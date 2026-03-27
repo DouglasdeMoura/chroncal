@@ -57,6 +57,11 @@ type eventDeletedMsg struct {
 	id int64
 }
 
+type eventDetailLoadedMsg struct {
+	alarms    []event.Alarm
+	attendees []event.Attendee
+}
+
 type errMsg struct {
 	err error
 }
@@ -127,6 +132,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.day.setEvents(m.month.selectedEvents())
 		m.week.setEvents(msg.events)
 		m.agenda.setEvents(msg.events)
+		return m, nil
+
+	case eventDetailLoadedMsg:
+		if m.selectedEvent != nil {
+			m.selectedEvent.Alarms = msg.alarms
+			m.selectedEvent.Attendees = msg.attendees
+		}
 		return m, nil
 
 	case eventSavedMsg:
@@ -313,8 +325,7 @@ func (m Model) handleDayKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.view = viewMonth
 	case key.Matches(msg, keys.Enter):
 		if e := m.day.selectedEvent(); e != nil {
-			m.selectedEvent = e
-			m.showDetail = true
+			return m, m.selectEvent(e)
 		}
 	case key.Matches(msg, keys.NewEvent):
 		m.openNewEventForm()
@@ -336,8 +347,7 @@ func (m Model) handleAgendaKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.agenda.next()
 	case key.Matches(msg, keys.Enter):
 		if e := m.agenda.selectedEvent(); e != nil {
-			m.selectedEvent = e
-			m.showDetail = true
+			return m, m.selectEvent(e)
 		}
 	case key.Matches(msg, keys.NewEvent):
 		m.openNewEventForm()
@@ -499,6 +509,21 @@ func (m Model) loadAgendaEvents() tea.Cmd {
 			return errMsg{err}
 		}
 		return eventsLoadedMsg{events}
+	}
+}
+
+func (m *Model) selectEvent(e *event.Event) tea.Cmd {
+	m.selectedEvent = e
+	m.showDetail = true
+	return m.loadEventDetail(e.ID)
+}
+
+func (m Model) loadEventDetail(id int64) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		alarms, _ := m.app.Events.ListAlarms(ctx, id)
+		attendees, _ := m.app.Events.ListAttendees(ctx, id)
+		return eventDetailLoadedMsg{alarms, attendees}
 	}
 }
 

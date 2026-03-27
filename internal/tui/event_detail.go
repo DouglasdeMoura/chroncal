@@ -40,6 +40,33 @@ func renderEventDetail(e *event.Event, calendarName string) string {
 		b.WriteString(row + "\n")
 	}
 
+	if e.Status != "" && e.Status != "CONFIRMED" {
+		row := eventDetailLabelStyle.Render("Status") + eventDetailValueStyle.Render(e.Status)
+		b.WriteString(row + "\n")
+	}
+
+	if e.URL != "" {
+		row := eventDetailLabelStyle.Render("URL") + eventDetailValueStyle.Render(e.URL)
+		b.WriteString(row + "\n")
+	}
+
+	if e.Categories != "" {
+		row := eventDetailLabelStyle.Render("Tags") + eventDetailValueStyle.Render(e.Categories)
+		b.WriteString(row + "\n")
+	}
+
+	if len(e.Alarms) > 0 {
+		label := fmt.Sprintf("%d reminder(s)", len(e.Alarms))
+		row := eventDetailLabelStyle.Render("Reminders") + eventDetailValueStyle.Render(label)
+		b.WriteString(row + "\n")
+	}
+
+	if len(e.Attendees) > 0 {
+		label := fmt.Sprintf("%d participant(s)", len(e.Attendees))
+		row := eventDetailLabelStyle.Render("Attendees") + eventDetailValueStyle.Render(label)
+		b.WriteString(row + "\n")
+	}
+
 	if e.Description != "" {
 		b.WriteString("\n")
 		b.WriteString(eventDetailValueStyle.Render(e.Description))

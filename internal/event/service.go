@@ -2,6 +2,8 @@ package event
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -10,11 +12,12 @@ import (
 )
 
 type Service struct {
-	q *storage.Queries
+	db *sql.DB
+	q  *storage.Queries
 }
 
-func NewService(q *storage.Queries) *Service {
-	return &Service{q: q}
+func NewService(db *sql.DB, q *storage.Queries) *Service {
+	return &Service{db: db, q: q}
 }
 
 type CreateParams struct {
@@ -26,6 +29,17 @@ type CreateParams struct {
 	EndTime        time.Time
 	AllDay         bool
 	RecurrenceRule string
+	Timezone       string
+	Status         string
+	Transp         string
+	Sequence       int64
+	Priority       int64
+	Class          string
+	URL            string
+	Categories     string
+	ExDates        string
+	RDates         string
+	RecurrenceID   string
 }
 
 type UpdateParams struct {
@@ -37,6 +51,15 @@ type UpdateParams struct {
 	AllDay         bool
 	RecurrenceRule string
 	CalendarID     int64
+	Timezone       string
+	Status         string
+	Transp         string
+	Priority       int64
+	Class          string
+	URL            string
+	Categories     string
+	ExDates        string
+	RDates         string
 }
 
 type UpsertParams struct {
@@ -49,6 +72,41 @@ type UpsertParams struct {
 	EndTime        time.Time
 	AllDay         bool
 	RecurrenceRule string
+	Timezone       string
+	Status         string
+	Transp         string
+	Sequence       int64
+	Priority       int64
+	Class          string
+	URL            string
+	Categories     string
+	ExDates        string
+	RDates         string
+	RecurrenceID   string
+}
+
+func (p *CreateParams) applyDefaults() {
+	if p.Status == "" {
+		p.Status = "CONFIRMED"
+	}
+	if p.Transp == "" {
+		p.Transp = "OPAQUE"
+	}
+	if p.Class == "" {
+		p.Class = "PUBLIC"
+	}
+}
+
+func (p *UpsertParams) applyDefaults() {
+	if p.Status == "" {
+		p.Status = "CONFIRMED"
+	}
+	if p.Transp == "" {
+		p.Transp = "OPAQUE"
+	}
+	if p.Class == "" {
+		p.Class = "PUBLIC"
+	}
 }
 
 func (s *Service) ListByDateRange(ctx context.Context, from, to time.Time) ([]Event, error) {
@@ -74,6 +132,14 @@ func (s *Service) ListByCalendarAndDateRange(ctx context.Context, calID int64, f
 	return fromStorageSlice(rows), nil
 }
 
+func (s *Service) ListOverridesByUID(ctx context.Context, uid string) ([]Event, error) {
+	rows, err := s.q.ListOverridesByUID(ctx, uid)
+	if err != nil {
+		return nil, err
+	}
+	return fromStorageSlice(rows), nil
+}
+
 func (s *Service) Get(ctx context.Context, id int64) (Event, error) {
 	r, err := s.q.GetEvent(ctx, id)
 	if err != nil {
@@ -83,10 +149,7 @@ func (s *Service) Get(ctx context.Context, id int64) (Event, error) {
 }
 
 func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
-	allDay := int64(0)
-	if p.AllDay {
-		allDay = 1
-	}
+	p.applyDefaults()
 	r, err := s.q.CreateEvent(ctx, storage.CreateEventParams{
 		Uid:            uuid.New().String(),
 		CalendarID:     p.CalendarID,
@@ -95,8 +158,19 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
 		Location:       p.Location,
 		StartTime:      p.StartTime.Format(time.RFC3339),
 		EndTime:        p.EndTime.Format(time.RFC3339),
-		AllDay:         allDay,
+		AllDay:         boolToInt(p.AllDay),
 		RecurrenceRule: p.RecurrenceRule,
+		Timezone:       p.Timezone,
+		Status:         p.Status,
+		Transp:         p.Transp,
+		Sequence:       p.Sequence,
+		Priority:       p.Priority,
+		Class:          p.Class,
+		Url:            p.URL,
+		Categories:     p.Categories,
+		Exdates:        p.ExDates,
+		Rdates:         p.RDates,
+		RecurrenceID:   p.RecurrenceID,
 	})
 	if err != nil {
 		return Event{}, err
@@ -105,9 +179,14 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
 }
 
 func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, error) {
-	allDay := int64(0)
-	if p.AllDay {
-		allDay = 1
+	if p.Status == "" {
+		p.Status = "CONFIRMED"
+	}
+	if p.Transp == "" {
+		p.Transp = "OPAQUE"
+	}
+	if p.Class == "" {
+		p.Class = "PUBLIC"
 	}
 	r, err := s.q.UpdateEvent(ctx, storage.UpdateEventParams{
 		ID:             id,
@@ -116,9 +195,18 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, 
 		Location:       p.Location,
 		StartTime:      p.StartTime.Format(time.RFC3339),
 		EndTime:        p.EndTime.Format(time.RFC3339),
-		AllDay:         allDay,
+		AllDay:         boolToInt(p.AllDay),
 		RecurrenceRule: p.RecurrenceRule,
 		CalendarID:     p.CalendarID,
+		Timezone:       p.Timezone,
+		Status:         p.Status,
+		Transp:         p.Transp,
+		Priority:       p.Priority,
+		Class:          p.Class,
+		Url:            p.URL,
+		Categories:     p.Categories,
+		Exdates:        p.ExDates,
+		Rdates:         p.RDates,
 	})
 	if err != nil {
 		return Event{}, err
@@ -127,10 +215,7 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, 
 }
 
 func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error) {
-	allDay := int64(0)
-	if p.AllDay {
-		allDay = 1
-	}
+	p.applyDefaults()
 	r, err := s.q.UpsertEventByUID(ctx, storage.UpsertEventByUIDParams{
 		Uid:            p.UID,
 		CalendarID:     p.CalendarID,
@@ -139,8 +224,19 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error
 		Location:       p.Location,
 		StartTime:      p.StartTime.Format(time.RFC3339),
 		EndTime:        p.EndTime.Format(time.RFC3339),
-		AllDay:         allDay,
+		AllDay:         boolToInt(p.AllDay),
 		RecurrenceRule: p.RecurrenceRule,
+		Timezone:       p.Timezone,
+		Status:         p.Status,
+		Transp:         p.Transp,
+		Sequence:       p.Sequence,
+		Priority:       p.Priority,
+		Class:          p.Class,
+		Url:            p.URL,
+		Categories:     p.Categories,
+		Exdates:        p.ExDates,
+		Rdates:         p.RDates,
+		RecurrenceID:   p.RecurrenceID,
 	})
 	if err != nil {
 		return Event{}, err
@@ -151,6 +247,88 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error
 func (s *Service) Delete(ctx context.Context, id int64) error {
 	return s.q.DeleteEvent(ctx, id)
 }
+
+// Alarm CRUD
+
+func (s *Service) ListAlarms(ctx context.Context, eventID int64) ([]Alarm, error) {
+	rows, err := s.q.ListAlarmsByEventID(ctx, eventID)
+	if err != nil {
+		return nil, err
+	}
+	alarms := make([]Alarm, len(rows))
+	for i, r := range rows {
+		alarms[i] = fromStorageAlarm(r)
+	}
+	return alarms, nil
+}
+
+func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []Alarm) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	qtx := s.q.WithTx(tx)
+	if err := qtx.DeleteAlarmsByEventID(ctx, eventID); err != nil {
+		return fmt.Errorf("delete alarms: %w", err)
+	}
+	for _, a := range alarms {
+		_, err := qtx.CreateAlarm(ctx, storage.CreateAlarmParams{
+			EventID:      eventID,
+			Action:       a.Action,
+			TriggerValue: a.TriggerValue,
+			Description:  a.Description,
+		})
+		if err != nil {
+			return fmt.Errorf("create alarm: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// Attendee CRUD
+
+func (s *Service) ListAttendees(ctx context.Context, eventID int64) ([]Attendee, error) {
+	rows, err := s.q.ListAttendeesByEventID(ctx, eventID)
+	if err != nil {
+		return nil, err
+	}
+	attendees := make([]Attendee, len(rows))
+	for i, r := range rows {
+		attendees[i] = fromStorageAttendee(r)
+	}
+	return attendees, nil
+}
+
+func (s *Service) ReplaceAttendees(ctx context.Context, eventID int64, attendees []Attendee) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	qtx := s.q.WithTx(tx)
+	if err := qtx.DeleteAttendeesByEventID(ctx, eventID); err != nil {
+		return fmt.Errorf("delete attendees: %w", err)
+	}
+	for _, a := range attendees {
+		_, err := qtx.CreateAttendee(ctx, storage.CreateAttendeeParams{
+			EventID:    eventID,
+			Email:      a.Email,
+			Name:       a.Name,
+			RsvpStatus: a.RSVPStatus,
+			Role:       a.Role,
+			Organizer:  boolToInt(a.Organizer),
+		})
+		if err != nil {
+			return fmt.Errorf("create attendee: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// Converters
 
 func fromStorage(r storage.Event) Event {
 	return Event{
@@ -164,6 +342,17 @@ func fromStorage(r storage.Event) Event {
 		EndTime:        parseTime(r.EndTime),
 		AllDay:         r.AllDay == 1,
 		RecurrenceRule: r.RecurrenceRule,
+		Timezone:       r.Timezone,
+		Status:         r.Status,
+		Transp:         r.Transp,
+		Sequence:       r.Sequence,
+		Priority:       r.Priority,
+		Class:          r.Class,
+		URL:            r.Url,
+		Categories:     r.Categories,
+		ExDates:        r.Exdates,
+		RDates:         r.Rdates,
+		RecurrenceID:   r.RecurrenceID,
 		CreatedAt:      parseTime(r.CreatedAt),
 		UpdatedAt:      parseTime(r.UpdatedAt),
 	}
@@ -177,7 +366,36 @@ func fromStorageSlice(rows []storage.Event) []Event {
 	return events
 }
 
+func fromStorageAlarm(r storage.EventAlarm) Alarm {
+	return Alarm{
+		ID:           r.ID,
+		EventID:      r.EventID,
+		Action:       r.Action,
+		TriggerValue: r.TriggerValue,
+		Description:  r.Description,
+	}
+}
+
+func fromStorageAttendee(r storage.EventAttendee) Attendee {
+	return Attendee{
+		ID:         r.ID,
+		EventID:    r.EventID,
+		Email:      r.Email,
+		Name:       r.Name,
+		RSVPStatus: r.RsvpStatus,
+		Role:       r.Role,
+		Organizer:  r.Organizer == 1,
+	}
+}
+
 func parseTime(s string) time.Time {
 	t, _ := time.Parse(time.RFC3339, s)
 	return t
+}
+
+func boolToInt(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
 }

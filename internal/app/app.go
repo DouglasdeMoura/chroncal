@@ -26,7 +26,7 @@ func New(dbPath string) (*App, error) {
 	return &App{
 		DB:        db,
 		Calendars: calendar.NewService(queries),
-		Events:    event.NewService(queries),
+		Events:    event.NewService(db, queries),
 	}, nil
 }
 

@@ -24,6 +24,35 @@ type Event struct {
 	EndTime        string
 	AllDay         int64
 	RecurrenceRule string
+	Timezone       string
+	Status         string
+	Transp         string
+	Sequence       int64
+	Priority       int64
+	Class          string
+	Url            string
+	Categories     string
+	Exdates        string
+	Rdates         string
+	RecurrenceID   string
 	CreatedAt      string
 	UpdatedAt      string
+}
+
+type EventAlarm struct {
+	ID           int64
+	EventID      int64
+	Action       string
+	TriggerValue string
+	Description  string
+}
+
+type EventAttendee struct {
+	ID         int64
+	EventID    int64
+	Email      string
+	Name       string
+	RsvpStatus string
+	Role       string
+	Organizer  int64
 }

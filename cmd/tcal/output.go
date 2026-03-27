@@ -12,18 +12,47 @@ import (
 )
 
 type jsonEvent struct {
-	ID             int64  `json:"id"`
-	UID            string `json:"uid"`
-	CalendarID     int64  `json:"calendar_id"`
-	Title          string `json:"title"`
-	Description    string `json:"description"`
-	Location       string `json:"location"`
-	StartTime      string `json:"start_time"`
-	EndTime        string `json:"end_time"`
-	AllDay         bool   `json:"all_day"`
-	RecurrenceRule string `json:"recurrence_rule"`
-	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
+	ID             int64           `json:"id"`
+	UID            string          `json:"uid"`
+	CalendarID     int64           `json:"calendar_id"`
+	Title          string          `json:"title"`
+	Description    string          `json:"description"`
+	Location       string          `json:"location"`
+	StartTime      string          `json:"start_time"`
+	EndTime        string          `json:"end_time"`
+	AllDay         bool            `json:"all_day"`
+	RecurrenceRule string          `json:"recurrence_rule"`
+	Timezone       string          `json:"timezone"`
+	Status         string          `json:"status"`
+	Transp         string          `json:"transp"`
+	Sequence       int64           `json:"sequence"`
+	Priority       int64           `json:"priority"`
+	Class          string          `json:"class"`
+	URL            string          `json:"url"`
+	Categories     string          `json:"categories"`
+	ExDates        string          `json:"exdates"`
+	RDates         string          `json:"rdates"`
+	RecurrenceID   string          `json:"recurrence_id"`
+	CreatedAt      string          `json:"created_at"`
+	UpdatedAt      string          `json:"updated_at"`
+	Alarms         []jsonAlarm     `json:"alarms,omitempty"`
+	Attendees      []jsonAttendee  `json:"attendees,omitempty"`
+}
+
+type jsonAlarm struct {
+	ID           int64  `json:"id"`
+	Action       string `json:"action"`
+	TriggerValue string `json:"trigger_value"`
+	Description  string `json:"description"`
+}
+
+type jsonAttendee struct {
+	ID         int64  `json:"id"`
+	Email      string `json:"email"`
+	Name       string `json:"name"`
+	RSVPStatus string `json:"rsvp_status"`
+	Role       string `json:"role"`
+	Organizer  bool   `json:"organizer"`
 }
 
 type jsonCalendar struct {
@@ -36,7 +65,7 @@ type jsonCalendar struct {
 }
 
 func toJSONEvent(e event.Event) jsonEvent {
-	return jsonEvent{
+	je := jsonEvent{
 		ID:             e.ID,
 		UID:            e.UID,
 		CalendarID:     e.CalendarID,
@@ -47,9 +76,33 @@ func toJSONEvent(e event.Event) jsonEvent {
 		EndTime:        e.EndTime.Local().Format(time.RFC3339),
 		AllDay:         e.AllDay,
 		RecurrenceRule: e.RecurrenceRule,
+		Timezone:       e.Timezone,
+		Status:         e.Status,
+		Transp:         e.Transp,
+		Sequence:       e.Sequence,
+		Priority:       e.Priority,
+		Class:          e.Class,
+		URL:            e.URL,
+		Categories:     e.Categories,
+		ExDates:        e.ExDates,
+		RDates:         e.RDates,
+		RecurrenceID:   e.RecurrenceID,
 		CreatedAt:      e.CreatedAt.Local().Format(time.RFC3339),
 		UpdatedAt:      e.UpdatedAt.Local().Format(time.RFC3339),
 	}
+	for _, a := range e.Alarms {
+		je.Alarms = append(je.Alarms, jsonAlarm{
+			ID: a.ID, Action: a.Action,
+			TriggerValue: a.TriggerValue, Description: a.Description,
+		})
+	}
+	for _, a := range e.Attendees {
+		je.Attendees = append(je.Attendees, jsonAttendee{
+			ID: a.ID, Email: a.Email, Name: a.Name,
+			RSVPStatus: a.RSVPStatus, Role: a.Role, Organizer: a.Organizer,
+		})
+	}
+	return je
 }
 
 func toJSONCalendar(c calendar.Calendar) jsonCalendar {
@@ -70,23 +123,41 @@ func printJSON(w io.Writer, v any) error {
 }
 
 func printEvent(w io.Writer, e event.Event) {
-	fmt.Fprintf(w, "  ID:       %d\n", e.ID)
-	fmt.Fprintf(w, "  Title:    %s\n", e.Title)
+	fmt.Fprintf(w, "  ID:         %d\n", e.ID)
+	fmt.Fprintf(w, "  Title:      %s\n", e.Title)
 	if e.AllDay {
-		fmt.Fprintf(w, "  When:     %s (all day)\n", e.StartTime.Local().Format("Mon, Jan 2 2006"))
+		fmt.Fprintf(w, "  When:       %s (all day)\n", e.StartTime.Local().Format("Mon, Jan 2 2006"))
 	} else {
-		fmt.Fprintf(w, "  When:     %s – %s\n",
+		fmt.Fprintf(w, "  When:       %s – %s\n",
 			e.StartTime.Local().Format("Mon, Jan 2 2006 15:04"),
 			e.EndTime.Local().Format("15:04"))
 	}
 	if e.Location != "" {
-		fmt.Fprintf(w, "  Where:    %s\n", e.Location)
+		fmt.Fprintf(w, "  Where:      %s\n", e.Location)
 	}
 	if e.Description != "" {
-		fmt.Fprintf(w, "  Notes:    %s\n", e.Description)
+		fmt.Fprintf(w, "  Notes:      %s\n", e.Description)
 	}
-	fmt.Fprintf(w, "  Calendar: %d\n", e.CalendarID)
-	fmt.Fprintf(w, "  UID:      %s\n", e.UID)
+	if e.Status != "CONFIRMED" {
+		fmt.Fprintf(w, "  Status:     %s\n", e.Status)
+	}
+	if e.URL != "" {
+		fmt.Fprintf(w, "  URL:        %s\n", e.URL)
+	}
+	if e.Categories != "" {
+		fmt.Fprintf(w, "  Categories: %s\n", e.Categories)
+	}
+	if e.Timezone != "" {
+		fmt.Fprintf(w, "  Timezone:   %s\n", e.Timezone)
+	}
+	fmt.Fprintf(w, "  Calendar:   %d\n", e.CalendarID)
+	fmt.Fprintf(w, "  UID:        %s\n", e.UID)
+	if len(e.Alarms) > 0 {
+		fmt.Fprintf(w, "  Alarms:     %d reminder(s)\n", len(e.Alarms))
+	}
+	if len(e.Attendees) > 0 {
+		fmt.Fprintf(w, "  Attendees:  %d participant(s)\n", len(e.Attendees))
+	}
 }
 
 func printEvents(w io.Writer, events []event.Event) {

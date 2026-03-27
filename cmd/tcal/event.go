@@ -91,16 +91,20 @@ func eventGetCmd() *cobra.Command {
 				return err
 			}
 			defer a.Close()
+			ctx := context.Background()
 
 			id, err := strconv.ParseInt(args[0], 10, 64)
 			if err != nil {
 				return fmt.Errorf("invalid event ID: %w", err)
 			}
 
-			e, err := a.Events.Get(context.Background(), id)
+			e, err := a.Events.Get(ctx, id)
 			if err != nil {
 				return fmt.Errorf("get event: %w", err)
 			}
+
+			e.Alarms, _ = a.Events.ListAlarms(ctx, e.ID)
+			e.Attendees, _ = a.Events.ListAttendees(ctx, e.ID)
 
 			w := cmd.OutOrStdout()
 			if jsonOut {
@@ -122,6 +126,12 @@ func eventAddCmd() *cobra.Command {
 		calendarName string
 		location     string
 		description  string
+		status       string
+		url          string
+		categories   string
+		class        string
+		transp       string
+		priority     int64
 		jsonOut      bool
 	)
 	cmd := &cobra.Command{
@@ -182,6 +192,12 @@ func eventAddCmd() *cobra.Command {
 				StartTime:   startTime,
 				EndTime:     endTime,
 				AllDay:      allDay,
+				Status:      status,
+				URL:         url,
+				Categories:  categories,
+				Class:       class,
+				Transp:      transp,
+				Priority:    priority,
 			})
 			if err != nil {
 				return fmt.Errorf("create event: %w", err)
@@ -205,20 +221,32 @@ func eventAddCmd() *cobra.Command {
 	cmd.Flags().StringVar(&calendarName, "calendar", "Personal", "calendar name")
 	cmd.Flags().StringVar(&location, "location", "", "event location")
 	cmd.Flags().StringVar(&description, "description", "", "event description")
+	cmd.Flags().StringVar(&status, "status", "", "event status (TENTATIVE, CONFIRMED, CANCELLED)")
+	cmd.Flags().StringVar(&url, "url", "", "associated URL")
+	cmd.Flags().StringVar(&categories, "categories", "", "comma-separated categories")
+	cmd.Flags().StringVar(&class, "class", "", "classification (PUBLIC, PRIVATE, CONFIDENTIAL)")
+	cmd.Flags().StringVar(&transp, "transp", "", "transparency (OPAQUE, TRANSPARENT)")
+	cmd.Flags().Int64Var(&priority, "priority", 0, "priority (0-9)")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "output as JSON")
 	return cmd
 }
 
 func eventUpdateCmd() *cobra.Command {
 	var (
-		title       string
-		dateStr     string
-		timeStr     string
-		durationStr string
+		title        string
+		dateStr      string
+		timeStr      string
+		durationStr  string
 		calendarName string
-		location    string
-		description string
-		jsonOut     bool
+		location     string
+		description  string
+		status       string
+		url          string
+		categories   string
+		class        string
+		transp       string
+		priority     int64
+		jsonOut      bool
 	)
 	cmd := &cobra.Command{
 		Use:   "update <id>",
@@ -242,7 +270,6 @@ func eventUpdateCmd() *cobra.Command {
 				return fmt.Errorf("get event: %w", err)
 			}
 
-			// Start from existing values, override only provided flags
 			p := event.UpdateParams{
 				Title:          existing.Title,
 				Description:    existing.Description,
@@ -252,6 +279,15 @@ func eventUpdateCmd() *cobra.Command {
 				AllDay:         existing.AllDay,
 				RecurrenceRule: existing.RecurrenceRule,
 				CalendarID:     existing.CalendarID,
+				Timezone:       existing.Timezone,
+				Status:         existing.Status,
+				Transp:         existing.Transp,
+				Priority:       existing.Priority,
+				Class:          existing.Class,
+				URL:            existing.URL,
+				Categories:     existing.Categories,
+				ExDates:        existing.ExDates,
+				RDates:         existing.RDates,
 			}
 
 			if cmd.Flags().Changed("title") {
@@ -269,6 +305,24 @@ func eventUpdateCmd() *cobra.Command {
 					return err
 				}
 				p.CalendarID = calID
+			}
+			if cmd.Flags().Changed("status") {
+				p.Status = status
+			}
+			if cmd.Flags().Changed("url") {
+				p.URL = url
+			}
+			if cmd.Flags().Changed("categories") {
+				p.Categories = categories
+			}
+			if cmd.Flags().Changed("class") {
+				p.Class = class
+			}
+			if cmd.Flags().Changed("transp") {
+				p.Transp = transp
+			}
+			if cmd.Flags().Changed("priority") {
+				p.Priority = priority
 			}
 
 			if cmd.Flags().Changed("date") || cmd.Flags().Changed("time") {
@@ -298,7 +352,6 @@ func eventUpdateCmd() *cobra.Command {
 				}
 				p.EndTime = p.StartTime.Add(dur)
 			} else if cmd.Flags().Changed("date") || cmd.Flags().Changed("time") {
-				// Preserve original duration
 				p.EndTime = p.StartTime.Add(existing.EndTime.Sub(existing.StartTime))
 			}
 
@@ -322,6 +375,12 @@ func eventUpdateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "move to calendar (by name)")
 	cmd.Flags().StringVar(&location, "location", "", "new location")
 	cmd.Flags().StringVar(&description, "description", "", "new description")
+	cmd.Flags().StringVar(&status, "status", "", "new status (TENTATIVE, CONFIRMED, CANCELLED)")
+	cmd.Flags().StringVar(&url, "url", "", "new URL")
+	cmd.Flags().StringVar(&categories, "categories", "", "new categories (comma-separated)")
+	cmd.Flags().StringVar(&class, "class", "", "new classification (PUBLIC, PRIVATE, CONFIDENTIAL)")
+	cmd.Flags().StringVar(&transp, "transp", "", "new transparency (OPAQUE, TRANSPARENT)")
+	cmd.Flags().Int64Var(&priority, "priority", 0, "new priority (0-9)")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "output as JSON")
 	return cmd
 }

@@ -65,10 +65,33 @@ func icalImportCmd() *cobra.Command {
 					EndTime:        e.EndTime,
 					AllDay:         e.AllDay,
 					RecurrenceRule: e.RecurrenceRule,
+					Timezone:       e.Timezone,
+					Status:         e.Status,
+					Transp:         e.Transp,
+					Sequence:       e.Sequence,
+					Priority:       e.Priority,
+					Class:          e.Class,
+					URL:            e.URL,
+					Categories:     e.Categories,
+					ExDates:        e.ExDates,
+					RDates:         e.RDates,
+					RecurrenceID:   e.RecurrenceID,
 				})
 				if err != nil {
 					return fmt.Errorf("upsert event %q: %w", e.Title, err)
 				}
+
+				if len(e.Alarms) > 0 {
+					if err := a.Events.ReplaceAlarms(ctx, saved.ID, e.Alarms); err != nil {
+						return fmt.Errorf("replace alarms for %q: %w", e.Title, err)
+					}
+				}
+				if len(e.Attendees) > 0 {
+					if err := a.Events.ReplaceAttendees(ctx, saved.ID, e.Attendees); err != nil {
+						return fmt.Errorf("replace attendees for %q: %w", e.Title, err)
+					}
+				}
+
 				imported = append(imported, saved)
 			}
 
@@ -127,6 +150,12 @@ func icalExportCmd() *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("list events: %w", err)
 				}
+			}
+
+			// Load alarms and attendees for each event
+			for i := range events {
+				events[i].Alarms, _ = a.Events.ListAlarms(ctx, events[i].ID)
+				events[i].Attendees, _ = a.Events.ListAttendees(ctx, events[i].ID)
 			}
 
 			data, err := ical.ExportEvents(events, calendarName)
