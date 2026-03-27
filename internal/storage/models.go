@@ -96,6 +96,12 @@ type EventRelation struct {
 	RelUid  string
 }
 
+type EventResource struct {
+	ID      int64
+	EventID int64
+	Text    string
+}
+
 type Todo struct {
 	ID              int64
 	Uid             string
@@ -178,4 +184,10 @@ type TodoRelation struct {
 	TodoID  int64
 	RelType string
 	RelUid  string
+}
+
+type TodoResource struct {
+	ID     int64
+	TodoID int64
+	Text   string
 }

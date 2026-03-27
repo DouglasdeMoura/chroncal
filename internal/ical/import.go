@@ -163,6 +163,7 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, error) {
 	attachments := parseAttachmentsFromProps(props)
 	comments := parseCommentsFromProps(props)
 	contacts := parseContactsFromProps(props)
+	resources := parseResourcesFromProps(props)
 	relations := parseRelationsFromProps(props)
 
 	return todo.Todo{
@@ -192,6 +193,7 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, error) {
 		Attachments:     attachments,
 		Comments:        comments,
 		Contacts:        contacts,
+		Resources:       resources,
 		Relations:       relations,
 	}, nil
 }
@@ -302,6 +304,7 @@ func eventFromVEvent(ve ical.Event) (event.Event, error) {
 	attachments := parseAttachmentsFromProps(ve.Props)
 	comments := parseCommentsFromProps(ve.Props)
 	contacts := parseContactsFromProps(ve.Props)
+	resources := parseResourcesFromProps(ve.Props)
 	relations := parseRelationsFromProps(ve.Props)
 
 	return event.Event{
@@ -330,6 +333,7 @@ func eventFromVEvent(ve ical.Event) (event.Event, error) {
 		Attachments:    attachments,
 		Comments:       comments,
 		Contacts:       contacts,
+		Resources:      resources,
 		Relations:      relations,
 	}, nil
 }
@@ -665,6 +669,23 @@ func parseContactsFromProps(props ical.Props) []string {
 		}
 		if text != "" {
 			out = append(out, text)
+		}
+	}
+	return out
+}
+
+func parseResourcesFromProps(props ical.Props) []string {
+	var out []string
+	for _, prop := range props.Values(ical.PropResources) {
+		// RESOURCES can be comma-separated within a single property
+		text, err := prop.Text()
+		if err != nil {
+			text = prop.Value
+		}
+		for _, r := range strings.Split(text, ",") {
+			if s := strings.TrimSpace(r); s != "" {
+				out = append(out, s)
+			}
 		}
 	}
 	return out

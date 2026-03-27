@@ -114,6 +114,11 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 			vevent.Props.Add(p)
 		}
 
+		// RESOURCES
+		if len(e.Resources) > 0 {
+			vevent.Props.SetText(ical.PropResources, strings.Join(e.Resources, ","))
+		}
+
 		// RELATED-TO
 		for _, r := range e.Relations {
 			p := &ical.Prop{Name: ical.PropRelatedTo, Params: make(ical.Params)}
@@ -324,6 +329,11 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 			p := &ical.Prop{Name: ical.PropContact}
 			p.SetText(c)
 			vtodo.Props.Add(p)
+		}
+
+		// RESOURCES
+		if len(t.Resources) > 0 {
+			vtodo.Props.SetText(ical.PropResources, strings.Join(t.Resources, ","))
 		}
 
 		// RELATED-TO

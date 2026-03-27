@@ -39,6 +39,7 @@ type Event struct {
 	Attachments []model.Attachment
 	Comments    []string
 	Contacts    []string
+	Resources   []string
 	Relations   []model.Relation
 }
 

@@ -493,6 +493,41 @@ func (s *Service) ReplaceContacts(ctx context.Context, todoID int64, contacts []
 	return tx.Commit()
 }
 
+// Resource CRUD
+
+func (s *Service) ListResources(ctx context.Context, todoID int64) ([]string, error) {
+	rows, err := s.q.ListTodoResourcesByTodoID(ctx, todoID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		out[i] = r.Text
+	}
+	return out, nil
+}
+
+func (s *Service) ReplaceResources(ctx context.Context, todoID int64, resources []string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+	if err := qtx.DeleteTodoResourcesByTodoID(ctx, todoID); err != nil {
+		return fmt.Errorf("delete resources: %w", err)
+	}
+	for _, r := range resources {
+		_, err := qtx.CreateTodoResource(ctx, storage.CreateTodoResourceParams{
+			TodoID: todoID, Text: r,
+		})
+		if err != nil {
+			return fmt.Errorf("create resource: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
 // Relation CRUD
 
 func (s *Service) ListRelations(ctx context.Context, todoID int64) ([]model.Relation, error) {
