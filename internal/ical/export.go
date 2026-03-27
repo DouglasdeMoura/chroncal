@@ -3,7 +3,6 @@ package ical
 import (
 	"bytes"
 	"fmt"
-	"time"
 
 	"github.com/emersion/go-ical"
 
@@ -62,8 +61,4 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 		return nil, fmt.Errorf("encode ical: %w", err)
 	}
 	return buf.Bytes(), nil
-}
-
-func formatDate(t time.Time) string {
-	return t.Format("20060102")
 }
