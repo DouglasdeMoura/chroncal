@@ -1,0 +1,8 @@
+The .ics files in this directory are from the libical project
+(https://github.com/libical/libical), used under the terms of the
+Mozilla Public License Version 2.0.
+
+libical is Copyright (c) Eric Busboom and contributors.
+
+The full MPL 2.0 license text is available at:
+https://www.mozilla.org/en-US/MPL/2.0/

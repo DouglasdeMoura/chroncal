@@ -1,0 +1,15 @@
+This project includes third-party materials under their respective licenses.
+
+================================================================================
+libical test data
+================================================================================
+
+Files: internal/ical/testdata/*.ics
+Source: https://github.com/libical/libical
+License: Mozilla Public License 2.0 (MPL-2.0)
+Copyright: Eric Busboom and contributors
+
+The .ics test fixtures in internal/ical/testdata/ are from the libical
+project's test-data directory, used for integration testing. These files
+are distributed under the MPL 2.0. The full license text is available at
+https://www.mozilla.org/en-US/MPL/2.0/
