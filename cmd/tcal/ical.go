@@ -180,24 +180,31 @@ func icalExportCmd() *cobra.Command {
 				todos[i].Attendees, _ = a.Todos.ListAttendees(ctx, todos[i].ID)
 			}
 
-			// Export events
-			eventData, err := ical.ExportEvents(events, calendarName)
-			if err != nil {
-				return err
-			}
-
-			// Export todos — append to same calendar
-			todoData, err := ical.ExportTodos(todos, calendarName)
-			if err != nil {
-				return err
-			}
-
-			// Merge: use event data as base, or todo data if no events
-			data := eventData
-			if len(todos) > 0 && len(events) > 0 {
+			var data []byte
+			switch {
+			case len(events) > 0 && len(todos) > 0:
+				eventData, err := ical.ExportEvents(events, calendarName)
+				if err != nil {
+					return err
+				}
+				todoData, err := ical.ExportTodos(todos, calendarName)
+				if err != nil {
+					return err
+				}
 				data = ical.MergeCalendars(eventData, todoData)
-			} else if len(events) == 0 {
-				data = todoData
+			case len(events) > 0:
+				data, err = ical.ExportEvents(events, calendarName)
+				if err != nil {
+					return err
+				}
+			case len(todos) > 0:
+				data, err = ical.ExportTodos(todos, calendarName)
+				if err != nil {
+					return err
+				}
+			default:
+				fmt.Fprintln(cmd.OutOrStdout(), "Nothing to export.")
+				return nil
 			}
 
 			if output != "" {
