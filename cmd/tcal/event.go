@@ -109,6 +109,7 @@ func eventGetCmd() *cobra.Command {
 			e.Attendees, _ = a.Events.ListAttendees(ctx, e.ID)
 			e.Attachments, _ = a.Events.ListAttachments(ctx, e.ID)
 			e.Comments, _ = a.Events.ListComments(ctx, e.ID)
+			e.Contacts, _ = a.Events.ListContacts(ctx, e.ID)
 			e.Relations, _ = a.Events.ListRelations(ctx, e.ID)
 
 			w := cmd.OutOrStdout()

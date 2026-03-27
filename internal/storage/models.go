@@ -83,6 +83,12 @@ type EventComment struct {
 	Text    string
 }
 
+type EventContact struct {
+	ID      int64
+	EventID int64
+	Text    string
+}
+
 type EventRelation struct {
 	ID      int64
 	EventID int64
@@ -156,6 +162,12 @@ type TodoAttendee struct {
 }
 
 type TodoComment struct {
+	ID     int64
+	TodoID int64
+	Text   string
+}
+
+type TodoContact struct {
 	ID     int64
 	TodoID int64
 	Text   string

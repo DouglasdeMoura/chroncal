@@ -107,6 +107,13 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 			vevent.Props.Add(p)
 		}
 
+		// CONTACT
+		for _, c := range e.Contacts {
+			p := &ical.Prop{Name: ical.PropContact}
+			p.SetText(c)
+			vevent.Props.Add(p)
+		}
+
 		// RELATED-TO
 		for _, r := range e.Relations {
 			p := &ical.Prop{Name: ical.PropRelatedTo, Params: make(ical.Params)}
@@ -308,6 +315,13 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 		// COMMENT
 		for _, c := range t.Comments {
 			p := &ical.Prop{Name: ical.PropComment}
+			p.SetText(c)
+			vtodo.Props.Add(p)
+		}
+
+		// CONTACT
+		for _, c := range t.Contacts {
+			p := &ical.Prop{Name: ical.PropContact}
 			p.SetText(c)
 			vtodo.Props.Add(p)
 		}

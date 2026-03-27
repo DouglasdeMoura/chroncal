@@ -97,6 +97,7 @@ func todoGetCmd() *cobra.Command {
 			t.Attendees, _ = a.Todos.ListAttendees(ctx, t.ID)
 			t.Attachments, _ = a.Todos.ListAttachments(ctx, t.ID)
 			t.Comments, _ = a.Todos.ListComments(ctx, t.ID)
+			t.Contacts, _ = a.Todos.ListContacts(ctx, t.ID)
 			t.Relations, _ = a.Todos.ListRelations(ctx, t.ID)
 
 			w := cmd.OutOrStdout()

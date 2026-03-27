@@ -41,6 +41,7 @@ type jsonEvent struct {
 	Attendees      []jsonAttendee    `json:"attendees,omitempty"`
 	Attachments    []jsonAttachment  `json:"attachments,omitempty"`
 	Comments       []string          `json:"comments,omitempty"`
+	Contacts       []string          `json:"contacts,omitempty"`
 	Relations      []jsonRelation    `json:"relations,omitempty"`
 }
 
@@ -122,6 +123,7 @@ func toJSONEvent(e event.Event) jsonEvent {
 		je.Attachments = append(je.Attachments, jsonAttachment{URI: a.URI, FmtType: a.FmtType})
 	}
 	je.Comments = e.Comments
+	je.Contacts = e.Contacts
 	for _, r := range e.Relations {
 		je.Relations = append(je.Relations, jsonRelation{RelType: r.RelType, RelUID: r.RelUID})
 	}
@@ -257,6 +259,7 @@ type jsonTodo struct {
 	Attendees       []jsonAttendee    `json:"attendees,omitempty"`
 	Attachments     []jsonAttachment  `json:"attachments,omitempty"`
 	Comments        []string          `json:"comments,omitempty"`
+	Contacts        []string          `json:"contacts,omitempty"`
 	Relations       []jsonRelation    `json:"relations,omitempty"`
 }
 
@@ -287,6 +290,7 @@ func toJSONTodo(t todo.Todo) jsonTodo {
 		jt.Attachments = append(jt.Attachments, jsonAttachment{URI: a.URI, FmtType: a.FmtType})
 	}
 	jt.Comments = t.Comments
+	jt.Contacts = t.Contacts
 	for _, r := range t.Relations {
 		jt.Relations = append(jt.Relations, jsonRelation{RelType: r.RelType, RelUID: r.RelUID})
 	}

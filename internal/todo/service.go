@@ -458,6 +458,41 @@ func (s *Service) ReplaceComments(ctx context.Context, todoID int64, comments []
 	return tx.Commit()
 }
 
+// Contact CRUD
+
+func (s *Service) ListContacts(ctx context.Context, todoID int64) ([]string, error) {
+	rows, err := s.q.ListTodoContactsByTodoID(ctx, todoID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		out[i] = r.Text
+	}
+	return out, nil
+}
+
+func (s *Service) ReplaceContacts(ctx context.Context, todoID int64, contacts []string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+	if err := qtx.DeleteTodoContactsByTodoID(ctx, todoID); err != nil {
+		return fmt.Errorf("delete contacts: %w", err)
+	}
+	for _, c := range contacts {
+		_, err := qtx.CreateTodoContact(ctx, storage.CreateTodoContactParams{
+			TodoID: todoID, Text: c,
+		})
+		if err != nil {
+			return fmt.Errorf("create contact: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
 // Relation CRUD
 
 func (s *Service) ListRelations(ctx context.Context, todoID int64) ([]model.Relation, error) {

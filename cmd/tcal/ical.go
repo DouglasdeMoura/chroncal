@@ -81,6 +81,9 @@ func icalImportCmd() *cobra.Command {
 				if len(e.Comments) > 0 {
 					_ = a.Events.ReplaceComments(ctx, saved.ID, e.Comments)
 				}
+				if len(e.Contacts) > 0 {
+					_ = a.Events.ReplaceContacts(ctx, saved.ID, e.Contacts)
+				}
 				if len(e.Relations) > 0 {
 					_ = a.Events.ReplaceRelations(ctx, saved.ID, e.Relations)
 				}
@@ -115,6 +118,9 @@ func icalImportCmd() *cobra.Command {
 				}
 				if len(t.Comments) > 0 {
 					_ = a.Todos.ReplaceComments(ctx, saved.ID, t.Comments)
+				}
+				if len(t.Contacts) > 0 {
+					_ = a.Todos.ReplaceContacts(ctx, saved.ID, t.Contacts)
 				}
 				if len(t.Relations) > 0 {
 					_ = a.Todos.ReplaceRelations(ctx, saved.ID, t.Relations)
@@ -183,6 +189,7 @@ func icalExportCmd() *cobra.Command {
 				events[i].Attendees, _ = a.Events.ListAttendees(ctx, events[i].ID)
 				events[i].Attachments, _ = a.Events.ListAttachments(ctx, events[i].ID)
 				events[i].Comments, _ = a.Events.ListComments(ctx, events[i].ID)
+				events[i].Contacts, _ = a.Events.ListContacts(ctx, events[i].ID)
 				events[i].Relations, _ = a.Events.ListRelations(ctx, events[i].ID)
 			}
 
@@ -199,6 +206,7 @@ func icalExportCmd() *cobra.Command {
 				todos[i].Attendees, _ = a.Todos.ListAttendees(ctx, todos[i].ID)
 				todos[i].Attachments, _ = a.Todos.ListAttachments(ctx, todos[i].ID)
 				todos[i].Comments, _ = a.Todos.ListComments(ctx, todos[i].ID)
+				todos[i].Contacts, _ = a.Todos.ListContacts(ctx, todos[i].ID)
 				todos[i].Relations, _ = a.Todos.ListRelations(ctx, todos[i].ID)
 			}
 

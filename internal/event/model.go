@@ -38,6 +38,7 @@ type Event struct {
 	Attendees   []model.Attendee
 	Attachments []model.Attachment
 	Comments    []string
+	Contacts    []string
 	Relations   []model.Relation
 }
 

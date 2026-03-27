@@ -159,9 +159,10 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, error) {
 	// ATTENDEE + ORGANIZER
 	attendees := parseAttendeesFromProps(props)
 
-	// ATTACH, COMMENT, RELATED-TO
+	// ATTACH, COMMENT, CONTACT, RELATED-TO
 	attachments := parseAttachmentsFromProps(props)
 	comments := parseCommentsFromProps(props)
+	contacts := parseContactsFromProps(props)
 	relations := parseRelationsFromProps(props)
 
 	return todo.Todo{
@@ -190,6 +191,7 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, error) {
 		Attendees:       attendees,
 		Attachments:     attachments,
 		Comments:        comments,
+		Contacts:        contacts,
 		Relations:       relations,
 	}, nil
 }
@@ -299,6 +301,7 @@ func eventFromVEvent(ve ical.Event) (event.Event, error) {
 	// ATTACH, COMMENT, RELATED-TO
 	attachments := parseAttachmentsFromProps(ve.Props)
 	comments := parseCommentsFromProps(ve.Props)
+	contacts := parseContactsFromProps(ve.Props)
 	relations := parseRelationsFromProps(ve.Props)
 
 	return event.Event{
@@ -326,6 +329,7 @@ func eventFromVEvent(ve ical.Event) (event.Event, error) {
 		Attendees:      attendees,
 		Attachments:    attachments,
 		Comments:       comments,
+		Contacts:       contacts,
 		Relations:      relations,
 	}, nil
 }
@@ -641,6 +645,20 @@ func parseAttachmentsFromProps(props ical.Props) []model.Attachment {
 func parseCommentsFromProps(props ical.Props) []string {
 	var out []string
 	for _, prop := range props.Values(ical.PropComment) {
+		text, err := prop.Text()
+		if err != nil {
+			text = prop.Value
+		}
+		if text != "" {
+			out = append(out, text)
+		}
+	}
+	return out
+}
+
+func parseContactsFromProps(props ical.Props) []string {
+	var out []string
+	for _, prop := range props.Values(ical.PropContact) {
 		text, err := prop.Text()
 		if err != nil {
 			text = prop.Value
