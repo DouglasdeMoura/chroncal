@@ -9,6 +9,7 @@ import (
 
 	"github.com/douglasdemoura/tcal/internal/event"
 	"github.com/douglasdemoura/tcal/internal/ical"
+	"github.com/douglasdemoura/tcal/internal/todo"
 )
 
 func icalCmd() *cobra.Command {
@@ -27,7 +28,7 @@ func icalImportCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "import <file.ics>",
-		Short: "Import events from an iCal (.ics) file",
+		Short: "Import events and todos from an iCal (.ics) file",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
@@ -43,7 +44,7 @@ func icalImportCmd() *cobra.Command {
 			}
 			defer f.Close()
 
-			events, err := ical.ImportFile(f)
+			result, err := ical.ImportFile(f)
 			if err != nil {
 				return fmt.Errorf("import: %w", err)
 			}
@@ -53,62 +54,71 @@ func icalImportCmd() *cobra.Command {
 				return err
 			}
 
-			var imported []event.Event
-			for _, e := range events {
+			// Import events
+			var importedEvents []event.Event
+			for _, e := range result.Events {
 				saved, err := a.Events.UpsertByUID(ctx, event.UpsertParams{
-					UID:            e.UID,
-					CalendarID:     calID,
-					Title:          e.Title,
-					Description:    e.Description,
-					Location:       e.Location,
-					StartTime:      e.StartTime,
-					EndTime:        e.EndTime,
-					AllDay:         e.AllDay,
-					RecurrenceRule: e.RecurrenceRule,
-					Timezone:       e.Timezone,
-					Status:         e.Status,
-					Transp:         e.Transp,
-					Sequence:       e.Sequence,
-					Priority:       e.Priority,
-					Class:          e.Class,
-					URL:            e.URL,
-					Categories:     e.Categories,
-					ExDates:        e.ExDates,
-					RDates:         e.RDates,
-					RecurrenceID:   e.RecurrenceID,
+					UID: e.UID, CalendarID: calID,
+					Title: e.Title, Description: e.Description, Location: e.Location,
+					StartTime: e.StartTime, EndTime: e.EndTime, AllDay: e.AllDay,
+					RecurrenceRule: e.RecurrenceRule, Timezone: e.Timezone,
+					Status: e.Status, Transp: e.Transp, Sequence: e.Sequence,
+					Priority: e.Priority, Class: e.Class, URL: e.URL,
+					Categories: e.Categories, ExDates: e.ExDates, RDates: e.RDates,
+					RecurrenceID: e.RecurrenceID,
 				})
 				if err != nil {
 					return fmt.Errorf("upsert event %q: %w", e.Title, err)
 				}
-
 				if len(e.Alarms) > 0 {
-					if err := a.Events.ReplaceAlarms(ctx, saved.ID, e.Alarms); err != nil {
-						return fmt.Errorf("replace alarms for %q: %w", e.Title, err)
-					}
+					_ = a.Events.ReplaceAlarms(ctx, saved.ID, e.Alarms)
 				}
 				if len(e.Attendees) > 0 {
-					if err := a.Events.ReplaceAttendees(ctx, saved.ID, e.Attendees); err != nil {
-						return fmt.Errorf("replace attendees for %q: %w", e.Title, err)
-					}
+					_ = a.Events.ReplaceAttendees(ctx, saved.ID, e.Attendees)
 				}
+				importedEvents = append(importedEvents, saved)
+			}
 
-				imported = append(imported, saved)
+			// Import todos
+			var importedTodos []todo.Todo
+			for _, t := range result.Todos {
+				saved, err := a.Todos.UpsertByUID(ctx, todo.UpsertParams{
+					UID: t.UID, CalendarID: calID,
+					Summary: t.Summary, Description: t.Description, Location: t.Location,
+					DueDate: t.DueDate, StartDate: t.StartDate, Duration: t.Duration,
+					CompletedAt: t.CompletedAt, PercentComplete: t.PercentComplete,
+					Status: t.Status, Priority: t.Priority, Class: t.Class,
+					URL: t.URL, Categories: t.Categories,
+					RecurrenceRule: t.RecurrenceRule, Timezone: t.Timezone,
+					Sequence: t.Sequence, ExDates: t.ExDates, RDates: t.RDates,
+					RecurrenceID: t.RecurrenceID,
+				})
+				if err != nil {
+					return fmt.Errorf("upsert todo %q: %w", t.Summary, err)
+				}
+				if len(t.Alarms) > 0 {
+					_ = a.Todos.ReplaceAlarms(ctx, saved.ID, t.Alarms)
+				}
+				if len(t.Attendees) > 0 {
+					_ = a.Todos.ReplaceAttendees(ctx, saved.ID, t.Attendees)
+				}
+				importedTodos = append(importedTodos, saved)
 			}
 
 			w := cmd.OutOrStdout()
 			if jsonOut {
-				items := make([]jsonEvent, len(imported))
-				for i, e := range imported {
-					items[i] = toJSONEvent(e)
+				out := map[string]any{
+					"events": toJSONEvents(importedEvents),
+					"todos":  toJSONTodos(importedTodos),
 				}
-				return printJSON(w, items)
+				return printJSON(w, out)
 			}
-			fmt.Fprintf(w, "Imported %d events.\n", len(imported))
+			fmt.Fprintf(w, "Imported %d events, %d todos.\n", len(importedEvents), len(importedTodos))
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&calendarName, "calendar", "Personal", "calendar to import into")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "output imported events as JSON")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "output imported items as JSON")
 	return cmd
 }
 
@@ -121,7 +131,7 @@ func icalExportCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "export",
-		Short: "Export events to iCal (.ics) format",
+		Short: "Export events and todos to iCal (.ics) format",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -135,6 +145,7 @@ func icalExportCmd() *cobra.Command {
 				return err
 			}
 
+			// Load events
 			var events []event.Event
 			if calendarName != "" {
 				calID, err := resolveCalendarID(ctx, a, calendarName)
@@ -151,23 +162,49 @@ func icalExportCmd() *cobra.Command {
 					return fmt.Errorf("list events: %w", err)
 				}
 			}
-
-			// Load alarms and attendees for each event
 			for i := range events {
 				events[i].Alarms, _ = a.Events.ListAlarms(ctx, events[i].ID)
 				events[i].Attendees, _ = a.Events.ListAttendees(ctx, events[i].ID)
 			}
 
-			data, err := ical.ExportEvents(events, calendarName)
+			// Load todos
+			var todos []todo.Todo
+			if calendarName != "" {
+				calID, _ := resolveCalendarID(ctx, a, calendarName)
+				todos, _ = a.Todos.ListByCalendar(ctx, calID)
+			} else {
+				todos, _ = a.Todos.ListAll(ctx)
+			}
+			for i := range todos {
+				todos[i].Alarms, _ = a.Todos.ListAlarms(ctx, todos[i].ID)
+				todos[i].Attendees, _ = a.Todos.ListAttendees(ctx, todos[i].ID)
+			}
+
+			// Export events
+			eventData, err := ical.ExportEvents(events, calendarName)
 			if err != nil {
 				return err
+			}
+
+			// Export todos — append to same calendar
+			todoData, err := ical.ExportTodos(todos, calendarName)
+			if err != nil {
+				return err
+			}
+
+			// Merge: use event data as base, or todo data if no events
+			data := eventData
+			if len(todos) > 0 && len(events) > 0 {
+				data = ical.MergeCalendars(eventData, todoData)
+			} else if len(events) == 0 {
+				data = todoData
 			}
 
 			if output != "" {
 				if err := os.WriteFile(output, data, 0o644); err != nil {
 					return fmt.Errorf("write file: %w", err)
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "Exported %d events to %s\n", len(events), output)
+				fmt.Fprintf(cmd.OutOrStdout(), "Exported %d events, %d todos to %s\n", len(events), len(todos), output)
 			} else {
 				cmd.OutOrStdout().Write(data)
 			}

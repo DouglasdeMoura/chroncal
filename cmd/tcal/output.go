@@ -9,6 +9,7 @@ import (
 
 	"github.com/douglasdemoura/tcal/internal/calendar"
 	"github.com/douglasdemoura/tcal/internal/event"
+	"github.com/douglasdemoura/tcal/internal/todo"
 )
 
 type jsonEvent struct {
@@ -205,5 +206,120 @@ func printCalendars(w io.Writer, cals []calendar.Calendar) {
 			fmt.Fprintln(w)
 		}
 		printCalendar(w, c)
+	}
+}
+
+// Todo output
+
+type jsonTodo struct {
+	ID              int64          `json:"id"`
+	UID             string         `json:"uid"`
+	CalendarID      int64          `json:"calendar_id"`
+	Summary         string         `json:"summary"`
+	Description     string         `json:"description"`
+	Location        string         `json:"location"`
+	DueDate         string         `json:"due_date"`
+	StartDate       string         `json:"start_date"`
+	Duration        string         `json:"duration"`
+	CompletedAt     string         `json:"completed_at"`
+	PercentComplete int64          `json:"percent_complete"`
+	Status          string         `json:"status"`
+	Priority        int64          `json:"priority"`
+	Class           string         `json:"class"`
+	URL             string         `json:"url"`
+	Categories      string         `json:"categories"`
+	Sequence        int64          `json:"sequence"`
+	CreatedAt       string         `json:"created_at"`
+	UpdatedAt       string         `json:"updated_at"`
+	Alarms          []jsonAlarm    `json:"alarms,omitempty"`
+	Attendees       []jsonAttendee `json:"attendees,omitempty"`
+}
+
+func toJSONTodo(t todo.Todo) jsonTodo {
+	jt := jsonTodo{
+		ID: t.ID, UID: t.UID, CalendarID: t.CalendarID,
+		Summary: t.Summary, Description: t.Description, Location: t.Location,
+		DueDate: t.DueDate, StartDate: t.StartDate, Duration: t.Duration,
+		CompletedAt: t.CompletedAt, PercentComplete: t.PercentComplete,
+		Status: t.Status, Priority: t.Priority, Class: t.Class,
+		URL: t.URL, Categories: t.Categories, Sequence: t.Sequence,
+		CreatedAt: t.CreatedAt.Local().Format(time.RFC3339),
+		UpdatedAt: t.UpdatedAt.Local().Format(time.RFC3339),
+	}
+	for _, a := range t.Alarms {
+		jt.Alarms = append(jt.Alarms, jsonAlarm{
+			ID: a.ID, Action: a.Action,
+			TriggerValue: a.TriggerValue, Description: a.Description,
+		})
+	}
+	for _, a := range t.Attendees {
+		jt.Attendees = append(jt.Attendees, jsonAttendee{
+			ID: a.ID, Email: a.Email, Name: a.Name,
+			RSVPStatus: a.RSVPStatus, Role: a.Role, Organizer: a.Organizer,
+		})
+	}
+	return jt
+}
+
+func toJSONEvents(events []event.Event) []jsonEvent {
+	items := make([]jsonEvent, len(events))
+	for i, e := range events {
+		items[i] = toJSONEvent(e)
+	}
+	return items
+}
+
+func toJSONTodos(todos []todo.Todo) []jsonTodo {
+	items := make([]jsonTodo, len(todos))
+	for i, t := range todos {
+		items[i] = toJSONTodo(t)
+	}
+	return items
+}
+
+func printTodo(w io.Writer, t todo.Todo) {
+	fmt.Fprintf(w, "  ID:       %d\n", t.ID)
+	fmt.Fprintf(w, "  Summary:  %s\n", t.Summary)
+	fmt.Fprintf(w, "  Status:   %s\n", t.Status)
+	if t.DueDate != "" {
+		due := t.ParseDueDate().Local()
+		fmt.Fprintf(w, "  Due:      %s\n", due.Format("Mon, Jan 2 2006 15:04"))
+	}
+	if t.PercentComplete > 0 {
+		fmt.Fprintf(w, "  Progress: %d%%\n", t.PercentComplete)
+	}
+	if t.Location != "" {
+		fmt.Fprintf(w, "  Where:    %s\n", t.Location)
+	}
+	if t.Description != "" {
+		fmt.Fprintf(w, "  Notes:    %s\n", t.Description)
+	}
+	if t.URL != "" {
+		fmt.Fprintf(w, "  URL:      %s\n", t.URL)
+	}
+	if t.Categories != "" {
+		fmt.Fprintf(w, "  Tags:     %s\n", t.Categories)
+	}
+	if t.Priority > 0 {
+		fmt.Fprintf(w, "  Priority: %d\n", t.Priority)
+	}
+	fmt.Fprintf(w, "  Calendar: %d\n", t.CalendarID)
+}
+
+func printTodos(w io.Writer, todos []todo.Todo) {
+	if len(todos) == 0 {
+		fmt.Fprintln(w, "No todos found.")
+		return
+	}
+	for _, t := range todos {
+		check := "○"
+		if t.IsCompleted() {
+			check = "●"
+		}
+		var dueStr string
+		if t.DueDate != "" {
+			dueStr = "  due " + t.ParseDueDate().Local().Format("Jan 2")
+		}
+		fmt.Fprintf(w, "  %s [%d] %s%s\n", check, t.ID, t.Summary, dueStr)
 	}
 }

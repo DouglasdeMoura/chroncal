@@ -25,6 +25,7 @@ for scriptable access to all calendar operations.
 
 Resource groups:
   event      Manage events (list, get, add, update, delete)
+  todo       Manage todos (list, get, add, update, delete, complete)
   calendar   Manage calendars (list, get, create, update, delete)
   ical       Import and export iCal (.ics) files`,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -52,7 +53,7 @@ func initApp() (*app.App, error) {
 func init() {
 	rootCmd.PersistentFlags().StringVar(&dbPath, "db", "", "path to SQLite database (default: $XDG_CONFIG_HOME/tcal/tcal.db)")
 
-	rootCmd.AddCommand(eventCmd(), calendarCmd(), icalCmd())
+	rootCmd.AddCommand(eventCmd(), calendarCmd(), todoCmd(), icalCmd())
 }
 
 func main() {

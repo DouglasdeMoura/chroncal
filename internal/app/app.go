@@ -9,12 +9,14 @@ import (
 	"github.com/douglasdemoura/tcal/internal/calendar"
 	"github.com/douglasdemoura/tcal/internal/event"
 	"github.com/douglasdemoura/tcal/internal/storage"
+	"github.com/douglasdemoura/tcal/internal/todo"
 )
 
 type App struct {
 	DB        *sql.DB
 	Calendars *calendar.Service
 	Events    *event.Service
+	Todos     *todo.Service
 }
 
 func New(dbPath string) (*App, error) {
@@ -27,6 +29,7 @@ func New(dbPath string) (*App, error) {
 		DB:        db,
 		Calendars: calendar.NewService(queries),
 		Events:    event.NewService(db, queries),
+		Todos:     todo.NewService(db, queries),
 	}, nil
 }
 

@@ -56,3 +56,48 @@ type EventAttendee struct {
 	Role       string
 	Organizer  int64
 }
+
+type Todo struct {
+	ID              int64
+	Uid             string
+	CalendarID      int64
+	Summary         string
+	Description     string
+	Location        string
+	DueDate         string
+	StartDate       string
+	Duration        string
+	CompletedAt     string
+	PercentComplete int64
+	Status          string
+	Priority        int64
+	Class           string
+	Url             string
+	Categories      string
+	RecurrenceRule  string
+	Timezone        string
+	Sequence        int64
+	Exdates         string
+	Rdates          string
+	RecurrenceID    string
+	CreatedAt       string
+	UpdatedAt       string
+}
+
+type TodoAlarm struct {
+	ID           int64
+	TodoID       int64
+	Action       string
+	TriggerValue string
+	Description  string
+}
+
+type TodoAttendee struct {
+	ID         int64
+	TodoID     int64
+	Email      string
+	Name       string
+	RsvpStatus string
+	Role       string
+	Organizer  int64
+}
