@@ -10,6 +10,7 @@ import (
 	"github.com/emersion/go-ical"
 
 	"github.com/douglasdemoura/tcal/internal/event"
+	"github.com/douglasdemoura/tcal/internal/model"
 )
 
 func ImportFile(r io.Reader) ([]event.Event, error) {
@@ -114,7 +115,7 @@ func eventFromVEvent(ve ical.Event) (event.Event, error) {
 	}
 
 	// VALARM children
-	var alarms []event.Alarm
+	var alarms []model.Alarm
 	for _, child := range ve.Children {
 		if child.Name != ical.CompAlarm {
 			continue
@@ -205,8 +206,8 @@ func parseDateList(ve ical.Event, propName string) string {
 	return strings.Join(dates, ",")
 }
 
-func parseAlarm(comp *ical.Component) event.Alarm {
-	alarm := event.Alarm{Action: "DISPLAY"}
+func parseAlarm(comp *ical.Component) model.Alarm {
+	alarm := model.Alarm{Action: "DISPLAY"}
 
 	if prop := comp.Props.Get(ical.PropAction); prop != nil {
 		alarm.Action = strings.ToUpper(prop.Value)
@@ -221,12 +222,12 @@ func parseAlarm(comp *ical.Component) event.Alarm {
 	return alarm
 }
 
-func parseAttendees(ve ical.Event) []event.Attendee {
-	var attendees []event.Attendee
+func parseAttendees(ve ical.Event) []model.Attendee {
+	var attendees []model.Attendee
 
 	// ORGANIZER
 	if prop := ve.Props.Get(ical.PropOrganizer); prop != nil {
-		attendees = append(attendees, event.Attendee{
+		attendees = append(attendees, model.Attendee{
 			Email:      stripMailto(prop.Value),
 			Name:       prop.Params.Get(ical.ParamCommonName),
 			RSVPStatus: "ACCEPTED",
@@ -237,7 +238,7 @@ func parseAttendees(ve ical.Event) []event.Attendee {
 
 	// ATTENDEE properties
 	for _, prop := range ve.Props.Values(ical.PropAttendee) {
-		a := event.Attendee{
+		a := model.Attendee{
 			Email:      stripMailto(prop.Value),
 			Name:       prop.Params.Get(ical.ParamCommonName),
 			RSVPStatus: strings.ToUpper(paramOrDefault(&prop, ical.ParamParticipationStatus, "NEEDS-ACTION")),

@@ -11,6 +11,7 @@ import (
 	"github.com/douglasdemoura/tcal/internal/app"
 	"github.com/douglasdemoura/tcal/internal/calendar"
 	"github.com/douglasdemoura/tcal/internal/event"
+	"github.com/douglasdemoura/tcal/internal/model"
 )
 
 type viewMode int
@@ -58,8 +59,8 @@ type eventDeletedMsg struct {
 }
 
 type eventDetailLoadedMsg struct {
-	alarms    []event.Alarm
-	attendees []event.Attendee
+	alarms    []model.Alarm
+	attendees []model.Attendee
 }
 
 type errMsg struct {

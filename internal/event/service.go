@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/douglasdemoura/tcal/internal/model"
 	"github.com/douglasdemoura/tcal/internal/storage"
 )
 
@@ -250,19 +251,19 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 
 // Alarm CRUD
 
-func (s *Service) ListAlarms(ctx context.Context, eventID int64) ([]Alarm, error) {
+func (s *Service) ListAlarms(ctx context.Context, eventID int64) ([]model.Alarm, error) {
 	rows, err := s.q.ListAlarmsByEventID(ctx, eventID)
 	if err != nil {
 		return nil, err
 	}
-	alarms := make([]Alarm, len(rows))
+	alarms := make([]model.Alarm, len(rows))
 	for i, r := range rows {
 		alarms[i] = fromStorageAlarm(r)
 	}
 	return alarms, nil
 }
 
-func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []Alarm) error {
+func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []model.Alarm) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -289,19 +290,19 @@ func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []Ala
 
 // Attendee CRUD
 
-func (s *Service) ListAttendees(ctx context.Context, eventID int64) ([]Attendee, error) {
+func (s *Service) ListAttendees(ctx context.Context, eventID int64) ([]model.Attendee, error) {
 	rows, err := s.q.ListAttendeesByEventID(ctx, eventID)
 	if err != nil {
 		return nil, err
 	}
-	attendees := make([]Attendee, len(rows))
+	attendees := make([]model.Attendee, len(rows))
 	for i, r := range rows {
 		attendees[i] = fromStorageAttendee(r)
 	}
 	return attendees, nil
 }
 
-func (s *Service) ReplaceAttendees(ctx context.Context, eventID int64, attendees []Attendee) error {
+func (s *Service) ReplaceAttendees(ctx context.Context, eventID int64, attendees []model.Attendee) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -366,8 +367,8 @@ func fromStorageSlice(rows []storage.Event) []Event {
 	return events
 }
 
-func fromStorageAlarm(r storage.EventAlarm) Alarm {
-	return Alarm{
+func fromStorageAlarm(r storage.EventAlarm) model.Alarm {
+	return model.Alarm{
 		ID:           r.ID,
 		EventID:      r.EventID,
 		Action:       r.Action,
@@ -376,8 +377,8 @@ func fromStorageAlarm(r storage.EventAlarm) Alarm {
 	}
 }
 
-func fromStorageAttendee(r storage.EventAttendee) Attendee {
-	return Attendee{
+func fromStorageAttendee(r storage.EventAttendee) model.Attendee {
+	return model.Attendee{
 		ID:         r.ID,
 		EventID:    r.EventID,
 		Email:      r.Email,
