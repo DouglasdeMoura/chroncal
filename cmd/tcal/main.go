@@ -10,12 +10,14 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/douglasdemoura/tcal/internal/app"
+	"github.com/douglasdemoura/tcal/internal/config"
 	"github.com/douglasdemoura/tcal/internal/tui"
 )
 
 var (
 	dbPath  string
 	jsonOut bool
+	cfg     config.Config
 )
 
 var rootCmd = &cobra.Command{
@@ -31,6 +33,9 @@ Resource groups:
   todo       Manage todos (list, get, add, update, delete, complete)
   calendar   Manage calendars (list, get, create, update, delete)
   ical       Import and export iCal (.ics) files`,
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		cfg = config.Load()
+	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		a, err := initApp()
 		if err != nil {
@@ -42,7 +47,11 @@ Resource groups:
 }
 
 func initApp() (*app.App, error) {
+	// Precedence: --db flag > TCAL_DB env > config.toml > default
 	path := dbPath
+	if path == "" {
+		path = cfg.DB
+	}
 	if path == "" {
 		var err error
 		path, err = app.DefaultDBPath()
@@ -54,7 +63,7 @@ func initApp() (*app.App, error) {
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&dbPath, "db", "", "path to SQLite database (default: $XDG_DATA_HOME/tcal/tcal.db)")
+	rootCmd.PersistentFlags().StringVar(&dbPath, "db", "", "path to SQLite database")
 	rootCmd.PersistentFlags().BoolVar(&jsonOut, "json", false, "output as JSON")
 
 	rootCmd.AddCommand(eventCmd(), calendarCmd(), todoCmd(), icalCmd())
