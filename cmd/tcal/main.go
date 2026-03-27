@@ -12,6 +12,7 @@ import (
 	"github.com/douglasdemoura/tcal/internal/app"
 	"github.com/douglasdemoura/tcal/internal/event"
 	"github.com/douglasdemoura/tcal/internal/ical"
+	"github.com/douglasdemoura/tcal/internal/tui"
 )
 
 var dbPath string
@@ -26,8 +27,7 @@ var rootCmd = &cobra.Command{
 		}
 		defer a.Close()
 
-		fmt.Println("tcal is ready. TUI coming soon.")
-		return nil
+		return tui.Run(a)
 	},
 }
 
