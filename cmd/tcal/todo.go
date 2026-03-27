@@ -95,6 +95,9 @@ func todoGetCmd() *cobra.Command {
 
 			t.Alarms, _ = a.Todos.ListAlarms(ctx, t.ID)
 			t.Attendees, _ = a.Todos.ListAttendees(ctx, t.ID)
+			t.Attachments, _ = a.Todos.ListAttachments(ctx, t.ID)
+			t.Comments, _ = a.Todos.ListComments(ctx, t.ID)
+			t.Relations, _ = a.Todos.ListRelations(ctx, t.ID)
 
 			w := cmd.OutOrStdout()
 			if jsonOut {

@@ -358,6 +358,111 @@ func (s *Service) ReplaceAttendees(ctx context.Context, todoID int64, attendees 
 	return tx.Commit()
 }
 
+// Attachment CRUD
+
+func (s *Service) ListAttachments(ctx context.Context, todoID int64) ([]model.Attachment, error) {
+	rows, err := s.q.ListTodoAttachmentsByTodoID(ctx, todoID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]model.Attachment, len(rows))
+	for i, r := range rows {
+		out[i] = model.Attachment{ID: r.ID, URI: r.Uri, FmtType: r.Fmttype}
+	}
+	return out, nil
+}
+
+func (s *Service) ReplaceAttachments(ctx context.Context, todoID int64, attachments []model.Attachment) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+	if err := qtx.DeleteTodoAttachmentsByTodoID(ctx, todoID); err != nil {
+		return fmt.Errorf("delete attachments: %w", err)
+	}
+	for _, a := range attachments {
+		_, err := qtx.CreateTodoAttachment(ctx, storage.CreateTodoAttachmentParams{
+			TodoID: todoID, Uri: a.URI, Fmttype: a.FmtType,
+		})
+		if err != nil {
+			return fmt.Errorf("create attachment: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// Comment CRUD
+
+func (s *Service) ListComments(ctx context.Context, todoID int64) ([]string, error) {
+	rows, err := s.q.ListTodoCommentsByTodoID(ctx, todoID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		out[i] = r.Text
+	}
+	return out, nil
+}
+
+func (s *Service) ReplaceComments(ctx context.Context, todoID int64, comments []string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+	if err := qtx.DeleteTodoCommentsByTodoID(ctx, todoID); err != nil {
+		return fmt.Errorf("delete comments: %w", err)
+	}
+	for _, c := range comments {
+		_, err := qtx.CreateTodoComment(ctx, storage.CreateTodoCommentParams{
+			TodoID: todoID, Text: c,
+		})
+		if err != nil {
+			return fmt.Errorf("create comment: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// Relation CRUD
+
+func (s *Service) ListRelations(ctx context.Context, todoID int64) ([]model.Relation, error) {
+	rows, err := s.q.ListTodoRelationsByTodoID(ctx, todoID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]model.Relation, len(rows))
+	for i, r := range rows {
+		out[i] = model.Relation{ID: r.ID, RelType: r.RelType, RelUID: r.RelUid}
+	}
+	return out, nil
+}
+
+func (s *Service) ReplaceRelations(ctx context.Context, todoID int64, relations []model.Relation) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+	if err := qtx.DeleteTodoRelationsByTodoID(ctx, todoID); err != nil {
+		return fmt.Errorf("delete relations: %w", err)
+	}
+	for _, r := range relations {
+		_, err := qtx.CreateTodoRelation(ctx, storage.CreateTodoRelationParams{
+			TodoID: todoID, RelType: r.RelType, RelUid: r.RelUID,
+		})
+		if err != nil {
+			return fmt.Errorf("create relation: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
 // Converters
 
 func fromStorage(r storage.Todo) Todo {

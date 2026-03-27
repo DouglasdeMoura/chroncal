@@ -47,6 +47,13 @@ type EventAlarm struct {
 	Description  string
 }
 
+type EventAttachment struct {
+	ID      int64
+	EventID int64
+	Uri     string
+	Fmttype string
+}
+
 type EventAttendee struct {
 	ID         int64
 	EventID    int64
@@ -55,6 +62,19 @@ type EventAttendee struct {
 	RsvpStatus string
 	Role       string
 	Organizer  int64
+}
+
+type EventComment struct {
+	ID      int64
+	EventID int64
+	Text    string
+}
+
+type EventRelation struct {
+	ID      int64
+	EventID int64
+	RelType string
+	RelUid  string
 }
 
 type Todo struct {
@@ -92,6 +112,13 @@ type TodoAlarm struct {
 	Description  string
 }
 
+type TodoAttachment struct {
+	ID      int64
+	TodoID  int64
+	Uri     string
+	Fmttype string
+}
+
 type TodoAttendee struct {
 	ID         int64
 	TodoID     int64
@@ -100,4 +127,17 @@ type TodoAttendee struct {
 	RsvpStatus string
 	Role       string
 	Organizer  int64
+}
+
+type TodoComment struct {
+	ID     int64
+	TodoID int64
+	Text   string
+}
+
+type TodoRelation struct {
+	ID      int64
+	TodoID  int64
+	RelType string
+	RelUid  string
 }

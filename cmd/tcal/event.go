@@ -102,6 +102,9 @@ func eventGetCmd() *cobra.Command {
 
 			e.Alarms, _ = a.Events.ListAlarms(ctx, e.ID)
 			e.Attendees, _ = a.Events.ListAttendees(ctx, e.ID)
+			e.Attachments, _ = a.Events.ListAttachments(ctx, e.ID)
+			e.Comments, _ = a.Events.ListComments(ctx, e.ID)
+			e.Relations, _ = a.Events.ListRelations(ctx, e.ID)
 
 			w := cmd.OutOrStdout()
 			if jsonOut {

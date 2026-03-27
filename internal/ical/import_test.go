@@ -3,6 +3,7 @@ package ical
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 const minimalEventICS = `BEGIN:VCALENDAR
@@ -344,5 +345,113 @@ END:VCALENDAR`
 	}
 	if result.Events[0].Timezone != "Europe/London" {
 		t.Errorf("Timezone = %q, want Europe/London", result.Events[0].Timezone)
+	}
+}
+
+func TestImport_Duration(t *testing.T) {
+	t.Parallel()
+	ics := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:dur-test
+DTSTAMP:20260401T100000Z
+DTSTART:20260401T140000Z
+DURATION:PT2H30M
+SUMMARY:Duration Event
+END:VEVENT
+END:VCALENDAR`
+	result, _ := ImportFile(strings.NewReader(ics))
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %d", len(result.Events))
+	}
+	e := result.Events[0]
+	dur := e.EndTime.Sub(e.StartTime)
+	want := 2*time.Hour + 30*time.Minute
+	if dur != want {
+		t.Errorf("Duration = %v, want %v", dur, want)
+	}
+}
+
+func TestImport_Attach(t *testing.T) {
+	t.Parallel()
+	ics := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:attach-test
+DTSTAMP:20260401T100000Z
+DTSTART:20260401T140000Z
+DTEND:20260401T150000Z
+SUMMARY:Event With Attach
+ATTACH;FMTTYPE=application/pdf:https://example.com/doc.pdf
+ATTACH:https://example.com/notes.txt
+END:VEVENT
+END:VCALENDAR`
+	result, _ := ImportFile(strings.NewReader(ics))
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %d", len(result.Events))
+	}
+	if len(result.Events[0].Attachments) != 2 {
+		t.Fatalf("Attachments = %d, want 2", len(result.Events[0].Attachments))
+	}
+	if result.Events[0].Attachments[0].URI != "https://example.com/doc.pdf" {
+		t.Errorf("Attach[0].URI = %q", result.Events[0].Attachments[0].URI)
+	}
+	if result.Events[0].Attachments[0].FmtType != "application/pdf" {
+		t.Errorf("Attach[0].FmtType = %q", result.Events[0].Attachments[0].FmtType)
+	}
+}
+
+func TestImport_Comment(t *testing.T) {
+	t.Parallel()
+	ics := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:comment-test
+DTSTAMP:20260401T100000Z
+DTSTART:20260401T140000Z
+DTEND:20260401T150000Z
+SUMMARY:Event With Comments
+COMMENT:First comment
+COMMENT:Second comment
+END:VEVENT
+END:VCALENDAR`
+	result, _ := ImportFile(strings.NewReader(ics))
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %d", len(result.Events))
+	}
+	if len(result.Events[0].Comments) != 2 {
+		t.Fatalf("Comments = %d, want 2", len(result.Events[0].Comments))
+	}
+	if result.Events[0].Comments[0] != "First comment" {
+		t.Errorf("Comment[0] = %q", result.Events[0].Comments[0])
+	}
+}
+
+func TestImport_RelatedTo(t *testing.T) {
+	t.Parallel()
+	ics := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:rel-test
+DTSTAMP:20260401T100000Z
+DTSTART:20260401T140000Z
+DTEND:20260401T150000Z
+SUMMARY:Child Event
+RELATED-TO;RELTYPE=PARENT:parent-uid-123
+RELATED-TO;RELTYPE=SIBLING:sibling-uid-456
+END:VEVENT
+END:VCALENDAR`
+	result, _ := ImportFile(strings.NewReader(ics))
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %d", len(result.Events))
+	}
+	if len(result.Events[0].Relations) != 2 {
+		t.Fatalf("Relations = %d, want 2", len(result.Events[0].Relations))
+	}
+	if result.Events[0].Relations[0].RelType != "PARENT" {
+		t.Errorf("Rel[0].RelType = %q", result.Events[0].Relations[0].RelType)
+	}
+	if result.Events[0].Relations[0].RelUID != "parent-uid-123" {
+		t.Errorf("Rel[0].RelUID = %q", result.Events[0].Relations[0].RelUID)
 	}
 }

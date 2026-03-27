@@ -36,8 +36,11 @@ type jsonEvent struct {
 	RecurrenceID   string          `json:"recurrence_id"`
 	CreatedAt      string          `json:"created_at"`
 	UpdatedAt      string          `json:"updated_at"`
-	Alarms         []jsonAlarm     `json:"alarms,omitempty"`
-	Attendees      []jsonAttendee  `json:"attendees,omitempty"`
+	Alarms         []jsonAlarm       `json:"alarms,omitempty"`
+	Attendees      []jsonAttendee    `json:"attendees,omitempty"`
+	Attachments    []jsonAttachment  `json:"attachments,omitempty"`
+	Comments       []string          `json:"comments,omitempty"`
+	Relations      []jsonRelation    `json:"relations,omitempty"`
 }
 
 type jsonAlarm struct {
@@ -54,6 +57,16 @@ type jsonAttendee struct {
 	RSVPStatus string `json:"rsvp_status"`
 	Role       string `json:"role"`
 	Organizer  bool   `json:"organizer"`
+}
+
+type jsonAttachment struct {
+	URI     string `json:"uri"`
+	FmtType string `json:"fmttype,omitempty"`
+}
+
+type jsonRelation struct {
+	RelType string `json:"rel_type"`
+	RelUID  string `json:"rel_uid"`
 }
 
 type jsonCalendar struct {
@@ -102,6 +115,13 @@ func toJSONEvent(e event.Event) jsonEvent {
 			ID: a.ID, Email: a.Email, Name: a.Name,
 			RSVPStatus: a.RSVPStatus, Role: a.Role, Organizer: a.Organizer,
 		})
+	}
+	for _, a := range e.Attachments {
+		je.Attachments = append(je.Attachments, jsonAttachment{URI: a.URI, FmtType: a.FmtType})
+	}
+	je.Comments = e.Comments
+	for _, r := range e.Relations {
+		je.Relations = append(je.Relations, jsonRelation{RelType: r.RelType, RelUID: r.RelUID})
 	}
 	return je
 }
@@ -231,8 +251,11 @@ type jsonTodo struct {
 	Sequence        int64          `json:"sequence"`
 	CreatedAt       string         `json:"created_at"`
 	UpdatedAt       string         `json:"updated_at"`
-	Alarms          []jsonAlarm    `json:"alarms,omitempty"`
-	Attendees       []jsonAttendee `json:"attendees,omitempty"`
+	Alarms          []jsonAlarm       `json:"alarms,omitempty"`
+	Attendees       []jsonAttendee    `json:"attendees,omitempty"`
+	Attachments     []jsonAttachment  `json:"attachments,omitempty"`
+	Comments        []string          `json:"comments,omitempty"`
+	Relations       []jsonRelation    `json:"relations,omitempty"`
 }
 
 func toJSONTodo(t todo.Todo) jsonTodo {
@@ -257,6 +280,13 @@ func toJSONTodo(t todo.Todo) jsonTodo {
 			ID: a.ID, Email: a.Email, Name: a.Name,
 			RSVPStatus: a.RSVPStatus, Role: a.Role, Organizer: a.Organizer,
 		})
+	}
+	for _, a := range t.Attachments {
+		jt.Attachments = append(jt.Attachments, jsonAttachment{URI: a.URI, FmtType: a.FmtType})
+	}
+	jt.Comments = t.Comments
+	for _, r := range t.Relations {
+		jt.Relations = append(jt.Relations, jsonRelation{RelType: r.RelType, RelUID: r.RelUID})
 	}
 	return jt
 }

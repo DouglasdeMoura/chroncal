@@ -87,6 +87,31 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 		vevent.Props.SetDateTime(ical.PropCreated, e.CreatedAt.UTC())
 		vevent.Props.SetDateTime(ical.PropLastModified, e.UpdatedAt.UTC())
 
+		// ATTACH
+		for _, att := range e.Attachments {
+			p := &ical.Prop{Name: ical.PropAttach, Params: make(ical.Params)}
+			p.Value = att.URI
+			if att.FmtType != "" {
+				p.Params.Set("FMTTYPE", att.FmtType)
+			}
+			vevent.Props.Add(p)
+		}
+
+		// COMMENT
+		for _, c := range e.Comments {
+			vevent.Props.SetText(ical.PropComment, c)
+		}
+
+		// RELATED-TO
+		for _, r := range e.Relations {
+			p := &ical.Prop{Name: ical.PropRelatedTo, Params: make(ical.Params)}
+			p.Value = r.RelUID
+			if r.RelType != "" && r.RelType != "PARENT" {
+				p.Params.Set("RELTYPE", r.RelType)
+			}
+			vevent.Props.Add(p)
+		}
+
 		// VALARM children
 		for _, alarm := range e.Alarms {
 			valarm := ical.NewComponent(ical.CompAlarm)
@@ -276,6 +301,31 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 		vtodo.Props.SetDateTime(ical.PropDateTimeStamp, t.UpdatedAt.UTC())
 		vtodo.Props.SetDateTime(ical.PropCreated, t.CreatedAt.UTC())
 		vtodo.Props.SetDateTime(ical.PropLastModified, t.UpdatedAt.UTC())
+
+		// ATTACH
+		for _, att := range t.Attachments {
+			p := &ical.Prop{Name: ical.PropAttach, Params: make(ical.Params)}
+			p.Value = att.URI
+			if att.FmtType != "" {
+				p.Params.Set("FMTTYPE", att.FmtType)
+			}
+			vtodo.Props.Add(p)
+		}
+
+		// COMMENT
+		for _, c := range t.Comments {
+			vtodo.Props.SetText(ical.PropComment, c)
+		}
+
+		// RELATED-TO
+		for _, r := range t.Relations {
+			p := &ical.Prop{Name: ical.PropRelatedTo, Params: make(ical.Params)}
+			p.Value = r.RelUID
+			if r.RelType != "" && r.RelType != "PARENT" {
+				p.Params.Set("RELTYPE", r.RelType)
+			}
+			vtodo.Props.Add(p)
+		}
 
 		// VALARM
 		for _, alarm := range t.Alarms {

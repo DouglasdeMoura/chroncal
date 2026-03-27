@@ -33,8 +33,11 @@ type Event struct {
 	UpdatedAt      time.Time
 
 	// Transient fields — populated for import/export, not stored in events table
-	Alarms    []model.Alarm
-	Attendees []model.Attendee
+	Alarms      []model.Alarm
+	Attendees   []model.Attendee
+	Attachments []model.Attachment
+	Comments    []string
+	Relations   []model.Relation
 }
 
 func (e Event) Duration() time.Duration {

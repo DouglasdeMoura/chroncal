@@ -34,8 +34,11 @@ type Todo struct {
 	UpdatedAt       time.Time
 
 	// Transient fields
-	Alarms    []model.Alarm
-	Attendees []model.Attendee
+	Alarms      []model.Alarm
+	Attendees   []model.Attendee
+	Attachments []model.Attachment
+	Comments    []string
+	Relations   []model.Relation
 }
 
 func (t Todo) IsCompleted() bool {

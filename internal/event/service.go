@@ -329,6 +329,111 @@ func (s *Service) ReplaceAttendees(ctx context.Context, eventID int64, attendees
 	return tx.Commit()
 }
 
+// Attachment CRUD
+
+func (s *Service) ListAttachments(ctx context.Context, eventID int64) ([]model.Attachment, error) {
+	rows, err := s.q.ListEventAttachmentsByEventID(ctx, eventID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]model.Attachment, len(rows))
+	for i, r := range rows {
+		out[i] = model.Attachment{ID: r.ID, URI: r.Uri, FmtType: r.Fmttype}
+	}
+	return out, nil
+}
+
+func (s *Service) ReplaceAttachments(ctx context.Context, eventID int64, attachments []model.Attachment) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+	if err := qtx.DeleteEventAttachmentsByEventID(ctx, eventID); err != nil {
+		return fmt.Errorf("delete attachments: %w", err)
+	}
+	for _, a := range attachments {
+		_, err := qtx.CreateEventAttachment(ctx, storage.CreateEventAttachmentParams{
+			EventID: eventID, Uri: a.URI, Fmttype: a.FmtType,
+		})
+		if err != nil {
+			return fmt.Errorf("create attachment: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// Comment CRUD
+
+func (s *Service) ListComments(ctx context.Context, eventID int64) ([]string, error) {
+	rows, err := s.q.ListEventCommentsByEventID(ctx, eventID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		out[i] = r.Text
+	}
+	return out, nil
+}
+
+func (s *Service) ReplaceComments(ctx context.Context, eventID int64, comments []string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+	if err := qtx.DeleteEventCommentsByEventID(ctx, eventID); err != nil {
+		return fmt.Errorf("delete comments: %w", err)
+	}
+	for _, c := range comments {
+		_, err := qtx.CreateEventComment(ctx, storage.CreateEventCommentParams{
+			EventID: eventID, Text: c,
+		})
+		if err != nil {
+			return fmt.Errorf("create comment: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// Relation CRUD
+
+func (s *Service) ListRelations(ctx context.Context, eventID int64) ([]model.Relation, error) {
+	rows, err := s.q.ListEventRelationsByEventID(ctx, eventID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]model.Relation, len(rows))
+	for i, r := range rows {
+		out[i] = model.Relation{ID: r.ID, RelType: r.RelType, RelUID: r.RelUid}
+	}
+	return out, nil
+}
+
+func (s *Service) ReplaceRelations(ctx context.Context, eventID int64, relations []model.Relation) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+	if err := qtx.DeleteEventRelationsByEventID(ctx, eventID); err != nil {
+		return fmt.Errorf("delete relations: %w", err)
+	}
+	for _, r := range relations {
+		_, err := qtx.CreateEventRelation(ctx, storage.CreateEventRelationParams{
+			EventID: eventID, RelType: r.RelType, RelUid: r.RelUID,
+		})
+		if err != nil {
+			return fmt.Errorf("create relation: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
 // Converters
 
 func fromStorage(r storage.Event) Event {

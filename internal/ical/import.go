@@ -153,6 +153,11 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, error) {
 	// ATTENDEE + ORGANIZER
 	attendees := parseAttendeesFromProps(props)
 
+	// ATTACH, COMMENT, RELATED-TO
+	attachments := parseAttachmentsFromProps(props)
+	comments := parseCommentsFromProps(props)
+	relations := parseRelationsFromProps(props)
+
 	return todo.Todo{
 		UID:             uid,
 		Summary:         summary,
@@ -176,6 +181,9 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, error) {
 		RecurrenceID:    recurrenceID,
 		Alarms:          alarms,
 		Attendees:       attendees,
+		Attachments:     attachments,
+		Comments:        comments,
+		Relations:       relations,
 	}, nil
 }
 
@@ -202,9 +210,16 @@ func eventFromVEvent(ve ical.Event) (event.Event, error) {
 		return event.Event{}, fmt.Errorf("parse DTSTART: %w", err)
 	}
 
-	endTime, err := ve.Props.DateTime(ical.PropDateTimeEnd, nil)
-	if err != nil {
-		endTime = startTime.Add(time.Hour)
+	var endTime time.Time
+	if prop := ve.Props.Get(ical.PropDateTimeEnd); prop != nil {
+		endTime, _ = ve.Props.DateTime(ical.PropDateTimeEnd, nil)
+	}
+	if endTime.IsZero() {
+		if prop := ve.Props.Get(ical.PropDuration); prop != nil {
+			endTime = addDuration(startTime, prop.Value)
+		} else {
+			endTime = startTime.Add(time.Hour)
+		}
 	}
 
 	allDay := false
@@ -269,6 +284,11 @@ func eventFromVEvent(ve ical.Event) (event.Event, error) {
 	// ATTENDEE + ORGANIZER
 	attendees := parseAttendees(ve)
 
+	// ATTACH, COMMENT, RELATED-TO
+	attachments := parseAttachmentsFromProps(ve.Props)
+	comments := parseCommentsFromProps(ve.Props)
+	relations := parseRelationsFromProps(ve.Props)
+
 	return event.Event{
 		UID:            uid,
 		Title:          summary,
@@ -291,6 +311,9 @@ func eventFromVEvent(ve ical.Event) (event.Event, error) {
 		RecurrenceID:   recurrenceID,
 		Alarms:         alarms,
 		Attendees:      attendees,
+		Attachments:    attachments,
+		Comments:       comments,
+		Relations:      relations,
 	}, nil
 }
 
@@ -486,4 +509,121 @@ func parseAttendeesFromProps(props ical.Props) []model.Attendee {
 	}
 
 	return attendees
+}
+
+// addDuration parses an RFC 5545 duration string and adds it to a time.
+// Format: [+/-]P[nW] or [+/-]P[nD][T[nH][nM][nS]]
+func addDuration(t time.Time, dur string) time.Time {
+	if dur == "" {
+		return t.Add(time.Hour)
+	}
+
+	s := dur
+	neg := false
+	if s[0] == '-' {
+		neg = true
+		s = s[1:]
+	} else if s[0] == '+' {
+		s = s[1:]
+	}
+
+	if len(s) == 0 || s[0] != 'P' {
+		return t.Add(time.Hour)
+	}
+	s = s[1:]
+
+	var d time.Duration
+	var days int
+
+	// Check for weeks
+	if i := strings.Index(s, "W"); i >= 0 {
+		if w, err := strconv.Atoi(s[:i]); err == nil {
+			days = w * 7
+		}
+		if neg {
+			return t.AddDate(0, 0, -days)
+		}
+		return t.AddDate(0, 0, days)
+	}
+
+	// Parse days before T
+	if i := strings.Index(s, "D"); i >= 0 {
+		if v, err := strconv.Atoi(s[:i]); err == nil {
+			days = v
+		}
+		s = s[i+1:]
+	}
+
+	// Parse time part after T
+	if len(s) > 0 && s[0] == 'T' {
+		s = s[1:]
+		if i := strings.Index(s, "H"); i >= 0 {
+			if v, err := strconv.Atoi(s[:i]); err == nil {
+				d += time.Duration(v) * time.Hour
+			}
+			s = s[i+1:]
+		}
+		if i := strings.Index(s, "M"); i >= 0 {
+			if v, err := strconv.Atoi(s[:i]); err == nil {
+				d += time.Duration(v) * time.Minute
+			}
+			s = s[i+1:]
+		}
+		if i := strings.Index(s, "S"); i >= 0 {
+			if v, err := strconv.Atoi(s[:i]); err == nil {
+				d += time.Duration(v) * time.Second
+			}
+		}
+	}
+
+	if neg {
+		return t.AddDate(0, 0, -days).Add(-d)
+	}
+	return t.AddDate(0, 0, days).Add(d)
+}
+
+func parseAttachmentsFromProps(props ical.Props) []model.Attachment {
+	var out []model.Attachment
+	for _, prop := range props.Values(ical.PropAttach) {
+		// Skip inline binary (BASE64) attachments
+		if prop.Params.Get("ENCODING") == "BASE64" {
+			continue
+		}
+		out = append(out, model.Attachment{
+			URI:     prop.Value,
+			FmtType: prop.Params.Get("FMTTYPE"),
+		})
+	}
+	return out
+}
+
+func parseCommentsFromProps(props ical.Props) []string {
+	var out []string
+	for _, prop := range props.Values(ical.PropComment) {
+		text, err := prop.Text()
+		if err != nil {
+			text = prop.Value
+		}
+		if text != "" {
+			out = append(out, text)
+		}
+	}
+	return out
+}
+
+func parseRelationsFromProps(props ical.Props) []model.Relation {
+	var out []model.Relation
+	for _, prop := range props.Values(ical.PropRelatedTo) {
+		relType := prop.Params.Get("RELTYPE")
+		if relType == "" {
+			relType = "PARENT" // default per RFC 5545
+		}
+		if prop.Value != "" {
+			out = append(out, model.Relation{
+				RelType: strings.ToUpper(relType),
+				RelUID:  prop.Value,
+			})
+		}
+	}
+	return out
 }
