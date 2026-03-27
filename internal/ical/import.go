@@ -1,6 +1,7 @@
 package ical
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"strconv"
@@ -382,16 +383,35 @@ func parseDateList(ve ical.Event, propName string) string {
 }
 
 func parseAlarm(comp *ical.Component) model.Alarm {
-	alarm := model.Alarm{Action: "DISPLAY"}
+	alarm := model.Alarm{Action: "DISPLAY", Related: "START"}
 
 	if prop := comp.Props.Get(ical.PropAction); prop != nil {
 		alarm.Action = strings.ToUpper(prop.Value)
 	}
 	if prop := comp.Props.Get(ical.PropTrigger); prop != nil {
 		alarm.TriggerValue = prop.Value
+		if rel := prop.Params.Get("RELATED"); rel != "" {
+			alarm.Related = strings.ToUpper(rel)
+		}
 	}
 	if prop := comp.Props.Get(ical.PropDescription); prop != nil {
 		alarm.Description = prop.Value
+	}
+	if prop := comp.Props.Get("REPEAT"); prop != nil {
+		if v, err := strconv.Atoi(prop.Value); err == nil {
+			alarm.Repeat = v
+		}
+	}
+	if prop := comp.Props.Get(ical.PropDuration); prop != nil {
+		alarm.Duration = prop.Value
+	}
+
+	// ATTENDEE children (for EMAIL alarms)
+	for _, prop := range comp.Props.Values(ical.PropAttendee) {
+		alarm.Attendees = append(alarm.Attendees, model.AlarmAttendee{
+			Email: stripMailto(prop.Value),
+			Name:  prop.Params.Get(ical.ParamCommonName),
+		})
 	}
 
 	return alarm
@@ -597,14 +617,23 @@ func addDuration(t time.Time, dur string) time.Time {
 func parseAttachmentsFromProps(props ical.Props) []model.Attachment {
 	var out []model.Attachment
 	for _, prop := range props.Values(ical.PropAttach) {
-		// Skip inline binary (BASE64) attachments
+		fmttype := prop.Params.Get("FMTTYPE")
 		if prop.Params.Get("ENCODING") == "BASE64" {
-			continue
+			data, err := base64.StdEncoding.DecodeString(prop.Value)
+			if err != nil {
+				continue
+			}
+			out = append(out, model.Attachment{
+				FmtType:  fmttype,
+				Data:     data,
+				Filename: prop.Params.Get("FILENAME"),
+			})
+		} else {
+			out = append(out, model.Attachment{
+				URI:     prop.Value,
+				FmtType: fmttype,
+			})
 		}
-		out = append(out, model.Attachment{
-			URI:     prop.Value,
-			FmtType: prop.Params.Get("FMTTYPE"),
-		})
 	}
 	return out
 }

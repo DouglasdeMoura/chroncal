@@ -2,6 +2,7 @@ package ical
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"strconv"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/emersion/go-ical"
 
 	"github.com/douglasdemoura/tcal/internal/event"
+	"github.com/douglasdemoura/tcal/internal/model"
 	"github.com/douglasdemoura/tcal/internal/todo"
 )
 
@@ -95,17 +97,14 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 
 		// ATTACH
 		for _, att := range e.Attachments {
-			p := &ical.Prop{Name: ical.PropAttach, Params: make(ical.Params)}
-			p.Value = att.URI
-			if att.FmtType != "" {
-				p.Params.Set("FMTTYPE", att.FmtType)
-			}
-			vevent.Props.Add(p)
+			emitAttachment(vevent.Props, att)
 		}
 
 		// COMMENT
 		for _, c := range e.Comments {
-			vevent.Props.SetText(ical.PropComment, c)
+			p := &ical.Prop{Name: ical.PropComment}
+			p.SetText(c)
+			vevent.Props.Add(p)
 		}
 
 		// RELATED-TO
@@ -120,20 +119,7 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 
 		// VALARM children
 		for _, alarm := range e.Alarms {
-			valarm := ical.NewComponent(ical.CompAlarm)
-			valarm.Props.SetText(ical.PropAction, alarm.Action)
-
-			trigger := &ical.Prop{Name: ical.PropTrigger, Params: make(ical.Params)}
-			trigger.Value = alarm.TriggerValue
-			if strings.HasPrefix(alarm.TriggerValue, "-") || strings.HasPrefix(alarm.TriggerValue, "P") {
-				trigger.Params.Set("VALUE", "DURATION")
-			}
-			valarm.Props.Set(trigger)
-
-			if alarm.Description != "" {
-				valarm.Props.SetText(ical.PropDescription, alarm.Description)
-			}
-			vevent.Children = append(vevent.Children, valarm)
+			vevent.Children = append(vevent.Children, buildValarm(alarm))
 		}
 
 		// ATTENDEE / ORGANIZER
@@ -316,17 +302,14 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 
 		// ATTACH
 		for _, att := range t.Attachments {
-			p := &ical.Prop{Name: ical.PropAttach, Params: make(ical.Params)}
-			p.Value = att.URI
-			if att.FmtType != "" {
-				p.Params.Set("FMTTYPE", att.FmtType)
-			}
-			vtodo.Props.Add(p)
+			emitAttachment(vtodo.Props, att)
 		}
 
 		// COMMENT
 		for _, c := range t.Comments {
-			vtodo.Props.SetText(ical.PropComment, c)
+			p := &ical.Prop{Name: ical.PropComment}
+			p.SetText(c)
+			vtodo.Props.Add(p)
 		}
 
 		// RELATED-TO
@@ -341,18 +324,7 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 
 		// VALARM
 		for _, alarm := range t.Alarms {
-			valarm := ical.NewComponent(ical.CompAlarm)
-			valarm.Props.SetText(ical.PropAction, alarm.Action)
-			trigger := &ical.Prop{Name: ical.PropTrigger, Params: make(ical.Params)}
-			trigger.Value = alarm.TriggerValue
-			if strings.HasPrefix(alarm.TriggerValue, "-") || strings.HasPrefix(alarm.TriggerValue, "P") {
-				trigger.Params.Set("VALUE", "DURATION")
-			}
-			valarm.Props.Set(trigger)
-			if alarm.Description != "" {
-				valarm.Props.SetText(ical.PropDescription, alarm.Description)
-			}
-			vtodo.Children = append(vtodo.Children, valarm)
+			vtodo.Children = append(vtodo.Children, buildValarm(alarm))
 		}
 
 		// ATTENDEE / ORGANIZER
@@ -423,4 +395,62 @@ func emitDateListOnComponent(comp *ical.Component, propName, dates string) {
 			comp.Props.SetDateTime(propName, t.UTC())
 		}
 	}
+}
+
+func buildValarm(alarm model.Alarm) *ical.Component {
+	valarm := ical.NewComponent(ical.CompAlarm)
+	valarm.Props.SetText(ical.PropAction, alarm.Action)
+
+	trigger := &ical.Prop{Name: ical.PropTrigger, Params: make(ical.Params)}
+	trigger.Value = alarm.TriggerValue
+	if strings.HasPrefix(alarm.TriggerValue, "-") || strings.HasPrefix(alarm.TriggerValue, "P") {
+		trigger.Params.Set("VALUE", "DURATION")
+	}
+	if alarm.Related == "END" {
+		trigger.Params.Set("RELATED", "END")
+	}
+	valarm.Props.Set(trigger)
+
+	if alarm.Description != "" {
+		valarm.Props.SetText(ical.PropDescription, alarm.Description)
+	}
+	if alarm.Duration != "" {
+		p := &ical.Prop{Name: ical.PropDuration}
+		p.Value = alarm.Duration
+		valarm.Props.Set(p)
+	}
+	if alarm.Repeat > 0 {
+		p := &ical.Prop{Name: "REPEAT"}
+		p.Value = strconv.Itoa(alarm.Repeat)
+		valarm.Props.Set(p)
+	}
+	for _, att := range alarm.Attendees {
+		p := &ical.Prop{Name: ical.PropAttendee, Params: make(ical.Params)}
+		p.Value = "mailto:" + att.Email
+		if att.Name != "" {
+			p.Params.Set(ical.ParamCommonName, att.Name)
+		}
+		valarm.Props.Add(p)
+	}
+
+	return valarm
+}
+
+func emitAttachment(props ical.Props, att model.Attachment) {
+	p := &ical.Prop{Name: ical.PropAttach, Params: make(ical.Params)}
+	if att.Data != nil {
+		// Inline binary attachment
+		p.Value = base64.StdEncoding.EncodeToString(att.Data)
+		p.Params.Set("ENCODING", "BASE64")
+		p.Params.Set("VALUE", "BINARY")
+		if att.Filename != "" {
+			p.Params.Set("FILENAME", att.Filename)
+		}
+	} else {
+		p.Value = att.URI
+	}
+	if att.FmtType != "" {
+		p.Params.Set("FMTTYPE", att.FmtType)
+	}
+	props.Add(p)
 }
