@@ -364,7 +364,7 @@ func eventUpdateCmd() *cobra.Command {
 			if jsonOut {
 				return printJSON(w, toJSONEvent(e))
 			}
-			fmt.Fprintf(w, "Updated event %d: %s\n", e.ID, e.Title)
+			printEvent(w, e)
 			return nil
 		},
 	}

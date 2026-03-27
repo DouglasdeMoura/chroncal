@@ -291,7 +291,7 @@ func todoUpdateCmd() *cobra.Command {
 			if jsonOut {
 				return printJSON(w, toJSONTodo(t))
 			}
-			fmt.Fprintf(w, "Updated todo %d: %s\n", t.ID, t.Summary)
+			printTodo(w, t)
 			return nil
 		},
 	}
