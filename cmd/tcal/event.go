@@ -140,6 +140,7 @@ func eventAddCmd() *cobra.Command {
 		priority     int64
 		rrule        string
 		attachFlags  []string
+		alarmFlags   []string
 	)
 	cmd := &cobra.Command{
 		Use:   `add "<title>"`,
@@ -221,6 +222,16 @@ func eventAddCmd() *cobra.Command {
 				}
 			}
 
+			if len(alarmFlags) > 0 {
+				alarms, err := parseAlarmFlags(alarmFlags)
+				if err != nil {
+					return err
+				}
+				if err := a.Events.ReplaceAlarms(ctx, e.ID, alarms); err != nil {
+					return fmt.Errorf("add alarms: %w", err)
+				}
+			}
+
 			w := cmd.OutOrStdout()
 			if jsonOut {
 				return printJSON(w, toJSONEvent(e))
@@ -247,6 +258,7 @@ func eventAddCmd() *cobra.Command {
 	cmd.Flags().Int64Var(&priority, "priority", 0, "priority (0-9)")
 	cmd.Flags().StringVar(&rrule, "rrule", "", "recurrence rule (e.g. FREQ=WEEKLY;COUNT=10)")
 	cmd.Flags().StringArrayVar(&attachFlags, "attach", nil, "attachment (file path or URL, repeatable)")
+	cmd.Flags().StringArrayVar(&alarmFlags, "alarm", nil, "alarm trigger (e.g. -PT15M, DISPLAY:-PT1H, repeatable)")
 	return cmd
 }
 
@@ -267,6 +279,7 @@ func eventUpdateCmd() *cobra.Command {
 		priority     int64
 		rrule        string
 		attachFlags  []string
+		alarmFlags   []string
 	)
 	cmd := &cobra.Command{
 		Use:   "update <id>",
@@ -393,6 +406,16 @@ func eventUpdateCmd() *cobra.Command {
 				}
 			}
 
+			if cmd.Flags().Changed("alarm") {
+				alarms, err := parseAlarmFlags(alarmFlags)
+				if err != nil {
+					return err
+				}
+				if err := a.Events.ReplaceAlarms(ctx, e.ID, alarms); err != nil {
+					return fmt.Errorf("update alarms: %w", err)
+				}
+			}
+
 			w := cmd.OutOrStdout()
 			if jsonOut {
 				return printJSON(w, toJSONEvent(e))
@@ -416,6 +439,7 @@ func eventUpdateCmd() *cobra.Command {
 	cmd.Flags().Int64Var(&priority, "priority", 0, "new priority (0-9)")
 	cmd.Flags().StringVar(&rrule, "rrule", "", "new recurrence rule")
 	cmd.Flags().StringArrayVar(&attachFlags, "attach", nil, "attachment (file path or URL, repeatable)")
+	cmd.Flags().StringArrayVar(&alarmFlags, "alarm", nil, "alarm trigger (e.g. -PT15M, DISPLAY:-PT1H, repeatable)")
 	return cmd
 }
 
@@ -449,6 +473,38 @@ func eventDeleteCmd() *cobra.Command {
 		},
 	}
 	return cmd
+}
+
+// parseAlarmFlags parses --alarm flag values into Alarm models.
+// Each value can be:
+//   - A trigger duration: "-PT15M" (defaults to ACTION:DISPLAY)
+//   - "ACTION:trigger": "DISPLAY:-PT15M", "EMAIL:-PT1H", "AUDIO:-PT5M"
+func parseAlarmFlags(flags []string) ([]model.Alarm, error) {
+	var out []model.Alarm
+	for _, val := range flags {
+		action := "DISPLAY"
+		trigger := val
+
+		// Check for ACTION: prefix
+		if idx := strings.Index(val, ":"); idx > 0 {
+			prefix := strings.ToUpper(val[:idx])
+			if prefix == "DISPLAY" || prefix == "EMAIL" || prefix == "AUDIO" {
+				action = prefix
+				trigger = val[idx+1:]
+			}
+		}
+
+		if trigger == "" {
+			return nil, fmt.Errorf("alarm %q: missing trigger value", val)
+		}
+
+		out = append(out, model.Alarm{
+			Action:       action,
+			TriggerValue: trigger,
+			Description:  "Reminder",
+		})
+	}
+	return out, nil
 }
 
 // parseAttachFlags parses --attach flag values into Attachment models.

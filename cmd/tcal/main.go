@@ -31,7 +31,9 @@ Resource groups:
   event      Manage events (list, get, add, update, delete)
   todo       Manage todos (list, get, add, update, delete)
   calendar   Manage calendars (list, get, create, update, delete)
-  ical       Import and export iCal (.ics) files`,
+  ical       Import and export iCal (.ics) files
+  alarm      Manage alarm notifications (check, list, dismiss, snooze, daemon)
+  service    Manage alarm notification service (install, uninstall, status)`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		cfg = config.Load()
 	},
@@ -61,7 +63,7 @@ func initApp() (*app.App, error) {
 func init() {
 	rootCmd.PersistentFlags().BoolVar(&jsonOut, "json", false, "output as JSON")
 
-	rootCmd.AddCommand(eventCmd(), calendarCmd(), todoCmd(), icalCmd())
+	rootCmd.AddCommand(eventCmd(), calendarCmd(), todoCmd(), icalCmd(), alarmCmd(), serviceCmd())
 }
 
 func main() {
