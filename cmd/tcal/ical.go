@@ -24,7 +24,6 @@ func icalCmd() *cobra.Command {
 func icalImportCmd() *cobra.Command {
 	var (
 		calendarName string
-		jsonOut      bool
 	)
 	cmd := &cobra.Command{
 		Use:   "import <file.ics>",
@@ -118,7 +117,6 @@ func icalImportCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&calendarName, "calendar", "Personal", "calendar to import into")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "output imported items as JSON")
 	return cmd
 }
 

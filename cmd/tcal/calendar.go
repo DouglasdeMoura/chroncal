@@ -19,7 +19,6 @@ func calendarCmd() *cobra.Command {
 }
 
 func calendarListCmd() *cobra.Command {
-	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List all calendars",
@@ -47,12 +46,10 @@ func calendarListCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "output as JSON")
 	return cmd
 }
 
 func calendarGetCmd() *cobra.Command {
-	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "get <id>",
 		Short: "Get calendar details by ID",
@@ -82,7 +79,6 @@ func calendarGetCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "output as JSON")
 	return cmd
 }
 
@@ -90,7 +86,6 @@ func calendarCreateCmd() *cobra.Command {
 	var (
 		color       string
 		description string
-		jsonOut     bool
 	)
 	cmd := &cobra.Command{
 		Use:   `create "<name>"`,
@@ -118,7 +113,6 @@ func calendarCreateCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&color, "color", "#7C3AED", "calendar color (hex)")
 	cmd.Flags().StringVar(&description, "description", "", "calendar description")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "output as JSON")
 	return cmd
 }
 
@@ -127,7 +121,6 @@ func calendarUpdateCmd() *cobra.Command {
 		name        string
 		color       string
 		description string
-		jsonOut     bool
 	)
 	cmd := &cobra.Command{
 		Use:   "update <id>",
@@ -178,12 +171,10 @@ func calendarUpdateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "new name")
 	cmd.Flags().StringVar(&color, "color", "", "new color (hex)")
 	cmd.Flags().StringVar(&description, "description", "", "new description")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "output as JSON")
 	return cmd
 }
 
 func calendarDeleteCmd() *cobra.Command {
-	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "delete <id>",
 		Short: "Delete a calendar",
@@ -212,6 +203,5 @@ func calendarDeleteCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "output as JSON")
 	return cmd
 }

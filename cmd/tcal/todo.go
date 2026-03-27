@@ -25,7 +25,6 @@ func todoListCmd() *cobra.Command {
 		calendarName string
 		status       string
 		all          bool
-		jsonOut      bool
 	)
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -68,12 +67,10 @@ func todoListCmd() *cobra.Command {
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "filter by calendar name")
 	cmd.Flags().StringVar(&status, "status", "", "filter by status (NEEDS-ACTION, IN-PROCESS, COMPLETED, CANCELLED)")
 	cmd.Flags().BoolVar(&all, "all", false, "include completed and cancelled")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "output as JSON")
 	return cmd
 }
 
 func todoGetCmd() *cobra.Command {
-	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "get <id>",
 		Short: "Get todo details by ID",
@@ -107,7 +104,6 @@ func todoGetCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "output as JSON")
 	return cmd
 }
 
@@ -120,7 +116,6 @@ func todoAddCmd() *cobra.Command {
 		priority     int64
 		categories   string
 		url          string
-		jsonOut      bool
 	)
 	cmd := &cobra.Command{
 		Use:   `add "<summary>"`,
@@ -182,7 +177,6 @@ func todoAddCmd() *cobra.Command {
 	cmd.Flags().Int64Var(&priority, "priority", 0, "priority (0-9)")
 	cmd.Flags().StringVar(&categories, "categories", "", "comma-separated categories")
 	cmd.Flags().StringVar(&url, "url", "", "associated URL")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "output as JSON")
 	return cmd
 }
 
@@ -198,7 +192,6 @@ func todoUpdateCmd() *cobra.Command {
 		priority    int64
 		categories  string
 		url         string
-		jsonOut     bool
 	)
 	cmd := &cobra.Command{
 		Use:   "update <id>",
@@ -305,12 +298,10 @@ func todoUpdateCmd() *cobra.Command {
 	cmd.Flags().Int64Var(&priority, "priority", 0, "new priority (0-9)")
 	cmd.Flags().StringVar(&categories, "categories", "", "new categories")
 	cmd.Flags().StringVar(&url, "url", "", "new URL")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "output as JSON")
 	return cmd
 }
 
 func todoDeleteCmd() *cobra.Command {
-	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "delete <id>",
 		Short: "Delete a todo",
@@ -339,12 +330,10 @@ func todoDeleteCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "output as JSON")
 	return cmd
 }
 
 func todoCompleteCmd() *cobra.Command {
-	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "complete <id>",
 		Short: "Mark a todo as completed",
@@ -374,6 +363,5 @@ func todoCompleteCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "output as JSON")
 	return cmd
 }

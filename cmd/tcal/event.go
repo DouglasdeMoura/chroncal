@@ -25,7 +25,6 @@ func eventListCmd() *cobra.Command {
 		fromStr      string
 		toStr        string
 		calendarName string
-		jsonOut      bool
 	)
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -75,12 +74,10 @@ func eventListCmd() *cobra.Command {
 	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD, default: today)")
 	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 14 days from now)")
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "filter by calendar name")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "output as JSON")
 	return cmd
 }
 
 func eventGetCmd() *cobra.Command {
-	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "get <id>",
 		Short: "Get event details by ID",
@@ -114,7 +111,6 @@ func eventGetCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "output as JSON")
 	return cmd
 }
 
@@ -132,7 +128,6 @@ func eventAddCmd() *cobra.Command {
 		class        string
 		transp       string
 		priority     int64
-		jsonOut      bool
 	)
 	cmd := &cobra.Command{
 		Use:   `add "<title>"`,
@@ -227,7 +222,6 @@ func eventAddCmd() *cobra.Command {
 	cmd.Flags().StringVar(&class, "class", "", "classification (PUBLIC, PRIVATE, CONFIDENTIAL)")
 	cmd.Flags().StringVar(&transp, "transp", "", "transparency (OPAQUE, TRANSPARENT)")
 	cmd.Flags().Int64Var(&priority, "priority", 0, "priority (0-9)")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "output as JSON")
 	return cmd
 }
 
@@ -246,7 +240,6 @@ func eventUpdateCmd() *cobra.Command {
 		class        string
 		transp       string
 		priority     int64
-		jsonOut      bool
 	)
 	cmd := &cobra.Command{
 		Use:   "update <id>",
@@ -381,12 +374,10 @@ func eventUpdateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&class, "class", "", "new classification (PUBLIC, PRIVATE, CONFIDENTIAL)")
 	cmd.Flags().StringVar(&transp, "transp", "", "new transparency (OPAQUE, TRANSPARENT)")
 	cmd.Flags().Int64Var(&priority, "priority", 0, "new priority (0-9)")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "output as JSON")
 	return cmd
 }
 
 func eventDeleteCmd() *cobra.Command {
-	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "delete <id>",
 		Short: "Delete an event",
@@ -415,6 +406,5 @@ func eventDeleteCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "output as JSON")
 	return cmd
 }
