@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/douglasdemoura/tcal/internal/calendar"
@@ -13,31 +12,31 @@ import (
 )
 
 type jsonEvent struct {
-	ID             int64           `json:"id"`
-	UID            string          `json:"uid"`
-	CalendarID     int64           `json:"calendar_id"`
-	Title          string          `json:"title"`
-	Description    string          `json:"description"`
-	Location       string          `json:"location"`
-	StartTime      string          `json:"start_time"`
-	EndTime        string          `json:"end_time"`
-	AllDay         bool            `json:"all_day"`
-	RecurrenceRule string          `json:"recurrence_rule"`
-	Timezone       string          `json:"timezone"`
-	Status         string          `json:"status"`
-	Transp         string          `json:"transp"`
-	Sequence       int64           `json:"sequence"`
-	Priority       int64           `json:"priority"`
-	Class          string          `json:"class"`
-	URL            string          `json:"url"`
-	Categories     string          `json:"categories"`
-	ExDates        string          `json:"exdates"`
-	RDates         string          `json:"rdates"`
-	RecurrenceID   string          `json:"recurrence_id"`
-	CreatedAt      string          `json:"created_at"`
-	UpdatedAt      string          `json:"updated_at"`
-	Alarms         []jsonAlarm     `json:"alarms,omitempty"`
-	Attendees      []jsonAttendee  `json:"attendees,omitempty"`
+	ID             int64          `json:"id"`
+	UID            string         `json:"uid"`
+	CalendarID     int64          `json:"calendar_id"`
+	Title          string         `json:"title"`
+	Description    string         `json:"description"`
+	Location       string         `json:"location"`
+	StartTime      string         `json:"start_time"`
+	EndTime        string         `json:"end_time"`
+	AllDay         bool           `json:"all_day"`
+	RecurrenceRule string         `json:"recurrence_rule"`
+	Timezone       string         `json:"timezone"`
+	Status         string         `json:"status"`
+	Transp         string         `json:"transp"`
+	Sequence       int64          `json:"sequence"`
+	Priority       int64          `json:"priority"`
+	Class          string         `json:"class"`
+	URL            string         `json:"url"`
+	Categories     string         `json:"categories"`
+	ExDates        string         `json:"exdates"`
+	RDates         string         `json:"rdates"`
+	RecurrenceID   string         `json:"recurrence_id"`
+	CreatedAt      string         `json:"created_at"`
+	UpdatedAt      string         `json:"updated_at"`
+	Alarms         []jsonAlarm    `json:"alarms,omitempty"`
+	Attendees      []jsonAttendee `json:"attendees,omitempty"`
 }
 
 type jsonAlarm struct {
@@ -124,88 +123,71 @@ func printJSON(w io.Writer, v any) error {
 }
 
 func printEvent(w io.Writer, e event.Event) {
-	fmt.Fprintf(w, "  ID:         %d\n", e.ID)
-	fmt.Fprintf(w, "  Title:      %s\n", e.Title)
+	fmt.Fprintf(w, "ID: %d\n", e.ID)
+	fmt.Fprintf(w, "Title: %s\n", e.Title)
 	if e.AllDay {
-		fmt.Fprintf(w, "  When:       %s (all day)\n", e.StartTime.Local().Format("Mon, Jan 2 2006"))
+		fmt.Fprintf(w, "When: %s (all day)\n", e.StartTime.Local().Format("Mon, 02 Jan 2006"))
 	} else {
-		fmt.Fprintf(w, "  When:       %s – %s\n",
-			e.StartTime.Local().Format("Mon, Jan 2 2006 15:04"),
+		fmt.Fprintf(w, "When: %s - %s\n",
+			e.StartTime.Local().Format("Mon, 02 Jan 2006 15:04"),
 			e.EndTime.Local().Format("15:04"))
 	}
 	if e.Location != "" {
-		fmt.Fprintf(w, "  Where:      %s\n", e.Location)
+		fmt.Fprintf(w, "Location: %s\n", e.Location)
 	}
 	if e.Description != "" {
-		fmt.Fprintf(w, "  Notes:      %s\n", e.Description)
+		fmt.Fprintf(w, "Description: %s\n", e.Description)
 	}
 	if e.Status != "CONFIRMED" {
-		fmt.Fprintf(w, "  Status:     %s\n", e.Status)
+		fmt.Fprintf(w, "Status: %s\n", e.Status)
 	}
 	if e.URL != "" {
-		fmt.Fprintf(w, "  URL:        %s\n", e.URL)
+		fmt.Fprintf(w, "URL: %s\n", e.URL)
 	}
 	if e.Categories != "" {
-		fmt.Fprintf(w, "  Categories: %s\n", e.Categories)
+		fmt.Fprintf(w, "Categories: %s\n", e.Categories)
 	}
 	if e.Timezone != "" {
-		fmt.Fprintf(w, "  Timezone:   %s\n", e.Timezone)
+		fmt.Fprintf(w, "Timezone: %s\n", e.Timezone)
 	}
-	fmt.Fprintf(w, "  Calendar:   %d\n", e.CalendarID)
-	fmt.Fprintf(w, "  UID:        %s\n", e.UID)
+	fmt.Fprintf(w, "Calendar: %d\n", e.CalendarID)
+	fmt.Fprintf(w, "UID: %s\n", e.UID)
 	if len(e.Alarms) > 0 {
-		fmt.Fprintf(w, "  Alarms:     %d reminder(s)\n", len(e.Alarms))
+		fmt.Fprintf(w, "Alarms: %d\n", len(e.Alarms))
 	}
 	if len(e.Attendees) > 0 {
-		fmt.Fprintf(w, "  Attendees:  %d participant(s)\n", len(e.Attendees))
+		fmt.Fprintf(w, "Attendees: %d\n", len(e.Attendees))
 	}
 }
 
 func printEvents(w io.Writer, events []event.Event) {
-	if len(events) == 0 {
-		fmt.Fprintln(w, "No events found.")
-		return
-	}
-
-	var currentDate string
 	for _, e := range events {
-		dateLabel := e.StartTime.Local().Format("Mon, Jan 2 2006")
-		if dateLabel != currentDate {
-			if currentDate != "" {
-				fmt.Fprintln(w)
-			}
-			fmt.Fprintf(w, "  %s\n", dateLabel)
-			fmt.Fprintf(w, "  %s\n", strings.Repeat("─", len(dateLabel)))
-			currentDate = dateLabel
-		}
 		if e.AllDay {
-			fmt.Fprintf(w, "  ● all day   %s\n", e.Title)
+			fmt.Fprintf(w, "%s\tall-day\t%s\n",
+				e.StartTime.Local().Format("2006-01-02"),
+				e.Title)
 		} else {
-			fmt.Fprintf(w, "  ● %s  %s\n", e.StartTime.Local().Format("15:04"), e.Title)
+			fmt.Fprintf(w, "%s\t%s-%s\t%s\n",
+				e.StartTime.Local().Format("2006-01-02"),
+				e.StartTime.Local().Format("15:04"),
+				e.EndTime.Local().Format("15:04"),
+				e.Title)
 		}
 	}
-	fmt.Fprintln(w)
 }
 
 func printCalendar(w io.Writer, c calendar.Calendar) {
-	fmt.Fprintf(w, "  ID:          %d\n", c.ID)
-	fmt.Fprintf(w, "  Name:        %s\n", c.Name)
-	fmt.Fprintf(w, "  Color:       %s\n", c.Color)
+	fmt.Fprintf(w, "ID: %d\n", c.ID)
+	fmt.Fprintf(w, "Name: %s\n", c.Name)
+	fmt.Fprintf(w, "Color: %s\n", c.Color)
 	if c.Description != "" {
-		fmt.Fprintf(w, "  Description: %s\n", c.Description)
+		fmt.Fprintf(w, "Description: %s\n", c.Description)
 	}
 }
 
 func printCalendars(w io.Writer, cals []calendar.Calendar) {
-	if len(cals) == 0 {
-		fmt.Fprintln(w, "No calendars found.")
-		return
-	}
-	for i, c := range cals {
-		if i > 0 {
-			fmt.Fprintln(w)
-		}
-		printCalendar(w, c)
+	for _, c := range cals {
+		fmt.Fprintf(w, "%d\t%s\t%s\n", c.ID, c.Name, c.Color)
 	}
 }
 
@@ -278,48 +260,43 @@ func toJSONTodos(todos []todo.Todo) []jsonTodo {
 }
 
 func printTodo(w io.Writer, t todo.Todo) {
-	fmt.Fprintf(w, "  ID:       %d\n", t.ID)
-	fmt.Fprintf(w, "  Summary:  %s\n", t.Summary)
-	fmt.Fprintf(w, "  Status:   %s\n", t.Status)
+	fmt.Fprintf(w, "ID: %d\n", t.ID)
+	fmt.Fprintf(w, "Summary: %s\n", t.Summary)
+	fmt.Fprintf(w, "Status: %s\n", t.Status)
 	if t.DueDate != "" {
-		due := t.ParseDueDate().Local()
-		fmt.Fprintf(w, "  Due:      %s\n", due.Format("Mon, Jan 2 2006 15:04"))
+		fmt.Fprintf(w, "Due: %s\n", t.ParseDueDate().Local().Format("Mon, 02 Jan 2006 15:04"))
 	}
 	if t.PercentComplete > 0 {
-		fmt.Fprintf(w, "  Progress: %d%%\n", t.PercentComplete)
+		fmt.Fprintf(w, "Progress: %d%%\n", t.PercentComplete)
 	}
 	if t.Location != "" {
-		fmt.Fprintf(w, "  Where:    %s\n", t.Location)
+		fmt.Fprintf(w, "Location: %s\n", t.Location)
 	}
 	if t.Description != "" {
-		fmt.Fprintf(w, "  Notes:    %s\n", t.Description)
+		fmt.Fprintf(w, "Description: %s\n", t.Description)
 	}
 	if t.URL != "" {
-		fmt.Fprintf(w, "  URL:      %s\n", t.URL)
+		fmt.Fprintf(w, "URL: %s\n", t.URL)
 	}
 	if t.Categories != "" {
-		fmt.Fprintf(w, "  Tags:     %s\n", t.Categories)
+		fmt.Fprintf(w, "Categories: %s\n", t.Categories)
 	}
 	if t.Priority > 0 {
-		fmt.Fprintf(w, "  Priority: %d\n", t.Priority)
+		fmt.Fprintf(w, "Priority: %d\n", t.Priority)
 	}
-	fmt.Fprintf(w, "  Calendar: %d\n", t.CalendarID)
+	fmt.Fprintf(w, "Calendar: %d\n", t.CalendarID)
 }
 
 func printTodos(w io.Writer, todos []todo.Todo) {
-	if len(todos) == 0 {
-		fmt.Fprintln(w, "No todos found.")
-		return
-	}
 	for _, t := range todos {
-		check := "○"
+		status := "[ ]"
 		if t.IsCompleted() {
-			check = "●"
+			status = "[x]"
 		}
-		var dueStr string
+		dueStr := "-"
 		if t.DueDate != "" {
-			dueStr = "  due " + t.ParseDueDate().Local().Format("Jan 2")
+			dueStr = t.ParseDueDate().Local().Format("2006-01-02")
 		}
-		fmt.Fprintf(w, "  %s [%d] %s%s\n", check, t.ID, t.Summary, dueStr)
+		fmt.Fprintf(w, "%d\t%s\t%s\t%s\n", t.ID, status, dueStr, t.Summary)
 	}
 }

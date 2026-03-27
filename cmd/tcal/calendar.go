@@ -112,7 +112,7 @@ func calendarCreateCmd() *cobra.Command {
 			if jsonOut {
 				return printJSON(w, toJSONCalendar(c))
 			}
-			fmt.Fprintf(w, "Created calendar %d: %s\n", c.ID, c.Name)
+			printCalendar(w, c)
 			return nil
 		},
 	}
@@ -171,7 +171,7 @@ func calendarUpdateCmd() *cobra.Command {
 			if jsonOut {
 				return printJSON(w, toJSONCalendar(c))
 			}
-			fmt.Fprintf(w, "Updated calendar %d: %s\n", c.ID, c.Name)
+			printCalendar(w, c)
 			return nil
 		},
 	}
@@ -208,7 +208,7 @@ func calendarDeleteCmd() *cobra.Command {
 			if jsonOut {
 				return printJSON(w, map[string]any{"deleted": true, "id": id})
 			}
-			fmt.Fprintf(w, "Deleted calendar %d.\n", id)
+			fmt.Fprintf(w, "tcal: deleted calendar %d\n", id)
 			return nil
 		},
 	}

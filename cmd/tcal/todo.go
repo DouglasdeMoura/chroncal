@@ -167,11 +167,7 @@ func todoAddCmd() *cobra.Command {
 			if jsonOut {
 				return printJSON(w, toJSONTodo(t))
 			}
-			msg := fmt.Sprintf("Created: %s", t.Summary)
-			if dueDate != "" {
-				msg += fmt.Sprintf(" (due %s)", t.ParseDueDate().Local().Format("Jan 2"))
-			}
-			fmt.Fprintln(w, msg)
+			printTodo(w, t)
 			return nil
 		},
 	}
@@ -335,7 +331,7 @@ func todoDeleteCmd() *cobra.Command {
 			if jsonOut {
 				return printJSON(w, map[string]any{"deleted": true, "id": id})
 			}
-			fmt.Fprintf(w, "Deleted todo %d.\n", id)
+			fmt.Fprintf(w, "tcal: deleted todo %d\n", id)
 			return nil
 		},
 	}
@@ -370,7 +366,7 @@ func todoCompleteCmd() *cobra.Command {
 			if jsonOut {
 				return printJSON(w, toJSONTodo(t))
 			}
-			fmt.Fprintf(w, "Completed: %s\n", t.Summary)
+			printTodo(w, t)
 			return nil
 		},
 	}
