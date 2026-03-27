@@ -34,6 +34,7 @@ type jsonEvent struct {
 	ExDates        string          `json:"exdates"`
 	RDates         string          `json:"rdates"`
 	RecurrenceID   string          `json:"recurrence_id"`
+	Geo            string          `json:"geo"`
 	CreatedAt      string          `json:"created_at"`
 	UpdatedAt      string          `json:"updated_at"`
 	Alarms         []jsonAlarm       `json:"alarms,omitempty"`
@@ -101,6 +102,7 @@ func toJSONEvent(e event.Event) jsonEvent {
 		ExDates:        e.ExDates,
 		RDates:         e.RDates,
 		RecurrenceID:   e.RecurrenceID,
+		Geo:            e.Geo,
 		CreatedAt:      e.CreatedAt.Local().Format(time.RFC3339),
 		UpdatedAt:      e.UpdatedAt.Local().Format(time.RFC3339),
 	}

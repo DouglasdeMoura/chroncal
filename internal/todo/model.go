@@ -30,6 +30,7 @@ type Todo struct {
 	ExDates         string
 	RDates          string
 	RecurrenceID    string
+	Geo             string // "lat;lon" (RFC 5545 GEO format)
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 

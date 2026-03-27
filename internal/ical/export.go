@@ -83,6 +83,12 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 			}
 		}
 
+		if e.Geo != "" {
+			p := &ical.Prop{Name: ical.PropGeo}
+			p.Value = e.Geo
+			vevent.Props.Set(p)
+		}
+
 		vevent.Props.SetDateTime(ical.PropDateTimeStamp, e.UpdatedAt.UTC())
 		vevent.Props.SetDateTime(ical.PropCreated, e.CreatedAt.UTC())
 		vevent.Props.SetDateTime(ical.PropLastModified, e.UpdatedAt.UTC())
@@ -296,6 +302,12 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 			if rid, err := time.Parse(time.RFC3339, t.RecurrenceID); err == nil {
 				vtodo.Props.SetDateTime(ical.PropRecurrenceID, rid.UTC())
 			}
+		}
+
+		if t.Geo != "" {
+			p := &ical.Prop{Name: ical.PropGeo}
+			p.Value = t.Geo
+			vtodo.Props.Set(p)
 		}
 
 		vtodo.Props.SetDateTime(ical.PropDateTimeStamp, t.UpdatedAt.UTC())

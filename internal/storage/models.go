@@ -37,6 +37,7 @@ type Event struct {
 	RecurrenceID   string
 	CreatedAt      string
 	UpdatedAt      string
+	Geo            string
 }
 
 type EventAlarm struct {
@@ -102,6 +103,7 @@ type Todo struct {
 	RecurrenceID    string
 	CreatedAt       string
 	UpdatedAt       string
+	Geo             string
 }
 
 type TodoAlarm struct {

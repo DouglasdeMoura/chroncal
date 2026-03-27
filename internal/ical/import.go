@@ -131,6 +131,11 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, error) {
 		rrule = prop.Value
 	}
 
+	var geo string
+	if prop := props.Get(ical.PropGeo); prop != nil {
+		geo = prop.Value
+	}
+
 	var recurrenceID string
 	if prop := props.Get(ical.PropRecurrenceID); prop != nil {
 		if t, err := prop.DateTime(nil); err == nil && !t.IsZero() {
@@ -179,6 +184,7 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, error) {
 		ExDates:         exdates,
 		RDates:          rdates,
 		RecurrenceID:    recurrenceID,
+		Geo:             geo,
 		Alarms:          alarms,
 		Attendees:       attendees,
 		Attachments:     attachments,
@@ -258,6 +264,11 @@ func eventFromVEvent(ve ical.Event) (event.Event, error) {
 		url = prop.Value
 	}
 
+	var geo string
+	if prop := ve.Props.Get(ical.PropGeo); prop != nil {
+		geo = prop.Value
+	}
+
 	categories := parseCategories(ve)
 	exdates := parseDateList(ve, ical.PropExceptionDates)
 	rdates := parseDateList(ve, ical.PropRecurrenceDates)
@@ -309,6 +320,7 @@ func eventFromVEvent(ve ical.Event) (event.Event, error) {
 		ExDates:        exdates,
 		RDates:         rdates,
 		RecurrenceID:   recurrenceID,
+		Geo:            geo,
 		Alarms:         alarms,
 		Attendees:      attendees,
 		Attachments:    attachments,

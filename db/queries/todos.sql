@@ -24,8 +24,8 @@ INSERT INTO todos (
     uid, calendar_id, summary, description, location,
     due_date, start_date, duration, completed_at, percent_complete,
     status, priority, class, url, categories,
-    recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, geo
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: UpdateTodo :one
@@ -37,7 +37,7 @@ UPDATE todos SET
     class = ?, url = ?, categories = ?,
     recurrence_rule = ?, timezone = ?,
     sequence = sequence + 1,
-    exdates = ?, rdates = ?,
+    exdates = ?, rdates = ?, geo = ?,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ? RETURNING *;
 
@@ -55,8 +55,8 @@ INSERT INTO todos (
     uid, calendar_id, summary, description, location,
     due_date, start_date, duration, completed_at, percent_complete,
     status, priority, class, url, categories,
-    recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, geo
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(uid, recurrence_id) DO UPDATE SET
     summary = excluded.summary, description = excluded.description,
     location = excluded.location, due_date = excluded.due_date,
@@ -68,6 +68,7 @@ ON CONFLICT(uid, recurrence_id) DO UPDATE SET
     timezone = excluded.timezone,
     sequence = MAX(excluded.sequence, todos.sequence + 1),
     exdates = excluded.exdates, rdates = excluded.rdates,
+    geo = excluded.geo,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 RETURNING *;
 

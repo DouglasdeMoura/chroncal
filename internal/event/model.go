@@ -29,6 +29,7 @@ type Event struct {
 	ExDates        string // comma-separated RFC 3339
 	RDates         string // comma-separated RFC 3339
 	RecurrenceID   string // RFC 3339 of overridden instance
+	Geo            string // "lat;lon" (RFC 5545 GEO format)
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 

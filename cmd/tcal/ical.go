@@ -64,7 +64,7 @@ func icalImportCmd() *cobra.Command {
 					Status: e.Status, Transp: e.Transp, Sequence: e.Sequence,
 					Priority: e.Priority, Class: e.Class, URL: e.URL,
 					Categories: e.Categories, ExDates: e.ExDates, RDates: e.RDates,
-					RecurrenceID: e.RecurrenceID,
+					RecurrenceID: e.RecurrenceID, Geo: e.Geo,
 				})
 				if err != nil {
 					return fmt.Errorf("upsert event %q: %w", e.Title, err)
@@ -99,7 +99,7 @@ func icalImportCmd() *cobra.Command {
 					URL: t.URL, Categories: t.Categories,
 					RecurrenceRule: t.RecurrenceRule, Timezone: t.Timezone,
 					Sequence: t.Sequence, ExDates: t.ExDates, RDates: t.RDates,
-					RecurrenceID: t.RecurrenceID,
+					RecurrenceID: t.RecurrenceID, Geo: t.Geo,
 				})
 				if err != nil {
 					return fmt.Errorf("upsert todo %q: %w", t.Summary, err)
