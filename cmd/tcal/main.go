@@ -52,23 +52,7 @@ func initApp() (*app.App, error) {
 func init() {
 	rootCmd.PersistentFlags().StringVar(&dbPath, "db", "", "path to SQLite database (default: $XDG_CONFIG_HOME/tcal/tcal.db)")
 
-	// Primary subcommand groups
 	rootCmd.AddCommand(eventCmd(), calendarCmd(), icalCmd())
-
-	// Backward-compatible aliases (hidden)
-	rootCmd.AddCommand(aliasCmd("add", "event add", eventAddCmd))
-	rootCmd.AddCommand(aliasCmd("list", "event list", eventListCmd))
-	rootCmd.AddCommand(aliasCmd("import", "ical import", icalImportCmd))
-	rootCmd.AddCommand(aliasCmd("export", "ical export", icalExportCmd))
-}
-
-func aliasCmd(name, target string, factory func() *cobra.Command) *cobra.Command {
-	cmd := factory()
-	cmd.Use = strings.Replace(cmd.Use, strings.Fields(cmd.Use)[0], name, 1)
-	cmd.Short = fmt.Sprintf("Alias for '%s'", target)
-	cmd.Hidden = true
-	cmd.Deprecated = fmt.Sprintf("use 'tcal %s' instead", target)
-	return cmd
 }
 
 func main() {
