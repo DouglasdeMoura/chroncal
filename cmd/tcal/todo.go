@@ -119,6 +119,7 @@ func todoAddCmd() *cobra.Command {
 		priority     int64
 		categories   string
 		url          string
+		attachFlags  []string
 	)
 	cmd := &cobra.Command{
 		Use:   `add "<summary>"`,
@@ -161,6 +162,16 @@ func todoAddCmd() *cobra.Command {
 				return fmt.Errorf("create todo: %w", err)
 			}
 
+			if len(attachFlags) > 0 {
+				attachments, err := parseAttachFlags(attachFlags)
+				if err != nil {
+					return err
+				}
+				if err := a.Todos.ReplaceAttachments(ctx, t.ID, attachments); err != nil {
+					return fmt.Errorf("add attachments: %w", err)
+				}
+			}
+
 			w := cmd.OutOrStdout()
 			if jsonOut {
 				return printJSON(w, toJSONTodo(t))
@@ -180,21 +191,23 @@ func todoAddCmd() *cobra.Command {
 	cmd.Flags().Int64Var(&priority, "priority", 0, "priority (0-9)")
 	cmd.Flags().StringVar(&categories, "categories", "", "comma-separated categories")
 	cmd.Flags().StringVar(&url, "url", "", "associated URL")
+	cmd.Flags().StringArrayVar(&attachFlags, "attach", nil, "attachment (file path or URL, repeatable)")
 	return cmd
 }
 
 func todoUpdateCmd() *cobra.Command {
 	var (
-		summary     string
-		dueStr      string
-		status      string
-		progress    int64
+		summary      string
+		dueStr       string
+		status       string
+		progress     int64
 		calendarName string
-		location    string
-		description string
-		priority    int64
-		categories  string
-		url         string
+		location     string
+		description  string
+		priority     int64
+		categories   string
+		url          string
+		attachFlags  []string
 	)
 	cmd := &cobra.Command{
 		Use:   "update <id>",
@@ -287,6 +300,16 @@ func todoUpdateCmd() *cobra.Command {
 				return fmt.Errorf("update todo: %w", err)
 			}
 
+			if cmd.Flags().Changed("attach") {
+				attachments, err := parseAttachFlags(attachFlags)
+				if err != nil {
+					return err
+				}
+				if err := a.Todos.ReplaceAttachments(ctx, t.ID, attachments); err != nil {
+					return fmt.Errorf("update attachments: %w", err)
+				}
+			}
+
 			w := cmd.OutOrStdout()
 			if jsonOut {
 				return printJSON(w, toJSONTodo(t))
@@ -305,6 +328,7 @@ func todoUpdateCmd() *cobra.Command {
 	cmd.Flags().Int64Var(&priority, "priority", 0, "new priority (0-9)")
 	cmd.Flags().StringVar(&categories, "categories", "", "new categories")
 	cmd.Flags().StringVar(&url, "url", "", "new URL")
+	cmd.Flags().StringArrayVar(&attachFlags, "attach", nil, "attachment (file path or URL, repeatable)")
 	return cmd
 }
 

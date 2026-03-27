@@ -3,12 +3,17 @@ package main
 import (
 	"context"
 	"fmt"
+	"mime"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/douglasdemoura/tcal/internal/event"
+	"github.com/douglasdemoura/tcal/internal/model"
 )
 
 func eventCmd() *cobra.Command {
@@ -131,6 +136,8 @@ func eventAddCmd() *cobra.Command {
 		class        string
 		transp       string
 		priority     int64
+		rrule        string
+		attachFlags  []string
 	)
 	cmd := &cobra.Command{
 		Use:   `add "<title>"`,
@@ -183,22 +190,33 @@ func eventAddCmd() *cobra.Command {
 			}
 
 			e, err := a.Events.Create(ctx, event.CreateParams{
-				CalendarID:  calID,
-				Title:       args[0],
-				Description: description,
-				Location:    location,
-				StartTime:   startTime,
-				EndTime:     endTime,
-				AllDay:      allDay,
-				Status:      status,
-				URL:         url,
-				Categories:  categories,
-				Class:       class,
-				Transp:      transp,
-				Priority:    priority,
+				CalendarID:     calID,
+				Title:          args[0],
+				Description:    description,
+				Location:       location,
+				StartTime:      startTime,
+				EndTime:        endTime,
+				AllDay:         allDay,
+				Status:         status,
+				URL:            url,
+				Categories:     categories,
+				Class:          class,
+				Transp:         transp,
+				Priority:       priority,
+				RecurrenceRule: rrule,
 			})
 			if err != nil {
 				return fmt.Errorf("create event: %w", err)
+			}
+
+			if len(attachFlags) > 0 {
+				attachments, err := parseAttachFlags(attachFlags)
+				if err != nil {
+					return err
+				}
+				if err := a.Events.ReplaceAttachments(ctx, e.ID, attachments); err != nil {
+					return fmt.Errorf("add attachments: %w", err)
+				}
 			}
 
 			w := cmd.OutOrStdout()
@@ -225,6 +243,8 @@ func eventAddCmd() *cobra.Command {
 	cmd.Flags().StringVar(&class, "class", "", "classification (PUBLIC, PRIVATE, CONFIDENTIAL)")
 	cmd.Flags().StringVar(&transp, "transp", "", "transparency (OPAQUE, TRANSPARENT)")
 	cmd.Flags().Int64Var(&priority, "priority", 0, "priority (0-9)")
+	cmd.Flags().StringVar(&rrule, "rrule", "", "recurrence rule (e.g. FREQ=WEEKLY;COUNT=10)")
+	cmd.Flags().StringArrayVar(&attachFlags, "attach", nil, "attachment (file path or URL, repeatable)")
 	return cmd
 }
 
@@ -243,6 +263,8 @@ func eventUpdateCmd() *cobra.Command {
 		class        string
 		transp       string
 		priority     int64
+		rrule        string
+		attachFlags  []string
 	)
 	cmd := &cobra.Command{
 		Use:   "update <id>",
@@ -320,6 +342,9 @@ func eventUpdateCmd() *cobra.Command {
 			if cmd.Flags().Changed("priority") {
 				p.Priority = priority
 			}
+			if cmd.Flags().Changed("rrule") {
+				p.RecurrenceRule = rrule
+			}
 
 			if cmd.Flags().Changed("date") || cmd.Flags().Changed("time") {
 				date := p.StartTime.Local()
@@ -356,6 +381,16 @@ func eventUpdateCmd() *cobra.Command {
 				return fmt.Errorf("update event: %w", err)
 			}
 
+			if cmd.Flags().Changed("attach") {
+				attachments, err := parseAttachFlags(attachFlags)
+				if err != nil {
+					return err
+				}
+				if err := a.Events.ReplaceAttachments(ctx, e.ID, attachments); err != nil {
+					return fmt.Errorf("update attachments: %w", err)
+				}
+			}
+
 			w := cmd.OutOrStdout()
 			if jsonOut {
 				return printJSON(w, toJSONEvent(e))
@@ -377,6 +412,8 @@ func eventUpdateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&class, "class", "", "new classification (PUBLIC, PRIVATE, CONFIDENTIAL)")
 	cmd.Flags().StringVar(&transp, "transp", "", "new transparency (OPAQUE, TRANSPARENT)")
 	cmd.Flags().Int64Var(&priority, "priority", 0, "new priority (0-9)")
+	cmd.Flags().StringVar(&rrule, "rrule", "", "new recurrence rule")
+	cmd.Flags().StringArrayVar(&attachFlags, "attach", nil, "attachment (file path or URL, repeatable)")
 	return cmd
 }
 
@@ -410,4 +447,50 @@ func eventDeleteCmd() *cobra.Command {
 		},
 	}
 	return cmd
+}
+
+// parseAttachFlags parses --attach flag values into Attachment models.
+// Each value can be:
+//   - A file path (read as blob, MIME inferred from extension)
+//   - "mime/type:path" (blob with explicit MIME)
+//   - A URL containing "://" (URI attachment)
+//   - "mime/type:url" (URI with explicit MIME)
+func parseAttachFlags(flags []string) ([]model.Attachment, error) {
+	var out []model.Attachment
+	for _, val := range flags {
+		var fmttype, target string
+
+		// Check for explicit MIME prefix like "application/pdf:/path/to/file"
+		if idx := strings.Index(val, ":"); idx > 0 {
+			prefix := val[:idx]
+			if strings.Contains(prefix, "/") && !strings.Contains(prefix, "://") {
+				fmttype = prefix
+				target = val[idx+1:]
+			} else {
+				target = val
+			}
+		} else {
+			target = val
+		}
+
+		if strings.Contains(target, "://") {
+			// URI attachment
+			out = append(out, model.Attachment{URI: target, FmtType: fmttype})
+		} else {
+			// File path — read as blob
+			data, err := os.ReadFile(target)
+			if err != nil {
+				return nil, fmt.Errorf("read attachment %q: %w", target, err)
+			}
+			if fmttype == "" {
+				fmttype = mime.TypeByExtension(filepath.Ext(target))
+			}
+			out = append(out, model.Attachment{
+				Data:     data,
+				Filename: filepath.Base(target),
+				FmtType:  fmttype,
+			})
+		}
+	}
+	return out, nil
 }
