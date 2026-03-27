@@ -4,6 +4,20 @@
 
 package storage
 
+import (
+	"database/sql"
+)
+
+type AlarmState struct {
+	ID        int64
+	AlarmID   int64
+	EventID   int64
+	TriggerAt string
+	FiredAt   sql.NullString
+	AckedAt   sql.NullString
+	SnoozedTo sql.NullString
+}
+
 type Calendar struct {
 	ID          int64
 	Name        string

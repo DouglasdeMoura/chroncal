@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"github.com/douglasdemoura/tcal/internal/alarm"
 	"github.com/douglasdemoura/tcal/internal/calendar"
 	"github.com/douglasdemoura/tcal/internal/event"
 	"github.com/douglasdemoura/tcal/internal/storage"
@@ -18,6 +19,7 @@ type App struct {
 	Calendars *calendar.Service
 	Events    *event.Service
 	Todos     *todo.Service
+	Alarms    *alarm.Service
 }
 
 func New(dbPath string) (*App, error) {
@@ -26,11 +28,14 @@ func New(dbPath string) (*App, error) {
 		return nil, fmt.Errorf("open storage: %w", err)
 	}
 
+	eventSvc := event.NewService(db, queries)
+
 	return &App{
 		DB:        db,
 		Calendars: calendar.NewService(queries),
-		Events:    event.NewService(db, queries),
+		Events:    eventSvc,
 		Todos:     todo.NewService(db, queries),
+		Alarms:    alarm.NewService(db, queries, eventSvc),
 	}, nil
 }
 

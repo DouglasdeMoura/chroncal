@@ -3,6 +3,7 @@ package alarm
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/douglasdemoura/tcal/internal/duration"
@@ -52,7 +53,7 @@ func (s *Service) Check(ctx context.Context, now time.Time) ([]DueAlarm, error) 
 	for _, evt := range events {
 		alarms, err := s.events.ListAlarms(ctx, evt.ID)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("list alarms for event %d: %w", evt.ID, err)
 		}
 		for _, a := range alarms {
 			triggerAt := computeTriggerTime(evt, a)
