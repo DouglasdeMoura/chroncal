@@ -1,0 +1,131 @@
+package calendar
+
+import (
+	"context"
+	"testing"
+
+	"github.com/douglasdemoura/tcal/internal/testutil"
+)
+
+func newTestService(t *testing.T) *Service {
+	t.Helper()
+	_, q := testutil.NewTestDB(t)
+	return NewService(q)
+}
+
+func TestCalendarService_ListDefault(t *testing.T) {
+	svc := newTestService(t)
+	cals, err := svc.List(context.Background())
+	if err != nil {
+		t.Fatalf("List error: %v", err)
+	}
+	if len(cals) != 1 {
+		t.Fatalf("List returned %d calendars, want 1", len(cals))
+	}
+	if cals[0].Name != "Personal" {
+		t.Errorf("default calendar name = %q, want %q", cals[0].Name, "Personal")
+	}
+}
+
+func TestCalendarService_Create(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	c, err := svc.Create(ctx, "Work", "#0284C7", "Work calendar")
+	if err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+	if c.ID == 0 {
+		t.Error("Create returned ID 0")
+	}
+	if c.Name != "Work" {
+		t.Errorf("Name = %q, want %q", c.Name, "Work")
+	}
+	if c.Color != "#0284C7" {
+		t.Errorf("Color = %q, want %q", c.Color, "#0284C7")
+	}
+	if c.Description != "Work calendar" {
+		t.Errorf("Description = %q, want %q", c.Description, "Work calendar")
+	}
+
+	cals, _ := svc.List(ctx)
+	if len(cals) != 2 {
+		t.Errorf("List after Create returned %d, want 2", len(cals))
+	}
+}
+
+func TestCalendarService_Get(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	c, err := svc.Get(ctx, 1)
+	if err != nil {
+		t.Fatalf("Get(1) error: %v", err)
+	}
+	if c.Name != "Personal" {
+		t.Errorf("Get(1).Name = %q, want %q", c.Name, "Personal")
+	}
+
+	_, err = svc.Get(ctx, 999)
+	if err == nil {
+		t.Error("Get(999) expected error, got nil")
+	}
+}
+
+func TestCalendarService_Update(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	c, err := svc.Update(ctx, 1, "Personal Updated", "#FF0000", "Updated desc")
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if c.Name != "Personal Updated" {
+		t.Errorf("Name = %q, want %q", c.Name, "Personal Updated")
+	}
+	if c.Color != "#FF0000" {
+		t.Errorf("Color = %q, want %q", c.Color, "#FF0000")
+	}
+}
+
+func TestCalendarService_Delete(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	c, _ := svc.Create(ctx, "Temp", "#000", "")
+	if err := svc.Delete(ctx, c.ID); err != nil {
+		t.Fatalf("Delete error: %v", err)
+	}
+
+	_, err := svc.Get(ctx, c.ID)
+	if err == nil {
+		t.Error("Get after Delete expected error, got nil")
+	}
+}
+
+func TestCalendarService_DeleteCascade(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	svc := NewService(q)
+	ctx := context.Background()
+
+	cal, _ := svc.Create(ctx, "Temp", "#000", "")
+
+	// Insert an event into this calendar directly
+	_, err := db.ExecContext(ctx,
+		"INSERT INTO events (uid, calendar_id, title, start_time, end_time, status, transp, class) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		"test-uid", cal.ID, "Test Event", "2026-04-01T10:00:00Z", "2026-04-01T11:00:00Z", "CONFIRMED", "OPAQUE", "PUBLIC")
+	if err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+
+	// Delete calendar should cascade
+	if err := svc.Delete(ctx, cal.ID); err != nil {
+		t.Fatalf("Delete error: %v", err)
+	}
+
+	var count int
+	db.QueryRowContext(ctx, "SELECT COUNT(*) FROM events WHERE calendar_id = ?", cal.ID).Scan(&count)
+	if count != 0 {
+		t.Errorf("expected 0 events after cascade delete, got %d", count)
+	}
+}

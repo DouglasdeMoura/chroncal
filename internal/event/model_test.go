@@ -1,0 +1,123 @@
+package event
+
+import (
+	"testing"
+	"time"
+)
+
+func TestEvent_Duration(t *testing.T) {
+	t.Parallel()
+	e := Event{
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 30, 0, 0, time.UTC),
+	}
+	got := e.Duration()
+	want := 90 * time.Minute
+	if got != want {
+		t.Errorf("Duration() = %v, want %v", got, want)
+	}
+}
+
+func TestEvent_IsRecurrenceOverride(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		recurrenceID string
+		want         bool
+	}{
+		{"empty", "", false},
+		{"set", "2026-04-01T10:00:00Z", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := Event{RecurrenceID: tt.recurrenceID}
+			if got := e.IsRecurrenceOverride(); got != tt.want {
+				t.Errorf("IsRecurrenceOverride() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseTimeList(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		input string
+		want  int
+	}{
+		{"empty", "", 0},
+		{"single", "2026-04-01T10:00:00Z", 1},
+		{"multiple", "2026-04-01T10:00:00Z,2026-04-02T10:00:00Z", 2},
+		{"with spaces", " 2026-04-01T10:00:00Z , 2026-04-02T10:00:00Z ", 2},
+		{"invalid entries skipped", "2026-04-01T10:00:00Z,invalid,2026-04-02T10:00:00Z", 2},
+		{"all invalid", "bad,worse", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ParseTimeList(tt.input)
+			if len(got) != tt.want {
+				t.Errorf("ParseTimeList(%q) returned %d items, want %d", tt.input, len(got), tt.want)
+			}
+		})
+	}
+}
+
+func TestParseCategoryList(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{"empty", "", nil},
+		{"single", "work", []string{"work"}},
+		{"multiple", "work,personal", []string{"work", "personal"}},
+		{"whitespace trimmed", " work , personal ", []string{"work", "personal"}},
+		{"empty entries skipped", "work,,personal", []string{"work", "personal"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ParseCategoryList(tt.input)
+			if tt.want == nil && got != nil {
+				t.Errorf("ParseCategoryList(%q) = %v, want nil", tt.input, got)
+				return
+			}
+			if len(got) != len(tt.want) {
+				t.Errorf("ParseCategoryList(%q) returned %d items, want %d", tt.input, len(got), len(tt.want))
+				return
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("ParseCategoryList(%q)[%d] = %q, want %q", tt.input, i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestEvent_ParseExDates(t *testing.T) {
+	t.Parallel()
+	e := Event{ExDates: "2026-04-01T10:00:00Z,2026-04-02T10:00:00Z"}
+	got := e.ParseExDates()
+	if len(got) != 2 {
+		t.Fatalf("ParseExDates() returned %d items, want 2", len(got))
+	}
+}
+
+func TestEvent_ParseRDates(t *testing.T) {
+	t.Parallel()
+	e := Event{RDates: ""}
+	got := e.ParseRDates()
+	if len(got) != 0 {
+		t.Errorf("ParseRDates() on empty returned %d items, want 0", len(got))
+	}
+}
+
+func TestEvent_ParseCategories(t *testing.T) {
+	t.Parallel()
+	e := Event{Categories: "work,dev"}
+	got := e.ParseCategories()
+	if len(got) != 2 || got[0] != "work" || got[1] != "dev" {
+		t.Errorf("ParseCategories() = %v, want [work dev]", got)
+	}
+}

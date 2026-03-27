@@ -37,7 +37,9 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 		setEventTimes(vevent, e)
 
 		if e.RecurrenceRule != "" {
-			vevent.Props.SetText(ical.PropRecurrenceRule, e.RecurrenceRule)
+			rruleProp := &ical.Prop{Name: ical.PropRecurrenceRule}
+			rruleProp.Value = e.RecurrenceRule
+			vevent.Props.Set(rruleProp)
 		}
 
 		// RFC 5545 properties
@@ -90,9 +92,8 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 			valarm := ical.NewComponent(ical.CompAlarm)
 			valarm.Props.SetText(ical.PropAction, alarm.Action)
 
-			trigger := &ical.Prop{Name: ical.PropTrigger}
+			trigger := &ical.Prop{Name: ical.PropTrigger, Params: make(ical.Params)}
 			trigger.Value = alarm.TriggerValue
-			// If it looks like a duration (starts with - or P), set VALUE=DURATION
 			if strings.HasPrefix(alarm.TriggerValue, "-") || strings.HasPrefix(alarm.TriggerValue, "P") {
 				trigger.Params.Set("VALUE", "DURATION")
 			}
@@ -107,7 +108,7 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 		// ATTENDEE / ORGANIZER
 		for _, att := range e.Attendees {
 			if att.Organizer {
-				org := &ical.Prop{Name: ical.PropOrganizer}
+				org := &ical.Prop{Name: ical.PropOrganizer, Params: make(ical.Params)}
 				org.Value = "mailto:" + att.Email
 				if att.Name != "" {
 					org.Params.Set(ical.ParamCommonName, att.Name)
@@ -115,7 +116,7 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 				vevent.Props.Set(org)
 			}
 
-			attendee := &ical.Prop{Name: ical.PropAttendee}
+			attendee := &ical.Prop{Name: ical.PropAttendee, Params: make(ical.Params)}
 			attendee.Value = "mailto:" + att.Email
 			if att.Name != "" {
 				attendee.Params.Set(ical.ParamCommonName, att.Name)
@@ -257,7 +258,9 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 		}
 
 		if t.RecurrenceRule != "" {
-			vtodo.Props.SetText(ical.PropRecurrenceRule, t.RecurrenceRule)
+			rruleProp := &ical.Prop{Name: ical.PropRecurrenceRule}
+			rruleProp.Value = t.RecurrenceRule
+			vtodo.Props.Set(rruleProp)
 		}
 
 		// Dates
@@ -278,7 +281,7 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 		for _, alarm := range t.Alarms {
 			valarm := ical.NewComponent(ical.CompAlarm)
 			valarm.Props.SetText(ical.PropAction, alarm.Action)
-			trigger := &ical.Prop{Name: ical.PropTrigger}
+			trigger := &ical.Prop{Name: ical.PropTrigger, Params: make(ical.Params)}
 			trigger.Value = alarm.TriggerValue
 			if strings.HasPrefix(alarm.TriggerValue, "-") || strings.HasPrefix(alarm.TriggerValue, "P") {
 				trigger.Params.Set("VALUE", "DURATION")
@@ -293,14 +296,14 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 		// ATTENDEE / ORGANIZER
 		for _, att := range t.Attendees {
 			if att.Organizer {
-				org := &ical.Prop{Name: ical.PropOrganizer}
+				org := &ical.Prop{Name: ical.PropOrganizer, Params: make(ical.Params)}
 				org.Value = "mailto:" + att.Email
 				if att.Name != "" {
 					org.Params.Set(ical.ParamCommonName, att.Name)
 				}
 				vtodo.Props.Set(org)
 			}
-			attendee := &ical.Prop{Name: ical.PropAttendee}
+			attendee := &ical.Prop{Name: ical.PropAttendee, Params: make(ical.Params)}
 			attendee.Value = "mailto:" + att.Email
 			if att.Name != "" {
 				attendee.Params.Set(ical.ParamCommonName, att.Name)

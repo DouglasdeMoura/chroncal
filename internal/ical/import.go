@@ -126,7 +126,10 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, error) {
 	categories := parseCategoriesFromProps(props)
 	exdates := parseDateListFromProps(props, ical.PropExceptionDates)
 	rdates := parseDateListFromProps(props, ical.PropRecurrenceDates)
-	rrule := propText(props, ical.PropRecurrenceRule)
+	var rrule string
+	if prop := props.Get(ical.PropRecurrenceRule); prop != nil {
+		rrule = prop.Value
+	}
 
 	var recurrenceID string
 	if prop := props.Get(ical.PropRecurrenceID); prop != nil {
@@ -211,7 +214,10 @@ func eventFromVEvent(ve ical.Event) (event.Event, error) {
 		}
 	}
 
-	rrule, _ := ve.Props.Text(ical.PropRecurrenceRule)
+	var rrule string
+	if prop := ve.Props.Get(ical.PropRecurrenceRule); prop != nil {
+		rrule = prop.Value
+	}
 
 	// RFC 5545 properties
 	status := textOrDefault(ve, ical.PropStatus, "CONFIRMED")

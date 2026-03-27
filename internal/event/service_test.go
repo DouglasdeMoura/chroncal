@@ -1,0 +1,305 @@
+package event
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/douglasdemoura/tcal/internal/model"
+	"github.com/douglasdemoura/tcal/internal/testutil"
+)
+
+func newTestService(t *testing.T) *Service {
+	t.Helper()
+	db, q := testutil.NewTestDB(t)
+	return NewService(db, q)
+}
+
+func createEvent(t *testing.T, svc *Service) Event {
+	t.Helper()
+	e, err := svc.Create(context.Background(), CreateParams{
+		CalendarID: 1,
+		Title:      "Test Event",
+		StartTime:  time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("create event: %v", err)
+	}
+	return e
+}
+
+func TestEventService_Create(t *testing.T) {
+	svc := newTestService(t)
+	e := createEvent(t, svc)
+
+	if e.ID == 0 {
+		t.Error("ID is 0")
+	}
+	if e.UID == "" {
+		t.Error("UID is empty")
+	}
+	if e.Title != "Test Event" {
+		t.Errorf("Title = %q, want %q", e.Title, "Test Event")
+	}
+	if e.Status != "CONFIRMED" {
+		t.Errorf("Status = %q, want %q", e.Status, "CONFIRMED")
+	}
+	if e.Transp != "OPAQUE" {
+		t.Errorf("Transp = %q, want %q", e.Transp, "OPAQUE")
+	}
+	if e.Class != "PUBLIC" {
+		t.Errorf("Class = %q, want %q", e.Class, "PUBLIC")
+	}
+}
+
+func TestEventService_Get(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	created := createEvent(t, svc)
+
+	got, err := svc.Get(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("Get error: %v", err)
+	}
+	if got.Title != created.Title {
+		t.Errorf("Title = %q, want %q", got.Title, created.Title)
+	}
+
+	_, err = svc.Get(ctx, 999)
+	if err == nil {
+		t.Error("Get(999) expected error")
+	}
+}
+
+func TestEventService_ListByDateRange(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	createEvent(t, svc) // April 1
+
+	from := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 4, 2, 0, 0, 0, 0, time.UTC)
+
+	events, err := svc.ListByDateRange(ctx, from, to)
+	if err != nil {
+		t.Fatalf("ListByDateRange error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Errorf("got %d events, want 1", len(events))
+	}
+
+	// Out of range
+	from2 := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	to2 := time.Date(2026, 5, 2, 0, 0, 0, 0, time.UTC)
+	events2, _ := svc.ListByDateRange(ctx, from2, to2)
+	if len(events2) != 0 {
+		t.Errorf("out-of-range returned %d events, want 0", len(events2))
+	}
+}
+
+func TestEventService_ListByCalendarAndDateRange(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	createEvent(t, svc)
+
+	from := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 4, 2, 0, 0, 0, 0, time.UTC)
+
+	events, _ := svc.ListByCalendarAndDateRange(ctx, 1, from, to)
+	if len(events) != 1 {
+		t.Errorf("calendar 1: got %d, want 1", len(events))
+	}
+
+	events2, _ := svc.ListByCalendarAndDateRange(ctx, 999, from, to)
+	if len(events2) != 0 {
+		t.Errorf("calendar 999: got %d, want 0", len(events2))
+	}
+}
+
+func TestEventService_Update(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	created := createEvent(t, svc)
+
+	updated, err := svc.Update(ctx, created.ID, UpdateParams{
+		Title:      "Updated Title",
+		StartTime:  created.StartTime,
+		EndTime:    created.EndTime,
+		CalendarID: 1,
+		Status:     "TENTATIVE",
+		Transp:     "TRANSPARENT",
+		Class:      "PRIVATE",
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if updated.Title != "Updated Title" {
+		t.Errorf("Title = %q, want %q", updated.Title, "Updated Title")
+	}
+	if updated.Sequence != 1 {
+		t.Errorf("Sequence = %d, want 1 (auto-incremented)", updated.Sequence)
+	}
+	if updated.Status != "TENTATIVE" {
+		t.Errorf("Status = %q, want %q", updated.Status, "TENTATIVE")
+	}
+}
+
+func TestEventService_UpsertByUID(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	p := UpsertParams{
+		UID:        "test-upsert-uid",
+		CalendarID: 1,
+		Title:      "Original",
+		StartTime:  time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC),
+	}
+
+	first, err := svc.UpsertByUID(ctx, p)
+	if err != nil {
+		t.Fatalf("first upsert: %v", err)
+	}
+	if first.Title != "Original" {
+		t.Errorf("first Title = %q", first.Title)
+	}
+
+	p.Title = "Updated"
+	second, err := svc.UpsertByUID(ctx, p)
+	if err != nil {
+		t.Fatalf("second upsert: %v", err)
+	}
+	if second.ID != first.ID {
+		t.Errorf("upsert created new row: ID %d != %d", second.ID, first.ID)
+	}
+	if second.Title != "Updated" {
+		t.Errorf("second Title = %q, want %q", second.Title, "Updated")
+	}
+}
+
+func TestEventService_Delete(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	created := createEvent(t, svc)
+
+	if err := svc.Delete(ctx, created.ID); err != nil {
+		t.Fatalf("Delete error: %v", err)
+	}
+	_, err := svc.Get(ctx, created.ID)
+	if err == nil {
+		t.Error("Get after Delete expected error")
+	}
+}
+
+func TestEventService_Alarms(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	e := createEvent(t, svc)
+
+	// Initially empty
+	alarms, _ := svc.ListAlarms(ctx, e.ID)
+	if len(alarms) != 0 {
+		t.Fatalf("initial alarms = %d, want 0", len(alarms))
+	}
+
+	// Replace with 2 alarms
+	err := svc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT15M", Description: "15 min before"},
+		{Action: "EMAIL", TriggerValue: "-PT1H", Description: "1 hour before"},
+	})
+	if err != nil {
+		t.Fatalf("ReplaceAlarms error: %v", err)
+	}
+
+	alarms, _ = svc.ListAlarms(ctx, e.ID)
+	if len(alarms) != 2 {
+		t.Fatalf("after replace: alarms = %d, want 2", len(alarms))
+	}
+	if alarms[0].Action != "DISPLAY" {
+		t.Errorf("alarm[0].Action = %q, want %q", alarms[0].Action, "DISPLAY")
+	}
+
+	// Replace again (should delete old ones)
+	svc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "AUDIO", TriggerValue: "-PT5M"},
+	})
+	alarms, _ = svc.ListAlarms(ctx, e.ID)
+	if len(alarms) != 1 {
+		t.Errorf("after second replace: alarms = %d, want 1", len(alarms))
+	}
+}
+
+func TestEventService_Attendees(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	e := createEvent(t, svc)
+
+	err := svc.ReplaceAttendees(ctx, e.ID, []model.Attendee{
+		{Email: "org@example.com", Name: "Organizer", RSVPStatus: "ACCEPTED", Role: "CHAIR", Organizer: true},
+		{Email: "user@example.com", Name: "User", RSVPStatus: "NEEDS-ACTION", Role: "REQ-PARTICIPANT"},
+	})
+	if err != nil {
+		t.Fatalf("ReplaceAttendees error: %v", err)
+	}
+
+	attendees, _ := svc.ListAttendees(ctx, e.ID)
+	if len(attendees) != 2 {
+		t.Fatalf("attendees = %d, want 2", len(attendees))
+	}
+	// Organizer sorted first (ORDER BY organizer DESC)
+	if !attendees[0].Organizer {
+		t.Error("first attendee should be organizer")
+	}
+}
+
+func TestEventService_ListOverridesByUID(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	// Master event
+	svc.UpsertByUID(ctx, UpsertParams{
+		UID: "recurring-uid", CalendarID: 1, Title: "Weekly Meeting",
+		StartTime: time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC),
+	})
+
+	// Override instance
+	svc.UpsertByUID(ctx, UpsertParams{
+		UID: "recurring-uid", CalendarID: 1, Title: "Weekly Meeting (moved)",
+		StartTime:    time.Date(2026, 4, 8, 14, 0, 0, 0, time.UTC),
+		EndTime:      time.Date(2026, 4, 8, 15, 0, 0, 0, time.UTC),
+		RecurrenceID: "2026-04-08T10:00:00Z",
+	})
+
+	overrides, err := svc.ListOverridesByUID(ctx, "recurring-uid")
+	if err != nil {
+		t.Fatalf("ListOverridesByUID error: %v", err)
+	}
+	if len(overrides) != 1 {
+		t.Fatalf("overrides = %d, want 1", len(overrides))
+	}
+	if overrides[0].Title != "Weekly Meeting (moved)" {
+		t.Errorf("override title = %q", overrides[0].Title)
+	}
+}
+
+func TestEventService_CreateDefaults(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	e, _ := svc.Create(ctx, CreateParams{
+		CalendarID: 1, Title: "No Defaults Set",
+		StartTime: time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC),
+		// Status, Transp, Class left empty
+	})
+	if e.Status != "CONFIRMED" {
+		t.Errorf("default Status = %q, want CONFIRMED", e.Status)
+	}
+	if e.Transp != "OPAQUE" {
+		t.Errorf("default Transp = %q, want OPAQUE", e.Transp)
+	}
+	if e.Class != "PUBLIC" {
+		t.Errorf("default Class = %q, want PUBLIC", e.Class)
+	}
+}

@@ -1,0 +1,273 @@
+package todo
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/douglasdemoura/tcal/internal/model"
+	"github.com/douglasdemoura/tcal/internal/testutil"
+)
+
+func newTestService(t *testing.T) *Service {
+	t.Helper()
+	db, q := testutil.NewTestDB(t)
+	return NewService(db, q)
+}
+
+func createTodo(t *testing.T, svc *Service) Todo {
+	t.Helper()
+	td, err := svc.Create(context.Background(), CreateParams{
+		CalendarID: 1,
+		Summary:    "Test Todo",
+		DueDate:    time.Date(2026, 4, 1, 23, 59, 59, 0, time.UTC).Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("create todo: %v", err)
+	}
+	return td
+}
+
+func TestTodoService_Create(t *testing.T) {
+	svc := newTestService(t)
+	td := createTodo(t, svc)
+
+	if td.ID == 0 {
+		t.Error("ID is 0")
+	}
+	if td.UID == "" {
+		t.Error("UID is empty")
+	}
+	if td.Summary != "Test Todo" {
+		t.Errorf("Summary = %q, want %q", td.Summary, "Test Todo")
+	}
+	if td.Status != "NEEDS-ACTION" {
+		t.Errorf("Status = %q, want %q", td.Status, "NEEDS-ACTION")
+	}
+	if td.Class != "PUBLIC" {
+		t.Errorf("Class = %q, want %q", td.Class, "PUBLIC")
+	}
+}
+
+func TestTodoService_Get(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	created := createTodo(t, svc)
+
+	got, err := svc.Get(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("Get error: %v", err)
+	}
+	if got.Summary != created.Summary {
+		t.Errorf("Summary = %q, want %q", got.Summary, created.Summary)
+	}
+
+	_, err = svc.Get(ctx, 999)
+	if err == nil {
+		t.Error("Get(999) expected error")
+	}
+}
+
+func TestTodoService_List(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	createTodo(t, svc)
+
+	// Create a completed todo
+	td2, _ := svc.Create(ctx, CreateParams{CalendarID: 1, Summary: "Done"})
+	svc.Complete(ctx, td2.ID)
+
+	todos, _ := svc.List(ctx)
+	if len(todos) != 1 {
+		t.Errorf("List (incomplete) = %d, want 1", len(todos))
+	}
+}
+
+func TestTodoService_ListAll(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	createTodo(t, svc)
+
+	td2, _ := svc.Create(ctx, CreateParams{CalendarID: 1, Summary: "Done"})
+	svc.Complete(ctx, td2.ID)
+
+	todos, _ := svc.ListAll(ctx)
+	if len(todos) != 2 {
+		t.Errorf("ListAll = %d, want 2", len(todos))
+	}
+}
+
+func TestTodoService_ListByCalendar(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	createTodo(t, svc)
+
+	todos, _ := svc.ListByCalendar(ctx, 1)
+	if len(todos) != 1 {
+		t.Errorf("calendar 1: %d, want 1", len(todos))
+	}
+
+	todos2, _ := svc.ListByCalendar(ctx, 999)
+	if len(todos2) != 0 {
+		t.Errorf("calendar 999: %d, want 0", len(todos2))
+	}
+}
+
+func TestTodoService_ListByStatus(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	createTodo(t, svc)
+
+	todos, _ := svc.ListByStatus(ctx, "NEEDS-ACTION")
+	if len(todos) != 1 {
+		t.Errorf("NEEDS-ACTION: %d, want 1", len(todos))
+	}
+
+	todos2, _ := svc.ListByStatus(ctx, "COMPLETED")
+	if len(todos2) != 0 {
+		t.Errorf("COMPLETED: %d, want 0", len(todos2))
+	}
+}
+
+func TestTodoService_ListByDueDateRange(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	createTodo(t, svc) // due April 1
+
+	from := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 4, 2, 0, 0, 0, 0, time.UTC)
+	todos, _ := svc.ListByDueDateRange(ctx, from, to)
+	if len(todos) != 1 {
+		t.Errorf("in-range: %d, want 1", len(todos))
+	}
+
+	from2 := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	to2 := time.Date(2026, 5, 2, 0, 0, 0, 0, time.UTC)
+	todos2, _ := svc.ListByDueDateRange(ctx, from2, to2)
+	if len(todos2) != 0 {
+		t.Errorf("out-of-range: %d, want 0", len(todos2))
+	}
+}
+
+func TestTodoService_Update(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	created := createTodo(t, svc)
+
+	updated, err := svc.Update(ctx, created.ID, UpdateParams{
+		Summary:    "Updated Summary",
+		DueDate:    created.DueDate,
+		Status:     "IN-PROCESS",
+		CalendarID: 1,
+		Class:      "PRIVATE",
+		PercentComplete: 50,
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if updated.Summary != "Updated Summary" {
+		t.Errorf("Summary = %q", updated.Summary)
+	}
+	if updated.Status != "IN-PROCESS" {
+		t.Errorf("Status = %q", updated.Status)
+	}
+	if updated.PercentComplete != 50 {
+		t.Errorf("PercentComplete = %d", updated.PercentComplete)
+	}
+	if updated.Sequence != 1 {
+		t.Errorf("Sequence = %d, want 1", updated.Sequence)
+	}
+}
+
+func TestTodoService_Complete(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	created := createTodo(t, svc)
+
+	completed, err := svc.Complete(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("Complete error: %v", err)
+	}
+	if completed.Status != "COMPLETED" {
+		t.Errorf("Status = %q, want COMPLETED", completed.Status)
+	}
+	if completed.PercentComplete != 100 {
+		t.Errorf("PercentComplete = %d, want 100", completed.PercentComplete)
+	}
+	if completed.CompletedAt == "" {
+		t.Error("CompletedAt is empty")
+	}
+}
+
+func TestTodoService_UpsertByUID(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	p := UpsertParams{
+		UID:        "test-upsert-uid",
+		CalendarID: 1,
+		Summary:    "Original",
+		DueDate:    "2026-04-01T23:59:59Z",
+	}
+
+	first, _ := svc.UpsertByUID(ctx, p)
+	p.Summary = "Updated"
+	second, _ := svc.UpsertByUID(ctx, p)
+
+	if second.ID != first.ID {
+		t.Errorf("upsert created new row: ID %d != %d", second.ID, first.ID)
+	}
+	if second.Summary != "Updated" {
+		t.Errorf("Summary = %q, want %q", second.Summary, "Updated")
+	}
+}
+
+func TestTodoService_Delete(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	created := createTodo(t, svc)
+
+	if err := svc.Delete(ctx, created.ID); err != nil {
+		t.Fatalf("Delete error: %v", err)
+	}
+	_, err := svc.Get(ctx, created.ID)
+	if err == nil {
+		t.Error("Get after Delete expected error")
+	}
+}
+
+func TestTodoService_Alarms(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	td := createTodo(t, svc)
+
+	alarms, _ := svc.ListAlarms(ctx, td.ID)
+	if len(alarms) != 0 {
+		t.Fatalf("initial alarms = %d", len(alarms))
+	}
+
+	svc.ReplaceAlarms(ctx, td.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT15M"},
+	})
+	alarms, _ = svc.ListAlarms(ctx, td.ID)
+	if len(alarms) != 1 {
+		t.Errorf("after replace: alarms = %d, want 1", len(alarms))
+	}
+}
+
+func TestTodoService_Attendees(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	td := createTodo(t, svc)
+
+	svc.ReplaceAttendees(ctx, td.ID, []model.Attendee{
+		{Email: "user@example.com", Name: "User", RSVPStatus: "ACCEPTED", Role: "REQ-PARTICIPANT"},
+	})
+	attendees, _ := svc.ListAttendees(ctx, td.ID)
+	if len(attendees) != 1 {
+		t.Errorf("attendees = %d, want 1", len(attendees))
+	}
+	if attendees[0].Email != "user@example.com" {
+		t.Errorf("email = %q", attendees[0].Email)
+	}
+}
