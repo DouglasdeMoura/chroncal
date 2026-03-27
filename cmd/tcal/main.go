@@ -29,7 +29,7 @@ for scriptable access to all calendar operations.
 
 Resource groups:
   event      Manage events (list, get, add, update, delete)
-  todo       Manage todos (list, get, add, update, delete, complete)
+  todo       Manage todos (list, get, add, update, delete)
   calendar   Manage calendars (list, get, create, update, delete)
   ical       Import and export iCal (.ics) files`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {

@@ -16,7 +16,7 @@ func todoCmd() *cobra.Command {
 		Use:   "todo",
 		Short: "Manage todos",
 	}
-	cmd.AddCommand(todoListCmd(), todoGetCmd(), todoAddCmd(), todoUpdateCmd(), todoDeleteCmd(), todoCompleteCmd())
+	cmd.AddCommand(todoListCmd(), todoGetCmd(), todoAddCmd(), todoUpdateCmd(), todoDeleteCmd())
 	return cmd
 }
 
@@ -254,6 +254,10 @@ func todoUpdateCmd() *cobra.Command {
 			}
 			if cmd.Flags().Changed("status") {
 				p.Status = status
+				if status == "COMPLETED" {
+					p.CompletedAt = time.Now().UTC().Format(time.RFC3339)
+					p.PercentComplete = 100
+				}
 			}
 			if cmd.Flags().Changed("progress") {
 				p.PercentComplete = progress
@@ -333,35 +337,3 @@ func todoDeleteCmd() *cobra.Command {
 	return cmd
 }
 
-func todoCompleteCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "complete <id>",
-		Short: "Mark a todo as completed",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			a, err := initApp()
-			if err != nil {
-				return err
-			}
-			defer a.Close()
-
-			id, err := strconv.ParseInt(args[0], 10, 64)
-			if err != nil {
-				return fmt.Errorf("invalid todo ID: %w", err)
-			}
-
-			t, err := a.Todos.Complete(context.Background(), id)
-			if err != nil {
-				return fmt.Errorf("complete todo: %w", err)
-			}
-
-			w := cmd.OutOrStdout()
-			if jsonOut {
-				return printJSON(w, toJSONTodo(t))
-			}
-			fmt.Fprintf(w, "Completed: %s\n", t.Summary)
-			return nil
-		},
-	}
-	return cmd
-}
