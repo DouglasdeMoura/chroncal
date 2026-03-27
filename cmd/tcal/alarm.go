@@ -73,7 +73,6 @@ func alarmCheckCmd() *cobra.Command {
 				if jsonOut {
 					return printJSON(w, []any{})
 				}
-				fmt.Fprintln(w, "No alarms due.")
 				return nil
 			}
 
@@ -81,14 +80,24 @@ func alarmCheckCmd() *cobra.Command {
 			for _, da := range due {
 				fireErr := fireAlarm(da)
 
-				status := "fired"
 				if fireErr != nil {
 					fmt.Fprintf(os.Stderr, "tcal: alarm error: %s (event=%q action=%s): %v\n",
 						da.TriggerAt.Local().Format("15:04"), da.Event.Title, da.Alarm.Action, fireErr)
-					status = fmt.Sprintf("error: %v", fireErr)
-				} else if markErr := a.Alarms.MarkFired(ctx, da); markErr != nil {
+					if jsonOut {
+						results = append(results, map[string]any{
+							"event_id":   da.Event.ID,
+							"event":      da.Event.Title,
+							"alarm_id":   da.Alarm.ID,
+							"action":     da.Alarm.Action,
+							"trigger_at": da.TriggerAt.Format(time.RFC3339),
+							"status":     fmt.Sprintf("error: %v", fireErr),
+						})
+					}
+					continue
+				}
+
+				if markErr := a.Alarms.MarkFired(ctx, da); markErr != nil {
 					fmt.Fprintf(os.Stderr, "tcal: mark-fired error: event=%q: %v\n", da.Event.Title, markErr)
-					status = fmt.Sprintf("mark-fired error: %v", markErr)
 				}
 
 				if jsonOut {
@@ -98,10 +107,10 @@ func alarmCheckCmd() *cobra.Command {
 						"alarm_id":   da.Alarm.ID,
 						"action":     da.Alarm.Action,
 						"trigger_at": da.TriggerAt.Format(time.RFC3339),
-						"status":     status,
+						"status":     "fired",
 					})
 				} else {
-					fmt.Fprintf(w, "  [%s] %s - %s (%s)\n", da.Alarm.Action, da.Event.Title, da.TriggerAt.Local().Format("15:04"), status)
+					fmt.Fprintf(w, "%s\t%s\t%s\n", da.TriggerAt.Local().Format("15:04"), da.Alarm.Action, da.Event.Title)
 				}
 			}
 
@@ -137,7 +146,6 @@ func alarmListCmd() *cobra.Command {
 				if jsonOut {
 					return printJSON(w, []any{})
 				}
-				fmt.Fprintln(w, "No pending alarms.")
 				return nil
 			}
 
@@ -267,7 +275,7 @@ func alarmDaemonCmd() *cobra.Command {
 			defer stop()
 
 			w := cmd.OutOrStdout()
-			fmt.Fprintf(w, "Alarm daemon started (interval: %s). Press Ctrl+C to stop.\n", dur)
+			fmt.Fprintf(os.Stderr, "tcal: daemon started (interval: %s)\n", dur)
 
 			ticker := time.NewTicker(dur)
 			defer ticker.Stop()
@@ -282,17 +290,17 @@ func alarmDaemonCmd() *cobra.Command {
 				for _, da := range due {
 					fireErr := fireAlarm(da)
 
-					status := "fired"
 					if fireErr != nil {
 						fmt.Fprintf(os.Stderr, "tcal: alarm error: %s (event=%q action=%s): %v\n",
 							da.TriggerAt.Local().Format("15:04"), da.Event.Title, da.Alarm.Action, fireErr)
-						status = fmt.Sprintf("error: %v", fireErr)
-					} else if markErr := a.Alarms.MarkFired(ctx, da); markErr != nil {
-						fmt.Fprintf(os.Stderr, "tcal: mark-fired error: event=%q: %v\n", da.Event.Title, markErr)
-						status = fmt.Sprintf("mark-fired error: %v", markErr)
+						continue
 					}
 
-					fmt.Fprintf(w, "  [%s] %s - %s (%s)\n", da.Alarm.Action, da.Event.Title, da.TriggerAt.Local().Format("15:04"), status)
+					if markErr := a.Alarms.MarkFired(ctx, da); markErr != nil {
+						fmt.Fprintf(os.Stderr, "tcal: mark-fired error: event=%q: %v\n", da.Event.Title, markErr)
+					}
+
+					fmt.Fprintf(w, "%s\t%s\t%s\n", da.TriggerAt.Local().Format("15:04"), da.Alarm.Action, da.Event.Title)
 				}
 			}
 
@@ -301,7 +309,7 @@ func alarmDaemonCmd() *cobra.Command {
 			for {
 				select {
 				case <-ctx.Done():
-					fmt.Fprintln(w, "Alarm daemon stopped.")
+					fmt.Fprintf(os.Stderr, "tcal: daemon stopped\n")
 					return nil
 				case <-ticker.C:
 					runCheck()
