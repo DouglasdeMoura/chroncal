@@ -207,7 +207,11 @@ func eventAddCmd() *cobra.Command {
 			if jsonOut {
 				return printJSON(w, toJSONEvent(e))
 			}
-			printEvent(w, e)
+			if allDay {
+				fmt.Fprintf(w, "Created: %s on %s (all day)\n", e.Title, e.StartTime.Local().Format("Mon, Jan 2 2006"))
+			} else {
+				fmt.Fprintf(w, "Created: %s on %s at %s (%s)\n", e.Title, e.StartTime.Local().Format("Mon, Jan 2 2006"), e.StartTime.Local().Format("15:04"), dur)
+			}
 			return nil
 		},
 	}
@@ -407,7 +411,7 @@ func eventDeleteCmd() *cobra.Command {
 			if jsonOut {
 				return printJSON(w, map[string]any{"deleted": true, "id": id})
 			}
-			fmt.Fprintf(w, "tcal: deleted event %d\n", id)
+			fmt.Fprintf(w, "Deleted event %d.\n", id)
 			return nil
 		},
 	}
