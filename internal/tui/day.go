@@ -7,11 +7,13 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/douglasdemoura/tcal/internal/event"
+	"github.com/douglasdemoura/tcal/internal/todo"
 )
 
 type dayView struct {
 	events   []event.Event
-	selected int
+	todos    []todo.Todo
+	selected int // index across both events then todos
 }
 
 func newDayView() dayView {
@@ -20,28 +22,50 @@ func newDayView() dayView {
 
 func (d *dayView) setEvents(events []event.Event) {
 	d.events = events
-	if d.selected >= len(events) {
-		d.selected = max(0, len(events)-1)
+	d.clampSelection()
+}
+
+func (d *dayView) setTodos(todos []todo.Todo) {
+	d.todos = todos
+	d.clampSelection()
+}
+
+func (d *dayView) totalItems() int {
+	return len(d.events) + len(d.todos)
+}
+
+func (d *dayView) clampSelection() {
+	total := d.totalItems()
+	if d.selected >= total {
+		d.selected = max(0, total-1)
 	}
 }
 
-func (d *dayView) nextEvent() {
-	if d.selected < len(d.events)-1 {
+func (d *dayView) next() {
+	if d.selected < d.totalItems()-1 {
 		d.selected++
 	}
 }
 
-func (d *dayView) prevEvent() {
+func (d *dayView) prev() {
 	if d.selected > 0 {
 		d.selected--
 	}
 }
 
-func (d *dayView) selectedEvent() *event.Event {
-	if len(d.events) == 0 {
-		return nil
+// selectedItem returns the selected event or todo (one will be nil).
+func (d *dayView) selectedItem() (*event.Event, *todo.Todo) {
+	if d.totalItems() == 0 {
+		return nil, nil
 	}
-	return &d.events[d.selected]
+	if d.selected < len(d.events) {
+		return &d.events[d.selected], nil
+	}
+	todoIdx := d.selected - len(d.events)
+	if todoIdx < len(d.todos) {
+		return nil, &d.todos[todoIdx]
+	}
+	return nil, nil
 }
 
 func (d dayView) view(dateLabel string) string {
@@ -50,13 +74,13 @@ func (d dayView) view(dateLabel string) string {
 	b.WriteString(titleStyle.Render(dateLabel))
 	b.WriteString("\n\n")
 
-	if len(d.events) == 0 {
-		b.WriteString(lipgloss.NewStyle().Foreground(DefaultTheme.Muted).Render("  No events for this day"))
+	if d.totalItems() == 0 {
+		b.WriteString(lipgloss.NewStyle().Foreground(DefaultTheme.Muted).Render("  No events or todos for this day"))
 		b.WriteString("\n")
 		return b.String()
 	}
 
-	// All-day events first
+	// All-day events
 	var allDay, timed []event.Event
 	for _, e := range d.events {
 		if e.AllDay {
@@ -98,6 +122,31 @@ func (d dayView) view(dateLabel string) string {
 			t := eventTimeStyle.Render(timeRange)
 			title := eventTitleStyle.Render(e.Title)
 			b.WriteString(fmt.Sprintf("%s%s %s %s\n", prefix, dot, t, title))
+			idx++
+		}
+	}
+
+	// Todos
+	if len(d.todos) > 0 {
+		b.WriteString("\n")
+		b.WriteString(subtitleStyle.Render("  Todos"))
+		b.WriteString("\n")
+		for _, t := range d.todos {
+			prefix := "  "
+			if idx == d.selected {
+				prefix = "▸ "
+			}
+			check := "○"
+			checkColor := DefaultTheme.Accent
+			if t.IsCompleted() {
+				check = "●"
+				checkColor = DefaultTheme.Muted
+			} else if t.IsOverdue() {
+				checkColor = DefaultTheme.Error
+			}
+			checkStyle := lipgloss.NewStyle().Foreground(checkColor)
+			title := eventTitleStyle.Render(t.Summary)
+			b.WriteString(fmt.Sprintf("%s%s %s\n", prefix, checkStyle.Render(check), title))
 			idx++
 		}
 	}

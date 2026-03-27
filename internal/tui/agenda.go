@@ -2,16 +2,25 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/douglasdemoura/tcal/internal/event"
+	"github.com/douglasdemoura/tcal/internal/todo"
 )
 
+// agendaItem is a union of event or todo for unified rendering.
+type agendaItem struct {
+	event *event.Event
+	todo  *todo.Todo
+	date  time.Time // sort key
+}
+
 type agendaView struct {
-	events   []event.Event
+	items    []agendaItem
 	selected int
 	today    time.Time
 }
@@ -24,14 +33,72 @@ func newAgendaView() agendaView {
 }
 
 func (a *agendaView) setEvents(events []event.Event) {
-	a.events = events
-	if a.selected >= len(events) {
-		a.selected = max(0, len(events)-1)
+	a.rebuildItems(events, a.extractTodos())
+}
+
+func (a *agendaView) setTodos(todos []todo.Todo) {
+	a.rebuildItems(a.extractEvents(), todos)
+}
+
+func (a *agendaView) extractEvents() []event.Event {
+	var events []event.Event
+	for _, item := range a.items {
+		if item.event != nil {
+			events = append(events, *item.event)
+		}
+	}
+	return events
+}
+
+func (a *agendaView) extractTodos() []todo.Todo {
+	var todos []todo.Todo
+	for _, item := range a.items {
+		if item.todo != nil {
+			todos = append(todos, *item.todo)
+		}
+	}
+	return todos
+}
+
+func (a *agendaView) rebuildItems(events []event.Event, todos []todo.Todo) {
+	a.items = nil
+
+	for i := range events {
+		a.items = append(a.items, agendaItem{
+			event: &events[i],
+			date:  events[i].StartTime.Local(),
+		})
+	}
+	for i := range todos {
+		if todos[i].DueDate == "" {
+			// Todos without due date go at the end
+			a.items = append(a.items, agendaItem{
+				todo: &todos[i],
+				date: time.Date(9999, 1, 1, 0, 0, 0, 0, time.Local),
+			})
+		} else {
+			a.items = append(a.items, agendaItem{
+				todo: &todos[i],
+				date: todos[i].ParseDueDate().Local(),
+			})
+		}
+	}
+
+	sort.Slice(a.items, func(i, j int) bool {
+		return a.items[i].date.Before(a.items[j].date)
+	})
+
+	a.clampSelection()
+}
+
+func (a *agendaView) clampSelection() {
+	if a.selected >= len(a.items) {
+		a.selected = max(0, len(a.items)-1)
 	}
 }
 
 func (a *agendaView) next() {
-	if a.selected < len(a.events)-1 {
+	if a.selected < len(a.items)-1 {
 		a.selected++
 	}
 }
@@ -42,36 +109,44 @@ func (a *agendaView) prev() {
 	}
 }
 
-func (a *agendaView) selectedEvent() *event.Event {
-	if len(a.events) == 0 {
-		return nil
+func (a *agendaView) selectedItem() (*event.Event, *todo.Todo) {
+	if len(a.items) == 0 {
+		return nil, nil
 	}
-	return &a.events[a.selected]
+	item := a.items[a.selected]
+	return item.event, item.todo
 }
 
 func (a agendaView) view() string {
 	var b strings.Builder
 
-	b.WriteString(titleStyle.Render("Upcoming Events"))
+	b.WriteString(titleStyle.Render("Upcoming"))
 	b.WriteString("\n\n")
 
-	if len(a.events) == 0 {
-		b.WriteString(lipgloss.NewStyle().Foreground(DefaultTheme.Muted).Render("  No upcoming events"))
+	if len(a.items) == 0 {
+		b.WriteString(lipgloss.NewStyle().Foreground(DefaultTheme.Muted).Render("  No upcoming events or todos"))
 		b.WriteString("\n")
 		return b.String()
 	}
 
 	var currentDate string
-	for i, e := range a.events {
-		localDate := e.StartTime.Local()
-		dateKey := localDate.Format("2006-01-02")
+	for i, item := range a.items {
+		dateKey := item.date.Format("2006-01-02")
+		if dateKey == "9999-01-01" {
+			dateKey = "no-due-date"
+		}
 
 		if dateKey != currentDate {
 			if currentDate != "" {
 				b.WriteString("\n")
 			}
 
-			label := a.dateLabel(localDate)
+			var label string
+			if dateKey == "no-due-date" {
+				label = "No Due Date"
+			} else {
+				label = a.dateLabel(item.date)
+			}
 			dateStyle := lipgloss.NewStyle().Bold(true).Foreground(DefaultTheme.Text)
 			b.WriteString("  " + dateStyle.Render(label))
 			b.WriteString("\n")
@@ -85,16 +160,31 @@ func (a agendaView) view() string {
 			prefix = "▸ "
 		}
 
-		dot := eventDotStyle.Render("●")
-		var timeStr string
-		if e.AllDay {
-			timeStr = eventTimeStyle.Render("all day")
-		} else {
-			timeStr = eventTimeStyle.Render(localDate.Format("15:04"))
+		if item.event != nil {
+			e := item.event
+			dot := eventDotStyle.Render("●")
+			var timeStr string
+			if e.AllDay {
+				timeStr = eventTimeStyle.Render("all day")
+			} else {
+				timeStr = eventTimeStyle.Render(e.StartTime.Local().Format("15:04"))
+			}
+			title := eventTitleStyle.Render(e.Title)
+			b.WriteString(fmt.Sprintf("%s%s %s %s\n", prefix, dot, timeStr, title))
+		} else if item.todo != nil {
+			t := item.todo
+			check := "○"
+			checkColor := DefaultTheme.Accent
+			if t.IsCompleted() {
+				check = "●"
+				checkColor = DefaultTheme.Muted
+			} else if t.IsOverdue() {
+				checkColor = DefaultTheme.Error
+			}
+			checkStyle := lipgloss.NewStyle().Foreground(checkColor)
+			title := eventTitleStyle.Render(t.Summary)
+			b.WriteString(fmt.Sprintf("%s%s %s %s\n", prefix, checkStyle.Render(check), eventTimeStyle.Render("todo"), title))
 		}
-		title := eventTitleStyle.Render(e.Title)
-
-		b.WriteString(fmt.Sprintf("%s%s %s %s\n", prefix, dot, timeStr, title))
 	}
 
 	return b.String()
@@ -105,11 +195,11 @@ func (a agendaView) dateLabel(date time.Time) string {
 	diff := d.Sub(a.today).Hours() / 24
 
 	switch {
-	case diff == 0:
+	case diff >= 0 && diff < 1:
 		return fmt.Sprintf("Today — %s", date.Format("Monday, January 2"))
-	case diff == 1:
+	case diff >= 1 && diff < 2:
 		return fmt.Sprintf("Tomorrow — %s", date.Format("Monday, January 2"))
-	case diff == -1:
+	case diff >= -1 && diff < 0:
 		return fmt.Sprintf("Yesterday — %s", date.Format("Monday, January 2"))
 	default:
 		return date.Format("Monday, January 2, 2006")

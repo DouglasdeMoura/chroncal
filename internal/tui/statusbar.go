@@ -10,11 +10,11 @@ func renderStatusBar(viewName string, width int) string {
 	helpItems := []struct{ key, desc string }{
 		{"hjkl", "navigate"},
 		{"enter", "select"},
-		{"n", "new"},
+		{"n", "event"},
+		{"t", "todo"},
+		{"space", "done"},
 		{"1-4", "views"},
-		{"tab", "sidebar"},
 		{"g", "today"},
-		{"?", "help"},
 		{"q", "quit"},
 	}
 

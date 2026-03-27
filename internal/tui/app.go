@@ -12,6 +12,7 @@ import (
 	"github.com/douglasdemoura/tcal/internal/calendar"
 	"github.com/douglasdemoura/tcal/internal/event"
 	"github.com/douglasdemoura/tcal/internal/model"
+	"github.com/douglasdemoura/tcal/internal/todo"
 )
 
 type viewMode int
@@ -50,15 +51,24 @@ type eventsLoadedMsg struct {
 	events []event.Event
 }
 
+type todosLoadedMsg struct {
+	todos []todo.Todo
+}
+
 type calendarsLoadedMsg struct {
 	calendars []calendar.Calendar
 }
 
-type eventDeletedMsg struct {
-	id int64
-}
+type eventDeletedMsg struct{ id int64 }
+type todoDeletedMsg struct{ id int64 }
+type todoCompletedMsg struct{ t todo.Todo }
 
 type eventDetailLoadedMsg struct {
+	alarms    []model.Alarm
+	attendees []model.Attendee
+}
+
+type todoDetailLoadedMsg struct {
 	alarms    []model.Alarm
 	attendees []model.Attendee
 }
@@ -77,9 +87,13 @@ type Model struct {
 	agenda        agendaView
 	sidebar       sidebar
 	form          *eventForm
+	todoForm      *todoForm
 	showSidebar   bool
 	showDetail    bool
+	detailType    string // "event" or "todo"
 	selectedEvent *event.Event
+	selectedTodo  *todo.Todo
+	todos         []todo.Todo
 	calendarMap   map[int64]calendar.Calendar
 	width         int
 	height        int
@@ -102,7 +116,7 @@ func NewModel(a *app.App) Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.loadCalendars(), m.loadEvents())
+	return tea.Batch(m.loadCalendars(), m.loadEvents(), m.loadTodos())
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -135,10 +149,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.agenda.setEvents(msg.events)
 		return m, nil
 
+	case todosLoadedMsg:
+		m.todos = msg.todos
+		m.month.setTodos(msg.todos)
+		m.day.setTodos(m.month.selectedTodos())
+		m.agenda.setTodos(msg.todos)
+		return m, nil
+
 	case eventDetailLoadedMsg:
 		if m.selectedEvent != nil {
 			m.selectedEvent.Alarms = msg.alarms
 			m.selectedEvent.Attendees = msg.attendees
+		}
+		return m, nil
+
+	case todoDetailLoadedMsg:
+		if m.selectedTodo != nil {
+			m.selectedTodo.Alarms = msg.alarms
+			m.selectedTodo.Attendees = msg.attendees
 		}
 		return m, nil
 
@@ -147,10 +175,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.focus = focusCalendar
 		return m, m.loadEvents()
 
+	case todoSavedMsg:
+		m.todoForm = nil
+		m.focus = focusCalendar
+		return m, m.loadTodos()
+
 	case eventDeletedMsg:
 		m.showDetail = false
 		m.selectedEvent = nil
 		return m, m.loadEvents()
+
+	case todoDeletedMsg:
+		m.showDetail = false
+		m.selectedTodo = nil
+		return m, m.loadTodos()
+
+	case todoCompletedMsg:
+		m.showDetail = false
+		m.selectedTodo = nil
+		return m, m.loadTodos()
 
 	case errMsg:
 		m.err = msg.err
@@ -161,27 +204,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Form mode — intercept everything
+	// Event form
 	if m.form != nil {
-		return m.handleFormKeys(msg)
+		return m.handleEventFormKeys(msg)
+	}
+	// Todo form
+	if m.todoForm != nil {
+		return m.handleTodoFormKeys(msg)
 	}
 
-	// Global quit
 	if key.Matches(msg, keys.Quit) {
 		return m, tea.Quit
 	}
 
-	// Detail view keys
 	if m.showDetail {
 		return m.handleDetailKeys(msg)
 	}
 
-	// Sidebar-focused keys
 	if m.focus == focusSidebar {
 		return m.handleSidebarKeys(msg)
 	}
 
-	// View-switching keys
+	// View-switching
 	switch {
 	case key.Matches(msg, keys.MonthView):
 		m.view = viewMonth
@@ -192,10 +236,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, keys.DayView):
 		m.view = viewDay
 		m.day.setEvents(m.month.selectedEvents())
+		m.day.setTodos(m.month.selectedTodos())
 		return m, nil
 	case key.Matches(msg, keys.AgendaView):
 		m.view = viewAgenda
-		return m, m.loadAgendaEvents()
+		return m, tea.Batch(m.loadAgendaEvents(), m.loadTodos())
 	case key.Matches(msg, keys.ToggleSidebar):
 		if m.focus == focusCalendar {
 			m.focus = focusSidebar
@@ -206,7 +251,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// View-specific keys
 	switch m.view {
 	case viewMonth:
 		return m.handleMonthKeys(msg)
@@ -221,7 +265,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleFormKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleEventFormKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.Back):
 		m.form = nil
@@ -236,6 +280,25 @@ func (m Model) handleFormKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		f, cmd := m.form.update(msg)
 		*m.form = f
+		return m, cmd
+	}
+}
+
+func (m Model) handleTodoFormKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, keys.Back):
+		m.todoForm = nil
+		m.focus = focusCalendar
+		return m, nil
+	case key.Matches(msg, key.NewBinding(key.WithKeys("ctrl+s"))):
+		return m, m.todoForm.save(m.app)
+	default:
+		handled, cmd := handleTodoFormKey(msg, m.todoForm)
+		if handled {
+			return m, cmd
+		}
+		f, cmd := m.todoForm.update(msg)
+		*m.todoForm = f
 		return m, cmd
 	}
 }
@@ -262,18 +325,23 @@ func (m Model) handleMonthKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, keys.Enter):
 		m.view = viewDay
 		m.day.setEvents(m.month.selectedEvents())
+		m.day.setTodos(m.month.selectedTodos())
 		return m, nil
 	case key.Matches(msg, keys.NewEvent):
 		m.openNewEventForm()
+		return m, nil
+	case key.Matches(msg, keys.NewTodo):
+		m.openNewTodoForm()
 		return m, nil
 	default:
 		return m, nil
 	}
 
 	m.day.setEvents(m.month.selectedEvents())
+	m.day.setTodos(m.month.selectedTodos())
 
 	if m.month.month != prevMonth || m.month.year != prevYear {
-		return m, m.loadEvents()
+		return m, tea.Batch(m.loadEvents(), m.loadTodos())
 	}
 	return m, nil
 }
@@ -296,16 +364,20 @@ func (m Model) handleWeekKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, keys.Enter):
 		m.view = viewDay
 		m.day.setEvents(m.month.selectedEvents())
+		m.day.setTodos(m.month.selectedTodos())
 		return m, nil
 	case key.Matches(msg, keys.NewEvent):
 		m.openNewEventForm()
+		return m, nil
+	case key.Matches(msg, keys.NewTodo):
+		m.openNewTodoForm()
 		return m, nil
 	default:
 		return m, nil
 	}
 
 	if m.month.month != prevMonth || m.month.year != prevYear {
-		return m, m.loadEvents()
+		return m, tea.Batch(m.loadEvents(), m.loadTodos())
 	}
 	return m, nil
 }
@@ -313,27 +385,41 @@ func (m Model) handleWeekKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleDayKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.Up):
-		m.day.prevEvent()
+		m.day.prev()
 	case key.Matches(msg, keys.Down):
-		m.day.nextEvent()
+		m.day.next()
 	case key.Matches(msg, keys.Left):
 		m.month.prevDay()
 		m.day.setEvents(m.month.selectedEvents())
+		m.day.setTodos(m.month.selectedTodos())
 	case key.Matches(msg, keys.Right):
 		m.month.nextDay()
 		m.day.setEvents(m.month.selectedEvents())
+		m.day.setTodos(m.month.selectedTodos())
 	case key.Matches(msg, keys.Back):
 		m.view = viewMonth
 	case key.Matches(msg, keys.Enter):
-		if e := m.day.selectedEvent(); e != nil {
+		if e, t := m.day.selectedItem(); e != nil {
 			return m, m.selectEvent(e)
+		} else if t != nil {
+			return m, m.selectTodo(t)
+		}
+	case key.Matches(msg, keys.ToggleComplete):
+		if _, t := m.day.selectedItem(); t != nil && !t.IsCompleted() {
+			return m, m.completeTodo(t.ID)
 		}
 	case key.Matches(msg, keys.NewEvent):
 		m.openNewEventForm()
+	case key.Matches(msg, keys.NewTodo):
+		m.openNewTodoForm()
 	case key.Matches(msg, keys.Edit):
-		if e := m.day.selectedEvent(); e != nil {
+		if e, t := m.day.selectedItem(); e != nil {
 			f := newEditForm(e)
 			m.form = &f
+			m.focus = focusForm
+		} else if t != nil {
+			f := newEditTodoForm(t)
+			m.todoForm = &f
 			m.focus = focusForm
 		}
 	}
@@ -347,11 +433,19 @@ func (m Model) handleAgendaKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, keys.Down):
 		m.agenda.next()
 	case key.Matches(msg, keys.Enter):
-		if e := m.agenda.selectedEvent(); e != nil {
+		if e, t := m.agenda.selectedItem(); e != nil {
 			return m, m.selectEvent(e)
+		} else if t != nil {
+			return m, m.selectTodo(t)
+		}
+	case key.Matches(msg, keys.ToggleComplete):
+		if _, t := m.agenda.selectedItem(); t != nil && !t.IsCompleted() {
+			return m, m.completeTodo(t.ID)
 		}
 	case key.Matches(msg, keys.NewEvent):
 		m.openNewEventForm()
+	case key.Matches(msg, keys.NewTodo):
+		m.openNewTodoForm()
 	case key.Matches(msg, keys.Back):
 		m.view = viewMonth
 	}
@@ -363,14 +457,28 @@ func (m Model) handleDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, keys.Back):
 		m.showDetail = false
 		m.selectedEvent = nil
+		m.selectedTodo = nil
 	case key.Matches(msg, keys.Delete):
-		if m.selectedEvent != nil {
+		if m.detailType == "event" && m.selectedEvent != nil {
 			return m, m.deleteEvent(m.selectedEvent.ID)
 		}
+		if m.detailType == "todo" && m.selectedTodo != nil {
+			return m, m.deleteTodo(m.selectedTodo.ID)
+		}
+	case key.Matches(msg, keys.ToggleComplete):
+		if m.detailType == "todo" && m.selectedTodo != nil && !m.selectedTodo.IsCompleted() {
+			return m, m.completeTodo(m.selectedTodo.ID)
+		}
 	case key.Matches(msg, keys.Edit):
-		if m.selectedEvent != nil {
+		if m.detailType == "event" && m.selectedEvent != nil {
 			f := newEditForm(m.selectedEvent)
 			m.form = &f
+			m.focus = focusForm
+			m.showDetail = false
+		}
+		if m.detailType == "todo" && m.selectedTodo != nil {
+			f := newEditTodoForm(m.selectedTodo)
+			m.todoForm = &f
 			m.focus = focusForm
 			m.showDetail = false
 		}
@@ -402,6 +510,16 @@ func (m *Model) openNewEventForm() {
 	m.focus = focusForm
 }
 
+func (m *Model) openNewTodoForm() {
+	calID := int64(1)
+	if len(m.sidebar.calendars) > 0 {
+		calID = m.sidebar.calendars[0].ID
+	}
+	f := newTodoForm(m.month.selected, calID)
+	m.todoForm = &f
+	m.focus = focusForm
+}
+
 func (m Model) View() string {
 	if m.width == 0 {
 		return "Loading..."
@@ -409,15 +527,25 @@ func (m Model) View() string {
 
 	var mainContent string
 
-	// Form takes over the main panel
+	// Forms take over
 	if m.form != nil {
 		mainContent = panelStyle.Render(m.form.view())
-	} else if m.showDetail && m.selectedEvent != nil {
-		calName := ""
-		if c, ok := m.calendarMap[m.selectedEvent.CalendarID]; ok {
-			calName = c.Name
+	} else if m.todoForm != nil {
+		mainContent = panelStyle.Render(m.todoForm.view())
+	} else if m.showDetail {
+		if m.detailType == "todo" && m.selectedTodo != nil {
+			calName := ""
+			if c, ok := m.calendarMap[m.selectedTodo.CalendarID]; ok {
+				calName = c.Name
+			}
+			mainContent = panelStyle.Render(renderTodoDetail(m.selectedTodo, calName))
+		} else if m.selectedEvent != nil {
+			calName := ""
+			if c, ok := m.calendarMap[m.selectedEvent.CalendarID]; ok {
+				calName = c.Name
+			}
+			mainContent = panelStyle.Render(renderEventDetail(m.selectedEvent, calName))
 		}
-		mainContent = panelStyle.Render(renderEventDetail(m.selectedEvent, calName))
 	} else {
 		switch m.view {
 		case viewMonth:
@@ -437,7 +565,6 @@ func (m Model) View() string {
 		mainContent = panelStyle.Render(mainContent)
 	}
 
-	// Error display
 	if m.err != nil {
 		errBar := lipgloss.NewStyle().
 			Foreground(DefaultTheme.Error).
@@ -500,6 +627,16 @@ func (m Model) loadEvents() tea.Cmd {
 	}
 }
 
+func (m Model) loadTodos() tea.Cmd {
+	return func() tea.Msg {
+		todos, err := m.app.Todos.List(context.Background())
+		if err != nil {
+			return errMsg{err}
+		}
+		return todosLoadedMsg{todos}
+	}
+}
+
 func (m Model) loadAgendaEvents() tea.Cmd {
 	return func() tea.Msg {
 		now := time.Now()
@@ -515,8 +652,18 @@ func (m Model) loadAgendaEvents() tea.Cmd {
 
 func (m *Model) selectEvent(e *event.Event) tea.Cmd {
 	m.selectedEvent = e
+	m.selectedTodo = nil
+	m.detailType = "event"
 	m.showDetail = true
 	return m.loadEventDetail(e.ID)
+}
+
+func (m *Model) selectTodo(t *todo.Todo) tea.Cmd {
+	m.selectedTodo = t
+	m.selectedEvent = nil
+	m.detailType = "todo"
+	m.showDetail = true
+	return m.loadTodoDetail(t.ID)
 }
 
 func (m Model) loadEventDetail(id int64) tea.Cmd {
@@ -528,6 +675,15 @@ func (m Model) loadEventDetail(id int64) tea.Cmd {
 	}
 }
 
+func (m Model) loadTodoDetail(id int64) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		alarms, _ := m.app.Todos.ListAlarms(ctx, id)
+		attendees, _ := m.app.Todos.ListAttendees(ctx, id)
+		return todoDetailLoadedMsg{alarms, attendees}
+	}
+}
+
 func (m Model) deleteEvent(id int64) tea.Cmd {
 	return func() tea.Msg {
 		err := m.app.Events.Delete(context.Background(), id)
@@ -535,6 +691,26 @@ func (m Model) deleteEvent(id int64) tea.Cmd {
 			return errMsg{err}
 		}
 		return eventDeletedMsg{id}
+	}
+}
+
+func (m Model) deleteTodo(id int64) tea.Cmd {
+	return func() tea.Msg {
+		err := m.app.Todos.Delete(context.Background(), id)
+		if err != nil {
+			return errMsg{err}
+		}
+		return todoDeletedMsg{id}
+	}
+}
+
+func (m Model) completeTodo(id int64) tea.Cmd {
+	return func() tea.Msg {
+		t, err := m.app.Todos.Complete(context.Background(), id)
+		if err != nil {
+			return errMsg{err}
+		}
+		return todoCompletedMsg{t}
 	}
 }
 

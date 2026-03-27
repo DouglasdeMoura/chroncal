@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/douglasdemoura/tcal/internal/event"
+	"github.com/douglasdemoura/tcal/internal/todo"
 )
 
 type monthView struct {
@@ -16,6 +17,7 @@ type monthView struct {
 	selected time.Time
 	today    time.Time
 	events   map[string][]event.Event // key: "2006-01-02"
+	todos    map[string][]todo.Todo   // key: "2006-01-02" (by due date)
 	width    int
 	height   int
 }
@@ -29,6 +31,7 @@ func newMonthView() monthView {
 		selected: today,
 		today:    today,
 		events:   make(map[string][]event.Event),
+		todos:    make(map[string][]todo.Todo),
 	}
 }
 
@@ -40,52 +43,31 @@ func (m *monthView) setEvents(events []event.Event) {
 	}
 }
 
-func (m *monthView) nextDay() {
-	m.selected = m.selected.AddDate(0, 0, 1)
-	m.syncMonth()
+func (m *monthView) setTodos(todos []todo.Todo) {
+	m.todos = make(map[string][]todo.Todo)
+	for _, t := range todos {
+		if t.DueDate == "" {
+			continue
+		}
+		key := t.ParseDueDate().Local().Format("2006-01-02")
+		m.todos[key] = append(m.todos[key], t)
+	}
 }
 
-func (m *monthView) prevDay() {
-	m.selected = m.selected.AddDate(0, 0, -1)
-	m.syncMonth()
-}
-
-func (m *monthView) nextWeek() {
-	m.selected = m.selected.AddDate(0, 0, 7)
-	m.syncMonth()
-}
-
-func (m *monthView) prevWeek() {
-	m.selected = m.selected.AddDate(0, 0, -7)
-	m.syncMonth()
-}
-
-func (m *monthView) nextMonth() {
-	m.selected = m.selected.AddDate(0, 1, 0)
-	m.syncMonth()
-}
-
-func (m *monthView) prevMonth() {
-	m.selected = m.selected.AddDate(0, -1, 0)
-	m.syncMonth()
-}
-
-func (m *monthView) goToToday() {
-	m.selected = m.today
-	m.syncMonth()
-}
-
-func (m *monthView) syncMonth() {
-	m.year = m.selected.Year()
-	m.month = m.selected.Month()
-}
+func (m *monthView) nextDay()    { m.selected = m.selected.AddDate(0, 0, 1); m.syncMonth() }
+func (m *monthView) prevDay()    { m.selected = m.selected.AddDate(0, 0, -1); m.syncMonth() }
+func (m *monthView) nextWeek()   { m.selected = m.selected.AddDate(0, 0, 7); m.syncMonth() }
+func (m *monthView) prevWeek()   { m.selected = m.selected.AddDate(0, 0, -7); m.syncMonth() }
+func (m *monthView) nextMonth()  { m.selected = m.selected.AddDate(0, 1, 0); m.syncMonth() }
+func (m *monthView) prevMonth()  { m.selected = m.selected.AddDate(0, -1, 0); m.syncMonth() }
+func (m *monthView) goToToday()  { m.selected = m.today; m.syncMonth() }
+func (m *monthView) syncMonth()  { m.year = m.selected.Year(); m.month = m.selected.Month() }
 
 func (m *monthView) dateRange() (time.Time, time.Time) {
 	first := time.Date(m.year, m.month, 1, 0, 0, 0, 0, time.Local)
 	last := first.AddDate(0, 1, 0)
 
-	// Extend to full weeks
-	offset := int(first.Weekday()) - 1 // Monday=0
+	offset := int(first.Weekday()) - 1
 	if offset < 0 {
 		offset = 6
 	}
@@ -100,12 +82,10 @@ func (m *monthView) dateRange() (time.Time, time.Time) {
 func (m monthView) view() string {
 	var b strings.Builder
 
-	// Month/year header
 	header := fmt.Sprintf("◀  %s %d  ▶", m.month.String(), m.year)
 	b.WriteString(titleStyle.Render(header))
 	b.WriteString("\n\n")
 
-	// Day-of-week headers
 	days := []string{"Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"}
 	var dayHeaders []string
 	for _, d := range days {
@@ -114,7 +94,6 @@ func (m monthView) view() string {
 	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, dayHeaders...))
 	b.WriteString("\n")
 
-	// Calendar grid
 	first := time.Date(m.year, m.month, 1, 0, 0, 0, 0, time.Local)
 	offset := int(first.Weekday()) - 1
 	if offset < 0 {
@@ -129,10 +108,16 @@ func (m monthView) view() string {
 			current := start.AddDate(0, 0, week*7+day)
 			dayStr := fmt.Sprintf("%d", current.Day())
 
-			// Add event dot indicator
 			key := current.Format("2006-01-02")
-			if evts, ok := m.events[key]; ok && len(evts) > 0 {
+			hasEvents := len(m.events[key]) > 0
+			hasTodos := len(m.todos[key]) > 0
+
+			if hasEvents && hasTodos {
 				dayStr += "·"
+			} else if hasEvents {
+				dayStr += "·"
+			} else if hasTodos {
+				dayStr += "○"
 			} else {
 				dayStr += " "
 			}
@@ -166,7 +151,7 @@ func (m monthView) view() string {
 		b.WriteString("\n")
 	}
 
-	// Events for selected day
+	// Events + todos for selected day
 	b.WriteString("\n")
 	selectedKey := m.selected.Format("2006-01-02")
 	dateLabel := m.selected.Format("Monday, January 2")
@@ -176,7 +161,11 @@ func (m monthView) view() string {
 	b.WriteString(subtitleStyle.Render(dateLabel))
 	b.WriteString("\n")
 
-	if evts, ok := m.events[selectedKey]; ok && len(evts) > 0 {
+	evts := m.events[selectedKey]
+	tds := m.todos[selectedKey]
+	hasItems := len(evts) > 0 || len(tds) > 0
+
+	if hasItems {
 		for _, e := range evts {
 			var timeStr string
 			if e.AllDay {
@@ -189,8 +178,17 @@ func (m monthView) view() string {
 			title := eventTitleStyle.Render(e.Title)
 			b.WriteString(fmt.Sprintf("  %s %s %s\n", dot, t, title))
 		}
+		for _, t := range tds {
+			check := "○"
+			if t.IsCompleted() {
+				check = "●"
+			}
+			checkStyle := lipgloss.NewStyle().Foreground(DefaultTheme.Accent)
+			title := eventTitleStyle.Render(t.Summary)
+			b.WriteString(fmt.Sprintf("  %s %s %s\n", checkStyle.Render(check), eventTimeStyle.Render("todo"), title))
+		}
 	} else {
-		b.WriteString(lipgloss.NewStyle().Foreground(DefaultTheme.Muted).Render("  No events"))
+		b.WriteString(lipgloss.NewStyle().Foreground(DefaultTheme.Muted).Render("  No events or todos"))
 		b.WriteString("\n")
 	}
 
@@ -200,4 +198,9 @@ func (m monthView) view() string {
 func (m monthView) selectedEvents() []event.Event {
 	key := m.selected.Format("2006-01-02")
 	return m.events[key]
+}
+
+func (m monthView) selectedTodos() []todo.Todo {
+	key := m.selected.Format("2006-01-02")
+	return m.todos[key]
 }
