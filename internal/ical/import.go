@@ -10,6 +10,7 @@ import (
 
 	"github.com/emersion/go-ical"
 
+	"github.com/douglasdemoura/tcal/internal/duration"
 	"github.com/douglasdemoura/tcal/internal/event"
 	"github.com/douglasdemoura/tcal/internal/model"
 	"github.com/douglasdemoura/tcal/internal/todo"
@@ -554,72 +555,7 @@ func parseAttendeesFromProps(props ical.Props) []model.Attendee {
 // addDuration parses an RFC 5545 duration string and adds it to a time.
 // Format: [+/-]P[nW] or [+/-]P[nD][T[nH][nM][nS]]
 func addDuration(t time.Time, dur string) time.Time {
-	if dur == "" {
-		return t.Add(time.Hour)
-	}
-
-	s := dur
-	neg := false
-	if s[0] == '-' {
-		neg = true
-		s = s[1:]
-	} else if s[0] == '+' {
-		s = s[1:]
-	}
-
-	if len(s) == 0 || s[0] != 'P' {
-		return t.Add(time.Hour)
-	}
-	s = s[1:]
-
-	var d time.Duration
-	var days int
-
-	// Check for weeks
-	if i := strings.Index(s, "W"); i >= 0 {
-		if w, err := strconv.Atoi(s[:i]); err == nil {
-			days = w * 7
-		}
-		if neg {
-			return t.AddDate(0, 0, -days)
-		}
-		return t.AddDate(0, 0, days)
-	}
-
-	// Parse days before T
-	if i := strings.Index(s, "D"); i >= 0 {
-		if v, err := strconv.Atoi(s[:i]); err == nil {
-			days = v
-		}
-		s = s[i+1:]
-	}
-
-	// Parse time part after T
-	if len(s) > 0 && s[0] == 'T' {
-		s = s[1:]
-		if i := strings.Index(s, "H"); i >= 0 {
-			if v, err := strconv.Atoi(s[:i]); err == nil {
-				d += time.Duration(v) * time.Hour
-			}
-			s = s[i+1:]
-		}
-		if i := strings.Index(s, "M"); i >= 0 {
-			if v, err := strconv.Atoi(s[:i]); err == nil {
-				d += time.Duration(v) * time.Minute
-			}
-			s = s[i+1:]
-		}
-		if i := strings.Index(s, "S"); i >= 0 {
-			if v, err := strconv.Atoi(s[:i]); err == nil {
-				d += time.Duration(v) * time.Second
-			}
-		}
-	}
-
-	if neg {
-		return t.AddDate(0, 0, -days).Add(-d)
-	}
-	return t.AddDate(0, 0, days).Add(d)
+	return duration.Add(t, dur)
 }
 
 func parseAttachmentsFromProps(props ical.Props) []model.Attachment {

@@ -4,12 +4,23 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 
 	"github.com/BurntSushi/toml"
 )
 
+// SMTPConfig holds SMTP connection settings for EMAIL action alarms.
+type SMTPConfig struct {
+	Host     string `toml:"host"`
+	Port     int    `toml:"port"`
+	Username string `toml:"username"`
+	Password string `toml:"password"`
+	From     string `toml:"from"`
+}
+
 type Config struct {
-	DB string `toml:"db"`
+	DB   string     `toml:"db"`
+	SMTP SMTPConfig `toml:"smtp"`
 }
 
 // Load reads configuration with precedence: env > config file > defaults.
@@ -22,12 +33,40 @@ func Load() Config {
 		toml.DecodeFile(path, &cfg)
 	}
 
-	// Environment variables override config file
+	applyEnv(&cfg)
+	return cfg
+}
+
+// LoadFile reads configuration from a specific file path, then applies env overrides.
+func LoadFile(path string) Config {
+	var cfg Config
+	toml.DecodeFile(path, &cfg)
+	applyEnv(&cfg)
+	return cfg
+}
+
+// applyEnv applies environment variable overrides to the config.
+func applyEnv(cfg *Config) {
 	if v := os.Getenv("TCAL_DB"); v != "" {
 		cfg.DB = v
 	}
-
-	return cfg
+	if v := os.Getenv("TCAL_SMTP_HOST"); v != "" {
+		cfg.SMTP.Host = v
+	}
+	if v := os.Getenv("TCAL_SMTP_PORT"); v != "" {
+		if port, err := strconv.Atoi(v); err == nil {
+			cfg.SMTP.Port = port
+		}
+	}
+	if v := os.Getenv("TCAL_SMTP_USERNAME"); v != "" {
+		cfg.SMTP.Username = v
+	}
+	if v := os.Getenv("TCAL_SMTP_PASSWORD"); v != "" {
+		cfg.SMTP.Password = v
+	}
+	if v := os.Getenv("TCAL_SMTP_FROM"); v != "" {
+		cfg.SMTP.From = v
+	}
 }
 
 // configFilePath returns the OS-appropriate config file location.
