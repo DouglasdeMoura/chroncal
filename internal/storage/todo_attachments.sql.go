@@ -10,23 +10,33 @@ import (
 )
 
 const createTodoAttachment = `-- name: CreateTodoAttachment :one
-INSERT INTO todo_attachments (todo_id, uri, fmttype) VALUES (?, ?, ?) RETURNING id, todo_id, uri, fmttype
+INSERT INTO todo_attachments (todo_id, uri, fmttype, data, filename) VALUES (?, ?, ?, ?, ?) RETURNING id, todo_id, uri, fmttype, data, filename
 `
 
 type CreateTodoAttachmentParams struct {
-	TodoID  int64
-	Uri     string
-	Fmttype string
+	TodoID   int64
+	Uri      string
+	Fmttype  string
+	Data     []byte
+	Filename string
 }
 
 func (q *Queries) CreateTodoAttachment(ctx context.Context, arg CreateTodoAttachmentParams) (TodoAttachment, error) {
-	row := q.db.QueryRowContext(ctx, createTodoAttachment, arg.TodoID, arg.Uri, arg.Fmttype)
+	row := q.db.QueryRowContext(ctx, createTodoAttachment,
+		arg.TodoID,
+		arg.Uri,
+		arg.Fmttype,
+		arg.Data,
+		arg.Filename,
+	)
 	var i TodoAttachment
 	err := row.Scan(
 		&i.ID,
 		&i.TodoID,
 		&i.Uri,
 		&i.Fmttype,
+		&i.Data,
+		&i.Filename,
 	)
 	return i, err
 }
@@ -40,8 +50,26 @@ func (q *Queries) DeleteTodoAttachmentsByTodoID(ctx context.Context, todoID int6
 	return err
 }
 
+const getTodoAttachment = `-- name: GetTodoAttachment :one
+SELECT id, todo_id, uri, fmttype, data, filename FROM todo_attachments WHERE id = ?
+`
+
+func (q *Queries) GetTodoAttachment(ctx context.Context, id int64) (TodoAttachment, error) {
+	row := q.db.QueryRowContext(ctx, getTodoAttachment, id)
+	var i TodoAttachment
+	err := row.Scan(
+		&i.ID,
+		&i.TodoID,
+		&i.Uri,
+		&i.Fmttype,
+		&i.Data,
+		&i.Filename,
+	)
+	return i, err
+}
+
 const listTodoAttachmentsByTodoID = `-- name: ListTodoAttachmentsByTodoID :many
-SELECT id, todo_id, uri, fmttype FROM todo_attachments WHERE todo_id = ? ORDER BY id
+SELECT id, todo_id, uri, fmttype, data, filename FROM todo_attachments WHERE todo_id = ? ORDER BY id
 `
 
 func (q *Queries) ListTodoAttachmentsByTodoID(ctx context.Context, todoID int64) ([]TodoAttachment, error) {
@@ -58,6 +86,8 @@ func (q *Queries) ListTodoAttachmentsByTodoID(ctx context.Context, todoID int64)
 			&i.TodoID,
 			&i.Uri,
 			&i.Fmttype,
+			&i.Data,
+			&i.Filename,
 		); err != nil {
 			return nil, err
 		}

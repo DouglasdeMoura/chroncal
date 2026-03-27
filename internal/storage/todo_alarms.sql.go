@@ -10,8 +10,8 @@ import (
 )
 
 const createTodoAlarm = `-- name: CreateTodoAlarm :one
-INSERT INTO todo_alarms (todo_id, action, trigger_value, description)
-VALUES (?, ?, ?, ?) RETURNING id, todo_id, "action", trigger_value, description
+INSERT INTO todo_alarms (todo_id, action, trigger_value, description, repeat, duration, related)
+VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id, todo_id, "action", trigger_value, description, repeat, duration, related
 `
 
 type CreateTodoAlarmParams struct {
@@ -19,6 +19,9 @@ type CreateTodoAlarmParams struct {
 	Action       string
 	TriggerValue string
 	Description  string
+	Repeat       int64
+	Duration     string
+	Related      string
 }
 
 func (q *Queries) CreateTodoAlarm(ctx context.Context, arg CreateTodoAlarmParams) (TodoAlarm, error) {
@@ -27,6 +30,9 @@ func (q *Queries) CreateTodoAlarm(ctx context.Context, arg CreateTodoAlarmParams
 		arg.Action,
 		arg.TriggerValue,
 		arg.Description,
+		arg.Repeat,
+		arg.Duration,
+		arg.Related,
 	)
 	var i TodoAlarm
 	err := row.Scan(
@@ -35,6 +41,9 @@ func (q *Queries) CreateTodoAlarm(ctx context.Context, arg CreateTodoAlarmParams
 		&i.Action,
 		&i.TriggerValue,
 		&i.Description,
+		&i.Repeat,
+		&i.Duration,
+		&i.Related,
 	)
 	return i, err
 }
@@ -49,7 +58,7 @@ func (q *Queries) DeleteTodoAlarmsByTodoID(ctx context.Context, todoID int64) er
 }
 
 const listTodoAlarmsByTodoID = `-- name: ListTodoAlarmsByTodoID :many
-SELECT id, todo_id, "action", trigger_value, description FROM todo_alarms WHERE todo_id = ? ORDER BY id
+SELECT id, todo_id, "action", trigger_value, description, repeat, duration, related FROM todo_alarms WHERE todo_id = ? ORDER BY id
 `
 
 func (q *Queries) ListTodoAlarmsByTodoID(ctx context.Context, todoID int64) ([]TodoAlarm, error) {
@@ -67,6 +76,9 @@ func (q *Queries) ListTodoAlarmsByTodoID(ctx context.Context, todoID int64) ([]T
 			&i.Action,
 			&i.TriggerValue,
 			&i.Description,
+			&i.Repeat,
+			&i.Duration,
+			&i.Related,
 		); err != nil {
 			return nil, err
 		}

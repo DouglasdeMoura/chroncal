@@ -10,23 +10,33 @@ import (
 )
 
 const createEventAttachment = `-- name: CreateEventAttachment :one
-INSERT INTO event_attachments (event_id, uri, fmttype) VALUES (?, ?, ?) RETURNING id, event_id, uri, fmttype
+INSERT INTO event_attachments (event_id, uri, fmttype, data, filename) VALUES (?, ?, ?, ?, ?) RETURNING id, event_id, uri, fmttype, data, filename
 `
 
 type CreateEventAttachmentParams struct {
-	EventID int64
-	Uri     string
-	Fmttype string
+	EventID  int64
+	Uri      string
+	Fmttype  string
+	Data     []byte
+	Filename string
 }
 
 func (q *Queries) CreateEventAttachment(ctx context.Context, arg CreateEventAttachmentParams) (EventAttachment, error) {
-	row := q.db.QueryRowContext(ctx, createEventAttachment, arg.EventID, arg.Uri, arg.Fmttype)
+	row := q.db.QueryRowContext(ctx, createEventAttachment,
+		arg.EventID,
+		arg.Uri,
+		arg.Fmttype,
+		arg.Data,
+		arg.Filename,
+	)
 	var i EventAttachment
 	err := row.Scan(
 		&i.ID,
 		&i.EventID,
 		&i.Uri,
 		&i.Fmttype,
+		&i.Data,
+		&i.Filename,
 	)
 	return i, err
 }
@@ -40,8 +50,26 @@ func (q *Queries) DeleteEventAttachmentsByEventID(ctx context.Context, eventID i
 	return err
 }
 
+const getEventAttachment = `-- name: GetEventAttachment :one
+SELECT id, event_id, uri, fmttype, data, filename FROM event_attachments WHERE id = ?
+`
+
+func (q *Queries) GetEventAttachment(ctx context.Context, id int64) (EventAttachment, error) {
+	row := q.db.QueryRowContext(ctx, getEventAttachment, id)
+	var i EventAttachment
+	err := row.Scan(
+		&i.ID,
+		&i.EventID,
+		&i.Uri,
+		&i.Fmttype,
+		&i.Data,
+		&i.Filename,
+	)
+	return i, err
+}
+
 const listEventAttachmentsByEventID = `-- name: ListEventAttachmentsByEventID :many
-SELECT id, event_id, uri, fmttype FROM event_attachments WHERE event_id = ? ORDER BY id
+SELECT id, event_id, uri, fmttype, data, filename FROM event_attachments WHERE event_id = ? ORDER BY id
 `
 
 func (q *Queries) ListEventAttachmentsByEventID(ctx context.Context, eventID int64) ([]EventAttachment, error) {
@@ -58,6 +86,8 @@ func (q *Queries) ListEventAttachmentsByEventID(ctx context.Context, eventID int
 			&i.EventID,
 			&i.Uri,
 			&i.Fmttype,
+			&i.Data,
+			&i.Filename,
 		); err != nil {
 			return nil, err
 		}

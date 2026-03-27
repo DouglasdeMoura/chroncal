@@ -284,6 +284,17 @@ func (s *Service) ListAlarms(ctx context.Context, todoID int64) ([]model.Alarm, 
 			ID: r.ID, EventID: r.TodoID,
 			Action: r.Action, TriggerValue: r.TriggerValue,
 			Description: r.Description,
+			Repeat:      int(r.Repeat),
+			Duration:    r.Duration,
+			Related:     r.Related,
+		}
+		attRows, err := s.q.ListTodoAlarmAttendeesByAlarmID(ctx, r.ID)
+		if err == nil {
+			for _, ar := range attRows {
+				alarms[i].Attendees = append(alarms[i].Attendees, model.AlarmAttendee{
+					ID: ar.ID, Email: ar.Email, Name: ar.Name,
+				})
+			}
 		}
 	}
 	return alarms, nil
@@ -301,14 +312,27 @@ func (s *Service) ReplaceAlarms(ctx context.Context, todoID int64, alarms []mode
 		return fmt.Errorf("delete alarms: %w", err)
 	}
 	for _, a := range alarms {
-		_, err := qtx.CreateTodoAlarm(ctx, storage.CreateTodoAlarmParams{
+		row, err := qtx.CreateTodoAlarm(ctx, storage.CreateTodoAlarmParams{
 			TodoID:       todoID,
 			Action:       a.Action,
 			TriggerValue: a.TriggerValue,
 			Description:  a.Description,
+			Repeat:       int64(a.Repeat),
+			Duration:     a.Duration,
+			Related:      a.Related,
 		})
 		if err != nil {
 			return fmt.Errorf("create alarm: %w", err)
+		}
+		for _, att := range a.Attendees {
+			_, err := qtx.CreateTodoAlarmAttendee(ctx, storage.CreateTodoAlarmAttendeeParams{
+				AlarmID: row.ID,
+				Email:   att.Email,
+				Name:    att.Name,
+			})
+			if err != nil {
+				return fmt.Errorf("create alarm attendee: %w", err)
+			}
 		}
 	}
 	return tx.Commit()
@@ -373,7 +397,7 @@ func (s *Service) ListAttachments(ctx context.Context, todoID int64) ([]model.At
 	}
 	out := make([]model.Attachment, len(rows))
 	for i, r := range rows {
-		out[i] = model.Attachment{ID: r.ID, URI: r.Uri, FmtType: r.Fmttype}
+		out[i] = model.Attachment{ID: r.ID, URI: r.Uri, FmtType: r.Fmttype, Data: r.Data, Filename: r.Filename}
 	}
 	return out, nil
 }
@@ -390,7 +414,7 @@ func (s *Service) ReplaceAttachments(ctx context.Context, todoID int64, attachme
 	}
 	for _, a := range attachments {
 		_, err := qtx.CreateTodoAttachment(ctx, storage.CreateTodoAttachmentParams{
-			TodoID: todoID, Uri: a.URI, Fmttype: a.FmtType,
+			TodoID: todoID, Uri: a.URI, Fmttype: a.FmtType, Data: a.Data, Filename: a.Filename,
 		})
 		if err != nil {
 			return fmt.Errorf("create attachment: %w", err)

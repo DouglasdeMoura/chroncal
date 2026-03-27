@@ -265,6 +265,14 @@ func (s *Service) ListAlarms(ctx context.Context, eventID int64) ([]model.Alarm,
 	alarms := make([]model.Alarm, len(rows))
 	for i, r := range rows {
 		alarms[i] = fromStorageAlarm(r)
+		attRows, err := s.q.ListAlarmAttendeesByAlarmID(ctx, r.ID)
+		if err == nil {
+			for _, ar := range attRows {
+				alarms[i].Attendees = append(alarms[i].Attendees, model.AlarmAttendee{
+					ID: ar.ID, Email: ar.Email, Name: ar.Name,
+				})
+			}
+		}
 	}
 	return alarms, nil
 }
@@ -281,14 +289,27 @@ func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []mod
 		return fmt.Errorf("delete alarms: %w", err)
 	}
 	for _, a := range alarms {
-		_, err := qtx.CreateAlarm(ctx, storage.CreateAlarmParams{
+		row, err := qtx.CreateAlarm(ctx, storage.CreateAlarmParams{
 			EventID:      eventID,
 			Action:       a.Action,
 			TriggerValue: a.TriggerValue,
 			Description:  a.Description,
+			Repeat:       int64(a.Repeat),
+			Duration:     a.Duration,
+			Related:      a.Related,
 		})
 		if err != nil {
 			return fmt.Errorf("create alarm: %w", err)
+		}
+		for _, att := range a.Attendees {
+			_, err := qtx.CreateAlarmAttendee(ctx, storage.CreateAlarmAttendeeParams{
+				AlarmID: row.ID,
+				Email:   att.Email,
+				Name:    att.Name,
+			})
+			if err != nil {
+				return fmt.Errorf("create alarm attendee: %w", err)
+			}
 		}
 	}
 	return tx.Commit()
@@ -344,7 +365,7 @@ func (s *Service) ListAttachments(ctx context.Context, eventID int64) ([]model.A
 	}
 	out := make([]model.Attachment, len(rows))
 	for i, r := range rows {
-		out[i] = model.Attachment{ID: r.ID, URI: r.Uri, FmtType: r.Fmttype}
+		out[i] = model.Attachment{ID: r.ID, URI: r.Uri, FmtType: r.Fmttype, Data: r.Data, Filename: r.Filename}
 	}
 	return out, nil
 }
@@ -361,7 +382,7 @@ func (s *Service) ReplaceAttachments(ctx context.Context, eventID int64, attachm
 	}
 	for _, a := range attachments {
 		_, err := qtx.CreateEventAttachment(ctx, storage.CreateEventAttachmentParams{
-			EventID: eventID, Uri: a.URI, Fmttype: a.FmtType,
+			EventID: eventID, Uri: a.URI, Fmttype: a.FmtType, Data: a.Data, Filename: a.Filename,
 		})
 		if err != nil {
 			return fmt.Errorf("create attachment: %w", err)
@@ -486,6 +507,9 @@ func fromStorageAlarm(r storage.EventAlarm) model.Alarm {
 		Action:       r.Action,
 		TriggerValue: r.TriggerValue,
 		Description:  r.Description,
+		Repeat:       int(r.Repeat),
+		Duration:     r.Duration,
+		Related:      r.Related,
 	}
 }
 

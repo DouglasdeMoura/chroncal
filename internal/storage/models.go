@@ -46,13 +46,25 @@ type EventAlarm struct {
 	Action       string
 	TriggerValue string
 	Description  string
+	Repeat       int64
+	Duration     string
+	Related      string
+}
+
+type EventAlarmAttendee struct {
+	ID      int64
+	AlarmID int64
+	Email   string
+	Name    string
 }
 
 type EventAttachment struct {
-	ID      int64
-	EventID int64
-	Uri     string
-	Fmttype string
+	ID       int64
+	EventID  int64
+	Uri      string
+	Fmttype  string
+	Data     []byte
+	Filename string
 }
 
 type EventAttendee struct {
@@ -112,13 +124,25 @@ type TodoAlarm struct {
 	Action       string
 	TriggerValue string
 	Description  string
+	Repeat       int64
+	Duration     string
+	Related      string
+}
+
+type TodoAlarmAttendee struct {
+	ID      int64
+	AlarmID int64
+	Email   string
+	Name    string
 }
 
 type TodoAttachment struct {
-	ID      int64
-	TodoID  int64
-	Uri     string
-	Fmttype string
+	ID       int64
+	TodoID   int64
+	Uri      string
+	Fmttype  string
+	Data     []byte
+	Filename string
 }
 
 type TodoAttendee struct {
