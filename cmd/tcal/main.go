@@ -54,7 +54,7 @@ func initApp() (*app.App, error) {
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&dbPath, "db", "", "path to SQLite database (default: $XDG_CONFIG_HOME/tcal/tcal.db)")
+	rootCmd.PersistentFlags().StringVar(&dbPath, "db", "", "path to SQLite database (default: $XDG_DATA_HOME/tcal/tcal.db)")
 	rootCmd.PersistentFlags().BoolVar(&jsonOut, "json", false, "output as JSON")
 
 	rootCmd.AddCommand(eventCmd(), calendarCmd(), todoCmd(), icalCmd())

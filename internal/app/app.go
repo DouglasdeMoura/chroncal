@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/douglasdemoura/tcal/internal/calendar"
 	"github.com/douglasdemoura/tcal/internal/event"
@@ -38,7 +39,7 @@ func (a *App) Close() error {
 }
 
 func DefaultDBPath() (string, error) {
-	dataDir, err := os.UserConfigDir()
+	dataDir, err := userDataDir()
 	if err != nil {
 		return "", err
 	}
@@ -47,4 +48,21 @@ func DefaultDBPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, "tcal.db"), nil
+}
+
+// userDataDir returns the OS-appropriate directory for application data.
+// On Linux this follows XDG: $XDG_DATA_HOME or ~/.local/share.
+// On macOS and Windows, config and data share the same path.
+func userDataDir() (string, error) {
+	if runtime.GOOS == "linux" {
+		if dir := os.Getenv("XDG_DATA_HOME"); dir != "" {
+			return dir, nil
+		}
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(home, ".local", "share"), nil
+	}
+	return os.UserConfigDir()
 }
