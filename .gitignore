@@ -1,0 +1,4 @@
+tcal
+*.db
+*.db-wal
+*.db-shm
