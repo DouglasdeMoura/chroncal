@@ -15,7 +15,6 @@ import (
 )
 
 var (
-	dbPath  string
 	jsonOut bool
 	cfg     config.Config
 )
@@ -47,11 +46,8 @@ Resource groups:
 }
 
 func initApp() (*app.App, error) {
-	// Precedence: --db flag > TCAL_DB env > config.toml > default
-	path := dbPath
-	if path == "" {
-		path = cfg.DB
-	}
+	// Precedence: TCAL_DB env > config.toml > default
+	path := cfg.DB
 	if path == "" {
 		var err error
 		path, err = app.DefaultDBPath()
@@ -63,7 +59,6 @@ func initApp() (*app.App, error) {
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&dbPath, "db", "", "path to SQLite database")
 	rootCmd.PersistentFlags().BoolVar(&jsonOut, "json", false, "output as JSON")
 
 	rootCmd.AddCommand(eventCmd(), calendarCmd(), todoCmd(), icalCmd())
