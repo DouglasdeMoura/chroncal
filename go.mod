@@ -3,6 +3,7 @@ module github.com/douglasdemoura/tcal
 go 1.25.1
 
 require (
+	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
 	github.com/google/uuid v1.6.0
 	github.com/pressly/goose/v3 v3.27.0
 	github.com/spf13/cobra v1.10.2
@@ -18,6 +19,7 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/sethvargo/go-retry v0.3.0 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
+	github.com/teambition/rrule-go v1.8.2 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
