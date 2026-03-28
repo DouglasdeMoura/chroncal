@@ -226,6 +226,60 @@ func printOutput(w io.Writer, v any) error {
 	}
 }
 
+// Table cell formatters for 1-to-many fields.
+
+func fmtAlarms(alarms []jsonAlarm) string {
+	if len(alarms) == 0 {
+		return ""
+	}
+	parts := make([]string, len(alarms))
+	for i, a := range alarms {
+		parts[i] = a.Action + ":" + a.TriggerValue
+	}
+	return strings.Join(parts, ", ")
+}
+
+func fmtAttendees(attendees []jsonAttendee) string {
+	if len(attendees) == 0 {
+		return ""
+	}
+	parts := make([]string, len(attendees))
+	for i, a := range attendees {
+		if a.Name != "" {
+			parts[i] = a.Name
+		} else {
+			parts[i] = a.Email
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+func fmtAttachments(attachments []jsonAttachment) string {
+	if len(attachments) == 0 {
+		return ""
+	}
+	parts := make([]string, len(attachments))
+	for i, a := range attachments {
+		parts[i] = a.URI
+	}
+	return strings.Join(parts, ", ")
+}
+
+func fmtStrings(ss []string) string {
+	return strings.Join(ss, ", ")
+}
+
+func fmtRelations(relations []jsonRelation) string {
+	if len(relations) == 0 {
+		return ""
+	}
+	parts := make([]string, len(relations))
+	for i, r := range relations {
+		parts[i] = r.RelType + ":" + r.RelUID
+	}
+	return strings.Join(parts, ", ")
+}
+
 // printTable renders v as aligned columns using rodaine/table.
 func printTable(w io.Writer, v any) error {
 	switch data := v.(type) {
@@ -234,7 +288,13 @@ func printTable(w io.Writer, v any) error {
 			fmt.Fprintln(w, "No events found.")
 			return nil
 		}
-		tbl := table.New("ID", "DATE", "TIME", "TITLE", "STATUS", "CALENDAR")
+		tbl := table.New("ID", "UID", "CAL", "DATE", "TIME", "TITLE",
+			"DESCRIPTION", "LOCATION", "ALL DAY", "RRULE", "TZ",
+			"STATUS", "TRANSP", "SEQ", "PRI", "CLASS", "URL",
+			"CATEGORIES", "EXDATES", "RDATES", "REC-ID", "GEO",
+			"ALARMS", "ATTENDEES", "ATTACHMENTS", "COMMENTS",
+			"CONTACTS", "RESOURCES", "RELATIONS",
+			"CREATED", "UPDATED")
 		tbl.WithWriter(w)
 		for _, e := range data {
 			start, _ := time.Parse(time.RFC3339, e.StartTime)
@@ -246,7 +306,14 @@ func printTable(w io.Writer, v any) error {
 			} else {
 				timeRange = start.Local().Format("15:04") + "–" + end.Local().Format("15:04")
 			}
-			tbl.AddRow(e.ID, date, timeRange, e.Title, e.Status, e.CalendarID)
+			tbl.AddRow(e.ID, e.UID, e.CalendarID, date, timeRange, e.Title,
+				e.Description, e.Location, e.AllDay, e.RecurrenceRule, e.Timezone,
+				e.Status, e.Transp, e.Sequence, e.Priority, e.Class, e.URL,
+				e.Categories, e.ExDates, e.RDates, e.RecurrenceID, e.Geo,
+				fmtAlarms(e.Alarms), fmtAttendees(e.Attendees), fmtAttachments(e.Attachments),
+				fmtStrings(e.Comments), fmtStrings(e.Contacts), fmtStrings(e.Resources),
+				fmtRelations(e.Relations),
+				e.CreatedAt, e.UpdatedAt)
 		}
 		tbl.Print()
 		return nil
@@ -259,10 +326,10 @@ func printTable(w io.Writer, v any) error {
 			fmt.Fprintln(w, "No calendars found.")
 			return nil
 		}
-		tbl := table.New("ID", "NAME", "COLOR", "DESCRIPTION")
+		tbl := table.New("ID", "NAME", "COLOR", "DESCRIPTION", "CREATED", "UPDATED")
 		tbl.WithWriter(w)
 		for _, c := range data {
-			tbl.AddRow(c.ID, c.Name, c.Color, c.Description)
+			tbl.AddRow(c.ID, c.Name, c.Color, c.Description, c.CreatedAt, c.UpdatedAt)
 		}
 		tbl.Print()
 		return nil
@@ -275,7 +342,12 @@ func printTable(w io.Writer, v any) error {
 			fmt.Fprintln(w, "No todos found.")
 			return nil
 		}
-		tbl := table.New("ID", "SUMMARY", "STATUS", "DUE", "CALENDAR")
+		tbl := table.New("ID", "UID", "CAL", "SUMMARY", "DESCRIPTION", "LOCATION",
+			"DUE", "START", "DURATION", "COMPLETED", "PROGRESS",
+			"STATUS", "PRI", "CLASS", "URL", "CATEGORIES", "SEQ",
+			"ALARMS", "ATTENDEES", "ATTACHMENTS", "COMMENTS",
+			"CONTACTS", "RESOURCES", "RELATIONS",
+			"CREATED", "UPDATED")
 		tbl.WithWriter(w)
 		for _, t := range data {
 			due := ""
@@ -284,7 +356,13 @@ func printTable(w io.Writer, v any) error {
 					due = d.Local().Format("2006-01-02")
 				}
 			}
-			tbl.AddRow(t.ID, t.Summary, t.Status, due, t.CalendarID)
+			tbl.AddRow(t.ID, t.UID, t.CalendarID, t.Summary, t.Description, t.Location,
+				due, t.StartDate, t.Duration, t.CompletedAt, t.PercentComplete,
+				t.Status, t.Priority, t.Class, t.URL, t.Categories, t.Sequence,
+				fmtAlarms(t.Alarms), fmtAttendees(t.Attendees), fmtAttachments(t.Attachments),
+				fmtStrings(t.Comments), fmtStrings(t.Contacts), fmtStrings(t.Resources),
+				fmtRelations(t.Relations),
+				t.CreatedAt, t.UpdatedAt)
 		}
 		tbl.Print()
 		return nil
