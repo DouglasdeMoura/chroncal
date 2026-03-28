@@ -61,3 +61,26 @@ func TestValidateGeo(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		wantErr bool
+	}{
+		{"empty is ok", "", false},
+		{"https", "https://example.com", false},
+		{"http", "http://example.com/path?q=1", false},
+		{"ftp", "ftp://files.example.com/doc.pdf", false},
+		{"no scheme", "example.com", true},
+		{"plain text", "not a url", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateURL(tt.url)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateURL(%q) error = %v, wantErr %v", tt.url, err, tt.wantErr)
+			}
+		})
+	}
+}

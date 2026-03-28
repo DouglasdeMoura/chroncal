@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"mime"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -197,6 +198,9 @@ Defaults: status=CONFIRMED, class=PUBLIC, transparency=OPAQUE, calendar=Personal
 				return err
 			}
 			if err := validateGeo(geo); err != nil {
+				return err
+			}
+			if err := validateURL(url); err != nil {
 				return err
 			}
 
@@ -528,6 +532,11 @@ func eventUpdateCmd() *cobra.Command {
 			}
 			if cmd.Flags().Changed("geo") {
 				if err := validateGeo(geo); err != nil {
+					return err
+				}
+			}
+			if cmd.Flags().Changed("url") {
+				if err := validateURL(url); err != nil {
 					return err
 				}
 			}
@@ -929,6 +938,22 @@ func validateGeo(geo string) error {
 	}
 	if lon < -180 || lon > 180 {
 		return fmt.Errorf("invalid --geo longitude %.6f: must be between -180 and 180", lon)
+	}
+	return nil
+}
+
+// validateURL checks that a URL has a scheme per RFC 3986. Empty string is
+// allowed (optional field).
+func validateURL(u string) error {
+	if u == "" {
+		return nil
+	}
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return fmt.Errorf("invalid --url %q: %w", u, err)
+	}
+	if parsed.Scheme == "" {
+		return fmt.Errorf("invalid --url %q: must include a scheme (e.g. https://example.com)", u)
 	}
 	return nil
 }
