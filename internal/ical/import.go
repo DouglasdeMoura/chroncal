@@ -615,14 +615,13 @@ func parseContactsFromProps(props ical.Props) []string {
 func parseResourcesFromProps(props ical.Props) []string {
 	var out []string
 	for _, prop := range props.Values(ical.PropResources) {
-		// RESOURCES can be comma-separated within a single property
-		text, err := prop.Text()
-		if err != nil {
-			text = prop.Value
-		}
-		for _, r := range strings.Split(text, ",") {
-			if s := strings.TrimSpace(r); s != "" {
-				out = append(out, s)
+		// RESOURCES is a comma-separated list (like CATEGORIES).
+		// Use TextList to split on unescaped commas correctly.
+		if list, err := prop.TextList(); err == nil {
+			for _, s := range list {
+				if s = strings.TrimSpace(s); s != "" {
+					out = append(out, s)
+				}
 			}
 		}
 	}

@@ -130,9 +130,11 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 			vevent.Props.Add(p)
 		}
 
-		// RESOURCES
+		// RESOURCES (comma-separated list, like CATEGORIES)
 		if len(e.Resources) > 0 {
-			vevent.Props.SetText(ical.PropResources, strings.Join(e.Resources, ","))
+			resProp := &ical.Prop{Name: ical.PropResources}
+			resProp.SetTextList(e.Resources)
+			vevent.Props.Set(resProp)
 		}
 
 		// RELATED-TO
@@ -348,9 +350,11 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 			vtodo.Props.Add(p)
 		}
 
-		// RESOURCES
+		// RESOURCES (comma-separated list, like CATEGORIES)
 		if len(t.Resources) > 0 {
-			vtodo.Props.SetText(ical.PropResources, strings.Join(t.Resources, ","))
+			resProp := &ical.Prop{Name: ical.PropResources}
+			resProp.SetTextList(t.Resources)
+			vtodo.Props.Set(resProp)
 		}
 
 		// RELATED-TO
