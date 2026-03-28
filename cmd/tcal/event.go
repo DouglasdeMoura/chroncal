@@ -300,7 +300,7 @@ func eventAddCmd() *cobra.Command {
 	cmd.Flags().StringVar(&url, "url", "", "associated URL")
 	cmd.Flags().StringVar(&categories, "categories", "", "comma-separated categories")
 	cmd.Flags().StringVar(&class, "class", "", "classification (PUBLIC, PRIVATE, CONFIDENTIAL)")
-	cmd.Flags().StringVar(&transp, "transp", "", "transparency (OPAQUE, TRANSPARENT)")
+	cmd.Flags().StringVar(&transp, "transparency", "", "free/busy visibility (OPAQUE=busy, TRANSPARENT=free)")
 	cmd.Flags().Int64Var(&priority, "priority", 0, "priority (0-9)")
 	cmd.Flags().StringVar(&rrule, "recurrence-rule", "", "recurrence rule (e.g. FREQ=WEEKLY;COUNT=10; alias: --rrule)")
 	cmd.Flags().StringVar(&rrule, "rrule", "", "alias for --recurrence-rule")
@@ -417,7 +417,7 @@ func eventUpdateCmd() *cobra.Command {
 			if cmd.Flags().Changed("class") {
 				p.Class = class
 			}
-			if cmd.Flags().Changed("transp") {
+			if cmd.Flags().Changed("transparency") {
 				p.Transp = transp
 			}
 			if cmd.Flags().Changed("priority") {
@@ -544,7 +544,7 @@ func eventUpdateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&url, "url", "", "new URL")
 	cmd.Flags().StringVar(&categories, "categories", "", "new categories (comma-separated)")
 	cmd.Flags().StringVar(&class, "class", "", "new classification (PUBLIC, PRIVATE, CONFIDENTIAL)")
-	cmd.Flags().StringVar(&transp, "transp", "", "new transparency (OPAQUE, TRANSPARENT)")
+	cmd.Flags().StringVar(&transp, "transparency", "", "new free/busy visibility (OPAQUE=busy, TRANSPARENT=free)")
 	cmd.Flags().Int64Var(&priority, "priority", 0, "new priority (0-9)")
 	cmd.Flags().StringVar(&rrule, "recurrence-rule", "", "new recurrence rule (alias: --rrule)")
 	cmd.Flags().StringVar(&rrule, "rrule", "", "alias for --recurrence-rule")
