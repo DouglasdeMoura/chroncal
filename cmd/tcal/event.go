@@ -223,11 +223,18 @@ func eventAddCmd() *cobra.Command {
 				endTime = startTime.AddDate(0, 0, 1)
 			}
 
-			parsedExDates, err := parseDateFlags(exdates, timezone)
+			// For timed events, pass startTime so date-only EXDATE/RDATE
+			// values inherit the event's time (RFC 5545 Section 3.8.5.1).
+			// For all-day events, pass zero time to keep date-only semantics.
+			var exrdateRef time.Time
+			if !allDay {
+				exrdateRef = startTime
+			}
+			parsedExDates, err := parseDateFlags(exdates, timezone, exrdateRef)
 			if err != nil {
 				return fmt.Errorf("--exception-date-times: %w", err)
 			}
-			parsedRDates, err := parseDateFlags(rdates, timezone)
+			parsedRDates, err := parseDateFlags(rdates, timezone, exrdateRef)
 			if err != nil {
 				return fmt.Errorf("--recurrence-date-times: %w", err)
 			}
@@ -445,14 +452,22 @@ func eventUpdateCmd() *cobra.Command {
 				p.Geo = geo
 			}
 			if cmd.Flags().Changed("exception-date-times") || cmd.Flags().Changed("exdate") {
-				parsed, err := parseDateFlags(exdates, timezone)
+				var exrdateRef time.Time
+				if !p.AllDay {
+					exrdateRef = p.StartTime
+				}
+				parsed, err := parseDateFlags(exdates, timezone, exrdateRef)
 				if err != nil {
 					return fmt.Errorf("--exception-date-times: %w", err)
 				}
 				p.ExDates = parsed
 			}
 			if cmd.Flags().Changed("recurrence-date-times") || cmd.Flags().Changed("rdate") {
-				parsed, err := parseDateFlags(rdates, timezone)
+				var exrdateRef time.Time
+				if !p.AllDay {
+					exrdateRef = p.StartTime
+				}
+				parsed, err := parseDateFlags(rdates, timezone, exrdateRef)
 				if err != nil {
 					return fmt.Errorf("--recurrence-date-times: %w", err)
 				}
@@ -643,7 +658,12 @@ func eventDeleteCmd() *cobra.Command {
 // Accepted formats: YYYY-MM-DD, YYYY-MM-DDTHH:MM, RFC 3339.
 // When tz is non-empty, it is used as the IANA timezone for interpreting values
 // that lack an explicit offset (i.e. not RFC 3339). Falls back to local time.
-func parseDateFlags(flags []string, tz string) (string, error) {
+//
+// startTime is the event's start time. When a date-only value (YYYY-MM-DD) is
+// provided for a timed event, the start time's hour and minute are overlaid onto
+// the parsed date so that EXDATE/RDATE values match the recurrence instance time
+// per RFC 5545 Section 3.8.5.1.
+func parseDateFlags(flags []string, tz string, startTime time.Time) (string, error) {
 	loc := time.Local
 	if tz != "" {
 		var err error
@@ -660,6 +680,7 @@ func parseDateFlags(flags []string, tz string) (string, error) {
 		}
 		var t time.Time
 		var err error
+		dateOnly := false
 		for _, layout := range []string{
 			time.RFC3339,
 			"2006-01-02T15:04",
@@ -671,11 +692,20 @@ func parseDateFlags(flags []string, tz string) (string, error) {
 				t, err = time.ParseInLocation(layout, val, loc)
 			}
 			if err == nil {
+				if layout == "2006-01-02" {
+					dateOnly = true
+				}
 				break
 			}
 		}
 		if err != nil {
 			return "", fmt.Errorf("parse date %q: expected YYYY-MM-DD or YYYY-MM-DDTHH:MM", val)
+		}
+		// For date-only values on timed events, overlay the event's start
+		// time so that the EXDATE/RDATE matches the recurrence instance.
+		if dateOnly && !startTime.IsZero() {
+			stIn := startTime.In(loc)
+			t = time.Date(t.Year(), t.Month(), t.Day(), stIn.Hour(), stIn.Minute(), stIn.Second(), 0, loc)
 		}
 		out = append(out, t.UTC().Format(time.RFC3339))
 	}
