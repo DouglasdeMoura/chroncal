@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rodaine/table"
 	"gopkg.in/yaml.v3"
 
 	"github.com/douglasdemoura/tcal/internal/calendar"
@@ -224,7 +225,7 @@ func printOutput(w io.Writer, v any) error {
 	}
 }
 
-// printTable renders v as aligned columns with headers.
+// printTable renders v as aligned columns using rodaine/table.
 func printTable(w io.Writer, v any) error {
 	switch data := v.(type) {
 	case []jsonEvent:
@@ -232,10 +233,8 @@ func printTable(w io.Writer, v any) error {
 			fmt.Fprintln(w, "No events found.")
 			return nil
 		}
-		fmt.Fprintf(w, "%-6s  %-12s  %-13s  %-30s  %-10s  %-8s\n",
-			"ID", "DATE", "TIME", "TITLE", "STATUS", "CALENDAR")
-		fmt.Fprintf(w, "%-6s  %-12s  %-13s  %-30s  %-10s  %-8s\n",
-			"──", "────", "────", "─────", "──────", "────────")
+		tbl := table.New("ID", "DATE", "TIME", "TITLE", "STATUS", "CALENDAR")
+		tbl.WithWriter(w)
 		for _, e := range data {
 			start, _ := time.Parse(time.RFC3339, e.StartTime)
 			end, _ := time.Parse(time.RFC3339, e.EndTime)
@@ -246,13 +245,9 @@ func printTable(w io.Writer, v any) error {
 			} else {
 				timeRange = start.Local().Format("15:04") + "–" + end.Local().Format("15:04")
 			}
-			title := e.Title
-			if len(title) > 30 {
-				title = title[:27] + "..."
-			}
-			fmt.Fprintf(w, "%-6d  %-12s  %-13s  %-30s  %-10s  %-8d\n",
-				e.ID, date, timeRange, title, e.Status, e.CalendarID)
+			tbl.AddRow(e.ID, date, timeRange, e.Title, e.Status, e.CalendarID)
 		}
+		tbl.Print()
 		return nil
 
 	case jsonEvent:
@@ -263,11 +258,12 @@ func printTable(w io.Writer, v any) error {
 			fmt.Fprintln(w, "No calendars found.")
 			return nil
 		}
-		fmt.Fprintf(w, "%-6s  %-20s  %-9s  %s\n", "ID", "NAME", "COLOR", "DESCRIPTION")
-		fmt.Fprintf(w, "%-6s  %-20s  %-9s  %s\n", "──", "────", "─────", "───────────")
+		tbl := table.New("ID", "NAME", "COLOR", "DESCRIPTION")
+		tbl.WithWriter(w)
 		for _, c := range data {
-			fmt.Fprintf(w, "%-6d  %-20s  %-9s  %s\n", c.ID, c.Name, c.Color, c.Description)
+			tbl.AddRow(c.ID, c.Name, c.Color, c.Description)
 		}
+		tbl.Print()
 		return nil
 
 	case jsonCalendar:
@@ -278,32 +274,24 @@ func printTable(w io.Writer, v any) error {
 			fmt.Fprintln(w, "No todos found.")
 			return nil
 		}
-		fmt.Fprintf(w, "%-6s  %-30s  %-14s  %-12s  %-8s\n",
-			"ID", "SUMMARY", "STATUS", "DUE", "CALENDAR")
-		fmt.Fprintf(w, "%-6s  %-30s  %-14s  %-12s  %-8s\n",
-			"──", "───────", "──────", "───", "────────")
+		tbl := table.New("ID", "SUMMARY", "STATUS", "DUE", "CALENDAR")
+		tbl.WithWriter(w)
 		for _, t := range data {
-			summary := t.Summary
-			if len(summary) > 30 {
-				summary = summary[:27] + "..."
-			}
 			due := ""
 			if t.DueDate != "" {
 				if d, err := time.Parse(time.RFC3339, t.DueDate); err == nil {
 					due = d.Local().Format("2006-01-02")
 				}
 			}
-			fmt.Fprintf(w, "%-6d  %-30s  %-14s  %-12s  %-8d\n",
-				t.ID, summary, t.Status, due, t.CalendarID)
+			tbl.AddRow(t.ID, t.Summary, t.Status, due, t.CalendarID)
 		}
+		tbl.Print()
 		return nil
 
 	case jsonTodo:
 		return printTable(w, []jsonTodo{data})
 
 	default:
-		// For ad-hoc maps (delete confirmations, alarm results, etc.)
-		// fall back to JSON since there's no generic table shape.
 		return printJSON(w, v)
 	}
 }
