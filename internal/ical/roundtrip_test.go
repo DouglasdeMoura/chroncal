@@ -166,8 +166,60 @@ func TestRoundtrip_EventWithAlarmsAttendees(t *testing.T) {
 		t.Errorf("Alarm trigger: %q", got.Alarms[0].TriggerValue)
 	}
 
-	if len(got.Attendees) < 2 {
-		t.Errorf("Attendees: %d, want >= 2", len(got.Attendees))
+	if len(got.Attendees) != 2 {
+		t.Errorf("Attendees: %d, want 2", len(got.Attendees))
+	}
+}
+
+func TestRoundtrip_OrganizerNotDuplicated(t *testing.T) {
+	t.Parallel()
+	original := event.Event{
+		UID:       "roundtrip-org-dedup",
+		Title:     "Organizer Dedup",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+		Attendees: []model.Attendee{
+			{Email: "org@test.com", Name: "Organizer", RSVPStatus: "ACCEPTED", Role: "CHAIR", Organizer: true},
+			{Email: "attendee@test.com", Name: "Attendee", RSVPStatus: "NEEDS-ACTION", Role: "REQ-PARTICIPANT"},
+		},
+	}
+
+	// Export emits ORGANIZER + ATTENDEE for the organizer.
+	// Import must not create a duplicate entry for the organizer email.
+	data, _ := ExportEvents([]event.Event{original}, "")
+	ics := string(data)
+
+	// Verify both ORGANIZER and ATTENDEE appear in the ICS
+	if !strings.Contains(ics, "ORGANIZER") {
+		t.Fatal("ICS missing ORGANIZER property")
+	}
+
+	result, _ := ImportFile(strings.NewReader(ics))
+	if len(result.Events) != 1 {
+		t.Fatalf("reimported %d events", len(result.Events))
+	}
+	got := result.Events[0]
+
+	if len(got.Attendees) != 2 {
+		t.Fatalf("Attendees: %d, want 2 (organizer should not be duplicated)", len(got.Attendees))
+	}
+
+	// Verify the organizer flag survived
+	var foundOrganizer bool
+	for _, a := range got.Attendees {
+		if a.Organizer {
+			foundOrganizer = true
+			if a.Email != "org@test.com" {
+				t.Errorf("Organizer email: %q, want org@test.com", a.Email)
+			}
+		}
+	}
+	if !foundOrganizer {
+		t.Error("No attendee has Organizer=true after roundtrip")
 	}
 }
 
