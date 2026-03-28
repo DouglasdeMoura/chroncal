@@ -160,6 +160,14 @@ func (s *Service) Get(ctx context.Context, id int64) (Todo, error) {
 	return fromStorage(r), nil
 }
 
+func (s *Service) GetByUID(ctx context.Context, uid string) (Todo, error) {
+	r, err := s.q.GetTodoByUID(ctx, uid)
+	if err != nil {
+		return Todo{}, err
+	}
+	return fromStorage(r), nil
+}
+
 func (s *Service) Create(ctx context.Context, p CreateParams) (Todo, error) {
 	p.applyDefaults()
 	r, err := s.q.CreateTodo(ctx, storage.CreateTodoParams{

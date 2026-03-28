@@ -171,6 +171,14 @@ func (s *Service) Get(ctx context.Context, id int64) (Event, error) {
 	return fromStorage(r), nil
 }
 
+func (s *Service) GetByUID(ctx context.Context, uid string) (Event, error) {
+	r, err := s.q.GetEventByUID(ctx, uid)
+	if err != nil {
+		return Event{}, err
+	}
+	return fromStorage(r), nil
+}
+
 func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
 	p.applyDefaults()
 	r, err := s.q.CreateEvent(ctx, storage.CreateEventParams{

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,6 +12,8 @@ import (
 
 	"github.com/douglasdemoura/tcal/internal/app"
 	"github.com/douglasdemoura/tcal/internal/config"
+	"github.com/douglasdemoura/tcal/internal/event"
+	"github.com/douglasdemoura/tcal/internal/todo"
 	"github.com/douglasdemoura/tcal/internal/tui"
 )
 
@@ -78,6 +81,22 @@ func main() {
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
+}
+
+// resolveEvent looks up an event by numeric ID or string UID.
+func resolveEvent(ctx context.Context, a *app.App, ref string) (event.Event, error) {
+	if id, err := strconv.ParseInt(ref, 10, 64); err == nil {
+		return a.Events.Get(ctx, id)
+	}
+	return a.Events.GetByUID(ctx, ref)
+}
+
+// resolveTodo looks up a todo by numeric ID or string UID.
+func resolveTodo(ctx context.Context, a *app.App, ref string) (todo.Todo, error) {
+	if id, err := strconv.ParseInt(ref, 10, 64); err == nil {
+		return a.Todos.Get(ctx, id)
+	}
+	return a.Todos.GetByUID(ctx, ref)
 }
 
 func resolveCalendarID(ctx context.Context, a *app.App, name string) (int64, error) {

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -72,8 +71,8 @@ func todoListCmd() *cobra.Command {
 
 func todoGetCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "get <id>",
-		Short: "Get todo details by ID",
+		Use:   "get <id|uid>",
+		Short: "Get todo details by ID or UID",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
@@ -83,12 +82,7 @@ func todoGetCmd() *cobra.Command {
 			defer a.Close()
 			ctx := context.Background()
 
-			id, err := strconv.ParseInt(args[0], 10, 64)
-			if err != nil {
-				return fmt.Errorf("invalid todo ID: %w", err)
-			}
-
-			t, err := a.Todos.Get(ctx, id)
+			t, err := resolveTodo(ctx, a, args[0])
 			if err != nil {
 				return fmt.Errorf("get todo: %w", err)
 			}
@@ -212,7 +206,7 @@ func todoUpdateCmd() *cobra.Command {
 		attachFlags  []string
 	)
 	cmd := &cobra.Command{
-		Use:   "update <id>",
+		Use:   "update <id|uid>",
 		Short: "Update an existing todo",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -223,12 +217,7 @@ func todoUpdateCmd() *cobra.Command {
 			defer a.Close()
 			ctx := context.Background()
 
-			id, err := strconv.ParseInt(args[0], 10, 64)
-			if err != nil {
-				return fmt.Errorf("invalid todo ID: %w", err)
-			}
-
-			existing, err := a.Todos.Get(ctx, id)
+			existing, err := resolveTodo(ctx, a, args[0])
 			if err != nil {
 				return fmt.Errorf("get todo: %w", err)
 			}
@@ -297,7 +286,7 @@ func todoUpdateCmd() *cobra.Command {
 				p.URL = url
 			}
 
-			t, err := a.Todos.Update(ctx, id, p)
+			t, err := a.Todos.Update(ctx, existing.ID, p)
 			if err != nil {
 				return fmt.Errorf("update todo: %w", err)
 			}
@@ -336,7 +325,7 @@ func todoUpdateCmd() *cobra.Command {
 
 func todoDeleteCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "delete <id>",
+		Use:   "delete <id|uid>",
 		Short: "Delete a todo",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -346,20 +335,20 @@ func todoDeleteCmd() *cobra.Command {
 			}
 			defer a.Close()
 
-			id, err := strconv.ParseInt(args[0], 10, 64)
+			t, err := resolveTodo(context.Background(), a, args[0])
 			if err != nil {
-				return fmt.Errorf("invalid todo ID: %w", err)
+				return fmt.Errorf("get todo: %w", err)
 			}
 
-			if err := a.Todos.Delete(context.Background(), id); err != nil {
+			if err := a.Todos.Delete(context.Background(), t.ID); err != nil {
 				return fmt.Errorf("delete todo: %w", err)
 			}
 
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
-				return printOutput(w, map[string]any{"deleted": true, "id": id})
+				return printOutput(w, map[string]any{"deleted": true, "id": t.ID})
 			}
-			fmt.Fprintf(w, "Deleted todo %d.\n", id)
+			fmt.Fprintf(w, "Deleted todo %d.\n", t.ID)
 			return nil
 		},
 	}

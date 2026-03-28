@@ -87,8 +87,8 @@ func eventListCmd() *cobra.Command {
 
 func eventGetCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "get <id>",
-		Short: "Get event details by ID",
+		Use:   "get <id|uid>",
+		Short: "Get event details by ID or UID",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
@@ -98,12 +98,7 @@ func eventGetCmd() *cobra.Command {
 			defer a.Close()
 			ctx := context.Background()
 
-			id, err := strconv.ParseInt(args[0], 10, 64)
-			if err != nil {
-				return fmt.Errorf("invalid event ID: %w", err)
-			}
-
-			e, err := a.Events.Get(ctx, id)
+			e, err := resolveEvent(ctx, a, args[0])
 			if err != nil {
 				return fmt.Errorf("get event: %w", err)
 			}
@@ -471,7 +466,7 @@ func eventUpdateCmd() *cobra.Command {
 		organizer     string
 	)
 	cmd := &cobra.Command{
-		Use:   "update <id>",
+		Use:   "update <id|uid>",
 		Short: "Update an existing event",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -482,12 +477,7 @@ func eventUpdateCmd() *cobra.Command {
 			defer a.Close()
 			ctx := context.Background()
 
-			id, err := strconv.ParseInt(args[0], 10, 64)
-			if err != nil {
-				return fmt.Errorf("invalid event ID: %w", err)
-			}
-
-			existing, err := a.Events.Get(ctx, id)
+			existing, err := resolveEvent(ctx, a, args[0])
 			if err != nil {
 				return fmt.Errorf("get event: %w", err)
 			}
@@ -666,7 +656,7 @@ func eventUpdateCmd() *cobra.Command {
 				p.RDates = parsed
 			}
 
-			e, err := a.Events.Update(ctx, id, p)
+			e, err := a.Events.Update(ctx, existing.ID, p)
 			if err != nil {
 				return fmt.Errorf("update event: %w", err)
 			}
@@ -784,7 +774,7 @@ func eventUpdateCmd() *cobra.Command {
 
 func eventDeleteCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "delete <id>",
+		Use:   "delete <id|uid>",
 		Short: "Delete an event",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -794,20 +784,20 @@ func eventDeleteCmd() *cobra.Command {
 			}
 			defer a.Close()
 
-			id, err := strconv.ParseInt(args[0], 10, 64)
+			e, err := resolveEvent(context.Background(), a, args[0])
 			if err != nil {
-				return fmt.Errorf("invalid event ID: %w", err)
+				return fmt.Errorf("get event: %w", err)
 			}
 
-			if err := a.Events.Delete(context.Background(), id); err != nil {
+			if err := a.Events.Delete(context.Background(), e.ID); err != nil {
 				return fmt.Errorf("delete event: %w", err)
 			}
 
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
-				return printOutput(w, map[string]any{"deleted": true, "id": id})
+				return printOutput(w, map[string]any{"deleted": true, "id": e.ID})
 			}
-			fmt.Fprintf(w, "Deleted event %d.\n", id)
+			fmt.Fprintf(w, "Deleted event %d.\n", e.ID)
 			return nil
 		},
 	}
