@@ -211,6 +211,15 @@ func eventAddCmd() *cobra.Command {
 				endTime = startTime.AddDate(0, 0, 1)
 			}
 
+			parsedExDates, err := parseDateFlags(exdates, timezone)
+			if err != nil {
+				return fmt.Errorf("--exception-date-times: %w", err)
+			}
+			parsedRDates, err := parseDateFlags(rdates, timezone)
+			if err != nil {
+				return fmt.Errorf("--recurrence-date-times: %w", err)
+			}
+
 			e, err := a.Events.Create(ctx, event.CreateParams{
 				CalendarID:     calID,
 				Title:          args[0],
@@ -228,8 +237,8 @@ func eventAddCmd() *cobra.Command {
 				RecurrenceRule: rrule,
 				Timezone:       timezone,
 				Geo:            geo,
-				ExDates:        strings.Join(exdates, ","),
-				RDates:         strings.Join(rdates, ","),
+				ExDates:        parsedExDates,
+				RDates:         parsedRDates,
 			})
 			if err != nil {
 				return fmt.Errorf("create event: %w", err)
@@ -298,8 +307,8 @@ func eventAddCmd() *cobra.Command {
 	cmd.Flags().MarkHidden("rrule")
 	cmd.Flags().StringVar(&timezone, "timezone", "", "IANA timezone (e.g. America/New_York)")
 	cmd.Flags().StringVar(&geo, "geo", "", "geographic position (lat;lon, e.g. 37.386;-122.083)")
-	cmd.Flags().StringArrayVar(&exdates, "exception-date-times", nil, "exclude date from recurrence (YYYY-MM-DD, repeatable; alias: --exdate)")
-	cmd.Flags().StringArrayVar(&rdates, "recurrence-date-times", nil, "add extra occurrence date (YYYY-MM-DD, repeatable; alias: --rdate)")
+	cmd.Flags().StringArrayVar(&exdates, "exception-date-times", nil, "exclude date/time from recurrence (YYYY-MM-DD or YYYY-MM-DDTHH:MM, repeatable; alias: --exdate)")
+	cmd.Flags().StringArrayVar(&rdates, "recurrence-date-times", nil, "add extra occurrence date/time (YYYY-MM-DD or YYYY-MM-DDTHH:MM, repeatable; alias: --rdate)")
 	cmd.Flags().StringArrayVar(&exdates, "exdate", nil, "alias for --exception-date-times")
 	cmd.Flags().StringArrayVar(&rdates, "rdate", nil, "alias for --recurrence-date-times")
 	cmd.Flags().MarkHidden("exdate")
@@ -424,10 +433,18 @@ func eventUpdateCmd() *cobra.Command {
 				p.Geo = geo
 			}
 			if cmd.Flags().Changed("exception-date-times") || cmd.Flags().Changed("exdate") {
-				p.ExDates = strings.Join(exdates, ",")
+				parsed, err := parseDateFlags(exdates, timezone)
+				if err != nil {
+					return fmt.Errorf("--exception-date-times: %w", err)
+				}
+				p.ExDates = parsed
 			}
 			if cmd.Flags().Changed("recurrence-date-times") || cmd.Flags().Changed("rdate") {
-				p.RDates = strings.Join(rdates, ",")
+				parsed, err := parseDateFlags(rdates, timezone)
+				if err != nil {
+					return fmt.Errorf("--recurrence-date-times: %w", err)
+				}
+				p.RDates = parsed
 			}
 
 			if cmd.Flags().Changed("date") || cmd.Flags().Changed("time") {
@@ -534,8 +551,8 @@ func eventUpdateCmd() *cobra.Command {
 	cmd.Flags().MarkHidden("rrule")
 	cmd.Flags().StringVar(&timezone, "timezone", "", "new IANA timezone (e.g. America/New_York)")
 	cmd.Flags().StringVar(&geo, "geo", "", "new geographic position (lat;lon)")
-	cmd.Flags().StringArrayVar(&exdates, "exception-date-times", nil, "exclude date from recurrence (YYYY-MM-DD, repeatable, replaces all; alias: --exdate)")
-	cmd.Flags().StringArrayVar(&rdates, "recurrence-date-times", nil, "add extra occurrence date (YYYY-MM-DD, repeatable, replaces all; alias: --rdate)")
+	cmd.Flags().StringArrayVar(&exdates, "exception-date-times", nil, "exclude date/time from recurrence (YYYY-MM-DD or YYYY-MM-DDTHH:MM, repeatable, replaces all; alias: --exdate)")
+	cmd.Flags().StringArrayVar(&rdates, "recurrence-date-times", nil, "add extra occurrence date/time (YYYY-MM-DD or YYYY-MM-DDTHH:MM, repeatable, replaces all; alias: --rdate)")
 	cmd.Flags().StringArrayVar(&exdates, "exdate", nil, "alias for --exception-date-times")
 	cmd.Flags().StringArrayVar(&rdates, "rdate", nil, "alias for --recurrence-date-times")
 	cmd.Flags().MarkHidden("exdate")
@@ -577,6 +594,49 @@ func eventDeleteCmd() *cobra.Command {
 		},
 	}
 	return cmd
+}
+
+// parseDateFlags normalizes date/datetime flag values to RFC 3339 for storage.
+// Accepted formats: YYYY-MM-DD, YYYY-MM-DDTHH:MM, RFC 3339.
+// When tz is non-empty, it is used as the IANA timezone for interpreting values
+// that lack an explicit offset (i.e. not RFC 3339). Falls back to local time.
+func parseDateFlags(flags []string, tz string) (string, error) {
+	loc := time.Local
+	if tz != "" {
+		var err error
+		loc, err = time.LoadLocation(tz)
+		if err != nil {
+			return "", fmt.Errorf("load timezone %q: %w", tz, err)
+		}
+	}
+	var out []string
+	for _, val := range flags {
+		val = strings.TrimSpace(val)
+		if val == "" {
+			continue
+		}
+		var t time.Time
+		var err error
+		for _, layout := range []string{
+			time.RFC3339,
+			"2006-01-02T15:04",
+			"2006-01-02",
+		} {
+			if layout == time.RFC3339 {
+				t, err = time.Parse(layout, val)
+			} else {
+				t, err = time.ParseInLocation(layout, val, loc)
+			}
+			if err == nil {
+				break
+			}
+		}
+		if err != nil {
+			return "", fmt.Errorf("parse date %q: expected YYYY-MM-DD or YYYY-MM-DDTHH:MM", val)
+		}
+		out = append(out, t.UTC().Format(time.RFC3339))
+	}
+	return strings.Join(out, ","), nil
 }
 
 // parseAttendeeFlags parses --attendee flag values into Attendee models.
