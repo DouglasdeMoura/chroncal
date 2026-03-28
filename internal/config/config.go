@@ -4,69 +4,71 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
+	"strings"
 
-	"github.com/BurntSushi/toml"
+	"github.com/spf13/viper"
 )
 
 // SMTPConfig holds SMTP connection settings for EMAIL action alarms.
 type SMTPConfig struct {
-	Host     string `toml:"host"`
-	Port     int    `toml:"port"`
-	Username string `toml:"username"`
-	Password string `toml:"password"`
-	From     string `toml:"from"`
+	Host     string `mapstructure:"host"`
+	Port     int    `mapstructure:"port"`
+	Username string `mapstructure:"username"`
+	Password string `mapstructure:"password"`
+	From     string `mapstructure:"from"`
 }
 
 type Config struct {
-	DB   string     `toml:"db"`
-	SMTP SMTPConfig `toml:"smtp"`
+	DB   string     `mapstructure:"db"`
+	SMTP SMTPConfig `mapstructure:"smtp"`
 }
 
 // Load reads configuration with precedence: env > config file > defaults.
 // The caller is responsible for applying flag overrides on top.
 func Load() Config {
-	var cfg Config
+	v := newViper()
 
-	// Load from config file (ignore errors — file is optional)
-	if path, err := configFilePath(); err == nil {
-		toml.DecodeFile(path, &cfg)
+	if dir, err := configDir(); err == nil {
+		v.AddConfigPath(filepath.Join(dir, "tcal"))
 	}
 
-	applyEnv(&cfg)
+	v.ReadInConfig() // ignore error — file is optional
+
+	var cfg Config
+	v.Unmarshal(&cfg)
 	return cfg
 }
 
 // LoadFile reads configuration from a specific file path, then applies env overrides.
 func LoadFile(path string) Config {
+	v := newViper()
+	v.SetConfigFile(path)
+	v.ReadInConfig()
+
 	var cfg Config
-	toml.DecodeFile(path, &cfg)
-	applyEnv(&cfg)
+	v.Unmarshal(&cfg)
 	return cfg
 }
 
-// applyEnv applies environment variable overrides to the config.
-func applyEnv(cfg *Config) {
-	if v := os.Getenv("TCAL_DB"); v != "" {
-		cfg.DB = v
-	}
-	if v := os.Getenv("TCAL_SMTP_HOST"); v != "" {
-		cfg.SMTP.Host = v
-	}
-	if v := os.Getenv("TCAL_SMTP_PORT"); v != "" {
-		if port, err := strconv.Atoi(v); err == nil {
-			cfg.SMTP.Port = port
-		}
-	}
-	if v := os.Getenv("TCAL_SMTP_USERNAME"); v != "" {
-		cfg.SMTP.Username = v
-	}
-	if v := os.Getenv("TCAL_SMTP_PASSWORD"); v != "" {
-		cfg.SMTP.Password = v
-	}
-	if v := os.Getenv("TCAL_SMTP_FROM"); v != "" {
-		cfg.SMTP.From = v
-	}
+// newViper creates a pre-configured Viper instance with TCAL_ env prefix
+// and bindings for all known config keys.
+func newViper() *viper.Viper {
+	v := viper.New()
+	v.SetConfigName("config")
+	v.SetConfigType("toml")
+	v.SetEnvPrefix("TCAL")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+
+	// Bind env vars so Unmarshal picks them up even without a config file.
+	v.BindEnv("db")
+	v.BindEnv("smtp.host")
+	v.BindEnv("smtp.port")
+	v.BindEnv("smtp.username")
+	v.BindEnv("smtp.password")
+	v.BindEnv("smtp.from")
+
+	return v
 }
 
 // configFilePath returns the OS-appropriate config file location.
