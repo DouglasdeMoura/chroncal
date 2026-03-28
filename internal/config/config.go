@@ -19,8 +19,9 @@ type SMTPConfig struct {
 }
 
 type Config struct {
-	DB   string     `mapstructure:"db"`
-	SMTP SMTPConfig `mapstructure:"smtp"`
+	DB        string     `mapstructure:"db"`
+	NerdFonts bool       `mapstructure:"nerd_fonts"`
+	SMTP      SMTPConfig `mapstructure:"smtp"`
 }
 
 // Load reads configuration with precedence: env > config file > defaults.
@@ -62,6 +63,7 @@ func newViper() *viper.Viper {
 
 	// Bind env vars so Unmarshal picks them up even without a config file.
 	v.BindEnv("db")
+	v.BindEnv("nerd_fonts")
 	v.BindEnv("smtp.host")
 	v.BindEnv("smtp.port")
 	v.BindEnv("smtp.username")

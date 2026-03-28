@@ -92,6 +92,37 @@ from = "noreply@example.com"
 	}
 }
 
+func TestLoad_NerdFontsFromFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	os.WriteFile(path, []byte(`nerd_fonts = true`), 0o644)
+
+	t.Setenv("TCAL_NERD_FONTS", "")
+
+	cfg := LoadFile(path)
+	if !cfg.NerdFonts {
+		t.Error("NerdFonts = false, want true")
+	}
+}
+
+func TestLoad_NerdFontsFromEnv(t *testing.T) {
+	t.Setenv("TCAL_NERD_FONTS", "true")
+
+	cfg := Load()
+	if !cfg.NerdFonts {
+		t.Error("NerdFonts = false, want true (from env)")
+	}
+}
+
+func TestLoad_NerdFontsDefault(t *testing.T) {
+	t.Setenv("TCAL_NERD_FONTS", "")
+
+	cfg := Load()
+	if cfg.NerdFonts {
+		t.Error("NerdFonts = true, want false (default)")
+	}
+}
+
 func TestLoad_SMTPFromEnv(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
