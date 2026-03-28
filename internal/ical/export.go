@@ -69,7 +69,12 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 		}
 
 		if e.Categories != "" {
-			vevent.Props.SetText(ical.PropCategories, e.Categories)
+			// Use raw value, not SetText: CATEGORIES uses commas as value
+			// separators (RFC 5545 Section 3.8.1.2), not as text content.
+			// SetText would escape them as \, breaking interop.
+			catProp := &ical.Prop{Name: ical.PropCategories}
+			catProp.Value = e.Categories
+			vevent.Props.Set(catProp)
 		}
 
 		// EXDATE
@@ -282,7 +287,9 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 		}
 
 		if t.Categories != "" {
-			vtodo.Props.SetText(ical.PropCategories, t.Categories)
+			catProp := &ical.Prop{Name: ical.PropCategories}
+			catProp.Value = t.Categories
+			vtodo.Props.Set(catProp)
 		}
 
 		if t.RecurrenceRule != "" {

@@ -174,6 +174,32 @@ func TestExport_MultipleExdatesRdates(t *testing.T) {
 	}
 }
 
+func TestExport_CategoriesNotEscaped(t *testing.T) {
+	t.Parallel()
+	events := []event.Event{{
+		UID:        "cat-export",
+		Title:      "Category Event",
+		StartTime:  time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Status:     "CONFIRMED",
+		Transp:     "OPAQUE",
+		Categories: "meeting,work,urgent",
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	}}
+
+	data, _ := ExportEvents(events, "")
+	ics := string(data)
+
+	// Commas must NOT be escaped — they are value separators in CATEGORIES
+	if strings.Contains(ics, `meeting\,work`) {
+		t.Errorf("CATEGORIES has escaped commas:\n%s", ics)
+	}
+	if !strings.Contains(ics, "CATEGORIES:meeting,work,urgent") {
+		t.Errorf("expected unescaped CATEGORIES, got:\n%s", ics)
+	}
+}
+
 func TestExport_AttendeePartstatNotEmpty(t *testing.T) {
 	t.Parallel()
 	events := []event.Event{{
