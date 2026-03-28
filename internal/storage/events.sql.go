@@ -334,6 +334,64 @@ func (q *Queries) ListEventsByDateRange(ctx context.Context, arg ListEventsByDat
 	return items, nil
 }
 
+const listEventsByStatusAndDateRange = `-- name: ListEventsByStatusAndDateRange :many
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, categories, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM events WHERE status = ? AND start_time >= ? AND start_time < ? ORDER BY start_time
+`
+
+type ListEventsByStatusAndDateRangeParams struct {
+	Status      string
+	StartTime   string
+	StartTime_2 string
+}
+
+func (q *Queries) ListEventsByStatusAndDateRange(ctx context.Context, arg ListEventsByStatusAndDateRangeParams) ([]Event, error) {
+	rows, err := q.db.QueryContext(ctx, listEventsByStatusAndDateRange, arg.Status, arg.StartTime, arg.StartTime_2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Event
+	for rows.Next() {
+		var i Event
+		if err := rows.Scan(
+			&i.ID,
+			&i.Uid,
+			&i.CalendarID,
+			&i.Title,
+			&i.Description,
+			&i.Location,
+			&i.StartTime,
+			&i.EndTime,
+			&i.AllDay,
+			&i.RecurrenceRule,
+			&i.Timezone,
+			&i.Status,
+			&i.Transp,
+			&i.Sequence,
+			&i.Priority,
+			&i.Class,
+			&i.Url,
+			&i.Categories,
+			&i.Exdates,
+			&i.Rdates,
+			&i.RecurrenceID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Geo,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOverridesByUID = `-- name: ListOverridesByUID :many
 SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, categories, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM events WHERE uid = ? AND recurrence_id != '' ORDER BY recurrence_id
 `

@@ -31,6 +31,7 @@ func eventListCmd() *cobra.Command {
 		fromStr      string
 		toStr        string
 		calendarName string
+		status       string
 	)
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -49,29 +50,29 @@ func eventListCmd() *cobra.Command {
 			}
 
 			var events []event.Event
-			if calendarName != "" {
-				calID, err := resolveCalendarID(ctx, a, calendarName)
-				if err != nil {
-					return err
+			switch {
+			case status != "":
+				events, err = a.Events.ListByStatusAndDateRange(ctx, status, from, to)
+			case calendarName != "":
+				calID, cerr := resolveCalendarID(ctx, a, calendarName)
+				if cerr != nil {
+					return cerr
 				}
 				events, err = a.Events.ListByCalendarAndDateRange(ctx, calID, from, to)
-				if err != nil {
-					return fmt.Errorf("list events: %w", err)
-				}
-			} else {
+			default:
 				events, err = a.Events.ListByDateRange(ctx, from, to)
-				if err != nil {
-					return fmt.Errorf("list events: %w", err)
-				}
+			}
+			if err != nil {
+				return fmt.Errorf("list events: %w", err)
 			}
 
 			w := cmd.OutOrStdout()
-			if jsonOut {
+			if outputFmt != "table" {
 				items := make([]jsonEvent, len(events))
 				for i, e := range events {
 					items[i] = toJSONEvent(e)
 				}
-				return printJSON(w, items)
+				return printOutput(w, items)
 			}
 			printEvents(w, events)
 			return nil
@@ -80,6 +81,7 @@ func eventListCmd() *cobra.Command {
 	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD, default: today)")
 	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 14 days from now)")
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "filter by calendar name")
+	cmd.Flags().StringVar(&status, "status", "", "filter by status (TENTATIVE, CONFIRMED, CANCELLED)")
 	return cmd
 }
 
@@ -115,8 +117,8 @@ func eventGetCmd() *cobra.Command {
 			e.Relations, _ = a.Events.ListRelations(ctx, e.ID)
 
 			w := cmd.OutOrStdout()
-			if jsonOut {
-				return printJSON(w, toJSONEvent(e))
+			if outputFmt != "table" {
+				return printOutput(w, toJSONEvent(e))
 			}
 			printEvent(w, e)
 			return nil
@@ -392,8 +394,8 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 			e.Relations, _ = a.Events.ListRelations(ctx, e.ID)
 
 			w := cmd.OutOrStdout()
-			if jsonOut {
-				return printJSON(w, toJSONEvent(e))
+			if outputFmt != "table" {
+				return printOutput(w, toJSONEvent(e))
 			}
 			if allDay {
 				fmt.Fprintf(w, "Created: %s on %s (all day)\n", e.Title, e.StartTime.Local().Format("Mon, Jan 2 2006"))
@@ -737,8 +739,8 @@ func eventUpdateCmd() *cobra.Command {
 			e.Relations, _ = a.Events.ListRelations(ctx, e.ID)
 
 			w := cmd.OutOrStdout()
-			if jsonOut {
-				return printJSON(w, toJSONEvent(e))
+			if outputFmt != "table" {
+				return printOutput(w, toJSONEvent(e))
 			}
 			printEvent(w, e)
 			return nil
@@ -802,8 +804,8 @@ func eventDeleteCmd() *cobra.Command {
 			}
 
 			w := cmd.OutOrStdout()
-			if jsonOut {
-				return printJSON(w, map[string]any{"deleted": true, "id": id})
+			if outputFmt != "table" {
+				return printOutput(w, map[string]any{"deleted": true, "id": id})
 			}
 			fmt.Fprintf(w, "Deleted event %d.\n", id)
 			return nil

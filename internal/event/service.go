@@ -131,6 +131,18 @@ func (s *Service) ListByDateRange(ctx context.Context, from, to time.Time) ([]Ev
 	return fromStorageSlice(rows), nil
 }
 
+func (s *Service) ListByStatusAndDateRange(ctx context.Context, status string, from, to time.Time) ([]Event, error) {
+	rows, err := s.q.ListEventsByStatusAndDateRange(ctx, storage.ListEventsByStatusAndDateRangeParams{
+		Status:      status,
+		StartTime:   from.Format(time.RFC3339),
+		StartTime_2: to.Format(time.RFC3339),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return fromStorageSlice(rows), nil
+}
+
 func (s *Service) ListByCalendarAndDateRange(ctx context.Context, calID int64, from, to time.Time) ([]Event, error) {
 	rows, err := s.q.ListEventsByCalendarAndDateRange(ctx, storage.ListEventsByCalendarAndDateRangeParams{
 		CalendarID:  calID,
