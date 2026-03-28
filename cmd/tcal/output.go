@@ -232,9 +232,12 @@ func printEvents(w io.Writer, events []event.Event) {
 			currentDate = dateLabel
 		}
 		if e.AllDay {
-			fmt.Fprintf(w, "  ● all day   [%d] %s\n", e.ID, e.Title)
+			fmt.Fprintf(w, "  ● all day       [%d] %s\n", e.ID, e.Title)
 		} else {
-			fmt.Fprintf(w, "  ● %s  [%d] %s\n", e.StartTime.Local().Format("15:04"), e.ID, e.Title)
+			fmt.Fprintf(w, "  ● %s–%s  [%d] %s\n",
+				e.StartTime.Local().Format("15:04"),
+				e.EndTime.Local().Format("15:04"),
+				e.ID, e.Title)
 		}
 	}
 	fmt.Fprintln(w)
