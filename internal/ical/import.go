@@ -434,10 +434,12 @@ func parseAlarm(comp *ical.Component) model.Alarm {
 func parseAttendees(ve ical.Event) []model.Attendee {
 	var attendees []model.Attendee
 
-	// ORGANIZER
+	// ORGANIZER — track email so we can deduplicate against ATTENDEE below.
+	var organizerEmail string
 	if prop := ve.Props.Get(ical.PropOrganizer); prop != nil {
+		organizerEmail = stripMailto(prop.Value)
 		attendees = append(attendees, model.Attendee{
-			Email:      stripMailto(prop.Value),
+			Email:      organizerEmail,
 			Name:       prop.Params.Get(ical.ParamCommonName),
 			RSVPStatus: "ACCEPTED",
 			Role:       "CHAIR",
@@ -445,10 +447,14 @@ func parseAttendees(ve ical.Event) []model.Attendee {
 		})
 	}
 
-	// ATTENDEE properties
+	// ATTENDEE properties — skip duplicates of the ORGANIZER email.
 	for _, prop := range ve.Props.Values(ical.PropAttendee) {
+		email := stripMailto(prop.Value)
+		if organizerEmail != "" && strings.EqualFold(email, organizerEmail) {
+			continue
+		}
 		a := model.Attendee{
-			Email:      stripMailto(prop.Value),
+			Email:      email,
 			Name:       prop.Params.Get(ical.ParamCommonName),
 			RSVPStatus: strings.ToUpper(paramOrDefault(&prop, ical.ParamParticipationStatus, "NEEDS-ACTION")),
 			Role:       strings.ToUpper(paramOrDefault(&prop, ical.ParamRole, "REQ-PARTICIPANT")),
@@ -531,9 +537,11 @@ func parseDateListFromProps(props ical.Props, propName string) string {
 func parseAttendeesFromProps(props ical.Props) []model.Attendee {
 	var attendees []model.Attendee
 
+	var organizerEmail string
 	if prop := props.Get(ical.PropOrganizer); prop != nil {
+		organizerEmail = stripMailto(prop.Value)
 		attendees = append(attendees, model.Attendee{
-			Email:      stripMailto(prop.Value),
+			Email:      organizerEmail,
 			Name:       prop.Params.Get(ical.ParamCommonName),
 			RSVPStatus: "ACCEPTED",
 			Role:       "CHAIR",
@@ -542,8 +550,12 @@ func parseAttendeesFromProps(props ical.Props) []model.Attendee {
 	}
 
 	for _, prop := range props.Values(ical.PropAttendee) {
+		email := stripMailto(prop.Value)
+		if organizerEmail != "" && strings.EqualFold(email, organizerEmail) {
+			continue
+		}
 		a := model.Attendee{
-			Email:      stripMailto(prop.Value),
+			Email:      email,
 			Name:       prop.Params.Get(ical.ParamCommonName),
 			RSVPStatus: strings.ToUpper(paramOrDefault(&prop, ical.ParamParticipationStatus, "NEEDS-ACTION")),
 			Role:       strings.ToUpper(paramOrDefault(&prop, ical.ParamRole, "REQ-PARTICIPANT")),
