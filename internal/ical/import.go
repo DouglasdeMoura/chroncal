@@ -355,15 +355,14 @@ func textOrDefault(ve ical.Event, prop, def string) string {
 func parseCategories(ve ical.Event) string {
 	var cats []string
 	for _, prop := range ve.Props.Values(ical.PropCategories) {
-		// Use Text() to decode iCal escaping (\, → ,), then split
-		decoded, err := prop.Text()
-		if err != nil {
-			decoded = prop.Value
-		}
-		parts := strings.Split(decoded, ",")
-		for _, p := range parts {
-			if s := strings.TrimSpace(p); s != "" {
-				cats = append(cats, s)
+		// TextList splits on unescaped commas and unescapes each value,
+		// handling both RFC-correct "CATEGORIES:a,b" and legacy
+		// escaped "CATEGORIES:a\,b" inputs.
+		if list, err := prop.TextList(); err == nil {
+			for _, s := range list {
+				if s = strings.TrimSpace(s); s != "" {
+					cats = append(cats, s)
+				}
 			}
 		}
 	}
@@ -493,14 +492,11 @@ func propTextOr(props ical.Props, name, def string) string {
 func parseCategoriesFromProps(props ical.Props) string {
 	var cats []string
 	for _, prop := range props.Values(ical.PropCategories) {
-		decoded, err := prop.Text()
-		if err != nil {
-			decoded = prop.Value
-		}
-		parts := strings.Split(decoded, ",")
-		for _, p := range parts {
-			if s := strings.TrimSpace(p); s != "" {
-				cats = append(cats, s)
+		if list, err := prop.TextList(); err == nil {
+			for _, s := range list {
+				if s = strings.TrimSpace(s); s != "" {
+					cats = append(cats, s)
+				}
 			}
 		}
 	}

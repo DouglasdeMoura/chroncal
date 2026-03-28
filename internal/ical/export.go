@@ -80,11 +80,11 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 		}
 
 		if e.Categories != "" {
-			// Use raw value, not SetText: CATEGORIES uses commas as value
-			// separators (RFC 5545 Section 3.8.1.2), not as text content.
-			// SetText would escape them as \, breaking interop.
+			// CATEGORIES is a comma-separated list of TEXT values.
+			// SetTextList handles escaping within individual values and
+			// uses unescaped commas as separators per RFC 5545 Section 3.8.1.2.
 			catProp := &ical.Prop{Name: ical.PropCategories}
-			catProp.Value = e.Categories
+			catProp.SetTextList(strings.Split(e.Categories, ","))
 			vevent.Props.Set(catProp)
 		}
 
@@ -299,7 +299,7 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 
 		if t.Categories != "" {
 			catProp := &ical.Prop{Name: ical.PropCategories}
-			catProp.Value = t.Categories
+			catProp.SetTextList(strings.Split(t.Categories, ","))
 			vtodo.Props.Set(catProp)
 		}
 
