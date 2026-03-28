@@ -247,6 +247,98 @@ func TestExport_EventWithTimezone(t *testing.T) {
 	}
 }
 
+func TestExport_VTimezonePresent(t *testing.T) {
+	t.Parallel()
+	events := []event.Event{{
+		UID:       "vtz-export",
+		Title:     "TZ Event",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Timezone:  "America/New_York",
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}}
+
+	data, _ := ExportEvents(events, "")
+	ics := string(data)
+
+	if !strings.Contains(ics, "BEGIN:VTIMEZONE") {
+		t.Fatalf("missing VTIMEZONE block:\n%s", ics)
+	}
+	if !strings.Contains(ics, "TZID:America/New_York") {
+		t.Error("missing TZID property in VTIMEZONE")
+	}
+	if !strings.Contains(ics, "TZOFFSETTO:") {
+		t.Error("missing TZOFFSETTO in VTIMEZONE")
+	}
+	if !strings.Contains(ics, "TZOFFSETFROM:") {
+		t.Error("missing TZOFFSETFROM in VTIMEZONE")
+	}
+	// America/New_York has DST, so both STANDARD and DAYLIGHT should be present
+	if !strings.Contains(ics, "BEGIN:STANDARD") {
+		t.Error("missing STANDARD sub-component")
+	}
+	if !strings.Contains(ics, "BEGIN:DAYLIGHT") {
+		t.Error("missing DAYLIGHT sub-component")
+	}
+}
+
+func TestExport_VTimezoneNoDST(t *testing.T) {
+	t.Parallel()
+	// Asia/Kolkata does not observe DST
+	events := []event.Event{{
+		UID:       "vtz-nodst",
+		Title:     "No DST Event",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Timezone:  "Asia/Kolkata",
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}}
+
+	data, _ := ExportEvents(events, "")
+	ics := string(data)
+
+	if !strings.Contains(ics, "TZID:Asia/Kolkata") {
+		t.Error("missing TZID for Asia/Kolkata")
+	}
+	if !strings.Contains(ics, "BEGIN:STANDARD") {
+		t.Error("missing STANDARD sub-component")
+	}
+	if strings.Contains(ics, "BEGIN:DAYLIGHT") {
+		t.Error("Asia/Kolkata should not have DAYLIGHT sub-component")
+	}
+	if !strings.Contains(ics, "+0530") {
+		t.Error("expected +0530 offset for Asia/Kolkata")
+	}
+}
+
+func TestExport_NoVTimezoneWithoutTZID(t *testing.T) {
+	t.Parallel()
+	// Events without a timezone should not generate VTIMEZONE
+	events := []event.Event{{
+		UID:       "no-vtz",
+		Title:     "UTC Event",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}}
+
+	data, _ := ExportEvents(events, "")
+	ics := string(data)
+
+	if strings.Contains(ics, "BEGIN:VTIMEZONE") {
+		t.Error("UTC event should not generate VTIMEZONE")
+	}
+}
+
 func TestExport_EventWithAlarms(t *testing.T) {
 	t.Parallel()
 	events := []event.Event{{

@@ -23,6 +23,17 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 		cal.Props.SetText("X-WR-CALNAME", calName)
 	}
 
+	// Emit VTIMEZONE components for all referenced timezones (RFC 5545 Section 3.6.5).
+	seen := make(map[string]bool)
+	for _, e := range events {
+		if e.Timezone != "" && !seen[e.Timezone] {
+			seen[e.Timezone] = true
+			if vtz, err := buildVTimezone(e.Timezone); err == nil {
+				cal.Children = append(cal.Children, vtz)
+			}
+		}
+	}
+
 	for _, e := range events {
 		vevent := ical.NewEvent()
 		vevent.Props.SetText(ical.PropUID, e.UID)
@@ -466,6 +477,116 @@ func buildValarm(alarm model.Alarm) *ical.Component {
 	}
 
 	return valarm
+}
+
+// buildVTimezone generates a VTIMEZONE component for the given IANA timezone ID.
+// It probes the current year for DST transitions and emits STANDARD and DAYLIGHT
+// sub-components as needed, satisfying RFC 5545 Section 3.6.5.
+func buildVTimezone(tzID string) (*ical.Component, error) {
+	loc, err := time.LoadLocation(tzID)
+	if err != nil {
+		return nil, err
+	}
+
+	vtz := ical.NewComponent("VTIMEZONE")
+	tzidProp := &ical.Prop{Name: "TZID"}
+	tzidProp.Value = tzID
+	vtz.Props.Set(tzidProp)
+
+	refYear := time.Now().Year()
+
+	// Probe the start of each month to detect offset transitions.
+	type transition struct {
+		name       string
+		offset     int // seconds east of UTC
+		month      time.Month
+		fromOffset int
+	}
+
+	jan := time.Date(refYear, 1, 1, 12, 0, 0, 0, loc)
+	janName, janOffset := jan.Zone()
+
+	var transitions []transition
+	prevOffset := janOffset
+	for m := time.February; m <= time.December; m++ {
+		t := time.Date(refYear, m, 1, 12, 0, 0, 0, loc)
+		name, offset := t.Zone()
+		if offset != prevOffset {
+			transitions = append(transitions, transition{
+				name: name, offset: offset, month: m, fromOffset: prevOffset,
+			})
+			prevOffset = offset
+		}
+	}
+
+	fmtOffset := func(secs int) string {
+		sign := "+"
+		if secs < 0 {
+			sign = "-"
+			secs = -secs
+		}
+		return fmt.Sprintf("%s%02d%02d", sign, secs/3600, (secs%3600)/60)
+	}
+
+	addSubComp := func(compName, tzName string, offset, fromOffset int, dtstart time.Time) {
+		comp := ical.NewComponent(compName)
+
+		p := &ical.Prop{Name: ical.PropDateTimeStart}
+		p.Value = dtstart.In(loc).Format("20060102T150405")
+		comp.Props.Set(p)
+
+		p = &ical.Prop{Name: "TZOFFSETFROM"}
+		p.Value = fmtOffset(fromOffset)
+		comp.Props.Set(p)
+
+		p = &ical.Prop{Name: "TZOFFSETTO"}
+		p.Value = fmtOffset(offset)
+		comp.Props.Set(p)
+
+		p = &ical.Prop{Name: "TZNAME"}
+		p.Value = tzName
+		comp.Props.Set(p)
+
+		vtz.Children = append(vtz.Children, comp)
+	}
+
+	if len(transitions) == 0 {
+		// No DST — single STANDARD component
+		addSubComp("STANDARD", janName, janOffset, janOffset,
+			time.Date(refYear, 1, 1, 0, 0, 0, 0, loc))
+	} else {
+		for _, tr := range transitions {
+			// The transition was detected between month M-1 and M, but the
+			// exact day could be anywhere in the prior month. Search backward.
+			dtstart := findTransitionDay(loc, refYear, tr.month, tr.fromOffset)
+			compName := "STANDARD"
+			if tr.offset > tr.fromOffset {
+				compName = "DAYLIGHT"
+			}
+			addSubComp(compName, tr.name, tr.offset, tr.fromOffset, dtstart)
+		}
+	}
+
+	return vtz, nil
+}
+
+// findTransitionDay finds the exact day when the UTC offset changes to a new
+// value, searching backward from the start of the detected month into the
+// previous month where the transition actually occurs.
+func findTransitionDay(loc *time.Location, year int, detectedMonth time.Month, prevOffset int) time.Time {
+	// Search from the previous month's first day through the detected month
+	searchStart := time.Date(year, detectedMonth-1, 1, 3, 0, 0, 0, loc)
+	if detectedMonth == time.January {
+		searchStart = time.Date(year-1, time.December, 1, 3, 0, 0, 0, loc)
+	}
+	searchEnd := time.Date(year, detectedMonth, 1, 3, 0, 0, 0, loc)
+	for d := searchStart; !d.After(searchEnd); d = d.AddDate(0, 0, 1) {
+		_, offset := d.Zone()
+		if offset != prevOffset {
+			return d
+		}
+	}
+	return searchEnd
 }
 
 func emitAttachment(props ical.Props, att model.Attachment) {
