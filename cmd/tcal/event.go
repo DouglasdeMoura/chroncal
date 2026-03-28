@@ -293,7 +293,9 @@ func eventAddCmd() *cobra.Command {
 	cmd.Flags().StringVar(&class, "class", "", "classification (PUBLIC, PRIVATE, CONFIDENTIAL)")
 	cmd.Flags().StringVar(&transp, "transp", "", "transparency (OPAQUE, TRANSPARENT)")
 	cmd.Flags().Int64Var(&priority, "priority", 0, "priority (0-9)")
-	cmd.Flags().StringVar(&rrule, "rrule", "", "recurrence rule (e.g. FREQ=WEEKLY;COUNT=10)")
+	cmd.Flags().StringVar(&rrule, "recurrence-rule", "", "recurrence rule (e.g. FREQ=WEEKLY;COUNT=10; alias: --rrule)")
+	cmd.Flags().StringVar(&rrule, "rrule", "", "alias for --recurrence-rule")
+	cmd.Flags().MarkHidden("rrule")
 	cmd.Flags().StringVar(&timezone, "timezone", "", "IANA timezone (e.g. America/New_York)")
 	cmd.Flags().StringVar(&geo, "geo", "", "geographic position (lat;lon, e.g. 37.386;-122.083)")
 	cmd.Flags().StringArrayVar(&exdates, "exception-date-times", nil, "exclude date from recurrence (YYYY-MM-DD, repeatable; alias: --exdate)")
@@ -412,7 +414,7 @@ func eventUpdateCmd() *cobra.Command {
 			if cmd.Flags().Changed("priority") {
 				p.Priority = priority
 			}
-			if cmd.Flags().Changed("rrule") {
+			if cmd.Flags().Changed("recurrence-rule") || cmd.Flags().Changed("rrule") {
 				p.RecurrenceRule = rrule
 			}
 			if cmd.Flags().Changed("timezone") {
@@ -527,7 +529,9 @@ func eventUpdateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&class, "class", "", "new classification (PUBLIC, PRIVATE, CONFIDENTIAL)")
 	cmd.Flags().StringVar(&transp, "transp", "", "new transparency (OPAQUE, TRANSPARENT)")
 	cmd.Flags().Int64Var(&priority, "priority", 0, "new priority (0-9)")
-	cmd.Flags().StringVar(&rrule, "rrule", "", "new recurrence rule")
+	cmd.Flags().StringVar(&rrule, "recurrence-rule", "", "new recurrence rule (alias: --rrule)")
+	cmd.Flags().StringVar(&rrule, "rrule", "", "alias for --recurrence-rule")
+	cmd.Flags().MarkHidden("rrule")
 	cmd.Flags().StringVar(&timezone, "timezone", "", "new IANA timezone (e.g. America/New_York)")
 	cmd.Flags().StringVar(&geo, "geo", "", "new geographic position (lat;lon)")
 	cmd.Flags().StringArrayVar(&exdates, "exception-date-times", nil, "exclude date from recurrence (YYYY-MM-DD, repeatable, replaces all; alias: --exdate)")
