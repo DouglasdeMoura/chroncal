@@ -19,7 +19,6 @@ import (
 
 var (
 	outputFmt string
-	wide      bool
 	cfg       config.Config
 )
 
@@ -72,7 +71,6 @@ func initApp() (*app.App, error) {
 
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&outputFmt, "output", "o", "text", "output format (text, table, json, yaml)")
-	rootCmd.PersistentFlags().BoolVarP(&wide, "wide", "w", false, "show all fields in text and table output")
 
 	rootCmd.AddCommand(eventCmd(), calendarCmd(), todoCmd(), icalCmd(), alarmCmd(), serviceCmd())
 }
