@@ -152,7 +152,31 @@ func eventAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   `add "<title>"`,
 		Short: "Create a new event",
-		Args:  cobra.ExactArgs(1),
+		Long: `Create a new event in the calendar.
+
+Omitting --time creates an all-day event. When --time is set, the event
+defaults to 1 hour unless --duration or --end-time is provided.
+
+Defaults: status=CONFIRMED, class=PUBLIC, transparency=OPAQUE, calendar=Personal.`,
+		Example: `  # Timed event tomorrow at 2pm for 90 minutes
+  tcal event add "Lunch with Alice" --date 2026-04-01 --time 14:00 --duration 1h30m
+
+  # All-day event (no --time flag)
+  tcal event add "Company Holiday" --date 2026-12-25
+
+  # Recurring weekly meeting with alarm and attendees
+  tcal event add "Team Standup" --time 09:00 --duration 30m \
+    --rrule "FREQ=WEEKLY;BYDAY=MO,WE,FR" \
+    --alarm "-PT15M" --attendee "Alice <alice@example.com>"
+
+  # Event with timezone, location, and categories
+  tcal event add "Conference Talk" --date 2026-05-10 --time 10:00 \
+    --timezone America/New_York --location "Room 42" --categories "work,conference"
+
+  # Recurring event with an excluded date
+  tcal event add "Sprint Review" --time 14:00 \
+    --rrule "FREQ=WEEKLY;COUNT=10" --exdate 2026-04-08`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -309,31 +333,31 @@ func eventAddCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&dateStr, "date", "", "event date (YYYY-MM-DD, default: today)")
-	cmd.Flags().StringVar(&timeStr, "time", "", "start time (HH:MM, default: all-day)")
-	cmd.Flags().StringVar(&endTimeStr, "end-time", "", "end time (HH:MM, alternative to --duration)")
-	cmd.Flags().StringVar(&durationStr, "duration", "1h", "event duration (e.g. 30m, 1h30m)")
+	cmd.Flags().StringVar(&timeStr, "time", "", "start time (HH:MM); omit for an all-day event")
+	cmd.Flags().StringVar(&endTimeStr, "end-time", "", "end time (HH:MM, alternative to --duration; ignored for all-day)")
+	cmd.Flags().StringVar(&durationStr, "duration", "1h", "event duration (e.g. 30m, 1h30m; ignored for all-day)")
 	cmd.Flags().StringVar(&calendarName, "calendar", "Personal", "calendar name")
 	cmd.Flags().StringVar(&location, "location", "", "event location")
 	cmd.Flags().StringVar(&description, "description", "", "event description")
-	cmd.Flags().StringVar(&status, "status", "", "event status (TENTATIVE, CONFIRMED, CANCELLED)")
+	cmd.Flags().StringVar(&status, "status", "", "event status (TENTATIVE, CONFIRMED, CANCELLED; default: CONFIRMED)")
 	cmd.Flags().StringVar(&url, "url", "", "associated URL")
-	cmd.Flags().StringVar(&categories, "categories", "", "comma-separated categories")
-	cmd.Flags().StringVar(&class, "class", "", "classification (PUBLIC, PRIVATE, CONFIDENTIAL)")
-	cmd.Flags().StringVar(&transp, "transparency", "", "free/busy visibility (OPAQUE=busy, TRANSPARENT=free)")
-	cmd.Flags().Int64Var(&priority, "priority", 0, "priority (0-9)")
-	cmd.Flags().StringVar(&rrule, "recurrence-rule", "", "recurrence rule (e.g. FREQ=WEEKLY;COUNT=10; alias: --rrule)")
+	cmd.Flags().StringVar(&categories, "categories", "", "comma-separated categories (e.g. work,meeting)")
+	cmd.Flags().StringVar(&class, "class", "", "classification (PUBLIC, PRIVATE, CONFIDENTIAL; default: PUBLIC)")
+	cmd.Flags().StringVar(&transp, "transparency", "", "free/busy visibility (OPAQUE=busy, TRANSPARENT=free; default: OPAQUE)")
+	cmd.Flags().Int64Var(&priority, "priority", 0, "priority 0-9 (0=undefined, 1=highest, 9=lowest)")
+	cmd.Flags().StringVar(&rrule, "recurrence-rule", "", "RFC 5545 recurrence rule (e.g. FREQ=DAILY, FREQ=WEEKLY;BYDAY=MO,WE,FR, FREQ=MONTHLY;COUNT=12; alias: --rrule)")
 	cmd.Flags().StringVar(&rrule, "rrule", "", "alias for --recurrence-rule")
 	cmd.Flags().MarkHidden("rrule")
-	cmd.Flags().StringVar(&timezone, "timezone", "", "IANA timezone (e.g. America/New_York)")
+	cmd.Flags().StringVar(&timezone, "timezone", "", "IANA timezone (e.g. America/New_York, Europe/London, Asia/Tokyo)")
 	cmd.Flags().StringVar(&geo, "geo", "", "geographic position (lat;lon, e.g. 37.386;-122.083)")
-	cmd.Flags().StringArrayVar(&exdates, "exception-date-times", nil, "exclude date/time from recurrence (YYYY-MM-DD or YYYY-MM-DDTHH:MM, repeatable; alias: --exdate)")
-	cmd.Flags().StringArrayVar(&rdates, "recurrence-date-times", nil, "add extra occurrence date/time (YYYY-MM-DD or YYYY-MM-DDTHH:MM, repeatable; alias: --rdate)")
+	cmd.Flags().StringArrayVar(&exdates, "exception-date-times", nil, "exclude date from recurrence (YYYY-MM-DD or YYYY-MM-DDTHH:MM, repeatable; alias: --exdate)")
+	cmd.Flags().StringArrayVar(&rdates, "recurrence-date-times", nil, "add extra occurrence date (YYYY-MM-DD or YYYY-MM-DDTHH:MM, repeatable; alias: --rdate)")
 	cmd.Flags().StringArrayVar(&exdates, "exdate", nil, "alias for --exception-date-times")
 	cmd.Flags().StringArrayVar(&rdates, "rdate", nil, "alias for --recurrence-date-times")
 	cmd.Flags().MarkHidden("exdate")
 	cmd.Flags().MarkHidden("rdate")
 	cmd.Flags().StringArrayVar(&attachFlags, "attach", nil, "attachment (file path or URL, repeatable)")
-	cmd.Flags().StringArrayVar(&alarmFlags, "alarm", nil, "alarm trigger (e.g. -PT15M, DISPLAY:-PT1H, repeatable)")
+	cmd.Flags().StringArrayVar(&alarmFlags, "alarm", nil, "alarm as ISO 8601 duration before start (e.g. -PT15M=15min, -PT1H=1hr, -P1D=1day; prefix ACTION: for type, e.g. EMAIL:-PT1H; repeatable)")
 	cmd.Flags().StringArrayVar(&attendeeFlags, "attendee", nil, "attendee (email or \"Name <email>\", repeatable)")
 	cmd.Flags().StringArrayVar(&commentFlags, "comment", nil, "comment annotation (repeatable)")
 	return cmd
