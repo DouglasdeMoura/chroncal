@@ -330,6 +330,12 @@ Defaults: status=CONFIRMED, class=PUBLIC, transparency=OPAQUE, calendar=Personal
 				}
 			}
 
+			// Re-read event with related data so JSON output is complete.
+			e.Alarms, _ = a.Events.ListAlarms(ctx, e.ID)
+			e.Attendees, _ = a.Events.ListAttendees(ctx, e.ID)
+			e.Attachments, _ = a.Events.ListAttachments(ctx, e.ID)
+			e.Comments, _ = a.Events.ListComments(ctx, e.ID)
+
 			w := cmd.OutOrStdout()
 			if jsonOut {
 				return printJSON(w, toJSONEvent(e))
