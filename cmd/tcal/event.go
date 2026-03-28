@@ -807,6 +807,9 @@ func parseAlarmFlags(flags []string) ([]model.Alarm, error) {
 		if trigger == "" {
 			return nil, fmt.Errorf("alarm %q: missing trigger value", val)
 		}
+		if err := validateAlarmTrigger(trigger); err != nil {
+			return nil, fmt.Errorf("alarm %q: %w", val, err)
+		}
 
 		out = append(out, model.Alarm{
 			Action:       action,
@@ -954,6 +957,32 @@ func validateURL(u string) error {
 	}
 	if parsed.Scheme == "" {
 		return fmt.Errorf("invalid --url %q: must include a scheme (e.g. https://example.com)", u)
+	}
+	return nil
+}
+
+// validateAlarmTrigger checks that a trigger value is a valid ISO 8601
+// duration (e.g. -PT15M, P1D) or an absolute RFC 3339 datetime per
+// RFC 5545 Section 3.8.6.3.
+func validateAlarmTrigger(trigger string) error {
+	if trigger == "" {
+		return fmt.Errorf("alarm trigger must not be empty")
+	}
+	// Try RFC 3339 absolute datetime first.
+	if _, err := time.Parse(time.RFC3339, trigger); err == nil {
+		return nil
+	}
+	// Validate ISO 8601 duration: optional minus, then P, then at least one component.
+	s := trigger
+	if strings.HasPrefix(s, "-") {
+		s = s[1:]
+	}
+	if !strings.HasPrefix(s, "P") {
+		return fmt.Errorf("invalid alarm trigger %q: must be an ISO 8601 duration (e.g. -PT15M) or RFC 3339 datetime", trigger)
+	}
+	s = s[1:] // strip P
+	if s == "" {
+		return fmt.Errorf("invalid alarm trigger %q: duration has no components after P", trigger)
 	}
 	return nil
 }

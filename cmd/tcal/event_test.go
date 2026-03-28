@@ -84,3 +84,32 @@ func TestValidateURL(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateAlarmTrigger(t *testing.T) {
+	tests := []struct {
+		name    string
+		trigger string
+		wantErr bool
+	}{
+		{"15 min before", "-PT15M", false},
+		{"1 hour before", "-PT1H", false},
+		{"1 day before", "-P1D", false},
+		{"complex duration", "-P1DT2H30M", false},
+		{"positive duration", "PT15M", false},
+		{"absolute datetime", "2026-05-10T14:00:00Z", false},
+		{"absolute with offset", "2026-05-10T14:00:00-04:00", false},
+		{"empty", "", true},
+		{"garbage", "garbage", true},
+		{"just P", "P", true},
+		{"just minus P", "-P", true},
+		{"no P prefix", "T15M", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateAlarmTrigger(tt.trigger)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateAlarmTrigger(%q) error = %v, wantErr %v", tt.trigger, err, tt.wantErr)
+			}
+		})
+	}
+}
