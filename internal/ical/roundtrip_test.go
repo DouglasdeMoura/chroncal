@@ -75,6 +75,9 @@ func TestRoundtrip_Event(t *testing.T) {
 	if got.Sequence != original.Sequence {
 		t.Errorf("Sequence: %d != %d", got.Sequence, original.Sequence)
 	}
+	if got.Categories != original.Categories {
+		t.Errorf("Categories: %q != %q", got.Categories, original.Categories)
+	}
 }
 
 func TestRoundtrip_Todo(t *testing.T) {
@@ -485,5 +488,97 @@ func TestRoundtrip_MultipleComments(t *testing.T) {
 		if got.Comments[i] != want {
 			t.Errorf("Comment[%d]: %q, want %q", i, got.Comments[i], want)
 		}
+	}
+}
+
+func TestRoundtrip_EventWithGeo(t *testing.T) {
+	t.Parallel()
+	original := event.Event{
+		UID:       "roundtrip-geo",
+		Title:     "Geo Event",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		Geo:       "37.386013;-122.082932",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	data, err := ExportEvents([]event.Event{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	// Verify GEO appears in the ICS output
+	ics := string(data)
+	if !strings.Contains(ics, "GEO:37.386013;-122.082932") {
+		t.Errorf("ICS missing GEO property:\n%s", ics)
+	}
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("reimported %d events", len(result.Events))
+	}
+
+	got := result.Events[0]
+	if got.Geo != original.Geo {
+		t.Errorf("Geo: %q != %q", got.Geo, original.Geo)
+	}
+}
+
+func TestRoundtrip_EventWithTimezone(t *testing.T) {
+	t.Parallel()
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatalf("load timezone: %v", err)
+	}
+	original := event.Event{
+		UID:       "roundtrip-tz",
+		Title:     "Timezone Event",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, loc),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, loc),
+		Timezone:  "America/New_York",
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	data, err := ExportEvents([]event.Event{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	ics := string(data)
+	// Verify VTIMEZONE and TZID appear in the ICS output
+	if !strings.Contains(ics, "BEGIN:VTIMEZONE") {
+		t.Error("ICS missing VTIMEZONE component")
+	}
+	if !strings.Contains(ics, "TZID:America/New_York") {
+		t.Error("ICS missing TZID:America/New_York")
+	}
+	if !strings.Contains(ics, "DTSTART;TZID=America/New_York:20260401T140000") {
+		t.Errorf("ICS missing DTSTART with TZID:\n%s", ics)
+	}
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("reimported %d events", len(result.Events))
+	}
+
+	got := result.Events[0]
+	if got.Timezone != original.Timezone {
+		t.Errorf("Timezone: %q != %q", got.Timezone, original.Timezone)
+	}
+	// Verify the time itself is preserved (2pm EDT = 18:00 UTC)
+	if got.StartTime.UTC().Hour() != 18 {
+		t.Errorf("StartTime UTC hour: %d, want 18 (2pm EDT)", got.StartTime.UTC().Hour())
 	}
 }
