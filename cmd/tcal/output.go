@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/douglasdemoura/tcal/internal/calendar"
 	"github.com/douglasdemoura/tcal/internal/event"
 	"github.com/douglasdemoura/tcal/internal/todo"
@@ -149,6 +151,31 @@ func printJSON(w io.Writer, v any) error {
 	return enc.Encode(v)
 }
 
+func printYAML(w io.Writer, v any) error {
+	// Serialize through JSON to ensure YAML keys match JSON field names.
+	jsonBytes, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	var data any
+	if err := json.Unmarshal(jsonBytes, &data); err != nil {
+		return err
+	}
+	enc := yaml.NewEncoder(w)
+	enc.SetIndent(2)
+	return enc.Encode(data)
+}
+
+// printOutput writes v as JSON or YAML based on the global outputFmt flag.
+func printOutput(w io.Writer, v any) error {
+	switch outputFmt {
+	case "yaml":
+		return printYAML(w, v)
+	default:
+		return printJSON(w, v)
+	}
+}
+
 func printEvent(w io.Writer, e event.Event) {
 	fmt.Fprintf(w, "  ID:         %d\n", e.ID)
 	fmt.Fprintf(w, "  Title:      %s\n", e.Title)
@@ -205,9 +232,9 @@ func printEvents(w io.Writer, events []event.Event) {
 			currentDate = dateLabel
 		}
 		if e.AllDay {
-			fmt.Fprintf(w, "  ● all day   %s\n", e.Title)
+			fmt.Fprintf(w, "  ● all day   [%d] %s\n", e.ID, e.Title)
 		} else {
-			fmt.Fprintf(w, "  ● %s  %s\n", e.StartTime.Local().Format("15:04"), e.Title)
+			fmt.Fprintf(w, "  ● %s  [%d] %s\n", e.StartTime.Local().Format("15:04"), e.ID, e.Title)
 		}
 	}
 	fmt.Fprintln(w)
