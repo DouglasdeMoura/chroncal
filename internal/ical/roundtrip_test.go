@@ -366,6 +366,49 @@ func TestRoundtrip_TodoAlarmRepeat(t *testing.T) {
 	}
 }
 
+func TestRoundtrip_AllDayEventDateStable(t *testing.T) {
+	t.Parallel()
+	// All-day event dates must survive export→import without shifting.
+	// Regression: previously, midnight-local became midnight-UTC on import,
+	// causing date drift for non-UTC timezones.
+	original := event.Event{
+		UID:       "roundtrip-allday-stable",
+		Title:     "All Day Stable",
+		StartTime: time.Date(2026, 4, 15, 0, 0, 0, 0, time.Local),
+		EndTime:   time.Date(2026, 4, 16, 0, 0, 0, 0, time.Local),
+		AllDay:    true,
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	data, err := ExportEvents([]event.Event{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	result, err := ImportFile(strings.NewReader(string(data)))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("reimported %d events", len(result.Events))
+	}
+	got := result.Events[0]
+
+	if !got.AllDay {
+		t.Error("AllDay flag lost on round-trip")
+	}
+	// The local date must be preserved: April 15 → April 15
+	if got.StartTime.Year() != 2026 || got.StartTime.Month() != 4 || got.StartTime.Day() != 15 {
+		t.Errorf("StartTime date shifted: got %s, want 2026-04-15", got.StartTime.Format("2006-01-02"))
+	}
+	if got.EndTime.Year() != 2026 || got.EndTime.Month() != 4 || got.EndTime.Day() != 16 {
+		t.Errorf("EndTime date shifted: got %s, want 2026-04-16", got.EndTime.Format("2006-01-02"))
+	}
+}
+
 func TestRoundtrip_MultipleExdatesRdates(t *testing.T) {
 	t.Parallel()
 	original := event.Event{

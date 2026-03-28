@@ -238,6 +238,12 @@ func eventFromVEvent(ve ical.Event) (event.Event, error) {
 	if prop := ve.Props.Get(ical.PropDateTimeStart); prop != nil {
 		if strings.EqualFold(prop.Params.Get("VALUE"), "DATE") {
 			allDay = true
+			// VALUE=DATE represents a calendar date, not a specific UTC instant.
+			// Store as midnight in the local timezone so the date component is
+			// preserved regardless of the machine's UTC offset. This keeps
+			// round-trips stable: export → import produces the same local date.
+			startTime = time.Date(startTime.Year(), startTime.Month(), startTime.Day(), 0, 0, 0, 0, time.Local)
+			endTime = time.Date(endTime.Year(), endTime.Month(), endTime.Day(), 0, 0, 0, 0, time.Local)
 		}
 	}
 
