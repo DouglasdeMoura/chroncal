@@ -530,6 +530,90 @@ func TestRoundtrip_EventWithGeo(t *testing.T) {
 	}
 }
 
+func TestRoundtrip_EventWithResources(t *testing.T) {
+	t.Parallel()
+	original := event.Event{
+		UID:       "roundtrip-resources",
+		Title:     "Resources Event",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		Resources: []string{"PROJECTOR", "WHITEBOARD", "EASEL"},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	data, err := ExportEvents([]event.Event{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	ics := string(data)
+	// Verify RESOURCES appears with unescaped commas (list separator, not text)
+	if !strings.Contains(ics, "RESOURCES:PROJECTOR,WHITEBOARD,EASEL") {
+		t.Errorf("ICS RESOURCES not formatted as comma-separated list:\n%s", ics)
+	}
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("reimported %d events", len(result.Events))
+	}
+	got := result.Events[0]
+
+	if len(got.Resources) != 3 {
+		t.Fatalf("Resources count: %d, want 3 (got %v)", len(got.Resources), got.Resources)
+	}
+	for i, want := range original.Resources {
+		if got.Resources[i] != want {
+			t.Errorf("Resource[%d]: %q, want %q", i, got.Resources[i], want)
+		}
+	}
+}
+
+func TestRoundtrip_TodoWithResources(t *testing.T) {
+	t.Parallel()
+	original := todo.Todo{
+		UID:       "roundtrip-todo-resources",
+		Summary:   "Resources Todo",
+		Status:    "NEEDS-ACTION",
+		Resources: []string{"LAPTOP", "MONITOR"},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	data, err := ExportTodos([]todo.Todo{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	ics := string(data)
+	if !strings.Contains(ics, "RESOURCES:LAPTOP,MONITOR") {
+		t.Errorf("ICS RESOURCES not formatted as comma-separated list:\n%s", ics)
+	}
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Todos) != 1 {
+		t.Fatalf("reimported %d todos", len(result.Todos))
+	}
+	got := result.Todos[0]
+
+	if len(got.Resources) != 2 {
+		t.Fatalf("Resources count: %d, want 2 (got %v)", len(got.Resources), got.Resources)
+	}
+	for i, want := range original.Resources {
+		if got.Resources[i] != want {
+			t.Errorf("Resource[%d]: %q, want %q", i, got.Resources[i], want)
+		}
+	}
+}
+
 func TestRoundtrip_EventWithTimezone(t *testing.T) {
 	t.Parallel()
 	loc, err := time.LoadLocation("America/New_York")
