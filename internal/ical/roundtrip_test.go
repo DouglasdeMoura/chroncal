@@ -366,6 +366,47 @@ func TestRoundtrip_TodoAlarmRepeat(t *testing.T) {
 	}
 }
 
+func TestRoundtrip_MultipleExdatesRdates(t *testing.T) {
+	t.Parallel()
+	original := event.Event{
+		UID:       "roundtrip-multi-exdate",
+		Title:     "Multi ExDate Event",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		ExDates:   "2026-04-08T14:00:00Z,2026-04-15T14:00:00Z,2026-04-22T14:00:00Z",
+		RDates:    "2026-05-01T14:00:00Z,2026-05-08T14:00:00Z",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	data, err := ExportEvents([]event.Event{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	result, err := ImportFile(strings.NewReader(string(data)))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("reimported %d events", len(result.Events))
+	}
+	got := result.Events[0]
+
+	// Count EXDATE entries
+	exdateCount := len(strings.Split(got.ExDates, ","))
+	if exdateCount != 3 {
+		t.Errorf("ExDates: got %d entries (%q), want 3", exdateCount, got.ExDates)
+	}
+
+	rdateCount := len(strings.Split(got.RDates, ","))
+	if rdateCount != 2 {
+		t.Errorf("RDates: got %d entries (%q), want 2", rdateCount, got.RDates)
+	}
+}
+
 func TestRoundtrip_MultipleComments(t *testing.T) {
 	t.Parallel()
 	original := event.Event{

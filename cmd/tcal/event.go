@@ -166,23 +166,35 @@ func eventAddCmd() *cobra.Command {
 				return err
 			}
 
+			if err := validateEventEnums(status, class, transp, priority); err != nil {
+				return err
+			}
+
 			now := time.Now()
-			date := now
+			loc := time.Local
+			if timezone != "" {
+				loc, err = time.LoadLocation(timezone)
+				if err != nil {
+					return fmt.Errorf("load timezone: %w", err)
+				}
+			}
+
+			date := now.In(loc)
 			if dateStr != "" {
-				date, err = time.ParseInLocation("2006-01-02", dateStr, time.Local)
+				date, err = time.ParseInLocation("2006-01-02", dateStr, loc)
 				if err != nil {
 					return fmt.Errorf("parse date: %w", err)
 				}
 			}
 
 			allDay := timeStr == ""
-			startTime := time.Date(date.Year(), date.Month(), date.Day(), 9, 0, 0, 0, time.Local)
+			startTime := time.Date(date.Year(), date.Month(), date.Day(), 9, 0, 0, 0, loc)
 			if timeStr != "" {
 				t, err := time.Parse("15:04", timeStr)
 				if err != nil {
 					return fmt.Errorf("parse time: %w", err)
 				}
-				startTime = time.Date(date.Year(), date.Month(), date.Day(), t.Hour(), t.Minute(), 0, 0, time.Local)
+				startTime = time.Date(date.Year(), date.Month(), date.Day(), t.Hour(), t.Minute(), 0, 0, loc)
 			}
 
 			var endTime time.Time
@@ -191,7 +203,7 @@ func eventAddCmd() *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("parse end-time: %w", err)
 				}
-				endTime = time.Date(date.Year(), date.Month(), date.Day(), t.Hour(), t.Minute(), 0, 0, time.Local)
+				endTime = time.Date(date.Year(), date.Month(), date.Day(), t.Hour(), t.Minute(), 0, 0, loc)
 				if endTime.Before(startTime) {
 					endTime = endTime.AddDate(0, 0, 1)
 				}
@@ -207,7 +219,7 @@ func eventAddCmd() *cobra.Command {
 			}
 
 			if allDay {
-				startTime = time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.Local)
+				startTime = time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, loc)
 				endTime = startTime.AddDate(0, 0, 1)
 			}
 
@@ -447,21 +459,52 @@ func eventUpdateCmd() *cobra.Command {
 				p.RDates = parsed
 			}
 
+			// Validate changed enum fields.
+			valStatus, valClass, valTransp, valPriority := "", "", "", int64(0)
+			if cmd.Flags().Changed("status") {
+				valStatus = status
+			}
+			if cmd.Flags().Changed("class") {
+				valClass = class
+			}
+			if cmd.Flags().Changed("transparency") {
+				valTransp = transp
+			}
+			if cmd.Flags().Changed("priority") {
+				valPriority = priority
+			}
+			if err := validateEventEnums(valStatus, valClass, valTransp, valPriority); err != nil {
+				return err
+			}
+
+			// Resolve timezone for date/time parsing.
+			loc := time.Local
+			tz := timezone
+			if !cmd.Flags().Changed("timezone") {
+				tz = existing.Timezone
+			}
+			if tz != "" {
+				loc, err = time.LoadLocation(tz)
+				if err != nil {
+					return fmt.Errorf("load timezone: %w", err)
+				}
+			}
+
 			if cmd.Flags().Changed("date") || cmd.Flags().Changed("time") {
-				date := p.StartTime.Local()
+				date := p.StartTime.In(loc)
 				if cmd.Flags().Changed("date") {
-					d, err := time.ParseInLocation("2006-01-02", dateStr, time.Local)
+					d, err := time.ParseInLocation("2006-01-02", dateStr, loc)
 					if err != nil {
 						return fmt.Errorf("parse date: %w", err)
 					}
-					date = time.Date(d.Year(), d.Month(), d.Day(), date.Hour(), date.Minute(), 0, 0, time.Local)
+					date = time.Date(d.Year(), d.Month(), d.Day(), date.Hour(), date.Minute(), 0, 0, loc)
 				}
 				if cmd.Flags().Changed("time") {
 					t, err := time.Parse("15:04", timeStr)
 					if err != nil {
 						return fmt.Errorf("parse time: %w", err)
 					}
-					date = time.Date(date.Year(), date.Month(), date.Day(), t.Hour(), t.Minute(), 0, 0, time.Local)
+					date = time.Date(date.Year(), date.Month(), date.Day(), t.Hour(), t.Minute(), 0, 0, loc)
 					p.AllDay = false
 				}
 				p.StartTime = date
@@ -472,7 +515,7 @@ func eventUpdateCmd() *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("parse end-time: %w", err)
 				}
-				p.EndTime = time.Date(p.StartTime.Year(), p.StartTime.Month(), p.StartTime.Day(), t.Hour(), t.Minute(), 0, 0, time.Local)
+				p.EndTime = time.Date(p.StartTime.Year(), p.StartTime.Month(), p.StartTime.Day(), t.Hour(), t.Minute(), 0, 0, loc)
 				if p.EndTime.Before(p.StartTime) {
 					p.EndTime = p.EndTime.AddDate(0, 0, 1)
 				}
@@ -654,9 +697,10 @@ func parseAttendeeFlags(flags []string) []model.Attendee {
 			email = val
 		}
 		out = append(out, model.Attendee{
-			Email: email,
-			Name:  name,
-			Role:  "REQ-PARTICIPANT",
+			Email:      email,
+			Name:       name,
+			Role:       "REQ-PARTICIPANT",
+			RSVPStatus: "NEEDS-ACTION",
 		})
 	}
 	return out
@@ -738,4 +782,34 @@ func parseAttachFlags(flags []string) ([]model.Attachment, error) {
 		}
 	}
 	return out, nil
+}
+
+// validateEventEnums checks that status, class, transparency, and priority
+// values are valid per RFC 5545. Empty strings are allowed (defaults apply).
+func validateEventEnums(status, class, transp string, priority int64) error {
+	if status != "" {
+		switch strings.ToUpper(status) {
+		case "TENTATIVE", "CONFIRMED", "CANCELLED":
+		default:
+			return fmt.Errorf("invalid --status %q: must be TENTATIVE, CONFIRMED, or CANCELLED", status)
+		}
+	}
+	if class != "" {
+		switch strings.ToUpper(class) {
+		case "PUBLIC", "PRIVATE", "CONFIDENTIAL":
+		default:
+			return fmt.Errorf("invalid --class %q: must be PUBLIC, PRIVATE, or CONFIDENTIAL", class)
+		}
+	}
+	if transp != "" {
+		switch strings.ToUpper(transp) {
+		case "OPAQUE", "TRANSPARENT":
+		default:
+			return fmt.Errorf("invalid --transparency %q: must be OPAQUE or TRANSPARENT", transp)
+		}
+	}
+	if priority < 0 || priority > 9 {
+		return fmt.Errorf("invalid --priority %d: must be 0-9", priority)
+	}
+	return nil
 }

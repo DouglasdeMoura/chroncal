@@ -97,6 +97,78 @@ func TestExport_AllDayEvent(t *testing.T) {
 	if !strings.Contains(ics, "VALUE=DATE") {
 		t.Error("all-day event missing VALUE=DATE")
 	}
+	// Bug 3: VALUE=DATE must use YYYYMMDD format, no time component.
+	for _, line := range strings.Split(ics, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.Contains(line, "VALUE=DATE") {
+			// The value after the colon must be exactly 8 digits (YYYYMMDD).
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 && strings.Contains(parts[1], "T") {
+				t.Errorf("VALUE=DATE line contains time component: %s", line)
+			}
+		}
+	}
+}
+
+func TestExport_MultipleExdatesRdates(t *testing.T) {
+	t.Parallel()
+	events := []event.Event{{
+		UID:       "multi-exdate",
+		Title:     "Recurring",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		ExDates:   "2026-04-08T14:00:00Z,2026-04-15T14:00:00Z",
+		RDates:    "2026-05-01T14:00:00Z,2026-05-08T14:00:00Z",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}}
+
+	data, err := ExportEvents(events, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	ics := string(data)
+
+	if strings.Count(ics, "EXDATE") != 2 {
+		t.Errorf("expected 2 EXDATE properties, got %d\n%s", strings.Count(ics, "EXDATE"), ics)
+	}
+	if strings.Count(ics, "RDATE") != 2 {
+		t.Errorf("expected 2 RDATE properties, got %d\n%s", strings.Count(ics, "RDATE"), ics)
+	}
+	if !strings.Contains(ics, "20260408") {
+		t.Error("missing first EXDATE (2026-04-08)")
+	}
+	if !strings.Contains(ics, "20260415") {
+		t.Error("missing second EXDATE (2026-04-15)")
+	}
+}
+
+func TestExport_AttendeePartstatNotEmpty(t *testing.T) {
+	t.Parallel()
+	events := []event.Event{{
+		UID:       "partstat-test",
+		Title:     "Meeting",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		Attendees: []model.Attendee{
+			{Email: "user@example.com", Name: "User", RSVPStatus: "NEEDS-ACTION", Role: "REQ-PARTICIPANT"},
+		},
+	}}
+
+	data, _ := ExportEvents(events, "")
+	ics := string(data)
+	if strings.Contains(ics, "PARTSTAT=;") || strings.Contains(ics, "PARTSTAT=\r") {
+		t.Errorf("PARTSTAT is empty in output:\n%s", ics)
+	}
+	if !strings.Contains(ics, "PARTSTAT=NEEDS-ACTION") {
+		t.Errorf("expected PARTSTAT=NEEDS-ACTION in output:\n%s", ics)
+	}
 }
 
 func TestExport_EventWithTimezone(t *testing.T) {

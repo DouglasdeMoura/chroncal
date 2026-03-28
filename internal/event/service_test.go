@@ -303,3 +303,57 @@ func TestEventService_CreateDefaults(t *testing.T) {
 		t.Errorf("default Class = %q, want PUBLIC", e.Class)
 	}
 }
+
+func TestEventService_CreateUppercasesEnums(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	e, err := svc.Create(ctx, CreateParams{
+		CalendarID: 1, Title: "Lowercase Enums",
+		StartTime: time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC),
+		Status:    "tentative",
+		Transp:    "transparent",
+		Class:     "private",
+	})
+	if err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+	if e.Status != "TENTATIVE" {
+		t.Errorf("Status = %q, want TENTATIVE", e.Status)
+	}
+	if e.Transp != "TRANSPARENT" {
+		t.Errorf("Transp = %q, want TRANSPARENT", e.Transp)
+	}
+	if e.Class != "PRIVATE" {
+		t.Errorf("Class = %q, want PRIVATE", e.Class)
+	}
+}
+
+func TestEventService_UpdateUppercasesEnums(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	created := createEvent(t, svc)
+
+	updated, err := svc.Update(ctx, created.ID, UpdateParams{
+		Title:      created.Title,
+		StartTime:  created.StartTime,
+		EndTime:    created.EndTime,
+		CalendarID: 1,
+		Status:     "cancelled",
+		Transp:     "transparent",
+		Class:      "confidential",
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if updated.Status != "CANCELLED" {
+		t.Errorf("Status = %q, want CANCELLED", updated.Status)
+	}
+	if updated.Transp != "TRANSPARENT" {
+		t.Errorf("Transp = %q, want TRANSPARENT", updated.Transp)
+	}
+	if updated.Class != "CONFIDENTIAL" {
+		t.Errorf("Class = %q, want CONFIDENTIAL", updated.Class)
+	}
+}

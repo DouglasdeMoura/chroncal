@@ -168,14 +168,8 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 
 func setEventTimes(vevent *ical.Event, e event.Event) {
 	if e.AllDay {
-		vevent.Props.SetDateTime(ical.PropDateTimeStart, e.StartTime.UTC())
-		if prop := vevent.Props.Get(ical.PropDateTimeStart); prop != nil {
-			prop.Params.Set("VALUE", "DATE")
-		}
-		vevent.Props.SetDateTime(ical.PropDateTimeEnd, e.EndTime.UTC())
-		if prop := vevent.Props.Get(ical.PropDateTimeEnd); prop != nil {
-			prop.Params.Set("VALUE", "DATE")
-		}
+		vevent.Props.SetDate(ical.PropDateTimeStart, e.StartTime.UTC())
+		vevent.Props.SetDate(ical.PropDateTimeEnd, e.EndTime.UTC())
 	} else if e.Timezone != "" {
 		loc, err := time.LoadLocation(e.Timezone)
 		if err == nil {
@@ -205,7 +199,9 @@ func emitDateList(vevent *ical.Event, propName, dates string) {
 	for _, ds := range strings.Split(dates, ",") {
 		ds = strings.TrimSpace(ds)
 		if t, err := time.Parse(time.RFC3339, ds); err == nil {
-			vevent.Props.SetDateTime(propName, t.UTC())
+			prop := &ical.Prop{Name: propName, Params: make(ical.Params)}
+			prop.SetDateTime(t.UTC())
+			vevent.Props.Add(prop)
 		}
 	}
 }
@@ -416,7 +412,9 @@ func emitDateListOnComponent(comp *ical.Component, propName, dates string) {
 	for _, ds := range strings.Split(dates, ",") {
 		ds = strings.TrimSpace(ds)
 		if t, err := time.Parse(time.RFC3339, ds); err == nil {
-			comp.Props.SetDateTime(propName, t.UTC())
+			prop := &ical.Prop{Name: propName, Params: make(ical.Params)}
+			prop.SetDateTime(t.UTC())
+			comp.Props.Add(prop)
 		}
 	}
 }

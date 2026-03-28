@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -90,6 +91,9 @@ type UpsertParams struct {
 }
 
 func (p *CreateParams) applyDefaults() {
+	p.Status = strings.ToUpper(p.Status)
+	p.Transp = strings.ToUpper(p.Transp)
+	p.Class = strings.ToUpper(p.Class)
 	if p.Status == "" {
 		p.Status = "CONFIRMED"
 	}
@@ -102,6 +106,9 @@ func (p *CreateParams) applyDefaults() {
 }
 
 func (p *UpsertParams) applyDefaults() {
+	p.Status = strings.ToUpper(p.Status)
+	p.Transp = strings.ToUpper(p.Transp)
+	p.Class = strings.ToUpper(p.Class)
 	if p.Status == "" {
 		p.Status = "CONFIRMED"
 	}
@@ -184,6 +191,9 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
 }
 
 func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, error) {
+	p.Status = strings.ToUpper(p.Status)
+	p.Transp = strings.ToUpper(p.Transp)
+	p.Class = strings.ToUpper(p.Class)
 	if p.Status == "" {
 		p.Status = "CONFIRMED"
 	}
