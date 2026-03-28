@@ -126,21 +126,28 @@ func eventGetCmd() *cobra.Command {
 
 func eventAddCmd() *cobra.Command {
 	var (
-		dateStr      string
-		timeStr      string
-		durationStr  string
-		calendarName string
-		location     string
-		description  string
-		status       string
-		url          string
-		categories   string
-		class        string
-		transp       string
-		priority     int64
-		rrule        string
-		attachFlags  []string
-		alarmFlags   []string
+		dateStr       string
+		timeStr       string
+		endTimeStr    string
+		durationStr   string
+		calendarName  string
+		location      string
+		description   string
+		status        string
+		url           string
+		categories    string
+		class         string
+		transp        string
+		priority      int64
+		rrule         string
+		timezone      string
+		geo           string
+		exdates       []string
+		rdates        []string
+		attachFlags   []string
+		alarmFlags    []string
+		attendeeFlags []string
+		commentFlags  []string
 	)
 	cmd := &cobra.Command{
 		Use:   `add "<title>"`,
@@ -178,15 +185,27 @@ func eventAddCmd() *cobra.Command {
 				startTime = time.Date(date.Year(), date.Month(), date.Day(), t.Hour(), t.Minute(), 0, 0, time.Local)
 			}
 
-			dur := time.Hour
-			if durationStr != "" {
-				dur, err = time.ParseDuration(durationStr)
+			var endTime time.Time
+			if endTimeStr != "" {
+				t, err := time.Parse("15:04", endTimeStr)
 				if err != nil {
-					return fmt.Errorf("parse duration: %w", err)
+					return fmt.Errorf("parse end-time: %w", err)
 				}
+				endTime = time.Date(date.Year(), date.Month(), date.Day(), t.Hour(), t.Minute(), 0, 0, time.Local)
+				if endTime.Before(startTime) {
+					endTime = endTime.AddDate(0, 0, 1)
+				}
+			} else {
+				dur := time.Hour
+				if durationStr != "" {
+					dur, err = time.ParseDuration(durationStr)
+					if err != nil {
+						return fmt.Errorf("parse duration: %w", err)
+					}
+				}
+				endTime = startTime.Add(dur)
 			}
 
-			endTime := startTime.Add(dur)
 			if allDay {
 				startTime = time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.Local)
 				endTime = startTime.AddDate(0, 0, 1)
@@ -207,6 +226,10 @@ func eventAddCmd() *cobra.Command {
 				Transp:         transp,
 				Priority:       priority,
 				RecurrenceRule: rrule,
+				Timezone:       timezone,
+				Geo:            geo,
+				ExDates:        strings.Join(exdates, ","),
+				RDates:         strings.Join(rdates, ","),
 			})
 			if err != nil {
 				return fmt.Errorf("create event: %w", err)
@@ -232,6 +255,19 @@ func eventAddCmd() *cobra.Command {
 				}
 			}
 
+			if len(attendeeFlags) > 0 {
+				attendees := parseAttendeeFlags(attendeeFlags)
+				if err := a.Events.ReplaceAttendees(ctx, e.ID, attendees); err != nil {
+					return fmt.Errorf("add attendees: %w", err)
+				}
+			}
+
+			if len(commentFlags) > 0 {
+				if err := a.Events.ReplaceComments(ctx, e.ID, commentFlags); err != nil {
+					return fmt.Errorf("add comments: %w", err)
+				}
+			}
+
 			w := cmd.OutOrStdout()
 			if jsonOut {
 				return printJSON(w, toJSONEvent(e))
@@ -239,13 +275,14 @@ func eventAddCmd() *cobra.Command {
 			if allDay {
 				fmt.Fprintf(w, "Created: %s on %s (all day)\n", e.Title, e.StartTime.Local().Format("Mon, Jan 2 2006"))
 			} else {
-				fmt.Fprintf(w, "Created: %s on %s at %s (%s)\n", e.Title, e.StartTime.Local().Format("Mon, Jan 2 2006"), e.StartTime.Local().Format("15:04"), dur)
+				fmt.Fprintf(w, "Created: %s on %s at %s – %s\n", e.Title, e.StartTime.Local().Format("Mon, Jan 2 2006"), e.StartTime.Local().Format("15:04"), endTime.Local().Format("15:04"))
 			}
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&dateStr, "date", "", "event date (YYYY-MM-DD, default: today)")
 	cmd.Flags().StringVar(&timeStr, "time", "", "start time (HH:MM, default: all-day)")
+	cmd.Flags().StringVar(&endTimeStr, "end-time", "", "end time (HH:MM, alternative to --duration)")
 	cmd.Flags().StringVar(&durationStr, "duration", "1h", "event duration (e.g. 30m, 1h30m)")
 	cmd.Flags().StringVar(&calendarName, "calendar", "Personal", "calendar name")
 	cmd.Flags().StringVar(&location, "location", "", "event location")
@@ -257,29 +294,46 @@ func eventAddCmd() *cobra.Command {
 	cmd.Flags().StringVar(&transp, "transp", "", "transparency (OPAQUE, TRANSPARENT)")
 	cmd.Flags().Int64Var(&priority, "priority", 0, "priority (0-9)")
 	cmd.Flags().StringVar(&rrule, "rrule", "", "recurrence rule (e.g. FREQ=WEEKLY;COUNT=10)")
+	cmd.Flags().StringVar(&timezone, "timezone", "", "IANA timezone (e.g. America/New_York)")
+	cmd.Flags().StringVar(&geo, "geo", "", "geographic position (lat;lon, e.g. 37.386;-122.083)")
+	cmd.Flags().StringArrayVar(&exdates, "exception-date-times", nil, "exclude date from recurrence (YYYY-MM-DD, repeatable; alias: --exdate)")
+	cmd.Flags().StringArrayVar(&rdates, "recurrence-date-times", nil, "add extra occurrence date (YYYY-MM-DD, repeatable; alias: --rdate)")
+	cmd.Flags().StringArrayVar(&exdates, "exdate", nil, "alias for --exception-date-times")
+	cmd.Flags().StringArrayVar(&rdates, "rdate", nil, "alias for --recurrence-date-times")
+	cmd.Flags().MarkHidden("exdate")
+	cmd.Flags().MarkHidden("rdate")
 	cmd.Flags().StringArrayVar(&attachFlags, "attach", nil, "attachment (file path or URL, repeatable)")
 	cmd.Flags().StringArrayVar(&alarmFlags, "alarm", nil, "alarm trigger (e.g. -PT15M, DISPLAY:-PT1H, repeatable)")
+	cmd.Flags().StringArrayVar(&attendeeFlags, "attendee", nil, "attendee (email or \"Name <email>\", repeatable)")
+	cmd.Flags().StringArrayVar(&commentFlags, "comment", nil, "comment annotation (repeatable)")
 	return cmd
 }
 
 func eventUpdateCmd() *cobra.Command {
 	var (
-		title        string
-		dateStr      string
-		timeStr      string
-		durationStr  string
-		calendarName string
-		location     string
-		description  string
-		status       string
-		url          string
-		categories   string
-		class        string
-		transp       string
-		priority     int64
-		rrule        string
-		attachFlags  []string
-		alarmFlags   []string
+		title         string
+		dateStr       string
+		timeStr       string
+		endTimeStr    string
+		durationStr   string
+		calendarName  string
+		location      string
+		description   string
+		status        string
+		url           string
+		categories    string
+		class         string
+		transp        string
+		priority      int64
+		rrule         string
+		timezone      string
+		geo           string
+		exdates       []string
+		rdates        []string
+		attachFlags   []string
+		alarmFlags    []string
+		attendeeFlags []string
+		commentFlags  []string
 	)
 	cmd := &cobra.Command{
 		Use:   "update <id>",
@@ -321,6 +375,7 @@ func eventUpdateCmd() *cobra.Command {
 				Categories:     existing.Categories,
 				ExDates:        existing.ExDates,
 				RDates:         existing.RDates,
+				Geo:            existing.Geo,
 			}
 
 			if cmd.Flags().Changed("title") {
@@ -360,6 +415,18 @@ func eventUpdateCmd() *cobra.Command {
 			if cmd.Flags().Changed("rrule") {
 				p.RecurrenceRule = rrule
 			}
+			if cmd.Flags().Changed("timezone") {
+				p.Timezone = timezone
+			}
+			if cmd.Flags().Changed("geo") {
+				p.Geo = geo
+			}
+			if cmd.Flags().Changed("exception-date-times") || cmd.Flags().Changed("exdate") {
+				p.ExDates = strings.Join(exdates, ",")
+			}
+			if cmd.Flags().Changed("recurrence-date-times") || cmd.Flags().Changed("rdate") {
+				p.RDates = strings.Join(rdates, ",")
+			}
 
 			if cmd.Flags().Changed("date") || cmd.Flags().Changed("time") {
 				date := p.StartTime.Local()
@@ -381,7 +448,16 @@ func eventUpdateCmd() *cobra.Command {
 				p.StartTime = date
 			}
 
-			if cmd.Flags().Changed("duration") {
+			if cmd.Flags().Changed("end-time") {
+				t, err := time.Parse("15:04", endTimeStr)
+				if err != nil {
+					return fmt.Errorf("parse end-time: %w", err)
+				}
+				p.EndTime = time.Date(p.StartTime.Year(), p.StartTime.Month(), p.StartTime.Day(), t.Hour(), t.Minute(), 0, 0, time.Local)
+				if p.EndTime.Before(p.StartTime) {
+					p.EndTime = p.EndTime.AddDate(0, 0, 1)
+				}
+			} else if cmd.Flags().Changed("duration") {
 				dur, err := time.ParseDuration(durationStr)
 				if err != nil {
 					return fmt.Errorf("parse duration: %w", err)
@@ -416,6 +492,19 @@ func eventUpdateCmd() *cobra.Command {
 				}
 			}
 
+			if cmd.Flags().Changed("attendee") {
+				attendees := parseAttendeeFlags(attendeeFlags)
+				if err := a.Events.ReplaceAttendees(ctx, e.ID, attendees); err != nil {
+					return fmt.Errorf("update attendees: %w", err)
+				}
+			}
+
+			if cmd.Flags().Changed("comment") {
+				if err := a.Events.ReplaceComments(ctx, e.ID, commentFlags); err != nil {
+					return fmt.Errorf("update comments: %w", err)
+				}
+			}
+
 			w := cmd.OutOrStdout()
 			if jsonOut {
 				return printJSON(w, toJSONEvent(e))
@@ -427,6 +516,7 @@ func eventUpdateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&title, "title", "", "new title")
 	cmd.Flags().StringVar(&dateStr, "date", "", "new date (YYYY-MM-DD)")
 	cmd.Flags().StringVar(&timeStr, "time", "", "new start time (HH:MM)")
+	cmd.Flags().StringVar(&endTimeStr, "end-time", "", "new end time (HH:MM)")
 	cmd.Flags().StringVar(&durationStr, "duration", "", "new duration (e.g. 30m, 1h30m)")
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "move to calendar (by name)")
 	cmd.Flags().StringVar(&location, "location", "", "new location")
@@ -438,8 +528,18 @@ func eventUpdateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&transp, "transp", "", "new transparency (OPAQUE, TRANSPARENT)")
 	cmd.Flags().Int64Var(&priority, "priority", 0, "new priority (0-9)")
 	cmd.Flags().StringVar(&rrule, "rrule", "", "new recurrence rule")
+	cmd.Flags().StringVar(&timezone, "timezone", "", "new IANA timezone (e.g. America/New_York)")
+	cmd.Flags().StringVar(&geo, "geo", "", "new geographic position (lat;lon)")
+	cmd.Flags().StringArrayVar(&exdates, "exception-date-times", nil, "exclude date from recurrence (YYYY-MM-DD, repeatable, replaces all; alias: --exdate)")
+	cmd.Flags().StringArrayVar(&rdates, "recurrence-date-times", nil, "add extra occurrence date (YYYY-MM-DD, repeatable, replaces all; alias: --rdate)")
+	cmd.Flags().StringArrayVar(&exdates, "exdate", nil, "alias for --exception-date-times")
+	cmd.Flags().StringArrayVar(&rdates, "rdate", nil, "alias for --recurrence-date-times")
+	cmd.Flags().MarkHidden("exdate")
+	cmd.Flags().MarkHidden("rdate")
 	cmd.Flags().StringArrayVar(&attachFlags, "attach", nil, "attachment (file path or URL, repeatable)")
 	cmd.Flags().StringArrayVar(&alarmFlags, "alarm", nil, "alarm trigger (e.g. -PT15M, DISPLAY:-PT1H, repeatable)")
+	cmd.Flags().StringArrayVar(&attendeeFlags, "attendee", nil, "attendee (email or \"Name <email>\", repeatable, replaces all)")
+	cmd.Flags().StringArrayVar(&commentFlags, "comment", nil, "comment annotation (repeatable, replaces all)")
 	return cmd
 }
 
@@ -473,6 +573,29 @@ func eventDeleteCmd() *cobra.Command {
 		},
 	}
 	return cmd
+}
+
+// parseAttendeeFlags parses --attendee flag values into Attendee models.
+// Each value can be:
+//   - An email address: "user@example.com"
+//   - "Name <email>": "Alice <alice@example.com>"
+func parseAttendeeFlags(flags []string) []model.Attendee {
+	var out []model.Attendee
+	for _, val := range flags {
+		var name, email string
+		if idx := strings.Index(val, "<"); idx >= 0 {
+			name = strings.TrimSpace(val[:idx])
+			email = strings.TrimRight(val[idx+1:], ">")
+		} else {
+			email = val
+		}
+		out = append(out, model.Attendee{
+			Email: email,
+			Name:  name,
+			Role:  "REQ-PARTICIPANT",
+		})
+	}
+	return out
 }
 
 // parseAlarmFlags parses --alarm flag values into Alarm models.
