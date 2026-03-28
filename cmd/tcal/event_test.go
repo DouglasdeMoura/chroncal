@@ -31,3 +31,33 @@ func TestValidateRRule(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateGeo(t *testing.T) {
+	tests := []struct {
+		name    string
+		geo     string
+		wantErr bool
+	}{
+		{"empty is ok", "", false},
+		{"valid coords", "37.386;-122.083", false},
+		{"zero zero", "0;0", false},
+		{"extremes", "90;180", false},
+		{"negative extremes", "-90;-180", false},
+		{"missing semicolon", "37.386", true},
+		{"non-numeric lat", "abc;-122.083", true},
+		{"non-numeric lon", "37.386;xyz", true},
+		{"lat too high", "91;0", true},
+		{"lat too low", "-91;0", true},
+		{"lon too high", "0;181", true},
+		{"lon too low", "0;-181", true},
+		{"garbage", "not-valid", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateGeo(tt.geo)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateGeo(%q) error = %v, wantErr %v", tt.geo, err, tt.wantErr)
+			}
+		})
+	}
+}

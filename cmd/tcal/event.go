@@ -196,6 +196,9 @@ Defaults: status=CONFIRMED, class=PUBLIC, transparency=OPAQUE, calendar=Personal
 			if err := validateRRule(rrule); err != nil {
 				return err
 			}
+			if err := validateGeo(geo); err != nil {
+				return err
+			}
 
 			now := time.Now()
 			loc := time.Local
@@ -520,6 +523,11 @@ func eventUpdateCmd() *cobra.Command {
 			}
 			if cmd.Flags().Changed("recurrence-rule") || cmd.Flags().Changed("rrule") {
 				if err := validateRRule(rrule); err != nil {
+					return err
+				}
+			}
+			if cmd.Flags().Changed("geo") {
+				if err := validateGeo(geo); err != nil {
 					return err
 				}
 			}
@@ -896,4 +904,31 @@ func validateRRule(rrule string) error {
 		}
 	}
 	return fmt.Errorf("invalid --rrule %q: must contain FREQ= (e.g. FREQ=WEEKLY;BYDAY=MO)", rrule)
+}
+
+// validateGeo checks that a GEO value is "lat;lon" with valid ranges per
+// RFC 5545 Section 3.8.1.6. Empty string is allowed (optional field).
+func validateGeo(geo string) error {
+	if geo == "" {
+		return nil
+	}
+	parts := strings.SplitN(geo, ";", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid --geo %q: must be lat;lon (e.g. 37.386;-122.083)", geo)
+	}
+	lat, err := strconv.ParseFloat(parts[0], 64)
+	if err != nil {
+		return fmt.Errorf("invalid --geo latitude %q: must be a number", parts[0])
+	}
+	lon, err := strconv.ParseFloat(parts[1], 64)
+	if err != nil {
+		return fmt.Errorf("invalid --geo longitude %q: must be a number", parts[1])
+	}
+	if lat < -90 || lat > 90 {
+		return fmt.Errorf("invalid --geo latitude %.6f: must be between -90 and 90", lat)
+	}
+	if lon < -180 || lon > 180 {
+		return fmt.Errorf("invalid --geo longitude %.6f: must be between -180 and 180", lon)
+	}
+	return nil
 }
