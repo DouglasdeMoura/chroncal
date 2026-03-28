@@ -168,8 +168,11 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 
 func setEventTimes(vevent *ical.Event, e event.Event) {
 	if e.AllDay {
-		vevent.Props.SetDate(ical.PropDateTimeStart, e.StartTime.UTC())
-		vevent.Props.SetDate(ical.PropDateTimeEnd, e.EndTime.UTC())
+		// Use the time as-is (not UTC) so SetDate extracts the correct
+		// local date. Converting to UTC first shifts the date for
+		// timezones with positive UTC offsets (e.g. UTC+12).
+		vevent.Props.SetDate(ical.PropDateTimeStart, e.StartTime)
+		vevent.Props.SetDate(ical.PropDateTimeEnd, e.EndTime)
 	} else if e.Timezone != "" {
 		loc, err := time.LoadLocation(e.Timezone)
 		if err == nil {

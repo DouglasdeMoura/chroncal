@@ -110,6 +110,35 @@ func TestExport_AllDayEvent(t *testing.T) {
 	}
 }
 
+func TestExport_AllDayEvent_PositiveUTCOffset(t *testing.T) {
+	t.Parallel()
+	// Simulate a user in UTC+12 (e.g. Auckland) creating an all-day event
+	// for April 15. Midnight local = April 14 12:00 UTC.
+	// The exported date must be 20260415, not 20260414.
+	loc := time.FixedZone("UTC+12", 12*60*60)
+	events := []event.Event{{
+		UID:       "allday-utcplus",
+		Title:     "Auckland Day",
+		StartTime: time.Date(2026, 4, 15, 0, 0, 0, 0, loc),
+		EndTime:   time.Date(2026, 4, 16, 0, 0, 0, 0, loc),
+		AllDay:    true,
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}}
+
+	data, _ := ExportEvents(events, "")
+	ics := string(data)
+
+	if !strings.Contains(ics, "DTSTART;VALUE=DATE:20260415") {
+		t.Errorf("expected DTSTART date 20260415, got:\n%s", ics)
+	}
+	if !strings.Contains(ics, "DTEND;VALUE=DATE:20260416") {
+		t.Errorf("expected DTEND date 20260416, got:\n%s", ics)
+	}
+}
+
 func TestExport_MultipleExdatesRdates(t *testing.T) {
 	t.Parallel()
 	events := []event.Event{{
