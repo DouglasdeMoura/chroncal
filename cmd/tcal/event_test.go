@@ -85,6 +85,80 @@ func TestValidateURL(t *testing.T) {
 	}
 }
 
+func TestParseRelationFlags(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     []string
+		wantTypes []string
+		wantUIDs  []string
+		wantErr   bool
+	}{
+		{"bare UID defaults to PARENT", []string{"some-uid"}, []string{"PARENT"}, []string{"some-uid"}, false},
+		{"PARENT prefix", []string{"PARENT:parent-uid"}, []string{"PARENT"}, []string{"parent-uid"}, false},
+		{"CHILD prefix", []string{"CHILD:child-uid"}, []string{"CHILD"}, []string{"child-uid"}, false},
+		{"SIBLING prefix", []string{"SIBLING:sibling-uid"}, []string{"SIBLING"}, []string{"sibling-uid"}, false},
+		{"lowercase prefix", []string{"child:uid-123"}, []string{"CHILD"}, []string{"uid-123"}, false},
+		{"multiple", []string{"PARENT:a", "CHILD:b"}, []string{"PARENT", "CHILD"}, []string{"a", "b"}, false},
+		{"unknown prefix treated as UID", []string{"UNKNOWN:uid"}, []string{"PARENT"}, []string{"UNKNOWN:uid"}, false},
+		{"empty UID after prefix", []string{"PARENT:"}, nil, nil, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseRelationFlags(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("parseRelationFlags(%v) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+				return
+			}
+			if tt.wantErr {
+				return
+			}
+			if len(got) != len(tt.wantTypes) {
+				t.Fatalf("got %d relations, want %d", len(got), len(tt.wantTypes))
+			}
+			for i := range got {
+				if got[i].RelType != tt.wantTypes[i] {
+					t.Errorf("relation[%d] type: %q, want %q", i, got[i].RelType, tt.wantTypes[i])
+				}
+				if got[i].RelUID != tt.wantUIDs[i] {
+					t.Errorf("relation[%d] uid: %q, want %q", i, got[i].RelUID, tt.wantUIDs[i])
+				}
+			}
+		})
+	}
+}
+
+func TestParseOrganizerFlag(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantEmail string
+		wantName  string
+	}{
+		{"email only", "alice@example.com", "alice@example.com", ""},
+		{"name and email", "Alice <alice@example.com>", "alice@example.com", "Alice"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseOrganizerFlag(tt.input)
+			if got.Email != tt.wantEmail {
+				t.Errorf("email: %q, want %q", got.Email, tt.wantEmail)
+			}
+			if got.Name != tt.wantName {
+				t.Errorf("name: %q, want %q", got.Name, tt.wantName)
+			}
+			if !got.Organizer {
+				t.Error("Organizer should be true")
+			}
+			if got.Role != "CHAIR" {
+				t.Errorf("Role: %q, want CHAIR", got.Role)
+			}
+			if got.RSVPStatus != "ACCEPTED" {
+				t.Errorf("RSVPStatus: %q, want ACCEPTED", got.RSVPStatus)
+			}
+		})
+	}
+}
+
 func TestValidateAlarmTrigger(t *testing.T) {
 	tests := []struct {
 		name    string

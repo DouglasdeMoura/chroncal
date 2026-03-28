@@ -530,6 +530,101 @@ func TestRoundtrip_EventWithGeo(t *testing.T) {
 	}
 }
 
+func TestRoundtrip_EventWithContacts(t *testing.T) {
+	t.Parallel()
+	original := event.Event{
+		UID:       "roundtrip-contacts",
+		Title:     "Contacts Event",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		Contacts:  []string{"John Smith, 555-1234", "Support: support@example.com"},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	data, err := ExportEvents([]event.Event{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	result, err := ImportFile(strings.NewReader(string(data)))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("reimported %d events", len(result.Events))
+	}
+	got := result.Events[0]
+
+	if len(got.Contacts) != 2 {
+		t.Fatalf("Contacts count: %d, want 2 (got %v)", len(got.Contacts), got.Contacts)
+	}
+	for i, want := range original.Contacts {
+		if got.Contacts[i] != want {
+			t.Errorf("Contact[%d]: %q, want %q", i, got.Contacts[i], want)
+		}
+	}
+}
+
+func TestRoundtrip_EventWithRelations(t *testing.T) {
+	t.Parallel()
+	original := event.Event{
+		UID:       "roundtrip-relations",
+		Title:     "Relations Event",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		Relations: []model.Relation{
+			{RelType: "PARENT", RelUID: "parent-uid-123"},
+			{RelType: "CHILD", RelUID: "child-uid-456"},
+			{RelType: "SIBLING", RelUID: "sibling-uid-789"},
+		},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	data, err := ExportEvents([]event.Event{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	ics := string(data)
+	// PARENT is default RELTYPE, so it should be omitted in export
+	if !strings.Contains(ics, "RELATED-TO:parent-uid-123") {
+		t.Errorf("ICS missing RELATED-TO for PARENT:\n%s", ics)
+	}
+	if !strings.Contains(ics, "RELATED-TO;RELTYPE=CHILD:child-uid-456") {
+		t.Errorf("ICS missing RELATED-TO;RELTYPE=CHILD:\n%s", ics)
+	}
+	if !strings.Contains(ics, "RELATED-TO;RELTYPE=SIBLING:sibling-uid-789") {
+		t.Errorf("ICS missing RELATED-TO;RELTYPE=SIBLING:\n%s", ics)
+	}
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("reimported %d events", len(result.Events))
+	}
+	got := result.Events[0]
+
+	if len(got.Relations) != 3 {
+		t.Fatalf("Relations count: %d, want 3 (got %v)", len(got.Relations), got.Relations)
+	}
+	for i, want := range original.Relations {
+		if got.Relations[i].RelType != want.RelType {
+			t.Errorf("Relation[%d] RelType: %q, want %q", i, got.Relations[i].RelType, want.RelType)
+		}
+		if got.Relations[i].RelUID != want.RelUID {
+			t.Errorf("Relation[%d] RelUID: %q, want %q", i, got.Relations[i].RelUID, want.RelUID)
+		}
+	}
+}
+
 func TestRoundtrip_EventWithResources(t *testing.T) {
 	t.Parallel()
 	original := event.Event{
