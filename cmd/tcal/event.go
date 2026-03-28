@@ -149,6 +149,10 @@ func eventAddCmd() *cobra.Command {
 		alarmFlags    []string
 		attendeeFlags []string
 		commentFlags  []string
+		contactFlags  []string
+		resourceFlags []string
+		relationFlags []string
+		organizer     string
 	)
 	cmd := &cobra.Command{
 		Use:   `add "<title>"`,
@@ -190,7 +194,16 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 
   # Multiple alarm types: display (default), email, and audio
   tcal event add "Deploy Window" --date 2026-04-15 --time 02:00 \
-    --alarm "-PT1H" --alarm "EMAIL:-PT1D" --alarm "AUDIO:-PT5M"`,
+    --alarm "-PT1H" --alarm "EMAIL:-PT1D" --alarm "AUDIO:-PT5M"
+
+  # Event with organizer, contacts, and resources
+  tcal event add "Board Meeting" --date 2026-06-01 --time 10:00 \
+    --organizer "Alice <alice@example.com>" \
+    --contact "Bob Smith, 555-1234" --resource PROJECTOR --resource WHITEBOARD
+
+  # Link events with RELATED-TO (parent/child/sibling)
+  tcal event add "Sprint Planning" --time 14:00 \
+    --related-to "PARENT:quarterly-review-uid"`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
@@ -331,8 +344,11 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 				}
 			}
 
-			if len(attendeeFlags) > 0 {
+			if len(attendeeFlags) > 0 || organizer != "" {
 				attendees := parseAttendeeFlags(attendeeFlags)
+				if organizer != "" {
+					attendees = append(attendees, parseOrganizerFlag(organizer))
+				}
 				if err := a.Events.ReplaceAttendees(ctx, e.ID, attendees); err != nil {
 					return fmt.Errorf("add attendees: %w", err)
 				}
@@ -344,11 +360,36 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 				}
 			}
 
+			if len(contactFlags) > 0 {
+				if err := a.Events.ReplaceContacts(ctx, e.ID, contactFlags); err != nil {
+					return fmt.Errorf("add contacts: %w", err)
+				}
+			}
+
+			if len(resourceFlags) > 0 {
+				if err := a.Events.ReplaceResources(ctx, e.ID, resourceFlags); err != nil {
+					return fmt.Errorf("add resources: %w", err)
+				}
+			}
+
+			if len(relationFlags) > 0 {
+				relations, err := parseRelationFlags(relationFlags)
+				if err != nil {
+					return err
+				}
+				if err := a.Events.ReplaceRelations(ctx, e.ID, relations); err != nil {
+					return fmt.Errorf("add relations: %w", err)
+				}
+			}
+
 			// Re-read event with related data so JSON output is complete.
 			e.Alarms, _ = a.Events.ListAlarms(ctx, e.ID)
 			e.Attendees, _ = a.Events.ListAttendees(ctx, e.ID)
 			e.Attachments, _ = a.Events.ListAttachments(ctx, e.ID)
 			e.Comments, _ = a.Events.ListComments(ctx, e.ID)
+			e.Contacts, _ = a.Events.ListContacts(ctx, e.ID)
+			e.Resources, _ = a.Events.ListResources(ctx, e.ID)
+			e.Relations, _ = a.Events.ListRelations(ctx, e.ID)
 
 			w := cmd.OutOrStdout()
 			if jsonOut {
@@ -389,7 +430,11 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 	cmd.Flags().StringArrayVar(&attachFlags, "attach", nil, "attachment (file path or URL; prefix mime/type: for explicit MIME, e.g. application/pdf:/path/to/file; repeatable)")
 	cmd.Flags().StringArrayVar(&alarmFlags, "alarm", nil, "alarm trigger as ISO 8601 duration (e.g. -PT15M, -PT1H, -P1D); prefix DISPLAY:, EMAIL:, or AUDIO: for action type (default: DISPLAY); repeatable")
 	cmd.Flags().StringArrayVar(&attendeeFlags, "attendee", nil, "attendee as email or \"Name <email>\" (defaults: RSVP=NEEDS-ACTION, ROLE=REQ-PARTICIPANT; repeatable)")
+	cmd.Flags().StringVar(&organizer, "organizer", "", "event organizer as email or \"Name <email>\" (RFC 5545 ORGANIZER; exported as ROLE=CHAIR)")
 	cmd.Flags().StringArrayVar(&commentFlags, "comment", nil, "comment annotation (free-form text, repeatable)")
+	cmd.Flags().StringArrayVar(&contactFlags, "contact", nil, "contact info (free-form text, e.g. \"Alice, 555-1234\"; RFC 5545 CONTACT; repeatable)")
+	cmd.Flags().StringArrayVar(&resourceFlags, "resource", nil, "resource needed (e.g. PROJECTOR, WHITEBOARD; RFC 5545 RESOURCES; repeatable)")
+	cmd.Flags().StringArrayVar(&relationFlags, "related-to", nil, "related event UID, optionally prefixed with PARENT:, CHILD:, or SIBLING: (default: PARENT; RFC 5545 RELATED-TO; repeatable)")
 	return cmd
 }
 
@@ -418,6 +463,10 @@ func eventUpdateCmd() *cobra.Command {
 		alarmFlags    []string
 		attendeeFlags []string
 		commentFlags  []string
+		contactFlags  []string
+		resourceFlags []string
+		relationFlags []string
+		organizer     string
 	)
 	cmd := &cobra.Command{
 		Use:   "update <id>",
@@ -638,8 +687,11 @@ func eventUpdateCmd() *cobra.Command {
 				}
 			}
 
-			if cmd.Flags().Changed("attendee") {
+			if cmd.Flags().Changed("attendee") || cmd.Flags().Changed("organizer") {
 				attendees := parseAttendeeFlags(attendeeFlags)
+				if cmd.Flags().Changed("organizer") && organizer != "" {
+					attendees = append(attendees, parseOrganizerFlag(organizer))
+				}
 				if err := a.Events.ReplaceAttendees(ctx, e.ID, attendees); err != nil {
 					return fmt.Errorf("update attendees: %w", err)
 				}
@@ -648,6 +700,28 @@ func eventUpdateCmd() *cobra.Command {
 			if cmd.Flags().Changed("comment") {
 				if err := a.Events.ReplaceComments(ctx, e.ID, commentFlags); err != nil {
 					return fmt.Errorf("update comments: %w", err)
+				}
+			}
+
+			if cmd.Flags().Changed("contact") {
+				if err := a.Events.ReplaceContacts(ctx, e.ID, contactFlags); err != nil {
+					return fmt.Errorf("update contacts: %w", err)
+				}
+			}
+
+			if cmd.Flags().Changed("resource") {
+				if err := a.Events.ReplaceResources(ctx, e.ID, resourceFlags); err != nil {
+					return fmt.Errorf("update resources: %w", err)
+				}
+			}
+
+			if cmd.Flags().Changed("related-to") {
+				relations, err := parseRelationFlags(relationFlags)
+				if err != nil {
+					return err
+				}
+				if err := a.Events.ReplaceRelations(ctx, e.ID, relations); err != nil {
+					return fmt.Errorf("update relations: %w", err)
 				}
 			}
 
@@ -687,7 +761,11 @@ func eventUpdateCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&attachFlags, "attach", nil, "attachment (file path or URL, repeatable)")
 	cmd.Flags().StringArrayVar(&alarmFlags, "alarm", nil, "alarm trigger (e.g. -PT15M, DISPLAY:-PT1H, repeatable)")
 	cmd.Flags().StringArrayVar(&attendeeFlags, "attendee", nil, "attendee (email or \"Name <email>\", repeatable, replaces all)")
+	cmd.Flags().StringVar(&organizer, "organizer", "", "event organizer (email or \"Name <email>\", replaces existing)")
 	cmd.Flags().StringArrayVar(&commentFlags, "comment", nil, "comment annotation (repeatable, replaces all)")
+	cmd.Flags().StringArrayVar(&contactFlags, "contact", nil, "contact info (free-form text, repeatable, replaces all)")
+	cmd.Flags().StringArrayVar(&resourceFlags, "resource", nil, "resource needed (e.g. PROJECTOR, repeatable, replaces all)")
+	cmd.Flags().StringArrayVar(&relationFlags, "related-to", nil, "related event UID with optional PARENT:/CHILD:/SIBLING: prefix (repeatable, replaces all)")
 	return cmd
 }
 
@@ -779,6 +857,50 @@ func parseDateFlags(flags []string, tz string, startTime time.Time) (string, err
 		out = append(out, t.UTC().Format(time.RFC3339))
 	}
 	return strings.Join(out, ","), nil
+}
+
+// parseOrganizerFlag parses the --organizer flag into an Attendee with Organizer=true.
+// Accepts email or "Name <email>".
+func parseOrganizerFlag(val string) model.Attendee {
+	var name, email string
+	if idx := strings.Index(val, "<"); idx >= 0 {
+		name = strings.TrimSpace(val[:idx])
+		email = strings.TrimRight(val[idx+1:], ">")
+	} else {
+		email = val
+	}
+	return model.Attendee{
+		Email:      email,
+		Name:       name,
+		Role:       "CHAIR",
+		RSVPStatus: "ACCEPTED",
+		Organizer:  true,
+	}
+}
+
+// parseRelationFlags parses --related-to flag values into Relation models.
+// Each value can be:
+//   - A UID: "some-event-uid" (defaults to RELTYPE=PARENT)
+//   - "RELTYPE:uid": "PARENT:uid", "CHILD:uid", "SIBLING:uid"
+func parseRelationFlags(flags []string) ([]model.Relation, error) {
+	validTypes := map[string]bool{"PARENT": true, "CHILD": true, "SIBLING": true}
+	var out []model.Relation
+	for _, val := range flags {
+		relType := "PARENT"
+		uid := val
+		if idx := strings.Index(val, ":"); idx > 0 {
+			prefix := strings.ToUpper(val[:idx])
+			if validTypes[prefix] {
+				relType = prefix
+				uid = val[idx+1:]
+			}
+		}
+		if uid == "" {
+			return nil, fmt.Errorf("--related-to %q: UID must not be empty", val)
+		}
+		out = append(out, model.Relation{RelType: relType, RelUID: uid})
+	}
+	return out, nil
 }
 
 // parseAttendeeFlags parses --attendee flag values into Attendee models.
