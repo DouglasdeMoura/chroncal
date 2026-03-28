@@ -344,15 +344,31 @@ func printTable(w io.Writer, v any) error {
 	}
 }
 
+// printEvent renders a single event detail. When showDate is false the date
+// is omitted from the time line (the caller already printed a date header).
 func printEvent(w io.Writer, e event.Event) {
+	printEventDetail(w, e, true)
+}
+
+func printEventDetail(w io.Writer, e event.Event, showDate bool) {
 	i := ic()
 	fmt.Fprintf(w, "  %s %d  %s\n", i.Calendar, e.ID, e.Title)
 	if e.AllDay {
-		fmt.Fprintf(w, "  %s %s (all day)\n", i.Clock, e.StartTime.Local().Format("Mon, Jan 2 2006"))
+		if showDate {
+			fmt.Fprintf(w, "  %s %s (all day)\n", i.Clock, e.StartTime.Local().Format("Mon, Jan 2 2006"))
+		} else {
+			fmt.Fprintf(w, "  %s all day\n", i.Clock)
+		}
 	} else {
-		fmt.Fprintf(w, "  %s %s – %s\n", i.Clock,
-			e.StartTime.Local().Format("Mon, Jan 2 2006 15:04"),
-			e.EndTime.Local().Format("15:04"))
+		if showDate {
+			fmt.Fprintf(w, "  %s %s – %s\n", i.Clock,
+				e.StartTime.Local().Format("Mon, Jan 2 2006 15:04"),
+				e.EndTime.Local().Format("15:04"))
+		} else {
+			fmt.Fprintf(w, "  %s %s – %s\n", i.Clock,
+				e.StartTime.Local().Format("15:04"),
+				e.EndTime.Local().Format("15:04"))
+		}
 	}
 	if e.Location != "" {
 		fmt.Fprintf(w, "  %s %s\n", i.Location, e.Location)
@@ -404,7 +420,7 @@ func printEvents(w io.Writer, events []event.Event) {
 			if idx > 0 && events[idx-1].StartTime.Local().Format("Mon, Jan 2 2006") == dateLabel {
 				fmt.Fprintln(w)
 			}
-			printEvent(w, e)
+			printEventDetail(w, e, false)
 		} else if e.AllDay {
 			fmt.Fprintf(w, "  %s all day       [%d] %s\n", i.AllDay, e.ID, e.Title)
 		} else {
