@@ -554,29 +554,6 @@ func eventUpdateCmd() *cobra.Command {
 			if cmd.Flags().Changed("geo") {
 				p.Geo = geo
 			}
-			if cmd.Flags().Changed("exception-date-times") || cmd.Flags().Changed("exdate") {
-				var exrdateRef time.Time
-				if !p.AllDay {
-					exrdateRef = p.StartTime
-				}
-				parsed, err := parseDateFlags(exdates, timezone, exrdateRef)
-				if err != nil {
-					return fmt.Errorf("--exception-date-times: %w", err)
-				}
-				p.ExDates = parsed
-			}
-			if cmd.Flags().Changed("recurrence-date-times") || cmd.Flags().Changed("rdate") {
-				var exrdateRef time.Time
-				if !p.AllDay {
-					exrdateRef = p.StartTime
-				}
-				parsed, err := parseDateFlags(rdates, timezone, exrdateRef)
-				if err != nil {
-					return fmt.Errorf("--recurrence-date-times: %w", err)
-				}
-				p.RDates = parsed
-			}
-
 			// Validate changed enum fields.
 			valStatus, valClass, valTransp, valPriority := "", "", "", int64(0)
 			if cmd.Flags().Changed("status") {
@@ -662,6 +639,31 @@ func eventUpdateCmd() *cobra.Command {
 				p.EndTime = p.StartTime.Add(existing.EndTime.Sub(existing.StartTime))
 			}
 
+			// Parse EXDATE/RDATE after date/time resolution so date-only
+			// values inherit the NEW start time, not the old one.
+			if cmd.Flags().Changed("exception-date-times") || cmd.Flags().Changed("exdate") {
+				var exrdateRef time.Time
+				if !p.AllDay {
+					exrdateRef = p.StartTime
+				}
+				parsed, err := parseDateFlags(exdates, tz, exrdateRef)
+				if err != nil {
+					return fmt.Errorf("--exception-date-times: %w", err)
+				}
+				p.ExDates = parsed
+			}
+			if cmd.Flags().Changed("recurrence-date-times") || cmd.Flags().Changed("rdate") {
+				var exrdateRef time.Time
+				if !p.AllDay {
+					exrdateRef = p.StartTime
+				}
+				parsed, err := parseDateFlags(rdates, tz, exrdateRef)
+				if err != nil {
+					return fmt.Errorf("--recurrence-date-times: %w", err)
+				}
+				p.RDates = parsed
+			}
+
 			e, err := a.Events.Update(ctx, id, p)
 			if err != nil {
 				return fmt.Errorf("update event: %w", err)
@@ -724,6 +726,15 @@ func eventUpdateCmd() *cobra.Command {
 					return fmt.Errorf("update relations: %w", err)
 				}
 			}
+
+			// Re-read event with related data so output is complete.
+			e.Alarms, _ = a.Events.ListAlarms(ctx, e.ID)
+			e.Attendees, _ = a.Events.ListAttendees(ctx, e.ID)
+			e.Attachments, _ = a.Events.ListAttachments(ctx, e.ID)
+			e.Comments, _ = a.Events.ListComments(ctx, e.ID)
+			e.Contacts, _ = a.Events.ListContacts(ctx, e.ID)
+			e.Resources, _ = a.Events.ListResources(ctx, e.ID)
+			e.Relations, _ = a.Events.ListRelations(ctx, e.ID)
 
 			w := cmd.OutOrStdout()
 			if jsonOut {
