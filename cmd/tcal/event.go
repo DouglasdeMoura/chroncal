@@ -193,6 +193,9 @@ Defaults: status=CONFIRMED, class=PUBLIC, transparency=OPAQUE, calendar=Personal
 			if err := validateEventEnums(status, class, transp, priority); err != nil {
 				return err
 			}
+			if err := validateRRule(rrule); err != nil {
+				return err
+			}
 
 			now := time.Now()
 			loc := time.Local
@@ -514,6 +517,11 @@ func eventUpdateCmd() *cobra.Command {
 			}
 			if err := validateEventEnums(valStatus, valClass, valTransp, valPriority); err != nil {
 				return err
+			}
+			if cmd.Flags().Changed("recurrence-rule") || cmd.Flags().Changed("rrule") {
+				if err := validateRRule(rrule); err != nil {
+					return err
+				}
 			}
 
 			// Resolve timezone for date/time parsing.
@@ -866,4 +874,26 @@ func validateEventEnums(status, class, transp string, priority int64) error {
 		return fmt.Errorf("invalid --priority %d: must be 0-9", priority)
 	}
 	return nil
+}
+
+// validateRRule checks that an RRULE value contains a valid FREQ per RFC 5545
+// Section 3.3.10. Empty string is allowed (optional field).
+func validateRRule(rrule string) error {
+	if rrule == "" {
+		return nil
+	}
+	validFreqs := map[string]bool{
+		"SECONDLY": true, "MINUTELY": true, "HOURLY": true,
+		"DAILY": true, "WEEKLY": true, "MONTHLY": true, "YEARLY": true,
+	}
+	for _, part := range strings.Split(strings.ToUpper(rrule), ";") {
+		if strings.HasPrefix(part, "FREQ=") {
+			freq := strings.TrimPrefix(part, "FREQ=")
+			if !validFreqs[freq] {
+				return fmt.Errorf("invalid --rrule FREQ=%s: must be one of SECONDLY, MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY, YEARLY", freq)
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid --rrule %q: must contain FREQ= (e.g. FREQ=WEEKLY;BYDAY=MO)", rrule)
 }
