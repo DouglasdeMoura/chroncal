@@ -158,12 +158,17 @@ func eventAddCmd() *cobra.Command {
 Omitting --time creates an all-day event. When --time is set, the event
 defaults to 1 hour unless --duration or --end-time is provided.
 
-Defaults: status=CONFIRMED, class=PUBLIC, transparency=OPAQUE, calendar=Personal.`,
+Defaults: status=CONFIRMED, class=PUBLIC, transparency=OPAQUE, calendar=Personal.
+Attendees default to RSVP=NEEDS-ACTION and ROLE=REQ-PARTICIPANT.
+Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 		Example: `  # Timed event tomorrow at 2pm for 90 minutes
   tcal event add "Lunch with Alice" --date 2026-04-01 --time 14:00 --duration 1h30m
 
   # All-day event (no --time flag)
   tcal event add "Company Holiday" --date 2026-12-25
+
+  # Event with explicit end time instead of duration
+  tcal event add "Workshop" --date 2026-05-10 --time 09:00 --end-time 12:30
 
   # Recurring weekly meeting with alarm and attendees
   tcal event add "Team Standup" --time 09:00 --duration 30m \
@@ -176,7 +181,16 @@ Defaults: status=CONFIRMED, class=PUBLIC, transparency=OPAQUE, calendar=Personal
 
   # Recurring event with an excluded date
   tcal event add "Sprint Review" --time 14:00 \
-    --rrule "FREQ=WEEKLY;COUNT=10" --exdate 2026-04-08`,
+    --rrule "FREQ=WEEKLY;COUNT=10" --exdate 2026-04-08
+
+  # High-priority event with comment and file attachment
+  tcal event add "Board Meeting" --date 2026-06-01 --time 10:00 \
+    --priority 1 --comment "Bring Q2 financials" \
+    --attach /path/to/agenda.pdf
+
+  # Multiple alarm types: display (default), email, and audio
+  tcal event add "Deploy Window" --date 2026-04-15 --time 02:00 \
+    --alarm "-PT1H" --alarm "EMAIL:-PT1D" --alarm "AUDIO:-PT5M"`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
@@ -372,10 +386,10 @@ Defaults: status=CONFIRMED, class=PUBLIC, transparency=OPAQUE, calendar=Personal
 	cmd.Flags().StringArrayVar(&rdates, "rdate", nil, "alias for --recurrence-date-times")
 	cmd.Flags().MarkHidden("exdate")
 	cmd.Flags().MarkHidden("rdate")
-	cmd.Flags().StringArrayVar(&attachFlags, "attach", nil, "attachment (file path or URL, repeatable)")
-	cmd.Flags().StringArrayVar(&alarmFlags, "alarm", nil, "alarm as ISO 8601 duration before start (e.g. -PT15M=15min, -PT1H=1hr, -P1D=1day; prefix ACTION: for type, e.g. EMAIL:-PT1H; repeatable)")
-	cmd.Flags().StringArrayVar(&attendeeFlags, "attendee", nil, "attendee (email or \"Name <email>\", repeatable)")
-	cmd.Flags().StringArrayVar(&commentFlags, "comment", nil, "comment annotation (repeatable)")
+	cmd.Flags().StringArrayVar(&attachFlags, "attach", nil, "attachment (file path or URL; prefix mime/type: for explicit MIME, e.g. application/pdf:/path/to/file; repeatable)")
+	cmd.Flags().StringArrayVar(&alarmFlags, "alarm", nil, "alarm trigger as ISO 8601 duration (e.g. -PT15M, -PT1H, -P1D); prefix DISPLAY:, EMAIL:, or AUDIO: for action type (default: DISPLAY); repeatable")
+	cmd.Flags().StringArrayVar(&attendeeFlags, "attendee", nil, "attendee as email or \"Name <email>\" (defaults: RSVP=NEEDS-ACTION, ROLE=REQ-PARTICIPANT; repeatable)")
+	cmd.Flags().StringArrayVar(&commentFlags, "comment", nil, "comment annotation (free-form text, repeatable)")
 	return cmd
 }
 
