@@ -39,7 +39,7 @@ type icons struct {
 }
 
 var nerdIcons = icons{
-	Calendar: "󰃭", Title: "󰧆", Clock: "󰥔", AllDay: "󰸗", Location: "󰍉",
+	Calendar: "󰃭", Title: "󰧆", Clock: "󰥔", AllDay: "󰸗", Location: "󰍎",
 	Notes: "󰎞", Status: "󰁪", Link: "󰌷", Tags: "󰓹",
 	Folder: "󰉋", ID: "󰻾", Bell: "󱃲", People: "󰡉",
 	Color: "󰏘", Priority: "󰁥", Progress: "󰓾",
