@@ -67,7 +67,7 @@ func eventListCmd() *cobra.Command {
 			}
 
 			w := cmd.OutOrStdout()
-			if outputFmt != "table" {
+			if outputFmt != "text" {
 				items := make([]jsonEvent, len(events))
 				for i, e := range events {
 					items[i] = toJSONEvent(e)
@@ -117,7 +117,7 @@ func eventGetCmd() *cobra.Command {
 			e.Relations, _ = a.Events.ListRelations(ctx, e.ID)
 
 			w := cmd.OutOrStdout()
-			if outputFmt != "table" {
+			if outputFmt != "text" {
 				return printOutput(w, toJSONEvent(e))
 			}
 			printEvent(w, e)
@@ -394,7 +394,7 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 			e.Relations, _ = a.Events.ListRelations(ctx, e.ID)
 
 			w := cmd.OutOrStdout()
-			if outputFmt != "table" {
+			if outputFmt != "text" {
 				return printOutput(w, toJSONEvent(e))
 			}
 			if allDay {
@@ -739,7 +739,7 @@ func eventUpdateCmd() *cobra.Command {
 			e.Relations, _ = a.Events.ListRelations(ctx, e.ID)
 
 			w := cmd.OutOrStdout()
-			if outputFmt != "table" {
+			if outputFmt != "text" {
 				return printOutput(w, toJSONEvent(e))
 			}
 			printEvent(w, e)
@@ -804,7 +804,7 @@ func eventDeleteCmd() *cobra.Command {
 			}
 
 			w := cmd.OutOrStdout()
-			if outputFmt != "table" {
+			if outputFmt != "text" {
 				return printOutput(w, map[string]any{"deleted": true, "id": id})
 			}
 			fmt.Fprintf(w, "Deleted event %d.\n", id)

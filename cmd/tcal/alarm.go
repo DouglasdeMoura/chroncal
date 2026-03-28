@@ -70,8 +70,8 @@ func alarmCheckCmd() *cobra.Command {
 			w := cmd.OutOrStdout()
 
 			if len(due) == 0 {
-				if jsonOut {
-					return printJSON(w, []any{})
+				if outputFmt != "text" {
+					return printOutput(w, []any{})
 				}
 				return nil
 			}
@@ -83,7 +83,7 @@ func alarmCheckCmd() *cobra.Command {
 				if fireErr != nil {
 					fmt.Fprintf(os.Stderr, "tcal: alarm error: %s (event=%q action=%s): %v\n",
 						da.TriggerAt.Local().Format("15:04"), da.Event.Title, da.Alarm.Action, fireErr)
-					if jsonOut {
+					if outputFmt != "text" {
 						results = append(results, map[string]any{
 							"event_id":   da.Event.ID,
 							"event":      da.Event.Title,
@@ -100,7 +100,7 @@ func alarmCheckCmd() *cobra.Command {
 					fmt.Fprintf(os.Stderr, "tcal: mark-fired error: event=%q: %v\n", da.Event.Title, markErr)
 				}
 
-				if jsonOut {
+				if outputFmt != "text" {
 					results = append(results, map[string]any{
 						"event_id":   da.Event.ID,
 						"event":      da.Event.Title,
@@ -114,8 +114,8 @@ func alarmCheckCmd() *cobra.Command {
 				}
 			}
 
-			if jsonOut {
-				return printJSON(w, results)
+			if outputFmt != "text" {
+				return printOutput(w, results)
 			}
 			return nil
 		},
@@ -143,13 +143,13 @@ func alarmListCmd() *cobra.Command {
 			w := cmd.OutOrStdout()
 
 			if len(pending) == 0 {
-				if jsonOut {
-					return printJSON(w, []any{})
+				if outputFmt != "text" {
+					return printOutput(w, []any{})
 				}
 				return nil
 			}
 
-			if jsonOut {
+			if outputFmt != "text" {
 				var items []map[string]any
 				for _, s := range pending {
 					items = append(items, map[string]any{
@@ -161,7 +161,7 @@ func alarmListCmd() *cobra.Command {
 						"snoozed_to": s.SnoozedTo.String,
 					})
 				}
-				return printJSON(w, items)
+				return printOutput(w, items)
 			}
 
 			for _, s := range pending {
@@ -200,8 +200,8 @@ func alarmDismissCmd() *cobra.Command {
 			}
 
 			w := cmd.OutOrStdout()
-			if jsonOut {
-				return printJSON(w, map[string]any{"dismissed": true, "id": stateID})
+			if outputFmt != "text" {
+				return printOutput(w, map[string]any{"dismissed": true, "id": stateID})
 			}
 			fmt.Fprintf(w, "Dismissed alarm state %d.\n", stateID)
 			return nil
@@ -239,8 +239,8 @@ func alarmSnoozeCmd() *cobra.Command {
 			}
 
 			w := cmd.OutOrStdout()
-			if jsonOut {
-				return printJSON(w, map[string]any{
+			if outputFmt != "text" {
+				return printOutput(w, map[string]any{
 					"snoozed": true,
 					"id":      stateID,
 					"until":   until.Format(time.RFC3339),

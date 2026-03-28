@@ -57,8 +57,8 @@ func todoListCmd() *cobra.Command {
 			}
 
 			w := cmd.OutOrStdout()
-			if jsonOut {
-				return printJSON(w, toJSONTodos(todos))
+			if outputFmt != "text" {
+				return printOutput(w, toJSONTodos(todos))
 			}
 			printTodos(w, todos)
 			return nil
@@ -102,8 +102,8 @@ func todoGetCmd() *cobra.Command {
 			t.Relations, _ = a.Todos.ListRelations(ctx, t.ID)
 
 			w := cmd.OutOrStdout()
-			if jsonOut {
-				return printJSON(w, toJSONTodo(t))
+			if outputFmt != "text" {
+				return printOutput(w, toJSONTodo(t))
 			}
 			printTodo(w, t)
 			return nil
@@ -175,8 +175,8 @@ func todoAddCmd() *cobra.Command {
 			}
 
 			w := cmd.OutOrStdout()
-			if jsonOut {
-				return printJSON(w, toJSONTodo(t))
+			if outputFmt != "text" {
+				return printOutput(w, toJSONTodo(t))
 			}
 			msg := fmt.Sprintf("Created: %s", t.Summary)
 			if dueDate != "" {
@@ -313,8 +313,8 @@ func todoUpdateCmd() *cobra.Command {
 			}
 
 			w := cmd.OutOrStdout()
-			if jsonOut {
-				return printJSON(w, toJSONTodo(t))
+			if outputFmt != "text" {
+				return printOutput(w, toJSONTodo(t))
 			}
 			printTodo(w, t)
 			return nil
@@ -356,8 +356,8 @@ func todoDeleteCmd() *cobra.Command {
 			}
 
 			w := cmd.OutOrStdout()
-			if jsonOut {
-				return printJSON(w, map[string]any{"deleted": true, "id": id})
+			if outputFmt != "text" {
+				return printOutput(w, map[string]any{"deleted": true, "id": id})
 			}
 			fmt.Fprintf(w, "Deleted todo %d.\n", id)
 			return nil

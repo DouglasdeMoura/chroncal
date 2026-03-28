@@ -15,8 +15,8 @@ import (
 )
 
 var (
-	jsonOut bool
-	cfg     config.Config
+	outputFmt string
+	cfg       config.Config
 )
 
 var rootCmd = &cobra.Command{
@@ -34,8 +34,14 @@ Resource groups:
   ical       Import and export iCal (.ics) files
   alarm      Manage alarm notifications (check, list, dismiss, snooze, daemon)
   service    Manage alarm notification service (install, uninstall, status)`,
-	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		cfg = config.Load()
+		switch outputFmt {
+		case "text", "table", "json", "yaml":
+			return nil
+		default:
+			return fmt.Errorf("invalid output format %q (must be text, table, json, or yaml)", outputFmt)
+		}
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		a, err := initApp()
@@ -61,7 +67,7 @@ func initApp() (*app.App, error) {
 }
 
 func init() {
-	rootCmd.PersistentFlags().BoolVar(&jsonOut, "json", false, "output as JSON")
+	rootCmd.PersistentFlags().StringVarP(&outputFmt, "output", "o", "text", "output format (text, table, json, yaml)")
 
 	rootCmd.AddCommand(eventCmd(), calendarCmd(), todoCmd(), icalCmd(), alarmCmd(), serviceCmd())
 }

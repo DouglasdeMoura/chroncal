@@ -35,12 +35,12 @@ func calendarListCmd() *cobra.Command {
 			}
 
 			w := cmd.OutOrStdout()
-			if jsonOut {
+			if outputFmt != "text" {
 				items := make([]jsonCalendar, len(cals))
 				for i, c := range cals {
 					items[i] = toJSONCalendar(c)
 				}
-				return printJSON(w, items)
+				return printOutput(w, items)
 			}
 			printCalendars(w, cals)
 			return nil
@@ -72,8 +72,8 @@ func calendarGetCmd() *cobra.Command {
 			}
 
 			w := cmd.OutOrStdout()
-			if jsonOut {
-				return printJSON(w, toJSONCalendar(c))
+			if outputFmt != "text" {
+				return printOutput(w, toJSONCalendar(c))
 			}
 			printCalendar(w, c)
 			return nil
@@ -104,8 +104,8 @@ func calendarCreateCmd() *cobra.Command {
 			}
 
 			w := cmd.OutOrStdout()
-			if jsonOut {
-				return printJSON(w, toJSONCalendar(c))
+			if outputFmt != "text" {
+				return printOutput(w, toJSONCalendar(c))
 			}
 			fmt.Fprintf(w, "Created calendar %d: %s\n", c.ID, c.Name)
 			return nil
@@ -161,8 +161,8 @@ func calendarUpdateCmd() *cobra.Command {
 			}
 
 			w := cmd.OutOrStdout()
-			if jsonOut {
-				return printJSON(w, toJSONCalendar(c))
+			if outputFmt != "text" {
+				return printOutput(w, toJSONCalendar(c))
 			}
 			fmt.Fprintf(w, "Updated calendar %d: %s\n", c.ID, c.Name)
 			return nil
@@ -196,8 +196,8 @@ func calendarDeleteCmd() *cobra.Command {
 			}
 
 			w := cmd.OutOrStdout()
-			if jsonOut {
-				return printJSON(w, map[string]any{"deleted": true, "id": id})
+			if outputFmt != "text" {
+				return printOutput(w, map[string]any{"deleted": true, "id": id})
 			}
 			fmt.Fprintf(w, "Deleted calendar %d.\n", id)
 			return nil

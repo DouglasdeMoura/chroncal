@@ -135,12 +135,12 @@ func icalImportCmd() *cobra.Command {
 			}
 
 			w := cmd.OutOrStdout()
-			if jsonOut {
+			if outputFmt != "text" {
 				out := map[string]any{
 					"events": toJSONEvents(importedEvents),
 					"todos":  toJSONTodos(importedTodos),
 				}
-				return printJSON(w, out)
+				return printOutput(w, out)
 			}
 			fmt.Fprintf(w, "Imported %d events, %d todos.\n", len(importedEvents), len(importedTodos))
 			return nil
@@ -155,7 +155,7 @@ func icalExportCmd() *cobra.Command {
 		calendarName string
 		fromStr      string
 		toStr        string
-		output       string
+		outFile      string
 	)
 	cmd := &cobra.Command{
 		Use:   "export",
@@ -245,11 +245,11 @@ func icalExportCmd() *cobra.Command {
 				return nil
 			}
 
-			if output != "" {
-				if err := os.WriteFile(output, data, 0o644); err != nil {
+			if outFile != "" {
+				if err := os.WriteFile(outFile, data, 0o644); err != nil {
 					return fmt.Errorf("write file: %w", err)
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "Exported %d events, %d todos to %s\n", len(events), len(todos), output)
+				fmt.Fprintf(cmd.OutOrStdout(), "Exported %d events, %d todos to %s\n", len(events), len(todos), outFile)
 			} else {
 				cmd.OutOrStdout().Write(data)
 			}
@@ -259,6 +259,6 @@ func icalExportCmd() *cobra.Command {
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "export only this calendar")
 	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD, default: today)")
 	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 14 days from now)")
-	cmd.Flags().StringVarP(&output, "output", "o", "", "output file (default: stdout)")
+	cmd.Flags().StringVarP(&outFile, "file", "f", "", "output file (default: stdout)")
 	return cmd
 }
