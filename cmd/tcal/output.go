@@ -14,6 +14,52 @@ import (
 	"github.com/douglasdemoura/tcal/internal/todo"
 )
 
+// icons holds display glyphs, switched by the nerd_fonts config flag.
+type icons struct {
+	Calendar      string // date headers, calendar detail
+	Clock         string // timed events, due dates
+	AllDay        string // all-day events
+	Location      string // location field
+	Notes         string // description field
+	Status        string // status field
+	Link          string // URL field
+	Tags          string // categories field
+	Folder        string // calendar reference
+	UID           string // UID field
+	Bell          string // alarms
+	People        string // attendees
+	Color         string // color swatch
+	Priority      string // priority field
+	Progress      string // progress bar
+	TodoOpen      string // incomplete todo
+	TodoDone      string // completed todo
+	Bullet        string // generic list bullet
+}
+
+var nerdIcons = icons{
+	Calendar: "󰃭", Clock: "󰥔", AllDay: "󰸗", Location: "󰍉",
+	Notes: "󰎞", Status: "󰁪", Link: "󰌷", Tags: "󰓹",
+	Folder: "󰉋", UID: "󰻾", Bell: "󱃲", People: "󰡉",
+	Color: "󰏘", Priority: "󰁥", Progress: "󰓾",
+	TodoOpen: "󰄱", TodoDone: "󰄬", Bullet: "󰧞",
+}
+
+var plainIcons = icons{
+	Calendar: "#", Clock: "●", AllDay: "◆", Location: "@",
+	Notes: "…", Status: "!", Link: "~", Tags: "#",
+	Folder: ">", UID: "~", Bell: "♪", People: "&",
+	Color: "●", Priority: "!", Progress: "%",
+	TodoOpen: "○", TodoDone: "●", Bullet: "●",
+}
+
+// ic returns the active icon set based on cfg.NerdFonts.
+func ic() icons {
+	if cfg.NerdFonts {
+		return nerdIcons
+	}
+	return plainIcons
+}
+
 type jsonEvent struct {
 	ID             int64           `json:"id"`
 	UID            string          `json:"uid"`
@@ -177,39 +223,40 @@ func printOutput(w io.Writer, v any) error {
 }
 
 func printEvent(w io.Writer, e event.Event) {
-	fmt.Fprintf(w, "  󰃭 %d  %s\n", e.ID, e.Title)
+	i := ic()
+	fmt.Fprintf(w, "  %s %d  %s\n", i.Calendar, e.ID, e.Title)
 	if e.AllDay {
-		fmt.Fprintf(w, "  󰥔 %s (all day)\n", e.StartTime.Local().Format("Mon, Jan 2 2006"))
+		fmt.Fprintf(w, "  %s %s (all day)\n", i.Clock, e.StartTime.Local().Format("Mon, Jan 2 2006"))
 	} else {
-		fmt.Fprintf(w, "  󰥔 %s – %s\n",
+		fmt.Fprintf(w, "  %s %s – %s\n", i.Clock,
 			e.StartTime.Local().Format("Mon, Jan 2 2006 15:04"),
 			e.EndTime.Local().Format("15:04"))
 	}
 	if e.Location != "" {
-		fmt.Fprintf(w, "  󰍉 %s\n", e.Location)
+		fmt.Fprintf(w, "  %s %s\n", i.Location, e.Location)
 	}
 	if e.Description != "" {
-		fmt.Fprintf(w, "  󰎞 %s\n", e.Description)
+		fmt.Fprintf(w, "  %s %s\n", i.Notes, e.Description)
 	}
 	if e.Status != "CONFIRMED" {
-		fmt.Fprintf(w, "  󰁪 %s\n", e.Status)
+		fmt.Fprintf(w, "  %s %s\n", i.Status, e.Status)
 	}
 	if e.URL != "" {
-		fmt.Fprintf(w, "  󰌷 %s\n", e.URL)
+		fmt.Fprintf(w, "  %s %s\n", i.Link, e.URL)
 	}
 	if e.Categories != "" {
-		fmt.Fprintf(w, "  󰓹 %s\n", e.Categories)
+		fmt.Fprintf(w, "  %s %s\n", i.Tags, e.Categories)
 	}
 	if e.Timezone != "" {
-		fmt.Fprintf(w, "  󰥔 TZ: %s\n", e.Timezone)
+		fmt.Fprintf(w, "  %s TZ: %s\n", i.Clock, e.Timezone)
 	}
-	fmt.Fprintf(w, "  󰉋 Calendar %d\n", e.CalendarID)
-	fmt.Fprintf(w, "  󰻾 %s\n", e.UID)
+	fmt.Fprintf(w, "  %s Calendar %d\n", i.Folder, e.CalendarID)
+	fmt.Fprintf(w, "  %s %s\n", i.UID, e.UID)
 	if len(e.Alarms) > 0 {
-		fmt.Fprintf(w, "  󱃲 %d reminder(s)\n", len(e.Alarms))
+		fmt.Fprintf(w, "  %s %d reminder(s)\n", i.Bell, len(e.Alarms))
 	}
 	if len(e.Attendees) > 0 {
-		fmt.Fprintf(w, "  󰡉 %d participant(s)\n", len(e.Attendees))
+		fmt.Fprintf(w, "  %s %d participant(s)\n", i.People, len(e.Attendees))
 	}
 }
 
@@ -219,6 +266,7 @@ func printEvents(w io.Writer, events []event.Event) {
 		return
 	}
 
+	i := ic()
 	var currentDate string
 	for _, e := range events {
 		dateLabel := e.StartTime.Local().Format("Mon, Jan 2 2006")
@@ -226,14 +274,14 @@ func printEvents(w io.Writer, events []event.Event) {
 			if currentDate != "" {
 				fmt.Fprintln(w)
 			}
-			fmt.Fprintf(w, "  󰃭 %s\n", dateLabel)
+			fmt.Fprintf(w, "  %s %s\n", i.Calendar, dateLabel)
 			fmt.Fprintf(w, "  %s\n", strings.Repeat("─", len(dateLabel)+4))
 			currentDate = dateLabel
 		}
 		if e.AllDay {
-			fmt.Fprintf(w, "  󰸗 all day       [%d] %s\n", e.ID, e.Title)
+			fmt.Fprintf(w, "  %s all day       [%d] %s\n", i.AllDay, e.ID, e.Title)
 		} else {
-			fmt.Fprintf(w, "  󰥔 %s–%s  [%d] %s\n",
+			fmt.Fprintf(w, "  %s %s–%s  [%d] %s\n", i.Clock,
 				e.StartTime.Local().Format("15:04"),
 				e.EndTime.Local().Format("15:04"),
 				e.ID, e.Title)
@@ -243,10 +291,11 @@ func printEvents(w io.Writer, events []event.Event) {
 }
 
 func printCalendar(w io.Writer, c calendar.Calendar) {
-	fmt.Fprintf(w, "  󰉋 %d  %s\n", c.ID, c.Name)
-	fmt.Fprintf(w, "  󰏘 %s\n", c.Color)
+	i := ic()
+	fmt.Fprintf(w, "  %s %d  %s\n", i.Folder, c.ID, c.Name)
+	fmt.Fprintf(w, "  %s %s\n", i.Color, c.Color)
 	if c.Description != "" {
-		fmt.Fprintf(w, "  󰎞 %s\n", c.Description)
+		fmt.Fprintf(w, "  %s %s\n", i.Notes, c.Description)
 	}
 }
 
@@ -346,31 +395,32 @@ func toJSONTodos(todos []todo.Todo) []jsonTodo {
 }
 
 func printTodo(w io.Writer, t todo.Todo) {
-	fmt.Fprintf(w, "  󰄱 %d  %s\n", t.ID, t.Summary)
-	fmt.Fprintf(w, "  󰁪 %s\n", t.Status)
+	i := ic()
+	fmt.Fprintf(w, "  %s %d  %s\n", i.TodoOpen, t.ID, t.Summary)
+	fmt.Fprintf(w, "  %s %s\n", i.Status, t.Status)
 	if t.DueDate != "" {
 		due := t.ParseDueDate().Local()
-		fmt.Fprintf(w, "  󰥔 Due %s\n", due.Format("Mon, Jan 2 2006 15:04"))
+		fmt.Fprintf(w, "  %s Due %s\n", i.Clock, due.Format("Mon, Jan 2 2006 15:04"))
 	}
 	if t.PercentComplete > 0 {
-		fmt.Fprintf(w, "  󰓾 %d%%\n", t.PercentComplete)
+		fmt.Fprintf(w, "  %s %d%%\n", i.Progress, t.PercentComplete)
 	}
 	if t.Location != "" {
-		fmt.Fprintf(w, "  󰍉 %s\n", t.Location)
+		fmt.Fprintf(w, "  %s %s\n", i.Location, t.Location)
 	}
 	if t.Description != "" {
-		fmt.Fprintf(w, "  󰎞 %s\n", t.Description)
+		fmt.Fprintf(w, "  %s %s\n", i.Notes, t.Description)
 	}
 	if t.URL != "" {
-		fmt.Fprintf(w, "  󰌷 %s\n", t.URL)
+		fmt.Fprintf(w, "  %s %s\n", i.Link, t.URL)
 	}
 	if t.Categories != "" {
-		fmt.Fprintf(w, "  󰓹 %s\n", t.Categories)
+		fmt.Fprintf(w, "  %s %s\n", i.Tags, t.Categories)
 	}
 	if t.Priority > 0 {
-		fmt.Fprintf(w, "  󰁥 Priority %d\n", t.Priority)
+		fmt.Fprintf(w, "  %s Priority %d\n", i.Priority, t.Priority)
 	}
-	fmt.Fprintf(w, "  󰉋 Calendar %d\n", t.CalendarID)
+	fmt.Fprintf(w, "  %s Calendar %d\n", i.Folder, t.CalendarID)
 }
 
 func printTodos(w io.Writer, todos []todo.Todo) {
@@ -379,9 +429,10 @@ func printTodos(w io.Writer, todos []todo.Todo) {
 		return
 	}
 	for _, t := range todos {
-		check := "󰄱"
+		i := ic()
+		check := i.TodoOpen
 		if t.IsCompleted() {
-			check = "󰄬"
+			check = i.TodoDone
 		}
 		var dueStr string
 		if t.DueDate != "" {
