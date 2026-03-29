@@ -81,7 +81,8 @@ Notification types depend on the alarm action set on the event:
   EMAIL    — email via SMTP (falls back to DISPLAY if SMTP is not configured)
 
 Each fired alarm is recorded in the database so it will not fire again on
-subsequent checks. If no alarms are due, the command produces no output
+subsequent checks. Snoozed alarms whose snooze-until time has expired
+are also re-fired. If no alarms are due, the command produces no output
 and exits 0.`,
 		Example: `  # One-shot check (suitable for cron / systemd timer)
   tcal alarm check
