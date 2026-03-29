@@ -240,6 +240,10 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 				}
 			}
 
+			if dueDate != "" && durationVal != "" {
+				return fmt.Errorf("--due and --duration are mutually exclusive (RFC 5545 §3.6.2)")
+			}
+
 			parsedExDates, err := parseDateFlags(exdates, "", time.Time{})
 			if err != nil {
 				return fmt.Errorf("--exdate: %w", err)
@@ -523,6 +527,10 @@ func todoUpdateCmd() *cobra.Command {
 					return fmt.Errorf("--rdate: %w", err)
 				}
 				p.RDates = parsed
+			}
+
+			if p.DueDate != "" && p.Duration != "" {
+				return fmt.Errorf("--due and --duration are mutually exclusive (RFC 5545 §3.6.2)")
 			}
 
 			t, err := a.Todos.Update(ctx, existing.ID, p)
