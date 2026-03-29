@@ -424,7 +424,44 @@ func todoUpdateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "update <id|uid>",
 		Short: "Update an existing todo",
-		Args:  cobra.ExactArgs(1),
+		Long: `Update an existing todo by numeric ID or UID.
+
+Only the flags you pass are changed; all other fields keep their current
+values. Use an empty string to clear optional fields like --due, --start,
+--duration, --description, --location, --url, --categories, or --rrule.
+
+Repeatable flags (--alarm, --attendee, --comment, --contact, --resource,
+--attach, --related-to) replace all existing values when specified.
+
+Per RFC 5545, DUE and DURATION are mutually exclusive. To switch from one
+to the other, clear the current one first (e.g. --due "" --duration 2h).
+
+Setting --status COMPLETED automatically sets the completion timestamp
+and percent-complete to 100. You cannot combine --status COMPLETED with
+a --progress value other than 100.`,
+		Example: `  # Change the summary
+  tcal todo update 1 --summary "Updated task name"
+
+  # Reschedule a todo
+  tcal todo update 1 --due 2026-05-01 --start 2026-04-15
+
+  # Mark as completed
+  tcal todo update 1 --status COMPLETED
+
+  # Switch from due date to estimated duration
+  tcal todo update 1 --due "" --duration 4h
+
+  # Update attendees and add a comment
+  tcal todo update 1 \
+    --attendee "Alice <alice@example.com>" \
+    --comment "Discussed in standup"
+
+  # Move to a different calendar and change classification
+  tcal todo update 1 --calendar Work --class CONFIDENTIAL
+
+  # Clear the location
+  tcal todo update 1 --location ""`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
