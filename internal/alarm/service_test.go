@@ -617,6 +617,66 @@ func TestComputeTriggerTime_Absolute(t *testing.T) {
 	}
 }
 
+func TestComputeTriggerTime_DST(t *testing.T) {
+	nyc := mustLoadLocation("America/New_York")
+
+	// March 8 2026: DST starts in NYC (clocks spring forward at 2:00 AM).
+	// Event at 14:00 EDT (UTC-4) = 18:00 UTC.
+	// A -P1D alarm should fire at 14:00 EST (UTC-5) on March 7 = 19:00 UTC.
+	// Without the timezone fix, it would fire at 18:00 UTC (1 hour early).
+	eventStart := time.Date(2026, 3, 8, 14, 0, 0, 0, nyc)
+
+	// Simulate DB round-trip: store as RFC 3339, parse back.
+	// This produces a fixed-offset time (zone "-04:00"), NOT location-aware.
+	storedRFC3339 := eventStart.Format(time.RFC3339)
+	parsedBack, _ := time.Parse(time.RFC3339, storedRFC3339)
+	if parsedBack.Location().String() == "America/New_York" {
+		t.Fatal("expected fixed-offset zone after RFC 3339 round-trip, got named location")
+	}
+
+	evt := event.Event{
+		StartTime: parsedBack,
+		EndTime:   parsedBack.Add(time.Hour),
+		Timezone:  "America/New_York",
+	}
+
+	// -P1D: one day before, should be 14:00 EST on March 7
+	a := model.Alarm{TriggerValue: "-P1D", Related: "START"}
+	got, err := computeTriggerTime(evt, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := time.Date(2026, 3, 7, 14, 0, 0, 0, nyc) // 14:00 EST = 19:00 UTC
+	if !got.Equal(want) {
+		t.Errorf("DST -P1D: got %v (%s UTC), want %v (%s UTC)",
+			got, got.UTC().Format("15:04"), want, want.UTC().Format("15:04"))
+	}
+
+	// -PT1H: one hour before, should be 13:00 EDT = 17:00 UTC (DST irrelevant for hours)
+	a2 := model.Alarm{TriggerValue: "-PT1H", Related: "START"}
+	got2, err := computeTriggerTime(evt, a2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want2 := eventStart.Add(-time.Hour) // 17:00 UTC
+	if !got2.Equal(want2) {
+		t.Errorf("DST -PT1H: got %v (%s UTC), want %v (%s UTC)",
+			got2, got2.UTC().Format("15:04"), want2, want2.UTC().Format("15:04"))
+	}
+
+	// -P1W: one week before, should be 14:00 EST on March 1 (still EST)
+	a3 := model.Alarm{TriggerValue: "-P1W", Related: "START"}
+	got3, err := computeTriggerTime(evt, a3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want3 := time.Date(2026, 3, 1, 14, 0, 0, 0, nyc) // 14:00 EST = 19:00 UTC
+	if !got3.Equal(want3) {
+		t.Errorf("DST -P1W: got %v (%s UTC), want %v (%s UTC)",
+			got3, got3.UTC().Format("15:04"), want3, want3.UTC().Format("15:04"))
+	}
+}
+
 func mustLoadLocation(name string) *time.Location {
 	loc, err := time.LoadLocation(name)
 	if err != nil {

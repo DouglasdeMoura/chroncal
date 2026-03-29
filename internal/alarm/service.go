@@ -270,6 +270,15 @@ func computeTriggerTime(evt event.Event, a model.Alarm) (time.Time, error) {
 		if a.Related == "END" {
 			anchor = evt.EndTime
 		}
+		// Convert to event's named timezone so that day-level arithmetic
+		// (P1D, P1W) handles DST transitions correctly. Without this,
+		// AddDate operates on a fixed UTC offset from RFC 3339 storage
+		// and produces wrong wall-clock times across DST boundaries.
+		if evt.Timezone != "" {
+			if loc, err := time.LoadLocation(evt.Timezone); err == nil {
+				anchor = anchor.In(loc)
+			}
+		}
 		return duration.Add(anchor, trigger), nil
 	}
 
