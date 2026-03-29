@@ -677,6 +677,148 @@ func TestComputeTriggerTime_DST(t *testing.T) {
 	}
 }
 
+func TestComputeSnooze_RejectsNegativeDuration(t *testing.T) {
+	svc, evtSvc := newTestServices(t)
+	ctx := context.Background()
+
+	start := time.Now().Add(10 * time.Minute)
+	e, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "Negative Dur",
+		StartTime:  start,
+		EndTime:    start.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT15M"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	due, _ := svc.Check(ctx, time.Now())
+	if err := svc.MarkFired(ctx, due[0]); err != nil {
+		t.Fatal(err)
+	}
+	pending, _ := svc.ListPending(ctx)
+
+	// Negative duration
+	_, err = svc.ComputeSnooze(ctx, pending[0].ID, -5*time.Minute)
+	if err == nil {
+		t.Error("expected error for negative duration")
+	}
+
+	// Zero duration
+	_, err = svc.ComputeSnooze(ctx, pending[0].ID, 0)
+	if err == nil {
+		t.Error("expected error for zero duration")
+	}
+}
+
+func TestComputeSnooze_RejectsPastEndedEvent(t *testing.T) {
+	svc, evtSvc := newTestServices(t)
+	ctx := context.Background()
+
+	// Event started 2 hours ago, ended 1 hour ago
+	start := time.Now().Add(-2 * time.Hour)
+	e, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "Past Ended",
+		StartTime:  start,
+		EndTime:    start.Add(time.Hour), // ended 1 hour ago
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT15M"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Trigger was 2h15m ago, still within 24h stale threshold
+	due, _ := svc.Check(ctx, time.Now())
+	if len(due) != 1 {
+		t.Fatalf("got %d due, want 1", len(due))
+	}
+	if err := svc.MarkFired(ctx, due[0]); err != nil {
+		t.Fatal(err)
+	}
+	pending, _ := svc.ListPending(ctx)
+
+	_, err = svc.ComputeSnooze(ctx, pending[0].ID, 10*time.Minute)
+	if err == nil {
+		t.Error("expected error for past-ended event")
+	}
+}
+
+func TestComputeSnooze_RejectsDismissedAlarm(t *testing.T) {
+	svc, evtSvc := newTestServices(t)
+	ctx := context.Background()
+
+	start := time.Now().Add(10 * time.Minute)
+	e, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "Dismissed Alarm",
+		StartTime:  start,
+		EndTime:    start.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT15M"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Fire, dismiss, then try to snooze
+	due, _ := svc.Check(ctx, time.Now())
+	if err := svc.MarkFired(ctx, due[0]); err != nil {
+		t.Fatal(err)
+	}
+	pending, _ := svc.ListPending(ctx)
+	if err := svc.Dismiss(ctx, pending[0].ID); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = svc.ComputeSnooze(ctx, pending[0].ID, 10*time.Minute)
+	if err == nil {
+		t.Error("expected error when snoozing dismissed alarm")
+	}
+}
+
+func TestComputeSnooze_RejectsNonexistentStateID(t *testing.T) {
+	svc, _ := newTestServices(t)
+	ctx := context.Background()
+
+	_, err := svc.ComputeSnooze(ctx, 99999, 10*time.Minute)
+	if err == nil {
+		t.Error("expected error for nonexistent state ID")
+	}
+	want := "not found"
+	if !contains(err.Error(), want) {
+		t.Errorf("error %q should contain %q", err.Error(), want)
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && searchString(s, substr)
+}
+
+func searchString(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
 func mustLoadLocation(name string) *time.Location {
 	loc, err := time.LoadLocation(name)
 	if err != nil {

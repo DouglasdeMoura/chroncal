@@ -366,7 +366,13 @@ expires, the alarm fires again.`,
   tcal alarm snooze 5 --for 1h
 
   # Snooze until the event starts
-  tcal alarm snooze 5 --until-start`,
+  tcal alarm snooze 5 --until-start
+
+  # Snooze and get JSON output (for scripting)
+  tcal alarm snooze 5 --for 1h -o json
+
+  # Check snooze status in the pending list
+  tcal alarm list`,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
@@ -393,6 +399,9 @@ expires, the alarm fires again.`,
 				dur, err := time.ParseDuration(forDur)
 				if err != nil {
 					return fmt.Errorf("parse --for duration: %w", err)
+				}
+				if dur <= 0 {
+					return fmt.Errorf("snooze duration must be positive (e.g. 5m, 1h)")
 				}
 				res, err = a.Alarms.ComputeSnooze(ctx, stateID, dur)
 				if err != nil {

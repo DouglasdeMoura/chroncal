@@ -3,6 +3,7 @@ package alarm
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -163,8 +164,11 @@ func (s *Service) MarkFired(ctx context.Context, da DueAlarm) error {
 // Returns an error if the state ID does not exist or is already dismissed.
 func (s *Service) Dismiss(ctx context.Context, stateID int64) error {
 	st, err := s.q.GetAlarmStateByID(ctx, stateID)
-	if err != nil {
+	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("alarm state %d not found", stateID)
+	}
+	if err != nil {
+		return fmt.Errorf("get alarm state %d: %w", stateID, err)
 	}
 	if st.AckedAt.Valid {
 		return fmt.Errorf("alarm state %d already dismissed", stateID)
@@ -197,16 +201,33 @@ type SnoozeResult struct {
 // ComputeSnooze calculates the snooze-until time, capped at event end.
 // It returns metadata about the computation so the CLI can display warnings.
 func (s *Service) ComputeSnooze(ctx context.Context, stateID int64, dur time.Duration) (SnoozeResult, error) {
+	if dur <= 0 {
+		return SnoozeResult{}, fmt.Errorf("snooze duration must be positive")
+	}
+
 	st, err := s.q.GetAlarmStateByID(ctx, stateID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SnoozeResult{}, fmt.Errorf("alarm state %d not found (use 'tcal alarm list' to see pending alarms)", stateID)
+	}
 	if err != nil {
 		return SnoozeResult{}, fmt.Errorf("get alarm state %d: %w", stateID, err)
 	}
+	if st.AckedAt.Valid {
+		return SnoozeResult{}, fmt.Errorf("alarm state %d is already dismissed", stateID)
+	}
+
 	evt, err := s.events.Get(ctx, st.EventID)
 	if err != nil {
 		return SnoozeResult{}, fmt.Errorf("get event %d: %w", st.EventID, err)
 	}
 
 	now := time.Now()
+
+	// Reject if the event has already ended.
+	if !evt.EndTime.IsZero() && evt.EndTime.Before(now) {
+		return SnoozeResult{}, fmt.Errorf("event %q has already ended", evt.Title)
+	}
+
 	until := now.Add(dur)
 
 	res := SnoozeResult{
@@ -232,9 +253,16 @@ func (s *Service) ComputeSnooze(ctx context.Context, stateID int64, dur time.Dur
 // SnoozeUntilStart snoozes an alarm to fire at the event's start time.
 func (s *Service) SnoozeUntilStart(ctx context.Context, stateID int64) (SnoozeResult, error) {
 	st, err := s.q.GetAlarmStateByID(ctx, stateID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SnoozeResult{}, fmt.Errorf("alarm state %d not found (use 'tcal alarm list' to see pending alarms)", stateID)
+	}
 	if err != nil {
 		return SnoozeResult{}, fmt.Errorf("get alarm state %d: %w", stateID, err)
 	}
+	if st.AckedAt.Valid {
+		return SnoozeResult{}, fmt.Errorf("alarm state %d is already dismissed", stateID)
+	}
+
 	evt, err := s.events.Get(ctx, st.EventID)
 	if err != nil {
 		return SnoozeResult{}, fmt.Errorf("get event %d: %w", st.EventID, err)
