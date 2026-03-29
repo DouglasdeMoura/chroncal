@@ -938,39 +938,120 @@ func parseAttendeeFlags(flags []string) []model.Attendee {
 }
 
 // parseAlarmFlags parses --alarm flag values into Alarm models.
-// Each value can be:
-//   - A trigger duration: "-PT15M" (defaults to ACTION:DISPLAY)
-//   - "ACTION:trigger": "DISPLAY:-PT15M", "EMAIL:-PT1H", "AUDIO:-PT5M"
+//
+// Simple format (backward compatible):
+//
+//	"-PT15M"              → DISPLAY, 15min before start
+//	"EMAIL:-PT1H"         → EMAIL, 1h before start
+//
+// Extended format (duration triggers only):
+//
+//	"ACTION:TRIGGER:DESC:REPEAT:DURATION:RELATED:ATTENDEES"
+//	"DISPLAY:-PT30M::3:PT5M:END"                          → repeat 3x every 5min, relative to END
+//	"EMAIL:-PT1H:::::alice@example.com,bob@example.com"    → EMAIL with attendees
+//
+// Extended format is only available for duration triggers (starting with -, +, or P).
+// Absolute RFC 3339 triggers do not support additional fields.
 func parseAlarmFlags(flags []string) ([]model.Alarm, error) {
 	var out []model.Alarm
 	for _, val := range flags {
-		action := "DISPLAY"
-		trigger := val
-
-		// Check for ACTION: prefix
-		if idx := strings.Index(val, ":"); idx > 0 {
-			prefix := strings.ToUpper(val[:idx])
-			if prefix == "DISPLAY" || prefix == "EMAIL" || prefix == "AUDIO" {
-				action = prefix
-				trigger = val[idx+1:]
-			}
+		a, err := parseOneAlarm(val)
+		if err != nil {
+			return nil, err
 		}
-
-		if trigger == "" {
-			return nil, fmt.Errorf("alarm %q: missing trigger value", val)
-		}
-		if err := validateAlarmTrigger(trigger); err != nil {
-			return nil, fmt.Errorf("alarm %q: %w", val, err)
-		}
-
-		out = append(out, model.Alarm{
-			Action:       action,
-			TriggerValue: trigger,
-			Description:  "Reminder",
-			Related:      "START",
-		})
+		out = append(out, a)
 	}
 	return out, nil
+}
+
+func parseOneAlarm(val string) (model.Alarm, error) {
+	action := "DISPLAY"
+	rest := val
+
+	// Check for ACTION: prefix
+	if idx := strings.Index(val, ":"); idx > 0 {
+		prefix := strings.ToUpper(val[:idx])
+		if prefix == "DISPLAY" || prefix == "EMAIL" || prefix == "AUDIO" {
+			action = prefix
+			rest = val[idx+1:]
+		}
+	}
+
+	if rest == "" {
+		return model.Alarm{}, fmt.Errorf("alarm %q: missing trigger value", val)
+	}
+
+	// Determine if the trigger is a duration (can have extended fields) or
+	// an absolute datetime (no extended fields, since RFC 3339 contains colons).
+	isDuration := rest[0] == '-' || rest[0] == '+' || rest[0] == 'P'
+
+	a := model.Alarm{
+		Action:      action,
+		Description: "Reminder",
+		Related:     "START",
+	}
+
+	if !isDuration {
+		// Absolute trigger — no splitting on colons.
+		a.TriggerValue = rest
+		if err := validateAlarmTrigger(a.TriggerValue); err != nil {
+			return model.Alarm{}, fmt.Errorf("alarm %q: %w", val, err)
+		}
+		return a, nil
+	}
+
+	// Duration trigger — split into positional fields.
+	// Fields: trigger, description, repeat, duration, related, attendees
+	parts := strings.SplitN(rest, ":", 6)
+	a.TriggerValue = parts[0]
+
+	if err := validateAlarmTrigger(a.TriggerValue); err != nil {
+		return model.Alarm{}, fmt.Errorf("alarm %q: %w", val, err)
+	}
+
+	// Parse optional fields from the extended format.
+	if len(parts) > 1 && parts[1] != "" {
+		a.Description = parts[1]
+	}
+	if len(parts) > 2 && parts[2] != "" {
+		r, err := strconv.Atoi(parts[2])
+		if err != nil {
+			return model.Alarm{}, fmt.Errorf("alarm %q: invalid repeat count %q", val, parts[2])
+		}
+		a.Repeat = r
+	}
+	if len(parts) > 3 && parts[3] != "" {
+		if err := duration.Validate(parts[3]); err != nil {
+			return model.Alarm{}, fmt.Errorf("alarm %q: invalid repeat duration %q", val, parts[3])
+		}
+		a.Duration = parts[3]
+	}
+	if len(parts) > 4 && parts[4] != "" {
+		rel := strings.ToUpper(parts[4])
+		if rel != "START" && rel != "END" {
+			return model.Alarm{}, fmt.Errorf("alarm %q: related must be START or END, got %q", val, parts[4])
+		}
+		a.Related = rel
+	}
+	if len(parts) > 5 && parts[5] != "" {
+		for _, email := range strings.Split(parts[5], ",") {
+			email = strings.TrimSpace(email)
+			if email == "" {
+				continue
+			}
+			if !strings.Contains(email, "@") {
+				return model.Alarm{}, fmt.Errorf("alarm %q: invalid attendee email %q", val, email)
+			}
+			a.Attendees = append(a.Attendees, model.AlarmAttendee{Email: email})
+		}
+	}
+
+	// Cross-field validation per RFC 5545.
+	if (a.Repeat > 0) != (a.Duration != "") {
+		return model.Alarm{}, fmt.Errorf("alarm %q: REPEAT and DURATION must be specified together", val)
+	}
+
+	return a, nil
 }
 
 // parseAttachFlags parses --attach flag values into Attachment models.
