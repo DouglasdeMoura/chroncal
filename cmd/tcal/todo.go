@@ -203,6 +203,9 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 			if progress < 0 || progress > 100 {
 				return fmt.Errorf("invalid --progress %d: must be 0-100", progress)
 			}
+			if priority < 0 || priority > 9 {
+				return fmt.Errorf("invalid --priority %d: must be 0-9", priority)
+			}
 			if err := validateRRule(rrule); err != nil {
 				return err
 			}
@@ -487,6 +490,9 @@ func todoUpdateCmd() *cobra.Command {
 				p.CalendarID = calID
 			}
 			if cmd.Flags().Changed("priority") {
+				if priority < 0 || priority > 9 {
+					return fmt.Errorf("invalid --priority %d: must be 0-9", priority)
+				}
 				p.Priority = priority
 			}
 			if cmd.Flags().Changed("categories") {
