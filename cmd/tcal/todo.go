@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/douglasdemoura/tcal/internal/duration"
 	"github.com/douglasdemoura/tcal/internal/todo"
 )
 
@@ -108,14 +110,27 @@ func todoGetCmd() *cobra.Command {
 
 func todoAddCmd() *cobra.Command {
 	var (
-		dueStr       string
-		calendarName string
-		location     string
-		description  string
-		priority     int64
-		categories   string
-		url          string
-		attachFlags  []string
+		dueStr        string
+		startStr      string
+		durationStr   string
+		calendarName  string
+		location      string
+		description   string
+		priority      int64
+		status        string
+		progress      int64
+		class         string
+		categories    string
+		url           string
+		rrule         string
+		exdates       []string
+		rdates        []string
+		attachFlags   []string
+		alarmFlags    []string
+		attendeeFlags []string
+		commentFlags  []string
+		relationFlags []string
+		organizer     string
 	)
 	cmd := &cobra.Command{
 		Use:   `add "<summary>"`,
@@ -134,6 +149,31 @@ func todoAddCmd() *cobra.Command {
 				return err
 			}
 
+			// Validate enums
+			if status != "" {
+				switch strings.ToUpper(status) {
+				case "NEEDS-ACTION", "IN-PROCESS", "COMPLETED", "CANCELLED":
+				default:
+					return fmt.Errorf("invalid --status %q: must be NEEDS-ACTION, IN-PROCESS, COMPLETED, or CANCELLED", status)
+				}
+			}
+			if class != "" {
+				switch strings.ToUpper(class) {
+				case "PUBLIC", "PRIVATE", "CONFIDENTIAL":
+				default:
+					return fmt.Errorf("invalid --class %q: must be PUBLIC, PRIVATE, or CONFIDENTIAL", class)
+				}
+			}
+			if progress < 0 || progress > 100 {
+				return fmt.Errorf("invalid --progress %d: must be 0-100", progress)
+			}
+			if err := validateRRule(rrule); err != nil {
+				return err
+			}
+			if err := validateURL(url); err != nil {
+				return err
+			}
+
 			var dueDate string
 			if dueStr != "" {
 				if _, err := time.Parse("2006-01-02", dueStr); err != nil {
@@ -142,15 +182,51 @@ func todoAddCmd() *cobra.Command {
 				dueDate = dueStr
 			}
 
+			var startDate string
+			if startStr != "" {
+				if _, err := time.Parse("2006-01-02", startStr); err != nil {
+					return fmt.Errorf("parse start date: expected YYYY-MM-DD, got %q", startStr)
+				}
+				startDate = startStr
+			}
+
+			var durationVal string
+			if durationStr != "" {
+				if d, err := time.ParseDuration(durationStr); err == nil {
+					durationVal = duration.FromGo(d)
+				} else if strings.HasPrefix(strings.ToUpper(durationStr), "P") {
+					durationVal = durationStr
+				} else {
+					return fmt.Errorf("parse duration: %q (use Go format like 1h30m or RFC 5545 like PT1H30M)", durationStr)
+				}
+			}
+
+			parsedExDates, err := parseDateFlags(exdates, "", time.Time{})
+			if err != nil {
+				return fmt.Errorf("--exdate: %w", err)
+			}
+			parsedRDates, err := parseDateFlags(rdates, "", time.Time{})
+			if err != nil {
+				return fmt.Errorf("--rdate: %w", err)
+			}
+
 			t, err := a.Todos.Create(ctx, todo.CreateParams{
-				CalendarID:  calID,
-				Summary:     args[0],
-				Description: description,
-				Location:    location,
-				DueDate:     dueDate,
-				Priority:    priority,
-				Categories:  categories,
-				URL:         url,
+				CalendarID:      calID,
+				Summary:         args[0],
+				Description:     description,
+				Location:        location,
+				DueDate:         dueDate,
+				StartDate:       startDate,
+				Duration:        durationVal,
+				Priority:        priority,
+				Status:          strings.ToUpper(status),
+				PercentComplete: progress,
+				Class:           strings.ToUpper(class),
+				Categories:      categories,
+				URL:             url,
+				RecurrenceRule:  rrule,
+				ExDates:         parsedExDates,
+				RDates:          parsedRDates,
 			})
 			if err != nil {
 				return fmt.Errorf("create todo: %w", err)
@@ -165,6 +241,45 @@ func todoAddCmd() *cobra.Command {
 					return fmt.Errorf("add attachments: %w", err)
 				}
 			}
+			if len(alarmFlags) > 0 {
+				alarms, err := parseAlarmFlags(alarmFlags)
+				if err != nil {
+					return err
+				}
+				if err := a.Todos.ReplaceAlarms(ctx, t.ID, alarms); err != nil {
+					return fmt.Errorf("add alarms: %w", err)
+				}
+			}
+			if len(attendeeFlags) > 0 || organizer != "" {
+				attendees := parseAttendeeFlags(attendeeFlags)
+				if organizer != "" {
+					attendees = append(attendees, parseOrganizerFlag(organizer))
+				}
+				if err := a.Todos.ReplaceAttendees(ctx, t.ID, attendees); err != nil {
+					return fmt.Errorf("add attendees: %w", err)
+				}
+			}
+			if len(commentFlags) > 0 {
+				if err := a.Todos.ReplaceComments(ctx, t.ID, commentFlags); err != nil {
+					return fmt.Errorf("add comments: %w", err)
+				}
+			}
+			if len(relationFlags) > 0 {
+				relations, err := parseRelationFlags(relationFlags)
+				if err != nil {
+					return err
+				}
+				if err := a.Todos.ReplaceRelations(ctx, t.ID, relations); err != nil {
+					return fmt.Errorf("add relations: %w", err)
+				}
+			}
+
+			// Re-read related data for output
+			t.Alarms, _ = a.Todos.ListAlarms(ctx, t.ID)
+			t.Attendees, _ = a.Todos.ListAttendees(ctx, t.ID)
+			t.Attachments, _ = a.Todos.ListAttachments(ctx, t.ID)
+			t.Comments, _ = a.Todos.ListComments(ctx, t.ID)
+			t.Relations, _ = a.Todos.ListRelations(ctx, t.ID)
 
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
@@ -172,36 +287,67 @@ func todoAddCmd() *cobra.Command {
 			}
 			msg := fmt.Sprintf("Created: %s", t.Summary)
 			if dueDate != "" {
-				msg += fmt.Sprintf(" (due %s)", t.ParseDueDate().Local().Format("Jan 2"))
+				msg += fmt.Sprintf(" (due %s)", t.ParseDueDate().Format("Jan 2"))
 			}
 			fmt.Fprintln(w, msg)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&dueStr, "due", "", "due date (YYYY-MM-DD)")
+	cmd.Flags().StringVar(&startStr, "start", "", "start date (YYYY-MM-DD; when the task becomes relevant)")
+	cmd.Flags().StringVar(&durationStr, "duration", "", "estimated duration (e.g. 1h30m or PT1H30M)")
 	cmd.Flags().StringVar(&calendarName, "calendar", "Personal", "calendar name")
 	cmd.Flags().StringVar(&location, "location", "", "location")
 	cmd.Flags().StringVar(&description, "description", "", "description")
-	cmd.Flags().Int64Var(&priority, "priority", 0, "priority (0-9)")
+	cmd.Flags().StringVar(&status, "status", "", "status (NEEDS-ACTION, IN-PROCESS, COMPLETED, CANCELLED; default: NEEDS-ACTION)")
+	cmd.Flags().Int64Var(&progress, "progress", 0, "percent complete (0-100)")
+	cmd.Flags().StringVar(&class, "class", "", "classification (PUBLIC, PRIVATE, CONFIDENTIAL; default: PUBLIC)")
+	cmd.Flags().Int64Var(&priority, "priority", 0, "priority 0-9 (0=undefined, 1=highest, 9=lowest)")
 	cmd.Flags().StringVar(&categories, "categories", "", "comma-separated categories")
 	cmd.Flags().StringVar(&url, "url", "", "associated URL")
+	cmd.Flags().StringVar(&rrule, "recurrence-rule", "", "RFC 5545 recurrence rule (e.g. FREQ=WEEKLY;BYDAY=MO)")
+	cmd.Flags().StringArrayVar(&exdates, "exception-date-times", nil, "exclude date from recurrence (YYYY-MM-DD, repeatable)")
+	cmd.Flags().StringArrayVar(&rdates, "recurrence-date-times", nil, "add extra recurrence date (YYYY-MM-DD, repeatable)")
 	cmd.Flags().StringArrayVar(&attachFlags, "attach", nil, "attachment (file path or URL, repeatable)")
+	cmd.Flags().StringArrayVar(&alarmFlags, "alarm", nil, "alarm trigger (e.g. -PT15M, EMAIL:-PT1H; repeatable)")
+	cmd.Flags().StringArrayVar(&attendeeFlags, "attendee", nil, "attendee (email or \"Name <email>\"; repeatable)")
+	cmd.Flags().StringVar(&organizer, "organizer", "", "organizer (email or \"Name <email>\")")
+	cmd.Flags().StringArrayVar(&commentFlags, "comment", nil, "comment annotation (free-form text, repeatable)")
+	cmd.Flags().StringArrayVar(&relationFlags, "related-to", nil, "related UID with optional PARENT:/CHILD:/SIBLING: prefix (repeatable)")
+	// Aliases
+	cmd.Flags().StringVar(&rrule, "rrule", "", "alias for --recurrence-rule")
+	cmd.Flags().StringArrayVar(&exdates, "exdate", nil, "alias for --exception-date-times")
+	cmd.Flags().StringArrayVar(&rdates, "rdate", nil, "alias for --recurrence-date-times")
+	_ = cmd.Flags().MarkHidden("rrule")
+	_ = cmd.Flags().MarkHidden("exdate")
+	_ = cmd.Flags().MarkHidden("rdate")
 	return cmd
 }
 
 func todoUpdateCmd() *cobra.Command {
 	var (
-		summary      string
-		dueStr       string
-		status       string
-		progress     int64
-		calendarName string
-		location     string
-		description  string
-		priority     int64
-		categories   string
-		url          string
-		attachFlags  []string
+		summary       string
+		dueStr        string
+		startStr      string
+		durationStr   string
+		status        string
+		progress      int64
+		calendarName  string
+		location      string
+		description   string
+		priority      int64
+		class         string
+		categories    string
+		url           string
+		rrule         string
+		exdates       []string
+		rdates        []string
+		attachFlags   []string
+		alarmFlags    []string
+		attendeeFlags []string
+		commentFlags  []string
+		relationFlags []string
+		organizer     string
 	)
 	cmd := &cobra.Command{
 		Use:   "update <id|uid>",
@@ -256,15 +402,46 @@ func todoUpdateCmd() *cobra.Command {
 				}
 				p.DueDate = dueStr
 			}
+			if cmd.Flags().Changed("start") {
+				if _, err := time.Parse("2006-01-02", startStr); err != nil {
+					return fmt.Errorf("parse start date: expected YYYY-MM-DD, got %q", startStr)
+				}
+				p.StartDate = startStr
+			}
+			if cmd.Flags().Changed("duration") {
+				if d, err := time.ParseDuration(durationStr); err == nil {
+					p.Duration = duration.FromGo(d)
+				} else if strings.HasPrefix(strings.ToUpper(durationStr), "P") {
+					p.Duration = durationStr
+				} else {
+					return fmt.Errorf("parse duration: %q (use Go format like 1h30m or RFC 5545 like PT1H30M)", durationStr)
+				}
+			}
 			if cmd.Flags().Changed("status") {
-				p.Status = status
-				if status == "COMPLETED" {
+				switch strings.ToUpper(status) {
+				case "NEEDS-ACTION", "IN-PROCESS", "COMPLETED", "CANCELLED":
+				default:
+					return fmt.Errorf("invalid --status %q: must be NEEDS-ACTION, IN-PROCESS, COMPLETED, or CANCELLED", status)
+				}
+				p.Status = strings.ToUpper(status)
+				if strings.ToUpper(status) == "COMPLETED" {
 					p.CompletedAt = time.Now().UTC().Format(time.RFC3339)
 					p.PercentComplete = 100
 				}
 			}
 			if cmd.Flags().Changed("progress") {
+				if progress < 0 || progress > 100 {
+					return fmt.Errorf("invalid --progress %d: must be 0-100", progress)
+				}
 				p.PercentComplete = progress
+			}
+			if cmd.Flags().Changed("class") {
+				switch strings.ToUpper(class) {
+				case "PUBLIC", "PRIVATE", "CONFIDENTIAL":
+				default:
+					return fmt.Errorf("invalid --class %q: must be PUBLIC, PRIVATE, or CONFIDENTIAL", class)
+				}
+				p.Class = strings.ToUpper(class)
 			}
 			if cmd.Flags().Changed("calendar") {
 				calID, err := resolveCalendarID(ctx, a, calendarName)
@@ -280,7 +457,30 @@ func todoUpdateCmd() *cobra.Command {
 				p.Categories = categories
 			}
 			if cmd.Flags().Changed("url") {
+				if err := validateURL(url); err != nil {
+					return err
+				}
 				p.URL = url
+			}
+			if cmd.Flags().Changed("recurrence-rule") || cmd.Flags().Changed("rrule") {
+				if err := validateRRule(rrule); err != nil {
+					return err
+				}
+				p.RecurrenceRule = rrule
+			}
+			if cmd.Flags().Changed("exception-date-times") || cmd.Flags().Changed("exdate") {
+				parsed, err := parseDateFlags(exdates, "", time.Time{})
+				if err != nil {
+					return fmt.Errorf("--exdate: %w", err)
+				}
+				p.ExDates = parsed
+			}
+			if cmd.Flags().Changed("recurrence-date-times") || cmd.Flags().Changed("rdate") {
+				parsed, err := parseDateFlags(rdates, "", time.Time{})
+				if err != nil {
+					return fmt.Errorf("--rdate: %w", err)
+				}
+				p.RDates = parsed
 			}
 
 			t, err := a.Todos.Update(ctx, existing.ID, p)
@@ -297,6 +497,45 @@ func todoUpdateCmd() *cobra.Command {
 					return fmt.Errorf("update attachments: %w", err)
 				}
 			}
+			if cmd.Flags().Changed("alarm") {
+				alarms, err := parseAlarmFlags(alarmFlags)
+				if err != nil {
+					return err
+				}
+				if err := a.Todos.ReplaceAlarms(ctx, t.ID, alarms); err != nil {
+					return fmt.Errorf("update alarms: %w", err)
+				}
+			}
+			if cmd.Flags().Changed("attendee") || cmd.Flags().Changed("organizer") {
+				attendees := parseAttendeeFlags(attendeeFlags)
+				if organizer != "" {
+					attendees = append(attendees, parseOrganizerFlag(organizer))
+				}
+				if err := a.Todos.ReplaceAttendees(ctx, t.ID, attendees); err != nil {
+					return fmt.Errorf("update attendees: %w", err)
+				}
+			}
+			if cmd.Flags().Changed("comment") {
+				if err := a.Todos.ReplaceComments(ctx, t.ID, commentFlags); err != nil {
+					return fmt.Errorf("update comments: %w", err)
+				}
+			}
+			if cmd.Flags().Changed("related-to") {
+				relations, err := parseRelationFlags(relationFlags)
+				if err != nil {
+					return err
+				}
+				if err := a.Todos.ReplaceRelations(ctx, t.ID, relations); err != nil {
+					return fmt.Errorf("update relations: %w", err)
+				}
+			}
+
+			// Re-read related data for output
+			t.Alarms, _ = a.Todos.ListAlarms(ctx, t.ID)
+			t.Attendees, _ = a.Todos.ListAttendees(ctx, t.ID)
+			t.Attachments, _ = a.Todos.ListAttachments(ctx, t.ID)
+			t.Comments, _ = a.Todos.ListComments(ctx, t.ID)
+			t.Relations, _ = a.Todos.ListRelations(ctx, t.ID)
 
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
@@ -308,15 +547,33 @@ func todoUpdateCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&summary, "summary", "", "new summary")
 	cmd.Flags().StringVar(&dueStr, "due", "", "new due date (YYYY-MM-DD)")
+	cmd.Flags().StringVar(&startStr, "start", "", "new start date (YYYY-MM-DD)")
+	cmd.Flags().StringVar(&durationStr, "duration", "", "new duration (e.g. 1h30m or PT1H30M)")
 	cmd.Flags().StringVar(&status, "status", "", "new status (NEEDS-ACTION, IN-PROCESS, COMPLETED, CANCELLED)")
 	cmd.Flags().Int64Var(&progress, "progress", 0, "percent complete (0-100)")
+	cmd.Flags().StringVar(&class, "class", "", "new classification (PUBLIC, PRIVATE, CONFIDENTIAL)")
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "move to calendar")
 	cmd.Flags().StringVar(&location, "location", "", "new location")
 	cmd.Flags().StringVar(&description, "description", "", "new description")
 	cmd.Flags().Int64Var(&priority, "priority", 0, "new priority (0-9)")
 	cmd.Flags().StringVar(&categories, "categories", "", "new categories")
 	cmd.Flags().StringVar(&url, "url", "", "new URL")
+	cmd.Flags().StringVar(&rrule, "recurrence-rule", "", "new recurrence rule (e.g. FREQ=WEEKLY;BYDAY=MO)")
+	cmd.Flags().StringArrayVar(&exdates, "exception-date-times", nil, "exclude date from recurrence (YYYY-MM-DD, repeatable)")
+	cmd.Flags().StringArrayVar(&rdates, "recurrence-date-times", nil, "add extra recurrence date (YYYY-MM-DD, repeatable)")
 	cmd.Flags().StringArrayVar(&attachFlags, "attach", nil, "attachment (file path or URL, repeatable)")
+	cmd.Flags().StringArrayVar(&alarmFlags, "alarm", nil, "alarm trigger (e.g. -PT15M, EMAIL:-PT1H; repeatable)")
+	cmd.Flags().StringArrayVar(&attendeeFlags, "attendee", nil, "attendee (email or \"Name <email>\"; repeatable)")
+	cmd.Flags().StringVar(&organizer, "organizer", "", "organizer (email or \"Name <email>\")")
+	cmd.Flags().StringArrayVar(&commentFlags, "comment", nil, "comment annotation (free-form text, repeatable)")
+	cmd.Flags().StringArrayVar(&relationFlags, "related-to", nil, "related UID with optional PARENT:/CHILD:/SIBLING: prefix (repeatable)")
+	// Aliases
+	cmd.Flags().StringVar(&rrule, "rrule", "", "alias for --recurrence-rule")
+	cmd.Flags().StringArrayVar(&exdates, "exdate", nil, "alias for --exception-date-times")
+	cmd.Flags().StringArrayVar(&rdates, "rdate", nil, "alias for --recurrence-date-times")
+	_ = cmd.Flags().MarkHidden("rrule")
+	_ = cmd.Flags().MarkHidden("exdate")
+	_ = cmd.Flags().MarkHidden("rdate")
 	return cmd
 }
 

@@ -6,6 +6,36 @@ import (
 	"time"
 )
 
+// FromGo converts a Go time.Duration to an RFC 5545 duration string.
+// e.g. 1h30m → "PT1H30M", 90s → "PT1M30S".
+func FromGo(d time.Duration) string {
+	if d == 0 {
+		return "PT0S"
+	}
+	var b strings.Builder
+	b.WriteByte('P')
+	total := int(d.Seconds())
+	h := total / 3600
+	m := (total % 3600) / 60
+	s := total % 60
+	if h > 0 || m > 0 || s > 0 {
+		b.WriteByte('T')
+		if h > 0 {
+			b.WriteString(strconv.Itoa(h))
+			b.WriteByte('H')
+		}
+		if m > 0 {
+			b.WriteString(strconv.Itoa(m))
+			b.WriteByte('M')
+		}
+		if s > 0 {
+			b.WriteString(strconv.Itoa(s))
+			b.WriteByte('S')
+		}
+	}
+	return b.String()
+}
+
 // Add parses an RFC 5545 duration string and adds it to a time.
 // Format: [+/-]P[nW] or [+/-]P[nD][T[nH][nM][nS]]
 // An empty string defaults to +1 hour.
