@@ -147,8 +147,11 @@ Duration accepts Go format (1h30m) or RFC 5545 format (PT1H30M).
 Note: per RFC 5545, DUE and DURATION are mutually exclusive in a VTODO.
 
 Defaults: status=NEEDS-ACTION, class=PUBLIC, calendar=Personal.
-Attendees default to RSVP=NEEDS-ACTION and ROLE=REQ-PARTICIPANT.
-Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
+Attendees default to PARTSTAT=NEEDS-ACTION and ROLE=REQ-PARTICIPANT.
+Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).
+
+Setting --status COMPLETED automatically sets the completion timestamp
+and percent-complete to 100.`,
 		Example: `  # Simple todo with due date
   tcal todo add "Write quarterly report" --due 2026-04-15
 
@@ -381,9 +384,9 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 	cmd.Flags().StringVar(&rrule, "rrule", "", "alias for --recurrence-rule")
 	cmd.Flags().StringArrayVar(&exdates, "exdate", nil, "alias for --exception-date-times")
 	cmd.Flags().StringArrayVar(&rdates, "rdate", nil, "alias for --recurrence-date-times")
-	_ = cmd.Flags().MarkHidden("rrule")
-	_ = cmd.Flags().MarkHidden("exdate")
-	_ = cmd.Flags().MarkHidden("rdate")
+	cmd.Flags().Lookup("rrule").Usage = "alias for --recurrence-rule"
+	cmd.Flags().Lookup("exdate").Usage = "alias for --exception-date-times"
+	cmd.Flags().Lookup("rdate").Usage = "alias for --recurrence-date-times"
 	return cmd
 }
 
@@ -661,9 +664,9 @@ func todoUpdateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&rrule, "rrule", "", "alias for --recurrence-rule")
 	cmd.Flags().StringArrayVar(&exdates, "exdate", nil, "alias for --exception-date-times")
 	cmd.Flags().StringArrayVar(&rdates, "rdate", nil, "alias for --recurrence-date-times")
-	_ = cmd.Flags().MarkHidden("rrule")
-	_ = cmd.Flags().MarkHidden("exdate")
-	_ = cmd.Flags().MarkHidden("rdate")
+	cmd.Flags().Lookup("rrule").Usage = "alias for --recurrence-rule"
+	cmd.Flags().Lookup("exdate").Usage = "alias for --exception-date-times"
+	cmd.Flags().Lookup("rdate").Usage = "alias for --recurrence-date-times"
 	return cmd
 }
 
