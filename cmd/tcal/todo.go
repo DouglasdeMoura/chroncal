@@ -465,19 +465,27 @@ func todoUpdateCmd() *cobra.Command {
 				p.Location = location
 			}
 			if cmd.Flags().Changed("due") {
-				if _, err := time.Parse("2006-01-02", dueStr); err != nil {
-					return fmt.Errorf("parse due date: expected YYYY-MM-DD, got %q", dueStr)
+				if dueStr == "" {
+					p.DueDate = ""
+				} else if _, err := time.Parse("2006-01-02", dueStr); err != nil {
+					return fmt.Errorf("parse due date: expected YYYY-MM-DD or empty to clear, got %q", dueStr)
+				} else {
+					p.DueDate = dueStr
 				}
-				p.DueDate = dueStr
 			}
 			if cmd.Flags().Changed("start") {
-				if _, err := time.Parse("2006-01-02", startStr); err != nil {
-					return fmt.Errorf("parse start date: expected YYYY-MM-DD, got %q", startStr)
+				if startStr == "" {
+					p.StartDate = ""
+				} else if _, err := time.Parse("2006-01-02", startStr); err != nil {
+					return fmt.Errorf("parse start date: expected YYYY-MM-DD or empty to clear, got %q", startStr)
+				} else {
+					p.StartDate = startStr
 				}
-				p.StartDate = startStr
 			}
 			if cmd.Flags().Changed("duration") {
-				if d, err := time.ParseDuration(durationStr); err == nil {
+				if durationStr == "" {
+					p.Duration = ""
+				} else if d, err := time.ParseDuration(durationStr); err == nil {
 					p.Duration = duration.FromGo(d)
 				} else if strings.HasPrefix(strings.ToUpper(durationStr), "P") {
 					p.Duration = durationStr
@@ -637,9 +645,9 @@ func todoUpdateCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&summary, "summary", "", "new summary")
-	cmd.Flags().StringVar(&dueStr, "due", "", "new due date (YYYY-MM-DD)")
-	cmd.Flags().StringVar(&startStr, "start", "", "new start date (YYYY-MM-DD)")
-	cmd.Flags().StringVar(&durationStr, "duration", "", "new duration (e.g. 1h30m or PT1H30M)")
+	cmd.Flags().StringVar(&dueStr, "due", "", "new due date (YYYY-MM-DD; empty to clear)")
+	cmd.Flags().StringVar(&startStr, "start", "", "new start date (YYYY-MM-DD; empty to clear)")
+	cmd.Flags().StringVar(&durationStr, "duration", "", "new duration (e.g. 1h30m or PT1H30M; empty to clear)")
 	cmd.Flags().StringVar(&status, "status", "", "new status (NEEDS-ACTION, IN-PROCESS, COMPLETED, CANCELLED)")
 	cmd.Flags().Int64Var(&progress, "progress", 0, "percent complete (0-100)")
 	cmd.Flags().StringVar(&class, "class", "", "new classification (PUBLIC, PRIVATE, CONFIDENTIAL)")
