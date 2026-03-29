@@ -63,6 +63,7 @@ type EventAlarm struct {
 	Repeat       int64
 	Duration     string
 	Related      string
+	Summary      string
 }
 
 type EventAlarmAttendee struct {
@@ -153,6 +154,7 @@ type TodoAlarm struct {
 	Repeat       int64
 	Duration     string
 	Related      string
+	Summary      string
 }
 
 type TodoAlarmAttendee struct {

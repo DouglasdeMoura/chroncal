@@ -102,6 +102,7 @@ type jsonAlarm struct {
 	Action       string             `json:"action"`
 	TriggerValue string             `json:"trigger_value"`
 	Description  string             `json:"description"`
+	Summary      string             `json:"summary,omitempty"`
 	Repeat       int                `json:"repeat,omitempty"`
 	Duration     string             `json:"duration,omitempty"`
 	Related      string             `json:"related,omitempty"`
@@ -183,6 +184,7 @@ func toJSONEvent(e event.Event) jsonEvent {
 		je.Alarms = append(je.Alarms, jsonAlarm{
 			ID: a.ID, Action: a.Action,
 			TriggerValue: a.TriggerValue, Description: a.Description,
+			Summary: a.Summary,
 			Repeat: a.Repeat, Duration: a.Duration, Related: a.Related,
 			Attendees: toJSONAlarmAttendees(a.Attendees),
 		})
@@ -558,6 +560,7 @@ func toJSONTodo(t todo.Todo) jsonTodo {
 		jt.Alarms = append(jt.Alarms, jsonAlarm{
 			ID: a.ID, Action: a.Action,
 			TriggerValue: a.TriggerValue, Description: a.Description,
+			Summary: a.Summary,
 			Repeat: a.Repeat, Duration: a.Duration, Related: a.Related,
 			Attendees: toJSONAlarmAttendees(a.Attendees),
 		})

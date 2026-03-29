@@ -10,8 +10,8 @@ import (
 )
 
 const createAlarm = `-- name: CreateAlarm :one
-INSERT INTO event_alarms (event_id, action, trigger_value, description, repeat, duration, related)
-VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id, event_id, "action", trigger_value, description, repeat, duration, related
+INSERT INTO event_alarms (event_id, action, trigger_value, description, summary, repeat, duration, related)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, event_id, "action", trigger_value, description, repeat, duration, related, summary
 `
 
 type CreateAlarmParams struct {
@@ -19,6 +19,7 @@ type CreateAlarmParams struct {
 	Action       string
 	TriggerValue string
 	Description  string
+	Summary      string
 	Repeat       int64
 	Duration     string
 	Related      string
@@ -30,6 +31,7 @@ func (q *Queries) CreateAlarm(ctx context.Context, arg CreateAlarmParams) (Event
 		arg.Action,
 		arg.TriggerValue,
 		arg.Description,
+		arg.Summary,
 		arg.Repeat,
 		arg.Duration,
 		arg.Related,
@@ -44,6 +46,7 @@ func (q *Queries) CreateAlarm(ctx context.Context, arg CreateAlarmParams) (Event
 		&i.Repeat,
 		&i.Duration,
 		&i.Related,
+		&i.Summary,
 	)
 	return i, err
 }
@@ -58,7 +61,7 @@ func (q *Queries) DeleteAlarmsByEventID(ctx context.Context, eventID int64) erro
 }
 
 const listAlarmsByEventID = `-- name: ListAlarmsByEventID :many
-SELECT id, event_id, "action", trigger_value, description, repeat, duration, related FROM event_alarms WHERE event_id = ? ORDER BY id
+SELECT id, event_id, "action", trigger_value, description, repeat, duration, related, summary FROM event_alarms WHERE event_id = ? ORDER BY id
 `
 
 func (q *Queries) ListAlarmsByEventID(ctx context.Context, eventID int64) ([]EventAlarm, error) {
@@ -79,6 +82,7 @@ func (q *Queries) ListAlarmsByEventID(ctx context.Context, eventID int64) ([]Eve
 			&i.Repeat,
 			&i.Duration,
 			&i.Related,
+			&i.Summary,
 		); err != nil {
 			return nil, err
 		}

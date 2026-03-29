@@ -419,6 +419,9 @@ func parseAlarm(comp *ical.Component) model.Alarm {
 	if prop := comp.Props.Get(ical.PropDescription); prop != nil {
 		alarm.Description = prop.Value
 	}
+	if prop := comp.Props.Get(ical.PropSummary); prop != nil {
+		alarm.Summary = prop.Value
+	}
 	if prop := comp.Props.Get("REPEAT"); prop != nil {
 		if v, err := strconv.Atoi(prop.Value); err == nil {
 			alarm.Repeat = v

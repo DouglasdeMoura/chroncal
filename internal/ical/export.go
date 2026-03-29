@@ -149,6 +149,9 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 
 		// VALARM children
 		for _, alarm := range e.Alarms {
+			if alarm.Summary == "" && alarm.Action == "EMAIL" {
+				alarm.Summary = e.Title
+			}
 			vevent.Children = append(vevent.Children, buildValarm(alarm))
 		}
 
@@ -406,6 +409,9 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 
 		// VALARM
 		for _, alarm := range t.Alarms {
+			if alarm.Summary == "" && alarm.Action == "EMAIL" {
+				alarm.Summary = t.Summary
+			}
 			vtodo.Children = append(vtodo.Children, buildValarm(alarm))
 		}
 
@@ -511,6 +517,9 @@ func buildValarm(alarm model.Alarm) *ical.Component {
 
 	if alarm.Description != "" {
 		valarm.Props.SetText(ical.PropDescription, alarm.Description)
+	}
+	if alarm.Summary != "" {
+		valarm.Props.SetText(ical.PropSummary, alarm.Summary)
 	}
 	if alarm.Duration != "" {
 		p := &ical.Prop{Name: ical.PropDuration}

@@ -1218,3 +1218,163 @@ func TestRoundtrip_TodoDateOnlyExdateRdate(t *testing.T) {
 		t.Errorf("RDates roundtrip: %q, want %q", got.RDates, "2026-05-01")
 	}
 }
+
+func TestRoundtrip_AlarmSummary_EMAIL(t *testing.T) {
+	t.Parallel()
+	original := event.Event{
+		UID:       "roundtrip-alarm-summary-email",
+		Title:     "Email Summary Test",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+		Alarms: []model.Alarm{
+			{
+				Action:       "EMAIL",
+				TriggerValue: "-PT1H",
+				Description:  "Email reminder",
+				Summary:      "Custom Subject Line",
+				Related:      "START",
+				Attendees:    []model.AlarmAttendee{{Email: "test@example.com"}},
+			},
+		},
+	}
+
+	data, err := ExportEvents([]event.Event{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	ics := string(data)
+	if !strings.Contains(ics, "SUMMARY:Custom Subject Line") {
+		t.Errorf("exported ICS missing SUMMARY; got:\n%s", ics)
+	}
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Events) != 1 || len(result.Events[0].Alarms) != 1 {
+		t.Fatalf("reimport: events=%d", len(result.Events))
+	}
+	got := result.Events[0].Alarms[0]
+	if got.Summary != "Custom Subject Line" {
+		t.Errorf("Summary roundtrip: %q, want %q", got.Summary, "Custom Subject Line")
+	}
+}
+
+func TestRoundtrip_AlarmSummary_DISPLAY(t *testing.T) {
+	t.Parallel()
+	original := event.Event{
+		UID:       "roundtrip-alarm-summary-display",
+		Title:     "Display Summary Test",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+		Alarms: []model.Alarm{
+			{
+				Action:       "DISPLAY",
+				TriggerValue: "-PT15M",
+				Description:  "Reminder",
+				Summary:      "Display Note",
+				Related:      "START",
+			},
+		},
+	}
+
+	data, err := ExportEvents([]event.Event{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	ics := string(data)
+	if !strings.Contains(ics, "SUMMARY:Display Note") {
+		t.Errorf("exported ICS missing SUMMARY for DISPLAY alarm; got:\n%s", ics)
+	}
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	got := result.Events[0].Alarms[0]
+	if got.Summary != "Display Note" {
+		t.Errorf("Summary roundtrip: %q, want %q", got.Summary, "Display Note")
+	}
+}
+
+func TestRoundtrip_AlarmSummary_EMAIL_Fallback(t *testing.T) {
+	t.Parallel()
+	// EMAIL alarm with no Summary should get the event title as SUMMARY on export
+	original := event.Event{
+		UID:       "roundtrip-alarm-summary-fallback",
+		Title:     "Team Meeting",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+		Alarms: []model.Alarm{
+			{
+				Action:       "EMAIL",
+				TriggerValue: "-PT1H",
+				Description:  "Reminder",
+				Related:      "START",
+				Attendees:    []model.AlarmAttendee{{Email: "test@example.com"}},
+			},
+		},
+	}
+
+	data, err := ExportEvents([]event.Event{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	ics := string(data)
+	if !strings.Contains(ics, "SUMMARY:Team Meeting") {
+		t.Errorf("exported ICS missing fallback SUMMARY; got:\n%s", ics)
+	}
+}
+
+func TestRoundtrip_AlarmSummary_SpecialChars(t *testing.T) {
+	t.Parallel()
+	original := event.Event{
+		UID:       "roundtrip-alarm-summary-special",
+		Title:     "Special Chars Test",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+		Alarms: []model.Alarm{
+			{
+				Action:       "EMAIL",
+				TriggerValue: "-PT1H",
+				Description:  "Reminder",
+				Summary:      "Meeting: Q1 Review",
+				Related:      "START",
+				Attendees:    []model.AlarmAttendee{{Email: "test@example.com"}},
+			},
+		},
+	}
+
+	data, err := ExportEvents([]event.Event{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	result, err := ImportFile(strings.NewReader(string(data)))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	got := result.Events[0].Alarms[0]
+	if got.Summary != "Meeting: Q1 Review" {
+		t.Errorf("Summary with special chars: %q, want %q", got.Summary, "Meeting: Q1 Review")
+	}
+}
