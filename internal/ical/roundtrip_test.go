@@ -82,20 +82,37 @@ func TestRoundtrip_Event(t *testing.T) {
 
 func TestRoundtrip_Todo(t *testing.T) {
 	t.Parallel()
+	// RFC 5545: DUE and DURATION are mutually exclusive in VTODO.
+	// Use DUE here; StartDate+Duration tested in TestRoundtrip_TodoStartDuration.
 	original := todo.Todo{
 		UID:             "roundtrip-todo",
 		Summary:         "Roundtrip Todo",
 		Description:     "Test todo roundtrip",
 		Location:        "Office",
-		DueDate:         "2026-04-05T17:00:00Z",
+		DueDate:         "2026-04-05",
+		StartDate:       "2026-04-01",
 		Status:          "IN-PROCESS",
 		Priority:        3,
 		PercentComplete: 50,
+		Class:           "PRIVATE",
 		URL:             "https://example.com/task",
 		Categories:      "dev",
 		Sequence:        1,
-		CreatedAt:       time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
-		UpdatedAt:       time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+		RecurrenceRule:  "FREQ=WEEKLY;COUNT=4",
+		ExDates:         "2026-04-08T00:00:00Z",
+		RDates:          "2026-05-01T00:00:00Z",
+		Alarms: []model.Alarm{
+			{Action: "DISPLAY", TriggerValue: "-PT15M", Description: "Reminder"},
+		},
+		Attachments: []model.Attachment{
+			{URI: "https://example.com/doc.pdf", FmtType: "application/pdf"},
+		},
+		Comments: []string{"First comment", "Second comment"},
+		Relations: []model.Relation{
+			{RelType: "PARENT", RelUID: "parent-uid-123"},
+		},
+		CreatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+		UpdatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
 	}
 
 	data, err := ExportTodos([]todo.Todo{original}, "")
@@ -112,12 +129,30 @@ func TestRoundtrip_Todo(t *testing.T) {
 	}
 
 	got := result.Todos[0]
+
+	// Core fields
 	if got.UID != original.UID {
 		t.Errorf("UID: %q != %q", got.UID, original.UID)
 	}
 	if got.Summary != original.Summary {
 		t.Errorf("Summary: %q != %q", got.Summary, original.Summary)
 	}
+	if got.Description != original.Description {
+		t.Errorf("Description: %q != %q", got.Description, original.Description)
+	}
+	if got.Location != original.Location {
+		t.Errorf("Location: %q != %q", got.Location, original.Location)
+	}
+
+	// Dates
+	if got.DueDate != original.DueDate {
+		t.Errorf("DueDate: %q != %q", got.DueDate, original.DueDate)
+	}
+	if got.StartDate != original.StartDate {
+		t.Errorf("StartDate: %q != %q", got.StartDate, original.StartDate)
+	}
+
+	// Status fields
 	if got.Status != original.Status {
 		t.Errorf("Status: %q != %q", got.Status, original.Status)
 	}
@@ -127,8 +162,168 @@ func TestRoundtrip_Todo(t *testing.T) {
 	if got.PercentComplete != original.PercentComplete {
 		t.Errorf("PercentComplete: %d != %d", got.PercentComplete, original.PercentComplete)
 	}
-	if got.DueDate == "" {
-		t.Error("DueDate lost on round-trip")
+	if got.Class != original.Class {
+		t.Errorf("Class: %q != %q", got.Class, original.Class)
+	}
+	if got.URL != original.URL {
+		t.Errorf("URL: %q != %q", got.URL, original.URL)
+	}
+	if got.Categories != original.Categories {
+		t.Errorf("Categories: %q != %q", got.Categories, original.Categories)
+	}
+	if got.Sequence != original.Sequence {
+		t.Errorf("Sequence: %d != %d", got.Sequence, original.Sequence)
+	}
+
+	// Recurrence
+	if got.RecurrenceRule != original.RecurrenceRule {
+		t.Errorf("RecurrenceRule: %q != %q", got.RecurrenceRule, original.RecurrenceRule)
+	}
+	if got.ExDates == "" {
+		t.Error("ExDates lost on round-trip")
+	}
+	if got.RDates == "" {
+		t.Error("RDates lost on round-trip")
+	}
+
+	// Alarms
+	if len(got.Alarms) != 1 {
+		t.Errorf("Alarms: got %d, want 1", len(got.Alarms))
+	} else {
+		if got.Alarms[0].Action != "DISPLAY" {
+			t.Errorf("Alarm action: %q != %q", got.Alarms[0].Action, "DISPLAY")
+		}
+		if got.Alarms[0].TriggerValue != "-PT15M" {
+			t.Errorf("Alarm trigger: %q != %q", got.Alarms[0].TriggerValue, "-PT15M")
+		}
+	}
+
+	// Attachments
+	if len(got.Attachments) != 1 {
+		t.Errorf("Attachments: got %d, want 1", len(got.Attachments))
+	} else if got.Attachments[0].URI != original.Attachments[0].URI {
+		t.Errorf("Attachment URI: %q != %q", got.Attachments[0].URI, original.Attachments[0].URI)
+	}
+
+	// Comments
+	if len(got.Comments) != 2 {
+		t.Errorf("Comments: got %d, want 2", len(got.Comments))
+	}
+
+	// Relations
+	if len(got.Relations) != 1 {
+		t.Errorf("Relations: got %d, want 1", len(got.Relations))
+	} else {
+		if got.Relations[0].RelType != "PARENT" {
+			t.Errorf("Relation type: %q != %q", got.Relations[0].RelType, "PARENT")
+		}
+		if got.Relations[0].RelUID != "parent-uid-123" {
+			t.Errorf("Relation UID: %q != %q", got.Relations[0].RelUID, "parent-uid-123")
+		}
+	}
+}
+
+func TestRoundtrip_TodoDateOnlyDue(t *testing.T) {
+	t.Parallel()
+	original := todo.Todo{
+		UID:       "roundtrip-todo-dateonly",
+		Summary:   "Date Only Due",
+		DueDate:   "2026-04-01",
+		Status:    "NEEDS-ACTION",
+		CreatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+		UpdatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+	}
+
+	data, err := ExportTodos([]todo.Todo{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	// Verify the raw iCal contains VALUE=DATE
+	ics := string(data)
+	if !strings.Contains(ics, "DUE;VALUE=DATE:20260401") {
+		t.Errorf("expected DUE;VALUE=DATE:20260401 in export, got:\n%s", ics)
+	}
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Todos) != 1 {
+		t.Fatalf("reimported %d todos", len(result.Todos))
+	}
+	got := result.Todos[0]
+	if got.DueDate != "2026-04-01" {
+		t.Errorf("DueDate round-trip: got %q, want %q", got.DueDate, "2026-04-01")
+	}
+}
+
+func TestRoundtrip_TodoWithCompletedAt(t *testing.T) {
+	t.Parallel()
+	original := todo.Todo{
+		UID:             "roundtrip-todo-completed",
+		Summary:         "Completed Todo",
+		Status:          "COMPLETED",
+		CompletedAt:     "2026-04-01T10:00:00Z",
+		PercentComplete: 100,
+		CreatedAt:       time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+		UpdatedAt:       time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+	}
+
+	data, err := ExportTodos([]todo.Todo{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	result, err := ImportFile(strings.NewReader(string(data)))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Todos) != 1 {
+		t.Fatalf("reimported %d todos", len(result.Todos))
+	}
+	got := result.Todos[0]
+	if got.Status != "COMPLETED" {
+		t.Errorf("Status: %q != COMPLETED", got.Status)
+	}
+	if got.CompletedAt == "" {
+		t.Error("CompletedAt lost on round-trip")
+	}
+	if got.PercentComplete != 100 {
+		t.Errorf("PercentComplete: %d != 100", got.PercentComplete)
+	}
+}
+
+func TestRoundtrip_TodoStartDuration(t *testing.T) {
+	t.Parallel()
+	original := todo.Todo{
+		UID:       "roundtrip-todo-duration",
+		Summary:   "Duration Todo",
+		StartDate: "2026-04-01",
+		Duration:  "PT4H",
+		Status:    "NEEDS-ACTION",
+		CreatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+		UpdatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+	}
+
+	data, err := ExportTodos([]todo.Todo{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	result, err := ImportFile(strings.NewReader(string(data)))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Todos) != 1 {
+		t.Fatalf("reimported %d todos", len(result.Todos))
+	}
+	got := result.Todos[0]
+	if got.StartDate != "2026-04-01" {
+		t.Errorf("StartDate: %q != %q", got.StartDate, "2026-04-01")
+	}
+	if got.Duration != "PT4H" {
+		t.Errorf("Duration: %q != %q", got.Duration, "PT4H")
 	}
 }
 
