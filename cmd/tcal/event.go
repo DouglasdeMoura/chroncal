@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/douglasdemoura/tcal/internal/duration"
 	"github.com/douglasdemoura/tcal/internal/event"
 	"github.com/douglasdemoura/tcal/internal/model"
 )
@@ -1124,17 +1125,9 @@ func validateAlarmTrigger(trigger string) error {
 	if _, err := time.Parse(time.RFC3339, trigger); err == nil {
 		return nil
 	}
-	// Validate ISO 8601 duration: optional minus, then P, then at least one component.
-	s := trigger
-	if strings.HasPrefix(s, "-") {
-		s = s[1:]
-	}
-	if !strings.HasPrefix(s, "P") {
+	// Strict RFC 5545 duration validation.
+	if err := duration.Validate(trigger); err != nil {
 		return fmt.Errorf("invalid alarm trigger %q: must be an ISO 8601 duration (e.g. -PT15M) or RFC 3339 datetime", trigger)
-	}
-	s = s[1:] // strip P
-	if s == "" {
-		return fmt.Errorf("invalid alarm trigger %q: duration has no components after P", trigger)
 	}
 	return nil
 }

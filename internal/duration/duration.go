@@ -1,6 +1,7 @@
 package duration
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -34,6 +35,101 @@ func FromGo(d time.Duration) string {
 		}
 	}
 	return b.String()
+}
+
+// Validate checks that s is a well-formed RFC 5545 duration string.
+// Format: [+/-]P[nW] or [+/-]P[nD][T[nH][nM][nS]]
+// Returns an error if the string is empty, malformed, or has trailing garbage.
+func Validate(s string) error {
+	if s == "" {
+		return fmt.Errorf("duration must not be empty")
+	}
+
+	r := s
+	if r[0] == '-' || r[0] == '+' {
+		r = r[1:]
+	}
+
+	if len(r) == 0 || r[0] != 'P' {
+		return fmt.Errorf("invalid duration %q: must start with P", s)
+	}
+	r = r[1:] // strip P
+
+	if r == "" {
+		return fmt.Errorf("invalid duration %q: no components after P", s)
+	}
+
+	// Week form: nW (mutually exclusive with other components)
+	if i := strings.Index(r, "W"); i >= 0 {
+		if i == 0 {
+			return fmt.Errorf("invalid duration %q: W requires a number", s)
+		}
+		if _, err := strconv.Atoi(r[:i]); err != nil {
+			return fmt.Errorf("invalid duration %q: bad week count %q", s, r[:i])
+		}
+		if r[i+1:] != "" {
+			return fmt.Errorf("invalid duration %q: trailing characters after W", s)
+		}
+		return nil
+	}
+
+	// Date part: optional nD
+	if i := strings.Index(r, "D"); i >= 0 {
+		if i == 0 {
+			return fmt.Errorf("invalid duration %q: D requires a number", s)
+		}
+		if _, err := strconv.Atoi(r[:i]); err != nil {
+			return fmt.Errorf("invalid duration %q: bad day count %q", s, r[:i])
+		}
+		r = r[i+1:]
+	}
+
+	if r == "" {
+		return nil // Just date components, e.g. P1D
+	}
+
+	// Time part: T followed by nH, nM, nS
+	if r[0] != 'T' {
+		return fmt.Errorf("invalid duration %q: unexpected character %q", s, string(r[0]))
+	}
+	r = r[1:]
+
+	if r == "" {
+		return fmt.Errorf("invalid duration %q: T requires at least one time component", s)
+	}
+
+	if i := strings.Index(r, "H"); i >= 0 {
+		if i == 0 {
+			return fmt.Errorf("invalid duration %q: H requires a number", s)
+		}
+		if _, err := strconv.Atoi(r[:i]); err != nil {
+			return fmt.Errorf("invalid duration %q: bad hour count %q", s, r[:i])
+		}
+		r = r[i+1:]
+	}
+	if i := strings.Index(r, "M"); i >= 0 {
+		if i == 0 {
+			return fmt.Errorf("invalid duration %q: M requires a number", s)
+		}
+		if _, err := strconv.Atoi(r[:i]); err != nil {
+			return fmt.Errorf("invalid duration %q: bad minute count %q", s, r[:i])
+		}
+		r = r[i+1:]
+	}
+	if i := strings.Index(r, "S"); i >= 0 {
+		if i == 0 {
+			return fmt.Errorf("invalid duration %q: S requires a number", s)
+		}
+		if _, err := strconv.Atoi(r[:i]); err != nil {
+			return fmt.Errorf("invalid duration %q: bad second count %q", s, r[:i])
+		}
+		r = r[i+1:]
+	}
+
+	if r != "" {
+		return fmt.Errorf("invalid duration %q: trailing characters %q", s, r)
+	}
+	return nil
 }
 
 // Add parses an RFC 5545 duration string and adds it to a time.
