@@ -45,6 +45,18 @@ func alarmCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "alarm",
 		Short: "Manage alarm notifications",
+		Long: `Manage alarm notifications for calendar events.
+
+Events can have one or more alarms attached (set via --alarm on event add/update).
+The alarm lifecycle is:
+
+  1. tcal alarm check   — scan events, fire notifications for due alarms
+  2. tcal alarm list    — show fired alarms not yet acknowledged
+  3. tcal alarm dismiss — acknowledge and clear a fired alarm
+  4. tcal alarm snooze  — re-schedule a fired alarm for later
+
+For continuous monitoring, use "tcal alarm daemon" or a systemd timer / cron job
+that runs "tcal alarm check" on an interval.`,
 	}
 	cmd.AddCommand(alarmCheckCmd(), alarmListCmd(), alarmDismissCmd(), alarmSnoozeCmd(), alarmDaemonCmd())
 	return cmd
@@ -54,6 +66,28 @@ func alarmCheckCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "check",
 		Short: "Fire due alarms",
+		Long: `Scan all events for alarms whose trigger time has passed and fire
+notifications. Each alarm's trigger time is computed from the event's
+start (or end) time plus the alarm's duration offset (e.g. -PT15M means
+15 minutes before).
+
+An alarm fires when its trigger time is in the past but within the last
+24 hours (the stale threshold). Alarms older than 24 hours are silently
+skipped to avoid a flood of stale notifications after downtime.
+
+Notification types depend on the alarm action set on the event:
+  DISPLAY  — desktop notification (default)
+  AUDIO    — desktop notification + system alert sound
+  EMAIL    — email via SMTP (falls back to DISPLAY if SMTP is not configured)
+
+Each fired alarm is recorded in the database so it will not fire again on
+subsequent checks. If no alarms are due, the command produces no output
+and exits 0.`,
+		Example: `  # One-shot check (suitable for cron / systemd timer)
+  tcal alarm check
+
+  # Check and output results as JSON
+  tcal alarm check -o json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -127,6 +161,16 @@ func alarmListCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List fired but unacknowledged alarms",
+		Long: `Show all alarms that have fired but have not been dismissed.
+
+Each entry includes a state ID that can be passed to "alarm dismiss" or
+"alarm snooze". Snoozed alarms remain in the list with their snooze-until
+time shown.`,
+		Example: `  # List pending alarms
+  tcal alarm list
+
+  # List as JSON (useful for scripts)
+  tcal alarm list -o json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -182,6 +226,14 @@ func alarmDismissCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "dismiss <state-id>",
 		Short: "Dismiss a fired alarm",
+		Long: `Acknowledge a fired alarm so it no longer appears in "alarm list".
+
+The state ID is shown in the output of "alarm list" (the number in
+brackets). Dismissing an alarm marks it as acknowledged and is
+permanent; use "alarm snooze" instead if you want to be reminded again
+later.`,
+		Example: `  # Dismiss alarm state #5
+  tcal alarm dismiss 5`,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
@@ -215,6 +267,20 @@ func alarmSnoozeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "snooze <state-id>",
 		Short: "Snooze a fired alarm",
+		Long: `Postpone a fired alarm so it can fire again after a delay.
+
+The alarm remains in the pending list (shown by "alarm list") with the
+snooze-until time recorded. When "alarm check" runs after the snooze
+expires, the alarm may fire again (subject to the 24-hour stale
+threshold). The default snooze duration is 15 minutes.`,
+		Example: `  # Snooze for the default 15 minutes
+  tcal alarm snooze 5
+
+  # Snooze for 1 hour
+  tcal alarm snooze 5 --for 1h
+
+  # Snooze for 30 minutes
+  tcal alarm snooze 5 --for 30m`,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
@@ -259,6 +325,30 @@ func alarmDaemonCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "daemon",
 		Short: "Run alarm check in a loop",
+		Long: `Run "alarm check" repeatedly on a fixed interval.
+
+The daemon performs an immediate check on startup, then sleeps for the
+configured interval before checking again. It handles SIGINT and SIGTERM
+for graceful shutdown.
+
+For production use, prefer a systemd timer or cron job that runs
+"tcal alarm check" instead of a long-running daemon:
+
+  # systemd timer (runs every 30 seconds)
+  [Timer]
+  OnBootSec=10s
+  OnUnitActiveSec=30s
+
+  [Service]
+  ExecStart=/usr/local/bin/tcal alarm check`,
+		Example: `  # Run with default 30-second interval
+  tcal alarm daemon
+
+  # Check every minute
+  tcal alarm daemon --interval 1m
+
+  # Check every 10 seconds
+  tcal alarm daemon --interval 10s`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
