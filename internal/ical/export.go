@@ -495,8 +495,14 @@ func buildValarm(alarm model.Alarm) *ical.Component {
 
 	trigger := &ical.Prop{Name: ical.PropTrigger, Params: make(ical.Params)}
 	trigger.Value = alarm.TriggerValue
-	if strings.HasPrefix(alarm.TriggerValue, "-") || strings.HasPrefix(alarm.TriggerValue, "P") {
+	if alarm.TriggerValue != "" && (alarm.TriggerValue[0] == '-' || alarm.TriggerValue[0] == '+' || alarm.TriggerValue[0] == 'P') {
 		trigger.Params.Set("VALUE", "DURATION")
+	} else if alarm.TriggerValue != "" {
+		trigger.Params.Set("VALUE", "DATE-TIME")
+		// Normalize any legacy RFC 3339 values to iCal format.
+		if t, err := time.Parse(time.RFC3339, alarm.TriggerValue); err == nil {
+			trigger.Value = t.UTC().Format("20060102T150405Z")
+		}
 	}
 	if alarm.Related == "END" {
 		trigger.Params.Set("RELATED", "END")
