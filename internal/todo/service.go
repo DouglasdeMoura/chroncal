@@ -98,6 +98,9 @@ func (p *CreateParams) applyDefaults() {
 	if p.Class == "" {
 		p.Class = "PUBLIC"
 	}
+	if p.Status == "COMPLETED" {
+		p.PercentComplete = 100
+	}
 }
 
 func (p *UpsertParams) applyDefaults() {
@@ -106,6 +109,10 @@ func (p *UpsertParams) applyDefaults() {
 	}
 	if p.Class == "" {
 		p.Class = "PUBLIC"
+	}
+	if p.Status == "COMPLETED" && p.CompletedAt == "" {
+		p.CompletedAt = time.Now().UTC().Format(time.RFC3339)
+		p.PercentComplete = 100
 	}
 }
 
@@ -170,6 +177,10 @@ func (s *Service) GetByUID(ctx context.Context, uid string) (Todo, error) {
 
 func (s *Service) Create(ctx context.Context, p CreateParams) (Todo, error) {
 	p.applyDefaults()
+	completedAt := ""
+	if p.Status == "COMPLETED" {
+		completedAt = time.Now().UTC().Format(time.RFC3339)
+	}
 	r, err := s.q.CreateTodo(ctx, storage.CreateTodoParams{
 		Uid:             uuid.New().String(),
 		CalendarID:      p.CalendarID,
@@ -179,7 +190,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Todo, error) {
 		DueDate:         p.DueDate,
 		StartDate:       p.StartDate,
 		Duration:        p.Duration,
-		CompletedAt:     "",
+		CompletedAt:     completedAt,
 		PercentComplete: p.PercentComplete,
 		Status:          p.Status,
 		Priority:        p.Priority,
@@ -206,6 +217,10 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, e
 	}
 	if p.Class == "" {
 		p.Class = "PUBLIC"
+	}
+	if p.Status == "COMPLETED" && p.CompletedAt == "" {
+		p.CompletedAt = time.Now().UTC().Format(time.RFC3339)
+		p.PercentComplete = 100
 	}
 	r, err := s.q.UpdateTodo(ctx, storage.UpdateTodoParams{
 		ID:              id,

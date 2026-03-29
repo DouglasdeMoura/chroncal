@@ -199,6 +199,54 @@ func TestTodoService_Complete(t *testing.T) {
 	}
 }
 
+func TestTodoService_CreateCompleted(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	td, err := svc.Create(ctx, CreateParams{
+		CalendarID: 1,
+		Summary:    "Already done",
+		Status:     "COMPLETED",
+	})
+	if err != nil {
+		t.Fatalf("Create COMPLETED: %v", err)
+	}
+	if td.Status != "COMPLETED" {
+		t.Errorf("Status = %q, want COMPLETED", td.Status)
+	}
+	if td.PercentComplete != 100 {
+		t.Errorf("PercentComplete = %d, want 100", td.PercentComplete)
+	}
+	if td.CompletedAt == "" {
+		t.Error("CompletedAt should be auto-set when status=COMPLETED")
+	}
+	if _, err := time.Parse(time.RFC3339, td.CompletedAt); err != nil {
+		t.Errorf("CompletedAt not valid RFC3339: %q", td.CompletedAt)
+	}
+}
+
+func TestTodoService_UpdateToCompleted(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	created := createTodo(t, svc)
+
+	updated, err := svc.Update(ctx, created.ID, UpdateParams{
+		Summary:    created.Summary,
+		DueDate:    created.DueDate,
+		CalendarID: 1,
+		Status:     "COMPLETED",
+	})
+	if err != nil {
+		t.Fatalf("Update to COMPLETED: %v", err)
+	}
+	if updated.PercentComplete != 100 {
+		t.Errorf("PercentComplete = %d, want 100", updated.PercentComplete)
+	}
+	if updated.CompletedAt == "" {
+		t.Error("CompletedAt should be auto-set when updating to COMPLETED")
+	}
+}
+
 func TestTodoService_UpsertByUID(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
