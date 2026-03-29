@@ -69,14 +69,22 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, error) {
 	var dueDate string
 	if prop := props.Get(ical.PropDue); prop != nil {
 		if t, err := prop.DateTime(nil); err == nil && !t.IsZero() {
-			dueDate = t.UTC().Format(time.RFC3339)
+			if len(prop.Value) == 8 {
+				dueDate = t.Format("2006-01-02")
+			} else {
+				dueDate = t.UTC().Format(time.RFC3339)
+			}
 		}
 	}
 
 	var startDate string
 	if prop := props.Get(ical.PropDateTimeStart); prop != nil {
 		if t, err := prop.DateTime(nil); err == nil && !t.IsZero() {
-			startDate = t.UTC().Format(time.RFC3339)
+			if len(prop.Value) == 8 {
+				startDate = t.Format("2006-01-02")
+			} else {
+				startDate = t.UTC().Format(time.RFC3339)
+			}
 		}
 	}
 

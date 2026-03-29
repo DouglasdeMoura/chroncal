@@ -136,12 +136,10 @@ func todoAddCmd() *cobra.Command {
 
 			var dueDate string
 			if dueStr != "" {
-				d, err := time.ParseInLocation("2006-01-02", dueStr, time.Local)
-				if err != nil {
-					return fmt.Errorf("parse due date: %w", err)
+				if _, err := time.Parse("2006-01-02", dueStr); err != nil {
+					return fmt.Errorf("parse due date: expected YYYY-MM-DD, got %q", dueStr)
 				}
-				// Due at end of day
-				dueDate = time.Date(d.Year(), d.Month(), d.Day(), 23, 59, 59, 0, time.Local).Format(time.RFC3339)
+				dueDate = dueStr
 			}
 
 			t, err := a.Todos.Create(ctx, todo.CreateParams{
@@ -253,11 +251,10 @@ func todoUpdateCmd() *cobra.Command {
 				p.Location = location
 			}
 			if cmd.Flags().Changed("due") {
-				d, err := time.ParseInLocation("2006-01-02", dueStr, time.Local)
-				if err != nil {
-					return fmt.Errorf("parse due date: %w", err)
+				if _, err := time.Parse("2006-01-02", dueStr); err != nil {
+					return fmt.Errorf("parse due date: expected YYYY-MM-DD, got %q", dueStr)
 				}
-				p.DueDate = time.Date(d.Year(), d.Month(), d.Day(), 23, 59, 59, 0, time.Local).Format(time.RFC3339)
+				p.DueDate = dueStr
 			}
 			if cmd.Flags().Changed("status") {
 				p.Status = status

@@ -14,8 +14,8 @@ type Todo struct {
 	Summary         string
 	Description     string
 	Location        string
-	DueDate         string // RFC 3339 or empty
-	StartDate       string // RFC 3339 or empty
+	DueDate         string // YYYY-MM-DD (date-only) or RFC 3339 or empty
+	StartDate       string // YYYY-MM-DD (date-only) or RFC 3339 or empty
 	Duration        string // RFC 5545 duration or empty
 	CompletedAt     string // RFC 3339 or empty
 	PercentComplete int64
@@ -53,12 +53,23 @@ func (t Todo) IsOverdue() bool {
 		return false
 	}
 	due := t.ParseDueDate()
-	return !due.IsZero() && time.Now().After(due)
+	if due.IsZero() {
+		return false
+	}
+	// Date-only: overdue after end of that day in local time
+	if isDateOnly(t.DueDate) {
+		endOfDay := time.Date(due.Year(), due.Month(), due.Day(), 23, 59, 59, 0, time.Local)
+		return time.Now().After(endOfDay)
+	}
+	return time.Now().After(due)
 }
 
 func (t Todo) ParseDueDate() time.Time {
 	if t.DueDate == "" {
 		return time.Time{}
+	}
+	if p, err := time.Parse("2006-01-02", t.DueDate); err == nil {
+		return p
 	}
 	p, _ := time.Parse(time.RFC3339, t.DueDate)
 	return p
@@ -68,8 +79,16 @@ func (t Todo) ParseStartDate() time.Time {
 	if t.StartDate == "" {
 		return time.Time{}
 	}
+	if p, err := time.Parse("2006-01-02", t.StartDate); err == nil {
+		return p
+	}
 	p, _ := time.Parse(time.RFC3339, t.StartDate)
 	return p
+}
+
+func isDateOnly(s string) bool {
+	_, err := time.Parse("2006-01-02", s)
+	return err == nil
 }
 
 func (t Todo) ParseCompletedAt() time.Time {

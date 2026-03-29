@@ -352,7 +352,9 @@ func printTable(w io.Writer, v any) error {
 		for _, t := range data {
 			due := ""
 			if t.DueDate != "" {
-				if d, err := time.Parse(time.RFC3339, t.DueDate); err == nil {
+				if _, err := time.Parse("2006-01-02", t.DueDate); err == nil {
+					due = t.DueDate
+				} else if d, err := time.Parse(time.RFC3339, t.DueDate); err == nil {
 					due = d.Local().Format("2006-01-02")
 				}
 			}
@@ -565,8 +567,12 @@ func printTodo(w io.Writer, t todo.Todo) {
 	fmt.Fprintf(w, "  %s %s\n", i.Title, t.Summary)
 	fmt.Fprintf(w, "  %s %s\n", i.Status, t.Status)
 	if t.DueDate != "" {
-		due := t.ParseDueDate().Local()
-		fmt.Fprintf(w, "  %s Due %s\n", i.Clock, due.Format("Mon, Jan 2 2006 15:04"))
+		due := t.ParseDueDate()
+		if _, err := time.Parse("2006-01-02", t.DueDate); err == nil {
+			fmt.Fprintf(w, "  %s Due %s\n", i.Clock, due.Format("Mon, Jan 2 2006"))
+		} else {
+			fmt.Fprintf(w, "  %s Due %s\n", i.Clock, due.Local().Format("Mon, Jan 2 2006 15:04"))
+		}
 	}
 	if t.PercentComplete > 0 {
 		fmt.Fprintf(w, "  %s %d%%\n", i.Progress, t.PercentComplete)

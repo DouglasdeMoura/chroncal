@@ -250,12 +250,16 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 
 		// DUE or DTSTART+DURATION
 		if t.DueDate != "" {
-			if due, err := time.Parse(time.RFC3339, t.DueDate); err == nil {
+			if d, err := time.Parse("2006-01-02", t.DueDate); err == nil {
+				vtodo.Props.SetDate(ical.PropDue, d)
+			} else if due, err := time.Parse(time.RFC3339, t.DueDate); err == nil {
 				vtodo.Props.SetDateTime(ical.PropDue, due.UTC())
 			}
 		}
 		if t.StartDate != "" {
-			if start, err := time.Parse(time.RFC3339, t.StartDate); err == nil {
+			if d, err := time.Parse("2006-01-02", t.StartDate); err == nil {
+				vtodo.Props.SetDate(ical.PropDateTimeStart, d)
+			} else if start, err := time.Parse(time.RFC3339, t.StartDate); err == nil {
 				vtodo.Props.SetDateTime(ical.PropDateTimeStart, start.UTC())
 			}
 		}

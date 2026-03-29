@@ -30,6 +30,8 @@ func TestTodo_IsOverdue(t *testing.T) {
 	t.Parallel()
 	past := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339)
 	future := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	pastDateOnly := time.Now().Add(-48 * time.Hour).Format("2006-01-02")
+	futureDateOnly := time.Now().Add(48 * time.Hour).Format("2006-01-02")
 
 	tests := []struct {
 		name    string
@@ -41,6 +43,8 @@ func TestTodo_IsOverdue(t *testing.T) {
 		{"future due, incomplete", future, "NEEDS-ACTION", false},
 		{"past due, completed", past, "COMPLETED", false},
 		{"no due date", "", "NEEDS-ACTION", false},
+		{"past date-only, incomplete", pastDateOnly, "NEEDS-ACTION", true},
+		{"future date-only, incomplete", futureDateOnly, "NEEDS-ACTION", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -54,7 +58,7 @@ func TestTodo_IsOverdue(t *testing.T) {
 
 func TestTodo_ParseDueDate(t *testing.T) {
 	t.Parallel()
-	t.Run("valid", func(t *testing.T) {
+	t.Run("valid RFC3339", func(t *testing.T) {
 		todo := Todo{DueDate: "2026-04-01T23:59:59Z"}
 		got := todo.ParseDueDate()
 		if got.IsZero() {
@@ -64,6 +68,16 @@ func TestTodo_ParseDueDate(t *testing.T) {
 			t.Errorf("ParseDueDate() = %v, want April 1", got)
 		}
 	})
+	t.Run("valid date-only", func(t *testing.T) {
+		todo := Todo{DueDate: "2026-04-01"}
+		got := todo.ParseDueDate()
+		if got.IsZero() {
+			t.Error("ParseDueDate() returned zero time for date-only input")
+		}
+		if got.Day() != 1 || got.Month() != time.April || got.Year() != 2026 {
+			t.Errorf("ParseDueDate() = %v, want 2026-04-01", got)
+		}
+	})
 	t.Run("empty", func(t *testing.T) {
 		todo := Todo{DueDate: ""}
 		got := todo.ParseDueDate()
@@ -71,6 +85,18 @@ func TestTodo_ParseDueDate(t *testing.T) {
 			t.Errorf("ParseDueDate() on empty = %v, want zero", got)
 		}
 	})
+}
+
+func TestTodo_ParseStartDate_DateOnly(t *testing.T) {
+	t.Parallel()
+	todo := Todo{StartDate: "2026-04-01"}
+	got := todo.ParseStartDate()
+	if got.IsZero() {
+		t.Error("ParseStartDate() returned zero time for date-only input")
+	}
+	if got.Day() != 1 || got.Month() != time.April || got.Year() != 2026 {
+		t.Errorf("ParseStartDate() = %v, want 2026-04-01", got)
+	}
 }
 
 func TestTodo_ParseStartDate(t *testing.T) {
