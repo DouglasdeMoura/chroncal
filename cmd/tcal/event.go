@@ -966,6 +966,7 @@ func parseAlarmFlags(flags []string) ([]model.Alarm, error) {
 			Action:       action,
 			TriggerValue: trigger,
 			Description:  "Reminder",
+			Related:      "START",
 		})
 	}
 	return out, nil
