@@ -80,6 +80,23 @@ Notification types depend on the alarm action set on the event:
   AUDIO    — desktop notification + system alert sound
   EMAIL    — email via SMTP (falls back to DISPLAY if SMTP is not configured)
 
+To enable EMAIL notifications, configure SMTP via environment variables:
+  TCAL_SMTP_HOST       SMTP server hostname (required)
+  TCAL_SMTP_PORT       SMTP server port (default: 587)
+  TCAL_SMTP_USERNAME   SMTP authentication username
+  TCAL_SMTP_PASSWORD   SMTP authentication password
+  TCAL_SMTP_FROM       sender address for alarm emails
+
+Or in the config file ($XDG_CONFIG_HOME/tcal/config.toml):
+  [smtp]
+  host = "smtp.example.com"
+  port = 587
+  username = "user@example.com"
+  password = "app-password"
+  from = "noreply@example.com"
+
+Environment variables override config file values.
+
 Each fired alarm is recorded in the database so it will not fire again on
 subsequent checks. Snoozed alarms whose snooze-until time has expired
 are also re-fired. If no alarms are due, the command produces no output

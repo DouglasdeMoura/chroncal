@@ -194,6 +194,14 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
   tcal event add "Deploy Window" --date 2026-04-15 --time 02:00 \
     --alarm "-PT1H" --alarm "EMAIL:-PT1D" --alarm "AUDIO:-PT5M"
 
+  # Alarm that repeats 3 times every 5 minutes, relative to event end
+  tcal event add "Deadline" --date 2026-04-15 --time 17:00 \
+    --alarm "DISPLAY:-PT30M::3:PT5M:END"
+
+  # EMAIL alarm with attendees
+  tcal event add "Team Sync" --date 2026-04-15 --time 09:00 \
+    --alarm "EMAIL:-PT1H:::::alice@example.com,bob@example.com"
+
   # Event with organizer, contacts, and resources
   tcal event add "Board Meeting" --date 2026-06-01 --time 10:00 \
     --organizer "Alice <alice@example.com>" \
@@ -426,7 +434,7 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 	cmd.Flags().MarkHidden("exdate")
 	cmd.Flags().MarkHidden("rdate")
 	cmd.Flags().StringArrayVar(&attachFlags, "attach", nil, "attachment (file path or URL; prefix mime/type: for explicit MIME, e.g. application/pdf:/path/to/file; repeatable)")
-	cmd.Flags().StringArrayVar(&alarmFlags, "alarm", nil, "alarm trigger as ISO 8601 duration (e.g. -PT15M, -PT1H, -P1D); prefix DISPLAY:, EMAIL:, or AUDIO: for action type (default: DISPLAY); repeatable")
+	cmd.Flags().StringArrayVar(&alarmFlags, "alarm", nil, `alarm in format [ACTION:]TRIGGER[:DESC:REPEAT:DURATION:RELATED:ATTENDEES]; ACTION is DISPLAY (default), EMAIL, or AUDIO; extended fields are optional, e.g. "DISPLAY:-PT30M::3:PT5M:END" or "EMAIL:-PT1H:::::user@example.com"; repeatable`)
 	cmd.Flags().StringArrayVar(&attendeeFlags, "attendee", nil, "attendee as email or \"Name <email>\" (defaults: RSVP=NEEDS-ACTION, ROLE=REQ-PARTICIPANT; repeatable)")
 	cmd.Flags().StringVar(&organizer, "organizer", "", "event organizer as email or \"Name <email>\" (RFC 5545 ORGANIZER; exported as ROLE=CHAIR)")
 	cmd.Flags().StringArrayVar(&commentFlags, "comment", nil, "comment annotation (free-form text, repeatable)")
@@ -763,7 +771,7 @@ func eventUpdateCmd() *cobra.Command {
 	cmd.Flags().MarkHidden("exdate")
 	cmd.Flags().MarkHidden("rdate")
 	cmd.Flags().StringArrayVar(&attachFlags, "attach", nil, "attachment (file path or URL, repeatable)")
-	cmd.Flags().StringArrayVar(&alarmFlags, "alarm", nil, "alarm trigger (e.g. -PT15M, DISPLAY:-PT1H, repeatable)")
+	cmd.Flags().StringArrayVar(&alarmFlags, "alarm", nil, `alarm in format [ACTION:]TRIGGER[:DESC:REPEAT:DURATION:RELATED:ATTENDEES]; repeatable`)
 	cmd.Flags().StringArrayVar(&attendeeFlags, "attendee", nil, "attendee (email or \"Name <email>\", repeatable, replaces all)")
 	cmd.Flags().StringVar(&organizer, "organizer", "", "event organizer (email or \"Name <email>\", replaces existing)")
 	cmd.Flags().StringArrayVar(&commentFlags, "comment", nil, "comment annotation (repeatable, replaces all)")
