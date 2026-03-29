@@ -61,7 +61,10 @@ func (s *Service) Check(ctx context.Context, now time.Time) ([]DueAlarm, error) 
 			return nil, fmt.Errorf("list alarms for event %d: %w", evt.ID, err)
 		}
 		for _, a := range alarms {
-			triggerAt := computeTriggerTime(evt, a)
+			triggerAt, err := computeTriggerTime(evt, a)
+			if err != nil {
+				continue // skip alarms with unparseable triggers
+			}
 
 			// Must be in the past (due) but not stale
 			if triggerAt.After(now) {
@@ -73,7 +76,7 @@ func (s *Service) Check(ctx context.Context, now time.Time) ([]DueAlarm, error) 
 
 			// Check if already fired
 			triggerKey := triggerAt.UTC().Format(time.RFC3339)
-			_, err := s.q.GetAlarmState(ctx, storage.GetAlarmStateParams{
+			_, err = s.q.GetAlarmState(ctx, storage.GetAlarmStateParams{
 				AlarmID:   a.ID,
 				TriggerAt: triggerKey,
 			})
@@ -255,10 +258,39 @@ func (s *Service) ListPending(ctx context.Context) ([]storage.AlarmState, error)
 	return s.q.ListPendingAlarmStates(ctx)
 }
 
-func computeTriggerTime(evt event.Event, a model.Alarm) time.Time {
-	anchor := evt.StartTime
-	if a.Related == "END" {
-		anchor = evt.EndTime
+func computeTriggerTime(evt event.Event, a model.Alarm) (time.Time, error) {
+	trigger := a.TriggerValue
+	if trigger == "" {
+		return time.Time{}, fmt.Errorf("empty trigger value")
 	}
-	return duration.Add(anchor, a.TriggerValue)
+
+	// Duration triggers: anchor-relative (RELATED=START or END).
+	if duration.Validate(trigger) == nil {
+		anchor := evt.StartTime
+		if a.Related == "END" {
+			anchor = evt.EndTime
+		}
+		return duration.Add(anchor, trigger), nil
+	}
+
+	// Absolute triggers: the trigger IS the fire time; Related is ignored.
+	// Try iCal UTC format: 20060102T150405Z
+	if t, err := time.Parse("20060102T150405Z", trigger); err == nil {
+		return t, nil
+	}
+	// Try iCal floating format: 20060102T150405 (interpret in event timezone)
+	if t, err := time.Parse("20060102T150405", trigger); err == nil {
+		if evt.Timezone != "" {
+			if loc, lerr := time.LoadLocation(evt.Timezone); lerr == nil {
+				return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), 0, loc), nil
+			}
+		}
+		return t, nil // treat as UTC if no timezone info
+	}
+	// Try RFC 3339 (legacy CLI-created triggers before normalization)
+	if t, err := time.Parse(time.RFC3339, trigger); err == nil {
+		return t, nil
+	}
+
+	return time.Time{}, fmt.Errorf("invalid trigger format: %q", trigger)
 }

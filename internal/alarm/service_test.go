@@ -478,3 +478,149 @@ func TestCheck_RelatedEnd(t *testing.T) {
 		t.Fatalf("got %d due alarms, want 1", len(due))
 	}
 }
+
+func TestCheck_AbsoluteTriggerUTC(t *testing.T) {
+	svc, evtSvc := newTestServices(t)
+	ctx := context.Background()
+
+	// Event starts in 2 hours. Absolute trigger is 5 minutes ago.
+	start := time.Now().Add(2 * time.Hour)
+	triggerTime := time.Now().Add(-5 * time.Minute).UTC()
+	triggerStr := triggerTime.Format("20060102T150405Z")
+
+	e, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "Absolute UTC",
+		StartTime:  start,
+		EndTime:    start.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: triggerStr, Description: "abs trigger"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	due, err := svc.Check(ctx, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 1 {
+		t.Fatalf("absolute UTC trigger: got %d due alarms, want 1", len(due))
+	}
+	if due[0].Event.Title != "Absolute UTC" {
+		t.Errorf("event title = %q, want %q", due[0].Event.Title, "Absolute UTC")
+	}
+}
+
+func TestCheck_AbsoluteTriggerFuture(t *testing.T) {
+	svc, evtSvc := newTestServices(t)
+	ctx := context.Background()
+
+	// Event starts in 2 hours. Absolute trigger is 1 hour from now (future).
+	start := time.Now().Add(2 * time.Hour)
+	triggerTime := time.Now().Add(1 * time.Hour).UTC()
+	triggerStr := triggerTime.Format("20060102T150405Z")
+
+	e, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "Absolute Future",
+		StartTime:  start,
+		EndTime:    start.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: triggerStr, Description: "future abs"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	due, err := svc.Check(ctx, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 0 {
+		t.Fatalf("absolute future trigger: got %d due alarms, want 0", len(due))
+	}
+}
+
+func TestComputeTriggerTime_Absolute(t *testing.T) {
+	evt := event.Event{
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+	}
+
+	tests := []struct {
+		name    string
+		trigger string
+		tz      string
+		want    time.Time
+		wantErr bool
+	}{
+		{
+			name:    "iCal UTC",
+			trigger: "20260401T170000Z",
+			want:    time.Date(2026, 4, 1, 17, 0, 0, 0, time.UTC),
+		},
+		{
+			name:    "iCal floating with timezone",
+			trigger: "20260401T120000",
+			tz:      "America/New_York",
+			want:    time.Date(2026, 4, 1, 12, 0, 0, 0, mustLoadLocation("America/New_York")),
+		},
+		{
+			name:    "iCal floating no timezone",
+			trigger: "20260401T120000",
+			want:    time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC),
+		},
+		{
+			name:    "RFC 3339 legacy",
+			trigger: "2026-04-01T17:00:00Z",
+			want:    time.Date(2026, 4, 1, 17, 0, 0, 0, time.UTC),
+		},
+		{
+			name:    "duration still works",
+			trigger: "-PT15M",
+			want:    time.Date(2026, 4, 1, 13, 45, 0, 0, time.UTC),
+		},
+		{
+			name:    "empty trigger errors",
+			trigger: "",
+			wantErr: true,
+		},
+		{
+			name:    "garbage errors",
+			trigger: "not-a-trigger",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := evt
+			e.Timezone = tt.tz
+			a := model.Alarm{TriggerValue: tt.trigger, Related: "START"}
+			got, err := computeTriggerTime(e, a)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("computeTriggerTime() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && !got.Equal(tt.want) {
+				t.Errorf("computeTriggerTime() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func mustLoadLocation(name string) *time.Location {
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		panic(err)
+	}
+	return loc
+}
