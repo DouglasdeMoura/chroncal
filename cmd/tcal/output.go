@@ -12,6 +12,7 @@ import (
 
 	"github.com/douglasdemoura/tcal/internal/calendar"
 	"github.com/douglasdemoura/tcal/internal/event"
+	"github.com/douglasdemoura/tcal/internal/model"
 	"github.com/douglasdemoura/tcal/internal/todo"
 )
 
@@ -97,10 +98,19 @@ type jsonEvent struct {
 }
 
 type jsonAlarm struct {
-	ID           int64  `json:"id"`
-	Action       string `json:"action"`
-	TriggerValue string `json:"trigger_value"`
-	Description  string `json:"description"`
+	ID           int64              `json:"id"`
+	Action       string             `json:"action"`
+	TriggerValue string             `json:"trigger_value"`
+	Description  string             `json:"description"`
+	Repeat       int                `json:"repeat,omitempty"`
+	Duration     string             `json:"duration,omitempty"`
+	Related      string             `json:"related,omitempty"`
+	Attendees    []jsonAlarmAttendee `json:"attendees,omitempty"`
+}
+
+type jsonAlarmAttendee struct {
+	Email string `json:"email"`
+	Name  string `json:"name,omitempty"`
 }
 
 type jsonAttendee struct {
@@ -120,6 +130,17 @@ type jsonAttachment struct {
 type jsonRelation struct {
 	RelType string `json:"rel_type"`
 	RelUID  string `json:"rel_uid"`
+}
+
+func toJSONAlarmAttendees(attendees []model.AlarmAttendee) []jsonAlarmAttendee {
+	if len(attendees) == 0 {
+		return nil
+	}
+	out := make([]jsonAlarmAttendee, len(attendees))
+	for i, a := range attendees {
+		out[i] = jsonAlarmAttendee{Email: a.Email, Name: a.Name}
+	}
+	return out
 }
 
 type jsonCalendar struct {
@@ -162,6 +183,8 @@ func toJSONEvent(e event.Event) jsonEvent {
 		je.Alarms = append(je.Alarms, jsonAlarm{
 			ID: a.ID, Action: a.Action,
 			TriggerValue: a.TriggerValue, Description: a.Description,
+			Repeat: a.Repeat, Duration: a.Duration, Related: a.Related,
+			Attendees: toJSONAlarmAttendees(a.Attendees),
 		})
 	}
 	for _, a := range e.Attendees {
@@ -535,6 +558,8 @@ func toJSONTodo(t todo.Todo) jsonTodo {
 		jt.Alarms = append(jt.Alarms, jsonAlarm{
 			ID: a.ID, Action: a.Action,
 			TriggerValue: a.TriggerValue, Description: a.Description,
+			Repeat: a.Repeat, Duration: a.Duration, Related: a.Related,
+			Attendees: toJSONAlarmAttendees(a.Attendees),
 		})
 	}
 	for _, a := range t.Attendees {
