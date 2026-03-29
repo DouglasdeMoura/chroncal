@@ -253,6 +253,10 @@ and percent-complete to 100.`,
 				return fmt.Errorf("--start %s is after --due %s (RFC 5545 §3.6.2: DTSTART must be before DUE)", startDate, dueDate)
 			}
 
+			if strings.EqualFold(status, "COMPLETED") && progress != 0 && progress != 100 {
+				return fmt.Errorf("--status COMPLETED requires 100%% progress, got %d (omit --progress or set it to 100)", progress)
+			}
+
 			parsedExDates, err := parseDateFlags(exdates, "", time.Time{})
 			if err != nil {
 				return fmt.Errorf("--exdate: %w", err)
@@ -568,6 +572,10 @@ func todoUpdateCmd() *cobra.Command {
 
 			if p.StartDate != "" && p.DueDate != "" && p.StartDate > p.DueDate {
 				return fmt.Errorf("--start %s is after --due %s (RFC 5545 §3.6.2: DTSTART must be before DUE)", p.StartDate, p.DueDate)
+			}
+
+			if p.Status == "COMPLETED" && cmd.Flags().Changed("progress") && p.PercentComplete != 100 {
+				return fmt.Errorf("--status COMPLETED requires 100%% progress, got %d (omit --progress or set it to 100)", p.PercentComplete)
 			}
 
 			t, err := a.Todos.Update(ctx, existing.ID, p)
