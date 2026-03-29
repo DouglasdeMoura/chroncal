@@ -129,6 +129,8 @@ func todoAddCmd() *cobra.Command {
 		alarmFlags    []string
 		attendeeFlags []string
 		commentFlags  []string
+		contactFlags  []string
+		resourceFlags []string
 		relationFlags []string
 		organizer     string
 	)
@@ -316,12 +318,24 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 					return fmt.Errorf("add relations: %w", err)
 				}
 			}
+			if len(contactFlags) > 0 {
+				if err := a.Todos.ReplaceContacts(ctx, t.ID, contactFlags); err != nil {
+					return fmt.Errorf("add contacts: %w", err)
+				}
+			}
+			if len(resourceFlags) > 0 {
+				if err := a.Todos.ReplaceResources(ctx, t.ID, resourceFlags); err != nil {
+					return fmt.Errorf("add resources: %w", err)
+				}
+			}
 
 			// Re-read related data for output
 			t.Alarms, _ = a.Todos.ListAlarms(ctx, t.ID)
 			t.Attendees, _ = a.Todos.ListAttendees(ctx, t.ID)
 			t.Attachments, _ = a.Todos.ListAttachments(ctx, t.ID)
 			t.Comments, _ = a.Todos.ListComments(ctx, t.ID)
+			t.Contacts, _ = a.Todos.ListContacts(ctx, t.ID)
+			t.Resources, _ = a.Todos.ListResources(ctx, t.ID)
 			t.Relations, _ = a.Todos.ListRelations(ctx, t.ID)
 
 			w := cmd.OutOrStdout()
@@ -356,6 +370,8 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 	cmd.Flags().StringArrayVar(&attendeeFlags, "attendee", nil, "attendee (email or \"Name <email>\"; repeatable)")
 	cmd.Flags().StringVar(&organizer, "organizer", "", "organizer (email or \"Name <email>\")")
 	cmd.Flags().StringArrayVar(&commentFlags, "comment", nil, "comment annotation (free-form text, repeatable)")
+	cmd.Flags().StringArrayVar(&contactFlags, "contact", nil, "contact info (free-form text, e.g. \"Alice, 555-1234\"; repeatable)")
+	cmd.Flags().StringArrayVar(&resourceFlags, "resource", nil, "resource needed (e.g. PROJECTOR, WHITEBOARD; repeatable)")
 	cmd.Flags().StringArrayVar(&relationFlags, "related-to", nil, "related UID with optional PARENT:/CHILD:/SIBLING: prefix (repeatable)")
 	// Aliases
 	cmd.Flags().StringVar(&rrule, "rrule", "", "alias for --recurrence-rule")
@@ -389,6 +405,8 @@ func todoUpdateCmd() *cobra.Command {
 		alarmFlags    []string
 		attendeeFlags []string
 		commentFlags  []string
+		contactFlags  []string
+		resourceFlags []string
 		relationFlags []string
 		organizer     string
 	)
@@ -579,12 +597,24 @@ func todoUpdateCmd() *cobra.Command {
 					return fmt.Errorf("update relations: %w", err)
 				}
 			}
+			if cmd.Flags().Changed("contact") {
+				if err := a.Todos.ReplaceContacts(ctx, t.ID, contactFlags); err != nil {
+					return fmt.Errorf("update contacts: %w", err)
+				}
+			}
+			if cmd.Flags().Changed("resource") {
+				if err := a.Todos.ReplaceResources(ctx, t.ID, resourceFlags); err != nil {
+					return fmt.Errorf("update resources: %w", err)
+				}
+			}
 
 			// Re-read related data for output
 			t.Alarms, _ = a.Todos.ListAlarms(ctx, t.ID)
 			t.Attendees, _ = a.Todos.ListAttendees(ctx, t.ID)
 			t.Attachments, _ = a.Todos.ListAttachments(ctx, t.ID)
 			t.Comments, _ = a.Todos.ListComments(ctx, t.ID)
+			t.Contacts, _ = a.Todos.ListContacts(ctx, t.ID)
+			t.Resources, _ = a.Todos.ListResources(ctx, t.ID)
 			t.Relations, _ = a.Todos.ListRelations(ctx, t.ID)
 
 			w := cmd.OutOrStdout()
@@ -616,6 +646,8 @@ func todoUpdateCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&attendeeFlags, "attendee", nil, "attendee (email or \"Name <email>\"; repeatable)")
 	cmd.Flags().StringVar(&organizer, "organizer", "", "organizer (email or \"Name <email>\")")
 	cmd.Flags().StringArrayVar(&commentFlags, "comment", nil, "comment annotation (free-form text, repeatable)")
+	cmd.Flags().StringArrayVar(&contactFlags, "contact", nil, "contact info (free-form text, repeatable, replaces all)")
+	cmd.Flags().StringArrayVar(&resourceFlags, "resource", nil, "resource needed (e.g. PROJECTOR, repeatable, replaces all)")
 	cmd.Flags().StringArrayVar(&relationFlags, "related-to", nil, "related UID with optional PARENT:/CHILD:/SIBLING: prefix (repeatable)")
 	// Aliases
 	cmd.Flags().StringVar(&rrule, "rrule", "", "alias for --recurrence-rule")
