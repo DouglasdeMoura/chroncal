@@ -499,6 +499,12 @@ type jsonTodo struct {
 	Class           string         `json:"class"`
 	URL             string         `json:"url"`
 	Categories      string         `json:"categories"`
+	RecurrenceRule  string         `json:"recurrence_rule"`
+	ExDates         string         `json:"exdates"`
+	RDates          string         `json:"rdates"`
+	RecurrenceID    string         `json:"recurrence_id"`
+	Timezone        string         `json:"timezone"`
+	Geo             string         `json:"geo"`
 	Sequence        int64          `json:"sequence"`
 	CreatedAt       string         `json:"created_at"`
 	UpdatedAt       string         `json:"updated_at"`
@@ -518,7 +524,10 @@ func toJSONTodo(t todo.Todo) jsonTodo {
 		DueDate: t.DueDate, StartDate: t.StartDate, Duration: t.Duration,
 		CompletedAt: t.CompletedAt, PercentComplete: t.PercentComplete,
 		Status: t.Status, Priority: t.Priority, Class: t.Class,
-		URL: t.URL, Categories: t.Categories, Sequence: t.Sequence,
+		URL: t.URL, Categories: t.Categories,
+		RecurrenceRule: t.RecurrenceRule, ExDates: t.ExDates, RDates: t.RDates,
+		RecurrenceID: t.RecurrenceID, Timezone: t.Timezone, Geo: t.Geo,
+		Sequence: t.Sequence,
 		CreatedAt: t.CreatedAt.Local().Format(time.RFC3339),
 		UpdatedAt: t.UpdatedAt.Local().Format(time.RFC3339),
 	}
