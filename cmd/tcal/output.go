@@ -575,12 +575,28 @@ func printTodo(w io.Writer, t todo.Todo) {
 	i := ic()
 	fmt.Fprintf(w, "  %s %s\n", i.Title, t.Summary)
 	fmt.Fprintf(w, "  %s %s\n", i.Status, t.Status)
+	if t.StartDate != "" {
+		start := t.ParseStartDate()
+		if _, err := time.Parse("2006-01-02", t.StartDate); err == nil {
+			fmt.Fprintf(w, "  %s Start %s\n", i.Clock, start.Format("Mon, Jan 2 2006"))
+		} else {
+			fmt.Fprintf(w, "  %s Start %s\n", i.Clock, start.Local().Format("Mon, Jan 2 2006 15:04"))
+		}
+	}
 	if t.DueDate != "" {
 		due := t.ParseDueDate()
 		if _, err := time.Parse("2006-01-02", t.DueDate); err == nil {
 			fmt.Fprintf(w, "  %s Due %s\n", i.Clock, due.Format("Mon, Jan 2 2006"))
 		} else {
 			fmt.Fprintf(w, "  %s Due %s\n", i.Clock, due.Local().Format("Mon, Jan 2 2006 15:04"))
+		}
+	}
+	if t.Duration != "" {
+		fmt.Fprintf(w, "  %s Duration %s\n", i.Clock, t.Duration)
+	}
+	if t.CompletedAt != "" {
+		if ca, err := time.Parse(time.RFC3339, t.CompletedAt); err == nil {
+			fmt.Fprintf(w, "  %s Completed %s\n", i.Clock, ca.Local().Format("Mon, Jan 2 2006 15:04"))
 		}
 	}
 	if t.PercentComplete > 0 {
@@ -598,11 +614,46 @@ func printTodo(w io.Writer, t todo.Todo) {
 	if t.Categories != "" {
 		fmt.Fprintf(w, "  %s %s\n", i.Tags, t.Categories)
 	}
+	if t.Class != "" && t.Class != "PUBLIC" {
+		fmt.Fprintf(w, "  %s %s\n", i.Status, t.Class)
+	}
 	if t.Priority > 0 {
 		fmt.Fprintf(w, "  %s Priority %d\n", i.Priority, t.Priority)
 	}
+	if t.RecurrenceRule != "" {
+		fmt.Fprintf(w, "  %s %s\n", i.Clock, t.RecurrenceRule)
+	}
 	fmt.Fprintf(w, "  %s Calendar %d\n", i.Folder, t.CalendarID)
 	fmt.Fprintf(w, "  %s %d  %s\n", i.ID, t.ID, t.UID)
+	if len(t.Alarms) > 0 {
+		fmt.Fprintf(w, "  %s %d reminder(s)\n", i.Bell, len(t.Alarms))
+	}
+	if len(t.Attendees) > 0 {
+		fmt.Fprintf(w, "  %s %d participant(s)\n", i.People, len(t.Attendees))
+	}
+	if len(t.Attachments) > 0 {
+		fmt.Fprintf(w, "  %s %d attachment(s)\n", i.Link, len(t.Attachments))
+	}
+	if len(t.Comments) > 0 {
+		for _, c := range t.Comments {
+			fmt.Fprintf(w, "  %s %s\n", i.Notes, c)
+		}
+	}
+	if len(t.Contacts) > 0 {
+		for _, c := range t.Contacts {
+			fmt.Fprintf(w, "  %s %s\n", i.People, c)
+		}
+	}
+	if len(t.Resources) > 0 {
+		for _, r := range t.Resources {
+			fmt.Fprintf(w, "  %s %s\n", i.Bullet, r)
+		}
+	}
+	if len(t.Relations) > 0 {
+		for _, r := range t.Relations {
+			fmt.Fprintf(w, "  %s %s:%s\n", i.Link, r.RelType, r.RelUID)
+		}
+	}
 }
 
 func printTodos(w io.Writer, todos []todo.Todo) {
