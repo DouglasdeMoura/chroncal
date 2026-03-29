@@ -967,6 +967,9 @@ func parseAlarmFlags(flags []string) ([]model.Alarm, error) {
 		if err != nil {
 			return nil, err
 		}
+		if a.Action == "EMAIL" && len(a.Attendees) == 0 {
+			fmt.Fprintf(os.Stderr, "tcal: warning: EMAIL alarm has no attendees (RFC 5545 requires at least one; alarm will behave as DISPLAY)\n")
+		}
 		out = append(out, a)
 	}
 	return out, nil
