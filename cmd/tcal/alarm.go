@@ -189,14 +189,34 @@ func alarmListCmd() *cobra.Command {
 		Short: "List fired but unacknowledged alarms",
 		Long: `Show all alarms that have fired but have not been dismissed.
 
-Each entry includes a state ID that can be passed to "alarm dismiss" or
-"alarm snooze". Snoozed alarms remain in the list with their snooze-until
-time shown.`,
+Alarms enter this list when "tcal alarm check" (or "tcal alarm daemon")
+detects that an alarm's trigger time has passed and fires a notification.
+Once fired, an alarm stays in the pending list until you dismiss it.
+
+Text output columns:
+  [ID]  TRIGGER_TIME  ACTION  EVENT_TITLE  (snoozed to HH:MM)
+
+  ID           — state ID, used with "alarm dismiss" and "alarm snooze"
+  TRIGGER_TIME — when the alarm fired (local time)
+  ACTION       — DISPLAY, EMAIL, or AUDIO
+  EVENT_TITLE  — the event this alarm belongs to
+  snoozed      — shown only for snoozed alarms, with the snooze-until time
+
+JSON output fields (-o json):
+  id, alarm_id, event_id, event, action, trigger_at, fired_at, snoozed_to
+
+Dismissed alarms are permanently removed from this list.`,
 		Example: `  # List pending alarms
   tcal alarm list
 
   # List as JSON (useful for scripts)
-  tcal alarm list -o json`,
+  tcal alarm list -o json
+
+  # Typical workflow: check for due alarms, review, then act
+  tcal alarm check          # fire any due alarms
+  tcal alarm list           # see what fired
+  tcal alarm dismiss 5      # clear alarm state #5
+  tcal alarm snooze 3       # remind again in 15 minutes`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
