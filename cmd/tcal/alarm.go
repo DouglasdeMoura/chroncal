@@ -130,8 +130,15 @@ and exits 0.`,
 					continue
 				}
 
-				if markErr := a.Alarms.MarkFired(ctx, da); markErr != nil {
-					fmt.Fprintf(os.Stderr, "tcal: mark-fired error: event=%q: %v\n", da.Event.Title, markErr)
+				if da.StateID != 0 {
+					// Re-fired snoozed alarm: update the existing state row.
+					if markErr := a.Alarms.MarkRefired(ctx, da.StateID); markErr != nil {
+						fmt.Fprintf(os.Stderr, "tcal: mark-refired error: event=%q: %v\n", da.Event.Title, markErr)
+					}
+				} else {
+					if markErr := a.Alarms.MarkFired(ctx, da); markErr != nil {
+						fmt.Fprintf(os.Stderr, "tcal: mark-fired error: event=%q: %v\n", da.Event.Title, markErr)
+					}
 				}
 
 				if outputFmt != "text" {
@@ -386,8 +393,14 @@ For production use, prefer a systemd timer or cron job that runs
 						continue
 					}
 
-					if markErr := a.Alarms.MarkFired(ctx, da); markErr != nil {
-						fmt.Fprintf(os.Stderr, "tcal: mark-fired error: event=%q: %v\n", da.Event.Title, markErr)
+					if da.StateID != 0 {
+						if markErr := a.Alarms.MarkRefired(ctx, da.StateID); markErr != nil {
+							fmt.Fprintf(os.Stderr, "tcal: mark-refired error: event=%q: %v\n", da.Event.Title, markErr)
+						}
+					} else {
+						if markErr := a.Alarms.MarkFired(ctx, da); markErr != nil {
+							fmt.Fprintf(os.Stderr, "tcal: mark-fired error: event=%q: %v\n", da.Event.Title, markErr)
+						}
 					}
 
 					fmt.Fprintf(w, "%s\t%s\t%s\n", da.TriggerAt.Local().Format("15:04"), da.Alarm.Action, da.Event.Title)

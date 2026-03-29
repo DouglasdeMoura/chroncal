@@ -89,12 +89,71 @@ func (q *Queries) GetAlarmState(ctx context.Context, arg GetAlarmStateParams) (A
 	return i, err
 }
 
+const getAlarmStateByID = `-- name: GetAlarmStateByID :one
+SELECT id, alarm_id, event_id, trigger_at, fired_at, acked_at, snoozed_to FROM alarm_state WHERE id = ?
+`
+
+func (q *Queries) GetAlarmStateByID(ctx context.Context, id int64) (AlarmState, error) {
+	row := q.db.QueryRowContext(ctx, getAlarmStateByID, id)
+	var i AlarmState
+	err := row.Scan(
+		&i.ID,
+		&i.AlarmID,
+		&i.EventID,
+		&i.TriggerAt,
+		&i.FiredAt,
+		&i.AckedAt,
+		&i.SnoozedTo,
+	)
+	return i, err
+}
+
 const listAlarmStatesByEventID = `-- name: ListAlarmStatesByEventID :many
 SELECT id, alarm_id, event_id, trigger_at, fired_at, acked_at, snoozed_to FROM alarm_state WHERE event_id = ? ORDER BY trigger_at
 `
 
 func (q *Queries) ListAlarmStatesByEventID(ctx context.Context, eventID int64) ([]AlarmState, error) {
 	rows, err := q.db.QueryContext(ctx, listAlarmStatesByEventID, eventID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AlarmState
+	for rows.Next() {
+		var i AlarmState
+		if err := rows.Scan(
+			&i.ID,
+			&i.AlarmID,
+			&i.EventID,
+			&i.TriggerAt,
+			&i.FiredAt,
+			&i.AckedAt,
+			&i.SnoozedTo,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listExpiredSnoozedAlarmStates = `-- name: ListExpiredSnoozedAlarmStates :many
+SELECT id, alarm_id, event_id, trigger_at, fired_at, acked_at, snoozed_to FROM alarm_state
+WHERE fired_at IS NOT NULL
+  AND acked_at IS NULL
+  AND snoozed_to IS NOT NULL
+  AND snoozed_to <= ?
+ORDER BY snoozed_to
+`
+
+func (q *Queries) ListExpiredSnoozedAlarmStates(ctx context.Context, snoozedTo sql.NullString) ([]AlarmState, error) {
+	rows, err := q.db.QueryContext(ctx, listExpiredSnoozedAlarmStates, snoozedTo)
 	if err != nil {
 		return nil, err
 	}
@@ -157,6 +216,20 @@ func (q *Queries) ListPendingAlarmStates(ctx context.Context) ([]AlarmState, err
 		return nil, err
 	}
 	return items, nil
+}
+
+const refireAlarmState = `-- name: RefireAlarmState :exec
+UPDATE alarm_state SET fired_at = ?, snoozed_to = NULL WHERE id = ?
+`
+
+type RefireAlarmStateParams struct {
+	FiredAt sql.NullString
+	ID      int64
+}
+
+func (q *Queries) RefireAlarmState(ctx context.Context, arg RefireAlarmStateParams) error {
+	_, err := q.db.ExecContext(ctx, refireAlarmState, arg.FiredAt, arg.ID)
+	return err
 }
 
 const snoozeAlarmState = `-- name: SnoozeAlarmState :exec

@@ -164,6 +164,116 @@ func TestCheck_SkipsStaleAlarm(t *testing.T) {
 	}
 }
 
+func TestCheck_RefiresSnoozedAlarm(t *testing.T) {
+	svc, evtSvc := newTestServices(t)
+	ctx := context.Background()
+
+	// Event starts in 10 minutes; alarm at -PT15M triggers 5 min ago.
+	start := time.Now().Add(10 * time.Minute)
+	e, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "Snoozed Refire",
+		StartTime:  start,
+		EndTime:    start.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT15M"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Fire the alarm
+	due, err := svc.Check(ctx, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 1 {
+		t.Fatalf("step 1: got %d, want 1", len(due))
+	}
+	if err := svc.MarkFired(ctx, due[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	// Snooze for 1 second in the past (already expired)
+	pending, _ := svc.ListPending(ctx)
+	pastSnooze := time.Now().Add(-1 * time.Second)
+	if err := svc.Snooze(ctx, pending[0].ID, pastSnooze); err != nil {
+		t.Fatal(err)
+	}
+
+	// Check should re-fire the snoozed alarm
+	due, err = svc.Check(ctx, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 1 {
+		t.Fatalf("step 3: got %d, want 1 (snoozed refire)", len(due))
+	}
+	if due[0].StateID == 0 {
+		t.Error("re-fired alarm should have non-zero StateID")
+	}
+
+	// MarkRefired clears snoozed_to
+	if err := svc.MarkRefired(ctx, due[0].StateID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Check again: no expired snoozes, no fresh alarms (already has state row)
+	due, err = svc.Check(ctx, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 0 {
+		t.Fatalf("step 4: got %d, want 0 (refired, no more snooze)", len(due))
+	}
+}
+
+func TestCheck_SkipsActiveSnoozedAlarm(t *testing.T) {
+	svc, evtSvc := newTestServices(t)
+	ctx := context.Background()
+
+	start := time.Now().Add(10 * time.Minute)
+	e, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "Active Snooze",
+		StartTime:  start,
+		EndTime:    start.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT15M"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Fire and snooze into the future
+	due, _ := svc.Check(ctx, time.Now())
+	if err := svc.MarkFired(ctx, due[0]); err != nil {
+		t.Fatal(err)
+	}
+	pending, _ := svc.ListPending(ctx)
+	futureSnooze := time.Now().Add(1 * time.Hour)
+	if err := svc.Snooze(ctx, pending[0].ID, futureSnooze); err != nil {
+		t.Fatal(err)
+	}
+
+	// Check: alarm is snoozed into the future, should NOT re-fire
+	due, err = svc.Check(ctx, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 0 {
+		t.Fatalf("got %d, want 0 (snooze not expired yet)", len(due))
+	}
+}
+
 func TestCheck_RelatedEnd(t *testing.T) {
 	svc, evtSvc := newTestServices(t)
 	ctx := context.Background()

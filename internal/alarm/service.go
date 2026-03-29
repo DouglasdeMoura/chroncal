@@ -20,6 +20,7 @@ type DueAlarm struct {
 	Event     event.Event
 	Alarm     model.Alarm
 	TriggerAt time.Time
+	StateID   int64 // non-zero for re-fired snoozed alarms
 }
 
 type Service struct {
@@ -37,6 +38,8 @@ func NewService(db *sql.DB, q *storage.Queries, events *event.Service) *Service 
 //   - trigger_at <= now (the alarm time has passed)
 //   - trigger_at > now - StaleThreshold (not too old)
 //   - no alarm_state row exists with fired_at set for this alarm+trigger
+//
+// It also returns snoozed alarms whose snooze-until time has expired.
 func (s *Service) Check(ctx context.Context, now time.Time) ([]DueAlarm, error) {
 	// Query events with alarms in a generous window around now.
 	// We look from (now - StaleThreshold - 24h) to (now + StaleThreshold + 24h) for start times,
@@ -50,6 +53,8 @@ func (s *Service) Check(ctx context.Context, now time.Time) ([]DueAlarm, error) 
 	}
 
 	var due []DueAlarm
+
+	// 1. Fresh alarms that haven't fired yet.
 	for _, evt := range events {
 		alarms, err := s.events.ListAlarms(ctx, evt.ID)
 		if err != nil {
@@ -84,6 +89,58 @@ func (s *Service) Check(ctx context.Context, now time.Time) ([]DueAlarm, error) 
 			})
 		}
 	}
+
+	// 2. Snoozed alarms whose snooze-until time has expired.
+	snoozed, err := s.ListExpiredSnoozed(ctx, now)
+	if err != nil {
+		return nil, fmt.Errorf("list expired snoozed alarms: %w", err)
+	}
+	due = append(due, snoozed...)
+
+	return due, nil
+}
+
+// ListExpiredSnoozed returns snoozed alarms whose snooze-until time is at or
+// before now. The caller should re-fire and mark them via MarkRefired.
+func (s *Service) ListExpiredSnoozed(ctx context.Context, now time.Time) ([]DueAlarm, error) {
+	states, err := s.q.ListExpiredSnoozedAlarmStates(ctx, sql.NullString{
+		String: now.UTC().Format(time.RFC3339),
+		Valid:  true,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var due []DueAlarm
+	for _, st := range states {
+		evt, err := s.events.Get(ctx, st.EventID)
+		if err != nil {
+			continue // event may have been deleted
+		}
+		alarms, err := s.events.ListAlarms(ctx, evt.ID)
+		if err != nil {
+			continue
+		}
+		var matched model.Alarm
+		for _, a := range alarms {
+			if a.ID == st.AlarmID {
+				matched = a
+				break
+			}
+		}
+		if matched.ID == 0 {
+			continue // alarm definition was removed
+		}
+
+		triggerAt, _ := time.Parse(time.RFC3339, st.SnoozedTo.String)
+
+		due = append(due, DueAlarm{
+			Event:     evt,
+			Alarm:     matched,
+			TriggerAt: triggerAt,
+			StateID:   st.ID,
+		})
+	}
 	return due, nil
 }
 
@@ -104,6 +161,15 @@ func (s *Service) Dismiss(ctx context.Context, stateID int64) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	return s.q.AcknowledgeAlarmState(ctx, storage.AcknowledgeAlarmStateParams{
 		AckedAt: sql.NullString{String: now, Valid: true},
+		ID:      stateID,
+	})
+}
+
+// MarkRefired updates a snoozed alarm's fired_at and clears snoozed_to.
+func (s *Service) MarkRefired(ctx context.Context, stateID int64) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	return s.q.RefireAlarmState(ctx, storage.RefireAlarmStateParams{
+		FiredAt: sql.NullString{String: now, Valid: true},
 		ID:      stateID,
 	})
 }

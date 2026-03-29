@@ -155,4 +155,42 @@ func TestAlarmLifecycle_Snooze(t *testing.T) {
 	if !pending[0].SnoozedTo.Valid {
 		t.Fatal("step 6: SnoozedTo should be set after snooze, but Valid is false")
 	}
+
+	// 7. Wait for snooze to "expire" by snoozing into the past
+	expiredSnooze := time.Now().Add(-1 * time.Second)
+	err = svc.Snooze(ctx, pending[0].ID, expiredSnooze)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 8. Check again -- snoozed alarm should re-fire
+	due, err = svc.Check(ctx, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 1 {
+		t.Fatalf("step 8: got %d due alarms, want 1 (snoozed refire)", len(due))
+	}
+	if due[0].StateID == 0 {
+		t.Fatal("step 8: re-fired alarm should have non-zero StateID")
+	}
+
+	// 9. MarkRefired and dismiss
+	err = svc.MarkRefired(ctx, due[0].StateID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = svc.Dismiss(ctx, due[0].StateID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 10. ListPending should return 0
+	pending, err = svc.ListPending(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("step 10: got %d pending alarms, want 0", len(pending))
+	}
 }
