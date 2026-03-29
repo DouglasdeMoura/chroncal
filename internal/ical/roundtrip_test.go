@@ -345,6 +345,82 @@ func TestRoundtrip_TodoWithAttendees(t *testing.T) {
 	}
 }
 
+func TestRoundtrip_TodoWithTimezone(t *testing.T) {
+	t.Parallel()
+	original := todo.Todo{
+		UID:       "roundtrip-todo-tz",
+		Summary:   "Timezone Todo",
+		DueDate:   "2026-04-05T21:00:00Z",
+		StartDate: "2026-04-01T13:00:00Z",
+		Timezone:  "America/New_York",
+		Status:    "NEEDS-ACTION",
+		CreatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+		UpdatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+	}
+
+	data, err := ExportTodos([]todo.Todo{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	ics := string(data)
+	if !strings.Contains(ics, "BEGIN:VTIMEZONE") {
+		t.Error("ICS missing VTIMEZONE component")
+	}
+	if !strings.Contains(ics, "TZID:America/New_York") {
+		t.Error("ICS missing TZID:America/New_York")
+	}
+	if !strings.Contains(ics, "TZID=America/New_York") {
+		t.Errorf("ICS missing TZID parameter on DUE or DTSTART:\n%s", ics)
+	}
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Todos) != 1 {
+		t.Fatalf("reimported %d todos", len(result.Todos))
+	}
+	got := result.Todos[0]
+	if got.Timezone != original.Timezone {
+		t.Errorf("Timezone: %q != %q", got.Timezone, original.Timezone)
+	}
+}
+
+func TestRoundtrip_TodoWithGeo(t *testing.T) {
+	t.Parallel()
+	original := todo.Todo{
+		UID:       "roundtrip-todo-geo",
+		Summary:   "Geo Todo",
+		Status:    "NEEDS-ACTION",
+		Geo:       "37.386013;-122.082932",
+		CreatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+		UpdatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+	}
+
+	data, err := ExportTodos([]todo.Todo{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	ics := string(data)
+	if !strings.Contains(ics, "GEO:37.386013;-122.082932") {
+		t.Errorf("ICS missing GEO property:\n%s", ics)
+	}
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Todos) != 1 {
+		t.Fatalf("reimported %d todos", len(result.Todos))
+	}
+	got := result.Todos[0]
+	if got.Geo != original.Geo {
+		t.Errorf("Geo: %q != %q", got.Geo, original.Geo)
+	}
+}
+
 func TestRoundtrip_TodoStartDuration(t *testing.T) {
 	t.Parallel()
 	original := todo.Todo{

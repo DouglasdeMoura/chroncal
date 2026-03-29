@@ -235,6 +235,17 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 		cal.Props.SetText("X-WR-CALNAME", calName)
 	}
 
+	// Emit VTIMEZONE components for all referenced timezones.
+	seen := make(map[string]bool)
+	for _, t := range todos {
+		if t.Timezone != "" && !seen[t.Timezone] {
+			seen[t.Timezone] = true
+			if vtz, err := buildVTimezone(t.Timezone); err == nil {
+				cal.Children = append(cal.Children, vtz)
+			}
+		}
+	}
+
 	for _, t := range todos {
 		vtodo := ical.NewComponent(ical.CompToDo)
 
@@ -248,19 +259,41 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 			vtodo.Props.SetText(ical.PropLocation, t.Location)
 		}
 
-		// DUE or DTSTART+DURATION
+		// DUE or DTSTART+DURATION (with optional timezone)
 		if t.DueDate != "" {
 			if d, err := time.Parse("2006-01-02", t.DueDate); err == nil {
 				vtodo.Props.SetDate(ical.PropDue, d)
 			} else if due, err := time.Parse(time.RFC3339, t.DueDate); err == nil {
-				vtodo.Props.SetDateTime(ical.PropDue, due.UTC())
+				if t.Timezone != "" {
+					if loc, lerr := time.LoadLocation(t.Timezone); lerr == nil {
+						vtodo.Props.SetDateTime(ical.PropDue, due.In(loc))
+						if p := vtodo.Props.Get(ical.PropDue); p != nil {
+							p.Params.Set(ical.ParamTimezoneID, t.Timezone)
+						}
+					} else {
+						vtodo.Props.SetDateTime(ical.PropDue, due.UTC())
+					}
+				} else {
+					vtodo.Props.SetDateTime(ical.PropDue, due.UTC())
+				}
 			}
 		}
 		if t.StartDate != "" {
 			if d, err := time.Parse("2006-01-02", t.StartDate); err == nil {
 				vtodo.Props.SetDate(ical.PropDateTimeStart, d)
 			} else if start, err := time.Parse(time.RFC3339, t.StartDate); err == nil {
-				vtodo.Props.SetDateTime(ical.PropDateTimeStart, start.UTC())
+				if t.Timezone != "" {
+					if loc, lerr := time.LoadLocation(t.Timezone); lerr == nil {
+						vtodo.Props.SetDateTime(ical.PropDateTimeStart, start.In(loc))
+						if p := vtodo.Props.Get(ical.PropDateTimeStart); p != nil {
+							p.Params.Set(ical.ParamTimezoneID, t.Timezone)
+						}
+					} else {
+						vtodo.Props.SetDateTime(ical.PropDateTimeStart, start.UTC())
+					}
+				} else {
+					vtodo.Props.SetDateTime(ical.PropDateTimeStart, start.UTC())
+				}
 			}
 		}
 		if t.Duration != "" {
