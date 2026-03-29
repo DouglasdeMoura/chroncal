@@ -271,23 +271,30 @@ later.`,
 
 func alarmSnoozeCmd() *cobra.Command {
 	var forDur string
+	var untilStart bool
 	cmd := &cobra.Command{
 		Use:   "snooze <state-id>",
 		Short: "Snooze a fired alarm",
 		Long: `Postpone a fired alarm so it can fire again after a delay.
 
+The snooze time is bounded by the event timeline: if the requested
+duration would place the reminder after the event ends, it is
+automatically capped to the event's end time. A warning is shown if
+the reminder will fire after the event has already started.
+
+Use --until-start to snooze until the moment the event begins.
+
 The alarm remains in the pending list (shown by "alarm list") with the
 snooze-until time recorded. When "alarm check" runs after the snooze
-expires, the alarm may fire again (subject to the 24-hour stale
-threshold). The default snooze duration is 15 minutes.`,
+expires, the alarm fires again.`,
 		Example: `  # Snooze for the default 15 minutes
   tcal alarm snooze 5
 
   # Snooze for 1 hour
   tcal alarm snooze 5 --for 1h
 
-  # Snooze for 30 minutes
-  tcal alarm snooze 5 --for 30m`,
+  # Snooze until the event starts
+  tcal alarm snooze 5 --until-start`,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
@@ -301,29 +308,54 @@ threshold). The default snooze duration is 15 minutes.`,
 				return fmt.Errorf("invalid state ID: %w", err)
 			}
 
-			dur, err := time.ParseDuration(forDur)
-			if err != nil {
-				return fmt.Errorf("parse --for duration: %w", err)
+			ctx := context.Background()
+			w := cmd.OutOrStdout()
+
+			var res alarm.SnoozeResult
+			if untilStart {
+				res, err = a.Alarms.SnoozeUntilStart(ctx, stateID)
+				if err != nil {
+					return fmt.Errorf("snooze until start: %w", err)
+				}
+			} else {
+				dur, err := time.ParseDuration(forDur)
+				if err != nil {
+					return fmt.Errorf("parse --for duration: %w", err)
+				}
+				res, err = a.Alarms.ComputeSnooze(ctx, stateID, dur)
+				if err != nil {
+					return fmt.Errorf("compute snooze: %w", err)
+				}
 			}
 
-			until := time.Now().Add(dur)
-			if err := a.Alarms.Snooze(context.Background(), stateID, until); err != nil {
+			if err := a.Alarms.Snooze(ctx, stateID, res.Until); err != nil {
 				return fmt.Errorf("snooze alarm: %w", err)
 			}
 
-			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
 				return printOutput(w, map[string]any{
-					"snoozed": true,
-					"id":      stateID,
-					"until":   until.Format(time.RFC3339),
+					"snoozed":    true,
+					"id":         stateID,
+					"until":      res.Until.Format(time.RFC3339),
+					"capped":     res.Capped,
+					"past_start": res.PastStart,
 				})
 			}
-			fmt.Fprintf(w, "Snoozed alarm state %d until %s.\n", stateID, until.Local().Format("15:04"))
+
+			if res.Capped {
+				fmt.Fprintf(os.Stderr, "tcal: snooze capped at event end (%s)\n",
+					res.EventEnd.Local().Format("15:04"))
+			} else if res.PastStart {
+				fmt.Fprintf(os.Stderr, "tcal: note: alarm will fire after event starts (%s)\n",
+					res.EventStart.Local().Format("15:04"))
+			}
+			fmt.Fprintf(w, "Snoozed alarm state %d until %s.\n", stateID, res.Until.Local().Format("15:04"))
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&forDur, "for", "15m", "snooze duration (e.g. 15m, 1h)")
+	cmd.Flags().BoolVar(&untilStart, "until-start", false, "snooze until the event starts")
+	cmd.MarkFlagsMutuallyExclusive("for", "until-start")
 	return cmd
 }
 

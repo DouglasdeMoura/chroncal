@@ -174,7 +174,75 @@ func (s *Service) MarkRefired(ctx context.Context, stateID int64) error {
 	})
 }
 
-// Snooze reschedules a fired alarm to fire again after the given duration.
+// SnoozeResult describes what happened when computing a snooze time.
+type SnoozeResult struct {
+	Until      time.Time
+	Capped     bool   // true if the snooze was capped at event end
+	PastStart  bool   // true if the snooze fires after event start
+	EventStart time.Time
+	EventEnd   time.Time
+}
+
+// ComputeSnooze calculates the snooze-until time, capped at event end.
+// It returns metadata about the computation so the CLI can display warnings.
+func (s *Service) ComputeSnooze(ctx context.Context, stateID int64, dur time.Duration) (SnoozeResult, error) {
+	st, err := s.q.GetAlarmStateByID(ctx, stateID)
+	if err != nil {
+		return SnoozeResult{}, fmt.Errorf("get alarm state %d: %w", stateID, err)
+	}
+	evt, err := s.events.Get(ctx, st.EventID)
+	if err != nil {
+		return SnoozeResult{}, fmt.Errorf("get event %d: %w", st.EventID, err)
+	}
+
+	now := time.Now()
+	until := now.Add(dur)
+
+	res := SnoozeResult{
+		Until:      until,
+		EventStart: evt.StartTime,
+		EventEnd:   evt.EndTime,
+	}
+
+	// Cap at event end — no point snoozing past when the event is over.
+	if until.After(evt.EndTime) {
+		res.Until = evt.EndTime
+		res.Capped = true
+	}
+
+	// Note if the snooze fires after the event has started.
+	if res.Until.After(evt.StartTime) {
+		res.PastStart = true
+	}
+
+	return res, nil
+}
+
+// SnoozeUntilStart snoozes an alarm to fire at the event's start time.
+func (s *Service) SnoozeUntilStart(ctx context.Context, stateID int64) (SnoozeResult, error) {
+	st, err := s.q.GetAlarmStateByID(ctx, stateID)
+	if err != nil {
+		return SnoozeResult{}, fmt.Errorf("get alarm state %d: %w", stateID, err)
+	}
+	evt, err := s.events.Get(ctx, st.EventID)
+	if err != nil {
+		return SnoozeResult{}, fmt.Errorf("get event %d: %w", st.EventID, err)
+	}
+
+	now := time.Now()
+	if now.After(evt.StartTime) {
+		return SnoozeResult{}, fmt.Errorf("event %q has already started", evt.Title)
+	}
+
+	res := SnoozeResult{
+		Until:      evt.StartTime,
+		EventStart: evt.StartTime,
+		EventEnd:   evt.EndTime,
+	}
+	return res, nil
+}
+
+// Snooze reschedules a fired alarm to fire again at the given time.
 func (s *Service) Snooze(ctx context.Context, stateID int64, until time.Time) error {
 	return s.q.SnoozeAlarmState(ctx, storage.SnoozeAlarmStateParams{
 		SnoozedTo: sql.NullString{String: until.UTC().Format(time.RFC3339), Valid: true},

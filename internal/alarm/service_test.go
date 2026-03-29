@@ -274,6 +274,179 @@ func TestCheck_SkipsActiveSnoozedAlarm(t *testing.T) {
 	}
 }
 
+func TestComputeSnooze_CapsAtEventEnd(t *testing.T) {
+	svc, evtSvc := newTestServices(t)
+	ctx := context.Background()
+
+	// Event starts in 10 min, ends in 70 min. Alarm at -PT15M (fires 5 min ago).
+	start := time.Now().Add(10 * time.Minute)
+	e, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "Cap Test",
+		StartTime:  start,
+		EndTime:    start.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT15M"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Fire and mark
+	due, _ := svc.Check(ctx, time.Now())
+	if err := svc.MarkFired(ctx, due[0]); err != nil {
+		t.Fatal(err)
+	}
+	pending, _ := svc.ListPending(ctx)
+	stateID := pending[0].ID
+
+	// Snooze for 24 hours -- should be capped at event end (~70 min from now)
+	res, err := svc.ComputeSnooze(ctx, stateID, 24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Capped {
+		t.Error("expected Capped=true when snooze exceeds event end")
+	}
+	if !res.PastStart {
+		t.Error("expected PastStart=true when capped to event end (which is after start)")
+	}
+	// The capped time should be approximately equal to event end
+	if diff := res.Until.Sub(start.Add(time.Hour)); diff < -time.Second || diff > time.Second {
+		t.Errorf("capped until=%v, want ~%v (event end)", res.Until, start.Add(time.Hour))
+	}
+}
+
+func TestComputeSnooze_WarnsPastStart(t *testing.T) {
+	svc, evtSvc := newTestServices(t)
+	ctx := context.Background()
+
+	// Event starts in 5 min, ends in 65 min. Alarm at -PT15M (fires 10 min ago).
+	start := time.Now().Add(5 * time.Minute)
+	e, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "PastStart Test",
+		StartTime:  start,
+		EndTime:    start.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT15M"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	due, _ := svc.Check(ctx, time.Now())
+	if err := svc.MarkFired(ctx, due[0]); err != nil {
+		t.Fatal(err)
+	}
+	pending, _ := svc.ListPending(ctx)
+	stateID := pending[0].ID
+
+	// Snooze for 10 minutes -- fires 5 min after event starts
+	res, err := svc.ComputeSnooze(ctx, stateID, 10*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.PastStart {
+		t.Error("expected PastStart=true when snooze fires after event start")
+	}
+	if res.Capped {
+		t.Error("expected Capped=false when snooze is within event end")
+	}
+}
+
+func TestSnoozeUntilStart(t *testing.T) {
+	svc, evtSvc := newTestServices(t)
+	ctx := context.Background()
+
+	// Event starts in 10 min. Alarm at -PT15M fires 5 min ago.
+	start := time.Now().Add(10 * time.Minute)
+	e, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "UntilStart Test",
+		StartTime:  start,
+		EndTime:    start.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT15M"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	due, _ := svc.Check(ctx, time.Now())
+	if err := svc.MarkFired(ctx, due[0]); err != nil {
+		t.Fatal(err)
+	}
+	pending, _ := svc.ListPending(ctx)
+	stateID := pending[0].ID
+
+	res, err := svc.SnoozeUntilStart(ctx, stateID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Until should be approximately event start
+	if diff := res.Until.Sub(start); diff < -time.Second || diff > time.Second {
+		t.Errorf("until=%v, want ~%v (event start)", res.Until, start)
+	}
+}
+
+func TestSnoozeUntilStart_RejectsStartedEvent(t *testing.T) {
+	svc, evtSvc := newTestServices(t)
+	ctx := context.Background()
+
+	// Event started 10 min ago (alarm at -PT15M triggers 25 min ago, still within 24h stale threshold)
+	start := time.Now().Add(-10 * time.Minute)
+	e, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "Already Started",
+		StartTime:  start,
+		EndTime:    start.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT15M"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The alarm trigger was 25 min ago -- Check() should fire it
+	due, err := svc.Check(ctx, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 1 {
+		t.Fatalf("got %d due, want 1", len(due))
+	}
+	if err := svc.MarkFired(ctx, due[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	pending, _ := svc.ListPending(ctx)
+	if len(pending) == 0 {
+		t.Fatal("expected 1 pending alarm")
+	}
+
+	_, err = svc.SnoozeUntilStart(ctx, pending[0].ID)
+	if err == nil {
+		t.Error("expected error when event has already started")
+	}
+}
+
 func TestCheck_RelatedEnd(t *testing.T) {
 	svc, evtSvc := newTestServices(t)
 	ctx := context.Background()
