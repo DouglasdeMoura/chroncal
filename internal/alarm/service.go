@@ -160,7 +160,15 @@ func (s *Service) MarkFired(ctx context.Context, da DueAlarm) error {
 }
 
 // Dismiss acknowledges a fired alarm so it won't show as pending.
+// Returns an error if the state ID does not exist or is already dismissed.
 func (s *Service) Dismiss(ctx context.Context, stateID int64) error {
+	st, err := s.q.GetAlarmStateByID(ctx, stateID)
+	if err != nil {
+		return fmt.Errorf("alarm state %d not found", stateID)
+	}
+	if st.AckedAt.Valid {
+		return fmt.Errorf("alarm state %d already dismissed", stateID)
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	return s.q.AcknowledgeAlarmState(ctx, storage.AcknowledgeAlarmStateParams{
 		AckedAt: sql.NullString{String: now, Valid: true},
