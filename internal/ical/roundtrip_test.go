@@ -1043,6 +1043,41 @@ func TestRoundtrip_EventWithResources(t *testing.T) {
 	}
 }
 
+func TestRoundtrip_TodoWithContacts(t *testing.T) {
+	t.Parallel()
+	original := todo.Todo{
+		UID:       "roundtrip-todo-contacts",
+		Summary:   "Contacts Todo",
+		Status:    "NEEDS-ACTION",
+		Contacts:  []string{"John Smith, 555-1234", "Support: support@example.com"},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	data, err := ExportTodos([]todo.Todo{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	result, err := ImportFile(strings.NewReader(string(data)))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Todos) != 1 {
+		t.Fatalf("reimported %d todos", len(result.Todos))
+	}
+	got := result.Todos[0]
+
+	if len(got.Contacts) != 2 {
+		t.Fatalf("Contacts count: %d, want 2 (got %v)", len(got.Contacts), got.Contacts)
+	}
+	for i, want := range original.Contacts {
+		if got.Contacts[i] != want {
+			t.Errorf("Contact[%d]: %q, want %q", i, got.Contacts[i], want)
+		}
+	}
+}
+
 func TestRoundtrip_TodoWithResources(t *testing.T) {
 	t.Parallel()
 	original := todo.Todo{
