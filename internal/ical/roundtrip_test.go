@@ -294,6 +294,57 @@ func TestRoundtrip_TodoWithCompletedAt(t *testing.T) {
 	}
 }
 
+func TestRoundtrip_TodoWithAttendees(t *testing.T) {
+	t.Parallel()
+	original := todo.Todo{
+		UID:     "roundtrip-todo-attendees",
+		Summary: "Todo with attendees",
+		Status:  "NEEDS-ACTION",
+		Attendees: []model.Attendee{
+			{Email: "org@test.com", Name: "Org", RSVPStatus: "ACCEPTED", Role: "CHAIR", Organizer: true},
+			{Email: "user@test.com", Name: "User", RSVPStatus: "NEEDS-ACTION", Role: "REQ-PARTICIPANT"},
+		},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	data, err := ExportTodos([]todo.Todo{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	ics := string(data)
+	if !strings.Contains(ics, "ORGANIZER") {
+		t.Fatal("ICS missing ORGANIZER property")
+	}
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Todos) != 1 {
+		t.Fatalf("reimported %d todos", len(result.Todos))
+	}
+	got := result.Todos[0]
+
+	if len(got.Attendees) != 2 {
+		t.Fatalf("Attendees: %d, want 2", len(got.Attendees))
+	}
+
+	var foundOrganizer bool
+	for _, a := range got.Attendees {
+		if a.Organizer {
+			foundOrganizer = true
+			if a.Email != "org@test.com" {
+				t.Errorf("Organizer email: %q, want org@test.com", a.Email)
+			}
+		}
+	}
+	if !foundOrganizer {
+		t.Error("No attendee has Organizer=true after roundtrip")
+	}
+}
+
 func TestRoundtrip_TodoStartDuration(t *testing.T) {
 	t.Parallel()
 	original := todo.Todo{
