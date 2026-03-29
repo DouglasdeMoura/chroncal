@@ -13,6 +13,7 @@ import (
 
 	"github.com/douglasdemoura/tcal/internal/alarm"
 	"github.com/douglasdemoura/tcal/internal/notify"
+	"github.com/douglasdemoura/tcal/internal/storage"
 )
 
 // fireAlarm dispatches the notification for a due alarm.
@@ -218,28 +219,61 @@ time shown.`,
 				return nil
 			}
 
+			// Enrich each state with event title and alarm action.
+			type pendingInfo struct {
+				State  storage.AlarmState
+				Title  string
+				Action string
+			}
+			var enriched []pendingInfo
+			for _, s := range pending {
+				info := pendingInfo{State: s, Title: fmt.Sprintf("event#%d", s.EventID)}
+				if evt, err := a.Events.Get(ctx, s.EventID); err == nil {
+					info.Title = evt.Title
+					if alarms, err := a.Events.ListAlarms(ctx, evt.ID); err == nil {
+						for _, al := range alarms {
+							if al.ID == s.AlarmID {
+								info.Action = al.Action
+								break
+							}
+						}
+					}
+				}
+				enriched = append(enriched, info)
+			}
+
 			if outputFmt != "text" {
 				var items []map[string]any
-				for _, s := range pending {
+				for _, p := range enriched {
 					items = append(items, map[string]any{
-						"id":         s.ID,
-						"alarm_id":   s.AlarmID,
-						"event_id":   s.EventID,
-						"trigger_at": s.TriggerAt,
-						"fired_at":   s.FiredAt.String,
-						"snoozed_to": s.SnoozedTo.String,
+						"id":         p.State.ID,
+						"alarm_id":   p.State.AlarmID,
+						"event_id":   p.State.EventID,
+						"event":      p.Title,
+						"action":     p.Action,
+						"trigger_at": p.State.TriggerAt,
+						"fired_at":   p.State.FiredAt.String,
+						"snoozed_to": p.State.SnoozedTo.String,
 					})
 				}
 				return printOutput(w, items)
 			}
 
-			for _, s := range pending {
-				snoozed := ""
-				if s.SnoozedTo.Valid {
-					snoozed = fmt.Sprintf(" (snoozed to %s)", s.SnoozedTo.String)
+			for _, p := range enriched {
+				triggerLocal := p.State.TriggerAt
+				if t, err := time.Parse(time.RFC3339, p.State.TriggerAt); err == nil {
+					triggerLocal = t.Local().Format("2006-01-02 15:04")
 				}
-				fmt.Fprintf(w, "  [%d] alarm=%d event=%d triggered=%s fired=%s%s\n",
-					s.ID, s.AlarmID, s.EventID, s.TriggerAt, s.FiredAt.String, snoozed)
+				snoozed := ""
+				if p.State.SnoozedTo.Valid {
+					snz := p.State.SnoozedTo.String
+					if t, err := time.Parse(time.RFC3339, snz); err == nil {
+						snz = t.Local().Format("15:04")
+					}
+					snoozed = fmt.Sprintf(" (snoozed to %s)", snz)
+				}
+				fmt.Fprintf(w, "  [%d] %s\t%s\t%s%s\n",
+					p.State.ID, triggerLocal, p.Action, p.Title, snoozed)
 			}
 			return nil
 		},
