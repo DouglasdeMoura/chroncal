@@ -533,7 +533,12 @@ func parseDateListFromProps(props ical.Props, propName string) string {
 				time.RFC3339,
 			} {
 				if t, err := time.Parse(layout, p); err == nil {
-					dates = append(dates, t.UTC().Format(time.RFC3339))
+					// Preserve date-only format for VALUE=DATE
+					if layout == "20060102" {
+						dates = append(dates, t.Format("2006-01-02"))
+					} else {
+						dates = append(dates, t.UTC().Format(time.RFC3339))
+					}
 					break
 				}
 			}

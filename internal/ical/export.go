@@ -473,6 +473,14 @@ func emitDateListOnComponent(comp *ical.Component, propName, dates string) {
 	}
 	for _, ds := range strings.Split(dates, ",") {
 		ds = strings.TrimSpace(ds)
+		// Date-only values (YYYY-MM-DD) → emit as VALUE=DATE
+		if t, err := time.Parse("2006-01-02", ds); err == nil {
+			prop := &ical.Prop{Name: propName, Params: make(ical.Params)}
+			prop.Params.Set("VALUE", "DATE")
+			prop.Value = t.Format("20060102")
+			comp.Props.Add(prop)
+			continue
+		}
 		if t, err := time.Parse(time.RFC3339, ds); err == nil {
 			prop := &ical.Prop{Name: propName, Params: make(ical.Params)}
 			prop.SetDateTime(t.UTC())

@@ -857,7 +857,13 @@ func parseDateFlags(flags []string, tz string, startTime time.Time) (string, err
 			stIn := startTime.In(loc)
 			t = time.Date(t.Year(), t.Month(), t.Day(), stIn.Hour(), stIn.Minute(), stIn.Second(), 0, loc)
 		}
-		out = append(out, t.UTC().Format(time.RFC3339))
+		// For date-only values with no start time (todos), preserve
+		// the date-only format so export emits VALUE=DATE correctly.
+		if dateOnly && startTime.IsZero() {
+			out = append(out, t.Format("2006-01-02"))
+		} else {
+			out = append(out, t.UTC().Format(time.RFC3339))
+		}
 	}
 	return strings.Join(out, ","), nil
 }

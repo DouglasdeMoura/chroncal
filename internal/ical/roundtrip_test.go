@@ -1170,3 +1170,51 @@ func TestRoundtrip_EventWithTimezone(t *testing.T) {
 		t.Errorf("StartTime UTC hour: %d, want 18 (2pm EDT)", got.StartTime.UTC().Hour())
 	}
 }
+
+func TestRoundtrip_TodoDateOnlyExdateRdate(t *testing.T) {
+	t.Parallel()
+	original := todo.Todo{
+		UID:            "roundtrip-todo-dateonly-exdate",
+		Summary:        "Date-only EXDATE/RDATE",
+		DueDate:        "2026-04-15",
+		StartDate:      "2026-04-01",
+		Status:         "IN-PROCESS",
+		RecurrenceRule: "FREQ=WEEKLY;COUNT=8",
+		ExDates:        "2026-04-08",
+		RDates:         "2026-05-01",
+		CreatedAt:      time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+		UpdatedAt:      time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+	}
+
+	data, err := ExportTodos([]todo.Todo{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	ics := string(data)
+	// Verify date-only EXDATE exports as VALUE=DATE
+	if !strings.Contains(ics, "EXDATE;VALUE=DATE:20260408") {
+		t.Errorf("expected EXDATE;VALUE=DATE:20260408, got:\n%s", ics)
+	}
+	// Verify date-only RDATE exports as VALUE=DATE
+	if !strings.Contains(ics, "RDATE;VALUE=DATE:20260501") {
+		t.Errorf("expected RDATE;VALUE=DATE:20260501, got:\n%s", ics)
+	}
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Todos) != 1 {
+		t.Fatalf("reimported %d todos", len(result.Todos))
+	}
+
+	got := result.Todos[0]
+	// Verify date-only format is preserved through roundtrip
+	if got.ExDates != "2026-04-08" {
+		t.Errorf("ExDates roundtrip: %q, want %q", got.ExDates, "2026-04-08")
+	}
+	if got.RDates != "2026-05-01" {
+		t.Errorf("RDates roundtrip: %q, want %q", got.RDates, "2026-05-01")
+	}
+}
