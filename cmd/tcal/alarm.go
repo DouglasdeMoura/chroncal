@@ -397,7 +397,9 @@ For production use, prefer a systemd timer or cron job that runs
   OnUnitActiveSec=30s
 
   [Service]
-  ExecStart=/usr/local/bin/tcal alarm check`,
+  ExecStart=/usr/local/bin/tcal alarm check
+
+See "tcal alarm check --help" for notification types and SMTP configuration.`,
 		Example: `  # Run with default 30-second interval
   tcal alarm daemon
 

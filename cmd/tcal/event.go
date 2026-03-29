@@ -1001,9 +1001,14 @@ func parseOneAlarm(val string) (model.Alarm, error) {
 
 	if !isDuration {
 		// Absolute trigger — no splitting on colons.
-		a.TriggerValue = rest
-		if err := validateAlarmTrigger(a.TriggerValue); err != nil {
+		if err := validateAlarmTrigger(rest); err != nil {
 			return model.Alarm{}, fmt.Errorf("alarm %q: %w", val, err)
+		}
+		// Normalize RFC 3339 to iCal UTC format for consistent storage.
+		if t, err := time.Parse(time.RFC3339, rest); err == nil {
+			a.TriggerValue = t.UTC().Format("20060102T150405Z")
+		} else {
+			a.TriggerValue = rest // Already iCal format or other valid form.
 		}
 		return a, nil
 	}
