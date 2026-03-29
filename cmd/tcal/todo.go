@@ -135,7 +135,43 @@ func todoAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   `add "<summary>"`,
 		Short: "Create a new todo",
-		Args:  cobra.ExactArgs(1),
+		Long: `Create a new todo in the calendar.
+
+Due and start dates are date-only (YYYY-MM-DD) and stored without a time
+component, so they export correctly as VALUE=DATE in iCal regardless of
+your timezone.
+
+Duration accepts Go format (1h30m) or RFC 5545 format (PT1H30M).
+Note: per RFC 5545, DUE and DURATION are mutually exclusive in a VTODO.
+
+Defaults: status=NEEDS-ACTION, class=PUBLIC, calendar=Personal.
+Attendees default to RSVP=NEEDS-ACTION and ROLE=REQ-PARTICIPANT.
+Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
+		Example: `  # Simple todo with due date
+  tcal todo add "Write quarterly report" --due 2026-04-15
+
+  # Todo with progress tracking and classification
+  tcal todo add "Review security audit" --due 2026-04-10 \
+    --status IN-PROCESS --progress 25 --class CONFIDENTIAL
+
+  # Recurring weekly todo with alarm
+  tcal todo add "Team standup prep" --due 2026-04-01 \
+    --rrule "FREQ=WEEKLY;BYDAY=MO" --alarm "-PT30M"
+
+  # Todo with attendee and organizer
+  tcal todo add "Review PR #42" --due 2026-04-05 \
+    --attendee "Alice <alice@example.com>" \
+    --organizer "Bob <bob@example.com>"
+
+  # Todo with categories, comment, and related task
+  tcal todo add "Deploy v2.0" --due 2026-04-20 \
+    --categories "release,ops" --comment "Needs QA sign-off" \
+    --related-to "PARENT:sprint-planning-uid"
+
+  # Todo with start date and estimated duration
+  tcal todo add "Database migration" --start 2026-04-10 \
+    --duration 4h --priority 1`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
