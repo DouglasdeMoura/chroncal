@@ -154,6 +154,20 @@ func (q *Queries) ListTodoAlarmsWithEmptyUID(ctx context.Context) ([]TodoAlarm, 
 	return items, nil
 }
 
+const updateTodoAlarmAcknowledged = `-- name: UpdateTodoAlarmAcknowledged :exec
+UPDATE todo_alarms SET acknowledged = ? WHERE id = ?
+`
+
+type UpdateTodoAlarmAcknowledgedParams struct {
+	Acknowledged string
+	ID           int64
+}
+
+func (q *Queries) UpdateTodoAlarmAcknowledged(ctx context.Context, arg UpdateTodoAlarmAcknowledgedParams) error {
+	_, err := q.db.ExecContext(ctx, updateTodoAlarmAcknowledged, arg.Acknowledged, arg.ID)
+	return err
+}
+
 const updateTodoAlarmUID = `-- name: UpdateTodoAlarmUID :exec
 UPDATE todo_alarms SET uid = ? WHERE id = ?
 `

@@ -24,8 +24,8 @@ type Alarm struct {
 }
 
 // ContentEqual returns true if two alarms have identical content (all fields
-// except ID, EventID, and UID). Used by ReplaceAlarms to match incoming
-// alarms against existing ones for merge-based updates.
+// except ID, EventID, UID, and Acknowledged). Used by ReplaceAlarms to match
+// incoming alarms against existing ones for merge-based updates.
 func (a Alarm) ContentEqual(b Alarm) bool {
 	if !strings.EqualFold(a.Action, b.Action) {
 		return false
@@ -95,6 +95,21 @@ func sortedEmails(atts []AlarmAttendee) []string {
 	}
 	sort.Strings(emails)
 	return emails
+}
+
+// ValidateAcknowledged returns true if v is a valid RFC 9074 ACKNOWLEDGED
+// value: empty string (clearing), iCal UTC datetime, or RFC 3339.
+func ValidateAcknowledged(v string) bool {
+	if v == "" {
+		return true
+	}
+	if _, err := time.Parse("20060102T150405Z", v); err == nil {
+		return true
+	}
+	if _, err := time.Parse(time.RFC3339, v); err == nil {
+		return true
+	}
+	return false
 }
 
 type AlarmAttendee struct {

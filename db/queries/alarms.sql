@@ -14,5 +14,8 @@ DELETE FROM event_alarms WHERE id = ?;
 -- name: UpdateAlarmUID :exec
 UPDATE event_alarms SET uid = ? WHERE id = ?;
 
+-- name: UpdateAlarmAcknowledged :exec
+UPDATE event_alarms SET acknowledged = ? WHERE id = ? AND event_id = ?;
+
 -- name: ListAlarmsWithEmptyUID :many
 SELECT * FROM event_alarms WHERE uid = '';

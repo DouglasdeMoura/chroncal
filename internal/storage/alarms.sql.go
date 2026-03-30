@@ -163,6 +163,21 @@ func (q *Queries) ListAlarmsWithEmptyUID(ctx context.Context) ([]EventAlarm, err
 	return items, nil
 }
 
+const updateAlarmAcknowledged = `-- name: UpdateAlarmAcknowledged :exec
+UPDATE event_alarms SET acknowledged = ? WHERE id = ? AND event_id = ?
+`
+
+type UpdateAlarmAcknowledgedParams struct {
+	Acknowledged string
+	ID           int64
+	EventID      int64
+}
+
+func (q *Queries) UpdateAlarmAcknowledged(ctx context.Context, arg UpdateAlarmAcknowledgedParams) error {
+	_, err := q.db.ExecContext(ctx, updateAlarmAcknowledged, arg.Acknowledged, arg.ID, arg.EventID)
+	return err
+}
+
 const updateAlarmUID = `-- name: UpdateAlarmUID :exec
 UPDATE event_alarms SET uid = ? WHERE id = ?
 `

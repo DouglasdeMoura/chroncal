@@ -359,6 +359,16 @@ func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []mod
 						return fmt.Errorf("backfill alarm uid: %w", err)
 					}
 				}
+				// Sync ACKNOWLEDGED if the incoming value differs (including clearing).
+				if a.Acknowledged != ex.Acknowledged && model.ValidateAcknowledged(a.Acknowledged) {
+					if err := qtx.UpdateAlarmAcknowledged(ctx, storage.UpdateAlarmAcknowledgedParams{
+						Acknowledged: a.Acknowledged,
+						ID:           ex.ID,
+						EventID:      eventID,
+					}); err != nil {
+						return fmt.Errorf("update alarm acknowledged: %w", err)
+					}
+				}
 				break
 			}
 		}

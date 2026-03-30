@@ -323,6 +323,62 @@ func TestReplaceAlarms_PreservesUnchangedDeletesRemoved(t *testing.T) {
 	_ = id5m // was deleted
 }
 
+func TestReplaceAlarms_SyncsAcknowledged(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	evtSvc := event.NewService(db, q)
+	ctx := context.Background()
+
+	start := time.Now().Add(10 * time.Minute)
+	e, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "Ack Test",
+		StartTime:  start,
+		EndTime:    start.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create alarm without Acknowledged
+	err = evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT15M"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	alarms1, err := evtSvc.ListAlarms(ctx, e.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alarms1[0].Acknowledged != "" {
+		t.Fatalf("expected empty acknowledged, got %q", alarms1[0].Acknowledged)
+	}
+	origID := alarms1[0].ID
+
+	// Re-import with Acknowledged set — should update existing row
+	ack := "2026-03-27T10:00:00Z"
+	err = evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT15M", Acknowledged: ack},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	alarms2, err := evtSvc.ListAlarms(ctx, e.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(alarms2) != 1 {
+		t.Fatalf("want 1 alarm, got %d", len(alarms2))
+	}
+	if alarms2[0].ID != origID {
+		t.Errorf("alarm row changed: got ID %d, want %d", alarms2[0].ID, origID)
+	}
+	if alarms2[0].Acknowledged != ack {
+		t.Errorf("acknowledged = %q, want %q", alarms2[0].Acknowledged, ack)
+	}
+}
+
 func TestReplaceAlarms_AssignsUID(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	evtSvc := event.NewService(db, q)

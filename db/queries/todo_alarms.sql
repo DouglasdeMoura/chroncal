@@ -13,3 +13,6 @@ SELECT * FROM todo_alarms WHERE uid = '';
 
 -- name: UpdateTodoAlarmUID :exec
 UPDATE todo_alarms SET uid = ? WHERE id = ?;
+
+-- name: UpdateTodoAlarmAcknowledged :exec
+UPDATE todo_alarms SET acknowledged = ? WHERE id = ?;
