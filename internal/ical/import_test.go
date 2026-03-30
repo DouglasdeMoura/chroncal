@@ -427,6 +427,160 @@ END:VCALENDAR`
 	}
 }
 
+func TestImport_SkippedComponentWarnings(t *testing.T) {
+	t.Parallel()
+	ics := `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//test//test//EN
+BEGIN:VTIMEZONE
+TZID:America/New_York
+BEGIN:STANDARD
+DTSTART:19701101T020000
+RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU
+TZOFFSETFROM:-0400
+TZOFFSETTO:-0500
+TZNAME:EST
+END:STANDARD
+END:VTIMEZONE
+BEGIN:VEVENT
+UID:evt-1
+DTSTAMP:20260401T100000Z
+DTSTART:20260401T140000Z
+DTEND:20260401T150000Z
+SUMMARY:Kept Event
+END:VEVENT
+BEGIN:VJOURNAL
+UID:journal-1
+DTSTAMP:20260401T100000Z
+SUMMARY:Journal Entry
+END:VJOURNAL
+BEGIN:VJOURNAL
+UID:journal-2
+DTSTAMP:20260401T100000Z
+SUMMARY:Another Journal
+END:VJOURNAL
+BEGIN:VFREEBUSY
+UID:fb-1
+DTSTAMP:20260401T100000Z
+DTSTART:20260401T000000Z
+DTEND:20260402T000000Z
+END:VFREEBUSY
+END:VCALENDAR`
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile error: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Errorf("events = %d, want 1", len(result.Events))
+	}
+	// VTIMEZONE should NOT produce a warning.
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "VTIMEZONE") {
+			t.Errorf("unexpected VTIMEZONE warning: %q", w)
+		}
+	}
+	// VJOURNAL(2) and VFREEBUSY(1) should produce warnings.
+	foundJournal, foundFreebusy := false, false
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "VJOURNAL") && strings.Contains(w, "2") {
+			foundJournal = true
+		}
+		if strings.Contains(w, "VFREEBUSY") && strings.Contains(w, "1") {
+			foundFreebusy = true
+		}
+	}
+	if !foundJournal {
+		t.Errorf("missing VJOURNAL warning; warnings = %v", result.Warnings)
+	}
+	if !foundFreebusy {
+		t.Errorf("missing VFREEBUSY warning; warnings = %v", result.Warnings)
+	}
+}
+
+func TestImport_TriggerTZID(t *testing.T) {
+	t.Parallel()
+	// TRIGGER;TZID=America/New_York:20260327T090000 should be resolved to UTC.
+	// America/New_York in March is EDT (UTC-4), so 09:00 EDT = 13:00 UTC.
+	ics := `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//test//test//EN
+BEGIN:VEVENT
+UID:tzid-trigger-test
+DTSTAMP:20260401T100000Z
+DTSTART:20260327T140000Z
+DTEND:20260327T150000Z
+SUMMARY:Event with TZID trigger
+BEGIN:VALARM
+ACTION:DISPLAY
+TRIGGER;TZID=America/New_York:20260327T090000
+DESCRIPTION:TZID alarm
+END:VALARM
+END:VEVENT
+END:VCALENDAR`
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile error: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %d, want 1", len(result.Events))
+	}
+	if len(result.Events[0].Alarms) != 1 {
+		t.Fatalf("alarms = %d, want 1", len(result.Events[0].Alarms))
+	}
+	trigger := result.Events[0].Alarms[0].TriggerValue
+	want := "20260327T130000Z"
+	if trigger != want {
+		t.Errorf("TriggerValue = %q, want %q (TZID=America/New_York 09:00 EDT = 13:00 UTC)", trigger, want)
+	}
+}
+
+func TestImport_TriggerTZID_UnknownTimezone(t *testing.T) {
+	t.Parallel()
+	// Unknown TZID should fall through to floating datetime parse.
+	ics := `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//test//test//EN
+BEGIN:VEVENT
+UID:tzid-unknown-test
+DTSTAMP:20260401T100000Z
+DTSTART:20260327T140000Z
+DTEND:20260327T150000Z
+SUMMARY:Event with unknown TZID trigger
+BEGIN:VALARM
+ACTION:DISPLAY
+TRIGGER;TZID=Fake/Zone:20260327T090000
+DESCRIPTION:Unknown TZID alarm
+END:VALARM
+END:VEVENT
+END:VCALENDAR`
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile error: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %d, want 1", len(result.Events))
+	}
+	if len(result.Events[0].Alarms) != 1 {
+		t.Fatalf("alarms = %d, want 1", len(result.Events[0].Alarms))
+	}
+	// Falls through to floating parse: stored as-is (not resolved to UTC).
+	trigger := result.Events[0].Alarms[0].TriggerValue
+	want := "20260327T090000"
+	if trigger != want {
+		t.Errorf("TriggerValue = %q, want %q (unknown TZID should fall through to floating)", trigger, want)
+	}
+	// A warning should be emitted about the unknown TZID.
+	foundWarning := false
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "Fake/Zone") && strings.Contains(w, "unknown timezone") {
+			foundWarning = true
+		}
+	}
+	if !foundWarning {
+		t.Errorf("missing unknown TZID warning; warnings = %v", result.Warnings)
+	}
+}
+
 func TestImport_RelatedTo(t *testing.T) {
 	t.Parallel()
 	ics := `BEGIN:VCALENDAR

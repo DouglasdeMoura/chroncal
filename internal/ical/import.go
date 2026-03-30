@@ -35,36 +35,46 @@ func ImportFile(r io.Reader) (ImportResult, error) {
 			return result, fmt.Errorf("decode ical: %w", err)
 		}
 
+		skipped := make(map[string]int)
 		for _, child := range cal.Children {
 			switch child.Name {
 			case ical.CompEvent:
 				vevent := ical.Event{Component: child}
-				e, err := eventFromVEvent(vevent)
+				e, warns, err := eventFromVEvent(vevent)
 				if err != nil {
 					result.Warnings = append(result.Warnings, fmt.Sprintf("VEVENT: %v", err))
 					continue
 				}
+				result.Warnings = append(result.Warnings, warns...)
 				result.Events = append(result.Events, e)
 			case ical.CompToDo:
-				t, err := todoFromVTodo(child)
+				t, warns, err := todoFromVTodo(child)
 				if err != nil {
 					result.Warnings = append(result.Warnings, fmt.Sprintf("VTODO: %v", err))
 					continue
 				}
+				result.Warnings = append(result.Warnings, warns...)
 				result.Todos = append(result.Todos, t)
+			default:
+				if child.Name != "VTIMEZONE" {
+					skipped[child.Name]++
+				}
 			}
+		}
+		for name, count := range skipped {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("skipped: %s (%d)", name, count))
 		}
 	}
 
 	return result, nil
 }
 
-func todoFromVTodo(comp *ical.Component) (todo.Todo, error) {
+func todoFromVTodo(comp *ical.Component) (todo.Todo, []string, error) {
 	props := comp.Props
 
 	uid := propText(props, ical.PropUID)
 	if uid == "" {
-		return todo.Todo{}, fmt.Errorf("missing UID")
+		return todo.Todo{}, nil, fmt.Errorf("missing UID")
 	}
 
 	summary := propText(props, ical.PropSummary)
@@ -167,11 +177,15 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, error) {
 
 	// VALARM children
 	var alarms []model.Alarm
+	var alarmWarnings []string
 	for _, child := range comp.Children {
 		if child.Name != ical.CompAlarm {
 			continue
 		}
-		alarm := parseAlarm(child)
+		alarm, w := parseAlarm(child)
+		if w != "" {
+			alarmWarnings = append(alarmWarnings, w)
+		}
 		if alarm.TriggerValue != "" {
 			alarms = append(alarms, alarm)
 		}
@@ -216,13 +230,13 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, error) {
 		Contacts:        contacts,
 		Resources:       resources,
 		Relations:       relations,
-	}, nil
+	}, alarmWarnings, nil
 }
 
-func eventFromVEvent(ve ical.Event) (event.Event, error) {
+func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 	uid, err := ve.Props.Text(ical.PropUID)
 	if err != nil || uid == "" {
-		return event.Event{}, fmt.Errorf("missing UID")
+		return event.Event{}, nil, fmt.Errorf("missing UID")
 	}
 
 	summary, _ := ve.Props.Text(ical.PropSummary)
@@ -239,7 +253,7 @@ func eventFromVEvent(ve ical.Event) (event.Event, error) {
 
 	startTime, err := ve.Props.DateTime(ical.PropDateTimeStart, nil)
 	if err != nil {
-		return event.Event{}, fmt.Errorf("parse DTSTART: %w", err)
+		return event.Event{}, nil, fmt.Errorf("parse DTSTART: %w", err)
 	}
 
 	var endTime time.Time
@@ -314,11 +328,15 @@ func eventFromVEvent(ve ical.Event) (event.Event, error) {
 
 	// VALARM children
 	var alarms []model.Alarm
+	var alarmWarnings []string
 	for _, child := range ve.Children {
 		if child.Name != ical.CompAlarm {
 			continue
 		}
-		alarm := parseAlarm(child)
+		alarm, w := parseAlarm(child)
+		if w != "" {
+			alarmWarnings = append(alarmWarnings, w)
+		}
 		if alarm.TriggerValue != "" {
 			alarms = append(alarms, alarm)
 		}
@@ -362,7 +380,7 @@ func eventFromVEvent(ve ical.Event) (event.Event, error) {
 		Contacts:       contacts,
 		Resources:      resources,
 		Relations:      relations,
-	}, nil
+	}, alarmWarnings, nil
 }
 
 func textOrDefault(ve ical.Event, prop, def string) string {
@@ -389,20 +407,37 @@ func parseCategories(ve ical.Event) string {
 	return strings.Join(cats, ",")
 }
 
-func parseAlarm(comp *ical.Component) model.Alarm {
+// parseAlarm extracts a model.Alarm from a VALARM component.
+// The second return value is a warning string (empty if no issues).
+func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 	alarm := model.Alarm{Action: "DISPLAY", Related: "START"}
+	var warn string
 
 	if prop := comp.Props.Get(ical.PropAction); prop != nil {
 		alarm.Action = strings.ToUpper(prop.Value)
 	}
 	if prop := comp.Props.Get(ical.PropTrigger); prop != nil {
 		tv := prop.Value
+		tzid := prop.Params.Get(ical.ParamTimezoneID)
 		// Validate trigger: must be a parseable duration or datetime.
 		valid := false
 		if duration.Validate(tv) == nil {
 			valid = true
 		} else if _, err := time.Parse("20060102T150405Z", tv); err == nil {
 			valid = true
+		} else if tzid != "" {
+			// TRIGGER;TZID=X:YYYYMMDDTHHMMSS — resolve to UTC.
+			if t, err := time.Parse("20060102T150405", tv); err == nil {
+				if loc, err := time.LoadLocation(tzid); err == nil {
+					t = time.Date(t.Year(), t.Month(), t.Day(),
+						t.Hour(), t.Minute(), t.Second(), 0, loc)
+					tv = t.UTC().Format("20060102T150405Z")
+				} else {
+					warn = fmt.Sprintf("VALARM TRIGGER TZID=%s: unknown timezone, treating as floating", tzid)
+				}
+				// Valid as floating even if TZID resolution failed.
+				valid = true
+			}
 		} else if _, err := time.Parse("20060102T150405", tv); err == nil {
 			valid = true
 		} else if _, err := time.Parse(time.RFC3339, tv); err == nil {
@@ -441,9 +476,7 @@ func parseAlarm(comp *ical.Component) model.Alarm {
 	// ACKNOWLEDGED (RFC 9074) — preserved for round-trip fidelity only.
 	if prop := comp.Props.Get("ACKNOWLEDGED"); prop != nil {
 		v := strings.TrimSpace(prop.Value)
-		if _, err := time.Parse("20060102T150405Z", v); err == nil {
-			alarm.Acknowledged = v
-		} else if _, err := time.Parse(time.RFC3339, v); err == nil {
+		if model.ValidateAcknowledged(v) && v != "" {
 			alarm.Acknowledged = v
 		}
 	}
@@ -464,7 +497,7 @@ func parseAlarm(comp *ical.Component) model.Alarm {
 		})
 	}
 
-	return alarm
+	return alarm, warn
 }
 
 func parseAttendees(ve ical.Event) []model.Attendee {
