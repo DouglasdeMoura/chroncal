@@ -10,17 +10,25 @@ import (
 )
 
 const createTodoAttendee = `-- name: CreateTodoAttendee :one
-INSERT INTO todo_attendees (todo_id, email, name, rsvp_status, role, organizer)
-VALUES (?, ?, ?, ?, ?, ?) RETURNING id, todo_id, email, name, rsvp_status, role, organizer
+INSERT INTO todo_attendees (todo_id, email, name, rsvp_status, role, organizer, cutype, rsvp, sent_by, delegated_to, delegated_from, member, dir, language)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, todo_id, email, name, rsvp_status, role, organizer, cutype, rsvp, sent_by, delegated_to, delegated_from, member, dir, language
 `
 
 type CreateTodoAttendeeParams struct {
-	TodoID     int64
-	Email      string
-	Name       string
-	RsvpStatus string
-	Role       string
-	Organizer  int64
+	TodoID        int64
+	Email         string
+	Name          string
+	RsvpStatus    string
+	Role          string
+	Organizer     int64
+	Cutype        string
+	Rsvp          string
+	SentBy        string
+	DelegatedTo   string
+	DelegatedFrom string
+	Member        string
+	Dir           string
+	Language      string
 }
 
 func (q *Queries) CreateTodoAttendee(ctx context.Context, arg CreateTodoAttendeeParams) (TodoAttendee, error) {
@@ -31,6 +39,14 @@ func (q *Queries) CreateTodoAttendee(ctx context.Context, arg CreateTodoAttendee
 		arg.RsvpStatus,
 		arg.Role,
 		arg.Organizer,
+		arg.Cutype,
+		arg.Rsvp,
+		arg.SentBy,
+		arg.DelegatedTo,
+		arg.DelegatedFrom,
+		arg.Member,
+		arg.Dir,
+		arg.Language,
 	)
 	var i TodoAttendee
 	err := row.Scan(
@@ -41,6 +57,14 @@ func (q *Queries) CreateTodoAttendee(ctx context.Context, arg CreateTodoAttendee
 		&i.RsvpStatus,
 		&i.Role,
 		&i.Organizer,
+		&i.Cutype,
+		&i.Rsvp,
+		&i.SentBy,
+		&i.DelegatedTo,
+		&i.DelegatedFrom,
+		&i.Member,
+		&i.Dir,
+		&i.Language,
 	)
 	return i, err
 }
@@ -55,7 +79,7 @@ func (q *Queries) DeleteTodoAttendeesByTodoID(ctx context.Context, todoID int64)
 }
 
 const listTodoAttendeesByTodoID = `-- name: ListTodoAttendeesByTodoID :many
-SELECT id, todo_id, email, name, rsvp_status, role, organizer FROM todo_attendees WHERE todo_id = ? ORDER BY organizer DESC, name
+SELECT id, todo_id, email, name, rsvp_status, role, organizer, cutype, rsvp, sent_by, delegated_to, delegated_from, member, dir, language FROM todo_attendees WHERE todo_id = ? ORDER BY organizer DESC, name
 `
 
 func (q *Queries) ListTodoAttendeesByTodoID(ctx context.Context, todoID int64) ([]TodoAttendee, error) {
@@ -75,6 +99,14 @@ func (q *Queries) ListTodoAttendeesByTodoID(ctx context.Context, todoID int64) (
 			&i.RsvpStatus,
 			&i.Role,
 			&i.Organizer,
+			&i.Cutype,
+			&i.Rsvp,
+			&i.SentBy,
+			&i.DelegatedTo,
+			&i.DelegatedFrom,
+			&i.Member,
+			&i.Dir,
+			&i.Language,
 		); err != nil {
 			return nil, err
 		}

@@ -433,13 +433,25 @@ func (s *Service) ReplaceAttendees(ctx context.Context, eventID int64, attendees
 		return fmt.Errorf("delete attendees: %w", err)
 	}
 	for _, a := range attendees {
+		rsvp := ""
+		if a.RSVPRequested {
+			rsvp = "TRUE"
+		}
 		_, err := qtx.CreateAttendee(ctx, storage.CreateAttendeeParams{
-			EventID:    eventID,
-			Email:      a.Email,
-			Name:       a.Name,
-			RsvpStatus: a.RSVPStatus,
-			Role:       a.Role,
-			Organizer:  boolToInt(a.Organizer),
+			EventID:       eventID,
+			Email:         a.Email,
+			Name:          a.Name,
+			RsvpStatus:    a.RSVPStatus,
+			Role:          a.Role,
+			Organizer:     boolToInt(a.Organizer),
+			Cutype:        a.CUType,
+			Rsvp:          rsvp,
+			SentBy:        a.SentBy,
+			DelegatedTo:   a.DelegatedTo,
+			DelegatedFrom: a.DelegatedFrom,
+			Member:        a.Member,
+			Dir:           a.Dir,
+			Language:      a.Language,
 		})
 		if err != nil {
 			return fmt.Errorf("create attendee: %w", err)
@@ -679,13 +691,21 @@ func fromStorageAlarm(r storage.EventAlarm) model.Alarm {
 
 func fromStorageAttendee(r storage.EventAttendee) model.Attendee {
 	return model.Attendee{
-		ID:         r.ID,
-		EventID:    r.EventID,
-		Email:      r.Email,
-		Name:       r.Name,
-		RSVPStatus: r.RsvpStatus,
-		Role:       r.Role,
-		Organizer:  r.Organizer == 1,
+		ID:            r.ID,
+		EventID:       r.EventID,
+		Email:         r.Email,
+		Name:          r.Name,
+		RSVPStatus:    r.RsvpStatus,
+		Role:          r.Role,
+		Organizer:     r.Organizer == 1,
+		CUType:        r.Cutype,
+		RSVPRequested: strings.EqualFold(r.Rsvp, "TRUE"),
+		SentBy:        r.SentBy,
+		DelegatedTo:   r.DelegatedTo,
+		DelegatedFrom: r.DelegatedFrom,
+		Member:        r.Member,
+		Dir:           r.Dir,
+		Language:      r.Language,
 	}
 }
 

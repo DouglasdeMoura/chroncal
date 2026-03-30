@@ -10,17 +10,25 @@ import (
 )
 
 const createAttendee = `-- name: CreateAttendee :one
-INSERT INTO event_attendees (event_id, email, name, rsvp_status, role, organizer)
-VALUES (?, ?, ?, ?, ?, ?) RETURNING id, event_id, email, name, rsvp_status, role, organizer
+INSERT INTO event_attendees (event_id, email, name, rsvp_status, role, organizer, cutype, rsvp, sent_by, delegated_to, delegated_from, member, dir, language)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, event_id, email, name, rsvp_status, role, organizer, cutype, rsvp, sent_by, delegated_to, delegated_from, member, dir, language
 `
 
 type CreateAttendeeParams struct {
-	EventID    int64
-	Email      string
-	Name       string
-	RsvpStatus string
-	Role       string
-	Organizer  int64
+	EventID       int64
+	Email         string
+	Name          string
+	RsvpStatus    string
+	Role          string
+	Organizer     int64
+	Cutype        string
+	Rsvp          string
+	SentBy        string
+	DelegatedTo   string
+	DelegatedFrom string
+	Member        string
+	Dir           string
+	Language      string
 }
 
 func (q *Queries) CreateAttendee(ctx context.Context, arg CreateAttendeeParams) (EventAttendee, error) {
@@ -31,6 +39,14 @@ func (q *Queries) CreateAttendee(ctx context.Context, arg CreateAttendeeParams) 
 		arg.RsvpStatus,
 		arg.Role,
 		arg.Organizer,
+		arg.Cutype,
+		arg.Rsvp,
+		arg.SentBy,
+		arg.DelegatedTo,
+		arg.DelegatedFrom,
+		arg.Member,
+		arg.Dir,
+		arg.Language,
 	)
 	var i EventAttendee
 	err := row.Scan(
@@ -41,6 +57,14 @@ func (q *Queries) CreateAttendee(ctx context.Context, arg CreateAttendeeParams) 
 		&i.RsvpStatus,
 		&i.Role,
 		&i.Organizer,
+		&i.Cutype,
+		&i.Rsvp,
+		&i.SentBy,
+		&i.DelegatedTo,
+		&i.DelegatedFrom,
+		&i.Member,
+		&i.Dir,
+		&i.Language,
 	)
 	return i, err
 }
@@ -55,7 +79,7 @@ func (q *Queries) DeleteAttendeesByEventID(ctx context.Context, eventID int64) e
 }
 
 const listAttendeesByEventID = `-- name: ListAttendeesByEventID :many
-SELECT id, event_id, email, name, rsvp_status, role, organizer FROM event_attendees WHERE event_id = ? ORDER BY organizer DESC, name
+SELECT id, event_id, email, name, rsvp_status, role, organizer, cutype, rsvp, sent_by, delegated_to, delegated_from, member, dir, language FROM event_attendees WHERE event_id = ? ORDER BY organizer DESC, name
 `
 
 func (q *Queries) ListAttendeesByEventID(ctx context.Context, eventID int64) ([]EventAttendee, error) {
@@ -75,6 +99,14 @@ func (q *Queries) ListAttendeesByEventID(ctx context.Context, eventID int64) ([]
 			&i.RsvpStatus,
 			&i.Role,
 			&i.Organizer,
+			&i.Cutype,
+			&i.Rsvp,
+			&i.SentBy,
+			&i.DelegatedTo,
+			&i.DelegatedFrom,
+			&i.Member,
+			&i.Dir,
+			&i.Language,
 		); err != nil {
 			return nil, err
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -383,7 +384,15 @@ func (s *Service) ListAttendees(ctx context.Context, todoID int64) ([]model.Atte
 			ID: r.ID, EventID: r.TodoID,
 			Email: r.Email, Name: r.Name,
 			RSVPStatus: r.RsvpStatus, Role: r.Role,
-			Organizer: r.Organizer == 1,
+			Organizer:     r.Organizer == 1,
+			CUType:        r.Cutype,
+			RSVPRequested: strings.EqualFold(r.Rsvp, "TRUE"),
+			SentBy:        r.SentBy,
+			DelegatedTo:   r.DelegatedTo,
+			DelegatedFrom: r.DelegatedFrom,
+			Member:        r.Member,
+			Dir:           r.Dir,
+			Language:      r.Language,
 		}
 	}
 	return attendees, nil
@@ -405,13 +414,25 @@ func (s *Service) ReplaceAttendees(ctx context.Context, todoID int64, attendees 
 		if a.Organizer {
 			org = 1
 		}
+		rsvp := ""
+		if a.RSVPRequested {
+			rsvp = "TRUE"
+		}
 		_, err := qtx.CreateTodoAttendee(ctx, storage.CreateTodoAttendeeParams{
-			TodoID:     todoID,
-			Email:      a.Email,
-			Name:       a.Name,
-			RsvpStatus: a.RSVPStatus,
-			Role:       a.Role,
-			Organizer:  org,
+			TodoID:        todoID,
+			Email:         a.Email,
+			Name:          a.Name,
+			RsvpStatus:    a.RSVPStatus,
+			Role:          a.Role,
+			Organizer:     org,
+			Cutype:        a.CUType,
+			Rsvp:          rsvp,
+			SentBy:        a.SentBy,
+			DelegatedTo:   a.DelegatedTo,
+			DelegatedFrom: a.DelegatedFrom,
+			Member:        a.Member,
+			Dir:           a.Dir,
+			Language:      a.Language,
 		})
 		if err != nil {
 			return fmt.Errorf("create attendee: %w", err)

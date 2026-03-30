@@ -95,13 +95,21 @@ type EventAttachment struct {
 }
 
 type EventAttendee struct {
-	ID         int64
-	EventID    int64
-	Email      string
-	Name       string
-	RsvpStatus string
-	Role       string
-	Organizer  int64
+	ID            int64
+	EventID       int64
+	Email         string
+	Name          string
+	RsvpStatus    string
+	Role          string
+	Organizer     int64
+	Cutype        string
+	Rsvp          string
+	SentBy        string
+	DelegatedTo   string
+	DelegatedFrom string
+	Member        string
+	Dir           string
+	Language      string
 }
 
 type EventComment struct {
@@ -206,13 +214,21 @@ type TodoAttachment struct {
 }
 
 type TodoAttendee struct {
-	ID         int64
-	TodoID     int64
-	Email      string
-	Name       string
-	RsvpStatus string
-	Role       string
-	Organizer  int64
+	ID            int64
+	TodoID        int64
+	Email         string
+	Name          string
+	RsvpStatus    string
+	Role          string
+	Organizer     int64
+	Cutype        string
+	Rsvp          string
+	SentBy        string
+	DelegatedTo   string
+	DelegatedFrom string
+	Member        string
+	Dir           string
+	Language      string
 }
 
 type TodoComment struct {
