@@ -477,6 +477,9 @@ func parseAttendees(ve ical.Event) []model.Attendee {
 			RSVPStatus: "ACCEPTED",
 			Role:       "CHAIR",
 			Organizer:  true,
+			SentBy:     stripMailto(prop.Params.Get(ical.ParamSentBy)),
+			Dir:        prop.Params.Get(ical.ParamDir),
+			Language:   prop.Params.Get(ical.ParamLanguage),
 		})
 	}
 
@@ -486,12 +489,7 @@ func parseAttendees(ve ical.Event) []model.Attendee {
 		if organizerEmail != "" && strings.EqualFold(email, organizerEmail) {
 			continue
 		}
-		a := model.Attendee{
-			Email:      email,
-			Name:       prop.Params.Get(ical.ParamCommonName),
-			RSVPStatus: strings.ToUpper(paramOrDefault(&prop, ical.ParamParticipationStatus, "NEEDS-ACTION")),
-			Role:       strings.ToUpper(paramOrDefault(&prop, ical.ParamRole, "REQ-PARTICIPANT")),
-		}
+		a := attendeeFromProp(&prop)
 		attendees = append(attendees, a)
 	}
 
@@ -584,6 +582,9 @@ func parseAttendeesFromProps(props ical.Props) []model.Attendee {
 			RSVPStatus: "ACCEPTED",
 			Role:       "CHAIR",
 			Organizer:  true,
+			SentBy:     stripMailto(prop.Params.Get(ical.ParamSentBy)),
+			Dir:        prop.Params.Get(ical.ParamDir),
+			Language:   prop.Params.Get(ical.ParamLanguage),
 		})
 	}
 
@@ -592,16 +593,47 @@ func parseAttendeesFromProps(props ical.Props) []model.Attendee {
 		if organizerEmail != "" && strings.EqualFold(email, organizerEmail) {
 			continue
 		}
-		a := model.Attendee{
-			Email:      email,
-			Name:       prop.Params.Get(ical.ParamCommonName),
-			RSVPStatus: strings.ToUpper(paramOrDefault(&prop, ical.ParamParticipationStatus, "NEEDS-ACTION")),
-			Role:       strings.ToUpper(paramOrDefault(&prop, ical.ParamRole, "REQ-PARTICIPANT")),
-		}
+		a := attendeeFromProp(&prop)
 		attendees = append(attendees, a)
 	}
 
 	return attendees
+}
+
+// attendeeFromProp extracts a model.Attendee from an iCal ATTENDEE property,
+// including all RFC 5545 parameters.
+func attendeeFromProp(prop *ical.Prop) model.Attendee {
+	return model.Attendee{
+		Email:         stripMailto(prop.Value),
+		Name:          prop.Params.Get(ical.ParamCommonName),
+		RSVPStatus:    strings.ToUpper(paramOrDefault(prop, ical.ParamParticipationStatus, "NEEDS-ACTION")),
+		Role:          strings.ToUpper(paramOrDefault(prop, ical.ParamRole, "REQ-PARTICIPANT")),
+		CUType:        strings.ToUpper(paramOrDefault(prop, ical.ParamCalendarUserType, "INDIVIDUAL")),
+		RSVPRequested: strings.EqualFold(prop.Params.Get(ical.ParamRSVP), "TRUE"),
+		SentBy:        stripMailto(prop.Params.Get(ical.ParamSentBy)),
+		DelegatedTo:   joinMailtoParams(prop.Params.Values(ical.ParamDelegatedTo)),
+		DelegatedFrom: joinMailtoParams(prop.Params.Values(ical.ParamDelegatedFrom)),
+		Member:        joinMailtoParams(prop.Params.Values(ical.ParamMember)),
+		Dir:           prop.Params.Get(ical.ParamDir),
+		Language:      prop.Params.Get(ical.ParamLanguage),
+	}
+}
+
+// joinMailtoParams joins multiple mailto URI param values into a comma-separated
+// string, stripping the "mailto:" prefix and surrounding quotes from each.
+func joinMailtoParams(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	cleaned := make([]string, 0, len(values))
+	for _, v := range values {
+		v = strings.Trim(v, "\"")
+		v = stripMailto(v)
+		if v != "" {
+			cleaned = append(cleaned, v)
+		}
+	}
+	return strings.Join(cleaned, ",")
 }
 
 // addDuration parses an RFC 5545 duration string and adds it to a time.
