@@ -10,6 +10,7 @@ import (
 
 	"github.com/douglasdemoura/tcal/internal/calendar"
 	"github.com/douglasdemoura/tcal/internal/event"
+	"github.com/douglasdemoura/tcal/internal/model"
 	"github.com/douglasdemoura/tcal/internal/testutil"
 	"github.com/douglasdemoura/tcal/internal/todo"
 )
@@ -401,6 +402,156 @@ func TestLibical_Roundtrip_3_Todo(t *testing.T) {
 	assertTodosMatch(t, "3.ics", result.Todos, reimported.Todos)
 }
 
+
+// TestAttendeeParamsRoundtrip verifies that all 8 RFC 5545 ATTENDEE parameters
+// survive import → DB persist → DB load → export → reimport.
+func TestAttendeeParamsRoundtrip(t *testing.T) {
+	ics := `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//test//test//EN
+BEGIN:VEVENT
+UID:attendee-params-test@example.com
+DTSTART:20260401T100000Z
+DTEND:20260401T110000Z
+SUMMARY:Attendee Params Test
+ORGANIZER;CN=Boss;SENT-BY="mailto:assistant@example.com";DIR="ldap://dir.example.com/boss";LANGUAGE=en-US:mailto:boss@example.com
+ATTENDEE;CN=Alice;PARTSTAT=ACCEPTED;ROLE=REQ-PARTICIPANT;CUTYPE=INDIVIDUAL;RSVP=TRUE;SENT-BY="mailto:secretary@example.com";DELEGATED-TO="mailto:bob@example.com";DELEGATED-FROM="mailto:charlie@example.com";MEMBER="mailto:group@example.com";DIR="ldap://dir.example.com/alice";LANGUAGE=de:mailto:alice@example.com
+ATTENDEE;CN=Room 42;CUTYPE=ROOM;PARTSTAT=ACCEPTED;ROLE=NON-PARTICIPANT:mailto:room42@example.com
+END:VEVENT
+END:VCALENDAR
+`
+	// Step 1: Import and verify parse
+	result, err := ImportFile(readerFromBytes([]byte(ics)))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %d, want 1", len(result.Events))
+	}
+
+	e := result.Events[0]
+	// Should have organizer + alice + room42 (organizer deduped from ATTENDEE list)
+	if len(e.Attendees) < 3 {
+		t.Fatalf("attendees = %d, want >= 3", len(e.Attendees))
+	}
+
+	// Find Alice by email
+	var alice *model.Attendee
+	var room *model.Attendee
+	var organizer *model.Attendee
+	for i := range e.Attendees {
+		switch e.Attendees[i].Email {
+		case "alice@example.com":
+			alice = &e.Attendees[i]
+		case "room42@example.com":
+			room = &e.Attendees[i]
+		case "boss@example.com":
+			organizer = &e.Attendees[i]
+		}
+	}
+
+	if alice == nil {
+		t.Fatal("alice not found in attendees")
+	}
+	if alice.CUType != "INDIVIDUAL" {
+		t.Errorf("alice.CUType = %q, want INDIVIDUAL", alice.CUType)
+	}
+	if !alice.RSVPRequested {
+		t.Error("alice.RSVPRequested = false, want true")
+	}
+	if alice.SentBy != "secretary@example.com" {
+		t.Errorf("alice.SentBy = %q, want secretary@example.com", alice.SentBy)
+	}
+	if alice.DelegatedTo != "bob@example.com" {
+		t.Errorf("alice.DelegatedTo = %q, want bob@example.com", alice.DelegatedTo)
+	}
+	if alice.DelegatedFrom != "charlie@example.com" {
+		t.Errorf("alice.DelegatedFrom = %q, want charlie@example.com", alice.DelegatedFrom)
+	}
+	if alice.Member != "group@example.com" {
+		t.Errorf("alice.Member = %q, want group@example.com", alice.Member)
+	}
+	if alice.Dir != "ldap://dir.example.com/alice" {
+		t.Errorf("alice.Dir = %q", alice.Dir)
+	}
+	if alice.Language != "de" {
+		t.Errorf("alice.Language = %q, want de", alice.Language)
+	}
+
+	if room == nil {
+		t.Fatal("room not found in attendees")
+	}
+	if room.CUType != "ROOM" {
+		t.Errorf("room.CUType = %q, want ROOM", room.CUType)
+	}
+
+	if organizer == nil {
+		t.Fatal("organizer not found")
+	}
+	if organizer.SentBy != "assistant@example.com" {
+		t.Errorf("organizer.SentBy = %q, want assistant@example.com", organizer.SentBy)
+	}
+	if organizer.Dir != "ldap://dir.example.com/boss" {
+		t.Errorf("organizer.Dir = %q", organizer.Dir)
+	}
+	if organizer.Language != "en-US" {
+		t.Errorf("organizer.Language = %q, want en-US", organizer.Language)
+	}
+
+	// Step 2: DB roundtrip — store, load, export, reimport
+	exported := storeThenExportEvents(t, result.Events)
+	reimported, err := ImportFile(readerFromBytes(exported))
+	if err != nil {
+		t.Fatalf("reimport: %v", err)
+	}
+	if len(reimported.Events) != 1 {
+		t.Fatalf("reimported events = %d, want 1", len(reimported.Events))
+	}
+
+	// Find Alice again in reimported data
+	var aliceRT *model.Attendee
+	var roomRT *model.Attendee
+	for i := range reimported.Events[0].Attendees {
+		switch reimported.Events[0].Attendees[i].Email {
+		case "alice@example.com":
+			aliceRT = &reimported.Events[0].Attendees[i]
+		case "room42@example.com":
+			roomRT = &reimported.Events[0].Attendees[i]
+		}
+	}
+
+	if aliceRT == nil {
+		t.Fatal("alice not found after roundtrip")
+	}
+	if !aliceRT.RSVPRequested {
+		t.Error("roundtrip: alice.RSVPRequested lost")
+	}
+	if aliceRT.SentBy != "secretary@example.com" {
+		t.Errorf("roundtrip: alice.SentBy = %q", aliceRT.SentBy)
+	}
+	if aliceRT.DelegatedTo != "bob@example.com" {
+		t.Errorf("roundtrip: alice.DelegatedTo = %q", aliceRT.DelegatedTo)
+	}
+	if aliceRT.DelegatedFrom != "charlie@example.com" {
+		t.Errorf("roundtrip: alice.DelegatedFrom = %q", aliceRT.DelegatedFrom)
+	}
+	if aliceRT.Member != "group@example.com" {
+		t.Errorf("roundtrip: alice.Member = %q", aliceRT.Member)
+	}
+	if aliceRT.Dir != "ldap://dir.example.com/alice" {
+		t.Errorf("roundtrip: alice.Dir = %q", aliceRT.Dir)
+	}
+	if aliceRT.Language != "de" {
+		t.Errorf("roundtrip: alice.Language = %q", aliceRT.Language)
+	}
+
+	if roomRT == nil {
+		t.Fatal("room not found after roundtrip")
+	}
+	if roomRT.CUType != "ROOM" {
+		t.Errorf("roundtrip: room.CUType = %q, want ROOM", roomRT.CUType)
+	}
+}
 
 func readerFromBytes(data []byte) *bytes.Reader {
 	return bytes.NewReader(data)
