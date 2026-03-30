@@ -17,7 +17,10 @@ type Alarm struct {
 	Repeat       int    // number of additional repetitions
 	Duration     string // repeat interval (RFC 5545 duration, e.g. PT5M)
 	Related      string // trigger anchor: START or END
-	Attendees    []AlarmAttendee
+	Acknowledged  string // RFC 9074 ACKNOWLEDGED UTC timestamp (round-trip only, does not affect local alarm_state)
+	AttachURI     string // optional sound URI for AUDIO alarms (RFC 5545 Section 3.6.6)
+	AttachFmtType string // FMTTYPE param for ATTACH (e.g. "audio/basic")
+	Attendees     []AlarmAttendee
 }
 
 // ContentEqual returns true if two alarms have identical content (all fields
@@ -37,6 +40,9 @@ func (a Alarm) ContentEqual(b Alarm) bool {
 		return false
 	}
 	if a.Repeat != b.Repeat || a.Duration != b.Duration {
+		return false
+	}
+	if a.AttachURI != b.AttachURI || a.AttachFmtType != b.AttachFmtType {
 		return false
 	}
 	return attendeesEqual(a.Attendees, b.Attendees)
