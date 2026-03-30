@@ -10,20 +10,23 @@ import (
 )
 
 const createAlarm = `-- name: CreateAlarm :one
-INSERT INTO event_alarms (event_id, uid, action, trigger_value, description, summary, repeat, duration, related)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, event_id, "action", trigger_value, description, repeat, duration, related, summary, uid
+INSERT INTO event_alarms (event_id, uid, action, trigger_value, description, summary, repeat, duration, related, acknowledged, attach_uri, attach_fmttype)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, event_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype
 `
 
 type CreateAlarmParams struct {
-	EventID      int64
-	Uid          string
-	Action       string
-	TriggerValue string
-	Description  string
-	Summary      string
-	Repeat       int64
-	Duration     string
-	Related      string
+	EventID       int64
+	Uid           string
+	Action        string
+	TriggerValue  string
+	Description   string
+	Summary       string
+	Repeat        int64
+	Duration      string
+	Related       string
+	Acknowledged  string
+	AttachUri     string
+	AttachFmttype string
 }
 
 func (q *Queries) CreateAlarm(ctx context.Context, arg CreateAlarmParams) (EventAlarm, error) {
@@ -37,6 +40,9 @@ func (q *Queries) CreateAlarm(ctx context.Context, arg CreateAlarmParams) (Event
 		arg.Repeat,
 		arg.Duration,
 		arg.Related,
+		arg.Acknowledged,
+		arg.AttachUri,
+		arg.AttachFmttype,
 	)
 	var i EventAlarm
 	err := row.Scan(
@@ -50,6 +56,9 @@ func (q *Queries) CreateAlarm(ctx context.Context, arg CreateAlarmParams) (Event
 		&i.Related,
 		&i.Summary,
 		&i.Uid,
+		&i.Acknowledged,
+		&i.AttachUri,
+		&i.AttachFmttype,
 	)
 	return i, err
 }
@@ -73,7 +82,7 @@ func (q *Queries) DeleteAlarmsByEventID(ctx context.Context, eventID int64) erro
 }
 
 const listAlarmsByEventID = `-- name: ListAlarmsByEventID :many
-SELECT id, event_id, "action", trigger_value, description, repeat, duration, related, summary, uid FROM event_alarms WHERE event_id = ? ORDER BY id
+SELECT id, event_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype FROM event_alarms WHERE event_id = ? ORDER BY id
 `
 
 func (q *Queries) ListAlarmsByEventID(ctx context.Context, eventID int64) ([]EventAlarm, error) {
@@ -96,6 +105,9 @@ func (q *Queries) ListAlarmsByEventID(ctx context.Context, eventID int64) ([]Eve
 			&i.Related,
 			&i.Summary,
 			&i.Uid,
+			&i.Acknowledged,
+			&i.AttachUri,
+			&i.AttachFmttype,
 		); err != nil {
 			return nil, err
 		}
@@ -111,7 +123,7 @@ func (q *Queries) ListAlarmsByEventID(ctx context.Context, eventID int64) ([]Eve
 }
 
 const listAlarmsWithEmptyUID = `-- name: ListAlarmsWithEmptyUID :many
-SELECT id, event_id, "action", trigger_value, description, repeat, duration, related, summary, uid FROM event_alarms WHERE uid = ''
+SELECT id, event_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype FROM event_alarms WHERE uid = ''
 `
 
 func (q *Queries) ListAlarmsWithEmptyUID(ctx context.Context) ([]EventAlarm, error) {
@@ -134,6 +146,9 @@ func (q *Queries) ListAlarmsWithEmptyUID(ctx context.Context) ([]EventAlarm, err
 			&i.Related,
 			&i.Summary,
 			&i.Uid,
+			&i.Acknowledged,
+			&i.AttachUri,
+			&i.AttachFmttype,
 		); err != nil {
 			return nil, err
 		}

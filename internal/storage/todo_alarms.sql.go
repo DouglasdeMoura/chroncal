@@ -10,20 +10,23 @@ import (
 )
 
 const createTodoAlarm = `-- name: CreateTodoAlarm :one
-INSERT INTO todo_alarms (todo_id, uid, action, trigger_value, description, summary, repeat, duration, related)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid
+INSERT INTO todo_alarms (todo_id, uid, action, trigger_value, description, summary, repeat, duration, related, acknowledged, attach_uri, attach_fmttype)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype
 `
 
 type CreateTodoAlarmParams struct {
-	TodoID       int64
-	Uid          string
-	Action       string
-	TriggerValue string
-	Description  string
-	Summary      string
-	Repeat       int64
-	Duration     string
-	Related      string
+	TodoID        int64
+	Uid           string
+	Action        string
+	TriggerValue  string
+	Description   string
+	Summary       string
+	Repeat        int64
+	Duration      string
+	Related       string
+	Acknowledged  string
+	AttachUri     string
+	AttachFmttype string
 }
 
 func (q *Queries) CreateTodoAlarm(ctx context.Context, arg CreateTodoAlarmParams) (TodoAlarm, error) {
@@ -37,6 +40,9 @@ func (q *Queries) CreateTodoAlarm(ctx context.Context, arg CreateTodoAlarmParams
 		arg.Repeat,
 		arg.Duration,
 		arg.Related,
+		arg.Acknowledged,
+		arg.AttachUri,
+		arg.AttachFmttype,
 	)
 	var i TodoAlarm
 	err := row.Scan(
@@ -50,6 +56,9 @@ func (q *Queries) CreateTodoAlarm(ctx context.Context, arg CreateTodoAlarmParams
 		&i.Related,
 		&i.Summary,
 		&i.Uid,
+		&i.Acknowledged,
+		&i.AttachUri,
+		&i.AttachFmttype,
 	)
 	return i, err
 }
@@ -64,7 +73,7 @@ func (q *Queries) DeleteTodoAlarmsByTodoID(ctx context.Context, todoID int64) er
 }
 
 const listTodoAlarmsByTodoID = `-- name: ListTodoAlarmsByTodoID :many
-SELECT id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid FROM todo_alarms WHERE todo_id = ? ORDER BY id
+SELECT id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype FROM todo_alarms WHERE todo_id = ? ORDER BY id
 `
 
 func (q *Queries) ListTodoAlarmsByTodoID(ctx context.Context, todoID int64) ([]TodoAlarm, error) {
@@ -87,6 +96,9 @@ func (q *Queries) ListTodoAlarmsByTodoID(ctx context.Context, todoID int64) ([]T
 			&i.Related,
 			&i.Summary,
 			&i.Uid,
+			&i.Acknowledged,
+			&i.AttachUri,
+			&i.AttachFmttype,
 		); err != nil {
 			return nil, err
 		}
@@ -102,7 +114,7 @@ func (q *Queries) ListTodoAlarmsByTodoID(ctx context.Context, todoID int64) ([]T
 }
 
 const listTodoAlarmsWithEmptyUID = `-- name: ListTodoAlarmsWithEmptyUID :many
-SELECT id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid FROM todo_alarms WHERE uid = ''
+SELECT id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype FROM todo_alarms WHERE uid = ''
 `
 
 func (q *Queries) ListTodoAlarmsWithEmptyUID(ctx context.Context) ([]TodoAlarm, error) {
@@ -125,6 +137,9 @@ func (q *Queries) ListTodoAlarmsWithEmptyUID(ctx context.Context) ([]TodoAlarm, 
 			&i.Related,
 			&i.Summary,
 			&i.Uid,
+			&i.Acknowledged,
+			&i.AttachUri,
+			&i.AttachFmttype,
 		); err != nil {
 			return nil, err
 		}

@@ -66,16 +66,19 @@ type Event struct {
 }
 
 type EventAlarm struct {
-	ID           int64
-	EventID      int64
-	Action       string
-	TriggerValue string
-	Description  string
-	Repeat       int64
-	Duration     string
-	Related      string
-	Summary      string
-	Uid          string
+	ID            int64
+	EventID       int64
+	Action        string
+	TriggerValue  string
+	Description   string
+	Repeat        int64
+	Duration      string
+	Related       string
+	Summary       string
+	Uid           string
+	Acknowledged  string
+	AttachUri     string
+	AttachFmttype string
 }
 
 type EventAlarmAttendee struct {
@@ -175,16 +178,19 @@ type Todo struct {
 }
 
 type TodoAlarm struct {
-	ID           int64
-	TodoID       int64
-	Action       string
-	TriggerValue string
-	Description  string
-	Repeat       int64
-	Duration     string
-	Related      string
-	Summary      string
-	Uid          string
+	ID            int64
+	TodoID        int64
+	Action        string
+	TriggerValue  string
+	Description   string
+	Repeat        int64
+	Duration      string
+	Related       string
+	Summary       string
+	Uid           string
+	Acknowledged  string
+	AttachUri     string
+	AttachFmttype string
 }
 
 type TodoAlarmAttendee struct {
