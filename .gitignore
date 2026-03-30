@@ -4,3 +4,4 @@
 *.db-shm
 
 .reference
+.worktrees/
