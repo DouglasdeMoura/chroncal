@@ -183,11 +183,7 @@ and exits 0.`,
 
 			// Process todo alarms
 			for _, tda := range todoDue {
-				fireErr := fireAlarm(alarm.DueAlarm{
-					Alarm:     tda.Alarm,
-					TriggerAt: tda.TriggerAt,
-					Event:     event.Event{Title: tda.Todo.Summary},
-				})
+				fireErr := fireAlarm(todoDueAlarmToDueAlarm(tda))
 
 				if fireErr != nil {
 					fmt.Fprintf(os.Stderr, "tcal: todo alarm error: %s (todo=%q action=%s): %v\n",
@@ -593,4 +589,30 @@ See "tcal alarm check --help" for notification types and SMTP configuration.`,
 	}
 	cmd.Flags().StringVar(&interval, "interval", "30s", "check interval (e.g. 30s, 1m)")
 	return cmd
+}
+
+// todoDueAlarmToDueAlarm converts a TodoDueAlarm into a DueAlarm with a
+// synthetic event populated from the todo's summary, location, and due/start
+// date so that FormatNotification produces meaningful output.
+func todoDueAlarmToDueAlarm(tda alarm.TodoDueAlarm) alarm.DueAlarm {
+	evt := event.Event{
+		Title:    tda.Todo.Summary,
+		Location: tda.Todo.Location,
+	}
+	dateStr := tda.Todo.DueDate
+	if dateStr == "" {
+		dateStr = tda.Todo.StartDate
+	}
+	if dateStr != "" {
+		if t, err := time.Parse(time.RFC3339, dateStr); err == nil {
+			evt.StartTime = t
+		} else if t, err := time.Parse("2006-01-02", dateStr); err == nil {
+			evt.StartTime = time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local)
+		}
+	}
+	return alarm.DueAlarm{
+		Alarm:     tda.Alarm,
+		TriggerAt: tda.TriggerAt,
+		Event:     evt,
+	}
 }

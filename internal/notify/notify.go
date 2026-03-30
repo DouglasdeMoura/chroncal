@@ -27,7 +27,9 @@ func FormatNotification(da alarm.DueAlarm) (title, body string) {
 	title = da.Event.Title
 
 	var parts []string
-	parts = append(parts, da.Event.StartTime.Local().Format("Mon Jan 2, 15:04"))
+	if !da.Event.StartTime.IsZero() {
+		parts = append(parts, da.Event.StartTime.Local().Format("Mon Jan 2, 15:04"))
+	}
 
 	if da.Event.Location != "" {
 		parts = append(parts, da.Event.Location)
@@ -36,6 +38,11 @@ func FormatNotification(da alarm.DueAlarm) (title, body string) {
 	desc := da.Alarm.Description
 	if desc != "" && desc != "Reminder" {
 		parts = append(parts, desc)
+	}
+
+	// Fallback for bare todos: show trigger time so the notification isn't empty.
+	if len(parts) == 0 && !da.TriggerAt.IsZero() {
+		parts = append(parts, da.TriggerAt.Local().Format("Mon Jan 2, 15:04"))
 	}
 
 	body = strings.Join(parts, " - ")
