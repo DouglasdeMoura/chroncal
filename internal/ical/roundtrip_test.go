@@ -493,6 +493,47 @@ func TestRoundtrip_EventWithAlarmsAttendees(t *testing.T) {
 	}
 }
 
+func TestRoundtrip_AlarmUID(t *testing.T) {
+	t.Parallel()
+	original := event.Event{
+		UID:       "roundtrip-alarm-uid",
+		Title:     "Alarm UID Test",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+		Alarms: []model.Alarm{
+			{UID: "alarm-uid-abc123", Action: "DISPLAY", TriggerValue: "-PT15M", Description: "Reminder"},
+			{UID: "alarm-uid-def456", Action: "EMAIL", TriggerValue: "-PT1H", Summary: "Heads up", Description: "Meeting soon"},
+		},
+	}
+
+	data, err := ExportEvents([]event.Event{original}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := ImportFile(strings.NewReader(string(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(result.Events) != 1 {
+		t.Fatalf("reimported %d events, want 1", len(result.Events))
+	}
+	got := result.Events[0]
+	if len(got.Alarms) != 2 {
+		t.Fatalf("got %d alarms, want 2", len(got.Alarms))
+	}
+	if got.Alarms[0].UID != "alarm-uid-abc123" {
+		t.Errorf("alarm[0] UID = %q, want %q", got.Alarms[0].UID, "alarm-uid-abc123")
+	}
+	if got.Alarms[1].UID != "alarm-uid-def456" {
+		t.Errorf("alarm[1] UID = %q, want %q", got.Alarms[1].UID, "alarm-uid-def456")
+	}
+}
+
 func TestRoundtrip_OrganizerNotDuplicated(t *testing.T) {
 	t.Parallel()
 	original := event.Event{

@@ -349,16 +349,24 @@ func alarmSnoozeCmd() *cobra.Command {
 		Short: "Snooze a fired alarm",
 		Long: `Postpone a fired alarm so it can fire again after a delay.
 
+The state ID is shown in the output of "alarm list" (the number in
+brackets, e.g. [5]). Only fired, non-dismissed alarms can be snoozed.
+
 The snooze time is bounded by the event timeline: if the requested
 duration would place the reminder after the event ends, it is
 automatically capped to the event's end time. A warning is shown if
-the reminder will fire after the event has already started.
+the reminder will fire after the event has already started. If the
+event has already ended, the snooze is rejected.
 
 Use --until-start to snooze until the moment the event begins.
 
 The alarm remains in the pending list (shown by "alarm list") with the
 snooze-until time recorded. When "alarm check" runs after the snooze
-expires, the alarm fires again.`,
+expires, the alarm fires again. The default snooze duration is 15
+minutes.
+
+Note: snooze state is local to tcal and is not exported to .ics files.
+Exporting and re-importing a calendar will not preserve snooze times.`,
 		Example: `  # Snooze for the default 15 minutes
   tcal alarm snooze 5
 
@@ -417,7 +425,7 @@ expires, the alarm fires again.`,
 				return printOutput(w, map[string]any{
 					"snoozed":    true,
 					"id":         stateID,
-					"until":      res.Until.Format(time.RFC3339),
+					"until":      res.Until.UTC().Format(time.RFC3339),
 					"capped":     res.Capped,
 					"past_start": res.PastStart,
 				})
