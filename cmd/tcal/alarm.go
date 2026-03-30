@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/douglasdemoura/tcal/internal/alarm"
+	"github.com/douglasdemoura/tcal/internal/event"
 	"github.com/douglasdemoura/tcal/internal/notify"
 	"github.com/douglasdemoura/tcal/internal/storage"
 )
@@ -115,14 +116,14 @@ and exits 0.`,
 			defer a.Close()
 			ctx := context.Background()
 
-			due, _, err := a.Alarms.Check(ctx, time.Now())
+			due, todoDue, err := a.Alarms.Check(ctx, time.Now())
 			if err != nil {
 				return fmt.Errorf("check alarms: %w", err)
 			}
 
 			w := cmd.OutOrStdout()
 
-			if len(due) == 0 {
+			if len(due) == 0 && len(todoDue) == 0 {
 				if outputFmt != "text" {
 					return printOutput(w, []any{})
 				}
@@ -131,6 +132,18 @@ and exits 0.`,
 
 			var results []map[string]any
 			for _, da := range due {
+				// Mark state before firing to reduce double-fire window on
+				// concurrent alarm check runs (SQLite serializes writes).
+				if da.StateID != 0 {
+					if markErr := a.Alarms.MarkRefired(ctx, da.StateID); markErr != nil {
+						fmt.Fprintf(os.Stderr, "tcal: mark-refired error: event=%q: %v\n", da.Event.Title, markErr)
+					}
+				} else {
+					if markErr := a.Alarms.MarkFired(ctx, da); markErr != nil {
+						fmt.Fprintf(os.Stderr, "tcal: mark-fired error: event=%q: %v\n", da.Event.Title, markErr)
+					}
+				}
+
 				fireErr := fireAlarm(da)
 
 				if fireErr != nil {
@@ -149,17 +162,6 @@ and exits 0.`,
 					continue
 				}
 
-				if da.StateID != 0 {
-					// Re-fired snoozed alarm: update the existing state row.
-					if markErr := a.Alarms.MarkRefired(ctx, da.StateID); markErr != nil {
-						fmt.Fprintf(os.Stderr, "tcal: mark-refired error: event=%q: %v\n", da.Event.Title, markErr)
-					}
-				} else {
-					if markErr := a.Alarms.MarkFired(ctx, da); markErr != nil {
-						fmt.Fprintf(os.Stderr, "tcal: mark-fired error: event=%q: %v\n", da.Event.Title, markErr)
-					}
-				}
-
 				if outputFmt != "text" {
 					results = append(results, map[string]any{
 						"event_id":   da.Event.ID,
@@ -171,6 +173,44 @@ and exits 0.`,
 					})
 				} else {
 					fmt.Fprintf(w, "%s\t%s\t%s\n", da.TriggerAt.Local().Format("15:04"), da.Alarm.Action, da.Event.Title)
+				}
+			}
+
+			// Process todo alarms
+			for _, tda := range todoDue {
+				fireErr := fireAlarm(alarm.DueAlarm{
+					Alarm:     tda.Alarm,
+					TriggerAt: tda.TriggerAt,
+					Event:     event.Event{Title: tda.Todo.Summary},
+				})
+
+				if fireErr != nil {
+					fmt.Fprintf(os.Stderr, "tcal: todo alarm error: %s (todo=%q action=%s): %v\n",
+						tda.TriggerAt.Local().Format("15:04"), tda.Todo.Summary, tda.Alarm.Action, fireErr)
+					if outputFmt != "text" {
+						results = append(results, map[string]any{
+							"todo_id":    tda.Todo.ID,
+							"todo":       tda.Todo.Summary,
+							"alarm_id":   tda.Alarm.ID,
+							"action":     tda.Alarm.Action,
+							"trigger_at": tda.TriggerAt.Format(time.RFC3339),
+							"status":     fmt.Sprintf("error: %v", fireErr),
+						})
+					}
+					continue
+				}
+
+				if outputFmt != "text" {
+					results = append(results, map[string]any{
+						"todo_id":    tda.Todo.ID,
+						"todo":       tda.Todo.Summary,
+						"alarm_id":   tda.Alarm.ID,
+						"action":     tda.Alarm.Action,
+						"trigger_at": tda.TriggerAt.Format(time.RFC3339),
+						"status":     "fired",
+					})
+				} else {
+					fmt.Fprintf(w, "%s\t%s\t%s (todo)\n", tda.TriggerAt.Local().Format("15:04"), tda.Alarm.Action, tda.Todo.Summary)
 				}
 			}
 
@@ -397,9 +437,10 @@ Exporting and re-importing a calendar will not preserve snooze times.`,
 			ctx := context.Background()
 			w := cmd.OutOrStdout()
 
+			now := time.Now()
 			var res alarm.SnoozeResult
 			if untilStart {
-				res, err = a.Alarms.SnoozeUntilStart(ctx, stateID)
+				res, err = a.Alarms.SnoozeUntilStart(ctx, stateID, now)
 				if err != nil {
 					return fmt.Errorf("snooze until start: %w", err)
 				}
@@ -411,7 +452,7 @@ Exporting and re-importing a calendar will not preserve snooze times.`,
 				if dur <= 0 {
 					return fmt.Errorf("snooze duration must be positive (e.g. 5m, 1h)")
 				}
-				res, err = a.Alarms.ComputeSnooze(ctx, stateID, dur)
+				res, err = a.Alarms.ComputeSnooze(ctx, stateID, dur, now)
 				if err != nil {
 					return fmt.Errorf("compute snooze: %w", err)
 				}
@@ -502,20 +543,12 @@ See "tcal alarm check --help" for notification types and SMTP configuration.`,
 
 			// Run immediately on start, then on each tick.
 			runCheck := func() {
-				due, _, err := a.Alarms.Check(ctx, time.Now())
+				due, todoDue, err := a.Alarms.Check(ctx, time.Now())
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "tcal: check error: %v\n", err)
 					return
 				}
 				for _, da := range due {
-					fireErr := fireAlarm(da)
-
-					if fireErr != nil {
-						fmt.Fprintf(os.Stderr, "tcal: alarm error: %s (event=%q action=%s): %v\n",
-							da.TriggerAt.Local().Format("15:04"), da.Event.Title, da.Alarm.Action, fireErr)
-						continue
-					}
-
 					if da.StateID != 0 {
 						if markErr := a.Alarms.MarkRefired(ctx, da.StateID); markErr != nil {
 							fmt.Fprintf(os.Stderr, "tcal: mark-refired error: event=%q: %v\n", da.Event.Title, markErr)
@@ -526,7 +559,17 @@ See "tcal alarm check --help" for notification types and SMTP configuration.`,
 						}
 					}
 
+					fireErr := fireAlarm(da)
+					if fireErr != nil {
+						fmt.Fprintf(os.Stderr, "tcal: alarm error: %s (event=%q action=%s): %v\n",
+							da.TriggerAt.Local().Format("15:04"), da.Event.Title, da.Alarm.Action, fireErr)
+						continue
+					}
+
 					fmt.Fprintf(w, "%s\t%s\t%s\n", da.TriggerAt.Local().Format("15:04"), da.Alarm.Action, da.Event.Title)
+				}
+				for _, tda := range todoDue {
+					fmt.Fprintf(w, "%s\t%s\t%s (todo)\n", tda.TriggerAt.Local().Format("15:04"), tda.Alarm.Action, tda.Todo.Summary)
 				}
 			}
 
