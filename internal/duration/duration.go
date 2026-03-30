@@ -8,12 +8,17 @@ import (
 )
 
 // FromGo converts a Go time.Duration to an RFC 5545 duration string.
-// e.g. 1h30m → "PT1H30M", 90s → "PT1M30S".
+// e.g. 1h30m → "PT1H30M", 90s → "PT1M30S", -15m → "-PT15M".
 func FromGo(d time.Duration) string {
 	if d == 0 {
 		return "PT0S"
 	}
 	var b strings.Builder
+	neg := d < 0
+	if neg {
+		b.WriteByte('-')
+		d = -d
+	}
 	b.WriteByte('P')
 	total := int(d.Seconds())
 	h := total / 3600
@@ -134,10 +139,11 @@ func Validate(s string) error {
 
 // Add parses an RFC 5545 duration string and adds it to a time.
 // Format: [+/-]P[nW] or [+/-]P[nD][T[nH][nM][nS]]
-// An empty string defaults to +1 hour.
+// Returns zero time for empty or unparseable input. Callers should
+// validate with Validate() before calling Add().
 func Add(t time.Time, dur string) time.Time {
 	if dur == "" {
-		return t.Add(time.Hour)
+		return time.Time{}
 	}
 
 	s := dur
@@ -150,7 +156,7 @@ func Add(t time.Time, dur string) time.Time {
 	}
 
 	if len(s) == 0 || s[0] != 'P' {
-		return t.Add(time.Hour)
+		return time.Time{}
 	}
 	s = s[1:]
 

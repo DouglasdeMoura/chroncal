@@ -21,7 +21,7 @@ func TestAdd(t *testing.T) {
 		{"1 day 2 hours", "P1DT2H", time.Date(2026, 4, 2, 16, 0, 0, 0, time.UTC)},
 		{"positive prefix", "+PT10M", time.Date(2026, 4, 1, 14, 10, 0, 0, time.UTC)},
 		{"hours minutes seconds", "-PT1H30M45S", time.Date(2026, 4, 1, 12, 29, 15, 0, time.UTC)},
-		{"empty defaults to 1h", "", time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC)},
+		{"empty returns zero", "", time.Time{}},
 	}
 
 	for _, tt := range tests {
