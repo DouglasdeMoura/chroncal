@@ -51,6 +51,8 @@ func TestParseTimeList(t *testing.T) {
 		{"with spaces", " 2026-04-01T10:00:00Z , 2026-04-02T10:00:00Z ", 2},
 		{"invalid entries skipped", "2026-04-01T10:00:00Z,invalid,2026-04-02T10:00:00Z", 2},
 		{"all invalid", "bad,worse", 0},
+		{"date-only", "2026-04-03", 1},
+		{"mixed rfc3339 and date-only", "2026-04-01T10:00:00Z,2026-04-03", 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -101,6 +103,21 @@ func TestEvent_ParseExDates(t *testing.T) {
 	got := e.ParseExDates()
 	if len(got) != 2 {
 		t.Fatalf("ParseExDates() returned %d items, want 2", len(got))
+	}
+}
+
+func TestParseTimeList_DateOnlyUsesLocal(t *testing.T) {
+	t.Parallel()
+	got := ParseTimeList("2026-04-03")
+	if len(got) != 1 {
+		t.Fatalf("ParseTimeList date-only returned %d items, want 1", len(got))
+	}
+	want := time.Date(2026, 4, 3, 0, 0, 0, 0, time.Local)
+	if !got[0].Equal(want) {
+		t.Errorf("ParseTimeList(\"2026-04-03\") = %v, want %v", got[0], want)
+	}
+	if got[0].Location() != time.Local {
+		t.Errorf("ParseTimeList date-only location = %v, want time.Local", got[0].Location())
 	}
 }
 

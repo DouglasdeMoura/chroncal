@@ -70,8 +70,13 @@ func ParseTimeList(s string) []time.Time {
 	parts := strings.Split(s, ",")
 	out := make([]time.Time, 0, len(parts))
 	for _, p := range parts {
-		if t, err := time.Parse(time.RFC3339, strings.TrimSpace(p)); err == nil {
+		p = strings.TrimSpace(p)
+		if t, err := time.Parse(time.RFC3339, p); err == nil {
 			out = append(out, t)
+		} else if t, err := time.Parse("2006-01-02", p); err == nil {
+			// Parse date-only into time.Local to match how all-day events
+			// are stored (import.go:253 uses time.Local for VALUE=DATE).
+			out = append(out, time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local))
 		}
 	}
 	return out

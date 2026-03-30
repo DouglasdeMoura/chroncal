@@ -369,15 +369,18 @@ func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []mod
 				uid = uuid.New().String()
 			}
 			row, err := qtx.CreateAlarm(ctx, storage.CreateAlarmParams{
-				EventID:      eventID,
-				Uid:          uid,
-				Action:       a.Action,
-				TriggerValue: a.TriggerValue,
-				Description:  a.Description,
-				Summary:      a.Summary,
-				Repeat:       int64(a.Repeat),
-				Duration:     a.Duration,
-				Related:      a.Related,
+				EventID:       eventID,
+				Uid:           uid,
+				Action:        a.Action,
+				TriggerValue:  a.TriggerValue,
+				Description:   a.Description,
+				Summary:       a.Summary,
+				Repeat:        int64(a.Repeat),
+				Duration:      a.Duration,
+				Related:       a.Related,
+				Acknowledged:  a.Acknowledged,
+				AttachUri:     a.AttachURI,
+				AttachFmttype: a.AttachFmtType,
 			})
 			if err != nil {
 				return fmt.Errorf("create alarm: %w", err)
@@ -676,16 +679,19 @@ func fromStorageSlice(rows []storage.Event) []Event {
 
 func fromStorageAlarm(r storage.EventAlarm) model.Alarm {
 	return model.Alarm{
-		ID:           r.ID,
-		EventID:      r.EventID,
-		UID:          r.Uid,
-		Action:       r.Action,
-		TriggerValue: r.TriggerValue,
-		Description:  r.Description,
-		Summary:      r.Summary,
-		Repeat:       int(r.Repeat),
-		Duration:     r.Duration,
-		Related:      r.Related,
+		ID:            r.ID,
+		EventID:       r.EventID,
+		UID:           r.Uid,
+		Action:        r.Action,
+		TriggerValue:  r.TriggerValue,
+		Description:   r.Description,
+		Summary:       r.Summary,
+		Repeat:        int(r.Repeat),
+		Duration:      r.Duration,
+		Related:       r.Related,
+		Acknowledged:  r.Acknowledged,
+		AttachURI:     r.AttachUri,
+		AttachFmtType: r.AttachFmttype,
 	}
 }
 
