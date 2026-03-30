@@ -444,6 +444,78 @@ func (q *Queries) ListEventsByStatusAndDateRange(ctx context.Context, arg ListEv
 	return items, nil
 }
 
+const listEventsForExport = `-- name: ListEventsForExport :many
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, categories, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM events
+WHERE (?1 = 0 OR calendar_id = ?1)
+AND (?2 = '' OR start_time >= ?2)
+AND (?3 = '' OR start_time <= ?3)
+AND (?4 = '' OR categories LIKE '%' || ?4 || '%')
+AND (?5 = '' OR status = ?5)
+ORDER BY start_time ASC
+`
+
+type ListEventsForExportParams struct {
+	CalendarID   interface{}
+	FromTime     interface{}
+	ToTime       interface{}
+	Category     interface{}
+	FilterStatus interface{}
+}
+
+func (q *Queries) ListEventsForExport(ctx context.Context, arg ListEventsForExportParams) ([]Event, error) {
+	rows, err := q.db.QueryContext(ctx, listEventsForExport,
+		arg.CalendarID,
+		arg.FromTime,
+		arg.ToTime,
+		arg.Category,
+		arg.FilterStatus,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Event
+	for rows.Next() {
+		var i Event
+		if err := rows.Scan(
+			&i.ID,
+			&i.Uid,
+			&i.CalendarID,
+			&i.Title,
+			&i.Description,
+			&i.Location,
+			&i.StartTime,
+			&i.EndTime,
+			&i.AllDay,
+			&i.RecurrenceRule,
+			&i.Timezone,
+			&i.Status,
+			&i.Transp,
+			&i.Sequence,
+			&i.Priority,
+			&i.Class,
+			&i.Url,
+			&i.Categories,
+			&i.Exdates,
+			&i.Rdates,
+			&i.RecurrenceID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Geo,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOverridesByUID = `-- name: ListOverridesByUID :many
 SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, categories, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM events WHERE uid = ? AND recurrence_id != '' ORDER BY recurrence_id
 `

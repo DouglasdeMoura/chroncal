@@ -13,6 +13,22 @@ import (
 	"github.com/douglasdemoura/tcal/internal/storage"
 )
 
+type SearchParams struct {
+	Query      string
+	CalendarID int64  // 0 = all calendars
+	From       string // RFC3339 or empty
+	To         string // RFC3339 or empty
+	Status     string // empty = all
+}
+
+type ExportParams struct {
+	CalendarID int64  // 0 = all
+	From       string // RFC3339 or empty
+	To         string // RFC3339 or empty
+	Category   string // empty = all
+	Status     string // empty = all
+}
+
 type Service struct {
 	db *sql.DB
 	q  *storage.Queries
@@ -151,6 +167,34 @@ func (s *Service) ListByCalendarAndDateRange(ctx context.Context, calID int64, f
 	})
 	if err != nil {
 		return nil, err
+	}
+	return fromStorageSlice(rows), nil
+}
+
+func (s *Service) Search(ctx context.Context, p SearchParams) ([]Event, error) {
+	rows, err := s.q.SearchEvents(ctx, storage.SearchEventsParams{
+		Query:        sql.NullString{String: p.Query, Valid: p.Query != ""},
+		CalendarID:   p.CalendarID,
+		FromTime:     p.From,
+		ToTime:       p.To,
+		FilterStatus: p.Status,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("search events: %w", err)
+	}
+	return fromStorageSlice(rows), nil
+}
+
+func (s *Service) ExportFiltered(ctx context.Context, p ExportParams) ([]Event, error) {
+	rows, err := s.q.ListEventsForExport(ctx, storage.ListEventsForExportParams{
+		CalendarID:   p.CalendarID,
+		FromTime:     p.From,
+		ToTime:       p.To,
+		Category:     p.Category,
+		FilterStatus: p.Status,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("export events: %w", err)
 	}
 	return fromStorageSlice(rows), nil
 }

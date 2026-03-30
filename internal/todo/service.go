@@ -13,6 +13,20 @@ import (
 	"github.com/douglasdemoura/tcal/internal/storage"
 )
 
+type SearchParams struct {
+	Query      string
+	CalendarID int64  // 0 = all
+	Status     string // empty = all
+	Completed  int    // 0 = all, 1 = completed only, 2 = incomplete only
+}
+
+type ExportParams struct {
+	CalendarID int64  // 0 = all
+	Category   string // empty = all
+	Status     string // empty = all
+	Completed  int    // 0 = all, 1 = completed, 2 = incomplete
+}
+
 type Service struct {
 	db *sql.DB
 	q  *storage.Queries
@@ -115,6 +129,32 @@ func (p *UpsertParams) applyDefaults() {
 		p.CompletedAt = time.Now().UTC().Format(time.RFC3339)
 		p.PercentComplete = 100
 	}
+}
+
+func (s *Service) Search(ctx context.Context, p SearchParams) ([]Todo, error) {
+	rows, err := s.q.SearchTodos(ctx, storage.SearchTodosParams{
+		Query:           sql.NullString{String: p.Query, Valid: p.Query != ""},
+		CalendarID:      int64(p.CalendarID),
+		FilterStatus:    p.Status,
+		CompletedFilter: int64(p.Completed),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("search todos: %w", err)
+	}
+	return fromStorageSlice(rows), nil
+}
+
+func (s *Service) ExportFiltered(ctx context.Context, p ExportParams) ([]Todo, error) {
+	rows, err := s.q.ListTodosForExport(ctx, storage.ListTodosForExportParams{
+		CalendarID:      int64(p.CalendarID),
+		Category:        p.Category,
+		FilterStatus:    p.Status,
+		CompletedFilter: int64(p.Completed),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("export todos: %w", err)
+	}
+	return fromStorageSlice(rows), nil
 }
 
 func (s *Service) List(ctx context.Context) ([]Todo, error) {

@@ -67,3 +67,12 @@ DELETE FROM events WHERE id = ?;
 
 -- name: ListAllEvents :many
 SELECT * FROM events;
+
+-- name: ListEventsForExport :many
+SELECT * FROM events
+WHERE (sqlc.arg(calendar_id) = 0 OR calendar_id = sqlc.arg(calendar_id))
+AND (sqlc.arg(from_time) = '' OR start_time >= sqlc.arg(from_time))
+AND (sqlc.arg(to_time) = '' OR start_time <= sqlc.arg(to_time))
+AND (sqlc.arg(category) = '' OR categories LIKE '%' || sqlc.arg(category) || '%')
+AND (sqlc.arg(filter_status) = '' OR status = sqlc.arg(filter_status))
+ORDER BY start_time ASC;

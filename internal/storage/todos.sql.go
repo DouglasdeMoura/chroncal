@@ -496,6 +496,76 @@ func (q *Queries) ListTodosByStatus(ctx context.Context, status string) ([]Todo,
 	return items, nil
 }
 
+const listTodosForExport = `-- name: ListTodosForExport :many
+SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, categories, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM todos
+WHERE (?1 = 0 OR calendar_id = ?1)
+AND (?2 = '' OR categories LIKE '%' || ?2 || '%')
+AND (?3 = '' OR status = ?3)
+AND (?4 = 0 OR (?4 = 1 AND completed_at != '') OR (?4 = 2 AND completed_at = ''))
+ORDER BY due_date ASC, summary ASC
+`
+
+type ListTodosForExportParams struct {
+	CalendarID      interface{}
+	Category        interface{}
+	FilterStatus    interface{}
+	CompletedFilter interface{}
+}
+
+func (q *Queries) ListTodosForExport(ctx context.Context, arg ListTodosForExportParams) ([]Todo, error) {
+	rows, err := q.db.QueryContext(ctx, listTodosForExport,
+		arg.CalendarID,
+		arg.Category,
+		arg.FilterStatus,
+		arg.CompletedFilter,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Todo
+	for rows.Next() {
+		var i Todo
+		if err := rows.Scan(
+			&i.ID,
+			&i.Uid,
+			&i.CalendarID,
+			&i.Summary,
+			&i.Description,
+			&i.Location,
+			&i.DueDate,
+			&i.StartDate,
+			&i.Duration,
+			&i.CompletedAt,
+			&i.PercentComplete,
+			&i.Status,
+			&i.Priority,
+			&i.Class,
+			&i.Url,
+			&i.Categories,
+			&i.RecurrenceRule,
+			&i.Timezone,
+			&i.Sequence,
+			&i.Exdates,
+			&i.Rdates,
+			&i.RecurrenceID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Geo,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateTodo = `-- name: UpdateTodo :one
 UPDATE todos SET
     summary = ?, description = ?, location = ?,
