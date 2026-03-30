@@ -3,6 +3,7 @@ package model
 import (
 	"sort"
 	"strings"
+	"time"
 )
 
 type Alarm struct {
@@ -26,7 +27,7 @@ func (a Alarm) ContentEqual(b Alarm) bool {
 	if !strings.EqualFold(a.Action, b.Action) {
 		return false
 	}
-	if !strings.EqualFold(a.TriggerValue, b.TriggerValue) {
+	if !triggerValuesEqual(a.TriggerValue, b.TriggerValue) {
 		return false
 	}
 	if !strings.EqualFold(a.Related, b.Related) {
@@ -39,6 +40,32 @@ func (a Alarm) ContentEqual(b Alarm) bool {
 		return false
 	}
 	return attendeesEqual(a.Attendees, b.Attendees)
+}
+
+// triggerValuesEqual compares two alarm trigger values, normalizing absolute
+// time formats. iCal UTC (20060102T150405Z), RFC 3339, and iCal floating
+// (20060102T150405) are all recognized so that the same instant written in
+// different formats is treated as equal.
+func triggerValuesEqual(a, b string) bool {
+	if strings.EqualFold(a, b) {
+		return true
+	}
+	ta, okA := parseTriggerTime(a)
+	tb, okB := parseTriggerTime(b)
+	return okA && okB && ta.Equal(tb)
+}
+
+func parseTriggerTime(s string) (time.Time, bool) {
+	for _, layout := range []string{
+		"20060102T150405Z",  // iCal UTC
+		time.RFC3339,        // RFC 3339
+		"20060102T150405",   // iCal floating (no timezone)
+	} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }
 
 func attendeesEqual(a, b []AlarmAttendee) bool {
