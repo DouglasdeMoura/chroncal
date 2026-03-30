@@ -122,6 +122,7 @@ func todoAddCmd() *cobra.Command {
 		class         string
 		categories    string
 		url           string
+		geo           string
 		rrule         string
 		exdates       []string
 		rdates        []string
@@ -217,6 +218,9 @@ and percent-complete to 100.`,
 			if err := validateURL(url); err != nil {
 				return err
 			}
+			if err := validateGeo(geo); err != nil {
+				return err
+			}
 
 			var dueDate string
 			if dueStr != "" {
@@ -280,6 +284,7 @@ and percent-complete to 100.`,
 				Class:           strings.ToUpper(class),
 				Categories:      categories,
 				URL:             url,
+				Geo:             geo,
 				RecurrenceRule:  rrule,
 				ExDates:         parsedExDates,
 				RDates:          parsedRDates,
@@ -373,6 +378,7 @@ and percent-complete to 100.`,
 	cmd.Flags().Int64Var(&priority, "priority", 0, "priority 0-9 (0=undefined, 1=highest, 9=lowest)")
 	cmd.Flags().StringVar(&categories, "categories", "", "comma-separated categories")
 	cmd.Flags().StringVar(&url, "url", "", "associated URL")
+	cmd.Flags().StringVar(&geo, "geo", "", "geographic position (lat;lon, e.g. 37.386;-122.083)")
 	cmd.Flags().StringVar(&rrule, "recurrence-rule", "", "RFC 5545 recurrence rule (e.g. FREQ=WEEKLY;BYDAY=MO)")
 	cmd.Flags().StringArrayVar(&exdates, "exception-date-times", nil, "exclude date from recurrence (YYYY-MM-DD, repeatable)")
 	cmd.Flags().StringArrayVar(&rdates, "recurrence-date-times", nil, "add extra recurrence date (YYYY-MM-DD, repeatable)")
@@ -409,6 +415,7 @@ func todoUpdateCmd() *cobra.Command {
 		class         string
 		categories    string
 		url           string
+		geo           string
 		rrule         string
 		exdates       []string
 		rdates        []string
@@ -582,6 +589,12 @@ a --progress value other than 100.`,
 				}
 				p.URL = url
 			}
+			if cmd.Flags().Changed("geo") {
+				if err := validateGeo(geo); err != nil {
+					return err
+				}
+				p.Geo = geo
+			}
 			if cmd.Flags().Changed("recurrence-rule") || cmd.Flags().Changed("rrule") {
 				if err := validateRRule(rrule); err != nil {
 					return err
@@ -702,6 +715,7 @@ a --progress value other than 100.`,
 	cmd.Flags().Int64Var(&priority, "priority", 0, "new priority (0-9)")
 	cmd.Flags().StringVar(&categories, "categories", "", "new categories")
 	cmd.Flags().StringVar(&url, "url", "", "new URL")
+	cmd.Flags().StringVar(&geo, "geo", "", "new geographic position (lat;lon)")
 	cmd.Flags().StringVar(&rrule, "recurrence-rule", "", "new recurrence rule (e.g. FREQ=WEEKLY;BYDAY=MO)")
 	cmd.Flags().StringArrayVar(&exdates, "exception-date-times", nil, "exclude date from recurrence (YYYY-MM-DD, repeatable)")
 	cmd.Flags().StringArrayVar(&rdates, "recurrence-date-times", nil, "add extra recurrence date (YYYY-MM-DD, repeatable)")
