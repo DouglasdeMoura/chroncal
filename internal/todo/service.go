@@ -149,9 +149,11 @@ func (s *Service) ListByStatus(ctx context.Context, status string) ([]Todo, erro
 }
 
 func (s *Service) ListByDueDateRange(ctx context.Context, from, to time.Time) ([]Todo, error) {
+	// Use date-only format for bounds so that date-only DUE values
+	// (stored as "YYYY-MM-DD") are correctly matched by string comparison.
 	rows, err := s.q.ListTodosByDueDateRange(ctx, storage.ListTodosByDueDateRangeParams{
-		DueDate:   from.Format(time.RFC3339),
-		DueDate_2: to.Format(time.RFC3339),
+		DueDate:   from.Format("2006-01-02"),
+		DueDate_2: to.Format("2006-01-02"),
 	})
 	if err != nil {
 		return nil, err
