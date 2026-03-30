@@ -163,6 +163,7 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 				if att.Name != "" {
 					org.Params.Set(ical.ParamCommonName, att.Name)
 				}
+				setOrganizerParams(org, att)
 				vevent.Props.Set(org)
 			}
 
@@ -173,6 +174,7 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 			}
 			attendee.Params.Set(ical.ParamParticipationStatus, att.RSVPStatus)
 			attendee.Params.Set(ical.ParamRole, att.Role)
+			setAttendeeParams(attendee, att)
 			vevent.Props.Add(attendee)
 		}
 
@@ -423,6 +425,7 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 				if att.Name != "" {
 					org.Params.Set(ical.ParamCommonName, att.Name)
 				}
+				setOrganizerParams(org, att)
 				vtodo.Props.Set(org)
 			}
 			attendee := &ical.Prop{Name: ical.PropAttendee, Params: make(ical.Params)}
@@ -432,6 +435,7 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 			}
 			attendee.Params.Set(ical.ParamParticipationStatus, att.RSVPStatus)
 			attendee.Params.Set(ical.ParamRole, att.Role)
+			setAttendeeParams(attendee, att)
 			vtodo.Props.Add(attendee)
 		}
 
@@ -692,6 +696,62 @@ func findTransitionDay(loc *time.Location, year int, detectedMonth time.Month, p
 		}
 	}
 	return searchEnd
+}
+
+// setAttendeeParams adds RFC 5545 ATTENDEE parameters beyond the base CN/PARTSTAT/ROLE.
+func setAttendeeParams(prop *ical.Prop, att model.Attendee) {
+	if att.CUType != "" && att.CUType != "INDIVIDUAL" {
+		prop.Params.Set(ical.ParamCalendarUserType, att.CUType)
+	}
+	if att.RSVPRequested {
+		prop.Params.Set(ical.ParamRSVP, "TRUE")
+	}
+	if att.SentBy != "" {
+		prop.Params.Set(ical.ParamSentBy, "mailto:"+att.SentBy)
+	}
+	for _, v := range splitNonEmpty(att.DelegatedTo) {
+		prop.Params.Add(ical.ParamDelegatedTo, "mailto:"+v)
+	}
+	for _, v := range splitNonEmpty(att.DelegatedFrom) {
+		prop.Params.Add(ical.ParamDelegatedFrom, "mailto:"+v)
+	}
+	for _, v := range splitNonEmpty(att.Member) {
+		prop.Params.Add(ical.ParamMember, "mailto:"+v)
+	}
+	if att.Dir != "" {
+		prop.Params.Set(ical.ParamDir, att.Dir)
+	}
+	if att.Language != "" {
+		prop.Params.Set(ical.ParamLanguage, att.Language)
+	}
+}
+
+// setOrganizerParams adds applicable RFC 5545 parameters to an ORGANIZER property.
+func setOrganizerParams(prop *ical.Prop, att model.Attendee) {
+	if att.SentBy != "" {
+		prop.Params.Set(ical.ParamSentBy, "mailto:"+att.SentBy)
+	}
+	if att.Dir != "" {
+		prop.Params.Set(ical.ParamDir, att.Dir)
+	}
+	if att.Language != "" {
+		prop.Params.Set(ical.ParamLanguage, att.Language)
+	}
+}
+
+// splitNonEmpty splits a comma-separated string and returns non-empty trimmed values.
+func splitNonEmpty(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func emitAttachment(props ical.Props, att model.Attachment) {
