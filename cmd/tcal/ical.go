@@ -134,11 +134,26 @@ func icalImportCmd() *cobra.Command {
 				importedTodos = append(importedTodos, saved)
 			}
 
+			if len(result.Warnings) > 0 {
+				fmt.Fprintf(os.Stderr, "tcal: %d component(s) skipped during import:\n", len(result.Warnings))
+				limit := 5
+				if len(result.Warnings) < limit {
+					limit = len(result.Warnings)
+				}
+				for _, w := range result.Warnings[:limit] {
+					fmt.Fprintf(os.Stderr, "  - %s\n", w)
+				}
+				if len(result.Warnings) > 5 {
+					fmt.Fprintf(os.Stderr, "  ... and %d more\n", len(result.Warnings)-5)
+				}
+			}
+
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
 				out := map[string]any{
-					"events": toJSONEvents(importedEvents),
-					"todos":  toJSONTodos(importedTodos),
+					"events":   toJSONEvents(importedEvents),
+					"todos":    toJSONTodos(importedTodos),
+					"warnings": result.Warnings,
 				}
 				return printOutput(w, out)
 			}

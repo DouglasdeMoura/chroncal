@@ -13,6 +13,7 @@ import (
 	"github.com/douglasdemoura/tcal/internal/app"
 	"github.com/douglasdemoura/tcal/internal/config"
 	"github.com/douglasdemoura/tcal/internal/event"
+	"github.com/douglasdemoura/tcal/internal/ical"
 	"github.com/douglasdemoura/tcal/internal/todo"
 	"github.com/douglasdemoura/tcal/internal/tui"
 )
@@ -39,6 +40,9 @@ Resource groups:
   service    Manage alarm notification service (install, uninstall, status)`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		cfg = config.Load()
+		if cfg.ProductID != "" {
+			ical.ProductID = cfg.ProductID
+		}
 		switch outputFmt {
 		case "text", "table", "json", "yaml":
 			return nil

@@ -19,6 +19,11 @@ import (
 
 // fireAlarm dispatches the notification for a due alarm.
 // EMAIL and AUDIO fall back to DISPLAY on failure.
+//
+// Note: RFC 5545 REPEAT and DURATION on VALARM specify additional
+// post-trigger notifications. These values are stored and round-tripped
+// for interchange fidelity but are not fired locally. Most calendar
+// clients also ignore VALARM repeat for desktop notifications.
 func fireAlarm(da alarm.DueAlarm) error {
 	switch da.Alarm.Action {
 	case "AUDIO":
