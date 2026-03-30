@@ -10,6 +10,7 @@ import (
 	"github.com/douglasdemoura/tcal/internal/duration"
 	"github.com/douglasdemoura/tcal/internal/event"
 	"github.com/douglasdemoura/tcal/internal/model"
+	"github.com/douglasdemoura/tcal/internal/recurrence"
 	"github.com/douglasdemoura/tcal/internal/storage"
 )
 
@@ -59,21 +60,26 @@ func (s *Service) checkEventAlarms(ctx context.Context, now time.Time) ([]DueAla
 	windowStart := now.Add(-StaleThreshold - 24*time.Hour)
 	windowEnd := now.Add(StaleThreshold + 24*time.Hour)
 
-	events, err := s.events.ListByDateRange(ctx, windowStart, windowEnd)
+	// Use recurrence service to get all event instances (including recurring)
+	recurSvc := recurrence.NewService(s.db, s.q)
+	expandedEvents, err := recurSvc.ListExpandedEvents(ctx, windowStart, windowEnd)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list expanded events: %w", err)
 	}
 
 	var due []DueAlarm
 
 	// 1. Fresh alarms that haven't fired yet.
-	for _, evt := range events {
-		alarms, err := s.events.ListAlarms(ctx, evt.ID)
+	for _, expEvt := range expandedEvents {
+		// Get alarms for the parent event
+		alarms, err := s.events.ListAlarms(ctx, expEvt.ID)
 		if err != nil {
-			return nil, fmt.Errorf("list alarms for event %d: %w", evt.ID, err)
+			continue // Skip events with alarm list errors
 		}
+
 		for _, a := range alarms {
-			triggerAt, err := computeTriggerTime(evt, a)
+			// Compute trigger time relative to the instance time
+			triggerAt, err := computeTriggerTimeForInstance(expEvt, a)
 			if err != nil {
 				continue // skip alarms with unparseable triggers
 			}
@@ -86,7 +92,8 @@ func (s *Service) checkEventAlarms(ctx context.Context, now time.Time) ([]DueAla
 				continue
 			}
 
-			// Check if already fired
+			// Check if already fired for this specific instance
+			// Include instance time in the trigger key for recurring events
 			triggerKey := triggerAt.UTC().Format(time.RFC3339)
 			_, err = s.q.GetAlarmState(ctx, storage.GetAlarmStateParams{
 				AlarmID:   a.ID,
@@ -97,8 +104,13 @@ func (s *Service) checkEventAlarms(ctx context.Context, now time.Time) ([]DueAla
 				continue
 			}
 
+			// Create modified event with instance time for notification
+			instanceEvent := expEvt.Event
+			instanceEvent.StartTime = expEvt.InstanceTime
+			instanceEvent.EndTime = expEvt.InstanceTime.Add(expEvt.Event.Duration())
+
 			due = append(due, DueAlarm{
-				Event:     evt,
+				Event:     instanceEvent,
 				Alarm:     a,
 				TriggerAt: triggerAt,
 			})
@@ -123,6 +135,51 @@ func (s *Service) checkTodoAlarms(ctx context.Context, now time.Time) ([]TodoDue
 
 	todoSvc := NewTodoService(s.db, s.q, s.todos)
 	return todoSvc.CheckTodos(ctx, now)
+}
+
+// computeTriggerTimeForInstance calculates trigger time for a specific event instance
+func computeTriggerTimeForInstance(expEvt recurrence.ExpandedEvent, alarm model.Alarm) (time.Time, error) {
+	trigger := alarm.TriggerValue
+	if trigger == "" {
+		return expEvt.InstanceTime.Add(-15 * time.Minute), nil // Default 15 min before
+	}
+
+	// Duration triggers: anchor-relative (RELATED=START or END).
+	if duration.Validate(trigger) == nil {
+		anchor := expEvt.InstanceTime
+		if alarm.Related == "END" {
+			anchor = expEvt.InstanceTime.Add(expEvt.Event.Duration())
+		}
+		// Convert to event's named timezone so that day-level arithmetic
+		// (P1D, P1W) handles DST transitions correctly.
+		if expEvt.Event.Timezone != "" {
+			if loc, err := time.LoadLocation(expEvt.Event.Timezone); err == nil {
+				anchor = anchor.In(loc)
+			}
+		}
+		return duration.Add(anchor, trigger), nil
+	}
+
+	// Absolute triggers: the trigger IS the fire time; Related is ignored.
+	// Try iCal UTC format: 20060102T150405Z
+	if t, err := time.Parse("20060102T150405Z", trigger); err == nil {
+		return t, nil
+	}
+	// Try iCal floating format: 20060102T150405 (interpret in event timezone)
+	if t, err := time.Parse("20060102T150405", trigger); err == nil {
+		if expEvt.Event.Timezone != "" {
+			if loc, lerr := time.LoadLocation(expEvt.Event.Timezone); lerr == nil {
+				return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), 0, loc), nil
+			}
+		}
+		return t, nil // treat as UTC if no timezone info
+	}
+	// Try RFC 3339 (legacy CLI-created triggers before normalization)
+	if t, err := time.Parse(time.RFC3339, trigger); err == nil {
+		return t, nil
+	}
+
+	return time.Time{}, fmt.Errorf("invalid trigger format: %q", trigger)
 }
 
 // ListExpiredSnoozed returns snoozed alarms whose snooze-until time is at or
