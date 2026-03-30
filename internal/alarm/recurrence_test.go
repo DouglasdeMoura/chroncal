@@ -35,8 +35,8 @@ func TestCheckRecurringEventAlarm(t *testing.T) {
 
 	// Check at 8:50 AM on day 2 (alarm should fire at 8:45 AM)
 	checkTime := time.Date(2026, 4, 2, 8, 50, 0, 0, time.UTC)
-	svc := NewService(db, q, eventsSvc)
-	eventAlarms, err := svc.Check(context.Background(), checkTime)
+	svc := NewService(db, q, eventsSvc, nil)
+	eventAlarms, _, err := svc.Check(context.Background(), checkTime)
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
@@ -84,8 +84,8 @@ func TestCheckRecurringEventAlarm_AllInstances(t *testing.T) {
 	// 1st alarm: Apr 6 13:50, 2nd alarm: Apr 13 13:50
 	// Check on Apr 13 after 13:50 to catch both alarms (2nd is not stale yet)
 	checkTime := time.Date(2026, 4, 13, 14, 0, 0, 0, time.UTC)
-	svc := NewService(db, q, eventsSvc)
-	eventAlarms, err := svc.Check(context.Background(), checkTime)
+	svc := NewService(db, q, eventsSvc, nil)
+	eventAlarms, _, err := svc.Check(context.Background(), checkTime)
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
