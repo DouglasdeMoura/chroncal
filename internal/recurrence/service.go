@@ -10,6 +10,7 @@ import (
 
 	"github.com/douglasdemoura/tcal/internal/event"
 	"github.com/douglasdemoura/tcal/internal/storage"
+	"github.com/douglasdemoura/tcal/internal/todo"
 )
 
 // Service handles recurrence expansion and caching
@@ -189,4 +190,66 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time) ([
 func parseTime(s string) time.Time {
 	t, _ := time.Parse(time.RFC3339, s)
 	return t
+}
+
+// ExpandTodo generates all occurrences of a todo within a date range.
+// The anchor date is DTSTART if present, else DUE. For non-recurring todos
+// a single instance is returned if the anchor falls in range.
+func ExpandTodo(td todo.Todo, from, to time.Time) []ExpandedTodo {
+	anchor := td.ParseStartDate()
+	if anchor.IsZero() {
+		anchor = td.ParseDueDate()
+	}
+	if anchor.IsZero() {
+		return nil
+	}
+
+	if td.RecurrenceRule == "" {
+		if anchor.Before(from) || !anchor.Before(to) {
+			return nil
+		}
+		return []ExpandedTodo{{
+			Todo:         td,
+			InstanceTime: anchor,
+		}}
+	}
+
+	rruleStr := "RRULE:" + td.RecurrenceRule
+	set, err := rrule.StrToRRuleSet(rruleStr)
+	if err != nil {
+		if anchor.Before(from) || !anchor.Before(to) {
+			return nil
+		}
+		return []ExpandedTodo{{
+			Todo:         td,
+			InstanceTime: anchor,
+		}}
+	}
+
+	set.DTStart(anchor)
+	for _, ex := range td.ParseExDates() {
+		set.ExDate(ex)
+	}
+	for _, rd := range td.ParseRDates() {
+		set.RDate(rd)
+	}
+
+	occurrences := set.Between(from, to, true)
+
+	var instances []ExpandedTodo
+	for _, occ := range occurrences {
+		isRDate := false
+		for _, rd := range td.ParseRDates() {
+			if occ.Equal(rd) {
+				isRDate = true
+				break
+			}
+		}
+		instances = append(instances, ExpandedTodo{
+			Todo:         td,
+			InstanceTime: occ,
+			IsOverride:   isRDate,
+		})
+	}
+	return instances
 }
