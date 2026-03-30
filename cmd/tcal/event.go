@@ -23,7 +23,7 @@ func eventCmd() *cobra.Command {
 		Use:   "event",
 		Short: "Manage events",
 	}
-	cmd.AddCommand(eventListCmd(), eventGetCmd(), eventAddCmd(), eventUpdateCmd(), eventDeleteCmd())
+	cmd.AddCommand(eventListCmd(), eventGetCmd(), eventAddCmd(), eventUpdateCmd(), eventDeleteCmd(), eventSearchCmd())
 	return cmd
 }
 
@@ -83,6 +83,63 @@ func eventListCmd() *cobra.Command {
 	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 14 days from now)")
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "filter by calendar name")
 	cmd.Flags().StringVar(&status, "status", "", "filter by status (TENTATIVE, CONFIRMED, CANCELLED)")
+	return cmd
+}
+
+func eventSearchCmd() *cobra.Command {
+	var (
+		calendarName string
+		fromStr      string
+		toStr        string
+		status       string
+	)
+	cmd := &cobra.Command{
+		Use:   "search <query>",
+		Short: "Search events by title, description, location, or categories",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			a, err := initApp()
+			if err != nil {
+				return err
+			}
+			defer a.Close()
+			ctx := context.Background()
+
+			var calID int64
+			if calendarName != "" {
+				calID, err = resolveCalendarID(ctx, a, calendarName)
+				if err != nil {
+					return err
+				}
+			}
+
+			events, err := a.Events.Search(ctx, event.SearchParams{
+				Query:      args[0],
+				CalendarID: calID,
+				From:       fromStr,
+				To:         toStr,
+				Status:     status,
+			})
+			if err != nil {
+				return fmt.Errorf("search events: %w", err)
+			}
+
+			w := cmd.OutOrStdout()
+			if outputFmt != "text" {
+				items := make([]jsonEvent, len(events))
+				for i, e := range events {
+					items[i] = toJSONEvent(e)
+				}
+				return printOutput(w, items)
+			}
+			printEvents(w, events)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&calendarName, "calendar", "", "filter by calendar name")
+	cmd.Flags().StringVar(&fromStr, "from", "", "start date filter (RFC3339)")
+	cmd.Flags().StringVar(&toStr, "to", "", "end date filter (RFC3339)")
+	cmd.Flags().StringVar(&status, "status", "", "status filter (TENTATIVE, CONFIRMED, CANCELLED)")
 	return cmd
 }
 

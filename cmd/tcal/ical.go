@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -167,10 +168,14 @@ func icalImportCmd() *cobra.Command {
 
 func icalExportCmd() *cobra.Command {
 	var (
-		calendarName string
-		fromStr      string
-		toStr        string
-		outFile      string
+		calendarName  string
+		fromStr       string
+		toStr         string
+		outFile       string
+		category      string
+		status        string
+		includeEvents bool
+		includeTodos  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "export",
@@ -183,54 +188,75 @@ func icalExportCmd() *cobra.Command {
 			defer a.Close()
 			ctx := context.Background()
 
-			from, to, err := parseDateRange(fromStr, toStr)
-			if err != nil {
-				return err
+			// Default to including both when neither flag is set
+			if !includeEvents && !includeTodos {
+				includeEvents = true
+				includeTodos = true
+			}
+
+			var calID int64
+			if calendarName != "" {
+				calID, err = resolveCalendarID(ctx, a, calendarName)
+				if err != nil {
+					return err
+				}
+			}
+
+			// Parse date range for event filtering
+			var fromTime, toTime string
+			if fromStr != "" || toStr != "" {
+				from, to, derr := parseDateRange(fromStr, toStr)
+				if derr != nil {
+					return derr
+				}
+				fromTime = from.Format(time.RFC3339)
+				toTime = to.Format(time.RFC3339)
 			}
 
 			// Load events
 			var events []event.Event
-			if calendarName != "" {
-				calID, err := resolveCalendarID(ctx, a, calendarName)
-				if err != nil {
-					return err
-				}
-				events, err = a.Events.ListByCalendarAndDateRange(ctx, calID, from, to)
-				if err != nil {
-					return fmt.Errorf("list events: %w", err)
-				}
-			} else {
-				events, err = a.Events.ListByDateRange(ctx, from, to)
+			if includeEvents {
+				events, err = a.Events.ExportFiltered(ctx, event.ExportParams{
+					CalendarID: calID,
+					From:       fromTime,
+					To:         toTime,
+					Category:   category,
+					Status:     status,
+				})
 				if err != nil {
 					return fmt.Errorf("list events: %w", err)
 				}
-			}
-			for i := range events {
-				events[i].Alarms, _ = a.Events.ListAlarms(ctx, events[i].ID)
-				events[i].Attendees, _ = a.Events.ListAttendees(ctx, events[i].ID)
-				events[i].Attachments, _ = a.Events.ListAttachments(ctx, events[i].ID)
-				events[i].Comments, _ = a.Events.ListComments(ctx, events[i].ID)
-				events[i].Contacts, _ = a.Events.ListContacts(ctx, events[i].ID)
-				events[i].Resources, _ = a.Events.ListResources(ctx, events[i].ID)
-				events[i].Relations, _ = a.Events.ListRelations(ctx, events[i].ID)
+				for i := range events {
+					events[i].Alarms, _ = a.Events.ListAlarms(ctx, events[i].ID)
+					events[i].Attendees, _ = a.Events.ListAttendees(ctx, events[i].ID)
+					events[i].Attachments, _ = a.Events.ListAttachments(ctx, events[i].ID)
+					events[i].Comments, _ = a.Events.ListComments(ctx, events[i].ID)
+					events[i].Contacts, _ = a.Events.ListContacts(ctx, events[i].ID)
+					events[i].Resources, _ = a.Events.ListResources(ctx, events[i].ID)
+					events[i].Relations, _ = a.Events.ListRelations(ctx, events[i].ID)
+				}
 			}
 
 			// Load todos
 			var todos []todo.Todo
-			if calendarName != "" {
-				calID, _ := resolveCalendarID(ctx, a, calendarName)
-				todos, _ = a.Todos.ListByCalendar(ctx, calID)
-			} else {
-				todos, _ = a.Todos.ListAll(ctx)
-			}
-			for i := range todos {
-				todos[i].Alarms, _ = a.Todos.ListAlarms(ctx, todos[i].ID)
-				todos[i].Attendees, _ = a.Todos.ListAttendees(ctx, todos[i].ID)
-				todos[i].Attachments, _ = a.Todos.ListAttachments(ctx, todos[i].ID)
-				todos[i].Comments, _ = a.Todos.ListComments(ctx, todos[i].ID)
-				todos[i].Contacts, _ = a.Todos.ListContacts(ctx, todos[i].ID)
-				todos[i].Resources, _ = a.Todos.ListResources(ctx, todos[i].ID)
-				todos[i].Relations, _ = a.Todos.ListRelations(ctx, todos[i].ID)
+			if includeTodos {
+				todos, err = a.Todos.ExportFiltered(ctx, todo.ExportParams{
+					CalendarID: calID,
+					Category:   category,
+					Status:     status,
+				})
+				if err != nil {
+					return fmt.Errorf("list todos: %w", err)
+				}
+				for i := range todos {
+					todos[i].Alarms, _ = a.Todos.ListAlarms(ctx, todos[i].ID)
+					todos[i].Attendees, _ = a.Todos.ListAttendees(ctx, todos[i].ID)
+					todos[i].Attachments, _ = a.Todos.ListAttachments(ctx, todos[i].ID)
+					todos[i].Comments, _ = a.Todos.ListComments(ctx, todos[i].ID)
+					todos[i].Contacts, _ = a.Todos.ListContacts(ctx, todos[i].ID)
+					todos[i].Resources, _ = a.Todos.ListResources(ctx, todos[i].ID)
+					todos[i].Relations, _ = a.Todos.ListRelations(ctx, todos[i].ID)
+				}
 			}
 
 			var data []byte
@@ -272,8 +298,12 @@ func icalExportCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "export only this calendar")
-	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD, default: today)")
-	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 14 days from now)")
+	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD, default: all)")
+	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: all)")
 	cmd.Flags().StringVarP(&outFile, "file", "f", "", "output file (default: stdout)")
+	cmd.Flags().StringVar(&category, "category", "", "filter by category")
+	cmd.Flags().StringVar(&status, "status", "", "filter by status")
+	cmd.Flags().BoolVar(&includeEvents, "events", false, "include only events")
+	cmd.Flags().BoolVar(&includeTodos, "todos", false, "include only todos")
 	return cmd
 }
