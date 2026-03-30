@@ -458,6 +458,15 @@ func MergeCalendars(a, b []byte) []byte {
 		aStr = aStr[:idx]
 	}
 
+	// Extract VTIMEZONE blocks from b that are not already in a, so they
+	// are preserved when the header of b is stripped below.
+	var extraTZ string
+	for _, tzBlock := range extractVTIMEZONEBlocks(bStr) {
+		if !strings.Contains(aStr, tzBlock) {
+			extraTZ += tzBlock
+		}
+	}
+
 	// Remove header from b (everything up to and including first blank line or first BEGIN:V component)
 	if idx := strings.Index(bStr, "BEGIN:VTODO"); idx >= 0 {
 		bStr = bStr[idx:]
@@ -470,7 +479,36 @@ func MergeCalendars(a, b []byte) []byte {
 		bStr = bStr[:idx]
 	}
 
-	return []byte(aStr + bStr + "END:VCALENDAR\r\n")
+	return []byte(aStr + extraTZ + bStr + "END:VCALENDAR\r\n")
+}
+
+// extractVTIMEZONEBlocks returns all BEGIN:VTIMEZONE...END:VTIMEZONE\r\n
+// segments found in s.
+func extractVTIMEZONEBlocks(s string) []string {
+	var blocks []string
+	rest := s
+	for {
+		start := strings.Index(rest, "BEGIN:VTIMEZONE")
+		if start < 0 {
+			break
+		}
+		end := strings.Index(rest[start:], "END:VTIMEZONE")
+		if end < 0 {
+			break
+		}
+		// end is relative to start; include the "END:VTIMEZONE" tag plus a
+		// trailing \r\n if present.
+		blockEnd := start + end + len("END:VTIMEZONE")
+		if blockEnd < len(rest) && rest[blockEnd] == '\r' {
+			blockEnd++
+		}
+		if blockEnd < len(rest) && rest[blockEnd] == '\n' {
+			blockEnd++
+		}
+		blocks = append(blocks, rest[start:blockEnd])
+		rest = rest[blockEnd:]
+	}
+	return blocks
 }
 
 func emitDateListOnComponent(comp *ical.Component, propName, dates string) {

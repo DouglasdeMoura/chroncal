@@ -411,7 +411,21 @@ func parseAlarm(comp *ical.Component) model.Alarm {
 		alarm.Action = strings.ToUpper(prop.Value)
 	}
 	if prop := comp.Props.Get(ical.PropTrigger); prop != nil {
-		alarm.TriggerValue = prop.Value
+		tv := prop.Value
+		// Validate trigger: must be a parseable duration or datetime.
+		valid := false
+		if duration.Validate(tv) == nil {
+			valid = true
+		} else if _, err := time.Parse("20060102T150405Z", tv); err == nil {
+			valid = true
+		} else if _, err := time.Parse("20060102T150405", tv); err == nil {
+			valid = true
+		} else if _, err := time.Parse(time.RFC3339, tv); err == nil {
+			valid = true
+		}
+		if valid {
+			alarm.TriggerValue = tv
+		}
 		if rel := prop.Params.Get("RELATED"); rel != "" {
 			alarm.Related = strings.ToUpper(rel)
 		}

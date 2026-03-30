@@ -484,3 +484,37 @@ func TestExport_MergeCalendars_EmptySecond(t *testing.T) {
 		t.Error("missing VEVENT from first calendar")
 	}
 }
+
+func TestExport_MergeCalendars_PreservesNewVTIMEZONE(t *testing.T) {
+	t.Parallel()
+	a := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\n" +
+		"BEGIN:VTIMEZONE\r\nTZID:America/New_York\r\nEND:VTIMEZONE\r\n" +
+		"BEGIN:VEVENT\r\nUID:e1\r\nEND:VEVENT\r\n" +
+		"END:VCALENDAR\r\n")
+	b := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\n" +
+		"BEGIN:VTIMEZONE\r\nTZID:America/New_York\r\nEND:VTIMEZONE\r\n" +
+		"BEGIN:VTIMEZONE\r\nTZID:Europe/London\r\nEND:VTIMEZONE\r\n" +
+		"BEGIN:VTODO\r\nUID:t1\r\nEND:VTODO\r\n" +
+		"END:VCALENDAR\r\n")
+
+	merged := string(MergeCalendars(a, b))
+
+	// The Europe/London timezone from b must be preserved.
+	if !strings.Contains(merged, "TZID:Europe/London") {
+		t.Error("missing VTIMEZONE Europe/London from second calendar")
+	}
+	// The duplicate America/New_York must NOT be added twice.
+	if strings.Count(merged, "TZID:America/New_York") != 1 {
+		t.Errorf("expected 1 America/New_York VTIMEZONE, got %d",
+			strings.Count(merged, "TZID:America/New_York"))
+	}
+	if !strings.Contains(merged, "BEGIN:VEVENT") {
+		t.Error("missing VEVENT from first calendar")
+	}
+	if !strings.Contains(merged, "BEGIN:VTODO") {
+		t.Error("missing VTODO from second calendar")
+	}
+	if strings.Count(merged, "BEGIN:VCALENDAR") != 1 {
+		t.Errorf("expected 1 VCALENDAR header, got %d", strings.Count(merged, "BEGIN:VCALENDAR"))
+	}
+}
