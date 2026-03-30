@@ -10,12 +10,13 @@ import (
 )
 
 const createAlarm = `-- name: CreateAlarm :one
-INSERT INTO event_alarms (event_id, action, trigger_value, description, summary, repeat, duration, related)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, event_id, "action", trigger_value, description, repeat, duration, related, summary
+INSERT INTO event_alarms (event_id, uid, action, trigger_value, description, summary, repeat, duration, related)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, event_id, "action", trigger_value, description, repeat, duration, related, summary, uid
 `
 
 type CreateAlarmParams struct {
 	EventID      int64
+	Uid          string
 	Action       string
 	TriggerValue string
 	Description  string
@@ -28,6 +29,7 @@ type CreateAlarmParams struct {
 func (q *Queries) CreateAlarm(ctx context.Context, arg CreateAlarmParams) (EventAlarm, error) {
 	row := q.db.QueryRowContext(ctx, createAlarm,
 		arg.EventID,
+		arg.Uid,
 		arg.Action,
 		arg.TriggerValue,
 		arg.Description,
@@ -47,8 +49,18 @@ func (q *Queries) CreateAlarm(ctx context.Context, arg CreateAlarmParams) (Event
 		&i.Duration,
 		&i.Related,
 		&i.Summary,
+		&i.Uid,
 	)
 	return i, err
+}
+
+const deleteAlarmByID = `-- name: DeleteAlarmByID :exec
+DELETE FROM event_alarms WHERE id = ?
+`
+
+func (q *Queries) DeleteAlarmByID(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, deleteAlarmByID, id)
+	return err
 }
 
 const deleteAlarmsByEventID = `-- name: DeleteAlarmsByEventID :exec
@@ -61,7 +73,7 @@ func (q *Queries) DeleteAlarmsByEventID(ctx context.Context, eventID int64) erro
 }
 
 const listAlarmsByEventID = `-- name: ListAlarmsByEventID :many
-SELECT id, event_id, "action", trigger_value, description, repeat, duration, related, summary FROM event_alarms WHERE event_id = ? ORDER BY id
+SELECT id, event_id, "action", trigger_value, description, repeat, duration, related, summary, uid FROM event_alarms WHERE event_id = ? ORDER BY id
 `
 
 func (q *Queries) ListAlarmsByEventID(ctx context.Context, eventID int64) ([]EventAlarm, error) {
@@ -83,6 +95,7 @@ func (q *Queries) ListAlarmsByEventID(ctx context.Context, eventID int64) ([]Eve
 			&i.Duration,
 			&i.Related,
 			&i.Summary,
+			&i.Uid,
 		); err != nil {
 			return nil, err
 		}
@@ -95,4 +108,56 @@ func (q *Queries) ListAlarmsByEventID(ctx context.Context, eventID int64) ([]Eve
 		return nil, err
 	}
 	return items, nil
+}
+
+const listAlarmsWithEmptyUID = `-- name: ListAlarmsWithEmptyUID :many
+SELECT id, event_id, "action", trigger_value, description, repeat, duration, related, summary, uid FROM event_alarms WHERE uid = ''
+`
+
+func (q *Queries) ListAlarmsWithEmptyUID(ctx context.Context) ([]EventAlarm, error) {
+	rows, err := q.db.QueryContext(ctx, listAlarmsWithEmptyUID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []EventAlarm
+	for rows.Next() {
+		var i EventAlarm
+		if err := rows.Scan(
+			&i.ID,
+			&i.EventID,
+			&i.Action,
+			&i.TriggerValue,
+			&i.Description,
+			&i.Repeat,
+			&i.Duration,
+			&i.Related,
+			&i.Summary,
+			&i.Uid,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const updateAlarmUID = `-- name: UpdateAlarmUID :exec
+UPDATE event_alarms SET uid = ? WHERE id = ?
+`
+
+type UpdateAlarmUIDParams struct {
+	Uid string
+	ID  int64
+}
+
+func (q *Queries) UpdateAlarmUID(ctx context.Context, arg UpdateAlarmUIDParams) error {
+	_, err := q.db.ExecContext(ctx, updateAlarmUID, arg.Uid, arg.ID)
+	return err
 }

@@ -336,8 +336,13 @@ func (s *Service) ReplaceAlarms(ctx context.Context, todoID int64, alarms []mode
 		return fmt.Errorf("delete alarms: %w", err)
 	}
 	for _, a := range alarms {
+		uid := a.UID
+		if uid == "" {
+			uid = uuid.New().String()
+		}
 		row, err := qtx.CreateTodoAlarm(ctx, storage.CreateTodoAlarmParams{
 			TodoID:       todoID,
+			Uid:          uid,
 			Action:       a.Action,
 			TriggerValue: a.TriggerValue,
 			Description:  a.Description,

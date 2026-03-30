@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 
+	"github.com/google/uuid"
 	"github.com/pressly/goose/v3"
 	_ "modernc.org/sqlite"
 
@@ -36,7 +37,55 @@ func Open(dbPath string) (*sql.DB, *Queries, error) {
 		return nil, nil, fmt.Errorf("run migrations: %w", err)
 	}
 
-	return conn, New(conn), nil
+	q := New(conn)
+	if err := backfillAlarmUIDs(conn, q); err != nil {
+		conn.Close()
+		return nil, nil, fmt.Errorf("backfill alarm uids: %w", err)
+	}
+
+	return conn, q, nil
+}
+
+// backfillAlarmUIDs assigns random UUIDs to alarms that have empty UIDs.
+// This runs once after upgrade from pre-UID schema.
+func backfillAlarmUIDs(conn *sql.DB, q *Queries) error {
+	ctx := context.Background()
+
+	alarms, err := q.ListAlarmsWithEmptyUID(ctx)
+	if err != nil || len(alarms) == 0 {
+		return nil
+	}
+
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	qtx := q.WithTx(tx)
+	for _, a := range alarms {
+		if err := qtx.UpdateAlarmUID(ctx, UpdateAlarmUIDParams{
+			Uid: uuid.New().String(),
+			ID:  a.ID,
+		}); err != nil {
+			return err
+		}
+	}
+
+	todoAlarms, err := q.ListTodoAlarmsWithEmptyUID(ctx)
+	if err != nil || len(todoAlarms) == 0 {
+		return tx.Commit()
+	}
+	for _, a := range todoAlarms {
+		if err := qtx.UpdateTodoAlarmUID(ctx, UpdateTodoAlarmUIDParams{
+			Uid: uuid.New().String(),
+			ID:  a.ID,
+		}); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 func runMigrations(conn *sql.DB) error {

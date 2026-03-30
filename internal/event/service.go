@@ -315,34 +315,95 @@ func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []mod
 	defer tx.Rollback()
 
 	qtx := s.q.WithTx(tx)
-	if err := qtx.DeleteAlarmsByEventID(ctx, eventID); err != nil {
-		return fmt.Errorf("delete alarms: %w", err)
+
+	// Load existing alarms with attendees for content matching.
+	existingRows, err := qtx.ListAlarmsByEventID(ctx, eventID)
+	if err != nil {
+		return fmt.Errorf("list existing alarms: %w", err)
 	}
-	for _, a := range alarms {
-		row, err := qtx.CreateAlarm(ctx, storage.CreateAlarmParams{
-			EventID:      eventID,
-			Action:       a.Action,
-			TriggerValue: a.TriggerValue,
-			Description:  a.Description,
-			Summary:      a.Summary,
-			Repeat:       int64(a.Repeat),
-			Duration:     a.Duration,
-			Related:      a.Related,
-		})
-		if err != nil {
-			return fmt.Errorf("create alarm: %w", err)
-		}
-		for _, att := range a.Attendees {
-			_, err := qtx.CreateAlarmAttendee(ctx, storage.CreateAlarmAttendeeParams{
-				AlarmID: row.ID,
-				Email:   att.Email,
-				Name:    att.Name,
-			})
-			if err != nil {
-				return fmt.Errorf("create alarm attendee: %w", err)
+	existing := make([]model.Alarm, len(existingRows))
+	for i, r := range existingRows {
+		existing[i] = fromStorageAlarm(r)
+		attRows, err := qtx.ListAlarmAttendeesByAlarmID(ctx, r.ID)
+		if err == nil {
+			for _, ar := range attRows {
+				existing[i].Attendees = append(existing[i].Attendees, model.AlarmAttendee{
+					ID: ar.ID, Email: ar.Email, Name: ar.Name,
+				})
 			}
 		}
 	}
+
+	// Match incoming alarms against existing by content.
+	// Slice-based matching: each existing alarm can only match once (supports duplicates).
+	matched := make([]bool, len(existing))
+	for _, a := range alarms {
+		found := false
+		for j, ex := range existing {
+			if matched[j] {
+				continue
+			}
+			if a.ContentEqual(ex) {
+				matched[j] = true
+				found = true
+				// If existing alarm has no UID, backfill it now.
+				if ex.UID == "" {
+					uid := a.UID
+					if uid == "" {
+						uid = uuid.New().String()
+					}
+					if err := qtx.UpdateAlarmUID(ctx, storage.UpdateAlarmUIDParams{
+						Uid: uid,
+						ID:  ex.ID,
+					}); err != nil {
+						return fmt.Errorf("backfill alarm uid: %w", err)
+					}
+				}
+				break
+			}
+		}
+		if !found {
+			// New alarm: assign UID and insert.
+			uid := a.UID
+			if uid == "" {
+				uid = uuid.New().String()
+			}
+			row, err := qtx.CreateAlarm(ctx, storage.CreateAlarmParams{
+				EventID:      eventID,
+				Uid:          uid,
+				Action:       a.Action,
+				TriggerValue: a.TriggerValue,
+				Description:  a.Description,
+				Summary:      a.Summary,
+				Repeat:       int64(a.Repeat),
+				Duration:     a.Duration,
+				Related:      a.Related,
+			})
+			if err != nil {
+				return fmt.Errorf("create alarm: %w", err)
+			}
+			for _, att := range a.Attendees {
+				_, err := qtx.CreateAlarmAttendee(ctx, storage.CreateAlarmAttendeeParams{
+					AlarmID: row.ID,
+					Email:   att.Email,
+					Name:    att.Name,
+				})
+				if err != nil {
+					return fmt.Errorf("create alarm attendee: %w", err)
+				}
+			}
+		}
+	}
+
+	// Delete existing alarms that were not matched (they were removed).
+	for j, ex := range existing {
+		if !matched[j] {
+			if err := qtx.DeleteAlarmByID(ctx, ex.ID); err != nil {
+				return fmt.Errorf("delete unmatched alarm: %w", err)
+			}
+		}
+	}
+
 	return tx.Commit()
 }
 
@@ -605,6 +666,7 @@ func fromStorageAlarm(r storage.EventAlarm) model.Alarm {
 	return model.Alarm{
 		ID:           r.ID,
 		EventID:      r.EventID,
+		UID:          r.Uid,
 		Action:       r.Action,
 		TriggerValue: r.TriggerValue,
 		Description:  r.Description,

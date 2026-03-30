@@ -64,6 +64,7 @@ type EventAlarm struct {
 	Duration     string
 	Related      string
 	Summary      string
+	Uid          string
 }
 
 type EventAlarmAttendee struct {
@@ -155,6 +156,7 @@ type TodoAlarm struct {
 	Duration     string
 	Related      string
 	Summary      string
+	Uid          string
 }
 
 type TodoAlarmAttendee struct {

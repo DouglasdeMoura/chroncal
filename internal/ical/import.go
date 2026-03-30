@@ -431,6 +431,14 @@ func parseAlarm(comp *ical.Component) model.Alarm {
 		alarm.Duration = prop.Value
 	}
 
+	// UID (RFC 9074)
+	if prop := comp.Props.Get(ical.PropUID); prop != nil {
+		uid := strings.TrimSpace(prop.Value)
+		if len(uid) > 0 && len(uid) <= 255 && !strings.ContainsRune(uid, 0) {
+			alarm.UID = uid
+		}
+	}
+
 	// ATTENDEE children (for EMAIL alarms)
 	for _, prop := range comp.Props.Values(ical.PropAttendee) {
 		alarm.Attendees = append(alarm.Attendees, model.AlarmAttendee{

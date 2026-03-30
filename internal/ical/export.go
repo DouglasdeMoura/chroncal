@@ -497,6 +497,9 @@ func emitDateListOnComponent(comp *ical.Component, propName, dates string) {
 
 func buildValarm(alarm model.Alarm) *ical.Component {
 	valarm := ical.NewComponent(ical.CompAlarm)
+	if alarm.UID != "" {
+		valarm.Props.SetText(ical.PropUID, alarm.UID)
+	}
 	valarm.Props.SetText(ical.PropAction, alarm.Action)
 
 	trigger := &ical.Prop{Name: ical.PropTrigger, Params: make(ical.Params)}

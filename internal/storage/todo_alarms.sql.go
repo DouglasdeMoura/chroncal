@@ -10,12 +10,13 @@ import (
 )
 
 const createTodoAlarm = `-- name: CreateTodoAlarm :one
-INSERT INTO todo_alarms (todo_id, action, trigger_value, description, summary, repeat, duration, related)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, todo_id, "action", trigger_value, description, repeat, duration, related, summary
+INSERT INTO todo_alarms (todo_id, uid, action, trigger_value, description, summary, repeat, duration, related)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid
 `
 
 type CreateTodoAlarmParams struct {
 	TodoID       int64
+	Uid          string
 	Action       string
 	TriggerValue string
 	Description  string
@@ -28,6 +29,7 @@ type CreateTodoAlarmParams struct {
 func (q *Queries) CreateTodoAlarm(ctx context.Context, arg CreateTodoAlarmParams) (TodoAlarm, error) {
 	row := q.db.QueryRowContext(ctx, createTodoAlarm,
 		arg.TodoID,
+		arg.Uid,
 		arg.Action,
 		arg.TriggerValue,
 		arg.Description,
@@ -47,6 +49,7 @@ func (q *Queries) CreateTodoAlarm(ctx context.Context, arg CreateTodoAlarmParams
 		&i.Duration,
 		&i.Related,
 		&i.Summary,
+		&i.Uid,
 	)
 	return i, err
 }
@@ -61,7 +64,7 @@ func (q *Queries) DeleteTodoAlarmsByTodoID(ctx context.Context, todoID int64) er
 }
 
 const listTodoAlarmsByTodoID = `-- name: ListTodoAlarmsByTodoID :many
-SELECT id, todo_id, "action", trigger_value, description, repeat, duration, related, summary FROM todo_alarms WHERE todo_id = ? ORDER BY id
+SELECT id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid FROM todo_alarms WHERE todo_id = ? ORDER BY id
 `
 
 func (q *Queries) ListTodoAlarmsByTodoID(ctx context.Context, todoID int64) ([]TodoAlarm, error) {
@@ -83,6 +86,7 @@ func (q *Queries) ListTodoAlarmsByTodoID(ctx context.Context, todoID int64) ([]T
 			&i.Duration,
 			&i.Related,
 			&i.Summary,
+			&i.Uid,
 		); err != nil {
 			return nil, err
 		}
@@ -95,4 +99,56 @@ func (q *Queries) ListTodoAlarmsByTodoID(ctx context.Context, todoID int64) ([]T
 		return nil, err
 	}
 	return items, nil
+}
+
+const listTodoAlarmsWithEmptyUID = `-- name: ListTodoAlarmsWithEmptyUID :many
+SELECT id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid FROM todo_alarms WHERE uid = ''
+`
+
+func (q *Queries) ListTodoAlarmsWithEmptyUID(ctx context.Context) ([]TodoAlarm, error) {
+	rows, err := q.db.QueryContext(ctx, listTodoAlarmsWithEmptyUID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TodoAlarm
+	for rows.Next() {
+		var i TodoAlarm
+		if err := rows.Scan(
+			&i.ID,
+			&i.TodoID,
+			&i.Action,
+			&i.TriggerValue,
+			&i.Description,
+			&i.Repeat,
+			&i.Duration,
+			&i.Related,
+			&i.Summary,
+			&i.Uid,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const updateTodoAlarmUID = `-- name: UpdateTodoAlarmUID :exec
+UPDATE todo_alarms SET uid = ? WHERE id = ?
+`
+
+type UpdateTodoAlarmUIDParams struct {
+	Uid string
+	ID  int64
+}
+
+func (q *Queries) UpdateTodoAlarmUID(ctx context.Context, arg UpdateTodoAlarmUIDParams) error {
+	_, err := q.db.ExecContext(ctx, updateTodoAlarmUID, arg.Uid, arg.ID)
+	return err
 }
