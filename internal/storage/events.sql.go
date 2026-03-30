@@ -219,6 +219,58 @@ func (q *Queries) GetEventByUIDAndRecurrenceID(ctx context.Context, arg GetEvent
 	return i, err
 }
 
+const listAllEvents = `-- name: ListAllEvents :many
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, categories, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM events
+`
+
+func (q *Queries) ListAllEvents(ctx context.Context) ([]Event, error) {
+	rows, err := q.db.QueryContext(ctx, listAllEvents)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Event
+	for rows.Next() {
+		var i Event
+		if err := rows.Scan(
+			&i.ID,
+			&i.Uid,
+			&i.CalendarID,
+			&i.Title,
+			&i.Description,
+			&i.Location,
+			&i.StartTime,
+			&i.EndTime,
+			&i.AllDay,
+			&i.RecurrenceRule,
+			&i.Timezone,
+			&i.Status,
+			&i.Transp,
+			&i.Sequence,
+			&i.Priority,
+			&i.Class,
+			&i.Url,
+			&i.Categories,
+			&i.Exdates,
+			&i.Rdates,
+			&i.RecurrenceID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Geo,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEventsByCalendarAndDateRange = `-- name: ListEventsByCalendarAndDateRange :many
 SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, categories, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM events WHERE calendar_id = ? AND start_time >= ? AND start_time < ? ORDER BY start_time
 `

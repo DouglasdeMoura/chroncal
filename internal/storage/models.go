@@ -129,6 +129,15 @@ type EventResource struct {
 	Text    string
 }
 
+type RecurrenceInstance struct {
+	ID         int64
+	EventID    int64
+	OriginalID int64
+	InstanceAt string
+	IsOverride int64
+	CreatedAt  string
+}
+
 type Todo struct {
 	ID              int64
 	Uid             string
@@ -216,6 +225,15 @@ type TodoContact struct {
 	ID     int64
 	TodoID int64
 	Text   string
+}
+
+type TodoRecurrenceInstance struct {
+	ID         int64
+	TodoID     int64
+	OriginalID int64
+	InstanceAt string
+	IsOverride int64
+	CreatedAt  string
 }
 
 type TodoRelation struct {
