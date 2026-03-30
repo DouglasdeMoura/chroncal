@@ -28,23 +28,34 @@ type Service struct {
 	db     *sql.DB
 	q      *storage.Queries
 	events *event.Service
+	todos  TodoAlarmLister
 }
 
-func NewService(db *sql.DB, q *storage.Queries, events *event.Service) *Service {
-	return &Service{db: db, q: q, events: events}
+func NewService(db *sql.DB, q *storage.Queries, events *event.Service, todos TodoAlarmLister) *Service {
+	return &Service{db: db, q: q, events: events, todos: todos}
 }
 
 // Check finds all alarms that are due at the given time.
-// An alarm is due when:
-//   - trigger_at <= now (the alarm time has passed)
-//   - trigger_at > now - StaleThreshold (not too old)
-//   - no alarm_state row exists with fired_at set for this alarm+trigger
-//
-// It also returns snoozed alarms whose snooze-until time has expired.
-func (s *Service) Check(ctx context.Context, now time.Time) ([]DueAlarm, error) {
+// Returns both event alarms and todo alarms separately.
+func (s *Service) Check(ctx context.Context, now time.Time) ([]DueAlarm, []TodoDueAlarm, error) {
+	// Check event alarms
+	eventAlarms, err := s.checkEventAlarms(ctx, now)
+	if err != nil {
+		return nil, nil, fmt.Errorf("check event alarms: %w", err)
+	}
+
+	// Check todo alarms
+	todoAlarms, err := s.checkTodoAlarms(ctx, now)
+	if err != nil {
+		return nil, nil, fmt.Errorf("check todo alarms: %w", err)
+	}
+
+	return eventAlarms, todoAlarms, nil
+}
+
+// checkEventAlarms finds due event alarms
+func (s *Service) checkEventAlarms(ctx context.Context, now time.Time) ([]DueAlarm, error) {
 	// Query events with alarms in a generous window around now.
-	// We look from (now - StaleThreshold - 24h) to (now + StaleThreshold + 24h) for start times,
-	// then filter precisely by computed trigger time.
 	windowStart := now.Add(-StaleThreshold - 24*time.Hour)
 	windowEnd := now.Add(StaleThreshold + 24*time.Hour)
 
@@ -102,6 +113,16 @@ func (s *Service) Check(ctx context.Context, now time.Time) ([]DueAlarm, error) 
 	due = append(due, snoozed...)
 
 	return due, nil
+}
+
+// checkTodoAlarms finds due todo alarms using TodoService
+func (s *Service) checkTodoAlarms(ctx context.Context, now time.Time) ([]TodoDueAlarm, error) {
+	if s.todos == nil {
+		return nil, nil
+	}
+
+	todoSvc := NewTodoService(s.db, s.q, s.todos)
+	return todoSvc.CheckTodos(ctx, now)
 }
 
 // ListExpiredSnoozed returns snoozed alarms whose snooze-until time is at or
@@ -192,8 +213,8 @@ func (s *Service) MarkRefired(ctx context.Context, stateID int64) error {
 // SnoozeResult describes what happened when computing a snooze time.
 type SnoozeResult struct {
 	Until      time.Time
-	Capped     bool   // true if the snooze was capped at event end
-	PastStart  bool   // true if the snooze fires after event start
+	Capped     bool // true if the snooze was capped at event end
+	PastStart  bool // true if the snooze fires after event start
 	EventStart time.Time
 	EventEnd   time.Time
 }

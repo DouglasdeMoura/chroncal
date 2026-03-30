@@ -115,7 +115,7 @@ and exits 0.`,
 			defer a.Close()
 			ctx := context.Background()
 
-			due, err := a.Alarms.Check(ctx, time.Now())
+			due, _, err := a.Alarms.Check(ctx, time.Now())
 			if err != nil {
 				return fmt.Errorf("check alarms: %w", err)
 			}
@@ -313,7 +313,7 @@ permanent; use "alarm snooze" instead if you want to be reminded again
 later.`,
 		Example: `  # Dismiss alarm state #5
   tcal alarm dismiss 5`,
-		Args:  cobra.ExactArgs(1),
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -381,7 +381,7 @@ Exporting and re-importing a calendar will not preserve snooze times.`,
 
   # Check snooze status in the pending list
   tcal alarm list`,
-		Args:  cobra.ExactArgs(1),
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -502,7 +502,7 @@ See "tcal alarm check --help" for notification types and SMTP configuration.`,
 
 			// Run immediately on start, then on each tick.
 			runCheck := func() {
-				due, err := a.Alarms.Check(ctx, time.Now())
+				due, _, err := a.Alarms.Check(ctx, time.Now())
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "tcal: check error: %v\n", err)
 					return

@@ -29,13 +29,14 @@ func New(dbPath string) (*App, error) {
 	}
 
 	eventSvc := event.NewService(db, queries)
+	todoSvc := todo.NewService(db, queries)
 
 	return &App{
 		DB:        db,
 		Calendars: calendar.NewService(queries),
 		Events:    eventSvc,
-		Todos:     todo.NewService(db, queries),
-		Alarms:    alarm.NewService(db, queries, eventSvc),
+		Todos:     todoSvc,
+		Alarms:    alarm.NewService(db, queries, eventSvc, todoSvc),
 	}, nil
 }
 

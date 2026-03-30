@@ -14,7 +14,7 @@ func newTestServices(t *testing.T) (*Service, *event.Service) {
 	t.Helper()
 	db, q := testutil.NewTestDB(t)
 	evtSvc := event.NewService(db, q)
-	alarmSvc := NewService(db, q, evtSvc)
+	alarmSvc := NewService(db, q, evtSvc, nil) // nil todos for event-only tests
 	return alarmSvc, evtSvc
 }
 
@@ -41,9 +41,15 @@ func TestCheck_FiresDueAlarm(t *testing.T) {
 	}
 
 	// Check: alarm trigger is 15 min before start = 5 min ago = should fire
-	due, err := svc.Check(ctx, time.Now())
+	due, _, err := svc.Check(ctx, time.Now())
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(due) != 1 {
+		t.Fatalf("got %d due alarms, want 1", len(due))
+	}
+	if due[0].Event.ID != e.ID {
+		t.Errorf("event ID = %d, want %d", due[0].Event.ID, e.ID)
 	}
 	if len(due) != 1 {
 		t.Fatalf("got %d due alarms, want 1", len(due))
@@ -78,7 +84,7 @@ func TestCheck_SkipsAlreadyFired(t *testing.T) {
 	}
 
 	// First check fires
-	due, err := svc.Check(ctx, time.Now())
+	due, _, err := svc.Check(ctx, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +99,7 @@ func TestCheck_SkipsAlreadyFired(t *testing.T) {
 	}
 
 	// Second check should skip it
-	due, err = svc.Check(ctx, time.Now())
+	due, _, err = svc.Check(ctx, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +130,7 @@ func TestCheck_SkipsFutureAlarm(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	due, err := svc.Check(ctx, time.Now())
+	due, _, err := svc.Check(ctx, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +161,7 @@ func TestCheck_SkipsStaleAlarm(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	due, err := svc.Check(ctx, time.Now())
+	due, _, err := svc.Check(ctx, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +193,7 @@ func TestCheck_RefiresSnoozedAlarm(t *testing.T) {
 	}
 
 	// Fire the alarm
-	due, err := svc.Check(ctx, time.Now())
+	due, _, err := svc.Check(ctx, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +212,7 @@ func TestCheck_RefiresSnoozedAlarm(t *testing.T) {
 	}
 
 	// Check should re-fire the snoozed alarm
-	due, err = svc.Check(ctx, time.Now())
+	due, _, err = svc.Check(ctx, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +229,7 @@ func TestCheck_RefiresSnoozedAlarm(t *testing.T) {
 	}
 
 	// Check again: no expired snoozes, no fresh alarms (already has state row)
-	due, err = svc.Check(ctx, time.Now())
+	due, _, err = svc.Check(ctx, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +260,7 @@ func TestCheck_SkipsActiveSnoozedAlarm(t *testing.T) {
 	}
 
 	// Fire and snooze into the future
-	due, _ := svc.Check(ctx, time.Now())
+	due, _, _ := svc.Check(ctx, time.Now())
 	if err := svc.MarkFired(ctx, due[0]); err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +271,7 @@ func TestCheck_SkipsActiveSnoozedAlarm(t *testing.T) {
 	}
 
 	// Check: alarm is snoozed into the future, should NOT re-fire
-	due, err = svc.Check(ctx, time.Now())
+	due, _, err = svc.Check(ctx, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +303,7 @@ func TestComputeSnooze_CapsAtEventEnd(t *testing.T) {
 	}
 
 	// Fire and mark
-	due, _ := svc.Check(ctx, time.Now())
+	due, _, _ := svc.Check(ctx, time.Now())
 	if err := svc.MarkFired(ctx, due[0]); err != nil {
 		t.Fatal(err)
 	}
@@ -343,7 +349,7 @@ func TestComputeSnooze_WarnsPastStart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	due, _ := svc.Check(ctx, time.Now())
+	due, _, _ := svc.Check(ctx, time.Now())
 	if err := svc.MarkFired(ctx, due[0]); err != nil {
 		t.Fatal(err)
 	}
@@ -385,7 +391,7 @@ func TestSnoozeUntilStart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	due, _ := svc.Check(ctx, time.Now())
+	due, _, _ := svc.Check(ctx, time.Now())
 	if err := svc.MarkFired(ctx, due[0]); err != nil {
 		t.Fatal(err)
 	}
@@ -425,7 +431,7 @@ func TestSnoozeUntilStart_RejectsStartedEvent(t *testing.T) {
 	}
 
 	// The alarm trigger was 25 min ago -- Check() should fire it
-	due, err := svc.Check(ctx, time.Now())
+	due, _, err := svc.Check(ctx, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -470,7 +476,7 @@ func TestCheck_RelatedEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	due, err := svc.Check(ctx, time.Now())
+	due, _, err := svc.Check(ctx, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -504,7 +510,7 @@ func TestCheck_AbsoluteTriggerUTC(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	due, err := svc.Check(ctx, time.Now())
+	due, _, err := svc.Check(ctx, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -541,7 +547,7 @@ func TestCheck_AbsoluteTriggerFuture(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	due, err := svc.Check(ctx, time.Now())
+	due, _, err := svc.Check(ctx, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -698,7 +704,7 @@ func TestComputeSnooze_RejectsNegativeDuration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	due, _ := svc.Check(ctx, time.Now())
+	due, _, _ := svc.Check(ctx, time.Now())
 	if err := svc.MarkFired(ctx, due[0]); err != nil {
 		t.Fatal(err)
 	}
@@ -740,7 +746,7 @@ func TestComputeSnooze_RejectsPastEndedEvent(t *testing.T) {
 	}
 
 	// Trigger was 2h15m ago, still within 24h stale threshold
-	due, _ := svc.Check(ctx, time.Now())
+	due, _, _ := svc.Check(ctx, time.Now())
 	if len(due) != 1 {
 		t.Fatalf("got %d due, want 1", len(due))
 	}
@@ -777,7 +783,7 @@ func TestComputeSnooze_RejectsDismissedAlarm(t *testing.T) {
 	}
 
 	// Fire, dismiss, then try to snooze
-	due, _ := svc.Check(ctx, time.Now())
+	due, _, _ := svc.Check(ctx, time.Now())
 	if err := svc.MarkFired(ctx, due[0]); err != nil {
 		t.Fatal(err)
 	}

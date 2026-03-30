@@ -13,7 +13,7 @@ import (
 func TestAlarmLifecycle(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	evtSvc := event.NewService(db, q)
-	svc := NewService(db, q, evtSvc)
+	svc := NewService(db, q, evtSvc, nil)
 	ctx := context.Background()
 
 	// 1. Create an event starting in 10 minutes with two alarms:
@@ -38,7 +38,7 @@ func TestAlarmLifecycle(t *testing.T) {
 
 	// 2. Check -- only the -PT15M alarm should be due (triggered 5 min ago),
 	//    the -PT5M is still 5 min in the future
-	due, err := svc.Check(ctx, time.Now())
+	due, _, err := svc.Check(ctx, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestAlarmLifecycle(t *testing.T) {
 	}
 
 	// 4. Check again -- nothing due
-	due, err = svc.Check(ctx, time.Now())
+	due, _, err = svc.Check(ctx, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestAlarmLifecycle(t *testing.T) {
 func TestAlarmLifecycle_Snooze(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	evtSvc := event.NewService(db, q)
-	svc := NewService(db, q, evtSvc)
+	svc := NewService(db, q, evtSvc, nil)
 	ctx := context.Background()
 
 	// 1. Create event starting in 10 minutes with DISPLAY alarm at -PT15M
@@ -114,7 +114,7 @@ func TestAlarmLifecycle_Snooze(t *testing.T) {
 	}
 
 	// 2. Check -- fires
-	due, err := svc.Check(ctx, time.Now())
+	due, _, err := svc.Check(ctx, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestAlarmLifecycle_Snooze(t *testing.T) {
 	}
 
 	// 8. Check again -- snoozed alarm should re-fire
-	due, err = svc.Check(ctx, time.Now())
+	due, _, err = svc.Check(ctx, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestAlarmLifecycle_Snooze(t *testing.T) {
 func TestSnoozeSurvivesEventUpdate(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	evtSvc := event.NewService(db, q)
-	svc := NewService(db, q, evtSvc)
+	svc := NewService(db, q, evtSvc, nil)
 	ctx := context.Background()
 
 	// 1. Create event with alarm
@@ -220,7 +220,7 @@ func TestSnoozeSurvivesEventUpdate(t *testing.T) {
 	}
 
 	// 2. Fire the alarm
-	due, err := svc.Check(ctx, time.Now())
+	due, _, err := svc.Check(ctx, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
