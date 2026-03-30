@@ -18,6 +18,17 @@ type AlarmState struct {
 	SnoozedTo sql.NullString
 }
 
+type AllAlarmState struct {
+	Type      string
+	ID        int64
+	AlarmID   int64
+	ItemID    int64
+	TriggerAt string
+	FiredAt   sql.NullString
+	AckedAt   sql.NullString
+	SnoozedTo sql.NullString
+}
+
 type Calendar struct {
 	ID          int64
 	Name        string
@@ -164,6 +175,16 @@ type TodoAlarmAttendee struct {
 	AlarmID int64
 	Email   string
 	Name    string
+}
+
+type TodoAlarmState struct {
+	ID        int64
+	AlarmID   int64
+	TodoID    int64
+	TriggerAt string
+	FiredAt   sql.NullString
+	AckedAt   sql.NullString
+	SnoozedTo sql.NullString
 }
 
 type TodoAttachment struct {
