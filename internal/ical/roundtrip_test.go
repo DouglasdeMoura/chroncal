@@ -1419,3 +1419,278 @@ func TestRoundtrip_AlarmSummary_SpecialChars(t *testing.T) {
 		t.Errorf("Summary with special chars: %q, want %q", got.Summary, "Meeting: Q1 Review")
 	}
 }
+
+func TestRoundtrip_AlarmAcknowledged(t *testing.T) {
+	t.Parallel()
+	original := event.Event{
+		UID:       "ack-roundtrip",
+		Title:     "Acknowledged Alarm",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+		Alarms: []model.Alarm{
+			{
+				Action:       "DISPLAY",
+				TriggerValue: "-PT15M",
+				Description:  "Reminder",
+				Related:      "START",
+				Acknowledged: "20260401T140000Z",
+			},
+		},
+	}
+
+	data, err := ExportEvents([]event.Event{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	ics := string(data)
+	if !strings.Contains(ics, "ACKNOWLEDGED:20260401T140000Z") {
+		t.Fatal("exported ICS missing ACKNOWLEDGED property")
+	}
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Events) == 0 || len(result.Events[0].Alarms) == 0 {
+		t.Fatal("no alarms after round-trip")
+	}
+	got := result.Events[0].Alarms[0]
+	if got.Acknowledged != "20260401T140000Z" {
+		t.Errorf("Acknowledged = %q, want %q", got.Acknowledged, "20260401T140000Z")
+	}
+}
+
+func TestRoundtrip_TodoAlarmAcknowledged(t *testing.T) {
+	t.Parallel()
+	original := todo.Todo{
+		UID:       "todo-ack-roundtrip",
+		Summary:   "Acknowledged Todo Alarm",
+		Status:    "NEEDS-ACTION",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+		Alarms: []model.Alarm{
+			{
+				Action:       "DISPLAY",
+				TriggerValue: "-PT30M",
+				Description:  "Todo reminder",
+				Related:      "START",
+				Acknowledged: "20260401T090000Z",
+			},
+		},
+	}
+
+	data, err := ExportTodos([]todo.Todo{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	ics := string(data)
+	if !strings.Contains(ics, "ACKNOWLEDGED:20260401T090000Z") {
+		t.Fatal("exported ICS missing ACKNOWLEDGED property")
+	}
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Todos) == 0 || len(result.Todos[0].Alarms) == 0 {
+		t.Fatal("no alarms after round-trip")
+	}
+	got := result.Todos[0].Alarms[0]
+	if got.Acknowledged != "20260401T090000Z" {
+		t.Errorf("Acknowledged = %q, want %q", got.Acknowledged, "20260401T090000Z")
+	}
+}
+
+func TestExport_ProductID(t *testing.T) {
+	t.Parallel()
+	original := ProductID
+	defer func() { ProductID = original }()
+
+	ProductID = "-//Custom//Product//EN"
+
+	events := []event.Event{{
+		UID:       "prodid-test",
+		Title:     "PRODID Test",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}}
+
+	data, err := ExportEvents(events, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if !strings.Contains(string(data), "-//Custom//Product//EN") {
+		t.Error("exported ICS does not contain custom PRODID")
+	}
+}
+
+func TestRoundtrip_TodoDueTZID(t *testing.T) {
+	t.Parallel()
+	// A todo with DUE;TZID but no DTSTART — timezone should be extracted from DUE.
+	original := todo.Todo{
+		UID:       "roundtrip-todo-due-tzid",
+		Summary:   "Todo with DUE timezone",
+		DueDate:   "2026-06-15T17:00:00Z",
+		Status:    "NEEDS-ACTION",
+		Timezone:  "America/Chicago",
+		CreatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+		UpdatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+	}
+
+	data, err := ExportTodos([]todo.Todo{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	result, err := ImportFile(strings.NewReader(string(data)))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Todos) != 1 {
+		t.Fatalf("reimported %d todos, want 1", len(result.Todos))
+	}
+
+	got := result.Todos[0]
+	if got.Timezone != "America/Chicago" {
+		t.Errorf("Timezone: got %q, want %q", got.Timezone, "America/Chicago")
+	}
+}
+
+func TestRoundtrip_AllDayEventEXDATE(t *testing.T) {
+	t.Parallel()
+	// All-day recurring event with date-only EXDATE should roundtrip as date-only.
+	original := event.Event{
+		UID:            "roundtrip-allday-exdate",
+		Title:          "Weekly All-Day",
+		StartTime:      time.Date(2026, 4, 1, 0, 0, 0, 0, time.Local),
+		EndTime:        time.Date(2026, 4, 2, 0, 0, 0, 0, time.Local),
+		AllDay:         true,
+		RecurrenceRule: "FREQ=WEEKLY;COUNT=5",
+		ExDates:        "2026-04-08",
+		RDates:         "2026-05-01",
+		Status:         "CONFIRMED",
+		Transp:         "OPAQUE",
+		CreatedAt:      time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+		UpdatedAt:      time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+	}
+
+	data, err := ExportEvents([]event.Event{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	// Verify the exported ICS contains VALUE=DATE for EXDATE
+	ics := string(data)
+	if !strings.Contains(ics, "VALUE=DATE") {
+		t.Errorf("exported EXDATE missing VALUE=DATE:\n%s", ics)
+	}
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("reimported %d events, want 1", len(result.Events))
+	}
+
+	got := result.Events[0]
+	if got.ExDates != "2026-04-08" {
+		t.Errorf("ExDates roundtrip: got %q, want %q", got.ExDates, "2026-04-08")
+	}
+	if got.RDates != "2026-05-01" {
+		t.Errorf("RDates roundtrip: got %q, want %q", got.RDates, "2026-05-01")
+	}
+}
+
+func TestImportFile_Warnings(t *testing.T) {
+	t.Parallel()
+	// A VEVENT missing UID should produce a warning, not be silently dropped.
+	ics := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//test//EN\r\n" +
+		"BEGIN:VEVENT\r\nSUMMARY:Good Event\r\nUID:good-uid\r\n" +
+		"DTSTART:20260401T140000Z\r\nDTEND:20260401T150000Z\r\nEND:VEVENT\r\n" +
+		"BEGIN:VEVENT\r\nSUMMARY:Bad Event No UID\r\n" +
+		"DTSTART:20260402T140000Z\r\nDTEND:20260402T150000Z\r\nEND:VEVENT\r\n" +
+		"END:VCALENDAR\r\n"
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Errorf("Events: got %d, want 1", len(result.Events))
+	}
+	if len(result.Warnings) != 1 {
+		t.Errorf("Warnings: got %d, want 1", len(result.Warnings))
+	}
+	if len(result.Warnings) > 0 && !strings.Contains(result.Warnings[0], "missing UID") {
+		t.Errorf("Warning: got %q, want something about missing UID", result.Warnings[0])
+	}
+}
+
+func TestRoundtrip_AlarmAttachURI(t *testing.T) {
+	t.Parallel()
+	// AUDIO alarm with ATTACH URI + FMTTYPE should roundtrip.
+	original := event.Event{
+		UID:       "roundtrip-alarm-attach",
+		Title:     "Event with Audio Alarm",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		Alarms: []model.Alarm{
+			{
+				Action:        "AUDIO",
+				TriggerValue:  "-PT15M",
+				Description:   "Alarm",
+				AttachURI:     "http://example.com/sounds/bell.aud",
+				AttachFmtType: "audio/basic",
+			},
+		},
+		CreatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+		UpdatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+	}
+
+	data, err := ExportEvents([]event.Event{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	// Verify ATTACH is in the output
+	ics := string(data)
+	if !strings.Contains(ics, "ATTACH") {
+		t.Errorf("exported ICS missing ATTACH:\n%s", ics)
+	}
+	if !strings.Contains(ics, "FMTTYPE=audio/basic") {
+		t.Errorf("exported ICS missing FMTTYPE:\n%s", ics)
+	}
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("reimported %d events, want 1", len(result.Events))
+	}
+
+	got := result.Events[0]
+	if len(got.Alarms) != 1 {
+		t.Fatalf("Alarms: got %d, want 1", len(got.Alarms))
+	}
+	alarm := got.Alarms[0]
+	if alarm.AttachURI != "http://example.com/sounds/bell.aud" {
+		t.Errorf("AttachURI: got %q, want %q", alarm.AttachURI, "http://example.com/sounds/bell.aud")
+	}
+	if alarm.AttachFmtType != "audio/basic" {
+		t.Errorf("AttachFmtType: got %q, want %q", alarm.AttachFmtType, "audio/basic")
+	}
+}

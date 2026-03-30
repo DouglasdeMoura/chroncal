@@ -17,8 +17,9 @@ import (
 )
 
 type ImportResult struct {
-	Events []event.Event
-	Todos  []todo.Todo
+	Events   []event.Event
+	Todos    []todo.Todo
+	Warnings []string
 }
 
 func ImportFile(r io.Reader) (ImportResult, error) {
@@ -39,14 +40,18 @@ func ImportFile(r io.Reader) (ImportResult, error) {
 			case ical.CompEvent:
 				vevent := ical.Event{Component: child}
 				e, err := eventFromVEvent(vevent)
-				if err == nil {
-					result.Events = append(result.Events, e)
+				if err != nil {
+					result.Warnings = append(result.Warnings, fmt.Sprintf("VEVENT: %v", err))
+					continue
 				}
+				result.Events = append(result.Events, e)
 			case ical.CompToDo:
 				t, err := todoFromVTodo(child)
-				if err == nil {
-					result.Todos = append(result.Todos, t)
+				if err != nil {
+					result.Warnings = append(result.Warnings, fmt.Sprintf("VTODO: %v", err))
+					continue
 				}
+				result.Todos = append(result.Todos, t)
 			}
 		}
 	}
@@ -130,6 +135,13 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, error) {
 	if prop := props.Get(ical.PropDateTimeStart); prop != nil {
 		if tzid := prop.Params.Get(ical.ParamTimezoneID); tzid != "" {
 			timezone = tzid
+		}
+	}
+	if timezone == "" {
+		if prop := props.Get(ical.PropDue); prop != nil {
+			if tzid := prop.Params.Get(ical.ParamTimezoneID); tzid != "" {
+				timezone = tzid
+			}
 		}
 	}
 
@@ -290,8 +302,8 @@ func eventFromVEvent(ve ical.Event) (event.Event, error) {
 	}
 
 	categories := parseCategories(ve)
-	exdates := parseDateList(ve, ical.PropExceptionDates)
-	rdates := parseDateList(ve, ical.PropRecurrenceDates)
+	exdates := parseDateListFromProps(ve.Props, ical.PropExceptionDates)
+	rdates := parseDateListFromProps(ve.Props, ical.PropRecurrenceDates)
 
 	var recurrenceID string
 	if prop := ve.Props.Get(ical.PropRecurrenceID); prop != nil {
@@ -377,33 +389,6 @@ func parseCategories(ve ical.Event) string {
 	return strings.Join(cats, ",")
 }
 
-func parseDateList(ve ical.Event, propName string) string {
-	var dates []string
-	for _, prop := range ve.Props.Values(propName) {
-		// Each property may contain comma-separated dates
-		parts := strings.Split(prop.Value, ",")
-		for _, p := range parts {
-			p = strings.TrimSpace(p)
-			if p == "" {
-				continue
-			}
-			// Try parsing as datetime
-			for _, layout := range []string{
-				"20060102T150405Z",
-				"20060102T150405",
-				"20060102",
-				time.RFC3339,
-			} {
-				if t, err := time.Parse(layout, p); err == nil {
-					dates = append(dates, t.UTC().Format(time.RFC3339))
-					break
-				}
-			}
-		}
-	}
-	return strings.Join(dates, ",")
-}
-
 func parseAlarm(comp *ical.Component) model.Alarm {
 	alarm := model.Alarm{Action: "DISPLAY", Related: "START"}
 
@@ -450,6 +435,24 @@ func parseAlarm(comp *ical.Component) model.Alarm {
 		uid := strings.TrimSpace(prop.Value)
 		if len(uid) > 0 && len(uid) <= 255 && !strings.ContainsRune(uid, 0) {
 			alarm.UID = uid
+		}
+	}
+
+	// ACKNOWLEDGED (RFC 9074) — preserved for round-trip fidelity only.
+	if prop := comp.Props.Get("ACKNOWLEDGED"); prop != nil {
+		v := strings.TrimSpace(prop.Value)
+		if _, err := time.Parse("20060102T150405Z", v); err == nil {
+			alarm.Acknowledged = v
+		} else if _, err := time.Parse(time.RFC3339, v); err == nil {
+			alarm.Acknowledged = v
+		}
+	}
+
+	// ATTACH (sound URI for AUDIO alarms)
+	if prop := comp.Props.Get(ical.PropAttach); prop != nil {
+		if prop.Params.Get("ENCODING") != "BASE64" {
+			alarm.AttachURI = prop.Value
+			alarm.AttachFmtType = prop.Params.Get("FMTTYPE")
 		}
 	}
 

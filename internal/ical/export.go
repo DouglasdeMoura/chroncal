@@ -15,10 +15,15 @@ import (
 	"github.com/douglasdemoura/tcal/internal/todo"
 )
 
+// ProductID is the PRODID value written into exported VCALENDAR objects.
+// Override before calling ExportEvents or ExportTodos to customise.
+var ProductID = "-//tcal//tcal//EN"
+
 func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 	cal := ical.NewCalendar()
 	cal.Props.SetText(ical.PropVersion, "2.0")
-	cal.Props.SetText(ical.PropProductID, "-//tcal//tcal//EN")
+	cal.Props.SetText(ical.PropProductID, ProductID)
+	cal.Props.SetText("CALSCALE", "GREGORIAN")
 	if calName != "" {
 		cal.Props.SetText("X-WR-CALNAME", calName)
 	}
@@ -89,10 +94,10 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 		}
 
 		// EXDATE
-		emitDateList(vevent, ical.PropExceptionDates, e.ExDates)
+		emitDateListOnComponent(vevent.Component, ical.PropExceptionDates, e.ExDates)
 
 		// RDATE
-		emitDateList(vevent, ical.PropRecurrenceDates, e.RDates)
+		emitDateListOnComponent(vevent.Component, ical.PropRecurrenceDates, e.RDates)
 
 		// RECURRENCE-ID
 		if e.RecurrenceID != "" {
@@ -218,24 +223,11 @@ func setEventTimes(vevent *ical.Event, e event.Event) {
 	}
 }
 
-func emitDateList(vevent *ical.Event, propName, dates string) {
-	if dates == "" {
-		return
-	}
-	for _, ds := range strings.Split(dates, ",") {
-		ds = strings.TrimSpace(ds)
-		if t, err := time.Parse(time.RFC3339, ds); err == nil {
-			prop := &ical.Prop{Name: propName, Params: make(ical.Params)}
-			prop.SetDateTime(t.UTC())
-			vevent.Props.Add(prop)
-		}
-	}
-}
-
 func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 	cal := ical.NewCalendar()
 	cal.Props.SetText(ical.PropVersion, "2.0")
-	cal.Props.SetText(ical.PropProductID, "-//tcal//tcal//EN")
+	cal.Props.SetText(ical.PropProductID, ProductID)
+	cal.Props.SetText("CALSCALE", "GREGORIAN")
 	if calName != "" {
 		cal.Props.SetText("X-WR-CALNAME", calName)
 	}
@@ -576,11 +568,32 @@ func buildValarm(alarm model.Alarm) *ical.Component {
 		p.Value = strconv.Itoa(alarm.Repeat)
 		valarm.Props.Set(p)
 	}
+	// ACKNOWLEDGED (RFC 9074) — round-trip only.
+	if alarm.Acknowledged != "" {
+		p := &ical.Prop{Name: "ACKNOWLEDGED", Params: make(ical.Params)}
+		p.Value = alarm.Acknowledged
+		// Normalize RFC 3339 to iCal UTC format.
+		if t, err := time.Parse(time.RFC3339, alarm.Acknowledged); err == nil {
+			p.Value = t.UTC().Format("20060102T150405Z")
+		}
+		valarm.Props.Set(p)
+	}
+
 	for _, att := range alarm.Attendees {
 		p := &ical.Prop{Name: ical.PropAttendee, Params: make(ical.Params)}
 		p.Value = "mailto:" + att.Email
 		if att.Name != "" {
 			p.Params.Set(ical.ParamCommonName, att.Name)
+		}
+		valarm.Props.Add(p)
+	}
+
+	// ATTACH (sound URI for AUDIO alarms only)
+	if alarm.AttachURI != "" && alarm.Action == "AUDIO" {
+		p := &ical.Prop{Name: ical.PropAttach, Params: make(ical.Params)}
+		p.Value = alarm.AttachURI
+		if alarm.AttachFmtType != "" {
+			p.Params.Set("FMTTYPE", alarm.AttachFmtType)
 		}
 		valarm.Props.Add(p)
 	}
