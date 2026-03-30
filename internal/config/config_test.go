@@ -116,6 +116,7 @@ func TestLoad_NerdFontsFromEnv(t *testing.T) {
 
 func TestLoad_NerdFontsDefault(t *testing.T) {
 	t.Setenv("TCAL_NERD_FONTS", "")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 	cfg := Load()
 	if cfg.NerdFonts {
