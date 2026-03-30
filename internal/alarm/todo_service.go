@@ -8,6 +8,7 @@ import (
 
 	"github.com/douglasdemoura/tcal/internal/duration"
 	"github.com/douglasdemoura/tcal/internal/model"
+	"github.com/douglasdemoura/tcal/internal/recurrence"
 	"github.com/douglasdemoura/tcal/internal/storage"
 	"github.com/douglasdemoura/tcal/internal/todo"
 )
@@ -37,16 +38,13 @@ func NewTodoService(db *sql.DB, q *storage.Queries, todos TodoAlarmLister) *Todo
 	return &TodoService{db: db, q: q, todos: todos}
 }
 
-// CheckTodos finds due alarms for todos within the stale threshold window
+// CheckTodos finds due alarms for todos within the stale threshold window.
+// Recurring todos are expanded via RRULE so alarms fire for each occurrence.
 func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueAlarm, error) {
-	// Get all todos with due dates in window
 	windowStart := now.Add(-StaleThreshold - 24*time.Hour)
 	windowEnd := now.Add(StaleThreshold + 24*time.Hour)
 
-	rows, err := s.q.ListTodosByDueDateRange(ctx, storage.ListTodosByDueDateRangeParams{
-		DueDate:   windowStart.Format("2006-01-02"),
-		DueDate_2: windowEnd.Format("2006-01-02"),
-	})
+	rows, err := s.q.ListAllTodos(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list todos: %w", err)
 	}
@@ -62,41 +60,61 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 		}
 
 		alarms, err := s.todos.ListAlarms(ctx, t.ID)
-		if err != nil {
+		if err != nil || len(alarms) == 0 {
 			continue
 		}
 
-		for _, a := range alarms {
-			triggerAt, err := computeTodoTriggerTime(t, a)
-			if err != nil {
-				continue
-			}
+		// Expand recurring instances (returns single instance for non-recurring)
+		instances := recurrence.ExpandTodo(t, windowStart, windowEnd)
 
-			// Check if due but not stale
-			if triggerAt.After(now) {
-				continue
-			}
-			if now.Sub(triggerAt) > StaleThreshold {
-				continue
-			}
+		for _, inst := range instances {
+			for _, a := range alarms {
+				triggerAt, err := computeTodoTriggerTimeForInstance(inst, a)
+				if err != nil {
+					continue
+				}
 
-			// Check if already fired
-			triggerKey := triggerAt.UTC().Format(time.RFC3339)
-			_, err = s.q.GetTodoAlarmState(ctx, storage.GetTodoAlarmStateParams{
-				AlarmID:   a.ID,
-				TriggerAt: triggerKey,
-			})
-			if err == nil {
-				continue // Already has state row
-			}
+				// Check if due but not stale
+				if triggerAt.After(now) {
+					continue
+				}
+				if now.Sub(triggerAt) > StaleThreshold {
+					continue
+				}
 
-			due = append(due, TodoDueAlarm{
-				Todo:      t,
-				Alarm:     a,
-				TriggerAt: triggerAt,
-			})
+				// Check if already fired
+				triggerKey := triggerAt.UTC().Format(time.RFC3339)
+				_, err = s.q.GetTodoAlarmState(ctx, storage.GetTodoAlarmStateParams{
+					AlarmID:   a.ID,
+					TriggerAt: triggerKey,
+				})
+				if err == nil {
+					continue // Already has state row
+				}
+
+				// Use instance time for the todo's due/start date
+				instanceTodo := t
+				if t.DueDate != "" {
+					instanceTodo.DueDate = inst.InstanceTime.Format(time.RFC3339)
+				} else if t.StartDate != "" {
+					instanceTodo.StartDate = inst.InstanceTime.Format(time.RFC3339)
+				}
+
+				due = append(due, TodoDueAlarm{
+					Todo:      instanceTodo,
+					Alarm:     a,
+					TriggerAt: triggerAt,
+				})
+			}
 		}
 	}
+
+	// Snoozed todo alarms whose snooze-until time has expired.
+	snoozed, err := s.ListExpiredTodoSnoozed(ctx, now)
+	if err != nil {
+		return nil, fmt.Errorf("list expired snoozed todo alarms: %w", err)
+	}
+	due = append(due, snoozed...)
 
 	return due, nil
 }
@@ -130,35 +148,51 @@ func todoFromRow(row storage.Todo) todo.Todo {
 	}
 }
 
-// computeTodoTriggerTime calculates when a todo alarm should trigger
-func computeTodoTriggerTime(t todo.Todo, alarm model.Alarm) (time.Time, error) {
-	// Determine base time (due date or start date)
-	base := t.ParseDueDate()
+// computeTodoTriggerTimeForInstance calculates when a todo alarm should trigger
+// for a specific recurrence instance.
+func computeTodoTriggerTimeForInstance(inst recurrence.ExpandedTodo, alarm model.Alarm) (time.Time, error) {
+	base := inst.InstanceTime
 	if base.IsZero() {
-		base = t.ParseStartDate()
-	}
-	if base.IsZero() {
-		return time.Time{}, fmt.Errorf("todo has no due or start date")
+		return time.Time{}, fmt.Errorf("todo instance has no anchor time")
 	}
 
-	if alarm.Related == "END" {
-		// For todos, "END" means the due date
-		// No duration adjustment needed
-		_ = base
+	// For RELATED=END on a todo with duration, offset from end of task.
+	if alarm.Related == "END" && inst.Todo.Duration != "" {
+		base = duration.Add(base, inst.Todo.Duration)
 	}
 
-	// Parse trigger
 	if alarm.TriggerValue == "" {
-		return base.Add(-15 * time.Minute), nil // Default 15 min before
+		return base.Add(-15 * time.Minute), nil
 	}
 
-	// Handle relative duration
-	if len(alarm.TriggerValue) > 0 && (alarm.TriggerValue[0] == '-' || alarm.TriggerValue[0] == 'P' || alarm.TriggerValue[0] == '+') {
-		return duration.Add(base, alarm.TriggerValue), nil
+	// Duration trigger (relative)
+	if duration.Validate(alarm.TriggerValue) == nil {
+		anchor := base
+		if inst.Todo.Timezone != "" {
+			if loc, err := time.LoadLocation(inst.Todo.Timezone); err == nil {
+				anchor = anchor.In(loc)
+			}
+		}
+		return duration.Add(anchor, alarm.TriggerValue), nil
 	}
 
-	// Absolute time
-	return time.Parse(time.RFC3339, alarm.TriggerValue)
+	// Absolute triggers
+	if t, err := time.Parse("20060102T150405Z", alarm.TriggerValue); err == nil {
+		return t, nil
+	}
+	if t, err := time.Parse("20060102T150405", alarm.TriggerValue); err == nil {
+		if inst.Todo.Timezone != "" {
+			if loc, lerr := time.LoadLocation(inst.Todo.Timezone); lerr == nil {
+				return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), 0, loc), nil
+			}
+		}
+		return t, nil
+	}
+	if t, err := time.Parse(time.RFC3339, alarm.TriggerValue); err == nil {
+		return t, nil
+	}
+
+	return time.Time{}, fmt.Errorf("invalid trigger format: %q", alarm.TriggerValue)
 }
 
 // MarkTodoAlarmFired records that a todo alarm has fired
