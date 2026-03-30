@@ -308,12 +308,17 @@ func (s *Service) ListAlarms(ctx context.Context, todoID int64) ([]model.Alarm, 
 	for i, r := range rows {
 		alarms[i] = model.Alarm{
 			ID: r.ID, EventID: r.TodoID,
-			Action: r.Action, TriggerValue: r.TriggerValue,
-			Description: r.Description,
-			Summary:     r.Summary,
-			Repeat:      int(r.Repeat),
-			Duration:    r.Duration,
-			Related:     r.Related,
+			UID:           r.Uid,
+			Action:        r.Action,
+			TriggerValue:  r.TriggerValue,
+			Description:   r.Description,
+			Summary:       r.Summary,
+			Repeat:        int(r.Repeat),
+			Duration:      r.Duration,
+			Related:       r.Related,
+			Acknowledged:  r.Acknowledged,
+			AttachURI:     r.AttachUri,
+			AttachFmtType: r.AttachFmttype,
 		}
 		attRows, err := s.q.ListTodoAlarmAttendeesByAlarmID(ctx, r.ID)
 		if err == nil {
@@ -344,15 +349,18 @@ func (s *Service) ReplaceAlarms(ctx context.Context, todoID int64, alarms []mode
 			uid = uuid.New().String()
 		}
 		row, err := qtx.CreateTodoAlarm(ctx, storage.CreateTodoAlarmParams{
-			TodoID:       todoID,
-			Uid:          uid,
-			Action:       a.Action,
-			TriggerValue: a.TriggerValue,
-			Description:  a.Description,
-			Summary:      a.Summary,
-			Repeat:       int64(a.Repeat),
-			Duration:     a.Duration,
-			Related:      a.Related,
+			TodoID:        todoID,
+			Uid:           uid,
+			Action:        a.Action,
+			TriggerValue:  a.TriggerValue,
+			Description:   a.Description,
+			Summary:       a.Summary,
+			Repeat:        int64(a.Repeat),
+			Duration:      a.Duration,
+			Related:       a.Related,
+			Acknowledged:  a.Acknowledged,
+			AttachUri:     a.AttachURI,
+			AttachFmttype: a.AttachFmtType,
 		})
 		if err != nil {
 			return fmt.Errorf("create alarm: %w", err)

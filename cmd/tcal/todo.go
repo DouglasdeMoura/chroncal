@@ -17,7 +17,7 @@ func todoCmd() *cobra.Command {
 		Use:   "todo",
 		Short: "Manage todos",
 	}
-	cmd.AddCommand(todoListCmd(), todoGetCmd(), todoAddCmd(), todoUpdateCmd(), todoDeleteCmd())
+	cmd.AddCommand(todoListCmd(), todoGetCmd(), todoAddCmd(), todoUpdateCmd(), todoDeleteCmd(), todoCompleteCmd())
 	return cmd
 }
 
@@ -735,6 +735,40 @@ a --progress value other than 100.`,
 	cmd.Flags().Lookup("rrule").Usage = "alias for --recurrence-rule"
 	cmd.Flags().Lookup("exdate").Usage = "alias for --exception-date-times"
 	cmd.Flags().Lookup("rdate").Usage = "alias for --recurrence-date-times"
+	return cmd
+}
+
+func todoCompleteCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "complete <id|uid>",
+		Short: "Mark a todo as completed",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			a, err := initApp()
+			if err != nil {
+				return err
+			}
+			defer a.Close()
+			ctx := context.Background()
+
+			t, err := resolveTodo(ctx, a, args[0])
+			if err != nil {
+				return fmt.Errorf("get todo: %w", err)
+			}
+
+			t, err = a.Todos.Complete(ctx, t.ID)
+			if err != nil {
+				return fmt.Errorf("complete todo: %w", err)
+			}
+
+			w := cmd.OutOrStdout()
+			if outputFmt != "text" {
+				return printOutput(w, toJSONTodo(t))
+			}
+			fmt.Fprintf(w, "Completed: %s\n", t.Summary)
+			return nil
+		},
+	}
 	return cmd
 }
 
