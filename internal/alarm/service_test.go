@@ -2,6 +2,7 @@ package alarm
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -50,9 +51,6 @@ func TestCheck_FiresDueAlarm(t *testing.T) {
 	}
 	if due[0].Event.ID != e.ID {
 		t.Errorf("event ID = %d, want %d", due[0].Event.ID, e.ID)
-	}
-	if len(due) != 1 {
-		t.Fatalf("got %d due alarms, want 1", len(due))
 	}
 	if due[0].Event.Title != "Meeting" {
 		t.Errorf("event title = %q, want %q", due[0].Event.Title, "Meeting")
@@ -311,7 +309,7 @@ func TestComputeSnooze_CapsAtEventEnd(t *testing.T) {
 	stateID := pending[0].ID
 
 	// Snooze for 24 hours -- should be capped at event end (~70 min from now)
-	res, err := svc.ComputeSnooze(ctx, stateID, 24*time.Hour)
+	res, err := svc.ComputeSnooze(ctx, stateID, 24*time.Hour, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +355,7 @@ func TestComputeSnooze_WarnsPastStart(t *testing.T) {
 	stateID := pending[0].ID
 
 	// Snooze for 10 minutes -- fires 5 min after event starts
-	res, err := svc.ComputeSnooze(ctx, stateID, 10*time.Minute)
+	res, err := svc.ComputeSnooze(ctx, stateID, 10*time.Minute, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -398,7 +396,7 @@ func TestSnoozeUntilStart(t *testing.T) {
 	pending, _ := svc.ListPending(ctx)
 	stateID := pending[0].ID
 
-	res, err := svc.SnoozeUntilStart(ctx, stateID)
+	res, err := svc.SnoozeUntilStart(ctx, stateID, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -447,7 +445,7 @@ func TestSnoozeUntilStart_RejectsStartedEvent(t *testing.T) {
 		t.Fatal("expected 1 pending alarm")
 	}
 
-	_, err = svc.SnoozeUntilStart(ctx, pending[0].ID)
+	_, err = svc.SnoozeUntilStart(ctx, pending[0].ID, time.Now())
 	if err == nil {
 		t.Error("expected error when event has already started")
 	}
@@ -711,13 +709,13 @@ func TestComputeSnooze_RejectsNegativeDuration(t *testing.T) {
 	pending, _ := svc.ListPending(ctx)
 
 	// Negative duration
-	_, err = svc.ComputeSnooze(ctx, pending[0].ID, -5*time.Minute)
+	_, err = svc.ComputeSnooze(ctx, pending[0].ID, -5*time.Minute, time.Now())
 	if err == nil {
 		t.Error("expected error for negative duration")
 	}
 
 	// Zero duration
-	_, err = svc.ComputeSnooze(ctx, pending[0].ID, 0)
+	_, err = svc.ComputeSnooze(ctx, pending[0].ID, 0, time.Now())
 	if err == nil {
 		t.Error("expected error for zero duration")
 	}
@@ -755,7 +753,7 @@ func TestComputeSnooze_RejectsPastEndedEvent(t *testing.T) {
 	}
 	pending, _ := svc.ListPending(ctx)
 
-	_, err = svc.ComputeSnooze(ctx, pending[0].ID, 10*time.Minute)
+	_, err = svc.ComputeSnooze(ctx, pending[0].ID, 10*time.Minute, time.Now())
 	if err == nil {
 		t.Error("expected error for past-ended event")
 	}
@@ -792,7 +790,7 @@ func TestComputeSnooze_RejectsDismissedAlarm(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = svc.ComputeSnooze(ctx, pending[0].ID, 10*time.Minute)
+	_, err = svc.ComputeSnooze(ctx, pending[0].ID, 10*time.Minute, time.Now())
 	if err == nil {
 		t.Error("expected error when snoozing dismissed alarm")
 	}
@@ -802,27 +800,14 @@ func TestComputeSnooze_RejectsNonexistentStateID(t *testing.T) {
 	svc, _ := newTestServices(t)
 	ctx := context.Background()
 
-	_, err := svc.ComputeSnooze(ctx, 99999, 10*time.Minute)
+	_, err := svc.ComputeSnooze(ctx, 99999, 10*time.Minute, time.Now())
 	if err == nil {
 		t.Error("expected error for nonexistent state ID")
 	}
 	want := "not found"
-	if !contains(err.Error(), want) {
+	if !strings.Contains(err.Error(), want) {
 		t.Errorf("error %q should contain %q", err.Error(), want)
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchString(s, substr)
-}
-
-func searchString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 func mustLoadLocation(name string) *time.Location {

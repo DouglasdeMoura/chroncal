@@ -141,7 +141,7 @@ func (s *Service) checkTodoAlarms(ctx context.Context, now time.Time) ([]TodoDue
 func computeTriggerTimeForInstance(expEvt recurrence.ExpandedEvent, alarm model.Alarm) (time.Time, error) {
 	trigger := alarm.TriggerValue
 	if trigger == "" {
-		return expEvt.InstanceTime.Add(-15 * time.Minute), nil // Default 15 min before
+		return time.Time{}, fmt.Errorf("empty trigger value")
 	}
 
 	// Duration triggers: anchor-relative (RELATED=START or END).
@@ -278,7 +278,7 @@ type SnoozeResult struct {
 
 // ComputeSnooze calculates the snooze-until time, capped at event end.
 // It returns metadata about the computation so the CLI can display warnings.
-func (s *Service) ComputeSnooze(ctx context.Context, stateID int64, dur time.Duration) (SnoozeResult, error) {
+func (s *Service) ComputeSnooze(ctx context.Context, stateID int64, dur time.Duration, now time.Time) (SnoozeResult, error) {
 	if dur <= 0 {
 		return SnoozeResult{}, fmt.Errorf("snooze duration must be positive")
 	}
@@ -299,8 +299,6 @@ func (s *Service) ComputeSnooze(ctx context.Context, stateID int64, dur time.Dur
 		return SnoozeResult{}, fmt.Errorf("get event %d: %w", st.EventID, err)
 	}
 
-	now := time.Now()
-
 	// Reject if the event has already ended.
 	if !evt.EndTime.IsZero() && evt.EndTime.Before(now) {
 		return SnoozeResult{}, fmt.Errorf("event %q has already ended", evt.Title)
@@ -315,7 +313,8 @@ func (s *Service) ComputeSnooze(ctx context.Context, stateID int64, dur time.Dur
 	}
 
 	// Cap at event end — no point snoozing past when the event is over.
-	if until.After(evt.EndTime) {
+	// Skip capping for all-day events with zero EndTime.
+	if !evt.EndTime.IsZero() && until.After(evt.EndTime) {
 		res.Until = evt.EndTime
 		res.Capped = true
 	}
@@ -329,7 +328,7 @@ func (s *Service) ComputeSnooze(ctx context.Context, stateID int64, dur time.Dur
 }
 
 // SnoozeUntilStart snoozes an alarm to fire at the event's start time.
-func (s *Service) SnoozeUntilStart(ctx context.Context, stateID int64) (SnoozeResult, error) {
+func (s *Service) SnoozeUntilStart(ctx context.Context, stateID int64, now time.Time) (SnoozeResult, error) {
 	st, err := s.q.GetAlarmStateByID(ctx, stateID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return SnoozeResult{}, fmt.Errorf("alarm state %d not found (use 'tcal alarm list' to see pending alarms)", stateID)
@@ -346,7 +345,6 @@ func (s *Service) SnoozeUntilStart(ctx context.Context, stateID int64) (SnoozeRe
 		return SnoozeResult{}, fmt.Errorf("get event %d: %w", st.EventID, err)
 	}
 
-	now := time.Now()
 	if now.After(evt.StartTime) {
 		return SnoozeResult{}, fmt.Errorf("event %q has already started", evt.Title)
 	}
