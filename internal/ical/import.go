@@ -1,6 +1,7 @@
 package ical
 
 import (
+	"bytes"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -16,10 +17,17 @@ import (
 	"github.com/douglasdemoura/tcal/internal/todo"
 )
 
+// TimezoneData holds a serialized VTIMEZONE component extracted during import.
+type TimezoneData struct {
+	TZID string
+	Data string // serialized VTIMEZONE component
+}
+
 type ImportResult struct {
-	Events   []event.Event
-	Todos    []todo.Todo
-	Warnings []string
+	Events    []event.Event
+	Todos     []todo.Todo
+	Timezones []TimezoneData
+	Warnings  []string
 }
 
 func ImportFile(r io.Reader) (ImportResult, error) {
@@ -37,6 +45,35 @@ func ImportFile(r io.Reader) (ImportResult, error) {
 
 		// Build timezone map from VTIMEZONE components.
 		tzMap := buildTZMap(cal)
+
+		// Extract and serialize VTIMEZONE components for storage.
+		for _, child := range cal.Children {
+			if child.Name != ical.CompTimezone {
+				continue
+			}
+			tzid := compPropText(child, ical.PropTimezoneID)
+			if tzid == "" {
+				continue
+			}
+			var buf bytes.Buffer
+			enc := ical.NewEncoder(&buf)
+			// Wrap in a minimal calendar for encoding.
+			tmpCal := ical.NewCalendar()
+			tmpCal.Children = append(tmpCal.Children, child)
+			if err := enc.Encode(tmpCal); err == nil {
+				// Extract just the VTIMEZONE block from the encoded output.
+				encoded := buf.String()
+				if start := strings.Index(encoded, "BEGIN:VTIMEZONE"); start >= 0 {
+					if end := strings.Index(encoded[start:], "END:VTIMEZONE"); end >= 0 {
+						vtData := encoded[start : start+end+len("END:VTIMEZONE")]
+						result.Timezones = append(result.Timezones, TimezoneData{
+							TZID: tzid,
+							Data: vtData,
+						})
+					}
+				}
+			}
+		}
 
 		skipped := make(map[string]int)
 		for _, child := range cal.Children {

@@ -17,6 +17,7 @@ import (
 
 type App struct {
 	DB          *sql.DB
+	Queries     *storage.Queries
 	Calendars   *calendar.Service
 	Events      *event.Service
 	Todos       *todo.Service
@@ -35,6 +36,7 @@ func New(dbPath string) (*App, error) {
 
 	return &App{
 		DB:          db,
+		Queries:     queries,
 		Calendars:   calendar.NewService(queries),
 		Events:      eventSvc,
 		Todos:       todoSvc,

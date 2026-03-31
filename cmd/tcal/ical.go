@@ -11,6 +11,7 @@ import (
 	"github.com/douglasdemoura/tcal/internal/event"
 	"github.com/douglasdemoura/tcal/internal/ical"
 	"github.com/douglasdemoura/tcal/internal/recurrence"
+	"github.com/douglasdemoura/tcal/internal/storage"
 	"github.com/douglasdemoura/tcal/internal/todo"
 )
 
@@ -55,6 +56,14 @@ func icalImportCmd() *cobra.Command {
 				return err
 			}
 
+			// Store imported VTIMEZONE components.
+			for _, tz := range result.Timezones {
+				_, _ = a.Queries.UpsertTimezone(ctx, storage.UpsertTimezoneParams{
+					Tzid:           tz.TZID,
+					VtimezoneData:  tz.Data,
+				})
+			}
+
 			// Import events
 			var importedEvents []event.Event
 			for _, e := range result.Events {
@@ -67,6 +76,7 @@ func icalImportCmd() *cobra.Command {
 					Priority: e.Priority, Class: e.Class, URL: e.URL,
 					Categories: e.Categories, ExDates: e.ExDates, RDates: e.RDates,
 					RecurrenceID: e.RecurrenceID, Geo: e.Geo,
+					DurationValue: e.DurationValue, DtStamp: e.DtStamp,
 				})
 				if err != nil {
 					return fmt.Errorf("upsert event %q: %w", e.Title, err)
@@ -108,6 +118,7 @@ func icalImportCmd() *cobra.Command {
 					RecurrenceRule: t.RecurrenceRule, Timezone: t.Timezone,
 					Sequence: t.Sequence, ExDates: t.ExDates, RDates: t.RDates,
 					RecurrenceID: t.RecurrenceID, Geo: t.Geo,
+					DtStamp: t.DtStamp,
 				})
 				if err != nil {
 					return fmt.Errorf("upsert todo %q: %w", t.Summary, err)

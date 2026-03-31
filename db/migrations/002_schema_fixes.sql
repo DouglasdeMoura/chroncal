@@ -19,7 +19,17 @@ ALTER TABLE events ADD COLUMN duration TEXT NOT NULL DEFAULT '';
 ALTER TABLE events ADD COLUMN dtstamp TEXT NOT NULL DEFAULT '';
 ALTER TABLE todos ADD COLUMN dtstamp TEXT NOT NULL DEFAULT '';
 
+-- Timezones table for VTIMEZONE round-tripping.
+-- Stores raw VTIMEZONE component data from imports so non-standard or custom
+-- timezone definitions can be faithfully re-exported.
+CREATE TABLE timezones (
+    tzid           TEXT PRIMARY KEY,
+    vtimezone_data TEXT NOT NULL,
+    created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
 -- +goose Down
+DROP TABLE IF EXISTS timezones;
 ALTER TABLE todos DROP COLUMN dtstamp;
 ALTER TABLE events DROP COLUMN dtstamp;
 ALTER TABLE events DROP COLUMN duration;

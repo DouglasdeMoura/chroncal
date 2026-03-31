@@ -155,6 +155,12 @@ type RecurrenceInstance struct {
 	CreatedAt  string
 }
 
+type Timezone struct {
+	Tzid          string
+	VtimezoneData string
+	CreatedAt     string
+}
+
 type Todo struct {
 	ID              int64
 	Uid             string
