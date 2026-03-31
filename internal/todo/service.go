@@ -9,9 +9,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/douglasdemoura/tcal/internal/event"
-	"github.com/douglasdemoura/tcal/internal/model"
-	"github.com/douglasdemoura/tcal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
 type SearchParams struct {

@@ -12,7 +12,7 @@ import (
 	"github.com/pressly/goose/v3"
 	sqlite "modernc.org/sqlite"
 
-	"github.com/douglasdemoura/tcal/db"
+	"github.com/douglasdemoura/chroncal/db"
 )
 
 func init() {

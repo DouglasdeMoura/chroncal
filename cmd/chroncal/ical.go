@@ -8,11 +8,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/douglasdemoura/tcal/internal/event"
-	"github.com/douglasdemoura/tcal/internal/ical"
-	"github.com/douglasdemoura/tcal/internal/recurrence"
-	"github.com/douglasdemoura/tcal/internal/storage"
-	"github.com/douglasdemoura/tcal/internal/todo"
+	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/ical"
+	"github.com/douglasdemoura/chroncal/internal/recurrence"
+	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
 func icalCmd() *cobra.Command {
@@ -150,7 +150,7 @@ func icalImportCmd() *cobra.Command {
 			}
 
 			if len(result.Warnings) > 0 {
-				fmt.Fprintf(os.Stderr, "tcal: %d component(s) skipped during import:\n", len(result.Warnings))
+				fmt.Fprintf(os.Stderr, "chroncal: %d component(s) skipped during import:\n", len(result.Warnings))
 				limit := 5
 				if len(result.Warnings) < limit {
 					limit = len(result.Warnings)

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/douglasdemoura/tcal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/event"
 )
 
 func TestExpandDailyEvent(t *testing.T) {

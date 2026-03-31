@@ -9,9 +9,9 @@ import (
 
 	"github.com/teambition/rrule-go"
 
-	"github.com/douglasdemoura/tcal/internal/event"
-	"github.com/douglasdemoura/tcal/internal/storage"
-	"github.com/douglasdemoura/tcal/internal/todo"
+	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
 // Service handles recurrence expansion and caching

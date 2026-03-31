@@ -8,11 +8,11 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/douglasdemoura/tcal/internal/calendar"
-	"github.com/douglasdemoura/tcal/internal/event"
-	"github.com/douglasdemoura/tcal/internal/model"
-	"github.com/douglasdemoura/tcal/internal/testutil"
-	"github.com/douglasdemoura/tcal/internal/todo"
+	"github.com/douglasdemoura/chroncal/internal/calendar"
+	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/testutil"
+	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
 // testdataPath returns the absolute path to the testdata directory.

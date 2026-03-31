@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/douglasdemoura/tcal/internal/alarm"
-	"github.com/douglasdemoura/tcal/internal/event"
-	"github.com/douglasdemoura/tcal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/alarm"
+	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/model"
 )
 
 func TestFormatNotification_Basic(t *testing.T) {

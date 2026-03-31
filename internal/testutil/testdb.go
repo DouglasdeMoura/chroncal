@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"testing"
 
-	"github.com/douglasdemoura/tcal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
 // NewTestDB creates a fresh in-memory SQLite database with all migrations

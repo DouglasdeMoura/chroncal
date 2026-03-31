@@ -1,4 +1,4 @@
-module github.com/douglasdemoura/tcal
+module github.com/douglasdemoura/chroncal
 
 go 1.25.1
 

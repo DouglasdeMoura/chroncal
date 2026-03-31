@@ -14,7 +14,7 @@ func TestConfig_Default(t *testing.T) {
 }
 
 func TestConfig_EnvVar(t *testing.T) {
-	t.Setenv("TCAL_DB", "/tmp/test-env.db")
+	t.Setenv("CHRONCAL_DB", "/tmp/test-env.db")
 	cfg := Load()
 	if cfg.DB != "/tmp/test-env.db" {
 		t.Errorf("DB = %q, want %q", cfg.DB, "/tmp/test-env.db")
@@ -23,12 +23,12 @@ func TestConfig_EnvVar(t *testing.T) {
 
 func TestConfig_File(t *testing.T) {
 	dir := t.TempDir()
-	configDir := filepath.Join(dir, "tcal")
+	configDir := filepath.Join(dir, "chroncal")
 	os.MkdirAll(configDir, 0o755)
 	os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(`db = "/tmp/test-file.db"`), 0o644)
 
 	t.Setenv("XDG_CONFIG_HOME", dir)
-	t.Setenv("TCAL_DB", "")
+	t.Setenv("CHRONCAL_DB", "")
 
 	cfg := Load()
 	if cfg.DB != "/tmp/test-file.db" {
@@ -38,12 +38,12 @@ func TestConfig_File(t *testing.T) {
 
 func TestConfig_EnvOverridesFile(t *testing.T) {
 	dir := t.TempDir()
-	configDir := filepath.Join(dir, "tcal")
+	configDir := filepath.Join(dir, "chroncal")
 	os.MkdirAll(configDir, 0o755)
 	os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(`db = "/tmp/from-file.db"`), 0o644)
 
 	t.Setenv("XDG_CONFIG_HOME", dir)
-	t.Setenv("TCAL_DB", "/tmp/from-env.db")
+	t.Setenv("CHRONCAL_DB", "/tmp/from-env.db")
 
 	cfg := Load()
 	if cfg.DB != "/tmp/from-env.db" {
@@ -67,11 +67,11 @@ from = "noreply@example.com"
 	os.WriteFile(path, []byte(content), 0o644)
 
 	// Clear SMTP env vars so they don't interfere
-	t.Setenv("TCAL_SMTP_HOST", "")
-	t.Setenv("TCAL_SMTP_PORT", "")
-	t.Setenv("TCAL_SMTP_USERNAME", "")
-	t.Setenv("TCAL_SMTP_PASSWORD", "")
-	t.Setenv("TCAL_SMTP_FROM", "")
+	t.Setenv("CHRONCAL_SMTP_HOST", "")
+	t.Setenv("CHRONCAL_SMTP_PORT", "")
+	t.Setenv("CHRONCAL_SMTP_USERNAME", "")
+	t.Setenv("CHRONCAL_SMTP_PASSWORD", "")
+	t.Setenv("CHRONCAL_SMTP_FROM", "")
 
 	cfg := LoadFile(path)
 
@@ -97,7 +97,7 @@ func TestLoad_NerdFontsFromFile(t *testing.T) {
 	path := filepath.Join(dir, "config.toml")
 	os.WriteFile(path, []byte(`nerd_fonts = true`), 0o644)
 
-	t.Setenv("TCAL_NERD_FONTS", "")
+	t.Setenv("CHRONCAL_NERD_FONTS", "")
 
 	cfg := LoadFile(path)
 	if !cfg.NerdFonts {
@@ -106,7 +106,7 @@ func TestLoad_NerdFontsFromFile(t *testing.T) {
 }
 
 func TestLoad_NerdFontsFromEnv(t *testing.T) {
-	t.Setenv("TCAL_NERD_FONTS", "true")
+	t.Setenv("CHRONCAL_NERD_FONTS", "true")
 
 	cfg := Load()
 	if !cfg.NerdFonts {
@@ -115,7 +115,7 @@ func TestLoad_NerdFontsFromEnv(t *testing.T) {
 }
 
 func TestLoad_NerdFontsDefault(t *testing.T) {
-	t.Setenv("TCAL_NERD_FONTS", "")
+	t.Setenv("CHRONCAL_NERD_FONTS", "")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 	cfg := Load()
@@ -135,8 +135,8 @@ port = 25
 `
 	os.WriteFile(path, []byte(content), 0o644)
 
-	t.Setenv("TCAL_SMTP_HOST", "env-host.example.com")
-	t.Setenv("TCAL_SMTP_PORT", "465")
+	t.Setenv("CHRONCAL_SMTP_HOST", "env-host.example.com")
+	t.Setenv("CHRONCAL_SMTP_PORT", "465")
 
 	cfg := LoadFile(path)
 

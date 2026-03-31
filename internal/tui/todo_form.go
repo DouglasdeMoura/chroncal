@@ -11,8 +11,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/douglasdemoura/tcal/internal/app"
-	"github.com/douglasdemoura/tcal/internal/todo"
+	"github.com/douglasdemoura/chroncal/internal/app"
+	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
 type todoFormField int

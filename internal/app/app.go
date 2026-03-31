@@ -7,12 +7,12 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/douglasdemoura/tcal/internal/alarm"
-	"github.com/douglasdemoura/tcal/internal/calendar"
-	"github.com/douglasdemoura/tcal/internal/event"
-	"github.com/douglasdemoura/tcal/internal/recurrence"
-	"github.com/douglasdemoura/tcal/internal/storage"
-	"github.com/douglasdemoura/tcal/internal/todo"
+	"github.com/douglasdemoura/chroncal/internal/alarm"
+	"github.com/douglasdemoura/chroncal/internal/calendar"
+	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/recurrence"
+	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
 type App struct {
@@ -54,11 +54,11 @@ func DefaultDBPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(dataDir, "tcal")
+	dir := filepath.Join(dataDir, "chroncal")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "tcal.db"), nil
+	return filepath.Join(dir, "chroncal.db"), nil
 }
 
 // userDataDir returns the OS-appropriate directory for application data.

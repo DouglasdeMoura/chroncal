@@ -3,8 +3,8 @@ package todo
 import (
 	"time"
 
-	"github.com/douglasdemoura/tcal/internal/event"
-	"github.com/douglasdemoura/tcal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/model"
 )
 
 type Todo struct {

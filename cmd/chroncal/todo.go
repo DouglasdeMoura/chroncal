@@ -8,9 +8,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/douglasdemoura/tcal/internal/duration"
-	"github.com/douglasdemoura/tcal/internal/recurrence"
-	"github.com/douglasdemoura/tcal/internal/todo"
+	"github.com/douglasdemoura/chroncal/internal/duration"
+	"github.com/douglasdemoura/chroncal/internal/recurrence"
+	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
 func todoCmd() *cobra.Command {
@@ -228,28 +228,28 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).
 Setting --status COMPLETED automatically sets the completion timestamp
 and percent-complete to 100.`,
 		Example: `  # Simple todo with due date
-  tcal todo add "Write quarterly report" --due 2026-04-15
+  chroncal todo add "Write quarterly report" --due 2026-04-15
 
   # Todo with progress tracking and classification
-  tcal todo add "Review security audit" --due 2026-04-10 \
+  chroncal todo add "Review security audit" --due 2026-04-10 \
     --status IN-PROCESS --progress 25 --class CONFIDENTIAL
 
   # Recurring weekly todo with alarm
-  tcal todo add "Team standup prep" --due 2026-04-01 \
+  chroncal todo add "Team standup prep" --due 2026-04-01 \
     --rrule "FREQ=WEEKLY;BYDAY=MO" --alarm "-PT30M"
 
   # Todo with attendee and organizer
-  tcal todo add "Review PR #42" --due 2026-04-05 \
+  chroncal todo add "Review PR #42" --due 2026-04-05 \
     --attendee "Alice <alice@example.com>" \
     --organizer "Bob <bob@example.com>"
 
   # Todo with categories, comment, and related task
-  tcal todo add "Deploy v2.0" --due 2026-04-20 \
+  chroncal todo add "Deploy v2.0" --due 2026-04-20 \
     --categories "release,ops" --comment "Needs QA sign-off" \
     --related-to "PARENT:sprint-planning-uid"
 
   # Todo with start date and estimated duration
-  tcal todo add "Database migration" --start 2026-04-10 \
+  chroncal todo add "Database migration" --start 2026-04-10 \
     --duration 4h --priority 1`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -522,27 +522,27 @@ Setting --status COMPLETED automatically sets the completion timestamp
 and percent-complete to 100. You cannot combine --status COMPLETED with
 a --progress value other than 100.`,
 		Example: `  # Change the summary
-  tcal todo update 1 --summary "Updated task name"
+  chroncal todo update 1 --summary "Updated task name"
 
   # Reschedule a todo
-  tcal todo update 1 --due 2026-05-01 --start 2026-04-15
+  chroncal todo update 1 --due 2026-05-01 --start 2026-04-15
 
   # Mark as completed
-  tcal todo update 1 --status COMPLETED
+  chroncal todo update 1 --status COMPLETED
 
   # Switch from due date to estimated duration
-  tcal todo update 1 --due "" --duration 4h
+  chroncal todo update 1 --due "" --duration 4h
 
   # Update attendees and add a comment
-  tcal todo update 1 \
+  chroncal todo update 1 \
     --attendee "Alice <alice@example.com>" \
     --comment "Discussed in standup"
 
   # Move to a different calendar and change classification
-  tcal todo update 1 --calendar Work --class CONFIDENTIAL
+  chroncal todo update 1 --calendar Work --class CONFIDENTIAL
 
   # Clear the location
-  tcal todo update 1 --location ""`,
+  chroncal todo update 1 --location ""`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()

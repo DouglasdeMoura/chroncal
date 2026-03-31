@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/douglasdemoura/tcal/internal/storage"
-	"github.com/douglasdemoura/tcal/internal/testutil"
+	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
 
 func testCalendar(t *testing.T, q *storage.Queries) int64 {

@@ -1,10 +1,10 @@
 .PHONY: build run test generate lint clean
 
 build:
-	go build -o tcal ./cmd/tcal
+	go build -o chroncal ./cmd/chroncal
 
 run: build
-	./tcal
+	./chroncal
 
 test:
 	go test ./internal/... -count=1
@@ -16,4 +16,4 @@ lint:
 	go vet ./...
 
 clean:
-	rm -f tcal
+	rm -f chroncal

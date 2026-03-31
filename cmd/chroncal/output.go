@@ -10,10 +10,10 @@ import (
 	"github.com/rodaine/table"
 	"gopkg.in/yaml.v3"
 
-	"github.com/douglasdemoura/tcal/internal/calendar"
-	"github.com/douglasdemoura/tcal/internal/event"
-	"github.com/douglasdemoura/tcal/internal/model"
-	"github.com/douglasdemoura/tcal/internal/todo"
+	"github.com/douglasdemoura/chroncal/internal/calendar"
+	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
 // icons holds display glyphs, switched by the nerd_fonts config flag.

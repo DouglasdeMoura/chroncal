@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/douglasdemoura/tcal/internal/testutil"
+	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
 
 func newTestService(t *testing.T) *Service {

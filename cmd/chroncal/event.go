@@ -13,10 +13,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/douglasdemoura/tcal/internal/duration"
-	"github.com/douglasdemoura/tcal/internal/event"
-	"github.com/douglasdemoura/tcal/internal/model"
-	"github.com/douglasdemoura/tcal/internal/recurrence"
+	"github.com/douglasdemoura/chroncal/internal/duration"
+	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/recurrence"
 )
 
 func eventCmd() *cobra.Command {
@@ -225,51 +225,51 @@ Defaults: status=CONFIRMED, class=PUBLIC, transparency=OPAQUE, calendar=Personal
 Attendees default to RSVP=NEEDS-ACTION and ROLE=REQ-PARTICIPANT.
 Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 		Example: `  # Timed event tomorrow at 2pm for 90 minutes
-  tcal event add "Lunch with Alice" --date 2026-04-01 --time 14:00 --duration 1h30m
+  chroncal event add "Lunch with Alice" --date 2026-04-01 --time 14:00 --duration 1h30m
 
   # All-day event (no --time flag)
-  tcal event add "Company Holiday" --date 2026-12-25
+  chroncal event add "Company Holiday" --date 2026-12-25
 
   # Event with explicit end time instead of duration
-  tcal event add "Workshop" --date 2026-05-10 --time 09:00 --end-time 12:30
+  chroncal event add "Workshop" --date 2026-05-10 --time 09:00 --end-time 12:30
 
   # Recurring weekly meeting with alarm and attendees
-  tcal event add "Team Standup" --time 09:00 --duration 30m \
+  chroncal event add "Team Standup" --time 09:00 --duration 30m \
     --rrule "FREQ=WEEKLY;BYDAY=MO,WE,FR" \
     --alarm "-PT15M" --attendee "Alice <alice@example.com>"
 
   # Event with timezone, location, and categories
-  tcal event add "Conference Talk" --date 2026-05-10 --time 10:00 \
+  chroncal event add "Conference Talk" --date 2026-05-10 --time 10:00 \
     --timezone America/New_York --location "Room 42" --categories "work,conference"
 
   # Recurring event with an excluded date
-  tcal event add "Sprint Review" --time 14:00 \
+  chroncal event add "Sprint Review" --time 14:00 \
     --rrule "FREQ=WEEKLY;COUNT=10" --exdate 2026-04-08
 
   # High-priority event with comment and file attachment
-  tcal event add "Board Meeting" --date 2026-06-01 --time 10:00 \
+  chroncal event add "Board Meeting" --date 2026-06-01 --time 10:00 \
     --priority 1 --comment "Bring Q2 financials" \
     --attach /path/to/agenda.pdf
 
   # Multiple alarm types: display (default), email, and audio
-  tcal event add "Deploy Window" --date 2026-04-15 --time 02:00 \
+  chroncal event add "Deploy Window" --date 2026-04-15 --time 02:00 \
     --alarm "-PT1H" --alarm "EMAIL:-PT1D" --alarm "AUDIO:-PT5M"
 
   # Alarm that repeats 3 times every 5 minutes, relative to event end
-  tcal event add "Deadline" --date 2026-04-15 --time 17:00 \
+  chroncal event add "Deadline" --date 2026-04-15 --time 17:00 \
     --alarm "DISPLAY:-PT30M::3:PT5M:END"
 
   # EMAIL alarm with attendees
-  tcal event add "Team Sync" --date 2026-04-15 --time 09:00 \
+  chroncal event add "Team Sync" --date 2026-04-15 --time 09:00 \
     --alarm "EMAIL:-PT1H:::::alice@example.com,bob@example.com"
 
   # Event with organizer, contacts, and resources
-  tcal event add "Board Meeting" --date 2026-06-01 --time 10:00 \
+  chroncal event add "Board Meeting" --date 2026-06-01 --time 10:00 \
     --organizer "Alice <alice@example.com>" \
     --contact "Bob Smith, 555-1234" --resource PROJECTOR --resource WHITEBOARD
 
   # Link events with RELATED-TO (parent/child/sibling)
-  tcal event add "Sprint Planning" --time 14:00 \
+  chroncal event add "Sprint Planning" --time 14:00 \
     --related-to "PARENT:quarterly-review-uid"`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -1033,7 +1033,7 @@ func parseAlarmFlags(flags []string) ([]model.Alarm, error) {
 			return nil, err
 		}
 		if a.Action == "EMAIL" && len(a.Attendees) == 0 {
-			fmt.Fprintf(os.Stderr, "tcal: warning: EMAIL alarm has no attendees (RFC 5545 requires at least one; alarm will behave as DISPLAY)\n")
+			fmt.Fprintf(os.Stderr, "chroncal: warning: EMAIL alarm has no attendees (RFC 5545 requires at least one; alarm will behave as DISPLAY)\n")
 		}
 		out = append(out, a)
 	}

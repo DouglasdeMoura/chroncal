@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/douglasdemoura/tcal/internal/model"
-	"github.com/douglasdemoura/tcal/internal/storage"
-	"github.com/douglasdemoura/tcal/internal/testutil"
-	"github.com/douglasdemoura/tcal/internal/todo"
+	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/testutil"
+	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
 type mockTodoAlarmLister struct {

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/douglasdemoura/tcal/internal/todo"
+	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
 func renderTodoDetail(t *todo.Todo, calendarName string) string {

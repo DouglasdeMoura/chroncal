@@ -1,4 +1,4 @@
-/tcal
+/chroncal
 *.db
 *.db-wal
 *.db-shm

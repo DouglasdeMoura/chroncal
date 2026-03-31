@@ -6,7 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/douglasdemoura/tcal/internal/calendar"
+	"github.com/douglasdemoura/chroncal/internal/calendar"
 )
 
 type sidebar struct {

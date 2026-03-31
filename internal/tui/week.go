@@ -7,7 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/douglasdemoura/tcal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/event"
 )
 
 type weekView struct {

@@ -43,7 +43,7 @@ func TestApp_DefaultDBPath(t *testing.T) {
 	if path == "" {
 		t.Error("DefaultDBPath returned empty string")
 	}
-	if filepath.Base(path) != "tcal.db" {
-		t.Errorf("DefaultDBPath base = %q, want tcal.db", filepath.Base(path))
+	if filepath.Base(path) != "chroncal.db" {
+		t.Errorf("DefaultDBPath base = %q, want chroncal.db", filepath.Base(path))
 	}
 }

@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/douglasdemoura/tcal/internal/event"
-	"github.com/douglasdemoura/tcal/internal/model"
-	"github.com/douglasdemoura/tcal/internal/testutil"
+	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
 
 func TestAlarmLifecycle(t *testing.T) {

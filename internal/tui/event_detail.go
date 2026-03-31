@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/douglasdemoura/tcal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/event"
 )
 
 func renderEventDetail(e *event.Event, calendarName string) string {

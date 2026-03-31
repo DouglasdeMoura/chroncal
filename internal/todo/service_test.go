@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/douglasdemoura/tcal/internal/model"
-	"github.com/douglasdemoura/tcal/internal/testutil"
+	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
 
 func newTestService(t *testing.T) *Service {

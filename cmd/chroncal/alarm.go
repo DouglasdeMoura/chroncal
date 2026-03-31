@@ -11,10 +11,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/douglasdemoura/tcal/internal/alarm"
-	"github.com/douglasdemoura/tcal/internal/event"
-	"github.com/douglasdemoura/tcal/internal/notify"
-	"github.com/douglasdemoura/tcal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/alarm"
+	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/notify"
+	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
 // fireAlarm dispatches the notification for a due alarm.
@@ -56,13 +56,13 @@ func alarmCmd() *cobra.Command {
 Events can have one or more alarms attached (set via --alarm on event add/update).
 The alarm lifecycle is:
 
-  1. tcal alarm check   — scan events, fire notifications for due alarms
-  2. tcal alarm list    — show fired alarms not yet acknowledged
-  3. tcal alarm dismiss — acknowledge and clear a fired alarm
-  4. tcal alarm snooze  — re-schedule a fired alarm for later
+  1. chroncal alarm check   — scan events, fire notifications for due alarms
+  2. chroncal alarm list    — show fired alarms not yet acknowledged
+  3. chroncal alarm dismiss — acknowledge and clear a fired alarm
+  4. chroncal alarm snooze  — re-schedule a fired alarm for later
 
-For continuous monitoring, use "tcal alarm daemon" or a systemd timer / cron job
-that runs "tcal alarm check" on an interval.`,
+For continuous monitoring, use "chroncal alarm daemon" or a systemd timer / cron job
+that runs "chroncal alarm check" on an interval.`,
 	}
 	cmd.AddCommand(alarmCheckCmd(), alarmListCmd(), alarmDismissCmd(), alarmSnoozeCmd(), alarmDaemonCmd())
 	return cmd
@@ -87,13 +87,13 @@ Notification types depend on the alarm action set on the event:
   EMAIL    — email via SMTP (falls back to DISPLAY if SMTP is not configured)
 
 To enable EMAIL notifications, configure SMTP via environment variables:
-  TCAL_SMTP_HOST       SMTP server hostname (required)
-  TCAL_SMTP_PORT       SMTP server port (default: 587)
-  TCAL_SMTP_USERNAME   SMTP authentication username
-  TCAL_SMTP_PASSWORD   SMTP authentication password
-  TCAL_SMTP_FROM       sender address for alarm emails
+  CHRONCAL_SMTP_HOST       SMTP server hostname (required)
+  CHRONCAL_SMTP_PORT       SMTP server port (default: 587)
+  CHRONCAL_SMTP_USERNAME   SMTP authentication username
+  CHRONCAL_SMTP_PASSWORD   SMTP authentication password
+  CHRONCAL_SMTP_FROM       sender address for alarm emails
 
-Or in the config file ($XDG_CONFIG_HOME/tcal/config.toml):
+Or in the config file ($XDG_CONFIG_HOME/chroncal/config.toml):
   [smtp]
   host = "smtp.example.com"
   port = 587
@@ -108,10 +108,10 @@ subsequent checks. Snoozed alarms whose snooze-until time has expired
 are also re-fired. If no alarms are due, the command produces no output
 and exits 0.`,
 		Example: `  # One-shot check (suitable for cron / systemd timer)
-  tcal alarm check
+  chroncal alarm check
 
   # Check and output results as JSON
-  tcal alarm check -o json`,
+  chroncal alarm check -o json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -140,18 +140,18 @@ and exits 0.`,
 				// concurrent alarm check runs (SQLite serializes writes).
 				if da.StateID != 0 {
 					if markErr := a.Alarms.MarkRefired(ctx, da.StateID); markErr != nil {
-						fmt.Fprintf(os.Stderr, "tcal: mark-refired error: event=%q: %v\n", da.Event.Title, markErr)
+						fmt.Fprintf(os.Stderr, "chroncal: mark-refired error: event=%q: %v\n", da.Event.Title, markErr)
 					}
 				} else {
 					if markErr := a.Alarms.MarkFired(ctx, da); markErr != nil {
-						fmt.Fprintf(os.Stderr, "tcal: mark-fired error: event=%q: %v\n", da.Event.Title, markErr)
+						fmt.Fprintf(os.Stderr, "chroncal: mark-fired error: event=%q: %v\n", da.Event.Title, markErr)
 					}
 				}
 
 				fireErr := fireAlarm(da)
 
 				if fireErr != nil {
-					fmt.Fprintf(os.Stderr, "tcal: alarm error: %s (event=%q action=%s): %v\n",
+					fmt.Fprintf(os.Stderr, "chroncal: alarm error: %s (event=%q action=%s): %v\n",
 						da.TriggerAt.Local().Format("15:04"), da.Event.Title, da.Alarm.Action, fireErr)
 					if outputFmt != "text" {
 						results = append(results, map[string]any{
@@ -185,7 +185,7 @@ and exits 0.`,
 				fireErr := fireAlarm(todoDueAlarmToDueAlarm(tda))
 
 				if fireErr != nil {
-					fmt.Fprintf(os.Stderr, "tcal: todo alarm error: %s (todo=%q action=%s): %v\n",
+					fmt.Fprintf(os.Stderr, "chroncal: todo alarm error: %s (todo=%q action=%s): %v\n",
 						tda.TriggerAt.Local().Format("15:04"), tda.Todo.Summary, tda.Alarm.Action, fireErr)
 					if outputFmt != "text" {
 						results = append(results, map[string]any{
@@ -229,7 +229,7 @@ func alarmListCmd() *cobra.Command {
 		Short: "List fired but unacknowledged alarms",
 		Long: `Show all alarms that have fired but have not been dismissed.
 
-Alarms enter this list when "tcal alarm check" (or "tcal alarm daemon")
+Alarms enter this list when "chroncal alarm check" (or "chroncal alarm daemon")
 detects that an alarm's trigger time has passed and fires a notification.
 Once fired, an alarm stays in the pending list until you dismiss it.
 
@@ -247,16 +247,16 @@ JSON output fields (-o json):
 
 Dismissed alarms are permanently removed from this list.`,
 		Example: `  # List pending alarms
-  tcal alarm list
+  chroncal alarm list
 
   # List as JSON (useful for scripts)
-  tcal alarm list -o json
+  chroncal alarm list -o json
 
   # Typical workflow: check for due alarms, review, then act
-  tcal alarm check          # fire any due alarms
-  tcal alarm list           # see what fired
-  tcal alarm dismiss 5      # clear alarm state #5
-  tcal alarm snooze 3       # remind again in 15 minutes`,
+  chroncal alarm check          # fire any due alarms
+  chroncal alarm list           # see what fired
+  chroncal alarm dismiss 5      # clear alarm state #5
+  chroncal alarm snooze 3       # remind again in 15 minutes`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -352,7 +352,7 @@ brackets). Dismissing an alarm marks it as acknowledged and is
 permanent; use "alarm snooze" instead if you want to be reminded again
 later.`,
 		Example: `  # Dismiss alarm state #5
-  tcal alarm dismiss 5`,
+  chroncal alarm dismiss 5`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
@@ -405,22 +405,22 @@ snooze-until time recorded. When "alarm check" runs after the snooze
 expires, the alarm fires again. The default snooze duration is 15
 minutes.
 
-Note: snooze state is local to tcal and is not exported to .ics files.
+Note: snooze state is local to chroncal and is not exported to .ics files.
 Exporting and re-importing a calendar will not preserve snooze times.`,
 		Example: `  # Snooze for the default 15 minutes
-  tcal alarm snooze 5
+  chroncal alarm snooze 5
 
   # Snooze for 1 hour
-  tcal alarm snooze 5 --for 1h
+  chroncal alarm snooze 5 --for 1h
 
   # Snooze until the event starts
-  tcal alarm snooze 5 --until-start
+  chroncal alarm snooze 5 --until-start
 
   # Snooze and get JSON output (for scripting)
-  tcal alarm snooze 5 --for 1h -o json
+  chroncal alarm snooze 5 --for 1h -o json
 
   # Check snooze status in the pending list
-  tcal alarm list`,
+  chroncal alarm list`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
@@ -473,10 +473,10 @@ Exporting and re-importing a calendar will not preserve snooze times.`,
 			}
 
 			if res.Capped {
-				fmt.Fprintf(os.Stderr, "tcal: snooze capped at event end (%s)\n",
+				fmt.Fprintf(os.Stderr, "chroncal: snooze capped at event end (%s)\n",
 					res.EventEnd.Local().Format("15:04"))
 			} else if res.PastStart {
-				fmt.Fprintf(os.Stderr, "tcal: note: alarm will fire after event starts (%s)\n",
+				fmt.Fprintf(os.Stderr, "chroncal: note: alarm will fire after event starts (%s)\n",
 					res.EventStart.Local().Format("15:04"))
 			}
 			fmt.Fprintf(w, "Snoozed alarm state %d until %s.\n", stateID, res.Until.Local().Format("15:04"))
@@ -501,7 +501,7 @@ configured interval before checking again. It handles SIGINT and SIGTERM
 for graceful shutdown.
 
 For production use, prefer a systemd timer or cron job that runs
-"tcal alarm check" instead of a long-running daemon:
+"chroncal alarm check" instead of a long-running daemon:
 
   # systemd timer (runs every 30 seconds)
   [Timer]
@@ -509,17 +509,17 @@ For production use, prefer a systemd timer or cron job that runs
   OnUnitActiveSec=30s
 
   [Service]
-  ExecStart=/usr/local/bin/tcal alarm check
+  ExecStart=/usr/local/bin/chroncal alarm check
 
-See "tcal alarm check --help" for notification types and SMTP configuration.`,
+See "chroncal alarm check --help" for notification types and SMTP configuration.`,
 		Example: `  # Run with default 30-second interval
-  tcal alarm daemon
+  chroncal alarm daemon
 
   # Check every minute
-  tcal alarm daemon --interval 1m
+  chroncal alarm daemon --interval 1m
 
   # Check every 10 seconds
-  tcal alarm daemon --interval 10s`,
+  chroncal alarm daemon --interval 10s`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -536,7 +536,7 @@ See "tcal alarm check --help" for notification types and SMTP configuration.`,
 			defer stop()
 
 			w := cmd.OutOrStdout()
-			fmt.Fprintf(os.Stderr, "tcal: daemon started (interval: %s)\n", dur)
+			fmt.Fprintf(os.Stderr, "chroncal: daemon started (interval: %s)\n", dur)
 
 			ticker := time.NewTicker(dur)
 			defer ticker.Stop()
@@ -545,23 +545,23 @@ See "tcal alarm check --help" for notification types and SMTP configuration.`,
 			runCheck := func() {
 				due, todoDue, err := a.Alarms.Check(ctx, time.Now())
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "tcal: check error: %v\n", err)
+					fmt.Fprintf(os.Stderr, "chroncal: check error: %v\n", err)
 					return
 				}
 				for _, da := range due {
 					if da.StateID != 0 {
 						if markErr := a.Alarms.MarkRefired(ctx, da.StateID); markErr != nil {
-							fmt.Fprintf(os.Stderr, "tcal: mark-refired error: event=%q: %v\n", da.Event.Title, markErr)
+							fmt.Fprintf(os.Stderr, "chroncal: mark-refired error: event=%q: %v\n", da.Event.Title, markErr)
 						}
 					} else {
 						if markErr := a.Alarms.MarkFired(ctx, da); markErr != nil {
-							fmt.Fprintf(os.Stderr, "tcal: mark-fired error: event=%q: %v\n", da.Event.Title, markErr)
+							fmt.Fprintf(os.Stderr, "chroncal: mark-fired error: event=%q: %v\n", da.Event.Title, markErr)
 						}
 					}
 
 					fireErr := fireAlarm(da)
 					if fireErr != nil {
-						fmt.Fprintf(os.Stderr, "tcal: alarm error: %s (event=%q action=%s): %v\n",
+						fmt.Fprintf(os.Stderr, "chroncal: alarm error: %s (event=%q action=%s): %v\n",
 							da.TriggerAt.Local().Format("15:04"), da.Event.Title, da.Alarm.Action, fireErr)
 						continue
 					}
@@ -578,7 +578,7 @@ See "tcal alarm check --help" for notification types and SMTP configuration.`,
 			for {
 				select {
 				case <-ctx.Done():
-					fmt.Fprintf(os.Stderr, "tcal: daemon stopped\n")
+					fmt.Fprintf(os.Stderr, "chroncal: daemon stopped\n")
 					return nil
 				case <-ticker.C:
 					runCheck()

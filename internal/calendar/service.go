@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/douglasdemoura/tcal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
 type Service struct {

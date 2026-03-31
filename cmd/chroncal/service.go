@@ -13,7 +13,7 @@ import (
 )
 
 const systemdServiceTmpl = `[Unit]
-Description=tcal alarm checker
+Description=chroncal alarm checker
 After=default.target
 
 [Service]
@@ -25,7 +25,7 @@ WantedBy=default.target
 `
 
 const systemdTimerTmpl = `[Unit]
-Description=tcal alarm timer
+Description=chroncal alarm timer
 
 [Timer]
 OnCalendar=*-*-* *:*:00
@@ -40,7 +40,7 @@ const launchdPlistTmpl = `<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.tcal.alarm</string>
+    <string>com.chroncal.alarm</string>
     <key>ProgramArguments</key>
     <array>
         <string>{{.BinaryPath}}</string>
@@ -52,9 +52,9 @@ const launchdPlistTmpl = `<?xml version="1.0" encoding="UTF-8"?>
     <key>RunAtLoad</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>{{.HomeDir}}/Library/Logs/tcal-alarm.log</string>
+    <string>{{.HomeDir}}/Library/Logs/chroncal-alarm.log</string>
     <key>StandardErrorPath</key>
-    <string>{{.HomeDir}}/Library/Logs/tcal-alarm.log</string>
+    <string>{{.HomeDir}}/Library/Logs/chroncal-alarm.log</string>
 </dict>
 </plist>
 `
@@ -119,7 +119,7 @@ func serviceInstallCmd() *cobra.Command {
 				return installDarwinService(w, data)
 			default:
 				fmt.Fprintf(w, "No native service integration for %s.\n", runtime.GOOS)
-				fmt.Fprintf(w, "Use 'tcal alarm daemon' to run alarm checks in a loop.\n")
+				fmt.Fprintf(w, "Use 'chroncal alarm daemon' to run alarm checks in a loop.\n")
 				return nil
 			}
 		},
@@ -147,8 +147,8 @@ func installLinuxService(w interface{ Write([]byte) (int, error) }, data map[str
 		return fmt.Errorf("create systemd dir: %w", err)
 	}
 
-	servicePath := filepath.Join(dir, "tcal-alarm.service")
-	timerPath := filepath.Join(dir, "tcal-alarm.timer")
+	servicePath := filepath.Join(dir, "chroncal-alarm.service")
+	timerPath := filepath.Join(dir, "chroncal-alarm.timer")
 
 	serviceContent, err := renderTemplate(systemdServiceTmpl, data)
 	if err != nil {
@@ -175,10 +175,10 @@ func installLinuxService(w interface{ Write([]byte) (int, error) }, data map[str
 	}
 	fmt.Fprintln(w, "Reloaded systemd user daemon.")
 
-	if err := exec.Command("systemctl", "--user", "enable", "--now", "tcal-alarm.timer").Run(); err != nil {
+	if err := exec.Command("systemctl", "--user", "enable", "--now", "chroncal-alarm.timer").Run(); err != nil {
 		return fmt.Errorf("systemctl enable timer: %w", err)
 	}
-	fmt.Fprintln(w, "Enabled and started tcal-alarm.timer.")
+	fmt.Fprintln(w, "Enabled and started chroncal-alarm.timer.")
 	return nil
 }
 
@@ -189,7 +189,7 @@ func installDarwinService(w interface{ Write([]byte) (int, error) }, data map[st
 		return fmt.Errorf("create LaunchAgents dir: %w", err)
 	}
 
-	plistPath := filepath.Join(dir, "com.tcal.alarm.plist")
+	plistPath := filepath.Join(dir, "com.chroncal.alarm.plist")
 
 	plistContent, err := renderTemplate(launchdPlistTmpl, data)
 	if err != nil {
@@ -204,7 +204,7 @@ func installDarwinService(w interface{ Write([]byte) (int, error) }, data map[st
 	if err := exec.Command("launchctl", "load", plistPath).Run(); err != nil {
 		return fmt.Errorf("launchctl load: %w", err)
 	}
-	fmt.Fprintln(w, "Loaded com.tcal.alarm agent.")
+	fmt.Fprintln(w, "Loaded com.chroncal.alarm agent.")
 	return nil
 }
 
@@ -234,12 +234,12 @@ func uninstallLinuxService(w interface{ Write([]byte) (int, error) }) error {
 	if err != nil {
 		return fmt.Errorf("resolve systemd user dir: %w", err)
 	}
-	servicePath := filepath.Join(dir, "tcal-alarm.service")
-	timerPath := filepath.Join(dir, "tcal-alarm.timer")
+	servicePath := filepath.Join(dir, "chroncal-alarm.service")
+	timerPath := filepath.Join(dir, "chroncal-alarm.timer")
 
 	// Stop and disable timer (best-effort).
-	_ = exec.Command("systemctl", "--user", "disable", "--now", "tcal-alarm.timer").Run()
-	fmt.Fprintln(w, "Disabled tcal-alarm.timer.")
+	_ = exec.Command("systemctl", "--user", "disable", "--now", "chroncal-alarm.timer").Run()
+	fmt.Fprintln(w, "Disabled chroncal-alarm.timer.")
 
 	if err := os.Remove(timerPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove timer file: %w", err)
@@ -262,11 +262,11 @@ func uninstallDarwinService(w interface{ Write([]byte) (int, error) }) error {
 		return fmt.Errorf("get home dir: %w", err)
 	}
 
-	plistPath := filepath.Join(home, "Library", "LaunchAgents", "com.tcal.alarm.plist")
+	plistPath := filepath.Join(home, "Library", "LaunchAgents", "com.chroncal.alarm.plist")
 
 	// Unload (best-effort).
 	_ = exec.Command("launchctl", "unload", plistPath).Run()
-	fmt.Fprintln(w, "Unloaded com.tcal.alarm agent.")
+	fmt.Fprintln(w, "Unloaded com.chroncal.alarm agent.")
 
 	if err := os.Remove(plistPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove plist file: %w", err)
@@ -284,7 +284,7 @@ func serviceStatusCmd() *cobra.Command {
 
 			switch runtime.GOOS {
 			case "linux":
-				out, err := exec.Command("systemctl", "--user", "status", "tcal-alarm.timer").CombinedOutput()
+				out, err := exec.Command("systemctl", "--user", "status", "chroncal-alarm.timer").CombinedOutput()
 				if len(out) > 0 {
 					fmt.Fprint(w, string(out))
 				}
@@ -297,7 +297,7 @@ func serviceStatusCmd() *cobra.Command {
 				}
 				return nil
 			case "darwin":
-				out, err := exec.Command("launchctl", "list", "com.tcal.alarm").CombinedOutput()
+				out, err := exec.Command("launchctl", "list", "com.chroncal.alarm").CombinedOutput()
 				if len(out) > 0 {
 					fmt.Fprint(w, string(out))
 				}
@@ -309,7 +309,7 @@ func serviceStatusCmd() *cobra.Command {
 				return nil
 			default:
 				fmt.Fprintf(w, "No native service integration for %s.\n", runtime.GOOS)
-				fmt.Fprintf(w, "Use 'tcal alarm daemon' to run alarm checks in a loop.\n")
+				fmt.Fprintf(w, "Use 'chroncal alarm daemon' to run alarm checks in a loop.\n")
 				return nil
 			}
 		},

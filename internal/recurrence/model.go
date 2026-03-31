@@ -3,8 +3,8 @@ package recurrence
 import (
 	"time"
 
-	"github.com/douglasdemoura/tcal/internal/event"
-	"github.com/douglasdemoura/tcal/internal/todo"
+	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
 // Instance represents a single occurrence of a recurring event

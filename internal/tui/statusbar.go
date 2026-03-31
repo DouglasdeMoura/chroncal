@@ -29,7 +29,7 @@ func renderStatusBar(viewName string, width int) string {
 	viewLabel := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(DefaultTheme.Primary).
-		Render("  tcal")
+		Render("  chroncal")
 
 	left := viewLabel + "  " + statusBarStyle.Render(viewName)
 

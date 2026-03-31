@@ -10,14 +10,14 @@ import (
 
 	"github.com/emersion/go-ical"
 
-	"github.com/douglasdemoura/tcal/internal/event"
-	"github.com/douglasdemoura/tcal/internal/model"
-	"github.com/douglasdemoura/tcal/internal/todo"
+	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
 // ProductID is the PRODID value written into exported VCALENDAR objects.
 // Override before calling ExportEvents or ExportTodos to customise.
-var ProductID = "-//tcal//tcal//EN"
+var ProductID = "-//chroncal//chroncal//EN"
 
 func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 	cal := ical.NewCalendar()

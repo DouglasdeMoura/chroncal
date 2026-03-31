@@ -31,7 +31,7 @@ func Load() Config {
 	v := newViper()
 
 	if dir, err := configDir(); err == nil {
-		v.AddConfigPath(filepath.Join(dir, "tcal"))
+		v.AddConfigPath(filepath.Join(dir, "chroncal"))
 	}
 
 	v.ReadInConfig() // ignore error — file is optional
@@ -52,13 +52,13 @@ func LoadFile(path string) Config {
 	return cfg
 }
 
-// newViper creates a pre-configured Viper instance with TCAL_ env prefix
+// newViper creates a pre-configured Viper instance with CHRONCAL_ env prefix
 // and bindings for all known config keys.
 func newViper() *viper.Viper {
 	v := viper.New()
 	v.SetConfigName("config")
 	v.SetConfigType("toml")
-	v.SetEnvPrefix("TCAL")
+	v.SetEnvPrefix("CHRONCAL")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
@@ -76,14 +76,14 @@ func newViper() *viper.Viper {
 }
 
 // configFilePath returns the OS-appropriate config file location.
-// Linux: $XDG_CONFIG_HOME/tcal/config.toml
-// macOS/Windows: os.UserConfigDir()/tcal/config.toml
+// Linux: $XDG_CONFIG_HOME/chroncal/config.toml
+// macOS/Windows: os.UserConfigDir()/chroncal/config.toml
 func configFilePath() (string, error) {
 	dir, err := configDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "tcal", "config.toml"), nil
+	return filepath.Join(dir, "chroncal", "config.toml"), nil
 }
 
 func configDir() (string, error) {

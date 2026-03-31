@@ -10,12 +10,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/douglasdemoura/tcal/internal/app"
-	"github.com/douglasdemoura/tcal/internal/config"
-	"github.com/douglasdemoura/tcal/internal/event"
-	"github.com/douglasdemoura/tcal/internal/ical"
-	"github.com/douglasdemoura/tcal/internal/todo"
-	"github.com/douglasdemoura/tcal/internal/tui"
+	"github.com/douglasdemoura/chroncal/internal/app"
+	"github.com/douglasdemoura/chroncal/internal/config"
+	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/ical"
+	"github.com/douglasdemoura/chroncal/internal/todo"
+	"github.com/douglasdemoura/chroncal/internal/tui"
 )
 
 var (
@@ -24,11 +24,11 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "tcal",
+	Use:   "chroncal",
 	Short: "A beautiful terminal calendar",
-	Long: `tcal is a terminal calendar backed by SQLite with iCal import/export.
+	Long: `chroncal is a terminal calendar backed by SQLite with iCal import/export.
 
-Launch the TUI by running tcal with no arguments, or use subcommands
+Launch the TUI by running chroncal with no arguments, or use subcommands
 for scriptable access to all calendar operations.
 
 Resource groups:
@@ -61,7 +61,7 @@ Resource groups:
 }
 
 func initApp() (*app.App, error) {
-	// Precedence: TCAL_DB env > config.toml > default
+	// Precedence: CHRONCAL_DB env > config.toml > default
 	path := cfg.DB
 	if path == "" {
 		var err error

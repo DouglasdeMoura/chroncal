@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/douglasdemoura/tcal/internal/duration"
-	"github.com/douglasdemoura/tcal/internal/event"
-	"github.com/douglasdemoura/tcal/internal/model"
-	"github.com/douglasdemoura/tcal/internal/recurrence"
-	"github.com/douglasdemoura/tcal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/duration"
+	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/recurrence"
+	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
 // StaleThreshold is the maximum age of an unfired alarm before it is skipped.
@@ -304,7 +304,7 @@ func (s *Service) ComputeSnooze(ctx context.Context, stateID int64, dur time.Dur
 
 	st, err := s.q.GetAlarmStateByID(ctx, stateID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return SnoozeResult{}, fmt.Errorf("alarm state %d not found (use 'tcal alarm list' to see pending alarms)", stateID)
+		return SnoozeResult{}, fmt.Errorf("alarm state %d not found (use 'chroncal alarm list' to see pending alarms)", stateID)
 	}
 	if err != nil {
 		return SnoozeResult{}, fmt.Errorf("get alarm state %d: %w", stateID, err)
@@ -350,7 +350,7 @@ func (s *Service) ComputeSnooze(ctx context.Context, stateID int64, dur time.Dur
 func (s *Service) SnoozeUntilStart(ctx context.Context, stateID int64, now time.Time) (SnoozeResult, error) {
 	st, err := s.q.GetAlarmStateByID(ctx, stateID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return SnoozeResult{}, fmt.Errorf("alarm state %d not found (use 'tcal alarm list' to see pending alarms)", stateID)
+		return SnoozeResult{}, fmt.Errorf("alarm state %d not found (use 'chroncal alarm list' to see pending alarms)", stateID)
 	}
 	if err != nil {
 		return SnoozeResult{}, fmt.Errorf("get alarm state %d: %w", stateID, err)

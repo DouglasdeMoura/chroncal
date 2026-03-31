@@ -8,7 +8,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/douglasdemoura/tcal/internal/alarm"
+	"github.com/douglasdemoura/chroncal/internal/alarm"
 	"github.com/gen2brain/beeep"
 )
 

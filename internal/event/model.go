@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/douglasdemoura/tcal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/model"
 )
 
 type Event struct {
