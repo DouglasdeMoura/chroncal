@@ -444,11 +444,81 @@ func (q *Queries) ListEventsByStatusAndDateRange(ctx context.Context, arg ListEv
 	return items, nil
 }
 
+const listEventsFiltered = `-- name: ListEventsFiltered :many
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, categories, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM events
+WHERE recurrence_rule = '' AND recurrence_id = ''
+AND (?1 = 0 OR calendar_id = ?1)
+AND (?2 = '' OR status = ?2)
+AND (?3 = '' OR start_time >= ?3)
+AND (?4 = '' OR start_time < ?4)
+ORDER BY start_time ASC
+`
+
+type ListEventsFilteredParams struct {
+	CalendarID   interface{}
+	FilterStatus interface{}
+	FromTime     interface{}
+	ToTime       interface{}
+}
+
+func (q *Queries) ListEventsFiltered(ctx context.Context, arg ListEventsFilteredParams) ([]Event, error) {
+	rows, err := q.db.QueryContext(ctx, listEventsFiltered,
+		arg.CalendarID,
+		arg.FilterStatus,
+		arg.FromTime,
+		arg.ToTime,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Event
+	for rows.Next() {
+		var i Event
+		if err := rows.Scan(
+			&i.ID,
+			&i.Uid,
+			&i.CalendarID,
+			&i.Title,
+			&i.Description,
+			&i.Location,
+			&i.StartTime,
+			&i.EndTime,
+			&i.AllDay,
+			&i.RecurrenceRule,
+			&i.Timezone,
+			&i.Status,
+			&i.Transp,
+			&i.Sequence,
+			&i.Priority,
+			&i.Class,
+			&i.Url,
+			&i.Categories,
+			&i.Exdates,
+			&i.Rdates,
+			&i.RecurrenceID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Geo,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEventsForExport = `-- name: ListEventsForExport :many
 SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, categories, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM events
 WHERE (?1 = 0 OR calendar_id = ?1)
 AND (?2 = '' OR start_time >= ?2)
-AND (?3 = '' OR start_time <= ?3)
+AND (?3 = '' OR start_time < ?3)
 AND (?4 = '' OR categories LIKE '%' || ?4 || '%')
 AND (?5 = '' OR status = ?5)
 ORDER BY start_time ASC
@@ -678,6 +748,67 @@ SELECT id, uid, calendar_id, title, description, location, start_time, end_time,
 
 func (q *Queries) ListRecurringEventsByStatus(ctx context.Context, status string) ([]Event, error) {
 	rows, err := q.db.QueryContext(ctx, listRecurringEventsByStatus, status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Event
+	for rows.Next() {
+		var i Event
+		if err := rows.Scan(
+			&i.ID,
+			&i.Uid,
+			&i.CalendarID,
+			&i.Title,
+			&i.Description,
+			&i.Location,
+			&i.StartTime,
+			&i.EndTime,
+			&i.AllDay,
+			&i.RecurrenceRule,
+			&i.Timezone,
+			&i.Status,
+			&i.Transp,
+			&i.Sequence,
+			&i.Priority,
+			&i.Class,
+			&i.Url,
+			&i.Categories,
+			&i.Exdates,
+			&i.Rdates,
+			&i.RecurrenceID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Geo,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecurringEventsFiltered = `-- name: ListRecurringEventsFiltered :many
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, categories, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM events
+WHERE recurrence_rule != '' AND recurrence_id = ''
+AND (?1 = 0 OR calendar_id = ?1)
+AND (?2 = '' OR status = ?2)
+ORDER BY start_time ASC
+`
+
+type ListRecurringEventsFilteredParams struct {
+	CalendarID   interface{}
+	FilterStatus interface{}
+}
+
+func (q *Queries) ListRecurringEventsFiltered(ctx context.Context, arg ListRecurringEventsFilteredParams) ([]Event, error) {
+	rows, err := q.db.QueryContext(ctx, listRecurringEventsFiltered, arg.CalendarID, arg.FilterStatus)
 	if err != nil {
 		return nil, err
 	}

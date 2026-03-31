@@ -20,7 +20,7 @@ WHERE (
 )
 AND (?2 = 0 OR calendar_id = ?2)
 AND (?3 = '' OR start_time >= ?3)
-AND (?4 = '' OR start_time <= ?4)
+AND (?4 = '' OR start_time < ?4)
 AND (?5 = '' OR status = ?5)
 ORDER BY start_time ASC
 `

@@ -427,6 +427,70 @@ func (q *Queries) ListRecurringTodosByCalendar(ctx context.Context, calendarID i
 	return items, nil
 }
 
+const listRecurringTodosFiltered = `-- name: ListRecurringTodosFiltered :many
+SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, categories, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM todos
+WHERE recurrence_rule != '' AND recurrence_id = ''
+AND (?1 = 0 OR calendar_id = ?1)
+AND (?2 = '' OR status = ?2)
+AND (?3 = 0 OR (status != 'COMPLETED' AND status != 'CANCELLED'))
+ORDER BY due_date, summary
+`
+
+type ListRecurringTodosFilteredParams struct {
+	CalendarID    interface{}
+	FilterStatus  interface{}
+	HideCompleted interface{}
+}
+
+func (q *Queries) ListRecurringTodosFiltered(ctx context.Context, arg ListRecurringTodosFilteredParams) ([]Todo, error) {
+	rows, err := q.db.QueryContext(ctx, listRecurringTodosFiltered, arg.CalendarID, arg.FilterStatus, arg.HideCompleted)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Todo
+	for rows.Next() {
+		var i Todo
+		if err := rows.Scan(
+			&i.ID,
+			&i.Uid,
+			&i.CalendarID,
+			&i.Summary,
+			&i.Description,
+			&i.Location,
+			&i.DueDate,
+			&i.StartDate,
+			&i.Duration,
+			&i.CompletedAt,
+			&i.PercentComplete,
+			&i.Status,
+			&i.Priority,
+			&i.Class,
+			&i.Url,
+			&i.Categories,
+			&i.RecurrenceRule,
+			&i.Timezone,
+			&i.Sequence,
+			&i.Exdates,
+			&i.Rdates,
+			&i.RecurrenceID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Geo,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTodos = `-- name: ListTodos :many
 SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, categories, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM todos WHERE status != 'COMPLETED' AND status != 'CANCELLED' ORDER BY due_date, summary
 `
@@ -597,6 +661,80 @@ SELECT id, uid, calendar_id, summary, description, location, due_date, start_dat
 
 func (q *Queries) ListTodosByStatus(ctx context.Context, status string) ([]Todo, error) {
 	rows, err := q.db.QueryContext(ctx, listTodosByStatus, status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Todo
+	for rows.Next() {
+		var i Todo
+		if err := rows.Scan(
+			&i.ID,
+			&i.Uid,
+			&i.CalendarID,
+			&i.Summary,
+			&i.Description,
+			&i.Location,
+			&i.DueDate,
+			&i.StartDate,
+			&i.Duration,
+			&i.CompletedAt,
+			&i.PercentComplete,
+			&i.Status,
+			&i.Priority,
+			&i.Class,
+			&i.Url,
+			&i.Categories,
+			&i.RecurrenceRule,
+			&i.Timezone,
+			&i.Sequence,
+			&i.Exdates,
+			&i.Rdates,
+			&i.RecurrenceID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Geo,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTodosFiltered = `-- name: ListTodosFiltered :many
+SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, categories, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM todos
+WHERE recurrence_rule = '' AND recurrence_id = ''
+AND (?1 = 0 OR calendar_id = ?1)
+AND (?2 = '' OR status = ?2)
+AND (?3 = 0 OR (status != 'COMPLETED' AND status != 'CANCELLED'))
+AND (?4 = '' OR due_date >= ?4)
+AND (?5 = '' OR due_date < ?5)
+ORDER BY due_date, summary
+`
+
+type ListTodosFilteredParams struct {
+	CalendarID    interface{}
+	FilterStatus  interface{}
+	HideCompleted interface{}
+	FromDate      interface{}
+	ToDate        interface{}
+}
+
+func (q *Queries) ListTodosFiltered(ctx context.Context, arg ListTodosFilteredParams) ([]Todo, error) {
+	rows, err := q.db.QueryContext(ctx, listTodosFiltered,
+		arg.CalendarID,
+		arg.FilterStatus,
+		arg.HideCompleted,
+		arg.FromDate,
+		arg.ToDate,
+	)
 	if err != nil {
 		return nil, err
 	}

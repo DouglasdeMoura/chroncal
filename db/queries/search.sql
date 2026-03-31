@@ -8,7 +8,7 @@ WHERE (
 )
 AND (sqlc.arg(calendar_id) = 0 OR calendar_id = sqlc.arg(calendar_id))
 AND (sqlc.arg(from_time) = '' OR start_time >= sqlc.arg(from_time))
-AND (sqlc.arg(to_time) = '' OR start_time <= sqlc.arg(to_time))
+AND (sqlc.arg(to_time) = '' OR start_time < sqlc.arg(to_time))
 AND (sqlc.arg(filter_status) = '' OR status = sqlc.arg(filter_status))
 ORDER BY start_time ASC;
 

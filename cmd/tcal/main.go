@@ -138,6 +138,7 @@ func parseDateRange(fromStr, toStr string) (time.Time, time.Time, error) {
 		if err != nil {
 			return time.Time{}, time.Time{}, fmt.Errorf("parse --to: %w", err)
 		}
+		to = to.AddDate(0, 0, 1) // half-open: include the entire end day
 	}
 	return from, to, nil
 }

@@ -432,8 +432,9 @@ func TestListExpandedTodosByDueDateRange(t *testing.T) {
 		t.Fatalf("ListExpandedTodosByDueDateRange: %v", err)
 	}
 
-	// Expect: Mar 30 (recurring), Apr 1 (one-off), Apr 6 (recurring), Apr 13 (recurring, boundary inclusive) = 4.
-	if len(todos) != 4 {
+	// Expect: Mar 30 (recurring), Apr 1 (one-off), Apr 6 (recurring) = 3.
+	// Apr 13 is excluded by half-open [from, to) semantics.
+	if len(todos) != 3 {
 		for i, td := range todos {
 			t.Logf("  todos[%d]: %s due=%s", i, td.Summary, td.DueDate)
 		}

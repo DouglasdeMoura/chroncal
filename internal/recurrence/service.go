@@ -67,8 +67,16 @@ func ExpandEvent(evt event.Event, from, to time.Time) []ExpandedEvent {
 		set.RDate(rd)
 	}
 
-	// Get all occurrences in range
+	// Get all occurrences in range [from, to)
 	occurrences := set.Between(from, to, true)
+	// Enforce half-open upper bound: exclude occurrences exactly at 'to'.
+	filtered := occurrences[:0]
+	for _, occ := range occurrences {
+		if occ.Before(to) {
+			filtered = append(filtered, occ)
+		}
+	}
+	occurrences = filtered
 
 	var instances []ExpandedEvent
 	for _, occ := range occurrences {
@@ -507,6 +515,127 @@ func (s *Service) ListExpandedTodosByDueDateRange(ctx context.Context, from, to 
 	return result, nil
 }
 
+// EventListParams holds composable filters for listing events.
+type EventListParams struct {
+	CalendarID int64
+	Status     string
+	From       time.Time
+	To         time.Time
+}
+
+// ListFilteredEvents returns events matching all supplied filters. Calendar,
+// status, and date-range filters compose freely. Recurring events are always
+// expanded within the date range, with overrides applied.
+func (s *Service) ListFilteredEvents(ctx context.Context, p EventListParams) ([]event.Event, error) {
+	fromStr := ""
+	toStr := ""
+	if !p.From.IsZero() {
+		fromStr = p.From.Format(time.RFC3339)
+	}
+	if !p.To.IsZero() {
+		toStr = p.To.Format(time.RFC3339)
+	}
+
+	rangeRows, err := s.q.ListEventsFiltered(ctx, storage.ListEventsFilteredParams{
+		CalendarID:   p.CalendarID,
+		FilterStatus: p.Status,
+		FromTime:     fromStr,
+		ToTime:       toStr,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var result []event.Event
+	for _, row := range rangeRows {
+		result = append(result, eventFromRow(row))
+	}
+
+	recurringRows, err := s.q.ListRecurringEventsFiltered(ctx, storage.ListRecurringEventsFilteredParams{
+		CalendarID:   p.CalendarID,
+		FilterStatus: p.Status,
+	})
+	if err != nil {
+		return nil, err
+	}
+	result = append(result, s.expandRecurringRows(ctx, recurringRows, p.From, p.To)...)
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].StartTime.Before(result[j].StartTime)
+	})
+	return result, nil
+}
+
+// TodoListParams holds composable filters for listing todos.
+type TodoListParams struct {
+	CalendarID    int64
+	Status        string
+	HideCompleted bool
+	From          time.Time
+	To            time.Time
+}
+
+// ListFilteredTodos returns todos matching all supplied filters. When a date
+// range is provided, recurring todos are expanded; otherwise master entries
+// are returned as-is.
+func (s *Service) ListFilteredTodos(ctx context.Context, p TodoListParams) ([]todo.Todo, error) {
+	hideCompleted := int64(0)
+	if p.HideCompleted {
+		hideCompleted = 1
+	}
+
+	fromStr := ""
+	toStr := ""
+	hasRange := !p.From.IsZero() || !p.To.IsZero()
+	if !p.From.IsZero() {
+		fromStr = p.From.Format("2006-01-02")
+	}
+	if !p.To.IsZero() {
+		toStr = p.To.Format("2006-01-02")
+	}
+
+	rows, err := s.q.ListTodosFiltered(ctx, storage.ListTodosFilteredParams{
+		CalendarID:    p.CalendarID,
+		FilterStatus:  p.Status,
+		HideCompleted: hideCompleted,
+		FromDate:      fromStr,
+		ToDate:        toStr,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var result []todo.Todo
+	for _, row := range rows {
+		result = append(result, todoFromRow(row))
+	}
+
+	if hasRange {
+		recurringRows, err := s.q.ListRecurringTodosFiltered(ctx, storage.ListRecurringTodosFilteredParams{
+			CalendarID:    p.CalendarID,
+			FilterStatus:  p.Status,
+			HideCompleted: hideCompleted,
+		})
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, expandRecurringTodoRows(recurringRows, p.From, p.To)...)
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		di := result[i].ParseDueDate()
+		dj := result[j].ParseDueDate()
+		if di.IsZero() {
+			return false
+		}
+		if dj.IsZero() {
+			return true
+		}
+		return di.Before(dj)
+	})
+	return result, nil
+}
+
 // ExpandTodo generates all occurrences of a todo within a date range.
 // The anchor date is DTSTART if present, else DUE. For non-recurring todos
 // a single instance is returned if the anchor falls in range.
@@ -550,6 +679,14 @@ func ExpandTodo(td todo.Todo, from, to time.Time) []ExpandedTodo {
 	}
 
 	occurrences := set.Between(from, to, true)
+	// Enforce half-open upper bound: exclude occurrences exactly at 'to'.
+	filteredOcc := occurrences[:0]
+	for _, occ := range occurrences {
+		if occ.Before(to) {
+			filteredOcc = append(filteredOcc, occ)
+		}
+	}
+	occurrences = filteredOcc
 
 	var instances []ExpandedTodo
 	for _, occ := range occurrences {
