@@ -201,7 +201,7 @@ func parseTime(s string) time.Time {
 	return t
 }
 
-func eventFromRow(row storage.Event) event.Event {
+func eventFromRow(row storage.EventsV) event.Event {
 	return event.Event{
 		ID:             row.ID,
 		UID:            row.Uid,
@@ -233,7 +233,7 @@ func eventFromRow(row storage.Event) event.Event {
 // expandRecurringRows expands recurring event rows into Event instances with
 // StartTime/EndTime adjusted to each occurrence. For each master, overrides
 // (rows with a matching RECURRENCE-ID) replace the original RRULE instance.
-func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Event, from, to time.Time) []event.Event {
+func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.EventsV, from, to time.Time) []event.Event {
 	var result []event.Event
 	for _, row := range rows {
 		evt := eventFromRow(row)
@@ -241,7 +241,7 @@ func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Event,
 
 		// Fetch overrides for this master.
 		overrides, _ := s.q.ListOverridesByUID(ctx, row.Uid)
-		overrideMap := make(map[string]storage.Event, len(overrides))
+		overrideMap := make(map[string]storage.EventsV, len(overrides))
 		for _, o := range overrides {
 			overrideMap[o.RecurrenceID] = o
 		}
@@ -426,7 +426,7 @@ func (s *Service) ExportExpandedByDateRange(ctx context.Context, p ExportFilterP
 	return result, nil
 }
 
-func todoFromRow(row storage.Todo) todo.Todo {
+func todoFromRow(row storage.TodosV) todo.Todo {
 	return todo.Todo{
 		ID:              row.ID,
 		UID:             row.Uid,
@@ -458,7 +458,7 @@ func todoFromRow(row storage.Todo) todo.Todo {
 
 // expandRecurringTodoRows expands recurring todo rows into Todo instances with
 // DueDate/StartDate adjusted to each occurrence.
-func expandRecurringTodoRows(rows []storage.Todo, from, to time.Time) []todo.Todo {
+func expandRecurringTodoRows(rows []storage.TodosV, from, to time.Time) []todo.Todo {
 	var result []todo.Todo
 	for _, row := range rows {
 		td := todoFromRow(row)

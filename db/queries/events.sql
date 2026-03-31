@@ -1,31 +1,31 @@
 -- name: ListEventsByDateRange :many
-SELECT * FROM events WHERE start_time >= ? AND start_time < ? ORDER BY start_time;
+SELECT * FROM events_v WHERE start_time >= ? AND start_time < ? ORDER BY start_time;
 
 -- name: ListEventsByCalendarAndDateRange :many
-SELECT * FROM events WHERE calendar_id = ? AND start_time >= ? AND start_time < ? ORDER BY start_time;
+SELECT * FROM events_v WHERE calendar_id = ? AND start_time >= ? AND start_time < ? ORDER BY start_time;
 
 -- name: ListOverridesByUID :many
-SELECT * FROM events WHERE uid = ? AND recurrence_id != '' ORDER BY recurrence_id;
+SELECT * FROM events_v WHERE uid = ? AND recurrence_id != '' ORDER BY recurrence_id;
 
 -- name: ListEventsByStatusAndDateRange :many
-SELECT * FROM events WHERE status = ? AND start_time >= ? AND start_time < ? ORDER BY start_time;
+SELECT * FROM events_v WHERE status = ? AND start_time >= ? AND start_time < ? ORDER BY start_time;
 
 -- name: GetEvent :one
-SELECT * FROM events WHERE id = ?;
+SELECT * FROM events_v WHERE id = ?;
 
 -- name: GetEventByUID :one
-SELECT * FROM events WHERE uid = ? AND recurrence_id = '';
+SELECT * FROM events_v WHERE uid = ? AND recurrence_id = '';
 
 -- name: GetEventByUIDAndRecurrenceID :one
-SELECT * FROM events WHERE uid = ? AND recurrence_id = ?;
+SELECT * FROM events_v WHERE uid = ? AND recurrence_id = ?;
 
 -- name: CreateEvent :one
 INSERT INTO events (
     uid, calendar_id, title, description, location,
     start_time, end_time, all_day, recurrence_rule,
     timezone, status, transp, sequence, priority,
-    class, url, categories, exdates, rdates, recurrence_id, geo
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    class, url, exdates, rdates, recurrence_id, geo
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: UpdateEvent :one
@@ -35,7 +35,7 @@ UPDATE events SET
     recurrence_rule = ?, calendar_id = ?,
     timezone = ?, status = ?, transp = ?,
     sequence = sequence + 1, priority = ?,
-    class = ?, url = ?, categories = ?,
+    class = ?, url = ?,
     exdates = ?, rdates = ?, geo = ?,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ? RETURNING *;
@@ -45,8 +45,8 @@ INSERT INTO events (
     uid, calendar_id, title, description, location,
     start_time, end_time, all_day, recurrence_rule,
     timezone, status, transp, sequence, priority,
-    class, url, categories, exdates, rdates, recurrence_id, geo
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    class, url, exdates, rdates, recurrence_id, geo
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(uid, recurrence_id) DO UPDATE SET
     title = excluded.title, description = excluded.description,
     location = excluded.location, start_time = excluded.start_time,
@@ -56,7 +56,7 @@ ON CONFLICT(uid, recurrence_id) DO UPDATE SET
     transp = excluded.transp,
     sequence = MAX(excluded.sequence, events.sequence + 1),
     priority = excluded.priority, class = excluded.class,
-    url = excluded.url, categories = excluded.categories,
+    url = excluded.url,
     exdates = excluded.exdates, rdates = excluded.rdates,
     geo = excluded.geo,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
@@ -66,19 +66,19 @@ RETURNING *;
 DELETE FROM events WHERE id = ?;
 
 -- name: ListAllEvents :many
-SELECT * FROM events;
+SELECT * FROM events_v;
 
 -- name: ListRecurringEvents :many
-SELECT * FROM events WHERE recurrence_rule != '' AND recurrence_id = '';
+SELECT * FROM events_v WHERE recurrence_rule != '' AND recurrence_id = '';
 
 -- name: ListRecurringEventsByCalendar :many
-SELECT * FROM events WHERE recurrence_rule != '' AND recurrence_id = '' AND calendar_id = ?;
+SELECT * FROM events_v WHERE recurrence_rule != '' AND recurrence_id = '' AND calendar_id = ?;
 
 -- name: ListRecurringEventsByStatus :many
-SELECT * FROM events WHERE recurrence_rule != '' AND recurrence_id = '' AND status = ?;
+SELECT * FROM events_v WHERE recurrence_rule != '' AND recurrence_id = '' AND status = ?;
 
 -- name: ListEventsFiltered :many
-SELECT * FROM events
+SELECT * FROM events_v
 WHERE recurrence_rule = '' AND recurrence_id = ''
 AND (sqlc.arg(calendar_id) = 0 OR calendar_id = sqlc.arg(calendar_id))
 AND (sqlc.arg(filter_status) = '' OR status = sqlc.arg(filter_status))
@@ -87,18 +87,18 @@ AND (sqlc.arg(to_time) = '' OR start_time < sqlc.arg(to_time))
 ORDER BY start_time ASC;
 
 -- name: ListRecurringEventsFiltered :many
-SELECT * FROM events
+SELECT * FROM events_v
 WHERE recurrence_rule != '' AND recurrence_id = ''
 AND (sqlc.arg(calendar_id) = 0 OR calendar_id = sqlc.arg(calendar_id))
 AND (sqlc.arg(filter_status) = '' OR status = sqlc.arg(filter_status))
-AND (sqlc.arg(category) = '' OR EXISTS (SELECT 1 FROM event_categories ec WHERE ec.event_id = events.id AND ec.category = sqlc.arg(category)))
+AND (sqlc.arg(category) = '' OR EXISTS (SELECT 1 FROM event_categories ec WHERE ec.event_id = events_v.id AND ec.category = sqlc.arg(category)))
 ORDER BY start_time ASC;
 
 -- name: ListEventsForExport :many
-SELECT * FROM events
+SELECT * FROM events_v
 WHERE (sqlc.arg(calendar_id) = 0 OR calendar_id = sqlc.arg(calendar_id))
 AND (sqlc.arg(from_time) = '' OR start_time >= sqlc.arg(from_time))
 AND (sqlc.arg(to_time) = '' OR start_time < sqlc.arg(to_time))
-AND (sqlc.arg(category) = '' OR EXISTS (SELECT 1 FROM event_categories ec WHERE ec.event_id = events.id AND ec.category = sqlc.arg(category)))
+AND (sqlc.arg(category) = '' OR EXISTS (SELECT 1 FROM event_categories ec WHERE ec.event_id = events_v.id AND ec.category = sqlc.arg(category)))
 AND (sqlc.arg(filter_status) = '' OR status = sqlc.arg(filter_status))
 ORDER BY start_time ASC;

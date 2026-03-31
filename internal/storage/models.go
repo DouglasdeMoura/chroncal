@@ -56,7 +56,6 @@ type Event struct {
 	Priority       int64
 	Class          string
 	Url            string
-	Categories     string
 	Exdates        string
 	Rdates         string
 	RecurrenceID   string
@@ -145,6 +144,33 @@ type EventResource struct {
 	Text    string
 }
 
+type EventsV struct {
+	ID             int64
+	Uid            string
+	CalendarID     int64
+	Title          string
+	Description    string
+	Location       string
+	StartTime      string
+	EndTime        string
+	AllDay         int64
+	RecurrenceRule string
+	Timezone       string
+	Status         string
+	Transp         string
+	Sequence       int64
+	Priority       int64
+	Class          string
+	Url            string
+	Exdates        string
+	Rdates         string
+	RecurrenceID   string
+	CreatedAt      string
+	UpdatedAt      string
+	Geo            string
+	Categories     string
+}
+
 type RecurrenceInstance struct {
 	ID         int64
 	EventID    int64
@@ -170,7 +196,6 @@ type Todo struct {
 	Priority        int64
 	Class           string
 	Url             string
-	Categories      string
 	RecurrenceRule  string
 	Timezone        string
 	Sequence        int64
@@ -279,4 +304,32 @@ type TodoResource struct {
 	ID     int64
 	TodoID int64
 	Text   string
+}
+
+type TodosV struct {
+	ID              int64
+	Uid             string
+	CalendarID      int64
+	Summary         string
+	Description     string
+	Location        string
+	DueDate         string
+	StartDate       string
+	Duration        string
+	CompletedAt     string
+	PercentComplete int64
+	Status          string
+	Priority        int64
+	Class           string
+	Url             string
+	RecurrenceRule  string
+	Timezone        string
+	Sequence        int64
+	Exdates         string
+	Rdates          string
+	RecurrenceID    string
+	CreatedAt       string
+	UpdatedAt       string
+	Geo             string
+	Categories      string
 }

@@ -253,7 +253,6 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
 		Priority:       p.Priority,
 		Class:          p.Class,
 		Url:            p.URL,
-		Categories:     p.Categories,
 		Exdates:        p.ExDates,
 		Rdates:         p.RDates,
 		RecurrenceID:   p.RecurrenceID,
@@ -262,7 +261,14 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
 	if err != nil {
 		return Event{}, err
 	}
-	return fromStorage(r), nil
+	e := fromStorageWrite(r)
+	if cats := ParseCategoryList(p.Categories); len(cats) > 0 {
+		if err := s.ReplaceCategories(ctx, e.ID, cats); err != nil {
+			return Event{}, fmt.Errorf("replace categories: %w", err)
+		}
+	}
+	e.Categories = p.Categories
+	return e, nil
 }
 
 func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, error) {
@@ -294,7 +300,6 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, 
 		Priority:       p.Priority,
 		Class:          p.Class,
 		Url:            p.URL,
-		Categories:     p.Categories,
 		Exdates:        p.ExDates,
 		Rdates:         p.RDates,
 		Geo:            p.Geo,
@@ -302,7 +307,12 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, 
 	if err != nil {
 		return Event{}, err
 	}
-	return fromStorage(r), nil
+	e := fromStorageWrite(r)
+	if err := s.ReplaceCategories(ctx, e.ID, ParseCategoryList(p.Categories)); err != nil {
+		return Event{}, fmt.Errorf("replace categories: %w", err)
+	}
+	e.Categories = p.Categories
+	return e, nil
 }
 
 func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error) {
@@ -324,7 +334,6 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error
 		Priority:       p.Priority,
 		Class:          p.Class,
 		Url:            p.URL,
-		Categories:     p.Categories,
 		Exdates:        p.ExDates,
 		Rdates:         p.RDates,
 		RecurrenceID:   p.RecurrenceID,
@@ -333,7 +342,12 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error
 	if err != nil {
 		return Event{}, err
 	}
-	return fromStorage(r), nil
+	e := fromStorageWrite(r)
+	if err := s.ReplaceCategories(ctx, e.ID, ParseCategoryList(p.Categories)); err != nil {
+		return Event{}, fmt.Errorf("replace categories: %w", err)
+	}
+	e.Categories = p.Categories
+	return e, nil
 }
 
 func (s *Service) Delete(ctx context.Context, id int64) error {
@@ -746,7 +760,7 @@ func (s *Service) ReplaceRelations(ctx context.Context, eventID int64, relations
 
 // Converters
 
-func fromStorage(r storage.Event) Event {
+func fromStorage(r storage.EventsV) Event {
 	return Event{
 		ID:             r.ID,
 		UID:            r.Uid,
@@ -775,12 +789,40 @@ func fromStorage(r storage.Event) Event {
 	}
 }
 
-func fromStorageSlice(rows []storage.Event) []Event {
+func fromStorageSlice(rows []storage.EventsV) []Event {
 	events := make([]Event, len(rows))
 	for i, r := range rows {
 		events[i] = fromStorage(r)
 	}
 	return events
+}
+
+func fromStorageWrite(r storage.Event) Event {
+	return Event{
+		ID:             r.ID,
+		UID:            r.Uid,
+		CalendarID:     r.CalendarID,
+		Title:          r.Title,
+		Description:    r.Description,
+		Location:       r.Location,
+		StartTime:      parseTime(r.StartTime),
+		EndTime:        parseTime(r.EndTime),
+		AllDay:         r.AllDay == 1,
+		RecurrenceRule: r.RecurrenceRule,
+		Timezone:       r.Timezone,
+		Status:         r.Status,
+		Transp:         r.Transp,
+		Sequence:       r.Sequence,
+		Priority:       r.Priority,
+		Class:          r.Class,
+		URL:            r.Url,
+		ExDates:        r.Exdates,
+		RDates:         r.Rdates,
+		RecurrenceID:   r.RecurrenceID,
+		Geo:            r.Geo,
+		CreatedAt:      parseTime(r.CreatedAt),
+		UpdatedAt:      parseTime(r.UpdatedAt),
+	}
 }
 
 func fromStorageAlarm(r storage.EventAlarm) model.Alarm {

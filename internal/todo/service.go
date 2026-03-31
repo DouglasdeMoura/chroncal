@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/douglasdemoura/tcal/internal/event"
 	"github.com/douglasdemoura/tcal/internal/model"
 	"github.com/douglasdemoura/tcal/internal/storage"
 )
@@ -250,7 +251,6 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Todo, error) {
 		Priority:        p.Priority,
 		Class:           p.Class,
 		Url:             p.URL,
-		Categories:      p.Categories,
 		RecurrenceRule:  p.RecurrenceRule,
 		Timezone:        p.Timezone,
 		Sequence:        p.Sequence,
@@ -262,7 +262,12 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Todo, error) {
 	if err != nil {
 		return Todo{}, err
 	}
-	return fromStorage(r), nil
+	t := fromStorageWrite(r)
+	if err := s.ReplaceCategories(ctx, t.ID, event.ParseCategoryList(p.Categories)); err != nil {
+		return Todo{}, fmt.Errorf("replace categories: %w", err)
+	}
+	t.Categories = p.Categories
+	return t, nil
 }
 
 func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, error) {
@@ -291,7 +296,6 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, e
 		Priority:        p.Priority,
 		Class:           p.Class,
 		Url:             p.URL,
-		Categories:      p.Categories,
 		RecurrenceRule:  p.RecurrenceRule,
 		Timezone:        p.Timezone,
 		Exdates:         p.ExDates,
@@ -301,7 +305,12 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, e
 	if err != nil {
 		return Todo{}, err
 	}
-	return fromStorage(r), nil
+	t := fromStorageWrite(r)
+	if err := s.ReplaceCategories(ctx, t.ID, event.ParseCategoryList(p.Categories)); err != nil {
+		return Todo{}, fmt.Errorf("replace categories: %w", err)
+	}
+	t.Categories = p.Categories
+	return t, nil
 }
 
 func (s *Service) Complete(ctx context.Context, id int64) (Todo, error) {
@@ -309,7 +318,7 @@ func (s *Service) Complete(ctx context.Context, id int64) (Todo, error) {
 	if err != nil {
 		return Todo{}, err
 	}
-	return fromStorage(r), nil
+	return fromStorageWrite(r), nil
 }
 
 func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Todo, error) {
@@ -329,7 +338,6 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Todo, error)
 		Priority:        p.Priority,
 		Class:           p.Class,
 		Url:             p.URL,
-		Categories:      p.Categories,
 		RecurrenceRule:  p.RecurrenceRule,
 		Timezone:        p.Timezone,
 		Sequence:        p.Sequence,
@@ -341,7 +349,12 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Todo, error)
 	if err != nil {
 		return Todo{}, err
 	}
-	return fromStorage(r), nil
+	t := fromStorageWrite(r)
+	if err := s.ReplaceCategories(ctx, t.ID, event.ParseCategoryList(p.Categories)); err != nil {
+		return Todo{}, fmt.Errorf("replace categories: %w", err)
+	}
+	t.Categories = p.Categories
+	return t, nil
 }
 
 func (s *Service) Delete(ctx context.Context, id int64) error {
@@ -718,7 +731,7 @@ func (s *Service) ReplaceRelations(ctx context.Context, todoID int64, relations 
 
 // Converters
 
-func fromStorage(r storage.Todo) Todo {
+func fromStorage(r storage.TodosV) Todo {
 	return Todo{
 		ID:              r.ID,
 		UID:             r.Uid,
@@ -748,7 +761,36 @@ func fromStorage(r storage.Todo) Todo {
 	}
 }
 
-func fromStorageSlice(rows []storage.Todo) []Todo {
+func fromStorageWrite(r storage.Todo) Todo {
+	return Todo{
+		ID:              r.ID,
+		UID:             r.Uid,
+		CalendarID:      r.CalendarID,
+		Summary:         r.Summary,
+		Description:     r.Description,
+		Location:        r.Location,
+		DueDate:         r.DueDate,
+		StartDate:       r.StartDate,
+		Duration:        r.Duration,
+		CompletedAt:     r.CompletedAt,
+		PercentComplete: r.PercentComplete,
+		Status:          r.Status,
+		Priority:        r.Priority,
+		Class:           r.Class,
+		URL:             r.Url,
+		RecurrenceRule:  r.RecurrenceRule,
+		Timezone:        r.Timezone,
+		Sequence:        r.Sequence,
+		ExDates:         r.Exdates,
+		RDates:          r.Rdates,
+		RecurrenceID:    r.RecurrenceID,
+		Geo:             r.Geo,
+		CreatedAt:       parseTime(r.CreatedAt),
+		UpdatedAt:       parseTime(r.UpdatedAt),
+	}
+}
+
+func fromStorageSlice(rows []storage.TodosV) []Todo {
 	todos := make([]Todo, len(rows))
 	for i, r := range rows {
 		todos[i] = fromStorage(r)

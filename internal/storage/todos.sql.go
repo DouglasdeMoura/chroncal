@@ -16,7 +16,7 @@ UPDATE todos SET
     percent_complete = 100,
     sequence = sequence + 1,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE id = ? RETURNING id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, categories, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo
+WHERE id = ? RETURNING id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo
 `
 
 func (q *Queries) CompleteTodo(ctx context.Context, id int64) (Todo, error) {
@@ -38,7 +38,6 @@ func (q *Queries) CompleteTodo(ctx context.Context, id int64) (Todo, error) {
 		&i.Priority,
 		&i.Class,
 		&i.Url,
-		&i.Categories,
 		&i.RecurrenceRule,
 		&i.Timezone,
 		&i.Sequence,
@@ -56,10 +55,10 @@ const createTodo = `-- name: CreateTodo :one
 INSERT INTO todos (
     uid, calendar_id, summary, description, location,
     due_date, start_date, duration, completed_at, percent_complete,
-    status, priority, class, url, categories,
+    status, priority, class, url,
     recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, geo
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, categories, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo
 `
 
 type CreateTodoParams struct {
@@ -77,7 +76,6 @@ type CreateTodoParams struct {
 	Priority        int64
 	Class           string
 	Url             string
-	Categories      string
 	RecurrenceRule  string
 	Timezone        string
 	Sequence        int64
@@ -103,7 +101,6 @@ func (q *Queries) CreateTodo(ctx context.Context, arg CreateTodoParams) (Todo, e
 		arg.Priority,
 		arg.Class,
 		arg.Url,
-		arg.Categories,
 		arg.RecurrenceRule,
 		arg.Timezone,
 		arg.Sequence,
@@ -129,7 +126,6 @@ func (q *Queries) CreateTodo(ctx context.Context, arg CreateTodoParams) (Todo, e
 		&i.Priority,
 		&i.Class,
 		&i.Url,
-		&i.Categories,
 		&i.RecurrenceRule,
 		&i.Timezone,
 		&i.Sequence,
@@ -153,12 +149,12 @@ func (q *Queries) DeleteTodo(ctx context.Context, id int64) error {
 }
 
 const getTodo = `-- name: GetTodo :one
-SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, categories, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM todos WHERE id = ?
+SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo, categories FROM todos_v WHERE id = ?
 `
 
-func (q *Queries) GetTodo(ctx context.Context, id int64) (Todo, error) {
+func (q *Queries) GetTodo(ctx context.Context, id int64) (TodosV, error) {
 	row := q.db.QueryRowContext(ctx, getTodo, id)
-	var i Todo
+	var i TodosV
 	err := row.Scan(
 		&i.ID,
 		&i.Uid,
@@ -175,7 +171,6 @@ func (q *Queries) GetTodo(ctx context.Context, id int64) (Todo, error) {
 		&i.Priority,
 		&i.Class,
 		&i.Url,
-		&i.Categories,
 		&i.RecurrenceRule,
 		&i.Timezone,
 		&i.Sequence,
@@ -185,17 +180,18 @@ func (q *Queries) GetTodo(ctx context.Context, id int64) (Todo, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Geo,
+		&i.Categories,
 	)
 	return i, err
 }
 
 const getTodoByUID = `-- name: GetTodoByUID :one
-SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, categories, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM todos WHERE uid = ? AND recurrence_id = ''
+SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo, categories FROM todos_v WHERE uid = ? AND recurrence_id = ''
 `
 
-func (q *Queries) GetTodoByUID(ctx context.Context, uid string) (Todo, error) {
+func (q *Queries) GetTodoByUID(ctx context.Context, uid string) (TodosV, error) {
 	row := q.db.QueryRowContext(ctx, getTodoByUID, uid)
-	var i Todo
+	var i TodosV
 	err := row.Scan(
 		&i.ID,
 		&i.Uid,
@@ -212,7 +208,6 @@ func (q *Queries) GetTodoByUID(ctx context.Context, uid string) (Todo, error) {
 		&i.Priority,
 		&i.Class,
 		&i.Url,
-		&i.Categories,
 		&i.RecurrenceRule,
 		&i.Timezone,
 		&i.Sequence,
@@ -222,12 +217,13 @@ func (q *Queries) GetTodoByUID(ctx context.Context, uid string) (Todo, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Geo,
+		&i.Categories,
 	)
 	return i, err
 }
 
 const getTodoByUIDAndRecurrenceID = `-- name: GetTodoByUIDAndRecurrenceID :one
-SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, categories, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM todos WHERE uid = ? AND recurrence_id = ?
+SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo, categories FROM todos_v WHERE uid = ? AND recurrence_id = ?
 `
 
 type GetTodoByUIDAndRecurrenceIDParams struct {
@@ -235,9 +231,9 @@ type GetTodoByUIDAndRecurrenceIDParams struct {
 	RecurrenceID string
 }
 
-func (q *Queries) GetTodoByUIDAndRecurrenceID(ctx context.Context, arg GetTodoByUIDAndRecurrenceIDParams) (Todo, error) {
+func (q *Queries) GetTodoByUIDAndRecurrenceID(ctx context.Context, arg GetTodoByUIDAndRecurrenceIDParams) (TodosV, error) {
 	row := q.db.QueryRowContext(ctx, getTodoByUIDAndRecurrenceID, arg.Uid, arg.RecurrenceID)
-	var i Todo
+	var i TodosV
 	err := row.Scan(
 		&i.ID,
 		&i.Uid,
@@ -254,7 +250,6 @@ func (q *Queries) GetTodoByUIDAndRecurrenceID(ctx context.Context, arg GetTodoBy
 		&i.Priority,
 		&i.Class,
 		&i.Url,
-		&i.Categories,
 		&i.RecurrenceRule,
 		&i.Timezone,
 		&i.Sequence,
@@ -264,23 +259,24 @@ func (q *Queries) GetTodoByUIDAndRecurrenceID(ctx context.Context, arg GetTodoBy
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Geo,
+		&i.Categories,
 	)
 	return i, err
 }
 
 const listAllTodos = `-- name: ListAllTodos :many
-SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, categories, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM todos ORDER BY due_date, summary
+SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo, categories FROM todos_v ORDER BY due_date, summary
 `
 
-func (q *Queries) ListAllTodos(ctx context.Context) ([]Todo, error) {
+func (q *Queries) ListAllTodos(ctx context.Context) ([]TodosV, error) {
 	rows, err := q.db.QueryContext(ctx, listAllTodos)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Todo
+	var items []TodosV
 	for rows.Next() {
-		var i Todo
+		var i TodosV
 		if err := rows.Scan(
 			&i.ID,
 			&i.Uid,
@@ -297,7 +293,6 @@ func (q *Queries) ListAllTodos(ctx context.Context) ([]Todo, error) {
 			&i.Priority,
 			&i.Class,
 			&i.Url,
-			&i.Categories,
 			&i.RecurrenceRule,
 			&i.Timezone,
 			&i.Sequence,
@@ -307,6 +302,7 @@ func (q *Queries) ListAllTodos(ctx context.Context) ([]Todo, error) {
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Geo,
+			&i.Categories,
 		); err != nil {
 			return nil, err
 		}
@@ -322,18 +318,18 @@ func (q *Queries) ListAllTodos(ctx context.Context) ([]Todo, error) {
 }
 
 const listRecurringTodos = `-- name: ListRecurringTodos :many
-SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, categories, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM todos WHERE recurrence_rule != '' AND recurrence_id = ''
+SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo, categories FROM todos_v WHERE recurrence_rule != '' AND recurrence_id = ''
 `
 
-func (q *Queries) ListRecurringTodos(ctx context.Context) ([]Todo, error) {
+func (q *Queries) ListRecurringTodos(ctx context.Context) ([]TodosV, error) {
 	rows, err := q.db.QueryContext(ctx, listRecurringTodos)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Todo
+	var items []TodosV
 	for rows.Next() {
-		var i Todo
+		var i TodosV
 		if err := rows.Scan(
 			&i.ID,
 			&i.Uid,
@@ -350,7 +346,6 @@ func (q *Queries) ListRecurringTodos(ctx context.Context) ([]Todo, error) {
 			&i.Priority,
 			&i.Class,
 			&i.Url,
-			&i.Categories,
 			&i.RecurrenceRule,
 			&i.Timezone,
 			&i.Sequence,
@@ -360,6 +355,7 @@ func (q *Queries) ListRecurringTodos(ctx context.Context) ([]Todo, error) {
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Geo,
+			&i.Categories,
 		); err != nil {
 			return nil, err
 		}
@@ -375,18 +371,18 @@ func (q *Queries) ListRecurringTodos(ctx context.Context) ([]Todo, error) {
 }
 
 const listRecurringTodosByCalendar = `-- name: ListRecurringTodosByCalendar :many
-SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, categories, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM todos WHERE recurrence_rule != '' AND recurrence_id = '' AND calendar_id = ?
+SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo, categories FROM todos_v WHERE recurrence_rule != '' AND recurrence_id = '' AND calendar_id = ?
 `
 
-func (q *Queries) ListRecurringTodosByCalendar(ctx context.Context, calendarID int64) ([]Todo, error) {
+func (q *Queries) ListRecurringTodosByCalendar(ctx context.Context, calendarID int64) ([]TodosV, error) {
 	rows, err := q.db.QueryContext(ctx, listRecurringTodosByCalendar, calendarID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Todo
+	var items []TodosV
 	for rows.Next() {
-		var i Todo
+		var i TodosV
 		if err := rows.Scan(
 			&i.ID,
 			&i.Uid,
@@ -403,7 +399,6 @@ func (q *Queries) ListRecurringTodosByCalendar(ctx context.Context, calendarID i
 			&i.Priority,
 			&i.Class,
 			&i.Url,
-			&i.Categories,
 			&i.RecurrenceRule,
 			&i.Timezone,
 			&i.Sequence,
@@ -413,6 +408,7 @@ func (q *Queries) ListRecurringTodosByCalendar(ctx context.Context, calendarID i
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Geo,
+			&i.Categories,
 		); err != nil {
 			return nil, err
 		}
@@ -428,7 +424,7 @@ func (q *Queries) ListRecurringTodosByCalendar(ctx context.Context, calendarID i
 }
 
 const listRecurringTodosFiltered = `-- name: ListRecurringTodosFiltered :many
-SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, categories, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM todos
+SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo, categories FROM todos_v
 WHERE recurrence_rule != '' AND recurrence_id = ''
 AND (?1 = 0 OR calendar_id = ?1)
 AND (?2 = '' OR status = ?2)
@@ -442,15 +438,15 @@ type ListRecurringTodosFilteredParams struct {
 	HideCompleted interface{}
 }
 
-func (q *Queries) ListRecurringTodosFiltered(ctx context.Context, arg ListRecurringTodosFilteredParams) ([]Todo, error) {
+func (q *Queries) ListRecurringTodosFiltered(ctx context.Context, arg ListRecurringTodosFilteredParams) ([]TodosV, error) {
 	rows, err := q.db.QueryContext(ctx, listRecurringTodosFiltered, arg.CalendarID, arg.FilterStatus, arg.HideCompleted)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Todo
+	var items []TodosV
 	for rows.Next() {
-		var i Todo
+		var i TodosV
 		if err := rows.Scan(
 			&i.ID,
 			&i.Uid,
@@ -467,7 +463,6 @@ func (q *Queries) ListRecurringTodosFiltered(ctx context.Context, arg ListRecurr
 			&i.Priority,
 			&i.Class,
 			&i.Url,
-			&i.Categories,
 			&i.RecurrenceRule,
 			&i.Timezone,
 			&i.Sequence,
@@ -477,6 +472,7 @@ func (q *Queries) ListRecurringTodosFiltered(ctx context.Context, arg ListRecurr
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Geo,
+			&i.Categories,
 		); err != nil {
 			return nil, err
 		}
@@ -492,18 +488,18 @@ func (q *Queries) ListRecurringTodosFiltered(ctx context.Context, arg ListRecurr
 }
 
 const listTodos = `-- name: ListTodos :many
-SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, categories, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM todos WHERE status != 'COMPLETED' AND status != 'CANCELLED' ORDER BY due_date, summary
+SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo, categories FROM todos_v WHERE status != 'COMPLETED' AND status != 'CANCELLED' ORDER BY due_date, summary
 `
 
-func (q *Queries) ListTodos(ctx context.Context) ([]Todo, error) {
+func (q *Queries) ListTodos(ctx context.Context) ([]TodosV, error) {
 	rows, err := q.db.QueryContext(ctx, listTodos)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Todo
+	var items []TodosV
 	for rows.Next() {
-		var i Todo
+		var i TodosV
 		if err := rows.Scan(
 			&i.ID,
 			&i.Uid,
@@ -520,7 +516,6 @@ func (q *Queries) ListTodos(ctx context.Context) ([]Todo, error) {
 			&i.Priority,
 			&i.Class,
 			&i.Url,
-			&i.Categories,
 			&i.RecurrenceRule,
 			&i.Timezone,
 			&i.Sequence,
@@ -530,6 +525,7 @@ func (q *Queries) ListTodos(ctx context.Context) ([]Todo, error) {
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Geo,
+			&i.Categories,
 		); err != nil {
 			return nil, err
 		}
@@ -545,18 +541,18 @@ func (q *Queries) ListTodos(ctx context.Context) ([]Todo, error) {
 }
 
 const listTodosByCalendar = `-- name: ListTodosByCalendar :many
-SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, categories, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM todos WHERE calendar_id = ? AND status != 'COMPLETED' AND status != 'CANCELLED' ORDER BY due_date, summary
+SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo, categories FROM todos_v WHERE calendar_id = ? AND status != 'COMPLETED' AND status != 'CANCELLED' ORDER BY due_date, summary
 `
 
-func (q *Queries) ListTodosByCalendar(ctx context.Context, calendarID int64) ([]Todo, error) {
+func (q *Queries) ListTodosByCalendar(ctx context.Context, calendarID int64) ([]TodosV, error) {
 	rows, err := q.db.QueryContext(ctx, listTodosByCalendar, calendarID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Todo
+	var items []TodosV
 	for rows.Next() {
-		var i Todo
+		var i TodosV
 		if err := rows.Scan(
 			&i.ID,
 			&i.Uid,
@@ -573,7 +569,6 @@ func (q *Queries) ListTodosByCalendar(ctx context.Context, calendarID int64) ([]
 			&i.Priority,
 			&i.Class,
 			&i.Url,
-			&i.Categories,
 			&i.RecurrenceRule,
 			&i.Timezone,
 			&i.Sequence,
@@ -583,6 +578,7 @@ func (q *Queries) ListTodosByCalendar(ctx context.Context, calendarID int64) ([]
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Geo,
+			&i.Categories,
 		); err != nil {
 			return nil, err
 		}
@@ -598,7 +594,7 @@ func (q *Queries) ListTodosByCalendar(ctx context.Context, calendarID int64) ([]
 }
 
 const listTodosByDueDateRange = `-- name: ListTodosByDueDateRange :many
-SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, categories, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM todos WHERE due_date >= ? AND due_date < ? ORDER BY due_date, summary
+SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo, categories FROM todos_v WHERE due_date >= ? AND due_date < ? ORDER BY due_date, summary
 `
 
 type ListTodosByDueDateRangeParams struct {
@@ -606,15 +602,15 @@ type ListTodosByDueDateRangeParams struct {
 	DueDate_2 string
 }
 
-func (q *Queries) ListTodosByDueDateRange(ctx context.Context, arg ListTodosByDueDateRangeParams) ([]Todo, error) {
+func (q *Queries) ListTodosByDueDateRange(ctx context.Context, arg ListTodosByDueDateRangeParams) ([]TodosV, error) {
 	rows, err := q.db.QueryContext(ctx, listTodosByDueDateRange, arg.DueDate, arg.DueDate_2)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Todo
+	var items []TodosV
 	for rows.Next() {
-		var i Todo
+		var i TodosV
 		if err := rows.Scan(
 			&i.ID,
 			&i.Uid,
@@ -631,7 +627,6 @@ func (q *Queries) ListTodosByDueDateRange(ctx context.Context, arg ListTodosByDu
 			&i.Priority,
 			&i.Class,
 			&i.Url,
-			&i.Categories,
 			&i.RecurrenceRule,
 			&i.Timezone,
 			&i.Sequence,
@@ -641,6 +636,7 @@ func (q *Queries) ListTodosByDueDateRange(ctx context.Context, arg ListTodosByDu
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Geo,
+			&i.Categories,
 		); err != nil {
 			return nil, err
 		}
@@ -656,18 +652,18 @@ func (q *Queries) ListTodosByDueDateRange(ctx context.Context, arg ListTodosByDu
 }
 
 const listTodosByStatus = `-- name: ListTodosByStatus :many
-SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, categories, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM todos WHERE status = ? ORDER BY due_date, summary
+SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo, categories FROM todos_v WHERE status = ? ORDER BY due_date, summary
 `
 
-func (q *Queries) ListTodosByStatus(ctx context.Context, status string) ([]Todo, error) {
+func (q *Queries) ListTodosByStatus(ctx context.Context, status string) ([]TodosV, error) {
 	rows, err := q.db.QueryContext(ctx, listTodosByStatus, status)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Todo
+	var items []TodosV
 	for rows.Next() {
-		var i Todo
+		var i TodosV
 		if err := rows.Scan(
 			&i.ID,
 			&i.Uid,
@@ -684,7 +680,6 @@ func (q *Queries) ListTodosByStatus(ctx context.Context, status string) ([]Todo,
 			&i.Priority,
 			&i.Class,
 			&i.Url,
-			&i.Categories,
 			&i.RecurrenceRule,
 			&i.Timezone,
 			&i.Sequence,
@@ -694,6 +689,7 @@ func (q *Queries) ListTodosByStatus(ctx context.Context, status string) ([]Todo,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Geo,
+			&i.Categories,
 		); err != nil {
 			return nil, err
 		}
@@ -709,7 +705,7 @@ func (q *Queries) ListTodosByStatus(ctx context.Context, status string) ([]Todo,
 }
 
 const listTodosFiltered = `-- name: ListTodosFiltered :many
-SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, categories, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM todos
+SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo, categories FROM todos_v
 WHERE recurrence_rule = '' AND recurrence_id = ''
 AND (?1 = 0 OR calendar_id = ?1)
 AND (?2 = '' OR status = ?2)
@@ -727,7 +723,7 @@ type ListTodosFilteredParams struct {
 	ToDate        interface{}
 }
 
-func (q *Queries) ListTodosFiltered(ctx context.Context, arg ListTodosFilteredParams) ([]Todo, error) {
+func (q *Queries) ListTodosFiltered(ctx context.Context, arg ListTodosFilteredParams) ([]TodosV, error) {
 	rows, err := q.db.QueryContext(ctx, listTodosFiltered,
 		arg.CalendarID,
 		arg.FilterStatus,
@@ -739,9 +735,9 @@ func (q *Queries) ListTodosFiltered(ctx context.Context, arg ListTodosFilteredPa
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Todo
+	var items []TodosV
 	for rows.Next() {
-		var i Todo
+		var i TodosV
 		if err := rows.Scan(
 			&i.ID,
 			&i.Uid,
@@ -758,7 +754,6 @@ func (q *Queries) ListTodosFiltered(ctx context.Context, arg ListTodosFilteredPa
 			&i.Priority,
 			&i.Class,
 			&i.Url,
-			&i.Categories,
 			&i.RecurrenceRule,
 			&i.Timezone,
 			&i.Sequence,
@@ -768,6 +763,7 @@ func (q *Queries) ListTodosFiltered(ctx context.Context, arg ListTodosFilteredPa
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Geo,
+			&i.Categories,
 		); err != nil {
 			return nil, err
 		}
@@ -783,9 +779,9 @@ func (q *Queries) ListTodosFiltered(ctx context.Context, arg ListTodosFilteredPa
 }
 
 const listTodosForExport = `-- name: ListTodosForExport :many
-SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, categories, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM todos
+SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo, categories FROM todos_v
 WHERE (?1 = 0 OR calendar_id = ?1)
-AND (?2 = '' OR EXISTS (SELECT 1 FROM todo_categories tc WHERE tc.todo_id = todos.id AND tc.category = ?2))
+AND (?2 = '' OR EXISTS (SELECT 1 FROM todo_categories tc WHERE tc.todo_id = todos_v.id AND tc.category = ?2))
 AND (?3 = '' OR status = ?3)
 AND (?4 = 0 OR (?4 = 1 AND completed_at != '') OR (?4 = 2 AND completed_at = ''))
 ORDER BY due_date ASC, summary ASC
@@ -798,7 +794,7 @@ type ListTodosForExportParams struct {
 	CompletedFilter interface{}
 }
 
-func (q *Queries) ListTodosForExport(ctx context.Context, arg ListTodosForExportParams) ([]Todo, error) {
+func (q *Queries) ListTodosForExport(ctx context.Context, arg ListTodosForExportParams) ([]TodosV, error) {
 	rows, err := q.db.QueryContext(ctx, listTodosForExport,
 		arg.CalendarID,
 		arg.Category,
@@ -809,9 +805,9 @@ func (q *Queries) ListTodosForExport(ctx context.Context, arg ListTodosForExport
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Todo
+	var items []TodosV
 	for rows.Next() {
-		var i Todo
+		var i TodosV
 		if err := rows.Scan(
 			&i.ID,
 			&i.Uid,
@@ -828,7 +824,6 @@ func (q *Queries) ListTodosForExport(ctx context.Context, arg ListTodosForExport
 			&i.Priority,
 			&i.Class,
 			&i.Url,
-			&i.Categories,
 			&i.RecurrenceRule,
 			&i.Timezone,
 			&i.Sequence,
@@ -838,6 +833,7 @@ func (q *Queries) ListTodosForExport(ctx context.Context, arg ListTodosForExport
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Geo,
+			&i.Categories,
 		); err != nil {
 			return nil, err
 		}
@@ -858,12 +854,12 @@ UPDATE todos SET
     due_date = ?, start_date = ?, duration = ?,
     completed_at = ?, percent_complete = ?,
     status = ?, calendar_id = ?, priority = ?,
-    class = ?, url = ?, categories = ?,
+    class = ?, url = ?,
     recurrence_rule = ?, timezone = ?,
     sequence = sequence + 1,
     exdates = ?, rdates = ?, geo = ?,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE id = ? RETURNING id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, categories, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo
+WHERE id = ? RETURNING id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo
 `
 
 type UpdateTodoParams struct {
@@ -880,7 +876,6 @@ type UpdateTodoParams struct {
 	Priority        int64
 	Class           string
 	Url             string
-	Categories      string
 	RecurrenceRule  string
 	Timezone        string
 	Exdates         string
@@ -904,7 +899,6 @@ func (q *Queries) UpdateTodo(ctx context.Context, arg UpdateTodoParams) (Todo, e
 		arg.Priority,
 		arg.Class,
 		arg.Url,
-		arg.Categories,
 		arg.RecurrenceRule,
 		arg.Timezone,
 		arg.Exdates,
@@ -929,7 +923,6 @@ func (q *Queries) UpdateTodo(ctx context.Context, arg UpdateTodoParams) (Todo, e
 		&i.Priority,
 		&i.Class,
 		&i.Url,
-		&i.Categories,
 		&i.RecurrenceRule,
 		&i.Timezone,
 		&i.Sequence,
@@ -947,9 +940,9 @@ const upsertTodoByUID = `-- name: UpsertTodoByUID :one
 INSERT INTO todos (
     uid, calendar_id, summary, description, location,
     due_date, start_date, duration, completed_at, percent_complete,
-    status, priority, class, url, categories,
+    status, priority, class, url,
     recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, geo
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(uid, recurrence_id) DO UPDATE SET
     summary = excluded.summary, description = excluded.description,
     location = excluded.location, due_date = excluded.due_date,
@@ -957,13 +950,13 @@ ON CONFLICT(uid, recurrence_id) DO UPDATE SET
     completed_at = excluded.completed_at, percent_complete = excluded.percent_complete,
     status = excluded.status, priority = excluded.priority,
     class = excluded.class, url = excluded.url,
-    categories = excluded.categories, recurrence_rule = excluded.recurrence_rule,
+    recurrence_rule = excluded.recurrence_rule,
     timezone = excluded.timezone,
     sequence = MAX(excluded.sequence, todos.sequence + 1),
     exdates = excluded.exdates, rdates = excluded.rdates,
     geo = excluded.geo,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-RETURNING id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, categories, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo
+RETURNING id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo
 `
 
 type UpsertTodoByUIDParams struct {
@@ -981,7 +974,6 @@ type UpsertTodoByUIDParams struct {
 	Priority        int64
 	Class           string
 	Url             string
-	Categories      string
 	RecurrenceRule  string
 	Timezone        string
 	Sequence        int64
@@ -1007,7 +999,6 @@ func (q *Queries) UpsertTodoByUID(ctx context.Context, arg UpsertTodoByUIDParams
 		arg.Priority,
 		arg.Class,
 		arg.Url,
-		arg.Categories,
 		arg.RecurrenceRule,
 		arg.Timezone,
 		arg.Sequence,
@@ -1033,7 +1024,6 @@ func (q *Queries) UpsertTodoByUID(ctx context.Context, arg UpsertTodoByUIDParams
 		&i.Priority,
 		&i.Class,
 		&i.Url,
-		&i.Categories,
 		&i.RecurrenceRule,
 		&i.Timezone,
 		&i.Sequence,

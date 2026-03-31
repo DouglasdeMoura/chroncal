@@ -1,26 +1,26 @@
 -- name: ListTodos :many
-SELECT * FROM todos WHERE status != 'COMPLETED' AND status != 'CANCELLED' ORDER BY due_date, summary;
+SELECT * FROM todos_v WHERE status != 'COMPLETED' AND status != 'CANCELLED' ORDER BY due_date, summary;
 
 -- name: ListTodosByCalendar :many
-SELECT * FROM todos WHERE calendar_id = ? AND status != 'COMPLETED' AND status != 'CANCELLED' ORDER BY due_date, summary;
+SELECT * FROM todos_v WHERE calendar_id = ? AND status != 'COMPLETED' AND status != 'CANCELLED' ORDER BY due_date, summary;
 
 -- name: ListTodosByStatus :many
-SELECT * FROM todos WHERE status = ? ORDER BY due_date, summary;
+SELECT * FROM todos_v WHERE status = ? ORDER BY due_date, summary;
 
 -- name: ListTodosByDueDateRange :many
-SELECT * FROM todos WHERE due_date >= ? AND due_date < ? ORDER BY due_date, summary;
+SELECT * FROM todos_v WHERE due_date >= ? AND due_date < ? ORDER BY due_date, summary;
 
 -- name: ListAllTodos :many
-SELECT * FROM todos ORDER BY due_date, summary;
+SELECT * FROM todos_v ORDER BY due_date, summary;
 
 -- name: ListRecurringTodos :many
-SELECT * FROM todos WHERE recurrence_rule != '' AND recurrence_id = '';
+SELECT * FROM todos_v WHERE recurrence_rule != '' AND recurrence_id = '';
 
 -- name: ListRecurringTodosByCalendar :many
-SELECT * FROM todos WHERE recurrence_rule != '' AND recurrence_id = '' AND calendar_id = ?;
+SELECT * FROM todos_v WHERE recurrence_rule != '' AND recurrence_id = '' AND calendar_id = ?;
 
 -- name: ListTodosFiltered :many
-SELECT * FROM todos
+SELECT * FROM todos_v
 WHERE recurrence_rule = '' AND recurrence_id = ''
 AND (sqlc.arg(calendar_id) = 0 OR calendar_id = sqlc.arg(calendar_id))
 AND (sqlc.arg(filter_status) = '' OR status = sqlc.arg(filter_status))
@@ -30,7 +30,7 @@ AND (sqlc.arg(to_date) = '' OR due_date < sqlc.arg(to_date))
 ORDER BY due_date, summary;
 
 -- name: ListRecurringTodosFiltered :many
-SELECT * FROM todos
+SELECT * FROM todos_v
 WHERE recurrence_rule != '' AND recurrence_id = ''
 AND (sqlc.arg(calendar_id) = 0 OR calendar_id = sqlc.arg(calendar_id))
 AND (sqlc.arg(filter_status) = '' OR status = sqlc.arg(filter_status))
@@ -38,21 +38,21 @@ AND (sqlc.arg(hide_completed) = 0 OR (status != 'COMPLETED' AND status != 'CANCE
 ORDER BY due_date, summary;
 
 -- name: GetTodo :one
-SELECT * FROM todos WHERE id = ?;
+SELECT * FROM todos_v WHERE id = ?;
 
 -- name: GetTodoByUID :one
-SELECT * FROM todos WHERE uid = ? AND recurrence_id = '';
+SELECT * FROM todos_v WHERE uid = ? AND recurrence_id = '';
 
 -- name: GetTodoByUIDAndRecurrenceID :one
-SELECT * FROM todos WHERE uid = ? AND recurrence_id = ?;
+SELECT * FROM todos_v WHERE uid = ? AND recurrence_id = ?;
 
 -- name: CreateTodo :one
 INSERT INTO todos (
     uid, calendar_id, summary, description, location,
     due_date, start_date, duration, completed_at, percent_complete,
-    status, priority, class, url, categories,
+    status, priority, class, url,
     recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, geo
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: UpdateTodo :one
@@ -61,7 +61,7 @@ UPDATE todos SET
     due_date = ?, start_date = ?, duration = ?,
     completed_at = ?, percent_complete = ?,
     status = ?, calendar_id = ?, priority = ?,
-    class = ?, url = ?, categories = ?,
+    class = ?, url = ?,
     recurrence_rule = ?, timezone = ?,
     sequence = sequence + 1,
     exdates = ?, rdates = ?, geo = ?,
@@ -81,9 +81,9 @@ WHERE id = ? RETURNING *;
 INSERT INTO todos (
     uid, calendar_id, summary, description, location,
     due_date, start_date, duration, completed_at, percent_complete,
-    status, priority, class, url, categories,
+    status, priority, class, url,
     recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, geo
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(uid, recurrence_id) DO UPDATE SET
     summary = excluded.summary, description = excluded.description,
     location = excluded.location, due_date = excluded.due_date,
@@ -91,7 +91,7 @@ ON CONFLICT(uid, recurrence_id) DO UPDATE SET
     completed_at = excluded.completed_at, percent_complete = excluded.percent_complete,
     status = excluded.status, priority = excluded.priority,
     class = excluded.class, url = excluded.url,
-    categories = excluded.categories, recurrence_rule = excluded.recurrence_rule,
+    recurrence_rule = excluded.recurrence_rule,
     timezone = excluded.timezone,
     sequence = MAX(excluded.sequence, todos.sequence + 1),
     exdates = excluded.exdates, rdates = excluded.rdates,
@@ -103,9 +103,9 @@ RETURNING *;
 DELETE FROM todos WHERE id = ?;
 
 -- name: ListTodosForExport :many
-SELECT * FROM todos
+SELECT * FROM todos_v
 WHERE (sqlc.arg(calendar_id) = 0 OR calendar_id = sqlc.arg(calendar_id))
-AND (sqlc.arg(category) = '' OR EXISTS (SELECT 1 FROM todo_categories tc WHERE tc.todo_id = todos.id AND tc.category = sqlc.arg(category)))
+AND (sqlc.arg(category) = '' OR EXISTS (SELECT 1 FROM todo_categories tc WHERE tc.todo_id = todos_v.id AND tc.category = sqlc.arg(category)))
 AND (sqlc.arg(filter_status) = '' OR status = sqlc.arg(filter_status))
 AND (sqlc.arg(completed_filter) = 0 OR (sqlc.arg(completed_filter) = 1 AND completed_at != '') OR (sqlc.arg(completed_filter) = 2 AND completed_at = ''))
 ORDER BY due_date ASC, summary ASC;

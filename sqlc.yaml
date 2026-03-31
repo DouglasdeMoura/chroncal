@@ -7,3 +7,8 @@ sql:
       go:
         package: "storage"
         out: "internal/storage"
+        overrides:
+          - column: "events_v.categories"
+            go_type: "string"
+          - column: "todos_v.categories"
+            go_type: "string"

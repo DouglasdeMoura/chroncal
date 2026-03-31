@@ -133,8 +133,8 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 	return due, nil
 }
 
-// todoFromRow converts a storage row to a todo.Todo
-func todoFromRow(row storage.Todo) todo.Todo {
+// todoFromRow converts a storage view row to a todo.Todo
+func todoFromRow(row storage.TodosV) todo.Todo {
 	return todo.Todo{
 		ID:              row.ID,
 		UID:             row.Uid,
