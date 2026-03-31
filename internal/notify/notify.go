@@ -3,6 +3,7 @@ package notify
 import (
 	"fmt"
 	"net/smtp"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -55,11 +56,60 @@ func Display(da alarm.DueAlarm) error {
 	return beeep.Notify(title, body, "")
 }
 
-// Audio sends a desktop notification and plays a system sound.
+// Audio sends a desktop notification and plays a sound. If the alarm has an
+// ATTACH URI pointing to a local audio file, that file is played. Otherwise
+// a platform-specific system sound is used as a fallback.
 func Audio(da alarm.DueAlarm) error {
 	// Send visual notification first (best-effort).
 	_ = Display(da)
 
+	// Try the alarm's ATTACH URI (local files only, no HTTP).
+	if path := resolveLocalAudioPath(da.Alarm.AttachURI); path != "" {
+		if err := playFile(path); err == nil {
+			return nil
+		}
+	}
+
+	// Fall back to platform system sounds.
+	return playSystemSound()
+}
+
+// resolveLocalAudioPath returns an absolute file path if the URI points to a
+// local audio file that exists, or "" if it should be skipped.
+func resolveLocalAudioPath(uri string) string {
+	if uri == "" {
+		return ""
+	}
+	var path string
+	if strings.HasPrefix(uri, "file://") {
+		path = strings.TrimPrefix(uri, "file://")
+	} else if strings.HasPrefix(uri, "/") {
+		path = uri
+	} else {
+		return "" // HTTP, data:, or other unsupported scheme.
+	}
+	if _, err := os.Stat(path); err != nil {
+		return "" // File doesn't exist.
+	}
+	return path
+}
+
+// playFile plays an audio file using the platform's native player.
+func playFile(path string) error {
+	switch runtime.GOOS {
+	case "linux":
+		if err := exec.Command("paplay", path).Run(); err == nil {
+			return nil
+		}
+		return exec.Command("aplay", path).Run()
+	case "darwin":
+		return exec.Command("afplay", path).Run()
+	default:
+		return fmt.Errorf("unsupported platform for file playback")
+	}
+}
+
+func playSystemSound() error {
 	switch runtime.GOOS {
 	case "linux":
 		if err := exec.Command("paplay", "/usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga").Run(); err == nil {
@@ -71,7 +121,7 @@ func Audio(da alarm.DueAlarm) error {
 		return beeep.Beep(beeep.DefaultFreq, beeep.DefaultDuration)
 	case "darwin":
 		return exec.Command("afplay", "/System/Library/Sounds/Glass.aiff").Run()
-	default: // windows and others
+	default:
 		return beeep.Beep(beeep.DefaultFreq, beeep.DefaultDuration)
 	}
 }

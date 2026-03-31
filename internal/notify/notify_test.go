@@ -1,6 +1,8 @@
 package notify
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -171,5 +173,41 @@ func TestFormatNotification_NoLocation(t *testing.T) {
 	want := "Fri Mar 27, 10:00"
 	if body != want {
 		t.Errorf("body = %q, want %q", body, want)
+	}
+}
+
+func TestResolveLocalAudioPath(t *testing.T) {
+	// Create a temp file to simulate a local audio file.
+	tmp := filepath.Join(t.TempDir(), "alert.oga")
+	if err := os.WriteFile(tmp, []byte("fake audio"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		uri  string
+		want bool // true = expect non-empty path
+	}{
+		{"empty", "", false},
+		{"absolute path exists", tmp, true},
+		{"absolute path missing", "/nonexistent/sound.wav", false},
+		{"file:// URI exists", "file://" + tmp, true},
+		{"file:// URI missing", "file:///nonexistent/sound.wav", false},
+		{"http URI", "http://example.com/sound.wav", false},
+		{"https URI", "https://example.com/sound.wav", false},
+		{"data URI", "data:audio/wav;base64,AAAA", false},
+		{"relative path", "sounds/alert.wav", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveLocalAudioPath(tt.uri)
+			if tt.want && got == "" {
+				t.Errorf("resolveLocalAudioPath(%q) = empty, want non-empty", tt.uri)
+			}
+			if !tt.want && got != "" {
+				t.Errorf("resolveLocalAudioPath(%q) = %q, want empty", tt.uri, got)
+			}
+		})
 	}
 }
