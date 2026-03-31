@@ -439,14 +439,16 @@ SELECT id, uid, calendar_id, title, description, location, start_time, end_time,
 WHERE recurrence_rule = '' AND recurrence_id = ''
 AND (?1 = 0 OR calendar_id = ?1)
 AND (?2 = '' OR status = ?2)
-AND (?3 = '' OR start_time >= ?3)
-AND (?4 = '' OR start_time < ?4)
+AND (?3 = '' OR EXISTS (SELECT 1 FROM event_categories ec WHERE ec.event_id = events.id AND ec.category = ?3))
+AND (?4 = '' OR start_time >= ?4)
+AND (?5 = '' OR start_time < ?5)
 ORDER BY start_time ASC
 `
 
 type ListEventsFilteredParams struct {
 	CalendarID   interface{}
 	FilterStatus interface{}
+	Category     interface{}
 	FromTime     interface{}
 	ToTime       interface{}
 }
@@ -455,6 +457,7 @@ func (q *Queries) ListEventsFiltered(ctx context.Context, arg ListEventsFiltered
 	rows, err := q.db.QueryContext(ctx, listEventsFiltered,
 		arg.CalendarID,
 		arg.FilterStatus,
+		arg.Category,
 		arg.FromTime,
 		arg.ToTime,
 	)

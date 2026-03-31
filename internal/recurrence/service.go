@@ -588,6 +588,7 @@ func (s *Service) ListExpandedTodosByDueDateRange(ctx context.Context, from, to 
 type EventListParams struct {
 	CalendarID int64
 	Status     string
+	Category   string
 	From       time.Time
 	To         time.Time
 }
@@ -608,6 +609,7 @@ func (s *Service) ListFilteredEvents(ctx context.Context, p EventListParams) ([]
 	rangeRows, err := s.q.ListEventsFiltered(ctx, storage.ListEventsFilteredParams{
 		CalendarID:   p.CalendarID,
 		FilterStatus: p.Status,
+		Category:     p.Category,
 		FromTime:     fromStr,
 		ToTime:       toStr,
 	})
@@ -623,7 +625,7 @@ func (s *Service) ListFilteredEvents(ctx context.Context, p EventListParams) ([]
 	recurringRows, err := s.q.ListRecurringEventsFiltered(ctx, storage.ListRecurringEventsFilteredParams{
 		CalendarID:   p.CalendarID,
 		FilterStatus: p.Status,
-		Category:     "",
+		Category:     p.Category,
 	})
 	if err != nil {
 		return nil, err
