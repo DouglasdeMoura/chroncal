@@ -25,6 +25,9 @@ SELECT * FROM todos WHERE id = ?;
 -- name: GetTodoByUID :one
 SELECT * FROM todos WHERE uid = ? AND recurrence_id = '';
 
+-- name: GetTodoByUIDAndRecurrenceID :one
+SELECT * FROM todos WHERE uid = ? AND recurrence_id = ?;
+
 -- name: CreateTodo :one
 INSERT INTO todos (
     uid, calendar_id, summary, description, location,

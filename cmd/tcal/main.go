@@ -85,18 +85,24 @@ func main() {
 	}
 }
 
-// resolveEvent looks up an event by numeric ID or string UID.
-func resolveEvent(ctx context.Context, a *app.App, ref string) (event.Event, error) {
+// resolveEvent looks up an event by numeric ID, string UID, or UID + recurrence-id.
+func resolveEvent(ctx context.Context, a *app.App, ref, recurrenceID string) (event.Event, error) {
 	if id, err := strconv.ParseInt(ref, 10, 64); err == nil {
 		return a.Events.Get(ctx, id)
+	}
+	if recurrenceID != "" {
+		return a.Events.GetByUIDAndRecurrenceID(ctx, ref, recurrenceID)
 	}
 	return a.Events.GetByUID(ctx, ref)
 }
 
-// resolveTodo looks up a todo by numeric ID or string UID.
-func resolveTodo(ctx context.Context, a *app.App, ref string) (todo.Todo, error) {
+// resolveTodo looks up a todo by numeric ID, string UID, or UID + recurrence-id.
+func resolveTodo(ctx context.Context, a *app.App, ref, recurrenceID string) (todo.Todo, error) {
 	if id, err := strconv.ParseInt(ref, 10, 64); err == nil {
 		return a.Todos.Get(ctx, id)
+	}
+	if recurrenceID != "" {
+		return a.Todos.GetByUIDAndRecurrenceID(ctx, ref, recurrenceID)
 	}
 	return a.Todos.GetByUID(ctx, ref)
 }

@@ -283,6 +283,50 @@ func TestEventService_ListOverridesByUID(t *testing.T) {
 	}
 }
 
+func TestEventService_GetByUIDAndRecurrenceID(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	// Master
+	svc.UpsertByUID(ctx, UpsertParams{
+		UID: "rec-uid", CalendarID: 1, Title: "Weekly",
+		StartTime: time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC),
+	})
+
+	// Override
+	svc.UpsertByUID(ctx, UpsertParams{
+		UID: "rec-uid", CalendarID: 1, Title: "Weekly (rescheduled)",
+		StartTime:    time.Date(2026, 4, 8, 14, 0, 0, 0, time.UTC),
+		EndTime:      time.Date(2026, 4, 8, 15, 0, 0, 0, time.UTC),
+		RecurrenceID: "2026-04-08T10:00:00Z",
+	})
+
+	// GetByUID returns master only.
+	master, err := svc.GetByUID(ctx, "rec-uid")
+	if err != nil {
+		t.Fatalf("GetByUID: %v", err)
+	}
+	if master.Title != "Weekly" {
+		t.Errorf("master.Title = %q, want %q", master.Title, "Weekly")
+	}
+
+	// GetByUIDAndRecurrenceID returns the override.
+	override, err := svc.GetByUIDAndRecurrenceID(ctx, "rec-uid", "2026-04-08T10:00:00Z")
+	if err != nil {
+		t.Fatalf("GetByUIDAndRecurrenceID: %v", err)
+	}
+	if override.Title != "Weekly (rescheduled)" {
+		t.Errorf("override.Title = %q, want %q", override.Title, "Weekly (rescheduled)")
+	}
+
+	// Non-existent recurrence-id returns error.
+	_, err = svc.GetByUIDAndRecurrenceID(ctx, "rec-uid", "2099-01-01T00:00:00Z")
+	if err == nil {
+		t.Error("expected error for non-existent recurrence-id, got nil")
+	}
+}
+
 func TestEventService_CreateDefaults(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()

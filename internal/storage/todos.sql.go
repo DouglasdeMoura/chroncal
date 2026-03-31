@@ -226,6 +226,48 @@ func (q *Queries) GetTodoByUID(ctx context.Context, uid string) (Todo, error) {
 	return i, err
 }
 
+const getTodoByUIDAndRecurrenceID = `-- name: GetTodoByUIDAndRecurrenceID :one
+SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, categories, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM todos WHERE uid = ? AND recurrence_id = ?
+`
+
+type GetTodoByUIDAndRecurrenceIDParams struct {
+	Uid          string
+	RecurrenceID string
+}
+
+func (q *Queries) GetTodoByUIDAndRecurrenceID(ctx context.Context, arg GetTodoByUIDAndRecurrenceIDParams) (Todo, error) {
+	row := q.db.QueryRowContext(ctx, getTodoByUIDAndRecurrenceID, arg.Uid, arg.RecurrenceID)
+	var i Todo
+	err := row.Scan(
+		&i.ID,
+		&i.Uid,
+		&i.CalendarID,
+		&i.Summary,
+		&i.Description,
+		&i.Location,
+		&i.DueDate,
+		&i.StartDate,
+		&i.Duration,
+		&i.CompletedAt,
+		&i.PercentComplete,
+		&i.Status,
+		&i.Priority,
+		&i.Class,
+		&i.Url,
+		&i.Categories,
+		&i.RecurrenceRule,
+		&i.Timezone,
+		&i.Sequence,
+		&i.Exdates,
+		&i.Rdates,
+		&i.RecurrenceID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Geo,
+	)
+	return i, err
+}
+
 const listAllTodos = `-- name: ListAllTodos :many
 SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, categories, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM todos ORDER BY due_date, summary
 `

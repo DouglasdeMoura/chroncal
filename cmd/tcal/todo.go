@@ -141,6 +141,7 @@ func todoSearchCmd() *cobra.Command {
 }
 
 func todoGetCmd() *cobra.Command {
+	var recurrenceID string
 	cmd := &cobra.Command{
 		Use:   "get <id|uid>",
 		Short: "Get todo details by ID or UID",
@@ -153,7 +154,7 @@ func todoGetCmd() *cobra.Command {
 			defer a.Close()
 			ctx := context.Background()
 
-			t, err := resolveTodo(ctx, a, args[0])
+			t, err := resolveTodo(ctx, a, args[0], recurrenceID)
 			if err != nil {
 				return fmt.Errorf("get todo: %w", err)
 			}
@@ -174,6 +175,7 @@ func todoGetCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&recurrenceID, "recurrence-id", "", "target a specific override instance (RFC 3339 timestamp)")
 	return cmd
 }
 
@@ -496,6 +498,7 @@ func todoUpdateCmd() *cobra.Command {
 		resourceFlags []string
 		relationFlags []string
 		organizer     string
+		recurrenceID  string
 	)
 	cmd := &cobra.Command{
 		Use:   "update <id|uid>",
@@ -546,7 +549,7 @@ a --progress value other than 100.`,
 			defer a.Close()
 			ctx := context.Background()
 
-			existing, err := resolveTodo(ctx, a, args[0])
+			existing, err := resolveTodo(ctx, a, args[0], recurrenceID)
 			if err != nil {
 				return fmt.Errorf("get todo: %w", err)
 			}
@@ -804,10 +807,12 @@ a --progress value other than 100.`,
 	cmd.Flags().Lookup("rrule").Usage = "alias for --recurrence-rule"
 	cmd.Flags().Lookup("exdate").Usage = "alias for --exception-date-times"
 	cmd.Flags().Lookup("rdate").Usage = "alias for --recurrence-date-times"
+	cmd.Flags().StringVar(&recurrenceID, "recurrence-id", "", "target a specific override instance (RFC 3339 timestamp)")
 	return cmd
 }
 
 func todoCompleteCmd() *cobra.Command {
+	var recurrenceID string
 	cmd := &cobra.Command{
 		Use:   "complete <id|uid>",
 		Short: "Mark a todo as completed",
@@ -820,7 +825,7 @@ func todoCompleteCmd() *cobra.Command {
 			defer a.Close()
 			ctx := context.Background()
 
-			t, err := resolveTodo(ctx, a, args[0])
+			t, err := resolveTodo(ctx, a, args[0], recurrenceID)
 			if err != nil {
 				return fmt.Errorf("get todo: %w", err)
 			}
@@ -838,10 +843,12 @@ func todoCompleteCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&recurrenceID, "recurrence-id", "", "target a specific override instance (RFC 3339 timestamp)")
 	return cmd
 }
 
 func todoDeleteCmd() *cobra.Command {
+	var recurrenceID string
 	cmd := &cobra.Command{
 		Use:   "delete <id|uid>",
 		Short: "Delete a todo",
@@ -853,7 +860,7 @@ func todoDeleteCmd() *cobra.Command {
 			}
 			defer a.Close()
 
-			t, err := resolveTodo(context.Background(), a, args[0])
+			t, err := resolveTodo(context.Background(), a, args[0], recurrenceID)
 			if err != nil {
 				return fmt.Errorf("get todo: %w", err)
 			}
@@ -870,6 +877,7 @@ func todoDeleteCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&recurrenceID, "recurrence-id", "", "target a specific override instance (RFC 3339 timestamp)")
 	return cmd
 }
 

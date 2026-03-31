@@ -218,6 +218,17 @@ func (s *Service) GetByUID(ctx context.Context, uid string) (Todo, error) {
 	return fromStorage(r), nil
 }
 
+func (s *Service) GetByUIDAndRecurrenceID(ctx context.Context, uid, recurrenceID string) (Todo, error) {
+	r, err := s.q.GetTodoByUIDAndRecurrenceID(ctx, storage.GetTodoByUIDAndRecurrenceIDParams{
+		Uid:          uid,
+		RecurrenceID: recurrenceID,
+	})
+	if err != nil {
+		return Todo{}, err
+	}
+	return fromStorage(r), nil
+}
+
 func (s *Service) Create(ctx context.Context, p CreateParams) (Todo, error) {
 	p.applyDefaults()
 	completedAt := ""

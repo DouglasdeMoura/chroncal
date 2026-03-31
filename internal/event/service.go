@@ -223,6 +223,17 @@ func (s *Service) GetByUID(ctx context.Context, uid string) (Event, error) {
 	return fromStorage(r), nil
 }
 
+func (s *Service) GetByUIDAndRecurrenceID(ctx context.Context, uid, recurrenceID string) (Event, error) {
+	r, err := s.q.GetEventByUIDAndRecurrenceID(ctx, storage.GetEventByUIDAndRecurrenceIDParams{
+		Uid:          uid,
+		RecurrenceID: recurrenceID,
+	})
+	if err != nil {
+		return Event{}, err
+	}
+	return fromStorage(r), nil
+}
+
 func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
 	p.applyDefaults()
 	r, err := s.q.CreateEvent(ctx, storage.CreateEventParams{

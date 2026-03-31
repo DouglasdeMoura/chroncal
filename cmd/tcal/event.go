@@ -144,6 +144,7 @@ func eventSearchCmd() *cobra.Command {
 }
 
 func eventGetCmd() *cobra.Command {
+	var recurrenceID string
 	cmd := &cobra.Command{
 		Use:   "get <id|uid>",
 		Short: "Get event details by ID or UID",
@@ -156,7 +157,7 @@ func eventGetCmd() *cobra.Command {
 			defer a.Close()
 			ctx := context.Background()
 
-			e, err := resolveEvent(ctx, a, args[0])
+			e, err := resolveEvent(ctx, a, args[0], recurrenceID)
 			if err != nil {
 				return fmt.Errorf("get event: %w", err)
 			}
@@ -177,6 +178,7 @@ func eventGetCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&recurrenceID, "recurrence-id", "", "target a specific override instance (RFC 3339 timestamp)")
 	return cmd
 }
 
@@ -529,6 +531,7 @@ func eventUpdateCmd() *cobra.Command {
 		contactFlags  []string
 		resourceFlags []string
 		relationFlags []string
+		recurrenceID  string
 		organizer     string
 	)
 	cmd := &cobra.Command{
@@ -543,7 +546,7 @@ func eventUpdateCmd() *cobra.Command {
 			defer a.Close()
 			ctx := context.Background()
 
-			existing, err := resolveEvent(ctx, a, args[0])
+			existing, err := resolveEvent(ctx, a, args[0], recurrenceID)
 			if err != nil {
 				return fmt.Errorf("get event: %w", err)
 			}
@@ -835,10 +838,12 @@ func eventUpdateCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&contactFlags, "contact", nil, "contact info (free-form text, repeatable, replaces all)")
 	cmd.Flags().StringArrayVar(&resourceFlags, "resource", nil, "resource needed (e.g. PROJECTOR, repeatable, replaces all)")
 	cmd.Flags().StringArrayVar(&relationFlags, "related-to", nil, "related event UID with optional PARENT:/CHILD:/SIBLING: prefix (repeatable, replaces all)")
+	cmd.Flags().StringVar(&recurrenceID, "recurrence-id", "", "target a specific override instance (RFC 3339 timestamp)")
 	return cmd
 }
 
 func eventDeleteCmd() *cobra.Command {
+	var recurrenceID string
 	cmd := &cobra.Command{
 		Use:   "delete <id|uid>",
 		Short: "Delete an event",
@@ -850,7 +855,7 @@ func eventDeleteCmd() *cobra.Command {
 			}
 			defer a.Close()
 
-			e, err := resolveEvent(context.Background(), a, args[0])
+			e, err := resolveEvent(context.Background(), a, args[0], recurrenceID)
 			if err != nil {
 				return fmt.Errorf("get event: %w", err)
 			}
@@ -867,6 +872,7 @@ func eventDeleteCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&recurrenceID, "recurrence-id", "", "target a specific override instance (RFC 3339 timestamp)")
 	return cmd
 }
 
