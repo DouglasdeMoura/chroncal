@@ -202,6 +202,13 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// setPropDuration writes a DURATION property without VALUE=TEXT parameter.
+func setPropDuration(vevent *ical.Event, dur string) {
+	p := &ical.Prop{Name: ical.PropDuration}
+	p.Value = dur
+	vevent.Props.Set(p)
+}
+
 // setPropFloating writes a datetime property without TZID and without Z suffix
 // (RFC 5545 floating time: local time in whatever timezone the viewer is in).
 func setPropFloating(vevent *ical.Event, propName string, t time.Time) {
@@ -218,7 +225,7 @@ func setEventTimes(vevent *ical.Event, e event.Event) {
 	if e.AllDay {
 		vevent.Props.SetDate(ical.PropDateTimeStart, e.StartTime)
 		if useDuration {
-			vevent.Props.SetText(ical.PropDuration, e.DurationValue)
+			setPropDuration(vevent, e.DurationValue)
 		} else {
 			vevent.Props.SetDate(ical.PropDateTimeEnd, e.EndTime)
 		}
@@ -226,7 +233,7 @@ func setEventTimes(vevent *ical.Event, e event.Event) {
 		local := e.StartTime.Local()
 		setPropFloating(vevent, ical.PropDateTimeStart, local)
 		if useDuration {
-			vevent.Props.SetText(ical.PropDuration, e.DurationValue)
+			setPropDuration(vevent, e.DurationValue)
 		} else {
 			local = e.EndTime.Local()
 			setPropFloating(vevent, ical.PropDateTimeEnd, local)
@@ -239,7 +246,7 @@ func setEventTimes(vevent *ical.Event, e event.Event) {
 				prop.Params.Set(ical.ParamTimezoneID, e.Timezone)
 			}
 			if useDuration {
-				vevent.Props.SetText(ical.PropDuration, e.DurationValue)
+				setPropDuration(vevent, e.DurationValue)
 			} else {
 				vevent.Props.SetDateTime(ical.PropDateTimeEnd, e.EndTime.In(loc))
 				if prop := vevent.Props.Get(ical.PropDateTimeEnd); prop != nil {
@@ -249,7 +256,7 @@ func setEventTimes(vevent *ical.Event, e event.Event) {
 		} else {
 			vevent.Props.SetDateTime(ical.PropDateTimeStart, e.StartTime.UTC())
 			if useDuration {
-				vevent.Props.SetText(ical.PropDuration, e.DurationValue)
+				setPropDuration(vevent, e.DurationValue)
 			} else {
 				vevent.Props.SetDateTime(ical.PropDateTimeEnd, e.EndTime.UTC())
 			}
@@ -257,7 +264,7 @@ func setEventTimes(vevent *ical.Event, e event.Event) {
 	} else {
 		vevent.Props.SetDateTime(ical.PropDateTimeStart, e.StartTime.UTC())
 		if useDuration {
-			vevent.Props.SetText(ical.PropDuration, e.DurationValue)
+			setPropDuration(vevent, e.DurationValue)
 		} else {
 			vevent.Props.SetDateTime(ical.PropDateTimeEnd, e.EndTime.UTC())
 		}

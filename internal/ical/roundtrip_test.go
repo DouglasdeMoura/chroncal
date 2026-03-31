@@ -1694,3 +1694,273 @@ func TestRoundtrip_AlarmAttachURI(t *testing.T) {
 		t.Errorf("AttachFmtType: got %q, want %q", alarm.AttachFmtType, "audio/basic")
 	}
 }
+
+func TestRoundtrip_EventDuration(t *testing.T) {
+	t.Parallel()
+	original := event.Event{
+		UID:           "duration-event",
+		Title:         "Duration Test",
+		StartTime:     time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:       time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		DurationValue: "PT1H",
+		Status:        "CONFIRMED",
+		Transp:        "OPAQUE",
+		CreatedAt:     time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+		UpdatedAt:     time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+	}
+
+	data, err := ExportEvents([]event.Event{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	exported := string(data)
+
+	// DURATION must be present, DTEND must NOT be present (RFC 5545 mutual exclusivity).
+	if !strings.Contains(exported, "DURATION:PT1H") {
+		t.Errorf("exported ICS missing DURATION:PT1H\n%s", exported)
+	}
+	if strings.Contains(exported, "DTEND") {
+		t.Errorf("exported ICS contains DTEND when DURATION is set\n%s", exported)
+	}
+
+	result, err := ImportFile(strings.NewReader(exported))
+	if err != nil {
+		t.Fatalf("reimport: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("reimported %d events, want 1", len(result.Events))
+	}
+
+	got := result.Events[0]
+	if got.DurationValue != "PT1H" {
+		t.Errorf("DurationValue: got %q, want %q", got.DurationValue, "PT1H")
+	}
+	if got.EndTime.Sub(got.StartTime) != time.Hour {
+		t.Errorf("EndTime-StartTime: got %v, want 1h", got.EndTime.Sub(got.StartTime))
+	}
+}
+
+func TestRoundtrip_EventDurationFloating(t *testing.T) {
+	t.Parallel()
+	original := event.Event{
+		UID:           "duration-floating",
+		Title:         "Floating Duration",
+		StartTime:     time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC),
+		EndTime:       time.Date(2026, 4, 1, 9, 30, 0, 0, time.UTC),
+		DurationValue: "PT30M",
+		Timezone:      "FLOATING",
+		Status:        "CONFIRMED",
+		Transp:        "OPAQUE",
+		CreatedAt:     time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+		UpdatedAt:     time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+	}
+
+	data, err := ExportEvents([]event.Event{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	exported := string(data)
+	if !strings.Contains(exported, "DURATION:PT30M") {
+		t.Errorf("exported ICS missing DURATION:PT30M\n%s", exported)
+	}
+	if strings.Contains(exported, "DTEND") {
+		t.Errorf("exported ICS contains DTEND when DURATION is set\n%s", exported)
+	}
+}
+
+func TestRoundtrip_EventDurationWithTimezone(t *testing.T) {
+	t.Parallel()
+	original := event.Event{
+		UID:           "duration-tz",
+		Title:         "TZ Duration",
+		StartTime:     time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:       time.Date(2026, 4, 1, 16, 0, 0, 0, time.UTC),
+		DurationValue: "PT2H",
+		Timezone:      "America/New_York",
+		Status:        "CONFIRMED",
+		Transp:        "OPAQUE",
+		CreatedAt:     time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+		UpdatedAt:     time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+	}
+
+	data, err := ExportEvents([]event.Event{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	exported := string(data)
+	if !strings.Contains(exported, "DURATION:PT2H") {
+		t.Errorf("exported ICS missing DURATION:PT2H\n%s", exported)
+	}
+	if strings.Contains(exported, "DTEND") {
+		t.Errorf("exported ICS contains DTEND when DURATION is set\n%s", exported)
+	}
+}
+
+func TestRoundtrip_EventNoDuration(t *testing.T) {
+	// When DurationValue is empty, export should emit DTEND, not DURATION.
+	t.Parallel()
+	original := event.Event{
+		UID:       "no-duration-event",
+		Title:     "No Duration",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		CreatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+		UpdatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+	}
+
+	data, err := ExportEvents([]event.Event{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	exported := string(data)
+	if !strings.Contains(exported, "DTEND") {
+		t.Errorf("exported ICS missing DTEND when DurationValue is empty\n%s", exported)
+	}
+	if strings.Contains(exported, "DURATION:") {
+		t.Errorf("exported ICS contains DURATION when DurationValue is empty\n%s", exported)
+	}
+}
+
+func TestRoundtrip_EventDtStamp(t *testing.T) {
+	t.Parallel()
+	original := event.Event{
+		UID:       "dtstamp-event",
+		Title:     "DtStamp Test",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		DtStamp:   "2026-03-25T08:00:00Z",
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		CreatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+		UpdatedAt: time.Date(2026, 3, 28, 12, 0, 0, 0, time.UTC),
+	}
+
+	data, err := ExportEvents([]event.Event{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	exported := string(data)
+
+	// DTSTAMP should reflect DtStamp, not UpdatedAt.
+	if !strings.Contains(exported, "DTSTAMP:20260325T080000Z") {
+		t.Errorf("exported DTSTAMP should be 20260325T080000Z, got:\n%s", exported)
+	}
+	// LAST-MODIFIED should still use UpdatedAt.
+	if !strings.Contains(exported, "LAST-MODIFIED:20260328T120000Z") {
+		t.Errorf("exported LAST-MODIFIED should be 20260328T120000Z, got:\n%s", exported)
+	}
+
+	result, err := ImportFile(strings.NewReader(exported))
+	if err != nil {
+		t.Fatalf("reimport: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("reimported %d events, want 1", len(result.Events))
+	}
+
+	got := result.Events[0]
+	if got.DtStamp != "2026-03-25T08:00:00Z" {
+		t.Errorf("DtStamp: got %q, want %q", got.DtStamp, "2026-03-25T08:00:00Z")
+	}
+}
+
+func TestRoundtrip_EventDtStampEmpty(t *testing.T) {
+	// When DtStamp is empty, DTSTAMP should fall back to UpdatedAt.
+	t.Parallel()
+	original := event.Event{
+		UID:       "dtstamp-empty",
+		Title:     "Empty DtStamp",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		CreatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+		UpdatedAt: time.Date(2026, 3, 28, 12, 0, 0, 0, time.UTC),
+	}
+
+	data, err := ExportEvents([]event.Event{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	exported := string(data)
+	// DTSTAMP should fall back to UpdatedAt.
+	if !strings.Contains(exported, "DTSTAMP:20260328T120000Z") {
+		t.Errorf("exported DTSTAMP should fall back to UpdatedAt 20260328T120000Z, got:\n%s", exported)
+	}
+}
+
+func TestRoundtrip_TodoDtStamp(t *testing.T) {
+	t.Parallel()
+	original := todo.Todo{
+		UID:       "dtstamp-todo",
+		Summary:   "DtStamp Todo Test",
+		DueDate:   "2026-04-15",
+		DtStamp:   "2026-03-20T10:00:00Z",
+		Status:    "NEEDS-ACTION",
+		CreatedAt: time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC),
+		UpdatedAt: time.Date(2026, 3, 22, 12, 0, 0, 0, time.UTC),
+	}
+
+	data, err := ExportTodos([]todo.Todo{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	exported := string(data)
+	if !strings.Contains(exported, "DTSTAMP:20260320T100000Z") {
+		t.Errorf("exported DTSTAMP should be 20260320T100000Z, got:\n%s", exported)
+	}
+	if !strings.Contains(exported, "LAST-MODIFIED:20260322T120000Z") {
+		t.Errorf("exported LAST-MODIFIED should be 20260322T120000Z, got:\n%s", exported)
+	}
+
+	result, err := ImportFile(strings.NewReader(exported))
+	if err != nil {
+		t.Fatalf("reimport: %v", err)
+	}
+	if len(result.Todos) != 1 {
+		t.Fatalf("reimported %d todos, want 1", len(result.Todos))
+	}
+
+	got := result.Todos[0]
+	if got.DtStamp != "2026-03-20T10:00:00Z" {
+		t.Errorf("DtStamp: got %q, want %q", got.DtStamp, "2026-03-20T10:00:00Z")
+	}
+}
+
+func TestRoundtrip_EventDurationAllDay(t *testing.T) {
+	t.Parallel()
+	original := event.Event{
+		UID:           "duration-allday",
+		Title:         "All-Day Duration",
+		StartTime:     time.Date(2026, 4, 1, 0, 0, 0, 0, time.Local),
+		EndTime:       time.Date(2026, 4, 3, 0, 0, 0, 0, time.Local),
+		AllDay:        true,
+		DurationValue: "P2D",
+		Status:        "CONFIRMED",
+		Transp:        "OPAQUE",
+		CreatedAt:     time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+		UpdatedAt:     time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+	}
+
+	data, err := ExportEvents([]event.Event{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	exported := string(data)
+	if !strings.Contains(exported, "DURATION:P2D") {
+		t.Errorf("exported ICS missing DURATION:P2D\n%s", exported)
+	}
+	if strings.Contains(exported, "DTEND") {
+		t.Errorf("exported ICS contains DTEND when DURATION is set for all-day event\n%s", exported)
+	}
+}
