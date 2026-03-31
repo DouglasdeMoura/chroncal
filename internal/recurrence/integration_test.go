@@ -254,7 +254,10 @@ func TestExportExpandedByDateRange(t *testing.T) {
 	from := time.Date(2026, 3, 30, 0, 0, 0, 0, time.UTC)
 	to := time.Date(2026, 4, 13, 0, 0, 0, 0, time.UTC)
 
-	events, err := recurSvc.ExportExpandedByDateRange(ctx, from, to)
+	events, err := recurSvc.ExportExpandedByDateRange(ctx, ExportFilterParams{
+		From: from,
+		To:   to,
+	})
 	if err != nil {
 		t.Fatalf("ExportExpandedByDateRange: %v", err)
 	}

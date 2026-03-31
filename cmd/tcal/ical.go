@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/douglasdemoura/tcal/internal/event"
 	"github.com/douglasdemoura/tcal/internal/ical"
+	"github.com/douglasdemoura/tcal/internal/recurrence"
 	"github.com/douglasdemoura/tcal/internal/todo"
 )
 
@@ -233,26 +233,22 @@ func icalExportCmd() *cobra.Command {
 				// filter.  Include them if any instance falls in range.
 				if fromStr != "" || toStr != "" {
 					from, to, _ := parseDateRange(fromStr, toStr)
-					extra, eerr := a.Recurrences.ExportExpandedByDateRange(ctx, from, to)
+					extra, eerr := a.Recurrences.ExportExpandedByDateRange(ctx, recurrence.ExportFilterParams{
+						CalendarID: calID,
+						Category:   category,
+						Status:     status,
+						From:       from,
+						To:         to,
+					})
 					if eerr == nil {
 						seen := make(map[int64]bool, len(events))
 						for _, e := range events {
 							seen[e.ID] = true
 						}
 						for _, e := range extra {
-							if seen[e.ID] {
-								continue
+							if !seen[e.ID] {
+								events = append(events, e)
 							}
-							if calID != 0 && e.CalendarID != calID {
-								continue
-							}
-							if category != "" && !strings.Contains(e.Categories, category) {
-								continue
-							}
-							if status != "" && !strings.EqualFold(e.Status, status) {
-								continue
-							}
-							events = append(events, e)
 						}
 					}
 				}

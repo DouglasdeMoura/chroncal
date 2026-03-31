@@ -799,16 +799,18 @@ SELECT id, uid, calendar_id, title, description, location, start_time, end_time,
 WHERE recurrence_rule != '' AND recurrence_id = ''
 AND (?1 = 0 OR calendar_id = ?1)
 AND (?2 = '' OR status = ?2)
+AND (?3 = '' OR categories LIKE '%' || ?3 || '%')
 ORDER BY start_time ASC
 `
 
 type ListRecurringEventsFilteredParams struct {
 	CalendarID   interface{}
 	FilterStatus interface{}
+	Category     interface{}
 }
 
 func (q *Queries) ListRecurringEventsFiltered(ctx context.Context, arg ListRecurringEventsFilteredParams) ([]Event, error) {
-	rows, err := q.db.QueryContext(ctx, listRecurringEventsFiltered, arg.CalendarID, arg.FilterStatus)
+	rows, err := q.db.QueryContext(ctx, listRecurringEventsFiltered, arg.CalendarID, arg.FilterStatus, arg.Category)
 	if err != nil {
 		return nil, err
 	}

@@ -91,6 +91,7 @@ SELECT * FROM events
 WHERE recurrence_rule != '' AND recurrence_id = ''
 AND (sqlc.arg(calendar_id) = 0 OR calendar_id = sqlc.arg(calendar_id))
 AND (sqlc.arg(filter_status) = '' OR status = sqlc.arg(filter_status))
+AND (sqlc.arg(category) = '' OR categories LIKE '%' || sqlc.arg(category) || '%')
 ORDER BY start_time ASC;
 
 -- name: ListEventsForExport :many

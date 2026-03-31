@@ -358,15 +358,37 @@ func (s *Service) ListExpandedByStatusAndDateRange(ctx context.Context, status s
 	return result, nil
 }
 
+// ExportFilterParams holds filters for ICS export of recurring masters.
+type ExportFilterParams struct {
+	CalendarID int64
+	Category   string
+	Status     string
+	From       time.Time
+	To         time.Time
+}
+
 // ExportExpandedByDateRange returns recurring event masters (not expanded
 // instances) that have at least one occurrence in [from,to), merged with
 // non-recurring events whose start_time is in range. This is for ICS export
 // where the master VEVENT with RRULE should be emitted, not individual
-// instances.
-func (s *Service) ExportExpandedByDateRange(ctx context.Context, from, to time.Time) ([]event.Event, error) {
-	rangeRows, err := s.q.ListEventsByDateRange(ctx, storage.ListEventsByDateRangeParams{
-		StartTime:   from.Format(time.RFC3339),
-		StartTime_2: to.Format(time.RFC3339),
+// instances. All filters (calendar, category, status) are applied at the
+// SQL level.
+func (s *Service) ExportExpandedByDateRange(ctx context.Context, p ExportFilterParams) ([]event.Event, error) {
+	fromStr := ""
+	toStr := ""
+	if !p.From.IsZero() {
+		fromStr = p.From.Format(time.RFC3339)
+	}
+	if !p.To.IsZero() {
+		toStr = p.To.Format(time.RFC3339)
+	}
+
+	rangeRows, err := s.q.ListEventsForExport(ctx, storage.ListEventsForExportParams{
+		CalendarID:   p.CalendarID,
+		FromTime:     fromStr,
+		ToTime:       toStr,
+		Category:     p.Category,
+		FilterStatus: p.Status,
 	})
 	if err != nil {
 		return nil, err
@@ -380,7 +402,11 @@ func (s *Service) ExportExpandedByDateRange(ctx context.Context, from, to time.T
 		}
 	}
 
-	recurringRows, err := s.q.ListRecurringEvents(ctx)
+	recurringRows, err := s.q.ListRecurringEventsFiltered(ctx, storage.ListRecurringEventsFilteredParams{
+		CalendarID:   p.CalendarID,
+		FilterStatus: p.Status,
+		Category:     p.Category,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -389,7 +415,7 @@ func (s *Service) ExportExpandedByDateRange(ctx context.Context, from, to time.T
 			continue
 		}
 		evt := eventFromRow(row)
-		if len(ExpandEvent(evt, from, to)) > 0 {
+		if len(ExpandEvent(evt, p.From, p.To)) > 0 {
 			result = append(result, evt)
 		}
 	}
@@ -554,6 +580,7 @@ func (s *Service) ListFilteredEvents(ctx context.Context, p EventListParams) ([]
 	recurringRows, err := s.q.ListRecurringEventsFiltered(ctx, storage.ListRecurringEventsFilteredParams{
 		CalendarID:   p.CalendarID,
 		FilterStatus: p.Status,
+		Category:     "",
 	})
 	if err != nil {
 		return nil, err
