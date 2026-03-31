@@ -84,24 +84,23 @@ func (s *Service) checkEventAlarms(ctx context.Context, now time.Time) ([]DueAla
 				continue // skip alarms with unparseable triggers
 			}
 
-			// Must be in the past (due) but not stale
-			if triggerAt.After(now) {
-				continue
-			}
-			if now.Sub(triggerAt) > StaleThreshold {
-				continue
-			}
-
-			// Check if already fired for this specific instance
-			// Include instance time in the trigger key for recurring events
-			triggerKey := triggerAt.UTC().Format(time.RFC3339)
-			_, err = s.q.GetAlarmState(ctx, storage.GetAlarmStateParams{
-				AlarmID:   a.ID,
-				TriggerAt: triggerKey,
-			})
-			if err == nil {
-				// Already has a state row -- skip
-				continue
+			// Build list of trigger times: initial + REPEAT firings.
+			triggers := []time.Time{triggerAt}
+			if a.Repeat > 0 && a.Duration != "" {
+				for i := 1; i <= a.Repeat; i++ {
+					rt := duration.Add(triggerAt, a.Duration)
+					if rt.IsZero() || rt.Equal(triggerAt) {
+						break
+					}
+					// Each subsequent repeat adds another interval.
+					repeatTrigger := triggerAt
+					for j := 0; j < i; j++ {
+						repeatTrigger = duration.Add(repeatTrigger, a.Duration)
+					}
+					if !repeatTrigger.IsZero() && repeatTrigger.After(triggerAt) {
+						triggers = append(triggers, repeatTrigger)
+					}
+				}
 			}
 
 			// Create modified event with instance time for notification
@@ -109,11 +108,31 @@ func (s *Service) checkEventAlarms(ctx context.Context, now time.Time) ([]DueAla
 			instanceEvent.StartTime = expEvt.InstanceTime
 			instanceEvent.EndTime = expEvt.InstanceTime.Add(expEvt.Event.Duration())
 
-			due = append(due, DueAlarm{
-				Event:     instanceEvent,
-				Alarm:     a,
-				TriggerAt: triggerAt,
-			})
+			for _, t := range triggers {
+				// Must be in the past (due) but not stale
+				if t.After(now) {
+					continue
+				}
+				if now.Sub(t) > StaleThreshold {
+					continue
+				}
+
+				// Check if already fired
+				triggerKey := t.UTC().Format(time.RFC3339)
+				_, err = s.q.GetAlarmState(ctx, storage.GetAlarmStateParams{
+					AlarmID:   a.ID,
+					TriggerAt: triggerKey,
+				})
+				if err == nil {
+					continue // already fired
+				}
+
+				due = append(due, DueAlarm{
+					Event:     instanceEvent,
+					Alarm:     a,
+					TriggerAt: t,
+				})
+			}
 		}
 	}
 

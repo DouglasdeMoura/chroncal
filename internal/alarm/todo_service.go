@@ -74,22 +74,18 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 					continue
 				}
 
-				// Check if due but not stale
-				if triggerAt.After(now) {
-					continue
-				}
-				if now.Sub(triggerAt) > StaleThreshold {
-					continue
-				}
-
-				// Check if already fired
-				triggerKey := triggerAt.UTC().Format(time.RFC3339)
-				_, err = s.q.GetTodoAlarmState(ctx, storage.GetTodoAlarmStateParams{
-					AlarmID:   a.ID,
-					TriggerAt: triggerKey,
-				})
-				if err == nil {
-					continue // Already has state row
+				// Build trigger list: initial + REPEAT firings.
+				triggers := []time.Time{triggerAt}
+				if a.Repeat > 0 && a.Duration != "" {
+					for i := 1; i <= a.Repeat; i++ {
+						repeatTrigger := triggerAt
+						for j := 0; j < i; j++ {
+							repeatTrigger = duration.Add(repeatTrigger, a.Duration)
+						}
+						if !repeatTrigger.IsZero() && repeatTrigger.After(triggerAt) {
+							triggers = append(triggers, repeatTrigger)
+						}
+					}
 				}
 
 				// Use instance time for the todo's due/start date
@@ -100,11 +96,29 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 					instanceTodo.StartDate = inst.InstanceTime.Format(time.RFC3339)
 				}
 
-				due = append(due, TodoDueAlarm{
-					Todo:      instanceTodo,
-					Alarm:     a,
-					TriggerAt: triggerAt,
-				})
+				for _, tt := range triggers {
+					if tt.After(now) {
+						continue
+					}
+					if now.Sub(tt) > StaleThreshold {
+						continue
+					}
+
+					triggerKey := tt.UTC().Format(time.RFC3339)
+					_, err = s.q.GetTodoAlarmState(ctx, storage.GetTodoAlarmStateParams{
+						AlarmID:   a.ID,
+						TriggerAt: triggerKey,
+					})
+					if err == nil {
+						continue
+					}
+
+					due = append(due, TodoDueAlarm{
+						Todo:      instanceTodo,
+						Alarm:     a,
+						TriggerAt: tt,
+					})
+				}
 			}
 		}
 	}
