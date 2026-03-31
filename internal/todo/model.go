@@ -31,6 +31,7 @@ type Todo struct {
 	RDates          string
 	RecurrenceID    string
 	Geo             string // "lat;lon" (RFC 5545 GEO format)
+	DtStamp         string // RFC 5545 DTSTAMP; empty = use UpdatedAt
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 

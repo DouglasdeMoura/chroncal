@@ -31,6 +31,7 @@ type Event struct {
 	RecurrenceID   string // RFC 3339 of overridden instance
 	Geo            string // "lat;lon" (RFC 5545 GEO format)
 	DurationValue  string // RFC 5545 DURATION string (e.g. "PT1H"); empty = use DTEND
+	DtStamp        string // RFC 5545 DTSTAMP; empty = use UpdatedAt
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 

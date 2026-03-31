@@ -112,7 +112,15 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 			vevent.Props.Set(p)
 		}
 
-		vevent.Props.SetDateTime(ical.PropDateTimeStamp, e.UpdatedAt.UTC())
+		if e.DtStamp != "" {
+			if ts, err := time.Parse(time.RFC3339, e.DtStamp); err == nil {
+				vevent.Props.SetDateTime(ical.PropDateTimeStamp, ts.UTC())
+			} else {
+				vevent.Props.SetDateTime(ical.PropDateTimeStamp, e.UpdatedAt.UTC())
+			}
+		} else {
+			vevent.Props.SetDateTime(ical.PropDateTimeStamp, e.UpdatedAt.UTC())
+		}
 		vevent.Props.SetDateTime(ical.PropCreated, e.CreatedAt.UTC())
 		vevent.Props.SetDateTime(ical.PropLastModified, e.UpdatedAt.UTC())
 
@@ -402,7 +410,15 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 			vtodo.Props.Set(p)
 		}
 
-		vtodo.Props.SetDateTime(ical.PropDateTimeStamp, t.UpdatedAt.UTC())
+		if t.DtStamp != "" {
+			if ts, err := time.Parse(time.RFC3339, t.DtStamp); err == nil {
+				vtodo.Props.SetDateTime(ical.PropDateTimeStamp, ts.UTC())
+			} else {
+				vtodo.Props.SetDateTime(ical.PropDateTimeStamp, t.UpdatedAt.UTC())
+			}
+		} else {
+			vtodo.Props.SetDateTime(ical.PropDateTimeStamp, t.UpdatedAt.UTC())
+		}
 		vtodo.Props.SetDateTime(ical.PropCreated, t.CreatedAt.UTC())
 		vtodo.Props.SetDateTime(ical.PropLastModified, t.UpdatedAt.UTC())
 

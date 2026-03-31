@@ -185,6 +185,7 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time) ([
 			RecurrenceID:   row.RecurrenceID,
 			Geo:            row.Geo,
 			DurationValue:  row.Duration,
+			DtStamp:        row.Dtstamp,
 			CreatedAt:      parseTime(row.CreatedAt),
 			UpdatedAt:      parseTime(row.UpdatedAt),
 		}
@@ -237,6 +238,7 @@ func eventFromRow(row storage.Event) event.Event {
 		RecurrenceID:   row.RecurrenceID,
 		Geo:            row.Geo,
 		DurationValue:  row.Duration,
+		DtStamp:        row.Dtstamp,
 		CreatedAt:      parseTime(row.CreatedAt),
 		UpdatedAt:      parseTime(row.UpdatedAt),
 	}
@@ -467,6 +469,7 @@ func todoFromRow(row storage.Todo) todo.Todo {
 		RDates:          row.Rdates,
 		RecurrenceID:    row.RecurrenceID,
 		Geo:             row.Geo,
+		DtStamp:         row.Dtstamp,
 		CreatedAt:       parseTime(row.CreatedAt),
 		UpdatedAt:       parseTime(row.UpdatedAt),
 	}

@@ -10,7 +10,7 @@ import (
 )
 
 const searchEvents = `-- name: SearchEvents :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration FROM events
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp FROM events
 WHERE (
     lower_unicode(title) LIKE '%' || lower_unicode(?1) || '%' OR
     lower_unicode(description) LIKE '%' || lower_unicode(?1) || '%' OR
@@ -72,6 +72,7 @@ func (q *Queries) SearchEvents(ctx context.Context, arg SearchEventsParams) ([]E
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Duration,
+			&i.Dtstamp,
 		); err != nil {
 			return nil, err
 		}
@@ -87,7 +88,7 @@ func (q *Queries) SearchEvents(ctx context.Context, arg SearchEventsParams) ([]E
 }
 
 const searchTodos = `-- name: SearchTodos :many
-SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, geo, created_at, updated_at FROM todos
+SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, geo, created_at, updated_at, dtstamp FROM todos
 WHERE (
     lower_unicode(summary) LIKE '%' || lower_unicode(?1) || '%' OR
     lower_unicode(description) LIKE '%' || lower_unicode(?1) || '%' OR
@@ -146,6 +147,7 @@ func (q *Queries) SearchTodos(ctx context.Context, arg SearchTodosParams) ([]Tod
 			&i.Geo,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Dtstamp,
 		); err != nil {
 			return nil, err
 		}

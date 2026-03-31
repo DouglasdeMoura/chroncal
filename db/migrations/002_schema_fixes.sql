@@ -13,7 +13,15 @@ CREATE INDEX idx_todo_alarm_state_snoozed ON todo_alarm_state(snoozed_to) WHERE 
 -- the original RFC 5545 DURATION string (e.g. "PT1H") so it can be re-emitted.
 ALTER TABLE events ADD COLUMN duration TEXT NOT NULL DEFAULT '';
 
+-- DTSTAMP column for RFC 5545 DTSTAMP/LAST-MODIFIED distinction.
+-- DTSTAMP reflects when the iCalendar object was created/sent; LAST-MODIFIED
+-- reflects when the component was last changed. Previously both mapped to updated_at.
+ALTER TABLE events ADD COLUMN dtstamp TEXT NOT NULL DEFAULT '';
+ALTER TABLE todos ADD COLUMN dtstamp TEXT NOT NULL DEFAULT '';
+
 -- +goose Down
+ALTER TABLE todos DROP COLUMN dtstamp;
+ALTER TABLE events DROP COLUMN dtstamp;
 ALTER TABLE events DROP COLUMN duration;
 DROP INDEX IF EXISTS idx_alarm_state_trigger_at;
 DROP INDEX IF EXISTS idx_todo_alarm_state_trigger_at;

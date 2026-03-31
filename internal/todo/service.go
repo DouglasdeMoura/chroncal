@@ -58,6 +58,7 @@ type CreateParams struct {
 	RDates          string
 	RecurrenceID    string
 	Geo             string
+	DtStamp         string
 }
 
 type UpdateParams struct {
@@ -80,6 +81,7 @@ type UpdateParams struct {
 	ExDates         string
 	RDates          string
 	Geo             string
+	DtStamp         string
 }
 
 type UpsertParams struct {
@@ -105,6 +107,7 @@ type UpsertParams struct {
 	RDates          string
 	RecurrenceID    string
 	Geo             string
+	DtStamp         string
 }
 
 func (p *CreateParams) applyDefaults() {
@@ -278,6 +281,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Todo, error) {
 		Rdates:          p.RDates,
 		RecurrenceID:    p.RecurrenceID,
 		Geo:             p.Geo,
+		Dtstamp:         p.DtStamp,
 	})
 	if err != nil {
 		return Todo{}, err
@@ -321,6 +325,7 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, e
 		Exdates:         p.ExDates,
 		Rdates:          p.RDates,
 		Geo:             p.Geo,
+		Dtstamp:         p.DtStamp,
 	})
 	if err != nil {
 		return Todo{}, err
@@ -365,6 +370,7 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Todo, error)
 		Rdates:          p.RDates,
 		RecurrenceID:    p.RecurrenceID,
 		Geo:             p.Geo,
+		Dtstamp:         p.DtStamp,
 	})
 	if err != nil {
 		return Todo{}, err
@@ -775,6 +781,7 @@ func fromStorage(r storage.Todo) Todo {
 		RDates:          r.Rdates,
 		RecurrenceID:    r.RecurrenceID,
 		Geo:             r.Geo,
+		DtStamp:         r.Dtstamp,
 		CreatedAt:       parseTime(r.CreatedAt),
 		UpdatedAt:       parseTime(r.UpdatedAt),
 	}

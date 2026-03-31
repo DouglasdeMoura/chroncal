@@ -63,6 +63,7 @@ type Event struct {
 	CreatedAt      string
 	UpdatedAt      string
 	Duration       string
+	Dtstamp        string
 }
 
 type EventAlarm struct {
@@ -179,6 +180,7 @@ type Todo struct {
 	Geo             string
 	CreatedAt       string
 	UpdatedAt       string
+	Dtstamp         string
 }
 
 type TodoAlarm struct {

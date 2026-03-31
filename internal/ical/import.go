@@ -185,6 +185,13 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, []string, error) {
 		}
 	}
 
+	var dtstamp string
+	if prop := props.Get(ical.PropDateTimeStamp); prop != nil {
+		if t, err := prop.DateTime(nil); err == nil && !t.IsZero() {
+			dtstamp = t.UTC().Format(time.RFC3339)
+		}
+	}
+
 	// VALARM children
 	var alarms []model.Alarm
 	var alarmWarnings []string
@@ -233,6 +240,7 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, []string, error) {
 		RDates:          rdates,
 		RecurrenceID:    recurrenceID,
 		Geo:             geo,
+		DtStamp:         dtstamp,
 		Alarms:          alarms,
 		Attendees:       attendees,
 		Attachments:     attachments,
@@ -344,6 +352,13 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 		}
 	}
 
+	var dtstamp string
+	if prop := ve.Props.Get(ical.PropDateTimeStamp); prop != nil {
+		if t, err := prop.DateTime(nil); err == nil && !t.IsZero() {
+			dtstamp = t.UTC().Format(time.RFC3339)
+		}
+	}
+
 	// VALARM children
 	var alarms []model.Alarm
 	var alarmWarnings []string
@@ -392,6 +407,7 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 		RecurrenceID:   recurrenceID,
 		Geo:            geo,
 		DurationValue:  durationValue,
+		DtStamp:        dtstamp,
 		Alarms:         alarms,
 		Attendees:      attendees,
 		Attachments:    attachments,
