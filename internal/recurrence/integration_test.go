@@ -397,6 +397,105 @@ func TestListExpandedByDateRange_CancelledOverride(t *testing.T) {
 	}
 }
 
+func TestListFilteredTodos_DefaultIncludesRecurring(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	todoSvc := todo.NewService(db, q)
+	recurSvc := NewService(db, q)
+	ctx := context.Background()
+
+	// Recurring weekly todo.
+	_, err := todoSvc.Create(ctx, todo.CreateParams{
+		CalendarID:     1,
+		Summary:        "Weekly Review",
+		DueDate:        "2020-01-06",
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
+	})
+	if err != nil {
+		t.Fatalf("create recurring: %v", err)
+	}
+
+	// Non-recurring todo.
+	_, err = todoSvc.Create(ctx, todo.CreateParams{
+		CalendarID: 1,
+		Summary:    "One-off Task",
+		DueDate:    "2026-04-01",
+	})
+	if err != nil {
+		t.Fatalf("create one-off: %v", err)
+	}
+
+	// Default list with no date range must include recurring masters.
+	todos, err := recurSvc.ListFilteredTodos(ctx, TodoListParams{})
+	if err != nil {
+		t.Fatalf("ListFilteredTodos: %v", err)
+	}
+
+	if len(todos) != 2 {
+		for i, td := range todos {
+			t.Logf("  todos[%d]: %s due=%s rrule=%s", i, td.Summary, td.DueDate, td.RecurrenceRule)
+		}
+		t.Fatalf("got %d todos, want 2", len(todos))
+	}
+
+	// Verify both are present.
+	found := map[string]bool{}
+	for _, td := range todos {
+		found[td.Summary] = true
+	}
+	if !found["Weekly Review"] {
+		t.Error("missing recurring todo 'Weekly Review'")
+	}
+	if !found["One-off Task"] {
+		t.Error("missing one-off todo 'One-off Task'")
+	}
+}
+
+func TestListFilteredTodos_FiltersApplyToRecurring(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	todoSvc := todo.NewService(db, q)
+	recurSvc := NewService(db, q)
+	ctx := context.Background()
+
+	// Recurring todo with NEEDS-ACTION status.
+	_, err := todoSvc.Create(ctx, todo.CreateParams{
+		CalendarID:     1,
+		Summary:        "Active Recurring",
+		DueDate:        "2020-01-06",
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Recurring todo that is completed.
+	completed, err := todoSvc.Create(ctx, todo.CreateParams{
+		CalendarID:     1,
+		Summary:        "Done Recurring",
+		DueDate:        "2020-01-06",
+		RecurrenceRule: "FREQ=DAILY",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	todoSvc.Complete(ctx, completed.ID)
+
+	// Filter by status NEEDS-ACTION — only active recurring should appear.
+	todos, err := recurSvc.ListFilteredTodos(ctx, TodoListParams{Status: "NEEDS-ACTION"})
+	if err != nil {
+		t.Fatalf("ListFilteredTodos: %v", err)
+	}
+
+	if len(todos) != 1 {
+		for i, td := range todos {
+			t.Logf("  todos[%d]: %s status=%s", i, td.Summary, td.Status)
+		}
+		t.Fatalf("got %d todos, want 1", len(todos))
+	}
+	if todos[0].Summary != "Active Recurring" {
+		t.Errorf("Summary = %q, want %q", todos[0].Summary, "Active Recurring")
+	}
+}
+
 func TestListExpandedTodosByDueDateRange(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	todoSvc := todo.NewService(db, q)

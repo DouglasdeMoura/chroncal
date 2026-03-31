@@ -610,16 +610,20 @@ func (s *Service) ListFilteredTodos(ctx context.Context, p TodoListParams) ([]to
 		result = append(result, todoFromRow(row))
 	}
 
+	recurringRows, err := s.q.ListRecurringTodosFiltered(ctx, storage.ListRecurringTodosFilteredParams{
+		CalendarID:    p.CalendarID,
+		FilterStatus:  p.Status,
+		HideCompleted: hideCompleted,
+	})
+	if err != nil {
+		return nil, err
+	}
 	if hasRange {
-		recurringRows, err := s.q.ListRecurringTodosFiltered(ctx, storage.ListRecurringTodosFilteredParams{
-			CalendarID:    p.CalendarID,
-			FilterStatus:  p.Status,
-			HideCompleted: hideCompleted,
-		})
-		if err != nil {
-			return nil, err
-		}
 		result = append(result, expandRecurringTodoRows(recurringRows, p.From, p.To)...)
+	} else {
+		for _, row := range recurringRows {
+			result = append(result, todoFromRow(row))
+		}
 	}
 
 	sort.Slice(result, func(i, j int) bool {
