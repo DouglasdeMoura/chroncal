@@ -59,6 +59,7 @@ type CreateParams struct {
 	RDates         string
 	RecurrenceID   string
 	Geo            string
+	DurationValue  string
 }
 
 type UpdateParams struct {
@@ -80,6 +81,7 @@ type UpdateParams struct {
 	ExDates        string
 	RDates         string
 	Geo            string
+	DurationValue  string
 }
 
 type UpsertParams struct {
@@ -104,6 +106,7 @@ type UpsertParams struct {
 	RDates         string
 	RecurrenceID   string
 	Geo            string
+	DurationValue  string
 }
 
 func (p *CreateParams) applyDefaults() {
@@ -275,6 +278,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
 		Rdates:         p.RDates,
 		RecurrenceID:   p.RecurrenceID,
 		Geo:            p.Geo,
+		Duration:       p.DurationValue,
 	})
 	if err != nil {
 		return Event{}, err
@@ -321,6 +325,7 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, 
 		Exdates:        p.ExDates,
 		Rdates:         p.RDates,
 		Geo:            p.Geo,
+		Duration:       p.DurationValue,
 	})
 	if err != nil {
 		return Event{}, err
@@ -356,6 +361,7 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error
 		Rdates:         p.RDates,
 		RecurrenceID:   p.RecurrenceID,
 		Geo:            p.Geo,
+		Duration:       p.DurationValue,
 	})
 	if err != nil {
 		return Event{}, err
@@ -801,6 +807,7 @@ func fromStorage(r storage.Event) Event {
 		RDates:         r.Rdates,
 		RecurrenceID:   r.RecurrenceID,
 		Geo:            r.Geo,
+		DurationValue:  r.Duration,
 		CreatedAt:      parseTime(r.CreatedAt),
 		UpdatedAt:      parseTime(r.UpdatedAt),
 	}

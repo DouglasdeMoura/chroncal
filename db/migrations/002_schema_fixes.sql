@@ -8,7 +8,13 @@ CREATE INDEX idx_todo_alarm_state_trigger_at ON todo_alarm_state(trigger_at);
 CREATE INDEX idx_alarm_state_snoozed ON alarm_state(snoozed_to) WHERE snoozed_to IS NOT NULL;
 CREATE INDEX idx_todo_alarm_state_snoozed ON todo_alarm_state(snoozed_to) WHERE snoozed_to IS NOT NULL;
 
+-- Event duration column for round-trip fidelity.
+-- Events with DURATION are converted to DTEND on import; this column preserves
+-- the original RFC 5545 DURATION string (e.g. "PT1H") so it can be re-emitted.
+ALTER TABLE events ADD COLUMN duration TEXT NOT NULL DEFAULT '';
+
 -- +goose Down
+ALTER TABLE events DROP COLUMN duration;
 DROP INDEX IF EXISTS idx_alarm_state_trigger_at;
 DROP INDEX IF EXISTS idx_todo_alarm_state_trigger_at;
 DROP INDEX IF EXISTS idx_alarm_state_snoozed;

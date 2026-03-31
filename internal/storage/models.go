@@ -62,6 +62,7 @@ type Event struct {
 	Geo            string
 	CreatedAt      string
 	UpdatedAt      string
+	Duration       string
 }
 
 type EventAlarm struct {

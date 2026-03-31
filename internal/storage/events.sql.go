@@ -14,9 +14,9 @@ INSERT INTO events (
     uid, calendar_id, title, description, location,
     start_time, end_time, all_day, recurrence_rule,
     timezone, status, transp, sequence, priority,
-    class, url, exdates, rdates, recurrence_id, geo
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at
+    class, url, exdates, rdates, recurrence_id, geo, duration
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration
 `
 
 type CreateEventParams struct {
@@ -40,6 +40,7 @@ type CreateEventParams struct {
 	Rdates         string
 	RecurrenceID   string
 	Geo            string
+	Duration       string
 }
 
 func (q *Queries) CreateEvent(ctx context.Context, arg CreateEventParams) (Event, error) {
@@ -64,6 +65,7 @@ func (q *Queries) CreateEvent(ctx context.Context, arg CreateEventParams) (Event
 		arg.Rdates,
 		arg.RecurrenceID,
 		arg.Geo,
+		arg.Duration,
 	)
 	var i Event
 	err := row.Scan(
@@ -90,6 +92,7 @@ func (q *Queries) CreateEvent(ctx context.Context, arg CreateEventParams) (Event
 		&i.Geo,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Duration,
 	)
 	return i, err
 }
@@ -104,7 +107,7 @@ func (q *Queries) DeleteEvent(ctx context.Context, id int64) error {
 }
 
 const getEvent = `-- name: GetEvent :one
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at FROM events WHERE id = ?
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration FROM events WHERE id = ?
 `
 
 func (q *Queries) GetEvent(ctx context.Context, id int64) (Event, error) {
@@ -134,12 +137,13 @@ func (q *Queries) GetEvent(ctx context.Context, id int64) (Event, error) {
 		&i.Geo,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Duration,
 	)
 	return i, err
 }
 
 const getEventByUID = `-- name: GetEventByUID :one
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at FROM events WHERE uid = ? AND recurrence_id = ''
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration FROM events WHERE uid = ? AND recurrence_id = ''
 `
 
 func (q *Queries) GetEventByUID(ctx context.Context, uid string) (Event, error) {
@@ -169,12 +173,13 @@ func (q *Queries) GetEventByUID(ctx context.Context, uid string) (Event, error) 
 		&i.Geo,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Duration,
 	)
 	return i, err
 }
 
 const getEventByUIDAndRecurrenceID = `-- name: GetEventByUIDAndRecurrenceID :one
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at FROM events WHERE uid = ? AND recurrence_id = ?
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration FROM events WHERE uid = ? AND recurrence_id = ?
 `
 
 type GetEventByUIDAndRecurrenceIDParams struct {
@@ -209,12 +214,13 @@ func (q *Queries) GetEventByUIDAndRecurrenceID(ctx context.Context, arg GetEvent
 		&i.Geo,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Duration,
 	)
 	return i, err
 }
 
 const listAllEvents = `-- name: ListAllEvents :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at FROM events
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration FROM events
 `
 
 func (q *Queries) ListAllEvents(ctx context.Context) ([]Event, error) {
@@ -250,6 +256,7 @@ func (q *Queries) ListAllEvents(ctx context.Context) ([]Event, error) {
 			&i.Geo,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Duration,
 		); err != nil {
 			return nil, err
 		}
@@ -265,7 +272,7 @@ func (q *Queries) ListAllEvents(ctx context.Context) ([]Event, error) {
 }
 
 const listEventsByCalendarAndDateRange = `-- name: ListEventsByCalendarAndDateRange :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at FROM events WHERE calendar_id = ? AND start_time >= ? AND start_time < ? ORDER BY start_time
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration FROM events WHERE calendar_id = ? AND start_time >= ? AND start_time < ? ORDER BY start_time
 `
 
 type ListEventsByCalendarAndDateRangeParams struct {
@@ -307,6 +314,7 @@ func (q *Queries) ListEventsByCalendarAndDateRange(ctx context.Context, arg List
 			&i.Geo,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Duration,
 		); err != nil {
 			return nil, err
 		}
@@ -322,7 +330,7 @@ func (q *Queries) ListEventsByCalendarAndDateRange(ctx context.Context, arg List
 }
 
 const listEventsByDateRange = `-- name: ListEventsByDateRange :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at FROM events WHERE start_time >= ? AND start_time < ? ORDER BY start_time
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration FROM events WHERE start_time >= ? AND start_time < ? ORDER BY start_time
 `
 
 type ListEventsByDateRangeParams struct {
@@ -363,6 +371,7 @@ func (q *Queries) ListEventsByDateRange(ctx context.Context, arg ListEventsByDat
 			&i.Geo,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Duration,
 		); err != nil {
 			return nil, err
 		}
@@ -378,7 +387,7 @@ func (q *Queries) ListEventsByDateRange(ctx context.Context, arg ListEventsByDat
 }
 
 const listEventsByStatusAndDateRange = `-- name: ListEventsByStatusAndDateRange :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at FROM events WHERE status = ? AND start_time >= ? AND start_time < ? ORDER BY start_time
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration FROM events WHERE status = ? AND start_time >= ? AND start_time < ? ORDER BY start_time
 `
 
 type ListEventsByStatusAndDateRangeParams struct {
@@ -420,6 +429,7 @@ func (q *Queries) ListEventsByStatusAndDateRange(ctx context.Context, arg ListEv
 			&i.Geo,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Duration,
 		); err != nil {
 			return nil, err
 		}
@@ -435,7 +445,7 @@ func (q *Queries) ListEventsByStatusAndDateRange(ctx context.Context, arg ListEv
 }
 
 const listEventsFiltered = `-- name: ListEventsFiltered :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at FROM events
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration FROM events
 WHERE recurrence_rule = '' AND recurrence_id = ''
 AND (?1 = 0 OR calendar_id = ?1)
 AND (?2 = '' OR status = ?2)
@@ -492,6 +502,7 @@ func (q *Queries) ListEventsFiltered(ctx context.Context, arg ListEventsFiltered
 			&i.Geo,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Duration,
 		); err != nil {
 			return nil, err
 		}
@@ -507,7 +518,7 @@ func (q *Queries) ListEventsFiltered(ctx context.Context, arg ListEventsFiltered
 }
 
 const listEventsForExport = `-- name: ListEventsForExport :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at FROM events
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration FROM events
 WHERE (?1 = 0 OR calendar_id = ?1)
 AND (?2 = '' OR start_time >= ?2)
 AND (?3 = '' OR start_time < ?3)
@@ -563,6 +574,7 @@ func (q *Queries) ListEventsForExport(ctx context.Context, arg ListEventsForExpo
 			&i.Geo,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Duration,
 		); err != nil {
 			return nil, err
 		}
@@ -578,7 +590,7 @@ func (q *Queries) ListEventsForExport(ctx context.Context, arg ListEventsForExpo
 }
 
 const listOverridesByUID = `-- name: ListOverridesByUID :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at FROM events WHERE uid = ? AND recurrence_id != '' ORDER BY recurrence_id
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration FROM events WHERE uid = ? AND recurrence_id != '' ORDER BY recurrence_id
 `
 
 func (q *Queries) ListOverridesByUID(ctx context.Context, uid string) ([]Event, error) {
@@ -614,6 +626,7 @@ func (q *Queries) ListOverridesByUID(ctx context.Context, uid string) ([]Event, 
 			&i.Geo,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Duration,
 		); err != nil {
 			return nil, err
 		}
@@ -629,7 +642,7 @@ func (q *Queries) ListOverridesByUID(ctx context.Context, uid string) ([]Event, 
 }
 
 const listRecurringEvents = `-- name: ListRecurringEvents :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at FROM events WHERE recurrence_rule != '' AND recurrence_id = ''
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration FROM events WHERE recurrence_rule != '' AND recurrence_id = ''
 `
 
 func (q *Queries) ListRecurringEvents(ctx context.Context) ([]Event, error) {
@@ -665,6 +678,7 @@ func (q *Queries) ListRecurringEvents(ctx context.Context) ([]Event, error) {
 			&i.Geo,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Duration,
 		); err != nil {
 			return nil, err
 		}
@@ -680,7 +694,7 @@ func (q *Queries) ListRecurringEvents(ctx context.Context) ([]Event, error) {
 }
 
 const listRecurringEventsByCalendar = `-- name: ListRecurringEventsByCalendar :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at FROM events WHERE recurrence_rule != '' AND recurrence_id = '' AND calendar_id = ?
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration FROM events WHERE recurrence_rule != '' AND recurrence_id = '' AND calendar_id = ?
 `
 
 func (q *Queries) ListRecurringEventsByCalendar(ctx context.Context, calendarID int64) ([]Event, error) {
@@ -716,6 +730,7 @@ func (q *Queries) ListRecurringEventsByCalendar(ctx context.Context, calendarID 
 			&i.Geo,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Duration,
 		); err != nil {
 			return nil, err
 		}
@@ -731,7 +746,7 @@ func (q *Queries) ListRecurringEventsByCalendar(ctx context.Context, calendarID 
 }
 
 const listRecurringEventsByStatus = `-- name: ListRecurringEventsByStatus :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at FROM events WHERE recurrence_rule != '' AND recurrence_id = '' AND status = ?
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration FROM events WHERE recurrence_rule != '' AND recurrence_id = '' AND status = ?
 `
 
 func (q *Queries) ListRecurringEventsByStatus(ctx context.Context, status string) ([]Event, error) {
@@ -767,6 +782,7 @@ func (q *Queries) ListRecurringEventsByStatus(ctx context.Context, status string
 			&i.Geo,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Duration,
 		); err != nil {
 			return nil, err
 		}
@@ -782,7 +798,7 @@ func (q *Queries) ListRecurringEventsByStatus(ctx context.Context, status string
 }
 
 const listRecurringEventsFiltered = `-- name: ListRecurringEventsFiltered :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at FROM events
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration FROM events
 WHERE recurrence_rule != '' AND recurrence_id = ''
 AND (?1 = 0 OR calendar_id = ?1)
 AND (?2 = '' OR status = ?2)
@@ -829,6 +845,7 @@ func (q *Queries) ListRecurringEventsFiltered(ctx context.Context, arg ListRecur
 			&i.Geo,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Duration,
 		); err != nil {
 			return nil, err
 		}
@@ -852,8 +869,9 @@ UPDATE events SET
     sequence = sequence + 1, priority = ?,
     class = ?, url = ?,
     exdates = ?, rdates = ?, geo = ?,
+    duration = ?,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE id = ? RETURNING id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at
+WHERE id = ? RETURNING id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration
 `
 
 type UpdateEventParams struct {
@@ -874,6 +892,7 @@ type UpdateEventParams struct {
 	Exdates        string
 	Rdates         string
 	Geo            string
+	Duration       string
 	ID             int64
 }
 
@@ -896,6 +915,7 @@ func (q *Queries) UpdateEvent(ctx context.Context, arg UpdateEventParams) (Event
 		arg.Exdates,
 		arg.Rdates,
 		arg.Geo,
+		arg.Duration,
 		arg.ID,
 	)
 	var i Event
@@ -923,6 +943,7 @@ func (q *Queries) UpdateEvent(ctx context.Context, arg UpdateEventParams) (Event
 		&i.Geo,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Duration,
 	)
 	return i, err
 }
@@ -932,8 +953,8 @@ INSERT INTO events (
     uid, calendar_id, title, description, location,
     start_time, end_time, all_day, recurrence_rule,
     timezone, status, transp, sequence, priority,
-    class, url, exdates, rdates, recurrence_id, geo
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    class, url, exdates, rdates, recurrence_id, geo, duration
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(uid, recurrence_id) DO UPDATE SET
     title = excluded.title, description = excluded.description,
     location = excluded.location, start_time = excluded.start_time,
@@ -946,8 +967,9 @@ ON CONFLICT(uid, recurrence_id) DO UPDATE SET
     url = excluded.url,
     exdates = excluded.exdates, rdates = excluded.rdates,
     geo = excluded.geo,
+    duration = excluded.duration,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-RETURNING id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at
+RETURNING id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration
 `
 
 type UpsertEventByUIDParams struct {
@@ -971,6 +993,7 @@ type UpsertEventByUIDParams struct {
 	Rdates         string
 	RecurrenceID   string
 	Geo            string
+	Duration       string
 }
 
 func (q *Queries) UpsertEventByUID(ctx context.Context, arg UpsertEventByUIDParams) (Event, error) {
@@ -995,6 +1018,7 @@ func (q *Queries) UpsertEventByUID(ctx context.Context, arg UpsertEventByUIDPara
 		arg.Rdates,
 		arg.RecurrenceID,
 		arg.Geo,
+		arg.Duration,
 	)
 	var i Event
 	err := row.Scan(
@@ -1021,6 +1045,7 @@ func (q *Queries) UpsertEventByUID(ctx context.Context, arg UpsertEventByUIDPara
 		&i.Geo,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Duration,
 	)
 	return i, err
 }

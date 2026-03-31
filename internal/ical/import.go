@@ -273,11 +273,13 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 	}
 
 	var endTime time.Time
+	var durationValue string
 	if prop := ve.Props.Get(ical.PropDateTimeEnd); prop != nil {
 		endTime, _ = ve.Props.DateTime(ical.PropDateTimeEnd, nil)
 	}
 	if endTime.IsZero() {
 		if prop := ve.Props.Get(ical.PropDuration); prop != nil {
+			durationValue = prop.Value
 			endTime = addDuration(startTime, prop.Value)
 		} else {
 			endTime = startTime.Add(time.Hour)
@@ -389,6 +391,7 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 		RDates:         rdates,
 		RecurrenceID:   recurrenceID,
 		Geo:            geo,
+		DurationValue:  durationValue,
 		Alarms:         alarms,
 		Attendees:      attendees,
 		Attachments:    attachments,

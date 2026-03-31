@@ -5,13 +5,13 @@ import (
 	"time"
 )
 
-func TestEvent_Duration(t *testing.T) {
+func TestEvent_Span(t *testing.T) {
 	t.Parallel()
 	e := Event{
 		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
 		EndTime:   time.Date(2026, 4, 1, 15, 30, 0, 0, time.UTC),
 	}
-	got := e.Duration()
+	got := e.Span()
 	want := 90 * time.Minute
 	if got != want {
 		t.Errorf("Duration() = %v, want %v", got, want)

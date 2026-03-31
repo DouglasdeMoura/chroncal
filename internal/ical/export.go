@@ -203,20 +203,26 @@ func setPropFloating(vevent *ical.Event, propName string, t time.Time) {
 }
 
 func setEventTimes(vevent *ical.Event, e event.Event) {
+	// RFC 5545 forbids both DTEND and DURATION on the same VEVENT.
+	// When DurationValue is set (imported from .ics), emit DURATION instead of DTEND.
+	useDuration := e.DurationValue != ""
+
 	if e.AllDay {
-		// Use the time as-is (not UTC) so SetDate extracts the correct
-		// local date. Converting to UTC first shifts the date for
-		// timezones with positive UTC offsets (e.g. UTC+12).
 		vevent.Props.SetDate(ical.PropDateTimeStart, e.StartTime)
-		vevent.Props.SetDate(ical.PropDateTimeEnd, e.EndTime)
+		if useDuration {
+			vevent.Props.SetText(ical.PropDuration, e.DurationValue)
+		} else {
+			vevent.Props.SetDate(ical.PropDateTimeEnd, e.EndTime)
+		}
 	} else if e.Timezone == "FLOATING" {
-		// Floating time: emit without TZID and without Z suffix.
-		// Use local time representation (the stored UTC value displayed
-		// in the user's local timezone).
 		local := e.StartTime.Local()
 		setPropFloating(vevent, ical.PropDateTimeStart, local)
-		local = e.EndTime.Local()
-		setPropFloating(vevent, ical.PropDateTimeEnd, local)
+		if useDuration {
+			vevent.Props.SetText(ical.PropDuration, e.DurationValue)
+		} else {
+			local = e.EndTime.Local()
+			setPropFloating(vevent, ical.PropDateTimeEnd, local)
+		}
 	} else if e.Timezone != "" {
 		loc, err := time.LoadLocation(e.Timezone)
 		if err == nil {
@@ -224,18 +230,29 @@ func setEventTimes(vevent *ical.Event, e event.Event) {
 			if prop := vevent.Props.Get(ical.PropDateTimeStart); prop != nil {
 				prop.Params.Set(ical.ParamTimezoneID, e.Timezone)
 			}
-			vevent.Props.SetDateTime(ical.PropDateTimeEnd, e.EndTime.In(loc))
-			if prop := vevent.Props.Get(ical.PropDateTimeEnd); prop != nil {
-				prop.Params.Set(ical.ParamTimezoneID, e.Timezone)
+			if useDuration {
+				vevent.Props.SetText(ical.PropDuration, e.DurationValue)
+			} else {
+				vevent.Props.SetDateTime(ical.PropDateTimeEnd, e.EndTime.In(loc))
+				if prop := vevent.Props.Get(ical.PropDateTimeEnd); prop != nil {
+					prop.Params.Set(ical.ParamTimezoneID, e.Timezone)
+				}
 			}
 		} else {
-			// Fallback to UTC
 			vevent.Props.SetDateTime(ical.PropDateTimeStart, e.StartTime.UTC())
-			vevent.Props.SetDateTime(ical.PropDateTimeEnd, e.EndTime.UTC())
+			if useDuration {
+				vevent.Props.SetText(ical.PropDuration, e.DurationValue)
+			} else {
+				vevent.Props.SetDateTime(ical.PropDateTimeEnd, e.EndTime.UTC())
+			}
 		}
 	} else {
 		vevent.Props.SetDateTime(ical.PropDateTimeStart, e.StartTime.UTC())
-		vevent.Props.SetDateTime(ical.PropDateTimeEnd, e.EndTime.UTC())
+		if useDuration {
+			vevent.Props.SetText(ical.PropDuration, e.DurationValue)
+		} else {
+			vevent.Props.SetDateTime(ical.PropDateTimeEnd, e.EndTime.UTC())
+		}
 	}
 }
 

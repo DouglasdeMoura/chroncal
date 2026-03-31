@@ -10,7 +10,7 @@ import (
 )
 
 const searchEvents = `-- name: SearchEvents :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at FROM events
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration FROM events
 WHERE (
     lower_unicode(title) LIKE '%' || lower_unicode(?1) || '%' OR
     lower_unicode(description) LIKE '%' || lower_unicode(?1) || '%' OR
@@ -71,6 +71,7 @@ func (q *Queries) SearchEvents(ctx context.Context, arg SearchEventsParams) ([]E
 			&i.Geo,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Duration,
 		); err != nil {
 			return nil, err
 		}

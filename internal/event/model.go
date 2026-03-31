@@ -30,6 +30,7 @@ type Event struct {
 	RDates         string // comma-separated RFC 3339
 	RecurrenceID   string // RFC 3339 of overridden instance
 	Geo            string // "lat;lon" (RFC 5545 GEO format)
+	DurationValue  string // RFC 5545 DURATION string (e.g. "PT1H"); empty = use DTEND
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 
@@ -43,7 +44,8 @@ type Event struct {
 	Relations   []model.Relation
 }
 
-func (e Event) Duration() time.Duration {
+// Span returns the computed time.Duration between StartTime and EndTime.
+func (e Event) Span() time.Duration {
 	return e.EndTime.Sub(e.StartTime)
 }
 

@@ -106,7 +106,7 @@ func (s *Service) checkEventAlarms(ctx context.Context, now time.Time) ([]DueAla
 			// Create modified event with instance time for notification
 			instanceEvent := expEvt.Event
 			instanceEvent.StartTime = expEvt.InstanceTime
-			instanceEvent.EndTime = expEvt.InstanceTime.Add(expEvt.Event.Duration())
+			instanceEvent.EndTime = expEvt.InstanceTime.Add(expEvt.Event.Span())
 
 			for _, t := range triggers {
 				// Must be in the past (due) but not stale
@@ -167,7 +167,7 @@ func computeTriggerTimeForInstance(expEvt recurrence.ExpandedEvent, alarm model.
 	if duration.Validate(trigger) == nil {
 		anchor := expEvt.InstanceTime
 		if alarm.Related == "END" {
-			anchor = expEvt.InstanceTime.Add(expEvt.Event.Duration())
+			anchor = expEvt.InstanceTime.Add(expEvt.Event.Span())
 		}
 		// Convert to event's named timezone so that day-level arithmetic
 		// (P1D, P1W) handles DST transitions correctly.
