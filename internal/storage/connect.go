@@ -3,15 +3,30 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"io/fs"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/pressly/goose/v3"
-	_ "modernc.org/sqlite"
+	sqlite "modernc.org/sqlite"
 
 	"github.com/douglasdemoura/tcal/db"
 )
+
+func init() {
+	sqlite.MustRegisterFunction("lower_unicode", &sqlite.FunctionImpl{
+		NArgs:         1,
+		Deterministic: true,
+		Scalar: func(ctx *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+			if s, ok := args[0].(string); ok {
+				return strings.ToLower(s), nil
+			}
+			return args[0], nil
+		},
+	})
+}
 
 func Open(dbPath string) (*sql.DB, *Queries, error) {
 	conn, err := sql.Open("sqlite", dbPath)

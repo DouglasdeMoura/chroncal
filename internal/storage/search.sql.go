@@ -7,16 +7,15 @@ package storage
 
 import (
 	"context"
-	"database/sql"
 )
 
 const searchEvents = `-- name: SearchEvents :many
 SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at FROM events
 WHERE (
-    title LIKE '%' || ?1 || '%' OR
-    description LIKE '%' || ?1 || '%' OR
-    location LIKE '%' || ?1 || '%' OR
-    EXISTS (SELECT 1 FROM event_categories ec WHERE ec.event_id = events.id AND ec.category LIKE '%' || ?1 || '%')
+    lower_unicode(title) LIKE '%' || lower_unicode(?1) || '%' OR
+    lower_unicode(description) LIKE '%' || lower_unicode(?1) || '%' OR
+    lower_unicode(location) LIKE '%' || lower_unicode(?1) || '%' OR
+    EXISTS (SELECT 1 FROM event_categories ec WHERE ec.event_id = events.id AND lower_unicode(ec.category) LIKE '%' || lower_unicode(?1) || '%')
 )
 AND (?2 = 0 OR calendar_id = ?2)
 AND (?3 = '' OR start_time >= ?3)
@@ -26,7 +25,7 @@ ORDER BY start_time ASC
 `
 
 type SearchEventsParams struct {
-	Query        sql.NullString
+	Query        interface{}
 	CalendarID   interface{}
 	FromTime     interface{}
 	ToTime       interface{}
@@ -89,10 +88,10 @@ func (q *Queries) SearchEvents(ctx context.Context, arg SearchEventsParams) ([]E
 const searchTodos = `-- name: SearchTodos :many
 SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, geo, created_at, updated_at FROM todos
 WHERE (
-    summary LIKE '%' || ?1 || '%' OR
-    description LIKE '%' || ?1 || '%' OR
-    location LIKE '%' || ?1 || '%' OR
-    EXISTS (SELECT 1 FROM todo_categories tc WHERE tc.todo_id = todos.id AND tc.category LIKE '%' || ?1 || '%')
+    lower_unicode(summary) LIKE '%' || lower_unicode(?1) || '%' OR
+    lower_unicode(description) LIKE '%' || lower_unicode(?1) || '%' OR
+    lower_unicode(location) LIKE '%' || lower_unicode(?1) || '%' OR
+    EXISTS (SELECT 1 FROM todo_categories tc WHERE tc.todo_id = todos.id AND lower_unicode(tc.category) LIKE '%' || lower_unicode(?1) || '%')
 )
 AND (?2 = 0 OR calendar_id = ?2)
 AND (?3 = '' OR status = ?3)
@@ -101,7 +100,7 @@ ORDER BY due_date ASC, summary ASC
 `
 
 type SearchTodosParams struct {
-	Query           sql.NullString
+	Query           interface{}
 	CalendarID      interface{}
 	FilterStatus    interface{}
 	CompletedFilter interface{}

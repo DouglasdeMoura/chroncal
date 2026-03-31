@@ -60,6 +60,14 @@ func TestService_Search(t *testing.T) {
 		Categories: "work",
 	})
 
+	// Add an event with Unicode characters for case-insensitive search testing.
+	mustCreate(t, svc, ctx, CreateParams{
+		CalendarID: calID,
+		Title:      "Réunion café",
+		StartTime:  time.Date(2026, 4, 4, 14, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 4, 15, 0, 0, 0, time.UTC),
+	})
+
 	tests := []struct {
 		name    string
 		params  SearchParams
@@ -70,6 +78,9 @@ func TestService_Search(t *testing.T) {
 		{"category match", SearchParams{Query: "social"}, 1},
 		{"no results", SearchParams{Query: "nonexistent"}, 0},
 		{"date range filter", SearchParams{Query: "budget", From: "2026-04-02T00:00:00Z"}, 1},
+		{"case insensitive ASCII", SearchParams{Query: "BUDGET"}, 2},
+		{"case insensitive Unicode", SearchParams{Query: "CAFÉ"}, 1},
+		{"case insensitive Unicode lowercase query", SearchParams{Query: "réunion"}, 1},
 	}
 
 	for _, tt := range tests {
