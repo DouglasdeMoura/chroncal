@@ -31,7 +31,7 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 	// Emit VTIMEZONE components for all referenced timezones (RFC 5545 Section 3.6.5).
 	seen := make(map[string]bool)
 	for _, e := range events {
-		if e.Timezone != "" && !seen[e.Timezone] {
+		if e.Timezone != "" && e.Timezone != "FLOATING" && !seen[e.Timezone] {
 			seen[e.Timezone] = true
 			if vtz, err := buildVTimezone(e.Timezone); err == nil {
 				cal.Children = append(cal.Children, vtz)
@@ -194,6 +194,14 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// setPropFloating writes a datetime property without TZID and without Z suffix
+// (RFC 5545 floating time: local time in whatever timezone the viewer is in).
+func setPropFloating(vevent *ical.Event, propName string, t time.Time) {
+	p := &ical.Prop{Name: propName}
+	p.Value = t.Format("20060102T150405")
+	vevent.Props.Set(p)
+}
+
 func setEventTimes(vevent *ical.Event, e event.Event) {
 	if e.AllDay {
 		// Use the time as-is (not UTC) so SetDate extracts the correct
@@ -201,6 +209,14 @@ func setEventTimes(vevent *ical.Event, e event.Event) {
 		// timezones with positive UTC offsets (e.g. UTC+12).
 		vevent.Props.SetDate(ical.PropDateTimeStart, e.StartTime)
 		vevent.Props.SetDate(ical.PropDateTimeEnd, e.EndTime)
+	} else if e.Timezone == "FLOATING" {
+		// Floating time: emit without TZID and without Z suffix.
+		// Use local time representation (the stored UTC value displayed
+		// in the user's local timezone).
+		local := e.StartTime.Local()
+		setPropFloating(vevent, ical.PropDateTimeStart, local)
+		local = e.EndTime.Local()
+		setPropFloating(vevent, ical.PropDateTimeEnd, local)
 	} else if e.Timezone != "" {
 		loc, err := time.LoadLocation(e.Timezone)
 		if err == nil {
@@ -235,7 +251,7 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 	// Emit VTIMEZONE components for all referenced timezones.
 	seen := make(map[string]bool)
 	for _, t := range todos {
-		if t.Timezone != "" && !seen[t.Timezone] {
+		if t.Timezone != "" && t.Timezone != "FLOATING" && !seen[t.Timezone] {
 			seen[t.Timezone] = true
 			if vtz, err := buildVTimezone(t.Timezone); err == nil {
 				cal.Children = append(cal.Children, vtz)
@@ -261,7 +277,11 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 			if d, err := time.Parse("2006-01-02", t.DueDate); err == nil {
 				vtodo.Props.SetDate(ical.PropDue, d)
 			} else if due, err := time.Parse(time.RFC3339, t.DueDate); err == nil {
-				if t.Timezone != "" {
+				if t.Timezone == "FLOATING" {
+					p := &ical.Prop{Name: ical.PropDue}
+					p.Value = due.Local().Format("20060102T150405")
+					vtodo.Props.Set(p)
+				} else if t.Timezone != "" {
 					if loc, lerr := time.LoadLocation(t.Timezone); lerr == nil {
 						vtodo.Props.SetDateTime(ical.PropDue, due.In(loc))
 						if p := vtodo.Props.Get(ical.PropDue); p != nil {
@@ -279,7 +299,11 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 			if d, err := time.Parse("2006-01-02", t.StartDate); err == nil {
 				vtodo.Props.SetDate(ical.PropDateTimeStart, d)
 			} else if start, err := time.Parse(time.RFC3339, t.StartDate); err == nil {
-				if t.Timezone != "" {
+				if t.Timezone == "FLOATING" {
+					p := &ical.Prop{Name: ical.PropDateTimeStart}
+					p.Value = start.Local().Format("20060102T150405")
+					vtodo.Props.Set(p)
+				} else if t.Timezone != "" {
 					if loc, lerr := time.LoadLocation(t.Timezone); lerr == nil {
 						vtodo.Props.SetDateTime(ical.PropDateTimeStart, start.In(loc))
 						if p := vtodo.Props.Get(ical.PropDateTimeStart); p != nil {

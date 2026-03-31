@@ -35,11 +35,15 @@ func ImportFile(r io.Reader) (ImportResult, error) {
 			return result, fmt.Errorf("decode ical: %w", err)
 		}
 
+		// Build timezone map from VTIMEZONE components.
+		tzMap := buildTZMap(cal)
+
 		skipped := make(map[string]int)
 		for _, child := range cal.Children {
 			switch child.Name {
 			case ical.CompEvent:
 				vevent := ical.Event{Component: child}
+				resolveComponentTZIDs(child, tzMap)
 				e, warns, err := eventFromVEvent(vevent)
 				if err != nil {
 					result.Warnings = append(result.Warnings, fmt.Sprintf("VEVENT: %v", err))
@@ -48,6 +52,7 @@ func ImportFile(r io.Reader) (ImportResult, error) {
 				result.Warnings = append(result.Warnings, warns...)
 				result.Events = append(result.Events, e)
 			case ical.CompToDo:
+				resolveComponentTZIDs(child, tzMap)
 				t, warns, err := todoFromVTodo(child)
 				if err != nil {
 					result.Warnings = append(result.Warnings, fmt.Sprintf("VTODO: %v", err))
@@ -142,15 +147,20 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, []string, error) {
 	url := propText(props, ical.PropURL)
 
 	var timezone string
+	var todoFloating bool
 	if prop := props.Get(ical.PropDateTimeStart); prop != nil {
 		if tzid := prop.Params.Get(ical.ParamTimezoneID); tzid != "" {
 			timezone = tzid
+		} else if len(prop.Value) > 8 && !strings.HasSuffix(prop.Value, "Z") {
+			todoFloating = true
 		}
 	}
-	if timezone == "" {
+	if timezone == "" && !todoFloating {
 		if prop := props.Get(ical.PropDue); prop != nil {
 			if tzid := prop.Params.Get(ical.ParamTimezoneID); tzid != "" {
 				timezone = tzid
+			} else if len(prop.Value) > 8 && !strings.HasSuffix(prop.Value, "Z") {
+				todoFloating = true
 			}
 		}
 	}
@@ -217,7 +227,7 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, []string, error) {
 		URL:             url,
 		Categories:      categories,
 		RecurrenceRule:  rrule,
-		Timezone:        timezone,
+		Timezone:        floatingOrTZ(todoFloating, timezone),
 		Sequence:        sequence,
 		ExDates:         exdates,
 		RDates:          rdates,
@@ -245,9 +255,15 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 
 	// Timezone from DTSTART param
 	var timezone string
+	var floating bool
 	if prop := ve.Props.Get(ical.PropDateTimeStart); prop != nil {
-		if tzid := prop.Params.Get(ical.ParamTimezoneID); tzid != "" {
+		tzid := prop.Params.Get(ical.ParamTimezoneID)
+		if tzid != "" {
 			timezone = tzid
+		} else if !strings.EqualFold(prop.Params.Get("VALUE"), "DATE") &&
+			!strings.HasSuffix(prop.Value, "Z") {
+			// No TZID, not all-day, no Z suffix → floating time.
+			floating = true
 		}
 	}
 
@@ -361,7 +377,7 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 		EndTime:        endTime.UTC(),
 		AllDay:         allDay,
 		RecurrenceRule: rrule,
-		Timezone:       timezone,
+		Timezone:       floatingOrTZ(floating, timezone),
 		Status:         strings.ToUpper(status),
 		Transp:         strings.ToUpper(transp),
 		Sequence:       sequence,
@@ -670,6 +686,15 @@ func joinMailtoParams(values []string) string {
 		}
 	}
 	return strings.Join(cleaned, ",")
+}
+
+// floatingOrTZ returns "FLOATING" if the time was detected as floating,
+// otherwise returns the original timezone string.
+func floatingOrTZ(floating bool, tz string) string {
+	if floating {
+		return "FLOATING"
+	}
+	return tz
 }
 
 // addDuration parses an RFC 5545 duration string and adds it to a time.
