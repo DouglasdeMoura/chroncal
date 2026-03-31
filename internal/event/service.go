@@ -144,7 +144,9 @@ func (s *Service) ListByDateRange(ctx context.Context, from, to time.Time) ([]Ev
 	if err != nil {
 		return nil, err
 	}
-	return fromStorageSlice(rows), nil
+	events := fromStorageSlice(rows)
+	s.populateCategories(ctx, events)
+	return events, nil
 }
 
 func (s *Service) ListByStatusAndDateRange(ctx context.Context, status string, from, to time.Time) ([]Event, error) {
@@ -156,7 +158,9 @@ func (s *Service) ListByStatusAndDateRange(ctx context.Context, status string, f
 	if err != nil {
 		return nil, err
 	}
-	return fromStorageSlice(rows), nil
+	events := fromStorageSlice(rows)
+	s.populateCategories(ctx, events)
+	return events, nil
 }
 
 func (s *Service) ListByCalendarAndDateRange(ctx context.Context, calID int64, from, to time.Time) ([]Event, error) {
@@ -168,7 +172,9 @@ func (s *Service) ListByCalendarAndDateRange(ctx context.Context, calID int64, f
 	if err != nil {
 		return nil, err
 	}
-	return fromStorageSlice(rows), nil
+	events := fromStorageSlice(rows)
+	s.populateCategories(ctx, events)
+	return events, nil
 }
 
 func (s *Service) Search(ctx context.Context, p SearchParams) ([]Event, error) {
@@ -182,7 +188,9 @@ func (s *Service) Search(ctx context.Context, p SearchParams) ([]Event, error) {
 	if err != nil {
 		return nil, fmt.Errorf("search events: %w", err)
 	}
-	return fromStorageSlice(rows), nil
+	events := fromStorageSlice(rows)
+	s.populateCategories(ctx, events)
+	return events, nil
 }
 
 func (s *Service) ExportFiltered(ctx context.Context, p ExportParams) ([]Event, error) {
@@ -196,7 +204,9 @@ func (s *Service) ExportFiltered(ctx context.Context, p ExportParams) ([]Event, 
 	if err != nil {
 		return nil, fmt.Errorf("export events: %w", err)
 	}
-	return fromStorageSlice(rows), nil
+	events := fromStorageSlice(rows)
+	s.populateCategories(ctx, events)
+	return events, nil
 }
 
 func (s *Service) ListOverridesByUID(ctx context.Context, uid string) ([]Event, error) {
@@ -204,7 +214,9 @@ func (s *Service) ListOverridesByUID(ctx context.Context, uid string) ([]Event, 
 	if err != nil {
 		return nil, err
 	}
-	return fromStorageSlice(rows), nil
+	events := fromStorageSlice(rows)
+	s.populateCategories(ctx, events)
+	return events, nil
 }
 
 func (s *Service) Get(ctx context.Context, id int64) (Event, error) {
@@ -212,7 +224,9 @@ func (s *Service) Get(ctx context.Context, id int64) (Event, error) {
 	if err != nil {
 		return Event{}, err
 	}
-	return fromStorage(r), nil
+	e := fromStorage(r)
+	s.populateSingleCategories(ctx, &e)
+	return e, nil
 }
 
 func (s *Service) GetByUID(ctx context.Context, uid string) (Event, error) {
@@ -220,7 +234,9 @@ func (s *Service) GetByUID(ctx context.Context, uid string) (Event, error) {
 	if err != nil {
 		return Event{}, err
 	}
-	return fromStorage(r), nil
+	e := fromStorage(r)
+	s.populateSingleCategories(ctx, &e)
+	return e, nil
 }
 
 func (s *Service) GetByUIDAndRecurrenceID(ctx context.Context, uid, recurrenceID string) (Event, error) {
@@ -231,7 +247,9 @@ func (s *Service) GetByUIDAndRecurrenceID(ctx context.Context, uid, recurrenceID
 	if err != nil {
 		return Event{}, err
 	}
-	return fromStorage(r), nil
+	e := fromStorage(r)
+	s.populateSingleCategories(ctx, &e)
+	return e, nil
 }
 
 func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
@@ -261,7 +279,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
 	if err != nil {
 		return Event{}, err
 	}
-	e := fromStorageWrite(r)
+	e := fromStorage(r)
 	if cats := ParseCategoryList(p.Categories); len(cats) > 0 {
 		if err := s.ReplaceCategories(ctx, e.ID, cats); err != nil {
 			return Event{}, fmt.Errorf("replace categories: %w", err)
@@ -307,7 +325,7 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, 
 	if err != nil {
 		return Event{}, err
 	}
-	e := fromStorageWrite(r)
+	e := fromStorage(r)
 	if err := s.ReplaceCategories(ctx, e.ID, ParseCategoryList(p.Categories)); err != nil {
 		return Event{}, fmt.Errorf("replace categories: %w", err)
 	}
@@ -342,7 +360,7 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error
 	if err != nil {
 		return Event{}, err
 	}
-	e := fromStorageWrite(r)
+	e := fromStorage(r)
 	if err := s.ReplaceCategories(ctx, e.ID, ParseCategoryList(p.Categories)); err != nil {
 		return Event{}, fmt.Errorf("replace categories: %w", err)
 	}
@@ -760,7 +778,7 @@ func (s *Service) ReplaceRelations(ctx context.Context, eventID int64, relations
 
 // Converters
 
-func fromStorage(r storage.EventsV) Event {
+func fromStorage(r storage.Event) Event {
 	return Event{
 		ID:             r.ID,
 		UID:            r.Uid,
@@ -779,7 +797,6 @@ func fromStorage(r storage.EventsV) Event {
 		Priority:       r.Priority,
 		Class:          r.Class,
 		URL:            r.Url,
-		Categories:     r.Categories,
 		ExDates:        r.Exdates,
 		RDates:         r.Rdates,
 		RecurrenceID:   r.RecurrenceID,
@@ -789,7 +806,7 @@ func fromStorage(r storage.EventsV) Event {
 	}
 }
 
-func fromStorageSlice(rows []storage.EventsV) []Event {
+func fromStorageSlice(rows []storage.Event) []Event {
 	events := make([]Event, len(rows))
 	for i, r := range rows {
 		events[i] = fromStorage(r)
@@ -797,31 +814,29 @@ func fromStorageSlice(rows []storage.EventsV) []Event {
 	return events
 }
 
-func fromStorageWrite(r storage.Event) Event {
-	return Event{
-		ID:             r.ID,
-		UID:            r.Uid,
-		CalendarID:     r.CalendarID,
-		Title:          r.Title,
-		Description:    r.Description,
-		Location:       r.Location,
-		StartTime:      parseTime(r.StartTime),
-		EndTime:        parseTime(r.EndTime),
-		AllDay:         r.AllDay == 1,
-		RecurrenceRule: r.RecurrenceRule,
-		Timezone:       r.Timezone,
-		Status:         r.Status,
-		Transp:         r.Transp,
-		Sequence:       r.Sequence,
-		Priority:       r.Priority,
-		Class:          r.Class,
-		URL:            r.Url,
-		ExDates:        r.Exdates,
-		RDates:         r.Rdates,
-		RecurrenceID:   r.RecurrenceID,
-		Geo:            r.Geo,
-		CreatedAt:      parseTime(r.CreatedAt),
-		UpdatedAt:      parseTime(r.UpdatedAt),
+func (s *Service) populateSingleCategories(ctx context.Context, e *Event) {
+	rows, err := s.q.ListCategoriesByEventID(ctx, e.ID)
+	if err != nil {
+		return
+	}
+	cats := make([]string, len(rows))
+	for j, r := range rows {
+		cats[j] = r.Category
+	}
+	e.Categories = strings.Join(cats, ",")
+}
+
+func (s *Service) populateCategories(ctx context.Context, events []Event) {
+	for i := range events {
+		rows, err := s.q.ListCategoriesByEventID(ctx, events[i].ID)
+		if err != nil {
+			continue
+		}
+		cats := make([]string, len(rows))
+		for j, r := range rows {
+			cats[j] = r.Category
+		}
+		events[i].Categories = strings.Join(cats, ",")
 	}
 }
 

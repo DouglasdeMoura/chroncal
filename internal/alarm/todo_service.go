@@ -134,7 +134,7 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 }
 
 // todoFromRow converts a storage view row to a todo.Todo
-func todoFromRow(row storage.TodosV) todo.Todo {
+func todoFromRow(row storage.Todo) todo.Todo {
 	return todo.Todo{
 		ID:              row.ID,
 		UID:             row.Uid,
@@ -151,7 +151,6 @@ func todoFromRow(row storage.TodosV) todo.Todo {
 		Priority:        row.Priority,
 		Class:           row.Class,
 		URL:             row.Url,
-		Categories:      row.Categories,
 		RecurrenceRule:  row.RecurrenceRule,
 		Timezone:        row.Timezone,
 		Sequence:        row.Sequence,

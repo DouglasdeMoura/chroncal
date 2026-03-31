@@ -180,7 +180,6 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time) ([
 			Priority:       row.Priority,
 			Class:          row.Class,
 			URL:            row.Url,
-			Categories:     row.Categories,
 			ExDates:        row.Exdates,
 			RDates:         row.Rdates,
 			RecurrenceID:   row.RecurrenceID,
@@ -193,6 +192,18 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time) ([
 		results = append(results, instances...)
 	}
 
+	for i := range results {
+		rows, err := s.q.ListCategoriesByEventID(ctx, results[i].ID)
+		if err != nil {
+			continue
+		}
+		cats := make([]string, len(rows))
+		for j, r := range rows {
+			cats[j] = r.Category
+		}
+		results[i].Categories = strings.Join(cats, ",")
+	}
+
 	return results, nil
 }
 
@@ -201,7 +212,7 @@ func parseTime(s string) time.Time {
 	return t
 }
 
-func eventFromRow(row storage.EventsV) event.Event {
+func eventFromRow(row storage.Event) event.Event {
 	return event.Event{
 		ID:             row.ID,
 		UID:            row.Uid,
@@ -220,7 +231,6 @@ func eventFromRow(row storage.EventsV) event.Event {
 		Priority:       row.Priority,
 		Class:          row.Class,
 		URL:            row.Url,
-		Categories:     row.Categories,
 		ExDates:        row.Exdates,
 		RDates:         row.Rdates,
 		RecurrenceID:   row.RecurrenceID,
@@ -233,7 +243,7 @@ func eventFromRow(row storage.EventsV) event.Event {
 // expandRecurringRows expands recurring event rows into Event instances with
 // StartTime/EndTime adjusted to each occurrence. For each master, overrides
 // (rows with a matching RECURRENCE-ID) replace the original RRULE instance.
-func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.EventsV, from, to time.Time) []event.Event {
+func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Event, from, to time.Time) []event.Event {
 	var result []event.Event
 	for _, row := range rows {
 		evt := eventFromRow(row)
@@ -241,7 +251,7 @@ func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Events
 
 		// Fetch overrides for this master.
 		overrides, _ := s.q.ListOverridesByUID(ctx, row.Uid)
-		overrideMap := make(map[string]storage.EventsV, len(overrides))
+		overrideMap := make(map[string]storage.Event, len(overrides))
 		for _, o := range overrides {
 			overrideMap[o.RecurrenceID] = o
 		}
@@ -264,6 +274,7 @@ func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Events
 			}
 		}
 	}
+	s.populateEventCategories(ctx, result)
 	return result
 }
 
@@ -292,6 +303,7 @@ func (s *Service) ListExpandedByDateRange(ctx context.Context, from, to time.Tim
 	}
 	result = append(result, s.expandRecurringRows(ctx, recurringRows, from, to)...)
 
+	s.populateEventCategories(ctx, result)
 	sort.Slice(result, func(i, j int) bool {
 		return result[i].StartTime.Before(result[j].StartTime)
 	})
@@ -322,6 +334,7 @@ func (s *Service) ListExpandedByCalendarAndDateRange(ctx context.Context, calID 
 	}
 	result = append(result, s.expandRecurringRows(ctx, recurringRows, from, to)...)
 
+	s.populateEventCategories(ctx, result)
 	sort.Slice(result, func(i, j int) bool {
 		return result[i].StartTime.Before(result[j].StartTime)
 	})
@@ -352,6 +365,7 @@ func (s *Service) ListExpandedByStatusAndDateRange(ctx context.Context, status s
 	}
 	result = append(result, s.expandRecurringRows(ctx, recurringRows, from, to)...)
 
+	s.populateEventCategories(ctx, result)
 	sort.Slice(result, func(i, j int) bool {
 		return result[i].StartTime.Before(result[j].StartTime)
 	})
@@ -420,13 +434,14 @@ func (s *Service) ExportExpandedByDateRange(ctx context.Context, p ExportFilterP
 		}
 	}
 
+	s.populateEventCategories(ctx, result)
 	sort.Slice(result, func(i, j int) bool {
 		return result[i].StartTime.Before(result[j].StartTime)
 	})
 	return result, nil
 }
 
-func todoFromRow(row storage.TodosV) todo.Todo {
+func todoFromRow(row storage.Todo) todo.Todo {
 	return todo.Todo{
 		ID:              row.ID,
 		UID:             row.Uid,
@@ -443,7 +458,6 @@ func todoFromRow(row storage.TodosV) todo.Todo {
 		Priority:        row.Priority,
 		Class:           row.Class,
 		URL:             row.Url,
-		Categories:      row.Categories,
 		RecurrenceRule:  row.RecurrenceRule,
 		Timezone:        row.Timezone,
 		Sequence:        row.Sequence,
@@ -456,9 +470,37 @@ func todoFromRow(row storage.TodosV) todo.Todo {
 	}
 }
 
+func (s *Service) populateEventCategories(ctx context.Context, events []event.Event) {
+	for i := range events {
+		rows, err := s.q.ListCategoriesByEventID(ctx, events[i].ID)
+		if err != nil {
+			continue
+		}
+		cats := make([]string, len(rows))
+		for j, r := range rows {
+			cats[j] = r.Category
+		}
+		events[i].Categories = strings.Join(cats, ",")
+	}
+}
+
+func (s *Service) populateTodoCategories(ctx context.Context, todos []todo.Todo) {
+	for i := range todos {
+		rows, err := s.q.ListCategoriesByTodoID(ctx, todos[i].ID)
+		if err != nil {
+			continue
+		}
+		cats := make([]string, len(rows))
+		for j, r := range rows {
+			cats[j] = r.Category
+		}
+		todos[i].Categories = strings.Join(cats, ",")
+	}
+}
+
 // expandRecurringTodoRows expands recurring todo rows into Todo instances with
 // DueDate/StartDate adjusted to each occurrence.
-func expandRecurringTodoRows(rows []storage.TodosV, from, to time.Time) []todo.Todo {
+func (s *Service) expandRecurringTodoRows(rows []storage.Todo, from, to time.Time) []todo.Todo {
 	var result []todo.Todo
 	for _, row := range rows {
 		td := todoFromRow(row)
@@ -525,8 +567,9 @@ func (s *Service) ListExpandedTodosByDueDateRange(ctx context.Context, from, to 
 	if err != nil {
 		return nil, err
 	}
-	result = append(result, expandRecurringTodoRows(recurringRows, from, to)...)
+	result = append(result, s.expandRecurringTodoRows(recurringRows, from, to)...)
 
+	s.populateTodoCategories(ctx, result)
 	sort.Slice(result, func(i, j int) bool {
 		di := result[i].ParseDueDate()
 		dj := result[j].ParseDueDate()
@@ -587,6 +630,7 @@ func (s *Service) ListFilteredEvents(ctx context.Context, p EventListParams) ([]
 	}
 	result = append(result, s.expandRecurringRows(ctx, recurringRows, p.From, p.To)...)
 
+	s.populateEventCategories(ctx, result)
 	sort.Slice(result, func(i, j int) bool {
 		return result[i].StartTime.Before(result[j].StartTime)
 	})
@@ -646,13 +690,14 @@ func (s *Service) ListFilteredTodos(ctx context.Context, p TodoListParams) ([]to
 		return nil, err
 	}
 	if hasRange {
-		result = append(result, expandRecurringTodoRows(recurringRows, p.From, p.To)...)
+		result = append(result, s.expandRecurringTodoRows(recurringRows, p.From, p.To)...)
 	} else {
 		for _, row := range recurringRows {
 			result = append(result, todoFromRow(row))
 		}
 	}
 
+	s.populateTodoCategories(ctx, result)
 	sort.Slice(result, func(i, j int) bool {
 		di := result[i].ParseDueDate()
 		dj := result[j].ParseDueDate()

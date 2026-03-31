@@ -11,12 +11,12 @@ import (
 )
 
 const searchEvents = `-- name: SearchEvents :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, created_at, updated_at, geo, categories FROM events_v
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at FROM events
 WHERE (
     title LIKE '%' || ?1 || '%' OR
     description LIKE '%' || ?1 || '%' OR
     location LIKE '%' || ?1 || '%' OR
-    EXISTS (SELECT 1 FROM event_categories ec WHERE ec.event_id = events_v.id AND ec.category LIKE '%' || ?1 || '%')
+    EXISTS (SELECT 1 FROM event_categories ec WHERE ec.event_id = events.id AND ec.category LIKE '%' || ?1 || '%')
 )
 AND (?2 = 0 OR calendar_id = ?2)
 AND (?3 = '' OR start_time >= ?3)
@@ -33,7 +33,7 @@ type SearchEventsParams struct {
 	FilterStatus interface{}
 }
 
-func (q *Queries) SearchEvents(ctx context.Context, arg SearchEventsParams) ([]EventsV, error) {
+func (q *Queries) SearchEvents(ctx context.Context, arg SearchEventsParams) ([]Event, error) {
 	rows, err := q.db.QueryContext(ctx, searchEvents,
 		arg.Query,
 		arg.CalendarID,
@@ -45,9 +45,9 @@ func (q *Queries) SearchEvents(ctx context.Context, arg SearchEventsParams) ([]E
 		return nil, err
 	}
 	defer rows.Close()
-	var items []EventsV
+	var items []Event
 	for rows.Next() {
-		var i EventsV
+		var i Event
 		if err := rows.Scan(
 			&i.ID,
 			&i.Uid,
@@ -69,10 +69,9 @@ func (q *Queries) SearchEvents(ctx context.Context, arg SearchEventsParams) ([]E
 			&i.Exdates,
 			&i.Rdates,
 			&i.RecurrenceID,
+			&i.Geo,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.Geo,
-			&i.Categories,
 		); err != nil {
 			return nil, err
 		}
@@ -88,12 +87,12 @@ func (q *Queries) SearchEvents(ctx context.Context, arg SearchEventsParams) ([]E
 }
 
 const searchTodos = `-- name: SearchTodos :many
-SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo, categories FROM todos_v
+SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, geo, created_at, updated_at FROM todos
 WHERE (
     summary LIKE '%' || ?1 || '%' OR
     description LIKE '%' || ?1 || '%' OR
     location LIKE '%' || ?1 || '%' OR
-    EXISTS (SELECT 1 FROM todo_categories tc WHERE tc.todo_id = todos_v.id AND tc.category LIKE '%' || ?1 || '%')
+    EXISTS (SELECT 1 FROM todo_categories tc WHERE tc.todo_id = todos.id AND tc.category LIKE '%' || ?1 || '%')
 )
 AND (?2 = 0 OR calendar_id = ?2)
 AND (?3 = '' OR status = ?3)
@@ -108,7 +107,7 @@ type SearchTodosParams struct {
 	CompletedFilter interface{}
 }
 
-func (q *Queries) SearchTodos(ctx context.Context, arg SearchTodosParams) ([]TodosV, error) {
+func (q *Queries) SearchTodos(ctx context.Context, arg SearchTodosParams) ([]Todo, error) {
 	rows, err := q.db.QueryContext(ctx, searchTodos,
 		arg.Query,
 		arg.CalendarID,
@@ -119,9 +118,9 @@ func (q *Queries) SearchTodos(ctx context.Context, arg SearchTodosParams) ([]Tod
 		return nil, err
 	}
 	defer rows.Close()
-	var items []TodosV
+	var items []Todo
 	for rows.Next() {
-		var i TodosV
+		var i Todo
 		if err := rows.Scan(
 			&i.ID,
 			&i.Uid,
@@ -144,10 +143,9 @@ func (q *Queries) SearchTodos(ctx context.Context, arg SearchTodosParams) ([]Tod
 			&i.Exdates,
 			&i.Rdates,
 			&i.RecurrenceID,
+			&i.Geo,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.Geo,
-			&i.Categories,
 		); err != nil {
 			return nil, err
 		}
