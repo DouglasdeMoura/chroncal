@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/douglasdemoura/tcal/internal/duration"
+	"github.com/douglasdemoura/tcal/internal/recurrence"
 	"github.com/douglasdemoura/tcal/internal/todo"
 )
 
@@ -40,27 +41,29 @@ func todoListCmd() *cobra.Command {
 			defer a.Close()
 			ctx := context.Background()
 
-			var todos []todo.Todo
-			switch {
-			case all:
-				todos, err = a.Todos.ListAll(ctx)
-			case status != "":
-				todos, err = a.Todos.ListByStatus(ctx, status)
-			case calendarName != "":
-				calID, cerr := resolveCalendarID(ctx, a, calendarName)
-				if cerr != nil {
-					return cerr
+			var from, to time.Time
+			if fromStr != "" || toStr != "" {
+				from, to, err = parseDateRange(fromStr, toStr)
+				if err != nil {
+					return err
 				}
-				todos, err = a.Todos.ListByCalendar(ctx, calID)
-			case fromStr != "" || toStr != "":
-				from, to, derr := parseDateRange(fromStr, toStr)
-				if derr != nil {
-					return derr
-				}
-				todos, err = a.Recurrences.ListExpandedTodosByDueDateRange(ctx, from, to)
-			default:
-				todos, err = a.Todos.List(ctx)
 			}
+
+			var calID int64
+			if calendarName != "" {
+				calID, err = resolveCalendarID(ctx, a, calendarName)
+				if err != nil {
+					return err
+				}
+			}
+
+			todos, err := a.Recurrences.ListFilteredTodos(ctx, recurrence.TodoListParams{
+				CalendarID:    calID,
+				Status:        status,
+				HideCompleted: !all && status == "",
+				From:          from,
+				To:            to,
+			})
 			if err != nil {
 				return fmt.Errorf("list todos: %w", err)
 			}

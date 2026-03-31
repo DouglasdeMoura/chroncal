@@ -16,6 +16,7 @@ import (
 	"github.com/douglasdemoura/tcal/internal/duration"
 	"github.com/douglasdemoura/tcal/internal/event"
 	"github.com/douglasdemoura/tcal/internal/model"
+	"github.com/douglasdemoura/tcal/internal/recurrence"
 )
 
 func eventCmd() *cobra.Command {
@@ -50,19 +51,20 @@ func eventListCmd() *cobra.Command {
 				return err
 			}
 
-			var events []event.Event
-			switch {
-			case status != "":
-				events, err = a.Recurrences.ListExpandedByStatusAndDateRange(ctx, status, from, to)
-			case calendarName != "":
-				calID, cerr := resolveCalendarID(ctx, a, calendarName)
-				if cerr != nil {
-					return cerr
+			var calID int64
+			if calendarName != "" {
+				calID, err = resolveCalendarID(ctx, a, calendarName)
+				if err != nil {
+					return err
 				}
-				events, err = a.Recurrences.ListExpandedByCalendarAndDateRange(ctx, calID, from, to)
-			default:
-				events, err = a.Recurrences.ListExpandedByDateRange(ctx, from, to)
 			}
+
+			events, err := a.Recurrences.ListFilteredEvents(ctx, recurrence.EventListParams{
+				CalendarID: calID,
+				Status:     status,
+				From:       from,
+				To:         to,
+			})
 			if err != nil {
 				return fmt.Errorf("list events: %w", err)
 			}
