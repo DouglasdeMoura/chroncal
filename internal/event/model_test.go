@@ -14,7 +14,7 @@ func TestEvent_Span(t *testing.T) {
 	got := e.Span()
 	want := 90 * time.Minute
 	if got != want {
-		t.Errorf("Duration() = %v, want %v", got, want)
+		t.Errorf("Span() = %v, want %v", got, want)
 	}
 }
 

@@ -58,10 +58,12 @@ func icalImportCmd() *cobra.Command {
 
 			// Store imported VTIMEZONE components.
 			for _, tz := range result.Timezones {
-				_, _ = a.Queries.UpsertTimezone(ctx, storage.UpsertTimezoneParams{
-					Tzid:           tz.TZID,
-					VtimezoneData:  tz.Data,
-				})
+				if _, err := a.Queries.UpsertTimezone(ctx, storage.UpsertTimezoneParams{
+					Tzid:          tz.TZID,
+					VtimezoneData: tz.Data,
+				}); err != nil {
+					result.Warnings = append(result.Warnings, fmt.Sprintf("store VTIMEZONE %s: %v", tz.TZID, err))
+				}
 			}
 
 			// Import events

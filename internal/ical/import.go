@@ -65,7 +65,7 @@ func ImportFile(r io.Reader) (ImportResult, error) {
 				encoded := buf.String()
 				if start := strings.Index(encoded, "BEGIN:VTIMEZONE"); start >= 0 {
 					if end := strings.Index(encoded[start:], "END:VTIMEZONE"); end >= 0 {
-						vtData := encoded[start : start+end+len("END:VTIMEZONE")]
+						vtData := encoded[start : start+end+len("END:VTIMEZONE\r\n")]
 						result.Timezones = append(result.Timezones, TimezoneData{
 							TZID: tzid,
 							Data: vtData,
