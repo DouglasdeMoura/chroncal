@@ -26,6 +26,8 @@ func todoListCmd() *cobra.Command {
 		calendarName string
 		status       string
 		all          bool
+		fromStr      string
+		toStr        string
 	)
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -50,6 +52,12 @@ func todoListCmd() *cobra.Command {
 					return cerr
 				}
 				todos, err = a.Todos.ListByCalendar(ctx, calID)
+			case fromStr != "" || toStr != "":
+				from, to, derr := parseDateRange(fromStr, toStr)
+				if derr != nil {
+					return derr
+				}
+				todos, err = a.Recurrences.ListExpandedTodosByDueDateRange(ctx, from, to)
 			default:
 				todos, err = a.Todos.List(ctx)
 			}
@@ -68,6 +76,8 @@ func todoListCmd() *cobra.Command {
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "filter by calendar name")
 	cmd.Flags().StringVar(&status, "status", "", "filter by status (NEEDS-ACTION, IN-PROCESS, COMPLETED, CANCELLED)")
 	cmd.Flags().BoolVar(&all, "all", false, "include completed and cancelled")
+	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD)")
+	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD)")
 	return cmd
 }
 

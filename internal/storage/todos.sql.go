@@ -279,6 +279,112 @@ func (q *Queries) ListAllTodos(ctx context.Context) ([]Todo, error) {
 	return items, nil
 }
 
+const listRecurringTodos = `-- name: ListRecurringTodos :many
+SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, categories, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM todos WHERE recurrence_rule != '' AND recurrence_id = ''
+`
+
+func (q *Queries) ListRecurringTodos(ctx context.Context) ([]Todo, error) {
+	rows, err := q.db.QueryContext(ctx, listRecurringTodos)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Todo
+	for rows.Next() {
+		var i Todo
+		if err := rows.Scan(
+			&i.ID,
+			&i.Uid,
+			&i.CalendarID,
+			&i.Summary,
+			&i.Description,
+			&i.Location,
+			&i.DueDate,
+			&i.StartDate,
+			&i.Duration,
+			&i.CompletedAt,
+			&i.PercentComplete,
+			&i.Status,
+			&i.Priority,
+			&i.Class,
+			&i.Url,
+			&i.Categories,
+			&i.RecurrenceRule,
+			&i.Timezone,
+			&i.Sequence,
+			&i.Exdates,
+			&i.Rdates,
+			&i.RecurrenceID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Geo,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecurringTodosByCalendar = `-- name: ListRecurringTodosByCalendar :many
+SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, categories, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM todos WHERE recurrence_rule != '' AND recurrence_id = '' AND calendar_id = ?
+`
+
+func (q *Queries) ListRecurringTodosByCalendar(ctx context.Context, calendarID int64) ([]Todo, error) {
+	rows, err := q.db.QueryContext(ctx, listRecurringTodosByCalendar, calendarID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Todo
+	for rows.Next() {
+		var i Todo
+		if err := rows.Scan(
+			&i.ID,
+			&i.Uid,
+			&i.CalendarID,
+			&i.Summary,
+			&i.Description,
+			&i.Location,
+			&i.DueDate,
+			&i.StartDate,
+			&i.Duration,
+			&i.CompletedAt,
+			&i.PercentComplete,
+			&i.Status,
+			&i.Priority,
+			&i.Class,
+			&i.Url,
+			&i.Categories,
+			&i.RecurrenceRule,
+			&i.Timezone,
+			&i.Sequence,
+			&i.Exdates,
+			&i.Rdates,
+			&i.RecurrenceID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Geo,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTodos = `-- name: ListTodos :many
 SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, categories, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM todos WHERE status != 'COMPLETED' AND status != 'CANCELLED' ORDER BY due_date, summary
 `

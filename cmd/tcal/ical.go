@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -226,6 +227,36 @@ func icalExportCmd() *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("list events: %w", err)
 				}
+
+				// When a date range is specified, recurring masters whose
+				// start_time predates the window are missed by the SQL
+				// filter.  Include them if any instance falls in range.
+				if fromStr != "" || toStr != "" {
+					from, to, _ := parseDateRange(fromStr, toStr)
+					extra, eerr := a.Recurrences.ExportExpandedByDateRange(ctx, from, to)
+					if eerr == nil {
+						seen := make(map[int64]bool, len(events))
+						for _, e := range events {
+							seen[e.ID] = true
+						}
+						for _, e := range extra {
+							if seen[e.ID] {
+								continue
+							}
+							if calID != 0 && e.CalendarID != calID {
+								continue
+							}
+							if category != "" && !strings.Contains(e.Categories, category) {
+								continue
+							}
+							if status != "" && !strings.EqualFold(e.Status, status) {
+								continue
+							}
+							events = append(events, e)
+						}
+					}
+				}
+
 				for i := range events {
 					events[i].Alarms, _ = a.Events.ListAlarms(ctx, events[i].ID)
 					events[i].Attendees, _ = a.Events.ListAttendees(ctx, events[i].ID)

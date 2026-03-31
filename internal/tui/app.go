@@ -619,7 +619,7 @@ func (m Model) loadCalendars() tea.Cmd {
 func (m Model) loadEvents() tea.Cmd {
 	return func() tea.Msg {
 		from, to := m.month.dateRange()
-		events, err := m.app.Events.ListByDateRange(context.Background(), from, to)
+		events, err := m.app.Recurrences.ListExpandedByDateRange(context.Background(), from, to)
 		if err != nil {
 			return errMsg{err}
 		}
@@ -642,7 +642,7 @@ func (m Model) loadAgendaEvents() tea.Cmd {
 		now := time.Now()
 		from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
 		to := from.AddDate(0, 0, 14)
-		events, err := m.app.Events.ListByDateRange(context.Background(), from, to)
+		events, err := m.app.Recurrences.ListExpandedByDateRange(context.Background(), from, to)
 		if err != nil {
 			return errMsg{err}
 		}

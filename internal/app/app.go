@@ -10,16 +10,18 @@ import (
 	"github.com/douglasdemoura/tcal/internal/alarm"
 	"github.com/douglasdemoura/tcal/internal/calendar"
 	"github.com/douglasdemoura/tcal/internal/event"
+	"github.com/douglasdemoura/tcal/internal/recurrence"
 	"github.com/douglasdemoura/tcal/internal/storage"
 	"github.com/douglasdemoura/tcal/internal/todo"
 )
 
 type App struct {
-	DB        *sql.DB
-	Calendars *calendar.Service
-	Events    *event.Service
-	Todos     *todo.Service
-	Alarms    *alarm.Service
+	DB          *sql.DB
+	Calendars   *calendar.Service
+	Events      *event.Service
+	Todos       *todo.Service
+	Alarms      *alarm.Service
+	Recurrences *recurrence.Service
 }
 
 func New(dbPath string) (*App, error) {
@@ -32,11 +34,12 @@ func New(dbPath string) (*App, error) {
 	todoSvc := todo.NewService(db, queries)
 
 	return &App{
-		DB:        db,
-		Calendars: calendar.NewService(queries),
-		Events:    eventSvc,
-		Todos:     todoSvc,
-		Alarms:    alarm.NewService(db, queries, eventSvc, todoSvc),
+		DB:          db,
+		Calendars:   calendar.NewService(queries),
+		Events:      eventSvc,
+		Todos:       todoSvc,
+		Alarms:      alarm.NewService(db, queries, eventSvc, todoSvc),
+		Recurrences: recurrence.NewService(db, queries),
 	}, nil
 }
 

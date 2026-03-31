@@ -13,6 +13,12 @@ SELECT * FROM todos WHERE due_date >= ? AND due_date < ? ORDER BY due_date, summ
 -- name: ListAllTodos :many
 SELECT * FROM todos ORDER BY due_date, summary;
 
+-- name: ListRecurringTodos :many
+SELECT * FROM todos WHERE recurrence_rule != '' AND recurrence_id = '';
+
+-- name: ListRecurringTodosByCalendar :many
+SELECT * FROM todos WHERE recurrence_rule != '' AND recurrence_id = '' AND calendar_id = ?;
+
 -- name: GetTodo :one
 SELECT * FROM todos WHERE id = ?;
 

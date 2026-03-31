@@ -3,6 +3,7 @@ package recurrence
 import (
 	"context"
 	"database/sql"
+	"sort"
 	"strings"
 	"time"
 
@@ -190,6 +191,320 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time) ([
 func parseTime(s string) time.Time {
 	t, _ := time.Parse(time.RFC3339, s)
 	return t
+}
+
+func eventFromRow(row storage.Event) event.Event {
+	return event.Event{
+		ID:             row.ID,
+		UID:            row.Uid,
+		CalendarID:     row.CalendarID,
+		Title:          row.Title,
+		Description:    row.Description,
+		Location:       row.Location,
+		StartTime:      parseTime(row.StartTime),
+		EndTime:        parseTime(row.EndTime),
+		AllDay:         row.AllDay != 0,
+		RecurrenceRule: row.RecurrenceRule,
+		Timezone:       row.Timezone,
+		Status:         row.Status,
+		Transp:         row.Transp,
+		Sequence:       row.Sequence,
+		Priority:       row.Priority,
+		Class:          row.Class,
+		URL:            row.Url,
+		Categories:     row.Categories,
+		ExDates:        row.Exdates,
+		RDates:         row.Rdates,
+		RecurrenceID:   row.RecurrenceID,
+		Geo:            row.Geo,
+		CreatedAt:      parseTime(row.CreatedAt),
+		UpdatedAt:      parseTime(row.UpdatedAt),
+	}
+}
+
+// expandRecurringRows expands recurring event rows into Event instances with
+// StartTime/EndTime adjusted to each occurrence. For each master, overrides
+// (rows with a matching RECURRENCE-ID) replace the original RRULE instance.
+func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Event, from, to time.Time) []event.Event {
+	var result []event.Event
+	for _, row := range rows {
+		evt := eventFromRow(row)
+		expanded := ExpandEvent(evt, from, to)
+
+		// Fetch overrides for this master.
+		overrides, _ := s.q.ListOverridesByUID(ctx, row.Uid)
+		overrideMap := make(map[string]storage.Event, len(overrides))
+		for _, o := range overrides {
+			overrideMap[o.RecurrenceID] = o
+		}
+
+		for _, inst := range expanded {
+			instKey := inst.InstanceTime.UTC().Format(time.RFC3339)
+			if o, ok := overrideMap[instKey]; ok {
+				// Override replaces this instance.
+				if strings.EqualFold(o.Status, "CANCELLED") {
+					continue // CANCELLED override suppresses the instance.
+				}
+				oe := eventFromRow(o)
+				result = append(result, oe)
+			} else {
+				e := inst.Event
+				dur := e.EndTime.Sub(e.StartTime)
+				e.StartTime = inst.InstanceTime
+				e.EndTime = inst.InstanceTime.Add(dur)
+				result = append(result, e)
+			}
+		}
+	}
+	return result
+}
+
+// ListExpandedByDateRange returns non-recurring events in [from,to) merged
+// with expanded instances of recurring event masters. The returned events have
+// StartTime/EndTime adjusted to the instance time and are sorted by StartTime.
+func (s *Service) ListExpandedByDateRange(ctx context.Context, from, to time.Time) ([]event.Event, error) {
+	rangeRows, err := s.q.ListEventsByDateRange(ctx, storage.ListEventsByDateRangeParams{
+		StartTime:   from.Format(time.RFC3339),
+		StartTime_2: to.Format(time.RFC3339),
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Keep only non-recurring from the date-range results.
+	var result []event.Event
+	for _, row := range rangeRows {
+		if row.RecurrenceRule == "" && row.RecurrenceID == "" {
+			result = append(result, eventFromRow(row))
+		}
+	}
+
+	recurringRows, err := s.q.ListRecurringEvents(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result = append(result, s.expandRecurringRows(ctx, recurringRows, from, to)...)
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].StartTime.Before(result[j].StartTime)
+	})
+	return result, nil
+}
+
+// ListExpandedByCalendarAndDateRange is like ListExpandedByDateRange but
+// scoped to a single calendar.
+func (s *Service) ListExpandedByCalendarAndDateRange(ctx context.Context, calID int64, from, to time.Time) ([]event.Event, error) {
+	rangeRows, err := s.q.ListEventsByCalendarAndDateRange(ctx, storage.ListEventsByCalendarAndDateRangeParams{
+		CalendarID:  calID,
+		StartTime:   from.Format(time.RFC3339),
+		StartTime_2: to.Format(time.RFC3339),
+	})
+	if err != nil {
+		return nil, err
+	}
+	var result []event.Event
+	for _, row := range rangeRows {
+		if row.RecurrenceRule == "" && row.RecurrenceID == "" {
+			result = append(result, eventFromRow(row))
+		}
+	}
+
+	recurringRows, err := s.q.ListRecurringEventsByCalendar(ctx, calID)
+	if err != nil {
+		return nil, err
+	}
+	result = append(result, s.expandRecurringRows(ctx, recurringRows, from, to)...)
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].StartTime.Before(result[j].StartTime)
+	})
+	return result, nil
+}
+
+// ListExpandedByStatusAndDateRange is like ListExpandedByDateRange but
+// filtered by event status.
+func (s *Service) ListExpandedByStatusAndDateRange(ctx context.Context, status string, from, to time.Time) ([]event.Event, error) {
+	rangeRows, err := s.q.ListEventsByStatusAndDateRange(ctx, storage.ListEventsByStatusAndDateRangeParams{
+		Status:      status,
+		StartTime:   from.Format(time.RFC3339),
+		StartTime_2: to.Format(time.RFC3339),
+	})
+	if err != nil {
+		return nil, err
+	}
+	var result []event.Event
+	for _, row := range rangeRows {
+		if row.RecurrenceRule == "" && row.RecurrenceID == "" {
+			result = append(result, eventFromRow(row))
+		}
+	}
+
+	recurringRows, err := s.q.ListRecurringEventsByStatus(ctx, status)
+	if err != nil {
+		return nil, err
+	}
+	result = append(result, s.expandRecurringRows(ctx, recurringRows, from, to)...)
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].StartTime.Before(result[j].StartTime)
+	})
+	return result, nil
+}
+
+// ExportExpandedByDateRange returns recurring event masters (not expanded
+// instances) that have at least one occurrence in [from,to), merged with
+// non-recurring events whose start_time is in range. This is for ICS export
+// where the master VEVENT with RRULE should be emitted, not individual
+// instances.
+func (s *Service) ExportExpandedByDateRange(ctx context.Context, from, to time.Time) ([]event.Event, error) {
+	rangeRows, err := s.q.ListEventsByDateRange(ctx, storage.ListEventsByDateRangeParams{
+		StartTime:   from.Format(time.RFC3339),
+		StartTime_2: to.Format(time.RFC3339),
+	})
+	if err != nil {
+		return nil, err
+	}
+	var result []event.Event
+	seen := make(map[int64]bool)
+	for _, row := range rangeRows {
+		if row.RecurrenceRule == "" {
+			result = append(result, eventFromRow(row))
+			seen[row.ID] = true
+		}
+	}
+
+	recurringRows, err := s.q.ListRecurringEvents(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range recurringRows {
+		if seen[row.ID] {
+			continue
+		}
+		evt := eventFromRow(row)
+		if len(ExpandEvent(evt, from, to)) > 0 {
+			result = append(result, evt)
+		}
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].StartTime.Before(result[j].StartTime)
+	})
+	return result, nil
+}
+
+func todoFromRow(row storage.Todo) todo.Todo {
+	return todo.Todo{
+		ID:              row.ID,
+		UID:             row.Uid,
+		CalendarID:      row.CalendarID,
+		Summary:         row.Summary,
+		Description:     row.Description,
+		Location:        row.Location,
+		DueDate:         row.DueDate,
+		StartDate:       row.StartDate,
+		Duration:        row.Duration,
+		CompletedAt:     row.CompletedAt,
+		PercentComplete: row.PercentComplete,
+		Status:          row.Status,
+		Priority:        row.Priority,
+		Class:           row.Class,
+		URL:             row.Url,
+		Categories:      row.Categories,
+		RecurrenceRule:  row.RecurrenceRule,
+		Timezone:        row.Timezone,
+		Sequence:        row.Sequence,
+		ExDates:         row.Exdates,
+		RDates:          row.Rdates,
+		RecurrenceID:    row.RecurrenceID,
+		Geo:             row.Geo,
+		CreatedAt:       parseTime(row.CreatedAt),
+		UpdatedAt:       parseTime(row.UpdatedAt),
+	}
+}
+
+// expandRecurringTodoRows expands recurring todo rows into Todo instances with
+// DueDate/StartDate adjusted to each occurrence.
+func expandRecurringTodoRows(rows []storage.Todo, from, to time.Time) []todo.Todo {
+	var result []todo.Todo
+	for _, row := range rows {
+		td := todoFromRow(row)
+		for _, inst := range ExpandTodo(td, from, to) {
+			t := inst.Todo
+			anchor := t.ParseStartDate()
+			if anchor.IsZero() {
+				anchor = t.ParseDueDate()
+			}
+			if !anchor.IsZero() {
+				offset := inst.InstanceTime.Sub(anchor)
+				if t.DueDate != "" {
+					due := t.ParseDueDate()
+					if !due.IsZero() {
+						newDue := due.Add(offset)
+						if isDateOnly(t.DueDate) {
+							t.DueDate = newDue.Format("2006-01-02")
+						} else {
+							t.DueDate = newDue.Format(time.RFC3339)
+						}
+					}
+				}
+				if t.StartDate != "" {
+					start := t.ParseStartDate()
+					if !start.IsZero() {
+						newStart := start.Add(offset)
+						if isDateOnly(t.StartDate) {
+							t.StartDate = newStart.Format("2006-01-02")
+						} else {
+							t.StartDate = newStart.Format(time.RFC3339)
+						}
+					}
+				}
+			}
+			result = append(result, t)
+		}
+	}
+	return result
+}
+
+func isDateOnly(s string) bool {
+	_, err := time.Parse("2006-01-02", s)
+	return err == nil
+}
+
+// ListExpandedTodosByDueDateRange returns non-recurring todos in [from,to)
+// merged with expanded instances of recurring todo masters.
+func (s *Service) ListExpandedTodosByDueDateRange(ctx context.Context, from, to time.Time) ([]todo.Todo, error) {
+	rangeRows, err := s.q.ListTodosByDueDateRange(ctx, storage.ListTodosByDueDateRangeParams{
+		DueDate:   from.Format("2006-01-02"),
+		DueDate_2: to.Format("2006-01-02"),
+	})
+	if err != nil {
+		return nil, err
+	}
+	var result []todo.Todo
+	for _, row := range rangeRows {
+		if row.RecurrenceRule == "" && row.RecurrenceID == "" {
+			result = append(result, todoFromRow(row))
+		}
+	}
+
+	recurringRows, err := s.q.ListRecurringTodos(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result = append(result, expandRecurringTodoRows(recurringRows, from, to)...)
+
+	sort.Slice(result, func(i, j int) bool {
+		di := result[i].ParseDueDate()
+		dj := result[j].ParseDueDate()
+		if di.IsZero() {
+			return false
+		}
+		if dj.IsZero() {
+			return true
+		}
+		return di.Before(dj)
+	})
+	return result, nil
 }
 
 // ExpandTodo generates all occurrences of a todo within a date range.

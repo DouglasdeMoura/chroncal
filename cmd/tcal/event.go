@@ -53,15 +53,15 @@ func eventListCmd() *cobra.Command {
 			var events []event.Event
 			switch {
 			case status != "":
-				events, err = a.Events.ListByStatusAndDateRange(ctx, status, from, to)
+				events, err = a.Recurrences.ListExpandedByStatusAndDateRange(ctx, status, from, to)
 			case calendarName != "":
 				calID, cerr := resolveCalendarID(ctx, a, calendarName)
 				if cerr != nil {
 					return cerr
 				}
-				events, err = a.Events.ListByCalendarAndDateRange(ctx, calID, from, to)
+				events, err = a.Recurrences.ListExpandedByCalendarAndDateRange(ctx, calID, from, to)
 			default:
-				events, err = a.Events.ListByDateRange(ctx, from, to)
+				events, err = a.Recurrences.ListExpandedByDateRange(ctx, from, to)
 			}
 			if err != nil {
 				return fmt.Errorf("list events: %w", err)

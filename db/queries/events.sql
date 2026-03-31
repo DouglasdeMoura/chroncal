@@ -68,6 +68,15 @@ DELETE FROM events WHERE id = ?;
 -- name: ListAllEvents :many
 SELECT * FROM events;
 
+-- name: ListRecurringEvents :many
+SELECT * FROM events WHERE recurrence_rule != '' AND recurrence_id = '';
+
+-- name: ListRecurringEventsByCalendar :many
+SELECT * FROM events WHERE recurrence_rule != '' AND recurrence_id = '' AND calendar_id = ?;
+
+-- name: ListRecurringEventsByStatus :many
+SELECT * FROM events WHERE recurrence_rule != '' AND recurrence_id = '' AND status = ?;
+
 -- name: ListEventsForExport :many
 SELECT * FROM events
 WHERE (sqlc.arg(calendar_id) = 0 OR calendar_id = sqlc.arg(calendar_id))
