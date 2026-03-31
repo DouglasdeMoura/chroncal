@@ -4,7 +4,7 @@ WHERE (
     title LIKE '%' || sqlc.arg(query) || '%' OR
     description LIKE '%' || sqlc.arg(query) || '%' OR
     location LIKE '%' || sqlc.arg(query) || '%' OR
-    categories LIKE '%' || sqlc.arg(query) || '%'
+    EXISTS (SELECT 1 FROM event_categories ec WHERE ec.event_id = events.id AND ec.category LIKE '%' || sqlc.arg(query) || '%')
 )
 AND (sqlc.arg(calendar_id) = 0 OR calendar_id = sqlc.arg(calendar_id))
 AND (sqlc.arg(from_time) = '' OR start_time >= sqlc.arg(from_time))
@@ -18,7 +18,7 @@ WHERE (
     summary LIKE '%' || sqlc.arg(query) || '%' OR
     description LIKE '%' || sqlc.arg(query) || '%' OR
     location LIKE '%' || sqlc.arg(query) || '%' OR
-    categories LIKE '%' || sqlc.arg(query) || '%'
+    EXISTS (SELECT 1 FROM todo_categories tc WHERE tc.todo_id = todos.id AND tc.category LIKE '%' || sqlc.arg(query) || '%')
 )
 AND (sqlc.arg(calendar_id) = 0 OR calendar_id = sqlc.arg(calendar_id))
 AND (sqlc.arg(filter_status) = '' OR status = sqlc.arg(filter_status))

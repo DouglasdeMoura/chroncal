@@ -1,0 +1,11 @@
+-- name: CreateEventCategory :one
+INSERT INTO event_categories (event_id, category) VALUES (?, ?) RETURNING *;
+
+-- name: ListCategoriesByEventID :many
+SELECT * FROM event_categories WHERE event_id = ? ORDER BY category;
+
+-- name: DeleteCategoriesByEventID :exec
+DELETE FROM event_categories WHERE event_id = ?;
+
+-- name: ListAllEventCategories :many
+SELECT DISTINCT category FROM event_categories ORDER BY category;

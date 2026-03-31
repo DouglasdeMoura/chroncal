@@ -519,7 +519,7 @@ SELECT id, uid, calendar_id, title, description, location, start_time, end_time,
 WHERE (?1 = 0 OR calendar_id = ?1)
 AND (?2 = '' OR start_time >= ?2)
 AND (?3 = '' OR start_time < ?3)
-AND (?4 = '' OR categories LIKE '%' || ?4 || '%')
+AND (?4 = '' OR EXISTS (SELECT 1 FROM event_categories ec WHERE ec.event_id = events.id AND ec.category = ?4))
 AND (?5 = '' OR status = ?5)
 ORDER BY start_time ASC
 `
@@ -799,7 +799,7 @@ SELECT id, uid, calendar_id, title, description, location, start_time, end_time,
 WHERE recurrence_rule != '' AND recurrence_id = ''
 AND (?1 = 0 OR calendar_id = ?1)
 AND (?2 = '' OR status = ?2)
-AND (?3 = '' OR categories LIKE '%' || ?3 || '%')
+AND (?3 = '' OR EXISTS (SELECT 1 FROM event_categories ec WHERE ec.event_id = events.id AND ec.category = ?3))
 ORDER BY start_time ASC
 `
 

@@ -785,7 +785,7 @@ func (q *Queries) ListTodosFiltered(ctx context.Context, arg ListTodosFilteredPa
 const listTodosForExport = `-- name: ListTodosForExport :many
 SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, categories, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, created_at, updated_at, geo FROM todos
 WHERE (?1 = 0 OR calendar_id = ?1)
-AND (?2 = '' OR categories LIKE '%' || ?2 || '%')
+AND (?2 = '' OR EXISTS (SELECT 1 FROM todo_categories tc WHERE tc.todo_id = todos.id AND tc.category = ?2))
 AND (?3 = '' OR status = ?3)
 AND (?4 = 0 OR (?4 = 1 AND completed_at != '') OR (?4 = 2 AND completed_at = ''))
 ORDER BY due_date ASC, summary ASC

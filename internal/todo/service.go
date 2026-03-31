@@ -500,6 +500,47 @@ func (s *Service) ReplaceAttendees(ctx context.Context, todoID int64, attendees 
 	return tx.Commit()
 }
 
+// Category CRUD
+
+func (s *Service) ListCategories(ctx context.Context, todoID int64) ([]string, error) {
+	rows, err := s.q.ListCategoriesByTodoID(ctx, todoID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		out[i] = r.Category
+	}
+	return out, nil
+}
+
+func (s *Service) ListAllCategories(ctx context.Context) ([]string, error) {
+	return s.q.ListAllTodoCategories(ctx)
+}
+
+func (s *Service) ReplaceCategories(ctx context.Context, todoID int64, categories []string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	qtx := s.q.WithTx(tx)
+	if err := qtx.DeleteCategoriesByTodoID(ctx, todoID); err != nil {
+		return fmt.Errorf("delete categories: %w", err)
+	}
+	for _, c := range categories {
+		_, err := qtx.CreateTodoCategory(ctx, storage.CreateTodoCategoryParams{
+			TodoID:   todoID,
+			Category: c,
+		})
+		if err != nil {
+			return fmt.Errorf("create category: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
 // Attachment CRUD
 
 func (s *Service) ListAttachments(ctx context.Context, todoID int64) ([]model.Attachment, error) {

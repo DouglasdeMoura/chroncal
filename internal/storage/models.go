@@ -115,6 +115,11 @@ type EventAttendee struct {
 	Language      string
 }
 
+type EventCategory struct {
+	EventID  int64
+	Category string
+}
+
 type EventComment struct {
 	ID      int64
 	EventID int64
@@ -235,6 +240,11 @@ type TodoAttendee struct {
 	Member        string
 	Dir           string
 	Language      string
+}
+
+type TodoCategory struct {
+	TodoID   int64
+	Category string
 }
 
 type TodoComment struct {

@@ -105,7 +105,7 @@ DELETE FROM todos WHERE id = ?;
 -- name: ListTodosForExport :many
 SELECT * FROM todos
 WHERE (sqlc.arg(calendar_id) = 0 OR calendar_id = sqlc.arg(calendar_id))
-AND (sqlc.arg(category) = '' OR categories LIKE '%' || sqlc.arg(category) || '%')
+AND (sqlc.arg(category) = '' OR EXISTS (SELECT 1 FROM todo_categories tc WHERE tc.todo_id = todos.id AND tc.category = sqlc.arg(category)))
 AND (sqlc.arg(filter_status) = '' OR status = sqlc.arg(filter_status))
 AND (sqlc.arg(completed_filter) = 0 OR (sqlc.arg(completed_filter) = 1 AND completed_at != '') OR (sqlc.arg(completed_filter) = 2 AND completed_at = ''))
 ORDER BY due_date ASC, summary ASC;

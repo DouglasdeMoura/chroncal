@@ -528,6 +528,47 @@ func (s *Service) ReplaceAttendees(ctx context.Context, eventID int64, attendees
 	return tx.Commit()
 }
 
+// Category CRUD
+
+func (s *Service) ListCategories(ctx context.Context, eventID int64) ([]string, error) {
+	rows, err := s.q.ListCategoriesByEventID(ctx, eventID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		out[i] = r.Category
+	}
+	return out, nil
+}
+
+func (s *Service) ListAllCategories(ctx context.Context) ([]string, error) {
+	return s.q.ListAllEventCategories(ctx)
+}
+
+func (s *Service) ReplaceCategories(ctx context.Context, eventID int64, categories []string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	qtx := s.q.WithTx(tx)
+	if err := qtx.DeleteCategoriesByEventID(ctx, eventID); err != nil {
+		return fmt.Errorf("delete categories: %w", err)
+	}
+	for _, c := range categories {
+		_, err := qtx.CreateEventCategory(ctx, storage.CreateEventCategoryParams{
+			EventID:  eventID,
+			Category: c,
+		})
+		if err != nil {
+			return fmt.Errorf("create category: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
 // Attachment CRUD
 
 func (s *Service) ListAttachments(ctx context.Context, eventID int64) ([]model.Attachment, error) {

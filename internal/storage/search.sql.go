@@ -16,7 +16,7 @@ WHERE (
     title LIKE '%' || ?1 || '%' OR
     description LIKE '%' || ?1 || '%' OR
     location LIKE '%' || ?1 || '%' OR
-    categories LIKE '%' || ?1 || '%'
+    EXISTS (SELECT 1 FROM event_categories ec WHERE ec.event_id = events.id AND ec.category LIKE '%' || ?1 || '%')
 )
 AND (?2 = 0 OR calendar_id = ?2)
 AND (?3 = '' OR start_time >= ?3)
@@ -93,7 +93,7 @@ WHERE (
     summary LIKE '%' || ?1 || '%' OR
     description LIKE '%' || ?1 || '%' OR
     location LIKE '%' || ?1 || '%' OR
-    categories LIKE '%' || ?1 || '%'
+    EXISTS (SELECT 1 FROM todo_categories tc WHERE tc.todo_id = todos.id AND tc.category LIKE '%' || ?1 || '%')
 )
 AND (?2 = 0 OR calendar_id = ?2)
 AND (?3 = '' OR status = ?3)
