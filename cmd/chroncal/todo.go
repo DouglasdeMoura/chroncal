@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/douglasdemoura/chroncal/internal/duration"
+	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/recurrence"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
@@ -341,6 +342,30 @@ and percent-complete to 100.`,
 				return fmt.Errorf("--rdate: %w", err)
 			}
 
+			// Validate all parseable flags before creating the todo so a
+			// validation failure cannot leave an orphaned row in the database.
+			var attachments []model.Attachment
+			if len(attachFlags) > 0 {
+				attachments, err = parseAttachFlags(attachFlags)
+				if err != nil {
+					return err
+				}
+			}
+			var alarms []model.Alarm
+			if len(alarmFlags) > 0 {
+				alarms, err = parseAlarmFlags(alarmFlags)
+				if err != nil {
+					return err
+				}
+			}
+			var relations []model.Relation
+			if len(relationFlags) > 0 {
+				relations, err = parseRelationFlags(relationFlags)
+				if err != nil {
+					return err
+				}
+			}
+
 			t, err := a.Todos.Create(ctx, todo.CreateParams{
 				CalendarID:      calID,
 				Summary:         args[0],
@@ -364,20 +389,12 @@ and percent-complete to 100.`,
 				return fmt.Errorf("create todo: %w", err)
 			}
 
-			if len(attachFlags) > 0 {
-				attachments, err := parseAttachFlags(attachFlags)
-				if err != nil {
-					return err
-				}
+			if len(attachments) > 0 {
 				if err := a.Todos.ReplaceAttachments(ctx, t.ID, attachments); err != nil {
 					return fmt.Errorf("add attachments: %w", err)
 				}
 			}
-			if len(alarmFlags) > 0 {
-				alarms, err := parseAlarmFlags(alarmFlags)
-				if err != nil {
-					return err
-				}
+			if len(alarms) > 0 {
 				if err := a.Todos.ReplaceAlarms(ctx, t.ID, alarms); err != nil {
 					return fmt.Errorf("add alarms: %w", err)
 				}
@@ -396,11 +413,7 @@ and percent-complete to 100.`,
 					return fmt.Errorf("add comments: %w", err)
 				}
 			}
-			if len(relationFlags) > 0 {
-				relations, err := parseRelationFlags(relationFlags)
-				if err != nil {
-					return err
-				}
+			if len(relations) > 0 {
 				if err := a.Todos.ReplaceRelations(ctx, t.ID, relations); err != nil {
 					return fmt.Errorf("add relations: %w", err)
 				}
@@ -701,25 +714,41 @@ a --progress value other than 100.`,
 				return fmt.Errorf("--status COMPLETED requires 100%% progress, got %d (omit --progress or set it to 100)", p.PercentComplete)
 			}
 
+			// Validate parseable flags before updating so a validation
+			// failure cannot leave the todo in a partially-updated state.
+			var attachments []model.Attachment
+			if cmd.Flags().Changed("attach") {
+				attachments, err = parseAttachFlags(attachFlags)
+				if err != nil {
+					return err
+				}
+			}
+			var alarms []model.Alarm
+			if cmd.Flags().Changed("alarm") {
+				alarms, err = parseAlarmFlags(alarmFlags)
+				if err != nil {
+					return err
+				}
+			}
+			var relations []model.Relation
+			if cmd.Flags().Changed("related-to") {
+				relations, err = parseRelationFlags(relationFlags)
+				if err != nil {
+					return err
+				}
+			}
+
 			t, err := a.Todos.Update(ctx, existing.ID, p)
 			if err != nil {
 				return fmt.Errorf("update todo: %w", err)
 			}
 
 			if cmd.Flags().Changed("attach") {
-				attachments, err := parseAttachFlags(attachFlags)
-				if err != nil {
-					return err
-				}
 				if err := a.Todos.ReplaceAttachments(ctx, t.ID, attachments); err != nil {
 					return fmt.Errorf("update attachments: %w", err)
 				}
 			}
 			if cmd.Flags().Changed("alarm") {
-				alarms, err := parseAlarmFlags(alarmFlags)
-				if err != nil {
-					return err
-				}
 				if err := a.Todos.ReplaceAlarms(ctx, t.ID, alarms); err != nil {
 					return fmt.Errorf("update alarms: %w", err)
 				}
@@ -739,10 +768,6 @@ a --progress value other than 100.`,
 				}
 			}
 			if cmd.Flags().Changed("related-to") {
-				relations, err := parseRelationFlags(relationFlags)
-				if err != nil {
-					return err
-				}
 				if err := a.Todos.ReplaceRelations(ctx, t.ID, relations); err != nil {
 					return fmt.Errorf("update relations: %w", err)
 				}

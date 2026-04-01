@@ -367,6 +367,30 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 				return fmt.Errorf("--recurrence-date-times: %w", err)
 			}
 
+			// Validate all parseable flags before creating the event so a
+			// validation failure cannot leave an orphaned row in the database.
+			var attachments []model.Attachment
+			if len(attachFlags) > 0 {
+				attachments, err = parseAttachFlags(attachFlags)
+				if err != nil {
+					return err
+				}
+			}
+			var alarms []model.Alarm
+			if len(alarmFlags) > 0 {
+				alarms, err = parseAlarmFlags(alarmFlags)
+				if err != nil {
+					return err
+				}
+			}
+			var relations []model.Relation
+			if len(relationFlags) > 0 {
+				relations, err = parseRelationFlags(relationFlags)
+				if err != nil {
+					return err
+				}
+			}
+
 			e, err := a.Events.Create(ctx, event.CreateParams{
 				CalendarID:     calID,
 				Title:          args[0],
@@ -391,21 +415,13 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 				return fmt.Errorf("create event: %w", err)
 			}
 
-			if len(attachFlags) > 0 {
-				attachments, err := parseAttachFlags(attachFlags)
-				if err != nil {
-					return err
-				}
+			if len(attachments) > 0 {
 				if err := a.Events.ReplaceAttachments(ctx, e.ID, attachments); err != nil {
 					return fmt.Errorf("add attachments: %w", err)
 				}
 			}
 
-			if len(alarmFlags) > 0 {
-				alarms, err := parseAlarmFlags(alarmFlags)
-				if err != nil {
-					return err
-				}
+			if len(alarms) > 0 {
 				if err := a.Events.ReplaceAlarms(ctx, e.ID, alarms); err != nil {
 					return fmt.Errorf("add alarms: %w", err)
 				}
@@ -439,11 +455,7 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 				}
 			}
 
-			if len(relationFlags) > 0 {
-				relations, err := parseRelationFlags(relationFlags)
-				if err != nil {
-					return err
-				}
+			if len(relations) > 0 {
 				if err := a.Events.ReplaceRelations(ctx, e.ID, relations); err != nil {
 					return fmt.Errorf("add relations: %w", err)
 				}
@@ -727,26 +739,42 @@ func eventUpdateCmd() *cobra.Command {
 				p.RDates = parsed
 			}
 
+			// Validate parseable flags before updating so a validation
+			// failure cannot leave the event in a partially-updated state.
+			var attachments []model.Attachment
+			if cmd.Flags().Changed("attach") {
+				attachments, err = parseAttachFlags(attachFlags)
+				if err != nil {
+					return err
+				}
+			}
+			var alarms []model.Alarm
+			if cmd.Flags().Changed("alarm") {
+				alarms, err = parseAlarmFlags(alarmFlags)
+				if err != nil {
+					return err
+				}
+			}
+			var relations []model.Relation
+			if cmd.Flags().Changed("related-to") {
+				relations, err = parseRelationFlags(relationFlags)
+				if err != nil {
+					return err
+				}
+			}
+
 			e, err := a.Events.Update(ctx, existing.ID, p)
 			if err != nil {
 				return fmt.Errorf("update event: %w", err)
 			}
 
 			if cmd.Flags().Changed("attach") {
-				attachments, err := parseAttachFlags(attachFlags)
-				if err != nil {
-					return err
-				}
 				if err := a.Events.ReplaceAttachments(ctx, e.ID, attachments); err != nil {
 					return fmt.Errorf("update attachments: %w", err)
 				}
 			}
 
 			if cmd.Flags().Changed("alarm") {
-				alarms, err := parseAlarmFlags(alarmFlags)
-				if err != nil {
-					return err
-				}
 				if err := a.Events.ReplaceAlarms(ctx, e.ID, alarms); err != nil {
 					return fmt.Errorf("update alarms: %w", err)
 				}
@@ -781,10 +809,6 @@ func eventUpdateCmd() *cobra.Command {
 			}
 
 			if cmd.Flags().Changed("related-to") {
-				relations, err := parseRelationFlags(relationFlags)
-				if err != nil {
-					return err
-				}
 				if err := a.Events.ReplaceRelations(ctx, e.ID, relations); err != nil {
 					return fmt.Errorf("update relations: %w", err)
 				}
