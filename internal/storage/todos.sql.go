@@ -152,6 +152,15 @@ func (q *Queries) DeleteTodo(ctx context.Context, id int64) error {
 	return err
 }
 
+const deleteTodosByUID = `-- name: DeleteTodosByUID :exec
+DELETE FROM todos WHERE uid = ?
+`
+
+func (q *Queries) DeleteTodosByUID(ctx context.Context, uid string) error {
+	_, err := q.db.ExecContext(ctx, deleteTodosByUID, uid)
+	return err
+}
+
 const getTodo = `-- name: GetTodo :one
 SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, geo, created_at, updated_at, dtstamp FROM todos WHERE id = ?
 `
@@ -444,6 +453,59 @@ type ListRecurringTodosFilteredParams struct {
 
 func (q *Queries) ListRecurringTodosFiltered(ctx context.Context, arg ListRecurringTodosFilteredParams) ([]Todo, error) {
 	rows, err := q.db.QueryContext(ctx, listRecurringTodosFiltered, arg.CalendarID, arg.FilterStatus, arg.HideCompleted)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Todo
+	for rows.Next() {
+		var i Todo
+		if err := rows.Scan(
+			&i.ID,
+			&i.Uid,
+			&i.CalendarID,
+			&i.Summary,
+			&i.Description,
+			&i.Location,
+			&i.DueDate,
+			&i.StartDate,
+			&i.Duration,
+			&i.CompletedAt,
+			&i.PercentComplete,
+			&i.Status,
+			&i.Priority,
+			&i.Class,
+			&i.Url,
+			&i.RecurrenceRule,
+			&i.Timezone,
+			&i.Sequence,
+			&i.Exdates,
+			&i.Rdates,
+			&i.RecurrenceID,
+			&i.Geo,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Dtstamp,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTodoOverridesByUID = `-- name: ListTodoOverridesByUID :many
+SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, geo, created_at, updated_at, dtstamp FROM todos WHERE uid = ? AND recurrence_id != '' ORDER BY recurrence_id
+`
+
+func (q *Queries) ListTodoOverridesByUID(ctx context.Context, uid string) ([]Todo, error) {
+	rows, err := q.db.QueryContext(ctx, listTodoOverridesByUID, uid)
 	if err != nil {
 		return nil, err
 	}

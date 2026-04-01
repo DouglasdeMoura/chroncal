@@ -46,6 +46,12 @@ SELECT * FROM todos WHERE uid = ? AND recurrence_id = '';
 -- name: GetTodoByUIDAndRecurrenceID :one
 SELECT * FROM todos WHERE uid = ? AND recurrence_id = ?;
 
+-- name: ListTodoOverridesByUID :many
+SELECT * FROM todos WHERE uid = ? AND recurrence_id != '' ORDER BY recurrence_id;
+
+-- name: DeleteTodosByUID :exec
+DELETE FROM todos WHERE uid = ?;
+
 -- name: CreateTodo :one
 INSERT INTO todos (
     uid, calendar_id, summary, description, location,

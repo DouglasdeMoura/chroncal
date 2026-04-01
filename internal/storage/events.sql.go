@@ -109,6 +109,15 @@ func (q *Queries) DeleteEvent(ctx context.Context, id int64) error {
 	return err
 }
 
+const deleteEventsByUID = `-- name: DeleteEventsByUID :exec
+DELETE FROM events WHERE uid = ?
+`
+
+func (q *Queries) DeleteEventsByUID(ctx context.Context, uid string) error {
+	_, err := q.db.ExecContext(ctx, deleteEventsByUID, uid)
+	return err
+}
+
 const getEvent = `-- name: GetEvent :one
 SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp FROM events WHERE id = ?
 `

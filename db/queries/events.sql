@@ -68,6 +68,9 @@ RETURNING *;
 -- name: DeleteEvent :exec
 DELETE FROM events WHERE id = ?;
 
+-- name: DeleteEventsByUID :exec
+DELETE FROM events WHERE uid = ?;
+
 -- name: ListAllEvents :many
 SELECT * FROM events;
 
