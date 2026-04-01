@@ -5,7 +5,7 @@ CREATE TABLE calendars (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     name        TEXT    NOT NULL,
     color       TEXT    NOT NULL DEFAULT '#7C3AED',
-    description TEXT    NOT NULL DEFAULT '',
+    description TEXT,
     created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
@@ -18,23 +18,23 @@ CREATE TABLE events (
     uid             TEXT    NOT NULL,
     calendar_id     INTEGER NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
     title           TEXT    NOT NULL,
-    description     TEXT    NOT NULL DEFAULT '',
-    location        TEXT    NOT NULL DEFAULT '',
+    description     TEXT,
+    location        TEXT,
     start_time      TEXT    NOT NULL,
     end_time        TEXT    NOT NULL,
     all_day         INTEGER NOT NULL DEFAULT 0,
-    recurrence_rule TEXT    NOT NULL DEFAULT '',
-    timezone        TEXT    NOT NULL DEFAULT '',
+    recurrence_rule TEXT,
+    timezone        TEXT,
     status          TEXT    NOT NULL DEFAULT 'CONFIRMED',
     transp          TEXT    NOT NULL DEFAULT 'OPAQUE',
     sequence        INTEGER NOT NULL DEFAULT 0,
     priority        INTEGER NOT NULL DEFAULT 0,
     class           TEXT    NOT NULL DEFAULT 'PUBLIC',
-    url             TEXT    NOT NULL DEFAULT '',
-    exdates         TEXT    NOT NULL DEFAULT '',
-    rdates          TEXT    NOT NULL DEFAULT '',
+    url             TEXT,
+    exdates         TEXT,
+    rdates          TEXT,
     recurrence_id   TEXT    NOT NULL DEFAULT '',
-    geo             TEXT    NOT NULL DEFAULT '',
+    geo             TEXT,
     created_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     UNIQUE(uid, recurrence_id)
@@ -59,26 +59,26 @@ CREATE TABLE event_alarms (
     event_id      INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
     action        TEXT    NOT NULL DEFAULT 'DISPLAY',
     trigger_value TEXT    NOT NULL,
-    description   TEXT    NOT NULL DEFAULT '',
+    description   TEXT,
     repeat        INTEGER NOT NULL DEFAULT 0,
-    duration      TEXT    NOT NULL DEFAULT '',
+    duration      TEXT,
     related       TEXT    NOT NULL DEFAULT 'START',
-    summary       TEXT    NOT NULL DEFAULT '',
-    uid           TEXT    NOT NULL DEFAULT '',
-    acknowledged  TEXT    NOT NULL DEFAULT '',
-    attach_uri    TEXT    NOT NULL DEFAULT '',
-    attach_fmttype TEXT   NOT NULL DEFAULT ''
+    summary       TEXT,
+    uid           TEXT,
+    acknowledged  TEXT,
+    attach_uri    TEXT,
+    attach_fmttype TEXT
 );
 
 CREATE INDEX idx_event_alarms_event_id ON event_alarms(event_id);
-CREATE UNIQUE INDEX idx_event_alarms_uid ON event_alarms(uid) WHERE uid != '';
+CREATE UNIQUE INDEX idx_event_alarms_uid ON event_alarms(uid) WHERE uid IS NOT NULL;
 
 -- Event alarm attendees (for EMAIL action)
 CREATE TABLE event_alarm_attendees (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     alarm_id INTEGER NOT NULL REFERENCES event_alarms(id) ON DELETE CASCADE,
     email    TEXT    NOT NULL,
-    name     TEXT    NOT NULL DEFAULT ''
+    name     TEXT
 );
 
 CREATE INDEX idx_event_alarm_attendees_alarm_id ON event_alarm_attendees(alarm_id);
@@ -88,18 +88,18 @@ CREATE TABLE event_attendees (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id       INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
     email          TEXT    NOT NULL,
-    name           TEXT    NOT NULL DEFAULT '',
+    name           TEXT,
     rsvp_status    TEXT    NOT NULL DEFAULT 'NEEDS-ACTION',
     role           TEXT    NOT NULL DEFAULT 'REQ-PARTICIPANT',
     organizer      INTEGER NOT NULL DEFAULT 0,
-    cutype         TEXT    NOT NULL DEFAULT '',
-    rsvp           TEXT    NOT NULL DEFAULT '',
-    sent_by        TEXT    NOT NULL DEFAULT '',
-    delegated_to   TEXT    NOT NULL DEFAULT '',
-    delegated_from TEXT    NOT NULL DEFAULT '',
-    member         TEXT    NOT NULL DEFAULT '',
-    dir            TEXT    NOT NULL DEFAULT '',
-    language       TEXT    NOT NULL DEFAULT ''
+    cutype         TEXT,
+    rsvp           TEXT,
+    sent_by        TEXT,
+    delegated_to   TEXT,
+    delegated_from TEXT,
+    member         TEXT,
+    dir            TEXT,
+    language       TEXT
 );
 
 CREATE INDEX idx_event_attendees_event_id ON event_attendees(event_id);
@@ -109,9 +109,9 @@ CREATE TABLE event_attachments (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
     uri      TEXT    NOT NULL,
-    fmttype  TEXT    NOT NULL DEFAULT '',
+    fmttype  TEXT,
     data     BLOB,
-    filename TEXT    NOT NULL DEFAULT ''
+    filename TEXT
 );
 
 CREATE INDEX idx_event_attachments_event_id ON event_attachments(event_id);
@@ -148,7 +148,7 @@ CREATE TABLE event_relations (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
     rel_type TEXT    NOT NULL DEFAULT 'PARENT',
-    rel_uid  TEXT    NOT NULL DEFAULT ''
+    rel_uid  TEXT
 );
 
 CREATE INDEX idx_event_relations_event_id ON event_relations(event_id);
@@ -191,24 +191,24 @@ CREATE TABLE todos (
     uid              TEXT    NOT NULL,
     calendar_id      INTEGER NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
     summary          TEXT    NOT NULL,
-    description      TEXT    NOT NULL DEFAULT '',
-    location         TEXT    NOT NULL DEFAULT '',
-    due_date         TEXT    NOT NULL DEFAULT '',
-    start_date       TEXT    NOT NULL DEFAULT '',
-    duration         TEXT    NOT NULL DEFAULT '',
-    completed_at     TEXT    NOT NULL DEFAULT '',
+    description      TEXT,
+    location         TEXT,
+    due_date         TEXT,
+    start_date       TEXT,
+    duration         TEXT,
+    completed_at     TEXT,
     percent_complete INTEGER NOT NULL DEFAULT 0,
     status           TEXT    NOT NULL DEFAULT 'NEEDS-ACTION',
     priority         INTEGER NOT NULL DEFAULT 0,
     class            TEXT    NOT NULL DEFAULT 'PUBLIC',
-    url              TEXT    NOT NULL DEFAULT '',
-    recurrence_rule  TEXT    NOT NULL DEFAULT '',
-    timezone         TEXT    NOT NULL DEFAULT '',
+    url              TEXT,
+    recurrence_rule  TEXT,
+    timezone         TEXT,
     sequence         INTEGER NOT NULL DEFAULT 0,
-    exdates          TEXT    NOT NULL DEFAULT '',
-    rdates           TEXT    NOT NULL DEFAULT '',
+    exdates          TEXT,
+    rdates           TEXT,
     recurrence_id    TEXT    NOT NULL DEFAULT '',
-    geo              TEXT    NOT NULL DEFAULT '',
+    geo              TEXT,
     created_at       TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at       TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     UNIQUE(uid, recurrence_id)
@@ -234,26 +234,26 @@ CREATE TABLE todo_alarms (
     todo_id       INTEGER NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
     action        TEXT    NOT NULL DEFAULT 'DISPLAY',
     trigger_value TEXT    NOT NULL,
-    description   TEXT    NOT NULL DEFAULT '',
+    description   TEXT,
     repeat        INTEGER NOT NULL DEFAULT 0,
-    duration      TEXT    NOT NULL DEFAULT '',
+    duration      TEXT,
     related       TEXT    NOT NULL DEFAULT 'START',
-    summary       TEXT    NOT NULL DEFAULT '',
-    uid           TEXT    NOT NULL DEFAULT '',
-    acknowledged  TEXT    NOT NULL DEFAULT '',
-    attach_uri    TEXT    NOT NULL DEFAULT '',
-    attach_fmttype TEXT   NOT NULL DEFAULT ''
+    summary       TEXT,
+    uid           TEXT,
+    acknowledged  TEXT,
+    attach_uri    TEXT,
+    attach_fmttype TEXT
 );
 
 CREATE INDEX idx_todo_alarms_todo_id ON todo_alarms(todo_id);
-CREATE UNIQUE INDEX idx_todo_alarms_uid ON todo_alarms(uid) WHERE uid != '';
+CREATE UNIQUE INDEX idx_todo_alarms_uid ON todo_alarms(uid) WHERE uid IS NOT NULL;
 
 -- Todo alarm attendees
 CREATE TABLE todo_alarm_attendees (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     alarm_id INTEGER NOT NULL REFERENCES todo_alarms(id) ON DELETE CASCADE,
     email    TEXT    NOT NULL,
-    name     TEXT    NOT NULL DEFAULT ''
+    name     TEXT
 );
 
 CREATE INDEX idx_todo_alarm_attendees_alarm_id ON todo_alarm_attendees(alarm_id);
@@ -263,18 +263,18 @@ CREATE TABLE todo_attendees (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     todo_id        INTEGER NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
     email          TEXT    NOT NULL,
-    name           TEXT    NOT NULL DEFAULT '',
+    name           TEXT,
     rsvp_status    TEXT    NOT NULL DEFAULT 'NEEDS-ACTION',
     role           TEXT    NOT NULL DEFAULT 'REQ-PARTICIPANT',
     organizer      INTEGER NOT NULL DEFAULT 0,
-    cutype         TEXT    NOT NULL DEFAULT '',
-    rsvp           TEXT    NOT NULL DEFAULT '',
-    sent_by        TEXT    NOT NULL DEFAULT '',
-    delegated_to   TEXT    NOT NULL DEFAULT '',
-    delegated_from TEXT    NOT NULL DEFAULT '',
-    member         TEXT    NOT NULL DEFAULT '',
-    dir            TEXT    NOT NULL DEFAULT '',
-    language       TEXT    NOT NULL DEFAULT ''
+    cutype         TEXT,
+    rsvp           TEXT,
+    sent_by        TEXT,
+    delegated_to   TEXT,
+    delegated_from TEXT,
+    member         TEXT,
+    dir            TEXT,
+    language       TEXT
 );
 
 CREATE INDEX idx_todo_attendees_todo_id ON todo_attendees(todo_id);
@@ -284,9 +284,9 @@ CREATE TABLE todo_attachments (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     todo_id  INTEGER NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
     uri      TEXT    NOT NULL,
-    fmttype  TEXT    NOT NULL DEFAULT '',
+    fmttype  TEXT,
     data     BLOB,
-    filename TEXT    NOT NULL DEFAULT ''
+    filename TEXT
 );
 
 CREATE INDEX idx_todo_attachments_todo_id ON todo_attachments(todo_id);
@@ -323,7 +323,7 @@ CREATE TABLE todo_relations (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     todo_id  INTEGER NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
     rel_type TEXT    NOT NULL DEFAULT 'PARENT',
-    rel_uid  TEXT    NOT NULL DEFAULT ''
+    rel_uid  TEXT
 );
 
 CREATE INDEX idx_todo_relations_todo_id ON todo_relations(todo_id);

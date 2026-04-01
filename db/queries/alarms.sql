@@ -18,4 +18,4 @@ UPDATE event_alarms SET uid = ? WHERE id = ?;
 UPDATE event_alarms SET acknowledged = ? WHERE id = ? AND event_id = ?;
 
 -- name: ListAlarmsWithEmptyUID :many
-SELECT * FROM event_alarms WHERE uid = '';
+SELECT * FROM event_alarms WHERE uid IS NULL;

@@ -11,13 +11,13 @@ CREATE INDEX idx_todo_alarm_state_snoozed ON todo_alarm_state(snoozed_to) WHERE 
 -- Event duration column for round-trip fidelity.
 -- Events with DURATION are converted to DTEND on import; this column preserves
 -- the original RFC 5545 DURATION string (e.g. "PT1H") so it can be re-emitted.
-ALTER TABLE events ADD COLUMN duration TEXT NOT NULL DEFAULT '';
+ALTER TABLE events ADD COLUMN duration TEXT;
 
 -- DTSTAMP column for RFC 5545 DTSTAMP/LAST-MODIFIED distinction.
 -- DTSTAMP reflects when the iCalendar object was created/sent; LAST-MODIFIED
 -- reflects when the component was last changed. Previously both mapped to updated_at.
-ALTER TABLE events ADD COLUMN dtstamp TEXT NOT NULL DEFAULT '';
-ALTER TABLE todos ADD COLUMN dtstamp TEXT NOT NULL DEFAULT '';
+ALTER TABLE events ADD COLUMN dtstamp TEXT;
+ALTER TABLE todos ADD COLUMN dtstamp TEXT;
 
 -- Timezones table for VTIMEZONE round-tripping.
 -- Stores raw VTIMEZONE component data from imports so non-standard or custom

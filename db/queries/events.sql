@@ -78,17 +78,17 @@ DELETE FROM events WHERE uid = ?;
 SELECT * FROM events;
 
 -- name: ListRecurringEvents :many
-SELECT * FROM events WHERE recurrence_rule != '' AND recurrence_id = '';
+SELECT * FROM events WHERE recurrence_rule IS NOT NULL AND recurrence_id = '';
 
 -- name: ListRecurringEventsByCalendar :many
-SELECT * FROM events WHERE recurrence_rule != '' AND recurrence_id = '' AND calendar_id = ?;
+SELECT * FROM events WHERE recurrence_rule IS NOT NULL AND recurrence_id = '' AND calendar_id = ?;
 
 -- name: ListRecurringEventsByStatus :many
-SELECT * FROM events WHERE recurrence_rule != '' AND recurrence_id = '' AND status = ?;
+SELECT * FROM events WHERE recurrence_rule IS NOT NULL AND recurrence_id = '' AND status = ?;
 
 -- name: ListEventsFiltered :many
 SELECT * FROM events
-WHERE recurrence_rule = '' AND recurrence_id = ''
+WHERE recurrence_rule IS NULL AND recurrence_id = ''
 AND (sqlc.arg(calendar_id) = 0 OR calendar_id = sqlc.arg(calendar_id))
 AND (sqlc.arg(filter_status) = '' OR status = sqlc.arg(filter_status))
 AND (sqlc.arg(category) = '' OR EXISTS (SELECT 1 FROM event_categories ec WHERE ec.event_id = events.id AND ec.category = sqlc.arg(category)))
@@ -98,7 +98,7 @@ ORDER BY start_time ASC;
 
 -- name: ListRecurringEventsFiltered :many
 SELECT * FROM events
-WHERE recurrence_rule != '' AND recurrence_id = ''
+WHERE recurrence_rule IS NOT NULL AND recurrence_id = ''
 AND (sqlc.arg(calendar_id) = 0 OR calendar_id = sqlc.arg(calendar_id))
 AND (sqlc.arg(filter_status) = '' OR status = sqlc.arg(filter_status))
 AND (sqlc.arg(category) = '' OR EXISTS (SELECT 1 FROM event_categories ec WHERE ec.event_id = events.id AND ec.category = sqlc.arg(category)))

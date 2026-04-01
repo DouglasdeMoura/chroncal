@@ -9,7 +9,7 @@ SELECT * FROM todo_alarms WHERE todo_id = ? ORDER BY id;
 DELETE FROM todo_alarms WHERE todo_id = ?;
 
 -- name: ListTodoAlarmsWithEmptyUID :many
-SELECT * FROM todo_alarms WHERE uid = '';
+SELECT * FROM todo_alarms WHERE uid IS NULL;
 
 -- name: UpdateTodoAlarmUID :exec
 UPDATE todo_alarms SET uid = ? WHERE id = ?;
