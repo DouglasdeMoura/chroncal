@@ -82,14 +82,23 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 		return nil, nil, err
 	}
 
+	// Batch fetch alarms for all unique parent event IDs to avoid N+1 queries.
+	uniqueIDs := make([]int64, 0, len(expanded))
+	seen := make(map[int64]struct{}, len(expanded))
+	for _, expEvt := range expanded {
+		if _, ok := seen[expEvt.ID]; !ok {
+			seen[expEvt.ID] = struct{}{}
+			uniqueIDs = append(uniqueIDs, expEvt.ID)
+		}
+	}
+	alarmMap, err := s.events.ListAlarmsByEventIDs(ctx, uniqueIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	var missed []MissedAlarm
 	for _, expEvt := range expanded {
-		alarms, err := s.events.ListAlarms(ctx, expEvt.Event.ID)
-		if err != nil {
-			continue
-		}
-
-		for _, a := range alarms {
+		for _, a := range alarmMap[expEvt.ID] {
 			triggerAt, err := computeTriggerTimeForInstance(expEvt, a)
 			if err != nil {
 				continue
@@ -299,25 +308,26 @@ func computeTriggerTimeForInstance(expEvt recurrence.ExpandedEvent, alarm model.
 		return duration.Add(anchor, trigger), nil
 	}
 
-	// Absolute triggers: the trigger IS the fire time; Related is ignored.
-	// Try iCal UTC format: 20060102T150405Z
+	return parseAbsoluteTrigger(trigger, expEvt.Event.Timezone)
+}
+
+// parseAbsoluteTrigger parses an absolute trigger value (iCal UTC, floating, or RFC 3339).
+// Floating times are interpreted in the given timezone if non-empty.
+func parseAbsoluteTrigger(trigger, timezone string) (time.Time, error) {
 	if t, err := time.Parse("20060102T150405Z", trigger); err == nil {
 		return t, nil
 	}
-	// Try iCal floating format: 20060102T150405 (interpret in event timezone)
 	if t, err := time.Parse("20060102T150405", trigger); err == nil {
-		if expEvt.Event.Timezone != "" {
-			if loc, lerr := time.LoadLocation(expEvt.Event.Timezone); lerr == nil {
+		if timezone != "" {
+			if loc, lerr := time.LoadLocation(timezone); lerr == nil {
 				return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), 0, loc), nil
 			}
 		}
-		return t, nil // treat as UTC if no timezone info
+		return t, nil
 	}
-	// Try RFC 3339 (legacy CLI-created triggers before normalization)
 	if t, err := time.Parse(time.RFC3339, trigger); err == nil {
 		return t, nil
 	}
-
 	return time.Time{}, fmt.Errorf("invalid trigger format: %q", trigger)
 }
 
@@ -527,42 +537,12 @@ func (s *Service) ListPending(ctx context.Context) ([]storage.AlarmState, error)
 }
 
 // computeTriggerTime calculates the absolute trigger time for an alarm on an event.
-// It's used primarily for testing; use computeTriggerTimeForInstance for recurring events.
+// It's a convenience wrapper used in tests; production code uses computeTriggerTimeForInstance.
 func computeTriggerTime(evt event.Event, a model.Alarm) (time.Time, error) {
-	trigger := a.TriggerValue
-	if trigger == "" {
-		return time.Time{}, fmt.Errorf("empty trigger value")
-	}
-
-	if duration.Validate(trigger) == nil {
-		anchor := evt.StartTime
-		if a.Related == "END" {
-			anchor = evt.EndTime
-		}
-		if evt.Timezone != "" {
-			if loc, err := time.LoadLocation(evt.Timezone); err == nil {
-				anchor = anchor.In(loc)
-			}
-		}
-		return duration.Add(anchor, trigger), nil
-	}
-
-	if t, err := time.Parse("20060102T150405Z", trigger); err == nil {
-		return t, nil
-	}
-	if t, err := time.Parse("20060102T150405", trigger); err == nil {
-		if evt.Timezone != "" {
-			if loc, lerr := time.LoadLocation(evt.Timezone); lerr == nil {
-				return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), 0, loc), nil
-			}
-		}
-		return t, nil
-	}
-	if t, err := time.Parse(time.RFC3339, trigger); err == nil {
-		return t, nil
-	}
-
-	return time.Time{}, fmt.Errorf("invalid trigger format: %q", trigger)
+	return computeTriggerTimeForInstance(recurrence.ExpandedEvent{
+		Event:        evt,
+		InstanceTime: evt.StartTime,
+	}, a)
 }
 
 // buildRepeatTriggers returns a list of trigger times for a repeating alarm.

@@ -185,22 +185,7 @@ func computeTodoTriggerTimeForInstance(inst recurrence.ExpandedTodo, alarm model
 	}
 
 	// Absolute triggers
-	if t, err := time.Parse("20060102T150405Z", alarm.TriggerValue); err == nil {
-		return t, nil
-	}
-	if t, err := time.Parse("20060102T150405", alarm.TriggerValue); err == nil {
-		if inst.Todo.Timezone != "" {
-			if loc, lerr := time.LoadLocation(inst.Todo.Timezone); lerr == nil {
-				return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), 0, loc), nil
-			}
-		}
-		return t, nil
-	}
-	if t, err := time.Parse(time.RFC3339, alarm.TriggerValue); err == nil {
-		return t, nil
-	}
-
-	return time.Time{}, fmt.Errorf("invalid trigger format: %q", alarm.TriggerValue)
+	return parseAbsoluteTrigger(alarm.TriggerValue, inst.Todo.Timezone)
 }
 
 // MarkTodoAlarmFired records that a todo alarm has fired
