@@ -185,7 +185,7 @@ func (s *Service) ListByCalendarAndDateRange(ctx context.Context, calID int64, f
 func (s *Service) Search(ctx context.Context, p SearchParams) ([]Event, error) {
 	ftsQuery := storage.FTSQuery(p.Query)
 	if ftsQuery == "" {
-		return nil, nil
+		return []Event{}, nil
 	}
 	rows, err := s.q.SearchEventsFTS(ctx, ftsQuery, p.CalendarID, p.From, p.To, p.Status)
 	if err != nil {
