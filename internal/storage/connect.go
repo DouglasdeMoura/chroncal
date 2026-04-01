@@ -83,7 +83,7 @@ func backfillAlarmUIDs(conn *sql.DB, q *Queries) error {
 	qtx := q.WithTx(tx)
 	for _, a := range alarms {
 		if err := qtx.UpdateAlarmUID(ctx, UpdateAlarmUIDParams{
-			Uid: uuid.New().String(),
+			Uid: StringToNullable(uuid.New().String()),
 			ID:  a.ID,
 		}); err != nil {
 			return err
@@ -99,7 +99,7 @@ func backfillAlarmUIDs(conn *sql.DB, q *Queries) error {
 	}
 	for _, a := range todoAlarms {
 		if err := qtx.UpdateTodoAlarmUID(ctx, UpdateTodoAlarmUIDParams{
-			Uid: uuid.New().String(),
+			Uid: StringToNullable(uuid.New().String()),
 			ID:  a.ID,
 		}); err != nil {
 			return err

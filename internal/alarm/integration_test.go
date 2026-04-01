@@ -152,8 +152,8 @@ func TestAlarmLifecycle_Snooze(t *testing.T) {
 	if len(pending) != 1 {
 		t.Fatalf("step 6: got %d pending alarms, want 1", len(pending))
 	}
-	if !pending[0].SnoozedTo.Valid {
-		t.Fatal("step 6: SnoozedTo should be set after snooze, but Valid is false")
+	if pending[0].SnoozedTo == nil {
+		t.Fatal("step 6: SnoozedTo should be set after snooze, but is nil")
 	}
 
 	// 7. Wait for snooze to "expire" by snoozing into the past
@@ -261,7 +261,7 @@ func TestSnoozeSurvivesEventUpdate(t *testing.T) {
 	if len(pending) != 1 {
 		t.Fatalf("want 1 pending alarm after update, got %d (snooze state was lost!)", len(pending))
 	}
-	if pending[0].SnoozedTo.String == "" {
+	if pending[0].SnoozedTo == nil {
 		t.Error("snooze-until time was lost after event update")
 	}
 }

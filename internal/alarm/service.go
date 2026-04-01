@@ -361,10 +361,8 @@ func computeTriggerTimeForInstance(expEvt recurrence.ExpandedEvent, alarm model.
 // ListExpiredSnoozed returns snoozed alarms whose snooze-until time is at or
 // before now. The caller should re-fire and mark them via MarkRefired.
 func (s *Service) ListExpiredSnoozed(ctx context.Context, now time.Time) ([]DueAlarm, error) {
-	states, err := s.q.ListExpiredSnoozedAlarmStates(ctx, sql.NullString{
-		String: now.UTC().Format(time.RFC3339),
-		Valid:  true,
-	})
+	nowStr := now.UTC().Format(time.RFC3339)
+	states, err := s.q.ListExpiredSnoozedAlarmStates(ctx, &nowStr)
 	if err != nil {
 		return nil, err
 	}
@@ -390,7 +388,7 @@ func (s *Service) ListExpiredSnoozed(ctx context.Context, now time.Time) ([]DueA
 			continue // alarm definition was removed
 		}
 
-		triggerAt, _ := time.Parse(time.RFC3339, st.SnoozedTo.String)
+		triggerAt, _ := time.Parse(time.RFC3339, storage.NullableToString(st.SnoozedTo))
 
 		due = append(due, DueAlarm{
 			Event:     evt,
@@ -409,7 +407,7 @@ func (s *Service) MarkFired(ctx context.Context, da DueAlarm) (int64, error) {
 		AlarmID:   da.Alarm.ID,
 		EventID:   da.Event.ID,
 		TriggerAt: da.TriggerAt.UTC().Format(time.RFC3339),
-		FiredAt:   sql.NullString{String: now, Valid: true},
+		FiredAt:   &now,
 	})
 	if err != nil {
 		return 0, err
@@ -427,7 +425,7 @@ func (s *Service) MarkTodoFired(ctx context.Context, tda TodoDueAlarm) (int64, e
 func (s *Service) MarkTodoRefired(ctx context.Context, stateID int64) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	return s.q.RefireTodoAlarmState(ctx, storage.RefireTodoAlarmStateParams{
-		FiredAt: sql.NullString{String: now, Valid: true},
+		FiredAt: &now,
 		ID:      stateID,
 	})
 }
@@ -442,12 +440,12 @@ func (s *Service) Dismiss(ctx context.Context, stateID int64) error {
 	if err != nil {
 		return fmt.Errorf("get alarm state %d: %w", stateID, err)
 	}
-	if st.AckedAt.Valid {
+	if st.AckedAt != nil {
 		return fmt.Errorf("alarm state %d already dismissed", stateID)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	return s.q.AcknowledgeAlarmState(ctx, storage.AcknowledgeAlarmStateParams{
-		AckedAt: sql.NullString{String: now, Valid: true},
+		AckedAt: &now,
 		ID:      stateID,
 	})
 }
@@ -456,7 +454,7 @@ func (s *Service) Dismiss(ctx context.Context, stateID int64) error {
 func (s *Service) MarkRefired(ctx context.Context, stateID int64) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	return s.q.RefireAlarmState(ctx, storage.RefireAlarmStateParams{
-		FiredAt: sql.NullString{String: now, Valid: true},
+		FiredAt: &now,
 		ID:      stateID,
 	})
 }
@@ -484,7 +482,7 @@ func (s *Service) ComputeSnooze(ctx context.Context, stateID int64, dur time.Dur
 	if err != nil {
 		return SnoozeResult{}, fmt.Errorf("get alarm state %d: %w", stateID, err)
 	}
-	if st.AckedAt.Valid {
+	if st.AckedAt != nil {
 		return SnoozeResult{}, fmt.Errorf("alarm state %d is already dismissed", stateID)
 	}
 
@@ -530,7 +528,7 @@ func (s *Service) SnoozeUntilStart(ctx context.Context, stateID int64, now time.
 	if err != nil {
 		return SnoozeResult{}, fmt.Errorf("get alarm state %d: %w", stateID, err)
 	}
-	if st.AckedAt.Valid {
+	if st.AckedAt != nil {
 		return SnoozeResult{}, fmt.Errorf("alarm state %d is already dismissed", stateID)
 	}
 
@@ -553,8 +551,9 @@ func (s *Service) SnoozeUntilStart(ctx context.Context, stateID int64, now time.
 
 // Snooze reschedules a fired alarm to fire again at the given time.
 func (s *Service) Snooze(ctx context.Context, stateID int64, until time.Time) error {
+	snoozeStr := until.UTC().Format(time.RFC3339)
 	return s.q.SnoozeAlarmState(ctx, storage.SnoozeAlarmStateParams{
-		SnoozedTo: sql.NullString{String: until.UTC().Format(time.RFC3339), Valid: true},
+		SnoozedTo: &snoozeStr,
 		ID:        stateID,
 	})
 }

@@ -208,9 +208,11 @@ func (s *Service) ListByStatus(ctx context.Context, status string) ([]Todo, erro
 func (s *Service) ListByDueDateRange(ctx context.Context, from, to time.Time) ([]Todo, error) {
 	// Use date-only format for bounds so that date-only DUE values
 	// (stored as "YYYY-MM-DD") are correctly matched by string comparison.
+	fromStr := from.Format("2006-01-02")
+	toStr := to.Format("2006-01-02")
 	rows, err := s.q.ListTodosByDueDateRange(ctx, storage.ListTodosByDueDateRangeParams{
-		DueDate:   from.Format("2006-01-02"),
-		DueDate_2: to.Format("2006-01-02"),
+		DueDate:   &fromStr,
+		DueDate_2: &toStr,
 	})
 	if err != nil {
 		return nil, err
@@ -263,25 +265,25 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Todo, error) {
 		Uid:             uuid.New().String(),
 		CalendarID:      p.CalendarID,
 		Summary:         p.Summary,
-		Description:     p.Description,
-		Location:        p.Location,
-		DueDate:         p.DueDate,
-		StartDate:       p.StartDate,
-		Duration:        p.Duration,
-		CompletedAt:     completedAt,
+		Description:     storage.StringToNullable(p.Description),
+		Location:        storage.StringToNullable(p.Location),
+		DueDate:         storage.StringToNullable(p.DueDate),
+		StartDate:       storage.StringToNullable(p.StartDate),
+		Duration:        storage.StringToNullable(p.Duration),
+		CompletedAt:     storage.StringToNullable(completedAt),
 		PercentComplete: p.PercentComplete,
 		Status:          p.Status,
 		Priority:        p.Priority,
 		Class:           p.Class,
-		Url:             p.URL,
-		RecurrenceRule:  p.RecurrenceRule,
-		Timezone:        p.Timezone,
+		Url:             storage.StringToNullable(p.URL),
+		RecurrenceRule:  storage.StringToNullable(p.RecurrenceRule),
+		Timezone:        storage.StringToNullable(p.Timezone),
 		Sequence:        p.Sequence,
-		Exdates:         p.ExDates,
-		Rdates:          p.RDates,
+		Exdates:         storage.StringToNullable(p.ExDates),
+		Rdates:          storage.StringToNullable(p.RDates),
 		RecurrenceID:    p.RecurrenceID,
-		Geo:             p.Geo,
-		Dtstamp:         p.DtStamp,
+		Geo:             storage.StringToNullable(p.Geo),
+		Dtstamp:         storage.StringToNullable(p.DtStamp),
 	})
 	if err != nil {
 		return Todo{}, err
@@ -308,24 +310,24 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, e
 	r, err := s.q.UpdateTodo(ctx, storage.UpdateTodoParams{
 		ID:              id,
 		Summary:         p.Summary,
-		Description:     p.Description,
-		Location:        p.Location,
-		DueDate:         p.DueDate,
-		StartDate:       p.StartDate,
-		Duration:        p.Duration,
-		CompletedAt:     p.CompletedAt,
+		Description:     storage.StringToNullable(p.Description),
+		Location:        storage.StringToNullable(p.Location),
+		DueDate:         storage.StringToNullable(p.DueDate),
+		StartDate:       storage.StringToNullable(p.StartDate),
+		Duration:        storage.StringToNullable(p.Duration),
+		CompletedAt:     storage.StringToNullable(p.CompletedAt),
 		PercentComplete: p.PercentComplete,
 		Status:          p.Status,
 		CalendarID:      p.CalendarID,
 		Priority:        p.Priority,
 		Class:           p.Class,
-		Url:             p.URL,
-		RecurrenceRule:  p.RecurrenceRule,
-		Timezone:        p.Timezone,
-		Exdates:         p.ExDates,
-		Rdates:          p.RDates,
-		Geo:             p.Geo,
-		Dtstamp:         p.DtStamp,
+		Url:             storage.StringToNullable(p.URL),
+		RecurrenceRule:  storage.StringToNullable(p.RecurrenceRule),
+		Timezone:        storage.StringToNullable(p.Timezone),
+		Exdates:         storage.StringToNullable(p.ExDates),
+		Rdates:          storage.StringToNullable(p.RDates),
+		Geo:             storage.StringToNullable(p.Geo),
+		Dtstamp:         storage.StringToNullable(p.DtStamp),
 	})
 	if err != nil {
 		return Todo{}, err
@@ -352,25 +354,25 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Todo, error)
 		Uid:             p.UID,
 		CalendarID:      p.CalendarID,
 		Summary:         p.Summary,
-		Description:     p.Description,
-		Location:        p.Location,
-		DueDate:         p.DueDate,
-		StartDate:       p.StartDate,
-		Duration:        p.Duration,
-		CompletedAt:     p.CompletedAt,
+		Description:     storage.StringToNullable(p.Description),
+		Location:        storage.StringToNullable(p.Location),
+		DueDate:         storage.StringToNullable(p.DueDate),
+		StartDate:       storage.StringToNullable(p.StartDate),
+		Duration:        storage.StringToNullable(p.Duration),
+		CompletedAt:     storage.StringToNullable(p.CompletedAt),
 		PercentComplete: p.PercentComplete,
 		Status:          p.Status,
 		Priority:        p.Priority,
 		Class:           p.Class,
-		Url:             p.URL,
-		RecurrenceRule:  p.RecurrenceRule,
-		Timezone:        p.Timezone,
+		Url:             storage.StringToNullable(p.URL),
+		RecurrenceRule:  storage.StringToNullable(p.RecurrenceRule),
+		Timezone:        storage.StringToNullable(p.Timezone),
 		Sequence:        p.Sequence,
-		Exdates:         p.ExDates,
-		Rdates:          p.RDates,
+		Exdates:         storage.StringToNullable(p.ExDates),
+		Rdates:          storage.StringToNullable(p.RDates),
 		RecurrenceID:    p.RecurrenceID,
-		Geo:             p.Geo,
-		Dtstamp:         p.DtStamp,
+		Geo:             storage.StringToNullable(p.Geo),
+		Dtstamp:         storage.StringToNullable(p.DtStamp),
 	})
 	if err != nil {
 		return Todo{}, err
@@ -415,7 +417,7 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 
 		master, err := qtx.GetTodoByUID(ctx, td.UID)
 		if err == nil {
-			existing := event.ParseTimeList(master.Exdates)
+			existing := event.ParseTimeList(storage.NullableToString(master.Exdates))
 			recIDTime, parseErr := time.Parse(time.RFC3339, td.RecurrenceID)
 			if parseErr != nil {
 				recIDTime, parseErr = time.Parse("2006-01-02", td.RecurrenceID)
@@ -426,7 +428,7 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 			if parseErr == nil {
 				existing = append(existing, recIDTime)
 				if err := qtx.UpdateTodoExdates(ctx, storage.UpdateTodoExdatesParams{
-					Exdates: event.SerializeTimeList(existing),
+					Exdates: storage.StringToNullable(event.SerializeTimeList(existing)),
 					ID:      master.ID,
 				}); err != nil {
 					return fmt.Errorf("update exdates: %w", err)
@@ -482,23 +484,23 @@ func (s *Service) ListAlarms(ctx context.Context, todoID int64) ([]model.Alarm, 
 	for i, r := range rows {
 		alarms[i] = model.Alarm{
 			ID: r.ID, EventID: r.TodoID,
-			UID:           r.Uid,
+			UID:           storage.NullableToString(r.Uid),
 			Action:        r.Action,
 			TriggerValue:  r.TriggerValue,
-			Description:   r.Description,
-			Summary:       r.Summary,
+			Description:   storage.NullableToString(r.Description),
+			Summary:       storage.NullableToString(r.Summary),
 			Repeat:        int(r.Repeat),
-			Duration:      r.Duration,
+			Duration:      storage.NullableToString(r.Duration),
 			Related:       r.Related,
-			Acknowledged:  r.Acknowledged,
-			AttachURI:     r.AttachUri,
-			AttachFmtType: r.AttachFmttype,
+			Acknowledged:  storage.NullableToString(r.Acknowledged),
+			AttachURI:     storage.NullableToString(r.AttachUri),
+			AttachFmtType: storage.NullableToString(r.AttachFmttype),
 		}
 		attRows, err := s.q.ListTodoAlarmAttendeesByAlarmID(ctx, r.ID)
 		if err == nil {
 			for _, ar := range attRows {
 				alarms[i].Attendees = append(alarms[i].Attendees, model.AlarmAttendee{
-					ID: ar.ID, Email: ar.Email, Name: ar.Name,
+					ID: ar.ID, Email: ar.Email, Name: storage.NullableToString(ar.Name),
 				})
 			}
 		}
@@ -524,17 +526,17 @@ func (s *Service) ReplaceAlarms(ctx context.Context, todoID int64, alarms []mode
 		}
 		row, err := qtx.CreateTodoAlarm(ctx, storage.CreateTodoAlarmParams{
 			TodoID:        todoID,
-			Uid:           uid,
+			Uid:           storage.StringToNullable(uid),
 			Action:        a.Action,
 			TriggerValue:  a.TriggerValue,
-			Description:   a.Description,
-			Summary:       a.Summary,
+			Description:   storage.StringToNullable(a.Description),
+			Summary:       storage.StringToNullable(a.Summary),
 			Repeat:        int64(a.Repeat),
-			Duration:      a.Duration,
+			Duration:      storage.StringToNullable(a.Duration),
 			Related:       a.Related,
-			Acknowledged:  a.Acknowledged,
-			AttachUri:     a.AttachURI,
-			AttachFmttype: a.AttachFmtType,
+			Acknowledged:  storage.StringToNullable(a.Acknowledged),
+			AttachUri:     storage.StringToNullable(a.AttachURI),
+			AttachFmttype: storage.StringToNullable(a.AttachFmtType),
 		})
 		if err != nil {
 			return fmt.Errorf("create alarm: %w", err)
@@ -543,7 +545,7 @@ func (s *Service) ReplaceAlarms(ctx context.Context, todoID int64, alarms []mode
 			_, err := qtx.CreateTodoAlarmAttendee(ctx, storage.CreateTodoAlarmAttendeeParams{
 				AlarmID: row.ID,
 				Email:   att.Email,
-				Name:    att.Name,
+				Name:    storage.StringToNullable(att.Name),
 			})
 			if err != nil {
 				return fmt.Errorf("create alarm attendee: %w", err)
@@ -564,17 +566,17 @@ func (s *Service) ListAttendees(ctx context.Context, todoID int64) ([]model.Atte
 	for i, r := range rows {
 		attendees[i] = model.Attendee{
 			ID: r.ID, EventID: r.TodoID,
-			Email: r.Email, Name: r.Name,
+			Email: r.Email, Name: storage.NullableToString(r.Name),
 			RSVPStatus: r.RsvpStatus, Role: r.Role,
 			Organizer:     r.Organizer == 1,
-			CUType:        r.Cutype,
-			RSVPRequested: strings.EqualFold(r.Rsvp, "TRUE"),
-			SentBy:        r.SentBy,
-			DelegatedTo:   r.DelegatedTo,
-			DelegatedFrom: r.DelegatedFrom,
-			Member:        r.Member,
-			Dir:           r.Dir,
-			Language:      r.Language,
+			CUType:        storage.NullableToString(r.Cutype),
+			RSVPRequested: strings.EqualFold(storage.NullableToString(r.Rsvp), "TRUE"),
+			SentBy:        storage.NullableToString(r.SentBy),
+			DelegatedTo:   storage.NullableToString(r.DelegatedTo),
+			DelegatedFrom: storage.NullableToString(r.DelegatedFrom),
+			Member:        storage.NullableToString(r.Member),
+			Dir:           storage.NullableToString(r.Dir),
+			Language:      storage.NullableToString(r.Language),
 		}
 	}
 	return attendees, nil
@@ -603,18 +605,18 @@ func (s *Service) ReplaceAttendees(ctx context.Context, todoID int64, attendees 
 		_, err := qtx.CreateTodoAttendee(ctx, storage.CreateTodoAttendeeParams{
 			TodoID:        todoID,
 			Email:         a.Email,
-			Name:          a.Name,
+			Name:          storage.StringToNullable(a.Name),
 			RsvpStatus:    a.RSVPStatus,
 			Role:          a.Role,
 			Organizer:     org,
-			Cutype:        a.CUType,
-			Rsvp:          rsvp,
-			SentBy:        a.SentBy,
-			DelegatedTo:   a.DelegatedTo,
-			DelegatedFrom: a.DelegatedFrom,
-			Member:        a.Member,
-			Dir:           a.Dir,
-			Language:      a.Language,
+			Cutype:        storage.StringToNullable(a.CUType),
+			Rsvp:          storage.StringToNullable(rsvp),
+			SentBy:        storage.StringToNullable(a.SentBy),
+			DelegatedTo:   storage.StringToNullable(a.DelegatedTo),
+			DelegatedFrom: storage.StringToNullable(a.DelegatedFrom),
+			Member:        storage.StringToNullable(a.Member),
+			Dir:           storage.StringToNullable(a.Dir),
+			Language:      storage.StringToNullable(a.Language),
 		})
 		if err != nil {
 			return fmt.Errorf("create attendee: %w", err)
@@ -673,7 +675,7 @@ func (s *Service) ListAttachments(ctx context.Context, todoID int64) ([]model.At
 	}
 	out := make([]model.Attachment, len(rows))
 	for i, r := range rows {
-		out[i] = model.Attachment{ID: r.ID, URI: r.Uri, FmtType: r.Fmttype, Data: r.Data, Filename: r.Filename}
+		out[i] = model.Attachment{ID: r.ID, URI: r.Uri, FmtType: storage.NullableToString(r.Fmttype), Data: r.Data, Filename: storage.NullableToString(r.Filename)}
 	}
 	return out, nil
 }
@@ -690,7 +692,7 @@ func (s *Service) ReplaceAttachments(ctx context.Context, todoID int64, attachme
 	}
 	for _, a := range attachments {
 		_, err := qtx.CreateTodoAttachment(ctx, storage.CreateTodoAttachmentParams{
-			TodoID: todoID, Uri: a.URI, Fmttype: a.FmtType, Data: a.Data, Filename: a.Filename,
+			TodoID: todoID, Uri: a.URI, Fmttype: storage.StringToNullable(a.FmtType), Data: a.Data, Filename: storage.StringToNullable(a.Filename),
 		})
 		if err != nil {
 			return fmt.Errorf("create attachment: %w", err)
@@ -813,7 +815,7 @@ func (s *Service) ListRelations(ctx context.Context, todoID int64) ([]model.Rela
 	}
 	out := make([]model.Relation, len(rows))
 	for i, r := range rows {
-		out[i] = model.Relation{ID: r.ID, RelType: r.RelType, RelUID: r.RelUid}
+		out[i] = model.Relation{ID: r.ID, RelType: r.RelType, RelUID: storage.NullableToString(r.RelUid)}
 	}
 	return out, nil
 }
@@ -830,7 +832,7 @@ func (s *Service) ReplaceRelations(ctx context.Context, todoID int64, relations 
 	}
 	for _, r := range relations {
 		_, err := qtx.CreateTodoRelation(ctx, storage.CreateTodoRelationParams{
-			TodoID: todoID, RelType: r.RelType, RelUid: r.RelUID,
+			TodoID: todoID, RelType: r.RelType, RelUid: storage.StringToNullable(r.RelUID),
 		})
 		if err != nil {
 			return fmt.Errorf("create relation: %w", err)
@@ -847,25 +849,25 @@ func fromStorage(r storage.Todo) Todo {
 		UID:             r.Uid,
 		CalendarID:      r.CalendarID,
 		Summary:         r.Summary,
-		Description:     r.Description,
-		Location:        r.Location,
-		DueDate:         r.DueDate,
-		StartDate:       r.StartDate,
-		Duration:        r.Duration,
-		CompletedAt:     r.CompletedAt,
+		Description:     storage.NullableToString(r.Description),
+		Location:        storage.NullableToString(r.Location),
+		DueDate:         storage.NullableToString(r.DueDate),
+		StartDate:       storage.NullableToString(r.StartDate),
+		Duration:        storage.NullableToString(r.Duration),
+		CompletedAt:     storage.NullableToString(r.CompletedAt),
 		PercentComplete: r.PercentComplete,
 		Status:          r.Status,
 		Priority:        r.Priority,
 		Class:           r.Class,
-		URL:             r.Url,
-		RecurrenceRule:  r.RecurrenceRule,
-		Timezone:        r.Timezone,
+		URL:             storage.NullableToString(r.Url),
+		RecurrenceRule:  storage.NullableToString(r.RecurrenceRule),
+		Timezone:        storage.NullableToString(r.Timezone),
 		Sequence:        r.Sequence,
-		ExDates:         r.Exdates,
-		RDates:          r.Rdates,
+		ExDates:         storage.NullableToString(r.Exdates),
+		RDates:          storage.NullableToString(r.Rdates),
 		RecurrenceID:    r.RecurrenceID,
-		Geo:             r.Geo,
-		DtStamp:         r.Dtstamp,
+		Geo:             storage.NullableToString(r.Geo),
+		DtStamp:         storage.NullableToString(r.Dtstamp),
 		CreatedAt:       parseTime(r.CreatedAt),
 		UpdatedAt:       parseTime(r.UpdatedAt),
 	}

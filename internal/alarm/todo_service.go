@@ -147,24 +147,24 @@ func todoFromRow(row storage.Todo) todo.Todo {
 		UID:             row.Uid,
 		CalendarID:      row.CalendarID,
 		Summary:         row.Summary,
-		Description:     row.Description,
-		Location:        row.Location,
-		DueDate:         row.DueDate,
-		StartDate:       row.StartDate,
-		Duration:        row.Duration,
-		CompletedAt:     row.CompletedAt,
+		Description:     storage.NullableToString(row.Description),
+		Location:        storage.NullableToString(row.Location),
+		DueDate:         storage.NullableToString(row.DueDate),
+		StartDate:       storage.NullableToString(row.StartDate),
+		Duration:        storage.NullableToString(row.Duration),
+		CompletedAt:     storage.NullableToString(row.CompletedAt),
 		PercentComplete: row.PercentComplete,
 		Status:          row.Status,
 		Priority:        row.Priority,
 		Class:           row.Class,
-		URL:             row.Url,
-		RecurrenceRule:  row.RecurrenceRule,
-		Timezone:        row.Timezone,
+		URL:             storage.NullableToString(row.Url),
+		RecurrenceRule:  storage.NullableToString(row.RecurrenceRule),
+		Timezone:        storage.NullableToString(row.Timezone),
 		Sequence:        row.Sequence,
-		ExDates:         row.Exdates,
-		RDates:          row.Rdates,
+		ExDates:         storage.NullableToString(row.Exdates),
+		RDates:          storage.NullableToString(row.Rdates),
 		RecurrenceID:    row.RecurrenceID,
-		Geo:             row.Geo,
+		Geo:             storage.NullableToString(row.Geo),
 	}
 }
 
@@ -224,7 +224,7 @@ func (s *TodoService) MarkTodoAlarmFired(ctx context.Context, alarmID, todoID in
 		AlarmID:   alarmID,
 		TodoID:    todoID,
 		TriggerAt: triggerKey,
-		FiredAt:   sql.NullString{String: now, Valid: true},
+		FiredAt:   &now,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("insert todo alarm state: %w", err)
@@ -238,24 +238,23 @@ func (s *TodoService) DismissTodoAlarm(ctx context.Context, stateID int64) error
 	now := time.Now().UTC().Format(time.RFC3339)
 	return s.q.UpdateTodoAlarmState(ctx, storage.UpdateTodoAlarmStateParams{
 		ID:      stateID,
-		AckedAt: sql.NullString{String: now, Valid: true},
+		AckedAt: &now,
 	})
 }
 
 // SnoozeTodoAlarm reschedules a todo alarm
 func (s *TodoService) SnoozeTodoAlarm(ctx context.Context, stateID int64, snoozeUntil time.Time) error {
+	snoozeStr := snoozeUntil.UTC().Format(time.RFC3339)
 	return s.q.UpdateTodoAlarmState(ctx, storage.UpdateTodoAlarmStateParams{
 		ID:        stateID,
-		SnoozedTo: sql.NullString{String: snoozeUntil.UTC().Format(time.RFC3339), Valid: true},
+		SnoozedTo: &snoozeStr,
 	})
 }
 
 // ListExpiredTodoSnoozed returns snoozed todo alarms that should re-fire
 func (s *TodoService) ListExpiredTodoSnoozed(ctx context.Context, now time.Time) ([]TodoDueAlarm, error) {
-	states, err := s.q.ListExpiredTodoSnoozed(ctx, sql.NullString{
-		String: now.UTC().Format(time.RFC3339),
-		Valid:  true,
-	})
+	nowStr := now.UTC().Format(time.RFC3339)
+	states, err := s.q.ListExpiredTodoSnoozed(ctx, &nowStr)
 	if err != nil {
 		return nil, err
 	}
@@ -284,7 +283,7 @@ func (s *TodoService) ListExpiredTodoSnoozed(ctx context.Context, now time.Time)
 			continue
 		}
 
-		triggerAt, _ := time.Parse(time.RFC3339, st.SnoozedTo.String)
+		triggerAt, _ := time.Parse(time.RFC3339, storage.NullableToString(st.SnoozedTo))
 
 		due = append(due, TodoDueAlarm{
 			Todo:      t,

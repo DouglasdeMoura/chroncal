@@ -334,8 +334,8 @@ Dismissed alarms are permanently removed from this list.`,
 						"event":      p.Title,
 						"action":     p.Action,
 						"trigger_at": p.State.TriggerAt,
-						"fired_at":   p.State.FiredAt.String,
-						"snoozed_to": p.State.SnoozedTo.String,
+						"fired_at":   storage.NullableToString(p.State.FiredAt),
+						"snoozed_to": storage.NullableToString(p.State.SnoozedTo),
 					})
 				}
 				return printOutput(w, items)
@@ -347,8 +347,8 @@ Dismissed alarms are permanently removed from this list.`,
 					triggerLocal = t.Local().Format("2006-01-02 15:04")
 				}
 				snoozed := ""
-				if p.State.SnoozedTo.Valid {
-					snz := p.State.SnoozedTo.String
+				if p.State.SnoozedTo != nil {
+					snz := *p.State.SnoozedTo
 					if t, err := time.Parse(time.RFC3339, snz); err == nil {
 						snz = t.Local().Format("15:04")
 					}

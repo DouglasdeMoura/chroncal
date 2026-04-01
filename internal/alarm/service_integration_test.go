@@ -68,12 +68,14 @@ func TestService_Check_BothEventAndTodoAlarms(t *testing.T) {
 	}
 
 	// Create todo alarm in database
+	todoAlarmUID := "todo-alarm-test"
+	todoAlarmDesc := "Todo alarm"
 	todoAlarm, err := q.CreateTodoAlarm(context.Background(), storage.CreateTodoAlarmParams{
 		TodoID:       newTodo.ID,
-		Uid:          "todo-alarm-test",
+		Uid:          &todoAlarmUID,
 		Action:       "DISPLAY",
 		TriggerValue: "-PT30M",
-		Description:  "Todo alarm",
+		Description:  &todoAlarmDesc,
 	})
 	if err != nil {
 		t.Fatalf("create todo alarm: %v", err)

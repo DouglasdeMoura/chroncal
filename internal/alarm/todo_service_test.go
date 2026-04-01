@@ -122,7 +122,7 @@ func TestMarkTodoAlarmFired(t *testing.T) {
 	// Create an alarm for the todo
 	alarm, err := q.CreateTodoAlarm(context.Background(), storage.CreateTodoAlarmParams{
 		TodoID:       newTodo.ID,
-		Uid:          "test-alarm-uid",
+		Uid:          storage.StringToNullable("test-alarm-uid"),
 		Action:       "DISPLAY",
 		TriggerValue: "-PT1H",
 	})
@@ -156,7 +156,7 @@ func TestDismissTodoAlarm(t *testing.T) {
 	})
 	alarm, _ := q.CreateTodoAlarm(context.Background(), storage.CreateTodoAlarmParams{
 		TodoID:       newTodo.ID,
-		Uid:          "test-alarm-uid",
+		Uid:          storage.StringToNullable("test-alarm-uid"),
 		Action:       "DISPLAY",
 		TriggerValue: "-PT1H",
 	})
@@ -182,7 +182,7 @@ func TestDismissTodoAlarm(t *testing.T) {
 		t.Fatalf("get state: %v", err)
 	}
 
-	if !state.AckedAt.Valid {
+	if state.AckedAt == nil {
 		t.Error("expected alarm to be dismissed (acked_at set)")
 	}
 }
@@ -200,7 +200,7 @@ func TestSnoozeTodoAlarm(t *testing.T) {
 	})
 	alarm, _ := q.CreateTodoAlarm(context.Background(), storage.CreateTodoAlarmParams{
 		TodoID:       newTodo.ID,
-		Uid:          "test-alarm-uid",
+		Uid:          storage.StringToNullable("test-alarm-uid"),
 		Action:       "DISPLAY",
 		TriggerValue: "-PT1H",
 	})
@@ -225,7 +225,7 @@ func TestSnoozeTodoAlarm(t *testing.T) {
 		t.Fatalf("get state: %v", err)
 	}
 
-	if !state.SnoozedTo.Valid {
+	if state.SnoozedTo == nil {
 		t.Error("expected snooze time to be set")
 	}
 }
@@ -243,7 +243,7 @@ func TestListExpiredTodoSnoozed(t *testing.T) {
 	})
 	alarm, _ := q.CreateTodoAlarm(context.Background(), storage.CreateTodoAlarmParams{
 		TodoID:       newTodo.ID,
-		Uid:          "test-alarm-uid",
+		Uid:          storage.StringToNullable("test-alarm-uid"),
 		Action:       "DISPLAY",
 		TriggerValue: "-PT1H",
 	})

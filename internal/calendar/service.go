@@ -42,7 +42,7 @@ func (s *Service) Create(ctx context.Context, name, color, description string) (
 	r, err := s.q.CreateCalendar(ctx, storage.CreateCalendarParams{
 		Name:        name,
 		Color:       color,
-		Description: description,
+		Description: storage.StringToNullable(description),
 	})
 	if err != nil {
 		return Calendar{}, err
@@ -55,7 +55,7 @@ func (s *Service) Update(ctx context.Context, id int64, name, color, description
 		ID:          id,
 		Name:        name,
 		Color:       color,
-		Description: description,
+		Description: storage.StringToNullable(description),
 	})
 	if err != nil {
 		return Calendar{}, err
@@ -96,7 +96,7 @@ func fromStorage(r storage.Calendar) Calendar {
 		ID:          r.ID,
 		Name:        r.Name,
 		Color:       r.Color,
-		Description: r.Description,
+		Description: storage.NullableToString(r.Description),
 		CreatedAt:   parseTime(r.CreatedAt),
 		UpdatedAt:   parseTime(r.UpdatedAt),
 	}

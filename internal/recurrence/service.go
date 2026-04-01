@@ -228,7 +228,7 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 
 	for _, row := range rangeRows {
 		// Skip recurring masters (handled below) but keep non-recurring events.
-		if row.RecurrenceRule != "" && row.RecurrenceID == "" {
+		if row.RecurrenceRule != nil && row.RecurrenceID == "" {
 			continue
 		}
 		// Skip overrides; they're merged during recurring expansion below.
@@ -300,25 +300,25 @@ func eventFromRow(row storage.Event) event.Event {
 		UID:            row.Uid,
 		CalendarID:     row.CalendarID,
 		Title:          row.Title,
-		Description:    row.Description,
-		Location:       row.Location,
+		Description:    storage.NullableToString(row.Description),
+		Location:       storage.NullableToString(row.Location),
 		StartTime:      parseTime(row.StartTime),
 		EndTime:        parseTime(row.EndTime),
 		AllDay:         row.AllDay != 0,
-		RecurrenceRule: row.RecurrenceRule,
-		Timezone:       row.Timezone,
+		RecurrenceRule: storage.NullableToString(row.RecurrenceRule),
+		Timezone:       storage.NullableToString(row.Timezone),
 		Status:         row.Status,
 		Transp:         row.Transp,
 		Sequence:       row.Sequence,
 		Priority:       row.Priority,
 		Class:          row.Class,
-		URL:            row.Url,
-		ExDates:        row.Exdates,
-		RDates:         row.Rdates,
+		URL:            storage.NullableToString(row.Url),
+		ExDates:        storage.NullableToString(row.Exdates),
+		RDates:         storage.NullableToString(row.Rdates),
 		RecurrenceID:   row.RecurrenceID,
-		Geo:            row.Geo,
-		DurationValue:  row.Duration,
-		DtStamp:        row.Dtstamp,
+		Geo:            storage.NullableToString(row.Geo),
+		DurationValue:  storage.NullableToString(row.Duration),
+		DtStamp:        storage.NullableToString(row.Dtstamp),
 		CreatedAt:      parseTime(row.CreatedAt),
 		UpdatedAt:      parseTime(row.UpdatedAt),
 	}
@@ -376,7 +376,7 @@ func (s *Service) ListExpandedByDateRange(ctx context.Context, from, to time.Tim
 	// Keep only non-recurring from the date-range results.
 	var result []event.Event
 	for _, row := range rangeRows {
-		if row.RecurrenceRule == "" && row.RecurrenceID == "" {
+		if row.RecurrenceRule == nil && row.RecurrenceID == "" {
 			result = append(result, eventFromRow(row))
 		}
 	}
@@ -407,7 +407,7 @@ func (s *Service) ListExpandedByCalendarAndDateRange(ctx context.Context, calID 
 	}
 	var result []event.Event
 	for _, row := range rangeRows {
-		if row.RecurrenceRule == "" && row.RecurrenceID == "" {
+		if row.RecurrenceRule == nil && row.RecurrenceID == "" {
 			result = append(result, eventFromRow(row))
 		}
 	}
@@ -438,7 +438,7 @@ func (s *Service) ListExpandedByStatusAndDateRange(ctx context.Context, status s
 	}
 	var result []event.Event
 	for _, row := range rangeRows {
-		if row.RecurrenceRule == "" && row.RecurrenceID == "" {
+		if row.RecurrenceRule == nil && row.RecurrenceID == "" {
 			result = append(result, eventFromRow(row))
 		}
 	}
@@ -494,7 +494,7 @@ func (s *Service) ExportExpandedByDateRange(ctx context.Context, p ExportFilterP
 	var result []event.Event
 	seen := make(map[int64]bool)
 	for _, row := range rangeRows {
-		if row.RecurrenceRule == "" {
+		if row.RecurrenceRule == nil {
 			result = append(result, eventFromRow(row))
 			seen[row.ID] = true
 		}
@@ -531,25 +531,25 @@ func todoFromRow(row storage.Todo) todo.Todo {
 		UID:             row.Uid,
 		CalendarID:      row.CalendarID,
 		Summary:         row.Summary,
-		Description:     row.Description,
-		Location:        row.Location,
-		DueDate:         row.DueDate,
-		StartDate:       row.StartDate,
-		Duration:        row.Duration,
-		CompletedAt:     row.CompletedAt,
+		Description:     storage.NullableToString(row.Description),
+		Location:        storage.NullableToString(row.Location),
+		DueDate:         storage.NullableToString(row.DueDate),
+		StartDate:       storage.NullableToString(row.StartDate),
+		Duration:        storage.NullableToString(row.Duration),
+		CompletedAt:     storage.NullableToString(row.CompletedAt),
 		PercentComplete: row.PercentComplete,
 		Status:          row.Status,
 		Priority:        row.Priority,
 		Class:           row.Class,
-		URL:             row.Url,
-		RecurrenceRule:  row.RecurrenceRule,
-		Timezone:        row.Timezone,
+		URL:             storage.NullableToString(row.Url),
+		RecurrenceRule:  storage.NullableToString(row.RecurrenceRule),
+		Timezone:        storage.NullableToString(row.Timezone),
 		Sequence:        row.Sequence,
-		ExDates:         row.Exdates,
-		RDates:          row.Rdates,
+		ExDates:         storage.NullableToString(row.Exdates),
+		RDates:          storage.NullableToString(row.Rdates),
 		RecurrenceID:    row.RecurrenceID,
-		Geo:             row.Geo,
-		DtStamp:         row.Dtstamp,
+		Geo:             storage.NullableToString(row.Geo),
+		DtStamp:         storage.NullableToString(row.Dtstamp),
 		CreatedAt:       parseTime(row.CreatedAt),
 		UpdatedAt:       parseTime(row.UpdatedAt),
 	}
@@ -653,16 +653,18 @@ func isDateOnly(s string) bool {
 // ListExpandedTodosByDueDateRange returns non-recurring todos in [from,to)
 // merged with expanded instances of recurring todo masters.
 func (s *Service) ListExpandedTodosByDueDateRange(ctx context.Context, from, to time.Time) ([]todo.Todo, error) {
+	fromStr := from.Format("2006-01-02")
+	toStr := to.Format("2006-01-02")
 	rangeRows, err := s.q.ListTodosByDueDateRange(ctx, storage.ListTodosByDueDateRangeParams{
-		DueDate:   from.Format("2006-01-02"),
-		DueDate_2: to.Format("2006-01-02"),
+		DueDate:   &fromStr,
+		DueDate_2: &toStr,
 	})
 	if err != nil {
 		return nil, err
 	}
 	var result []todo.Todo
 	for _, row := range rangeRows {
-		if row.RecurrenceRule == "" && row.RecurrenceID == "" {
+		if row.RecurrenceRule == nil && row.RecurrenceID == "" {
 			result = append(result, todoFromRow(row))
 		}
 	}

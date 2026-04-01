@@ -264,25 +264,25 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
 		Uid:            uuid.New().String(),
 		CalendarID:     p.CalendarID,
 		Title:          p.Title,
-		Description:    p.Description,
-		Location:       p.Location,
+		Description:    storage.StringToNullable(p.Description),
+		Location:       storage.StringToNullable(p.Location),
 		StartTime:      p.StartTime.Format(time.RFC3339),
 		EndTime:        p.EndTime.Format(time.RFC3339),
 		AllDay:         boolToInt(p.AllDay),
-		RecurrenceRule: p.RecurrenceRule,
-		Timezone:       p.Timezone,
+		RecurrenceRule: storage.StringToNullable(p.RecurrenceRule),
+		Timezone:       storage.StringToNullable(p.Timezone),
 		Status:         p.Status,
 		Transp:         p.Transp,
 		Sequence:       p.Sequence,
 		Priority:       p.Priority,
 		Class:          p.Class,
-		Url:            p.URL,
-		Exdates:        p.ExDates,
-		Rdates:         p.RDates,
+		Url:            storage.StringToNullable(p.URL),
+		Exdates:        storage.StringToNullable(p.ExDates),
+		Rdates:         storage.StringToNullable(p.RDates),
 		RecurrenceID:   p.RecurrenceID,
-		Geo:            p.Geo,
-		Duration:       p.DurationValue,
-		Dtstamp:        p.DtStamp,
+		Geo:            storage.StringToNullable(p.Geo),
+		Duration:       storage.StringToNullable(p.DurationValue),
+		Dtstamp:        storage.StringToNullable(p.DtStamp),
 	})
 	if err != nil {
 		return Event{}, err
@@ -313,24 +313,24 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, 
 	r, err := s.q.UpdateEvent(ctx, storage.UpdateEventParams{
 		ID:             id,
 		Title:          p.Title,
-		Description:    p.Description,
-		Location:       p.Location,
+		Description:    storage.StringToNullable(p.Description),
+		Location:       storage.StringToNullable(p.Location),
 		StartTime:      p.StartTime.Format(time.RFC3339),
 		EndTime:        p.EndTime.Format(time.RFC3339),
 		AllDay:         boolToInt(p.AllDay),
-		RecurrenceRule: p.RecurrenceRule,
+		RecurrenceRule: storage.StringToNullable(p.RecurrenceRule),
 		CalendarID:     p.CalendarID,
-		Timezone:       p.Timezone,
+		Timezone:       storage.StringToNullable(p.Timezone),
 		Status:         p.Status,
 		Transp:         p.Transp,
 		Priority:       p.Priority,
 		Class:          p.Class,
-		Url:            p.URL,
-		Exdates:        p.ExDates,
-		Rdates:         p.RDates,
-		Geo:            p.Geo,
-		Duration:       p.DurationValue,
-		Dtstamp:        p.DtStamp,
+		Url:            storage.StringToNullable(p.URL),
+		Exdates:        storage.StringToNullable(p.ExDates),
+		Rdates:         storage.StringToNullable(p.RDates),
+		Geo:            storage.StringToNullable(p.Geo),
+		Duration:       storage.StringToNullable(p.DurationValue),
+		Dtstamp:        storage.StringToNullable(p.DtStamp),
 	})
 	if err != nil {
 		return Event{}, err
@@ -349,25 +349,25 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error
 		Uid:            p.UID,
 		CalendarID:     p.CalendarID,
 		Title:          p.Title,
-		Description:    p.Description,
-		Location:       p.Location,
+		Description:    storage.StringToNullable(p.Description),
+		Location:       storage.StringToNullable(p.Location),
 		StartTime:      p.StartTime.Format(time.RFC3339),
 		EndTime:        p.EndTime.Format(time.RFC3339),
 		AllDay:         boolToInt(p.AllDay),
-		RecurrenceRule: p.RecurrenceRule,
-		Timezone:       p.Timezone,
+		RecurrenceRule: storage.StringToNullable(p.RecurrenceRule),
+		Timezone:       storage.StringToNullable(p.Timezone),
 		Status:         p.Status,
 		Transp:         p.Transp,
 		Sequence:       p.Sequence,
 		Priority:       p.Priority,
 		Class:          p.Class,
-		Url:            p.URL,
-		Exdates:        p.ExDates,
-		Rdates:         p.RDates,
+		Url:            storage.StringToNullable(p.URL),
+		Exdates:        storage.StringToNullable(p.ExDates),
+		Rdates:         storage.StringToNullable(p.RDates),
 		RecurrenceID:   p.RecurrenceID,
-		Geo:            p.Geo,
-		Duration:       p.DurationValue,
-		Dtstamp:        p.DtStamp,
+		Geo:            storage.StringToNullable(p.Geo),
+		Duration:       storage.StringToNullable(p.DurationValue),
+		Dtstamp:        storage.StringToNullable(p.DtStamp),
 	})
 	if err != nil {
 		return Event{}, err
@@ -413,7 +413,7 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 
 		master, err := qtx.GetEventByUID(ctx, evt.UID)
 		if err == nil {
-			existing := ParseTimeList(master.Exdates)
+			existing := ParseTimeList(storage.NullableToString(master.Exdates))
 			recIDTime, parseErr := time.Parse(time.RFC3339, evt.RecurrenceID)
 			if parseErr != nil {
 				// Try date-only format for all-day events.
@@ -425,7 +425,7 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 			if parseErr == nil {
 				existing = append(existing, recIDTime)
 				if err := qtx.UpdateEventExdates(ctx, storage.UpdateEventExdatesParams{
-					Exdates: SerializeTimeList(existing),
+					Exdates: storage.StringToNullable(SerializeTimeList(existing)),
 					ID:      master.ID,
 				}); err != nil {
 					return fmt.Errorf("update exdates: %w", err)
@@ -471,7 +471,7 @@ func (s *Service) ListAlarms(ctx context.Context, eventID int64) ([]model.Alarm,
 		if err == nil {
 			for _, ar := range attRows {
 				alarms[i].Attendees = append(alarms[i].Attendees, model.AlarmAttendee{
-					ID: ar.ID, Email: ar.Email, Name: ar.Name,
+					ID: ar.ID, Email: ar.Email, Name: storage.NullableToString(ar.Name),
 				})
 			}
 		}
@@ -500,7 +500,7 @@ func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []mod
 		if err == nil {
 			for _, ar := range attRows {
 				existing[i].Attendees = append(existing[i].Attendees, model.AlarmAttendee{
-					ID: ar.ID, Email: ar.Email, Name: ar.Name,
+					ID: ar.ID, Email: ar.Email, Name: storage.NullableToString(ar.Name),
 				})
 			}
 		}
@@ -525,7 +525,7 @@ func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []mod
 						uid = uuid.New().String()
 					}
 					if err := qtx.UpdateAlarmUID(ctx, storage.UpdateAlarmUIDParams{
-						Uid: uid,
+						Uid: storage.StringToNullable(uid),
 						ID:  ex.ID,
 					}); err != nil {
 						return fmt.Errorf("backfill alarm uid: %w", err)
@@ -534,7 +534,7 @@ func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []mod
 				// Sync ACKNOWLEDGED if the incoming value differs (including clearing).
 				if a.Acknowledged != ex.Acknowledged && model.ValidateAcknowledged(a.Acknowledged) {
 					if err := qtx.UpdateAlarmAcknowledged(ctx, storage.UpdateAlarmAcknowledgedParams{
-						Acknowledged: a.Acknowledged,
+						Acknowledged: storage.StringToNullable(a.Acknowledged),
 						ID:           ex.ID,
 						EventID:      eventID,
 					}); err != nil {
@@ -552,17 +552,17 @@ func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []mod
 			}
 			row, err := qtx.CreateAlarm(ctx, storage.CreateAlarmParams{
 				EventID:       eventID,
-				Uid:           uid,
+				Uid:           storage.StringToNullable(uid),
 				Action:        a.Action,
 				TriggerValue:  a.TriggerValue,
-				Description:   a.Description,
-				Summary:       a.Summary,
+				Description:   storage.StringToNullable(a.Description),
+				Summary:       storage.StringToNullable(a.Summary),
 				Repeat:        int64(a.Repeat),
-				Duration:      a.Duration,
+				Duration:      storage.StringToNullable(a.Duration),
 				Related:       a.Related,
-				Acknowledged:  a.Acknowledged,
-				AttachUri:     a.AttachURI,
-				AttachFmttype: a.AttachFmtType,
+				Acknowledged:  storage.StringToNullable(a.Acknowledged),
+				AttachUri:     storage.StringToNullable(a.AttachURI),
+				AttachFmttype: storage.StringToNullable(a.AttachFmtType),
 			})
 			if err != nil {
 				return fmt.Errorf("create alarm: %w", err)
@@ -571,7 +571,7 @@ func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []mod
 				_, err := qtx.CreateAlarmAttendee(ctx, storage.CreateAlarmAttendeeParams{
 					AlarmID: row.ID,
 					Email:   att.Email,
-					Name:    att.Name,
+					Name:    storage.StringToNullable(att.Name),
 				})
 				if err != nil {
 					return fmt.Errorf("create alarm attendee: %w", err)
@@ -625,18 +625,18 @@ func (s *Service) ReplaceAttendees(ctx context.Context, eventID int64, attendees
 		_, err := qtx.CreateAttendee(ctx, storage.CreateAttendeeParams{
 			EventID:       eventID,
 			Email:         a.Email,
-			Name:          a.Name,
+			Name:          storage.StringToNullable(a.Name),
 			RsvpStatus:    a.RSVPStatus,
 			Role:          a.Role,
 			Organizer:     boolToInt(a.Organizer),
-			Cutype:        a.CUType,
-			Rsvp:          rsvp,
-			SentBy:        a.SentBy,
-			DelegatedTo:   a.DelegatedTo,
-			DelegatedFrom: a.DelegatedFrom,
-			Member:        a.Member,
-			Dir:           a.Dir,
-			Language:      a.Language,
+			Cutype:        storage.StringToNullable(a.CUType),
+			Rsvp:          storage.StringToNullable(rsvp),
+			SentBy:        storage.StringToNullable(a.SentBy),
+			DelegatedTo:   storage.StringToNullable(a.DelegatedTo),
+			DelegatedFrom: storage.StringToNullable(a.DelegatedFrom),
+			Member:        storage.StringToNullable(a.Member),
+			Dir:           storage.StringToNullable(a.Dir),
+			Language:      storage.StringToNullable(a.Language),
 		})
 		if err != nil {
 			return fmt.Errorf("create attendee: %w", err)
@@ -695,7 +695,7 @@ func (s *Service) ListAttachments(ctx context.Context, eventID int64) ([]model.A
 	}
 	out := make([]model.Attachment, len(rows))
 	for i, r := range rows {
-		out[i] = model.Attachment{ID: r.ID, URI: r.Uri, FmtType: r.Fmttype, Data: r.Data, Filename: r.Filename}
+		out[i] = model.Attachment{ID: r.ID, URI: r.Uri, FmtType: storage.NullableToString(r.Fmttype), Data: r.Data, Filename: storage.NullableToString(r.Filename)}
 	}
 	return out, nil
 }
@@ -712,7 +712,7 @@ func (s *Service) ReplaceAttachments(ctx context.Context, eventID int64, attachm
 	}
 	for _, a := range attachments {
 		_, err := qtx.CreateEventAttachment(ctx, storage.CreateEventAttachmentParams{
-			EventID: eventID, Uri: a.URI, Fmttype: a.FmtType, Data: a.Data, Filename: a.Filename,
+			EventID: eventID, Uri: a.URI, Fmttype: storage.StringToNullable(a.FmtType), Data: a.Data, Filename: storage.StringToNullable(a.Filename),
 		})
 		if err != nil {
 			return fmt.Errorf("create attachment: %w", err)
@@ -835,7 +835,7 @@ func (s *Service) ListRelations(ctx context.Context, eventID int64) ([]model.Rel
 	}
 	out := make([]model.Relation, len(rows))
 	for i, r := range rows {
-		out[i] = model.Relation{ID: r.ID, RelType: r.RelType, RelUID: r.RelUid}
+		out[i] = model.Relation{ID: r.ID, RelType: r.RelType, RelUID: storage.NullableToString(r.RelUid)}
 	}
 	return out, nil
 }
@@ -852,7 +852,7 @@ func (s *Service) ReplaceRelations(ctx context.Context, eventID int64, relations
 	}
 	for _, r := range relations {
 		_, err := qtx.CreateEventRelation(ctx, storage.CreateEventRelationParams{
-			EventID: eventID, RelType: r.RelType, RelUid: r.RelUID,
+			EventID: eventID, RelType: r.RelType, RelUid: storage.StringToNullable(r.RelUID),
 		})
 		if err != nil {
 			return fmt.Errorf("create relation: %w", err)
@@ -869,25 +869,25 @@ func fromStorage(r storage.Event) Event {
 		UID:            r.Uid,
 		CalendarID:     r.CalendarID,
 		Title:          r.Title,
-		Description:    r.Description,
-		Location:       r.Location,
+		Description:    storage.NullableToString(r.Description),
+		Location:       storage.NullableToString(r.Location),
 		StartTime:      parseTime(r.StartTime),
 		EndTime:        parseTime(r.EndTime),
 		AllDay:         r.AllDay == 1,
-		RecurrenceRule: r.RecurrenceRule,
-		Timezone:       r.Timezone,
+		RecurrenceRule: storage.NullableToString(r.RecurrenceRule),
+		Timezone:       storage.NullableToString(r.Timezone),
 		Status:         r.Status,
 		Transp:         r.Transp,
 		Sequence:       r.Sequence,
 		Priority:       r.Priority,
 		Class:          r.Class,
-		URL:            r.Url,
-		ExDates:        r.Exdates,
-		RDates:         r.Rdates,
+		URL:            storage.NullableToString(r.Url),
+		ExDates:        storage.NullableToString(r.Exdates),
+		RDates:         storage.NullableToString(r.Rdates),
 		RecurrenceID:   r.RecurrenceID,
-		Geo:            r.Geo,
-		DurationValue:  r.Duration,
-		DtStamp:        r.Dtstamp,
+		Geo:            storage.NullableToString(r.Geo),
+		DurationValue:  storage.NullableToString(r.Duration),
+		DtStamp:        storage.NullableToString(r.Dtstamp),
 		CreatedAt:      parseTime(r.CreatedAt),
 		UpdatedAt:      parseTime(r.UpdatedAt),
 	}
@@ -931,17 +931,17 @@ func fromStorageAlarm(r storage.EventAlarm) model.Alarm {
 	return model.Alarm{
 		ID:            r.ID,
 		EventID:       r.EventID,
-		UID:           r.Uid,
+		UID:           storage.NullableToString(r.Uid),
 		Action:        r.Action,
 		TriggerValue:  r.TriggerValue,
-		Description:   r.Description,
-		Summary:       r.Summary,
+		Description:   storage.NullableToString(r.Description),
+		Summary:       storage.NullableToString(r.Summary),
 		Repeat:        int(r.Repeat),
-		Duration:      r.Duration,
+		Duration:      storage.NullableToString(r.Duration),
 		Related:       r.Related,
-		Acknowledged:  r.Acknowledged,
-		AttachURI:     r.AttachUri,
-		AttachFmtType: r.AttachFmttype,
+		Acknowledged:  storage.NullableToString(r.Acknowledged),
+		AttachURI:     storage.NullableToString(r.AttachUri),
+		AttachFmtType: storage.NullableToString(r.AttachFmttype),
 	}
 }
 
@@ -950,18 +950,18 @@ func fromStorageAttendee(r storage.EventAttendee) model.Attendee {
 		ID:            r.ID,
 		EventID:       r.EventID,
 		Email:         r.Email,
-		Name:          r.Name,
+		Name:          storage.NullableToString(r.Name),
 		RSVPStatus:    r.RsvpStatus,
 		Role:          r.Role,
 		Organizer:     r.Organizer == 1,
-		CUType:        r.Cutype,
-		RSVPRequested: strings.EqualFold(r.Rsvp, "TRUE"),
-		SentBy:        r.SentBy,
-		DelegatedTo:   r.DelegatedTo,
-		DelegatedFrom: r.DelegatedFrom,
-		Member:        r.Member,
-		Dir:           r.Dir,
-		Language:      r.Language,
+		CUType:        storage.NullableToString(r.Cutype),
+		RSVPRequested: strings.EqualFold(storage.NullableToString(r.Rsvp), "TRUE"),
+		SentBy:        storage.NullableToString(r.SentBy),
+		DelegatedTo:   storage.NullableToString(r.DelegatedTo),
+		DelegatedFrom: storage.NullableToString(r.DelegatedFrom),
+		Member:        storage.NullableToString(r.Member),
+		Dir:           storage.NullableToString(r.Dir),
+		Language:      storage.NullableToString(r.Language),
 	}
 }
 
