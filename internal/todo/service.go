@@ -136,18 +136,22 @@ func (p *UpsertParams) applyDefaults() {
 }
 
 func (s *Service) Search(ctx context.Context, p SearchParams) ([]Todo, error) {
-	rows, err := s.q.SearchTodos(ctx, storage.SearchTodosParams{
-		Query:           sql.NullString{String: p.Query, Valid: p.Query != ""},
-		CalendarID:      int64(p.CalendarID),
-		FilterStatus:    p.Status,
-		CompletedFilter: int64(p.Completed),
-	})
+	ftsQuery := storage.FTSQuery(p.Query)
+	if ftsQuery == "" {
+		return nil, nil
+	}
+	rows, err := s.q.SearchTodosFTS(ctx, ftsQuery, int64(p.CalendarID), p.Status, int64(p.Completed))
 	if err != nil {
 		return nil, fmt.Errorf("search todos: %w", err)
 	}
 	todos := fromStorageSlice(rows)
 	s.populateCategories(ctx, todos)
 	return todos, nil
+}
+
+func (s *Service) syncFTS(ctx context.Context, t Todo) {
+	cats := strings.ReplaceAll(t.Categories, ",", " ")
+	_ = s.q.UpsertTodoFTS(ctx, t.ID, t.Summary, t.Description, t.Location, cats)
 }
 
 func (s *Service) ExportFiltered(ctx context.Context, p ExportParams) ([]Todo, error) {
@@ -293,6 +297,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Todo, error) {
 		return Todo{}, fmt.Errorf("replace categories: %w", err)
 	}
 	t.Categories = p.Categories
+	s.syncFTS(ctx, t)
 	return t, nil
 }
 
@@ -337,6 +342,7 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, e
 		return Todo{}, fmt.Errorf("replace categories: %w", err)
 	}
 	t.Categories = p.Categories
+	s.syncFTS(ctx, t)
 	return t, nil
 }
 
@@ -382,6 +388,7 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Todo, error)
 		return Todo{}, fmt.Errorf("replace categories: %w", err)
 	}
 	t.Categories = p.Categories
+	s.syncFTS(ctx, t)
 	return t, nil
 }
 
@@ -436,12 +443,14 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 			}
 		}
 
+		_ = qtx.DeleteTodoFTS(ctx, id)
 		if err := qtx.DeleteTodo(ctx, id); err != nil {
 			return fmt.Errorf("delete todo: %w", err)
 		}
 		return tx.Commit()
 	}
 
+	_ = s.q.DeleteTodoFTS(ctx, id)
 	return s.q.DeleteTodo(ctx, id)
 }
 
@@ -454,6 +463,7 @@ func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
+	_ = qtx.DeleteTodosFTSByUID(ctx, uid)
 	if err := qtx.DeleteTodosByUID(ctx, uid); err != nil {
 		return fmt.Errorf("delete series: %w", err)
 	}

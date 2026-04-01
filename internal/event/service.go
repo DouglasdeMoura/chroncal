@@ -184,19 +184,22 @@ func (s *Service) ListByCalendarAndDateRange(ctx context.Context, calID int64, f
 }
 
 func (s *Service) Search(ctx context.Context, p SearchParams) ([]Event, error) {
-	rows, err := s.q.SearchEvents(ctx, storage.SearchEventsParams{
-		Query:        sql.NullString{String: p.Query, Valid: p.Query != ""},
-		CalendarID:   p.CalendarID,
-		FromTime:     p.From,
-		ToTime:       p.To,
-		FilterStatus: p.Status,
-	})
+	ftsQuery := storage.FTSQuery(p.Query)
+	if ftsQuery == "" {
+		return nil, nil
+	}
+	rows, err := s.q.SearchEventsFTS(ctx, ftsQuery, p.CalendarID, p.From, p.To, p.Status)
 	if err != nil {
 		return nil, fmt.Errorf("search events: %w", err)
 	}
 	events := fromStorageSlice(rows)
 	s.populateCategories(ctx, events)
 	return events, nil
+}
+
+func (s *Service) syncFTS(ctx context.Context, e Event) {
+	cats := strings.ReplaceAll(e.Categories, ",", " ")
+	_ = s.q.UpsertEventFTS(ctx, e.ID, e.Title, e.Description, e.Location, cats)
 }
 
 func (s *Service) ExportFiltered(ctx context.Context, p ExportParams) ([]Event, error) {
@@ -294,6 +297,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
 		}
 	}
 	e.Categories = p.Categories
+	s.syncFTS(ctx, e)
 	return e, nil
 }
 
@@ -340,6 +344,7 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, 
 		return Event{}, fmt.Errorf("replace categories: %w", err)
 	}
 	e.Categories = p.Categories
+	s.syncFTS(ctx, e)
 	return e, nil
 }
 
@@ -377,6 +382,7 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error
 		return Event{}, fmt.Errorf("replace categories: %w", err)
 	}
 	e.Categories = p.Categories
+	s.syncFTS(ctx, e)
 	return e, nil
 }
 
@@ -433,12 +439,14 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 			}
 		}
 
+		_ = qtx.DeleteEventFTS(ctx, id)
 		if err := qtx.DeleteEvent(ctx, id); err != nil {
 			return fmt.Errorf("delete event: %w", err)
 		}
 		return tx.Commit()
 	}
 
+	_ = s.q.DeleteEventFTS(ctx, id)
 	return s.q.DeleteEvent(ctx, id)
 }
 
@@ -451,6 +459,7 @@ func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
+	_ = qtx.DeleteEventsFTSByUID(ctx, uid)
 	if err := qtx.DeleteEventsByUID(ctx, uid); err != nil {
 		return fmt.Errorf("delete series: %w", err)
 	}
