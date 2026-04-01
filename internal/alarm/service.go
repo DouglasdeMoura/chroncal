@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/duration"
@@ -114,6 +115,12 @@ func (s *Service) checkEventAlarms(ctx context.Context, now time.Time) ([]DueAla
 					continue
 				}
 				if now.Sub(t) > StaleThreshold {
+					slog.Debug("skipping stale alarm",
+						"alarm_id", a.ID,
+						"event", instanceEvent.Title,
+						"trigger_at", t.UTC().Format(time.RFC3339),
+						"age", now.Sub(t).Round(time.Minute).String(),
+					)
 					continue
 				}
 

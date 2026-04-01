@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/duration"
@@ -101,6 +102,12 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 						continue
 					}
 					if now.Sub(tt) > StaleThreshold {
+						slog.Debug("skipping stale todo alarm",
+							"alarm_id", a.ID,
+							"todo", instanceTodo.Summary,
+							"trigger_at", tt.UTC().Format(time.RFC3339),
+							"age", now.Sub(tt).Round(time.Minute).String(),
+						)
 						continue
 					}
 
