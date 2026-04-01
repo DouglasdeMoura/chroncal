@@ -17,18 +17,18 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, todo_id, email, 
 type CreateTodoAttendeeParams struct {
 	TodoID        int64
 	Email         string
-	Name          string
+	Name          *string
 	RsvpStatus    string
 	Role          string
 	Organizer     int64
-	Cutype        string
-	Rsvp          string
-	SentBy        string
-	DelegatedTo   string
-	DelegatedFrom string
-	Member        string
-	Dir           string
-	Language      string
+	Cutype        *string
+	Rsvp          *string
+	SentBy        *string
+	DelegatedTo   *string
+	DelegatedFrom *string
+	Member        *string
+	Dir           *string
+	Language      *string
 }
 
 func (q *Queries) CreateTodoAttendee(ctx context.Context, arg CreateTodoAttendeeParams) (TodoAttendee, error) {

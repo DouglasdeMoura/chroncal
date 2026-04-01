@@ -7,7 +7,6 @@ package storage
 
 import (
 	"context"
-	"database/sql"
 )
 
 const acknowledgeAlarmState = `-- name: AcknowledgeAlarmState :exec
@@ -15,7 +14,7 @@ UPDATE alarm_state SET acked_at = ? WHERE id = ?
 `
 
 type AcknowledgeAlarmStateParams struct {
-	AckedAt sql.NullString
+	AckedAt *string
 	ID      int64
 }
 
@@ -33,7 +32,7 @@ type CreateAlarmStateParams struct {
 	AlarmID   int64
 	EventID   int64
 	TriggerAt string
-	FiredAt   sql.NullString
+	FiredAt   *string
 }
 
 func (q *Queries) CreateAlarmState(ctx context.Context, arg CreateAlarmStateParams) (AlarmState, error) {
@@ -152,7 +151,7 @@ WHERE fired_at IS NOT NULL
 ORDER BY snoozed_to
 `
 
-func (q *Queries) ListExpiredSnoozedAlarmStates(ctx context.Context, snoozedTo sql.NullString) ([]AlarmState, error) {
+func (q *Queries) ListExpiredSnoozedAlarmStates(ctx context.Context, snoozedTo *string) ([]AlarmState, error) {
 	rows, err := q.db.QueryContext(ctx, listExpiredSnoozedAlarmStates, snoozedTo)
 	if err != nil {
 		return nil, err
@@ -223,7 +222,7 @@ UPDATE alarm_state SET fired_at = ?, snoozed_to = NULL WHERE id = ?
 `
 
 type RefireAlarmStateParams struct {
-	FiredAt sql.NullString
+	FiredAt *string
 	ID      int64
 }
 
@@ -237,7 +236,7 @@ UPDATE alarm_state SET snoozed_to = ? WHERE id = ?
 `
 
 type SnoozeAlarmStateParams struct {
-	SnoozedTo sql.NullString
+	SnoozedTo *string
 	ID        int64
 }
 

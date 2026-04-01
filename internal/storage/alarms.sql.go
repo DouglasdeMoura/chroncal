@@ -16,17 +16,17 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, event_id, "action", tr
 
 type CreateAlarmParams struct {
 	EventID       int64
-	Uid           string
+	Uid           *string
 	Action        string
 	TriggerValue  string
-	Description   string
-	Summary       string
+	Description   *string
+	Summary       *string
 	Repeat        int64
-	Duration      string
+	Duration      *string
 	Related       string
-	Acknowledged  string
-	AttachUri     string
-	AttachFmttype string
+	Acknowledged  *string
+	AttachUri     *string
+	AttachFmttype *string
 }
 
 func (q *Queries) CreateAlarm(ctx context.Context, arg CreateAlarmParams) (EventAlarm, error) {
@@ -123,7 +123,7 @@ func (q *Queries) ListAlarmsByEventID(ctx context.Context, eventID int64) ([]Eve
 }
 
 const listAlarmsWithEmptyUID = `-- name: ListAlarmsWithEmptyUID :many
-SELECT id, event_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype FROM event_alarms WHERE uid = ''
+SELECT id, event_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype FROM event_alarms WHERE uid IS NULL
 `
 
 func (q *Queries) ListAlarmsWithEmptyUID(ctx context.Context) ([]EventAlarm, error) {
@@ -168,7 +168,7 @@ UPDATE event_alarms SET acknowledged = ? WHERE id = ? AND event_id = ?
 `
 
 type UpdateAlarmAcknowledgedParams struct {
-	Acknowledged string
+	Acknowledged *string
 	ID           int64
 	EventID      int64
 }
@@ -183,7 +183,7 @@ UPDATE event_alarms SET uid = ? WHERE id = ?
 `
 
 type UpdateAlarmUIDParams struct {
-	Uid string
+	Uid *string
 	ID  int64
 }
 

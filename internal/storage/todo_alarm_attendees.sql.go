@@ -16,7 +16,7 @@ INSERT INTO todo_alarm_attendees (alarm_id, email, name) VALUES (?, ?, ?) RETURN
 type CreateTodoAlarmAttendeeParams struct {
 	AlarmID int64
 	Email   string
-	Name    string
+	Name    *string
 }
 
 func (q *Queries) CreateTodoAlarmAttendee(ctx context.Context, arg CreateTodoAlarmAttendeeParams) (TodoAlarmAttendee, error) {

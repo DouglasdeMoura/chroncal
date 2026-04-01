@@ -17,18 +17,18 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, event_id, email,
 type CreateAttendeeParams struct {
 	EventID       int64
 	Email         string
-	Name          string
+	Name          *string
 	RsvpStatus    string
 	Role          string
 	Organizer     int64
-	Cutype        string
-	Rsvp          string
-	SentBy        string
-	DelegatedTo   string
-	DelegatedFrom string
-	Member        string
-	Dir           string
-	Language      string
+	Cutype        *string
+	Rsvp          *string
+	SentBy        *string
+	DelegatedTo   *string
+	DelegatedFrom *string
+	Member        *string
+	Dir           *string
+	Language      *string
 }
 
 func (q *Queries) CreateAttendee(ctx context.Context, arg CreateAttendeeParams) (EventAttendee, error) {

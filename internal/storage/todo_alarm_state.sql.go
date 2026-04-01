@@ -7,7 +7,6 @@ package storage
 
 import (
 	"context"
-	"database/sql"
 )
 
 const countTodoAlarmStates = `-- name: CountTodoAlarmStates :one
@@ -65,9 +64,9 @@ type InsertTodoAlarmStateParams struct {
 	AlarmID   int64
 	TodoID    int64
 	TriggerAt string
-	FiredAt   sql.NullString
-	AckedAt   sql.NullString
-	SnoozedTo sql.NullString
+	FiredAt   *string
+	AckedAt   *string
+	SnoozedTo *string
 }
 
 func (q *Queries) InsertTodoAlarmState(ctx context.Context, arg InsertTodoAlarmStateParams) (TodoAlarmState, error) {
@@ -98,7 +97,7 @@ WHERE snoozed_to IS NOT NULL AND snoozed_to <= ?
 ORDER BY snoozed_to
 `
 
-func (q *Queries) ListExpiredTodoSnoozed(ctx context.Context, snoozedTo sql.NullString) ([]TodoAlarmState, error) {
+func (q *Queries) ListExpiredTodoSnoozed(ctx context.Context, snoozedTo *string) ([]TodoAlarmState, error) {
 	rows, err := q.db.QueryContext(ctx, listExpiredTodoSnoozed, snoozedTo)
 	if err != nil {
 		return nil, err
@@ -208,7 +207,7 @@ UPDATE todo_alarm_state SET fired_at = ?, snoozed_to = NULL WHERE id = ?
 `
 
 type RefireTodoAlarmStateParams struct {
-	FiredAt sql.NullString
+	FiredAt *string
 	ID      int64
 }
 
@@ -224,9 +223,9 @@ WHERE id = ?
 `
 
 type UpdateTodoAlarmStateParams struct {
-	FiredAt   sql.NullString
-	AckedAt   sql.NullString
-	SnoozedTo sql.NullString
+	FiredAt   *string
+	AckedAt   *string
+	SnoozedTo *string
 	ID        int64
 }
 

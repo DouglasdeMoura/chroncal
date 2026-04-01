@@ -16,9 +16,9 @@ INSERT INTO event_attachments (event_id, uri, fmttype, data, filename) VALUES (?
 type CreateEventAttachmentParams struct {
 	EventID  int64
 	Uri      string
-	Fmttype  string
+	Fmttype  *string
 	Data     []byte
-	Filename string
+	Filename *string
 }
 
 func (q *Queries) CreateEventAttachment(ctx context.Context, arg CreateEventAttachmentParams) (EventAttachment, error) {

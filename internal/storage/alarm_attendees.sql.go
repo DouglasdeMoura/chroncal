@@ -16,7 +16,7 @@ INSERT INTO event_alarm_attendees (alarm_id, email, name) VALUES (?, ?, ?) RETUR
 type CreateAlarmAttendeeParams struct {
 	AlarmID int64
 	Email   string
-	Name    string
+	Name    *string
 }
 
 func (q *Queries) CreateAlarmAttendee(ctx context.Context, arg CreateAlarmAttendeeParams) (EventAlarmAttendee, error) {

@@ -97,7 +97,7 @@ WHERE (
 )
 AND (?2 = 0 OR calendar_id = ?2)
 AND (?3 = '' OR status = ?3)
-AND (?4 = 0 OR (?4 = 1 AND completed_at != '') OR (?4 = 2 AND completed_at = ''))
+AND (?4 = 0 OR (?4 = 1 AND completed_at IS NOT NULL) OR (?4 = 2 AND completed_at IS NULL))
 ORDER BY due_date ASC, summary ASC
 `
 

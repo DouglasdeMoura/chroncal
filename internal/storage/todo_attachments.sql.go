@@ -16,9 +16,9 @@ INSERT INTO todo_attachments (todo_id, uri, fmttype, data, filename) VALUES (?, 
 type CreateTodoAttachmentParams struct {
 	TodoID   int64
 	Uri      string
-	Fmttype  string
+	Fmttype  *string
 	Data     []byte
-	Filename string
+	Filename *string
 }
 
 func (q *Queries) CreateTodoAttachment(ctx context.Context, arg CreateTodoAttachmentParams) (TodoAttachment, error) {

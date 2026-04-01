@@ -27,7 +27,7 @@ INSERT INTO calendars (name, color, description) VALUES (?, ?, ?) RETURNING id, 
 type CreateCalendarParams struct {
 	Name        string
 	Color       string
-	Description string
+	Description *string
 }
 
 func (q *Queries) CreateCalendar(ctx context.Context, arg CreateCalendarParams) (Calendar, error) {
@@ -112,7 +112,7 @@ UPDATE calendars SET name = ?, color = ?, description = ?, updated_at = strftime
 type UpdateCalendarParams struct {
 	Name        string
 	Color       string
-	Description string
+	Description *string
 	ID          int64
 }
 

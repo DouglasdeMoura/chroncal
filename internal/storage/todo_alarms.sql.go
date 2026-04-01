@@ -16,17 +16,17 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, todo_id, "action", tri
 
 type CreateTodoAlarmParams struct {
 	TodoID        int64
-	Uid           string
+	Uid           *string
 	Action        string
 	TriggerValue  string
-	Description   string
-	Summary       string
+	Description   *string
+	Summary       *string
 	Repeat        int64
-	Duration      string
+	Duration      *string
 	Related       string
-	Acknowledged  string
-	AttachUri     string
-	AttachFmttype string
+	Acknowledged  *string
+	AttachUri     *string
+	AttachFmttype *string
 }
 
 func (q *Queries) CreateTodoAlarm(ctx context.Context, arg CreateTodoAlarmParams) (TodoAlarm, error) {
@@ -114,7 +114,7 @@ func (q *Queries) ListTodoAlarmsByTodoID(ctx context.Context, todoID int64) ([]T
 }
 
 const listTodoAlarmsWithEmptyUID = `-- name: ListTodoAlarmsWithEmptyUID :many
-SELECT id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype FROM todo_alarms WHERE uid = ''
+SELECT id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype FROM todo_alarms WHERE uid IS NULL
 `
 
 func (q *Queries) ListTodoAlarmsWithEmptyUID(ctx context.Context) ([]TodoAlarm, error) {
@@ -159,7 +159,7 @@ UPDATE todo_alarms SET acknowledged = ? WHERE id = ?
 `
 
 type UpdateTodoAlarmAcknowledgedParams struct {
-	Acknowledged string
+	Acknowledged *string
 	ID           int64
 }
 
@@ -173,7 +173,7 @@ UPDATE todo_alarms SET uid = ? WHERE id = ?
 `
 
 type UpdateTodoAlarmUIDParams struct {
-	Uid string
+	Uid *string
 	ID  int64
 }
 

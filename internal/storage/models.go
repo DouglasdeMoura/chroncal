@@ -4,25 +4,21 @@
 
 package storage
 
-import (
-	"database/sql"
-)
-
 type AlarmState struct {
 	ID        int64
 	AlarmID   int64
 	EventID   int64
 	TriggerAt string
-	FiredAt   sql.NullString
-	AckedAt   sql.NullString
-	SnoozedTo sql.NullString
+	FiredAt   *string
+	AckedAt   *string
+	SnoozedTo *string
 }
 
 type Calendar struct {
 	ID          int64
 	Name        string
 	Color       string
-	Description string
+	Description *string
 	CreatedAt   string
 	UpdatedAt   string
 }
@@ -32,27 +28,27 @@ type Event struct {
 	Uid            string
 	CalendarID     int64
 	Title          string
-	Description    string
-	Location       string
+	Description    *string
+	Location       *string
 	StartTime      string
 	EndTime        string
 	AllDay         int64
-	RecurrenceRule string
-	Timezone       string
+	RecurrenceRule *string
+	Timezone       *string
 	Status         string
 	Transp         string
 	Sequence       int64
 	Priority       int64
 	Class          string
-	Url            string
-	Exdates        string
-	Rdates         string
+	Url            *string
+	Exdates        *string
+	Rdates         *string
 	RecurrenceID   string
-	Geo            string
+	Geo            *string
 	CreatedAt      string
 	UpdatedAt      string
-	Duration       string
-	Dtstamp        string
+	Duration       *string
+	Dtstamp        *string
 }
 
 type EventAlarm struct {
@@ -60,49 +56,49 @@ type EventAlarm struct {
 	EventID       int64
 	Action        string
 	TriggerValue  string
-	Description   string
+	Description   *string
 	Repeat        int64
-	Duration      string
+	Duration      *string
 	Related       string
-	Summary       string
-	Uid           string
-	Acknowledged  string
-	AttachUri     string
-	AttachFmttype string
+	Summary       *string
+	Uid           *string
+	Acknowledged  *string
+	AttachUri     *string
+	AttachFmttype *string
 }
 
 type EventAlarmAttendee struct {
 	ID      int64
 	AlarmID int64
 	Email   string
-	Name    string
+	Name    *string
 }
 
 type EventAttachment struct {
 	ID       int64
 	EventID  int64
 	Uri      string
-	Fmttype  string
+	Fmttype  *string
 	Data     []byte
-	Filename string
+	Filename *string
 }
 
 type EventAttendee struct {
 	ID            int64
 	EventID       int64
 	Email         string
-	Name          string
+	Name          *string
 	RsvpStatus    string
 	Role          string
 	Organizer     int64
-	Cutype        string
-	Rsvp          string
-	SentBy        string
-	DelegatedTo   string
-	DelegatedFrom string
-	Member        string
-	Dir           string
-	Language      string
+	Cutype        *string
+	Rsvp          *string
+	SentBy        *string
+	DelegatedTo   *string
+	DelegatedFrom *string
+	Member        *string
+	Dir           *string
+	Language      *string
 }
 
 type EventCategory struct {
@@ -126,7 +122,7 @@ type EventRelation struct {
 	ID      int64
 	EventID int64
 	RelType string
-	RelUid  string
+	RelUid  *string
 }
 
 type EventResource struct {
@@ -155,27 +151,27 @@ type Todo struct {
 	Uid             string
 	CalendarID      int64
 	Summary         string
-	Description     string
-	Location        string
-	DueDate         string
-	StartDate       string
-	Duration        string
-	CompletedAt     string
+	Description     *string
+	Location        *string
+	DueDate         *string
+	StartDate       *string
+	Duration        *string
+	CompletedAt     *string
 	PercentComplete int64
 	Status          string
 	Priority        int64
 	Class           string
-	Url             string
-	RecurrenceRule  string
-	Timezone        string
+	Url             *string
+	RecurrenceRule  *string
+	Timezone        *string
 	Sequence        int64
-	Exdates         string
-	Rdates          string
+	Exdates         *string
+	Rdates          *string
 	RecurrenceID    string
-	Geo             string
+	Geo             *string
 	CreatedAt       string
 	UpdatedAt       string
-	Dtstamp         string
+	Dtstamp         *string
 }
 
 type TodoAlarm struct {
@@ -183,22 +179,22 @@ type TodoAlarm struct {
 	TodoID        int64
 	Action        string
 	TriggerValue  string
-	Description   string
+	Description   *string
 	Repeat        int64
-	Duration      string
+	Duration      *string
 	Related       string
-	Summary       string
-	Uid           string
-	Acknowledged  string
-	AttachUri     string
-	AttachFmttype string
+	Summary       *string
+	Uid           *string
+	Acknowledged  *string
+	AttachUri     *string
+	AttachFmttype *string
 }
 
 type TodoAlarmAttendee struct {
 	ID      int64
 	AlarmID int64
 	Email   string
-	Name    string
+	Name    *string
 }
 
 type TodoAlarmState struct {
@@ -206,36 +202,36 @@ type TodoAlarmState struct {
 	AlarmID   int64
 	TodoID    int64
 	TriggerAt string
-	FiredAt   sql.NullString
-	AckedAt   sql.NullString
-	SnoozedTo sql.NullString
+	FiredAt   *string
+	AckedAt   *string
+	SnoozedTo *string
 }
 
 type TodoAttachment struct {
 	ID       int64
 	TodoID   int64
 	Uri      string
-	Fmttype  string
+	Fmttype  *string
 	Data     []byte
-	Filename string
+	Filename *string
 }
 
 type TodoAttendee struct {
 	ID            int64
 	TodoID        int64
 	Email         string
-	Name          string
+	Name          *string
 	RsvpStatus    string
 	Role          string
 	Organizer     int64
-	Cutype        string
-	Rsvp          string
-	SentBy        string
-	DelegatedTo   string
-	DelegatedFrom string
-	Member        string
-	Dir           string
-	Language      string
+	Cutype        *string
+	Rsvp          *string
+	SentBy        *string
+	DelegatedTo   *string
+	DelegatedFrom *string
+	Member        *string
+	Dir           *string
+	Language      *string
 }
 
 type TodoCategory struct {
@@ -268,7 +264,7 @@ type TodoRelation struct {
 	ID      int64
 	TodoID  int64
 	RelType string
-	RelUid  string
+	RelUid  *string
 }
 
 type TodoResource struct {
