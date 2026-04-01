@@ -556,3 +556,71 @@ func TestListExpandedTodosByDueDateRange(t *testing.T) {
 		t.Errorf("todos[1].Summary = %q, want %q", todos[1].Summary, "One-off Task")
 	}
 }
+
+func TestDeleteOverrideThenReexpand(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	eventsSvc := event.NewService(db, q)
+	recurSvc := NewService(db, q)
+	ctx := context.Background()
+
+	// Create weekly event: 4 occurrences starting Apr 6.
+	base := time.Date(2026, 4, 6, 9, 0, 0, 0, time.UTC)
+	master, err := eventsSvc.Create(ctx, event.CreateParams{
+		CalendarID:     1,
+		Title:          "Weekly Sync",
+		StartTime:      base,
+		EndTime:        base.Add(time.Hour),
+		RecurrenceRule: "FREQ=WEEKLY;COUNT=4",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+
+	// Create override for Apr 13 instance.
+	_, err = eventsSvc.UpsertByUID(ctx, event.UpsertParams{
+		UID: master.UID, CalendarID: 1, Title: "Weekly Sync (moved)",
+		StartTime:    time.Date(2026, 4, 13, 14, 0, 0, 0, time.UTC),
+		EndTime:      time.Date(2026, 4, 13, 15, 0, 0, 0, time.UTC),
+		RecurrenceID: "2026-04-13T09:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	// Verify expansion includes the override (4 instances).
+	from := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	before, err := recurSvc.ListExpandedByDateRange(ctx, from, to)
+	if err != nil {
+		t.Fatalf("expand before delete: %v", err)
+	}
+	if len(before) != 4 {
+		t.Fatalf("before delete: got %d events, want 4", len(before))
+	}
+
+	// Delete the override (should add EXDATE to master).
+	override, err := eventsSvc.GetByUIDAndRecurrenceID(ctx, master.UID, "2026-04-13T09:00:00Z")
+	if err != nil {
+		t.Fatalf("get override: %v", err)
+	}
+	if err := eventsSvc.Delete(ctx, override.ID); err != nil {
+		t.Fatalf("delete override: %v", err)
+	}
+
+	// Re-expand: should now have 3 instances (Apr 13 excluded by EXDATE).
+	after, err := recurSvc.ListExpandedByDateRange(ctx, from, to)
+	if err != nil {
+		t.Fatalf("expand after delete: %v", err)
+	}
+	if len(after) != 3 {
+		t.Fatalf("after delete: got %d events, want 3", len(after))
+	}
+
+	// Verify Apr 13 is not in the results.
+	excluded := time.Date(2026, 4, 13, 9, 0, 0, 0, time.UTC)
+	for _, e := range after {
+		if e.StartTime.Equal(excluded) {
+			t.Error("Apr 13 instance should be excluded after override deletion")
+		}
+	}
+}
