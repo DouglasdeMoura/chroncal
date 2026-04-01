@@ -2,17 +2,20 @@ package calendar
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
 type Service struct {
-	q *storage.Queries
+	db *sql.DB
+	q  *storage.Queries
 }
 
-func NewService(q *storage.Queries) *Service {
-	return &Service{q: q}
+func NewService(db *sql.DB, q *storage.Queries) *Service {
+	return &Service{db: db, q: q}
 }
 
 func (s *Service) List(ctx context.Context) ([]Calendar, error) {
@@ -61,7 +64,26 @@ func (s *Service) Update(ctx context.Context, id int64, name, color, description
 }
 
 func (s *Service) Delete(ctx context.Context, id int64) error {
-	return s.q.DeleteCalendar(ctx, id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	qtx := s.q.WithTx(tx)
+
+	count, err := qtx.CountCalendars(ctx)
+	if err != nil {
+		return fmt.Errorf("count calendars: %w", err)
+	}
+	if count <= 1 {
+		return fmt.Errorf("cannot delete the last calendar")
+	}
+
+	if err := qtx.DeleteCalendar(ctx, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func fromStorage(r storage.Calendar) Calendar {

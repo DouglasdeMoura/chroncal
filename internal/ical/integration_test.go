@@ -48,7 +48,7 @@ func storeThenExportEvents(t *testing.T, events []event.Event) []byte {
 	db, q := testutil.NewTestDB(t)
 	ctx := context.Background()
 
-	calSvc := calendar.NewService(q)
+	calSvc := calendar.NewService(db, q)
 	eventSvc := event.NewService(db, q)
 
 	cals, _ := calSvc.List(ctx)
@@ -98,7 +98,7 @@ func storeThenExportTodos(t *testing.T, todos []todo.Todo) []byte {
 	db, q := testutil.NewTestDB(t)
 	ctx := context.Background()
 
-	calSvc := calendar.NewService(q)
+	calSvc := calendar.NewService(db, q)
 	todoSvc := todo.NewService(db, q)
 
 	cals, _ := calSvc.List(ctx)

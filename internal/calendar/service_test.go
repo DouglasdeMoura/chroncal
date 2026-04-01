@@ -9,8 +9,8 @@ import (
 
 func newTestService(t *testing.T) *Service {
 	t.Helper()
-	_, q := testutil.NewTestDB(t)
-	return NewService(q)
+	db, q := testutil.NewTestDB(t)
+	return NewService(db, q)
 }
 
 func TestCalendarService_ListDefault(t *testing.T) {
@@ -105,7 +105,7 @@ func TestCalendarService_Delete(t *testing.T) {
 
 func TestCalendarService_DeleteCascade(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
-	svc := NewService(q)
+	svc := NewService(db, q)
 	ctx := context.Background()
 
 	cal, _ := svc.Create(ctx, "Temp", "#000", "")
@@ -127,5 +127,50 @@ func TestCalendarService_DeleteCascade(t *testing.T) {
 	db.QueryRowContext(ctx, "SELECT COUNT(*) FROM events WHERE calendar_id = ?", cal.ID).Scan(&count)
 	if count != 0 {
 		t.Errorf("expected 0 events after cascade delete, got %d", count)
+	}
+}
+
+func TestCalendarService_DeleteLastCalendarBlocked(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	// The seed migration creates one "Personal" calendar (ID 1).
+	// Deleting it should fail because it's the last one.
+	err := svc.Delete(ctx, 1)
+	if err == nil {
+		t.Fatal("expected error when deleting the last calendar, got nil")
+	}
+	if err.Error() != "cannot delete the last calendar" {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	// Calendar should still exist.
+	cal, err := svc.Get(ctx, 1)
+	if err != nil {
+		t.Fatalf("Get after blocked delete: %v", err)
+	}
+	if cal.Name != "Personal" {
+		t.Errorf("calendar name = %q, want %q", cal.Name, "Personal")
+	}
+}
+
+func TestCalendarService_DeleteNonLastCalendarAllowed(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	// Create a second calendar, then delete it.
+	c, err := svc.Create(ctx, "Work", "#0284C7", "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if err := svc.Delete(ctx, c.ID); err != nil {
+		t.Fatalf("Delete non-last calendar: %v", err)
+	}
+
+	// Only the original should remain.
+	cals, _ := svc.List(ctx)
+	if len(cals) != 1 {
+		t.Fatalf("expected 1 calendar after delete, got %d", len(cals))
 	}
 }

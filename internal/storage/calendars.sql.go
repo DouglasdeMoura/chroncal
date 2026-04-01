@@ -9,6 +9,17 @@ import (
 	"context"
 )
 
+const countCalendars = `-- name: CountCalendars :one
+SELECT COUNT(*) FROM calendars
+`
+
+func (q *Queries) CountCalendars(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countCalendars)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createCalendar = `-- name: CreateCalendar :one
 INSERT INTO calendars (name, color, description) VALUES (?, ?, ?) RETURNING id, name, color, description, created_at, updated_at
 `
