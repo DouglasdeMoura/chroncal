@@ -9,17 +9,9 @@ import (
 	"strings"
 
 	"github.com/douglasdemoura/chroncal/internal/alarm"
+	"github.com/douglasdemoura/chroncal/internal/config"
 	"github.com/gen2brain/beeep"
 )
-
-// SMTPConfig holds SMTP connection settings for EMAIL action alarms.
-type SMTPConfig struct {
-	Host     string `toml:"host"`
-	Port     int    `toml:"port"`
-	Username string `toml:"username"`
-	Password string `toml:"password"`
-	From     string `toml:"from"`
-}
 
 // FormatNotification formats a DueAlarm into a title and body suitable for display.
 // Title is the event title. Body contains the formatted time and, when present,
@@ -129,7 +121,7 @@ func playSystemSound() error {
 // Email sends an email notification for an EMAIL action alarm.
 // It sends to the alarm's attendees using the provided SMTP configuration.
 // Returns an error if no attendees are configured or SMTP is not configured.
-func Email(da alarm.DueAlarm, smtpCfg SMTPConfig) error {
+func Email(da alarm.DueAlarm, smtpCfg config.SMTPConfig) error {
 	if smtpCfg.Host == "" {
 		return fmt.Errorf("SMTP not configured")
 	}

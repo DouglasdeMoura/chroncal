@@ -31,14 +31,7 @@ func fireAlarm(da alarm.DueAlarm) error {
 		}
 		return nil
 	case "EMAIL":
-		smtpCfg := notify.SMTPConfig{
-			Host:     cfg.SMTP.Host,
-			Port:     cfg.SMTP.Port,
-			Username: cfg.SMTP.Username,
-			Password: cfg.SMTP.Password,
-			From:     cfg.SMTP.From,
-		}
-		if err := notify.Email(da, smtpCfg); err != nil {
+		if err := notify.Email(da, cfg.SMTP); err != nil {
 			return notify.Display(da)
 		}
 		return nil
