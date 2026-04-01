@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
@@ -93,6 +94,45 @@ func TestService_Search(t *testing.T) {
 				t.Errorf("got %d results, want %d", len(results), tt.wantLen)
 			}
 		})
+	}
+}
+
+func TestService_Search_NoGhostAfterCalendarDelete(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	calSvc := calendar.NewService(db, q)
+	evtSvc := NewService(db, q)
+	ctx := context.Background()
+
+	tempCal, err := calSvc.Create(ctx, "FTS temp", "#000", "")
+	if err != nil {
+		t.Fatalf("create calendar: %v", err)
+	}
+	const unique = "GhostbusterFTS2026"
+	mustCreate(t, evtSvc, ctx, CreateParams{
+		CalendarID: tempCal.ID,
+		Title:      unique,
+		StartTime:  time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC),
+	})
+
+	before, err := evtSvc.Search(ctx, SearchParams{Query: unique})
+	if err != nil {
+		t.Fatalf("search before delete: %v", err)
+	}
+	if len(before) != 1 {
+		t.Fatalf("before delete: got %d hits, want 1", len(before))
+	}
+
+	if err := calSvc.Delete(ctx, tempCal.ID); err != nil {
+		t.Fatalf("delete calendar: %v", err)
+	}
+
+	after, err := evtSvc.Search(ctx, SearchParams{Query: unique})
+	if err != nil {
+		t.Fatalf("search after delete: %v", err)
+	}
+	if len(after) != 0 {
+		t.Fatalf("after delete: got %d FTS hits, want 0 (orphan rows)", len(after))
 	}
 }
 
