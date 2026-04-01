@@ -197,7 +197,7 @@ func calendarDeleteCmd() *cobra.Command {
 			}
 
 			if err := a.Calendars.Delete(context.Background(), id); err != nil {
-				return fmt.Errorf("delete calendar: %w", err)
+				return notFoundErr(err, "calendar", id)
 			}
 
 			w := cmd.OutOrStdout()
