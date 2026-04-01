@@ -438,36 +438,37 @@ func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
 
 // Alarm CRUD
 
-func (s *Service) ListAlarms(ctx context.Context, eventID int64) ([]model.Alarm, error) {
-	rows, err := s.q.ListAlarmsByEventID(ctx, eventID)
-	if err != nil {
-		return nil, err
-	}
+// buildAlarmsWithAttendees converts storage alarm rows into model.Alarm
+// values with attendees batch-loaded.
+func buildAlarmsWithAttendees(ctx context.Context, q *storage.Queries, rows []storage.EventAlarm) []model.Alarm {
 	if len(rows) == 0 {
-		return nil, nil
+		return nil
 	}
-
-	// Collect alarm IDs for batch loading attendees
 	alarmIDs := make([]int64, len(rows))
 	for i, r := range rows {
 		alarmIDs[i] = r.ID
 	}
-
-	// Batch load attendees for all alarms
-	attRows, _ := s.q.ListAlarmAttendeesByAlarmIDs(ctx, alarmIDs)
+	attRows, _ := q.ListAlarmAttendeesByAlarmIDs(ctx, alarmIDs)
 	attMap := make(map[int64][]model.AlarmAttendee, len(rows))
 	for _, ar := range attRows {
 		attMap[ar.AlarmID] = append(attMap[ar.AlarmID], model.AlarmAttendee{
 			ID: ar.ID, Email: ar.Email, Name: storage.NullableToString(ar.Name),
 		})
 	}
-
 	alarms := make([]model.Alarm, len(rows))
 	for i, r := range rows {
 		alarms[i] = fromStorageAlarm(r)
 		alarms[i].Attendees = attMap[r.ID]
 	}
-	return alarms, nil
+	return alarms
+}
+
+func (s *Service) ListAlarms(ctx context.Context, eventID int64) ([]model.Alarm, error) {
+	rows, err := s.q.ListAlarmsByEventID(ctx, eventID)
+	if err != nil {
+		return nil, err
+	}
+	return buildAlarmsWithAttendees(ctx, s.q, rows), nil
 }
 
 // ListAlarmsByEventIDs fetches alarms for multiple event IDs in a single batch query.
@@ -476,71 +477,28 @@ func (s *Service) ListAlarmsByEventIDs(ctx context.Context, eventIDs []int64) (m
 	if len(eventIDs) == 0 {
 		return nil, nil
 	}
-
 	alarmRows, err := s.q.ListAlarmsByEventIDs(ctx, eventIDs)
 	if err != nil {
 		return nil, err
 	}
-	if len(alarmRows) == 0 {
+	alarms := buildAlarmsWithAttendees(ctx, s.q, alarmRows)
+	if len(alarms) == 0 {
 		return nil, nil
 	}
-
-	// Collect alarm IDs for batch loading attendees
-	alarmIDs := make([]int64, len(alarmRows))
-	for i, r := range alarmRows {
-		alarmIDs[i] = r.ID
-	}
-
-	// Batch load attendees for all alarms
-	attRows, _ := s.q.ListAlarmAttendeesByAlarmIDs(ctx, alarmIDs)
-	attMap := make(map[int64][]model.AlarmAttendee, len(alarmRows))
-	for _, ar := range attRows {
-		attMap[ar.AlarmID] = append(attMap[ar.AlarmID], model.AlarmAttendee{
-			ID: ar.ID, Email: ar.Email, Name: storage.NullableToString(ar.Name),
-		})
-	}
-
-	// Build map: eventID -> alarms
 	alarmMap := make(map[int64][]model.Alarm, len(eventIDs))
-	for _, r := range alarmRows {
-		alarm := fromStorageAlarm(r)
-		alarm.Attendees = attMap[r.ID]
-		alarmMap[r.EventID] = append(alarmMap[r.EventID], alarm)
+	for _, a := range alarms {
+		alarmMap[a.EventID] = append(alarmMap[a.EventID], a)
 	}
 	return alarmMap, nil
 }
 
 // loadExistingAlarms loads existing alarms with their attendees for the given event.
 func (s *Service) loadExistingAlarms(ctx context.Context, qtx *storage.Queries, eventID int64) ([]model.Alarm, error) {
-	existingRows, err := qtx.ListAlarmsByEventID(ctx, eventID)
+	rows, err := qtx.ListAlarmsByEventID(ctx, eventID)
 	if err != nil {
 		return nil, fmt.Errorf("list existing alarms: %w", err)
 	}
-	if len(existingRows) == 0 {
-		return nil, nil
-	}
-
-	// Collect alarm IDs for batch loading attendees
-	alarmIDs := make([]int64, len(existingRows))
-	for i, r := range existingRows {
-		alarmIDs[i] = r.ID
-	}
-
-	// Batch load attendees for all alarms
-	attRows, _ := qtx.ListAlarmAttendeesByAlarmIDs(ctx, alarmIDs)
-	attMap := make(map[int64][]model.AlarmAttendee, len(existingRows))
-	for _, ar := range attRows {
-		attMap[ar.AlarmID] = append(attMap[ar.AlarmID], model.AlarmAttendee{
-			ID: ar.ID, Email: ar.Email, Name: storage.NullableToString(ar.Name),
-		})
-	}
-
-	existing := make([]model.Alarm, len(existingRows))
-	for i, r := range existingRows {
-		existing[i] = fromStorageAlarm(r)
-		existing[i].Attendees = attMap[r.ID]
-	}
-	return existing, nil
+	return buildAlarmsWithAttendees(ctx, qtx, rows), nil
 }
 
 // applyAlarmDefaults sets default values for alarm fields.
@@ -1009,14 +967,10 @@ func parseRecurrenceID(id string) (time.Time, error) {
 }
 
 func (s *Service) populateSingleCategories(ctx context.Context, e *Event) {
-	rows, err := s.q.ListCategoriesByEventID(ctx, e.ID)
+	cats, err := s.ListCategories(ctx, e.ID)
 	if err != nil {
 		log.Printf("populateSingleCategories failed for event %d: %v", e.ID, err)
 		return
-	}
-	cats := make([]string, len(rows))
-	for j, r := range rows {
-		cats[j] = r.Category
 	}
 	e.Categories = strings.Join(cats, ",")
 }
