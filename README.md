@@ -121,7 +121,8 @@ chroncal alarm check                          # Fire due alarms (one-shot)
 chroncal alarm list                           # List unacknowledged alarms
 chroncal alarm dismiss  <state-id>            # Dismiss a fired alarm
 chroncal alarm snooze   <state-id> [--for DURATION] [--until-start]
-chroncal alarm daemon   [--interval DURATION] # Run alarm checks in a loop
+chroncal alarm daemon   [--interval DURATION] # Run alarm checks in a loop (default: 30s)
+chroncal alarm missed   [--days N]            # Show missed alarms (default lookback: 7 days)
 ```
 
 ### Service (alarm background service)
