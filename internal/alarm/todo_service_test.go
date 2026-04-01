@@ -125,6 +125,7 @@ func TestMarkTodoAlarmFired(t *testing.T) {
 		Uid:          storage.StringToNullable("test-alarm-uid"),
 		Action:       "DISPLAY",
 		TriggerValue: "-PT1H",
+		Related:      "START",
 	})
 	if err != nil {
 		t.Fatalf("create alarm: %v", err)
@@ -159,6 +160,7 @@ func TestDismissTodoAlarm(t *testing.T) {
 		Uid:          storage.StringToNullable("test-alarm-uid"),
 		Action:       "DISPLAY",
 		TriggerValue: "-PT1H",
+		Related:      "START",
 	})
 
 	todoAlarmSvc := NewTodoService(db, q, &mockTodoAlarmLister{})
@@ -203,6 +205,7 @@ func TestSnoozeTodoAlarm(t *testing.T) {
 		Uid:          storage.StringToNullable("test-alarm-uid"),
 		Action:       "DISPLAY",
 		TriggerValue: "-PT1H",
+		Related:      "START",
 	})
 
 	todoAlarmSvc := NewTodoService(db, q, &mockTodoAlarmLister{})
@@ -246,6 +249,7 @@ func TestListExpiredTodoSnoozed(t *testing.T) {
 		Uid:          storage.StringToNullable("test-alarm-uid"),
 		Action:       "DISPLAY",
 		TriggerValue: "-PT1H",
+		Related:      "START",
 	})
 
 	todoAlarmSvc := NewTodoService(db, q, &mockTodoAlarmLister{

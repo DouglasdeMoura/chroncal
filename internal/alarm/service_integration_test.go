@@ -76,6 +76,7 @@ func TestService_Check_BothEventAndTodoAlarms(t *testing.T) {
 		Action:       "DISPLAY",
 		TriggerValue: "-PT30M",
 		Description:  &todoAlarmDesc,
+		Related:      "START",
 	})
 	if err != nil {
 		t.Fatalf("create todo alarm: %v", err)

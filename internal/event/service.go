@@ -518,6 +518,14 @@ func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []mod
 	// Match incoming alarms against existing by content.
 	// Slice-based matching: each existing alarm can only match once (supports duplicates).
 	matched := make([]bool, len(existing))
+	for i := range alarms {
+		if alarms[i].Action == "" {
+			alarms[i].Action = "DISPLAY"
+		}
+		if alarms[i].Related == "" {
+			alarms[i].Related = "START"
+		}
+	}
 	for _, a := range alarms {
 		found := false
 		for j, ex := range existing {

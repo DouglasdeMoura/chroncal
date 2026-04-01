@@ -529,6 +529,14 @@ func (s *Service) ReplaceAlarms(ctx context.Context, todoID int64, alarms []mode
 	if err := qtx.DeleteTodoAlarmsByTodoID(ctx, todoID); err != nil {
 		return fmt.Errorf("delete alarms: %w", err)
 	}
+	for i := range alarms {
+		if alarms[i].Action == "" {
+			alarms[i].Action = "DISPLAY"
+		}
+		if alarms[i].Related == "" {
+			alarms[i].Related = "START"
+		}
+	}
 	for _, a := range alarms {
 		uid := a.UID
 		if uid == "" {
