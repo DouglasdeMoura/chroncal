@@ -9,3 +9,6 @@ DELETE FROM event_categories WHERE event_id = ?;
 
 -- name: ListAllEventCategories :many
 SELECT DISTINCT category FROM event_categories ORDER BY category;
+
+-- name: ListAllEventCategoriesWithIDs :many
+SELECT event_id, category FROM event_categories ORDER BY event_id, category;

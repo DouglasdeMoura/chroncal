@@ -189,62 +189,56 @@ func isDuplicateError(err error) bool {
 	return strings.Contains(err.Error(), "UNIQUE constraint failed")
 }
 
-// ListExpandedEvents returns events with their instances in a date range
-// This merges both recurring and non-recurring events
+// ListExpandedEvents returns events with their instances in a date range.
+// Uses filtered queries instead of loading the entire table.
 func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time) ([]ExpandedEvent, error) {
-	// Get all events that might have occurrences in this range
-	// For recurring events, we need the parent event regardless of its start time
-	// For non-recurring, they must be in range
-	rows, err := s.q.ListAllEvents(ctx)
+	// Non-recurring events in date range.
+	rangeRows, err := s.q.ListEventsByDateRange(ctx, storage.ListEventsByDateRangeParams{
+		StartTime:   from.Format(time.RFC3339),
+		StartTime_2: to.Format(time.RFC3339),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// All recurring master events (need full set for expansion).
+	recurRows, err := s.q.ListRecurringEvents(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	var results []ExpandedEvent
 
-	for _, row := range rows {
-		evt := event.Event{
-			ID:             row.ID,
-			UID:            row.Uid,
-			CalendarID:     row.CalendarID,
-			Title:          row.Title,
-			Description:    row.Description,
-			Location:       row.Location,
-			StartTime:      parseTime(row.StartTime),
-			EndTime:        parseTime(row.EndTime),
-			AllDay:         row.AllDay != 0,
-			RecurrenceRule: row.RecurrenceRule,
-			Timezone:       row.Timezone,
-			Status:         row.Status,
-			Transp:         row.Transp,
-			Sequence:       row.Sequence,
-			Priority:       row.Priority,
-			Class:          row.Class,
-			URL:            row.Url,
-			ExDates:        row.Exdates,
-			RDates:         row.Rdates,
-			RecurrenceID:   row.RecurrenceID,
-			Geo:            row.Geo,
-			DurationValue:  row.Duration,
-			DtStamp:        row.Dtstamp,
-			CreatedAt:      parseTime(row.CreatedAt),
-			UpdatedAt:      parseTime(row.UpdatedAt),
+	for _, row := range rangeRows {
+		// Skip recurring masters and overrides here; they're handled below.
+		if row.RecurrenceRule != "" || row.RecurrenceID != "" {
+			continue
 		}
+		evt := eventFromRow(row)
+		results = append(results, ExpandedEvent{
+			Event:        evt,
+			InstanceTime: evt.StartTime,
+		})
+	}
 
+	for _, row := range recurRows {
+		evt := eventFromRow(row)
 		instances := ExpandEvent(evt, from, to)
 		results = append(results, instances...)
 	}
 
-	for i := range results {
-		rows, err := s.q.ListCategoriesByEventID(ctx, results[i].ID)
-		if err != nil {
-			continue
+	// Batch category loading: one query for all categories, then build map.
+	allCats, err := s.q.ListAllEventCategoriesWithIDs(ctx)
+	if err == nil && len(allCats) > 0 {
+		catMap := make(map[int64][]string)
+		for _, c := range allCats {
+			catMap[c.EventID] = append(catMap[c.EventID], c.Category)
 		}
-		cats := make([]string, len(rows))
-		for j, r := range rows {
-			cats[j] = r.Category
+		for i := range results {
+			if cats, ok := catMap[results[i].Event.ID]; ok {
+				results[i].Event.Categories = strings.Join(cats, ",")
+			}
 		}
-		results[i].Categories = strings.Join(cats, ",")
 	}
 
 	return results, nil

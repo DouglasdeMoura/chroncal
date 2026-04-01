@@ -61,6 +61,33 @@ func (q *Queries) ListAllEventCategories(ctx context.Context) ([]string, error) 
 	return items, nil
 }
 
+const listAllEventCategoriesWithIDs = `-- name: ListAllEventCategoriesWithIDs :many
+SELECT event_id, category FROM event_categories ORDER BY event_id, category
+`
+
+func (q *Queries) ListAllEventCategoriesWithIDs(ctx context.Context) ([]EventCategory, error) {
+	rows, err := q.db.QueryContext(ctx, listAllEventCategoriesWithIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []EventCategory
+	for rows.Next() {
+		var i EventCategory
+		if err := rows.Scan(&i.EventID, &i.Category); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCategoriesByEventID = `-- name: ListCategoriesByEventID :many
 SELECT event_id, category FROM event_categories WHERE event_id = ? ORDER BY category
 `
