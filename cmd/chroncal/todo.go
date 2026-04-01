@@ -869,6 +869,10 @@ func todoDeleteCmd() *cobra.Command {
 				return fmt.Errorf("get todo: %w", err)
 			}
 
+			if series && recurrenceID != "" {
+				return fmt.Errorf("--series and --recurrence-id are mutually exclusive")
+			}
+
 			if series {
 				if err := a.Todos.DeleteSeries(ctx, t.UID); err != nil {
 					return fmt.Errorf("delete series: %w", err)

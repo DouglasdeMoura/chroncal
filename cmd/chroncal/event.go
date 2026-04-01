@@ -866,6 +866,10 @@ func eventDeleteCmd() *cobra.Command {
 				return fmt.Errorf("get event: %w", err)
 			}
 
+			if series && recurrenceID != "" {
+				return fmt.Errorf("--series and --recurrence-id are mutually exclusive")
+			}
+
 			if series {
 				if err := a.Events.DeleteSeries(ctx, e.UID); err != nil {
 					return fmt.Errorf("delete series: %w", err)

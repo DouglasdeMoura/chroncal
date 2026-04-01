@@ -210,8 +210,12 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time) ([
 	var results []ExpandedEvent
 
 	for _, row := range rangeRows {
-		// Skip recurring masters and overrides here; they're handled below.
-		if row.RecurrenceRule != "" || row.RecurrenceID != "" {
+		// Skip recurring masters (handled below) but keep non-recurring events.
+		if row.RecurrenceRule != "" && row.RecurrenceID == "" {
+			continue
+		}
+		// Skip overrides; they're merged during recurring expansion below.
+		if row.RecurrenceID != "" {
 			continue
 		}
 		evt := eventFromRow(row)
@@ -223,8 +227,30 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time) ([
 
 	for _, row := range recurRows {
 		evt := eventFromRow(row)
-		instances := ExpandEvent(evt, from, to)
-		results = append(results, instances...)
+		expanded := ExpandEvent(evt, from, to)
+
+		// Fetch overrides for this master and substitute them.
+		overrides, _ := s.q.ListOverridesByUID(ctx, row.Uid)
+		overrideMap := make(map[string]storage.Event, len(overrides))
+		for _, o := range overrides {
+			overrideMap[o.RecurrenceID] = o
+		}
+
+		for _, inst := range expanded {
+			instKey := inst.InstanceTime.UTC().Format(time.RFC3339)
+			if o, ok := overrideMap[instKey]; ok {
+				if strings.EqualFold(o.Status, "CANCELLED") {
+					continue
+				}
+				oe := eventFromRow(o)
+				results = append(results, ExpandedEvent{
+					Event:        oe,
+					InstanceTime: oe.StartTime,
+				})
+			} else {
+				results = append(results, inst)
+			}
+		}
 	}
 
 	// Batch category loading: one query for all categories, then build map.

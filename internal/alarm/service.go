@@ -113,6 +113,9 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 				if err == nil {
 					continue // already fired/acknowledged
 				}
+				if !errors.Is(err, sql.ErrNoRows) {
+					continue // real DB error, skip rather than false-positive
+				}
 				missed = append(missed, MissedAlarm{
 					EventTitle: expEvt.Event.Title,
 					AlarmID:    a.ID,
