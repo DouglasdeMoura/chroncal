@@ -39,8 +39,7 @@ CREATE TABLE todos (
 CREATE INDEX idx_todos_cal_due    ON todos(calendar_id, due_date);
 CREATE INDEX idx_todos_due_date   ON todos(due_date);
 CREATE INDEX idx_todos_status     ON todos(status);
-CREATE INDEX idx_todos_uid        ON todos(uid);
-CREATE INDEX idx_todos_recurrence ON todos(uid, recurrence_id);
+-- uid-only lookups are served by the left prefix of the UNIQUE(uid, recurrence_id) constraint.
 
 -- Normalized junction table for CATEGORIES property.
 CREATE TABLE todo_categories (

@@ -17,6 +17,7 @@ CREATE UNIQUE INDEX idx_todo_alarm_state_unique     ON todo_alarm_state(alarm_id
 CREATE INDEX        idx_todo_alarm_state_todo_id    ON todo_alarm_state(todo_id);
 CREATE INDEX        idx_todo_alarm_state_trigger_at ON todo_alarm_state(trigger_at);
 CREATE INDEX        idx_todo_alarm_state_snoozed    ON todo_alarm_state(snoozed_to) WHERE snoozed_to IS NOT NULL;
+CREATE INDEX        idx_todo_alarm_state_pending    ON todo_alarm_state(trigger_at) WHERE fired_at IS NULL;
 
 -- +goose Down
 DROP TABLE IF EXISTS todo_alarm_state;

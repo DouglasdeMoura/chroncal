@@ -39,8 +39,7 @@ CREATE TABLE events (
 -- Composite index covers calendar+time range queries and calendar-only lookups.
 CREATE INDEX idx_events_cal_start  ON events(calendar_id, start_time);
 CREATE INDEX idx_events_start_time ON events(start_time);
-CREATE INDEX idx_events_uid        ON events(uid);
-CREATE INDEX idx_events_recurrence ON events(uid, recurrence_id);
+-- uid-only lookups are served by the left prefix of the UNIQUE(uid, recurrence_id) constraint.
 
 -- Normalized junction table for CATEGORIES property.
 CREATE TABLE event_categories (
