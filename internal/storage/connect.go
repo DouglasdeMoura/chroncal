@@ -57,8 +57,48 @@ func Open(dbPath string) (*sql.DB, *Queries, error) {
 		conn.Close()
 		return nil, nil, fmt.Errorf("backfill alarm uids: %w", err)
 	}
+	if err := syncFTSIndex(conn, q); err != nil {
+		conn.Close()
+		return nil, nil, fmt.Errorf("sync fts index: %w", err)
+	}
 
 	return conn, q, nil
+}
+
+// syncFTSIndex checks if the FTS indexes are in sync with the source tables.
+// If row counts differ, it rebuilds the index. This handles writes that
+// bypass the service layer.
+func syncFTSIndex(_ *sql.DB, q *Queries) error {
+	ctx := context.Background()
+
+	var eventCount, ftsEventCount int64
+	if err := q.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM events").Scan(&eventCount); err != nil {
+		return fmt.Errorf("count events: %w", err)
+	}
+	if err := q.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM events_fts").Scan(&ftsEventCount); err != nil {
+		// Table may not exist yet (pre-migration); skip silently.
+		return nil
+	}
+	if eventCount != ftsEventCount {
+		if err := q.RebuildEventsFTS(ctx); err != nil {
+			return fmt.Errorf("rebuild events fts: %w", err)
+		}
+	}
+
+	var todoCount, ftsTodoCount int64
+	if err := q.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM todos").Scan(&todoCount); err != nil {
+		return fmt.Errorf("count todos: %w", err)
+	}
+	if err := q.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM todos_fts").Scan(&ftsTodoCount); err != nil {
+		return nil
+	}
+	if todoCount != ftsTodoCount {
+		if err := q.RebuildTodosFTS(ctx); err != nil {
+			return fmt.Errorf("rebuild todos fts: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // backfillAlarmUIDs assigns random UUIDs to alarms that have empty UIDs.

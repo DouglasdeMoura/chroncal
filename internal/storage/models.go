@@ -131,6 +131,13 @@ type EventResource struct {
 	Text    string
 }
 
+type EventsFt struct {
+	Title       string
+	Description string
+	Location    string
+	Categories  string
+}
+
 type RecurrenceInstance struct {
 	ID         int64
 	EventID    int64
@@ -271,4 +278,11 @@ type TodoResource struct {
 	ID     int64
 	TodoID int64
 	Text   string
+}
+
+type TodosFt struct {
+	Summary     string
+	Description string
+	Location    string
+	Categories  string
 }
