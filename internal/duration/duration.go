@@ -20,7 +20,7 @@ func FromGo(d time.Duration) string {
 		d = -d
 	}
 	b.WriteByte('P')
-	total := int(d.Seconds())
+	total := int(d / time.Second)
 	h := total / 3600
 	m := (total % 3600) / 60
 	s := total % 60
@@ -95,7 +95,7 @@ func Validate(s string) error {
 
 	// Time part: T followed by nH, nM, nS
 	if r[0] != 'T' {
-		return fmt.Errorf("invalid duration %q: unexpected character %q", s, string(r[0]))
+		return fmt.Errorf("invalid duration %q: unexpected character %c", s, r[0])
 	}
 	r = r[1:]
 
