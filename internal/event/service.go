@@ -448,7 +448,10 @@ func buildAlarmsWithAttendees(ctx context.Context, q *storage.Queries, rows []st
 	for i, r := range rows {
 		alarmIDs[i] = r.ID
 	}
-	attRows, _ := q.ListAlarmAttendeesByAlarmIDs(ctx, alarmIDs)
+	attRows, err := q.ListAlarmAttendeesByAlarmIDs(ctx, alarmIDs)
+	if err != nil {
+		log.Printf("buildAlarmsWithAttendees: failed to load attendees for %d alarms: %v", len(alarmIDs), err)
+	}
 	attMap := make(map[int64][]model.AlarmAttendee, len(rows))
 	for _, ar := range attRows {
 		attMap[ar.AlarmID] = append(attMap[ar.AlarmID], model.AlarmAttendee{
@@ -525,16 +528,19 @@ func matchAlarm(existing []model.Alarm, matched []bool, a model.Alarm) (int, boo
 	return 0, false
 }
 
+func alarmUID(a model.Alarm) string {
+	if a.UID != "" {
+		return a.UID
+	}
+	return uuid.New().String()
+}
+
 // syncMatchedAlarm syncs a matched alarm's UID and ACKNOWLEDGED state.
 func (s *Service) syncMatchedAlarm(ctx context.Context, qtx *storage.Queries, eventID int64, a model.Alarm, ex model.Alarm) error {
 	// If existing alarm has no UID, backfill it now.
 	if ex.UID == "" {
-		uid := a.UID
-		if uid == "" {
-			uid = uuid.New().String()
-		}
 		if err := qtx.UpdateAlarmUID(ctx, storage.UpdateAlarmUIDParams{
-			Uid: storage.StringToNullable(uid),
+			Uid: storage.StringToNullable(alarmUID(a)),
 			ID:  ex.ID,
 		}); err != nil {
 			return fmt.Errorf("backfill alarm uid: %w", err)
@@ -555,13 +561,9 @@ func (s *Service) syncMatchedAlarm(ctx context.Context, qtx *storage.Queries, ev
 
 // createNewAlarm creates a new alarm and its attendees.
 func (s *Service) createNewAlarm(ctx context.Context, qtx *storage.Queries, eventID int64, a model.Alarm) error {
-	uid := a.UID
-	if uid == "" {
-		uid = uuid.New().String()
-	}
 	row, err := qtx.CreateAlarm(ctx, storage.CreateAlarmParams{
 		EventID:       eventID,
-		Uid:           storage.StringToNullable(uid),
+		Uid:           storage.StringToNullable(alarmUID(a)),
 		Action:        a.Action,
 		TriggerValue:  a.TriggerValue,
 		Description:   storage.StringToNullable(a.Description),
