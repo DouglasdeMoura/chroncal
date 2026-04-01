@@ -332,8 +332,8 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 					return fmt.Errorf("parse end-time: %w", err)
 				}
 				endTime = time.Date(date.Year(), date.Month(), date.Day(), t.Hour(), t.Minute(), 0, 0, loc)
-				if endTime.Before(startTime) {
-					endTime = endTime.AddDate(0, 0, 1)
+				if !endTime.After(startTime) {
+					return fmt.Errorf("--end-time %s is not after --time %s (use --duration for cross-midnight events)", endTimeStr, timeStr)
 				}
 			} else {
 				dur := time.Hour
@@ -701,8 +701,9 @@ func eventUpdateCmd() *cobra.Command {
 					return fmt.Errorf("parse end-time: %w", err)
 				}
 				p.EndTime = time.Date(p.StartTime.Year(), p.StartTime.Month(), p.StartTime.Day(), t.Hour(), t.Minute(), 0, 0, loc)
-				if p.EndTime.Before(p.StartTime) {
-					p.EndTime = p.EndTime.AddDate(0, 0, 1)
+				if !p.EndTime.After(p.StartTime) {
+					return fmt.Errorf("--end-time %s is not after start time %s (use --duration for cross-midnight events)",
+						endTimeStr, p.StartTime.Format("15:04"))
 				}
 			} else if cmd.Flags().Changed("duration") {
 				dur, err := time.ParseDuration(durationStr)
