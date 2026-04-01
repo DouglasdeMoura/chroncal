@@ -130,6 +130,55 @@ func TestEvent_ParseRDates(t *testing.T) {
 	}
 }
 
+func TestSerializeTimeList(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		times []time.Time
+		want  string
+	}{
+		{"nil", nil, ""},
+		{"empty", []time.Time{}, ""},
+		{"single rfc3339", []time.Time{time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)}, "2026-04-01T10:00:00Z"},
+		{"multiple rfc3339", []time.Time{
+			time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+			time.Date(2026, 4, 2, 10, 0, 0, 0, time.UTC),
+		}, "2026-04-01T10:00:00Z,2026-04-02T10:00:00Z"},
+		{"date-only", []time.Time{time.Date(2026, 4, 3, 0, 0, 0, 0, time.Local)}, "2026-04-03"},
+		{"mixed", []time.Time{
+			time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+			time.Date(2026, 4, 3, 0, 0, 0, 0, time.Local),
+		}, "2026-04-01T10:00:00Z,2026-04-03"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := SerializeTimeList(tt.times)
+			if got != tt.want {
+				t.Errorf("SerializeTimeList() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSerializeTimeList_RoundTrip(t *testing.T) {
+	t.Parallel()
+	inputs := []string{
+		"2026-04-01T10:00:00Z,2026-04-02T10:00:00Z",
+		"2026-04-03",
+		"2026-04-01T10:00:00Z,2026-04-03",
+		"",
+	}
+	for _, input := range inputs {
+		t.Run(input, func(t *testing.T) {
+			parsed := ParseTimeList(input)
+			serialized := SerializeTimeList(parsed)
+			if serialized != input {
+				t.Errorf("round-trip: ParseTimeList(%q) → SerializeTimeList() = %q", input, serialized)
+			}
+		})
+	}
+}
+
 func TestEvent_ParseCategories(t *testing.T) {
 	t.Parallel()
 	e := Event{Categories: "work,dev"}

@@ -85,6 +85,26 @@ func ParseTimeList(s string) []time.Time {
 	return out
 }
 
+// SerializeTimeList is the inverse of ParseTimeList. It formats each time as
+// date-only ("2006-01-02") when the time component is midnight in time.Local
+// (matching all-day event EXDATEs), or RFC 3339 otherwise.
+func SerializeTimeList(times []time.Time) string {
+	if len(times) == 0 {
+		return ""
+	}
+	parts := make([]string, len(times))
+	for i, t := range times {
+		local := t.In(time.Local)
+		if local.Hour() == 0 && local.Minute() == 0 && local.Second() == 0 && local.Nanosecond() == 0 &&
+			t.Location() == time.Local {
+			parts[i] = t.Format("2006-01-02")
+		} else {
+			parts[i] = t.UTC().Format(time.RFC3339)
+		}
+	}
+	return strings.Join(parts, ",")
+}
+
 func ParseCategoryList(s string) []string {
 	if s == "" {
 		return nil
