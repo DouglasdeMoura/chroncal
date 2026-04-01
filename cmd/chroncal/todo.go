@@ -41,12 +41,9 @@ func todoListCmd() *cobra.Command {
 			defer a.Close()
 			ctx := context.Background()
 
-			var from, to time.Time
-			if fromStr != "" || toStr != "" {
-				from, to, err = parseDateRange(fromStr, toStr)
-				if err != nil {
-					return err
-				}
+			from, to, err := parseDateRange(fromStr, toStr)
+			if err != nil {
+				return err
 			}
 
 			var calID int64
