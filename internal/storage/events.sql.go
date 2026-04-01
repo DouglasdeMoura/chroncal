@@ -788,6 +788,7 @@ INSERT INTO events (
     class, url, exdates, rdates, recurrence_id, geo, duration, dtstamp
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(uid, recurrence_id) DO UPDATE SET
+    calendar_id = excluded.calendar_id,
     title = excluded.title, description = excluded.description,
     location = excluded.location, start_time = excluded.start_time,
     end_time = excluded.end_time, all_day = excluded.all_day,

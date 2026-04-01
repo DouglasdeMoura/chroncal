@@ -76,6 +76,7 @@ INSERT INTO todos (
     recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, geo, dtstamp
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(uid, recurrence_id) DO UPDATE SET
+    calendar_id = excluded.calendar_id,
     summary = excluded.summary, description = excluded.description,
     location = excluded.location, due_date = excluded.due_date,
     start_date = excluded.start_date, duration = excluded.duration,
