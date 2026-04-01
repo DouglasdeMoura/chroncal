@@ -5,6 +5,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
 
 type Todo struct {
@@ -35,7 +36,6 @@ type Todo struct {
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 
-	// Transient fields
 	Alarms      []model.Alarm
 	Attendees   []model.Attendee
 	Attachments []model.Attachment
@@ -50,54 +50,32 @@ func (t Todo) IsCompleted() bool {
 }
 
 func (t Todo) IsOverdue() bool {
-	if t.DueDate == "" || t.IsCompleted() {
+	if t.IsCompleted() {
 		return false
 	}
 	due := t.ParseDueDate()
 	if due.IsZero() {
 		return false
 	}
+	now := time.Now()
 	// Date-only: overdue after end of that day in local time
-	if isDateOnly(t.DueDate) {
+	if timeutil.IsDateOnly(t.DueDate) {
 		endOfDay := time.Date(due.Year(), due.Month(), due.Day(), 23, 59, 59, 0, time.Local)
-		return time.Now().After(endOfDay)
+		return now.After(endOfDay)
 	}
-	return time.Now().After(due)
+	return now.After(due)
 }
 
 func (t Todo) ParseDueDate() time.Time {
-	if t.DueDate == "" {
-		return time.Time{}
-	}
-	if p, err := time.Parse("2006-01-02", t.DueDate); err == nil {
-		return p
-	}
-	p, _ := time.Parse(time.RFC3339, t.DueDate)
-	return p
+	return timeutil.ParseDate(t.DueDate)
 }
 
 func (t Todo) ParseStartDate() time.Time {
-	if t.StartDate == "" {
-		return time.Time{}
-	}
-	if p, err := time.Parse("2006-01-02", t.StartDate); err == nil {
-		return p
-	}
-	p, _ := time.Parse(time.RFC3339, t.StartDate)
-	return p
-}
-
-func isDateOnly(s string) bool {
-	_, err := time.Parse("2006-01-02", s)
-	return err == nil
+	return timeutil.ParseDate(t.StartDate)
 }
 
 func (t Todo) ParseCompletedAt() time.Time {
-	if t.CompletedAt == "" {
-		return time.Time{}
-	}
-	p, _ := time.Parse(time.RFC3339, t.CompletedAt)
-	return p
+	return timeutil.ParseDateTime(t.CompletedAt)
 }
 
 func (t Todo) ParseExDates() []time.Time {

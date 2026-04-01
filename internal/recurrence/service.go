@@ -11,6 +11,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/timeutil"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
@@ -570,7 +571,7 @@ func (s *Service) expandRecurringTodoRows(ctx context.Context, rows []storage.To
 						due := t.ParseDueDate()
 						if !due.IsZero() {
 							newDue := due.Add(offset)
-							if isDateOnly(t.DueDate) {
+							if timeutil.IsDateOnly(t.DueDate) {
 								t.DueDate = newDue.Format("2006-01-02")
 							} else {
 								t.DueDate = newDue.Format(time.RFC3339)
@@ -581,7 +582,7 @@ func (s *Service) expandRecurringTodoRows(ctx context.Context, rows []storage.To
 						start := t.ParseStartDate()
 						if !start.IsZero() {
 							newStart := start.Add(offset)
-							if isDateOnly(t.StartDate) {
+							if timeutil.IsDateOnly(t.StartDate) {
 								t.StartDate = newStart.Format("2006-01-02")
 							} else {
 								t.StartDate = newStart.Format(time.RFC3339)
@@ -594,11 +595,6 @@ func (s *Service) expandRecurringTodoRows(ctx context.Context, rows []storage.To
 		}
 	}
 	return result
-}
-
-func isDateOnly(s string) bool {
-	_, err := time.Parse("2006-01-02", s)
-	return err == nil
 }
 
 // ListExpandedTodosByDueDateRange returns non-recurring todos in [from,to)
