@@ -253,7 +253,7 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 
   # Multiple alarm types: display (default), email, and audio
   chroncal event add "Deploy Window" --date 2026-04-15 --time 02:00 \
-    --alarm "-PT1H" --alarm "EMAIL:-PT1D" --alarm "AUDIO:-PT5M"
+    --alarm "-PT1H" --alarm "EMAIL:-P1D" --alarm "AUDIO:-PT5M"
 
   # Alarm that repeats 3 times every 5 minutes, relative to event end
   chroncal event add "Deadline" --date 2026-04-15 --time 17:00 \
