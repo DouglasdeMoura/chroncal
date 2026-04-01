@@ -893,16 +893,25 @@ func (s *Service) populateSingleCategories(ctx context.Context, t *Todo) {
 }
 
 func (s *Service) populateCategories(ctx context.Context, todos []Todo) {
+	if len(todos) == 0 {
+		return
+	}
+	ids := make([]int64, len(todos))
 	for i := range todos {
-		rows, err := s.q.ListCategoriesByTodoID(ctx, todos[i].ID)
-		if err != nil {
-			continue
+		ids[i] = todos[i].ID
+	}
+	rows, err := s.q.ListCategoriesByTodoIDs(ctx, ids)
+	if err != nil {
+		return
+	}
+	catMap := make(map[int64][]string, len(todos))
+	for _, r := range rows {
+		catMap[r.TodoID] = append(catMap[r.TodoID], r.Category)
+	}
+	for i := range todos {
+		if cats, ok := catMap[todos[i].ID]; ok {
+			todos[i].Categories = strings.Join(cats, ",")
 		}
-		cats := make([]string, len(rows))
-		for j, r := range rows {
-			cats[j] = r.Category
-		}
-		todos[i].Categories = strings.Join(cats, ",")
 	}
 }
 

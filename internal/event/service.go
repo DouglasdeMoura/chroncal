@@ -920,16 +920,25 @@ func (s *Service) populateSingleCategories(ctx context.Context, e *Event) {
 }
 
 func (s *Service) populateCategories(ctx context.Context, events []Event) {
+	if len(events) == 0 {
+		return
+	}
+	ids := make([]int64, len(events))
 	for i := range events {
-		rows, err := s.q.ListCategoriesByEventID(ctx, events[i].ID)
-		if err != nil {
-			continue
+		ids[i] = events[i].ID
+	}
+	rows, err := s.q.ListCategoriesByEventIDs(ctx, ids)
+	if err != nil {
+		return
+	}
+	catMap := make(map[int64][]string, len(events))
+	for _, r := range rows {
+		catMap[r.EventID] = append(catMap[r.EventID], r.Category)
+	}
+	for i := range events {
+		if cats, ok := catMap[events[i].ID]; ok {
+			events[i].Categories = strings.Join(cats, ",")
 		}
-		cats := make([]string, len(rows))
-		for j, r := range rows {
-			cats[j] = r.Category
-		}
-		events[i].Categories = strings.Join(cats, ",")
 	}
 }
 

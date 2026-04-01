@@ -9,3 +9,6 @@ DELETE FROM todo_categories WHERE todo_id = ?;
 
 -- name: ListAllTodoCategories :many
 SELECT DISTINCT category FROM todo_categories ORDER BY category;
+
+-- name: ListCategoriesByTodoIDs :many
+SELECT todo_id, category FROM todo_categories WHERE todo_id IN sqlx.in(?) ORDER BY todo_id, category;
