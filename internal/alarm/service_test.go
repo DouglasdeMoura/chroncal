@@ -810,6 +810,103 @@ func TestComputeSnooze_RejectsNonexistentStateID(t *testing.T) {
 	}
 }
 
+func TestCheckMissed_FindsStaleAlarm(t *testing.T) {
+	svc, evtSvc := newTestServices(t)
+	ctx := context.Background()
+
+	// Event was 3 days ago with a 15-min-before alarm.
+	// Trigger was 3 days + 15 minutes ago, well past the 24h stale threshold.
+	start := time.Now().Add(-72 * time.Hour)
+	e, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "Missed Meeting",
+		StartTime:  start,
+		EndTime:    start.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT15M"},
+	})
+
+	missed, err := svc.CheckMissed(ctx, time.Now(), 7*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(missed) != 1 {
+		t.Fatalf("got %d missed, want 1", len(missed))
+	}
+	if missed[0].EventTitle != "Missed Meeting" {
+		t.Errorf("title = %q", missed[0].EventTitle)
+	}
+}
+
+func TestCheckMissed_SkipsAcknowledged(t *testing.T) {
+	svc, evtSvc := newTestServices(t)
+	ctx := context.Background()
+
+	start := time.Now().Add(-72 * time.Hour)
+	e, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "Acknowledged Meeting",
+		StartTime:  start,
+		EndTime:    start.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT15M"},
+	})
+
+	// Fire via Check at the correct time (simulate daemon having run).
+	triggerTime := start.Add(-15 * time.Minute)
+	due, _, err := svc.Check(ctx, triggerTime.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range due {
+		svc.MarkFired(ctx, d)
+	}
+
+	missed, err := svc.CheckMissed(ctx, time.Now(), 7*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(missed) != 0 {
+		t.Fatalf("got %d missed, want 0 (acknowledged)", len(missed))
+	}
+}
+
+func TestCheckMissed_SkipsNotYetStale(t *testing.T) {
+	svc, evtSvc := newTestServices(t)
+	ctx := context.Background()
+
+	// Event 12 hours ago, alarm trigger 12h15m ago. Under the 24h threshold.
+	start := time.Now().Add(-12 * time.Hour)
+	e, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "Recent Meeting",
+		StartTime:  start,
+		EndTime:    start.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT15M"},
+	})
+
+	missed, err := svc.CheckMissed(ctx, time.Now(), 7*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(missed) != 0 {
+		t.Fatalf("got %d missed, want 0 (not yet stale)", len(missed))
+	}
+}
+
 func mustLoadLocation(name string) *time.Location {
 	loc, err := time.LoadLocation(name)
 	if err != nil {
