@@ -7,6 +7,7 @@ package storage
 
 import (
 	"context"
+	"strings"
 )
 
 const createAlarmAttendee = `-- name: CreateAlarmAttendee :one
@@ -46,6 +47,48 @@ SELECT id, alarm_id, email, name FROM event_alarm_attendees WHERE alarm_id = ? O
 
 func (q *Queries) ListAlarmAttendeesByAlarmID(ctx context.Context, alarmID int64) ([]EventAlarmAttendee, error) {
 	rows, err := q.db.QueryContext(ctx, listAlarmAttendeesByAlarmID, alarmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []EventAlarmAttendee
+	for rows.Next() {
+		var i EventAlarmAttendee
+		if err := rows.Scan(
+			&i.ID,
+			&i.AlarmID,
+			&i.Email,
+			&i.Name,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAlarmAttendeesByAlarmIDs = `-- name: ListAlarmAttendeesByAlarmIDs :many
+SELECT id, alarm_id, email, name FROM event_alarm_attendees WHERE alarm_id IN (/*SLICE:alarm_ids*/?) ORDER BY alarm_id, id
+`
+
+func (q *Queries) ListAlarmAttendeesByAlarmIDs(ctx context.Context, alarmIds []int64) ([]EventAlarmAttendee, error) {
+	query := listAlarmAttendeesByAlarmIDs
+	var queryParams []interface{}
+	if len(alarmIds) > 0 {
+		for _, v := range alarmIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:alarm_ids*/?", strings.Repeat(",?", len(alarmIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:alarm_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
 	if err != nil {
 		return nil, err
 	}

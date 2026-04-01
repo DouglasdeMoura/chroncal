@@ -5,6 +5,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *;
 -- name: ListAlarmsByEventID :many
 SELECT * FROM event_alarms WHERE event_id = ? ORDER BY id;
 
+-- name: ListAlarmsByEventIDs :many
+SELECT * FROM event_alarms WHERE event_id IN (sqlc.slice(event_ids)) ORDER BY event_id, id;
+
 -- name: DeleteAlarmsByEventID :exec
 DELETE FROM event_alarms WHERE event_id = ?;
 

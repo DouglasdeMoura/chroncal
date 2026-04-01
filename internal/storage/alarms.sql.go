@@ -7,6 +7,7 @@ package storage
 
 import (
 	"context"
+	"strings"
 )
 
 const createAlarm = `-- name: CreateAlarm :one
@@ -87,6 +88,57 @@ SELECT id, event_id, "action", trigger_value, description, repeat, duration, rel
 
 func (q *Queries) ListAlarmsByEventID(ctx context.Context, eventID int64) ([]EventAlarm, error) {
 	rows, err := q.db.QueryContext(ctx, listAlarmsByEventID, eventID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []EventAlarm
+	for rows.Next() {
+		var i EventAlarm
+		if err := rows.Scan(
+			&i.ID,
+			&i.EventID,
+			&i.Action,
+			&i.TriggerValue,
+			&i.Description,
+			&i.Repeat,
+			&i.Duration,
+			&i.Related,
+			&i.Summary,
+			&i.Uid,
+			&i.Acknowledged,
+			&i.AttachUri,
+			&i.AttachFmttype,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAlarmsByEventIDs = `-- name: ListAlarmsByEventIDs :many
+SELECT id, event_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype FROM event_alarms WHERE event_id IN (/*SLICE:event_ids*/?) ORDER BY event_id, id
+`
+
+func (q *Queries) ListAlarmsByEventIDs(ctx context.Context, eventIds []int64) ([]EventAlarm, error) {
+	query := listAlarmsByEventIDs
+	var queryParams []interface{}
+	if len(eventIds) > 0 {
+		for _, v := range eventIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:event_ids*/?", strings.Repeat(",?", len(eventIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:event_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
 	if err != nil {
 		return nil, err
 	}
