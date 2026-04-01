@@ -144,3 +144,102 @@ func TestExpandNonRecurring(t *testing.T) {
 		t.Errorf("instance time = %v, want %v", instances[0].InstanceTime, evt.StartTime)
 	}
 }
+
+func TestExpandEvent_DSTSpringForward(t *testing.T) {
+	// In America/New_York, DST spring forward happens on 2026-03-08 at 2:00 AM.
+	// A weekly 9am event should stay at 9am local on both sides.
+	nyc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skip("America/New_York timezone not available")
+	}
+
+	// DTSTART is before DST: 9am EST = 14:00 UTC
+	dtstart := time.Date(2026, 3, 1, 14, 0, 0, 0, time.UTC) // Sun Mar 1, 9am EST
+	evt := event.Event{
+		UID:            "dst-spring",
+		Title:          "Weekly 9am",
+		StartTime:      dtstart,
+		EndTime:        dtstart.Add(time.Hour),
+		RecurrenceRule: "FREQ=WEEKLY;COUNT=4",
+		Timezone:       "America/New_York",
+	}
+
+	from := time.Date(2026, 2, 28, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	instances := ExpandEvent(evt, from, to)
+
+	if len(instances) != 4 {
+		t.Fatalf("got %d instances, want 4", len(instances))
+	}
+
+	for i, inst := range instances {
+		local := inst.InstanceTime.In(nyc)
+		if local.Hour() != 9 {
+			t.Errorf("instance[%d] at %v: local hour = %d, want 9", i, inst.InstanceTime, local.Hour())
+		}
+	}
+}
+
+func TestExpandEvent_DSTFallBack(t *testing.T) {
+	// In America/New_York, DST fall back happens on 2025-11-02 at 2:00 AM.
+	nyc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skip("America/New_York timezone not available")
+	}
+
+	// DTSTART is before fall-back: 9am EDT = 13:00 UTC
+	dtstart := time.Date(2025, 10, 26, 13, 0, 0, 0, time.UTC) // Sun Oct 26, 9am EDT
+	evt := event.Event{
+		UID:            "dst-fall",
+		Title:          "Weekly 9am",
+		StartTime:      dtstart,
+		EndTime:        dtstart.Add(time.Hour),
+		RecurrenceRule: "FREQ=WEEKLY;COUNT=4",
+		Timezone:       "America/New_York",
+	}
+
+	from := time.Date(2025, 10, 25, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2025, 12, 1, 0, 0, 0, 0, time.UTC)
+	instances := ExpandEvent(evt, from, to)
+
+	if len(instances) != 4 {
+		t.Fatalf("got %d instances, want 4", len(instances))
+	}
+
+	for i, inst := range instances {
+		local := inst.InstanceTime.In(nyc)
+		if local.Hour() != 9 {
+			t.Errorf("instance[%d] at %v: local hour = %d, want 9", i, inst.InstanceTime, local.Hour())
+		}
+	}
+}
+
+func TestExpandEvent_FloatingTime(t *testing.T) {
+	// No timezone set: expansion should pass through in UTC unchanged.
+	dtstart := time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
+	evt := event.Event{
+		UID:            "floating",
+		Title:          "Floating 9am",
+		StartTime:      dtstart,
+		EndTime:        dtstart.Add(time.Hour),
+		RecurrenceRule: "FREQ=DAILY;COUNT=3",
+		Timezone:       "", // no timezone
+	}
+
+	from := time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 4, 5, 0, 0, 0, 0, time.UTC)
+	instances := ExpandEvent(evt, from, to)
+
+	if len(instances) != 3 {
+		t.Fatalf("got %d instances, want 3", len(instances))
+	}
+
+	for i, inst := range instances {
+		if inst.InstanceTime.Hour() != 9 {
+			t.Errorf("instance[%d] hour = %d, want 9", i, inst.InstanceTime.Hour())
+		}
+		if inst.InstanceTime.Location() != time.UTC {
+			t.Errorf("instance[%d] location = %v, want UTC", i, inst.InstanceTime.Location())
+		}
+	}
+}
