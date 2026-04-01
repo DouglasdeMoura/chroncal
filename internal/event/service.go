@@ -371,10 +371,11 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error
 var ErrHasOverrides = fmt.Errorf("event has overrides: use DeleteSeries to delete the entire series")
 
 func (s *Service) Delete(ctx context.Context, id int64) error {
-	evt, err := s.Get(ctx, id)
+	r, err := s.q.GetEvent(ctx, id)
 	if err != nil {
 		return err
 	}
+	evt := fromStorage(r)
 
 	// If this is a recurring master, check for overrides.
 	if evt.RecurrenceRule != "" && evt.RecurrenceID == "" {
@@ -496,7 +497,7 @@ func (s *Service) ListAlarmsByEventIDs(ctx context.Context, eventIDs []int64) (m
 }
 
 // loadExistingAlarms loads existing alarms with their attendees for the given event.
-func (s *Service) loadExistingAlarms(ctx context.Context, qtx *storage.Queries, eventID int64) ([]model.Alarm, error) {
+func loadExistingAlarms(ctx context.Context, qtx *storage.Queries, eventID int64) ([]model.Alarm, error) {
 	rows, err := qtx.ListAlarmsByEventID(ctx, eventID)
 	if err != nil {
 		return nil, fmt.Errorf("list existing alarms: %w", err)
@@ -536,7 +537,7 @@ func alarmUID(a model.Alarm) string {
 }
 
 // syncMatchedAlarm syncs a matched alarm's UID and ACKNOWLEDGED state.
-func (s *Service) syncMatchedAlarm(ctx context.Context, qtx *storage.Queries, eventID int64, a model.Alarm, ex model.Alarm) error {
+func syncMatchedAlarm(ctx context.Context, qtx *storage.Queries, eventID int64, a model.Alarm, ex model.Alarm) error {
 	// If existing alarm has no UID, backfill it now.
 	if ex.UID == "" {
 		if err := qtx.UpdateAlarmUID(ctx, storage.UpdateAlarmUIDParams{
@@ -560,7 +561,7 @@ func (s *Service) syncMatchedAlarm(ctx context.Context, qtx *storage.Queries, ev
 }
 
 // createNewAlarm creates a new alarm and its attendees.
-func (s *Service) createNewAlarm(ctx context.Context, qtx *storage.Queries, eventID int64, a model.Alarm) error {
+func createNewAlarm(ctx context.Context, qtx *storage.Queries, eventID int64, a model.Alarm) error {
 	row, err := qtx.CreateAlarm(ctx, storage.CreateAlarmParams{
 		EventID:       eventID,
 		Uid:           storage.StringToNullable(alarmUID(a)),
@@ -592,7 +593,7 @@ func (s *Service) createNewAlarm(ctx context.Context, qtx *storage.Queries, even
 }
 
 // deleteUnmatchedAlarms deletes existing alarms that were not matched.
-func (s *Service) deleteUnmatchedAlarms(ctx context.Context, qtx *storage.Queries, existing []model.Alarm, matched []bool) error {
+func deleteUnmatchedAlarms(ctx context.Context, qtx *storage.Queries, existing []model.Alarm, matched []bool) error {
 	for j, ex := range existing {
 		if !matched[j] {
 			if err := qtx.DeleteAlarmByID(ctx, ex.ID); err != nil {
@@ -613,7 +614,7 @@ func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []mod
 	qtx := s.q.WithTx(tx)
 
 	// Load existing alarms with attendees for content matching.
-	existing, err := s.loadExistingAlarms(ctx, qtx, eventID)
+	existing, err := loadExistingAlarms(ctx, qtx, eventID)
 	if err != nil {
 		return err
 	}
@@ -627,18 +628,18 @@ func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []mod
 	for _, a := range alarms {
 		if j, found := matchAlarm(existing, matched, a); found {
 			matched[j] = true
-			if err := s.syncMatchedAlarm(ctx, qtx, eventID, a, existing[j]); err != nil {
+			if err := syncMatchedAlarm(ctx, qtx, eventID, a, existing[j]); err != nil {
 				return err
 			}
 		} else {
-			if err := s.createNewAlarm(ctx, qtx, eventID, a); err != nil {
+			if err := createNewAlarm(ctx, qtx, eventID, a); err != nil {
 				return err
 			}
 		}
 	}
 
 	// Delete existing alarms that were not matched (they were removed).
-	if err := s.deleteUnmatchedAlarms(ctx, qtx, existing, matched); err != nil {
+	if err := deleteUnmatchedAlarms(ctx, qtx, existing, matched); err != nil {
 		return err
 	}
 
