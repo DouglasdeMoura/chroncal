@@ -486,7 +486,7 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 	cmd.Flags().StringVar(&timeStr, "time", "", "start time (HH:MM); omit for an all-day event")
 	cmd.Flags().StringVar(&endTimeStr, "end-time", "", "end time (HH:MM, alternative to --duration; ignored for all-day)")
 	cmd.Flags().StringVar(&durationStr, "duration", "1h", "event duration (e.g. 30m, 1h30m; ignored for all-day)")
-	cmd.Flags().StringVar(&calendarName, "calendar", "Personal", "calendar name")
+	cmd.Flags().StringVar(&calendarName, "calendar", "", "calendar name (default: first available)")
 	cmd.Flags().StringVar(&location, "location", "", "event location")
 	cmd.Flags().StringVar(&description, "description", "", "event description")
 	cmd.Flags().StringVar(&status, "status", "", "event status (TENTATIVE, CONFIRMED, CANCELLED; default: CONFIRMED)")

@@ -196,7 +196,7 @@ func icalImportCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&calendarName, "calendar", "Personal", "calendar to import into")
+	cmd.Flags().StringVar(&calendarName, "calendar", "", "calendar to import into (default: first available)")
 	return cmd
 }
 

@@ -112,6 +112,13 @@ func resolveCalendarID(ctx context.Context, a *app.App, name string) (int64, err
 	if err != nil {
 		return 0, fmt.Errorf("list calendars: %w", err)
 	}
+	if name == "" {
+		// No calendar specified: use the first available calendar.
+		if len(cals) == 0 {
+			return 0, fmt.Errorf("no calendars exist")
+		}
+		return cals[0].ID, nil
+	}
 	for _, c := range cals {
 		if strings.EqualFold(c.Name, name) {
 			return c.ID, nil

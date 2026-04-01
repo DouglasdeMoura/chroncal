@@ -453,7 +453,7 @@ and percent-complete to 100.`,
 	cmd.Flags().StringVar(&dueStr, "due", "", "due date (YYYY-MM-DD)")
 	cmd.Flags().StringVar(&startStr, "start", "", "start date (YYYY-MM-DD; when the task becomes relevant)")
 	cmd.Flags().StringVar(&durationStr, "duration", "", "estimated duration (e.g. 1h30m or PT1H30M)")
-	cmd.Flags().StringVar(&calendarName, "calendar", "Personal", "calendar name")
+	cmd.Flags().StringVar(&calendarName, "calendar", "", "calendar name (default: first available)")
 	cmd.Flags().StringVar(&location, "location", "", "location")
 	cmd.Flags().StringVar(&description, "description", "", "description")
 	cmd.Flags().StringVar(&status, "status", "", "status (NEEDS-ACTION, IN-PROCESS, COMPLETED, CANCELLED; default: NEEDS-ACTION)")
