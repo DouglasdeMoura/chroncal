@@ -110,28 +110,42 @@ type UpsertParams struct {
 	DtStamp         string
 }
 
+const (
+	defaultStatus = "NEEDS-ACTION"
+	defaultClass  = "PUBLIC"
+	alarmAction   = "DISPLAY"
+	alarmRelated  = "START"
+)
+
+func defaults(status, class string) (string, string) {
+	if status == "" {
+		status = defaultStatus
+	}
+	if class == "" {
+		class = defaultClass
+	}
+	return status, class
+}
+
+func completedAtIfMissing(status, completedAt string) (string, int64) {
+	if status == "COMPLETED" && completedAt == "" {
+		return time.Now().UTC().Format(time.RFC3339), 100
+	}
+	return completedAt, 0
+}
+
 func (p *CreateParams) applyDefaults() {
-	if p.Status == "" {
-		p.Status = "NEEDS-ACTION"
-	}
-	if p.Class == "" {
-		p.Class = "PUBLIC"
-	}
+	p.Status, p.Class = defaults(p.Status, p.Class)
 	if p.Status == "COMPLETED" {
 		p.PercentComplete = 100
 	}
 }
 
 func (p *UpsertParams) applyDefaults() {
-	if p.Status == "" {
-		p.Status = "NEEDS-ACTION"
-	}
-	if p.Class == "" {
-		p.Class = "PUBLIC"
-	}
-	if p.Status == "COMPLETED" && p.CompletedAt == "" {
-		p.CompletedAt = time.Now().UTC().Format(time.RFC3339)
-		p.PercentComplete = 100
+	p.Status, p.Class = defaults(p.Status, p.Class)
+	if completedAt, pct := completedAtIfMissing(p.Status, p.CompletedAt); completedAt != "" {
+		p.CompletedAt = completedAt
+		p.PercentComplete = pct
 	}
 }
 
@@ -296,15 +310,10 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Todo, error) {
 }
 
 func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, error) {
-	if p.Status == "" {
-		p.Status = "NEEDS-ACTION"
-	}
-	if p.Class == "" {
-		p.Class = "PUBLIC"
-	}
-	if p.Status == "COMPLETED" && p.CompletedAt == "" {
-		p.CompletedAt = time.Now().UTC().Format(time.RFC3339)
-		p.PercentComplete = 100
+	p.Status, p.Class = defaults(p.Status, p.Class)
+	if completedAt, pct := completedAtIfMissing(p.Status, p.CompletedAt); completedAt != "" {
+		p.CompletedAt = completedAt
+		p.PercentComplete = pct
 	}
 	r, err := s.q.UpdateTodo(ctx, storage.UpdateTodoParams{
 		ID:              id,
@@ -518,15 +527,13 @@ func (s *Service) ReplaceAlarms(ctx context.Context, todoID int64, alarms []mode
 	if err := qtx.DeleteTodoAlarmsByTodoID(ctx, todoID); err != nil {
 		return fmt.Errorf("delete alarms: %w", err)
 	}
-	for i := range alarms {
-		if alarms[i].Action == "" {
-			alarms[i].Action = "DISPLAY"
-		}
-		if alarms[i].Related == "" {
-			alarms[i].Related = "START"
-		}
-	}
 	for _, a := range alarms {
+		if a.Action == "" {
+			a.Action = alarmAction
+		}
+		if a.Related == "" {
+			a.Related = alarmRelated
+		}
 		uid := a.UID
 		if uid == "" {
 			uid = uuid.New().String()
