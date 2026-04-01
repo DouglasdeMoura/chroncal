@@ -25,8 +25,8 @@ WHERE recurrence_rule = '' AND recurrence_id = ''
 AND (sqlc.arg(calendar_id) = 0 OR calendar_id = sqlc.arg(calendar_id))
 AND (sqlc.arg(filter_status) = '' OR status = sqlc.arg(filter_status))
 AND (sqlc.arg(hide_completed) = 0 OR (status != 'COMPLETED' AND status != 'CANCELLED'))
-AND (sqlc.arg(from_date) = '' OR due_date >= sqlc.arg(from_date))
-AND (sqlc.arg(to_date) = '' OR due_date < sqlc.arg(to_date))
+AND (sqlc.arg(from_date) = '' OR due_date = '' OR due_date >= sqlc.arg(from_date))
+AND (sqlc.arg(to_date) = '' OR due_date = '' OR due_date < sqlc.arg(to_date))
 ORDER BY due_date, summary;
 
 -- name: ListRecurringTodosFiltered :many

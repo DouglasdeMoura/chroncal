@@ -776,8 +776,8 @@ WHERE recurrence_rule = '' AND recurrence_id = ''
 AND (?1 = 0 OR calendar_id = ?1)
 AND (?2 = '' OR status = ?2)
 AND (?3 = 0 OR (status != 'COMPLETED' AND status != 'CANCELLED'))
-AND (?4 = '' OR due_date >= ?4)
-AND (?5 = '' OR due_date < ?5)
+AND (?4 = '' OR due_date = '' OR due_date >= ?4)
+AND (?5 = '' OR due_date = '' OR due_date < ?5)
 ORDER BY due_date, summary
 `
 
