@@ -65,6 +65,9 @@ ON CONFLICT(uid, recurrence_id) DO UPDATE SET
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 RETURNING *;
 
+-- name: UpdateEventExdates :exec
+UPDATE events SET exdates = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?;
+
 -- name: DeleteEvent :exec
 DELETE FROM events WHERE id = ?;
 

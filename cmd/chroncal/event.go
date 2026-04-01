@@ -845,7 +845,10 @@ func eventUpdateCmd() *cobra.Command {
 }
 
 func eventDeleteCmd() *cobra.Command {
-	var recurrenceID string
+	var (
+		recurrenceID string
+		series       bool
+	)
 	cmd := &cobra.Command{
 		Use:   "delete <id|uid>",
 		Short: "Delete an event",
@@ -856,13 +859,26 @@ func eventDeleteCmd() *cobra.Command {
 				return err
 			}
 			defer a.Close()
+			ctx := context.Background()
 
-			e, err := resolveEvent(context.Background(), a, args[0], recurrenceID)
+			e, err := resolveEvent(ctx, a, args[0], recurrenceID)
 			if err != nil {
 				return fmt.Errorf("get event: %w", err)
 			}
 
-			if err := a.Events.Delete(context.Background(), e.ID); err != nil {
+			if series {
+				if err := a.Events.DeleteSeries(ctx, e.UID); err != nil {
+					return fmt.Errorf("delete series: %w", err)
+				}
+				w := cmd.OutOrStdout()
+				if outputFmt != "text" {
+					return printOutput(w, map[string]any{"deleted": true, "uid": e.UID, "series": true})
+				}
+				fmt.Fprintf(w, "Deleted event series %q.\n", e.UID)
+				return nil
+			}
+
+			if err := a.Events.Delete(ctx, e.ID); err != nil {
 				return fmt.Errorf("delete event: %w", err)
 			}
 
@@ -875,6 +891,7 @@ func eventDeleteCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&recurrenceID, "recurrence-id", "", "target a specific override instance (RFC 3339 timestamp)")
+	cmd.Flags().BoolVar(&series, "series", false, "delete the entire recurring series (master + all overrides)")
 	return cmd
 }
 

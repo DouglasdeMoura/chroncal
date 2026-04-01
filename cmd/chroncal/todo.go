@@ -851,7 +851,10 @@ func todoCompleteCmd() *cobra.Command {
 }
 
 func todoDeleteCmd() *cobra.Command {
-	var recurrenceID string
+	var (
+		recurrenceID string
+		series       bool
+	)
 	cmd := &cobra.Command{
 		Use:   "delete <id|uid>",
 		Short: "Delete a todo",
@@ -862,13 +865,26 @@ func todoDeleteCmd() *cobra.Command {
 				return err
 			}
 			defer a.Close()
+			ctx := context.Background()
 
-			t, err := resolveTodo(context.Background(), a, args[0], recurrenceID)
+			t, err := resolveTodo(ctx, a, args[0], recurrenceID)
 			if err != nil {
 				return fmt.Errorf("get todo: %w", err)
 			}
 
-			if err := a.Todos.Delete(context.Background(), t.ID); err != nil {
+			if series {
+				if err := a.Todos.DeleteSeries(ctx, t.UID); err != nil {
+					return fmt.Errorf("delete series: %w", err)
+				}
+				w := cmd.OutOrStdout()
+				if outputFmt != "text" {
+					return printOutput(w, map[string]any{"deleted": true, "uid": t.UID, "series": true})
+				}
+				fmt.Fprintf(w, "Deleted todo series %q.\n", t.UID)
+				return nil
+			}
+
+			if err := a.Todos.Delete(ctx, t.ID); err != nil {
 				return fmt.Errorf("delete todo: %w", err)
 			}
 
@@ -881,6 +897,7 @@ func todoDeleteCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&recurrenceID, "recurrence-id", "", "target a specific override instance (RFC 3339 timestamp)")
+	cmd.Flags().BoolVar(&series, "series", false, "delete the entire recurring series (master + all overrides)")
 	return cmd
 }
 

@@ -1006,6 +1006,20 @@ func (q *Queries) UpdateTodo(ctx context.Context, arg UpdateTodoParams) (Todo, e
 	return i, err
 }
 
+const updateTodoExdates = `-- name: UpdateTodoExdates :exec
+UPDATE todos SET exdates = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?
+`
+
+type UpdateTodoExdatesParams struct {
+	Exdates string
+	ID      int64
+}
+
+func (q *Queries) UpdateTodoExdates(ctx context.Context, arg UpdateTodoExdatesParams) error {
+	_, err := q.db.ExecContext(ctx, updateTodoExdates, arg.Exdates, arg.ID)
+	return err
+}
+
 const upsertTodoByUID = `-- name: UpsertTodoByUID :one
 INSERT INTO todos (
     uid, calendar_id, summary, description, location,

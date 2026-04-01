@@ -383,8 +383,92 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Todo, error)
 	return t, nil
 }
 
+// ErrHasOverrides is returned when attempting to delete a recurring master
+// todo that has override instances. Use DeleteSeries instead.
+var ErrHasOverrides = fmt.Errorf("todo has overrides: use DeleteSeries to delete the entire series")
+
 func (s *Service) Delete(ctx context.Context, id int64) error {
+	td, err := s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	// If this is a recurring master, check for overrides.
+	if td.RecurrenceRule != "" && td.RecurrenceID == "" {
+		overrides, err := s.q.ListTodoOverridesByUID(ctx, td.UID)
+		if err != nil {
+			return fmt.Errorf("check overrides: %w", err)
+		}
+		if len(overrides) > 0 {
+			return ErrHasOverrides
+		}
+	}
+
+	// If this is an override, add EXDATE to the master.
+	if td.RecurrenceID != "" {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("begin tx: %w", err)
+		}
+		defer tx.Rollback()
+		qtx := s.q.WithTx(tx)
+
+		master, err := qtx.GetTodoByUID(ctx, td.UID)
+		if err == nil {
+			existing := event.ParseTimeList(master.Exdates)
+			recIDTime, parseErr := time.Parse(time.RFC3339, td.RecurrenceID)
+			if parseErr != nil {
+				recIDTime, parseErr = time.Parse("2006-01-02", td.RecurrenceID)
+				if parseErr == nil {
+					recIDTime = time.Date(recIDTime.Year(), recIDTime.Month(), recIDTime.Day(), 0, 0, 0, 0, time.Local)
+				}
+			}
+			if parseErr == nil {
+				existing = append(existing, recIDTime)
+				if err := qtx.UpdateTodoExdates(ctx, storage.UpdateTodoExdatesParams{
+					Exdates: event.SerializeTimeList(existing),
+					ID:      master.ID,
+				}); err != nil {
+					return fmt.Errorf("update exdates: %w", err)
+				}
+			}
+		}
+
+		if err := qtx.DeleteTodo(ctx, id); err != nil {
+			return fmt.Errorf("delete todo: %w", err)
+		}
+		return tx.Commit()
+	}
+
 	return s.q.DeleteTodo(ctx, id)
+}
+
+// DeleteSeries deletes a recurring master todo and all its overrides.
+func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+
+	if err := qtx.DeleteTodosByUID(ctx, uid); err != nil {
+		return fmt.Errorf("delete series: %w", err)
+	}
+	return tx.Commit()
+}
+
+// ListOverridesByUID returns all override instances for a given UID.
+func (s *Service) ListOverridesByUID(ctx context.Context, uid string) ([]Todo, error) {
+	rows, err := s.q.ListTodoOverridesByUID(ctx, uid)
+	if err != nil {
+		return nil, err
+	}
+	todos := make([]Todo, len(rows))
+	for i, r := range rows {
+		todos[i] = fromStorage(r)
+	}
+	return todos, nil
 }
 
 // Alarm CRUD

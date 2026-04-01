@@ -380,8 +380,81 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error
 	return e, nil
 }
 
+// ErrHasOverrides is returned when attempting to delete a recurring master
+// event that has override instances. Use DeleteSeries instead.
+var ErrHasOverrides = fmt.Errorf("event has overrides: use DeleteSeries to delete the entire series")
+
 func (s *Service) Delete(ctx context.Context, id int64) error {
+	evt, err := s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	// If this is a recurring master, check for overrides.
+	if evt.RecurrenceRule != "" && evt.RecurrenceID == "" {
+		overrides, err := s.q.ListOverridesByUID(ctx, evt.UID)
+		if err != nil {
+			return fmt.Errorf("check overrides: %w", err)
+		}
+		if len(overrides) > 0 {
+			return ErrHasOverrides
+		}
+	}
+
+	// If this is an override, add EXDATE to the master so the instance
+	// doesn't reappear on next expansion.
+	if evt.RecurrenceID != "" {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("begin tx: %w", err)
+		}
+		defer tx.Rollback()
+		qtx := s.q.WithTx(tx)
+
+		master, err := qtx.GetEventByUID(ctx, evt.UID)
+		if err == nil {
+			existing := ParseTimeList(master.Exdates)
+			recIDTime, parseErr := time.Parse(time.RFC3339, evt.RecurrenceID)
+			if parseErr != nil {
+				// Try date-only format for all-day events.
+				recIDTime, parseErr = time.Parse("2006-01-02", evt.RecurrenceID)
+				if parseErr == nil {
+					recIDTime = time.Date(recIDTime.Year(), recIDTime.Month(), recIDTime.Day(), 0, 0, 0, 0, time.Local)
+				}
+			}
+			if parseErr == nil {
+				existing = append(existing, recIDTime)
+				if err := qtx.UpdateEventExdates(ctx, storage.UpdateEventExdatesParams{
+					Exdates: SerializeTimeList(existing),
+					ID:      master.ID,
+				}); err != nil {
+					return fmt.Errorf("update exdates: %w", err)
+				}
+			}
+		}
+
+		if err := qtx.DeleteEvent(ctx, id); err != nil {
+			return fmt.Errorf("delete event: %w", err)
+		}
+		return tx.Commit()
+	}
+
 	return s.q.DeleteEvent(ctx, id)
+}
+
+// DeleteSeries deletes a recurring master event and all its overrides.
+func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+
+	if err := qtx.DeleteEventsByUID(ctx, uid); err != nil {
+		return fmt.Errorf("delete series: %w", err)
+	}
+	return tx.Commit()
 }
 
 // Alarm CRUD

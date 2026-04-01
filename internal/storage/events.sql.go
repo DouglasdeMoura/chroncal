@@ -977,6 +977,20 @@ func (q *Queries) UpdateEvent(ctx context.Context, arg UpdateEventParams) (Event
 	return i, err
 }
 
+const updateEventExdates = `-- name: UpdateEventExdates :exec
+UPDATE events SET exdates = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?
+`
+
+type UpdateEventExdatesParams struct {
+	Exdates string
+	ID      int64
+}
+
+func (q *Queries) UpdateEventExdates(ctx context.Context, arg UpdateEventExdatesParams) error {
+	_, err := q.db.ExecContext(ctx, updateEventExdates, arg.Exdates, arg.ID)
+	return err
+}
+
 const upsertEventByUID = `-- name: UpsertEventByUID :one
 INSERT INTO events (
     uid, calendar_id, title, description, location,

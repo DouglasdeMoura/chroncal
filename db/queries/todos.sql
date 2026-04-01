@@ -107,6 +107,9 @@ ON CONFLICT(uid, recurrence_id) DO UPDATE SET
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 RETURNING *;
 
+-- name: UpdateTodoExdates :exec
+UPDATE todos SET exdates = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?;
+
 -- name: DeleteTodo :exec
 DELETE FROM todos WHERE id = ?;
 
