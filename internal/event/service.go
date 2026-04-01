@@ -113,34 +113,31 @@ type UpsertParams struct {
 	DtStamp        string
 }
 
-func (p *CreateParams) applyDefaults() {
-	p.Status = strings.ToUpper(p.Status)
-	p.Transp = strings.ToUpper(p.Transp)
-	p.Class = strings.ToUpper(p.Class)
-	if p.Status == "" {
-		p.Status = "CONFIRMED"
+func applyEventDefaults(status, transp, class *string) {
+	*status = strings.ToUpper(*status)
+	*transp = strings.ToUpper(*transp)
+	*class = strings.ToUpper(*class)
+	if *status == "" {
+		*status = "CONFIRMED"
 	}
-	if p.Transp == "" {
-		p.Transp = "OPAQUE"
+	if *transp == "" {
+		*transp = "OPAQUE"
 	}
-	if p.Class == "" {
-		p.Class = "PUBLIC"
+	if *class == "" {
+		*class = "PUBLIC"
 	}
 }
 
+func (p *CreateParams) applyDefaults() {
+	applyEventDefaults(&p.Status, &p.Transp, &p.Class)
+}
+
 func (p *UpsertParams) applyDefaults() {
-	p.Status = strings.ToUpper(p.Status)
-	p.Transp = strings.ToUpper(p.Transp)
-	p.Class = strings.ToUpper(p.Class)
-	if p.Status == "" {
-		p.Status = "CONFIRMED"
-	}
-	if p.Transp == "" {
-		p.Transp = "OPAQUE"
-	}
-	if p.Class == "" {
-		p.Class = "PUBLIC"
-	}
+	applyEventDefaults(&p.Status, &p.Transp, &p.Class)
+}
+
+func (p *UpdateParams) applyDefaults() {
+	applyEventDefaults(&p.Status, &p.Transp, &p.Class)
 }
 
 func (s *Service) ListByDateRange(ctx context.Context, from, to time.Time) ([]Event, error) {
@@ -297,18 +294,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
 }
 
 func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, error) {
-	p.Status = strings.ToUpper(p.Status)
-	p.Transp = strings.ToUpper(p.Transp)
-	p.Class = strings.ToUpper(p.Class)
-	if p.Status == "" {
-		p.Status = "CONFIRMED"
-	}
-	if p.Transp == "" {
-		p.Transp = "OPAQUE"
-	}
-	if p.Class == "" {
-		p.Class = "PUBLIC"
-	}
+	p.applyDefaults()
 	r, err := s.q.UpdateEvent(ctx, storage.UpdateEventParams{
 		ID:             id,
 		Title:          p.Title,
