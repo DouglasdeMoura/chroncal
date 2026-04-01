@@ -329,6 +329,10 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 				startTime = time.Date(date.Year(), date.Month(), date.Day(), t.Hour(), t.Minute(), 0, 0, loc)
 			}
 
+			if endTimeStr != "" && cmd.Flags().Changed("duration") {
+				return fmt.Errorf("--end-time and --duration are mutually exclusive")
+			}
+
 			var endTime time.Time
 			if endTimeStr != "" {
 				t, err := time.Parse("15:04", endTimeStr)
@@ -697,6 +701,10 @@ func eventUpdateCmd() *cobra.Command {
 					p.AllDay = false
 				}
 				p.StartTime = date
+			}
+
+			if cmd.Flags().Changed("end-time") && cmd.Flags().Changed("duration") {
+				return fmt.Errorf("--end-time and --duration are mutually exclusive")
 			}
 
 			if cmd.Flags().Changed("end-time") {
