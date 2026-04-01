@@ -357,20 +357,7 @@ CREATE INDEX        idx_todo_recurrence_todo         ON todo_recurrence_instance
 CREATE INDEX        idx_todo_recurrence_instance_at  ON todo_recurrence_instances(instance_at);
 CREATE INDEX        idx_todo_recurrence_original     ON todo_recurrence_instances(original_id);
 
--- Unified alarm state view
-CREATE VIEW all_alarm_states AS
-SELECT
-    'event' as type, id, alarm_id, event_id as item_id,
-    trigger_at, fired_at, acked_at, snoozed_to
-FROM alarm_state
-UNION ALL
-SELECT
-    'todo' as type, id, alarm_id, todo_id as item_id,
-    trigger_at, fired_at, acked_at, snoozed_to
-FROM todo_alarm_state;
-
 -- +goose Down
-DROP VIEW IF EXISTS all_alarm_states;
 DROP TABLE IF EXISTS todo_recurrence_instances;
 DROP TABLE IF EXISTS todo_alarm_state;
 DROP TABLE IF EXISTS todo_relations;
