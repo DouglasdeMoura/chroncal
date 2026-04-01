@@ -140,55 +140,6 @@ func ExpandEvent(evt event.Event, from, to time.Time) []ExpandedEvent {
 	return instances
 }
 
-// ExpandAndCache generates and caches instances for a single event
-func (s *Service) ExpandAndCache(ctx context.Context, evt event.Event, from, to time.Time) error {
-	if evt.RecurrenceRule == "" {
-		return nil // Nothing to cache for non-recurring
-	}
-
-	instances := ExpandEvent(evt, from, to)
-
-	// Use transaction for atomicity
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	q := s.q.WithTx(tx)
-
-	// Clear existing instances in this range
-	if err := q.DeleteRecurrenceInstances(ctx, storage.DeleteRecurrenceInstancesParams{
-		EventID:    evt.ID,
-		InstanceAt: from.Format(time.RFC3339),
-	}); err != nil {
-		return err
-	}
-
-	// Insert new instances
-	for _, inst := range instances {
-		_, err := q.InsertRecurrenceInstance(ctx, storage.InsertRecurrenceInstanceParams{
-			EventID:    evt.ID,
-			OriginalID: evt.ID,
-			InstanceAt: inst.InstanceTime.Format(time.RFC3339),
-			IsOverride: 0,
-		})
-		if err != nil && !isDuplicateError(err) {
-			return err
-		}
-	}
-
-	return tx.Commit()
-}
-
-// isDuplicateError checks if error is a unique constraint violation
-func isDuplicateError(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), "UNIQUE constraint failed")
-}
-
 // ExpandOption configures ListExpandedEvents behaviour.
 type ExpandOption func(*expandOptions)
 
