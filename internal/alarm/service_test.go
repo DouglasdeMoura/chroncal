@@ -9,6 +9,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/testutil"
+	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
 func newTestServices(t *testing.T) (*Service, *event.Service) {
@@ -17,6 +18,15 @@ func newTestServices(t *testing.T) (*Service, *event.Service) {
 	evtSvc := event.NewService(db, q)
 	alarmSvc := NewService(db, q, evtSvc, nil) // nil todos for event-only tests
 	return alarmSvc, evtSvc
+}
+
+func newTestServicesWithTodos(t *testing.T) (*Service, *event.Service, *todo.Service) {
+	t.Helper()
+	db, q := testutil.NewTestDB(t)
+	evtSvc := event.NewService(db, q)
+	todoSvc := todo.NewService(db, q)
+	alarmSvc := NewService(db, q, evtSvc, todoSvc)
+	return alarmSvc, evtSvc, todoSvc
 }
 
 func TestCheck_FiresDueAlarm(t *testing.T) {
@@ -830,7 +840,7 @@ func TestCheckMissed_FindsStaleAlarm(t *testing.T) {
 		{Action: "DISPLAY", TriggerValue: "-PT15M"},
 	})
 
-	missed, err := svc.CheckMissed(ctx, time.Now(), 7*24*time.Hour)
+	missed, _, err := svc.CheckMissed(ctx, time.Now(), 7*24*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -870,7 +880,7 @@ func TestCheckMissed_SkipsAcknowledged(t *testing.T) {
 		svc.MarkFired(ctx, d)
 	}
 
-	missed, err := svc.CheckMissed(ctx, time.Now(), 7*24*time.Hour)
+	missed, _, err := svc.CheckMissed(ctx, time.Now(), 7*24*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -898,12 +908,96 @@ func TestCheckMissed_SkipsNotYetStale(t *testing.T) {
 		{Action: "DISPLAY", TriggerValue: "-PT15M"},
 	})
 
-	missed, err := svc.CheckMissed(ctx, time.Now(), 7*24*time.Hour)
+	missed, _, err := svc.CheckMissed(ctx, time.Now(), 7*24*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(missed) != 0 {
 		t.Fatalf("got %d missed, want 0 (not yet stale)", len(missed))
+	}
+}
+
+func TestCheckMissed_FindsStaleTodoAlarm(t *testing.T) {
+	svc, _, todoSvc := newTestServicesWithTodos(t)
+	ctx := context.Background()
+
+	// Todo due 3 days ago with a 15-min-before alarm.
+	dueDate := time.Now().Add(-72 * time.Hour)
+	td, err := todoSvc.Create(ctx, todo.CreateParams{
+		CalendarID: 1,
+		Summary:    "Missed Task",
+		DueDate:    dueDate.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	todoSvc.ReplaceAlarms(ctx, td.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT15M"},
+	})
+
+	_, missedTodos, err := svc.CheckMissed(ctx, time.Now(), 7*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(missedTodos) != 1 {
+		t.Fatalf("got %d missed todos, want 1", len(missedTodos))
+	}
+	if missedTodos[0].TodoSummary != "Missed Task" {
+		t.Errorf("summary = %q", missedTodos[0].TodoSummary)
+	}
+}
+
+func TestCheckMissed_SkipsCompletedTodo(t *testing.T) {
+	svc, _, todoSvc := newTestServicesWithTodos(t)
+	ctx := context.Background()
+
+	dueDate := time.Now().Add(-72 * time.Hour)
+	td, err := todoSvc.Create(ctx, todo.CreateParams{
+		CalendarID: 1,
+		Summary:    "Done Task",
+		DueDate:    dueDate.Format(time.RFC3339),
+		Status:     "COMPLETED",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	todoSvc.ReplaceAlarms(ctx, td.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT15M"},
+	})
+
+	_, missedTodos, err := svc.CheckMissed(ctx, time.Now(), 7*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(missedTodos) != 0 {
+		t.Fatalf("got %d missed todos, want 0 (completed)", len(missedTodos))
+	}
+}
+
+func TestCheckMissed_SkipsNotYetStaleTodo(t *testing.T) {
+	svc, _, todoSvc := newTestServicesWithTodos(t)
+	ctx := context.Background()
+
+	// Todo due 12 hours ago. Trigger 12h15m ago, under 24h stale threshold.
+	dueDate := time.Now().Add(-12 * time.Hour)
+	td, err := todoSvc.Create(ctx, todo.CreateParams{
+		CalendarID: 1,
+		Summary:    "Recent Task",
+		DueDate:    dueDate.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	todoSvc.ReplaceAlarms(ctx, td.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT15M"},
+	})
+
+	_, missedTodos, err := svc.CheckMissed(ctx, time.Now(), 7*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(missedTodos) != 0 {
+		t.Fatalf("got %d missed todos, want 0 (not yet stale)", len(missedTodos))
 	}
 }
 

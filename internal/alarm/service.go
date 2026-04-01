@@ -63,16 +63,25 @@ type MissedAlarm struct {
 	Age        time.Duration
 }
 
+// MissedTodoAlarm represents a todo alarm that was never fired because it became stale.
+type MissedTodoAlarm struct {
+	TodoSummary string
+	AlarmID     int64
+	TriggerAt   time.Time
+	Age         time.Duration
+}
+
 // CheckMissed returns alarms from the last `lookback` that were never fired
-// (no alarm_state entry) and are past the stale threshold.
-func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.Duration) ([]MissedAlarm, error) {
+// (no alarm_state / todo_alarm_state entry) and are past the stale threshold.
+func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.Duration) ([]MissedAlarm, []MissedTodoAlarm, error) {
 	windowStart := now.Add(-lookback)
 	windowEnd := now
 
+	// --- Event alarms ---
 	recurSvc := recurrence.NewService(s.db, s.q)
 	expanded, err := recurSvc.ListExpandedEvents(ctx, windowStart, windowEnd, recurrence.SkipCategories())
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	var missed []MissedAlarm
@@ -125,7 +134,75 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 			}
 		}
 	}
-	return missed, nil
+
+	// --- Todo alarms ---
+	var missedTodos []MissedTodoAlarm
+	if s.todos != nil {
+		rows, err := s.q.ListAllTodos(ctx)
+		if err != nil {
+			return missed, nil, nil // degrade gracefully
+		}
+
+		for _, row := range rows {
+			td := todoFromRow(row)
+			if td.Status == "COMPLETED" || td.Status == "CANCELLED" {
+				continue
+			}
+
+			alarms, err := s.todos.ListAlarms(ctx, td.ID)
+			if err != nil || len(alarms) == 0 {
+				continue
+			}
+
+			instances := recurrence.ExpandTodo(td, windowStart, windowEnd)
+			for _, inst := range instances {
+				for _, a := range alarms {
+					triggerAt, err := computeTodoTriggerTimeForInstance(inst, a)
+					if err != nil {
+						continue
+					}
+
+					triggers := []time.Time{triggerAt}
+					if a.Repeat > 0 && a.Duration != "" {
+						for i := 1; i <= a.Repeat; i++ {
+							repeatTrigger := triggerAt
+							for j := 0; j < i; j++ {
+								repeatTrigger = duration.Add(repeatTrigger, a.Duration)
+							}
+							if !repeatTrigger.IsZero() && repeatTrigger.After(triggerAt) {
+								triggers = append(triggers, repeatTrigger)
+							}
+						}
+					}
+
+					for _, t := range triggers {
+						if t.After(now) || now.Sub(t) <= StaleThreshold {
+							continue
+						}
+						triggerKey := t.UTC().Format(time.RFC3339)
+						_, err := s.q.GetTodoAlarmState(ctx, storage.GetTodoAlarmStateParams{
+							AlarmID:   a.ID,
+							TriggerAt: triggerKey,
+						})
+						if err == nil {
+							continue
+						}
+						if !errors.Is(err, sql.ErrNoRows) {
+							continue
+						}
+						missedTodos = append(missedTodos, MissedTodoAlarm{
+							TodoSummary: td.Summary,
+							AlarmID:     a.ID,
+							TriggerAt:   t,
+							Age:         now.Sub(t),
+						})
+					}
+				}
+			}
+		}
+	}
+
+	return missed, missedTodos, nil
 }
 
 // checkEventAlarms finds due event alarms

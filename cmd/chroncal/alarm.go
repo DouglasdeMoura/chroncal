@@ -633,26 +633,36 @@ system was not running when they became due.`,
 
 			now := time.Now()
 			lookback := time.Duration(days) * 24 * time.Hour
-			missed, err := a.Alarms.CheckMissed(context.Background(), now, lookback)
+			missedEvents, missedTodos, err := a.Alarms.CheckMissed(context.Background(), now, lookback)
 			if err != nil {
 				return fmt.Errorf("check missed: %w", err)
 			}
 
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
-				return printOutput(w, missed)
+				return printOutput(w, map[string]any{
+					"events": missedEvents,
+					"todos":  missedTodos,
+				})
 			}
 
-			if len(missed) == 0 {
+			if len(missedEvents) == 0 && len(missedTodos) == 0 {
 				fmt.Fprintln(w, "No missed alarms.")
 				return nil
 			}
 
 			fmt.Fprintf(w, "Missed alarms (last %d days):\n\n", days)
-			for _, m := range missed {
+			for _, m := range missedEvents {
 				fmt.Fprintf(w, "  %s  %s (%s ago)\n",
 					m.TriggerAt.Local().Format("2006-01-02 15:04"),
 					m.EventTitle,
+					m.Age.Round(time.Minute),
+				)
+			}
+			for _, m := range missedTodos {
+				fmt.Fprintf(w, "  %s  [todo] %s (%s ago)\n",
+					m.TriggerAt.Local().Format("2006-01-02 15:04"),
+					m.TodoSummary,
 					m.Age.Round(time.Minute),
 				)
 			}
