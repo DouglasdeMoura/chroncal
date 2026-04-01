@@ -87,7 +87,6 @@ func ExpandEvent(evt event.Event, from, to time.Time) []ExpandedEvent {
 
 	set.DTStart(dtstart)
 
-	// Add EXDATEs
 	for _, ex := range evt.ParseExDates() {
 		if loc != nil {
 			ex = ex.In(loc)
@@ -95,12 +94,21 @@ func ExpandEvent(evt event.Event, from, to time.Time) []ExpandedEvent {
 		set.ExDate(ex)
 	}
 
-	// Add RDATEs
-	for _, rd := range evt.ParseRDates() {
+	rdates := evt.ParseRDates()
+	for _, rd := range rdates {
 		if loc != nil {
 			rd = rd.In(loc)
 		}
 		set.RDate(rd)
+	}
+
+	// Build a set of RDATE times for O(1) membership checks below.
+	rdateSet := make(map[time.Time]struct{}, len(rdates))
+	for _, rd := range rdates {
+		if loc != nil {
+			rd = rd.In(loc)
+		}
+		rdateSet[rd] = struct{}{}
 	}
 
 	// Get all occurrences in range [from, to)
@@ -116,20 +124,8 @@ func ExpandEvent(evt event.Event, from, to time.Time) []ExpandedEvent {
 
 	var instances []ExpandedEvent
 	for _, occ := range occurrences {
-		// Convert back to UTC for storage consistency.
 		utcOcc := occ.UTC()
-
-		// Check if this occurrence is from RDATE (override) or RRULE
-		isRDate := false
-		for _, rd := range evt.ParseRDates() {
-			if loc != nil {
-				rd = rd.In(loc)
-			}
-			if occ.Equal(rd) {
-				isRDate = true
-				break
-			}
-		}
+		_, isRDate := rdateSet[occ]
 
 		instances = append(instances, ExpandedEvent{
 			Event:        evt,
@@ -222,17 +218,20 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 		}
 	}
 
-	// Batch category loading: one query for all categories, then build map.
-	if !o.skipCategories {
-		allCats, err := s.q.ListAllEventCategoriesWithIDs(ctx)
-		if err == nil && len(allCats) > 0 {
-			catMap := make(map[int64][]string)
-			for _, c := range allCats {
+	if !o.skipCategories && len(results) > 0 {
+		ids := make([]int64, len(results))
+		for i := range results {
+			ids[i] = results[i].Event.ID
+		}
+		cats, err := s.q.ListCategoriesByEventIDs(ctx, ids)
+		if err == nil {
+			catMap := make(map[int64][]string, len(results))
+			for _, c := range cats {
 				catMap[c.EventID] = append(catMap[c.EventID], c.Category)
 			}
 			for i := range results {
-				if cats, ok := catMap[results[i].Event.ID]; ok {
-					results[i].Event.Categories = strings.Join(cats, ",")
+				if c, ok := catMap[results[i].Event.ID]; ok {
+					results[i].Event.Categories = strings.Join(c, ",")
 				}
 			}
 		}
@@ -306,7 +305,6 @@ func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Event,
 			}
 		}
 	}
-	s.populateEventCategories(ctx, result)
 	return result
 }
 
@@ -330,68 +328,6 @@ func (s *Service) ListExpandedByDateRange(ctx context.Context, from, to time.Tim
 	}
 
 	recurringRows, err := s.q.ListRecurringEvents(ctx)
-	if err != nil {
-		return nil, err
-	}
-	result = append(result, s.expandRecurringRows(ctx, recurringRows, from, to)...)
-
-	s.populateEventCategories(ctx, result)
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].StartTime.Before(result[j].StartTime)
-	})
-	return result, nil
-}
-
-// ListExpandedByCalendarAndDateRange is like ListExpandedByDateRange but
-// scoped to a single calendar.
-func (s *Service) ListExpandedByCalendarAndDateRange(ctx context.Context, calID int64, from, to time.Time) ([]event.Event, error) {
-	rangeRows, err := s.q.ListEventsByCalendarAndDateRange(ctx, storage.ListEventsByCalendarAndDateRangeParams{
-		CalendarID: calID,
-		StartTime:  to.Format(time.RFC3339),   // start_time < to
-		EndTime:    from.Format(time.RFC3339), // end_time > from
-	})
-	if err != nil {
-		return nil, err
-	}
-	var result []event.Event
-	for _, row := range rangeRows {
-		if row.RecurrenceRule == nil && row.RecurrenceID == "" {
-			result = append(result, eventFromRow(row))
-		}
-	}
-
-	recurringRows, err := s.q.ListRecurringEventsByCalendar(ctx, calID)
-	if err != nil {
-		return nil, err
-	}
-	result = append(result, s.expandRecurringRows(ctx, recurringRows, from, to)...)
-
-	s.populateEventCategories(ctx, result)
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].StartTime.Before(result[j].StartTime)
-	})
-	return result, nil
-}
-
-// ListExpandedByStatusAndDateRange is like ListExpandedByDateRange but
-// filtered by event status.
-func (s *Service) ListExpandedByStatusAndDateRange(ctx context.Context, status string, from, to time.Time) ([]event.Event, error) {
-	rangeRows, err := s.q.ListEventsByStatusAndDateRange(ctx, storage.ListEventsByStatusAndDateRangeParams{
-		Status:    status,
-		StartTime: to.Format(time.RFC3339),   // start_time < to
-		EndTime:   from.Format(time.RFC3339), // end_time > from
-	})
-	if err != nil {
-		return nil, err
-	}
-	var result []event.Event
-	for _, row := range rangeRows {
-		if row.RecurrenceRule == nil && row.RecurrenceID == "" {
-			result = append(result, eventFromRow(row))
-		}
-	}
-
-	recurringRows, err := s.q.ListRecurringEventsByStatus(ctx, status)
 	if err != nil {
 		return nil, err
 	}
@@ -504,30 +440,48 @@ func todoFromRow(row storage.Todo) todo.Todo {
 }
 
 func (s *Service) populateEventCategories(ctx context.Context, events []event.Event) {
+	if len(events) == 0 {
+		return
+	}
+	ids := make([]int64, len(events))
 	for i := range events {
-		rows, err := s.q.ListCategoriesByEventID(ctx, events[i].ID)
-		if err != nil {
-			continue
+		ids[i] = events[i].ID
+	}
+	rows, err := s.q.ListCategoriesByEventIDs(ctx, ids)
+	if err != nil {
+		return
+	}
+	catMap := make(map[int64][]string, len(events))
+	for _, r := range rows {
+		catMap[r.EventID] = append(catMap[r.EventID], r.Category)
+	}
+	for i := range events {
+		if cats, ok := catMap[events[i].ID]; ok {
+			events[i].Categories = strings.Join(cats, ",")
 		}
-		cats := make([]string, len(rows))
-		for j, r := range rows {
-			cats[j] = r.Category
-		}
-		events[i].Categories = strings.Join(cats, ",")
 	}
 }
 
 func (s *Service) populateTodoCategories(ctx context.Context, todos []todo.Todo) {
+	if len(todos) == 0 {
+		return
+	}
+	ids := make([]int64, len(todos))
 	for i := range todos {
-		rows, err := s.q.ListCategoriesByTodoID(ctx, todos[i].ID)
-		if err != nil {
-			continue
+		ids[i] = todos[i].ID
+	}
+	rows, err := s.q.ListCategoriesByTodoIDs(ctx, ids)
+	if err != nil {
+		return
+	}
+	catMap := make(map[int64][]string, len(todos))
+	for _, r := range rows {
+		catMap[r.TodoID] = append(catMap[r.TodoID], r.Category)
+	}
+	for i := range todos {
+		if cats, ok := catMap[todos[i].ID]; ok {
+			todos[i].Categories = strings.Join(cats, ",")
 		}
-		cats := make([]string, len(rows))
-		for j, r := range rows {
-			cats[j] = r.Category
-		}
-		todos[i].Categories = strings.Join(cats, ",")
 	}
 }
 
@@ -813,11 +767,20 @@ func ExpandTodo(td todo.Todo, from, to time.Time) []ExpandedTodo {
 		}
 		set.ExDate(ex)
 	}
-	for _, rd := range td.ParseRDates() {
+	rdates := td.ParseRDates()
+	for _, rd := range rdates {
 		if loc != nil {
 			rd = rd.In(loc)
 		}
 		set.RDate(rd)
+	}
+
+	rdateSet := make(map[time.Time]struct{}, len(rdates))
+	for _, rd := range rdates {
+		if loc != nil {
+			rd = rd.In(loc)
+		}
+		rdateSet[rd] = struct{}{}
 	}
 
 	occurrences := set.Between(localFrom, localTo, true)
@@ -832,16 +795,7 @@ func ExpandTodo(td todo.Todo, from, to time.Time) []ExpandedTodo {
 	var instances []ExpandedTodo
 	for _, occ := range occurrences {
 		utcOcc := occ.UTC()
-		isRDate := false
-		for _, rd := range td.ParseRDates() {
-			if loc != nil {
-				rd = rd.In(loc)
-			}
-			if occ.Equal(rd) {
-				isRDate = true
-				break
-			}
-		}
+		_, isRDate := rdateSet[occ]
 		instances = append(instances, ExpandedTodo{
 			Todo:         td,
 			InstanceTime: utcOcc,
