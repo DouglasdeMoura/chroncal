@@ -284,6 +284,134 @@ func TestTodoService_Delete(t *testing.T) {
 	}
 }
 
+func TestDelete_MasterWithOverridesRefused(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	svc.UpsertByUID(ctx, UpsertParams{
+		UID: "del-master", CalendarID: 1, Summary: "Weekly Review",
+		DueDate:        time.Date(2026, 4, 1, 23, 59, 59, 0, time.UTC).Format(time.RFC3339),
+		RecurrenceRule: "FREQ=WEEKLY",
+	})
+	svc.UpsertByUID(ctx, UpsertParams{
+		UID: "del-master", CalendarID: 1, Summary: "Weekly Review (moved)",
+		DueDate:      time.Date(2026, 4, 8, 23, 59, 59, 0, time.UTC).Format(time.RFC3339),
+		RecurrenceID: "2026-04-08T23:59:59Z",
+	})
+
+	master, _ := svc.GetByUID(ctx, "del-master")
+	err := svc.Delete(ctx, master.ID)
+	if err != ErrHasOverrides {
+		t.Fatalf("Delete master with overrides: got %v, want ErrHasOverrides", err)
+	}
+}
+
+func TestDelete_MasterNoOverridesSucceeds(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	svc.UpsertByUID(ctx, UpsertParams{
+		UID: "del-solo", CalendarID: 1, Summary: "Solo Recurring",
+		DueDate:        time.Date(2026, 4, 1, 23, 59, 59, 0, time.UTC).Format(time.RFC3339),
+		RecurrenceRule: "FREQ=WEEKLY",
+	})
+
+	master, _ := svc.GetByUID(ctx, "del-solo")
+	if err := svc.Delete(ctx, master.ID); err != nil {
+		t.Fatalf("Delete solo master: %v", err)
+	}
+	_, err := svc.Get(ctx, master.ID)
+	if err == nil {
+		t.Error("expected error after deletion")
+	}
+}
+
+func TestDelete_OverrideAddsEXDATE(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	svc.UpsertByUID(ctx, UpsertParams{
+		UID: "exd-test", CalendarID: 1, Summary: "Weekly",
+		DueDate:        time.Date(2026, 4, 1, 23, 59, 59, 0, time.UTC).Format(time.RFC3339),
+		RecurrenceRule: "FREQ=WEEKLY",
+	})
+	svc.UpsertByUID(ctx, UpsertParams{
+		UID: "exd-test", CalendarID: 1, Summary: "Weekly (moved)",
+		DueDate:      time.Date(2026, 4, 8, 23, 59, 59, 0, time.UTC).Format(time.RFC3339),
+		RecurrenceID: "2026-04-08T23:59:59Z",
+	})
+
+	override, _ := svc.GetByUIDAndRecurrenceID(ctx, "exd-test", "2026-04-08T23:59:59Z")
+	if err := svc.Delete(ctx, override.ID); err != nil {
+		t.Fatalf("Delete override: %v", err)
+	}
+
+	master, _ := svc.GetByUID(ctx, "exd-test")
+	exdates := master.ParseExDates()
+	if len(exdates) != 1 {
+		t.Fatalf("exdates count = %d, want 1", len(exdates))
+	}
+}
+
+func TestDelete_OverridePreservesExistingEXDATEs(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	svc.UpsertByUID(ctx, UpsertParams{
+		UID: "pre-exd", CalendarID: 1, Summary: "Weekly",
+		DueDate:        time.Date(2026, 4, 1, 23, 59, 59, 0, time.UTC).Format(time.RFC3339),
+		RecurrenceRule: "FREQ=WEEKLY",
+		ExDates:        "2026-04-15T23:59:59Z",
+	})
+	svc.UpsertByUID(ctx, UpsertParams{
+		UID: "pre-exd", CalendarID: 1, Summary: "Weekly (moved)",
+		DueDate:      time.Date(2026, 4, 8, 23, 59, 59, 0, time.UTC).Format(time.RFC3339),
+		RecurrenceID: "2026-04-08T23:59:59Z",
+	})
+
+	override, _ := svc.GetByUIDAndRecurrenceID(ctx, "pre-exd", "2026-04-08T23:59:59Z")
+	if err := svc.Delete(ctx, override.ID); err != nil {
+		t.Fatalf("Delete override: %v", err)
+	}
+
+	master, _ := svc.GetByUID(ctx, "pre-exd")
+	exdates := master.ParseExDates()
+	if len(exdates) != 2 {
+		t.Fatalf("exdates count = %d, want 2", len(exdates))
+	}
+}
+
+func TestDeleteSeries_CascadesAll(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	svc.UpsertByUID(ctx, UpsertParams{
+		UID: "series-del", CalendarID: 1, Summary: "Weekly",
+		DueDate:        time.Date(2026, 4, 1, 23, 59, 59, 0, time.UTC).Format(time.RFC3339),
+		RecurrenceRule: "FREQ=WEEKLY",
+	})
+	for _, recID := range []string{"2026-04-08T23:59:59Z", "2026-04-15T23:59:59Z"} {
+		svc.UpsertByUID(ctx, UpsertParams{
+			UID: "series-del", CalendarID: 1, Summary: "Override",
+			DueDate:      time.Date(2026, 4, 8, 23, 59, 59, 0, time.UTC).Format(time.RFC3339),
+			RecurrenceID: recID,
+		})
+	}
+
+	if err := svc.DeleteSeries(ctx, "series-del"); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+
+	_, err := svc.GetByUID(ctx, "series-del")
+	if err == nil {
+		t.Error("master should be deleted")
+	}
+	overrides, _ := svc.ListOverridesByUID(ctx, "series-del")
+	if len(overrides) != 0 {
+		t.Errorf("overrides remaining = %d, want 0", len(overrides))
+	}
+}
+
 func TestTodoService_Alarms(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
