@@ -241,10 +241,6 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 	return results, nil
 }
 
-func parseTime(s string) time.Time {
-	t, _ := time.Parse(time.RFC3339, s)
-	return t
-}
 
 func eventFromRow(row storage.Event) event.Event {
 	return event.Event{
@@ -254,8 +250,8 @@ func eventFromRow(row storage.Event) event.Event {
 		Title:          row.Title,
 		Description:    storage.NullableToString(row.Description),
 		Location:       storage.NullableToString(row.Location),
-		StartTime:      parseTime(row.StartTime),
-		EndTime:        parseTime(row.EndTime),
+		StartTime:      timeutil.ParseDateTime(row.StartTime),
+		EndTime:        timeutil.ParseDateTime(row.EndTime),
 		AllDay:         row.AllDay != 0,
 		RecurrenceRule: storage.NullableToString(row.RecurrenceRule),
 		Timezone:       storage.NullableToString(row.Timezone),
@@ -271,8 +267,8 @@ func eventFromRow(row storage.Event) event.Event {
 		Geo:            storage.NullableToString(row.Geo),
 		DurationValue:  storage.NullableToString(row.Duration),
 		DtStamp:        storage.NullableToString(row.Dtstamp),
-		CreatedAt:      parseTime(row.CreatedAt),
-		UpdatedAt:      parseTime(row.UpdatedAt),
+		CreatedAt:      timeutil.ParseDateTime(row.CreatedAt),
+		UpdatedAt:      timeutil.ParseDateTime(row.UpdatedAt),
 	}
 }
 
@@ -502,8 +498,8 @@ func todoFromRow(row storage.Todo) todo.Todo {
 		RecurrenceID:    row.RecurrenceID,
 		Geo:             storage.NullableToString(row.Geo),
 		DtStamp:         storage.NullableToString(row.Dtstamp),
-		CreatedAt:       parseTime(row.CreatedAt),
-		UpdatedAt:       parseTime(row.UpdatedAt),
+		CreatedAt:       timeutil.ParseDateTime(row.CreatedAt),
+		UpdatedAt:       timeutil.ParseDateTime(row.UpdatedAt),
 	}
 }
 

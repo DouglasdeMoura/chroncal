@@ -4,9 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
 
 type Service struct {
@@ -97,12 +97,7 @@ func fromStorage(r storage.Calendar) Calendar {
 		Name:        r.Name,
 		Color:       r.Color,
 		Description: storage.NullableToString(r.Description),
-		CreatedAt:   parseTime(r.CreatedAt),
-		UpdatedAt:   parseTime(r.UpdatedAt),
+		CreatedAt:   timeutil.ParseDateTime(r.CreatedAt),
+		UpdatedAt:   timeutil.ParseDateTime(r.UpdatedAt),
 	}
-}
-
-func parseTime(s string) time.Time {
-	t, _ := time.Parse(time.RFC3339, s)
-	return t
 }

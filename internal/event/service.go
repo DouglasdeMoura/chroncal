@@ -11,6 +11,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
 
 type SearchParams struct {
@@ -877,8 +878,8 @@ func fromStorage(r storage.Event) Event {
 		Title:          r.Title,
 		Description:    storage.NullableToString(r.Description),
 		Location:       storage.NullableToString(r.Location),
-		StartTime:      parseTime(r.StartTime),
-		EndTime:        parseTime(r.EndTime),
+		StartTime:      timeutil.ParseDateTime(r.StartTime),
+		EndTime:        timeutil.ParseDateTime(r.EndTime),
 		AllDay:         r.AllDay == 1,
 		RecurrenceRule: storage.NullableToString(r.RecurrenceRule),
 		Timezone:       storage.NullableToString(r.Timezone),
@@ -894,8 +895,8 @@ func fromStorage(r storage.Event) Event {
 		Geo:            storage.NullableToString(r.Geo),
 		DurationValue:  storage.NullableToString(r.Duration),
 		DtStamp:        storage.NullableToString(r.Dtstamp),
-		CreatedAt:      parseTime(r.CreatedAt),
-		UpdatedAt:      parseTime(r.UpdatedAt),
+		CreatedAt:      timeutil.ParseDateTime(r.CreatedAt),
+		UpdatedAt:      timeutil.ParseDateTime(r.UpdatedAt),
 	}
 }
 
@@ -978,9 +979,4 @@ func fromStorageAttendee(r storage.EventAttendee) model.Attendee {
 		Dir:           storage.NullableToString(r.Dir),
 		Language:      storage.NullableToString(r.Language),
 	}
-}
-
-func parseTime(s string) time.Time {
-	t, _ := time.Parse(time.RFC3339, s)
-	return t
 }

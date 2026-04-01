@@ -12,6 +12,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
 
 type SearchParams struct {
@@ -879,8 +880,8 @@ func fromStorage(r storage.Todo) Todo {
 		RecurrenceID:    r.RecurrenceID,
 		Geo:             storage.NullableToString(r.Geo),
 		DtStamp:         storage.NullableToString(r.Dtstamp),
-		CreatedAt:       parseTime(r.CreatedAt),
-		UpdatedAt:       parseTime(r.UpdatedAt),
+		CreatedAt:       timeutil.ParseDateTime(r.CreatedAt),
+		UpdatedAt:       timeutil.ParseDateTime(r.UpdatedAt),
 	}
 }
 
@@ -927,7 +928,3 @@ func fromStorageSlice(rows []storage.Todo) []Todo {
 	return todos
 }
 
-func parseTime(s string) time.Time {
-	t, _ := time.Parse(time.RFC3339, s)
-	return t
-}
