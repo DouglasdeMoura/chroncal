@@ -400,7 +400,7 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		master, err := qtx.GetEventByUID(ctx, evt.UID)
 		if err == nil {
 			existing := ParseTimeList(storage.NullableToString(master.Exdates))
-			recIDTime, parseErr := parseRecurrenceID(evt.RecurrenceID)
+			recIDTime, parseErr := timeutil.ParseRecurrenceID(evt.RecurrenceID)
 			if parseErr == nil {
 				existing = append(existing, recIDTime)
 				if err := qtx.UpdateEventExdates(ctx, storage.UpdateEventExdatesParams{
@@ -954,19 +954,6 @@ func fromStorageSlice(rows []storage.Event) []Event {
 	return events
 }
 
-// parseRecurrenceID parses a recurrence ID string which can be in RFC3339
-// format or date-only format (2006-01-02) for all-day events.
-func parseRecurrenceID(id string) (time.Time, error) {
-	if t, err := time.Parse(time.RFC3339, id); err == nil {
-		return t, nil
-	}
-	// Try date-only format for all-day events.
-	t, err := time.Parse("2006-01-02", id)
-	if err != nil {
-		return time.Time{}, err
-	}
-	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local), nil
-}
 
 func (s *Service) populateSingleCategories(ctx context.Context, e *Event) {
 	cats, err := s.ListCategories(ctx, e.ID)

@@ -24,6 +24,19 @@ func ParseDate(s string) time.Time {
 	return p
 }
 
+// ParseRecurrenceID parses a recurrence ID string in RFC 3339 or date-only
+// (2006-01-02) format for all-day events.
+func ParseRecurrenceID(id string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, id); err == nil {
+		return t, nil
+	}
+	t, err := time.Parse("2006-01-02", id)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local), nil
+}
+
 // ParseDateTime parses s as an RFC 3339 datetime.
 // Returns zero time if s is empty.
 func ParseDateTime(s string) time.Time {
