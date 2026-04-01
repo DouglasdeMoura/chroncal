@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -17,6 +19,14 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/todo"
 	"github.com/douglasdemoura/chroncal/internal/tui"
 )
+
+// notFoundErr wraps sql.ErrNoRows into a user-friendly message.
+func notFoundErr(err error, resource string, id any) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%s %v not found", resource, id)
+	}
+	return err
+}
 
 var (
 	outputFmt string
@@ -87,24 +97,36 @@ func main() {
 
 // resolveEvent looks up an event by numeric ID, string UID, or UID + recurrence-id.
 func resolveEvent(ctx context.Context, a *app.App, ref, recurrenceID string) (event.Event, error) {
-	if id, err := strconv.ParseInt(ref, 10, 64); err == nil {
-		return a.Events.Get(ctx, id)
+	var e event.Event
+	var err error
+	if id, parseErr := strconv.ParseInt(ref, 10, 64); parseErr == nil {
+		e, err = a.Events.Get(ctx, id)
+	} else if recurrenceID != "" {
+		e, err = a.Events.GetByUIDAndRecurrenceID(ctx, ref, recurrenceID)
+	} else {
+		e, err = a.Events.GetByUID(ctx, ref)
 	}
-	if recurrenceID != "" {
-		return a.Events.GetByUIDAndRecurrenceID(ctx, ref, recurrenceID)
+	if err != nil {
+		return e, notFoundErr(err, "event", ref)
 	}
-	return a.Events.GetByUID(ctx, ref)
+	return e, nil
 }
 
 // resolveTodo looks up a todo by numeric ID, string UID, or UID + recurrence-id.
 func resolveTodo(ctx context.Context, a *app.App, ref, recurrenceID string) (todo.Todo, error) {
-	if id, err := strconv.ParseInt(ref, 10, 64); err == nil {
-		return a.Todos.Get(ctx, id)
+	var t todo.Todo
+	var err error
+	if id, parseErr := strconv.ParseInt(ref, 10, 64); parseErr == nil {
+		t, err = a.Todos.Get(ctx, id)
+	} else if recurrenceID != "" {
+		t, err = a.Todos.GetByUIDAndRecurrenceID(ctx, ref, recurrenceID)
+	} else {
+		t, err = a.Todos.GetByUID(ctx, ref)
 	}
-	if recurrenceID != "" {
-		return a.Todos.GetByUIDAndRecurrenceID(ctx, ref, recurrenceID)
+	if err != nil {
+		return t, notFoundErr(err, "todo", ref)
 	}
-	return a.Todos.GetByUID(ctx, ref)
+	return t, nil
 }
 
 func resolveCalendarID(ctx context.Context, a *app.App, name string) (int64, error) {

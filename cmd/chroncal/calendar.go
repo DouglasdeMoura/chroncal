@@ -68,7 +68,7 @@ func calendarGetCmd() *cobra.Command {
 
 			c, err := a.Calendars.Get(context.Background(), id)
 			if err != nil {
-				return fmt.Errorf("get calendar: %w", err)
+				return notFoundErr(err, "calendar", id)
 			}
 
 			w := cmd.OutOrStdout()
@@ -141,7 +141,7 @@ func calendarUpdateCmd() *cobra.Command {
 
 			existing, err := a.Calendars.Get(ctx, id)
 			if err != nil {
-				return fmt.Errorf("get calendar: %w", err)
+				return notFoundErr(err, "calendar", id)
 			}
 
 			n, co, d := existing.Name, existing.Color, existing.Description
