@@ -105,7 +105,7 @@ CREATE TABLE todo_relations (
     todo_id  INTEGER NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
     rel_type TEXT    NOT NULL DEFAULT 'PARENT'
         CHECK(rel_type IN ('PARENT','CHILD','SIBLING')),
-    rel_uid  TEXT
+    rel_uid  TEXT    NOT NULL
 );
 
 CREATE INDEX idx_todo_relations_todo_id ON todo_relations(todo_id);

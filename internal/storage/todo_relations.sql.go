@@ -16,7 +16,7 @@ INSERT INTO todo_relations (todo_id, rel_type, rel_uid) VALUES (?, ?, ?) RETURNI
 type CreateTodoRelationParams struct {
 	TodoID  int64
 	RelType string
-	RelUid  *string
+	RelUid  string
 }
 
 func (q *Queries) CreateTodoRelation(ctx context.Context, arg CreateTodoRelationParams) (TodoRelation, error) {

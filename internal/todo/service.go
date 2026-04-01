@@ -833,7 +833,7 @@ func (s *Service) ListRelations(ctx context.Context, todoID int64) ([]model.Rela
 	}
 	out := make([]model.Relation, len(rows))
 	for i, r := range rows {
-		out[i] = model.Relation{ID: r.ID, RelType: r.RelType, RelUID: storage.NullableToString(r.RelUid)}
+		out[i] = model.Relation{ID: r.ID, RelType: r.RelType, RelUID: r.RelUid}
 	}
 	return out, nil
 }
@@ -850,7 +850,7 @@ func (s *Service) ReplaceRelations(ctx context.Context, todoID int64, relations 
 	}
 	for _, r := range relations {
 		_, err := qtx.CreateTodoRelation(ctx, storage.CreateTodoRelationParams{
-			TodoID: todoID, RelType: r.RelType, RelUid: storage.StringToNullable(r.RelUID),
+			TodoID: todoID, RelType: r.RelType, RelUid: r.RelUID,
 		})
 		if err != nil {
 			return fmt.Errorf("create relation: %w", err)

@@ -122,7 +122,7 @@ type EventRelation struct {
 	ID      int64
 	EventID int64
 	RelType string
-	RelUid  *string
+	RelUid  string
 }
 
 type EventResource struct {
@@ -253,7 +253,7 @@ type TodoRelation struct {
 	ID      int64
 	TodoID  int64
 	RelType string
-	RelUid  *string
+	RelUid  string
 }
 
 type TodoResource struct {

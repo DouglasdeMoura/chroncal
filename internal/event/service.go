@@ -852,7 +852,7 @@ func (s *Service) ListRelations(ctx context.Context, eventID int64) ([]model.Rel
 	}
 	out := make([]model.Relation, len(rows))
 	for i, r := range rows {
-		out[i] = model.Relation{ID: r.ID, RelType: r.RelType, RelUID: storage.NullableToString(r.RelUid)}
+		out[i] = model.Relation{ID: r.ID, RelType: r.RelType, RelUID: r.RelUid}
 	}
 	return out, nil
 }
@@ -869,7 +869,7 @@ func (s *Service) ReplaceRelations(ctx context.Context, eventID int64, relations
 	}
 	for _, r := range relations {
 		_, err := qtx.CreateEventRelation(ctx, storage.CreateEventRelationParams{
-			EventID: eventID, RelType: r.RelType, RelUid: storage.StringToNullable(r.RelUID),
+			EventID: eventID, RelType: r.RelType, RelUid: r.RelUID,
 		})
 		if err != nil {
 			return fmt.Errorf("create relation: %w", err)

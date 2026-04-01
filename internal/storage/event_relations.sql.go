@@ -16,7 +16,7 @@ INSERT INTO event_relations (event_id, rel_type, rel_uid) VALUES (?, ?, ?) RETUR
 type CreateEventRelationParams struct {
 	EventID int64
 	RelType string
-	RelUid  *string
+	RelUid  string
 }
 
 func (q *Queries) CreateEventRelation(ctx context.Context, arg CreateEventRelationParams) (EventRelation, error) {
