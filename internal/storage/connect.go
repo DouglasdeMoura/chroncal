@@ -57,40 +57,8 @@ func Open(dbPath string) (*sql.DB, *Queries, error) {
 		conn.Close()
 		return nil, nil, fmt.Errorf("backfill alarm uids: %w", err)
 	}
-	if err := syncFTSIndex(conn, q); err != nil {
-		conn.Close()
-		return nil, nil, fmt.Errorf("sync fts index: %w", err)
-	}
 
 	return conn, q, nil
-}
-
-// syncFTSIndex rebuilds the FTS indexes from the source tables on every
-// startup. A row-count heuristic is not sufficient: in-place updates,
-// delete+insert pairs, and category-only changes all leave counts equal
-// while the FTS content diverges. For a local SQLite database the full
-// rebuild cost is negligible.
-func syncFTSIndex(_ *sql.DB, q *Queries) error {
-	ctx := context.Background()
-
-	if err := q.RebuildEventsFTS(ctx); err != nil {
-		// Table may not exist yet (pre-migration); skip silently.
-		if !isTableMissing(err) {
-			return fmt.Errorf("rebuild events fts: %w", err)
-		}
-	}
-
-	if err := q.RebuildTodosFTS(ctx); err != nil {
-		if !isTableMissing(err) {
-			return fmt.Errorf("rebuild todos fts: %w", err)
-		}
-	}
-
-	return nil
-}
-
-func isTableMissing(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "no such table")
 }
 
 // backfillAlarmUIDs assigns random UUIDs to alarms that have empty UIDs.

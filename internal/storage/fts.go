@@ -21,54 +21,6 @@ func FTSQuery(input string) string {
 	return strings.Join(parts, " ")
 }
 
-// --- Event FTS operations ---
-
-func (q *Queries) UpsertEventFTS(ctx context.Context, id int64, title, description, location, categories string) error {
-	if _, err := q.db.ExecContext(ctx, "DELETE FROM events_fts WHERE rowid = ?", id); err != nil {
-		return err
-	}
-	_, err := q.db.ExecContext(ctx,
-		"INSERT INTO events_fts (rowid, title, description, location, categories) VALUES (?, ?, ?, ?, ?)",
-		id, title, description, location, categories)
-	return err
-}
-
-func (q *Queries) DeleteEventFTS(ctx context.Context, id int64) error {
-	_, err := q.db.ExecContext(ctx, "DELETE FROM events_fts WHERE rowid = ?", id)
-	return err
-}
-
-func (q *Queries) DeleteEventsFTSByUID(ctx context.Context, uid string) error {
-	_, err := q.db.ExecContext(ctx,
-		"DELETE FROM events_fts WHERE rowid IN (SELECT id FROM events WHERE uid = ?)", uid)
-	return err
-}
-
-// --- Todo FTS operations ---
-
-func (q *Queries) UpsertTodoFTS(ctx context.Context, id int64, summary, description, location, categories string) error {
-	if _, err := q.db.ExecContext(ctx, "DELETE FROM todos_fts WHERE rowid = ?", id); err != nil {
-		return err
-	}
-	_, err := q.db.ExecContext(ctx,
-		"INSERT INTO todos_fts (rowid, summary, description, location, categories) VALUES (?, ?, ?, ?, ?)",
-		id, summary, description, location, categories)
-	return err
-}
-
-func (q *Queries) DeleteTodoFTS(ctx context.Context, id int64) error {
-	_, err := q.db.ExecContext(ctx, "DELETE FROM todos_fts WHERE rowid = ?", id)
-	return err
-}
-
-func (q *Queries) DeleteTodosFTSByUID(ctx context.Context, uid string) error {
-	_, err := q.db.ExecContext(ctx,
-		"DELETE FROM todos_fts WHERE rowid IN (SELECT id FROM todos WHERE uid = ?)", uid)
-	return err
-}
-
-// --- Search ---
-
 func (q *Queries) SearchEventsFTS(ctx context.Context, query string, calendarID int64, fromTime, toTime, filterStatus string) ([]Event, error) {
 	var w whereBuilder
 	w.add("id IN (SELECT rowid FROM events_fts WHERE events_fts MATCH ?)", query)
@@ -104,30 +56,4 @@ func (q *Queries) SearchTodosFTS(ctx context.Context, query string, calendarID i
 	}
 	where, args := w.build()
 	return q.queryTodos(ctx, where, args, "due_date ASC, summary ASC")
-}
-
-// --- Rebuild / sync ---
-
-func (q *Queries) RebuildEventsFTS(ctx context.Context) error {
-	if _, err := q.db.ExecContext(ctx, "DELETE FROM events_fts"); err != nil {
-		return err
-	}
-	_, err := q.db.ExecContext(ctx, `
-		INSERT INTO events_fts (rowid, title, description, location, categories)
-		SELECT e.id, e.title, COALESCE(e.description, ''), COALESCE(e.location, ''),
-		       COALESCE((SELECT GROUP_CONCAT(ec.category, ' ') FROM event_categories ec WHERE ec.event_id = e.id), '')
-		FROM events e`)
-	return err
-}
-
-func (q *Queries) RebuildTodosFTS(ctx context.Context) error {
-	if _, err := q.db.ExecContext(ctx, "DELETE FROM todos_fts"); err != nil {
-		return err
-	}
-	_, err := q.db.ExecContext(ctx, `
-		INSERT INTO todos_fts (rowid, summary, description, location, categories)
-		SELECT t.id, t.summary, COALESCE(t.description, ''), COALESCE(t.location, ''),
-		       COALESCE((SELECT GROUP_CONCAT(tc.category, ' ') FROM todo_categories tc WHERE tc.todo_id = t.id), '')
-		FROM todos t`)
-	return err
 }
