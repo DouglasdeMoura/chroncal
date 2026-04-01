@@ -24,6 +24,25 @@ func NewService(db *sql.DB, q *storage.Queries) *Service {
 	return &Service{db: db, q: q}
 }
 
+// tzForExpansion returns the *time.Location to use for rrule expansion.
+// If tz is a valid IANA timezone, expansion happens in that timezone so
+// wall-clock times are preserved across DST transitions. Otherwise nil
+// is returned and expansion happens in whatever timezone the times carry.
+func tzForExpansion(tz string) *time.Location {
+	if tz == "" {
+		return nil
+	}
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		return nil
+	}
+	// Don't bother converting for fixed-offset zones (no DST to handle).
+	if loc == time.UTC {
+		return nil
+	}
+	return loc
+}
+
 // ExpandEvent generates all occurrences of an event within a date range
 // Returns instances even for non-recurring events (single instance)
 func ExpandEvent(evt event.Event, from, to time.Time) []ExpandedEvent {
@@ -54,25 +73,41 @@ func ExpandEvent(evt event.Event, from, to time.Time) []ExpandedEvent {
 		}}
 	}
 
-	// Set DTSTART to the event's start time
-	set.DTStart(evt.StartTime)
+	// If the event has a named timezone, expand in that timezone so
+	// wall-clock times are preserved across DST boundaries.
+	loc := tzForExpansion(evt.Timezone)
+	dtstart := evt.StartTime
+	localFrom, localTo := from, to
+	if loc != nil {
+		dtstart = dtstart.In(loc)
+		localFrom = from.In(loc)
+		localTo = to.In(loc)
+	}
+
+	set.DTStart(dtstart)
 
 	// Add EXDATEs
 	for _, ex := range evt.ParseExDates() {
+		if loc != nil {
+			ex = ex.In(loc)
+		}
 		set.ExDate(ex)
 	}
 
 	// Add RDATEs
 	for _, rd := range evt.ParseRDates() {
+		if loc != nil {
+			rd = rd.In(loc)
+		}
 		set.RDate(rd)
 	}
 
 	// Get all occurrences in range [from, to)
-	occurrences := set.Between(from, to, true)
+	occurrences := set.Between(localFrom, localTo, true)
 	// Enforce half-open upper bound: exclude occurrences exactly at 'to'.
 	filtered := occurrences[:0]
 	for _, occ := range occurrences {
-		if occ.Before(to) {
+		if occ.Before(localTo) {
 			filtered = append(filtered, occ)
 		}
 	}
@@ -80,9 +115,15 @@ func ExpandEvent(evt event.Event, from, to time.Time) []ExpandedEvent {
 
 	var instances []ExpandedEvent
 	for _, occ := range occurrences {
+		// Convert back to UTC for storage consistency.
+		utcOcc := occ.UTC()
+
 		// Check if this occurrence is from RDATE (override) or RRULE
 		isRDate := false
 		for _, rd := range evt.ParseRDates() {
+			if loc != nil {
+				rd = rd.In(loc)
+			}
 			if occ.Equal(rd) {
 				isRDate = true
 				break
@@ -91,7 +132,7 @@ func ExpandEvent(evt event.Event, from, to time.Time) []ExpandedEvent {
 
 		instances = append(instances, ExpandedEvent{
 			Event:        evt,
-			InstanceTime: occ,
+			InstanceTime: utcOcc,
 			IsOverride:   isRDate,
 		})
 	}
@@ -753,19 +794,33 @@ func ExpandTodo(td todo.Todo, from, to time.Time) []ExpandedTodo {
 		}}
 	}
 
-	set.DTStart(anchor)
+	loc := tzForExpansion(td.Timezone)
+	dtstart := anchor
+	localFrom, localTo := from, to
+	if loc != nil {
+		dtstart = dtstart.In(loc)
+		localFrom = from.In(loc)
+		localTo = to.In(loc)
+	}
+
+	set.DTStart(dtstart)
 	for _, ex := range td.ParseExDates() {
+		if loc != nil {
+			ex = ex.In(loc)
+		}
 		set.ExDate(ex)
 	}
 	for _, rd := range td.ParseRDates() {
+		if loc != nil {
+			rd = rd.In(loc)
+		}
 		set.RDate(rd)
 	}
 
-	occurrences := set.Between(from, to, true)
-	// Enforce half-open upper bound: exclude occurrences exactly at 'to'.
+	occurrences := set.Between(localFrom, localTo, true)
 	filteredOcc := occurrences[:0]
 	for _, occ := range occurrences {
-		if occ.Before(to) {
+		if occ.Before(localTo) {
 			filteredOcc = append(filteredOcc, occ)
 		}
 	}
@@ -773,8 +828,12 @@ func ExpandTodo(td todo.Todo, from, to time.Time) []ExpandedTodo {
 
 	var instances []ExpandedTodo
 	for _, occ := range occurrences {
+		utcOcc := occ.UTC()
 		isRDate := false
 		for _, rd := range td.ParseRDates() {
+			if loc != nil {
+				rd = rd.In(loc)
+			}
 			if occ.Equal(rd) {
 				isRDate = true
 				break
@@ -782,7 +841,7 @@ func ExpandTodo(td todo.Todo, from, to time.Time) []ExpandedTodo {
 		}
 		instances = append(instances, ExpandedTodo{
 			Todo:         td,
-			InstanceTime: occ,
+			InstanceTime: utcOcc,
 			IsOverride:   isRDate,
 		})
 	}
