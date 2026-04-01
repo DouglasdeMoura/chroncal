@@ -478,6 +478,65 @@ func (s *Service) ListAlarms(ctx context.Context, eventID int64) ([]model.Alarm,
 	return alarms, nil
 }
 
+// ListAlarmsByEventIDs fetches alarms for multiple event IDs in a single batch query.
+// Returns a map of event ID to its list of alarms.
+func (s *Service) ListAlarmsByEventIDs(ctx context.Context, eventIDs []int64) (map[int64][]model.Alarm, error) {
+	if len(eventIDs) == 0 {
+		return nil, nil
+	}
+	// Build dynamic IN clause: event_id IN (?, ?, ?)
+	placeholders := make([]string, len(eventIDs))
+	args := make([]interface{}, len(eventIDs))
+	for i, id := range eventIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	inClause := "event_id IN (" + strings.Join(placeholders, ",") + ")"
+
+	query := "SELECT * FROM event_alarms WHERE " + inClause + " ORDER BY event_id, id"
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var alarmRows []storage.EventAlarm
+	for rows.Next() {
+		var r storage.EventAlarm
+		if err := rows.Scan(
+			&r.ID, &r.EventID, &r.Action, &r.TriggerValue, &r.Description,
+			&r.Repeat, &r.Duration, &r.Related, &r.Summary, &r.Uid,
+			&r.Acknowledged, &r.AttachUri, &r.AttachFmttype,
+		); err != nil {
+			return nil, err
+		}
+		alarmRows = append(alarmRows, r)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Build map: eventID -> alarms
+	alarmMap := make(map[int64][]model.Alarm, len(eventIDs))
+	for _, r := range alarmRows {
+		alarm := fromStorageAlarm(r)
+		// Load attendees for this alarm
+		attRows, err := s.q.ListAlarmAttendeesByAlarmID(ctx, r.ID)
+		if err == nil {
+			for _, ar := range attRows {
+				alarm.Attendees = append(alarm.Attendees, model.AlarmAttendee{
+					ID: ar.ID, Email: ar.Email, Name: storage.NullableToString(ar.Name),
+				})
+			}
+		}
+		alarmMap[r.EventID] = append(alarmMap[r.EventID], alarm)
+	}
+	return alarmMap, nil
+}
+
 func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []model.Alarm) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

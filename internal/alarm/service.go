@@ -192,13 +192,25 @@ func (s *Service) checkEventAlarms(ctx context.Context, now time.Time) ([]DueAla
 		return nil, fmt.Errorf("list expanded events: %w", err)
 	}
 
+	// Batch fetch alarms for all unique parent event IDs to avoid N+1 queries.
+	// For recurring events, multiple expanded instances share the same parent event ID.
+	uniqueParentIDs := make([]int64, 0, len(expandedEvents))
+	seenIDs := make(map[int64]struct{}, len(expandedEvents))
+	for _, expEvt := range expandedEvents {
+		if _, seen := seenIDs[expEvt.ID]; !seen {
+			seenIDs[expEvt.ID] = struct{}{}
+			uniqueParentIDs = append(uniqueParentIDs, expEvt.ID)
+		}
+	}
+	alarmMap, err := s.events.ListAlarmsByEventIDs(ctx, uniqueParentIDs)
+	if err != nil {
+		return nil, fmt.Errorf("fetch alarms: %w", err)
+	}
+
 	var due []DueAlarm
 
 	for _, expEvt := range expandedEvents {
-		alarms, err := s.events.ListAlarms(ctx, expEvt.ID)
-		if err != nil {
-			continue
-		}
+		alarms := alarmMap[expEvt.ID] // nil if no alarms for this event
 
 		for _, a := range alarms {
 			triggerAt, err := computeTriggerTimeForInstance(expEvt, a)

@@ -693,3 +693,110 @@ func TestEventService_UpdateUppercasesEnums(t *testing.T) {
 		t.Errorf("Class = %q, want CONFIDENTIAL", updated.Class)
 	}
 }
+
+func TestEventService_ListAlarmsByEventIDs_Correctness(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	// Create 3 events with varying numbers of alarms
+	events := make([]Event, 3)
+	alarmsPerEvent := [][]model.Alarm{
+		// Event 1: 3 alarms
+		{
+			{Action: "DISPLAY", TriggerValue: "-PT15M", Description: "15 min"},
+			{Action: "DISPLAY", TriggerValue: "-PT5M", Description: "5 min"},
+			{Action: "DISPLAY", TriggerValue: "PT0H", Description: "at start"},
+		},
+		// Event 2: 1 alarm
+		{
+			{Action: "DISPLAY", TriggerValue: "-PT30M", Description: "30 min"},
+		},
+		// Event 3: no alarms (empty slice)
+		{},
+	}
+
+	for i, alarms := range alarmsPerEvent {
+		e, err := svc.Create(ctx, CreateParams{
+			CalendarID: 1,
+			Title:      "Event " + string(rune('1'+i)),
+			StartTime:  time.Date(2026, 4, 1+i, 14, 0, 0, 0, time.UTC),
+			EndTime:    time.Date(2026, 4, 1+i, 15, 0, 0, 0, time.UTC),
+		})
+		if err != nil {
+			t.Fatalf("create event %d: %v", i, err)
+		}
+		events[i] = e
+		if len(alarms) > 0 {
+			if err := svc.ReplaceAlarms(ctx, e.ID, alarms); err != nil {
+				t.Fatalf("replace alarms event %d: %v", i, err)
+			}
+		}
+	}
+
+	// Fetch alarms individually (old N+1 pattern)
+	individualMap := make(map[int64][]model.Alarm)
+	for _, e := range events {
+		alarms, err := svc.ListAlarms(ctx, e.ID)
+		if err != nil {
+			t.Fatalf("ListAlarms(%d): %v", e.ID, err)
+		}
+		individualMap[e.ID] = alarms
+	}
+
+	// Fetch alarms in batch (new optimized pattern)
+	eventIDs := []int64{events[0].ID, events[1].ID, events[2].ID}
+	batchMap, err := svc.ListAlarmsByEventIDs(ctx, eventIDs)
+	if err != nil {
+		t.Fatalf("ListAlarmsByEventIDs: %v", err)
+	}
+
+	// Verify results are identical
+	for _, e := range events {
+		individual := individualMap[e.ID]
+		batch := batchMap[e.ID]
+
+		if len(individual) != len(batch) {
+			t.Errorf("event %d: individual got %d alarms, batch got %d",
+				e.ID, len(individual), len(batch))
+			continue
+		}
+
+		for i := range individual {
+			if individual[i].ID != batch[i].ID {
+				t.Errorf("event %d alarm %d: ID = %d (batch), want %d (individual)",
+					e.ID, i, batch[i].ID, individual[i].ID)
+			}
+			if individual[i].Action != batch[i].Action {
+				t.Errorf("event %d alarm %d: Action = %q (batch), want %q",
+					e.ID, i, batch[i].Action, individual[i].Action)
+			}
+			if individual[i].TriggerValue != batch[i].TriggerValue {
+				t.Errorf("event %d alarm %d: TriggerValue = %q (batch), want %q",
+					e.ID, i, batch[i].TriggerValue, individual[i].TriggerValue)
+			}
+			if individual[i].Description != batch[i].Description {
+				t.Errorf("event %d alarm %d: Description = %q (batch), want %q",
+					e.ID, i, batch[i].Description, individual[i].Description)
+			}
+		}
+	}
+
+	// Test empty input
+	emptyMap, err := svc.ListAlarmsByEventIDs(ctx, []int64{})
+	if err != nil {
+		t.Errorf("empty eventIDs: got error %v", err)
+	}
+	if emptyMap != nil {
+		t.Errorf("empty eventIDs: got non-nil map %v", emptyMap)
+	}
+
+	// Test non-existent event IDs
+	nonExistent := []int64{9999, 9998}
+	nonExistentMap, err := svc.ListAlarmsByEventIDs(ctx, nonExistent)
+	if err != nil {
+		t.Errorf("non-existent eventIDs: got error %v", err)
+	}
+	if len(nonExistentMap) != 0 {
+		t.Errorf("non-existent eventIDs: got map with %d entries, want 0", len(nonExistentMap))
+	}
+}
