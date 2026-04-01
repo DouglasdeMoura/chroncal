@@ -75,19 +75,7 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 					continue
 				}
 
-				// Build trigger list: initial + REPEAT firings.
-				triggers := []time.Time{triggerAt}
-				if a.Repeat > 0 && a.Duration != "" {
-					for i := 1; i <= a.Repeat; i++ {
-						repeatTrigger := triggerAt
-						for j := 0; j < i; j++ {
-							repeatTrigger = duration.Add(repeatTrigger, a.Duration)
-						}
-						if !repeatTrigger.IsZero() && repeatTrigger.After(triggerAt) {
-							triggers = append(triggers, repeatTrigger)
-						}
-					}
-				}
+			triggers := buildRepeatTriggers(triggerAt, a.Repeat, a.Duration)
 
 				// Use instance time for the todo's due/start date
 				instanceTodo := t

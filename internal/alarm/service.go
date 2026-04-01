@@ -40,13 +40,11 @@ func NewService(db *sql.DB, q *storage.Queries, events *event.Service, todos Tod
 // Check finds all alarms that are due at the given time.
 // Returns both event alarms and todo alarms separately.
 func (s *Service) Check(ctx context.Context, now time.Time) ([]DueAlarm, []TodoDueAlarm, error) {
-	// Check event alarms
 	eventAlarms, err := s.checkEventAlarms(ctx, now)
 	if err != nil {
 		return nil, nil, fmt.Errorf("check event alarms: %w", err)
 	}
 
-	// Check todo alarms
 	todoAlarms, err := s.checkTodoAlarms(ctx, now)
 	if err != nil {
 		return nil, nil, fmt.Errorf("check todo alarms: %w", err)
@@ -97,18 +95,7 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 				continue
 			}
 
-			triggers := []time.Time{triggerAt}
-			if a.Repeat > 0 && a.Duration != "" {
-				for i := 1; i <= a.Repeat; i++ {
-					repeatTrigger := triggerAt
-					for j := 0; j < i; j++ {
-						repeatTrigger = duration.Add(repeatTrigger, a.Duration)
-					}
-					if !repeatTrigger.IsZero() && repeatTrigger.After(triggerAt) {
-						triggers = append(triggers, repeatTrigger)
-					}
-				}
-			}
+			triggers := buildRepeatTriggers(triggerAt, a.Repeat, a.Duration)
 
 			for _, t := range triggers {
 				if t.After(now) || now.Sub(t) <= StaleThreshold {
@@ -162,18 +149,7 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 						continue
 					}
 
-					triggers := []time.Time{triggerAt}
-					if a.Repeat > 0 && a.Duration != "" {
-						for i := 1; i <= a.Repeat; i++ {
-							repeatTrigger := triggerAt
-							for j := 0; j < i; j++ {
-								repeatTrigger = duration.Add(repeatTrigger, a.Duration)
-							}
-							if !repeatTrigger.IsZero() && repeatTrigger.After(triggerAt) {
-								triggers = append(triggers, repeatTrigger)
-							}
-						}
-					}
+					triggers := buildRepeatTriggers(triggerAt, a.Repeat, a.Duration)
 
 					for _, t := range triggers {
 						if t.After(now) || now.Sub(t) <= StaleThreshold {
@@ -207,11 +183,9 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 
 // checkEventAlarms finds due event alarms
 func (s *Service) checkEventAlarms(ctx context.Context, now time.Time) ([]DueAlarm, error) {
-	// Query events with alarms in a generous window around now.
 	windowStart := now.Add(-StaleThreshold - 24*time.Hour)
 	windowEnd := now.Add(StaleThreshold + 24*time.Hour)
 
-	// Use recurrence service to get all event instances (including recurring)
 	recurSvc := recurrence.NewService(s.db, s.q)
 	expandedEvents, err := recurSvc.ListExpandedEvents(ctx, windowStart, windowEnd, recurrence.SkipCategories())
 	if err != nil {
@@ -220,47 +194,25 @@ func (s *Service) checkEventAlarms(ctx context.Context, now time.Time) ([]DueAla
 
 	var due []DueAlarm
 
-	// 1. Fresh alarms that haven't fired yet.
 	for _, expEvt := range expandedEvents {
-		// Get alarms for the parent event
 		alarms, err := s.events.ListAlarms(ctx, expEvt.ID)
 		if err != nil {
-			continue // Skip events with alarm list errors
+			continue
 		}
 
 		for _, a := range alarms {
-			// Compute trigger time relative to the instance time
 			triggerAt, err := computeTriggerTimeForInstance(expEvt, a)
 			if err != nil {
-				continue // skip alarms with unparseable triggers
+				continue
 			}
 
-			// Build list of trigger times: initial + REPEAT firings.
-			triggers := []time.Time{triggerAt}
-			if a.Repeat > 0 && a.Duration != "" {
-				for i := 1; i <= a.Repeat; i++ {
-					rt := duration.Add(triggerAt, a.Duration)
-					if rt.IsZero() || rt.Equal(triggerAt) {
-						break
-					}
-					// Each subsequent repeat adds another interval.
-					repeatTrigger := triggerAt
-					for j := 0; j < i; j++ {
-						repeatTrigger = duration.Add(repeatTrigger, a.Duration)
-					}
-					if !repeatTrigger.IsZero() && repeatTrigger.After(triggerAt) {
-						triggers = append(triggers, repeatTrigger)
-					}
-				}
-			}
+			triggers := buildRepeatTriggers(triggerAt, a.Repeat, a.Duration)
 
-			// Create modified event with instance time for notification
 			instanceEvent := expEvt.Event
 			instanceEvent.StartTime = expEvt.InstanceTime
 			instanceEvent.EndTime = expEvt.InstanceTime.Add(expEvt.Event.Span())
 
 			for _, t := range triggers {
-				// Must be in the past (due) but not stale
 				if t.After(now) {
 					continue
 				}
@@ -274,14 +226,13 @@ func (s *Service) checkEventAlarms(ctx context.Context, now time.Time) ([]DueAla
 					continue
 				}
 
-				// Check if already fired
 				triggerKey := t.UTC().Format(time.RFC3339)
 				_, err = s.q.GetAlarmState(ctx, storage.GetAlarmStateParams{
 					AlarmID:   a.ID,
 					TriggerAt: triggerKey,
 				})
 				if err == nil {
-					continue // already fired
+					continue
 				}
 
 				due = append(due, DueAlarm{
@@ -563,22 +514,19 @@ func (s *Service) ListPending(ctx context.Context) ([]storage.AlarmState, error)
 	return s.q.ListPendingAlarmStates(ctx)
 }
 
+// computeTriggerTime calculates the absolute trigger time for an alarm on an event.
+// It's used primarily for testing; use computeTriggerTimeForInstance for recurring events.
 func computeTriggerTime(evt event.Event, a model.Alarm) (time.Time, error) {
 	trigger := a.TriggerValue
 	if trigger == "" {
 		return time.Time{}, fmt.Errorf("empty trigger value")
 	}
 
-	// Duration triggers: anchor-relative (RELATED=START or END).
 	if duration.Validate(trigger) == nil {
 		anchor := evt.StartTime
 		if a.Related == "END" {
 			anchor = evt.EndTime
 		}
-		// Convert to event's named timezone so that day-level arithmetic
-		// (P1D, P1W) handles DST transitions correctly. Without this,
-		// AddDate operates on a fixed UTC offset from RFC 3339 storage
-		// and produces wrong wall-clock times across DST boundaries.
 		if evt.Timezone != "" {
 			if loc, err := time.LoadLocation(evt.Timezone); err == nil {
 				anchor = anchor.In(loc)
@@ -587,24 +535,38 @@ func computeTriggerTime(evt event.Event, a model.Alarm) (time.Time, error) {
 		return duration.Add(anchor, trigger), nil
 	}
 
-	// Absolute triggers: the trigger IS the fire time; Related is ignored.
-	// Try iCal UTC format: 20060102T150405Z
 	if t, err := time.Parse("20060102T150405Z", trigger); err == nil {
 		return t, nil
 	}
-	// Try iCal floating format: 20060102T150405 (interpret in event timezone)
 	if t, err := time.Parse("20060102T150405", trigger); err == nil {
 		if evt.Timezone != "" {
 			if loc, lerr := time.LoadLocation(evt.Timezone); lerr == nil {
 				return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), 0, loc), nil
 			}
 		}
-		return t, nil // treat as UTC if no timezone info
+		return t, nil
 	}
-	// Try RFC 3339 (legacy CLI-created triggers before normalization)
 	if t, err := time.Parse(time.RFC3339, trigger); err == nil {
 		return t, nil
 	}
 
 	return time.Time{}, fmt.Errorf("invalid trigger format: %q", trigger)
+}
+
+// buildRepeatTriggers returns a list of trigger times for a repeating alarm.
+// The result includes the initial trigger time plus additional firings
+// at the specified duration interval, up to the repeat count.
+func buildRepeatTriggers(triggerAt time.Time, repeat int, durStr string) []time.Time {
+	triggers := []time.Time{triggerAt}
+	if repeat <= 0 || durStr == "" {
+		return triggers
+	}
+	for i := 1; i <= repeat; i++ {
+		triggerAt = duration.Add(triggerAt, durStr)
+		if triggerAt.IsZero() || triggerAt.Equal(triggers[len(triggers)-1]) {
+			break
+		}
+		triggers = append(triggers, triggerAt)
+	}
+	return triggers
 }
