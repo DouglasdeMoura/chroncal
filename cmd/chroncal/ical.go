@@ -68,7 +68,9 @@ func icalImportCmd() *cobra.Command {
 
 			// Import events
 			var importedEvents []event.Event
+			var newEvents, updatedEvents int
 			for _, e := range result.Events {
+				_, lookupErr := a.Events.GetByUID(ctx, e.UID)
 				saved, err := a.Events.UpsertByUID(ctx, event.UpsertParams{
 					UID: e.UID, CalendarID: calID,
 					Title: e.Title, Description: e.Description, Location: e.Location,
@@ -105,11 +107,18 @@ func icalImportCmd() *cobra.Command {
 					_ = a.Events.ReplaceRelations(ctx, saved.ID, e.Relations)
 				}
 				importedEvents = append(importedEvents, saved)
+				if lookupErr != nil {
+					newEvents++
+				} else {
+					updatedEvents++
+				}
 			}
 
 			// Import todos
 			var importedTodos []todo.Todo
+			var newTodos, updatedTodos int
 			for _, t := range result.Todos {
+				_, lookupErr := a.Todos.GetByUID(ctx, t.UID)
 				saved, err := a.Todos.UpsertByUID(ctx, todo.UpsertParams{
 					UID: t.UID, CalendarID: calID,
 					Summary: t.Summary, Description: t.Description, Location: t.Location,
@@ -147,6 +156,11 @@ func icalImportCmd() *cobra.Command {
 					_ = a.Todos.ReplaceRelations(ctx, saved.ID, t.Relations)
 				}
 				importedTodos = append(importedTodos, saved)
+				if lookupErr != nil {
+					newTodos++
+				} else {
+					updatedTodos++
+				}
 			}
 
 			if len(result.Warnings) > 0 {
@@ -166,13 +180,19 @@ func icalImportCmd() *cobra.Command {
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
 				out := map[string]any{
-					"events":   toJSONEvents(importedEvents),
-					"todos":    toJSONTodos(importedTodos),
-					"warnings": result.Warnings,
+					"events":         toJSONEvents(importedEvents),
+					"todos":          toJSONTodos(importedTodos),
+					"new_events":     newEvents,
+					"updated_events": updatedEvents,
+					"new_todos":      newTodos,
+					"updated_todos":  updatedTodos,
+					"warnings":       result.Warnings,
 				}
 				return printOutput(w, out)
 			}
-			fmt.Fprintf(w, "Imported %d events, %d todos.\n", len(importedEvents), len(importedTodos))
+			fmt.Fprintf(w, "Imported %d new, updated %d existing (%d events, %d todos).\n",
+				newEvents+newTodos, updatedEvents+updatedTodos,
+				len(importedEvents), len(importedTodos))
 			return nil
 		},
 	}
