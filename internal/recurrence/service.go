@@ -539,43 +539,62 @@ func (s *Service) populateTodoCategories(ctx context.Context, todos []todo.Todo)
 }
 
 // expandRecurringTodoRows expands recurring todo rows into Todo instances with
-// DueDate/StartDate adjusted to each occurrence.
-func (s *Service) expandRecurringTodoRows(rows []storage.Todo, from, to time.Time) []todo.Todo {
+// DueDate/StartDate adjusted to each occurrence. For each master, overrides
+// (rows with a matching RECURRENCE-ID) replace the original RRULE instance.
+func (s *Service) expandRecurringTodoRows(ctx context.Context, rows []storage.Todo, from, to time.Time) []todo.Todo {
 	var result []todo.Todo
 	for _, row := range rows {
 		td := todoFromRow(row)
-		for _, inst := range ExpandTodo(td, from, to) {
-			t := inst.Todo
-			anchor := t.ParseStartDate()
-			if anchor.IsZero() {
-				anchor = t.ParseDueDate()
-			}
-			if !anchor.IsZero() {
-				offset := inst.InstanceTime.Sub(anchor)
-				if t.DueDate != "" {
-					due := t.ParseDueDate()
-					if !due.IsZero() {
-						newDue := due.Add(offset)
-						if isDateOnly(t.DueDate) {
-							t.DueDate = newDue.Format("2006-01-02")
-						} else {
-							t.DueDate = newDue.Format(time.RFC3339)
+		expanded := ExpandTodo(td, from, to)
+
+		// Fetch overrides for this master.
+		overrides, _ := s.q.ListTodoOverridesByUID(ctx, row.Uid)
+		overrideMap := make(map[string]storage.Todo, len(overrides))
+		for _, o := range overrides {
+			overrideMap[o.RecurrenceID] = o
+		}
+
+		for _, inst := range expanded {
+			instKey := inst.InstanceTime.UTC().Format(time.RFC3339)
+			if o, ok := overrideMap[instKey]; ok {
+				if strings.EqualFold(o.Status, "CANCELLED") {
+					continue // CANCELLED override suppresses the instance.
+				}
+				ot := todoFromRow(o)
+				result = append(result, ot)
+			} else {
+				t := inst.Todo
+				anchor := t.ParseStartDate()
+				if anchor.IsZero() {
+					anchor = t.ParseDueDate()
+				}
+				if !anchor.IsZero() {
+					offset := inst.InstanceTime.Sub(anchor)
+					if t.DueDate != "" {
+						due := t.ParseDueDate()
+						if !due.IsZero() {
+							newDue := due.Add(offset)
+							if isDateOnly(t.DueDate) {
+								t.DueDate = newDue.Format("2006-01-02")
+							} else {
+								t.DueDate = newDue.Format(time.RFC3339)
+							}
+						}
+					}
+					if t.StartDate != "" {
+						start := t.ParseStartDate()
+						if !start.IsZero() {
+							newStart := start.Add(offset)
+							if isDateOnly(t.StartDate) {
+								t.StartDate = newStart.Format("2006-01-02")
+							} else {
+								t.StartDate = newStart.Format(time.RFC3339)
+							}
 						}
 					}
 				}
-				if t.StartDate != "" {
-					start := t.ParseStartDate()
-					if !start.IsZero() {
-						newStart := start.Add(offset)
-						if isDateOnly(t.StartDate) {
-							t.StartDate = newStart.Format("2006-01-02")
-						} else {
-							t.StartDate = newStart.Format(time.RFC3339)
-						}
-					}
-				}
+				result = append(result, t)
 			}
-			result = append(result, t)
 		}
 	}
 	return result
@@ -607,7 +626,7 @@ func (s *Service) ListExpandedTodosByDueDateRange(ctx context.Context, from, to 
 	if err != nil {
 		return nil, err
 	}
-	result = append(result, s.expandRecurringTodoRows(recurringRows, from, to)...)
+	result = append(result, s.expandRecurringTodoRows(ctx, recurringRows, from, to)...)
 
 	s.populateTodoCategories(ctx, result)
 	sort.Slice(result, func(i, j int) bool {
@@ -732,7 +751,7 @@ func (s *Service) ListFilteredTodos(ctx context.Context, p TodoListParams) ([]to
 		return nil, err
 	}
 	if hasRange {
-		result = append(result, s.expandRecurringTodoRows(recurringRows, p.From, p.To)...)
+		result = append(result, s.expandRecurringTodoRows(ctx, recurringRows, p.From, p.To)...)
 	} else {
 		for _, row := range recurringRows {
 			result = append(result, todoFromRow(row))
