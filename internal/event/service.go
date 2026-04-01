@@ -482,54 +482,35 @@ func (s *Service) ListAlarmsByEventIDs(ctx context.Context, eventIDs []int64) (m
 	if len(eventIDs) == 0 {
 		return nil, nil
 	}
-	// Build dynamic IN clause: event_id IN (?, ?, ?)
-	placeholders := make([]string, len(eventIDs))
-	args := make([]interface{}, len(eventIDs))
-	for i, id := range eventIDs {
-		placeholders[i] = "?"
-		args[i] = id
-	}
-	inClause := "event_id IN (" + strings.Join(placeholders, ",") + ")"
 
-	query := "SELECT * FROM event_alarms WHERE " + inClause + " ORDER BY event_id, id"
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	alarmRows, err := s.q.ListAlarmsByEventIDs(ctx, eventIDs)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	if len(alarmRows) == 0 {
+		return nil, nil
+	}
 
-	var alarmRows []storage.EventAlarm
-	for rows.Next() {
-		var r storage.EventAlarm
-		if err := rows.Scan(
-			&r.ID, &r.EventID, &r.Action, &r.TriggerValue, &r.Description,
-			&r.Repeat, &r.Duration, &r.Related, &r.Summary, &r.Uid,
-			&r.Acknowledged, &r.AttachUri, &r.AttachFmttype,
-		); err != nil {
-			return nil, err
-		}
-		alarmRows = append(alarmRows, r)
+	// Collect alarm IDs for batch loading attendees
+	alarmIDs := make([]int64, len(alarmRows))
+	for i, r := range alarmRows {
+		alarmIDs[i] = r.ID
 	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+
+	// Batch load attendees for all alarms
+	attRows, _ := s.q.ListAlarmAttendeesByAlarmIDs(ctx, alarmIDs)
+	attMap := make(map[int64][]model.AlarmAttendee, len(alarmRows))
+	for _, ar := range attRows {
+		attMap[ar.AlarmID] = append(attMap[ar.AlarmID], model.AlarmAttendee{
+			ID: ar.ID, Email: ar.Email, Name: storage.NullableToString(ar.Name),
+		})
 	}
 
 	// Build map: eventID -> alarms
 	alarmMap := make(map[int64][]model.Alarm, len(eventIDs))
 	for _, r := range alarmRows {
 		alarm := fromStorageAlarm(r)
-		// Load attendees for this alarm
-		attRows, err := s.q.ListAlarmAttendeesByAlarmID(ctx, r.ID)
-		if err == nil {
-			for _, ar := range attRows {
-				alarm.Attendees = append(alarm.Attendees, model.AlarmAttendee{
-					ID: ar.ID, Email: ar.Email, Name: storage.NullableToString(ar.Name),
-				})
-			}
-		}
+		alarm.Attendees = attMap[r.ID]
 		alarmMap[r.EventID] = append(alarmMap[r.EventID], alarm)
 	}
 	return alarmMap, nil
