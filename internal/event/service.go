@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -949,6 +950,7 @@ func fromStorageSlice(rows []storage.Event) []Event {
 func (s *Service) populateSingleCategories(ctx context.Context, e *Event) {
 	rows, err := s.q.ListCategoriesByEventID(ctx, e.ID)
 	if err != nil {
+		log.Printf("populateSingleCategories failed for event %d: %v", e.ID, err)
 		return
 	}
 	cats := make([]string, len(rows))
@@ -968,6 +970,7 @@ func (s *Service) populateCategories(ctx context.Context, events []Event) {
 	}
 	rows, err := s.q.ListCategoriesByEventIDs(ctx, ids)
 	if err != nil {
+		log.Printf("populateCategories failed for %d events: %v", len(events), err)
 		return
 	}
 	catMap := make(map[int64][]string, len(events))
