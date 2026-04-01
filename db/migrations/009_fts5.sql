@@ -6,12 +6,12 @@
 
 CREATE VIRTUAL TABLE events_fts USING fts5(
     title, description, location, categories,
-    tokenize='unicode61 remove_diacritics 0'
+    tokenize='unicode61 remove_diacritics 2'
 );
 
 CREATE VIRTUAL TABLE todos_fts USING fts5(
     summary, description, location, categories,
-    tokenize='unicode61 remove_diacritics 0'
+    tokenize='unicode61 remove_diacritics 2'
 );
 
 -- Backfill existing events into FTS.
