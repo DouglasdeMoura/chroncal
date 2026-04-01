@@ -57,7 +57,7 @@ func Audio(da alarm.DueAlarm) error {
 
 	// Try the alarm's ATTACH URI (local files only, no HTTP).
 	if path := resolveLocalAudioPath(da.Alarm.AttachURI); path != "" {
-		if err := playFile(path); err == nil {
+		if err := playAudio(path); err == nil {
 			return nil
 		}
 	}
@@ -73,8 +73,8 @@ func resolveLocalAudioPath(uri string) string {
 		return ""
 	}
 	var path string
-	if strings.HasPrefix(uri, "file://") {
-		path = strings.TrimPrefix(uri, "file://")
+	if p, ok := strings.CutPrefix(uri, "file://"); ok {
+		path = p
 	} else if strings.HasPrefix(uri, "/") {
 		path = uri
 	} else {
@@ -86,8 +86,13 @@ func resolveLocalAudioPath(uri string) string {
 	return path
 }
 
-// playFile plays an audio file using the platform's native player.
-func playFile(path string) error {
+const (
+	linuxSystemSound  = "/usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga"
+	darwinSystemSound = "/System/Library/Sounds/Glass.aiff"
+)
+
+// playAudio plays an audio file using the platform's native player.
+func playAudio(path string) error {
 	switch runtime.GOOS {
 	case "linux":
 		if err := exec.Command("paplay", path).Run(); err == nil {
@@ -97,22 +102,19 @@ func playFile(path string) error {
 	case "darwin":
 		return exec.Command("afplay", path).Run()
 	default:
-		return fmt.Errorf("unsupported platform for file playback")
+		return fmt.Errorf("unsupported platform for audio playback")
 	}
 }
 
 func playSystemSound() error {
 	switch runtime.GOOS {
 	case "linux":
-		if err := exec.Command("paplay", "/usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga").Run(); err == nil {
-			return nil
-		}
-		if err := exec.Command("aplay", "/usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga").Run(); err == nil {
+		if err := playAudio(linuxSystemSound); err == nil {
 			return nil
 		}
 		return beeep.Beep(beeep.DefaultFreq, beeep.DefaultDuration)
 	case "darwin":
-		return exec.Command("afplay", "/System/Library/Sounds/Glass.aiff").Run()
+		return playAudio(darwinSystemSound)
 	default:
 		return beeep.Beep(beeep.DefaultFreq, beeep.DefaultDuration)
 	}
