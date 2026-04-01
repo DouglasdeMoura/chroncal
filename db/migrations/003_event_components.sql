@@ -6,12 +6,14 @@
 CREATE TABLE event_alarms (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id       INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-    action         TEXT    NOT NULL DEFAULT 'DISPLAY',
+    action         TEXT    NOT NULL DEFAULT 'DISPLAY'
+        CHECK(action IN ('AUDIO','DISPLAY','EMAIL')),
     trigger_value  TEXT    NOT NULL,
     description    TEXT,
     repeat         INTEGER NOT NULL DEFAULT 0,
     duration       TEXT,
-    related        TEXT    NOT NULL DEFAULT 'START',
+    related        TEXT    NOT NULL DEFAULT 'START'
+        CHECK(related IN ('START','END')),
     summary        TEXT,
     uid            TEXT,
     acknowledged   TEXT,
@@ -38,11 +40,16 @@ CREATE TABLE event_attendees (
     event_id       INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
     email          TEXT    NOT NULL,
     name           TEXT,
-    rsvp_status    TEXT    NOT NULL DEFAULT 'NEEDS-ACTION',
-    role           TEXT    NOT NULL DEFAULT 'REQ-PARTICIPANT',
-    organizer      INTEGER NOT NULL DEFAULT 0,
-    cutype         TEXT,
-    rsvp           TEXT,
+    rsvp_status    TEXT    NOT NULL DEFAULT 'NEEDS-ACTION'
+        CHECK(rsvp_status IN ('NEEDS-ACTION','ACCEPTED','DECLINED','TENTATIVE','DELEGATED')),
+    role           TEXT    NOT NULL DEFAULT 'REQ-PARTICIPANT'
+        CHECK(role IN ('CHAIR','REQ-PARTICIPANT','OPT-PARTICIPANT','NON-PARTICIPANT')),
+    organizer      INTEGER NOT NULL DEFAULT 0
+        CHECK(organizer IN (0, 1)),
+    cutype         TEXT
+        CHECK(cutype IS NULL OR cutype IN ('INDIVIDUAL','GROUP','RESOURCE','ROOM','UNKNOWN')),
+    rsvp           TEXT
+        CHECK(rsvp IS NULL OR rsvp IN ('TRUE','FALSE')),
     sent_by        TEXT,
     delegated_to   TEXT,
     delegated_from TEXT,
@@ -96,7 +103,8 @@ CREATE INDEX idx_event_resources_event_id ON event_resources(event_id);
 CREATE TABLE event_relations (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-    rel_type TEXT    NOT NULL DEFAULT 'PARENT',
+    rel_type TEXT    NOT NULL DEFAULT 'PARENT'
+        CHECK(rel_type IN ('PARENT','CHILD','SIBLING')),
     rel_uid  TEXT
 );
 

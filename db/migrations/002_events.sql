@@ -10,14 +10,20 @@ CREATE TABLE events (
     location        TEXT,
     start_time      TEXT    NOT NULL,
     end_time        TEXT    NOT NULL,
-    all_day         INTEGER NOT NULL DEFAULT 0,
+    all_day         INTEGER NOT NULL DEFAULT 0
+        CHECK(all_day IN (0, 1)),
     recurrence_rule TEXT,
     timezone        TEXT,
-    status          TEXT    NOT NULL DEFAULT 'CONFIRMED',
-    transp          TEXT    NOT NULL DEFAULT 'OPAQUE',
-    sequence        INTEGER NOT NULL DEFAULT 0,
-    priority        INTEGER NOT NULL DEFAULT 0,
-    class           TEXT    NOT NULL DEFAULT 'PUBLIC',
+    status          TEXT    NOT NULL DEFAULT 'CONFIRMED'
+        CHECK(status IN ('TENTATIVE','CONFIRMED','CANCELLED')),
+    transp          TEXT    NOT NULL DEFAULT 'OPAQUE'
+        CHECK(transp IN ('OPAQUE','TRANSPARENT')),
+    sequence        INTEGER NOT NULL DEFAULT 0
+        CHECK(sequence >= 0),
+    priority        INTEGER NOT NULL DEFAULT 0
+        CHECK(priority BETWEEN 0 AND 9),
+    class           TEXT    NOT NULL DEFAULT 'PUBLIC'
+        CHECK(class IN ('PUBLIC','PRIVATE','CONFIDENTIAL')),
     url             TEXT,
     exdates         TEXT,
     rdates          TEXT,

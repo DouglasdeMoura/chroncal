@@ -12,14 +12,19 @@ CREATE TABLE todos (
     start_date       TEXT,
     duration         TEXT,
     completed_at     TEXT,
-    percent_complete INTEGER NOT NULL DEFAULT 0,
-    status           TEXT    NOT NULL DEFAULT 'NEEDS-ACTION',
-    priority         INTEGER NOT NULL DEFAULT 0,
-    class            TEXT    NOT NULL DEFAULT 'PUBLIC',
+    percent_complete INTEGER NOT NULL DEFAULT 0
+        CHECK(percent_complete BETWEEN 0 AND 100),
+    status           TEXT    NOT NULL DEFAULT 'NEEDS-ACTION'
+        CHECK(status IN ('NEEDS-ACTION','COMPLETED','IN-PROCESS','CANCELLED')),
+    priority         INTEGER NOT NULL DEFAULT 0
+        CHECK(priority BETWEEN 0 AND 9),
+    class            TEXT    NOT NULL DEFAULT 'PUBLIC'
+        CHECK(class IN ('PUBLIC','PRIVATE','CONFIDENTIAL')),
     url              TEXT,
     recurrence_rule  TEXT,
     timezone         TEXT,
-    sequence         INTEGER NOT NULL DEFAULT 0,
+    sequence         INTEGER NOT NULL DEFAULT 0
+        CHECK(sequence >= 0),
     exdates          TEXT,
     rdates           TEXT,
     recurrence_id    TEXT    NOT NULL DEFAULT '',

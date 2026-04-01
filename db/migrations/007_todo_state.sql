@@ -24,7 +24,8 @@ CREATE TABLE todo_recurrence_instances (
     todo_id     INTEGER NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
     original_id INTEGER NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
     instance_at TEXT    NOT NULL,
-    is_override INTEGER NOT NULL DEFAULT 0,
+    is_override INTEGER NOT NULL DEFAULT 0
+        CHECK(is_override IN (0, 1)),
     created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
