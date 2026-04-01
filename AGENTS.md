@@ -109,11 +109,13 @@ dueEvents, dueTodos, err := alarmSvc.Check(ctx, time.Now())
 
 ### Import/Export iCal
 ```go
-events, todos, err := ical.Import(data, calendarID)
+result, err := ical.ImportFile(r) // r is io.Reader
+// result.Events, result.Todos, result.Timezones, result.Warnings
 
 params := event.ExportParams{CalendarID: 1, From: "2026-04-01T00:00:00Z", To: "2026-04-30T23:59:59Z"}
-events, err := svc.ListForExport(ctx, params)
-ics, err := ical.Export(events, todos, "chroncal@example.com")
+events, err := svc.ExportFiltered(ctx, params)
+ics, err := ical.ExportEvents(events, "Work")
+ics, err := ical.ExportTodos(todos, "Work")
 ```
 
 ### Parse RFC 5545 duration
