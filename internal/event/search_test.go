@@ -79,7 +79,7 @@ func TestService_Search(t *testing.T) {
 		{"no results", SearchParams{Query: "nonexistent"}, 0},
 		{"date range filter", SearchParams{Query: "budget", From: "2026-04-02T00:00:00Z"}, 1},
 		{"case insensitive ASCII", SearchParams{Query: "BUDGET"}, 2},
-		{"case insensitive Unicode", SearchParams{Query: "CAFÉ"}, 1},
+		{"case insensitive Unicode", SearchParams{Query: "CAFÉ"}, 2},
 		{"case insensitive Unicode lowercase query", SearchParams{Query: "réunion"}, 1},
 	}
 
