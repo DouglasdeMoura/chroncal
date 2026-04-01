@@ -449,17 +449,29 @@ func (s *Service) ListAlarms(ctx context.Context, eventID int64) ([]model.Alarm,
 	if err != nil {
 		return nil, err
 	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+
+	// Collect alarm IDs for batch loading attendees
+	alarmIDs := make([]int64, len(rows))
+	for i, r := range rows {
+		alarmIDs[i] = r.ID
+	}
+
+	// Batch load attendees for all alarms
+	attRows, _ := s.q.ListAlarmAttendeesByAlarmIDs(ctx, alarmIDs)
+	attMap := make(map[int64][]model.AlarmAttendee, len(rows))
+	for _, ar := range attRows {
+		attMap[ar.AlarmID] = append(attMap[ar.AlarmID], model.AlarmAttendee{
+			ID: ar.ID, Email: ar.Email, Name: storage.NullableToString(ar.Name),
+		})
+	}
+
 	alarms := make([]model.Alarm, len(rows))
 	for i, r := range rows {
 		alarms[i] = fromStorageAlarm(r)
-		attRows, err := s.q.ListAlarmAttendeesByAlarmID(ctx, r.ID)
-		if err == nil {
-			for _, ar := range attRows {
-				alarms[i].Attendees = append(alarms[i].Attendees, model.AlarmAttendee{
-					ID: ar.ID, Email: ar.Email, Name: storage.NullableToString(ar.Name),
-				})
-			}
-		}
+		alarms[i].Attendees = attMap[r.ID]
 	}
 	return alarms, nil
 }
