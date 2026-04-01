@@ -1,14 +1,14 @@
 -- name: ListEventsByDateRange :many
-SELECT * FROM events WHERE start_time >= ? AND start_time < ? ORDER BY start_time;
+SELECT * FROM events WHERE start_time < ? AND end_time > ? ORDER BY start_time;
 
 -- name: ListEventsByCalendarAndDateRange :many
-SELECT * FROM events WHERE calendar_id = ? AND start_time >= ? AND start_time < ? ORDER BY start_time;
+SELECT * FROM events WHERE calendar_id = ? AND start_time < ? AND end_time > ? ORDER BY start_time;
 
 -- name: ListOverridesByUID :many
 SELECT * FROM events WHERE uid = ? AND recurrence_id != '' ORDER BY recurrence_id;
 
 -- name: ListEventsByStatusAndDateRange :many
-SELECT * FROM events WHERE status = ? AND start_time >= ? AND start_time < ? ORDER BY start_time;
+SELECT * FROM events WHERE status = ? AND start_time < ? AND end_time > ? ORDER BY start_time;
 
 -- name: GetEvent :one
 SELECT * FROM events WHERE id = ?;

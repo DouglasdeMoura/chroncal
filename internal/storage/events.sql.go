@@ -288,17 +288,17 @@ func (q *Queries) ListAllEvents(ctx context.Context) ([]Event, error) {
 }
 
 const listEventsByCalendarAndDateRange = `-- name: ListEventsByCalendarAndDateRange :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp FROM events WHERE calendar_id = ? AND start_time >= ? AND start_time < ? ORDER BY start_time
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp FROM events WHERE calendar_id = ? AND start_time < ? AND end_time > ? ORDER BY start_time
 `
 
 type ListEventsByCalendarAndDateRangeParams struct {
-	CalendarID  int64
-	StartTime   string
-	StartTime_2 string
+	CalendarID int64
+	StartTime  string
+	EndTime    string
 }
 
 func (q *Queries) ListEventsByCalendarAndDateRange(ctx context.Context, arg ListEventsByCalendarAndDateRangeParams) ([]Event, error) {
-	rows, err := q.db.QueryContext(ctx, listEventsByCalendarAndDateRange, arg.CalendarID, arg.StartTime, arg.StartTime_2)
+	rows, err := q.db.QueryContext(ctx, listEventsByCalendarAndDateRange, arg.CalendarID, arg.StartTime, arg.EndTime)
 	if err != nil {
 		return nil, err
 	}
@@ -347,16 +347,16 @@ func (q *Queries) ListEventsByCalendarAndDateRange(ctx context.Context, arg List
 }
 
 const listEventsByDateRange = `-- name: ListEventsByDateRange :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp FROM events WHERE start_time >= ? AND start_time < ? ORDER BY start_time
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp FROM events WHERE start_time < ? AND end_time > ? ORDER BY start_time
 `
 
 type ListEventsByDateRangeParams struct {
-	StartTime   string
-	StartTime_2 string
+	StartTime string
+	EndTime   string
 }
 
 func (q *Queries) ListEventsByDateRange(ctx context.Context, arg ListEventsByDateRangeParams) ([]Event, error) {
-	rows, err := q.db.QueryContext(ctx, listEventsByDateRange, arg.StartTime, arg.StartTime_2)
+	rows, err := q.db.QueryContext(ctx, listEventsByDateRange, arg.StartTime, arg.EndTime)
 	if err != nil {
 		return nil, err
 	}
@@ -405,17 +405,17 @@ func (q *Queries) ListEventsByDateRange(ctx context.Context, arg ListEventsByDat
 }
 
 const listEventsByStatusAndDateRange = `-- name: ListEventsByStatusAndDateRange :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp FROM events WHERE status = ? AND start_time >= ? AND start_time < ? ORDER BY start_time
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp FROM events WHERE status = ? AND start_time < ? AND end_time > ? ORDER BY start_time
 `
 
 type ListEventsByStatusAndDateRangeParams struct {
-	Status      string
-	StartTime   string
-	StartTime_2 string
+	Status    string
+	StartTime string
+	EndTime   string
 }
 
 func (q *Queries) ListEventsByStatusAndDateRange(ctx context.Context, arg ListEventsByStatusAndDateRangeParams) ([]Event, error) {
-	rows, err := q.db.QueryContext(ctx, listEventsByStatusAndDateRange, arg.Status, arg.StartTime, arg.StartTime_2)
+	rows, err := q.db.QueryContext(ctx, listEventsByStatusAndDateRange, arg.Status, arg.StartTime, arg.EndTime)
 	if err != nil {
 		return nil, err
 	}

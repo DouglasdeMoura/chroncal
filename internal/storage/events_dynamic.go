@@ -25,7 +25,7 @@ func (w *whereBuilder) addEventFilters(arg EventFilterParams) {
 		w.add(eventCategoryExists, arg.Category)
 	}
 	if arg.FromTime != "" {
-		w.add("start_time >= ?", arg.FromTime)
+		w.add("end_time > ?", arg.FromTime)
 	}
 	if arg.ToTime != "" {
 		w.add("start_time < ?", arg.ToTime)

@@ -76,7 +76,7 @@ func (q *Queries) SearchEventsFTS(ctx context.Context, query string, calendarID 
 		w.add("calendar_id = ?", calendarID)
 	}
 	if fromTime != "" {
-		w.add("start_time >= ?", fromTime)
+		w.add("end_time > ?", fromTime)
 	}
 	if toTime != "" {
 		w.add("start_time < ?", toTime)

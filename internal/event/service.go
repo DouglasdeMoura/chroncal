@@ -144,8 +144,8 @@ func (p *UpsertParams) applyDefaults() {
 
 func (s *Service) ListByDateRange(ctx context.Context, from, to time.Time) ([]Event, error) {
 	rows, err := s.q.ListEventsByDateRange(ctx, storage.ListEventsByDateRangeParams{
-		StartTime:   from.Format(time.RFC3339),
-		StartTime_2: to.Format(time.RFC3339),
+		StartTime: to.Format(time.RFC3339),   // start_time < to
+		EndTime:   from.Format(time.RFC3339), // end_time > from
 	})
 	if err != nil {
 		return nil, err
@@ -157,9 +157,9 @@ func (s *Service) ListByDateRange(ctx context.Context, from, to time.Time) ([]Ev
 
 func (s *Service) ListByStatusAndDateRange(ctx context.Context, status string, from, to time.Time) ([]Event, error) {
 	rows, err := s.q.ListEventsByStatusAndDateRange(ctx, storage.ListEventsByStatusAndDateRangeParams{
-		Status:      status,
-		StartTime:   from.Format(time.RFC3339),
-		StartTime_2: to.Format(time.RFC3339),
+		Status:    status,
+		StartTime: to.Format(time.RFC3339),   // start_time < to
+		EndTime:   from.Format(time.RFC3339), // end_time > from
 	})
 	if err != nil {
 		return nil, err
@@ -171,9 +171,9 @@ func (s *Service) ListByStatusAndDateRange(ctx context.Context, status string, f
 
 func (s *Service) ListByCalendarAndDateRange(ctx context.Context, calID int64, from, to time.Time) ([]Event, error) {
 	rows, err := s.q.ListEventsByCalendarAndDateRange(ctx, storage.ListEventsByCalendarAndDateRangeParams{
-		CalendarID:  calID,
-		StartTime:   from.Format(time.RFC3339),
-		StartTime_2: to.Format(time.RFC3339),
+		CalendarID: calID,
+		StartTime:  to.Format(time.RFC3339),   // start_time < to
+		EndTime:    from.Format(time.RFC3339), // end_time > from
 	})
 	if err != nil {
 		return nil, err

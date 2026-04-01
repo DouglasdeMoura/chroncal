@@ -162,8 +162,8 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 	}
 	// Non-recurring events in date range.
 	rangeRows, err := s.q.ListEventsByDateRange(ctx, storage.ListEventsByDateRangeParams{
-		StartTime:   from.Format(time.RFC3339),
-		StartTime_2: to.Format(time.RFC3339),
+		StartTime: to.Format(time.RFC3339),   // start_time < to
+		EndTime:   from.Format(time.RFC3339), // end_time > from
 	})
 	if err != nil {
 		return nil, err
@@ -318,8 +318,8 @@ func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Event,
 // StartTime/EndTime adjusted to the instance time and are sorted by StartTime.
 func (s *Service) ListExpandedByDateRange(ctx context.Context, from, to time.Time) ([]event.Event, error) {
 	rangeRows, err := s.q.ListEventsByDateRange(ctx, storage.ListEventsByDateRangeParams{
-		StartTime:   from.Format(time.RFC3339),
-		StartTime_2: to.Format(time.RFC3339),
+		StartTime: to.Format(time.RFC3339),   // start_time < to
+		EndTime:   from.Format(time.RFC3339), // end_time > from
 	})
 	if err != nil {
 		return nil, err
@@ -349,9 +349,9 @@ func (s *Service) ListExpandedByDateRange(ctx context.Context, from, to time.Tim
 // scoped to a single calendar.
 func (s *Service) ListExpandedByCalendarAndDateRange(ctx context.Context, calID int64, from, to time.Time) ([]event.Event, error) {
 	rangeRows, err := s.q.ListEventsByCalendarAndDateRange(ctx, storage.ListEventsByCalendarAndDateRangeParams{
-		CalendarID:  calID,
-		StartTime:   from.Format(time.RFC3339),
-		StartTime_2: to.Format(time.RFC3339),
+		CalendarID: calID,
+		StartTime:  to.Format(time.RFC3339),   // start_time < to
+		EndTime:    from.Format(time.RFC3339), // end_time > from
 	})
 	if err != nil {
 		return nil, err
@@ -380,9 +380,9 @@ func (s *Service) ListExpandedByCalendarAndDateRange(ctx context.Context, calID 
 // filtered by event status.
 func (s *Service) ListExpandedByStatusAndDateRange(ctx context.Context, status string, from, to time.Time) ([]event.Event, error) {
 	rangeRows, err := s.q.ListEventsByStatusAndDateRange(ctx, storage.ListEventsByStatusAndDateRangeParams{
-		Status:      status,
-		StartTime:   from.Format(time.RFC3339),
-		StartTime_2: to.Format(time.RFC3339),
+		Status:    status,
+		StartTime: to.Format(time.RFC3339),   // start_time < to
+		EndTime:   from.Format(time.RFC3339), // end_time > from
 	})
 	if err != nil {
 		return nil, err

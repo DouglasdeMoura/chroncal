@@ -97,6 +97,112 @@ func TestEventService_ListByDateRange(t *testing.T) {
 	}
 }
 
+func TestEventService_ListByDateRange_MultiDayOverlap(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	// Multi-day event: starts March 28, ends April 2.
+	_, err := svc.Create(ctx, CreateParams{
+		CalendarID: 1,
+		Title:      "Multi-Day Conference",
+		StartTime:  time.Date(2026, 3, 28, 9, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 2, 17, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("create multi-day: %v", err)
+	}
+
+	// Single-day event inside the range.
+	_, err = svc.Create(ctx, CreateParams{
+		CalendarID: 1,
+		Title:      "Normal Meeting",
+		StartTime:  time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("create normal: %v", err)
+	}
+
+	// Event entirely before the range.
+	_, err = svc.Create(ctx, CreateParams{
+		CalendarID: 1,
+		Title:      "Past Event",
+		StartTime:  time.Date(2026, 3, 25, 9, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 3, 26, 9, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("create past: %v", err)
+	}
+
+	from := time.Date(2026, 3, 30, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 4, 5, 0, 0, 0, 0, time.UTC)
+
+	events, err := svc.ListByDateRange(ctx, from, to)
+	if err != nil {
+		t.Fatalf("ListByDateRange: %v", err)
+	}
+
+	if len(events) != 2 {
+		for i, e := range events {
+			t.Logf("  events[%d]: %s start=%v end=%v", i, e.Title, e.StartTime, e.EndTime)
+		}
+		t.Fatalf("got %d events, want 2", len(events))
+	}
+
+	titles := map[string]bool{}
+	for _, e := range events {
+		titles[e.Title] = true
+	}
+	if !titles["Multi-Day Conference"] {
+		t.Error("multi-day event not found in results")
+	}
+	if !titles["Normal Meeting"] {
+		t.Error("normal meeting not found in results")
+	}
+}
+
+func TestEventService_ListByDateRange_BoundaryExclusion(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	// Event ending exactly at window start (end_time == from): should NOT match.
+	_, err := svc.Create(ctx, CreateParams{
+		CalendarID: 1,
+		Title:      "Ends At From",
+		StartTime:  time.Date(2026, 3, 29, 9, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 3, 30, 0, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Event starting exactly at window end (start_time == to): should NOT match.
+	_, err = svc.Create(ctx, CreateParams{
+		CalendarID: 1,
+		Title:      "Starts At To",
+		StartTime:  time.Date(2026, 4, 5, 0, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 5, 1, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	from := time.Date(2026, 3, 30, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 4, 5, 0, 0, 0, 0, time.UTC)
+
+	events, err := svc.ListByDateRange(ctx, from, to)
+	if err != nil {
+		t.Fatalf("ListByDateRange: %v", err)
+	}
+
+	if len(events) != 0 {
+		for i, e := range events {
+			t.Logf("  events[%d]: %s start=%v end=%v", i, e.Title, e.StartTime, e.EndTime)
+		}
+		t.Fatalf("got %d events, want 0 (boundary events should be excluded)", len(events))
+	}
+}
+
 func TestEventService_ListByCalendarAndDateRange(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
