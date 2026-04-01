@@ -64,7 +64,7 @@ The alarm lifecycle is:
 For continuous monitoring, use "chroncal alarm daemon" or a systemd timer / cron job
 that runs "chroncal alarm check" on an interval.`,
 	}
-	cmd.AddCommand(alarmCheckCmd(), alarmListCmd(), alarmDismissCmd(), alarmSnoozeCmd(), alarmDaemonCmd())
+	cmd.AddCommand(alarmCheckCmd(), alarmListCmd(), alarmDismissCmd(), alarmSnoozeCmd(), alarmDaemonCmd(), alarmMissedCmd())
 	return cmd
 }
 
@@ -614,4 +614,51 @@ func todoDueAlarmToDueAlarm(tda alarm.TodoDueAlarm) alarm.DueAlarm {
 		TriggerAt: tda.TriggerAt,
 		Event:     evt,
 	}
+}
+
+func alarmMissedCmd() *cobra.Command {
+	var days int
+	cmd := &cobra.Command{
+		Use:   "missed",
+		Short: "Show alarms that were missed (older than 24h, never fired)",
+		Long: `List alarms that would have fired in the lookback window but were
+never acknowledged. These are alarms that were skipped because the
+system was not running when they became due.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			a, err := initApp()
+			if err != nil {
+				return err
+			}
+			defer a.Close()
+
+			now := time.Now()
+			lookback := time.Duration(days) * 24 * time.Hour
+			missed, err := a.Alarms.CheckMissed(context.Background(), now, lookback)
+			if err != nil {
+				return fmt.Errorf("check missed: %w", err)
+			}
+
+			w := cmd.OutOrStdout()
+			if outputFmt != "text" {
+				return printOutput(w, missed)
+			}
+
+			if len(missed) == 0 {
+				fmt.Fprintln(w, "No missed alarms.")
+				return nil
+			}
+
+			fmt.Fprintf(w, "Missed alarms (last %d days):\n\n", days)
+			for _, m := range missed {
+				fmt.Fprintf(w, "  %s  %s (%s ago)\n",
+					m.TriggerAt.Local().Format("2006-01-02 15:04"),
+					m.EventTitle,
+					m.Age.Round(time.Minute),
+				)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&days, "days", 7, "lookback window in days")
+	return cmd
 }

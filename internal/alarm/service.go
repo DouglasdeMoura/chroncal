@@ -55,6 +55,76 @@ func (s *Service) Check(ctx context.Context, now time.Time) ([]DueAlarm, []TodoD
 	return eventAlarms, todoAlarms, nil
 }
 
+// MissedAlarm represents an alarm that was never fired because it became stale.
+type MissedAlarm struct {
+	EventTitle string
+	AlarmID    int64
+	TriggerAt  time.Time
+	Age        time.Duration
+}
+
+// CheckMissed returns alarms from the last `lookback` that were never fired
+// (no alarm_state entry) and are past the stale threshold.
+func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.Duration) ([]MissedAlarm, error) {
+	windowStart := now.Add(-lookback)
+	windowEnd := now
+
+	recurSvc := recurrence.NewService(s.db, s.q)
+	expanded, err := recurSvc.ListExpandedEvents(ctx, windowStart, windowEnd)
+	if err != nil {
+		return nil, err
+	}
+
+	var missed []MissedAlarm
+	for _, expEvt := range expanded {
+		alarms, err := s.events.ListAlarms(ctx, expEvt.Event.ID)
+		if err != nil {
+			continue
+		}
+
+		for _, a := range alarms {
+			triggerAt, err := computeTriggerTimeForInstance(expEvt, a)
+			if err != nil {
+				continue
+			}
+
+			triggers := []time.Time{triggerAt}
+			if a.Repeat > 0 && a.Duration != "" {
+				for i := 1; i <= a.Repeat; i++ {
+					repeatTrigger := triggerAt
+					for j := 0; j < i; j++ {
+						repeatTrigger = duration.Add(repeatTrigger, a.Duration)
+					}
+					if !repeatTrigger.IsZero() && repeatTrigger.After(triggerAt) {
+						triggers = append(triggers, repeatTrigger)
+					}
+				}
+			}
+
+			for _, t := range triggers {
+				if t.After(now) || now.Sub(t) <= StaleThreshold {
+					continue // not stale yet
+				}
+				triggerKey := t.UTC().Format(time.RFC3339)
+				_, err := s.q.GetAlarmState(ctx, storage.GetAlarmStateParams{
+					AlarmID:   a.ID,
+					TriggerAt: triggerKey,
+				})
+				if err == nil {
+					continue // already fired/acknowledged
+				}
+				missed = append(missed, MissedAlarm{
+					EventTitle: expEvt.Event.Title,
+					AlarmID:    a.ID,
+					TriggerAt:  t,
+					Age:        now.Sub(t),
+				})
+			}
+		}
+	}
+	return missed, nil
+}
+
 // checkEventAlarms finds due event alarms
 func (s *Service) checkEventAlarms(ctx context.Context, now time.Time) ([]DueAlarm, error) {
 	// Query events with alarms in a generous window around now.
