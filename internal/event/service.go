@@ -712,7 +712,7 @@ func (s *Service) ListAttachments(ctx context.Context, eventID int64) ([]model.A
 	}
 	out := make([]model.Attachment, len(rows))
 	for i, r := range rows {
-		out[i] = model.Attachment{ID: r.ID, URI: r.Uri, FmtType: storage.NullableToString(r.Fmttype), Data: r.Data, Filename: storage.NullableToString(r.Filename)}
+		out[i] = model.Attachment{ID: r.ID, URI: storage.NullableToString(r.Uri), FmtType: storage.NullableToString(r.Fmttype), Data: r.Data, Filename: storage.NullableToString(r.Filename)}
 	}
 	return out, nil
 }
@@ -729,7 +729,7 @@ func (s *Service) ReplaceAttachments(ctx context.Context, eventID int64, attachm
 	}
 	for _, a := range attachments {
 		_, err := qtx.CreateEventAttachment(ctx, storage.CreateEventAttachmentParams{
-			EventID: eventID, Uri: a.URI, Fmttype: storage.StringToNullable(a.FmtType), Data: a.Data, Filename: storage.StringToNullable(a.Filename),
+			EventID: eventID, Uri: storage.StringToNullable(a.URI), Fmttype: storage.StringToNullable(a.FmtType), Data: a.Data, Filename: storage.StringToNullable(a.Filename),
 		})
 		if err != nil {
 			return fmt.Errorf("create attachment: %w", err)

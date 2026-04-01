@@ -64,10 +64,11 @@ CREATE INDEX idx_event_attendees_event_id ON event_attendees(event_id);
 CREATE TABLE event_attachments (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-    uri      TEXT    NOT NULL,
+    uri      TEXT,
     fmttype  TEXT,
     data     BLOB,
-    filename TEXT
+    filename TEXT,
+    CHECK (uri IS NOT NULL OR data IS NOT NULL)
 );
 
 CREATE INDEX idx_event_attachments_event_id ON event_attachments(event_id);

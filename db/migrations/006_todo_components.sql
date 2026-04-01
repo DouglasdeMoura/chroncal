@@ -64,10 +64,11 @@ CREATE INDEX idx_todo_attendees_todo_id ON todo_attendees(todo_id);
 CREATE TABLE todo_attachments (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     todo_id  INTEGER NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
-    uri      TEXT    NOT NULL,
+    uri      TEXT,
     fmttype  TEXT,
     data     BLOB,
-    filename TEXT
+    filename TEXT,
+    CHECK (uri IS NOT NULL OR data IS NOT NULL)
 );
 
 CREATE INDEX idx_todo_attachments_todo_id ON todo_attachments(todo_id);

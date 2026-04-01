@@ -15,7 +15,7 @@ INSERT INTO event_attachments (event_id, uri, fmttype, data, filename) VALUES (?
 
 type CreateEventAttachmentParams struct {
 	EventID  int64
-	Uri      string
+	Uri      *string
 	Fmttype  *string
 	Data     []byte
 	Filename *string

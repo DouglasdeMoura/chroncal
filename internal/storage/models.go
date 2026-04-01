@@ -77,7 +77,7 @@ type EventAlarmAttendee struct {
 type EventAttachment struct {
 	ID       int64
 	EventID  int64
-	Uri      string
+	Uri      *string
 	Fmttype  *string
 	Data     []byte
 	Filename *string
@@ -208,7 +208,7 @@ type TodoAlarmState struct {
 type TodoAttachment struct {
 	ID       int64
 	TodoID   int64
-	Uri      string
+	Uri      *string
 	Fmttype  *string
 	Data     []byte
 	Filename *string
