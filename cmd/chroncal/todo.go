@@ -258,6 +258,10 @@ and percent-complete to 100.`,
 			defer a.Close()
 			ctx := context.Background()
 
+			if strings.TrimSpace(args[0]) == "" {
+				return fmt.Errorf("todo summary must not be empty")
+			}
+
 			calID, err := resolveCalendarID(ctx, a, calendarName)
 			if err != nil {
 				return err

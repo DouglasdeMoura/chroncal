@@ -280,6 +280,10 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 			defer a.Close()
 			ctx := context.Background()
 
+			if strings.TrimSpace(args[0]) == "" {
+				return fmt.Errorf("event title must not be empty")
+			}
+
 			calID, err := resolveCalendarID(ctx, a, calendarName)
 			if err != nil {
 				return err

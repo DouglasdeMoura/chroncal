@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -92,6 +93,10 @@ func calendarCreateCmd() *cobra.Command {
 		Short: "Create a new calendar",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if strings.TrimSpace(args[0]) == "" {
+				return fmt.Errorf("calendar name must not be empty")
+			}
+
 			a, err := initApp()
 			if err != nil {
 				return err
