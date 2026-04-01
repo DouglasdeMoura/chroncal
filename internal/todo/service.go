@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -128,11 +129,11 @@ func defaults(status, class string) (string, string) {
 	return status, class
 }
 
-func completedAtIfMissing(status, completedAt string) (string, int64) {
+func completedAtIfMissing(status, completedAt string) string {
 	if status == "COMPLETED" && completedAt == "" {
-		return time.Now().UTC().Format(time.RFC3339), 100
+		return time.Now().UTC().Format(time.RFC3339)
 	}
-	return completedAt, 0
+	return completedAt
 }
 
 func (p *CreateParams) applyDefaults() {
@@ -144,9 +145,9 @@ func (p *CreateParams) applyDefaults() {
 
 func (p *UpsertParams) applyDefaults() {
 	p.Status, p.Class = defaults(p.Status, p.Class)
-	if completedAt, pct := completedAtIfMissing(p.Status, p.CompletedAt); completedAt != "" {
-		p.CompletedAt = completedAt
-		p.PercentComplete = pct
+	p.CompletedAt = completedAtIfMissing(p.Status, p.CompletedAt)
+	if p.Status == "COMPLETED" {
+		p.PercentComplete = 100
 	}
 }
 
@@ -312,9 +313,9 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Todo, error) {
 
 func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, error) {
 	p.Status, p.Class = defaults(p.Status, p.Class)
-	if completedAt, pct := completedAtIfMissing(p.Status, p.CompletedAt); completedAt != "" {
-		p.CompletedAt = completedAt
-		p.PercentComplete = pct
+	p.CompletedAt = completedAtIfMissing(p.Status, p.CompletedAt)
+	if p.Status == "COMPLETED" {
+		p.PercentComplete = 100
 	}
 	r, err := s.q.UpdateTodo(ctx, storage.UpdateTodoParams{
 		ID:              id,
@@ -427,13 +428,7 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		master, err := qtx.GetTodoByUID(ctx, td.UID)
 		if err == nil {
 			existing := event.ParseTimeList(storage.NullableToString(master.Exdates))
-			recIDTime, parseErr := time.Parse(time.RFC3339, td.RecurrenceID)
-			if parseErr != nil {
-				recIDTime, parseErr = time.Parse("2006-01-02", td.RecurrenceID)
-				if parseErr == nil {
-					recIDTime = time.Date(recIDTime.Year(), recIDTime.Month(), recIDTime.Day(), 0, 0, 0, 0, time.Local)
-				}
-			}
+			recIDTime, parseErr := timeutil.ParseRecurrenceID(td.RecurrenceID)
 			if parseErr == nil {
 				existing = append(existing, recIDTime)
 				if err := qtx.UpdateTodoExdates(ctx, storage.UpdateTodoExdatesParams{
@@ -475,11 +470,7 @@ func (s *Service) ListOverridesByUID(ctx context.Context, uid string) ([]Todo, e
 	if err != nil {
 		return nil, err
 	}
-	todos := make([]Todo, len(rows))
-	for i, r := range rows {
-		todos[i] = fromStorage(r)
-	}
-	return todos, nil
+	return fromStorageSlice(rows), nil
 }
 
 // Alarm CRUD
@@ -488,6 +479,23 @@ func (s *Service) ListAlarms(ctx context.Context, todoID int64) ([]model.Alarm, 
 	rows, err := s.q.ListTodoAlarmsByTodoID(ctx, todoID)
 	if err != nil {
 		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	alarmIDs := make([]int64, len(rows))
+	for i, r := range rows {
+		alarmIDs[i] = r.ID
+	}
+	attRows, err := s.q.ListTodoAlarmAttendeesByAlarmIDs(ctx, alarmIDs)
+	if err != nil {
+		log.Printf("ListAlarms: failed to load attendees for %d alarms: %v", len(alarmIDs), err)
+	}
+	attMap := make(map[int64][]model.AlarmAttendee, len(rows))
+	for _, ar := range attRows {
+		attMap[ar.AlarmID] = append(attMap[ar.AlarmID], model.AlarmAttendee{
+			ID: ar.ID, Email: ar.Email, Name: storage.NullableToString(ar.Name),
+		})
 	}
 	alarms := make([]model.Alarm, len(rows))
 	for i, r := range rows {
@@ -504,14 +512,7 @@ func (s *Service) ListAlarms(ctx context.Context, todoID int64) ([]model.Alarm, 
 			Acknowledged:  storage.NullableToString(r.Acknowledged),
 			AttachURI:     storage.NullableToString(r.AttachUri),
 			AttachFmtType: storage.NullableToString(r.AttachFmttype),
-		}
-		attRows, err := s.q.ListTodoAlarmAttendeesByAlarmID(ctx, r.ID)
-		if err == nil {
-			for _, ar := range attRows {
-				alarms[i].Attendees = append(alarms[i].Attendees, model.AlarmAttendee{
-					ID: ar.ID, Email: ar.Email, Name: storage.NullableToString(ar.Name),
-				})
-			}
+			Attendees:     attMap[r.ID],
 		}
 	}
 	return alarms, nil
