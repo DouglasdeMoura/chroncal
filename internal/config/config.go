@@ -75,17 +75,6 @@ func newViper() *viper.Viper {
 	return v
 }
 
-// configFilePath returns the OS-appropriate config file location.
-// Linux: $XDG_CONFIG_HOME/chroncal/config.toml
-// macOS/Windows: os.UserConfigDir()/chroncal/config.toml
-func configFilePath() (string, error) {
-	dir, err := configDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "chroncal", "config.toml"), nil
-}
-
 func configDir() (string, error) {
 	if runtime.GOOS == "linux" {
 		if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
