@@ -518,3 +518,49 @@ func TestExport_MergeCalendars_PreservesNewVTIMEZONE(t *testing.T) {
 		t.Errorf("expected 1 VCALENDAR header, got %d", strings.Count(merged, "BEGIN:VCALENDAR"))
 	}
 }
+
+func TestExport_MasterWithOverride(t *testing.T) {
+	t.Parallel()
+	events := []event.Event{
+		{
+			UID:            "recurring-1",
+			Title:          "Weekly Sync",
+			StartTime:      time.Date(2026, 4, 6, 9, 0, 0, 0, time.UTC),
+			EndTime:        time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC),
+			Status:         "CONFIRMED",
+			RecurrenceRule: "FREQ=WEEKLY;COUNT=4",
+			ExDates:        "2026-04-20T09:00:00Z",
+		},
+		{
+			UID:          "recurring-1",
+			Title:        "Weekly Sync (moved)",
+			StartTime:    time.Date(2026, 4, 13, 14, 0, 0, 0, time.UTC),
+			EndTime:      time.Date(2026, 4, 13, 15, 0, 0, 0, time.UTC),
+			Status:       "CONFIRMED",
+			RecurrenceID: "2026-04-13T09:00:00Z",
+		},
+	}
+
+	data, err := ExportEvents(events, "Test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ics := string(data)
+
+	// Should have two VEVENT blocks with the same UID.
+	if strings.Count(ics, "BEGIN:VEVENT") != 2 {
+		t.Errorf("expected 2 VEVENTs, got %d", strings.Count(ics, "BEGIN:VEVENT"))
+	}
+	if !strings.Contains(ics, "UID:recurring-1") {
+		t.Error("missing UID")
+	}
+	if !strings.Contains(ics, "RECURRENCE-ID") {
+		t.Error("override should have RECURRENCE-ID")
+	}
+	if !strings.Contains(ics, "RRULE:FREQ=WEEKLY") {
+		t.Error("master should have RRULE")
+	}
+	if !strings.Contains(ics, "EXDATE") {
+		t.Error("master should have EXDATE")
+	}
+}

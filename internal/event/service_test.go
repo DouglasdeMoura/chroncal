@@ -439,6 +439,47 @@ func TestDelete_OverridePreservesExistingEXDATEs(t *testing.T) {
 	}
 }
 
+func TestDelete_AllDayOverrideAddsDateOnlyEXDATE(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	svc.UpsertByUID(ctx, UpsertParams{
+		UID: "allday-exd", CalendarID: 1, Title: "Daily Standup",
+		StartTime:      time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 2, 0, 0, 0, 0, time.UTC),
+		AllDay:         true,
+		RecurrenceRule: "FREQ=DAILY",
+	})
+	// Override with date-only RecurrenceID (all-day event).
+	svc.UpsertByUID(ctx, UpsertParams{
+		UID: "allday-exd", CalendarID: 1, Title: "Standup (cancelled)",
+		StartTime:    time.Date(2026, 4, 8, 0, 0, 0, 0, time.UTC),
+		EndTime:      time.Date(2026, 4, 9, 0, 0, 0, 0, time.UTC),
+		AllDay:       true,
+		RecurrenceID: "2026-04-08",
+	})
+
+	override, _ := svc.GetByUIDAndRecurrenceID(ctx, "allday-exd", "2026-04-08")
+	if err := svc.Delete(ctx, override.ID); err != nil {
+		t.Fatalf("Delete all-day override: %v", err)
+	}
+
+	master, _ := svc.GetByUID(ctx, "allday-exd")
+	// The EXDATE should be in date-only format matching the all-day event.
+	exdates := master.ParseExDates()
+	if len(exdates) != 1 {
+		t.Fatalf("exdates count = %d, want 1", len(exdates))
+	}
+	// Verify it's midnight in Local (date-only format).
+	ex := exdates[0]
+	if ex.Location() != time.Local {
+		t.Errorf("exdate location = %v, want time.Local (date-only)", ex.Location())
+	}
+	if ex.Hour() != 0 || ex.Minute() != 0 {
+		t.Errorf("exdate time = %v, want midnight", ex)
+	}
+}
+
 func TestDeleteSeries_CascadesAll(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
