@@ -601,10 +601,7 @@ func (s *Service) ReplaceAttendees(ctx context.Context, todoID int64, attendees 
 		return fmt.Errorf("delete attendees: %w", err)
 	}
 	for _, a := range attendees {
-		org := int64(0)
-		if a.Organizer {
-			org = 1
-		}
+		org := storage.BoolToInt(a.Organizer)
 		rsvp := ""
 		if a.RSVPRequested {
 			rsvp = "TRUE"

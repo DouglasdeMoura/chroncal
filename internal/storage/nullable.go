@@ -15,3 +15,11 @@ func NullableToString(s *string) string {
 	}
 	return *s
 }
+
+// BoolToInt converts a bool to int64 (1 for true, 0 for false).
+func BoolToInt(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
+}

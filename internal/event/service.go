@@ -266,7 +266,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
 		Location:       storage.StringToNullable(p.Location),
 		StartTime:      p.StartTime.Format(time.RFC3339),
 		EndTime:        p.EndTime.Format(time.RFC3339),
-		AllDay:         boolToInt(p.AllDay),
+		AllDay:         storage.BoolToInt(p.AllDay),
 		RecurrenceRule: storage.StringToNullable(p.RecurrenceRule),
 		Timezone:       storage.StringToNullable(p.Timezone),
 		Status:         p.Status,
@@ -315,7 +315,7 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, 
 		Location:       storage.StringToNullable(p.Location),
 		StartTime:      p.StartTime.Format(time.RFC3339),
 		EndTime:        p.EndTime.Format(time.RFC3339),
-		AllDay:         boolToInt(p.AllDay),
+		AllDay:         storage.BoolToInt(p.AllDay),
 		RecurrenceRule: storage.StringToNullable(p.RecurrenceRule),
 		CalendarID:     p.CalendarID,
 		Timezone:       storage.StringToNullable(p.Timezone),
@@ -351,7 +351,7 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error
 		Location:       storage.StringToNullable(p.Location),
 		StartTime:      p.StartTime.Format(time.RFC3339),
 		EndTime:        p.EndTime.Format(time.RFC3339),
-		AllDay:         boolToInt(p.AllDay),
+		AllDay:         storage.BoolToInt(p.AllDay),
 		RecurrenceRule: storage.StringToNullable(p.RecurrenceRule),
 		Timezone:       storage.StringToNullable(p.Timezone),
 		Status:         p.Status,
@@ -634,7 +634,7 @@ func (s *Service) ReplaceAttendees(ctx context.Context, eventID int64, attendees
 			Name:          storage.StringToNullable(a.Name),
 			RsvpStatus:    a.RSVPStatus,
 			Role:          a.Role,
-			Organizer:     boolToInt(a.Organizer),
+			Organizer:     storage.BoolToInt(a.Organizer),
 			Cutype:        storage.StringToNullable(a.CUType),
 			Rsvp:          storage.StringToNullable(rsvp),
 			SentBy:        storage.StringToNullable(a.SentBy),
@@ -983,11 +983,4 @@ func fromStorageAttendee(r storage.EventAttendee) model.Attendee {
 func parseTime(s string) time.Time {
 	t, _ := time.Parse(time.RFC3339, s)
 	return t
-}
-
-func boolToInt(b bool) int64 {
-	if b {
-		return 1
-	}
-	return 0
 }
