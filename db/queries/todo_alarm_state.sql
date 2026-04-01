@@ -27,6 +27,9 @@ SELECT * FROM todo_alarm_state
 WHERE snoozed_to IS NOT NULL AND snoozed_to <= ?
 ORDER BY snoozed_to;
 
+-- name: RefireTodoAlarmState :exec
+UPDATE todo_alarm_state SET fired_at = ?, snoozed_to = NULL WHERE id = ?;
+
 -- name: DeleteTodoAlarmState :exec
 DELETE FROM todo_alarm_state WHERE id = ?;
 

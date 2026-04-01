@@ -50,7 +50,7 @@ func TestAlarmLifecycle(t *testing.T) {
 	}
 
 	// 3. MarkFired on the due alarm
-	err = svc.MarkFired(ctx, due[0])
+	_, err = svc.MarkFired(ctx, due[0])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestAlarmLifecycle_Snooze(t *testing.T) {
 	}
 
 	// 3. MarkFired
-	err = svc.MarkFired(ctx, due[0])
+	_, err = svc.MarkFired(ctx, due[0])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +227,7 @@ func TestSnoozeSurvivesEventUpdate(t *testing.T) {
 	if len(due) != 1 {
 		t.Fatalf("want 1 due alarm, got %d", len(due))
 	}
-	if err := svc.MarkFired(ctx, due[0]); err != nil {
+	if _, err := svc.MarkFired(ctx, due[0]); err != nil {
 		t.Fatal(err)
 	}
 

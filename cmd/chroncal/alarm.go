@@ -138,13 +138,17 @@ and exits 0.`,
 			for _, da := range due {
 				// Mark state before firing to reduce double-fire window on
 				// concurrent alarm check runs (SQLite serializes writes).
-				if da.StateID != 0 {
-					if markErr := a.Alarms.MarkRefired(ctx, da.StateID); markErr != nil {
+				stateID := da.StateID
+				if stateID != 0 {
+					if markErr := a.Alarms.MarkRefired(ctx, stateID); markErr != nil {
 						fmt.Fprintf(os.Stderr, "chroncal: mark-refired error: event=%q: %v\n", da.Event.Title, markErr)
 					}
 				} else {
-					if markErr := a.Alarms.MarkFired(ctx, da); markErr != nil {
+					newID, markErr := a.Alarms.MarkFired(ctx, da)
+					if markErr != nil {
 						fmt.Fprintf(os.Stderr, "chroncal: mark-fired error: event=%q: %v\n", da.Event.Title, markErr)
+					} else {
+						stateID = newID
 					}
 				}
 
@@ -158,6 +162,7 @@ and exits 0.`,
 							"event_id":   da.Event.ID,
 							"event":      da.Event.Title,
 							"alarm_id":   da.Alarm.ID,
+							"state_id":   stateID,
 							"action":     da.Alarm.Action,
 							"trigger_at": da.TriggerAt.Format(time.RFC3339),
 							"status":     fmt.Sprintf("error: %v", fireErr),
@@ -171,6 +176,7 @@ and exits 0.`,
 						"event_id":   da.Event.ID,
 						"event":      da.Event.Title,
 						"alarm_id":   da.Alarm.ID,
+						"state_id":   stateID,
 						"action":     da.Alarm.Action,
 						"trigger_at": da.TriggerAt.Format(time.RFC3339),
 						"status":     "fired",
@@ -182,6 +188,20 @@ and exits 0.`,
 
 			// Process todo alarms
 			for _, tda := range todoDue {
+				stateID := tda.StateID
+				if stateID != 0 {
+					if markErr := a.Alarms.MarkTodoRefired(ctx, stateID); markErr != nil {
+						fmt.Fprintf(os.Stderr, "chroncal: mark-refired error: todo=%q: %v\n", tda.Todo.Summary, markErr)
+					}
+				} else {
+					newID, markErr := a.Alarms.MarkTodoFired(ctx, tda)
+					if markErr != nil {
+						fmt.Fprintf(os.Stderr, "chroncal: mark-fired error: todo=%q: %v\n", tda.Todo.Summary, markErr)
+					} else {
+						stateID = newID
+					}
+				}
+
 				fireErr := fireAlarm(todoDueAlarmToDueAlarm(tda))
 
 				if fireErr != nil {
@@ -192,6 +212,7 @@ and exits 0.`,
 							"todo_id":    tda.Todo.ID,
 							"todo":       tda.Todo.Summary,
 							"alarm_id":   tda.Alarm.ID,
+							"state_id":   stateID,
 							"action":     tda.Alarm.Action,
 							"trigger_at": tda.TriggerAt.Format(time.RFC3339),
 							"status":     fmt.Sprintf("error: %v", fireErr),
@@ -205,6 +226,7 @@ and exits 0.`,
 						"todo_id":    tda.Todo.ID,
 						"todo":       tda.Todo.Summary,
 						"alarm_id":   tda.Alarm.ID,
+						"state_id":   stateID,
 						"action":     tda.Alarm.Action,
 						"trigger_at": tda.TriggerAt.Format(time.RFC3339),
 						"status":     "fired",
@@ -554,7 +576,7 @@ See "chroncal alarm check --help" for notification types and SMTP configuration.
 							fmt.Fprintf(os.Stderr, "chroncal: mark-refired error: event=%q: %v\n", da.Event.Title, markErr)
 						}
 					} else {
-						if markErr := a.Alarms.MarkFired(ctx, da); markErr != nil {
+						if _, markErr := a.Alarms.MarkFired(ctx, da); markErr != nil {
 							fmt.Fprintf(os.Stderr, "chroncal: mark-fired error: event=%q: %v\n", da.Event.Title, markErr)
 						}
 					}

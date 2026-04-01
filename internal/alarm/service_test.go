@@ -101,7 +101,7 @@ func TestCheck_SkipsAlreadyFired(t *testing.T) {
 	}
 
 	// Mark as fired
-	err = svc.MarkFired(ctx, due[0])
+	_, err = svc.MarkFired(ctx, due[0])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +208,7 @@ func TestCheck_RefiresSnoozedAlarm(t *testing.T) {
 	if len(due) != 1 {
 		t.Fatalf("step 1: got %d, want 1", len(due))
 	}
-	if err := svc.MarkFired(ctx, due[0]); err != nil {
+	if _, err := svc.MarkFired(ctx, due[0]); err != nil {
 		t.Fatal(err)
 	}
 
@@ -269,7 +269,7 @@ func TestCheck_SkipsActiveSnoozedAlarm(t *testing.T) {
 
 	// Fire and snooze into the future
 	due, _, _ := svc.Check(ctx, time.Now())
-	if err := svc.MarkFired(ctx, due[0]); err != nil {
+	if _, err := svc.MarkFired(ctx, due[0]); err != nil {
 		t.Fatal(err)
 	}
 	pending, _ := svc.ListPending(ctx)
@@ -312,7 +312,7 @@ func TestComputeSnooze_CapsAtEventEnd(t *testing.T) {
 
 	// Fire and mark
 	due, _, _ := svc.Check(ctx, time.Now())
-	if err := svc.MarkFired(ctx, due[0]); err != nil {
+	if _, err := svc.MarkFired(ctx, due[0]); err != nil {
 		t.Fatal(err)
 	}
 	pending, _ := svc.ListPending(ctx)
@@ -358,7 +358,7 @@ func TestComputeSnooze_WarnsPastStart(t *testing.T) {
 	}
 
 	due, _, _ := svc.Check(ctx, time.Now())
-	if err := svc.MarkFired(ctx, due[0]); err != nil {
+	if _, err := svc.MarkFired(ctx, due[0]); err != nil {
 		t.Fatal(err)
 	}
 	pending, _ := svc.ListPending(ctx)
@@ -400,7 +400,7 @@ func TestSnoozeUntilStart(t *testing.T) {
 	}
 
 	due, _, _ := svc.Check(ctx, time.Now())
-	if err := svc.MarkFired(ctx, due[0]); err != nil {
+	if _, err := svc.MarkFired(ctx, due[0]); err != nil {
 		t.Fatal(err)
 	}
 	pending, _ := svc.ListPending(ctx)
@@ -446,7 +446,7 @@ func TestSnoozeUntilStart_RejectsStartedEvent(t *testing.T) {
 	if len(due) != 1 {
 		t.Fatalf("got %d due, want 1", len(due))
 	}
-	if err := svc.MarkFired(ctx, due[0]); err != nil {
+	if _, err := svc.MarkFired(ctx, due[0]); err != nil {
 		t.Fatal(err)
 	}
 
@@ -713,7 +713,7 @@ func TestComputeSnooze_RejectsNegativeDuration(t *testing.T) {
 	}
 
 	due, _, _ := svc.Check(ctx, time.Now())
-	if err := svc.MarkFired(ctx, due[0]); err != nil {
+	if _, err := svc.MarkFired(ctx, due[0]); err != nil {
 		t.Fatal(err)
 	}
 	pending, _ := svc.ListPending(ctx)
@@ -758,7 +758,7 @@ func TestComputeSnooze_RejectsPastEndedEvent(t *testing.T) {
 	if len(due) != 1 {
 		t.Fatalf("got %d due, want 1", len(due))
 	}
-	if err := svc.MarkFired(ctx, due[0]); err != nil {
+	if _, err := svc.MarkFired(ctx, due[0]); err != nil {
 		t.Fatal(err)
 	}
 	pending, _ := svc.ListPending(ctx)
@@ -792,7 +792,7 @@ func TestComputeSnooze_RejectsDismissedAlarm(t *testing.T) {
 
 	// Fire, dismiss, then try to snooze
 	due, _, _ := svc.Check(ctx, time.Now())
-	if err := svc.MarkFired(ctx, due[0]); err != nil {
+	if _, err := svc.MarkFired(ctx, due[0]); err != nil {
 		t.Fatal(err)
 	}
 	pending, _ := svc.ListPending(ctx)
@@ -877,7 +877,7 @@ func TestCheckMissed_SkipsAcknowledged(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, d := range due {
-		svc.MarkFired(ctx, d)
+		svc.MarkFired(ctx, d) //nolint:errcheck // fire-and-forget in bulk setup
 	}
 
 	missed, _, err := svc.CheckMissed(ctx, time.Now(), 7*24*time.Hour)

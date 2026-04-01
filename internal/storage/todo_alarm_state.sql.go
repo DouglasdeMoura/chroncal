@@ -203,6 +203,20 @@ func (q *Queries) ListTodoAlarmStates(ctx context.Context, todoID int64) ([]Todo
 	return items, nil
 }
 
+const refireTodoAlarmState = `-- name: RefireTodoAlarmState :exec
+UPDATE todo_alarm_state SET fired_at = ?, snoozed_to = NULL WHERE id = ?
+`
+
+type RefireTodoAlarmStateParams struct {
+	FiredAt sql.NullString
+	ID      int64
+}
+
+func (q *Queries) RefireTodoAlarmState(ctx context.Context, arg RefireTodoAlarmStateParams) error {
+	_, err := q.db.ExecContext(ctx, refireTodoAlarmState, arg.FiredAt, arg.ID)
+	return err
+}
+
 const updateTodoAlarmState = `-- name: UpdateTodoAlarmState :exec
 UPDATE todo_alarm_state 
 SET fired_at = ?, acked_at = ?, snoozed_to = ?

@@ -402,16 +402,34 @@ func (s *Service) ListExpiredSnoozed(ctx context.Context, now time.Time) ([]DueA
 	return due, nil
 }
 
-// MarkFired records that an alarm has been fired.
-func (s *Service) MarkFired(ctx context.Context, da DueAlarm) error {
+// MarkFired records that an alarm has been fired and returns the new state ID.
+func (s *Service) MarkFired(ctx context.Context, da DueAlarm) (int64, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := s.q.CreateAlarmState(ctx, storage.CreateAlarmStateParams{
+	st, err := s.q.CreateAlarmState(ctx, storage.CreateAlarmStateParams{
 		AlarmID:   da.Alarm.ID,
 		EventID:   da.Event.ID,
 		TriggerAt: da.TriggerAt.UTC().Format(time.RFC3339),
 		FiredAt:   sql.NullString{String: now, Valid: true},
 	})
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return st.ID, nil
+}
+
+// MarkTodoFired records that a todo alarm has been fired and returns the new state ID.
+func (s *Service) MarkTodoFired(ctx context.Context, tda TodoDueAlarm) (int64, error) {
+	todoSvc := NewTodoService(s.db, s.q, s.todos)
+	return todoSvc.MarkTodoAlarmFired(ctx, tda.Alarm.ID, tda.Todo.ID, tda.TriggerAt)
+}
+
+// MarkTodoRefired re-fires a snoozed todo alarm, clearing the snooze.
+func (s *Service) MarkTodoRefired(ctx context.Context, stateID int64) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	return s.q.RefireTodoAlarmState(ctx, storage.RefireTodoAlarmStateParams{
+		FiredAt: sql.NullString{String: now, Valid: true},
+		ID:      stateID,
+	})
 }
 
 // Dismiss acknowledges a fired alarm so it won't show as pending.
