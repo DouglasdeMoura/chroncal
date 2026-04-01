@@ -76,9 +76,10 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 
 	qtx := s.q.WithTx(tx)
 
-	// Verify the calendar exists before checking the count guard.
+	// Return not-found before the count guard so callers can distinguish
+	// a missing ID from the last-calendar constraint.
 	if _, err := qtx.GetCalendar(ctx, id); err != nil {
-		return err // surfaces sql.ErrNoRows when the ID doesn't exist
+		return err
 	}
 
 	count, err := qtx.CountCalendars(ctx)
