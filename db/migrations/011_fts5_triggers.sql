@@ -57,8 +57,10 @@ CREATE TRIGGER event_categories_fts_ai AFTER INSERT ON event_categories BEGIN
 END;
 -- +goose StatementEnd
 
+-- Guard: skip when the event itself was CASCADE-deleted (row already gone).
 -- +goose StatementBegin
-CREATE TRIGGER event_categories_fts_ad AFTER DELETE ON event_categories BEGIN
+CREATE TRIGGER event_categories_fts_ad AFTER DELETE ON event_categories
+WHEN EXISTS (SELECT 1 FROM events WHERE id = OLD.event_id) BEGIN
     DELETE FROM events_fts WHERE rowid = OLD.event_id;
     INSERT INTO events_fts(rowid, title, description, location, categories)
     SELECT e.id, e.title, COALESCE(e.description, ''), COALESCE(e.location, ''),
@@ -106,8 +108,10 @@ CREATE TRIGGER todo_categories_fts_ai AFTER INSERT ON todo_categories BEGIN
 END;
 -- +goose StatementEnd
 
+-- Guard: skip when the todo itself was CASCADE-deleted (row already gone).
 -- +goose StatementBegin
-CREATE TRIGGER todo_categories_fts_ad AFTER DELETE ON todo_categories BEGIN
+CREATE TRIGGER todo_categories_fts_ad AFTER DELETE ON todo_categories
+WHEN EXISTS (SELECT 1 FROM todos WHERE id = OLD.todo_id) BEGIN
     DELETE FROM todos_fts WHERE rowid = OLD.todo_id;
     INSERT INTO todos_fts(rowid, summary, description, location, categories)
     SELECT t.id, t.summary, COALESCE(t.description, ''), COALESCE(t.location, ''),
