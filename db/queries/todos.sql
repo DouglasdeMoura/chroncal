@@ -19,23 +19,6 @@ SELECT * FROM todos WHERE recurrence_rule IS NOT NULL AND recurrence_id = '';
 -- name: ListRecurringTodosByCalendar :many
 SELECT * FROM todos WHERE recurrence_rule IS NOT NULL AND recurrence_id = '' AND calendar_id = ?;
 
--- name: ListTodosFiltered :many
-SELECT * FROM todos
-WHERE recurrence_rule IS NULL AND recurrence_id = ''
-AND (sqlc.arg(calendar_id) = 0 OR calendar_id = sqlc.arg(calendar_id))
-AND (sqlc.arg(filter_status) = '' OR status = sqlc.arg(filter_status))
-AND (sqlc.arg(hide_completed) = 0 OR (status != 'COMPLETED' AND status != 'CANCELLED'))
-AND (sqlc.arg(from_date) = '' OR due_date IS NULL OR due_date >= sqlc.arg(from_date))
-AND (sqlc.arg(to_date) = '' OR due_date IS NULL OR due_date < sqlc.arg(to_date))
-ORDER BY due_date, summary;
-
--- name: ListRecurringTodosFiltered :many
-SELECT * FROM todos
-WHERE recurrence_rule IS NOT NULL AND recurrence_id = ''
-AND (sqlc.arg(calendar_id) = 0 OR calendar_id = sqlc.arg(calendar_id))
-AND (sqlc.arg(filter_status) = '' OR status = sqlc.arg(filter_status))
-AND (sqlc.arg(hide_completed) = 0 OR (status != 'COMPLETED' AND status != 'CANCELLED'))
-ORDER BY due_date, summary;
 
 -- name: GetTodo :one
 SELECT * FROM todos WHERE id = ?;
@@ -114,10 +97,3 @@ UPDATE todos SET exdates = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 -- name: DeleteTodo :exec
 DELETE FROM todos WHERE id = ?;
 
--- name: ListTodosForExport :many
-SELECT * FROM todos
-WHERE (sqlc.arg(calendar_id) = 0 OR calendar_id = sqlc.arg(calendar_id))
-AND (sqlc.arg(category) = '' OR EXISTS (SELECT 1 FROM todo_categories tc WHERE tc.todo_id = todos.id AND tc.category = sqlc.arg(category)))
-AND (sqlc.arg(filter_status) = '' OR status = sqlc.arg(filter_status))
-AND (sqlc.arg(completed_filter) = 0 OR (sqlc.arg(completed_filter) = 1 AND completed_at IS NOT NULL) OR (sqlc.arg(completed_filter) = 2 AND completed_at IS NULL))
-ORDER BY due_date ASC, summary ASC;

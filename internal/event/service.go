@@ -200,7 +200,7 @@ func (s *Service) Search(ctx context.Context, p SearchParams) ([]Event, error) {
 }
 
 func (s *Service) ExportFiltered(ctx context.Context, p ExportParams) ([]Event, error) {
-	rows, err := s.q.ListEventsForExport(ctx, storage.ListEventsForExportParams{
+	rows, err := s.q.ListEventsForExport(ctx, storage.EventFilterParams{
 		CalendarID:   p.CalendarID,
 		FromTime:     p.From,
 		ToTime:       p.To,

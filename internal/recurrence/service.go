@@ -481,7 +481,7 @@ func (s *Service) ExportExpandedByDateRange(ctx context.Context, p ExportFilterP
 		toStr = p.To.Format(time.RFC3339)
 	}
 
-	rangeRows, err := s.q.ListEventsForExport(ctx, storage.ListEventsForExportParams{
+	rangeRows, err := s.q.ListEventsForExport(ctx, storage.EventFilterParams{
 		CalendarID:   p.CalendarID,
 		FromTime:     fromStr,
 		ToTime:       toStr,
@@ -500,7 +500,7 @@ func (s *Service) ExportExpandedByDateRange(ctx context.Context, p ExportFilterP
 		}
 	}
 
-	recurringRows, err := s.q.ListRecurringEventsFiltered(ctx, storage.ListRecurringEventsFilteredParams{
+	recurringRows, err := s.q.ListRecurringEventsFiltered(ctx, storage.EventFilterParams{
 		CalendarID:   p.CalendarID,
 		FilterStatus: p.Status,
 		Category:     p.Category,
@@ -712,7 +712,7 @@ func (s *Service) ListFilteredEvents(ctx context.Context, p EventListParams) ([]
 		toStr = p.To.Format(time.RFC3339)
 	}
 
-	rangeRows, err := s.q.ListEventsFiltered(ctx, storage.ListEventsFilteredParams{
+	rangeRows, err := s.q.ListEventsFiltered(ctx, storage.EventFilterParams{
 		CalendarID:   p.CalendarID,
 		FilterStatus: p.Status,
 		Category:     p.Category,
@@ -728,7 +728,7 @@ func (s *Service) ListFilteredEvents(ctx context.Context, p EventListParams) ([]
 		result = append(result, eventFromRow(row))
 	}
 
-	recurringRows, err := s.q.ListRecurringEventsFiltered(ctx, storage.ListRecurringEventsFilteredParams{
+	recurringRows, err := s.q.ListRecurringEventsFiltered(ctx, storage.EventFilterParams{
 		CalendarID:   p.CalendarID,
 		FilterStatus: p.Status,
 		Category:     p.Category,
