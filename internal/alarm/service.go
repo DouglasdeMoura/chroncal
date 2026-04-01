@@ -70,7 +70,7 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 	windowEnd := now
 
 	recurSvc := recurrence.NewService(s.db, s.q)
-	expanded, err := recurSvc.ListExpandedEvents(ctx, windowStart, windowEnd)
+	expanded, err := recurSvc.ListExpandedEvents(ctx, windowStart, windowEnd, recurrence.SkipCategories())
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +136,7 @@ func (s *Service) checkEventAlarms(ctx context.Context, now time.Time) ([]DueAla
 
 	// Use recurrence service to get all event instances (including recurring)
 	recurSvc := recurrence.NewService(s.db, s.q)
-	expandedEvents, err := recurSvc.ListExpandedEvents(ctx, windowStart, windowEnd)
+	expandedEvents, err := recurSvc.ListExpandedEvents(ctx, windowStart, windowEnd, recurrence.SkipCategories())
 	if err != nil {
 		return nil, fmt.Errorf("list expanded events: %w", err)
 	}

@@ -189,9 +189,26 @@ func isDuplicateError(err error) bool {
 	return strings.Contains(err.Error(), "UNIQUE constraint failed")
 }
 
+// ExpandOption configures ListExpandedEvents behaviour.
+type ExpandOption func(*expandOptions)
+
+type expandOptions struct {
+	skipCategories bool
+}
+
+// SkipCategories omits the batch category load. Use this when the caller
+// does not need Event.Categories (e.g. alarm checking).
+func SkipCategories() ExpandOption {
+	return func(o *expandOptions) { o.skipCategories = true }
+}
+
 // ListExpandedEvents returns events with their instances in a date range.
 // Uses filtered queries instead of loading the entire table.
-func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time) ([]ExpandedEvent, error) {
+func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, opts ...ExpandOption) ([]ExpandedEvent, error) {
+	var o expandOptions
+	for _, fn := range opts {
+		fn(&o)
+	}
 	// Non-recurring events in date range.
 	rangeRows, err := s.q.ListEventsByDateRange(ctx, storage.ListEventsByDateRangeParams{
 		StartTime:   from.Format(time.RFC3339),
@@ -254,15 +271,17 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time) ([
 	}
 
 	// Batch category loading: one query for all categories, then build map.
-	allCats, err := s.q.ListAllEventCategoriesWithIDs(ctx)
-	if err == nil && len(allCats) > 0 {
-		catMap := make(map[int64][]string)
-		for _, c := range allCats {
-			catMap[c.EventID] = append(catMap[c.EventID], c.Category)
-		}
-		for i := range results {
-			if cats, ok := catMap[results[i].Event.ID]; ok {
-				results[i].Event.Categories = strings.Join(cats, ",")
+	if !o.skipCategories {
+		allCats, err := s.q.ListAllEventCategoriesWithIDs(ctx)
+		if err == nil && len(allCats) > 0 {
+			catMap := make(map[int64][]string)
+			for _, c := range allCats {
+				catMap[c.EventID] = append(catMap[c.EventID], c.Category)
+			}
+			for i := range results {
+				if cats, ok := catMap[results[i].Event.ID]; ok {
+					results[i].Event.Categories = strings.Join(cats, ",")
+				}
 			}
 		}
 	}
