@@ -2,6 +2,7 @@ package calendar
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/douglasdemoura/chroncal/internal/testutil"
@@ -140,7 +141,7 @@ func TestCalendarService_DeleteLastCalendarBlocked(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when deleting the last calendar, got nil")
 	}
-	if err.Error() != "cannot delete the last calendar" {
+	if !errors.Is(err, ErrLastCalendar) {
 		t.Errorf("unexpected error: %v", err)
 	}
 

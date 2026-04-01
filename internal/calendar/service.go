@@ -3,11 +3,15 @@ package calendar
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
+
+// ErrLastCalendar is returned when attempting to delete the only remaining calendar.
+var ErrLastCalendar = errors.New("cannot delete the last calendar")
 
 type Service struct {
 	db *sql.DB
@@ -82,7 +86,7 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		return fmt.Errorf("count calendars: %w", err)
 	}
 	if count <= 1 {
-		return fmt.Errorf("cannot delete the last calendar")
+		return ErrLastCalendar
 	}
 
 	if err := qtx.DeleteCalendar(ctx, id); err != nil {
