@@ -176,7 +176,7 @@ func (m monthView) view() string {
 			dot := eventDotStyle.Render("●")
 			t := eventTimeStyle.Render(timeStr)
 			title := eventTitleStyle.Render(e.Title)
-			b.WriteString(fmt.Sprintf("  %s %s %s\n", dot, t, title))
+			fmt.Fprintf(&b, "  %s %s %s\n", dot, t, title)
 		}
 		for _, t := range tds {
 			check := "○"
@@ -185,7 +185,7 @@ func (m monthView) view() string {
 			}
 			checkStyle := lipgloss.NewStyle().Foreground(DefaultTheme.Accent)
 			title := eventTitleStyle.Render(t.Summary)
-			b.WriteString(fmt.Sprintf("  %s %s %s\n", checkStyle.Render(check), eventTimeStyle.Render("todo"), title))
+			fmt.Fprintf(&b, "  %s %s %s\n", checkStyle.Render(check), eventTimeStyle.Render("todo"), title)
 		}
 	} else {
 		b.WriteString(lipgloss.NewStyle().Foreground(DefaultTheme.Muted).Render("  No events or todos"))

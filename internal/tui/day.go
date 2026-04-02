@@ -121,7 +121,7 @@ func (d dayView) view(dateLabel string) string {
 				e.EndTime.Local().Format("15:04"))
 			t := eventTimeStyle.Render(timeRange)
 			title := eventTitleStyle.Render(e.Title)
-			b.WriteString(fmt.Sprintf("%s%s %s %s\n", prefix, dot, t, title))
+			fmt.Fprintf(&b, "%s%s %s %s\n", prefix, dot, t, title)
 			idx++
 		}
 	}
@@ -146,7 +146,7 @@ func (d dayView) view(dateLabel string) string {
 			}
 			checkStyle := lipgloss.NewStyle().Foreground(checkColor)
 			title := eventTitleStyle.Render(t.Summary)
-			b.WriteString(fmt.Sprintf("%s%s %s\n", prefix, checkStyle.Render(check), title))
+			fmt.Fprintf(&b, "%s%s %s\n", prefix, checkStyle.Render(check), title)
 			idx++
 		}
 	}

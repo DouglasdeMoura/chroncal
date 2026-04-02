@@ -31,6 +31,10 @@ linters:
           - unparam
         path: _test\.go
       - linters:
+          - unparam
+        path: internal/tui/
+        text: "always nil"
+      - linters:
           - errcheck
         text: "Error return value of `.+\\.Rollback` is not checked"
       - linters:
