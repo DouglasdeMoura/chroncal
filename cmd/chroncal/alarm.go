@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -16,6 +17,23 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/notify"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 )
+
+// parseStateID parses a state ID string that may be prefixed with "t" for todo alarms.
+// Returns the numeric ID and whether it's a todo alarm.
+func parseStateID(s string) (int64, bool, error) {
+	if strings.HasPrefix(s, "t") || strings.HasPrefix(s, "T") {
+		id, err := strconv.ParseInt(s[1:], 10, 64)
+		if err != nil {
+			return 0, false, fmt.Errorf("invalid todo state ID %q", s)
+		}
+		return id, true, nil
+	}
+	id, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, false, fmt.Errorf("invalid state ID %q (use 't<N>' for todo alarms)", s)
+	}
+	return id, false, nil
+}
 
 // fireAlarm dispatches the notification for a due alarm.
 // EMAIL and AUDIO fall back to DISPLAY on failure.
@@ -248,17 +266,15 @@ Alarms enter this list when "chroncal alarm check" (or "chroncal alarm daemon")
 detects that an alarm's trigger time has passed and fires a notification.
 Once fired, an alarm stays in the pending list until you dismiss it.
 
-Text output columns:
-  [ID]  TRIGGER_TIME  ACTION  EVENT_TITLE  (snoozed to HH:MM)
+Both event and todo alarms are shown. Todo alarm IDs are prefixed with "t"
+(e.g. [t3]) to distinguish them from event alarm IDs (e.g. [3]). Use the
+prefixed form with "alarm dismiss" and "alarm snooze".
 
-  ID           — state ID, used with "alarm dismiss" and "alarm snooze"
-  TRIGGER_TIME — when the alarm fired (local time)
-  ACTION       — DISPLAY, EMAIL, or AUDIO
-  EVENT_TITLE  — the event this alarm belongs to
-  snoozed      — shown only for snoozed alarms, with the snooze-until time
+Text output columns:
+  [ID]  TRIGGER_TIME  ACTION  TITLE  (snoozed to HH:MM)
 
 JSON output fields (-o json):
-  id, alarm_id, event_id, event, action, trigger_at, fired_at, snoozed_to
+  id, type, alarm_id, event_id/todo_id, title, action, trigger_at, fired_at, snoozed_to
 
 Dismissed alarms are permanently removed from this list.`,
 		Example: `  # List pending alarms
@@ -270,7 +286,8 @@ Dismissed alarms are permanently removed from this list.`,
   # Typical workflow: check for due alarms, review, then act
   chroncal alarm check          # fire any due alarms
   chroncal alarm list           # see what fired
-  chroncal alarm dismiss 5      # clear alarm state #5
+  chroncal alarm dismiss 5      # clear event alarm state #5
+  chroncal alarm dismiss t3     # clear todo alarm state #3
   chroncal alarm snooze 3       # remind again in 15 minutes`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
@@ -284,25 +301,34 @@ Dismissed alarms are permanently removed from this list.`,
 			if err != nil {
 				return fmt.Errorf("list pending alarms: %w", err)
 			}
+			pendingTodos, err := a.Alarms.ListPendingTodoAlarms(ctx)
+			if err != nil {
+				return fmt.Errorf("list pending todo alarms: %w", err)
+			}
 
 			w := cmd.OutOrStdout()
 
-			if len(pending) == 0 {
+			if len(pending) == 0 && len(pendingTodos) == 0 {
 				if outputFmt != "text" {
 					return printOutput(w, []any{})
 				}
 				return nil
 			}
 
-			// Enrich each state with event title and alarm action.
+			// Enrich each event alarm state with title and action.
 			type pendingInfo struct {
+				ID     string // display ID: "3" or "t3"
 				State  storage.AlarmState
 				Title  string
 				Action string
 			}
 			var enriched []pendingInfo
 			for _, s := range pending {
-				info := pendingInfo{State: s, Title: fmt.Sprintf("event#%d", s.EventID)}
+				info := pendingInfo{
+					ID:    fmt.Sprintf("%d", s.ID),
+					State: s,
+					Title: fmt.Sprintf("event#%d", s.EventID),
+				}
 				if evt, err := a.Events.Get(ctx, s.EventID); err == nil {
 					info.Title = evt.Title
 					if alarms, err := a.Events.ListAlarms(ctx, evt.ID); err == nil {
@@ -317,14 +343,56 @@ Dismissed alarms are permanently removed from this list.`,
 				enriched = append(enriched, info)
 			}
 
+			// Enrich each todo alarm state.
+			type pendingTodoInfo struct {
+				ID    string // display ID: "t3"
+				State storage.TodoAlarmState
+				Title string
+				Action string
+			}
+			var enrichedTodos []pendingTodoInfo
+			for _, s := range pendingTodos {
+				info := pendingTodoInfo{
+					ID:    fmt.Sprintf("t%d", s.ID),
+					State: s,
+					Title: fmt.Sprintf("todo#%d", s.TodoID),
+				}
+				if td, err := a.Todos.Get(ctx, s.TodoID); err == nil {
+					info.Title = td.Summary
+					if alarms, err := a.Todos.ListAlarms(ctx, td.ID); err == nil {
+						for _, al := range alarms {
+							if al.ID == s.AlarmID {
+								info.Action = al.Action
+								break
+							}
+						}
+					}
+				}
+				enrichedTodos = append(enrichedTodos, info)
+			}
+
 			if outputFmt != "text" {
 				var items []map[string]any
 				for _, p := range enriched {
 					items = append(items, map[string]any{
-						"id":         p.State.ID,
+						"id":         p.ID,
+						"type":       "event",
 						"alarm_id":   p.State.AlarmID,
 						"event_id":   p.State.EventID,
-						"event":      p.Title,
+						"title":      p.Title,
+						"action":     p.Action,
+						"trigger_at": p.State.TriggerAt,
+						"fired_at":   storage.NullableToString(p.State.FiredAt),
+						"snoozed_to": storage.NullableToString(p.State.SnoozedTo),
+					})
+				}
+				for _, p := range enrichedTodos {
+					items = append(items, map[string]any{
+						"id":         p.ID,
+						"type":       "todo",
+						"alarm_id":   p.State.AlarmID,
+						"todo_id":    p.State.TodoID,
+						"title":      p.Title,
 						"action":     p.Action,
 						"trigger_at": p.State.TriggerAt,
 						"fired_at":   storage.NullableToString(p.State.FiredAt),
@@ -347,8 +415,24 @@ Dismissed alarms are permanently removed from this list.`,
 					}
 					snoozed = fmt.Sprintf(" (snoozed to %s)", snz)
 				}
-				fmt.Fprintf(w, "  [%d] %s\t%s\t%s%s\n",
-					p.State.ID, triggerLocal, p.Action, p.Title, snoozed)
+				fmt.Fprintf(w, "  [%s] %s\t%s\t%s%s\n",
+					p.ID, triggerLocal, p.Action, p.Title, snoozed)
+			}
+			for _, p := range enrichedTodos {
+				triggerLocal := p.State.TriggerAt
+				if t, err := time.Parse(time.RFC3339, p.State.TriggerAt); err == nil {
+					triggerLocal = t.Local().Format("2006-01-02 15:04")
+				}
+				snoozed := ""
+				if p.State.SnoozedTo != nil {
+					snz := *p.State.SnoozedTo
+					if t, err := time.Parse(time.RFC3339, snz); err == nil {
+						snz = t.Local().Format("15:04")
+					}
+					snoozed = fmt.Sprintf(" (snoozed to %s)", snz)
+				}
+				fmt.Fprintf(w, "  [%s] %s\t%s\t%s (todo)%s\n",
+					p.ID, triggerLocal, p.Action, p.Title, snoozed)
 			}
 			return nil
 		},
@@ -365,9 +449,14 @@ func alarmDismissCmd() *cobra.Command {
 The state ID is shown in the output of "alarm list" (the number in
 brackets). Dismissing an alarm marks it as acknowledged and is
 permanent; use "alarm snooze" instead if you want to be reminded again
-later.`,
-		Example: `  # Dismiss alarm state #5
-  chroncal alarm dismiss 5`,
+later.
+
+For todo alarms, use the "t" prefix shown in "alarm list" (e.g. t3).`,
+		Example: `  # Dismiss event alarm state #5
+  chroncal alarm dismiss 5
+
+  # Dismiss todo alarm state #3
+  chroncal alarm dismiss t3`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
@@ -376,20 +465,28 @@ later.`,
 			}
 			defer a.Close()
 
-			stateID, err := strconv.ParseInt(args[0], 10, 64)
+			stateID, isTodo, err := parseStateID(args[0])
 			if err != nil {
-				return fmt.Errorf("invalid state ID: %w", err)
+				return err
 			}
 
-			if err := a.Alarms.Dismiss(context.Background(), stateID); err != nil {
-				return fmt.Errorf("dismiss alarm: %w", err)
+			ctx := context.Background()
+			if isTodo {
+				if err := a.Alarms.DismissTodoAlarm(ctx, stateID); err != nil {
+					return fmt.Errorf("dismiss todo alarm: %w", err)
+				}
+			} else {
+				if err := a.Alarms.Dismiss(ctx, stateID); err != nil {
+					return fmt.Errorf("dismiss alarm: %w", err)
+				}
 			}
 
+			displayID := args[0]
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
-				return printOutput(w, map[string]any{"dismissed": true, "id": stateID})
+				return printOutput(w, map[string]any{"dismissed": true, "id": displayID})
 			}
-			fmt.Fprintf(w, "Dismissed alarm state %d.\n", stateID)
+			fmt.Fprintf(w, "Dismissed alarm state %s.\n", displayID)
 			return nil
 		},
 	}
@@ -405,15 +502,16 @@ func alarmSnoozeCmd() *cobra.Command {
 		Long: `Postpone a fired alarm so it can fire again after a delay.
 
 The state ID is shown in the output of "alarm list" (the number in
-brackets, e.g. [5]). Only fired, non-dismissed alarms can be snoozed.
+brackets, e.g. [5] or [t5]). Only fired, non-dismissed alarms can be
+snoozed. For todo alarms, use the "t" prefix (e.g. t5).
 
-The snooze time is bounded by the event timeline: if the requested
-duration would place the reminder after the event ends, it is
-automatically capped to the event's end time. A warning is shown if
-the reminder will fire after the event has already started. If the
-event has already ended, the snooze is rejected.
+For event alarms, the snooze time is bounded by the event timeline: if
+the requested duration would place the reminder after the event ends,
+it is automatically capped to the event's end time. If the event has
+already ended, the snooze is rejected.
 
-Use --until-start to snooze until the moment the event begins.
+Use --until-start to snooze until the moment the event begins (event
+alarms only; not supported for todo alarms).
 
 The alarm remains in the pending list (shown by "alarm list") with the
 snooze-until time recorded. When "alarm check" runs after the snooze
@@ -425,10 +523,10 @@ Exporting and re-importing a calendar will not preserve snooze times.`,
 		Example: `  # Snooze for the default 15 minutes
   chroncal alarm snooze 5
 
-  # Snooze for 1 hour
-  chroncal alarm snooze 5 --for 1h
+  # Snooze a todo alarm for 1 hour
+  chroncal alarm snooze t3 --for 1h
 
-  # Snooze until the event starts
+  # Snooze until the event starts (event alarms only)
   chroncal alarm snooze 5 --until-start
 
   # Snooze and get JSON output (for scripting)
@@ -444,15 +542,44 @@ Exporting and re-importing a calendar will not preserve snooze times.`,
 			}
 			defer a.Close()
 
-			stateID, err := strconv.ParseInt(args[0], 10, 64)
+			stateID, isTodo, err := parseStateID(args[0])
 			if err != nil {
-				return fmt.Errorf("invalid state ID: %w", err)
+				return err
 			}
 
 			ctx := context.Background()
 			w := cmd.OutOrStdout()
-
 			now := time.Now()
+			displayID := args[0]
+
+			// Todo alarm snooze: simple duration-based, no event bounds.
+			if isTodo {
+				if untilStart {
+					return fmt.Errorf("--until-start is not supported for todo alarms")
+				}
+				dur, err := time.ParseDuration(forDur)
+				if err != nil {
+					return fmt.Errorf("parse --for duration: %w", err)
+				}
+				if dur <= 0 {
+					return fmt.Errorf("snooze duration must be positive (e.g. 5m, 1h)")
+				}
+				until := now.Add(dur)
+				if err := a.Alarms.SnoozeTodoAlarm(ctx, stateID, until); err != nil {
+					return fmt.Errorf("snooze todo alarm: %w", err)
+				}
+				if outputFmt != "text" {
+					return printOutput(w, map[string]any{
+						"snoozed": true,
+						"id":      displayID,
+						"until":   until.UTC().Format(time.RFC3339),
+					})
+				}
+				fmt.Fprintf(w, "Snoozed todo alarm state %s until %s.\n", displayID, until.Local().Format("15:04"))
+				return nil
+			}
+
+			// Event alarm snooze: bounded by event timeline.
 			var res alarm.SnoozeResult
 			if untilStart {
 				res, err = a.Alarms.SnoozeUntilStart(ctx, stateID, now)
@@ -480,7 +607,7 @@ Exporting and re-importing a calendar will not preserve snooze times.`,
 			if outputFmt != "text" {
 				return printOutput(w, map[string]any{
 					"snoozed":    true,
-					"id":         stateID,
+					"id":         displayID,
 					"until":      res.Until.UTC().Format(time.RFC3339),
 					"capped":     res.Capped,
 					"past_start": res.PastStart,
@@ -494,12 +621,12 @@ Exporting and re-importing a calendar will not preserve snooze times.`,
 				fmt.Fprintf(os.Stderr, "chroncal: note: alarm will fire after event starts (%s)\n",
 					res.EventStart.Local().Format("15:04"))
 			}
-			fmt.Fprintf(w, "Snoozed alarm state %d until %s.\n", stateID, res.Until.Local().Format("15:04"))
+			fmt.Fprintf(w, "Snoozed alarm state %s until %s.\n", displayID, res.Until.Local().Format("15:04"))
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&forDur, "for", "15m", "snooze duration (e.g. 15m, 1h)")
-	cmd.Flags().BoolVar(&untilStart, "until-start", false, "snooze until the event starts")
+	cmd.Flags().BoolVar(&untilStart, "until-start", false, "snooze until the event starts (event alarms only)")
 	cmd.MarkFlagsMutuallyExclusive("for", "until-start")
 	return cmd
 }
