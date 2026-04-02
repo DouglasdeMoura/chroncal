@@ -117,28 +117,6 @@ func parseUTCOffset(s string) (int, error) {
 	return sign * (hours*3600 + minutes*60), nil
 }
 
-// resolveTZID resolves a TZID string to a valid IANA name using the VTIMEZONE
-// map, the Windows-to-IANA table, and time.LoadLocation as a final fallback.
-// Returns the original TZID and false if resolution fails.
-func resolveTZID(tzid string, tzMap map[string]*time.Location) (string, bool) {
-	if tzid == "" {
-		return "", false
-	}
-	// Already a valid IANA name?
-	if _, err := time.LoadLocation(tzid); err == nil {
-		return tzid, true
-	}
-	// In VTIMEZONE map?
-	if _, ok := tzMap[tzid]; ok {
-		return tzid, true
-	}
-	// Windows alias?
-	if iana, ok := windowsToIANA[tzid]; ok {
-		return iana, true
-	}
-	return tzid, false
-}
-
 // resolveComponentTZIDs rewrites TZID parameters on datetime properties
 // (DTSTART, DTEND, DUE) so that non-IANA TZIDs are replaced with their
 // IANA equivalents. This allows go-ical's DateTime() to resolve them via

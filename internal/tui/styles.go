@@ -50,11 +50,6 @@ var (
 	subtitleStyle = lipgloss.NewStyle().
 			Foreground(DefaultTheme.TextDim)
 
-	headerStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(DefaultTheme.Text).
-			PaddingBottom(1)
-
 	dayHeaderStyle = lipgloss.NewStyle().
 			Foreground(DefaultTheme.TextDim).
 			Width(4).

@@ -50,11 +50,6 @@ func (s *sidebar) prev() {
 	}
 }
 
-func (s *sidebar) isVisible(calID int64) bool {
-	vis, ok := s.visible[calID]
-	return !ok || vis
-}
-
 func (s sidebar) view(width int) string {
 	var b strings.Builder
 
