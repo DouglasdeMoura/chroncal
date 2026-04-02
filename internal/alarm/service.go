@@ -300,15 +300,15 @@ func computeTriggerTimeForInstance(expEvt recurrence.ExpandedEvent, alarm model.
 		}
 		// Convert to event's named timezone so that day-level arithmetic
 		// (P1D, P1W) handles DST transitions correctly.
-		if expEvt.Event.Timezone != "" {
-			if loc, err := time.LoadLocation(expEvt.Event.Timezone); err == nil {
+		if expEvt.Timezone != "" {
+			if loc, err := time.LoadLocation(expEvt.Timezone); err == nil {
 				anchor = anchor.In(loc)
 			}
 		}
 		return duration.Add(anchor, trigger), nil
 	}
 
-	return parseAbsoluteTrigger(trigger, expEvt.Event.Timezone)
+	return parseAbsoluteTrigger(trigger, expEvt.Timezone)
 }
 
 // parseAbsoluteTrigger parses an absolute trigger value (iCal UTC, floating, or RFC 3339).

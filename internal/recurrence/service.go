@@ -221,7 +221,7 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 	if !o.skipCategories && len(results) > 0 {
 		ids := make([]int64, len(results))
 		for i := range results {
-			ids[i] = results[i].Event.ID
+			ids[i] = results[i].ID
 		}
 		cats, err := s.q.ListCategoriesByEventIDs(ctx, ids)
 		if err == nil {
@@ -230,8 +230,8 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 				catMap[c.EventID] = append(catMap[c.EventID], c.Category)
 			}
 			for i := range results {
-				if c, ok := catMap[results[i].Event.ID]; ok {
-					results[i].Event.Categories = strings.Join(c, ",")
+				if c, ok := catMap[results[i].ID]; ok {
+					results[i].Categories = strings.Join(c, ",")
 				}
 			}
 		}
