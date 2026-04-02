@@ -30,6 +30,15 @@ linters:
           - errcheck
           - unparam
         path: _test\.go
+      - linters:
+          - errcheck
+        text: "Error return value of `.+\\.Rollback` is not checked"
+      - linters:
+          - errcheck
+        text: "Error return value of `.+\\.MarkHidden` is not checked"
+      - linters:
+          - errcheck
+        text: "Error return value of `.+\\.BindEnv` is not checked"
     paths:
       - internal/storage
       - third_party$

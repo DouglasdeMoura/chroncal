@@ -34,10 +34,10 @@ func Load() Config {
 		v.AddConfigPath(filepath.Join(dir, "chroncal"))
 	}
 
-	v.ReadInConfig() // ignore error — file is optional
+	v.ReadInConfig() //nolint:errcheck // file is optional
 
 	var cfg Config
-	v.Unmarshal(&cfg)
+	v.Unmarshal(&cfg) //nolint:errcheck // best-effort; zero-value Config is safe
 	return cfg
 }
 

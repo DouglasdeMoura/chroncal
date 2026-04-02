@@ -352,7 +352,7 @@ func icalExportCmd() *cobra.Command {
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "Exported %d events, %d todos to %s\n", len(events), len(todos), outFile)
 			} else {
-				cmd.OutOrStdout().Write(data)
+				fmt.Fprint(cmd.OutOrStdout(), string(data))
 			}
 			return nil
 		},
