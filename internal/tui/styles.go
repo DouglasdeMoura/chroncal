@@ -1,31 +1,40 @@
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"image/color"
 
+	lipgloss "charm.land/lipgloss/v2"
+)
+
+// Theme holds resolved colors for the current terminal background.
 type Theme struct {
-	Primary   lipgloss.AdaptiveColor
-	Secondary lipgloss.AdaptiveColor
-	Accent    lipgloss.AdaptiveColor
-	Muted     lipgloss.AdaptiveColor
-	Text      lipgloss.AdaptiveColor
-	TextDim   lipgloss.AdaptiveColor
-	Border    lipgloss.AdaptiveColor
-	Today     lipgloss.AdaptiveColor
-	Selected  lipgloss.AdaptiveColor
-	Surface   lipgloss.AdaptiveColor
-	Error     lipgloss.AdaptiveColor
+	Primary   color.Color
+	Secondary color.Color
+	Accent    color.Color
+	Muted     color.Color
+	Text      color.Color
+	TextDim   color.Color
+	Border    color.Color
+	Today     color.Color
+	Selected  color.Color
+	Surface   color.Color
+	Error     color.Color
 }
 
-var DefaultTheme = Theme{
-	Primary:   lipgloss.AdaptiveColor{Light: "#7C3AED", Dark: "#A78BFA"},
-	Secondary: lipgloss.AdaptiveColor{Light: "#0284C7", Dark: "#38BDF8"},
-	Accent:    lipgloss.AdaptiveColor{Light: "#059669", Dark: "#34D399"},
-	Muted:     lipgloss.AdaptiveColor{Light: "#9CA3AF", Dark: "#6B7280"},
-	Text:      lipgloss.AdaptiveColor{Light: "#1F2937", Dark: "#F9FAFB"},
-	TextDim:   lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#9CA3AF"},
-	Border:    lipgloss.AdaptiveColor{Light: "#D1D5DB", Dark: "#374151"},
-	Today:     lipgloss.AdaptiveColor{Light: "#DC2626", Dark: "#F87171"},
-	Selected:  lipgloss.AdaptiveColor{Light: "#EDE9FE", Dark: "#312E81"},
-	Surface:   lipgloss.AdaptiveColor{Light: "#F9FAFB", Dark: "#111827"},
-	Error:     lipgloss.AdaptiveColor{Light: "#DC2626", Dark: "#F87171"},
+// NewTheme returns a Theme with colors resolved for light or dark backgrounds.
+func NewTheme(hasDarkBG bool) Theme {
+	ld := lipgloss.LightDark(hasDarkBG)
+	return Theme{
+		Primary:   ld(lipgloss.Color("#7C3AED"), lipgloss.Color("#A78BFA")),
+		Secondary: ld(lipgloss.Color("#0284C7"), lipgloss.Color("#38BDF8")),
+		Accent:    ld(lipgloss.Color("#059669"), lipgloss.Color("#34D399")),
+		Muted:     ld(lipgloss.Color("#9CA3AF"), lipgloss.Color("#6B7280")),
+		Text:      ld(lipgloss.Color("#1F2937"), lipgloss.Color("#F9FAFB")),
+		TextDim:   ld(lipgloss.Color("#6B7280"), lipgloss.Color("#9CA3AF")),
+		Border:    ld(lipgloss.Color("#D1D5DB"), lipgloss.Color("#374151")),
+		Today:     ld(lipgloss.Color("#DC2626"), lipgloss.Color("#F87171")),
+		Selected:  ld(lipgloss.Color("#EDE9FE"), lipgloss.Color("#312E81")),
+		Surface:   ld(lipgloss.Color("#F9FAFB"), lipgloss.Color("#111827")),
+		Error:     ld(lipgloss.Color("#DC2626"), lipgloss.Color("#F87171")),
+	}
 }
