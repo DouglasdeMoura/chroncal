@@ -1,5 +1,11 @@
 # chroncal
 
+[![CI](https://github.com/DouglasdeMoura/chroncal/actions/workflows/ci.yml/badge.svg)](https://github.com/DouglasdeMoura/chroncal/actions/workflows/ci.yml)
+[![Release](https://github.com/DouglasdeMoura/chroncal/actions/workflows/release.yml/badge.svg)](https://github.com/DouglasdeMoura/chroncal/actions/workflows/release.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/douglasdemoura/chroncal.svg)](https://pkg.go.dev/github.com/douglasdemoura/chroncal)
+[![Go Report Card](https://goreportcard.com/badge/github.com/douglasdemoura/chroncal)](https://goreportcard.com/report/github.com/douglasdemoura/chroncal)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 A terminal calendar backed by SQLite with full iCal import/export. Launch the TUI for an interactive calendar, or use the CLI for scriptable access to events, todos, alarms, and calendars.
 
 Built for people who live in the terminal and want their calendar data local, portable, and standards-compliant.
@@ -202,6 +208,15 @@ Import from Google Calendar, Apple Calendar, Thunderbird, or any RFC 5545-compli
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and code conventions.
+
+## Links
+
+- [GitHub Repository](https://github.com/DouglasdeMoura/chroncal)
+- [Go Package Reference](https://pkg.go.dev/github.com/douglasdemoura/chroncal)
+- [Issue Tracker](https://github.com/DouglasdeMoura/chroncal/issues)
+- [Releases](https://github.com/DouglasdeMoura/chroncal/releases)
+- [Contributing Guide](CONTRIBUTING.md)
+- [Security Policy](SECURITY.md)
 
 ## License
 
