@@ -170,7 +170,7 @@ func (a agendaView) view() string {
 				timeStr = eventTimeStyle.Render(e.StartTime.Local().Format("15:04"))
 			}
 			title := eventTitleStyle.Render(e.Title)
-			b.WriteString(fmt.Sprintf("%s%s %s %s\n", prefix, dot, timeStr, title))
+			fmt.Fprintf(&b, "%s%s %s %s\n", prefix, dot, timeStr, title)
 		} else if item.todo != nil {
 			t := item.todo
 			check := "○"
@@ -183,7 +183,7 @@ func (a agendaView) view() string {
 			}
 			checkStyle := lipgloss.NewStyle().Foreground(checkColor)
 			title := eventTitleStyle.Render(t.Summary)
-			b.WriteString(fmt.Sprintf("%s%s %s %s\n", prefix, checkStyle.Render(check), eventTimeStyle.Render("todo"), title))
+			fmt.Fprintf(&b, "%s%s %s %s\n", prefix, checkStyle.Render(check), eventTimeStyle.Render("todo"), title)
 		}
 	}
 

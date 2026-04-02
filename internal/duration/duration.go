@@ -42,10 +42,11 @@ func parse(s string) (parsed, error) {
 
 	r := s
 	var p parsed
-	if r[0] == '-' {
+	switch r[0] {
+	case '-':
 		p.neg = true
 		r = r[1:]
-	} else if r[0] == '+' {
+	case '+':
 		r = r[1:]
 	}
 

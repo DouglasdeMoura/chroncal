@@ -101,7 +101,7 @@ func (d dayView) view(dateLabel string) string {
 			}
 			dot := eventDotStyle.Render("●")
 			title := eventTitleStyle.Render(e.Title)
-			b.WriteString(fmt.Sprintf("%s%s %s\n", prefix, dot, title))
+			fmt.Fprintf(&b, "%s%s %s\n", prefix, dot, title)
 			idx++
 		}
 		b.WriteString("\n")
