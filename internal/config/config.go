@@ -65,10 +65,12 @@ func newViper() *viper.Viper {
 }
 
 func configDir() (string, error) {
+	// Honour XDG_CONFIG_HOME on every OS. Many CLI tools do this so users
+	// on macOS/Windows can override the default config location.
+	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
+		return dir, nil
+	}
 	if runtime.GOOS == "linux" {
-		if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
-			return dir, nil
-		}
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return "", err
