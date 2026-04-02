@@ -1,16 +1,11 @@
+version: "2"
 linters:
   enable:
-    - errcheck
-    - gosimple
-    - govet
-    - ineffassign
-    - staticcheck
-    - unused
     - bodyclose
+    - copyloopvar
     - durationcheck
     - errorlint
     - exhaustive
-    - copyloopvar
     - makezero
     - nilerr
     - noctx
@@ -20,16 +15,30 @@ linters:
     - unconvert
     - unparam
     - wastedassign
-
-linters-settings:
-  exhaustive:
-    default-signifies-exhaustive: true
-
-issues:
-  exclude-dirs:
-    - internal/storage # sqlc-generated code
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - errcheck
-        - unparam
+  settings:
+    exhaustive:
+      default-signifies-exhaustive: true
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - errcheck
+          - unparam
+        path: _test\.go
+    paths:
+      - internal/storage
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
