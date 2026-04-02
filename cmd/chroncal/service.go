@@ -218,9 +218,9 @@ func serviceUninstallCmd() *cobra.Command {
 
 			switch runtime.GOOS {
 			case "linux":
-				return uninstallLinuxService(w)
+				return uninstallLinuxService(cmd.Context(), w)
 			case "darwin":
-				return uninstallDarwinService(w)
+				return uninstallDarwinService(cmd.Context(), w)
 			default:
 				fmt.Fprintf(w, "No native service integration for %s.\n", runtime.GOOS)
 				return nil
@@ -230,7 +230,7 @@ func serviceUninstallCmd() *cobra.Command {
 	return cmd
 }
 
-func uninstallLinuxService(w interface{ Write([]byte) (int, error) }) error {
+func uninstallLinuxService(ctx context.Context, w interface{ Write([]byte) (int, error) }) error {
 	dir, err := systemdUserDir()
 	if err != nil {
 		return fmt.Errorf("resolve systemd user dir: %w", err)
@@ -239,7 +239,7 @@ func uninstallLinuxService(w interface{ Write([]byte) (int, error) }) error {
 	timerPath := filepath.Join(dir, "chroncal-alarm.timer")
 
 	// Stop and disable timer (best-effort).
-	_ = exec.Command("systemctl", "--user", "disable", "--now", "chroncal-alarm.timer").Run()
+	_ = exec.CommandContext(ctx, "systemctl", "--user", "disable", "--now", "chroncal-alarm.timer").Run()
 	fmt.Fprintln(w, "Disabled chroncal-alarm.timer.")
 
 	if err := os.Remove(timerPath); err != nil && !os.IsNotExist(err) {
@@ -252,12 +252,12 @@ func uninstallLinuxService(w interface{ Write([]byte) (int, error) }) error {
 	}
 	fmt.Fprintf(w, "Removed %s\n", servicePath)
 
-	_ = exec.Command("systemctl", "--user", "daemon-reload").Run()
+	_ = exec.CommandContext(ctx, "systemctl", "--user", "daemon-reload").Run()
 	fmt.Fprintln(w, "Reloaded systemd user daemon.")
 	return nil
 }
 
-func uninstallDarwinService(w interface{ Write([]byte) (int, error) }) error {
+func uninstallDarwinService(ctx context.Context, w interface{ Write([]byte) (int, error) }) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("get home dir: %w", err)
@@ -266,7 +266,7 @@ func uninstallDarwinService(w interface{ Write([]byte) (int, error) }) error {
 	plistPath := filepath.Join(home, "Library", "LaunchAgents", "com.chroncal.alarm.plist")
 
 	// Unload (best-effort).
-	_ = exec.Command("launchctl", "unload", plistPath).Run()
+	_ = exec.CommandContext(ctx, "launchctl", "unload", plistPath).Run()
 	fmt.Fprintln(w, "Unloaded com.chroncal.alarm agent.")
 
 	if err := os.Remove(plistPath); err != nil && !os.IsNotExist(err) {
@@ -285,7 +285,7 @@ func serviceStatusCmd() *cobra.Command {
 
 			switch runtime.GOOS {
 			case "linux":
-				out, err := exec.Command("systemctl", "--user", "status", "chroncal-alarm.timer").CombinedOutput()
+				out, err := exec.CommandContext(cmd.Context(), "systemctl", "--user", "status", "chroncal-alarm.timer").CombinedOutput()
 				if len(out) > 0 {
 					fmt.Fprint(w, string(out))
 				}
@@ -298,7 +298,7 @@ func serviceStatusCmd() *cobra.Command {
 				}
 				return nil
 			case "darwin":
-				out, err := exec.Command("launchctl", "list", "com.chroncal.alarm").CombinedOutput()
+				out, err := exec.CommandContext(cmd.Context(), "launchctl", "list", "com.chroncal.alarm").CombinedOutput()
 				if len(out) > 0 {
 					fmt.Fprint(w, string(out))
 				}

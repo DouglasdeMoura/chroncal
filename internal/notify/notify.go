@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"context"
 	"fmt"
 	"net/smtp"
 	"os"
@@ -93,14 +94,15 @@ const (
 
 // playAudio plays an audio file using the platform's native player.
 func playAudio(path string) error {
+	ctx := context.TODO()
 	switch runtime.GOOS {
 	case "linux":
-		if err := exec.Command("paplay", path).Run(); err == nil {
+		if err := exec.CommandContext(ctx, "paplay", path).Run(); err == nil {
 			return nil
 		}
-		return exec.Command("aplay", path).Run()
+		return exec.CommandContext(ctx, "aplay", path).Run()
 	case "darwin":
-		return exec.Command("afplay", path).Run()
+		return exec.CommandContext(ctx, "afplay", path).Run()
 	default:
 		return fmt.Errorf("unsupported platform for audio playback")
 	}
