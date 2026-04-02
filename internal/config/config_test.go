@@ -53,7 +53,8 @@ func TestConfig_EnvOverridesFile(t *testing.T) {
 
 func TestLoad_SMTPFromFile(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
+	configDir := filepath.Join(dir, "chroncal")
+	os.MkdirAll(configDir, 0o755)
 
 	content := `db = "/tmp/test.db"
 
@@ -64,8 +65,9 @@ username = "user@example.com"
 password = "secret123"
 from = "noreply@example.com"
 `
-	os.WriteFile(path, []byte(content), 0o644)
+	os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(content), 0o644)
 
+	t.Setenv("XDG_CONFIG_HOME", dir)
 	// Clear SMTP env vars so they don't interfere
 	t.Setenv("CHRONCAL_SMTP_HOST", "")
 	t.Setenv("CHRONCAL_SMTP_PORT", "")
@@ -73,7 +75,7 @@ from = "noreply@example.com"
 	t.Setenv("CHRONCAL_SMTP_PASSWORD", "")
 	t.Setenv("CHRONCAL_SMTP_FROM", "")
 
-	cfg := LoadFile(path)
+	cfg := Load()
 
 	if cfg.SMTP.Host != "smtp.example.com" {
 		t.Errorf("SMTP.Host = %q, want %q", cfg.SMTP.Host, "smtp.example.com")
@@ -94,12 +96,14 @@ from = "noreply@example.com"
 
 func TestLoad_NerdFontsFromFile(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
-	os.WriteFile(path, []byte(`nerd_fonts = true`), 0o644)
+	configDir := filepath.Join(dir, "chroncal")
+	os.MkdirAll(configDir, 0o755)
+	os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(`nerd_fonts = true`), 0o644)
 
+	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("CHRONCAL_NERD_FONTS", "")
 
-	cfg := LoadFile(path)
+	cfg := Load()
 	if !cfg.NerdFonts {
 		t.Error("NerdFonts = false, want true")
 	}
@@ -126,19 +130,21 @@ func TestLoad_NerdFontsDefault(t *testing.T) {
 
 func TestLoad_SMTPFromEnv(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
+	configDir := filepath.Join(dir, "chroncal")
+	os.MkdirAll(configDir, 0o755)
 
 	// Write a file with different SMTP values to verify env overrides
 	content := `[smtp]
 host = "file-host.example.com"
 port = 25
 `
-	os.WriteFile(path, []byte(content), 0o644)
+	os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(content), 0o644)
 
+	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("CHRONCAL_SMTP_HOST", "env-host.example.com")
 	t.Setenv("CHRONCAL_SMTP_PORT", "465")
 
-	cfg := LoadFile(path)
+	cfg := Load()
 
 	if cfg.SMTP.Host != "env-host.example.com" {
 		t.Errorf("SMTP.Host = %q, want %q (env should override file)", cfg.SMTP.Host, "env-host.example.com")

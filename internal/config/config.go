@@ -41,17 +41,6 @@ func Load() Config {
 	return cfg
 }
 
-// LoadFile reads configuration from a specific file path, then applies env overrides.
-func LoadFile(path string) Config {
-	v := newViper()
-	v.SetConfigFile(path)
-	v.ReadInConfig()
-
-	var cfg Config
-	v.Unmarshal(&cfg)
-	return cfg
-}
-
 // newViper creates a pre-configured Viper instance with CHRONCAL_ env prefix
 // and bindings for all known config keys.
 func newViper() *viper.Viper {
