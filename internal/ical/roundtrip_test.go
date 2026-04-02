@@ -1508,7 +1508,6 @@ func TestRoundtrip_TodoAlarmAcknowledged(t *testing.T) {
 }
 
 func TestExport_ProductID(t *testing.T) {
-	t.Parallel()
 	original := ProductID
 	defer func() { ProductID = original }()
 
