@@ -1049,7 +1049,7 @@ func parseRelationFlags(flags []string) ([]model.Relation, error) {
 //   - An email address: "user@example.com"
 //   - "Name <email>": "Alice <alice@example.com>"
 func parseAttendeeFlags(flags []string) []model.Attendee {
-	var out []model.Attendee
+	out := make([]model.Attendee, 0, len(flags))
 	for _, val := range flags {
 		var name, email string
 		if idx := strings.Index(val, "<"); idx >= 0 {

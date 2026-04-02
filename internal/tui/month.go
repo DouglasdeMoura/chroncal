@@ -87,7 +87,7 @@ func (m monthView) view() string {
 	b.WriteString("\n\n")
 
 	days := []string{"Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"}
-	var dayHeaders []string
+	dayHeaders := make([]string, 0, len(days))
 	for _, d := range days {
 		dayHeaders = append(dayHeaders, dayHeaderStyle.Render(d))
 	}

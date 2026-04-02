@@ -18,7 +18,7 @@ func renderStatusBar(viewName string, width int) string {
 		{"q", "quit"},
 	}
 
-	var parts []string
+	parts := make([]string, 0, len(helpItems))
 	for _, h := range helpItems {
 		parts = append(parts,
 			helpKeyStyle.Render(h.key)+helpDescStyle.Render(" "+h.desc))
