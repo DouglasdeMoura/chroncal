@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
+	"errors"
 	"io"
 	"strconv"
 	"strings"
@@ -36,7 +37,7 @@ func ImportFile(r io.Reader) (ImportResult, error) {
 
 	for {
 		cal, err := dec.Decode()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

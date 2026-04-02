@@ -2,6 +2,7 @@ package todo
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -301,7 +302,7 @@ func TestDelete_MasterWithOverridesRefused(t *testing.T) {
 
 	master, _ := svc.GetByUID(ctx, "del-master")
 	err := svc.Delete(ctx, master.ID)
-	if err != ErrHasOverrides {
+	if !errors.Is(err, ErrHasOverrides) {
 		t.Fatalf("Delete master with overrides: got %v, want ErrHasOverrides", err)
 	}
 }
