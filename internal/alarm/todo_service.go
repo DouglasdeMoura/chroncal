@@ -165,8 +165,8 @@ func computeTodoTriggerTimeForInstance(inst recurrence.ExpandedTodo, alarm model
 	}
 
 	// For RELATED=END on a todo with duration, offset from end of task.
-	if alarm.Related == "END" && inst.Todo.Duration != "" {
-		base = duration.Add(base, inst.Todo.Duration)
+	if alarm.Related == "END" && inst.Duration != "" {
+		base = duration.Add(base, inst.Duration)
 	}
 
 	if alarm.TriggerValue == "" {
@@ -176,8 +176,8 @@ func computeTodoTriggerTimeForInstance(inst recurrence.ExpandedTodo, alarm model
 	// Duration trigger (relative)
 	if duration.Validate(alarm.TriggerValue) == nil {
 		anchor := base
-		if inst.Todo.Timezone != "" {
-			if loc, err := time.LoadLocation(inst.Todo.Timezone); err == nil {
+		if inst.Timezone != "" {
+			if loc, err := time.LoadLocation(inst.Timezone); err == nil {
 				anchor = anchor.In(loc)
 			}
 		}

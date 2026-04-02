@@ -122,7 +122,7 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 					continue // real DB error, skip rather than false-positive
 				}
 				missed = append(missed, MissedAlarm{
-					EventTitle: expEvt.Event.Title,
+					EventTitle: expEvt.Title,
 					AlarmID:    a.ID,
 					TriggerAt:  t,
 					Age:        now.Sub(t),
@@ -136,7 +136,7 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 	if s.todos != nil {
 		rows, err := s.q.ListAllTodos(ctx)
 		if err != nil {
-			return missed, nil, nil // degrade gracefully
+			return missed, nil, err
 		}
 
 		for _, row := range rows {
@@ -231,7 +231,7 @@ func (s *Service) checkEventAlarms(ctx context.Context, now time.Time) ([]DueAla
 
 			instanceEvent := expEvt.Event
 			instanceEvent.StartTime = expEvt.InstanceTime
-			instanceEvent.EndTime = expEvt.InstanceTime.Add(expEvt.Event.Span())
+			instanceEvent.EndTime = expEvt.InstanceTime.Add(expEvt.Span())
 
 			for _, t := range triggers {
 				if t.After(now) {
@@ -296,7 +296,7 @@ func computeTriggerTimeForInstance(expEvt recurrence.ExpandedEvent, alarm model.
 	if duration.Validate(trigger) == nil {
 		anchor := expEvt.InstanceTime
 		if alarm.Related == "END" {
-			anchor = expEvt.InstanceTime.Add(expEvt.Event.Span())
+			anchor = expEvt.InstanceTime.Add(expEvt.Span())
 		}
 		// Convert to event's named timezone so that day-level arithmetic
 		// (P1D, P1W) handles DST transitions correctly.
