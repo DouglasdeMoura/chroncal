@@ -536,6 +536,43 @@ func (s *Service) ListPending(ctx context.Context) ([]storage.AlarmState, error)
 	return s.q.ListPendingAlarmStates(ctx)
 }
 
+// ListPendingTodoAlarms returns all fired-but-not-acknowledged todo alarms.
+func (s *Service) ListPendingTodoAlarms(ctx context.Context) ([]storage.TodoAlarmState, error) {
+	return s.q.ListPendingTodoAlarmStates(ctx)
+}
+
+// DismissTodoAlarm acknowledges a fired todo alarm so it won't show as pending.
+func (s *Service) DismissTodoAlarm(ctx context.Context, stateID int64) error {
+	st, err := s.q.GetTodoAlarmStateByID(ctx, stateID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("todo alarm state %d not found", stateID)
+	}
+	if err != nil {
+		return fmt.Errorf("get todo alarm state %d: %w", stateID, err)
+	}
+	if st.AckedAt != nil {
+		return fmt.Errorf("todo alarm state %d already dismissed", stateID)
+	}
+	todoSvc := NewTodoService(s.db, s.q, s.todos)
+	return todoSvc.DismissTodoAlarm(ctx, stateID)
+}
+
+// SnoozeTodoAlarm reschedules a fired todo alarm to fire again at the given time.
+func (s *Service) SnoozeTodoAlarm(ctx context.Context, stateID int64, until time.Time) error {
+	st, err := s.q.GetTodoAlarmStateByID(ctx, stateID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("todo alarm state %d not found", stateID)
+	}
+	if err != nil {
+		return fmt.Errorf("get todo alarm state %d: %w", stateID, err)
+	}
+	if st.AckedAt != nil {
+		return fmt.Errorf("todo alarm state %d is already dismissed", stateID)
+	}
+	todoSvc := NewTodoService(s.db, s.q, s.todos)
+	return todoSvc.SnoozeTodoAlarm(ctx, stateID, until)
+}
+
 // computeTriggerTime calculates the absolute trigger time for an alarm on an event.
 // It's a convenience wrapper used in tests; production code uses computeTriggerTimeForInstance.
 func computeTriggerTime(evt event.Event, a model.Alarm) (time.Time, error) {

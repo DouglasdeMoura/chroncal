@@ -54,6 +54,25 @@ func (q *Queries) GetTodoAlarmState(ctx context.Context, arg GetTodoAlarmStatePa
 	return i, err
 }
 
+const getTodoAlarmStateByID = `-- name: GetTodoAlarmStateByID :one
+SELECT id, alarm_id, todo_id, trigger_at, fired_at, acked_at, snoozed_to FROM todo_alarm_state WHERE id = ?
+`
+
+func (q *Queries) GetTodoAlarmStateByID(ctx context.Context, id int64) (TodoAlarmState, error) {
+	row := q.db.QueryRowContext(ctx, getTodoAlarmStateByID, id)
+	var i TodoAlarmState
+	err := row.Scan(
+		&i.ID,
+		&i.AlarmID,
+		&i.TodoID,
+		&i.TriggerAt,
+		&i.FiredAt,
+		&i.AckedAt,
+		&i.SnoozedTo,
+	)
+	return i, err
+}
+
 const insertTodoAlarmState = `-- name: InsertTodoAlarmState :one
 INSERT INTO todo_alarm_state (alarm_id, todo_id, trigger_at, fired_at, acked_at, snoozed_to)
 VALUES (?, ?, ?, ?, ?, ?)
@@ -136,6 +155,43 @@ ORDER BY fired_at DESC
 
 func (q *Queries) ListFiredTodoAlarmStates(ctx context.Context, todoID int64) ([]TodoAlarmState, error) {
 	rows, err := q.db.QueryContext(ctx, listFiredTodoAlarmStates, todoID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TodoAlarmState
+	for rows.Next() {
+		var i TodoAlarmState
+		if err := rows.Scan(
+			&i.ID,
+			&i.AlarmID,
+			&i.TodoID,
+			&i.TriggerAt,
+			&i.FiredAt,
+			&i.AckedAt,
+			&i.SnoozedTo,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPendingTodoAlarmStates = `-- name: ListPendingTodoAlarmStates :many
+SELECT id, alarm_id, todo_id, trigger_at, fired_at, acked_at, snoozed_to FROM todo_alarm_state
+WHERE acked_at IS NULL AND (fired_at IS NOT NULL OR snoozed_to IS NOT NULL)
+ORDER BY trigger_at
+`
+
+func (q *Queries) ListPendingTodoAlarmStates(ctx context.Context) ([]TodoAlarmState, error) {
+	rows, err := q.db.QueryContext(ctx, listPendingTodoAlarmStates)
 	if err != nil {
 		return nil, err
 	}

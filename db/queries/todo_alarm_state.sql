@@ -35,3 +35,11 @@ DELETE FROM todo_alarm_state WHERE id = ?;
 
 -- name: CountTodoAlarmStates :one
 SELECT COUNT(*) FROM todo_alarm_state WHERE todo_id = ?;
+
+-- name: ListPendingTodoAlarmStates :many
+SELECT * FROM todo_alarm_state
+WHERE acked_at IS NULL AND (fired_at IS NOT NULL OR snoozed_to IS NOT NULL)
+ORDER BY trigger_at;
+
+-- name: GetTodoAlarmStateByID :one
+SELECT * FROM todo_alarm_state WHERE id = ?;
