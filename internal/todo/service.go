@@ -156,7 +156,7 @@ func (s *Service) Search(ctx context.Context, p SearchParams) ([]Todo, error) {
 	if ftsQuery == "" {
 		return nil, nil
 	}
-	rows, err := s.q.SearchTodosFTS(ctx, ftsQuery, int64(p.CalendarID), p.Status, int64(p.Completed))
+	rows, err := s.q.SearchTodosFTS(ctx, ftsQuery, p.CalendarID, p.Status, int64(p.Completed))
 	if err != nil {
 		return nil, fmt.Errorf("search todos: %w", err)
 	}
@@ -167,7 +167,7 @@ func (s *Service) Search(ctx context.Context, p SearchParams) ([]Todo, error) {
 
 func (s *Service) ExportFiltered(ctx context.Context, p ExportParams) ([]Todo, error) {
 	rows, err := s.q.ListTodosForExport(ctx, storage.ListTodosForExportParams{
-		CalendarID:      int64(p.CalendarID),
+		CalendarID:      p.CalendarID,
 		Category:        p.Category,
 		FilterStatus:    p.Status,
 		CompletedFilter: int64(p.Completed),
