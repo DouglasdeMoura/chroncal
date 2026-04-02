@@ -9,6 +9,7 @@ updates:
     labels:
       - dependencies
     open-pull-requests-limit: 10
+    minimum-version-age: 7 days
 
   - package-ecosystem: github-actions
     directory: /
@@ -19,3 +20,4 @@ updates:
     labels:
       - ci
     open-pull-requests-limit: 5
+    minimum-version-age: 7 days
