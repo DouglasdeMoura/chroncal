@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -109,14 +110,14 @@ func serviceInstallCmd() *cobra.Command {
 
 			switch runtime.GOOS {
 			case "linux":
-				return installLinuxService(w, data)
+				return installLinuxService(cmd.Context(), w, data)
 			case "darwin":
 				home, err := os.UserHomeDir()
 				if err != nil {
 					return fmt.Errorf("get home dir: %w", err)
 				}
 				data["HomeDir"] = home
-				return installDarwinService(w, data)
+				return installDarwinService(cmd.Context(), w, data)
 			default:
 				fmt.Fprintf(w, "No native service integration for %s.\n", runtime.GOOS)
 				fmt.Fprintf(w, "Use 'chroncal alarm daemon' to run alarm checks in a loop.\n")
@@ -138,7 +139,7 @@ func systemdUserDir() (string, error) {
 	return filepath.Join(home, ".config", "systemd", "user"), nil
 }
 
-func installLinuxService(w interface{ Write([]byte) (int, error) }, data map[string]string) error {
+func installLinuxService(ctx context.Context, w interface{ Write([]byte) (int, error) }, data map[string]string) error {
 	dir, err := systemdUserDir()
 	if err != nil {
 		return fmt.Errorf("resolve systemd user dir: %w", err)
@@ -170,19 +171,19 @@ func installLinuxService(w interface{ Write([]byte) (int, error) }, data map[str
 	}
 	fmt.Fprintf(w, "Wrote %s\n", timerPath)
 
-	if err := exec.Command("systemctl", "--user", "daemon-reload").Run(); err != nil {
+	if err := exec.CommandContext(ctx, "systemctl", "--user", "daemon-reload").Run(); err != nil {
 		return fmt.Errorf("systemctl daemon-reload: %w", err)
 	}
 	fmt.Fprintln(w, "Reloaded systemd user daemon.")
 
-	if err := exec.Command("systemctl", "--user", "enable", "--now", "chroncal-alarm.timer").Run(); err != nil {
+	if err := exec.CommandContext(ctx, "systemctl", "--user", "enable", "--now", "chroncal-alarm.timer").Run(); err != nil {
 		return fmt.Errorf("systemctl enable timer: %w", err)
 	}
 	fmt.Fprintln(w, "Enabled and started chroncal-alarm.timer.")
 	return nil
 }
 
-func installDarwinService(w interface{ Write([]byte) (int, error) }, data map[string]string) error {
+func installDarwinService(ctx context.Context, w interface{ Write([]byte) (int, error) }, data map[string]string) error {
 	home := data["HomeDir"]
 	dir := filepath.Join(home, "Library", "LaunchAgents")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -201,7 +202,7 @@ func installDarwinService(w interface{ Write([]byte) (int, error) }, data map[st
 	}
 	fmt.Fprintf(w, "Wrote %s\n", plistPath)
 
-	if err := exec.Command("launchctl", "load", plistPath).Run(); err != nil {
+	if err := exec.CommandContext(ctx, "launchctl", "load", plistPath).Run(); err != nil {
 		return fmt.Errorf("launchctl load: %w", err)
 	}
 	fmt.Fprintln(w, "Loaded com.chroncal.alarm agent.")
