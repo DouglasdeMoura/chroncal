@@ -114,30 +114,3 @@ func (q *Queries) ListCategoriesByEventID(ctx context.Context, eventID int64) ([
 	}
 	return items, nil
 }
-
-const listCategoriesByEventIDs = `-- name: ListCategoriesByEventIDs :many
-SELECT event_id, category FROM event_categories WHERE event_id IN sqlx.in(?) ORDER BY event_id, category
-`
-
-func (q *Queries) ListCategoriesByEventIDs(ctx context.Context, in interface{}) ([]EventCategory, error) {
-	rows, err := q.db.QueryContext(ctx, listCategoriesByEventIDs, in)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []EventCategory
-	for rows.Next() {
-		var i EventCategory
-		if err := rows.Scan(&i.EventID, &i.Category); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}

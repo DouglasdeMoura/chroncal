@@ -87,30 +87,3 @@ func (q *Queries) ListCategoriesByTodoID(ctx context.Context, todoID int64) ([]T
 	}
 	return items, nil
 }
-
-const listCategoriesByTodoIDs = `-- name: ListCategoriesByTodoIDs :many
-SELECT todo_id, category FROM todo_categories WHERE todo_id IN sqlx.in(?) ORDER BY todo_id, category
-`
-
-func (q *Queries) ListCategoriesByTodoIDs(ctx context.Context, in interface{}) ([]TodoCategory, error) {
-	rows, err := q.db.QueryContext(ctx, listCategoriesByTodoIDs, in)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []TodoCategory
-	for rows.Next() {
-		var i TodoCategory
-		if err := rows.Scan(&i.TodoID, &i.Category); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
