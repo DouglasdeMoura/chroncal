@@ -3,7 +3,6 @@ package todo
 import (
 	"time"
 
-	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
@@ -79,13 +78,13 @@ func (t Todo) ParseCompletedAt() time.Time {
 }
 
 func (t Todo) ParseExDates() []time.Time {
-	return event.ParseTimeList(t.ExDates)
+	return timeutil.ParseTimeList(t.ExDates)
 }
 
 func (t Todo) ParseRDates() []time.Time {
-	return event.ParseTimeList(t.RDates)
+	return timeutil.ParseTimeList(t.RDates)
 }
 
 func (t Todo) ParseCategories() []string {
-	return event.ParseCategoryList(t.Categories)
+	return timeutil.ParseCategoryList(t.Categories)
 }

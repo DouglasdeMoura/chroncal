@@ -10,7 +10,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
@@ -304,7 +303,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Todo, error) {
 		return Todo{}, err
 	}
 	t := fromStorage(r)
-	if err := s.ReplaceCategories(ctx, t.ID, event.ParseCategoryList(p.Categories)); err != nil {
+	if err := s.ReplaceCategories(ctx, t.ID, timeutil.ParseCategoryList(p.Categories)); err != nil {
 		return Todo{}, fmt.Errorf("replace categories: %w", err)
 	}
 	t.Categories = p.Categories
@@ -343,7 +342,7 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, e
 		return Todo{}, err
 	}
 	t := fromStorage(r)
-	if err := s.ReplaceCategories(ctx, t.ID, event.ParseCategoryList(p.Categories)); err != nil {
+	if err := s.ReplaceCategories(ctx, t.ID, timeutil.ParseCategoryList(p.Categories)); err != nil {
 		return Todo{}, fmt.Errorf("replace categories: %w", err)
 	}
 	t.Categories = p.Categories
@@ -388,7 +387,7 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Todo, error)
 		return Todo{}, err
 	}
 	t := fromStorage(r)
-	if err := s.ReplaceCategories(ctx, t.ID, event.ParseCategoryList(p.Categories)); err != nil {
+	if err := s.ReplaceCategories(ctx, t.ID, timeutil.ParseCategoryList(p.Categories)); err != nil {
 		return Todo{}, fmt.Errorf("replace categories: %w", err)
 	}
 	t.Categories = p.Categories
@@ -427,12 +426,12 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 
 		master, err := qtx.GetTodoByUID(ctx, td.UID)
 		if err == nil {
-			existing := event.ParseTimeList(storage.NullableToString(master.Exdates))
+			existing := timeutil.ParseTimeList(storage.NullableToString(master.Exdates))
 			recIDTime, parseErr := timeutil.ParseRecurrenceID(td.RecurrenceID)
 			if parseErr == nil {
 				existing = append(existing, recIDTime)
 				if err := qtx.UpdateTodoExdates(ctx, storage.UpdateTodoExdatesParams{
-					Exdates: storage.StringToNullable(event.SerializeTimeList(existing)),
+					Exdates: storage.StringToNullable(timeutil.SerializeTimeList(existing)),
 					ID:      master.ID,
 				}); err != nil {
 					return fmt.Errorf("update exdates: %w", err)

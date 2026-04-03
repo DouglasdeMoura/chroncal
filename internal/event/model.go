@@ -1,10 +1,10 @@
 package event
 
 import (
-	"strings"
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
 
 type Event struct {
@@ -66,55 +66,11 @@ func (e Event) ParseCategories() []string {
 	return ParseCategoryList(e.Categories)
 }
 
-func ParseTimeList(s string) []time.Time {
-	if s == "" {
-		return nil
-	}
-	parts := strings.Split(s, ",")
-	out := make([]time.Time, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if t, err := time.Parse(time.RFC3339, p); err == nil {
-			out = append(out, t)
-		} else if t, err := time.Parse("2006-01-02", p); err == nil {
-			// Parse date-only into time.Local to match how all-day events
-			// are stored (import.go:253 uses time.Local for VALUE=DATE).
-			out = append(out, time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local))
-		}
-	}
-	return out
-}
+// ParseTimeList delegates to timeutil.ParseTimeList.
+func ParseTimeList(s string) []time.Time { return timeutil.ParseTimeList(s) }
 
-// SerializeTimeList is the inverse of ParseTimeList. It formats each time as
-// date-only ("2006-01-02") when the time component is midnight in time.Local
-// (matching all-day event EXDATEs), or RFC 3339 otherwise.
-func SerializeTimeList(times []time.Time) string {
-	if len(times) == 0 {
-		return ""
-	}
-	parts := make([]string, len(times))
-	for i, t := range times {
-		local := t.In(time.Local)
-		if local.Hour() == 0 && local.Minute() == 0 && local.Second() == 0 && local.Nanosecond() == 0 &&
-			t.Location() == time.Local {
-			parts[i] = t.Format("2006-01-02")
-		} else {
-			parts[i] = t.UTC().Format(time.RFC3339)
-		}
-	}
-	return strings.Join(parts, ",")
-}
+// SerializeTimeList delegates to timeutil.SerializeTimeList.
+func SerializeTimeList(times []time.Time) string { return timeutil.SerializeTimeList(times) }
 
-func ParseCategoryList(s string) []string {
-	if s == "" {
-		return nil
-	}
-	parts := strings.Split(s, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if v := strings.TrimSpace(p); v != "" {
-			out = append(out, v)
-		}
-	}
-	return out
-}
+// ParseCategoryList delegates to timeutil.ParseCategoryList.
+func ParseCategoryList(s string) []string { return timeutil.ParseCategoryList(s) }
