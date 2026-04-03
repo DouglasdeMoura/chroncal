@@ -6,6 +6,7 @@ require (
 	charm.land/bubbletea/v2 v2.0.2
 	charm.land/lipgloss/v2 v2.0.2
 	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
+	github.com/emersion/go-webdav v0.7.0
 	github.com/gen2brain/beeep v0.11.2
 	github.com/google/uuid v1.6.0
 	github.com/pressly/goose/v3 v3.27.0
