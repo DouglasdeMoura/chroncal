@@ -4,7 +4,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(calendar_id, uid) DO UPDATE SET
     remote_url = excluded.remote_url,
     etag = excluded.etag,
-    dirty = excluded.dirty,
+    dirty = MAX(sync_resources.dirty, excluded.dirty),
     sync_strategy = excluded.sync_strategy;
 
 -- name: GetSyncResource :one
@@ -41,4 +41,4 @@ DELETE FROM tombstones WHERE id = ?;
 DELETE FROM tombstones WHERE calendar_id = ?;
 
 -- name: DeleteStaleTombstones :exec
-DELETE FROM tombstones WHERE deleted_at < datetime('now', '-30 days');
+DELETE FROM tombstones WHERE deleted_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-30 days');

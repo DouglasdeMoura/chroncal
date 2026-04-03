@@ -40,7 +40,7 @@ func (q *Queries) CreateTombstone(ctx context.Context, arg CreateTombstoneParams
 }
 
 const deleteStaleTombstones = `-- name: DeleteStaleTombstones :exec
-DELETE FROM tombstones WHERE deleted_at < datetime('now', '-30 days')
+DELETE FROM tombstones WHERE deleted_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-30 days')
 `
 
 func (q *Queries) DeleteStaleTombstones(ctx context.Context) error {
@@ -239,7 +239,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(calendar_id, uid) DO UPDATE SET
     remote_url = excluded.remote_url,
     etag = excluded.etag,
-    dirty = excluded.dirty,
+    dirty = MAX(sync_resources.dirty, excluded.dirty),
     sync_strategy = excluded.sync_strategy
 `
 
