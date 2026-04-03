@@ -2,8 +2,11 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net"
 	"net/http"
@@ -40,12 +43,20 @@ func GoogleOAuthFlow(ctx context.Context, clientID, clientSecret string) (*Googl
 	port := listener.Addr().(*net.TCPAddr).Port
 	redirectURI := fmt.Sprintf("http://127.0.0.1:%d", port)
 
+	// Generate CSRF state token
+	stateBytes := make([]byte, 16)
+	if _, err := rand.Read(stateBytes); err != nil {
+		return nil, fmt.Errorf("generate state token: %w", err)
+	}
+	state := hex.EncodeToString(stateBytes)
+
 	// Build authorization URL
-	authURL := fmt.Sprintf("%s?client_id=%s&redirect_uri=%s&response_type=code&scope=%s&access_type=offline&prompt=consent",
+	authURL := fmt.Sprintf("%s?client_id=%s&redirect_uri=%s&response_type=code&scope=%s&access_type=offline&prompt=consent&state=%s",
 		googleAuthURL,
 		url.QueryEscape(clientID),
 		url.QueryEscape(redirectURI),
 		url.QueryEscape(googleScope),
+		url.QueryEscape(state),
 	)
 
 	// Try to open browser
@@ -61,6 +72,13 @@ func GoogleOAuthFlow(ctx context.Context, clientID, clientSecret string) (*Googl
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Validate CSRF state token
+		if r.URL.Query().Get("state") != state {
+			errCh <- fmt.Errorf("oauth error: state mismatch (possible CSRF)")
+			fmt.Fprint(w, "<html><body><h1>Authorization failed</h1><p>State mismatch. Please try again.</p></body></html>")
+			return
+		}
+
 		code := r.URL.Query().Get("code")
 		if code == "" {
 			errMsg := r.URL.Query().Get("error")
@@ -68,7 +86,7 @@ func GoogleOAuthFlow(ctx context.Context, clientID, clientSecret string) (*Googl
 				errMsg = "no authorization code received"
 			}
 			errCh <- fmt.Errorf("oauth error: %s", errMsg)
-			fmt.Fprintf(w, "<html><body><h1>Authorization failed</h1><p>%s</p></body></html>", errMsg)
+			fmt.Fprintf(w, "<html><body><h1>Authorization failed</h1><p>%s</p></body></html>", html.EscapeString(errMsg))
 			return
 		}
 		codeCh <- code

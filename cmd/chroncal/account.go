@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/caldav"
@@ -95,9 +97,13 @@ func accountAddCmd() *cobra.Command {
 				cred.OAuthClientSecret = oauthSecret
 			} else if authType == "basic" {
 				fmt.Print("Password: ")
-				var password string
-				fmt.Scanln(&password)
-				cred.Password = password
+				passwordBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
+				fmt.Println() // newline after hidden input
+				if err != nil {
+					_ = a.Queries.DeleteAccount(ctx, account.ID)
+					return fmt.Errorf("read password: %w", err)
+				}
+				cred.Password = string(passwordBytes)
 			}
 
 			if err := credStore.Set(cred); err != nil {
