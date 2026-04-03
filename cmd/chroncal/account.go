@@ -107,6 +107,7 @@ func accountAddCmd() *cobra.Command {
 			}
 
 			if err := credStore.Set(cred); err != nil {
+				_ = a.Queries.DeleteAccount(ctx, account.ID)
 				return fmt.Errorf("store credentials: %w", err)
 			}
 
