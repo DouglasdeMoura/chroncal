@@ -82,7 +82,7 @@ func TestClientPutResourceSendsIfMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PutResource: %v", err)
 	}
-	if etag != `"etag-after"` {
-		t.Fatalf("etag = %q, want %q", etag, `"etag-after"`)
+	if etag != "etag-after" {
+		t.Fatalf("etag = %q, want %q", etag, "etag-after")
 	}
 }

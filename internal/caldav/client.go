@@ -114,7 +114,7 @@ func (c *Client) GetResources(ctx context.Context, calendarPath string, hrefs []
 	for _, obj := range objects {
 		out = append(out, Resource{
 			Path: obj.Path,
-			ETag: obj.ETag,
+			ETag: normalizeETag(obj.ETag),
 			Data: obj.Data,
 		})
 	}
@@ -143,7 +143,7 @@ func (c *Client) QueryAll(ctx context.Context, calendarPath string) ([]Resource,
 	for _, obj := range objects {
 		out = append(out, Resource{
 			Path: obj.Path,
-			ETag: obj.ETag,
+			ETag: normalizeETag(obj.ETag),
 			Data: obj.Data,
 		})
 	}
@@ -165,7 +165,7 @@ func (c *Client) PutResource(ctx context.Context, path string, data *ical.Calend
 	}
 	req.Header.Set("Content-Type", ical.MIMEType)
 	if etag != "" {
-		req.Header.Set("If-Match", etag)
+		req.Header.Set("If-Match", formatIfMatch(etag))
 	}
 
 	resp, err := c.httpClient.Do(req)
@@ -178,7 +178,7 @@ func (c *Client) PutResource(ctx context.Context, path string, data *ical.Calend
 		return "", fmt.Errorf("put resource: %w", httpError(resp))
 	}
 
-	return resp.Header.Get("ETag"), nil
+	return normalizeETag(resp.Header.Get("ETag")), nil
 }
 
 // DeleteResource removes a resource by path.
@@ -194,7 +194,7 @@ func (c *Client) GetResource(ctx context.Context, path string) (*Resource, error
 	}
 	return &Resource{
 		Path: obj.Path,
-		ETag: obj.ETag,
+		ETag: normalizeETag(obj.ETag),
 		Data: obj.Data,
 	}, nil
 }
@@ -262,6 +262,21 @@ func httpError(resp *http.Response) error {
 		return fmt.Errorf("HTTP %s", status)
 	}
 	return fmt.Errorf("HTTP %s: %s", status, bodyText)
+}
+
+func normalizeETag(etag string) string {
+	etag = strings.TrimSpace(etag)
+	etag = strings.TrimPrefix(etag, "W/")
+	etag = strings.TrimSpace(etag)
+	return strings.Trim(etag, `"`)
+}
+
+func formatIfMatch(etag string) string {
+	etag = normalizeETag(etag)
+	if etag == "" {
+		return ""
+	}
+	return `"` + etag + `"`
 }
 
 // bearerHTTPClient adds a Bearer token to every request.
