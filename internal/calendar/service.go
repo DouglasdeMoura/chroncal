@@ -149,6 +149,12 @@ func (s *Service) LinkToAccount(ctx context.Context, id, accountID int64, remote
 	})
 }
 
+func (s *Service) UnlinkFromAccount(ctx context.Context, id int64) error {
+	return s.q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID: id,
+	})
+}
+
 func (s *Service) UpdateColorFromSync(ctx context.Context, id int64, localColor, remoteColor string) error {
 	return s.q.UpdateCalendarColorFromSync(ctx, storage.UpdateCalendarColorFromSyncParams{
 		ID:          id,

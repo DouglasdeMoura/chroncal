@@ -154,6 +154,69 @@ func TestCalendarService_UpdateColorFromSync(t *testing.T) {
 	}
 }
 
+func TestCalendarService_LinkToAccount(t *testing.T) {
+	svc, q, _ := newTestServiceWithDB(t)
+	ctx := context.Background()
+
+	account, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name:      "test",
+		ServerUrl: "https://example.com",
+		AuthType:  "basic",
+		Username:  "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+
+	if err := svc.LinkToAccount(ctx, 1, account.ID, "https://example.com/cal/work"); err != nil {
+		t.Fatalf("LinkToAccount: %v", err)
+	}
+
+	cal, err := svc.Get(ctx, 1)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if cal.AccountID != account.ID {
+		t.Fatalf("AccountID = %d, want %d", cal.AccountID, account.ID)
+	}
+	if cal.RemoteURL != "https://example.com/cal/work" {
+		t.Fatalf("RemoteURL = %q", cal.RemoteURL)
+	}
+}
+
+func TestCalendarService_UnlinkFromAccount(t *testing.T) {
+	svc, q, _ := newTestServiceWithDB(t)
+	ctx := context.Background()
+
+	account, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name:      "test",
+		ServerUrl: "https://example.com",
+		AuthType:  "basic",
+		Username:  "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	if err := svc.LinkToAccount(ctx, 1, account.ID, "https://example.com/cal/work"); err != nil {
+		t.Fatalf("LinkToAccount: %v", err)
+	}
+
+	if err := svc.UnlinkFromAccount(ctx, 1); err != nil {
+		t.Fatalf("UnlinkFromAccount: %v", err)
+	}
+
+	cal, err := svc.Get(ctx, 1)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if cal.AccountID != 0 {
+		t.Fatalf("AccountID = %d, want 0", cal.AccountID)
+	}
+	if cal.RemoteURL != "" {
+		t.Fatalf("RemoteURL = %q, want empty", cal.RemoteURL)
+	}
+}
+
 func TestCalendarService_Delete(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()

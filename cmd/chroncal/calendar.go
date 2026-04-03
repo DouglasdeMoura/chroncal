@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	calendarpkg "github.com/douglasdemoura/chroncal/internal/calendar"
 )
 
 func calendarCmd() *cobra.Command {
@@ -15,7 +17,15 @@ func calendarCmd() *cobra.Command {
 		Aliases: []string{"cal"},
 		Short:   "Manage calendars",
 	}
-	cmd.AddCommand(calendarListCmd(), calendarGetCmd(), calendarCreateCmd(), calendarUpdateCmd(), calendarDeleteCmd())
+	cmd.AddCommand(
+		calendarListCmd(),
+		calendarGetCmd(),
+		calendarCreateCmd(),
+		calendarUpdateCmd(),
+		calendarDeleteCmd(),
+		calendarLinkCmd(),
+		calendarUnlinkCmd(),
+	)
 	return cmd
 }
 
@@ -209,4 +219,106 @@ func calendarDeleteCmd() *cobra.Command {
 		},
 	}
 	return cmd
+}
+
+func calendarLinkCmd() *cobra.Command {
+	var (
+		accountRef string
+		remoteURL  string
+	)
+	cmd := &cobra.Command{
+		Use:   "link <id|name>",
+		Short: "Link a local calendar to a remote CalDAV calendar",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if strings.TrimSpace(accountRef) == "" {
+				return fmt.Errorf("--account is required")
+			}
+			if strings.TrimSpace(remoteURL) == "" {
+				return fmt.Errorf("--remote-url is required")
+			}
+
+			a, err := initApp()
+			if err != nil {
+				return err
+			}
+			defer a.Close()
+			ctx := context.Background()
+
+			cals, err := a.Calendars.List(ctx)
+			if err != nil {
+				return fmt.Errorf("list calendars: %w", err)
+			}
+			cal, err := findCalendarByRef(cals, args[0])
+			if err != nil {
+				return err
+			}
+
+			account, err := resolveAccount(ctx, a.Queries, accountRef)
+			if err != nil {
+				return err
+			}
+
+			if err := a.Calendars.LinkToAccount(ctx, cal.ID, account.ID, remoteURL); err != nil {
+				return fmt.Errorf("link calendar: %w", err)
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "Linked calendar %q to account %q\n", cal.Name, account.Name)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&accountRef, "account", "", "account name or ID")
+	cmd.Flags().StringVar(&remoteURL, "remote-url", "", "remote CalDAV calendar URL")
+	return cmd
+}
+
+func calendarUnlinkCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "unlink <id|name>",
+		Short: "Remove the remote CalDAV link from a local calendar",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			a, err := initApp()
+			if err != nil {
+				return err
+			}
+			defer a.Close()
+			ctx := context.Background()
+
+			cals, err := a.Calendars.List(ctx)
+			if err != nil {
+				return fmt.Errorf("list calendars: %w", err)
+			}
+			cal, err := findCalendarByRef(cals, args[0])
+			if err != nil {
+				return err
+			}
+
+			if err := a.Calendars.UnlinkFromAccount(ctx, cal.ID); err != nil {
+				return fmt.Errorf("unlink calendar: %w", err)
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "Unlinked calendar %q\n", cal.Name)
+			return nil
+		},
+	}
+	return cmd
+}
+
+func findCalendarByRef(cals []calendarpkg.Calendar, ref string) (calendarpkg.Calendar, error) {
+	if id, err := strconv.ParseInt(ref, 10, 64); err == nil {
+		for _, cal := range cals {
+			if cal.ID == id {
+				return cal, nil
+			}
+		}
+		return calendarpkg.Calendar{}, fmt.Errorf("calendar %q not found", ref)
+	}
+
+	for _, cal := range cals {
+		if strings.EqualFold(cal.Name, ref) {
+			return cal, nil
+		}
+	}
+	return calendarpkg.Calendar{}, fmt.Errorf("calendar %q not found", ref)
 }
