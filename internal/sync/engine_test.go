@@ -571,6 +571,68 @@ END:VCALENDAR
 	}
 }
 
+func TestEnginePullDeletesLocalResourceWhenServerRemovesIt(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	insertTestEvent(t, db, calendarID, "remote-deleted")
+
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calendarID,
+		Uid:          "remote-deleted",
+		OwnerType:    "event",
+		RemoteUrl:    "/calendar/remote-deleted.ics",
+		Etag:         "etag-remote",
+		Dirty:        0,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method != "REPORT" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		return &http.Response{
+			StatusCode: http.StatusMultiStatus,
+			Status:     "207 Multi-Status",
+			Header:     http.Header{"Content-Type": []string{"application/xml"}},
+			Body: io.NopCloser(strings.NewReader(`<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav"></d:multistatus>`)),
+			Request: r,
+		}, nil
+	})
+
+	pullResult, err := engine.pull(ctx, client, calendarID, "/calendar/")
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if pullResult.deleted != 1 {
+		t.Fatalf("deleted = %d, want 1", pullResult.deleted)
+	}
+	if pullResult.pulled != 0 {
+		t.Fatalf("pulled = %d, want 0", pullResult.pulled)
+	}
+
+	if _, err := q.GetEventByUID(ctx, "remote-deleted"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("GetEventByUID err = %v, want sql.ErrNoRows", err)
+	}
+	if _, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{
+		CalendarID: calendarID,
+		Uid:        "remote-deleted",
+	}); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("GetSyncResource err = %v, want sql.ErrNoRows", err)
+	}
+}
+
 func TestEngineSyncCalendarMetadataPushesLocalColor(t *testing.T) {
 	t.Parallel()
 

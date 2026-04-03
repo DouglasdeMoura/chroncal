@@ -468,6 +468,10 @@ func (e *Engine) pull(ctx context.Context, client *caldav.Client, calendarID int
 	for path, local := range localByPath {
 		if !remoteHrefs[path] {
 			e.logger.Debug("resource deleted on server", "uid", local.Uid, "path", path)
+			if err := e.deleteLocalResourceByUID(ctx, local.OwnerType, local.Uid); err != nil {
+				e.logger.Error("delete local resource", "uid", local.Uid, "owner_type", local.OwnerType, "error", err)
+				continue
+			}
 			if err := e.q.DeleteSyncResource(ctx, storage.DeleteSyncResourceParams{
 				CalendarID: calendarID,
 				Uid:        local.Uid,
@@ -479,6 +483,19 @@ func (e *Engine) pull(ctx context.Context, client *caldav.Client, calendarID int
 	}
 
 	return result, nil
+}
+
+func (e *Engine) deleteLocalResourceByUID(ctx context.Context, ownerType, uid string) error {
+	switch ownerType {
+	case "event":
+		return e.q.DeleteEventsByUID(ctx, uid)
+	case "todo":
+		return e.q.DeleteTodosByUID(ctx, uid)
+	case "journal":
+		return e.q.DeleteJournalsByUID(ctx, uid)
+	default:
+		return fmt.Errorf("unsupported owner type %q", ownerType)
+	}
 }
 
 type tombstoneResult struct {
