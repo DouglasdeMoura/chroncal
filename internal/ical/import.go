@@ -3,8 +3,8 @@ package ical
 import (
 	"bytes"
 	"encoding/base64"
-	"fmt"
 	"errors"
+	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -102,12 +102,11 @@ func ImportFile(r io.Reader) (ImportResult, error) {
 				result.Todos = append(result.Todos, t)
 			case ical.CompJournal:
 				resolveComponentTZIDs(child, tzMap)
-				j, warns, err := journalFromVJournal(child)
+				j, err := journalFromVJournal(child)
 				if err != nil {
 					result.Warnings = append(result.Warnings, fmt.Sprintf("VJOURNAL: %v", err))
 					continue
 				}
-				result.Warnings = append(result.Warnings, warns...)
 				result.Journals = append(result.Journals, j)
 			default:
 				if child.Name != "VTIMEZONE" {
@@ -856,12 +855,12 @@ func parseRelationsFromProps(props ical.Props) []model.Relation {
 	return out
 }
 
-func journalFromVJournal(comp *ical.Component) (journal.Journal, []string, error) {
+func journalFromVJournal(comp *ical.Component) (journal.Journal, error) {
 	props := comp.Props
 
 	uid := propText(props, ical.PropUID)
 	if uid == "" {
-		return journal.Journal{}, nil, fmt.Errorf("missing UID")
+		return journal.Journal{}, fmt.Errorf("missing UID")
 	}
 
 	summary := propText(props, ical.PropSummary)
@@ -964,5 +963,5 @@ func journalFromVJournal(comp *ical.Component) (journal.Journal, []string, error
 		Comments:       comments,
 		Contacts:       contacts,
 		Relations:      relations,
-	}, nil, nil
+	}, nil
 }
