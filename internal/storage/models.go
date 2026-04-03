@@ -230,6 +230,18 @@ type JournalsFt struct {
 	Categories  string
 }
 
+type SyncConflict struct {
+	ID         int64
+	CalendarID int64
+	OwnerType  string
+	OwnerID    int64
+	Uid        string
+	LocalIcal  string
+	ServerIcal string
+	ServerEtag string
+	DetectedAt string
+}
+
 type SyncResource struct {
 	ID           int64
 	CalendarID   int64
