@@ -35,6 +35,7 @@ type Calendar struct {
 	RemoteUrl   *string
 	Ctag        *string
 	SyncToken   *string
+	LastSyncAt  *string
 }
 
 type Event struct {

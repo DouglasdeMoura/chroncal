@@ -43,6 +43,7 @@ type SyncStatus struct {
 	CalendarName  string
 	AccountName   string
 	LastSyncToken string
+	LastSyncAt    string // RFC 3339 or empty
 	PendingPush   int
 	Conflicts     int
 }
@@ -74,6 +75,7 @@ func (s *Service) Status(ctx context.Context) ([]SyncStatus, error) {
 				CalendarName:  cal.Name,
 				AccountName:   account.Name,
 				LastSyncToken: storage.NullableToString(cal.SyncToken),
+				LastSyncAt:    storage.NullableToString(cal.LastSyncAt),
 				PendingPush:   len(dirty),
 				Conflicts:     len(conflicts),
 			})

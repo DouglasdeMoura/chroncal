@@ -12,8 +12,9 @@ type Calendar struct {
 	UpdatedAt   time.Time
 
 	// Sync fields — populated when calendar is linked to a remote account
-	AccountID int64  // 0 = local-only calendar
-	RemoteURL string // CalDAV calendar URL (href)
-	CTag      string // CalDAV getctag for change detection
-	SyncToken string // CalDAV sync-token (preferred over ctag)
+	AccountID  int64  // 0 = local-only calendar
+	RemoteURL  string // CalDAV calendar URL (href)
+	CTag       string // CalDAV getctag for change detection
+	SyncToken  string // CalDAV sync-token (preferred over ctag)
+	LastSyncAt string // RFC 3339 timestamp of last sync
 }

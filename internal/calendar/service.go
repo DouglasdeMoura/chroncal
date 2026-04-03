@@ -140,5 +140,6 @@ func fromStorage(r storage.Calendar) Calendar {
 		RemoteURL:   storage.NullableToString(r.RemoteUrl),
 		CTag:        storage.NullableToString(r.Ctag),
 		SyncToken:   storage.NullableToString(r.SyncToken),
+		LastSyncAt:  storage.NullableToString(r.LastSyncAt),
 	}
 }

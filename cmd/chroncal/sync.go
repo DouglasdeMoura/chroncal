@@ -115,8 +115,12 @@ func syncStatusCmd() *cobra.Command {
 			}
 
 			for _, s := range statuses {
-				fmt.Printf("  %-20s  account=%-15s  pending=%d  conflicts=%d\n",
-					s.CalendarName, s.AccountName, s.PendingPush, s.Conflicts)
+				lastSync := "never"
+				if s.LastSyncAt != "" {
+					lastSync = s.LastSyncAt
+				}
+				fmt.Printf("  %-20s  account=%-15s  last_sync=%s  pending=%d  conflicts=%d\n",
+					s.CalendarName, s.AccountName, lastSync, s.PendingPush, s.Conflicts)
 			}
 			return nil
 		},

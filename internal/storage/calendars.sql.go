@@ -21,7 +21,7 @@ func (q *Queries) CountCalendars(ctx context.Context) (int64, error) {
 }
 
 const createCalendar = `-- name: CreateCalendar :one
-INSERT INTO calendars (name, color, description) VALUES (?, ?, ?) RETURNING id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token
+INSERT INTO calendars (name, color, description) VALUES (?, ?, ?) RETURNING id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at
 `
 
 type CreateCalendarParams struct {
@@ -44,6 +44,7 @@ func (q *Queries) CreateCalendar(ctx context.Context, arg CreateCalendarParams) 
 		&i.RemoteUrl,
 		&i.Ctag,
 		&i.SyncToken,
+		&i.LastSyncAt,
 	)
 	return i, err
 }
@@ -58,7 +59,7 @@ func (q *Queries) DeleteCalendar(ctx context.Context, id int64) error {
 }
 
 const getCalendar = `-- name: GetCalendar :one
-SELECT id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token FROM calendars WHERE id = ?
+SELECT id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at FROM calendars WHERE id = ?
 `
 
 func (q *Queries) GetCalendar(ctx context.Context, id int64) (Calendar, error) {
@@ -75,6 +76,7 @@ func (q *Queries) GetCalendar(ctx context.Context, id int64) (Calendar, error) {
 		&i.RemoteUrl,
 		&i.Ctag,
 		&i.SyncToken,
+		&i.LastSyncAt,
 	)
 	return i, err
 }
@@ -99,7 +101,7 @@ func (q *Queries) LinkCalendarToAccount(ctx context.Context, arg LinkCalendarToA
 }
 
 const listCalendars = `-- name: ListCalendars :many
-SELECT id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token FROM calendars ORDER BY name
+SELECT id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at FROM calendars ORDER BY name
 `
 
 func (q *Queries) ListCalendars(ctx context.Context) ([]Calendar, error) {
@@ -122,6 +124,7 @@ func (q *Queries) ListCalendars(ctx context.Context) ([]Calendar, error) {
 			&i.RemoteUrl,
 			&i.Ctag,
 			&i.SyncToken,
+			&i.LastSyncAt,
 		); err != nil {
 			return nil, err
 		}
@@ -137,7 +140,7 @@ func (q *Queries) ListCalendars(ctx context.Context) ([]Calendar, error) {
 }
 
 const listCalendarsByAccount = `-- name: ListCalendarsByAccount :many
-SELECT id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token FROM calendars WHERE account_id = ? ORDER BY name
+SELECT id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at FROM calendars WHERE account_id = ? ORDER BY name
 `
 
 func (q *Queries) ListCalendarsByAccount(ctx context.Context, accountID *int64) ([]Calendar, error) {
@@ -160,6 +163,7 @@ func (q *Queries) ListCalendarsByAccount(ctx context.Context, accountID *int64) 
 			&i.RemoteUrl,
 			&i.Ctag,
 			&i.SyncToken,
+			&i.LastSyncAt,
 		); err != nil {
 			return nil, err
 		}
@@ -175,7 +179,7 @@ func (q *Queries) ListCalendarsByAccount(ctx context.Context, accountID *int64) 
 }
 
 const updateCalendar = `-- name: UpdateCalendar :one
-UPDATE calendars SET name = ?, color = ?, description = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ? RETURNING id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token
+UPDATE calendars SET name = ?, color = ?, description = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ? RETURNING id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at
 `
 
 type UpdateCalendarParams struct {
@@ -204,6 +208,7 @@ func (q *Queries) UpdateCalendar(ctx context.Context, arg UpdateCalendarParams) 
 		&i.RemoteUrl,
 		&i.Ctag,
 		&i.SyncToken,
+		&i.LastSyncAt,
 	)
 	return i, err
 }
@@ -212,6 +217,7 @@ const updateCalendarSyncState = `-- name: UpdateCalendarSyncState :exec
 UPDATE calendars SET
     ctag = ?,
     sync_token = ?,
+    last_sync_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ?
 `
