@@ -10,4 +10,10 @@ type Calendar struct {
 	Description string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+
+	// Sync fields — populated when calendar is linked to a remote account
+	AccountID int64  // 0 = local-only calendar
+	RemoteURL string // CalDAV calendar URL (href)
+	CTag      string // CalDAV getctag for change detection
+	SyncToken string // CalDAV sync-token (preferred over ctag)
 }

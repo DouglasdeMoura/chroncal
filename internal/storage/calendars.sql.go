@@ -21,7 +21,7 @@ func (q *Queries) CountCalendars(ctx context.Context) (int64, error) {
 }
 
 const createCalendar = `-- name: CreateCalendar :one
-INSERT INTO calendars (name, color, description) VALUES (?, ?, ?) RETURNING id, name, color, description, created_at, updated_at
+INSERT INTO calendars (name, color, description) VALUES (?, ?, ?) RETURNING id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token
 `
 
 type CreateCalendarParams struct {
@@ -40,6 +40,10 @@ func (q *Queries) CreateCalendar(ctx context.Context, arg CreateCalendarParams) 
 		&i.Description,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AccountID,
+		&i.RemoteUrl,
+		&i.Ctag,
+		&i.SyncToken,
 	)
 	return i, err
 }
@@ -54,7 +58,7 @@ func (q *Queries) DeleteCalendar(ctx context.Context, id int64) error {
 }
 
 const getCalendar = `-- name: GetCalendar :one
-SELECT id, name, color, description, created_at, updated_at FROM calendars WHERE id = ?
+SELECT id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token FROM calendars WHERE id = ?
 `
 
 func (q *Queries) GetCalendar(ctx context.Context, id int64) (Calendar, error) {
@@ -67,12 +71,35 @@ func (q *Queries) GetCalendar(ctx context.Context, id int64) (Calendar, error) {
 		&i.Description,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AccountID,
+		&i.RemoteUrl,
+		&i.Ctag,
+		&i.SyncToken,
 	)
 	return i, err
 }
 
+const linkCalendarToAccount = `-- name: LinkCalendarToAccount :exec
+UPDATE calendars SET
+    account_id = ?,
+    remote_url = ?,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = ?
+`
+
+type LinkCalendarToAccountParams struct {
+	AccountID *int64
+	RemoteUrl *string
+	ID        int64
+}
+
+func (q *Queries) LinkCalendarToAccount(ctx context.Context, arg LinkCalendarToAccountParams) error {
+	_, err := q.db.ExecContext(ctx, linkCalendarToAccount, arg.AccountID, arg.RemoteUrl, arg.ID)
+	return err
+}
+
 const listCalendars = `-- name: ListCalendars :many
-SELECT id, name, color, description, created_at, updated_at FROM calendars ORDER BY name
+SELECT id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token FROM calendars ORDER BY name
 `
 
 func (q *Queries) ListCalendars(ctx context.Context) ([]Calendar, error) {
@@ -91,6 +118,48 @@ func (q *Queries) ListCalendars(ctx context.Context) ([]Calendar, error) {
 			&i.Description,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.AccountID,
+			&i.RemoteUrl,
+			&i.Ctag,
+			&i.SyncToken,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCalendarsByAccount = `-- name: ListCalendarsByAccount :many
+SELECT id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token FROM calendars WHERE account_id = ? ORDER BY name
+`
+
+func (q *Queries) ListCalendarsByAccount(ctx context.Context, accountID *int64) ([]Calendar, error) {
+	rows, err := q.db.QueryContext(ctx, listCalendarsByAccount, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Calendar
+	for rows.Next() {
+		var i Calendar
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Color,
+			&i.Description,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AccountID,
+			&i.RemoteUrl,
+			&i.Ctag,
+			&i.SyncToken,
 		); err != nil {
 			return nil, err
 		}
@@ -106,7 +175,7 @@ func (q *Queries) ListCalendars(ctx context.Context) ([]Calendar, error) {
 }
 
 const updateCalendar = `-- name: UpdateCalendar :one
-UPDATE calendars SET name = ?, color = ?, description = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ? RETURNING id, name, color, description, created_at, updated_at
+UPDATE calendars SET name = ?, color = ?, description = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ? RETURNING id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token
 `
 
 type UpdateCalendarParams struct {
@@ -131,6 +200,29 @@ func (q *Queries) UpdateCalendar(ctx context.Context, arg UpdateCalendarParams) 
 		&i.Description,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AccountID,
+		&i.RemoteUrl,
+		&i.Ctag,
+		&i.SyncToken,
 	)
 	return i, err
+}
+
+const updateCalendarSyncState = `-- name: UpdateCalendarSyncState :exec
+UPDATE calendars SET
+    ctag = ?,
+    sync_token = ?,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = ?
+`
+
+type UpdateCalendarSyncStateParams struct {
+	Ctag      *string
+	SyncToken *string
+	ID        int64
+}
+
+func (q *Queries) UpdateCalendarSyncState(ctx context.Context, arg UpdateCalendarSyncStateParams) error {
+	_, err := q.db.ExecContext(ctx, updateCalendarSyncState, arg.Ctag, arg.SyncToken, arg.ID)
+	return err
 }

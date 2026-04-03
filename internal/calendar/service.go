@@ -96,7 +96,39 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 	return tx.Commit()
 }
 
+func (s *Service) ListByAccount(ctx context.Context, accountID int64) ([]Calendar, error) {
+	rows, err := s.q.ListCalendarsByAccount(ctx, &accountID)
+	if err != nil {
+		return nil, err
+	}
+	cals := make([]Calendar, len(rows))
+	for i, r := range rows {
+		cals[i] = fromStorage(r)
+	}
+	return cals, nil
+}
+
+func (s *Service) UpdateSyncState(ctx context.Context, id int64, ctag, syncToken string) error {
+	return s.q.UpdateCalendarSyncState(ctx, storage.UpdateCalendarSyncStateParams{
+		ID:        id,
+		Ctag:      storage.StringToNullable(ctag),
+		SyncToken: storage.StringToNullable(syncToken),
+	})
+}
+
+func (s *Service) LinkToAccount(ctx context.Context, id, accountID int64, remoteURL string) error {
+	return s.q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID:        id,
+		AccountID: &accountID,
+		RemoteUrl: storage.StringToNullable(remoteURL),
+	})
+}
+
 func fromStorage(r storage.Calendar) Calendar {
+	var accountID int64
+	if r.AccountID != nil {
+		accountID = *r.AccountID
+	}
 	return Calendar{
 		ID:          r.ID,
 		Name:        r.Name,
@@ -104,5 +136,9 @@ func fromStorage(r storage.Calendar) Calendar {
 		Description: storage.NullableToString(r.Description),
 		CreatedAt:   timeutil.ParseDateTime(r.CreatedAt),
 		UpdatedAt:   timeutil.ParseDateTime(r.UpdatedAt),
+		AccountID:   accountID,
+		RemoteURL:   storage.NullableToString(r.RemoteUrl),
+		CTag:        storage.NullableToString(r.Ctag),
+		SyncToken:   storage.NullableToString(r.SyncToken),
 	}
 }

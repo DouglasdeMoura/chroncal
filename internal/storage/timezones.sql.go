@@ -19,18 +19,23 @@ func (q *Queries) DeleteTimezone(ctx context.Context, tzid string) error {
 }
 
 const getTimezone = `-- name: GetTimezone :one
-SELECT tzid, vtimezone_data, created_at FROM timezones WHERE tzid = ?
+SELECT tzid, vtimezone_data, created_at, source FROM timezones WHERE tzid = ?
 `
 
 func (q *Queries) GetTimezone(ctx context.Context, tzid string) (Timezone, error) {
 	row := q.db.QueryRowContext(ctx, getTimezone, tzid)
 	var i Timezone
-	err := row.Scan(&i.Tzid, &i.VtimezoneData, &i.CreatedAt)
+	err := row.Scan(
+		&i.Tzid,
+		&i.VtimezoneData,
+		&i.CreatedAt,
+		&i.Source,
+	)
 	return i, err
 }
 
 const listTimezones = `-- name: ListTimezones :many
-SELECT tzid, vtimezone_data, created_at FROM timezones ORDER BY tzid
+SELECT tzid, vtimezone_data, created_at, source FROM timezones ORDER BY tzid
 `
 
 func (q *Queries) ListTimezones(ctx context.Context) ([]Timezone, error) {
@@ -42,7 +47,12 @@ func (q *Queries) ListTimezones(ctx context.Context) ([]Timezone, error) {
 	var items []Timezone
 	for rows.Next() {
 		var i Timezone
-		if err := rows.Scan(&i.Tzid, &i.VtimezoneData, &i.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&i.Tzid,
+			&i.VtimezoneData,
+			&i.CreatedAt,
+			&i.Source,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -61,7 +71,7 @@ INSERT INTO timezones (tzid, vtimezone_data)
 VALUES (?, ?)
 ON CONFLICT(tzid) DO UPDATE SET
     vtimezone_data = excluded.vtimezone_data
-RETURNING tzid, vtimezone_data, created_at
+RETURNING tzid, vtimezone_data, created_at, source
 `
 
 type UpsertTimezoneParams struct {
@@ -72,6 +82,11 @@ type UpsertTimezoneParams struct {
 func (q *Queries) UpsertTimezone(ctx context.Context, arg UpsertTimezoneParams) (Timezone, error) {
 	row := q.db.QueryRowContext(ctx, upsertTimezone, arg.Tzid, arg.VtimezoneData)
 	var i Timezone
-	err := row.Scan(&i.Tzid, &i.VtimezoneData, &i.CreatedAt)
+	err := row.Scan(
+		&i.Tzid,
+		&i.VtimezoneData,
+		&i.CreatedAt,
+		&i.Source,
+	)
 	return i, err
 }

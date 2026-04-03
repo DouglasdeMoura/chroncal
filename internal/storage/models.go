@@ -4,6 +4,16 @@
 
 package storage
 
+type Account struct {
+	ID        int64
+	Name      string
+	ServerUrl string
+	AuthType  string
+	Username  string
+	CreatedAt string
+	UpdatedAt string
+}
+
 type AlarmState struct {
 	ID        int64
 	AlarmID   int64
@@ -21,6 +31,10 @@ type Calendar struct {
 	Description *string
 	CreatedAt   string
 	UpdatedAt   string
+	AccountID   *int64
+	RemoteUrl   *string
+	Ctag        *string
+	SyncToken   *string
 }
 
 type Event struct {
@@ -216,10 +230,22 @@ type JournalsFt struct {
 	Categories  string
 }
 
+type SyncResource struct {
+	ID           int64
+	CalendarID   int64
+	Uid          string
+	OwnerType    string
+	RemoteUrl    string
+	Etag         string
+	Dirty        int64
+	SyncStrategy string
+}
+
 type Timezone struct {
 	Tzid          string
 	VtimezoneData string
 	CreatedAt     string
+	Source        string
 }
 
 type Todo struct {
@@ -345,6 +371,14 @@ type TodosFt struct {
 	Description string
 	Location    string
 	Categories  string
+}
+
+type Tombstone struct {
+	ID         int64
+	CalendarID int64
+	Uid        string
+	RemoteUrl  string
+	DeletedAt  string
 }
 
 type XProperty struct {

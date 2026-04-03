@@ -15,3 +15,20 @@ SELECT COUNT(*) FROM calendars;
 
 -- name: DeleteCalendar :exec
 DELETE FROM calendars WHERE id = ?;
+
+-- name: ListCalendarsByAccount :many
+SELECT * FROM calendars WHERE account_id = ? ORDER BY name;
+
+-- name: UpdateCalendarSyncState :exec
+UPDATE calendars SET
+    ctag = ?,
+    sync_token = ?,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = ?;
+
+-- name: LinkCalendarToAccount :exec
+UPDATE calendars SET
+    account_id = ?,
+    remote_url = ?,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = ?;
