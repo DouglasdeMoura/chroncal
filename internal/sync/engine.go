@@ -324,6 +324,21 @@ func (e *Engine) pull(ctx context.Context, client *caldav.Client, calendarID int
 		return nil, fmt.Errorf("query all: %w", err)
 	}
 
+	tombstones, err := e.q.ListTombstonesByCalendar(ctx, calendarID)
+	if err != nil {
+		return nil, fmt.Errorf("list tombstones: %w", err)
+	}
+	tombstonedPaths := make(map[string]bool, len(tombstones))
+	tombstonedUIDs := make(map[string]bool, len(tombstones))
+	for _, ts := range tombstones {
+		if ts.RemoteUrl != "" {
+			tombstonedPaths[ts.RemoteUrl] = true
+		}
+		if ts.Uid != "" {
+			tombstonedUIDs[ts.Uid] = true
+		}
+	}
+
 	// Build map of known local resources
 	localResources, err := e.q.ListSyncResourcesByCalendar(ctx, calendarID)
 	if err != nil {
@@ -340,6 +355,10 @@ func (e *Engine) pull(ctx context.Context, client *caldav.Client, calendarID int
 	remoteHrefs := make(map[string]bool, len(resources))
 	for _, res := range resources {
 		remoteHrefs[res.Path] = true
+		if tombstonedPaths[res.Path] {
+			e.logger.Debug("skip tombstoned remote resource by path", "path", res.Path)
+			continue
+		}
 
 		local, exists := localByPath[res.Path]
 		if exists && local.Etag == res.ETag {
@@ -368,6 +387,10 @@ func (e *Engine) pull(ctx context.Context, client *caldav.Client, calendarID int
 		uid := extractUID(importResult)
 		if uid == "" {
 			e.logger.Warn("no UID in fetched resource", "path", res.Path)
+			continue
+		}
+		if tombstonedUIDs[uid] {
+			e.logger.Debug("skip tombstoned remote resource by uid", "uid", uid, "path", res.Path)
 			continue
 		}
 
@@ -432,6 +455,12 @@ func (e *Engine) processTombstones(ctx context.Context, client *caldav.Client, c
 			e.logger.Warn("delete remote resource failed", "uid", ts.Uid, "error", err)
 			result.errors = append(result.errors, fmt.Errorf("delete tombstone %s: %w", ts.Uid, err))
 			continue
+		}
+		if err := e.q.DeleteSyncResource(ctx, storage.DeleteSyncResourceParams{
+			CalendarID: calendarID,
+			Uid:        ts.Uid,
+		}); err != nil {
+			e.logger.Warn("delete sync resource after tombstone", "uid", ts.Uid, "error", err)
 		}
 		if err := e.q.DeleteTombstone(ctx, ts.ID); err != nil {
 			e.logger.Warn("delete tombstone row failed", "uid", ts.Uid, "error", err)

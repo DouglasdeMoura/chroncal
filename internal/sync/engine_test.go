@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -322,6 +323,130 @@ func TestEngineProcessTombstonesContinuesAfterDeleteFailure(t *testing.T) {
 	}
 	if tombstones[0].Uid != "delete-fail" {
 		t.Fatalf("remaining tombstone uid = %q, want delete-fail", tombstones[0].Uid)
+	}
+}
+
+func TestEnginePullSkipsTombstonedRemoteResource(t *testing.T) {
+	t.Parallel()
+
+	engine, _, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calendarID,
+		Uid:          "tombstoned-event",
+		OwnerType:    "event",
+		RemoteUrl:    "/calendar/tombstoned.ics",
+		Etag:         `"etag-remote"`,
+		Dirty:        0,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+	if err := q.CreateTombstone(ctx, storage.CreateTombstoneParams{
+		CalendarID: calendarID,
+		Uid:        "tombstoned-event",
+		RemoteUrl:  "/calendar/tombstoned.ics",
+	}); err != nil {
+		t.Fatalf("CreateTombstone: %v", err)
+	}
+
+	remoteExists := true
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		switch r.Method {
+		case "REPORT":
+			if r.URL.Path != "/calendar/" {
+				t.Fatalf("REPORT path = %s, want /calendar/", r.URL.Path)
+			}
+			body := `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav"></d:multistatus>`
+			if remoteExists {
+				body = `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/calendar/tombstoned.ics</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>&quot;etag-remote&quot;</d:getetag>
+        <cal:calendar-data>BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//chroncal//tests//EN
+BEGIN:VEVENT
+UID:tombstoned-event
+DTSTAMP:20260403T120000Z
+DTSTART:20260403T120000Z
+DTEND:20260403T130000Z
+SUMMARY:Tombstoned event
+END:VEVENT
+END:VCALENDAR
+</cal:calendar-data>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`
+			}
+			return &http.Response{
+				StatusCode: http.StatusMultiStatus,
+				Status:     "207 Multi-Status",
+				Header:     http.Header{"Content-Type": []string{"application/xml"}},
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Request:    r,
+			}, nil
+		case http.MethodDelete:
+			if r.URL.Path != "/calendar/tombstoned.ics" {
+				t.Fatalf("DELETE path = %s, want /calendar/tombstoned.ics", r.URL.Path)
+			}
+			remoteExists = false
+			return newResponse(http.StatusNoContent, nil), nil
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			return nil, nil
+		}
+	})
+
+	pullResult, err := engine.pull(ctx, client, calendarID, "/calendar/")
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if pullResult.pulled != 0 {
+		t.Fatalf("pulled = %d, want 0", pullResult.pulled)
+	}
+
+	if _, err := q.GetEventByUID(ctx, "tombstoned-event"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("GetEventByUID err = %v, want sql.ErrNoRows", err)
+	}
+
+	tombstoneResult, err := engine.processTombstones(ctx, client, calendarID)
+	if err != nil {
+		t.Fatalf("processTombstones: %v", err)
+	}
+	if tombstoneResult.deleted != 1 {
+		t.Fatalf("deleted = %d, want 1", tombstoneResult.deleted)
+	}
+	if len(tombstoneResult.errors) != 0 {
+		t.Fatalf("errors = %d, want 0", len(tombstoneResult.errors))
+	}
+
+	tombstones, err := q.ListTombstonesByCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("ListTombstonesByCalendar: %v", err)
+	}
+	if len(tombstones) != 0 {
+		t.Fatalf("remaining tombstones = %d, want 0", len(tombstones))
+	}
+
+	if _, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{
+		CalendarID: calendarID,
+		Uid:        "tombstoned-event",
+	}); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("GetSyncResource err = %v, want sql.ErrNoRows", err)
 	}
 }
 
