@@ -138,6 +138,84 @@ type EventsFt struct {
 	Categories  string
 }
 
+type Journal struct {
+	ID             int64
+	Uid            string
+	CalendarID     int64
+	Summary        string
+	Description    *string
+	StartDate      *string
+	Status         string
+	Class          string
+	Url            *string
+	RecurrenceRule *string
+	Timezone       *string
+	Sequence       int64
+	Exdates        *string
+	Rdates         *string
+	RecurrenceID   string
+	Dtstamp        *string
+	CreatedAt      string
+	UpdatedAt      string
+}
+
+type JournalAttachment struct {
+	ID        int64
+	JournalID int64
+	Uri       *string
+	Fmttype   *string
+	Data      []byte
+	Filename  *string
+}
+
+type JournalAttendee struct {
+	ID            int64
+	JournalID     int64
+	Email         string
+	Name          *string
+	RsvpStatus    string
+	Role          string
+	Organizer     int64
+	Cutype        *string
+	Rsvp          *string
+	SentBy        *string
+	DelegatedTo   *string
+	DelegatedFrom *string
+	Member        *string
+	Dir           *string
+	Language      *string
+}
+
+type JournalCategory struct {
+	JournalID int64
+	Category  string
+}
+
+type JournalComment struct {
+	ID        int64
+	JournalID int64
+	Text      string
+}
+
+type JournalContact struct {
+	ID        int64
+	JournalID int64
+	Text      string
+}
+
+type JournalRelation struct {
+	ID        int64
+	JournalID int64
+	RelType   string
+	RelUid    string
+}
+
+type JournalsFt struct {
+	Summary     string
+	Description string
+	Categories  string
+}
+
 type Timezone struct {
 	Tzid          string
 	VtimezoneData string
