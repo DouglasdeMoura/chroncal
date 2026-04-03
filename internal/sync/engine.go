@@ -205,8 +205,38 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 			if isConflictError(putErr) {
 				e.logger.Warn("conflict detected during push", "uid", res.Uid)
 				if strategy == ConflictServerWins {
-					// Re-fetch server version and overwrite local
+					// Re-fetch server version, clear dirty flag, accept server state
 					e.logger.Info("resolving conflict: server wins", "uid", res.Uid)
+					serverRes, fetchErr := client.GetResource(ctx, putPath)
+					if fetchErr != nil {
+						e.logger.Error("re-fetch server resource failed", "uid", res.Uid, "error", fetchErr)
+						result.errors = append(result.errors, fmt.Errorf("conflict re-fetch %s: %w", res.Uid, fetchErr))
+					} else {
+						// Clear dirty and update ETag to accept server version
+						if err := e.q.ClearSyncResourceDirty(ctx, storage.ClearSyncResourceDirtyParams{
+							CalendarID: calendarID,
+							Uid:        res.Uid,
+							Etag:       serverRes.ETag,
+						}); err != nil {
+							e.logger.Error("clear dirty after conflict", "uid", res.Uid, "error", err)
+						}
+					}
+				} else {
+					// ConflictPrompt: record conflict for manual resolution
+					localIcal, _ := e.exportResource(ctx, res.OwnerType, calendarID, res.Uid)
+					serverRes, fetchErr := client.GetResource(ctx, putPath)
+					if fetchErr == nil {
+						serverIcal, _ := caldav.EncodeCalendar(serverRes.Data)
+						_ = e.q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+							CalendarID: calendarID,
+							OwnerType:  res.OwnerType,
+							OwnerID:    res.ID,
+							Uid:        res.Uid,
+							LocalIcal:  string(localIcal),
+							ServerIcal: string(serverIcal),
+							ServerEtag: serverRes.ETag,
+						})
+					}
 				}
 				result.conflicts++
 				continue
