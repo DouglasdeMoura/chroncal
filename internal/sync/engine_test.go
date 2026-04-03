@@ -5,10 +5,12 @@ import (
 	"database/sql"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/caldav"
+	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/storage"
@@ -29,10 +31,11 @@ func newTestEngine(t *testing.T) (*Engine, *sql.DB, *storage.Queries) {
 
 	db, q := testutil.NewTestDB(t)
 	credStore := &mockCredStore{creds: make(map[int64]auth.Credential)}
+	calendars := calendar.NewService(db, q)
 	events := event.NewService(db, q)
 	todos := todo.NewService(db, q)
 	journals := journal.NewService(db, q)
-	return NewEngine(db, q, credStore, events, todos, journals, nil), db, q
+	return NewEngine(db, q, credStore, calendars, events, todos, journals, nil), db, q
 }
 
 func newTestCalDAVClient(t *testing.T, do func(*http.Request) (*http.Response, error)) *caldav.Client {
@@ -206,5 +209,164 @@ func TestEngineProcessTombstonesContinuesAfterDeleteFailure(t *testing.T) {
 	}
 	if tombstones[0].Uid != "delete-fail" {
 		t.Fatalf("remaining tombstone uid = %q, want delete-fail", tombstones[0].Uid)
+	}
+}
+
+func TestEngineSyncCalendarMetadataPushesLocalColor(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+
+	account, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name:      "test",
+		ServerUrl: "https://example.com",
+		AuthType:  "basic",
+		Username:  "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID:        1,
+		AccountID: &account.ID,
+		RemoteUrl: storage.StringToNullable("https://example.com/cal/work"),
+	}); err != nil {
+		t.Fatalf("LinkCalendarToAccount: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		UPDATE calendars
+		SET color = '#112233', remote_color = '#445566', color_dirty = 1
+		WHERE id = 1
+	`); err != nil {
+		t.Fatalf("seed calendar color state: %v", err)
+	}
+
+	sawPropPatch := false
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		switch r.Method {
+		case "PROPFIND":
+			return &http.Response{
+				StatusCode: http.StatusMultiStatus,
+				Header:     http.Header{"Content-Type": []string{"application/xml"}},
+				Body: io.NopCloser(strings.NewReader(`<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:ic="http://apple.com/ns/ical/">
+  <d:response>
+    <d:href>/cal/work</d:href>
+    <d:propstat>
+      <d:prop><ic:calendar-color>#445566</ic:calendar-color></d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`)),
+			}, nil
+		case "PROPPATCH":
+			sawPropPatch = true
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("ReadAll: %v", err)
+			}
+			if !strings.Contains(string(body), "#112233") {
+				t.Fatalf("PROPPATCH body = %s", string(body))
+			}
+			return &http.Response{
+				StatusCode: http.StatusMultiStatus,
+				Header:     http.Header{"Content-Type": []string{"application/xml"}},
+				Body: io.NopCloser(strings.NewReader(`<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response><d:href>/cal/work</d:href><d:propstat><d:prop /><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
+</d:multistatus>`)),
+			}, nil
+		default:
+			t.Fatalf("unexpected method %s", r.Method)
+			return nil, nil
+		}
+	})
+
+	if err := engine.syncCalendarMetadata(ctx, client, 1, "https://example.com/cal/work"); err != nil {
+		t.Fatalf("syncCalendarMetadata: %v", err)
+	}
+	if !sawPropPatch {
+		t.Fatal("expected color push PROPPATCH")
+	}
+
+	cal, err := q.GetCalendar(ctx, 1)
+	if err != nil {
+		t.Fatalf("GetCalendar: %v", err)
+	}
+	if got := storage.NullableToString(cal.RemoteColor); got != "#112233" {
+		t.Fatalf("RemoteColor = %q, want #112233", got)
+	}
+	if cal.ColorDirty != 0 {
+		t.Fatalf("ColorDirty = %d, want 0", cal.ColorDirty)
+	}
+}
+
+func TestEngineSyncCalendarMetadataAdoptsRemoteColor(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+
+	account, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name:      "test",
+		ServerUrl: "https://example.com",
+		AuthType:  "basic",
+		Username:  "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID:        1,
+		AccountID: &account.ID,
+		RemoteUrl: storage.StringToNullable("https://example.com/cal/work"),
+	}); err != nil {
+		t.Fatalf("LinkCalendarToAccount: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		UPDATE calendars
+		SET color = '#445566', remote_color = '#445566', color_dirty = 0
+		WHERE id = 1
+	`); err != nil {
+		t.Fatalf("seed calendar color state: %v", err)
+	}
+
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method != "PROPFIND" {
+			t.Fatalf("unexpected method %s", r.Method)
+		}
+		return &http.Response{
+			StatusCode: http.StatusMultiStatus,
+			Header:     http.Header{"Content-Type": []string{"application/xml"}},
+			Body: io.NopCloser(strings.NewReader(`<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:ic="http://apple.com/ns/ical/">
+  <d:response>
+    <d:href>/cal/work</d:href>
+    <d:propstat>
+      <d:prop><ic:calendar-color>#778899</ic:calendar-color></d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`)),
+		}, nil
+	})
+
+	if err := engine.syncCalendarMetadata(ctx, client, 1, "https://example.com/cal/work"); err != nil {
+		t.Fatalf("syncCalendarMetadata: %v", err)
+	}
+
+	cal, err := q.GetCalendar(ctx, 1)
+	if err != nil {
+		t.Fatalf("GetCalendar: %v", err)
+	}
+	if cal.Color != "#778899" {
+		t.Fatalf("Color = %q, want #778899", cal.Color)
+	}
+	if got := storage.NullableToString(cal.RemoteColor); got != "#778899" {
+		t.Fatalf("RemoteColor = %q, want #778899", got)
+	}
+	if cal.ColorDirty != 0 {
+		t.Fatalf("ColorDirty = %d, want 0", cal.ColorDirty)
 	}
 }

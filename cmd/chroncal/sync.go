@@ -44,7 +44,7 @@ func syncRunCmd() *cobra.Command {
 			}
 
 			logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-			svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Events, a.Todos, a.Journals, logger)
+			svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, logger)
 
 			strategy := syncPkg.ConflictServerWins
 			if conflict == "prompt" {
@@ -102,7 +102,7 @@ func syncStatusCmd() *cobra.Command {
 			defer a.Close()
 
 			credStore, _ := auth.NewCredentialStore(true)
-			svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Events, a.Todos, a.Journals, nil)
+			svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, nil)
 
 			statuses, err := svc.Status(context.Background())
 			if err != nil {
@@ -147,7 +147,7 @@ func syncConflictsCmd() *cobra.Command {
 			defer a.Close()
 
 			credStore, _ := auth.NewCredentialStore(true)
-			svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Events, a.Todos, a.Journals, nil)
+			svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, nil)
 
 			conflicts, err := svc.ListConflicts(context.Background())
 			if err != nil {
@@ -187,7 +187,7 @@ func syncResolveCmd() *cobra.Command {
 			defer a.Close()
 
 			credStore, _ := auth.NewCredentialStore(true)
-			svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Events, a.Todos, a.Journals, nil)
+			svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, nil)
 
 			if err := svc.ResolveConflict(context.Background(), id, pick); err != nil {
 				return err
@@ -216,7 +216,7 @@ func syncResetCmd() *cobra.Command {
 			ctx := context.Background()
 
 			credStore, _ := auth.NewCredentialStore(true)
-			svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Events, a.Todos, a.Journals, nil)
+			svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, nil)
 
 			cals, err := a.Calendars.List(ctx)
 			if err != nil {

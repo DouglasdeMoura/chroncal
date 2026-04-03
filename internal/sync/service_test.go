@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/auth"
+	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/storage"
@@ -41,10 +42,11 @@ func newTestServiceWithDB(t *testing.T) (*Service, *sql.DB, *storage.Queries) {
 	t.Helper()
 	db, q := testutil.NewTestDB(t)
 	credStore := &mockCredStore{creds: make(map[int64]auth.Credential)}
+	calendars := calendar.NewService(db, q)
 	events := event.NewService(db, q)
 	todos := todo.NewService(db, q)
 	journals := journal.NewService(db, q)
-	svc := NewService(db, q, credStore, events, todos, journals, nil)
+	svc := NewService(db, q, credStore, calendars, events, todos, journals, nil)
 	return svc, db, q
 }
 

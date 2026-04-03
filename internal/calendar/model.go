@@ -19,4 +19,6 @@ type Calendar struct {
 	LastSyncAt          string // RFC 3339 timestamp of last clean sync
 	LastSyncAttemptedAt string // RFC 3339 timestamp of last sync attempt
 	LastSyncError       string // Concise summary of the last sync failure
+	RemoteColor         string // Last known remote calendar-color value
+	ColorDirty          bool   // Local color changed and needs remote sync
 }

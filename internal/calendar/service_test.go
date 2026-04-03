@@ -2,9 +2,11 @@ package calendar
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 
+	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
 
@@ -12,6 +14,12 @@ func newTestService(t *testing.T) *Service {
 	t.Helper()
 	db, q := testutil.NewTestDB(t)
 	return NewService(db, q)
+}
+
+func newTestServiceWithDB(t *testing.T) (*Service, *storage.Queries, *sql.DB) {
+	t.Helper()
+	db, q := testutil.NewTestDB(t)
+	return NewService(db, q), q, db
 }
 
 func TestCalendarService_ListDefault(t *testing.T) {
@@ -86,6 +94,63 @@ func TestCalendarService_Update(t *testing.T) {
 	}
 	if c.Color != "#FF0000" {
 		t.Errorf("Color = %q, want %q", c.Color, "#FF0000")
+	}
+}
+
+func TestCalendarService_UpdateLinkedColorMarksDirty(t *testing.T) {
+	svc, q, _ := newTestServiceWithDB(t)
+	ctx := context.Background()
+
+	account, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name:      "test",
+		ServerUrl: "https://example.com",
+		AuthType:  "basic",
+		Username:  "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID:        1,
+		AccountID: &account.ID,
+		RemoteUrl: storage.StringToNullable("https://example.com/cal/work"),
+	}); err != nil {
+		t.Fatalf("LinkCalendarToAccount: %v", err)
+	}
+
+	c, err := svc.Update(ctx, 1, "Personal", "#123456", "")
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if !c.ColorDirty {
+		t.Fatal("expected linked calendar color change to mark color dirty")
+	}
+}
+
+func TestCalendarService_UpdateColorFromSync(t *testing.T) {
+	svc, _, db := newTestServiceWithDB(t)
+	ctx := context.Background()
+
+	if _, err := db.ExecContext(ctx, "UPDATE calendars SET color_dirty = 1 WHERE id = 1"); err != nil {
+		t.Fatalf("seed dirty color: %v", err)
+	}
+
+	if err := svc.UpdateColorFromSync(ctx, 1, "#abcdef", "#abcdef"); err != nil {
+		t.Fatalf("UpdateColorFromSync: %v", err)
+	}
+
+	cal, err := svc.Get(ctx, 1)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if cal.Color != "#abcdef" {
+		t.Fatalf("Color = %q, want #abcdef", cal.Color)
+	}
+	if cal.RemoteColor != "#abcdef" {
+		t.Fatalf("RemoteColor = %q, want #abcdef", cal.RemoteColor)
+	}
+	if cal.ColorDirty {
+		t.Fatal("expected color dirty to be cleared")
 	}
 }
 

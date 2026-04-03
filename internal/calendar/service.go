@@ -55,16 +55,41 @@ func (s *Service) Create(ctx context.Context, name, color, description string) (
 }
 
 func (s *Service) Update(ctx context.Context, id int64, name, color, description string) (Calendar, error) {
-	r, err := s.q.UpdateCalendar(ctx, storage.UpdateCalendarParams{
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Calendar{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	qtx := s.q.WithTx(tx)
+	existing, err := qtx.GetCalendar(ctx, id)
+	if err != nil {
+		return Calendar{}, err
+	}
+
+	if _, err := qtx.UpdateCalendar(ctx, storage.UpdateCalendarParams{
 		ID:          id,
 		Name:        name,
 		Color:       color,
 		Description: storage.StringToNullable(description),
-	})
+	}); err != nil {
+		return Calendar{}, err
+	}
+
+	if existing.AccountID != nil && existing.Color != color {
+		if err := qtx.MarkCalendarColorDirty(ctx, id); err != nil {
+			return Calendar{}, err
+		}
+	}
+
+	updated, err := qtx.GetCalendar(ctx, id)
 	if err != nil {
 		return Calendar{}, err
 	}
-	return fromStorage(r), nil
+	if err := tx.Commit(); err != nil {
+		return Calendar{}, err
+	}
+	return fromStorage(updated), nil
 }
 
 func (s *Service) Delete(ctx context.Context, id int64) error {
@@ -124,6 +149,21 @@ func (s *Service) LinkToAccount(ctx context.Context, id, accountID int64, remote
 	})
 }
 
+func (s *Service) UpdateColorFromSync(ctx context.Context, id int64, localColor, remoteColor string) error {
+	return s.q.UpdateCalendarColorFromSync(ctx, storage.UpdateCalendarColorFromSyncParams{
+		ID:          id,
+		Color:       localColor,
+		RemoteColor: storage.StringToNullable(remoteColor),
+	})
+}
+
+func (s *Service) ClearColorDirty(ctx context.Context, id int64, remoteColor string) error {
+	return s.q.ClearCalendarColorDirty(ctx, storage.ClearCalendarColorDirtyParams{
+		ID:          id,
+		RemoteColor: storage.StringToNullable(remoteColor),
+	})
+}
+
 func fromStorage(r storage.Calendar) Calendar {
 	var accountID int64
 	if r.AccountID != nil {
@@ -143,5 +183,7 @@ func fromStorage(r storage.Calendar) Calendar {
 		LastSyncAt:          storage.NullableToString(r.LastSyncAt),
 		LastSyncAttemptedAt: storage.NullableToString(r.LastSyncAttemptedAt),
 		LastSyncError:       storage.NullableToString(r.LastSyncError),
+		RemoteColor:         storage.NullableToString(r.RemoteColor),
+		ColorDirty:          r.ColorDirty != 0,
 	}
 }

@@ -38,6 +38,8 @@ type Calendar struct {
 	LastSyncAt          *string
 	LastSyncAttemptedAt *string
 	LastSyncError       *string
+	RemoteColor         *string
+	ColorDirty          int64
 }
 
 type Event struct {

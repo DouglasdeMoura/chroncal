@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/auth"
+	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/storage"
@@ -22,9 +23,9 @@ type Service struct {
 }
 
 // NewService creates a new sync service.
-func NewService(db *sql.DB, q *storage.Queries, credStore auth.CredentialStore, events *event.Service, todos *todo.Service, journals *journal.Service, logger *slog.Logger) *Service {
+func NewService(db *sql.DB, q *storage.Queries, credStore auth.CredentialStore, calendars *calendar.Service, events *event.Service, todos *todo.Service, journals *journal.Service, logger *slog.Logger) *Service {
 	return &Service{
-		engine: NewEngine(db, q, credStore, events, todos, journals, logger),
+		engine: NewEngine(db, q, credStore, calendars, events, todos, journals, logger),
 		db:     db,
 		q:      q,
 	}

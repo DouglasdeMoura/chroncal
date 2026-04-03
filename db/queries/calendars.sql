@@ -40,3 +40,24 @@ UPDATE calendars SET
     remote_url = ?,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ?;
+
+-- name: MarkCalendarColorDirty :exec
+UPDATE calendars SET
+    color_dirty = 1,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = ?;
+
+-- name: UpdateCalendarColorFromSync :exec
+UPDATE calendars SET
+    color = ?,
+    remote_color = ?,
+    color_dirty = 0,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = ?;
+
+-- name: ClearCalendarColorDirty :exec
+UPDATE calendars SET
+    remote_color = ?,
+    color_dirty = 0,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = ?;

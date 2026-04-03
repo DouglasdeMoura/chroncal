@@ -13,6 +13,7 @@ import (
 
 	authpkg "github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/caldav"
+	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	icalPkg "github.com/douglasdemoura/chroncal/internal/ical"
 	"github.com/douglasdemoura/chroncal/internal/journal"
@@ -43,6 +44,7 @@ type Engine struct {
 	db        *sql.DB
 	q         *storage.Queries
 	credStore authpkg.CredentialStore
+	calendars *calendar.Service
 	events    *event.Service
 	todos     *todo.Service
 	journals  *journal.Service
@@ -54,11 +56,11 @@ var syncRetryOptions = caldav.RetryOptions{
 }
 
 // NewEngine creates a new sync engine.
-func NewEngine(db *sql.DB, q *storage.Queries, credStore authpkg.CredentialStore, events *event.Service, todos *todo.Service, journals *journal.Service, logger *slog.Logger) *Engine {
+func NewEngine(db *sql.DB, q *storage.Queries, credStore authpkg.CredentialStore, calendars *calendar.Service, events *event.Service, todos *todo.Service, journals *journal.Service, logger *slog.Logger) *Engine {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Engine{db: db, q: q, credStore: credStore, events: events, todos: todos, journals: journals, logger: logger}
+	return &Engine{db: db, q: q, credStore: credStore, calendars: calendars, events: events, todos: todos, journals: journals, logger: logger}
 }
 
 // SyncCalendar runs a full sync cycle for one calendar.
@@ -103,6 +105,12 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 	}
 
 	e.logger.Info("sync started", "calendar_id", calendarID, "remote_url", remoteURL)
+
+	// Phase 0: Sync calendar metadata
+	if err := e.syncCalendarMetadata(ctx, client, calendarID, remoteURL); err != nil {
+		e.logger.Warn("calendar metadata sync failed", "calendar_id", calendarID, "error", err)
+		result.Errors = append(result.Errors, fmt.Errorf("calendar metadata: %w", err))
+	}
 
 	// Phase 1: Push dirty resources
 	pushResult, err := e.push(ctx, client, calendarID, remoteURL, strategy)
@@ -431,6 +439,40 @@ func (e *Engine) processTombstones(ctx context.Context, client *caldav.Client, c
 		result.deleted++
 	}
 	return result, nil
+}
+
+func (e *Engine) syncCalendarMetadata(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL string) error {
+	cal, err := e.q.GetCalendar(ctx, calendarID)
+	if err != nil {
+		return fmt.Errorf("get calendar for metadata sync: %w", err)
+	}
+
+	remoteColor, err := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (string, error) {
+		return caldav.GetCalendarColor(ctx, client.HTTPClient(), remoteURL)
+	})
+	if err != nil {
+		return fmt.Errorf("get remote calendar color: %w", err)
+	}
+
+	if cal.ColorDirty != 0 {
+		if _, err := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (struct{}, error) {
+			return struct{}{}, caldav.SetCalendarColor(ctx, client.HTTPClient(), remoteURL, cal.Color)
+		}); err != nil {
+			return fmt.Errorf("set remote calendar color: %w", err)
+		}
+		if err := e.calendars.ClearColorDirty(ctx, calendarID, cal.Color); err != nil {
+			return fmt.Errorf("clear calendar color dirty: %w", err)
+		}
+		return nil
+	}
+
+	if remoteColor != storage.NullableToString(cal.RemoteColor) {
+		if err := e.calendars.UpdateColorFromSync(ctx, calendarID, remoteColor, remoteColor); err != nil {
+			return fmt.Errorf("update calendar color from sync: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // exportResource exports a local resource to iCal bytes.
