@@ -227,6 +227,15 @@ func (s *Service) GetByUIDAndRecurrenceID(ctx context.Context, uid, recurrenceID
 	return j, nil
 }
 
+// markDirtyByID looks up a journal by ID and marks its sync resource as dirty.
+func (s *Service) markDirtyByID(ctx context.Context, journalID int64) {
+	r, err := s.q.GetJournal(ctx, journalID)
+	if err != nil {
+		return
+	}
+	_ = storage.MarkResourceDirty(ctx, s.db, r.CalendarID, r.Uid, "journal")
+}
+
 func (s *Service) Create(ctx context.Context, p CreateParams) (Journal, error) {
 	p.applyDefaults()
 	r, err := s.q.CreateJournal(ctx, storage.CreateJournalParams{
@@ -254,6 +263,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Journal, error) {
 		return Journal{}, fmt.Errorf("replace categories: %w", err)
 	}
 	j.Categories = p.Categories
+	_ = storage.MarkResourceDirty(ctx, s.db, j.CalendarID, j.UID, "journal")
 	return j, nil
 }
 
@@ -282,6 +292,7 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Journal
 		return Journal{}, fmt.Errorf("replace categories: %w", err)
 	}
 	j.Categories = p.Categories
+	_ = storage.MarkResourceDirty(ctx, s.db, j.CalendarID, j.UID, "journal")
 	return j, nil
 }
 
@@ -336,6 +347,12 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		}
 	}
 
+	// If this is a standalone journal (no recurrence or a solo master), create
+	// a tombstone so the sync engine can send a DELETE to the server.
+	if j.RecurrenceID == "" {
+		_, _ = storage.CreateTombstoneIfSynced(ctx, s.db, j.CalendarID, j.UID)
+	}
+
 	// If this is an override, add EXDATE to the master.
 	if j.RecurrenceID != "" {
 		tx, err := s.db.BeginTx(ctx, nil)
@@ -363,7 +380,12 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		if err := qtx.DeleteJournal(ctx, id); err != nil {
 			return fmt.Errorf("delete journal: %w", err)
 		}
-		return tx.Commit()
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		// Mark the master dirty — its EXDATE was modified.
+		_ = storage.MarkResourceDirty(ctx, s.db, j.CalendarID, j.UID, "journal")
+		return nil
 	}
 
 	return s.q.DeleteJournal(ctx, id)
@@ -371,6 +393,12 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 
 // DeleteSeries deletes a recurring master journal and all its overrides.
 func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
+	// Look up the master to get calendarID for tombstone creation.
+	master, err := s.q.GetJournalByUID(ctx, uid)
+	if err == nil {
+		_, _ = storage.CreateTombstoneIfSynced(ctx, s.db, master.CalendarID, uid)
+	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -457,7 +485,11 @@ func (s *Service) ReplaceAttendees(ctx context.Context, journalID int64, attende
 			return fmt.Errorf("create attendee: %w", err)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.markDirtyByID(ctx, journalID)
+	return nil
 }
 
 // Category CRUD
@@ -533,7 +565,11 @@ func (s *Service) ReplaceAttachments(ctx context.Context, journalID int64, attac
 			return fmt.Errorf("create attachment: %w", err)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.markDirtyByID(ctx, journalID)
+	return nil
 }
 
 // Comment CRUD
@@ -568,7 +604,11 @@ func (s *Service) ReplaceComments(ctx context.Context, journalID int64, comments
 			return fmt.Errorf("create comment: %w", err)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.markDirtyByID(ctx, journalID)
+	return nil
 }
 
 // Contact CRUD
@@ -603,7 +643,11 @@ func (s *Service) ReplaceContacts(ctx context.Context, journalID int64, contacts
 			return fmt.Errorf("create contact: %w", err)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.markDirtyByID(ctx, journalID)
+	return nil
 }
 
 // Relation CRUD
@@ -638,7 +682,11 @@ func (s *Service) ReplaceRelations(ctx context.Context, journalID int64, relatio
 			return fmt.Errorf("create relation: %w", err)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.markDirtyByID(ctx, journalID)
+	return nil
 }
 
 // Converters
@@ -740,7 +788,11 @@ func (s *Service) ReplaceXProperties(ctx context.Context, journalID int64, xprop
 			return fmt.Errorf("insert x-property: %w", err)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.markDirtyByID(ctx, journalID)
+	return nil
 }
 
 func fromStorageSlice(rows []storage.Journal) []Journal {

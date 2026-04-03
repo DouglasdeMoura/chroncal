@@ -269,6 +269,15 @@ func (s *Service) GetByUIDAndRecurrenceID(ctx context.Context, uid, recurrenceID
 	return t, nil
 }
 
+// markDirtyByID looks up a todo by ID and marks its sync resource as dirty.
+func (s *Service) markDirtyByID(ctx context.Context, todoID int64) {
+	r, err := s.q.GetTodo(ctx, todoID)
+	if err != nil {
+		return
+	}
+	_ = storage.MarkResourceDirty(ctx, s.db, r.CalendarID, r.Uid, "todo")
+}
+
 func (s *Service) Create(ctx context.Context, p CreateParams) (Todo, error) {
 	p.applyDefaults()
 	completedAt := ""
@@ -307,6 +316,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Todo, error) {
 		return Todo{}, fmt.Errorf("replace categories: %w", err)
 	}
 	t.Categories = p.Categories
+	_ = storage.MarkResourceDirty(ctx, s.db, t.CalendarID, t.UID, "todo")
 	return t, nil
 }
 
@@ -346,6 +356,7 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, e
 		return Todo{}, fmt.Errorf("replace categories: %w", err)
 	}
 	t.Categories = p.Categories
+	_ = storage.MarkResourceDirty(ctx, s.db, t.CalendarID, t.UID, "todo")
 	return t, nil
 }
 
@@ -415,6 +426,12 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		}
 	}
 
+	// If this is a standalone todo (no recurrence or a solo master), create
+	// a tombstone so the sync engine can send a DELETE to the server.
+	if td.RecurrenceID == "" {
+		_, _ = storage.CreateTombstoneIfSynced(ctx, s.db, td.CalendarID, td.UID)
+	}
+
 	// If this is an override, add EXDATE to the master.
 	if td.RecurrenceID != "" {
 		tx, err := s.db.BeginTx(ctx, nil)
@@ -442,7 +459,12 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		if err := qtx.DeleteTodo(ctx, id); err != nil {
 			return fmt.Errorf("delete todo: %w", err)
 		}
-		return tx.Commit()
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		// Mark the master dirty — its EXDATE was modified.
+		_ = storage.MarkResourceDirty(ctx, s.db, td.CalendarID, td.UID, "todo")
+		return nil
 	}
 
 	return s.q.DeleteTodo(ctx, id)
@@ -450,6 +472,12 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 
 // DeleteSeries deletes a recurring master todo and all its overrides.
 func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
+	// Look up the master to get calendarID for tombstone creation.
+	master, err := s.q.GetTodoByUID(ctx, uid)
+	if err == nil {
+		_, _ = storage.CreateTombstoneIfSynced(ctx, s.db, master.CalendarID, uid)
+	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -567,7 +595,11 @@ func (s *Service) ReplaceAlarms(ctx context.Context, todoID int64, alarms []mode
 			}
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.markDirtyByID(ctx, todoID)
+	return nil
 }
 
 // Attendee CRUD
@@ -634,7 +666,11 @@ func (s *Service) ReplaceAttendees(ctx context.Context, todoID int64, attendees 
 			return fmt.Errorf("create attendee: %w", err)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.markDirtyByID(ctx, todoID)
+	return nil
 }
 
 // Category CRUD
@@ -710,7 +746,11 @@ func (s *Service) ReplaceAttachments(ctx context.Context, todoID int64, attachme
 			return fmt.Errorf("create attachment: %w", err)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.markDirtyByID(ctx, todoID)
+	return nil
 }
 
 // Comment CRUD
@@ -745,7 +785,11 @@ func (s *Service) ReplaceComments(ctx context.Context, todoID int64, comments []
 			return fmt.Errorf("create comment: %w", err)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.markDirtyByID(ctx, todoID)
+	return nil
 }
 
 // Contact CRUD
@@ -780,7 +824,11 @@ func (s *Service) ReplaceContacts(ctx context.Context, todoID int64, contacts []
 			return fmt.Errorf("create contact: %w", err)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.markDirtyByID(ctx, todoID)
+	return nil
 }
 
 // Resource CRUD
@@ -815,7 +863,11 @@ func (s *Service) ReplaceResources(ctx context.Context, todoID int64, resources 
 			return fmt.Errorf("create resource: %w", err)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.markDirtyByID(ctx, todoID)
+	return nil
 }
 
 // Relation CRUD
@@ -850,7 +902,11 @@ func (s *Service) ReplaceRelations(ctx context.Context, todoID int64, relations 
 			return fmt.Errorf("create relation: %w", err)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.markDirtyByID(ctx, todoID)
+	return nil
 }
 
 // Converters
@@ -959,7 +1015,11 @@ func (s *Service) ReplaceXProperties(ctx context.Context, todoID int64, xprops [
 			return fmt.Errorf("insert x-property: %w", err)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.markDirtyByID(ctx, todoID)
+	return nil
 }
 
 func fromStorageSlice(rows []storage.Todo) []Todo {

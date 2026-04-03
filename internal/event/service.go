@@ -241,6 +241,15 @@ func (s *Service) GetByUIDAndRecurrenceID(ctx context.Context, uid, recurrenceID
 	return e, nil
 }
 
+// markDirtyByID looks up an event by ID and marks its sync resource as dirty.
+func (s *Service) markDirtyByID(ctx context.Context, eventID int64) {
+	r, err := s.q.GetEvent(ctx, eventID)
+	if err != nil {
+		return
+	}
+	_ = storage.MarkResourceDirty(ctx, s.db, r.CalendarID, r.Uid, "event")
+}
+
 func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
 	p.applyDefaults()
 	r, err := s.q.CreateEvent(ctx, storage.CreateEventParams{
@@ -277,6 +286,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
 		}
 	}
 	e.Categories = p.Categories
+	_ = storage.MarkResourceDirty(ctx, s.db, e.CalendarID, e.UID, "event")
 	return e, nil
 }
 
@@ -312,6 +322,7 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, 
 		return Event{}, fmt.Errorf("replace categories: %w", err)
 	}
 	e.Categories = p.Categories
+	_ = storage.MarkResourceDirty(ctx, s.db, e.CalendarID, e.UID, "event")
 	return e, nil
 }
 
@@ -374,8 +385,15 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		}
 	}
 
+	// If this is a standalone event (no recurrence or a solo master), create
+	// a tombstone so the sync engine can send a DELETE to the server.
+	if evt.RecurrenceID == "" {
+		_, _ = storage.CreateTombstoneIfSynced(ctx, s.db, evt.CalendarID, evt.UID)
+	}
+
 	// If this is an override, add EXDATE to the master so the instance
-	// doesn't reappear on next expansion.
+	// doesn't reappear on next expansion. The master's sync resource
+	// becomes dirty (modified EXDATE), not the override.
 	if evt.RecurrenceID != "" {
 		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
@@ -402,7 +420,12 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		if err := qtx.DeleteEvent(ctx, id); err != nil {
 			return fmt.Errorf("delete event: %w", err)
 		}
-		return tx.Commit()
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		// Mark the master dirty — its EXDATE was modified.
+		_ = storage.MarkResourceDirty(ctx, s.db, evt.CalendarID, evt.UID, "event")
+		return nil
 	}
 
 	return s.q.DeleteEvent(ctx, id)
@@ -410,6 +433,12 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 
 // DeleteSeries deletes a recurring master event and all its overrides.
 func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
+	// Look up the master to get calendarID for tombstone creation.
+	master, err := s.q.GetEventByUID(ctx, uid)
+	if err == nil {
+		_, _ = storage.CreateTombstoneIfSynced(ctx, s.db, master.CalendarID, uid)
+	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -629,7 +658,11 @@ func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []mod
 		return err
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.markDirtyByID(ctx, eventID)
+	return nil
 }
 
 // Attendee CRUD
@@ -682,7 +715,11 @@ func (s *Service) ReplaceAttendees(ctx context.Context, eventID int64, attendees
 			return fmt.Errorf("create attendee: %w", err)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.markDirtyByID(ctx, eventID)
+	return nil
 }
 
 // Category CRUD
@@ -758,7 +795,11 @@ func (s *Service) ReplaceAttachments(ctx context.Context, eventID int64, attachm
 			return fmt.Errorf("create attachment: %w", err)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.markDirtyByID(ctx, eventID)
+	return nil
 }
 
 // Comment CRUD
@@ -793,7 +834,11 @@ func (s *Service) ReplaceComments(ctx context.Context, eventID int64, comments [
 			return fmt.Errorf("create comment: %w", err)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.markDirtyByID(ctx, eventID)
+	return nil
 }
 
 // Contact CRUD
@@ -828,7 +873,11 @@ func (s *Service) ReplaceContacts(ctx context.Context, eventID int64, contacts [
 			return fmt.Errorf("create contact: %w", err)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.markDirtyByID(ctx, eventID)
+	return nil
 }
 
 // Resource CRUD
@@ -863,7 +912,11 @@ func (s *Service) ReplaceResources(ctx context.Context, eventID int64, resources
 			return fmt.Errorf("create resource: %w", err)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.markDirtyByID(ctx, eventID)
+	return nil
 }
 
 // Relation CRUD
@@ -898,7 +951,11 @@ func (s *Service) ReplaceRelations(ctx context.Context, eventID int64, relations
 			return fmt.Errorf("create relation: %w", err)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.markDirtyByID(ctx, eventID)
+	return nil
 }
 
 // Converters
@@ -1032,7 +1089,11 @@ func (s *Service) ReplaceXProperties(ctx context.Context, eventID int64, xprops 
 			return fmt.Errorf("insert x-property: %w", err)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.markDirtyByID(ctx, eventID)
+	return nil
 }
 
 func fromStorageAttendee(r storage.EventAttendee) model.Attendee {
