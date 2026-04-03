@@ -25,17 +25,19 @@ type AlarmState struct {
 }
 
 type Calendar struct {
-	ID          int64
-	Name        string
-	Color       string
-	Description *string
-	CreatedAt   string
-	UpdatedAt   string
-	AccountID   *int64
-	RemoteUrl   *string
-	Ctag        *string
-	SyncToken   *string
-	LastSyncAt  *string
+	ID                  int64
+	Name                string
+	Color               string
+	Description         *string
+	CreatedAt           string
+	UpdatedAt           string
+	AccountID           *int64
+	RemoteUrl           *string
+	Ctag                *string
+	SyncToken           *string
+	LastSyncAt          *string
+	LastSyncAttemptedAt *string
+	LastSyncError       *string
 }
 
 type Event struct {

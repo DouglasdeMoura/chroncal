@@ -35,8 +35,9 @@ type Change struct {
 
 // Client wraps the go-webdav CalDAV client with error handling and auth.
 type Client struct {
-	inner    *caldav.Client
-	endpoint string
+	httpClient webdav.HTTPClient
+	inner      *caldav.Client
+	endpoint   string
 }
 
 // NewClient creates a CalDAV client with the given HTTP client and endpoint.
@@ -46,7 +47,7 @@ func NewClient(httpClient webdav.HTTPClient, endpoint string) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create caldav client: %w", err)
 	}
-	return &Client{inner: inner, endpoint: endpoint}, nil
+	return &Client{httpClient: httpClient, inner: inner, endpoint: endpoint}, nil
 }
 
 // NewBasicAuthClient creates a CalDAV client with HTTP basic authentication.
@@ -173,6 +174,11 @@ func (c *Client) GetResource(ctx context.Context, path string) (*Resource, error
 		ETag: obj.ETag,
 		Data: obj.Data,
 	}, nil
+}
+
+// HTTPClient exposes the authenticated HTTP client for raw WebDAV requests.
+func (c *Client) HTTPClient() webdav.HTTPClient {
+	return c.httpClient
 }
 
 // EncodeCalendar serializes an ical.Calendar to bytes.

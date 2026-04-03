@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/emersion/go-ical"
 
@@ -48,6 +49,10 @@ type Engine struct {
 	logger    *slog.Logger
 }
 
+var syncRetryOptions = caldav.RetryOptions{
+	MaxAttempts: 3,
+}
+
 // NewEngine creates a new sync engine.
 func NewEngine(db *sql.DB, q *storage.Queries, credStore authpkg.CredentialStore, events *event.Service, todos *todo.Service, journals *journal.Service, logger *slog.Logger) *Engine {
 	if logger == nil {
@@ -57,14 +62,21 @@ func NewEngine(db *sql.DB, q *storage.Queries, credStore authpkg.CredentialStore
 }
 
 // SyncCalendar runs a full sync cycle for one calendar.
-func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy ConflictStrategy) (*SyncResult, error) {
-	result := &SyncResult{CalendarID: calendarID}
-
+func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy ConflictStrategy) (result *SyncResult, err error) {
 	// Load calendar and account
 	cal, err := e.q.GetCalendar(ctx, calendarID)
 	if err != nil {
 		return nil, fmt.Errorf("get calendar: %w", err)
 	}
+	result = &SyncResult{CalendarID: cal.ID}
+	attemptedAt := time.Now().UTC().Format(time.RFC3339)
+	defer func() {
+		if updateErr := e.updateSyncHealth(ctx, cal.ID, attemptedAt, result, err); updateErr != nil {
+			e.logger.Warn("update sync health failed", "calendar_id", cal.ID, "error", updateErr)
+			result.Errors = append(result.Errors, fmt.Errorf("update sync health: %w", updateErr))
+		}
+	}()
+
 	if cal.AccountID == nil || *cal.AccountID == 0 {
 		return nil, fmt.Errorf("calendar %d is not linked to an account", calendarID)
 	}
@@ -114,11 +126,14 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 	}
 
 	// Phase 3: Process tombstones
-	tombstoneCount, err := e.processTombstones(ctx, client, calendarID)
+	tombstoneResult, err := e.processTombstones(ctx, client, calendarID)
 	if err != nil {
 		e.logger.Warn("tombstone processing failed", "calendar_id", calendarID, "error", err)
+		result.Errors = append(result.Errors, fmt.Errorf("tombstones: %w", err))
+	} else {
+		result.Deleted += tombstoneResult.deleted
+		result.Errors = append(result.Errors, tombstoneResult.errors...)
 	}
-	result.Deleted += tombstoneCount
 
 	// Cleanup stale tombstones
 	if err := e.q.DeleteStaleTombstones(ctx); err != nil {
@@ -205,10 +220,12 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 		}
 
 		// PUT to server
-		newEtag, putErr := client.PutResource(ctx, putPath, cal)
+		newEtag, putErr := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (string, error) {
+			return client.PutResource(ctx, putPath, cal)
+		})
 		if putErr != nil {
 			// Check for 412 Precondition Failed (ETag conflict)
-			if isConflictError(putErr) {
+			if caldav.IsConflict(putErr) {
 				e.logger.Warn("conflict detected during push", "uid", res.Uid)
 				if strategy == ConflictServerWins {
 					// Re-fetch server version, clear dirty flag, accept server state
@@ -292,7 +309,9 @@ func (e *Engine) pull(ctx context.Context, client *caldav.Client, calendarID int
 	result := &pullResult{}
 
 	// Fetch all resources from server
-	resources, err := client.QueryAll(ctx, remoteURL)
+	resources, err := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) ([]caldav.Resource, error) {
+		return client.QueryAll(ctx, remoteURL)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("query all: %w", err)
 	}
@@ -385,25 +404,33 @@ func (e *Engine) pull(ctx context.Context, client *caldav.Client, calendarID int
 	return result, nil
 }
 
-func (e *Engine) processTombstones(ctx context.Context, client *caldav.Client, calendarID int64) (int, error) {
+type tombstoneResult struct {
+	deleted int
+	errors  []error
+}
+
+func (e *Engine) processTombstones(ctx context.Context, client *caldav.Client, calendarID int64) (*tombstoneResult, error) {
 	tombstones, err := e.q.ListTombstonesByCalendar(ctx, calendarID)
 	if err != nil {
-		return 0, fmt.Errorf("list tombstones: %w", err)
+		return nil, fmt.Errorf("list tombstones: %w", err)
 	}
 
-	deleted := 0
+	result := &tombstoneResult{}
 	for _, ts := range tombstones {
 		e.logger.Debug("deleting tombstone", "uid", ts.Uid, "remote_url", ts.RemoteUrl)
-		if err := client.DeleteResource(ctx, ts.RemoteUrl); err != nil {
+		if _, err := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (struct{}, error) {
+			return struct{}{}, client.DeleteResource(ctx, ts.RemoteUrl)
+		}); err != nil {
 			e.logger.Warn("delete remote resource failed", "uid", ts.Uid, "error", err)
+			result.errors = append(result.errors, fmt.Errorf("delete tombstone %s: %w", ts.Uid, err))
 			continue
 		}
 		if err := e.q.DeleteTombstone(ctx, ts.ID); err != nil {
 			e.logger.Warn("delete tombstone row failed", "uid", ts.Uid, "error", err)
 		}
-		deleted++
+		result.deleted++
 	}
-	return deleted, nil
+	return result, nil
 }
 
 // exportResource exports a local resource to iCal bytes.
@@ -562,7 +589,7 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 			RecurrenceRule: j.RecurrenceRule, Timezone: j.Timezone,
 			Sequence: j.Sequence, ExDates: j.ExDates, RDates: j.RDates,
 			RecurrenceID: j.RecurrenceID,
-			DtStamp: j.DtStamp,
+			DtStamp:      j.DtStamp,
 		})
 		if err != nil {
 			return fmt.Errorf("upsert journal %q: %w", j.UID, err)
@@ -595,10 +622,6 @@ func parseICalData(data []byte) (*ical.Calendar, error) {
 	return dec.Decode()
 }
 
-func isConflictError(err error) bool {
-	return strings.Contains(err.Error(), "412") || strings.Contains(err.Error(), "Precondition Failed")
-}
-
 func extractUID(result icalPkg.ImportResult) string {
 	if len(result.Events) > 0 {
 		return result.Events[0].UID
@@ -623,4 +646,33 @@ func detectOwnerType(result icalPkg.ImportResult) string {
 		return "journal"
 	}
 	return "event"
+}
+
+func (e *Engine) updateSyncHealth(ctx context.Context, calendarID int64, attemptedAt string, result *SyncResult, runErr error) error {
+	lastSyncAt := ""
+	lastSyncError := summarizeSyncError(result, runErr)
+	if runErr == nil && len(result.Errors) == 0 {
+		lastSyncAt = attemptedAt
+		lastSyncError = ""
+	}
+
+	return e.q.UpdateCalendarSyncHealth(ctx, storage.UpdateCalendarSyncHealthParams{
+		ID:                  calendarID,
+		LastSyncAttemptedAt: storage.StringToNullable(attemptedAt),
+		LastSyncAt:          storage.StringToNullable(lastSyncAt),
+		LastSyncError:       storage.StringToNullable(lastSyncError),
+	})
+}
+
+func summarizeSyncError(result *SyncResult, runErr error) string {
+	if runErr != nil {
+		return runErr.Error()
+	}
+	if len(result.Errors) == 0 {
+		return ""
+	}
+	if len(result.Errors) == 1 {
+		return result.Errors[0].Error()
+	}
+	return fmt.Sprintf("%s (+%d more)", result.Errors[0], len(result.Errors)-1)
 }

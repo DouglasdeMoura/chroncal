@@ -23,7 +23,14 @@ SELECT * FROM calendars WHERE account_id = ? ORDER BY name;
 UPDATE calendars SET
     ctag = ?,
     sync_token = ?,
-    last_sync_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = ?;
+
+-- name: UpdateCalendarSyncHealth :exec
+UPDATE calendars SET
+    last_sync_attempted_at = ?,
+    last_sync_at = ?,
+    last_sync_error = ?,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ?;
 

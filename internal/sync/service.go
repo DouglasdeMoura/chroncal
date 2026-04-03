@@ -42,13 +42,15 @@ func (s *Service) SyncAll(ctx context.Context, strategy ConflictStrategy) ([]*Sy
 
 // SyncStatus returns the current sync status for a calendar.
 type SyncStatus struct {
-	CalendarID    int64
-	CalendarName  string
-	AccountName   string
-	LastSyncToken string
-	LastSyncAt    string // RFC 3339 or empty
-	PendingPush   int
-	Conflicts     int
+	CalendarID          int64
+	CalendarName        string
+	AccountName         string
+	LastSyncToken       string
+	LastSyncAt          string // RFC 3339 or empty
+	LastSyncAttemptedAt string // RFC 3339 or empty
+	LastSyncError       string
+	PendingPush         int
+	Conflicts           int
 }
 
 // Status returns sync status for all synced calendars.
@@ -74,13 +76,15 @@ func (s *Service) Status(ctx context.Context) ([]SyncStatus, error) {
 				conflicts = nil
 			}
 			statuses = append(statuses, SyncStatus{
-				CalendarID:    cal.ID,
-				CalendarName:  cal.Name,
-				AccountName:   account.Name,
-				LastSyncToken: storage.NullableToString(cal.SyncToken),
-				LastSyncAt:    storage.NullableToString(cal.LastSyncAt),
-				PendingPush:   len(dirty),
-				Conflicts:     len(conflicts),
+				CalendarID:          cal.ID,
+				CalendarName:        cal.Name,
+				AccountName:         account.Name,
+				LastSyncToken:       storage.NullableToString(cal.SyncToken),
+				LastSyncAt:          storage.NullableToString(cal.LastSyncAt),
+				LastSyncAttemptedAt: storage.NullableToString(cal.LastSyncAttemptedAt),
+				LastSyncError:       storage.NullableToString(cal.LastSyncError),
+				PendingPush:         len(dirty),
+				Conflicts:           len(conflicts),
 			})
 		}
 	}
@@ -89,14 +93,14 @@ func (s *Service) Status(ctx context.Context) ([]SyncStatus, error) {
 
 // Conflict represents an unresolved sync conflict.
 type Conflict struct {
-	ID          int64
-	CalendarID  int64
-	OwnerType   string
-	UID         string
-	LocalICal   string
-	ServerICal  string
-	ServerETag  string
-	DetectedAt  time.Time
+	ID         int64
+	CalendarID int64
+	OwnerType  string
+	UID        string
+	LocalICal  string
+	ServerICal string
+	ServerETag string
+	DetectedAt time.Time
 }
 
 // ListConflicts returns all unresolved sync conflicts.

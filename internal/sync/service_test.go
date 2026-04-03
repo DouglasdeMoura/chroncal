@@ -2,6 +2,8 @@ package sync
 
 import (
 	"context"
+	"database/sql"
+	"reflect"
 	"testing"
 	"time"
 
@@ -31,13 +33,19 @@ func (m *mockCredStore) Delete(accountID int64) error   { return nil }
 
 func newTestService(t *testing.T) (*Service, *storage.Queries) {
 	t.Helper()
+	svc, _, q := newTestServiceWithDB(t)
+	return svc, q
+}
+
+func newTestServiceWithDB(t *testing.T) (*Service, *sql.DB, *storage.Queries) {
+	t.Helper()
 	db, q := testutil.NewTestDB(t)
 	credStore := &mockCredStore{creds: make(map[int64]auth.Credential)}
 	events := event.NewService(db, q)
 	todos := todo.NewService(db, q)
 	journals := journal.NewService(db, q)
 	svc := NewService(db, q, credStore, events, todos, journals, nil)
-	return svc, q
+	return svc, db, q
 }
 
 func TestService_StatusEmpty(t *testing.T) {
@@ -48,6 +56,79 @@ func TestService_StatusEmpty(t *testing.T) {
 	}
 	if len(statuses) != 0 {
 		t.Errorf("expected 0 statuses, got %d", len(statuses))
+	}
+}
+
+func TestService_StatusIncludesSyncHealthFields(t *testing.T) {
+	svc, db, q := newTestServiceWithDB(t)
+	ctx := context.Background()
+
+	account, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name:      "test",
+		ServerUrl: "https://example.com",
+		AuthType:  "basic",
+		Username:  "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID:        calendarID,
+		AccountID: &account.ID,
+		RemoteUrl: func() *string {
+			s := "https://example.com/cal"
+			return &s
+		}(),
+	}); err != nil {
+		t.Fatalf("LinkCalendarToAccount: %v", err)
+	}
+
+	lastSync := "2026-04-03T08:30:00Z"
+	lastAttempt := "2026-04-03T08:35:00Z"
+	lastError := "partial push failure"
+	if _, err := db.ExecContext(ctx,
+		"UPDATE calendars SET last_sync_at = ?, last_sync_attempted_at = ?, last_sync_error = ? WHERE id = ?",
+		lastSync,
+		lastAttempt,
+		lastError,
+		calendarID,
+	); err != nil {
+		t.Fatalf("seed sync health: %v", err)
+	}
+
+	statuses, err := svc.Status(ctx)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if len(statuses) != 1 {
+		t.Fatalf("statuses = %d, want 1", len(statuses))
+	}
+	if statuses[0].LastSyncAt != lastSync {
+		t.Fatalf("LastSyncAt = %q, want %q", statuses[0].LastSyncAt, lastSync)
+	}
+
+	statusValue := reflect.ValueOf(statuses[0])
+	attemptedField := statusValue.FieldByName("LastSyncAttemptedAt")
+	if !attemptedField.IsValid() {
+		t.Fatal("SyncStatus is missing LastSyncAttemptedAt")
+	}
+	if got := attemptedField.String(); got != lastAttempt {
+		t.Fatalf("LastSyncAttemptedAt = %q, want %q", got, lastAttempt)
+	}
+
+	errorField := statusValue.FieldByName("LastSyncError")
+	if !errorField.IsValid() {
+		t.Fatal("SyncStatus is missing LastSyncError")
+	}
+	if got := errorField.String(); got != lastError {
+		t.Fatalf("LastSyncError = %q, want %q", got, lastError)
 	}
 }
 

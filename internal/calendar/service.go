@@ -130,16 +130,18 @@ func fromStorage(r storage.Calendar) Calendar {
 		accountID = *r.AccountID
 	}
 	return Calendar{
-		ID:          r.ID,
-		Name:        r.Name,
-		Color:       r.Color,
-		Description: storage.NullableToString(r.Description),
-		CreatedAt:   timeutil.ParseDateTime(r.CreatedAt),
-		UpdatedAt:   timeutil.ParseDateTime(r.UpdatedAt),
-		AccountID:   accountID,
-		RemoteURL:   storage.NullableToString(r.RemoteUrl),
-		CTag:        storage.NullableToString(r.Ctag),
-		SyncToken:   storage.NullableToString(r.SyncToken),
-		LastSyncAt:  storage.NullableToString(r.LastSyncAt),
+		ID:                  r.ID,
+		Name:                r.Name,
+		Color:               r.Color,
+		Description:         storage.NullableToString(r.Description),
+		CreatedAt:           timeutil.ParseDateTime(r.CreatedAt),
+		UpdatedAt:           timeutil.ParseDateTime(r.UpdatedAt),
+		AccountID:           accountID,
+		RemoteURL:           storage.NullableToString(r.RemoteUrl),
+		CTag:                storage.NullableToString(r.Ctag),
+		SyncToken:           storage.NullableToString(r.SyncToken),
+		LastSyncAt:          storage.NullableToString(r.LastSyncAt),
+		LastSyncAttemptedAt: storage.NullableToString(r.LastSyncAttemptedAt),
+		LastSyncError:       storage.NullableToString(r.LastSyncError),
 	}
 }

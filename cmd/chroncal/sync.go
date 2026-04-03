@@ -119,8 +119,16 @@ func syncStatusCmd() *cobra.Command {
 				if s.LastSyncAt != "" {
 					lastSync = s.LastSyncAt
 				}
-				fmt.Printf("  %-20s  account=%-15s  last_sync=%s  pending=%d  conflicts=%d\n",
-					s.CalendarName, s.AccountName, lastSync, s.PendingPush, s.Conflicts)
+				lastAttempt := "never"
+				if s.LastSyncAttemptedAt != "" {
+					lastAttempt = s.LastSyncAttemptedAt
+				}
+				lastError := "-"
+				if s.LastSyncError != "" {
+					lastError = s.LastSyncError
+				}
+				fmt.Printf("  %-20s  account=%-15s  last_sync=%s  last_attempt=%s  pending=%d  conflicts=%d  last_error=%s\n",
+					s.CalendarName, s.AccountName, lastSync, lastAttempt, s.PendingPush, s.Conflicts, lastError)
 			}
 			return nil
 		},
