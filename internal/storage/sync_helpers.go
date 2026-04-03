@@ -5,17 +5,27 @@ import (
 	"database/sql"
 )
 
-// MarkResourceDirty sets dirty=1 on the sync_resources row for the given
-// calendar_id + uid pair. If no sync_resources row exists (local-only item),
-// this is a no-op. Called by service-layer mutations (Create, Update, Delete,
-// ReplaceAlarms, etc.) when the item belongs to a synced calendar.
-func MarkResourceDirty(ctx context.Context, db *sql.DB, calendarID int64, uid string) error {
+// MarkResourceDirty marks a resource as needing sync. If the calendar is
+// linked to an account (synced), this upserts a sync_resources row with
+// dirty=1. For local-only calendars this is a no-op.
+// Called by service-layer mutations (Create, Update, ReplaceAlarms, etc.).
+func MarkResourceDirty(ctx context.Context, db *sql.DB, calendarID int64, uid, ownerType string) error {
 	if calendarID == 0 || uid == "" {
 		return nil
 	}
+	// Only act if the calendar is linked to an account.
+	var accountID *int64
+	_ = db.QueryRowContext(ctx,
+		`SELECT account_id FROM calendars WHERE id = ?`, calendarID,
+	).Scan(&accountID)
+	if accountID == nil || *accountID == 0 {
+		return nil
+	}
 	_, err := db.ExecContext(ctx,
-		`UPDATE sync_resources SET dirty = 1 WHERE calendar_id = ? AND uid = ?`,
-		calendarID, uid,
+		`INSERT INTO sync_resources (calendar_id, uid, owner_type, dirty, sync_strategy)
+		 VALUES (?, ?, ?, 1, 'sync-token')
+		 ON CONFLICT(calendar_id, uid) DO UPDATE SET dirty = 1`,
+		calendarID, uid, ownerType,
 	)
 	return err
 }

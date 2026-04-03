@@ -12,8 +12,8 @@ func TestMarkResourceDirty_NoopWhenNoSyncResource(t *testing.T) {
 	}
 	defer db.Close()
 
-	// Should be a no-op when no sync_resources row exists
-	err = MarkResourceDirty(context.Background(), db, 1, "non-existent-uid")
+	// Should be a no-op when no sync_resources row exists (no account linked)
+	err = MarkResourceDirty(context.Background(), db, 1, "non-existent-uid", "event")
 	if err != nil {
 		t.Fatalf("MarkResourceDirty: %v", err)
 	}
@@ -27,10 +27,10 @@ func TestMarkResourceDirty_SkipsZeroCalendarOrEmptyUID(t *testing.T) {
 	defer db.Close()
 
 	ctx := context.Background()
-	if err := MarkResourceDirty(ctx, db, 0, "uid"); err != nil {
+	if err := MarkResourceDirty(ctx, db, 0, "uid", "event"); err != nil {
 		t.Errorf("should skip when calendarID=0: %v", err)
 	}
-	if err := MarkResourceDirty(ctx, db, 1, ""); err != nil {
+	if err := MarkResourceDirty(ctx, db, 1, "", "event"); err != nil {
 		t.Errorf("should skip when uid is empty: %v", err)
 	}
 }
@@ -126,22 +126,19 @@ func TestMarkResourceDirty_SetsDirtyFlag(t *testing.T) {
 	cals, _ := q.ListCalendars(ctx)
 	calID := cals[0].ID
 
-	// Create a clean sync resource
-	err = q.UpsertSyncResource(ctx, UpsertSyncResourceParams{
-		CalendarID:   calID,
-		Uid:          "dirty-test-uid",
-		OwnerType:    "event",
-		RemoteUrl:    "https://example.com/cal/event.ics",
-		Etag:         "etag-abc",
-		Dirty:        0,
-		SyncStrategy: "sync-token",
+	// Link calendar to an account so MarkResourceDirty acts
+	account, err := q.CreateAccount(ctx, CreateAccountParams{
+		Name: "test", ServerUrl: "https://example.com", AuthType: "basic", Username: "u",
 	})
 	if err != nil {
-		t.Fatalf("UpsertSyncResource: %v", err)
+		t.Fatalf("CreateAccount: %v", err)
 	}
+	_ = q.LinkCalendarToAccount(ctx, LinkCalendarToAccountParams{
+		AccountID: &account.ID, RemoteUrl: strPtr("https://example.com/cal/"), ID: calID,
+	})
 
-	// Mark dirty
-	err = MarkResourceDirty(ctx, db, calID, "dirty-test-uid")
+	// Mark dirty — should upsert a sync_resource row
+	err = MarkResourceDirty(ctx, db, calID, "dirty-test-uid", "event")
 	if err != nil {
 		t.Fatalf("MarkResourceDirty: %v", err)
 	}
@@ -158,3 +155,5 @@ func TestMarkResourceDirty_SetsDirtyFlag(t *testing.T) {
 		t.Errorf("dirty uid = %q, want %q", dirty[0].Uid, "dirty-test-uid")
 	}
 }
+
+func strPtr(s string) *string { return &s }
