@@ -12,6 +12,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
@@ -397,6 +398,33 @@ func printTable(w io.Writer, v any) error {
 	case jsonTodo:
 		return printTable(w, []jsonTodo{data})
 
+	case []jsonJournal:
+		if len(data) == 0 {
+			fmt.Fprintln(w, "No journal entries found.")
+			return nil
+		}
+		tbl := table.New("ID", "UID", "CAL", "SUMMARY", "DESCRIPTION",
+			"DATE", "STATUS", "CLASS", "URL", "CATEGORIES", "SEQ",
+			"RRULE", "EXDATES", "RDATES", "REC-ID", "TZ",
+			"ATTENDEES", "ATTACHMENTS", "COMMENTS",
+			"CONTACTS", "RELATIONS",
+			"CREATED", "UPDATED")
+		tbl.WithWriter(w)
+		for _, j := range data {
+			tbl.AddRow(j.ID, j.UID, j.CalendarID, j.Summary, j.Description,
+				j.StartDate, j.Status, j.Class, j.URL, j.Categories, j.Sequence,
+				j.RecurrenceRule, j.ExDates, j.RDates, j.RecurrenceID, j.Timezone,
+				fmtAttendees(j.Attendees), fmtAttachments(j.Attachments),
+				fmtStrings(j.Comments), fmtStrings(j.Contacts),
+				fmtRelations(j.Relations),
+				j.CreatedAt, j.UpdatedAt)
+		}
+		tbl.Print()
+		return nil
+
+	case jsonJournal:
+		return printTable(w, []jsonJournal{data})
+
 	default:
 		return printJSON(w, v)
 	}
@@ -694,5 +722,135 @@ func printTodos(w io.Writer, todos []todo.Todo) {
 			fmt.Fprintln(w)
 		}
 		printTodo(w, t)
+	}
+}
+
+// Journal output
+
+type jsonJournal struct {
+	ID             int64            `json:"id"`
+	UID            string           `json:"uid"`
+	CalendarID     int64            `json:"calendar_id"`
+	Summary        string           `json:"summary"`
+	Description    string           `json:"description"`
+	StartDate      string           `json:"start_date"`
+	Status         string           `json:"status"`
+	Class          string           `json:"class"`
+	URL            string           `json:"url"`
+	Categories     string           `json:"categories"`
+	RecurrenceRule string           `json:"recurrence_rule"`
+	ExDates        string           `json:"exdates"`
+	RDates         string           `json:"rdates"`
+	RecurrenceID   string           `json:"recurrence_id"`
+	Timezone       string           `json:"timezone"`
+	Sequence       int64            `json:"sequence"`
+	CreatedAt      string           `json:"created_at"`
+	UpdatedAt      string           `json:"updated_at"`
+	Attendees      []jsonAttendee   `json:"attendees,omitempty"`
+	Attachments    []jsonAttachment `json:"attachments,omitempty"`
+	Comments       []string         `json:"comments,omitempty"`
+	Contacts       []string         `json:"contacts,omitempty"`
+	Relations      []jsonRelation   `json:"relations,omitempty"`
+}
+
+func toJSONJournal(j journal.Journal) jsonJournal {
+	jj := jsonJournal{
+		ID: j.ID, UID: j.UID, CalendarID: j.CalendarID,
+		Summary: j.Summary, Description: j.Description,
+		StartDate: j.StartDate, Status: j.Status, Class: j.Class,
+		URL: j.URL, Categories: j.Categories,
+		RecurrenceRule: j.RecurrenceRule, ExDates: j.ExDates, RDates: j.RDates,
+		RecurrenceID: j.RecurrenceID, Timezone: j.Timezone,
+		Sequence:  j.Sequence,
+		CreatedAt: j.CreatedAt.Local().Format(time.RFC3339),
+		UpdatedAt: j.UpdatedAt.Local().Format(time.RFC3339),
+	}
+	for _, a := range j.Attendees {
+		jj.Attendees = append(jj.Attendees, jsonAttendee{
+			ID: a.ID, Email: a.Email, Name: a.Name,
+			RSVPStatus: a.RSVPStatus, Role: a.Role, Organizer: a.Organizer,
+		})
+	}
+	for _, a := range j.Attachments {
+		jj.Attachments = append(jj.Attachments, jsonAttachment{URI: a.URI, FmtType: a.FmtType})
+	}
+	jj.Comments = j.Comments
+	jj.Contacts = j.Contacts
+	for _, r := range j.Relations {
+		jj.Relations = append(jj.Relations, jsonRelation{RelType: r.RelType, RelUID: r.RelUID})
+	}
+	return jj
+}
+
+func toJSONJournals(journals []journal.Journal) []jsonJournal {
+	items := make([]jsonJournal, len(journals))
+	for i, j := range journals {
+		items[i] = toJSONJournal(j)
+	}
+	return items
+}
+
+func printJournal(w io.Writer, j journal.Journal) {
+	i := ic()
+	fmt.Fprintf(w, "  %s %s\n", i.Title, j.Summary)
+	fmt.Fprintf(w, "  %s %s\n", i.Status, j.Status)
+	if j.StartDate != "" {
+		start := j.ParseStartDate()
+		if _, err := time.Parse("2006-01-02", j.StartDate); err == nil {
+			fmt.Fprintf(w, "  %s %s\n", i.Clock, start.Format("Mon, Jan 2 2006"))
+		} else {
+			fmt.Fprintf(w, "  %s %s\n", i.Clock, start.Local().Format("Mon, Jan 2 2006 15:04"))
+		}
+	}
+	if j.Description != "" {
+		fmt.Fprintf(w, "  %s %s\n", i.Notes, j.Description)
+	}
+	if j.URL != "" {
+		fmt.Fprintf(w, "  %s %s\n", i.Link, j.URL)
+	}
+	if j.Categories != "" {
+		fmt.Fprintf(w, "  %s %s\n", i.Tags, j.Categories)
+	}
+	if j.Class != "" && j.Class != "PUBLIC" {
+		fmt.Fprintf(w, "  %s %s\n", i.Status, j.Class)
+	}
+	if j.RecurrenceRule != "" {
+		fmt.Fprintf(w, "  %s %s\n", i.Clock, j.RecurrenceRule)
+	}
+	fmt.Fprintf(w, "  %s Calendar %d\n", i.Folder, j.CalendarID)
+	fmt.Fprintf(w, "  %s %d  %s\n", i.ID, j.ID, j.UID)
+	if len(j.Attendees) > 0 {
+		fmt.Fprintf(w, "  %s %d participant(s)\n", i.People, len(j.Attendees))
+	}
+	if len(j.Attachments) > 0 {
+		fmt.Fprintf(w, "  %s %d attachment(s)\n", i.Link, len(j.Attachments))
+	}
+	if len(j.Comments) > 0 {
+		for _, c := range j.Comments {
+			fmt.Fprintf(w, "  %s %s\n", i.Notes, c)
+		}
+	}
+	if len(j.Contacts) > 0 {
+		for _, c := range j.Contacts {
+			fmt.Fprintf(w, "  %s %s\n", i.People, c)
+		}
+	}
+	if len(j.Relations) > 0 {
+		for _, r := range j.Relations {
+			fmt.Fprintf(w, "  %s %s:%s\n", i.Link, r.RelType, r.RelUID)
+		}
+	}
+}
+
+func printJournals(w io.Writer, journals []journal.Journal) {
+	if len(journals) == 0 {
+		fmt.Fprintln(w, "No journal entries found.")
+		return
+	}
+	for idx, j := range journals {
+		if idx > 0 {
+			fmt.Fprintln(w)
+		}
+		printJournal(w, j)
 	}
 }

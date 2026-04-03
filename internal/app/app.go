@@ -10,6 +10,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/alarm"
 	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/recurrence"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/todo"
@@ -21,6 +22,7 @@ type App struct {
 	Calendars   *calendar.Service
 	Events      *event.Service
 	Todos       *todo.Service
+	Journals    *journal.Service
 	Alarms      *alarm.Service
 	Recurrences *recurrence.Service
 }
@@ -33,6 +35,7 @@ func New(dbPath string) (*App, error) {
 
 	eventSvc := event.NewService(db, queries)
 	todoSvc := todo.NewService(db, queries)
+	journalSvc := journal.NewService(db, queries)
 
 	return &App{
 		DB:          db,
@@ -40,6 +43,7 @@ func New(dbPath string) (*App, error) {
 		Calendars:   calendar.NewService(db, queries),
 		Events:      eventSvc,
 		Todos:       todoSvc,
+		Journals:    journalSvc,
 		Alarms:      alarm.NewService(db, queries, eventSvc, todoSvc),
 		Recurrences: recurrence.NewService(db, queries),
 	}, nil

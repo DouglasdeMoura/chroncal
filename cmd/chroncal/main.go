@@ -16,6 +16,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/config"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/ical"
+	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 	"github.com/douglasdemoura/chroncal/internal/tui"
 )
@@ -44,6 +45,7 @@ for scriptable access to all calendar operations.
 Resource groups:
   event      Manage events (list, get, add, update, delete)
   todo       Manage todos (list, get, add, update, delete)
+  journal    Manage journal entries (list, get, add, update, delete)
   calendar   Manage calendars (list, get, create, update, delete)
   ical       Import and export iCal (.ics) files
   alarm      Manage alarm notifications (check, list, dismiss, snooze, daemon)
@@ -86,7 +88,7 @@ func initApp() (*app.App, error) {
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&outputFmt, "output", "o", "text", "output format (text, table, json, yaml)")
 
-	rootCmd.AddCommand(eventCmd(), calendarCmd(), todoCmd(), icalCmd(), alarmCmd(), serviceCmd())
+	rootCmd.AddCommand(eventCmd(), calendarCmd(), todoCmd(), journalCmd(), icalCmd(), alarmCmd(), serviceCmd())
 }
 
 func main() {
@@ -147,6 +149,23 @@ func resolveCalendarID(ctx context.Context, a *app.App, name string) (int64, err
 		}
 	}
 	return 0, fmt.Errorf("calendar %q not found", name)
+}
+
+// resolveJournal looks up a journal by numeric ID, string UID, or UID + recurrence-id.
+func resolveJournal(ctx context.Context, a *app.App, ref, recurrenceID string) (journal.Journal, error) {
+	var j journal.Journal
+	var err error
+	if id, parseErr := strconv.ParseInt(ref, 10, 64); parseErr == nil {
+		j, err = a.Journals.Get(ctx, id)
+	} else if recurrenceID != "" {
+		j, err = a.Journals.GetByUIDAndRecurrenceID(ctx, ref, recurrenceID)
+	} else {
+		j, err = a.Journals.GetByUID(ctx, ref)
+	}
+	if err != nil {
+		return j, notFoundErr(err, "journal", ref)
+	}
+	return j, nil
 }
 
 func parseDateRange(fromStr, toStr string) (time.Time, time.Time, error) {

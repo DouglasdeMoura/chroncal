@@ -10,6 +10,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/ical"
+	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/recurrence"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/todo"
@@ -30,7 +31,7 @@ func icalImportCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "import <file.ics>",
-		Short: "Import events and todos from an iCal (.ics) file",
+		Short: "Import events, todos, and journal entries from an iCal (.ics) file",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
@@ -163,6 +164,47 @@ func icalImportCmd() *cobra.Command {
 				}
 			}
 
+			// Import journals
+			var importedJournals []journal.Journal
+			var newJournals, updatedJournals int
+			for _, j := range result.Journals {
+				_, lookupErr := a.Journals.GetByUID(ctx, j.UID)
+				saved, err := a.Journals.UpsertByUID(ctx, journal.UpsertParams{
+					UID: j.UID, CalendarID: calID,
+					Summary: j.Summary, Description: j.Description,
+					StartDate: j.StartDate, Status: j.Status, Class: j.Class,
+					URL: j.URL, Categories: j.Categories,
+					RecurrenceRule: j.RecurrenceRule, Timezone: j.Timezone,
+					Sequence: j.Sequence, ExDates: j.ExDates, RDates: j.RDates,
+					RecurrenceID: j.RecurrenceID,
+					DtStamp: j.DtStamp,
+				})
+				if err != nil {
+					return fmt.Errorf("upsert journal %q: %w", j.Summary, err)
+				}
+				if len(j.Attendees) > 0 {
+					_ = a.Journals.ReplaceAttendees(ctx, saved.ID, j.Attendees)
+				}
+				if len(j.Attachments) > 0 {
+					_ = a.Journals.ReplaceAttachments(ctx, saved.ID, j.Attachments)
+				}
+				if len(j.Comments) > 0 {
+					_ = a.Journals.ReplaceComments(ctx, saved.ID, j.Comments)
+				}
+				if len(j.Contacts) > 0 {
+					_ = a.Journals.ReplaceContacts(ctx, saved.ID, j.Contacts)
+				}
+				if len(j.Relations) > 0 {
+					_ = a.Journals.ReplaceRelations(ctx, saved.ID, j.Relations)
+				}
+				importedJournals = append(importedJournals, saved)
+				if lookupErr != nil {
+					newJournals++
+				} else {
+					updatedJournals++
+				}
+			}
+
 			if len(result.Warnings) > 0 {
 				fmt.Fprintf(os.Stderr, "chroncal: %d component(s) skipped during import:\n", len(result.Warnings))
 				limit := 5
@@ -180,19 +222,22 @@ func icalImportCmd() *cobra.Command {
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
 				out := map[string]any{
-					"events":         toJSONEvents(importedEvents),
-					"todos":          toJSONTodos(importedTodos),
-					"new_events":     newEvents,
-					"updated_events": updatedEvents,
-					"new_todos":      newTodos,
-					"updated_todos":  updatedTodos,
-					"warnings":       result.Warnings,
+					"events":           toJSONEvents(importedEvents),
+					"todos":            toJSONTodos(importedTodos),
+					"journals":         toJSONJournals(importedJournals),
+					"new_events":       newEvents,
+					"updated_events":   updatedEvents,
+					"new_todos":        newTodos,
+					"updated_todos":    updatedTodos,
+					"new_journals":     newJournals,
+					"updated_journals": updatedJournals,
+					"warnings":         result.Warnings,
 				}
 				return printOutput(w, out)
 			}
-			fmt.Fprintf(w, "Imported %d new, updated %d existing (%d events, %d todos).\n",
-				newEvents+newTodos, updatedEvents+updatedTodos,
-				len(importedEvents), len(importedTodos))
+			fmt.Fprintf(w, "Imported %d new, updated %d existing (%d events, %d todos, %d journals).\n",
+				newEvents+newTodos+newJournals, updatedEvents+updatedTodos+updatedJournals,
+				len(importedEvents), len(importedTodos), len(importedJournals))
 			return nil
 		},
 	}
@@ -202,18 +247,19 @@ func icalImportCmd() *cobra.Command {
 
 func icalExportCmd() *cobra.Command {
 	var (
-		calendarName  string
-		fromStr       string
-		toStr         string
-		outFile       string
-		category      string
-		status        string
-		includeEvents bool
-		includeTodos  bool
+		calendarName    string
+		fromStr         string
+		toStr           string
+		outFile         string
+		category        string
+		status          string
+		includeEvents   bool
+		includeTodos    bool
+		includeJournals bool
 	)
 	cmd := &cobra.Command{
 		Use:   "export",
-		Short: "Export events and todos to iCal (.ics) format",
+		Short: "Export events, todos, and journal entries to iCal (.ics) format",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -222,10 +268,11 @@ func icalExportCmd() *cobra.Command {
 			defer a.Close()
 			ctx := context.Background()
 
-			// Default to including both when neither flag is set
-			if !includeEvents && !includeTodos {
+			// Default to including all when no type flags are set
+			if !includeEvents && !includeTodos && !includeJournals {
 				includeEvents = true
 				includeTodos = true
+				includeJournals = true
 			}
 
 			var calID int64
@@ -319,38 +366,66 @@ func icalExportCmd() *cobra.Command {
 				}
 			}
 
-			var data []byte
-			switch {
-			case len(events) > 0 && len(todos) > 0:
-				eventData, err := ical.ExportEvents(events, calendarName)
+			// Load journals
+			var journals []journal.Journal
+			if includeJournals {
+				journals, err = a.Journals.ExportFiltered(ctx, journal.ExportParams{
+					CalendarID: calID,
+					Category:   category,
+					Status:     status,
+				})
 				if err != nil {
-					return err
+					return fmt.Errorf("list journals: %w", err)
 				}
-				todoData, err := ical.ExportTodos(todos, calendarName)
-				if err != nil {
-					return err
+				for i := range journals {
+					journals[i].Attendees, _ = a.Journals.ListAttendees(ctx, journals[i].ID)
+					journals[i].Attachments, _ = a.Journals.ListAttachments(ctx, journals[i].ID)
+					journals[i].Comments, _ = a.Journals.ListComments(ctx, journals[i].ID)
+					journals[i].Contacts, _ = a.Journals.ListContacts(ctx, journals[i].ID)
+					journals[i].Relations, _ = a.Journals.ListRelations(ctx, journals[i].ID)
 				}
-				data = ical.MergeCalendars(eventData, todoData)
-			case len(events) > 0:
-				data, err = ical.ExportEvents(events, calendarName)
-				if err != nil {
-					return err
-				}
-			case len(todos) > 0:
-				data, err = ical.ExportTodos(todos, calendarName)
-				if err != nil {
-					return err
-				}
-			default:
+			}
+
+			if len(events) == 0 && len(todos) == 0 && len(journals) == 0 {
 				fmt.Fprintln(cmd.OutOrStdout(), "Nothing to export.")
 				return nil
+			}
+
+			// Build individual exports and merge them together.
+			var parts [][]byte
+			if len(events) > 0 {
+				eventData, eerr := ical.ExportEvents(events, calendarName)
+				if eerr != nil {
+					return eerr
+				}
+				parts = append(parts, eventData)
+			}
+			if len(todos) > 0 {
+				todoData, terr := ical.ExportTodos(todos, calendarName)
+				if terr != nil {
+					return terr
+				}
+				parts = append(parts, todoData)
+			}
+			if len(journals) > 0 {
+				journalData, jerr := ical.ExportJournals(journals, calendarName)
+				if jerr != nil {
+					return jerr
+				}
+				parts = append(parts, journalData)
+			}
+
+			data := parts[0]
+			for _, p := range parts[1:] {
+				data = ical.MergeCalendars(data, p)
 			}
 
 			if outFile != "" {
 				if err := os.WriteFile(outFile, data, 0o644); err != nil {
 					return fmt.Errorf("write file: %w", err)
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "Exported %d events, %d todos to %s\n", len(events), len(todos), outFile)
+				fmt.Fprintf(cmd.OutOrStdout(), "Exported %d events, %d todos, %d journals to %s\n",
+					len(events), len(todos), len(journals), outFile)
 			} else {
 				fmt.Fprint(cmd.OutOrStdout(), string(data))
 			}
@@ -365,5 +440,6 @@ func icalExportCmd() *cobra.Command {
 	cmd.Flags().StringVar(&status, "status", "", "filter by status")
 	cmd.Flags().BoolVar(&includeEvents, "events", false, "include only events")
 	cmd.Flags().BoolVar(&includeTodos, "todos", false, "include only todos")
+	cmd.Flags().BoolVar(&includeJournals, "journals", false, "include only journal entries")
 	return cmd
 }
