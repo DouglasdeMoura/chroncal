@@ -62,5 +62,5 @@ func QueryFreeBusy(ctx context.Context, httpClient webdav.HTTPClient, calendarUR
 
 // QueryFreeBusy executes a free-busy-query REPORT using the client's authenticated HTTP transport.
 func (c *Client) QueryFreeBusy(ctx context.Context, calendarURL string, from, to time.Time) (freebusy.Result, error) {
-	return QueryFreeBusy(ctx, c.httpClient, calendarURL, from, to)
+	return QueryFreeBusy(ctx, c.httpClient, c.ResolveURL(calendarURL), from, to)
 }

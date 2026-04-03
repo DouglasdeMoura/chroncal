@@ -448,7 +448,7 @@ func (e *Engine) syncCalendarMetadata(ctx context.Context, client *caldav.Client
 	}
 
 	remoteColor, err := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (string, error) {
-		return caldav.GetCalendarColor(ctx, client.HTTPClient(), remoteURL)
+		return client.GetCalendarColor(ctx, remoteURL)
 	})
 	if err != nil {
 		return fmt.Errorf("get remote calendar color: %w", err)
@@ -456,7 +456,7 @@ func (e *Engine) syncCalendarMetadata(ctx context.Context, client *caldav.Client
 
 	if cal.ColorDirty != 0 {
 		if _, err := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (struct{}, error) {
-			return struct{}{}, caldav.SetCalendarColor(ctx, client.HTTPClient(), remoteURL, cal.Color)
+			return struct{}{}, client.SetCalendarColor(ctx, remoteURL, cal.Color)
 		}); err != nil {
 			return fmt.Errorf("set remote calendar color: %w", err)
 		}

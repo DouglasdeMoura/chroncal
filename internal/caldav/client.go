@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/emersion/go-ical"
 	"github.com/emersion/go-webdav"
@@ -179,6 +181,30 @@ func (c *Client) GetResource(ctx context.Context, path string) (*Resource, error
 // HTTPClient exposes the authenticated HTTP client for raw WebDAV requests.
 func (c *Client) HTTPClient() webdav.HTTPClient {
 	return c.httpClient
+}
+
+// ResolveURL resolves a discovered calendar href against the client's endpoint.
+// CalDAV discovery commonly returns server-relative paths.
+func (c *Client) ResolveURL(ref string) string {
+	if ref == "" {
+		return ref
+	}
+	if parsed, err := url.Parse(ref); err == nil && parsed.IsAbs() {
+		return ref
+	}
+
+	base, err := url.Parse(c.endpoint)
+	if err != nil {
+		return ref
+	}
+	if !strings.HasSuffix(base.Path, "/") {
+		base.Path += "/"
+	}
+	rel, err := url.Parse(ref)
+	if err != nil {
+		return ref
+	}
+	return base.ResolveReference(rel).String()
 }
 
 // EncodeCalendar serializes an ical.Calendar to bytes.

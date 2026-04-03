@@ -77,6 +77,11 @@ func GetCalendarColor(ctx context.Context, httpClient webdav.HTTPClient, calenda
 	return "", nil
 }
 
+// GetCalendarColor fetches the current calendar-color for a calendar href.
+func (c *Client) GetCalendarColor(ctx context.Context, calendarURL string) (string, error) {
+	return GetCalendarColor(ctx, c.httpClient, c.ResolveURL(calendarURL))
+}
+
 // SetCalendarColor updates the calendar-color property for a calendar.
 func SetCalendarColor(ctx context.Context, httpClient webdav.HTTPClient, calendarURL, color string) error {
 	body := fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?>
@@ -121,6 +126,11 @@ func SetCalendarColor(ctx context.Context, httpClient webdav.HTTPClient, calenda
 		io.Copy(io.Discard, resp.Body)
 		return fmt.Errorf("PROPPATCH calendar-color: HTTP %d", resp.StatusCode)
 	}
+}
+
+// SetCalendarColor updates the calendar-color property for a calendar href.
+func (c *Client) SetCalendarColor(ctx context.Context, calendarURL, color string) error {
+	return SetCalendarColor(ctx, c.httpClient, c.ResolveURL(calendarURL), color)
 }
 
 func parseStatusCode(status string) int {

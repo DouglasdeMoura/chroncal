@@ -92,3 +92,73 @@ func TestSetCalendarColor(t *testing.T) {
 		t.Fatalf("SetCalendarColor: %v", err)
 	}
 }
+
+func TestClientGetCalendarColor_ResolvesRelativeHref(t *testing.T) {
+	t.Parallel()
+
+	client := &Client{
+		httpClient: testHTTPClient{
+			do: func(req *http.Request) (*http.Response, error) {
+				if req.URL.String() != "http://app/remote.php/dav/calendars/admin/personal/" {
+					t.Fatalf("url = %s", req.URL.String())
+				}
+				return &http.Response{
+					StatusCode: http.StatusMultiStatus,
+					Header:     http.Header{"Content-Type": []string{"application/xml"}},
+					Body: io.NopCloser(strings.NewReader(`<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:ic="http://apple.com/ns/ical/">
+  <d:response>
+    <d:propstat>
+      <d:prop>
+        <ic:calendar-color>#aabbcc</ic:calendar-color>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`)),
+				}, nil
+			},
+		},
+		endpoint: "http://app/remote.php/dav",
+	}
+
+	color, err := client.GetCalendarColor(context.Background(), "/remote.php/dav/calendars/admin/personal/")
+	if err != nil {
+		t.Fatalf("GetCalendarColor: %v", err)
+	}
+	if color != "#aabbcc" {
+		t.Fatalf("color = %q, want #aabbcc", color)
+	}
+}
+
+func TestClientSetCalendarColor_ResolvesRelativeHref(t *testing.T) {
+	t.Parallel()
+
+	client := &Client{
+		httpClient: testHTTPClient{
+			do: func(req *http.Request) (*http.Response, error) {
+				if req.URL.String() != "http://app/remote.php/dav/calendars/admin/personal/" {
+					t.Fatalf("url = %s", req.URL.String())
+				}
+				return &http.Response{
+					StatusCode: http.StatusMultiStatus,
+					Header:     http.Header{"Content-Type": []string{"application/xml"}},
+					Body: io.NopCloser(strings.NewReader(`<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:propstat>
+      <d:prop />
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`)),
+				}, nil
+			},
+		},
+		endpoint: "http://app/remote.php/dav",
+	}
+
+	if err := client.SetCalendarColor(context.Background(), "/remote.php/dav/calendars/admin/personal/", "#112233"); err != nil {
+		t.Fatalf("SetCalendarColor: %v", err)
+	}
+}
