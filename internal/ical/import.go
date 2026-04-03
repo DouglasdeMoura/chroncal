@@ -14,6 +14,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/duration"
 	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
@@ -27,6 +28,7 @@ type TimezoneData struct {
 type ImportResult struct {
 	Events    []event.Event
 	Todos     []todo.Todo
+	Journals  []journal.Journal
 	Timezones []TimezoneData
 	Warnings  []string
 }
@@ -98,6 +100,15 @@ func ImportFile(r io.Reader) (ImportResult, error) {
 				}
 				result.Warnings = append(result.Warnings, warns...)
 				result.Todos = append(result.Todos, t)
+			case ical.CompJournal:
+				resolveComponentTZIDs(child, tzMap)
+				j, warns, err := journalFromVJournal(child)
+				if err != nil {
+					result.Warnings = append(result.Warnings, fmt.Sprintf("VJOURNAL: %v", err))
+					continue
+				}
+				result.Warnings = append(result.Warnings, warns...)
+				result.Journals = append(result.Journals, j)
 			default:
 				if child.Name != "VTIMEZONE" {
 					skipped[child.Name]++
@@ -843,4 +854,115 @@ func parseRelationsFromProps(props ical.Props) []model.Relation {
 		}
 	}
 	return out
+}
+
+func journalFromVJournal(comp *ical.Component) (journal.Journal, []string, error) {
+	props := comp.Props
+
+	uid := propText(props, ical.PropUID)
+	if uid == "" {
+		return journal.Journal{}, nil, fmt.Errorf("missing UID")
+	}
+
+	summary := propText(props, ical.PropSummary)
+
+	// VJOURNAL can have multiple DESCRIPTION properties; join them.
+	var descriptions []string
+	for _, prop := range props.Values(ical.PropDescription) {
+		text, err := prop.Text()
+		if err != nil {
+			text = prop.Value
+		}
+		if text != "" {
+			descriptions = append(descriptions, text)
+		}
+	}
+	description := strings.Join(descriptions, "\n\n")
+
+	var startDate string
+	if prop := props.Get(ical.PropDateTimeStart); prop != nil {
+		if t, err := prop.DateTime(nil); err == nil && !t.IsZero() {
+			if len(prop.Value) == 8 {
+				startDate = t.Format("2006-01-02")
+			} else {
+				startDate = t.UTC().Format(time.RFC3339)
+			}
+		}
+	}
+
+	status := propTextOr(props, ical.PropStatus, "FINAL")
+	class := propTextOr(props, ical.PropClass, "PUBLIC")
+
+	var sequence int64
+	if prop := props.Get("SEQUENCE"); prop != nil {
+		if v, err := strconv.ParseInt(prop.Value, 10, 64); err == nil {
+			sequence = v
+		}
+	}
+
+	url := propText(props, ical.PropURL)
+
+	var timezone string
+	var journalFloating bool
+	if prop := props.Get(ical.PropDateTimeStart); prop != nil {
+		if tzid := prop.Params.Get(ical.ParamTimezoneID); tzid != "" {
+			timezone = tzid
+		} else if len(prop.Value) > 8 && !strings.HasSuffix(prop.Value, "Z") {
+			journalFloating = true
+		}
+	}
+
+	categories := parseCategoriesFromProps(props)
+	exdates := parseDateListFromProps(props, ical.PropExceptionDates)
+	rdates := parseDateListFromProps(props, ical.PropRecurrenceDates)
+	var rrule string
+	if prop := props.Get(ical.PropRecurrenceRule); prop != nil {
+		rrule = prop.Value
+	}
+
+	var recurrenceID string
+	if prop := props.Get(ical.PropRecurrenceID); prop != nil {
+		if t, err := prop.DateTime(nil); err == nil && !t.IsZero() {
+			recurrenceID = t.UTC().Format(time.RFC3339)
+		}
+	}
+
+	var dtstamp string
+	if prop := props.Get(ical.PropDateTimeStamp); prop != nil {
+		if t, err := prop.DateTime(nil); err == nil && !t.IsZero() {
+			dtstamp = t.UTC().Format(time.RFC3339)
+		}
+	}
+
+	// ATTENDEE + ORGANIZER
+	attendees := parseAttendeesFromProps(props)
+
+	// ATTACH, COMMENT, CONTACT, RELATED-TO
+	attachments := parseAttachmentsFromProps(props)
+	comments := parseCommentsFromProps(props)
+	contacts := parseContactsFromProps(props)
+	relations := parseRelationsFromProps(props)
+
+	return journal.Journal{
+		UID:            uid,
+		Summary:        summary,
+		Description:    description,
+		StartDate:      startDate,
+		Status:         strings.ToUpper(status),
+		Class:          strings.ToUpper(class),
+		URL:            url,
+		Categories:     categories,
+		RecurrenceRule: rrule,
+		Timezone:       floatingOrTZ(journalFloating, timezone),
+		Sequence:       sequence,
+		ExDates:        exdates,
+		RDates:         rdates,
+		RecurrenceID:   recurrenceID,
+		DtStamp:        dtstamp,
+		Attendees:      attendees,
+		Attachments:    attachments,
+		Comments:       comments,
+		Contacts:       contacts,
+		Relations:      relations,
+	}, nil, nil
 }

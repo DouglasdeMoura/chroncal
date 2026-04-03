@@ -11,6 +11,7 @@ import (
 	"github.com/emersion/go-ical"
 
 	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
@@ -532,6 +533,8 @@ func MergeCalendars(a, b []byte) []byte {
 		bStr = bStr[idx:]
 	} else if idx := strings.Index(bStr, "BEGIN:VEVENT"); idx >= 0 {
 		bStr = bStr[idx:]
+	} else if idx := strings.Index(bStr, "BEGIN:VJOURNAL"); idx >= 0 {
+		bStr = bStr[idx:]
 	}
 
 	// Remove trailing END:VCALENDAR from b, then re-add it
@@ -848,4 +851,170 @@ func emitAttachment(props ical.Props, att model.Attachment) {
 		p.Params.Set("FMTTYPE", att.FmtType)
 	}
 	props.Add(p)
+}
+
+func ExportJournals(journals []journal.Journal, calName string) ([]byte, error) {
+	cal := ical.NewCalendar()
+	cal.Props.SetText(ical.PropVersion, "2.0")
+	cal.Props.SetText(ical.PropProductID, ProductID)
+	cal.Props.SetText("CALSCALE", "GREGORIAN")
+	if calName != "" {
+		cal.Props.SetText("X-WR-CALNAME", calName)
+	}
+
+	// Emit VTIMEZONE components for all referenced timezones.
+	seen := make(map[string]bool)
+	for _, j := range journals {
+		if j.Timezone != "" && j.Timezone != "FLOATING" && !seen[j.Timezone] {
+			seen[j.Timezone] = true
+			if vtz, err := buildVTimezone(j.Timezone); err == nil {
+				cal.Children = append(cal.Children, vtz)
+			}
+		}
+	}
+
+	for _, j := range journals {
+		vjournal := ical.NewComponent(ical.CompJournal)
+
+		vjournal.Props.SetText(ical.PropUID, j.UID)
+		vjournal.Props.SetText(ical.PropSummary, j.Summary)
+
+		if j.Description != "" {
+			vjournal.Props.SetText(ical.PropDescription, j.Description)
+		}
+
+		// DTSTART with timezone handling
+		if j.StartDate != "" {
+			if d, err := time.Parse("2006-01-02", j.StartDate); err == nil {
+				vjournal.Props.SetDate(ical.PropDateTimeStart, d)
+			} else if start, err := time.Parse(time.RFC3339, j.StartDate); err == nil {
+				if j.Timezone == "FLOATING" {
+					p := &ical.Prop{Name: ical.PropDateTimeStart}
+					p.Value = start.Local().Format("20060102T150405")
+					vjournal.Props.Set(p)
+				} else if j.Timezone != "" {
+					if loc, lerr := time.LoadLocation(j.Timezone); lerr == nil {
+						vjournal.Props.SetDateTime(ical.PropDateTimeStart, start.In(loc))
+						if p := vjournal.Props.Get(ical.PropDateTimeStart); p != nil {
+							p.Params.Set(ical.ParamTimezoneID, j.Timezone)
+						}
+					} else {
+						vjournal.Props.SetDateTime(ical.PropDateTimeStart, start.UTC())
+					}
+				} else {
+					vjournal.Props.SetDateTime(ical.PropDateTimeStart, start.UTC())
+				}
+			}
+		}
+
+		vjournal.Props.SetText(ical.PropStatus, j.Status)
+
+		seq := &ical.Prop{Name: "SEQUENCE"}
+		seq.Value = strconv.FormatInt(j.Sequence, 10)
+		vjournal.Props.Set(seq)
+
+		if j.Class != "" && j.Class != "PUBLIC" {
+			vjournal.Props.SetText(ical.PropClass, j.Class)
+		}
+
+		if j.URL != "" {
+			p := &ical.Prop{Name: ical.PropURL}
+			p.Value = j.URL
+			vjournal.Props.Set(p)
+		}
+
+		if j.Categories != "" {
+			catProp := &ical.Prop{Name: ical.PropCategories}
+			catProp.SetTextList(strings.Split(j.Categories, ","))
+			vjournal.Props.Set(catProp)
+		}
+
+		if j.RecurrenceRule != "" {
+			rruleProp := &ical.Prop{Name: ical.PropRecurrenceRule}
+			rruleProp.Value = j.RecurrenceRule
+			vjournal.Props.Set(rruleProp)
+		}
+
+		// Dates
+		emitDateListOnComponent(vjournal, ical.PropExceptionDates, j.ExDates)
+		emitDateListOnComponent(vjournal, ical.PropRecurrenceDates, j.RDates)
+
+		if j.RecurrenceID != "" {
+			if rid, err := time.Parse(time.RFC3339, j.RecurrenceID); err == nil {
+				vjournal.Props.SetDateTime(ical.PropRecurrenceID, rid.UTC())
+			}
+		}
+
+		if j.DtStamp != "" {
+			if ts, err := time.Parse(time.RFC3339, j.DtStamp); err == nil {
+				vjournal.Props.SetDateTime(ical.PropDateTimeStamp, ts.UTC())
+			} else {
+				vjournal.Props.SetDateTime(ical.PropDateTimeStamp, j.UpdatedAt.UTC())
+			}
+		} else {
+			vjournal.Props.SetDateTime(ical.PropDateTimeStamp, j.UpdatedAt.UTC())
+		}
+		vjournal.Props.SetDateTime(ical.PropCreated, j.CreatedAt.UTC())
+		vjournal.Props.SetDateTime(ical.PropLastModified, j.UpdatedAt.UTC())
+
+		// ATTACH
+		for _, att := range j.Attachments {
+			emitAttachment(vjournal.Props, att)
+		}
+
+		// COMMENT
+		for _, c := range j.Comments {
+			p := &ical.Prop{Name: ical.PropComment}
+			p.SetText(c)
+			vjournal.Props.Add(p)
+		}
+
+		// CONTACT
+		for _, c := range j.Contacts {
+			p := &ical.Prop{Name: ical.PropContact}
+			p.SetText(c)
+			vjournal.Props.Add(p)
+		}
+
+		// RELATED-TO
+		for _, r := range j.Relations {
+			p := &ical.Prop{Name: ical.PropRelatedTo, Params: make(ical.Params)}
+			p.Value = r.RelUID
+			if r.RelType != "" && r.RelType != "PARENT" {
+				p.Params.Set("RELTYPE", r.RelType)
+			}
+			vjournal.Props.Add(p)
+		}
+
+		// ATTENDEE / ORGANIZER
+		for _, att := range j.Attendees {
+			if att.Organizer {
+				org := &ical.Prop{Name: ical.PropOrganizer, Params: make(ical.Params)}
+				org.Value = "mailto:" + att.Email
+				if att.Name != "" {
+					org.Params.Set(ical.ParamCommonName, att.Name)
+				}
+				setOrganizerParams(org, att)
+				vjournal.Props.Set(org)
+			}
+			attendee := &ical.Prop{Name: ical.PropAttendee, Params: make(ical.Params)}
+			attendee.Value = "mailto:" + att.Email
+			if att.Name != "" {
+				attendee.Params.Set(ical.ParamCommonName, att.Name)
+			}
+			attendee.Params.Set(ical.ParamParticipationStatus, att.RSVPStatus)
+			attendee.Params.Set(ical.ParamRole, att.Role)
+			setAttendeeParams(attendee, att)
+			vjournal.Props.Add(attendee)
+		}
+
+		cal.Children = append(cal.Children, vjournal)
+	}
+
+	var buf bytes.Buffer
+	enc := ical.NewEncoder(&buf)
+	if err := enc.Encode(cal); err != nil {
+		return nil, fmt.Errorf("encode ical: %w", err)
+	}
+	return buf.Bytes(), nil
 }
