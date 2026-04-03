@@ -88,7 +88,7 @@ func initApp() (*app.App, error) {
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&outputFmt, "output", "o", "text", "output format (text, table, json, yaml)")
 
-	rootCmd.AddCommand(eventCmd(), calendarCmd(), todoCmd(), journalCmd(), icalCmd(), alarmCmd(), serviceCmd())
+	rootCmd.AddCommand(eventCmd(), calendarCmd(), todoCmd(), journalCmd(), icalCmd(), alarmCmd(), serviceCmd(), accountCmd(), syncCmd())
 }
 
 func main() {
