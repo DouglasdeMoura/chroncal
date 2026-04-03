@@ -49,6 +49,7 @@ Resource groups:
   calendar   Manage calendars (list, get, create, update, delete)
   ical       Import and export iCal (.ics) files
   alarm      Manage alarm notifications (check, list, dismiss, snooze, daemon)
+  tick       Run one service tick (alarms always, sync when due)
   service    Manage alarm notification service (install, uninstall, status)`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		cfg = config.Load()
@@ -88,7 +89,7 @@ func initApp() (*app.App, error) {
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&outputFmt, "output", "o", "text", "output format (text, table, json, yaml)")
 
-	rootCmd.AddCommand(eventCmd(), calendarCmd(), todoCmd(), journalCmd(), icalCmd(), alarmCmd(), serviceCmd(), accountCmd(), syncCmd())
+	rootCmd.AddCommand(eventCmd(), calendarCmd(), todoCmd(), journalCmd(), icalCmd(), alarmCmd(), tickCmd(), serviceCmd(), accountCmd(), syncCmd())
 }
 
 func main() {

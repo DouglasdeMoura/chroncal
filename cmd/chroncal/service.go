@@ -14,12 +14,14 @@ import (
 )
 
 const systemdServiceTmpl = `[Unit]
-Description=chroncal alarm checker
+Description=chroncal tick service
 After=default.target
 
 [Service]
 Type=oneshot
-ExecStart={{.BinaryPath}} alarm check
+{{if .SyncInterval}}Environment=CHRONCAL_SYNC_INTERVAL={{.SyncInterval}}
+{{end}}{{if .SyncConflictStrategy}}Environment=CHRONCAL_SYNC_CONFLICT_STRATEGY={{.SyncConflictStrategy}}
+{{end}}ExecStart={{.BinaryPath}} tick
 
 [Install]
 WantedBy=default.target
@@ -45,9 +47,17 @@ const launchdPlistTmpl = `<?xml version="1.0" encoding="UTF-8"?>
     <key>ProgramArguments</key>
     <array>
         <string>{{.BinaryPath}}</string>
-        <string>alarm</string>
-        <string>check</string>
+        <string>tick</string>
     </array>
+    {{if or .SyncInterval .SyncConflictStrategy}}<key>EnvironmentVariables</key>
+    <dict>
+        {{if .SyncInterval}}<key>CHRONCAL_SYNC_INTERVAL</key>
+        <string>{{.SyncInterval}}</string>
+        {{end}}{{if .SyncConflictStrategy}}<key>CHRONCAL_SYNC_CONFLICT_STRATEGY</key>
+        <string>{{.SyncConflictStrategy}}</string>
+        {{end}}
+    </dict>
+    {{end}}
     <key>StartInterval</key>
     <integer>60</integer>
     <key>RunAtLoad</key>
@@ -94,6 +104,7 @@ func renderTemplate(tmplStr string, data any) (string, error) {
 }
 
 func serviceInstallCmd() *cobra.Command {
+	var syncInterval string
 	cmd := &cobra.Command{
 		Use:   "install",
 		Short: "Install alarm notification service for the current OS",
@@ -103,9 +114,15 @@ func serviceInstallCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			effectiveSyncInterval := syncInterval
+			if effectiveSyncInterval == "" {
+				effectiveSyncInterval = cfg.Sync.Interval
+			}
 
 			data := map[string]string{
-				"BinaryPath": binPath,
+				"BinaryPath":           binPath,
+				"SyncInterval":         effectiveSyncInterval,
+				"SyncConflictStrategy": cfg.Sync.ConflictStrategy,
 			}
 
 			switch runtime.GOOS {
@@ -125,6 +142,7 @@ func serviceInstallCmd() *cobra.Command {
 			}
 		},
 	}
+	cmd.Flags().StringVar(&syncInterval, "sync-interval", cfg.Sync.Interval, "how often tick should run sync work (for example 15m); empty disables sync")
 	return cmd
 }
 

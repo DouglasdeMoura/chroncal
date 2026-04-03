@@ -18,11 +18,17 @@ type SMTPConfig struct {
 	From     string `mapstructure:"from"`
 }
 
+type SyncConfig struct {
+	Interval         string `mapstructure:"interval"`
+	ConflictStrategy string `mapstructure:"conflict_strategy"`
+}
+
 type Config struct {
 	DB        string     `mapstructure:"db"`
 	NerdFonts bool       `mapstructure:"nerd_fonts"`
 	ProductID string     `mapstructure:"product_id"`
 	SMTP      SMTPConfig `mapstructure:"smtp"`
+	Sync      SyncConfig `mapstructure:"sync"`
 }
 
 // Load reads configuration with precedence: env > config file > defaults.
@@ -60,6 +66,8 @@ func newViper() *viper.Viper {
 	v.BindEnv("smtp.username")
 	v.BindEnv("smtp.password")
 	v.BindEnv("smtp.from")
+	v.BindEnv("sync.interval")
+	v.BindEnv("sync.conflict_strategy")
 
 	return v
 }

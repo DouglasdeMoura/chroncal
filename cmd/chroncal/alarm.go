@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/douglasdemoura/chroncal/internal/alarm"
+	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/notify"
 	"github.com/douglasdemoura/chroncal/internal/storage"
@@ -129,131 +131,126 @@ and exits 0.`,
 				return err
 			}
 			defer a.Close()
-			ctx := context.Background()
-
-			due, todoDue, err := a.Alarms.Check(ctx, time.Now())
-			if err != nil {
-				return fmt.Errorf("check alarms: %w", err)
-			}
-
-			w := cmd.OutOrStdout()
-
-			if len(due) == 0 && len(todoDue) == 0 {
-				if outputFmt != "text" {
-					return printOutput(w, []any{})
-				}
-				return nil
-			}
-
-			var results []map[string]any
-			for _, da := range due {
-				// Mark state before firing to reduce double-fire window on
-				// concurrent alarm check runs (SQLite serializes writes).
-				stateID := da.StateID
-				if stateID != 0 {
-					if markErr := a.Alarms.MarkRefired(ctx, stateID); markErr != nil {
-						fmt.Fprintf(os.Stderr, "chroncal: mark-refired error: event=%q: %v\n", da.Event.Title, markErr)
-					}
-				} else {
-					newID, markErr := a.Alarms.MarkFired(ctx, da)
-					if markErr != nil {
-						fmt.Fprintf(os.Stderr, "chroncal: mark-fired error: event=%q: %v\n", da.Event.Title, markErr)
-					} else {
-						stateID = newID
-					}
-				}
-
-				fireErr := fireAlarm(da)
-
-				if fireErr != nil {
-					fmt.Fprintf(os.Stderr, "chroncal: alarm error: %s (event=%q action=%s): %v\n",
-						da.TriggerAt.Local().Format("15:04"), da.Event.Title, da.Alarm.Action, fireErr)
-					if outputFmt != "text" {
-						results = append(results, map[string]any{
-							"event_id":   da.Event.ID,
-							"event":      da.Event.Title,
-							"alarm_id":   da.Alarm.ID,
-							"state_id":   stateID,
-							"action":     da.Alarm.Action,
-							"trigger_at": da.TriggerAt.Format(time.RFC3339),
-							"status":     fmt.Sprintf("error: %v", fireErr),
-						})
-					}
-					continue
-				}
-
-				if outputFmt != "text" {
-					results = append(results, map[string]any{
-						"event_id":   da.Event.ID,
-						"event":      da.Event.Title,
-						"alarm_id":   da.Alarm.ID,
-						"state_id":   stateID,
-						"action":     da.Alarm.Action,
-						"trigger_at": da.TriggerAt.Format(time.RFC3339),
-						"status":     "fired",
-					})
-				} else {
-					fmt.Fprintf(w, "%s\t%s\t%s\n", da.TriggerAt.Local().Format("15:04"), da.Alarm.Action, da.Event.Title)
-				}
-			}
-
-			// Process todo alarms
-			for _, tda := range todoDue {
-				stateID := tda.StateID
-				if stateID != 0 {
-					if markErr := a.Alarms.MarkTodoRefired(ctx, stateID); markErr != nil {
-						fmt.Fprintf(os.Stderr, "chroncal: mark-refired error: todo=%q: %v\n", tda.Todo.Summary, markErr)
-					}
-				} else {
-					newID, markErr := a.Alarms.MarkTodoFired(ctx, tda)
-					if markErr != nil {
-						fmt.Fprintf(os.Stderr, "chroncal: mark-fired error: todo=%q: %v\n", tda.Todo.Summary, markErr)
-					} else {
-						stateID = newID
-					}
-				}
-
-				fireErr := fireAlarm(todoDueAlarmToDueAlarm(tda))
-
-				if fireErr != nil {
-					fmt.Fprintf(os.Stderr, "chroncal: todo alarm error: %s (todo=%q action=%s): %v\n",
-						tda.TriggerAt.Local().Format("15:04"), tda.Todo.Summary, tda.Alarm.Action, fireErr)
-					if outputFmt != "text" {
-						results = append(results, map[string]any{
-							"todo_id":    tda.Todo.ID,
-							"todo":       tda.Todo.Summary,
-							"alarm_id":   tda.Alarm.ID,
-							"state_id":   stateID,
-							"action":     tda.Alarm.Action,
-							"trigger_at": tda.TriggerAt.Format(time.RFC3339),
-							"status":     fmt.Sprintf("error: %v", fireErr),
-						})
-					}
-					continue
-				}
-
-				if outputFmt != "text" {
-					results = append(results, map[string]any{
-						"todo_id":    tda.Todo.ID,
-						"todo":       tda.Todo.Summary,
-						"alarm_id":   tda.Alarm.ID,
-						"state_id":   stateID,
-						"action":     tda.Alarm.Action,
-						"trigger_at": tda.TriggerAt.Format(time.RFC3339),
-						"status":     "fired",
-					})
-				} else {
-					fmt.Fprintf(w, "%s\t%s\t%s (todo)\n", tda.TriggerAt.Local().Format("15:04"), tda.Alarm.Action, tda.Todo.Summary)
-				}
-			}
-
-			if outputFmt != "text" {
-				return printOutput(w, results)
-			}
-			return nil
+			return runAlarmCheck(context.Background(), a, cmd.OutOrStdout(), time.Now())
 		},
 	}
 	return cmd
+}
+
+func runAlarmCheck(ctx context.Context, a *app.App, w io.Writer, now time.Time) error {
+	due, todoDue, err := a.Alarms.Check(ctx, now)
+	if err != nil {
+		return fmt.Errorf("check alarms: %w", err)
+	}
+
+	if len(due) == 0 && len(todoDue) == 0 {
+		if outputFmt != "text" {
+			return printOutput(w, []any{})
+		}
+		return nil
+	}
+
+	var results []map[string]any
+	for _, da := range due {
+		stateID := da.StateID
+		if stateID != 0 {
+			if markErr := a.Alarms.MarkRefired(ctx, stateID); markErr != nil {
+				fmt.Fprintf(os.Stderr, "chroncal: mark-refired error: event=%q: %v\n", da.Event.Title, markErr)
+			}
+		} else {
+			newID, markErr := a.Alarms.MarkFired(ctx, da)
+			if markErr != nil {
+				fmt.Fprintf(os.Stderr, "chroncal: mark-fired error: event=%q: %v\n", da.Event.Title, markErr)
+			} else {
+				stateID = newID
+			}
+		}
+
+		fireErr := fireAlarm(da)
+		if fireErr != nil {
+			fmt.Fprintf(os.Stderr, "chroncal: alarm error: %s (event=%q action=%s): %v\n",
+				da.TriggerAt.Local().Format("15:04"), da.Event.Title, da.Alarm.Action, fireErr)
+			if outputFmt != "text" {
+				results = append(results, map[string]any{
+					"event_id":   da.Event.ID,
+					"event":      da.Event.Title,
+					"alarm_id":   da.Alarm.ID,
+					"state_id":   stateID,
+					"action":     da.Alarm.Action,
+					"trigger_at": da.TriggerAt.Format(time.RFC3339),
+					"status":     fmt.Sprintf("error: %v", fireErr),
+				})
+			}
+			continue
+		}
+
+		if outputFmt != "text" {
+			results = append(results, map[string]any{
+				"event_id":   da.Event.ID,
+				"event":      da.Event.Title,
+				"alarm_id":   da.Alarm.ID,
+				"state_id":   stateID,
+				"action":     da.Alarm.Action,
+				"trigger_at": da.TriggerAt.Format(time.RFC3339),
+				"status":     "fired",
+			})
+		} else {
+			fmt.Fprintf(w, "%s\t%s\t%s\n", da.TriggerAt.Local().Format("15:04"), da.Alarm.Action, da.Event.Title)
+		}
+	}
+
+	for _, tda := range todoDue {
+		stateID := tda.StateID
+		if stateID != 0 {
+			if markErr := a.Alarms.MarkTodoRefired(ctx, stateID); markErr != nil {
+				fmt.Fprintf(os.Stderr, "chroncal: mark-refired error: todo=%q: %v\n", tda.Todo.Summary, markErr)
+			}
+		} else {
+			newID, markErr := a.Alarms.MarkTodoFired(ctx, tda)
+			if markErr != nil {
+				fmt.Fprintf(os.Stderr, "chroncal: mark-fired error: todo=%q: %v\n", tda.Todo.Summary, markErr)
+			} else {
+				stateID = newID
+			}
+		}
+
+		fireErr := fireAlarm(todoDueAlarmToDueAlarm(tda))
+		if fireErr != nil {
+			fmt.Fprintf(os.Stderr, "chroncal: todo alarm error: %s (todo=%q action=%s): %v\n",
+				tda.TriggerAt.Local().Format("15:04"), tda.Todo.Summary, tda.Alarm.Action, fireErr)
+			if outputFmt != "text" {
+				results = append(results, map[string]any{
+					"todo_id":    tda.Todo.ID,
+					"todo":       tda.Todo.Summary,
+					"alarm_id":   tda.Alarm.ID,
+					"state_id":   stateID,
+					"action":     tda.Alarm.Action,
+					"trigger_at": tda.TriggerAt.Format(time.RFC3339),
+					"status":     fmt.Sprintf("error: %v", fireErr),
+				})
+			}
+			continue
+		}
+
+		if outputFmt != "text" {
+			results = append(results, map[string]any{
+				"todo_id":    tda.Todo.ID,
+				"todo":       tda.Todo.Summary,
+				"alarm_id":   tda.Alarm.ID,
+				"state_id":   stateID,
+				"action":     tda.Alarm.Action,
+				"trigger_at": tda.TriggerAt.Format(time.RFC3339),
+				"status":     "fired",
+			})
+		} else {
+			fmt.Fprintf(w, "%s\t%s\t%s (todo)\n", tda.TriggerAt.Local().Format("15:04"), tda.Alarm.Action, tda.Todo.Summary)
+		}
+	}
+
+	if outputFmt != "text" {
+		return printOutput(w, results)
+	}
+	return nil
 }
 
 func alarmListCmd() *cobra.Command {
@@ -345,9 +342,9 @@ Dismissed alarms are permanently removed from this list.`,
 
 			// Enrich each todo alarm state.
 			type pendingTodoInfo struct {
-				ID    string // display ID: "t3"
-				State storage.TodoAlarmState
-				Title string
+				ID     string // display ID: "t3"
+				State  storage.TodoAlarmState
+				Title  string
 				Action string
 			}
 			var enrichedTodos []pendingTodoInfo

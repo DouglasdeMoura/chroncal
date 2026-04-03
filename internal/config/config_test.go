@@ -153,3 +153,17 @@ port = 25
 		t.Errorf("SMTP.Port = %d, want %d (env should override file)", cfg.SMTP.Port, 465)
 	}
 }
+
+func TestLoad_SyncFromEnv(t *testing.T) {
+	t.Setenv("CHRONCAL_SYNC_INTERVAL", "15m")
+	t.Setenv("CHRONCAL_SYNC_CONFLICT_STRATEGY", "prompt")
+
+	cfg := Load()
+
+	if cfg.Sync.Interval != "15m" {
+		t.Fatalf("Sync.Interval = %q, want 15m", cfg.Sync.Interval)
+	}
+	if cfg.Sync.ConflictStrategy != "prompt" {
+		t.Fatalf("Sync.ConflictStrategy = %q, want prompt", cfg.Sync.ConflictStrategy)
+	}
+}
