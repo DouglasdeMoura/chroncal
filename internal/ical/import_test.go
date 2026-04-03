@@ -489,15 +489,17 @@ END:VCALENDAR`
 			t.Errorf("unexpected VJOURNAL warning: %q", w)
 		}
 	}
-	// VFREEBUSY(1) should still produce a warning.
+	if len(result.FreeBusy) != 1 {
+		t.Fatalf("freebusy = %d, want 1", len(result.FreeBusy))
+	}
 	foundFreebusy := false
 	for _, w := range result.Warnings {
-		if strings.Contains(w, "VFREEBUSY") && strings.Contains(w, "1") {
+		if strings.Contains(w, "VFREEBUSY") {
 			foundFreebusy = true
 		}
 	}
-	if !foundFreebusy {
-		t.Errorf("missing VFREEBUSY warning; warnings = %v", result.Warnings)
+	if foundFreebusy {
+		t.Errorf("unexpected VFREEBUSY warning; warnings = %v", result.Warnings)
 	}
 }
 

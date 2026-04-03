@@ -183,7 +183,7 @@ func icalImportCmd() *cobra.Command {
 					RecurrenceRule: j.RecurrenceRule, Timezone: j.Timezone,
 					Sequence: j.Sequence, ExDates: j.ExDates, RDates: j.RDates,
 					RecurrenceID: j.RecurrenceID,
-					DtStamp: j.DtStamp,
+					DtStamp:      j.DtStamp,
 				})
 				if err != nil {
 					return fmt.Errorf("upsert journal %q: %w", j.Summary, err)
@@ -234,6 +234,7 @@ func icalImportCmd() *cobra.Command {
 					"events":           toJSONEvents(importedEvents),
 					"todos":            toJSONTodos(importedTodos),
 					"journals":         toJSONJournals(importedJournals),
+					"freebusy":         result.FreeBusy,
 					"new_events":       newEvents,
 					"updated_events":   updatedEvents,
 					"new_todos":        newTodos,
@@ -247,6 +248,9 @@ func icalImportCmd() *cobra.Command {
 			fmt.Fprintf(w, "Imported %d new, updated %d existing (%d events, %d todos, %d journals).\n",
 				newEvents+newTodos+newJournals, updatedEvents+updatedTodos+updatedJournals,
 				len(importedEvents), len(importedTodos), len(importedJournals))
+			if len(result.FreeBusy) > 0 {
+				fmt.Fprintf(w, "Parsed %d VFREEBUSY component(s); they were not imported into local storage.\n", len(result.FreeBusy))
+			}
 			return nil
 		},
 	}

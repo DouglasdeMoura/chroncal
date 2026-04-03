@@ -48,6 +48,7 @@ Resource groups:
   journal    Manage journal entries (list, get, add, update, delete)
   calendar   Manage calendars (list, get, create, update, delete)
   ical       Import and export iCal (.ics) files
+  freebusy   Compute or query calendar free/busy ranges
   alarm      Manage alarm notifications (check, list, dismiss, snooze, daemon)
   tick       Run one service tick (alarms always, sync when due)
   service    Manage alarm notification service (install, uninstall, status)`,
@@ -89,7 +90,7 @@ func initApp() (*app.App, error) {
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&outputFmt, "output", "o", "text", "output format (text, table, json, yaml)")
 
-	rootCmd.AddCommand(eventCmd(), calendarCmd(), todoCmd(), journalCmd(), icalCmd(), alarmCmd(), tickCmd(), serviceCmd(), accountCmd(), syncCmd())
+	rootCmd.AddCommand(eventCmd(), calendarCmd(), todoCmd(), journalCmd(), icalCmd(), freebusyCmd(), alarmCmd(), tickCmd(), serviceCmd(), accountCmd(), syncCmd())
 }
 
 func main() {

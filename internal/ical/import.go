@@ -16,6 +16,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/duration"
 	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/freebusy"
 	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/todo"
@@ -31,6 +32,7 @@ type ImportResult struct {
 	Events    []event.Event
 	Todos     []todo.Todo
 	Journals  []journal.Journal
+	FreeBusy  []freebusy.Result
 	Timezones []TimezoneData
 	Warnings  []string
 }
@@ -110,6 +112,14 @@ func ImportFile(r io.Reader) (ImportResult, error) {
 					continue
 				}
 				result.Journals = append(result.Journals, j)
+			case ical.CompFreeBusy:
+				resolveComponentTZIDs(child, tzMap)
+				fb, err := freebusy.ParseComponent(child)
+				if err != nil {
+					result.Warnings = append(result.Warnings, fmt.Sprintf("VFREEBUSY: %v", err))
+					continue
+				}
+				result.FreeBusy = append(result.FreeBusy, fb)
 			default:
 				if child.Name != "VTIMEZONE" {
 					skipped[child.Name]++
@@ -1012,7 +1022,7 @@ var handledJournalProps = map[string]bool{
 	ical.PropDateTimeStamp: true, ical.PropCreated: true, ical.PropLastModified: true,
 	ical.PropAttach: true, ical.PropComment: true, ical.PropContact: true,
 	ical.PropRelatedTo: true,
-	ical.PropAttendee: true, ical.PropOrganizer: true,
+	ical.PropAttendee:  true, ical.PropOrganizer: true,
 }
 
 // extractXPropertiesWithSet collects properties not in the handled set.
