@@ -54,22 +54,22 @@ func retryWithBackoff(ctx context.Context, maxRetries int, fn func() (*http.Resp
 			resp.Body.Close()
 			lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
 
-			wait := backoffDuration(attempt)
-			// Respect Retry-After header if present
-			if ra := resp.Header.Get("Retry-After"); ra != "" {
-				if secs, err := strconv.Atoi(ra); err == nil {
-					wait = time.Duration(secs) * time.Second
-				}
-			}
-
 			if attempt < maxRetries {
+				wait := backoffDuration(attempt)
+				// Respect Retry-After header if present
+				if ra := resp.Header.Get("Retry-After"); ra != "" {
+					if secs, err := strconv.Atoi(ra); err == nil {
+						wait = time.Duration(secs) * time.Second
+					}
+				}
+
 				select {
 				case <-time.After(wait):
 				case <-ctx.Done():
 					return nil, ctx.Err()
 				}
-				continue
 			}
+			continue
 		}
 
 		return resp, nil
