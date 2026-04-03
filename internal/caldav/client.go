@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -152,12 +153,32 @@ func (c *Client) QueryAll(ctx context.Context, calendarPath string) ([]Resource,
 // PutResource uploads a single iCal resource. Returns the new ETag.
 // If etag is non-empty, the server will reject the PUT if the resource was
 // modified since (If-Match precondition).
-func (c *Client) PutResource(ctx context.Context, path string, data *ical.Calendar) (string, error) {
-	co, err := c.inner.PutCalendarObject(ctx, path, data)
+func (c *Client) PutResource(ctx context.Context, path string, data *ical.Calendar, etag string) (string, error) {
+	body, err := EncodeCalendar(data)
+	if err != nil {
+		return "", fmt.Errorf("encode calendar: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.ResolveURL(path), bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("new PUT request: %w", err)
+	}
+	req.Header.Set("Content-Type", ical.MIMEType)
+	if etag != "" {
+		req.Header.Set("If-Match", etag)
+	}
+
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("put resource: %w", err)
 	}
-	return co.ETag, nil
+	defer resp.Body.Close()
+
+	if resp.StatusCode/100 != 2 {
+		return "", fmt.Errorf("put resource: %w", httpError(resp))
+	}
+
+	return resp.Header.Get("ETag"), nil
 }
 
 // DeleteResource removes a resource by path.
@@ -215,6 +236,32 @@ func EncodeCalendar(cal *ical.Calendar) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+func httpError(resp *http.Response) error {
+	if resp == nil {
+		return fmt.Errorf("HTTP 0")
+	}
+
+	status := strings.TrimSpace(resp.Status)
+	if status == "" {
+		status = fmt.Sprintf("%d %s", resp.StatusCode, http.StatusText(resp.StatusCode))
+	}
+
+	var bodyText string
+	if resp.Body != nil {
+		lr := &io.LimitedReader{R: resp.Body, N: 1024}
+		body, _ := io.ReadAll(lr)
+		bodyText = strings.TrimSpace(string(body))
+		if lr.N == 0 {
+			bodyText += " […]"
+		}
+	}
+
+	if bodyText == "" {
+		return fmt.Errorf("HTTP %s", status)
+	}
+	return fmt.Errorf("HTTP %s: %s", status, bodyText)
 }
 
 // bearerHTTPClient adds a Bearer token to every request.

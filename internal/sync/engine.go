@@ -229,7 +229,7 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 
 		// PUT to server
 		newEtag, putErr := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (string, error) {
-			return client.PutResource(ctx, putPath, cal)
+			return client.PutResource(ctx, putPath, cal, res.Etag)
 		})
 		if putErr != nil {
 			// Check for 412 Precondition Failed (ETag conflict)

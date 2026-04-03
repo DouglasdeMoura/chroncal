@@ -153,6 +153,119 @@ func TestEnginePushContinuesAfterResourceFailure(t *testing.T) {
 	}
 }
 
+func TestEnginePushRecordsConflictOnPreconditionFailure(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	insertTestEvent(t, db, calendarID, "conflict-event")
+
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		switch r.Method {
+		case http.MethodPut:
+			if r.URL.Path != "/calendar/conflict-event.ics" {
+				t.Fatalf("PUT path = %s, want /calendar/conflict-event.ics", r.URL.Path)
+			}
+			if got := r.Header.Get("If-Match"); got != `"etag-before"` {
+				t.Fatalf("If-Match = %q, want %q", got, `"etag-before"`)
+			}
+			return &http.Response{
+				StatusCode: http.StatusPreconditionFailed,
+				Status:     "412 Precondition Failed",
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("precondition failed")),
+				Request:    r,
+			}, nil
+		case http.MethodGet:
+			if r.URL.Path != "/calendar/conflict-event.ics" {
+				t.Fatalf("GET path = %s, want /calendar/conflict-event.ics", r.URL.Path)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header: http.Header{
+					"Content-Type": []string{"text/calendar; charset=utf-8"},
+					"Etag":         []string{`"etag-server"`},
+				},
+				Body: io.NopCloser(strings.NewReader(`BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//chroncal//tests//EN
+BEGIN:VEVENT
+UID:conflict-event
+DTSTAMP:20260403T120000Z
+DTSTART:20260403T120000Z
+DTEND:20260403T130000Z
+SUMMARY:Server version
+END:VEVENT
+END:VCALENDAR
+`)),
+				Request: r,
+			}, nil
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			return nil, nil
+		}
+	})
+
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calendarID,
+		Uid:          "conflict-event",
+		OwnerType:    "event",
+		RemoteUrl:    "/calendar/conflict-event.ics",
+		Etag:         `"etag-before"`,
+		Dirty:        1,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource conflict-event: %v", err)
+	}
+
+	result, err := engine.push(ctx, client, calendarID, "", ConflictPrompt)
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if result.pushed != 0 {
+		t.Fatalf("pushed = %d, want 0", result.pushed)
+	}
+	if result.conflicts != 1 {
+		t.Fatalf("conflicts = %d, want 1", result.conflicts)
+	}
+	if len(result.errors) != 0 {
+		t.Fatalf("errors = %d, want 0", len(result.errors))
+	}
+
+	conflicts, err := q.ListSyncConflictsByCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("ListSyncConflictsByCalendar: %v", err)
+	}
+	if len(conflicts) != 1 {
+		t.Fatalf("sync conflicts = %d, want 1", len(conflicts))
+	}
+	if conflicts[0].Uid != "conflict-event" {
+		t.Fatalf("conflict uid = %q, want conflict-event", conflicts[0].Uid)
+	}
+	if conflicts[0].ServerEtag != "etag-server" {
+		t.Fatalf("ServerEtag = %q, want %q", conflicts[0].ServerEtag, "etag-server")
+	}
+
+	dirty, err := q.ListDirtySyncResources(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("ListDirtySyncResources: %v", err)
+	}
+	if len(dirty) != 1 {
+		t.Fatalf("dirty resources = %d, want 1", len(dirty))
+	}
+	if dirty[0].Uid != "conflict-event" {
+		t.Fatalf("remaining dirty uid = %q, want conflict-event", dirty[0].Uid)
+	}
+}
+
 func TestEngineProcessTombstonesContinuesAfterDeleteFailure(t *testing.T) {
 	t.Parallel()
 
