@@ -12,8 +12,11 @@ import (
 
 	authpkg "github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/caldav"
+	"github.com/douglasdemoura/chroncal/internal/event"
 	icalPkg "github.com/douglasdemoura/chroncal/internal/ical"
+	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
 // SyncResult holds the outcome of a sync cycle for one calendar.
@@ -36,18 +39,21 @@ const (
 
 // Engine orchestrates push and pull of CalDAV resources.
 type Engine struct {
-	db       *sql.DB
-	q        *storage.Queries
+	db        *sql.DB
+	q         *storage.Queries
 	credStore authpkg.CredentialStore
-	logger   *slog.Logger
+	events    *event.Service
+	todos     *todo.Service
+	journals  *journal.Service
+	logger    *slog.Logger
 }
 
 // NewEngine creates a new sync engine.
-func NewEngine(db *sql.DB, q *storage.Queries, credStore authpkg.CredentialStore, logger *slog.Logger) *Engine {
+func NewEngine(db *sql.DB, q *storage.Queries, credStore authpkg.CredentialStore, events *event.Service, todos *todo.Service, journals *journal.Service, logger *slog.Logger) *Engine {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Engine{db: db, q: q, credStore: credStore, logger: logger}
+	return &Engine{db: db, q: q, credStore: credStore, events: events, todos: todos, journals: journals, logger: logger}
 }
 
 // SyncCalendar runs a full sync cycle for one calendar.
@@ -338,8 +344,14 @@ func (e *Engine) pull(ctx context.Context, client *caldav.Client, calendarID int
 			continue
 		}
 
-		// Upsert sync resource
+		// Persist imported data to the database
 		ownerType := detectOwnerType(importResult)
+		if persistErr := e.persistImported(ctx, calendarID, importResult); persistErr != nil {
+			e.logger.Error("persist imported resource", "uid", uid, "path", res.Path, "error", persistErr)
+			continue
+		}
+
+		// Upsert sync resource tracking
 		if err := e.q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
 			CalendarID:   calendarID,
 			Uid:          uid,
@@ -396,12 +408,186 @@ func (e *Engine) processTombstones(ctx context.Context, client *caldav.Client, c
 
 // exportResource exports a local resource to iCal bytes.
 func (e *Engine) exportResource(ctx context.Context, ownerType string, calendarID int64, uid string) ([]byte, error) {
-	// This is a simplified export — the full implementation would query the
-	// specific event/todo/journal by UID and export it. For now, delegate
-	// to the service layer (to be wired in Phase 5).
-	_ = ctx
-	_ = calendarID
-	return nil, fmt.Errorf("export for %s uid=%s: not yet wired to services", ownerType, uid)
+	switch ownerType {
+	case "event":
+		evt, err := e.events.GetByUID(ctx, uid)
+		if err != nil {
+			return nil, fmt.Errorf("get event by uid %s: %w", uid, err)
+		}
+		evt.Alarms, _ = e.events.ListAlarms(ctx, evt.ID)
+		evt.Attendees, _ = e.events.ListAttendees(ctx, evt.ID)
+		evt.Attachments, _ = e.events.ListAttachments(ctx, evt.ID)
+		evt.Comments, _ = e.events.ListComments(ctx, evt.ID)
+		evt.Contacts, _ = e.events.ListContacts(ctx, evt.ID)
+		evt.Resources, _ = e.events.ListResources(ctx, evt.ID)
+		evt.Relations, _ = e.events.ListRelations(ctx, evt.ID)
+		evt.XProperties, _ = e.events.ListXProperties(ctx, evt.ID)
+		return icalPkg.ExportEvents([]event.Event{evt}, "")
+	case "todo":
+		t, err := e.todos.GetByUID(ctx, uid)
+		if err != nil {
+			return nil, fmt.Errorf("get todo by uid %s: %w", uid, err)
+		}
+		t.Alarms, _ = e.todos.ListAlarms(ctx, t.ID)
+		t.Attendees, _ = e.todos.ListAttendees(ctx, t.ID)
+		t.Attachments, _ = e.todos.ListAttachments(ctx, t.ID)
+		t.Comments, _ = e.todos.ListComments(ctx, t.ID)
+		t.Contacts, _ = e.todos.ListContacts(ctx, t.ID)
+		t.Resources, _ = e.todos.ListResources(ctx, t.ID)
+		t.Relations, _ = e.todos.ListRelations(ctx, t.ID)
+		t.XProperties, _ = e.todos.ListXProperties(ctx, t.ID)
+		return icalPkg.ExportTodos([]todo.Todo{t}, "")
+	case "journal":
+		j, err := e.journals.GetByUID(ctx, uid)
+		if err != nil {
+			return nil, fmt.Errorf("get journal by uid %s: %w", uid, err)
+		}
+		j.Attendees, _ = e.journals.ListAttendees(ctx, j.ID)
+		j.Attachments, _ = e.journals.ListAttachments(ctx, j.ID)
+		j.Comments, _ = e.journals.ListComments(ctx, j.ID)
+		j.Contacts, _ = e.journals.ListContacts(ctx, j.ID)
+		j.Relations, _ = e.journals.ListRelations(ctx, j.ID)
+		j.XProperties, _ = e.journals.ListXProperties(ctx, j.ID)
+		return icalPkg.ExportJournals([]journal.Journal{j}, "")
+	default:
+		return nil, fmt.Errorf("unknown owner type: %s", ownerType)
+	}
+}
+
+// persistImported saves parsed iCal data to the local database using the same
+// upsert pattern as the CLI import command.
+func (e *Engine) persistImported(ctx context.Context, calendarID int64, result icalPkg.ImportResult) error {
+	// Store timezones
+	for _, tz := range result.Timezones {
+		if _, err := e.q.UpsertTimezone(ctx, storage.UpsertTimezoneParams{
+			Tzid:          tz.TZID,
+			VtimezoneData: tz.Data,
+		}); err != nil {
+			e.logger.Warn("store VTIMEZONE", "tzid", tz.TZID, "error", err)
+		}
+	}
+
+	// Import events
+	for _, ev := range result.Events {
+		saved, err := e.events.UpsertByUID(ctx, event.UpsertParams{
+			UID: ev.UID, CalendarID: calendarID,
+			Title: ev.Title, Description: ev.Description, Location: ev.Location,
+			StartTime: ev.StartTime, EndTime: ev.EndTime, AllDay: ev.AllDay,
+			RecurrenceRule: ev.RecurrenceRule, Timezone: ev.Timezone,
+			Status: ev.Status, Transp: ev.Transp, Sequence: ev.Sequence,
+			Priority: ev.Priority, Class: ev.Class, URL: ev.URL,
+			Categories: ev.Categories, ExDates: ev.ExDates, RDates: ev.RDates,
+			RecurrenceID: ev.RecurrenceID, Geo: ev.Geo,
+			DurationValue: ev.DurationValue, DtStamp: ev.DtStamp,
+		})
+		if err != nil {
+			return fmt.Errorf("upsert event %q: %w", ev.UID, err)
+		}
+		if len(ev.Alarms) > 0 {
+			_ = e.events.ReplaceAlarms(ctx, saved.ID, ev.Alarms)
+		}
+		if len(ev.Attendees) > 0 {
+			_ = e.events.ReplaceAttendees(ctx, saved.ID, ev.Attendees)
+		}
+		if len(ev.Attachments) > 0 {
+			_ = e.events.ReplaceAttachments(ctx, saved.ID, ev.Attachments)
+		}
+		if len(ev.Comments) > 0 {
+			_ = e.events.ReplaceComments(ctx, saved.ID, ev.Comments)
+		}
+		if len(ev.Contacts) > 0 {
+			_ = e.events.ReplaceContacts(ctx, saved.ID, ev.Contacts)
+		}
+		if len(ev.Resources) > 0 {
+			_ = e.events.ReplaceResources(ctx, saved.ID, ev.Resources)
+		}
+		if len(ev.Relations) > 0 {
+			_ = e.events.ReplaceRelations(ctx, saved.ID, ev.Relations)
+		}
+		if len(ev.XProperties) > 0 {
+			_ = e.events.ReplaceXProperties(ctx, saved.ID, ev.XProperties)
+		}
+	}
+
+	// Import todos
+	for _, t := range result.Todos {
+		saved, err := e.todos.UpsertByUID(ctx, todo.UpsertParams{
+			UID: t.UID, CalendarID: calendarID,
+			Summary: t.Summary, Description: t.Description, Location: t.Location,
+			DueDate: t.DueDate, StartDate: t.StartDate, Duration: t.Duration,
+			CompletedAt: t.CompletedAt, PercentComplete: t.PercentComplete,
+			Status: t.Status, Priority: t.Priority, Class: t.Class,
+			URL: t.URL, Categories: t.Categories,
+			RecurrenceRule: t.RecurrenceRule, Timezone: t.Timezone,
+			Sequence: t.Sequence, ExDates: t.ExDates, RDates: t.RDates,
+			RecurrenceID: t.RecurrenceID, Geo: t.Geo,
+			DtStamp: t.DtStamp,
+		})
+		if err != nil {
+			return fmt.Errorf("upsert todo %q: %w", t.UID, err)
+		}
+		if len(t.Alarms) > 0 {
+			_ = e.todos.ReplaceAlarms(ctx, saved.ID, t.Alarms)
+		}
+		if len(t.Attendees) > 0 {
+			_ = e.todos.ReplaceAttendees(ctx, saved.ID, t.Attendees)
+		}
+		if len(t.Attachments) > 0 {
+			_ = e.todos.ReplaceAttachments(ctx, saved.ID, t.Attachments)
+		}
+		if len(t.Comments) > 0 {
+			_ = e.todos.ReplaceComments(ctx, saved.ID, t.Comments)
+		}
+		if len(t.Contacts) > 0 {
+			_ = e.todos.ReplaceContacts(ctx, saved.ID, t.Contacts)
+		}
+		if len(t.Resources) > 0 {
+			_ = e.todos.ReplaceResources(ctx, saved.ID, t.Resources)
+		}
+		if len(t.Relations) > 0 {
+			_ = e.todos.ReplaceRelations(ctx, saved.ID, t.Relations)
+		}
+		if len(t.XProperties) > 0 {
+			_ = e.todos.ReplaceXProperties(ctx, saved.ID, t.XProperties)
+		}
+	}
+
+	// Import journals
+	for _, j := range result.Journals {
+		saved, err := e.journals.UpsertByUID(ctx, journal.UpsertParams{
+			UID: j.UID, CalendarID: calendarID,
+			Summary: j.Summary, Description: j.Description,
+			StartDate: j.StartDate, Status: j.Status, Class: j.Class,
+			URL: j.URL, Categories: j.Categories,
+			RecurrenceRule: j.RecurrenceRule, Timezone: j.Timezone,
+			Sequence: j.Sequence, ExDates: j.ExDates, RDates: j.RDates,
+			RecurrenceID: j.RecurrenceID,
+			DtStamp: j.DtStamp,
+		})
+		if err != nil {
+			return fmt.Errorf("upsert journal %q: %w", j.UID, err)
+		}
+		if len(j.Attendees) > 0 {
+			_ = e.journals.ReplaceAttendees(ctx, saved.ID, j.Attendees)
+		}
+		if len(j.Attachments) > 0 {
+			_ = e.journals.ReplaceAttachments(ctx, saved.ID, j.Attachments)
+		}
+		if len(j.Comments) > 0 {
+			_ = e.journals.ReplaceComments(ctx, saved.ID, j.Comments)
+		}
+		if len(j.Contacts) > 0 {
+			_ = e.journals.ReplaceContacts(ctx, saved.ID, j.Contacts)
+		}
+		if len(j.Relations) > 0 {
+			_ = e.journals.ReplaceRelations(ctx, saved.ID, j.Relations)
+		}
+		if len(j.XProperties) > 0 {
+			_ = e.journals.ReplaceXProperties(ctx, saved.ID, j.XProperties)
+		}
+	}
+
+	return nil
 }
 
 func parseICalData(data []byte) (*ical.Calendar, error) {

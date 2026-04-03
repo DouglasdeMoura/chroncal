@@ -6,8 +6,11 @@ import (
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/auth"
+	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/testutil"
+	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
 // mockCredStore implements auth.CredentialStore for testing.
@@ -30,7 +33,10 @@ func newTestService(t *testing.T) (*Service, *storage.Queries) {
 	t.Helper()
 	db, q := testutil.NewTestDB(t)
 	credStore := &mockCredStore{creds: make(map[int64]auth.Credential)}
-	svc := NewService(db, q, credStore, nil)
+	events := event.NewService(db, q)
+	todos := todo.NewService(db, q)
+	journals := journal.NewService(db, q)
+	svc := NewService(db, q, credStore, events, todos, journals, nil)
 	return svc, q
 }
 
