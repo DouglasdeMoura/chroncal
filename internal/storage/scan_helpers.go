@@ -51,3 +51,26 @@ func scanTodos(rows *sql.Rows) ([]Todo, error) {
 	}
 	return items, rows.Err()
 }
+
+// scanJournals reads rows into []Journal. Column order must match the journals table:
+// id, uid, calendar_id, summary, description, start_date, status, class, url,
+// recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp,
+// created_at, updated_at.
+func scanJournals(rows *sql.Rows) ([]Journal, error) {
+	defer rows.Close()
+	items := make([]Journal, 0, 64)
+	for rows.Next() {
+		var i Journal
+		if err := rows.Scan(
+			&i.ID, &i.Uid, &i.CalendarID, &i.Summary, &i.Description,
+			&i.StartDate, &i.Status, &i.Class, &i.Url,
+			&i.RecurrenceRule, &i.Timezone, &i.Sequence,
+			&i.Exdates, &i.Rdates, &i.RecurrenceID, &i.Dtstamp,
+			&i.CreatedAt, &i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	return items, rows.Err()
+}

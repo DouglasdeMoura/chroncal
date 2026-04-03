@@ -66,3 +66,34 @@ func (q *Queries) ListCategoriesByTodoIDs(ctx context.Context, ids []int64) ([]T
 	}
 	return items, rows.Err()
 }
+
+// ListCategoriesByJournalIDs returns categories for the given journal IDs.
+// Hand-written because database/sql does not support slice parameters.
+func (q *Queries) ListCategoriesByJournalIDs(ctx context.Context, ids []int64) ([]JournalCategory, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	placeholders := strings.Repeat("?,", len(ids))
+	placeholders = placeholders[:len(placeholders)-1]
+	query := "SELECT journal_id, category FROM journal_categories WHERE journal_id IN (" + placeholders + ") ORDER BY journal_id, category"
+
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+
+	rows, err := q.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []JournalCategory
+	for rows.Next() {
+		var i JournalCategory
+		if err := rows.Scan(&i.JournalID, &i.Category); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	return items, rows.Err()
+}

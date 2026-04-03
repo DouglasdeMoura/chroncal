@@ -10,6 +10,7 @@ import (
 	"github.com/teambition/rrule-go"
 
 	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 	"github.com/douglasdemoura/chroncal/internal/todo"
@@ -803,4 +804,234 @@ func ExpandTodo(td todo.Todo, from, to time.Time) []ExpandedTodo {
 		})
 	}
 	return instances
+}
+
+// ── Journal recurrence ────────────────────────────────────────────────
+
+// ExpandedJournal represents a single occurrence of a (possibly recurring) journal.
+type ExpandedJournal struct {
+	journal.Journal
+	InstanceTime time.Time
+	IsOverride   bool
+}
+
+// JournalListParams holds composable filters for listing journals.
+type JournalListParams struct {
+	CalendarID int64
+	Status     string
+	From       time.Time
+	To         time.Time
+}
+
+func journalFromRow(row storage.Journal) journal.Journal {
+	return journal.Journal{
+		ID:             row.ID,
+		UID:            row.Uid,
+		CalendarID:     row.CalendarID,
+		Summary:        row.Summary,
+		Description:    storage.NullableToString(row.Description),
+		StartDate:      storage.NullableToString(row.StartDate),
+		Status:         row.Status,
+		Class:          row.Class,
+		URL:            storage.NullableToString(row.Url),
+		RecurrenceRule: storage.NullableToString(row.RecurrenceRule),
+		Timezone:       storage.NullableToString(row.Timezone),
+		Sequence:       row.Sequence,
+		ExDates:        storage.NullableToString(row.Exdates),
+		RDates:         storage.NullableToString(row.Rdates),
+		RecurrenceID:   row.RecurrenceID,
+		DtStamp:        storage.NullableToString(row.Dtstamp),
+		CreatedAt:      timeutil.ParseDateTime(row.CreatedAt),
+		UpdatedAt:      timeutil.ParseDateTime(row.UpdatedAt),
+	}
+}
+
+func (s *Service) populateJournalCategories(ctx context.Context, journals []journal.Journal) {
+	if len(journals) == 0 {
+		return
+	}
+	ids := make([]int64, len(journals))
+	for i := range journals {
+		ids[i] = journals[i].ID
+	}
+	rows, err := s.q.ListCategoriesByJournalIDs(ctx, ids)
+	if err != nil {
+		return
+	}
+	catMap := make(map[int64][]string, len(journals))
+	for _, r := range rows {
+		catMap[r.JournalID] = append(catMap[r.JournalID], r.Category)
+	}
+	for i := range journals {
+		if cats, ok := catMap[journals[i].ID]; ok {
+			journals[i].Categories = strings.Join(cats, ",")
+		}
+	}
+}
+
+// ExpandJournal generates all occurrences of a journal within a date range.
+func ExpandJournal(j journal.Journal, from, to time.Time) []ExpandedJournal {
+	anchor := j.ParseStartDate()
+	if anchor.IsZero() {
+		return nil
+	}
+
+	if j.RecurrenceRule == "" {
+		if anchor.Before(from) || !anchor.Before(to) {
+			return nil
+		}
+		return []ExpandedJournal{{Journal: j, InstanceTime: anchor}}
+	}
+
+	rruleStr := "RRULE:" + j.RecurrenceRule
+	set, err := rrule.StrToRRuleSet(rruleStr)
+	if err != nil {
+		if anchor.Before(from) || !anchor.Before(to) {
+			return nil
+		}
+		return []ExpandedJournal{{Journal: j, InstanceTime: anchor}}
+	}
+
+	loc := tzForExpansion(j.Timezone)
+	dtstart := anchor
+	localFrom, localTo := from, to
+	if loc != nil {
+		dtstart = dtstart.In(loc)
+		localFrom = from.In(loc)
+		localTo = to.In(loc)
+	}
+
+	set.DTStart(dtstart)
+	for _, ex := range j.ParseExDates() {
+		if loc != nil {
+			ex = ex.In(loc)
+		}
+		set.ExDate(ex)
+	}
+	rdates := j.ParseRDates()
+	for _, rd := range rdates {
+		if loc != nil {
+			rd = rd.In(loc)
+		}
+		set.RDate(rd)
+	}
+	rdateSet := make(map[time.Time]struct{}, len(rdates))
+	for _, rd := range rdates {
+		if loc != nil {
+			rd = rd.In(loc)
+		}
+		rdateSet[rd] = struct{}{}
+	}
+
+	occurrences := set.Between(localFrom, localTo, true)
+	filteredOcc := occurrences[:0]
+	for _, occ := range occurrences {
+		if occ.Before(localTo) {
+			filteredOcc = append(filteredOcc, occ)
+		}
+	}
+
+	var instances []ExpandedJournal
+	for _, occ := range filteredOcc {
+		_, isRDate := rdateSet[occ]
+		instances = append(instances, ExpandedJournal{Journal: j, InstanceTime: occ.UTC(), IsOverride: isRDate})
+	}
+	return instances
+}
+
+func (s *Service) expandRecurringJournalRows(ctx context.Context, rows []storage.Journal, from, to time.Time) []journal.Journal {
+	var result []journal.Journal
+	for _, row := range rows {
+		j := journalFromRow(row)
+		expanded := ExpandJournal(j, from, to)
+
+		overrides, _ := s.q.ListJournalOverridesByUID(ctx, row.Uid)
+		overrideMap := make(map[string]storage.Journal, len(overrides))
+		for _, o := range overrides {
+			overrideMap[o.RecurrenceID] = o
+		}
+
+		for _, inst := range expanded {
+			instKey := inst.InstanceTime.UTC().Format(time.RFC3339)
+			if o, ok := overrideMap[instKey]; ok {
+				if strings.EqualFold(o.Status, "CANCELLED") {
+					continue
+				}
+				result = append(result, journalFromRow(o))
+			} else {
+				jj := inst.Journal
+				anchor := jj.ParseStartDate()
+				if !anchor.IsZero() && jj.StartDate != "" {
+					offset := inst.InstanceTime.Sub(anchor)
+					newStart := anchor.Add(offset)
+					if timeutil.IsDateOnly(jj.StartDate) {
+						jj.StartDate = newStart.Format("2006-01-02")
+					} else {
+						jj.StartDate = newStart.Format(time.RFC3339)
+					}
+				}
+				result = append(result, jj)
+			}
+		}
+	}
+	return result
+}
+
+// ListFilteredJournals returns journals matching all supplied filters. When a
+// date range is provided, recurring journals are expanded; otherwise master
+// entries are returned as-is.
+func (s *Service) ListFilteredJournals(ctx context.Context, p JournalListParams) ([]journal.Journal, error) {
+	fromStr := ""
+	toStr := ""
+	hasRange := !p.From.IsZero() || !p.To.IsZero()
+	if !p.From.IsZero() {
+		fromStr = p.From.Format("2006-01-02")
+	}
+	if !p.To.IsZero() {
+		toStr = p.To.Format("2006-01-02")
+	}
+
+	rows, err := s.q.ListJournalsFiltered(ctx, storage.ListJournalsFilteredParams{
+		CalendarID:   p.CalendarID,
+		FilterStatus: p.Status,
+		FromDate:     fromStr,
+		ToDate:       toStr,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var result []journal.Journal
+	for _, row := range rows {
+		result = append(result, journalFromRow(row))
+	}
+
+	recurringRows, err := s.q.ListRecurringJournalsFiltered(ctx, storage.ListRecurringJournalsFilteredParams{
+		CalendarID:   p.CalendarID,
+		FilterStatus: p.Status,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if hasRange {
+		result = append(result, s.expandRecurringJournalRows(ctx, recurringRows, p.From, p.To)...)
+	} else {
+		for _, row := range recurringRows {
+			result = append(result, journalFromRow(row))
+		}
+	}
+
+	s.populateJournalCategories(ctx, result)
+	sort.Slice(result, func(i, j int) bool {
+		di := result[i].ParseStartDate()
+		dj := result[j].ParseStartDate()
+		if di.IsZero() {
+			return false
+		}
+		if dj.IsZero() {
+			return true
+		}
+		return di.Before(dj)
+	})
+	return result, nil
 }

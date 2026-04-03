@@ -57,3 +57,16 @@ func (q *Queries) SearchTodosFTS(ctx context.Context, query string, calendarID i
 	where, args := w.build()
 	return q.queryTodos(ctx, where, args, "due_date ASC, summary ASC")
 }
+
+func (q *Queries) SearchJournalsFTS(ctx context.Context, query string, calendarID int64, filterStatus string) ([]Journal, error) {
+	var w whereBuilder
+	w.add("id IN (SELECT rowid FROM journals_fts WHERE journals_fts MATCH ?)", query)
+	if calendarID != 0 {
+		w.add("calendar_id = ?", calendarID)
+	}
+	if filterStatus != "" {
+		w.add("status = ?", filterStatus)
+	}
+	where, args := w.build()
+	return q.queryJournals(ctx, where, args, "start_date ASC, summary ASC")
+}

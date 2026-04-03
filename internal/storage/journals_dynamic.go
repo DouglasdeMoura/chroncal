@@ -1,0 +1,74 @@
+package storage
+
+import "context"
+
+const journalCategoryExists = "EXISTS (SELECT 1 FROM journal_categories jc WHERE jc.journal_id = journals.id AND jc.category = ?)"
+
+type ListJournalsFilteredParams struct {
+	CalendarID   int64
+	FilterStatus string
+	HideDrafts   int64
+	FromDate     string
+	ToDate       string
+}
+
+func (q *Queries) ListJournalsFiltered(ctx context.Context, arg ListJournalsFilteredParams) ([]Journal, error) {
+	var w whereBuilder
+	w.add("recurrence_rule IS NULL AND recurrence_id = ''")
+	if arg.CalendarID != 0 {
+		w.add("calendar_id = ?", arg.CalendarID)
+	}
+	if arg.FilterStatus != "" {
+		w.add("status = ?", arg.FilterStatus)
+	}
+	if arg.HideDrafts != 0 {
+		w.add("status != 'CANCELLED'")
+	}
+	if arg.FromDate != "" {
+		w.add("(start_date IS NULL OR start_date >= ?)", arg.FromDate)
+	}
+	if arg.ToDate != "" {
+		w.add("(start_date IS NULL OR start_date < ?)", arg.ToDate)
+	}
+	where, args := w.build()
+	return q.queryJournals(ctx, where, args, "start_date ASC, summary ASC")
+}
+
+type ListRecurringJournalsFilteredParams struct {
+	CalendarID   int64
+	FilterStatus string
+}
+
+func (q *Queries) ListRecurringJournalsFiltered(ctx context.Context, arg ListRecurringJournalsFilteredParams) ([]Journal, error) {
+	var w whereBuilder
+	w.add("recurrence_rule IS NOT NULL AND recurrence_id = ''")
+	if arg.CalendarID != 0 {
+		w.add("calendar_id = ?", arg.CalendarID)
+	}
+	if arg.FilterStatus != "" {
+		w.add("status = ?", arg.FilterStatus)
+	}
+	where, args := w.build()
+	return q.queryJournals(ctx, where, args, "start_date ASC, summary ASC")
+}
+
+type ListJournalsForExportParams struct {
+	CalendarID   int64
+	Category     string
+	FilterStatus string
+}
+
+func (q *Queries) ListJournalsForExport(ctx context.Context, arg ListJournalsForExportParams) ([]Journal, error) {
+	var w whereBuilder
+	if arg.CalendarID != 0 {
+		w.add("calendar_id = ?", arg.CalendarID)
+	}
+	if arg.Category != "" {
+		w.add(journalCategoryExists, arg.Category)
+	}
+	if arg.FilterStatus != "" {
+		w.add("status = ?", arg.FilterStatus)
+	}
+	where, args := w.build()
+	return q.queryJournals(ctx, where, args, "start_date ASC, summary ASC")
+}

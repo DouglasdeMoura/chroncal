@@ -41,3 +41,12 @@ func (q *Queries) queryTodos(ctx context.Context, where string, args []interface
 	}
 	return scanTodos(rows)
 }
+
+func (q *Queries) queryJournals(ctx context.Context, where string, args []interface{}, orderBy string) ([]Journal, error) {
+	query := "SELECT * FROM journals " + where + " ORDER BY " + orderBy
+	rows, err := q.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	return scanJournals(rows)
+}
