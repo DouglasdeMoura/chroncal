@@ -3,9 +3,11 @@ package ical
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -296,6 +298,7 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, []string, error) {
 		Contacts:        contacts,
 		Resources:       resources,
 		Relations:       relations,
+		XProperties:     extractXPropertiesWithSet(props, handledTodoProps),
 	}, alarmWarnings, nil
 }
 
@@ -463,6 +466,7 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 		Contacts:       contacts,
 		Resources:      resources,
 		Relations:      relations,
+		XProperties:    extractXPropertiesWithSet(ve.Props, handledEventProps),
 	}, alarmWarnings, nil
 }
 
@@ -962,6 +966,85 @@ func journalFromVJournal(comp *ical.Component) (journal.Journal, error) {
 		Attachments:    attachments,
 		Comments:       comments,
 		Contacts:       contacts,
+		XProperties:    extractXPropertiesWithSet(props, handledJournalProps),
 		Relations:      relations,
 	}, nil
+}
+
+// handledEventProps is the set of property names explicitly parsed by eventFromVEvent.
+var handledEventProps = map[string]bool{
+	ical.PropUID: true, ical.PropSummary: true, ical.PropDescription: true,
+	ical.PropLocation: true, ical.PropDateTimeStart: true, ical.PropDateTimeEnd: true,
+	ical.PropDuration: true, ical.PropRecurrenceRule: true, ical.PropStatus: true,
+	ical.PropTransparency: true, "SEQUENCE": true, ical.PropPriority: true,
+	ical.PropClass: true, ical.PropURL: true, ical.PropGeo: true,
+	ical.PropCategories: true, ical.PropExceptionDates: true,
+	ical.PropRecurrenceDates: true, ical.PropRecurrenceID: true,
+	ical.PropDateTimeStamp: true, ical.PropCreated: true, ical.PropLastModified: true,
+	ical.PropAttach: true, ical.PropComment: true, ical.PropContact: true,
+	ical.PropResources: true, ical.PropRelatedTo: true,
+	ical.PropAttendee: true, ical.PropOrganizer: true,
+}
+
+// handledTodoProps is the set of property names explicitly parsed by todoFromVTodo.
+var handledTodoProps = map[string]bool{
+	ical.PropUID: true, ical.PropSummary: true, ical.PropDescription: true,
+	ical.PropLocation: true, ical.PropDateTimeStart: true, ical.PropDue: true,
+	ical.PropDuration: true, ical.PropCompleted: true, ical.PropPercentComplete: true,
+	ical.PropRecurrenceRule: true, ical.PropStatus: true,
+	"SEQUENCE": true, ical.PropPriority: true,
+	ical.PropClass: true, ical.PropURL: true, ical.PropGeo: true,
+	ical.PropCategories: true, ical.PropExceptionDates: true,
+	ical.PropRecurrenceDates: true, ical.PropRecurrenceID: true,
+	ical.PropDateTimeStamp: true, ical.PropCreated: true, ical.PropLastModified: true,
+	ical.PropAttach: true, ical.PropComment: true, ical.PropContact: true,
+	ical.PropResources: true, ical.PropRelatedTo: true,
+	ical.PropAttendee: true, ical.PropOrganizer: true,
+}
+
+// handledJournalProps is the set of property names explicitly parsed by journalFromVJournal.
+var handledJournalProps = map[string]bool{
+	ical.PropUID: true, ical.PropSummary: true, ical.PropDescription: true,
+	ical.PropDateTimeStart: true, ical.PropRecurrenceRule: true, ical.PropStatus: true,
+	"SEQUENCE": true, ical.PropClass: true, ical.PropURL: true,
+	ical.PropCategories: true, ical.PropExceptionDates: true,
+	ical.PropRecurrenceDates: true, ical.PropRecurrenceID: true,
+	ical.PropDateTimeStamp: true, ical.PropCreated: true, ical.PropLastModified: true,
+	ical.PropAttach: true, ical.PropComment: true, ical.PropContact: true,
+	ical.PropRelatedTo: true,
+	ical.PropAttendee: true, ical.PropOrganizer: true,
+}
+
+// extractXPropertiesWithSet collects properties not in the handled set.
+// If handled is nil, only X-* prefixed properties are captured.
+func extractXPropertiesWithSet(props ical.Props, handled map[string]bool) []model.XProperty {
+	var out []model.XProperty
+
+	// Iterate property names in sorted order for deterministic output.
+	names := make([]string, 0, len(props))
+	for name := range props {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		isXProp := strings.HasPrefix(name, "X-")
+		if !isXProp && (handled == nil || handled[name]) {
+			continue
+		}
+		for _, prop := range props[name] {
+			params := "{}"
+			if len(prop.Params) > 0 {
+				if b, err := json.Marshal(prop.Params); err == nil {
+					params = string(b)
+				}
+			}
+			out = append(out, model.XProperty{
+				Name:   name,
+				Value:  prop.Value,
+				Params: params,
+			})
+		}
+	}
+	return out
 }

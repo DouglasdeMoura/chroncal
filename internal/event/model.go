@@ -43,6 +43,7 @@ type Event struct {
 	Contacts    []string
 	Resources   []string
 	Relations   []model.Relation
+	XProperties []model.XProperty
 }
 
 // Span returns the computed time.Duration between StartTime and EndTime.

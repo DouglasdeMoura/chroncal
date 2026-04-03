@@ -107,6 +107,9 @@ func icalImportCmd() *cobra.Command {
 				if len(e.Relations) > 0 {
 					_ = a.Events.ReplaceRelations(ctx, saved.ID, e.Relations)
 				}
+				if len(e.XProperties) > 0 {
+					_ = a.Events.ReplaceXProperties(ctx, saved.ID, e.XProperties)
+				}
 				importedEvents = append(importedEvents, saved)
 				if lookupErr != nil {
 					newEvents++
@@ -156,6 +159,9 @@ func icalImportCmd() *cobra.Command {
 				if len(t.Relations) > 0 {
 					_ = a.Todos.ReplaceRelations(ctx, saved.ID, t.Relations)
 				}
+				if len(t.XProperties) > 0 {
+					_ = a.Todos.ReplaceXProperties(ctx, saved.ID, t.XProperties)
+				}
 				importedTodos = append(importedTodos, saved)
 				if lookupErr != nil {
 					newTodos++
@@ -196,6 +202,9 @@ func icalImportCmd() *cobra.Command {
 				}
 				if len(j.Relations) > 0 {
 					_ = a.Journals.ReplaceRelations(ctx, saved.ID, j.Relations)
+				}
+				if len(j.XProperties) > 0 {
+					_ = a.Journals.ReplaceXProperties(ctx, saved.ID, j.XProperties)
 				}
 				importedJournals = append(importedJournals, saved)
 				if lookupErr != nil {
@@ -341,6 +350,7 @@ func icalExportCmd() *cobra.Command {
 					events[i].Contacts, _ = a.Events.ListContacts(ctx, events[i].ID)
 					events[i].Resources, _ = a.Events.ListResources(ctx, events[i].ID)
 					events[i].Relations, _ = a.Events.ListRelations(ctx, events[i].ID)
+					events[i].XProperties, _ = a.Events.ListXProperties(ctx, events[i].ID)
 				}
 			}
 
@@ -363,6 +373,7 @@ func icalExportCmd() *cobra.Command {
 					todos[i].Contacts, _ = a.Todos.ListContacts(ctx, todos[i].ID)
 					todos[i].Resources, _ = a.Todos.ListResources(ctx, todos[i].ID)
 					todos[i].Relations, _ = a.Todos.ListRelations(ctx, todos[i].ID)
+					todos[i].XProperties, _ = a.Todos.ListXProperties(ctx, todos[i].ID)
 				}
 			}
 
@@ -383,6 +394,7 @@ func icalExportCmd() *cobra.Command {
 					journals[i].Comments, _ = a.Journals.ListComments(ctx, journals[i].ID)
 					journals[i].Contacts, _ = a.Journals.ListContacts(ctx, journals[i].ID)
 					journals[i].Relations, _ = a.Journals.ListRelations(ctx, journals[i].ID)
+					journals[i].XProperties, _ = a.Journals.ListXProperties(ctx, journals[i].ID)
 				}
 			}
 

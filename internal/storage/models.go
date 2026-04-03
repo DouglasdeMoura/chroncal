@@ -346,3 +346,12 @@ type TodosFt struct {
 	Location    string
 	Categories  string
 }
+
+type XProperty struct {
+	ID        int64
+	OwnerType string
+	OwnerID   int64
+	Name      string
+	Value     string
+	Params    string
+}

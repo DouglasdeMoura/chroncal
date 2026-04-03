@@ -920,6 +920,48 @@ func (s *Service) populateCategories(ctx context.Context, todos []Todo) {
 	}
 }
 
+// X-Property CRUD
+
+func (s *Service) ListXProperties(ctx context.Context, todoID int64) ([]model.XProperty, error) {
+	rows, err := s.q.ListXPropertiesByOwner(ctx, storage.ListXPropertiesByOwnerParams{
+		OwnerType: "todo", OwnerID: todoID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]model.XProperty, len(rows))
+	for i, r := range rows {
+		out[i] = model.XProperty{
+			ID: r.ID, OwnerType: r.OwnerType, OwnerID: r.OwnerID,
+			Name: r.Name, Value: r.Value, Params: r.Params,
+		}
+	}
+	return out, nil
+}
+
+func (s *Service) ReplaceXProperties(ctx context.Context, todoID int64, xprops []model.XProperty) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+	if err := qtx.DeleteXPropertiesByOwner(ctx, storage.DeleteXPropertiesByOwnerParams{
+		OwnerType: "todo", OwnerID: todoID,
+	}); err != nil {
+		return fmt.Errorf("delete x-properties: %w", err)
+	}
+	for _, xp := range xprops {
+		if err := qtx.InsertXProperty(ctx, storage.InsertXPropertyParams{
+			OwnerType: "todo", OwnerID: todoID,
+			Name: xp.Name, Value: xp.Value, Params: xp.Params,
+		}); err != nil {
+			return fmt.Errorf("insert x-property: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
 func fromStorageSlice(rows []storage.Todo) []Todo {
 	todos := make([]Todo, len(rows))
 	for i, r := range rows {

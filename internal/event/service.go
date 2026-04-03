@@ -993,6 +993,48 @@ func fromStorageAlarm(r storage.EventAlarm) model.Alarm {
 	}
 }
 
+// X-Property CRUD
+
+func (s *Service) ListXProperties(ctx context.Context, eventID int64) ([]model.XProperty, error) {
+	rows, err := s.q.ListXPropertiesByOwner(ctx, storage.ListXPropertiesByOwnerParams{
+		OwnerType: "event", OwnerID: eventID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]model.XProperty, len(rows))
+	for i, r := range rows {
+		out[i] = model.XProperty{
+			ID: r.ID, OwnerType: r.OwnerType, OwnerID: r.OwnerID,
+			Name: r.Name, Value: r.Value, Params: r.Params,
+		}
+	}
+	return out, nil
+}
+
+func (s *Service) ReplaceXProperties(ctx context.Context, eventID int64, xprops []model.XProperty) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+	if err := qtx.DeleteXPropertiesByOwner(ctx, storage.DeleteXPropertiesByOwnerParams{
+		OwnerType: "event", OwnerID: eventID,
+	}); err != nil {
+		return fmt.Errorf("delete x-properties: %w", err)
+	}
+	for _, xp := range xprops {
+		if err := qtx.InsertXProperty(ctx, storage.InsertXPropertyParams{
+			OwnerType: "event", OwnerID: eventID,
+			Name: xp.Name, Value: xp.Value, Params: xp.Params,
+		}); err != nil {
+			return fmt.Errorf("insert x-property: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
 func fromStorageAttendee(r storage.EventAttendee) model.Attendee {
 	return model.Attendee{
 		ID:            r.ID,

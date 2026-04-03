@@ -33,6 +33,7 @@ type Journal struct {
 	Comments    []string
 	Contacts    []string
 	Relations   []model.Relation
+	XProperties []model.XProperty
 }
 
 func (j Journal) ParseStartDate() time.Time {

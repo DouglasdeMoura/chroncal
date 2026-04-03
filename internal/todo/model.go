@@ -42,6 +42,7 @@ type Todo struct {
 	Contacts    []string
 	Resources   []string
 	Relations   []model.Relation
+	XProperties []model.XProperty
 }
 
 func (t Todo) IsCompleted() bool {

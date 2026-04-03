@@ -3,6 +3,7 @@ package ical
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -160,6 +161,9 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 			}
 			vevent.Props.Add(p)
 		}
+
+		// X-Properties (round-trip preservation)
+		emitXProperties(vevent.Component, e.XProperties)
 
 		// VALARM children
 		for _, alarm := range e.Alarms {
@@ -465,6 +469,9 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 			}
 			vtodo.Props.Add(p)
 		}
+
+		// X-Properties (round-trip preservation)
+		emitXProperties(vtodo, t.XProperties)
 
 		// VALARM
 		for _, alarm := range t.Alarms {
@@ -834,6 +841,26 @@ func splitNonEmpty(s string) []string {
 	return out
 }
 
+// emitXProperties writes X-properties (and other unhandled properties) onto an
+// iCal component for round-trip preservation.
+func emitXProperties(comp *ical.Component, xprops []model.XProperty) {
+	for _, xp := range xprops {
+		p := &ical.Prop{Name: xp.Name, Params: make(ical.Params)}
+		p.Value = xp.Value
+		if xp.Params != "" && xp.Params != "{}" {
+			var params map[string][]string
+			if err := json.Unmarshal([]byte(xp.Params), &params); err == nil {
+				for k, vals := range params {
+					for _, v := range vals {
+						p.Params.Add(k, v)
+					}
+				}
+			}
+		}
+		comp.Props.Add(p)
+	}
+}
+
 func emitAttachment(props ical.Props, att model.Attachment) {
 	p := &ical.Prop{Name: ical.PropAttach, Params: make(ical.Params)}
 	if att.Data != nil {
@@ -985,6 +1012,9 @@ func ExportJournals(journals []journal.Journal, calName string) ([]byte, error) 
 			}
 			vjournal.Props.Add(p)
 		}
+
+		// X-Properties (round-trip preservation)
+		emitXProperties(vjournal, j.XProperties)
 
 		// ATTENDEE / ORGANIZER
 		for _, att := range j.Attendees {
