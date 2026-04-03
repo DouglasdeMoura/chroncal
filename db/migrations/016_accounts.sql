@@ -1,13 +1,13 @@
 -- +goose Up
 CREATE TABLE accounts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,                -- display name, e.g. "Google - Work"
+    name TEXT NOT NULL UNIQUE,          -- display name, e.g. "Google - Work"
     server_url TEXT NOT NULL,          -- CalDAV principal URL
     auth_type TEXT NOT NULL DEFAULT 'basic',  -- 'basic', 'oauth2', 'bearer'
     username TEXT NOT NULL DEFAULT '',
     -- credentials stored separately (keyring / encrypted file / plaintext)
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 -- Link calendars to remote accounts

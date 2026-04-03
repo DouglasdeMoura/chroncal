@@ -23,7 +23,7 @@ CREATE TABLE tombstones (
     calendar_id INTEGER NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
     uid TEXT NOT NULL,
     remote_url TEXT NOT NULL,
-    deleted_at TEXT NOT NULL DEFAULT (datetime('now'))
+    deleted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE INDEX idx_tombstones_calendar ON tombstones(calendar_id);

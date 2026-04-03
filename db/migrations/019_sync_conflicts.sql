@@ -8,7 +8,7 @@ CREATE TABLE sync_conflicts (
     local_ical TEXT NOT NULL,      -- full iCal data of local version
     server_ical TEXT NOT NULL,     -- full iCal data of server version
     server_etag TEXT NOT NULL,     -- ETag of server version (needed for resolution PUT)
-    detected_at TEXT NOT NULL DEFAULT (datetime('now'))
+    detected_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 -- +goose Down

@@ -18,7 +18,7 @@ UPDATE accounts SET
     server_url = ?,
     auth_type = ?,
     username = ?,
-    updated_at = datetime('now')
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ?;
 
 -- name: DeleteAccount :exec
