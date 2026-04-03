@@ -198,7 +198,20 @@ func TestService_ResolveConflict_Server(t *testing.T) {
 	cals, _ := q.ListCalendars(ctx)
 	calID := cals[0].ID
 
-	err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+	err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calID,
+		Uid:          "resolve-server-uid",
+		OwnerType:    "event",
+		RemoteUrl:    "https://example.com/cal/resolve-server-uid.ics",
+		Etag:         "etag-before",
+		Dirty:        1,
+		SyncStrategy: "sync-token",
+	})
+	if err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+
+	err = q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 		CalendarID: calID,
 		OwnerType:  "event",
 		OwnerID:    1,
@@ -221,6 +234,20 @@ func TestService_ResolveConflict_Server(t *testing.T) {
 	remaining, _ := q.ListSyncConflicts(ctx)
 	if len(remaining) != 0 {
 		t.Errorf("expected 0 conflicts after resolve, got %d", len(remaining))
+	}
+
+	res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{
+		CalendarID: calID,
+		Uid:        "resolve-server-uid",
+	})
+	if err != nil {
+		t.Fatalf("GetSyncResource: %v", err)
+	}
+	if res.Dirty != 0 {
+		t.Fatalf("Dirty = %d, want 0", res.Dirty)
+	}
+	if res.Etag != "etag-456" {
+		t.Fatalf("Etag = %q, want %q", res.Etag, "etag-456")
 	}
 }
 

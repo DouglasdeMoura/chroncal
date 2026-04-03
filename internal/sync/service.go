@@ -135,8 +135,15 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 
 	switch pick {
 	case "server":
-		// Server version is already the current local state after auto-resolve
-		// Just remove the conflict record
+		// Server version is already the current local state after auto-resolve.
+		// Accept it by clearing the pending local push and storing the server ETag.
+		if err := s.q.ClearSyncResourceDirty(ctx, storage.ClearSyncResourceDirtyParams{
+			CalendarID: conflict.CalendarID,
+			Uid:        conflict.Uid,
+			Etag:       conflict.ServerEtag,
+		}); err != nil {
+			return fmt.Errorf("clear dirty: %w", err)
+		}
 	case "local":
 		// Mark the resource as dirty so next sync pushes local version
 		if err := s.q.MarkSyncResourceDirty(ctx, storage.MarkSyncResourceDirtyParams{
