@@ -267,6 +267,131 @@ END:VCALENDAR
 	}
 }
 
+func TestEnginePushServerWinsAdoptsServerVersion(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	insertTestEvent(t, db, calendarID, "server-wins-event")
+
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		switch r.Method {
+		case http.MethodPut:
+			if got := r.Header.Get("If-Match"); got != `"etag-before"` {
+				t.Fatalf("If-Match = %q, want %q", got, `"etag-before"`)
+			}
+			return &http.Response{
+				StatusCode: http.StatusPreconditionFailed,
+				Status:     "412 Precondition Failed",
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("precondition failed")),
+				Request:    r,
+			}, nil
+		case http.MethodGet:
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header: http.Header{
+					"Content-Type": []string{"text/calendar; charset=utf-8"},
+					"Etag":         []string{`"etag-server"`},
+				},
+				Body: io.NopCloser(strings.NewReader(`BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//chroncal//tests//EN
+BEGIN:VEVENT
+UID:server-wins-event
+DTSTAMP:20260403T120000Z
+DTSTART:20260403T130000Z
+DTEND:20260403T140000Z
+SUMMARY:Server Wins Version
+DESCRIPTION:server wins update
+STATUS:CONFIRMED
+TRANSP:OPAQUE
+SEQUENCE:2
+END:VEVENT
+END:VCALENDAR
+`)),
+				Request: r,
+			}, nil
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			return nil, nil
+		}
+	})
+
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calendarID,
+		Uid:          "server-wins-event",
+		OwnerType:    "event",
+		RemoteUrl:    "/calendar/server-wins-event.ics",
+		Etag:         "etag-before",
+		Dirty:        1,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+
+	result, err := engine.push(ctx, client, calendarID, "", ConflictServerWins)
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if result.conflicts != 1 {
+		t.Fatalf("conflicts = %d, want 1", result.conflicts)
+	}
+	if len(result.errors) != 0 {
+		t.Fatalf("errors = %d, want 0", len(result.errors))
+	}
+
+	evt, err := q.GetEventByUID(ctx, "server-wins-event")
+	if err != nil {
+		t.Fatalf("GetEventByUID: %v", err)
+	}
+	if evt.Title != "Server Wins Version" {
+		t.Fatalf("Title = %q, want Server Wins Version", evt.Title)
+	}
+	if storage.NullableToString(evt.Description) != "server wins update" {
+		t.Fatalf("Description = %q, want server wins update", storage.NullableToString(evt.Description))
+	}
+	if evt.StartTime != "2026-04-03T13:00:00Z" {
+		t.Fatalf("StartTime = %q, want 2026-04-03T13:00:00Z", evt.StartTime)
+	}
+	if evt.EndTime != "2026-04-03T14:00:00Z" {
+		t.Fatalf("EndTime = %q, want 2026-04-03T14:00:00Z", evt.EndTime)
+	}
+	if evt.Sequence != 2 {
+		t.Fatalf("Sequence = %d, want 2", evt.Sequence)
+	}
+
+	res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{
+		CalendarID: calendarID,
+		Uid:        "server-wins-event",
+	})
+	if err != nil {
+		t.Fatalf("GetSyncResource: %v", err)
+	}
+	if res.Dirty != 0 {
+		t.Fatalf("Dirty = %d, want 0", res.Dirty)
+	}
+	if res.Etag != "etag-server" {
+		t.Fatalf("Etag = %q, want etag-server", res.Etag)
+	}
+
+	conflicts, err := q.ListSyncConflictsByCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("ListSyncConflictsByCalendar: %v", err)
+	}
+	if len(conflicts) != 0 {
+		t.Fatalf("sync conflicts = %d, want 0", len(conflicts))
+	}
+}
+
 func TestEngineProcessTombstonesContinuesAfterDeleteFailure(t *testing.T) {
 	t.Parallel()
 

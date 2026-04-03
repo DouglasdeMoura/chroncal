@@ -288,6 +288,27 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 						e.logger.Error("re-fetch server resource failed", "uid", res.Uid, "error", fetchErr)
 						result.errors = append(result.errors, fmt.Errorf("conflict re-fetch %s: %w", res.Uid, fetchErr))
 					} else {
+						var buf bytes.Buffer
+						enc := ical.NewEncoder(&buf)
+						if err := enc.Encode(serverRes.Data); err != nil {
+							e.logger.Error("encode server resource failed", "uid", res.Uid, "error", err)
+							result.errors = append(result.errors, fmt.Errorf("encode server resource %s: %w", res.Uid, err))
+							result.conflicts++
+							continue
+						}
+						importResult, err := icalPkg.ImportFile(strings.NewReader(buf.String()))
+						if err != nil {
+							e.logger.Error("import server resource failed", "uid", res.Uid, "error", err)
+							result.errors = append(result.errors, fmt.Errorf("import server resource %s: %w", res.Uid, err))
+							result.conflicts++
+							continue
+						}
+						if err := e.persistImported(ctx, calendarID, importResult); err != nil {
+							e.logger.Error("persist server resource failed", "uid", res.Uid, "error", err)
+							result.errors = append(result.errors, fmt.Errorf("persist server resource %s: %w", res.Uid, err))
+							result.conflicts++
+							continue
+						}
 						// Clear dirty and update ETag to accept server version
 						if err := e.q.ClearSyncResourceDirty(ctx, storage.ClearSyncResourceDirtyParams{
 							CalendarID: calendarID,
