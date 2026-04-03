@@ -479,18 +479,22 @@ END:VCALENDAR`
 			t.Errorf("unexpected VTIMEZONE warning: %q", w)
 		}
 	}
-	// VJOURNAL(2) and VFREEBUSY(1) should produce warnings.
-	foundJournal, foundFreebusy := false, false
+	// VJOURNAL is now parsed, so we expect 2 journals.
+	if len(result.Journals) != 2 {
+		t.Errorf("journals = %d, want 2", len(result.Journals))
+	}
+	// VJOURNAL should NOT produce a warning.
 	for _, w := range result.Warnings {
-		if strings.Contains(w, "VJOURNAL") && strings.Contains(w, "2") {
-			foundJournal = true
+		if strings.Contains(w, "VJOURNAL") {
+			t.Errorf("unexpected VJOURNAL warning: %q", w)
 		}
+	}
+	// VFREEBUSY(1) should still produce a warning.
+	foundFreebusy := false
+	for _, w := range result.Warnings {
 		if strings.Contains(w, "VFREEBUSY") && strings.Contains(w, "1") {
 			foundFreebusy = true
 		}
-	}
-	if !foundJournal {
-		t.Errorf("missing VJOURNAL warning; warnings = %v", result.Warnings)
 	}
 	if !foundFreebusy {
 		t.Errorf("missing VFREEBUSY warning; warnings = %v", result.Warnings)
@@ -607,5 +611,135 @@ END:VCALENDAR`
 	}
 	if result.Events[0].Relations[0].RelUID != "parent-uid-123" {
 		t.Errorf("Rel[0].RelUID = %q", result.Events[0].Relations[0].RelUID)
+	}
+}
+
+func TestImport_VJournal(t *testing.T) {
+	t.Parallel()
+	ics := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//test//EN\r\n" +
+		"BEGIN:VJOURNAL\r\n" +
+		"UID:journal-basic\r\n" +
+		"DTSTAMP:20260401T100000Z\r\n" +
+		"DTSTART:20260401T090000Z\r\n" +
+		"SUMMARY:Daily Standup Notes\r\n" +
+		"DESCRIPTION:Discussed sprint progress\r\n" +
+		"STATUS:FINAL\r\n" +
+		"END:VJOURNAL\r\n" +
+		"END:VCALENDAR\r\n"
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile error: %v", err)
+	}
+	if len(result.Journals) != 1 {
+		t.Fatalf("journals = %d, want 1", len(result.Journals))
+	}
+	j := result.Journals[0]
+	if j.UID != "journal-basic" {
+		t.Errorf("UID = %q", j.UID)
+	}
+	if j.Summary != "Daily Standup Notes" {
+		t.Errorf("Summary = %q", j.Summary)
+	}
+	if j.Description != "Discussed sprint progress" {
+		t.Errorf("Description = %q", j.Description)
+	}
+	if j.StartDate == "" {
+		t.Error("StartDate is empty")
+	}
+	if j.Status != "FINAL" {
+		t.Errorf("Status = %q, want FINAL", j.Status)
+	}
+}
+
+func TestImport_VJournal_MissingUID(t *testing.T) {
+	t.Parallel()
+	ics := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//test//EN\r\n" +
+		"BEGIN:VJOURNAL\r\n" +
+		"DTSTAMP:20260401T100000Z\r\n" +
+		"SUMMARY:No UID Journal\r\n" +
+		"END:VJOURNAL\r\n" +
+		"END:VCALENDAR\r\n"
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile error: %v", err)
+	}
+	if len(result.Journals) != 0 {
+		t.Errorf("journals = %d, want 0 (missing UID should be skipped)", len(result.Journals))
+	}
+	foundWarning := false
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "VJOURNAL") && strings.Contains(w, "missing UID") {
+			foundWarning = true
+		}
+	}
+	if !foundWarning {
+		t.Errorf("expected warning about missing UID; warnings = %v", result.Warnings)
+	}
+}
+
+func TestImport_VJournal_MultipleDescriptions(t *testing.T) {
+	t.Parallel()
+	ics := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//test//EN\r\n" +
+		"BEGIN:VJOURNAL\r\n" +
+		"UID:journal-multi-desc\r\n" +
+		"DTSTAMP:20260401T100000Z\r\n" +
+		"SUMMARY:Multi Description\r\n" +
+		"DESCRIPTION:First paragraph\r\n" +
+		"DESCRIPTION:Second paragraph\r\n" +
+		"END:VJOURNAL\r\n" +
+		"END:VCALENDAR\r\n"
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile error: %v", err)
+	}
+	if len(result.Journals) != 1 {
+		t.Fatalf("journals = %d, want 1", len(result.Journals))
+	}
+	desc := result.Journals[0].Description
+	if desc != "First paragraph\n\nSecond paragraph" {
+		t.Errorf("Description = %q, want joined with double newline", desc)
+	}
+}
+
+func TestImport_VJournal_DateOnly(t *testing.T) {
+	t.Parallel()
+	ics := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//test//EN\r\n" +
+		"BEGIN:VJOURNAL\r\n" +
+		"UID:journal-dateonly\r\n" +
+		"DTSTAMP:20260401T100000Z\r\n" +
+		"DTSTART;VALUE=DATE:20260401\r\n" +
+		"SUMMARY:Date Only Journal\r\n" +
+		"END:VJOURNAL\r\n" +
+		"END:VCALENDAR\r\n"
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile error: %v", err)
+	}
+	if len(result.Journals) != 1 {
+		t.Fatalf("journals = %d, want 1", len(result.Journals))
+	}
+	if result.Journals[0].StartDate != "2026-04-01" {
+		t.Errorf("StartDate = %q, want 2026-04-01", result.Journals[0].StartDate)
+	}
+}
+
+func TestImport_VJournal_OptionalDTSTART(t *testing.T) {
+	t.Parallel()
+	ics := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//test//EN\r\n" +
+		"BEGIN:VJOURNAL\r\n" +
+		"UID:journal-no-dtstart\r\n" +
+		"DTSTAMP:20260401T100000Z\r\n" +
+		"SUMMARY:No Start Date\r\n" +
+		"END:VJOURNAL\r\n" +
+		"END:VCALENDAR\r\n"
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile error: %v", err)
+	}
+	if len(result.Journals) != 1 {
+		t.Fatalf("journals = %d, want 1", len(result.Journals))
+	}
+	if result.Journals[0].StartDate != "" {
+		t.Errorf("StartDate = %q, want empty", result.Journals[0].StartDate)
 	}
 }

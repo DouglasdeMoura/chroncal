@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
@@ -1961,5 +1962,113 @@ func TestRoundtrip_EventDurationAllDay(t *testing.T) {
 	}
 	if strings.Contains(exported, "DTEND") {
 		t.Errorf("exported ICS contains DTEND when DURATION is set for all-day event\n%s", exported)
+	}
+}
+
+func TestRoundtrip_Journal(t *testing.T) {
+	t.Parallel()
+	original := journal.Journal{
+		UID:            "roundtrip-journal",
+		Summary:        "Roundtrip Journal",
+		Description:    "Testing journal round-trip",
+		StartDate:      "2026-04-01T09:00:00Z",
+		Status:         "FINAL",
+		Class:          "PRIVATE",
+		URL:            "https://example.com/journal",
+		Categories:     "notes",
+		RecurrenceRule: "FREQ=DAILY;COUNT=5",
+		Sequence:       2,
+		ExDates:        "2026-04-03T09:00:00Z",
+		RDates:         "2026-04-10T09:00:00Z",
+		Comments:       []string{"First comment", "Second comment"},
+		Attachments: []model.Attachment{
+			{URI: "https://example.com/doc.pdf", FmtType: "application/pdf"},
+		},
+		Relations: []model.Relation{
+			{RelType: "PARENT", RelUID: "parent-uid-123"},
+		},
+		CreatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+		UpdatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+	}
+
+	data, err := ExportJournals([]journal.Journal{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	result, err := ImportFile(strings.NewReader(string(data)))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Journals) != 1 {
+		t.Fatalf("reimported %d journals", len(result.Journals))
+	}
+
+	got := result.Journals[0]
+
+	// Core fields
+	if got.UID != original.UID {
+		t.Errorf("UID: %q != %q", got.UID, original.UID)
+	}
+	if got.Summary != original.Summary {
+		t.Errorf("Summary: %q != %q", got.Summary, original.Summary)
+	}
+	if got.Description != original.Description {
+		t.Errorf("Description: %q != %q", got.Description, original.Description)
+	}
+	if got.Status != original.Status {
+		t.Errorf("Status: %q != %q", got.Status, original.Status)
+	}
+	if got.Class != original.Class {
+		t.Errorf("Class: %q != %q", got.Class, original.Class)
+	}
+	if got.URL != original.URL {
+		t.Errorf("URL: %q != %q", got.URL, original.URL)
+	}
+	if got.Categories != original.Categories {
+		t.Errorf("Categories: %q != %q", got.Categories, original.Categories)
+	}
+	if got.Sequence != original.Sequence {
+		t.Errorf("Sequence: %d != %d", got.Sequence, original.Sequence)
+	}
+
+	// StartDate
+	if got.StartDate == "" {
+		t.Error("StartDate lost on round-trip")
+	}
+
+	// Recurrence
+	if got.RecurrenceRule != original.RecurrenceRule {
+		t.Errorf("RecurrenceRule: %q != %q", got.RecurrenceRule, original.RecurrenceRule)
+	}
+	if got.ExDates == "" {
+		t.Error("ExDates lost on round-trip")
+	}
+	if got.RDates == "" {
+		t.Error("RDates lost on round-trip")
+	}
+
+	// Attachments
+	if len(got.Attachments) != 1 {
+		t.Errorf("Attachments: got %d, want 1", len(got.Attachments))
+	} else if got.Attachments[0].URI != original.Attachments[0].URI {
+		t.Errorf("Attachment URI: %q != %q", got.Attachments[0].URI, original.Attachments[0].URI)
+	}
+
+	// Comments
+	if len(got.Comments) != 2 {
+		t.Errorf("Comments: got %d, want 2", len(got.Comments))
+	}
+
+	// Relations
+	if len(got.Relations) != 1 {
+		t.Errorf("Relations: got %d, want 1", len(got.Relations))
+	} else {
+		if got.Relations[0].RelType != "PARENT" {
+			t.Errorf("Relation type: %q != %q", got.Relations[0].RelType, "PARENT")
+		}
+		if got.Relations[0].RelUID != "parent-uid-123" {
+			t.Errorf("Relation UID: %q != %q", got.Relations[0].RelUID, "parent-uid-123")
+		}
 	}
 }

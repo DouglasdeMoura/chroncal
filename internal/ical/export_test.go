@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
@@ -562,5 +563,67 @@ func TestExport_MasterWithOverride(t *testing.T) {
 	}
 	if !strings.Contains(ics, "EXDATE") {
 		t.Error("master should have EXDATE")
+	}
+}
+
+func TestExportJournals_Basic(t *testing.T) {
+	t.Parallel()
+	journals := []journal.Journal{{
+		UID:       "journal-export-1",
+		Summary:   "Test Journal",
+		Status:    "FINAL",
+		Class:     "PUBLIC",
+		CreatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+		UpdatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+	}}
+
+	data, err := ExportJournals(journals, "Test")
+	if err != nil {
+		t.Fatalf("ExportJournals error: %v", err)
+	}
+	ics := string(data)
+
+	required := []string{
+		"BEGIN:VCALENDAR", "END:VCALENDAR",
+		"BEGIN:VJOURNAL", "END:VJOURNAL",
+		"UID:journal-export-1", "SUMMARY:Test Journal",
+		"STATUS:FINAL", "DTSTAMP:", "VERSION:2.0",
+	}
+	for _, s := range required {
+		if !strings.Contains(ics, s) {
+			t.Errorf("output missing %q", s)
+		}
+	}
+}
+
+func TestExportJournals_DateOnly(t *testing.T) {
+	t.Parallel()
+	journals := []journal.Journal{{
+		UID:       "journal-dateonly-export",
+		Summary:   "Date Only",
+		StartDate: "2026-04-01",
+		Status:    "FINAL",
+		CreatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+		UpdatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+	}}
+
+	data, err := ExportJournals(journals, "")
+	if err != nil {
+		t.Fatalf("ExportJournals error: %v", err)
+	}
+	ics := string(data)
+
+	if !strings.Contains(ics, "VALUE=DATE") {
+		t.Error("date-only journal missing VALUE=DATE")
+	}
+	// Verify the date value is YYYYMMDD format, not containing "T"
+	for _, line := range strings.Split(ics, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.Contains(line, "VALUE=DATE") && strings.Contains(line, "DTSTART") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 && strings.Contains(parts[1], "T") {
+				t.Errorf("VALUE=DATE line contains time component: %s", line)
+			}
+		}
 	}
 }
