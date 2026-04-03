@@ -1,0 +1,129 @@
+package auth
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestPlaintextFileStore_SetGetDelete(t *testing.T) {
+	dir := t.TempDir()
+	store := &PlaintextFileStore{dir: dir}
+
+	cred := Credential{
+		AccountID: 42,
+		Username:  "alice",
+		Password:  "secret123",
+	}
+
+	if err := store.Set(cred); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	// File should exist with 0600 permissions
+	path := filepath.Join(dir, "account_42.json")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat credential file: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("file permissions = %o, want 0600", perm)
+	}
+
+	got, err := store.Get(42)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Username != "alice" || got.Password != "secret123" {
+		t.Errorf("Get returned %+v, want username=alice password=secret123", got)
+	}
+
+	if err := store.Delete(42); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	_, err = store.Get(42)
+	if err == nil {
+		t.Error("Get after Delete should return error")
+	}
+}
+
+func TestPlaintextFileStore_GetMissing(t *testing.T) {
+	store := &PlaintextFileStore{dir: t.TempDir()}
+	_, err := store.Get(999)
+	if err == nil {
+		t.Error("Get for non-existent account should return error")
+	}
+}
+
+func TestPlaintextFileStore_DeleteMissing(t *testing.T) {
+	store := &PlaintextFileStore{dir: t.TempDir()}
+	// Deleting a non-existent credential should not error
+	if err := store.Delete(999); err != nil {
+		t.Errorf("Delete non-existent should not error, got: %v", err)
+	}
+}
+
+func TestPlaintextFileStore_OAuthCredentials(t *testing.T) {
+	store := &PlaintextFileStore{dir: t.TempDir()}
+
+	cred := Credential{
+		AccountID:         1,
+		AccessToken:       "ya29.abc",
+		RefreshToken:      "1//0xyz",
+		TokenExpiry:       "2026-04-03T12:00:00Z",
+		OAuthClientID:     "client-id.apps.googleusercontent.com",
+		OAuthClientSecret: "GOCSPX-secret",
+	}
+
+	if err := store.Set(cred); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	got, err := store.Get(1)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.AccessToken != "ya29.abc" {
+		t.Errorf("AccessToken = %q, want %q", got.AccessToken, "ya29.abc")
+	}
+	if got.RefreshToken != "1//0xyz" {
+		t.Errorf("RefreshToken = %q, want %q", got.RefreshToken, "1//0xyz")
+	}
+	if got.OAuthClientID != "client-id.apps.googleusercontent.com" {
+		t.Errorf("OAuthClientID = %q, want %q", got.OAuthClientID, "client-id.apps.googleusercontent.com")
+	}
+}
+
+func TestNewCredentialStore_NoKeyring_NoPlaintext(t *testing.T) {
+	store, err := NewCredentialStore(false)
+	if err == nil {
+		t.Errorf("expected error when no keyring and plaintext disabled, got store: %v", store)
+	}
+}
+
+func TestNewCredentialStore_AllowPlaintext(t *testing.T) {
+	store, err := NewCredentialStore(true)
+	if err != nil {
+		t.Fatalf("expected no error with plaintext allowed, got: %v", err)
+	}
+	if store == nil {
+		t.Error("store should not be nil")
+	}
+	if _, ok := store.(*PlaintextFileStore); !ok {
+		t.Errorf("expected PlaintextFileStore, got %T", store)
+	}
+}
+
+func TestKeyringStore_ReturnsNotImplemented(t *testing.T) {
+	store := &KeyringStore{}
+	if _, err := store.Get(1); err == nil {
+		t.Error("KeyringStore.Get should return error")
+	}
+	if err := store.Set(Credential{}); err == nil {
+		t.Error("KeyringStore.Set should return error")
+	}
+	if err := store.Delete(1); err == nil {
+		t.Error("KeyringStore.Delete should return error")
+	}
+}
