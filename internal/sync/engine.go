@@ -324,10 +324,11 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 					serverRes, fetchErr := client.GetResource(ctx, putPath)
 					if fetchErr == nil {
 						serverIcal, _ := caldav.EncodeCalendar(serverRes.Data)
+						ownerID := e.lookupOwnerID(ctx, res.OwnerType, res.Uid)
 						_ = e.q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 							CalendarID: calendarID,
 							OwnerType:  res.OwnerType,
-							OwnerID:    res.ID,
+							OwnerID:    ownerID,
 							Uid:        res.Uid,
 							LocalIcal:  string(localIcal),
 							ServerIcal: string(serverIcal),
@@ -517,6 +518,27 @@ func (e *Engine) deleteLocalResourceByUID(ctx context.Context, ownerType, uid st
 	default:
 		return fmt.Errorf("unsupported owner type %q", ownerType)
 	}
+}
+
+func (e *Engine) lookupOwnerID(ctx context.Context, ownerType, uid string) int64 {
+	switch ownerType {
+	case "event":
+		row, err := e.q.GetEventByUID(ctx, uid)
+		if err == nil {
+			return row.ID
+		}
+	case "todo":
+		row, err := e.q.GetTodoByUID(ctx, uid)
+		if err == nil {
+			return row.ID
+		}
+	case "journal":
+		row, err := e.q.GetJournalByUID(ctx, uid)
+		if err == nil {
+			return row.ID
+		}
+	}
+	return 0
 }
 
 type tombstoneResult struct {

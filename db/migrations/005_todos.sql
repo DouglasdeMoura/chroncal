@@ -32,6 +32,8 @@ CREATE TABLE todos (
     created_at       TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at       TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     dtstamp          TEXT,
+    CHECK (duration IS NULL OR start_date IS NOT NULL),
+    CHECK (duration IS NULL OR due_date IS NULL),
     UNIQUE(uid, recurrence_id)
 );
 

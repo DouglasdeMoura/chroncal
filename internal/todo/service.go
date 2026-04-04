@@ -3,6 +3,7 @@ package todo
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -118,6 +119,8 @@ const (
 	alarmRelated  = "START"
 )
 
+var ErrInvalidTiming = errors.New("invalid todo timing")
+
 func defaults(status, class string) (string, string) {
 	if status == "" {
 		status = defaultStatus
@@ -133,6 +136,19 @@ func completedAtIfMissing(status, completedAt string) string {
 		return time.Now().UTC().Format(time.RFC3339)
 	}
 	return completedAt
+}
+
+func validateTiming(dueDate, startDate, dur string) error {
+	if dur == "" {
+		return nil
+	}
+	if startDate == "" {
+		return fmt.Errorf("%w: duration requires start date", ErrInvalidTiming)
+	}
+	if dueDate != "" {
+		return fmt.Errorf("%w: due date and duration are mutually exclusive", ErrInvalidTiming)
+	}
+	return nil
 }
 
 func (p *CreateParams) applyDefaults() {
@@ -280,6 +296,9 @@ func (s *Service) markDirtyByID(ctx context.Context, todoID int64) {
 
 func (s *Service) Create(ctx context.Context, p CreateParams) (Todo, error) {
 	p.applyDefaults()
+	if err := validateTiming(p.DueDate, p.StartDate, p.Duration); err != nil {
+		return Todo{}, err
+	}
 	completedAt := ""
 	if p.Status == "COMPLETED" {
 		completedAt = time.Now().UTC().Format(time.RFC3339)
@@ -326,6 +345,9 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, e
 	if p.Status == "COMPLETED" {
 		p.PercentComplete = 100
 	}
+	if err := validateTiming(p.DueDate, p.StartDate, p.Duration); err != nil {
+		return Todo{}, err
+	}
 	r, err := s.q.UpdateTodo(ctx, storage.UpdateTodoParams{
 		ID:              id,
 		Summary:         p.Summary,
@@ -370,6 +392,9 @@ func (s *Service) Complete(ctx context.Context, id int64) (Todo, error) {
 
 func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Todo, error) {
 	p.applyDefaults()
+	if err := validateTiming(p.DueDate, p.StartDate, p.Duration); err != nil {
+		return Todo{}, err
+	}
 	r, err := s.q.UpsertTodoByUID(ctx, storage.UpsertTodoByUIDParams{
 		Uid:             p.UID,
 		CalendarID:      p.CalendarID,
@@ -1029,4 +1054,3 @@ func fromStorageSlice(rows []storage.Todo) []Todo {
 	}
 	return todos
 }
-

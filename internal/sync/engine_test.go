@@ -254,6 +254,13 @@ END:VCALENDAR
 	if conflicts[0].ServerEtag != "etag-server" {
 		t.Fatalf("ServerEtag = %q, want %q", conflicts[0].ServerEtag, "etag-server")
 	}
+	var evtID int64
+	if err := db.QueryRowContext(ctx, `SELECT id FROM events WHERE uid = ? AND recurrence_id = ''`, "conflict-event").Scan(&evtID); err != nil {
+		t.Fatalf("lookup event id: %v", err)
+	}
+	if conflicts[0].OwnerID != evtID {
+		t.Fatalf("OwnerID = %d, want %d", conflicts[0].OwnerID, evtID)
+	}
 
 	dirty, err := q.ListDirtySyncResources(ctx, calendarID)
 	if err != nil {
