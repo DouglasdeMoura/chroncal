@@ -203,9 +203,7 @@ func TestFormatNotification_SanitizesControlCharacters(t *testing.T) {
 	}
 }
 
-func TestResolveLocalAudioPath_RejectsCalendarSuppliedLocalFiles(t *testing.T) {
-	// Even when a local file exists, calendar data should not drive native
-	// audio player arguments on the user's machine.
+func TestResolveLocalAudioPath_RequiresExplicitUnsafeOptIn(t *testing.T) {
 	dir := t.TempDir()
 	tmp := filepath.Join(dir, "alert.oga")
 	if err := os.WriteFile(tmp, []byte("fake audio"), 0o644); err != nil {
@@ -221,26 +219,31 @@ func TestResolveLocalAudioPath_RejectsCalendarSuppliedLocalFiles(t *testing.T) {
 	}
 
 	tests := []struct {
-		name string
-		uri  string
-		want bool // true = expect non-empty path
+		name   string
+		uri    string
+		policy ExecutionPolicy
+		want   bool // true = expect non-empty path
 	}{
-		{"empty", "", false},
-		{"absolute path exists", tmp, false},
-		{"absolute path missing", "/nonexistent/sound.wav", false},
-		{"file:// URI exists", "file://" + tmp, false},
-		{"file:// URI missing", "file:///nonexistent/sound.wav", false},
-		{"directory rejected", subdir, false},
-		{"non-audio extension rejected", notAudio, false},
-		{"http URI", "http://example.com/sound.wav", false},
-		{"https URI", "https://example.com/sound.wav", false},
-		{"data URI", "data:audio/wav;base64,AAAA", false},
-		{"relative path", "sounds/alert.wav", false},
+		{"empty", "", ExecutionPolicy{}, false},
+		{"absolute path exists disabled", tmp, ExecutionPolicy{}, false},
+		{"absolute path exists enabled", tmp, ExecutionPolicy{AllowUnsafeAudioAttach: true}, true},
+		{"absolute path missing", "/nonexistent/sound.wav", ExecutionPolicy{AllowUnsafeAudioAttach: true}, false},
+		{"file:// URI exists disabled", "file://" + tmp, ExecutionPolicy{}, false},
+		{"file:// URI exists enabled", "file://" + tmp, ExecutionPolicy{AllowUnsafeAudioAttach: true}, true},
+		{"file:// URI missing", "file:///nonexistent/sound.wav", ExecutionPolicy{AllowUnsafeAudioAttach: true}, false},
+		{"directory rejected", subdir, ExecutionPolicy{AllowUnsafeAudioAttach: true}, false},
+		{"non-audio extension rejected", notAudio, ExecutionPolicy{AllowUnsafeAudioAttach: true}, false},
+		{"http URI", "http://example.com/sound.wav", ExecutionPolicy{AllowUnsafeAudioAttach: true}, false},
+		{"https URI", "https://example.com/sound.wav", ExecutionPolicy{AllowUnsafeAudioAttach: true}, false},
+		{"data URI", "data:audio/wav;base64,AAAA", ExecutionPolicy{AllowUnsafeAudioAttach: true}, false},
+		{"relative path", "sounds/alert.wav", ExecutionPolicy{AllowUnsafeAudioAttach: true}, false},
+		{"file URI relative path rejected", "file://relative.wav", ExecutionPolicy{AllowUnsafeAudioAttach: true}, false},
+		{"file URI remote host rejected", "file://example.com/alert.oga", ExecutionPolicy{AllowUnsafeAudioAttach: true}, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := resolveLocalAudioPath(tt.uri)
+			got := resolveLocalAudioPath(tt.uri, tt.policy)
 			if tt.want && got == "" {
 				t.Errorf("resolveLocalAudioPath(%q) = empty, want non-empty", tt.uri)
 			}
@@ -265,11 +268,35 @@ func TestEmail_RequiresSMTPConfig(t *testing.T) {
 	err := Email(da, config.SMTPConfig{
 		Port: 587,
 		From: "sender@example.com",
-	})
+	}, ExecutionPolicy{AllowUnsafeEmailAttendees: true})
 	if err == nil {
 		t.Fatal("Email err = nil, want SMTP configuration error")
 	}
 	if !strings.Contains(strings.ToLower(err.Error()), "smtp not configured") {
 		t.Fatalf("Email err = %q, want SMTP configuration message", err)
+	}
+}
+
+func TestEmail_RequiresExplicitUnsafeOptInForStoredAttendees(t *testing.T) {
+	da := alarm.DueAlarm{
+		Event: event.Event{Title: "Test Event"},
+		Alarm: model.Alarm{
+			Action: "EMAIL",
+			Attendees: []model.AlarmAttendee{
+				{Email: "user@example.com"},
+			},
+		},
+	}
+
+	err := Email(da, config.SMTPConfig{
+		Host: "smtp.example.com",
+		Port: 587,
+		From: "sender@example.com",
+	}, ExecutionPolicy{})
+	if err == nil {
+		t.Fatal("Email err = nil, want unsafe opt-in error")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "unsafe") {
+		t.Fatalf("Email err = %q, want unsafe opt-in message", err)
 	}
 }

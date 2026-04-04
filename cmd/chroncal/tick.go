@@ -14,7 +14,8 @@ import (
 )
 
 func tickCmd() *cobra.Command {
-	return &cobra.Command{
+	var flagPolicy alarmExecutionPolicy
+	cmd := &cobra.Command{
 		Use:     "run",
 		Aliases: []string{"tick"},
 		Short:   "Run one background-service cycle: alarms always, sync when due",
@@ -25,19 +26,21 @@ when the configured sync interval says a sync is due.`,
 		Example: `  chroncal service run
   CHRONCAL_SYNC_INTERVAL=15m chroncal service run`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runTick(cmd.Context(), cmd.OutOrStdout(), time.Now())
+			return runTick(cmd.Context(), cmd.OutOrStdout(), time.Now(), effectiveAlarmExecutionPolicy(cmd, flagPolicy))
 		},
 	}
+	bindAlarmExecutionPolicyFlags(cmd, &flagPolicy)
+	return cmd
 }
 
-func runTick(ctx context.Context, w io.Writer, now time.Time) error {
+func runTick(ctx context.Context, w io.Writer, now time.Time, policy alarmExecutionPolicy) error {
 	a, err := initApp()
 	if err != nil {
 		return err
 	}
 	defer a.Close()
 
-	if err := runAlarmCheck(ctx, a, w, now); err != nil {
+	if err := runAlarmCheck(ctx, a, w, now, policy); err != nil {
 		return err
 	}
 

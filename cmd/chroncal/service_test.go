@@ -7,8 +7,10 @@ import (
 
 func TestSystemdServiceTemplateUsesServiceRunAndSyncInterval(t *testing.T) {
 	rendered, err := renderTemplate(systemdServiceTmpl, map[string]string{
-		"BinaryPath":   "/usr/local/bin/chroncal",
-		"SyncInterval": "15m",
+		"BinaryPath":                     "/usr/local/bin/chroncal",
+		"SyncInterval":                   "15m",
+		"AllowUnsafeAlarmAudioAttach":    "true",
+		"AllowUnsafeAlarmEmailAttendees": "true",
 	})
 	if err != nil {
 		t.Fatalf("renderTemplate: %v", err)
@@ -20,13 +22,21 @@ func TestSystemdServiceTemplateUsesServiceRunAndSyncInterval(t *testing.T) {
 	if !strings.Contains(rendered, "Environment=CHRONCAL_SYNC_INTERVAL=15m") {
 		t.Fatalf("systemd service missing sync interval env:\n%s", rendered)
 	}
+	if !strings.Contains(rendered, "Environment=CHRONCAL_SECURITY_ALLOW_UNSAFE_ALARM_AUDIO_ATTACH=true") {
+		t.Fatalf("systemd service missing unsafe audio env:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "Environment=CHRONCAL_SECURITY_ALLOW_UNSAFE_ALARM_EMAIL_ATTENDEES=true") {
+		t.Fatalf("systemd service missing unsafe email env:\n%s", rendered)
+	}
 }
 
 func TestLaunchdTemplateUsesServiceRunAndSyncInterval(t *testing.T) {
 	rendered, err := renderTemplate(launchdPlistTmpl, map[string]string{
-		"BinaryPath":   "/usr/local/bin/chroncal",
-		"HomeDir":      "/Users/tester",
-		"SyncInterval": "15m",
+		"BinaryPath":                     "/usr/local/bin/chroncal",
+		"HomeDir":                        "/Users/tester",
+		"SyncInterval":                   "15m",
+		"AllowUnsafeAlarmAudioAttach":    "true",
+		"AllowUnsafeAlarmEmailAttendees": "true",
 	})
 	if err != nil {
 		t.Fatalf("renderTemplate: %v", err)
@@ -37,6 +47,12 @@ func TestLaunchdTemplateUsesServiceRunAndSyncInterval(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "<key>CHRONCAL_SYNC_INTERVAL</key>") {
 		t.Fatalf("launchd plist missing sync interval env:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "<key>CHRONCAL_SECURITY_ALLOW_UNSAFE_ALARM_AUDIO_ATTACH</key>") {
+		t.Fatalf("launchd plist missing unsafe audio env:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "<key>CHRONCAL_SECURITY_ALLOW_UNSAFE_ALARM_EMAIL_ATTENDEES</key>") {
+		t.Fatalf("launchd plist missing unsafe email env:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "<integer>60</integer>") {
 		t.Fatalf("launchd plist missing one-minute schedule:\n%s", rendered)

@@ -21,6 +21,8 @@ After=default.target
 Type=oneshot
 {{if .SyncInterval}}Environment=CHRONCAL_SYNC_INTERVAL={{.SyncInterval}}
 {{end}}{{if .SyncConflictStrategy}}Environment=CHRONCAL_SYNC_CONFLICT_STRATEGY={{.SyncConflictStrategy}}
+{{end}}{{if .AllowUnsafeAlarmAudioAttach}}Environment=CHRONCAL_SECURITY_ALLOW_UNSAFE_ALARM_AUDIO_ATTACH={{.AllowUnsafeAlarmAudioAttach}}
+{{end}}{{if .AllowUnsafeAlarmEmailAttendees}}Environment=CHRONCAL_SECURITY_ALLOW_UNSAFE_ALARM_EMAIL_ATTENDEES={{.AllowUnsafeAlarmEmailAttendees}}
 {{end}}ExecStart={{.BinaryPath}} service run
 
 [Install]
@@ -50,12 +52,16 @@ const launchdPlistTmpl = `<?xml version="1.0" encoding="UTF-8"?>
         <string>service</string>
         <string>run</string>
     </array>
-    {{if or .SyncInterval .SyncConflictStrategy}}<key>EnvironmentVariables</key>
+    {{if or .SyncInterval .SyncConflictStrategy .AllowUnsafeAlarmAudioAttach .AllowUnsafeAlarmEmailAttendees}}<key>EnvironmentVariables</key>
     <dict>
         {{if .SyncInterval}}<key>CHRONCAL_SYNC_INTERVAL</key>
         <string>{{.SyncInterval}}</string>
         {{end}}{{if .SyncConflictStrategy}}<key>CHRONCAL_SYNC_CONFLICT_STRATEGY</key>
         <string>{{.SyncConflictStrategy}}</string>
+        {{end}}{{if .AllowUnsafeAlarmAudioAttach}}<key>CHRONCAL_SECURITY_ALLOW_UNSAFE_ALARM_AUDIO_ATTACH</key>
+        <string>{{.AllowUnsafeAlarmAudioAttach}}</string>
+        {{end}}{{if .AllowUnsafeAlarmEmailAttendees}}<key>CHRONCAL_SECURITY_ALLOW_UNSAFE_ALARM_EMAIL_ATTENDEES</key>
+        <string>{{.AllowUnsafeAlarmEmailAttendees}}</string>
         {{end}}
     </dict>
     {{end}}
@@ -115,6 +121,7 @@ func renderTemplate(tmplStr string, data any) (string, error) {
 
 func serviceInstallCmd() *cobra.Command {
 	var syncInterval string
+	var flagPolicy alarmExecutionPolicy
 	cmd := &cobra.Command{
 		Use:   "install",
 		Short: "Install alarm notification service for the current OS",
@@ -137,9 +144,18 @@ minute and also runs sync work when the configured sync interval is due.`,
 			}
 
 			data := map[string]string{
-				"BinaryPath":           binPath,
-				"SyncInterval":         effectiveSyncInterval,
-				"SyncConflictStrategy": cfg.Sync.ConflictStrategy,
+				"BinaryPath":                     binPath,
+				"SyncInterval":                   effectiveSyncInterval,
+				"SyncConflictStrategy":           cfg.Sync.ConflictStrategy,
+				"AllowUnsafeAlarmAudioAttach":    "",
+				"AllowUnsafeAlarmEmailAttendees": "",
+			}
+			policy := effectiveAlarmExecutionPolicy(cmd, flagPolicy)
+			if policy.AllowUnsafeAudioAttach {
+				data["AllowUnsafeAlarmAudioAttach"] = "true"
+			}
+			if policy.AllowUnsafeEmailAttendees {
+				data["AllowUnsafeAlarmEmailAttendees"] = "true"
 			}
 
 			switch runtime.GOOS {
@@ -160,6 +176,7 @@ minute and also runs sync work when the configured sync interval is due.`,
 		},
 	}
 	cmd.Flags().StringVar(&syncInterval, "sync-interval", cfg.Sync.Interval, "how often service run should run sync work (for example 15m); empty disables sync")
+	bindAlarmExecutionPolicyFlags(cmd, &flagPolicy)
 	return cmd
 }
 

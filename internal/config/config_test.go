@@ -167,3 +167,40 @@ func TestLoad_SyncFromEnv(t *testing.T) {
 		t.Fatalf("Sync.ConflictStrategy = %q, want prompt", cfg.Sync.ConflictStrategy)
 	}
 }
+
+func TestLoad_SecurityFromEnv(t *testing.T) {
+	t.Setenv("CHRONCAL_SECURITY_ALLOW_UNSAFE_ALARM_AUDIO_ATTACH", "true")
+	t.Setenv("CHRONCAL_SECURITY_ALLOW_UNSAFE_ALARM_EMAIL_ATTENDEES", "true")
+
+	cfg := Load()
+
+	if !cfg.Security.AllowUnsafeAlarmAudioAttach {
+		t.Fatal("Security.AllowUnsafeAlarmAudioAttach = false, want true")
+	}
+	if !cfg.Security.AllowUnsafeAlarmEmailAttendees {
+		t.Fatal("Security.AllowUnsafeAlarmEmailAttendees = false, want true")
+	}
+}
+
+func TestLoad_SecurityFromFile(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "chroncal")
+	os.MkdirAll(configDir, 0o755)
+	os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(`
+[security]
+allow_unsafe_alarm_audio_attach = true
+allow_unsafe_alarm_email_attendees = true
+`), 0o644)
+
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("CHRONCAL_SECURITY_ALLOW_UNSAFE_ALARM_AUDIO_ATTACH", "")
+	t.Setenv("CHRONCAL_SECURITY_ALLOW_UNSAFE_ALARM_EMAIL_ATTENDEES", "")
+
+	cfg := Load()
+	if !cfg.Security.AllowUnsafeAlarmAudioAttach {
+		t.Fatal("Security.AllowUnsafeAlarmAudioAttach = false, want true")
+	}
+	if !cfg.Security.AllowUnsafeAlarmEmailAttendees {
+		t.Fatal("Security.AllowUnsafeAlarmEmailAttendees = false, want true")
+	}
+}

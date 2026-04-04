@@ -3,9 +3,13 @@ package notify
 import (
 	"context"
 	"fmt"
+	"mime"
 	"net/mail"
 	"net/smtp"
+	"net/url"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -15,6 +19,11 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/textsafe"
 	"github.com/gen2brain/beeep"
 )
+
+type ExecutionPolicy struct {
+	AllowUnsafeAudioAttach    bool
+	AllowUnsafeEmailAttendees bool
+}
 
 // FormatNotification formats a DueAlarm into a title and body suitable for display.
 // Title is the event title. Body contains the formatted time and, when present,
@@ -51,21 +60,57 @@ func Display(da alarm.DueAlarm) error {
 	return beeep.Notify(title, body, "")
 }
 
-// Audio sends a desktop notification and plays a platform system sound.
-// Calendar-provided ATTACH values are intentionally ignored so imported or
-// synced data cannot drive local file access through native audio players.
-func Audio(da alarm.DueAlarm) error {
+// Audio sends a desktop notification and plays a sound. Calendar-provided
+// local paths are only honored when the execution policy explicitly allows it.
+func Audio(da alarm.DueAlarm, policy ExecutionPolicy) error {
 	// Send visual notification first (best-effort).
 	_ = Display(da)
+
+	if path := resolveLocalAudioPath(da.Alarm.AttachURI, policy); path != "" {
+		if err := playAudio(path); err == nil {
+			return nil
+		}
+	}
 
 	// Fall back to platform system sounds.
 	return playSystemSound()
 }
 
-// resolveLocalAudioPath always returns "" because calendar data must not be
-// allowed to choose a local file for native audio playback.
-func resolveLocalAudioPath(uri string) string {
-	return ""
+// resolveLocalAudioPath returns an absolute file path if the URI points to a
+// local audio file that exists and the execution policy explicitly allows it.
+func resolveLocalAudioPath(uri string, policy ExecutionPolicy) string {
+	if !policy.AllowUnsafeAudioAttach || uri == "" {
+		return ""
+	}
+	var path string
+	if p, ok := strings.CutPrefix(uri, "file://"); ok {
+		u, err := url.Parse("file://" + p)
+		if err != nil {
+			return ""
+		}
+		if u.Host != "" && u.Host != "localhost" {
+			return ""
+		}
+		path = u.Path
+	} else if strings.HasPrefix(uri, "/") {
+		path = uri
+	} else {
+		return "" // HTTP, data:, or other unsupported scheme.
+	}
+	if !filepath.IsAbs(path) {
+		return ""
+	}
+	if _, err := os.Stat(path); err != nil {
+		return "" // File doesn't exist.
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return ""
+	}
+	if !isLikelyAudioFile(path) {
+		return ""
+	}
+	return path
 }
 
 const (
@@ -108,13 +153,16 @@ func playSystemSound() error {
 // Email sends an email notification for an EMAIL action alarm.
 // It sends to the alarm's attendees using the provided SMTP configuration.
 // Returns an error if no attendees are configured or SMTP is not configured.
-func Email(da alarm.DueAlarm, smtpCfg config.SMTPConfig) error {
+func Email(da alarm.DueAlarm, smtpCfg config.SMTPConfig, policy ExecutionPolicy) error {
 	if smtpCfg.Host == "" {
 		return fmt.Errorf("SMTP not configured")
 	}
 
 	if len(da.Alarm.Attendees) == 0 {
 		return fmt.Errorf("no attendees for EMAIL alarm")
+	}
+	if !policy.AllowUnsafeEmailAttendees {
+		return fmt.Errorf("unsafe EMAIL alarm attendees are disabled; pass an explicit allow flag or config option")
 	}
 
 	title, body := FormatNotification(da)
@@ -149,4 +197,20 @@ func Email(da alarm.DueAlarm, smtpCfg config.SMTPConfig) error {
 	}
 
 	return smtp.SendMail(addr, auth, smtpCfg.From, to, []byte(msg))
+}
+
+func isLikelyAudioFile(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext == "" {
+		return false
+	}
+	if mt := mime.TypeByExtension(ext); strings.HasPrefix(mt, "audio/") {
+		return true
+	}
+	switch ext {
+	case ".ogg", ".oga", ".wav", ".mp3", ".aiff", ".aif", ".flac", ".m4a", ".aac", ".au", ".snd":
+		return true
+	default:
+		return false
+	}
 }

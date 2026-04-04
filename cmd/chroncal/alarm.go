@@ -43,15 +43,15 @@ func parseStateID(s string) (int64, bool, error) {
 // RFC 5545 REPEAT and DURATION on VALARM specify additional
 // post-trigger notifications. The alarm check loop generates separate
 // trigger times for each repeat, each tracked independently via alarm state.
-func fireAlarm(da alarm.DueAlarm) error {
+func fireAlarm(da alarm.DueAlarm, policy alarmExecutionPolicy) error {
 	switch da.Alarm.Action {
 	case "AUDIO":
-		if err := notify.Audio(da); err != nil {
+		if err := notify.Audio(da, policy.notifyPolicy()); err != nil {
 			return notify.Display(da)
 		}
 		return nil
 	case "EMAIL":
-		if err := notify.Email(da, cfg.SMTP); err != nil {
+		if err := notify.Email(da, cfg.SMTP, policy.notifyPolicy()); err != nil {
 			return notify.Display(da)
 		}
 		return nil
@@ -86,6 +86,7 @@ that runs "chroncal alarm check" on an interval.`,
 }
 
 func alarmCheckCmd() *cobra.Command {
+	var flagPolicy alarmExecutionPolicy
 	cmd := &cobra.Command{
 		Use:   "check",
 		Short: "Fire due alarms",
@@ -135,13 +136,14 @@ and exits 0.`,
 				return err
 			}
 			defer a.Close()
-			return runAlarmCheck(context.Background(), a, cmd.OutOrStdout(), time.Now())
+			return runAlarmCheck(context.Background(), a, cmd.OutOrStdout(), time.Now(), effectiveAlarmExecutionPolicy(cmd, flagPolicy))
 		},
 	}
+	bindAlarmExecutionPolicyFlags(cmd, &flagPolicy)
 	return cmd
 }
 
-func runAlarmCheck(ctx context.Context, a *app.App, w io.Writer, now time.Time) error {
+func runAlarmCheck(ctx context.Context, a *app.App, w io.Writer, now time.Time, policy alarmExecutionPolicy) error {
 	due, todoDue, err := a.Alarms.Check(ctx, now)
 	if err != nil {
 		return fmt.Errorf("check alarms: %w", err)
@@ -170,7 +172,7 @@ func runAlarmCheck(ctx context.Context, a *app.App, w io.Writer, now time.Time) 
 			}
 		}
 
-		fireErr := fireAlarm(da)
+		fireErr := fireAlarm(da, policy)
 		if fireErr != nil {
 			fmt.Fprintf(os.Stderr, "chroncal: alarm error: %s (event=%q action=%s): %v\n",
 				da.TriggerAt.Local().Format("15:04"), safeText(da.Event.Title), da.Alarm.Action, fireErr)
@@ -218,7 +220,7 @@ func runAlarmCheck(ctx context.Context, a *app.App, w io.Writer, now time.Time) 
 			}
 		}
 
-		fireErr := fireAlarm(todoDueAlarmToDueAlarm(tda))
+		fireErr := fireAlarm(todoDueAlarmToDueAlarm(tda), policy)
 		if fireErr != nil {
 			fmt.Fprintf(os.Stderr, "chroncal: todo alarm error: %s (todo=%q action=%s): %v\n",
 				tda.TriggerAt.Local().Format("15:04"), safeText(tda.Todo.Summary), tda.Alarm.Action, fireErr)
@@ -634,6 +636,7 @@ Exporting and re-importing a calendar will not preserve snooze times.`,
 
 func alarmDaemonCmd() *cobra.Command {
 	var interval string
+	var flagPolicy alarmExecutionPolicy
 	cmd := &cobra.Command{
 		Use:   "daemon",
 		Short: "Run alarm check in a loop",
@@ -680,6 +683,7 @@ See "chroncal alarm check --help" for notification types and SMTP configuration.
 
 			w := cmd.OutOrStdout()
 			fmt.Fprintf(os.Stderr, "chroncal: daemon started (interval: %s)\n", dur)
+			policy := effectiveAlarmExecutionPolicy(cmd, flagPolicy)
 
 			ticker := time.NewTicker(dur)
 			defer ticker.Stop()
@@ -702,7 +706,7 @@ See "chroncal alarm check --help" for notification types and SMTP configuration.
 						}
 					}
 
-					fireErr := fireAlarm(da)
+					fireErr := fireAlarm(da, policy)
 					if fireErr != nil {
 						fmt.Fprintf(os.Stderr, "chroncal: alarm error: %s (event=%q action=%s): %v\n",
 							da.TriggerAt.Local().Format("15:04"), safeText(da.Event.Title), da.Alarm.Action, fireErr)
@@ -730,6 +734,7 @@ See "chroncal alarm check --help" for notification types and SMTP configuration.
 		},
 	}
 	cmd.Flags().StringVar(&interval, "interval", "30s", "check interval (e.g. 30s, 1m)")
+	bindAlarmExecutionPolicyFlags(cmd, &flagPolicy)
 	return cmd
 }
 

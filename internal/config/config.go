@@ -23,12 +23,18 @@ type SyncConfig struct {
 	ConflictStrategy string `mapstructure:"conflict_strategy"`
 }
 
+type SecurityConfig struct {
+	AllowUnsafeAlarmAudioAttach    bool `mapstructure:"allow_unsafe_alarm_audio_attach"`
+	AllowUnsafeAlarmEmailAttendees bool `mapstructure:"allow_unsafe_alarm_email_attendees"`
+}
+
 type Config struct {
-	DB        string     `mapstructure:"db"`
-	NerdFonts bool       `mapstructure:"nerd_fonts"`
-	ProductID string     `mapstructure:"product_id"`
-	SMTP      SMTPConfig `mapstructure:"smtp"`
-	Sync      SyncConfig `mapstructure:"sync"`
+	DB        string         `mapstructure:"db"`
+	NerdFonts bool           `mapstructure:"nerd_fonts"`
+	ProductID string         `mapstructure:"product_id"`
+	SMTP      SMTPConfig     `mapstructure:"smtp"`
+	Sync      SyncConfig     `mapstructure:"sync"`
+	Security  SecurityConfig `mapstructure:"security"`
 }
 
 // Load reads configuration with precedence: env > config file > defaults.
@@ -68,6 +74,8 @@ func newViper() *viper.Viper {
 	v.BindEnv("smtp.from")
 	v.BindEnv("sync.interval")
 	v.BindEnv("sync.conflict_strategy")
+	v.BindEnv("security.allow_unsafe_alarm_audio_attach")
+	v.BindEnv("security.allow_unsafe_alarm_email_attendees")
 
 	return v
 }
