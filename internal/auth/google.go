@@ -3,6 +3,8 @@ package auth
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -23,6 +25,8 @@ const (
 	googleScope    = "https://www.googleapis.com/auth/calendar"
 )
 
+var googleHTTPClient = http.DefaultClient
+
 // GoogleOAuthResult holds tokens from a successful OAuth flow.
 type GoogleOAuthResult struct {
 	AccessToken  string
@@ -32,7 +36,7 @@ type GoogleOAuthResult struct {
 
 // GoogleOAuthFlow performs the installed-app loopback redirect flow for Google OAuth 2.0.
 // It starts a temporary HTTP server, opens the user's browser, and waits for the redirect.
-func GoogleOAuthFlow(ctx context.Context, clientID, clientSecret string) (*GoogleOAuthResult, error) {
+func GoogleOAuthFlow(ctx context.Context, clientID string) (*GoogleOAuthResult, error) {
 	// Start a temporary listener on a random port
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -49,14 +53,20 @@ func GoogleOAuthFlow(ctx context.Context, clientID, clientSecret string) (*Googl
 		return nil, fmt.Errorf("generate state token: %w", err)
 	}
 	state := hex.EncodeToString(stateBytes)
+	codeVerifier, err := generateCodeVerifier()
+	if err != nil {
+		return nil, fmt.Errorf("generate code verifier: %w", err)
+	}
+	codeChallenge := codeChallengeS256(codeVerifier)
 
 	// Build authorization URL
-	authURL := fmt.Sprintf("%s?client_id=%s&redirect_uri=%s&response_type=code&scope=%s&access_type=offline&prompt=consent&state=%s",
+	authURL := fmt.Sprintf("%s?client_id=%s&redirect_uri=%s&response_type=code&scope=%s&access_type=offline&prompt=consent&state=%s&code_challenge=%s&code_challenge_method=S256",
 		googleAuthURL,
 		url.QueryEscape(clientID),
 		url.QueryEscape(redirectURI),
 		url.QueryEscape(googleScope),
 		url.QueryEscape(state),
+		url.QueryEscape(codeChallenge),
 	)
 
 	// Try to open browser
@@ -114,16 +124,16 @@ func GoogleOAuthFlow(ctx context.Context, clientID, clientSecret string) (*Googl
 	}
 
 	// Exchange code for tokens
-	return exchangeGoogleCode(ctx, clientID, clientSecret, code, redirectURI)
+	return exchangeGoogleCode(ctx, clientID, code, redirectURI, codeVerifier)
 }
 
-func exchangeGoogleCode(ctx context.Context, clientID, clientSecret, code, redirectURI string) (*GoogleOAuthResult, error) {
+func exchangeGoogleCode(ctx context.Context, clientID, code, redirectURI, codeVerifier string) (*GoogleOAuthResult, error) {
 	data := url.Values{
 		"code":          {code},
 		"client_id":     {clientID},
-		"client_secret": {clientSecret},
 		"redirect_uri":  {redirectURI},
 		"grant_type":    {"authorization_code"},
+		"code_verifier": {codeVerifier},
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", googleTokenURL, strings.NewReader(data.Encode()))
@@ -132,7 +142,7 @@ func exchangeGoogleCode(ctx context.Context, clientID, clientSecret, code, redir
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := googleHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("token exchange: %w", err)
 	}
@@ -160,10 +170,9 @@ func exchangeGoogleCode(ctx context.Context, clientID, clientSecret, code, redir
 }
 
 // RefreshGoogleToken refreshes an expired access token.
-func RefreshGoogleToken(ctx context.Context, clientID, clientSecret, refreshToken string) (*GoogleOAuthResult, error) {
+func RefreshGoogleToken(ctx context.Context, clientID, refreshToken string) (*GoogleOAuthResult, error) {
 	data := url.Values{
 		"client_id":     {clientID},
-		"client_secret": {clientSecret},
 		"refresh_token": {refreshToken},
 		"grant_type":    {"refresh_token"},
 	}
@@ -174,7 +183,7 @@ func RefreshGoogleToken(ctx context.Context, clientID, clientSecret, refreshToke
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := googleHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("token refresh: %w", err)
 	}
@@ -198,6 +207,19 @@ func RefreshGoogleToken(ctx context.Context, clientID, clientSecret, refreshToke
 		RefreshToken: refreshToken, // refresh token stays the same
 		Expiry:       time.Now().Add(time.Duration(result.ExpiresIn) * time.Second),
 	}, nil
+}
+
+func generateCodeVerifier() (string, error) {
+	data := make([]byte, 32)
+	if _, err := rand.Read(data); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(data), nil
+}
+
+func codeChallengeS256(verifier string) string {
+	sum := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
 func openBrowser(url string) error {

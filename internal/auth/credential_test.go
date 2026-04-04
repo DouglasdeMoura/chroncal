@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -102,12 +103,11 @@ func TestPlaintextFileStore_OAuthCredentials(t *testing.T) {
 	store := &PlaintextFileStore{dir: t.TempDir()}
 
 	cred := Credential{
-		AccountID:         1,
-		AccessToken:       "ya29.abc",
-		RefreshToken:      "1//0xyz",
-		TokenExpiry:       "2026-04-03T12:00:00Z",
-		OAuthClientID:     "client-id.apps.googleusercontent.com",
-		OAuthClientSecret: "GOCSPX-secret",
+		AccountID:     1,
+		AccessToken:   "ya29.abc",
+		RefreshToken:  "1//0xyz",
+		TokenExpiry:   "2026-04-03T12:00:00Z",
+		OAuthClientID: "client-id.apps.googleusercontent.com",
 	}
 
 	if err := store.Set(cred); err != nil {
@@ -126,6 +126,14 @@ func TestPlaintextFileStore_OAuthCredentials(t *testing.T) {
 	}
 	if got.OAuthClientID != "client-id.apps.googleusercontent.com" {
 		t.Errorf("OAuthClientID = %q, want %q", got.OAuthClientID, "client-id.apps.googleusercontent.com")
+	}
+
+	data, err := os.ReadFile(filepath.Join(store.dir, "account_1.json"))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if strings.Contains(string(data), "oauth_client_secret") {
+		t.Fatal("credential file should not persist oauth_client_secret")
 	}
 }
 

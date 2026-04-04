@@ -12,13 +12,37 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/auth"
 )
 
+var refreshGoogleTokenFn = auth.RefreshGoogleToken
+
 // NewClientFromCredential creates a CalDAV client using the provided credential.
-func NewClientFromCredential(endpoint string, cred auth.Credential) (*Client, error) {
+func NewClientFromCredential(endpoint string, cred auth.Credential, persist func(auth.Credential) error) (*Client, error) {
 	switch {
 	case cred.AccessToken != "":
 		httpClient := &oauth2HTTPClient{
 			inner:       http.DefaultClient,
 			accessToken: cred.AccessToken,
+		}
+		if cred.TokenExpiry != "" {
+			if expiry, err := time.Parse(time.RFC3339, cred.TokenExpiry); err == nil {
+				httpClient.expiry = expiry
+			}
+		}
+		if cred.RefreshToken != "" && cred.OAuthClientID != "" {
+			httpClient.refreshFn = func(ctx context.Context) (string, time.Time, error) {
+				refreshed, err := refreshGoogleTokenFn(ctx, cred.OAuthClientID, cred.RefreshToken)
+				if err != nil {
+					return "", time.Time{}, err
+				}
+				cred.AccessToken = refreshed.AccessToken
+				cred.RefreshToken = refreshed.RefreshToken
+				cred.TokenExpiry = refreshed.Expiry.Format(time.RFC3339)
+				if persist != nil {
+					if err := persist(cred); err != nil {
+						return "", time.Time{}, err
+					}
+				}
+				return refreshed.AccessToken, refreshed.Expiry, nil
+			}
 		}
 		return NewClient(httpClient, endpoint)
 	case cred.Password != "":

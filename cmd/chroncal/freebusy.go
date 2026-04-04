@@ -95,7 +95,9 @@ queries the linked remote CalDAV calendar instead.`,
 				if err != nil {
 					return fmt.Errorf("get credentials: %w", err)
 				}
-				client, err := caldav.NewClientFromCredential(account.ServerUrl, cred)
+				client, err := caldav.NewClientFromCredential(account.ServerUrl, cred, func(updated auth.Credential) error {
+					return credStore.Set(updated)
+				})
 				if err != nil {
 					return fmt.Errorf("create client: %w", err)
 				}

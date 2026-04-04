@@ -140,7 +140,9 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 		return nil, fmt.Errorf("get credentials: %w", err)
 	}
 
-	client, err := caldav.NewClientFromCredential(account.ServerUrl, cred)
+	client, err := caldav.NewClientFromCredential(account.ServerUrl, cred, func(updated authpkg.Credential) error {
+		return e.credStore.Set(updated)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("create client: %w", err)
 	}

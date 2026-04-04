@@ -21,8 +21,7 @@ type Credential struct {
 	RefreshToken string `json:"refresh_token,omitempty"`
 	TokenExpiry  string `json:"token_expiry,omitempty"` // RFC 3339
 	// OAuth client config (stored with credential, not in DB)
-	OAuthClientID     string `json:"oauth_client_id,omitempty"`
-	OAuthClientSecret string `json:"oauth_client_secret,omitempty"`
+	OAuthClientID string `json:"oauth_client_id,omitempty"`
 }
 
 // CredentialStore provides read/write access to account credentials.

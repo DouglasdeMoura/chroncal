@@ -43,7 +43,6 @@ func accountAddCmd() *cobra.Command {
 		allowPlaintext bool
 		allowInsecure  bool
 		oauthClientID  string
-		oauthSecret    string
 	)
 	cmd := &cobra.Command{
 		Use:   "add <name>",
@@ -60,8 +59,7 @@ development or trusted test environments.`,
   chroncal account add google \
     --server https://apidata.googleusercontent.com/caldav/v2 \
     --auth oauth2 \
-    --oauth-client-id your-client-id \
-    --oauth-client-secret your-client-secret`,
+    --oauth-client-id your-client-id`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
@@ -106,10 +104,10 @@ development or trusted test environments.`,
 			}
 
 			if authType == "oauth2" {
-				if oauthClientID == "" || oauthSecret == "" {
-					return fmt.Errorf("--oauth-client-id and --oauth-client-secret are required for OAuth 2.0")
+				if oauthClientID == "" {
+					return fmt.Errorf("--oauth-client-id is required for OAuth 2.0")
 				}
-				result, err := auth.GoogleOAuthFlow(ctx, oauthClientID, oauthSecret)
+				result, err := auth.GoogleOAuthFlow(ctx, oauthClientID)
 				if err != nil {
 					// Clean up account on auth failure
 					_ = a.Queries.DeleteAccount(ctx, account.ID)
@@ -119,7 +117,6 @@ development or trusted test environments.`,
 				cred.RefreshToken = result.RefreshToken
 				cred.TokenExpiry = result.Expiry.Format("2006-01-02T15:04:05Z07:00")
 				cred.OAuthClientID = oauthClientID
-				cred.OAuthClientSecret = oauthSecret
 			} else if authType == "basic" {
 				fmt.Print("Password: ")
 				passwordBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
@@ -146,7 +143,6 @@ development or trusted test environments.`,
 	cmd.Flags().BoolVar(&allowPlaintext, "allow-plaintext", false, "Allow plaintext credential storage")
 	cmd.Flags().BoolVar(&allowInsecure, "allow-insecure", false, "Allow HTTP (non-HTTPS) server URLs")
 	cmd.Flags().StringVar(&oauthClientID, "oauth-client-id", "", "OAuth 2.0 client ID")
-	cmd.Flags().StringVar(&oauthSecret, "oauth-client-secret", "", "OAuth 2.0 client secret")
 	cmd.MarkFlagRequired("server")
 	return cmd
 }
@@ -259,7 +255,9 @@ local calendar to a remote one.`,
 				return fmt.Errorf("get credentials: %w", err)
 			}
 
-			client, err := caldav.NewClientFromCredential(account.ServerUrl, cred)
+			client, err := caldav.NewClientFromCredential(account.ServerUrl, cred, func(updated auth.Credential) error {
+				return credStore.Set(updated)
+			})
 			if err != nil {
 				return fmt.Errorf("connect: %w", err)
 			}

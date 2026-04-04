@@ -185,8 +185,7 @@ accept the local at-rest risk.
 chroncal account add "Google Work" \
   --server https://apidata.googleusercontent.com/caldav/v2 \
   --auth oauth2 \
-  --oauth-client-id "YOUR_CLIENT_ID.apps.googleusercontent.com" \
-  --oauth-client-secret "YOUR_SECRET"
+  --oauth-client-id "YOUR_CLIENT_ID.apps.googleusercontent.com"
 ```
 
 4. Discover remote calendars and link one to a local calendar:
