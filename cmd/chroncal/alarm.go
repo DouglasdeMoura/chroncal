@@ -159,12 +159,12 @@ func runAlarmCheck(ctx context.Context, a *app.App, w io.Writer, now time.Time) 
 		stateID := da.StateID
 		if stateID != 0 {
 			if markErr := a.Alarms.MarkRefired(ctx, stateID); markErr != nil {
-				fmt.Fprintf(os.Stderr, "chroncal: mark-refired error: event=%q: %v\n", da.Event.Title, markErr)
+				fmt.Fprintf(os.Stderr, "chroncal: mark-refired error: event=%q: %v\n", safeText(da.Event.Title), markErr)
 			}
 		} else {
 			newID, markErr := a.Alarms.MarkFired(ctx, da)
 			if markErr != nil {
-				fmt.Fprintf(os.Stderr, "chroncal: mark-fired error: event=%q: %v\n", da.Event.Title, markErr)
+				fmt.Fprintf(os.Stderr, "chroncal: mark-fired error: event=%q: %v\n", safeText(da.Event.Title), markErr)
 			} else {
 				stateID = newID
 			}
@@ -173,7 +173,7 @@ func runAlarmCheck(ctx context.Context, a *app.App, w io.Writer, now time.Time) 
 		fireErr := fireAlarm(da)
 		if fireErr != nil {
 			fmt.Fprintf(os.Stderr, "chroncal: alarm error: %s (event=%q action=%s): %v\n",
-				da.TriggerAt.Local().Format("15:04"), da.Event.Title, da.Alarm.Action, fireErr)
+				da.TriggerAt.Local().Format("15:04"), safeText(da.Event.Title), da.Alarm.Action, fireErr)
 			if outputFmt != "text" {
 				results = append(results, map[string]any{
 					"event_id":   da.Event.ID,
@@ -199,7 +199,7 @@ func runAlarmCheck(ctx context.Context, a *app.App, w io.Writer, now time.Time) 
 				"status":     "fired",
 			})
 		} else {
-			fmt.Fprintf(w, "%s\t%s\t%s\n", da.TriggerAt.Local().Format("15:04"), da.Alarm.Action, da.Event.Title)
+			writeAlarmCheckLine(w, da.TriggerAt, da.Alarm.Action, da.Event.Title, false)
 		}
 	}
 
@@ -207,12 +207,12 @@ func runAlarmCheck(ctx context.Context, a *app.App, w io.Writer, now time.Time) 
 		stateID := tda.StateID
 		if stateID != 0 {
 			if markErr := a.Alarms.MarkTodoRefired(ctx, stateID); markErr != nil {
-				fmt.Fprintf(os.Stderr, "chroncal: mark-refired error: todo=%q: %v\n", tda.Todo.Summary, markErr)
+				fmt.Fprintf(os.Stderr, "chroncal: mark-refired error: todo=%q: %v\n", safeText(tda.Todo.Summary), markErr)
 			}
 		} else {
 			newID, markErr := a.Alarms.MarkTodoFired(ctx, tda)
 			if markErr != nil {
-				fmt.Fprintf(os.Stderr, "chroncal: mark-fired error: todo=%q: %v\n", tda.Todo.Summary, markErr)
+				fmt.Fprintf(os.Stderr, "chroncal: mark-fired error: todo=%q: %v\n", safeText(tda.Todo.Summary), markErr)
 			} else {
 				stateID = newID
 			}
@@ -221,7 +221,7 @@ func runAlarmCheck(ctx context.Context, a *app.App, w io.Writer, now time.Time) 
 		fireErr := fireAlarm(todoDueAlarmToDueAlarm(tda))
 		if fireErr != nil {
 			fmt.Fprintf(os.Stderr, "chroncal: todo alarm error: %s (todo=%q action=%s): %v\n",
-				tda.TriggerAt.Local().Format("15:04"), tda.Todo.Summary, tda.Alarm.Action, fireErr)
+				tda.TriggerAt.Local().Format("15:04"), safeText(tda.Todo.Summary), tda.Alarm.Action, fireErr)
 			if outputFmt != "text" {
 				results = append(results, map[string]any{
 					"todo_id":    tda.Todo.ID,
@@ -247,7 +247,7 @@ func runAlarmCheck(ctx context.Context, a *app.App, w io.Writer, now time.Time) 
 				"status":     "fired",
 			})
 		} else {
-			fmt.Fprintf(w, "%s\t%s\t%s (todo)\n", tda.TriggerAt.Local().Format("15:04"), tda.Alarm.Action, tda.Todo.Summary)
+			writeAlarmCheckLine(w, tda.TriggerAt, tda.Alarm.Action, tda.Todo.Summary, true)
 		}
 	}
 
@@ -694,25 +694,25 @@ See "chroncal alarm check --help" for notification types and SMTP configuration.
 				for _, da := range due {
 					if da.StateID != 0 {
 						if markErr := a.Alarms.MarkRefired(ctx, da.StateID); markErr != nil {
-							fmt.Fprintf(os.Stderr, "chroncal: mark-refired error: event=%q: %v\n", da.Event.Title, markErr)
+							fmt.Fprintf(os.Stderr, "chroncal: mark-refired error: event=%q: %v\n", safeText(da.Event.Title), markErr)
 						}
 					} else {
 						if _, markErr := a.Alarms.MarkFired(ctx, da); markErr != nil {
-							fmt.Fprintf(os.Stderr, "chroncal: mark-fired error: event=%q: %v\n", da.Event.Title, markErr)
+							fmt.Fprintf(os.Stderr, "chroncal: mark-fired error: event=%q: %v\n", safeText(da.Event.Title), markErr)
 						}
 					}
 
 					fireErr := fireAlarm(da)
 					if fireErr != nil {
 						fmt.Fprintf(os.Stderr, "chroncal: alarm error: %s (event=%q action=%s): %v\n",
-							da.TriggerAt.Local().Format("15:04"), da.Event.Title, da.Alarm.Action, fireErr)
+							da.TriggerAt.Local().Format("15:04"), safeText(da.Event.Title), da.Alarm.Action, fireErr)
 						continue
 					}
 
-					fmt.Fprintf(w, "%s\t%s\t%s\n", da.TriggerAt.Local().Format("15:04"), da.Alarm.Action, da.Event.Title)
+					writeAlarmCheckLine(w, da.TriggerAt, da.Alarm.Action, da.Event.Title, false)
 				}
 				for _, tda := range todoDue {
-					fmt.Fprintf(w, "%s\t%s\t%s (todo)\n", tda.TriggerAt.Local().Format("15:04"), tda.Alarm.Action, tda.Todo.Summary)
+					writeAlarmCheckLine(w, tda.TriggerAt, tda.Alarm.Action, tda.Todo.Summary, true)
 				}
 			}
 

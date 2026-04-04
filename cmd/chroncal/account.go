@@ -272,19 +272,7 @@ local calendar to a remote one.`,
 				return nil
 			}
 
-			fmt.Printf("Found %d calendar(s) on %s:\n\n", len(calendars), account.Name)
-			for i, cal := range calendars {
-				components := "none"
-				if len(cal.SupportedComponentSet) > 0 {
-					components = strings.Join(cal.SupportedComponentSet, ", ")
-				}
-				fmt.Printf("  %d. %s\n     Path: %s\n     Components: %s\n",
-					i+1, cal.Name, cal.Path, components)
-				if cal.Description != "" {
-					fmt.Printf("     Description: %s\n", cal.Description)
-				}
-				fmt.Println()
-			}
+			printDiscoveredCalendars(cmd.OutOrStdout(), account.Name, calendars)
 			return nil
 		},
 	}

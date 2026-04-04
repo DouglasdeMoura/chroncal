@@ -513,9 +513,9 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 				return printOutput(w, toJSONEvent(e))
 			}
 			if allDay {
-				fmt.Fprintf(w, "Created: %s on %s (all day)\n", e.Title, e.StartTime.Local().Format("Mon, Jan 2 2006"))
+				fmt.Fprintf(w, "Created: %s on %s (all day)\n", safeText(e.Title), e.StartTime.Local().Format("Mon, Jan 2 2006"))
 			} else {
-				fmt.Fprintf(w, "Created: %s on %s at %s – %s\n", e.Title, e.StartTime.Local().Format("Mon, Jan 2 2006"), e.StartTime.Local().Format("15:04"), endTime.Local().Format("15:04"))
+				fmt.Fprintf(w, "Created: %s on %s at %s – %s\n", safeText(e.Title), e.StartTime.Local().Format("Mon, Jan 2 2006"), e.StartTime.Local().Format("15:04"), endTime.Local().Format("15:04"))
 			}
 			return nil
 		},
@@ -958,7 +958,7 @@ recurring series.`,
 				if outputFmt != "text" {
 					return printOutput(w, map[string]any{"deleted": true, "uid": e.UID, "series": true})
 				}
-				fmt.Fprintf(w, "Deleted event series %q.\n", e.UID)
+				fmt.Fprintf(w, "Deleted event series %q.\n", safeText(e.UID))
 				return nil
 			}
 

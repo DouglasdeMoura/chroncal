@@ -626,7 +626,7 @@ entire recurring series.`,
 				if outputFmt != "text" {
 					return printOutput(w, map[string]any{"deleted": true, "uid": j.UID, "series": true})
 				}
-				fmt.Fprintf(w, "Deleted journal series %q.\n", j.UID)
+				fmt.Fprintf(w, "Deleted journal series %q.\n", safeText(j.UID))
 				return nil
 			}
 

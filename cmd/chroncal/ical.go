@@ -101,7 +101,7 @@ again updates existing items instead of blindly duplicating them.`,
 					DurationValue: e.DurationValue, DtStamp: e.DtStamp,
 				})
 				if err != nil {
-					return fmt.Errorf("upsert event %q: %w", e.Title, err)
+					return fmt.Errorf("upsert event %q: %w", safeText(e.Title), err)
 				}
 				if len(e.Alarms) > 0 {
 					_ = a.Events.ReplaceAlarms(ctx, saved.ID, e.Alarms)
@@ -153,7 +153,7 @@ again updates existing items instead of blindly duplicating them.`,
 					DtStamp: t.DtStamp,
 				})
 				if err != nil {
-					return fmt.Errorf("upsert todo %q: %w", t.Summary, err)
+					return fmt.Errorf("upsert todo %q: %w", safeText(t.Summary), err)
 				}
 				if len(t.Alarms) > 0 {
 					_ = a.Todos.ReplaceAlarms(ctx, saved.ID, t.Alarms)
@@ -203,7 +203,7 @@ again updates existing items instead of blindly duplicating them.`,
 					DtStamp:      j.DtStamp,
 				})
 				if err != nil {
-					return fmt.Errorf("upsert journal %q: %w", j.Summary, err)
+					return fmt.Errorf("upsert journal %q: %w", safeText(j.Summary), err)
 				}
 				if len(j.Attendees) > 0 {
 					_ = a.Journals.ReplaceAttendees(ctx, saved.ID, j.Attendees)
@@ -238,7 +238,7 @@ again updates existing items instead of blindly duplicating them.`,
 					limit = len(result.Warnings)
 				}
 				for _, w := range result.Warnings[:limit] {
-					fmt.Fprintf(os.Stderr, "  - %s\n", w)
+					fmt.Fprintf(os.Stderr, "  - %s\n", safeText(w))
 				}
 				if len(result.Warnings) > 5 {
 					fmt.Fprintf(os.Stderr, "  ... and %d more\n", len(result.Warnings)-5)

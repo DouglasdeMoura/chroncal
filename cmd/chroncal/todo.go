@@ -472,7 +472,7 @@ and percent-complete to 100.`,
 			if outputFmt != "text" {
 				return printOutput(w, toJSONTodo(t))
 			}
-			msg := fmt.Sprintf("Created: %s", t.Summary)
+			msg := fmt.Sprintf("Created: %s", safeText(t.Summary))
 			if dueDate != "" {
 				msg += fmt.Sprintf(" (due %s)", t.ParseDueDate().Format("Jan 2"))
 			}
@@ -898,7 +898,7 @@ its progress to 100%.`,
 			if outputFmt != "text" {
 				return printOutput(w, toJSONTodo(t))
 			}
-			fmt.Fprintf(w, "Completed: %s\n", t.Summary)
+			fmt.Fprintf(w, "Completed: %s\n", safeText(t.Summary))
 			return nil
 		},
 	}
@@ -945,7 +945,7 @@ recurring series.`,
 				if outputFmt != "text" {
 					return printOutput(w, map[string]any{"deleted": true, "uid": t.UID, "series": true})
 				}
-				fmt.Fprintf(w, "Deleted todo series %q.\n", t.UID)
+				fmt.Fprintf(w, "Deleted todo series %q.\n", safeText(t.UID))
 				return nil
 			}
 
