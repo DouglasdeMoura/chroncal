@@ -1,10 +1,44 @@
 package auth
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func overrideKeyringForTest(t *testing.T, available bool, values map[string]string) {
+	t.Helper()
+
+	prevAvailable := keyringAvailableFn
+	prevGet := keyringGetFn
+	prevSet := keyringSetFn
+	prevDelete := keyringDeleteFn
+
+	keyringAvailableFn = func() bool { return available }
+	keyringGetFn = func(service, user string) (string, error) {
+		value, ok := values[user]
+		if !ok {
+			return "", errCredentialNotFound
+		}
+		return value, nil
+	}
+	keyringSetFn = func(service, user, value string) error {
+		values[user] = value
+		return nil
+	}
+	keyringDeleteFn = func(service, user string) error {
+		delete(values, user)
+		return nil
+	}
+
+	t.Cleanup(func() {
+		keyringAvailableFn = prevAvailable
+		keyringGetFn = prevGet
+		keyringSetFn = prevSet
+		keyringDeleteFn = prevDelete
+	})
+}
 
 func TestPlaintextFileStore_SetGetDelete(t *testing.T) {
 	dir := t.TempDir()
@@ -103,6 +137,8 @@ func TestNewCredentialStore_NoKeyring_NoPlaintext(t *testing.T) {
 }
 
 func TestNewCredentialStore_AllowPlaintext(t *testing.T) {
+	overrideKeyringForTest(t, false, map[string]string{})
+
 	store, err := NewCredentialStore(true)
 	if err != nil {
 		t.Fatalf("expected no error with plaintext allowed, got: %v", err)
@@ -115,15 +151,67 @@ func TestNewCredentialStore_AllowPlaintext(t *testing.T) {
 	}
 }
 
-func TestKeyringStore_ReturnsNotImplemented(t *testing.T) {
-	store := &KeyringStore{}
-	if _, err := store.Get(1); err == nil {
-		t.Error("KeyringStore.Get should return error")
+func TestNewCredentialStore_PrefersKeyringWhenAvailable(t *testing.T) {
+	overrideKeyringForTest(t, true, map[string]string{})
+
+	store, err := NewCredentialStore(false)
+	if err != nil {
+		t.Fatalf("NewCredentialStore: %v", err)
 	}
-	if err := store.Set(Credential{}); err == nil {
-		t.Error("KeyringStore.Set should return error")
+
+	cred := Credential{
+		AccountID: 7,
+		Username:  "alice",
+		Password:  "secret123",
 	}
-	if err := store.Delete(1); err == nil {
-		t.Error("KeyringStore.Delete should return error")
+	if err := store.Set(cred); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	got, err := store.Get(7)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Username != "alice" || got.Password != "secret123" {
+		t.Fatalf("Get returned %+v", got)
+	}
+}
+
+func TestNewCredentialStore_MigratesLegacyPlaintextCredentials(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	legacyDir := filepath.Join(dir, "chroncal", "credentials")
+	legacyStore := &PlaintextFileStore{dir: legacyDir}
+	legacyCred := Credential{
+		AccountID: 99,
+		Username:  "legacy",
+		Password:  "plaintext-secret",
+	}
+	if err := legacyStore.Set(legacyCred); err != nil {
+		t.Fatalf("legacy Set: %v", err)
+	}
+
+	backing := map[string]string{}
+	overrideKeyringForTest(t, true, backing)
+
+	store, err := NewCredentialStore(false)
+	if err != nil {
+		t.Fatalf("NewCredentialStore: %v", err)
+	}
+
+	got, err := store.Get(99)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Username != "legacy" || got.Password != "plaintext-secret" {
+		t.Fatalf("Get returned %+v", got)
+	}
+
+	if _, err := legacyStore.Get(99); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("legacy credential should be removed after migration, got %v", err)
+	}
+	if len(backing) == 0 {
+		t.Fatal("expected migrated credential to be stored in keyring backing store")
 	}
 }

@@ -173,6 +173,10 @@ chroncal sync reset        [--calendar NAME]
 
 Google Calendar requires OAuth 2.0 and only exposes `VEVENT` over CalDAV.
 
+Account credentials are stored in the OS keyring by default. Only use
+`--allow-plaintext` on systems where no keyring backend is available and you
+accept the local at-rest risk.
+
 1. Create a desktop OAuth client in the [Google Cloud Console](https://console.cloud.google.com/).
 2. Enable the Google Calendar API for that project.
 3. Add the account:
@@ -182,8 +186,7 @@ chroncal account add "Google Work" \
   --server https://apidata.googleusercontent.com/caldav/v2 \
   --auth oauth2 \
   --oauth-client-id "YOUR_CLIENT_ID.apps.googleusercontent.com" \
-  --oauth-client-secret "YOUR_SECRET" \
-  --allow-plaintext
+  --oauth-client-secret "YOUR_SECRET"
 ```
 
 4. Discover remote calendars and link one to a local calendar:

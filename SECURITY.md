@@ -28,5 +28,6 @@ You should receive an acknowledgment within 48 hours. We will work with you to u
 chroncal stores data locally in a SQLite database. The main areas of security concern are:
 
 - **iCal import** -- parsing untrusted `.ics` files
+- **Account credentials** -- stored in the OS keyring by default; plaintext storage is opt-in only for environments without a usable keyring
 - **SMTP credentials** -- stored in config files
 - **Desktop notifications** -- D-Bus interaction on Linux

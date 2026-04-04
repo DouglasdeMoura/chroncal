@@ -7,6 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
+
+	"github.com/zalando/go-keyring"
 )
 
 // Credential holds authentication secrets for an account.
@@ -29,45 +32,81 @@ type CredentialStore interface {
 	Delete(accountID int64) error
 }
 
+const keyringService = "chroncal"
+
+var errCredentialNotFound = keyring.ErrNotFound
+
+var (
+	keyringAvailableFn = newKeyringAvailabilityProbe()
+	keyringGetFn       = keyring.Get
+	keyringSetFn       = keyring.Set
+	keyringDeleteFn    = keyring.Delete
+)
+
 // NewCredentialStore returns the best available credential store.
 // It tries strategies in order: OS keyring, encrypted file, plaintext.
 // Plaintext is only used if allowPlaintext is true.
 func NewCredentialStore(allowPlaintext bool) (CredentialStore, error) {
+	dir, err := credentialDir()
+	if err != nil {
+		return nil, err
+	}
+	plaintext := &PlaintextFileStore{dir: dir}
+
 	if keyringAvailable() {
-		return &KeyringStore{}, nil
+		return &migratingCredentialStore{
+			primary: &KeyringStore{},
+			legacy:  plaintext,
+		}, nil
 	}
 	// Encrypted file store needs a passphrase prompt; skip for now.
 	// TODO: implement EncryptedFileStore with argon2id + AES-256-GCM
 	if allowPlaintext {
-		dir, err := credentialDir()
-		if err != nil {
-			return nil, err
-		}
-		return &PlaintextFileStore{dir: dir}, nil
+		return plaintext, nil
 	}
 	return nil, fmt.Errorf("no secure credential store available; use --allow-plaintext to store credentials in plaintext, or install a keyring provider")
 }
 
 // keyringAvailable returns true if the OS keyring is usable.
 func keyringAvailable() bool {
-	// Keyring support requires zalando/go-keyring dependency.
-	// For now, return false — will be implemented when go-keyring is added.
-	return false
+	return keyringAvailableFn()
 }
 
 // KeyringStore stores credentials in the OS keyring (GNOME Keyring, KWallet, macOS Keychain).
 type KeyringStore struct{}
 
 func (s *KeyringStore) Get(accountID int64) (Credential, error) {
-	return Credential{}, errors.New("keyring store not yet implemented")
+	secret, err := keyringGetFn(keyringService, keyringAccountName(accountID))
+	if err != nil {
+		if errors.Is(err, errCredentialNotFound) {
+			return Credential{}, errCredentialNotFound
+		}
+		return Credential{}, fmt.Errorf("read credential from keyring: %w", err)
+	}
+	var cred Credential
+	if err := json.Unmarshal([]byte(secret), &cred); err != nil {
+		return Credential{}, fmt.Errorf("parse credential from keyring: %w", err)
+	}
+	return cred, nil
 }
 
 func (s *KeyringStore) Set(cred Credential) error {
-	return errors.New("keyring store not yet implemented")
+	data, err := json.Marshal(cred)
+	if err != nil {
+		return fmt.Errorf("marshal credential: %w", err)
+	}
+	if err := keyringSetFn(keyringService, keyringAccountName(cred.AccountID), string(data)); err != nil {
+		return fmt.Errorf("write credential to keyring: %w", err)
+	}
+	return nil
 }
 
 func (s *KeyringStore) Delete(accountID int64) error {
-	return errors.New("keyring store not yet implemented")
+	err := keyringDeleteFn(keyringService, keyringAccountName(accountID))
+	if err != nil && !errors.Is(err, errCredentialNotFound) {
+		return fmt.Errorf("delete credential from keyring: %w", err)
+	}
+	return nil
 }
 
 // PlaintextFileStore stores credentials as JSON files with 0600 permissions.
@@ -137,4 +176,84 @@ func credentialDir() (string, error) {
 		configDir = dir
 	}
 	return filepath.Join(configDir, "chroncal", "credentials"), nil
+}
+
+// StoreDescription returns a user-facing description of the credential backend.
+func StoreDescription(store CredentialStore) string {
+	switch store.(type) {
+	case *PlaintextFileStore:
+		return "plaintext files"
+	default:
+		return "OS keyring"
+	}
+}
+
+type migratingCredentialStore struct {
+	primary CredentialStore
+	legacy  *PlaintextFileStore
+}
+
+func (s *migratingCredentialStore) Get(accountID int64) (Credential, error) {
+	cred, err := s.primary.Get(accountID)
+	if err == nil {
+		return cred, nil
+	}
+	if s.legacy == nil {
+		return Credential{}, err
+	}
+
+	legacyCred, legacyErr := s.legacy.Get(accountID)
+	if legacyErr != nil {
+		return Credential{}, err
+	}
+	if setErr := s.primary.Set(legacyCred); setErr != nil {
+		return Credential{}, setErr
+	}
+	if deleteErr := s.legacy.Delete(accountID); deleteErr != nil {
+		return Credential{}, deleteErr
+	}
+	return legacyCred, nil
+}
+
+func (s *migratingCredentialStore) Set(cred Credential) error {
+	if err := s.primary.Set(cred); err != nil {
+		return err
+	}
+	if s.legacy != nil {
+		_ = s.legacy.Delete(cred.AccountID)
+	}
+	return nil
+}
+
+func (s *migratingCredentialStore) Delete(accountID int64) error {
+	if err := s.primary.Delete(accountID); err != nil {
+		return err
+	}
+	if s.legacy != nil {
+		_ = s.legacy.Delete(accountID)
+	}
+	return nil
+}
+
+func keyringAccountName(accountID int64) string {
+	return fmt.Sprintf("account_%d", accountID)
+}
+
+func newKeyringAvailabilityProbe() func() bool {
+	var (
+		once      sync.Once
+		available bool
+	)
+	return func() bool {
+		once.Do(func() {
+			probeUser := "__chroncal_probe__"
+			probeValue := "ok"
+			if err := keyringSetFn(keyringService, probeUser, probeValue); err != nil {
+				return
+			}
+			available = true
+			_ = keyringDeleteFn(keyringService, probeUser)
+		})
+		return available
+	}
 }

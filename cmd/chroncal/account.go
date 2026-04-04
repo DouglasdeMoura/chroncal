@@ -136,7 +136,7 @@ development or trusted test environments.`,
 				return fmt.Errorf("store credentials: %w", err)
 			}
 
-			fmt.Printf("Account %q added (ID: %d)\n", name, account.ID)
+			fmt.Printf("Account %q added (ID: %d). Credentials stored in %s.\n", name, account.ID, auth.StoreDescription(credStore))
 			return nil
 		},
 	}
