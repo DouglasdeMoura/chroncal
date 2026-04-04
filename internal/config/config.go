@@ -11,11 +11,12 @@ import (
 
 // SMTPConfig holds SMTP connection settings for EMAIL action alarms.
 type SMTPConfig struct {
-	Host     string `mapstructure:"host"`
-	Port     int    `mapstructure:"port"`
-	Username string `mapstructure:"username"`
-	Password string `mapstructure:"password"`
-	From     string `mapstructure:"from"`
+	Host               string `mapstructure:"host"`
+	Port               int    `mapstructure:"port"`
+	Username           string `mapstructure:"username"`
+	Password           string `mapstructure:"password"`
+	From               string `mapstructure:"from"`
+	EnableAlarmActions bool   `mapstructure:"enable_alarm_actions"`
 }
 
 type SyncConfig struct {
@@ -66,6 +67,7 @@ func newViper() *viper.Viper {
 	v.BindEnv("smtp.username")
 	v.BindEnv("smtp.password")
 	v.BindEnv("smtp.from")
+	v.BindEnv("smtp.enable_alarm_actions")
 	v.BindEnv("sync.interval")
 	v.BindEnv("sync.conflict_strategy")
 

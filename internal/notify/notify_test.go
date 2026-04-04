@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/alarm"
+	"github.com/douglasdemoura/chroncal/internal/config"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/model"
 )
@@ -176,10 +177,45 @@ func TestFormatNotification_NoLocation(t *testing.T) {
 	}
 }
 
+func TestFormatNotification_SanitizesControlCharacters(t *testing.T) {
+	da := alarm.DueAlarm{
+		Event: event.Event{
+			Title:     "Bad\x1b]52;c;clip\a",
+			Location:  "Room\r\nB",
+			StartTime: time.Date(2026, 3, 27, 10, 0, 0, 0, time.Local),
+		},
+		Alarm: model.Alarm{
+			Action:      "DISPLAY",
+			Description: "Line\x1b[31m",
+		},
+	}
+
+	title, body := FormatNotification(da)
+
+	if strings.Contains(title, "\x1b") || strings.Contains(title, "\r") || strings.Contains(title, "\n") {
+		t.Fatalf("title contains control characters: %q", title)
+	}
+	if strings.Contains(body, "\x1b") || strings.Contains(body, "\r") || strings.Contains(body, "\n") {
+		t.Fatalf("body contains control characters: %q", body)
+	}
+	if strings.Contains(title, "]52;c;clip") {
+		t.Fatalf("title contains raw OSC payload: %q", title)
+	}
+}
+
 func TestResolveLocalAudioPath(t *testing.T) {
 	// Create a temp file to simulate a local audio file.
-	tmp := filepath.Join(t.TempDir(), "alert.oga")
+	dir := t.TempDir()
+	tmp := filepath.Join(dir, "alert.oga")
 	if err := os.WriteFile(tmp, []byte("fake audio"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	notAudio := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(notAudio, []byte("not audio"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	subdir := filepath.Join(dir, "folder.oga")
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -193,6 +229,8 @@ func TestResolveLocalAudioPath(t *testing.T) {
 		{"absolute path missing", "/nonexistent/sound.wav", false},
 		{"file:// URI exists", "file://" + tmp, true},
 		{"file:// URI missing", "file:///nonexistent/sound.wav", false},
+		{"directory rejected", subdir, false},
+		{"non-audio extension rejected", notAudio, false},
 		{"http URI", "http://example.com/sound.wav", false},
 		{"https URI", "https://example.com/sound.wav", false},
 		{"data URI", "data:audio/wav;base64,AAAA", false},
@@ -209,5 +247,29 @@ func TestResolveLocalAudioPath(t *testing.T) {
 				t.Errorf("resolveLocalAudioPath(%q) = %q, want empty", tt.uri, got)
 			}
 		})
+	}
+}
+
+func TestEmail_DisabledByDefault(t *testing.T) {
+	da := alarm.DueAlarm{
+		Event: event.Event{Title: "Test Event"},
+		Alarm: model.Alarm{
+			Action: "EMAIL",
+			Attendees: []model.AlarmAttendee{
+				{Email: "user@example.com"},
+			},
+		},
+	}
+
+	err := Email(da, config.SMTPConfig{
+		Host: "smtp.example.com",
+		Port: 587,
+		From: "sender@example.com",
+	})
+	if err == nil {
+		t.Fatal("Email err = nil, want disabled error")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "disabled") {
+		t.Fatalf("Email err = %q, want disabled message", err)
 	}
 }

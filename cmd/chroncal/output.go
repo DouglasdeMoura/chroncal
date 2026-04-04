@@ -14,6 +14,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/textsafe"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
@@ -272,9 +273,9 @@ func fmtAttendees(attendees []jsonAttendee) string {
 	parts := make([]string, len(attendees))
 	for i, a := range attendees {
 		if a.Name != "" {
-			parts[i] = a.Name
+			parts[i] = textsafe.Display(a.Name)
 		} else {
-			parts[i] = a.Email
+			parts[i] = textsafe.Display(a.Email)
 		}
 	}
 	return strings.Join(parts, ", ")
@@ -286,13 +287,17 @@ func fmtAttachments(attachments []jsonAttachment) string {
 	}
 	parts := make([]string, len(attachments))
 	for i, a := range attachments {
-		parts[i] = a.URI
+		parts[i] = textsafe.Display(a.URI)
 	}
 	return strings.Join(parts, ", ")
 }
 
 func fmtStrings(ss []string) string {
-	return strings.Join(ss, ", ")
+	parts := make([]string, len(ss))
+	for i, s := range ss {
+		parts[i] = textsafe.Display(s)
+	}
+	return strings.Join(parts, ", ")
 }
 
 func fmtRelations(relations []jsonRelation) string {
@@ -301,9 +306,24 @@ func fmtRelations(relations []jsonRelation) string {
 	}
 	parts := make([]string, len(relations))
 	for i, r := range relations {
-		parts[i] = r.RelType + ":" + r.RelUID
+		parts[i] = textsafe.Display(r.RelType + ":" + r.RelUID)
 	}
 	return strings.Join(parts, ", ")
+}
+
+func safeDisplayValue(v any) any {
+	if s, ok := v.(string); ok {
+		return textsafe.Display(s)
+	}
+	return v
+}
+
+func safeDisplayValues(vals ...any) []any {
+	out := make([]any, len(vals))
+	for i, v := range vals {
+		out[i] = safeDisplayValue(v)
+	}
+	return out
 }
 
 // printTable renders v as aligned columns using rodaine/table.
@@ -332,14 +352,14 @@ func printTable(w io.Writer, v any) error {
 			} else {
 				timeRange = start.Local().Format("15:04") + "–" + end.Local().Format("15:04")
 			}
-			tbl.AddRow(e.ID, e.UID, e.CalendarID, date, timeRange, e.Title,
+			tbl.AddRow(safeDisplayValues(e.ID, e.UID, e.CalendarID, date, timeRange, e.Title,
 				e.Description, e.Location, e.AllDay, e.RecurrenceRule, e.Timezone,
 				e.Status, e.Transp, e.Sequence, e.Priority, e.Class, e.URL,
 				e.Categories, e.ExDates, e.RDates, e.RecurrenceID, e.Geo,
 				fmtAlarms(e.Alarms), fmtAttendees(e.Attendees), fmtAttachments(e.Attachments),
 				fmtStrings(e.Comments), fmtStrings(e.Contacts), fmtStrings(e.Resources),
 				fmtRelations(e.Relations),
-				e.CreatedAt, e.UpdatedAt)
+				e.CreatedAt, e.UpdatedAt)...)
 		}
 		tbl.Print()
 		return nil
@@ -355,7 +375,7 @@ func printTable(w io.Writer, v any) error {
 		tbl := table.New("ID", "NAME", "COLOR", "DESCRIPTION", "CREATED", "UPDATED")
 		tbl.WithWriter(w)
 		for _, c := range data {
-			tbl.AddRow(c.ID, c.Name, c.Color, c.Description, c.CreatedAt, c.UpdatedAt)
+			tbl.AddRow(safeDisplayValues(c.ID, c.Name, c.Color, c.Description, c.CreatedAt, c.UpdatedAt)...)
 		}
 		tbl.Print()
 		return nil
@@ -384,13 +404,13 @@ func printTable(w io.Writer, v any) error {
 					due = d.Local().Format("2006-01-02")
 				}
 			}
-			tbl.AddRow(t.ID, t.UID, t.CalendarID, t.Summary, t.Description, t.Location,
+			tbl.AddRow(safeDisplayValues(t.ID, t.UID, t.CalendarID, t.Summary, t.Description, t.Location,
 				due, t.StartDate, t.Duration, t.CompletedAt, t.PercentComplete,
 				t.Status, t.Priority, t.Class, t.URL, t.Categories, t.Sequence,
 				fmtAlarms(t.Alarms), fmtAttendees(t.Attendees), fmtAttachments(t.Attachments),
 				fmtStrings(t.Comments), fmtStrings(t.Contacts), fmtStrings(t.Resources),
 				fmtRelations(t.Relations),
-				t.CreatedAt, t.UpdatedAt)
+				t.CreatedAt, t.UpdatedAt)...)
 		}
 		tbl.Print()
 		return nil
@@ -411,13 +431,13 @@ func printTable(w io.Writer, v any) error {
 			"CREATED", "UPDATED")
 		tbl.WithWriter(w)
 		for _, j := range data {
-			tbl.AddRow(j.ID, j.UID, j.CalendarID, j.Summary, j.Description,
+			tbl.AddRow(safeDisplayValues(j.ID, j.UID, j.CalendarID, j.Summary, j.Description,
 				j.StartDate, j.Status, j.Class, j.URL, j.Categories, j.Sequence,
 				j.RecurrenceRule, j.ExDates, j.RDates, j.RecurrenceID, j.Timezone,
 				fmtAttendees(j.Attendees), fmtAttachments(j.Attachments),
 				fmtStrings(j.Comments), fmtStrings(j.Contacts),
 				fmtRelations(j.Relations),
-				j.CreatedAt, j.UpdatedAt)
+				j.CreatedAt, j.UpdatedAt)...)
 		}
 		tbl.Print()
 		return nil
@@ -438,7 +458,7 @@ func printEvent(w io.Writer, e event.Event) {
 
 func printEventDetail(w io.Writer, e event.Event, showDate bool) {
 	i := ic()
-	fmt.Fprintf(w, "  %s %s\n", i.Title, e.Title)
+	fmt.Fprintf(w, "  %s %s\n", i.Title, textsafe.Display(e.Title))
 	if e.AllDay {
 		if showDate {
 			fmt.Fprintf(w, "  %s %s (all day)\n", i.Clock, e.StartTime.Local().Format("Mon, Jan 2 2006"))
@@ -457,25 +477,25 @@ func printEventDetail(w io.Writer, e event.Event, showDate bool) {
 		}
 	}
 	if e.Location != "" {
-		fmt.Fprintf(w, "  %s %s\n", i.Location, e.Location)
+		fmt.Fprintf(w, "  %s %s\n", i.Location, textsafe.Display(e.Location))
 	}
 	if e.Description != "" {
-		fmt.Fprintf(w, "  %s %s\n", i.Notes, e.Description)
+		fmt.Fprintf(w, "  %s %s\n", i.Notes, textsafe.Display(e.Description))
 	}
 	if e.Status != "CONFIRMED" {
 		fmt.Fprintf(w, "  %s %s\n", i.Status, e.Status)
 	}
 	if e.URL != "" {
-		fmt.Fprintf(w, "  %s %s\n", i.Link, e.URL)
+		fmt.Fprintf(w, "  %s %s\n", i.Link, textsafe.Display(e.URL))
 	}
 	if e.Categories != "" {
-		fmt.Fprintf(w, "  %s %s\n", i.Tags, e.Categories)
+		fmt.Fprintf(w, "  %s %s\n", i.Tags, textsafe.Display(e.Categories))
 	}
 	if e.Timezone != "" {
-		fmt.Fprintf(w, "  %s TZ: %s\n", i.Clock, e.Timezone)
+		fmt.Fprintf(w, "  %s TZ: %s\n", i.Clock, textsafe.Display(e.Timezone))
 	}
 	fmt.Fprintf(w, "  %s Calendar %d\n", i.Folder, e.CalendarID)
-	fmt.Fprintf(w, "  %s %d  %s\n", i.ID, e.ID, e.UID)
+	fmt.Fprintf(w, "  %s %d  %s\n", i.ID, e.ID, textsafe.Display(e.UID))
 	if len(e.Alarms) > 0 {
 		fmt.Fprintf(w, "  %s %d reminder(s)\n", i.Bell, len(e.Alarms))
 	}
@@ -512,10 +532,10 @@ func printEvents(w io.Writer, events []event.Event) {
 
 func printCalendar(w io.Writer, c calendar.Calendar) {
 	i := ic()
-	fmt.Fprintf(w, "  %s %s\n", i.Title, c.Name)
-	fmt.Fprintf(w, "  %s %s\n", i.Color, c.Color)
+	fmt.Fprintf(w, "  %s %s\n", i.Title, textsafe.Display(c.Name))
+	fmt.Fprintf(w, "  %s %s\n", i.Color, textsafe.Display(c.Color))
 	if c.Description != "" {
-		fmt.Fprintf(w, "  %s %s\n", i.Notes, c.Description)
+		fmt.Fprintf(w, "  %s %s\n", i.Notes, textsafe.Display(c.Description))
 	}
 	fmt.Fprintf(w, "  %s %d\n", i.ID, c.ID)
 }
@@ -629,7 +649,7 @@ func toJSONTodos(todos []todo.Todo) []jsonTodo {
 
 func printTodo(w io.Writer, t todo.Todo) {
 	i := ic()
-	fmt.Fprintf(w, "  %s %s\n", i.Title, t.Summary)
+	fmt.Fprintf(w, "  %s %s\n", i.Title, textsafe.Display(t.Summary))
 	fmt.Fprintf(w, "  %s %s\n", i.Status, t.Status)
 	if t.StartDate != "" {
 		start := t.ParseStartDate()
@@ -659,16 +679,16 @@ func printTodo(w io.Writer, t todo.Todo) {
 		fmt.Fprintf(w, "  %s %d%%\n", i.Progress, t.PercentComplete)
 	}
 	if t.Location != "" {
-		fmt.Fprintf(w, "  %s %s\n", i.Location, t.Location)
+		fmt.Fprintf(w, "  %s %s\n", i.Location, textsafe.Display(t.Location))
 	}
 	if t.Description != "" {
-		fmt.Fprintf(w, "  %s %s\n", i.Notes, t.Description)
+		fmt.Fprintf(w, "  %s %s\n", i.Notes, textsafe.Display(t.Description))
 	}
 	if t.URL != "" {
-		fmt.Fprintf(w, "  %s %s\n", i.Link, t.URL)
+		fmt.Fprintf(w, "  %s %s\n", i.Link, textsafe.Display(t.URL))
 	}
 	if t.Categories != "" {
-		fmt.Fprintf(w, "  %s %s\n", i.Tags, t.Categories)
+		fmt.Fprintf(w, "  %s %s\n", i.Tags, textsafe.Display(t.Categories))
 	}
 	if t.Class != "" && t.Class != "PUBLIC" {
 		fmt.Fprintf(w, "  %s %s\n", i.Status, t.Class)
@@ -677,10 +697,10 @@ func printTodo(w io.Writer, t todo.Todo) {
 		fmt.Fprintf(w, "  %s Priority %d\n", i.Priority, t.Priority)
 	}
 	if t.RecurrenceRule != "" {
-		fmt.Fprintf(w, "  %s %s\n", i.Clock, t.RecurrenceRule)
+		fmt.Fprintf(w, "  %s %s\n", i.Clock, textsafe.Display(t.RecurrenceRule))
 	}
 	fmt.Fprintf(w, "  %s Calendar %d\n", i.Folder, t.CalendarID)
-	fmt.Fprintf(w, "  %s %d  %s\n", i.ID, t.ID, t.UID)
+	fmt.Fprintf(w, "  %s %d  %s\n", i.ID, t.ID, textsafe.Display(t.UID))
 	if len(t.Alarms) > 0 {
 		fmt.Fprintf(w, "  %s %d reminder(s)\n", i.Bell, len(t.Alarms))
 	}
@@ -692,22 +712,22 @@ func printTodo(w io.Writer, t todo.Todo) {
 	}
 	if len(t.Comments) > 0 {
 		for _, c := range t.Comments {
-			fmt.Fprintf(w, "  %s %s\n", i.Notes, c)
+			fmt.Fprintf(w, "  %s %s\n", i.Notes, textsafe.Display(c))
 		}
 	}
 	if len(t.Contacts) > 0 {
 		for _, c := range t.Contacts {
-			fmt.Fprintf(w, "  %s %s\n", i.People, c)
+			fmt.Fprintf(w, "  %s %s\n", i.People, textsafe.Display(c))
 		}
 	}
 	if len(t.Resources) > 0 {
 		for _, r := range t.Resources {
-			fmt.Fprintf(w, "  %s %s\n", i.Bullet, r)
+			fmt.Fprintf(w, "  %s %s\n", i.Bullet, textsafe.Display(r))
 		}
 	}
 	if len(t.Relations) > 0 {
 		for _, r := range t.Relations {
-			fmt.Fprintf(w, "  %s %s:%s\n", i.Link, r.RelType, r.RelUID)
+			fmt.Fprintf(w, "  %s %s:%s\n", i.Link, textsafe.Display(r.RelType), textsafe.Display(r.RelUID))
 		}
 	}
 }
@@ -792,7 +812,7 @@ func toJSONJournals(journals []journal.Journal) []jsonJournal {
 
 func printJournal(w io.Writer, j journal.Journal) {
 	i := ic()
-	fmt.Fprintf(w, "  %s %s\n", i.Title, j.Summary)
+	fmt.Fprintf(w, "  %s %s\n", i.Title, textsafe.Display(j.Summary))
 	fmt.Fprintf(w, "  %s %s\n", i.Status, j.Status)
 	if j.StartDate != "" {
 		start := j.ParseStartDate()
@@ -803,22 +823,22 @@ func printJournal(w io.Writer, j journal.Journal) {
 		}
 	}
 	if j.Description != "" {
-		fmt.Fprintf(w, "  %s %s\n", i.Notes, j.Description)
+		fmt.Fprintf(w, "  %s %s\n", i.Notes, textsafe.Display(j.Description))
 	}
 	if j.URL != "" {
-		fmt.Fprintf(w, "  %s %s\n", i.Link, j.URL)
+		fmt.Fprintf(w, "  %s %s\n", i.Link, textsafe.Display(j.URL))
 	}
 	if j.Categories != "" {
-		fmt.Fprintf(w, "  %s %s\n", i.Tags, j.Categories)
+		fmt.Fprintf(w, "  %s %s\n", i.Tags, textsafe.Display(j.Categories))
 	}
 	if j.Class != "" && j.Class != "PUBLIC" {
 		fmt.Fprintf(w, "  %s %s\n", i.Status, j.Class)
 	}
 	if j.RecurrenceRule != "" {
-		fmt.Fprintf(w, "  %s %s\n", i.Clock, j.RecurrenceRule)
+		fmt.Fprintf(w, "  %s %s\n", i.Clock, textsafe.Display(j.RecurrenceRule))
 	}
 	fmt.Fprintf(w, "  %s Calendar %d\n", i.Folder, j.CalendarID)
-	fmt.Fprintf(w, "  %s %d  %s\n", i.ID, j.ID, j.UID)
+	fmt.Fprintf(w, "  %s %d  %s\n", i.ID, j.ID, textsafe.Display(j.UID))
 	if len(j.Attendees) > 0 {
 		fmt.Fprintf(w, "  %s %d participant(s)\n", i.People, len(j.Attendees))
 	}
@@ -827,17 +847,17 @@ func printJournal(w io.Writer, j journal.Journal) {
 	}
 	if len(j.Comments) > 0 {
 		for _, c := range j.Comments {
-			fmt.Fprintf(w, "  %s %s\n", i.Notes, c)
+			fmt.Fprintf(w, "  %s %s\n", i.Notes, textsafe.Display(c))
 		}
 	}
 	if len(j.Contacts) > 0 {
 		for _, c := range j.Contacts {
-			fmt.Fprintf(w, "  %s %s\n", i.People, c)
+			fmt.Fprintf(w, "  %s %s\n", i.People, textsafe.Display(c))
 		}
 	}
 	if len(j.Relations) > 0 {
 		for _, r := range j.Relations {
-			fmt.Fprintf(w, "  %s %s:%s\n", i.Link, r.RelType, r.RelUID)
+			fmt.Fprintf(w, "  %s %s:%s\n", i.Link, textsafe.Display(r.RelType), textsafe.Display(r.RelUID))
 		}
 	}
 }

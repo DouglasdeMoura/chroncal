@@ -3,14 +3,19 @@ package notify
 import (
 	"context"
 	"fmt"
+	"mime"
+	"net/mail"
 	"net/smtp"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/alarm"
 	"github.com/douglasdemoura/chroncal/internal/config"
+	"github.com/douglasdemoura/chroncal/internal/textsafe"
 	"github.com/gen2brain/beeep"
 )
 
@@ -18,7 +23,7 @@ import (
 // Title is the event title. Body contains the formatted time and, when present,
 // the location. The description is included only if it is non-empty and not "Reminder".
 func FormatNotification(da alarm.DueAlarm) (title, body string) {
-	title = da.Event.Title
+	title = textsafe.Display(da.Event.Title)
 
 	var parts []string
 	if !da.Event.StartTime.IsZero() {
@@ -26,12 +31,12 @@ func FormatNotification(da alarm.DueAlarm) (title, body string) {
 	}
 
 	if da.Event.Location != "" {
-		parts = append(parts, da.Event.Location)
+		parts = append(parts, textsafe.Display(da.Event.Location))
 	}
 
 	desc := da.Alarm.Description
 	if desc != "" && desc != "Reminder" {
-		parts = append(parts, desc)
+		parts = append(parts, textsafe.Display(desc))
 	}
 
 	// Fallback for bare todos: show trigger time so the notification isn't empty.
@@ -84,17 +89,26 @@ func resolveLocalAudioPath(uri string) string {
 	if _, err := os.Stat(path); err != nil {
 		return "" // File doesn't exist.
 	}
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return ""
+	}
+	if !isLikelyAudioFile(path) {
+		return ""
+	}
 	return path
 }
 
 const (
 	linuxSystemSound  = "/usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga"
 	darwinSystemSound = "/System/Library/Sounds/Glass.aiff"
+	audioPlaybackTimeout = 5 * time.Second
 )
 
 // playAudio plays an audio file using the platform's native player.
 func playAudio(path string) error {
-	ctx := context.TODO()
+	ctx, cancel := context.WithTimeout(context.Background(), audioPlaybackTimeout)
+	defer cancel()
 	switch runtime.GOOS {
 	case "linux":
 		if err := exec.CommandContext(ctx, "paplay", path).Run(); err == nil {
@@ -105,6 +119,22 @@ func playAudio(path string) error {
 		return exec.CommandContext(ctx, "afplay", path).Run()
 	default:
 		return fmt.Errorf("unsupported platform for audio playback")
+	}
+}
+
+func isLikelyAudioFile(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext == "" {
+		return false
+	}
+	if mt := mime.TypeByExtension(ext); strings.HasPrefix(mt, "audio/") {
+		return true
+	}
+	switch ext {
+	case ".ogg", ".oga", ".wav", ".mp3", ".aiff", ".aif", ".flac", ".m4a", ".aac", ".au", ".snd":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -126,6 +156,9 @@ func playSystemSound() error {
 // It sends to the alarm's attendees using the provided SMTP configuration.
 // Returns an error if no attendees are configured or SMTP is not configured.
 func Email(da alarm.DueAlarm, smtpCfg config.SMTPConfig) error {
+	if !smtpCfg.EnableAlarmActions {
+		return fmt.Errorf("EMAIL alarm actions are disabled")
+	}
 	if smtpCfg.Host == "" {
 		return fmt.Errorf("SMTP not configured")
 	}
@@ -136,16 +169,26 @@ func Email(da alarm.DueAlarm, smtpCfg config.SMTPConfig) error {
 
 	title, body := FormatNotification(da)
 
-	to := make([]string, len(da.Alarm.Attendees))
-	for i, att := range da.Alarm.Attendees {
-		to[i] = att.Email
+	to := make([]string, 0, len(da.Alarm.Attendees))
+	for _, att := range da.Alarm.Attendees {
+		addr := textsafe.Display(att.Email)
+		if addr == "" {
+			continue
+		}
+		if _, err := mail.ParseAddress(addr); err != nil {
+			continue
+		}
+		to = append(to, addr)
+	}
+	if len(to) == 0 {
+		return fmt.Errorf("no valid attendees for EMAIL alarm")
 	}
 
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\n\r\n%s\r\n",
-		smtpCfg.From,
+		textsafe.Display(smtpCfg.From),
 		strings.Join(to, ", "),
-		title,
-		body,
+		textsafe.Display(title),
+		textsafe.Display(body),
 	)
 
 	addr := fmt.Sprintf("%s:%d", smtpCfg.Host, smtpCfg.Port)

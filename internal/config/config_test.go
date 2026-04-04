@@ -64,6 +64,7 @@ port = 587
 username = "user@example.com"
 password = "secret123"
 from = "noreply@example.com"
+enable_alarm_actions = true
 `
 	os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(content), 0o644)
 
@@ -91,6 +92,9 @@ from = "noreply@example.com"
 	}
 	if cfg.SMTP.From != "noreply@example.com" {
 		t.Errorf("SMTP.From = %q, want %q", cfg.SMTP.From, "noreply@example.com")
+	}
+	if !cfg.SMTP.EnableAlarmActions {
+		t.Error("SMTP.EnableAlarmActions = false, want true")
 	}
 }
 
@@ -143,6 +147,7 @@ port = 25
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("CHRONCAL_SMTP_HOST", "env-host.example.com")
 	t.Setenv("CHRONCAL_SMTP_PORT", "465")
+	t.Setenv("CHRONCAL_SMTP_ENABLE_ALARM_ACTIONS", "true")
 
 	cfg := Load()
 
@@ -151,6 +156,9 @@ port = 25
 	}
 	if cfg.SMTP.Port != 465 {
 		t.Errorf("SMTP.Port = %d, want %d (env should override file)", cfg.SMTP.Port, 465)
+	}
+	if !cfg.SMTP.EnableAlarmActions {
+		t.Error("SMTP.EnableAlarmActions = false, want true (from env)")
 	}
 }
 
