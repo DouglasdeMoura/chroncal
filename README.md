@@ -152,6 +152,10 @@ chroncal ical import  <file.ics> [--calendar NAME]
 chroncal ical export  [--calendar NAME] [--from DATE] [--to DATE] [--category TEXT] [--status TEXT] [-f FILE] [--events] [--todos] [--journals]
 ```
 
+Imports are bounded to reduce resource exhaustion from untrusted calendar
+data. `chroncal ical import` rejects `.ics` payloads larger than 8 MiB and
+inline base64 attachments larger than 1 MiB decoded.
+
 ### CalDAV accounts and sync
 
 ```
@@ -176,6 +180,10 @@ Google Calendar requires OAuth 2.0 and only exposes `VEVENT` over CalDAV.
 Account credentials are stored in the OS keyring by default. Only use
 `--allow-plaintext` on systems where no keyring backend is available and you
 accept the local at-rest risk.
+
+chroncal uses OAuth PKCE for installed-app flows, so you only need the client
+ID for Google CalDAV setup. Refresh tokens are reused automatically and updated
+tokens are persisted back to the configured credential store.
 
 1. Create a desktop OAuth client in the [Google Cloud Console](https://console.cloud.google.com/).
 2. Enable the Google Calendar API for that project.
@@ -313,6 +321,10 @@ chroncal aims for complete RFC 5545 compliance. Current coverage:
 - **VFREEBUSY**: local compute/export plus remote CalDAV query support
 
 Import from Google Calendar, Apple Calendar, Thunderbird, or any RFC 5545-compliant source. Export produces standards-compliant `.ics` files.
+
+For safety, chroncal applies size limits to untrusted imports and inline
+attachments before storing them locally or sending them to linked CalDAV
+servers.
 
 ## CalDAV interoperability
 

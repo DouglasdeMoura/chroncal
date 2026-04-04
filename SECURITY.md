@@ -27,7 +27,9 @@ You should receive an acknowledgment within 48 hours. We will work with you to u
 
 chroncal stores data locally in a SQLite database. The main areas of security concern are:
 
-- **iCal import** -- parsing untrusted `.ics` files
+- **iCal import** -- parsing untrusted `.ics` files; chroncal enforces payload and inline attachment size limits during import
 - **Account credentials** -- stored in the OS keyring by default; plaintext storage is opt-in only for environments without a usable keyring
+- **OAuth tokens** -- Google CalDAV uses PKCE and persists refreshed access tokens through the configured credential store
 - **SMTP credentials** -- stored in config files
+- **Remote CalDAV servers** -- sync, discovery, and free/busy requests run with bounded HTTP clients and command deadlines
 - **Desktop notifications** -- D-Bus interaction on Linux
