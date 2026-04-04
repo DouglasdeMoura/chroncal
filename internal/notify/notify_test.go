@@ -203,8 +203,9 @@ func TestFormatNotification_SanitizesControlCharacters(t *testing.T) {
 	}
 }
 
-func TestResolveLocalAudioPath(t *testing.T) {
-	// Create a temp file to simulate a local audio file.
+func TestResolveLocalAudioPath_RejectsCalendarSuppliedLocalFiles(t *testing.T) {
+	// Even when a local file exists, calendar data should not drive native
+	// audio player arguments on the user's machine.
 	dir := t.TempDir()
 	tmp := filepath.Join(dir, "alert.oga")
 	if err := os.WriteFile(tmp, []byte("fake audio"), 0o644); err != nil {
@@ -225,9 +226,9 @@ func TestResolveLocalAudioPath(t *testing.T) {
 		want bool // true = expect non-empty path
 	}{
 		{"empty", "", false},
-		{"absolute path exists", tmp, true},
+		{"absolute path exists", tmp, false},
 		{"absolute path missing", "/nonexistent/sound.wav", false},
-		{"file:// URI exists", "file://" + tmp, true},
+		{"file:// URI exists", "file://" + tmp, false},
 		{"file:// URI missing", "file:///nonexistent/sound.wav", false},
 		{"directory rejected", subdir, false},
 		{"non-audio extension rejected", notAudio, false},

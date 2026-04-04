@@ -3,12 +3,9 @@ package notify
 import (
 	"context"
 	"fmt"
-	"mime"
 	"net/mail"
 	"net/smtp"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -54,49 +51,21 @@ func Display(da alarm.DueAlarm) error {
 	return beeep.Notify(title, body, "")
 }
 
-// Audio sends a desktop notification and plays a sound. If the alarm has an
-// ATTACH URI pointing to a local audio file, that file is played. Otherwise
-// a platform-specific system sound is used as a fallback.
+// Audio sends a desktop notification and plays a platform system sound.
+// Calendar-provided ATTACH values are intentionally ignored so imported or
+// synced data cannot drive local file access through native audio players.
 func Audio(da alarm.DueAlarm) error {
 	// Send visual notification first (best-effort).
 	_ = Display(da)
-
-	// Try the alarm's ATTACH URI (local files only, no HTTP).
-	if path := resolveLocalAudioPath(da.Alarm.AttachURI); path != "" {
-		if err := playAudio(path); err == nil {
-			return nil
-		}
-	}
 
 	// Fall back to platform system sounds.
 	return playSystemSound()
 }
 
-// resolveLocalAudioPath returns an absolute file path if the URI points to a
-// local audio file that exists, or "" if it should be skipped.
+// resolveLocalAudioPath always returns "" because calendar data must not be
+// allowed to choose a local file for native audio playback.
 func resolveLocalAudioPath(uri string) string {
-	if uri == "" {
-		return ""
-	}
-	var path string
-	if p, ok := strings.CutPrefix(uri, "file://"); ok {
-		path = p
-	} else if strings.HasPrefix(uri, "/") {
-		path = uri
-	} else {
-		return "" // HTTP, data:, or other unsupported scheme.
-	}
-	if _, err := os.Stat(path); err != nil {
-		return "" // File doesn't exist.
-	}
-	info, err := os.Stat(path)
-	if err != nil || !info.Mode().IsRegular() {
-		return ""
-	}
-	if !isLikelyAudioFile(path) {
-		return ""
-	}
-	return path
+	return ""
 }
 
 const (
@@ -119,22 +88,6 @@ func playAudio(path string) error {
 		return exec.CommandContext(ctx, "afplay", path).Run()
 	default:
 		return fmt.Errorf("unsupported platform for audio playback")
-	}
-}
-
-func isLikelyAudioFile(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
-	if ext == "" {
-		return false
-	}
-	if mt := mime.TypeByExtension(ext); strings.HasPrefix(mt, "audio/") {
-		return true
-	}
-	switch ext {
-	case ".ogg", ".oga", ".wav", ".mp3", ".aiff", ".aif", ".flac", ".m4a", ".aac", ".au", ".snd":
-		return true
-	default:
-		return false
 	}
 }
 
