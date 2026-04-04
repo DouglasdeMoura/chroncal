@@ -16,6 +16,8 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
+const icalImportTimeout = 2 * time.Minute
+
 func icalCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ical",
@@ -53,7 +55,8 @@ again updates existing items instead of blindly duplicating them.`,
 				return err
 			}
 			defer a.Close()
-			ctx := context.Background()
+			ctx, cancel := context.WithTimeout(context.Background(), icalImportTimeout)
+			defer cancel()
 
 			f, err := os.Open(args[0])
 			if err != nil {

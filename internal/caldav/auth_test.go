@@ -31,9 +31,9 @@ func TestNewClientFromCredential_RefreshesExpiredOAuthToken(t *testing.T) {
 		refreshGoogleTokenFn = prevRefresh
 	})
 
-	prevDefaultClient := http.DefaultClient
+	prevDefaultClient := defaultHTTPClient
 	var tokens []string
-	http.DefaultClient = &http.Client{
+	defaultHTTPClient = &http.Client{
 		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 			tokens = append(tokens, r.Header.Get("Authorization"))
 			return &http.Response{
@@ -45,7 +45,7 @@ func TestNewClientFromCredential_RefreshesExpiredOAuthToken(t *testing.T) {
 		}),
 	}
 	t.Cleanup(func() {
-		http.DefaultClient = prevDefaultClient
+		defaultHTTPClient = prevDefaultClient
 	})
 
 	var persisted auth.Credential
@@ -93,5 +93,23 @@ func TestNewClientFromCredential_RefreshesExpiredOAuthToken(t *testing.T) {
 	}
 	if persisted.TokenExpiry == "" {
 		t.Fatal("persisted token expiry should be updated")
+	}
+}
+
+func TestNewClientFromCredential_UsesBoundedHTTPClient(t *testing.T) {
+	client, err := NewClientFromCredential("https://example.com", auth.Credential{
+		AccessToken:   "token",
+		OAuthClientID: "client-id",
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewClientFromCredential: %v", err)
+	}
+
+	oauthClient, ok := client.httpClient.(*oauth2HTTPClient)
+	if !ok {
+		t.Fatalf("httpClient type = %T, want *oauth2HTTPClient", client.httpClient)
+	}
+	if oauthClient.inner.Timeout != defaultHTTPTimeout {
+		t.Fatalf("inner timeout = %s, want %s", oauthClient.inner.Timeout, defaultHTTPTimeout)
 	}
 }

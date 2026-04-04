@@ -37,9 +37,24 @@ type ImportResult struct {
 	Warnings  []string
 }
 
+const (
+	maxImportBytes           = 8 << 20
+	maxInlineAttachmentBytes = 1 << 20
+)
+
+var errImportLimitExceeded = errors.New("ical import exceeds configured limits")
+
 func ImportFile(r io.Reader) (ImportResult, error) {
-	dec := ical.NewDecoder(r)
 	var result ImportResult
+	data, err := io.ReadAll(io.LimitReader(r, maxImportBytes+1))
+	if err != nil {
+		return result, fmt.Errorf("read ical: %w", err)
+	}
+	if len(data) > maxImportBytes {
+		return result, fmt.Errorf("ical payload exceeds %d bytes", maxImportBytes)
+	}
+
+	dec := ical.NewDecoder(bytes.NewReader(data))
 
 	for {
 		cal, err := dec.Decode()
@@ -90,6 +105,9 @@ func ImportFile(r io.Reader) (ImportResult, error) {
 				resolveComponentTZIDs(child, tzMap)
 				e, warns, err := eventFromVEvent(vevent)
 				if err != nil {
+					if errors.Is(err, errImportLimitExceeded) {
+						return result, err
+					}
 					result.Warnings = append(result.Warnings, fmt.Sprintf("VEVENT: %v", err))
 					continue
 				}
@@ -99,6 +117,9 @@ func ImportFile(r io.Reader) (ImportResult, error) {
 				resolveComponentTZIDs(child, tzMap)
 				t, warns, err := todoFromVTodo(child)
 				if err != nil {
+					if errors.Is(err, errImportLimitExceeded) {
+						return result, err
+					}
 					result.Warnings = append(result.Warnings, fmt.Sprintf("VTODO: %v", err))
 					continue
 				}
@@ -108,6 +129,9 @@ func ImportFile(r io.Reader) (ImportResult, error) {
 				resolveComponentTZIDs(child, tzMap)
 				j, err := journalFromVJournal(child)
 				if err != nil {
+					if errors.Is(err, errImportLimitExceeded) {
+						return result, err
+					}
 					result.Warnings = append(result.Warnings, fmt.Sprintf("VJOURNAL: %v", err))
 					continue
 				}
@@ -272,7 +296,10 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, []string, error) {
 	attendees := parseAttendeesFromProps(props)
 
 	// ATTACH, COMMENT, CONTACT, RELATED-TO
-	attachments := parseAttachmentsFromProps(props)
+	attachments, err := parseAttachmentsFromProps(props)
+	if err != nil {
+		return todo.Todo{}, nil, err
+	}
 	comments := parseCommentsFromProps(props)
 	contacts := parseContactsFromProps(props)
 	resources := parseResourcesFromProps(props)
@@ -440,7 +467,10 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 	attendees := parseAttendees(ve)
 
 	// ATTACH, COMMENT, RELATED-TO
-	attachments := parseAttachmentsFromProps(ve.Props)
+	attachments, err := parseAttachmentsFromProps(ve.Props)
+	if err != nil {
+		return event.Event{}, nil, err
+	}
 	comments := parseCommentsFromProps(ve.Props)
 	contacts := parseContactsFromProps(ve.Props)
 	resources := parseResourcesFromProps(ve.Props)
@@ -784,14 +814,20 @@ func addDuration(t time.Time, dur string) time.Time {
 	return duration.Add(t, dur)
 }
 
-func parseAttachmentsFromProps(props ical.Props) []model.Attachment {
+func parseAttachmentsFromProps(props ical.Props) ([]model.Attachment, error) {
 	var out []model.Attachment
 	for _, prop := range props.Values(ical.PropAttach) {
 		fmttype := prop.Params.Get("FMTTYPE")
 		if prop.Params.Get("ENCODING") == "BASE64" {
+			if base64.StdEncoding.DecodedLen(len(prop.Value)) > maxInlineAttachmentBytes {
+				return nil, fmt.Errorf("%w: inline attachment exceeds %d bytes", errImportLimitExceeded, maxInlineAttachmentBytes)
+			}
 			data, err := base64.StdEncoding.DecodeString(prop.Value)
 			if err != nil {
-				continue
+				return nil, fmt.Errorf("decode inline attachment: %w", err)
+			}
+			if len(data) > maxInlineAttachmentBytes {
+				return nil, fmt.Errorf("%w: inline attachment exceeds %d bytes", errImportLimitExceeded, maxInlineAttachmentBytes)
 			}
 			out = append(out, model.Attachment{
 				FmtType:  fmttype,
@@ -805,7 +841,7 @@ func parseAttachmentsFromProps(props ical.Props) []model.Attachment {
 			})
 		}
 	}
-	return out
+	return out, nil
 }
 
 func parseCommentsFromProps(props ical.Props) []string {
@@ -951,7 +987,10 @@ func journalFromVJournal(comp *ical.Component) (journal.Journal, error) {
 	attendees := parseAttendeesFromProps(props)
 
 	// ATTACH, COMMENT, CONTACT, RELATED-TO
-	attachments := parseAttachmentsFromProps(props)
+	attachments, err := parseAttachmentsFromProps(props)
+	if err != nil {
+		return journal.Journal{}, err
+	}
 	comments := parseCommentsFromProps(props)
 	contacts := parseContactsFromProps(props)
 	relations := parseRelationsFromProps(props)

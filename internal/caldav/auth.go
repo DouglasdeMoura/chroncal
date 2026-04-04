@@ -19,7 +19,7 @@ func NewClientFromCredential(endpoint string, cred auth.Credential, persist func
 	switch {
 	case cred.AccessToken != "":
 		httpClient := &oauth2HTTPClient{
-			inner:       http.DefaultClient,
+			inner:       defaultHTTPClient,
 			accessToken: cred.AccessToken,
 		}
 		if cred.TokenExpiry != "" {
@@ -46,7 +46,7 @@ func NewClientFromCredential(endpoint string, cred auth.Credential, persist func
 		}
 		return NewClient(httpClient, endpoint)
 	case cred.Password != "":
-		httpClient := webdav.HTTPClientWithBasicAuth(http.DefaultClient, cred.Username, cred.Password)
+		httpClient := webdav.HTTPClientWithBasicAuth(defaultHTTPClient, cred.Username, cred.Password)
 		return NewClient(httpClient, endpoint)
 	default:
 		return nil, fmt.Errorf("credential has no password or access token")

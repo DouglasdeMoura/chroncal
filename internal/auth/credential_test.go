@@ -138,6 +138,8 @@ func TestPlaintextFileStore_OAuthCredentials(t *testing.T) {
 }
 
 func TestNewCredentialStore_NoKeyring_NoPlaintext(t *testing.T) {
+	overrideKeyringForTest(t, false, map[string]string{})
+
 	store, err := NewCredentialStore(false)
 	if err == nil {
 		t.Errorf("expected error when no keyring and plaintext disabled, got store: %v", store)

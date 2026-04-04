@@ -25,7 +25,7 @@ const (
 	googleScope    = "https://www.googleapis.com/auth/calendar"
 )
 
-var googleHTTPClient = http.DefaultClient
+var googleHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 // GoogleOAuthResult holds tokens from a successful OAuth flow.
 type GoogleOAuthResult struct {

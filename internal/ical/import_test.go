@@ -1,6 +1,7 @@
 package ical
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 	"time"
@@ -398,6 +399,50 @@ END:VCALENDAR`
 	}
 	if result.Events[0].Attachments[0].FmtType != "application/pdf" {
 		t.Errorf("Attach[0].FmtType = %q", result.Events[0].Attachments[0].FmtType)
+	}
+}
+
+func TestImport_RejectsOversizedInlineAttachment(t *testing.T) {
+	t.Parallel()
+
+	encoded := base64.StdEncoding.EncodeToString(make([]byte, maxInlineAttachmentBytes+1))
+	ics := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:oversized-attachment
+DTSTAMP:20260401T100000Z
+DTSTART:20260401T140000Z
+DTEND:20260401T150000Z
+SUMMARY:Oversized Attach
+ATTACH;ENCODING=BASE64;FMTTYPE=application/octet-stream:` + encoded + `
+END:VEVENT
+END:VCALENDAR`
+
+	_, err := ImportFile(strings.NewReader(ics))
+	if err == nil {
+		t.Fatal("ImportFile should reject oversized inline attachments")
+	}
+}
+
+func TestImport_RejectsOversizedCalendarPayload(t *testing.T) {
+	t.Parallel()
+
+	oversizedDescription := strings.Repeat("A", maxImportBytes)
+	ics := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:oversized-payload
+DTSTAMP:20260401T100000Z
+DTSTART:20260401T140000Z
+DTEND:20260401T150000Z
+SUMMARY:Oversized Payload
+DESCRIPTION:` + oversizedDescription + `
+END:VEVENT
+END:VCALENDAR`
+
+	_, err := ImportFile(strings.NewReader(ics))
+	if err == nil {
+		t.Fatal("ImportFile should reject oversized calendar payloads")
 	}
 }
 

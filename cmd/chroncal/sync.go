@@ -6,12 +6,15 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	syncPkg "github.com/douglasdemoura/chroncal/internal/sync"
 )
+
+const syncRunTimeout = 5 * time.Minute
 
 func syncCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -48,7 +51,8 @@ run to a single local calendar.`,
 				return err
 			}
 			defer a.Close()
-			ctx := context.Background()
+			ctx, cancel := context.WithTimeout(context.Background(), syncRunTimeout)
+			defer cancel()
 
 			credStore, err := auth.NewCredentialStore(true)
 			if err != nil {

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/emersion/go-ical"
 	"github.com/emersion/go-webdav"
@@ -36,6 +37,10 @@ type Change struct {
 	Deleted bool
 }
 
+const defaultHTTPTimeout = 30 * time.Second
+
+var defaultHTTPClient = &http.Client{Timeout: defaultHTTPTimeout}
+
 // Client wraps the go-webdav CalDAV client with error handling and auth.
 type Client struct {
 	httpClient webdav.HTTPClient
@@ -55,13 +60,13 @@ func NewClient(httpClient webdav.HTTPClient, endpoint string) (*Client, error) {
 
 // NewBasicAuthClient creates a CalDAV client with HTTP basic authentication.
 func NewBasicAuthClient(endpoint, username, password string) (*Client, error) {
-	httpClient := webdav.HTTPClientWithBasicAuth(http.DefaultClient, username, password)
+	httpClient := webdav.HTTPClientWithBasicAuth(defaultHTTPClient, username, password)
 	return NewClient(httpClient, endpoint)
 }
 
 // NewBearerAuthClient creates a CalDAV client with Bearer token authentication.
 func NewBearerAuthClient(endpoint, token string) (*Client, error) {
-	httpClient := &bearerHTTPClient{inner: http.DefaultClient, token: token}
+	httpClient := &bearerHTTPClient{inner: defaultHTTPClient, token: token}
 	return NewClient(httpClient, endpoint)
 }
 
