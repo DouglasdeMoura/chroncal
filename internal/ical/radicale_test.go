@@ -921,8 +921,8 @@ func TestRadicale_VALARM_EmailOnEvent(t *testing.T) {
 	assertEqual(t, "Action", alarm.Action, "EMAIL")
 	assertEqual(t, "Summary", alarm.Summary, "Meeting Reminder")
 	assertEqual(t, "Description", alarm.Description, "Your meeting starts in 30 minutes")
-	if len(alarm.Attendees) != 1 {
-		t.Errorf("expected 1 alarm attendee, got %d", len(alarm.Attendees))
+	if len(alarm.Attendees) != 0 {
+		t.Errorf("expected 0 alarm attendees, got %d", len(alarm.Attendees))
 	}
 }
 

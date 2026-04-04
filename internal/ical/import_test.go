@@ -273,6 +273,42 @@ func TestImport_FullTodo(t *testing.T) {
 	}
 }
 
+func TestImport_StripsEmailAlarmAttendees(t *testing.T) {
+	t.Parallel()
+
+	ics := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:email-alarm-uid
+DTSTAMP:20260401T100000Z
+DTSTART:20260401T140000Z
+DTEND:20260401T150000Z
+SUMMARY:Imported EMAIL Alarm
+BEGIN:VALARM
+ACTION:EMAIL
+TRIGGER:-PT1H
+DESCRIPTION:Mail me
+ATTENDEE;CN=Alice:mailto:alice@example.com
+ATTENDEE:mailto:bob@example.com
+END:VALARM
+END:VEVENT
+END:VCALENDAR`
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile error: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %d, want 1", len(result.Events))
+	}
+	if len(result.Events[0].Alarms) != 1 {
+		t.Fatalf("alarms = %d, want 1", len(result.Events[0].Alarms))
+	}
+	if got := len(result.Events[0].Alarms[0].Attendees); got != 0 {
+		t.Fatalf("EMAIL alarm attendees = %d, want 0", got)
+	}
+}
+
 func TestImport_MixedEventsTodos(t *testing.T) {
 	t.Parallel()
 	result, err := ImportFile(strings.NewReader(mixedICS))

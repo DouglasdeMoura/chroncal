@@ -618,6 +618,9 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 
 	// ATTENDEE children (for EMAIL alarms)
 	for _, prop := range comp.Props.Values(ical.PropAttendee) {
+		if alarm.Action == "EMAIL" {
+			continue
+		}
 		alarm.Attendees = append(alarm.Attendees, model.AlarmAttendee{
 			Email: stripMailto(prop.Value),
 			Name:  prop.Params.Get(ical.ParamCommonName),
