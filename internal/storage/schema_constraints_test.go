@@ -155,3 +155,111 @@ func TestXPropertiesAreDeletedWithOwners(t *testing.T) {
 		})
 	}
 }
+
+func TestSyncResourcesRejectInvalidOwnerType(t *testing.T) {
+	db, q, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("list calendars: %v", err)
+	}
+	calID := cals[0].ID
+
+	_, err = db.Exec(
+		`INSERT INTO sync_resources (calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy)
+		 VALUES (?, 'sync-invalid-owner', 'note', '', '', 0, 'sync-token')`,
+		calID,
+	)
+	if err == nil {
+		t.Fatal("expected invalid owner_type insert to fail")
+	}
+	if !strings.Contains(err.Error(), "CHECK constraint failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSyncResourcesRejectInvalidDirtyValue(t *testing.T) {
+	db, q, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("list calendars: %v", err)
+	}
+	calID := cals[0].ID
+
+	_, err = db.Exec(
+		`INSERT INTO sync_resources (calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy)
+		 VALUES (?, 'sync-invalid-dirty', 'event', '', '', 2, 'sync-token')`,
+		calID,
+	)
+	if err == nil {
+		t.Fatal("expected invalid dirty insert to fail")
+	}
+	if !strings.Contains(err.Error(), "CHECK constraint failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSyncResourcesRejectInvalidSyncStrategy(t *testing.T) {
+	db, q, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("list calendars: %v", err)
+	}
+	calID := cals[0].ID
+
+	_, err = db.Exec(
+		`INSERT INTO sync_resources (calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy)
+		 VALUES (?, 'sync-invalid-strategy', 'event', '', '', 0, 'manual')`,
+		calID,
+	)
+	if err == nil {
+		t.Fatal("expected invalid sync_strategy insert to fail")
+	}
+	if !strings.Contains(err.Error(), "CHECK constraint failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSyncConflictsRejectInvalidOwnerType(t *testing.T) {
+	db, q, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("list calendars: %v", err)
+	}
+	calID := cals[0].ID
+
+	_, err = db.Exec(
+		`INSERT INTO sync_conflicts (calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag)
+		 VALUES (?, 'note', 1, 'conflict-invalid-owner', 'BEGIN:VCALENDAR', 'BEGIN:VCALENDAR', 'etag')`,
+		calID,
+	)
+	if err == nil {
+		t.Fatal("expected invalid sync_conflicts owner_type insert to fail")
+	}
+	if !strings.Contains(err.Error(), "CHECK constraint failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

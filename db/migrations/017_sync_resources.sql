@@ -6,11 +6,14 @@ CREATE TABLE sync_resources (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     calendar_id INTEGER NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
     uid TEXT NOT NULL,              -- iCal UID
-    owner_type TEXT NOT NULL,       -- 'event', 'todo', 'journal'
+    owner_type TEXT NOT NULL        -- 'event', 'todo', 'journal'
+        CHECK(owner_type IN ('event', 'todo', 'journal')),
     remote_url TEXT NOT NULL DEFAULT '',  -- CalDAV href for this resource
     etag TEXT NOT NULL DEFAULT '',        -- server ETag for change detection
-    dirty INTEGER NOT NULL DEFAULT 0,    -- 1 = locally modified, needs push
-    sync_strategy TEXT NOT NULL DEFAULT 'sync-token',  -- 'sync-token' or 'ctag-etag'
+    dirty INTEGER NOT NULL DEFAULT 0
+        CHECK(dirty IN (0, 1)),    -- 1 = locally modified, needs push
+    sync_strategy TEXT NOT NULL DEFAULT 'sync-token'
+        CHECK(sync_strategy IN ('sync-token', 'ctag-etag')),  -- 'sync-token' or 'ctag-etag'
     UNIQUE(calendar_id, uid)
 );
 
