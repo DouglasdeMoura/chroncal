@@ -273,7 +273,7 @@ func TestImport_FullTodo(t *testing.T) {
 	}
 }
 
-func TestImport_StripsEmailAlarmAttendees(t *testing.T) {
+func TestImport_PreservesEmailAlarmAttendees(t *testing.T) {
 	t.Parallel()
 
 	ics := `BEGIN:VCALENDAR
@@ -304,8 +304,8 @@ END:VCALENDAR`
 	if len(result.Events[0].Alarms) != 1 {
 		t.Fatalf("alarms = %d, want 1", len(result.Events[0].Alarms))
 	}
-	if got := len(result.Events[0].Alarms[0].Attendees); got != 0 {
-		t.Fatalf("EMAIL alarm attendees = %d, want 0", got)
+	if got := len(result.Events[0].Alarms[0].Attendees); got != 2 {
+		t.Fatalf("EMAIL alarm attendees = %d, want 2", got)
 	}
 }
 

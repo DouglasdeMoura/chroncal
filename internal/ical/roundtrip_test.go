@@ -661,8 +661,14 @@ func TestRoundtrip_AlarmRepeatDurationRelated(t *testing.T) {
 	if a1.Repeat != 1 {
 		t.Errorf("Alarm[1] repeat: %d, want 1", a1.Repeat)
 	}
-	if len(a1.Attendees) != 0 {
-		t.Fatalf("Alarm[1] attendees: %d, want 0", len(a1.Attendees))
+	if len(a1.Attendees) != 2 {
+		t.Fatalf("Alarm[1] attendees: %d, want 2", len(a1.Attendees))
+	}
+	if a1.Attendees[0].Email != "alice@test.com" {
+		t.Errorf("Alarm[1] attendee[0] email: %q", a1.Attendees[0].Email)
+	}
+	if a1.Attendees[1].Name != "Bob" {
+		t.Errorf("Alarm[1] attendee[1] name: %q", a1.Attendees[1].Name)
 	}
 }
 
