@@ -11,12 +11,17 @@ import (
 func overrideKeyringForTest(t *testing.T, available bool, values map[string]string) {
 	t.Helper()
 
-	prevAvailable := keyringAvailableFn
+	prevUnavailableReason := keyringUnavailableReasonFn
 	prevGet := keyringGetFn
 	prevSet := keyringSetFn
 	prevDelete := keyringDeleteFn
 
-	keyringAvailableFn = func() bool { return available }
+	keyringUnavailableReasonFn = func() error {
+		if available {
+			return nil
+		}
+		return errors.New("keyring unavailable")
+	}
 	keyringGetFn = func(service, user string) (string, error) {
 		value, ok := values[user]
 		if !ok {
@@ -34,7 +39,7 @@ func overrideKeyringForTest(t *testing.T, available bool, values map[string]stri
 	}
 
 	t.Cleanup(func() {
-		keyringAvailableFn = prevAvailable
+		keyringUnavailableReasonFn = prevUnavailableReason
 		keyringGetFn = prevGet
 		keyringSetFn = prevSet
 		keyringDeleteFn = prevDelete
@@ -143,6 +148,35 @@ func TestNewCredentialStore_NoKeyring_NoPlaintext(t *testing.T) {
 	store, err := NewCredentialStore(false)
 	if err == nil {
 		t.Errorf("expected error when no keyring and plaintext disabled, got store: %v", store)
+	}
+}
+
+func TestNewCredentialStore_IncludesKeyringProbeError(t *testing.T) {
+	prevUnavailableReason := keyringUnavailableReasonFn
+	prevSet := keyringSetFn
+	prevDelete := keyringDeleteFn
+
+	probeErr := errors.New("dbus: org.freedesktop.secrets unavailable")
+	keyringSetFn = func(service, user, value string) error {
+		return probeErr
+	}
+	keyringDeleteFn = func(service, user string) error {
+		return nil
+	}
+	keyringUnavailableReasonFn = newKeyringAvailabilityProbe()
+
+	t.Cleanup(func() {
+		keyringUnavailableReasonFn = prevUnavailableReason
+		keyringSetFn = prevSet
+		keyringDeleteFn = prevDelete
+	})
+
+	_, err := NewCredentialStore(false)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), probeErr.Error()) {
+		t.Fatalf("expected error to include probe failure %q, got %q", probeErr.Error(), err.Error())
 	}
 }
 

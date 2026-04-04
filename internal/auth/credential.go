@@ -36,10 +36,10 @@ const keyringService = "chroncal"
 var errCredentialNotFound = keyring.ErrNotFound
 
 var (
-	keyringAvailableFn = newKeyringAvailabilityProbe()
-	keyringGetFn       = keyring.Get
-	keyringSetFn       = keyring.Set
-	keyringDeleteFn    = keyring.Delete
+	keyringUnavailableReasonFn = newKeyringAvailabilityProbe()
+	keyringGetFn               = keyring.Get
+	keyringSetFn               = keyring.Set
+	keyringDeleteFn            = keyring.Delete
 )
 
 // NewCredentialStore returns the best available credential store.
@@ -52,7 +52,7 @@ func NewCredentialStore(allowPlaintext bool) (CredentialStore, error) {
 	}
 	plaintext := &PlaintextFileStore{dir: dir}
 
-	if keyringAvailable() {
+	if probeErr := keyringUnavailableReason(); probeErr == nil {
 		return &migratingCredentialStore{
 			primary: &KeyringStore{},
 			legacy:  plaintext,
@@ -63,12 +63,16 @@ func NewCredentialStore(allowPlaintext bool) (CredentialStore, error) {
 	if allowPlaintext {
 		return plaintext, nil
 	}
-	return nil, fmt.Errorf("no secure credential store available; use --allow-plaintext to store credentials in plaintext, or install a keyring provider")
+	return nil, fmt.Errorf("no secure credential store available: %w; use --allow-plaintext to store credentials in plaintext, or install a keyring provider", keyringUnavailableReason())
 }
 
 // keyringAvailable returns true if the OS keyring is usable.
 func keyringAvailable() bool {
-	return keyringAvailableFn()
+	return keyringUnavailableReason() == nil
+}
+
+func keyringUnavailableReason() error {
+	return keyringUnavailableReasonFn()
 }
 
 // KeyringStore stores credentials in the OS keyring (GNOME Keyring, KWallet, macOS Keychain).
@@ -238,21 +242,21 @@ func keyringAccountName(accountID int64) string {
 	return fmt.Sprintf("account_%d", accountID)
 }
 
-func newKeyringAvailabilityProbe() func() bool {
+func newKeyringAvailabilityProbe() func() error {
 	var (
-		once      sync.Once
-		available bool
+		once     sync.Once
+		probeErr error
 	)
-	return func() bool {
+	return func() error {
 		once.Do(func() {
 			probeUser := "__chroncal_probe__"
 			probeValue := "ok"
 			if err := keyringSetFn(keyringService, probeUser, probeValue); err != nil {
+				probeErr = err
 				return
 			}
-			available = true
 			_ = keyringDeleteFn(keyringService, probeUser)
 		})
-		return available
+		return probeErr
 	}
 }
