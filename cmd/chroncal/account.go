@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
+	sqlite "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/caldav"
@@ -89,7 +92,7 @@ development or trusted test environments.`,
 				Username:  username,
 			})
 			if err != nil {
-				return fmt.Errorf("create account: %w", err)
+				return friendlyCreateAccountError(name, err)
 			}
 
 			// Store credentials
@@ -145,6 +148,19 @@ development or trusted test environments.`,
 	cmd.Flags().StringVar(&oauthClientID, "oauth-client-id", "", "OAuth 2.0 client ID")
 	cmd.MarkFlagRequired("server")
 	return cmd
+}
+
+func friendlyCreateAccountError(name string, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	var sqlErr *sqlite.Error
+	if errors.As(err, &sqlErr) && sqlErr.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE && strings.Contains(err.Error(), "accounts.name") {
+		return fmt.Errorf("account %q already exists; choose a different name or run `chroncal account list` to inspect configured accounts", name)
+	}
+
+	return fmt.Errorf("create account: %w", err)
 }
 
 func accountListCmd() *cobra.Command {
