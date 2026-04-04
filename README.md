@@ -231,6 +231,7 @@ chroncal alarm missed   [--days N]            # Show missed alarms (default look
 
 ```
 chroncal service install    # Install systemd timer (Linux) or launchd agent (macOS)
+chroncal service run        # Run one background-service cycle now
 chroncal service uninstall
 chroncal service status
 ```

@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestSystemdServiceTemplateUsesTickAndSyncInterval(t *testing.T) {
+func TestSystemdServiceTemplateUsesServiceRunAndSyncInterval(t *testing.T) {
 	rendered, err := renderTemplate(systemdServiceTmpl, map[string]string{
 		"BinaryPath":   "/usr/local/bin/chroncal",
 		"SyncInterval": "15m",
@@ -14,15 +14,15 @@ func TestSystemdServiceTemplateUsesTickAndSyncInterval(t *testing.T) {
 		t.Fatalf("renderTemplate: %v", err)
 	}
 
-	if !strings.Contains(rendered, "ExecStart=/usr/local/bin/chroncal tick") {
-		t.Fatalf("systemd service missing tick command:\n%s", rendered)
+	if !strings.Contains(rendered, "ExecStart=/usr/local/bin/chroncal service run") {
+		t.Fatalf("systemd service missing service run command:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "Environment=CHRONCAL_SYNC_INTERVAL=15m") {
 		t.Fatalf("systemd service missing sync interval env:\n%s", rendered)
 	}
 }
 
-func TestLaunchdTemplateUsesTickAndSyncInterval(t *testing.T) {
+func TestLaunchdTemplateUsesServiceRunAndSyncInterval(t *testing.T) {
 	rendered, err := renderTemplate(launchdPlistTmpl, map[string]string{
 		"BinaryPath":   "/usr/local/bin/chroncal",
 		"HomeDir":      "/Users/tester",
@@ -32,8 +32,8 @@ func TestLaunchdTemplateUsesTickAndSyncInterval(t *testing.T) {
 		t.Fatalf("renderTemplate: %v", err)
 	}
 
-	if !strings.Contains(rendered, "<string>tick</string>") {
-		t.Fatalf("launchd plist missing tick command:\n%s", rendered)
+	if !strings.Contains(rendered, "<string>service</string>") || !strings.Contains(rendered, "<string>run</string>") {
+		t.Fatalf("launchd plist missing service run command:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "<key>CHRONCAL_SYNC_INTERVAL</key>") {
 		t.Fatalf("launchd plist missing sync interval env:\n%s", rendered)
@@ -43,11 +43,44 @@ func TestLaunchdTemplateUsesTickAndSyncInterval(t *testing.T) {
 	}
 }
 
-func TestRootCommandRegistersTick(t *testing.T) {
+func TestServiceCommandRegistersRun(t *testing.T) {
 	for _, cmd := range rootCmd.Commands() {
-		if cmd.Name() == "tick" {
-			return
+		if cmd.Name() != "service" {
+			continue
+		}
+		for _, sub := range cmd.Commands() {
+			if sub.Name() == "run" {
+				return
+			}
 		}
 	}
-	t.Fatal("root command is missing tick")
+	t.Fatal("service command is missing run")
+}
+
+func TestServiceRunCommandHasTickAlias(t *testing.T) {
+	for _, cmd := range rootCmd.Commands() {
+		if cmd.Name() != "service" {
+			continue
+		}
+		for _, sub := range cmd.Commands() {
+			if sub.Name() != "run" {
+				continue
+			}
+			for _, alias := range sub.Aliases {
+				if alias == "tick" {
+					return
+				}
+			}
+			t.Fatal("service run command is missing tick alias")
+		}
+	}
+	t.Fatal("service command is missing run")
+}
+
+func TestRootCommandDoesNotRegisterTopLevelTick(t *testing.T) {
+	for _, cmd := range rootCmd.Commands() {
+		if cmd.Name() == "tick" {
+			t.Fatal("root command should not register top-level tick")
+		}
+	}
 }

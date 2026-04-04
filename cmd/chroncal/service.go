@@ -14,14 +14,14 @@ import (
 )
 
 const systemdServiceTmpl = `[Unit]
-Description=chroncal tick service
+Description=chroncal service run service
 After=default.target
 
 [Service]
 Type=oneshot
 {{if .SyncInterval}}Environment=CHRONCAL_SYNC_INTERVAL={{.SyncInterval}}
 {{end}}{{if .SyncConflictStrategy}}Environment=CHRONCAL_SYNC_CONFLICT_STRATEGY={{.SyncConflictStrategy}}
-{{end}}ExecStart={{.BinaryPath}} tick
+{{end}}ExecStart={{.BinaryPath}} service run
 
 [Install]
 WantedBy=default.target
@@ -47,7 +47,8 @@ const launchdPlistTmpl = `<?xml version="1.0" encoding="UTF-8"?>
     <key>ProgramArguments</key>
     <array>
         <string>{{.BinaryPath}}</string>
-        <string>tick</string>
+        <string>service</string>
+        <string>run</string>
     </array>
     {{if or .SyncInterval .SyncConflictStrategy}}<key>EnvironmentVariables</key>
     <dict>
@@ -74,16 +75,17 @@ func serviceCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "service",
 		Short: "Manage alarm notification service",
-		Long: `Install or inspect the background service that runs "chroncal tick"
+		Long: `Install or inspect the background service that runs "chroncal service run"
 on a schedule.
 
 On Linux this uses user-level systemd units. On macOS it uses a
 LaunchAgent.`,
 		Example: `  chroncal service install
+  chroncal service run
   chroncal service status
   chroncal service uninstall`,
 	}
-	cmd.AddCommand(serviceInstallCmd(), serviceUninstallCmd(), serviceStatusCmd())
+	cmd.AddCommand(serviceInstallCmd(), serviceUninstallCmd(), serviceStatusCmd(), tickCmd())
 	return cmd
 }
 
@@ -119,7 +121,7 @@ func serviceInstallCmd() *cobra.Command {
 		Long: `Install the native background service that runs chroncal on a
 schedule.
 
-The installed service runs "chroncal tick", which checks alarms every
+The installed service runs "chroncal service run", which checks alarms every
 minute and also runs sync work when the configured sync interval is due.`,
 		Example: `  chroncal service install
   chroncal service install --sync-interval 15m`,
@@ -157,7 +159,7 @@ minute and also runs sync work when the configured sync interval is due.`,
 			}
 		},
 	}
-	cmd.Flags().StringVar(&syncInterval, "sync-interval", cfg.Sync.Interval, "how often tick should run sync work (for example 15m); empty disables sync")
+	cmd.Flags().StringVar(&syncInterval, "sync-interval", cfg.Sync.Interval, "how often service run should run sync work (for example 15m); empty disables sync")
 	return cmd
 }
 

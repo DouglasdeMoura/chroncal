@@ -15,14 +15,15 @@ import (
 
 func tickCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "tick",
-		Short: "Run one service tick: alarms always, sync when due",
+		Use:     "run",
+		Aliases: []string{"tick"},
+		Short:   "Run one background-service cycle: alarms always, sync when due",
 		Long: `Run one background-service cycle.
 
-Each tick always checks alarms. It also runs sync for linked calendars
+Each run always checks alarms. It also runs sync for linked calendars
 when the configured sync interval says a sync is due.`,
-		Example: `  chroncal tick
-  CHRONCAL_SYNC_INTERVAL=15m chroncal tick`,
+		Example: `  chroncal service run
+  CHRONCAL_SYNC_INTERVAL=15m chroncal service run`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runTick(cmd.Context(), cmd.OutOrStdout(), time.Now())
 		},
@@ -70,7 +71,7 @@ func runTick(ctx context.Context, w io.Writer, now time.Time) error {
 		}
 	}
 	if len(syncErrs) > 0 {
-		return fmt.Errorf("tick sync failed: %w", errors.Join(syncErrs...))
+		return fmt.Errorf("service run sync failed: %w", errors.Join(syncErrs...))
 	}
 	return nil
 }

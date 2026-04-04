@@ -128,7 +128,7 @@ func init() {
 		rootCmd.AddCommand(cmd)
 	}
 
-	automationCommands := []*cobra.Command{alarmCmd(), tickCmd(), serviceCmd()}
+	automationCommands := []*cobra.Command{alarmCmd(), serviceCmd()}
 	for _, cmd := range automationCommands {
 		cmd.GroupID = groupAutomation
 		rootCmd.AddCommand(cmd)
