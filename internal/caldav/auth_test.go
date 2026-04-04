@@ -105,9 +105,13 @@ func TestNewClientFromCredential_UsesBoundedHTTPClient(t *testing.T) {
 		t.Fatalf("NewClientFromCredential: %v", err)
 	}
 
-	oauthClient, ok := client.httpClient.(*oauth2HTTPClient)
+	boundedClient, ok := client.httpClient.(boundedHTTPClient)
 	if !ok {
-		t.Fatalf("httpClient type = %T, want *oauth2HTTPClient", client.httpClient)
+		t.Fatalf("httpClient type = %T, want boundedHTTPClient", client.httpClient)
+	}
+	oauthClient, ok := boundedClient.inner.(*oauth2HTTPClient)
+	if !ok {
+		t.Fatalf("inner client type = %T, want *oauth2HTTPClient", boundedClient.inner)
 	}
 	if oauthClient.inner.Timeout != defaultHTTPTimeout {
 		t.Fatalf("inner timeout = %s, want %s", oauthClient.inner.Timeout, defaultHTTPTimeout)

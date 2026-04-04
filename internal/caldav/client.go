@@ -3,6 +3,7 @@ package caldav
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -39,8 +40,10 @@ type Change struct {
 }
 
 const defaultHTTPTimeout = 30 * time.Second
+const maxHTTPResponseBytes = 8 << 20
 
 var defaultHTTPClient = &http.Client{Timeout: defaultHTTPTimeout}
+var errResponseTooLarge = errors.New("caldav response exceeds configured limits")
 
 // Client wraps the go-webdav CalDAV client with error handling and auth.
 type Client struct {
@@ -52,11 +55,15 @@ type Client struct {
 // NewClient creates a CalDAV client with the given HTTP client and endpoint.
 // Use NewBasicAuthClient or NewBearerAuthClient for authenticated access.
 func NewClient(httpClient webdav.HTTPClient, endpoint string) (*Client, error) {
-	inner, err := caldav.NewClient(httpClient, endpoint)
+	bounded := boundedHTTPClient{
+		inner:            httpClient,
+		maxResponseBytes: maxHTTPResponseBytes,
+	}
+	inner, err := caldav.NewClient(bounded, endpoint)
 	if err != nil {
 		return nil, fmt.Errorf("create caldav client: %w", err)
 	}
-	return &Client{httpClient: httpClient, inner: inner, endpoint: endpoint}, nil
+	return &Client{httpClient: bounded, inner: inner, endpoint: endpoint}, nil
 }
 
 // NewBasicAuthClient creates a CalDAV client with HTTP basic authentication.
@@ -337,6 +344,54 @@ func normalizePath(raw string) string {
 		return "/"
 	}
 	return cleaned
+}
+
+type boundedHTTPClient struct {
+	inner            webdav.HTTPClient
+	maxResponseBytes int64
+}
+
+func (c boundedHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	resp, err := c.inner.Do(req)
+	if err != nil || resp == nil || resp.Body == nil {
+		return resp, err
+	}
+	resp.Body = &limitedReadCloser{
+		inner:     resp.Body,
+		remaining: c.maxResponseBytes,
+	}
+	return resp, nil
+}
+
+type limitedReadCloser struct {
+	inner     io.ReadCloser
+	remaining int64
+}
+
+func (r *limitedReadCloser) Read(p []byte) (int, error) {
+	if r.remaining <= 0 {
+		var extra [1]byte
+		n, err := r.inner.Read(extra[:])
+		switch {
+		case n > 0 || err == nil:
+			return 0, errResponseTooLarge
+		case err == io.EOF:
+			return 0, io.EOF
+		default:
+			return 0, err
+		}
+	}
+
+	if int64(len(p)) > r.remaining {
+		p = p[:r.remaining]
+	}
+	n, err := r.inner.Read(p)
+	r.remaining -= int64(n)
+	return n, err
+}
+
+func (r *limitedReadCloser) Close() error {
+	return r.inner.Close()
 }
 
 // EncodeCalendar serializes an ical.Calendar to bytes.

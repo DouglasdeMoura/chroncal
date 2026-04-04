@@ -86,3 +86,81 @@ func TestClientPutResourceSendsIfMatch(t *testing.T) {
 		t.Fatalf("etag = %q, want %q", etag, "etag-after")
 	}
 }
+
+func oversizedCalendarData(size int) string {
+	var b strings.Builder
+	b.Grow(size + 256)
+	b.WriteString("BEGIN:VCALENDAR\r\n")
+	b.WriteString("VERSION:2.0\r\n")
+	b.WriteString("PRODID:-//chroncal//tests//EN\r\n")
+	b.WriteString("BEGIN:VEVENT\r\n")
+	b.WriteString("UID:oversized\r\n")
+	b.WriteString("DTSTAMP:20260403T100000Z\r\n")
+	b.WriteString("DTSTART:20260403T100000Z\r\n")
+	b.WriteString("DTEND:20260403T110000Z\r\n")
+	b.WriteString("SUMMARY:")
+	b.WriteString(strings.Repeat("A", size))
+	b.WriteString("\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+	return b.String()
+}
+
+func TestClientGetResourceRejectsOversizedResponseBody(t *testing.T) {
+	t.Parallel()
+
+	client, err := NewClient(putTestHTTPClient{do: func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodGet {
+			t.Fatalf("method = %s, want GET", req.Method)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": []string{"text/calendar; charset=utf-8"}},
+			Body:       io.NopCloser(strings.NewReader(oversizedCalendarData(9 << 20))),
+			Request:    req,
+		}, nil
+	}}, "https://example.com")
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	if _, err := client.GetResource(context.Background(), "/calendar/oversized.ics"); err == nil {
+		t.Fatal("GetResource err = nil, want response size failure")
+	}
+}
+
+func TestClientQueryAllRejectsOversizedResponseBody(t *testing.T) {
+	t.Parallel()
+
+	client, err := NewClient(putTestHTTPClient{do: func(req *http.Request) (*http.Response, error) {
+		if req.Method != "REPORT" {
+			t.Fatalf("method = %s, want REPORT", req.Method)
+		}
+		body := `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/calendar/oversized.ics</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>&quot;etag-large&quot;</d:getetag>
+        <cal:calendar-data>` + oversizedCalendarData(9<<20) + `</cal:calendar-data>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`
+		return &http.Response{
+			StatusCode: http.StatusMultiStatus,
+			Status:     "207 Multi-Status",
+			Header:     http.Header{"Content-Type": []string{"application/xml"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	}}, "https://example.com")
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	if _, err := client.QueryAll(context.Background(), "/calendar/"); err == nil {
+		t.Fatal("QueryAll err = nil, want response size failure")
+	}
+}
