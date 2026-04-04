@@ -27,6 +27,13 @@ func freebusyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "freebusy",
 		Short: "Compute or query busy time for a calendar range",
+		Long: `Return busy periods for a time range.
+
+By default this computes free/busy from local data. With --remote, it
+queries the linked remote CalDAV calendar instead.`,
+		Example: `  chroncal freebusy --from 2026-04-01 --to 2026-04-07
+  chroncal freebusy --calendar Work --from 2026-04-01T09:00:00-03:00 --to 2026-04-01T18:00:00-03:00
+  chroncal freebusy --calendar Work --remote --from 2026-04-01 --to 2026-04-07 --format ical`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			from, err := parseFreeBusyTime(fromStr)
 			if err != nil {

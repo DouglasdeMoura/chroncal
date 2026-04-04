@@ -20,6 +20,12 @@ func icalCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ical",
 		Short: "Import and export iCal (.ics) files",
+		Long: `Move data between chroncal and standard iCalendar (.ics) files.
+
+Import accepts VEVENT, VTODO, and VJOURNAL components. Export can emit
+any combination of those resource types.`,
+		Example: `  chroncal ical import ./calendar.ics
+  chroncal ical export --calendar Work --file work.ics`,
 	}
 	cmd.AddCommand(icalImportCmd(), icalExportCmd())
 	return cmd
@@ -32,7 +38,15 @@ func icalImportCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "import <file.ics>",
 		Short: "Import events, todos, and journal entries from an iCal (.ics) file",
-		Args:  cobra.ExactArgs(1),
+		Long: `Read an .ics file and upsert its events, todos, and journal entries
+into a local calendar.
+
+Entries are matched by UID when possible, so importing the same file
+again updates existing items instead of blindly duplicating them.`,
+		Example: `  chroncal ical import ./calendar.ics
+  chroncal ical import ./team.ics --calendar Work
+  chroncal ical import ./dump.ics --output json`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -273,6 +287,14 @@ func icalExportCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "export",
 		Short: "Export events, todos, and journal entries to iCal (.ics) format",
+		Long: `Export local data as iCalendar (.ics).
+
+Without --events, --todos, or --journals, all supported entry types are
+included. Use --file to write a file, or omit it to print the .ics data
+to stdout.`,
+		Example: `  chroncal ical export --calendar Work --file work.ics
+  chroncal ical export --events --from 2026-04-01 --to 2026-04-30
+  chroncal ical export --todos --category release`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {

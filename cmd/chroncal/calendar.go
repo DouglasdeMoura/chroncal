@@ -15,7 +15,14 @@ func calendarCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "calendar",
 		Aliases: []string{"cal"},
-		Short:   "Manage calendars",
+		Short:   "Manage local calendars",
+		Long: `Create and organize local calendars.
+
+Calendars can stay local-only, or they can be linked to a remote CalDAV
+calendar for sync.`,
+		Example: `  chroncal calendar list
+  chroncal calendar create "Work"
+  chroncal calendar link Work --account work --remote-url https://cal.example.com/dav/calendars/work/`,
 	}
 	cmd.AddCommand(
 		calendarListCmd(),
@@ -33,6 +40,9 @@ func calendarListCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List all calendars",
+		Long:  `Show the local calendars available in your chroncal database.`,
+		Example: `  chroncal calendar list
+  chroncal calendar list --output json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -64,7 +74,10 @@ func calendarGetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get <id>",
 		Short: "Get calendar details by ID",
-		Args:  cobra.ExactArgs(1),
+		Long:  `Show one calendar, including its metadata and sync link details.`,
+		Example: `  chroncal calendar get 1
+  chroncal calendar get 1 --output json`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -101,7 +114,13 @@ func calendarCreateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   `create "<name>"`,
 		Short: "Create a new calendar",
-		Args:  cobra.ExactArgs(1),
+		Long: `Create a local calendar for events, todos, and journal entries.
+
+The default color is only a presentation hint; it does not affect sync
+behavior.`,
+		Example: `  chroncal calendar create "Work"
+  chroncal calendar create "Family" --color "#0F766E" --description "Shared family schedule"`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if strings.TrimSpace(args[0]) == "" {
 				return fmt.Errorf("calendar name must not be empty")
@@ -140,7 +159,12 @@ func calendarUpdateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "update <id>",
 		Short: "Update an existing calendar",
-		Args:  cobra.ExactArgs(1),
+		Long: `Update a local calendar's name, color, or description.
+
+Only the flags you pass are changed.`,
+		Example: `  chroncal calendar update 1 --name "Deep Work"
+  chroncal calendar update 1 --color "#2563EB" --description "Focus blocks and deadlines"`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -193,7 +217,12 @@ func calendarDeleteCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "delete <id>",
 		Short: "Delete a calendar",
-		Args:  cobra.ExactArgs(1),
+		Long: `Delete a local calendar by numeric ID.
+
+Use "chroncal calendar list" first if you need to confirm the ID.`,
+		Example: `  chroncal calendar delete 3
+  chroncal calendar delete 3 --output json`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -229,7 +258,12 @@ func calendarLinkCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "link <id|name>",
 		Short: "Link a local calendar to a remote CalDAV calendar",
-		Args:  cobra.ExactArgs(1),
+		Long: `Attach a local calendar to a specific remote CalDAV calendar so it
+can participate in sync.`,
+		Example: `  chroncal calendar link Work \
+    --account work \
+    --remote-url https://cal.example.com/dav/calendars/work/`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if strings.TrimSpace(accountRef) == "" {
 				return fmt.Errorf("--account is required")
@@ -276,7 +310,11 @@ func calendarUnlinkCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "unlink <id|name>",
 		Short: "Remove the remote CalDAV link from a local calendar",
-		Args:  cobra.ExactArgs(1),
+		Long: `Detach a local calendar from its remote CalDAV link without deleting
+the local calendar itself.`,
+		Example: `  chroncal calendar unlink Work
+  chroncal calendar unlink 2`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {

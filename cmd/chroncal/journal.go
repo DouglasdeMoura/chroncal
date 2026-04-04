@@ -17,6 +17,14 @@ func journalCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "journal",
 		Short: "Manage journal entries",
+		Long: `Create and manage journal entries such as notes, logs, and dated
+records.
+
+Journal entries can be recurring and can carry categories, attachments,
+contacts, attendees, and related-item metadata.`,
+		Example: `  chroncal journal list
+  chroncal journal add "Sprint retro" --date 2026-04-01
+  chroncal journal search retro`,
 	}
 	cmd.AddCommand(journalListCmd(), journalGetCmd(), journalAddCmd(), journalUpdateCmd(), journalDeleteCmd(), journalSearchCmd())
 	return cmd
@@ -33,6 +41,13 @@ func journalListCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List journal entries",
+		Long: `List journal entries in a date window.
+
+Use --status when you want to narrow the list to DRAFT, FINAL, or
+CANCELLED entries.`,
+		Example: `  chroncal journal list
+  chroncal journal list --calendar Work --from 2026-04-01 --to 2026-04-30
+  chroncal journal list --status DRAFT --output json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -56,7 +71,6 @@ func journalListCmd() *cobra.Command {
 
 			filterStatus := status
 			if !all && status == "" {
-				// By default show only FINAL entries; --all shows everything
 				filterStatus = ""
 			}
 
@@ -80,9 +94,9 @@ func journalListCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "filter by calendar name")
 	cmd.Flags().StringVar(&status, "status", "", "filter by status (DRAFT, FINAL, CANCELLED)")
-	cmd.Flags().BoolVar(&all, "all", false, "include all statuses")
-	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD)")
-	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD)")
+	cmd.Flags().BoolVar(&all, "all", false, "include draft, final, and cancelled entries together")
+	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD, default: today)")
+	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 14 days from now)")
 	return cmd
 }
 
@@ -91,7 +105,14 @@ func journalGetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get <id|uid>",
 		Short: "Get journal entry details by ID or UID",
-		Args:  cobra.ExactArgs(1),
+		Long: `Show one journal entry in detail.
+
+You can look it up by numeric ID or UID. Use --recurrence-id to target a
+specific overridden instance from a recurring series.`,
+		Example: `  chroncal journal get 12
+  chroncal journal get weekly-review-uid
+  chroncal journal get weekly-review-uid --recurrence-id 2026-04-10T00:00:00Z --output json`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -574,7 +595,12 @@ func journalDeleteCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "delete <id|uid>",
 		Short: "Delete a journal entry",
-		Args:  cobra.ExactArgs(1),
+		Long: `Delete a single journal entry, a specific recurring override, or an
+entire recurring series.`,
+		Example: `  chroncal journal delete 12
+  chroncal journal delete weekly-review-uid --recurrence-id 2026-04-10T00:00:00Z
+  chroncal journal delete weekly-review-uid --series`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -629,7 +655,12 @@ func journalSearchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Search journal entries by summary, description, or categories",
-		Args:  cobra.ExactArgs(1),
+		Long: `Search journal entries by text fields such as summary,
+description, and categories.`,
+		Example: `  chroncal journal search retro
+  chroncal journal search architecture --calendar Work
+  chroncal journal search research --status DRAFT --output json`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {

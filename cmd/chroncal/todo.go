@@ -18,6 +18,13 @@ func todoCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "todo",
 		Short: "Manage todos",
+		Long: `Create, organize, and complete tasks stored in chroncal.
+
+Todos support due dates, start dates, progress, recurrence, alarms, and
+the same calendar organization model used by events.`,
+		Example: `  chroncal todo list
+  chroncal todo add "Ship release" --due 2026-04-15
+  chroncal todo complete 7`,
 	}
 	cmd.AddCommand(todoListCmd(), todoGetCmd(), todoAddCmd(), todoUpdateCmd(), todoDeleteCmd(), todoCompleteCmd(), todoSearchCmd())
 	return cmd
@@ -34,6 +41,13 @@ func todoListCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List todos (incomplete by default)",
+		Long: `List todos in a date window.
+
+By default completed and cancelled todos are hidden unless you pass
+--all or filter explicitly with --status.`,
+		Example: `  chroncal todo list
+  chroncal todo list --all
+  chroncal todo list --calendar Work --from 2026-04-01 --to 2026-04-30 --output json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -77,8 +91,8 @@ func todoListCmd() *cobra.Command {
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "filter by calendar name")
 	cmd.Flags().StringVar(&status, "status", "", "filter by status (NEEDS-ACTION, IN-PROCESS, COMPLETED, CANCELLED)")
 	cmd.Flags().BoolVar(&all, "all", false, "include completed and cancelled")
-	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD)")
-	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD)")
+	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD, default: today)")
+	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 14 days from now)")
 	return cmd
 }
 
@@ -92,7 +106,12 @@ func todoSearchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Search todos by summary, description, location, or categories",
-		Args:  cobra.ExactArgs(1),
+		Long: `Search todos by text fields such as summary, description, location,
+and categories.`,
+		Example: `  chroncal todo search release
+  chroncal todo search invoice --completed
+  chroncal todo search onboarding --calendar Work --status IN-PROCESS`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -146,7 +165,14 @@ func todoGetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get <id|uid>",
 		Short: "Get todo details by ID or UID",
-		Args:  cobra.ExactArgs(1),
+		Long: `Show one todo in detail.
+
+You can look it up by numeric ID or UID. Use --recurrence-id to target a
+specific overridden instance from a recurring series.`,
+		Example: `  chroncal todo get 7
+  chroncal todo get weekly-review-uid
+  chroncal todo get weekly-review-uid --recurrence-id 2026-04-10T00:00:00Z --output json`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -845,7 +871,11 @@ func todoCompleteCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "complete <id|uid>",
 		Short: "Mark a todo as completed",
-		Args:  cobra.ExactArgs(1),
+		Long: `Mark a todo as completed, set its completion timestamp, and update
+its progress to 100%.`,
+		Example: `  chroncal todo complete 7
+  chroncal todo complete weekly-review-uid --recurrence-id 2026-04-10T00:00:00Z`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -884,7 +914,12 @@ func todoDeleteCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "delete <id|uid>",
 		Short: "Delete a todo",
-		Args:  cobra.ExactArgs(1),
+		Long: `Delete a single todo, a specific recurring override, or an entire
+recurring series.`,
+		Example: `  chroncal todo delete 7
+  chroncal todo delete weekly-review-uid --recurrence-id 2026-04-10T00:00:00Z
+  chroncal todo delete weekly-review-uid --series`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -930,4 +965,3 @@ func todoDeleteCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&series, "series", false, "delete the entire recurring series (master + all overrides)")
 	return cmd
 }
-

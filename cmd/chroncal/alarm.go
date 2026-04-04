@@ -76,6 +76,10 @@ The alarm lifecycle is:
 
 For continuous monitoring, use "chroncal alarm daemon" or a systemd timer / cron job
 that runs "chroncal alarm check" on an interval.`,
+		Example: `  chroncal alarm check
+  chroncal alarm list
+  chroncal alarm snooze 12 --for 10m
+  chroncal alarm daemon`,
 	}
 	cmd.AddCommand(alarmCheckCmd(), alarmListCmd(), alarmDismissCmd(), alarmSnoozeCmd(), alarmDaemonCmd(), alarmMissedCmd())
 	return cmd
@@ -763,6 +767,9 @@ func alarmMissedCmd() *cobra.Command {
 		Long: `List alarms that would have fired in the lookback window but were
 never acknowledged. These are alarms that were skipped because the
 system was not running when they became due.`,
+		Example: `  chroncal alarm missed
+  chroncal alarm missed --days 3
+  chroncal alarm missed --days 14 --output json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {

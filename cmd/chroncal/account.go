@@ -18,7 +18,18 @@ import (
 func accountCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "account",
-		Short: "Manage CalDAV accounts",
+		Short: "Manage CalDAV accounts used for sync",
+		Long: `Add and manage CalDAV accounts that chroncal can use for discovery
+and sync.
+
+Typical flow:
+  1. chroncal account add ...
+  2. chroncal account discover ...
+  3. chroncal calendar link ...
+  4. chroncal sync run`,
+		Example: `  chroncal account add work --server https://cal.example.com/dav --username alice
+  chroncal account list
+  chroncal account discover work`,
 	}
 	cmd.AddCommand(accountAddCmd(), accountListCmd(), accountRemoveCmd(), accountDiscoverCmd())
 	return cmd
@@ -37,7 +48,21 @@ func accountAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add <name>",
 		Short: "Add a CalDAV account",
-		Args:  cobra.ExactArgs(1),
+		Long: `Create a named CalDAV account and store the credentials chroncal
+needs for sync and remote discovery.
+
+Use HTTPS for normal deployments. --allow-insecure exists only for local
+development or trusted test environments.`,
+		Example: `  chroncal account add work \
+    --server https://cal.example.com/dav \
+    --username alice
+
+  chroncal account add google \
+    --server https://apidata.googleusercontent.com/caldav/v2 \
+    --auth oauth2 \
+    --oauth-client-id your-client-id \
+    --oauth-client-secret your-client-secret`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 
@@ -130,6 +155,9 @@ func accountListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List all accounts",
+		Long:  `Show the configured CalDAV accounts chroncal knows about.`,
+		Example: `  chroncal account list
+  chroncal account list --output json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -159,7 +187,13 @@ func accountRemoveCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "remove <name|id>",
 		Short: "Remove an account",
-		Args:  cobra.ExactArgs(1),
+		Long: `Delete a configured CalDAV account.
+
+This removes the account record and attempts to remove any stored
+credentials for it.`,
+		Example: `  chroncal account remove work
+  chroncal account remove 2`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -194,7 +228,14 @@ func accountDiscoverCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "discover <name|id>",
 		Short: "Discover remote calendars on an account",
-		Args:  cobra.ExactArgs(1),
+		Long: `Connect to a configured CalDAV account and list the calendars that
+server exposes.
+
+Use the discovered remote URL with "chroncal calendar link" to connect a
+local calendar to a remote one.`,
+		Example: `  chroncal account discover work
+  chroncal account discover 2`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -263,4 +304,3 @@ func resolveAccount(ctx context.Context, q *storage.Queries, ref string) (storag
 	}
 	return account, nil
 }
-

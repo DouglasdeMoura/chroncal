@@ -16,7 +16,12 @@ import (
 func syncCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sync",
-		Short: "Sync calendars with CalDAV servers",
+		Short: "Sync linked calendars with CalDAV servers",
+		Long: `Run manual sync operations, inspect sync state, and resolve
+conflicts for calendars linked to remote CalDAV accounts.`,
+		Example: `  chroncal sync run
+  chroncal sync status
+  chroncal sync conflicts`,
 	}
 	cmd.AddCommand(syncRunCmd(), syncStatusCmd(), syncConflictsCmd(), syncResolveCmd(), syncResetCmd())
 	return cmd
@@ -30,6 +35,13 @@ func syncRunCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Run sync for one or all linked calendars",
+		Long: `Push local changes and pull remote changes for linked calendars.
+
+By default every linked calendar is synced. Use --calendar to limit the
+run to a single local calendar.`,
+		Example: `  chroncal sync run
+  chroncal sync run --calendar Work
+  chroncal sync run --conflict prompt`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -94,6 +106,10 @@ func syncStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Show sync status for all linked calendars",
+		Long: `Show the last sync times, pending work, conflicts, and last error
+for each linked calendar.`,
+		Example: `  chroncal sync status
+  chroncal sync status --output json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -139,6 +155,9 @@ func syncConflictsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "conflicts",
 		Short: "List unresolved sync conflicts",
+		Long:  `List conflicts that need an explicit local-or-server decision.`,
+		Example: `  chroncal sync conflicts
+  chroncal sync conflicts --output json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -173,7 +192,12 @@ func syncResolveCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "resolve <id>",
 		Short: "Resolve a sync conflict",
-		Args:  cobra.ExactArgs(1),
+		Long: `Resolve a listed sync conflict by choosing which version wins.
+
+Use "chroncal sync conflicts" first to find the conflict ID.`,
+		Example: `  chroncal sync resolve 12 --pick local
+  chroncal sync resolve 12 --pick server`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := strconv.ParseInt(args[0], 10, 64)
 			if err != nil {
@@ -207,6 +231,12 @@ func syncResetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reset",
 		Short: "Clear sync state and force a full re-sync",
+		Long: `Forget stored sync cursors and conflict state so chroncal performs
+a fresh sync on the next run.
+
+This does not delete your local calendars or entries.`,
+		Example: `  chroncal sync reset
+  chroncal sync reset --calendar Work`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {

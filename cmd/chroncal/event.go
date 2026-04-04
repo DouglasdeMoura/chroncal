@@ -23,6 +23,13 @@ func eventCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "event",
 		Short: "Manage events",
+		Long: `Create, search, inspect, update, and delete calendar events.
+
+Events may be one-time or recurring, all-day or timed, and can include
+alarms, attendees, attachments, and other iCalendar metadata.`,
+		Example: `  chroncal event list
+  chroncal event add "Demo" --date 2026-04-10 --time 14:00 --duration 1h
+  chroncal event get 42`,
 	}
 	cmd.AddCommand(eventListCmd(), eventGetCmd(), eventAddCmd(), eventUpdateCmd(), eventDeleteCmd(), eventSearchCmd())
 	return cmd
@@ -38,6 +45,13 @@ func eventListCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List events in a date range",
+		Long: `List events in a date range, expanding recurring series into the
+instances that fall inside the requested window.
+
+Without flags, the window defaults to today through the next 14 days.`,
+		Example: `  chroncal event list
+  chroncal event list --calendar Work --from 2026-04-01 --to 2026-04-07
+  chroncal event list --status CONFIRMED --output json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -98,7 +112,15 @@ func eventSearchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Search events by title, description, location, or categories",
-		Args:  cobra.ExactArgs(1),
+		Long: `Search events by text fields such as title, description, location,
+and categories.
+
+Use --from and --to to narrow the search window when you already know
+roughly when the event occurred.`,
+		Example: `  chroncal event search standup
+  chroncal event search deploy --calendar Work --status CONFIRMED
+  chroncal event search conference --from 2026-04-01T00:00:00Z --to 2026-05-01T00:00:00Z`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -150,7 +172,15 @@ func eventGetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get <id|uid>",
 		Short: "Get event details by ID or UID",
-		Args:  cobra.ExactArgs(1),
+		Long: `Show one event in detail.
+
+You can look up the event by numeric ID or by its UID. Use
+--recurrence-id to target a specific overridden instance from a
+recurring series.`,
+		Example: `  chroncal event get 42
+  chroncal event get 6d7d8c3b-uid
+  chroncal event get team-standup-uid --recurrence-id 2026-04-06T12:00:00Z --output json`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -559,7 +589,15 @@ func eventUpdateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "update <id|uid>",
 		Short: "Update an existing event",
-		Args:  cobra.ExactArgs(1),
+		Long: `Update an existing event by numeric ID or UID.
+
+Only the flags you pass are changed; other fields keep their current
+values. Repeatable flags such as --alarm, --attendee, --resource, and
+--related-to replace the full existing set when specified.`,
+		Example: `  chroncal event update 42 --title "Demo with customer"
+  chroncal event update release-meeting --date 2026-04-11 --time 15:00
+  chroncal event update standup-uid --recurrence-id 2026-04-07T12:00:00Z --location "Room 4B"`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -889,7 +927,12 @@ func eventDeleteCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "delete <id|uid>",
 		Short: "Delete an event",
-		Args:  cobra.ExactArgs(1),
+		Long: `Delete a single event, a specific recurring override, or an entire
+recurring series.`,
+		Example: `  chroncal event delete 42
+  chroncal event delete standup-uid --recurrence-id 2026-04-07T12:00:00Z
+  chroncal event delete standup-uid --series`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {

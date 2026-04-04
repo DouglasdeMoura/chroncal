@@ -74,6 +74,14 @@ func serviceCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "service",
 		Short: "Manage alarm notification service",
+		Long: `Install or inspect the background service that runs "chroncal tick"
+on a schedule.
+
+On Linux this uses user-level systemd units. On macOS it uses a
+LaunchAgent.`,
+		Example: `  chroncal service install
+  chroncal service status
+  chroncal service uninstall`,
 	}
 	cmd.AddCommand(serviceInstallCmd(), serviceUninstallCmd(), serviceStatusCmd())
 	return cmd
@@ -108,6 +116,13 @@ func serviceInstallCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "install",
 		Short: "Install alarm notification service for the current OS",
+		Long: `Install the native background service that runs chroncal on a
+schedule.
+
+The installed service runs "chroncal tick", which checks alarms every
+minute and also runs sync work when the configured sync interval is due.`,
+		Example: `  chroncal service install
+  chroncal service install --sync-interval 15m`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			w := cmd.OutOrStdout()
 			binPath, err := resolveBinaryPath()
@@ -229,8 +244,10 @@ func installDarwinService(ctx context.Context, w interface{ Write([]byte) (int, 
 
 func serviceUninstallCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "uninstall",
-		Short: "Uninstall alarm notification service",
+		Use:     "uninstall",
+		Short:   "Uninstall alarm notification service",
+		Long:    `Remove the native background service that was installed by "chroncal service install".`,
+		Example: `  chroncal service uninstall`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			w := cmd.OutOrStdout()
 
@@ -298,6 +315,11 @@ func serviceStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show alarm service status",
+		Long: `Show the native background service status for the current OS.
+
+On Linux this proxies "systemctl --user status chroncal-alarm.timer".
+On macOS it proxies "launchctl list com.chroncal.alarm".`,
+		Example: `  chroncal service status`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			w := cmd.OutOrStdout()
 
