@@ -250,7 +250,7 @@ func TestResolveLocalAudioPath(t *testing.T) {
 	}
 }
 
-func TestEmail_DisabledByDefault(t *testing.T) {
+func TestEmail_RequiresSMTPConfig(t *testing.T) {
 	da := alarm.DueAlarm{
 		Event: event.Event{Title: "Test Event"},
 		Alarm: model.Alarm{
@@ -262,14 +262,13 @@ func TestEmail_DisabledByDefault(t *testing.T) {
 	}
 
 	err := Email(da, config.SMTPConfig{
-		Host: "smtp.example.com",
 		Port: 587,
 		From: "sender@example.com",
 	})
 	if err == nil {
-		t.Fatal("Email err = nil, want disabled error")
+		t.Fatal("Email err = nil, want SMTP configuration error")
 	}
-	if !strings.Contains(strings.ToLower(err.Error()), "disabled") {
-		t.Fatalf("Email err = %q, want disabled message", err)
+	if !strings.Contains(strings.ToLower(err.Error()), "smtp not configured") {
+		t.Fatalf("Email err = %q, want SMTP configuration message", err)
 	}
 }

@@ -101,7 +101,7 @@ skipped to avoid a flood of stale notifications after downtime.
 Notification types depend on the alarm action set on the event:
   DISPLAY  — desktop notification (default)
   AUDIO    — desktop notification + system alert sound
-  EMAIL    — email via SMTP when explicitly enabled (falls back to DISPLAY otherwise)
+  EMAIL    — email via SMTP when configured (falls back to DISPLAY otherwise)
 
 To enable EMAIL notifications, configure SMTP via environment variables:
   CHRONCAL_SMTP_HOST       SMTP server hostname (required)
@@ -109,7 +109,6 @@ To enable EMAIL notifications, configure SMTP via environment variables:
   CHRONCAL_SMTP_USERNAME   SMTP authentication username
   CHRONCAL_SMTP_PASSWORD   SMTP authentication password
   CHRONCAL_SMTP_FROM       sender address for alarm emails
-  CHRONCAL_SMTP_ENABLE_ALARM_ACTIONS=true
 
 Or in the config file ($XDG_CONFIG_HOME/chroncal/config.toml):
   [smtp]
@@ -118,7 +117,6 @@ Or in the config file ($XDG_CONFIG_HOME/chroncal/config.toml):
   username = "user@example.com"
   password = "app-password"
   from = "noreply@example.com"
-  enable_alarm_actions = true
 
 Environment variables override config file values.
 

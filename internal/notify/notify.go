@@ -100,8 +100,8 @@ func resolveLocalAudioPath(uri string) string {
 }
 
 const (
-	linuxSystemSound  = "/usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga"
-	darwinSystemSound = "/System/Library/Sounds/Glass.aiff"
+	linuxSystemSound     = "/usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga"
+	darwinSystemSound    = "/System/Library/Sounds/Glass.aiff"
 	audioPlaybackTimeout = 5 * time.Second
 )
 
@@ -156,9 +156,6 @@ func playSystemSound() error {
 // It sends to the alarm's attendees using the provided SMTP configuration.
 // Returns an error if no attendees are configured or SMTP is not configured.
 func Email(da alarm.DueAlarm, smtpCfg config.SMTPConfig) error {
-	if !smtpCfg.EnableAlarmActions {
-		return fmt.Errorf("EMAIL alarm actions are disabled")
-	}
 	if smtpCfg.Host == "" {
 		return fmt.Errorf("SMTP not configured")
 	}

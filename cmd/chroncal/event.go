@@ -1128,10 +1128,15 @@ func parseAttendeeFlags(flags []string) []model.Attendee {
 // Absolute RFC 3339 triggers do not support additional fields.
 func parseAlarmFlags(flags []string) ([]model.Alarm, error) {
 	var out []model.Alarm
+	warnedMissingSMTP := false
 	for _, val := range flags {
 		a, err := parseOneAlarm(val)
 		if err != nil {
 			return nil, err
+		}
+		if a.Action == "EMAIL" && !warnedMissingSMTP && !smtpConfiguredForEmailAlarms() {
+			fmt.Fprintf(os.Stderr, "chroncal: warning: EMAIL alarm added without SMTP configuration (set CHRONCAL_SMTP_HOST or [smtp].host); alarm will behave as DISPLAY until SMTP is configured\n")
+			warnedMissingSMTP = true
 		}
 		if a.Action == "EMAIL" && len(a.Attendees) == 0 {
 			fmt.Fprintf(os.Stderr, "chroncal: warning: EMAIL alarm has no attendees (RFC 5545 requires at least one; alarm will behave as DISPLAY)\n")
@@ -1139,6 +1144,10 @@ func parseAlarmFlags(flags []string) ([]model.Alarm, error) {
 		out = append(out, a)
 	}
 	return out, nil
+}
+
+func smtpConfiguredForEmailAlarms() bool {
+	return strings.TrimSpace(cfg.SMTP.Host) != ""
 }
 
 func parseOneAlarm(val string) (model.Alarm, error) {

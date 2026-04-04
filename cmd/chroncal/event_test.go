@@ -1,6 +1,13 @@
 package main
 
-import "testing"
+import (
+	"io"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/douglasdemoura/chroncal/internal/config"
+)
 
 func TestValidateRRule(t *testing.T) {
 	tests := []struct {
@@ -186,4 +193,67 @@ func TestValidateAlarmTrigger(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParseAlarmFlags_WarnsWhenEmailAlarmAddedWithoutSMTP(t *testing.T) {
+	oldCfg := cfg
+	cfg = config.Config{}
+	t.Cleanup(func() { cfg = oldCfg })
+
+	stderr := captureStderr(t, func() {
+		alarms, err := parseAlarmFlags([]string{"EMAIL:-PT1H:::::user@example.com"})
+		if err != nil {
+			t.Fatalf("parseAlarmFlags() error = %v", err)
+		}
+		if len(alarms) != 1 {
+			t.Fatalf("parseAlarmFlags() returned %d alarms, want 1", len(alarms))
+		}
+	})
+
+	if !strings.Contains(stderr, "EMAIL alarm added without SMTP configuration") {
+		t.Fatalf("stderr = %q, want missing SMTP warning", stderr)
+	}
+}
+
+func TestParseAlarmFlags_DoesNotWarnWhenSMTPConfigured(t *testing.T) {
+	oldCfg := cfg
+	cfg = config.Config{SMTP: config.SMTPConfig{Host: "smtp.example.com"}}
+	t.Cleanup(func() { cfg = oldCfg })
+
+	stderr := captureStderr(t, func() {
+		_, err := parseAlarmFlags([]string{"EMAIL:-PT1H:::::user@example.com"})
+		if err != nil {
+			t.Fatalf("parseAlarmFlags() error = %v", err)
+		}
+	})
+
+	if strings.Contains(stderr, "EMAIL alarm added without SMTP configuration") {
+		t.Fatalf("stderr = %q, want no missing SMTP warning", stderr)
+	}
+}
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stderr = w
+	defer func() { os.Stderr = oldStderr }()
+
+	fn()
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("close stderr writer: %v", err)
+	}
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read stderr: %v", err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatalf("close stderr reader: %v", err)
+	}
+	return string(out)
 }
