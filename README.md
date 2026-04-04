@@ -6,7 +6,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/douglasdemoura/chroncal)](https://goreportcard.com/report/github.com/douglasdemoura/chroncal)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A terminal calendar backed by SQLite with full iCal import/export. Launch the TUI for an interactive calendar, or use the CLI for scriptable access to events, todos, alarms, and calendars.
+A terminal calendar backed by SQLite with full iCal import/export and CalDAV sync. Launch the TUI for an interactive calendar, or use the CLI for scriptable access to events, todos, journals, alarms, free/busy queries, and calendars.
 
 Built for people who live in the terminal and want their calendar data local, portable, and standards-compliant.
 
@@ -14,11 +14,14 @@ Built for people who live in the terminal and want their calendar data local, po
 
 - **Interactive TUI** with month, week, day, and agenda views
 - **Full CLI** for scripting and automation
-- **iCal import/export** with near-complete RFC 5545 coverage (VEVENT, VTODO, VALARM, VTIMEZONE)
+- **iCal import/export** with broad RFC 5545 coverage (VEVENT, VTODO, VJOURNAL, VALARM, VTIMEZONE)
+- **CalDAV sync** with account discovery, linked calendars, conflict handling, and sync status
+- **Free/busy queries** from local data or remote CalDAV `VFREEBUSY` reports
 - **Recurring events and todos** via RRULE, RDATE, and EXDATE
+- **Recurring journals** via RRULE, RDATE, and EXDATE
 - **Alarm notifications** with desktop alerts, sound, and email
 - **Multiple calendars** with color coding
-- **Full-text search** across events and todos
+- **Full-text search** across events, todos, and journals
 - **Attendees, attachments, comments, contacts, resources, and relations**
 - **SQLite storage** with automatic migrations
 - **Cross-platform** (Linux, macOS, Windows)
@@ -61,6 +64,9 @@ chroncal event add "Weekly review" --date 2026-04-04 --time 14:00 --duration 1h 
 # Add a todo
 chroncal todo add "Write quarterly report" --due 2026-04-15 --priority 1
 
+# Add a journal entry
+chroncal journal add "Weekly notes" --date 2026-04-04 --calendar Work
+
 # List upcoming events
 chroncal event list --from 2026-04-01 --to 2026-04-30
 
@@ -72,6 +78,17 @@ chroncal ical import calendar.ics --calendar Work
 
 # Export to iCal
 chroncal ical export --calendar Work -f work.ics
+
+# Discover and link a remote CalDAV calendar after adding an account
+chroncal account discover "Google Work"
+chroncal calendar link "Work" --account "Google Work" --remote-url /remote/calendar/path/
+
+# Run sync and inspect status
+chroncal sync run --calendar Work
+chroncal sync status
+
+# Compute local free/busy for a range
+chroncal freebusy --calendar Work --from 2026-04-01 --to 2026-04-30
 ```
 
 ## CLI reference
@@ -103,13 +120,28 @@ chroncal todo delete    <id|uid> [--recurrence-id ID]
 
 Todo flags: `--due`, `--start`, `--duration`, `--location`, `--description`, `--calendar`, `--status`, `--progress`, `--class`, `--priority`, `--url`, `--categories`, `--geo`, `--rrule`, `--exdate`, `--rdate`, `--attach`, `--alarm`, `--attendee`, `--organizer`, `--contact`, `--resource`, `--comment`, `--related-to`
 
+### Journals
+
+```
+chroncal journal list    [--from DATE] [--to DATE] [--calendar NAME] [--status STATUS] [--all]
+chroncal journal get     <id|uid> [--recurrence-id ID]
+chroncal journal search  <query> [--calendar NAME] [--from DATE] [--to DATE] [--status STATUS]
+chroncal journal add     "<summary>" [flags]
+chroncal journal update  <id|uid> [flags] [--recurrence-id ID]
+chroncal journal delete  <id|uid> [--recurrence-id ID]
+```
+
+Journal flags: `--date`, `--description`, `--calendar`, `--status`, `--class`, `--url`, `--categories`, `--rrule`, `--exdate`, `--rdate`, `--attach`, `--attendee`, `--organizer`, `--contact`, `--comment`, `--related-to`
+
 ### Calendars
 
 ```
 chroncal calendar list
 chroncal calendar get     <id>
 chroncal calendar create  "<name>" [--color HEX] [--description TEXT]
+chroncal calendar link    <id|name> --account <id|name> --remote-url <href>
 chroncal calendar update  <id> [--name NAME] [--color HEX] [--description TEXT]
+chroncal calendar unlink  <id|name>
 chroncal calendar delete  <id>
 ```
 
@@ -117,8 +149,72 @@ chroncal calendar delete  <id>
 
 ```
 chroncal ical import  <file.ics> [--calendar NAME]
-chroncal ical export  [--calendar NAME] [--from DATE] [--to DATE] [--category TEXT] [--status TEXT] [-f FILE] [--events] [--todos]
+chroncal ical export  [--calendar NAME] [--from DATE] [--to DATE] [--category TEXT] [--status TEXT] [-f FILE] [--events] [--todos] [--journals]
 ```
+
+### CalDAV accounts and sync
+
+```
+chroncal account add       "<name>" [flags]
+chroncal account discover  <name|id>
+chroncal account list
+chroncal account remove    <name|id>
+
+chroncal sync run          [--calendar NAME] [--conflict MODE]
+chroncal sync status
+chroncal sync conflicts
+chroncal sync resolve      <id> --pick {local,server}
+chroncal sync reset        [--calendar NAME]
+```
+
+`chroncal account discover` lists remote calendars and their supported component sets. Link a local calendar to one of those remote hrefs with `chroncal calendar link` before running sync.
+
+### Google Calendar via CalDAV
+
+Google Calendar requires OAuth 2.0 and only exposes `VEVENT` over CalDAV.
+
+1. Create a desktop OAuth client in the [Google Cloud Console](https://console.cloud.google.com/).
+2. Enable the Google Calendar API for that project.
+3. Add the account:
+
+```bash
+chroncal account add "Google Work" \
+  --server https://apidata.googleusercontent.com/caldav/v2 \
+  --auth oauth2 \
+  --oauth-client-id "YOUR_CLIENT_ID.apps.googleusercontent.com" \
+  --oauth-client-secret "YOUR_SECRET" \
+  --allow-plaintext
+```
+
+4. Discover remote calendars and link one to a local calendar:
+
+```bash
+chroncal account discover "Google Work"
+chroncal calendar create "Work"
+chroncal calendar link "Work" \
+  --account "Google Work" \
+  --remote-url /caldav/v2/YOUR_CALENDAR_ID/events/
+```
+
+5. Run sync and inspect status:
+
+```bash
+chroncal sync run --calendar "Work"
+chroncal sync status
+```
+
+Google limitations:
+
+- Google CalDAV only supports `VEVENT`. Use Nextcloud, Radicale, or Fastmail for `VTODO` and `VJOURNAL`.
+- Google does not support `sync-collection` REPORT, so chroncal falls back to ctag + ETag comparison.
+
+### Free/busy
+
+```
+chroncal freebusy --calendar NAME --from DATE_OR_RFC3339 --to DATE_OR_RFC3339 [--remote] [--format {text,ical}]
+```
+
+Without `--remote`, `freebusy` computes busy time from local recurring data. With `--remote`, it sends a CalDAV free-busy report to the linked remote calendar.
 
 ### Alarms
 
@@ -182,6 +278,14 @@ from = "you@example.com"
 
 Or via environment: `CHRONCAL_SMTP_HOST`, `CHRONCAL_SMTP_PORT`, `CHRONCAL_SMTP_USERNAME`, `CHRONCAL_SMTP_PASSWORD`, `CHRONCAL_SMTP_FROM`.
 
+### Desktop notification backends
+
+`chroncal alarm check` records fired alarms even in headless environments, but
+`DISPLAY` and `AUDIO` notifications still need an OS notification backend.
+On minimal containers or SSH sessions without desktop tooling, notification
+delivery can fail even though the alarm is detected and listed by
+`chroncal alarm list`.
+
 ## Data storage
 
 The database is a single SQLite file:
@@ -199,11 +303,26 @@ chroncal aims for complete RFC 5545 compliance. Current coverage:
 
 - **VEVENT**: 30/31 properties (RSTATUS excluded, iTIP-only)
 - **VTODO**: 31/32 properties (RSTATUS excluded, iTIP-only)
+- **VJOURNAL**: core component import/export and CalDAV sync support
 - **VALARM**: 7/7 properties, plus RFC 9074 UID support
 - **ATTENDEE/ORGANIZER**: all 11 parameters
 - **VTIMEZONE**: round-trip preservation
+- **VFREEBUSY**: local compute/export plus remote CalDAV query support
 
 Import from Google Calendar, Apple Calendar, Thunderbird, or any RFC 5545-compliant source. Export produces standards-compliant `.ics` files.
+
+## CalDAV interoperability
+
+Live interoperability QA has been run against Nextcloud CalDAV with:
+
+- `VEVENT`: create, update, delete, recurrence, timezone, conflict handling
+- `VTODO`: create, update, delete, recurrence, duration/start semantics, conflict handling
+- `VJOURNAL`: create, update, delete, recurrence, conflict handling
+- `VALARM`: round-trip sync on `VEVENT` and `VTODO`, including repeated alarms
+
+Nextcloud does not expose a `VJOURNAL` collection by default, but chroncal
+interoperates cleanly with a dedicated CalDAV calendar created with
+`supported-calendar-component-set = VJOURNAL`.
 
 ## Contributing
 
