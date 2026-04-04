@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/emersion/go-ical"
+	"github.com/google/uuid"
 
 	authpkg "github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/caldav"
@@ -57,6 +58,10 @@ var syncRetryOptions = caldav.RetryOptions{
 	MaxAttempts: 3,
 }
 
+var newRemoteObjectName = func() string {
+	return uuid.NewString() + ".ics"
+}
+
 func normalizeRemoteRef(ref string) string {
 	if ref == "" {
 		return ""
@@ -82,21 +87,17 @@ func normalizeRemoteRef(ref string) string {
 	return parsed.String()
 }
 
-func buildRemoteResourcePath(calendarRef, uid string) string {
-	if uid == "" {
-		return normalizeRemoteRef(calendarRef)
-	}
-
+func buildRemoteResourcePath(calendarRef, _ string) string {
 	parsed, err := url.Parse(calendarRef)
 	if err != nil {
-		return normalizeRemoteRef(strings.TrimRight(calendarRef, "/") + "/" + uid + ".ics")
+		return normalizeRemoteRef(strings.TrimRight(calendarRef, "/") + "/" + newRemoteObjectName())
 	}
 
 	basePath := parsed.Path
 	if basePath == "" {
 		basePath = "/"
 	}
-	parsed.Path = path.Join(basePath, uid+".ics")
+	parsed.Path = path.Join(basePath, newRemoteObjectName())
 	return normalizeRemoteRef(parsed.String())
 }
 

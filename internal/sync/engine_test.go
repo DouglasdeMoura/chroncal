@@ -49,6 +49,16 @@ func newTestCalDAVClient(t *testing.T, do func(*http.Request) (*http.Response, e
 	return client
 }
 
+func overrideRemoteObjectNameGenerator(t *testing.T, name string) {
+	t.Helper()
+
+	prev := newRemoteObjectName
+	newRemoteObjectName = func() string { return name }
+	t.Cleanup(func() {
+		newRemoteObjectName = prev
+	})
+}
+
 func newResponse(statusCode int, headers map[string]string) *http.Response {
 	header := make(http.Header, len(headers))
 	for key, value := range headers {
@@ -583,10 +593,9 @@ END:VCALENDAR
 }
 
 func TestEnginePushNormalizesNewResourcePath(t *testing.T) {
-	t.Parallel()
-
 	engine, db, q := newTestEngine(t)
 	ctx := context.Background()
+	overrideRemoteObjectNameGenerator(t, "opaque-resource.ics")
 
 	cals, err := q.ListCalendars(ctx)
 	if err != nil {
@@ -611,8 +620,8 @@ func TestEnginePushNormalizesNewResourcePath(t *testing.T) {
 	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
 		switch r.Method {
 		case http.MethodPut:
-			if r.URL.Path != "/calendar/normalized-new.ics" {
-				t.Fatalf("PUT path = %s, want /calendar/normalized-new.ics", r.URL.Path)
+			if r.URL.Path != "/calendar/opaque-resource.ics" {
+				t.Fatalf("PUT path = %s, want /calendar/opaque-resource.ics", r.URL.Path)
 			}
 			return &http.Response{
 				StatusCode: http.StatusCreated,
@@ -632,7 +641,7 @@ func TestEnginePushNormalizesNewResourcePath(t *testing.T) {
 				Body: io.NopCloser(strings.NewReader(`<?xml version="1.0" encoding="utf-8"?>
 <d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
   <d:response>
-    <d:href>/calendar/normalized-new.ics</d:href>
+    <d:href>/calendar/opaque-resource.ics</d:href>
     <d:propstat>
       <d:prop>
         <d:getetag>&quot;etag-new&quot;</d:getetag>
@@ -676,8 +685,8 @@ END:VCALENDAR
 	if err != nil {
 		t.Fatalf("GetSyncResource: %v", err)
 	}
-	if res.RemoteUrl != "/calendar/normalized-new.ics" {
-		t.Fatalf("RemoteUrl = %q, want /calendar/normalized-new.ics", res.RemoteUrl)
+	if res.RemoteUrl != "/calendar/opaque-resource.ics" {
+		t.Fatalf("RemoteUrl = %q, want /calendar/opaque-resource.ics", res.RemoteUrl)
 	}
 
 	pullResult, err := engine.pull(ctx, client, calendarID, "/calendar/")
@@ -698,8 +707,69 @@ END:VCALENDAR
 	if err != nil {
 		t.Fatalf("GetSyncResource after pull: %v", err)
 	}
-	if res.RemoteUrl != "/calendar/normalized-new.ics" {
-		t.Fatalf("RemoteUrl after pull = %q, want /calendar/normalized-new.ics", res.RemoteUrl)
+	if res.RemoteUrl != "/calendar/opaque-resource.ics" {
+		t.Fatalf("RemoteUrl after pull = %q, want /calendar/opaque-resource.ics", res.RemoteUrl)
+	}
+}
+
+func TestEnginePushIgnoresUIDWhenAssigningNewResourcePath(t *testing.T) {
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+	overrideRemoteObjectNameGenerator(t, "opaque-malicious.ics")
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	insertTestEvent(t, db, calendarID, "../../escape")
+
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calendarID,
+		Uid:          "../../escape",
+		OwnerType:    "event",
+		RemoteUrl:    "",
+		Etag:         "",
+		Dirty:        1,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodPut {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		if r.URL.Path != "/calendar/opaque-malicious.ics" {
+			t.Fatalf("PUT path = %s, want /calendar/opaque-malicious.ics", r.URL.Path)
+		}
+		return &http.Response{
+			StatusCode: http.StatusCreated,
+			Status:     "201 Created",
+			Header:     http.Header{"Etag": []string{`"etag-malicious"`}},
+			Body:       io.NopCloser(http.NoBody),
+			Request:    r,
+		}, nil
+	})
+
+	pushResult, err := engine.push(ctx, client, calendarID, "/calendar/", ConflictServerWins)
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if pushResult.pushed != 1 {
+		t.Fatalf("pushed = %d, want 1", pushResult.pushed)
+	}
+
+	res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{
+		CalendarID: calendarID,
+		Uid:        "../../escape",
+	})
+	if err != nil {
+		t.Fatalf("GetSyncResource: %v", err)
+	}
+	if res.RemoteUrl != "/calendar/opaque-malicious.ics" {
+		t.Fatalf("RemoteUrl = %q, want /calendar/opaque-malicious.ics", res.RemoteUrl)
 	}
 }
 
