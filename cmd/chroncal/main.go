@@ -34,24 +34,44 @@ var (
 	cfg       config.Config
 )
 
+const (
+	groupPlanning    = "planning"
+	groupIntegration = "integration"
+	groupAutomation  = "automation"
+)
+
 var rootCmd = &cobra.Command{
 	Use:   "chroncal",
-	Short: "A beautiful terminal calendar",
-	Long: `chroncal is a terminal calendar backed by SQLite with iCal import/export.
+	Short: "Terminal calendar with a TUI, scripting, and sync support",
+	Long: `chroncal is a local-first terminal calendar backed by SQLite.
 
-Launch the TUI by running chroncal with no arguments, or use subcommands
-for scriptable access to all calendar operations.
+Run chroncal with no arguments to open the interactive TUI. Use subcommands
+when you want copy-pasteable, scriptable access from the shell or an LLM.
 
-Resource groups:
-  event      Manage events (list, get, add, update, delete)
-  todo       Manage todos (list, get, add, update, delete)
-  journal    Manage journal entries (list, get, add, update, delete)
-  calendar   Manage calendars (list, get, create, update, delete)
-  ical       Import and export iCal (.ics) files
-  freebusy   Compute or query calendar free/busy ranges
-  alarm      Manage alarm notifications (check, list, dismiss, snooze, daemon)
-  tick       Run one service tick (alarms always, sync when due)
-  service    Manage alarm notification service (install, uninstall, status)`,
+Helpful conventions:
+  Dates use YYYY-MM-DD.
+  Times use HH:MM in your local timezone unless a command accepts --timezone.
+  Machine-friendly output: --output json or --output yaml.
+  Event, todo, and journal commands accept either a numeric ID or a UID.
+  Recurring overrides can be targeted with --recurrence-id.`,
+	Example: `  # Open the interactive terminal UI
+  chroncal
+
+  # See the next week of events
+  chroncal event list --from 2026-04-01 --to 2026-04-07
+
+  # Create a calendar, then add an event to it
+  chroncal calendar create "Work"
+  chroncal event add "Team Standup" --calendar Work --date 2026-04-06 --time 09:00 --duration 30m
+
+  # Import an .ics file
+  chroncal ical import ./calendar.ics
+
+  # Sync linked CalDAV calendars
+  chroncal sync run
+
+  # Get machine-readable output for scripts or LLMs
+  chroncal todo list --output json`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		cfg = config.Load()
 		if cfg.ProductID != "" {
@@ -90,7 +110,29 @@ func initApp() (*app.App, error) {
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&outputFmt, "output", "o", "text", "output format (text, table, json, yaml)")
 
-	rootCmd.AddCommand(eventCmd(), calendarCmd(), todoCmd(), journalCmd(), icalCmd(), freebusyCmd(), alarmCmd(), tickCmd(), serviceCmd(), accountCmd(), syncCmd())
+	rootCmd.AddGroup(
+		&cobra.Group{ID: groupPlanning, Title: "Planning and Scheduling"},
+		&cobra.Group{ID: groupIntegration, Title: "Import, Sync, and Remote"},
+		&cobra.Group{ID: groupAutomation, Title: "Alarms and Background Services"},
+	)
+
+	planningCommands := []*cobra.Command{eventCmd(), calendarCmd(), todoCmd(), journalCmd(), freebusyCmd()}
+	for _, cmd := range planningCommands {
+		cmd.GroupID = groupPlanning
+		rootCmd.AddCommand(cmd)
+	}
+
+	integrationCommands := []*cobra.Command{icalCmd(), accountCmd(), syncCmd()}
+	for _, cmd := range integrationCommands {
+		cmd.GroupID = groupIntegration
+		rootCmd.AddCommand(cmd)
+	}
+
+	automationCommands := []*cobra.Command{alarmCmd(), tickCmd(), serviceCmd()}
+	for _, cmd := range automationCommands {
+		cmd.GroupID = groupAutomation
+		rootCmd.AddCommand(cmd)
+	}
 }
 
 func main() {
