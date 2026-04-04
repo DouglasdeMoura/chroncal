@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"time"
 
@@ -101,6 +102,11 @@ func (c *Client) DiscoverCalendars(ctx context.Context) ([]RemoteCalendar, error
 
 // GetResources fetches full iCal data for a set of hrefs via calendar-multiget.
 func (c *Client) GetResources(ctx context.Context, calendarPath string, hrefs []string) ([]Resource, error) {
+	calendarPath, err := c.CanonicalCollectionRef(calendarPath)
+	if err != nil {
+		return nil, err
+	}
+
 	multiGet := &caldav.CalendarMultiGet{
 		Paths: hrefs,
 		CompRequest: caldav.CalendarCompRequest{
@@ -128,6 +134,11 @@ func (c *Client) GetResources(ctx context.Context, calendarPath string, hrefs []
 
 // QueryAll fetches all resources from a calendar.
 func (c *Client) QueryAll(ctx context.Context, calendarPath string) ([]Resource, error) {
+	calendarPath, err := c.CanonicalCollectionRef(calendarPath)
+	if err != nil {
+		return nil, err
+	}
+
 	query := &caldav.CalendarQuery{
 		CompRequest: caldav.CalendarCompRequest{
 			Name:     "VCALENDAR",
@@ -231,6 +242,101 @@ func (c *Client) ResolveURL(ref string) string {
 		return ref
 	}
 	return base.ResolveReference(rel).String()
+}
+
+// CanonicalCollectionRef resolves a calendar collection href against the
+// configured endpoint, validates it stays on the CalDAV origin, and returns a
+// normalized server-relative path.
+func (c *Client) CanonicalCollectionRef(ref string) (string, error) {
+	endpointURL, err := url.Parse(c.endpoint)
+	if err != nil {
+		return "", fmt.Errorf("parse CalDAV endpoint: %w", err)
+	}
+	if !endpointURL.IsAbs() {
+		return "", fmt.Errorf("CalDAV endpoint must be absolute")
+	}
+
+	resolved, err := resolveRef(endpointURL, ref)
+	if err != nil {
+		return "", fmt.Errorf("parse calendar href: %w", err)
+	}
+	if resolved.RawQuery != "" || resolved.Fragment != "" {
+		return "", fmt.Errorf("calendar href must not include query or fragment")
+	}
+	if !sameOrigin(endpointURL, resolved) {
+		return "", fmt.Errorf("calendar href must stay on the configured CalDAV origin")
+	}
+
+	collectionPath := normalizePath(resolved.Path)
+	if collectionPath == "" {
+		collectionPath = "/"
+	}
+	if !strings.HasSuffix(collectionPath, "/") {
+		collectionPath += "/"
+	}
+	return collectionPath, nil
+}
+
+// CanonicalObjectRef resolves a calendar object href against the linked
+// calendar collection, validates origin and collection scope, and returns a
+// normalized server-relative path.
+func (c *Client) CanonicalObjectRef(calendarRef, objectRef string) (string, error) {
+	collectionPath, err := c.CanonicalCollectionRef(calendarRef)
+	if err != nil {
+		return "", err
+	}
+
+	endpointURL, err := url.Parse(c.endpoint)
+	if err != nil {
+		return "", fmt.Errorf("parse CalDAV endpoint: %w", err)
+	}
+	baseURL, err := resolveRef(endpointURL, collectionPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve calendar href: %w", err)
+	}
+	if !strings.HasSuffix(baseURL.Path, "/") {
+		baseURL.Path += "/"
+	}
+
+	resolved, err := resolveRef(baseURL, objectRef)
+	if err != nil {
+		return "", fmt.Errorf("parse calendar object href: %w", err)
+	}
+	if resolved.RawQuery != "" || resolved.Fragment != "" {
+		return "", fmt.Errorf("calendar object href must not include query or fragment")
+	}
+	if !sameOrigin(endpointURL, resolved) {
+		return "", fmt.Errorf("calendar object href must stay on the configured CalDAV origin")
+	}
+
+	objectPath := normalizePath(resolved.Path)
+	if !strings.HasPrefix(objectPath, collectionPath) || objectPath == strings.TrimSuffix(collectionPath, "/") {
+		return "", fmt.Errorf("calendar object href must stay within the linked collection")
+	}
+	return objectPath, nil
+}
+
+func resolveRef(base *url.URL, ref string) (*url.URL, error) {
+	rel, err := url.Parse(ref)
+	if err != nil {
+		return nil, err
+	}
+	return base.ResolveReference(rel), nil
+}
+
+func sameOrigin(a, b *url.URL) bool {
+	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Host, b.Host)
+}
+
+func normalizePath(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	cleaned := path.Clean(raw)
+	if cleaned == "." {
+		return "/"
+	}
+	return cleaned
 }
 
 // EncodeCalendar serializes an ical.Calendar to bytes.

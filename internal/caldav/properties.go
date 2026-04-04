@@ -79,7 +79,11 @@ func GetCalendarColor(ctx context.Context, httpClient webdav.HTTPClient, calenda
 
 // GetCalendarColor fetches the current calendar-color for a calendar href.
 func (c *Client) GetCalendarColor(ctx context.Context, calendarURL string) (string, error) {
-	return GetCalendarColor(ctx, c.httpClient, c.ResolveURL(calendarURL))
+	canonicalURL, err := c.CanonicalCollectionRef(calendarURL)
+	if err != nil {
+		return "", err
+	}
+	return GetCalendarColor(ctx, c.httpClient, c.ResolveURL(canonicalURL))
 }
 
 // SetCalendarColor updates the calendar-color property for a calendar.
@@ -130,7 +134,11 @@ func SetCalendarColor(ctx context.Context, httpClient webdav.HTTPClient, calenda
 
 // SetCalendarColor updates the calendar-color property for a calendar href.
 func (c *Client) SetCalendarColor(ctx context.Context, calendarURL, color string) error {
-	return SetCalendarColor(ctx, c.httpClient, c.ResolveURL(calendarURL), color)
+	canonicalURL, err := c.CanonicalCollectionRef(calendarURL)
+	if err != nil {
+		return err
+	}
+	return SetCalendarColor(ctx, c.httpClient, c.ResolveURL(canonicalURL), color)
 }
 
 func parseStatusCode(status string) int {

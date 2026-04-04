@@ -182,7 +182,7 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 	}
 
 	// Phase 3: Process tombstones
-	tombstoneResult, err := e.processTombstones(ctx, client, calendarID)
+	tombstoneResult, err := e.processTombstones(ctx, client, calendarID, remoteURL)
 	if err != nil {
 		e.logger.Warn("tombstone processing failed", "calendar_id", calendarID, "error", err)
 		result.Errors = append(result.Errors, fmt.Errorf("tombstones: %w", err))
@@ -270,9 +270,19 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 		}
 
 		// Determine PUT path
-		putPath := normalizeRemoteRef(res.RemoteUrl)
-		if putPath == "" {
-			putPath = buildRemoteResourcePath(remoteURL, res.Uid)
+		var putPath string
+		if res.RemoteUrl != "" {
+			putPath, err = client.CanonicalObjectRef(remoteURL, res.RemoteUrl)
+			if err != nil {
+				result.errors = append(result.errors, fmt.Errorf("validate remote href for %s: %w", res.Uid, err))
+				continue
+			}
+		} else {
+			putPath, err = client.CanonicalObjectRef(remoteURL, buildRemoteResourcePath(remoteURL, res.Uid))
+			if err != nil {
+				result.errors = append(result.errors, fmt.Errorf("build remote href for %s: %w", res.Uid, err))
+				continue
+			}
 		}
 
 		// PUT to server
@@ -401,9 +411,14 @@ func (e *Engine) pull(ctx context.Context, client *caldav.Client, calendarID int
 	tombstonedPaths := make(map[string]bool, len(tombstones))
 	tombstonedUIDs := make(map[string]bool, len(tombstones))
 	for _, ts := range tombstones {
-		if ts.RemoteUrl != "" {
-			tombstonedPaths[normalizeRemoteRef(ts.RemoteUrl)] = true
-		}
+			if ts.RemoteUrl != "" {
+				remotePath, hrefErr := client.CanonicalObjectRef(remoteURL, ts.RemoteUrl)
+				if hrefErr != nil {
+					e.logger.Warn("ignore invalid tombstone href", "calendar_id", calendarID, "uid", ts.Uid, "remote_url", ts.RemoteUrl, "error", hrefErr)
+					continue
+				}
+				tombstonedPaths[remotePath] = true
+			}
 		if ts.Uid != "" {
 			tombstonedUIDs[ts.Uid] = true
 		}
@@ -417,14 +432,23 @@ func (e *Engine) pull(ctx context.Context, client *caldav.Client, calendarID int
 	localByPath := make(map[string]storage.SyncResource, len(localResources))
 	for _, r := range localResources {
 		if r.RemoteUrl != "" {
-			localByPath[normalizeRemoteRef(r.RemoteUrl)] = r
+			remotePath, hrefErr := client.CanonicalObjectRef(remoteURL, r.RemoteUrl)
+			if hrefErr != nil {
+				e.logger.Warn("ignore invalid sync resource href", "calendar_id", calendarID, "uid", r.Uid, "remote_url", r.RemoteUrl, "error", hrefErr)
+				continue
+			}
+			localByPath[remotePath] = r
 		}
 	}
 
 	// Process each remote resource
 	remoteHrefs := make(map[string]bool, len(resources))
 	for _, res := range resources {
-		resPath := normalizeRemoteRef(res.Path)
+		resPath, hrefErr := client.CanonicalObjectRef(remoteURL, res.Path)
+		if hrefErr != nil {
+			e.logger.Warn("skip out-of-scope remote href", "calendar_id", calendarID, "path", res.Path, "error", hrefErr)
+			continue
+		}
 		remoteHrefs[resPath] = true
 		if tombstonedPaths[resPath] {
 			e.logger.Debug("skip tombstoned remote resource by path", "path", resPath)
@@ -549,7 +573,7 @@ type tombstoneResult struct {
 	errors  []error
 }
 
-func (e *Engine) processTombstones(ctx context.Context, client *caldav.Client, calendarID int64) (*tombstoneResult, error) {
+func (e *Engine) processTombstones(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL string) (*tombstoneResult, error) {
 	tombstones, err := e.q.ListTombstonesByCalendar(ctx, calendarID)
 	if err != nil {
 		return nil, fmt.Errorf("list tombstones: %w", err)
@@ -557,7 +581,11 @@ func (e *Engine) processTombstones(ctx context.Context, client *caldav.Client, c
 
 	result := &tombstoneResult{}
 	for _, ts := range tombstones {
-		deletePath := normalizeRemoteRef(ts.RemoteUrl)
+		deletePath, hrefErr := client.CanonicalObjectRef(remoteURL, ts.RemoteUrl)
+		if hrefErr != nil {
+			result.errors = append(result.errors, fmt.Errorf("validate tombstone %s: %w", ts.Uid, hrefErr))
+			continue
+		}
 		e.logger.Debug("deleting tombstone", "uid", ts.Uid, "remote_url", deletePath)
 		if _, err := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (struct{}, error) {
 			return struct{}{}, client.DeleteResource(ctx, deletePath)

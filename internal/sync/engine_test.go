@@ -448,7 +448,7 @@ func TestEngineProcessTombstonesContinuesAfterDeleteFailure(t *testing.T) {
 		t.Fatalf("CreateTombstone delete-success: %v", err)
 	}
 
-	result, err := engine.processTombstones(ctx, client, calendarID)
+	result, err := engine.processTombstones(ctx, client, calendarID, "/calendar/")
 	if err != nil {
 		t.Fatalf("processTombstones: %v", err)
 	}
@@ -565,7 +565,7 @@ END:VCALENDAR
 		t.Fatalf("GetEventByUID err = %v, want sql.ErrNoRows", err)
 	}
 
-	tombstoneResult, err := engine.processTombstones(ctx, client, calendarID)
+	tombstoneResult, err := engine.processTombstones(ctx, client, calendarID, "/calendar/")
 	if err != nil {
 		t.Fatalf("processTombstones: %v", err)
 	}
@@ -770,6 +770,155 @@ func TestEnginePushIgnoresUIDWhenAssigningNewResourcePath(t *testing.T) {
 	}
 	if res.RemoteUrl != "/calendar/opaque-malicious.ics" {
 		t.Fatalf("RemoteUrl = %q, want /calendar/opaque-malicious.ics", res.RemoteUrl)
+	}
+}
+
+func TestEnginePushRejectsOffOriginStoredRemoteURL(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	insertTestEvent(t, db, calendarID, "off-origin-push")
+
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calendarID,
+		Uid:          "off-origin-push",
+		OwnerType:    "event",
+		RemoteUrl:    "https://attacker.example/calendar/off-origin-push.ics",
+		Etag:         "",
+		Dirty:        1,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+
+	requests := 0
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		requests++
+		return newResponse(http.StatusCreated, map[string]string{"ETag": `"etag-off-origin"`}), nil
+	})
+
+	result, err := engine.push(ctx, client, calendarID, "/calendar/", ConflictServerWins)
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if result.pushed != 0 {
+		t.Fatalf("pushed = %d, want 0", result.pushed)
+	}
+	if len(result.errors) != 1 {
+		t.Fatalf("errors = %d, want 1", len(result.errors))
+	}
+	if requests != 0 {
+		t.Fatalf("requests = %d, want 0", requests)
+	}
+}
+
+func TestEnginePullSkipsOutOfCollectionRemoteHref(t *testing.T) {
+	t.Parallel()
+
+	engine, _, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method != "REPORT" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		return &http.Response{
+			StatusCode: http.StatusMultiStatus,
+			Status:     "207 Multi-Status",
+			Header:     http.Header{"Content-Type": []string{"application/xml"}},
+			Body: io.NopCloser(strings.NewReader(`<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/other-calendar/off-origin-pulled.ics</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>&quot;etag-off-origin&quot;</d:getetag>
+        <cal:calendar-data>BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//chroncal//tests//EN
+BEGIN:VEVENT
+UID:off-origin-pulled
+DTSTAMP:20260403T120000Z
+DTSTART:20260403T120000Z
+DTEND:20260403T130000Z
+SUMMARY:Off-origin pulled
+END:VEVENT
+END:VCALENDAR
+</cal:calendar-data>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`)),
+			Request: r,
+		}, nil
+	})
+
+	result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if result.pulled != 0 {
+		t.Fatalf("pulled = %d, want 0", result.pulled)
+	}
+
+	if _, err := q.GetEventByUID(ctx, "off-origin-pulled"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("GetEventByUID err = %v, want sql.ErrNoRows", err)
+	}
+}
+
+func TestEngineProcessTombstonesRejectsOffOriginRemoteURL(t *testing.T) {
+	t.Parallel()
+
+	engine, _, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	if err := q.CreateTombstone(ctx, storage.CreateTombstoneParams{
+		CalendarID: calendarID,
+		Uid:        "off-origin-tombstone",
+		RemoteUrl:  "https://attacker.example/calendar/off-origin-tombstone.ics",
+	}); err != nil {
+		t.Fatalf("CreateTombstone: %v", err)
+	}
+
+	requests := 0
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		requests++
+		return newResponse(http.StatusNoContent, nil), nil
+	})
+
+	result, err := engine.processTombstones(ctx, client, calendarID, "/calendar/")
+	if err != nil {
+		t.Fatalf("processTombstones: %v", err)
+	}
+	if result.deleted != 0 {
+		t.Fatalf("deleted = %d, want 0", result.deleted)
+	}
+	if len(result.errors) != 1 {
+		t.Fatalf("errors = %d, want 1", len(result.errors))
+	}
+	if requests != 0 {
+		t.Fatalf("requests = %d, want 0", requests)
 	}
 }
 
