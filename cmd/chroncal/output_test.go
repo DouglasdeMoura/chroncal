@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/journal"
+	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
 func TestPrintEvent_SanitizesControlSequences(t *testing.T) {
@@ -19,7 +21,7 @@ func TestPrintEvent_SanitizesControlSequences(t *testing.T) {
 		Description: "Notes\x1b[31m",
 		StartTime:   time.Date(2026, 4, 4, 12, 0, 0, 0, time.UTC),
 		EndTime:     time.Date(2026, 4, 4, 13, 0, 0, 0, time.UTC),
-		Status:      "CONFIRMED",
+		Status:      "PENDING\x1b[31m",
 	})
 
 	out := buf.String()
@@ -31,6 +33,54 @@ func TestPrintEvent_SanitizesControlSequences(t *testing.T) {
 	}
 	if strings.Contains(out, "]52;c;stolen") {
 		t.Fatalf("printEvent output contains OSC payload: %q", out)
+	}
+}
+
+func TestPrintTodo_SanitizesControlSequences(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	printTodo(&buf, todo.Todo{
+		Summary:     "Todo\x1b]52;c;clip\a",
+		Status:      "NEEDS-ACTION\x1b[31m",
+		Duration:    "PT15M\r\nInjected",
+		Class:       "PRIVATE\x1b]52;c;clip\a",
+		Location:    "Desk\r\nA",
+		Description: "Notes\x1b[31m",
+	})
+
+	out := buf.String()
+	if strings.Contains(out, "\x1b") {
+		t.Fatalf("printTodo output contains escape sequence: %q", out)
+	}
+	if strings.Contains(out, "\r") {
+		t.Fatalf("printTodo output contains carriage return: %q", out)
+	}
+	if strings.Contains(out, "]52;c;clip") {
+		t.Fatalf("printTodo output contains OSC payload: %q", out)
+	}
+}
+
+func TestPrintJournal_SanitizesControlSequences(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	printJournal(&buf, journal.Journal{
+		Summary:     "Journal\x1b]52;c;clip\a",
+		Status:      "FINAL\x1b[31m",
+		Class:       "CONFIDENTIAL\r\nInjected",
+		Description: "Body\x1b[31m",
+	})
+
+	out := buf.String()
+	if strings.Contains(out, "\x1b") {
+		t.Fatalf("printJournal output contains escape sequence: %q", out)
+	}
+	if strings.Contains(out, "\r") {
+		t.Fatalf("printJournal output contains carriage return: %q", out)
+	}
+	if strings.Contains(out, "]52;c;clip") {
+		t.Fatalf("printJournal output contains OSC payload: %q", out)
 	}
 }
 

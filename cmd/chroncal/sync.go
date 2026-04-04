@@ -134,21 +134,9 @@ for each linked calendar.`,
 				return nil
 			}
 
+			w := cmd.OutOrStdout()
 			for _, s := range statuses {
-				lastSync := "never"
-				if s.LastSyncAt != "" {
-					lastSync = s.LastSyncAt
-				}
-				lastAttempt := "never"
-				if s.LastSyncAttemptedAt != "" {
-					lastAttempt = s.LastSyncAttemptedAt
-				}
-				lastError := "-"
-				if s.LastSyncError != "" {
-					lastError = s.LastSyncError
-				}
-				fmt.Printf("  %-20s  account=%-15s  last_sync=%s  last_attempt=%s  pending=%d  conflicts=%d  last_error=%s\n",
-					s.CalendarName, s.AccountName, lastSync, lastAttempt, s.PendingPush, s.Conflicts, lastError)
+				writeSyncStatusLine(w, s)
 			}
 			return nil
 		},
@@ -182,9 +170,9 @@ func syncConflictsCmd() *cobra.Command {
 				return nil
 			}
 
+			w := cmd.OutOrStdout()
 			for _, c := range conflicts {
-				fmt.Printf("  #%d  type=%s  uid=%s  detected=%s\n",
-					c.ID, c.OwnerType, c.UID, c.DetectedAt.Format("2006-01-02 15:04"))
+				writeSyncConflictLine(w, c)
 			}
 			return nil
 		},
@@ -265,10 +253,10 @@ This does not delete your local calendars or entries.`,
 					continue
 				}
 				if err := svc.ResetCalendar(ctx, c.ID); err != nil {
-					fmt.Fprintf(os.Stderr, "reset %s: %v\n", c.Name, err)
+					fmt.Fprintf(os.Stderr, "reset %s: %s\n", safeText(c.Name), safeText(err.Error()))
 					continue
 				}
-				fmt.Printf("Reset sync state for %q\n", c.Name)
+				fmt.Printf("Reset sync state for %q\n", safeText(c.Name))
 			}
 			return nil
 		},
@@ -278,9 +266,5 @@ This does not delete your local calendars or entries.`,
 }
 
 func printSyncResult(r *syncPkg.SyncResult) {
-	fmt.Printf("  Calendar %d: pushed=%d pulled=%d deleted=%d conflicts=%d errors=%d\n",
-		r.CalendarID, r.Pushed, r.Pulled, r.Deleted, r.Conflicts, len(r.Errors))
-	for _, e := range r.Errors {
-		fmt.Fprintf(os.Stderr, "    error: %v\n", e)
-	}
+	writeSyncResult(os.Stdout, os.Stderr, r)
 }

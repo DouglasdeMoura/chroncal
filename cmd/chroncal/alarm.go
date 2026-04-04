@@ -418,8 +418,7 @@ Dismissed alarms are permanently removed from this list.`,
 					}
 					snoozed = fmt.Sprintf(" (snoozed to %s)", snz)
 				}
-				fmt.Fprintf(w, "  [%s] %s\t%s\t%s%s\n",
-					p.ID, triggerLocal, p.Action, p.Title, snoozed)
+				writePendingAlarmLine(w, p.ID, triggerLocal, p.Action, p.Title, false, snoozed)
 			}
 			for _, p := range enrichedTodos {
 				triggerLocal := p.State.TriggerAt
@@ -434,8 +433,7 @@ Dismissed alarms are permanently removed from this list.`,
 					}
 					snoozed = fmt.Sprintf(" (snoozed to %s)", snz)
 				}
-				fmt.Fprintf(w, "  [%s] %s\t%s\t%s (todo)%s\n",
-					p.ID, triggerLocal, p.Action, p.Title, snoozed)
+				writePendingAlarmLine(w, p.ID, triggerLocal, p.Action, p.Title, true, snoozed)
 			}
 			return nil
 		},
@@ -804,18 +802,10 @@ system was not running when they became due.`,
 
 			fmt.Fprintf(w, "Missed alarms (last %d days):\n\n", days)
 			for _, m := range missedEvents {
-				fmt.Fprintf(w, "  %s  %s (%s ago)\n",
-					m.TriggerAt.Local().Format("2006-01-02 15:04"),
-					m.EventTitle,
-					m.Age.Round(time.Minute),
-				)
+				writeMissedAlarmLine(w, m.TriggerAt, m.EventTitle, false, m.Age)
 			}
 			for _, m := range missedTodos {
-				fmt.Fprintf(w, "  %s  [todo] %s (%s ago)\n",
-					m.TriggerAt.Local().Format("2006-01-02 15:04"),
-					m.TodoSummary,
-					m.Age.Round(time.Minute),
-				)
+				writeMissedAlarmLine(w, m.TriggerAt, m.TodoSummary, true, m.Age)
 			}
 			return nil
 		},

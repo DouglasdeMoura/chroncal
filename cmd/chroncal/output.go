@@ -20,25 +20,25 @@ import (
 
 // icons holds display glyphs, switched by the nerd_fonts config flag.
 type icons struct {
-	Calendar      string // date headers
-	Title         string // event/todo title
-	Clock         string // timed events, due dates
-	AllDay        string // all-day events
-	Location      string // location field
-	Notes         string // description field
-	Status        string // status field
-	Link          string // URL field
-	Tags          string // categories field
-	Folder        string // calendar reference
-	ID            string // numeric ID + UID
-	Bell          string // alarms
-	People        string // attendees
-	Color         string // color swatch
-	Priority      string // priority field
-	Progress      string // progress bar
-	TodoOpen      string // incomplete todo
-	TodoDone      string // completed todo
-	Bullet        string // generic list bullet
+	Calendar string // date headers
+	Title    string // event/todo title
+	Clock    string // timed events, due dates
+	AllDay   string // all-day events
+	Location string // location field
+	Notes    string // description field
+	Status   string // status field
+	Link     string // URL field
+	Tags     string // categories field
+	Folder   string // calendar reference
+	ID       string // numeric ID + UID
+	Bell     string // alarms
+	People   string // attendees
+	Color    string // color swatch
+	Priority string // priority field
+	Progress string // progress bar
+	TodoOpen string // incomplete todo
+	TodoDone string // completed todo
+	Bullet   string // generic list bullet
 }
 
 var nerdIcons = icons{
@@ -66,48 +66,48 @@ func ic() icons {
 }
 
 type jsonEvent struct {
-	ID             int64           `json:"id"`
-	UID            string          `json:"uid"`
-	CalendarID     int64           `json:"calendar_id"`
-	Title          string          `json:"title"`
-	Description    string          `json:"description"`
-	Location       string          `json:"location"`
-	StartTime      string          `json:"start_time"`
-	EndTime        string          `json:"end_time"`
-	AllDay         bool            `json:"all_day"`
-	RecurrenceRule string          `json:"recurrence_rule"`
-	Timezone       string          `json:"timezone"`
-	Status         string          `json:"status"`
-	Transp         string          `json:"transp"`
-	Sequence       int64           `json:"sequence"`
-	Priority       int64           `json:"priority"`
-	Class          string          `json:"class"`
-	URL            string          `json:"url"`
-	Categories     string          `json:"categories"`
-	ExDates        string          `json:"exdates"`
-	RDates         string          `json:"rdates"`
-	RecurrenceID   string          `json:"recurrence_id"`
-	Geo            string          `json:"geo"`
-	CreatedAt      string          `json:"created_at"`
-	UpdatedAt      string          `json:"updated_at"`
-	Alarms         []jsonAlarm       `json:"alarms,omitempty"`
-	Attendees      []jsonAttendee    `json:"attendees,omitempty"`
-	Attachments    []jsonAttachment  `json:"attachments,omitempty"`
-	Comments       []string          `json:"comments,omitempty"`
-	Contacts       []string          `json:"contacts,omitempty"`
-	Resources      []string          `json:"resources,omitempty"`
-	Relations      []jsonRelation    `json:"relations,omitempty"`
+	ID             int64            `json:"id"`
+	UID            string           `json:"uid"`
+	CalendarID     int64            `json:"calendar_id"`
+	Title          string           `json:"title"`
+	Description    string           `json:"description"`
+	Location       string           `json:"location"`
+	StartTime      string           `json:"start_time"`
+	EndTime        string           `json:"end_time"`
+	AllDay         bool             `json:"all_day"`
+	RecurrenceRule string           `json:"recurrence_rule"`
+	Timezone       string           `json:"timezone"`
+	Status         string           `json:"status"`
+	Transp         string           `json:"transp"`
+	Sequence       int64            `json:"sequence"`
+	Priority       int64            `json:"priority"`
+	Class          string           `json:"class"`
+	URL            string           `json:"url"`
+	Categories     string           `json:"categories"`
+	ExDates        string           `json:"exdates"`
+	RDates         string           `json:"rdates"`
+	RecurrenceID   string           `json:"recurrence_id"`
+	Geo            string           `json:"geo"`
+	CreatedAt      string           `json:"created_at"`
+	UpdatedAt      string           `json:"updated_at"`
+	Alarms         []jsonAlarm      `json:"alarms,omitempty"`
+	Attendees      []jsonAttendee   `json:"attendees,omitempty"`
+	Attachments    []jsonAttachment `json:"attachments,omitempty"`
+	Comments       []string         `json:"comments,omitempty"`
+	Contacts       []string         `json:"contacts,omitempty"`
+	Resources      []string         `json:"resources,omitempty"`
+	Relations      []jsonRelation   `json:"relations,omitempty"`
 }
 
 type jsonAlarm struct {
-	ID           int64              `json:"id"`
-	Action       string             `json:"action"`
-	TriggerValue string             `json:"trigger_value"`
-	Description  string             `json:"description"`
-	Summary      string             `json:"summary,omitempty"`
-	Repeat       int                `json:"repeat,omitempty"`
-	Duration     string             `json:"duration,omitempty"`
-	Related      string             `json:"related,omitempty"`
+	ID           int64               `json:"id"`
+	Action       string              `json:"action"`
+	TriggerValue string              `json:"trigger_value"`
+	Description  string              `json:"description"`
+	Summary      string              `json:"summary,omitempty"`
+	Repeat       int                 `json:"repeat,omitempty"`
+	Duration     string              `json:"duration,omitempty"`
+	Related      string              `json:"related,omitempty"`
 	Attendees    []jsonAlarmAttendee `json:"attendees,omitempty"`
 }
 
@@ -187,7 +187,7 @@ func toJSONEvent(e event.Event) jsonEvent {
 			ID: a.ID, Action: a.Action,
 			TriggerValue: a.TriggerValue, Description: a.Description,
 			Summary: a.Summary,
-			Repeat: a.Repeat, Duration: a.Duration, Related: a.Related,
+			Repeat:  a.Repeat, Duration: a.Duration, Related: a.Related,
 			Attendees: toJSONAlarmAttendees(a.Attendees),
 		})
 	}
@@ -483,7 +483,7 @@ func printEventDetail(w io.Writer, e event.Event, showDate bool) {
 		fmt.Fprintf(w, "  %s %s\n", i.Notes, textsafe.Display(e.Description))
 	}
 	if e.Status != "CONFIRMED" {
-		fmt.Fprintf(w, "  %s %s\n", i.Status, e.Status)
+		fmt.Fprintf(w, "  %s %s\n", i.Status, textsafe.Display(e.Status))
 	}
 	if e.URL != "" {
 		fmt.Fprintf(w, "  %s %s\n", i.Link, textsafe.Display(e.URL))
@@ -556,38 +556,38 @@ func printCalendars(w io.Writer, cals []calendar.Calendar) {
 // Todo output
 
 type jsonTodo struct {
-	ID              int64          `json:"id"`
-	UID             string         `json:"uid"`
-	CalendarID      int64          `json:"calendar_id"`
-	Summary         string         `json:"summary"`
-	Description     string         `json:"description"`
-	Location        string         `json:"location"`
-	DueDate         string         `json:"due_date"`
-	StartDate       string         `json:"start_date"`
-	Duration        string         `json:"duration"`
-	CompletedAt     string         `json:"completed_at"`
-	PercentComplete int64          `json:"percent_complete"`
-	Status          string         `json:"status"`
-	Priority        int64          `json:"priority"`
-	Class           string         `json:"class"`
-	URL             string         `json:"url"`
-	Categories      string         `json:"categories"`
-	RecurrenceRule  string         `json:"recurrence_rule"`
-	ExDates         string         `json:"exdates"`
-	RDates          string         `json:"rdates"`
-	RecurrenceID    string         `json:"recurrence_id"`
-	Timezone        string         `json:"timezone"`
-	Geo             string         `json:"geo"`
-	Sequence        int64          `json:"sequence"`
-	CreatedAt       string         `json:"created_at"`
-	UpdatedAt       string         `json:"updated_at"`
-	Alarms          []jsonAlarm       `json:"alarms,omitempty"`
-	Attendees       []jsonAttendee    `json:"attendees,omitempty"`
-	Attachments     []jsonAttachment  `json:"attachments,omitempty"`
-	Comments        []string          `json:"comments,omitempty"`
-	Contacts        []string          `json:"contacts,omitempty"`
-	Resources       []string          `json:"resources,omitempty"`
-	Relations       []jsonRelation    `json:"relations,omitempty"`
+	ID              int64            `json:"id"`
+	UID             string           `json:"uid"`
+	CalendarID      int64            `json:"calendar_id"`
+	Summary         string           `json:"summary"`
+	Description     string           `json:"description"`
+	Location        string           `json:"location"`
+	DueDate         string           `json:"due_date"`
+	StartDate       string           `json:"start_date"`
+	Duration        string           `json:"duration"`
+	CompletedAt     string           `json:"completed_at"`
+	PercentComplete int64            `json:"percent_complete"`
+	Status          string           `json:"status"`
+	Priority        int64            `json:"priority"`
+	Class           string           `json:"class"`
+	URL             string           `json:"url"`
+	Categories      string           `json:"categories"`
+	RecurrenceRule  string           `json:"recurrence_rule"`
+	ExDates         string           `json:"exdates"`
+	RDates          string           `json:"rdates"`
+	RecurrenceID    string           `json:"recurrence_id"`
+	Timezone        string           `json:"timezone"`
+	Geo             string           `json:"geo"`
+	Sequence        int64            `json:"sequence"`
+	CreatedAt       string           `json:"created_at"`
+	UpdatedAt       string           `json:"updated_at"`
+	Alarms          []jsonAlarm      `json:"alarms,omitempty"`
+	Attendees       []jsonAttendee   `json:"attendees,omitempty"`
+	Attachments     []jsonAttachment `json:"attachments,omitempty"`
+	Comments        []string         `json:"comments,omitempty"`
+	Contacts        []string         `json:"contacts,omitempty"`
+	Resources       []string         `json:"resources,omitempty"`
+	Relations       []jsonRelation   `json:"relations,omitempty"`
 }
 
 func toJSONTodo(t todo.Todo) jsonTodo {
@@ -600,7 +600,7 @@ func toJSONTodo(t todo.Todo) jsonTodo {
 		URL: t.URL, Categories: t.Categories,
 		RecurrenceRule: t.RecurrenceRule, ExDates: t.ExDates, RDates: t.RDates,
 		RecurrenceID: t.RecurrenceID, Timezone: t.Timezone, Geo: t.Geo,
-		Sequence: t.Sequence,
+		Sequence:  t.Sequence,
 		CreatedAt: t.CreatedAt.Local().Format(time.RFC3339),
 		UpdatedAt: t.UpdatedAt.Local().Format(time.RFC3339),
 	}
@@ -609,7 +609,7 @@ func toJSONTodo(t todo.Todo) jsonTodo {
 			ID: a.ID, Action: a.Action,
 			TriggerValue: a.TriggerValue, Description: a.Description,
 			Summary: a.Summary,
-			Repeat: a.Repeat, Duration: a.Duration, Related: a.Related,
+			Repeat:  a.Repeat, Duration: a.Duration, Related: a.Related,
 			Attendees: toJSONAlarmAttendees(a.Attendees),
 		})
 	}
@@ -650,7 +650,7 @@ func toJSONTodos(todos []todo.Todo) []jsonTodo {
 func printTodo(w io.Writer, t todo.Todo) {
 	i := ic()
 	fmt.Fprintf(w, "  %s %s\n", i.Title, textsafe.Display(t.Summary))
-	fmt.Fprintf(w, "  %s %s\n", i.Status, t.Status)
+	fmt.Fprintf(w, "  %s %s\n", i.Status, textsafe.Display(t.Status))
 	if t.StartDate != "" {
 		start := t.ParseStartDate()
 		if _, err := time.Parse("2006-01-02", t.StartDate); err == nil {
@@ -668,7 +668,7 @@ func printTodo(w io.Writer, t todo.Todo) {
 		}
 	}
 	if t.Duration != "" {
-		fmt.Fprintf(w, "  %s Duration %s\n", i.Clock, t.Duration)
+		fmt.Fprintf(w, "  %s Duration %s\n", i.Clock, textsafe.Display(t.Duration))
 	}
 	if t.CompletedAt != "" {
 		if ca, err := time.Parse(time.RFC3339, t.CompletedAt); err == nil {
@@ -691,7 +691,7 @@ func printTodo(w io.Writer, t todo.Todo) {
 		fmt.Fprintf(w, "  %s %s\n", i.Tags, textsafe.Display(t.Categories))
 	}
 	if t.Class != "" && t.Class != "PUBLIC" {
-		fmt.Fprintf(w, "  %s %s\n", i.Status, t.Class)
+		fmt.Fprintf(w, "  %s %s\n", i.Status, textsafe.Display(t.Class))
 	}
 	if t.Priority > 0 {
 		fmt.Fprintf(w, "  %s Priority %d\n", i.Priority, t.Priority)
@@ -813,7 +813,7 @@ func toJSONJournals(journals []journal.Journal) []jsonJournal {
 func printJournal(w io.Writer, j journal.Journal) {
 	i := ic()
 	fmt.Fprintf(w, "  %s %s\n", i.Title, textsafe.Display(j.Summary))
-	fmt.Fprintf(w, "  %s %s\n", i.Status, j.Status)
+	fmt.Fprintf(w, "  %s %s\n", i.Status, textsafe.Display(j.Status))
 	if j.StartDate != "" {
 		start := j.ParseStartDate()
 		if _, err := time.Parse("2006-01-02", j.StartDate); err == nil {
@@ -832,7 +832,7 @@ func printJournal(w io.Writer, j journal.Journal) {
 		fmt.Fprintf(w, "  %s %s\n", i.Tags, textsafe.Display(j.Categories))
 	}
 	if j.Class != "" && j.Class != "PUBLIC" {
-		fmt.Fprintf(w, "  %s %s\n", i.Status, j.Class)
+		fmt.Fprintf(w, "  %s %s\n", i.Status, textsafe.Display(j.Class))
 	}
 	if j.RecurrenceRule != "" {
 		fmt.Fprintf(w, "  %s %s\n", i.Clock, textsafe.Display(j.RecurrenceRule))
