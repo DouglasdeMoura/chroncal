@@ -26,6 +26,23 @@ func (s failingCredentialStore) Delete(accountID int64) error {
 	return nil
 }
 
+type recordingCredentialStore struct {
+	deleted []int64
+}
+
+func (s *recordingCredentialStore) Get(accountID int64) (auth.Credential, error) {
+	return auth.Credential{}, errors.New("unexpected Get")
+}
+
+func (s *recordingCredentialStore) Set(cred auth.Credential) error {
+	return nil
+}
+
+func (s *recordingCredentialStore) Delete(accountID int64) error {
+	s.deleted = append(s.deleted, accountID)
+	return nil
+}
+
 func TestConnectCalendarRemote_RollsBackNewLinkWhenCredentialStoreFails(t *testing.T) {
 	dbPath := setupCalendarCLITestEnv(t)
 
@@ -127,5 +144,38 @@ func TestConnectCalendarRemote_RollsBackExistingHiddenAccountUpdateWhenCredentia
 	}
 	if account.ServerUrl != "https://cal.example.com/dav" {
 		t.Fatalf("account server URL = %q, want original server URL after rollback", account.ServerUrl)
+	}
+}
+
+func TestDeleteCalendarWithCleanup_RemovesHiddenAccountAndCredential(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	defer a.Close()
+
+	ctx := context.Background()
+	_, accountID := createLinkedCalendarForTest(t, dbPath)
+
+	store := &recordingCredentialStore{}
+	prevFactory := newCalendarCredentialStore
+	newCalendarCredentialStore = func(bool) (auth.CredentialStore, error) {
+		return store, nil
+	}
+	t.Cleanup(func() {
+		newCalendarCredentialStore = prevFactory
+	})
+
+	if err := deleteCalendarWithCleanup(ctx, a, 2); err != nil {
+		t.Fatalf("deleteCalendarWithCleanup: %v", err)
+	}
+
+	if _, err := a.Queries.GetAccount(ctx, accountID); err == nil {
+		t.Fatalf("expected hidden account %d to be deleted", accountID)
+	}
+	if len(store.deleted) != 1 || store.deleted[0] != accountID {
+		t.Fatalf("deleted credentials = %v, want [%d]", store.deleted, accountID)
 	}
 }

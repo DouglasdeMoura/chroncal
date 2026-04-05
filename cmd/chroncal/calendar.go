@@ -299,13 +299,14 @@ Use "chroncal calendar list" first if you need to confirm the ID.`,
 				return err
 			}
 			defer a.Close()
+			ctx := context.Background()
 
 			id, err := strconv.ParseInt(args[0], 10, 64)
 			if err != nil {
 				return fmt.Errorf("invalid calendar ID: %w", err)
 			}
 
-			if err := a.Calendars.Delete(context.Background(), id); err != nil {
+			if err := deleteCalendarWithCleanup(ctx, a, id); err != nil {
 				return notFoundErr(err, "calendar", id)
 			}
 

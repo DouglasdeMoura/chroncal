@@ -178,18 +178,89 @@ func disconnectCalendarRemote(ctx context.Context, a *app.App, cal calendarpkg.C
 	}
 
 	if strings.HasPrefix(account.Name, hiddenAccountPrefix) {
-		if err := qtx.DeleteAccount(ctx, account.ID); err != nil {
+		linked, err := qtx.ListCalendarsByAccount(ctx, &account.ID)
+		if err != nil {
 			_ = tx.Rollback()
-			return fmt.Errorf("delete hidden account: %w", err)
+			return fmt.Errorf("list calendars by hidden account: %w", err)
+		}
+		if len(linked) == 0 {
+			if err := qtx.DeleteAccount(ctx, account.ID); err != nil {
+				_ = tx.Rollback()
+				return fmt.Errorf("delete hidden account: %w", err)
+			}
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit remote calendar disconnect: %w", err)
 	}
 
-	credStore, err := auth.NewCredentialStore(true)
+	credStore, err := newCalendarCredentialStore(true)
 	if err == nil && strings.HasPrefix(account.Name, hiddenAccountPrefix) {
 		_ = credStore.Delete(account.ID)
+	}
+	return nil
+}
+
+func deleteCalendarWithCleanup(ctx context.Context, a *app.App, id int64) error {
+	cal, err := a.Calendars.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	count, err := a.Queries.CountCalendars(ctx)
+	if err != nil {
+		return fmt.Errorf("count calendars: %w", err)
+	}
+	if count <= 1 {
+		return calendarpkg.ErrLastCalendar
+	}
+
+	var (
+		account      storage.Account
+		hasAccount   bool
+		hiddenAccount bool
+	)
+	if cal.AccountID != 0 {
+		account, err = a.Queries.GetAccount(ctx, cal.AccountID)
+		if err != nil {
+			return fmt.Errorf("get account: %w", err)
+		}
+		hasAccount = true
+		hiddenAccount = strings.HasPrefix(account.Name, hiddenAccountPrefix)
+	}
+
+	tx, err := a.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	qtx := a.Queries.WithTx(tx)
+	if err := qtx.DeleteCalendar(ctx, id); err != nil {
+		return err
+	}
+
+	if hasAccount && hiddenAccount {
+		linked, err := qtx.ListCalendarsByAccount(ctx, &account.ID)
+		if err != nil {
+			return fmt.Errorf("list calendars by hidden account: %w", err)
+		}
+		if len(linked) == 0 {
+			if err := qtx.DeleteAccount(ctx, account.ID); err != nil {
+				return fmt.Errorf("delete hidden account: %w", err)
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	if hasAccount && hiddenAccount {
+		credStore, err := newCalendarCredentialStore(true)
+		if err == nil {
+			_ = credStore.Delete(account.ID)
+		}
 	}
 	return nil
 }
