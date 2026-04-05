@@ -18,6 +18,8 @@ import (
 
 const hiddenAccountPrefix = "__calendar_"
 
+var newCalendarCredentialStore = auth.NewCredentialStore
+
 type calendarRemoteFlags struct {
 	RemoteURL     string
 	Username      string
@@ -71,7 +73,7 @@ func connectCalendarRemote(ctx context.Context, a *app.App, cal calendarpkg.Cale
 		return err
 	}
 
-	credStore, err := auth.NewCredentialStore(true)
+	credStore, err := newCalendarCredentialStore(true)
 	if err != nil {
 		return fmt.Errorf("credential store: %w", err)
 	}
@@ -84,6 +86,11 @@ func connectCalendarRemote(ctx context.Context, a *app.App, cal calendarpkg.Cale
 	if cal.AccountID != 0 {
 		existingAccount, err := a.Queries.GetAccount(ctx, cal.AccountID)
 		if err == nil && strings.HasPrefix(existingAccount.Name, hiddenAccountPrefix) {
+			cred.AccountID = existingAccount.ID
+			if err := credStore.Set(cred); err != nil {
+				return fmt.Errorf("store credentials: %w", err)
+			}
+
 			tx, err := a.DB.BeginTx(ctx, nil)
 			if err != nil {
 				return fmt.Errorf("begin tx: %w", err)
@@ -109,10 +116,6 @@ func connectCalendarRemote(ctx context.Context, a *app.App, cal calendarpkg.Cale
 			}
 			if err := tx.Commit(); err != nil {
 				return fmt.Errorf("commit remote calendar link: %w", err)
-			}
-			cred.AccountID = existingAccount.ID
-			if err := credStore.Set(cred); err != nil {
-				return fmt.Errorf("store credentials: %w", err)
 			}
 			return nil
 		}
@@ -141,19 +144,15 @@ func connectCalendarRemote(ctx context.Context, a *app.App, cal calendarpkg.Cale
 		_ = tx.Rollback()
 		return fmt.Errorf("link calendar: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit remote calendar link: %w", err)
-	}
 
 	cred.AccountID = account.ID
 	if err := credStore.Set(cred); err != nil {
-		_ = a.Queries.DeleteAccount(ctx, account.ID)
+		_ = tx.Rollback()
 		return fmt.Errorf("store credentials: %w", err)
 	}
-	if err := a.Calendars.LinkToAccount(ctx, cal.ID, account.ID, flags.RemoteURL); err != nil {
+	if err := tx.Commit(); err != nil {
 		_ = credStore.Delete(account.ID)
-		_ = a.Queries.DeleteAccount(ctx, account.ID)
-		return fmt.Errorf("link calendar: %w", err)
+		return fmt.Errorf("commit remote calendar link: %w", err)
 	}
 	return nil
 }
