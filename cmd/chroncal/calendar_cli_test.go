@@ -276,7 +276,7 @@ func createLinkedCalendarForTest(t *testing.T, dbPath string) (int64, int64) {
 	}
 
 	account, err := a.Queries.CreateAccount(ctx, storage.CreateAccountParams{
-		Name:      "work",
+		Name:      "__calendar_test",
 		ServerUrl: "https://cal.example.com/dav",
 		AuthType:  "bearer",
 		Username:  "alice",
