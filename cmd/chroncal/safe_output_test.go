@@ -106,7 +106,6 @@ func TestWriteSyncStatusLine_SanitizesControlSequences(t *testing.T) {
 	var buf bytes.Buffer
 	writeSyncStatusLine(&buf, syncPkg.SyncStatus{
 		CalendarName:        "Work\x1b]52;c;clip\a",
-		AccountName:         "Main\r\nAccount",
 		LastSyncAt:          "2026-04-04T09:30:00Z",
 		LastSyncAttemptedAt: "2026-04-04T09:45:00Z",
 		LastSyncError:       "HTTP 500:\x1b[31m server\r\nerror",
@@ -124,7 +123,10 @@ func TestWriteSyncStatusLine_SanitizesControlSequences(t *testing.T) {
 	if strings.Contains(out, "]52;c;clip") {
 		t.Fatalf("sync status line contains OSC payload: %q", out)
 	}
-	if !strings.Contains(out, "Work") || !strings.Contains(out, "Main Account") || !strings.Contains(out, "HTTP 500: server error") {
+	if strings.Contains(out, "account=") {
+		t.Fatalf("sync status line should not expose account details: %q", out)
+	}
+	if !strings.Contains(out, "Work") || !strings.Contains(out, "HTTP 500: server error") {
 		t.Fatalf("sync status line did not contain sanitized fields: %q", out)
 	}
 }

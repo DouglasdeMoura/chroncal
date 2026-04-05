@@ -208,32 +208,29 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 	return result, nil
 }
 
-// SyncAll syncs all calendars linked to accounts.
+// SyncAll syncs all connected calendars.
 func (e *Engine) SyncAll(ctx context.Context, strategy ConflictStrategy) ([]*SyncResult, error) {
-	accounts, err := e.q.ListAccounts(ctx)
+	cals, err := e.q.ListCalendars(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list accounts: %w", err)
+		return nil, fmt.Errorf("list calendars: %w", err)
 	}
 
 	var results []*SyncResult
-	for _, account := range accounts {
-		cals, err := e.q.ListCalendarsByAccount(ctx, &account.ID)
-		if err != nil {
-			e.logger.Error("list calendars for account", "account_id", account.ID, "error", err)
+	for _, cal := range cals {
+		if cal.AccountID == nil || *cal.AccountID == 0 {
 			continue
 		}
-		for _, cal := range cals {
-			result, err := e.SyncCalendar(ctx, cal.ID, strategy)
-			if err != nil {
-				e.logger.Error("sync calendar failed", "calendar_id", cal.ID, "error", err)
-				results = append(results, &SyncResult{
-					CalendarID: cal.ID,
-					Errors:     []error{err},
-				})
-				continue
-			}
-			results = append(results, result)
+
+		result, err := e.SyncCalendar(ctx, cal.ID, strategy)
+		if err != nil {
+			e.logger.Error("sync calendar failed", "calendar_id", cal.ID, "error", err)
+			results = append(results, &SyncResult{
+				CalendarID: cal.ID,
+				Errors:     []error{err},
+			})
+			continue
 		}
+		results = append(results, result)
 	}
 	return results, nil
 }

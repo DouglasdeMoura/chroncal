@@ -19,9 +19,9 @@ const syncRunTimeout = 5 * time.Minute
 func syncCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sync",
-		Short: "Sync linked calendars with CalDAV servers",
+		Short: "Sync connected calendars with CalDAV servers",
 		Long: `Run manual sync operations, inspect sync state, and resolve
-conflicts for calendars linked to remote CalDAV accounts.`,
+conflicts for calendars connected to remote CalDAV calendars.`,
 		Example: `  chroncal sync run
   chroncal sync status
   chroncal sync conflicts`,
@@ -37,10 +37,10 @@ func syncRunCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "run",
-		Short: "Run sync for one or all linked calendars",
-		Long: `Push local changes and pull remote changes for linked calendars.
+		Short: "Run sync for one or all connected calendars",
+		Long: `Push local changes and pull remote changes for connected calendars.
 
-By default every linked calendar is synced. Use --calendar to limit the
+By default every connected calendar is synced. Use --calendar to limit the
 run to a single local calendar.`,
 		Example: `  chroncal sync run
   chroncal sync run --calendar Work
@@ -109,9 +109,9 @@ run to a single local calendar.`,
 func syncStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
-		Short: "Show sync status for all linked calendars",
+		Short: "Show sync status for all connected calendars",
 		Long: `Show the last sync times, pending work, conflicts, and last error
-for each linked calendar.`,
+for each connected calendar.`,
 		Example: `  chroncal sync status
   chroncal sync status --output json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -130,7 +130,7 @@ for each linked calendar.`,
 			}
 
 			if len(statuses) == 0 {
-				fmt.Println("No synced calendars. Use 'chroncal account add' to set up sync.")
+				fmt.Println("No connected calendars. Use 'chroncal calendar create ... --remote-url ...' or 'chroncal calendar update ... --remote-url ...' to set up sync.")
 				return nil
 			}
 

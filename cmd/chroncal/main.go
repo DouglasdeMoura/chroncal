@@ -122,7 +122,7 @@ func init() {
 		rootCmd.AddCommand(cmd)
 	}
 
-	integrationCommands := []*cobra.Command{icalCmd(), accountCmd(), syncCmd()}
+	integrationCommands := []*cobra.Command{icalCmd(), syncCmd()}
 	for _, cmd := range integrationCommands {
 		cmd.GroupID = groupIntegration
 		rootCmd.AddCommand(cmd)

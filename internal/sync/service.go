@@ -45,7 +45,6 @@ func (s *Service) SyncAll(ctx context.Context, strategy ConflictStrategy) ([]*Sy
 type SyncStatus struct {
 	CalendarID          int64
 	CalendarName        string
-	AccountName         string
 	LastSyncToken       string
 	LastSyncAt          string // RFC 3339 or empty
 	LastSyncAttemptedAt string // RFC 3339 or empty
@@ -56,38 +55,35 @@ type SyncStatus struct {
 
 // Status returns sync status for all synced calendars.
 func (s *Service) Status(ctx context.Context) ([]SyncStatus, error) {
-	accounts, err := s.q.ListAccounts(ctx)
+	cals, err := s.q.ListCalendars(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list accounts: %w", err)
+		return nil, fmt.Errorf("list calendars: %w", err)
 	}
 
 	var statuses []SyncStatus
-	for _, account := range accounts {
-		cals, err := s.q.ListCalendarsByAccount(ctx, &account.ID)
-		if err != nil {
+	for _, cal := range cals {
+		if cal.AccountID == nil || *cal.AccountID == 0 {
 			continue
 		}
-		for _, cal := range cals {
-			dirty, err := s.q.ListDirtySyncResources(ctx, cal.ID)
-			if err != nil {
-				dirty = nil
-			}
-			conflicts, err := s.q.ListSyncConflictsByCalendar(ctx, cal.ID)
-			if err != nil {
-				conflicts = nil
-			}
-			statuses = append(statuses, SyncStatus{
-				CalendarID:          cal.ID,
-				CalendarName:        cal.Name,
-				AccountName:         account.Name,
-				LastSyncToken:       storage.NullableToString(cal.SyncToken),
-				LastSyncAt:          storage.NullableToString(cal.LastSyncAt),
-				LastSyncAttemptedAt: storage.NullableToString(cal.LastSyncAttemptedAt),
-				LastSyncError:       storage.NullableToString(cal.LastSyncError),
-				PendingPush:         len(dirty),
-				Conflicts:           len(conflicts),
-			})
+
+		dirty, err := s.q.ListDirtySyncResources(ctx, cal.ID)
+		if err != nil {
+			dirty = nil
 		}
+		conflicts, err := s.q.ListSyncConflictsByCalendar(ctx, cal.ID)
+		if err != nil {
+			conflicts = nil
+		}
+		statuses = append(statuses, SyncStatus{
+			CalendarID:          cal.ID,
+			CalendarName:        cal.Name,
+			LastSyncToken:       storage.NullableToString(cal.SyncToken),
+			LastSyncAt:          storage.NullableToString(cal.LastSyncAt),
+			LastSyncAttemptedAt: storage.NullableToString(cal.LastSyncAttemptedAt),
+			LastSyncError:       storage.NullableToString(cal.LastSyncError),
+			PendingPush:         len(dirty),
+			Conflicts:           len(conflicts),
+		})
 	}
 	return statuses, nil
 }

@@ -21,7 +21,7 @@ func tickCmd() *cobra.Command {
 		Short:   "Run one background-service cycle: alarms always, sync when due",
 		Long: `Run one background-service cycle.
 
-Each run always checks alarms. It also runs sync for linked calendars
+Each run always checks alarms. It also runs sync for connected calendars
 when the configured sync interval says a sync is due.`,
 		Example: `  chroncal service run
   CHRONCAL_SYNC_INTERVAL=15m chroncal service run`,

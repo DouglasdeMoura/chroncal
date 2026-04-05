@@ -31,8 +31,6 @@ calendar for sync.`,
 		calendarCreateCmd(),
 		calendarUpdateCmd(),
 		calendarDeleteCmd(),
-		calendarLinkCmd(),
-		calendarUnlinkCmd(),
 	)
 	return cmd
 }

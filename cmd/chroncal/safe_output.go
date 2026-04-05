@@ -57,9 +57,8 @@ func writeSyncStatusLine(w io.Writer, status syncPkg.SyncStatus) {
 	if status.LastSyncError != "" {
 		lastError = safeText(status.LastSyncError)
 	}
-	fmt.Fprintf(w, "  %-20s  account=%-15s  last_sync=%s  last_attempt=%s  pending=%d  conflicts=%d  last_error=%s\n",
+	fmt.Fprintf(w, "  %-20s  last_sync=%s  last_attempt=%s  pending=%d  conflicts=%d  last_error=%s\n",
 		safeText(status.CalendarName),
-		safeText(status.AccountName),
 		lastSync,
 		lastAttempt,
 		status.PendingPush,
