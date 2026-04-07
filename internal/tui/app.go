@@ -43,6 +43,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+const sidebarWidth = 30
+
 func (m Model) View() tea.View {
 	v := tea.View{AltScreen: true}
 
@@ -50,12 +52,39 @@ func (m Model) View() tea.View {
 		return v
 	}
 
-	title := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(m.theme.Primary).
+	padding := 1
+	borderWidth := 1
+	footerHeight := 1
+	contentHeight := m.height - footerHeight - padding*2
+	mainWidth := m.width - sidebarWidth - borderWidth - padding*2
+
+	sidebar := lipgloss.NewStyle().
+		Width(sidebarWidth - padding*2).
+		Height(contentHeight).
+		Padding(padding).
+		BorderRight(true).
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(m.theme.Border).
+		Foreground(m.theme.Text).
+		Render("Sidebar")
+
+	main := lipgloss.NewStyle().
+		Width(mainWidth).
+		Height(contentHeight).
+		Padding(padding).
+		Foreground(m.theme.Text).
+		Render("Main")
+
+	body := lipgloss.JoinHorizontal(lipgloss.Top, sidebar, main)
+
+	footer := lipgloss.NewStyle().
+		Width(m.width - padding*2).
+		Height(footerHeight).
+		Padding(padding).
+		Foreground(m.theme.TextDim).
 		Render("chroncal")
 
-	v.Content = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, title)
+	v.Content = lipgloss.JoinVertical(lipgloss.Left, body, footer)
 	return v
 }
 
