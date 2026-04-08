@@ -238,6 +238,22 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 		}
 	}
 
+	// Order by instance day, placing all-day events before timed events on
+	// the same day, then timed events by start time. SQL-level ordering is
+	// not sufficient because recurring instances are generated in Go.
+	sort.SliceStable(results, func(i, j int) bool {
+		a, b := results[i], results[j]
+		ad := a.InstanceTime.Local().Truncate(24 * time.Hour)
+		bd := b.InstanceTime.Local().Truncate(24 * time.Hour)
+		if !ad.Equal(bd) {
+			return ad.Before(bd)
+		}
+		if a.AllDay != b.AllDay {
+			return a.AllDay
+		}
+		return a.InstanceTime.Before(b.InstanceTime)
+	})
+
 	return results, nil
 }
 
