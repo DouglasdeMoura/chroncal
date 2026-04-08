@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"charm.land/bubbles/v2/viewport"
@@ -40,8 +41,29 @@ func (m Model) loadEvents() tea.Cmd {
 		from := m.month
 		to := from.AddDate(0, 1, 0)
 		events, err := m.app.Recurrences.ListExpandedEvents(context.Background(), from, to)
+		if err == nil {
+			sortEventsAllDayFirst(events)
+		}
 		return eventsLoadedMsg{events: events, err: err}
 	}
+}
+
+// sortEventsAllDayFirst sorts events by instance day, placing all-day
+// events before timed events on the same day, then ordering timed events
+// by their start time.
+func sortEventsAllDayFirst(events []recurrence.ExpandedEvent) {
+	sort.SliceStable(events, func(i, j int) bool {
+		a, b := events[i], events[j]
+		ad := a.InstanceTime.Local().Truncate(24 * time.Hour)
+		bd := b.InstanceTime.Local().Truncate(24 * time.Hour)
+		if !ad.Equal(bd) {
+			return ad.Before(bd)
+		}
+		if a.AllDay != b.AllDay {
+			return a.AllDay
+		}
+		return a.InstanceTime.Before(b.InstanceTime)
+	})
 }
 
 func (m Model) Init() tea.Cmd {
