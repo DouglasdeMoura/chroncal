@@ -1,25 +1,48 @@
 package tui
 
 import (
+	"context"
+	"time"
+
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
 
 	"github.com/douglasdemoura/chroncal/internal/app"
+	"github.com/douglasdemoura/chroncal/internal/recurrence"
 )
+
+type eventsLoadedMsg struct {
+	events []recurrence.ExpandedEvent
+	err    error
+}
 
 type Model struct {
 	app    *app.App
 	theme  Theme
 	width  int
 	height int
+	month  time.Time
+	events []recurrence.ExpandedEvent
+	err    error
 }
 
 func NewModel(a *app.App) Model {
-	return Model{app: a}
+	now := time.Now()
+	month := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	return Model{app: a, month: month}
+}
+
+func (m Model) loadEvents() tea.Cmd {
+	return func() tea.Msg {
+		from := m.month
+		to := from.AddDate(0, 1, 0)
+		events, err := m.app.Recurrences.ListExpandedEvents(context.Background(), from, to)
+		return eventsLoadedMsg{events: events, err: err}
+	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.RequestBackgroundColor
+	return tea.Batch(tea.RequestBackgroundColor, m.loadEvents())
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -33,6 +56,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
+	case eventsLoadedMsg:
+		m.events = msg.events
+		m.err = msg.err
+		return m, nil
+
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
@@ -44,6 +72,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 const sidebarWidth = 30
+
+func getMainContent(m Model) string {
+	var mainContent string
+	if m.err != nil {
+		mainContent = lipgloss.NewStyle().Foreground(m.theme.Error).Render("Error: " + m.err.Error())
+	} else if len(m.events) == 0 {
+		mainContent = "No events for " + m.month.Format("January 2006")
+	} else {
+		mainContent = lipgloss.NewStyle().Bold(true).Render(m.month.Format("January 2006")) + "\n\n"
+		for _, ev := range m.events {
+			t := ev.InstanceTime.Local().Format("02 Mon 15:04")
+			mainContent += t + "  " + ev.Title + "\n"
+		}
+	}
+
+	return mainContent
+}
 
 func (m Model) View() tea.View {
 	v := tea.View{AltScreen: true}
@@ -73,7 +118,7 @@ func (m Model) View() tea.View {
 		Height(contentHeight).
 		Padding(padding).
 		Foreground(m.theme.Text).
-		Render("Main")
+		Render(getMainContent(m))
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top, sidebar, main)
 
