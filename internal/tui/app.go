@@ -106,7 +106,7 @@ func formatTimeColumn(ev recurrence.ExpandedEvent) string {
 	case ev.EndTime.IsZero():
 		return ev.InstanceTime.Local().Format("15:04") + "      "
 	default:
-		return ev.InstanceTime.Local().Format("15:04") + "-" + ev.EndTime.Local().Format("15:04")
+		return ev.InstanceTime.Local().Format("15:04") + "–" + ev.EndTime.Local().Format("15:04")
 	}
 }
 
