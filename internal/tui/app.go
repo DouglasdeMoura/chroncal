@@ -35,7 +35,7 @@ func NewModel(a *app.App) Model {
 func (m Model) loadEvents() tea.Cmd {
 	return func() tea.Msg {
 		from := m.month
-		to := from.AddDate(0, 1, 0)
+		to := from.AddDate(0, 1, -from.Day())
 		events, err := m.app.Recurrences.ListExpandedEvents(context.Background(), from, to)
 		return eventsLoadedMsg{events: events, err: err}
 	}
