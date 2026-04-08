@@ -17,6 +17,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/recurrence"
+	"github.com/douglasdemoura/chroncal/internal/tui"
 )
 
 func eventCmd() *cobra.Command {
@@ -48,7 +49,7 @@ func eventListCmd() *cobra.Command {
 		Long: `List events in a date range, expanding recurring series into the
 instances that fall inside the requested window.
 
-Without flags, the window defaults to today through the next 14 days.`,
+Without flags, the window defaults to today through the next 30 days.`,
 		Example: `  chroncal event list
   chroncal event list --calendar Work --from 2026-04-01 --to 2026-04-07
   chroncal event list --status CONFIRMED --output json`,
@@ -91,12 +92,18 @@ Without flags, the window defaults to today through the next 14 days.`,
 				}
 				return printOutput(w, items)
 			}
-			printEvents(w, events)
+			fmt.Fprint(w, tui.FormatEventList(tui.FormatEventListOptions{
+				Events:      events,
+				ShowHeader:  true,
+				ShowAllDays: true,
+				From:        from,
+				To:          to,
+			}))
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD, default: today)")
-	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 14 days from now)")
+	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 30 days from now)")
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "filter by calendar name")
 	cmd.Flags().StringVar(&status, "status", "", "filter by status (TENTATIVE, CONFIRMED, CANCELLED)")
 	return cmd
