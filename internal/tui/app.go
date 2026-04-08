@@ -97,47 +97,77 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 const sidebarWidth = 30
 
 type FormatEventListOptions struct {
-	Events     []recurrence.ExpandedEvent
-	ShowHeader bool
+	Events      []recurrence.ExpandedEvent
+	ShowHeader  bool
+	ShowAllDays bool
+	From        time.Time
+	To          time.Time
 }
 
 func FormatEventList(opts FormatEventListOptions) string {
-	if len(opts.Events) == 0 {
+	if len(opts.Events) == 0 && !opts.ShowAllDays {
 		return ""
 	}
 
-	months := make(map[string][]recurrence.ExpandedEvent)
+	eventsByDay := make(map[string][]recurrence.ExpandedEvent)
+	for _, ev := range opts.Events {
+		key := ev.InstanceTime.Local().Format("2006-01-02")
+		eventsByDay[key] = append(eventsByDay[key], ev)
+	}
+
+	months := make(map[string][]string)
 	var monthOrder []string
 
-	for _, ev := range opts.Events {
-		key := ev.InstanceTime.Local().Format("2006-01")
-		if _, exists := months[key]; !exists {
-			monthOrder = append(monthOrder, key)
+	addDay := func(d time.Time) {
+		monthKey := d.Format("2006-01")
+		dayKey := d.Format("2006-01-02")
+		if _, exists := months[monthKey]; !exists {
+			monthOrder = append(monthOrder, monthKey)
 		}
-		months[key] = append(months[key], ev)
+		months[monthKey] = append(months[monthKey], dayKey)
+	}
+
+	if opts.ShowAllDays && !opts.From.IsZero() && !opts.To.IsZero() {
+		for d := opts.From; d.Before(opts.To); d = d.AddDate(0, 0, 1) {
+			addDay(d.Local())
+		}
+	} else {
+		seen := make(map[string]bool)
+		for _, ev := range opts.Events {
+			dayKey := ev.InstanceTime.Local().Format("2006-01-02")
+			if !seen[dayKey] {
+				seen[dayKey] = true
+				addDay(ev.InstanceTime.Local())
+			}
+		}
 	}
 
 	var out string
-	for _, key := range monthOrder {
+	for _, monthKey := range monthOrder {
 		if opts.ShowHeader {
-			t, _ := time.Parse("2006-01", key)
+			t, _ := time.Parse("2006-01", monthKey)
 			out += lipgloss.NewStyle().Bold(true).Render(t.Format("January 2006")) + "\n\n"
 		}
 
-		var prevDate string
-		for _, ev := range months[key] {
-			day := ev.InstanceTime.Local().Format("2006-01-02")
-			if day == prevDate {
-				out += "       " + ev.InstanceTime.Local().Format("15:04") + " " + ev.Title + "\n"
-			} else {
-				out += ev.InstanceTime.Local().Format("02 Mon 15:04") + " " + ev.Title + "\n"
+		for _, dayKey := range months[monthKey] {
+			dayEvents := eventsByDay[dayKey]
+			d, _ := time.Parse("2006-01-02", dayKey)
+
+			if len(dayEvents) == 0 {
+				out += d.Format("02 Mon") + "\n"
+				continue
 			}
-			prevDate = day
+
+			for i, ev := range dayEvents {
+				if i == 0 {
+					out += ev.InstanceTime.Local().Format("02 Mon 15:04") + " " + ev.Title + "\n"
+				} else {
+					out += "       " + ev.InstanceTime.Local().Format("15:04") + " " + ev.Title + "\n"
+				}
+			}
 		}
-		
-		if opts.ShowHeader {
-			out += "\n"
-		}
+
+		out += "\n"
 	}
 
 	return out
@@ -150,7 +180,13 @@ func getMainContent(m Model) string {
 	} else if len(m.events) == 0 {
 		mainContent = "No events for " + m.month.Format("January 2006")
 	} else {
-		mainContent = FormatEventList(FormatEventListOptions{Events: m.events, ShowHeader: true})
+		mainContent = FormatEventList(FormatEventListOptions{
+			Events:      m.events,
+			ShowHeader:  true,
+			ShowAllDays: true,
+			From:        m.month,
+			To:          m.month.AddDate(0, 1, -m.month.Day()),
+		})
 	}
 
 	return mainContent
