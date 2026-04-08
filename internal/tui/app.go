@@ -38,7 +38,7 @@ func NewModel(a *app.App) Model {
 func (m Model) loadEvents() tea.Cmd {
 	return func() tea.Msg {
 		from := m.month
-		to := from.AddDate(0, 3, -from.Day())
+		to := from.AddDate(0, 1, 0)
 		events, err := m.app.Recurrences.ListExpandedEvents(context.Background(), from, to)
 		return eventsLoadedMsg{events: events, err: err}
 	}
@@ -128,8 +128,10 @@ func FormatEventList(opts FormatEventListOptions) string {
 	}
 
 	if opts.ShowAllDays && !opts.From.IsZero() && !opts.To.IsZero() {
-		for d := opts.From; d.Before(opts.To); d = d.AddDate(0, 0, 1) {
-			addDay(d.Local())
+		from := time.Date(opts.From.Year(), opts.From.Month(), opts.From.Day(), 0, 0, 0, 0, time.Local)
+		to := time.Date(opts.To.Year(), opts.To.Month(), opts.To.Day(), 0, 0, 0, 0, time.Local)
+		for d := from; d.Before(to); d = d.AddDate(0, 0, 1) {
+			addDay(d)
 		}
 	} else {
 		seen := make(map[string]bool)
@@ -185,7 +187,7 @@ func getMainContent(m Model) string {
 			ShowHeader:  true,
 			ShowAllDays: true,
 			From:        m.month,
-			To:          m.month.AddDate(0, 1, -m.month.Day()),
+			To:          m.month.AddDate(0, 1, 0),
 		})
 	}
 
