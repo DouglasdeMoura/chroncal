@@ -96,6 +96,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 const sidebarWidth = 30
 
+// formatTimeColumn returns a fixed-width label for an event's time slot.
+// The width matches "15:04-15:04" (11 chars) so titles line up across
+// all-day events, events with only a start time, and events with a range.
+func formatTimeColumn(ev recurrence.ExpandedEvent) string {
+	switch {
+	case ev.AllDay:
+		return "           "
+	case ev.EndTime.IsZero():
+		return ev.InstanceTime.Local().Format("15:04") + "      "
+	default:
+		return ev.InstanceTime.Local().Format("15:04") + "-" + ev.EndTime.Local().Format("15:04")
+	}
+}
+
 type FormatEventListOptions struct {
 	Events      []recurrence.ExpandedEvent
 	ShowHeader  bool
@@ -154,18 +168,20 @@ func FormatEventList(opts FormatEventListOptions) string {
 		for _, dayKey := range months[monthKey] {
 			dayEvents := eventsByDay[dayKey]
 			d, _ := time.Parse("2006-01-02", dayKey)
+			dayPrefix := d.Format("02 Mon")
 
 			if len(dayEvents) == 0 {
-				out += d.Format("02 Mon") + "\n"
+				out += dayPrefix + "\n"
 				continue
 			}
 
 			for i, ev := range dayEvents {
 				if i == 0 {
-					out += ev.InstanceTime.Local().Format("02 Mon 15:04") + " " + ev.Title + "\n"
+					out += dayPrefix
 				} else {
-					out += "       " + ev.InstanceTime.Local().Format("15:04") + " " + ev.Title + "\n"
+					out += "      "
 				}
+				out += " " + formatTimeColumn(ev) + " " + ev.Title + "\n"
 			}
 		}
 
