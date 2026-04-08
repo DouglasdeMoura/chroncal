@@ -29,11 +29,30 @@ type FormatEventListOptions struct {
 	ShowAllDays bool
 	From        time.Time
 	To          time.Time
+	// WeekdayWidth controls the weekday label width (1, 2, or 3 chars).
+	// Zero or out-of-range values default to 3.
+	WeekdayWidth int
+}
+
+// formatWeekday returns a 1-, 2-, or 3-character English weekday label.
+func formatWeekday(t time.Time, width int) string {
+	full := t.Format("Mon")
+	switch width {
+	case 1, 2:
+		return full[:width]
+	default:
+		return full
+	}
 }
 
 func FormatEventList(opts FormatEventListOptions) string {
 	if len(opts.Events) == 0 && !opts.ShowAllDays {
 		return ""
+	}
+
+	weekdayWidth := opts.WeekdayWidth
+	if weekdayWidth < 1 || weekdayWidth > 3 {
+		weekdayWidth = 3
 	}
 
 	eventsByDay := make(map[string][]event.Event)
@@ -81,7 +100,7 @@ func FormatEventList(opts FormatEventListOptions) string {
 		for _, dayKey := range months[monthKey] {
 			dayEvents := eventsByDay[dayKey]
 			d, _ := time.Parse("2006-01-02", dayKey)
-			dayPrefix := d.Format("02 Mon")
+			dayPrefix := d.Format("02") + " " + formatWeekday(d, weekdayWidth)
 
 			if len(dayEvents) == 0 {
 				out += dayPrefix + "\n"
