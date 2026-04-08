@@ -93,7 +93,7 @@ func FormatEventList(opts FormatEventListOptions) string {
 				} else {
 					out += "      "
 				}
-				out += " " + formatTimeColumn(ev) + " " + ev.Title + "\n"
+				out += " " + formatTimeColumn(ev) + "  " + ev.Title + "\n"
 			}
 		}
 
