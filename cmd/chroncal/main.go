@@ -215,7 +215,7 @@ func resolveJournal(ctx context.Context, a *app.App, ref, recurrenceID string) (
 func parseDateRange(fromStr, toStr string) (time.Time, time.Time, error) {
 	now := time.Now()
 	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
-	to := from.AddDate(0, 0, 14)
+	to := from.AddDate(0, 0, 30)
 
 	if fromStr != "" {
 		var err error
