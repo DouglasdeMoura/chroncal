@@ -96,15 +96,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 const sidebarWidth = 30
 
-func FormatEventList(events []recurrence.ExpandedEvent) string {
-	if len(events) == 0 {
+type FormatEventListOptions struct {
+	Events     []recurrence.ExpandedEvent
+	ShowHeader bool
+}
+
+func FormatEventList(opts FormatEventListOptions) string {
+	if len(opts.Events) == 0 {
 		return ""
 	}
 
 	months := make(map[string][]recurrence.ExpandedEvent)
 	var monthOrder []string
 
-	for _, ev := range events {
+	for _, ev := range opts.Events {
 		key := ev.InstanceTime.Local().Format("2006-01")
 		if _, exists := months[key]; !exists {
 			monthOrder = append(monthOrder, key)
@@ -114,8 +119,10 @@ func FormatEventList(events []recurrence.ExpandedEvent) string {
 
 	var out string
 	for _, key := range monthOrder {
-		t, _ := time.Parse("2006-01", key)
-		out += lipgloss.NewStyle().Bold(true).Render(t.Format("January 2006")) + "\n\n"
+		if opts.ShowHeader {
+			t, _ := time.Parse("2006-01", key)
+			out += lipgloss.NewStyle().Bold(true).Render(t.Format("January 2006")) + "\n\n"
+		}
 
 		var prevDate string
 		for _, ev := range months[key] {
@@ -127,8 +134,10 @@ func FormatEventList(events []recurrence.ExpandedEvent) string {
 			}
 			prevDate = day
 		}
-
-		out += "\n"
+		
+		if opts.ShowHeader {
+			out += "\n"
+		}
 	}
 
 	return out
@@ -141,7 +150,7 @@ func getMainContent(m Model) string {
 	} else if len(m.events) == 0 {
 		mainContent = "No events for " + m.month.Format("January 2006")
 	} else {
-		mainContent = FormatEventList(m.events)
+		mainContent = FormatEventList(FormatEventListOptions{Events: m.events, ShowHeader: true})
 	}
 
 	return mainContent
