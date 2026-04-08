@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"time"
 
 	lipgloss "charm.land/lipgloss/v2"
@@ -87,11 +88,12 @@ func FormatEventList(opts FormatEventListOptions) string {
 				continue
 			}
 
+			continuation := strings.Repeat(" ", len(dayPrefix))
 			for i, ev := range dayEvents {
 				if i == 0 {
 					out += dayPrefix
 				} else {
-					out += "      "
+					out += continuation
 				}
 				out += " " + formatTimeColumn(ev) + "  " + ev.Title + "\n"
 			}
