@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
 
@@ -17,13 +18,15 @@ type eventsLoadedMsg struct {
 }
 
 type Model struct {
-	app    *app.App
-	theme  Theme
-	width  int
-	height int
-	month  time.Time
-	events []recurrence.ExpandedEvent
-	err    error
+	app       *app.App
+	theme     Theme
+	width     int
+	height    int
+	month     time.Time
+	events    []recurrence.ExpandedEvent
+	err       error
+	ready     bool
+	viewport  viewport.Model
 }
 
 func NewModel(a *app.App) Model {
@@ -35,7 +38,7 @@ func NewModel(a *app.App) Model {
 func (m Model) loadEvents() tea.Cmd {
 	return func() tea.Msg {
 		from := m.month
-		to := from.AddDate(0, 1, -from.Day())
+		to := from.AddDate(0, 3, -from.Day())
 		events, err := m.app.Recurrences.ListExpandedEvents(context.Background(), from, to)
 		return eventsLoadedMsg{events: events, err: err}
 	}
@@ -54,11 +57,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+
+		footerHeight := 1
+		padding := 1
+		borderWidth := 1
+		contentHeight := m.height - footerHeight - padding*2
+		mainWidth := m.width - sidebarWidth - borderWidth - padding*2
+
+		if !m.ready {
+			m.viewport = viewport.New(viewport.WithWidth(mainWidth), viewport.WithHeight(contentHeight))
+			m.viewport.SetContent(getMainContent(m))
+			m.ready = true
+		} else {
+			m.viewport.SetWidth(mainWidth)
+			m.viewport.SetHeight(contentHeight)
+		}
 		return m, nil
 
 	case eventsLoadedMsg:
 		m.events = msg.events
 		m.err = msg.err
+		if m.ready {
+			m.viewport.SetContent(getMainContent(m))
+		}
 		return m, nil
 
 	case tea.KeyPressMsg:
@@ -68,7 +89,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	return m, nil
+	var cmd tea.Cmd
+	m.viewport, cmd = m.viewport.Update(msg)
+	return m, cmd
 }
 
 const sidebarWidth = 30
@@ -125,9 +148,14 @@ func getMainContent(m Model) string {
 }
 
 func (m Model) View() tea.View {
-	v := tea.View{AltScreen: true}
+	v := tea.View{AltScreen: true, MouseMode: tea.MouseModeCellMotion}
 
 	if m.width == 0 {
+		return v
+	}
+
+	if !m.ready {
+		v.Content = "\n  Loading..."
 		return v
 	}
 
@@ -152,7 +180,7 @@ func (m Model) View() tea.View {
 		Height(contentHeight).
 		Padding(padding).
 		Foreground(m.theme.Text).
-		Render(getMainContent(m))
+		Render(m.viewport.View())
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top, sidebar, main)
 
