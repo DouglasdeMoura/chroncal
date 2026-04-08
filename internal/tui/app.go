@@ -81,9 +81,15 @@ func getMainContent(m Model) string {
 		mainContent = "No events for " + m.month.Format("January 2006")
 	} else {
 		mainContent = lipgloss.NewStyle().Bold(true).Render(m.month.Format("January 2006")) + "\n\n"
+		var prevDate string
 		for _, ev := range m.events {
-			t := ev.InstanceTime.Local().Format("02 Mon 15:04")
-			mainContent += t + "  " + ev.Title + "\n"
+			day := ev.InstanceTime.Local().Format("2006-01-02")
+			if day == prevDate {
+				mainContent += "       " + ev.InstanceTime.Local().Format("15:04") + " " + ev.Title + "\n"
+			} else {
+				mainContent += ev.InstanceTime.Local().Format("02 Mon 15:04") + " " + ev.Title + "\n"
+			}
+			prevDate = day
 		}
 	}
 
