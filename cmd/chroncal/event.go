@@ -94,7 +94,7 @@ Without flags, the window defaults to today through the next 30 days.`,
 			}
 			fmt.Fprint(w, tui.FormatEventList(tui.FormatEventListOptions{
 				Events:      events,
-				ShowHeader:  true,
+				ShowHeader:  false,
 				ShowAllDays: true,
 				From:        from,
 				To:          to,

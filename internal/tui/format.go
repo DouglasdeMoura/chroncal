@@ -101,6 +101,9 @@ func FormatEventList(opts FormatEventListOptions) string {
 			dayEvents := eventsByDay[dayKey]
 			d, _ := time.Parse("2006-01-02", dayKey)
 			dayPrefix := d.Format("02") + " " + formatWeekday(d, weekdayWidth)
+			if !opts.ShowHeader {
+				dayPrefix = d.Format("Jan") + " " + dayPrefix
+			}
 
 			if len(dayEvents) == 0 {
 				out += dayPrefix + "\n"
