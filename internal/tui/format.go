@@ -34,6 +34,8 @@ type FormatEventListOptions struct {
 	WeekdayWidth int
 	// ShowWeekday controls whether the weekday label is displayed.
 	ShowWeekday bool
+	// ShowMonth controls whether the month label is displayed in the day prefix.
+	ShowMonth bool
 }
 
 // formatWeekday returns a 1-, 2-, or 3-character English weekday label.
@@ -106,7 +108,7 @@ func FormatEventList(opts FormatEventListOptions) string {
 			if opts.ShowWeekday {
 				dayPrefix += " " + formatWeekday(d, weekdayWidth)
 			}
-			if !opts.ShowHeader {
+			if opts.ShowMonth {
 				dayPrefix = d.Format("Jan") + " " + dayPrefix
 			}
 
