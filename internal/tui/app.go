@@ -69,8 +69,7 @@ func (m Model) mainDims() (int, int) {
 	contentHeight := m.height - footerHeight - padding*2
 	mainWidth := m.width - padding*2
 	if m.showSidebar {
-		borderWidth := 1
-		mainWidth -= sidebarWidth + borderWidth
+		mainWidth -= sidebarWidth
 	}
 	return mainWidth, contentHeight
 }
@@ -158,7 +157,7 @@ func (m Model) View() tea.View {
 	var body string
 	if m.showSidebar {
 		sidebar := lipgloss.NewStyle().
-			Width(sidebarWidth - padding*2).
+			Width(sidebarWidth).
 			Height(contentHeight).
 			Padding(padding).
 			BorderRight(true).
