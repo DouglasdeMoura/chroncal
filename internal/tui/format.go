@@ -126,7 +126,9 @@ func FormatEventList(opts FormatEventListOptions) string {
 			}
 		}
 
-		out += "\n"
+		if opts.ShowHeader {
+			out += "\n"
+		}
 	}
 
 	return out
