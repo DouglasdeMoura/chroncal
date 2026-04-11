@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
 
@@ -18,26 +17,24 @@ type eventsLoadedMsg struct {
 }
 
 type Model struct {
-	app      *app.App
-	theme    Theme
-	width    int
-	height   int
-	month    time.Time
-	events   []event.Event
-	err      error
-	ready    bool
-	viewport viewport.Model
+	app         *app.App
+	theme       Theme
+	width       int
+	height      int
+	calendar    CalendarModel
+	err         error
+	ready       bool
+	showSidebar bool
 }
 
 func NewModel(a *app.App) Model {
-	now := time.Now()
-	month := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	return Model{app: a, month: month}
+	return Model{app: a, calendar: NewCalendarModel(time.Now()), showSidebar: true}
 }
 
 func (m Model) loadEvents() tea.Cmd {
+	month := m.calendar.Month()
 	return func() tea.Msg {
-		from := m.month
+		from := time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, time.UTC)
 		to := from.AddDate(0, 1, 0)
 		expanded, err := m.app.Recurrences.ListExpandedEvents(context.Background(), from, to)
 		events := make([]event.Event, len(expanded))
@@ -48,76 +45,86 @@ func (m Model) loadEvents() tea.Cmd {
 	}
 }
 
+func eventsToCalendar(events []event.Event) []CalendarEvent {
+	out := make([]CalendarEvent, len(events))
+	for i, e := range events {
+		out[i] = CalendarEvent{
+			Title:  e.Title,
+			AllDay: e.AllDay,
+			Day:    e.StartTime.Local(),
+		}
+	}
+	return out
+}
+
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(tea.RequestBackgroundColor, m.loadEvents())
+}
+
+const sidebarWidth = 30
+
+func (m Model) mainDims() (int, int) {
+	padding := 1
+	footerHeight := 1
+	contentHeight := m.height - footerHeight - padding*2
+	mainWidth := m.width - padding*2
+	if m.showSidebar {
+		borderWidth := 1
+		mainWidth -= sidebarWidth + borderWidth
+	}
+	return mainWidth, contentHeight
+}
+
+// innerDims returns the space available inside the padded main box,
+// which is what the calendar renderer should fill.
+func (m Model) innerDims() (int, int) {
+	mw, mh := m.mainDims()
+	padding := 1
+	return mw - padding*2, mh - padding*2
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.BackgroundColorMsg:
 		m.theme = NewTheme(msg.IsDark())
+		m.calendar = m.calendar.SetSelectedColor(m.theme.Text)
 		return m, nil
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-
-		footerHeight := 1
-		padding := 1
-		borderWidth := 1
-		contentHeight := m.height - footerHeight - padding*2
-		mainWidth := m.width - sidebarWidth - borderWidth - padding*2
-
-		if !m.ready {
-			m.viewport = viewport.New(viewport.WithWidth(mainWidth), viewport.WithHeight(contentHeight))
-			m.viewport.SetContent(getMainContent(m))
-			m.ready = true
-		} else {
-			m.viewport.SetWidth(mainWidth)
-			m.viewport.SetHeight(contentHeight)
-		}
+		iw, ih := m.innerDims()
+		m.calendar = m.calendar.SetSize(iw, ih)
+		m.ready = true
 		return m, nil
 
 	case eventsLoadedMsg:
-		m.events = msg.events
 		m.err = msg.err
-		if m.ready {
-			m.viewport.SetContent(getMainContent(m))
-		}
+		m.calendar = m.calendar.SetEvents(eventsToCalendar(msg.events))
+		return m, nil
+
+	case CalendarMonthChangedMsg:
+		return m, m.loadEvents()
+
+	case CalendarDaySelectedMsg:
 		return m, nil
 
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "s":
+			m.showSidebar = !m.showSidebar
+			iw, ih := m.innerDims()
+			m.calendar = m.calendar.SetSize(iw, ih)
+			return m, nil
 		}
+		var cmd tea.Cmd
+		m.calendar, cmd = m.calendar.Update(msg)
+		return m, cmd
 	}
 
-	var cmd tea.Cmd
-	m.viewport, cmd = m.viewport.Update(msg)
-	return m, cmd
-}
-
-const sidebarWidth = 30
-
-func getMainContent(m Model) string {
-	var mainContent string
-	if m.err != nil {
-		mainContent = lipgloss.NewStyle().Foreground(m.theme.Error).Render("Error: " + m.err.Error())
-	} else if len(m.events) == 0 {
-		mainContent = "No events for " + m.month.Format("January 2006")
-	} else {
-		mainContent = FormatEventList(FormatEventListOptions{
-			Events:      m.events,
-			ShowHeader:  true,
-			ShowAllDays: true,
-			ShowWeekday: true,
-			From:        m.month,
-			To:          m.month.AddDate(0, 1, 0),
-		})
-	}
-
-	return mainContent
+	return m, nil
 }
 
 func (m Model) View() tea.View {
@@ -133,36 +140,43 @@ func (m Model) View() tea.View {
 	}
 
 	padding := 1
-	borderWidth := 1
 	footerHeight := 1
-	contentHeight := m.height - footerHeight - padding*2
-	mainWidth := m.width - sidebarWidth - borderWidth - padding*2
+	mainWidth, contentHeight := m.mainDims()
 
-	sidebar := lipgloss.NewStyle().
-		Width(sidebarWidth - padding*2).
-		Height(contentHeight).
-		Padding(padding).
-		BorderRight(true).
-		BorderStyle(lipgloss.NormalBorder()).
-		BorderForeground(m.theme.Border).
-		Foreground(m.theme.Text).
-		Render("Sidebar")
+	mainContent := m.calendar.View()
+	if m.err != nil {
+		mainContent = lipgloss.NewStyle().Foreground(m.theme.Error).Render("Error: " + m.err.Error())
+	}
 
 	main := lipgloss.NewStyle().
 		Width(mainWidth).
 		Height(contentHeight).
 		Padding(padding).
 		Foreground(m.theme.Text).
-		Render(m.viewport.View())
+		Render(mainContent)
 
-	body := lipgloss.JoinHorizontal(lipgloss.Top, sidebar, main)
+	var body string
+	if m.showSidebar {
+		sidebar := lipgloss.NewStyle().
+			Width(sidebarWidth - padding*2).
+			Height(contentHeight).
+			Padding(padding).
+			BorderRight(true).
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderForeground(m.theme.Border).
+			Foreground(m.theme.Text).
+			Render("Sidebar")
+		body = lipgloss.JoinHorizontal(lipgloss.Top, sidebar, main)
+	} else {
+		body = main
+	}
 
 	footer := lipgloss.NewStyle().
 		Width(m.width - padding*2).
 		Height(footerHeight).
 		Padding(padding).
 		Foreground(m.theme.TextDim).
-		Render("chroncal")
+		Render("chroncal  ·  hjkl/arrows: move  ·  [/]: month  ·  t: today  ·  enter: select  ·  s: sidebar  ·  q: quit")
 
 	v.Content = lipgloss.JoinVertical(lipgloss.Left, body, footer)
 	return v
