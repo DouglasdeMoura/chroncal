@@ -8,6 +8,7 @@ import (
 	lipgloss "charm.land/lipgloss/v2"
 
 	"github.com/douglasdemoura/chroncal/internal/app"
+	"github.com/douglasdemoura/chroncal/internal/config"
 	"github.com/douglasdemoura/chroncal/internal/event"
 )
 
@@ -28,7 +29,8 @@ type Model struct {
 }
 
 func NewModel(a *app.App) Model {
-	return Model{app: a, calendar: NewCalendarModel(time.Now()), showSidebar: true}
+	ui := config.LoadUIState()
+	return Model{app: a, calendar: NewCalendarModel(time.Now()), showSidebar: ui.ShowSidebar}
 }
 
 func (m Model) loadEvents() tea.Cmd {
@@ -116,6 +118,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showSidebar = !m.showSidebar
 			iw, ih := m.innerDims()
 			m.calendar = m.calendar.SetSize(iw, ih)
+			_ = config.SaveUIState(config.UIState{ShowSidebar: m.showSidebar})
 			return m, nil
 		}
 		var cmd tea.Cmd
