@@ -42,6 +42,7 @@ func eventListCmd() *cobra.Command {
 		toStr        string
 		calendarName string
 		status       string
+		showWeekday  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -96,7 +97,7 @@ Without flags, the window defaults to today through the next 30 days.`,
 				Events:      events,
 				ShowHeader:  false,
 				ShowAllDays: true,
-				ShowWeekday: false,
+				ShowWeekday: showWeekday,
 				From:        from,
 				To:          to,
 			}))
@@ -107,6 +108,7 @@ Without flags, the window defaults to today through the next 30 days.`,
 	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 30 days from now)")
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "filter by calendar name")
 	cmd.Flags().StringVar(&status, "status", "", "filter by status (TENTATIVE, CONFIRMED, CANCELLED)")
+	cmd.Flags().BoolVar(&showWeekday, "show-weekday", false, "show weekday abbreviation next to the date")
 	return cmd
 }
 
