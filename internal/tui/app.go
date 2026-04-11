@@ -2,10 +2,12 @@ package tui
 
 import (
 	"context"
+	"image"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 
 	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/config"
@@ -23,6 +25,9 @@ type Model struct {
 	width       int
 	height      int
 	calendar    CalendarModel
+	events      []event.Event
+	dialog      EventDialogModel
+	dialogOpen  bool
 	err         error
 	ready       bool
 	showSidebar bool
@@ -45,6 +50,17 @@ func (m Model) loadEvents() tea.Cmd {
 		}
 		return eventsLoadedMsg{events: events, err: err}
 	}
+}
+
+func eventsOn(events []event.Event, day time.Time) []event.Event {
+	dayKey := day.Local().Format("2006-01-02")
+	var out []event.Event
+	for _, e := range events {
+		if e.StartTime.Local().Format("2006-01-02") == dayKey {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 func eventsToCalendar(events []event.Event) []CalendarEvent {
@@ -89,6 +105,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.BackgroundColorMsg:
 		m.theme = NewTheme(msg.IsDark())
 		m.calendar = m.calendar.SetSelectedColor(m.theme.Text)
+		m.dialog = m.dialog.SetTheme(m.theme)
 		return m, nil
 
 	case tea.WindowSizeMsg:
@@ -96,11 +113,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		iw, ih := m.innerDims()
 		m.calendar = m.calendar.SetSize(iw, ih)
+		m.dialog = m.dialog.SetSize(m.width, m.height)
 		m.ready = true
 		return m, nil
 
 	case eventsLoadedMsg:
 		m.err = msg.err
+		m.events = msg.events
 		m.calendar = m.calendar.SetEvents(eventsToCalendar(msg.events))
 		return m, nil
 
@@ -108,9 +127,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.loadEvents()
 
 	case CalendarDaySelectedMsg:
+		dayEvents := eventsOn(m.events, msg.Day)
+		if len(dayEvents) == 0 {
+			return m, nil
+		}
+		m.dialog = NewEventDialogModel(msg.Day, dayEvents, m.theme).
+			SetSize(m.width, m.height)
+		m.dialogOpen = true
+		return m, nil
+
+	case EventDialogClosedMsg:
+		m.dialogOpen = false
 		return m, nil
 
 	case tea.KeyPressMsg:
+		if m.dialogOpen {
+			if msg.String() == "ctrl+c" {
+				return m, tea.Quit
+			}
+			var cmd tea.Cmd
+			m.dialog, cmd = m.dialog.Update(msg)
+			return m, cmd
+		}
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
@@ -181,7 +219,40 @@ func (m Model) View() tea.View {
 		Render("chroncal  ·  hjkl/arrows: move  ·  [/]: month  ·  t: today  ·  enter: select  ·  s: sidebar  ·  q: quit")
 
 	v.Content = lipgloss.JoinVertical(lipgloss.Left, body, footer)
+
+	if m.dialogOpen {
+		v.Content = m.compositeDialog(v.Content)
+	}
+
 	return v
+}
+
+// compositeDialog draws the dialog box over the already-rendered main view
+// using an ultraviolet screen buffer. The background content outside the
+// dialog's rectangle is preserved unchanged.
+func (m Model) compositeDialog(background string) string {
+	if m.width <= 0 || m.height <= 0 {
+		return background
+	}
+
+	buf := uv.NewScreenBuffer(m.width, m.height)
+	uv.NewStyledString(background).Draw(buf, buf.Bounds())
+
+	dialogView := m.dialog.View()
+	if dialogView == "" {
+		return buf.Render()
+	}
+
+	boxW, boxH := m.dialog.BoxSize()
+	if boxW <= 0 || boxH <= 0 {
+		return buf.Render()
+	}
+	x := (m.width - boxW) / 2
+	y := (m.height - boxH) / 2
+	rect := image.Rect(x, y, x+boxW, y+boxH)
+	uv.NewStyledString(dialogView).Draw(buf, rect)
+
+	return buf.Render()
 }
 
 func Run(a *app.App) error {
