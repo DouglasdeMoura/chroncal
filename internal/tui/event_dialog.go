@@ -38,26 +38,19 @@ type EventDialogModel struct {
 	keys     eventDialogKeyMap
 	width    int
 	height   int
-	theme    Theme
 }
 
-func NewEventDialogModel(day time.Time, events []event.Event, theme Theme) EventDialogModel {
+func NewEventDialogModel(day time.Time, events []event.Event) EventDialogModel {
 	return EventDialogModel{
 		day:    day,
 		events: events,
 		keys:   defaultEventDialogKeys(),
-		theme:  theme,
 	}
 }
 
 func (m EventDialogModel) SetSize(w, h int) EventDialogModel {
 	m.width = w
 	m.height = h
-	return m
-}
-
-func (m EventDialogModel) SetTheme(t Theme) EventDialogModel {
-	m.theme = t
 	return m
 }
 
@@ -98,12 +91,11 @@ func (m EventDialogModel) View() string {
 
 	title := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(m.theme.Primary).
 		Width(innerW).
 		Render(m.day.Format("Monday, January 2, 2006"))
 
 	help := lipgloss.NewStyle().
-		Foreground(m.theme.TextDim).
+		Faint(true).
 		Width(innerW).
 		Render("↑/↓: navigate  ·  esc: close")
 
@@ -127,8 +119,6 @@ func (m EventDialogModel) View() string {
 		Height(boxH).
 		Padding(1, 2).
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(m.theme.Border).
-		Foreground(m.theme.Text).
 		Render(content)
 }
 
@@ -155,7 +145,7 @@ func (m EventDialogModel) renderList(w, h int) string {
 		}
 		label := formatEventLabel(ev)
 		label = truncateTo(label, w)
-		style := lipgloss.NewStyle().Width(w).Foreground(m.theme.Text)
+		style := lipgloss.NewStyle().Width(w)
 		if i == m.selected {
 			style = style.Reverse(true).Bold(true)
 		}
@@ -165,7 +155,7 @@ func (m EventDialogModel) renderList(w, h int) string {
 }
 
 func (m EventDialogModel) renderDivider(w, h int) string {
-	bar := lipgloss.NewStyle().Foreground(m.theme.Border).Render("│")
+	bar := lipgloss.NewStyle().Faint(true).Render("│")
 	pad := strings.Repeat(" ", (w-1)/2)
 	rest := strings.Repeat(" ", w-len(pad)-1)
 	line := pad + bar + rest
@@ -182,8 +172,8 @@ func (m EventDialogModel) renderDetails(w, h int) string {
 	}
 	ev := m.events[m.selected]
 
-	labelStyle := lipgloss.NewStyle().Foreground(m.theme.TextDim)
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(m.theme.Primary)
+	labelStyle := lipgloss.NewStyle().Faint(true)
+	titleStyle := lipgloss.NewStyle().Bold(true)
 
 	var lines []string
 	lines = append(lines, truncateTo(titleStyle.Render(ev.Title), w))

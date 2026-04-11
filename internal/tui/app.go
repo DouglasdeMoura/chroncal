@@ -105,7 +105,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.BackgroundColorMsg:
 		m.theme = NewTheme(msg.IsDark())
 		m.calendar = m.calendar.SetSelectedColor(m.theme.Text)
-		m.dialog = m.dialog.SetTheme(m.theme)
 		return m, nil
 
 	case tea.WindowSizeMsg:
@@ -131,7 +130,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(dayEvents) == 0 {
 			return m, nil
 		}
-		m.dialog = NewEventDialogModel(msg.Day, dayEvents, m.theme).
+		m.dialog = NewEventDialogModel(msg.Day, dayEvents).
 			SetSize(m.width, m.height)
 		m.dialogOpen = true
 		return m, nil
