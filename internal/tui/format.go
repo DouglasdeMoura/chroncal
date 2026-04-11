@@ -32,6 +32,8 @@ type FormatEventListOptions struct {
 	// WeekdayWidth controls the weekday label width (1, 2, or 3 chars).
 	// Zero or out-of-range values default to 3.
 	WeekdayWidth int
+	// ShowWeekday controls whether the weekday label is displayed.
+	ShowWeekday bool
 }
 
 // formatWeekday returns a 1-, 2-, or 3-character English weekday label.
@@ -100,7 +102,10 @@ func FormatEventList(opts FormatEventListOptions) string {
 		for _, dayKey := range months[monthKey] {
 			dayEvents := eventsByDay[dayKey]
 			d, _ := time.Parse("2006-01-02", dayKey)
-			dayPrefix := d.Format("02") + " " + formatWeekday(d, weekdayWidth)
+			dayPrefix := d.Format("02")
+			if opts.ShowWeekday {
+				dayPrefix += " " + formatWeekday(d, weekdayWidth)
+			}
 			if !opts.ShowHeader {
 				dayPrefix = d.Format("Jan") + " " + dayPrefix
 			}

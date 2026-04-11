@@ -111,6 +111,7 @@ func getMainContent(m Model) string {
 			Events:      m.events,
 			ShowHeader:  true,
 			ShowAllDays: true,
+			ShowWeekday: true,
 			From:        m.month,
 			To:          m.month.AddDate(0, 1, 0),
 		})

@@ -96,6 +96,7 @@ Without flags, the window defaults to today through the next 30 days.`,
 				Events:      events,
 				ShowHeader:  false,
 				ShowAllDays: true,
+				ShowWeekday: false,
 				From:        from,
 				To:          to,
 			}))
