@@ -69,6 +69,12 @@ RETURNING *;
 -- name: UpdateEventExdates :exec
 UPDATE events SET exdates = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?;
 
+-- name: UpdateEventRecurrenceRule :exec
+UPDATE events SET recurrence_rule = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?;
+
+-- name: DeleteOverridesAtOrAfter :exec
+DELETE FROM events WHERE uid = ? AND recurrence_id != '' AND recurrence_id >= ?;
+
 -- name: DeleteEvent :exec
 DELETE FROM events WHERE id = ?;
 

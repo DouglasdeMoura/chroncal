@@ -118,6 +118,20 @@ func (q *Queries) DeleteEventsByUID(ctx context.Context, uid string) error {
 	return err
 }
 
+const deleteOverridesAtOrAfter = `-- name: DeleteOverridesAtOrAfter :exec
+DELETE FROM events WHERE uid = ? AND recurrence_id != '' AND recurrence_id >= ?
+`
+
+type DeleteOverridesAtOrAfterParams struct {
+	Uid          string
+	RecurrenceID string
+}
+
+func (q *Queries) DeleteOverridesAtOrAfter(ctx context.Context, arg DeleteOverridesAtOrAfterParams) error {
+	_, err := q.db.ExecContext(ctx, deleteOverridesAtOrAfter, arg.Uid, arg.RecurrenceID)
+	return err
+}
+
 const getEvent = `-- name: GetEvent :one
 SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp FROM events WHERE id = ?
 `
@@ -777,6 +791,20 @@ type UpdateEventExdatesParams struct {
 
 func (q *Queries) UpdateEventExdates(ctx context.Context, arg UpdateEventExdatesParams) error {
 	_, err := q.db.ExecContext(ctx, updateEventExdates, arg.Exdates, arg.ID)
+	return err
+}
+
+const updateEventRecurrenceRule = `-- name: UpdateEventRecurrenceRule :exec
+UPDATE events SET recurrence_rule = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?
+`
+
+type UpdateEventRecurrenceRuleParams struct {
+	RecurrenceRule *string
+	ID             int64
+}
+
+func (q *Queries) UpdateEventRecurrenceRule(ctx context.Context, arg UpdateEventRecurrenceRuleParams) error {
+	_, err := q.db.ExecContext(ctx, updateEventRecurrenceRule, arg.RecurrenceRule, arg.ID)
 	return err
 }
 

@@ -431,6 +431,103 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 	return s.q.DeleteEvent(ctx, id)
 }
 
+// DeleteInstance excludes a single occurrence of a recurring event by adding
+// an EXDATE to the master. instanceTime is the StartTime of the occurrence.
+func (s *Service) DeleteInstance(ctx context.Context, uid string, instanceTime time.Time) error {
+	master, err := s.q.GetEventByUID(ctx, uid)
+	if err != nil {
+		return fmt.Errorf("get master: %w", err)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+
+	existing := ParseTimeList(storage.NullableToString(master.Exdates))
+	existing = append(existing, instanceTime.UTC())
+	if err := qtx.UpdateEventExdates(ctx, storage.UpdateEventExdatesParams{
+		Exdates: storage.StringToNullable(SerializeTimeList(existing)),
+		ID:      master.ID,
+	}); err != nil {
+		return fmt.Errorf("update exdates: %w", err)
+	}
+
+	recID := instanceTime.UTC().Format(time.RFC3339)
+	override, oErr := qtx.GetEventByUIDAndRecurrenceID(ctx, storage.GetEventByUIDAndRecurrenceIDParams{
+		Uid:          uid,
+		RecurrenceID: recID,
+	})
+	if oErr == nil {
+		if err := qtx.DeleteEvent(ctx, override.ID); err != nil {
+			return fmt.Errorf("delete override: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	_ = storage.MarkResourceDirty(ctx, s.db, master.CalendarID, uid, "event")
+	return nil
+}
+
+// DeleteFromInstance truncates a recurring series so that instances at or
+// after instanceTime are removed. It sets UNTIL on the RRULE and deletes
+// any overrides at or after the cutoff.
+func (s *Service) DeleteFromInstance(ctx context.Context, uid string, instanceTime time.Time) error {
+	master, err := s.q.GetEventByUID(ctx, uid)
+	if err != nil {
+		return fmt.Errorf("get master: %w", err)
+	}
+
+	until := instanceTime.UTC().Add(-time.Second)
+	rule := setRRuleUntil(storage.NullableToString(master.RecurrenceRule), until)
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+
+	if err := qtx.UpdateEventRecurrenceRule(ctx, storage.UpdateEventRecurrenceRuleParams{
+		RecurrenceRule: storage.StringToNullable(rule),
+		ID:             master.ID,
+	}); err != nil {
+		return fmt.Errorf("update rrule: %w", err)
+	}
+
+	cutoff := instanceTime.UTC().Format(time.RFC3339)
+	if err := qtx.DeleteOverridesAtOrAfter(ctx, storage.DeleteOverridesAtOrAfterParams{
+		Uid:          uid,
+		RecurrenceID: cutoff,
+	}); err != nil {
+		return fmt.Errorf("delete future overrides: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	_ = storage.MarkResourceDirty(ctx, s.db, master.CalendarID, uid, "event")
+	return nil
+}
+
+// setRRuleUntil adds or replaces the UNTIL parameter in an RRULE string.
+func setRRuleUntil(rule string, until time.Time) string {
+	untilStr := "UNTIL=" + until.UTC().Format("20060102T150405Z")
+	parts := strings.Split(rule, ";")
+	out := parts[:0]
+	for _, p := range parts {
+		if !strings.HasPrefix(strings.ToUpper(p), "UNTIL=") && !strings.HasPrefix(strings.ToUpper(p), "COUNT=") {
+			out = append(out, p)
+		}
+	}
+	out = append(out, untilStr)
+	return strings.Join(out, ";")
+}
+
 // DeleteSeries deletes a recurring master event and all its overrides.
 func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
 	// Look up the master to get calendarID for tombstone creation.

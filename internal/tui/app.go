@@ -41,6 +41,8 @@ type Model struct {
 	dialogOpen     bool
 	confirmDialog  ConfirmDialogModel
 	confirmOpen    bool
+	choiceDialog   ChoiceDialogModel
+	choiceOpen     bool
 	pendingDelete  event.Event
 	err            error
 	ready          bool
@@ -157,6 +159,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.calendar = m.calendar.SetSize(iw, ih)
 		m.dialog = m.dialog.SetSize(m.width, m.height)
 		m.confirmDialog = m.confirmDialog.SetSize(m.width, m.height)
+		m.choiceDialog = m.choiceDialog.SetSize(m.width, m.height)
 		m.ready = true
 		return m, nil
 
@@ -199,12 +202,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case EventDeleteMsg:
 		m.pendingDelete = msg.Event
-		m.confirmDialog = NewConfirmDialogModel(
-			fmt.Sprintf("Delete %q?", msg.Event.Title),
-			"Delete",
-		).SetSize(m.width, m.height)
-		m.confirmOpen = true
+		if msg.Event.RecurrenceRule != "" {
+			m.choiceDialog = NewChoiceDialogModel(
+				fmt.Sprintf("Delete %q?", msg.Event.Title),
+				"This event", "This and following", "All events",
+			).SetSize(m.width, m.height)
+			m.choiceOpen = true
+		} else {
+			m.confirmDialog = NewConfirmDialogModel(
+				fmt.Sprintf("Delete %q?", msg.Event.Title),
+				"Delete",
+			).SetSize(m.width, m.height)
+			m.confirmOpen = true
+		}
 		return m, nil
+
+	case ChoiceDialogResultMsg:
+		m.choiceOpen = false
+		if msg.Choice < 0 {
+			return m, nil
+		}
+		ev := m.pendingDelete
+		return m, func() tea.Msg {
+			var err error
+			switch msg.Choice {
+			case 0: // This event
+				err = m.app.Events.DeleteInstance(context.Background(), ev.UID, ev.StartTime)
+			case 1: // This and following
+				err = m.app.Events.DeleteFromInstance(context.Background(), ev.UID, ev.StartTime)
+			case 2: // All events
+				err = m.app.Events.DeleteSeries(context.Background(), ev.UID)
+			}
+			return eventDeletedMsg{err: err}
+		}
 
 	case ConfirmDialogResultMsg:
 		m.confirmOpen = false
@@ -228,6 +258,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Button != tea.MouseLeft {
 			return m, nil
 		}
+		if m.choiceOpen {
+			var cmd tea.Cmd
+			m.choiceDialog, cmd = m.choiceDialog.Update(msg)
+			return m, cmd
+		}
 		if m.confirmOpen {
 			var cmd tea.Cmd
 			m.confirmDialog, cmd = m.confirmDialog.Update(msg)
@@ -248,6 +283,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case tea.KeyPressMsg:
+		if m.choiceOpen {
+			if msg.String() == "ctrl+c" {
+				return m, tea.Quit
+			}
+			var cmd tea.Cmd
+			m.choiceDialog, cmd = m.choiceDialog.Update(msg)
+			return m, cmd
+		}
 		if m.confirmOpen {
 			if msg.String() == "ctrl+c" {
 				return m, tea.Quit
@@ -337,6 +380,10 @@ func (m Model) View() tea.View {
 
 	if m.dialogOpen {
 		v.Content = m.compositeDialog(v.Content)
+	}
+	if m.choiceOpen {
+		bw, bh := m.choiceDialog.BoxSize()
+		v.Content = m.compositeOverlay(v.Content, m.choiceDialog.View(), bw, bh)
 	}
 	if m.confirmOpen {
 		bw, bh := m.confirmDialog.BoxSize()
