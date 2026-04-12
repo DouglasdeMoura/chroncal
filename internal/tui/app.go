@@ -60,7 +60,12 @@ func (m Model) loadEvents() tea.Cmd {
 		expanded, err := m.app.Recurrences.ListExpandedEvents(context.Background(), from, to)
 		events := make([]event.Event, len(expanded))
 		for i, e := range expanded {
-			events[i] = e.Event
+			evt := e.Event
+			if !evt.EndTime.IsZero() {
+				evt.EndTime = e.InstanceTime.Add(evt.EndTime.Sub(evt.StartTime))
+			}
+			evt.StartTime = e.InstanceTime
+			events[i] = evt
 		}
 		return eventsLoadedMsg{events: events, err: err}
 	}
