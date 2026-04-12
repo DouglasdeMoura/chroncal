@@ -134,10 +134,12 @@ func eventsToCalendar(events []event.Event, calendars map[int64]CalendarInfo) []
 	out := make([]CalendarEvent, len(events))
 	for i, e := range events {
 		out[i] = CalendarEvent{
-			Title:  e.Title,
-			AllDay: e.AllDay,
-			Day:    e.StartTime.Local(),
-			Color:  calendars[e.CalendarID].Color,
+			Title:     e.Title,
+			AllDay:    e.AllDay,
+			Day:       e.StartTime.Local(),
+			Color:     calendars[e.CalendarID].Color,
+			StartTime: e.StartTime.Local(),
+			EndTime:   e.EndTime.Local(),
 		}
 	}
 	return out
@@ -639,7 +641,7 @@ func (m Model) footerHelp() string {
 	var parts string
 	switch m.viewMode {
 	case viewWeek:
-		parts = "chroncal  ·  hjkl/arrows: move  ·  [/]: week  ·  t: today  ·  enter: select  ·  w: month"
+		parts = "chroncal  ·  jk/↑↓: scroll  ·  hl/←→: day  ·  [/]: week  ·  t: today  ·  enter: select  ·  w: month"
 	default:
 		parts = "chroncal  ·  hjkl/arrows: move  ·  [/]: month  ·  t: today  ·  enter: select  ·  w: week"
 	}

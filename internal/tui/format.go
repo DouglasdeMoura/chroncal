@@ -143,10 +143,12 @@ func FormatEventList(opts FormatEventListOptions) string {
 // CalendarEvent is the rendering-only view of an event inside the month grid.
 // Callers resolve colors and other domain data before passing these in.
 type CalendarEvent struct {
-	Title  string
-	Color  string // hex like "#a6e3a1"; empty → default muted background
-	AllDay bool
-	Day    time.Time // local day the event should render on
+	Title     string
+	Color     string // hex like "#a6e3a1"; empty → default muted background
+	AllDay    bool
+	Day       time.Time // local day the event should render on
+	StartTime time.Time
+	EndTime   time.Time
 }
 
 type CalendarOptions struct {
@@ -442,6 +444,65 @@ type WeekOptions struct {
 	Height        int
 	ShowHeader    bool
 	SelectedColor color.Color
+	ScrollOffset  int
+	LinesPerHour  int
+}
+
+type placedEvent struct {
+	event    CalendarEvent
+	col      int
+	startRow int
+	endRow   int
+}
+
+func calcWeekColWidths(width int) []int {
+	separators := 8
+	availW := width - weekTimeLabelWidth - separators
+	if availW < 7 {
+		availW = 7
+	}
+	colW := availW / 7
+	remW := availW - colW*7
+	colWs := make([]int, 7)
+	for i := range 7 {
+		colWs[i] = colW
+		if i < remW {
+			colWs[i]++
+		}
+	}
+	return colWs
+}
+
+func placeWeekEvents(events []CalendarEvent, anchor time.Time, lph int) []placedEvent {
+	var placed []placedEvent
+	totalRows := totalHours * lph
+	for _, ev := range events {
+		if ev.AllDay {
+			continue
+		}
+		col := findWeekCol(anchor, ev.Day)
+		if col < 0 {
+			continue
+		}
+		startRow := ev.StartTime.Hour()*lph + ev.StartTime.Minute()*lph/60
+		endRow := startRow + 1
+		if !ev.EndTime.IsZero() {
+			endRow = ev.EndTime.Hour()*lph + ev.EndTime.Minute()*lph/60
+		}
+		if endRow <= startRow {
+			endRow = startRow + 1
+		}
+		if endRow > totalRows {
+			endRow = totalRows
+		}
+		placed = append(placed, placedEvent{
+			event:    ev,
+			col:      col,
+			startRow: startRow,
+			endRow:   endRow,
+		})
+	}
+	return placed
 }
 
 func WeekGrid(opts WeekOptions) string {
@@ -449,70 +510,74 @@ func WeekGrid(opts WeekOptions) string {
 		return ""
 	}
 
-	anchor := opts.WeekStart
-
-	eventsByDay := make(map[string][]CalendarEvent)
-	for _, ev := range opts.Events {
-		key := ev.Day.Format("2006-01-02")
-		eventsByDay[key] = append(eventsByDay[key], ev)
+	lph := opts.LinesPerHour
+	if lph < 1 {
+		lph = defaultLinesPerHour
 	}
+	totalRows := totalHours * lph
+	anchor := opts.WeekStart
 
 	todayKey := ""
 	if !opts.Today.IsZero() {
 		todayKey = opts.Today.Local().Format("2006-01-02")
 	}
+	selectedKey := ""
+	selectedCol := -1
+	if !opts.Selected.IsZero() {
+		selectedKey = opts.Selected.Local().Format("2006-01-02")
+		selectedCol = findWeekCol(anchor, opts.Selected)
+	}
 
-	preambleLines := 1
+	colWs := calcWeekColWidths(opts.Width)
+	placed := placeWeekEvents(opts.Events, anchor, lph)
+
+	allDayRows := weekAllDayRowCount(opts.Events, anchor)
+	if allDayRows < 1 {
+		allDayRows = 1
+	}
+
+	headerLines := 0
 	if opts.ShowHeader {
-		preambleLines += 2
+		headerLines = 2
+	}
+	fixedLines := headerLines + 1 + 1 + allDayRows + 1
+	viewportHeight := opts.Height - fixedLines
+	if viewportHeight < 1 {
+		viewportHeight = 1
 	}
 
-	cellWs := make([]int, 7)
-	availW := opts.Width - 8
-	baseW := availW / 7
-	if baseW < 6 {
-		baseW = 6
+	scrollOffset := opts.ScrollOffset
+	maxScroll := totalRows - viewportHeight
+	if maxScroll < 0 {
+		maxScroll = 0
 	}
-	remW := availW - baseW*7
-	if remW < 0 {
-		remW = 0
+	if scrollOffset > maxScroll {
+		scrollOffset = maxScroll
 	}
-	for i := range 7 {
-		cellWs[i] = baseW
-		if i < remW {
-			cellWs[i]++
+	if scrollOffset < 0 {
+		scrollOffset = 0
+	}
+
+	nowHour := -1
+	if todayKey != "" {
+		now := time.Now().Local()
+		if findWeekCol(anchor, now) >= 0 {
+			nowHour = now.Hour()
 		}
 	}
 
-	cellH := opts.Height - preambleLines - 2
-	if cellH < 3 {
-		cellH = 3
-	}
+	faint := lipgloss.NewStyle().Faint(true)
+	faintSep := faint.Render("│")
+	nowStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
 
-	row := make([]string, 7)
-	for col := range 7 {
-		d := anchor.AddDate(0, 0, col)
-		dayKey := d.Format("2006-01-02")
-		row[col] = buildWeekCell(eventsByDay[dayKey], cellWs[col], cellH)
-	}
-
-	t := table.New().
-		Rows(row).
-		Border(lipgloss.RoundedBorder()).
-		BorderStyle(lipgloss.NewStyle().Faint(true)).
-		StyleFunc(func(_, col int) lipgloss.Style {
-			return lipgloss.NewStyle().Width(cellWs[col]).Padding(0, 0)
-		})
-
-	rendered := t.Render()
-	if opts.SelectedColor != nil && !opts.Selected.IsZero() {
-		sc := findWeekCol(anchor, opts.Selected)
-		if sc >= 0 {
-			rendered = highlightCellBorder(rendered, 0, sc, cellWs, []int{cellH}, opts.SelectedColor)
-		}
+	var selSep string
+	if opts.SelectedColor != nil && selectedCol >= 0 {
+		selStyle := lipgloss.NewStyle().Foreground(opts.SelectedColor).Bold(true).Faint(false)
+		selSep = selStyle.Render("│")
 	}
 
 	var out strings.Builder
+
 	if opts.ShowHeader {
 		endDay := anchor.AddDate(0, 0, 6)
 		var title string
@@ -529,14 +594,62 @@ func WeekGrid(opts WeekOptions) string {
 		out.WriteString(lipgloss.NewStyle().Bold(true).Width(opts.Width).Align(lipgloss.Center).Render(title))
 		out.WriteString("\n\n")
 	}
-	out.WriteString(renderWeekdayDateRow(anchor, cellWs, todayKey))
+
+	out.WriteString(renderWeekColumnHeaders(anchor, colWs, todayKey, selectedKey, opts.SelectedColor))
 	out.WriteString("\n")
-	out.WriteString(rendered)
+
+	out.WriteString(renderWeekHRule(colWs, "┌", "┬", "┐"))
+	out.WriteString("\n")
+
+	out.WriteString(renderWeekAllDayRows(opts.Events, anchor, colWs, allDayRows, selectedCol, opts.SelectedColor))
+
+	out.WriteString(renderWeekHRule(colWs, "├", "┼", "┤"))
+	out.WriteString("\n")
+
+	for row := scrollOffset; row < scrollOffset+viewportHeight && row < totalRows; row++ {
+		if row > scrollOffset {
+			out.WriteString("\n")
+		}
+
+		hour := row / lph
+		subRow := row % lph
+
+		if subRow == 0 {
+			timeText := fmt.Sprintf("%02d:00", hour)
+			if hour == nowHour {
+				out.WriteString(nowStyle.Render(timeText) + " ")
+			} else {
+				out.WriteString(faint.Render(timeText) + " ")
+			}
+		} else {
+			out.WriteString("      ")
+		}
+
+		for i := 0; i <= 7; i++ {
+			highlighted := selSep != "" && (i == selectedCol || i == selectedCol+1)
+			if highlighted {
+				out.WriteString(selSep)
+			} else {
+				out.WriteString(faintSep)
+			}
+
+			if i < 7 {
+				p, found := findPlacedEvent(placed, row, i)
+				if found {
+					out.WriteString(renderTimeCellContent(p, row, colWs[i]))
+				} else {
+					out.WriteString(strings.Repeat(" ", colWs[i]))
+				}
+			}
+		}
+	}
+
 	return out.String()
 }
 
-func renderWeekdayDateRow(anchor time.Time, cellWs []int, todayKey string) string {
+func renderWeekColumnHeaders(anchor time.Time, colWs []int, todayKey, selectedKey string, selectedColor color.Color) string {
 	var b strings.Builder
+	b.WriteString("      ")
 	b.WriteString(" ")
 	for i := range 7 {
 		if i > 0 {
@@ -545,9 +658,12 @@ func renderWeekdayDateRow(anchor time.Time, cellWs []int, todayKey string) strin
 		d := anchor.AddDate(0, 0, i)
 		dayKey := d.Format("2006-01-02")
 		label := strings.ToLower(d.Format("Mon")) + " " + fmt.Sprintf("%d", d.Day())
-		style := lipgloss.NewStyle().Width(cellWs[i]).Align(lipgloss.Center).Faint(true)
+		style := lipgloss.NewStyle().Width(colWs[i]).Align(lipgloss.Center).Faint(true)
 		if dayKey == todayKey {
 			style = style.Faint(false).Bold(true)
+		}
+		if dayKey == selectedKey && selectedColor != nil {
+			style = style.Foreground(selectedColor).Bold(true).Faint(false)
 		}
 		b.WriteString(style.Render(label))
 	}
@@ -555,29 +671,122 @@ func renderWeekdayDateRow(anchor time.Time, cellWs []int, todayKey string) strin
 	return b.String()
 }
 
-func buildWeekCell(events []CalendarEvent, cellW, cellH int) string {
-	maxEventLines := cellH
-	pills := make([]string, 0, maxEventLines)
-	overflow := 0
-	for i, ev := range events {
-		if i >= maxEventLines {
-			overflow = len(events) - maxEventLines + 1
-			break
+func renderWeekHRule(colWs []int, left, mid, right string) string {
+	faint := lipgloss.NewStyle().Faint(true)
+	var b strings.Builder
+	b.WriteString(faint.Render("──────" + left))
+	for i, w := range colWs {
+		b.WriteString(faint.Render(strings.Repeat("─", w)))
+		if i < len(colWs)-1 {
+			b.WriteString(faint.Render(mid))
 		}
-		pills = append(pills, renderEventPill(ev, cellW))
 	}
-	if overflow > 0 && len(pills) > 0 {
-		pills[len(pills)-1] = lipgloss.NewStyle().Faint(true).
-			Width(cellW).Render(fmt.Sprintf(" +%d more", overflow))
+	b.WriteString(faint.Render(right))
+	return b.String()
+}
+
+func weekAllDayRowCount(events []CalendarEvent, anchor time.Time) int {
+	maxPerCol := 0
+	for col := range 7 {
+		d := anchor.AddDate(0, 0, col)
+		dayKey := d.Format("2006-01-02")
+		count := 0
+		for _, ev := range events {
+			if ev.AllDay && ev.Day.Format("2006-01-02") == dayKey {
+				count++
+			}
+		}
+		if count > maxPerCol {
+			maxPerCol = count
+		}
+	}
+	return maxPerCol
+}
+
+func renderWeekAllDayRows(events []CalendarEvent, anchor time.Time, colWs []int, numRows int, selectedCol int, selectedColor color.Color) string {
+	eventsByCol := make([][]CalendarEvent, 7)
+	for _, ev := range events {
+		if !ev.AllDay {
+			continue
+		}
+		col := findWeekCol(anchor, ev.Day)
+		if col >= 0 {
+			eventsByCol[col] = append(eventsByCol[col], ev)
+		}
 	}
 
-	lines := make([]string, 0, cellH)
-	lines = append(lines, pills...)
-	blank := strings.Repeat(" ", cellW)
-	for len(lines) < cellH {
-		lines = append(lines, blank)
+	faint := lipgloss.NewStyle().Faint(true)
+	faintSep := faint.Render("│")
+	var selSep string
+	if selectedColor != nil && selectedCol >= 0 {
+		selStyle := lipgloss.NewStyle().Foreground(selectedColor).Bold(true).Faint(false)
+		selSep = selStyle.Render("│")
 	}
-	return strings.Join(lines, "\n")
+
+	var out strings.Builder
+	for row := 0; row < numRows; row++ {
+		out.WriteString("      ")
+		for i := 0; i <= 7; i++ {
+			highlighted := selSep != "" && (i == selectedCol || i == selectedCol+1)
+			if highlighted {
+				out.WriteString(selSep)
+			} else {
+				out.WriteString(faintSep)
+			}
+			if i < 7 {
+				if row < len(eventsByCol[i]) {
+					out.WriteString(renderEventPill(eventsByCol[i][row], colWs[i]))
+				} else {
+					out.WriteString(strings.Repeat(" ", colWs[i]))
+				}
+			}
+		}
+		out.WriteString("\n")
+	}
+
+	return out.String()
+}
+
+func findPlacedEvent(placed []placedEvent, row, col int) (placedEvent, bool) {
+	for _, p := range placed {
+		if p.col == col && row >= p.startRow && row < p.endRow {
+			return p, true
+		}
+	}
+	return placedEvent{}, false
+}
+
+func renderTimeCellContent(p placedEvent, row, width int) string {
+	relRow := row - p.startRow
+	bg := lipgloss.Color("8")
+	fg := lipgloss.Color("15")
+	if p.event.Color != "" {
+		bg = lipgloss.Color(p.event.Color)
+		fg = lipgloss.Color("0")
+	}
+
+	var text string
+	switch relRow {
+	case 0:
+		text = " " + p.event.Title
+	case 1:
+		if !p.event.EndTime.IsZero() {
+			text = " " + p.event.StartTime.Format("15:04") + "–" + p.event.EndTime.Format("15:04")
+		}
+	}
+
+	if lipgloss.Width(text) > width {
+		r := []rune(text)
+		limit := width - 1
+		if limit < 1 {
+			limit = 1
+		}
+		if len(r) > limit {
+			text = string(r[:limit]) + "…"
+		}
+	}
+
+	return lipgloss.NewStyle().Background(bg).Foreground(fg).Width(width).Render(text)
 }
 
 func findWeekCol(anchor, d time.Time) int {

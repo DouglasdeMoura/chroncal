@@ -8,29 +8,35 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
+const (
+	defaultLinesPerHour = 2
+	totalHours          = 24
+	weekTimeLabelWidth  = 6
+)
+
 type WeekChangedMsg struct{ Week time.Time }
 
 type weekKeyMap struct {
-	Up       key.Binding
-	Down     key.Binding
-	Left     key.Binding
-	Right    key.Binding
-	PrevWeek key.Binding
-	NextWeek key.Binding
-	Today    key.Binding
-	Select   key.Binding
+	ScrollUp   key.Binding
+	ScrollDown key.Binding
+	Left       key.Binding
+	Right      key.Binding
+	PrevWeek   key.Binding
+	NextWeek   key.Binding
+	Today      key.Binding
+	Select     key.Binding
 }
 
 func defaultWeekKeys() weekKeyMap {
 	return weekKeyMap{
-		Up:       key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "prev week")),
-		Down:     key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "next week")),
-		Left:     key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "prev day")),
-		Right:    key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next day")),
-		PrevWeek: key.NewBinding(key.WithKeys("[", "pgup"), key.WithHelp("[", "prev week")),
-		NextWeek: key.NewBinding(key.WithKeys("]", "pgdown"), key.WithHelp("]", "next week")),
-		Today:    key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "today")),
-		Select:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select day")),
+		ScrollUp:   key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "scroll up")),
+		ScrollDown: key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "scroll down")),
+		Left:       key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "prev day")),
+		Right:      key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next day")),
+		PrevWeek:   key.NewBinding(key.WithKeys("[", "pgup"), key.WithHelp("[", "prev week")),
+		NextWeek:   key.NewBinding(key.WithKeys("]", "pgdown"), key.WithHelp("]", "next week")),
+		Today:      key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "today")),
+		Select:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select day")),
 	}
 }
 
@@ -43,15 +49,24 @@ type WeekModel struct {
 	height        int
 	weekStart     time.Weekday
 	selectedColor color.Color
+	scrollOffset  int
+	linesPerHour  int
 }
 
 func NewWeekModel(today time.Time) WeekModel {
 	t := today.Local()
+	now := time.Now().Local()
+	initialScroll := now.Hour()*defaultLinesPerHour - 4
+	if initialScroll < 0 {
+		initialScroll = 0
+	}
 	return WeekModel{
-		cursor:    t,
-		today:     t,
-		keys:      defaultWeekKeys(),
-		weekStart: time.Sunday,
+		cursor:       t,
+		today:        t,
+		keys:         defaultWeekKeys(),
+		weekStart:    time.Sunday,
+		linesPerHour: defaultLinesPerHour,
+		scrollOffset: initialScroll,
 	}
 }
 
@@ -78,6 +93,47 @@ func (m WeekModel) SetSelectedColor(c color.Color) WeekModel {
 	return m
 }
 
+func (m WeekModel) allDayRowCount() int {
+	anchor := m.WeekStartDate()
+	maxPerCol := 0
+	for col := range 7 {
+		d := anchor.AddDate(0, 0, col)
+		dayKey := d.Format("2006-01-02")
+		count := 0
+		for _, ev := range m.events {
+			if ev.AllDay && ev.Day.Format("2006-01-02") == dayKey {
+				count++
+			}
+		}
+		if count > maxPerCol {
+			maxPerCol = count
+		}
+	}
+	return maxPerCol
+}
+
+func (m WeekModel) viewportHeight() int {
+	allDayRows := m.allDayRowCount()
+	if allDayRows < 1 {
+		allDayRows = 1
+	}
+	fixedLines := 2 + 1 + 1 + allDayRows + 1
+	vh := m.height - fixedLines
+	if vh < 1 {
+		vh = 1
+	}
+	return vh
+}
+
+func (m WeekModel) maxScroll() int {
+	totalRows := totalHours * m.linesPerHour
+	ms := totalRows - m.viewportHeight()
+	if ms < 0 {
+		ms = 0
+	}
+	return ms
+}
+
 func (m WeekModel) selectDay(day time.Time) (WeekModel, tea.Cmd) {
 	prevWeek := m.WeekStartDate()
 	m.cursor = day
@@ -97,38 +153,25 @@ func (m WeekModel) DayAtPosition(x, y int) (time.Time, bool) {
 		return time.Time{}, false
 	}
 
-	preambleLines := 3
-	if y < preambleLines {
+	if y < 2 {
 		return time.Time{}, false
 	}
 
 	anchor := m.WeekStartDate()
-
-	availW := m.width - 8
-	baseW := availW / 7
-	if baseW < 6 {
-		baseW = 6
-	}
-	remW := availW - baseW*7
-	if remW < 0 {
-		remW = 0
-	}
-	cellWs := make([]int, 7)
-	for i := range 7 {
-		cellWs[i] = baseW
-		if i < remW {
-			cellWs[i]++
-		}
+	gridX := x - weekTimeLabelWidth - 1
+	if gridX < 0 {
+		return time.Time{}, false
 	}
 
+	colWs := calcWeekColWidths(m.width)
 	col := -1
-	posX := 1
+	posX := 0
 	for j := range 7 {
-		if x >= posX && x < posX+cellWs[j] {
+		if gridX >= posX && gridX < posX+colWs[j] {
 			col = j
 			break
 		}
-		posX += cellWs[j] + 1
+		posX += colWs[j] + 1
 	}
 	if col < 0 {
 		return time.Time{}, false
@@ -145,10 +188,16 @@ func (m WeekModel) Update(msg tea.Msg) (WeekModel, tea.Cmd) {
 
 	prevWeek := m.WeekStartDate()
 	switch {
-	case key.Matches(keyMsg, m.keys.Up):
-		m.cursor = m.cursor.AddDate(0, 0, -7)
-	case key.Matches(keyMsg, m.keys.Down):
-		m.cursor = m.cursor.AddDate(0, 0, 7)
+	case key.Matches(keyMsg, m.keys.ScrollUp):
+		m.scrollOffset -= m.linesPerHour
+		if m.scrollOffset < 0 {
+			m.scrollOffset = 0
+		}
+	case key.Matches(keyMsg, m.keys.ScrollDown):
+		m.scrollOffset += m.linesPerHour
+		if ms := m.maxScroll(); m.scrollOffset > ms {
+			m.scrollOffset = ms
+		}
 	case key.Matches(keyMsg, m.keys.Left):
 		m.cursor = m.cursor.AddDate(0, 0, -1)
 	case key.Matches(keyMsg, m.keys.Right):
@@ -159,6 +208,15 @@ func (m WeekModel) Update(msg tea.Msg) (WeekModel, tea.Cmd) {
 		m.cursor = m.cursor.AddDate(0, 0, 7)
 	case key.Matches(keyMsg, m.keys.Today):
 		m.cursor = m.today
+		now := time.Now().Local()
+		targetRow := now.Hour()*m.linesPerHour + now.Minute()*m.linesPerHour/60
+		m.scrollOffset = targetRow - m.viewportHeight()/2
+		if m.scrollOffset < 0 {
+			m.scrollOffset = 0
+		}
+		if ms := m.maxScroll(); m.scrollOffset > ms {
+			m.scrollOffset = ms
+		}
 	case key.Matches(keyMsg, m.keys.Select):
 		return m, func() tea.Msg { return CalendarDaySelectedMsg{Day: m.cursor} }
 	default:
@@ -176,6 +234,13 @@ func (m WeekModel) View() string {
 	if m.width <= 0 || m.height <= 0 {
 		return ""
 	}
+	scrollOffset := m.scrollOffset
+	if scrollOffset < 0 {
+		scrollOffset = 0
+	}
+	if ms := m.maxScroll(); scrollOffset > ms {
+		scrollOffset = ms
+	}
 	return WeekGrid(WeekOptions{
 		WeekStart:     m.WeekStartDate(),
 		Events:        m.events,
@@ -185,5 +250,7 @@ func (m WeekModel) View() string {
 		Height:        m.height,
 		ShowHeader:    true,
 		SelectedColor: m.selectedColor,
+		ScrollOffset:  scrollOffset,
+		LinesPerHour:  m.linesPerHour,
 	})
 }
