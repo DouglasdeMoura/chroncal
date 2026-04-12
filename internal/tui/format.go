@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"image/color"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -449,10 +450,66 @@ type WeekOptions struct {
 }
 
 type placedEvent struct {
-	event    CalendarEvent
-	col      int
-	startRow int
-	endRow   int
+	event      CalendarEvent
+	col        int
+	startRow   int
+	endRow     int
+	subCol     int
+	numSubCols int
+}
+
+func resolveOverlaps(placed []placedEvent) {
+	for col := 0; col < 7; col++ {
+		var idxs []int
+		for i, p := range placed {
+			if p.col == col {
+				idxs = append(idxs, i)
+			}
+		}
+		if len(idxs) == 0 {
+			continue
+		}
+
+		sort.Slice(idxs, func(a, b int) bool {
+			pa, pb := placed[idxs[a]], placed[idxs[b]]
+			if pa.startRow != pb.startRow {
+				return pa.startRow < pb.startRow
+			}
+			return pa.endRow > pb.endRow
+		})
+
+		type cluster struct {
+			end  int
+			idxs []int
+		}
+		var clusters []cluster
+
+		for _, idx := range idxs {
+			p := placed[idx]
+			merged := false
+			for ci := range clusters {
+				if p.startRow < clusters[ci].end {
+					clusters[ci].idxs = append(clusters[ci].idxs, idx)
+					if p.endRow > clusters[ci].end {
+						clusters[ci].end = p.endRow
+					}
+					merged = true
+					break
+				}
+			}
+			if !merged {
+				clusters = append(clusters, cluster{end: p.endRow, idxs: []int{idx}})
+			}
+		}
+
+		for _, cl := range clusters {
+			n := len(cl.idxs)
+			for sub, idx := range cl.idxs {
+				placed[idx].subCol = sub
+				placed[idx].numSubCols = n
+			}
+		}
+	}
 }
 
 func calcWeekColWidths(width int) []int {
@@ -530,6 +587,7 @@ func WeekGrid(opts WeekOptions) string {
 
 	colWs := calcWeekColWidths(opts.Width)
 	placed := placeWeekEvents(opts.Events, anchor, lph)
+	resolveOverlaps(placed)
 
 	allDayRows := weekAllDayRowCount(opts.Events, anchor)
 	if allDayRows < 1 {
@@ -633,9 +691,9 @@ func WeekGrid(opts WeekOptions) string {
 			}
 
 			if i < 7 {
-				p, found := findPlacedEvent(placed, row, i)
-				if found {
-					out.WriteString(renderTimeCellContent(p, row, colWs[i]))
+				matches := findPlacedEvents(placed, row, i)
+				if len(matches) > 0 {
+					out.WriteString(renderOverlappingCells(matches, row, colWs[i]))
 				} else if nowHasLine && row == nowRow && i == nowCol {
 					out.WriteString(nowStyle.Render(strings.Repeat("─", colWs[i])))
 				} else {
@@ -748,13 +806,14 @@ func renderWeekAllDayRows(events []CalendarEvent, anchor time.Time, colWs []int,
 	return out.String()
 }
 
-func findPlacedEvent(placed []placedEvent, row, col int) (placedEvent, bool) {
+func findPlacedEvents(placed []placedEvent, row, col int) []placedEvent {
+	var result []placedEvent
 	for _, p := range placed {
 		if p.col == col && row >= p.startRow && row < p.endRow {
-			return p, true
+			result = append(result, p)
 		}
 	}
-	return placedEvent{}, false
+	return result
 }
 
 func renderTimeCellContent(p placedEvent, row, width int) string {
@@ -788,6 +847,38 @@ func renderTimeCellContent(p placedEvent, row, width int) string {
 	}
 
 	return lipgloss.NewStyle().Background(bg).Foreground(fg).Width(width).Render(text)
+}
+
+func renderOverlappingCells(matches []placedEvent, row, totalWidth int) string {
+	sort.Slice(matches, func(a, b int) bool {
+		return matches[a].subCol < matches[b].subCol
+	})
+
+	n := matches[0].numSubCols
+	widths := make([]int, n)
+	base := totalWidth / n
+	rem := totalWidth - base*n
+	for i := range n {
+		widths[i] = base
+		if i < rem {
+			widths[i]++
+		}
+	}
+
+	active := make(map[int]placedEvent)
+	for _, m := range matches {
+		active[m.subCol] = m
+	}
+
+	var b strings.Builder
+	for sub := 0; sub < n; sub++ {
+		if p, ok := active[sub]; ok {
+			b.WriteString(renderTimeCellContent(p, row, widths[sub]))
+		} else {
+			b.WriteString(strings.Repeat(" ", widths[sub]))
+		}
+	}
+	return b.String()
 }
 
 func findWeekCol(anchor, d time.Time) int {
