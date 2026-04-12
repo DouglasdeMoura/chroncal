@@ -716,15 +716,21 @@ func renderWeekColumnHeaders(anchor time.Time, colWs []int, todayKey, selectedKe
 		}
 		d := anchor.AddDate(0, 0, i)
 		dayKey := d.Format("2006-01-02")
-		label := strings.ToLower(d.Format("Mon")) + " " + fmt.Sprintf("%d", d.Day())
-		style := lipgloss.NewStyle().Width(colWs[i]).Align(lipgloss.Center).Faint(true)
+		dayName := strings.ToLower(d.Format("Mon"))
+		dayNum := fmt.Sprintf("%d", d.Day())
+		style := lipgloss.NewStyle().Faint(true)
+		numStyle := lipgloss.NewStyle().Faint(true)
 		if dayKey == todayKey {
 			style = style.Faint(false).Bold(true)
+			numStyle = numStyle.Faint(false).Bold(true).Reverse(true).Padding(0, 1)
 		}
 		if dayKey == selectedKey && selectedColor != nil {
 			style = style.Foreground(selectedColor).Bold(true).Faint(false)
+			numStyle = numStyle.Foreground(selectedColor).Bold(true).Faint(false)
 		}
-		b.WriteString(style.Render(label))
+		label := style.Render(dayName) + " " + numStyle.Render(dayNum)
+		colStyle := lipgloss.NewStyle().Width(colWs[i]).Align(lipgloss.Center)
+		b.WriteString(colStyle.Render(label))
 	}
 	b.WriteString(" ")
 	return b.String()
