@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"image"
 	"time"
 
@@ -29,18 +30,21 @@ type eventDeletedMsg struct {
 }
 
 type Model struct {
-	app         *app.App
-	theme       Theme
-	width       int
-	height      int
-	calendar    CalendarModel
-	events      []event.Event
-	calendars   map[int64]CalendarInfo
-	dialog      EventDialogModel
-	dialogOpen  bool
-	err         error
-	ready       bool
-	showSidebar bool
+	app            *app.App
+	theme          Theme
+	width          int
+	height         int
+	calendar       CalendarModel
+	events         []event.Event
+	calendars      map[int64]CalendarInfo
+	dialog         EventDialogModel
+	dialogOpen     bool
+	confirmDialog  ConfirmDialogModel
+	confirmOpen    bool
+	pendingDelete  event.Event
+	err            error
+	ready          bool
+	showSidebar    bool
 }
 
 func NewModel(a *app.App) Model {
@@ -147,6 +151,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		iw, ih := m.innerDims()
 		m.calendar = m.calendar.SetSize(iw, ih)
 		m.dialog = m.dialog.SetSize(m.width, m.height)
+		m.confirmDialog = m.confirmDialog.SetSize(m.width, m.height)
 		m.ready = true
 		return m, nil
 
@@ -180,7 +185,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case EventDeleteMsg:
-		ev := msg.Event
+		m.pendingDelete = msg.Event
+		m.confirmDialog = NewConfirmDialogModel(
+			fmt.Sprintf("Delete %q?", msg.Event.Title),
+			"Delete",
+		).SetSize(m.width, m.height)
+		m.confirmOpen = true
+		return m, nil
+
+	case ConfirmDialogResultMsg:
+		m.confirmOpen = false
+		if !msg.Confirmed {
+			return m, nil
+		}
+		ev := m.pendingDelete
 		return m, func() tea.Msg {
 			err := m.app.Events.Delete(context.Background(), ev.ID)
 			return eventDeletedMsg{err: err}
@@ -198,6 +216,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Button != tea.MouseLeft {
 			return m, nil
 		}
+		if m.confirmOpen {
+			var cmd tea.Cmd
+			m.confirmDialog, cmd = m.confirmDialog.Update(msg)
+			return m, cmd
+		}
 		if m.dialogOpen {
 			var cmd tea.Cmd
 			m.dialog, cmd = m.dialog.Update(msg)
@@ -213,6 +236,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case tea.KeyPressMsg:
+		if m.confirmOpen {
+			if msg.String() == "ctrl+c" {
+				return m, tea.Quit
+			}
+			var cmd tea.Cmd
+			m.confirmDialog, cmd = m.confirmDialog.Update(msg)
+			return m, cmd
+		}
 		if m.dialogOpen {
 			if msg.String() == "ctrl+c" {
 				return m, tea.Quit
@@ -295,6 +326,10 @@ func (m Model) View() tea.View {
 	if m.dialogOpen {
 		v.Content = m.compositeDialog(v.Content)
 	}
+	if m.confirmOpen {
+		bw, bh := m.confirmDialog.BoxSize()
+		v.Content = m.compositeOverlay(v.Content, m.confirmDialog.View(), bw, bh)
+	}
 
 	return v
 }
@@ -324,6 +359,19 @@ func (m Model) compositeDialog(background string) string {
 	rect := image.Rect(x, y, x+boxW, y+boxH)
 	uv.NewStyledString(dialogView).Draw(buf, rect)
 
+	return buf.Render()
+}
+
+func (m Model) compositeOverlay(background, overlay string, boxW, boxH int) string {
+	if m.width <= 0 || m.height <= 0 || boxW <= 0 || boxH <= 0 || overlay == "" {
+		return background
+	}
+	buf := uv.NewScreenBuffer(m.width, m.height)
+	uv.NewStyledString(background).Draw(buf, buf.Bounds())
+	x := (m.width - boxW) / 2
+	y := (m.height - boxH) / 2
+	rect := image.Rect(x, y, x+boxW, y+boxH)
+	uv.NewStyledString(overlay).Draw(buf, rect)
 	return buf.Render()
 }
 
