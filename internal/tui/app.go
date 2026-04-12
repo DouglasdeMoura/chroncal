@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"image"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -109,7 +110,7 @@ func (m Model) loadCalendars() tea.Cmd {
 		}
 		info := make(map[int64]CalendarInfo, len(cals))
 		for _, c := range cals {
-			info[c.ID] = CalendarInfo{Name: c.Name, Color: c.Color}
+			info[c.ID] = CalendarInfo{Name: c.Name, Color: c.Color, OwnerEmail: c.OwnerEmail}
 		}
 		return calendarsLoadedMsg{calendars: info}
 	}
@@ -202,6 +203,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case EventRSVPMsg:
 		ev := msg.Event
+		ownerEmail := m.calendars[ev.CalendarID].OwnerEmail
 		return m, func() tea.Msg {
 			ctx := context.Background()
 			attendees, err := m.app.Events.ListAttendees(ctx, ev.ID)
@@ -209,7 +211,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return eventRSVPUpdatedMsg{err: err}
 			}
 			for i, att := range attendees {
-				if !att.Organizer {
+				if strings.EqualFold(att.Email, ownerEmail) {
 					attendees[i].RSVPStatus = msg.Status
 					break
 				}

@@ -109,6 +109,7 @@ func calendarCreateCmd() *cobra.Command {
 	var (
 		color         string
 		description   string
+		email         string
 		remoteURL     string
 		username      string
 		authType      string
@@ -145,6 +146,12 @@ behavior.`,
 				return fmt.Errorf("create calendar: %w", err)
 			}
 
+			if email != "" {
+				if err := a.Calendars.SetOwnerEmail(context.Background(), c.ID, email); err != nil {
+					return fmt.Errorf("set owner email: %w", err)
+				}
+			}
+
 			if strings.TrimSpace(remoteURL) != "" {
 				if err := connectCalendarRemote(cmd.Context(), a, c, calendarRemoteFlags{
 					RemoteURL:     remoteURL,
@@ -172,6 +179,7 @@ behavior.`,
 	}
 	cmd.Flags().StringVar(&color, "color", "#7C3AED", "calendar color (hex)")
 	cmd.Flags().StringVar(&description, "description", "", "calendar description")
+	cmd.Flags().StringVar(&email, "email", "", "owner email address (used for RSVP matching)")
 	cmd.Flags().StringVar(&remoteURL, "remote-url", "", "remote CalDAV calendar URL")
 	cmd.Flags().StringVar(&username, "username", "", "Username for remote authentication")
 	cmd.Flags().StringVar(&authType, "auth", "basic", "Auth type: basic, bearer, oauth2")
@@ -185,6 +193,7 @@ func calendarUpdateCmd() *cobra.Command {
 		name             string
 		color            string
 		description      string
+		email            string
 		remoteURL        string
 		username         string
 		authType         string
@@ -239,6 +248,12 @@ Only the flags you pass are changed.`,
 				return fmt.Errorf("update calendar: %w", err)
 			}
 
+			if cmd.Flags().Changed("email") {
+				if err := a.Calendars.SetOwnerEmail(ctx, c.ID, email); err != nil {
+					return fmt.Errorf("set owner email: %w", err)
+				}
+			}
+
 			if disconnectRemote {
 				if err := disconnectCalendarRemote(ctx, a, c); err != nil {
 					return err
@@ -274,6 +289,7 @@ Only the flags you pass are changed.`,
 	cmd.Flags().StringVar(&name, "name", "", "new name")
 	cmd.Flags().StringVar(&color, "color", "", "new color (hex)")
 	cmd.Flags().StringVar(&description, "description", "", "new description")
+	cmd.Flags().StringVar(&email, "email", "", "owner email address (used for RSVP matching)")
 	cmd.Flags().StringVar(&remoteURL, "remote-url", "", "remote CalDAV calendar URL")
 	cmd.Flags().StringVar(&username, "username", "", "Username for remote authentication")
 	cmd.Flags().StringVar(&authType, "auth", "basic", "Auth type: basic, bearer, oauth2")

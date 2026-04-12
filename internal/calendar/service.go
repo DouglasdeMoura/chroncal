@@ -92,6 +92,13 @@ func (s *Service) Update(ctx context.Context, id int64, name, color, description
 	return fromStorage(updated), nil
 }
 
+func (s *Service) SetOwnerEmail(ctx context.Context, id int64, email string) error {
+	return s.q.UpdateCalendarOwnerEmail(ctx, storage.UpdateCalendarOwnerEmailParams{
+		OwnerEmail: email,
+		ID:         id,
+	})
+}
+
 func (s *Service) Delete(ctx context.Context, id int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -180,6 +187,7 @@ func fromStorage(r storage.Calendar) Calendar {
 		Name:                r.Name,
 		Color:               r.Color,
 		Description:         storage.NullableToString(r.Description),
+		OwnerEmail:          r.OwnerEmail,
 		CreatedAt:           timeutil.ParseDateTime(r.CreatedAt),
 		UpdatedAt:           timeutil.ParseDateTime(r.UpdatedAt),
 		AccountID:           accountID,

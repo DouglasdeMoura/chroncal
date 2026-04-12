@@ -40,6 +40,7 @@ type Calendar struct {
 	LastSyncError       *string
 	RemoteColor         *string
 	ColorDirty          int64
+	OwnerEmail          string
 }
 
 type Event struct {

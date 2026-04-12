@@ -61,3 +61,9 @@ UPDATE calendars SET
     color_dirty = 0,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ?;
+
+-- name: UpdateCalendarOwnerEmail :exec
+UPDATE calendars SET
+    owner_email = ?,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = ?;

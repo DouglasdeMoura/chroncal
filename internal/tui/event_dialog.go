@@ -66,8 +66,9 @@ type dialogAction struct {
 
 // CalendarInfo holds the display-relevant fields of a calendar.
 type CalendarInfo struct {
-	Name  string
-	Color string
+	Name       string
+	Color      string
+	OwnerEmail string
 }
 
 // EventDialogModel shows a day's events in a two-column dialog: a list on
@@ -80,6 +81,9 @@ type EventDialogModel struct {
 	selected      int
 	scroll        int
 	focusedAction int
+	focusedRSVP   int
+	focusZone     int // 0 = action bar, 1 = RSVP buttons
+	rsvpLineIdx   int // line index of RSVP row within details (set during render)
 	keys          eventDialogKeyMap
 	width         int
 	height        int
@@ -127,36 +131,82 @@ func (m EventDialogModel) selectedEvent() (event.Event, bool) {
 	return m.events[m.selected], true
 }
 
+func (m EventDialogModel) userAttendee() (model.Attendee, bool) {
+	ev, ok := m.selectedEvent()
+	if !ok {
+		return model.Attendee{}, false
+	}
+	cal := m.calendars[ev.CalendarID]
+	if cal.OwnerEmail == "" {
+		return model.Attendee{}, false
+	}
+	for _, att := range ev.Attendees {
+		if strings.EqualFold(att.Email, cal.OwnerEmail) && !att.Organizer {
+			return att, true
+		}
+	}
+	return model.Attendee{}, false
+}
+
+func (m EventDialogModel) rsvpActions() []dialogAction {
+	ev, ok := m.selectedEvent()
+	if !ok {
+		return nil
+	}
+	if _, ok := m.userAttendee(); !ok {
+		return nil
+	}
+	return []dialogAction{
+		{"Yes", func() tea.Msg { return EventRSVPMsg{Event: ev, Status: "ACCEPTED"} }},
+		{"No", func() tea.Msg { return EventRSVPMsg{Event: ev, Status: "DECLINED"} }},
+		{"Maybe", func() tea.Msg { return EventRSVPMsg{Event: ev, Status: "TENTATIVE"} }},
+	}
+}
+
 func (m EventDialogModel) visibleActions() []dialogAction {
 	ev, ok := m.selectedEvent()
 	if !ok {
 		return nil
 	}
-	actions := []dialogAction{
+	return []dialogAction{
 		{"Edit", func() tea.Msg { return EventEditMsg{Event: ev} }},
 		{"Delete", func() tea.Msg { return EventDeleteMsg{Event: ev} }},
 	}
-	if len(ev.Attendees) > 0 {
-		actions = append(actions,
-			dialogAction{"Yes", func() tea.Msg { return EventRSVPMsg{Event: ev, Status: "ACCEPTED"} }},
-			dialogAction{"No", func() tea.Msg { return EventRSVPMsg{Event: ev, Status: "DECLINED"} }},
-			dialogAction{"Maybe", func() tea.Msg { return EventRSVPMsg{Event: ev, Status: "TENTATIVE"} }},
-		)
-	}
-	return actions
 }
 
 func (m *EventDialogModel) clampFocus() {
 	n := len(m.visibleActions())
-	if n == 0 {
-		m.focusedAction = 0
-		return
-	}
 	if m.focusedAction >= n {
-		m.focusedAction = n - 1
+		m.focusedAction = max(n-1, 0)
 	}
-	if m.focusedAction < 0 {
-		m.focusedAction = 0
+	rn := len(m.rsvpActions())
+	if rn == 0 {
+		m.focusZone = 0
+	}
+	if m.focusedRSVP >= rn {
+		m.focusedRSVP = max(rn-1, 0)
+	}
+}
+
+func (m EventDialogModel) allFocusable() int {
+	return len(m.visibleActions()) + len(m.rsvpActions())
+}
+
+func (m EventDialogModel) flatFocusIndex() int {
+	if m.focusZone == 0 {
+		return m.focusedAction
+	}
+	return len(m.visibleActions()) + m.focusedRSVP
+}
+
+func (m *EventDialogModel) setFlatFocusIndex(idx int) {
+	n := len(m.visibleActions())
+	if idx < n {
+		m.focusZone = 0
+		m.focusedAction = idx
+	} else {
+		m.focusZone = 1
+		m.focusedRSVP = idx - n
 	}
 }
 
@@ -172,6 +222,8 @@ func (m EventDialogModel) Update(msg tea.Msg) (EventDialogModel, tea.Cmd) {
 
 func (m EventDialogModel) handleKey(msg tea.KeyPressMsg) (EventDialogModel, tea.Cmd) {
 	actions := m.visibleActions()
+	rsvp := m.rsvpActions()
+	total := len(actions) + len(rsvp)
 
 	switch {
 	case key.Matches(msg, m.keys.Close):
@@ -187,41 +239,44 @@ func (m EventDialogModel) handleKey(msg tea.KeyPressMsg) (EventDialogModel, tea.
 			m.clampFocus()
 		}
 	case key.Matches(msg, m.keys.Tab):
-		if len(actions) > 0 {
-			m.focusedAction = (m.focusedAction + 1) % len(actions)
+		if total > 0 {
+			m.setFlatFocusIndex((m.flatFocusIndex() + 1) % total)
 		}
 	case key.Matches(msg, m.keys.ShiftTab):
-		if len(actions) > 0 {
-			m.focusedAction = (m.focusedAction - 1 + len(actions)) % len(actions)
+		if total > 0 {
+			m.setFlatFocusIndex((m.flatFocusIndex() - 1 + total) % total)
 		}
 	case key.Matches(msg, m.keys.Enter):
-		if m.focusedAction >= 0 && m.focusedAction < len(actions) {
+		if m.focusZone == 1 && m.focusedRSVP >= 0 && m.focusedRSVP < len(rsvp) {
+			return m, rsvp[m.focusedRSVP].msg
+		}
+		if m.focusZone == 0 && m.focusedAction >= 0 && m.focusedAction < len(actions) {
 			return m, actions[m.focusedAction].msg
 		}
 	case key.Matches(msg, m.keys.Edit):
-		if _, ok := m.selectedEvent(); ok {
-			m.focusedAction = 0
+		if _, ok := m.selectedEvent(); ok && len(actions) > 0 {
+			m.setFlatFocusIndex(0)
 			return m, actions[0].msg
 		}
 	case key.Matches(msg, m.keys.Delete):
 		if _, ok := m.selectedEvent(); ok && len(actions) > 1 {
-			m.focusedAction = 1
+			m.setFlatFocusIndex(1)
 			return m, actions[1].msg
 		}
 	case key.Matches(msg, m.keys.RSVPYes):
-		if ev, ok := m.selectedEvent(); ok && len(ev.Attendees) > 0 && len(actions) > 2 {
-			m.focusedAction = 2
-			return m, actions[2].msg
+		if len(rsvp) > 0 {
+			m.setFlatFocusIndex(len(actions))
+			return m, rsvp[0].msg
 		}
 	case key.Matches(msg, m.keys.RSVPNo):
-		if ev, ok := m.selectedEvent(); ok && len(ev.Attendees) > 0 && len(actions) > 3 {
-			m.focusedAction = 3
-			return m, actions[3].msg
+		if len(rsvp) > 1 {
+			m.setFlatFocusIndex(len(actions) + 1)
+			return m, rsvp[1].msg
 		}
 	case key.Matches(msg, m.keys.RSVPMaybe):
-		if ev, ok := m.selectedEvent(); ok && len(ev.Attendees) > 0 && len(actions) > 4 {
-			m.focusedAction = 4
-			return m, actions[4].msg
+		if len(rsvp) > 2 {
+			m.setFlatFocusIndex(len(actions) + 2)
+			return m, rsvp[2].msg
 		}
 	}
 	return m, nil
@@ -232,24 +287,38 @@ func (m EventDialogModel) handleMouse(msg tea.MouseClickMsg) (EventDialogModel, 
 		return m, nil
 	}
 
+	// Check action bar (Edit/Delete)
 	actions := m.visibleActions()
-	if len(actions) == 0 {
-		return m, nil
-	}
-
 	ox, oy := m.actionBarOrigin()
-	if msg.Y != oy {
-		return m, nil
+	if msg.Y == oy {
+		x := ox
+		for i, a := range actions {
+			w := len(a.label) + 2
+			if msg.X >= x && msg.X < x+w {
+				m.focusZone = 0
+				m.focusedAction = i
+				return m, a.msg
+			}
+			x += w + 1
+		}
 	}
 
-	x := ox
-	for i, a := range actions {
-		w := len(a.label) + 2
-		if msg.X >= x && msg.X < x+w {
-			m.focusedAction = i
-			return m, a.msg
+	// Check RSVP buttons in details pane
+	rsvp := m.rsvpActions()
+	if len(rsvp) > 0 {
+		rx, ry := m.rsvpBarOrigin()
+		if msg.Y == ry {
+			x := rx
+			for i, a := range rsvp {
+				w := len(a.label) + 2
+				if msg.X >= x && msg.X < x+w {
+					m.focusZone = 1
+					m.focusedRSVP = i
+					return m, a.msg
+				}
+				x += w + 1
+			}
 		}
-		x += w + 1
 	}
 
 	return m, nil
@@ -275,6 +344,48 @@ func (m EventDialogModel) actionBarOrigin() (int, int) {
 	listW := max(min(max(innerW/4, 18), innerW-24), 10)
 	dividerW := 3
 	return contentX + listW + dividerW, actionsY
+}
+
+func (m EventDialogModel) rsvpBarOrigin() (int, int) {
+	if m.rsvpLineIdx < 0 {
+		return 0, 0
+	}
+
+	boxW, _ := m.boxSize()
+	innerW := max(boxW-6, 10)
+	dialogX := (m.width - boxW) / 2
+	dialogY := (m.height - m.boxH()) / 2
+
+	contentX := dialogX + 3
+	detailsStartY := dialogY + 2
+
+	if m.isNarrow() {
+		listH := min(max(len(m.events)+1, 3), max(m.bodyH()/3, 3))
+		detailsStartY += listH + 1
+	}
+
+	lw := m.labelWidth()
+	padded := "Your RSVP" + strings.Repeat(" ", max(lw-len("Your RSVP"), 1))
+	rsvpButtonsX := contentX + len(padded)
+
+	if !m.isNarrow() {
+		listW := max(min(max(innerW/4, 18), innerW-24), 10)
+		dividerW := 3
+		rsvpButtonsX += listW + dividerW
+	}
+
+	return rsvpButtonsX, detailsStartY + m.rsvpLineIdx
+}
+
+func (m EventDialogModel) boxH() int {
+	_, h := m.boxSize()
+	return h
+}
+
+func (m EventDialogModel) bodyH() int {
+	_, boxH := m.boxSize()
+	innerH := max(boxH-4, 6)
+	return max(innerH-4, 3)
 }
 
 func (m EventDialogModel) isNarrow() bool {
@@ -455,7 +566,7 @@ func (m EventDialogModel) renderActions(w int) string {
 	actions := m.visibleActions()
 	parts := make([]string, len(actions))
 	for i, a := range actions {
-		parts[i] = button(a.label, 0, i == m.focusedAction)
+		parts[i] = button(a.label, 0, m.focusZone == 0 && i == m.focusedAction)
 	}
 	return truncateTo(strings.Join(parts, " "), w)
 }
@@ -477,16 +588,52 @@ func (m EventDialogModel) renderDetails(w, h int) string {
 	actionsLine := m.renderActions(w)
 	detailsH := max(h-2, 1)
 
-	details := RenderEventDetails(ev, cal, w, detailsH, m.labelWidth())
+	rsvpLine := ""
+	if rsvp := m.rsvpActions(); len(rsvp) > 0 {
+		att, _ := m.userAttendee()
+		rsvpLine = m.renderRSVPLine(att, rsvp, w)
+	}
+
+	lines, rsvpIdx := eventDetailLines(ev, cal, w, m.labelWidth(), rsvpLine)
+	m.rsvpLineIdx = rsvpIdx
+
+	if len(lines) > detailsH {
+		lines = lines[:detailsH]
+	}
+	details := padLines(lines, w, detailsH)
 	blank := strings.Repeat(" ", w)
 
 	return details + "\n" + blank + "\n" + actionsLine
 }
 
-// RenderEventDetails renders a single event's details into a block of the
-// given width and height. labelWidth controls the left-column alignment of
-// field labels (e.g. 7 for narrow layouts, 10 for wide).
-func RenderEventDetails(ev event.Event, cal CalendarInfo, w, h, labelWidth int) string {
+func (m EventDialogModel) renderRSVPLine(att model.Attendee, rsvp []dialogAction, w int) string {
+	faint := lipgloss.NewStyle().Faint(true)
+	lw := m.labelWidth()
+
+	label := "Your RSVP"
+	padded := label + strings.Repeat(" ", max(lw-len(label), 1))
+
+	var parts []string
+	for i, a := range rsvp {
+		parts = append(parts, button(a.label, 0, m.focusZone == 1 && i == m.focusedRSVP))
+	}
+	value := strings.Join(parts, " ")
+
+	current := ""
+	switch strings.ToUpper(att.RSVPStatus) {
+	case "ACCEPTED":
+		current = " ✓"
+	case "DECLINED":
+		current = " ✗"
+	case "TENTATIVE":
+		current = " ?"
+	}
+
+	return truncateTo(faint.Render(padded)+value+current, w)
+}
+
+// eventDetailLines returns detail lines and the index of the RSVP row (-1 if none).
+func eventDetailLines(ev event.Event, cal CalendarInfo, w, labelWidth int, rsvpLine string) ([]string, int) {
 	faint := lipgloss.NewStyle().Faint(true)
 	bold := lipgloss.NewStyle().Bold(true)
 
@@ -521,6 +668,11 @@ func RenderEventDetails(ev event.Event, cal CalendarInfo, w, h, labelWidth int) 
 	if ev.URL != "" {
 		lines = append(lines, detailLine(faint, "URL", ev.URL, labelWidth, w))
 	}
+	rsvpIdx := -1
+	if rsvpLine != "" {
+		rsvpIdx = len(lines)
+		lines = append(lines, rsvpLine)
+	}
 
 	if len(ev.Attendees) > 0 {
 		lines = append(lines, "")
@@ -545,10 +697,7 @@ func RenderEventDetails(ev event.Event, cal CalendarInfo, w, h, labelWidth int) 
 		}
 	}
 
-	if len(lines) > h {
-		lines = lines[:h]
-	}
-	return padLines(lines, w, h)
+	return lines, rsvpIdx
 }
 
 func detailLine(labelStyle lipgloss.Style, label, value string, lw, w int) string {
