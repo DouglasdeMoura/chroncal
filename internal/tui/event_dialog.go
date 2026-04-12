@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"image/color"
 	"slices"
 	"strings"
 	"time"
@@ -103,8 +104,14 @@ type EventDialogModel struct {
 	focusZone     int // zoneEventList, zoneRSVP, or zoneActions
 	rsvpLineIdx   int // line index of RSVP row within details (set during render)
 	keys          eventDialogKeyMap
+	selectedColor color.Color
 	width         int
 	height        int
+}
+
+func (m EventDialogModel) SetSelectedColor(c color.Color) EventDialogModel {
+	m.selectedColor = c
+	return m
 }
 
 const narrowThreshold = 90
@@ -623,8 +630,10 @@ func (m EventDialogModel) renderList(w, h int) string {
 		if i == m.selected {
 			if m.focusZone == zoneEventList {
 				style = style.Reverse(true).Bold(true)
+			} else if m.selectedColor != nil {
+				style = style.Bold(true).Background(m.selectedColor)
 			} else {
-				style = style.Bold(true).Underline(true)
+				style = style.Bold(true)
 			}
 		}
 		lines = append(lines, style.Render(label))

@@ -202,6 +202,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case CalendarDaySelectedMsg:
 		dayEvents := eventsOn(m.events, msg.Day)
 		m.dialog = NewEventDialogModel(msg.Day, dayEvents, m.calendars).
+			SetSelectedColor(m.theme.Selected).
 			SetSize(m.width, m.height)
 		m.dialogOpen = true
 		return m, nil
@@ -264,11 +265,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Day.Year() != m.calendar.month.Year() || msg.Day.Month() != m.calendar.month.Month() {
 			m.calendar.month = time.Date(msg.Day.Year(), msg.Day.Month(), 1, 0, 0, 0, 0, msg.Day.Location())
 			m.dialog = NewEventDialogModel(msg.Day, nil, m.calendars).
+				SetSelectedColor(m.theme.Selected).
 				SetSize(m.width, m.height)
 			return m, m.loadEvents()
 		}
 		dayEvents := eventsOn(m.events, msg.Day)
 		m.dialog = NewEventDialogModel(msg.Day, dayEvents, m.calendars).
+			SetSelectedColor(m.theme.Selected).
 			SetSize(m.width, m.height)
 		return m, nil
 
