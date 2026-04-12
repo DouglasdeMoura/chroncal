@@ -340,15 +340,15 @@ func (m EventDialogModel) handleMouse(msg tea.MouseClickMsg) (EventDialogModel, 
 	if len(rsvp) > 0 {
 		rx, ry := m.rsvpBarOrigin()
 		if msg.Y == ry {
+			btnW := rsvpButtonWidth()
 			x := rx
 			for i, a := range rsvp {
-				w := len(a.label) + 2
-				if msg.X >= x && msg.X < x+w {
+				if msg.X >= x && msg.X < x+btnW {
 					m.focusZone = 1
 					m.focusedRSVP = i
 					return m, a.msg
 				}
-				x += w + 1
+				x += btnW + 1
 			}
 		}
 	}
@@ -676,6 +676,33 @@ func (m EventDialogModel) renderDetails(w, h int) string {
 	return details + "\n" + blank + "\n" + actionsLine
 }
 
+var rsvpIndicators = map[string]string{
+	"ACCEPTED":  "Yes ✓",
+	"DECLINED":  "No ✗",
+	"TENTATIVE": "Maybe ?",
+}
+
+func rsvpMaxLabelWidth() int {
+	maxW := 0
+	for _, v := range rsvpIndicators {
+		if w := lipgloss.Width(v); w > maxW {
+			maxW = w
+		}
+	}
+	return maxW
+}
+
+func rsvpButtonWidth() int {
+	return rsvpMaxLabelWidth() + 2 // +2 for button padding
+}
+
+func rsvpButtonLabel(baseLabel, rsvpStatus string) string {
+	if mapped, ok := rsvpIndicators[strings.ToUpper(rsvpStatus)]; ok && strings.HasPrefix(mapped, baseLabel) {
+		return mapped
+	}
+	return baseLabel
+}
+
 func (m EventDialogModel) renderRSVPLine(att model.Attendee, rsvp []dialogAction, w int) string {
 	faint := lipgloss.NewStyle().Faint(true)
 	lw := m.labelWidth()
@@ -683,23 +710,21 @@ func (m EventDialogModel) renderRSVPLine(att model.Attendee, rsvp []dialogAction
 	label := "Your RSVP"
 	padded := label + strings.Repeat(" ", max(lw-len(label), 1))
 
+	fixedW := rsvpMaxLabelWidth()
 	var parts []string
 	for i, a := range rsvp {
-		parts = append(parts, button(a.label, 0, m.focusZone == 1 && i == m.focusedRSVP))
+		l := rsvpButtonLabel(a.label, att.RSVPStatus)
+		leftPad := 0
+		if pad := fixedW - lipgloss.Width(l); pad > 0 {
+			leftPad = pad / 2
+			right := pad - leftPad
+			l = strings.Repeat(" ", leftPad) + l + strings.Repeat(" ", right)
+		}
+		parts = append(parts, button(l, leftPad, m.focusZone == 1 && i == m.focusedRSVP))
 	}
 	value := strings.Join(parts, " ")
 
-	current := ""
-	switch strings.ToUpper(att.RSVPStatus) {
-	case "ACCEPTED":
-		current = " ✓"
-	case "DECLINED":
-		current = " ✗"
-	case "TENTATIVE":
-		current = " ?"
-	}
-
-	return truncateTo(faint.Render(padded)+value+current, w)
+	return truncateTo(faint.Render(padded)+value, w)
 }
 
 // eventDetailLines returns detail lines and the index of the RSVP row (-1 if none).
