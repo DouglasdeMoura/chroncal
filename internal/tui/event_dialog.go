@@ -111,6 +111,15 @@ func (m EventDialogModel) SetSize(w, h int) EventDialogModel {
 	return m
 }
 
+func (m EventDialogModel) SetEvents(events []event.Event) EventDialogModel {
+	m.events = events
+	if m.selected >= len(m.events) {
+		m.selected = max(0, len(m.events)-1)
+	}
+	m.clampFocus()
+	return m
+}
+
 func (m EventDialogModel) selectedEvent() (event.Event, bool) {
 	if len(m.events) == 0 || m.selected < 0 || m.selected >= len(m.events) {
 		return event.Event{}, false

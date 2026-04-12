@@ -159,6 +159,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.err
 		m.events = msg.events
 		m.calendar = m.calendar.SetEvents(eventsToCalendar(msg.events, m.calendars))
+		if m.dialogOpen {
+			dayEvents := eventsOn(m.events, m.dialog.day)
+			if len(dayEvents) == 0 {
+				m.dialogOpen = false
+			} else {
+				m.dialog = m.dialog.SetEvents(dayEvents)
+			}
+		}
 		return m, nil
 
 	case calendarsLoadedMsg:
@@ -205,7 +213,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case eventDeletedMsg:
-		m.dialogOpen = false
 		if msg.err != nil {
 			m.err = msg.err
 			return m, nil
