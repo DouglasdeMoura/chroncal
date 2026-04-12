@@ -69,13 +69,14 @@ func eventsOn(events []event.Event, day time.Time) []event.Event {
 	return out
 }
 
-func eventsToCalendar(events []event.Event) []CalendarEvent {
+func eventsToCalendar(events []event.Event, calendars map[int64]CalendarInfo) []CalendarEvent {
 	out := make([]CalendarEvent, len(events))
 	for i, e := range events {
 		out[i] = CalendarEvent{
 			Title:  e.Title,
 			AllDay: e.AllDay,
 			Day:    e.StartTime.Local(),
+			Color:  calendars[e.CalendarID].Color,
 		}
 	}
 	return out
@@ -148,7 +149,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case eventsLoadedMsg:
 		m.err = msg.err
 		m.events = msg.events
-		m.calendar = m.calendar.SetEvents(eventsToCalendar(msg.events))
+		m.calendar = m.calendar.SetEvents(eventsToCalendar(msg.events, m.calendars))
 		return m, nil
 
 	case calendarsLoadedMsg:
