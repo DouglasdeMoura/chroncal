@@ -672,11 +672,11 @@ func WeekGrid(opts WeekOptions) string {
 		subRow := row % lph
 
 		if row == nowRow {
-			out.WriteString(nowStyle.Render(nowTimeLabel) + " ")
+			out.WriteString(nowStyle.Render(fmt.Sprintf("  %s", nowTimeLabel)) + " ")
 		} else if subRow == 0 {
-			out.WriteString(faint.Render(fmt.Sprintf("%02d:00", hour)) + " ")
+			out.WriteString(faint.Render(fmt.Sprintf("  %02d:00", hour)) + " ")
 		} else {
-			out.WriteString("      ")
+			out.WriteString("        ")
 		}
 
 		for i := 0; i <= 7; i++ {
@@ -708,7 +708,7 @@ func WeekGrid(opts WeekOptions) string {
 
 func renderWeekColumnHeaders(anchor time.Time, colWs []int, todayKey, selectedKey string, selectedColor color.Color) string {
 	var b strings.Builder
-	b.WriteString("      ")
+	b.WriteString("        ")
 	b.WriteString(" ")
 	for i := range 7 {
 		if i > 0 {
@@ -739,7 +739,7 @@ func renderWeekColumnHeaders(anchor time.Time, colWs []int, todayKey, selectedKe
 func renderWeekHRule(colWs []int, left, mid, right string) string {
 	faint := lipgloss.NewStyle().Faint(true)
 	var b strings.Builder
-	b.WriteString(faint.Render("──────" + left))
+	b.WriteString(faint.Render("────────" + left))
 	for i, w := range colWs {
 		b.WriteString(faint.Render(strings.Repeat("─", w)))
 		if i < len(colWs)-1 {
@@ -790,7 +790,11 @@ func renderWeekAllDayRows(events []CalendarEvent, anchor time.Time, colWs []int,
 
 	var out strings.Builder
 	for row := 0; row < numRows; row++ {
-		out.WriteString("      ")
+		if row == 0 {
+			out.WriteString(faint.Render("All day") + " ")
+		} else {
+			out.WriteString("        ")
+		}
 		for i := 0; i <= 7; i++ {
 			highlighted := selSep != "" && (i == selectedCol || i == selectedCol+1)
 			if highlighted {

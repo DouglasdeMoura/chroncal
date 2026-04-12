@@ -11,7 +11,7 @@ import (
 const (
 	defaultLinesPerHour = 4
 	totalHours          = 24
-	weekTimeLabelWidth  = 6
+	weekTimeLabelWidth  = 8
 )
 
 type WeekChangedMsg struct{ Week time.Time }
