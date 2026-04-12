@@ -433,6 +433,163 @@ func buildCalendarCell(d time.Time, isToday, inMonth bool, events []CalendarEven
 	return strings.Join(lines, "\n")
 }
 
+type WeekOptions struct {
+	WeekStart     time.Time
+	Events        []CalendarEvent
+	Today         time.Time
+	Selected      time.Time
+	Width         int
+	Height        int
+	ShowHeader    bool
+	SelectedColor color.Color
+}
+
+func WeekGrid(opts WeekOptions) string {
+	if opts.Width <= 0 || opts.Height <= 0 {
+		return ""
+	}
+
+	anchor := opts.WeekStart
+
+	eventsByDay := make(map[string][]CalendarEvent)
+	for _, ev := range opts.Events {
+		key := ev.Day.Format("2006-01-02")
+		eventsByDay[key] = append(eventsByDay[key], ev)
+	}
+
+	todayKey := ""
+	if !opts.Today.IsZero() {
+		todayKey = opts.Today.Local().Format("2006-01-02")
+	}
+
+	preambleLines := 1
+	if opts.ShowHeader {
+		preambleLines += 2
+	}
+
+	cellWs := make([]int, 7)
+	availW := opts.Width - 8
+	baseW := availW / 7
+	if baseW < 6 {
+		baseW = 6
+	}
+	remW := availW - baseW*7
+	if remW < 0 {
+		remW = 0
+	}
+	for i := range 7 {
+		cellWs[i] = baseW
+		if i < remW {
+			cellWs[i]++
+		}
+	}
+
+	cellH := opts.Height - preambleLines - 2
+	if cellH < 3 {
+		cellH = 3
+	}
+
+	row := make([]string, 7)
+	for col := range 7 {
+		d := anchor.AddDate(0, 0, col)
+		dayKey := d.Format("2006-01-02")
+		row[col] = buildWeekCell(eventsByDay[dayKey], cellWs[col], cellH)
+	}
+
+	t := table.New().
+		Rows(row).
+		Border(lipgloss.RoundedBorder()).
+		BorderStyle(lipgloss.NewStyle().Faint(true)).
+		StyleFunc(func(_, col int) lipgloss.Style {
+			return lipgloss.NewStyle().Width(cellWs[col]).Padding(0, 0)
+		})
+
+	rendered := t.Render()
+	if opts.SelectedColor != nil && !opts.Selected.IsZero() {
+		sc := findWeekCol(anchor, opts.Selected)
+		if sc >= 0 {
+			rendered = highlightCellBorder(rendered, 0, sc, cellWs, []int{cellH}, opts.SelectedColor)
+		}
+	}
+
+	var out strings.Builder
+	if opts.ShowHeader {
+		endDay := anchor.AddDate(0, 0, 6)
+		var title string
+		if anchor.Month() == endDay.Month() {
+			title = fmt.Sprintf("%s %d – %d, %d",
+				anchor.Format("January"), anchor.Day(), endDay.Day(), anchor.Year())
+		} else if anchor.Year() == endDay.Year() {
+			title = fmt.Sprintf("%s %d – %s %d, %d",
+				anchor.Format("Jan"), anchor.Day(), endDay.Format("Jan"), endDay.Day(), anchor.Year())
+		} else {
+			title = fmt.Sprintf("%s %d, %d – %s %d, %d",
+				anchor.Format("Jan"), anchor.Day(), anchor.Year(), endDay.Format("Jan"), endDay.Day(), endDay.Year())
+		}
+		out.WriteString(lipgloss.NewStyle().Bold(true).Width(opts.Width).Align(lipgloss.Center).Render(title))
+		out.WriteString("\n\n")
+	}
+	out.WriteString(renderWeekdayDateRow(anchor, cellWs, todayKey))
+	out.WriteString("\n")
+	out.WriteString(rendered)
+	return out.String()
+}
+
+func renderWeekdayDateRow(anchor time.Time, cellWs []int, todayKey string) string {
+	var b strings.Builder
+	b.WriteString(" ")
+	for i := range 7 {
+		if i > 0 {
+			b.WriteString(" ")
+		}
+		d := anchor.AddDate(0, 0, i)
+		dayKey := d.Format("2006-01-02")
+		label := strings.ToLower(d.Format("Mon")) + " " + fmt.Sprintf("%d", d.Day())
+		style := lipgloss.NewStyle().Width(cellWs[i]).Align(lipgloss.Center).Faint(true)
+		if dayKey == todayKey {
+			style = style.Faint(false).Bold(true)
+		}
+		b.WriteString(style.Render(label))
+	}
+	b.WriteString(" ")
+	return b.String()
+}
+
+func buildWeekCell(events []CalendarEvent, cellW, cellH int) string {
+	maxEventLines := cellH
+	pills := make([]string, 0, maxEventLines)
+	overflow := 0
+	for i, ev := range events {
+		if i >= maxEventLines {
+			overflow = len(events) - maxEventLines + 1
+			break
+		}
+		pills = append(pills, renderEventPill(ev, cellW))
+	}
+	if overflow > 0 && len(pills) > 0 {
+		pills[len(pills)-1] = lipgloss.NewStyle().Faint(true).
+			Width(cellW).Render(fmt.Sprintf(" +%d more", overflow))
+	}
+
+	lines := make([]string, 0, cellH)
+	lines = append(lines, pills...)
+	blank := strings.Repeat(" ", cellW)
+	for len(lines) < cellH {
+		lines = append(lines, blank)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func findWeekCol(anchor, d time.Time) int {
+	target := d.Local().Format("2006-01-02")
+	for col := range 7 {
+		if anchor.AddDate(0, 0, col).Format("2006-01-02") == target {
+			return col
+		}
+	}
+	return -1
+}
+
 func renderEventPill(ev CalendarEvent, cellW int) string {
 	text := " " + ev.Title
 	if lipgloss.Width(text) > cellW {

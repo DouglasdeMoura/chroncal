@@ -23,6 +23,13 @@ const (
 	focusCalendar
 )
 
+type viewMode int
+
+const (
+	viewMonth viewMode = iota
+	viewWeek
+)
+
 type eventsLoadedMsg struct {
 	events []event.Event
 	err    error
@@ -50,7 +57,9 @@ type Model struct {
 	theme          Theme
 	width          int
 	height         int
+	viewMode       viewMode
 	calendar       CalendarModel
+	week           WeekModel
 	events         []event.Event
 	calendars      map[int64]CalendarInfo
 	dialog         EventDialogModel
@@ -68,14 +77,34 @@ type Model struct {
 
 func NewModel(a *app.App) Model {
 	ui := config.LoadUIState()
-	return Model{app: a, calendar: NewCalendarModel(time.Now()), showSidebar: ui.ShowSidebar, focus: focusCalendar}
+	now := time.Now()
+	vm := viewMonth
+	if ui.ViewMode == "week" {
+		vm = viewWeek
+	}
+	return Model{
+		app:         a,
+		viewMode:    vm,
+		calendar:    NewCalendarModel(now),
+		week:        NewWeekModel(now),
+		showSidebar: ui.ShowSidebar,
+		focus:       focusCalendar,
+	}
 }
 
 func (m Model) loadEvents() tea.Cmd {
-	month := m.calendar.Month()
+	var from, to time.Time
+	switch m.viewMode {
+	case viewWeek:
+		start := m.week.WeekStartDate()
+		from = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.UTC)
+		to = from.AddDate(0, 0, 7)
+	default:
+		month := m.calendar.Month()
+		from = time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, time.UTC)
+		to = from.AddDate(0, 1, 0)
+	}
 	return func() tea.Msg {
-		from := time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, time.UTC)
-		to := from.AddDate(0, 1, 0)
 		expanded, err := m.app.Recurrences.ListExpandedEvents(context.Background(), from, to)
 		events := make([]event.Event, len(expanded))
 		for i, e := range expanded {
@@ -167,6 +196,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.BackgroundColorMsg:
 		m.theme = NewTheme(msg.IsDark())
 		m.calendar = m.calendar.SetSelectedColor(m.theme.Text)
+		m.week = m.week.SetSelectedColor(m.theme.Text)
 		return m, nil
 
 	case tea.WindowSizeMsg:
@@ -174,6 +204,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		iw, ih := m.innerDims()
 		m.calendar = m.calendar.SetSize(iw, ih)
+		m.week = m.week.SetSize(iw, ih)
 		m.dialog = m.dialog.SetSize(m.width, m.height)
 		m.confirmDialog = m.confirmDialog.SetSize(m.width, m.height)
 		m.choiceDialog = m.choiceDialog.SetSize(m.width, m.height)
@@ -183,7 +214,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case eventsLoadedMsg:
 		m.err = msg.err
 		m.events = msg.events
-		m.calendar = m.calendar.SetEvents(eventsToCalendar(msg.events, m.calendars))
+		calEvents := eventsToCalendar(msg.events, m.calendars)
+		switch m.viewMode {
+		case viewWeek:
+			m.week = m.week.SetEvents(calEvents)
+		default:
+			m.calendar = m.calendar.SetEvents(calEvents)
+		}
 		if m.dialogOpen {
 			dayEvents := eventsOn(m.events, m.dialog.day)
 			m.dialog = m.dialog.SetEvents(dayEvents)
@@ -197,6 +234,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case CalendarMonthChangedMsg:
+		return m, m.loadEvents()
+
+	case WeekChangedMsg:
 		return m, m.loadEvents()
 
 	case CalendarDaySelectedMsg:
@@ -261,6 +301,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.loadEvents()
 
 	case DialogDayChangedMsg:
+		if m.viewMode == viewWeek {
+			prevWeek := m.week.WeekStartDate()
+			m.week.cursor = msg.Day
+			if m.week.WeekStartDate() != prevWeek {
+				m.dialog = NewEventDialogModel(msg.Day, nil, m.calendars).
+					SetSelectedColor(m.theme.Selected).
+					SetSize(m.width, m.height)
+				return m, m.loadEvents()
+			}
+			dayEvents := eventsOn(m.events, msg.Day)
+			m.dialog = NewEventDialogModel(msg.Day, dayEvents, m.calendars).
+				SetSelectedColor(m.theme.Selected).
+				SetSize(m.width, m.height)
+			return m, nil
+		}
 		m.calendar.cursor = msg.Day
 		if msg.Day.Year() != m.calendar.month.Year() || msg.Day.Month() != m.calendar.month.Month() {
 			m.calendar.month = time.Date(msg.Day.Year(), msg.Day.Month(), 1, 0, 0, 0, 0, msg.Day.Location())
@@ -353,6 +408,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		ox, oy := m.calendarOffset()
+		if m.viewMode == viewWeek {
+			day, ok := m.week.DayAtPosition(msg.X-ox, msg.Y-oy)
+			if !ok {
+				return m, nil
+			}
+			var cmd tea.Cmd
+			m.week, cmd = m.week.selectDay(day)
+			return m, cmd
+		}
 		day, ok := m.calendar.DayAtPosition(msg.X-ox, msg.Y-oy)
 		if !ok {
 			return m, nil
@@ -389,6 +453,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "w":
+			switch m.viewMode {
+			case viewMonth:
+				m.viewMode = viewWeek
+				m.week.cursor = m.calendar.cursor
+				m.week.today = m.calendar.today
+			case viewWeek:
+				m.viewMode = viewMonth
+				m.calendar.cursor = m.week.cursor
+				m.calendar.today = m.week.today
+				if m.calendar.cursor.Year() != m.calendar.month.Year() || m.calendar.cursor.Month() != m.calendar.month.Month() {
+					m.calendar.month = time.Date(m.calendar.cursor.Year(), m.calendar.cursor.Month(), 1, 0, 0, 0, 0, m.calendar.cursor.Location())
+				}
+			}
+			iw, ih := m.innerDims()
+			m.calendar = m.calendar.SetSize(iw, ih)
+			m.week = m.week.SetSize(iw, ih)
+			m.saveUIState()
+			return m, m.loadEvents()
 		case "s":
 			m.showSidebar = !m.showSidebar
 			if !m.showSidebar {
@@ -396,7 +479,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			iw, ih := m.innerDims()
 			m.calendar = m.calendar.SetSize(iw, ih)
-			_ = config.SaveUIState(config.UIState{ShowSidebar: m.showSidebar})
+			m.week = m.week.SetSize(iw, ih)
+			m.saveUIState()
 			return m, nil
 		case "tab", "shift+tab":
 			if m.showSidebar {
@@ -409,6 +493,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.focus == focusCalendar {
+			if m.viewMode == viewWeek {
+				var cmd tea.Cmd
+				m.week, cmd = m.week.Update(msg)
+				return m, cmd
+			}
 			var cmd tea.Cmd
 			m.calendar, cmd = m.calendar.Update(msg)
 			return m, cmd
@@ -435,7 +524,13 @@ func (m Model) View() tea.View {
 	footerHeight := 1
 	mainWidth, contentHeight := m.mainDims()
 
-	mainContent := m.calendar.View()
+	var mainContent string
+	switch m.viewMode {
+	case viewWeek:
+		mainContent = m.week.View()
+	default:
+		mainContent = m.calendar.View()
+	}
 	if m.err != nil {
 		mainContent = lipgloss.NewStyle().Foreground(m.theme.Error).Render("Error: " + m.err.Error())
 	}
@@ -532,8 +627,22 @@ func (m Model) compositeOverlay(background, overlay string, boxW, boxH int) stri
 	return buf.Render()
 }
 
+func (m Model) saveUIState() {
+	vm := "month"
+	if m.viewMode == viewWeek {
+		vm = "week"
+	}
+	_ = config.SaveUIState(config.UIState{ShowSidebar: m.showSidebar, ViewMode: vm})
+}
+
 func (m Model) footerHelp() string {
-	parts := "chroncal  ·  hjkl/arrows: move  ·  [/]: month  ·  t: today  ·  enter: select"
+	var parts string
+	switch m.viewMode {
+	case viewWeek:
+		parts = "chroncal  ·  hjkl/arrows: move  ·  [/]: week  ·  t: today  ·  enter: select  ·  w: month"
+	default:
+		parts = "chroncal  ·  hjkl/arrows: move  ·  [/]: month  ·  t: today  ·  enter: select  ·  w: week"
+	}
 	if m.showSidebar {
 		parts += "  ·  tab: switch"
 	}
