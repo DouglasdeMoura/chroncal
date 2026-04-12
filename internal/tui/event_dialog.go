@@ -17,6 +17,9 @@ import (
 // EventDialogClosedMsg is emitted when the dialog requests to close.
 type EventDialogClosedMsg struct{}
 
+// DialogDayChangedMsg is emitted when the user navigates to another day from the dialog.
+type DialogDayChangedMsg struct{ Day time.Time }
+
 // EventEditMsg is emitted when the user requests to edit the selected event.
 type EventEditMsg struct{ Event event.Event }
 
@@ -30,23 +33,27 @@ type EventRSVPMsg struct {
 }
 
 type eventDialogKeyMap struct {
-	Up       key.Binding
-	Down     key.Binding
-	Close    key.Binding
-	Edit     key.Binding
-	Delete   key.Binding
-	RSVPYes  key.Binding
-	RSVPNo   key.Binding
+	Up        key.Binding
+	Down      key.Binding
+	Left      key.Binding
+	Right     key.Binding
+	Close     key.Binding
+	Edit      key.Binding
+	Delete    key.Binding
+	RSVPYes   key.Binding
+	RSVPNo    key.Binding
 	RSVPMaybe key.Binding
-	Tab      key.Binding
-	ShiftTab key.Binding
-	Enter    key.Binding
+	Tab       key.Binding
+	ShiftTab  key.Binding
+	Enter     key.Binding
 }
 
 func defaultEventDialogKeys() eventDialogKeyMap {
 	return eventDialogKeyMap{
 		Up:        key.NewBinding(key.WithKeys("up", "k")),
 		Down:      key.NewBinding(key.WithKeys("down", "j")),
+		Left:      key.NewBinding(key.WithKeys("left", "h")),
+		Right:     key.NewBinding(key.WithKeys("right", "l")),
 		Close:     key.NewBinding(key.WithKeys("esc", "q")),
 		Edit:      key.NewBinding(key.WithKeys("e")),
 		Delete:    key.NewBinding(key.WithKeys("d")),
@@ -228,6 +235,12 @@ func (m EventDialogModel) handleKey(msg tea.KeyPressMsg) (EventDialogModel, tea.
 	switch {
 	case key.Matches(msg, m.keys.Close):
 		return m, func() tea.Msg { return EventDialogClosedMsg{} }
+	case key.Matches(msg, m.keys.Left):
+		prev := m.day.AddDate(0, 0, -1)
+		return m, func() tea.Msg { return DialogDayChangedMsg{Day: prev} }
+	case key.Matches(msg, m.keys.Right):
+		next := m.day.AddDate(0, 0, 1)
+		return m, func() tea.Msg { return DialogDayChangedMsg{Day: next} }
 	case key.Matches(msg, m.keys.Up):
 		if m.selected > 0 {
 			m.selected--
@@ -409,7 +422,7 @@ func (m EventDialogModel) View() string {
 	help := lipgloss.NewStyle().
 		Faint(true).
 		Width(innerW).
-		Render("↑/↓: navigate  ·  esc: close")
+		Render("←/→: day  ·  ↑/↓: navigate  ·  esc: close")
 
 	bodyH := max(innerH-4, 3)
 
