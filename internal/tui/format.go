@@ -558,17 +558,16 @@ func WeekGrid(opts WeekOptions) string {
 		scrollOffset = 0
 	}
 
-	nowHour := -1
-	if todayKey != "" {
-		now := time.Now().Local()
-		if findWeekCol(anchor, now) >= 0 {
-			nowHour = now.Hour()
-		}
-	}
+	now := time.Now().Local()
+	nowRow := now.Hour()*lph + now.Minute()*lph/60
+	nowTimeLabel := now.Format("15:04")
+	nowCol := findWeekCol(anchor, now)
+	nowHasLine := nowCol >= 0
 
 	faint := lipgloss.NewStyle().Faint(true)
 	faintSep := faint.Render("│")
 	nowStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
+	nowSep := nowStyle.Render("│")
 
 	var selSep string
 	if opts.SelectedColor != nil && selectedCol >= 0 {
@@ -614,20 +613,20 @@ func WeekGrid(opts WeekOptions) string {
 		hour := row / lph
 		subRow := row % lph
 
-		if subRow == 0 {
-			timeText := fmt.Sprintf("%02d:00", hour)
-			if hour == nowHour {
-				out.WriteString(nowStyle.Render(timeText) + " ")
-			} else {
-				out.WriteString(faint.Render(timeText) + " ")
-			}
+		if row == nowRow {
+			out.WriteString(nowStyle.Render(nowTimeLabel) + " ")
+		} else if subRow == 0 {
+			out.WriteString(faint.Render(fmt.Sprintf("%02d:00", hour)) + " ")
 		} else {
 			out.WriteString("      ")
 		}
 
 		for i := 0; i <= 7; i++ {
+			nowBorder := nowHasLine && row == nowRow && i == nowCol
 			highlighted := selSep != "" && (i == selectedCol || i == selectedCol+1)
-			if highlighted {
+			if nowBorder {
+				out.WriteString(nowSep)
+			} else if highlighted {
 				out.WriteString(selSep)
 			} else {
 				out.WriteString(faintSep)
@@ -637,6 +636,8 @@ func WeekGrid(opts WeekOptions) string {
 				p, found := findPlacedEvent(placed, row, i)
 				if found {
 					out.WriteString(renderTimeCellContent(p, row, colWs[i]))
+				} else if nowHasLine && row == nowRow && i == nowCol {
+					out.WriteString(nowStyle.Render(strings.Repeat("─", colWs[i])))
 				} else {
 					out.WriteString(strings.Repeat(" ", colWs[i]))
 				}
