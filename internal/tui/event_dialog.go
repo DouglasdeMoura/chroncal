@@ -266,41 +266,47 @@ func (m EventDialogModel) renderDetails(w, h int) string {
 		return padLines(nil, w, h)
 	}
 	ev := m.events[m.selected]
+	cal := m.calendars[ev.CalendarID]
+	return RenderEventDetails(ev, cal, w, h, m.labelWidth())
+}
 
+// RenderEventDetails renders a single event's details into a block of the
+// given width and height. labelWidth controls the left-column alignment of
+// field labels (e.g. 7 for narrow layouts, 10 for wide).
+func RenderEventDetails(ev event.Event, cal CalendarInfo, w, h, labelWidth int) string {
 	faint := lipgloss.NewStyle().Faint(true)
 	bold := lipgloss.NewStyle().Bold(true)
-	lw := m.labelWidth()
 
 	var lines []string
 	lines = append(lines, truncateTo(bold.Render(ev.Title), w))
 	lines = append(lines, "")
 
-	lines = append(lines, detailLine(faint, "When", formatWhen(ev), lw, w))
+	lines = append(lines, detailLine(faint, "When", formatWhen(ev), labelWidth, w))
 
 	dur := formatDuration(ev)
 	if dur != "" {
-		lines = append(lines, detailLine(faint, "Duration", dur, lw, w))
+		lines = append(lines, detailLine(faint, "Duration", dur, labelWidth, w))
 	}
 
-	if cal, ok := m.calendars[ev.CalendarID]; ok && cal.Name != "" {
+	if cal.Name != "" {
 		dot := "●"
 		if cal.Color != "" {
 			dot = lipgloss.NewStyle().Foreground(lipgloss.Color(cal.Color)).Render("●")
 		}
-		lines = append(lines, detailLine(faint, "Calendar", dot+" "+cal.Name, lw, w))
+		lines = append(lines, detailLine(faint, "Calendar", dot+" "+cal.Name, labelWidth, w))
 	}
 
 	if ev.Location != "" {
-		lines = append(lines, detailLine(faint, "Where", ev.Location, lw, w))
+		lines = append(lines, detailLine(faint, "Where", ev.Location, labelWidth, w))
 	}
 	if ev.Status != "" {
-		lines = append(lines, detailLine(faint, "Status", ev.Status, lw, w))
+		lines = append(lines, detailLine(faint, "Status", ev.Status, labelWidth, w))
 	}
 	if ev.Categories != "" {
-		lines = append(lines, detailLine(faint, "Tags", ev.Categories, lw, w))
+		lines = append(lines, detailLine(faint, "Tags", ev.Categories, labelWidth, w))
 	}
 	if ev.URL != "" {
-		lines = append(lines, detailLine(faint, "URL", ev.URL, lw, w))
+		lines = append(lines, detailLine(faint, "URL", ev.URL, labelWidth, w))
 	}
 
 	if len(ev.Attendees) > 0 {
