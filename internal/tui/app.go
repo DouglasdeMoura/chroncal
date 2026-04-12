@@ -19,6 +19,11 @@ type eventsLoadedMsg struct {
 	err    error
 }
 
+type calendarsLoadedMsg struct {
+	calendars map[int64]CalendarInfo
+	err       error
+}
+
 type Model struct {
 	app         *app.App
 	theme       Theme
@@ -26,6 +31,7 @@ type Model struct {
 	height      int
 	calendar    CalendarModel
 	events      []event.Event
+	calendars   map[int64]CalendarInfo
 	dialog      EventDialogModel
 	dialogOpen  bool
 	err         error
@@ -75,8 +81,22 @@ func eventsToCalendar(events []event.Event) []CalendarEvent {
 	return out
 }
 
+func (m Model) loadCalendars() tea.Cmd {
+	return func() tea.Msg {
+		cals, err := m.app.Calendars.List(context.Background())
+		if err != nil {
+			return calendarsLoadedMsg{err: err}
+		}
+		info := make(map[int64]CalendarInfo, len(cals))
+		for _, c := range cals {
+			info[c.ID] = CalendarInfo{Name: c.Name, Color: c.Color}
+		}
+		return calendarsLoadedMsg{calendars: info}
+	}
+}
+
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(tea.RequestBackgroundColor, m.loadEvents())
+	return tea.Batch(tea.RequestBackgroundColor, m.loadEvents(), m.loadCalendars())
 }
 
 const sidebarWidth = 30
@@ -122,6 +142,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.calendar = m.calendar.SetEvents(eventsToCalendar(msg.events))
 		return m, nil
 
+	case calendarsLoadedMsg:
+		if msg.err == nil {
+			m.calendars = msg.calendars
+		}
+		return m, nil
+
 	case CalendarMonthChangedMsg:
 		return m, m.loadEvents()
 
@@ -130,7 +156,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(dayEvents) == 0 {
 			return m, nil
 		}
-		m.dialog = NewEventDialogModel(msg.Day, dayEvents).
+		m.dialog = NewEventDialogModel(msg.Day, dayEvents, m.calendars).
 			SetSize(m.width, m.height)
 		m.dialogOpen = true
 		return m, nil

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	lipgloss "charm.land/lipgloss/v2"
 
 	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/model"
 )
 
 // EventDialogClosedMsg is emitted when the dialog requests to close.
@@ -29,22 +31,43 @@ func defaultEventDialogKeys() eventDialogKeyMap {
 	}
 }
 
-// EventDialogModel shows a day's events in a two-column dialog: a list on
-// the left and the selected event's details on the right.
-type EventDialogModel struct {
-	day      time.Time
-	events   []event.Event
-	selected int
-	keys     eventDialogKeyMap
-	width    int
-	height   int
+// CalendarInfo holds the display-relevant fields of a calendar.
+type CalendarInfo struct {
+	Name  string
+	Color string
 }
 
-func NewEventDialogModel(day time.Time, events []event.Event) EventDialogModel {
+// EventDialogModel shows a day's events in a two-column dialog: a list on
+// the left and the selected event's details on the right. On narrow screens
+// it switches to a stacked single-column layout.
+type EventDialogModel struct {
+	day       time.Time
+	events    []event.Event
+	calendars map[int64]CalendarInfo
+	selected  int
+	scroll    int
+	keys      eventDialogKeyMap
+	width     int
+	height    int
+}
+
+const narrowThreshold = 90
+
+func NewEventDialogModel(day time.Time, events []event.Event, calendars map[int64]CalendarInfo) EventDialogModel {
+	slices.SortStableFunc(events, func(a, b event.Event) int {
+		if a.AllDay != b.AllDay {
+			if a.AllDay {
+				return -1
+			}
+			return 1
+		}
+		return a.StartTime.Compare(b.StartTime)
+	})
 	return EventDialogModel{
-		day:    day,
-		events: events,
-		keys:   defaultEventDialogKeys(),
+		day:       day,
+		events:    events,
+		calendars: calendars,
+		keys:      defaultEventDialogKeys(),
 	}
 }
 
@@ -74,18 +97,16 @@ func (m EventDialogModel) Update(msg tea.Msg) (EventDialogModel, tea.Cmd) {
 	return m, nil
 }
 
-// View renders the dialog as a self-contained box. The returned string has
-// no outer padding, so the caller is free to composite it over other content
-// at an arbitrary position.
+func (m EventDialogModel) isNarrow() bool {
+	return m.width < narrowThreshold
+}
+
 func (m EventDialogModel) View() string {
 	if m.width <= 0 || m.height <= 0 {
 		return ""
 	}
 
 	boxW, boxH := m.boxSize()
-
-	// Border (2) + horizontal padding (2*2) = 6 overhead on width.
-	// Border (2) + vertical padding (1*2) = 4 overhead on height.
 	innerW := max(boxW-6, 10)
 	innerH := max(boxH-4, 6)
 
@@ -99,18 +120,14 @@ func (m EventDialogModel) View() string {
 		Width(innerW).
 		Render("↑/↓: navigate  ·  esc: close")
 
-	// Body = innerH minus title row + blank + blank + help = 4 reserved.
 	bodyH := max(innerH-4, 3)
 
-	listW := max(min(max(innerW/3, 20), innerW-24), 10)
-	dividerW := 3
-	detailsW := max(innerW-listW-dividerW, 10)
-
-	list := m.renderList(listW, bodyH)
-	divider := m.renderDivider(dividerW, bodyH)
-	details := m.renderDetails(detailsW, bodyH)
-
-	body := lipgloss.JoinHorizontal(lipgloss.Top, list, divider, details)
+	var body string
+	if m.isNarrow() {
+		body = m.viewStacked(innerW, bodyH)
+	} else {
+		body = m.viewColumns(innerW, bodyH)
+	}
 
 	content := lipgloss.JoinVertical(lipgloss.Left, title, "", body, "", help)
 
@@ -120,6 +137,32 @@ func (m EventDialogModel) View() string {
 		Padding(1, 2).
 		Border(lipgloss.RoundedBorder()).
 		Render(content)
+}
+
+func (m *EventDialogModel) viewColumns(innerW, bodyH int) string {
+	listW := max(min(max(innerW/4, 18), innerW-24), 10)
+	dividerW := 3
+	detailsW := max(innerW-listW-dividerW, 10)
+
+	m.adjustScroll(bodyH)
+	list := m.renderList(listW, bodyH)
+	divider := m.renderDivider(dividerW, bodyH)
+	details := m.renderDetails(detailsW, bodyH)
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, list, divider, details)
+}
+
+func (m *EventDialogModel) viewStacked(innerW, bodyH int) string {
+	listH := min(max(len(m.events)+1, 3), max(bodyH/3, 3))
+	detailsH := max(bodyH-listH-1, 3)
+
+	m.adjustScroll(listH)
+	list := m.renderList(innerW, listH)
+	sep := lipgloss.NewStyle().Faint(true).Width(innerW).
+		Render(strings.Repeat("─", innerW))
+	details := m.renderDetails(innerW, detailsH)
+
+	return lipgloss.JoinVertical(lipgloss.Left, list, sep, details)
 }
 
 // BoxSize returns the rendered dialog's outer dimensions (w, h) so the caller
@@ -132,17 +175,37 @@ func (m EventDialogModel) BoxSize() (int, int) {
 }
 
 func (m EventDialogModel) boxSize() (int, int) {
-	boxW := min(max(m.width*4/5, 50), m.width-2)
-	boxH := min(max(m.height*4/5, 14), m.height-2)
+	if m.isNarrow() {
+		boxW := max(m.width-4, 20)
+		boxH := max(m.height-4, 14)
+		return boxW, boxH
+	}
+	boxW := min(max(m.width*2/3, 50), m.width-2)
+	boxH := min(max(m.height*2/3, 14), m.height-2)
 	return boxW, boxH
 }
 
+func (m *EventDialogModel) adjustScroll(visibleH int) {
+	if m.selected < m.scroll {
+		m.scroll = m.selected
+	}
+	if m.selected >= m.scroll+visibleH {
+		m.scroll = m.selected - visibleH + 1
+	}
+	if m.scroll < 0 {
+		m.scroll = 0
+	}
+}
+
 func (m EventDialogModel) renderList(w, h int) string {
+	total := len(m.events)
+
+	visibleStart := m.scroll
+	visibleEnd := min(visibleStart+h, total)
+
 	lines := make([]string, 0, h)
-	for i, ev := range m.events {
-		if len(lines) >= h {
-			break
-		}
+	for i := visibleStart; i < visibleEnd; i++ {
+		ev := m.events[i]
 		label := formatEventLabel(ev)
 		label = truncateTo(label, w)
 		style := lipgloss.NewStyle().Width(w)
@@ -151,6 +214,31 @@ func (m EventDialogModel) renderList(w, h int) string {
 		}
 		lines = append(lines, style.Render(label))
 	}
+
+	if total > h {
+		indicator := fmt.Sprintf(" %d/%d ", m.selected+1, total)
+		arrows := ""
+		if m.scroll > 0 {
+			arrows += "▲"
+		}
+		if visibleEnd < total {
+			if arrows != "" {
+				arrows += " "
+			}
+			arrows += "▼"
+		}
+		if arrows != "" {
+			indicator += arrows + " "
+		}
+		indicator = truncateTo(indicator, w)
+
+		if len(lines) >= h {
+			lines[h-1] = lipgloss.NewStyle().Width(w).Faint(true).Render(indicator)
+		} else {
+			lines = append(lines, lipgloss.NewStyle().Width(w).Faint(true).Render(indicator))
+		}
+	}
+
 	return padLines(lines, w, h)
 }
 
@@ -166,33 +254,69 @@ func (m EventDialogModel) renderDivider(w, h int) string {
 	return strings.Join(lines, "\n")
 }
 
+func (m EventDialogModel) labelWidth() int {
+	if m.isNarrow() {
+		return 7
+	}
+	return 10
+}
+
 func (m EventDialogModel) renderDetails(w, h int) string {
 	if len(m.events) == 0 || m.selected < 0 || m.selected >= len(m.events) {
 		return padLines(nil, w, h)
 	}
 	ev := m.events[m.selected]
 
-	labelStyle := lipgloss.NewStyle().Faint(true)
-	titleStyle := lipgloss.NewStyle().Bold(true)
+	faint := lipgloss.NewStyle().Faint(true)
+	bold := lipgloss.NewStyle().Bold(true)
+	lw := m.labelWidth()
 
 	var lines []string
-	lines = append(lines, truncateTo(titleStyle.Render(ev.Title), w))
+	lines = append(lines, truncateTo(bold.Render(ev.Title), w))
 	lines = append(lines, "")
 
-	when := formatWhen(ev)
-	lines = append(lines, truncateTo(labelStyle.Render("When:  ")+when, w))
+	lines = append(lines, detailLine(faint, "When", formatWhen(ev), lw, w))
+
+	dur := formatDuration(ev)
+	if dur != "" {
+		lines = append(lines, detailLine(faint, "Duration", dur, lw, w))
+	}
+
+	if cal, ok := m.calendars[ev.CalendarID]; ok && cal.Name != "" {
+		dot := "●"
+		if cal.Color != "" {
+			dot = lipgloss.NewStyle().Foreground(lipgloss.Color(cal.Color)).Render("●")
+		}
+		lines = append(lines, detailLine(faint, "Cal", dot+" "+cal.Name, lw, w))
+	}
 
 	if ev.Location != "" {
-		lines = append(lines, truncateTo(labelStyle.Render("Where: ")+ev.Location, w))
+		lines = append(lines, detailLine(faint, "Where", ev.Location, lw, w))
 	}
 	if ev.Status != "" {
-		lines = append(lines, truncateTo(labelStyle.Render("Status: ")+ev.Status, w))
+		lines = append(lines, detailLine(faint, "Status", ev.Status, lw, w))
 	}
 	if ev.Categories != "" {
-		lines = append(lines, truncateTo(labelStyle.Render("Tags:  ")+ev.Categories, w))
+		lines = append(lines, detailLine(faint, "Tags", ev.Categories, lw, w))
 	}
 	if ev.URL != "" {
-		lines = append(lines, truncateTo(labelStyle.Render("URL:   ")+ev.URL, w))
+		lines = append(lines, detailLine(faint, "URL", ev.URL, lw, w))
+	}
+
+	if len(ev.Attendees) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, faint.Render("Attendees:"))
+		for _, att := range ev.Attendees {
+			lines = append(lines, truncateTo(formatAttendee(att), w))
+		}
+	}
+
+	if len(ev.Alarms) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, faint.Render("Reminders:"))
+		for _, a := range ev.Alarms {
+			lines = append(lines, truncateTo("  "+formatAlarm(a), w))
+		}
 	}
 
 	if ev.Description != "" {
@@ -206,6 +330,11 @@ func (m EventDialogModel) renderDetails(w, h int) string {
 		lines = lines[:h]
 	}
 	return padLines(lines, w, h)
+}
+
+func detailLine(labelStyle lipgloss.Style, label, value string, lw, w int) string {
+	padded := label + strings.Repeat(" ", max(lw-len(label), 1))
+	return truncateTo(labelStyle.Render(padded)+value, w)
 }
 
 func formatEventLabel(ev event.Event) string {
@@ -222,12 +351,121 @@ func formatWhen(ev event.Event) string {
 	start := ev.StartTime.Local()
 	end := ev.EndTime.Local()
 	if end.IsZero() {
-		return start.Format("Mon, Jan 2 15:04")
+		return start.Format("15:04")
 	}
 	if start.Format("2006-01-02") == end.Format("2006-01-02") {
-		return fmt.Sprintf("%s – %s", start.Format("Mon, Jan 2 15:04"), end.Format("15:04"))
+		return fmt.Sprintf("%s – %s", start.Format("15:04"), end.Format("15:04"))
 	}
 	return fmt.Sprintf("%s – %s", start.Format("Mon, Jan 2 15:04"), end.Format("Mon, Jan 2 15:04"))
+}
+
+func formatDuration(ev event.Event) string {
+	if ev.AllDay || ev.EndTime.IsZero() {
+		return ""
+	}
+	d := ev.EndTime.Sub(ev.StartTime)
+	if d <= 0 {
+		return ""
+	}
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	switch {
+	case h == 0:
+		return fmt.Sprintf("%d min", m)
+	case m == 0:
+		if h == 1 {
+			return "1 hour"
+		}
+		return fmt.Sprintf("%d hours", h)
+	default:
+		return fmt.Sprintf("%dh %dm", h, m)
+	}
+}
+
+func formatAttendee(att model.Attendee) string {
+	name := att.Name
+	if name == "" {
+		name = att.Email
+	}
+	status := ""
+	switch strings.ToUpper(att.RSVPStatus) {
+	case "ACCEPTED":
+		status = " ✓"
+	case "DECLINED":
+		status = " ✗"
+	case "TENTATIVE":
+		status = " ?"
+	}
+	role := ""
+	if att.Organizer {
+		role = " (organizer)"
+	}
+	return "  " + name + status + role
+}
+
+func formatAlarm(a model.Alarm) string {
+	tv := a.TriggerValue
+	if tv == "" {
+		return "at event time"
+	}
+	neg := strings.HasPrefix(tv, "-")
+	raw := strings.TrimPrefix(tv, "-")
+	raw = strings.TrimPrefix(raw, "+")
+	raw = strings.TrimPrefix(raw, "P")
+	raw = strings.TrimPrefix(raw, "T")
+
+	var parts []string
+	if n, rest, ok := parseLeadingInt(raw, 'W'); ok {
+		parts = append(parts, pluralize(n, "week"))
+		raw = rest
+	}
+	if n, rest, ok := parseLeadingInt(raw, 'D'); ok {
+		parts = append(parts, pluralize(n, "day"))
+		raw = rest
+	}
+	raw = strings.TrimPrefix(raw, "T")
+	if n, rest, ok := parseLeadingInt(raw, 'H'); ok {
+		parts = append(parts, pluralize(n, "hour"))
+		raw = rest
+	}
+	if n, rest, ok := parseLeadingInt(raw, 'M'); ok {
+		parts = append(parts, pluralize(n, "min"))
+		raw = rest
+	}
+	if n, _, ok := parseLeadingInt(raw, 'S'); ok {
+		parts = append(parts, pluralize(n, "sec"))
+	}
+
+	if len(parts) == 0 {
+		return tv
+	}
+	desc := strings.Join(parts, " ")
+	if neg {
+		return desc + " before"
+	}
+	return desc + " after"
+}
+
+func parseLeadingInt(s string, suffix byte) (int, string, bool) {
+	i := 0
+	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+		i++
+	}
+	if i == 0 || i >= len(s) || s[i] != suffix {
+		return 0, s, false
+	}
+	n := 0
+	for _, c := range s[:i] {
+		n = n*10 + int(c-'0')
+	}
+	return n, s[i+1:], true
+}
+
+func pluralize(n int, unit string) string {
+	if n == 1 {
+		return "1 " + unit
+	}
+	return fmt.Sprintf("%d %s", n, unit)
 }
 
 func truncateTo(s string, w int) string {
@@ -237,8 +475,6 @@ func truncateTo(s string, w int) string {
 	if lipgloss.Width(s) <= w {
 		return s
 	}
-	// lipgloss.Width respects ANSI; use it iteratively to avoid breaking escapes.
-	// Fall back to a plain rune truncation when s has no ANSI.
 	if !strings.ContainsRune(s, '\x1b') {
 		r := []rune(s)
 		if w == 1 {
@@ -246,8 +482,6 @@ func truncateTo(s string, w int) string {
 		}
 		return string(r[:w-1]) + "…"
 	}
-	// Leave ANSI-styled strings intact if they already fit; otherwise
-	// drop to a best-effort truncation that strips styling.
 	plain := stripANSI(s)
 	r := []rune(plain)
 	if w == 1 {
@@ -329,7 +563,6 @@ func padLines(lines []string, w, h int) string {
 		if len(out) >= h {
 			break
 		}
-		// Pad to exact width with plain style so columns align.
 		padded := lipgloss.NewStyle().Width(w).Render(l)
 		out = append(out, padded)
 	}
