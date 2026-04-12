@@ -390,6 +390,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.loadEvents()
 
+	case tea.MouseWheelMsg:
+		if m.viewMode == viewWeek && !m.dialogOpen && !m.choiceOpen && !m.confirmOpen {
+			switch msg.Button {
+			case tea.MouseWheelUp:
+				m.week.scrollOffset -= m.week.linesPerHour
+				if m.week.scrollOffset < 0 {
+					m.week.scrollOffset = 0
+				}
+			case tea.MouseWheelDown:
+				m.week.scrollOffset += m.week.linesPerHour
+				if ms := m.week.maxScroll(); m.week.scrollOffset > ms {
+					m.week.scrollOffset = ms
+				}
+			}
+		}
+		return m, nil
+
 	case tea.MouseClickMsg:
 		if msg.Button != tea.MouseLeft {
 			return m, nil

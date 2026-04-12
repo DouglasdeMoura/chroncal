@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	defaultLinesPerHour = 2
+	defaultLinesPerHour = 4
 	totalHours          = 24
 	weekTimeLabelWidth  = 6
 )
