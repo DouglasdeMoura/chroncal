@@ -287,7 +287,7 @@ func (m EventDialogModel) renderDetails(w, h int) string {
 		if cal.Color != "" {
 			dot = lipgloss.NewStyle().Foreground(lipgloss.Color(cal.Color)).Render("●")
 		}
-		lines = append(lines, detailLine(faint, "Cal", dot+" "+cal.Name, lw, w))
+		lines = append(lines, detailLine(faint, "Calendar", dot+" "+cal.Name, lw, w))
 	}
 
 	if ev.Location != "" {
