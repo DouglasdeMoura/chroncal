@@ -25,6 +25,10 @@ type calendarsLoadedMsg struct {
 	err       error
 }
 
+type eventRSVPUpdatedMsg struct {
+	err error
+}
+
 type eventDeletedMsg struct {
 	err error
 }
@@ -195,6 +199,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			SetSize(m.width, m.height)
 		m.dialogOpen = true
 		return m, nil
+
+	case EventRSVPMsg:
+		ev := msg.Event
+		return m, func() tea.Msg {
+			ctx := context.Background()
+			attendees, err := m.app.Events.ListAttendees(ctx, ev.ID)
+			if err != nil {
+				return eventRSVPUpdatedMsg{err: err}
+			}
+			for i, att := range attendees {
+				if !att.Organizer {
+					attendees[i].RSVPStatus = msg.Status
+					break
+				}
+			}
+			err = m.app.Events.ReplaceAttendees(ctx, ev.ID, attendees)
+			return eventRSVPUpdatedMsg{err: err}
+		}
+
+	case eventRSVPUpdatedMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		return m, m.loadEvents()
 
 	case EventDialogClosedMsg:
 		m.dialogOpen = false

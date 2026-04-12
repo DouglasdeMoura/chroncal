@@ -11,6 +11,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/journal"
+	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 	"github.com/douglasdemoura/chroncal/internal/todo"
@@ -219,20 +220,36 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 		}
 	}
 
-	if !o.skipCategories && len(results) > 0 {
+	if len(results) > 0 {
 		ids := make([]int64, len(results))
 		for i := range results {
 			ids[i] = results[i].ID
 		}
-		cats, err := s.q.ListCategoriesByEventIDs(ctx, ids)
+
+		if !o.skipCategories {
+			cats, err := s.q.ListCategoriesByEventIDs(ctx, ids)
+			if err == nil {
+				catMap := make(map[int64][]string, len(results))
+				for _, c := range cats {
+					catMap[c.EventID] = append(catMap[c.EventID], c.Category)
+				}
+				for i := range results {
+					if c, ok := catMap[results[i].ID]; ok {
+						results[i].Categories = strings.Join(c, ",")
+					}
+				}
+			}
+		}
+
+		atts, err := s.q.ListAttendeesByEventIDs(ctx, ids)
 		if err == nil {
-			catMap := make(map[int64][]string, len(results))
-			for _, c := range cats {
-				catMap[c.EventID] = append(catMap[c.EventID], c.Category)
+			attMap := make(map[int64][]model.Attendee, len(results))
+			for _, a := range atts {
+				attMap[a.EventID] = append(attMap[a.EventID], attendeeFromStorage(a))
 			}
 			for i := range results {
-				if c, ok := catMap[results[i].ID]; ok {
-					results[i].Categories = strings.Join(c, ",")
+				if a, ok := attMap[results[i].ID]; ok {
+					results[i].Attendees = a
 				}
 			}
 		}
@@ -257,6 +274,26 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 	return results, nil
 }
 
+
+func attendeeFromStorage(r storage.EventAttendee) model.Attendee {
+	return model.Attendee{
+		ID:            r.ID,
+		EventID:       r.EventID,
+		Email:         r.Email,
+		Name:          storage.NullableToString(r.Name),
+		RSVPStatus:    r.RsvpStatus,
+		Role:          r.Role,
+		Organizer:     r.Organizer == 1,
+		CUType:        storage.NullableToString(r.Cutype),
+		RSVPRequested: strings.EqualFold(storage.NullableToString(r.Rsvp), "TRUE"),
+		SentBy:        storage.NullableToString(r.SentBy),
+		DelegatedTo:   storage.NullableToString(r.DelegatedTo),
+		DelegatedFrom: storage.NullableToString(r.DelegatedFrom),
+		Member:        storage.NullableToString(r.Member),
+		Dir:           storage.NullableToString(r.Dir),
+		Language:      storage.NullableToString(r.Language),
+	}
+}
 
 func eventFromRow(row storage.Event) event.Event {
 	return event.Event{
