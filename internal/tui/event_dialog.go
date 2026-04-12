@@ -194,6 +194,9 @@ func (m *EventDialogModel) clampFocus() {
 	rn := len(m.rsvpActions())
 	if rn == 0 {
 		m.focusZone = 0
+	} else if m.focusZone == 0 && m.focusedAction == 0 {
+		m.focusZone = 1
+		m.focusedRSVP = 0
 	}
 	if m.focusedRSVP >= rn {
 		m.focusedRSVP = max(rn-1, 0)
@@ -205,20 +208,20 @@ func (m EventDialogModel) allFocusable() int {
 }
 
 func (m EventDialogModel) flatFocusIndex() int {
-	if m.focusZone == 0 {
-		return m.focusedAction
+	if m.focusZone == 1 {
+		return m.focusedRSVP
 	}
-	return len(m.visibleActions()) + m.focusedRSVP
+	return len(m.rsvpActions()) + m.focusedAction
 }
 
 func (m *EventDialogModel) setFlatFocusIndex(idx int) {
-	n := len(m.visibleActions())
-	if idx < n {
-		m.focusZone = 0
-		m.focusedAction = idx
-	} else {
+	rn := len(m.rsvpActions())
+	if rn > 0 && idx < rn {
 		m.focusZone = 1
-		m.focusedRSVP = idx - n
+		m.focusedRSVP = idx
+	} else {
+		m.focusZone = 0
+		m.focusedAction = idx - rn
 	}
 }
 
@@ -277,27 +280,27 @@ func (m EventDialogModel) handleKey(msg tea.KeyPressMsg) (EventDialogModel, tea.
 		}
 	case key.Matches(msg, m.keys.Edit):
 		if _, ok := m.selectedEvent(); ok && len(actions) > 0 {
-			m.setFlatFocusIndex(0)
+			m.setFlatFocusIndex(len(rsvp))
 			return m, actions[0].msg
 		}
 	case key.Matches(msg, m.keys.Delete):
 		if _, ok := m.selectedEvent(); ok && len(actions) > 1 {
-			m.setFlatFocusIndex(1)
+			m.setFlatFocusIndex(len(rsvp) + 1)
 			return m, actions[1].msg
 		}
 	case key.Matches(msg, m.keys.RSVPYes):
 		if len(rsvp) > 0 {
-			m.setFlatFocusIndex(len(actions))
+			m.setFlatFocusIndex(0)
 			return m, rsvp[0].msg
 		}
 	case key.Matches(msg, m.keys.RSVPNo):
 		if len(rsvp) > 1 {
-			m.setFlatFocusIndex(len(actions) + 1)
+			m.setFlatFocusIndex(1)
 			return m, rsvp[1].msg
 		}
 	case key.Matches(msg, m.keys.RSVPMaybe):
 		if len(rsvp) > 2 {
-			m.setFlatFocusIndex(len(actions) + 2)
+			m.setFlatFocusIndex(2)
 			return m, rsvp[2].msg
 		}
 	}
