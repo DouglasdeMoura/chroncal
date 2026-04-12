@@ -17,17 +17,39 @@ import (
 // EventDialogClosedMsg is emitted when the dialog requests to close.
 type EventDialogClosedMsg struct{}
 
+// EventEditMsg is emitted when the user requests to edit the selected event.
+type EventEditMsg struct{ Event event.Event }
+
+// EventDeleteMsg is emitted when the user requests to delete the selected event.
+type EventDeleteMsg struct{ Event event.Event }
+
+// EventRSVPMsg is emitted when the user changes their RSVP status.
+type EventRSVPMsg struct {
+	Event  event.Event
+	Status string // "ACCEPTED", "DECLINED", "TENTATIVE"
+}
+
 type eventDialogKeyMap struct {
-	Up    key.Binding
-	Down  key.Binding
-	Close key.Binding
+	Up       key.Binding
+	Down     key.Binding
+	Close    key.Binding
+	Edit     key.Binding
+	Delete   key.Binding
+	RSVPYes  key.Binding
+	RSVPNo   key.Binding
+	RSVPMaybe key.Binding
 }
 
 func defaultEventDialogKeys() eventDialogKeyMap {
 	return eventDialogKeyMap{
-		Up:    key.NewBinding(key.WithKeys("up", "k")),
-		Down:  key.NewBinding(key.WithKeys("down", "j")),
-		Close: key.NewBinding(key.WithKeys("esc", "q")),
+		Up:        key.NewBinding(key.WithKeys("up", "k")),
+		Down:      key.NewBinding(key.WithKeys("down", "j")),
+		Close:     key.NewBinding(key.WithKeys("esc", "q")),
+		Edit:      key.NewBinding(key.WithKeys("e")),
+		Delete:    key.NewBinding(key.WithKeys("d")),
+		RSVPYes:   key.NewBinding(key.WithKeys("y")),
+		RSVPNo:    key.NewBinding(key.WithKeys("n")),
+		RSVPMaybe: key.NewBinding(key.WithKeys("m")),
 	}
 }
 
@@ -77,6 +99,13 @@ func (m EventDialogModel) SetSize(w, h int) EventDialogModel {
 	return m
 }
 
+func (m EventDialogModel) selectedEvent() (event.Event, bool) {
+	if len(m.events) == 0 || m.selected < 0 || m.selected >= len(m.events) {
+		return event.Event{}, false
+	}
+	return m.events[m.selected], true
+}
+
 func (m EventDialogModel) Update(msg tea.Msg) (EventDialogModel, tea.Cmd) {
 	keyMsg, ok := msg.(tea.KeyPressMsg)
 	if !ok {
@@ -92,6 +121,26 @@ func (m EventDialogModel) Update(msg tea.Msg) (EventDialogModel, tea.Cmd) {
 	case key.Matches(keyMsg, m.keys.Down):
 		if m.selected < len(m.events)-1 {
 			m.selected++
+		}
+	case key.Matches(keyMsg, m.keys.Edit):
+		if ev, ok := m.selectedEvent(); ok {
+			return m, func() tea.Msg { return EventEditMsg{Event: ev} }
+		}
+	case key.Matches(keyMsg, m.keys.Delete):
+		if ev, ok := m.selectedEvent(); ok {
+			return m, func() tea.Msg { return EventDeleteMsg{Event: ev} }
+		}
+	case key.Matches(keyMsg, m.keys.RSVPYes):
+		if ev, ok := m.selectedEvent(); ok && len(ev.Attendees) > 0 {
+			return m, func() tea.Msg { return EventRSVPMsg{Event: ev, Status: "ACCEPTED"} }
+		}
+	case key.Matches(keyMsg, m.keys.RSVPNo):
+		if ev, ok := m.selectedEvent(); ok && len(ev.Attendees) > 0 {
+			return m, func() tea.Msg { return EventRSVPMsg{Event: ev, Status: "DECLINED"} }
+		}
+	case key.Matches(keyMsg, m.keys.RSVPMaybe):
+		if ev, ok := m.selectedEvent(); ok && len(ev.Attendees) > 0 {
+			return m, func() tea.Msg { return EventRSVPMsg{Event: ev, Status: "TENTATIVE"} }
 		}
 	}
 	return m, nil
@@ -254,6 +303,33 @@ func (m EventDialogModel) renderDivider(w, h int) string {
 	return strings.Join(lines, "\n")
 }
 
+func button(text string, underlineIndex int) string {
+	style := lipgloss.NewStyle().
+		Background(lipgloss.Color("240")).
+		Foreground(lipgloss.Color("255"))
+
+	rendered := style.Padding(0, 1).Render(text)
+	if underlineIndex >= 0 && underlineIndex < len(text) {
+		rendered = lipgloss.StyleRanges(rendered,
+			lipgloss.NewRange(1+underlineIndex, 1+underlineIndex+1, style.Underline(true)))
+	}
+	return rendered
+}
+
+func (m EventDialogModel) renderActions(w int) string {
+	var parts []string
+	parts = append(parts, button("Edit", 0))
+	parts = append(parts, button("Delete", 0))
+
+	if ev, ok := m.selectedEvent(); ok && len(ev.Attendees) > 0 {
+		parts = append(parts, button("Yes", 0))
+		parts = append(parts, button("No", 0))
+		parts = append(parts, button("Maybe", 0))
+	}
+
+	return truncateTo(strings.Join(parts, " "), w)
+}
+
 func (m EventDialogModel) labelWidth() int {
 	if m.isNarrow() {
 		return 7
@@ -267,7 +343,14 @@ func (m EventDialogModel) renderDetails(w, h int) string {
 	}
 	ev := m.events[m.selected]
 	cal := m.calendars[ev.CalendarID]
-	return RenderEventDetails(ev, cal, w, h, m.labelWidth())
+
+	actionsLine := m.renderActions(w)
+	detailsH := max(h-2, 1)
+
+	details := RenderEventDetails(ev, cal, w, detailsH, m.labelWidth())
+	blank := strings.Repeat(" ", w)
+
+	return details + "\n" + blank + "\n" + actionsLine
 }
 
 // RenderEventDetails renders a single event's details into a block of the
