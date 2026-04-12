@@ -112,6 +112,15 @@ func (m Model) mainDims() (int, int) {
 	return mainWidth, contentHeight
 }
 
+func (m Model) calendarOffset() (int, int) {
+	padding := 1
+	x := padding
+	if m.showSidebar {
+		x += sidebarWidth
+	}
+	return x, padding
+}
+
 // innerDims returns the space available inside the padded main box,
 // which is what the calendar renderer should fill.
 func (m Model) innerDims() (int, int) {
@@ -164,6 +173,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case EventDialogClosedMsg:
 		m.dialogOpen = false
 		return m, nil
+
+	case tea.MouseClickMsg:
+		if m.dialogOpen || msg.Button != tea.MouseLeft {
+			return m, nil
+		}
+		ox, oy := m.calendarOffset()
+		day, ok := m.calendar.DayAtPosition(msg.X-ox, msg.Y-oy)
+		if !ok {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.calendar, cmd = m.calendar.selectDay(day)
+		return m, cmd
 
 	case tea.KeyPressMsg:
 		if m.dialogOpen {
