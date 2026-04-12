@@ -270,7 +270,7 @@ func Calendar(opts CalendarOptions) string {
 
 	var out strings.Builder
 	if opts.ShowHeader {
-		out.WriteString(lipgloss.NewStyle().Bold(true).Render(first.Format("January 2006")))
+		out.WriteString(lipgloss.NewStyle().Bold(true).Width(opts.Width).Align(lipgloss.Center).Render(first.Format("January 2006")))
 		out.WriteString("\n\n")
 	}
 	out.WriteString(renderWeekdayRow(anchor, cellWs))
