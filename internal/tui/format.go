@@ -616,6 +616,12 @@ func WeekGrid(opts WeekOptions) string {
 		scrollOffset = 0
 	}
 
+	// Reserve one line for the bottom rule when end of day is visible.
+	showBottomRule := scrollOffset+viewportHeight >= totalRows
+	if showBottomRule && viewportHeight > 1 {
+		viewportHeight--
+	}
+
 	now := time.Now().Local()
 	nowRow := now.Hour()*lph + now.Minute()*lph/60
 	nowTimeLabel := now.Format("15:04")
@@ -655,12 +661,12 @@ func WeekGrid(opts WeekOptions) string {
 	out.WriteString(renderWeekColumnHeaders(anchor, colWs, todayKey, selectedKey, opts.SelectedColor))
 	out.WriteString("\n")
 
-	out.WriteString(renderWeekHRule(colWs, "┌", "┬", ""))
+	out.WriteString(renderWeekHRule(colWs, "┌", "┬", "", true))
 	out.WriteString("\n")
 
 	out.WriteString(renderWeekAllDayRows(opts.Events, anchor, colWs, allDayRows, selectedCol, opts.SelectedColor))
 
-	out.WriteString(renderWeekHRule(colWs, "├", "┼", "╮"))
+	out.WriteString(renderWeekHRule(colWs, "├", "┼", "╮", true))
 	out.WriteString("\n")
 
 	for row := scrollOffset; row < scrollOffset+viewportHeight && row < totalRows; row++ {
@@ -703,6 +709,11 @@ func WeekGrid(opts WeekOptions) string {
 		}
 	}
 
+	if showBottomRule {
+		out.WriteString("\n")
+		out.WriteString(renderWeekHRule(colWs, "╰", "┴", "╯", false))
+	}
+
 	return out.String()
 }
 
@@ -736,10 +747,14 @@ func renderWeekColumnHeaders(anchor time.Time, colWs []int, todayKey, selectedKe
 	return b.String()
 }
 
-func renderWeekHRule(colWs []int, left, mid, right string) string {
+func renderWeekHRule(colWs []int, left, mid, right string, timeCol bool) string {
 	faint := lipgloss.NewStyle().Faint(true)
 	var b strings.Builder
-	b.WriteString(faint.Render("────────" + left))
+	if timeCol {
+		b.WriteString(faint.Render("────────" + left))
+	} else {
+		b.WriteString("        " + faint.Render(left))
+	}
 	for i, w := range colWs {
 		b.WriteString(faint.Render(strings.Repeat("─", w)))
 		if i < len(colWs)-1 {
