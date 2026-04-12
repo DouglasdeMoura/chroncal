@@ -185,10 +185,6 @@ func Calendar(opts CalendarOptions) string {
 	if !opts.Today.IsZero() {
 		todayKey = opts.Today.Local().Format("2006-01-02")
 	}
-	selectedKey := ""
-	if !opts.Selected.IsZero() {
-		selectedKey = opts.Selected.Local().Format("2006-01-02")
-	}
 
 	// Preamble lines above the table: title + blank (optional) + weekday row.
 	preambleLines := 1
@@ -246,7 +242,7 @@ func Calendar(opts CalendarOptions) string {
 				row[col] = blankCell(cellWs[col], cellHs[week])
 				continue
 			}
-			row[col] = buildCalendarCell(d, dayKey == todayKey, dayKey == selectedKey, inMonth, eventsByDay[dayKey], cellWs[col], cellHs[week])
+			row[col] = buildCalendarCell(d, dayKey == todayKey, inMonth, eventsByDay[dayKey], cellWs[col], cellHs[week])
 		}
 		rows[week] = row
 	}
@@ -301,8 +297,7 @@ func renderWeekdayRow(anchor time.Time, cellWs []int) string {
 	return b.String()
 }
 
-// findCellIndex returns the (week, col) position of day d in the 6×7 grid
-// anchored at the given start date, or (-1, -1) if it is not present.
+
 func findCellIndex(anchor, d time.Time) (int, int) {
 	target := d.Local().Format("2006-01-02")
 	for week := range 6 {
@@ -316,10 +311,6 @@ func findCellIndex(anchor, d time.Time) (int, int) {
 	return -1, -1
 }
 
-// highlightCellBorder recolors the four border sides around the cell at
-// (sr, sc) in the rendered table output. The corner characters are swapped
-// for rounded variants so the highlight reads as an isolated rectangle
-// instead of bleeding into adjacent cells via ┼'s outward arms.
 func highlightCellBorder(rendered string, sr, sc int, cellWs, cellHs []int, c color.Color) string {
 	leftC := sc
 	for i := 0; i < sc; i++ {
@@ -356,9 +347,6 @@ func highlightCellBorder(rendered string, sr, sc int, cellWs, cellHs []int, c co
 	return strings.Join(lines, "\n")
 }
 
-// substituteAtVisPos replaces runes at the given visible (column) positions
-// with the supplied replacements, preserving any interleaved ANSI escape
-// sequences unchanged.
 func substituteAtVisPos(line string, subs map[int]rune) string {
 	if len(subs) == 0 {
 		return line
@@ -402,17 +390,13 @@ func blankCell(w, h int) string {
 	return strings.Join(lines, "\n")
 }
 
-func buildCalendarCell(d time.Time, isToday, isSelected, inMonth bool, events []CalendarEvent, cellW, cellH int) string {
+func buildCalendarCell(d time.Time, isToday, inMonth bool, events []CalendarEvent, cellW, cellH int) string {
 	dayNum := fmt.Sprintf("%d", d.Day())
 
 	numStyle := lipgloss.NewStyle()
 	switch {
-	case isToday && isSelected:
-		numStyle = numStyle.Reverse(true).Bold(true).Underline(true).Padding(0, 1)
 	case isToday:
 		numStyle = numStyle.Reverse(true).Bold(true).Padding(0, 1)
-	case isSelected:
-		numStyle = numStyle.Reverse(true).Underline(true).Padding(0, 1)
 	case !inMonth:
 		numStyle = numStyle.Faint(true)
 	}
