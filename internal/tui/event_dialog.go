@@ -38,6 +38,9 @@ type eventDialogKeyMap struct {
 	RSVPYes  key.Binding
 	RSVPNo   key.Binding
 	RSVPMaybe key.Binding
+	Tab      key.Binding
+	ShiftTab key.Binding
+	Enter    key.Binding
 }
 
 func defaultEventDialogKeys() eventDialogKeyMap {
@@ -50,7 +53,15 @@ func defaultEventDialogKeys() eventDialogKeyMap {
 		RSVPYes:   key.NewBinding(key.WithKeys("y")),
 		RSVPNo:    key.NewBinding(key.WithKeys("n")),
 		RSVPMaybe: key.NewBinding(key.WithKeys("m")),
+		Tab:       key.NewBinding(key.WithKeys("tab")),
+		ShiftTab:  key.NewBinding(key.WithKeys("shift+tab")),
+		Enter:     key.NewBinding(key.WithKeys("enter", " ")),
 	}
+}
+
+type dialogAction struct {
+	label string
+	msg   func() tea.Msg
 }
 
 // CalendarInfo holds the display-relevant fields of a calendar.
@@ -63,14 +74,15 @@ type CalendarInfo struct {
 // the left and the selected event's details on the right. On narrow screens
 // it switches to a stacked single-column layout.
 type EventDialogModel struct {
-	day       time.Time
-	events    []event.Event
-	calendars map[int64]CalendarInfo
-	selected  int
-	scroll    int
-	keys      eventDialogKeyMap
-	width     int
-	height    int
+	day           time.Time
+	events        []event.Event
+	calendars     map[int64]CalendarInfo
+	selected      int
+	scroll        int
+	focusedAction int
+	keys          eventDialogKeyMap
+	width         int
+	height        int
 }
 
 const narrowThreshold = 90
@@ -106,44 +118,154 @@ func (m EventDialogModel) selectedEvent() (event.Event, bool) {
 	return m.events[m.selected], true
 }
 
-func (m EventDialogModel) Update(msg tea.Msg) (EventDialogModel, tea.Cmd) {
-	keyMsg, ok := msg.(tea.KeyPressMsg)
+func (m EventDialogModel) visibleActions() []dialogAction {
+	ev, ok := m.selectedEvent()
 	if !ok {
-		return m, nil
+		return nil
 	}
+	actions := []dialogAction{
+		{"Edit", func() tea.Msg { return EventEditMsg{Event: ev} }},
+		{"Delete", func() tea.Msg { return EventDeleteMsg{Event: ev} }},
+	}
+	if len(ev.Attendees) > 0 {
+		actions = append(actions,
+			dialogAction{"Yes", func() tea.Msg { return EventRSVPMsg{Event: ev, Status: "ACCEPTED"} }},
+			dialogAction{"No", func() tea.Msg { return EventRSVPMsg{Event: ev, Status: "DECLINED"} }},
+			dialogAction{"Maybe", func() tea.Msg { return EventRSVPMsg{Event: ev, Status: "TENTATIVE"} }},
+		)
+	}
+	return actions
+}
+
+func (m *EventDialogModel) clampFocus() {
+	n := len(m.visibleActions())
+	if n == 0 {
+		m.focusedAction = 0
+		return
+	}
+	if m.focusedAction >= n {
+		m.focusedAction = n - 1
+	}
+	if m.focusedAction < 0 {
+		m.focusedAction = 0
+	}
+}
+
+func (m EventDialogModel) Update(msg tea.Msg) (EventDialogModel, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		return m.handleKey(msg)
+	case tea.MouseClickMsg:
+		return m.handleMouse(msg)
+	}
+	return m, nil
+}
+
+func (m EventDialogModel) handleKey(msg tea.KeyPressMsg) (EventDialogModel, tea.Cmd) {
+	actions := m.visibleActions()
+
 	switch {
-	case key.Matches(keyMsg, m.keys.Close):
+	case key.Matches(msg, m.keys.Close):
 		return m, func() tea.Msg { return EventDialogClosedMsg{} }
-	case key.Matches(keyMsg, m.keys.Up):
+	case key.Matches(msg, m.keys.Up):
 		if m.selected > 0 {
 			m.selected--
+			m.clampFocus()
 		}
-	case key.Matches(keyMsg, m.keys.Down):
+	case key.Matches(msg, m.keys.Down):
 		if m.selected < len(m.events)-1 {
 			m.selected++
+			m.clampFocus()
 		}
-	case key.Matches(keyMsg, m.keys.Edit):
-		if ev, ok := m.selectedEvent(); ok {
-			return m, func() tea.Msg { return EventEditMsg{Event: ev} }
+	case key.Matches(msg, m.keys.Tab):
+		if len(actions) > 0 {
+			m.focusedAction = (m.focusedAction + 1) % len(actions)
 		}
-	case key.Matches(keyMsg, m.keys.Delete):
-		if ev, ok := m.selectedEvent(); ok {
-			return m, func() tea.Msg { return EventDeleteMsg{Event: ev} }
+	case key.Matches(msg, m.keys.ShiftTab):
+		if len(actions) > 0 {
+			m.focusedAction = (m.focusedAction - 1 + len(actions)) % len(actions)
 		}
-	case key.Matches(keyMsg, m.keys.RSVPYes):
-		if ev, ok := m.selectedEvent(); ok && len(ev.Attendees) > 0 {
-			return m, func() tea.Msg { return EventRSVPMsg{Event: ev, Status: "ACCEPTED"} }
+	case key.Matches(msg, m.keys.Enter):
+		if m.focusedAction >= 0 && m.focusedAction < len(actions) {
+			return m, actions[m.focusedAction].msg
 		}
-	case key.Matches(keyMsg, m.keys.RSVPNo):
-		if ev, ok := m.selectedEvent(); ok && len(ev.Attendees) > 0 {
-			return m, func() tea.Msg { return EventRSVPMsg{Event: ev, Status: "DECLINED"} }
+	case key.Matches(msg, m.keys.Edit):
+		if _, ok := m.selectedEvent(); ok {
+			m.focusedAction = 0
+			return m, actions[0].msg
 		}
-	case key.Matches(keyMsg, m.keys.RSVPMaybe):
-		if ev, ok := m.selectedEvent(); ok && len(ev.Attendees) > 0 {
-			return m, func() tea.Msg { return EventRSVPMsg{Event: ev, Status: "TENTATIVE"} }
+	case key.Matches(msg, m.keys.Delete):
+		if _, ok := m.selectedEvent(); ok && len(actions) > 1 {
+			m.focusedAction = 1
+			return m, actions[1].msg
+		}
+	case key.Matches(msg, m.keys.RSVPYes):
+		if ev, ok := m.selectedEvent(); ok && len(ev.Attendees) > 0 && len(actions) > 2 {
+			m.focusedAction = 2
+			return m, actions[2].msg
+		}
+	case key.Matches(msg, m.keys.RSVPNo):
+		if ev, ok := m.selectedEvent(); ok && len(ev.Attendees) > 0 && len(actions) > 3 {
+			m.focusedAction = 3
+			return m, actions[3].msg
+		}
+	case key.Matches(msg, m.keys.RSVPMaybe):
+		if ev, ok := m.selectedEvent(); ok && len(ev.Attendees) > 0 && len(actions) > 4 {
+			m.focusedAction = 4
+			return m, actions[4].msg
 		}
 	}
 	return m, nil
+}
+
+func (m EventDialogModel) handleMouse(msg tea.MouseClickMsg) (EventDialogModel, tea.Cmd) {
+	if msg.Button != tea.MouseLeft {
+		return m, nil
+	}
+
+	actions := m.visibleActions()
+	if len(actions) == 0 {
+		return m, nil
+	}
+
+	ox, oy := m.actionBarOrigin()
+	if msg.Y != oy {
+		return m, nil
+	}
+
+	x := ox
+	for i, a := range actions {
+		w := len(a.label) + 2
+		if msg.X >= x && msg.X < x+w {
+			m.focusedAction = i
+			return m, a.msg
+		}
+		x += w + 1
+	}
+
+	return m, nil
+}
+
+func (m EventDialogModel) actionBarOrigin() (int, int) {
+	boxW, boxH := m.boxSize()
+	innerW := max(boxW-6, 10)
+	innerH := max(boxH-4, 6)
+	bodyH := max(innerH-4, 3)
+
+	dialogX := (m.width - boxW) / 2
+	dialogY := (m.height - boxH) / 2
+
+	// border(1) + padding(top:1, left:2)
+	contentX := dialogX + 3
+	actionsY := dialogY + bodyH + 3
+
+	if m.isNarrow() {
+		return contentX, actionsY
+	}
+
+	listW := max(min(max(innerW/4, 18), innerW-24), 10)
+	dividerW := 3
+	return contentX + listW + dividerW, actionsY
 }
 
 func (m EventDialogModel) isNarrow() bool {
@@ -303,9 +425,13 @@ func (m EventDialogModel) renderDivider(w, h int) string {
 	return strings.Join(lines, "\n")
 }
 
-func button(text string, underlineIndex int) string {
+func button(text string, underlineIndex int, focused bool) string {
+	bg := lipgloss.Color("240")
+	if focused {
+		bg = lipgloss.Color("63")
+	}
 	style := lipgloss.NewStyle().
-		Background(lipgloss.Color("240")).
+		Background(bg).
 		Foreground(lipgloss.Color("255"))
 
 	rendered := style.Padding(0, 1).Render(text)
@@ -317,16 +443,11 @@ func button(text string, underlineIndex int) string {
 }
 
 func (m EventDialogModel) renderActions(w int) string {
-	var parts []string
-	parts = append(parts, button("Edit", 0))
-	parts = append(parts, button("Delete", 0))
-
-	if ev, ok := m.selectedEvent(); ok && len(ev.Attendees) > 0 {
-		parts = append(parts, button("Yes", 0))
-		parts = append(parts, button("No", 0))
-		parts = append(parts, button("Maybe", 0))
+	actions := m.visibleActions()
+	parts := make([]string, len(actions))
+	for i, a := range actions {
+		parts[i] = button(a.label, 0, i == m.focusedAction)
 	}
-
 	return truncateTo(strings.Join(parts, " "), w)
 }
 

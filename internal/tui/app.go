@@ -24,6 +24,10 @@ type calendarsLoadedMsg struct {
 	err       error
 }
 
+type eventDeletedMsg struct {
+	err error
+}
+
 type Model struct {
 	app         *app.App
 	theme       Theme
@@ -175,9 +179,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.dialogOpen = false
 		return m, nil
 
-	case tea.MouseClickMsg:
-		if m.dialogOpen || msg.Button != tea.MouseLeft {
+	case EventDeleteMsg:
+		ev := msg.Event
+		return m, func() tea.Msg {
+			err := m.app.Events.Delete(context.Background(), ev.ID)
+			return eventDeletedMsg{err: err}
+		}
+
+	case eventDeletedMsg:
+		m.dialogOpen = false
+		if msg.err != nil {
+			m.err = msg.err
 			return m, nil
+		}
+		return m, m.loadEvents()
+
+	case tea.MouseClickMsg:
+		if msg.Button != tea.MouseLeft {
+			return m, nil
+		}
+		if m.dialogOpen {
+			var cmd tea.Cmd
+			m.dialog, cmd = m.dialog.Update(msg)
+			return m, cmd
 		}
 		ox, oy := m.calendarOffset()
 		day, ok := m.calendar.DayAtPosition(msg.X-ox, msg.Y-oy)
