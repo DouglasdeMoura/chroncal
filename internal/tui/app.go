@@ -16,6 +16,13 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/event"
 )
 
+type appFocus int
+
+const (
+	focusSidebar  appFocus = iota
+	focusCalendar
+)
+
 type eventsLoadedMsg struct {
 	events []event.Event
 	err    error
@@ -56,11 +63,12 @@ type Model struct {
 	err            error
 	ready          bool
 	showSidebar    bool
+	focus          appFocus
 }
 
 func NewModel(a *app.App) Model {
 	ui := config.LoadUIState()
-	return Model{app: a, calendar: NewCalendarModel(time.Now()), showSidebar: ui.ShowSidebar}
+	return Model{app: a, calendar: NewCalendarModel(time.Now()), showSidebar: ui.ShowSidebar, focus: focusCalendar}
 }
 
 func (m Model) loadEvents() tea.Cmd {
@@ -380,14 +388,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "s":
 			m.showSidebar = !m.showSidebar
+			if !m.showSidebar {
+				m.focus = focusCalendar
+			}
 			iw, ih := m.innerDims()
 			m.calendar = m.calendar.SetSize(iw, ih)
 			_ = config.SaveUIState(config.UIState{ShowSidebar: m.showSidebar})
 			return m, nil
+		case "tab", "shift+tab":
+			if m.showSidebar {
+				if m.focus == focusSidebar {
+					m.focus = focusCalendar
+				} else {
+					m.focus = focusSidebar
+				}
+			}
+			return m, nil
 		}
-		var cmd tea.Cmd
-		m.calendar, cmd = m.calendar.Update(msg)
-		return m, cmd
+		if m.focus == focusCalendar {
+			var cmd tea.Cmd
+			m.calendar, cmd = m.calendar.Update(msg)
+			return m, cmd
+		}
+		return m, nil
 	}
 
 	return m, nil
@@ -423,13 +446,17 @@ func (m Model) View() tea.View {
 
 	var body string
 	if m.showSidebar {
+		sidebarBorder := m.theme.Border
+		if m.focus == focusSidebar {
+			sidebarBorder = m.theme.Primary
+		}
 		sidebar := lipgloss.NewStyle().
 			Width(sidebarWidth).
 			Height(contentHeight).
 			Padding(padding).
 			BorderRight(true).
 			BorderStyle(lipgloss.NormalBorder()).
-			BorderForeground(m.theme.Border).
+			BorderForeground(sidebarBorder).
 			Foreground(m.theme.Text).
 			Render("Sidebar")
 		body = lipgloss.JoinHorizontal(lipgloss.Top, sidebar, main)
@@ -442,7 +469,7 @@ func (m Model) View() tea.View {
 		Height(footerHeight).
 		Padding(padding).
 		Foreground(m.theme.TextDim).
-		Render("chroncal  ·  hjkl/arrows: move  ·  [/]: month  ·  t: today  ·  enter: select  ·  s: sidebar  ·  q: quit")
+		Render(m.footerHelp())
 
 	v.Content = lipgloss.JoinVertical(lipgloss.Left, body, footer)
 
@@ -500,6 +527,15 @@ func (m Model) compositeOverlay(background, overlay string, boxW, boxH int) stri
 	rect := image.Rect(x, y, x+boxW, y+boxH)
 	uv.NewStyledString(overlay).Draw(buf, rect)
 	return buf.Render()
+}
+
+func (m Model) footerHelp() string {
+	parts := "chroncal  ·  hjkl/arrows: move  ·  [/]: month  ·  t: today  ·  enter: select"
+	if m.showSidebar {
+		parts += "  ·  tab: switch"
+	}
+	parts += "  ·  s: sidebar  ·  q: quit"
+	return parts
 }
 
 func Run(a *app.App) error {

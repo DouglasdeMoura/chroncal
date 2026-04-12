@@ -83,6 +83,12 @@ type CalendarInfo struct {
 	OwnerEmail string
 }
 
+const (
+	zoneEventList = iota
+	zoneRSVP
+	zoneActions
+)
+
 // EventDialogModel shows a day's events in a two-column dialog: a list on
 // the left and the selected event's details on the right. On narrow screens
 // it switches to a stacked single-column layout.
@@ -94,7 +100,7 @@ type EventDialogModel struct {
 	scroll        int
 	focusedAction int
 	focusedRSVP   int
-	focusZone     int // 0 = action bar, 1 = RSVP buttons
+	focusZone     int // zoneEventList, zoneRSVP, or zoneActions
 	rsvpLineIdx   int // line index of RSVP row within details (set during render)
 	keys          eventDialogKeyMap
 	width         int
@@ -192,37 +198,46 @@ func (m *EventDialogModel) clampFocus() {
 		m.focusedAction = max(n-1, 0)
 	}
 	rn := len(m.rsvpActions())
-	if rn == 0 {
-		m.focusZone = 0
-	} else if m.focusZone == 0 && m.focusedAction == 0 {
-		m.focusZone = 1
-		m.focusedRSVP = 0
-	}
 	if m.focusedRSVP >= rn {
 		m.focusedRSVP = max(rn-1, 0)
 	}
-}
-
-func (m EventDialogModel) allFocusable() int {
-	return len(m.visibleActions()) + len(m.rsvpActions())
-}
-
-func (m EventDialogModel) flatFocusIndex() int {
-	if m.focusZone == 1 {
-		return m.focusedRSVP
+	if m.focusZone == zoneRSVP && rn == 0 {
+		m.focusZone = zoneEventList
 	}
-	return len(m.rsvpActions()) + m.focusedAction
+	if m.focusZone == zoneActions && n == 0 {
+		m.focusZone = zoneEventList
+	}
 }
 
-func (m *EventDialogModel) setFlatFocusIndex(idx int) {
-	rn := len(m.rsvpActions())
-	if rn > 0 && idx < rn {
-		m.focusZone = 1
-		m.focusedRSVP = idx
-	} else {
-		m.focusZone = 0
-		m.focusedAction = idx - rn
+func (m EventDialogModel) availableZones() []int {
+	zones := []int{zoneEventList}
+	if len(m.rsvpActions()) > 0 {
+		zones = append(zones, zoneRSVP)
 	}
+	if len(m.visibleActions()) > 0 {
+		zones = append(zones, zoneActions)
+	}
+	return zones
+}
+
+func (m EventDialogModel) nextZone() int {
+	zones := m.availableZones()
+	for i, z := range zones {
+		if z == m.focusZone {
+			return zones[(i+1)%len(zones)]
+		}
+	}
+	return zoneEventList
+}
+
+func (m EventDialogModel) prevZone() int {
+	zones := m.availableZones()
+	for i, z := range zones {
+		if z == m.focusZone {
+			return zones[(i-1+len(zones))%len(zones)]
+		}
+	}
+	return zoneEventList
 }
 
 func (m EventDialogModel) Update(msg tea.Msg) (EventDialogModel, tea.Cmd) {
@@ -238,69 +253,104 @@ func (m EventDialogModel) Update(msg tea.Msg) (EventDialogModel, tea.Cmd) {
 func (m EventDialogModel) handleKey(msg tea.KeyPressMsg) (EventDialogModel, tea.Cmd) {
 	actions := m.visibleActions()
 	rsvp := m.rsvpActions()
-	total := len(actions) + len(rsvp)
 
 	switch {
 	case key.Matches(msg, m.keys.Close):
 		return m, func() tea.Msg { return EventDialogClosedMsg{} }
-	case key.Matches(msg, m.keys.Left):
-		prev := m.day.AddDate(0, 0, -1)
-		return m, func() tea.Msg { return DialogDayChangedMsg{Day: prev} }
-	case key.Matches(msg, m.keys.Right):
-		next := m.day.AddDate(0, 0, 1)
-		return m, func() tea.Msg { return DialogDayChangedMsg{Day: next} }
+
+	case key.Matches(msg, m.keys.Tab):
+		m.focusZone = m.nextZone()
+
+	case key.Matches(msg, m.keys.ShiftTab):
+		m.focusZone = m.prevZone()
+
 	case key.Matches(msg, m.keys.Up):
-		if m.selected > 0 {
+		if m.focusZone == zoneEventList && m.selected > 0 {
 			m.selected--
 			m.clampFocus()
 		}
+
 	case key.Matches(msg, m.keys.Down):
-		if m.selected < len(m.events)-1 {
+		if m.focusZone == zoneEventList && m.selected < len(m.events)-1 {
 			m.selected++
 			m.clampFocus()
 		}
-	case key.Matches(msg, m.keys.Tab):
-		if total > 0 {
-			m.setFlatFocusIndex((m.flatFocusIndex() + 1) % total)
+
+	case key.Matches(msg, m.keys.Left):
+		switch m.focusZone {
+		case zoneEventList:
+			prev := m.day.AddDate(0, 0, -1)
+			return m, func() tea.Msg { return DialogDayChangedMsg{Day: prev} }
+		case zoneRSVP:
+			if len(rsvp) > 0 {
+				m.focusedRSVP = (m.focusedRSVP - 1 + len(rsvp)) % len(rsvp)
+			}
+		case zoneActions:
+			if len(actions) > 0 {
+				m.focusedAction = (m.focusedAction - 1 + len(actions)) % len(actions)
+			}
 		}
-	case key.Matches(msg, m.keys.ShiftTab):
-		if total > 0 {
-			m.setFlatFocusIndex((m.flatFocusIndex() - 1 + total) % total)
+
+	case key.Matches(msg, m.keys.Right):
+		switch m.focusZone {
+		case zoneEventList:
+			next := m.day.AddDate(0, 0, 1)
+			return m, func() tea.Msg { return DialogDayChangedMsg{Day: next} }
+		case zoneRSVP:
+			if len(rsvp) > 0 {
+				m.focusedRSVP = (m.focusedRSVP + 1) % len(rsvp)
+			}
+		case zoneActions:
+			if len(actions) > 0 {
+				m.focusedAction = (m.focusedAction + 1) % len(actions)
+			}
 		}
+
 	case key.Matches(msg, m.keys.Enter):
-		if len(m.events) == 0 {
-			day := m.day
-			return m, func() tea.Msg { return EventCreateMsg{Day: day} }
+		switch m.focusZone {
+		case zoneEventList:
+			if len(m.events) == 0 {
+				day := m.day
+				return m, func() tea.Msg { return EventCreateMsg{Day: day} }
+			}
+		case zoneRSVP:
+			if m.focusedRSVP >= 0 && m.focusedRSVP < len(rsvp) {
+				return m, rsvp[m.focusedRSVP].msg
+			}
+		case zoneActions:
+			if m.focusedAction >= 0 && m.focusedAction < len(actions) {
+				return m, actions[m.focusedAction].msg
+			}
 		}
-		if m.focusZone == 1 && m.focusedRSVP >= 0 && m.focusedRSVP < len(rsvp) {
-			return m, rsvp[m.focusedRSVP].msg
-		}
-		if m.focusZone == 0 && m.focusedAction >= 0 && m.focusedAction < len(actions) {
-			return m, actions[m.focusedAction].msg
-		}
+
 	case key.Matches(msg, m.keys.Edit):
 		if _, ok := m.selectedEvent(); ok && len(actions) > 0 {
-			m.setFlatFocusIndex(len(rsvp))
+			m.focusZone = zoneActions
+			m.focusedAction = 0
 			return m, actions[0].msg
 		}
 	case key.Matches(msg, m.keys.Delete):
 		if _, ok := m.selectedEvent(); ok && len(actions) > 1 {
-			m.setFlatFocusIndex(len(rsvp) + 1)
+			m.focusZone = zoneActions
+			m.focusedAction = 1
 			return m, actions[1].msg
 		}
 	case key.Matches(msg, m.keys.RSVPYes):
 		if len(rsvp) > 0 {
-			m.setFlatFocusIndex(0)
+			m.focusZone = zoneRSVP
+			m.focusedRSVP = 0
 			return m, rsvp[0].msg
 		}
 	case key.Matches(msg, m.keys.RSVPNo):
 		if len(rsvp) > 1 {
-			m.setFlatFocusIndex(1)
+			m.focusZone = zoneRSVP
+			m.focusedRSVP = 1
 			return m, rsvp[1].msg
 		}
 	case key.Matches(msg, m.keys.RSVPMaybe):
 		if len(rsvp) > 2 {
-			m.setFlatFocusIndex(2)
+			m.focusZone = zoneRSVP
+			m.focusedRSVP = 2
 			return m, rsvp[2].msg
 		}
 	}
@@ -330,7 +380,7 @@ func (m EventDialogModel) handleMouse(msg tea.MouseClickMsg) (EventDialogModel, 
 		for i, a := range actions {
 			w := len(a.label) + 2
 			if msg.X >= x && msg.X < x+w {
-				m.focusZone = 0
+				m.focusZone = zoneActions
 				m.focusedAction = i
 				return m, a.msg
 			}
@@ -347,7 +397,7 @@ func (m EventDialogModel) handleMouse(msg tea.MouseClickMsg) (EventDialogModel, 
 			x := rx
 			for i, a := range rsvp {
 				if msg.X >= x && msg.X < x+btnW {
-					m.focusZone = 1
+					m.focusZone = zoneRSVP
 					m.focusedRSVP = i
 					return m, a.msg
 				}
@@ -449,12 +499,12 @@ func (m EventDialogModel) View() string {
 		help = lipgloss.NewStyle().
 			Faint(true).
 			Width(innerW).
-			Render("←/→: day  ·  enter: create  ·  esc: close")
+			Render("←/→: day  ��  enter: create  ·  esc: close")
 	} else {
 		help = lipgloss.NewStyle().
 			Faint(true).
 			Width(innerW).
-			Render("←/→: day  ·  ↑/↓: navigate  ·  esc: close")
+			Render("tab: sections  ·  ←/→: day/buttons  ·  ↑/↓: events  ·  esc: close")
 	}
 
 	if m.isNarrow() {
@@ -571,7 +621,11 @@ func (m EventDialogModel) renderList(w, h int) string {
 		label = truncateTo(label, w)
 		style := lipgloss.NewStyle().Width(w)
 		if i == m.selected {
-			style = style.Reverse(true).Bold(true)
+			if m.focusZone == zoneEventList {
+				style = style.Reverse(true).Bold(true)
+			} else {
+				style = style.Bold(true).Underline(true)
+			}
 		}
 		lines = append(lines, style.Render(label))
 	}
@@ -636,7 +690,7 @@ func (m EventDialogModel) renderActions(w int) string {
 	actions := m.visibleActions()
 	parts := make([]string, len(actions))
 	for i, a := range actions {
-		parts[i] = button(a.label, 0, m.focusZone == 0 && i == m.focusedAction)
+		parts[i] = button(a.label, 0, m.focusZone == zoneActions && i == m.focusedAction)
 	}
 	return truncateTo(strings.Join(parts, " "), w)
 }
@@ -723,7 +777,7 @@ func (m EventDialogModel) renderRSVPLine(att model.Attendee, rsvp []dialogAction
 			right := pad - leftPad
 			l = strings.Repeat(" ", leftPad) + l + strings.Repeat(" ", right)
 		}
-		parts = append(parts, button(l, leftPad, m.focusZone == 1 && i == m.focusedRSVP))
+		parts = append(parts, button(l, leftPad, m.focusZone == zoneRSVP && i == m.focusedRSVP))
 	}
 	value := strings.Join(parts, " ")
 
