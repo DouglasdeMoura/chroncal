@@ -30,6 +30,10 @@ type eventRSVPUpdatedMsg struct {
 	err error
 }
 
+type eventCreatedMsg struct {
+	err error
+}
+
 type eventDeletedMsg struct {
 	err error
 }
@@ -189,13 +193,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case CalendarDaySelectedMsg:
 		dayEvents := eventsOn(m.events, msg.Day)
-		if len(dayEvents) == 0 {
-			return m, nil
-		}
 		m.dialog = NewEventDialogModel(msg.Day, dayEvents, m.calendars).
 			SetSize(m.width, m.height)
 		m.dialogOpen = true
 		return m, nil
+
+	case EventCreateMsg:
+		return m, func() tea.Msg {
+			ctx := context.Background()
+			var calID int64
+			for id := range m.calendars {
+				calID = id
+				break
+			}
+			start := time.Date(msg.Day.Year(), msg.Day.Month(), msg.Day.Day(), 0, 0, 0, 0, time.UTC)
+			end := start.AddDate(0, 0, 1)
+			_, err := m.app.Events.Create(ctx, event.CreateParams{
+				CalendarID: calID,
+				Title:      "New Event",
+				StartTime:  start,
+				EndTime:    end,
+				AllDay:     true,
+			})
+			return eventCreatedMsg{err: err}
+		}
+
+	case eventCreatedMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		return m, m.loadEvents()
 
 	case EventRSVPMsg:
 		ev := msg.Event

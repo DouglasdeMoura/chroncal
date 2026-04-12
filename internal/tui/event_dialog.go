@@ -26,6 +26,11 @@ type EventEditMsg struct{ Event event.Event }
 // EventDeleteMsg is emitted when the user requests to delete the selected event.
 type EventDeleteMsg struct{ Event event.Event }
 
+// EventCreateMsg is emitted when the user requests to create an event on a day.
+type EventCreateMsg struct {
+	Day time.Time
+}
+
 // EventRSVPMsg is emitted when the user changes their RSVP status.
 type EventRSVPMsg struct {
 	Event  event.Event
@@ -260,6 +265,10 @@ func (m EventDialogModel) handleKey(msg tea.KeyPressMsg) (EventDialogModel, tea.
 			m.setFlatFocusIndex((m.flatFocusIndex() - 1 + total) % total)
 		}
 	case key.Matches(msg, m.keys.Enter):
+		if len(m.events) == 0 {
+			day := m.day
+			return m, func() tea.Msg { return EventCreateMsg{Day: day} }
+		}
 		if m.focusZone == 1 && m.focusedRSVP >= 0 && m.focusedRSVP < len(rsvp) {
 			return m, rsvp[m.focusedRSVP].msg
 		}
@@ -297,6 +306,16 @@ func (m EventDialogModel) handleKey(msg tea.KeyPressMsg) (EventDialogModel, tea.
 
 func (m EventDialogModel) handleMouse(msg tea.MouseClickMsg) (EventDialogModel, tea.Cmd) {
 	if msg.Button != tea.MouseLeft {
+		return m, nil
+	}
+
+	if len(m.events) == 0 {
+		ox, oy := m.createBtnOrigin()
+		btnW := lipgloss.Width(button("Create Event", 0, false))
+		if msg.Y == oy && msg.X >= ox && msg.X < ox+btnW {
+			day := m.day
+			return m, func() tea.Msg { return EventCreateMsg{Day: day} }
+		}
 		return m, nil
 	}
 
@@ -419,14 +438,22 @@ func (m EventDialogModel) View() string {
 		Width(innerW).
 		Render(m.day.Format("Monday, January 2, 2006"))
 
-	help := lipgloss.NewStyle().
-		Faint(true).
-		Width(innerW).
-		Render("←/→: day  ·  ↑/↓: navigate  ·  esc: close")
-
 	bodyH := max(innerH-4, 3)
 
-	var body string
+	var help, body string
+
+	if len(m.events) == 0 {
+		help = lipgloss.NewStyle().
+			Faint(true).
+			Width(innerW).
+			Render("←/→: day  ·  enter: create  ·  esc: close")
+	} else {
+		help = lipgloss.NewStyle().
+			Faint(true).
+			Width(innerW).
+			Render("←/→: day  ·  ↑/↓: navigate  ·  esc: close")
+	}
+
 	if m.isNarrow() {
 		body = m.viewStacked(innerW, bodyH)
 	} else {
@@ -441,6 +468,33 @@ func (m EventDialogModel) View() string {
 		Padding(1, 2).
 		Border(lipgloss.RoundedBorder()).
 		Render(content)
+}
+
+func (m EventDialogModel) createBtnOrigin() (int, int) {
+	boxW, _ := m.boxSize()
+	innerW := max(boxW-6, 10)
+	dialogX := (m.width - boxW) / 2
+	dialogY := (m.height - m.boxH()) / 2
+	// border(1) + padding(top:1, left:2) + title(1) + blank(1) + "No events"(1) + blank(1)
+	btnY := dialogY + 6
+
+	if m.isNarrow() {
+		listH := min(max(1, 3), max(m.bodyH()/3, 3))
+		btnY = dialogY + 2 + listH + 1 + 2
+		return dialogX + 3, btnY
+	}
+
+	listW := max(min(max(innerW/4, 18), innerW-24), 10)
+	dividerW := 3
+	return dialogX + 3 + listW + dividerW, btnY
+}
+
+func (m EventDialogModel) renderEmptyDetails(w, h int) string {
+	faint := lipgloss.NewStyle().Faint(true)
+	msg := faint.Render("No events on this day.")
+	createBtn := button("Create Event", 0, true)
+	lines := []string{msg, "", createBtn}
+	return padLines(lines, w, h)
 }
 
 func (m *EventDialogModel) viewColumns(innerW, bodyH int) string {
@@ -592,7 +646,10 @@ func (m EventDialogModel) labelWidth() int {
 }
 
 func (m EventDialogModel) renderDetails(w, h int) string {
-	if len(m.events) == 0 || m.selected < 0 || m.selected >= len(m.events) {
+	if len(m.events) == 0 {
+		return m.renderEmptyDetails(w, h)
+	}
+	if m.selected < 0 || m.selected >= len(m.events) {
 		return padLines(nil, w, h)
 	}
 	ev := m.events[m.selected]
