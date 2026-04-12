@@ -655,12 +655,12 @@ func WeekGrid(opts WeekOptions) string {
 	out.WriteString(renderWeekColumnHeaders(anchor, colWs, todayKey, selectedKey, opts.SelectedColor))
 	out.WriteString("\n")
 
-	out.WriteString(renderWeekHRule(colWs, "┌", "┬", "┐"))
+	out.WriteString(renderWeekHRule(colWs, "┌", "┬", ""))
 	out.WriteString("\n")
 
 	out.WriteString(renderWeekAllDayRows(opts.Events, anchor, colWs, allDayRows, selectedCol, opts.SelectedColor))
 
-	out.WriteString(renderWeekHRule(colWs, "├", "┼", "┤"))
+	out.WriteString(renderWeekHRule(colWs, "├", "┼", "╮"))
 	out.WriteString("\n")
 
 	for row := scrollOffset; row < scrollOffset+viewportHeight && row < totalRows; row++ {
@@ -795,19 +795,17 @@ func renderWeekAllDayRows(events []CalendarEvent, anchor time.Time, colWs []int,
 		} else {
 			out.WriteString("        ")
 		}
-		for i := 0; i <= 7; i++ {
+		for i := 0; i < 7; i++ {
 			highlighted := selSep != "" && (i == selectedCol || i == selectedCol+1)
 			if highlighted {
 				out.WriteString(selSep)
 			} else {
 				out.WriteString(faintSep)
 			}
-			if i < 7 {
-				if row < len(eventsByCol[i]) {
-					out.WriteString(renderEventPill(eventsByCol[i][row], colWs[i]))
-				} else {
-					out.WriteString(strings.Repeat(" ", colWs[i]))
-				}
+			if row < len(eventsByCol[i]) {
+				out.WriteString(renderEventPill(eventsByCol[i][row], colWs[i]))
+			} else {
+				out.WriteString(strings.Repeat(" ", colWs[i]))
 			}
 		}
 		out.WriteString("\n")
