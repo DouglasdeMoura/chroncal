@@ -12,8 +12,6 @@ import (
 	"github.com/emersion/go-webdav"
 )
 
-const calendarColorNamespace = "http://apple.com/ns/ical/"
-
 type calendarColorMultiStatus struct {
 	Responses []calendarColorResponse `xml:"DAV: response"`
 }
