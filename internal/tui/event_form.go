@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
@@ -64,7 +65,7 @@ type EventFormModel struct {
 	startTime   textinput.Model
 	endTime     textinput.Model
 	location    textinput.Model
-	description textinput.Model
+	description textarea.Model
 
 	allDay         bool
 	focusField     formField
@@ -96,9 +97,12 @@ func NewEventFormModel(day time.Time, calendars map[int64]CalendarInfo, theme Th
 	locationInput.Placeholder = "Add location"
 	locationInput.CharLimit = 200
 
-	descInput := textinput.New()
+	descInput := textarea.New()
 	descInput.Placeholder = "Add description"
 	descInput.CharLimit = 500
+	descInput.ShowLineNumbers = false
+	descInput.Prompt = ""
+	descInput.SetHeight(3)
 
 	// Default times: next half hour, 1 hour duration.
 	now := time.Now()
@@ -145,7 +149,9 @@ func NewEventFormModel(day time.Time, calendars map[int64]CalendarInfo, theme Th
 func (m EventFormModel) SetSize(w, h int) EventFormModel {
 	m.width = w
 	m.height = h
-	m.updateInputWidths()
+	if m.width > 0 && m.height > 0 && m.title.CharLimit > 0 {
+		m.updateInputWidths()
+	}
 	return m
 }
 
@@ -158,15 +164,15 @@ func (m *EventFormModel) updateInputWidths() {
 	m.startTime.SetWidth(5)
 	m.endTime.SetWidth(5)
 	m.location.SetWidth(inputW)
-	m.description.SetWidth(inputW)
+	m.description.SetWidth(innerW)
 }
 
 // BoxSize returns the outer dimensions of the form dialog.
 func (m EventFormModel) BoxSize() (int, int) {
 	boxW := min(56, max(m.width-4, 30))
-	boxH := 23
+	boxH := 25
 	if m.allDay {
-		boxH = 21
+		boxH = 23
 	}
 	if len(m.calendars) <= 1 {
 		boxH -= 2
@@ -303,7 +309,7 @@ func (m EventFormModel) handleKey(msg tea.KeyPressMsg) (EventFormModel, tea.Cmd)
 			m.datePickerOpen = true
 			return m, nil
 		default:
-			if m.isTextInput() {
+			if m.isTextInput() && m.focusField != fieldDescription {
 				return m.withFocus(m.nextField())
 			}
 		}
@@ -631,7 +637,8 @@ func (m EventFormModel) View() string {
 	lines = append(lines, "")
 
 	// Description
-	lines = append(lines, faint.Render(formLabel("Description", lw))+m.description.View())
+	lines = append(lines, faint.Render("Description"))
+	lines = append(lines, m.description.View())
 
 	// Error message
 	if m.errMsg != "" {
