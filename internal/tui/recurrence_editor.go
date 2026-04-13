@@ -578,7 +578,7 @@ func (m RecurrenceEditorModel) View() string {
 	lines = append(lines, "")
 	m.help.SetWidth(innerW)
 	helpKeys := []key.Binding{
-		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "fields")),
+		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
 		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")),
 	}

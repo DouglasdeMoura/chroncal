@@ -27,7 +27,7 @@ type calendarKeyMap struct {
 }
 
 func (k calendarKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Left, k.Right, k.Up, k.Down, k.PrevMonth, k.NextMonth, k.Today, k.Select}
+	return []key.Binding{k.Up, k.Down, k.Left, k.Right, k.PrevMonth, k.NextMonth, k.Today, k.Select}
 }
 
 func (k calendarKeyMap) FullHelp() [][]key.Binding {
@@ -40,7 +40,7 @@ func (k calendarKeyMap) FullHelp() [][]key.Binding {
 	prev.SetHelp("[", "previous month")
 	next.SetHelp("]", "next month")
 	return [][]key.Binding{
-		{left, right, up, down},
+		{up, down, left, right},
 		{prev, next, k.Today, k.Select},
 	}
 }

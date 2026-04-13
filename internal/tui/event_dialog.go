@@ -57,7 +57,7 @@ type eventDialogKeyMap struct {
 }
 
 func (k eventDialogKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Tab, k.Left, k.Right, k.Up, k.Down, k.Create, k.Close}
+	return []key.Binding{k.Up, k.Down, k.Left, k.Right, k.Tab, k.Create, k.Close}
 }
 
 func (k eventDialogKeyMap) FullHelp() [][]key.Binding {
@@ -66,7 +66,7 @@ func (k eventDialogKeyMap) FullHelp() [][]key.Binding {
 	right.SetHelp("→/l", "next day")
 	return [][]key.Binding{
 		{k.Up, k.Down, left, right, k.Tab},
-		{k.Edit, k.Delete, k.Create, k.Enter, k.Close},
+		{k.Enter, k.Edit, k.Delete, k.Create, k.Close},
 		{k.RSVPYes, k.RSVPNo, k.RSVPMaybe},
 	}
 }
@@ -132,14 +132,9 @@ func (m EventDialogModel) SetSelectedColor(c color.Color) EventDialogModel {
 	return m
 }
 
-func (m EventDialogModel) SetHelp(h help.Model) EventDialogModel {
-	m.help = h
-	return m
-}
-
 const narrowThreshold = 90
 
-func NewEventDialogModel(day time.Time, events []event.Event, calendars map[int64]CalendarInfo) EventDialogModel {
+func NewEventDialogModel(day time.Time, events []event.Event, calendars map[int64]CalendarInfo, h help.Model) EventDialogModel {
 	slices.SortStableFunc(events, func(a, b event.Event) int {
 		if a.AllDay != b.AllDay {
 			if a.AllDay {
@@ -154,7 +149,7 @@ func NewEventDialogModel(day time.Time, events []event.Event, calendars map[int6
 		events:    events,
 		calendars: calendars,
 		keys:      defaultEventDialogKeys(),
-		help:      help.New(),
+		help:      h,
 	}
 }
 

@@ -369,8 +369,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case CalendarDaySelectedMsg:
 		dayEvents := eventsOn(m.events, msg.Day)
-		m.dialog = NewEventDialogModel(msg.Day, dayEvents, m.calendars).
-			SetHelp(newThemedHelp(m.theme)).
+		m.dialog = NewEventDialogModel(msg.Day, dayEvents, m.calendars, newThemedHelp(m.theme)).
 			SetSelectedColor(m.theme.Selected).
 			SetSize(m.width, m.height)
 		if m.clickedEventID > 0 {
@@ -451,13 +450,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			prevDay := m.day.cursor.Format("2006-01-02")
 			m.day.cursor = msg.Day
 			if m.day.cursor.Format("2006-01-02") != prevDay {
-				m.dialog = NewEventDialogModel(msg.Day, nil, m.calendars).
+				m.dialog = NewEventDialogModel(msg.Day, nil, m.calendars, newThemedHelp(m.theme)).
 					SetSelectedColor(m.theme.Selected).
 					SetSize(m.width, m.height)
 				return m, m.loadEvents()
 			}
 			dayEvents := eventsOn(m.events, msg.Day)
-			m.dialog = NewEventDialogModel(msg.Day, dayEvents, m.calendars).
+			m.dialog = NewEventDialogModel(msg.Day, dayEvents, m.calendars, newThemedHelp(m.theme)).
 				SetSelectedColor(m.theme.Selected).
 				SetSize(m.width, m.height)
 			return m, nil
@@ -466,13 +465,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			prevWeek := m.week.WeekStartDate()
 			m.week.cursor = msg.Day
 			if m.week.WeekStartDate() != prevWeek {
-				m.dialog = NewEventDialogModel(msg.Day, nil, m.calendars).
+				m.dialog = NewEventDialogModel(msg.Day, nil, m.calendars, newThemedHelp(m.theme)).
 					SetSelectedColor(m.theme.Selected).
 					SetSize(m.width, m.height)
 				return m, m.loadEvents()
 			}
 			dayEvents := eventsOn(m.events, msg.Day)
-			m.dialog = NewEventDialogModel(msg.Day, dayEvents, m.calendars).
+			m.dialog = NewEventDialogModel(msg.Day, dayEvents, m.calendars, newThemedHelp(m.theme)).
 				SetSelectedColor(m.theme.Selected).
 				SetSize(m.width, m.height)
 			return m, nil
@@ -480,15 +479,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.calendar.cursor = msg.Day
 		if msg.Day.Year() != m.calendar.month.Year() || msg.Day.Month() != m.calendar.month.Month() {
 			m.calendar.month = time.Date(msg.Day.Year(), msg.Day.Month(), 1, 0, 0, 0, 0, msg.Day.Location())
-			m.dialog = NewEventDialogModel(msg.Day, nil, m.calendars).
-				SetHelp(newThemedHelp(m.theme)).
+			m.dialog = NewEventDialogModel(msg.Day, nil, m.calendars, newThemedHelp(m.theme)).
 				SetSelectedColor(m.theme.Selected).
 				SetSize(m.width, m.height)
 			return m, m.loadEvents()
 		}
 		dayEvents := eventsOn(m.events, msg.Day)
-		m.dialog = NewEventDialogModel(msg.Day, dayEvents, m.calendars).
-			SetHelp(newThemedHelp(m.theme)).
+		m.dialog = NewEventDialogModel(msg.Day, dayEvents, m.calendars, newThemedHelp(m.theme)).
 			SetSelectedColor(m.theme.Selected).
 			SetSize(m.width, m.height)
 		return m, nil
