@@ -136,11 +136,27 @@ func eventsOn(events []event.Event, day time.Time) []event.Event {
 	dayKey := day.Local().Format("2006-01-02")
 	var out []event.Event
 	for _, e := range events {
-		if e.StartTime.Local().Format("2006-01-02") == dayKey {
+		// All-day events are stored as midnight UTC; compare in UTC
+		// so negative-offset timezones don't shift the date.
+		eKey := e.StartTime.Local().Format("2006-01-02")
+		if e.AllDay {
+			eKey = e.StartTime.UTC().Format("2006-01-02")
+		}
+		if eKey == dayKey {
 			out = append(out, e)
 		}
 	}
 	return out
+}
+
+// eventDay returns the display date for an event. All-day events use their
+// UTC date (a datestamp, not a point in time) so they appear on the correct
+// day regardless of the local timezone offset.
+func eventDay(e event.Event) time.Time {
+	if e.AllDay {
+		return e.StartTime.UTC()
+	}
+	return e.StartTime.Local()
 }
 
 func eventsToCalendar(events []event.Event, calendars map[int64]CalendarInfo) []CalendarEvent {
@@ -150,9 +166,9 @@ func eventsToCalendar(events []event.Event, calendars map[int64]CalendarInfo) []
 			ID:        e.ID,
 			Title:     e.Title,
 			AllDay:    e.AllDay,
-			Day:       e.StartTime.Local(),
+			Day:       eventDay(e),
 			Color:     calendars[e.CalendarID].Color,
-			StartTime: e.StartTime.Local(),
+			StartTime: eventDay(e),
 			EndTime:   e.EndTime.Local(),
 		}
 	}
