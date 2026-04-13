@@ -102,7 +102,6 @@ type EventDialogModel struct {
 	focusedAction int
 	focusedRSVP   int
 	focusZone     int // zoneEventList, zoneRSVP, or zoneActions
-	rsvpLineIdx   int // line index of RSVP row within details (set during render)
 	keys          eventDialogKeyMap
 	selectedColor color.Color
 	width         int
@@ -439,7 +438,8 @@ func (m EventDialogModel) actionBarOrigin() (int, int) {
 }
 
 func (m EventDialogModel) rsvpBarOrigin() (int, int) {
-	if m.rsvpLineIdx < 0 {
+	rsvpIdx := m.computeRSVPLineIdx()
+	if rsvpIdx < 0 {
 		return 0, 0
 	}
 
@@ -466,7 +466,35 @@ func (m EventDialogModel) rsvpBarOrigin() (int, int) {
 		rsvpButtonsX += listW + dividerW
 	}
 
-	return rsvpButtonsX, detailsStartY + m.rsvpLineIdx
+	return rsvpButtonsX, detailsStartY + rsvpIdx
+}
+
+func (m EventDialogModel) computeRSVPLineIdx() int {
+	if len(m.events) == 0 || m.selected < 0 || m.selected >= len(m.events) {
+		return -1
+	}
+	rsvp := m.rsvpActions()
+	if len(rsvp) == 0 {
+		return -1
+	}
+	ev := m.events[m.selected]
+	cal := m.calendars[ev.CalendarID]
+
+	boxW, _ := m.boxSize()
+	innerW := max(boxW-6, 10)
+	var w int
+	if m.isNarrow() {
+		w = innerW
+	} else {
+		listW := max(min(max(innerW/4, 18), innerW-24), 10)
+		dividerW := 3
+		w = max(innerW-listW-dividerW, 10)
+	}
+
+	att, _ := m.userAttendee()
+	rsvpLine := m.renderRSVPLine(att, rsvp, w)
+	_, idx := eventDetailLines(ev, cal, w, m.labelWidth(), rsvpLine)
+	return idx
 }
 
 func (m EventDialogModel) boxH() int {
@@ -730,8 +758,7 @@ func (m EventDialogModel) renderDetails(w, h int) string {
 		rsvpLine = m.renderRSVPLine(att, rsvp, w)
 	}
 
-	lines, rsvpIdx := eventDetailLines(ev, cal, w, m.labelWidth(), rsvpLine)
-	m.rsvpLineIdx = rsvpIdx
+	lines, _ := eventDetailLines(ev, cal, w, m.labelWidth(), rsvpLine)
 
 	if len(lines) > detailsH {
 		lines = lines[:detailsH]
