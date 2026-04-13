@@ -1,14 +1,6 @@
 package tui
 
-import (
-	"strings"
-	"unicode"
-	"unicode/utf8"
-
-	"charm.land/bubbles/v2/key"
-	tea "charm.land/bubbletea/v2"
-	lipgloss "charm.land/lipgloss/v2"
-)
+import tea "charm.land/bubbletea/v2"
 
 // ChoiceDialogResultMsg is emitted when the user picks an option or cancels.
 // Choice is -1 when cancelled, otherwise the index of the selected option.
@@ -16,271 +8,39 @@ type ChoiceDialogResultMsg struct {
 	Choice int
 }
 
-type choiceDialogKeyMap struct {
-	LeftRight  key.Binding
-	Tab        key.Binding
-	EnterSpace key.Binding
-	Close      key.Binding
-}
-
 // ChoiceDialogModel shows a centered prompt with N option buttons plus Cancel.
 type ChoiceDialogModel struct {
-	message  string
-	options  []string
-	selected int // index into options; len(options) = Cancel
-	keys     choiceDialogKeyMap
-	width    int
-	height   int
+	dialog buttonDialogModel
 }
 
 func NewChoiceDialogModel(message string, options ...string) ChoiceDialogModel {
+	labels := append(append([]string(nil), options...), "Cancel")
 	return ChoiceDialogModel{
-		message:  message,
-		options:  options,
-		selected: len(options), // Cancel selected by default
-		keys: choiceDialogKeyMap{
-			LeftRight:  key.NewBinding(key.WithKeys("left", "right")),
-			Tab:        key.NewBinding(key.WithKeys("tab")),
-			EnterSpace: key.NewBinding(key.WithKeys("enter", " ")),
-			Close:      key.NewBinding(key.WithKeys("esc")),
-		},
+		dialog: newButtonDialogModel(message, len(labels)-1, labels...),
 	}
 }
 
 func (m ChoiceDialogModel) SetSize(w, h int) ChoiceDialogModel {
-	m.width = w
-	m.height = h
+	m.dialog = m.dialog.SetSize(w, h)
 	return m
 }
 
 func (m ChoiceDialogModel) BoxSize() (int, int) {
-	view := m.View()
-	return lipgloss.Size(view)
+	return m.dialog.BoxSize()
 }
 
 func (m ChoiceDialogModel) Update(msg tea.Msg) (ChoiceDialogModel, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		return m.handleKey(msg)
-	case tea.MouseClickMsg:
-		return m.handleMouse(msg)
-	}
-	return m, nil
-}
-
-func (m ChoiceDialogModel) total() int { return len(m.options) + 1 }
-
-func (m ChoiceDialogModel) handleKey(msg tea.KeyPressMsg) (ChoiceDialogModel, tea.Cmd) {
-	if choice := m.shortcutChoice(msg); choice != noShortcut {
-		return m, func() tea.Msg { return ChoiceDialogResultMsg{Choice: choice} }
-	}
-
-	switch {
-	case key.Matches(msg, m.keys.Close):
-		return m, func() tea.Msg { return ChoiceDialogResultMsg{Choice: -1} }
-	case key.Matches(msg, m.keys.LeftRight), key.Matches(msg, m.keys.Tab):
-		m.selected = (m.selected + 1) % m.total()
-	case key.Matches(msg, m.keys.EnterSpace):
-		choice := m.selected
-		if choice == len(m.options) {
-			choice = -1
-		}
-		return m, func() tea.Msg { return ChoiceDialogResultMsg{Choice: choice} }
-	}
-	return m, nil
-}
-
-const noShortcut = -2
-
-func (m ChoiceDialogModel) shortcutChoice(msg tea.KeyPressMsg) int {
-	if msg.Text == "" {
-		return noShortcut
-	}
-
-	indices := choiceButtonUnderlineIndices(m.options)
-	for i, label := range m.options {
-		if matchesButtonRune(msg, label, indices[i]) {
-			return i
-		}
-	}
-	if matchesButtonRune(msg, "Cancel", indices[len(indices)-1]) {
-		return -1
-	}
-	return noShortcut
-}
-
-func (m ChoiceDialogModel) handleMouse(msg tea.MouseClickMsg) (ChoiceDialogModel, tea.Cmd) {
-	if msg.Button != tea.MouseLeft {
+	dialog, choice, ok := m.dialog.Update(msg)
+	m.dialog = dialog
+	if !ok {
 		return m, nil
 	}
-
-	ox, oy := m.buttonBarOrigin()
-	if msg.Y != oy {
-		return m, nil
+	if choice == m.dialog.cancelIndex() {
+		choice = -1
 	}
-
-	x := ox
-	for i, label := range m.options {
-		w := lipgloss.Width(button(label, 0, false))
-		if msg.X >= x && msg.X < x+w {
-			choice := i
-			return m, func() tea.Msg { return ChoiceDialogResultMsg{Choice: choice} }
-		}
-		x += w + 1
-	}
-
-	cancelW := lipgloss.Width(button("Cancel", 0, false))
-	if msg.X >= x && msg.X < x+cancelW {
-		return m, func() tea.Msg { return ChoiceDialogResultMsg{Choice: -1} }
-	}
-
-	return m, nil
-}
-
-func (m ChoiceDialogModel) buttonBarOrigin() (int, int) {
-	boxW, boxH := m.BoxSize()
-	dialogX := (m.width - boxW) / 2
-	dialogY := (m.height - boxH) / 2
-
-	buttonsW := 0
-	for _, label := range m.options {
-		buttonsW += lipgloss.Width(button(label, 0, false)) + 1
-	}
-	buttonsW += lipgloss.Width(button("Cancel", 0, false))
-	contentW := boxW - 8
-	centerOffset := (contentW - buttonsW) / 2
-
-	return dialogX + 4 + centerOffset, dialogY + boxH - 3
+	return m, func() tea.Msg { return ChoiceDialogResultMsg{Choice: choice} }
 }
 
 func (m ChoiceDialogModel) View() string {
-	underline := choiceButtonUnderlineIndices(m.options)
-
-	var buttons string
-	for i, label := range m.options {
-		btn := button(label, underline[i], m.selected == i)
-		if i > 0 {
-			buttons += " "
-		}
-		buttons += btn
-	}
-	cancelBtn := button("Cancel", underline[len(underline)-1], m.selected == len(m.options))
-	buttons += " " + cancelBtn
-
-	content := lipgloss.JoinVertical(lipgloss.Center, m.message, "", buttons)
-
-	return lipgloss.NewStyle().
-		Padding(1, 3).
-		Border(lipgloss.RoundedBorder()).
-		Render(content)
-}
-
-func choiceButtonUnderlineIndices(options []string) []int {
-	labels := make([]string, 0, len(options)+1)
-	labels = append(labels, options...)
-	labels = append(labels, "Cancel")
-
-	indices := make([]int, len(labels))
-	keys := make([]string, len(labels))
-	used := make(map[string]struct{}, len(labels))
-	firstCounts := make(map[string]int, len(labels))
-
-	for i, label := range labels {
-		idx, key := firstNonSpaceShortcut(label)
-		indices[i] = idx
-		keys[i] = key
-		if key != "" {
-			firstCounts[key]++
-		}
-	}
-
-	for _, key := range keys {
-		if key != "" && firstCounts[key] == 1 {
-			used[key] = struct{}{}
-		}
-	}
-
-	for i, key := range keys {
-		if key != "" && firstCounts[key] == 1 {
-			continue
-		}
-		idx, resolved := nextUniqueShortcut(labels[i], used)
-		if idx >= 0 {
-			indices[i] = idx
-			keys[i] = resolved
-			used[resolved] = struct{}{}
-		}
-	}
-
-	return indices
-}
-
-func firstNonSpaceShortcut(label string) (int, string) {
-	for i, r := range label {
-		if unicode.IsSpace(r) {
-			continue
-		}
-		return i, strings.ToLower(string(r))
-	}
-	return -1, ""
-}
-
-func nextUniqueShortcut(label string, used map[string]struct{}) (int, string) {
-	seen := make(map[string]struct{})
-	for _, idx := range shortcutCandidates(label) {
-		r, _ := utf8.DecodeRuneInString(label[idx:])
-		if r == utf8.RuneError || unicode.IsSpace(r) {
-			continue
-		}
-		key := strings.ToLower(string(r))
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		if _, ok := used[key]; !ok {
-			return idx, key
-		}
-	}
-	return -1, ""
-}
-
-func shortcutCandidates(label string) []int {
-	var first int = -1
-	var wordStarts []int
-	var rest []int
-	prevSpace := true
-
-	for i, r := range label {
-		if unicode.IsSpace(r) {
-			prevSpace = true
-			continue
-		}
-		if first == -1 {
-			first = i
-		} else if prevSpace {
-			wordStarts = append(wordStarts, i)
-		} else {
-			rest = append(rest, i)
-		}
-		prevSpace = false
-	}
-
-	var out []int
-	if first >= 0 {
-		out = append(out, first)
-	}
-	out = append(out, wordStarts...)
-	out = append(out, rest...)
-	return out
-}
-
-func matchesButtonRune(msg tea.KeyPressMsg, label string, idx int) bool {
-	if msg.Text == "" || idx < 0 || idx >= len(label) {
-		return false
-	}
-	r, _ := utf8.DecodeRuneInString(label[idx:])
-	if r == utf8.RuneError {
-		return false
-	}
-	return strings.EqualFold(msg.Text, string(r))
+	return m.dialog.View()
 }
