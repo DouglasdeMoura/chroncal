@@ -569,10 +569,10 @@ func (m RecurrenceEditorModel) View() string {
 	lines = append(lines, "")
 
 	// Buttons
-	doneBtn := button("Done", 0, m.focusField == refDone)
+	doneBtn := buttonStyled("Done", 0, m.focusField == refDone, true)
 	cancelBtn := button("Cancel", 0, m.focusField == refCancel)
-	buttons := doneBtn + " " + cancelBtn
-	pad := max((innerW-lipgloss.Width(buttons))/2, 0)
+	buttons := cancelBtn + "   " + doneBtn
+	pad := max(innerW-lipgloss.Width(buttons), 0)
 	lines = append(lines, strings.Repeat(" ", pad)+buttons)
 
 	lines = append(lines, "")

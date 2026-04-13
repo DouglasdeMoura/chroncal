@@ -229,7 +229,7 @@ func (m *EventFormModel) updateInputWidths() {
 	m.startTime.SetWidth(5)
 	m.endTime.SetWidth(5)
 	m.location.SetWidth(inputW)
-	m.description.SetWidth(innerW)
+	m.description.SetWidth(innerW - 2) // account for left border + padding
 	m.endsCount.SetWidth(4)
 }
 
@@ -944,9 +944,14 @@ func (m EventFormModel) View() string {
 	lines = append(lines, faint.Render(formLabel("Location", lw))+m.location.View())
 	lines = append(lines, "")
 
-	// Description
+	// Description (with left border)
 	lines = append(lines, faint.Render("Description"))
-	lines = append(lines, m.description.View())
+	descBorder := lipgloss.NewStyle().
+		BorderLeft(true).
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(m.theme.Border).
+		PaddingLeft(1)
+	lines = append(lines, descBorder.Render(m.description.View()))
 
 	// Error message
 	if m.errMsg != "" {
@@ -956,11 +961,11 @@ func (m EventFormModel) View() string {
 
 	lines = append(lines, "")
 
-	// Save / Cancel buttons
-	saveBtn := button("Save", 0, m.focusField == fieldSave)
+	// Save / Cancel buttons (right-aligned, primary styling on Save)
+	saveBtn := buttonStyled("Save", 0, m.focusField == fieldSave, true)
 	cancelBtn := button("Cancel", 0, m.focusField == fieldCancel)
-	buttons := saveBtn + " " + cancelBtn
-	pad := max((innerW-lipgloss.Width(buttons))/2, 0)
+	buttons := cancelBtn + "   " + saveBtn
+	pad := max(innerW-lipgloss.Width(buttons), 0)
 	lines = append(lines, strings.Repeat(" ", pad)+buttons)
 
 	lines = append(lines, "")

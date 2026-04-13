@@ -772,13 +772,25 @@ func (m EventDialogModel) renderDivider(w, h int) string {
 }
 
 func button(text string, underlineIndex int, focused bool) string {
-	bg := lipgloss.Color("240")
-	if focused {
+	return buttonStyled(text, underlineIndex, focused, false)
+}
+
+func buttonStyled(text string, underlineIndex int, focused, primary bool) string {
+	var bg color.Color
+	switch {
+	case focused:
 		bg = lipgloss.Color("63")
+	case primary:
+		bg = lipgloss.Color("61")
+	default:
+		bg = lipgloss.Color("240")
 	}
 	style := lipgloss.NewStyle().
 		Background(bg).
 		Foreground(lipgloss.Color("255"))
+	if primary {
+		style = style.Bold(true)
+	}
 
 	rendered := style.Padding(0, 1).Render(text)
 	if underlineIndex >= 0 && underlineIndex < len(text) {
