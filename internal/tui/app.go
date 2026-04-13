@@ -310,13 +310,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, func() tea.Msg {
 			ctx := context.Background()
 			_, err := m.app.Events.Create(ctx, event.CreateParams{
-				CalendarID:  msg.CalendarID,
-				Title:       msg.Title,
-				Description: msg.Description,
-				Location:    msg.Location,
-				StartTime:   msg.StartTime,
-				EndTime:     msg.EndTime,
-				AllDay:      msg.AllDay,
+				CalendarID:     msg.CalendarID,
+				Title:          msg.Title,
+				Description:    msg.Description,
+				Location:       msg.Location,
+				StartTime:      msg.StartTime,
+				EndTime:        msg.EndTime,
+				AllDay:         msg.AllDay,
+				RecurrenceRule: msg.RecurrenceRule,
 			})
 			return eventCreatedMsg{err: err}
 		}
@@ -728,6 +729,10 @@ func (m Model) View() tea.View {
 		if m.form.DatePickerOpen() {
 			pw, ph := m.form.DatePickerBoxSize()
 			v.Content = m.compositeOverlay(v.Content, m.form.DatePickerView(), pw, ph)
+		}
+		if m.form.EndsDatePickerOpen() {
+			pw, ph := m.form.DatePickerBoxSize()
+			v.Content = m.compositeOverlay(v.Content, m.form.EndsDatePickerView(), pw, ph)
 		}
 	}
 	if m.choiceOpen {
