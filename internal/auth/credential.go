@@ -66,11 +66,6 @@ func NewCredentialStore(allowPlaintext bool) (CredentialStore, error) {
 	return nil, fmt.Errorf("no secure credential store available: %w; use --allow-plaintext to store credentials in plaintext, or install a keyring provider", keyringUnavailableReason())
 }
 
-// keyringAvailable returns true if the OS keyring is usable.
-func keyringAvailable() bool {
-	return keyringUnavailableReason() == nil
-}
-
 func keyringUnavailableReason() error {
 	return keyringUnavailableReasonFn()
 }
