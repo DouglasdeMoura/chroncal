@@ -1,6 +1,9 @@
 package tui
 
 import (
+	"strings"
+	"unicode/utf8"
+
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
@@ -69,10 +72,15 @@ func (m ConfirmDialogModel) Update(msg tea.Msg) (ConfirmDialogModel, tea.Cmd) {
 }
 
 func (m ConfirmDialogModel) handleKey(msg tea.KeyPressMsg) (ConfirmDialogModel, tea.Cmd) {
+	confirmShortcut := matchesButtonInitial(msg, m.confirmLabel)
+	cancelShortcut := matchesButtonInitial(msg, "Cancel")
+
 	switch {
-	case key.Matches(msg, m.keys.Close), key.Matches(msg, m.keys.No):
+	case key.Matches(msg, m.keys.Close):
 		return m, func() tea.Msg { return ConfirmDialogResultMsg{Confirmed: false} }
-	case key.Matches(msg, m.keys.Yes):
+	case cancelShortcut && !confirmShortcut, key.Matches(msg, m.keys.No):
+		return m, func() tea.Msg { return ConfirmDialogResultMsg{Confirmed: false} }
+	case confirmShortcut && !cancelShortcut, key.Matches(msg, m.keys.Yes):
 		return m, func() tea.Msg { return ConfirmDialogResultMsg{Confirmed: true} }
 	case key.Matches(msg, m.keys.LeftRight), key.Matches(msg, m.keys.Tab):
 		m.selectedNo = !m.selectedNo
@@ -117,10 +125,10 @@ func (m ConfirmDialogModel) buttonBarOrigin() (int, int) {
 	confirmBtn := button(m.confirmLabel, 0, false)
 	cancelBtn := button("Cancel", 0, false)
 	buttonsW := lipgloss.Width(confirmBtn) + 1 + lipgloss.Width(cancelBtn)
-	contentW := boxW - 4
+	contentW := boxW - 8
 	centerOffset := (contentW - buttonsW) / 2
 
-	return dialogX + 2 + centerOffset, dialogY + boxH - 2
+	return dialogX + 4 + centerOffset, dialogY + boxH - 3
 }
 
 func (m ConfirmDialogModel) View() string {
@@ -134,4 +142,15 @@ func (m ConfirmDialogModel) View() string {
 		Padding(1, 3).
 		Border(lipgloss.RoundedBorder()).
 		Render(content)
+}
+
+func matchesButtonInitial(msg tea.KeyPressMsg, label string) bool {
+	if msg.Text == "" || label == "" {
+		return false
+	}
+	initial, _ := utf8.DecodeRuneInString(label)
+	if initial == utf8.RuneError {
+		return false
+	}
+	return strings.EqualFold(msg.Text, string(initial))
 }

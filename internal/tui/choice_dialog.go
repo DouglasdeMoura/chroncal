@@ -120,10 +120,10 @@ func (m ChoiceDialogModel) buttonBarOrigin() (int, int) {
 		buttonsW += lipgloss.Width(button(label, 0, false)) + 1
 	}
 	buttonsW += lipgloss.Width(button("Cancel", 0, false))
-	contentW := boxW - 4
+	contentW := boxW - 8
 	centerOffset := (contentW - buttonsW) / 2
 
-	return dialogX + 2 + centerOffset, dialogY + boxH - 2
+	return dialogX + 4 + centerOffset, dialogY + boxH - 3
 }
 
 func (m ChoiceDialogModel) View() string {
