@@ -4,10 +4,11 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/caldav"
@@ -173,7 +174,7 @@ func printFreeBusy(w io.Writer, label string, remote bool, result freebusy.Resul
 	if remote {
 		scope = "remote"
 	}
-	fmt.Fprintf(w, "%s free/busy for %s\n", strings.Title(scope), label)
+	fmt.Fprintf(w, "%s free/busy for %s\n", cases.Title(language.English).String(scope), label)
 	fmt.Fprintf(w, "  Range: %s - %s\n", result.Start.Local().Format("2006-01-02 15:04"), result.End.Local().Format("2006-01-02 15:04"))
 	if len(result.Periods) == 0 {
 		fmt.Fprintln(w, "  No busy periods.")
