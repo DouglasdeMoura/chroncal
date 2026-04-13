@@ -103,30 +103,7 @@ again updates existing items instead of blindly duplicating them.`,
 				if err != nil {
 					return fmt.Errorf("upsert event %q: %w", safeText(e.Title), err)
 				}
-				if len(e.Alarms) > 0 {
-					_ = a.Events.ReplaceAlarms(ctx, saved.ID, e.Alarms)
-				}
-				if len(e.Attendees) > 0 {
-					_ = a.Events.ReplaceAttendees(ctx, saved.ID, e.Attendees)
-				}
-				if len(e.Attachments) > 0 {
-					_ = a.Events.ReplaceAttachments(ctx, saved.ID, e.Attachments)
-				}
-				if len(e.Comments) > 0 {
-					_ = a.Events.ReplaceComments(ctx, saved.ID, e.Comments)
-				}
-				if len(e.Contacts) > 0 {
-					_ = a.Events.ReplaceContacts(ctx, saved.ID, e.Contacts)
-				}
-				if len(e.Resources) > 0 {
-					_ = a.Events.ReplaceResources(ctx, saved.ID, e.Resources)
-				}
-				if len(e.Relations) > 0 {
-					_ = a.Events.ReplaceRelations(ctx, saved.ID, e.Relations)
-				}
-				if len(e.XProperties) > 0 {
-					_ = a.Events.ReplaceXProperties(ctx, saved.ID, e.XProperties)
-				}
+				importEventFields(ctx, a.Events, saved.ID, e)
 				importedEvents = append(importedEvents, saved)
 				if lookupErr != nil {
 					newEvents++
@@ -155,30 +132,7 @@ again updates existing items instead of blindly duplicating them.`,
 				if err != nil {
 					return fmt.Errorf("upsert todo %q: %w", safeText(t.Summary), err)
 				}
-				if len(t.Alarms) > 0 {
-					_ = a.Todos.ReplaceAlarms(ctx, saved.ID, t.Alarms)
-				}
-				if len(t.Attendees) > 0 {
-					_ = a.Todos.ReplaceAttendees(ctx, saved.ID, t.Attendees)
-				}
-				if len(t.Attachments) > 0 {
-					_ = a.Todos.ReplaceAttachments(ctx, saved.ID, t.Attachments)
-				}
-				if len(t.Comments) > 0 {
-					_ = a.Todos.ReplaceComments(ctx, saved.ID, t.Comments)
-				}
-				if len(t.Contacts) > 0 {
-					_ = a.Todos.ReplaceContacts(ctx, saved.ID, t.Contacts)
-				}
-				if len(t.Resources) > 0 {
-					_ = a.Todos.ReplaceResources(ctx, saved.ID, t.Resources)
-				}
-				if len(t.Relations) > 0 {
-					_ = a.Todos.ReplaceRelations(ctx, saved.ID, t.Relations)
-				}
-				if len(t.XProperties) > 0 {
-					_ = a.Todos.ReplaceXProperties(ctx, saved.ID, t.XProperties)
-				}
+				importTodoFields(ctx, a.Todos, saved.ID, t)
 				importedTodos = append(importedTodos, saved)
 				if lookupErr != nil {
 					newTodos++
@@ -205,24 +159,7 @@ again updates existing items instead of blindly duplicating them.`,
 				if err != nil {
 					return fmt.Errorf("upsert journal %q: %w", safeText(j.Summary), err)
 				}
-				if len(j.Attendees) > 0 {
-					_ = a.Journals.ReplaceAttendees(ctx, saved.ID, j.Attendees)
-				}
-				if len(j.Attachments) > 0 {
-					_ = a.Journals.ReplaceAttachments(ctx, saved.ID, j.Attachments)
-				}
-				if len(j.Comments) > 0 {
-					_ = a.Journals.ReplaceComments(ctx, saved.ID, j.Comments)
-				}
-				if len(j.Contacts) > 0 {
-					_ = a.Journals.ReplaceContacts(ctx, saved.ID, j.Contacts)
-				}
-				if len(j.Relations) > 0 {
-					_ = a.Journals.ReplaceRelations(ctx, saved.ID, j.Relations)
-				}
-				if len(j.XProperties) > 0 {
-					_ = a.Journals.ReplaceXProperties(ctx, saved.ID, j.XProperties)
-				}
+				importJournalFields(ctx, a.Journals, saved.ID, j)
 				importedJournals = append(importedJournals, saved)
 				if lookupErr != nil {
 					newJournals++
