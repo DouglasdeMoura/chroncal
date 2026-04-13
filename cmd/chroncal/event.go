@@ -205,13 +205,7 @@ recurring series.`,
 				return fmt.Errorf("get event: %w", err)
 			}
 
-			e.Alarms, _ = a.Events.ListAlarms(ctx, e.ID)
-			e.Attendees, _ = a.Events.ListAttendees(ctx, e.ID)
-			e.Attachments, _ = a.Events.ListAttachments(ctx, e.ID)
-			e.Comments, _ = a.Events.ListComments(ctx, e.ID)
-			e.Contacts, _ = a.Events.ListContacts(ctx, e.ID)
-			e.Resources, _ = a.Events.ListResources(ctx, e.ID)
-			e.Relations, _ = a.Events.ListRelations(ctx, e.ID)
+			populateEventFields(ctx, a.Events, &e)
 
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
@@ -511,13 +505,7 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 			}
 
 			// Re-read event with related data so JSON output is complete.
-			e.Alarms, _ = a.Events.ListAlarms(ctx, e.ID)
-			e.Attendees, _ = a.Events.ListAttendees(ctx, e.ID)
-			e.Attachments, _ = a.Events.ListAttachments(ctx, e.ID)
-			e.Comments, _ = a.Events.ListComments(ctx, e.ID)
-			e.Contacts, _ = a.Events.ListContacts(ctx, e.ID)
-			e.Resources, _ = a.Events.ListResources(ctx, e.ID)
-			e.Relations, _ = a.Events.ListRelations(ctx, e.ID)
+			populateEventFields(ctx, a.Events, &e)
 
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
@@ -877,13 +865,7 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 			}
 
 			// Re-read event with related data so output is complete.
-			e.Alarms, _ = a.Events.ListAlarms(ctx, e.ID)
-			e.Attendees, _ = a.Events.ListAttendees(ctx, e.ID)
-			e.Attachments, _ = a.Events.ListAttachments(ctx, e.ID)
-			e.Comments, _ = a.Events.ListComments(ctx, e.ID)
-			e.Contacts, _ = a.Events.ListContacts(ctx, e.ID)
-			e.Resources, _ = a.Events.ListResources(ctx, e.ID)
-			e.Relations, _ = a.Events.ListRelations(ctx, e.ID)
+			populateEventFields(ctx, a.Events, &e)
 
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {

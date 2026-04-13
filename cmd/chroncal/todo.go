@@ -186,13 +186,7 @@ specific overridden instance from a recurring series.`,
 				return fmt.Errorf("get todo: %w", err)
 			}
 
-			t.Alarms, _ = a.Todos.ListAlarms(ctx, t.ID)
-			t.Attendees, _ = a.Todos.ListAttendees(ctx, t.ID)
-			t.Attachments, _ = a.Todos.ListAttachments(ctx, t.ID)
-			t.Comments, _ = a.Todos.ListComments(ctx, t.ID)
-			t.Contacts, _ = a.Todos.ListContacts(ctx, t.ID)
-			t.Resources, _ = a.Todos.ListResources(ctx, t.ID)
-			t.Relations, _ = a.Todos.ListRelations(ctx, t.ID)
+			populateTodoFields(ctx, a.Todos, &t)
 
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
@@ -460,13 +454,7 @@ and percent-complete to 100.`,
 			}
 
 			// Re-read related data for output
-			t.Alarms, _ = a.Todos.ListAlarms(ctx, t.ID)
-			t.Attendees, _ = a.Todos.ListAttendees(ctx, t.ID)
-			t.Attachments, _ = a.Todos.ListAttachments(ctx, t.ID)
-			t.Comments, _ = a.Todos.ListComments(ctx, t.ID)
-			t.Contacts, _ = a.Todos.ListContacts(ctx, t.ID)
-			t.Resources, _ = a.Todos.ListResources(ctx, t.ID)
-			t.Relations, _ = a.Todos.ListRelations(ctx, t.ID)
+			populateTodoFields(ctx, a.Todos, &t)
 
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
@@ -814,13 +802,7 @@ a --progress value other than 100.`,
 			}
 
 			// Re-read related data for output
-			t.Alarms, _ = a.Todos.ListAlarms(ctx, t.ID)
-			t.Attendees, _ = a.Todos.ListAttendees(ctx, t.ID)
-			t.Attachments, _ = a.Todos.ListAttachments(ctx, t.ID)
-			t.Comments, _ = a.Todos.ListComments(ctx, t.ID)
-			t.Contacts, _ = a.Todos.ListContacts(ctx, t.ID)
-			t.Resources, _ = a.Todos.ListResources(ctx, t.ID)
-			t.Relations, _ = a.Todos.ListRelations(ctx, t.ID)
+			populateTodoFields(ctx, a.Todos, &t)
 
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {

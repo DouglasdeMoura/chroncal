@@ -372,14 +372,7 @@ to stdout.`,
 				}
 
 				for i := range events {
-					events[i].Alarms, _ = a.Events.ListAlarms(ctx, events[i].ID)
-					events[i].Attendees, _ = a.Events.ListAttendees(ctx, events[i].ID)
-					events[i].Attachments, _ = a.Events.ListAttachments(ctx, events[i].ID)
-					events[i].Comments, _ = a.Events.ListComments(ctx, events[i].ID)
-					events[i].Contacts, _ = a.Events.ListContacts(ctx, events[i].ID)
-					events[i].Resources, _ = a.Events.ListResources(ctx, events[i].ID)
-					events[i].Relations, _ = a.Events.ListRelations(ctx, events[i].ID)
-					events[i].XProperties, _ = a.Events.ListXProperties(ctx, events[i].ID)
+					populateEventFields(ctx, a.Events, &events[i])
 				}
 			}
 
@@ -395,14 +388,7 @@ to stdout.`,
 					return fmt.Errorf("list todos: %w", err)
 				}
 				for i := range todos {
-					todos[i].Alarms, _ = a.Todos.ListAlarms(ctx, todos[i].ID)
-					todos[i].Attendees, _ = a.Todos.ListAttendees(ctx, todos[i].ID)
-					todos[i].Attachments, _ = a.Todos.ListAttachments(ctx, todos[i].ID)
-					todos[i].Comments, _ = a.Todos.ListComments(ctx, todos[i].ID)
-					todos[i].Contacts, _ = a.Todos.ListContacts(ctx, todos[i].ID)
-					todos[i].Resources, _ = a.Todos.ListResources(ctx, todos[i].ID)
-					todos[i].Relations, _ = a.Todos.ListRelations(ctx, todos[i].ID)
-					todos[i].XProperties, _ = a.Todos.ListXProperties(ctx, todos[i].ID)
+					populateTodoFields(ctx, a.Todos, &todos[i])
 				}
 			}
 
@@ -418,12 +404,7 @@ to stdout.`,
 					return fmt.Errorf("list journals: %w", err)
 				}
 				for i := range journals {
-					journals[i].Attendees, _ = a.Journals.ListAttendees(ctx, journals[i].ID)
-					journals[i].Attachments, _ = a.Journals.ListAttachments(ctx, journals[i].ID)
-					journals[i].Comments, _ = a.Journals.ListComments(ctx, journals[i].ID)
-					journals[i].Contacts, _ = a.Journals.ListContacts(ctx, journals[i].ID)
-					journals[i].Relations, _ = a.Journals.ListRelations(ctx, journals[i].ID)
-					journals[i].XProperties, _ = a.Journals.ListXProperties(ctx, journals[i].ID)
+					populateJournalFields(ctx, a.Journals, &journals[i])
 				}
 			}
 

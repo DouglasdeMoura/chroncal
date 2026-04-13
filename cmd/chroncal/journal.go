@@ -126,11 +126,7 @@ specific overridden instance from a recurring series.`,
 				return fmt.Errorf("get journal: %w", err)
 			}
 
-			j.Attendees, _ = a.Journals.ListAttendees(ctx, j.ID)
-			j.Attachments, _ = a.Journals.ListAttachments(ctx, j.ID)
-			j.Comments, _ = a.Journals.ListComments(ctx, j.ID)
-			j.Contacts, _ = a.Journals.ListContacts(ctx, j.ID)
-			j.Relations, _ = a.Journals.ListRelations(ctx, j.ID)
+			populateJournalFields(ctx, a.Journals, &j)
 
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
@@ -308,11 +304,7 @@ Defaults: status=FINAL, class=PUBLIC, calendar=Personal.`,
 			}
 
 			// Re-read related data for output
-			j.Attendees, _ = a.Journals.ListAttendees(ctx, j.ID)
-			j.Attachments, _ = a.Journals.ListAttachments(ctx, j.ID)
-			j.Comments, _ = a.Journals.ListComments(ctx, j.ID)
-			j.Contacts, _ = a.Journals.ListContacts(ctx, j.ID)
-			j.Relations, _ = a.Journals.ListRelations(ctx, j.ID)
+			populateJournalFields(ctx, a.Journals, &j)
 
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
@@ -545,11 +537,7 @@ Repeatable flags (--attendee, --comment, --contact, --attach,
 			}
 
 			// Re-read related data for output
-			j.Attendees, _ = a.Journals.ListAttendees(ctx, j.ID)
-			j.Attachments, _ = a.Journals.ListAttachments(ctx, j.ID)
-			j.Comments, _ = a.Journals.ListComments(ctx, j.ID)
-			j.Contacts, _ = a.Journals.ListContacts(ctx, j.ID)
-			j.Relations, _ = a.Journals.ListRelations(ctx, j.ID)
+			populateJournalFields(ctx, a.Journals, &j)
 
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
