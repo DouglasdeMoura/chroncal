@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
@@ -60,6 +61,7 @@ type RecurrenceEditorModel struct {
 	startDate time.Time
 	preview   []time.Time
 
+	help   help.Model
 	width  int
 	height int
 	theme  Theme
@@ -79,6 +81,9 @@ func NewRecurrenceEditorModel(startDate time.Time, w, h int, theme Theme) Recurr
 	var weekDays [7]bool
 	weekDays[int(startDate.Weekday())] = true
 
+	h2 := help.New()
+	h2.ShortSeparator = " · "
+
 	m := RecurrenceEditorModel{
 		freqIdx:       1, // Weekly
 		interval:      intervalInput,
@@ -89,6 +94,7 @@ func NewRecurrenceEditorModel(startDate time.Time, w, h int, theme Theme) Recurr
 		endsDate:      startDate.AddDate(0, 3, 0),
 		focusField:    refFreq,
 		startDate:     startDate,
+		help:          h2,
 		width:         w,
 		height:        h,
 		theme:         theme,
@@ -179,10 +185,10 @@ func (m RecurrenceEditorModel) handleKey(msg tea.KeyPressMsg) (RecurrenceEditorM
 	keys := struct {
 		Tab, ShiftTab, Enter, Close key.Binding
 	}{
-		Tab:      key.NewBinding(key.WithKeys("tab")),
-		ShiftTab: key.NewBinding(key.WithKeys("shift+tab")),
-		Enter:    key.NewBinding(key.WithKeys("enter")),
-		Close:    key.NewBinding(key.WithKeys("esc")),
+		Tab:      key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
+		ShiftTab: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev field")),
+		Enter:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
+		Close:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")),
 	}
 
 	switch {
@@ -441,7 +447,6 @@ func (m RecurrenceEditorModel) BoxSize() (int, int) {
 func (m RecurrenceEditorModel) EndsDatePickerView() string {
 	const boxW = 50
 	innerW := boxW - 6
-	faint := lipgloss.NewStyle().Faint(true)
 	bold := lipgloss.NewStyle().Bold(true)
 
 	const gridW = 20
@@ -451,9 +456,10 @@ func (m RecurrenceEditorModel) EndsDatePickerView() string {
 	monthPad := gridPad + max((gridW-len(monthStr))/2, 0)
 	lines = append(lines, strings.Repeat(" ", monthPad)+bold.Render(monthStr))
 	lines = append(lines, renderMiniCalendar(m.endsDate, time.Now(), gridPad, m.theme))
-	helpStr := "\u2190\u2191\u2192\u2193: navigate  \u00b7  [/]: month  \u00b7  t: today"
-	helpPad := max((innerW-lipgloss.Width(helpStr))/2, 0)
-	lines = append(lines, strings.Repeat(" ", helpPad)+faint.Render(helpStr))
+	m.help.SetWidth(innerW)
+	dpHelp := m.help.ShortHelpView(datePickerHelpKeys())
+	dpHelpPad := max((innerW-lipgloss.Width(dpHelp))/2, 0)
+	lines = append(lines, strings.Repeat(" ", dpHelpPad)+dpHelp)
 
 	return lipgloss.NewStyle().
 		Width(boxW).
@@ -573,8 +579,14 @@ func (m RecurrenceEditorModel) View() string {
 	lines = append(lines, strings.Repeat(" ", pad)+buttons)
 
 	lines = append(lines, "")
-	help := faint.Render("tab: fields  \u00b7  enter: confirm  \u00b7  esc: close")
-	lines = append(lines, truncateTo(help, innerW))
+	m.help.SetWidth(innerW)
+	helpKeys := []key.Binding{
+		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "fields")),
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")),
+	}
+	helpText := m.help.ShortHelpView(helpKeys)
+	lines = append(lines, truncateTo(helpText, innerW))
 
 	content := strings.Join(lines, "\n")
 

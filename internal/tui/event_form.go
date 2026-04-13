@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
@@ -85,6 +86,24 @@ type eventFormKeyMap struct {
 	Close    key.Binding
 }
 
+func (k eventFormKeyMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Tab, k.Enter, k.Close}
+}
+
+func (k eventFormKeyMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		{k.Tab, k.ShiftTab, k.Enter, k.Close},
+	}
+}
+
+func datePickerHelpKeys() []key.Binding {
+	return []key.Binding{
+		key.NewBinding(key.WithKeys("left", "up", "right", "down"), key.WithHelp("arrows", "navigate")),
+		key.NewBinding(key.WithKeys("[", "]"), key.WithHelp("[/]", "month")),
+		key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "today")),
+	}
+}
+
 // EventFormModel is the Bubble Tea model for the event creation form.
 type EventFormModel struct {
 	day         time.Time
@@ -111,6 +130,7 @@ type EventFormModel struct {
 	errMsg         string
 
 	keys   eventFormKeyMap
+	help   help.Model
 	width  int
 	height int
 	theme  Theme
@@ -179,13 +199,18 @@ func NewEventFormModel(day time.Time, calendars map[int64]CalendarInfo, theme Th
 		description: descInput,
 		endsCount:   endsCountInput,
 		endsDate:    day.AddDate(0, 1, 0),
-		focusField:  fieldTitle,
-		theme:       theme,
+		focusField: fieldTitle,
+		theme:     theme,
+		help: func() help.Model {
+			h := help.New()
+			h.ShortSeparator = " · "
+			return h
+		}(),
 		keys: eventFormKeyMap{
-			Tab:      key.NewBinding(key.WithKeys("tab")),
-			ShiftTab: key.NewBinding(key.WithKeys("shift+tab")),
-			Enter:    key.NewBinding(key.WithKeys("enter")),
-			Close:    key.NewBinding(key.WithKeys("esc")),
+			Tab:      key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
+			ShiftTab: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev field")),
+			Enter:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
+			Close:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")),
 		},
 	}, cmd
 }
@@ -628,7 +653,6 @@ func (m EventFormModel) EndsDatePickerView() string {
 	boxW, _ := m.DatePickerBoxSize()
 	innerW := boxW - 6
 
-	faint := lipgloss.NewStyle().Faint(true)
 	bold := lipgloss.NewStyle().Bold(true)
 
 	const gridW = 20
@@ -638,10 +662,10 @@ func (m EventFormModel) EndsDatePickerView() string {
 	monthPad := gridPad + max((gridW-len(monthStr))/2, 0)
 	lines = append(lines, strings.Repeat(" ", monthPad)+bold.Render(monthStr))
 	lines = append(lines, renderMiniCalendar(m.endsDate, time.Now(), gridPad, m.theme))
-	helpStr := "\u2190\u2191\u2192\u2193: navigate  \u00b7  [/]: month  \u00b7  t: today"
-	helpPad := max((innerW-lipgloss.Width(helpStr))/2, 0)
-	help := strings.Repeat(" ", helpPad) + faint.Render(helpStr)
-	lines = append(lines, help)
+	m.help.SetWidth(innerW)
+	dpHelp := m.help.ShortHelpView(datePickerHelpKeys())
+	dpHelpPad := max((innerW-lipgloss.Width(dpHelp))/2, 0)
+	lines = append(lines, strings.Repeat(" ", dpHelpPad)+dpHelp)
 
 	content := strings.Join(lines, "\n")
 	boxH := 13
@@ -675,7 +699,6 @@ func (m EventFormModel) DatePickerView() string {
 	boxW, boxH := m.DatePickerBoxSize()
 	innerW := boxW - 6
 
-	faint := lipgloss.NewStyle().Faint(true)
 	bold := lipgloss.NewStyle().Bold(true)
 
 	const gridW = 20 // width of "Su Mo Tu We Th Fr Sa"
@@ -685,10 +708,10 @@ func (m EventFormModel) DatePickerView() string {
 	monthPad := gridPad + max((gridW-len(monthStr))/2, 0)
 	lines = append(lines, strings.Repeat(" ", monthPad)+bold.Render(monthStr))
 	lines = append(lines, renderMiniCalendar(m.day, time.Now(), gridPad, m.theme))
-	helpStr := "\u2190\u2191\u2192\u2193: navigate  \u00b7  [/]: month  \u00b7  t: today"
-	helpPad := max((innerW-lipgloss.Width(helpStr))/2, 0)
-	help := strings.Repeat(" ", helpPad) + faint.Render(helpStr)
-	lines = append(lines, help)
+	m.help.SetWidth(innerW)
+	dpHelp := m.help.ShortHelpView(datePickerHelpKeys())
+	dpHelpPad := max((innerW-lipgloss.Width(dpHelp))/2, 0)
+	lines = append(lines, strings.Repeat(" ", dpHelpPad)+dpHelp)
 
 	content := strings.Join(lines, "\n")
 
@@ -943,8 +966,9 @@ func (m EventFormModel) View() string {
 	lines = append(lines, "")
 
 	// Help
-	help := faint.Render("tab: fields  \u00b7  enter: confirm  \u00b7  esc: close")
-	lines = append(lines, truncateTo(help, innerW))
+	m.help.SetWidth(innerW)
+	helpText := m.help.ShortHelpView(m.keys.ShortHelp())
+	lines = append(lines, truncateTo(helpText, innerW))
 
 	content := strings.Join(lines, "\n")
 

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
 	uv "github.com/charmbracelet/ultraviolet"
@@ -30,6 +32,63 @@ const (
 	viewWeek
 	viewDay
 )
+
+type appKeyMap struct {
+	Quit        key.Binding
+	MonthView   key.Binding
+	WeekView    key.Binding
+	DayView     key.Binding
+	Sidebar     key.Binding
+	Create      key.Binding
+	SwitchFocus key.Binding
+	Help        key.Binding
+}
+
+func defaultAppKeys() appKeyMap {
+	return appKeyMap{
+		Quit:        key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+		MonthView:   key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "month")),
+		WeekView:    key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "week")),
+		DayView:     key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "day")),
+		Sidebar:     key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sidebar")),
+		Create:      key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "create")),
+		SwitchFocus: key.NewBinding(key.WithKeys("tab", "shift+tab"), key.WithHelp("tab", "switch focus")),
+		Help:        key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+	}
+}
+
+// compositeKeyMap merges app-level and view-level keybindings for the help view.
+type compositeKeyMap struct {
+	viewShort []key.Binding
+	viewFull  [][]key.Binding
+	appKeys   appKeyMap
+}
+
+func (c compositeKeyMap) ShortHelp() []key.Binding {
+	return append(c.viewShort,
+		c.appKeys.Create,
+		c.appKeys.Sidebar,
+		c.appKeys.MonthView,
+		c.appKeys.WeekView,
+		c.appKeys.DayView,
+		c.appKeys.Help,
+		c.appKeys.Quit,
+	)
+}
+
+func (c compositeKeyMap) FullHelp() [][]key.Binding {
+	appGroup := []key.Binding{
+		c.appKeys.Create,
+		c.appKeys.MonthView,
+		c.appKeys.WeekView,
+		c.appKeys.DayView,
+		c.appKeys.Sidebar,
+		c.appKeys.SwitchFocus,
+		c.appKeys.Help,
+		c.appKeys.Quit,
+	}
+	return append(c.viewFull, appGroup)
+}
 
 type eventsLoadedMsg struct {
 	events []event.Event
@@ -56,6 +115,8 @@ type eventDeletedMsg struct {
 type Model struct {
 	app            *app.App
 	theme          Theme
+	keys           appKeyMap
+	help           help.Model
 	width          int
 	height         int
 	viewMode       viewMode
@@ -90,8 +151,13 @@ func NewModel(a *app.App) Model {
 	case "day":
 		vm = viewDay
 	}
+	h := help.New()
+	h.ShortSeparator = " · "
+
 	return Model{
 		app:         a,
+		keys:        defaultAppKeys(),
+		help:        h,
 		viewMode:    vm,
 		calendar:    NewCalendarModel(now),
 		week:        NewWeekModel(now),
@@ -195,10 +261,16 @@ func (m Model) Init() tea.Cmd {
 
 const sidebarWidth = 30
 
+func (m Model) footerHeight() int {
+	if m.help.ShowAll {
+		return 8
+	}
+	return 1
+}
+
 func (m Model) mainDims() (int, int) {
 	padding := 1
-	footerHeight := 1
-	contentHeight := m.height - footerHeight - padding*2
+	contentHeight := m.height - m.footerHeight() - padding*2
 	mainWidth := m.width - padding*2
 	if m.showSidebar {
 		mainWidth -= sidebarWidth
@@ -248,6 +320,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.calendar = m.calendar.SetSelectedColor(m.theme.Text)
 		m.week = m.week.SetSelectedColor(m.theme.Text)
 		m.day = m.day.SetSelectedColor(m.theme.Text)
+		m.help.Styles = help.Styles{
+			ShortKey:       lipgloss.NewStyle().Foreground(m.theme.Text),
+			ShortDesc:      lipgloss.NewStyle().Foreground(m.theme.TextDim),
+			ShortSeparator: lipgloss.NewStyle().Foreground(m.theme.Muted),
+			FullKey:        lipgloss.NewStyle().Foreground(m.theme.Text),
+			FullDesc:       lipgloss.NewStyle().Foreground(m.theme.TextDim),
+			FullSeparator:  lipgloss.NewStyle().Foreground(m.theme.Muted),
+			Ellipsis:       lipgloss.NewStyle().Foreground(m.theme.Muted),
+		}
 		return m, nil
 
 	case tea.WindowSizeMsg:
@@ -586,34 +667,47 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.dialog, cmd = m.dialog.Update(msg)
 			return m, cmd
 		}
-		switch msg.String() {
-		case "q", "ctrl+c":
+		switch {
+		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
-		case "w":
-			switch m.viewMode {
-			case viewMonth:
-				m.viewMode = viewWeek
-				m.week.cursor = m.calendar.cursor
-				m.week.today = m.calendar.today
-			case viewWeek:
-				m.viewMode = viewDay
-				m.day.cursor = m.week.cursor
-				m.day.today = m.week.today
-			case viewDay:
-				m.viewMode = viewMonth
-				m.calendar.cursor = m.day.cursor
-				m.calendar.today = m.day.today
-				if m.calendar.cursor.Year() != m.calendar.month.Year() || m.calendar.cursor.Month() != m.calendar.month.Month() {
-					m.calendar.month = time.Date(m.calendar.cursor.Year(), m.calendar.cursor.Month(), 1, 0, 0, 0, 0, m.calendar.cursor.Location())
-				}
-			}
+		case key.Matches(msg, m.keys.Help):
+			m.help.ShowAll = !m.help.ShowAll
 			iw, ih := m.innerDims()
 			m.calendar = m.calendar.SetSize(iw, ih)
 			m.week = m.week.SetSize(iw, ih)
 			m.day = m.day.SetSize(iw, ih)
-			m.saveUIState()
-			return m, m.loadEvents()
-		case "s":
+			return m, nil
+		case key.Matches(msg, m.keys.MonthView):
+			if m.viewMode == viewMonth {
+				return m, nil
+			}
+			cursor, today := m.viewCursorAndToday()
+			m.viewMode = viewMonth
+			m.calendar.cursor = cursor
+			m.calendar.today = today
+			if m.calendar.cursor.Year() != m.calendar.month.Year() || m.calendar.cursor.Month() != m.calendar.month.Month() {
+				m.calendar.month = time.Date(cursor.Year(), cursor.Month(), 1, 0, 0, 0, 0, cursor.Location())
+			}
+			return m, m.switchView()
+		case key.Matches(msg, m.keys.WeekView):
+			if m.viewMode == viewWeek {
+				return m, nil
+			}
+			cursor, today := m.viewCursorAndToday()
+			m.viewMode = viewWeek
+			m.week.cursor = cursor
+			m.week.today = today
+			return m, m.switchView()
+		case key.Matches(msg, m.keys.DayView):
+			if m.viewMode == viewDay {
+				return m, nil
+			}
+			cursor, today := m.viewCursorAndToday()
+			m.viewMode = viewDay
+			m.day.cursor = cursor
+			m.day.today = today
+			return m, m.switchView()
+		case key.Matches(msg, m.keys.Sidebar):
 			m.showSidebar = !m.showSidebar
 			if !m.showSidebar {
 				m.focus = focusCalendar
@@ -624,7 +718,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.day = m.day.SetSize(iw, ih)
 			m.saveUIState()
 			return m, nil
-		case "tab", "shift+tab":
+		case key.Matches(msg, m.keys.SwitchFocus):
 			if m.showSidebar {
 				if m.focus == focusSidebar {
 					m.focus = focusCalendar
@@ -633,7 +727,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, nil
-		case "c":
+		case key.Matches(msg, m.keys.Create):
 			var cursor time.Time
 			switch m.viewMode {
 			case viewDay:
@@ -684,7 +778,6 @@ func (m Model) View() tea.View {
 	}
 
 	padding := 1
-	footerHeight := 1
 	mainWidth, contentHeight := m.mainDims()
 
 	var mainContent string
@@ -727,12 +820,12 @@ func (m Model) View() tea.View {
 		body = main
 	}
 
+	m.help.SetWidth(m.width - padding*4)
+	helpView := m.help.View(m.currentKeyMap())
 	footer := lipgloss.NewStyle().
 		Width(m.width - padding*2).
-		Height(footerHeight).
 		Padding(padding).
-		Foreground(m.theme.TextDim).
-		Render(m.footerHelp())
+		Render(helpView)
 
 	v.Content = lipgloss.JoinVertical(lipgloss.Left, body, footer)
 
@@ -812,6 +905,28 @@ func (m Model) compositeOverlay(background, overlay string, boxW, boxH int) stri
 	return buf.Render()
 }
 
+// viewCursorAndToday returns the cursor and today from whichever view is active.
+func (m Model) viewCursorAndToday() (time.Time, time.Time) {
+	switch m.viewMode {
+	case viewDay:
+		return m.day.cursor, m.day.today
+	case viewWeek:
+		return m.week.cursor, m.week.today
+	default:
+		return m.calendar.cursor, m.calendar.today
+	}
+}
+
+// switchView resizes all views and reloads events after a view mode change.
+func (m *Model) switchView() tea.Cmd {
+	iw, ih := m.innerDims()
+	m.calendar = m.calendar.SetSize(iw, ih)
+	m.week = m.week.SetSize(iw, ih)
+	m.day = m.day.SetSize(iw, ih)
+	m.saveUIState()
+	return m.loadEvents()
+}
+
 func (m Model) saveUIState() {
 	var vm string
 	switch m.viewMode {
@@ -825,22 +940,41 @@ func (m Model) saveUIState() {
 	_ = config.SaveUIState(config.UIState{ShowSidebar: m.showSidebar, ViewMode: vm})
 }
 
-func (m Model) footerHelp() string {
-	var parts string
+func (m Model) currentKeyMap() compositeKeyMap {
+	appKeys := m.keys
+	// Disable the binding for the currently active view.
+	switch m.viewMode {
+	case viewMonth:
+		appKeys.MonthView.SetEnabled(false)
+	case viewWeek:
+		appKeys.WeekView.SetEnabled(false)
+	case viewDay:
+		appKeys.DayView.SetEnabled(false)
+	}
+	// Only show SwitchFocus when sidebar is visible.
+	appKeys.SwitchFocus.SetEnabled(m.showSidebar)
+
+	var viewShort []key.Binding
+	var viewFull [][]key.Binding
 	switch m.viewMode {
 	case viewDay:
-		parts = "chroncal  ·  jk/↑↓: scroll  ·  hl/←→: day  ·  [/]: week  ·  t: today  ·  enter: select  ·  w: month"
+		k := m.day.keys
+		viewShort = k.ShortHelp()
+		viewFull = k.FullHelp()
 	case viewWeek:
-		parts = "chroncal  ·  jk/↑↓: scroll  ·  hl/←→: day  ·  [/]: week  ·  t: today  ·  enter: select  ·  w: day"
+		k := m.week.keys
+		viewShort = k.ShortHelp()
+		viewFull = k.FullHelp()
 	default:
-		parts = "chroncal  ·  hjkl/arrows: move  ·  [/]: month  ·  t: today  ·  enter: select  ·  w: week"
+		k := m.calendar.keys
+		viewShort = k.ShortHelp()
+		viewFull = k.FullHelp()
 	}
-	parts += "  ·  c: create"
-	if m.showSidebar {
-		parts += "  ·  tab: switch"
+	return compositeKeyMap{
+		viewShort: viewShort,
+		viewFull:  viewFull,
+		appKeys:   appKeys,
 	}
-	parts += "  ·  s: sidebar  ·  q: quit"
-	return parts
 }
 
 func Run(a *app.App) error {

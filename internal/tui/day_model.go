@@ -21,6 +21,17 @@ type dayKeyMap struct {
 	Select     key.Binding
 }
 
+func (k dayKeyMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.ScrollUp, k.ScrollDown, k.PrevDay, k.NextDay, k.PrevWeek, k.NextWeek, k.Today, k.Select}
+}
+
+func (k dayKeyMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		{k.ScrollUp, k.ScrollDown, k.PrevDay, k.NextDay},
+		{k.PrevWeek, k.NextWeek, k.Today, k.Select},
+	}
+}
+
 func defaultDayKeys() dayKeyMap {
 	return dayKeyMap{
 		ScrollUp:   key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "scroll up")),

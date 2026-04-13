@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
@@ -55,22 +56,34 @@ type eventDialogKeyMap struct {
 	Enter     key.Binding
 }
 
+func (k eventDialogKeyMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Tab, k.Left, k.Right, k.Up, k.Down, k.Create, k.Close}
+}
+
+func (k eventDialogKeyMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		{k.Up, k.Down, k.Left, k.Right, k.Tab},
+		{k.Edit, k.Delete, k.Create, k.Enter, k.Close},
+		{k.RSVPYes, k.RSVPNo, k.RSVPMaybe},
+	}
+}
+
 func defaultEventDialogKeys() eventDialogKeyMap {
 	return eventDialogKeyMap{
-		Up:        key.NewBinding(key.WithKeys("up", "k")),
-		Down:      key.NewBinding(key.WithKeys("down", "j")),
-		Left:      key.NewBinding(key.WithKeys("left", "h")),
-		Right:     key.NewBinding(key.WithKeys("right", "l")),
-		Close:     key.NewBinding(key.WithKeys("esc", "q")),
-		Edit:      key.NewBinding(key.WithKeys("e")),
-		Delete:    key.NewBinding(key.WithKeys("d")),
-		Create:    key.NewBinding(key.WithKeys("c")),
-		RSVPYes:   key.NewBinding(key.WithKeys("y")),
-		RSVPNo:    key.NewBinding(key.WithKeys("n")),
-		RSVPMaybe: key.NewBinding(key.WithKeys("m")),
-		Tab:       key.NewBinding(key.WithKeys("tab")),
-		ShiftTab:  key.NewBinding(key.WithKeys("shift+tab")),
-		Enter:     key.NewBinding(key.WithKeys("enter", " ")),
+		Up:        key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
+		Down:      key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+		Left:      key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "prev day")),
+		Right:     key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next day")),
+		Close:     key.NewBinding(key.WithKeys("esc", "q"), key.WithHelp("esc", "close")),
+		Edit:      key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
+		Delete:    key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
+		Create:    key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "create")),
+		RSVPYes:   key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "RSVP yes")),
+		RSVPNo:    key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "RSVP no")),
+		RSVPMaybe: key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "RSVP maybe")),
+		Tab:       key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "sections")),
+		ShiftTab:  key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev section")),
+		Enter:     key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter", "select")),
 	}
 }
 
@@ -105,6 +118,7 @@ type EventDialogModel struct {
 	focusedRSVP   int
 	focusZone     int // zoneEventList, zoneRSVP, or zoneActions
 	keys          eventDialogKeyMap
+	help          help.Model
 	selectedColor color.Color
 	width         int
 	height        int
@@ -127,11 +141,15 @@ func NewEventDialogModel(day time.Time, events []event.Event, calendars map[int6
 		}
 		return a.StartTime.Compare(b.StartTime)
 	})
+	h := help.New()
+	h.ShortSeparator = " · "
+
 	return EventDialogModel{
 		day:       day,
 		events:    events,
 		calendars: calendars,
 		keys:      defaultEventDialogKeys(),
+		help:      h,
 	}
 }
 
@@ -579,18 +597,14 @@ func (m EventDialogModel) View() string {
 
 	bodyH := max(innerH-4, 3)
 
-	var help, body string
+	m.help.SetWidth(innerW)
+	var helpText, body string
 
 	if len(m.events) == 0 {
-		help = lipgloss.NewStyle().
-			Faint(true).
-			Width(innerW).
-			Render("←/→: day  ·  enter/c: create  ·  esc: close")
+		emptyKeys := []key.Binding{m.keys.Left, m.keys.Right, m.keys.Enter, m.keys.Create, m.keys.Close}
+		helpText = m.help.ShortHelpView(emptyKeys)
 	} else {
-		help = lipgloss.NewStyle().
-			Faint(true).
-			Width(innerW).
-			Render("tab: sections  ·  ←/→: day/buttons  ·  ↑/↓: events  ·  c: create  ·  esc: close")
+		helpText = m.help.ShortHelpView(m.keys.ShortHelp())
 	}
 
 	if m.isNarrow() {
@@ -599,7 +613,7 @@ func (m EventDialogModel) View() string {
 		body = m.viewColumns(innerW, bodyH)
 	}
 
-	content := lipgloss.JoinVertical(lipgloss.Left, title, "", body, "", help)
+	content := lipgloss.JoinVertical(lipgloss.Left, title, "", body, "", helpText)
 
 	return lipgloss.NewStyle().
 		Width(boxW).
