@@ -955,7 +955,9 @@ func renderOverlappingCells(matches []placedEvent, row, totalWidth int) string {
 }
 
 func findWeekCol(anchor, d time.Time) int {
-	target := d.Local().Format("2006-01-02")
+	// d is already in the correct display timezone (local for timed events,
+	// UTC for all-day events via eventDay), so don't call .Local() again.
+	target := d.Format("2006-01-02")
 	for col := range 7 {
 		if anchor.AddDate(0, 0, col).Format("2006-01-02") == target {
 			return col
