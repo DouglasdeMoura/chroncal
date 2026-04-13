@@ -38,9 +38,6 @@ func Compute(ctx context.Context, source ExpandedEventSource, from, to time.Time
 		}
 
 		start, end := eventWindow(evt)
-		if end.Before(to) || end.Equal(to) {
-			// half-open clipping is still applied below
-		}
 		if start.Before(from) {
 			start = from
 		}
