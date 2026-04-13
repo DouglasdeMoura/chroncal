@@ -221,7 +221,7 @@ func (m EventFormModel) SetSize(w, h int) EventFormModel {
 }
 
 func (m *EventFormModel) updateInputWidths() {
-	boxW, _ := m.BoxSize()
+	boxW, _ := m.boxSize()
 	innerW := max(boxW-6, 20)
 	lw := 12
 	inputW := max(innerW-lw, 10)
@@ -235,6 +235,10 @@ func (m *EventFormModel) updateInputWidths() {
 
 // BoxSize returns the outer dimensions of the form dialog.
 func (m EventFormModel) BoxSize() (int, int) {
+	return lipgloss.Size(m.View())
+}
+
+func (m EventFormModel) boxSize() (int, int) {
 	boxW := min(56, max(m.width-4, 30))
 	boxH := 27 // base with repeat line
 	if m.allDay {
@@ -838,7 +842,7 @@ func (m EventFormModel) View() string {
 		return ""
 	}
 
-	boxW, boxH := m.BoxSize()
+	boxW, boxH := m.boxSize()
 	innerW := max(boxW-6, 20) // border + padding
 	lw := 12
 
