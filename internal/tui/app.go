@@ -734,6 +734,14 @@ func (m Model) View() tea.View {
 			pw, ph := m.form.DatePickerBoxSize()
 			v.Content = m.compositeOverlay(v.Content, m.form.EndsDatePickerView(), pw, ph)
 		}
+		if m.form.RRuleEditorOpen() {
+			ew, eh := m.form.rruleEditor.BoxSize()
+			v.Content = m.compositeOverlay(v.Content, m.form.rruleEditor.View(), ew, eh)
+			if m.form.rruleEditor.EndsDatePickerOpen() {
+				pw, ph := m.form.rruleEditor.EndsDatePickerBoxSize()
+				v.Content = m.compositeOverlay(v.Content, m.form.rruleEditor.EndsDatePickerView(), pw, ph)
+			}
+		}
 	}
 	if m.choiceOpen {
 		bw, bh := m.choiceDialog.BoxSize()

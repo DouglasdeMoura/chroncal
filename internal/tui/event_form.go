@@ -59,7 +59,10 @@ var repeatPresets = []repeatPreset{
 	{"Every month", "FREQ=MONTHLY"},
 	{"Every year", "FREQ=YEARLY"},
 	{"Weekdays", "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"},
+	{"Custom...", ""},
 }
+
+const repeatCustomIdx = 7 // index of the "Custom..." entry
 
 type endsMode int
 
@@ -96,6 +99,9 @@ type EventFormModel struct {
 
 	allDay         bool
 	repeatIdx      int // index into repeatPresets
+	customRule     string
+	rruleEditor    RecurrenceEditorModel
+	rruleEditorOpen bool
 	ends           endsMode
 	endsCount      textinput.Model
 	endsDate       time.Time
@@ -232,7 +238,7 @@ func (m EventFormModel) focusableFields() []formField {
 		fields = append(fields, fieldStart, fieldEnd)
 	}
 	fields = append(fields, fieldDate, fieldAllDay, fieldRepeat)
-	if m.repeatIdx > 0 {
+	if m.repeatIdx > 0 && m.repeatIdx != repeatCustomIdx {
 		fields = append(fields, fieldEnds)
 		if m.ends == endsAfter {
 			fields = append(fields, fieldEndsCount)
@@ -307,6 +313,11 @@ func (m EventFormModel) Update(msg tea.Msg) (EventFormModel, tea.Cmd) {
 		return m.handleKey(msg)
 	case tea.MouseClickMsg:
 		if msg.Button == tea.MouseLeft {
+			if m.rruleEditorOpen && m.rruleEditor.EndsDatePickerOpen() {
+				pw, ph := m.rruleEditor.EndsDatePickerBoxSize()
+				m.rruleEditor = m.rruleEditor.HandleEndsDateMouse(msg, pw, ph)
+				return m, nil
+			}
 			if m.endsDatePicker {
 				return m.handleEndsDatePickerMouse(msg)
 			}
@@ -339,7 +350,18 @@ func (m EventFormModel) Update(msg tea.Msg) (EventFormModel, tea.Cmd) {
 }
 
 func (m EventFormModel) handleKey(msg tea.KeyPressMsg) (EventFormModel, tea.Cmd) {
-	// Date picker dialogs capture all input when open.
+	// Overlays capture all input when open.
+	if m.rruleEditorOpen {
+		var cmd tea.Cmd
+		m.rruleEditor, cmd = m.rruleEditor.Update(msg)
+		if m.rruleEditor.Done() {
+			m.customRule = m.rruleEditor.BuildRule()
+			m.rruleEditorOpen = false
+		} else if m.rruleEditor.Cancelled() {
+			m.rruleEditorOpen = false
+		}
+		return m, cmd
+	}
 	if m.datePickerOpen {
 		return m.handleDatePickerKey(msg)
 	}
@@ -369,6 +391,12 @@ func (m EventFormModel) handleKey(msg tea.KeyPressMsg) (EventFormModel, tea.Cmd)
 		case fieldDate:
 			m.datePickerOpen = true
 			return m, nil
+		case fieldRepeat:
+			if m.repeatIdx == repeatCustomIdx {
+				m.rruleEditor = NewRecurrenceEditorModel(m.day, m.width, m.height, m.theme)
+				m.rruleEditorOpen = true
+				return m, nil
+			}
 		default:
 			if m.isTextInput() && m.focusField != fieldDescription {
 				return m.withFocus(m.nextField())
@@ -630,6 +658,11 @@ func (m EventFormModel) DatePickerOpen() bool {
 	return m.datePickerOpen
 }
 
+// RRuleEditorOpen reports whether the recurrence editor overlay should be shown.
+func (m EventFormModel) RRuleEditorOpen() bool {
+	return m.rruleEditorOpen
+}
+
 // DatePickerBoxSize returns the outer dimensions of the date picker dialog.
 func (m EventFormModel) DatePickerBoxSize() (int, int) {
 	// width: help text (~44 chars) + padding(4) + border(2) = 50
@@ -693,6 +726,9 @@ func (m *EventFormModel) adjustEndTime(dur time.Duration) {
 func (m EventFormModel) buildRecurrenceRule() string {
 	if m.repeatIdx == 0 {
 		return ""
+	}
+	if m.repeatIdx == repeatCustomIdx {
+		return m.customRule
 	}
 	rule := repeatPresets[m.repeatIdx].Rule
 	switch m.ends {
@@ -830,14 +866,21 @@ func (m EventFormModel) View() string {
 
 	// Repeat selector
 	repeatLabel := repeatPresets[m.repeatIdx].Label
+	if m.repeatIdx == repeatCustomIdx && m.customRule != "" {
+		repeatLabel = m.rruleEditor.RuleSummary()
+	}
 	if m.focusField == fieldRepeat {
-		repeatLabel = lipgloss.NewStyle().Reverse(true).Render(repeatLabel) + faint.Render("  \u25c0 \u25b6")
+		hint := faint.Render("  \u25c0 \u25b6")
+		if m.repeatIdx == repeatCustomIdx {
+			hint = faint.Render("  enter: edit  \u25c0 \u25b6")
+		}
+		repeatLabel = lipgloss.NewStyle().Reverse(true).Render(repeatLabel) + hint
 	}
 	lines = append(lines, faint.Render(formLabel("Repeat", lw))+repeatLabel)
 	lines = append(lines, "")
 
-	// Ends condition (only when repeat is active)
-	if m.repeatIdx > 0 {
+	// Ends condition (only when a simple preset is active, not Custom)
+	if m.repeatIdx > 0 && m.repeatIdx != repeatCustomIdx {
 		var endsLabel string
 		switch m.ends {
 		case endsNever:
