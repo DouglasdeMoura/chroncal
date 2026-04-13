@@ -378,6 +378,13 @@ func (m EventDialogModel) handleMouse(msg tea.MouseClickMsg) (EventDialogModel, 
 		return m, nil
 	}
 
+	if idx, ok := m.eventIndexAtPosition(msg.X, msg.Y); ok {
+		m.selected = idx
+		m.focusZone = zoneEventList
+		m.clampFocus()
+		return m, nil
+	}
+
 	// Check action bar (Edit/Delete)
 	actions := m.visibleActions()
 	ox, oy := m.actionBarOrigin()
@@ -415,6 +422,45 @@ func (m EventDialogModel) handleMouse(msg tea.MouseClickMsg) (EventDialogModel, 
 	return m, nil
 }
 
+func (m EventDialogModel) eventIndexAtPosition(x, y int) (int, bool) {
+	if len(m.events) == 0 || m.width <= 0 || m.height <= 0 {
+		return 0, false
+	}
+
+	boxW, boxH := m.boxSize()
+	innerW := max(boxW-6, 10)
+	innerH := max(boxH-4, 6)
+	bodyH := max(innerH-4, 3)
+
+	dialogX := (m.width - boxW) / 2
+	dialogY := (m.height - boxH) / 2
+	listX := dialogX + 3
+	listY := dialogY + 4
+	listW := innerW
+	listH := bodyH
+
+	if m.isNarrow() {
+		listH = min(max(len(m.events)+1, 3), max(bodyH/3, 3))
+	} else {
+		listW = max(min(max(innerW/4, 18), innerW-24), 10)
+	}
+
+	if x < listX || x >= listX+listW || y < listY || y >= listY+listH {
+		return 0, false
+	}
+
+	row := y - listY
+	if len(m.events) > listH && row == listH-1 {
+		return 0, false
+	}
+
+	idx := m.scroll + row
+	if idx < 0 || idx >= len(m.events) {
+		return 0, false
+	}
+	return idx, true
+}
+
 func (m EventDialogModel) actionBarOrigin() (int, int) {
 	boxW, boxH := m.boxSize()
 	innerW := max(boxW-6, 10)
@@ -449,7 +495,7 @@ func (m EventDialogModel) rsvpBarOrigin() (int, int) {
 	dialogY := (m.height - m.boxH()) / 2
 
 	contentX := dialogX + 3
-	detailsStartY := dialogY + 2
+	detailsStartY := dialogY + 4
 
 	if m.isNarrow() {
 		listH := min(max(len(m.events)+1, 3), max(m.bodyH()/3, 3))
