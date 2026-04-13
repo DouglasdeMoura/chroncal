@@ -661,12 +661,12 @@ func WeekGrid(opts WeekOptions) string {
 	out.WriteString(renderWeekColumnHeaders(anchor, colWs, todayKey, selectedKey, opts.SelectedColor))
 	out.WriteString("\n")
 
-	out.WriteString(renderWeekHRule(colWs, "┌", "┬", "", true))
+	out.WriteString(renderWeekHRule(colWs, "┌", "┬", "", true, selectedCol, opts.SelectedColor))
 	out.WriteString("\n")
 
 	out.WriteString(renderWeekAllDayRows(opts.Events, anchor, colWs, allDayRows, selectedCol, opts.SelectedColor))
 
-	out.WriteString(renderWeekHRule(colWs, "├", "┼", "╮", true))
+	out.WriteString(renderWeekHRule(colWs, "├", "┼", "╮", true, selectedCol, opts.SelectedColor))
 	out.WriteString("\n")
 
 	for row := scrollOffset; row < scrollOffset+viewportHeight && row < totalRows; row++ {
@@ -711,7 +711,7 @@ func WeekGrid(opts WeekOptions) string {
 
 	if showBottomRule {
 		out.WriteString("\n")
-		out.WriteString(renderWeekHRule(colWs, "╰", "┴", "╯", false))
+		out.WriteString(renderWeekHRule(colWs, "╰", "┴", "╯", false, selectedCol, opts.SelectedColor))
 	}
 
 	return out.String()
@@ -747,21 +747,41 @@ func renderWeekColumnHeaders(anchor time.Time, colWs []int, todayKey, selectedKe
 	return b.String()
 }
 
-func renderWeekHRule(colWs []int, left, mid, right string, timeCol bool) string {
+func renderWeekHRule(colWs []int, left, mid, right string, timeCol bool, selectedCol int, selectedColor color.Color) string {
 	faint := lipgloss.NewStyle().Faint(true)
+	var selStyle lipgloss.Style
+	hasSel := selectedColor != nil && selectedCol >= 0
+	if hasSel {
+		selStyle = lipgloss.NewStyle().Foreground(selectedColor).Bold(true).Faint(false)
+	}
+
+	renderJunction := func(s string, sepIdx int) string {
+		if hasSel && (sepIdx == selectedCol || sepIdx == selectedCol+1) {
+			return selStyle.Render(s)
+		}
+		return faint.Render(s)
+	}
+
 	var b strings.Builder
 	if timeCol {
-		b.WriteString(faint.Render("────────" + left))
+		b.WriteString(faint.Render("────────"))
+		b.WriteString(renderJunction(left, 0))
 	} else {
-		b.WriteString("        " + faint.Render(left))
+		b.WriteString("        ")
+		b.WriteString(renderJunction(left, 0))
 	}
 	for i, w := range colWs {
-		b.WriteString(faint.Render(strings.Repeat("─", w)))
+		seg := strings.Repeat("─", w)
+		if hasSel && i == selectedCol {
+			b.WriteString(selStyle.Render(seg))
+		} else {
+			b.WriteString(faint.Render(seg))
+		}
 		if i < len(colWs)-1 {
-			b.WriteString(faint.Render(mid))
+			b.WriteString(renderJunction(mid, i+1))
 		}
 	}
-	b.WriteString(faint.Render(right))
+	b.WriteString(renderJunction(right, len(colWs)))
 	return b.String()
 }
 
