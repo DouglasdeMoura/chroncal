@@ -546,7 +546,10 @@ func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
 	if err := qtx.DeleteEventsByUID(ctx, uid); err != nil {
 		return fmt.Errorf("delete series: %w", err)
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit delete series: %w", err)
+	}
+	return nil
 }
 
 // Alarm CRUD
@@ -857,7 +860,10 @@ func (s *Service) ReplaceCategories(ctx context.Context, eventID int64, categori
 			return fmt.Errorf("create category: %w", err)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit replace categories: %w", err)
+	}
+	return nil
 }
 
 // Attachment CRUD

@@ -513,7 +513,10 @@ func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
 	if err := qtx.DeleteTodosByUID(ctx, uid); err != nil {
 		return fmt.Errorf("delete series: %w", err)
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit delete series: %w", err)
+	}
+	return nil
 }
 
 // ListOverridesByUID returns all override instances for a given UID.
@@ -736,7 +739,10 @@ func (s *Service) ReplaceCategories(ctx context.Context, todoID int64, categorie
 			return fmt.Errorf("create category: %w", err)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit replace categories: %w", err)
+	}
+	return nil
 }
 
 // Attachment CRUD

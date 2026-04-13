@@ -123,9 +123,12 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 	}
 
 	if err := qtx.DeleteCalendar(ctx, id); err != nil {
-		return err
+		return fmt.Errorf("delete calendar: %w", err)
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit delete calendar: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) ListByAccount(ctx context.Context, accountID int64) ([]Calendar, error) {
