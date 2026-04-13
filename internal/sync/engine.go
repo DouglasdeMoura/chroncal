@@ -330,10 +330,16 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 					}
 				} else {
 					// ConflictPrompt: record conflict for manual resolution
-					localIcal, _ := e.exportResource(ctx, res.OwnerType, calendarID, res.Uid)
+					localIcal, exportErr := e.exportResource(ctx, res.OwnerType, calendarID, res.Uid)
+					if exportErr != nil {
+						e.logger.Warn("export local resource for conflict record", "uid", res.Uid, "error", exportErr)
+					}
 					serverRes, fetchErr := client.GetResource(ctx, putPath)
 					if fetchErr == nil {
-						serverIcal, _ := caldav.EncodeCalendar(serverRes.Data)
+						serverIcal, encodeErr := caldav.EncodeCalendar(serverRes.Data)
+						if encodeErr != nil {
+							e.logger.Warn("encode server resource for conflict record", "uid", res.Uid, "error", encodeErr)
+						}
 						ownerID := e.lookupOwnerID(ctx, res.OwnerType, res.Uid)
 						_ = e.q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 							CalendarID: calendarID,
