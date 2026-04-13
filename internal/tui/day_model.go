@@ -140,6 +140,49 @@ func (m DayModel) DayAtPosition(x, y int) (time.Time, bool) {
 	return m.cursor, true
 }
 
+func (m DayModel) EventAtPosition(x, y int) int64 {
+	if x < timeLabelWidth+1 {
+		return 0
+	}
+
+	allDayRows := m.allDayCount()
+	if allDayRows < 1 {
+		allDayRows = 1
+	}
+	fixedLines := 2 + 1 + allDayRows + 1
+	if y < fixedLines {
+		return 0
+	}
+
+	scrollOffset := m.scrollOffset
+	if scrollOffset < 0 {
+		scrollOffset = 0
+	}
+	if ms := m.maxScroll(); scrollOffset > ms {
+		scrollOffset = ms
+	}
+	row := scrollOffset + (y - fixedLines)
+
+	lph := m.linesPerHour
+	if lph < 1 {
+		lph = defaultLinesPerHour
+	}
+
+	colWidth := m.width - timeLabelWidth - 2
+	if colWidth < 1 {
+		colWidth = 1
+	}
+
+	placed := placeDayEvents(m.events, m.cursor, lph)
+	resolveOverlaps(placed)
+	matches := findPlacedEvents(placed, row, 0)
+	if len(matches) == 0 {
+		return 0
+	}
+	xInCol := x - timeLabelWidth - 1
+	return hitSubCol(matches, xInCol, colWidth)
+}
+
 func (m DayModel) Update(msg tea.Msg) (DayModel, tea.Cmd) {
 	keyMsg, ok := msg.(tea.KeyPressMsg)
 	if !ok {

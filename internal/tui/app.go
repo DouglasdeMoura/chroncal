@@ -71,10 +71,11 @@ type Model struct {
 	choiceDialog   ChoiceDialogModel
 	choiceOpen     bool
 	pendingDelete  event.Event
-	err            error
-	ready          bool
-	showSidebar    bool
-	focus          appFocus
+	err              error
+	ready            bool
+	showSidebar      bool
+	focus            appFocus
+	clickedEventID   int64
 }
 
 func NewModel(a *app.App) Model {
@@ -144,6 +145,7 @@ func eventsToCalendar(events []event.Event, calendars map[int64]CalendarInfo) []
 	out := make([]CalendarEvent, len(events))
 	for i, e := range events {
 		out[i] = CalendarEvent{
+			ID:        e.ID,
 			Title:     e.Title,
 			AllDay:    e.AllDay,
 			Day:       e.StartTime.Local(),
@@ -263,6 +265,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.dialog = NewEventDialogModel(msg.Day, dayEvents, m.calendars).
 			SetSelectedColor(m.theme.Selected).
 			SetSize(m.width, m.height)
+		if m.clickedEventID > 0 {
+			for i, e := range m.dialog.events {
+				if e.ID == m.clickedEventID {
+					m.dialog.selected = i
+					break
+				}
+			}
+			m.clickedEventID = 0
+		}
 		m.dialogOpen = true
 		return m, nil
 
@@ -481,6 +492,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !ok {
 				return m, nil
 			}
+			m.clickedEventID = m.day.EventAtPosition(msg.X-ox, msg.Y-oy)
 			var cmd tea.Cmd
 			m.day, cmd = m.day.selectDay(day)
 			return m, cmd
@@ -489,6 +501,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !ok {
 				return m, nil
 			}
+			m.clickedEventID = m.week.EventAtPosition(msg.X-ox, msg.Y-oy)
 			var cmd tea.Cmd
 			m.week, cmd = m.week.selectDay(day)
 			return m, cmd

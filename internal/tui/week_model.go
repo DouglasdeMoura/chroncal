@@ -174,6 +174,59 @@ func (m WeekModel) DayAtPosition(x, y int) (time.Time, bool) {
 	return anchor.AddDate(0, 0, col), true
 }
 
+func (m WeekModel) EventAtPosition(x, y int) int64 {
+	anchor := m.WeekStartDate()
+
+	gridX := x - timeLabelWidth - 1
+	if gridX < 0 {
+		return 0
+	}
+	colWs := calcWeekColWidths(m.width)
+	col := -1
+	colStart := 0
+	for j := range 7 {
+		if gridX >= colStart && gridX < colStart+colWs[j] {
+			col = j
+			break
+		}
+		colStart += colWs[j] + 1
+	}
+	if col < 0 {
+		return 0
+	}
+
+	allDayRows := m.allDayRowCount()
+	if allDayRows < 1 {
+		allDayRows = 1
+	}
+	fixedLines := 2 + 1 + 1 + allDayRows + 1
+	if y < fixedLines {
+		return 0
+	}
+
+	scrollOffset := m.scrollOffset
+	if scrollOffset < 0 {
+		scrollOffset = 0
+	}
+	if ms := m.maxScroll(); scrollOffset > ms {
+		scrollOffset = ms
+	}
+	row := scrollOffset + (y - fixedLines)
+
+	lph := m.linesPerHour
+	if lph < 1 {
+		lph = defaultLinesPerHour
+	}
+	placed := placeWeekEvents(m.events, anchor, lph)
+	resolveOverlaps(placed)
+	matches := findPlacedEvents(placed, row, col)
+	if len(matches) == 0 {
+		return 0
+	}
+	xInCol := gridX - colStart
+	return hitSubCol(matches, xInCol, colWs[col])
+}
+
 func (m WeekModel) Update(msg tea.Msg) (WeekModel, tea.Cmd) {
 	keyMsg, ok := msg.(tea.KeyPressMsg)
 	if !ok {

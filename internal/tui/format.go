@@ -150,6 +150,7 @@ func FormatEventList(opts FormatEventListOptions) string {
 // CalendarEvent is the rendering-only view of an event inside the month grid.
 // Callers resolve colors and other domain data before passing these in.
 type CalendarEvent struct {
+	ID        int64
 	Title     string
 	Color     string // hex like "#a6e3a1"; empty → default muted background
 	AllDay    bool
@@ -860,6 +861,32 @@ func findPlacedEvents(placed []placedEvent, row, col int) []placedEvent {
 		}
 	}
 	return result
+}
+
+func hitSubCol(matches []placedEvent, xInCol, totalWidth int) int64 {
+	n := matches[0].numSubCols
+	widths := make([]int, n)
+	base := totalWidth / n
+	rem := totalWidth - base*n
+	for i := range n {
+		widths[i] = base
+		if i < rem {
+			widths[i]++
+		}
+	}
+	offset := 0
+	for sub := 0; sub < n; sub++ {
+		if xInCol >= offset && xInCol < offset+widths[sub] {
+			for _, m := range matches {
+				if m.subCol == sub {
+					return m.event.ID
+				}
+			}
+			return 0
+		}
+		offset += widths[sub]
+	}
+	return 0
 }
 
 func renderTimeCellContent(p placedEvent, row, width int) string {
