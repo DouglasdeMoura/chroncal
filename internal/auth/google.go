@@ -17,6 +17,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/douglasdemoura/chroncal/internal/retry"
 )
 
 const (
@@ -26,6 +28,12 @@ const (
 )
 
 var googleHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
+var tokenRetryOptions = retry.RetryOptions{
+	MaxAttempts: 4,
+	BaseDelay:   500 * time.Millisecond,
+	MaxDelay:    8 * time.Second,
+}
 
 // GoogleOAuthResult holds tokens from a successful OAuth flow.
 type GoogleOAuthResult struct {
@@ -128,85 +136,89 @@ func GoogleOAuthFlow(ctx context.Context, clientID string) (*GoogleOAuthResult, 
 }
 
 func exchangeGoogleCode(ctx context.Context, clientID, code, redirectURI, codeVerifier string) (*GoogleOAuthResult, error) {
-	data := url.Values{
-		"code":          {code},
-		"client_id":     {clientID},
-		"redirect_uri":  {redirectURI},
-		"grant_type":    {"authorization_code"},
-		"code_verifier": {codeVerifier},
-	}
+	return retry.Retry(ctx, tokenRetryOptions, func(ctx context.Context) (*GoogleOAuthResult, error) {
+		data := url.Values{
+			"code":          {code},
+			"client_id":     {clientID},
+			"redirect_uri":  {redirectURI},
+			"grant_type":    {"authorization_code"},
+			"code_verifier": {codeVerifier},
+		}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", googleTokenURL, strings.NewReader(data.Encode()))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req, err := http.NewRequestWithContext(ctx, "POST", googleTokenURL, strings.NewReader(data.Encode()))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := googleHTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("token exchange: %w", err)
-	}
-	defer resp.Body.Close()
+		resp, err := googleHTTPClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("token exchange: %w", err)
+		}
+		defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("token exchange failed (%d): %s", resp.StatusCode, body)
-	}
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != 200 {
+			return nil, fmt.Errorf("token exchange failed (%d): %s", resp.StatusCode, body)
+		}
 
-	var result struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		ExpiresIn    int    `json:"expires_in"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("parse token response: %w", err)
-	}
+		var result struct {
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
+			ExpiresIn    int    `json:"expires_in"`
+		}
+		if err := json.Unmarshal(body, &result); err != nil {
+			return nil, fmt.Errorf("parse token response: %w", err)
+		}
 
-	return &GoogleOAuthResult{
-		AccessToken:  result.AccessToken,
-		RefreshToken: result.RefreshToken,
-		Expiry:       time.Now().Add(time.Duration(result.ExpiresIn) * time.Second),
-	}, nil
+		return &GoogleOAuthResult{
+			AccessToken:  result.AccessToken,
+			RefreshToken: result.RefreshToken,
+			Expiry:       time.Now().Add(time.Duration(result.ExpiresIn) * time.Second),
+		}, nil
+	})
 }
 
 // RefreshGoogleToken refreshes an expired access token.
 func RefreshGoogleToken(ctx context.Context, clientID, refreshToken string) (*GoogleOAuthResult, error) {
-	data := url.Values{
-		"client_id":     {clientID},
-		"refresh_token": {refreshToken},
-		"grant_type":    {"refresh_token"},
-	}
+	return retry.Retry(ctx, tokenRetryOptions, func(ctx context.Context) (*GoogleOAuthResult, error) {
+		data := url.Values{
+			"client_id":     {clientID},
+			"refresh_token": {refreshToken},
+			"grant_type":    {"refresh_token"},
+		}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", googleTokenURL, strings.NewReader(data.Encode()))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req, err := http.NewRequestWithContext(ctx, "POST", googleTokenURL, strings.NewReader(data.Encode()))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := googleHTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("token refresh: %w", err)
-	}
-	defer resp.Body.Close()
+		resp, err := googleHTTPClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("token refresh: %w", err)
+		}
+		defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("token refresh failed (%d): %s", resp.StatusCode, body)
-	}
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != 200 {
+			return nil, fmt.Errorf("token refresh failed (%d): %s", resp.StatusCode, body)
+		}
 
-	var result struct {
-		AccessToken string `json:"access_token"`
-		ExpiresIn   int    `json:"expires_in"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("parse refresh response: %w", err)
-	}
+		var result struct {
+			AccessToken string `json:"access_token"`
+			ExpiresIn   int    `json:"expires_in"`
+		}
+		if err := json.Unmarshal(body, &result); err != nil {
+			return nil, fmt.Errorf("parse refresh response: %w", err)
+		}
 
-	return &GoogleOAuthResult{
-		AccessToken:  result.AccessToken,
-		RefreshToken: refreshToken, // refresh token stays the same
-		Expiry:       time.Now().Add(time.Duration(result.ExpiresIn) * time.Second),
-	}, nil
+		return &GoogleOAuthResult{
+			AccessToken:  result.AccessToken,
+			RefreshToken: refreshToken, // refresh token stays the same
+			Expiry:       time.Now().Add(time.Duration(result.ExpiresIn) * time.Second),
+		}, nil
+	})
 }
 
 func generateCodeVerifier() (string, error) {

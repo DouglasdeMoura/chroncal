@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -78,5 +79,121 @@ func TestRefreshGoogleToken_DoesNotSendClientSecret(t *testing.T) {
 	}
 	if result.AccessToken != "fresh" {
 		t.Fatalf("AccessToken = %q, want fresh", result.AccessToken)
+	}
+}
+
+func TestExchangeGoogleCode_RetriesTransientError(t *testing.T) {
+	var calls atomic.Int32
+	prevClient := googleHTTPClient
+	googleHTTPClient = &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			n := calls.Add(1)
+			if n < 3 {
+				return &http.Response{
+					StatusCode: http.StatusServiceUnavailable,
+					Body:       io.NopCloser(strings.NewReader("try again")),
+					Header:     make(http.Header),
+				}, nil
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"access_token":"ok","refresh_token":"r","expires_in":3600}`)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
+	t.Cleanup(func() { googleHTTPClient = prevClient })
+
+	result, err := exchangeGoogleCode(context.Background(), "cid", "code", "http://localhost/cb", "verifier")
+	if err != nil {
+		t.Fatalf("exchangeGoogleCode: %v", err)
+	}
+	if result.AccessToken != "ok" {
+		t.Fatalf("AccessToken = %q, want ok", result.AccessToken)
+	}
+	if got := calls.Load(); got != 3 {
+		t.Fatalf("transport calls = %d, want 3", got)
+	}
+}
+
+func TestExchangeGoogleCode_NoRetryOnNonTransient(t *testing.T) {
+	var calls atomic.Int32
+	prevClient := googleHTTPClient
+	googleHTTPClient = &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			calls.Add(1)
+			return &http.Response{
+				StatusCode: http.StatusBadRequest,
+				Body:       io.NopCloser(strings.NewReader("bad")),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
+	t.Cleanup(func() { googleHTTPClient = prevClient })
+
+	_, err := exchangeGoogleCode(context.Background(), "cid", "code", "http://localhost/cb", "verifier")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("transport calls = %d, want 1", got)
+	}
+}
+
+func TestRefreshGoogleToken_RetriesTransientError(t *testing.T) {
+	var calls atomic.Int32
+	prevClient := googleHTTPClient
+	googleHTTPClient = &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			n := calls.Add(1)
+			if n < 2 {
+				return &http.Response{
+					StatusCode: http.StatusServiceUnavailable,
+					Body:       io.NopCloser(strings.NewReader("try again")),
+					Header:     make(http.Header),
+				}, nil
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"access_token":"refreshed","expires_in":3600}`)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
+	t.Cleanup(func() { googleHTTPClient = prevClient })
+
+	result, err := RefreshGoogleToken(context.Background(), "cid", "rt")
+	if err != nil {
+		t.Fatalf("RefreshGoogleToken: %v", err)
+	}
+	if result.AccessToken != "refreshed" {
+		t.Fatalf("AccessToken = %q, want refreshed", result.AccessToken)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("transport calls = %d, want 2", got)
+	}
+}
+
+func TestRefreshGoogleToken_NoRetryOn400(t *testing.T) {
+	var calls atomic.Int32
+	prevClient := googleHTTPClient
+	googleHTTPClient = &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			calls.Add(1)
+			return &http.Response{
+				StatusCode: http.StatusBadRequest,
+				Body:       io.NopCloser(strings.NewReader(`{"error":"invalid_grant"}`)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
+	t.Cleanup(func() { googleHTTPClient = prevClient })
+
+	_, err := RefreshGoogleToken(context.Background(), "cid", "rt")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("transport calls = %d, want 1", got)
 	}
 }

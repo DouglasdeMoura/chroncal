@@ -2,6 +2,7 @@ package caldav
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"testing"
@@ -93,6 +94,98 @@ func TestNewClientFromCredential_RefreshesExpiredOAuthToken(t *testing.T) {
 	}
 	if persisted.TokenExpiry == "" {
 		t.Fatal("persisted token expiry should be updated")
+	}
+}
+
+func TestOAuth2HTTPClient_FailsFastOnNonTransientRefreshError(t *testing.T) {
+	prevRefresh := refreshGoogleTokenFn
+	refreshGoogleTokenFn = func(ctx context.Context, clientID, refreshToken string) (*auth.GoogleOAuthResult, error) {
+		return nil, errors.New("token refresh failed (400): invalid_grant")
+	}
+	t.Cleanup(func() { refreshGoogleTokenFn = prevRefresh })
+
+	prevDefaultClient := defaultHTTPClient
+	transportCalled := false
+	defaultHTTPClient = &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			transportCalled = true
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(http.NoBody),
+				Header:     make(http.Header),
+				Request:    r,
+			}, nil
+		}),
+	}
+	t.Cleanup(func() { defaultHTTPClient = prevDefaultClient })
+
+	client, err := NewClientFromCredential("https://example.com", auth.Credential{
+		AccountID:     1,
+		AccessToken:   "stale-token",
+		RefreshToken:  "revoked-refresh",
+		TokenExpiry:   time.Now().Add(-time.Hour).Format(time.RFC3339),
+		OAuthClientID: "client-id",
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewClientFromCredential: %v", err)
+	}
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/resource", nil)
+	if err != nil {
+		t.Fatalf("NewRequestWithContext: %v", err)
+	}
+	_, err = client.httpClient.Do(req)
+	if err == nil {
+		t.Fatal("expected error from non-transient refresh failure, got nil")
+	}
+	if transportCalled {
+		t.Fatal("transport should not have been called after non-transient refresh failure")
+	}
+}
+
+func TestOAuth2HTTPClient_ProceedsWithStaleTokenOnTransientRefreshError(t *testing.T) {
+	prevRefresh := refreshGoogleTokenFn
+	refreshGoogleTokenFn = func(ctx context.Context, clientID, refreshToken string) (*auth.GoogleOAuthResult, error) {
+		return nil, errors.New("token refresh failed (503): Service Unavailable")
+	}
+	t.Cleanup(func() { refreshGoogleTokenFn = prevRefresh })
+
+	prevDefaultClient := defaultHTTPClient
+	var gotAuth string
+	defaultHTTPClient = &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			gotAuth = r.Header.Get("Authorization")
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(http.NoBody),
+				Header:     make(http.Header),
+				Request:    r,
+			}, nil
+		}),
+	}
+	t.Cleanup(func() { defaultHTTPClient = prevDefaultClient })
+
+	client, err := NewClientFromCredential("https://example.com", auth.Credential{
+		AccountID:     2,
+		AccessToken:   "stale-token",
+		RefreshToken:  "refresh-token",
+		TokenExpiry:   time.Now().Add(-time.Hour).Format(time.RFC3339),
+		OAuthClientID: "client-id",
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewClientFromCredential: %v", err)
+	}
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/resource", nil)
+	if err != nil {
+		t.Fatalf("NewRequestWithContext: %v", err)
+	}
+	_, err = client.httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v (should proceed with stale token on transient refresh failure)", err)
+	}
+	if gotAuth != "Bearer stale-token" {
+		t.Fatalf("Authorization = %q, want Bearer stale-token", gotAuth)
 	}
 }
 

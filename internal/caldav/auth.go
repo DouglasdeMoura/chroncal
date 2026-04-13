@@ -10,6 +10,7 @@ import (
 	"github.com/emersion/go-webdav"
 
 	"github.com/douglasdemoura/chroncal/internal/auth"
+	"github.com/douglasdemoura/chroncal/internal/retry"
 )
 
 var refreshGoogleTokenFn = auth.RefreshGoogleToken
@@ -70,7 +71,14 @@ func (c *oauth2HTTPClient) Do(req *http.Request) (*http.Response, error) {
 		if err == nil {
 			c.accessToken = newToken
 			c.expiry = newExpiry
+		} else if !retry.IsTransient(err) {
+			// Non-transient refresh failure (e.g. revoked token): fail fast
+			// rather than sending a doomed request with a stale token.
+			c.mu.Unlock()
+			return nil, fmt.Errorf("oauth token refresh: %w", err)
 		}
+		// Transient failure after internal retries exhausted: proceed with
+		// stale token and let the outer CalDAV retry handle the 401.
 	}
 	token := c.accessToken
 	c.mu.Unlock()

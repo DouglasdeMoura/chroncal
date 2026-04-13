@@ -1,4 +1,4 @@
-package caldav
+package retry
 
 import (
 	"context"
