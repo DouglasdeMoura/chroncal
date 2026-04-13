@@ -219,6 +219,7 @@ func (m EventDialogModel) visibleActions() []dialogAction {
 	}
 	return []dialogAction{
 		{"Edit", func() tea.Msg { return EventEditMsg{Event: ev} }},
+		{"Duplicate", func() tea.Msg { return EventDuplicateMsg{Event: ev} }},
 		{"Delete", func() tea.Msg { return EventDeleteMsg{Event: ev} }},
 	}
 }
@@ -360,15 +361,17 @@ func (m EventDialogModel) handleKey(msg tea.KeyPressMsg) (EventDialogModel, tea.
 			m.focusedAction = 0
 			return m, actions[0].msg
 		}
-	case key.Matches(msg, m.keys.Delete):
+	case key.Matches(msg, m.keys.Duplicate):
 		if _, ok := m.selectedEvent(); ok && len(actions) > 1 {
 			m.focusZone = zoneActions
 			m.focusedAction = 1
 			return m, actions[1].msg
 		}
-	case key.Matches(msg, m.keys.Duplicate):
-		if ev, ok := m.selectedEvent(); ok {
-			return m, func() tea.Msg { return EventDuplicateMsg{Event: ev} }
+	case key.Matches(msg, m.keys.Delete):
+		if _, ok := m.selectedEvent(); ok && len(actions) > 2 {
+			m.focusZone = zoneActions
+			m.focusedAction = 2
+			return m, actions[2].msg
 		}
 	case key.Matches(msg, m.keys.RSVPYes):
 		if len(rsvp) > 0 {
