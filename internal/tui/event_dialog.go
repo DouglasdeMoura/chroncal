@@ -46,6 +46,7 @@ type eventDialogKeyMap struct {
 	Close     key.Binding
 	Edit      key.Binding
 	Delete    key.Binding
+	Create    key.Binding
 	RSVPYes   key.Binding
 	RSVPNo    key.Binding
 	RSVPMaybe key.Binding
@@ -63,6 +64,7 @@ func defaultEventDialogKeys() eventDialogKeyMap {
 		Close:     key.NewBinding(key.WithKeys("esc", "q")),
 		Edit:      key.NewBinding(key.WithKeys("e")),
 		Delete:    key.NewBinding(key.WithKeys("d")),
+		Create:    key.NewBinding(key.WithKeys("c")),
 		RSVPYes:   key.NewBinding(key.WithKeys("y")),
 		RSVPNo:    key.NewBinding(key.WithKeys("n")),
 		RSVPMaybe: key.NewBinding(key.WithKeys("m")),
@@ -359,6 +361,9 @@ func (m EventDialogModel) handleKey(msg tea.KeyPressMsg) (EventDialogModel, tea.
 			m.focusedRSVP = 2
 			return m, rsvp[2].msg
 		}
+	case key.Matches(msg, m.keys.Create):
+		day := m.day
+		return m, func() tea.Msg { return EventCreateMsg{Day: day} }
 	}
 	return m, nil
 }
@@ -580,12 +585,12 @@ func (m EventDialogModel) View() string {
 		help = lipgloss.NewStyle().
 			Faint(true).
 			Width(innerW).
-			Render("←/→: day  ��  enter: create  ·  esc: close")
+			Render("←/→: day  ·  enter/c: create  ·  esc: close")
 	} else {
 		help = lipgloss.NewStyle().
 			Faint(true).
 			Width(innerW).
-			Render("tab: sections  ·  ←/→: day/buttons  ·  ↑/↓: events  ·  esc: close")
+			Render("tab: sections  ·  ←/→: day/buttons  ·  ↑/↓: events  ·  c: create  ·  esc: close")
 	}
 
 	if m.isNarrow() {

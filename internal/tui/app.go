@@ -70,6 +70,8 @@ type Model struct {
 	confirmOpen    bool
 	choiceDialog   ChoiceDialogModel
 	choiceOpen     bool
+	form           EventFormModel
+	formOpen       bool
 	pendingDelete  event.Event
 	err            error
 	ready          bool
@@ -206,6 +208,24 @@ func (m Model) innerDims() (int, int) {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// When the form is open, route most messages to it (cursor blink, keys, etc.).
+	// Only let specific parent-level messages fall through to the main switch.
+	if m.formOpen {
+		switch msg.(type) {
+		case EventFormSaveMsg, EventFormClosedMsg,
+			tea.BackgroundColorMsg, tea.WindowSizeMsg,
+			eventsLoadedMsg, calendarsLoadedMsg, eventCreatedMsg:
+			// fall through to main switch
+		default:
+			if kp, ok := msg.(tea.KeyPressMsg); ok && kp.String() == "ctrl+c" {
+				return m, tea.Quit
+			}
+			var cmd tea.Cmd
+			m.form, cmd = m.form.Update(msg)
+			return m, cmd
+		}
+	}
+
 	switch msg := msg.(type) {
 	case tea.BackgroundColorMsg:
 		m.theme = NewTheme(msg.IsDark())
@@ -224,6 +244,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.dialog = m.dialog.SetSize(m.width, m.height)
 		m.confirmDialog = m.confirmDialog.SetSize(m.width, m.height)
 		m.choiceDialog = m.choiceDialog.SetSize(m.width, m.height)
+		m.form = m.form.SetSize(m.width, m.height)
 		m.ready = true
 		return m, nil
 
@@ -278,24 +299,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case EventCreateMsg:
+		var cmd tea.Cmd
+		m.form, cmd = NewEventFormModel(msg.Day, m.calendars, m.theme)
+		m.form = m.form.SetSize(m.width, m.height)
+		m.formOpen = true
+		return m, cmd
+
+	case EventFormSaveMsg:
+		m.formOpen = false
 		return m, func() tea.Msg {
 			ctx := context.Background()
-			var calID int64
-			for id := range m.calendars {
-				calID = id
-				break
-			}
-			start := time.Date(msg.Day.Year(), msg.Day.Month(), msg.Day.Day(), 0, 0, 0, 0, time.UTC)
-			end := start.AddDate(0, 0, 1)
 			_, err := m.app.Events.Create(ctx, event.CreateParams{
-				CalendarID: calID,
-				Title:      "New Event",
-				StartTime:  start,
-				EndTime:    end,
-				AllDay:     true,
+				CalendarID:  msg.CalendarID,
+				Title:       msg.Title,
+				Description: msg.Description,
+				Location:    msg.Location,
+				StartTime:   msg.StartTime,
+				EndTime:     msg.EndTime,
+				AllDay:      msg.AllDay,
 			})
 			return eventCreatedMsg{err: err}
 		}
+
+	case EventFormClosedMsg:
+		m.formOpen = false
+		return m, nil
 
 	case eventCreatedMsg:
 		if msg.err != nil {
@@ -588,6 +616,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, nil
+		case "c":
+			var cursor time.Time
+			switch m.viewMode {
+			case viewDay:
+				cursor = m.day.Cursor()
+			case viewWeek:
+				cursor = m.week.Cursor()
+			default:
+				cursor = m.calendar.Cursor()
+			}
+			var cmd tea.Cmd
+			m.form, cmd = NewEventFormModel(cursor, m.calendars, m.theme)
+			m.form = m.form.SetSize(m.width, m.height)
+			m.formOpen = true
+			return m, cmd
 		}
 		if m.focus == focusCalendar {
 			switch m.viewMode {
@@ -679,6 +722,10 @@ func (m Model) View() tea.View {
 	if m.dialogOpen {
 		v.Content = m.compositeDialog(v.Content)
 	}
+	if m.formOpen {
+		bw, bh := m.form.BoxSize()
+		v.Content = m.compositeOverlay(v.Content, m.form.View(), bw, bh)
+	}
 	if m.choiceOpen {
 		bw, bh := m.choiceDialog.BoxSize()
 		v.Content = m.compositeOverlay(v.Content, m.choiceDialog.View(), bw, bh)
@@ -755,6 +802,7 @@ func (m Model) footerHelp() string {
 	default:
 		parts = "chroncal  ·  hjkl/arrows: move  ·  [/]: month  ·  t: today  ·  enter: select  ·  w: week"
 	}
+	parts += "  ·  c: create"
 	if m.showSidebar {
 		parts += "  ·  tab: switch"
 	}
