@@ -31,20 +31,28 @@ func (k calendarKeyMap) ShortHelp() []key.Binding {
 }
 
 func (k calendarKeyMap) FullHelp() [][]key.Binding {
+	left, right, up, down := k.Left, k.Right, k.Up, k.Down
+	left.SetHelp("←/h", "previous day")
+	right.SetHelp("→/l", "next day")
+	up.SetHelp("↑/k", "previous week")
+	down.SetHelp("↓/j", "next week")
+	prev, next := k.PrevMonth, k.NextMonth
+	prev.SetHelp("[", "previous month")
+	next.SetHelp("]", "next month")
 	return [][]key.Binding{
-		{k.Left, k.Right, k.Up, k.Down},
-		{k.PrevMonth, k.NextMonth, k.Today, k.Select},
+		{left, right, up, down},
+		{prev, next, k.Today, k.Select},
 	}
 }
 
 func defaultCalendarKeys() calendarKeyMap {
 	return calendarKeyMap{
-		Up:        key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "prev week")),
-		Down:      key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "next week")),
-		Left:      key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "prev day")),
-		Right:     key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next day")),
-		PrevMonth: key.NewBinding(key.WithKeys("[", "pgup"), key.WithHelp("[", "prev month")),
-		NextMonth: key.NewBinding(key.WithKeys("]", "pgdown"), key.WithHelp("]", "next month")),
+		Up:        key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "previous")),
+		Down:      key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "next")),
+		Left:      key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "previous")),
+		Right:     key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next")),
+		PrevMonth: key.NewBinding(key.WithKeys("[", "pgup"), key.WithHelp("[", "previous")),
+		NextMonth: key.NewBinding(key.WithKeys("]", "pgdown"), key.WithHelp("]", "next")),
 		Today:     key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "today")),
 		Select:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select day")),
 	}

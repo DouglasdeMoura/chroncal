@@ -61,8 +61,11 @@ func (k eventDialogKeyMap) ShortHelp() []key.Binding {
 }
 
 func (k eventDialogKeyMap) FullHelp() [][]key.Binding {
+	left, right := k.Left, k.Right
+	left.SetHelp("←/h", "previous day")
+	right.SetHelp("→/l", "next day")
 	return [][]key.Binding{
-		{k.Up, k.Down, k.Left, k.Right, k.Tab},
+		{k.Up, k.Down, left, right, k.Tab},
 		{k.Edit, k.Delete, k.Create, k.Enter, k.Close},
 		{k.RSVPYes, k.RSVPNo, k.RSVPMaybe},
 	}
@@ -72,8 +75,8 @@ func defaultEventDialogKeys() eventDialogKeyMap {
 	return eventDialogKeyMap{
 		Up:        key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
 		Down:      key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
-		Left:      key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "prev day")),
-		Right:     key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next day")),
+		Left:      key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "previous")),
+		Right:     key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next")),
 		Close:     key.NewBinding(key.WithKeys("esc", "q"), key.WithHelp("esc", "close")),
 		Edit:      key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
 		Delete:    key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),

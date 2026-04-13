@@ -26,9 +26,15 @@ func (k dayKeyMap) ShortHelp() []key.Binding {
 }
 
 func (k dayKeyMap) FullHelp() [][]key.Binding {
+	prev, next := k.PrevDay, k.NextDay
+	prev.SetHelp("←/h", "previous day")
+	next.SetHelp("→/l", "next day")
+	prevW, nextW := k.PrevWeek, k.NextWeek
+	prevW.SetHelp("[", "previous week")
+	nextW.SetHelp("]", "next week")
 	return [][]key.Binding{
-		{k.ScrollUp, k.ScrollDown, k.PrevDay, k.NextDay},
-		{k.PrevWeek, k.NextWeek, k.Today, k.Select},
+		{k.ScrollUp, k.ScrollDown, prev, next},
+		{prevW, nextW, k.Today, k.Select},
 	}
 }
 
@@ -36,10 +42,10 @@ func defaultDayKeys() dayKeyMap {
 	return dayKeyMap{
 		ScrollUp:   key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "scroll up")),
 		ScrollDown: key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "scroll down")),
-		PrevDay:    key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "prev day")),
-		NextDay:    key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next day")),
-		PrevWeek:   key.NewBinding(key.WithKeys("[", "pgup"), key.WithHelp("[", "prev week")),
-		NextWeek:   key.NewBinding(key.WithKeys("]", "pgdown"), key.WithHelp("]", "next week")),
+		PrevDay:    key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "previous")),
+		NextDay:    key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next")),
+		PrevWeek:   key.NewBinding(key.WithKeys("[", "pgup"), key.WithHelp("[", "previous")),
+		NextWeek:   key.NewBinding(key.WithKeys("]", "pgdown"), key.WithHelp("]", "next")),
 		Today:      key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "today")),
 		Select:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select day")),
 	}
