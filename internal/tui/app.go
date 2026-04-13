@@ -420,6 +420,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.dialogOpen = false
 		return m, cmd
 
+	case EventDuplicateMsg:
+		var cmd tea.Cmd
+		m.form, cmd = NewEventFormModelForDuplicate(msg.Event, m.calendars, m.theme)
+		m.form = m.form.SetSize(m.width, m.height)
+		m.formOpen = true
+		m.dialogOpen = false
+		return m, cmd
+
 	case EventFormSaveMsg:
 		m.formOpen = false
 		if msg.EventID > 0 {

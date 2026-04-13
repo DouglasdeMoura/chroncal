@@ -251,6 +251,14 @@ func NewEventFormModelForEdit(ev event.Event, calendars map[int64]CalendarInfo, 
 	return m, cmd
 }
 
+// NewEventFormModelForDuplicate creates a form pre-filled with an existing
+// event's data but in create mode (editID = 0), so saving creates a new event.
+func NewEventFormModelForDuplicate(ev event.Event, calendars map[int64]CalendarInfo, theme Theme) (EventFormModel, tea.Cmd) {
+	m, cmd := NewEventFormModelForEdit(ev, calendars, theme)
+	m.editID = 0
+	return m, cmd
+}
+
 // parseRecurrenceRule matches a recurrence rule against the form presets and
 // extracts ending conditions. Returns presetIdx, customRule, ends mode, and
 // ends date.

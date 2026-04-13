@@ -25,6 +25,9 @@ type DialogDayChangedMsg struct{ Day time.Time }
 // EventEditMsg is emitted when the user requests to edit the selected event.
 type EventEditMsg struct{ Event event.Event }
 
+// EventDuplicateMsg is emitted when the user requests to duplicate the selected event.
+type EventDuplicateMsg struct{ Event event.Event }
+
 // EventDeleteMsg is emitted when the user requests to delete the selected event.
 type EventDeleteMsg struct{ Event event.Event }
 
@@ -47,6 +50,7 @@ type eventDialogKeyMap struct {
 	Close     key.Binding
 	Edit      key.Binding
 	Delete    key.Binding
+	Duplicate key.Binding
 	Create    key.Binding
 	RSVPYes   key.Binding
 	RSVPNo    key.Binding
@@ -66,7 +70,7 @@ func (k eventDialogKeyMap) FullHelp() [][]key.Binding {
 	right.SetHelp("→/l", "next day")
 	return [][]key.Binding{
 		{k.Up, k.Down, left, right, k.Tab},
-		{k.Enter, k.Edit, k.Delete, k.Create, k.Close},
+		{k.Enter, k.Edit, k.Duplicate, k.Delete, k.Create, k.Close},
 		{k.RSVPYes, k.RSVPNo, k.RSVPMaybe},
 	}
 }
@@ -80,6 +84,7 @@ func defaultEventDialogKeys() eventDialogKeyMap {
 		Close:     key.NewBinding(key.WithKeys("esc", "q"), key.WithHelp("esc", "close")),
 		Edit:      key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
 		Delete:    key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
+		Duplicate: key.NewBinding(key.WithKeys("D"), key.WithHelp("D", "duplicate")),
 		Create:    key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "create")),
 		RSVPYes:   key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "RSVP yes")),
 		RSVPNo:    key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "RSVP no")),
@@ -360,6 +365,10 @@ func (m EventDialogModel) handleKey(msg tea.KeyPressMsg) (EventDialogModel, tea.
 			m.focusZone = zoneActions
 			m.focusedAction = 1
 			return m, actions[1].msg
+		}
+	case key.Matches(msg, m.keys.Duplicate):
+		if ev, ok := m.selectedEvent(); ok {
+			return m, func() tea.Msg { return EventDuplicateMsg{Event: ev} }
 		}
 	case key.Matches(msg, m.keys.RSVPYes):
 		if len(rsvp) > 0 {
