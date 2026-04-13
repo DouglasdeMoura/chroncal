@@ -14,6 +14,12 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/event"
 )
 
+const (
+	defaultLinesPerHour = 4
+	totalHours          = 24
+	timeLabelWidth      = 8
+)
+
 // formatTimeColumn returns a fixed-width label for an event's time slot.
 // The width matches "15:04-15:04" (11 chars) so titles line up across
 // all-day events, events with only a start time, and events with a range.
@@ -514,7 +520,7 @@ func resolveOverlaps(placed []placedEvent) {
 
 func calcWeekColWidths(width int) []int {
 	separators := 8
-	availW := width - weekTimeLabelWidth - separators
+	availW := width - timeLabelWidth - separators
 	if availW < 7 {
 		availW = 7
 	}
@@ -530,14 +536,14 @@ func calcWeekColWidths(width int) []int {
 	return colWs
 }
 
-func placeWeekEvents(events []CalendarEvent, anchor time.Time, lph int) []placedEvent {
+func placeEvents(events []CalendarEvent, colFn func(CalendarEvent) int, lph int) []placedEvent {
 	var placed []placedEvent
 	totalRows := totalHours * lph
 	for _, ev := range events {
 		if ev.AllDay {
 			continue
 		}
-		col := findWeekCol(anchor, ev.Day)
+		col := colFn(ev)
 		if col < 0 {
 			continue
 		}
@@ -560,6 +566,12 @@ func placeWeekEvents(events []CalendarEvent, anchor time.Time, lph int) []placed
 		})
 	}
 	return placed
+}
+
+func placeWeekEvents(events []CalendarEvent, anchor time.Time, lph int) []placedEvent {
+	return placeEvents(events, func(ev CalendarEvent) int {
+		return findWeekCol(anchor, ev.Day)
+	}, lph)
 }
 
 func WeekGrid(opts WeekOptions) string {
@@ -955,4 +967,207 @@ func renderEventPill(ev CalendarEvent, cellW int) string {
 	}
 	return lipgloss.NewStyle().Background(bg).Foreground(fg).
 		Width(cellW).Render(text)
+}
+
+type DayOptions struct {
+	Day          time.Time
+	Events       []CalendarEvent
+	Today        time.Time
+	Width        int
+	Height       int
+	ShowHeader   bool
+	ScrollOffset int
+	LinesPerHour int
+}
+
+func DayGrid(opts DayOptions) string {
+	if opts.Width <= 0 || opts.Height <= 0 {
+		return ""
+	}
+
+	lph := opts.LinesPerHour
+	if lph < 1 {
+		lph = defaultLinesPerHour
+	}
+	totalRows := totalHours * lph
+	day := opts.Day
+
+	colWidth := opts.Width - timeLabelWidth - 2
+	if colWidth < 1 {
+		colWidth = 1
+	}
+
+	placed := placeDayEvents(opts.Events, day, lph)
+	resolveOverlaps(placed)
+
+	allDayRows := dayAllDayCount(opts.Events, day)
+	if allDayRows < 1 {
+		allDayRows = 1
+	}
+
+	headerLines := 0
+	if opts.ShowHeader {
+		headerLines = 2
+	}
+	fixedLines := headerLines + 1 + allDayRows + 1
+	viewportHeight := opts.Height - fixedLines
+	if viewportHeight < 1 {
+		viewportHeight = 1
+	}
+
+	scrollOffset := opts.ScrollOffset
+	maxScroll := totalRows - viewportHeight
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if scrollOffset > maxScroll {
+		scrollOffset = maxScroll
+	}
+	if scrollOffset < 0 {
+		scrollOffset = 0
+	}
+
+	showBottomRule := scrollOffset+viewportHeight >= totalRows
+	if showBottomRule && viewportHeight > 1 {
+		viewportHeight--
+	}
+
+	now := time.Now().Local()
+	nowRow := now.Hour()*lph + now.Minute()*lph/60
+	nowTimeLabel := now.Format("15:04")
+	isToday := day.Format("2006-01-02") == now.Format("2006-01-02")
+
+	faint := lipgloss.NewStyle().Faint(true)
+	faintSep := faint.Render("│")
+	nowStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
+	nowSep := nowStyle.Render("│")
+
+	var out strings.Builder
+
+	if opts.ShowHeader {
+		title := day.Format("Monday, January 2, 2006")
+		out.WriteString(lipgloss.NewStyle().Bold(true).Width(opts.Width).Align(lipgloss.Center).Render(title))
+		out.WriteString("\n\n")
+	}
+
+	out.WriteString(renderDayHRule(colWidth, "┌", "", true))
+	out.WriteString("\n")
+
+	out.WriteString(renderDayAllDayRows(opts.Events, day, colWidth, allDayRows))
+
+	out.WriteString(renderDayHRule(colWidth, "├", "╮", true))
+	out.WriteString("\n")
+
+	for row := scrollOffset; row < scrollOffset+viewportHeight && row < totalRows; row++ {
+		if row > scrollOffset {
+			out.WriteString("\n")
+		}
+
+		hour := row / lph
+		subRow := row % lph
+		isNowRow := isToday && row == nowRow
+
+		if isNowRow {
+			out.WriteString(nowStyle.Render(fmt.Sprintf("  %s", nowTimeLabel)) + " ")
+		} else if subRow == 0 {
+			out.WriteString(faint.Render(fmt.Sprintf("  %02d:00", hour)) + " ")
+		} else {
+			out.WriteString("        ")
+		}
+
+		if isNowRow {
+			out.WriteString(nowSep)
+		} else {
+			out.WriteString(faintSep)
+		}
+
+		matches := findPlacedEvents(placed, row, 0)
+		if len(matches) > 0 {
+			out.WriteString(renderOverlappingCells(matches, row, colWidth))
+		} else if isNowRow {
+			out.WriteString(nowStyle.Render(strings.Repeat("─", colWidth)))
+		} else {
+			out.WriteString(strings.Repeat(" ", colWidth))
+		}
+
+		if isNowRow {
+			out.WriteString(nowSep)
+		} else {
+			out.WriteString(faintSep)
+		}
+	}
+
+	if showBottomRule {
+		out.WriteString("\n")
+		out.WriteString(renderDayHRule(colWidth, "╰", "╯", false))
+	}
+
+	return out.String()
+}
+
+func placeDayEvents(events []CalendarEvent, day time.Time, lph int) []placedEvent {
+	dayKey := day.Format("2006-01-02")
+	return placeEvents(events, func(ev CalendarEvent) int {
+		if ev.Day.Format("2006-01-02") == dayKey {
+			return 0
+		}
+		return -1
+	}, lph)
+}
+
+func dayAllDayCount(events []CalendarEvent, day time.Time) int {
+	dayKey := day.Format("2006-01-02")
+	count := 0
+	for _, ev := range events {
+		if ev.AllDay && ev.Day.Format("2006-01-02") == dayKey {
+			count++
+		}
+	}
+	return count
+}
+
+func renderDayAllDayRows(events []CalendarEvent, day time.Time, colWidth int, numRows int) string {
+	dayKey := day.Format("2006-01-02")
+	var allDayEvents []CalendarEvent
+	for _, ev := range events {
+		if ev.AllDay && ev.Day.Format("2006-01-02") == dayKey {
+			allDayEvents = append(allDayEvents, ev)
+		}
+	}
+
+	faint := lipgloss.NewStyle().Faint(true)
+	faintSep := faint.Render("│")
+
+	var out strings.Builder
+	for row := 0; row < numRows; row++ {
+		if row == 0 {
+			out.WriteString(faint.Render("All day") + " ")
+		} else {
+			out.WriteString("        ")
+		}
+		out.WriteString(faintSep)
+		if row < len(allDayEvents) {
+			out.WriteString(renderEventPill(allDayEvents[row], colWidth))
+		} else {
+			out.WriteString(strings.Repeat(" ", colWidth))
+		}
+		out.WriteString("\n")
+	}
+	return out.String()
+}
+
+func renderDayHRule(colWidth int, left, right string, timeCol bool) string {
+	faint := lipgloss.NewStyle().Faint(true)
+	var b strings.Builder
+	if timeCol {
+		b.WriteString(faint.Render("────────"))
+	} else {
+		b.WriteString("        ")
+	}
+	b.WriteString(faint.Render(left))
+	b.WriteString(faint.Render(strings.Repeat("─", colWidth)))
+	if right != "" {
+		b.WriteString(faint.Render(right))
+	}
+	return b.String()
 }

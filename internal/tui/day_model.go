@@ -8,25 +8,25 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-type WeekChangedMsg struct{ Week time.Time }
+type DayChangedMsg struct{ Day time.Time }
 
-type weekKeyMap struct {
+type dayKeyMap struct {
 	ScrollUp   key.Binding
 	ScrollDown key.Binding
-	Left       key.Binding
-	Right      key.Binding
+	PrevDay    key.Binding
+	NextDay    key.Binding
 	PrevWeek   key.Binding
 	NextWeek   key.Binding
 	Today      key.Binding
 	Select     key.Binding
 }
 
-func defaultWeekKeys() weekKeyMap {
-	return weekKeyMap{
+func defaultDayKeys() dayKeyMap {
+	return dayKeyMap{
 		ScrollUp:   key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "scroll up")),
 		ScrollDown: key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "scroll down")),
-		Left:       key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "prev day")),
-		Right:      key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next day")),
+		PrevDay:    key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "prev day")),
+		NextDay:    key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next day")),
 		PrevWeek:   key.NewBinding(key.WithKeys("[", "pgup"), key.WithHelp("[", "prev week")),
 		NextWeek:   key.NewBinding(key.WithKeys("]", "pgdown"), key.WithHelp("]", "next week")),
 		Today:      key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "today")),
@@ -34,84 +34,69 @@ func defaultWeekKeys() weekKeyMap {
 	}
 }
 
-type WeekModel struct {
+type DayModel struct {
 	cursor        time.Time
 	today         time.Time
 	events        []CalendarEvent
-	keys          weekKeyMap
+	keys          dayKeyMap
 	width         int
 	height        int
-	weekStart     time.Weekday
 	selectedColor color.Color
 	scrollOffset  int
 	linesPerHour  int
 }
 
-func NewWeekModel(today time.Time) WeekModel {
+func NewDayModel(today time.Time) DayModel {
 	t := today.Local()
 	now := time.Now().Local()
 	initialScroll := now.Hour()*defaultLinesPerHour - 4
 	if initialScroll < 0 {
 		initialScroll = 0
 	}
-	return WeekModel{
+	return DayModel{
 		cursor:       t,
 		today:        t,
-		keys:         defaultWeekKeys(),
-		weekStart:    time.Sunday,
+		keys:         defaultDayKeys(),
 		linesPerHour: defaultLinesPerHour,
 		scrollOffset: initialScroll,
 	}
 }
 
-func (m WeekModel) WeekStartDate() time.Time {
-	offset := (int(m.cursor.Weekday()) - int(m.weekStart) + 7) % 7
-	return time.Date(m.cursor.Year(), m.cursor.Month(), m.cursor.Day()-offset, 0, 0, 0, 0, m.cursor.Location())
-}
+func (m DayModel) Cursor() time.Time { return m.cursor }
 
-func (m WeekModel) Cursor() time.Time { return m.cursor }
-
-func (m WeekModel) SetSize(w, h int) WeekModel {
+func (m DayModel) SetSize(w, h int) DayModel {
 	m.width = w
 	m.height = h
 	return m
 }
 
-func (m WeekModel) SetEvents(events []CalendarEvent) WeekModel {
+func (m DayModel) SetEvents(events []CalendarEvent) DayModel {
 	m.events = events
 	return m
 }
 
-func (m WeekModel) SetSelectedColor(c color.Color) WeekModel {
+func (m DayModel) SetSelectedColor(c color.Color) DayModel {
 	m.selectedColor = c
 	return m
 }
 
-func (m WeekModel) allDayRowCount() int {
-	anchor := m.WeekStartDate()
-	maxPerCol := 0
-	for col := range 7 {
-		d := anchor.AddDate(0, 0, col)
-		dayKey := d.Format("2006-01-02")
-		count := 0
-		for _, ev := range m.events {
-			if ev.AllDay && ev.Day.Format("2006-01-02") == dayKey {
-				count++
-			}
-		}
-		if count > maxPerCol {
-			maxPerCol = count
+func (m DayModel) allDayCount() int {
+	dayKey := m.cursor.Format("2006-01-02")
+	count := 0
+	for _, ev := range m.events {
+		if ev.AllDay && ev.Day.Format("2006-01-02") == dayKey {
+			count++
 		}
 	}
-	return maxPerCol
+	return count
 }
 
-func (m WeekModel) viewportHeight() int {
-	allDayRows := m.allDayRowCount()
+func (m DayModel) viewportHeight() int {
+	allDayRows := m.allDayCount()
 	if allDayRows < 1 {
 		allDayRows = 1
 	}
-	fixedLines := 2 + 1 + 1 + allDayRows + 1
+	fixedLines := 2 + 1 + allDayRows + 1
 	vh := m.height - fixedLines
 	if vh < 1 {
 		vh = 1
@@ -119,7 +104,7 @@ func (m WeekModel) viewportHeight() int {
 	return vh
 }
 
-func (m WeekModel) maxScroll() int {
+func (m DayModel) maxScroll() int {
 	totalRows := totalHours * m.linesPerHour
 	ms := totalRows - m.viewportHeight()
 	if ms < 0 {
@@ -128,59 +113,40 @@ func (m WeekModel) maxScroll() int {
 	return ms
 }
 
-func (m WeekModel) selectDay(day time.Time) (WeekModel, tea.Cmd) {
-	prevWeek := m.WeekStartDate()
+func (m DayModel) selectDay(day time.Time) (DayModel, tea.Cmd) {
+	prevDay := m.cursor.Format("2006-01-02")
 	m.cursor = day
 
 	var cmds []tea.Cmd
-	if m.WeekStartDate() != prevWeek {
-		week := m.WeekStartDate()
-		cmds = append(cmds, func() tea.Msg { return WeekChangedMsg{Week: week} })
+	if m.cursor.Format("2006-01-02") != prevDay {
+		cursor := m.cursor
+		cmds = append(cmds, func() tea.Msg { return DayChangedMsg{Day: cursor} })
 	}
 	cursor := m.cursor
 	cmds = append(cmds, func() tea.Msg { return CalendarDaySelectedMsg{Day: cursor} })
 	return m, tea.Batch(cmds...)
 }
 
-func (m WeekModel) DayAtPosition(x, y int) (time.Time, bool) {
+func (m DayModel) DayAtPosition(x, y int) (time.Time, bool) {
 	if m.width <= 0 || m.height <= 0 {
 		return time.Time{}, false
 	}
-
 	if y < 2 {
 		return time.Time{}, false
 	}
-
-	anchor := m.WeekStartDate()
-	gridX := x - timeLabelWidth - 1
-	if gridX < 0 {
+	if x < timeLabelWidth+1 {
 		return time.Time{}, false
 	}
-
-	colWs := calcWeekColWidths(m.width)
-	col := -1
-	posX := 0
-	for j := range 7 {
-		if gridX >= posX && gridX < posX+colWs[j] {
-			col = j
-			break
-		}
-		posX += colWs[j] + 1
-	}
-	if col < 0 {
-		return time.Time{}, false
-	}
-
-	return anchor.AddDate(0, 0, col), true
+	return m.cursor, true
 }
 
-func (m WeekModel) Update(msg tea.Msg) (WeekModel, tea.Cmd) {
+func (m DayModel) Update(msg tea.Msg) (DayModel, tea.Cmd) {
 	keyMsg, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return m, nil
 	}
 
-	prevWeek := m.WeekStartDate()
+	prevDay := m.cursor.Format("2006-01-02")
 	switch {
 	case key.Matches(keyMsg, m.keys.ScrollUp):
 		m.scrollOffset -= m.linesPerHour
@@ -192,9 +158,9 @@ func (m WeekModel) Update(msg tea.Msg) (WeekModel, tea.Cmd) {
 		if ms := m.maxScroll(); m.scrollOffset > ms {
 			m.scrollOffset = ms
 		}
-	case key.Matches(keyMsg, m.keys.Left):
+	case key.Matches(keyMsg, m.keys.PrevDay):
 		m.cursor = m.cursor.AddDate(0, 0, -1)
-	case key.Matches(keyMsg, m.keys.Right):
+	case key.Matches(keyMsg, m.keys.NextDay):
 		m.cursor = m.cursor.AddDate(0, 0, 1)
 	case key.Matches(keyMsg, m.keys.PrevWeek):
 		m.cursor = m.cursor.AddDate(0, 0, -7)
@@ -217,14 +183,14 @@ func (m WeekModel) Update(msg tea.Msg) (WeekModel, tea.Cmd) {
 		return m, nil
 	}
 
-	if m.WeekStartDate() != prevWeek {
-		week := m.WeekStartDate()
-		return m, func() tea.Msg { return WeekChangedMsg{Week: week} }
+	if m.cursor.Format("2006-01-02") != prevDay {
+		cursor := m.cursor
+		return m, func() tea.Msg { return DayChangedMsg{Day: cursor} }
 	}
 	return m, nil
 }
 
-func (m WeekModel) View() string {
+func (m DayModel) View() string {
 	if m.width <= 0 || m.height <= 0 {
 		return ""
 	}
@@ -235,16 +201,14 @@ func (m WeekModel) View() string {
 	if ms := m.maxScroll(); scrollOffset > ms {
 		scrollOffset = ms
 	}
-	return WeekGrid(WeekOptions{
-		WeekStart:     m.WeekStartDate(),
-		Events:        m.events,
-		Today:         m.today,
-		Selected:      m.cursor,
-		Width:         m.width,
-		Height:        m.height,
-		ShowHeader:    true,
-		SelectedColor: m.selectedColor,
-		ScrollOffset:  scrollOffset,
-		LinesPerHour:  m.linesPerHour,
+	return DayGrid(DayOptions{
+		Day:          m.cursor,
+		Events:       m.events,
+		Today:        m.today,
+		Width:        m.width,
+		Height:       m.height,
+		ShowHeader:   true,
+		ScrollOffset: scrollOffset,
+		LinesPerHour: m.linesPerHour,
 	})
 }
