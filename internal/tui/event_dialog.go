@@ -83,8 +83,8 @@ func defaultEventDialogKeys() eventDialogKeyMap {
 		Right:     key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next")),
 		Close:     key.NewBinding(key.WithKeys("esc", "q"), key.WithHelp("esc", "close")),
 		Edit:      key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
-		Delete:    key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
-		Duplicate: key.NewBinding(key.WithKeys("D"), key.WithHelp("D", "duplicate")),
+		Delete:    key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "delete")),
+		Duplicate: key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "duplicate")),
 		Create:    key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "create")),
 		RSVPYes:   key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "RSVP yes")),
 		RSVPNo:    key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "RSVP no")),
@@ -96,8 +96,9 @@ func defaultEventDialogKeys() eventDialogKeyMap {
 }
 
 type dialogAction struct {
-	label string
-	msg   func() tea.Msg
+	label          string
+	underlineIndex int
+	msg            func() tea.Msg
 }
 
 // CalendarInfo holds the display-relevant fields of a calendar.
@@ -206,9 +207,9 @@ func (m EventDialogModel) rsvpActions() []dialogAction {
 		return nil
 	}
 	return []dialogAction{
-		{"Yes", func() tea.Msg { return EventRSVPMsg{Event: ev, Status: "ACCEPTED"} }},
-		{"No", func() tea.Msg { return EventRSVPMsg{Event: ev, Status: "DECLINED"} }},
-		{"Maybe", func() tea.Msg { return EventRSVPMsg{Event: ev, Status: "TENTATIVE"} }},
+		{"Yes", 0, func() tea.Msg { return EventRSVPMsg{Event: ev, Status: "ACCEPTED"} }},
+		{"No", 0, func() tea.Msg { return EventRSVPMsg{Event: ev, Status: "DECLINED"} }},
+		{"Maybe", 0, func() tea.Msg { return EventRSVPMsg{Event: ev, Status: "TENTATIVE"} }},
 	}
 }
 
@@ -218,9 +219,9 @@ func (m EventDialogModel) visibleActions() []dialogAction {
 		return nil
 	}
 	return []dialogAction{
-		{"Edit", func() tea.Msg { return EventEditMsg{Event: ev} }},
-		{"Duplicate", func() tea.Msg { return EventDuplicateMsg{Event: ev} }},
-		{"Delete", func() tea.Msg { return EventDeleteMsg{Event: ev} }},
+		{"Edit", 0, func() tea.Msg { return EventEditMsg{Event: ev} }},
+		{"Duplicate", 0, func() tea.Msg { return EventDuplicateMsg{Event: ev} }},
+		{"Delete", 4, func() tea.Msg { return EventDeleteMsg{Event: ev} }},
 	}
 }
 
@@ -816,7 +817,7 @@ func (m EventDialogModel) renderActions(w int) string {
 	actions := m.visibleActions()
 	parts := make([]string, len(actions))
 	for i, a := range actions {
-		parts[i] = button(a.label, 0, m.focusZone == zoneActions && i == m.focusedAction)
+		parts[i] = button(a.label, a.underlineIndex, m.focusZone == zoneActions && i == m.focusedAction)
 	}
 	return truncateTo(strings.Join(parts, " "), w)
 }
@@ -902,7 +903,7 @@ func (m EventDialogModel) renderRSVPLine(att model.Attendee, rsvp []dialogAction
 			right := pad - leftPad
 			l = strings.Repeat(" ", leftPad) + l + strings.Repeat(" ", right)
 		}
-		parts = append(parts, button(l, leftPad, m.focusZone == zoneRSVP && i == m.focusedRSVP))
+		parts = append(parts, button(l, leftPad+a.underlineIndex, m.focusZone == zoneRSVP && i == m.focusedRSVP))
 	}
 	value := strings.Join(parts, " ")
 
