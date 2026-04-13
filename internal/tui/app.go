@@ -108,6 +108,15 @@ type eventCreatedMsg struct {
 	err error
 }
 
+type eventEditLoadedMsg struct {
+	event event.Event
+	err   error
+}
+
+type eventUpdatedMsg struct {
+	err error
+}
+
 type eventDeletedMsg struct {
 	err error
 }
@@ -299,7 +308,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.(type) {
 		case EventFormSaveMsg, EventFormClosedMsg,
 			tea.BackgroundColorMsg, tea.WindowSizeMsg,
-			eventsLoadedMsg, calendarsLoadedMsg, eventCreatedMsg:
+			eventsLoadedMsg, calendarsLoadedMsg,
+			eventCreatedMsg, eventUpdatedMsg:
 			// fall through to main switch
 		default:
 			if kp, ok := msg.(tea.KeyPressMsg); ok && kp.String() == "ctrl+c" {
@@ -391,8 +401,43 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.formOpen = true
 		return m, cmd
 
+	case EventEditMsg:
+		ev := msg.Event
+		return m, func() tea.Msg {
+			fresh, err := m.app.Events.Get(context.Background(), ev.ID)
+			return eventEditLoadedMsg{event: fresh, err: err}
+		}
+
+	case eventEditLoadedMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.form, cmd = NewEventFormModelForEdit(msg.event, m.calendars, m.theme)
+		m.form = m.form.SetSize(m.width, m.height)
+		m.formOpen = true
+		m.dialogOpen = false
+		return m, cmd
+
 	case EventFormSaveMsg:
 		m.formOpen = false
+		if msg.EventID > 0 {
+			return m, func() tea.Msg {
+				ctx := context.Background()
+				_, err := m.app.Events.Update(ctx, msg.EventID, event.UpdateParams{
+					CalendarID:     msg.CalendarID,
+					Title:          msg.Title,
+					Description:    msg.Description,
+					Location:       msg.Location,
+					StartTime:      msg.StartTime,
+					EndTime:        msg.EndTime,
+					AllDay:         msg.AllDay,
+					RecurrenceRule: msg.RecurrenceRule,
+				})
+				return eventUpdatedMsg{err: err}
+			}
+		}
 		return m, func() tea.Msg {
 			ctx := context.Background()
 			_, err := m.app.Events.Create(ctx, event.CreateParams{
@@ -413,6 +458,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case eventCreatedMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		return m, m.loadEvents()
+
+	case eventUpdatedMsg:
 		if msg.err != nil {
 			m.err = msg.err
 			return m, nil

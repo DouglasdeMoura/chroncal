@@ -12,10 +12,14 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
+
+	"github.com/douglasdemoura/chroncal/internal/event"
 )
 
 // EventFormSaveMsg is emitted when the user saves the event form.
+// When EventID > 0 the save is an update; otherwise it is a create.
 type EventFormSaveMsg struct {
+	EventID        int64
 	CalendarID     int64
 	Title          string
 	Description    string
@@ -104,8 +108,9 @@ func datePickerHelpKeys() []key.Binding {
 	}
 }
 
-// EventFormModel is the Bubble Tea model for the event creation form.
+// EventFormModel is the Bubble Tea model for the event creation/edit form.
 type EventFormModel struct {
+	editID      int64 // 0 = create mode, >0 = editing this event ID
 	day         time.Time
 	calendars   []calendarOption
 	calendarIdx int
@@ -209,6 +214,95 @@ func NewEventFormModel(day time.Time, calendars map[int64]CalendarInfo, theme Th
 			Close:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")),
 		},
 	}, cmd
+}
+
+// NewEventFormModelForEdit creates a form pre-filled with an existing event's data.
+func NewEventFormModelForEdit(ev event.Event, calendars map[int64]CalendarInfo, theme Theme) (EventFormModel, tea.Cmd) {
+	m, cmd := NewEventFormModel(ev.StartTime, calendars, theme)
+	m.editID = ev.ID
+	m.title.SetValue(ev.Title)
+	m.location.SetValue(ev.Location)
+	m.description.SetValue(ev.Description)
+	m.allDay = ev.AllDay
+
+	if !ev.AllDay {
+		m.startTime.SetValue(ev.StartTime.Local().Format("15:04"))
+		m.endTime.SetValue(ev.EndTime.Local().Format("15:04"))
+	}
+
+	// Select the correct calendar.
+	for i, c := range m.calendars {
+		if c.ID == ev.CalendarID {
+			m.calendarIdx = i
+			break
+		}
+	}
+
+	// Parse recurrence rule into form state.
+	if ev.RecurrenceRule != "" {
+		m.repeatIdx, m.customRule, m.ends, m.endsDate = parseRecurrenceRule(ev.RecurrenceRule, m.day)
+		if m.ends == endsAfter {
+			if count := rruleParam(ev.RecurrenceRule, "COUNT"); count != "" {
+				m.endsCount.SetValue(count)
+			}
+		}
+	}
+
+	return m, cmd
+}
+
+// parseRecurrenceRule matches a recurrence rule against the form presets and
+// extracts ending conditions. Returns presetIdx, customRule, ends mode, and
+// ends date.
+func parseRecurrenceRule(rule string, fallbackDate time.Time) (int, string, endsMode, time.Time) {
+	// Strip COUNT and UNTIL to match the base rule against presets.
+	base := rule
+	var ends endsMode
+	endsDate := fallbackDate.AddDate(0, 1, 0)
+
+	parts := strings.Split(rule, ";")
+	var baseParts []string
+	for _, p := range parts {
+		upper := strings.ToUpper(p)
+		switch {
+		case strings.HasPrefix(upper, "COUNT="):
+			ends = endsAfter
+		case strings.HasPrefix(upper, "UNTIL="):
+			ends = endsOnDate
+			val := strings.TrimPrefix(upper, "UNTIL=")
+			if t, err := time.Parse("20060102T150405Z", val); err == nil {
+				endsDate = t
+			} else if t, err := time.Parse("20060102", val); err == nil {
+				endsDate = t
+			}
+		default:
+			baseParts = append(baseParts, p)
+		}
+	}
+	base = strings.Join(baseParts, ";")
+
+	// Try to match against presets (skip index 0 "None" and 7 "Custom...").
+	for i := 1; i < len(repeatPresets); i++ {
+		if i == repeatCustomIdx {
+			continue
+		}
+		if strings.EqualFold(base, repeatPresets[i].Rule) {
+			return i, "", ends, endsDate
+		}
+	}
+
+	// No preset matched — use Custom.
+	return repeatCustomIdx, rule, ends, endsDate
+}
+
+// rruleParam extracts a named parameter value from an RRULE string.
+func rruleParam(rule, name string) string {
+	for _, p := range strings.Split(rule, ";") {
+		if k, v, ok := strings.Cut(p, "="); ok && strings.EqualFold(k, name) {
+			return v
+		}
+	}
+	return ""
 }
 
 func (m EventFormModel) SetSize(w, h int) EventFormModel {
@@ -781,11 +875,14 @@ func (m EventFormModel) save() (EventFormModel, tea.Cmd) {
 	day := m.day
 	rrule := m.buildRecurrenceRule()
 
+	editID := m.editID
+
 	if m.allDay {
 		start := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC)
 		end := start.AddDate(0, 0, 1)
 		return m, func() tea.Msg {
 			return EventFormSaveMsg{
+				EventID:        editID,
 				CalendarID:     calID,
 				Title:          title,
 				Description:    strings.TrimSpace(m.description.Value()),
@@ -825,6 +922,7 @@ func (m EventFormModel) save() (EventFormModel, tea.Cmd) {
 
 	return m, func() tea.Msg {
 		return EventFormSaveMsg{
+			EventID:        editID,
 			CalendarID:     calID,
 			Title:          title,
 			Description:    desc,
@@ -850,7 +948,11 @@ func (m EventFormModel) View() string {
 	bold := lipgloss.NewStyle().Bold(true)
 
 	var lines []string
-	lines = append(lines, bold.Render("New Event"))
+	header := "New Event"
+	if m.editID > 0 {
+		header = "Edit Event"
+	}
+	lines = append(lines, bold.Render(header))
 	lines = append(lines, "")
 
 	// Title
