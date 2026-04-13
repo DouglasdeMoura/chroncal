@@ -686,16 +686,7 @@ func WeekGrid(opts WeekOptions) string {
 			out.WriteString("\n")
 		}
 
-		hour := row / lph
-		subRow := row % lph
-
-		if row == nowRow {
-			out.WriteString(nowStyle.Render(fmt.Sprintf("  %s", nowTimeLabel)) + " ")
-		} else if subRow == 0 {
-			out.WriteString(faint.Render(fmt.Sprintf("  %02d:00", hour)) + " ")
-		} else {
-			out.WriteString("        ")
-		}
+		out.WriteString(renderTimeLabel(row, lph, row == nowRow, nowTimeLabel))
 
 		for i := 0; i <= 7; i++ {
 			nowBorder := nowHasLine && row == nowRow && i == nowCol
@@ -946,6 +937,18 @@ func findWeekCol(anchor, d time.Time) int {
 	return -1
 }
 
+func renderTimeLabel(row, lph int, isNowRow bool, nowTimeLabel string) string {
+	if isNowRow {
+		s := lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
+		return s.Render(fmt.Sprintf("  %s", nowTimeLabel)) + " "
+	}
+	if row%lph == 0 {
+		s := lipgloss.NewStyle().Faint(true)
+		return s.Render(fmt.Sprintf("  %02d:00", row/lph)) + " "
+	}
+	return strings.Repeat(" ", timeLabelWidth)
+}
+
 func renderEventPill(ev CalendarEvent, cellW int) string {
 	text := " " + ev.Title
 	if lipgloss.Width(text) > cellW {
@@ -1063,17 +1066,8 @@ func DayGrid(opts DayOptions) string {
 			out.WriteString("\n")
 		}
 
-		hour := row / lph
-		subRow := row % lph
 		isNowRow := isToday && row == nowRow
-
-		if isNowRow {
-			out.WriteString(nowStyle.Render(fmt.Sprintf("  %s", nowTimeLabel)) + " ")
-		} else if subRow == 0 {
-			out.WriteString(faint.Render(fmt.Sprintf("  %02d:00", hour)) + " ")
-		} else {
-			out.WriteString("        ")
-		}
+		out.WriteString(renderTimeLabel(row, lph, isNowRow, nowTimeLabel))
 
 		if isNowRow {
 			out.WriteString(nowSep)
