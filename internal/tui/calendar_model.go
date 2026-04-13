@@ -89,11 +89,9 @@ func (m CalendarModel) SetSelectedColor(c color.Color) CalendarModel {
 func (m CalendarModel) Cursor() time.Time { return m.cursor }
 func (m CalendarModel) Month() time.Time  { return m.month }
 
-// DayAtPosition maps a position relative to the calendar widget's top-left
-// corner to the corresponding day in the grid.
-func (m CalendarModel) DayAtPosition(x, y int) (time.Time, bool) {
+func (m CalendarModel) hitCell(x, y int) (time.Time, int, int, bool) {
 	if m.width <= 0 || m.height <= 0 {
-		return time.Time{}, false
+		return time.Time{}, 0, 0, false
 	}
 
 	first := time.Date(m.month.Year(), m.month.Month(), 1, 0, 0, 0, 0, time.Local)
@@ -138,20 +136,22 @@ func (m CalendarModel) DayAtPosition(x, y int) (time.Time, bool) {
 
 	tableY := y - preambleLines
 	if tableY < 0 {
-		return time.Time{}, false
+		return time.Time{}, 0, 0, false
 	}
 
 	week := -1
 	posY := 1
+	cellTop := -1
 	for i := range 6 {
 		if tableY >= posY && tableY < posY+cellHs[i] {
 			week = i
+			cellTop = posY
 			break
 		}
 		posY += cellHs[i] + 1
 	}
 	if week < 0 {
-		return time.Time{}, false
+		return time.Time{}, 0, 0, false
 	}
 
 	col := -1
@@ -164,10 +164,49 @@ func (m CalendarModel) DayAtPosition(x, y int) (time.Time, bool) {
 		posX += cellWs[j] + 1
 	}
 	if col < 0 {
-		return time.Time{}, false
+		return time.Time{}, 0, 0, false
 	}
 
-	return anchor.AddDate(0, 0, week*7+col), true
+	return anchor.AddDate(0, 0, week*7+col), tableY - cellTop, cellHs[week], true
+}
+
+// DayAtPosition maps a position relative to the calendar widget's top-left
+// corner to the corresponding day in the grid.
+func (m CalendarModel) DayAtPosition(x, y int) (time.Time, bool) {
+	day, _, _, ok := m.hitCell(x, y)
+	return day, ok
+}
+
+// EventAtPosition returns the ID of the visible month-view event pill at the
+// given position, or 0 when the click doesn't land on a rendered event.
+func (m CalendarModel) EventAtPosition(x, y int) int64 {
+	day, line, cellH, ok := m.hitCell(x, y)
+	if !ok || line < 1 {
+		return 0
+	}
+
+	dayKey := day.Format("2006-01-02")
+	events := make([]CalendarEvent, 0, cellH-1)
+	for _, ev := range m.events {
+		if ev.Day.Format("2006-01-02") == dayKey {
+			events = append(events, ev)
+		}
+	}
+
+	maxEventLines := cellH - 1
+	if maxEventLines < 1 {
+		return 0
+	}
+
+	visibleEvents := min(len(events), maxEventLines)
+	if len(events) > maxEventLines {
+		visibleEvents--
+	}
+	if visibleEvents <= 0 || line > visibleEvents {
+		return 0
+	}
+
+	return events[line-1].ID
 }
 
 func (m CalendarModel) selectDay(day time.Time) (CalendarModel, tea.Cmd) {

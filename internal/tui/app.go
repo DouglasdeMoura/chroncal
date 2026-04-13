@@ -19,7 +19,7 @@ import (
 type appFocus int
 
 const (
-	focusSidebar  appFocus = iota
+	focusSidebar appFocus = iota
 	focusCalendar
 )
 
@@ -71,11 +71,11 @@ type Model struct {
 	choiceDialog   ChoiceDialogModel
 	choiceOpen     bool
 	pendingDelete  event.Event
-	err              error
-	ready            bool
-	showSidebar      bool
-	focus            appFocus
-	clickedEventID   int64
+	err            error
+	ready          bool
+	showSidebar    bool
+	focus          appFocus
+	clickedEventID int64
 }
 
 func NewModel(a *app.App) Model {
@@ -510,6 +510,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !ok {
 				return m, nil
 			}
+			m.clickedEventID = m.calendar.EventAtPosition(msg.X-ox, msg.Y-oy)
 			var cmd tea.Cmd
 			m.calendar, cmd = m.calendar.selectDay(day)
 			return m, cmd
