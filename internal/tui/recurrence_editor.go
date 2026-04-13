@@ -81,9 +81,6 @@ func NewRecurrenceEditorModel(startDate time.Time, w, h int, theme Theme) Recurr
 	var weekDays [7]bool
 	weekDays[int(startDate.Weekday())] = true
 
-	h2 := help.New()
-	h2.ShortSeparator = " · "
-
 	m := RecurrenceEditorModel{
 		freqIdx:       1, // Weekly
 		interval:      intervalInput,
@@ -94,7 +91,7 @@ func NewRecurrenceEditorModel(startDate time.Time, w, h int, theme Theme) Recurr
 		endsDate:      startDate.AddDate(0, 3, 0),
 		focusField:    refFreq,
 		startDate:     startDate,
-		help:          h2,
+		help:          newThemedHelp(theme),
 		width:         w,
 		height:        h,
 		theme:         theme,

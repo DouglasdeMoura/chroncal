@@ -201,11 +201,7 @@ func NewEventFormModel(day time.Time, calendars map[int64]CalendarInfo, theme Th
 		endsDate:    day.AddDate(0, 1, 0),
 		focusField: fieldTitle,
 		theme:     theme,
-		help: func() help.Model {
-			h := help.New()
-			h.ShortSeparator = " · "
-			return h
-		}(),
+		help: newThemedHelp(theme),
 		keys: eventFormKeyMap{
 			Tab:      key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
 			ShiftTab: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev field")),

@@ -151,13 +151,10 @@ func NewModel(a *app.App) Model {
 	case "day":
 		vm = viewDay
 	}
-	h := help.New()
-	h.ShortSeparator = " · "
-
 	return Model{
 		app:         a,
 		keys:        defaultAppKeys(),
-		help:        h,
+		help:        help.New(),
 		viewMode:    vm,
 		calendar:    NewCalendarModel(now),
 		week:        NewWeekModel(now),
@@ -320,15 +317,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.calendar = m.calendar.SetSelectedColor(m.theme.Text)
 		m.week = m.week.SetSelectedColor(m.theme.Text)
 		m.day = m.day.SetSelectedColor(m.theme.Text)
-		m.help.Styles = help.Styles{
-			ShortKey:       lipgloss.NewStyle().Foreground(m.theme.Text),
-			ShortDesc:      lipgloss.NewStyle().Foreground(m.theme.TextDim),
-			ShortSeparator: lipgloss.NewStyle().Foreground(m.theme.Muted),
-			FullKey:        lipgloss.NewStyle().Foreground(m.theme.Text),
-			FullDesc:       lipgloss.NewStyle().Foreground(m.theme.TextDim),
-			FullSeparator:  lipgloss.NewStyle().Foreground(m.theme.Muted),
-			Ellipsis:       lipgloss.NewStyle().Foreground(m.theme.Muted),
-		}
+		m.help = newThemedHelp(m.theme)
 		return m, nil
 
 	case tea.WindowSizeMsg:
@@ -381,6 +370,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case CalendarDaySelectedMsg:
 		dayEvents := eventsOn(m.events, msg.Day)
 		m.dialog = NewEventDialogModel(msg.Day, dayEvents, m.calendars).
+			SetHelp(newThemedHelp(m.theme)).
 			SetSelectedColor(m.theme.Selected).
 			SetSize(m.width, m.height)
 		if m.clickedEventID > 0 {
@@ -491,12 +481,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Day.Year() != m.calendar.month.Year() || msg.Day.Month() != m.calendar.month.Month() {
 			m.calendar.month = time.Date(msg.Day.Year(), msg.Day.Month(), 1, 0, 0, 0, 0, msg.Day.Location())
 			m.dialog = NewEventDialogModel(msg.Day, nil, m.calendars).
+				SetHelp(newThemedHelp(m.theme)).
 				SetSelectedColor(m.theme.Selected).
 				SetSize(m.width, m.height)
 			return m, m.loadEvents()
 		}
 		dayEvents := eventsOn(m.events, msg.Day)
 		m.dialog = NewEventDialogModel(msg.Day, dayEvents, m.calendars).
+			SetHelp(newThemedHelp(m.theme)).
 			SetSelectedColor(m.theme.Selected).
 			SetSize(m.width, m.height)
 		return m, nil

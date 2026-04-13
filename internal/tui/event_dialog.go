@@ -132,6 +132,11 @@ func (m EventDialogModel) SetSelectedColor(c color.Color) EventDialogModel {
 	return m
 }
 
+func (m EventDialogModel) SetHelp(h help.Model) EventDialogModel {
+	m.help = h
+	return m
+}
+
 const narrowThreshold = 90
 
 func NewEventDialogModel(day time.Time, events []event.Event, calendars map[int64]CalendarInfo) EventDialogModel {
@@ -144,15 +149,12 @@ func NewEventDialogModel(day time.Time, events []event.Event, calendars map[int6
 		}
 		return a.StartTime.Compare(b.StartTime)
 	})
-	h := help.New()
-	h.ShortSeparator = " · "
-
 	return EventDialogModel{
 		day:       day,
 		events:    events,
 		calendars: calendars,
 		keys:      defaultEventDialogKeys(),
-		help:      h,
+		help:      help.New(),
 	}
 }
 

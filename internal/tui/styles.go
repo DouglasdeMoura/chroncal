@@ -3,6 +3,7 @@ package tui
 import (
 	"image/color"
 
+	"charm.land/bubbles/v2/help"
 	lipgloss "charm.land/lipgloss/v2"
 )
 
@@ -19,6 +20,21 @@ type Theme struct {
 	Selected  color.Color
 	Surface   color.Color
 	Error     color.Color
+}
+
+func newThemedHelp(theme Theme) help.Model {
+	h := help.New()
+	h.ShortSeparator = " · "
+	h.Styles = help.Styles{
+		ShortKey:       lipgloss.NewStyle().Foreground(theme.Text),
+		ShortDesc:      lipgloss.NewStyle().Foreground(theme.TextDim),
+		ShortSeparator: lipgloss.NewStyle().Foreground(theme.Muted),
+		FullKey:        lipgloss.NewStyle().Foreground(theme.Text),
+		FullDesc:       lipgloss.NewStyle().Foreground(theme.TextDim),
+		FullSeparator:  lipgloss.NewStyle().Foreground(theme.Muted),
+		Ellipsis:       lipgloss.NewStyle().Foreground(theme.Muted),
+	}
+	return h
 }
 
 // NewTheme returns a Theme with colors resolved for light or dark backgrounds.
