@@ -15,26 +15,26 @@ type dayKeyMap struct {
 	ScrollDown key.Binding
 	PrevDay    key.Binding
 	NextDay    key.Binding
-	PrevWeek   key.Binding
-	NextWeek   key.Binding
+	PrevBracket key.Binding
+	NextBracket key.Binding
 	Today      key.Binding
 	Select     key.Binding
 }
 
 func (k dayKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.ScrollUp, k.ScrollDown, k.PrevDay, k.NextDay, k.PrevWeek, k.NextWeek, k.Today, k.Select}
+	return []key.Binding{k.ScrollUp, k.ScrollDown, k.PrevDay, k.NextDay, k.PrevBracket, k.NextBracket, k.Today, k.Select}
 }
 
 func (k dayKeyMap) FullHelp() [][]key.Binding {
 	prev, next := k.PrevDay, k.NextDay
 	prev.SetHelp("←/h", "previous day")
 	next.SetHelp("→/l", "next day")
-	prevW, nextW := k.PrevWeek, k.NextWeek
-	prevW.SetHelp("[", "previous week")
-	nextW.SetHelp("]", "next week")
+	prevB, nextB := k.PrevBracket, k.NextBracket
+	prevB.SetHelp("[", "previous day")
+	nextB.SetHelp("]", "next day")
 	return [][]key.Binding{
 		{k.ScrollUp, k.ScrollDown, prev, next},
-		{prevW, nextW, k.Today, k.Select},
+		{prevB, nextB, k.Today, k.Select},
 	}
 }
 
@@ -44,8 +44,8 @@ func defaultDayKeys() dayKeyMap {
 		ScrollDown: key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "scroll down")),
 		PrevDay:    key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "previous")),
 		NextDay:    key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next")),
-		PrevWeek:   key.NewBinding(key.WithKeys("[", "pgup"), key.WithHelp("[", "previous")),
-		NextWeek:   key.NewBinding(key.WithKeys("]", "pgdown"), key.WithHelp("]", "next")),
+		PrevBracket: key.NewBinding(key.WithKeys("[", "pgup"), key.WithHelp("[", "previous day")),
+		NextBracket: key.NewBinding(key.WithKeys("]", "pgdown"), key.WithHelp("]", "next day")),
 		Today:      key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "today")),
 		Select:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select day")),
 	}
@@ -222,10 +222,10 @@ func (m DayModel) Update(msg tea.Msg) (DayModel, tea.Cmd) {
 		m.cursor = m.cursor.AddDate(0, 0, -1)
 	case key.Matches(keyMsg, m.keys.NextDay):
 		m.cursor = m.cursor.AddDate(0, 0, 1)
-	case key.Matches(keyMsg, m.keys.PrevWeek):
-		m.cursor = m.cursor.AddDate(0, 0, -7)
-	case key.Matches(keyMsg, m.keys.NextWeek):
-		m.cursor = m.cursor.AddDate(0, 0, 7)
+	case key.Matches(keyMsg, m.keys.PrevBracket):
+		m.cursor = m.cursor.AddDate(0, 0, -1)
+	case key.Matches(keyMsg, m.keys.NextBracket):
+		m.cursor = m.cursor.AddDate(0, 0, 1)
 	case key.Matches(keyMsg, m.keys.Today):
 		m.cursor = m.today
 		now := time.Now().Local()
