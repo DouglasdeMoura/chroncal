@@ -725,6 +725,10 @@ func (m Model) View() tea.View {
 	if m.formOpen {
 		bw, bh := m.form.BoxSize()
 		v.Content = m.compositeOverlay(v.Content, m.form.View(), bw, bh)
+		if m.form.DatePickerOpen() {
+			pw, ph := m.form.DatePickerBoxSize()
+			v.Content = m.compositeOverlay(v.Content, m.form.DatePickerView(), pw, ph)
+		}
 	}
 	if m.choiceOpen {
 		bw, bh := m.choiceDialog.BoxSize()

@@ -66,9 +66,10 @@ type EventFormModel struct {
 	location    textinput.Model
 	description textinput.Model
 
-	allDay     bool
-	focusField formField
-	errMsg     string
+	allDay         bool
+	focusField     formField
+	datePickerOpen bool
+	errMsg         string
 
 	keys   eventFormKeyMap
 	width  int
@@ -167,9 +168,6 @@ func (m EventFormModel) BoxSize() (int, int) {
 	if m.allDay {
 		boxH = 21
 	}
-	if m.focusField == fieldDate {
-		boxH += 8 // weekday header + 6 week rows + help line
-	}
 	if len(m.calendars) <= 1 {
 		boxH -= 2
 	}
@@ -247,8 +245,14 @@ func (m EventFormModel) isTextInput() bool {
 
 // Update handles messages for the event form.
 func (m EventFormModel) Update(msg tea.Msg) (EventFormModel, tea.Cmd) {
-	if msg, ok := msg.(tea.KeyPressMsg); ok {
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+	case tea.MouseClickMsg:
+		if msg.Button == tea.MouseLeft && m.datePickerOpen {
+			return m.handleDatePickerMouse(msg)
+		}
+		return m, nil
 	}
 	// Forward non-key messages (cursor blink, etc.) to the active textinput.
 	if m.isTextInput() {
@@ -271,6 +275,11 @@ func (m EventFormModel) Update(msg tea.Msg) (EventFormModel, tea.Cmd) {
 }
 
 func (m EventFormModel) handleKey(msg tea.KeyPressMsg) (EventFormModel, tea.Cmd) {
+	// Date picker dialog captures all input when open.
+	if m.datePickerOpen {
+		return m.handleDatePickerKey(msg)
+	}
+
 	switch {
 	case key.Matches(msg, m.keys.Close):
 		return m, func() tea.Msg { return EventFormClosedMsg{} }
@@ -291,7 +300,8 @@ func (m EventFormModel) handleKey(msg tea.KeyPressMsg) (EventFormModel, tea.Cmd)
 			m.allDay = !m.allDay
 			return m, nil
 		case fieldDate:
-			return m.withFocus(m.nextField())
+			m.datePickerOpen = true
+			return m, nil
 		default:
 			if m.isTextInput() {
 				return m.withFocus(m.nextField())
@@ -305,31 +315,10 @@ func (m EventFormModel) handleKey(msg tea.KeyPressMsg) (EventFormModel, tea.Cmd)
 		return m, nil
 	}
 
-	// Date picker navigation.
-	if m.focusField == fieldDate {
-		switch msg.String() {
-		case "left", "h":
-			m.day = m.day.AddDate(0, 0, -1)
-			return m, nil
-		case "right", "l":
-			m.day = m.day.AddDate(0, 0, 1)
-			return m, nil
-		case "up", "k":
-			m.day = m.day.AddDate(0, 0, -7)
-			return m, nil
-		case "down", "j":
-			m.day = m.day.AddDate(0, 0, 7)
-			return m, nil
-		case "[":
-			m.day = addMonthClamped(m.day, -1)
-			return m, nil
-		case "]":
-			m.day = addMonthClamped(m.day, 1)
-			return m, nil
-		case "t":
-			m.day = time.Now()
-			return m, nil
-		}
+	// Open date picker via space.
+	if m.focusField == fieldDate && msg.String() == "space" {
+		m.datePickerOpen = true
+		return m, nil
 	}
 
 	// Calendar cycling via arrow keys.
@@ -369,6 +358,118 @@ func (m EventFormModel) handleKey(msg tea.KeyPressMsg) (EventFormModel, tea.Cmd)
 
 // currentDuration returns the duration between start and end if both are valid.
 // Falls back to 1 hour when either value is unparseable.
+func (m EventFormModel) handleDatePickerKey(msg tea.KeyPressMsg) (EventFormModel, tea.Cmd) {
+	switch msg.String() {
+	case "left", "h":
+		m.day = m.day.AddDate(0, 0, -1)
+	case "right", "l":
+		m.day = m.day.AddDate(0, 0, 1)
+	case "up", "k":
+		m.day = m.day.AddDate(0, 0, -7)
+	case "down", "j":
+		m.day = m.day.AddDate(0, 0, 7)
+	case "[":
+		m.day = addMonthClamped(m.day, -1)
+	case "]":
+		m.day = addMonthClamped(m.day, 1)
+	case "t":
+		m.day = time.Now()
+	case "enter", "space":
+		m.datePickerOpen = false
+	case "esc", "q":
+		m.datePickerOpen = false
+	}
+	return m, nil
+}
+
+func (m EventFormModel) handleDatePickerMouse(msg tea.MouseClickMsg) (EventFormModel, tea.Cmd) {
+	boxW, boxH := m.DatePickerBoxSize()
+	innerW := boxW - 6
+	const gridW = 20
+	gridPad := max((innerW-gridW)/2, 0)
+
+	// Picker is centered on screen.
+	ox := (m.width - boxW) / 2
+	oy := (m.height - boxH) / 2
+
+	// Grid origin inside the box: border(1) + padding(2) + gridPad for x,
+	// border(1) + padding(1) + month header(1) + weekday header(1) for y.
+	gridX := ox + 3 + gridPad
+	gridY := oy + 4
+
+	// Translate click to grid-relative coordinates.
+	rx := msg.X - gridX
+	ry := msg.Y - gridY
+	if rx < 0 || rx >= gridW || ry < 0 || ry >= 6 {
+		return m, nil
+	}
+
+	// Each cell is 3 chars wide (2 digit + 1 space), last column has no trailing space.
+	dow := rx / 3
+	if dow > 6 {
+		dow = 6
+	}
+	week := ry
+
+	// Map to day number.
+	y, mo, _ := m.day.Date()
+	loc := m.day.Location()
+	first := time.Date(y, mo, 1, 0, 0, 0, 0, loc)
+	startDow := int(first.Weekday())
+	daysInMonth := time.Date(y, mo+1, 0, 0, 0, 0, 0, loc).Day()
+
+	dayNum := week*7 + dow - startDow + 1
+	if dayNum < 1 || dayNum > daysInMonth {
+		return m, nil
+	}
+
+	m.day = time.Date(y, mo, dayNum, 0, 0, 0, 0, loc)
+	m.datePickerOpen = false
+	return m, nil
+}
+
+// DatePickerOpen reports whether the date picker overlay should be shown.
+func (m EventFormModel) DatePickerOpen() bool {
+	return m.datePickerOpen
+}
+
+// DatePickerBoxSize returns the outer dimensions of the date picker dialog.
+func (m EventFormModel) DatePickerBoxSize() (int, int) {
+	// width: help text (~44 chars) + padding(4) + border(2) = 50
+	// height: 1 month header + 1 weekday header + 6 week rows + 1 help + padding(2) + border(2) = 13
+	return 50, 13
+}
+
+// DatePickerView renders the date picker as a standalone bordered dialog.
+func (m EventFormModel) DatePickerView() string {
+	boxW, boxH := m.DatePickerBoxSize()
+	innerW := boxW - 6
+
+	faint := lipgloss.NewStyle().Faint(true)
+	bold := lipgloss.NewStyle().Bold(true)
+
+	const gridW = 20 // width of "Su Mo Tu We Th Fr Sa"
+	gridPad := max((innerW-gridW)/2, 0)
+	var lines []string
+	monthStr := m.day.Format("January 2006")
+	monthPad := gridPad + max((gridW-len(monthStr))/2, 0)
+	lines = append(lines, strings.Repeat(" ", monthPad)+bold.Render(monthStr))
+	lines = append(lines, renderMiniCalendar(m.day, time.Now(), gridPad, m.theme))
+	helpStr := "\u2190\u2191\u2192\u2193: navigate  \u00b7  [/]: month  \u00b7  t: today"
+	helpPad := max((innerW-lipgloss.Width(helpStr))/2, 0)
+	help := strings.Repeat(" ", helpPad) + faint.Render(helpStr)
+	lines = append(lines, help)
+
+	content := strings.Join(lines, "\n")
+
+	return lipgloss.NewStyle().
+		Width(boxW).
+		Height(boxH).
+		Padding(1, 2).
+		Border(lipgloss.RoundedBorder()).
+		Render(content)
+}
+
 func (m EventFormModel) currentDuration() time.Duration {
 	s, err1 := time.Parse("15:04", m.startTime.Value())
 	e, err2 := time.Parse("15:04", m.endTime.Value())
@@ -492,14 +593,11 @@ func (m EventFormModel) View() string {
 	}
 
 	// Date
+	dateStr := m.day.Format("Mon, Jan 2, 2006")
 	if m.focusField == fieldDate {
-		monthLabel := bold.Render(m.day.Format("January 2006"))
-		lines = append(lines, faint.Render(formLabel("Date", lw))+monthLabel)
-		lines = append(lines, renderMiniCalendar(m.day, time.Now(), lw, m.theme))
-		lines = append(lines, faint.Render(formLabel("", lw)+"\u2190\u2191\u2192\u2193: navigate  \u00b7  [/]: month  \u00b7  t: today  \u00b7  enter: select"))
-	} else {
-		lines = append(lines, faint.Render(formLabel("Date", lw))+m.day.Format("Mon, Jan 2, 2006"))
+		dateStr = lipgloss.NewStyle().Reverse(true).Render(dateStr) + faint.Render("  enter: pick")
 	}
+	lines = append(lines, faint.Render(formLabel("Date", lw))+dateStr)
 	lines = append(lines, "")
 
 	// All day toggle
