@@ -1,6 +1,10 @@
 package tui
 
 import (
+	"strings"
+	"unicode"
+	"unicode/utf8"
+
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
@@ -67,6 +71,10 @@ func (m ChoiceDialogModel) Update(msg tea.Msg) (ChoiceDialogModel, tea.Cmd) {
 func (m ChoiceDialogModel) total() int { return len(m.options) + 1 }
 
 func (m ChoiceDialogModel) handleKey(msg tea.KeyPressMsg) (ChoiceDialogModel, tea.Cmd) {
+	if choice := m.shortcutChoice(msg); choice != noShortcut {
+		return m, func() tea.Msg { return ChoiceDialogResultMsg{Choice: choice} }
+	}
+
 	switch {
 	case key.Matches(msg, m.keys.Close):
 		return m, func() tea.Msg { return ChoiceDialogResultMsg{Choice: -1} }
@@ -80,6 +88,25 @@ func (m ChoiceDialogModel) handleKey(msg tea.KeyPressMsg) (ChoiceDialogModel, te
 		return m, func() tea.Msg { return ChoiceDialogResultMsg{Choice: choice} }
 	}
 	return m, nil
+}
+
+const noShortcut = -2
+
+func (m ChoiceDialogModel) shortcutChoice(msg tea.KeyPressMsg) int {
+	if msg.Text == "" {
+		return noShortcut
+	}
+
+	indices := choiceButtonUnderlineIndices(m.options)
+	for i, label := range m.options {
+		if matchesButtonRune(msg, label, indices[i]) {
+			return i
+		}
+	}
+	if matchesButtonRune(msg, "Cancel", indices[len(indices)-1]) {
+		return -1
+	}
+	return noShortcut
 }
 
 func (m ChoiceDialogModel) handleMouse(msg tea.MouseClickMsg) (ChoiceDialogModel, tea.Cmd) {
@@ -127,15 +154,17 @@ func (m ChoiceDialogModel) buttonBarOrigin() (int, int) {
 }
 
 func (m ChoiceDialogModel) View() string {
+	underline := choiceButtonUnderlineIndices(m.options)
+
 	var buttons string
 	for i, label := range m.options {
-		btn := button(label, 0, m.selected == i)
+		btn := button(label, underline[i], m.selected == i)
 		if i > 0 {
 			buttons += " "
 		}
 		buttons += btn
 	}
-	cancelBtn := button("Cancel", 0, m.selected == len(m.options))
+	cancelBtn := button("Cancel", underline[len(underline)-1], m.selected == len(m.options))
 	buttons += " " + cancelBtn
 
 	content := lipgloss.JoinVertical(lipgloss.Center, m.message, "", buttons)
@@ -144,4 +173,114 @@ func (m ChoiceDialogModel) View() string {
 		Padding(1, 3).
 		Border(lipgloss.RoundedBorder()).
 		Render(content)
+}
+
+func choiceButtonUnderlineIndices(options []string) []int {
+	labels := make([]string, 0, len(options)+1)
+	labels = append(labels, options...)
+	labels = append(labels, "Cancel")
+
+	indices := make([]int, len(labels))
+	keys := make([]string, len(labels))
+	used := make(map[string]struct{}, len(labels))
+	firstCounts := make(map[string]int, len(labels))
+
+	for i, label := range labels {
+		idx, key := firstNonSpaceShortcut(label)
+		indices[i] = idx
+		keys[i] = key
+		if key != "" {
+			firstCounts[key]++
+		}
+	}
+
+	for _, key := range keys {
+		if key != "" && firstCounts[key] == 1 {
+			used[key] = struct{}{}
+		}
+	}
+
+	for i, key := range keys {
+		if key != "" && firstCounts[key] == 1 {
+			continue
+		}
+		idx, resolved := nextUniqueShortcut(labels[i], used)
+		if idx >= 0 {
+			indices[i] = idx
+			keys[i] = resolved
+			used[resolved] = struct{}{}
+		}
+	}
+
+	return indices
+}
+
+func firstNonSpaceShortcut(label string) (int, string) {
+	for i, r := range label {
+		if unicode.IsSpace(r) {
+			continue
+		}
+		return i, strings.ToLower(string(r))
+	}
+	return -1, ""
+}
+
+func nextUniqueShortcut(label string, used map[string]struct{}) (int, string) {
+	seen := make(map[string]struct{})
+	for _, idx := range shortcutCandidates(label) {
+		r, _ := utf8.DecodeRuneInString(label[idx:])
+		if r == utf8.RuneError || unicode.IsSpace(r) {
+			continue
+		}
+		key := strings.ToLower(string(r))
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		if _, ok := used[key]; !ok {
+			return idx, key
+		}
+	}
+	return -1, ""
+}
+
+func shortcutCandidates(label string) []int {
+	var first int = -1
+	var wordStarts []int
+	var rest []int
+	prevSpace := true
+
+	for i, r := range label {
+		if unicode.IsSpace(r) {
+			prevSpace = true
+			continue
+		}
+		if first == -1 {
+			first = i
+		} else if prevSpace {
+			wordStarts = append(wordStarts, i)
+		} else {
+			rest = append(rest, i)
+		}
+		prevSpace = false
+	}
+
+	var out []int
+	if first >= 0 {
+		out = append(out, first)
+	}
+	out = append(out, wordStarts...)
+	out = append(out, rest...)
+	return out
+}
+
+func matchesButtonRune(msg tea.KeyPressMsg, label string, idx int) bool {
+	if msg.Text == "" || idx < 0 || idx >= len(label) {
+		return false
+	}
+	r, _ := utf8.DecodeRuneInString(label[idx:])
+	if r == utf8.RuneError {
+		return false
+	}
+	return strings.EqualFold(msg.Text, string(r))
 }
