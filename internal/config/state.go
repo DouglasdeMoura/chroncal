@@ -10,8 +10,9 @@ import (
 // UIState is machine-written TUI state persisted across sessions.
 // Unlike Config, users are not expected to hand-edit this file.
 type UIState struct {
-	ShowSidebar bool   `json:"show_sidebar"`
-	ViewMode    string `json:"view_mode,omitempty"`
+	ShowSidebar     bool    `json:"show_sidebar"`
+	ViewMode        string  `json:"view_mode,omitempty"`
+	HiddenCalendars []int64 `json:"hidden_calendars,omitempty"`
 }
 
 func defaultUIState() UIState {
