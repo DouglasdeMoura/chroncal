@@ -126,31 +126,31 @@ type eventDeletedMsg struct {
 }
 
 type Model struct {
-	app            *app.App
-	theme          Theme
-	keys           appKeyMap
-	help           help.Model
-	width          int
-	height         int
-	viewMode       viewMode
-	calendar       CalendarModel
-	week           WeekModel
-	day            DayModel
-	events         []event.Event
-	calendars      map[int64]CalendarInfo
-	dialog         EventDialogModel
-	dialogOpen     bool
-	confirmDialog  ConfirmDialogModel
-	confirmOpen    bool
-	choiceDialog   ChoiceDialogModel
-	choiceOpen     bool
-	form           EventFormModel
-	formOpen       bool
-	palette        PaletteModel
-	paletteOpen    bool
-	pendingDelete  event.Event
-	err            error
-	ready          bool
+	app             *app.App
+	theme           Theme
+	keys            appKeyMap
+	help            help.Model
+	width           int
+	height          int
+	viewMode        viewMode
+	calendar        CalendarModel
+	week            WeekModel
+	day             DayModel
+	events          []event.Event
+	calendars       map[int64]CalendarInfo
+	dialog          EventDialogModel
+	dialogOpen      bool
+	confirmDialog   ConfirmDialogModel
+	confirmOpen     bool
+	choiceDialog    ChoiceDialogModel
+	choiceOpen      bool
+	form            EventFormModel
+	formOpen        bool
+	palette         PaletteModel
+	paletteOpen     bool
+	pendingDelete   event.Event
+	err             error
+	ready           bool
 	showSidebar     bool
 	focus           appFocus
 	hiddenCalendars map[int64]bool
@@ -172,13 +172,13 @@ func NewModel(a *app.App) Model {
 		vm = viewDay
 	}
 	return Model{
-		app:         a,
-		keys:        defaultAppKeys(),
-		help:        help.New(),
-		viewMode:    vm,
-		calendar:    NewCalendarModel(now),
-		week:        NewWeekModel(now),
-		day:         NewDayModel(now),
+		app:             a,
+		keys:            defaultAppKeys(),
+		help:            help.New(),
+		viewMode:        vm,
+		calendar:        NewCalendarModel(now),
+		week:            NewWeekModel(now),
+		day:             NewDayModel(now),
 		showSidebar:     ui.ShowSidebar,
 		hiddenCalendars: hidden,
 		focus:           focusCalendar,
