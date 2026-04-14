@@ -121,8 +121,11 @@ func (m CalendarDialogModel) SetSize(w, h int) CalendarDialogModel {
 	return m
 }
 
-// BoxSize returns the dialog's rendered dimensions for the parent's compositor.
-func (m CalendarDialogModel) BoxSize() (int, int) { return 50, 14 }
+// BoxSize returns the dialog's actual rendered dimensions so the parent's
+// overlay compositor doesn't reserve empty space around the content.
+func (m CalendarDialogModel) BoxSize() (int, int) {
+	return lipgloss.Size(m.View())
+}
 
 func (m CalendarDialogModel) isEditing() bool { return m.id > 0 }
 
@@ -262,9 +265,16 @@ func (m CalendarDialogModel) View() string {
 	actions := save
 	if m.isEditing() {
 		del := button("Delete", -1, m.field == cdFieldDelete)
-		actions = lipgloss.JoinHorizontal(lipgloss.Top, del, " ", save)
+		actions = del + " " + save
 	}
-	actionsRow := lipgloss.PlaceHorizontal(contentWidth, lipgloss.Right, actions)
+	// Right-align with plain-space padding. lipgloss.PlaceHorizontal /
+	// Style.Align on styled strings sometimes wraps; manual padding is
+	// deterministic and correctly accounts for ANSI width.
+	leftPad := contentWidth - lipgloss.Width(actions)
+	if leftPad < 0 {
+		leftPad = 0
+	}
+	actionsRow := strings.Repeat(" ", leftPad) + actions
 
 	body := strings.Join([]string{title, "", nameRow, paletteRow, hexRow, "", actionsRow}, "\n")
 	if m.errorMsg != "" {
