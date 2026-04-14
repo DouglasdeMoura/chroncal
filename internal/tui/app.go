@@ -765,7 +765,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 			return m, nil
 		}
-		return m, m.loadCalendars()
+		// Reload events too: deleting a calendar cascades to its events in
+		// the DB, so the in-memory cache is stale and would keep rendering
+		// orphaned events (with no color mapping) until the next event reload.
+		return m, tea.Batch(m.loadCalendars(), m.loadEvents())
 
 	case ChoiceDialogResultMsg:
 		m.choiceOpen = false
