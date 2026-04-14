@@ -151,13 +151,18 @@ type Model struct {
 	pendingDelete  event.Event
 	err            error
 	ready          bool
-	showSidebar    bool
-	focus          appFocus
-	clickedEventID int64
+	showSidebar     bool
+	focus           appFocus
+	hiddenCalendars map[int64]bool
+	clickedEventID  int64
 }
 
 func NewModel(a *app.App) Model {
 	ui := config.LoadUIState()
+	hidden := make(map[int64]bool, len(ui.HiddenCalendars))
+	for _, id := range ui.HiddenCalendars {
+		hidden[id] = true
+	}
 	now := time.Now()
 	vm := viewMonth
 	switch ui.ViewMode {
@@ -174,8 +179,9 @@ func NewModel(a *app.App) Model {
 		calendar:    NewCalendarModel(now),
 		week:        NewWeekModel(now),
 		day:         NewDayModel(now),
-		showSidebar: ui.ShowSidebar,
-		focus:       focusCalendar,
+		showSidebar:     ui.ShowSidebar,
+		hiddenCalendars: hidden,
+		focus:           focusCalendar,
 	}
 }
 
@@ -237,10 +243,13 @@ func eventDay(e event.Event) time.Time {
 	return e.StartTime.Local()
 }
 
-func eventsToCalendar(events []event.Event, calendars map[int64]CalendarInfo) []CalendarEvent {
-	out := make([]CalendarEvent, len(events))
-	for i, e := range events {
-		out[i] = CalendarEvent{
+func eventsToCalendar(events []event.Event, calendars map[int64]CalendarInfo, hidden map[int64]bool) []CalendarEvent {
+	out := make([]CalendarEvent, 0, len(events))
+	for _, e := range events {
+		if hidden[e.CalendarID] {
+			continue
+		}
+		out = append(out, CalendarEvent{
 			ID:        e.ID,
 			Title:     e.Title,
 			AllDay:    e.AllDay,
@@ -248,7 +257,7 @@ func eventsToCalendar(events []event.Event, calendars map[int64]CalendarInfo) []
 			Color:     calendars[e.CalendarID].Color,
 			StartTime: eventDay(e),
 			EndTime:   e.EndTime.Local(),
-		}
+		})
 	}
 	return out
 }
@@ -265,6 +274,17 @@ func (m Model) loadCalendars() tea.Cmd {
 		}
 		return calendarsLoadedMsg{calendars: info}
 	}
+}
+
+// refreshCalendarViews recomputes the per-view CalendarEvent slices from the
+// current m.events using the current m.hiddenCalendars set. Use this after the
+// hidden set changes (no DB round-trip needed).
+func (m Model) refreshCalendarViews() Model {
+	calEvents := eventsToCalendar(m.events, m.calendars, m.hiddenCalendars)
+	m.calendar = m.calendar.SetEvents(calEvents)
+	m.week = m.week.SetEvents(calEvents)
+	m.day = m.day.SetEvents(calEvents)
+	return m
 }
 
 func (m Model) Init() tea.Cmd {
@@ -371,7 +391,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case eventsLoadedMsg:
 		m.err = msg.err
 		m.events = msg.events
-		calEvents := eventsToCalendar(msg.events, m.calendars)
+		calEvents := eventsToCalendar(msg.events, m.calendars, m.hiddenCalendars)
 		switch m.viewMode {
 		case viewDay:
 			m.day = m.day.SetEvents(calEvents)
