@@ -87,16 +87,17 @@ type eventFormKeyMap struct {
 	Tab      key.Binding
 	ShiftTab key.Binding
 	Enter    key.Binding
+	Save     key.Binding
 	Close    key.Binding
 }
 
 func (k eventFormKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Tab, k.Enter, k.Close}
+	return []key.Binding{k.Tab, k.Enter, k.Save, k.Close}
 }
 
 func (k eventFormKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Tab, k.ShiftTab, k.Enter, k.Close},
+		{k.Tab, k.ShiftTab, k.Enter, k.Save, k.Close},
 	}
 }
 
@@ -211,6 +212,7 @@ func NewEventFormModel(day time.Time, calendars map[int64]CalendarInfo, theme Th
 			Tab:      key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
 			ShiftTab: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev field")),
 			Enter:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
+			Save:     key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("ctrl+s", "save")),
 			Close:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")),
 		},
 	}, cmd
@@ -497,6 +499,9 @@ func (m EventFormModel) handleKey(msg tea.KeyPressMsg) (EventFormModel, tea.Cmd)
 	}
 
 	switch {
+	case key.Matches(msg, m.keys.Save):
+		return m.save()
+
 	case key.Matches(msg, m.keys.Close):
 		return m, func() tea.Msg { return EventFormClosedMsg{} }
 

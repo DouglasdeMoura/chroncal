@@ -180,15 +180,19 @@ func (m RecurrenceEditorModel) Update(msg tea.Msg) (RecurrenceEditorModel, tea.C
 
 func (m RecurrenceEditorModel) handleKey(msg tea.KeyPressMsg) (RecurrenceEditorModel, tea.Cmd) {
 	keys := struct {
-		Tab, ShiftTab, Enter, Close key.Binding
+		Tab, ShiftTab, Enter, Save, Close key.Binding
 	}{
 		Tab:      key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
 		ShiftTab: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev field")),
 		Enter:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
+		Save:     key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("ctrl+s", "save")),
 		Close:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")),
 	}
 
 	switch {
+	case key.Matches(msg, keys.Save):
+		m.done = true
+		return m, nil
 	case key.Matches(msg, keys.Close):
 		m.cancelled = true
 		return m, nil
