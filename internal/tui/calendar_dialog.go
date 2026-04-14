@@ -119,6 +119,10 @@ func NewCalendarDialogModel(id int64, name, hex string, theme Theme) CalendarDia
 	hx.Prompt = ""
 	hx.SetValue(hex)
 	hx.SetWidth(10)
+	// "#rrggbb" is the only accepted form, so cap the buffer and filter
+	// keystrokes in Update so the field can never hold more than 7 chars
+	// or any non-hex characters.
+	hx.CharLimit = 7
 
 	return CalendarDialogModel{
 		id:           id,
@@ -133,6 +137,26 @@ func NewCalendarDialogModel(id int64, name, hex string, theme Theme) CalendarDia
 		mutedColor:   theme.Muted,
 		textDimColor: theme.TextDim,
 	}
+}
+
+// isHexInputAllowed reports whether the printable text `t` can be inserted
+// into the hex input at cursor position `pos` given the current value. It
+// accepts only hex digits and a single leading '#' — matching what the
+// #rrggbb regex expects on save.
+func isHexInputAllowed(t string, pos int, current string) bool {
+	for _, r := range t {
+		switch {
+		case r == '#':
+			if pos != 0 || strings.ContainsRune(current, '#') {
+				return false
+			}
+		case (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F'):
+			// ok
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func paletteIndexFor(hex string) int {
@@ -357,6 +381,13 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 		m.nameInput, cmd = m.nameInput.Update(msg)
 		return m, cmd
 	case cdFieldHex:
+		// Swallow keystrokes that would put non-hex characters (or a stray
+		// second '#') into the field. CharLimit caps the total length, but
+		// the textinput's Validate hook only flags errors — it doesn't
+		// block insertion — so we filter at the source instead.
+		if kp.Text != "" && !isHexInputAllowed(kp.Text, m.hexInput.Position(), m.hexInput.Value()) {
+			return m, nil
+		}
 		prev := m.hexInput.Value()
 		var cmd tea.Cmd
 		m.hexInput, cmd = m.hexInput.Update(msg)
@@ -512,11 +543,20 @@ func (m CalendarDialogModel) View() string {
 	// extra cell around the selected dot so the spacing stays uniform.
 	paletteRow := labelStyle.Render("Color") + marker(cdFieldPalette) + strings.Join(swatches, " ")
 
+	// Live preview of whatever hex the user is typing, so a custom color
+	// is visible before the field passes validation on save. Only shown
+	// once the value parses as #rrggbb so partial input doesn't flash
+	// garbage colors as the user types.
+	hexVal := strings.TrimSpace(m.hexInput.Value())
+	hexPreview := ""
+	if hexRE.MatchString(hexVal) {
+		hexPreview = "  " + lipgloss.NewStyle().Foreground(lipgloss.Color(hexVal)).Render("●")
+	}
 	customNote := ""
-	if m.paletteIdx < 0 && hexRE.MatchString(strings.TrimSpace(m.hexInput.Value())) {
+	if m.paletteIdx < 0 && hexRE.MatchString(hexVal) {
 		customNote = "  " + lipgloss.NewStyle().Foreground(m.textDimColor).Italic(true).Render("(custom)")
 	}
-	hexRow := labelStyle.Render("Hex") + marker(cdFieldHex) + m.hexInput.View() + customNote
+	hexRow := labelStyle.Render("Hex") + marker(cdFieldHex) + m.hexInput.View() + hexPreview + customNote
 
 	// Error sits directly below the form, aligned with the input column, so
 	// it points at the field that's wrong instead of floating at the bottom.
