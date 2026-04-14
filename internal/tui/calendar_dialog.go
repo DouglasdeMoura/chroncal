@@ -44,9 +44,9 @@ const (
 	cdFieldColX    = cdLabelWidth + cdMarkerWidth
 )
 
-// PaletteSwatches is the preset color grid shown in the calendar dialog.
+// paletteSwatches is the preset color grid shown in the calendar dialog.
 // Picked to match the Catppuccin-ish palette the app already uses.
-var PaletteSwatches = []string{
+var paletteSwatches = []string{
 	"#a6e3a1", "#f5c2e7", "#89b4fa", "#fab387",
 	"#f38ba8", "#94e2d5", "#cba6f7", "#f9e2af",
 	"#74c7ec", "#eba0ac", "#a6adc8", "#f2cdcd",
@@ -161,7 +161,7 @@ func isHexInputAllowed(t string, pos int, current string) bool {
 
 func paletteIndexFor(hex string) int {
 	h := strings.TrimSpace(hex)
-	for i, c := range PaletteSwatches {
+	for i, c := range paletteSwatches {
 		if strings.EqualFold(c, h) {
 			return i
 		}
@@ -302,7 +302,7 @@ func (m CalendarDialogModel) handleMouse(msg tea.MouseClickMsg) (CalendarDialogM
 			m = m.focusField(cdFieldPalette)
 			if idx, ok := swatchIndexAt(lx-cdFieldColX, m.paletteIdx); ok {
 				m.paletteIdx = idx
-				m.hexInput.SetValue(PaletteSwatches[idx])
+				m.hexInput.SetValue(paletteSwatches[idx])
 				m.errorMsg = ""
 			}
 			return m, nil
@@ -338,7 +338,7 @@ func swatchIndexAt(x int, selected int) (int, bool) {
 		return 0, false
 	}
 	col := 0
-	for i := range PaletteSwatches {
+	for i := range paletteSwatches {
 		w := 1
 		if i == selected {
 			w = 3
@@ -431,11 +431,11 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 			}
 			if idx < 0 {
 				idx = 0
-			} else if idx >= len(PaletteSwatches) {
-				idx = len(PaletteSwatches) - 1
+			} else if idx >= len(paletteSwatches) {
+				idx = len(paletteSwatches) - 1
 			}
 			m.paletteIdx = idx
-			m.hexInput.SetValue(PaletteSwatches[idx])
+			m.hexInput.SetValue(paletteSwatches[idx])
 			m.errorMsg = ""
 		}
 		return m, nil
@@ -527,16 +527,14 @@ func (m CalendarDialogModel) View() string {
 
 	nameRow := labelStyle.Render("Name") + marker(cdFieldName) + m.nameInput.View()
 
-	// Palette: render each swatch as a single colored dot and join with a
-	// uniform two-space separator. The selected swatch is wrapped in
-	// brackets so its position is visible even when focus is elsewhere
-	// (and still readable for color-blind users). Brackets glow with the
-	// accent color while the palette is focused.
+	// Wrap the selected swatch in brackets so its position is visible even
+	// when focus is elsewhere, and readable for color-blind users. Brackets
+	// glow with the accent color while the palette is focused.
 	dotStyle := func(c string) string {
 		return lipgloss.NewStyle().Foreground(lipgloss.Color(c)).Render("●")
 	}
-	swatches := make([]string, 0, len(PaletteSwatches))
-	for i, c := range PaletteSwatches {
+	swatches := make([]string, 0, len(paletteSwatches))
+	for i, c := range paletteSwatches {
 		if i == m.paletteIdx {
 			brCol := m.mutedColor
 			if m.field == cdFieldPalette {
