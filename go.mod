@@ -17,7 +17,7 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/teambition/rrule-go v1.8.2
 	github.com/zalando/go-keyring v0.2.8
-	golang.org/x/term v0.41.0
+	golang.org/x/term v0.42.0
 	golang.org/x/text v0.36.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.48.2
