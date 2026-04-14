@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"image"
+	"slices"
 	"strings"
 	"time"
 
@@ -112,6 +113,8 @@ type eventCreatedMsg struct {
 	err error
 }
 
+type calendarMutationDoneMsg struct{ err error }
+
 type eventEditLoadedMsg struct {
 	event event.Event
 	err   error
@@ -155,6 +158,11 @@ type Model struct {
 	focus           appFocus
 	hiddenCalendars map[int64]bool
 	clickedEventID  int64
+
+	sidebar               SidebarModel
+	calendarDialog        CalendarDialogModel
+	calendarDialogOpen    bool
+	pendingCalendarDelete int64
 }
 
 func NewModel(a *app.App) Model {
@@ -171,6 +179,7 @@ func NewModel(a *app.App) Model {
 	case "day":
 		vm = viewDay
 	}
+	sb := NewSidebarModel(NewMiniMonthModel(now), NewCalendarListModel(nil, hidden))
 	return Model{
 		app:             a,
 		keys:            defaultAppKeys(),
@@ -182,6 +191,7 @@ func NewModel(a *app.App) Model {
 		showSidebar:     ui.ShowSidebar,
 		hiddenCalendars: hidden,
 		focus:           focusCalendar,
+		sidebar:         sb,
 	}
 }
 
@@ -345,6 +355,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	if m.calendarDialogOpen {
+		switch msg.(type) {
+		case CalendarSavedMsg, CalendarDeleteRequestedMsg, CalendarDialogClosedMsg,
+			tea.BackgroundColorMsg, tea.WindowSizeMsg,
+			eventsLoadedMsg, calendarsLoadedMsg,
+			calendarMutationDoneMsg:
+			// fall through to main switch
+		default:
+			if kp, ok := msg.(tea.KeyPressMsg); ok && kp.String() == "ctrl+c" {
+				return m, tea.Quit
+			}
+			var cmd tea.Cmd
+			m.calendarDialog, cmd = m.calendarDialog.Update(msg)
+			return m, cmd
+		}
+	}
+
 	// When the form is open, route most messages to it (cursor blink, keys, etc.).
 	// Only let specific parent-level messages fall through to the main switch.
 	if m.formOpen {
@@ -409,6 +436,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case calendarsLoadedMsg:
 		if msg.err == nil {
 			m.calendars = msg.calendars
+			items := make([]CalendarListItem, 0, len(m.calendars))
+			for id, c := range m.calendars {
+				items = append(items, CalendarListItem{ID: id, Name: c.Name, Color: c.Color})
+			}
+			slices.SortFunc(items, func(a, b CalendarListItem) int { return strings.Compare(a.Name, b.Name) })
+			m.sidebar = m.sidebar.SetList(m.sidebar.List().SetItems(items))
+			// Prune stale hidden IDs after CalendarListModel has done its pruning.
+			m.hiddenCalendars = m.sidebar.List().HiddenSet()
+			m.saveUIState()
 		}
 		return m, nil
 
@@ -643,6 +679,83 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case SidebarFocusEscapedMsg:
+		m.sidebar = m.sidebar.Blur()
+		m.focus = focusCalendar
+		return m, nil
+
+	case MiniMonthDateSelectedMsg:
+		switch m.viewMode {
+		case viewDay:
+			m.day.cursor = msg.Date
+		case viewWeek:
+			m.week.cursor = msg.Date
+		default:
+			m.calendar.cursor = msg.Date
+			m.calendar.month = time.Date(msg.Date.Year(), msg.Date.Month(), 1, 0, 0, 0, 0, msg.Date.Location())
+		}
+		return m, m.loadEvents()
+
+	case CalendarVisibilityToggledMsg:
+		if m.hiddenCalendars == nil {
+			m.hiddenCalendars = map[int64]bool{}
+		}
+		if msg.Hidden {
+			m.hiddenCalendars[msg.ID] = true
+		} else {
+			delete(m.hiddenCalendars, msg.ID)
+		}
+		m.saveUIState()
+		m = m.refreshCalendarViews()
+		return m, nil
+
+	case CalendarDialogRequestedMsg:
+		name, hex := "", "#a6e3a1"
+		if msg.ID > 0 {
+			if info, ok := m.calendars[msg.ID]; ok {
+				name = info.Name
+				hex = info.Color
+			}
+		}
+		m.calendarDialog = NewCalendarDialogModel(msg.ID, name, hex, m.theme).SetSize(m.width, m.height)
+		m.calendarDialogOpen = true
+		return m, nil
+
+	case CalendarSavedMsg:
+		m.calendarDialogOpen = false
+		id := msg.ID
+		name, hex := msg.Name, msg.Color
+		return m, func() tea.Msg {
+			ctx := context.Background()
+			if id == 0 {
+				_, err := m.app.Calendars.Create(ctx, name, hex, "")
+				return calendarMutationDoneMsg{err: err}
+			}
+			_, err := m.app.Calendars.Update(ctx, id, name, hex, "")
+			return calendarMutationDoneMsg{err: err}
+		}
+
+	case CalendarDeleteRequestedMsg:
+		m.calendarDialogOpen = false
+		m.pendingCalendarDelete = msg.ID
+		m.confirmDialog = NewConfirmDialogModel(
+			fmt.Sprintf("Delete calendar %q?", msg.Name),
+			"Delete",
+		).SetSize(m.width, m.height)
+		m.confirmOpen = true
+		return m, nil
+
+	case CalendarDialogClosedMsg:
+		m.calendarDialogOpen = false
+		return m, nil
+
+	case calendarMutationDoneMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		return m, m.loadCalendars()
+
 	case ChoiceDialogResultMsg:
 		m.choiceOpen = false
 		if msg.Choice < 0 {
@@ -665,7 +778,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ConfirmDialogResultMsg:
 		m.confirmOpen = false
 		if !msg.Confirmed {
+			m.pendingCalendarDelete = 0
 			return m, nil
+		}
+		if m.pendingCalendarDelete != 0 {
+			id := m.pendingCalendarDelete
+			m.pendingCalendarDelete = 0
+			return m, func() tea.Msg {
+				err := m.app.Calendars.Delete(context.Background(), id)
+				return calendarMutationDoneMsg{err: err}
+			}
 		}
 		ev := m.pendingDelete
 		return m, func() tea.Msg {
@@ -807,8 +929,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.showSidebar {
 				if m.focus == focusSidebar {
 					m.focus = focusCalendar
+					m.sidebar = m.sidebar.Blur()
 				} else {
 					m.focus = focusSidebar
+					m.sidebar = m.sidebar.Focus()
 				}
 			}
 			return m, nil
@@ -843,6 +967,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.calendar, cmd = m.calendar.Update(msg)
 				return m, cmd
 			}
+		}
+		if m.focus == focusSidebar {
+			var cmd tea.Cmd
+			m.sidebar, cmd = m.sidebar.Update(msg)
+			return m, cmd
 		}
 		return m, nil
 	}
@@ -891,6 +1020,7 @@ func (m Model) View() tea.View {
 		if m.focus == focusSidebar {
 			sidebarBorder = m.theme.Primary
 		}
+		sb := m.sidebar.SetSize(sidebarWidth-padding*2, contentHeight-padding*2)
 		sidebar := lipgloss.NewStyle().
 			Width(sidebarWidth).
 			Height(contentHeight).
@@ -899,7 +1029,7 @@ func (m Model) View() tea.View {
 			BorderStyle(lipgloss.NormalBorder()).
 			BorderForeground(sidebarBorder).
 			Foreground(m.theme.Text).
-			Render("Sidebar")
+			Render(sb.View())
 		body = lipgloss.JoinHorizontal(lipgloss.Top, sidebar, main)
 	} else {
 		body = main
@@ -936,6 +1066,10 @@ func (m Model) View() tea.View {
 				v.Content = m.compositeOverlay(v.Content, m.form.rruleEditor.EndsDatePickerView(), pw, ph)
 			}
 		}
+	}
+	if m.calendarDialogOpen {
+		bw, bh := m.calendarDialog.BoxSize()
+		v.Content = m.compositeOverlay(v.Content, m.calendarDialog.View(), bw, bh)
 	}
 	if m.choiceOpen {
 		bw, bh := m.choiceDialog.BoxSize()
@@ -1096,7 +1230,18 @@ func (m Model) saveUIState() {
 	default:
 		vm = "month"
 	}
-	_ = config.SaveUIState(config.UIState{ShowSidebar: m.showSidebar, ViewMode: vm})
+	ids := make([]int64, 0, len(m.hiddenCalendars))
+	for id, hidden := range m.hiddenCalendars {
+		if hidden {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	_ = config.SaveUIState(config.UIState{
+		ShowSidebar:     m.showSidebar,
+		ViewMode:        vm,
+		HiddenCalendars: ids,
+	})
 }
 
 func (m Model) currentKeyMap() compositeKeyMap {
