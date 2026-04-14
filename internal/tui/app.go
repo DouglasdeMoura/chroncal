@@ -927,16 +927,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Sidebar):
 			return m.toggleSidebar()
 		case key.Matches(msg, m.keys.SwitchFocus):
-			if m.showSidebar {
-				if m.focus == focusSidebar {
-					m.focus = focusCalendar
-					m.sidebar = m.sidebar.Blur()
-				} else {
-					m.focus = focusSidebar
-					m.sidebar = m.sidebar.Focus()
-				}
+			// Only handle Tab/Shift+Tab at the app level when entering the
+			// sidebar from the main view. When the sidebar is already
+			// focused, let the key fall through to m.sidebar.Update so it
+			// can cycle between its children; SidebarFocusEscapedMsg hands
+			// focus back to the main view when the user tabs past the last
+			// row.
+			if m.showSidebar && m.focus != focusSidebar {
+				m.focus = focusSidebar
+				m.sidebar = m.sidebar.Focus()
+				return m, nil
 			}
-			return m, nil
+			// Fall through to the sidebar routing below.
 		case key.Matches(msg, m.keys.Create):
 			var cursor time.Time
 			switch m.viewMode {
