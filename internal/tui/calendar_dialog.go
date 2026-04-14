@@ -183,26 +183,76 @@ func (m CalendarDialogModel) BoxSize() (int, int) {
 
 func (m CalendarDialogModel) isEditing() bool { return m.id > 0 }
 
-// buttonLabels returns the action-row labels in render order. Delete is only
-// present when editing (id > 0). Order matches what View renders so shortcut
-// indices line up with the buttons the user sees.
-func (m CalendarDialogModel) buttonLabels() []string {
-	if m.isEditing() {
-		return []string{"Delete", "Cancel", "Save"}
-	}
-	return []string{"Cancel", "Save"}
+// actionButton carries everything the View and mouse/keyboard handlers need
+// to place, render, and dispatch a single action button without recomputing
+// widths or underline indices at each site.
+type actionButton struct {
+	field        calendarDialogField
+	label        string
+	underlineIdx int
+	rendered     string
+	start, end   int // column positions within cdContentWidth
 }
 
-// triggerButton dispatches the action bound to a button label. Used by the
-// underlined-letter shortcut handler so a single press fires the button
-// without having to Tab to it first.
-func (m CalendarDialogModel) triggerButton(label string) (CalendarDialogModel, tea.Cmd) {
-	switch label {
-	case "Save":
+// actionLayout builds the action-row button list in render order (Delete only
+// when editing) and assigns each button a column range so View renders and
+// handleMouse hit-tests against the same numbers.
+func (m CalendarDialogModel) actionLayout() []actionButton {
+	var labels []string
+	var fields []calendarDialogField
+	if m.isEditing() {
+		labels = []string{"Delete", "Cancel", "Save"}
+		fields = []calendarDialogField{cdFieldDelete, cdFieldCancel, cdFieldSave}
+	} else {
+		labels = []string{"Cancel", "Save"}
+		fields = []calendarDialogField{cdFieldCancel, cdFieldSave}
+	}
+	indices := buttonDialogUnderlineIndices(labels)
+
+	btns := make([]actionButton, len(labels))
+	for i, label := range labels {
+		b := actionButton{field: fields[i], label: label, underlineIdx: indices[i]}
+		switch b.field {
+		case cdFieldDelete:
+			b.rendered = buttonDanger(label, indices[i], m.field == cdFieldDelete)
+		case cdFieldCancel:
+			b.rendered = button(label, indices[i], m.field == cdFieldCancel)
+		case cdFieldSave:
+			b.rendered = buttonStyled(label, indices[i], m.field == cdFieldSave, true)
+		}
+		btns[i] = b
+	}
+
+	const sep = 2 // "  " between Cancel and Save
+	widthOf := func(i int) int { return lipgloss.Width(btns[i].rendered) }
+	if m.isEditing() {
+		delW, cancelW, saveW := widthOf(0), widthOf(1), widthOf(2)
+		gap := max(cdContentWidth-delW-(cancelW+sep+saveW), 2)
+		btns[0].start, btns[0].end = 0, delW
+		btns[1].start = delW + gap
+		btns[1].end = btns[1].start + cancelW
+		btns[2].start = btns[1].end + sep
+		btns[2].end = btns[2].start + saveW
+	} else {
+		cancelW, saveW := widthOf(0), widthOf(1)
+		leftPad := max(cdContentWidth-(cancelW+sep+saveW), 0)
+		btns[0].start, btns[0].end = leftPad, leftPad+cancelW
+		btns[1].start = btns[0].end + sep
+		btns[1].end = btns[1].start + saveW
+	}
+	return btns
+}
+
+// triggerField dispatches the action bound to an action-row field. Shared by
+// the mouse click handler, the underlined-letter shortcut handler, and the
+// Enter-on-focused-button path.
+func (m CalendarDialogModel) triggerField(f calendarDialogField) (CalendarDialogModel, tea.Cmd) {
+	switch f {
+	case cdFieldSave:
 		return m.tryEmitSave()
-	case "Cancel":
+	case cdFieldCancel:
 		return m, func() tea.Msg { return CalendarDialogClosedMsg{} }
-	case "Delete":
+	case cdFieldDelete:
 		if m.isEditing() {
 			id, name := m.id, m.nameInput.Value()
 			return m, func() tea.Msg { return CalendarDeleteRequestedMsg{ID: id, Name: name} }
@@ -271,42 +321,9 @@ func (m CalendarDialogModel) handleMouse(msg tea.MouseClickMsg) (CalendarDialogM
 		return m, nil
 	}
 
-	labels := m.buttonLabels()
-	indices := buttonDialogUnderlineIndices(labels)
-	underlineFor := func(name string) int {
-		for i, l := range labels {
-			if l == name {
-				return indices[i]
-			}
-		}
-		return -1
-	}
-	cancelW := lipgloss.Width(button("Cancel", underlineFor("Cancel"), false))
-	saveW := lipgloss.Width(buttonStyled("Save", underlineFor("Save"), false, true))
-	rightW := cancelW + 2 + saveW
-
-	if m.isEditing() {
-		delW := lipgloss.Width(buttonDanger("Delete", underlineFor("Delete"), false))
-		gap := max(cdContentWidth-delW-rightW, 2)
-		cancelStart := delW + gap
-		saveStart := cancelStart + cancelW + 2
-		switch {
-		case lx >= 0 && lx < delW:
-			return m.triggerButton("Delete")
-		case lx >= cancelStart && lx < cancelStart+cancelW:
-			return m.triggerButton("Cancel")
-		case lx >= saveStart && lx < saveStart+saveW:
-			return m.triggerButton("Save")
-		}
-	} else {
-		leftPad := max(cdContentWidth-rightW, 0)
-		cancelStart := leftPad
-		saveStart := cancelStart + cancelW + 2
-		switch {
-		case lx >= cancelStart && lx < cancelStart+cancelW:
-			return m.triggerButton("Cancel")
-		case lx >= saveStart && lx < saveStart+saveW:
-			return m.triggerButton("Save")
+	for _, b := range m.actionLayout() {
+		if lx >= b.start && lx < b.end {
+			return m.triggerField(b.field)
 		}
 	}
 	return m, nil
@@ -366,11 +383,9 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 	// focus isn't on a text input, so typing the letter into Name/Hex still
 	// works as normal text entry.
 	if m.field != cdFieldName && m.field != cdFieldHex {
-		labels := m.buttonLabels()
-		indices := buttonDialogUnderlineIndices(labels)
-		for i, label := range labels {
-			if matchesButtonRune(kp, label, indices[i]) {
-				return m.triggerButton(label)
+		for _, b := range m.actionLayout() {
+			if matchesButtonRune(kp, b.label, b.underlineIdx) {
+				return m.triggerField(b.field)
 			}
 		}
 	}
@@ -398,38 +413,35 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 		}
 		return m, cmd
 	case cdFieldPalette:
+		// A custom color (paletteIdx < 0) snaps to index 0 on either arrow so
+		// the user lands inside the palette; subsequent arrows move from there.
+		delta := 0
 		switch {
 		case key.Matches(kp, m.keys.PaletteLeft):
-			if m.paletteIdx <= 0 {
-				m.paletteIdx = 0
-			} else {
-				m.paletteIdx--
-			}
-			m.hexInput.SetValue(PaletteSwatches[m.paletteIdx])
-			m.errorMsg = ""
+			delta = -1
 		case key.Matches(kp, m.keys.PaletteRight):
-			switch {
-			case m.paletteIdx < 0:
-				m.paletteIdx = 0
-			case m.paletteIdx < len(PaletteSwatches)-1:
-				m.paletteIdx++
+			delta = 1
+		}
+		if delta != 0 {
+			idx := m.paletteIdx
+			if idx < 0 {
+				idx = 0
+			} else {
+				idx += delta
 			}
-			m.hexInput.SetValue(PaletteSwatches[m.paletteIdx])
+			if idx < 0 {
+				idx = 0
+			} else if idx >= len(PaletteSwatches) {
+				idx = len(PaletteSwatches) - 1
+			}
+			m.paletteIdx = idx
+			m.hexInput.SetValue(PaletteSwatches[idx])
 			m.errorMsg = ""
 		}
 		return m, nil
-	case cdFieldSave:
+	case cdFieldSave, cdFieldCancel, cdFieldDelete:
 		if key.Matches(kp, m.keys.Confirm) {
-			return m.tryEmitSave()
-		}
-	case cdFieldCancel:
-		if key.Matches(kp, m.keys.Confirm) {
-			return m, func() tea.Msg { return CalendarDialogClosedMsg{} }
-		}
-	case cdFieldDelete:
-		if key.Matches(kp, m.keys.Confirm) && m.isEditing() {
-			id, name := m.id, m.nameInput.Value()
-			return m, func() tea.Msg { return CalendarDeleteRequestedMsg{ID: id, Name: name} }
+			return m.triggerField(m.field)
 		}
 	}
 	return m, nil
@@ -499,9 +511,6 @@ func (m CalendarDialogModel) titleText() string {
 }
 
 func (m CalendarDialogModel) View() string {
-	// cdContentWidth is the width of the text area *inside* padding+border.
-	// Every row is padded or truncated to this width so the dialog renders
-	// as a rigid rectangle regardless of which fields are shown.
 	title := lipgloss.NewStyle().Bold(true).Render(m.titleText())
 	ruleStyle := lipgloss.NewStyle().Foreground(m.mutedColor)
 	rule := ruleStyle.Render(strings.Repeat("─", cdContentWidth))
@@ -567,31 +576,13 @@ func (m CalendarDialogModel) View() string {
 	}
 
 	// Action row: Delete on the far left (destructive, least prominent),
-	// Cancel + Save on the far right. Save is the primary action and is
-	// visually strongest. Underlined letters indicate the single-key
-	// shortcuts wired up in Update.
-	labels := m.buttonLabels()
-	indices := buttonDialogUnderlineIndices(labels)
-	underlineFor := func(name string) int {
-		for i, l := range labels {
-			if l == name {
-				return indices[i]
-			}
-		}
-		return -1
-	}
-	saveBtn := buttonStyled("Save", underlineFor("Save"), m.field == cdFieldSave, true)
-	cancelBtn := button("Cancel", underlineFor("Cancel"), m.field == cdFieldCancel)
-	rightActions := cancelBtn + "  " + saveBtn
-
+	// Cancel + Save on the far right. Save is the primary action. Layout is
+	// computed in actionLayout so View and handleMouse stay in sync.
 	var actionsRow string
-	if m.isEditing() {
-		delBtn := buttonDanger("Delete", underlineFor("Delete"), m.field == cdFieldDelete)
-		gap := max(cdContentWidth-lipgloss.Width(delBtn)-lipgloss.Width(rightActions), 2)
-		actionsRow = delBtn + strings.Repeat(" ", gap) + rightActions
-	} else {
-		leftPad := max(cdContentWidth-lipgloss.Width(rightActions), 0)
-		actionsRow = strings.Repeat(" ", leftPad) + rightActions
+	prev := 0
+	for _, b := range m.actionLayout() {
+		actionsRow += strings.Repeat(" ", b.start-prev) + b.rendered
+		prev = b.end
 	}
 
 	m.help.SetWidth(cdContentWidth)
