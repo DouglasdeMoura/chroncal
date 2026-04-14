@@ -446,6 +446,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Prune stale hidden IDs after CalendarListModel has done its pruning.
 			m.hiddenCalendars = m.sidebar.List().HiddenSet()
 			m.saveUIState()
+			// Rebuild the per-view CalendarEvent slices so rename/color edits
+			// reflect immediately — eventsToCalendar reads colors from
+			// m.calendars at conversion time.
+			m = m.refreshCalendarViews()
 		}
 		return m, nil
 
