@@ -1,11 +1,11 @@
 package tui
 
 import (
-	"fmt"
 	"image/color"
 	"regexp"
 	"strings"
 
+	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
@@ -47,8 +47,9 @@ const (
 	cdFieldName calendarDialogField = iota
 	cdFieldPalette
 	cdFieldHex
-	cdFieldSave
 	cdFieldDelete
+	cdFieldCancel
+	cdFieldSave
 )
 
 type calendarDialogKeyMap struct {
@@ -60,59 +61,77 @@ type calendarDialogKeyMap struct {
 func defaultCalendarDialogKeys() calendarDialogKeyMap {
 	return calendarDialogKeyMap{
 		Tab:          key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
-		ShiftTab:     key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev field")),
+		ShiftTab:     key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev")),
 		Save:         key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("ctrl+s", "save")),
 		Cancel:       key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
-		PaletteLeft:  key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "swatch left")),
-		PaletteRight: key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "swatch right")),
+		PaletteLeft:  key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "prev swatch")),
+		PaletteRight: key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next swatch")),
 		Confirm:      key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter", "confirm")),
 	}
+}
+
+// ShortHelp returns the bindings shown in the dialog's footer. Order mirrors
+// the user's typical flow: navigate, confirm, cancel.
+func (k calendarDialogKeyMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Tab, k.Confirm, k.Cancel}
 }
 
 // CalendarDialogModel is a modal dialog for creating/editing a calendar.
 // id == 0 means the user is creating a new calendar (Delete field is hidden).
 type CalendarDialogModel struct {
-	id          int64
-	nameInput   textinput.Model
-	hexInput    textinput.Model
-	paletteIdx  int
-	field       calendarDialogField
-	keys        calendarDialogKeyMap
-	width       int
-	height      int
-	accentColor color.Color
-	errorColor  color.Color
-	errorMsg    string
+	id           int64
+	nameInput    textinput.Model
+	hexInput     textinput.Model
+	paletteIdx   int // -1 when the current hex is off-palette (custom color)
+	field        calendarDialogField
+	keys         calendarDialogKeyMap
+	help         help.Model
+	width        int
+	height       int
+	accentColor  color.Color
+	errorColor   color.Color
+	mutedColor   color.Color
+	textDimColor color.Color
+	errorMsg     string
 }
 
 // NewCalendarDialogModel builds a dialog for create (id==0) or edit. Pass the
 // current theme so focused fields can highlight correctly.
 func NewCalendarDialogModel(id int64, name, hex string, theme Theme) CalendarDialogModel {
 	nm := textinput.New()
+	nm.Prompt = ""
 	nm.SetValue(name)
+	nm.SetWidth(28)
 	nm.Focus()
 
 	hx := textinput.New()
+	hx.Prompt = ""
 	hx.SetValue(hex)
-
-	palIdx := 0
-	for i, c := range PaletteSwatches {
-		if strings.EqualFold(c, hex) {
-			palIdx = i
-			break
-		}
-	}
+	hx.SetWidth(10)
 
 	return CalendarDialogModel{
-		id:          id,
-		nameInput:   nm,
-		hexInput:    hx,
-		paletteIdx:  palIdx,
-		field:       cdFieldName,
-		keys:        defaultCalendarDialogKeys(),
-		accentColor: theme.Selected,
-		errorColor:  theme.Error,
+		id:           id,
+		nameInput:    nm,
+		hexInput:     hx,
+		paletteIdx:   paletteIndexFor(hex),
+		field:        cdFieldName,
+		keys:         defaultCalendarDialogKeys(),
+		help:         newThemedHelp(theme),
+		accentColor:  theme.Selected,
+		errorColor:   theme.Error,
+		mutedColor:   theme.Muted,
+		textDimColor: theme.TextDim,
 	}
+}
+
+func paletteIndexFor(hex string) int {
+	h := strings.TrimSpace(hex)
+	for i, c := range PaletteSwatches {
+		if strings.EqualFold(c, h) {
+			return i
+		}
+	}
+	return -1
 }
 
 func (m CalendarDialogModel) SetSize(w, h int) CalendarDialogModel {
@@ -160,26 +179,43 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 		m.nameInput, cmd = m.nameInput.Update(msg)
 		return m, cmd
 	case cdFieldHex:
+		prev := m.hexInput.Value()
 		var cmd tea.Cmd
 		m.hexInput, cmd = m.hexInput.Update(msg)
+		if m.hexInput.Value() != prev {
+			// Keep the palette cursor synced with whatever the user typed.
+			m.paletteIdx = paletteIndexFor(m.hexInput.Value())
+			m.errorMsg = ""
+		}
 		return m, cmd
 	case cdFieldPalette:
 		switch {
 		case key.Matches(kp, m.keys.PaletteLeft):
-			if m.paletteIdx > 0 {
+			if m.paletteIdx <= 0 {
+				m.paletteIdx = 0
+			} else {
 				m.paletteIdx--
 			}
+			m.hexInput.SetValue(PaletteSwatches[m.paletteIdx])
+			m.errorMsg = ""
 		case key.Matches(kp, m.keys.PaletteRight):
-			if m.paletteIdx < len(PaletteSwatches)-1 {
+			switch {
+			case m.paletteIdx < 0:
+				m.paletteIdx = 0
+			case m.paletteIdx < len(PaletteSwatches)-1:
 				m.paletteIdx++
 			}
-		case key.Matches(kp, m.keys.Confirm):
 			m.hexInput.SetValue(PaletteSwatches[m.paletteIdx])
+			m.errorMsg = ""
 		}
 		return m, nil
 	case cdFieldSave:
 		if key.Matches(kp, m.keys.Confirm) {
 			return m.tryEmitSave()
+		}
+	case cdFieldCancel:
+		if key.Matches(kp, m.keys.Confirm) {
+			return m, func() tea.Msg { return CalendarDialogClosedMsg{} }
 		}
 	case cdFieldDelete:
 		if key.Matches(kp, m.keys.Confirm) && m.isEditing() {
@@ -191,12 +227,15 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 }
 
 // advanceField cycles through the active fields. The Delete field is only
-// included when editing (id > 0).
+// included when editing (id > 0). Tab order is left-to-right, top-to-bottom:
+// Name → Palette → Hex → [Delete] → Cancel → Save.
 func (m CalendarDialogModel) advanceField(delta int) CalendarDialogModel {
-	fields := []calendarDialogField{cdFieldName, cdFieldPalette, cdFieldHex, cdFieldSave}
+	fields := []calendarDialogField{cdFieldName, cdFieldPalette, cdFieldHex}
 	if m.isEditing() {
 		fields = append(fields, cdFieldDelete)
 	}
+	fields = append(fields, cdFieldCancel, cdFieldSave)
+
 	idx := 0
 	for i, f := range fields {
 		if f == m.field {
@@ -237,53 +276,108 @@ func (m CalendarDialogModel) tryEmitSave() (CalendarDialogModel, tea.Cmd) {
 	}
 }
 
+func (m CalendarDialogModel) titleText() string {
+	if m.isEditing() {
+		return "Edit calendar"
+	}
+	return "New calendar"
+}
+
 func (m CalendarDialogModel) View() string {
-	const boxWidth = 48
+	// contentWidth is the width of the text area *inside* padding+border.
+	// Every row is padded or truncated to this width so the dialog renders
+	// as a rigid rectangle regardless of which fields are shown.
+	const contentWidth = 50
 	const padX = 2
-	contentWidth := boxWidth - padX*2
+	const labelWidth = 6 // "Color " — widest label + trailing space
 
-	title := "New calendar"
-	if m.isEditing() {
-		title = "Edit calendar"
-	}
-	title = lipgloss.NewStyle().Bold(true).Render(title)
+	title := lipgloss.NewStyle().Bold(true).Render(m.titleText())
+	ruleStyle := lipgloss.NewStyle().Foreground(m.mutedColor)
+	rule := ruleStyle.Render(strings.Repeat("─", contentWidth))
 
-	nameRow := fmt.Sprintf("Name:  %s", m.nameInput.View())
-
-	var swatches []string
-	for i, c := range PaletteSwatches {
-		sw := lipgloss.NewStyle().Foreground(lipgloss.Color(c)).Render("●")
-		if m.field == cdFieldPalette && i == m.paletteIdx {
-			sw = lipgloss.NewStyle().Background(m.accentColor).Foreground(lipgloss.Color(c)).Render("●")
+	labelStyle := lipgloss.NewStyle().Width(labelWidth).Foreground(m.textDimColor)
+	focusMarker := lipgloss.NewStyle().Foreground(m.accentColor).Bold(true).Render("> ")
+	idleMarker := "  "
+	marker := func(f calendarDialogField) string {
+		if m.field == f {
+			return focusMarker
 		}
-		swatches = append(swatches, sw)
+		return idleMarker
 	}
-	paletteRow := "Color: " + strings.Join(swatches, " ")
-	hexRow := fmt.Sprintf("Hex:   %s", m.hexInput.View())
 
-	save := buttonStyled("Save", -1, m.field == cdFieldSave, true)
-	actions := save
-	if m.isEditing() {
-		del := button("Delete", -1, m.field == cdFieldDelete)
-		actions = del + " " + save
-	}
-	// Right-align with plain-space padding. lipgloss.PlaceHorizontal /
-	// Style.Align on styled strings sometimes wraps; manual padding is
-	// deterministic and correctly accounts for ANSI width.
-	leftPad := contentWidth - lipgloss.Width(actions)
-	if leftPad < 0 {
-		leftPad = 0
-	}
-	actionsRow := strings.Repeat(" ", leftPad) + actions
+	nameRow := labelStyle.Render("Name") + marker(cdFieldName) + m.nameInput.View()
 
-	body := strings.Join([]string{title, "", nameRow, paletteRow, hexRow, "", actionsRow}, "\n")
+	// Palette: render each swatch as a single colored dot and join with a
+	// uniform two-space separator. The selected swatch is wrapped in
+	// brackets so its position is visible even when focus is elsewhere
+	// (and still readable for color-blind users). Brackets glow with the
+	// accent color while the palette is focused.
+	dotStyle := func(c string) string {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(c)).Render("●")
+	}
+	swatches := make([]string, 0, len(PaletteSwatches))
+	for i, c := range PaletteSwatches {
+		if i == m.paletteIdx {
+			brCol := m.mutedColor
+			if m.field == cdFieldPalette {
+				brCol = m.accentColor
+			}
+			brStyle := lipgloss.NewStyle().Foreground(brCol).Bold(true)
+			swatches = append(swatches, brStyle.Render("[")+dotStyle(c)+brStyle.Render("]"))
+		} else {
+			swatches = append(swatches, dotStyle(c))
+		}
+	}
+	// Join with a single space; the bracket chars themselves provide the
+	// extra cell around the selected dot so the spacing stays uniform.
+	paletteRow := labelStyle.Render("Color") + marker(cdFieldPalette) + strings.Join(swatches, " ")
+
+	customNote := ""
+	if m.paletteIdx < 0 && hexRE.MatchString(strings.TrimSpace(m.hexInput.Value())) {
+		customNote = "  " + lipgloss.NewStyle().Foreground(m.textDimColor).Italic(true).Render("(custom)")
+	}
+	hexRow := labelStyle.Render("Hex") + marker(cdFieldHex) + m.hexInput.View() + customNote
+
+	// Error sits directly below the form, aligned with the input column, so
+	// it points at the field that's wrong instead of floating at the bottom.
+	var errBlock string
 	if m.errorMsg != "" {
-		body += "\n\n" + lipgloss.NewStyle().Foreground(m.errorColor).Render(m.errorMsg)
+		errBlock = "\n" + strings.Repeat(" ", labelWidth+2) +
+			lipgloss.NewStyle().Foreground(m.errorColor).Render(m.errorMsg)
 	}
+
+	// Action row: Delete on the far left (destructive, least prominent),
+	// Cancel + Save on the far right. Save is the primary action and is
+	// visually strongest.
+	saveBtn := buttonStyled("Save", -1, m.field == cdFieldSave, true)
+	cancelBtn := button("Cancel", -1, m.field == cdFieldCancel)
+	rightActions := cancelBtn + "  " + saveBtn
+
+	var actionsRow string
+	if m.isEditing() {
+		delBtn := buttonDanger("Delete", -1, m.field == cdFieldDelete)
+		gap := max(contentWidth-lipgloss.Width(delBtn)-lipgloss.Width(rightActions), 2)
+		actionsRow = delBtn + strings.Repeat(" ", gap) + rightActions
+	} else {
+		leftPad := max(contentWidth-lipgloss.Width(rightActions), 0)
+		actionsRow = strings.Repeat(" ", leftPad) + rightActions
+	}
+
+	m.help.SetWidth(contentWidth)
+	helpText := m.help.ShortHelpView(m.keys.ShortHelp())
+
+	body := strings.Join([]string{
+		title,
+		"",
+		nameRow,
+		paletteRow,
+		hexRow,
+	}, "\n") + errBlock + "\n\n" + rule + "\n" + actionsRow + "\n\n" + helpText
 
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		Padding(1, padX).
-		Width(boxWidth).
+		PaddingTop(1).
+		PaddingLeft(padX).
+		PaddingRight(padX).
 		Render(body)
 }

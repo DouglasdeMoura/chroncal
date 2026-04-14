@@ -39,3 +39,26 @@ func buttonStyled(text string, underlineIndex int, focused, primary bool) string
 	}
 	return rendered
 }
+
+// buttonDanger renders a destructive-action button. Unfocused uses a muted
+// red-tinted background so the action is visible but doesn't compete with the
+// primary button. Focused uses a bright red so the keyboard highlight reads
+// clearly as "you're about to delete something."
+func buttonDanger(text string, underlineIndex int, focused bool) string {
+	var bg color.Color
+	if focused {
+		bg = lipgloss.Color("160")
+	} else {
+		bg = lipgloss.Color("52")
+	}
+	style := lipgloss.NewStyle().
+		Background(bg).
+		Foreground(lipgloss.Color("255"))
+
+	rendered := style.Padding(0, 1).Render(text)
+	if underlineIndex >= 0 && underlineIndex < len(text) {
+		rendered = lipgloss.StyleRanges(rendered,
+			lipgloss.NewRange(1+underlineIndex, 1+underlineIndex+1, style.Underline(true)))
+	}
+	return rendered
+}
