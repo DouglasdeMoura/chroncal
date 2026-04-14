@@ -174,6 +174,45 @@ type CalendarOptions struct {
 	SelectedColor color.Color
 }
 
+// calendarGridAnchor returns the date of the top-left cell of the calendar
+// grid for the given month and week start.
+func calendarGridAnchor(month time.Time, weekStart time.Weekday) time.Time {
+	first := time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, time.Local)
+	offset := (int(first.Weekday()) - int(weekStart) + 7) % 7
+	return first.AddDate(0, 0, -offset)
+}
+
+// distributeCells splits avail into n cell sizes each >= minSize, spreading
+// the remainder across leading cells so the row/column sums to avail.
+func distributeCells(avail, n, minSize int) []int {
+	base := max(avail/n, minSize)
+	rem := max(avail-base*n, 0)
+	sizes := make([]int, n)
+	for i := range n {
+		sizes[i] = base
+		if i < rem {
+			sizes[i]++
+		}
+	}
+	return sizes
+}
+
+// calendarGridSizes returns the per-column widths, per-row heights, and the
+// number of preamble lines above the 6-row table for a Width×Height month grid.
+func calendarGridSizes(width, height int, showHeader bool) (cellWs, cellHs []int, preambleLines int) {
+	// Preamble lines above the table: title + blank (optional) + weekday row.
+	preambleLines = 1
+	if showHeader {
+		preambleLines += 2
+	}
+	// Table overhead: 8 vertical borders between 7 columns.
+	cellWs = distributeCells(width-8, 7, 6)
+	// Table overhead: top + bottom + 5 inter-row borders = 7 chrome lines
+	// above the 6 week rows (no header row — weekdays render as preamble).
+	cellHs = distributeCells(height-preambleLines-7, 6, 2)
+	return cellWs, cellHs, preambleLines
+}
+
 // Calendar renders a full-size month grid that fills Width×Height.
 // Returns "" if Width or Height is zero.
 func Calendar(opts CalendarOptions) string {
@@ -181,9 +220,8 @@ func Calendar(opts CalendarOptions) string {
 		return ""
 	}
 
+	anchor := calendarGridAnchor(opts.Month, opts.WeekStartsOn)
 	first := time.Date(opts.Month.Year(), opts.Month.Month(), 1, 0, 0, 0, 0, time.Local)
-	offset := (int(first.Weekday()) - int(opts.WeekStartsOn) + 7) % 7
-	anchor := first.AddDate(0, 0, -offset)
 
 	eventsByDay := make(map[string][]CalendarEvent)
 	for _, ev := range opts.Events {
@@ -196,49 +234,7 @@ func Calendar(opts CalendarOptions) string {
 		todayKey = opts.Today.Local().Format("2006-01-02")
 	}
 
-	// Preamble lines above the table: title + blank (optional) + weekday row.
-	preambleLines := 1
-	if opts.ShowHeader {
-		preambleLines += 2
-	}
-
-	// Table overhead: 8 vertical borders between 7 columns. Distribute the
-	// remainder across the first columns so the grid fills Width exactly.
-	cellWs := make([]int, 7)
-	availW := opts.Width - 8
-	baseW := availW / 7
-	if baseW < 6 {
-		baseW = 6
-	}
-	remW := availW - baseW*7
-	if remW < 0 {
-		remW = 0
-	}
-	for i := range 7 {
-		cellWs[i] = baseW
-		if i < remW {
-			cellWs[i]++
-		}
-	}
-
-	// Table overhead: top + bottom + 5 inter-row borders = 7 chrome lines
-	// above the 6 week rows (no header row — weekdays render as preamble).
-	cellHs := make([]int, 6)
-	availH := opts.Height - preambleLines - 7
-	baseH := availH / 6
-	if baseH < 2 {
-		baseH = 2
-	}
-	remH := availH - baseH*6
-	if remH < 0 {
-		remH = 0
-	}
-	for i := range 6 {
-		cellHs[i] = baseH
-		if i < remH {
-			cellHs[i]++
-		}
-	}
+	cellWs, cellHs, _ := calendarGridSizes(opts.Width, opts.Height, opts.ShowHeader)
 
 	rows := make([][]string, 6)
 	for week := range 6 {

@@ -108,59 +108,27 @@ func (m CalendarModel) SetSelectedColor(c color.Color) CalendarModel {
 func (m CalendarModel) Cursor() time.Time { return m.cursor }
 func (m CalendarModel) Month() time.Time  { return m.month }
 
-func (m CalendarModel) hitCell(x, y int) (time.Time, int, int, bool) {
+type cellHit struct {
+	Day   time.Time
+	Line  int
+	CellH int
+}
+
+func (m CalendarModel) hitCell(x, y int) (cellHit, bool) {
 	if m.width <= 0 || m.height <= 0 {
-		return time.Time{}, 0, 0, false
+		return cellHit{}, false
 	}
 
-	first := time.Date(m.month.Year(), m.month.Month(), 1, 0, 0, 0, 0, time.Local)
-	offset := (int(first.Weekday()) - int(m.weekStart) + 7) % 7
-	anchor := first.AddDate(0, 0, -offset)
-
-	preambleLines := 3 // header + blank + weekday row
-
-	availW := m.width - 8
-	baseW := availW / 7
-	if baseW < 6 {
-		baseW = 6
-	}
-	remW := availW - baseW*7
-	if remW < 0 {
-		remW = 0
-	}
-	cellWs := make([]int, 7)
-	for i := range 7 {
-		cellWs[i] = baseW
-		if i < remW {
-			cellWs[i]++
-		}
-	}
-
-	availH := m.height - preambleLines - 7
-	baseH := availH / 6
-	if baseH < 2 {
-		baseH = 2
-	}
-	remH := availH - baseH*6
-	if remH < 0 {
-		remH = 0
-	}
-	cellHs := make([]int, 6)
-	for i := range 6 {
-		cellHs[i] = baseH
-		if i < remH {
-			cellHs[i]++
-		}
-	}
+	anchor := calendarGridAnchor(m.month, m.weekStart)
+	cellWs, cellHs, preambleLines := calendarGridSizes(m.width, m.height, true)
 
 	tableY := y - preambleLines
 	if tableY < 0 {
-		return time.Time{}, 0, 0, false
+		return cellHit{}, false
 	}
 
-	week := -1
+	week, cellTop := -1, -1
 	posY := 1
-	cellTop := -1
 	for i := range 6 {
 		if tableY >= posY && tableY < posY+cellHs[i] {
 			week = i
@@ -170,7 +138,7 @@ func (m CalendarModel) hitCell(x, y int) (time.Time, int, int, bool) {
 		posY += cellHs[i] + 1
 	}
 	if week < 0 {
-		return time.Time{}, 0, 0, false
+		return cellHit{}, false
 	}
 
 	col := -1
@@ -183,64 +151,76 @@ func (m CalendarModel) hitCell(x, y int) (time.Time, int, int, bool) {
 		posX += cellWs[j] + 1
 	}
 	if col < 0 {
-		return time.Time{}, 0, 0, false
+		return cellHit{}, false
 	}
 
-	return anchor.AddDate(0, 0, week*7+col), tableY - cellTop, cellHs[week], true
+	return cellHit{
+		Day:   anchor.AddDate(0, 0, week*7+col),
+		Line:  tableY - cellTop,
+		CellH: cellHs[week],
+	}, true
 }
 
 // DayAtPosition maps a position relative to the calendar widget's top-left
 // corner to the corresponding day in the grid.
 func (m CalendarModel) DayAtPosition(x, y int) (time.Time, bool) {
-	day, _, _, ok := m.hitCell(x, y)
-	return day, ok
+	hit, ok := m.hitCell(x, y)
+	return hit.Day, ok
 }
 
 // EventAtPosition returns the ID of the visible month-view event pill at the
 // given position, or 0 when the click doesn't land on a rendered event.
 func (m CalendarModel) EventAtPosition(x, y int) int64 {
-	day, line, cellH, ok := m.hitCell(x, y)
-	if !ok || line < 1 {
+	hit, ok := m.hitCell(x, y)
+	if !ok || hit.Line < 1 {
 		return 0
 	}
-
-	dayKey := day.Format("2006-01-02")
-	events := make([]CalendarEvent, 0, cellH-1)
-	for _, ev := range m.events {
-		if ev.Day.Format("2006-01-02") == dayKey {
-			events = append(events, ev)
-		}
-	}
-
-	maxEventLines := cellH - 1
+	maxEventLines := hit.CellH - 1
 	if maxEventLines < 1 {
 		return 0
+	}
+
+	dy, dm, dd := hit.Day.Date()
+	var events []CalendarEvent
+	for _, ev := range m.events {
+		ey, em, ed := ev.Day.Date()
+		if ey == dy && em == dm && ed == dd {
+			events = append(events, ev)
+		}
 	}
 
 	visibleEvents := min(len(events), maxEventLines)
 	if len(events) > maxEventLines {
 		visibleEvents--
 	}
-	if visibleEvents <= 0 || line > visibleEvents {
+	if visibleEvents <= 0 || hit.Line > visibleEvents {
 		return 0
 	}
 
-	return events[line-1].ID
+	return events[hit.Line-1].ID
+}
+
+// moveCursor moves the cursor to day, syncs m.month to it, and returns a
+// CalendarMonthChangedMsg command when the month boundary was crossed.
+func (m CalendarModel) moveCursor(day time.Time) (CalendarModel, tea.Cmd) {
+	prevMonth := m.month
+	m.cursor = day
+	if m.cursor.Year() == prevMonth.Year() && m.cursor.Month() == prevMonth.Month() {
+		return m, nil
+	}
+	m.month = time.Date(m.cursor.Year(), m.cursor.Month(), 1, 0, 0, 0, 0, m.cursor.Location())
+	month := m.month
+	return m, func() tea.Msg { return CalendarMonthChangedMsg{Month: month} }
 }
 
 func (m CalendarModel) selectDay(day time.Time) (CalendarModel, tea.Cmd) {
-	prevMonth := m.month
-	m.cursor = day
-
-	var cmds []tea.Cmd
-	if m.cursor.Year() != prevMonth.Year() || m.cursor.Month() != prevMonth.Month() {
-		m.month = time.Date(m.cursor.Year(), m.cursor.Month(), 1, 0, 0, 0, 0, m.cursor.Location())
-		month := m.month
-		cmds = append(cmds, func() tea.Msg { return CalendarMonthChangedMsg{Month: month} })
-	}
+	m, monthCmd := m.moveCursor(day)
 	cursor := m.cursor
-	cmds = append(cmds, func() tea.Msg { return CalendarDaySelectedMsg{Day: cursor} })
-	return m, tea.Batch(cmds...)
+	selectCmd := func() tea.Msg { return CalendarDaySelectedMsg{Day: cursor} }
+	if monthCmd == nil {
+		return m, selectCmd
+	}
+	return m, tea.Batch(monthCmd, selectCmd)
 }
 
 func (m CalendarModel) Update(msg tea.Msg) (CalendarModel, tea.Cmd) {
@@ -249,34 +229,29 @@ func (m CalendarModel) Update(msg tea.Msg) (CalendarModel, tea.Cmd) {
 		return m, nil
 	}
 
-	prevMonth := m.month
+	var target time.Time
 	switch {
 	case key.Matches(keyMsg, m.keys.Up):
-		m.cursor = m.cursor.AddDate(0, 0, -7)
+		target = m.cursor.AddDate(0, 0, -7)
 	case key.Matches(keyMsg, m.keys.Down):
-		m.cursor = m.cursor.AddDate(0, 0, 7)
+		target = m.cursor.AddDate(0, 0, 7)
 	case key.Matches(keyMsg, m.keys.Left):
-		m.cursor = m.cursor.AddDate(0, 0, -1)
+		target = m.cursor.AddDate(0, 0, -1)
 	case key.Matches(keyMsg, m.keys.Right):
-		m.cursor = m.cursor.AddDate(0, 0, 1)
+		target = m.cursor.AddDate(0, 0, 1)
 	case key.Matches(keyMsg, m.keys.PrevMonth):
-		m.cursor = m.cursor.AddDate(0, -1, 0)
+		target = m.cursor.AddDate(0, -1, 0)
 	case key.Matches(keyMsg, m.keys.NextMonth):
-		m.cursor = m.cursor.AddDate(0, 1, 0)
+		target = m.cursor.AddDate(0, 1, 0)
 	case key.Matches(keyMsg, m.keys.Today):
-		m.cursor = m.today
+		target = m.today
 	case key.Matches(keyMsg, m.keys.Select):
 		return m, func() tea.Msg { return CalendarDaySelectedMsg{Day: m.cursor} }
 	default:
 		return m, nil
 	}
 
-	if m.cursor.Year() != prevMonth.Year() || m.cursor.Month() != prevMonth.Month() {
-		m.month = time.Date(m.cursor.Year(), m.cursor.Month(), 1, 0, 0, 0, 0, m.cursor.Location())
-		month := m.month
-		return m, func() tea.Msg { return CalendarMonthChangedMsg{Month: month} }
-	}
-	return m, nil
+	return m.moveCursor(target)
 }
 
 func (m CalendarModel) View() string {
