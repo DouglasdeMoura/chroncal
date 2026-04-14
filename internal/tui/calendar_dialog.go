@@ -296,7 +296,7 @@ func (m CalendarDialogModel) View() string {
 	rule := ruleStyle.Render(strings.Repeat("─", contentWidth))
 
 	labelStyle := lipgloss.NewStyle().Width(labelWidth).Foreground(m.textDimColor)
-	focusMarker := lipgloss.NewStyle().Foreground(m.accentColor).Bold(true).Render("> ")
+	focusMarker := lipgloss.NewStyle().Foreground(m.textDimColor).Bold(true).Render("> ")
 	idleMarker := "  "
 	marker := func(f calendarDialogField) string {
 		if m.field == f {
@@ -364,7 +364,10 @@ func (m CalendarDialogModel) View() string {
 	}
 
 	m.help.SetWidth(contentWidth)
-	helpText := m.help.ShortHelpView(m.keys.ShortHelp())
+	helpText := lipgloss.NewStyle().
+		Width(contentWidth).
+		Align(lipgloss.Center).
+		Render(m.help.ShortHelpView(m.keys.ShortHelp()))
 
 	body := strings.Join([]string{
 		title,
