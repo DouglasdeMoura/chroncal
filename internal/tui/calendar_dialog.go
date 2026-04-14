@@ -33,6 +33,17 @@ type CalendarDialogClosedMsg struct{}
 
 var hexRE = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 
+// Layout constants shared between View and handleMouse so click-to-field
+// hit-testing lines up with what the user actually sees.
+const (
+	cdContentWidth = 50
+	cdPadX         = 2
+	cdPadTop       = 1
+	cdLabelWidth   = 6 // "Color " — widest label + trailing space
+	cdMarkerWidth  = 2 // "> " / "  "
+	cdFieldColX    = cdLabelWidth + cdMarkerWidth
+)
+
 // PaletteSwatches is the preset color grid shown in the calendar dialog.
 // Picked to match the Catppuccin-ish palette the app already uses.
 var PaletteSwatches = []string{
@@ -176,7 +187,133 @@ func (m CalendarDialogModel) triggerButton(label string) (CalendarDialogModel, t
 	return m, nil
 }
 
+// handleMouse routes a left-click to the field or button at the click
+// coordinates. Click-to-focus for Name/Hex; click-to-select for swatches;
+// click-to-trigger for Delete/Cancel/Save. All other clicks are ignored so
+// dragging outside the dialog doesn't steal focus unexpectedly.
+func (m CalendarDialogModel) handleMouse(msg tea.MouseClickMsg) (CalendarDialogModel, tea.Cmd) {
+	if msg.Button != tea.MouseLeft {
+		return m, nil
+	}
+
+	boxW, boxH := m.BoxSize()
+	if m.width <= 0 || m.height <= 0 || boxW <= 0 || boxH <= 0 {
+		return m, nil
+	}
+	dx := (m.width - boxW) / 2
+	dy := (m.height - boxH) / 2
+	// Top-left of the content area inside the border + padding.
+	cx := dx + 1 + cdPadX
+	cy := dy + 1 + cdPadTop
+	lx := msg.X - cx
+	ly := msg.Y - cy
+
+	// Body row layout (0-indexed from cy):
+	//   0: title     1: blank     2: name     3: palette     4: hex
+	//   with errMsg: 5: err       6: blank    7: rule        8: actions
+	//   no errMsg:   5: blank     6: rule     7: actions
+	const (
+		nameRowY    = 2
+		paletteRowY = 3
+		hexRowY     = 4
+	)
+
+	switch ly {
+	case nameRowY:
+		if lx >= cdFieldColX {
+			return m.focusField(cdFieldName), nil
+		}
+	case paletteRowY:
+		if lx >= cdFieldColX {
+			m = m.focusField(cdFieldPalette)
+			if idx, ok := swatchIndexAt(lx-cdFieldColX, m.paletteIdx); ok {
+				m.paletteIdx = idx
+				m.hexInput.SetValue(PaletteSwatches[idx])
+				m.errorMsg = ""
+			}
+			return m, nil
+		}
+	case hexRowY:
+		if lx >= cdFieldColX {
+			return m.focusField(cdFieldHex), nil
+		}
+	}
+
+	actionY := 7
+	if m.errorMsg != "" {
+		actionY = 8
+	}
+	if ly != actionY {
+		return m, nil
+	}
+
+	labels := m.buttonLabels()
+	indices := buttonDialogUnderlineIndices(labels)
+	underlineFor := func(name string) int {
+		for i, l := range labels {
+			if l == name {
+				return indices[i]
+			}
+		}
+		return -1
+	}
+	cancelW := lipgloss.Width(button("Cancel", underlineFor("Cancel"), false))
+	saveW := lipgloss.Width(buttonStyled("Save", underlineFor("Save"), false, true))
+	rightW := cancelW + 2 + saveW
+
+	if m.isEditing() {
+		delW := lipgloss.Width(buttonDanger("Delete", underlineFor("Delete"), false))
+		gap := max(cdContentWidth-delW-rightW, 2)
+		cancelStart := delW + gap
+		saveStart := cancelStart + cancelW + 2
+		switch {
+		case lx >= 0 && lx < delW:
+			return m.triggerButton("Delete")
+		case lx >= cancelStart && lx < cancelStart+cancelW:
+			return m.triggerButton("Cancel")
+		case lx >= saveStart && lx < saveStart+saveW:
+			return m.triggerButton("Save")
+		}
+	} else {
+		leftPad := max(cdContentWidth-rightW, 0)
+		cancelStart := leftPad
+		saveStart := cancelStart + cancelW + 2
+		switch {
+		case lx >= cancelStart && lx < cancelStart+cancelW:
+			return m.triggerButton("Cancel")
+		case lx >= saveStart && lx < saveStart+saveW:
+			return m.triggerButton("Save")
+		}
+	}
+	return m, nil
+}
+
+// swatchIndexAt finds which palette swatch covers column x, where x is
+// measured from the start of the swatch row. The currently-selected swatch
+// renders as "[●]" (3 cells) and the others as "●" (1 cell); neighbors are
+// joined by a single space.
+func swatchIndexAt(x int, selected int) (int, bool) {
+	if x < 0 {
+		return 0, false
+	}
+	col := 0
+	for i := range PaletteSwatches {
+		w := 1
+		if i == selected {
+			w = 3
+		}
+		if x >= col && x < col+w {
+			return i, true
+		}
+		col += w + 1
+	}
+	return 0, false
+}
+
 func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) {
+	if mc, ok := msg.(tea.MouseClickMsg); ok {
+		return m.handleMouse(mc)
+	}
 	kp, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		// Forward non-key messages (cursor blink, etc.) to the focused input.
@@ -285,10 +422,16 @@ func (m CalendarDialogModel) advanceField(delta int) CalendarDialogModel {
 		}
 	}
 	idx = (idx + delta + len(fields)) % len(fields)
-	m.field = fields[idx]
+	return m.focusField(fields[idx])
+}
+
+// focusField moves focus to f and updates textinput focus accordingly. Kept
+// as a single helper so Tab navigation and click-to-focus stay in sync.
+func (m CalendarDialogModel) focusField(f calendarDialogField) CalendarDialogModel {
+	m.field = f
 	m.nameInput.Blur()
 	m.hexInput.Blur()
-	switch m.field {
+	switch f {
 	case cdFieldName:
 		m.nameInput.Focus()
 	case cdFieldHex:
@@ -325,18 +468,14 @@ func (m CalendarDialogModel) titleText() string {
 }
 
 func (m CalendarDialogModel) View() string {
-	// contentWidth is the width of the text area *inside* padding+border.
+	// cdContentWidth is the width of the text area *inside* padding+border.
 	// Every row is padded or truncated to this width so the dialog renders
 	// as a rigid rectangle regardless of which fields are shown.
-	const contentWidth = 50
-	const padX = 2
-	const labelWidth = 6 // "Color " — widest label + trailing space
-
 	title := lipgloss.NewStyle().Bold(true).Render(m.titleText())
 	ruleStyle := lipgloss.NewStyle().Foreground(m.mutedColor)
-	rule := ruleStyle.Render(strings.Repeat("─", contentWidth))
+	rule := ruleStyle.Render(strings.Repeat("─", cdContentWidth))
 
-	labelStyle := lipgloss.NewStyle().Width(labelWidth).Foreground(m.textDimColor)
+	labelStyle := lipgloss.NewStyle().Width(cdLabelWidth).Foreground(m.textDimColor)
 	focusMarker := lipgloss.NewStyle().Foreground(m.textDimColor).Bold(true).Render("> ")
 	idleMarker := "  "
 	marker := func(f calendarDialogField) string {
@@ -383,7 +522,7 @@ func (m CalendarDialogModel) View() string {
 	// it points at the field that's wrong instead of floating at the bottom.
 	var errBlock string
 	if m.errorMsg != "" {
-		errBlock = "\n" + strings.Repeat(" ", labelWidth+2) +
+		errBlock = "\n" + strings.Repeat(" ", cdFieldColX) +
 			lipgloss.NewStyle().Foreground(m.errorColor).Render(m.errorMsg)
 	}
 
@@ -408,16 +547,16 @@ func (m CalendarDialogModel) View() string {
 	var actionsRow string
 	if m.isEditing() {
 		delBtn := buttonDanger("Delete", underlineFor("Delete"), m.field == cdFieldDelete)
-		gap := max(contentWidth-lipgloss.Width(delBtn)-lipgloss.Width(rightActions), 2)
+		gap := max(cdContentWidth-lipgloss.Width(delBtn)-lipgloss.Width(rightActions), 2)
 		actionsRow = delBtn + strings.Repeat(" ", gap) + rightActions
 	} else {
-		leftPad := max(contentWidth-lipgloss.Width(rightActions), 0)
+		leftPad := max(cdContentWidth-lipgloss.Width(rightActions), 0)
 		actionsRow = strings.Repeat(" ", leftPad) + rightActions
 	}
 
-	m.help.SetWidth(contentWidth)
+	m.help.SetWidth(cdContentWidth)
 	helpText := lipgloss.NewStyle().
-		Width(contentWidth).
+		Width(cdContentWidth).
 		Align(lipgloss.Center).
 		Render(m.help.ShortHelpView(m.keys.ShortHelp()))
 
@@ -431,8 +570,8 @@ func (m CalendarDialogModel) View() string {
 
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		PaddingTop(1).
-		PaddingLeft(padX).
-		PaddingRight(padX).
+		PaddingTop(cdPadTop).
+		PaddingLeft(cdPadX).
+		PaddingRight(cdPadX).
 		Render(body)
 }
