@@ -235,10 +235,15 @@ func (m CalendarDialogModel) tryEmitSave() (CalendarDialogModel, tea.Cmd) {
 }
 
 func (m CalendarDialogModel) View() string {
+	const boxWidth = 48
+	const padX = 2
+	contentWidth := boxWidth - padX*2
+
 	title := "New calendar"
 	if m.isEditing() {
 		title = "Edit calendar"
 	}
+	title = lipgloss.NewStyle().Bold(true).Render(title)
 
 	nameRow := fmt.Sprintf("Name:  %s", m.nameInput.View())
 
@@ -257,17 +262,18 @@ func (m CalendarDialogModel) View() string {
 	actions := save
 	if m.isEditing() {
 		del := button("Delete", -1, m.field == cdFieldDelete)
-		actions = save + " " + del
+		actions = del + " " + save
 	}
+	actionsRow := lipgloss.NewStyle().Width(contentWidth).Align(lipgloss.Right).Render(actions)
 
-	body := strings.Join([]string{title, "", nameRow, paletteRow, hexRow, "", actions}, "\n")
+	body := strings.Join([]string{title, "", nameRow, paletteRow, hexRow, "", actionsRow}, "\n")
 	if m.errorMsg != "" {
 		body += "\n\n" + lipgloss.NewStyle().Foreground(m.errorColor).Render(m.errorMsg)
 	}
 
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		Padding(1, 2).
-		Width(48).
+		Padding(1, padX).
+		Width(boxWidth).
 		Render(body)
 }
