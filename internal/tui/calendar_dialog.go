@@ -148,6 +148,34 @@ func (m CalendarDialogModel) BoxSize() (int, int) {
 
 func (m CalendarDialogModel) isEditing() bool { return m.id > 0 }
 
+// buttonLabels returns the action-row labels in render order. Delete is only
+// present when editing (id > 0). Order matches what View renders so shortcut
+// indices line up with the buttons the user sees.
+func (m CalendarDialogModel) buttonLabels() []string {
+	if m.isEditing() {
+		return []string{"Delete", "Cancel", "Save"}
+	}
+	return []string{"Cancel", "Save"}
+}
+
+// triggerButton dispatches the action bound to a button label. Used by the
+// underlined-letter shortcut handler so a single press fires the button
+// without having to Tab to it first.
+func (m CalendarDialogModel) triggerButton(label string) (CalendarDialogModel, tea.Cmd) {
+	switch label {
+	case "Save":
+		return m.tryEmitSave()
+	case "Cancel":
+		return m, func() tea.Msg { return CalendarDialogClosedMsg{} }
+	case "Delete":
+		if m.isEditing() {
+			id, name := m.id, m.nameInput.Value()
+			return m, func() tea.Msg { return CalendarDeleteRequestedMsg{ID: id, Name: name} }
+		}
+	}
+	return m, nil
+}
+
 func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) {
 	kp, ok := msg.(tea.KeyPressMsg)
 	if !ok {
@@ -171,6 +199,19 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 		return m.advanceField(1), nil
 	case key.Matches(kp, m.keys.ShiftTab):
 		return m.advanceField(-1), nil
+	}
+
+	// Underlined-letter shortcuts for the action buttons. Only active when
+	// focus isn't on a text input, so typing the letter into Name/Hex still
+	// works as normal text entry.
+	if m.field != cdFieldName && m.field != cdFieldHex {
+		labels := m.buttonLabels()
+		indices := buttonDialogUnderlineIndices(labels)
+		for i, label := range labels {
+			if matchesButtonRune(kp, label, indices[i]) {
+				return m.triggerButton(label)
+			}
+		}
 	}
 
 	switch m.field {
@@ -348,14 +389,25 @@ func (m CalendarDialogModel) View() string {
 
 	// Action row: Delete on the far left (destructive, least prominent),
 	// Cancel + Save on the far right. Save is the primary action and is
-	// visually strongest.
-	saveBtn := buttonStyled("Save", -1, m.field == cdFieldSave, true)
-	cancelBtn := button("Cancel", -1, m.field == cdFieldCancel)
+	// visually strongest. Underlined letters indicate the single-key
+	// shortcuts wired up in Update.
+	labels := m.buttonLabels()
+	indices := buttonDialogUnderlineIndices(labels)
+	underlineFor := func(name string) int {
+		for i, l := range labels {
+			if l == name {
+				return indices[i]
+			}
+		}
+		return -1
+	}
+	saveBtn := buttonStyled("Save", underlineFor("Save"), m.field == cdFieldSave, true)
+	cancelBtn := button("Cancel", underlineFor("Cancel"), m.field == cdFieldCancel)
 	rightActions := cancelBtn + "  " + saveBtn
 
 	var actionsRow string
 	if m.isEditing() {
-		delBtn := buttonDanger("Delete", -1, m.field == cdFieldDelete)
+		delBtn := buttonDanger("Delete", underlineFor("Delete"), m.field == cdFieldDelete)
 		gap := max(contentWidth-lipgloss.Width(delBtn)-lipgloss.Width(rightActions), 2)
 		actionsRow = delBtn + strings.Repeat(" ", gap) + rightActions
 	} else {
