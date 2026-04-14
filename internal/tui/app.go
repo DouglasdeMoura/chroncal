@@ -741,7 +741,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case CalendarDeleteRequestedMsg:
-		m.calendarDialogOpen = false
+		// Keep the edit dialog open behind the confirm — if the user
+		// cancels the confirm, they return to the edit dialog instead of
+		// losing their in-progress changes. The confirm dialog takes input
+		// priority, so the edit dialog is visible but inert.
 		m.pendingCalendarDelete = msg.ID
 		m.confirmDialog = NewConfirmDialogModel(
 			fmt.Sprintf("Delete calendar %q?", msg.Name),
@@ -789,6 +792,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.pendingCalendarDelete != 0 {
 			id := m.pendingCalendarDelete
 			m.pendingCalendarDelete = 0
+			// Delete confirmed: close the edit dialog too.
+			m.calendarDialogOpen = false
 			return m, func() tea.Msg {
 				err := m.app.Calendars.Delete(context.Background(), id)
 				return calendarMutationDoneMsg{err: err}
