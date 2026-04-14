@@ -355,7 +355,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.calendarDialogOpen {
+	// When a confirm/choice dialog is stacked on top of the calendar dialog
+	// (e.g. the delete-calendar confirm), it must own input — otherwise Esc
+	// would close the calendar dialog underneath instead of the confirm.
+	if m.calendarDialogOpen && !m.confirmOpen && !m.choiceOpen {
 		switch msg.(type) {
 		case CalendarSavedMsg, CalendarDeleteRequestedMsg, CalendarDialogClosedMsg,
 			tea.BackgroundColorMsg, tea.WindowSizeMsg,
