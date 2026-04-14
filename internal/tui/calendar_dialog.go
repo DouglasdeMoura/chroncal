@@ -45,11 +45,11 @@ const (
 )
 
 // paletteSwatches is the preset color grid shown in the calendar dialog.
-// Picked to match the Catppuccin-ish palette the app already uses.
 var paletteSwatches = []string{
-	"#a6e3a1", "#f5c2e7", "#89b4fa", "#fab387",
-	"#f38ba8", "#94e2d5", "#cba6f7", "#f9e2af",
-	"#74c7ec", "#eba0ac", "#a6adc8", "#f2cdcd",
+	"#0074D9", "#7FDBFF", "#39CCCC", "#B10DC9",
+	"#F012BE", "#85144b", "#FF4136", "#FF851B",
+	"#FFDC00", "#3D9970", "#2ECC40", "#01FF70",
+	"#111111", "#AAAAAA",
 }
 
 type calendarDialogField int
