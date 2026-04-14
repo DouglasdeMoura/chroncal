@@ -42,6 +42,7 @@ type appKeyMap struct {
 	Create      key.Binding
 	SwitchFocus key.Binding
 	Help        key.Binding
+	Palette     key.Binding
 }
 
 func defaultAppKeys() appKeyMap {
@@ -54,6 +55,7 @@ func defaultAppKeys() appKeyMap {
 		Create:      key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "create")),
 		SwitchFocus: key.NewBinding(key.WithKeys("tab", "shift+tab"), key.WithHelp("tab", "switch focus")),
 		Help:        key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+		Palette:     key.NewBinding(key.WithKeys("/", "ctrl+p", "ctrl+k"), key.WithHelp("/", "commands")),
 	}
 }
 
@@ -71,6 +73,7 @@ func (c compositeKeyMap) ShortHelp() []key.Binding {
 		c.appKeys.MonthView,
 		c.appKeys.WeekView,
 		c.appKeys.DayView,
+		c.appKeys.Palette,
 		c.appKeys.Help,
 		c.appKeys.Quit,
 	)
@@ -84,6 +87,7 @@ func (c compositeKeyMap) FullHelp() [][]key.Binding {
 		c.appKeys.DayView,
 		c.appKeys.Sidebar,
 		c.appKeys.SwitchFocus,
+		c.appKeys.Palette,
 		c.appKeys.Help,
 		c.appKeys.Quit,
 	}
@@ -142,6 +146,8 @@ type Model struct {
 	choiceOpen     bool
 	form           EventFormModel
 	formOpen       bool
+	palette        PaletteModel
+	paletteOpen    bool
 	pendingDelete  event.Event
 	err            error
 	ready          bool
@@ -302,6 +308,23 @@ func (m Model) innerDims() (int, int) {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// When the palette is open, it captures all input. Only specific
+	// parent-level messages (size, theme, palette-result) fall through.
+	if m.paletteOpen {
+		switch msg.(type) {
+		case PaletteSelectedMsg, PaletteClosedMsg,
+			tea.BackgroundColorMsg, tea.WindowSizeMsg:
+			// fall through to main switch
+		default:
+			if kp, ok := msg.(tea.KeyPressMsg); ok && kp.String() == "ctrl+c" {
+				return m, tea.Quit
+			}
+			var cmd tea.Cmd
+			m.palette, cmd = m.palette.Update(msg)
+			return m, cmd
+		}
+	}
+
 	// When the form is open, route most messages to it (cursor blink, keys, etc.).
 	// Only let specific parent-level messages fall through to the main switch.
 	if m.formOpen {
@@ -341,6 +364,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.confirmDialog = m.confirmDialog.SetSize(m.width, m.height)
 		m.choiceDialog = m.choiceDialog.SetSize(m.width, m.height)
 		m.form = m.form.SetSize(m.width, m.height)
+		m.palette = m.palette.SetSize(m.width, m.height)
 		m.ready = true
 		return m, nil
 
@@ -462,6 +486,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case EventFormClosedMsg:
 		m.formOpen = false
+		return m, nil
+
+	case PaletteSelectedMsg:
+		m.paletteOpen = false
+		if msg.Action == nil {
+			return m, nil
+		}
+		action := msg.Action
+		return m, func() tea.Msg { return action() }
+
+	case PaletteClosedMsg:
+		m.paletteOpen = false
+		return m, nil
+
+	case SwitchViewMsg:
+		return m.switchToView(msg.Mode)
+
+	case GoToTodayMsg:
+		return m.goToToday()
+
+	case ToggleSidebarMsg:
+		return m.toggleSidebar()
+
+	case ToggleHelpMsg:
+		m.help.ShowAll = !m.help.ShowAll
+		iw, ih := m.innerDims()
+		m.calendar = m.calendar.SetSize(iw, ih)
+		m.week = m.week.SetSize(iw, ih)
+		m.day = m.day.SetSize(iw, ih)
 		return m, nil
 
 	case eventCreatedMsg:
@@ -718,54 +771,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
+		case key.Matches(msg, m.keys.Palette):
+			return m.openPalette()
 		case key.Matches(msg, m.keys.Help):
-			m.help.ShowAll = !m.help.ShowAll
-			iw, ih := m.innerDims()
-			m.calendar = m.calendar.SetSize(iw, ih)
-			m.week = m.week.SetSize(iw, ih)
-			m.day = m.day.SetSize(iw, ih)
-			return m, nil
+			return m.Update(ToggleHelpMsg{})
 		case key.Matches(msg, m.keys.MonthView):
-			if m.viewMode == viewMonth {
-				return m, nil
-			}
-			cursor, today := m.viewCursorAndToday()
-			m.viewMode = viewMonth
-			m.calendar.cursor = cursor
-			m.calendar.today = today
-			if m.calendar.cursor.Year() != m.calendar.month.Year() || m.calendar.cursor.Month() != m.calendar.month.Month() {
-				m.calendar.month = time.Date(cursor.Year(), cursor.Month(), 1, 0, 0, 0, 0, cursor.Location())
-			}
-			return m, m.switchView()
+			return m.switchToView(viewMonth)
 		case key.Matches(msg, m.keys.WeekView):
-			if m.viewMode == viewWeek {
-				return m, nil
-			}
-			cursor, today := m.viewCursorAndToday()
-			m.viewMode = viewWeek
-			m.week.cursor = cursor
-			m.week.today = today
-			return m, m.switchView()
+			return m.switchToView(viewWeek)
 		case key.Matches(msg, m.keys.DayView):
-			if m.viewMode == viewDay {
-				return m, nil
-			}
-			cursor, today := m.viewCursorAndToday()
-			m.viewMode = viewDay
-			m.day.cursor = cursor
-			m.day.today = today
-			return m, m.switchView()
+			return m.switchToView(viewDay)
 		case key.Matches(msg, m.keys.Sidebar):
-			m.showSidebar = !m.showSidebar
-			if !m.showSidebar {
-				m.focus = focusCalendar
-			}
-			iw, ih := m.innerDims()
-			m.calendar = m.calendar.SetSize(iw, ih)
-			m.week = m.week.SetSize(iw, ih)
-			m.day = m.day.SetSize(iw, ih)
-			m.saveUIState()
-			return m, nil
+			return m.toggleSidebar()
 		case key.Matches(msg, m.keys.SwitchFocus):
 			if m.showSidebar {
 				if m.focus == focusSidebar {
@@ -908,6 +925,10 @@ func (m Model) View() tea.View {
 		bw, bh := m.confirmDialog.BoxSize()
 		v.Content = m.compositeOverlay(v.Content, m.confirmDialog.View(), bw, bh)
 	}
+	if m.paletteOpen {
+		bw, bh := m.palette.BoxSize()
+		v.Content = m.compositeOverlay(v.Content, m.palette.View(), bw, bh)
+	}
 
 	return v
 }
@@ -963,6 +984,76 @@ func (m Model) viewCursorAndToday() (time.Time, time.Time) {
 	default:
 		return m.calendar.cursor, m.calendar.today
 	}
+}
+
+// switchToView changes the active view mode and synchronizes cursor/today.
+// Safe to call even when already in the requested mode (no-op).
+func (m Model) switchToView(mode viewMode) (tea.Model, tea.Cmd) {
+	if m.viewMode == mode {
+		return m, nil
+	}
+	cursor, today := m.viewCursorAndToday()
+	m.viewMode = mode
+	switch mode {
+	case viewMonth:
+		m.calendar.cursor = cursor
+		m.calendar.today = today
+		if m.calendar.cursor.Year() != m.calendar.month.Year() || m.calendar.cursor.Month() != m.calendar.month.Month() {
+			m.calendar.month = time.Date(cursor.Year(), cursor.Month(), 1, 0, 0, 0, 0, cursor.Location())
+		}
+	case viewWeek:
+		m.week.cursor = cursor
+		m.week.today = today
+	case viewDay:
+		m.day.cursor = cursor
+		m.day.today = today
+	}
+	return m, m.switchView()
+}
+
+// goToToday moves the cursor in the active view to today and reloads events.
+func (m Model) goToToday() (tea.Model, tea.Cmd) {
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	switch m.viewMode {
+	case viewDay:
+		m.day.cursor = today
+		m.day.today = today
+	case viewWeek:
+		m.week.cursor = today
+		m.week.today = today
+	default:
+		m.calendar.cursor = today
+		m.calendar.today = today
+		if m.calendar.month.Year() != today.Year() || m.calendar.month.Month() != today.Month() {
+			m.calendar.month = time.Date(today.Year(), today.Month(), 1, 0, 0, 0, 0, today.Location())
+		}
+	}
+	return m, m.loadEvents()
+}
+
+// toggleSidebar toggles the sidebar panel and resyncs view sizes.
+func (m Model) toggleSidebar() (tea.Model, tea.Cmd) {
+	m.showSidebar = !m.showSidebar
+	if !m.showSidebar {
+		m.focus = focusCalendar
+	}
+	iw, ih := m.innerDims()
+	m.calendar = m.calendar.SetSize(iw, ih)
+	m.week = m.week.SetSize(iw, ih)
+	m.day = m.day.SetSize(iw, ih)
+	m.saveUIState()
+	return m, nil
+}
+
+// openPalette initializes and shows the command palette.
+func (m Model) openPalette() (tea.Model, tea.Cmd) {
+	cmds := buildPaletteCommands(m)
+	palette, cmd := NewPaletteModel(cmds, m.theme)
+	palette = palette.SetSize(m.width, m.height)
+	m.palette = palette
+	m.paletteOpen = true
+	return m, cmd
 }
 
 // switchView resizes all views and reloads events after a view mode change.
