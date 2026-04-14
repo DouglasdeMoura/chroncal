@@ -784,35 +784,6 @@ func (m EventDialogModel) renderDivider(w, h int) string {
 	return strings.Join(lines, "\n")
 }
 
-func button(text string, underlineIndex int, focused bool) string {
-	return buttonStyled(text, underlineIndex, focused, false)
-}
-
-func buttonStyled(text string, underlineIndex int, focused, primary bool) string {
-	var bg color.Color
-	switch {
-	case focused:
-		bg = lipgloss.Color("63")
-	case primary:
-		bg = lipgloss.Color("61")
-	default:
-		bg = lipgloss.Color("240")
-	}
-	style := lipgloss.NewStyle().
-		Background(bg).
-		Foreground(lipgloss.Color("255"))
-	if primary {
-		style = style.Bold(true)
-	}
-
-	rendered := style.Padding(0, 1).Render(text)
-	if underlineIndex >= 0 && underlineIndex < len(text) {
-		rendered = lipgloss.StyleRanges(rendered,
-			lipgloss.NewRange(1+underlineIndex, 1+underlineIndex+1, style.Underline(true)))
-	}
-	return rendered
-}
-
 func (m EventDialogModel) renderActions(w int) string {
 	actions := m.visibleActions()
 	parts := make([]string, len(actions))

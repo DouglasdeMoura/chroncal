@@ -253,17 +253,11 @@ func (m CalendarDialogModel) View() string {
 	paletteRow := "Color: " + strings.Join(swatches, " ")
 	hexRow := fmt.Sprintf("Hex:   %s", m.hexInput.View())
 
-	save := "[ Save ]"
-	if m.field == cdFieldSave {
-		save = lipgloss.NewStyle().Background(m.accentColor).Foreground(lipgloss.Color("#000")).Render(save)
-	}
+	save := buttonStyled("Save", -1, m.field == cdFieldSave, true)
 	actions := save
 	if m.isEditing() {
-		del := "[ Delete ]"
-		if m.field == cdFieldDelete {
-			del = lipgloss.NewStyle().Background(m.errorColor).Foreground(lipgloss.Color("#000")).Render(del)
-		}
-		actions = save + "   " + del
+		del := button("Delete", -1, m.field == cdFieldDelete)
+		actions = save + " " + del
 	}
 
 	body := strings.Join([]string{title, "", nameRow, paletteRow, hexRow, "", actions}, "\n")
