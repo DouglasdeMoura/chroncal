@@ -41,8 +41,10 @@ type MiniMonthModel struct {
 	cursor       time.Time // selected day
 	displayMonth time.Time // first-of-month for the rendered grid
 	keys         miniMonthKeyMap
+	focused      bool
 	accentColor  color.Color
 	todayColor   color.Color
+	textColor    color.Color
 }
 
 func NewMiniMonthModel(initial time.Time) MiniMonthModel {
@@ -54,11 +56,16 @@ func NewMiniMonthModel(initial time.Time) MiniMonthModel {
 	}
 }
 
-func (m MiniMonthModel) SetTheme(accent, today color.Color) MiniMonthModel {
+func (m MiniMonthModel) SetTheme(accent, today, text color.Color) MiniMonthModel {
 	m.accentColor = accent
 	m.todayColor = today
+	m.textColor = text
 	return m
 }
+
+func (m MiniMonthModel) Focus() MiniMonthModel { m.focused = true; return m }
+func (m MiniMonthModel) Blur() MiniMonthModel  { m.focused = false; return m }
+func (m MiniMonthModel) Focused() bool         { return m.focused }
 
 func (m MiniMonthModel) Cursor() time.Time { return m.cursor }
 
@@ -135,10 +142,16 @@ func (m MiniMonthModel) View() string {
 	col := leading
 	for cur.Month() == first.Month() {
 		cell := fmt.Sprintf("%2d", cur.Day())
+		isCursor := cur.Format("2006-01-02") == cursorDay
+		isToday := cur.Format("2006-01-02") == todayKey
 		switch {
-		case cur.Format("2006-01-02") == cursorDay:
-			cell = lipgloss.NewStyle().Background(m.accentColor).Foreground(lipgloss.Color("#000")).Render(cell)
-		case cur.Format("2006-01-02") == todayKey:
+		case isCursor && m.focused:
+			// Filled highlight when the widget has focus.
+			cell = lipgloss.NewStyle().Background(m.accentColor).Foreground(m.textColor).Bold(true).Render(cell)
+		case isCursor:
+			// Unfocused cursor: underline + bold so selection is still visible.
+			cell = lipgloss.NewStyle().Foreground(m.textColor).Bold(true).Underline(true).Render(cell)
+		case isToday:
 			cell = lipgloss.NewStyle().Foreground(m.todayColor).Bold(true).Render(cell)
 		}
 		b.WriteString(cell)

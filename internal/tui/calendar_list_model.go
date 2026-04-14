@@ -54,6 +54,7 @@ type CalendarListModel struct {
 	keys        calendarListKeyMap
 	accentColor color.Color
 	mutedColor  color.Color
+	textColor   color.Color
 }
 
 func NewCalendarListModel(items []CalendarListItem, hidden map[int64]bool) CalendarListModel {
@@ -68,9 +69,10 @@ func NewCalendarListModel(items []CalendarListItem, hidden map[int64]bool) Calen
 	}
 }
 
-func (m CalendarListModel) SetTheme(accent, muted color.Color) CalendarListModel {
+func (m CalendarListModel) SetTheme(accent, muted, text color.Color) CalendarListModel {
 	m.accentColor = accent
 	m.mutedColor = muted
+	m.textColor = text
 	return m
 }
 
@@ -177,14 +179,14 @@ func (m CalendarListModel) View() string {
 		}
 		line := fmt.Sprintf("%s %s %s", swatch, marker, it.Name)
 		if m.focused && i == m.cursor {
-			line = lipgloss.NewStyle().Background(m.accentColor).Foreground(lipgloss.Color("#000")).Render(line)
+			line = lipgloss.NewStyle().Background(m.accentColor).Foreground(m.textColor).Bold(true).Render(line)
 		}
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
 	add := "+ Add calendar"
 	if m.focused && m.cursor == len(m.items) {
-		add = lipgloss.NewStyle().Background(m.accentColor).Foreground(lipgloss.Color("#000")).Render(add)
+		add = lipgloss.NewStyle().Background(m.accentColor).Foreground(m.textColor).Bold(true).Render(add)
 	} else {
 		add = lipgloss.NewStyle().Foreground(m.mutedColor).Render(add)
 	}

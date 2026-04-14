@@ -397,6 +397,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.calendar = m.calendar.SetSelectedColor(m.theme.Text)
 		m.week = m.week.SetSelectedColor(m.theme.Text)
 		m.day = m.day.SetSelectedColor(m.theme.Text)
+		m.sidebar = m.sidebar.SetTheme(m.theme)
 		m.help = newThemedHelp(m.theme)
 		return m, nil
 

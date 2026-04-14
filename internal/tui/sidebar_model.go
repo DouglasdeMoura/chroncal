@@ -7,6 +7,14 @@ import (
 	lipgloss "charm.land/lipgloss/v2"
 )
 
+// SetTheme propagates theme colors to both children so their cursor and focus
+// highlights render correctly.
+func (m SidebarModel) SetTheme(t Theme) SidebarModel {
+	m.miniMonth = m.miniMonth.SetTheme(t.Selected, t.Today, t.Text)
+	m.list = m.list.SetTheme(t.Selected, t.Muted, t.Text)
+	return m
+}
+
 // SidebarFocusEscapedMsg is emitted when the user Tabs (or Shift+Tabs) past
 // the edge of the sidebar's focusable widgets. The parent should move
 // top-level focus to the main view.
@@ -59,9 +67,14 @@ func (m SidebarModel) SetSize(w, h int) SidebarModel {
 	return m
 }
 
-// refocusChildren syncs the list child's focused state with the sidebar's
-// current focus target.
+// refocusChildren syncs each child's focused state with the sidebar's
+// current focus target so only one child highlights at a time.
 func (m SidebarModel) refocusChildren() SidebarModel {
+	if m.focused && m.focus == sidebarFocusMiniMonth {
+		m.miniMonth = m.miniMonth.Focus()
+	} else {
+		m.miniMonth = m.miniMonth.Blur()
+	}
 	if m.focused && m.focus == sidebarFocusList {
 		m.list = m.list.Focus()
 	} else {
