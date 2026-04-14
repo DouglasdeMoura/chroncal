@@ -262,9 +262,9 @@ func (m CalendarDialogModel) View() string {
 	actions := save
 	if m.isEditing() {
 		del := button("Delete", -1, m.field == cdFieldDelete)
-		actions = del + " " + save
+		actions = lipgloss.JoinHorizontal(lipgloss.Top, del, " ", save)
 	}
-	actionsRow := lipgloss.NewStyle().Width(contentWidth).Align(lipgloss.Right).Render(actions)
+	actionsRow := lipgloss.PlaceHorizontal(contentWidth, lipgloss.Right, actions)
 
 	body := strings.Join([]string{title, "", nameRow, paletteRow, hexRow, "", actionsRow}, "\n")
 	if m.errorMsg != "" {
