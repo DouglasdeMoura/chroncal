@@ -323,6 +323,9 @@ func (m PaletteModel) renderRow(c PaletteCommand, width int, selected bool) stri
 		gap = 1
 	}
 
+	if right != "" {
+		right = lipgloss.NewStyle().Foreground(m.theme.TextDim).Render(right)
+	}
 	row := leftPad + title + strings.Repeat(" ", gap) + right
 	style := lipgloss.NewStyle().Width(width).Foreground(m.theme.Text)
 	if selected {
