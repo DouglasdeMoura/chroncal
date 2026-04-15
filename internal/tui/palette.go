@@ -339,6 +339,7 @@ func (m PaletteModel) renderFooter(width int) string {
 	return lipgloss.NewStyle().
 		Foreground(m.theme.TextDim).
 		Width(width).
+		Align(lipgloss.Center).
 		Render(hint)
 }
 
