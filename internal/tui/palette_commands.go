@@ -70,7 +70,7 @@ func buildPaletteCommands(m Model) []PaletteCommand {
 			ID:       "ui.sidebar",
 			Title:    "Toggle sidebar",
 			Category: "View",
-			Shortcut: "s",
+			Shortcut: "`",
 			Action:   func() tea.Msg { return ToggleSidebarMsg{} },
 		},
 		{
