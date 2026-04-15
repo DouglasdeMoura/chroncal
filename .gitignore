@@ -31,4 +31,5 @@ go.work.sum
 !.env.example
 
 .crush
+.agents
 
