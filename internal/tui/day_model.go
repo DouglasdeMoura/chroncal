@@ -66,10 +66,7 @@ type DayModel struct {
 func NewDayModel(today time.Time) DayModel {
 	t := today.Local()
 	now := time.Now().Local()
-	initialScroll := now.Hour()*defaultLinesPerHour - 4
-	if initialScroll < 0 {
-		initialScroll = 0
-	}
+	initialScroll := max(now.Hour()*defaultLinesPerHour-4, 0)
 	return DayModel{
 		cursor:       t,
 		today:        t,
@@ -109,24 +106,15 @@ func (m DayModel) allDayCount() int {
 }
 
 func (m DayModel) viewportHeight() int {
-	allDayRows := m.allDayCount()
-	if allDayRows < 1 {
-		allDayRows = 1
-	}
+	allDayRows := max(m.allDayCount(), 1)
 	fixedLines := 2 + 1 + allDayRows + 1
-	vh := m.height - fixedLines
-	if vh < 1 {
-		vh = 1
-	}
+	vh := max(m.height-fixedLines, 1)
 	return vh
 }
 
 func (m DayModel) maxScroll() int {
 	totalRows := totalHours * m.linesPerHour
-	ms := totalRows - m.viewportHeight()
-	if ms < 0 {
-		ms = 0
-	}
+	ms := max(totalRows-m.viewportHeight(), 0)
 	return ms
 }
 
@@ -162,22 +150,13 @@ func (m DayModel) EventAtPosition(x, y int) int64 {
 		return 0
 	}
 
-	allDayRows := m.allDayCount()
-	if allDayRows < 1 {
-		allDayRows = 1
-	}
+	allDayRows := max(m.allDayCount(), 1)
 	fixedLines := 2 + 1 + allDayRows + 1
 	if y < fixedLines {
 		return 0
 	}
 
-	scrollOffset := m.scrollOffset
-	if scrollOffset < 0 {
-		scrollOffset = 0
-	}
-	if ms := m.maxScroll(); scrollOffset > ms {
-		scrollOffset = ms
-	}
+	scrollOffset := min(max(m.scrollOffset, 0), m.maxScroll())
 	row := scrollOffset + (y - fixedLines)
 
 	lph := m.linesPerHour
@@ -185,10 +164,7 @@ func (m DayModel) EventAtPosition(x, y int) int64 {
 		lph = defaultLinesPerHour
 	}
 
-	colWidth := m.width - timeLabelWidth - 2
-	if colWidth < 1 {
-		colWidth = 1
-	}
+	colWidth := max(m.width-timeLabelWidth-2, 1)
 
 	placed := placeDayEvents(m.events, m.cursor, lph)
 	resolveOverlaps(placed)
@@ -209,15 +185,9 @@ func (m DayModel) Update(msg tea.Msg) (DayModel, tea.Cmd) {
 	prevDay := m.cursor.Format("2006-01-02")
 	switch {
 	case key.Matches(keyMsg, m.keys.ScrollUp):
-		m.scrollOffset -= m.linesPerHour
-		if m.scrollOffset < 0 {
-			m.scrollOffset = 0
-		}
+		m.scrollOffset = max(m.scrollOffset-m.linesPerHour, 0)
 	case key.Matches(keyMsg, m.keys.ScrollDown):
-		m.scrollOffset += m.linesPerHour
-		if ms := m.maxScroll(); m.scrollOffset > ms {
-			m.scrollOffset = ms
-		}
+		m.scrollOffset = min(m.scrollOffset+m.linesPerHour, m.maxScroll())
 	case key.Matches(keyMsg, m.keys.PrevDay):
 		m.cursor = m.cursor.AddDate(0, 0, -1)
 	case key.Matches(keyMsg, m.keys.NextDay):
@@ -230,13 +200,7 @@ func (m DayModel) Update(msg tea.Msg) (DayModel, tea.Cmd) {
 		m.cursor = m.today
 		now := time.Now().Local()
 		targetRow := now.Hour()*m.linesPerHour + now.Minute()*m.linesPerHour/60
-		m.scrollOffset = targetRow - m.viewportHeight()/2
-		if m.scrollOffset < 0 {
-			m.scrollOffset = 0
-		}
-		if ms := m.maxScroll(); m.scrollOffset > ms {
-			m.scrollOffset = ms
-		}
+		m.scrollOffset = min(max(targetRow-m.viewportHeight()/2, 0), m.maxScroll())
 	case key.Matches(keyMsg, m.keys.Select):
 		return m, func() tea.Msg { return CalendarDaySelectedMsg{Day: m.cursor} }
 	default:
@@ -254,13 +218,7 @@ func (m DayModel) View() string {
 	if m.width <= 0 || m.height <= 0 {
 		return ""
 	}
-	scrollOffset := m.scrollOffset
-	if scrollOffset < 0 {
-		scrollOffset = 0
-	}
-	if ms := m.maxScroll(); scrollOffset > ms {
-		scrollOffset = ms
-	}
+	scrollOffset := min(max(m.scrollOffset, 0), m.maxScroll())
 	return DayGrid(DayOptions{
 		Day:          m.cursor,
 		Events:       m.events,

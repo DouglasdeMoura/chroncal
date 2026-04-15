@@ -584,10 +584,11 @@ func (m CalendarDialogModel) View() string {
 	// Action row: Delete on the far left (destructive, least prominent),
 	// Cancel + Save on the far right. Save is the primary action. Layout is
 	// computed in actionLayout so View and handleMouse stay in sync.
-	var actionsRow string
+	var actionsRow strings.Builder
 	prev := 0
 	for _, b := range m.actionLayout() {
-		actionsRow += strings.Repeat(" ", b.start-prev) + b.rendered
+		actionsRow.WriteString(strings.Repeat(" ", b.start-prev))
+		actionsRow.WriteString(b.rendered)
 		prev = b.end
 	}
 
@@ -603,7 +604,7 @@ func (m CalendarDialogModel) View() string {
 		nameRow,
 		paletteRow,
 		hexRow,
-	}, "\n") + errBlock + "\n\n" + rule + "\n" + actionsRow + "\n\n" + helpText
+	}, "\n") + errBlock + "\n\n" + rule + "\n" + actionsRow.String() + "\n\n" + helpText
 
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).

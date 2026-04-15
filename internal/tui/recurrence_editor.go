@@ -334,10 +334,7 @@ func (m RecurrenceEditorModel) HandleEndsDateMouse(msg tea.MouseClickMsg, picker
 		return m
 	}
 
-	dow := rx / 3
-	if dow > 6 {
-		dow = 6
-	}
+	dow := min(rx/3, 6)
 
 	y, mo, _ := m.endsDate.Date()
 	loc := m.endsDate.Location()
@@ -516,8 +513,8 @@ func (m RecurrenceEditorModel) View() string {
 
 	// Weekly: day toggles
 	if m.freqIdx == 1 {
-		var dayParts []string
-		for i := 0; i < 7; i++ {
+		dayParts := make([]string, 0, 7)
+		for i := range 7 {
 			label := weekDayLabels[i]
 			style := lipgloss.NewStyle().Faint(true)
 			if m.weekDays[i] {

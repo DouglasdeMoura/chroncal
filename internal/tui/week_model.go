@@ -67,10 +67,7 @@ type WeekModel struct {
 func NewWeekModel(today time.Time) WeekModel {
 	t := today.Local()
 	now := time.Now().Local()
-	initialScroll := now.Hour()*defaultLinesPerHour - 4
-	if initialScroll < 0 {
-		initialScroll = 0
-	}
+	initialScroll := max(now.Hour()*defaultLinesPerHour-4, 0)
 	return WeekModel{
 		cursor:       t,
 		today:        t,
@@ -116,33 +113,20 @@ func (m WeekModel) allDayRowCount() int {
 				count++
 			}
 		}
-		if count > maxPerCol {
-			maxPerCol = count
-		}
+		maxPerCol = max(maxPerCol, count)
 	}
 	return maxPerCol
 }
 
 func (m WeekModel) viewportHeight() int {
-	allDayRows := m.allDayRowCount()
-	if allDayRows < 1 {
-		allDayRows = 1
-	}
+	allDayRows := max(m.allDayRowCount(), 1)
 	fixedLines := 2 + 1 + 1 + allDayRows + 1
-	vh := m.height - fixedLines
-	if vh < 1 {
-		vh = 1
-	}
-	return vh
+	return max(m.height-fixedLines, 1)
 }
 
 func (m WeekModel) maxScroll() int {
 	totalRows := totalHours * m.linesPerHour
-	ms := totalRows - m.viewportHeight()
-	if ms < 0 {
-		ms = 0
-	}
-	return ms
+	return max(totalRows-m.viewportHeight(), 0)
 }
 
 func (m WeekModel) selectDay(day time.Time) (WeekModel, tea.Cmd) {
@@ -212,22 +196,13 @@ func (m WeekModel) EventAtPosition(x, y int) int64 {
 		return 0
 	}
 
-	allDayRows := m.allDayRowCount()
-	if allDayRows < 1 {
-		allDayRows = 1
-	}
+	allDayRows := max(m.allDayRowCount(), 1)
 	fixedLines := 2 + 1 + 1 + allDayRows + 1
 	if y < fixedLines {
 		return 0
 	}
 
-	scrollOffset := m.scrollOffset
-	if scrollOffset < 0 {
-		scrollOffset = 0
-	}
-	if ms := m.maxScroll(); scrollOffset > ms {
-		scrollOffset = ms
-	}
+	scrollOffset := min(max(m.scrollOffset, 0), m.maxScroll())
 	row := scrollOffset + (y - fixedLines)
 
 	lph := m.linesPerHour
@@ -253,15 +228,9 @@ func (m WeekModel) Update(msg tea.Msg) (WeekModel, tea.Cmd) {
 	prevWeek := m.WeekStartDate()
 	switch {
 	case key.Matches(keyMsg, m.keys.ScrollUp):
-		m.scrollOffset -= m.linesPerHour
-		if m.scrollOffset < 0 {
-			m.scrollOffset = 0
-		}
+		m.scrollOffset = max(m.scrollOffset-m.linesPerHour, 0)
 	case key.Matches(keyMsg, m.keys.ScrollDown):
-		m.scrollOffset += m.linesPerHour
-		if ms := m.maxScroll(); m.scrollOffset > ms {
-			m.scrollOffset = ms
-		}
+		m.scrollOffset = min(m.scrollOffset+m.linesPerHour, m.maxScroll())
 	case key.Matches(keyMsg, m.keys.Left):
 		m.cursor = m.cursor.AddDate(0, 0, -1)
 	case key.Matches(keyMsg, m.keys.Right):
@@ -274,13 +243,7 @@ func (m WeekModel) Update(msg tea.Msg) (WeekModel, tea.Cmd) {
 		m.cursor = m.today
 		now := time.Now().Local()
 		targetRow := now.Hour()*m.linesPerHour + now.Minute()*m.linesPerHour/60
-		m.scrollOffset = targetRow - m.viewportHeight()/2
-		if m.scrollOffset < 0 {
-			m.scrollOffset = 0
-		}
-		if ms := m.maxScroll(); m.scrollOffset > ms {
-			m.scrollOffset = ms
-		}
+		m.scrollOffset = min(max(targetRow-m.viewportHeight()/2, 0), m.maxScroll())
 	case key.Matches(keyMsg, m.keys.Select):
 		return m, func() tea.Msg { return CalendarDaySelectedMsg{Day: m.cursor} }
 	default:
@@ -298,13 +261,7 @@ func (m WeekModel) View() string {
 	if m.width <= 0 || m.height <= 0 {
 		return ""
 	}
-	scrollOffset := m.scrollOffset
-	if scrollOffset < 0 {
-		scrollOffset = 0
-	}
-	if ms := m.maxScroll(); scrollOffset > ms {
-		scrollOffset = ms
-	}
+	scrollOffset := min(max(m.scrollOffset, 0), m.maxScroll())
 	return WeekGrid(WeekOptions{
 		WeekStart:     m.WeekStartDate(),
 		Events:        m.events,

@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"image/color"
+	"maps"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -59,9 +60,7 @@ type CalendarListModel struct {
 
 func NewCalendarListModel(items []CalendarListItem, hidden map[int64]bool) CalendarListModel {
 	h := make(map[int64]bool, len(hidden))
-	for k, v := range hidden {
-		h[k] = v
-	}
+	maps.Copy(h, hidden)
 	return CalendarListModel{
 		items:  items,
 		hidden: h,
@@ -107,9 +106,7 @@ func (m CalendarListModel) SetItems(items []CalendarListItem) CalendarListModel 
 // HiddenSet returns a copy of the current hidden set.
 func (m CalendarListModel) HiddenSet() map[int64]bool {
 	out := make(map[int64]bool, len(m.hidden))
-	for k, v := range m.hidden {
-		out[k] = v
-	}
+	maps.Copy(out, m.hidden)
 	return out
 }
 

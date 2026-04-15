@@ -248,10 +248,7 @@ func (m MiniMonthModel) chevronPositions() (leftX, rightX int) {
 	// "‹ ›" is three display columns. Keep at least one space between the
 	// name and the chevrons so very long month names don't butt up against
 	// the glyphs.
-	padding := miniMonthHeaderWidth - nameWidth - 3
-	if padding < 1 {
-		padding = 1
-	}
+	padding := max(miniMonthHeaderWidth-nameWidth-3, 1)
 	leftX = nameWidth + padding
 	rightX = leftX + 2
 	return leftX, rightX
@@ -329,10 +326,7 @@ func (m MiniMonthModel) View() string {
 	headerName := lipgloss.NewStyle().Bold(true).Render(name)
 	// Pad between the month name (left) and the two chevrons (right) so the
 	// chevrons align with the right edge of the day grid.
-	padding := miniMonthHeaderWidth - lipgloss.Width(name) - 3
-	if padding < 1 {
-		padding = 1
-	}
+	padding := max(miniMonthHeaderWidth-lipgloss.Width(name)-3, 1)
 	b.WriteString(headerName)
 	b.WriteString(strings.Repeat(" ", padding))
 	b.WriteString(leftChev)
@@ -346,7 +340,7 @@ func (m MiniMonthModel) View() string {
 	first := m.displayMonth
 	// Pad to align first-of-month under its weekday column.
 	leading := int(first.Weekday())
-	for i := 0; i < leading; i++ {
+	for range leading {
 		b.WriteString("   ")
 	}
 

@@ -105,11 +105,12 @@ func FormatEventList(opts FormatEventListOptions) string {
 		}
 	}
 
-	var out string
+	var out strings.Builder
 	for _, monthKey := range monthOrder {
 		if opts.ShowHeader {
 			t, _ := time.Parse("2006-01", monthKey)
-			out += lipgloss.NewStyle().Bold(true).Render(t.Format("January 2006")) + "\n\n"
+			out.WriteString(lipgloss.NewStyle().Bold(true).Render(t.Format("January 2006")))
+			out.WriteString("\n\n")
 		}
 
 		for _, dayKey := range months[monthKey] {
@@ -124,27 +125,32 @@ func FormatEventList(opts FormatEventListOptions) string {
 			}
 
 			if len(dayEvents) == 0 {
-				out += dayPrefix + "\n"
+				out.WriteString(dayPrefix)
+				out.WriteByte('\n')
 				continue
 			}
 
 			continuation := strings.Repeat(" ", len(dayPrefix))
 			for i, ev := range dayEvents {
 				if i == 0 {
-					out += dayPrefix
+					out.WriteString(dayPrefix)
 				} else {
-					out += continuation
+					out.WriteString(continuation)
 				}
-				out += " " + formatTimeColumn(ev) + "  " + ev.Title + "\n"
+				out.WriteString(" ")
+				out.WriteString(formatTimeColumn(ev))
+				out.WriteString("  ")
+				out.WriteString(ev.Title)
+				out.WriteByte('\n')
 			}
 		}
 
 		if opts.ShowHeader {
-			out += "\n"
+			out.WriteByte('\n')
 		}
 	}
 
-	return out
+	return out.String()
 }
 
 // CalendarEvent is the rendering-only view of an event inside the month grid.
@@ -319,13 +325,13 @@ func findCellIndex(anchor, d time.Time) (int, int) {
 
 func highlightCellBorder(rendered string, sr, sc int, cellWs, cellHs []int, c color.Color) string {
 	leftC := sc
-	for i := 0; i < sc; i++ {
+	for i := range sc {
 		leftC += cellWs[i]
 	}
 	rightC := leftC + cellWs[sc] + 1
 
 	topL := 0
-	for i := 0; i < sr; i++ {
+	for i := range sr {
 		topL += cellHs[i] + 1
 	}
 	botL := topL + cellHs[sr] + 1
@@ -408,10 +414,7 @@ func buildCalendarCell(d time.Time, isToday, inMonth bool, events []CalendarEven
 	}
 
 	rendered := numStyle.Render(dayNum)
-	padW := cellW - lipgloss.Width(rendered)
-	if padW < 0 {
-		padW = 0
-	}
+	padW := max(cellW-lipgloss.Width(rendered), 0)
 	numLine := strings.Repeat(" ", padW) + rendered
 
 	maxEventLines := cellH - 1
@@ -462,7 +465,7 @@ type placedEvent struct {
 }
 
 func resolveOverlaps(placed []placedEvent) {
-	for col := 0; col < 7; col++ {
+	for col := range 7 {
 		var idxs []int
 		for i, p := range placed {
 			if p.col == col {
@@ -517,10 +520,7 @@ func resolveOverlaps(placed []placedEvent) {
 
 func calcWeekColWidths(width int) []int {
 	separators := 8
-	availW := width - timeLabelWidth - separators
-	if availW < 7 {
-		availW = 7
-	}
+	availW := max(width-timeLabelWidth-separators, 7)
 	colW := availW / 7
 	remW := availW - colW*7
 	colWs := make([]int, 7)
@@ -598,32 +598,17 @@ func WeekGrid(opts WeekOptions) string {
 	placed := placeWeekEvents(opts.Events, anchor, lph)
 	resolveOverlaps(placed)
 
-	allDayRows := weekAllDayRowCount(opts.Events, anchor)
-	if allDayRows < 1 {
-		allDayRows = 1
-	}
+	allDayRows := max(weekAllDayRowCount(opts.Events, anchor), 1)
 
 	headerLines := 0
 	if opts.ShowHeader {
 		headerLines = 2
 	}
 	fixedLines := headerLines + 1 + 1 + allDayRows + 1
-	viewportHeight := opts.Height - fixedLines
-	if viewportHeight < 1 {
-		viewportHeight = 1
-	}
+	viewportHeight := max(opts.Height-fixedLines, 1)
 
-	scrollOffset := opts.ScrollOffset
-	maxScroll := totalRows - viewportHeight
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	if scrollOffset > maxScroll {
-		scrollOffset = maxScroll
-	}
-	if scrollOffset < 0 {
-		scrollOffset = 0
-	}
+	maxScroll := max(totalRows-viewportHeight, 0)
+	scrollOffset := min(max(opts.ScrollOffset, 0), maxScroll)
 
 	// Reserve one line for the bottom rule when end of day is visible.
 	showBottomRule := scrollOffset+viewportHeight >= totalRows
@@ -824,13 +809,13 @@ func renderWeekAllDayRows(events []CalendarEvent, anchor time.Time, colWs []int,
 	}
 
 	var out strings.Builder
-	for row := 0; row < numRows; row++ {
+	for row := range numRows {
 		if row == 0 {
 			out.WriteString(faint.Render("All day") + " ")
 		} else {
 			out.WriteString("        ")
 		}
-		for i := 0; i < 7; i++ {
+		for i := range 7 {
 			highlighted := selSep != "" && (i == selectedCol || i == selectedCol+1)
 			if highlighted {
 				out.WriteString(selSep)
@@ -871,7 +856,7 @@ func hitSubCol(matches []placedEvent, xInCol, totalWidth int) int64 {
 		}
 	}
 	offset := 0
-	for sub := 0; sub < n; sub++ {
+	for sub := range n {
 		if xInCol >= offset && xInCol < offset+widths[sub] {
 			for _, m := range matches {
 				if m.subCol == sub {
@@ -906,10 +891,7 @@ func renderTimeCellContent(p placedEvent, row, width int) string {
 
 	if lipgloss.Width(text) > width {
 		r := []rune(text)
-		limit := width - 1
-		if limit < 1 {
-			limit = 1
-		}
+		limit := max(width-1, 1)
 		if len(r) > limit {
 			text = string(r[:limit]) + "…"
 		}
@@ -940,7 +922,7 @@ func renderOverlappingCells(matches []placedEvent, row, totalWidth int) string {
 	}
 
 	var b strings.Builder
-	for sub := 0; sub < n; sub++ {
+	for sub := range n {
 		if p, ok := active[sub]; ok {
 			b.WriteString(renderTimeCellContent(p, row, widths[sub]))
 		} else {
@@ -978,10 +960,7 @@ func renderEventPill(ev CalendarEvent, cellW int) string {
 	text := " " + ev.Title
 	if lipgloss.Width(text) > cellW {
 		r := []rune(text)
-		limit := cellW - 1
-		if limit < 1 {
-			limit = 1
-		}
+		limit := max(cellW-1, 1)
 		if len(r) > limit {
 			text = string(r[:limit]) + "…"
 		}
@@ -1020,40 +999,22 @@ func DayGrid(opts DayOptions) string {
 	totalRows := totalHours * lph
 	day := opts.Day
 
-	colWidth := opts.Width - timeLabelWidth - 2
-	if colWidth < 1 {
-		colWidth = 1
-	}
+	colWidth := max(opts.Width-timeLabelWidth-2, 1)
 
 	placed := placeDayEvents(opts.Events, day, lph)
 	resolveOverlaps(placed)
 
-	allDayRows := dayAllDayCount(opts.Events, day)
-	if allDayRows < 1 {
-		allDayRows = 1
-	}
+	allDayRows := max(dayAllDayCount(opts.Events, day), 1)
 
 	headerLines := 0
 	if opts.ShowHeader {
 		headerLines = 2
 	}
 	fixedLines := headerLines + 1 + allDayRows + 1
-	viewportHeight := opts.Height - fixedLines
-	if viewportHeight < 1 {
-		viewportHeight = 1
-	}
+	viewportHeight := max(opts.Height-fixedLines, 1)
 
-	scrollOffset := opts.ScrollOffset
-	maxScroll := totalRows - viewportHeight
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	if scrollOffset > maxScroll {
-		scrollOffset = maxScroll
-	}
-	if scrollOffset < 0 {
-		scrollOffset = 0
-	}
+	maxScroll := max(totalRows-viewportHeight, 0)
+	scrollOffset := min(max(opts.ScrollOffset, 0), maxScroll)
 
 	showBottomRule := scrollOffset+viewportHeight >= totalRows
 	if showBottomRule && viewportHeight > 1 {
@@ -1158,7 +1119,7 @@ func renderDayAllDayRows(events []CalendarEvent, day time.Time, colWidth int, nu
 	faintSep := faint.Render("│")
 
 	var out strings.Builder
-	for row := 0; row < numRows; row++ {
+	for row := range numRows {
 		if row == 0 {
 			out.WriteString(faint.Render("All day") + " ")
 		} else {

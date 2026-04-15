@@ -147,15 +147,15 @@ func (m buttonDialogModel) buttonBarOrigin() (int, int) {
 func (m buttonDialogModel) View() string {
 	underline := buttonDialogUnderlineIndices(m.labels)
 
-	var buttons string
+	var buttons strings.Builder
 	for i, label := range m.labels {
 		if i > 0 {
-			buttons += " "
+			buttons.WriteByte(' ')
 		}
-		buttons += button(label, underline[i], m.selected == i)
+		buttons.WriteString(button(label, underline[i], m.selected == i))
 	}
 
-	content := lipgloss.JoinVertical(lipgloss.Center, m.message, "", buttons)
+	content := lipgloss.JoinVertical(lipgloss.Center, m.message, "", buttons.String())
 
 	return lipgloss.NewStyle().
 		Padding(1, 3).

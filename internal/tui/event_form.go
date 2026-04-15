@@ -306,7 +306,7 @@ func parseRecurrenceRule(rule string, fallbackDate time.Time) (int, string, ends
 
 // rruleParam extracts a named parameter value from an RRULE string.
 func rruleParam(rule, name string) string {
-	for _, p := range strings.Split(rule, ";") {
+	for p := range strings.SplitSeq(rule, ";") {
 		if k, v, ok := strings.Cut(p, "="); ok && strings.EqualFold(k, name) {
 			return v
 		}
@@ -670,10 +670,7 @@ func (m EventFormModel) handleDatePickerMouse(msg tea.MouseClickMsg) (EventFormM
 	}
 
 	// Each cell is 3 chars wide (2 digit + 1 space), last column has no trailing space.
-	dow := rx / 3
-	if dow > 6 {
-		dow = 6
-	}
+	dow := min(rx/3, 6)
 	week := ry
 
 	// Map to day number.
@@ -710,10 +707,7 @@ func (m EventFormModel) handleEndsDatePickerMouse(msg tea.MouseClickMsg) (EventF
 		return m, nil
 	}
 
-	dow := rx / 3
-	if dow > 6 {
-		dow = 6
-	}
+	dow := min(rx/3, 6)
 	week := ry
 
 	y, mo, _ := m.endsDate.Date()
@@ -1170,9 +1164,9 @@ func renderMiniCalendar(selected, today time.Time, indent int, theme Theme) stri
 	lines = append(lines, pad+faint.Render("Su Mo Tu We Th Fr Sa"))
 
 	dayNum := 1
-	for week := 0; week < 6; week++ {
+	for week := range 6 {
 		var cells []string
-		for dow := 0; dow < 7; dow++ {
+		for dow := range 7 {
 			pos := week*7 + dow
 			if pos < startDow || dayNum > daysInMonth {
 				cells = append(cells, "  ")

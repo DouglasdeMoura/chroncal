@@ -104,13 +104,7 @@ func (m PaletteModel) BoxSize() (int, int) {
 func (m PaletteModel) boxDims() (int, int) {
 	w := min(60, max(m.width-4, 30))
 	// Prompt line + blank + up to 10 rows + footer.
-	rows := len(m.filtered)
-	if rows > 10 {
-		rows = 10
-	}
-	if rows < 1 {
-		rows = 1
-	}
+	rows := max(min(len(m.filtered), 10), 1)
 	h := rows + 6
 	if h > m.height-2 {
 		h = max(m.height-2, 6)
@@ -318,10 +312,7 @@ func (m PaletteModel) renderRow(c PaletteCommand, width int, selected bool) stri
 		title = truncate(title, maxTitle)
 		avail = width - lipgloss.Width(leftPad) - lipgloss.Width(right)
 	}
-	gap := avail - lipgloss.Width(title)
-	if gap < 1 {
-		gap = 1
-	}
+	gap := max(avail-lipgloss.Width(title), 1)
 
 	if right != "" {
 		right = lipgloss.NewStyle().Foreground(m.theme.TextDim).Render(right)
