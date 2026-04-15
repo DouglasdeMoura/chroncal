@@ -371,7 +371,7 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(tea.RequestBackgroundColor, m.loadEvents(), m.loadCalendars())
 }
 
-const sidebarWidth = 30
+const sidebarWidth = 24
 
 func (m Model) footerHeight() int {
 	if m.help.ShowAll {
