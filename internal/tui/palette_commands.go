@@ -33,6 +33,12 @@ func buildPaletteCommands(m Model) []PaletteCommand {
 			Action:   func() tea.Msg { return EventCreateMsg{Day: cursor} },
 		},
 		{
+			ID:       "calendar.new",
+			Title:    "New calendar",
+			Category: "Calendar",
+			Action:   func() tea.Msg { return CalendarDialogRequestedMsg{ID: 0} },
+		},
+		{
 			ID:       "view.month",
 			Title:    "Switch to Month view",
 			Category: "View",
