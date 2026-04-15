@@ -54,7 +54,7 @@ func defaultAppKeys() appKeyMap {
 		WeekView:     key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "week")),
 		DayView:      key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "day")),
 		Sidebar:      key.NewBinding(key.WithKeys("\\"), key.WithHelp("\\", "sidebar")),
-		Create:       key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "create")),
+		Create:       key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new")),
 		SwitchFocus:  key.NewBinding(key.WithKeys("tab", "shift+tab"), key.WithHelp("tab", "switch focus")),
 		Help:         key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		Palette:      key.NewBinding(key.WithKeys("/", "ctrl+p", "ctrl+k"), key.WithHelp("/", "commands")),
