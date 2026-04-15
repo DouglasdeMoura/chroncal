@@ -189,7 +189,6 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 
 // HandleClick dispatches a mouse click given in the sidebar's local
 // coordinates (0,0 == top-left of the mini-month) to the appropriate child.
-// For now only the mini-month's header chevrons + day grid are clickable.
 func (m SidebarModel) HandleClick(x, y int) (SidebarModel, tea.Cmd) {
 	// The mini-month always occupies the top of the sidebar. Its rendered
 	// height is header (1) + weekday row (1) + up to 6 grid rows = 8.
@@ -199,7 +198,19 @@ func (m SidebarModel) HandleClick(x, y int) (SidebarModel, tea.Cmd) {
 		m.miniMonth = mm
 		return m, cmd
 	}
-	return m, nil
+	// View() separates the two children with "\n\n", which — on top of the
+	// mini-month's trailing newline — renders as two blank rows before the
+	// calendar list begins.
+	const listStartY = miniMonthMaxY + 2
+	listY := y - listStartY
+	if listY < 0 {
+		return m, nil
+	}
+	m.focus = sidebarFocusList
+	list, cmd := m.list.HandleClick(x, listY)
+	m.list = list
+	m = m.refocusChildren()
+	return m, cmd
 }
 
 func (m SidebarModel) View() string {

@@ -148,6 +148,29 @@ func (m CalendarListModel) activateCurrent() tea.Cmd {
 	return func() tea.Msg { return CalendarDialogRequestedMsg{ID: id} }
 }
 
+// HandleClick hit-tests a click at (x, y) in the widget's local coordinates
+// (top-left of the first item row is (0, 0)). A click on an item row moves
+// the cursor there and toggles its visibility; a click on the "+ Add" row
+// opens the new-calendar dialog. y values outside the rendered rows are
+// no-ops. x is currently ignored — any click within the sidebar's x range
+// that lands on a row activates it.
+func (m CalendarListModel) HandleClick(_ int, y int) (CalendarListModel, tea.Cmd) {
+	if y < 0 {
+		return m, nil
+	}
+	n := len(m.items)
+	// Layout (see View): items at y=0..n-1, blank gap at y=n, "+ Add" at y=n+1.
+	if y < n {
+		m.cursor = y
+		return m.toggleCurrent()
+	}
+	if y == n+1 {
+		m.cursor = n
+		return m, m.activateCurrent()
+	}
+	return m, nil
+}
+
 func (m CalendarListModel) Update(msg tea.Msg) (CalendarListModel, tea.Cmd) {
 	if !m.focused {
 		return m, nil
