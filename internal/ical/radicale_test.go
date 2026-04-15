@@ -22,7 +22,11 @@ func radicaleURL() string { return defaultRadicaleURL }
 // radicaleAvailable checks whether the Radicale server is reachable.
 func radicaleAvailable(t *testing.T) {
 	t.Helper()
-	resp, err := http.Get(radicaleURL() + "/")
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, radicaleURL()+"/", nil)
+	if err != nil {
+		t.Fatalf("NewRequestWithContext: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Skipf("Radicale not available at %s: %v", radicaleURL(), err)
 	}
@@ -38,7 +42,7 @@ func radicaleCalendar(t *testing.T) string {
 
 	// Ensure user root exists (MKCOL).
 	userURL := base + "/qauser/"
-	req, _ := http.NewRequest("MKCOL", userURL, nil)
+	req, _ := http.NewRequestWithContext(t.Context(), "MKCOL", userURL, nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("MKCOL %s: %v", userURL, err)
@@ -47,7 +51,7 @@ func radicaleCalendar(t *testing.T) string {
 
 	// Create calendar (MKCALENDAR).
 	calURL := base + "/qauser/qa-integration/"
-	req, _ = http.NewRequest("MKCALENDAR", calURL, nil)
+	req, _ = http.NewRequestWithContext(t.Context(), "MKCALENDAR", calURL, nil)
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("MKCALENDAR: %v", err)
@@ -67,7 +71,7 @@ func radicaleRoundtrip(t *testing.T, calURL, filename string, icsData []byte) Im
 	itemURL := calURL + filename
 
 	// PUT
-	req, _ := http.NewRequest("PUT", itemURL, strings.NewReader(string(icsData)))
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPut, itemURL, strings.NewReader(string(icsData)))
 	req.Header.Set("Content-Type", "text/calendar; charset=utf-8")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -79,7 +83,11 @@ func radicaleRoundtrip(t *testing.T, calURL, filename string, icsData []byte) Im
 	}
 
 	// GET
-	resp, err = http.Get(itemURL)
+	getReq, err := http.NewRequestWithContext(t.Context(), http.MethodGet, itemURL, nil)
+	if err != nil {
+		t.Fatalf("NewRequestWithContext: %v", err)
+	}
+	resp, err = http.DefaultClient.Do(getReq)
 	if err != nil {
 		t.Fatalf("GET %s: %v", itemURL, err)
 	}

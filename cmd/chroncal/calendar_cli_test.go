@@ -196,7 +196,7 @@ func runChroncalCommand(t *testing.T, args ...string) (string, string, error) {
 	t.Helper()
 
 	cmdArgs := append([]string{"-test.run=TestHelperProcess", "--"}, args...)
-	cmd := exec.Command(os.Args[0], cmdArgs...)
+	cmd := exec.CommandContext(t.Context(), os.Args[0], cmdArgs...)
 	cmd.Env = append(os.Environ(), "GO_WANT_HELPER_PROCESS=1")
 
 	var stdout, stderr bytes.Buffer

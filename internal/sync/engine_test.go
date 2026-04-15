@@ -75,7 +75,7 @@ func newResponse(statusCode int, headers map[string]string) *http.Response {
 func insertTestEvent(t *testing.T, db *sql.DB, calendarID int64, uid string) {
 	t.Helper()
 
-	_, err := db.Exec(
+	_, err := db.ExecContext(t.Context(),
 		"INSERT INTO events (uid, calendar_id, title, start_time, end_time, status, transp, class) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
 		uid,
 		calendarID,

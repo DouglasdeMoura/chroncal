@@ -46,7 +46,8 @@ type GoogleOAuthResult struct {
 // It starts a temporary HTTP server, opens the user's browser, and waits for the redirect.
 func GoogleOAuthFlow(ctx context.Context, clientID string) (*GoogleOAuthResult, error) {
 	// Start a temporary listener on a random port
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	var lc net.ListenConfig
+	listener, err := lc.Listen(ctx, "tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("start listener: %w", err)
 	}
@@ -78,7 +79,7 @@ func GoogleOAuthFlow(ctx context.Context, clientID string) (*GoogleOAuthResult, 
 	)
 
 	// Try to open browser
-	if err := openBrowser(authURL); err != nil {
+	if err := openBrowser(ctx, authURL); err != nil {
 		fmt.Printf("Open this URL in your browser to authorize:\n\n  %s\n\n", authURL)
 	} else {
 		fmt.Println("Browser opened for Google authorization. Waiting for redirect...")
@@ -234,14 +235,14 @@ func codeChallengeS256(verifier string) string {
 	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
-func openBrowser(url string) error {
+func openBrowser(ctx context.Context, url string) error {
 	switch runtime.GOOS {
 	case "linux":
-		return exec.Command("xdg-open", url).Start()
+		return exec.CommandContext(ctx, "xdg-open", url).Start()
 	case "darwin":
-		return exec.Command("open", url).Start()
+		return exec.CommandContext(ctx, "open", url).Start()
 	case "windows":
-		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+		return exec.CommandContext(ctx, "rundll32", "url.dll,FileProtocolHandler", url).Start()
 	default:
 		return fmt.Errorf("unsupported platform")
 	}
