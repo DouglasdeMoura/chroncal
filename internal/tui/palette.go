@@ -345,7 +345,7 @@ func (m PaletteModel) renderFooter(width int) string {
 		{"enter", "select"},
 		{"esc", "close"},
 	}
-	var segs []string
+	segs := make([]string, 0, len(pairs))
 	for _, p := range pairs {
 		segs = append(segs, keyStyle.Render(p[0])+" "+descStyle.Render(p[1]))
 	}

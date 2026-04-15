@@ -452,7 +452,7 @@ func (m RecurrenceEditorModel) EndsDatePickerView() string {
 
 	const gridW = 20
 	gridPad := max((innerW-gridW)/2, 0)
-	var lines []string
+	lines := make([]string, 0, 3)
 	monthStr := m.endsDate.Format("January 2006")
 	monthPad := gridPad + max((gridW-len(monthStr))/2, 0)
 	lines = append(lines, strings.Repeat(" ", monthPad)+bold.Render(monthStr))

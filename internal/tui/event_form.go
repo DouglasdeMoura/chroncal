@@ -189,7 +189,7 @@ func NewEventFormModel(day time.Time, calendars map[int64]CalendarInfo, theme Th
 	startInput.SetValue(fmt.Sprintf("%02d:%02d", startHour, startMin))
 	endInput.SetValue(fmt.Sprintf("%02d:%02d", endHour, startMin))
 
-	var calOpts []calendarOption
+	calOpts := make([]calendarOption, 0, len(calendars))
 	for id, info := range calendars {
 		calOpts = append(calOpts, calendarOption{ID: id, Name: info.Name, Color: info.Color})
 	}
@@ -763,7 +763,7 @@ func (m EventFormModel) EndsDatePickerView() string {
 
 	const gridW = 20
 	gridPad := max((innerW-gridW)/2, 0)
-	var lines []string
+	lines := make([]string, 0, 3)
 	monthStr := m.endsDate.Format("January 2006")
 	monthPad := gridPad + max((gridW-len(monthStr))/2, 0)
 	lines = append(lines, strings.Repeat(" ", monthPad)+bold.Render(monthStr))
@@ -809,7 +809,7 @@ func (m EventFormModel) DatePickerView() string {
 
 	const gridW = 20 // width of "Su Mo Tu We Th Fr Sa"
 	gridPad := max((innerW-gridW)/2, 0)
-	var lines []string
+	lines := make([]string, 0, 3)
 	monthStr := m.day.Format("January 2006")
 	monthPad := gridPad + max((gridW-len(monthStr))/2, 0)
 	lines = append(lines, strings.Repeat(" ", monthPad)+bold.Render(monthStr))

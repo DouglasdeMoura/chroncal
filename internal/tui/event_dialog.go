@@ -865,7 +865,7 @@ func (m EventDialogModel) renderRSVPLine(att model.Attendee, rsvp []dialogAction
 	padded := label + strings.Repeat(" ", max(lw-len(label), 1))
 
 	fixedW := rsvpMaxLabelWidth()
-	var parts []string
+	parts := make([]string, 0, len(rsvp))
 	for i, a := range rsvp {
 		l := rsvpButtonLabel(a.label, att.RSVPStatus)
 		leftPad := 0
