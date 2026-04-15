@@ -228,13 +228,27 @@ func (m MiniMonthModel) Update(msg tea.Msg) (MiniMonthModel, tea.Cmd) {
 	return m, nil
 }
 
-// chevronRightX returns the column (0-indexed, relative to the widget's
-// top-left) where the right chevron `›` is rendered. The left chevron is
-// always at column 0. Header layout: "‹ <name> ›" → `‹` at 0, name starts at
-// col 2, closing space+chevron at col (2+nameWidth)..(2+nameWidth+1).
-func (m MiniMonthModel) chevronRightX() int {
+// miniMonthHeaderWidth is the header row width in display columns. It matches
+// the weekday row ("Su Mo Tu We Th Fr Sa") and the seven day cells below it so
+// the chevrons align with the right edge of the grid.
+const miniMonthHeaderWidth = 20
+
+// chevronPositions returns the 0-indexed columns (relative to the widget's
+// top-left) for the left and right chevrons. Header layout:
+// "<name><padding><‹> <›>" — name is flush left, chevrons flush right.
+func (m MiniMonthModel) chevronPositions() (leftX, rightX int) {
 	name := m.displayMonth.Format("January 2006")
-	return 2 + lipgloss.Width(name) + 1
+	nameWidth := lipgloss.Width(name)
+	// "‹ ›" is three display columns. Keep at least one space between the
+	// name and the chevrons so very long month names don't butt up against
+	// the glyphs.
+	padding := miniMonthHeaderWidth - nameWidth - 3
+	if padding < 1 {
+		padding = 1
+	}
+	leftX = nameWidth + padding
+	rightX = leftX + 2
+	return leftX, rightX
 }
 
 // HandleClick hit-tests the click at (x, y) in the widget's local coordinates
@@ -242,14 +256,14 @@ func (m MiniMonthModel) chevronRightX() int {
 // shifts the month. Clicks on a day cell move the cursor and select it.
 func (m MiniMonthModel) HandleClick(x, y int) (MiniMonthModel, tea.Cmd) {
 	if y == 0 {
-		// Header row: chevron hit zones are 2 cols wide each (the glyph plus
-		// its adjacent space) for easier targeting.
-		rightX := m.chevronRightX()
+		// Header row: chevrons sit together on the right. Each hit zone is
+		// the glyph's own column for precise targeting.
+		leftX, rightX := m.chevronPositions()
 		switch {
-		case x >= 0 && x <= 1:
+		case x == leftX:
 			m.innerFocus = innerFocusPrev
 			return m.shiftMonth(-1)
-		case x >= rightX-1 && x <= rightX:
+		case x == rightX:
 			m.innerFocus = innerFocusNext
 			return m.shiftMonth(1)
 		}
@@ -306,10 +320,17 @@ func (m MiniMonthModel) View() string {
 	} else {
 		rightChev = mutedStyle.Render("›")
 	}
-	headerName := lipgloss.NewStyle().Bold(true).Render(m.displayMonth.Format("January 2006"))
-	b.WriteString(leftChev)
-	b.WriteString(" ")
+	name := m.displayMonth.Format("January 2006")
+	headerName := lipgloss.NewStyle().Bold(true).Render(name)
+	// Pad between the month name (left) and the two chevrons (right) so the
+	// chevrons align with the right edge of the day grid.
+	padding := miniMonthHeaderWidth - lipgloss.Width(name) - 3
+	if padding < 1 {
+		padding = 1
+	}
 	b.WriteString(headerName)
+	b.WriteString(strings.Repeat(" ", padding))
+	b.WriteString(leftChev)
 	b.WriteString(" ")
 	b.WriteString(rightChev)
 	b.WriteString("\n")
