@@ -954,7 +954,6 @@ func (m EventFormModel) View() string {
 
 	boxW, boxH := m.boxSize()
 	innerW := max(boxW-6, 20) // border + padding
-	lw := 12
 
 	faint := lipgloss.NewStyle().Faint(true)
 	bold := lipgloss.NewStyle().Bold(true)
@@ -968,12 +967,12 @@ func (m EventFormModel) View() string {
 	lines = append(lines, "")
 
 	// Title
-	lines = append(lines, faint.Render(formLabel("Title", lw))+m.title.View())
+	lines = append(lines, faint.Render(formLabel("Title"))+m.title.View())
 	lines = append(lines, "")
 
 	if !m.allDay {
 		// Start → End with duration
-		timeLine := faint.Render(formLabel("Time", lw)) +
+		timeLine := faint.Render(formLabel("Time")) +
 			m.startTime.View() + faint.Render("  \u2192  ") + m.endTime.View()
 		if dur := m.durationStr(); dur != "" {
 			timeLine += faint.Render("  " + dur)
@@ -987,7 +986,7 @@ func (m EventFormModel) View() string {
 	if m.focusField == fieldDate {
 		dateStr = lipgloss.NewStyle().Reverse(true).Render(dateStr) + faint.Render("  enter: pick")
 	}
-	lines = append(lines, faint.Render(formLabel("Date", lw))+dateStr)
+	lines = append(lines, faint.Render(formLabel("Date"))+dateStr)
 	lines = append(lines, "")
 
 	// All day toggle
@@ -998,7 +997,7 @@ func (m EventFormModel) View() string {
 	if m.focusField == fieldAllDay {
 		toggle = lipgloss.NewStyle().Reverse(true).Render(toggle)
 	}
-	lines = append(lines, faint.Render(formLabel("All day", lw))+toggle)
+	lines = append(lines, faint.Render(formLabel("All day"))+toggle)
 	lines = append(lines, "")
 
 	// Repeat selector
@@ -1013,7 +1012,7 @@ func (m EventFormModel) View() string {
 		}
 		repeatLabel = lipgloss.NewStyle().Reverse(true).Render(repeatLabel) + hint
 	}
-	lines = append(lines, faint.Render(formLabel("Repeat", lw))+repeatLabel)
+	lines = append(lines, faint.Render(formLabel("Repeat"))+repeatLabel)
 	lines = append(lines, "")
 
 	// Ends condition (only when a simple preset is active, not Custom)
@@ -1035,7 +1034,7 @@ func (m EventFormModel) View() string {
 		} else if m.focusField == fieldEnds {
 			endsLabel = endsLabel + faint.Render("  \u25c0 \u25b6")
 		}
-		lines = append(lines, faint.Render(formLabel("Ends", lw))+endsLabel)
+		lines = append(lines, faint.Render(formLabel("Ends"))+endsLabel)
 		lines = append(lines, "")
 	}
 
@@ -1050,12 +1049,12 @@ func (m EventFormModel) View() string {
 		if m.focusField == fieldCalendar {
 			calVal += faint.Render("  \u25c0 \u25b6")
 		}
-		lines = append(lines, faint.Render(formLabel("Calendar", lw))+calVal)
+		lines = append(lines, faint.Render(formLabel("Calendar"))+calVal)
 		lines = append(lines, "")
 	}
 
 	// Location
-	lines = append(lines, faint.Render(formLabel("Location", lw))+m.location.View())
+	lines = append(lines, faint.Render(formLabel("Location"))+m.location.View())
 	lines = append(lines, "")
 
 	// Description (with left border)
@@ -1124,11 +1123,13 @@ func (m EventFormModel) durationStr() string {
 	}
 }
 
-func formLabel(s string, w int) string {
-	if len(s) >= w {
+const formLabelWidth = 12
+
+func formLabel(s string) string {
+	if len(s) >= formLabelWidth {
 		return s
 	}
-	return s + strings.Repeat(" ", w-len(s))
+	return s + strings.Repeat(" ", formLabelWidth-len(s))
 }
 
 // addMonthClamped shifts t by months, clamping the day so it stays valid

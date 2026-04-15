@@ -479,7 +479,6 @@ func (m RecurrenceEditorModel) EndsDatePickerBoxSize() (int, int) {
 func (m RecurrenceEditorModel) View() string {
 	boxW, boxH := m.BoxSize()
 	innerW := boxW - 6
-	lw := 12
 
 	faint := lipgloss.NewStyle().Faint(true)
 	bold := lipgloss.NewStyle().Bold(true)
@@ -493,7 +492,7 @@ func (m RecurrenceEditorModel) View() string {
 	if m.focusField == refFreq {
 		freqLabel = lipgloss.NewStyle().Reverse(true).Render(freqLabel) + faint.Render("  \u25c0 \u25b6")
 	}
-	lines = append(lines, faint.Render(formLabel("Frequency", lw))+freqLabel)
+	lines = append(lines, faint.Render(formLabel("Frequency"))+freqLabel)
 
 	// Interval
 	n, _ := strconv.Atoi(strings.TrimSpace(m.interval.Value()))
@@ -504,7 +503,7 @@ func (m RecurrenceEditorModel) View() string {
 	if n != 1 {
 		unit = recFrequencies[m.freqIdx].Unit[1]
 	}
-	lines = append(lines, faint.Render(formLabel("Every", lw))+m.interval.View()+" "+faint.Render(unit))
+	lines = append(lines, faint.Render(formLabel("Every"))+m.interval.View()+" "+faint.Render(unit))
 	lines = append(lines, "")
 
 	// Weekly: day toggles
@@ -521,9 +520,9 @@ func (m RecurrenceEditorModel) View() string {
 			}
 			dayParts = append(dayParts, style.Render(label))
 		}
-		lines = append(lines, faint.Render(formLabel("On", lw))+strings.Join(dayParts, " "))
+		lines = append(lines, faint.Render(formLabel("On"))+strings.Join(dayParts, " "))
 		if m.focusField == refWeekDays {
-			lines = append(lines, faint.Render(formLabel("", lw)+"\u2190/\u2192: move  \u00b7  space: toggle"))
+			lines = append(lines, faint.Render(formLabel("")+"\u2190/\u2192: move  \u00b7  space: toggle"))
 		}
 		lines = append(lines, "")
 	}
@@ -539,7 +538,7 @@ func (m RecurrenceEditorModel) View() string {
 		if m.focusField == refMonthlyOn {
 			onLabel = lipgloss.NewStyle().Reverse(true).Render(onLabel) + faint.Render("  \u25c0 \u25b6")
 		}
-		lines = append(lines, faint.Render(formLabel("On", lw))+onLabel)
+		lines = append(lines, faint.Render(formLabel("On"))+onLabel)
 		lines = append(lines, "")
 	}
 
@@ -559,7 +558,7 @@ func (m RecurrenceEditorModel) View() string {
 		}
 		endsLabel += faint.Render("  \u25c0 \u25b6")
 	}
-	lines = append(lines, faint.Render(formLabel("Ends", lw))+endsLabel)
+	lines = append(lines, faint.Render(formLabel("Ends"))+endsLabel)
 	lines = append(lines, "")
 
 	// Preview

@@ -252,7 +252,7 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 		e.logger.Debug("pushing resource", "uid", res.Uid, "remote_url", res.RemoteUrl)
 
 		// Export the local resource to iCal
-		icalData, err := e.exportResource(ctx, res.OwnerType, calendarID, res.Uid)
+		icalData, err := e.exportResource(ctx, res.OwnerType, res.Uid)
 		if err != nil {
 			e.logger.Error("export resource failed", "uid", res.Uid, "error", err)
 			result.errors = append(result.errors, fmt.Errorf("export %s: %w", res.Uid, err))
@@ -330,7 +330,7 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 					}
 				} else {
 					// ConflictPrompt: record conflict for manual resolution
-					localIcal, exportErr := e.exportResource(ctx, res.OwnerType, calendarID, res.Uid)
+					localIcal, exportErr := e.exportResource(ctx, res.OwnerType, res.Uid)
 					if exportErr != nil {
 						e.logger.Warn("export local resource for conflict record", "uid", res.Uid, "error", exportErr)
 					}
@@ -646,7 +646,7 @@ func (e *Engine) syncCalendarMetadata(ctx context.Context, client *caldav.Client
 }
 
 // exportResource exports a local resource to iCal bytes.
-func (e *Engine) exportResource(ctx context.Context, ownerType string, calendarID int64, uid string) ([]byte, error) {
+func (e *Engine) exportResource(ctx context.Context, ownerType string, uid string) ([]byte, error) {
 	switch ownerType {
 	case "event":
 		evt, err := e.events.GetByUID(ctx, uid)
