@@ -35,28 +35,30 @@ const (
 )
 
 type appKeyMap struct {
-	Quit        key.Binding
-	MonthView   key.Binding
-	WeekView    key.Binding
-	DayView     key.Binding
-	Sidebar     key.Binding
-	Create      key.Binding
-	SwitchFocus key.Binding
-	Help        key.Binding
-	Palette     key.Binding
+	Quit         key.Binding
+	MonthView    key.Binding
+	WeekView     key.Binding
+	DayView      key.Binding
+	Sidebar      key.Binding
+	Create       key.Binding
+	SwitchFocus  key.Binding
+	Help         key.Binding
+	Palette      key.Binding
+	CalendarList key.Binding
 }
 
 func defaultAppKeys() appKeyMap {
 	return appKeyMap{
-		Quit:        key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
-		MonthView:   key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "month")),
-		WeekView:    key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "week")),
-		DayView:     key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "day")),
-		Sidebar:     key.NewBinding(key.WithKeys("\\"), key.WithHelp("\\", "sidebar")),
-		Create:      key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "create")),
-		SwitchFocus: key.NewBinding(key.WithKeys("tab", "shift+tab"), key.WithHelp("tab", "switch focus")),
-		Help:        key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
-		Palette:     key.NewBinding(key.WithKeys("/", "ctrl+p", "ctrl+k"), key.WithHelp("/", "commands")),
+		Quit:         key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+		MonthView:    key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "month")),
+		WeekView:     key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "week")),
+		DayView:      key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "day")),
+		Sidebar:      key.NewBinding(key.WithKeys("\\"), key.WithHelp("\\", "sidebar")),
+		Create:       key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "create")),
+		SwitchFocus:  key.NewBinding(key.WithKeys("tab", "shift+tab"), key.WithHelp("tab", "switch focus")),
+		Help:         key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+		Palette:      key.NewBinding(key.WithKeys("/", "ctrl+p", "ctrl+k"), key.WithHelp("/", "commands")),
+		CalendarList: key.NewBinding(key.WithKeys("L"), key.WithHelp("L", "calendars")),
 	}
 }
 
@@ -87,6 +89,7 @@ func (c compositeKeyMap) FullHelp() [][]key.Binding {
 		c.appKeys.WeekView,
 		c.appKeys.DayView,
 		c.appKeys.Sidebar,
+		c.appKeys.CalendarList,
 		c.appKeys.SwitchFocus,
 		c.appKeys.Palette,
 		c.appKeys.Help,
@@ -173,6 +176,9 @@ type Model struct {
 	calendarDialog        CalendarDialogModel
 	calendarDialogOpen    bool
 	pendingCalendarDelete int64
+
+	calendarListDialog     CalendarListDialogModel
+	calendarListDialogOpen bool
 
 	// miniMonthEvents caches the raw events for the sidebar mini-month's
 	// displayed month so visibility toggles can re-filter without a DB hit.
@@ -486,6 +492,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.choiceDialog = m.choiceDialog.SetSize(m.width, m.height)
 		m.form = m.form.SetSize(m.width, m.height)
 		m.palette = m.palette.SetSize(m.width, m.height)
+		m.calendarListDialog = m.calendarListDialog.SetSize(m.width, m.height)
 		m.ready = true
 		return m, nil
 
@@ -523,6 +530,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// reflect immediately — eventsToCalendar reads colors from
 			// m.calendars at conversion time.
 			m = m.refreshCalendarViews()
+			if m.calendarListDialogOpen {
+				m.calendarListDialog = m.calendarListDialog.SetCalendars(m.calendars, m.hiddenCalendars)
+			}
 		}
 		return m, nil
 
@@ -847,6 +857,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.calendarDialogOpen = false
 		return m, nil
 
+	case CalendarListDialogRequestedMsg:
+		m.calendarListDialog = NewCalendarListDialogModel(m.calendars, m.hiddenCalendars, newThemedHelp(m.theme)).
+			SetSelectedColor(m.theme.Selected).
+			SetMutedColor(m.theme.Muted).
+			SetSize(m.width, m.height)
+		m.calendarListDialogOpen = true
+		return m, nil
+
+	case CalendarListDialogClosedMsg:
+		m.calendarListDialogOpen = false
+		return m, nil
+
 	case calendarMutationDoneMsg:
 		if msg.err != nil {
 			m.err = msg.err
@@ -959,6 +981,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.dialog, cmd = m.dialog.Update(msg)
 			return m, cmd
 		}
+		if m.calendarListDialogOpen {
+			var cmd tea.Cmd
+			m.calendarListDialog, cmd = m.calendarListDialog.Update(msg)
+			return m, cmd
+		}
 		// Sidebar hit-test. The sidebar content starts at (padding, padding)
 		// inside the outer screen, with a 1-col right border. If the click
 		// lands inside that x-range we dispatch to the sidebar in its local
@@ -1035,6 +1062,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.dialog, cmd = m.dialog.Update(msg)
 			return m, cmd
 		}
+		if m.calendarListDialogOpen {
+			if msg.String() == "ctrl+c" {
+				return m, tea.Quit
+			}
+			var cmd tea.Cmd
+			m.calendarListDialog, cmd = m.calendarListDialog.Update(msg)
+			return m, cmd
+		}
 		switch {
 		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
@@ -1050,6 +1085,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.switchToView(viewDay)
 		case key.Matches(msg, m.keys.Sidebar):
 			return m.toggleSidebar()
+		case key.Matches(msg, m.keys.CalendarList):
+			return m, func() tea.Msg { return CalendarListDialogRequestedMsg{} }
 		case key.Matches(msg, m.keys.SwitchFocus):
 			// Only handle Tab/Shift+Tab at the app level when entering the
 			// sidebar from the main view. Forward Tab lands on the first
@@ -1198,6 +1235,10 @@ func (m Model) View() tea.View {
 				v.Content = m.compositeOverlay(v.Content, m.form.rruleEditor.EndsDatePickerView(), pw, ph)
 			}
 		}
+	}
+	if m.calendarListDialogOpen {
+		bw, bh := m.calendarListDialog.BoxSize()
+		v.Content = m.compositeOverlay(v.Content, m.calendarListDialog.View(), bw, bh)
 	}
 	if m.calendarDialogOpen {
 		bw, bh := m.calendarDialog.BoxSize()
