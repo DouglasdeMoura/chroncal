@@ -1,6 +1,7 @@
 package freebusy
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -19,7 +20,7 @@ func ParseCalendar(r io.Reader) ([]Result, error) {
 
 	for {
 		cal, err := dec.Decode()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return results, nil
 		}
 		if err != nil {
