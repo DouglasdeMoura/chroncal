@@ -474,18 +474,7 @@ func (m CalendarListDialogModel) renderList(w, h int) string {
 		}
 		swatchStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(info.Color))
 		label := fmt.Sprintf("%s  %s", swatchStyle.Render(glyph), info.Name)
-		label = truncateTo(label, w)
-		style := lipgloss.NewStyle().Width(w)
-		if i == m.selected {
-			if m.focusZone == clZoneList {
-				style = style.Reverse(true).Bold(true)
-			} else if m.selectedColor != nil {
-				style = style.Bold(true).Background(m.selectedColor)
-			} else {
-				style = style.Bold(true)
-			}
-		}
-		lines = append(lines, style.Render(label))
+		lines = append(lines, renderListRow(label, w, i == m.selected, m.focusZone == clZoneList, m.selectedColor))
 	}
 
 	if total > h {

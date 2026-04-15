@@ -731,18 +731,7 @@ func (m EventDialogModel) renderList(w, h int) string {
 	for i := visibleStart; i < visibleEnd; i++ {
 		ev := m.events[i]
 		label := formatEventLabel(ev)
-		label = truncateTo(label, w)
-		style := lipgloss.NewStyle().Width(w)
-		if i == m.selected {
-			if m.focusZone == zoneEventList {
-				style = style.Reverse(true).Bold(true)
-			} else if m.selectedColor != nil {
-				style = style.Bold(true).Background(m.selectedColor)
-			} else {
-				style = style.Bold(true)
-			}
-		}
-		lines = append(lines, style.Render(label))
+		lines = append(lines, renderListRow(label, w, i == m.selected, m.focusZone == zoneEventList, m.selectedColor))
 	}
 
 	if total > h {
