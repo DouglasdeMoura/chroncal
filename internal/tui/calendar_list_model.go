@@ -172,18 +172,28 @@ func (m CalendarListModel) Update(msg tea.Msg) (CalendarListModel, tea.Cmd) {
 func (m CalendarListModel) View() string {
 	var b strings.Builder
 	for i, it := range m.items {
-		swatch := lipgloss.NewStyle().Foreground(lipgloss.Color(it.Color)).Render("●")
-		marker := "✓"
+		// Filled dot = visible, hollow dot = hidden. A single glyph carries
+		// both the calendar's color identity and its on/off state, avoiding
+		// the previous ● + ✓ doubling.
+		glyph := "●"
 		if m.hidden[it.ID] {
-			marker = "✗"
+			glyph = "○"
 		}
-		line := fmt.Sprintf("%s %s %s", swatch, marker, it.Name)
+		swatch := lipgloss.NewStyle().Foreground(lipgloss.Color(it.Color)).Render(glyph)
+		name := it.Name
+		if m.hidden[it.ID] {
+			name = lipgloss.NewStyle().Foreground(m.mutedColor).Render(name)
+		}
+		line := fmt.Sprintf("%s %s", swatch, name)
 		if m.focused && i == m.cursor {
 			line = lipgloss.NewStyle().Background(m.accentColor).Foreground(m.textColor).Bold(true).Render(line)
 		}
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
+	// Blank gap separates the "+ Add calendar" action from the list of
+	// calendars so it reads as an action, not another list row.
+	b.WriteString("\n")
 	add := "+ Add calendar"
 	if m.focused && m.cursor == len(m.items) {
 		add = lipgloss.NewStyle().Background(m.accentColor).Foreground(m.textColor).Bold(true).Render(add)

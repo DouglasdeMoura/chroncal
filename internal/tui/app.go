@@ -100,6 +100,16 @@ type eventsLoadedMsg struct {
 	err    error
 }
 
+// miniMonthEventsLoadedMsg carries the events for the sidebar mini-month's
+// displayed month. It's separate from eventsLoadedMsg so the mini-month's
+// event-density dots can be computed independently from the main view's
+// query range (which may be a single day/week).
+type miniMonthEventsLoadedMsg struct {
+	month  time.Time
+	events []event.Event
+	err    error
+}
+
 type calendarsLoadedMsg struct {
 	calendars map[int64]CalendarInfo
 	err       error
@@ -163,6 +173,10 @@ type Model struct {
 	calendarDialog        CalendarDialogModel
 	calendarDialogOpen    bool
 	pendingCalendarDelete int64
+
+	// miniMonthEvents caches the raw events for the sidebar mini-month's
+	// displayed month so visibility toggles can re-filter without a DB hit.
+	miniMonthEvents []event.Event
 }
 
 func NewModel(a *app.App) Model {
@@ -211,7 +225,7 @@ func (m Model) loadEvents() tea.Cmd {
 		from = time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, time.UTC)
 		to = from.AddDate(0, 1, 0)
 	}
-	return func() tea.Msg {
+	mainCmd := func() tea.Msg {
 		expanded, err := m.app.Recurrences.ListExpandedEvents(context.Background(), from, to)
 		events := make([]event.Event, len(expanded))
 		for i, e := range expanded {
@@ -224,6 +238,46 @@ func (m Model) loadEvents() tea.Cmd {
 		}
 		return eventsLoadedMsg{events: events, err: err}
 	}
+	// The mini-month shows a full month regardless of the main view's range,
+	// so refresh its per-day event counts alongside every main reload.
+	return tea.Batch(mainCmd, m.loadMiniMonthEvents())
+}
+
+// loadMiniMonthEvents queries the single-month range displayed by the sidebar
+// mini-month so we can paint event-density dots under day numbers.
+func (m Model) loadMiniMonthEvents() tea.Cmd {
+	mm := m.sidebar.MiniMonth().DisplayMonth()
+	from := time.Date(mm.Year(), mm.Month(), 1, 0, 0, 0, 0, time.UTC)
+	to := from.AddDate(0, 1, 0)
+	return func() tea.Msg {
+		expanded, err := m.app.Recurrences.ListExpandedEvents(context.Background(), from, to)
+		events := make([]event.Event, len(expanded))
+		for i, e := range expanded {
+			evt := e.Event
+			if !evt.EndTime.IsZero() {
+				evt.EndTime = e.InstanceTime.Add(evt.EndTime.Sub(evt.StartTime))
+			}
+			evt.StartTime = e.InstanceTime
+			events[i] = evt
+		}
+		return miniMonthEventsLoadedMsg{month: from, events: events, err: err}
+	}
+}
+
+// refreshMiniMonthDays recomputes the per-day event-density set from the
+// cached mini-month events (honoring the current hiddenCalendars filter) and
+// pushes it into the sidebar.
+func (m Model) refreshMiniMonthDays() Model {
+	days := make(map[string]bool, len(m.miniMonthEvents))
+	for _, e := range m.miniMonthEvents {
+		if m.hiddenCalendars[e.CalendarID] {
+			continue
+		}
+		days[eventDay(e).Format("2006-01-02")] = true
+	}
+	mm := m.sidebar.MiniMonth().SetEventDays(days)
+	m.sidebar = m.sidebar.SetMiniMonth(mm)
+	return m
 }
 
 func eventsOn(events []event.Event, day time.Time) []event.Event {
@@ -284,6 +338,22 @@ func (m Model) loadCalendars() tea.Cmd {
 		}
 		return calendarsLoadedMsg{calendars: info}
 	}
+}
+
+// navigateMainTo sets the active main view's cursor (and the month-view's
+// displayed month) to the given date. Callers typically follow this with
+// m.loadEvents() to refresh the query range.
+func (m Model) navigateMainTo(t time.Time) Model {
+	switch m.viewMode {
+	case viewDay:
+		m.day.cursor = t
+	case viewWeek:
+		m.week.cursor = t
+	default:
+		m.calendar.cursor = t
+		m.calendar.month = time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, t.Location())
+	}
+	return m
 }
 
 // refreshCalendarViews recomputes the per-view CalendarEvent slices from the
@@ -693,16 +763,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case MiniMonthDateSelectedMsg:
-		switch m.viewMode {
-		case viewDay:
-			m.day.cursor = msg.Date
-		case viewWeek:
-			m.week.cursor = msg.Date
-		default:
-			m.calendar.cursor = msg.Date
-			m.calendar.month = time.Date(msg.Date.Year(), msg.Date.Month(), 1, 0, 0, 0, 0, msg.Date.Location())
-		}
+		m = m.navigateMainTo(msg.Date)
 		return m, m.loadEvents()
+
+	case MiniMonthMonthChangedMsg:
+		// Sidebar month shifted — refresh the mini-month density dots so
+		// the new month's events render. Main-view navigation is driven
+		// only by explicit day selection (MiniMonthDateSelectedMsg); month
+		// changes here are preview-only.
+		return m, m.loadMiniMonthEvents()
+
+	case miniMonthEventsLoadedMsg:
+		if msg.err != nil {
+			// Don't surface a sidebar fetch error as m.err — the main view
+			// still works; silently drop and leave the old density map.
+			return m, nil
+		}
+		// Guard against a stale load: if the user shifted months between
+		// request and response, only accept the result if it still matches.
+		current := m.sidebar.MiniMonth().DisplayMonth()
+		if current.Year() != msg.month.Year() || current.Month() != msg.month.Month() {
+			return m, nil
+		}
+		m.miniMonthEvents = msg.events
+		m = m.refreshMiniMonthDays()
+		return m, nil
 
 	case CalendarVisibilityToggledMsg:
 		if m.hiddenCalendars == nil {
@@ -715,6 +800,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.saveUIState()
 		m = m.refreshCalendarViews()
+		// Re-filter cached mini-month events against the new visibility set.
+		m = m.refreshMiniMonthDays()
 		return m, nil
 
 	case CalendarDialogRequestedMsg:
@@ -870,6 +957,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.dialog, cmd = m.dialog.Update(msg)
 			return m, cmd
 		}
+		// Sidebar hit-test. The sidebar content starts at (padding, padding)
+		// inside the outer screen, with a 1-col right border. If the click
+		// lands inside that x-range we dispatch to the sidebar in its local
+		// coordinates instead of the main calendar.
+		if m.showSidebar {
+			padding := 1
+			if msg.X >= padding && msg.X < sidebarWidth-padding {
+				localX := msg.X - padding
+				localY := msg.Y - padding
+				// Moving focus to the sidebar mirrors keyboard navigation;
+				// otherwise the chevrons would click but not visibly focus.
+				if m.focus != focusSidebar {
+					m.focus = focusSidebar
+					m.sidebar = m.sidebar.Focus()
+				}
+				var cmd tea.Cmd
+				m.sidebar, cmd = m.sidebar.HandleClick(localX, localY)
+				return m, cmd
+			}
+		}
 		ox, oy := m.calendarOffset()
 		switch m.viewMode {
 		case viewDay:
@@ -943,14 +1050,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.toggleSidebar()
 		case key.Matches(msg, m.keys.SwitchFocus):
 			// Only handle Tab/Shift+Tab at the app level when entering the
-			// sidebar from the main view. When the sidebar is already
-			// focused, let the key fall through to m.sidebar.Update so it
-			// can cycle between its children; SidebarFocusEscapedMsg hands
-			// focus back to the main view when the user tabs past the last
-			// row.
+			// sidebar from the main view. Forward Tab lands on the first
+			// sidebar tab stop (the prev-month chevron); backward Shift+Tab
+			// lands on the last (the "+ Add calendar" row). Once focus is
+			// inside the sidebar, the key falls through to m.sidebar.Update
+			// which cycles between its internal stops and emits
+			// SidebarFocusEscapedMsg to hand focus back to the main view.
 			if m.showSidebar && m.focus != focusSidebar {
 				m.focus = focusSidebar
-				m.sidebar = m.sidebar.Focus()
+				if msg.String() == "shift+tab" {
+					m.sidebar = m.sidebar.FocusAtEnd()
+				} else {
+					m.sidebar = m.sidebar.FocusAtStart()
+				}
 				return m, nil
 			}
 			// Fall through to the sidebar routing below.

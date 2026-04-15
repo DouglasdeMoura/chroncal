@@ -15,6 +15,14 @@ import (
 // The parent (app.go) decides what to do — typically move the active main view.
 type MiniMonthDateSelectedMsg struct{ Date time.Time }
 
+// MiniMonthMonthChangedMsg is emitted whenever the displayed month changes
+// (via cursor crossing a boundary, chevron / [ / ] shifts, or snap-to-today).
+// The parent uses this to (re)load the per-day event-density map for the new
+// month. Month changes are preview-only and do NOT carry into the main view;
+// only an explicit day selection (MiniMonthDateSelectedMsg) drives the main
+// view's cursor.
+type MiniMonthMonthChangedMsg struct{ Month time.Time }
+
 type miniMonthKeyMap struct {
 	Up, Down, Left, Right key.Binding
 	PrevMonth, NextMonth  key.Binding
@@ -34,6 +42,18 @@ func defaultMiniMonthKeys() miniMonthKeyMap {
 	}
 }
 
+// miniInnerFocus tracks which sub-element of the mini-month has focus for
+// keyboard input. Tab order is: prev chevron → next chevron → day grid,
+// matching a reading-order traversal of the widget's visual layout. After
+// the grid the sidebar hands off focus to the calendar list.
+type miniInnerFocus int
+
+const (
+	innerFocusPrev miniInnerFocus = iota
+	innerFocusNext
+	innerFocusGrid
+)
+
 // MiniMonthModel is a compact month picker that lives in the sidebar.
 // Its cursor is independent of the main calendar view; navigation only
 // affects the main view when the user presses Enter.
@@ -42,9 +62,14 @@ type MiniMonthModel struct {
 	displayMonth time.Time // first-of-month for the rendered grid
 	keys         miniMonthKeyMap
 	focused      bool
+	innerFocus   miniInnerFocus
 	accentColor  color.Color
 	todayColor   color.Color
 	textColor    color.Color
+	mutedColor   color.Color
+	// eventDays holds "YYYY-MM-DD" keys for days that have at least one
+	// visible event; rendered as a combining dot below the day number.
+	eventDays map[string]bool
 }
 
 func NewMiniMonthModel(initial time.Time) MiniMonthModel {
@@ -53,13 +78,22 @@ func NewMiniMonthModel(initial time.Time) MiniMonthModel {
 		cursor:       d,
 		displayMonth: time.Date(d.Year(), d.Month(), 1, 0, 0, 0, 0, d.Location()),
 		keys:         defaultMiniMonthKeys(),
+		innerFocus:   innerFocusGrid,
 	}
 }
 
-func (m MiniMonthModel) SetTheme(accent, today, text color.Color) MiniMonthModel {
+func (m MiniMonthModel) SetTheme(accent, today, text, muted color.Color) MiniMonthModel {
 	m.accentColor = accent
 	m.todayColor = today
 	m.textColor = text
+	m.mutedColor = muted
+	return m
+}
+
+// SetEventDays replaces the set of days (keyed "YYYY-MM-DD") that should be
+// marked as having at least one visible event. Passing nil clears the set.
+func (m MiniMonthModel) SetEventDays(days map[string]bool) MiniMonthModel {
+	m.eventDays = days
 	return m
 }
 
@@ -67,28 +101,93 @@ func (m MiniMonthModel) Focus() MiniMonthModel { m.focused = true; return m }
 func (m MiniMonthModel) Blur() MiniMonthModel  { m.focused = false; return m }
 func (m MiniMonthModel) Focused() bool         { return m.focused }
 
-func (m MiniMonthModel) Cursor() time.Time { return m.cursor }
+func (m MiniMonthModel) Cursor() time.Time       { return m.cursor }
+func (m MiniMonthModel) DisplayMonth() time.Time { return m.displayMonth }
 
-func (m MiniMonthModel) moveCursor(dx, dy int) MiniMonthModel {
+// Tab-stop traversal API used by SidebarModel to integrate the mini-month's
+// internal sub-widgets (prev chevron, day grid, next chevron) into the
+// sidebar's forward/backward Tab routing.
+
+// AtStart reports whether inner focus is on the first tab stop (prev chevron).
+func (m MiniMonthModel) AtStart() bool { return m.innerFocus == innerFocusPrev }
+
+// AtEnd reports whether inner focus is on the last tab stop (day grid).
+func (m MiniMonthModel) AtEnd() bool { return m.innerFocus == innerFocusGrid }
+
+// FocusFirst resets inner focus to the first tab stop (prev chevron).
+func (m MiniMonthModel) FocusFirst() MiniMonthModel {
+	m.innerFocus = innerFocusPrev
+	return m
+}
+
+// FocusLast resets inner focus to the last tab stop (day grid).
+func (m MiniMonthModel) FocusLast() MiniMonthModel {
+	m.innerFocus = innerFocusGrid
+	return m
+}
+
+// FocusGrid resets inner focus to the day grid (e.g. after a click on a day
+// or when entering the sidebar via the `s` toggle rather than via Tab).
+func (m MiniMonthModel) FocusGrid() MiniMonthModel {
+	m.innerFocus = innerFocusGrid
+	return m
+}
+
+// AdvanceFocus moves inner focus one tab stop forward (prev → next → grid).
+// Caller is responsible for checking AtEnd() first.
+func (m MiniMonthModel) AdvanceFocus() MiniMonthModel {
+	if m.innerFocus < innerFocusGrid {
+		m.innerFocus++
+	}
+	return m
+}
+
+// RetreatFocus moves inner focus one tab stop backward.
+func (m MiniMonthModel) RetreatFocus() MiniMonthModel {
+	if m.innerFocus > innerFocusPrev {
+		m.innerFocus--
+	}
+	return m
+}
+
+// monthChangedCmd returns a cmd that emits MiniMonthMonthChangedMsg with the
+// current displayMonth, or nil if prev is already in the same month.
+func (m MiniMonthModel) monthChangedCmd(prev time.Time) tea.Cmd {
+	if prev.Year() == m.displayMonth.Year() && prev.Month() == m.displayMonth.Month() {
+		return nil
+	}
+	month := m.displayMonth
+	return func() tea.Msg { return MiniMonthMonthChangedMsg{Month: month} }
+}
+
+func (m MiniMonthModel) moveCursor(dx, dy int) (MiniMonthModel, tea.Cmd) {
+	prev := m.displayMonth
 	next := m.cursor.AddDate(0, 0, dy*7+dx)
 	m.cursor = next
 	if next.Year() != m.displayMonth.Year() || next.Month() != m.displayMonth.Month() {
 		m.displayMonth = time.Date(next.Year(), next.Month(), 1, 0, 0, 0, 0, next.Location())
 	}
-	return m
+	return m, m.monthChangedCmd(prev)
 }
 
-func (m MiniMonthModel) shiftMonth(delta int) MiniMonthModel {
+func (m MiniMonthModel) shiftMonth(delta int) (MiniMonthModel, tea.Cmd) {
+	prev := m.displayMonth
 	m.displayMonth = m.displayMonth.AddDate(0, delta, 0)
-	return m
+	// Snap the cursor to the first of the new month so that when Tab
+	// arrives at the day grid after a chevron shift, the selection is the
+	// first day of the newly displayed month instead of a date that's no
+	// longer in view.
+	m.cursor = m.displayMonth
+	return m, m.monthChangedCmd(prev)
 }
 
-func (m MiniMonthModel) snapToday() MiniMonthModel {
+func (m MiniMonthModel) snapToday() (MiniMonthModel, tea.Cmd) {
+	prev := m.displayMonth
 	now := time.Now()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	m.cursor = today
 	m.displayMonth = time.Date(today.Year(), today.Month(), 1, 0, 0, 0, 0, today.Location())
-	return m
+	return m, m.monthChangedCmd(prev)
 }
 
 func (m MiniMonthModel) Update(msg tea.Msg) (MiniMonthModel, tea.Cmd) {
@@ -96,36 +195,127 @@ func (m MiniMonthModel) Update(msg tea.Msg) (MiniMonthModel, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
+	// Arrow keys are tied to the grid cursor; ignore them when inner focus
+	// is on a chevron so Tab navigation doesn't silently re-select a day.
+	gridFocused := m.innerFocus == innerFocusGrid
 	switch {
-	case key.Matches(kp, m.keys.Up):
-		return m.moveCursor(0, -1), nil
-	case key.Matches(kp, m.keys.Down):
-		return m.moveCursor(0, 1), nil
-	case key.Matches(kp, m.keys.Left):
-		return m.moveCursor(-1, 0), nil
-	case key.Matches(kp, m.keys.Right):
-		return m.moveCursor(1, 0), nil
+	case gridFocused && key.Matches(kp, m.keys.Up):
+		return m.moveCursor(0, -1)
+	case gridFocused && key.Matches(kp, m.keys.Down):
+		return m.moveCursor(0, 1)
+	case gridFocused && key.Matches(kp, m.keys.Left):
+		return m.moveCursor(-1, 0)
+	case gridFocused && key.Matches(kp, m.keys.Right):
+		return m.moveCursor(1, 0)
 	case key.Matches(kp, m.keys.PrevMonth):
-		return m.shiftMonth(-1), nil
+		return m.shiftMonth(-1)
 	case key.Matches(kp, m.keys.NextMonth):
-		return m.shiftMonth(1), nil
+		return m.shiftMonth(1)
 	case key.Matches(kp, m.keys.Today):
-		return m.snapToday(), nil
+		return m.snapToday()
 	case key.Matches(kp, m.keys.Select):
-		sel := m.cursor
-		return m, func() tea.Msg { return MiniMonthDateSelectedMsg{Date: sel} }
+		// Enter semantics depend on which sub-widget is focused.
+		switch m.innerFocus {
+		case innerFocusPrev:
+			return m.shiftMonth(-1)
+		case innerFocusNext:
+			return m.shiftMonth(1)
+		default:
+			sel := m.cursor
+			return m, func() tea.Msg { return MiniMonthDateSelectedMsg{Date: sel} }
+		}
 	}
 	return m, nil
 }
 
+// chevronRightX returns the column (0-indexed, relative to the widget's
+// top-left) where the right chevron `›` is rendered. The left chevron is
+// always at column 0. Header layout: "‹ <name> ›" → `‹` at 0, name starts at
+// col 2, closing space+chevron at col (2+nameWidth)..(2+nameWidth+1).
+func (m MiniMonthModel) chevronRightX() int {
+	name := m.displayMonth.Format("January 2006")
+	return 2 + lipgloss.Width(name) + 1
+}
+
+// HandleClick hit-tests the click at (x, y) in the widget's local coordinates
+// (top-left of the rendered view is (0, 0)) and, if it lands on a chevron,
+// shifts the month. Clicks on a day cell move the cursor and select it.
+func (m MiniMonthModel) HandleClick(x, y int) (MiniMonthModel, tea.Cmd) {
+	if y == 0 {
+		// Header row: chevron hit zones are 2 cols wide each (the glyph plus
+		// its adjacent space) for easier targeting.
+		rightX := m.chevronRightX()
+		switch {
+		case x >= 0 && x <= 1:
+			m.innerFocus = innerFocusPrev
+			return m.shiftMonth(-1)
+		case x >= rightX-1 && x <= rightX:
+			m.innerFocus = innerFocusNext
+			return m.shiftMonth(1)
+		}
+		return m, nil
+	}
+	// Day grid rows start at y=2 (header is 0, weekday row is 1). Each cell
+	// occupies 3 display columns ("%2d" + separator).
+	gridY := y - 2
+	if gridY < 0 {
+		return m, nil
+	}
+	col := x / 3
+	if col < 0 || col > 6 {
+		return m, nil
+	}
+	leading := int(m.displayMonth.Weekday())
+	dayIndex := gridY*7 + col - leading
+	if dayIndex < 0 {
+		return m, nil
+	}
+	candidate := m.displayMonth.AddDate(0, 0, dayIndex)
+	if candidate.Month() != m.displayMonth.Month() {
+		return m, nil
+	}
+	m.cursor = candidate
+	m.innerFocus = innerFocusGrid
+	sel := candidate
+	return m, func() tea.Msg { return MiniMonthDateSelectedMsg{Date: sel} }
+}
+
+// eventDotSuffix is the Unicode combining dot-below character. Appended to a
+// day number it renders as the same number with a small dot directly beneath
+// it, giving an event-density cue without changing cell width.
+const eventDotSuffix = "\u0323"
+
 // View renders a 7-column day grid with a header row showing the month.
-// Cursor is highlighted; today is bolded.
+// Cursor is highlighted; today is bolded; days with events get a subtle dot
+// below the digit.
 func (m MiniMonthModel) View() string {
 	var b strings.Builder
-	header := lipgloss.NewStyle().Bold(true).Render(m.displayMonth.Format("January 2006"))
-	b.WriteString(header)
+	// Header: chevrons are real tab stops (Tab / click) for month navigation.
+	// Each gets a filled highlight when inner focus lands on it.
+	mutedStyle := lipgloss.NewStyle().Foreground(m.mutedColor)
+	focusedChevronStyle := lipgloss.NewStyle().Background(m.accentColor).Foreground(m.textColor).Bold(true)
+	leftChev := "‹"
+	rightChev := "›"
+	if m.focused && m.innerFocus == innerFocusPrev {
+		leftChev = focusedChevronStyle.Render("‹")
+	} else {
+		leftChev = mutedStyle.Render("‹")
+	}
+	if m.focused && m.innerFocus == innerFocusNext {
+		rightChev = focusedChevronStyle.Render("›")
+	} else {
+		rightChev = mutedStyle.Render("›")
+	}
+	headerName := lipgloss.NewStyle().Bold(true).Render(m.displayMonth.Format("January 2006"))
+	b.WriteString(leftChev)
+	b.WriteString(" ")
+	b.WriteString(headerName)
+	b.WriteString(" ")
+	b.WriteString(rightChev)
 	b.WriteString("\n")
-	b.WriteString("Su Mo Tu We Th Fr Sa\n")
+	// Weekday row dimmed so the day numbers carry the hierarchy.
+	b.WriteString(mutedStyle.Render("Su Mo Tu We Th Fr Sa"))
+	b.WriteString("\n")
 
 	first := m.displayMonth
 	// Pad to align first-of-month under its weekday column.
@@ -141,18 +331,28 @@ func (m MiniMonthModel) View() string {
 	cur := first
 	col := leading
 	for cur.Month() == first.Month() {
-		cell := fmt.Sprintf("%2d", cur.Day())
-		isCursor := cur.Format("2006-01-02") == cursorDay
-		isToday := cur.Format("2006-01-02") == todayKey
+		key := cur.Format("2006-01-02")
+		num := fmt.Sprintf("%2d", cur.Day())
+		// Combining dot below attaches to the last rune of the number without
+		// taking a display column, so the grid geometry is preserved.
+		if m.eventDays[key] {
+			num += eventDotSuffix
+		}
+		cell := num
+		isCursor := key == cursorDay
+		isToday := key == todayKey
+		// Treat the grid as "focused" only when widget focus is on the grid
+		// sub-widget; otherwise show the cursor in the unfocused style so the
+		// active tab stop (a chevron) is the only filled highlight on screen.
+		gridFocused := m.focused && m.innerFocus == innerFocusGrid
 		switch {
-		case isCursor && m.focused:
-			// Filled highlight when the widget has focus.
-			cell = lipgloss.NewStyle().Background(m.accentColor).Foreground(m.textColor).Bold(true).Render(cell)
+		case isCursor && gridFocused:
+			cell = lipgloss.NewStyle().Background(m.accentColor).Foreground(m.textColor).Bold(true).Render(num)
 		case isCursor:
 			// Unfocused cursor: underline + bold so selection is still visible.
-			cell = lipgloss.NewStyle().Foreground(m.textColor).Bold(true).Underline(true).Render(cell)
+			cell = lipgloss.NewStyle().Foreground(m.textColor).Bold(true).Underline(true).Render(num)
 		case isToday:
-			cell = lipgloss.NewStyle().Foreground(m.todayColor).Bold(true).Render(cell)
+			cell = lipgloss.NewStyle().Foreground(m.todayColor).Bold(true).Render(num)
 		}
 		b.WriteString(cell)
 		col++
