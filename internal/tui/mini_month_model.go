@@ -265,11 +265,11 @@ func (m MiniMonthModel) HandleClick(x, y int) (MiniMonthModel, tea.Cmd) {
 		// Header row: chevrons sit together on the right. Each hit zone is
 		// the glyph's own column for precise targeting.
 		leftX, rightX := m.chevronPositions()
-		switch {
-		case x == leftX:
+		switch x {
+		case leftX:
 			m.innerFocus = innerFocusPrev
 			return m.shiftMonth(-1)
-		case x == rightX:
+		case rightX:
 			m.innerFocus = innerFocusNext
 			return m.shiftMonth(1)
 		}
