@@ -214,7 +214,9 @@ Use "chroncal sync conflicts" first to find the conflict ID.`,
 		},
 	}
 	cmd.Flags().StringVar(&pick, "pick", "", "Which version to keep: local or server (required)")
-	cmd.MarkFlagRequired("pick")
+	if err := cmd.MarkFlagRequired("pick"); err != nil {
+		panic(err)
+	}
 	return cmd
 }
 

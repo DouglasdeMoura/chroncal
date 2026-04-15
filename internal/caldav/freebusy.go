@@ -38,7 +38,7 @@ func QueryFreeBusy(ctx context.Context, httpClient webdav.HTTPClient, calendarUR
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusMultiStatus {
-		io.Copy(io.Discard, resp.Body)
+		_, _ = io.Copy(io.Discard, resp.Body)
 		return freebusy.Result{}, fmt.Errorf("free-busy query: HTTP %d", resp.StatusCode)
 	}
 

@@ -125,7 +125,7 @@ func SetCalendarColor(ctx context.Context, httpClient webdav.HTTPClient, calenda
 		}
 		return nil
 	default:
-		io.Copy(io.Discard, resp.Body)
+		_, _ = io.Copy(io.Discard, resp.Body)
 		return fmt.Errorf("PROPPATCH calendar-color: HTTP %d", resp.StatusCode)
 	}
 }

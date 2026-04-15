@@ -117,7 +117,7 @@ func GoogleOAuthFlow(ctx context.Context, clientID string) (*GoogleOAuthResult, 
 			errCh <- err
 		}
 	}()
-	defer server.Shutdown(context.Background())
+	defer func() { _ = server.Shutdown(context.Background()) }()
 
 	// Wait for code or error
 	var code string
