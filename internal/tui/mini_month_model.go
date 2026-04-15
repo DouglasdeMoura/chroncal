@@ -314,8 +314,7 @@ func (m MiniMonthModel) View() string {
 	// Each gets a filled highlight when inner focus lands on it.
 	mutedStyle := lipgloss.NewStyle().Foreground(m.mutedColor)
 	focusedChevronStyle := lipgloss.NewStyle().Background(m.accentColor).Foreground(m.textColor).Bold(true)
-	leftChev := "‹"
-	rightChev := "›"
+	var leftChev, rightChev string
 	if m.focused && m.innerFocus == innerFocusPrev {
 		leftChev = focusedChevronStyle.Render("‹")
 	} else {

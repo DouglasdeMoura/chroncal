@@ -266,7 +266,6 @@ func NewEventFormModelForDuplicate(ev event.Event, calendars map[int64]CalendarI
 // ends date.
 func parseRecurrenceRule(rule string, fallbackDate time.Time) (int, string, endsMode, time.Time) {
 	// Strip COUNT and UNTIL to match the base rule against presets.
-	base := rule
 	var ends endsMode
 	endsDate := fallbackDate.AddDate(0, 1, 0)
 
@@ -289,7 +288,7 @@ func parseRecurrenceRule(rule string, fallbackDate time.Time) (int, string, ends
 			baseParts = append(baseParts, p)
 		}
 	}
-	base = strings.Join(baseParts, ";")
+	base := strings.Join(baseParts, ";")
 
 	// Try to match against presets (skip index 0 "None" and 7 "Custom...").
 	for i := 1; i < len(repeatPresets); i++ {
