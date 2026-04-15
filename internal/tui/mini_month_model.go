@@ -233,6 +233,12 @@ func (m MiniMonthModel) Update(msg tea.Msg) (MiniMonthModel, tea.Cmd) {
 // the chevrons align with the right edge of the grid.
 const miniMonthHeaderWidth = 20
 
+// miniMonthGridRows is the fixed number of day-grid rows rendered. A Gregorian
+// month spans at most 6 weeks, so padding every month to 6 rows keeps the
+// widget height constant and prevents the sidebar's calendar list from
+// shifting when the displayed month changes.
+const miniMonthGridRows = 6
+
 // chevronPositions returns the 0-indexed columns (relative to the widget's
 // top-left) for the left and right chevrons. Header layout:
 // "<name><padding><‹> <›>" — name is flush left, chevrons flush right.
@@ -351,6 +357,7 @@ func (m MiniMonthModel) View() string {
 
 	cur := first
 	col := leading
+	rows := 0
 	for cur.Month() == first.Month() {
 		key := cur.Format("2006-01-02")
 		num := fmt.Sprintf("%2d", cur.Day())
@@ -380,12 +387,27 @@ func (m MiniMonthModel) View() string {
 		if col == 7 {
 			b.WriteString("\n")
 			col = 0
+			rows++
 		} else {
 			b.WriteString(" ")
 		}
 		cur = cur.AddDate(0, 0, 1)
 	}
 	if col != 0 {
+		// Pad the trailing partial row so its width matches full rows; this
+		// keeps widget width stable and avoids relying on terminal whitespace
+		// normalization.
+		for ; col < 7; col++ {
+			b.WriteString("   ")
+		}
+		b.WriteString("\n")
+		rows++
+	}
+	// Always emit miniMonthGridRows grid rows so the sidebar list below never
+	// shifts when the month changes (Feb non-leap = 4 rows, most months = 5,
+	// some = 6).
+	for ; rows < miniMonthGridRows; rows++ {
+		b.WriteString(strings.Repeat("   ", 7))
 		b.WriteString("\n")
 	}
 	return b.String()
