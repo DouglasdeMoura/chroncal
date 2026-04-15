@@ -332,12 +332,25 @@ func (m PaletteModel) renderRow(c PaletteCommand, width int, selected bool) stri
 }
 
 func (m PaletteModel) renderFooter(width int) string {
-	hint := "↑↓ navigate · enter select · esc close"
+	keyStyle := lipgloss.NewStyle().Foreground(m.theme.Text)
+	descStyle := lipgloss.NewStyle().Foreground(m.theme.TextDim)
+	sepStyle := lipgloss.NewStyle().Foreground(m.theme.Muted)
+	sep := sepStyle.Render(" · ")
+
+	pairs := [][2]string{
+		{"↑↓", "navigate"},
+		{"enter", "select"},
+		{"esc", "close"},
+	}
+	var segs []string
+	for _, p := range pairs {
+		segs = append(segs, keyStyle.Render(p[0])+" "+descStyle.Render(p[1]))
+	}
+	hint := strings.Join(segs, sep)
 	if len(m.filtered) == 0 && strings.TrimSpace(m.input.Value()) != "" {
-		hint = "No matches. " + hint
+		hint = descStyle.Render("No matches.") + " " + hint
 	}
 	return lipgloss.NewStyle().
-		Foreground(m.theme.TextDim).
 		Width(width).
 		Align(lipgloss.Center).
 		Render(hint)
