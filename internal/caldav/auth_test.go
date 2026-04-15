@@ -68,16 +68,20 @@ func TestNewClientFromCredential_RefreshesExpiredOAuthToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRequestWithContext: %v", err)
 	}
-	if _, err := client.httpClient.Do(req); err != nil {
+	if resp, err := client.httpClient.Do(req); err != nil {
 		t.Fatalf("Do first request: %v", err)
+	} else {
+		resp.Body.Close()
 	}
 
 	req, err = http.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/resource", nil)
 	if err != nil {
 		t.Fatalf("NewRequestWithContext second: %v", err)
 	}
-	if _, err := client.httpClient.Do(req); err != nil {
+	if resp, err := client.httpClient.Do(req); err != nil {
 		t.Fatalf("Do second request: %v", err)
+	} else {
+		resp.Body.Close()
 	}
 
 	if refreshCalls != 1 {
@@ -134,8 +138,9 @@ func TestOAuth2HTTPClient_FailsFastOnNonTransientRefreshError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRequestWithContext: %v", err)
 	}
-	_, err = client.httpClient.Do(req)
+	resp, err := client.httpClient.Do(req)
 	if err == nil {
+		resp.Body.Close()
 		t.Fatal("expected error from non-transient refresh failure, got nil")
 	}
 	if transportCalled {
@@ -180,10 +185,11 @@ func TestOAuth2HTTPClient_ProceedsWithStaleTokenOnTransientRefreshError(t *testi
 	if err != nil {
 		t.Fatalf("NewRequestWithContext: %v", err)
 	}
-	_, err = client.httpClient.Do(req)
+	resp, err := client.httpClient.Do(req)
 	if err != nil {
 		t.Fatalf("Do: %v (should proceed with stale token on transient refresh failure)", err)
 	}
+	resp.Body.Close()
 	if gotAuth != "Bearer stale-token" {
 		t.Fatalf("Authorization = %q, want Bearer stale-token", gotAuth)
 	}
