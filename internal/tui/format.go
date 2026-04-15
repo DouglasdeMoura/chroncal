@@ -272,7 +272,7 @@ func Calendar(opts CalendarOptions) string {
 
 	var out strings.Builder
 	if opts.ShowHeader {
-		out.WriteString(lipgloss.NewStyle().Bold(true).Width(opts.Width).Align(lipgloss.Center).Render(first.Format("January 2006")))
+		out.WriteString(lipgloss.NewStyle().Bold(true).Width(opts.Width).Align(lipgloss.Left).Render(first.Format("January 2006")))
 		out.WriteString("\n\n")
 	}
 	out.WriteString(renderWeekdayRow(anchor, cellWs))
@@ -663,7 +663,7 @@ func WeekGrid(opts WeekOptions) string {
 			title = fmt.Sprintf("%s %d, %d – %s %d, %d",
 				anchor.Format("Jan"), anchor.Day(), anchor.Year(), endDay.Format("Jan"), endDay.Day(), endDay.Year())
 		}
-		out.WriteString(lipgloss.NewStyle().Bold(true).Width(opts.Width).Align(lipgloss.Center).Render(title))
+		out.WriteString(lipgloss.NewStyle().Bold(true).Width(opts.Width).Align(lipgloss.Left).Render(title))
 		out.WriteString("\n\n")
 	}
 
@@ -1074,7 +1074,7 @@ func DayGrid(opts DayOptions) string {
 
 	if opts.ShowHeader {
 		title := day.Format("Monday, January 2, 2006")
-		out.WriteString(lipgloss.NewStyle().Bold(true).Width(opts.Width).Align(lipgloss.Center).Render(title))
+		out.WriteString(lipgloss.NewStyle().Bold(true).Width(opts.Width).Align(lipgloss.Left).Render(title))
 		out.WriteString("\n\n")
 	}
 
