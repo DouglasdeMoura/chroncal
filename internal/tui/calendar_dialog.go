@@ -219,6 +219,8 @@ func (m CalendarDialogModel) actionLayout() []actionButton {
 			b.rendered = button(label, indices[i], m.field == cdFieldCancel)
 		case cdFieldSave:
 			b.rendered = buttonStyled(label, indices[i], m.field == cdFieldSave, true)
+		default:
+			// cdFieldName, cdFieldPalette, cdFieldHex: not action buttons
 		}
 		btns[i] = b
 	}
@@ -257,6 +259,8 @@ func (m CalendarDialogModel) triggerField(f calendarDialogField) (CalendarDialog
 			id, name := m.id, m.nameInput.Value()
 			return m, func() tea.Msg { return CalendarDeleteRequestedMsg{ID: id, Name: name} }
 		}
+	default:
+		// cdFieldName, cdFieldPalette, cdFieldHex: no action on trigger
 	}
 	return m, nil
 }
@@ -364,6 +368,8 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 			m.nameInput, cmd = m.nameInput.Update(msg)
 		case cdFieldHex:
 			m.hexInput, cmd = m.hexInput.Update(msg)
+		default:
+			// cdFieldPalette, cdFieldDelete, cdFieldCancel, cdFieldSave: no-op
 		}
 		return m, cmd
 	}
@@ -479,6 +485,8 @@ func (m CalendarDialogModel) focusField(f calendarDialogField) CalendarDialogMod
 		m.nameInput.Focus()
 	case cdFieldHex:
 		m.hexInput.Focus()
+	default:
+		// cdFieldPalette, cdFieldDelete, cdFieldCancel, cdFieldSave: no input focus
 	}
 	return m
 }

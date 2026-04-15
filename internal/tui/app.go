@@ -934,6 +934,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.day.scrollOffset = ms
 					}
 				}
+			default:
+				// viewMonth: no wheel scrolling
 			}
 		}
 		return m, nil

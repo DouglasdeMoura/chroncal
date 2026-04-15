@@ -155,6 +155,8 @@ func (m RecurrenceEditorModel) withFocus(f recEditorField) RecurrenceEditorModel
 		m.interval.Focus()
 	case refEndsCount:
 		m.endsCount.Focus()
+	default:
+		// non-text fields: no input focus
 	}
 	return m
 }
@@ -174,6 +176,8 @@ func (m RecurrenceEditorModel) Update(msg tea.Msg) (RecurrenceEditorModel, tea.C
 		m.interval, cmd = m.interval.Update(msg)
 	case refEndsCount:
 		m.endsCount, cmd = m.endsCount.Update(msg)
+	default:
+		// non-text fields: nothing to forward
 	}
 	return m, cmd
 }
@@ -225,6 +229,8 @@ func (m RecurrenceEditorModel) handleKey(msg tea.KeyPressMsg) (RecurrenceEditorM
 	}
 
 	switch m.focusField {
+	case refDone, refCancel:
+		return m, nil
 	case refFreq:
 		n := len(recFrequencies)
 		switch msg.String() {
@@ -384,6 +390,8 @@ func (m RecurrenceEditorModel) BuildRule() string {
 		}
 	case endsOnDate:
 		rule += ";UNTIL=" + m.endsDate.UTC().Format("20060102T150405Z")
+	default:
+		// endsNever: no COUNT/UNTIL appended
 	}
 
 	return rule

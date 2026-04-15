@@ -422,6 +422,8 @@ func (m EventFormModel) withFocus(f formField) (EventFormModel, tea.Cmd) {
 		cmd = m.description.Focus()
 	case fieldEndsCount:
 		cmd = m.endsCount.Focus()
+	default:
+		// non-text fields: no input focus
 	}
 	return m, cmd
 }
@@ -430,8 +432,9 @@ func (m EventFormModel) isTextInput() bool {
 	switch m.focusField {
 	case fieldTitle, fieldStart, fieldEnd, fieldLocation, fieldDescription, fieldEndsCount:
 		return true
+	default:
+		return false
 	}
-	return false
 }
 
 // Update handles messages for the event form.
@@ -471,6 +474,8 @@ func (m EventFormModel) Update(msg tea.Msg) (EventFormModel, tea.Cmd) {
 			m.description, cmd = m.description.Update(msg)
 		case fieldEndsCount:
 			m.endsCount, cmd = m.endsCount.Update(msg)
+		default:
+			// non-text fields: nothing to forward
 		}
 		return m, cmd
 	}
@@ -607,6 +612,8 @@ func (m EventFormModel) handleKey(msg tea.KeyPressMsg) (EventFormModel, tea.Cmd)
 			m.description, cmd = m.description.Update(msg)
 		case fieldEndsCount:
 			m.endsCount, cmd = m.endsCount.Update(msg)
+		default:
+			// non-text fields: nothing to forward
 		}
 		return m, cmd
 	}
@@ -868,6 +875,8 @@ func (m EventFormModel) buildRecurrenceRule() string {
 		}
 	case endsOnDate:
 		rule += ";UNTIL=" + m.endsDate.UTC().Format("20060102T150405Z")
+	default:
+		// endsNever: no COUNT/UNTIL appended
 	}
 	return rule
 }
