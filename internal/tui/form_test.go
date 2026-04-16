@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	lipgloss "charm.land/lipgloss/v2"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -527,6 +528,80 @@ func TestForm_CheckboxFieldAccessor(t *testing.T) {
 
 	form, _ = form.Update(keyPressMsg("space"))
 	assert.True(t, form.FormCheckboxField(0).Checked())
+}
+
+// ---------------------------------------------------------------------------
+// Form label placement tests
+// ---------------------------------------------------------------------------
+
+func TestForm_LabelTopByDefault(t *testing.T) {
+	form := newTestForm(
+		FormItem{Label: "Name", Field: NewTextField("name")},
+	)
+	view := form.View()
+	// With LabelTop (the default) the label and field are on separate lines.
+	assert.True(t, labelAndFieldOnSeparateLines(view, "Name"),
+		"label should be on its own line above the field")
+}
+
+func TestForm_LabelLeftAtFormLevel(t *testing.T) {
+	styles := DefaultFormStyles()
+	styles.LabelPlacement = LabelLeft
+	form := NewForm("Submit", styles,
+		FormItem{Label: "Name", Field: NewTextField("name")},
+	)
+	view := form.View()
+	assert.False(t, labelAndFieldOnSeparateLines(view, "Name"),
+		"label should be inline with the field")
+}
+
+func TestForm_LabelPlacementPerItemOverride(t *testing.T) {
+	styles := DefaultFormStyles()
+	styles.LabelPlacement = LabelTop
+	form := NewForm("Submit", styles,
+		FormItem{Label: "Top", Field: NewTextField("a")},
+		FormItem{Label: "Left", Field: NewTextField("b"), LabelPlacement: PlacementPtr(LabelLeft)},
+	)
+	view := form.View()
+	assert.True(t, labelAndFieldOnSeparateLines(view, "Top"),
+		"first field uses form default (top)")
+	assert.False(t, labelAndFieldOnSeparateLines(view, "Left"),
+		"second field overrides to inline")
+}
+
+func TestForm_LabelLeftAlignment(t *testing.T) {
+	styles := DefaultFormStyles()
+	styles.LabelPlacement = LabelLeft
+
+	form := NewForm("Submit", styles,
+		FormItem{Label: "N", Field: NewTextField("a")},       // 1 char
+		FormItem{Label: "Email", Field: NewTextField("b")},   // 5 chars (longest)
+	)
+
+	// Both left-placed labels should be padded to the same visual width
+	// (longest label + 1 column of spacing).
+	shortLabel := styles.Label.Width(6).Render("N")
+	longLabel := styles.Label.Width(6).Render("Email")
+	assert.Equal(t, lipgloss.Width(shortLabel), lipgloss.Width(longLabel),
+		"labels should have equal rendered width")
+
+	// The rendered view should contain both padded labels.
+	view := form.View()
+	assert.Contains(t, view, shortLabel)
+	assert.Contains(t, view, longLabel)
+}
+
+// labelAndFieldOnSeparateLines returns true when the line containing the
+// label text does NOT also contain a mouse marker (meaning the field is
+// on the next line). Mouse markers (\x1b[Nz) are only emitted around
+// field views, never around labels.
+func labelAndFieldOnSeparateLines(view, label string) bool {
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, label) {
+			return !strings.Contains(line, "z") || !strings.Contains(line, "\x1b[")
+		}
+	}
+	return false
 }
 
 // ---------------------------------------------------------------------------
