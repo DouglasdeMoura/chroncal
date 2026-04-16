@@ -86,6 +86,25 @@ func TestTextField_ImplementsFormField(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// TextAreaField tests
+// ---------------------------------------------------------------------------
+
+func TestTextAreaField_SetAndGetValue(t *testing.T) {
+	f := NewTextAreaField("desc")
+	f.SetValue("hello\nworld")
+	assert.Equal(t, "hello\nworld", f.Value())
+}
+
+func TestTextAreaField_IsFocusable(t *testing.T) {
+	f := NewTextAreaField("desc")
+	assert.True(t, f.IsFocusable())
+}
+
+func TestTextAreaField_ImplementsFormField(t *testing.T) {
+	var _ FormField = NewTextAreaField("test")
+}
+
+// ---------------------------------------------------------------------------
 // CheckboxField tests
 // ---------------------------------------------------------------------------
 

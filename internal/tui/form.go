@@ -6,6 +6,7 @@ import (
 	"unicode"
 
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
@@ -87,6 +88,44 @@ func (f *TextField) IsFocusable() bool { return true }
 func FilterDigits(k tea.Key) bool {
 	return k.Text == "" || unicode.IsDigit(rune(k.Text[0]))
 }
+
+// ---------------------------------------------------------------------------
+// TextAreaField
+// ---------------------------------------------------------------------------
+
+// TextAreaField wraps a bubbles textarea for multi-line text input.
+type TextAreaField struct {
+	input textarea.Model
+}
+
+func NewTextAreaField(placeholder string) *TextAreaField {
+	input := textarea.New()
+	input.Prompt = ""
+	input.Placeholder = placeholder
+	input.CharLimit = 500
+	input.ShowLineNumbers = false
+	input.SetHeight(3)
+	return &TextAreaField{input: input}
+}
+
+func (f *TextAreaField) Value() string     { return f.input.Value() }
+func (f *TextAreaField) SetValue(v string) { f.input.SetValue(v) }
+
+func (f *TextAreaField) SetPlaceholder(p string) { f.input.Placeholder = p }
+func (f *TextAreaField) SetCharLimit(n int)      { f.input.CharLimit = n }
+func (f *TextAreaField) SetHeight(h int)         { f.input.SetHeight(h) }
+
+func (f *TextAreaField) Update(msg tea.Msg) tea.Cmd {
+	var cmd tea.Cmd
+	f.input, cmd = f.input.Update(msg)
+	return cmd
+}
+
+func (f *TextAreaField) View() string      { return f.input.View() }
+func (f *TextAreaField) Focus() tea.Cmd    { return f.input.Focus() }
+func (f *TextAreaField) Blur()             { f.input.Blur() }
+func (f *TextAreaField) SetWidth(w int)    { f.input.SetWidth(w) }
+func (f *TextAreaField) IsFocusable() bool { return true }
 
 // ---------------------------------------------------------------------------
 // CheckboxField
@@ -228,7 +267,6 @@ type FormItem struct {
 	Required        bool
 	LabelLayout     *LabelLayout // nil = use the form-level default
 	ShowFocusMarker *bool        // nil = use the form-level default
-	ShowInputBorder *bool        // nil = use the form-level default
 }
 
 // ButtonVariant selects which style pair a button uses.
@@ -303,9 +341,6 @@ func DefaultButtonStyles() ButtonStyles {
 // FormStyles controls how the Form renders labels, errors, and buttons.
 type FormStyles struct {
 	Label           lipgloss.Style
-	Input           lipgloss.Style // style wrapping unfocused fields (e.g. border)
-	InputFocused    lipgloss.Style // style wrapping the focused field
-	ShowInputBorder bool           // when true, wrap text fields with Input/InputFocused styles
 	ShowFocusMarker bool           // when true, render focus glyph before the focused field
 	Error           lipgloss.Style
 	LabelLayout     LabelLayout    // default layout for all fields
@@ -439,21 +474,7 @@ func (f Form) View() string {
 			continue
 		}
 
-		fieldView := item.Field.View()
-		showBorder := f.styles.ShowInputBorder
-		if item.ShowInputBorder != nil {
-			showBorder = *item.ShowInputBorder
-		}
-		if showBorder {
-			if _, isText := item.Field.(*TextField); isText {
-				if f.focused == i {
-					fieldView = f.styles.InputFocused.Render(fieldView)
-				} else {
-					fieldView = f.styles.Input.Render(fieldView)
-				}
-			}
-		}
-		field := mouseMark(fieldTarget(i), fieldView)
+		field := mouseMark(fieldTarget(i), item.Field.View())
 		hasError := f.error != "" && i == f.errorField
 
 		layout := f.styles.LabelLayout
@@ -473,16 +494,16 @@ func (f Form) View() string {
 		var row string
 		switch {
 		case (layout == LabelInline || layout == LabelInlineRight) && item.Label == "":
-			row = lipgloss.JoinHorizontal(lipgloss.Center, marker, field)
+			row = lipgloss.JoinHorizontal(lipgloss.Top, marker, field)
 		case layout == LabelInline:
 			label := mouseMark(target, f.styles.Label.Width(maxLabelLen).Render(item.Label))
-			row = lipgloss.JoinHorizontal(lipgloss.Center, label+" "+marker, field)
+			row = lipgloss.JoinHorizontal(lipgloss.Top, label+" "+marker, field)
 		case layout == LabelInlineRight:
 			label := mouseMark(target, f.styles.Label.Width(maxLabelLen).Align(lipgloss.Right).Render(item.Label))
-			row = lipgloss.JoinHorizontal(lipgloss.Center, label+" "+marker, field)
+			row = lipgloss.JoinHorizontal(lipgloss.Top, label+" "+marker, field)
 		default: // LabelTop
 			label := mouseMark(target, f.styles.Label.Render(item.Label))
-			row = label + "\n" + lipgloss.JoinHorizontal(lipgloss.Center, marker, field)
+			row = label + "\n" + lipgloss.JoinHorizontal(lipgloss.Top, marker, field)
 		}
 
 		if hasError {
@@ -500,7 +521,7 @@ func (f Form) View() string {
 	}
 	cancelStyle := bs.Get(f.cancelVariant)
 	buttonParts = append(buttonParts, mouseMark("cancel", cancelStyle.Render("Cancel", f.focused == f.cancelIndex())))
-	buttons := lipgloss.JoinHorizontal(lipgloss.Center, buttonParts...)
+	buttons := lipgloss.JoinHorizontal(lipgloss.Top, buttonParts...)
 	parts = append(parts, "", buttons)
 
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
@@ -553,6 +574,10 @@ func (f Form) Field(i int) FormField {
 
 func (f Form) FormTextField(i int) *TextField {
 	return f.items[i].Field.(*TextField)
+}
+
+func (f Form) FormTextAreaField(i int) *TextAreaField {
+	return f.items[i].Field.(*TextAreaField)
 }
 
 func (f Form) FormCheckboxField(i int) *CheckboxField {
