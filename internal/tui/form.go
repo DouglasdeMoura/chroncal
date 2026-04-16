@@ -455,6 +455,15 @@ func DefaultButtonStyles() ButtonStyles {
 	}
 }
 
+// ButtonAlign controls horizontal placement of the button row.
+type ButtonAlign int
+
+const (
+	ButtonAlignRight  ButtonAlign = iota // default: right-aligned
+	ButtonAlignCenter                    // centered (for dialogs)
+	ButtonAlignLeft                      // left-aligned
+)
+
 // FormStyles controls how the Form renders labels, errors, and buttons.
 type FormStyles struct {
 	Label           lipgloss.Style
@@ -462,13 +471,14 @@ type FormStyles struct {
 	Error           lipgloss.Style
 	LabelLayout     LabelLayout    // default layout for all fields
 	Buttons         ButtonStyles   // styles for all button variants
+	ButtonAlign     ButtonAlign    // horizontal placement of button row (default: right)
 }
 
 // DefaultFormStyles returns minimal styles suitable for testing or as a
 // starting point.
 func DefaultFormStyles() FormStyles {
 	return FormStyles{
-		Label:   lipgloss.NewStyle(),
+		Label:   lipgloss.NewStyle().Faint(true),
 		Error:   lipgloss.NewStyle().Foreground(lipgloss.Color("9")),
 		Buttons: DefaultButtonStyles(),
 	}
@@ -639,6 +649,20 @@ func (f Form) View() string {
 	cancelStyle := bs.Get(f.cancelVariant)
 	buttonParts = append(buttonParts, mouseMark("cancel", cancelStyle.Render("Cancel", f.focused == f.cancelIndex())))
 	buttons := lipgloss.JoinHorizontal(lipgloss.Top, buttonParts...)
+
+	// Measure the natural width of the field rows so button alignment
+	// stays inside the form's content area rather than stretching to
+	// the full terminal width.
+	contentWidth := lipgloss.Width(lipgloss.JoinVertical(lipgloss.Left, parts...))
+
+	if contentWidth > 0 && f.styles.ButtonAlign != ButtonAlignLeft {
+		align := lipgloss.Right
+		if f.styles.ButtonAlign == ButtonAlignCenter {
+			align = lipgloss.Center
+		}
+		buttons = lipgloss.NewStyle().Width(contentWidth).Align(align).Render(buttons)
+	}
+
 	parts = append(parts, "", buttons)
 
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
