@@ -211,39 +211,30 @@ type valuer interface {
 	Value() string
 }
 
-// LabelPlacement controls whether the label renders above or to the left
-// of the field.
-type LabelPlacement int
+// LabelLayout controls where and how the label is rendered relative to
+// the field.
+type LabelLayout int
 
 const (
-	LabelTop  LabelPlacement = iota // label on its own line above the field
-	LabelLeft                       // label inline to the left of the field
-)
-
-// LabelAlign controls how left-placed labels are aligned within their
-// computed column width.
-type LabelAlign int
-
-const (
-	LabelAlignLeft  LabelAlign = iota // padding after the label text (default)
-	LabelAlignRight                   // padding before the label text
+	LabelTop         LabelLayout = iota // label on its own line above the field
+	LabelInline                         // inline left-aligned:  "Name      [field]"
+	LabelInlineRight                    // inline right-aligned: "     Name [field]"
 )
 
 // FormItem pairs a label with a field and an optional required constraint.
 type FormItem struct {
-	Label          string
-	Field          FormField
-	Required       bool
-	LabelPlacement *LabelPlacement // nil = use the form-level default
+	Label       string
+	Field       FormField
+	Required    bool
+	LabelLayout *LabelLayout // nil = use the form-level default
 }
 
 // FormStyles controls how the Form renders labels, errors, and buttons.
 type FormStyles struct {
-	Label          lipgloss.Style
-	ShowFocusMarker bool           // when true, render "> " before the focused field
-	Error          lipgloss.Style
-	LabelPlacement LabelPlacement // default placement for all fields
-	LabelAlign     LabelAlign     // alignment for left-placed labels
+	Label           lipgloss.Style
+	ShowFocusMarker bool        // when true, render "> " before the focused field
+	Error           lipgloss.Style
+	LabelLayout     LabelLayout // default layout for all fields
 	// RenderButton renders a button with the given label. focused indicates
 	// keyboard focus; primary marks the submit button.
 	RenderButton func(label string, focused, primary bool) string
@@ -354,20 +345,20 @@ func (f Form) Update(msg tea.Msg) (Form, tea.Cmd) {
 func (f Form) View() string {
 	var parts []string
 
-	// Compute the widest label among LabelLeft items so all left-placed
-	// labels can be padded to the same column. The longest label gets
-	// exactly one column of space before the field; shorter labels are
-	// right-padded to match.
+	// Compute the widest label among inline items so all inline labels
+	// can be padded to the same column. The longest label gets exactly
+	// one column of space before the field; shorter labels are padded
+	// to match.
 	maxLabelLen := 0
 	for _, item := range f.items {
 		if _, isStatic := item.Field.(*StaticField); isStatic {
 			continue
 		}
-		placement := f.styles.LabelPlacement
-		if item.LabelPlacement != nil {
-			placement = *item.LabelPlacement
+		layout := f.styles.LabelLayout
+		if item.LabelLayout != nil {
+			layout = *item.LabelLayout
 		}
-		if placement == LabelLeft && len(item.Label) > maxLabelLen {
+		if layout != LabelTop && len(item.Label) > maxLabelLen {
 			maxLabelLen = len(item.Label)
 		}
 	}
@@ -381,24 +372,22 @@ func (f Form) View() string {
 		field := mouseMark(fieldTarget(i), item.Field.View())
 		hasError := f.error != "" && i == f.errorField
 
-		placement := f.styles.LabelPlacement
-		if item.LabelPlacement != nil {
-			placement = *item.LabelPlacement
+		layout := f.styles.LabelLayout
+		if item.LabelLayout != nil {
+			layout = *item.LabelLayout
 		}
 
 		focused := f.focused == i
 		marker := f.focusMarker(focused)
 
 		var row string
-		if placement == LabelLeft {
-			labelStyle := f.styles.Label.Width(maxLabelLen)
-			if f.styles.LabelAlign == LabelAlignRight {
-				labelStyle = labelStyle.Align(lipgloss.Right)
-			}
-			row = labelStyle.Render(item.Label) + " " + marker + field
-		} else {
-			label := f.styles.Label.Render(item.Label)
-			row = label + "\n" + marker + field
+		switch layout {
+		case LabelInline:
+			row = f.styles.Label.Width(maxLabelLen).Render(item.Label) + " " + marker + field
+		case LabelInlineRight:
+			row = f.styles.Label.Width(maxLabelLen).Align(lipgloss.Right).Render(item.Label) + " " + marker + field
+		default: // LabelTop
+			row = f.styles.Label.Render(item.Label) + "\n" + marker + field
 		}
 
 		if hasError {
@@ -641,9 +630,9 @@ func (f Form) focusMarker(focused bool) string {
 	return "  "
 }
 
-// PlacementPtr returns a pointer to a LabelPlacement value, for use in
-// FormItem.LabelPlacement overrides.
-func PlacementPtr(p LabelPlacement) *LabelPlacement { return &p }
+// LayoutPtr returns a pointer to a LabelLayout value, for use in
+// FormItem.LabelLayout overrides.
+func LayoutPtr(l LabelLayout) *LabelLayout { return &l }
 
 func fieldTarget(i int) string {
 	return "field:" + strconv.Itoa(i)

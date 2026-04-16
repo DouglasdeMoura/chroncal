@@ -546,7 +546,7 @@ func TestForm_LabelTopByDefault(t *testing.T) {
 
 func TestForm_LabelLeftAtFormLevel(t *testing.T) {
 	styles := DefaultFormStyles()
-	styles.LabelPlacement = LabelLeft
+	styles.LabelLayout = LabelInline
 	form := NewForm("Submit", styles,
 		FormItem{Label: "Name", Field: NewTextField("name")},
 	)
@@ -557,10 +557,10 @@ func TestForm_LabelLeftAtFormLevel(t *testing.T) {
 
 func TestForm_LabelPlacementPerItemOverride(t *testing.T) {
 	styles := DefaultFormStyles()
-	styles.LabelPlacement = LabelTop
+	styles.LabelLayout = LabelTop
 	form := NewForm("Submit", styles,
 		FormItem{Label: "Top", Field: NewTextField("a")},
-		FormItem{Label: "Left", Field: NewTextField("b"), LabelPlacement: PlacementPtr(LabelLeft)},
+		FormItem{Label: "Left", Field: NewTextField("b"), LabelLayout: LayoutPtr(LabelInline)},
 	)
 	view := form.View()
 	assert.True(t, labelAndFieldOnSeparateLines(view, "Top"),
@@ -571,7 +571,7 @@ func TestForm_LabelPlacementPerItemOverride(t *testing.T) {
 
 func TestForm_LabelLeftAlignment(t *testing.T) {
 	styles := DefaultFormStyles()
-	styles.LabelPlacement = LabelLeft
+	styles.LabelLayout = LabelInline
 
 	form := NewForm("Submit", styles,
 		FormItem{Label: "N", Field: NewTextField("a")},       // 1 char
@@ -590,10 +590,9 @@ func TestForm_LabelLeftAlignment(t *testing.T) {
 	assert.Contains(t, view, longLabel+" ")
 }
 
-func TestForm_LabelAlignRight(t *testing.T) {
+func TestForm_LabelInlineRight(t *testing.T) {
 	styles := DefaultFormStyles()
-	styles.LabelPlacement = LabelLeft
-	styles.LabelAlign = LabelAlignRight
+	styles.LabelLayout = LabelInlineRight
 
 	form := NewForm("Submit", styles,
 		FormItem{Label: "N", Field: NewTextField("a")},
@@ -634,7 +633,7 @@ func TestForm_FocusIndicatorOnFocusedField(t *testing.T) {
 func TestForm_FocusIndicatorMovesWithFocus(t *testing.T) {
 	styles := DefaultFormStyles()
 	styles.ShowFocusMarker = true
-	styles.LabelPlacement = LabelLeft
+	styles.LabelLayout = LabelInline
 
 	form := NewForm("Submit", styles,
 		FormItem{Label: "Name", Field: NewTextField("name")},
