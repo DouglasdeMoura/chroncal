@@ -541,8 +541,7 @@ func (m EventDialogModel) rsvpBarOrigin() (int, int) {
 	}
 
 	lw := m.labelWidth()
-	padded := "Your RSVP" + strings.Repeat(" ", max(lw-len("Your RSVP"), 1))
-	rsvpButtonsX := contentX + len(padded)
+	rsvpButtonsX := contentX + labelColWidth("Your RSVP", lw)
 
 	if !m.isNarrow() {
 		listW := max(min(max(innerW/4, 18), innerW-24), 10)
@@ -857,7 +856,7 @@ func (m EventDialogModel) renderRSVPLine(att model.Attendee, rsvp []dialogAction
 	lw := m.labelWidth()
 
 	label := "Your RSVP"
-	padded := label + strings.Repeat(" ", max(lw-len(label), 1))
+	padded := strings.Repeat(" ", max(lw-len(label), 0)) + label + "  "
 
 	fixedW := rsvpMaxLabelWidth()
 	parts := make([]string, 0, len(rsvp))
@@ -944,8 +943,14 @@ func eventDetailLines(ev event.Event, cal CalendarInfo, w, labelWidth int, rsvpL
 }
 
 func detailLine(labelStyle lipgloss.Style, label, value string, lw, w int) string {
-	padded := label + strings.Repeat(" ", max(lw-len(label), 1))
-	return truncateTo(labelStyle.Render(padded)+value, w)
+	padded := strings.Repeat(" ", max(lw-len(label), 0)) + label
+	return truncateTo(labelStyle.Render(padded)+"  "+value, w)
+}
+
+// labelColWidth returns the on-screen cell width consumed by the label column
+// plus its two-space gap, accounting for labels that exceed the nominal lw.
+func labelColWidth(label string, lw int) int {
+	return max(lw, len(label)) + 2
 }
 
 func formatEventLabel(ev event.Event) string {
