@@ -722,6 +722,29 @@ func (f Form) Focused() int   { return f.focused }
 func (f Form) HasError() bool { return f.error != "" }
 func (f Form) Error() string  { return f.error }
 
+// SetWidth explicitly sets the form's content width. Use this instead of
+// relying on WindowSizeMsg when the form is embedded inside a Dialog or
+// other container whose width differs from the terminal width.
+func (f *Form) SetWidth(w int) {
+	f.width = w
+	inputWidth := min(w-4, 60)
+	for _, item := range f.items {
+		item.Field.SetWidth(inputWidth)
+	}
+}
+
+// SetError displays an error message on the given field index.
+// Use this for domain-specific validation in OnSubmit callbacks.
+func (f *Form) SetError(field int, msg string) {
+	f.errorField = field
+	f.error = msg
+}
+
+// ClearError removes the current error message.
+func (f *Form) ClearError() {
+	f.error = ""
+}
+
 func (f Form) Field(i int) FormField {
 	return f.items[i].Field
 }
