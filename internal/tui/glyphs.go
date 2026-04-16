@@ -16,6 +16,10 @@ var Glyphs = map[string]string{
 	"status.ok":     "✓",
 	"status.danger": "✗",
 
+	// Select
+	"select.prev": "◀",
+	"select.next": "▶",
+
 	// Shapes
 	"dot": "●",
 

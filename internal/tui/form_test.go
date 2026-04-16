@@ -105,6 +105,80 @@ func TestTextAreaField_ImplementsFormField(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// SelectField tests
+// ---------------------------------------------------------------------------
+
+func testSelectOptions() []SelectOption {
+	return []SelectOption{
+		{Label: "None", Value: ""},
+		{Label: "Daily", Value: "daily"},
+		{Label: "Weekly", Value: "weekly"},
+	}
+}
+
+func TestSelectField_DefaultSelection(t *testing.T) {
+	f := NewSelectField(testSelectOptions())
+	assert.Equal(t, 0, f.Selected())
+	assert.Equal(t, "None", f.SelectedOption().Label)
+	assert.Equal(t, "", f.Value())
+}
+
+func TestSelectField_CycleRight(t *testing.T) {
+	f := NewSelectField(testSelectOptions())
+	f.Update(keyPressMsg("right"))
+	assert.Equal(t, 1, f.Selected())
+	assert.Equal(t, "daily", f.Value())
+
+	f.Update(keyPressMsg("right"))
+	assert.Equal(t, 2, f.Selected())
+
+	// Wraps around
+	f.Update(keyPressMsg("right"))
+	assert.Equal(t, 0, f.Selected())
+}
+
+func TestSelectField_CycleLeft(t *testing.T) {
+	f := NewSelectField(testSelectOptions())
+	// Wraps backward from first
+	f.Update(keyPressMsg("left"))
+	assert.Equal(t, 2, f.Selected())
+
+	f.Update(keyPressMsg("left"))
+	assert.Equal(t, 1, f.Selected())
+}
+
+func TestSelectField_VimKeys(t *testing.T) {
+	f := NewSelectField(testSelectOptions())
+	f.Update(keyPressMsg("l"))
+	assert.Equal(t, 1, f.Selected())
+
+	f.Update(keyPressMsg("h"))
+	assert.Equal(t, 0, f.Selected())
+}
+
+func TestSelectField_SetSelected(t *testing.T) {
+	f := NewSelectField(testSelectOptions())
+	f.SetSelected(2)
+	assert.Equal(t, "weekly", f.Value())
+}
+
+func TestSelectField_ViewAlwaysShowsArrows(t *testing.T) {
+	f := NewSelectField(testSelectOptions())
+	view := f.View()
+	assert.Contains(t, view, Glyphs["select.prev"], "arrows visible when unfocused")
+	assert.Contains(t, view, Glyphs["select.next"], "arrows visible when unfocused")
+
+	f.Focus()
+	view = f.View()
+	assert.Contains(t, view, Glyphs["select.prev"], "arrows visible when focused")
+	assert.Contains(t, view, Glyphs["select.next"], "arrows visible when focused")
+}
+
+func TestSelectField_ImplementsFormField(t *testing.T) {
+	var _ FormField = NewSelectField(testSelectOptions())
+}
+
+// ---------------------------------------------------------------------------
 // CheckboxField tests
 // ---------------------------------------------------------------------------
 

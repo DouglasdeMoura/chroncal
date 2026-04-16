@@ -3,6 +3,7 @@ package tui
 import (
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"charm.land/bubbles/v2/key"
@@ -126,6 +127,122 @@ func (f *TextAreaField) Focus() tea.Cmd    { return f.input.Focus() }
 func (f *TextAreaField) Blur()             { f.input.Blur() }
 func (f *TextAreaField) SetWidth(w int)    { f.input.SetWidth(w) }
 func (f *TextAreaField) IsFocusable() bool { return true }
+
+// ---------------------------------------------------------------------------
+// SelectField
+// ---------------------------------------------------------------------------
+
+// SelectOption is a single entry in a SelectField.
+type SelectOption struct {
+	Label string
+	Value string
+}
+
+// selectHighlight tracks which arrow was just pressed.
+type selectHighlight int
+
+const (
+	selectNone  selectHighlight = iota
+	selectLeft
+	selectRight
+)
+
+// selectFlashMsg is sent by a tick to clear the arrow highlight.
+type selectFlashMsg struct{ id int }
+
+const selectFlashDuration = 150 * time.Millisecond
+
+// SelectField cycles through a list of options with left/right arrows.
+type SelectField struct {
+	options   []SelectOption
+	selected  int
+	maxWidth  int
+	focused   bool
+	highlight selectHighlight
+	flashID   int // incremented per flash; stale ticks are ignored
+}
+
+func NewSelectField(options []SelectOption) *SelectField {
+	maxW := 0
+	for _, o := range options {
+		if len(o.Label) > maxW {
+			maxW = len(o.Label)
+		}
+	}
+	return &SelectField{options: options, maxWidth: maxW}
+}
+
+func (f *SelectField) Selected() int                { return f.selected }
+func (f *SelectField) SetSelected(i int)            { f.selected = i }
+func (f *SelectField) SelectedOption() SelectOption { return f.options[f.selected] }
+func (f *SelectField) Value() string                { return f.options[f.selected].Value }
+
+func (f *SelectField) Update(msg tea.Msg) tea.Cmd {
+	switch msg := msg.(type) {
+	case selectFlashMsg:
+		if msg.id == f.flashID {
+			f.highlight = selectNone
+		}
+		return nil
+	case tea.KeyPressMsg:
+		n := len(f.options)
+		switch msg.String() {
+		case "left", "h":
+			f.selected = (f.selected - 1 + n) % n
+			return f.flash(selectLeft)
+		case "right", "l":
+			f.selected = (f.selected + 1) % n
+			return f.flash(selectRight)
+		}
+	}
+	return nil
+}
+
+func (f *SelectField) flash(dir selectHighlight) tea.Cmd {
+	f.highlight = dir
+	f.flashID++
+	id := f.flashID
+	return tea.Tick(selectFlashDuration, func(time.Time) tea.Msg {
+		return selectFlashMsg{id: id}
+	})
+}
+
+func (f *SelectField) View() string {
+	if len(f.options) == 0 {
+		return ""
+	}
+	labelStyle := lipgloss.NewStyle().Width(f.maxWidth)
+	if f.focused {
+		labelStyle = labelStyle.Reverse(true)
+	}
+	label := labelStyle.Render(f.options[f.selected].Label)
+
+	flash := lipgloss.NewStyle().Foreground(lipgloss.Color("63"))
+	prev := Glyphs["select.prev"]
+	next := Glyphs["select.next"]
+
+	if f.highlight == selectLeft {
+		prev = flash.Render(prev)
+	}
+	if f.highlight == selectRight {
+		next = flash.Render(next)
+	}
+
+	return label + "  " + mouseMark("select:prev", prev) + " " + mouseMark("select:next", next)
+}
+
+func (f *SelectField) Focus() tea.Cmd {
+	f.focused = true
+	return nil
+}
+
+func (f *SelectField) Blur() {
+	f.focused = false
+	f.highlight = selectNone
+}
+
+func (f *SelectField) SetWidth(int)      {}
+func (f *SelectField) IsFocusable() bool { return true }
 
 // ---------------------------------------------------------------------------
 // CheckboxField
@@ -580,6 +697,10 @@ func (f Form) FormTextAreaField(i int) *TextAreaField {
 	return f.items[i].Field.(*TextAreaField)
 }
 
+func (f Form) FormSelectField(i int) *SelectField {
+	return f.items[i].Field.(*SelectField)
+}
+
 func (f Form) FormCheckboxField(i int) *CheckboxField {
 	return f.items[i].Field.(*CheckboxField)
 }
@@ -592,6 +713,23 @@ func (f Form) FormStaticField(i int) *StaticField {
 
 func (f Form) handleClick(target string) (Form, tea.Cmd) {
 	if target == "" {
+		return f, nil
+	}
+
+	// Select arrow clicks: find the SelectField that owns the arrow,
+	// focus it, and simulate the corresponding keypress.
+	if target == "select:prev" || target == "select:next" {
+		for i := range f.items {
+			if sf, ok := f.items[i].Field.(*SelectField); ok && sf.focused {
+				var cmd tea.Cmd
+				if target == "select:prev" {
+					cmd = sf.Update(keyMsg("left"))
+				} else {
+					cmd = sf.Update(keyMsg("right"))
+				}
+				return f, cmd
+			}
+		}
 		return f, nil
 	}
 
@@ -774,4 +912,12 @@ func fieldTarget(i int) string {
 
 func actionTarget(i int) string {
 	return "action:" + strconv.Itoa(i)
+}
+
+func keyMsg(s string) tea.KeyPressMsg {
+	k := tea.Key{Text: s}
+	if r := []rune(s); len(r) == 1 {
+		k.Code = r[0]
+	}
+	return tea.KeyPressMsg(k)
 }
