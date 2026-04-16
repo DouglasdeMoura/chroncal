@@ -4,7 +4,6 @@ import (
 	"image/color"
 	"strings"
 
-	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
@@ -63,7 +62,6 @@ type CalendarDialogModel struct {
 	id           int64
 	dialog       Dialog
 	form         Form
-	help         help.Model
 	accentColor  color.Color
 	mutedColor   color.Color
 	textDimColor color.Color
@@ -78,7 +76,6 @@ func NewCalendarDialogModel(id int64, name, hex string, theme Theme) CalendarDia
 
 	styles := DefaultDialogStyles()
 	dialog := NewDialog(title, styles)
-	dialog.SetWidth(56) // 56 total = 2 border + 4 padding + 50 content
 
 	formStyles := DefaultFormStyles()
 	formStyles.LabelLayout = LabelInline
@@ -126,7 +123,6 @@ func NewCalendarDialogModel(id int64, name, hex string, theme Theme) CalendarDia
 		id:           id,
 		dialog:       dialog,
 		form:         form,
-		help:         newThemedHelp(theme),
 		accentColor:  theme.Selected,
 		mutedColor:   theme.Muted,
 		textDimColor: theme.TextDim,
@@ -197,18 +193,6 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 }
 
 func (m CalendarDialogModel) View() string {
-	cw := m.dialog.ContentWidth()
-	if cw <= 0 {
-		cw = 46
-	}
-	m.help.SetWidth(cw)
-	helpKeys := []key.Binding{
-		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
-		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
-		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
-	}
-	m.dialog.SetFooter(m.help.ShortHelpView(helpKeys))
-
 	content := mouseSweep(m.dialog.Box(m.form.View()))
 	return content
 }
