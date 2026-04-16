@@ -1003,20 +1003,24 @@ func formatAttendee(att model.Attendee) string {
 	if name == "" {
 		name = att.Email
 	}
-	status := ""
-	switch strings.ToUpper(att.RSVPStatus) {
-	case "ACCEPTED":
-		status = " ✓"
-	case "DECLINED":
-		status = " ✗"
-	case "TENTATIVE":
-		status = " ?"
-	}
-	role := ""
+	out := "  " + name + " " + attendeeStatusSymbol(att.RSVPStatus)
 	if att.Organizer {
-		role = " (organizer)"
+		out += "  " + badge("organizer", badgeInfo)
 	}
-	return "  " + name + status + role
+	return out
+}
+
+func attendeeStatusSymbol(status string) string {
+	switch strings.ToUpper(status) {
+	case "ACCEPTED":
+		return lipgloss.NewStyle().Foreground(badgeBackground(badgeOK)).Render("✓")
+	case "DECLINED":
+		return lipgloss.NewStyle().Foreground(badgeBackground(badgeDanger)).Render("✗")
+	case "TENTATIVE":
+		return lipgloss.NewStyle().Foreground(badgeBackground(badgeWarn)).Render("?")
+	default:
+		return lipgloss.NewStyle().Faint(true).Render("○")
+	}
 }
 
 func formatAlarm(a model.Alarm) string {
