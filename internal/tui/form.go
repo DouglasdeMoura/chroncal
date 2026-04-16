@@ -474,7 +474,7 @@ func (f *HexColorField) SetPaletteIdx(idx int)      { f.paletteIdx = idx }
 func (f *HexColorField) Update(msg tea.Msg) tea.Cmd { return f.input.Update(msg) }
 func (f *HexColorField) Focus() tea.Cmd             { return f.input.Focus() }
 func (f *HexColorField) Blur()                      { f.input.Blur() }
-func (f *HexColorField) SetWidth(w int)             { f.input.SetWidth(max(w-16, 8)) }
+func (f *HexColorField) SetWidth(w int)             { f.input.SetWidth(9) } // #rrggbb + cursor + 1
 func (f *HexColorField) IsFocusable() bool          { return true }
 
 func (f *HexColorField) View() string {
