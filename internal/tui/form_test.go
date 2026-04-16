@@ -613,6 +613,56 @@ func TestForm_LabelAlignRight(t *testing.T) {
 		"longest label should start at column 0 with 1-col gap")
 }
 
+// ---------------------------------------------------------------------------
+// Form focus indicator tests
+// ---------------------------------------------------------------------------
+
+func TestForm_FocusIndicatorOnFocusedField(t *testing.T) {
+	styles := DefaultFormStyles()
+	styles.ShowFocusMarker = true
+
+	form := NewForm("Submit", styles,
+		FormItem{Label: "Name", Field: NewTextField("name")},
+		FormItem{Label: "Email", Field: NewTextField("email")},
+	)
+
+	view := form.View()
+	styledMarker := styles.Label.Render(">") + " "
+	assert.Contains(t, view, styledMarker, "focused field should show > marker")
+}
+
+func TestForm_FocusIndicatorMovesWithFocus(t *testing.T) {
+	styles := DefaultFormStyles()
+	styles.ShowFocusMarker = true
+	styles.LabelPlacement = LabelLeft
+
+	form := NewForm("Submit", styles,
+		FormItem{Label: "Name", Field: NewTextField("name")},
+		FormItem{Label: "Email", Field: NewTextField("email")},
+	)
+
+	styledMarker := styles.Label.Render(">") + " "
+
+	view := form.View()
+	assert.Equal(t, 1, strings.Count(view, styledMarker),
+		"exactly one field should have the focus marker")
+
+	formPressTab(&form)
+	view = form.View()
+	assert.Equal(t, 1, strings.Count(view, styledMarker),
+		"exactly one field should have the focus marker after tab")
+}
+
+func TestForm_NoFocusIndicatorByDefault(t *testing.T) {
+	form := newTestForm(
+		FormItem{Label: "Name", Field: NewTextField("name")},
+	)
+	view := form.View()
+	styledMarker := DefaultFormStyles().Label.Render(">") + " "
+	assert.NotContains(t, view, styledMarker,
+		"no focus marker when ShowFocusMarker is false")
+}
+
 // labelAndFieldOnSeparateLines returns true when the line containing the
 // label text does NOT also contain a mouse marker (meaning the field is
 // on the next line). Mouse markers (\x1b[Nz) are only emitted around

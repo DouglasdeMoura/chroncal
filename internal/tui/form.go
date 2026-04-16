@@ -240,6 +240,7 @@ type FormItem struct {
 // FormStyles controls how the Form renders labels, errors, and buttons.
 type FormStyles struct {
 	Label          lipgloss.Style
+	ShowFocusMarker bool           // when true, render "> " before the focused field
 	Error          lipgloss.Style
 	LabelPlacement LabelPlacement // default placement for all fields
 	LabelAlign     LabelAlign     // alignment for left-placed labels
@@ -385,16 +386,19 @@ func (f Form) View() string {
 			placement = *item.LabelPlacement
 		}
 
+		focused := f.focused == i
+		marker := f.focusMarker(focused)
+
 		var row string
 		if placement == LabelLeft {
 			labelStyle := f.styles.Label.Width(maxLabelLen)
 			if f.styles.LabelAlign == LabelAlignRight {
 				labelStyle = labelStyle.Align(lipgloss.Right)
 			}
-			row = labelStyle.Render(item.Label) + " " + field
+			row = labelStyle.Render(item.Label) + " " + marker + field
 		} else {
 			label := f.styles.Label.Render(item.Label)
-			row = label + "\n" + field
+			row = label + "\n" + marker + field
 		}
 
 		if hasError {
@@ -624,6 +628,18 @@ func (f Form) totalCount() int {
 }
 
 // Helpers
+
+// focusMarker returns "> " styled with the label style for the focused
+// field, or equivalent whitespace for unfocused fields.
+func (f Form) focusMarker(focused bool) string {
+	if !f.styles.ShowFocusMarker {
+		return ""
+	}
+	if focused {
+		return f.styles.Label.Render(">") + " "
+	}
+	return "  "
+}
 
 // PlacementPtr returns a pointer to a LabelPlacement value, for use in
 // FormItem.LabelPlacement overrides.
