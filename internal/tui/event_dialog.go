@@ -902,7 +902,7 @@ func eventDetailLines(ev event.Event, cal CalendarInfo, w, labelWidth int, rsvpL
 		lines = append(lines, detailLine(faint, "Where", ev.Location, labelWidth, w))
 	}
 	if ev.Status != "" {
-		lines = append(lines, detailLine(faint, "Status", ev.Status, labelWidth, w))
+		lines = append(lines, detailLine(faint, "Status", statusBadge(ev.Status), labelWidth, w))
 	}
 	if ev.Categories != "" {
 		lines = append(lines, detailLine(faint, "Tags", ev.Categories, labelWidth, w))
