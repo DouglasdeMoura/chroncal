@@ -139,9 +139,9 @@ func (f *CheckboxField) View() string {
 		}
 	}
 	if f.checked {
-		return "[" + Glyphs["checkbox.on"] + "] " + f.label
+		return Glyphs["checkbox.on"] + " " + f.label
 	}
-	return "[" + Glyphs["checkbox.off"] + "] " + f.label
+	return Glyphs["checkbox.off"] + " " + f.label
 }
 
 func (f *CheckboxField) Focus() tea.Cmd    { return nil }

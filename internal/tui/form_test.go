@@ -108,10 +108,10 @@ func TestCheckboxField_SetChecked(t *testing.T) {
 
 func TestCheckboxField_Render(t *testing.T) {
 	f := NewCheckboxField("TLS", true)
-	assert.Equal(t, "[" + Glyphs["checkbox.on"] + "] TLS", f.View())
+	assert.Equal(t, Glyphs["checkbox.on"] + " TLS", f.View())
 
 	f.Update(keyPressMsg("space"))
-	assert.Equal(t, "[" + Glyphs["checkbox.off"] + "] TLS", f.View())
+	assert.Equal(t, Glyphs["checkbox.off"] + " TLS", f.View())
 }
 
 func TestCheckboxField_DisabledWhen(t *testing.T) {
@@ -128,7 +128,7 @@ func TestCheckboxField_DisabledWhen(t *testing.T) {
 	disabled = false
 	f.Update(keyPressMsg("space"))
 	assert.True(t, f.Checked(), "toggle works when enabled")
-	assert.Equal(t, "[" + Glyphs["checkbox.on"] + "] TLS", f.View())
+	assert.Equal(t, Glyphs["checkbox.on"] + " TLS", f.View())
 }
 
 func TestCheckboxField_IgnoresNonSpaceKeys(t *testing.T) {

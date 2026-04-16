@@ -5,12 +5,12 @@ package tui
 // vs plain Unicode) from a single place.
 var Glyphs = map[string]string{
 	// Focus / navigation
-	"focus":     "\uf054", //  (chevron-right)
-	"ellipsis":  "…",
+	"focus":    "\uf054", //  (chevron-right)
+	"ellipsis": "…",
 
 	// Checkbox
-	"checkbox.on":  "✓",
-	"checkbox.off": " ",
+	"checkbox.on":  "\U000f0c52", // 󰱒
+	"checkbox.off": "\U000f0131", // 󰄱
 
 	// Status
 	"status.ok":     "✓",
