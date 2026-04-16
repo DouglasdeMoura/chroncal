@@ -177,6 +177,14 @@ func mouseResolve(x, y int) string {
 	return defaultMouseTracker.resolve(x, y)
 }
 
+// MouseSweep is the exported version of mouseSweep for use by parent models
+// outside this package.
+func MouseSweep(content string) string { return mouseSweep(content) }
+
+// MouseResolve is the exported version of mouseResolve for use by parent models
+// outside this package.
+func MouseResolve(x, y int) string { return mouseResolve(x, y) }
+
 func (mt *mouseTracker) mark(name, content string) string {
 	id := mt.nextID
 	mt.nextID++
