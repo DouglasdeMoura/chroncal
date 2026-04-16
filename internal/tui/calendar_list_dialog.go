@@ -31,7 +31,7 @@ type calendarListDialogKeyMap struct {
 }
 
 func (k calendarListDialogKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Tab, k.Enter, k.New, k.Close}
+	return []key.Binding{k.Up, k.Down, k.Tab, k.New, k.Edit, k.Close}
 }
 
 func defaultCalendarListDialogKeys() calendarListDialogKeyMap {
@@ -265,13 +265,6 @@ func (m CalendarListDialogModel) handleKey(msg tea.KeyPressMsg) (CalendarListDia
 
 	case key.Matches(msg, m.keys.Enter):
 		switch m.focusZone {
-		case clZoneList:
-			if _, ok := m.selectedID(); ok && len(actions) > 1 {
-				return m, actions[1].msg // Edit on Enter over list
-			}
-			if len(m.order) == 0 {
-				return m, actions[0].msg // New when list is empty
-			}
 		case clZoneActions:
 			if m.focusedAction >= 0 && m.focusedAction < len(actions) {
 				return m, actions[m.focusedAction].msg
