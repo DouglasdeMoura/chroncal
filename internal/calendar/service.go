@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
@@ -12,6 +13,9 @@ import (
 
 // ErrLastCalendar is returned when attempting to delete the only remaining calendar.
 var ErrLastCalendar = errors.New("cannot delete the last calendar")
+
+// ErrDuplicateName is returned when a calendar name already exists.
+var ErrDuplicateName = errors.New("a calendar with this name already exists")
 
 type Service struct {
 	db *sql.DB
@@ -49,6 +53,9 @@ func (s *Service) Create(ctx context.Context, name, color, description string) (
 		Description: storage.StringToNullable(description),
 	})
 	if err != nil {
+		if isUniqueViolation(err, "calendars.name") {
+			return Calendar{}, ErrDuplicateName
+		}
 		return Calendar{}, err
 	}
 	return fromStorage(r), nil
@@ -73,6 +80,9 @@ func (s *Service) Update(ctx context.Context, id int64, name, color, description
 		Color:       color,
 		Description: storage.StringToNullable(description),
 	}); err != nil {
+		if isUniqueViolation(err, "calendars.name") {
+			return Calendar{}, ErrDuplicateName
+		}
 		return Calendar{}, err
 	}
 
@@ -203,4 +213,14 @@ func fromStorage(r storage.Calendar) Calendar {
 		RemoteColor:         storage.NullableToString(r.RemoteColor),
 		ColorDirty:          r.ColorDirty != 0,
 	}
+}
+
+// isUniqueViolation returns true when the error is a SQLite UNIQUE constraint
+// violation on the given column (e.g. "calendars.name").
+func isUniqueViolation(err error, column string) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "UNIQUE constraint failed") && strings.Contains(msg, column)
 }

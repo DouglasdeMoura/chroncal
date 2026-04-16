@@ -827,7 +827,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case CalendarSavedMsg:
-		m.calendarDialogOpen = false
+		// Keep the dialog open until the mutation succeeds so we can
+		// show validation errors (e.g. duplicate name) on the form.
 		id := msg.ID
 		name, hex := msg.Name, msg.Color
 		return m, func() tea.Msg {
@@ -871,9 +872,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case calendarMutationDoneMsg:
 		if msg.err != nil {
+			if m.calendarDialogOpen {
+				// Show the error on the Name field so the user can fix it.
+				m.calendarDialog.form.SetError(cdIdxName, msg.err.Error())
+				return m, nil
+			}
 			m.err = msg.err
 			return m, nil
 		}
+		m.calendarDialogOpen = false
 		// Reload events too: deleting a calendar cascades to its events in
 		// the DB, so the in-memory cache is stale and would keep rendering
 		// orphaned events (with no color mapping) until the next event reload.
