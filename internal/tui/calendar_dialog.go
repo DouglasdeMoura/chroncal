@@ -147,6 +147,7 @@ type HexColorField struct {
 	input      *TextField
 	paletteIdx int // -1 when off-palette
 	dimColor   color.Color
+	totalWidth int // full field column width (set via SetWidth)
 }
 
 func NewHexColorField(placeholder string, dimColor color.Color) *HexColorField {
@@ -169,7 +170,7 @@ func (f *HexColorField) SetPaletteIdx(idx int)     { f.paletteIdx = idx }
 func (f *HexColorField) Update(msg tea.Msg) tea.Cmd { return f.input.Update(msg) }
 func (f *HexColorField) Focus() tea.Cmd            { return f.input.Focus() }
 func (f *HexColorField) Blur()                     { f.input.Blur() }
-func (f *HexColorField) SetWidth(w int)            { f.input.SetWidth(max(w-16, 8)) }
+func (f *HexColorField) SetWidth(w int)            { f.totalWidth = w; f.input.SetWidth(max(w-16, 8)) }
 func (f *HexColorField) IsFocusable() bool         { return true }
 
 func (f *HexColorField) View() string {
@@ -178,9 +179,18 @@ func (f *HexColorField) View() string {
 	if f.paletteIdx >= 0 || !hexRE.MatchString(hexVal) {
 		return base
 	}
-	preview := "  " + lipgloss.NewStyle().Foreground(lipgloss.Color(hexVal)).Render("●")
-	custom := "  " + lipgloss.NewStyle().Foreground(f.dimColor).Italic(true).Render("(custom)")
-	return base + preview + custom
+	dot := lipgloss.NewStyle().Foreground(lipgloss.Color(hexVal)).Render("●")
+	customLabel := lipgloss.NewStyle().Foreground(f.dimColor).Italic(true).Render("(custom)")
+	suffix := dot + "  " + customLabel
+
+	// Right-align suffix within the total field width.
+	baseW := lipgloss.Width(base)
+	suffixW := lipgloss.Width(suffix)
+	gap := f.totalWidth - baseW - suffixW
+	if gap < 1 {
+		gap = 1
+	}
+	return base + strings.Repeat(" ", gap) + suffix
 }
 
 // ---------------------------------------------------------------------------
