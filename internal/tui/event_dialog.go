@@ -99,6 +99,7 @@ type dialogAction struct {
 	label          string
 	underlineIndex int
 	msg            func() tea.Msg
+	danger         bool
 }
 
 // CalendarInfo holds the display-relevant fields of a calendar.
@@ -207,9 +208,9 @@ func (m EventDialogModel) rsvpActions() []dialogAction {
 		return nil
 	}
 	return []dialogAction{
-		{"Yes", 0, func() tea.Msg { return EventRSVPMsg{Event: ev, Status: "ACCEPTED"} }},
-		{"No", 0, func() tea.Msg { return EventRSVPMsg{Event: ev, Status: "DECLINED"} }},
-		{"Maybe", 0, func() tea.Msg { return EventRSVPMsg{Event: ev, Status: "TENTATIVE"} }},
+		{label: "Yes", msg: func() tea.Msg { return EventRSVPMsg{Event: ev, Status: "ACCEPTED"} }},
+		{label: "No", msg: func() tea.Msg { return EventRSVPMsg{Event: ev, Status: "DECLINED"} }},
+		{label: "Maybe", msg: func() tea.Msg { return EventRSVPMsg{Event: ev, Status: "TENTATIVE"} }},
 	}
 }
 
@@ -219,9 +220,9 @@ func (m EventDialogModel) visibleActions() []dialogAction {
 		return nil
 	}
 	return []dialogAction{
-		{"Edit", 0, func() tea.Msg { return EventEditMsg{Event: ev} }},
-		{"Duplicate", 0, func() tea.Msg { return EventDuplicateMsg{Event: ev} }},
-		{"Delete", 4, func() tea.Msg { return EventDeleteMsg{Event: ev} }},
+		{label: "Edit", underlineIndex: 0, msg: func() tea.Msg { return EventEditMsg{Event: ev} }},
+		{label: "Duplicate", underlineIndex: 0, msg: func() tea.Msg { return EventDuplicateMsg{Event: ev} }},
+		{label: "Delete", underlineIndex: 4, danger: true, msg: func() tea.Msg { return EventDeleteMsg{Event: ev} }},
 	}
 }
 
@@ -778,7 +779,12 @@ func (m EventDialogModel) renderActions(w int) string {
 	actions := m.visibleActions()
 	parts := make([]string, len(actions))
 	for i, a := range actions {
-		parts[i] = button(a.label, a.underlineIndex, m.focusZone == zoneActions && i == m.focusedAction)
+		focused := m.focusZone == zoneActions && i == m.focusedAction
+		if a.danger {
+			parts[i] = buttonDanger(a.label, a.underlineIndex, focused)
+		} else {
+			parts[i] = button(a.label, a.underlineIndex, focused)
+		}
 	}
 	return truncateTo(strings.Join(parts, " "), w)
 }
