@@ -220,6 +220,15 @@ const (
 	LabelLeft                       // label inline to the left of the field
 )
 
+// LabelAlign controls how left-placed labels are aligned within their
+// computed column width.
+type LabelAlign int
+
+const (
+	LabelAlignLeft  LabelAlign = iota // padding after the label text (default)
+	LabelAlignRight                   // padding before the label text
+)
+
 // FormItem pairs a label with a field and an optional required constraint.
 type FormItem struct {
 	Label          string
@@ -233,6 +242,7 @@ type FormStyles struct {
 	Label          lipgloss.Style
 	Error          lipgloss.Style
 	LabelPlacement LabelPlacement // default placement for all fields
+	LabelAlign     LabelAlign     // alignment for left-placed labels
 	// RenderButton renders a button with the given label. focused indicates
 	// keyboard focus; primary marks the submit button.
 	RenderButton func(label string, focused, primary bool) string
@@ -377,8 +387,11 @@ func (f Form) View() string {
 
 		var row string
 		if placement == LabelLeft {
-			label := f.styles.Label.Width(maxLabelLen + 1).Render(item.Label)
-			row = label + field
+			labelStyle := f.styles.Label.Width(maxLabelLen)
+			if f.styles.LabelAlign == LabelAlignRight {
+				labelStyle = labelStyle.Align(lipgloss.Right)
+			}
+			row = labelStyle.Render(item.Label) + " " + field
 		} else {
 			label := f.styles.Label.Render(item.Label)
 			row = label + "\n" + field

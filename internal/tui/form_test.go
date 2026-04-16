@@ -578,17 +578,39 @@ func TestForm_LabelLeftAlignment(t *testing.T) {
 		FormItem{Label: "Email", Field: NewTextField("b")},   // 5 chars (longest)
 	)
 
-	// Both left-placed labels should be padded to the same visual width
-	// (longest label + 1 column of spacing).
-	shortLabel := styles.Label.Width(6).Render("N")
-	longLabel := styles.Label.Width(6).Render("Email")
+	// Both left-placed labels should be padded to the longest label width,
+	// with a 1-column space between label and field.
+	shortLabel := styles.Label.Width(5).Render("N")
+	longLabel := styles.Label.Width(5).Render("Email")
 	assert.Equal(t, lipgloss.Width(shortLabel), lipgloss.Width(longLabel),
 		"labels should have equal rendered width")
 
-	// The rendered view should contain both padded labels.
 	view := form.View()
-	assert.Contains(t, view, shortLabel)
-	assert.Contains(t, view, longLabel)
+	assert.Contains(t, view, shortLabel+" ")
+	assert.Contains(t, view, longLabel+" ")
+}
+
+func TestForm_LabelAlignRight(t *testing.T) {
+	styles := DefaultFormStyles()
+	styles.LabelPlacement = LabelLeft
+	styles.LabelAlign = LabelAlignRight
+
+	form := NewForm("Submit", styles,
+		FormItem{Label: "N", Field: NewTextField("a")},
+		FormItem{Label: "Email", Field: NewTextField("b")},
+	)
+
+	view := form.View()
+
+	// "N" right-aligned in a 5-wide column: "    N", then " " gap before field.
+	shortLabel := styles.Label.Width(5).Align(lipgloss.Right).Render("N")
+	assert.Contains(t, view, shortLabel+" ",
+		"short label should be right-aligned with 1-col gap")
+
+	// "Email" fills the column exactly: "Email", then " " gap.
+	longLabel := styles.Label.Width(5).Align(lipgloss.Right).Render("Email")
+	assert.Contains(t, view, longLabel+" ",
+		"longest label should start at column 0 with 1-col gap")
 }
 
 // labelAndFieldOnSeparateLines returns true when the line containing the
