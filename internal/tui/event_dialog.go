@@ -408,7 +408,7 @@ func (m EventDialogModel) handleMouse(msg tea.MouseClickMsg) (EventDialogModel, 
 
 	if len(m.events) == 0 {
 		ox, oy := m.createBtnOrigin()
-		btnW := lipgloss.Width(button("Create Event", 0, false))
+		btnW := lipgloss.Width(DefaultButtonStyles().Primary.Render("Create Event", false))
 		if msg.Y == oy && msg.X >= ox && msg.X < ox+btnW {
 			day := m.day
 			return m, func() tea.Msg { return EventCreateMsg{Day: day} }
@@ -651,7 +651,7 @@ func (m EventDialogModel) createBtnOrigin() (int, int) {
 func (m EventDialogModel) renderEmptyDetails(w, h int) string {
 	faint := lipgloss.NewStyle().Faint(true)
 	msg := faint.Render("No events on this day.")
-	createBtn := button("Create Event", 0, true)
+	createBtn := DefaultButtonStyles().Primary.Render("Create Event", true)
 	lines := []string{msg, "", createBtn}
 	return padLines(lines, w, h)
 }
@@ -766,14 +766,15 @@ func (m EventDialogModel) renderDivider(w, h int) string {
 }
 
 func (m EventDialogModel) renderActions(w int) string {
+	bs := DefaultButtonStyles()
 	actions := m.visibleActions()
 	parts := make([]string, len(actions))
 	for i, a := range actions {
 		focused := m.focusZone == zoneActions && i == m.focusedAction
 		if a.danger {
-			parts[i] = buttonDanger(a.label, a.underlineIndex, focused)
+			parts[i] = bs.Danger.Render(a.label, focused)
 		} else {
-			parts[i] = button(a.label, a.underlineIndex, focused)
+			parts[i] = bs.Secondary.Render(a.label, focused)
 		}
 	}
 	return truncateTo(strings.Join(parts, " "), w)
@@ -859,7 +860,7 @@ func (m EventDialogModel) renderRSVPLine(att model.Attendee, rsvp []dialogAction
 			right := pad - leftPad
 			l = strings.Repeat(" ", leftPad) + l + strings.Repeat(" ", right)
 		}
-		parts = append(parts, button(l, leftPad+a.underlineIndex, m.focusZone == zoneRSVP && i == m.focusedRSVP))
+		parts = append(parts, DefaultButtonStyles().Secondary.Render(l, m.focusZone == zoneRSVP && i == m.focusedRSVP))
 	}
 	value := strings.Join(parts, " ")
 

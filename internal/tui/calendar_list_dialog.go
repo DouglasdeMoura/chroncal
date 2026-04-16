@@ -507,17 +507,18 @@ func (m CalendarListDialogModel) renderDivider(w, h int) string {
 }
 
 func (m CalendarListDialogModel) renderActions(w int) string {
+	bs := DefaultButtonStyles()
 	actions := m.visibleActions()
 	parts := make([]string, len(actions))
 	for i, a := range actions {
 		focused := m.focusZone == clZoneActions && i == m.focusedAction
 		switch {
 		case a.danger:
-			parts[i] = buttonDanger(a.label, a.underlineIndex, focused)
+			parts[i] = bs.Danger.Render(a.label, focused)
 		case a.primary:
-			parts[i] = buttonStyled(a.label, a.underlineIndex, focused, true)
+			parts[i] = bs.Primary.Render(a.label, focused)
 		default:
-			parts[i] = button(a.label, a.underlineIndex, focused)
+			parts[i] = bs.Secondary.Render(a.label, focused)
 		}
 	}
 	return truncateTo(strings.Join(parts, " "), w)
