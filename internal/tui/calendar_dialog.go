@@ -144,10 +144,10 @@ func (f *PaletteField) IsFocusable() bool { return true }
 // HexColorField wraps a TextField and appends a live color preview dot
 // and optional "(custom)" label to its View.
 type HexColorField struct {
-	input      *TextField
-	paletteIdx int // -1 when off-palette
-	dimColor   color.Color
-	totalWidth int // full field column width (set via SetWidth)
+	input        *TextField
+	paletteIdx   int // -1 when off-palette
+	dimColor     color.Color
+	alignWidth   int // target width for right-aligning the suffix
 }
 
 func NewHexColorField(placeholder string, dimColor color.Color) *HexColorField {
@@ -170,7 +170,8 @@ func (f *HexColorField) SetPaletteIdx(idx int)     { f.paletteIdx = idx }
 func (f *HexColorField) Update(msg tea.Msg) tea.Cmd { return f.input.Update(msg) }
 func (f *HexColorField) Focus() tea.Cmd            { return f.input.Focus() }
 func (f *HexColorField) Blur()                     { f.input.Blur() }
-func (f *HexColorField) SetWidth(w int)            { f.totalWidth = w; f.input.SetWidth(max(w-16, 8)) }
+func (f *HexColorField) SetAlignWidth(w int)       { f.alignWidth = w }
+func (f *HexColorField) SetWidth(w int)            { f.input.SetWidth(max(w-16, 8)) }
 func (f *HexColorField) IsFocusable() bool         { return true }
 
 func (f *HexColorField) View() string {
@@ -183,10 +184,10 @@ func (f *HexColorField) View() string {
 	customLabel := lipgloss.NewStyle().Foreground(f.dimColor).Italic(true).Render("(custom)")
 	suffix := dot + "  " + customLabel
 
-	// Right-align suffix within the total field width.
+	// Right-align suffix with the palette row.
 	baseW := lipgloss.Width(base)
 	suffixW := lipgloss.Width(suffix)
-	gap := f.totalWidth - baseW - suffixW
+	gap := f.alignWidth - baseW - suffixW
 	if gap < 1 {
 		gap = 1
 	}
@@ -265,6 +266,7 @@ func NewCalendarDialogModel(id int64, name, hex string, theme Theme) CalendarDia
 	hexField.SetValue(hex)
 	hexField.input.SetCharLimit(7)
 	hexField.SetPaletteIdx(paletteIndexFor(hex))
+	hexField.SetAlignWidth(lipgloss.Width(palette.View()))
 
 	form := NewForm("Save", formStyles,
 		FormItem{Label: "Name", Field: nameField, Required: true},
@@ -314,6 +316,7 @@ func NewCalendarDialogModel(id int64, name, hex string, theme Theme) CalendarDia
 		}
 
 		hf.SetPaletteIdx(pal.Selected())
+		hf.SetAlignWidth(lipgloss.Width(pal.View()))
 	})
 	m.form = form
 
