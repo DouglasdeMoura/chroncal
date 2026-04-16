@@ -480,7 +480,7 @@ func (m EventDialogModel) eventIndexAtPosition(x, y int) (int, bool) {
 	if m.isNarrow() {
 		listH = min(max(len(m.events)+1, 3), max(bodyH/3, 3))
 	} else {
-		listW = max(min(max(innerW/4, 18), innerW-24), 10)
+		listW = listColumnWidth(innerW)
 	}
 
 	if x < listX || x >= listX+listW || y < listY || y >= listY+listH {
@@ -516,9 +516,7 @@ func (m EventDialogModel) actionBarOrigin() (int, int) {
 		return contentX, actionsY
 	}
 
-	listW := max(min(max(innerW/4, 18), innerW-24), 10)
-	dividerW := 3
-	return contentX + listW + dividerW, actionsY
+	return contentX + listColumnWidth(innerW) + dialogDividerWidth, actionsY
 }
 
 func (m EventDialogModel) rsvpBarOrigin() (int, int) {
@@ -544,9 +542,7 @@ func (m EventDialogModel) rsvpBarOrigin() (int, int) {
 	rsvpButtonsX := contentX + labelColWidth("Your RSVP", lw)
 
 	if !m.isNarrow() {
-		listW := max(min(max(innerW/4, 18), innerW-24), 10)
-		dividerW := 3
-		rsvpButtonsX += listW + dividerW
+		rsvpButtonsX += listColumnWidth(innerW) + dialogDividerWidth
 	}
 
 	return rsvpButtonsX, detailsStartY + rsvpIdx
@@ -569,9 +565,7 @@ func (m EventDialogModel) computeRSVPLineIdx() int {
 	if m.isNarrow() {
 		w = innerW
 	} else {
-		listW := max(min(max(innerW/4, 18), innerW-24), 10)
-		dividerW := 3
-		w = max(innerW-listW-dividerW, 10)
+		w = detailColumnWidth(innerW)
 	}
 
 	att, _ := m.userAttendee()
@@ -651,9 +645,7 @@ func (m EventDialogModel) createBtnOrigin() (int, int) {
 		return dialogX + 3, btnY
 	}
 
-	listW := max(min(max(innerW/4, 18), innerW-24), 10)
-	dividerW := 3
-	return dialogX + 3 + listW + dividerW, btnY
+	return dialogX + 3 + listColumnWidth(innerW) + dialogDividerWidth, btnY
 }
 
 func (m EventDialogModel) renderEmptyDetails(w, h int) string {
@@ -665,13 +657,12 @@ func (m EventDialogModel) renderEmptyDetails(w, h int) string {
 }
 
 func (m *EventDialogModel) viewColumns(innerW, bodyH int) string {
-	listW := max(min(max(innerW/4, 18), innerW-24), 10)
-	dividerW := 3
-	detailsW := max(innerW-listW-dividerW, 10)
+	listW := listColumnWidth(innerW)
+	detailsW := detailColumnWidth(innerW)
 
 	m.adjustScroll(bodyH)
 	list := m.renderList(listW, bodyH)
-	divider := m.renderDivider(dividerW, bodyH)
+	divider := m.renderDivider(dialogDividerWidth, bodyH)
 	details := m.renderDetails(detailsW, bodyH)
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, list, divider, details)

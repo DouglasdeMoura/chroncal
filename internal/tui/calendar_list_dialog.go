@@ -344,7 +344,7 @@ func (m CalendarListDialogModel) rowAtPosition(x, y int) (int, bool) {
 	if m.isNarrow() {
 		listH = min(max(len(m.order)+1, 3), max(bodyH/3, 3))
 	} else {
-		listW = max(min(max(innerW/4, 20), innerW-24), 12)
+		listW = listColumnWidth(innerW)
 	}
 
 	if x < listX || x >= listX+listW || y < listY || y >= listY+listH {
@@ -379,9 +379,7 @@ func (m CalendarListDialogModel) actionBarOrigin() (int, int) {
 		return contentX, actionsY
 	}
 
-	listW := max(min(max(innerW/4, 20), innerW-24), 12)
-	dividerW := 3
-	return contentX + listW + dividerW, actionsY
+	return contentX + listColumnWidth(innerW) + dialogDividerWidth, actionsY
 }
 
 func (m CalendarListDialogModel) View() string {
@@ -421,13 +419,12 @@ func (m CalendarListDialogModel) View() string {
 }
 
 func (m *CalendarListDialogModel) viewColumns(innerW, bodyH int) string {
-	listW := max(min(max(innerW/4, 20), innerW-24), 12)
-	dividerW := 3
-	detailsW := max(innerW-listW-dividerW, 10)
+	listW := listColumnWidth(innerW)
+	detailsW := detailColumnWidth(innerW)
 
 	m.adjustScroll(bodyH)
 	list := m.renderList(listW, bodyH)
-	divider := m.renderDivider(dividerW, bodyH)
+	divider := m.renderDivider(dialogDividerWidth, bodyH)
 	details := m.renderDetails(detailsW, bodyH)
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, list, divider, details)
