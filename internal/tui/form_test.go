@@ -305,6 +305,21 @@ func TestForm_SkipsStaticFields(t *testing.T) {
 	assert.Equal(t, 2, form.Focused(), "skips static field to Email")
 }
 
+func TestForm_ShiftTabSkipsStaticFieldsBackward(t *testing.T) {
+	form := newTestForm(
+		FormItem{Label: "Name", Field: NewTextField("name")},
+		FormItem{Label: "Info", Field: NewStaticField("read-only", nil)},
+		FormItem{Label: "Email", Field: NewTextField("email")},
+	)
+
+	// Tab to Email (skips static), then shift-tab back to Name (skips static).
+	formPressTab(&form)
+	assert.Equal(t, 2, form.Focused(), "Email")
+
+	formPressShiftTab(&form)
+	assert.Equal(t, 0, form.Focused(), "back to Name, skipping static")
+}
+
 func TestForm_FieldValuesAccessible(t *testing.T) {
 	form := newTestForm(
 		FormItem{Label: "Name", Field: NewTextField("name")},

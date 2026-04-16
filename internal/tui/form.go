@@ -316,10 +316,10 @@ func (f Form) Update(msg tea.Msg) (Form, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		switch {
-		case key.Matches(msg, formKeys.Tab):
-			return f.focusNext()
 		case key.Matches(msg, formKeys.ShiftTab):
 			return f.focusPrev()
+		case key.Matches(msg, formKeys.Tab):
+			return f.focusNext()
 		case key.Matches(msg, formKeys.Enter):
 			return f.handleEnter()
 		}
@@ -381,10 +381,12 @@ func (f Form) View() string {
 		marker := f.focusMarker(focused)
 
 		var row string
-		switch layout {
-		case LabelInline:
+		switch {
+		case (layout == LabelInline || layout == LabelInlineRight) && item.Label == "":
+			row = marker + field
+		case layout == LabelInline:
 			row = f.styles.Label.Width(maxLabelLen).Render(item.Label) + " " + marker + field
-		case LabelInlineRight:
+		case layout == LabelInlineRight:
 			row = f.styles.Label.Width(maxLabelLen).Align(lipgloss.Right).Render(item.Label) + " " + marker + field
 		default: // LabelTop
 			row = f.styles.Label.Render(item.Label) + "\n" + marker + field
@@ -501,13 +503,13 @@ func (f Form) handleClick(target string) (Form, tea.Cmd) {
 func (f Form) focusNext() (Form, tea.Cmd) {
 	f.blurCurrent()
 	f.focused = (f.focused + 1) % f.totalCount()
-	return f.focusToNextFocusable()
+	return f.skipToFocusable(1)
 }
 
 func (f Form) focusPrev() (Form, tea.Cmd) {
 	f.blurCurrent()
 	f.focused = (f.focused - 1 + f.totalCount()) % f.totalCount()
-	return f.focusToNextFocusable()
+	return f.skipToFocusable(-1)
 }
 
 func (f Form) blurCurrent() {
@@ -523,14 +525,17 @@ func (f Form) focusCurrent() tea.Cmd {
 	return nil
 }
 
-func (f Form) focusToNextFocusable() (Form, tea.Cmd) {
+// skipToFocusable scans in the given direction (+1 or -1) until it lands
+// on a focusable field or a button slot. This ensures that focusPrev
+// correctly skips non-focusable items backward instead of forward.
+func (f Form) skipToFocusable(dir int) (Form, tea.Cmd) {
 	start := f.focused
 	for {
 		if f.focused < len(f.items) {
 			if f.items[f.focused].Field.IsFocusable() {
 				return f, f.focusCurrent()
 			}
-			f.focused = (f.focused + 1) % f.totalCount()
+			f.focused = (f.focused + dir + f.totalCount()) % f.totalCount()
 		} else {
 			return f, nil
 		}
