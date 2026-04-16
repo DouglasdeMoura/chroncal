@@ -550,10 +550,7 @@ func (f Form) Update(msg tea.Msg) (Form, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		f.width = msg.Width
-		inputWidth := min(max(f.width-4, 1), 60)
-		for _, item := range f.items {
-			item.Field.SetWidth(inputWidth)
-		}
+		f.applyFieldWidths()
 
 	case MouseEvent:
 		if msg.IsClick {
@@ -725,11 +722,8 @@ func (f *Form) OnFieldEnter(fn func(f *Form, field int) tea.Cmd) {
 }
 
 func (f *Form) AppendItems(items ...FormItem) {
-	inputWidth := min(f.width-4, 60)
-	for _, item := range items {
-		item.Field.SetWidth(inputWidth)
-	}
 	f.items = append(f.items, items...)
+	f.applyFieldWidths()
 }
 
 func (f *Form) RemoveItems(from int) {
@@ -751,9 +745,52 @@ func (f *Form) SetWidth(w int) {
 		return
 	}
 	f.width = w
-	inputWidth := min(max(w-4, 1), 60)
+	f.applyFieldWidths()
+}
+
+// applyFieldWidths sets each field's width based on the form width,
+// accounting for inline label columns and focus markers.
+func (f *Form) applyFieldWidths() {
+	if f.width <= 0 {
+		return
+	}
+
+	// Compute the widest inline label (same logic as View).
+	maxLabelLen := 0
 	for _, item := range f.items {
-		item.Field.SetWidth(inputWidth)
+		if _, isStatic := item.Field.(*StaticField); isStatic {
+			continue
+		}
+		layout := f.styles.LabelLayout
+		if item.LabelLayout != nil {
+			layout = *item.LabelLayout
+		}
+		if layout != LabelTop && len(item.Label) > maxLabelLen {
+			maxLabelLen = len(item.Label)
+		}
+	}
+
+	for _, item := range f.items {
+		layout := f.styles.LabelLayout
+		if item.LabelLayout != nil {
+			layout = *item.LabelLayout
+		}
+		showMarker := f.styles.ShowFocusMarker
+		if item.ShowFocusMarker != nil {
+			showMarker = *item.ShowFocusMarker
+		}
+
+		w := f.width - 1 // reserve 1 col so textinput cursor doesn't overflow
+		if layout == LabelInline || layout == LabelInlineRight {
+			// Subtract: label column + " " gap + marker
+			w -= maxLabelLen + 1
+			if showMarker {
+				w -= 2 // "> " or "  "
+			}
+		} else if showMarker {
+			w -= 2
+		}
+		item.Field.SetWidth(max(w, 1))
 	}
 }
 

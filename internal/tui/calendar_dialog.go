@@ -169,7 +169,7 @@ func (f *HexColorField) SetPaletteIdx(idx int)     { f.paletteIdx = idx }
 func (f *HexColorField) Update(msg tea.Msg) tea.Cmd { return f.input.Update(msg) }
 func (f *HexColorField) Focus() tea.Cmd            { return f.input.Focus() }
 func (f *HexColorField) Blur()                     { f.input.Blur() }
-func (f *HexColorField) SetWidth(w int)            { f.input.SetWidth(w) }
+func (f *HexColorField) SetWidth(w int)            { f.input.SetWidth(max(w-16, 8)) }
 func (f *HexColorField) IsFocusable() bool         { return true }
 
 func (f *HexColorField) View() string {
@@ -240,7 +240,7 @@ func NewCalendarDialogModel(id int64, name, hex string, theme Theme) CalendarDia
 
 	styles := DefaultDialogStyles()
 	dialog := NewDialog(title, styles)
-	dialog.SetWidth(50)
+	dialog.SetWidth(54) // 54 total = 2 border + 2 padding + 50 content
 
 	formStyles := DefaultFormStyles()
 	formStyles.LabelLayout = LabelInline

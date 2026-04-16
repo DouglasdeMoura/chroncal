@@ -929,3 +929,20 @@ func formFocusSubmit(form *Form) {
 func formClickTarget(form *Form, target string) {
 	*form = updateForm(*form, MouseEvent{IsClick: true, Target: target})
 }
+
+func TestCalendarDialogRendering(t *testing.T) {
+	theme := Theme{}
+	m := NewCalendarDialogModel(0, "", "#a6e3a1", theme)
+	m = m.SetSize(120, 40)
+
+	v := m.View()
+	assert.NotEmpty(t, v)
+
+	// All form lines must fit within the dialog content width.
+	fv := m.form.View()
+	cw := m.dialog.ContentWidth()
+	for i, l := range strings.Split(fv, "\n") {
+		w := lipgloss.Width(l)
+		assert.LessOrEqual(t, w, cw, "form line %d is %d cols, exceeds content width %d", i, w, cw)
+	}
+}

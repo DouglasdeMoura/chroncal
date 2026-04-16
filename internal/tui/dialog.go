@@ -75,7 +75,13 @@ func (d Dialog) Update(msg tea.Msg) Dialog {
 // Returns 0 before the first WindowSizeMsg.
 func (d Dialog) ContentWidth() int {
 	if d.fixedWidth > 0 {
-		return d.fixedWidth
+		// fixedWidth is the total box width set via lipgloss.Width().
+		// Border (1 char each side) and padding are applied inside that width.
+		w := d.fixedWidth - 2 - 2*d.styles.PaddingX
+		if w < 0 {
+			return 0
+		}
+		return w
 	}
 	if d.width == 0 {
 		return 0
