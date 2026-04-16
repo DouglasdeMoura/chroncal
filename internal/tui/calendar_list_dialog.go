@@ -576,10 +576,9 @@ func (m CalendarListDialogModel) labelWidth() int {
 
 func calendarDetailLines(info CalendarInfo, w, labelWidth int) []string {
 	faint := lipgloss.NewStyle().Faint(true)
-	bold := lipgloss.NewStyle().Bold(true)
 
 	var lines []string
-	lines = append(lines, truncateTo(bold.Render(info.Name), w))
+	lines = append(lines, strings.Split(paneTitle(info.Name, w), "\n")...)
 	lines = append(lines, "")
 
 	dot := "●"

@@ -880,10 +880,9 @@ func (m EventDialogModel) renderRSVPLine(att model.Attendee, rsvp []dialogAction
 // eventDetailLines returns detail lines and the index of the RSVP row (-1 if none).
 func eventDetailLines(ev event.Event, cal CalendarInfo, w, labelWidth int, rsvpLine string) ([]string, int) {
 	faint := lipgloss.NewStyle().Faint(true)
-	bold := lipgloss.NewStyle().Bold(true)
 
 	var lines []string
-	lines = append(lines, truncateTo(bold.Render(ev.Title), w))
+	lines = append(lines, strings.Split(paneTitle(ev.Title, w), "\n")...)
 	lines = append(lines, "")
 
 	lines = append(lines, detailLine(faint, "When", formatWhen(ev), labelWidth, w))
