@@ -413,15 +413,16 @@ func (f *PaletteField) View() string {
 	}
 	parts := make([]string, 0, len(f.swatches))
 	for i, c := range f.swatches {
+		target := "palette:" + strconv.Itoa(i)
 		if i == f.selected {
 			brCol := f.mutedColor
 			if f.focused {
 				brCol = f.accentColor
 			}
 			br := lipgloss.NewStyle().Foreground(brCol).Bold(true)
-			parts = append(parts, br.Render("[")+dot(c)+br.Render("]"))
+			parts = append(parts, mouseMark(target, br.Render("[")+dot(c)+br.Render("]")))
 		} else {
-			parts = append(parts, dot(c))
+			parts = append(parts, mouseMark(target, dot(c)))
 		}
 	}
 	return strings.Join(parts, " ")
@@ -451,7 +452,6 @@ type HexColorField struct {
 	input      *TextField
 	paletteIdx int // -1 when off-palette
 	dimColor   color.Color
-	alignWidth int // target width for right-aligning the suffix
 }
 
 func NewHexColorField(placeholder string, dimColor color.Color) *HexColorField {
@@ -471,7 +471,6 @@ func NewHexColorField(placeholder string, dimColor color.Color) *HexColorField {
 func (f *HexColorField) Value() string              { return f.input.Value() }
 func (f *HexColorField) SetValue(v string)          { f.input.SetValue(v) }
 func (f *HexColorField) SetPaletteIdx(idx int)      { f.paletteIdx = idx }
-func (f *HexColorField) SetAlignWidth(w int)        { f.alignWidth = w }
 func (f *HexColorField) Update(msg tea.Msg) tea.Cmd { return f.input.Update(msg) }
 func (f *HexColorField) Focus() tea.Cmd             { return f.input.Focus() }
 func (f *HexColorField) Blur()                      { f.input.Blur() }
@@ -486,13 +485,7 @@ func (f *HexColorField) View() string {
 	}
 	dot := lipgloss.NewStyle().Foreground(lipgloss.Color(hexVal)).Render(Glyphs["dot"])
 	customLabel := lipgloss.NewStyle().Foreground(f.dimColor).Italic(true).Render("(custom)")
-	suffix := dot + "  " + customLabel
-
-	// Right-align suffix with the palette row.
-	baseW := lipgloss.Width(base)
-	suffixW := lipgloss.Width(suffix)
-	gap := max(f.alignWidth-baseW-suffixW, 1)
-	return base + strings.Repeat(" ", gap) + suffix
+	return base + "  " + dot + "  " + customLabel
 }
 
 // isHexInputAllowed reports whether the printable text t can be inserted
@@ -1015,6 +1008,19 @@ func (f Form) handleClick(target string) (Form, tea.Cmd) {
 					cmd = sf.Update(keyMsg("right"))
 				}
 				return f, cmd
+			}
+		}
+		return f, nil
+	}
+
+	// Palette swatch clicks: "palette:N" selects swatch N and focuses the field.
+	if strings.HasPrefix(target, "palette:") {
+		if idx, err := strconv.Atoi(strings.TrimPrefix(target, "palette:")); err == nil {
+			for i := range f.items {
+				if pf, ok := f.items[i].Field.(*PaletteField); ok {
+					pf.selected = idx
+					return f.focusIndex(i)
+				}
 			}
 		}
 		return f, nil

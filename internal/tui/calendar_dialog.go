@@ -96,7 +96,6 @@ func NewCalendarDialogModel(id int64, name, hex string, theme Theme) CalendarDia
 	hexField.SetValue(hex)
 	hexField.input.SetCharLimit(7)
 	hexField.SetPaletteIdx(paletteIndexFor(hex))
-	hexField.SetAlignWidth(lipgloss.Width(palette.View()))
 
 	form := NewForm("Save", formStyles,
 		FormItem{Label: "Name", Field: nameField, Required: true},
@@ -146,7 +145,6 @@ func NewCalendarDialogModel(id int64, name, hex string, theme Theme) CalendarDia
 		}
 
 		hf.SetPaletteIdx(pal.Selected())
-		hf.SetAlignWidth(lipgloss.Width(pal.View()))
 	})
 	m.form = form
 
