@@ -32,9 +32,9 @@ func renderListRow(label string, w int, selected, focused bool, tint color.Color
 	var prefix string
 	switch {
 	case selected && focused:
-		prefix = lipgloss.NewStyle().Foreground(lipgloss.Color("63")).Render("▌") + " "
+		prefix = lipgloss.NewStyle().Foreground(lipgloss.Color("63")).Render("❯") + " "
 	case selected:
-		prefix = lipgloss.NewStyle().Faint(true).Render("▌") + " "
+		prefix = lipgloss.NewStyle().Faint(true).Render("❯") + " "
 	default:
 		prefix = strings.Repeat(" ", selectionPrefixWidth)
 	}
