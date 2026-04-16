@@ -21,7 +21,7 @@ type DialogStyles struct {
 func DefaultDialogStyles() DialogStyles {
 	return DialogStyles{
 		Title:    lipgloss.NewStyle().Bold(true),
-		Footer:   lipgloss.NewStyle().Faint(true),
+		Footer:   lipgloss.NewStyle(),
 		Border:   lipgloss.RoundedBorder(),
 		BorderFg: lipgloss.NoColor{},
 		PaddingY: 1,
