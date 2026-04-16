@@ -114,7 +114,7 @@ func (d Dialog) Box(content string) string {
 
 	inner := lipgloss.JoinVertical(lipgloss.Left, sections...)
 
-	padBottom := 0
+	padBottom := d.styles.PaddingY
 
 	box := lipgloss.NewStyle().
 		Border(d.styles.Border).
