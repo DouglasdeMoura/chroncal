@@ -1022,7 +1022,11 @@ func (f Form) handleClick(target string) (Form, tea.Cmd) {
 			for i := range f.items {
 				if pf, ok := f.items[i].Field.(*PaletteField); ok {
 					pf.selected = idx
-					return f.focusIndex(i)
+					f, cmd := f.focusIndex(i)
+					if f.onRebuild != nil {
+						f.onRebuild(&f)
+					}
+					return f, cmd
 				}
 			}
 		}
