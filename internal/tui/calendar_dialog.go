@@ -175,15 +175,12 @@ func (f *HexColorField) IsFocusable() bool         { return true }
 func (f *HexColorField) View() string {
 	base := f.input.View()
 	hexVal := strings.TrimSpace(f.input.Value())
-	if !hexRE.MatchString(hexVal) {
+	if f.paletteIdx >= 0 || !hexRE.MatchString(hexVal) {
 		return base
 	}
 	preview := "  " + lipgloss.NewStyle().Foreground(lipgloss.Color(hexVal)).Render("●")
-	if f.paletteIdx < 0 {
-		custom := "  " + lipgloss.NewStyle().Foreground(f.dimColor).Italic(true).Render("(custom)")
-		return base + preview + custom
-	}
-	return base + preview
+	custom := "  " + lipgloss.NewStyle().Foreground(f.dimColor).Italic(true).Render("(custom)")
+	return base + preview + custom
 }
 
 // ---------------------------------------------------------------------------
