@@ -9,8 +9,8 @@ var Glyphs = map[string]string{
 	"ellipsis": "…",
 
 	// Checkbox
-	"checkbox.on":  "\U000f0c52", // 󰱒
-	"checkbox.off": "\U000f0131", // 󰄱
+	"checkbox.on":  "[x]",
+	"checkbox.off": "[ ]",
 
 	// Status
 	"status.ok":     "✓",
