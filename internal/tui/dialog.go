@@ -25,7 +25,7 @@ func DefaultDialogStyles() DialogStyles {
 		Border:   lipgloss.RoundedBorder(),
 		BorderFg: lipgloss.NoColor{},
 		PaddingY: 1,
-		PaddingX: 3,
+		PaddingX: 1,
 	}
 }
 
