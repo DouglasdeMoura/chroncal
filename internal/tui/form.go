@@ -117,6 +117,18 @@ func (f *TextAreaField) SetCharLimit(n int)      { f.input.CharLimit = n }
 func (f *TextAreaField) SetHeight(h int)         { f.input.SetHeight(h) }
 
 func (f *TextAreaField) Update(msg tea.Msg) tea.Cmd {
+	if kp, ok := msg.(tea.KeyPressMsg); ok {
+		k := kp.Key()
+		// Block plain Enter so the Form can use it for focus cycling.
+		// Shift+Enter inserts a newline by forwarding as a plain Enter.
+		if k.Code == '\r' {
+			if k.Mod&tea.ModShift == 0 {
+				return nil
+			}
+			plain := tea.Key{Code: '\r'}
+			msg = tea.KeyPressMsg(plain)
+		}
+	}
 	var cmd tea.Cmd
 	f.input, cmd = f.input.Update(msg)
 	return cmd
@@ -507,6 +519,7 @@ type Form struct {
 	onSubmit     func(f *Form) tea.Cmd
 	onCancel     func(f *Form) tea.Cmd
 	onRebuild    func(f *Form)
+	onFieldEnter func(f *Form, field int) tea.Cmd
 }
 
 func NewForm(submitLabel string, styles FormStyles, items ...FormItem) Form {
@@ -703,6 +716,14 @@ func (f *Form) OnRebuild(fn func(f *Form)) {
 	f.onRebuild = fn
 }
 
+// OnFieldEnter registers a callback that fires when Enter is pressed on a
+// form field (not a button or checkbox). If the callback returns a non-nil
+// Cmd, it replaces the default focus-next behavior. Return nil to keep
+// the default. The field parameter is the index of the focused field.
+func (f *Form) OnFieldEnter(fn func(f *Form, field int) tea.Cmd) {
+	f.onFieldEnter = fn
+}
+
 func (f *Form) AppendItems(items ...FormItem) {
 	inputWidth := min(f.width-4, 60)
 	for _, item := range items {
@@ -875,6 +896,17 @@ func (f Form) skipToFocusable(dir int) (Form, tea.Cmd) {
 func (f Form) handleEnter() (Form, tea.Cmd) {
 	switch {
 	case f.focused < len(f.items):
+		// CheckboxField: Enter toggles.
+		if cb, ok := f.items[f.focused].Field.(*CheckboxField); ok {
+			cb.Toggle()
+			return f, nil
+		}
+		// Custom field-enter handler.
+		if f.onFieldEnter != nil {
+			if cmd := f.onFieldEnter(&f, f.focused); cmd != nil {
+				return f, cmd
+			}
+		}
 		return f.focusNext()
 	case f.focused == f.submitIndex():
 		return f.submitIfValid()
