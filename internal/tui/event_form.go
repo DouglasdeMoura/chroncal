@@ -499,6 +499,9 @@ func (m EventFormModel) SetSize(w, h int) EventFormModel {
 
 // BoxSize returns the outer dimensions of the form dialog.
 func (m EventFormModel) BoxSize() (int, int) {
+	if m.width <= 0 || m.height <= 0 {
+		return 0, 0
+	}
 	return lipgloss.Size(m.View())
 }
 

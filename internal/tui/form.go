@@ -550,7 +550,7 @@ func (f Form) Update(msg tea.Msg) (Form, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		f.width = msg.Width
-		inputWidth := min(f.width-4, 60)
+		inputWidth := min(max(f.width-4, 1), 60)
 		for _, item := range f.items {
 			item.Field.SetWidth(inputWidth)
 		}
@@ -747,8 +747,11 @@ func (f Form) Error() string  { return f.error }
 // relying on WindowSizeMsg when the form is embedded inside a Dialog or
 // other container whose width differs from the terminal width.
 func (f *Form) SetWidth(w int) {
+	if w <= 0 {
+		return
+	}
 	f.width = w
-	inputWidth := min(w-4, 60)
+	inputWidth := min(max(w-4, 1), 60)
 	for _, item := range f.items {
 		item.Field.SetWidth(inputWidth)
 	}
