@@ -232,7 +232,9 @@ type FormItem struct {
 // FormStyles controls how the Form renders labels, errors, and buttons.
 type FormStyles struct {
 	Label           lipgloss.Style
-	ShowFocusMarker bool        // when true, render "> " before the focused field
+	Input           lipgloss.Style // style wrapping unfocused fields (e.g. border)
+	InputFocused    lipgloss.Style // style wrapping the focused field
+	ShowFocusMarker bool           // when true, render focus glyph before the focused field
 	Error           lipgloss.Style
 	LabelLayout     LabelLayout // default layout for all fields
 	// RenderButton renders a button with the given label. focused indicates
@@ -369,7 +371,15 @@ func (f Form) View() string {
 			continue
 		}
 
-		field := mouseMark(fieldTarget(i), item.Field.View())
+		fieldView := item.Field.View()
+		if _, isText := item.Field.(*TextField); isText {
+			if f.focused == i {
+				fieldView = f.styles.InputFocused.Render(fieldView)
+			} else {
+				fieldView = f.styles.Input.Render(fieldView)
+			}
+		}
+		field := mouseMark(fieldTarget(i), fieldView)
 		hasError := f.error != "" && i == f.errorField
 
 		layout := f.styles.LabelLayout
@@ -383,13 +393,16 @@ func (f Form) View() string {
 		var row string
 		switch {
 		case (layout == LabelInline || layout == LabelInlineRight) && item.Label == "":
-			row = marker + field
+			row = lipgloss.JoinHorizontal(lipgloss.Center, marker, field)
 		case layout == LabelInline:
-			row = f.styles.Label.Width(maxLabelLen).Render(item.Label) + " " + marker + field
+			label := f.styles.Label.Width(maxLabelLen).Render(item.Label)
+			row = lipgloss.JoinHorizontal(lipgloss.Center, label+" "+marker, field)
 		case layout == LabelInlineRight:
-			row = f.styles.Label.Width(maxLabelLen).Align(lipgloss.Right).Render(item.Label) + " " + marker + field
+			label := f.styles.Label.Width(maxLabelLen).Align(lipgloss.Right).Render(item.Label)
+			row = lipgloss.JoinHorizontal(lipgloss.Center, label+" "+marker, field)
 		default: // LabelTop
-			row = f.styles.Label.Render(item.Label) + "\n" + marker + field
+			label := f.styles.Label.Render(item.Label)
+			row = label + "\n" + lipgloss.JoinHorizontal(lipgloss.Center, marker, field)
 		}
 
 		if hasError {
