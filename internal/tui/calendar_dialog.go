@@ -58,7 +58,6 @@ const (
 	cdFieldName calendarDialogField = iota
 	cdFieldPalette
 	cdFieldHex
-	cdFieldDelete
 	cdFieldCancel
 	cdFieldSave
 )
@@ -198,23 +197,14 @@ type actionButton struct {
 // when editing) and assigns each button a column range so View renders and
 // handleMouse hit-tests against the same numbers.
 func (m CalendarDialogModel) actionLayout() []actionButton {
-	var labels []string
-	var fields []calendarDialogField
-	if m.isEditing() {
-		labels = []string{"Delete", "Cancel", "Save"}
-		fields = []calendarDialogField{cdFieldDelete, cdFieldCancel, cdFieldSave}
-	} else {
-		labels = []string{"Cancel", "Save"}
-		fields = []calendarDialogField{cdFieldCancel, cdFieldSave}
-	}
+	labels := []string{"Cancel", "Save"}
+	fields := []calendarDialogField{cdFieldCancel, cdFieldSave}
 	indices := buttonDialogUnderlineIndices(labels)
 
 	btns := make([]actionButton, len(labels))
 	for i, label := range labels {
 		b := actionButton{field: fields[i], label: label, underlineIdx: indices[i]}
 		switch b.field {
-		case cdFieldDelete:
-			b.rendered = buttonDanger(label, indices[i], m.field == cdFieldDelete)
 		case cdFieldCancel:
 			b.rendered = button(label, indices[i], m.field == cdFieldCancel)
 		case cdFieldSave:
@@ -227,21 +217,11 @@ func (m CalendarDialogModel) actionLayout() []actionButton {
 
 	const sep = 2 // "  " between Cancel and Save
 	widthOf := func(i int) int { return lipgloss.Width(btns[i].rendered) }
-	if m.isEditing() {
-		delW, cancelW, saveW := widthOf(0), widthOf(1), widthOf(2)
-		gap := max(cdContentWidth-delW-(cancelW+sep+saveW), 2)
-		btns[0].start, btns[0].end = 0, delW
-		btns[1].start = delW + gap
-		btns[1].end = btns[1].start + cancelW
-		btns[2].start = btns[1].end + sep
-		btns[2].end = btns[2].start + saveW
-	} else {
-		cancelW, saveW := widthOf(0), widthOf(1)
-		leftPad := max(cdContentWidth-(cancelW+sep+saveW), 0)
-		btns[0].start, btns[0].end = leftPad, leftPad+cancelW
-		btns[1].start = btns[0].end + sep
-		btns[1].end = btns[1].start + saveW
-	}
+	cancelW, saveW := widthOf(0), widthOf(1)
+	leftPad := max(cdContentWidth-(cancelW+sep+saveW), 0)
+	btns[0].start, btns[0].end = leftPad, leftPad+cancelW
+	btns[1].start = btns[0].end + sep
+	btns[1].end = btns[1].start + saveW
 	return btns
 }
 
@@ -254,11 +234,6 @@ func (m CalendarDialogModel) triggerField(f calendarDialogField) (CalendarDialog
 		return m.tryEmitSave()
 	case cdFieldCancel:
 		return m, func() tea.Msg { return CalendarDialogClosedMsg{} }
-	case cdFieldDelete:
-		if m.isEditing() {
-			id, name := m.id, m.nameInput.Value()
-			return m, func() tea.Msg { return CalendarDeleteRequestedMsg{ID: id, Name: name} }
-		}
 	default:
 		// cdFieldName, cdFieldPalette, cdFieldHex: no action on trigger
 	}
@@ -369,7 +344,7 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 		case cdFieldHex:
 			m.hexInput, cmd = m.hexInput.Update(msg)
 		default:
-			// cdFieldPalette, cdFieldDelete, cdFieldCancel, cdFieldSave: no-op
+			// cdFieldPalette, cdFieldCancel, cdFieldSave: no-op
 		}
 		return m, cmd
 	}
@@ -445,7 +420,7 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 			m.errorMsg = ""
 		}
 		return m, nil
-	case cdFieldSave, cdFieldCancel, cdFieldDelete:
+	case cdFieldSave, cdFieldCancel:
 		if key.Matches(kp, m.keys.Confirm) {
 			return m.triggerField(m.field)
 		}
@@ -453,15 +428,10 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 	return m, nil
 }
 
-// advanceField cycles through the active fields. The Delete field is only
-// included when editing (id > 0). Tab order is left-to-right, top-to-bottom:
-// Name → Palette → Hex → [Delete] → Cancel → Save.
+// advanceField cycles through the active fields. Tab order is
+// left-to-right, top-to-bottom: Name → Palette → Hex → Cancel → Save.
 func (m CalendarDialogModel) advanceField(delta int) CalendarDialogModel {
-	fields := []calendarDialogField{cdFieldName, cdFieldPalette, cdFieldHex}
-	if m.isEditing() {
-		fields = append(fields, cdFieldDelete)
-	}
-	fields = append(fields, cdFieldCancel, cdFieldSave)
+	fields := []calendarDialogField{cdFieldName, cdFieldPalette, cdFieldHex, cdFieldCancel, cdFieldSave}
 
 	idx := 0
 	for i, f := range fields {
@@ -486,7 +456,7 @@ func (m CalendarDialogModel) focusField(f calendarDialogField) CalendarDialogMod
 	case cdFieldHex:
 		m.hexInput.Focus()
 	default:
-		// cdFieldPalette, cdFieldDelete, cdFieldCancel, cdFieldSave: no input focus
+		// cdFieldPalette, cdFieldCancel, cdFieldSave: no input focus
 	}
 	return m
 }
@@ -581,9 +551,8 @@ func (m CalendarDialogModel) View() string {
 			lipgloss.NewStyle().Foreground(m.errorColor).Render(m.errorMsg)
 	}
 
-	// Action row: Delete on the far left (destructive, least prominent),
-	// Cancel + Save on the far right. Save is the primary action. Layout is
-	// computed in actionLayout so View and handleMouse stay in sync.
+	// Action row: Cancel + Save on the far right. Save is the primary action.
+	// Layout is computed in actionLayout so View and handleMouse stay in sync.
 	var actionsRow strings.Builder
 	prev := 0
 	for _, b := range m.actionLayout() {
