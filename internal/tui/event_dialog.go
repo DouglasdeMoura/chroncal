@@ -466,13 +466,13 @@ func (m EventDialogModel) eventIndexAtPosition(x, y int) (int, bool) {
 	}
 
 	boxW, boxH := m.boxSize()
-	innerW := max(boxW-6, 10)
+	innerW := max(boxW-5, 10)
 	innerH := max(boxH-4, 6)
 	bodyH := max(innerH-4, 3)
 
 	dialogX := (m.width - boxW) / 2
 	dialogY := (m.height - boxH) / 2
-	listX := dialogX + 3
+	listX := dialogX + 2
 	listY := dialogY + 4
 	listW := innerW
 	listH := bodyH
@@ -501,7 +501,7 @@ func (m EventDialogModel) eventIndexAtPosition(x, y int) (int, bool) {
 
 func (m EventDialogModel) actionBarOrigin() (int, int) {
 	boxW, boxH := m.boxSize()
-	innerW := max(boxW-6, 10)
+	innerW := max(boxW-5, 10)
 	innerH := max(boxH-4, 6)
 	bodyH := max(innerH-4, 3)
 
@@ -509,7 +509,7 @@ func (m EventDialogModel) actionBarOrigin() (int, int) {
 	dialogY := (m.height - boxH) / 2
 
 	// border(1) + padding(top:1, left:2)
-	contentX := dialogX + 3
+	contentX := dialogX + 2
 	actionsY := dialogY + bodyH + 3
 
 	if m.isNarrow() {
@@ -526,11 +526,11 @@ func (m EventDialogModel) rsvpBarOrigin() (int, int) {
 	}
 
 	boxW, _ := m.boxSize()
-	innerW := max(boxW-6, 10)
+	innerW := max(boxW-5, 10)
 	dialogX := (m.width - boxW) / 2
 	dialogY := (m.height - m.boxH()) / 2
 
-	contentX := dialogX + 3
+	contentX := dialogX + 2
 	detailsStartY := dialogY + 4
 
 	if m.isNarrow() {
@@ -560,7 +560,7 @@ func (m EventDialogModel) computeRSVPLineIdx() int {
 	cal := m.calendars[ev.CalendarID]
 
 	boxW, _ := m.boxSize()
-	innerW := max(boxW-6, 10)
+	innerW := max(boxW-5, 10)
 	var w int
 	if m.isNarrow() {
 		w = innerW
@@ -595,7 +595,7 @@ func (m EventDialogModel) View() string {
 	}
 
 	boxW, boxH := m.boxSize()
-	innerW := max(boxW-6, 10)
+	innerW := max(boxW-5, 10)
 	innerH := max(boxH-4, 6)
 
 	title := lipgloss.NewStyle().
@@ -626,14 +626,14 @@ func (m EventDialogModel) View() string {
 	return lipgloss.NewStyle().
 		Width(boxW).
 		Height(boxH).
-		Padding(1, 2).
+		Padding(1, 2, 1, 1).
 		Border(lipgloss.RoundedBorder()).
 		Render(content)
 }
 
 func (m EventDialogModel) createBtnOrigin() (int, int) {
 	boxW, _ := m.boxSize()
-	innerW := max(boxW-6, 10)
+	innerW := max(boxW-5, 10)
 	dialogX := (m.width - boxW) / 2
 	dialogY := (m.height - m.boxH()) / 2
 	// border(1) + padding(top:1, left:2) + title(1) + blank(1) + "No events"(1) + blank(1)
@@ -642,10 +642,10 @@ func (m EventDialogModel) createBtnOrigin() (int, int) {
 	if m.isNarrow() {
 		listH := min(max(1, 3), max(m.bodyH()/3, 3))
 		btnY = dialogY + 2 + listH + 1 + 2
-		return dialogX + 3, btnY
+		return dialogX + 2, btnY
 	}
 
-	return dialogX + 3 + listColumnWidth(innerW) + dialogDividerWidth, btnY
+	return dialogX + 2 + listColumnWidth(innerW) + dialogDividerWidth, btnY
 }
 
 func (m EventDialogModel) renderEmptyDetails(w, h int) string {

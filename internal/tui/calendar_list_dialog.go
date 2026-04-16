@@ -330,13 +330,13 @@ func (m CalendarListDialogModel) rowAtPosition(x, y int) (int, bool) {
 	}
 
 	boxW, boxH := m.boxSize()
-	innerW := max(boxW-6, 10)
+	innerW := max(boxW-5, 10)
 	innerH := max(boxH-4, 6)
 	bodyH := max(innerH-4, 3)
 
 	dialogX := (m.width - boxW) / 2
 	dialogY := (m.height - boxH) / 2
-	listX := dialogX + 3
+	listX := dialogX + 2
 	listY := dialogY + 4
 	listW := innerW
 	listH := bodyH
@@ -365,14 +365,14 @@ func (m CalendarListDialogModel) rowAtPosition(x, y int) (int, bool) {
 
 func (m CalendarListDialogModel) actionBarOrigin() (int, int) {
 	boxW, boxH := m.boxSize()
-	innerW := max(boxW-6, 10)
+	innerW := max(boxW-5, 10)
 	innerH := max(boxH-4, 6)
 	bodyH := max(innerH-4, 3)
 
 	dialogX := (m.width - boxW) / 2
 	dialogY := (m.height - boxH) / 2
 
-	contentX := dialogX + 3
+	contentX := dialogX + 2
 	actionsY := dialogY + bodyH + 3
 
 	if m.isNarrow() {
@@ -388,7 +388,7 @@ func (m CalendarListDialogModel) View() string {
 	}
 
 	boxW, boxH := m.boxSize()
-	innerW := max(boxW-6, 10)
+	innerW := max(boxW-5, 10)
 	innerH := max(boxH-4, 6)
 
 	title := lipgloss.NewStyle().
@@ -413,7 +413,7 @@ func (m CalendarListDialogModel) View() string {
 	return lipgloss.NewStyle().
 		Width(boxW).
 		Height(boxH).
-		Padding(1, 2).
+		Padding(1, 2, 1, 1).
 		Border(lipgloss.RoundedBorder()).
 		Render(content)
 }
