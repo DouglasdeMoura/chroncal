@@ -557,7 +557,7 @@ func (m CalendarListDialogModel) renderDetails(w, h int) string {
 	actionsLine := m.renderActions(w)
 	detailsH := max(h-2, 1)
 
-	lines := calendarDetailLines(info, id, w, m.labelWidth())
+	lines := calendarDetailLines(info, w, m.labelWidth())
 	if len(lines) > detailsH {
 		lines = lines[:detailsH]
 	}
@@ -574,7 +574,7 @@ func (m CalendarListDialogModel) labelWidth() int {
 	return 10
 }
 
-func calendarDetailLines(info CalendarInfo, id int64, w, labelWidth int) []string {
+func calendarDetailLines(info CalendarInfo, w, labelWidth int) []string {
 	faint := lipgloss.NewStyle().Faint(true)
 	bold := lipgloss.NewStyle().Bold(true)
 
@@ -595,8 +595,6 @@ func calendarDetailLines(info CalendarInfo, id int64, w, labelWidth int) []strin
 	if info.OwnerEmail != "" {
 		lines = append(lines, detailLine(faint, "Owner", info.OwnerEmail, labelWidth, w))
 	}
-
-	lines = append(lines, detailLine(faint, "ID", fmt.Sprintf("%d", id), labelWidth, w))
 
 	return lines
 }
