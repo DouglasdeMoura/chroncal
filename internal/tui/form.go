@@ -231,6 +231,75 @@ type FormItem struct {
 	ShowInputBorder *bool        // nil = use the form-level default
 }
 
+// ButtonVariant selects which style pair a button uses.
+type ButtonVariant int
+
+const (
+	ButtonPrimary   ButtonVariant = iota // submit / main action
+	ButtonSecondary                      // cancel / neutral
+	ButtonDanger                         // destructive action
+	ButtonGhost                          // minimal / text-only
+)
+
+// ButtonStyle holds the normal and focused styles for a button variant.
+type ButtonStyle struct {
+	Normal  lipgloss.Style
+	Focused lipgloss.Style
+}
+
+// Render returns the styled button label.
+func (bs ButtonStyle) Render(label string, focused bool) string {
+	if focused {
+		return bs.Focused.Render(label)
+	}
+	return bs.Normal.Render(label)
+}
+
+// ButtonStyles holds style pairs for every button variant.
+type ButtonStyles struct {
+	Primary   ButtonStyle
+	Secondary ButtonStyle
+	Danger    ButtonStyle
+	Ghost     ButtonStyle
+}
+
+// Get returns the ButtonStyle for the given variant.
+func (bs ButtonStyles) Get(v ButtonVariant) ButtonStyle {
+	switch v {
+	case ButtonPrimary:
+		return bs.Primary
+	case ButtonDanger:
+		return bs.Danger
+	case ButtonGhost:
+		return bs.Ghost
+	default:
+		return bs.Secondary
+	}
+}
+
+// DefaultButtonStyles returns minimal button styles suitable for testing.
+func DefaultButtonStyles() ButtonStyles {
+	base := lipgloss.NewStyle().Padding(0, 2).MarginRight(1)
+	return ButtonStyles{
+		Primary: ButtonStyle{
+			Normal:  base.Background(lipgloss.Color("61")).Foreground(lipgloss.Color("255")).Bold(true),
+			Focused: base.Background(lipgloss.Color("63")).Foreground(lipgloss.Color("255")).Bold(true),
+		},
+		Secondary: ButtonStyle{
+			Normal:  base.Background(lipgloss.Color("240")).Foreground(lipgloss.Color("255")),
+			Focused: base.Background(lipgloss.Color("63")).Foreground(lipgloss.Color("255")),
+		},
+		Danger: ButtonStyle{
+			Normal:  base.Background(lipgloss.Color("52")).Foreground(lipgloss.Color("255")),
+			Focused: base.Background(lipgloss.Color("160")).Foreground(lipgloss.Color("255")),
+		},
+		Ghost: ButtonStyle{
+			Normal:  base.Foreground(lipgloss.Color("240")),
+			Focused: base.Foreground(lipgloss.Color("255")).Background(lipgloss.Color("63")),
+		},
+	}
+}
+
 // FormStyles controls how the Form renders labels, errors, and buttons.
 type FormStyles struct {
 	Label           lipgloss.Style
@@ -239,41 +308,36 @@ type FormStyles struct {
 	ShowInputBorder bool           // when true, wrap text fields with Input/InputFocused styles
 	ShowFocusMarker bool           // when true, render focus glyph before the focused field
 	Error           lipgloss.Style
-	LabelLayout     LabelLayout // default layout for all fields
-	// RenderButton renders a button with the given label. focused indicates
-	// keyboard focus; primary marks the submit button.
-	RenderButton func(label string, focused, primary bool) string
+	LabelLayout     LabelLayout    // default layout for all fields
+	Buttons         ButtonStyles   // styles for all button variants
 }
 
 // DefaultFormStyles returns minimal styles suitable for testing or as a
 // starting point.
 func DefaultFormStyles() FormStyles {
 	return FormStyles{
-		Label: lipgloss.NewStyle().Bold(true),
-		Error: lipgloss.NewStyle().Foreground(lipgloss.Color("9")),
-		RenderButton: func(label string, focused, primary bool) string {
-			if focused {
-				return "[ " + label + " ]"
-			}
-			return "  " + label + "  "
-		},
+		Label:   lipgloss.NewStyle().Bold(true),
+		Error:   lipgloss.NewStyle().Foreground(lipgloss.Color("9")),
+		Buttons: DefaultButtonStyles(),
 	}
 }
 
 // FormActionButton is an optional third button between Submit and Cancel.
 type FormActionButton struct {
 	Label   string
+	Variant ButtonVariant
 	OnPress func() tea.Msg
 }
 
 // Form manages a list of form fields with focus cycling, validation,
 // and submit/cancel handling.
 type Form struct {
-	items        []FormItem
-	styles       FormStyles
-	submitLabel  string
-	actionButton *FormActionButton
-	focused      int
+	items         []FormItem
+	styles        FormStyles
+	submitLabel   string
+	cancelVariant ButtonVariant
+	actionButtons []FormActionButton
+	focused       int
 	width        int
 	errorField   int
 	error        string
@@ -284,9 +348,10 @@ type Form struct {
 
 func NewForm(submitLabel string, styles FormStyles, items ...FormItem) Form {
 	f := Form{
-		items:       items,
-		styles:      styles,
-		submitLabel: submitLabel,
+		items:         items,
+		styles:        styles,
+		submitLabel:   submitLabel,
+		cancelVariant: ButtonSecondary,
 	}
 	for i, item := range items {
 		if item.Field.IsFocusable() {
@@ -425,20 +490,28 @@ func (f Form) View() string {
 		}
 	}
 
-	render := f.styles.RenderButton
-	buttonParts := []string{mouseMark("submit", render(f.submitLabel, f.focused == f.submitIndex(), true))}
-	if f.actionButton != nil {
-		buttonParts = append(buttonParts, mouseMark("action", render(f.actionButton.Label, f.focused == f.actionIndex(), false)))
+	bs := f.styles.Buttons
+	buttonParts := []string{mouseMark("submit", bs.Primary.Render(f.submitLabel, f.focused == f.submitIndex()))}
+	for i, ab := range f.actionButtons {
+		style := bs.Get(ab.Variant)
+		buttonParts = append(buttonParts, mouseMark(actionTarget(i), style.Render(ab.Label, f.focused == f.actionIndex(i))))
 	}
-	buttonParts = append(buttonParts, mouseMark("cancel", render("Cancel", f.focused == f.cancelIndex(), false)))
+	cancelStyle := bs.Get(f.cancelVariant)
+	buttonParts = append(buttonParts, mouseMark("cancel", cancelStyle.Render("Cancel", f.focused == f.cancelIndex())))
 	buttons := lipgloss.JoinHorizontal(lipgloss.Center, buttonParts...)
 	parts = append(parts, "", buttons)
 
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
-func (f *Form) SetActionButton(label string, onPress func() tea.Msg) {
-	f.actionButton = &FormActionButton{Label: label, OnPress: onPress}
+// SetActionButton adds an action button. Can be called multiple times to
+// add several buttons between Submit and Cancel.
+func (f *Form) SetActionButton(label string, variant ButtonVariant, onPress func() tea.Msg) {
+	f.actionButtons = append(f.actionButtons, FormActionButton{Label: label, Variant: variant, OnPress: onPress})
+}
+
+func (f *Form) SetCancelVariant(v ButtonVariant) {
+	f.cancelVariant = v
 }
 
 func (f *Form) OnSubmit(fn func(f *Form) tea.Cmd) {
@@ -504,22 +577,25 @@ func (f Form) handleClick(target string) (Form, tea.Cmd) {
 		}
 	}
 
-	switch target {
-	case "submit":
+	switch {
+	case target == "submit":
 		f.blurCurrent()
 		f.focused = f.submitIndex()
 		return f.submitIfValid()
-	case "action":
-		if f.actionButton != nil {
-			f.blurCurrent()
-			f.focused = f.actionIndex()
-			return f, func() tea.Msg { return f.actionButton.OnPress() }
-		}
-	case "cancel":
+	case target == "cancel":
 		f.blurCurrent()
 		f.focused = f.cancelIndex()
 		if f.onCancel != nil {
 			return f, f.onCancel(&f)
+		}
+	default:
+		for i := range f.actionButtons {
+			if target == actionTarget(i) {
+				f.blurCurrent()
+				f.focused = f.actionIndex(i)
+				ab := f.actionButtons[i]
+				return f, func() tea.Msg { return ab.OnPress() }
+			}
 		}
 	}
 
@@ -575,8 +651,6 @@ func (f Form) handleEnter() (Form, tea.Cmd) {
 	switch {
 	case f.focused < len(f.items):
 		return f.focusNext()
-	case f.actionButton != nil && f.focused == f.actionIndex():
-		return f, func() tea.Msg { return f.actionButton.OnPress() }
 	case f.focused == f.submitIndex():
 		return f.submitIfValid()
 	case f.focused == f.cancelIndex():
@@ -584,6 +658,13 @@ func (f Form) handleEnter() (Form, tea.Cmd) {
 			return f, f.onCancel(&f)
 		}
 		return f, nil
+	default:
+		for i := range f.actionButtons {
+			if f.focused == f.actionIndex(i) {
+				ab := f.actionButtons[i]
+				return f, func() tea.Msg { return ab.OnPress() }
+			}
+		}
 	}
 	return f, nil
 }
@@ -634,18 +715,11 @@ func (f Form) focusIndex(i int) (Form, tea.Cmd) {
 
 func (f Form) submitIndex() int { return len(f.items) }
 
-func (f Form) actionIndex() int { return len(f.items) + 1 }
+func (f Form) actionIndex(i int) int { return len(f.items) + 1 + i }
 
-func (f Form) cancelIndex() int {
-	if f.actionButton != nil {
-		return len(f.items) + 2
-	}
-	return len(f.items) + 1
-}
+func (f Form) cancelIndex() int { return len(f.items) + 1 + len(f.actionButtons) }
 
-func (f Form) totalCount() int {
-	return f.cancelIndex() + 1
-}
+func (f Form) totalCount() int { return f.cancelIndex() + 1 }
 
 // Helpers
 
@@ -669,4 +743,8 @@ func BoolPtr(b bool) *bool { return &b }
 
 func fieldTarget(i int) string {
 	return "field:" + strconv.Itoa(i)
+}
+
+func actionTarget(i int) string {
+	return "action:" + strconv.Itoa(i)
 }

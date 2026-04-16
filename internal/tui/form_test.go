@@ -511,7 +511,7 @@ func TestForm_ActionButton(t *testing.T) {
 		FormItem{Label: "Field", Field: NewTextField("val")},
 	)
 	var actionFired bool
-	form.SetActionButton("Delete", func() tea.Msg {
+	form.SetActionButton("Delete", ButtonDanger, func() tea.Msg {
 		actionFired = true
 		return nil
 	})
@@ -767,12 +767,12 @@ func TestForm_ClickActionButton(t *testing.T) {
 		FormItem{Label: "Field", Field: NewTextField("val")},
 	)
 	var actionFired bool
-	form.SetActionButton("Delete", func() tea.Msg {
+	form.SetActionButton("Delete", ButtonDanger, func() tea.Msg {
 		actionFired = true
 		return nil
 	})
 
-	form, cmd := form.Update(MouseEvent{IsClick: true, Target: "action"})
+	form, cmd := form.Update(MouseEvent{IsClick: true, Target: "action:0"})
 	if cmd != nil {
 		cmd()
 	}
