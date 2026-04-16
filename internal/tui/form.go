@@ -316,7 +316,7 @@ type FormStyles struct {
 // starting point.
 func DefaultFormStyles() FormStyles {
 	return FormStyles{
-		Label:   lipgloss.NewStyle().Bold(true),
+		Label:   lipgloss.NewStyle(),
 		Error:   lipgloss.NewStyle().Foreground(lipgloss.Color("9")),
 		Buttons: DefaultButtonStyles(),
 	}
@@ -468,18 +468,20 @@ func (f Form) View() string {
 		}
 		marker := f.focusMarkerFor(focused, showMarker)
 
+		target := fieldTarget(i)
+
 		var row string
 		switch {
 		case (layout == LabelInline || layout == LabelInlineRight) && item.Label == "":
 			row = lipgloss.JoinHorizontal(lipgloss.Center, marker, field)
 		case layout == LabelInline:
-			label := f.styles.Label.Width(maxLabelLen).Render(item.Label)
+			label := mouseMark(target, f.styles.Label.Width(maxLabelLen).Render(item.Label))
 			row = lipgloss.JoinHorizontal(lipgloss.Center, label+" "+marker, field)
 		case layout == LabelInlineRight:
-			label := f.styles.Label.Width(maxLabelLen).Align(lipgloss.Right).Render(item.Label)
+			label := mouseMark(target, f.styles.Label.Width(maxLabelLen).Align(lipgloss.Right).Render(item.Label))
 			row = lipgloss.JoinHorizontal(lipgloss.Center, label+" "+marker, field)
 		default: // LabelTop
-			label := f.styles.Label.Render(item.Label)
+			label := mouseMark(target, f.styles.Label.Render(item.Label))
 			row = label + "\n" + lipgloss.JoinHorizontal(lipgloss.Center, marker, field)
 		}
 

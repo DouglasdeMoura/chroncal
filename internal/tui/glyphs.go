@@ -5,7 +5,7 @@ package tui
 // vs plain Unicode) from a single place.
 var Glyphs = map[string]string{
 	// Focus / navigation
-	"focus":    "\uf054", //  (chevron-right)
+	"focus":    ">",
 	"ellipsis": "…",
 
 	// Checkbox

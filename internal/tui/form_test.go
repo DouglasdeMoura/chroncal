@@ -600,7 +600,8 @@ func TestForm_LabelLeftAlignment(t *testing.T) {
 	assert.Equal(t, lipgloss.Width(shortLabel), lipgloss.Width(longLabel),
 		"labels should have equal rendered width")
 
-	view := form.View()
+	// Sweep markers so we can check for the rendered label text.
+	view := mouseSweep(form.View())
 	assert.Contains(t, view, shortLabel+" ")
 	assert.Contains(t, view, longLabel+" ")
 }
@@ -614,7 +615,7 @@ func TestForm_LabelInlineRight(t *testing.T) {
 		FormItem{Label: "Email", Field: NewTextField("b")},
 	)
 
-	view := form.View()
+	view := mouseSweep(form.View())
 
 	// "N" right-aligned in a 5-wide column: "    N", then " " gap before field.
 	shortLabel := styles.Label.Width(5).Align(lipgloss.Right).Render("N")
@@ -678,13 +679,16 @@ func TestForm_NoFocusIndicatorByDefault(t *testing.T) {
 }
 
 // labelAndFieldOnSeparateLines returns true when the line containing the
-// label text does NOT also contain a mouse marker (meaning the field is
-// on the next line). Mouse markers (\x1b[Nz) are only emitted around
-// field views, never around labels.
+// label text does NOT also contain field content (identified by the
+// textinput cursor styling). Sweep markers first so only visual content
+// remains.
 func labelAndFieldOnSeparateLines(view, label string) bool {
-	for _, line := range strings.Split(view, "\n") {
+	clean := mouseSweep(view)
+	for _, line := range strings.Split(clean, "\n") {
 		if strings.Contains(line, label) {
-			return !strings.Contains(line, "z") || !strings.Contains(line, "\x1b[")
+			// Textinput cursor uses reverse video (\x1b[7;37m). If the
+			// label's line doesn't contain that, label and field are separate.
+			return !strings.Contains(line, "\x1b[7;37m") && !strings.Contains(line, "\x1b[38;5;240m")
 		}
 	}
 	return false
