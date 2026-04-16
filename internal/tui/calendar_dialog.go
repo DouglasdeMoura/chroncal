@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 
+	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
@@ -44,7 +45,6 @@ const (
 	cdIdxName    = 0
 	cdIdxPalette = 1
 	cdIdxHex     = 2
-	cdIdxPreview = 3
 )
 
 // ---------------------------------------------------------------------------
@@ -70,7 +70,7 @@ func NewPaletteField(swatches []string, selected int, accent, muted color.Color)
 	}
 }
 
-func (f *PaletteField) Selected() int    { return f.selected }
+func (f *PaletteField) Selected() int     { return f.selected }
 func (f *PaletteField) SetSelected(i int) { f.selected = i }
 
 func (f *PaletteField) Value() string {
@@ -138,12 +138,58 @@ func (f *PaletteField) SetWidth(int)      {}
 func (f *PaletteField) IsFocusable() bool { return true }
 
 // ---------------------------------------------------------------------------
+// HexColorField — TextField with inline preview dot
+// ---------------------------------------------------------------------------
+
+// HexColorField wraps a TextField and appends a live color preview dot
+// and optional "(custom)" label to its View.
+type HexColorField struct {
+	input      *TextField
+	paletteIdx int // -1 when off-palette
+	dimColor   color.Color
+}
+
+func NewHexColorField(placeholder string, dimColor color.Color) *HexColorField {
+	f := &HexColorField{
+		input:    NewTextField(placeholder),
+		dimColor: dimColor,
+	}
+	f.input.SetFilter(func(k tea.Key) bool {
+		if k.Text == "" {
+			return true
+		}
+		return isHexInputAllowed(k.Text, f.input.Position(), f.input.Value())
+	})
+	return f
+}
+
+func (f *HexColorField) Value() string             { return f.input.Value() }
+func (f *HexColorField) SetValue(v string)         { f.input.SetValue(v) }
+func (f *HexColorField) SetPaletteIdx(idx int)     { f.paletteIdx = idx }
+func (f *HexColorField) Update(msg tea.Msg) tea.Cmd { return f.input.Update(msg) }
+func (f *HexColorField) Focus() tea.Cmd            { return f.input.Focus() }
+func (f *HexColorField) Blur()                     { f.input.Blur() }
+func (f *HexColorField) SetWidth(w int)            { f.input.SetWidth(w) }
+func (f *HexColorField) IsFocusable() bool         { return true }
+
+func (f *HexColorField) View() string {
+	base := f.input.View()
+	hexVal := strings.TrimSpace(f.input.Value())
+	if !hexRE.MatchString(hexVal) {
+		return base
+	}
+	preview := "  " + lipgloss.NewStyle().Foreground(lipgloss.Color(hexVal)).Render("●")
+	if f.paletteIdx < 0 {
+		custom := "  " + lipgloss.NewStyle().Foreground(f.dimColor).Italic(true).Render("(custom)")
+		return base + preview + custom
+	}
+	return base + preview
+}
+
+// ---------------------------------------------------------------------------
 // Hex input filter
 // ---------------------------------------------------------------------------
 
-// isHexInputAllowed reports whether the printable text `t` can be inserted
-// into the hex input at cursor position `pos` given the current value. It
-// accepts only hex digits and a single leading '#'.
 func isHexInputAllowed(t string, pos int, current string) bool {
 	for _, r := range t {
 		switch {
@@ -170,17 +216,6 @@ func paletteIndexFor(hex string) int {
 	return -1
 }
 
-// FilterHex returns a filter function for TextField that only allows hex
-// characters (#0-9a-fA-F) with a single leading '#'.
-func FilterHex(tf *TextField) func(tea.Key) bool {
-	return func(k tea.Key) bool {
-		if k.Text == "" {
-			return true
-		}
-		return isHexInputAllowed(k.Text, tf.Position(), tf.Value())
-	}
-}
-
 // ---------------------------------------------------------------------------
 // CalendarDialogModel
 // ---------------------------------------------------------------------------
@@ -190,6 +225,7 @@ type CalendarDialogModel struct {
 	id           int64
 	dialog       Dialog
 	form         Form
+	help         help.Model
 	accentColor  color.Color
 	mutedColor   color.Color
 	textDimColor color.Color
@@ -204,6 +240,7 @@ func NewCalendarDialogModel(id int64, name, hex string, theme Theme) CalendarDia
 
 	styles := DefaultDialogStyles()
 	dialog := NewDialog(title, styles)
+	dialog.SetWidth(50)
 
 	formStyles := DefaultFormStyles()
 	formStyles.LabelLayout = LabelInline
@@ -217,29 +254,27 @@ func NewCalendarDialogModel(id int64, name, hex string, theme Theme) CalendarDia
 
 	palette := NewPaletteField(paletteSwatches, paletteIndexFor(hex), theme.Selected, theme.Muted)
 
-	hexField := NewTextField("#rrggbb")
+	hexField := NewHexColorField("#rrggbb", theme.TextDim)
 	hexField.SetValue(hex)
-	hexField.SetCharLimit(7)
-	hexField.SetFilter(FilterHex(hexField))
-
-	previewText := hexPreviewText(hex, paletteIndexFor(hex), theme.TextDim)
-	preview := NewStaticField(previewText, func(s string) string { return s })
+	hexField.input.SetCharLimit(7)
+	hexField.SetPaletteIdx(paletteIndexFor(hex))
 
 	form := NewForm("Save", formStyles,
 		FormItem{Label: "Name", Field: nameField, Required: true},
 		FormItem{Label: "Color", Field: palette},
 		FormItem{Label: "Hex", Field: hexField, Required: true},
-		FormItem{Field: preview},
 	)
 
 	savedID := id
 	form.OnSubmit(func(f *Form) tea.Cmd {
-		hexVal := strings.TrimSpace(f.FormTextField(cdIdxHex).Value())
+		hf := f.Field(cdIdxHex).(*HexColorField)
+		hexVal := strings.TrimSpace(hf.Value())
 		if !hexRE.MatchString(hexVal) {
 			f.SetError(cdIdxHex, "Color must be #rrggbb")
 			return nil
 		}
-		nameVal := strings.TrimSpace(f.FormTextField(cdIdxName).Value())
+		nf := f.Field(cdIdxName).(*TextField)
+		nameVal := strings.TrimSpace(nf.Value())
 		return func() tea.Msg {
 			return CalendarSavedMsg{ID: savedID, Name: nameVal, Color: hexVal}
 		}
@@ -253,28 +288,25 @@ func NewCalendarDialogModel(id int64, name, hex string, theme Theme) CalendarDia
 		id:           id,
 		dialog:       dialog,
 		form:         form,
+		help:         newThemedHelp(theme),
 		accentColor:  theme.Selected,
 		mutedColor:   theme.Muted,
 		textDimColor: theme.TextDim,
 	}
 
-	// Set up palette ↔ hex bidirectional sync.
 	form.OnRebuild(func(f *Form) {
 		pal := f.Field(cdIdxPalette).(*PaletteField)
-		hexF := f.FormTextField(cdIdxHex)
-		prev := f.FormStaticField(cdIdxPreview)
+		hf := f.Field(cdIdxHex).(*HexColorField)
 
 		if f.Focused() == cdIdxPalette {
-			// Palette changed → update hex.
 			if v := pal.Value(); v != "" {
-				hexF.SetValue(v)
+				hf.SetValue(v)
 			}
 		} else if f.Focused() == cdIdxHex {
-			// Hex changed → sync palette selection.
-			pal.SetSelected(paletteIndexFor(hexF.Value()))
+			pal.SetSelected(paletteIndexFor(hf.Value()))
 		}
 
-		prev.SetValue(hexPreviewText(hexF.Value(), pal.Selected(), m.textDimColor))
+		hf.SetPaletteIdx(pal.Selected())
 	})
 	m.form = form
 
@@ -307,7 +339,6 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 		}
 	}
 
-	// Forward mouse clicks through the mouse tracker system.
 	if mc, ok := msg.(tea.MouseClickMsg); ok {
 		if mc.Button == tea.MouseLeft {
 			target := mouseResolve(mc.X, mc.Y)
@@ -323,20 +354,18 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 }
 
 func (m CalendarDialogModel) View() string {
+	cw := m.dialog.ContentWidth()
+	if cw <= 0 {
+		cw = 46
+	}
+	m.help.SetWidth(cw)
+	helpKeys := []key.Binding{
+		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
+	}
+	m.dialog.SetFooter(m.help.ShortHelpView(helpKeys))
+
 	content := mouseSweep(m.dialog.Box(m.form.View()))
 	return content
-}
-
-// hexPreviewText returns the colored preview dot and optional "(custom)" note.
-func hexPreviewText(hex string, paletteIdx int, dimColor color.Color) string {
-	hexVal := strings.TrimSpace(hex)
-	if !hexRE.MatchString(hexVal) {
-		return ""
-	}
-	preview := lipgloss.NewStyle().Foreground(lipgloss.Color(hexVal)).Render("●")
-	if paletteIdx < 0 {
-		custom := lipgloss.NewStyle().Foreground(dimColor).Italic(true).Render("(custom)")
-		return preview + "  " + custom
-	}
-	return preview
 }
