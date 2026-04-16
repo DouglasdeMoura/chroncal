@@ -8,8 +8,6 @@ import (
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
-	"charm.land/bubbles/v2/textarea"
-	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
 
@@ -32,24 +30,6 @@ type EventFormSaveMsg struct {
 
 // EventFormClosedMsg is emitted when the user closes the event form.
 type EventFormClosedMsg struct{}
-
-type formField int
-
-const (
-	fieldTitle formField = iota
-	fieldStart
-	fieldEnd
-	fieldDate
-	fieldAllDay
-	fieldRepeat
-	fieldEnds
-	fieldEndsCount
-	fieldCalendar
-	fieldLocation
-	fieldDescription
-	fieldSave
-	fieldCancel
-)
 
 type repeatPreset struct {
 	Label string
@@ -83,22 +63,70 @@ type calendarOption struct {
 	Color string
 }
 
+// ---------------------------------------------------------------------------
+// Named field keys for OnFieldEnter lookup
+// ---------------------------------------------------------------------------
+
+const (
+	efKeyTitle       = "title"
+	efKeyStart       = "start"
+	efKeyEnd         = "end"
+	efKeyDate        = "date"
+	efKeyAllDay      = "allday"
+	efKeyRepeat      = "repeat"
+	efKeyEnds        = "ends"
+	efKeyEndsCount   = "endscount"
+	efKeyCalendar    = "calendar"
+	efKeyLocation    = "location"
+	efKeyDescription = "description"
+)
+
+// EventFormModel is the Bubble Tea model for the event creation/edit form.
+type EventFormModel struct {
+	editID      int64 // 0 = create mode, >0 = editing this event ID
+	day         time.Time
+	calendars   []calendarOption
+	calendarIdx int
+
+	// Fields (pointer types survive form rebuilds)
+	titleField *TextField
+	startField *TextField
+	endField   *TextField
+	dateField  *StaticField
+	allDayField *CheckboxField
+	repeatField *SelectField
+	endsField   *SelectField
+	endsCountField *TextField
+	calendarField  *SelectField
+	locationField  *TextField
+	descField      *TextAreaField
+
+	// Overlay state
+	repeatIdx       int // index into repeatPresets
+	customRule      string
+	rruleEditor     RecurrenceEditorModel
+	rruleEditorOpen bool
+	ends            endsMode
+	endsDate        time.Time
+	endsDatePicker  bool
+	datePickerOpen  bool
+
+	// Dialog + Form
+	dialog Dialog
+	form   Form
+	// fieldKeys maps form item index → field key for OnFieldEnter
+	fieldKeys []string
+
+	keys   eventFormKeyMap
+	help   help.Model
+	width  int
+	height int
+	theme  Theme
+}
+
 type eventFormKeyMap struct {
-	Tab      key.Binding
-	ShiftTab key.Binding
-	Enter    key.Binding
-	Save     key.Binding
-	Close    key.Binding
-}
-
-func (k eventFormKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Tab, k.Enter, k.Save, k.Close}
-}
-
-func (k eventFormKeyMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{
-		{k.Tab, k.ShiftTab, k.Enter, k.Save, k.Close},
-	}
+	Save  key.Binding
+	Close key.Binding
 }
 
 func datePickerHelpKeys() []key.Binding {
@@ -109,68 +137,13 @@ func datePickerHelpKeys() []key.Binding {
 	}
 }
 
-// EventFormModel is the Bubble Tea model for the event creation/edit form.
-type EventFormModel struct {
-	editID      int64 // 0 = create mode, >0 = editing this event ID
-	day         time.Time
-	calendars   []calendarOption
-	calendarIdx int
-
-	title       textinput.Model
-	startTime   textinput.Model
-	endTime     textinput.Model
-	location    textinput.Model
-	description textarea.Model
-
-	allDay         bool
-	repeatIdx      int // index into repeatPresets
-	customRule     string
-	rruleEditor    RecurrenceEditorModel
-	rruleEditorOpen bool
-	ends           endsMode
-	endsCount      textinput.Model
-	endsDate       time.Time
-	endsDatePicker bool // reuse date picker for ends-on-date
-	focusField     formField
-	datePickerOpen bool
-	errMsg         string
-
-	keys   eventFormKeyMap
-	help   help.Model
-	width  int
-	height int
-	theme  Theme
-}
-
 // NewEventFormModel creates a new event form for the given day.
 func NewEventFormModel(day time.Time, calendars map[int64]CalendarInfo, theme Theme) (EventFormModel, tea.Cmd) {
-	title := textinput.New()
-	title.Placeholder = "Event title"
-	title.CharLimit = 200
-	cmd := title.Focus()
-
-	startInput := textinput.New()
-	startInput.Placeholder = "HH:MM"
-	startInput.CharLimit = 5
-
-	endInput := textinput.New()
-	endInput.Placeholder = "HH:MM"
-	endInput.CharLimit = 5
-
-	locationInput := textinput.New()
-	locationInput.Placeholder = "Add location"
-	locationInput.CharLimit = 200
-
-	descInput := textarea.New()
-	descInput.Placeholder = "Add description"
-	descInput.CharLimit = 500
-	descInput.ShowLineNumbers = false
-	descInput.Prompt = ""
-	descInput.SetHeight(3)
-
-	endsCountInput := textinput.New()
-	endsCountInput.Placeholder = "10"
-	endsCountInput.CharLimit = 4
+	calOpts := make([]calendarOption, 0, len(calendars))
+	for id, info := range calendars {
+		calOpts = append(calOpts, calendarOption{ID: id, Name: info.Name, Color: info.Color})
+	}
+	sort.Slice(calOpts, func(i, j int) bool { return calOpts[i].Name < calOpts[j].Name })
 
 	// Default times: next half hour, 1 hour duration.
 	now := time.Now()
@@ -186,86 +159,131 @@ func NewEventFormModel(day time.Time, calendars map[int64]CalendarInfo, theme Th
 	if endHour >= 24 {
 		endHour -= 24
 	}
-	startInput.SetValue(fmt.Sprintf("%02d:%02d", startHour, startMin))
-	endInput.SetValue(fmt.Sprintf("%02d:%02d", endHour, startMin))
 
-	calOpts := make([]calendarOption, 0, len(calendars))
-	for id, info := range calendars {
-		calOpts = append(calOpts, calendarOption{ID: id, Name: info.Name, Color: info.Color})
-	}
-	sort.Slice(calOpts, func(i, j int) bool { return calOpts[i].Name < calOpts[j].Name })
-
-	return EventFormModel{
-		day:         day,
-		calendars:   calOpts,
-		title:       title,
-		startTime:   startInput,
-		endTime:     endInput,
-		location:    locationInput,
-		description: descInput,
-		endsCount:   endsCountInput,
-		endsDate:    day.AddDate(0, 1, 0),
-		focusField: fieldTitle,
+	m := EventFormModel{
+		day:       day,
+		calendars: calOpts,
+		endsDate:  day.AddDate(0, 1, 0),
 		theme:     theme,
-		help: newThemedHelp(theme),
+		help:      newThemedHelp(theme),
 		keys: eventFormKeyMap{
-			Tab:      key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
-			ShiftTab: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev field")),
-			Enter:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
-			Save:     key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("ctrl+s", "save")),
-			Close:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")),
+			Save:  key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("ctrl+s", "save")),
+			Close: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")),
 		},
-	}, cmd
+	}
+
+	// Build fields
+	m.titleField = NewTextField("Event title")
+	m.titleField.SetCharLimit(200)
+
+	m.startField = NewTextField("HH:MM")
+	m.startField.SetCharLimit(5)
+	m.startField.SetFilter(FilterTimeInput)
+	m.startField.SetValue(fmt.Sprintf("%02d:%02d", startHour, startMin))
+
+	m.endField = NewTextField("HH:MM")
+	m.endField.SetCharLimit(5)
+	m.endField.SetFilter(FilterTimeInput)
+	m.endField.SetValue(fmt.Sprintf("%02d:%02d", endHour, startMin))
+
+	m.dateField = NewStaticField(m.day.Format("Mon, Jan 2, 2006"), nil)
+
+	m.allDayField = NewCheckboxField("All day", false)
+
+	repeatOpts := make([]SelectOption, len(repeatPresets))
+	for i, p := range repeatPresets {
+		repeatOpts[i] = SelectOption{Label: p.Label, Value: p.Rule}
+	}
+	m.repeatField = NewSelectField(repeatOpts)
+
+	endsOpts := []SelectOption{
+		{Label: "Never", Value: "never"},
+		{Label: "After", Value: "after"},
+		{Label: "On date", Value: "ondate"},
+	}
+	m.endsField = NewSelectField(endsOpts)
+
+	m.endsCountField = NewTextField("10")
+	m.endsCountField.SetCharLimit(4)
+	m.endsCountField.SetDigitsOnly()
+
+	if len(calOpts) > 1 {
+		calSelectOpts := make([]SelectOption, len(calOpts))
+		for i, c := range calOpts {
+			calSelectOpts[i] = SelectOption{Label: c.Name, Value: fmt.Sprintf("%d", c.ID)}
+		}
+		m.calendarField = NewSelectField(calSelectOpts)
+	}
+
+	m.locationField = NewTextField("Add location")
+	m.locationField.SetCharLimit(200)
+
+	m.descField = NewTextAreaField("Add description")
+	m.descField.SetCharLimit(500)
+	m.descField.SetHeight(3)
+
+	// Build dialog + form
+	m.buildDialogAndForm()
+
+	cmd := m.form.Init()
+	return m, cmd
 }
 
 // NewEventFormModelForEdit creates a form pre-filled with an existing event's data.
 func NewEventFormModelForEdit(ev event.Event, calendars map[int64]CalendarInfo, theme Theme) (EventFormModel, tea.Cmd) {
 	m, cmd := NewEventFormModel(ev.StartTime, calendars, theme)
 	m.editID = ev.ID
-	m.title.SetValue(ev.Title)
-	m.location.SetValue(ev.Location)
-	m.description.SetValue(ev.Description)
-	m.allDay = ev.AllDay
+	m.titleField.SetValue(ev.Title)
+	m.locationField.SetValue(ev.Location)
+	m.descField.SetValue(ev.Description)
 
+	if ev.AllDay {
+		m.allDayField.SetChecked(true)
+	}
 	if !ev.AllDay {
-		m.startTime.SetValue(ev.StartTime.Local().Format("15:04"))
-		m.endTime.SetValue(ev.EndTime.Local().Format("15:04"))
+		m.startField.SetValue(ev.StartTime.Local().Format("15:04"))
+		m.endField.SetValue(ev.EndTime.Local().Format("15:04"))
 	}
 
 	// Select the correct calendar.
-	for i, c := range m.calendars {
-		if c.ID == ev.CalendarID {
-			m.calendarIdx = i
-			break
-		}
-	}
-
-	// Parse recurrence rule into form state.
-	if ev.RecurrenceRule != "" {
-		m.repeatIdx, m.customRule, m.ends, m.endsDate = parseRecurrenceRule(ev.RecurrenceRule, m.day)
-		if m.ends == endsAfter {
-			if count := rruleParam(ev.RecurrenceRule, "COUNT"); count != "" {
-				m.endsCount.SetValue(count)
+	if m.calendarField != nil {
+		for i, c := range m.calendars {
+			if c.ID == ev.CalendarID {
+				m.calendarField.SetSelected(i)
+				m.calendarIdx = i
+				break
 			}
 		}
 	}
 
+	// Parse recurrence rule.
+	if ev.RecurrenceRule != "" {
+		m.repeatIdx, m.customRule, m.ends, m.endsDate = parseRecurrenceRule(ev.RecurrenceRule, m.day)
+		m.repeatField.SetSelected(m.repeatIdx)
+		m.endsField.SetSelected(int(m.ends))
+		if m.ends == endsAfter {
+			if count := rruleParam(ev.RecurrenceRule, "COUNT"); count != "" {
+				m.endsCountField.SetValue(count)
+			}
+		}
+	}
+
+	m.rebuildDialog()
 	return m, cmd
 }
 
 // NewEventFormModelForDuplicate creates a form pre-filled with an existing
-// event's data but in create mode (editID = 0), so saving creates a new event.
+// event's data but in create mode (editID = 0).
 func NewEventFormModelForDuplicate(ev event.Event, calendars map[int64]CalendarInfo, theme Theme) (EventFormModel, tea.Cmd) {
 	m, cmd := NewEventFormModelForEdit(ev, calendars, theme)
 	m.editID = 0
+	m.rebuildDialog()
 	return m, cmd
 }
 
 // parseRecurrenceRule matches a recurrence rule against the form presets and
-// extracts ending conditions. Returns presetIdx, customRule, ends mode, and
-// ends date.
+// extracts ending conditions.
 func parseRecurrenceRule(rule string, fallbackDate time.Time) (int, string, endsMode, time.Time) {
-	// Strip COUNT and UNTIL to match the base rule against presets.
 	var ends endsMode
 	endsDate := fallbackDate.AddDate(0, 1, 0)
 
@@ -290,7 +308,6 @@ func parseRecurrenceRule(rule string, fallbackDate time.Time) (int, string, ends
 	}
 	base := strings.Join(baseParts, ";")
 
-	// Try to match against presets (skip index 0 "None" and 7 "Custom...").
 	for i := 1; i < len(repeatPresets); i++ {
 		if i == repeatCustomIdx {
 			continue
@@ -300,11 +317,9 @@ func parseRecurrenceRule(rule string, fallbackDate time.Time) (int, string, ends
 		}
 	}
 
-	// No preset matched — use Custom.
 	return repeatCustomIdx, rule, ends, endsDate
 }
 
-// rruleParam extracts a named parameter value from an RRULE string.
 func rruleParam(rule, name string) string {
 	for p := range strings.SplitSeq(rule, ";") {
 		if k, v, ok := strings.Cut(p, "="); ok && strings.EqualFold(k, name) {
@@ -314,26 +329,172 @@ func rruleParam(rule, name string) string {
 	return ""
 }
 
+// FilterTimeInput allows digits and ':' for HH:MM time input.
+func FilterTimeInput(k tea.Key) bool {
+	if k.Text == "" {
+		return true
+	}
+	r := rune(k.Text[0])
+	return (r >= '0' && r <= '9') || r == ':'
+}
+
+func (m *EventFormModel) buildDialogAndForm() {
+	title := "New Event"
+	if m.editID > 0 {
+		title = "Edit Event"
+	}
+
+	styles := DefaultDialogStyles()
+	m.dialog = NewDialog(title, styles)
+
+	formStyles := DefaultFormStyles()
+	formStyles.LabelLayout = LabelInline
+	formStyles.ShowFocusMarker = true
+	formStyles.ButtonAlign = ButtonAlignRight
+	formStyles.ButtonRule = true
+
+	items, keys := m.buildFormItems()
+	m.fieldKeys = keys
+
+	m.form = NewForm("Save", formStyles, items...)
+
+	editID := m.editID
+	m.form.OnSubmit(func(f *Form) tea.Cmd {
+		return m.save(f, editID)
+	})
+	m.form.OnCancel(func(f *Form) tea.Cmd {
+		return func() tea.Msg { return EventFormClosedMsg{} }
+	})
+	m.form.OnFieldEnter(func(f *Form, field int) tea.Cmd {
+		if field < len(m.fieldKeys) {
+			return m.handleFieldEnter(m.fieldKeys[field])
+		}
+		return nil
+	})
+	m.form.OnRebuild(func(f *Form) {
+		m.syncFromForm()
+	})
+}
+
+func (m *EventFormModel) rebuildDialog() {
+	title := "New Event"
+	if m.editID > 0 {
+		title = "Edit Event"
+	}
+	m.dialog.SetTitle(title)
+
+	// Preserve callbacks by rebuilding items only.
+	items, keys := m.buildFormItems()
+	m.fieldKeys = keys
+	m.form.RemoveItems(0)
+	m.form.AppendItems(items...)
+}
+
+func (m *EventFormModel) buildFormItems() ([]FormItem, []string) {
+	var items []FormItem
+	var keys []string
+
+	items = append(items, FormItem{Label: "Title", Field: m.titleField, Required: true})
+	keys = append(keys, efKeyTitle)
+
+	if !m.allDayField.Checked() {
+		items = append(items, FormItem{Label: "Start", Field: m.startField})
+		keys = append(keys, efKeyStart)
+		items = append(items, FormItem{Label: "End", Field: m.endField})
+		keys = append(keys, efKeyEnd)
+	}
+
+	m.dateField.SetValue(m.day.Format("Mon, Jan 2, 2006"))
+	items = append(items, FormItem{Label: "Date", Field: m.dateField})
+	keys = append(keys, efKeyDate)
+
+	items = append(items, FormItem{Label: "All day", Field: m.allDayField})
+	keys = append(keys, efKeyAllDay)
+
+	items = append(items, FormItem{Label: "Repeat", Field: m.repeatField})
+	keys = append(keys, efKeyRepeat)
+
+	m.repeatIdx = m.repeatField.Selected()
+	if m.repeatIdx > 0 && m.repeatIdx != repeatCustomIdx {
+		items = append(items, FormItem{Label: "Ends", Field: m.endsField})
+		keys = append(keys, efKeyEnds)
+
+		m.ends = endsMode(m.endsField.Selected())
+		if m.ends == endsAfter {
+			items = append(items, FormItem{Label: "", Field: m.endsCountField,
+				LabelLayout: LayoutPtr(LabelInline), ShowFocusMarker: BoolPtr(true)})
+			keys = append(keys, efKeyEndsCount)
+		}
+	}
+
+	if m.calendarField != nil {
+		items = append(items, FormItem{Label: "Calendar", Field: m.calendarField})
+		keys = append(keys, efKeyCalendar)
+	}
+
+	items = append(items, FormItem{Label: "Location", Field: m.locationField})
+	keys = append(keys, efKeyLocation)
+
+	items = append(items, FormItem{Label: "Notes", Field: m.descField})
+	keys = append(keys, efKeyDescription)
+
+	return items, keys
+}
+
+func (m *EventFormModel) syncFromForm() {
+	prevAllDay := m.allDayField.Checked()
+	prevRepeatIdx := m.repeatIdx
+	prevEnds := m.ends
+
+	m.repeatIdx = m.repeatField.Selected()
+	m.ends = endsMode(m.endsField.Selected())
+	if m.calendarField != nil {
+		m.calendarIdx = m.calendarField.Selected()
+	}
+
+	// Rebuild form items if dynamic fields changed.
+	needRebuild := m.allDayField.Checked() != prevAllDay ||
+		m.repeatIdx != prevRepeatIdx ||
+		m.ends != prevEnds
+
+	if needRebuild {
+		items, keys := m.buildFormItems()
+		m.fieldKeys = keys
+		m.form.RemoveItems(0)
+		m.form.AppendItems(items...)
+	}
+}
+
+// noopCmd is a non-nil Cmd that does nothing. Used to signal to Form's
+// OnFieldEnter that the default focus-next behavior should be suppressed.
+func noopCmd() tea.Msg { return nil }
+
+func (m *EventFormModel) handleFieldEnter(fieldKey string) tea.Cmd {
+	switch fieldKey {
+	case efKeyDate:
+		m.datePickerOpen = true
+		return noopCmd
+	case efKeyRepeat:
+		if m.repeatField.Selected() == repeatCustomIdx {
+			m.rruleEditor = NewRecurrenceEditorModel(m.day, m.width, m.height, m.theme)
+			m.rruleEditorOpen = true
+			return noopCmd
+		}
+	case efKeyEnds:
+		if endsMode(m.endsField.Selected()) == endsOnDate {
+			m.endsDatePicker = true
+			return noopCmd
+		}
+	}
+	return nil // nil = proceed with default focus-next
+}
+
 func (m EventFormModel) SetSize(w, h int) EventFormModel {
 	m.width = w
 	m.height = h
-	if m.width > 0 && m.height > 0 && m.title.CharLimit > 0 {
-		m.updateInputWidths()
-	}
+	m.dialog = m.dialog.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	m.form.SetWidth(m.dialog.ContentWidth())
 	return m
-}
-
-func (m *EventFormModel) updateInputWidths() {
-	boxW, _ := m.boxSize()
-	innerW := max(boxW-6, 20)
-	lw := 12
-	inputW := max(innerW-lw, 10)
-	m.title.SetWidth(inputW)
-	m.startTime.SetWidth(5)
-	m.endTime.SetWidth(5)
-	m.location.SetWidth(inputW)
-	m.description.SetWidth(innerW - 2) // account for left border + padding
-	m.endsCount.SetWidth(4)
 }
 
 // BoxSize returns the outer dimensions of the form dialog.
@@ -341,152 +502,54 @@ func (m EventFormModel) BoxSize() (int, int) {
 	return lipgloss.Size(m.View())
 }
 
-func (m EventFormModel) boxSize() (int, int) {
-	boxW := min(56, max(m.width-4, 30))
-	boxH := 27 // base with repeat line
-	if m.allDay {
-		boxH = 25
-	}
-	if m.repeatIdx > 0 {
-		boxH += 2 // ends line
-	}
-	if len(m.calendars) <= 1 {
-		boxH -= 2
-	}
-	if m.errMsg != "" {
-		boxH += 2
-	}
-	boxH = min(boxH, max(m.height-4, 14))
-	return boxW, boxH
-}
-
-func (m EventFormModel) focusableFields() []formField {
-	fields := []formField{fieldTitle}
-	if !m.allDay {
-		fields = append(fields, fieldStart, fieldEnd)
-	}
-	fields = append(fields, fieldDate, fieldAllDay, fieldRepeat)
-	if m.repeatIdx > 0 && m.repeatIdx != repeatCustomIdx {
-		fields = append(fields, fieldEnds)
-		if m.ends == endsAfter {
-			fields = append(fields, fieldEndsCount)
-		}
-	}
-	if len(m.calendars) > 1 {
-		fields = append(fields, fieldCalendar)
-	}
-	fields = append(fields, fieldLocation, fieldDescription, fieldSave, fieldCancel)
-	return fields
-}
-
-func (m EventFormModel) nextField() formField {
-	fields := m.focusableFields()
-	for i, f := range fields {
-		if f == m.focusField {
-			return fields[(i+1)%len(fields)]
-		}
-	}
-	return fields[0]
-}
-
-func (m EventFormModel) prevField() formField {
-	fields := m.focusableFields()
-	for i, f := range fields {
-		if f == m.focusField {
-			return fields[(i-1+len(fields))%len(fields)]
-		}
-	}
-	return fields[0]
-}
-
-func (m EventFormModel) withFocus(f formField) (EventFormModel, tea.Cmd) {
-	m.focusField = f
-	m.title.Blur()
-	m.startTime.Blur()
-	m.endTime.Blur()
-	m.location.Blur()
-	m.description.Blur()
-	m.endsCount.Blur()
-	m.errMsg = ""
-	var cmd tea.Cmd
-	switch f {
-	case fieldTitle:
-		cmd = m.title.Focus()
-	case fieldStart:
-		cmd = m.startTime.Focus()
-	case fieldEnd:
-		cmd = m.endTime.Focus()
-	case fieldLocation:
-		cmd = m.location.Focus()
-	case fieldDescription:
-		cmd = m.description.Focus()
-	case fieldEndsCount:
-		cmd = m.endsCount.Focus()
-	default:
-		// non-text fields: no input focus
-	}
-	return m, cmd
-}
-
-func (m EventFormModel) isTextInput() bool {
-	switch m.focusField {
-	case fieldTitle, fieldStart, fieldEnd, fieldLocation, fieldDescription, fieldEndsCount:
-		return true
-	default:
-		return false
-	}
-}
-
 // Update handles messages for the event form.
 func (m EventFormModel) Update(msg tea.Msg) (EventFormModel, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		return m.handleKey(msg)
-	case tea.MouseClickMsg:
-		if msg.Button == tea.MouseLeft {
-			if m.rruleEditorOpen && m.rruleEditor.EndsDatePickerOpen() {
-				pw, ph := m.rruleEditor.EndsDatePickerBoxSize()
-				m.rruleEditor = m.rruleEditor.HandleEndsDateMouse(msg, pw, ph)
-				return m, nil
-			}
-			if m.endsDatePicker {
-				return m.handleEndsDatePickerMouse(msg)
-			}
-			if m.datePickerOpen {
-				return m.handleDatePickerMouse(msg)
-			}
+	// Window resize
+	if msg, ok := msg.(tea.WindowSizeMsg); ok {
+		return m.SetSize(msg.Width, msg.Height), nil
+	}
+
+	// Overlays capture all input when open.
+	if m.rruleEditorOpen {
+		return m.updateRRuleEditor(msg)
+	}
+	if m.datePickerOpen {
+		return m.updateDatePicker(msg)
+	}
+	if m.endsDatePicker {
+		return m.updateEndsDatePicker(msg)
+	}
+
+	if kp, ok := msg.(tea.KeyPressMsg); ok {
+		switch {
+		case key.Matches(kp, m.keys.Save):
+			var cmd tea.Cmd
+			m.form, cmd = m.form.Submit()
+			return m, cmd
+		case key.Matches(kp, m.keys.Close):
+			return m, func() tea.Msg { return EventFormClosedMsg{} }
+		}
+	}
+
+	// Forward mouse clicks through mouse tracker.
+	if mc, ok := msg.(tea.MouseClickMsg); ok {
+		if mc.Button == tea.MouseLeft {
+			target := mouseResolve(mc.X, mc.Y)
+			m.form, _ = m.form.Update(MouseEvent{IsClick: true, Target: target})
+			return m, nil
 		}
 		return m, nil
 	}
-	// Forward non-key messages (cursor blink, etc.) to the active textinput.
-	if m.isTextInput() {
-		var cmd tea.Cmd
-		switch m.focusField {
-		case fieldTitle:
-			m.title, cmd = m.title.Update(msg)
-		case fieldStart:
-			m.startTime, cmd = m.startTime.Update(msg)
-		case fieldEnd:
-			m.endTime, cmd = m.endTime.Update(msg)
-		case fieldLocation:
-			m.location, cmd = m.location.Update(msg)
-		case fieldDescription:
-			m.description, cmd = m.description.Update(msg)
-		case fieldEndsCount:
-			m.endsCount, cmd = m.endsCount.Update(msg)
-		default:
-			// non-text fields: nothing to forward
-		}
-		return m, cmd
-	}
-	return m, nil
+
+	var cmd tea.Cmd
+	m.form, cmd = m.form.Update(msg)
+	return m, cmd
 }
 
-func (m EventFormModel) handleKey(msg tea.KeyPressMsg) (EventFormModel, tea.Cmd) {
-	// Overlays capture all input when open.
-	if m.rruleEditorOpen {
+func (m EventFormModel) updateRRuleEditor(msg tea.Msg) (EventFormModel, tea.Cmd) {
+	if kp, ok := msg.(tea.KeyPressMsg); ok {
 		var cmd tea.Cmd
-		m.rruleEditor, cmd = m.rruleEditor.Update(msg)
+		m.rruleEditor, cmd = m.rruleEditor.Update(kp)
 		if m.rruleEditor.Done() {
 			m.customRule = m.rruleEditor.BuildRule()
 			m.rruleEditorOpen = false
@@ -495,134 +558,29 @@ func (m EventFormModel) handleKey(msg tea.KeyPressMsg) (EventFormModel, tea.Cmd)
 		}
 		return m, cmd
 	}
-	if m.datePickerOpen {
-		return m.handleDatePickerKey(msg)
-	}
-	if m.endsDatePicker {
-		return m.handleEndsDatePickerKey(msg)
-	}
-
-	switch {
-	case key.Matches(msg, m.keys.Save):
-		return m.save()
-
-	case key.Matches(msg, m.keys.Close):
-		return m, func() tea.Msg { return EventFormClosedMsg{} }
-
-	case key.Matches(msg, m.keys.ShiftTab):
-		return m.withFocus(m.prevField())
-
-	case key.Matches(msg, m.keys.Tab):
-		return m.withFocus(m.nextField())
-
-	case key.Matches(msg, m.keys.Enter):
-		switch m.focusField {
-		case fieldSave:
-			return m.save()
-		case fieldCancel:
-			return m, func() tea.Msg { return EventFormClosedMsg{} }
-		case fieldAllDay:
-			m.allDay = !m.allDay
-			return m, nil
-		case fieldDate:
-			m.datePickerOpen = true
-			return m, nil
-		case fieldRepeat:
-			if m.repeatIdx == repeatCustomIdx {
-				m.rruleEditor = NewRecurrenceEditorModel(m.day, m.width, m.height, m.theme)
-				m.rruleEditorOpen = true
-				return m, nil
-			}
-		default:
-			if m.isTextInput() && m.focusField != fieldDescription {
-				return m.withFocus(m.nextField())
-			}
-		}
-	}
-
-	// All day toggle via space.
-	if m.focusField == fieldAllDay && msg.String() == "space" {
-		m.allDay = !m.allDay
-		return m, nil
-	}
-
-	// Open date picker via space.
-	if m.focusField == fieldDate && msg.String() == "space" {
-		m.datePickerOpen = true
-		return m, nil
-	}
-
-	// Repeat preset cycling.
-	if m.focusField == fieldRepeat {
-		n := len(repeatPresets)
-		switch msg.String() {
-		case "left", "h":
-			m.repeatIdx = (m.repeatIdx - 1 + n) % n
-			return m, nil
-		case "right", "l":
-			m.repeatIdx = (m.repeatIdx + 1) % n
-			return m, nil
-		}
-	}
-
-	// Ends mode cycling.
-	if m.focusField == fieldEnds {
-		switch msg.String() {
-		case "left", "h":
-			m.ends = endsMode((int(m.ends) - 1 + 3) % 3)
-			return m, nil
-		case "right", "l":
-			m.ends = endsMode((int(m.ends) + 1) % 3)
-			return m, nil
-		case "enter", "space":
-			if m.ends == endsOnDate {
-				m.endsDatePicker = true
-				return m, nil
-			}
-		}
-	}
-
-	// Calendar cycling via arrow keys.
-	if m.focusField == fieldCalendar && len(m.calendars) > 0 {
-		switch msg.String() {
-		case "left", "h":
-			m.calendarIdx = (m.calendarIdx - 1 + len(m.calendars)) % len(m.calendars)
-			return m, nil
-		case "right", "l":
-			m.calendarIdx = (m.calendarIdx + 1) % len(m.calendars)
-			return m, nil
-		}
-	}
-
-	// Forward to active textinput.
-	if m.isTextInput() {
-		var cmd tea.Cmd
-		switch m.focusField {
-		case fieldTitle:
-			m.title, cmd = m.title.Update(msg)
-		case fieldStart:
-			dur := m.currentDuration()
-			m.startTime, cmd = m.startTime.Update(msg)
-			m.adjustEndTime(dur)
-		case fieldEnd:
-			m.endTime, cmd = m.endTime.Update(msg)
-		case fieldLocation:
-			m.location, cmd = m.location.Update(msg)
-		case fieldDescription:
-			m.description, cmd = m.description.Update(msg)
-		case fieldEndsCount:
-			m.endsCount, cmd = m.endsCount.Update(msg)
-		default:
-			// non-text fields: nothing to forward
-		}
-		return m, cmd
-	}
-
 	return m, nil
 }
 
-// currentDuration returns the duration between start and end if both are valid.
-// Falls back to 1 hour when either value is unparseable.
+func (m EventFormModel) updateDatePicker(msg tea.Msg) (EventFormModel, tea.Cmd) {
+	if mc, ok := msg.(tea.MouseClickMsg); ok && mc.Button == tea.MouseLeft {
+		return m.handleDatePickerMouse(mc)
+	}
+	if kp, ok := msg.(tea.KeyPressMsg); ok {
+		return m.handleDatePickerKey(kp)
+	}
+	return m, nil
+}
+
+func (m EventFormModel) updateEndsDatePicker(msg tea.Msg) (EventFormModel, tea.Cmd) {
+	if mc, ok := msg.(tea.MouseClickMsg); ok && mc.Button == tea.MouseLeft {
+		return m.handleEndsDatePickerMouse(mc)
+	}
+	if kp, ok := msg.(tea.KeyPressMsg); ok {
+		return m.handleEndsDatePickerKey(kp)
+	}
+	return m, nil
+}
+
 func (m EventFormModel) handleDatePickerKey(msg tea.KeyPressMsg) (EventFormModel, tea.Cmd) {
 	switch msg.String() {
 	case "left", "h":
@@ -641,6 +599,7 @@ func (m EventFormModel) handleDatePickerKey(msg tea.KeyPressMsg) (EventFormModel
 		m.day = time.Now()
 	case "enter", "space":
 		m.datePickerOpen = false
+		m.dateField.SetValue(m.day.Format("Mon, Jan 2, 2006"))
 	case "esc", "q":
 		m.datePickerOpen = false
 	}
@@ -653,27 +612,20 @@ func (m EventFormModel) handleDatePickerMouse(msg tea.MouseClickMsg) (EventFormM
 	const gridW = 20
 	gridPad := max((innerW-gridW)/2, 0)
 
-	// Picker is centered on screen.
 	ox := (m.width - boxW) / 2
 	oy := (m.height - boxH) / 2
-
-	// Grid origin inside the box: border(1) + padding(2) + gridPad for x,
-	// border(1) + padding(1) + month header(1) + weekday header(1) for y.
 	gridX := ox + 3 + gridPad
 	gridY := oy + 4
 
-	// Translate click to grid-relative coordinates.
 	rx := msg.X - gridX
 	ry := msg.Y - gridY
 	if rx < 0 || rx >= gridW || ry < 0 || ry >= 6 {
 		return m, nil
 	}
 
-	// Each cell is 3 chars wide (2 digit + 1 space), last column has no trailing space.
 	dow := min(rx/3, 6)
 	week := ry
 
-	// Map to day number.
 	y, mo, _ := m.day.Date()
 	loc := m.day.Location()
 	first := time.Date(y, mo, 1, 0, 0, 0, 0, loc)
@@ -687,6 +639,7 @@ func (m EventFormModel) handleDatePickerMouse(msg tea.MouseClickMsg) (EventFormM
 
 	m.day = time.Date(y, mo, dayNum, 0, 0, 0, 0, loc)
 	m.datePickerOpen = false
+	m.dateField.SetValue(m.day.Format("Mon, Jan 2, 2006"))
 	return m, nil
 }
 
@@ -751,15 +704,46 @@ func (m EventFormModel) handleEndsDatePickerKey(msg tea.KeyPressMsg) (EventFormM
 }
 
 // EndsDatePickerOpen reports whether the ends-date picker overlay should be shown.
-func (m EventFormModel) EndsDatePickerOpen() bool {
-	return m.endsDatePicker
+func (m EventFormModel) EndsDatePickerOpen() bool { return m.endsDatePicker }
+
+// DatePickerOpen reports whether the date picker overlay should be shown.
+func (m EventFormModel) DatePickerOpen() bool { return m.datePickerOpen }
+
+// RRuleEditorOpen reports whether the recurrence editor overlay should be shown.
+func (m EventFormModel) RRuleEditorOpen() bool { return m.rruleEditorOpen }
+
+// DatePickerBoxSize returns the outer dimensions of the date picker dialog.
+func (m EventFormModel) DatePickerBoxSize() (int, int) { return 50, 13 }
+
+// DatePickerView renders the date picker as a standalone bordered dialog.
+func (m EventFormModel) DatePickerView() string {
+	boxW, boxH := m.DatePickerBoxSize()
+	innerW := boxW - 6
+	bold := lipgloss.NewStyle().Bold(true)
+
+	const gridW = 20
+	gridPad := max((innerW-gridW)/2, 0)
+	lines := make([]string, 0, 3)
+	monthStr := m.day.Format("January 2006")
+	monthPad := gridPad + max((gridW-len(monthStr))/2, 0)
+	lines = append(lines, strings.Repeat(" ", monthPad)+bold.Render(monthStr))
+	lines = append(lines, renderMiniCalendar(m.day, time.Now(), gridPad, m.theme))
+	m.help.SetWidth(innerW)
+	dpHelp := m.help.ShortHelpView(datePickerHelpKeys())
+	dpHelpPad := max((innerW-lipgloss.Width(dpHelp))/2, 0)
+	lines = append(lines, strings.Repeat(" ", dpHelpPad)+dpHelp)
+
+	content := strings.Join(lines, "\n")
+	return lipgloss.NewStyle().
+		Width(boxW).Height(boxH).Padding(1, 2).
+		Border(lipgloss.RoundedBorder()).
+		Render(content)
 }
 
-// EndsDatePickerView renders the ends-date picker using the same layout as the main date picker.
+// EndsDatePickerView renders the ends-date picker overlay.
 func (m EventFormModel) EndsDatePickerView() string {
 	boxW, _ := m.DatePickerBoxSize()
 	innerW := boxW - 6
-
 	bold := lipgloss.NewStyle().Bold(true)
 
 	const gridW = 20
@@ -777,80 +761,18 @@ func (m EventFormModel) EndsDatePickerView() string {
 	content := strings.Join(lines, "\n")
 	boxH := 13
 	return lipgloss.NewStyle().
-		Width(boxW).
-		Height(boxH).
-		Padding(1, 2).
+		Width(boxW).Height(boxH).Padding(1, 2).
 		Border(lipgloss.RoundedBorder()).
 		Render(content)
 }
 
-// DatePickerOpen reports whether the date picker overlay should be shown.
-func (m EventFormModel) DatePickerOpen() bool {
-	return m.datePickerOpen
-}
-
-// RRuleEditorOpen reports whether the recurrence editor overlay should be shown.
-func (m EventFormModel) RRuleEditorOpen() bool {
-	return m.rruleEditorOpen
-}
-
-// DatePickerBoxSize returns the outer dimensions of the date picker dialog.
-func (m EventFormModel) DatePickerBoxSize() (int, int) {
-	// width: help text (~44 chars) + padding(4) + border(2) = 50
-	// height: 1 month header + 1 weekday header + 6 week rows + 1 help + padding(2) + border(2) = 13
-	return 50, 13
-}
-
-// DatePickerView renders the date picker as a standalone bordered dialog.
-func (m EventFormModel) DatePickerView() string {
-	boxW, boxH := m.DatePickerBoxSize()
-	innerW := boxW - 6
-
-	bold := lipgloss.NewStyle().Bold(true)
-
-	const gridW = 20 // width of "Su Mo Tu We Th Fr Sa"
-	gridPad := max((innerW-gridW)/2, 0)
-	lines := make([]string, 0, 3)
-	monthStr := m.day.Format("January 2006")
-	monthPad := gridPad + max((gridW-len(monthStr))/2, 0)
-	lines = append(lines, strings.Repeat(" ", monthPad)+bold.Render(monthStr))
-	lines = append(lines, renderMiniCalendar(m.day, time.Now(), gridPad, m.theme))
-	m.help.SetWidth(innerW)
-	dpHelp := m.help.ShortHelpView(datePickerHelpKeys())
-	dpHelpPad := max((innerW-lipgloss.Width(dpHelp))/2, 0)
-	lines = append(lines, strings.Repeat(" ", dpHelpPad)+dpHelp)
-
-	content := strings.Join(lines, "\n")
-
-	return lipgloss.NewStyle().
-		Width(boxW).
-		Height(boxH).
-		Padding(1, 2).
-		Border(lipgloss.RoundedBorder()).
-		Render(content)
-}
-
-func (m EventFormModel) currentDuration() time.Duration {
-	s, err1 := time.Parse("15:04", m.startTime.Value())
-	e, err2 := time.Parse("15:04", m.endTime.Value())
-	if err1 != nil || err2 != nil {
-		return time.Hour
+// View renders the event form dialog.
+func (m EventFormModel) View() string {
+	if m.width <= 0 || m.height <= 0 {
+		return ""
 	}
-	d := e.Sub(s)
-	if d <= 0 {
-		d += 24 * time.Hour
-	}
-	return d
-}
-
-// adjustEndTime sets end = start + dur whenever the start value is a valid time.
-func (m *EventFormModel) adjustEndTime(dur time.Duration) {
-	s, err := time.Parse("15:04", m.startTime.Value())
-	if err != nil {
-		return
-	}
-	end := s.Add(dur)
-	m.endTime.SetValue(end.Format("15:04"))
+	content := mouseSweep(m.dialog.Box(m.form.View()))
+	return content
 }
 
 func (m EventFormModel) buildRecurrenceRule() string {
@@ -863,45 +785,42 @@ func (m EventFormModel) buildRecurrenceRule() string {
 	rule := repeatPresets[m.repeatIdx].Rule
 	switch m.ends {
 	case endsAfter:
-		count := strings.TrimSpace(m.endsCount.Value())
+		count := strings.TrimSpace(m.endsCountField.Value())
 		if count != "" {
 			rule += ";COUNT=" + count
 		}
 	case endsOnDate:
 		rule += ";UNTIL=" + m.endsDate.UTC().Format("20060102T150405Z")
 	default:
-		// endsNever: no COUNT/UNTIL appended
+		// endsNever
 	}
 	return rule
 }
 
-func (m EventFormModel) save() (EventFormModel, tea.Cmd) {
-	title := strings.TrimSpace(m.title.Value())
-	if title == "" {
-		m.errMsg = "Title is required"
-		return m, nil
+func (m EventFormModel) save(f *Form, editID int64) tea.Cmd {
+	calIdx := 0
+	if m.calendarField != nil {
+		calIdx = m.calendarField.Selected()
 	}
-	if len(m.calendars) == 0 {
-		m.errMsg = "No calendars available"
-		return m, nil
+	if calIdx >= len(m.calendars) || len(m.calendars) == 0 {
+		f.SetError(0, "No calendars available")
+		return nil
 	}
-
-	calID := m.calendars[m.calendarIdx].ID
+	calID := m.calendars[calIdx].ID
 	day := m.day
 	rrule := m.buildRecurrenceRule()
+	title := strings.TrimSpace(m.titleField.Value())
 
-	editID := m.editID
-
-	if m.allDay {
+	if m.allDayField.Checked() {
 		start := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC)
 		end := start.AddDate(0, 0, 1)
-		return m, func() tea.Msg {
+		return func() tea.Msg {
 			return EventFormSaveMsg{
 				EventID:        editID,
 				CalendarID:     calID,
 				Title:          title,
-				Description:    strings.TrimSpace(m.description.Value()),
-				Location:       strings.TrimSpace(m.location.Value()),
+				Description:    strings.TrimSpace(m.descField.Value()),
+				Location:       strings.TrimSpace(m.locationField.Value()),
 				StartTime:      start,
 				EndTime:        end,
 				AllDay:         true,
@@ -910,18 +829,29 @@ func (m EventFormModel) save() (EventFormModel, tea.Cmd) {
 		}
 	}
 
-	startVal := strings.TrimSpace(m.startTime.Value())
-	endVal := strings.TrimSpace(m.endTime.Value())
+	startVal := strings.TrimSpace(m.startField.Value())
+	endVal := strings.TrimSpace(m.endField.Value())
 
 	st, err := time.Parse("15:04", startVal)
 	if err != nil {
-		m.errMsg = "Invalid start time (use HH:MM)"
-		return m, nil
+		// Find the start field index
+		for i, k := range m.fieldKeys {
+			if k == efKeyStart {
+				f.SetError(i, "Invalid start time (use HH:MM)")
+				return nil
+			}
+		}
+		return nil
 	}
 	et, err := time.Parse("15:04", endVal)
 	if err != nil {
-		m.errMsg = "Invalid end time (use HH:MM)"
-		return m, nil
+		for i, k := range m.fieldKeys {
+			if k == efKeyEnd {
+				f.SetError(i, "Invalid end time (use HH:MM)")
+				return nil
+			}
+		}
+		return nil
 	}
 
 	start := time.Date(day.Year(), day.Month(), day.Day(),
@@ -932,10 +862,10 @@ func (m EventFormModel) save() (EventFormModel, tea.Cmd) {
 		end = end.AddDate(0, 0, 1)
 	}
 
-	desc := strings.TrimSpace(m.description.Value())
-	loc := strings.TrimSpace(m.location.Value())
+	desc := strings.TrimSpace(m.descField.Value())
+	loc := strings.TrimSpace(m.locationField.Value())
 
-	return m, func() tea.Msg {
+	return func() tea.Msg {
 		return EventFormSaveMsg{
 			EventID:        editID,
 			CalendarID:     calID,
@@ -949,194 +879,7 @@ func (m EventFormModel) save() (EventFormModel, tea.Cmd) {
 	}
 }
 
-// View renders the event form dialog.
-func (m EventFormModel) View() string {
-	if m.width <= 0 || m.height <= 0 {
-		return ""
-	}
-
-	boxW, boxH := m.boxSize()
-	innerW := max(boxW-6, 20) // border + padding
-
-	faint := lipgloss.NewStyle().Faint(true)
-	bold := lipgloss.NewStyle().Bold(true)
-
-	var lines []string
-	header := "New Event"
-	if m.editID > 0 {
-		header = "Edit Event"
-	}
-	lines = append(lines, bold.Render(header))
-	lines = append(lines, "")
-
-	// Title
-	lines = append(lines, faint.Render(formLabel("Title"))+m.title.View())
-	lines = append(lines, "")
-
-	if !m.allDay {
-		// Start → End with duration
-		timeLine := faint.Render(formLabel("Time")) +
-			m.startTime.View() + faint.Render("  \u2192  ") + m.endTime.View()
-		if dur := m.durationStr(); dur != "" {
-			timeLine += faint.Render("  " + dur)
-		}
-		lines = append(lines, truncateTo(timeLine, innerW))
-		lines = append(lines, "")
-	}
-
-	// Date
-	dateStr := m.day.Format("Mon, Jan 2, 2006")
-	if m.focusField == fieldDate {
-		dateStr = lipgloss.NewStyle().Reverse(true).Render(dateStr) + faint.Render("  enter: pick")
-	}
-	lines = append(lines, faint.Render(formLabel("Date"))+dateStr)
-	lines = append(lines, "")
-
-	// All day toggle
-	toggle := "[ ]"
-	if m.allDay {
-		toggle = "[x]"
-	}
-	if m.focusField == fieldAllDay {
-		toggle = lipgloss.NewStyle().Reverse(true).Render(toggle)
-	}
-	lines = append(lines, faint.Render(formLabel("All day"))+toggle)
-	lines = append(lines, "")
-
-	// Repeat selector
-	repeatLabel := repeatPresets[m.repeatIdx].Label
-	if m.repeatIdx == repeatCustomIdx && m.customRule != "" {
-		repeatLabel = m.rruleEditor.RuleSummary()
-	}
-	if m.focusField == fieldRepeat {
-		hint := faint.Render("  \u25c0 \u25b6")
-		if m.repeatIdx == repeatCustomIdx {
-			hint = faint.Render("  enter: edit  \u25c0 \u25b6")
-		}
-		repeatLabel = lipgloss.NewStyle().Reverse(true).Render(repeatLabel) + hint
-	}
-	lines = append(lines, faint.Render(formLabel("Repeat"))+repeatLabel)
-	lines = append(lines, "")
-
-	// Ends condition (only when a simple preset is active, not Custom)
-	if m.repeatIdx > 0 && m.repeatIdx != repeatCustomIdx {
-		var endsLabel string
-		switch m.ends {
-		case endsNever:
-			endsLabel = "Never"
-		case endsAfter:
-			endsLabel = "After " + m.endsCount.View() + " times"
-		case endsOnDate:
-			endsLabel = "On " + m.endsDate.Format("Jan 2, 2006")
-			if m.focusField == fieldEnds {
-				endsLabel += faint.Render("  enter: pick")
-			}
-		}
-		if m.focusField == fieldEnds && m.ends != endsAfter {
-			endsLabel = lipgloss.NewStyle().Reverse(true).Render(endsLabel) + faint.Render("  \u25c0 \u25b6")
-		} else if m.focusField == fieldEnds {
-			endsLabel = endsLabel + faint.Render("  \u25c0 \u25b6")
-		}
-		lines = append(lines, faint.Render(formLabel("Ends"))+endsLabel)
-		lines = append(lines, "")
-	}
-
-	// Calendar selector
-	if len(m.calendars) > 1 {
-		cal := m.calendars[m.calendarIdx]
-		dot := "\u25cf"
-		if cal.Color != "" {
-			dot = lipgloss.NewStyle().Foreground(lipgloss.Color(cal.Color)).Render("\u25cf")
-		}
-		calVal := dot + " " + cal.Name
-		if m.focusField == fieldCalendar {
-			calVal += faint.Render("  \u25c0 \u25b6")
-		}
-		lines = append(lines, faint.Render(formLabel("Calendar"))+calVal)
-		lines = append(lines, "")
-	}
-
-	// Location
-	lines = append(lines, faint.Render(formLabel("Location"))+m.location.View())
-	lines = append(lines, "")
-
-	// Description (with left border)
-	lines = append(lines, faint.Render("Description"))
-	descBorder := lipgloss.NewStyle().
-		BorderLeft(true).
-		BorderStyle(lipgloss.NormalBorder()).
-		BorderForeground(m.theme.Border).
-		PaddingLeft(1)
-	lines = append(lines, descBorder.Render(m.description.View()))
-
-	// Error message
-	if m.errMsg != "" {
-		lines = append(lines, "")
-		lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.Error).Render(m.errMsg))
-	}
-
-	lines = append(lines, "")
-
-	// Save / Cancel buttons (right-aligned, primary styling on Save)
-	saveBtn := buttonStyled("Save", 0, m.focusField == fieldSave, true)
-	cancelBtn := button("Cancel", 0, m.focusField == fieldCancel)
-	buttons := cancelBtn + "   " + saveBtn
-	pad := max(innerW-lipgloss.Width(buttons), 0)
-	lines = append(lines, strings.Repeat(" ", pad)+buttons)
-
-	lines = append(lines, "")
-
-	// Help
-	m.help.SetWidth(innerW)
-	helpText := m.help.ShortHelpView(m.keys.ShortHelp())
-	lines = append(lines, truncateTo(helpText, innerW))
-
-	content := strings.Join(lines, "\n")
-
-	return lipgloss.NewStyle().
-		Width(boxW).
-		Height(boxH).
-		Padding(1, 2).
-		Border(lipgloss.RoundedBorder()).
-		Render(content)
-}
-
-func (m EventFormModel) durationStr() string {
-	s, err1 := time.Parse("15:04", m.startTime.Value())
-	e, err2 := time.Parse("15:04", m.endTime.Value())
-	if err1 != nil || err2 != nil {
-		return ""
-	}
-	d := e.Sub(s)
-	if d <= 0 {
-		d += 24 * time.Hour
-	}
-	h := int(d.Hours())
-	m2 := int(d.Minutes()) % 60
-	switch {
-	case h == 0:
-		return fmt.Sprintf("%d min", m2)
-	case m2 == 0:
-		if h == 1 {
-			return "1 hour"
-		}
-		return fmt.Sprintf("%d hours", h)
-	default:
-		return fmt.Sprintf("%dh %dm", h, m2)
-	}
-}
-
-const formLabelWidth = 12
-
-func formLabel(s string) string {
-	if len(s) >= formLabelWidth {
-		return s
-	}
-	return s + strings.Repeat(" ", formLabelWidth-len(s))
-}
-
-// addMonthClamped shifts t by months, clamping the day so it stays valid
-// (e.g. Jan 31 + 1 month → Feb 28, not Mar 3).
+// addMonthClamped shifts t by months, clamping the day so it stays valid.
 func addMonthClamped(t time.Time, months int) time.Time {
 	y, m, d := t.Date()
 	newMonth := time.Month(int(m) + months)
@@ -1147,14 +890,13 @@ func addMonthClamped(t time.Time, months int) time.Time {
 	return time.Date(y, newMonth, d, 0, 0, 0, 0, t.Location())
 }
 
-// renderMiniCalendar draws a compact month grid with the selected day
-// highlighted and today marked.
+// renderMiniCalendar draws a compact month grid.
 func renderMiniCalendar(selected, today time.Time, indent int, theme Theme) string {
 	y, mo, _ := selected.Date()
 	loc := selected.Location()
 
 	first := time.Date(y, mo, 1, 0, 0, 0, 0, loc)
-	startDow := int(first.Weekday()) // 0=Sun
+	startDow := int(first.Weekday())
 	daysInMonth := time.Date(y, mo+1, 0, 0, 0, 0, 0, loc).Day()
 
 	pad := strings.Repeat(" ", indent)
@@ -1184,7 +926,6 @@ func renderMiniCalendar(selected, today time.Time, indent int, theme Theme) stri
 		}
 		lines = append(lines, pad+strings.Join(cells, " "))
 		if dayNum > daysInMonth {
-			// Pad remaining empty weeks so height is stable.
 			for week++; week < 6; week++ {
 				lines = append(lines, pad+strings.Repeat(" ", 20))
 			}
@@ -1193,6 +934,15 @@ func renderMiniCalendar(selected, today time.Time, indent int, theme Theme) stri
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+const formLabelWidth = 12
+
+func formLabel(s string) string {
+	if len(s) >= formLabelWidth {
+		return s
+	}
+	return s + strings.Repeat(" ", formLabelWidth-len(s))
 }
 
 func sameDay(a, b time.Time) bool {
