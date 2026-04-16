@@ -472,6 +472,7 @@ type FormStyles struct {
 	LabelLayout     LabelLayout    // default layout for all fields
 	Buttons         ButtonStyles   // styles for all button variants
 	ButtonAlign     ButtonAlign    // horizontal placement of button row (default: right)
+	ButtonRule      bool           // when true, render a horizontal rule above buttons
 }
 
 // DefaultFormStyles returns minimal styles suitable for testing or as a
@@ -650,20 +651,32 @@ func (f Form) View() string {
 	buttonParts = append(buttonParts, mouseMark("cancel", cancelStyle.Render("Cancel", f.focused == f.cancelIndex())))
 	buttons := lipgloss.JoinHorizontal(lipgloss.Top, buttonParts...)
 
-	// Measure the natural width of the field rows so button alignment
-	// stays inside the form's content area rather than stretching to
-	// the full terminal width.
-	contentWidth := lipgloss.Width(lipgloss.JoinVertical(lipgloss.Left, parts...))
+	// Use the form's width (typically set from Dialog.ContentWidth()) so
+	// buttons align relative to the container, not the field rows. Fall
+	// back to the natural content width when no explicit width is set.
+	alignWidth := f.width
+	if alignWidth <= 0 {
+		alignWidth = lipgloss.Width(lipgloss.JoinVertical(lipgloss.Left, parts...))
+	}
 
-	if contentWidth > 0 && f.styles.ButtonAlign != ButtonAlignLeft {
+	if alignWidth > 0 && f.styles.ButtonAlign != ButtonAlignLeft {
 		align := lipgloss.Right
 		if f.styles.ButtonAlign == ButtonAlignCenter {
 			align = lipgloss.Center
 		}
-		buttons = lipgloss.NewStyle().Width(contentWidth).Align(align).Render(buttons)
+		buttons = lipgloss.NewStyle().Width(alignWidth).Align(align).Render(buttons)
 	}
 
-	parts = append(parts, "", buttons)
+	if f.styles.ButtonRule {
+		ruleWidth := alignWidth
+		if ruleWidth <= 0 {
+			ruleWidth = lipgloss.Width(buttons)
+		}
+		rule := strings.Repeat(Glyphs["separator.horizontal"], ruleWidth)
+		parts = append(parts, "", lipgloss.NewStyle().Faint(true).Render(rule), buttons)
+	} else {
+		parts = append(parts, "", buttons)
+	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
