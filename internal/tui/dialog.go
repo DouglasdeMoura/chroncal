@@ -104,7 +104,12 @@ func (d Dialog) Box(content string) string {
 	}
 	sections = append(sections, content)
 	if d.footer != "" {
-		sections = append(sections, "", d.styles.Footer.Render(d.footer))
+		cw := d.ContentWidth()
+		if cw <= 0 {
+			cw = lipgloss.Width(lipgloss.JoinVertical(lipgloss.Left, sections...))
+		}
+		centered := lipgloss.NewStyle().Width(cw).Align(lipgloss.Center).Render(d.styles.Footer.Render(d.footer))
+		sections = append(sections, "", centered)
 	}
 
 	inner := lipgloss.JoinVertical(lipgloss.Left, sections...)
