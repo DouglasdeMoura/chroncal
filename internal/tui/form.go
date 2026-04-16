@@ -645,9 +645,9 @@ func (f Form) View() string {
 		}
 
 		if hasError {
-			parts = append(parts, row, f.styles.Error.Render(f.error), "")
+			parts = append(parts, row, f.styles.Error.Render(f.error))
 		} else {
-			parts = append(parts, row, "")
+			parts = append(parts, row)
 		}
 	}
 
