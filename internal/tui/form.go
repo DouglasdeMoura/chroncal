@@ -480,12 +480,15 @@ func (f *HexColorField) IsFocusable() bool          { return true }
 func (f *HexColorField) View() string {
 	base := f.input.View()
 	hexVal := strings.TrimSpace(f.input.Value())
-	if f.paletteIdx >= 0 || !hexRE.MatchString(hexVal) {
+	if !hexRE.MatchString(hexVal) {
 		return base
 	}
 	dot := lipgloss.NewStyle().Foreground(lipgloss.Color(hexVal)).Render(Glyphs["dot"])
-	customLabel := lipgloss.NewStyle().Foreground(f.dimColor).Italic(true).Render("(custom)")
-	return base + "  " + dot + "  " + customLabel
+	if f.paletteIdx < 0 {
+		customLabel := lipgloss.NewStyle().Foreground(f.dimColor).Italic(true).Render("(custom)")
+		return base + "  " + dot + "  " + customLabel
+	}
+	return base + "  " + dot
 }
 
 // isHexInputAllowed reports whether the printable text t can be inserted
