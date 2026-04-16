@@ -482,15 +482,12 @@ func (m RecurrenceEditorModel) EndsDatePickerBoxSize() (int, int) {
 
 // View renders the recurrence editor dialog.
 func (m RecurrenceEditorModel) View() string {
-	boxW, boxH := m.BoxSize()
-	innerW := boxW - 6
+	boxW, _ := m.BoxSize()
+	innerW := boxW - 2 - 2 // border + padding
 
 	faint := lipgloss.NewStyle().Faint(true)
-	bold := lipgloss.NewStyle().Bold(true)
 
 	var lines []string
-	lines = append(lines, bold.Render("Custom Repeat"))
-	lines = append(lines, "")
 
 	// Frequency
 	freqLabel := recFrequencies[m.freqIdx].Label
@@ -577,13 +574,13 @@ func (m RecurrenceEditorModel) View() string {
 	lines = append(lines, "")
 
 	// Buttons
-	doneBtn := buttonStyled("Done", 0, m.focusField == refDone, true)
-	cancelBtn := button("Cancel", 0, m.focusField == refCancel)
-	buttons := cancelBtn + "   " + doneBtn
+	bs := DefaultButtonStyles()
+	doneBtn := bs.Primary.Render("Done", m.focusField == refDone)
+	cancelBtn := bs.Secondary.Render("Cancel", m.focusField == refCancel)
+	buttons := cancelBtn + " " + doneBtn
 	pad := max(innerW-lipgloss.Width(buttons), 0)
 	lines = append(lines, strings.Repeat(" ", pad)+buttons)
 
-	lines = append(lines, "")
 	m.help.SetWidth(innerW)
 	helpKeys := []key.Binding{
 		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
@@ -591,16 +588,15 @@ func (m RecurrenceEditorModel) View() string {
 		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")),
 	}
 	helpText := m.help.ShortHelpView(helpKeys)
-	lines = append(lines, truncateTo(helpText, innerW))
 
 	content := strings.Join(lines, "\n")
 
-	return lipgloss.NewStyle().
-		Width(boxW).
-		Height(boxH).
-		Padding(1, 2).
-		Border(lipgloss.RoundedBorder()).
-		Render(content)
+	styles := DefaultDialogStyles()
+	dialog := NewDialog("Custom Repeat", styles)
+	dialog = dialog.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+	dialog.SetFooter(helpText)
+
+	return dialog.Box(content)
 }
 
 // nthWeekdayOf returns the Nth occurrence number and RFC 5545 day code
