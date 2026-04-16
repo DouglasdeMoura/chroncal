@@ -900,6 +900,12 @@ func (f *Form) clearErrorOnInput() {
 	}
 }
 
+// Submit triggers validation and, if valid, calls the OnSubmit callback.
+// Use this for external submit triggers like ctrl+s shortcuts.
+func (f Form) Submit() (Form, tea.Cmd) {
+	return f.submitIfValid()
+}
+
 func (f Form) submitIfValid() (Form, tea.Cmd) {
 	var valid bool
 	f, valid = f.validate()
