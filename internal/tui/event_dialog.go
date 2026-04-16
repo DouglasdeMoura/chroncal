@@ -1086,22 +1086,28 @@ func truncateTo(s string, w int) string {
 	if lipgloss.Width(s) <= w {
 		return s
 	}
-	if !strings.ContainsRune(s, '\x1b') {
-		r := []rune(s)
-		if w == 1 {
-			return "…"
-		}
-		return string(r[:w-1]) + "…"
-	}
-	plain := stripANSI(s)
-	r := []rune(plain)
 	if w == 1 {
 		return "…"
 	}
-	if len(r) > w-1 {
-		return string(r[:w-1]) + "…"
+
+	plain := s
+	if strings.ContainsRune(s, '\x1b') {
+		plain = stripANSI(s)
 	}
-	return plain
+	r := []rune(plain)
+	cut := min(w-1, len(r))
+
+	// Prefer breaking at whitespace within a small look-back window so
+	// truncation doesn't slice mid-word. If no whitespace is within reach
+	// (e.g., a single long token), fall back to a hard cut.
+	lookback := cut / 3
+	for i := cut; i > cut-lookback && i > 1; i-- {
+		if r[i-1] == ' ' || r[i-1] == '\t' {
+			trimmed := strings.TrimRight(string(r[:i-1]), " \t")
+			return trimmed + " …"
+		}
+	}
+	return string(r[:cut]) + "…"
 }
 
 func stripANSI(s string) string {
