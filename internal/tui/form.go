@@ -223,10 +223,12 @@ const (
 
 // FormItem pairs a label with a field and an optional required constraint.
 type FormItem struct {
-	Label       string
-	Field       FormField
-	Required    bool
-	LabelLayout *LabelLayout // nil = use the form-level default
+	Label           string
+	Field           FormField
+	Required        bool
+	LabelLayout     *LabelLayout // nil = use the form-level default
+	ShowFocusMarker *bool        // nil = use the form-level default
+	ShowInputBorder *bool        // nil = use the form-level default
 }
 
 // FormStyles controls how the Form renders labels, errors, and buttons.
@@ -234,6 +236,7 @@ type FormStyles struct {
 	Label           lipgloss.Style
 	Input           lipgloss.Style // style wrapping unfocused fields (e.g. border)
 	InputFocused    lipgloss.Style // style wrapping the focused field
+	ShowInputBorder bool           // when true, wrap text fields with Input/InputFocused styles
 	ShowFocusMarker bool           // when true, render focus glyph before the focused field
 	Error           lipgloss.Style
 	LabelLayout     LabelLayout // default layout for all fields
@@ -372,11 +375,17 @@ func (f Form) View() string {
 		}
 
 		fieldView := item.Field.View()
-		if _, isText := item.Field.(*TextField); isText {
-			if f.focused == i {
-				fieldView = f.styles.InputFocused.Render(fieldView)
-			} else {
-				fieldView = f.styles.Input.Render(fieldView)
+		showBorder := f.styles.ShowInputBorder
+		if item.ShowInputBorder != nil {
+			showBorder = *item.ShowInputBorder
+		}
+		if showBorder {
+			if _, isText := item.Field.(*TextField); isText {
+				if f.focused == i {
+					fieldView = f.styles.InputFocused.Render(fieldView)
+				} else {
+					fieldView = f.styles.Input.Render(fieldView)
+				}
 			}
 		}
 		field := mouseMark(fieldTarget(i), fieldView)
@@ -388,7 +397,11 @@ func (f Form) View() string {
 		}
 
 		focused := f.focused == i
-		marker := f.focusMarker(focused)
+		showMarker := f.styles.ShowFocusMarker
+		if item.ShowFocusMarker != nil {
+			showMarker = *item.ShowFocusMarker
+		}
+		marker := f.focusMarkerFor(focused, showMarker)
 
 		var row string
 		switch {
@@ -636,10 +649,9 @@ func (f Form) totalCount() int {
 
 // Helpers
 
-// focusMarker returns "> " styled with the label style for the focused
-// field, or equivalent whitespace for unfocused fields.
-func (f Form) focusMarker(focused bool) string {
-	if !f.styles.ShowFocusMarker {
+// focusMarkerFor returns the focus indicator string for a field.
+func (f Form) focusMarkerFor(focused, showMarker bool) string {
+	if !showMarker {
 		return ""
 	}
 	if focused {
@@ -651,6 +663,9 @@ func (f Form) focusMarker(focused bool) string {
 // LayoutPtr returns a pointer to a LabelLayout value, for use in
 // FormItem.LabelLayout overrides.
 func LayoutPtr(l LabelLayout) *LabelLayout { return &l }
+
+// BoolPtr returns a pointer to a bool, for use in FormItem overrides.
+func BoolPtr(b bool) *bool { return &b }
 
 func fieldTarget(i int) string {
 	return "field:" + strconv.Itoa(i)
