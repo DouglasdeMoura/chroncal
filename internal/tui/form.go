@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"image/color"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -346,6 +348,170 @@ func (f *StaticField) Focus() tea.Cmd         { return nil }
 func (f *StaticField) Blur()                  {}
 func (f *StaticField) SetWidth(int)           {}
 func (f *StaticField) IsFocusable() bool      { return false }
+
+// ---------------------------------------------------------------------------
+// PaletteField
+// ---------------------------------------------------------------------------
+
+// PaletteField is a FormField that cycles through color swatches with
+// left/right arrows. The selected swatch is wrapped in brackets.
+type PaletteField struct {
+	swatches    []string
+	selected    int // -1 for custom/off-palette
+	focused     bool
+	accentColor color.Color
+	mutedColor  color.Color
+}
+
+func NewPaletteField(swatches []string, selected int, accent, muted color.Color) *PaletteField {
+	return &PaletteField{
+		swatches:    swatches,
+		selected:    selected,
+		accentColor: accent,
+		mutedColor:  muted,
+	}
+}
+
+func (f *PaletteField) Selected() int     { return f.selected }
+func (f *PaletteField) SetSelected(i int) { f.selected = i }
+
+func (f *PaletteField) Value() string {
+	if f.selected >= 0 && f.selected < len(f.swatches) {
+		return f.swatches[f.selected]
+	}
+	return ""
+}
+
+func (f *PaletteField) Update(msg tea.Msg) tea.Cmd {
+	if msg, ok := msg.(tea.KeyPressMsg); ok {
+		n := len(f.swatches)
+		switch msg.String() {
+		case "left", "h":
+			idx := f.selected
+			if idx < 0 {
+				idx = 0
+			} else if idx > 0 {
+				idx--
+			}
+			f.selected = idx
+		case "right", "l":
+			idx := f.selected
+			if idx < 0 {
+				idx = 0
+			} else if idx < n-1 {
+				idx++
+			}
+			f.selected = idx
+		}
+	}
+	return nil
+}
+
+func (f *PaletteField) View() string {
+	dot := func(c string) string {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(c)).Render(Glyphs["dot"])
+	}
+	parts := make([]string, 0, len(f.swatches))
+	for i, c := range f.swatches {
+		if i == f.selected {
+			brCol := f.mutedColor
+			if f.focused {
+				brCol = f.accentColor
+			}
+			br := lipgloss.NewStyle().Foreground(brCol).Bold(true)
+			parts = append(parts, br.Render("[")+dot(c)+br.Render("]"))
+		} else {
+			parts = append(parts, dot(c))
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func (f *PaletteField) Focus() tea.Cmd {
+	f.focused = true
+	return nil
+}
+
+func (f *PaletteField) Blur() {
+	f.focused = false
+}
+
+func (f *PaletteField) SetWidth(int)      {}
+func (f *PaletteField) IsFocusable() bool { return true }
+
+// ---------------------------------------------------------------------------
+// HexColorField
+// ---------------------------------------------------------------------------
+
+var hexRE = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+
+// HexColorField wraps a TextField and appends a live color preview dot
+// and "(custom)" label when the value doesn't match any palette swatch.
+type HexColorField struct {
+	input      *TextField
+	paletteIdx int // -1 when off-palette
+	dimColor   color.Color
+	alignWidth int // target width for right-aligning the suffix
+}
+
+func NewHexColorField(placeholder string, dimColor color.Color) *HexColorField {
+	f := &HexColorField{
+		input:    NewTextField(placeholder),
+		dimColor: dimColor,
+	}
+	f.input.SetFilter(func(k tea.Key) bool {
+		if k.Text == "" {
+			return true
+		}
+		return isHexInputAllowed(k.Text, f.input.Position(), f.input.Value())
+	})
+	return f
+}
+
+func (f *HexColorField) Value() string              { return f.input.Value() }
+func (f *HexColorField) SetValue(v string)          { f.input.SetValue(v) }
+func (f *HexColorField) SetPaletteIdx(idx int)      { f.paletteIdx = idx }
+func (f *HexColorField) SetAlignWidth(w int)        { f.alignWidth = w }
+func (f *HexColorField) Update(msg tea.Msg) tea.Cmd { return f.input.Update(msg) }
+func (f *HexColorField) Focus() tea.Cmd             { return f.input.Focus() }
+func (f *HexColorField) Blur()                      { f.input.Blur() }
+func (f *HexColorField) SetWidth(w int)             { f.input.SetWidth(max(w-16, 8)) }
+func (f *HexColorField) IsFocusable() bool          { return true }
+
+func (f *HexColorField) View() string {
+	base := f.input.View()
+	hexVal := strings.TrimSpace(f.input.Value())
+	if f.paletteIdx >= 0 || !hexRE.MatchString(hexVal) {
+		return base
+	}
+	dot := lipgloss.NewStyle().Foreground(lipgloss.Color(hexVal)).Render(Glyphs["dot"])
+	customLabel := lipgloss.NewStyle().Foreground(f.dimColor).Italic(true).Render("(custom)")
+	suffix := dot + "  " + customLabel
+
+	// Right-align suffix with the palette row.
+	baseW := lipgloss.Width(base)
+	suffixW := lipgloss.Width(suffix)
+	gap := max(f.alignWidth-baseW-suffixW, 1)
+	return base + strings.Repeat(" ", gap) + suffix
+}
+
+// isHexInputAllowed reports whether the printable text t can be inserted
+// into the hex input at cursor position pos given the current value.
+func isHexInputAllowed(t string, pos int, current string) bool {
+	for _, r := range t {
+		switch {
+		case r == '#':
+			if pos != 0 || strings.ContainsRune(current, '#') {
+				return false
+			}
+		case (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F'):
+			// ok
+		default:
+			return false
+		}
+	}
+	return true
+}
 
 // ---------------------------------------------------------------------------
 // MouseEvent
