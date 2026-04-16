@@ -540,8 +540,7 @@ func (m CalendarListDialogModel) renderEmptyDetails(w, h int) string {
 	lines := []string{msg}
 	detailsH := max(h-2, 1)
 	details := padLines(lines, w, detailsH)
-	blank := strings.Repeat(" ", w)
-	return details + "\n" + blank + "\n" + actionsLine
+	return details + "\n" + actionBar(actionsLine, w)
 }
 
 func (m CalendarListDialogModel) renderDetails(w, h int) string {
@@ -562,9 +561,8 @@ func (m CalendarListDialogModel) renderDetails(w, h int) string {
 		lines = lines[:detailsH]
 	}
 	details := padLines(lines, w, detailsH)
-	blank := strings.Repeat(" ", w)
 
-	return details + "\n" + blank + "\n" + actionsLine
+	return details + "\n" + actionBar(actionsLine, w)
 }
 
 func (m CalendarListDialogModel) labelWidth() int {

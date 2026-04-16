@@ -821,9 +821,8 @@ func (m EventDialogModel) renderDetails(w, h int) string {
 		lines = lines[:detailsH]
 	}
 	details := padLines(lines, w, detailsH)
-	blank := strings.Repeat(" ", w)
 
-	return details + "\n" + blank + "\n" + actionsLine
+	return details + "\n" + actionBar(actionsLine, w)
 }
 
 var rsvpIndicators = map[string]string{
