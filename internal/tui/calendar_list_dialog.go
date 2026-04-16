@@ -394,7 +394,7 @@ func (m CalendarListDialogModel) View() string {
 	title := lipgloss.NewStyle().
 		Bold(true).
 		Width(innerW).
-		Render("Calendars")
+		Render(strings.Repeat(" ", selectionPrefixWidth) + "Calendars")
 
 	bodyH := max(innerH-4, 3)
 

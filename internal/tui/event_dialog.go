@@ -601,7 +601,7 @@ func (m EventDialogModel) View() string {
 	title := lipgloss.NewStyle().
 		Bold(true).
 		Width(innerW).
-		Render(m.day.Format("Monday, January 2, 2006"))
+		Render(strings.Repeat(" ", selectionPrefixWidth) + m.day.Format("Monday, January 2, 2006"))
 
 	bodyH := max(innerH-4, 3)
 
