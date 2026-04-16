@@ -240,7 +240,7 @@ func NewCalendarDialogModel(id int64, name, hex string, theme Theme) CalendarDia
 
 	styles := DefaultDialogStyles()
 	dialog := NewDialog(title, styles)
-	dialog.SetWidth(54) // 54 total = 2 border + 2 padding + 50 content
+	dialog.SetWidth(56) // 56 total = 2 border + 4 padding + 50 content
 
 	formStyles := DefaultFormStyles()
 	formStyles.LabelLayout = LabelInline

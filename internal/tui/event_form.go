@@ -346,7 +346,7 @@ func (m *EventFormModel) buildDialogAndForm() {
 
 	styles := DefaultDialogStyles()
 	m.dialog = NewDialog(title, styles)
-	m.dialog.SetWidth(56) // 56 total = 2 border + 2 padding + 52 content
+	m.dialog.SetWidth(58) // 58 total = 2 border + 4 padding + 52 content
 
 	formStyles := DefaultFormStyles()
 	formStyles.LabelLayout = LabelInline

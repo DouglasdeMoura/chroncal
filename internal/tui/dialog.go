@@ -25,7 +25,7 @@ func DefaultDialogStyles() DialogStyles {
 		Border:   lipgloss.RoundedBorder(),
 		BorderFg: lipgloss.NoColor{},
 		PaddingY: 1,
-		PaddingX: 1,
+		PaddingX: 2,
 	}
 }
 
@@ -109,10 +109,18 @@ func (d Dialog) Box(content string) string {
 
 	inner := lipgloss.JoinVertical(lipgloss.Left, sections...)
 
+	padBottom := d.styles.PaddingY
+	if d.footer != "" {
+		padBottom = 0
+	}
+
 	box := lipgloss.NewStyle().
 		Border(d.styles.Border).
 		BorderForeground(d.styles.BorderFg).
-		Padding(d.styles.PaddingY, d.styles.PaddingX)
+		PaddingTop(d.styles.PaddingY).
+		PaddingBottom(padBottom).
+		PaddingLeft(d.styles.PaddingX).
+		PaddingRight(d.styles.PaddingX)
 
 	switch {
 	case d.fixedWidth == -1:
