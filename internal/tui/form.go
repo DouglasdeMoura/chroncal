@@ -683,7 +683,7 @@ func (f Form) View() string {
 			ruleWidth = lipgloss.Width(buttons)
 		}
 		rule := strings.Repeat(Glyphs["separator.horizontal"], ruleWidth)
-		parts = append(parts, lipgloss.NewStyle().Faint(true).Render(rule), buttons)
+		parts = append(parts, "", lipgloss.NewStyle().Faint(true).Render(rule), buttons)
 	} else {
 		parts = append(parts, "", buttons)
 	}

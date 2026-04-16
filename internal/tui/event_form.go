@@ -538,9 +538,14 @@ func (m EventFormModel) Update(msg tea.Msg) (EventFormModel, tea.Cmd) {
 	// Forward mouse clicks through mouse tracker.
 	if mc, ok := msg.(tea.MouseClickMsg); ok {
 		if mc.Button == tea.MouseLeft {
-			target := mouseResolve(mc.X, mc.Y)
-			m.form, _ = m.form.Update(MouseEvent{IsClick: true, Target: target})
-			return m, nil
+			// Translate screen coordinates to dialog-local coordinates.
+			bw, bh := m.BoxSize()
+			ox := (m.width - bw) / 2
+			oy := (m.height - bh) / 2
+			target := mouseResolve(mc.X-ox, mc.Y-oy)
+			var cmd tea.Cmd
+			m.form, cmd = m.form.Update(MouseEvent{IsClick: true, Target: target})
+			return m, cmd
 		}
 		return m, nil
 	}

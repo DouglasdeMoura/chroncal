@@ -341,9 +341,14 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 
 	if mc, ok := msg.(tea.MouseClickMsg); ok {
 		if mc.Button == tea.MouseLeft {
-			target := mouseResolve(mc.X, mc.Y)
-			m.form, _ = m.form.Update(MouseEvent{IsClick: true, Target: target})
-			return m, nil
+			// Translate screen coordinates to dialog-local coordinates.
+			bw, bh := m.BoxSize()
+			ox := (m.dialog.width - bw) / 2
+			oy := (m.dialog.height - bh) / 2
+			target := mouseResolve(mc.X-ox, mc.Y-oy)
+			var cmd tea.Cmd
+			m.form, cmd = m.form.Update(MouseEvent{IsClick: true, Target: target})
+			return m, cmd
 		}
 		return m, nil
 	}
