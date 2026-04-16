@@ -108,10 +108,10 @@ func TestCheckboxField_SetChecked(t *testing.T) {
 
 func TestCheckboxField_Render(t *testing.T) {
 	f := NewCheckboxField("TLS", true)
-	assert.Equal(t, "[✓] TLS", f.View())
+	assert.Equal(t, "[" + Glyphs["checkbox.on"] + "] TLS", f.View())
 
 	f.Update(keyPressMsg("space"))
-	assert.Equal(t, "[ ] TLS", f.View())
+	assert.Equal(t, "[" + Glyphs["checkbox.off"] + "] TLS", f.View())
 }
 
 func TestCheckboxField_DisabledWhen(t *testing.T) {
@@ -128,7 +128,7 @@ func TestCheckboxField_DisabledWhen(t *testing.T) {
 	disabled = false
 	f.Update(keyPressMsg("space"))
 	assert.True(t, f.Checked(), "toggle works when enabled")
-	assert.Equal(t, "[✓] TLS", f.View())
+	assert.Equal(t, "[" + Glyphs["checkbox.on"] + "] TLS", f.View())
 }
 
 func TestCheckboxField_IgnoresNonSpaceKeys(t *testing.T) {
@@ -626,7 +626,7 @@ func TestForm_FocusIndicatorOnFocusedField(t *testing.T) {
 	)
 
 	view := form.View()
-	styledMarker := styles.Label.Render(">") + " "
+	styledMarker := styles.Label.Render(Glyphs["focus"]) + " "
 	assert.Contains(t, view, styledMarker, "focused field should show > marker")
 }
 
@@ -640,7 +640,7 @@ func TestForm_FocusIndicatorMovesWithFocus(t *testing.T) {
 		FormItem{Label: "Email", Field: NewTextField("email")},
 	)
 
-	styledMarker := styles.Label.Render(">") + " "
+	styledMarker := styles.Label.Render(Glyphs["focus"]) + " "
 
 	view := form.View()
 	assert.Equal(t, 1, strings.Count(view, styledMarker),
@@ -657,7 +657,7 @@ func TestForm_NoFocusIndicatorByDefault(t *testing.T) {
 		FormItem{Label: "Name", Field: NewTextField("name")},
 	)
 	view := form.View()
-	styledMarker := DefaultFormStyles().Label.Render(">") + " "
+	styledMarker := DefaultFormStyles().Label.Render(Glyphs["focus"]) + " "
 	assert.NotContains(t, view, styledMarker,
 		"no focus marker when ShowFocusMarker is false")
 }
