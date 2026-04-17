@@ -24,8 +24,9 @@ INSERT INTO events (
     uid, calendar_id, title, description, location,
     start_time, end_time, all_day, recurrence_rule,
     timezone, status, transp, sequence, priority,
-    class, url, exdates, rdates, recurrence_id, geo, duration, dtstamp
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    class, url, exdates, rdates, recurrence_id, geo, duration, dtstamp,
+    conference_uri
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: UpdateEvent :one
@@ -38,6 +39,7 @@ UPDATE events SET
     class = ?, url = ?,
     exdates = ?, rdates = ?, geo = ?,
     duration = ?, dtstamp = ?,
+    conference_uri = ?,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ? RETURNING *;
 
@@ -46,8 +48,9 @@ INSERT INTO events (
     uid, calendar_id, title, description, location,
     start_time, end_time, all_day, recurrence_rule,
     timezone, status, transp, sequence, priority,
-    class, url, exdates, rdates, recurrence_id, geo, duration, dtstamp
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    class, url, exdates, rdates, recurrence_id, geo, duration, dtstamp,
+    conference_uri
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(uid, recurrence_id) DO UPDATE SET
     calendar_id = excluded.calendar_id,
     title = excluded.title, description = excluded.description,
@@ -63,6 +66,7 @@ ON CONFLICT(uid, recurrence_id) DO UPDATE SET
     geo = excluded.geo,
     duration = excluded.duration,
     dtstamp = excluded.dtstamp,
+    conference_uri = excluded.conference_uri,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 RETURNING *;
 

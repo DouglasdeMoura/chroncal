@@ -6,7 +6,7 @@ import "database/sql"
 // id, uid, calendar_id, title, description, location, start_time, end_time,
 // all_day, recurrence_rule, timezone, status, transp, sequence, priority,
 // class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at,
-// duration, dtstamp.
+// duration, dtstamp, conference_uri.
 func scanEvents(rows *sql.Rows) ([]Event, error) {
 	defer rows.Close()
 	items := make([]Event, 0, 64)
@@ -18,7 +18,7 @@ func scanEvents(rows *sql.Rows) ([]Event, error) {
 			&i.RecurrenceRule, &i.Timezone, &i.Status, &i.Transp,
 			&i.Sequence, &i.Priority, &i.Class, &i.Url, &i.Exdates,
 			&i.Rdates, &i.RecurrenceID, &i.Geo, &i.CreatedAt,
-			&i.UpdatedAt, &i.Duration, &i.Dtstamp,
+			&i.UpdatedAt, &i.Duration, &i.Dtstamp, &i.ConferenceUri,
 		); err != nil {
 			return nil, err
 		}

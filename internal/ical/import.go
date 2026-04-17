@@ -424,6 +424,11 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 		url = prop.Value
 	}
 
+	var conferenceURI string
+	if prop := ve.Props.Get("CONFERENCE"); prop != nil {
+		conferenceURI = prop.Value
+	}
+
 	var geo string
 	if prop := ve.Props.Get(ical.PropGeo); prop != nil {
 		geo = prop.Value
@@ -492,6 +497,7 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 		Priority:       priority,
 		Class:          strings.ToUpper(class),
 		URL:            url,
+		ConferenceURI:  conferenceURI,
 		Categories:     categories,
 		ExDates:        exdates,
 		RDates:         rdates,
@@ -1026,7 +1032,7 @@ var handledEventProps = map[string]bool{
 	ical.PropLocation: true, ical.PropDateTimeStart: true, ical.PropDateTimeEnd: true,
 	ical.PropDuration: true, ical.PropRecurrenceRule: true, ical.PropStatus: true,
 	ical.PropTransparency: true, "SEQUENCE": true, ical.PropPriority: true,
-	ical.PropClass: true, ical.PropURL: true, ical.PropGeo: true,
+	ical.PropClass: true, ical.PropURL: true, "CONFERENCE": true, ical.PropGeo: true,
 	ical.PropCategories: true, ical.PropExceptionDates: true,
 	ical.PropRecurrenceDates: true, ical.PropRecurrenceID: true,
 	ical.PropDateTimeStamp: true, ical.PropCreated: true, ical.PropLastModified: true,

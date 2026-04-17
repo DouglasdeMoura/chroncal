@@ -69,6 +69,7 @@ type Event struct {
 	UpdatedAt      string
 	Duration       *string
 	Dtstamp        *string
+	ConferenceUri  string
 }
 
 type EventAlarm struct {

@@ -56,6 +56,7 @@ type CreateParams struct {
 	Priority       int64
 	Class          string
 	URL            string
+	ConferenceURI  string
 	Categories     string
 	ExDates        string
 	RDates         string
@@ -80,6 +81,7 @@ type UpdateParams struct {
 	Priority       int64
 	Class          string
 	URL            string
+	ConferenceURI  string
 	Categories     string
 	ExDates        string
 	RDates         string
@@ -105,6 +107,7 @@ type UpsertParams struct {
 	Priority       int64
 	Class          string
 	URL            string
+	ConferenceURI  string
 	Categories     string
 	ExDates        string
 	RDates         string
@@ -279,6 +282,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
 		Geo:            storage.StringToNullable(p.Geo),
 		Duration:       storage.StringToNullable(p.DurationValue),
 		Dtstamp:        storage.StringToNullable(p.DtStamp),
+		ConferenceUri:  p.ConferenceURI,
 	})
 	if err != nil {
 		return Event{}, err
@@ -317,6 +321,7 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, 
 		Geo:            storage.StringToNullable(p.Geo),
 		Duration:       storage.StringToNullable(p.DurationValue),
 		Dtstamp:        storage.StringToNullable(p.DtStamp),
+		ConferenceUri:  p.ConferenceURI,
 	})
 	if err != nil {
 		return Event{}, err
@@ -355,6 +360,7 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error
 		Geo:            storage.StringToNullable(p.Geo),
 		Duration:       storage.StringToNullable(p.DurationValue),
 		Dtstamp:        storage.StringToNullable(p.DtStamp),
+		ConferenceUri:  p.ConferenceURI,
 	})
 	if err != nil {
 		return Event{}, err
@@ -1086,6 +1092,7 @@ func fromStorage(r storage.Event) Event {
 		Priority:       r.Priority,
 		Class:          r.Class,
 		URL:            storage.NullableToString(r.Url),
+		ConferenceURI:  r.ConferenceUri,
 		ExDates:        storage.NullableToString(r.Exdates),
 		RDates:         storage.NullableToString(r.Rdates),
 		RecurrenceID:   r.RecurrenceID,

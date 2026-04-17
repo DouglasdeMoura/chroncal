@@ -715,6 +715,7 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 			RecurrenceRule: ev.RecurrenceRule, Timezone: ev.Timezone,
 			Status: ev.Status, Transp: ev.Transp, Sequence: ev.Sequence,
 			Priority: ev.Priority, Class: ev.Class, URL: ev.URL,
+			ConferenceURI: ev.ConferenceURI,
 			Categories: ev.Categories, ExDates: ev.ExDates, RDates: ev.RDates,
 			RecurrenceID: ev.RecurrenceID, Geo: ev.Geo,
 			DurationValue: ev.DurationValue, DtStamp: ev.DtStamp,

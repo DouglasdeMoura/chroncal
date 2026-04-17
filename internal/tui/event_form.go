@@ -23,6 +23,7 @@ type EventFormSaveMsg struct {
 	Title          string
 	Description    string
 	Location       string
+	ConferenceURI  string
 	StartTime      time.Time
 	EndTime        time.Time
 	AllDay         bool
@@ -82,6 +83,7 @@ const (
 	efKeyCalendar    = "calendar"
 	efKeyPeople      = "people"
 	efKeyLocation    = "location"
+	efKeyConference  = "conference"
 	efKeyDescription = "description"
 )
 
@@ -102,9 +104,10 @@ type EventFormModel struct {
 	endsField      *SelectField
 	endsCountField *TextField
 	calendarField  *SelectField
-	peopleField    *TextField
-	locationField  *TextField
-	descField      *TextAreaField
+	peopleField     *TextField
+	locationField   *TextField
+	conferenceField *TextField
+	descField       *TextAreaField
 
 	// Overlay state
 	allDay             bool
@@ -222,6 +225,9 @@ func NewEventFormModel(day time.Time, calendars map[int64]CalendarInfo, theme Th
 	m.locationField = NewTextField("Add location")
 	m.locationField.SetCharLimit(200)
 
+	m.conferenceField = NewTextField("Add conference link")
+	m.conferenceField.SetCharLimit(500)
+
 	m.descField = NewTextAreaField("Add description")
 	m.descField.SetCharLimit(500)
 	m.descField.SetHeight(3)
@@ -239,6 +245,7 @@ func NewEventFormModelForEdit(ev event.Event, calendars map[int64]CalendarInfo, 
 	m.editID = ev.ID
 	m.titleField.SetValue(ev.Title)
 	m.locationField.SetValue(ev.Location)
+	m.conferenceField.SetValue(ev.ConferenceURI)
 	m.descField.SetValue(ev.Description)
 
 	// Restore timezone.
@@ -466,6 +473,9 @@ func (m *EventFormModel) buildFormItems() ([]FormItem, []string) {
 
 	items = append(items, FormItem{Label: "Location", Field: m.locationField})
 	keys = append(keys, efKeyLocation)
+
+	items = append(items, FormItem{Label: "Conference", Field: m.conferenceField})
+	keys = append(keys, efKeyConference)
 
 	items = append(items, FormItem{Label: "Notes", Field: m.descField})
 	keys = append(keys, efKeyDescription)
@@ -1104,6 +1114,7 @@ func (m EventFormModel) save(f *Form, editID int64) tea.Cmd {
 				Title:          title,
 				Description:    strings.TrimSpace(m.descField.Value()),
 				Location:       strings.TrimSpace(m.locationField.Value()),
+				ConferenceURI:  strings.TrimSpace(m.conferenceField.Value()),
 				StartTime:      start,
 				EndTime:        end,
 				AllDay:         true,
@@ -1149,6 +1160,7 @@ func (m EventFormModel) save(f *Form, editID int64) tea.Cmd {
 
 	desc := strings.TrimSpace(m.descField.Value())
 	location := strings.TrimSpace(m.locationField.Value())
+	conference := strings.TrimSpace(m.conferenceField.Value())
 
 	return func() tea.Msg {
 		return EventFormSaveMsg{
@@ -1157,6 +1169,7 @@ func (m EventFormModel) save(f *Form, editID int64) tea.Cmd {
 			Title:          title,
 			Description:    desc,
 			Location:       location,
+			ConferenceURI:  conference,
 			StartTime:      start,
 			EndTime:        end,
 			RecurrenceRule: rrule,

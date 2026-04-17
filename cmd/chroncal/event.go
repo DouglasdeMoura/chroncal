@@ -625,6 +625,7 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 				Priority:       existing.Priority,
 				Class:          existing.Class,
 				URL:            existing.URL,
+				ConferenceURI:  existing.ConferenceURI,
 				Categories:     existing.Categories,
 				ExDates:        existing.ExDates,
 				RDates:         existing.RDates,

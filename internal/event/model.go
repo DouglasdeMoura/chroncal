@@ -25,6 +25,7 @@ type Event struct {
 	Priority       int64 // 0-9
 	Class          string // PUBLIC, PRIVATE, CONFIDENTIAL
 	URL            string
+	ConferenceURI  string // RFC 7986 CONFERENCE property URI
 	Categories     string // comma-separated
 	ExDates        string // comma-separated RFC 3339
 	RDates         string // comma-separated RFC 3339

@@ -86,6 +86,13 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 			vevent.Props.Set(p)
 		}
 
+		if e.ConferenceURI != "" {
+			p := &ical.Prop{Name: "CONFERENCE"}
+			p.Value = e.ConferenceURI
+			p.Params.Set("VALUE", "URI")
+			vevent.Props.Set(p)
+		}
+
 		if e.Categories != "" {
 			// CATEGORIES is a comma-separated list of TEXT values.
 			// SetTextList handles escaping within individual values and

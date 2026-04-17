@@ -902,6 +902,9 @@ func eventDetailLines(ev event.Event, cal CalendarInfo, w, labelWidth int, rsvpL
 	if ev.URL != "" {
 		lines = append(lines, detailLine(faint, "URL", ev.URL, labelWidth, w))
 	}
+	if ev.ConferenceURI != "" {
+		lines = append(lines, detailLine(faint, "Conference", ev.ConferenceURI, labelWidth, w))
+	}
 	rsvpIdx := -1
 	if rsvpLine != "" {
 		rsvpIdx = len(lines)
