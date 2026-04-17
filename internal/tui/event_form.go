@@ -12,6 +12,7 @@ import (
 	lipgloss "charm.land/lipgloss/v2"
 
 	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/model"
 )
 
 // EventFormSaveMsg is emitted when the user saves the event form.
@@ -27,6 +28,7 @@ type EventFormSaveMsg struct {
 	AllDay         bool
 	RecurrenceRule string
 	Timezone       string
+	Attendees      []model.Attendee
 }
 
 // EventFormClosedMsg is emitted when the user closes the event form.
@@ -78,6 +80,7 @@ const (
 	efKeyEnds        = "ends"
 	efKeyEndsCount   = "endscount"
 	efKeyCalendar    = "calendar"
+	efKeyPeople      = "people"
 	efKeyLocation    = "location"
 	efKeyDescription = "description"
 )
@@ -99,6 +102,7 @@ type EventFormModel struct {
 	endsField      *SelectField
 	endsCountField *TextField
 	calendarField  *SelectField
+	peopleField    *TextField
 	locationField  *TextField
 	descField      *TextAreaField
 
@@ -212,6 +216,9 @@ func NewEventFormModel(day time.Time, calendars map[int64]CalendarInfo, theme Th
 		m.calendarField = NewSelectField(calSelectOpts)
 	}
 
+	m.peopleField = NewTextField("Comma-separated emails")
+	m.peopleField.SetCharLimit(500)
+
 	m.locationField = NewTextField("Add location")
 	m.locationField.SetCharLimit(200)
 
@@ -265,6 +272,15 @@ func NewEventFormModelForEdit(ev event.Event, calendars map[int64]CalendarInfo, 
 				break
 			}
 		}
+	}
+
+	// Pre-fill attendees.
+	if len(ev.Attendees) > 0 {
+		var emails []string
+		for _, a := range ev.Attendees {
+			emails = append(emails, a.Email)
+		}
+		m.peopleField.SetValue(strings.Join(emails, ", "))
 	}
 
 	// Parse recurrence rule.
@@ -444,6 +460,9 @@ func (m *EventFormModel) buildFormItems() ([]FormItem, []string) {
 		items = append(items, FormItem{Label: "Calendar", Field: m.calendarField})
 		keys = append(keys, efKeyCalendar)
 	}
+
+	items = append(items, FormItem{Label: "People", Field: m.peopleField})
+	keys = append(keys, efKeyPeople)
 
 	items = append(items, FormItem{Label: "Location", Field: m.locationField})
 	keys = append(keys, efKeyLocation)
@@ -1051,6 +1070,22 @@ func (m EventFormModel) save(f *Form, editID int64) tea.Cmd {
 	title := strings.TrimSpace(m.titleField.Value())
 	tzName := m.timezoneField.Value()
 
+	// Parse comma-separated emails into attendees.
+	var attendees []model.Attendee
+	if raw := strings.TrimSpace(m.peopleField.Value()); raw != "" {
+		for _, part := range strings.Split(raw, ",") {
+			email := strings.TrimSpace(part)
+			if email != "" {
+				attendees = append(attendees, model.Attendee{
+					Email:      email,
+					Role:       "REQ-PARTICIPANT",
+					RSVPStatus: "NEEDS-ACTION",
+					CUType:     "INDIVIDUAL",
+				})
+			}
+		}
+	}
+
 	// Resolve the time.Location for the selected timezone.
 	loc := time.UTC
 	if tzName != "" && tzName != "UTC" {
@@ -1074,6 +1109,7 @@ func (m EventFormModel) save(f *Form, editID int64) tea.Cmd {
 				AllDay:         true,
 				RecurrenceRule: rrule,
 				Timezone:       tzName,
+				Attendees:      attendees,
 			}
 		}
 	}
@@ -1125,6 +1161,7 @@ func (m EventFormModel) save(f *Form, editID int64) tea.Cmd {
 			EndTime:        end,
 			RecurrenceRule: rrule,
 			Timezone:       tzName,
+			Attendees:      attendees,
 		}
 	}
 }

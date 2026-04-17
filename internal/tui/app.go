@@ -579,8 +579,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case EventEditMsg:
 		ev := msg.Event
 		return m, func() tea.Msg {
-			fresh, err := m.app.Events.Get(context.Background(), ev.ID)
-			return eventEditLoadedMsg{event: fresh, err: err}
+			ctx := context.Background()
+			fresh, err := m.app.Events.Get(ctx, ev.ID)
+			if err != nil {
+				return eventEditLoadedMsg{err: err}
+			}
+			attendees, err := m.app.Events.ListAttendees(ctx, ev.ID)
+			if err != nil {
+				return eventEditLoadedMsg{err: err}
+			}
+			fresh.Attendees = attendees
+			return eventEditLoadedMsg{event: fresh}
 		}
 
 	case eventEditLoadedMsg:
@@ -604,10 +613,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case EventFormSaveMsg:
 		m.formOpen = false
+		attendees := msg.Attendees
 		if msg.EventID > 0 {
+			eventID := msg.EventID
 			return m, func() tea.Msg {
 				ctx := context.Background()
-				_, err := m.app.Events.Update(ctx, msg.EventID, event.UpdateParams{
+				_, err := m.app.Events.Update(ctx, eventID, event.UpdateParams{
 					CalendarID:     msg.CalendarID,
 					Title:          msg.Title,
 					Description:    msg.Description,
@@ -618,12 +629,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					RecurrenceRule: msg.RecurrenceRule,
 					Timezone:       msg.Timezone,
 				})
+				if err != nil {
+					return eventUpdatedMsg{err: err}
+				}
+				err = m.app.Events.ReplaceAttendees(ctx, eventID, attendees)
 				return eventUpdatedMsg{err: err}
 			}
 		}
 		return m, func() tea.Msg {
 			ctx := context.Background()
-			_, err := m.app.Events.Create(ctx, event.CreateParams{
+			created, err := m.app.Events.Create(ctx, event.CreateParams{
 				CalendarID:     msg.CalendarID,
 				Title:          msg.Title,
 				Description:    msg.Description,
@@ -634,6 +649,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				RecurrenceRule: msg.RecurrenceRule,
 				Timezone:       msg.Timezone,
 			})
+			if err != nil {
+				return eventCreatedMsg{err: err}
+			}
+			if len(attendees) > 0 {
+				err = m.app.Events.ReplaceAttendees(ctx, created.ID, attendees)
+			}
 			return eventCreatedMsg{err: err}
 		}
 
