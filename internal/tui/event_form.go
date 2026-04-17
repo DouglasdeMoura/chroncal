@@ -100,6 +100,7 @@ type EventFormModel struct {
 	descField      *TextAreaField
 
 	// Overlay state
+	allDay          bool
 	repeatIdx       int // index into repeatPresets
 	customRule      string
 	rruleEditor     RecurrenceEditorModel
@@ -231,6 +232,7 @@ func NewEventFormModelForEdit(ev event.Event, calendars map[int64]CalendarInfo, 
 
 	if ev.AllDay {
 		m.allDayField.SetChecked(true)
+		m.allDay = true
 	}
 	if !ev.AllDay {
 		m.timeField.SetStartValue(ev.StartTime.Local().Format("15:04"))
@@ -390,10 +392,10 @@ func (m *EventFormModel) buildFormItems() ([]FormItem, []string) {
 	items = append(items, FormItem{Label: "Title", Field: m.titleField, Required: true})
 	keys = append(keys, efKeyTitle)
 
-	if !m.allDayField.Checked() {
-		items = append(items, FormItem{Label: "Time", Field: m.timeField, Required: true})
-		keys = append(keys, efKeyTime)
-	}
+	allDay := m.allDayField.Checked()
+	m.timeField.SetDisabled(allDay)
+	items = append(items, FormItem{Label: "Time", Field: m.timeField, Required: !allDay})
+	keys = append(keys, efKeyTime)
 
 	m.dateField.SetValue(m.day.Format("Mon, Jan 2, 2006"))
 	items = append(items, FormItem{Label: "Date", Field: m.dateField})
@@ -433,10 +435,11 @@ func (m *EventFormModel) buildFormItems() ([]FormItem, []string) {
 }
 
 func (m *EventFormModel) syncFromForm() {
-	prevAllDay := m.allDayField.Checked()
+	prevAllDay := m.allDay
 	prevRepeatIdx := m.repeatIdx
 	prevEnds := m.ends
 
+	m.allDay = m.allDayField.Checked()
 	m.repeatIdx = m.repeatField.Selected()
 	m.ends = endsMode(m.endsField.Selected())
 	if m.calendarField != nil {
@@ -444,7 +447,7 @@ func (m *EventFormModel) syncFromForm() {
 	}
 
 	// Rebuild form items if dynamic fields changed.
-	needRebuild := m.allDayField.Checked() != prevAllDay ||
+	needRebuild := m.allDay != prevAllDay ||
 		m.repeatIdx != prevRepeatIdx ||
 		m.ends != prevEnds
 

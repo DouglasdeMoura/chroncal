@@ -157,7 +157,7 @@ type SelectOption struct {
 type selectHighlight int
 
 const (
-	selectNone  selectHighlight = iota
+	selectNone selectHighlight = iota
 	selectLeft
 	selectRight
 )
@@ -546,6 +546,7 @@ type TimeRangeField struct {
 	end      *TextField
 	subFocus int // 0 = start, 1 = end
 	focused  bool
+	disabled bool
 	dimColor color.Color
 }
 
@@ -565,10 +566,11 @@ func NewTimeRangeField(dimColor color.Color) *TimeRangeField {
 	}
 }
 
-func (f *TimeRangeField) StartValue() string      { return f.start.Value() }
-func (f *TimeRangeField) EndValue() string         { return f.end.Value() }
-func (f *TimeRangeField) SetStartValue(v string)   { f.start.SetValue(v) }
-func (f *TimeRangeField) SetEndValue(v string)     { f.end.SetValue(v) }
+func (f *TimeRangeField) StartValue() string     { return f.start.Value() }
+func (f *TimeRangeField) EndValue() string       { return f.end.Value() }
+func (f *TimeRangeField) SetStartValue(v string) { f.start.SetValue(v) }
+func (f *TimeRangeField) SetEndValue(v string)   { f.end.SetValue(v) }
+func (f *TimeRangeField) SetDisabled(v bool)     { f.disabled = v }
 
 // Value returns the start value, satisfying the valuer interface for
 // Required field checks.
@@ -587,9 +589,26 @@ func (f *TimeRangeField) Update(msg tea.Msg) tea.Cmd {
 	return cmd
 }
 
+func (f *TimeRangeField) timeText(tf *TextField, dim bool) string {
+	if dim {
+		v := tf.Value()
+		if v == "" {
+			v = tf.input.Placeholder
+		}
+		return lipgloss.NewStyle().Foreground(f.dimColor).Render(v)
+	}
+	return tf.View()
+}
+
 func (f *TimeRangeField) View() string {
-	startView := f.start.View()
-	endView := f.end.View()
+	// Use the live textinput View only for the actively focused sub-field
+	// so the cursor is visible. All other sub-fields render as plain text
+	// to avoid the extra padding/cursor space that textinput always adds.
+	startDim := f.disabled // || !f.focused || f.subFocus != 0
+	endDim := f.disabled   // || !f.focused || f.subFocus != 1
+
+	startView := f.timeText(f.start, startDim)
+	endView := f.timeText(f.end, endDim)
 	arrow := lipgloss.NewStyle().Foreground(f.dimColor).Render(Glyphs["time.arrow"])
 
 	result := startView + "  " + arrow + "  " + endView
@@ -621,7 +640,7 @@ func (f *TimeRangeField) SetWidth(int) {
 	f.end.SetWidth(6)
 }
 
-func (f *TimeRangeField) IsFocusable() bool { return true }
+func (f *TimeRangeField) IsFocusable() bool { return !f.disabled }
 
 // subFocuser implementation
 
@@ -890,12 +909,12 @@ const (
 // FormStyles controls how the Form renders labels, errors, and buttons.
 type FormStyles struct {
 	Label           lipgloss.Style
-	ShowFocusMarker bool           // when true, render focus glyph before the focused field
+	ShowFocusMarker bool // when true, render focus glyph before the focused field
 	Error           lipgloss.Style
-	LabelLayout     LabelLayout    // default layout for all fields
-	Buttons         ButtonStyles   // styles for all button variants
-	ButtonAlign     ButtonAlign    // horizontal placement of button row (default: right)
-	ButtonRule      bool           // when true, render a horizontal rule above buttons
+	LabelLayout     LabelLayout  // default layout for all fields
+	Buttons         ButtonStyles // styles for all button variants
+	ButtonAlign     ButtonAlign  // horizontal placement of button row (default: right)
+	ButtonRule      bool         // when true, render a horizontal rule above buttons
 }
 
 // DefaultFormStyles returns minimal styles suitable for testing or as a
@@ -924,13 +943,13 @@ type Form struct {
 	cancelVariant ButtonVariant
 	actionButtons []FormActionButton
 	focused       int
-	width        int
-	errorField   int
-	error        string
-	onSubmit     func(f *Form) tea.Cmd
-	onCancel     func(f *Form) tea.Cmd
-	onRebuild    func(f *Form)
-	onFieldEnter func(f *Form, field int) tea.Cmd
+	width         int
+	errorField    int
+	error         string
+	onSubmit      func(f *Form) tea.Cmd
+	onCancel      func(f *Form) tea.Cmd
+	onRebuild     func(f *Form)
+	onFieldEnter  func(f *Form, field int) tea.Cmd
 }
 
 func NewForm(submitLabel string, styles FormStyles, items ...FormItem) Form {
@@ -1300,6 +1319,9 @@ func (f Form) handleClick(target string) (Form, tea.Cmd) {
 		if target == fieldTarget(i) {
 			if cb, ok := f.items[i].Field.(*CheckboxField); ok {
 				cb.Toggle()
+				if f.onRebuild != nil {
+					f.onRebuild(&f)
+				}
 			}
 			return f.focusIndex(i)
 		}
