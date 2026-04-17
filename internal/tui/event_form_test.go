@@ -22,10 +22,47 @@ func testEventFormCalendars() map[int64]CalendarInfo {
 func TestEventForm_PlacesCalendarAfterNotes(t *testing.T) {
 	m, _ := NewEventFormModel(time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC), testEventFormCalendars(), Theme{})
 
+	repeatItemIdx := -1
+	titleItemIdx := -1
+	titleSeparatorIdx := -1
+	repeatSeparatorIdx := -1
+	peopleItemIdx := -1
+	notesItemIdx := -1
+	calendarItemIdx := -1
+	transpItemIdx := -1
+	classItemIdx := -1
+	for i, item := range m.form.items {
+		switch item.Label {
+		case "Title":
+			titleItemIdx = i
+		case "Repeat":
+			repeatItemIdx = i
+		case "People":
+			peopleItemIdx = i
+		case "Notes":
+			notesItemIdx = i
+		case "Calendar":
+			calendarItemIdx = i
+		case "Show as":
+			transpItemIdx = i
+		case "Visibility":
+			classItemIdx = i
+		case "":
+			if _, ok := item.Field.(*StaticField); ok {
+				if titleItemIdx != -1 && titleSeparatorIdx == -1 {
+					titleSeparatorIdx = i
+				} else {
+					repeatSeparatorIdx = i
+				}
+			}
+		}
+	}
+
 	notesIdx := -1
 	calendarIdx := -1
 	transpIdx := -1
 	classIdx := -1
+	peopleIdx := -1
 	for i, key := range m.fieldKeys {
 		switch key {
 		case efKeyDescription:
@@ -36,6 +73,8 @@ func TestEventForm_PlacesCalendarAfterNotes(t *testing.T) {
 			transpIdx = i
 		case efKeyClass:
 			classIdx = i
+		case efKeyPeople:
+			peopleIdx = i
 		}
 	}
 
@@ -43,13 +82,25 @@ func TestEventForm_PlacesCalendarAfterNotes(t *testing.T) {
 	assert.NotEqual(t, -1, calendarIdx)
 	assert.NotEqual(t, -1, transpIdx)
 	assert.NotEqual(t, -1, classIdx)
+	assert.NotEqual(t, -1, peopleIdx)
 	assert.Equal(t, notesIdx+1, calendarIdx)
 	assert.Equal(t, calendarIdx+1, transpIdx)
 	assert.Equal(t, transpIdx+1, classIdx)
-	assert.Equal(t, "Notes", m.form.items[notesIdx].Label)
-	assert.Equal(t, "Calendar", m.form.items[calendarIdx].Label)
-	assert.Equal(t, "Show as", m.form.items[transpIdx].Label)
-	assert.Equal(t, "Visibility", m.form.items[classIdx].Label)
+	assert.NotEqual(t, -1, titleItemIdx)
+	assert.NotEqual(t, -1, titleSeparatorIdx)
+	assert.NotEqual(t, -1, repeatItemIdx)
+	assert.NotEqual(t, -1, repeatSeparatorIdx)
+	assert.NotEqual(t, -1, peopleItemIdx)
+	assert.NotEqual(t, -1, notesItemIdx)
+	assert.NotEqual(t, -1, calendarItemIdx)
+	assert.NotEqual(t, -1, transpItemIdx)
+	assert.NotEqual(t, -1, classItemIdx)
+	assert.Equal(t, titleItemIdx+1, titleSeparatorIdx)
+	assert.Equal(t, repeatItemIdx+1, repeatSeparatorIdx)
+	assert.Equal(t, repeatSeparatorIdx+1, peopleItemIdx)
+	assert.Equal(t, notesItemIdx+1, calendarItemIdx)
+	assert.Equal(t, calendarItemIdx+1, transpItemIdx)
+	assert.Equal(t, transpItemIdx+1, classItemIdx)
 }
 
 func TestEventForm_CalendarFieldRendersColorDot(t *testing.T) {

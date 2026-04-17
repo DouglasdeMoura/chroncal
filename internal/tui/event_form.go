@@ -37,6 +37,10 @@ type EventFormSaveMsg struct {
 // EventFormClosedMsg is emitted when the user closes the event form.
 type EventFormClosedMsg struct{}
 
+func newEventFormSeparator() *StaticField {
+	return NewStaticField("", nil)
+}
+
 type repeatPreset struct {
 	Label string
 	Rule  string // RRULE value without prefix, empty for "None"
@@ -485,6 +489,8 @@ func (m *EventFormModel) buildFormItems() ([]FormItem, []string) {
 	items = append(items, FormItem{Label: "Title", Field: m.titleField, Required: true})
 	keys = append(keys, efKeyTitle)
 
+	items = append(items, FormItem{Label: "", Field: newEventFormSeparator()})
+
 	allDay := m.allDayField.Checked()
 	m.timeField.SetDisabled(allDay)
 	items = append(items, FormItem{Label: "Time", Field: m.timeField, Required: !allDay})
@@ -515,6 +521,8 @@ func (m *EventFormModel) buildFormItems() ([]FormItem, []string) {
 			keys = append(keys, efKeyEndsCount)
 		}
 	}
+
+	items = append(items, FormItem{Label: "", Field: newEventFormSeparator()})
 
 	items = append(items, FormItem{Label: "People", Field: m.peopleField})
 	keys = append(keys, efKeyPeople)
