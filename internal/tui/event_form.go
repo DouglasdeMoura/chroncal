@@ -32,6 +32,7 @@ type EventFormSaveMsg struct {
 	Transp         string
 	Class          string
 	Attendees      []model.Attendee
+	Alarms         []model.Alarm
 }
 
 // EventFormClosedMsg is emitted when the user closes the event form.
@@ -89,6 +90,7 @@ const (
 	efKeyRepeat      = "repeat"
 	efKeyEnds        = "ends"
 	efKeyEndsCount   = "endscount"
+	efKeyAlarms      = "alarms"
 	efKeyCalendar    = "calendar"
 	efKeyPeople      = "people"
 	efKeyLocation    = "location"
@@ -114,6 +116,7 @@ type EventFormModel struct {
 	repeatField       *SelectField
 	endsField         *SelectField
 	endsCountField    *TextField
+	alarmField        *OpenerField
 	calendarField     *SelectField
 	peopleField       *TextField
 	locationField     *TextField
@@ -132,6 +135,9 @@ type EventFormModel struct {
 	endsDate           time.Time
 	endsDatePicker     bool
 	datePickerOpen     bool
+	alarms             []model.Alarm
+	alarmEditor        AlarmListEditorModel
+	alarmEditorOpen    bool
 
 	// Mini-month models for date picker overlays
 	datePicker          MiniMonthModel
@@ -348,6 +354,11 @@ func NewEventFormModelForEdit(ev event.Event, calendars map[int64]CalendarInfo, 
 		m.peopleField.SetValue(strings.Join(emails, ", "))
 	}
 
+	// Pre-fill alarms.
+	if len(ev.Alarms) > 0 {
+		m.alarms = append([]model.Alarm(nil), ev.Alarms...)
+	}
+
 	// Parse recurrence rule.
 	if ev.RecurrenceRule != "" {
 		m.repeatIdx, m.customRule, m.ends, m.endsDate = parseRecurrenceRule(ev.RecurrenceRule, m.day)
@@ -524,6 +535,14 @@ func (m *EventFormModel) buildFormItems() ([]FormItem, []string) {
 		}
 	}
 
+	if m.alarmField == nil {
+		m.alarmField = NewOpenerField(alarmSummary(m.alarms))
+	} else {
+		m.alarmField.SetValue(alarmSummary(m.alarms))
+	}
+	items = append(items, FormItem{Label: "Alarms", Field: m.alarmField})
+	keys = append(keys, efKeyAlarms)
+
 	items = append(items, FormItem{Label: "", Field: newEventFormSeparator()})
 	keys = append(keys, "")
 
@@ -609,6 +628,10 @@ func (m *EventFormModel) tryOpenOverlay() tea.Cmd {
 			m.openEndsDatePicker()
 			return noopCmd
 		}
+	case efKeyAlarms:
+		m.alarmEditor = NewAlarmListEditorModel(m.alarms, m.width, m.height, m.theme)
+		m.alarmEditorOpen = true
+		return noopCmd
 	}
 	return nil
 }
@@ -662,6 +685,9 @@ func (m EventFormModel) Update(msg tea.Msg) (EventFormModel, tea.Cmd) {
 	// Overlays capture all input when open.
 	if m.rruleEditorOpen {
 		return m.updateRRuleEditor(msg)
+	}
+	if m.alarmEditorOpen {
+		return m.updateAlarmEditor(msg)
 	}
 	if m.timezonePickerOpen {
 		return m.updateTimezonePicker(msg)
@@ -725,6 +751,21 @@ func (m EventFormModel) updateRRuleEditor(msg tea.Msg) (EventFormModel, tea.Cmd)
 		m.rruleEditorOpen = false
 	} else if m.rruleEditor.Cancelled() {
 		m.rruleEditorOpen = false
+	}
+	return m, cmd
+}
+
+func (m EventFormModel) updateAlarmEditor(msg tea.Msg) (EventFormModel, tea.Cmd) {
+	var cmd tea.Cmd
+	m.alarmEditor, cmd = m.alarmEditor.Update(msg)
+	if m.alarmEditor.Done() {
+		m.alarms = m.alarmEditor.Alarms()
+		if m.alarmField != nil {
+			m.alarmField.SetValue(alarmSummary(m.alarms))
+		}
+		m.alarmEditorOpen = false
+	} else if m.alarmEditor.Cancelled() {
+		m.alarmEditorOpen = false
 	}
 	return m, cmd
 }
@@ -985,6 +1026,9 @@ func (m EventFormModel) TimezonePickerOpen() bool { return m.timezonePickerOpen 
 // RRuleEditorOpen reports whether the recurrence editor overlay should be shown.
 func (m EventFormModel) RRuleEditorOpen() bool { return m.rruleEditorOpen }
 
+// AlarmEditorOpen reports whether the alarm editor overlay should be shown.
+func (m EventFormModel) AlarmEditorOpen() bool { return m.alarmEditorOpen }
+
 // TimezonePickerBoxSize returns the outer dimensions of the timezone picker dialog.
 func (m EventFormModel) TimezonePickerBoxSize() (int, int) { return 50, 19 }
 
@@ -1190,6 +1234,7 @@ func (m EventFormModel) save(f *Form, editID int64) tea.Cmd {
 				Transp:         m.transparencyField.Value(),
 				Class:          m.visibilityField.Value(),
 				Attendees:      attendees,
+				Alarms:         m.alarms,
 			}
 		}
 	}
@@ -1246,6 +1291,7 @@ func (m EventFormModel) save(f *Form, editID int64) tea.Cmd {
 			Transp:         m.transparencyField.Value(),
 			Class:          m.visibilityField.Value(),
 			Attendees:      attendees,
+			Alarms:         m.alarms,
 		}
 	}
 }

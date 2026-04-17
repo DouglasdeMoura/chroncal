@@ -23,6 +23,7 @@ func TestEventForm_PlacesCalendarAfterNotes(t *testing.T) {
 	m, _ := NewEventFormModel(time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC), testEventFormCalendars(), Theme{})
 
 	repeatItemIdx := -1
+	alarmsItemIdx := -1
 	titleItemIdx := -1
 	titleSeparatorIdx := -1
 	repeatSeparatorIdx := -1
@@ -37,6 +38,8 @@ func TestEventForm_PlacesCalendarAfterNotes(t *testing.T) {
 			titleItemIdx = i
 		case "Repeat":
 			repeatItemIdx = i
+		case "Alarms":
+			alarmsItemIdx = i
 		case "People":
 			peopleItemIdx = i
 		case "Notes":
@@ -96,7 +99,9 @@ func TestEventForm_PlacesCalendarAfterNotes(t *testing.T) {
 	assert.NotEqual(t, -1, transpItemIdx)
 	assert.NotEqual(t, -1, classItemIdx)
 	assert.Equal(t, titleItemIdx+1, titleSeparatorIdx)
-	assert.Equal(t, repeatItemIdx+1, repeatSeparatorIdx)
+	assert.NotEqual(t, -1, alarmsItemIdx)
+	assert.Greater(t, alarmsItemIdx, repeatItemIdx)
+	assert.Equal(t, alarmsItemIdx+1, repeatSeparatorIdx)
 	assert.Equal(t, repeatSeparatorIdx+1, peopleItemIdx)
 	assert.Equal(t, notesItemIdx+1, calendarItemIdx)
 	assert.Equal(t, calendarItemIdx+1, transpItemIdx)

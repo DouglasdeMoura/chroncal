@@ -614,6 +614,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case EventFormSaveMsg:
 		m.formOpen = false
 		attendees := msg.Attendees
+		alarms := msg.Alarms
 		if msg.EventID > 0 {
 			eventID := msg.EventID
 			return m, func() tea.Msg {
@@ -635,7 +636,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if err != nil {
 					return eventUpdatedMsg{err: err}
 				}
-				err = m.app.Events.ReplaceAttendees(ctx, eventID, attendees)
+				if err = m.app.Events.ReplaceAttendees(ctx, eventID, attendees); err != nil {
+					return eventUpdatedMsg{err: err}
+				}
+				err = m.app.Events.ReplaceAlarms(ctx, eventID, alarms)
 				return eventUpdatedMsg{err: err}
 			}
 		}
@@ -659,7 +663,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return eventCreatedMsg{err: err}
 			}
 			if len(attendees) > 0 {
-				err = m.app.Events.ReplaceAttendees(ctx, created.ID, attendees)
+				if err = m.app.Events.ReplaceAttendees(ctx, created.ID, attendees); err != nil {
+					return eventCreatedMsg{err: err}
+				}
+			}
+			if len(alarms) > 0 {
+				err = m.app.Events.ReplaceAlarms(ctx, created.ID, alarms)
 			}
 			return eventCreatedMsg{err: err}
 		}
@@ -1296,6 +1305,10 @@ func (m Model) View() tea.View {
 				pw, ph := m.form.rruleEditor.EndsDatePickerBoxSize()
 				v.Content = m.compositeOverlay(v.Content, m.form.rruleEditor.EndsDatePickerView(), pw, ph)
 			}
+		}
+		if m.form.AlarmEditorOpen() {
+			ew, eh := m.form.alarmEditor.BoxSize()
+			v.Content = m.compositeOverlay(v.Content, m.form.alarmEditor.View(), ew, eh)
 		}
 	}
 	if m.calendarListDialogOpen {
