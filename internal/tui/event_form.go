@@ -113,6 +113,7 @@ type EventFormModel struct {
 	// Mini-month models for date picker overlays
 	datePicker          MiniMonthModel
 	endsDatePickerModel MiniMonthModel
+	dpBtnFocus          int // -1 = calendar focused, 0 = Cancel, 1 = Ok
 
 	// Dialog + Form
 	dialog Dialog
@@ -130,14 +131,6 @@ type EventFormModel struct {
 type eventFormKeyMap struct {
 	Save  key.Binding
 	Close key.Binding
-}
-
-func datePickerHelpKeys() []key.Binding {
-	return []key.Binding{
-		key.NewBinding(key.WithKeys("left", "up", "right", "down"), key.WithHelp("←↓↑→", "navigate")),
-		key.NewBinding(key.WithKeys("[", "]"), key.WithHelp("[/]", "month")),
-		key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "today")),
-	}
 }
 
 // NewEventFormModel creates a new event form for the given day.
@@ -499,6 +492,7 @@ func (m *EventFormModel) openDatePicker() {
 	m.datePicker = NewMiniMonthModel(m.day).Focus().FocusGrid().
 		SetTheme(m.theme.Selected, m.theme.Today, m.theme.Text, m.theme.Muted)
 	m.datePickerOpen = true
+	m.dpBtnFocus = -1
 }
 
 // openEndsDatePicker initialises the ends-date MiniMonthModel and opens the overlay.
@@ -506,6 +500,7 @@ func (m *EventFormModel) openEndsDatePicker() {
 	m.endsDatePickerModel = NewMiniMonthModel(m.endsDate).Focus().FocusGrid().
 		SetTheme(m.theme.Selected, m.theme.Today, m.theme.Text, m.theme.Muted)
 	m.endsDatePicker = true
+	m.dpBtnFocus = -1
 }
 
 // handleFieldEnter is the Form.OnFieldEnter callback. Overlay opening is
@@ -612,21 +607,40 @@ func (m EventFormModel) updateDatePicker(msg tea.Msg) (EventFormModel, tea.Cmd) 
 	if mc, ok := msg.(tea.MouseClickMsg); ok && mc.Button == tea.MouseLeft {
 		return m.handleDatePickerMouse(mc)
 	}
-	if kp, ok := msg.(tea.KeyPressMsg); ok {
-		switch kp.String() {
-		case "esc", "q":
+	kp, ok := msg.(tea.KeyPressMsg)
+	if !ok {
+		return m, nil
+	}
+	switch kp.String() {
+	case "esc", "q":
+		m.datePickerOpen = false
+		return m, nil
+	case "tab":
+		m, m.datePicker = m.dpAdvanceFocus(m.datePicker)
+		return m, nil
+	case "shift+tab":
+		m, m.datePicker = m.dpRetreatFocus(m.datePicker)
+		return m, nil
+	case "enter", "space":
+		switch {
+		case m.dpBtnFocus == 0: // Cancel
 			m.datePickerOpen = false
-			return m, nil
-		case "enter", "space":
+		case m.dpBtnFocus == 1: // Ok
 			m.day = m.datePicker.Cursor()
 			m.dateField.SetDate(m.day)
 			m.datePickerOpen = false
-			return m, nil
+		case !m.datePicker.AtEnd(): // Chevron focused: let MiniMonth handle it
+			m.datePicker, _ = m.datePicker.Update(kp)
+		default: // Grid focused: confirm date
+			m.day = m.datePicker.Cursor()
+			m.dateField.SetDate(m.day)
+			m.datePickerOpen = false
 		}
-		// Forward navigation keys to MiniMonthModel; discard its cmds
-		// (only MiniMonthMonthChangedMsg, which the overlay doesn't need).
-		m.datePicker, _ = m.datePicker.Update(kp)
 		return m, nil
+	}
+	// Forward navigation keys only when calendar is focused.
+	if m.dpBtnFocus == -1 {
+		m.datePicker, _ = m.datePicker.Update(kp)
 	}
 	return m, nil
 }
@@ -635,20 +649,79 @@ func (m EventFormModel) updateEndsDatePicker(msg tea.Msg) (EventFormModel, tea.C
 	if mc, ok := msg.(tea.MouseClickMsg); ok && mc.Button == tea.MouseLeft {
 		return m.handleEndsDatePickerMouse(mc)
 	}
-	if kp, ok := msg.(tea.KeyPressMsg); ok {
-		switch kp.String() {
-		case "esc", "q":
-			m.endsDatePicker = false
-			return m, nil
-		case "enter", "space":
-			m.endsDate = m.endsDatePickerModel.Cursor()
-			m.endsDatePicker = false
-			return m, nil
-		}
-		m.endsDatePickerModel, _ = m.endsDatePickerModel.Update(kp)
+	kp, ok := msg.(tea.KeyPressMsg)
+	if !ok {
 		return m, nil
 	}
+	switch kp.String() {
+	case "esc", "q":
+		m.endsDatePicker = false
+		return m, nil
+	case "tab":
+		m, m.endsDatePickerModel = m.dpAdvanceFocus(m.endsDatePickerModel)
+		return m, nil
+	case "shift+tab":
+		m, m.endsDatePickerModel = m.dpRetreatFocus(m.endsDatePickerModel)
+		return m, nil
+	case "enter", "space":
+		switch {
+		case m.dpBtnFocus == 0: // Cancel
+			m.endsDatePicker = false
+		case m.dpBtnFocus == 1: // Ok
+			m.endsDate = m.endsDatePickerModel.Cursor()
+			m.endsDatePicker = false
+		case !m.endsDatePickerModel.AtEnd(): // Chevron focused
+			m.endsDatePickerModel, _ = m.endsDatePickerModel.Update(kp)
+		default: // Grid focused
+			m.endsDate = m.endsDatePickerModel.Cursor()
+			m.endsDatePicker = false
+		}
+		return m, nil
+	}
+	if m.dpBtnFocus == -1 {
+		m.endsDatePickerModel, _ = m.endsDatePickerModel.Update(kp)
+	}
 	return m, nil
+}
+
+// dpAdvanceFocus moves focus forward: ‹ → › → grid → Cancel → Ok → ‹.
+func (m EventFormModel) dpAdvanceFocus(mm MiniMonthModel) (EventFormModel, MiniMonthModel) {
+	if m.dpBtnFocus >= 0 {
+		if m.dpBtnFocus < 1 {
+			m.dpBtnFocus++
+		} else {
+			m.dpBtnFocus = -1
+			mm = mm.Focus().FocusFirst()
+		}
+		return m, mm
+	}
+	if mm.AtEnd() {
+		mm = mm.Blur()
+		m.dpBtnFocus = 0
+	} else {
+		mm = mm.AdvanceFocus()
+	}
+	return m, mm
+}
+
+// dpRetreatFocus moves focus backward: Ok → Cancel → grid → › → ‹.
+func (m EventFormModel) dpRetreatFocus(mm MiniMonthModel) (EventFormModel, MiniMonthModel) {
+	if m.dpBtnFocus >= 0 {
+		if m.dpBtnFocus > 0 {
+			m.dpBtnFocus--
+		} else {
+			m.dpBtnFocus = -1
+			mm = mm.Focus().FocusLast()
+		}
+		return m, mm
+	}
+	if mm.AtStart() {
+		mm = mm.Blur()
+		m.dpBtnFocus = 1
+	} else {
+		mm = mm.RetreatFocus()
+	}
+	return m, mm
 }
 
 func (m EventFormModel) handleDatePickerMouse(msg tea.MouseClickMsg) (EventFormModel, tea.Cmd) {
@@ -656,24 +729,41 @@ func (m EventFormModel) handleDatePickerMouse(msg tea.MouseClickMsg) (EventFormM
 	ox := (m.width - boxW) / 2
 	oy := (m.height - boxH) / 2
 
-	// MiniMonth local coordinates: border(1) + padding(left=2, top=1).
-	innerW := boxW - 6
-	gridPad := max((innerW-miniMonthHeaderWidth)/2, 0)
-	mmX := msg.X - ox - 3 - gridPad
+	// Content-relative coordinates: border(1) + padding(left=1, top=1).
+	mmX := msg.X - ox - 2
 	mmY := msg.Y - oy - 2
 
-	if mmX < 0 || mmX >= miniMonthHeaderWidth || mmY < 0 {
+	if mmX < 0 || mmY < 0 {
 		return m, nil
 	}
+
+	// Button row: 8 calendar lines + 1 blank + 1 separator = Y index 10.
+	if mmY == 10 {
+		if m.datePickerButtonHit(mmX) == "cancel" {
+			m.datePickerOpen = false
+		} else if m.datePickerButtonHit(mmX) == "ok" {
+			m.day = m.datePicker.Cursor()
+			m.dateField.SetDate(m.day)
+			m.datePickerOpen = false
+		}
+		return m, nil
+	}
+
+	// Calendar grid hit-testing.
+	if mmX >= miniMonthHeaderWidth {
+		return m, nil
+	}
+
+	// Click on calendar: ensure calendar is focused, not buttons.
+	m.dpBtnFocus = -1
+	m.datePicker = m.datePicker.Focus()
 
 	prevMonth := m.datePicker.DisplayMonth()
 	m.datePicker, _ = m.datePicker.HandleClick(mmX, mmY)
 
-	// Distinguish day click (close) from chevron click (stay open).
 	monthChanged := m.datePicker.DisplayMonth().Month() != prevMonth.Month() ||
 		m.datePicker.DisplayMonth().Year() != prevMonth.Year()
 	if !monthChanged && mmY >= 2 {
-		// Click was in the day grid area and didn't shift the month.
 		m.day = m.datePicker.Cursor()
 		m.dateField.SetDate(m.day)
 		m.datePickerOpen = false
@@ -682,19 +772,55 @@ func (m EventFormModel) handleDatePickerMouse(msg tea.MouseClickMsg) (EventFormM
 	return m, nil
 }
 
+// datePickerButtonHit returns "cancel", "ok", or "" based on x position.
+func (m EventFormModel) datePickerButtonHit(x int) string {
+	boxW, _ := m.DatePickerBoxSize()
+	innerW := boxW - 4
+	bs := DefaultButtonStyles()
+	cancelW := lipgloss.Width(bs.Secondary.Render("Cancel", false))
+	okW := lipgloss.Width(bs.Primary.Render("Ok", false))
+	totalW := cancelW + 1 + okW
+	pad := max(innerW-totalW, 0)
+	if x >= pad && x < pad+cancelW {
+		return "cancel"
+	}
+	if x >= pad+cancelW+1 && x < pad+cancelW+1+okW {
+		return "ok"
+	}
+	return ""
+}
+
 func (m EventFormModel) handleEndsDatePickerMouse(msg tea.MouseClickMsg) (EventFormModel, tea.Cmd) {
 	boxW, boxH := m.DatePickerBoxSize()
 	ox := (m.width - boxW) / 2
 	oy := (m.height - boxH) / 2
 
-	innerW := boxW - 6
-	gridPad := max((innerW-miniMonthHeaderWidth)/2, 0)
-	mmX := msg.X - ox - 3 - gridPad
+	mmX := msg.X - ox - 2
 	mmY := msg.Y - oy - 2
 
-	if mmX < 0 || mmX >= miniMonthHeaderWidth || mmY < 0 {
+	if mmX < 0 || mmY < 0 {
 		return m, nil
 	}
+
+	// Button row: 8 calendar lines + 1 blank + 1 separator = Y index 10.
+	if mmY == 10 {
+		if m.datePickerButtonHit(mmX) == "cancel" {
+			m.endsDatePicker = false
+		} else if m.datePickerButtonHit(mmX) == "ok" {
+			m.endsDate = m.endsDatePickerModel.Cursor()
+			m.endsDatePicker = false
+		}
+		return m, nil
+	}
+
+	// Calendar grid hit-testing.
+	if mmX >= miniMonthHeaderWidth {
+		return m, nil
+	}
+
+	// Click on calendar: ensure calendar is focused, not buttons.
+	m.dpBtnFocus = -1
+	m.endsDatePickerModel = m.endsDatePickerModel.Focus()
 
 	prevMonth := m.endsDatePickerModel.DisplayMonth()
 	m.endsDatePickerModel, _ = m.endsDatePickerModel.HandleClick(mmX, mmY)
@@ -719,35 +845,61 @@ func (m EventFormModel) DatePickerOpen() bool { return m.datePickerOpen }
 func (m EventFormModel) RRuleEditorOpen() bool { return m.rruleEditorOpen }
 
 // DatePickerBoxSize returns the outer dimensions of the date picker dialog.
-func (m EventFormModel) DatePickerBoxSize() (int, int) { return 50, 13 }
+func (m EventFormModel) DatePickerBoxSize() (int, int) { return 40, 14 }
 
 // datePickerOverlayView renders a MiniMonthModel inside a bordered dialog
-// box with centered calendar grid and help footer.
+// box with the calendar grid on the left and key hints stacked vertically
+// on the right.
 func (m EventFormModel) datePickerOverlayView(mm MiniMonthModel) string {
 	boxW, boxH := m.DatePickerBoxSize()
-	innerW := boxW - 6
 
 	calView := strings.TrimRight(mm.View(), "\n")
+	calLines := strings.Split(calView, "\n")
 
-	// Center the 20-column calendar in the content area.
-	gridPad := max((innerW-miniMonthHeaderWidth)/2, 0)
-	padStr := strings.Repeat(" ", gridPad)
-	var paddedLines []string
-	for _, line := range strings.Split(calView, "\n") {
-		paddedLines = append(paddedLines, padStr+line)
+	// Compute max display width of calendar lines for consistent padding.
+	maxCalW := 0
+	for _, line := range calLines {
+		if w := lipgloss.Width(line); w > maxCalW {
+			maxCalW = w
+		}
 	}
 
-	var lines []string
-	lines = append(lines, strings.Join(paddedLines, "\n"))
+	// Vertically-stacked key hints: dark key, lighter description.
+	descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	hintLines := []string{
+		"←↓↑→" + " " + descStyle.Render("navigate"),
+		"[]" + "   " + descStyle.Render("month"),
+		"t" + "    " + descStyle.Render("today"),
+	}
 
-	m.help.SetWidth(innerW)
-	dpHelp := m.help.ShortHelpView(datePickerHelpKeys())
-	dpHelpPad := max((innerW-lipgloss.Width(dpHelp))/2, 0)
-	lines = append(lines, strings.Repeat(" ", dpHelpPad)+dpHelp)
+	// Bottom-align hints with calendar lines.
+	hintStart := len(calLines) - len(hintLines)
 
-	content := strings.Join(lines, "\n")
+	var resultLines []string
+	for i, line := range calLines {
+		w := lipgloss.Width(line)
+		padded := line + strings.Repeat(" ", max(maxCalW-w, 0))
+		if i >= hintStart && i-hintStart < len(hintLines) {
+			padded += "  " + hintLines[i-hintStart]
+		}
+		resultLines = append(resultLines, padded)
+	}
+
+	// Action buttons right-aligned at the bottom, separated by a line.
+	innerW := boxW - 4
+	resultLines = append(resultLines, "")
+	sepStyle := lipgloss.NewStyle().Faint(true)
+	resultLines = append(resultLines, sepStyle.Render(strings.Repeat("─", innerW)))
+	bs := DefaultButtonStyles()
+	cancelBtn := bs.Secondary.Render("Cancel", m.dpBtnFocus == 0)
+	okBtn := bs.Primary.Render("Ok", m.dpBtnFocus == 1)
+	buttonRow := cancelBtn + " " + okBtn
+	btnPad := max(innerW-lipgloss.Width(buttonRow), 0)
+	resultLines = append(resultLines, strings.Repeat(" ", btnPad)+buttonRow)
+
+	content := strings.Join(resultLines, "\n")
 	return lipgloss.NewStyle().
-		Width(boxW).Height(boxH).Padding(1, 2).
+		Width(boxW).Height(boxH).Padding(1, 1, 0, 1).
 		Border(lipgloss.RoundedBorder()).
 		Render(content)
 }

@@ -451,33 +451,67 @@ func (m RecurrenceEditorModel) BoxSize() (int, int) {
 
 // EndsDatePickerView renders the ends-date picker overlay.
 func (m RecurrenceEditorModel) EndsDatePickerView() string {
-	const boxW = 50
-	innerW := boxW - 6
+	const boxW = 40
+	const boxH = 14
 	bold := lipgloss.NewStyle().Bold(true)
 
-	const gridW = 20
-	gridPad := max((innerW-gridW)/2, 0)
-	lines := make([]string, 0, 3)
+	// Build calendar lines: month header + day grid.
 	monthStr := m.endsDate.Format("January 2006")
-	monthPad := gridPad + max((gridW-len(monthStr))/2, 0)
-	lines = append(lines, strings.Repeat(" ", monthPad)+bold.Render(monthStr))
-	lines = append(lines, renderMiniCalendar(m.endsDate, time.Now(), gridPad, m.theme))
-	m.help.SetWidth(innerW)
-	dpHelp := m.help.ShortHelpView(datePickerHelpKeys())
-	dpHelpPad := max((innerW-lipgloss.Width(dpHelp))/2, 0)
-	lines = append(lines, strings.Repeat(" ", dpHelpPad)+dpHelp)
+	var calLines []string
+	calLines = append(calLines, bold.Render(monthStr))
+	calGrid := renderMiniCalendar(m.endsDate, time.Now(), 0, m.theme)
+	calLines = append(calLines, strings.Split(calGrid, "\n")...)
+
+	// Compute max display width for consistent padding.
+	maxCalW := 0
+	for _, line := range calLines {
+		if w := lipgloss.Width(line); w > maxCalW {
+			maxCalW = w
+		}
+	}
+
+	// Vertically-stacked key hints: dark key, lighter description.
+	descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	hintLines := []string{
+		"←↓↑→" + " " + descStyle.Render("navigate"),
+		"[]" + "   " + descStyle.Render("month"),
+		"t" + "    " + descStyle.Render("today"),
+	}
+	hintStart := len(calLines) - len(hintLines)
+
+	var resultLines []string
+	for i, line := range calLines {
+		w := lipgloss.Width(line)
+		padded := line + strings.Repeat(" ", max(maxCalW-w, 0))
+		if i >= hintStart && i-hintStart < len(hintLines) {
+			padded += "  " + hintLines[i-hintStart]
+		}
+		resultLines = append(resultLines, padded)
+	}
+
+	// Action buttons right-aligned at the bottom, separated by a line.
+	innerW := boxW - 4
+	resultLines = append(resultLines, "")
+	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	resultLines = append(resultLines, sepStyle.Render(strings.Repeat("─", innerW)))
+	bs := DefaultButtonStyles()
+	cancelBtn := bs.Secondary.Render("Cancel", false)
+	okBtn := bs.Primary.Render("Ok", false)
+	buttonRow := cancelBtn + " " + okBtn
+	btnPad := max(innerW-lipgloss.Width(buttonRow), 0)
+	resultLines = append(resultLines, strings.Repeat(" ", btnPad)+buttonRow)
 
 	return lipgloss.NewStyle().
 		Width(boxW).
-		Height(13).
-		Padding(1, 2).
+		Height(boxH).
+		Padding(1, 1, 0, 1).
 		Border(lipgloss.RoundedBorder()).
-		Render(strings.Join(lines, "\n"))
+		Render(strings.Join(resultLines, "\n"))
 }
 
 // EndsDatePickerBoxSize returns the outer dimensions of the ends date picker.
 func (m RecurrenceEditorModel) EndsDatePickerBoxSize() (int, int) {
-	return 50, 13
+	return 40, 14
 }
 
 // View renders the recurrence editor dialog.
