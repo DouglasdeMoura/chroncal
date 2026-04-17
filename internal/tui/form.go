@@ -267,6 +267,7 @@ func (f *SelectField) IsFocusable() bool { return true }
 type CheckboxField struct {
 	label      string
 	checked    bool
+	focused    bool
 	disabledFn func() (disabled bool, text string)
 }
 
@@ -309,14 +310,25 @@ func (f *CheckboxField) View() string {
 			return text
 		}
 	}
+	glyph := Glyphs["checkbox.off"]
 	if f.checked {
-		return Glyphs["checkbox.on"] + " " + f.label
+		glyph = Glyphs["checkbox.on"]
 	}
-	return Glyphs["checkbox.off"] + " " + f.label
+	style := lipgloss.NewStyle()
+	if f.focused {
+		style = style.Reverse(true)
+	}
+	return style.Render(glyph + " " + f.label)
 }
 
-func (f *CheckboxField) Focus() tea.Cmd    { return nil }
-func (f *CheckboxField) Blur()             {}
+func (f *CheckboxField) Focus() tea.Cmd {
+	f.focused = true
+	return nil
+}
+
+func (f *CheckboxField) Blur() {
+	f.focused = false
+}
 func (f *CheckboxField) SetWidth(int)      {}
 func (f *CheckboxField) IsFocusable() bool { return true }
 
