@@ -174,6 +174,27 @@ func TestSelectField_ViewAlwaysShowsArrows(t *testing.T) {
 	assert.Contains(t, view, Glyphs["select.next"], "arrows visible when focused")
 }
 
+func TestSelectField_CustomRenderLabel(t *testing.T) {
+	f := NewSelectField(testSelectOptions())
+	f.SetRenderLabel(func(opt SelectOption, focused bool) string {
+		if focused {
+			return "<" + opt.Label + ">"
+		}
+		return "[" + opt.Label + "]"
+	})
+
+	view := f.View()
+	assert.Contains(t, view, "[None]")
+
+	f.Update(keyPressMsg("right"))
+	view = f.View()
+	assert.Contains(t, view, "[Daily]")
+
+	f.Focus()
+	view = f.View()
+	assert.Contains(t, view, "<Daily>")
+}
+
 func TestSelectField_ImplementsFormField(t *testing.T) {
 	var _ FormField = NewSelectField(testSelectOptions())
 }
@@ -201,10 +222,10 @@ func TestCheckboxField_SetChecked(t *testing.T) {
 
 func TestCheckboxField_Render(t *testing.T) {
 	f := NewCheckboxField("TLS", true)
-	assert.Equal(t, Glyphs["checkbox.on"] + " TLS", f.View())
+	assert.Equal(t, Glyphs["checkbox.on"]+" TLS", f.View())
 
 	f.Update(keyPressMsg("space"))
-	assert.Equal(t, Glyphs["checkbox.off"] + " TLS", f.View())
+	assert.Equal(t, Glyphs["checkbox.off"]+" TLS", f.View())
 }
 
 func TestCheckboxField_DisabledWhen(t *testing.T) {
@@ -221,7 +242,7 @@ func TestCheckboxField_DisabledWhen(t *testing.T) {
 	disabled = false
 	f.Update(keyPressMsg("space"))
 	assert.True(t, f.Checked(), "toggle works when enabled")
-	assert.Equal(t, Glyphs["checkbox.on"] + " TLS", f.View())
+	assert.Equal(t, Glyphs["checkbox.on"]+" TLS", f.View())
 }
 
 func TestCheckboxField_IgnoresNonSpaceKeys(t *testing.T) {
@@ -682,8 +703,8 @@ func TestForm_LabelLeftAlignment(t *testing.T) {
 	styles.LabelLayout = LabelInline
 
 	form := NewForm("Submit", styles,
-		FormItem{Label: "N", Field: NewTextField("a")},       // 1 char
-		FormItem{Label: "Email", Field: NewTextField("b")},   // 5 chars (longest)
+		FormItem{Label: "N", Field: NewTextField("a")},     // 1 char
+		FormItem{Label: "Email", Field: NewTextField("b")}, // 5 chars (longest)
 	)
 
 	// Both left-placed labels should be padded to the longest label width,

@@ -62,9 +62,10 @@ const (
 )
 
 type calendarOption struct {
-	ID    int64
-	Name  string
-	Color string
+	ID         int64
+	Name       string
+	Color      string
+	OwnerEmail string
 }
 
 // ---------------------------------------------------------------------------
@@ -95,15 +96,15 @@ type EventFormModel struct {
 	calendarIdx int
 
 	// Fields (pointer types survive form rebuilds)
-	titleField     *TextField
-	timeField      *TimeRangeField
-	dateField      *DatePickerField
-	allDayField    *CheckboxField
-	timezoneField  *TimezoneField
-	repeatField    *SelectField
-	endsField      *SelectField
-	endsCountField *TextField
-	calendarField  *SelectField
+	titleField      *TextField
+	timeField       *TimeRangeField
+	dateField       *DatePickerField
+	allDayField     *CheckboxField
+	timezoneField   *TimezoneField
+	repeatField     *SelectField
+	endsField       *SelectField
+	endsCountField  *TextField
+	calendarField   *SelectField
 	peopleField     *TextField
 	locationField   *TextField
 	conferenceField *TextField
@@ -149,7 +150,7 @@ type eventFormKeyMap struct {
 func NewEventFormModel(day time.Time, calendars map[int64]CalendarInfo, theme Theme) (EventFormModel, tea.Cmd) {
 	calOpts := make([]calendarOption, 0, len(calendars))
 	for id, info := range calendars {
-		calOpts = append(calOpts, calendarOption{ID: id, Name: info.Name, Color: info.Color})
+		calOpts = append(calOpts, calendarOption{ID: id, Name: info.Name, Color: info.Color, OwnerEmail: info.OwnerEmail})
 	}
 	sort.Slice(calOpts, func(i, j int) bool { return calOpts[i].Name < calOpts[j].Name })
 
@@ -213,10 +214,29 @@ func NewEventFormModel(day time.Time, calendars map[int64]CalendarInfo, theme Th
 
 	if len(calOpts) > 1 {
 		calSelectOpts := make([]SelectOption, len(calOpts))
+		calendarColors := make(map[string]string, len(calOpts))
 		for i, c := range calOpts {
-			calSelectOpts[i] = SelectOption{Label: c.Name, Value: fmt.Sprintf("%d", c.ID)}
+			label := c.Name
+			if c.OwnerEmail != "" && strings.EqualFold(c.Name, c.OwnerEmail) {
+				label = c.OwnerEmail
+			} else if c.OwnerEmail != "" {
+				label += " (" + c.OwnerEmail + ")"
+			}
+			calSelectOpts[i] = SelectOption{Label: label, Value: fmt.Sprintf("%d", c.ID)}
+			calendarColors[calSelectOpts[i].Value] = c.Color
 		}
 		m.calendarField = NewSelectField(calSelectOpts)
+		m.calendarField.SetRenderLabel(func(opt SelectOption, focused bool) string {
+			dot := Glyphs["dot"]
+			if color := calendarColors[opt.Value]; color != "" {
+				dot = lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(Glyphs["dot"])
+			}
+			name := opt.Label
+			if focused {
+				name = lipgloss.NewStyle().Reverse(true).Render(name)
+			}
+			return dot + " " + name
+		})
 	}
 
 	m.peopleField = NewTextField("Comma-separated emails")
@@ -463,11 +483,6 @@ func (m *EventFormModel) buildFormItems() ([]FormItem, []string) {
 		}
 	}
 
-	if m.calendarField != nil {
-		items = append(items, FormItem{Label: "Calendar", Field: m.calendarField})
-		keys = append(keys, efKeyCalendar)
-	}
-
 	items = append(items, FormItem{Label: "People", Field: m.peopleField})
 	keys = append(keys, efKeyPeople)
 
@@ -479,6 +494,11 @@ func (m *EventFormModel) buildFormItems() ([]FormItem, []string) {
 
 	items = append(items, FormItem{Label: "Notes", Field: m.descField})
 	keys = append(keys, efKeyDescription)
+
+	if m.calendarField != nil {
+		items = append(items, FormItem{Label: "Calendar", Field: m.calendarField})
+		keys = append(keys, efKeyCalendar)
+	}
 
 	return items, keys
 }

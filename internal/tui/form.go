@@ -170,28 +170,46 @@ const selectFlashDuration = 150 * time.Millisecond
 
 // SelectField cycles through a list of options with left/right arrows.
 type SelectField struct {
-	options   []SelectOption
-	selected  int
-	maxWidth  int
-	focused   bool
-	highlight selectHighlight
-	flashID   int // incremented per flash; stale ticks are ignored
+	options     []SelectOption
+	selected    int
+	maxWidth    int
+	focused     bool
+	renderLabel func(SelectOption, bool) string
+	highlight   selectHighlight
+	flashID     int // incremented per flash; stale ticks are ignored
 }
 
 func NewSelectField(options []SelectOption) *SelectField {
-	maxW := 0
-	for _, o := range options {
-		if len(o.Label) > maxW {
-			maxW = len(o.Label)
-		}
-	}
-	return &SelectField{options: options, maxWidth: maxW}
+	f := &SelectField{options: options}
+	f.updateMaxWidth()
+	return f
 }
 
 func (f *SelectField) Selected() int                { return f.selected }
 func (f *SelectField) SetSelected(i int)            { f.selected = i }
 func (f *SelectField) SelectedOption() SelectOption { return f.options[f.selected] }
 func (f *SelectField) Value() string                { return f.options[f.selected].Value }
+func (f *SelectField) SetRenderLabel(fn func(SelectOption, bool) string) {
+	f.renderLabel = fn
+	f.updateMaxWidth()
+}
+
+func (f *SelectField) renderOptionLabel(opt SelectOption, focused bool) string {
+	if f.renderLabel != nil {
+		return f.renderLabel(opt, focused)
+	}
+	return opt.Label
+}
+
+func (f *SelectField) updateMaxWidth() {
+	maxW := 0
+	for _, o := range f.options {
+		if w := lipgloss.Width(f.renderOptionLabel(o, false)); w > maxW {
+			maxW = w
+		}
+	}
+	f.maxWidth = maxW
+}
 
 func (f *SelectField) Update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
@@ -228,10 +246,10 @@ func (f *SelectField) View() string {
 		return ""
 	}
 	labelStyle := lipgloss.NewStyle().Width(f.maxWidth)
-	if f.focused {
+	if f.focused && f.renderLabel == nil {
 		labelStyle = labelStyle.Reverse(true)
 	}
-	label := labelStyle.Render(f.options[f.selected].Label)
+	label := labelStyle.Render(f.renderOptionLabel(f.options[f.selected], f.focused))
 
 	flash := lipgloss.NewStyle().Foreground(lipgloss.Color("63"))
 	prev := Glyphs["select.prev"]
