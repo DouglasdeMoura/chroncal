@@ -189,6 +189,21 @@ func (f *SelectField) Selected() int                { return f.selected }
 func (f *SelectField) SetSelected(i int)            { f.selected = i }
 func (f *SelectField) SelectedOption() SelectOption { return f.options[f.selected] }
 func (f *SelectField) Value() string                { return f.options[f.selected].Value }
+func (f *SelectField) SetOptions(options []SelectOption) {
+	f.options = options
+	if len(f.options) == 0 {
+		f.selected = 0
+		f.maxWidth = 0
+		return
+	}
+	if f.selected >= len(f.options) {
+		f.selected = len(f.options) - 1
+	}
+	if f.selected < 0 {
+		f.selected = 0
+	}
+	f.updateMaxWidth()
+}
 func (f *SelectField) SetRenderLabel(fn func(SelectOption, bool) string) {
 	f.renderLabel = fn
 	f.updateMaxWidth()
@@ -277,6 +292,156 @@ func (f *SelectField) Blur() {
 
 func (f *SelectField) SetWidth(int)      {}
 func (f *SelectField) IsFocusable() bool { return true }
+
+// ---------------------------------------------------------------------------
+// RecurrenceOnField
+// ---------------------------------------------------------------------------
+
+type RecurrenceOnMode int
+
+const (
+	RecurrenceOnWeekly RecurrenceOnMode = iota
+	RecurrenceOnMonthly
+)
+
+type RecurrenceOnField struct {
+	mode          RecurrenceOnMode
+	startDate     time.Time
+	weekDays      [7]bool
+	weekDayCursor int
+	monthly       *SelectField
+	focused       bool
+	width         int
+}
+
+func NewRecurrenceOnField(startDate time.Time) *RecurrenceOnField {
+	f := &RecurrenceOnField{
+		mode:          RecurrenceOnWeekly,
+		startDate:     startDate,
+		weekDayCursor: int(startDate.Weekday()),
+		monthly:       NewSelectField(nil),
+	}
+	f.weekDays[f.weekDayCursor] = true
+	f.syncMonthlyOptions()
+	return f
+}
+
+func (f *RecurrenceOnField) SetWeekly(weekDays [7]bool, cursor int) {
+	f.mode = RecurrenceOnWeekly
+	f.weekDays = weekDays
+	if cursor >= 0 && cursor < len(weekDayLabels) {
+		f.weekDayCursor = cursor
+	}
+}
+
+func (f *RecurrenceOnField) SetMonthly(startDate time.Time, monthlyMode int) {
+	f.mode = RecurrenceOnMonthly
+	f.startDate = startDate
+	f.syncMonthlyOptions()
+	f.monthly.SetSelected(monthlyMode)
+}
+
+func (f *RecurrenceOnField) Mode() RecurrenceOnMode { return f.mode }
+func (f *RecurrenceOnField) WeekDays() [7]bool      { return f.weekDays }
+func (f *RecurrenceOnField) WeekDayCursor() int     { return f.weekDayCursor }
+func (f *RecurrenceOnField) MonthlyMode() int       { return f.monthly.Selected() }
+
+func (f *RecurrenceOnField) ToggleWeekDay(idx int) {
+	if idx < 0 || idx >= len(f.weekDays) {
+		return
+	}
+	f.weekDayCursor = idx
+	f.weekDays[idx] = !f.weekDays[idx]
+}
+
+func (f *RecurrenceOnField) syncMonthlyOptions() {
+	f.monthly.SetOptions([]SelectOption{
+		{Label: fmt.Sprintf("day %d", f.startDate.Day()), Value: "day"},
+		{Label: nthWeekdayLabel(f.startDate), Value: "nth"},
+	})
+}
+
+func (f *RecurrenceOnField) Update(msg tea.Msg) tea.Cmd {
+	if f.mode == RecurrenceOnMonthly {
+		return f.monthly.Update(msg)
+	}
+	if msg, ok := msg.(tea.KeyPressMsg); ok {
+		switch msg.String() {
+		case "left", "h":
+			f.weekDayCursor = (f.weekDayCursor - 1 + 7) % 7
+		case "right", "l":
+			f.weekDayCursor = (f.weekDayCursor + 1) % 7
+		case "space":
+			f.ToggleWeekDay(f.weekDayCursor)
+		}
+	}
+	return nil
+}
+
+func (f *RecurrenceOnField) View() string {
+	if f.mode == RecurrenceOnMonthly {
+		return f.monthly.View()
+	}
+	dayParts := make([]string, 0, 7)
+	plainParts := make([]string, 0, 7)
+	for i := range 7 {
+		label := weekDayLabels[i]
+		style := lipgloss.NewStyle()
+		if f.weekDays[i] {
+			style = style.Bold(true)
+		} else {
+			style = style.Faint(true)
+		}
+		if f.focused && i == f.weekDayCursor {
+			style = lipgloss.NewStyle().Reverse(true)
+			if f.weekDays[i] {
+				style = style.Bold(true)
+			}
+		}
+		rendered := style.Render(label)
+		plainParts = append(plainParts, rendered)
+		dayParts = append(dayParts, mouseMark("recurrenceon:"+strconv.Itoa(i), rendered))
+	}
+	row := strings.Join(dayParts, " ")
+	plainRow := strings.Join(plainParts, " ")
+	if !f.focused {
+		return row
+	}
+
+	hint := lipgloss.NewStyle().Faint(true).Render("click toggle")
+	if rowWidth := lipgloss.Width(plainRow); f.width > 0 {
+		hintWidth := lipgloss.Width(hint)
+		if rowWidth+1+hintWidth > f.width {
+			hint = lipgloss.NewStyle().Faint(true).Render("click")
+		}
+	}
+	if f.width <= 0 {
+		return row + " " + hint
+	}
+
+	rowWidth := lipgloss.Width(plainRow)
+	hintWidth := lipgloss.Width(hint)
+	if rowWidth+1+hintWidth > f.width {
+		return row
+	}
+	return row + strings.Repeat(" ", f.width-rowWidth-hintWidth) + hint
+}
+
+func (f *RecurrenceOnField) Focus() tea.Cmd {
+	f.focused = true
+	if f.mode == RecurrenceOnMonthly {
+		return f.monthly.Focus()
+	}
+	return nil
+}
+
+func (f *RecurrenceOnField) Blur() {
+	f.focused = false
+	f.monthly.Blur()
+}
+
+func (f *RecurrenceOnField) SetWidth(w int)    { f.width = w }
+func (f *RecurrenceOnField) IsFocusable() bool { return true }
 
 // ---------------------------------------------------------------------------
 // CheckboxField
@@ -1403,6 +1568,9 @@ func (f Form) handleClick(target string) (Form, tea.Cmd) {
 				} else {
 					cmd = sf.Update(keyMsg("right"))
 				}
+				if f.onRebuild != nil {
+					f.onRebuild(&f)
+				}
 				return f, cmd
 			}
 		}
@@ -1420,6 +1588,21 @@ func (f Form) handleClick(target string) (Form, tea.Cmd) {
 						f.onRebuild(&f)
 					}
 					return f, cmd
+				}
+			}
+		}
+		return f, nil
+	}
+
+	if strings.HasPrefix(target, "recurrenceon:") {
+		if idx, err := strconv.Atoi(strings.TrimPrefix(target, "recurrenceon:")); err == nil {
+			for i := range f.items {
+				if rf, ok := f.items[i].Field.(*RecurrenceOnField); ok {
+					rf.ToggleWeekDay(idx)
+					if f.onRebuild != nil {
+						f.onRebuild(&f)
+					}
+					return f.focusIndex(i)
 				}
 			}
 		}

@@ -1,30 +1,27 @@
 package tui
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
-	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
 	"github.com/teambition/rrule-go"
 )
 
-type recEditorField int
+type recurrenceEditorMsg int
 
 const (
-	refFreq recEditorField = iota
-	refInterval
-	refWeekDays
-	refMonthlyOn
-	refEnds
-	refEndsCount
-	refDone
-	refCancel
+	recurrenceEditorDone recurrenceEditorMsg = iota
+	recurrenceEditorCancel
+)
+
+const (
+	recFieldFrequency = "frequency"
+	recFieldEnds      = "ends"
 )
 
 var recFrequencies = []struct {
@@ -43,23 +40,23 @@ var weekDayRRule = [7]string{"SU", "MO", "TU", "WE", "TH", "FR", "SA"}
 
 // RecurrenceEditorModel is the model for the advanced recurrence editor overlay.
 type RecurrenceEditorModel struct {
-	freqIdx       int // index into recFrequencies
-	interval      textinput.Model
-	weekDays      [7]bool // Sun=0 .. Sat=6
-	weekDayCursor int
-	monthlyMode   int // 0=day of month, 1=Nth weekday
+	startDate time.Time
 
-	ends           endsMode
-	endsCount      textinput.Model
+	frequencyField *SelectField
+	intervalField  *TextField
+	onField        *RecurrenceOnField
+	endsField      *SelectField
+	endsCountField *TextField
+
 	endsDate       time.Time
 	endsDatePicker bool
 
-	focusField recEditorField
-	done       bool
-	cancelled  bool
+	form      Form
+	fieldKeys []string
 
-	startDate time.Time
 	preview   []time.Time
+	done      bool
+	cancelled bool
 
 	help   help.Model
 	width  int
@@ -69,229 +66,271 @@ type RecurrenceEditorModel struct {
 
 // NewRecurrenceEditorModel creates a new editor pre-configured from the event date.
 func NewRecurrenceEditorModel(startDate time.Time, w, h int, theme Theme) RecurrenceEditorModel {
-	intervalInput := textinput.New()
-	intervalInput.Placeholder = "1"
-	intervalInput.CharLimit = 3
-	intervalInput.SetValue("1")
+	freqOpts := make([]SelectOption, len(recFrequencies))
+	for i, freq := range recFrequencies {
+		freqOpts[i] = SelectOption{Label: freq.Label, Value: freq.Freq}
+	}
 
-	endsCountInput := textinput.New()
-	endsCountInput.Placeholder = "10"
-	endsCountInput.CharLimit = 4
+	intervalField := NewTextField("1")
+	intervalField.SetValue("1")
+	intervalField.SetCharLimit(3)
+	intervalField.SetDigitsOnly()
 
-	var weekDays [7]bool
-	weekDays[int(startDate.Weekday())] = true
+	endsField := NewSelectField(nil)
+	endsField.SetOptions([]SelectOption{
+		{Label: "Never", Value: "never"},
+		{Label: "After", Value: "after"},
+		{Label: "On " + startDate.AddDate(0, 3, 0).Format("Jan 2, 2006"), Value: "ondate"},
+	})
+
+	endsCountField := NewTextField("10")
+	endsCountField.SetCharLimit(4)
+	endsCountField.SetDigitsOnly()
 
 	m := RecurrenceEditorModel{
-		freqIdx:       1, // Weekly
-		interval:      intervalInput,
-		weekDays:      weekDays,
-		weekDayCursor: int(startDate.Weekday()),
-		ends:          endsNever,
-		endsCount:     endsCountInput,
-		endsDate:      startDate.AddDate(0, 3, 0),
-		focusField:    refFreq,
-		startDate:     startDate,
-		help:          newThemedHelp(theme),
-		width:         w,
-		height:        h,
-		theme:         theme,
+		startDate:      startDate,
+		frequencyField: NewSelectField(freqOpts),
+		intervalField:  intervalField,
+		onField:        NewRecurrenceOnField(startDate),
+		endsField:      endsField,
+		endsCountField: endsCountField,
+		endsDate:       startDate.AddDate(0, 3, 0),
+		help:           newThemedHelp(theme),
+		width:          w,
+		height:         h,
+		theme:          theme,
 	}
+	m.frequencyField.SetSelected(1) // Weekly
 	m.updatePreview()
+	m.buildForm()
 	return m
 }
 
 func (m RecurrenceEditorModel) SetSize(w, h int) RecurrenceEditorModel {
 	m.width = w
 	m.height = h
+	m.form.SetWidth(m.formWidth())
 	return m
 }
 
-func (m RecurrenceEditorModel) Done() bool      { return m.done }
-func (m RecurrenceEditorModel) Cancelled() bool  { return m.cancelled }
+func (m RecurrenceEditorModel) Done() bool               { return m.done }
+func (m RecurrenceEditorModel) Cancelled() bool          { return m.cancelled }
 func (m RecurrenceEditorModel) EndsDatePickerOpen() bool { return m.endsDatePicker }
 
-func (m RecurrenceEditorModel) focusableFields() []recEditorField {
-	fields := []recEditorField{refFreq, refInterval}
-	switch m.freqIdx {
-	case 1: // Weekly
-		fields = append(fields, refWeekDays)
-	case 2: // Monthly
-		fields = append(fields, refMonthlyOn)
+func (m *RecurrenceEditorModel) buildForm() {
+	styles := DefaultFormStyles()
+	styles.LabelLayout = LabelInline
+	styles.ShowFocusMarker = true
+	styles.ButtonAlign = ButtonAlignRight
+
+	items, keys := m.buildFormItems()
+	m.fieldKeys = keys
+
+	if m.form.ItemCount() == 0 {
+		m.form = NewForm("Done", styles, items...)
+		m.form.OnSubmit(func(f *Form) tea.Cmd {
+			return func() tea.Msg { return recurrenceEditorDone }
+		})
+		m.form.OnCancel(func(f *Form) tea.Cmd {
+			return func() tea.Msg { return recurrenceEditorCancel }
+		})
+	} else {
+		m.form.RemoveItems(0)
+		m.form.AppendItems(items...)
 	}
-	fields = append(fields, refEnds)
-	if m.ends == endsAfter {
-		fields = append(fields, refEndsCount)
-	}
-	fields = append(fields, refDone, refCancel)
-	return fields
+	m.form.SetWidth(m.formWidth())
 }
 
-func (m RecurrenceEditorModel) nextField() recEditorField {
-	fields := m.focusableFields()
-	for i, f := range fields {
-		if f == m.focusField {
-			return fields[(i+1)%len(fields)]
+func (m *RecurrenceEditorModel) buildFormItems() ([]FormItem, []string) {
+	var items []FormItem
+	var keys []string
+
+	freq := m.currentFreq()
+	m.endsField.SetOptions([]SelectOption{
+		{Label: "Never", Value: "never"},
+		{Label: "After", Value: "after"},
+		{Label: "On " + m.endsDate.Format("Jan 2, 2006"), Value: "ondate"},
+	})
+
+	items = append(items, FormItem{Label: "Frequency", Field: m.frequencyField})
+	keys = append(keys, recFieldFrequency)
+
+	items = append(items, FormItem{Label: "Every", Field: m.intervalField})
+	keys = append(keys, "")
+
+	switch freq {
+	case "WEEKLY":
+		m.onField.SetWeekly(m.onField.WeekDays(), m.onField.WeekDayCursor())
+		items = append(items, FormItem{Label: "On", Field: m.onField})
+		keys = append(keys, "")
+	case "MONTHLY":
+		m.onField.SetMonthly(m.startDate, m.onField.MonthlyMode())
+		items = append(items, FormItem{Label: "On", Field: m.onField})
+		keys = append(keys, "")
+	}
+
+	items = append(items, FormItem{Label: "Ends", Field: m.endsField})
+	keys = append(keys, recFieldEnds)
+
+	if m.currentEnds() == endsAfter {
+		items = append(items, FormItem{
+			Label:           "",
+			Field:           m.endsCountField,
+			LabelLayout:     LayoutPtr(LabelInline),
+			ShowFocusMarker: BoolPtr(true),
+		})
+		keys = append(keys, "")
+	}
+
+	items = append(items, FormItem{Label: "", Field: NewStaticField("", nil)})
+	keys = append(keys, "")
+	items = append(items, FormItem{
+		Label: "",
+		Field: NewStaticField("Preview", func(s string) string {
+			return lipgloss.NewStyle().Faint(true).Render(s)
+		}),
+	})
+	keys = append(keys, "")
+
+	if len(m.preview) == 0 {
+		items = append(items, FormItem{
+			Label: "",
+			Field: NewStaticField("  (no occurrences)", func(s string) string {
+				return lipgloss.NewStyle().Faint(true).Render(s)
+			}),
+		})
+		keys = append(keys, "")
+	} else {
+		for _, t := range m.preview {
+			items = append(items, FormItem{
+				Label: "",
+				Field: NewStaticField("  "+t.Format("Mon, Jan 2, 2006"), nil),
+			})
+			keys = append(keys, "")
 		}
 	}
-	return fields[0]
+
+	return items, keys
 }
 
-func (m RecurrenceEditorModel) prevField() recEditorField {
-	fields := m.focusableFields()
-	for i, f := range fields {
-		if f == m.focusField {
-			return fields[(i-1+len(fields))%len(fields)]
-		}
+func (m *RecurrenceEditorModel) syncFromForm() {
+	m.updatePreview()
+	focused := m.form.Focused()
+	items, keys := m.buildFormItems()
+	m.fieldKeys = keys
+	m.form.RemoveItems(0)
+	m.form.AppendItems(items...)
+	if focused >= m.form.totalCount() {
+		focused = m.form.totalCount() - 1
 	}
-	return fields[0]
+	if focused < 0 {
+		focused = 0
+	}
+	m.form.focused = focused
+	if m.form.focused < len(m.form.items) && !m.form.items[m.form.focused].Field.IsFocusable() {
+		m.form, _ = m.form.skipToFocusable(1)
+	}
+	m.form.SetWidth(m.formWidth())
 }
 
-func (m RecurrenceEditorModel) withFocus(f recEditorField) RecurrenceEditorModel {
-	m.focusField = f
-	m.interval.Blur()
-	m.endsCount.Blur()
-	switch f {
-	case refInterval:
-		m.interval.Focus()
-	case refEndsCount:
-		m.endsCount.Focus()
-	default:
-		// non-text fields: no input focus
+func (m RecurrenceEditorModel) currentFreq() string {
+	return m.frequencyField.Value()
+}
+
+func (m RecurrenceEditorModel) currentEnds() endsMode {
+	return endsMode(m.endsField.Selected())
+}
+
+func (m RecurrenceEditorModel) intervalValue() int {
+	n, err := strconv.Atoi(strings.TrimSpace(m.intervalField.Value()))
+	if err != nil || n <= 0 {
+		return 1
 	}
-	return m
+	return n
+}
+
+func (m RecurrenceEditorModel) formWidth() int {
+	boxW, _ := m.BoxSize()
+	return boxW - 4
+}
+
+func (m *RecurrenceEditorModel) tryOpenOverlay() tea.Cmd {
+	idx := m.form.Focused()
+	if idx >= len(m.fieldKeys) {
+		return nil
+	}
+	if m.fieldKeys[idx] == recFieldEnds && m.currentEnds() == endsOnDate {
+		m.endsDatePicker = true
+		return noopCmd
+	}
+	return nil
 }
 
 // Update handles all messages for the recurrence editor.
 func (m RecurrenceEditorModel) Update(msg tea.Msg) (RecurrenceEditorModel, tea.Cmd) {
-	if msg, ok := msg.(tea.KeyPressMsg); ok {
-		if m.endsDatePicker {
-			return m.handleEndsDateKey(msg), nil
+	if ws, ok := msg.(tea.WindowSizeMsg); ok {
+		return m.SetSize(ws.Width, ws.Height), nil
+	}
+
+	if m.endsDatePicker {
+		if mc, ok := msg.(tea.MouseClickMsg); ok && mc.Button == tea.MouseLeft {
+			w, h := m.EndsDatePickerBoxSize()
+			m = m.HandleEndsDateMouse(mc, w, h)
+			return m, nil
 		}
-		return m.handleKey(msg)
-	}
-	// Forward cursor blink etc. to active textinput.
-	var cmd tea.Cmd
-	switch m.focusField {
-	case refInterval:
-		m.interval, cmd = m.interval.Update(msg)
-	case refEndsCount:
-		m.endsCount, cmd = m.endsCount.Update(msg)
-	default:
-		// non-text fields: nothing to forward
-	}
-	return m, cmd
-}
-
-func (m RecurrenceEditorModel) handleKey(msg tea.KeyPressMsg) (RecurrenceEditorModel, tea.Cmd) {
-	keys := struct {
-		Tab, ShiftTab, Enter, Save, Close key.Binding
-	}{
-		Tab:      key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
-		ShiftTab: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev field")),
-		Enter:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
-		Save:     key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("ctrl+s", "save")),
-		Close:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")),
+		if kp, ok := msg.(tea.KeyPressMsg); ok {
+			m = m.handleEndsDateKey(kp)
+			return m, nil
+		}
+		return m, nil
 	}
 
-	switch {
-	case key.Matches(msg, keys.Save):
+	switch msg {
+	case recurrenceEditorDone:
 		m.done = true
 		return m, nil
-	case key.Matches(msg, keys.Close):
+	case recurrenceEditorCancel:
 		m.cancelled = true
 		return m, nil
-	case key.Matches(msg, keys.ShiftTab):
-		m = m.withFocus(m.prevField())
-		return m, nil
-	case key.Matches(msg, keys.Tab):
-		m = m.withFocus(m.nextField())
-		return m, nil
-	case key.Matches(msg, keys.Enter):
-		switch m.focusField {
-		case refDone:
-			m.done = true
-			return m, nil
-		case refCancel:
+	}
+
+	if kp, ok := msg.(tea.KeyPressMsg); ok {
+		switch kp.String() {
+		case "ctrl+s":
+			var cmd tea.Cmd
+			m.form, cmd = m.form.Submit()
+			return m, cmd
+		case "esc":
 			m.cancelled = true
 			return m, nil
-		case refEnds:
-			if m.ends == endsOnDate {
-				m.endsDatePicker = true
-				return m, nil
-			}
-		default:
-			if m.focusField == refInterval || m.focusField == refEndsCount {
-				m = m.withFocus(m.nextField())
-				m.updatePreview()
-				return m, nil
+		case "enter":
+			if cmd := m.tryOpenOverlay(); cmd != nil {
+				return m, cmd
 			}
 		}
 	}
 
-	switch m.focusField {
-	case refDone, refCancel:
-		return m, nil
-	case refFreq:
-		n := len(recFrequencies)
-		switch msg.String() {
-		case "left", "h":
-			m.freqIdx = (m.freqIdx - 1 + n) % n
-			m.updatePreview()
-		case "right", "l":
-			m.freqIdx = (m.freqIdx + 1) % n
-			m.updatePreview()
-		}
-		return m, nil
-
-	case refInterval:
+	if mc, ok := msg.(tea.MouseClickMsg); ok && mc.Button == tea.MouseLeft {
+		bw, bh := m.BoxSize()
+		ox := (m.width - bw) / 2
+		oy := (m.height - bh) / 2
+		target := mouseResolve(mc.X-ox, mc.Y-oy)
 		var cmd tea.Cmd
-		m.interval, cmd = m.interval.Update(msg)
-		m.updatePreview()
-		return m, cmd
-
-	case refWeekDays:
-		switch msg.String() {
-		case "left", "h":
-			m.weekDayCursor = (m.weekDayCursor - 1 + 7) % 7
-		case "right", "l":
-			m.weekDayCursor = (m.weekDayCursor + 1) % 7
-		case "space":
-			m.weekDays[m.weekDayCursor] = !m.weekDays[m.weekDayCursor]
-			m.updatePreview()
+		m.form, cmd = m.form.Update(MouseEvent{IsClick: true, Target: target})
+		m.syncFromForm()
+		if idx := m.form.Focused(); idx < len(m.fieldKeys) &&
+			m.fieldKeys[idx] == recFieldEnds &&
+			m.currentEnds() == endsOnDate &&
+			target == fieldTarget(idx) {
+			m.endsDatePicker = true
 		}
-		return m, nil
-
-	case refMonthlyOn:
-		switch msg.String() {
-		case "left", "h", "right", "l":
-			m.monthlyMode = 1 - m.monthlyMode // toggle 0 ↔ 1
-			m.updatePreview()
-		}
-		return m, nil
-
-	case refEnds:
-		switch msg.String() {
-		case "left", "h":
-			m.ends = endsMode((int(m.ends) - 1 + 3) % 3)
-			m.updatePreview()
-		case "right", "l":
-			m.ends = endsMode((int(m.ends) + 1) % 3)
-			m.updatePreview()
-		case "space":
-			if m.ends == endsOnDate {
-				m.endsDatePicker = true
-			}
-		}
-		return m, nil
-
-	case refEndsCount:
-		var cmd tea.Cmd
-		m.endsCount, cmd = m.endsCount.Update(msg)
-		m.updatePreview()
 		return m, cmd
 	}
 
-	return m, nil
+	var cmd tea.Cmd
+	m.form, cmd = m.form.Update(msg)
+	m.syncFromForm()
+	return m, cmd
 }
 
 func (m RecurrenceEditorModel) handleEndsDateKey(msg tea.KeyPressMsg) RecurrenceEditorModel {
@@ -312,8 +351,9 @@ func (m RecurrenceEditorModel) handleEndsDateKey(msg tea.KeyPressMsg) Recurrence
 		m.endsDate = time.Now()
 	case "enter", "space", "esc", "q":
 		m.endsDatePicker = false
-		m.updatePreview()
 	}
+	m.updatePreview()
+	m.syncFromForm()
 	return m
 }
 
@@ -350,22 +390,22 @@ func (m RecurrenceEditorModel) HandleEndsDateMouse(msg tea.MouseClickMsg, picker
 	m.endsDate = time.Date(y, mo, dayNum, 0, 0, 0, 0, loc)
 	m.endsDatePicker = false
 	m.updatePreview()
+	m.syncFromForm()
 	return m
 }
 
 // BuildRule generates the RRULE string from the editor state.
 func (m RecurrenceEditorModel) BuildRule() string {
-	freq := recFrequencies[m.freqIdx].Freq
-	rule := "FREQ=" + freq
+	rule := "FREQ=" + m.currentFreq()
 
-	if n, err := strconv.Atoi(strings.TrimSpace(m.interval.Value())); err == nil && n > 1 {
+	if n := m.intervalValue(); n > 1 {
 		rule += ";INTERVAL=" + strconv.Itoa(n)
 	}
 
-	switch freq {
+	switch m.currentFreq() {
 	case "WEEKLY":
 		var days []string
-		for i, on := range m.weekDays {
+		for i, on := range m.onField.WeekDays() {
 			if on {
 				days = append(days, weekDayRRule[i])
 			}
@@ -374,21 +414,19 @@ func (m RecurrenceEditorModel) BuildRule() string {
 			rule += ";BYDAY=" + strings.Join(days, ",")
 		}
 	case "MONTHLY":
-		if m.monthlyMode == 1 {
+		if m.onField.MonthlyMode() == 1 {
 			nth, dayName := nthWeekdayOf(m.startDate)
-			rule += fmt.Sprintf(";BYDAY=%d%s", nth, dayName)
+			rule += ";BYDAY=" + strconv.Itoa(nth) + dayName
 		}
 	}
 
-	switch m.ends {
+	switch m.currentEnds() {
 	case endsAfter:
-		if c := strings.TrimSpace(m.endsCount.Value()); c != "" {
+		if c := strings.TrimSpace(m.endsCountField.Value()); c != "" {
 			rule += ";COUNT=" + c
 		}
 	case endsOnDate:
 		rule += ";UNTIL=" + m.endsDate.UTC().Format("20060102T150405Z")
-	default:
-		// endsNever: no COUNT/UNTIL appended
 	}
 
 	return rule
@@ -396,41 +434,47 @@ func (m RecurrenceEditorModel) BuildRule() string {
 
 // RuleSummary returns a short human-readable summary of the rule.
 func (m RecurrenceEditorModel) RuleSummary() string {
-	f := recFrequencies[m.freqIdx]
-	n, _ := strconv.Atoi(strings.TrimSpace(m.interval.Value()))
-	if n <= 0 {
-		n = 1
-	}
-	unit := f.Unit[0]
-	if n > 1 {
-		unit = f.Unit[1]
-	}
-	s := fmt.Sprintf("Every %d %s", n, unit)
-	if n == 1 {
-		s = f.Label
+	freq := m.currentFreq()
+	n := m.intervalValue()
+
+	var summary string
+	for _, f := range recFrequencies {
+		if f.Freq == freq {
+			unit := f.Unit[0]
+			if n > 1 {
+				unit = f.Unit[1]
+			}
+			if n == 1 {
+				summary = f.Label
+			} else {
+				summary = "Every " + strconv.Itoa(n) + " " + unit
+			}
+			break
+		}
 	}
 
-	if f.Freq == "WEEKLY" {
+	if freq == "WEEKLY" {
 		var days []string
-		for i, on := range m.weekDays {
+		for i, on := range m.onField.WeekDays() {
 			if on {
 				days = append(days, weekDayLabels[i])
 			}
 		}
 		if len(days) > 0 && len(days) < 7 {
-			s += " on " + strings.Join(days, ", ")
+			summary += " on " + strings.Join(days, ", ")
 		}
 	}
-	if f.Freq == "MONTHLY" && m.monthlyMode == 1 {
-		s += " on " + nthWeekdayLabel(m.startDate)
+
+	if freq == "MONTHLY" && m.onField.MonthlyMode() == 1 {
+		summary += " on " + nthWeekdayLabel(m.startDate)
 	}
-	return s
+
+	return summary
 }
 
 func (m *RecurrenceEditorModel) updatePreview() {
 	rule := m.BuildRule()
-	rruleStr := "RRULE:" + rule
-	set, err := rrule.StrToRRuleSet(rruleStr)
+	set, err := rrule.StrToRRuleSet("RRULE:" + rule)
 	if err != nil {
 		m.preview = nil
 		return
@@ -455,14 +499,12 @@ func (m RecurrenceEditorModel) EndsDatePickerView() string {
 	const boxH = 14
 	bold := lipgloss.NewStyle().Bold(true)
 
-	// Build calendar lines: month header + day grid.
 	monthStr := m.endsDate.Format("January 2006")
 	var calLines []string
 	calLines = append(calLines, bold.Render(monthStr))
 	calGrid := renderMiniCalendar(m.endsDate, time.Now(), 0, m.theme)
 	calLines = append(calLines, strings.Split(calGrid, "\n")...)
 
-	// Compute max display width for consistent padding.
 	maxCalW := 0
 	for _, line := range calLines {
 		if w := lipgloss.Width(line); w > maxCalW {
@@ -470,7 +512,6 @@ func (m RecurrenceEditorModel) EndsDatePickerView() string {
 		}
 	}
 
-	// Vertically-stacked key hints: dark key, lighter description.
 	descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	hintLines := []string{
 		"←↓↑→" + " " + descStyle.Render("navigate"),
@@ -489,7 +530,6 @@ func (m RecurrenceEditorModel) EndsDatePickerView() string {
 		resultLines = append(resultLines, padded)
 	}
 
-	// Action buttons right-aligned at the bottom, separated by a line.
 	innerW := boxW - 4
 	resultLines = append(resultLines, "")
 	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
@@ -516,125 +556,24 @@ func (m RecurrenceEditorModel) EndsDatePickerBoxSize() (int, int) {
 
 // View renders the recurrence editor dialog.
 func (m RecurrenceEditorModel) View() string {
-	boxW, _ := m.BoxSize()
-	innerW := boxW - 2 - 2 // border + padding
-
-	faint := lipgloss.NewStyle().Faint(true)
-
-	var lines []string
-
-	// Frequency
-	freqLabel := recFrequencies[m.freqIdx].Label
-	if m.focusField == refFreq {
-		freqLabel = lipgloss.NewStyle().Reverse(true).Render(freqLabel) + faint.Render("  \u25c0 \u25b6")
-	}
-	lines = append(lines, faint.Render(formLabel("Frequency"))+freqLabel)
-
-	// Interval
-	n, _ := strconv.Atoi(strings.TrimSpace(m.interval.Value()))
-	if n <= 0 {
-		n = 1
-	}
-	unit := recFrequencies[m.freqIdx].Unit[0]
-	if n != 1 {
-		unit = recFrequencies[m.freqIdx].Unit[1]
-	}
-	lines = append(lines, faint.Render(formLabel("Every"))+m.interval.View()+" "+faint.Render(unit))
-	lines = append(lines, "")
-
-	// Weekly: day toggles
-	if m.freqIdx == 1 {
-		dayParts := make([]string, 0, 7)
-		for i := range 7 {
-			label := weekDayLabels[i]
-			style := lipgloss.NewStyle().Faint(true)
-			if m.weekDays[i] {
-				style = lipgloss.NewStyle().Bold(true)
-			}
-			if m.focusField == refWeekDays && i == m.weekDayCursor {
-				style = style.Reverse(true)
-			}
-			dayParts = append(dayParts, style.Render(label))
-		}
-		lines = append(lines, faint.Render(formLabel("On"))+strings.Join(dayParts, " "))
-		if m.focusField == refWeekDays {
-			lines = append(lines, faint.Render(formLabel("")+"\u2190/\u2192: move  \u00b7  space: toggle"))
-		}
-		lines = append(lines, "")
-	}
-
-	// Monthly: on selector
-	if m.freqIdx == 2 {
-		var onLabel string
-		if m.monthlyMode == 0 {
-			onLabel = fmt.Sprintf("day %d", m.startDate.Day())
-		} else {
-			onLabel = nthWeekdayLabel(m.startDate)
-		}
-		if m.focusField == refMonthlyOn {
-			onLabel = lipgloss.NewStyle().Reverse(true).Render(onLabel) + faint.Render("  \u25c0 \u25b6")
-		}
-		lines = append(lines, faint.Render(formLabel("On"))+onLabel)
-		lines = append(lines, "")
-	}
-
-	// Ends
-	var endsLabel string
-	switch m.ends {
-	case endsNever:
-		endsLabel = "Never"
-	case endsAfter:
-		endsLabel = "After " + m.endsCount.View() + " times"
-	case endsOnDate:
-		endsLabel = "On " + m.endsDate.Format("Jan 2, 2006")
-	}
-	if m.focusField == refEnds {
-		if m.ends != endsAfter {
-			endsLabel = lipgloss.NewStyle().Reverse(true).Render(endsLabel)
-		}
-		endsLabel += faint.Render("  \u25c0 \u25b6")
-	}
-	lines = append(lines, faint.Render(formLabel("Ends"))+endsLabel)
-	lines = append(lines, "")
-
-	// Preview
-	lines = append(lines, faint.Render("Preview"))
-	if len(m.preview) == 0 {
-		lines = append(lines, faint.Render("  (no occurrences)"))
-	}
-	for _, t := range m.preview {
-		lines = append(lines, "  "+t.Format("Mon, Jan 2, 2006"))
-	}
-	lines = append(lines, "")
-
-	// Buttons
-	bs := DefaultButtonStyles()
-	doneBtn := bs.Primary.Render("Done", m.focusField == refDone)
-	cancelBtn := bs.Secondary.Render("Cancel", m.focusField == refCancel)
-	buttons := cancelBtn + " " + doneBtn
-	pad := max(innerW-lipgloss.Width(buttons), 0)
-	lines = append(lines, strings.Repeat(" ", pad)+buttons)
-
-	m.help.SetWidth(innerW)
 	helpKeys := []key.Binding{
 		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
 		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")),
 	}
-	helpText := m.help.ShortHelpView(helpKeys)
-
-	content := strings.Join(lines, "\n")
 
 	styles := DefaultDialogStyles()
 	dialog := NewDialog("Custom Repeat", styles)
 	dialog = dialog.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
-	dialog.SetFooter(helpText)
+	dialog.SetFooter(m.help.ShortHelpView(helpKeys))
 
-	return dialog.Box(content)
+	form := m.form
+	form.SetWidth(dialog.ContentWidth())
+	return mouseSweep(dialog.Box(form.View()))
 }
 
 // nthWeekdayOf returns the Nth occurrence number and RFC 5545 day code
-// for the given date's position within its month (e.g. 3rd Monday → 3, "MO").
+// for the given date's position within its month (e.g. 3rd Monday -> 3, "MO").
 func nthWeekdayOf(t time.Time) (int, string) {
 	nth := (t.Day()-1)/7 + 1
 	return nth, weekDayRRule[int(t.Weekday())]

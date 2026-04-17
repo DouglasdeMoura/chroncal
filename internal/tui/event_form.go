@@ -717,18 +717,15 @@ func (m EventFormModel) Update(msg tea.Msg) (EventFormModel, tea.Cmd) {
 }
 
 func (m EventFormModel) updateRRuleEditor(msg tea.Msg) (EventFormModel, tea.Cmd) {
-	if kp, ok := msg.(tea.KeyPressMsg); ok {
-		var cmd tea.Cmd
-		m.rruleEditor, cmd = m.rruleEditor.Update(kp)
-		if m.rruleEditor.Done() {
-			m.customRule = m.rruleEditor.BuildRule()
-			m.rruleEditorOpen = false
-		} else if m.rruleEditor.Cancelled() {
-			m.rruleEditorOpen = false
-		}
-		return m, cmd
+	var cmd tea.Cmd
+	m.rruleEditor, cmd = m.rruleEditor.Update(msg)
+	if m.rruleEditor.Done() {
+		m.customRule = m.rruleEditor.BuildRule()
+		m.rruleEditorOpen = false
+	} else if m.rruleEditor.Cancelled() {
+		m.rruleEditorOpen = false
 	}
-	return m, nil
+	return m, cmd
 }
 
 func (m EventFormModel) updateTimezonePicker(msg tea.Msg) (EventFormModel, tea.Cmd) {
