@@ -477,6 +477,17 @@ func (f *HexColorField) Blur()                      { f.input.Blur() }
 func (f *HexColorField) SetWidth(w int)             { f.input.SetWidth(9) } // #rrggbb + cursor + 1
 func (f *HexColorField) IsFocusable() bool          { return true }
 
+func (f *HexColorField) Validate() string {
+	hexVal := strings.TrimSpace(f.input.Value())
+	if hexVal == "" {
+		return "" // emptiness is handled by Required
+	}
+	if !hexRE.MatchString(hexVal) {
+		return "Color must be #rrggbb"
+	}
+	return ""
+}
+
 func (f *HexColorField) View() string {
 	base := f.input.View()
 	hexVal := strings.TrimSpace(f.input.Value())
@@ -539,6 +550,13 @@ var formKeys = struct {
 // StaticField). Used by Form.validate to check required fields.
 type valuer interface {
 	Value() string
+}
+
+// validator is optionally implemented by fields that perform their own
+// validation. Form.validate calls Validate after the required check
+// and uses the returned message (if non-empty) as the field error.
+type validator interface {
+	Validate() string
 }
 
 // LabelLayout controls where and how the label is rendered relative to
@@ -1172,13 +1190,22 @@ func (f Form) submitIfValid() (Form, tea.Cmd) {
 func (f Form) validate() (Form, bool) {
 	f.error = ""
 	for i, item := range f.items {
-		if !item.Required || !item.Field.IsFocusable() {
+		if !item.Field.IsFocusable() {
 			continue
 		}
-		if v, ok := item.Field.(valuer); ok {
-			if strings.TrimSpace(v.Value()) == "" {
+		if item.Required {
+			if v, ok := item.Field.(valuer); ok {
+				if strings.TrimSpace(v.Value()) == "" {
+					f.errorField = i
+					f.error = item.Label + " is required"
+					return f, false
+				}
+			}
+		}
+		if v, ok := item.Field.(validator); ok {
+			if msg := v.Validate(); msg != "" {
 				f.errorField = i
-				f.error = item.Label + " is required"
+				f.error = msg
 				return f, false
 			}
 		}

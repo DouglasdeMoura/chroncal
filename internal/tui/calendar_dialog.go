@@ -107,10 +107,6 @@ func NewCalendarDialogModel(id int64, name, hex string, theme Theme) CalendarDia
 	form.OnSubmit(func(f *Form) tea.Cmd {
 		hf := f.Field(cdIdxHex).(*HexColorField)
 		hexVal := strings.TrimSpace(hf.Value())
-		if !hexRE.MatchString(hexVal) {
-			f.SetError(cdIdxHex, "Color must be #rrggbb")
-			return nil
-		}
 		nf := f.Field(cdIdxName).(*TextField)
 		nameVal := strings.TrimSpace(nf.Value())
 		return func() tea.Msg {
