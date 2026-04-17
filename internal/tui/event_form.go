@@ -780,6 +780,12 @@ func (m EventFormModel) View() string {
 	if m.width <= 0 || m.height <= 0 {
 		return ""
 	}
+	helpKeys := []key.Binding{
+		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
+		m.keys.Save,
+		m.keys.Close,
+	}
+	m.dialog.SetFooter(m.help.ShortHelpView(helpKeys))
 	content := mouseSweep(m.dialog.Box(m.form.View()))
 	return content
 }
