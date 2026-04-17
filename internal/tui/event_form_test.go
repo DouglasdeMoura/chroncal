@@ -27,11 +27,13 @@ func TestEventForm_PlacesCalendarAfterNotes(t *testing.T) {
 	titleItemIdx := -1
 	titleSeparatorIdx := -1
 	repeatSeparatorIdx := -1
+	alarmsSeparatorIdx := -1
 	peopleItemIdx := -1
 	notesItemIdx := -1
 	calendarItemIdx := -1
 	transpItemIdx := -1
 	classItemIdx := -1
+	sepCount := 0
 	for i, item := range m.form.items {
 		switch item.Label {
 		case "Title":
@@ -52,11 +54,15 @@ func TestEventForm_PlacesCalendarAfterNotes(t *testing.T) {
 			classItemIdx = i
 		case "":
 			if _, ok := item.Field.(*StaticField); ok {
-				if titleItemIdx != -1 && titleSeparatorIdx == -1 {
+				switch sepCount {
+				case 0:
 					titleSeparatorIdx = i
-				} else {
+				case 1:
 					repeatSeparatorIdx = i
+				case 2:
+					alarmsSeparatorIdx = i
 				}
+				sepCount++
 			}
 		}
 	}
@@ -93,6 +99,7 @@ func TestEventForm_PlacesCalendarAfterNotes(t *testing.T) {
 	assert.NotEqual(t, -1, titleSeparatorIdx)
 	assert.NotEqual(t, -1, repeatItemIdx)
 	assert.NotEqual(t, -1, repeatSeparatorIdx)
+	assert.NotEqual(t, -1, alarmsSeparatorIdx)
 	assert.NotEqual(t, -1, peopleItemIdx)
 	assert.NotEqual(t, -1, notesItemIdx)
 	assert.NotEqual(t, -1, calendarItemIdx)
@@ -101,11 +108,15 @@ func TestEventForm_PlacesCalendarAfterNotes(t *testing.T) {
 	assert.Equal(t, titleItemIdx+1, titleSeparatorIdx)
 	assert.NotEqual(t, -1, alarmsItemIdx)
 	assert.Greater(t, alarmsItemIdx, repeatItemIdx)
-	assert.Equal(t, alarmsItemIdx+1, repeatSeparatorIdx)
+	assert.Greater(t, alarmsItemIdx, classItemIdx)
+	assert.Equal(t, repeatItemIdx+1, repeatSeparatorIdx)
 	assert.Equal(t, repeatSeparatorIdx+1, peopleItemIdx)
 	assert.Equal(t, notesItemIdx+1, calendarItemIdx)
 	assert.Equal(t, calendarItemIdx+1, transpItemIdx)
 	assert.Equal(t, transpItemIdx+1, classItemIdx)
+	assert.Equal(t, classItemIdx+1, alarmsSeparatorIdx)
+	assert.Equal(t, alarmsSeparatorIdx+1, alarmsItemIdx)
+	assert.Equal(t, len(m.form.items)-1, alarmsItemIdx)
 }
 
 func TestEventForm_CalendarFieldRendersColorDot(t *testing.T) {

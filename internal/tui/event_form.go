@@ -535,14 +535,6 @@ func (m *EventFormModel) buildFormItems() ([]FormItem, []string) {
 		}
 	}
 
-	if m.alarmField == nil {
-		m.alarmField = NewOpenerField(alarmSummary(m.alarms))
-	} else {
-		m.alarmField.SetValue(alarmSummary(m.alarms))
-	}
-	items = append(items, FormItem{Label: "Alarms", Field: m.alarmField})
-	keys = append(keys, efKeyAlarms)
-
 	items = append(items, FormItem{Label: "", Field: newEventFormSeparator()})
 	keys = append(keys, "")
 
@@ -568,6 +560,17 @@ func (m *EventFormModel) buildFormItems() ([]FormItem, []string) {
 
 	items = append(items, FormItem{Label: "Visibility", Field: m.visibilityField})
 	keys = append(keys, efKeyClass)
+
+	items = append(items, FormItem{Label: "", Field: newEventFormSeparator()})
+	keys = append(keys, "")
+
+	if m.alarmField == nil {
+		m.alarmField = NewOpenerField(alarmSummary(m.alarms))
+	} else {
+		m.alarmField.SetValue(alarmSummary(m.alarms))
+	}
+	items = append(items, FormItem{Label: "Alarms", Field: m.alarmField})
+	keys = append(keys, efKeyAlarms)
 
 	return items, keys
 }
