@@ -29,22 +29,18 @@ func init() {
 }
 
 func Open(dbPath string) (*sql.DB, *Queries, error) {
-	conn, err := sql.Open("sqlite", dbPath)
+	// Encode pragmas in the DSN so every pooled connection gets them,
+	// not just the first one. PRAGMA foreign_keys is per-connection in
+	// SQLite; setting it via Exec on the pool only affects one conn.
+	dsn := dbPath +
+		"?_pragma=journal_mode(WAL)" +
+		"&_pragma=foreign_keys(ON)" +
+		"&_pragma=busy_timeout(5000)" +
+		"&_pragma=synchronous(NORMAL)"
+
+	conn, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open database: %w", err)
-	}
-
-	pragmas := []string{
-		"PRAGMA journal_mode=WAL",
-		"PRAGMA foreign_keys=ON",
-		"PRAGMA busy_timeout=5000",
-		"PRAGMA synchronous=NORMAL",
-	}
-	for _, p := range pragmas {
-		if _, err := conn.Exec(p); err != nil {
-			conn.Close()
-			return nil, nil, fmt.Errorf("exec pragma %q: %w", p, err)
-		}
 	}
 
 	if err := runMigrations(conn); err != nil {
