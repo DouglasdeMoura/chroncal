@@ -152,14 +152,25 @@ type tzEntry struct {
 	Label string // display label, e.g. "America/New_York  (UTC-04:00)"
 }
 
+// tzFocusZone tracks which part of the picker has focus.
+type tzFocusZone int
+
+const (
+	tzFocusSearch tzFocusZone = iota
+	tzFocusList
+	tzFocusCancel
+	tzFocusOk
+)
+
 // TimezonePickerModel is the model for the timezone picker overlay.
 type TimezonePickerModel struct {
 	all       []tzEntry // full list
 	filtered  []tzEntry // filtered subset
 	filter    *TextField
-	cursor    int  // index in filtered
-	offset    int  // scroll offset
-	done      bool // true when selection confirmed
+	cursor    int         // index in filtered
+	offset    int         // scroll offset
+	focus     tzFocusZone // current focus zone
+	done      bool        // true when selection confirmed
 	cancelled bool
 	selected  string // final selection (IANA name)
 	theme     Theme
@@ -243,6 +254,9 @@ func (m TimezonePickerModel) Cancelled() bool { return m.cancelled }
 // Selected returns the IANA timezone name that was selected.
 func (m TimezonePickerModel) Selected() string { return m.selected }
 
+// BtnFocus returns the current button focus for rendering in the parent.
+func (m TimezonePickerModel) BtnFocus() tzFocusZone { return m.focus }
+
 // Update handles keyboard input for the timezone picker.
 func (m TimezonePickerModel) Update(msg tea.Msg) (TimezonePickerModel, tea.Cmd) {
 	kp, ok := msg.(tea.KeyPressMsg)
@@ -254,22 +268,47 @@ func (m TimezonePickerModel) Update(msg tea.Msg) (TimezonePickerModel, tea.Cmd) 
 	case "esc":
 		m.cancelled = true
 		return m, nil
+	case "tab":
+		m.focus = (m.focus + 1) % (tzFocusOk + 1)
+		if m.focus == tzFocusSearch {
+			m.filter.Focus()
+		} else {
+			m.filter.Blur()
+		}
+		return m, nil
+	case "shift+tab":
+		m.focus = (m.focus - 1 + (tzFocusOk + 1)) % (tzFocusOk + 1)
+		if m.focus == tzFocusSearch {
+			m.filter.Focus()
+		} else {
+			m.filter.Blur()
+		}
+		return m, nil
 	case "enter":
-		if len(m.filtered) > 0 {
-			m.selected = m.filtered[m.cursor].Name
-			m.done = true
+		switch m.focus {
+		case tzFocusCancel:
+			m.cancelled = true
+		default:
+			if len(m.filtered) > 0 {
+				m.selected = m.filtered[m.cursor].Name
+				m.done = true
+			}
 		}
 		return m, nil
 	case "up", "ctrl+p":
-		if m.cursor > 0 {
-			m.cursor--
-			m.ensureVisible()
+		if m.focus == tzFocusSearch || m.focus == tzFocusList {
+			if m.cursor > 0 {
+				m.cursor--
+				m.ensureVisible()
+			}
 		}
 		return m, nil
 	case "down", "ctrl+n":
-		if m.cursor < len(m.filtered)-1 {
-			m.cursor++
-			m.ensureVisible()
+		if m.focus == tzFocusSearch || m.focus == tzFocusList {
+			if m.cursor < len(m.filtered)-1 {
+				m.cursor++
+				m.ensureVisible()
+			}
 		}
 		return m, nil
 	case "pgup":
@@ -282,13 +321,17 @@ func (m TimezonePickerModel) Update(msg tea.Msg) (TimezonePickerModel, tea.Cmd) 
 		return m, nil
 	}
 
-	// Forward to filter input.
-	prev := m.filter.Value()
-	cmd := m.filter.Update(kp)
-	if m.filter.Value() != prev {
-		m.applyFilter()
+	// Forward to filter input only when search is focused.
+	if m.focus == tzFocusSearch {
+		prev := m.filter.Value()
+		cmd := m.filter.Update(kp)
+		if m.filter.Value() != prev {
+			m.applyFilter()
+		}
+		return m, cmd
 	}
-	return m, cmd
+
+	return m, nil
 }
 
 // View renders the timezone picker.

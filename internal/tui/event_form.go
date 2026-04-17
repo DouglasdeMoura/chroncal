@@ -103,17 +103,17 @@ type EventFormModel struct {
 	descField      *TextAreaField
 
 	// Overlay state
-	allDay          bool
+	allDay             bool
 	timezonePicker     TimezonePickerModel
 	timezonePickerOpen bool
-	repeatIdx       int // index into repeatPresets
-	customRule      string
-	rruleEditor     RecurrenceEditorModel
-	rruleEditorOpen bool
-	ends            endsMode
-	endsDate        time.Time
-	endsDatePicker  bool
-	datePickerOpen  bool
+	repeatIdx          int // index into repeatPresets
+	customRule         string
+	rruleEditor        RecurrenceEditorModel
+	rruleEditorOpen    bool
+	ends               endsMode
+	endsDate           time.Time
+	endsDatePicker     bool
+	datePickerOpen     bool
 
 	// Mini-month models for date picker overlays
 	datePicker          MiniMonthModel
@@ -890,22 +890,38 @@ func (m EventFormModel) TimezonePickerOpen() bool { return m.timezonePickerOpen 
 func (m EventFormModel) RRuleEditorOpen() bool { return m.rruleEditorOpen }
 
 // TimezonePickerBoxSize returns the outer dimensions of the timezone picker dialog.
-func (m EventFormModel) TimezonePickerBoxSize() (int, int) { return 50, 16 }
+func (m EventFormModel) TimezonePickerBoxSize() (int, int) { return 50, 19 }
 
 // TimezonePickerView renders the timezone picker as a standalone bordered dialog.
 func (m EventFormModel) TimezonePickerView() string {
 	boxW, boxH := m.TimezonePickerBoxSize()
 	content := m.timezonePicker.View()
 
-	// Key hints.
-	descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	hints := descStyle.Render("↑↓ navigate  enter select  esc cancel")
-
 	innerW := boxW - 4
+
 	sepStyle := lipgloss.NewStyle().Faint(true)
 	sep := sepStyle.Render(strings.Repeat("─", innerW))
 
-	content = content + "\n\n" + sep + "\n" + hints
+	// Action buttons right-aligned.
+	bs := DefaultButtonStyles()
+	focus := m.timezonePicker.BtnFocus()
+	cancelBtn := bs.Secondary.Render("Cancel", focus == tzFocusCancel)
+	okBtn := bs.Primary.Render("Ok", focus == tzFocusOk)
+	buttonRow := cancelBtn + " " + okBtn
+	btnPad := max(innerW-lipgloss.Width(buttonRow), 0)
+	buttonRow = strings.Repeat(" ", btnPad) + buttonRow
+
+	// Key hints: dark keys, dimmed description, centered.
+	descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	dot := descStyle.Render(Glyphs["separator.dot"])
+	hints := "↑↓" + " " + descStyle.Render("navigate") +
+		dot + "tab" + " " + descStyle.Render("next") +
+		dot + "esc" + " " + descStyle.Render("close")
+	hintsWidth := lipgloss.Width(hints)
+	hintsPad := max((innerW-hintsWidth)/2, 0)
+	hints = strings.Repeat(" ", hintsPad) + hints
+
+	content = content + "\n\n" + sep + "\n" + buttonRow + "\n" + "\n" + hints
 
 	return lipgloss.NewStyle().
 		Width(boxW).Height(boxH).Padding(1, 1, 0, 1).
