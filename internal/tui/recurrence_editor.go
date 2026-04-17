@@ -77,10 +77,11 @@ func NewRecurrenceEditorModel(startDate time.Time, w, h int, theme Theme) Recurr
 		{Label: "On " + startDate.AddDate(0, 3, 0).Format("Jan 2, 2006"), Value: "ondate"},
 	})
 
-	endsCountField := NewTextField("10")
+	endsCountField := NewTextField("1")
 	endsCountField.SetCharLimit(4)
 	endsCountField.SetDigitsOnly()
 	endsCountField.SetSuffix("times")
+	endsCountField.SetValue("1")
 
 	m := RecurrenceEditorModel{
 		startDate:      startDate,
@@ -241,7 +242,8 @@ func (m RecurrenceEditorModel) intervalValue() int {
 
 func (m RecurrenceEditorModel) formWidth() int {
 	boxW, _ := m.BoxSize()
-	return boxW - 4
+	styles := DefaultDialogStyles()
+	return boxW - 2 - 2*styles.PaddingX
 }
 
 func (m *RecurrenceEditorModel) tryOpenOverlay() tea.Cmd {
@@ -552,9 +554,11 @@ func (m RecurrenceEditorModel) View() string {
 		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")),
 	}
 
+	boxW, _ := m.BoxSize()
 	styles := DefaultDialogStyles()
 	dialog := NewDialog("Custom Repeat", styles)
 	dialog = dialog.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+	dialog.SetWidth(boxW)
 	dialog.SetFooter(m.help.ShortHelpView(helpKeys))
 
 	form := m.form

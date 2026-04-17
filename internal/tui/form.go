@@ -89,13 +89,17 @@ func (f *TextField) View() string {
 	if f.suffix == "" {
 		return f.input.View()
 	}
-	return strings.TrimRight(f.input.View(), " ") + " " + f.suffix
+	return f.input.View() + " " + f.suffix
 }
-func (f *TextField) Focus() tea.Cmd    { return f.input.Focus() }
-func (f *TextField) Blur()             { f.input.Blur() }
+func (f *TextField) Focus() tea.Cmd { return f.input.Focus() }
+func (f *TextField) Blur()          { f.input.Blur() }
 func (f *TextField) SetWidth(w int) {
 	if f.suffix != "" {
-		w -= lipgloss.Width(f.suffix) + 1
+		// Disable the textinput's internal width padding so the suffix sits
+		// immediately after the value at a fixed offset. The input expands
+		// naturally as the user types, bounded by CharLimit.
+		f.input.SetWidth(0)
+		return
 	}
 	f.input.SetWidth(max(w, 1))
 }
