@@ -46,13 +46,6 @@ var alarmActionOpts = []SelectOption{
 	{Label: "Audio", Value: "AUDIO"},
 }
 
-var alarmRelatedOpts = []SelectOption{
-	{Label: "before start", Value: "START-before"},
-	{Label: "after start", Value: "START-after"},
-	{Label: "before end", Value: "END-before"},
-	{Label: "after end", Value: "END-after"},
-}
-
 // parseOffsetTrigger parses a relative-trigger string like "-PT15M" into
 // (qty, unitIdx, before). Only single-unit offsets are supported so the
 // editor stays lossless; absolute triggers and mixed forms return ok=false.
@@ -141,27 +134,6 @@ func alarmSummary(alarms []model.Alarm) string {
 	}
 }
 
-func alarmRelatedKey(related string, before bool) string {
-	rel := "START"
-	if strings.EqualFold(strings.TrimSpace(related), "END") {
-		rel = "END"
-	}
-	if before {
-		return rel + "-before"
-	}
-	return rel + "-after"
-}
-
-func parseAlarmRelatedKey(v string) (related string, before bool) {
-	parts := strings.SplitN(v, "-", 2)
-	related = "START"
-	if len(parts) >= 1 && strings.EqualFold(parts[0], "END") {
-		related = "END"
-	}
-	before = len(parts) == 2 && strings.EqualFold(parts[1], "before")
-	return related, before
-}
-
 // AlarmListEditorModel manages the list of alarms attached to an event.
 // It has two internal modes: list (picker) and edit (single-alarm form).
 // Follows the RecurrenceEditorModel paradigm: Done()/Cancelled()/Alarms()
@@ -173,10 +145,8 @@ type AlarmListEditorModel struct {
 	cursor  int
 	editIdx int
 
-	actionField  *SelectField
-	offsetField  *QuantitySelectField
-	relatedField *SelectField
-	descField    *TextField
+	actionField *SelectField
+	offsetField *QuantitySelectField
 
 	form      Form
 	fieldKeys []string
@@ -244,7 +214,6 @@ func (m *AlarmListEditorModel) enterEditMode(idx int) {
 			Action:       "DISPLAY",
 			TriggerValue: "-PT15M",
 			Related:      "START",
-			Description:  "Reminder",
 		}
 	}
 	m.editIdx = idx
@@ -265,25 +234,12 @@ func (m *AlarmListEditorModel) buildEditForm(a model.Alarm) {
 	for i, u := range alarmUnits {
 		unitOpts[i] = SelectOption{Label: u.Label, Value: string(u.Code)}
 	}
-	qty, unitIdx, before, ok := parseOffsetTrigger(a.TriggerValue)
+	qty, unitIdx, _, ok := parseOffsetTrigger(a.TriggerValue)
 	if !ok {
-		qty, unitIdx, before = 15, 0, true
+		qty, unitIdx = 15, 0
 	}
 	m.offsetField = NewQuantitySelectField(unitOpts, unitIdx)
 	m.offsetField.SetAmount(strconv.Itoa(qty))
-
-	m.relatedField = NewSelectField(alarmRelatedOpts)
-	relKey := alarmRelatedKey(a.Related, before)
-	for i, opt := range alarmRelatedOpts {
-		if opt.Value == relKey {
-			m.relatedField.SetSelected(i)
-			break
-		}
-	}
-
-	m.descField = NewTextField("Reminder text")
-	m.descField.SetCharLimit(200)
-	m.descField.SetValue(a.Description)
 
 	styles := DefaultFormStyles()
 	styles.LabelLayout = LabelInline
@@ -294,10 +250,8 @@ func (m *AlarmListEditorModel) buildEditForm(a model.Alarm) {
 	items := []FormItem{
 		{Label: "Action", Field: m.actionField},
 		{Label: "Offset", Field: m.offsetField},
-		{Label: "Relative to", Field: m.relatedField},
-		{Label: "Description", Field: m.descField},
 	}
-	m.fieldKeys = []string{"action", "offset", "related", "description"}
+	m.fieldKeys = []string{"action", "offset"}
 
 	m.form = NewForm("Save", styles, items...)
 	m.form.OnSubmit(func(f *Form) tea.Cmd {
@@ -315,20 +269,14 @@ func (m *AlarmListEditorModel) applyEditForm() {
 		qty = 1
 	}
 	unitIdx := m.offsetField.Selected()
-	related, before := parseAlarmRelatedKey(m.relatedField.Value())
-	trigger := buildOffsetTrigger(qty, unitIdx, before)
+	trigger := buildOffsetTrigger(qty, unitIdx, true)
 
-	desc := strings.TrimSpace(m.descField.Value())
 	action := strings.ToUpper(m.actionField.Value())
 
 	alarm := model.Alarm{
 		Action:       action,
 		TriggerValue: trigger,
-		Related:      related,
-		Description:  desc,
-	}
-	if action == "EMAIL" {
-		alarm.Summary = desc
+		Related:      "START",
 	}
 
 	if m.editIdx >= 0 && m.editIdx < len(m.alarms) {
@@ -342,9 +290,8 @@ func (m *AlarmListEditorModel) applyEditForm() {
 		alarm.AttachURI = orig.AttachURI
 		alarm.AttachFmtType = orig.AttachFmtType
 		alarm.Attendees = orig.Attendees
-		if action != "EMAIL" {
-			alarm.Summary = orig.Summary
-		}
+		alarm.Description = orig.Description
+		alarm.Summary = orig.Summary
 		m.alarms[m.editIdx] = alarm
 	} else {
 		m.alarms = append(m.alarms, alarm)

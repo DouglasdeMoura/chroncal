@@ -162,9 +162,7 @@ func TestAlarmEditor_NewAlarmFromNonDefaultOffset(t *testing.T) {
 	// Change to 3 days before and switch action to EMAIL.
 	m.offsetField.SetAmount("3")
 	m.offsetField.SetSelected(2) // days
-	m.relatedField.SetSelected(0) // before start
-	m.actionField.SetSelected(1)  // Email
-	m.descField.SetValue("Reminder email")
+	m.actionField.SetSelected(1) // Email
 
 	m, cmd := m.Update(keyMsg("ctrl+s"))
 	require.NotNil(t, cmd)
@@ -175,8 +173,6 @@ func TestAlarmEditor_NewAlarmFromNonDefaultOffset(t *testing.T) {
 	assert.Equal(t, "-P3D", a.TriggerValue)
 	assert.Equal(t, "EMAIL", a.Action)
 	assert.Equal(t, "START", a.Related)
-	assert.Equal(t, "Reminder email", a.Description)
-	assert.Equal(t, "Reminder email", a.Summary) // EMAIL uses description as summary
 }
 
 func TestEventForm_SaveRoundTripsAlarms(t *testing.T) {
