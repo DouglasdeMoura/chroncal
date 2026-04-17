@@ -338,15 +338,22 @@ func (m TimezonePickerModel) Update(msg tea.Msg) (TimezonePickerModel, tea.Cmd) 
 func (m TimezonePickerModel) View() string {
 	var lines []string
 
-	// Search input with inline label.
+	// Search input with inline label and focus marker.
 	label := lipgloss.NewStyle().Faint(true).Render("Search")
-	lines = append(lines, label+" "+m.filter.View())
+	marker := "  "
+	if m.focus == tzFocusSearch {
+		marker = lipgloss.NewStyle().Faint(true).Render(Glyphs["focus"]) + " "
+	}
+	lines = append(lines, label+" "+marker+m.filter.View())
 	lines = append(lines, "")
 
-	// Timezone list.
+	// Timezone list — always emit exactly tzPickerVisibleRows + 1 lines
+	// so the buttons stay pinned to the bottom.
+	listLines := 0
 	if len(m.filtered) == 0 {
 		dimStyle := lipgloss.NewStyle().Faint(true)
 		lines = append(lines, dimStyle.Render("No matching timezones"))
+		listLines++
 	} else {
 		end := min(m.offset+tzPickerVisibleRows, len(m.filtered))
 		for i := m.offset; i < end; i++ {
@@ -356,13 +363,21 @@ func (m TimezonePickerModel) View() string {
 			} else {
 				lines = append(lines, entry.Label)
 			}
+			listLines++
 		}
-		// Scroll indicators.
-		if m.offset > 0 || end < len(m.filtered) {
-			dimStyle := lipgloss.NewStyle().Faint(true)
-			indicator := fmt.Sprintf("%d/%d", m.cursor+1, len(m.filtered))
-			lines = append(lines, dimStyle.Render(indicator))
-		}
+	}
+	// Scroll indicator or blank.
+	totalListRows := tzPickerVisibleRows + 1
+	if m.offset > 0 || (len(m.filtered) > 0 && m.offset+tzPickerVisibleRows < len(m.filtered)) {
+		dimStyle := lipgloss.NewStyle().Faint(true)
+		indicator := fmt.Sprintf("%d/%d", m.cursor+1, len(m.filtered))
+		lines = append(lines, dimStyle.Render(indicator))
+		listLines++
+	}
+	// Pad remaining rows so total is always tzPickerVisibleRows + 1.
+	for listLines < totalListRows {
+		lines = append(lines, "")
+		listLines++
 	}
 
 	return strings.Join(lines, "\n")
