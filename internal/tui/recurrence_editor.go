@@ -23,6 +23,8 @@ const (
 	recFieldEnds = "ends"
 )
 
+const recurrenceEditorBoxWidth = 52
+
 var recFrequencies = []struct {
 	Label string
 	Freq  string
@@ -242,9 +244,8 @@ func (m RecurrenceEditorModel) intervalValue() int {
 }
 
 func (m RecurrenceEditorModel) formWidth() int {
-	boxW, _ := m.BoxSize()
 	styles := DefaultDialogStyles()
-	return boxW - 2 - 2*styles.PaddingX
+	return recurrenceEditorBoxWidth - 2 - 2*styles.PaddingX
 }
 
 func (m *RecurrenceEditorModel) tryOpenOverlay() tea.Cmd {
@@ -483,7 +484,10 @@ func (m *RecurrenceEditorModel) updatePreview() {
 
 // BoxSize returns the outer dimensions of the editor dialog.
 func (m RecurrenceEditorModel) BoxSize() (int, int) {
-	return 52, 24
+	if m.width <= 0 || m.height <= 0 {
+		return 0, 0
+	}
+	return lipgloss.Size(m.View())
 }
 
 // EndsDatePickerView renders the ends-date picker overlay.
@@ -555,11 +559,10 @@ func (m RecurrenceEditorModel) View() string {
 		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")),
 	}
 
-	boxW, _ := m.BoxSize()
 	styles := DefaultDialogStyles()
 	dialog := NewDialog("Custom Repeat", styles)
 	dialog = dialog.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
-	dialog.SetWidth(boxW)
+	dialog.SetWidth(recurrenceEditorBoxWidth)
 	dialog.SetFooter(m.help.ShortHelpView(helpKeys))
 
 	form := m.form
