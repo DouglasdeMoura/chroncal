@@ -405,3 +405,71 @@ func (m MiniMonthModel) View() string {
 	}
 	return b.String()
 }
+
+// ---------------------------------------------------------------------------
+// Shared calendar helpers
+// ---------------------------------------------------------------------------
+
+// addMonthClamped shifts t by months, clamping the day so it stays valid.
+func addMonthClamped(t time.Time, months int) time.Time {
+	y, m, d := t.Date()
+	newMonth := time.Month(int(m) + months)
+	maxDay := time.Date(y, newMonth+1, 0, 0, 0, 0, 0, t.Location()).Day()
+	if d > maxDay {
+		d = maxDay
+	}
+	return time.Date(y, newMonth, d, 0, 0, 0, 0, t.Location())
+}
+
+// renderMiniCalendar draws a compact month grid.
+func renderMiniCalendar(selected, today time.Time, indent int, theme Theme) string {
+	y, mo, _ := selected.Date()
+	loc := selected.Location()
+
+	first := time.Date(y, mo, 1, 0, 0, 0, 0, loc)
+	startDow := int(first.Weekday())
+	daysInMonth := time.Date(y, mo+1, 0, 0, 0, 0, 0, loc).Day()
+
+	pad := strings.Repeat(" ", indent)
+	faint := lipgloss.NewStyle().Faint(true)
+
+	var lines []string
+	lines = append(lines, pad+faint.Render("Su Mo Tu We Th Fr Sa"))
+
+	dayNum := 1
+	for week := range 6 {
+		var cells []string
+		for dow := range 7 {
+			pos := week*7 + dow
+			if pos < startDow || dayNum > daysInMonth {
+				cells = append(cells, "  ")
+			} else {
+				cell := fmt.Sprintf("%2d", dayNum)
+				d := time.Date(y, mo, dayNum, 0, 0, 0, 0, loc)
+				if sameDay(d, selected) {
+					cell = lipgloss.NewStyle().Reverse(true).Bold(true).Render(cell)
+				} else if sameDay(d, today) {
+					cell = lipgloss.NewStyle().Foreground(theme.Today).Bold(true).Render(cell)
+				}
+				cells = append(cells, cell)
+				dayNum++
+			}
+		}
+		lines = append(lines, pad+strings.Join(cells, " "))
+		if dayNum > daysInMonth {
+			for week++; week < 6; week++ {
+				lines = append(lines, pad+strings.Repeat(" ", 20))
+			}
+			break
+		}
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// sameDay reports whether a and b represent the same calendar date.
+func sameDay(a, b time.Time) bool {
+	ay, am, ad := a.Date()
+	by, bm, bd := b.Date()
+	return ay == by && am == bm && ad == bd
+}

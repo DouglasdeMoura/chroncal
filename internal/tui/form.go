@@ -540,6 +540,40 @@ func isHexInputAllowed(t string, pos int, current string) bool {
 }
 
 // ---------------------------------------------------------------------------
+// DatePickerField
+// ---------------------------------------------------------------------------
+
+// DatePickerField is a focusable field that displays a formatted date. The
+// actual date selection happens via an overlay managed by the parent; this
+// field only renders the current value and toggles a focus highlight.
+type DatePickerField struct {
+	value   time.Time
+	focused bool
+}
+
+// NewDatePickerField creates a field that displays the given date.
+func NewDatePickerField(value time.Time) *DatePickerField {
+	return &DatePickerField{value: value}
+}
+
+func (f *DatePickerField) Date() time.Time     { return f.value }
+func (f *DatePickerField) SetDate(t time.Time) { f.value = t }
+func (f *DatePickerField) Value() string       { return f.value.Format("Mon, Jan 2, 2006") }
+
+func (f *DatePickerField) Update(tea.Msg) tea.Cmd { return nil }
+func (f *DatePickerField) View() string {
+	s := f.value.Format("Mon, Jan 2, 2006")
+	if f.focused {
+		return lipgloss.NewStyle().Reverse(true).Render(s)
+	}
+	return s
+}
+func (f *DatePickerField) Focus() tea.Cmd    { f.focused = true; return nil }
+func (f *DatePickerField) Blur()             { f.focused = false }
+func (f *DatePickerField) SetWidth(int)      {}
+func (f *DatePickerField) IsFocusable() bool { return true }
+
+// ---------------------------------------------------------------------------
 // TimeRangeField
 // ---------------------------------------------------------------------------
 

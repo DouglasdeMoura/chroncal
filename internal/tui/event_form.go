@@ -90,7 +90,7 @@ type EventFormModel struct {
 	// Fields (pointer types survive form rebuilds)
 	titleField     *TextField
 	timeField      *TimeRangeField
-	dateField      *StaticField
+	dateField      *DatePickerField
 	allDayField    *CheckboxField
 	repeatField    *SelectField
 	endsField      *SelectField
@@ -109,6 +109,10 @@ type EventFormModel struct {
 	endsDate        time.Time
 	endsDatePicker  bool
 	datePickerOpen  bool
+
+	// Mini-month models for date picker overlays
+	datePicker          MiniMonthModel
+	endsDatePickerModel MiniMonthModel
 
 	// Dialog + Form
 	dialog Dialog
@@ -130,7 +134,7 @@ type eventFormKeyMap struct {
 
 func datePickerHelpKeys() []key.Binding {
 	return []key.Binding{
-		key.NewBinding(key.WithKeys("left", "up", "right", "down"), key.WithHelp("arrows", "navigate")),
+		key.NewBinding(key.WithKeys("left", "up", "right", "down"), key.WithHelp("←↓↑→", "navigate")),
 		key.NewBinding(key.WithKeys("[", "]"), key.WithHelp("[/]", "month")),
 		key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "today")),
 	}
@@ -179,7 +183,7 @@ func NewEventFormModel(day time.Time, calendars map[int64]CalendarInfo, theme Th
 	m.timeField.SetStartValue(fmt.Sprintf("%02d:%02d", startHour, startMin))
 	m.timeField.SetEndValue(fmt.Sprintf("%02d:%02d", endHour, startMin))
 
-	m.dateField = NewStaticField(m.day.Format("Mon, Jan 2, 2006"), nil)
+	m.dateField = NewDatePickerField(m.day)
 
 	m.allDayField = NewCheckboxField("All day", false)
 
@@ -397,7 +401,7 @@ func (m *EventFormModel) buildFormItems() ([]FormItem, []string) {
 	items = append(items, FormItem{Label: "Time", Field: m.timeField, Required: !allDay})
 	keys = append(keys, efKeyTime)
 
-	m.dateField.SetValue(m.day.Format("Mon, Jan 2, 2006"))
+	m.dateField.SetDate(m.day)
 	items = append(items, FormItem{Label: "Date", Field: m.dateField})
 	keys = append(keys, efKeyDate)
 
@@ -463,10 +467,17 @@ func (m *EventFormModel) syncFromForm() {
 // OnFieldEnter that the default focus-next behavior should be suppressed.
 func noopCmd() tea.Msg { return nil }
 
-func (m *EventFormModel) handleFieldEnter(fieldKey string) tea.Cmd {
-	switch fieldKey {
+// tryOpenOverlay checks whether the currently focused form field should open
+// an overlay on Enter and, if so, opens it. Returns a non-nil cmd (noopCmd)
+// when an overlay was opened so the caller can skip forwarding to the form.
+func (m *EventFormModel) tryOpenOverlay() tea.Cmd {
+	idx := m.form.Focused()
+	if idx >= len(m.fieldKeys) {
+		return nil
+	}
+	switch m.fieldKeys[idx] {
 	case efKeyDate:
-		m.datePickerOpen = true
+		m.openDatePicker()
 		return noopCmd
 	case efKeyRepeat:
 		if m.repeatField.Selected() == repeatCustomIdx {
@@ -476,10 +487,31 @@ func (m *EventFormModel) handleFieldEnter(fieldKey string) tea.Cmd {
 		}
 	case efKeyEnds:
 		if endsMode(m.endsField.Selected()) == endsOnDate {
-			m.endsDatePicker = true
+			m.openEndsDatePicker()
 			return noopCmd
 		}
 	}
+	return nil
+}
+
+// openDatePicker initialises the MiniMonthModel and opens the overlay.
+func (m *EventFormModel) openDatePicker() {
+	m.datePicker = NewMiniMonthModel(m.day).Focus().FocusGrid().
+		SetTheme(m.theme.Selected, m.theme.Today, m.theme.Text, m.theme.Muted)
+	m.datePickerOpen = true
+}
+
+// openEndsDatePicker initialises the ends-date MiniMonthModel and opens the overlay.
+func (m *EventFormModel) openEndsDatePicker() {
+	m.endsDatePickerModel = NewMiniMonthModel(m.endsDate).Focus().FocusGrid().
+		SetTheme(m.theme.Selected, m.theme.Today, m.theme.Text, m.theme.Muted)
+	m.endsDatePicker = true
+}
+
+// handleFieldEnter is the Form.OnFieldEnter callback. Overlay opening is
+// handled in EventFormModel.Update to avoid the value-receiver closure bug;
+// this callback exists for non-overlay field-enter behavior.
+func (m *EventFormModel) handleFieldEnter(fieldKey string) tea.Cmd {
 	return nil // nil = proceed with default focus-next
 }
 
@@ -526,6 +558,15 @@ func (m EventFormModel) Update(msg tea.Msg) (EventFormModel, tea.Cmd) {
 		case key.Matches(kp, m.keys.Close):
 			return m, func() tea.Msg { return EventFormClosedMsg{} }
 		}
+
+		// Handle overlay-opening Enter presses directly (not via the
+		// form's onFieldEnter callback) so mutations survive the
+		// value-receiver copy.
+		if kp.String() == "enter" {
+			if cmd := m.tryOpenOverlay(); cmd != nil {
+				return m, cmd
+			}
+		}
 	}
 
 	// Forward mouse clicks through mouse tracker.
@@ -538,6 +579,10 @@ func (m EventFormModel) Update(msg tea.Msg) (EventFormModel, tea.Cmd) {
 			target := mouseResolve(mc.X-ox, mc.Y-oy)
 			var cmd tea.Cmd
 			m.form, cmd = m.form.Update(MouseEvent{IsClick: true, Target: target})
+			// Click on DatePickerField opens the date picker overlay.
+			if idx := m.form.Focused(); idx < len(m.fieldKeys) && m.fieldKeys[idx] == efKeyDate {
+				m.openDatePicker()
+			}
 			return m, cmd
 		}
 		return m, nil
@@ -568,7 +613,20 @@ func (m EventFormModel) updateDatePicker(msg tea.Msg) (EventFormModel, tea.Cmd) 
 		return m.handleDatePickerMouse(mc)
 	}
 	if kp, ok := msg.(tea.KeyPressMsg); ok {
-		return m.handleDatePickerKey(kp)
+		switch kp.String() {
+		case "esc", "q":
+			m.datePickerOpen = false
+			return m, nil
+		case "enter", "space":
+			m.day = m.datePicker.Cursor()
+			m.dateField.SetDate(m.day)
+			m.datePickerOpen = false
+			return m, nil
+		}
+		// Forward navigation keys to MiniMonthModel; discard its cmds
+		// (only MiniMonthMonthChangedMsg, which the overlay doesn't need).
+		m.datePicker, _ = m.datePicker.Update(kp)
+		return m, nil
 	}
 	return m, nil
 }
@@ -578,130 +636,76 @@ func (m EventFormModel) updateEndsDatePicker(msg tea.Msg) (EventFormModel, tea.C
 		return m.handleEndsDatePickerMouse(mc)
 	}
 	if kp, ok := msg.(tea.KeyPressMsg); ok {
-		return m.handleEndsDatePickerKey(kp)
-	}
-	return m, nil
-}
-
-func (m EventFormModel) handleDatePickerKey(msg tea.KeyPressMsg) (EventFormModel, tea.Cmd) {
-	switch msg.String() {
-	case "left", "h":
-		m.day = m.day.AddDate(0, 0, -1)
-	case "right", "l":
-		m.day = m.day.AddDate(0, 0, 1)
-	case "up", "k":
-		m.day = m.day.AddDate(0, 0, -7)
-	case "down", "j":
-		m.day = m.day.AddDate(0, 0, 7)
-	case "[":
-		m.day = addMonthClamped(m.day, -1)
-	case "]":
-		m.day = addMonthClamped(m.day, 1)
-	case "t":
-		m.day = time.Now()
-	case "enter", "space":
-		m.datePickerOpen = false
-		m.dateField.SetValue(m.day.Format("Mon, Jan 2, 2006"))
-	case "esc", "q":
-		m.datePickerOpen = false
+		switch kp.String() {
+		case "esc", "q":
+			m.endsDatePicker = false
+			return m, nil
+		case "enter", "space":
+			m.endsDate = m.endsDatePickerModel.Cursor()
+			m.endsDatePicker = false
+			return m, nil
+		}
+		m.endsDatePickerModel, _ = m.endsDatePickerModel.Update(kp)
+		return m, nil
 	}
 	return m, nil
 }
 
 func (m EventFormModel) handleDatePickerMouse(msg tea.MouseClickMsg) (EventFormModel, tea.Cmd) {
 	boxW, boxH := m.DatePickerBoxSize()
-	innerW := boxW - 6
-	const gridW = 20
-	gridPad := max((innerW-gridW)/2, 0)
-
 	ox := (m.width - boxW) / 2
 	oy := (m.height - boxH) / 2
-	gridX := ox + 3 + gridPad
-	gridY := oy + 4
 
-	rx := msg.X - gridX
-	ry := msg.Y - gridY
-	if rx < 0 || rx >= gridW || ry < 0 || ry >= 6 {
+	// MiniMonth local coordinates: border(1) + padding(left=2, top=1).
+	innerW := boxW - 6
+	gridPad := max((innerW-miniMonthHeaderWidth)/2, 0)
+	mmX := msg.X - ox - 3 - gridPad
+	mmY := msg.Y - oy - 2
+
+	if mmX < 0 || mmX >= miniMonthHeaderWidth || mmY < 0 {
 		return m, nil
 	}
 
-	dow := min(rx/3, 6)
-	week := ry
+	prevMonth := m.datePicker.DisplayMonth()
+	m.datePicker, _ = m.datePicker.HandleClick(mmX, mmY)
 
-	y, mo, _ := m.day.Date()
-	loc := m.day.Location()
-	first := time.Date(y, mo, 1, 0, 0, 0, 0, loc)
-	startDow := int(first.Weekday())
-	daysInMonth := time.Date(y, mo+1, 0, 0, 0, 0, 0, loc).Day()
-
-	dayNum := week*7 + dow - startDow + 1
-	if dayNum < 1 || dayNum > daysInMonth {
-		return m, nil
+	// Distinguish day click (close) from chevron click (stay open).
+	monthChanged := m.datePicker.DisplayMonth().Month() != prevMonth.Month() ||
+		m.datePicker.DisplayMonth().Year() != prevMonth.Year()
+	if !monthChanged && mmY >= 2 {
+		// Click was in the day grid area and didn't shift the month.
+		m.day = m.datePicker.Cursor()
+		m.dateField.SetDate(m.day)
+		m.datePickerOpen = false
 	}
 
-	m.day = time.Date(y, mo, dayNum, 0, 0, 0, 0, loc)
-	m.datePickerOpen = false
-	m.dateField.SetValue(m.day.Format("Mon, Jan 2, 2006"))
 	return m, nil
 }
 
 func (m EventFormModel) handleEndsDatePickerMouse(msg tea.MouseClickMsg) (EventFormModel, tea.Cmd) {
 	boxW, boxH := m.DatePickerBoxSize()
-	innerW := boxW - 6
-	const gridW = 20
-	gridPad := max((innerW-gridW)/2, 0)
-
 	ox := (m.width - boxW) / 2
 	oy := (m.height - boxH) / 2
-	gridX := ox + 3 + gridPad
-	gridY := oy + 4
 
-	rx := msg.X - gridX
-	ry := msg.Y - gridY
-	if rx < 0 || rx >= gridW || ry < 0 || ry >= 6 {
+	innerW := boxW - 6
+	gridPad := max((innerW-miniMonthHeaderWidth)/2, 0)
+	mmX := msg.X - ox - 3 - gridPad
+	mmY := msg.Y - oy - 2
+
+	if mmX < 0 || mmX >= miniMonthHeaderWidth || mmY < 0 {
 		return m, nil
 	}
 
-	dow := min(rx/3, 6)
-	week := ry
+	prevMonth := m.endsDatePickerModel.DisplayMonth()
+	m.endsDatePickerModel, _ = m.endsDatePickerModel.HandleClick(mmX, mmY)
 
-	y, mo, _ := m.endsDate.Date()
-	loc := m.endsDate.Location()
-	first := time.Date(y, mo, 1, 0, 0, 0, 0, loc)
-	startDow := int(first.Weekday())
-	daysInMonth := time.Date(y, mo+1, 0, 0, 0, 0, 0, loc).Day()
-
-	dayNum := week*7 + dow - startDow + 1
-	if dayNum < 1 || dayNum > daysInMonth {
-		return m, nil
-	}
-
-	m.endsDate = time.Date(y, mo, dayNum, 0, 0, 0, 0, loc)
-	m.endsDatePicker = false
-	return m, nil
-}
-
-func (m EventFormModel) handleEndsDatePickerKey(msg tea.KeyPressMsg) (EventFormModel, tea.Cmd) {
-	switch msg.String() {
-	case "left", "h":
-		m.endsDate = m.endsDate.AddDate(0, 0, -1)
-	case "right", "l":
-		m.endsDate = m.endsDate.AddDate(0, 0, 1)
-	case "up", "k":
-		m.endsDate = m.endsDate.AddDate(0, 0, -7)
-	case "down", "j":
-		m.endsDate = m.endsDate.AddDate(0, 0, 7)
-	case "[":
-		m.endsDate = addMonthClamped(m.endsDate, -1)
-	case "]":
-		m.endsDate = addMonthClamped(m.endsDate, 1)
-	case "t":
-		m.endsDate = time.Now()
-	case "enter", "space":
-		m.endsDatePicker = false
-	case "esc", "q":
+	monthChanged := m.endsDatePickerModel.DisplayMonth().Month() != prevMonth.Month() ||
+		m.endsDatePickerModel.DisplayMonth().Year() != prevMonth.Year()
+	if !monthChanged && mmY >= 2 {
+		m.endsDate = m.endsDatePickerModel.Cursor()
 		m.endsDatePicker = false
 	}
+
 	return m, nil
 }
 
@@ -717,19 +721,25 @@ func (m EventFormModel) RRuleEditorOpen() bool { return m.rruleEditorOpen }
 // DatePickerBoxSize returns the outer dimensions of the date picker dialog.
 func (m EventFormModel) DatePickerBoxSize() (int, int) { return 50, 13 }
 
-// DatePickerView renders the date picker as a standalone bordered dialog.
-func (m EventFormModel) DatePickerView() string {
+// datePickerOverlayView renders a MiniMonthModel inside a bordered dialog
+// box with centered calendar grid and help footer.
+func (m EventFormModel) datePickerOverlayView(mm MiniMonthModel) string {
 	boxW, boxH := m.DatePickerBoxSize()
 	innerW := boxW - 6
-	bold := lipgloss.NewStyle().Bold(true)
 
-	const gridW = 20
-	gridPad := max((innerW-gridW)/2, 0)
-	lines := make([]string, 0, 3)
-	monthStr := m.day.Format("January 2006")
-	monthPad := gridPad + max((gridW-len(monthStr))/2, 0)
-	lines = append(lines, strings.Repeat(" ", monthPad)+bold.Render(monthStr))
-	lines = append(lines, renderMiniCalendar(m.day, time.Now(), gridPad, m.theme))
+	calView := strings.TrimRight(mm.View(), "\n")
+
+	// Center the 20-column calendar in the content area.
+	gridPad := max((innerW-miniMonthHeaderWidth)/2, 0)
+	padStr := strings.Repeat(" ", gridPad)
+	var paddedLines []string
+	for _, line := range strings.Split(calView, "\n") {
+		paddedLines = append(paddedLines, padStr+line)
+	}
+
+	var lines []string
+	lines = append(lines, strings.Join(paddedLines, "\n"))
+
 	m.help.SetWidth(innerW)
 	dpHelp := m.help.ShortHelpView(datePickerHelpKeys())
 	dpHelpPad := max((innerW-lipgloss.Width(dpHelp))/2, 0)
@@ -742,30 +752,14 @@ func (m EventFormModel) DatePickerView() string {
 		Render(content)
 }
 
+// DatePickerView renders the date picker as a standalone bordered dialog.
+func (m EventFormModel) DatePickerView() string {
+	return m.datePickerOverlayView(m.datePicker)
+}
+
 // EndsDatePickerView renders the ends-date picker overlay.
 func (m EventFormModel) EndsDatePickerView() string {
-	boxW, _ := m.DatePickerBoxSize()
-	innerW := boxW - 6
-	bold := lipgloss.NewStyle().Bold(true)
-
-	const gridW = 20
-	gridPad := max((innerW-gridW)/2, 0)
-	lines := make([]string, 0, 3)
-	monthStr := m.endsDate.Format("January 2006")
-	monthPad := gridPad + max((gridW-len(monthStr))/2, 0)
-	lines = append(lines, strings.Repeat(" ", monthPad)+bold.Render(monthStr))
-	lines = append(lines, renderMiniCalendar(m.endsDate, time.Now(), gridPad, m.theme))
-	m.help.SetWidth(innerW)
-	dpHelp := m.help.ShortHelpView(datePickerHelpKeys())
-	dpHelpPad := max((innerW-lipgloss.Width(dpHelp))/2, 0)
-	lines = append(lines, strings.Repeat(" ", dpHelpPad)+dpHelp)
-
-	content := strings.Join(lines, "\n")
-	boxH := 13
-	return lipgloss.NewStyle().
-		Width(boxW).Height(boxH).Padding(1, 2).
-		Border(lipgloss.RoundedBorder()).
-		Render(content)
+	return m.datePickerOverlayView(m.endsDatePickerModel)
 }
 
 // View renders the event form dialog.
@@ -886,63 +880,6 @@ func (m EventFormModel) save(f *Form, editID int64) tea.Cmd {
 	}
 }
 
-// addMonthClamped shifts t by months, clamping the day so it stays valid.
-func addMonthClamped(t time.Time, months int) time.Time {
-	y, m, d := t.Date()
-	newMonth := time.Month(int(m) + months)
-	maxDay := time.Date(y, newMonth+1, 0, 0, 0, 0, 0, t.Location()).Day()
-	if d > maxDay {
-		d = maxDay
-	}
-	return time.Date(y, newMonth, d, 0, 0, 0, 0, t.Location())
-}
-
-// renderMiniCalendar draws a compact month grid.
-func renderMiniCalendar(selected, today time.Time, indent int, theme Theme) string {
-	y, mo, _ := selected.Date()
-	loc := selected.Location()
-
-	first := time.Date(y, mo, 1, 0, 0, 0, 0, loc)
-	startDow := int(first.Weekday())
-	daysInMonth := time.Date(y, mo+1, 0, 0, 0, 0, 0, loc).Day()
-
-	pad := strings.Repeat(" ", indent)
-	faint := lipgloss.NewStyle().Faint(true)
-
-	var lines []string
-	lines = append(lines, pad+faint.Render("Su Mo Tu We Th Fr Sa"))
-
-	dayNum := 1
-	for week := range 6 {
-		var cells []string
-		for dow := range 7 {
-			pos := week*7 + dow
-			if pos < startDow || dayNum > daysInMonth {
-				cells = append(cells, "  ")
-			} else {
-				cell := fmt.Sprintf("%2d", dayNum)
-				d := time.Date(y, mo, dayNum, 0, 0, 0, 0, loc)
-				if sameDay(d, selected) {
-					cell = lipgloss.NewStyle().Reverse(true).Bold(true).Render(cell)
-				} else if sameDay(d, today) {
-					cell = lipgloss.NewStyle().Foreground(theme.Today).Bold(true).Render(cell)
-				}
-				cells = append(cells, cell)
-				dayNum++
-			}
-		}
-		lines = append(lines, pad+strings.Join(cells, " "))
-		if dayNum > daysInMonth {
-			for week++; week < 6; week++ {
-				lines = append(lines, pad+strings.Repeat(" ", 20))
-			}
-			break
-		}
-	}
-
-	return strings.Join(lines, "\n")
-}
-
 const formLabelWidth = 12
 
 func formLabel(s string) string {
@@ -950,10 +887,4 @@ func formLabel(s string) string {
 		return s
 	}
 	return s + strings.Repeat(" ", formLabelWidth-len(s))
-}
-
-func sameDay(a, b time.Time) bool {
-	ay, am, ad := a.Date()
-	by, bm, bd := b.Date()
-	return ay == by && am == bm && ad == bd
 }
