@@ -116,12 +116,13 @@ func (m *RecurrenceEditorModel) buildForm() {
 	styles.LabelLayout = LabelInline
 	styles.ShowFocusMarker = true
 	styles.ButtonAlign = ButtonAlignRight
+	styles.ButtonRule = true
 
 	items, keys := m.buildFormItems()
 	m.fieldKeys = keys
 
 	if m.form.ItemCount() == 0 {
-		m.form = NewForm("Done", styles, items...)
+		m.form = NewForm("Ok", styles, items...)
 		m.form.OnSubmit(func(f *Form) tea.Cmd {
 			return func() tea.Msg { return recurrenceEditorDone }
 		})
