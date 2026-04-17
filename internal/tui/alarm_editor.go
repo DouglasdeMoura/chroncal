@@ -141,9 +141,10 @@ func alarmSummary(alarms []model.Alarm) string {
 type AlarmListEditorModel struct {
 	alarms []model.Alarm
 
-	mode    alarmEditorMode
-	cursor  int
-	editIdx int
+	mode     alarmEditorMode
+	cursor   int
+	btnFocus int // -1 = list cursor, 0 = New, 1 = Cancel, 2 = Save
+	editIdx  int
 
 	actionField *SelectField
 	offsetField *QuantitySelectField
@@ -163,15 +164,20 @@ type AlarmListEditorModel struct {
 // NewAlarmListEditorModel creates the editor with a copy of the given alarms.
 func NewAlarmListEditorModel(existing []model.Alarm, w, h int, theme Theme) AlarmListEditorModel {
 	alarms := append([]model.Alarm(nil), existing...)
+	btnFocus := -1
+	if len(alarms) == 0 {
+		btnFocus = 0 // focus "New" button when there are no alarms to select
+	}
 	return AlarmListEditorModel{
-		alarms:  alarms,
-		mode:    alarmModeList,
-		cursor:  len(alarms),
-		editIdx: -1,
-		help:    newThemedHelp(theme),
-		width:   w,
-		height:  h,
-		theme:   theme,
+		alarms:   alarms,
+		mode:     alarmModeList,
+		cursor:   0,
+		btnFocus: btnFocus,
+		editIdx:  -1,
+		help:     newThemedHelp(theme),
+		width:    w,
+		height:   h,
+		theme:    theme,
 	}
 }
 
@@ -315,17 +321,24 @@ func (m AlarmListEditorModel) Update(msg tea.Msg) (AlarmListEditorModel, tea.Cmd
 			newCursor = 0
 		}
 		m.cursor = newCursor
+		m.btnFocus = -1
 		m.editIdx = -1
 		m.mode = alarmModeList
 		return m, nil
 	case alarmEditorCancelForm:
 		m.editIdx = -1
 		m.mode = alarmModeList
+		if len(m.alarms) == 0 {
+			m.btnFocus = 0
+		}
 		return m, nil
 	}
 
 	if m.mode == alarmModeEdit {
 		return m.updateEditMode(msg)
+	}
+	if mc, ok := msg.(tea.MouseClickMsg); ok && mc.Button == tea.MouseLeft {
+		return m.handleListMouse(mc)
 	}
 	return m.updateListMode(msg)
 }
@@ -366,46 +379,146 @@ func actionLabelFor(action string) string {
 	}
 }
 
+// actionDisplayLabel returns the user-facing label for an alarm action value.
+func actionDisplayLabel(action string) string {
+	v := strings.ToUpper(strings.TrimSpace(action))
+	if v == "" {
+		v = "DISPLAY"
+	}
+	for _, opt := range alarmActionOpts {
+		if strings.EqualFold(opt.Value, v) {
+			return opt.Label
+		}
+	}
+	return titleCaseAscii(v)
+}
+
 func (m AlarmListEditorModel) updateListMode(msg tea.Msg) (AlarmListEditorModel, tea.Cmd) {
 	kp, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return m, nil
 	}
-	addIdx := len(m.alarms)
+	last := len(m.alarms) - 1
 	switch kp.String() {
+	case "tab":
+		m.advanceFocus()
+	case "shift+tab":
+		m.retreatFocus()
 	case "up", "k":
-		if m.cursor > 0 {
+		if m.btnFocus == -1 && m.cursor > 0 {
 			m.cursor--
 		}
 	case "down", "j":
-		if m.cursor < addIdx {
+		if m.btnFocus == -1 && m.cursor < last {
 			m.cursor++
 		}
-	case "enter":
-		if m.cursor == addIdx {
+	case "enter", "space":
+		switch m.btnFocus {
+		case 0:
 			m.enterEditMode(-1)
-		} else if _, _, _, ok := parseOffsetTrigger(m.alarms[m.cursor].TriggerValue); ok {
-			m.enterEditMode(m.cursor)
+		case 1:
+			m.cancelled = true
+		case 2:
+			m.done = true
+		default:
+			if kp.String() == "enter" && m.cursor >= 0 && m.cursor <= last {
+				if _, _, _, ok := parseOffsetTrigger(m.alarms[m.cursor].TriggerValue); ok {
+					m.enterEditMode(m.cursor)
+				}
+			}
 		}
 	case "n":
 		m.enterEditMode(-1)
 	case "e":
-		if m.cursor < addIdx {
+		if m.cursor >= 0 && m.cursor <= last {
 			if _, _, _, ok := parseOffsetTrigger(m.alarms[m.cursor].TriggerValue); ok {
 				m.enterEditMode(m.cursor)
 			}
 		}
 	case "d":
-		if m.cursor < addIdx {
+		if m.btnFocus == -1 && m.cursor >= 0 && m.cursor <= last {
 			m.alarms = append(m.alarms[:m.cursor], m.alarms[m.cursor+1:]...)
-			if m.cursor > len(m.alarms) {
-				m.cursor = len(m.alarms)
+			if m.cursor >= len(m.alarms) && m.cursor > 0 {
+				m.cursor = len(m.alarms) - 1
+			}
+			if m.cursor < 0 {
+				m.cursor = 0
+			}
+			if len(m.alarms) == 0 {
+				m.btnFocus = 0
 			}
 		}
 	case "ctrl+s":
 		m.done = true
 	case "esc":
 		m.cancelled = true
+	}
+	return m, nil
+}
+
+// advanceFocus moves focus forward: rows (if any) → New → Cancel → Save → rows.
+func (m *AlarmListEditorModel) advanceFocus() {
+	if m.btnFocus == -1 {
+		if m.cursor < len(m.alarms)-1 {
+			m.cursor++
+			return
+		}
+		m.btnFocus = 0
+		return
+	}
+	if m.btnFocus < 2 {
+		m.btnFocus++
+		return
+	}
+	if len(m.alarms) > 0 {
+		m.btnFocus = -1
+		m.cursor = 0
+	} else {
+		m.btnFocus = 0
+	}
+}
+
+// retreatFocus moves focus backward: Save → Cancel → New → rows (last to first).
+func (m *AlarmListEditorModel) retreatFocus() {
+	if m.btnFocus == -1 {
+		if m.cursor > 0 {
+			m.cursor--
+			return
+		}
+		m.btnFocus = 2
+		return
+	}
+	if m.btnFocus > 0 {
+		m.btnFocus--
+		return
+	}
+	if len(m.alarms) > 0 {
+		m.btnFocus = -1
+		m.cursor = len(m.alarms) - 1
+	} else {
+		m.btnFocus = 2
+	}
+}
+
+func (m AlarmListEditorModel) handleListMouse(msg tea.MouseClickMsg) (AlarmListEditorModel, tea.Cmd) {
+	bw, bh := m.BoxSize()
+	ox := (m.width - bw) / 2
+	oy := (m.height - bh) / 2
+	target := mouseResolve(msg.X-ox, msg.Y-oy)
+	switch target {
+	case "alarm:list:save":
+		m.done = true
+	case "alarm:list:cancel":
+		m.cancelled = true
+	case "alarm:list:new":
+		m.enterEditMode(-1)
+	default:
+		if rest, ok := strings.CutPrefix(target, "alarm:list:row:"); ok {
+			if n, err := strconv.Atoi(rest); err == nil && n >= 0 && n < len(m.alarms) {
+				m.cursor = n
+				m.btnFocus = -1
+			}
+		}
 	}
 	return m, nil
 }
@@ -438,11 +551,11 @@ func (m AlarmListEditorModel) helpKeys() []key.Binding {
 		}
 	}
 	return []key.Binding{
-		key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "add")),
+		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next")),
+		key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new")),
 		key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
 		key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
-		key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("ctrl+s", "done")),
-		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")),
 	}
 }
 
@@ -456,24 +569,26 @@ func (m AlarmListEditorModel) renderList() string {
 	} else {
 		for i, a := range m.alarms {
 			label := "  " + formatAlarm(a)
-			act := strings.ToUpper(strings.TrimSpace(a.Action))
-			if act == "" {
-				act = "DISPLAY"
-			}
-			label += faint.Render("  (" + titleCaseAscii(act) + ")")
-			if i == m.cursor {
+			label += faint.Render("  (" + actionDisplayLabel(a.Action) + ")")
+			if m.btnFocus == -1 && i == m.cursor {
 				label = reverse.Render(label)
 			}
-			lines = append(lines, label)
+			lines = append(lines, mouseMark("alarm:list:row:"+strconv.Itoa(i), label))
 		}
 	}
-	lines = append(lines, "")
 
-	addLabel := "  + Add alarm"
-	if m.cursor == len(m.alarms) {
-		addLabel = reverse.Render(addLabel)
-	}
-	lines = append(lines, addLabel)
+	innerW := m.formWidth()
+	lines = append(lines, "")
+	lines = append(lines, faint.Render(strings.Repeat("─", innerW)))
+
+	bs := DefaultButtonStyles()
+	newBtn := mouseMark("alarm:list:new", bs.Secondary.Render("+ New alarm", m.btnFocus == 0))
+	cancelBtn := mouseMark("alarm:list:cancel", bs.Secondary.Render("Cancel", m.btnFocus == 1))
+	saveBtn := mouseMark("alarm:list:save", bs.Primary.Render("Save", m.btnFocus == 2))
+
+	rightRow := cancelBtn + " " + saveBtn
+	gap := max(innerW-lipgloss.Width(newBtn)-lipgloss.Width(rightRow), 1)
+	lines = append(lines, newBtn+strings.Repeat(" ", gap)+rightRow)
 
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
