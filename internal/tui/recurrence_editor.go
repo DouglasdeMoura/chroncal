@@ -20,8 +20,7 @@ const (
 )
 
 const (
-	recFieldFrequency = "frequency"
-	recFieldEnds      = "ends"
+	recFieldEnds = "ends"
 )
 
 var recFrequencies = []struct {
@@ -42,8 +41,7 @@ var weekDayRRule = [7]string{"SU", "MO", "TU", "WE", "TH", "FR", "SA"}
 type RecurrenceEditorModel struct {
 	startDate time.Time
 
-	frequencyField *SelectField
-	intervalField  *TextField
+	eachField      *QuantitySelectField
 	onField        *RecurrenceOnField
 	endsField      *SelectField
 	endsCountField *TextField
@@ -66,15 +64,11 @@ type RecurrenceEditorModel struct {
 
 // NewRecurrenceEditorModel creates a new editor pre-configured from the event date.
 func NewRecurrenceEditorModel(startDate time.Time, w, h int, theme Theme) RecurrenceEditorModel {
-	freqOpts := make([]SelectOption, len(recFrequencies))
+	eachOpts := make([]SelectOption, len(recFrequencies))
 	for i, freq := range recFrequencies {
-		freqOpts[i] = SelectOption{Label: freq.Label, Value: freq.Freq}
+		label := strings.ToUpper(freq.Unit[0][:1]) + freq.Unit[0][1:]
+		eachOpts[i] = SelectOption{Label: label, Value: freq.Freq}
 	}
-
-	intervalField := NewTextField("1")
-	intervalField.SetValue("1")
-	intervalField.SetCharLimit(3)
-	intervalField.SetDigitsOnly()
 
 	endsField := NewSelectField(nil)
 	endsField.SetOptions([]SelectOption{
@@ -86,11 +80,11 @@ func NewRecurrenceEditorModel(startDate time.Time, w, h int, theme Theme) Recurr
 	endsCountField := NewTextField("10")
 	endsCountField.SetCharLimit(4)
 	endsCountField.SetDigitsOnly()
+	endsCountField.SetSuffix("times")
 
 	m := RecurrenceEditorModel{
 		startDate:      startDate,
-		frequencyField: NewSelectField(freqOpts),
-		intervalField:  intervalField,
+		eachField:      NewQuantitySelectField(eachOpts, 1),
 		onField:        NewRecurrenceOnField(startDate),
 		endsField:      endsField,
 		endsCountField: endsCountField,
@@ -100,7 +94,6 @@ func NewRecurrenceEditorModel(startDate time.Time, w, h int, theme Theme) Recurr
 		height:         h,
 		theme:          theme,
 	}
-	m.frequencyField.SetSelected(1) // Weekly
 	m.updatePreview()
 	m.buildForm()
 	return m
@@ -152,10 +145,7 @@ func (m *RecurrenceEditorModel) buildFormItems() ([]FormItem, []string) {
 		{Label: "On " + m.endsDate.Format("Jan 2, 2006"), Value: "ondate"},
 	})
 
-	items = append(items, FormItem{Label: "Frequency", Field: m.frequencyField})
-	keys = append(keys, recFieldFrequency)
-
-	items = append(items, FormItem{Label: "Every", Field: m.intervalField})
+	items = append(items, FormItem{Label: "Repeat every", Field: m.eachField})
 	keys = append(keys, "")
 
 	switch freq {
@@ -174,7 +164,7 @@ func (m *RecurrenceEditorModel) buildFormItems() ([]FormItem, []string) {
 
 	if m.currentEnds() == endsAfter {
 		items = append(items, FormItem{
-			Label:           "",
+			Label:           " ",
 			Field:           m.endsCountField,
 			LabelLayout:     LayoutPtr(LabelInline),
 			ShowFocusMarker: BoolPtr(true),
@@ -234,7 +224,7 @@ func (m *RecurrenceEditorModel) syncFromForm() {
 }
 
 func (m RecurrenceEditorModel) currentFreq() string {
-	return m.frequencyField.Value()
+	return m.eachField.Value()
 }
 
 func (m RecurrenceEditorModel) currentEnds() endsMode {
@@ -242,7 +232,7 @@ func (m RecurrenceEditorModel) currentEnds() endsMode {
 }
 
 func (m RecurrenceEditorModel) intervalValue() int {
-	n, err := strconv.Atoi(strings.TrimSpace(m.intervalField.Value()))
+	n, err := strconv.Atoi(strings.TrimSpace(m.eachField.Amount()))
 	if err != nil || n <= 0 {
 		return 1
 	}

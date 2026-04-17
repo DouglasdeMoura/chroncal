@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	lipgloss "charm.land/lipgloss/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -13,13 +14,11 @@ import (
 func TestRecurrenceEditor_UsesSharedFormFields(t *testing.T) {
 	m := NewRecurrenceEditorModel(time.Date(2026, 4, 24, 0, 0, 0, 0, time.UTC), 120, 40, Theme{})
 
-	var frequencyIdx, intervalIdx, onIdx, endsIdx int = -1, -1, -1, -1
+	var eachIdx, onIdx, endsIdx int = -1, -1, -1
 	for i, item := range m.form.items {
 		switch item.Label {
-		case "Frequency":
-			frequencyIdx = i
-		case "Every":
-			intervalIdx = i
+		case "Repeat every":
+			eachIdx = i
 		case "On":
 			onIdx = i
 		case "Ends":
@@ -27,12 +26,10 @@ func TestRecurrenceEditor_UsesSharedFormFields(t *testing.T) {
 		}
 	}
 
-	require.NotEqual(t, -1, frequencyIdx)
-	require.NotEqual(t, -1, intervalIdx)
+	require.NotEqual(t, -1, eachIdx)
 	require.NotEqual(t, -1, onIdx)
 	require.NotEqual(t, -1, endsIdx)
-	assert.IsType(t, &SelectField{}, m.form.Field(frequencyIdx))
-	assert.IsType(t, &TextField{}, m.form.Field(intervalIdx))
+	assert.IsType(t, &QuantitySelectField{}, m.form.Field(eachIdx))
 	assert.IsType(t, &RecurrenceOnField{}, m.form.Field(onIdx))
 	assert.IsType(t, &SelectField{}, m.form.Field(endsIdx))
 }
@@ -54,11 +51,20 @@ func TestRecurrenceEditor_EndsAfterIncludesCount(t *testing.T) {
 
 func TestRecurrenceEditor_MonthlyOnFieldUpdatesRule(t *testing.T) {
 	m := NewRecurrenceEditorModel(time.Date(2026, 4, 24, 0, 0, 0, 0, time.UTC), 120, 40, Theme{})
-	m.frequencyField.SetSelected(2)
+	m.eachField.SetSelected(2)
 	m.syncFromForm()
 	m.onField.SetMonthly(m.startDate, 1)
 
 	assert.Equal(t, "FREQ=MONTHLY;BYDAY=4FR", m.BuildRule())
+}
+
+func TestRecurrenceEditor_EachFieldIntervalAndUnitUpdateRule(t *testing.T) {
+	m := NewRecurrenceEditorModel(time.Date(2026, 4, 24, 0, 0, 0, 0, time.UTC), 120, 40, Theme{})
+	m.eachField.SetAmount("2")
+	m.eachField.SetSelected(3)
+	m.syncFromForm()
+
+	assert.Equal(t, "FREQ=YEARLY;INTERVAL=2", m.BuildRule())
 }
 
 func TestRecurrenceEditor_EnterOnEndsOnDateOpensPicker(t *testing.T) {
@@ -132,4 +138,73 @@ func TestRecurrenceOnField_FocusedDayDoesNotUseFaintText(t *testing.T) {
 	assert.Contains(t, view, "Mo")
 	assert.NotContains(t, view, "[2;7mMo")
 	assert.False(t, strings.Contains(view, "\x1b[2;7mMo"), "focused day should invert colors without faint text")
+}
+
+func TestQuantitySelectField_DefaultsToOneWeek(t *testing.T) {
+	f := NewQuantitySelectField([]SelectOption{
+		{Label: "Day", Value: "DAILY"},
+		{Label: "Week", Value: "WEEKLY"},
+		{Label: "Month", Value: "MONTHLY"},
+		{Label: "Year", Value: "YEARLY"},
+	}, 1)
+
+	assert.Equal(t, "1", f.Amount())
+	assert.Equal(t, "WEEKLY", f.Value())
+}
+
+func TestQuantitySelectField_ValidateRequiresPositiveInteger(t *testing.T) {
+	f := NewQuantitySelectField([]SelectOption{
+		{Label: "Day", Value: "DAILY"},
+		{Label: "Week", Value: "WEEKLY"},
+	}, 1)
+
+	f.SetAmount("0")
+	assert.Equal(t, "Value must be greater than 0", f.Validate())
+
+	f.SetAmount("abc")
+	assert.Equal(t, "Value must be a whole number", f.Validate())
+}
+
+func TestQuantitySelectField_UnitStaysInSameColumnAcrossFocusStates(t *testing.T) {
+	f := NewQuantitySelectField([]SelectOption{
+		{Label: "Day", Value: "DAILY"},
+		{Label: "Week", Value: "WEEKLY"},
+		{Label: "Month", Value: "MONTHLY"},
+		{Label: "Year", Value: "YEARLY"},
+	}, 1)
+
+	f.Focus()
+	amountFocused := mouseSweep(f.View())
+
+	_, _ = f.SubFocusNext()
+	unitFocused := mouseSweep(f.View())
+
+	amountParts := strings.SplitN(amountFocused, "Week", 2)
+	unitParts := strings.SplitN(unitFocused, "Week", 2)
+	require.Len(t, amountParts, 2)
+	require.Len(t, unitParts, 2)
+	assert.Equal(t, lipgloss.Width(amountParts[0]), lipgloss.Width(unitParts[0]))
+}
+
+func TestTextField_FocusedViewShowsSuffix(t *testing.T) {
+	f := NewTextField("10")
+	f.SetSuffix("times")
+	f.SetValue("10")
+	f.SetWidth(12)
+	f.Focus()
+
+	view := mouseSweep(f.View())
+
+	assert.Contains(t, view, "times")
+}
+
+func TestRecurrenceEditor_EndsAfterViewShowsTimesSuffix(t *testing.T) {
+	m := NewRecurrenceEditorModel(time.Date(2026, 4, 24, 0, 0, 0, 0, time.UTC), 120, 40, Theme{})
+	m.endsField.SetSelected(1)
+	m.endsCountField.SetValue("10")
+	m.syncFromForm()
+
+	view := m.View()
+
+	assert.Contains(t, view, "times")
 }

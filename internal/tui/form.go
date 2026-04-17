@@ -40,6 +40,7 @@ type FormField interface {
 type TextField struct {
 	input  textinput.Model
 	filter func(tea.Key) bool
+	suffix string
 }
 
 func NewTextField(placeholder string) *TextField {
@@ -57,6 +58,7 @@ func (f *TextField) SetPlaceholder(p string) { f.input.Placeholder = p }
 func (f *TextField) SetCharLimit(n int)      { f.input.CharLimit = n }
 func (f *TextField) Position() int           { return f.input.Position() }
 func (f *TextField) SetCursor(pos int)       { f.input.SetCursor(pos) }
+func (f *TextField) SetSuffix(s string)      { f.suffix = s }
 
 // SetFilter sets a function that gates printable keystrokes. When set, a key
 // with non-empty Text is forwarded to the underlying input only if fn returns
@@ -83,10 +85,20 @@ func (f *TextField) Update(msg tea.Msg) tea.Cmd {
 	return cmd
 }
 
-func (f *TextField) View() string      { return f.input.View() }
+func (f *TextField) View() string {
+	if f.suffix == "" {
+		return f.input.View()
+	}
+	return strings.TrimRight(f.input.View(), " ") + " " + f.suffix
+}
 func (f *TextField) Focus() tea.Cmd    { return f.input.Focus() }
 func (f *TextField) Blur()             { f.input.Blur() }
-func (f *TextField) SetWidth(w int)    { f.input.SetWidth(w) }
+func (f *TextField) SetWidth(w int) {
+	if f.suffix != "" {
+		w -= lipgloss.Width(f.suffix) + 1
+	}
+	f.input.SetWidth(max(w, 1))
+}
 func (f *TextField) IsFocusable() bool { return true }
 
 // FilterDigits allows only digit characters (0-9).
@@ -292,6 +304,171 @@ func (f *SelectField) Blur() {
 
 func (f *SelectField) SetWidth(int)      {}
 func (f *SelectField) IsFocusable() bool { return true }
+
+// ---------------------------------------------------------------------------
+// QuantitySelectField
+// ---------------------------------------------------------------------------
+
+// QuantitySelectField is a composite FormField that renders a positive integer
+// input followed by a select on the same row, e.g. "1 Week". It implements
+// subFocuser so Tab/Enter cycle between the amount and unit before leaving.
+type QuantitySelectField struct {
+	amount   *TextField
+	unit     *SelectField
+	subFocus int // 0 = amount, 1 = unit
+	focused  bool
+	width    int
+}
+
+func NewQuantitySelectField(options []SelectOption, defaultSelected int) *QuantitySelectField {
+	amount := NewTextField("1")
+	amount.SetValue("1")
+	amount.SetCharLimit(3)
+	amount.SetDigitsOnly()
+
+	unit := NewSelectField(options)
+	unit.SetSelected(defaultSelected)
+
+	return &QuantitySelectField{
+		amount: amount,
+		unit:   unit,
+		width:  4,
+	}
+}
+
+func (f *QuantitySelectField) Amount() string     { return f.amount.Value() }
+func (f *QuantitySelectField) SetAmount(v string) { f.amount.SetValue(v) }
+func (f *QuantitySelectField) Selected() int      { return f.unit.Selected() }
+func (f *QuantitySelectField) SetSelected(i int)  { f.unit.SetSelected(i) }
+func (f *QuantitySelectField) Value() string      { return f.unit.Value() }
+
+func (f *QuantitySelectField) Update(msg tea.Msg) tea.Cmd {
+	if f.subFocus == 0 {
+		return f.amount.Update(msg)
+	}
+	return f.unit.Update(msg)
+}
+
+func (f *QuantitySelectField) View() string {
+	amountView := f.amountText()
+	unitView := f.unitText()
+	return amountView + " " + unitView
+}
+
+func (f *QuantitySelectField) amountText() string {
+	style := lipgloss.NewStyle().Width(f.width)
+	if f.focused && f.subFocus == 0 {
+		return mouseMark("quantityselect:amount", style.Render(f.amount.View()))
+	}
+	v := f.amount.Value()
+	if strings.TrimSpace(v) == "" {
+		v = f.amount.input.Placeholder
+	}
+	return mouseMark("quantityselect:amount", style.Render(v))
+}
+
+func (f *QuantitySelectField) unitText() string {
+	if len(f.unit.options) == 0 {
+		return ""
+	}
+	unitFocused := f.focused && f.subFocus == 1
+	labelStyle := lipgloss.NewStyle().Width(f.unit.maxWidth)
+	if unitFocused && f.unit.renderLabel == nil {
+		labelStyle = labelStyle.Reverse(true)
+	}
+	label := labelStyle.Render(f.unit.renderOptionLabel(f.unit.options[f.unit.selected], unitFocused))
+
+	flash := lipgloss.NewStyle().Foreground(lipgloss.Color("63"))
+	prev := Glyphs["select.prev"]
+	next := Glyphs["select.next"]
+	if f.unit.highlight == selectLeft {
+		prev = flash.Render(prev)
+	}
+	if f.unit.highlight == selectRight {
+		next = flash.Render(next)
+	}
+
+	return mouseMark("quantityselect:unit", label) +
+		"  " +
+		mouseMark("quantityselect:prev", prev) +
+		" " +
+		mouseMark("quantityselect:next", next)
+}
+
+func (f *QuantitySelectField) Focus() tea.Cmd {
+	f.focused = true
+	f.subFocus = 0
+	f.unit.Blur()
+	return f.amount.Focus()
+}
+
+func (f *QuantitySelectField) Blur() {
+	f.focused = false
+	f.amount.Blur()
+	f.unit.Blur()
+}
+
+func (f *QuantitySelectField) SetWidth(int) {
+	f.width = 4
+	f.amount.SetWidth(f.width)
+}
+
+func (f *QuantitySelectField) IsFocusable() bool { return true }
+
+func (f *QuantitySelectField) SubFocusNext() (bool, tea.Cmd) {
+	if f.subFocus == 0 {
+		f.amount.Blur()
+		f.subFocus = 1
+		return true, f.unit.Focus()
+	}
+	return false, nil
+}
+
+func (f *QuantitySelectField) SubFocusPrev() (bool, tea.Cmd) {
+	if f.subFocus == 1 {
+		f.unit.Blur()
+		f.subFocus = 0
+		return true, f.amount.Focus()
+	}
+	return false, nil
+}
+
+func (f *QuantitySelectField) HandleClickTarget(target string) tea.Cmd {
+	switch target {
+	case "quantityselect:amount":
+		f.unit.Blur()
+		f.subFocus = 0
+		return f.amount.Focus()
+	case "quantityselect:unit":
+		f.amount.Blur()
+		f.subFocus = 1
+		return f.unit.Focus()
+	case "quantityselect:prev":
+		f.amount.Blur()
+		f.subFocus = 1
+		_ = f.unit.Focus()
+		return f.unit.Update(keyMsg("left"))
+	case "quantityselect:next":
+		f.amount.Blur()
+		f.subFocus = 1
+		_ = f.unit.Focus()
+		return f.unit.Update(keyMsg("right"))
+	default:
+		return nil
+	}
+}
+
+func (f *QuantitySelectField) Validate() string {
+	raw := strings.TrimSpace(f.amount.Value())
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return "Value must be a whole number"
+	}
+	if n <= 0 {
+		return "Value must be greater than 0"
+	}
+	return ""
+}
 
 // ---------------------------------------------------------------------------
 // RecurrenceOnField
@@ -1604,6 +1781,20 @@ func (f Form) handleClick(target string) (Form, tea.Cmd) {
 					}
 					return f.focusIndex(i)
 				}
+			}
+		}
+		return f, nil
+	}
+
+	if strings.HasPrefix(target, "quantityselect:") {
+		for i := range f.items {
+			if qf, ok := f.items[i].Field.(*QuantitySelectField); ok {
+				f, _ = f.focusIndex(i)
+				cmd := qf.HandleClickTarget(target)
+				if f.onRebuild != nil {
+					f.onRebuild(&f)
+				}
+				return f, cmd
 			}
 		}
 		return f, nil

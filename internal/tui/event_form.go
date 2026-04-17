@@ -232,6 +232,7 @@ func NewEventFormModel(day time.Time, calendars map[int64]CalendarInfo, theme Th
 	m.endsCountField = NewTextField("10")
 	m.endsCountField.SetCharLimit(4)
 	m.endsCountField.SetDigitsOnly()
+	m.endsCountField.suffix = "times"
 
 	if len(calOpts) > 1 {
 		calSelectOpts := make([]SelectOption, len(calOpts))
