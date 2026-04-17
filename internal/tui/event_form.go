@@ -88,12 +88,12 @@ type EventFormModel struct {
 	calendarIdx int
 
 	// Fields (pointer types survive form rebuilds)
-	titleField *TextField
-	timeField  *TimeRangeField
-	dateField  *StaticField
-	allDayField *CheckboxField
-	repeatField *SelectField
-	endsField   *SelectField
+	titleField     *TextField
+	timeField      *TimeRangeField
+	dateField      *StaticField
+	allDayField    *CheckboxField
+	repeatField    *SelectField
+	endsField      *SelectField
 	endsCountField *TextField
 	calendarField  *SelectField
 	locationField  *TextField

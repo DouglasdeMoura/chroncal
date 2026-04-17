@@ -266,6 +266,7 @@ func (f *SelectField) IsFocusable() bool { return true }
 // CheckboxField is a focusable toggle rendered as [✓] or [ ].
 type CheckboxField struct {
 	label      string
+	content    string
 	checked    bool
 	focused    bool
 	disabledFn func() (disabled bool, text string)
@@ -318,7 +319,12 @@ func (f *CheckboxField) View() string {
 	if f.focused {
 		style = style.Reverse(true)
 	}
-	return style.Render(glyph + " " + f.label)
+
+	if len(f.content) > 0 {
+		return style.Render(glyph + " " + f.content)
+	}
+
+	return style.Render(glyph)
 }
 
 func (f *CheckboxField) Focus() tea.Cmd {
