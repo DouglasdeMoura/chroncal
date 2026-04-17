@@ -15,7 +15,7 @@ import (
 var ErrLastCalendar = errors.New("cannot delete the last calendar")
 
 // ErrDuplicateName is returned when a calendar name already exists.
-var ErrDuplicateName = errors.New("a calendar with this name already exists")
+var ErrDuplicateName = errors.New("A calendar with this name already exists")
 
 type Service struct {
 	db *sql.DB
