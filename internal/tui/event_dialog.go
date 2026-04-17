@@ -1044,11 +1044,11 @@ func formatAlarm(a model.Alarm) string {
 		raw = rest
 	}
 	if n, rest, ok := parseLeadingInt(raw, 'M'); ok {
-		parts = append(parts, pluralize(n, "min"))
+		parts = append(parts, pluralize(n, "min."))
 		raw = rest
 	}
 	if n, _, ok := parseLeadingInt(raw, 'S'); ok {
-		parts = append(parts, pluralize(n, "sec"))
+		parts = append(parts, pluralize(n, "sec."))
 	}
 
 	if len(parts) == 0 {
