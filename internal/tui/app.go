@@ -616,6 +616,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					EndTime:        msg.EndTime,
 					AllDay:         msg.AllDay,
 					RecurrenceRule: msg.RecurrenceRule,
+					Timezone:       msg.Timezone,
 				})
 				return eventUpdatedMsg{err: err}
 			}
@@ -631,6 +632,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				EndTime:        msg.EndTime,
 				AllDay:         msg.AllDay,
 				RecurrenceRule: msg.RecurrenceRule,
+				Timezone:       msg.Timezone,
 			})
 			return eventCreatedMsg{err: err}
 		}
@@ -1255,6 +1257,10 @@ func (m Model) View() tea.View {
 		if m.form.EndsDatePickerOpen() {
 			pw, ph := m.form.DatePickerBoxSize()
 			v.Content = m.compositeOverlay(v.Content, m.form.EndsDatePickerView(), pw, ph)
+		}
+		if m.form.TimezonePickerOpen() {
+			tw, th := m.form.TimezonePickerBoxSize()
+			v.Content = m.compositeOverlay(v.Content, m.form.TimezonePickerView(), tw, th)
 		}
 		if m.form.RRuleEditorOpen() {
 			ew, eh := m.form.rruleEditor.BoxSize()

@@ -26,6 +26,7 @@ type EventFormSaveMsg struct {
 	EndTime        time.Time
 	AllDay         bool
 	RecurrenceRule string
+	Timezone       string
 }
 
 // EventFormClosedMsg is emitted when the user closes the event form.
@@ -72,6 +73,7 @@ const (
 	efKeyTime        = "time"
 	efKeyDate        = "date"
 	efKeyAllDay      = "allday"
+	efKeyTimezone    = "timezone"
 	efKeyRepeat      = "repeat"
 	efKeyEnds        = "ends"
 	efKeyEndsCount   = "endscount"
@@ -92,6 +94,7 @@ type EventFormModel struct {
 	timeField      *TimeRangeField
 	dateField      *DatePickerField
 	allDayField    *CheckboxField
+	timezoneField  *TimezoneField
 	repeatField    *SelectField
 	endsField      *SelectField
 	endsCountField *TextField
@@ -101,6 +104,8 @@ type EventFormModel struct {
 
 	// Overlay state
 	allDay          bool
+	timezonePicker     TimezonePickerModel
+	timezonePickerOpen bool
 	repeatIdx       int // index into repeatPresets
 	customRule      string
 	rruleEditor     RecurrenceEditorModel
@@ -180,6 +185,8 @@ func NewEventFormModel(day time.Time, calendars map[int64]CalendarInfo, theme Th
 
 	m.allDayField = NewCheckboxField("All day", false)
 
+	m.timezoneField = NewTimezoneField(LocalIANATimezone())
+
 	repeatOpts := make([]SelectOption, len(repeatPresets))
 	for i, p := range repeatPresets {
 		repeatOpts[i] = SelectOption{Label: p.Label, Value: p.Rule}
@@ -227,13 +234,26 @@ func NewEventFormModelForEdit(ev event.Event, calendars map[int64]CalendarInfo, 
 	m.locationField.SetValue(ev.Location)
 	m.descField.SetValue(ev.Description)
 
+	// Restore timezone.
+	if ev.Timezone != "" {
+		m.timezoneField.SetValue(ev.Timezone)
+	}
+
+	// Resolve the display timezone for formatting start/end times.
+	displayLoc := time.Local
+	if ev.Timezone != "" {
+		if loc, err := time.LoadLocation(ev.Timezone); err == nil {
+			displayLoc = loc
+		}
+	}
+
 	if ev.AllDay {
 		m.allDayField.SetChecked(true)
 		m.allDay = true
 	}
 	if !ev.AllDay {
-		m.timeField.SetStartValue(ev.StartTime.Local().Format("15:04"))
-		m.timeField.SetEndValue(ev.EndTime.Local().Format("15:04"))
+		m.timeField.SetStartValue(ev.StartTime.In(displayLoc).Format("15:04"))
+		m.timeField.SetEndValue(ev.EndTime.In(displayLoc).Format("15:04"))
 	}
 
 	// Select the correct calendar.
@@ -401,6 +421,9 @@ func (m *EventFormModel) buildFormItems() ([]FormItem, []string) {
 	items = append(items, FormItem{Label: "All day", Field: m.allDayField})
 	keys = append(keys, efKeyAllDay)
 
+	items = append(items, FormItem{Label: "Timezone", Field: m.timezoneField})
+	keys = append(keys, efKeyTimezone)
+
 	items = append(items, FormItem{Label: "Repeat", Field: m.repeatField})
 	keys = append(keys, efKeyRepeat)
 
@@ -472,6 +495,10 @@ func (m *EventFormModel) tryOpenOverlay() tea.Cmd {
 	case efKeyDate:
 		m.openDatePicker()
 		return noopCmd
+	case efKeyTimezone:
+		m.timezonePicker = NewTimezonePickerModel(m.timezoneField.Value(), m.theme)
+		m.timezonePickerOpen = true
+		return noopCmd
 	case efKeyRepeat:
 		if m.repeatField.Selected() == repeatCustomIdx {
 			m.rruleEditor = NewRecurrenceEditorModel(m.day, m.width, m.height, m.theme)
@@ -537,6 +564,9 @@ func (m EventFormModel) Update(msg tea.Msg) (EventFormModel, tea.Cmd) {
 	if m.rruleEditorOpen {
 		return m.updateRRuleEditor(msg)
 	}
+	if m.timezonePickerOpen {
+		return m.updateTimezonePicker(msg)
+	}
 	if m.datePickerOpen {
 		return m.updateDatePicker(msg)
 	}
@@ -601,6 +631,18 @@ func (m EventFormModel) updateRRuleEditor(msg tea.Msg) (EventFormModel, tea.Cmd)
 		return m, cmd
 	}
 	return m, nil
+}
+
+func (m EventFormModel) updateTimezonePicker(msg tea.Msg) (EventFormModel, tea.Cmd) {
+	var cmd tea.Cmd
+	m.timezonePicker, cmd = m.timezonePicker.Update(msg)
+	if m.timezonePicker.Done() {
+		m.timezoneField.SetValue(m.timezonePicker.Selected())
+		m.timezonePickerOpen = false
+	} else if m.timezonePicker.Cancelled() {
+		m.timezonePickerOpen = false
+	}
+	return m, cmd
 }
 
 func (m EventFormModel) updateDatePicker(msg tea.Msg) (EventFormModel, tea.Cmd) {
@@ -841,8 +883,35 @@ func (m EventFormModel) EndsDatePickerOpen() bool { return m.endsDatePicker }
 // DatePickerOpen reports whether the date picker overlay should be shown.
 func (m EventFormModel) DatePickerOpen() bool { return m.datePickerOpen }
 
+// TimezonePickerOpen reports whether the timezone picker overlay should be shown.
+func (m EventFormModel) TimezonePickerOpen() bool { return m.timezonePickerOpen }
+
 // RRuleEditorOpen reports whether the recurrence editor overlay should be shown.
 func (m EventFormModel) RRuleEditorOpen() bool { return m.rruleEditorOpen }
+
+// TimezonePickerBoxSize returns the outer dimensions of the timezone picker dialog.
+func (m EventFormModel) TimezonePickerBoxSize() (int, int) { return 50, 16 }
+
+// TimezonePickerView renders the timezone picker as a standalone bordered dialog.
+func (m EventFormModel) TimezonePickerView() string {
+	boxW, boxH := m.TimezonePickerBoxSize()
+	content := m.timezonePicker.View()
+
+	// Key hints.
+	descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	hints := descStyle.Render("↑↓ navigate  enter select  esc cancel")
+
+	innerW := boxW - 4
+	sepStyle := lipgloss.NewStyle().Faint(true)
+	sep := sepStyle.Render(strings.Repeat("─", innerW))
+
+	content = content + "\n\n" + sep + "\n" + hints
+
+	return lipgloss.NewStyle().
+		Width(boxW).Height(boxH).Padding(1, 1, 0, 1).
+		Border(lipgloss.RoundedBorder()).
+		Render(content)
+}
 
 // DatePickerBoxSize returns the outer dimensions of the date picker dialog.
 func (m EventFormModel) DatePickerBoxSize() (int, int) { return 40, 14 }
@@ -964,6 +1033,15 @@ func (m EventFormModel) save(f *Form, editID int64) tea.Cmd {
 	day := m.day
 	rrule := m.buildRecurrenceRule()
 	title := strings.TrimSpace(m.titleField.Value())
+	tzName := m.timezoneField.Value()
+
+	// Resolve the time.Location for the selected timezone.
+	loc := time.UTC
+	if tzName != "" && tzName != "UTC" {
+		if parsed, err := time.LoadLocation(tzName); err == nil {
+			loc = parsed
+		}
+	}
 
 	if m.allDayField.Checked() {
 		start := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC)
@@ -979,6 +1057,7 @@ func (m EventFormModel) save(f *Form, editID int64) tea.Cmd {
 				EndTime:        end,
 				AllDay:         true,
 				RecurrenceRule: rrule,
+				Timezone:       tzName,
 			}
 		}
 	}
@@ -1007,16 +1086,17 @@ func (m EventFormModel) save(f *Form, editID int64) tea.Cmd {
 		return nil
 	}
 
+	// Interpret entered times in the selected timezone, then convert to UTC.
 	start := time.Date(day.Year(), day.Month(), day.Day(),
-		st.Hour(), st.Minute(), 0, 0, time.UTC)
+		st.Hour(), st.Minute(), 0, 0, loc).UTC()
 	end := time.Date(day.Year(), day.Month(), day.Day(),
-		et.Hour(), et.Minute(), 0, 0, time.UTC)
+		et.Hour(), et.Minute(), 0, 0, loc).UTC()
 	if !end.After(start) {
 		end = end.AddDate(0, 0, 1)
 	}
 
 	desc := strings.TrimSpace(m.descField.Value())
-	loc := strings.TrimSpace(m.locationField.Value())
+	location := strings.TrimSpace(m.locationField.Value())
 
 	return func() tea.Msg {
 		return EventFormSaveMsg{
@@ -1024,10 +1104,11 @@ func (m EventFormModel) save(f *Form, editID int64) tea.Cmd {
 			CalendarID:     calID,
 			Title:          title,
 			Description:    desc,
-			Location:       loc,
+			Location:       location,
 			StartTime:      start,
 			EndTime:        end,
 			RecurrenceRule: rrule,
+			Timezone:       tzName,
 		}
 	}
 }
