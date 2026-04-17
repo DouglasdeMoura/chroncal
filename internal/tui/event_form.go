@@ -69,8 +69,7 @@ type calendarOption struct {
 
 const (
 	efKeyTitle       = "title"
-	efKeyStart       = "start"
-	efKeyEnd         = "end"
+	efKeyTime        = "time"
 	efKeyDate        = "date"
 	efKeyAllDay      = "allday"
 	efKeyRepeat      = "repeat"
@@ -90,8 +89,7 @@ type EventFormModel struct {
 
 	// Fields (pointer types survive form rebuilds)
 	titleField *TextField
-	startField *TextField
-	endField   *TextField
+	timeField  *TimeRangeField
 	dateField  *StaticField
 	allDayField *CheckboxField
 	repeatField *SelectField
@@ -176,15 +174,9 @@ func NewEventFormModel(day time.Time, calendars map[int64]CalendarInfo, theme Th
 	m.titleField = NewTextField("Event title")
 	m.titleField.SetCharLimit(200)
 
-	m.startField = NewTextField("HH:MM")
-	m.startField.SetCharLimit(5)
-	m.startField.SetFilter(FilterTimeInput)
-	m.startField.SetValue(fmt.Sprintf("%02d:%02d", startHour, startMin))
-
-	m.endField = NewTextField("HH:MM")
-	m.endField.SetCharLimit(5)
-	m.endField.SetFilter(FilterTimeInput)
-	m.endField.SetValue(fmt.Sprintf("%02d:%02d", endHour, startMin))
+	m.timeField = NewTimeRangeField(theme.TextDim)
+	m.timeField.SetStartValue(fmt.Sprintf("%02d:%02d", startHour, startMin))
+	m.timeField.SetEndValue(fmt.Sprintf("%02d:%02d", endHour, startMin))
 
 	m.dateField = NewStaticField(m.day.Format("Mon, Jan 2, 2006"), nil)
 
@@ -241,8 +233,8 @@ func NewEventFormModelForEdit(ev event.Event, calendars map[int64]CalendarInfo, 
 		m.allDayField.SetChecked(true)
 	}
 	if !ev.AllDay {
-		m.startField.SetValue(ev.StartTime.Local().Format("15:04"))
-		m.endField.SetValue(ev.EndTime.Local().Format("15:04"))
+		m.timeField.SetStartValue(ev.StartTime.Local().Format("15:04"))
+		m.timeField.SetEndValue(ev.EndTime.Local().Format("15:04"))
 	}
 
 	// Select the correct calendar.
@@ -399,10 +391,8 @@ func (m *EventFormModel) buildFormItems() ([]FormItem, []string) {
 	keys = append(keys, efKeyTitle)
 
 	if !m.allDayField.Checked() {
-		items = append(items, FormItem{Label: "Start", Field: m.startField})
-		keys = append(keys, efKeyStart)
-		items = append(items, FormItem{Label: "End", Field: m.endField})
-		keys = append(keys, efKeyEnd)
+		items = append(items, FormItem{Label: "Time", Field: m.timeField, Required: true})
+		keys = append(keys, efKeyTime)
 	}
 
 	m.dateField.SetValue(m.day.Format("Mon, Jan 2, 2006"))
@@ -844,14 +834,13 @@ func (m EventFormModel) save(f *Form, editID int64) tea.Cmd {
 		}
 	}
 
-	startVal := strings.TrimSpace(m.startField.Value())
-	endVal := strings.TrimSpace(m.endField.Value())
+	startVal := strings.TrimSpace(m.timeField.StartValue())
+	endVal := strings.TrimSpace(m.timeField.EndValue())
 
 	st, err := time.Parse("15:04", startVal)
 	if err != nil {
-		// Find the start field index
 		for i, k := range m.fieldKeys {
-			if k == efKeyStart {
+			if k == efKeyTime {
 				f.SetError(i, "Invalid start time (use HH:MM)")
 				return nil
 			}
@@ -861,7 +850,7 @@ func (m EventFormModel) save(f *Form, editID int64) tea.Cmd {
 	et, err := time.Parse("15:04", endVal)
 	if err != nil {
 		for i, k := range m.fieldKeys {
-			if k == efKeyEnd {
+			if k == efKeyTime {
 				f.SetError(i, "Invalid end time (use HH:MM)")
 				return nil
 			}

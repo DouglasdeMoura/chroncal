@@ -23,6 +23,9 @@ var Glyphs = map[string]string{
 	// Shapes
 	"dot": "●",
 
+	// Time
+	"time.arrow": "→",
+
 	// Separators
 	"separator.vertical":   "│",
 	"separator.horizontal": "─",
