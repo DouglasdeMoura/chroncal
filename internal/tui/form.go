@@ -1514,6 +1514,10 @@ func (f Form) handleEnter() (Form, tea.Cmd) {
 		// CheckboxField: Enter toggles.
 		if cb, ok := f.items[f.focused].Field.(*CheckboxField); ok {
 			cb.Toggle()
+			if f.onRebuild != nil {
+				f.onRebuild(&f)
+				f.focused = min(f.focused, f.totalCount()-1)
+			}
 			return f, nil
 		}
 		// Composite field: advance internal focus before leaving.

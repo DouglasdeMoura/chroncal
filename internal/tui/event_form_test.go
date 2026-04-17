@@ -190,3 +190,80 @@ func TestEventForm_SaveIncludesShowAsAndVisibility(t *testing.T) {
 	assert.Equal(t, "TRANSPARENT", msg.Transp)
 	assert.Equal(t, "CONFIDENTIAL", msg.Class)
 }
+
+func TestEventForm_EnterOnTimeDoesNotOpenDatePicker(t *testing.T) {
+	m, _ := NewEventFormModel(time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC), testEventFormCalendars(), Theme{})
+
+	timeIdx := -1
+	for i, item := range m.form.items {
+		if item.Label == "Time" {
+			timeIdx = i
+			break
+		}
+	}
+	require.NotEqual(t, -1, timeIdx)
+	m.form.focused = timeIdx
+
+	cmd := m.tryOpenOverlay()
+	assert.Nil(t, cmd)
+	assert.False(t, m.datePickerOpen)
+	assert.False(t, m.timezonePickerOpen)
+}
+
+func TestEventForm_EnterOnDateOpensDatePicker(t *testing.T) {
+	m, _ := NewEventFormModel(time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC), testEventFormCalendars(), Theme{})
+
+	dateIdx := -1
+	for i, item := range m.form.items {
+		if item.Label == "Date" {
+			dateIdx = i
+			break
+		}
+	}
+	require.NotEqual(t, -1, dateIdx)
+	m.form.focused = dateIdx
+
+	cmd := m.tryOpenOverlay()
+	require.NotNil(t, cmd)
+	assert.True(t, m.datePickerOpen)
+	assert.False(t, m.timezonePickerOpen)
+}
+
+func TestEventForm_EnterOnAllDayDoesNotOpenTimezonePicker(t *testing.T) {
+	m, _ := NewEventFormModel(time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC), testEventFormCalendars(), Theme{})
+
+	allDayIdx := -1
+	for i, item := range m.form.items {
+		if item.Label == "All day" {
+			allDayIdx = i
+			break
+		}
+	}
+	require.NotEqual(t, -1, allDayIdx)
+	m.form.focused = allDayIdx
+
+	cmd := m.tryOpenOverlay()
+	assert.Nil(t, cmd)
+	assert.False(t, m.datePickerOpen)
+	assert.False(t, m.timezonePickerOpen)
+}
+
+func TestEventForm_EnterOnAllDayDisablesTimeImmediately(t *testing.T) {
+	m, _ := NewEventFormModel(time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC), testEventFormCalendars(), Theme{})
+
+	allDayIdx := -1
+	for i, item := range m.form.items {
+		if item.Label == "All day" {
+			allDayIdx = i
+			break
+		}
+	}
+	require.NotEqual(t, -1, allDayIdx)
+	require.True(t, m.timeField.IsFocusable())
+
+	m.form.focused = allDayIdx
+	m, _ = m.Update(keyPressMsg("enter"))
+
+	assert.True(t, m.allDayField.Checked())
+	assert.False(t, m.timeField.IsFocusable())
+}

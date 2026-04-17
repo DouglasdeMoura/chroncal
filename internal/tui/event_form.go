@@ -490,6 +490,7 @@ func (m *EventFormModel) buildFormItems() ([]FormItem, []string) {
 	keys = append(keys, efKeyTitle)
 
 	items = append(items, FormItem{Label: "", Field: newEventFormSeparator()})
+	keys = append(keys, "")
 
 	allDay := m.allDayField.Checked()
 	m.timeField.SetDisabled(allDay)
@@ -523,6 +524,7 @@ func (m *EventFormModel) buildFormItems() ([]FormItem, []string) {
 	}
 
 	items = append(items, FormItem{Label: "", Field: newEventFormSeparator()})
+	keys = append(keys, "")
 
 	items = append(items, FormItem{Label: "People", Field: m.peopleField})
 	keys = append(keys, efKeyPeople)
