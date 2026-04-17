@@ -41,7 +41,7 @@ var alarmUnits = []struct {
 }
 
 var alarmActionOpts = []SelectOption{
-	{Label: "Display", Value: "DISPLAY"},
+	{Label: "Notification", Value: "DISPLAY"},
 	{Label: "Email", Value: "EMAIL"},
 	{Label: "Audio", Value: "AUDIO"},
 }
@@ -240,6 +240,7 @@ func (m *AlarmListEditorModel) buildEditForm(a model.Alarm) {
 	}
 	m.offsetField = NewQuantitySelectField(unitOpts, unitIdx)
 	m.offsetField.SetAmount(strconv.Itoa(qty))
+	m.offsetField.SetSuffix("before")
 
 	styles := DefaultFormStyles()
 	styles.LabelLayout = LabelInline
@@ -248,10 +249,10 @@ func (m *AlarmListEditorModel) buildEditForm(a model.Alarm) {
 	styles.ButtonRule = true
 
 	items := []FormItem{
-		{Label: "Action", Field: m.actionField},
-		{Label: "Offset", Field: m.offsetField},
+		{Label: "Remind me", Field: m.offsetField},
+		{Label: actionLabelFor(m.actionField.Value()), Field: m.actionField},
 	}
-	m.fieldKeys = []string{"action", "offset"}
+	m.fieldKeys = []string{"offset", "action"}
 
 	m.form = NewForm("Save", styles, items...)
 	m.form.OnSubmit(func(f *Form) tea.Cmd {
@@ -342,7 +343,27 @@ func (m AlarmListEditorModel) updateEditMode(msg tea.Msg) (AlarmListEditorModel,
 	}
 	var cmd tea.Cmd
 	m.form, cmd = m.form.Update(msg)
+	m.syncActionLabel()
 	return m, cmd
+}
+
+// syncActionLabel updates the "With a/an" label for the action field based
+// on the currently selected action value.
+func (m *AlarmListEditorModel) syncActionLabel() {
+	if m.actionField == nil {
+		return
+	}
+	m.form.SetItemLabel(1, actionLabelFor(m.actionField.Value()))
+}
+
+// actionLabelFor returns the grammatically correct article for the action.
+func actionLabelFor(action string) string {
+	switch strings.ToUpper(strings.TrimSpace(action)) {
+	case "EMAIL", "AUDIO":
+		return "With an"
+	default:
+		return "With a"
+	}
 }
 
 func (m AlarmListEditorModel) updateListMode(msg tea.Msg) (AlarmListEditorModel, tea.Cmd) {

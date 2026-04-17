@@ -322,6 +322,7 @@ func (f *SelectField) IsFocusable() bool { return true }
 type QuantitySelectField struct {
 	amount   *TextField
 	unit     *SelectField
+	suffix   string
 	subFocus int // 0 = amount, 1 = unit
 	focused  bool
 	width    int
@@ -348,6 +349,7 @@ func (f *QuantitySelectField) SetAmount(v string) { f.amount.SetValue(v) }
 func (f *QuantitySelectField) Selected() int      { return f.unit.Selected() }
 func (f *QuantitySelectField) SetSelected(i int)  { f.unit.SetSelected(i) }
 func (f *QuantitySelectField) Value() string      { return f.unit.Value() }
+func (f *QuantitySelectField) SetSuffix(s string) { f.suffix = s }
 
 func (f *QuantitySelectField) Update(msg tea.Msg) tea.Cmd {
 	if f.subFocus == 0 {
@@ -359,7 +361,11 @@ func (f *QuantitySelectField) Update(msg tea.Msg) tea.Cmd {
 func (f *QuantitySelectField) View() string {
 	amountView := f.amountText()
 	unitView := f.unitText()
-	return amountView + " " + unitView
+	out := amountView + " " + unitView
+	if f.suffix != "" {
+		out += " " + f.suffix
+	}
+	return out
 }
 
 func (f *QuantitySelectField) amountText() string {
@@ -1665,6 +1671,19 @@ func (f *Form) RemoveItems(from int) {
 	if from < len(f.items) {
 		f.items = f.items[:from]
 	}
+}
+
+// SetItemLabel updates the label of the item at index i. Useful for labels
+// that depend on another field's value.
+func (f *Form) SetItemLabel(i int, label string) {
+	if i < 0 || i >= len(f.items) {
+		return
+	}
+	if f.items[i].Label == label {
+		return
+	}
+	f.items[i].Label = label
+	f.applyFieldWidths()
 }
 
 func (f Form) ItemCount() int { return len(f.items) }
