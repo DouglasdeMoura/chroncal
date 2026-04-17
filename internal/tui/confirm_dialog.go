@@ -14,8 +14,9 @@ type ConfirmDialogResultMsg struct {
 // ConfirmDialogModel shows a centered confirmation prompt with Cancel and
 // a caller-defined confirm button. Reusable for any destructive action.
 type ConfirmDialogModel struct {
-	dialog Dialog
-	form   Form
+	dialog       Dialog
+	form         Form
+	contentWidth *int // shared with styleFn closure for centering
 }
 
 func NewConfirmDialogModel(message, confirmLabel string) ConfirmDialogModel {
@@ -26,9 +27,15 @@ func NewConfirmDialogModel(message, confirmLabel string) ConfirmDialogModel {
 	formStyles.ButtonAlign = ButtonAlignCenter
 	formStyles.LabelLayout = LabelTop
 
+	cw := new(int)
 	form := NewForm(confirmLabel, formStyles,
 		FormItem{
-			Field: NewStaticField(message, nil),
+			Field: NewStaticField(message, func(s string) string {
+				if *cw > 0 {
+					return lipgloss.NewStyle().Width(*cw).Align(lipgloss.Center).Render(s)
+				}
+				return s
+			}),
 		},
 	)
 	form.OnSubmit(func(f *Form) tea.Cmd {
@@ -38,12 +45,22 @@ func NewConfirmDialogModel(message, confirmLabel string) ConfirmDialogModel {
 		return func() tea.Msg { return ConfirmDialogResultMsg{Confirmed: false} }
 	})
 
-	return ConfirmDialogModel{dialog: dialog, form: form}
+	return ConfirmDialogModel{dialog: dialog, form: form, contentWidth: cw}
 }
 
 func (m ConfirmDialogModel) SetSize(w, h int) ConfirmDialogModel {
-	m.dialog = m.dialog.Update(tea.WindowSizeMsg{Width: w, Height: h})
-	m.form.SetWidth(m.dialog.ContentWidth())
+	const maxWidth = 50
+	dw := w
+	if dw > maxWidth {
+		dw = maxWidth
+	}
+	m.dialog = m.dialog.Update(tea.WindowSizeMsg{Width: dw, Height: h})
+	m.dialog.SetWidth(dw)
+	cw := m.dialog.ContentWidth()
+	if m.contentWidth != nil {
+		*m.contentWidth = cw
+	}
+	m.form.SetWidth(cw)
 	return m
 }
 
