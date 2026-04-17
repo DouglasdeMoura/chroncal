@@ -29,6 +29,8 @@ type EventFormSaveMsg struct {
 	AllDay         bool
 	RecurrenceRule string
 	Timezone       string
+	Transp         string
+	Class          string
 	Attendees      []model.Attendee
 }
 
@@ -78,6 +80,8 @@ const (
 	efKeyDate        = "date"
 	efKeyAllDay      = "allday"
 	efKeyTimezone    = "timezone"
+	efKeyTransp      = "transp"
+	efKeyClass       = "class"
 	efKeyRepeat      = "repeat"
 	efKeyEnds        = "ends"
 	efKeyEndsCount   = "endscount"
@@ -96,19 +100,21 @@ type EventFormModel struct {
 	calendarIdx int
 
 	// Fields (pointer types survive form rebuilds)
-	titleField      *TextField
-	timeField       *TimeRangeField
-	dateField       *DatePickerField
-	allDayField     *CheckboxField
-	timezoneField   *TimezoneField
-	repeatField     *SelectField
-	endsField       *SelectField
-	endsCountField  *TextField
-	calendarField   *SelectField
-	peopleField     *TextField
-	locationField   *TextField
-	conferenceField *TextField
-	descField       *TextAreaField
+	titleField        *TextField
+	timeField         *TimeRangeField
+	dateField         *DatePickerField
+	allDayField       *CheckboxField
+	timezoneField     *TimezoneField
+	transparencyField *SelectField
+	visibilityField   *SelectField
+	repeatField       *SelectField
+	endsField         *SelectField
+	endsCountField    *TextField
+	calendarField     *SelectField
+	peopleField       *TextField
+	locationField     *TextField
+	conferenceField   *TextField
+	descField         *TextAreaField
 
 	// Overlay state
 	allDay             bool
@@ -195,6 +201,17 @@ func NewEventFormModel(day time.Time, calendars map[int64]CalendarInfo, theme Th
 
 	m.timezoneField = NewTimezoneField(LocalIANATimezone())
 
+	m.transparencyField = NewSelectField([]SelectOption{
+		{Label: "Busy", Value: "OPAQUE"},
+		{Label: "Free", Value: "TRANSPARENT"},
+	})
+
+	m.visibilityField = NewSelectField([]SelectOption{
+		{Label: "Public", Value: "PUBLIC"},
+		{Label: "Private", Value: "PRIVATE"},
+		{Label: "Confidential", Value: "CONFIDENTIAL"},
+	})
+
 	repeatOpts := make([]SelectOption, len(repeatPresets))
 	for i, p := range repeatPresets {
 		repeatOpts[i] = SelectOption{Label: p.Label, Value: p.Rule}
@@ -271,6 +288,22 @@ func NewEventFormModelForEdit(ev event.Event, calendars map[int64]CalendarInfo, 
 	// Restore timezone.
 	if ev.Timezone != "" {
 		m.timezoneField.SetValue(ev.Timezone)
+	}
+	if ev.Transp != "" {
+		for i, opt := range m.transparencyField.options {
+			if strings.EqualFold(opt.Value, ev.Transp) {
+				m.transparencyField.SetSelected(i)
+				break
+			}
+		}
+	}
+	if ev.Class != "" {
+		for i, opt := range m.visibilityField.options {
+			if strings.EqualFold(opt.Value, ev.Class) {
+				m.visibilityField.SetSelected(i)
+				break
+			}
+		}
 	}
 
 	// Resolve the display timezone for formatting start/end times.
@@ -499,6 +532,12 @@ func (m *EventFormModel) buildFormItems() ([]FormItem, []string) {
 		items = append(items, FormItem{Label: "Calendar", Field: m.calendarField})
 		keys = append(keys, efKeyCalendar)
 	}
+
+	items = append(items, FormItem{Label: "Show as", Field: m.transparencyField})
+	keys = append(keys, efKeyTransp)
+
+	items = append(items, FormItem{Label: "Visibility", Field: m.visibilityField})
+	keys = append(keys, efKeyClass)
 
 	return items, keys
 }
@@ -1140,6 +1179,8 @@ func (m EventFormModel) save(f *Form, editID int64) tea.Cmd {
 				AllDay:         true,
 				RecurrenceRule: rrule,
 				Timezone:       tzName,
+				Transp:         m.transparencyField.Value(),
+				Class:          m.visibilityField.Value(),
 				Attendees:      attendees,
 			}
 		}
@@ -1194,6 +1235,8 @@ func (m EventFormModel) save(f *Form, editID int64) tea.Cmd {
 			EndTime:        end,
 			RecurrenceRule: rrule,
 			Timezone:       tzName,
+			Transp:         m.transparencyField.Value(),
+			Class:          m.visibilityField.Value(),
 			Attendees:      attendees,
 		}
 	}

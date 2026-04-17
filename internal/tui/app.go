@@ -629,6 +629,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					AllDay:         msg.AllDay,
 					RecurrenceRule: msg.RecurrenceRule,
 					Timezone:       msg.Timezone,
+					Transp:         msg.Transp,
+					Class:          msg.Class,
 				})
 				if err != nil {
 					return eventUpdatedMsg{err: err}
@@ -650,6 +652,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				AllDay:         msg.AllDay,
 				RecurrenceRule: msg.RecurrenceRule,
 				Timezone:       msg.Timezone,
+				Transp:         msg.Transp,
+				Class:          msg.Class,
 			})
 			if err != nil {
 				return eventCreatedMsg{err: err}

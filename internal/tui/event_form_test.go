@@ -6,7 +6,9 @@ import (
 	"time"
 
 	lipgloss "charm.land/lipgloss/v2"
+	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func testEventFormCalendars() map[int64]CalendarInfo {
@@ -22,20 +24,32 @@ func TestEventForm_PlacesCalendarAfterNotes(t *testing.T) {
 
 	notesIdx := -1
 	calendarIdx := -1
+	transpIdx := -1
+	classIdx := -1
 	for i, key := range m.fieldKeys {
 		switch key {
 		case efKeyDescription:
 			notesIdx = i
 		case efKeyCalendar:
 			calendarIdx = i
+		case efKeyTransp:
+			transpIdx = i
+		case efKeyClass:
+			classIdx = i
 		}
 	}
 
 	assert.NotEqual(t, -1, notesIdx)
 	assert.NotEqual(t, -1, calendarIdx)
+	assert.NotEqual(t, -1, transpIdx)
+	assert.NotEqual(t, -1, classIdx)
 	assert.Equal(t, notesIdx+1, calendarIdx)
+	assert.Equal(t, calendarIdx+1, transpIdx)
+	assert.Equal(t, transpIdx+1, classIdx)
 	assert.Equal(t, "Notes", m.form.items[notesIdx].Label)
 	assert.Equal(t, "Calendar", m.form.items[calendarIdx].Label)
+	assert.Equal(t, "Show as", m.form.items[transpIdx].Label)
+	assert.Equal(t, "Visibility", m.form.items[classIdx].Label)
 }
 
 func TestEventForm_CalendarFieldRendersColorDot(t *testing.T) {
@@ -84,4 +98,44 @@ func TestEventForm_CalendarFieldFocusBackgroundAppliesOnlyToName(t *testing.T) {
 
 		assert.Contains(t, view, dot+" "+name)
 	}
+}
+
+func TestEventForm_DefaultsShowBusyAndPublic(t *testing.T) {
+	m, _ := NewEventFormModel(time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC), testEventFormCalendars(), Theme{})
+
+	require.NotNil(t, m.transparencyField)
+	require.NotNil(t, m.visibilityField)
+	assert.Equal(t, "OPAQUE", m.transparencyField.Value())
+	assert.Equal(t, "PUBLIC", m.visibilityField.Value())
+}
+
+func TestEventForm_EditHydratesShowAsAndVisibility(t *testing.T) {
+	m, _ := NewEventFormModelForEdit(event.Event{
+		ID:         7,
+		Title:      "Review",
+		StartTime:  time.Date(2026, 4, 22, 14, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 22, 15, 0, 0, 0, time.UTC),
+		CalendarID: 1,
+		Transp:     "TRANSPARENT",
+		Class:      "PRIVATE",
+	}, testEventFormCalendars(), Theme{})
+
+	require.NotNil(t, m.transparencyField)
+	require.NotNil(t, m.visibilityField)
+	assert.Equal(t, "TRANSPARENT", m.transparencyField.Value())
+	assert.Equal(t, "PRIVATE", m.visibilityField.Value())
+}
+
+func TestEventForm_SaveIncludesShowAsAndVisibility(t *testing.T) {
+	m, _ := NewEventFormModel(time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC), testEventFormCalendars(), Theme{})
+	m.titleField.SetValue("Planning")
+	m.transparencyField.SetSelected(1)
+	m.visibilityField.SetSelected(2)
+
+	cmd := m.save(&m.form, 0)
+	require.NotNil(t, cmd)
+	msg, ok := cmd().(EventFormSaveMsg)
+	require.True(t, ok)
+	assert.Equal(t, "TRANSPARENT", msg.Transp)
+	assert.Equal(t, "CONFIDENTIAL", msg.Class)
 }
