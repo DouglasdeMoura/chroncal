@@ -87,6 +87,9 @@ SELECT * FROM events;
 -- name: ListRecurringEvents :many
 SELECT * FROM events WHERE recurrence_rule IS NOT NULL AND recurrence_id = '';
 
+-- name: CountEventsByCalendar :one
+SELECT COUNT(*) FROM events WHERE calendar_id = ?;
+
 -- name: ListRecurringEventsByCalendar :many
 SELECT * FROM events WHERE recurrence_rule IS NOT NULL AND recurrence_id = '' AND calendar_id = ?;
 

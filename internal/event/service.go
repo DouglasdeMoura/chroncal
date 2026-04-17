@@ -141,6 +141,10 @@ func (p *UpdateParams) applyDefaults() {
 	applyEventDefaults(&p.Status, &p.Transp, &p.Class)
 }
 
+func (s *Service) CountByCalendar(ctx context.Context, calendarID int64) (int64, error) {
+	return s.q.CountEventsByCalendar(ctx, calendarID)
+}
+
 func (s *Service) ListByDateRange(ctx context.Context, from, to time.Time) ([]Event, error) {
 	rows, err := s.q.ListEventsByDateRange(ctx, storage.ListEventsByDateRangeParams{
 		StartTime: to.Format(time.RFC3339),   // start_time < to

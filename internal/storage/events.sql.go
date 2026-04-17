@@ -9,6 +9,17 @@ import (
 	"context"
 )
 
+const countEventsByCalendar = `-- name: CountEventsByCalendar :one
+SELECT COUNT(*) FROM events WHERE calendar_id = ?
+`
+
+func (q *Queries) CountEventsByCalendar(ctx context.Context, calendarID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countEventsByCalendar, calendarID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createEvent = `-- name: CreateEvent :one
 INSERT INTO events (
     uid, calendar_id, title, description, location,

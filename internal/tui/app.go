@@ -128,6 +128,12 @@ type eventCreatedMsg struct {
 
 type calendarMutationDoneMsg struct{ err error }
 
+type calendarDeleteCountMsg struct {
+	id         int64
+	name       string
+	eventCount int64
+}
+
 type eventEditLoadedMsg struct {
 	event event.Event
 	err   error
@@ -437,6 +443,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.calendarDialogOpen && !m.confirmOpen && !m.choiceOpen {
 		switch msg.(type) {
 		case CalendarSavedMsg, CalendarDeleteRequestedMsg, CalendarDialogClosedMsg,
+			calendarDeleteCountMsg,
 			tea.BackgroundColorMsg, tea.WindowSizeMsg,
 			eventsLoadedMsg, calendarsLoadedMsg,
 			calendarMutationDoneMsg:
@@ -842,15 +849,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case CalendarDeleteRequestedMsg:
+		// Fetch the event count before showing the confirm dialog so the
+		// user knows how many events will be deleted alongside the calendar.
+		id, name := msg.ID, msg.Name
+		return m, func() tea.Msg {
+			count, _ := m.app.Events.CountByCalendar(context.Background(), id)
+			return calendarDeleteCountMsg{id: id, name: name, eventCount: count}
+		}
+
+	case calendarDeleteCountMsg:
 		// Keep the edit dialog open behind the confirm — if the user
 		// cancels the confirm, they return to the edit dialog instead of
 		// losing their in-progress changes. The confirm dialog takes input
 		// priority, so the edit dialog is visible but inert.
-		m.pendingCalendarDelete = msg.ID
-		m.confirmDialog = NewConfirmDialogModel(
-			fmt.Sprintf("Delete calendar %q?", msg.Name),
-			"Delete",
-		).SetSize(m.width, m.height)
+		m.pendingCalendarDelete = msg.id
+		message := fmt.Sprintf("Delete calendar %q?", msg.name)
+		if msg.eventCount > 0 {
+			if msg.eventCount == 1 {
+				message = fmt.Sprintf("Delete calendar %q?\n\n%d event will be deleted", msg.name, msg.eventCount)
+			} else {
+				message = fmt.Sprintf("Delete calendar %q?\n\n%d events will be deleted", msg.name, msg.eventCount)
+			}
+		}
+		m.confirmDialog = NewConfirmDialogModel(message, "Delete").
+			SetSize(m.width, m.height)
 		m.confirmOpen = true
 		return m, nil
 
