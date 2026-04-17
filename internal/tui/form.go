@@ -95,11 +95,14 @@ func (f *TextField) Focus() tea.Cmd { return f.input.Focus() }
 func (f *TextField) Blur()          { f.input.Blur() }
 func (f *TextField) SetWidth(w int) {
 	if f.suffix != "" {
-		// Disable the textinput's internal width padding so the suffix sits
-		// immediately after the value at a fixed offset. The input expands
-		// naturally as the user types, bounded by CharLimit.
-		f.input.SetWidth(0)
-		return
+		// Pin the input to CharLimit so the suffix sits at a fixed column
+		// regardless of the value's length. Falls back to w minus suffix
+		// width when CharLimit is unset.
+		if f.input.CharLimit > 0 {
+			f.input.SetWidth(f.input.CharLimit)
+			return
+		}
+		w -= lipgloss.Width(f.suffix) + 1
 	}
 	f.input.SetWidth(max(w, 1))
 }
