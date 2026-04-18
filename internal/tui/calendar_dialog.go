@@ -61,6 +61,27 @@ type CalendarDisconnectRemoteRequestedMsg struct {
 	Name string
 }
 
+// CalendarTestRequestedMsg is emitted when the user presses Test. The parent
+// runs a CalDAV authenticated ping and replies with CalendarTestResultMsg.
+type CalendarTestRequestedMsg struct {
+	URL           string
+	Username      string
+	AuthType      string
+	Password      string
+	AllowInsecure bool
+}
+
+// CalendarTestResultMsg is the outcome of a CalendarTestRequestedMsg.
+type CalendarTestResultMsg struct {
+	OK      bool
+	Message string
+}
+
+// testConnectionPressedMsg is an internal sentinel emitted by the Test
+// button so the dialog can read the current field values before asking
+// the parent to perform the actual connection check.
+type testConnectionPressedMsg struct{}
+
 // CalendarDialogClosedMsg is emitted when the user cancels the dialog.
 type CalendarDialogClosedMsg struct{}
 
@@ -120,6 +141,8 @@ type CalendarDialogModel struct {
 	dialog       Dialog
 	form         Form
 	help         help.Model
+	testStatus   string
+	theme        Theme
 	accentColor  color.Color
 	mutedColor   color.Color
 	textDimColor color.Color
@@ -247,6 +270,7 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		dialog:       dialog,
 		form:         form,
 		help:         newThemedHelp(theme),
+		theme:        theme,
 		accentColor:  theme.Selected,
 		mutedColor:   theme.Muted,
 		textDimColor: theme.TextDim,
@@ -280,9 +304,13 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 				FormItem{Label: "Password", Field: newPasswordField(syncPlaceholderStyle), Required: true},
 				FormItem{Label: "HTTP", Field: insecure},
 			)
+			f.SetActionButton("Test", ButtonSecondary, func() tea.Msg {
+				return testConnectionPressedMsg{}
+			})
 		case !syncOn && hasRemote:
 			f.RemoveItems(cdIdxSync + 1)
 			f.ClearError()
+			f.ClearActionButtons()
 		}
 
 		// Keep the Password row's label and placeholder in sync with the
@@ -423,6 +451,21 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 		return m.SetSize(msg.Width, msg.Height), nil
 	}
 
+	if _, ok := msg.(testConnectionPressedMsg); ok {
+		return m.handleTestPressed()
+	}
+
+	if tr, ok := msg.(CalendarTestResultMsg); ok {
+		if tr.OK {
+			m.testStatus = lipgloss.NewStyle().Foreground(m.theme.Accent).
+				Render("✓ " + tr.Message)
+		} else {
+			m.testStatus = lipgloss.NewStyle().Foreground(m.theme.Error).
+				Render("✗ " + tr.Message)
+		}
+		return m, nil
+	}
+
 	if msg, ok := msg.(tea.KeyPressMsg); ok {
 		switch {
 		case key.Matches(msg, key.NewBinding(key.WithKeys("esc"))):
@@ -459,6 +502,42 @@ func (m CalendarDialogModel) View() string {
 		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 	}
 	m.dialog.SetFooter(m.help.ShortHelpView(helpKeys))
-	content := mouseSweep(m.dialog.Box(m.form.View()))
+	body := m.form.View()
+	if m.testStatus != "" {
+		body += "\n" + m.testStatus
+	}
+	content := mouseSweep(m.dialog.Box(body))
 	return content
+}
+
+// handleTestPressed validates the remote fields and, when they're
+// populated, emits a CalendarTestRequestedMsg so the parent can run the
+// authenticated ping. Errors show inline without contacting the server.
+func (m CalendarDialogModel) handleTestPressed() (CalendarDialogModel, tea.Cmd) {
+	if m.form.ItemCount() <= cdIdxAllowInsecure {
+		return m, nil
+	}
+	url := strings.TrimSpace(m.form.Field(cdIdxRemoteURL).(*TextField).Value())
+	user := strings.TrimSpace(m.form.Field(cdIdxUsername).(*TextField).Value())
+	auth := m.form.Field(cdIdxAuth).(*SelectField).Value()
+	pass := m.form.Field(cdIdxPassword).(*TextField).Value()
+	ins := m.form.Field(cdIdxAllowInsecure).(*CheckboxField).Checked()
+
+	if url == "" || user == "" || pass == "" {
+		m.testStatus = lipgloss.NewStyle().Foreground(m.theme.Error).
+			Render("✗ Fill URL, Username, and Password first")
+		return m, nil
+	}
+
+	m.testStatus = lipgloss.NewStyle().Foreground(m.theme.TextDim).Italic(true).
+		Render("Testing…")
+	return m, func() tea.Msg {
+		return CalendarTestRequestedMsg{
+			URL:           url,
+			Username:      user,
+			AuthType:      auth,
+			Password:      pass,
+			AllowInsecure: ins,
+		}
+	}
 }

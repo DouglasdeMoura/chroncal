@@ -1845,6 +1845,13 @@ func (f *Form) SetActionButton(label string, variant ButtonVariant, onPress func
 	f.actionButtons = append(f.actionButtons, FormActionButton{Label: label, Variant: variant, OnPress: onPress})
 }
 
+// ClearActionButtons removes every registered action button. Typically used
+// when the set of buttons must track dynamic form state (e.g. showing a Test
+// button only while a sync section is visible).
+func (f *Form) ClearActionButtons() {
+	f.actionButtons = nil
+}
+
 // SetLeadingActionButton adds an action button rendered on the left side
 // of the button row, separated from Submit/Cancel. Typical use: destructive
 // actions whose placement should not invite misclicks on the primary action.
