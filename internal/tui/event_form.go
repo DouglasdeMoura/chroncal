@@ -1298,12 +1298,3 @@ func (m EventFormModel) save(f *Form, editID int64) tea.Cmd {
 		}
 	}
 }
-
-const formLabelWidth = 12
-
-func formLabel(s string) string {
-	if len(s) >= formLabelWidth {
-		return s
-	}
-	return s + strings.Repeat(" ", formLabelWidth-len(s))
-}
