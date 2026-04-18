@@ -14,7 +14,7 @@ import (
 func TestRecurrenceEditor_UsesSharedFormFields(t *testing.T) {
 	m := NewRecurrenceEditorModel(time.Date(2026, 4, 24, 0, 0, 0, 0, time.UTC), 120, 40, Theme{})
 
-	var eachIdx, onIdx, endsIdx int = -1, -1, -1
+	eachIdx, onIdx, endsIdx := -1, -1, -1
 	for i, item := range m.form.items {
 		switch item.Label {
 		case "Repeat every":
