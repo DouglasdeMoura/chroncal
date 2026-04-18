@@ -284,19 +284,20 @@ func (m PaletteModel) View() string {
 
 	footer := m.renderFooter(innerW)
 
+	sep := lipgloss.NewStyle().Faint(true).Render(strings.Repeat("─", innerW))
 	body := lipgloss.JoinVertical(
 		lipgloss.Left,
 		promptLine,
-		strings.Repeat("─", innerW),
+		sep,
 		lipgloss.JoinVertical(lipgloss.Left, rows...),
-		"",
+		sep,
 		footer,
 	)
 
 	return lipgloss.NewStyle().
 		Padding(0, 1).
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(m.theme.Border).
+		BorderForeground(lipgloss.NoColor{}).
 		Render(body)
 }
 
