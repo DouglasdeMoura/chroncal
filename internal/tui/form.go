@@ -56,6 +56,15 @@ func (f *TextField) SetValue(v string) { f.input.SetValue(v) }
 
 func (f *TextField) SetPlaceholder(p string) { f.input.Placeholder = p }
 func (f *TextField) SetCharLimit(n int)      { f.input.CharLimit = n }
+
+// SetPlaceholderStyle styles the placeholder in both focused and blurred
+// states, so it reads as a hint rather than real input.
+func (f *TextField) SetPlaceholderStyle(style lipgloss.Style) {
+	s := f.input.Styles()
+	s.Focused.Placeholder = style
+	s.Blurred.Placeholder = style
+	f.input.SetStyles(s)
+}
 func (f *TextField) Position() int           { return f.input.Position() }
 func (f *TextField) SetCursor(pos int)       { f.input.SetCursor(pos) }
 func (f *TextField) SetSuffix(s string)      { f.suffix = s }
