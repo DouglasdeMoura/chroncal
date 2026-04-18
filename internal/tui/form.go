@@ -1566,8 +1566,11 @@ func (f Form) View() string {
 		if item.LabelLayout != nil {
 			layout = *item.LabelLayout
 		}
-		if layout != LabelTop && len(item.Label) > maxLabelLen {
-			maxLabelLen = len(item.Label)
+		if layout != LabelTop {
+			w := lipgloss.Width(item.Label)
+			if w > maxLabelLen {
+				maxLabelLen = w
+			}
 		}
 		if item.Required {
 			anyRequired = true
@@ -1754,8 +1757,11 @@ func (f *Form) applyFieldWidths() {
 		if item.LabelLayout != nil {
 			layout = *item.LabelLayout
 		}
-		if layout != LabelTop && len(item.Label) > maxLabelLen {
-			maxLabelLen = len(item.Label)
+		if layout != LabelTop {
+			w := lipgloss.Width(item.Label)
+			if w > maxLabelLen {
+				maxLabelLen = w
+			}
 		}
 		if item.Required {
 			anyRequired = true

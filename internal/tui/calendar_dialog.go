@@ -292,18 +292,22 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		hasRemote := f.ItemCount() > cdIdxSync+1
 		switch {
 		case syncOn && !hasRemote:
+			bar := lipgloss.NewStyle().Foreground(syncTheme.Muted).Render("│")
+			group := func(label string) string {
+				return bar + " " + label
+			}
 			authHelp := lipgloss.NewStyle().Foreground(syncTheme.Muted).Italic(true).Render(
-				"  Basic = password · Bearer = access token",
+				bar + "   Basic = password · Bearer = access token",
 			)
 			insecure := NewCheckboxField("", false)
 			insecure.SetContent(lipgloss.NewStyle().Foreground(syncTheme.Muted).Render("allow plain HTTP"))
 			f.AppendItems(
-				FormItem{Label: "Remote URL", Field: newRemoteURLField("", syncTheme), Required: true},
-				FormItem{Label: "Username", Field: newUsernameField(""), Required: true},
-				FormItem{Label: "Auth", Field: newAuthField("")},
+				FormItem{Label: group("Remote URL"), Field: newRemoteURLField("", syncTheme), Required: true},
+				FormItem{Label: group("Username"), Field: newUsernameField(""), Required: true},
+				FormItem{Label: group("Auth"), Field: newAuthField("")},
 				FormItem{Label: "", Field: NewStaticField(authHelp, nil)},
-				FormItem{Label: "Password", Field: newPasswordField(), Required: true},
-				FormItem{Label: "HTTP", Field: insecure},
+				FormItem{Label: group("Password"), Field: newPasswordField(), Required: true},
+				FormItem{Label: group("HTTP"), Field: insecure},
 			)
 		case !syncOn && hasRemote:
 			f.RemoveItems(cdIdxSync + 1)
@@ -315,11 +319,12 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		if syncOn && f.ItemCount() > cdIdxPassword {
 			authVal := f.Field(cdIdxAuth).(*SelectField).Value()
 			pw := f.Field(cdIdxPassword).(*TextField)
+			bar := lipgloss.NewStyle().Foreground(syncTheme.Muted).Render("│")
 			if authVal == "bearer" {
-				f.SetItemLabel(cdIdxPassword, "Token")
+				f.SetItemLabel(cdIdxPassword, bar+" Token")
 				pw.SetPlaceholder("paste your API token")
 			} else {
-				f.SetItemLabel(cdIdxPassword, "Password")
+				f.SetItemLabel(cdIdxPassword, bar+" Password")
 				pw.SetPlaceholder("your password")
 			}
 		}
