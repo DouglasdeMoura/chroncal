@@ -152,7 +152,7 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 	formStyles.ButtonAlign = ButtonAlignRight
 	formStyles.ButtonRule = true
 
-	nameField := NewTextField("")
+	nameField := NewTextField("e.g. Work")
 	nameField.SetValue(params.Name)
 	nameField.SetCharLimit(256)
 
@@ -163,11 +163,11 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 	hexField.input.SetCharLimit(7)
 	hexField.SetPaletteIdx(paletteIndexFor(params.Color))
 
-	descField := NewTextField("")
+	descField := NewTextField("Shared family schedule")
 	descField.SetValue(params.Description)
 	descField.SetCharLimit(500)
 
-	emailField := NewTextField("name@example.com")
+	emailField := NewTextField("you@example.com")
 	emailField.SetValue(params.OwnerEmail)
 	emailField.SetCharLimit(256)
 
@@ -309,7 +309,7 @@ func newRemoteURLField(value string, _ Theme) *TextField {
 }
 
 func newUsernameField(value string) *TextField {
-	f := NewTextField("alice")
+	f := NewTextField("you@example.com")
 	f.SetValue(value)
 	f.SetCharLimit(256)
 	return f
