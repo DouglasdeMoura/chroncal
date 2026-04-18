@@ -72,24 +72,26 @@ var paletteSwatches = []string{
 	"#111111", "#AAAAAA",
 }
 
-// Form field indices. Local fields are always present. Index 4 is the Sync
-// toggle in unlinked mode or a read-only status line in linked mode. The
-// remote fields (5..10) exist only when Sync is on.
+// Form field indices. Local fields are always present. Index 4 is an empty
+// spacer row; index 5 is the Sync toggle in unlinked mode or a read-only
+// status line in linked mode. Remote fields (6..11) exist only when Sync
+// is on.
 const (
 	cdIdxName        = 0
 	cdIdxColor       = 1
 	cdIdxDescription = 2
 	cdIdxEmail       = 3
-	cdIdxSync        = 4
+	// Index 4 is an empty spacer StaticField.
+	cdIdxSync = 5
 
-	// Present only when Sync is on (unlinked mode only). Index 8 is a
+	// Present only when Sync is on (unlinked mode only). Index 9 is a
 	// StaticField showing the auth help line; it's skipped in focus
 	// cycling and never read, so no symbolic name is defined for it.
-	cdIdxRemoteURL     = 5
-	cdIdxUsername      = 6
-	cdIdxAuth          = 7
-	cdIdxPassword      = 9
-	cdIdxAllowInsecure = 10
+	cdIdxRemoteURL     = 6
+	cdIdxUsername      = 7
+	cdIdxAuth          = 8
+	cdIdxPassword      = 10
+	cdIdxAllowInsecure = 11
 )
 
 var authOptions = []SelectOption{
@@ -164,6 +166,7 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		{Label: "Color", Field: colorField, Required: true},
 		{Label: "Description", Field: descField},
 		{Label: "Email", Field: emailField},
+		{Label: "", Field: NewStaticField("", nil)},
 	}
 
 	if params.RemoteLinked {
