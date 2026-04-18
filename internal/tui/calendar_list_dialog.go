@@ -176,9 +176,8 @@ type calendarAction struct {
 // visibleActions returns the action buttons in render order. Edit/Delete are
 // only present when a calendar is selected.
 func (m CalendarListDialogModel) visibleActions() []calendarAction {
-	actions := []calendarAction{
-		{label: "New", underlineIndex: 0, primary: true, msg: func() tea.Msg { return CalendarDialogRequestedMsg{ID: 0} }},
-	}
+	actions := make([]calendarAction, 0, 3)
+	actions = append(actions, calendarAction{label: "New", underlineIndex: 0, primary: true, msg: func() tea.Msg { return CalendarDialogRequestedMsg{ID: 0} }})
 	id, ok := m.selectedID()
 	if !ok {
 		return actions

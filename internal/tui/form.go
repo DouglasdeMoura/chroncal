@@ -1593,7 +1593,8 @@ func (f Form) View() string {
 	}
 
 	bs := f.styles.Buttons
-	buttonParts := []string{mouseMark("submit", bs.Primary.Render(f.submitLabel, f.focused == f.submitIndex()))}
+	buttonParts := make([]string, 0, len(f.actionButtons)+2)
+	buttonParts = append(buttonParts, mouseMark("submit", bs.Primary.Render(f.submitLabel, f.focused == f.submitIndex())))
 	for i, ab := range f.actionButtons {
 		style := bs.Get(ab.Variant)
 		buttonParts = append(buttonParts, mouseMark(actionTarget(i), style.Render(ab.Label, f.focused == f.actionIndex(i))))

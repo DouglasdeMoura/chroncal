@@ -499,10 +499,11 @@ func (m RecurrenceEditorModel) EndsDatePickerView() string {
 	bold := lipgloss.NewStyle().Bold(true)
 
 	monthStr := m.endsDate.Format("January 2006")
-	var calLines []string
-	calLines = append(calLines, bold.Render(monthStr))
 	calGrid := renderMiniCalendar(m.endsDate, time.Now(), 0, m.theme)
-	calLines = append(calLines, strings.Split(calGrid, "\n")...)
+	gridLines := strings.Split(calGrid, "\n")
+	calLines := make([]string, 0, len(gridLines)+1)
+	calLines = append(calLines, bold.Render(monthStr))
+	calLines = append(calLines, gridLines...)
 
 	maxCalW := 0
 	for _, line := range calLines {
@@ -519,7 +520,7 @@ func (m RecurrenceEditorModel) EndsDatePickerView() string {
 	}
 	hintStart := len(calLines) - len(hintLines)
 
-	var resultLines []string
+	resultLines := make([]string, 0, len(calLines)+3)
 	for i, line := range calLines {
 		w := lipgloss.Width(line)
 		padded := line + strings.Repeat(" ", max(maxCalW-w, 0))

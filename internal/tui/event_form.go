@@ -347,7 +347,7 @@ func NewEventFormModelForEdit(ev event.Event, calendars map[int64]CalendarInfo, 
 
 	// Pre-fill attendees.
 	if len(ev.Attendees) > 0 {
-		var emails []string
+		emails := make([]string, 0, len(ev.Attendees))
 		for _, a := range ev.Attendees {
 			emails = append(emails, a.Email)
 		}
@@ -1103,7 +1103,7 @@ func (m EventFormModel) datePickerOverlayView(mm MiniMonthModel) string {
 	// Bottom-align hints with calendar lines.
 	hintStart := len(calLines) - len(hintLines)
 
-	var resultLines []string
+	resultLines := make([]string, 0, len(calLines)+3)
 	for i, line := range calLines {
 		w := lipgloss.Width(line)
 		padded := line + strings.Repeat(" ", max(maxCalW-w, 0))
