@@ -163,7 +163,7 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		{Label: "Name", Field: nameField, Required: true},
 		{Label: "Color", Field: colorField, Required: true},
 		{Label: "Description", Field: descField},
-		{Label: "Organizer email", Field: emailField},
+		{Label: "Owner email", Field: emailField},
 		{Label: "", Field: NewStaticField("", nil)},
 	}
 
