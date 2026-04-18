@@ -52,13 +52,15 @@ func NewTextField(placeholder string) *TextField {
 	return &TextField{input: input}
 }
 
-// applyPlaceholderDefaults italicizes the placeholder in both focus
-// states so hints read as hints — distinct from entered values which
-// use the upright text style.
+// applyPlaceholderDefaults styles the placeholder in both focus states
+// so hints read as hints — italicized and faint, distinct from entered
+// values which use the upright text style. Drops the bubbles default
+// colour so the terminal's own faint attribute drives the dimness.
 func applyPlaceholderDefaults(input *textinput.Model) {
+	hint := lipgloss.NewStyle().Italic(true).Faint(true)
 	s := input.Styles()
-	s.Focused.Placeholder = s.Focused.Placeholder.Italic(true)
-	s.Blurred.Placeholder = s.Blurred.Placeholder.Italic(true)
+	s.Focused.Placeholder = hint
+	s.Blurred.Placeholder = hint
 	input.SetStyles(s)
 }
 
@@ -149,9 +151,10 @@ func NewTextAreaField(placeholder string) *TextAreaField {
 	input.CharLimit = 500
 	input.ShowLineNumbers = false
 	input.SetHeight(3)
+	hint := lipgloss.NewStyle().Italic(true).Faint(true)
 	s := input.Styles()
-	s.Focused.Placeholder = s.Focused.Placeholder.Italic(true)
-	s.Blurred.Placeholder = s.Blurred.Placeholder.Italic(true)
+	s.Focused.Placeholder = hint
+	s.Blurred.Placeholder = hint
 	input.SetStyles(s)
 	return &TextAreaField{input: input}
 }
@@ -1596,7 +1599,7 @@ type FormStyles struct {
 // starting point.
 func DefaultFormStyles() FormStyles {
 	return FormStyles{
-		Label:    lipgloss.NewStyle().Faint(true),
+		Label:    lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
 		Required: lipgloss.NewStyle().Foreground(lipgloss.Color("9")),
 		Error:    lipgloss.NewStyle().Foreground(lipgloss.Color("9")),
 		Buttons:  DefaultButtonStyles(),

@@ -768,18 +768,15 @@ func TestForm_NoFocusIndicatorByDefault(t *testing.T) {
 }
 
 // labelAndFieldOnSeparateLines returns true when the line containing the
-// label text does NOT also contain field content (identified by the
-// textinput cursor styling). Sweep markers first so only visual content
-// remains.
+// label text does NOT also contain field content. Field content carries
+// either the textinput reverse-video cursor (\x1b[7;37m) or the
+// italic+faint placeholder combo (\x1b[3;2m). Labels now render in 240
+// without italic/faint, so those markers uniquely identify a field.
 func labelAndFieldOnSeparateLines(view, label string) bool {
 	clean := mouseSweep(view)
 	for _, line := range strings.Split(clean, "\n") {
 		if strings.Contains(line, label) {
-			// Textinput cursor uses reverse video (\x1b[7;37m) and
-			// placeholders render with 256-colour 240 (possibly combined
-			// with italic, e.g. \x1b[3;38;5;240m). Match the colour
-			// substring so combined SGR sequences still register.
-			return !strings.Contains(line, "\x1b[7;37m") && !strings.Contains(line, "38;5;240m")
+			return !strings.Contains(line, "\x1b[7;37m") && !strings.Contains(line, "\x1b[3;2m")
 		}
 	}
 	return false
