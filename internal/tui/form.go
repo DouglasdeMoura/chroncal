@@ -1448,10 +1448,14 @@ func DefaultFormStyles() FormStyles {
 }
 
 // FormActionButton is an optional third button between Submit and Cancel.
+// When Leading is true, the button renders flush-left in the button row
+// (typically used for destructive actions that need visual distance
+// from the primary action).
 type FormActionButton struct {
 	Label   string
 	Variant ButtonVariant
 	OnPress func() tea.Msg
+	Leading bool
 }
 
 // Form manages a list of form fields with focus cycling, validation,
@@ -1629,15 +1633,22 @@ func (f Form) View() string {
 	}
 
 	bs := f.styles.Buttons
-	buttonParts := make([]string, 0, len(f.actionButtons)+2)
-	buttonParts = append(buttonParts, mouseMark("submit", bs.Primary.Render(f.submitLabel, f.focused == f.submitIndex())))
+	leadParts := make([]string, 0, len(f.actionButtons))
+	rightParts := make([]string, 0, len(f.actionButtons)+2)
+	rightParts = append(rightParts, mouseMark("submit", bs.Primary.Render(f.submitLabel, f.focused == f.submitIndex())))
 	for i, ab := range f.actionButtons {
 		style := bs.Get(ab.Variant)
-		buttonParts = append(buttonParts, mouseMark(actionTarget(i), style.Render(ab.Label, f.focused == f.actionIndex(i))))
+		btn := mouseMark(actionTarget(i), style.Render(ab.Label, f.focused == f.actionIndex(i)))
+		if ab.Leading {
+			leadParts = append(leadParts, btn)
+		} else {
+			rightParts = append(rightParts, btn)
+		}
 	}
 	cancelStyle := bs.Get(f.cancelVariant)
-	buttonParts = append(buttonParts, mouseMark("cancel", cancelStyle.Render("Cancel", f.focused == f.cancelIndex())))
-	buttons := lipgloss.JoinHorizontal(lipgloss.Top, buttonParts...)
+	rightParts = append(rightParts, mouseMark("cancel", cancelStyle.Render("Cancel", f.focused == f.cancelIndex())))
+
+	rightGroup := lipgloss.JoinHorizontal(lipgloss.Top, rightParts...)
 
 	// Use the form's width (typically set from Dialog.ContentWidth()) so
 	// buttons align relative to the container, not the field rows. Fall
@@ -1647,12 +1658,21 @@ func (f Form) View() string {
 		alignWidth = lipgloss.Width(lipgloss.JoinVertical(lipgloss.Left, parts...))
 	}
 
-	if alignWidth > 0 && f.styles.ButtonAlign != ButtonAlignLeft {
-		align := lipgloss.Right
-		if f.styles.ButtonAlign == ButtonAlignCenter {
-			align = lipgloss.Center
+	var buttons string
+	if len(leadParts) > 0 {
+		leadGroup := lipgloss.JoinHorizontal(lipgloss.Top, leadParts...)
+		spacerW := max(alignWidth-lipgloss.Width(leadGroup)-lipgloss.Width(rightGroup), 1)
+		spacer := lipgloss.NewStyle().Width(spacerW).Render("")
+		buttons = leadGroup + spacer + rightGroup
+	} else {
+		buttons = rightGroup
+		if alignWidth > 0 && f.styles.ButtonAlign != ButtonAlignLeft {
+			align := lipgloss.Right
+			if f.styles.ButtonAlign == ButtonAlignCenter {
+				align = lipgloss.Center
+			}
+			buttons = lipgloss.NewStyle().Width(alignWidth).Align(align).Render(buttons)
 		}
-		buttons = lipgloss.NewStyle().Width(alignWidth).Align(align).Render(buttons)
 	}
 
 	if f.styles.ButtonRule {
@@ -1673,6 +1693,13 @@ func (f Form) View() string {
 // add several buttons between Submit and Cancel.
 func (f *Form) SetActionButton(label string, variant ButtonVariant, onPress func() tea.Msg) {
 	f.actionButtons = append(f.actionButtons, FormActionButton{Label: label, Variant: variant, OnPress: onPress})
+}
+
+// SetLeadingActionButton adds an action button rendered on the left side
+// of the button row, separated from Submit/Cancel. Typical use: destructive
+// actions whose placement should not invite misclicks on the primary action.
+func (f *Form) SetLeadingActionButton(label string, variant ButtonVariant, onPress func() tea.Msg) {
+	f.actionButtons = append(f.actionButtons, FormActionButton{Label: label, Variant: variant, OnPress: onPress, Leading: true})
 }
 
 func (f *Form) SetCancelVariant(v ButtonVariant) {

@@ -265,7 +265,7 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 	if params.RemoteLinked {
 		id := params.ID
 		name := params.Name
-		form.SetActionButton("Disconnect", ButtonDanger, func() tea.Msg {
+		form.SetLeadingActionButton("Disconnect", ButtonDanger, func() tea.Msg {
 			return CalendarDisconnectRemoteRequestedMsg{ID: id, Name: name}
 		})
 	}
