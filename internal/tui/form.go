@@ -48,7 +48,18 @@ func NewTextField(placeholder string) *TextField {
 	input.Prompt = ""
 	input.Placeholder = placeholder
 	input.CharLimit = 256
+	applyPlaceholderDefaults(&input)
 	return &TextField{input: input}
+}
+
+// applyPlaceholderDefaults italicizes the placeholder in both focus
+// states so hints read as hints — distinct from entered values which
+// use the upright text style.
+func applyPlaceholderDefaults(input *textinput.Model) {
+	s := input.Styles()
+	s.Focused.Placeholder = s.Focused.Placeholder.Italic(true)
+	s.Blurred.Placeholder = s.Blurred.Placeholder.Italic(true)
+	input.SetStyles(s)
 }
 
 func (f *TextField) Value() string     { return f.input.Value() }
@@ -56,15 +67,6 @@ func (f *TextField) SetValue(v string) { f.input.SetValue(v) }
 
 func (f *TextField) SetPlaceholder(p string) { f.input.Placeholder = p }
 func (f *TextField) SetCharLimit(n int)      { f.input.CharLimit = n }
-
-// SetPlaceholderStyle styles the placeholder in both focused and blurred
-// states, so it reads as a hint rather than real input.
-func (f *TextField) SetPlaceholderStyle(style lipgloss.Style) {
-	s := f.input.Styles()
-	s.Focused.Placeholder = style
-	s.Blurred.Placeholder = style
-	f.input.SetStyles(s)
-}
 func (f *TextField) Position() int           { return f.input.Position() }
 func (f *TextField) SetCursor(pos int)       { f.input.SetCursor(pos) }
 func (f *TextField) SetSuffix(s string)      { f.suffix = s }
@@ -147,6 +149,10 @@ func NewTextAreaField(placeholder string) *TextAreaField {
 	input.CharLimit = 500
 	input.ShowLineNumbers = false
 	input.SetHeight(3)
+	s := input.Styles()
+	s.Focused.Placeholder = s.Focused.Placeholder.Italic(true)
+	s.Blurred.Placeholder = s.Blurred.Placeholder.Italic(true)
+	input.SetStyles(s)
 	return &TextAreaField{input: input}
 }
 

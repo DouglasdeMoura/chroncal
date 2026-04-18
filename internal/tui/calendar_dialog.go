@@ -168,24 +168,19 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 	formStyles.ButtonAlign = ButtonAlignRight
 	formStyles.ButtonRule = true
 
-	placeholderStyle := lipgloss.NewStyle().Foreground(theme.Muted).Italic(true)
-
 	nameField := NewTextField("e.g. Work")
 	nameField.SetValue(params.Name)
 	nameField.SetCharLimit(256)
-	nameField.SetPlaceholderStyle(placeholderStyle)
 
 	colorField := NewColorField(paletteSwatches, params.Color, theme.Selected, theme.Muted, theme.TextDim)
 
 	descField := NewTextField("Shared family schedule")
 	descField.SetValue(params.Description)
 	descField.SetCharLimit(500)
-	descField.SetPlaceholderStyle(placeholderStyle)
 
 	emailField := NewTextField("you@example.com")
 	emailField.SetValue(params.OwnerEmail)
 	emailField.SetCharLimit(256)
-	emailField.SetPlaceholderStyle(placeholderStyle)
 
 	items := []FormItem{
 		{Label: "Name", Field: nameField, Required: true},
@@ -285,7 +280,6 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 	}
 
 	syncTheme := theme
-	syncPlaceholderStyle := placeholderStyle
 	form.OnRebuild(func(f *Form) {
 		// Toggle remote fields on/off in lockstep with the Sync checkbox.
 		if linked {
@@ -298,10 +292,10 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 			insecure := NewCheckboxField("", false)
 			insecure.SetContent("allow plain HTTP")
 			f.AppendItems(
-				FormItem{Label: "Remote URL", Field: newRemoteURLField("", syncPlaceholderStyle), Required: true},
-				FormItem{Label: "Username", Field: newUsernameField("", syncPlaceholderStyle), Required: true},
+				FormItem{Label: "Remote URL", Field: newRemoteURLField(""), Required: true},
+				FormItem{Label: "Username", Field: newUsernameField(""), Required: true},
 				FormItem{Label: "Auth", Field: newAuthField("")},
-				FormItem{Label: "Password", Field: newPasswordField(syncPlaceholderStyle), Required: true},
+				FormItem{Label: "Password", Field: newPasswordField(), Required: true},
 				FormItem{Label: "HTTP", Field: insecure},
 			)
 			f.SetActionButton("Test", ButtonSecondary, func() tea.Msg {
@@ -406,19 +400,17 @@ func remoteStatusLine(params CalendarDialogParams, theme Theme) string {
 	return label + " " + details
 }
 
-func newRemoteURLField(value string, placeholderStyle lipgloss.Style) *TextField {
+func newRemoteURLField(value string) *TextField {
 	f := NewTextField("https://cal.example.com/dav/calendars/work/")
 	f.SetValue(value)
 	f.SetCharLimit(512)
-	f.SetPlaceholderStyle(placeholderStyle)
 	return f
 }
 
-func newUsernameField(value string, placeholderStyle lipgloss.Style) *TextField {
+func newUsernameField(value string) *TextField {
 	f := NewTextField("you@example.com")
 	f.SetValue(value)
 	f.SetCharLimit(256)
-	f.SetPlaceholderStyle(placeholderStyle)
 	return f
 }
 
@@ -428,11 +420,10 @@ func newAuthField(authType string) *SelectField {
 	return f
 }
 
-func newPasswordField(placeholderStyle lipgloss.Style) *TextField {
+func newPasswordField() *TextField {
 	f := NewTextField("your password")
 	f.SetCharLimit(256)
 	f.SetEchoPassword(true)
-	f.SetPlaceholderStyle(placeholderStyle)
 	return f
 }
 

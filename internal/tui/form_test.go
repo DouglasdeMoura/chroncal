@@ -775,9 +775,11 @@ func labelAndFieldOnSeparateLines(view, label string) bool {
 	clean := mouseSweep(view)
 	for _, line := range strings.Split(clean, "\n") {
 		if strings.Contains(line, label) {
-			// Textinput cursor uses reverse video (\x1b[7;37m). If the
-			// label's line doesn't contain that, label and field are separate.
-			return !strings.Contains(line, "\x1b[7;37m") && !strings.Contains(line, "\x1b[38;5;240m")
+			// Textinput cursor uses reverse video (\x1b[7;37m) and
+			// placeholders render with 256-colour 240 (possibly combined
+			// with italic, e.g. \x1b[3;38;5;240m). Match the colour
+			// substring so combined SGR sequences still register.
+			return !strings.Contains(line, "\x1b[7;37m") && !strings.Contains(line, "38;5;240m")
 		}
 	}
 	return false
