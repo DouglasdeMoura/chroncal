@@ -35,30 +35,32 @@ const (
 )
 
 type appKeyMap struct {
-	Quit         key.Binding
-	MonthView    key.Binding
-	WeekView     key.Binding
-	DayView      key.Binding
-	Sidebar      key.Binding
-	Create       key.Binding
-	SwitchFocus  key.Binding
-	Help         key.Binding
-	Palette      key.Binding
-	CalendarList key.Binding
+	Quit           key.Binding
+	MonthView      key.Binding
+	WeekView       key.Binding
+	DayView        key.Binding
+	Sidebar        key.Binding
+	Create         key.Binding
+	SwitchFocus    key.Binding
+	Help           key.Binding
+	Palette        key.Binding
+	CalendarCreate key.Binding
+	CalendarList   key.Binding
 }
 
 func defaultAppKeys() appKeyMap {
 	return appKeyMap{
-		Quit:         key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
-		MonthView:    key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "month")),
-		WeekView:     key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "week")),
-		DayView:      key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "day")),
-		Sidebar:      key.NewBinding(key.WithKeys("\\"), key.WithHelp("\\", "sidebar")),
-		Create:       key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "new")),
-		SwitchFocus:  key.NewBinding(key.WithKeys("tab", "shift+tab"), key.WithHelp("tab", "switch focus")),
-		Help:         key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
-		Palette:      key.NewBinding(key.WithKeys("/", "ctrl+p", "ctrl+k"), key.WithHelp("/", "commands")),
-		CalendarList: key.NewBinding(key.WithKeys("L"), key.WithHelp("L", "calendars")),
+		Quit:           key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+		MonthView:      key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "month")),
+		WeekView:       key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "week")),
+		DayView:        key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "day")),
+		Sidebar:        key.NewBinding(key.WithKeys("\\"), key.WithHelp("\\", "sidebar")),
+		Create:         key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "new")),
+		SwitchFocus:    key.NewBinding(key.WithKeys("tab", "shift+tab"), key.WithHelp("tab", "switch focus")),
+		Help:           key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+		Palette:        key.NewBinding(key.WithKeys("/", "ctrl+p", "ctrl+k"), key.WithHelp("/", "commands")),
+		CalendarCreate: key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "new calendar")),
+		CalendarList:   key.NewBinding(key.WithKeys("L"), key.WithHelp("L", "calendars")),
 	}
 }
 
@@ -89,6 +91,7 @@ func (c compositeKeyMap) FullHelp() [][]key.Binding {
 		c.appKeys.WeekView,
 		c.appKeys.DayView,
 		c.appKeys.Sidebar,
+		c.appKeys.CalendarCreate,
 		c.appKeys.CalendarList,
 		c.appKeys.SwitchFocus,
 		c.appKeys.Palette,
@@ -1152,6 +1155,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.switchToView(viewDay)
 		case key.Matches(msg, m.keys.Sidebar):
 			return m.toggleSidebar()
+		case key.Matches(msg, m.keys.CalendarCreate):
+			return m, func() tea.Msg { return CalendarDialogRequestedMsg{ID: 0} }
 		case key.Matches(msg, m.keys.CalendarList):
 			return m, func() tea.Msg { return CalendarListDialogRequestedMsg{} }
 		case key.Matches(msg, m.keys.SwitchFocus):
