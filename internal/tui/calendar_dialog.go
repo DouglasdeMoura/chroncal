@@ -272,7 +272,7 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 				bar + "   Basic = password · Bearer = access token",
 			)
 			insecure := NewCheckboxField("", false)
-			insecure.SetContent(lipgloss.NewStyle().Foreground(syncTheme.Muted).Render("allow plain HTTP"))
+			insecure.SetContent("allow plain HTTP")
 			f.AppendItems(
 				FormItem{Label: group("Remote URL"), Field: newRemoteURLField("", syncTheme), Required: true},
 				FormItem{Label: group("Username"), Field: newUsernameField(""), Required: true},
