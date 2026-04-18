@@ -85,7 +85,7 @@ func defaultEventDialogKeys() eventDialogKeyMap {
 		Edit:      key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
 		Delete:    key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "delete")),
 		Duplicate: key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "duplicate")),
-		Create:    key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new")),
+		Create:    key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "new")),
 		RSVPYes:   key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "RSVP yes")),
 		RSVPNo:    key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "RSVP no")),
 		RSVPMaybe: key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "RSVP maybe")),
@@ -376,13 +376,6 @@ func (m EventDialogModel) handleKey(msg tea.KeyPressMsg) (EventDialogModel, tea.
 			return m, actions[2].msg
 		}
 	case key.Matches(msg, m.keys.Create):
-		// 'n' means RSVP-no when focus is in the RSVP zone, otherwise
-		// it creates a new event. Keeps 'n new' consistent with the
-		// calendar dialog while preserving in-context decline.
-		if m.focusZone == zoneRSVP && len(rsvp) > 1 {
-			m.focusedRSVP = 1
-			return m, rsvp[1].msg
-		}
 		day := m.day
 		return m, func() tea.Msg { return EventCreateMsg{Day: day} }
 	case key.Matches(msg, m.keys.RSVPYes):
