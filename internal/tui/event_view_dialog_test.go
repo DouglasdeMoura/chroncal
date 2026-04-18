@@ -171,6 +171,29 @@ func TestFormatEventTimeRange(t *testing.T) {
 	assert.Equal(t, "", formatEventTimeRange(ev))
 }
 
+func TestEventViewDialog_OmitsChromeTitle(t *testing.T) {
+	// The dialog has no chrome heading; the event's own title is the
+	// only heading rendered.
+	m := NewEventViewDialogModel(testViewEvent(), CalendarInfo{Name: "Work"}, Theme{}).SetSize(120, 40)
+	out := m.View()
+	// First non-blank line inside the border should be the event title,
+	// not the literal word "Event".
+	for line := range strings.SplitSeq(out, "\n") {
+		trimmed := strings.TrimSpace(stripANSI(line))
+		if trimmed == "" || strings.HasPrefix(trimmed, "╭") {
+			continue
+		}
+		// Strip the left border char if present.
+		trimmed = strings.TrimLeft(trimmed, "│ ")
+		if trimmed == "" {
+			continue
+		}
+		assert.Equal(t, "Weekly sync", strings.TrimRight(trimmed, " │"))
+		return
+	}
+	t.Fatal("no content line rendered")
+}
+
 func TestEventViewDialog_ViewIsStableAcrossRenders(t *testing.T) {
 	// mouseSweep mutates the default tracker; rendering twice should
 	// produce identical output and not accumulate markers.

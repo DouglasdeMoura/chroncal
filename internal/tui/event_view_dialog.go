@@ -78,8 +78,10 @@ type EventViewDialogModel struct {
 }
 
 // NewEventViewDialogModel builds a read-only view of the given event.
+// The dialog omits a chrome title and relies on the event's own title
+// (rendered by paneTitle) as the visual heading.
 func NewEventViewDialogModel(ev event.Event, cal CalendarInfo, theme Theme) EventViewDialogModel {
-	dialog := NewDialog("Event", DefaultDialogStyles())
+	dialog := NewDialog("", DefaultDialogStyles())
 	dialog.SetWidth(60)
 	return EventViewDialogModel{
 		event:    ev,

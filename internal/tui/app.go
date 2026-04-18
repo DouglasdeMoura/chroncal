@@ -172,6 +172,11 @@ type Model struct {
 	dialogOpen      bool
 	viewDialog      EventViewDialogModel
 	viewDialogOpen  bool
+	// viewReturnEvent is set when the event form is opened from the
+	// view dialog; after the form closes (save or cancel) the app
+	// reopens the view with this event so the user lands back where
+	// they started. Zero-valued ID means "don't return to view."
+	viewReturnEvent event.Event
 	confirmDialog   ConfirmDialogModel
 	confirmOpen     bool
 	choiceDialog    ChoiceDialogModel
@@ -613,6 +618,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.form = m.form.SetSize(m.width, m.height)
 		m.formOpen = true
 		m.dialogOpen = false
+		if m.viewDialogOpen {
+			m.viewReturnEvent = msg.event
+		}
 		m.viewDialogOpen = false
 		return m, cmd
 
@@ -657,6 +665,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.form, cmd = NewEventFormModelForDuplicate(msg.Event, m.calendars, m.theme)
 		m.form = m.form.SetSize(m.width, m.height)
 		m.formOpen = true
+		if m.viewDialogOpen {
+			m.viewReturnEvent = msg.Event
+		}
 		m.viewDialogOpen = false
 		return m, cmd
 
@@ -724,6 +735,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case EventFormClosedMsg:
 		m.formOpen = false
+		if m.viewReturnEvent.ID != 0 {
+			ev := m.viewReturnEvent
+			m.viewReturnEvent = event.Event{}
+			return m, func() tea.Msg { return EventViewRequestedMsg{Event: ev} }
+		}
 		return m, nil
 
 	case PaletteSelectedMsg:
@@ -758,16 +774,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case eventCreatedMsg:
 		if msg.err != nil {
 			m.err = msg.err
+			m.viewReturnEvent = event.Event{}
 			return m, nil
 		}
-		return m, m.loadEvents()
+		cmds := []tea.Cmd{m.loadEvents()}
+		if m.viewReturnEvent.ID != 0 {
+			ev := m.viewReturnEvent
+			m.viewReturnEvent = event.Event{}
+			cmds = append(cmds, func() tea.Msg { return EventViewRequestedMsg{Event: ev} })
+		}
+		return m, tea.Batch(cmds...)
 
 	case eventUpdatedMsg:
 		if msg.err != nil {
 			m.err = msg.err
+			m.viewReturnEvent = event.Event{}
 			return m, nil
 		}
-		return m, m.loadEvents()
+		cmds := []tea.Cmd{m.loadEvents()}
+		if m.viewReturnEvent.ID != 0 {
+			ev := m.viewReturnEvent
+			m.viewReturnEvent = event.Event{}
+			cmds = append(cmds, func() tea.Msg { return EventViewRequestedMsg{Event: ev} })
+		}
+		return m, tea.Batch(cmds...)
 
 	case EventRSVPMsg:
 		ev := msg.Event
