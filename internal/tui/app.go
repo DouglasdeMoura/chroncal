@@ -142,6 +142,11 @@ type eventEditLoadedMsg struct {
 	err   error
 }
 
+type eventViewLoadedMsg struct {
+	event event.Event
+	err   error
+}
+
 type eventUpdatedMsg struct {
 	err error
 }
@@ -165,6 +170,8 @@ type Model struct {
 	calendars       map[int64]CalendarInfo
 	dialog          EventDialogModel
 	dialogOpen      bool
+	viewDialog      EventViewDialogModel
+	viewDialogOpen  bool
 	confirmDialog   ConfirmDialogModel
 	confirmOpen     bool
 	choiceDialog    ChoiceDialogModel
@@ -498,6 +505,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.week = m.week.SetSize(iw, ih)
 		m.day = m.day.SetSize(iw, ih)
 		m.dialog = m.dialog.SetSize(m.width, m.height)
+		m.viewDialog = m.viewDialog.SetSize(m.width, m.height)
 		m.confirmDialog = m.confirmDialog.SetSize(m.width, m.height)
 		m.choiceDialog = m.choiceDialog.SetSize(m.width, m.height)
 		m.form = m.form.SetSize(m.width, m.height)
@@ -605,13 +613,51 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.form = m.form.SetSize(m.width, m.height)
 		m.formOpen = true
 		m.dialogOpen = false
+		m.viewDialogOpen = false
 		return m, cmd
+
+	case EventViewRequestedMsg:
+		ev := msg.Event
+		return m, func() tea.Msg {
+			ctx := context.Background()
+			fresh, err := m.app.Events.Get(ctx, ev.ID)
+			if err != nil {
+				return eventViewLoadedMsg{err: err}
+			}
+			attendees, err := m.app.Events.ListAttendees(ctx, ev.ID)
+			if err != nil {
+				return eventViewLoadedMsg{err: err}
+			}
+			fresh.Attendees = attendees
+			alarms, err := m.app.Events.ListAlarms(ctx, ev.ID)
+			if err != nil {
+				return eventViewLoadedMsg{err: err}
+			}
+			fresh.Alarms = alarms
+			return eventViewLoadedMsg{event: fresh}
+		}
+
+	case eventViewLoadedMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		cal := m.calendars[msg.event.CalendarID]
+		m.viewDialog = NewEventViewDialogModel(msg.event, cal, m.theme).
+			SetSize(m.width, m.height)
+		m.viewDialogOpen = true
+		return m, nil
+
+	case EventViewClosedMsg:
+		m.viewDialogOpen = false
+		return m, nil
 
 	case EventDuplicateMsg:
 		var cmd tea.Cmd
 		m.form, cmd = NewEventFormModelForDuplicate(msg.Event, m.calendars, m.theme)
 		m.form = m.form.SetSize(m.width, m.height)
 		m.formOpen = true
+		m.viewDialogOpen = false
 		return m, cmd
 
 	case EventFormSaveMsg:
@@ -995,6 +1041,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 			return m, nil
 		}
+		m.viewDialogOpen = false
 		return m, m.loadEvents()
 
 	case tea.MouseWheelMsg:
@@ -1049,6 +1096,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.dialogOpen {
 			var cmd tea.Cmd
 			m.dialog, cmd = m.dialog.Update(msg)
+			return m, cmd
+		}
+		if m.viewDialogOpen {
+			var cmd tea.Cmd
+			m.viewDialog, cmd = m.viewDialog.Update(msg)
 			return m, cmd
 		}
 		if m.calendarListDialogOpen {
@@ -1122,6 +1174,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			var cmd tea.Cmd
 			m.confirmDialog, cmd = m.confirmDialog.Update(msg)
+			return m, cmd
+		}
+		if m.viewDialogOpen {
+			if msg.String() == "ctrl+c" {
+				return m, tea.Quit
+			}
+			var cmd tea.Cmd
+			m.viewDialog, cmd = m.viewDialog.Update(msg)
 			return m, cmd
 		}
 		if m.dialogOpen {
@@ -1287,6 +1347,10 @@ func (m Model) View() tea.View {
 
 	if m.dialogOpen {
 		v.Content = m.compositeDialog(v.Content)
+	}
+	if m.viewDialogOpen {
+		bw, bh := m.viewDialog.BoxSize()
+		v.Content = m.compositeOverlay(v.Content, m.viewDialog.View(), bw, bh)
 	}
 	if m.formOpen {
 		bw, bh := m.form.BoxSize()

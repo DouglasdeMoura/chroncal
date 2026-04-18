@@ -16,7 +16,7 @@ const paletteSearchLimit = 15
 
 // makePaletteSearchFunc returns a palette search callback that queries
 // events by text and formats them as palette entries. Selecting a result
-// opens the event in the edit form via EventEditMsg.
+// opens the event view dialog via EventViewRequestedMsg.
 func makePaletteSearchFunc(m Model) PaletteSearchFunc {
 	return func(query string) tea.Cmd {
 		return func() tea.Msg {
@@ -44,7 +44,7 @@ func eventPaletteCommand(ev event.Event, cal CalendarInfo) PaletteCommand {
 		PrefixColor: cal.Color,
 		Title:       ev.Title,
 		Shortcut:    paletteEventDate(ev),
-		Action:      func() tea.Msg { return EventEditMsg{Event: ev} },
+		Action:      func() tea.Msg { return EventViewRequestedMsg{Event: ev} },
 	}
 }
 
