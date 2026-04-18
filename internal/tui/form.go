@@ -1869,12 +1869,12 @@ func (f Form) handleClick(target string) (Form, tea.Cmd) {
 		}
 	}
 
-	switch {
-	case target == "submit":
+	switch target {
+	case "submit":
 		f.blurCurrent()
 		f.focused = f.submitIndex()
 		return f.submitIfValid()
-	case target == "cancel":
+	case "cancel":
 		f.blurCurrent()
 		f.focused = f.cancelIndex()
 		if f.onCancel != nil {
