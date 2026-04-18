@@ -72,25 +72,24 @@ var paletteSwatches = []string{
 	"#111111", "#AAAAAA",
 }
 
-// Form field indices. Local fields are always present. Index 5 is the Sync
+// Form field indices. Local fields are always present. Index 4 is the Sync
 // toggle in unlinked mode or a read-only status line in linked mode. The
-// remote fields (6..11) exist only when Sync is on.
+// remote fields (5..10) exist only when Sync is on.
 const (
 	cdIdxName        = 0
-	cdIdxPalette     = 1
-	cdIdxHex         = 2
-	cdIdxDescription = 3
-	cdIdxEmail       = 4
-	cdIdxSync        = 5
+	cdIdxColor       = 1
+	cdIdxDescription = 2
+	cdIdxEmail       = 3
+	cdIdxSync        = 4
 
-	// Present only when Sync is on (unlinked mode only). Index 9 is a
+	// Present only when Sync is on (unlinked mode only). Index 8 is a
 	// StaticField showing the auth help line; it's skipped in focus
 	// cycling and never read, so no symbolic name is defined for it.
-	cdIdxRemoteURL     = 6
-	cdIdxUsername      = 7
-	cdIdxAuth          = 8
-	cdIdxPassword      = 10
-	cdIdxAllowInsecure = 11
+	cdIdxRemoteURL     = 5
+	cdIdxUsername      = 6
+	cdIdxAuth          = 7
+	cdIdxPassword      = 9
+	cdIdxAllowInsecure = 10
 )
 
 var authOptions = []SelectOption{
@@ -108,15 +107,6 @@ func authOptionIndex(authType string) int {
 	return 0
 }
 
-func paletteIndexFor(hex string) int {
-	h := strings.TrimSpace(hex)
-	for i, c := range paletteSwatches {
-		if strings.EqualFold(c, h) {
-			return i
-		}
-	}
-	return -1
-}
 
 // ---------------------------------------------------------------------------
 // CalendarDialogModel
@@ -147,7 +137,7 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 
 	styles := DefaultDialogStyles()
 	dialog := NewDialog(title, styles)
-	dialog.SetWidth(60)
+	dialog.SetWidth(62)
 
 	formStyles := DefaultFormStyles()
 	formStyles.LabelLayout = LabelInline
@@ -159,12 +149,7 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 	nameField.SetValue(params.Name)
 	nameField.SetCharLimit(256)
 
-	palette := NewPaletteField(paletteSwatches, paletteIndexFor(params.Color), theme.Selected, theme.Muted)
-
-	hexField := NewHexColorField("#rrggbb", theme.TextDim)
-	hexField.SetValue(params.Color)
-	hexField.input.SetCharLimit(7)
-	hexField.SetPaletteIdx(paletteIndexFor(params.Color))
+	colorField := NewColorField(paletteSwatches, params.Color, theme.Selected, theme.Muted, theme.TextDim)
 
 	descField := NewTextField("Shared family schedule")
 	descField.SetValue(params.Description)
@@ -176,8 +161,7 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 
 	items := []FormItem{
 		{Label: "Name", Field: nameField, Required: true},
-		{Label: "Color", Field: palette},
-		{Label: "Hex", Field: hexField, Required: true},
+		{Label: "Color", Field: colorField, Required: true},
 		{Label: "Description", Field: descField},
 		{Label: "Email", Field: emailField},
 	}
@@ -200,7 +184,7 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 	linked := params.RemoteLinked
 	form.OnSubmit(func(f *Form) tea.Cmd {
 		nameVal := strings.TrimSpace(f.Field(cdIdxName).(*TextField).Value())
-		hexVal := strings.TrimSpace(f.Field(cdIdxHex).(*HexColorField).Value())
+		hexVal := strings.TrimSpace(f.Field(cdIdxColor).(*ColorField).Value())
 		descVal := strings.TrimSpace(f.Field(cdIdxDescription).(*TextField).Value())
 		emailVal := strings.TrimSpace(f.Field(cdIdxEmail).(*TextField).Value())
 
@@ -272,18 +256,6 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 
 	syncTheme := theme
 	form.OnRebuild(func(f *Form) {
-		pal := f.Field(cdIdxPalette).(*PaletteField)
-		hf := f.Field(cdIdxHex).(*HexColorField)
-
-		if f.Focused() == cdIdxPalette {
-			if v := pal.Value(); v != "" {
-				hf.SetValue(v)
-			}
-		} else if f.Focused() == cdIdxHex {
-			pal.SetSelected(paletteIndexFor(hf.Value()))
-		}
-		hf.SetPaletteIdx(pal.Selected())
-
 		// Toggle remote fields on/off in lockstep with the Sync checkbox.
 		if linked {
 			return
