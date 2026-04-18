@@ -471,20 +471,16 @@ func (paletteDelegate) Spacing() int                        { return 0 }
 func (paletteDelegate) Update(tea.Msg, *list.Model) tea.Cmd { return nil }
 
 func renderPaletteRow(c PaletteCommand, width int, selected bool, theme Theme) string {
-	leftPad := "  "
-	leftPadW := lipgloss.Width(leftPad)
-
-	prefixChar := c.PrefixChar
-	prefixW := 0
-	if prefixChar != "" {
-		prefixW = lipgloss.Width(prefixChar) + 1 // +1 for trailing space
-	}
+	// Fixed 2-cell prefix zone so event titles line up with non-event
+	// titles. Rows with a PrefixChar render `<char> `; other rows render
+	// two spaces.
+	const prefixW = 2
 
 	right := c.Shortcut
 	rightW := lipgloss.Width(right)
 
 	title := c.Title
-	avail := width - leftPadW - prefixW - rightW
+	avail := width - prefixW - rightW
 	if avail < lipgloss.Width(title)+1 {
 		title = truncate(title, max(avail-1, 3))
 	}
@@ -498,16 +494,17 @@ func renderPaletteRow(c PaletteCommand, width int, selected bool, theme Theme) s
 	}
 
 	out := strings.Builder{}
-	out.WriteString(base.Render(leftPad))
-	if prefixChar != "" {
+	if c.PrefixChar != "" {
 		ps := base
 		if c.PrefixColor != "" {
 			ps = ps.Foreground(lipgloss.Color(c.PrefixColor))
 		} else {
 			ps = ps.Faint(true)
 		}
-		out.WriteString(ps.Render(prefixChar))
+		out.WriteString(ps.Render(c.PrefixChar))
 		out.WriteString(base.Render(" "))
+	} else {
+		out.WriteString(base.Render("  "))
 	}
 	out.WriteString(base.Foreground(theme.Text).Render(title))
 	out.WriteString(base.Render(strings.Repeat(" ", gap)))
