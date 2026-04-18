@@ -10,6 +10,24 @@ import (
 	lipgloss "charm.land/lipgloss/v2"
 )
 
+// CalendarDialogParams seeds the calendar dialog. All fields are optional;
+// ID == 0 means "create a new calendar", and RemoteLinked reflects whether
+// the calendar is currently connected to a remote CalDAV account.
+type CalendarDialogParams struct {
+	ID           int64
+	Name         string
+	Color        string // hex like "#a6e3a1"
+	Description  string
+	OwnerEmail   string
+	RemoteURL    string
+	RemoteLinked bool
+
+	// RemoteAuthType and RemoteUsername are display-only; populated when
+	// the calendar is linked so the dialog can show connection details.
+	RemoteAuthType string
+	RemoteUsername string
+}
+
 // CalendarSavedMsg is emitted when the user saves the dialog. ID == 0 means
 // "create a new calendar"; otherwise it's an update.
 type CalendarSavedMsg struct {
@@ -17,11 +35,28 @@ type CalendarSavedMsg struct {
 	Name        string
 	Color       string
 	Description string
+	OwnerEmail  string
+
+	// Remote connection — only meaningful when RemoteURL is non-empty and
+	// the calendar is not already linked. OAuth flows are handled via the
+	// CLI, not the dialog.
+	RemoteURL     string
+	Username      string
+	AuthType      string // "basic" | "bearer"
+	Password      string // populated only when AuthType == "basic"
+	AllowInsecure bool
 }
 
 // CalendarDeleteRequestedMsg is emitted when the user presses Delete in the
 // dialog. The parent is responsible for showing the confirm dialog.
 type CalendarDeleteRequestedMsg struct {
+	ID   int64
+	Name string
+}
+
+// CalendarDisconnectRemoteRequestedMsg is emitted when the user presses the
+// Disconnect button in the dialog. The parent tears down the remote link.
+type CalendarDisconnectRemoteRequestedMsg struct {
 	ID   int64
 	Name string
 }
@@ -37,12 +72,38 @@ var paletteSwatches = []string{
 	"#111111", "#AAAAAA",
 }
 
-// Form field indices.
+// Form field indices. Local fields are always present; remote fields exist
+// only when the calendar is not already linked to a remote account. Index
+// 5 is a static separator or status line (skipped during focus cycling).
 const (
-	cdIdxName    = 0
-	cdIdxPalette = 1
-	cdIdxHex     = 2
+	cdIdxName        = 0
+	cdIdxPalette     = 1
+	cdIdxHex         = 2
+	cdIdxDescription = 3
+	cdIdxEmail       = 4
+
+	// Present only when !linked.
+	cdIdxRemoteURL     = 6
+	cdIdxUsername      = 7
+	cdIdxAuth          = 8
+	cdIdxPassword      = 9
+	cdIdxAllowInsecure = 10
 )
+
+var authOptions = []SelectOption{
+	{Label: "Basic", Value: "basic"},
+	{Label: "Bearer", Value: "bearer"},
+}
+
+func authOptionIndex(authType string) int {
+	at := strings.ToLower(strings.TrimSpace(authType))
+	for i, opt := range authOptions {
+		if opt.Value == at {
+			return i
+		}
+	}
+	return 0
+}
 
 func paletteIndexFor(hex string) int {
 	h := strings.TrimSpace(hex)
@@ -61,6 +122,8 @@ func paletteIndexFor(hex string) int {
 // CalendarDialogModel is a modal dialog for creating/editing a calendar.
 type CalendarDialogModel struct {
 	id           int64
+	name         string
+	linked       bool
 	dialog       Dialog
 	form         Form
 	help         help.Model
@@ -69,16 +132,19 @@ type CalendarDialogModel struct {
 	textDimColor color.Color
 }
 
-// NewCalendarDialogModel builds a dialog for create (id==0) or edit.
-func NewCalendarDialogModel(id int64, name, hex string, theme Theme) CalendarDialogModel {
+// NewCalendarDialogModel builds a dialog for create (params.ID==0) or edit.
+func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDialogModel {
 	title := "New calendar"
-	if id > 0 {
+	if params.ID > 0 {
 		title = "Edit calendar"
+	}
+	if params.Color == "" {
+		params.Color = "#a6e3a1"
 	}
 
 	styles := DefaultDialogStyles()
 	dialog := NewDialog(title, styles)
-	dialog.SetWidth(52)
+	dialog.SetWidth(60)
 
 	formStyles := DefaultFormStyles()
 	formStyles.LabelLayout = LabelInline
@@ -87,31 +153,94 @@ func NewCalendarDialogModel(id int64, name, hex string, theme Theme) CalendarDia
 	formStyles.ButtonRule = true
 
 	nameField := NewTextField("")
-	nameField.SetValue(name)
+	nameField.SetValue(params.Name)
 	nameField.SetCharLimit(256)
 
-	palette := NewPaletteField(paletteSwatches, paletteIndexFor(hex), theme.Selected, theme.Muted)
+	palette := NewPaletteField(paletteSwatches, paletteIndexFor(params.Color), theme.Selected, theme.Muted)
 
 	hexField := NewHexColorField("#rrggbb", theme.TextDim)
-	hexField.SetValue(hex)
+	hexField.SetValue(params.Color)
 	hexField.input.SetCharLimit(7)
-	hexField.SetPaletteIdx(paletteIndexFor(hex))
+	hexField.SetPaletteIdx(paletteIndexFor(params.Color))
 
-	form := NewForm("Save", formStyles,
-		FormItem{Label: "Name", Field: nameField, Required: true},
-		FormItem{Label: "Color", Field: palette},
-		FormItem{Label: "Hex", Field: hexField, Required: true},
-	)
+	descField := NewTextField("")
+	descField.SetValue(params.Description)
+	descField.SetCharLimit(500)
 
-	savedID := id
+	emailField := NewTextField("name@example.com")
+	emailField.SetValue(params.OwnerEmail)
+	emailField.SetCharLimit(256)
+
+	items := []FormItem{
+		{Label: "Name", Field: nameField, Required: true},
+		{Label: "Color", Field: palette},
+		{Label: "Hex", Field: hexField, Required: true},
+		{Label: "Description", Field: descField},
+		{Label: "Email", Field: emailField},
+	}
+
+	if params.RemoteLinked {
+		summary := remoteStatusLine(params, theme)
+		items = append(items, FormItem{
+			Label: "",
+			Field: NewStaticField(summary, nil),
+		})
+	} else {
+		separator := lipgloss.NewStyle().Foreground(theme.Muted).Render("── Remote (CalDAV, optional) ──")
+		items = append(items,
+			FormItem{Label: "", Field: NewStaticField(separator, nil)},
+			FormItem{Label: "Remote URL", Field: newRemoteURLField(params.RemoteURL, theme)},
+			FormItem{Label: "Username", Field: newUsernameField(params.RemoteUsername)},
+			FormItem{Label: "Auth", Field: newAuthField(params.RemoteAuthType)},
+			FormItem{Label: "Password", Field: newPasswordField()},
+			FormItem{Label: "Allow insecure", Field: NewCheckboxField("", false)},
+		)
+	}
+
+	form := NewForm("Save", formStyles, items...)
+
+	savedID := params.ID
+	linked := params.RemoteLinked
 	form.OnSubmit(func(f *Form) tea.Cmd {
-		hf := f.Field(cdIdxHex).(*HexColorField)
-		hexVal := strings.TrimSpace(hf.Value())
-		nf := f.Field(cdIdxName).(*TextField)
-		nameVal := strings.TrimSpace(nf.Value())
-		return func() tea.Msg {
-			return CalendarSavedMsg{ID: savedID, Name: nameVal, Color: hexVal}
+		nameVal := strings.TrimSpace(f.Field(cdIdxName).(*TextField).Value())
+		hexVal := strings.TrimSpace(f.Field(cdIdxHex).(*HexColorField).Value())
+		descVal := strings.TrimSpace(f.Field(cdIdxDescription).(*TextField).Value())
+		emailVal := strings.TrimSpace(f.Field(cdIdxEmail).(*TextField).Value())
+
+		msg := CalendarSavedMsg{
+			ID:          savedID,
+			Name:        nameVal,
+			Color:       hexVal,
+			Description: descVal,
+			OwnerEmail:  emailVal,
 		}
+
+		if !linked {
+			urlVal := strings.TrimSpace(f.Field(cdIdxRemoteURL).(*TextField).Value())
+			if urlVal != "" {
+				userVal := strings.TrimSpace(f.Field(cdIdxUsername).(*TextField).Value())
+				authVal := f.Field(cdIdxAuth).(*SelectField).Value()
+				passVal := f.Field(cdIdxPassword).(*TextField).Value()
+				allowIns := f.Field(cdIdxAllowInsecure).(*CheckboxField).Checked()
+
+				if userVal == "" {
+					f.SetError(cdIdxUsername, "Username is required when a remote URL is set")
+					return nil
+				}
+				if authVal == "basic" && passVal == "" {
+					f.SetError(cdIdxPassword, "Password is required for basic auth")
+					return nil
+				}
+
+				msg.RemoteURL = urlVal
+				msg.Username = userVal
+				msg.AuthType = authVal
+				msg.Password = passVal
+				msg.AllowInsecure = allowIns
+			}
+		}
+
+		return func() tea.Msg { return msg }
 	})
 
 	form.OnCancel(func(f *Form) tea.Cmd {
@@ -119,13 +248,23 @@ func NewCalendarDialogModel(id int64, name, hex string, theme Theme) CalendarDia
 	})
 
 	m := CalendarDialogModel{
-		id:           id,
+		id:           params.ID,
+		name:         params.Name,
+		linked:       params.RemoteLinked,
 		dialog:       dialog,
 		form:         form,
 		help:         newThemedHelp(theme),
 		accentColor:  theme.Selected,
 		mutedColor:   theme.Muted,
 		textDimColor: theme.TextDim,
+	}
+
+	if params.RemoteLinked {
+		id := params.ID
+		name := params.Name
+		form.SetActionButton("Disconnect", ButtonDanger, func() tea.Msg {
+			return CalendarDisconnectRemoteRequestedMsg{ID: id, Name: name}
+		})
 	}
 
 	form.OnRebuild(func(f *Form) {
@@ -145,6 +284,48 @@ func NewCalendarDialogModel(id int64, name, hex string, theme Theme) CalendarDia
 	m.form = form
 
 	return m
+}
+
+func remoteStatusLine(params CalendarDialogParams, theme Theme) string {
+	label := lipgloss.NewStyle().Foreground(theme.Muted).Render("Remote:")
+	details := params.RemoteURL
+	if params.RemoteUsername != "" {
+		details += "  (" + params.RemoteUsername
+		if params.RemoteAuthType != "" {
+			details += ", " + params.RemoteAuthType
+		}
+		details += ")"
+	} else if params.RemoteAuthType != "" {
+		details += "  (" + params.RemoteAuthType + ")"
+	}
+	return label + " " + details
+}
+
+func newRemoteURLField(value string, _ Theme) *TextField {
+	f := NewTextField("https://cal.example.com/dav/calendars/work/")
+	f.SetValue(value)
+	f.SetCharLimit(512)
+	return f
+}
+
+func newUsernameField(value string) *TextField {
+	f := NewTextField("alice")
+	f.SetValue(value)
+	f.SetCharLimit(256)
+	return f
+}
+
+func newAuthField(authType string) *SelectField {
+	f := NewSelectField(authOptions)
+	f.SetSelected(authOptionIndex(authType))
+	return f
+}
+
+func newPasswordField() *TextField {
+	f := NewTextField("(basic auth only)")
+	f.SetCharLimit(256)
+	f.SetEchoPassword(true)
+	return f
 }
 
 func (m CalendarDialogModel) SetSize(w, h int) CalendarDialogModel {
@@ -175,7 +356,6 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 
 	if mc, ok := msg.(tea.MouseClickMsg); ok {
 		if mc.Button == tea.MouseLeft {
-			// Translate screen coordinates to dialog-local coordinates.
 			bw, bh := m.BoxSize()
 			ox := (m.dialog.width - bw) / 2
 			oy := (m.dialog.height - bh) / 2

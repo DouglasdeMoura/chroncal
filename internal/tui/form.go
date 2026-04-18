@@ -72,6 +72,15 @@ func (f *TextField) SetDigitsOnly() {
 	f.filter = FilterDigits
 }
 
+// SetEchoPassword toggles password masking for the underlying input.
+func (f *TextField) SetEchoPassword(on bool) {
+	if on {
+		f.input.EchoMode = textinput.EchoPassword
+	} else {
+		f.input.EchoMode = textinput.EchoNormal
+	}
+}
+
 func (f *TextField) Update(msg tea.Msg) tea.Cmd {
 	if f.filter != nil {
 		if msg, ok := msg.(tea.KeyPressMsg); ok {

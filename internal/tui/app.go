@@ -15,6 +15,8 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 
 	"github.com/douglasdemoura/chroncal/internal/app"
+	"github.com/douglasdemoura/chroncal/internal/auth"
+	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/config"
 	"github.com/douglasdemoura/chroncal/internal/event"
 )
@@ -458,6 +460,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.calendarDialogOpen && !m.confirmOpen && !m.choiceOpen {
 		switch msg.(type) {
 		case CalendarSavedMsg, CalendarDeleteRequestedMsg, CalendarDialogClosedMsg,
+			CalendarDisconnectRemoteRequestedMsg,
 			calendarDeleteCountMsg,
 			tea.BackgroundColorMsg, tea.WindowSizeMsg,
 			eventsLoadedMsg, calendarsLoadedMsg,
@@ -939,30 +942,89 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case CalendarDialogRequestedMsg:
-		name, hex := "", "#a6e3a1"
+		params := CalendarDialogParams{Color: "#a6e3a1"}
 		if msg.ID > 0 {
-			if info, ok := m.calendars[msg.ID]; ok {
-				name = info.Name
-				hex = info.Color
+			ctx := context.Background()
+			cal, err := m.app.Calendars.Get(ctx, msg.ID)
+			if err != nil {
+				m.err = err
+				return m, nil
+			}
+			params = CalendarDialogParams{
+				ID:          cal.ID,
+				Name:        cal.Name,
+				Color:       cal.Color,
+				Description: cal.Description,
+				OwnerEmail:  cal.OwnerEmail,
+				RemoteURL:   cal.RemoteURL,
+			}
+			if cal.AccountID != 0 {
+				if acct, aerr := m.app.Queries.GetAccount(ctx, cal.AccountID); aerr == nil {
+					params.RemoteLinked = true
+					params.RemoteAuthType = acct.AuthType
+					params.RemoteUsername = acct.Username
+				}
 			}
 		}
-		m.calendarDialog = NewCalendarDialogModel(msg.ID, name, hex, m.theme).SetSize(m.width, m.height)
+		m.calendarDialog = NewCalendarDialogModel(params, m.theme).SetSize(m.width, m.height)
 		m.calendarDialogOpen = true
 		return m, nil
 
 	case CalendarSavedMsg:
 		// Keep the dialog open until the mutation succeeds so we can
 		// show validation errors (e.g. duplicate name) on the form.
-		id := msg.ID
-		name, hex := msg.Name, msg.Color
+		saved := msg
 		return m, func() tea.Msg {
 			ctx := context.Background()
-			if id == 0 {
-				_, err := m.app.Calendars.Create(ctx, name, hex, "")
+			var (
+				cal calendar.Calendar
+				err error
+			)
+			if saved.ID == 0 {
+				cal, err = m.app.Calendars.Create(ctx, saved.Name, saved.Color, saved.Description)
+			} else {
+				cal, err = m.app.Calendars.Update(ctx, saved.ID, saved.Name, saved.Color, saved.Description)
+			}
+			if err != nil {
 				return calendarMutationDoneMsg{err: err}
 			}
-			_, err := m.app.Calendars.Update(ctx, id, name, hex, "")
-			return calendarMutationDoneMsg{err: err}
+
+			if err := m.app.Calendars.SetOwnerEmail(ctx, cal.ID, saved.OwnerEmail); err != nil {
+				return calendarMutationDoneMsg{err: err}
+			}
+
+			if saved.RemoteURL != "" {
+				credStore, storeErr := auth.NewCredentialStore(true)
+				if storeErr != nil {
+					return calendarMutationDoneMsg{err: storeErr}
+				}
+				cred := auth.Credential{Username: saved.Username}
+				if calendar.NormalizeAuthType(saved.AuthType) == "basic" {
+					cred.Password = saved.Password
+				}
+				if cerr := m.app.Calendars.Connect(ctx, cal, calendar.RemoteLink{
+					RemoteURL:     saved.RemoteURL,
+					Username:      saved.Username,
+					AuthType:      saved.AuthType,
+					AllowInsecure: saved.AllowInsecure,
+				}, cred, credStore); cerr != nil {
+					return calendarMutationDoneMsg{err: cerr}
+				}
+			}
+
+			return calendarMutationDoneMsg{err: nil}
+		}
+
+	case CalendarDisconnectRemoteRequestedMsg:
+		id := msg.ID
+		return m, func() tea.Msg {
+			ctx := context.Background()
+			cal, err := m.app.Calendars.Get(ctx, id)
+			if err != nil {
+				return calendarMutationDoneMsg{err: err}
+			}
+			credStore, _ := auth.NewCredentialStore(true)
+			return calendarMutationDoneMsg{err: m.app.Calendars.Disconnect(ctx, cal, credStore)}
 		}
 
 	case CalendarDeleteRequestedMsg:
@@ -1056,7 +1118,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Delete confirmed: close the edit dialog too.
 			m.calendarDialogOpen = false
 			return m, func() tea.Msg {
-				err := m.app.Calendars.Delete(context.Background(), id)
+				credStore, _ := auth.NewCredentialStore(true)
+				err := m.app.Calendars.DeleteWithRemoteCleanup(context.Background(), id, credStore)
 				return calendarMutationDoneMsg{err: err}
 			}
 		}

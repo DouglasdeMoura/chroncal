@@ -928,7 +928,7 @@ func formClickTarget(form *Form, target string) {
 
 func TestCalendarDialogRendering(t *testing.T) {
 	theme := Theme{}
-	m := NewCalendarDialogModel(0, "", "#a6e3a1", theme)
+	m := NewCalendarDialogModel(CalendarDialogParams{Color: "#a6e3a1"}, theme)
 	m = m.SetSize(120, 40)
 
 	v := m.View()
@@ -941,4 +941,22 @@ func TestCalendarDialogRendering(t *testing.T) {
 		w := lipgloss.Width(l)
 		assert.LessOrEqual(t, w, cw, "form line %d is %d cols, exceeds content width %d", i, w, cw)
 	}
+}
+
+func TestCalendarDialogRendering_EditLinked(t *testing.T) {
+	theme := Theme{}
+	m := NewCalendarDialogModel(CalendarDialogParams{
+		ID:             7,
+		Name:           "Work",
+		Color:          "#a6e3a1",
+		RemoteURL:      "https://cal.example.com/dav/calendars/work/",
+		RemoteLinked:   true,
+		RemoteAuthType: "basic",
+		RemoteUsername: "alice",
+	}, theme)
+	m = m.SetSize(120, 40)
+
+	v := m.View()
+	assert.Contains(t, v, "Disconnect")
+	assert.Contains(t, v, "cal.example.com")
 }
