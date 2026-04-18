@@ -415,6 +415,8 @@ func (m RecurrenceEditorModel) BuildRule() string {
 	}
 
 	switch m.currentEnds() {
+	case endsNever:
+		// no COUNT or UNTIL
 	case endsAfter:
 		if c := strings.TrimSpace(m.endsCountField.Value()); c != "" {
 			rule += ";COUNT=" + c
