@@ -74,7 +74,7 @@ var paletteSwatches = []string{
 
 // Form field indices. Local fields are always present. Index 5 is the Sync
 // toggle in unlinked mode or a read-only status line in linked mode. The
-// remote fields (6..10) exist only when Sync is on.
+// remote fields (6..11) exist only when Sync is on.
 const (
 	cdIdxName        = 0
 	cdIdxPalette     = 1
@@ -83,12 +83,14 @@ const (
 	cdIdxEmail       = 4
 	cdIdxSync        = 5
 
-	// Present only when Sync is on (unlinked mode only).
+	// Present only when Sync is on (unlinked mode only). Index 9 is a
+	// StaticField showing the auth help line; it's skipped in focus
+	// cycling and never read, so no symbolic name is defined for it.
 	cdIdxRemoteURL     = 6
 	cdIdxUsername      = 7
 	cdIdxAuth          = 8
-	cdIdxPassword      = 9
-	cdIdxAllowInsecure = 10
+	cdIdxPassword      = 10
+	cdIdxAllowInsecure = 11
 )
 
 var authOptions = []SelectOption{
@@ -290,10 +292,14 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		hasRemote := f.ItemCount() > cdIdxSync+1
 		switch {
 		case syncOn && !hasRemote:
+			authHelp := lipgloss.NewStyle().Foreground(syncTheme.Muted).Italic(true).Render(
+				"  Basic = password · Bearer = access token",
+			)
 			f.AppendItems(
 				FormItem{Label: "Remote URL", Field: newRemoteURLField("", syncTheme), Required: true},
 				FormItem{Label: "Username", Field: newUsernameField(""), Required: true},
 				FormItem{Label: "Auth", Field: newAuthField("")},
+				FormItem{Label: "", Field: NewStaticField(authHelp, nil)},
 				FormItem{Label: "Password", Field: newPasswordField(), Required: true},
 				FormItem{Label: "Allow insecure", Field: NewCheckboxField("", false)},
 			)
