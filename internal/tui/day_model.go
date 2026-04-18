@@ -11,14 +11,14 @@ import (
 type DayChangedMsg struct{ Day time.Time }
 
 type dayKeyMap struct {
-	ScrollUp   key.Binding
-	ScrollDown key.Binding
-	PrevDay    key.Binding
-	NextDay    key.Binding
+	ScrollUp    key.Binding
+	ScrollDown  key.Binding
+	PrevDay     key.Binding
+	NextDay     key.Binding
 	PrevBracket key.Binding
 	NextBracket key.Binding
-	Today      key.Binding
-	Select     key.Binding
+	Today       key.Binding
+	Select      key.Binding
 }
 
 func (k dayKeyMap) ShortHelp() []key.Binding {
@@ -40,14 +40,14 @@ func (k dayKeyMap) FullHelp() [][]key.Binding {
 
 func defaultDayKeys() dayKeyMap {
 	return dayKeyMap{
-		ScrollUp:   key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "scroll up")),
-		ScrollDown: key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "scroll down")),
-		PrevDay:    key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "previous")),
-		NextDay:    key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next")),
+		ScrollUp:    key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "scroll up")),
+		ScrollDown:  key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "scroll down")),
+		PrevDay:     key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "previous")),
+		NextDay:     key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next")),
 		PrevBracket: key.NewBinding(key.WithKeys("[", "pgup"), key.WithHelp("[", "previous day")),
 		NextBracket: key.NewBinding(key.WithKeys("]", "pgdown"), key.WithHelp("]", "next day")),
-		Today:      key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "today")),
-		Select:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select day")),
+		Today:       key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "today")),
+		Select:      key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select day")),
 	}
 }
 

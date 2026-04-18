@@ -414,14 +414,14 @@ func (e *Engine) pull(ctx context.Context, client *caldav.Client, calendarID int
 	tombstonedPaths := make(map[string]bool, len(tombstones))
 	tombstonedUIDs := make(map[string]bool, len(tombstones))
 	for _, ts := range tombstones {
-			if ts.RemoteUrl != "" {
-				remotePath, hrefErr := client.CanonicalObjectRef(remoteURL, ts.RemoteUrl)
-				if hrefErr != nil {
-					e.logger.Warn("ignore invalid tombstone href", "calendar_id", calendarID, "uid", ts.Uid, "remote_url", ts.RemoteUrl, "error", hrefErr)
-					continue
-				}
-				tombstonedPaths[remotePath] = true
+		if ts.RemoteUrl != "" {
+			remotePath, hrefErr := client.CanonicalObjectRef(remoteURL, ts.RemoteUrl)
+			if hrefErr != nil {
+				e.logger.Warn("ignore invalid tombstone href", "calendar_id", calendarID, "uid", ts.Uid, "remote_url", ts.RemoteUrl, "error", hrefErr)
+				continue
 			}
+			tombstonedPaths[remotePath] = true
+		}
 		if ts.Uid != "" {
 			tombstonedUIDs[ts.Uid] = true
 		}
@@ -716,7 +716,7 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 			Status: ev.Status, Transp: ev.Transp, Sequence: ev.Sequence,
 			Priority: ev.Priority, Class: ev.Class, URL: ev.URL,
 			ConferenceURI: ev.ConferenceURI,
-			Categories: ev.Categories, ExDates: ev.ExDates, RDates: ev.RDates,
+			Categories:    ev.Categories, ExDates: ev.ExDates, RDates: ev.RDates,
 			RecurrenceID: ev.RecurrenceID, Geo: ev.Geo,
 			DurationValue: ev.DurationValue, DtStamp: ev.DtStamp,
 		})

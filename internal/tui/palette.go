@@ -204,6 +204,7 @@ func (m *PaletteModel) refilter() {
 //   - Word-start matches (after space/punct/case boundary) score higher.
 //   - Contiguous matches score higher.
 //   - Earlier matches score slightly higher.
+//
 // Returns (score, true) on match, (0, false) otherwise.
 func fuzzyScore(query, hay string) (int, bool) {
 	if query == "" {

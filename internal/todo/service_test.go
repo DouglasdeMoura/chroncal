@@ -156,11 +156,11 @@ func TestTodoService_Update(t *testing.T) {
 	created := createTodo(t, svc)
 
 	updated, err := svc.Update(ctx, created.ID, UpdateParams{
-		Summary:    "Updated Summary",
-		DueDate:    created.DueDate,
-		Status:     "IN-PROCESS",
-		CalendarID: 1,
-		Class:      "PRIVATE",
+		Summary:         "Updated Summary",
+		DueDate:         created.DueDate,
+		Status:          "IN-PROCESS",
+		CalendarID:      1,
+		Class:           "PRIVATE",
 		PercentComplete: 50,
 	})
 	if err != nil {

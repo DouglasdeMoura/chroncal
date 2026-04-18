@@ -216,7 +216,6 @@ func NewTimezonePickerModel(current string, theme Theme) TimezonePickerModel {
 	return m
 }
 
-
 func (m *TimezonePickerModel) applyFilter() {
 	query := strings.ToLower(strings.TrimSpace(m.filter.Value()))
 	if query == "" {

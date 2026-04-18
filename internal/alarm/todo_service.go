@@ -75,7 +75,7 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 					continue
 				}
 
-			triggers := buildRepeatTriggers(triggerAt, a.Repeat, a.Duration)
+				triggers := buildRepeatTriggers(triggerAt, a.Repeat, a.Duration)
 
 				// Use instance time for the todo's due/start date
 				instanceTodo := t

@@ -12,10 +12,10 @@ import (
 
 func TestParseOffsetTrigger_RoundTrip(t *testing.T) {
 	cases := []struct {
-		name  string
-		in    string
-		qty   int
-		unit  int // index into alarmUnits
+		name   string
+		in     string
+		qty    int
+		unit   int // index into alarmUnits
 		before bool
 	}{
 		{"minutes before", "-PT15M", 15, 0, true},
@@ -224,4 +224,3 @@ func TestEventForm_EnterOnAlarmsOpensEditor(t *testing.T) {
 	assert.NotNil(t, cmd)
 	assert.True(t, m.alarmEditorOpen)
 }
-

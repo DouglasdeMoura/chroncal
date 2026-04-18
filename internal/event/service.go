@@ -1112,7 +1112,6 @@ func fromStorageSlice(rows []storage.Event) []Event {
 	return events
 }
 
-
 func (s *Service) populateSingleCategories(ctx context.Context, e *Event) {
 	cats, err := s.ListCategories(ctx, e.ID)
 	if err != nil {

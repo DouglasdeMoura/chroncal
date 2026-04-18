@@ -402,7 +402,6 @@ func TestLibical_Roundtrip_3_Todo(t *testing.T) {
 	assertTodosMatch(t, "3.ics", result.Todos, reimported.Todos)
 }
 
-
 // TestAttendeeParamsRoundtrip verifies that all 8 RFC 5545 ATTENDEE parameters
 // survive import → DB persist → DB load → export → reimport.
 func TestAttendeeParamsRoundtrip(t *testing.T) {

@@ -30,7 +30,7 @@ type CalendarListItem struct {
 
 type calendarListKeyMap struct {
 	Up, Down, Tab, ShiftTab key.Binding
-	Toggle, Add key.Binding
+	Toggle, Add             key.Binding
 }
 
 func defaultCalendarListKeys() calendarListKeyMap {
@@ -39,8 +39,8 @@ func defaultCalendarListKeys() calendarListKeyMap {
 		Down:     key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
 		Tab:      key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next")),
 		ShiftTab: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev")),
-		Toggle: key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "toggle visibility")),
-		Add:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "add calendar")),
+		Toggle:   key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "toggle visibility")),
+		Add:      key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "add calendar")),
 	}
 }
 

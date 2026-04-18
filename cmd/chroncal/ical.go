@@ -97,7 +97,7 @@ again updates existing items instead of blindly duplicating them.`,
 					Status: e.Status, Transp: e.Transp, Sequence: e.Sequence,
 					Priority: e.Priority, Class: e.Class, URL: e.URL,
 					ConferenceURI: e.ConferenceURI,
-					Categories: e.Categories, ExDates: e.ExDates, RDates: e.RDates,
+					Categories:    e.Categories, ExDates: e.ExDates, RDates: e.RDates,
 					RecurrenceID: e.RecurrenceID, Geo: e.Geo,
 					DurationValue: e.DurationValue, DtStamp: e.DtStamp,
 				})

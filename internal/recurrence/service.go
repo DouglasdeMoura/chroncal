@@ -274,7 +274,6 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 	return results, nil
 }
 
-
 func attendeeFromStorage(r storage.EventAttendee) model.Attendee {
 	return model.Attendee{
 		ID:            r.ID,

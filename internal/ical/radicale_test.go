@@ -1217,11 +1217,11 @@ func TestRadicale_VALARM_OnTodo(t *testing.T) {
 	calURL := radicaleCalendar(t)
 
 	original := todo.Todo{
-		UID:     "rad-vtodo-alarm",
-		Summary: "Todo with alarm",
-		DueDate: "2026-04-15T17:00:00Z",
-		Status:  "NEEDS-ACTION",
-		DtStamp: "2026-04-01T00:00:00Z",
+		UID:       "rad-vtodo-alarm",
+		Summary:   "Todo with alarm",
+		DueDate:   "2026-04-15T17:00:00Z",
+		Status:    "NEEDS-ACTION",
+		DtStamp:   "2026-04-01T00:00:00Z",
 		CreatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
 		UpdatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
 		Alarms: []model.Alarm{
@@ -1595,11 +1595,11 @@ func TestRadicale_VTODO_WithAttendees(t *testing.T) {
 	calURL := radicaleCalendar(t)
 
 	original := todo.Todo{
-		UID:     "rad-vtodo-attendees",
-		Summary: "Todo with attendees",
-		DueDate: "2026-04-15T17:00:00Z",
-		Status:  "NEEDS-ACTION",
-		DtStamp: "2026-04-01T00:00:00Z",
+		UID:       "rad-vtodo-attendees",
+		Summary:   "Todo with attendees",
+		DueDate:   "2026-04-15T17:00:00Z",
+		Status:    "NEEDS-ACTION",
+		DtStamp:   "2026-04-01T00:00:00Z",
 		CreatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
 		UpdatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
 		Attendees: []model.Attendee{

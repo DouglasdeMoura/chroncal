@@ -337,7 +337,6 @@ Use "chroncal calendar list" first if you need to confirm the ID.`,
 	return cmd
 }
 
-
 func findCalendarByRef(cals []calendarpkg.Calendar, ref string) (calendarpkg.Calendar, error) {
 	if id, err := strconv.ParseInt(ref, 10, 64); err == nil {
 		for _, cal := range cals {

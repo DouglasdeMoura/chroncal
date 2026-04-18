@@ -7,16 +7,16 @@ import (
 )
 
 type Alarm struct {
-	ID           int64
-	EventID      int64
-	UID          string // globally unique per RFC 9074
-	Action       string // DISPLAY, EMAIL, AUDIO
-	TriggerValue string // e.g. "-PT15M" or absolute RFC 3339
-	Description  string
-	Summary      string // RFC 5545 SUMMARY (required for EMAIL action)
-	Repeat       int    // number of additional repetitions
-	Duration     string // repeat interval (RFC 5545 duration, e.g. PT5M)
-	Related      string // trigger anchor: START or END
+	ID            int64
+	EventID       int64
+	UID           string // globally unique per RFC 9074
+	Action        string // DISPLAY, EMAIL, AUDIO
+	TriggerValue  string // e.g. "-PT15M" or absolute RFC 3339
+	Description   string
+	Summary       string // RFC 5545 SUMMARY (required for EMAIL action)
+	Repeat        int    // number of additional repetitions
+	Duration      string // repeat interval (RFC 5545 duration, e.g. PT5M)
+	Related       string // trigger anchor: START or END
 	Acknowledged  string // RFC 9074 ACKNOWLEDGED UTC timestamp (round-trip only, does not affect local alarm_state)
 	AttachURI     string // optional sound URI for AUDIO alarms (RFC 5545 Section 3.6.6)
 	AttachFmtType string // FMTTYPE param for ATTACH (e.g. "audio/basic")
@@ -63,9 +63,9 @@ func triggerValuesEqual(a, b string) bool {
 
 func parseTriggerTime(s string) (time.Time, bool) {
 	for _, layout := range []string{
-		"20060102T150405Z",  // iCal UTC
-		time.RFC3339,        // RFC 3339
-		"20060102T150405",   // iCal floating (no timezone)
+		"20060102T150405Z", // iCal UTC
+		time.RFC3339,       // RFC 3339
+		"20060102T150405",  // iCal floating (no timezone)
 	} {
 		if t, err := time.Parse(layout, s); err == nil {
 			return t, true

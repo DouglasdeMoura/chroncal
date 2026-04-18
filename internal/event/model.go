@@ -22,7 +22,7 @@ type Event struct {
 	Status         string // TENTATIVE, CONFIRMED, CANCELLED
 	Transp         string // OPAQUE, TRANSPARENT
 	Sequence       int64
-	Priority       int64 // 0-9
+	Priority       int64  // 0-9
 	Class          string // PUBLIC, PRIVATE, CONFIDENTIAL
 	URL            string
 	ConferenceURI  string // RFC 7986 CONFERENCE property URI

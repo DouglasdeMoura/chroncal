@@ -309,7 +309,6 @@ func renderWeekdayRow(anchor time.Time, cellWs []int) string {
 	return b.String()
 }
 
-
 func findCellIndex(anchor, d time.Time) (int, int) {
 	target := d.Local().Format("2006-01-02")
 	for week := range 6 {

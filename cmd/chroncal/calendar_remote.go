@@ -216,8 +216,8 @@ func deleteCalendarWithCleanup(ctx context.Context, a *app.App, id int64) error 
 	}
 
 	var (
-		account      storage.Account
-		hasAccount   bool
+		account       storage.Account
+		hasAccount    bool
 		hiddenAccount bool
 	)
 	if cal.AccountID != 0 {
