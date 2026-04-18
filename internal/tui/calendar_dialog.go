@@ -72,17 +72,18 @@ var paletteSwatches = []string{
 	"#111111", "#AAAAAA",
 }
 
-// Form field indices. Local fields are always present; remote fields exist
-// only when the calendar is not already linked to a remote account. Index
-// 5 is a static separator or status line (skipped during focus cycling).
+// Form field indices. Local fields are always present. Index 5 is the Sync
+// toggle in unlinked mode or a read-only status line in linked mode. The
+// remote fields (6..10) exist only when Sync is on.
 const (
 	cdIdxName        = 0
 	cdIdxPalette     = 1
 	cdIdxHex         = 2
 	cdIdxDescription = 3
 	cdIdxEmail       = 4
+	cdIdxSync        = 5
 
-	// Present only when !linked.
+	// Present only when Sync is on (unlinked mode only).
 	cdIdxRemoteURL     = 6
 	cdIdxUsername      = 7
 	cdIdxAuth          = 8
@@ -186,15 +187,9 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 			Field: NewStaticField(summary, nil),
 		})
 	} else {
-		separator := lipgloss.NewStyle().Foreground(theme.Muted).Render("── Remote (CalDAV, optional) ──")
-		items = append(items,
-			FormItem{Label: "", Field: NewStaticField(separator, nil)},
-			FormItem{Label: "Remote URL", Field: newRemoteURLField(params.RemoteURL, theme)},
-			FormItem{Label: "Username", Field: newUsernameField(params.RemoteUsername)},
-			FormItem{Label: "Auth", Field: newAuthField(params.RemoteAuthType)},
-			FormItem{Label: "Password", Field: newPasswordField()},
-			FormItem{Label: "Allow insecure", Field: NewCheckboxField("", false)},
-		)
+		sync := NewCheckboxField("", false)
+		sync.SetContent(lipgloss.NewStyle().Foreground(theme.Muted).Render("Enable CalDAV sync"))
+		items = append(items, FormItem{Label: "Sync", Field: sync})
 	}
 
 	form := NewForm("Save", formStyles, items...)
@@ -215,29 +210,31 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 			OwnerEmail:  emailVal,
 		}
 
-		if !linked {
+		if !linked && syncEnabled(f) {
 			urlVal := strings.TrimSpace(f.Field(cdIdxRemoteURL).(*TextField).Value())
-			if urlVal != "" {
-				userVal := strings.TrimSpace(f.Field(cdIdxUsername).(*TextField).Value())
-				authVal := f.Field(cdIdxAuth).(*SelectField).Value()
-				passVal := f.Field(cdIdxPassword).(*TextField).Value()
-				allowIns := f.Field(cdIdxAllowInsecure).(*CheckboxField).Checked()
+			userVal := strings.TrimSpace(f.Field(cdIdxUsername).(*TextField).Value())
+			authVal := f.Field(cdIdxAuth).(*SelectField).Value()
+			passVal := f.Field(cdIdxPassword).(*TextField).Value()
+			allowIns := f.Field(cdIdxAllowInsecure).(*CheckboxField).Checked()
 
-				if userVal == "" {
-					f.SetError(cdIdxUsername, "Username is required when a remote URL is set")
-					return nil
-				}
-				if authVal == "basic" && passVal == "" {
-					f.SetError(cdIdxPassword, "Password is required for basic auth")
-					return nil
-				}
-
-				msg.RemoteURL = urlVal
-				msg.Username = userVal
-				msg.AuthType = authVal
-				msg.Password = passVal
-				msg.AllowInsecure = allowIns
+			if urlVal == "" {
+				f.SetError(cdIdxRemoteURL, "Remote URL is required when Sync is on")
+				return nil
 			}
+			if userVal == "" {
+				f.SetError(cdIdxUsername, "Username is required when Sync is on")
+				return nil
+			}
+			if authVal == "basic" && passVal == "" {
+				f.SetError(cdIdxPassword, "Password is required for basic auth")
+				return nil
+			}
+
+			msg.RemoteURL = urlVal
+			msg.Username = userVal
+			msg.AuthType = authVal
+			msg.Password = passVal
+			msg.AllowInsecure = allowIns
 		}
 
 		return func() tea.Msg { return msg }
@@ -267,6 +264,7 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		})
 	}
 
+	syncTheme := theme
 	form.OnRebuild(func(f *Form) {
 		pal := f.Field(cdIdxPalette).(*PaletteField)
 		hf := f.Field(cdIdxHex).(*HexColorField)
@@ -278,12 +276,44 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		} else if f.Focused() == cdIdxHex {
 			pal.SetSelected(paletteIndexFor(hf.Value()))
 		}
-
 		hf.SetPaletteIdx(pal.Selected())
+
+		// Toggle remote fields on/off in lockstep with the Sync checkbox.
+		if linked {
+			return
+		}
+		syncOn := syncEnabled(f)
+		hasRemote := f.ItemCount() > cdIdxSync+1
+		switch {
+		case syncOn && !hasRemote:
+			f.AppendItems(
+				FormItem{Label: "Remote URL", Field: newRemoteURLField("", syncTheme), Required: true},
+				FormItem{Label: "Username", Field: newUsernameField(""), Required: true},
+				FormItem{Label: "Auth", Field: newAuthField("")},
+				FormItem{Label: "Password", Field: newPasswordField()},
+				FormItem{Label: "Allow insecure", Field: NewCheckboxField("", false)},
+			)
+		case !syncOn && hasRemote:
+			f.RemoveItems(cdIdxSync + 1)
+			f.ClearError()
+		}
 	})
 	m.form = form
 
 	return m
+}
+
+// syncEnabled reports whether the Sync checkbox is currently on. Returns
+// false in linked mode (where the checkbox doesn't exist).
+func syncEnabled(f *Form) bool {
+	if f.ItemCount() <= cdIdxSync {
+		return false
+	}
+	cb, ok := f.Field(cdIdxSync).(*CheckboxField)
+	if !ok {
+		return false
+	}
+	return cb.Checked()
 }
 
 func remoteStatusLine(params CalendarDialogParams, theme Theme) string {

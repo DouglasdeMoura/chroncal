@@ -663,6 +663,10 @@ func (f *CheckboxField) Checked() bool { return f.checked }
 
 func (f *CheckboxField) SetChecked(v bool) { f.checked = v }
 
+// SetContent sets the text rendered to the right of the checkbox glyph.
+// When empty (default), only the glyph is shown.
+func (f *CheckboxField) SetContent(v string) { f.content = v }
+
 // SetDisabledWhen registers a function that is evaluated on every Toggle and
 // View call. When it returns disabled=true the toggle is inert and View
 // renders the returned text instead of the normal [✓]/[ ] label.
