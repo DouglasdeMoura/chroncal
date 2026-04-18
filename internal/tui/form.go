@@ -1415,7 +1415,8 @@ const (
 // FormStyles controls how the Form renders labels, errors, and buttons.
 type FormStyles struct {
 	Label           lipgloss.Style
-	ShowFocusMarker bool // when true, render focus glyph before the focused field
+	Required        lipgloss.Style // style for the "*" marker on required fields
+	ShowFocusMarker bool           // when true, render focus glyph before the focused field
 	Error           lipgloss.Style
 	LabelLayout     LabelLayout  // default layout for all fields
 	Buttons         ButtonStyles // styles for all button variants
@@ -1427,9 +1428,10 @@ type FormStyles struct {
 // starting point.
 func DefaultFormStyles() FormStyles {
 	return FormStyles{
-		Label:   lipgloss.NewStyle().Faint(true),
-		Error:   lipgloss.NewStyle().Foreground(lipgloss.Color("9")),
-		Buttons: DefaultButtonStyles(),
+		Label:    lipgloss.NewStyle().Faint(true),
+		Required: lipgloss.NewStyle().Foreground(lipgloss.Color("9")),
+		Error:    lipgloss.NewStyle().Foreground(lipgloss.Color("9")),
+		Buttons:  DefaultButtonStyles(),
 	}
 }
 
@@ -1543,6 +1545,7 @@ func (f Form) View() string {
 	// one column of space before the field; shorter labels are padded
 	// to match.
 	maxLabelLen := 0
+	anyRequired := false
 	for _, item := range f.items {
 		if _, isStatic := item.Field.(*StaticField); isStatic {
 			continue
@@ -1554,6 +1557,15 @@ func (f Form) View() string {
 		if layout != LabelTop && len(item.Label) > maxLabelLen {
 			maxLabelLen = len(item.Label)
 		}
+		if item.Required {
+			anyRequired = true
+		}
+	}
+	// Reserve a trailing column for the "*" suffix so required and
+	// optional rows align to the same field column.
+	requiredPad := 0
+	if anyRequired {
+		requiredPad = 1
 	}
 
 	for i, item := range f.items {
@@ -1584,13 +1596,13 @@ func (f Form) View() string {
 		case (layout == LabelInline || layout == LabelInlineRight) && item.Label == "":
 			row = lipgloss.JoinHorizontal(lipgloss.Top, marker, field)
 		case layout == LabelInline:
-			label := mouseMark(target, f.styles.Label.Width(maxLabelLen).Render(item.Label))
+			label := mouseMark(target, f.renderInlineLabel(item, maxLabelLen, requiredPad, false))
 			row = lipgloss.JoinHorizontal(lipgloss.Top, label+" "+marker, field)
 		case layout == LabelInlineRight:
-			label := mouseMark(target, f.styles.Label.Width(maxLabelLen).Align(lipgloss.Right).Render(item.Label))
+			label := mouseMark(target, f.renderInlineLabel(item, maxLabelLen, requiredPad, true))
 			row = lipgloss.JoinHorizontal(lipgloss.Top, label+" "+marker, field)
 		default: // LabelTop
-			label := mouseMark(target, f.styles.Label.Render(item.Label))
+			label := mouseMark(target, f.renderTopLabel(item))
 			row = label + "\n" + lipgloss.JoinHorizontal(lipgloss.Top, marker, field)
 		}
 
@@ -1721,6 +1733,7 @@ func (f *Form) applyFieldWidths() {
 
 	// Compute the widest inline label (same logic as View).
 	maxLabelLen := 0
+	anyRequired := false
 	for _, item := range f.items {
 		if _, isStatic := item.Field.(*StaticField); isStatic {
 			continue
@@ -1732,6 +1745,13 @@ func (f *Form) applyFieldWidths() {
 		if layout != LabelTop && len(item.Label) > maxLabelLen {
 			maxLabelLen = len(item.Label)
 		}
+		if item.Required {
+			anyRequired = true
+		}
+	}
+	requiredPad := 0
+	if anyRequired {
+		requiredPad = 1
 	}
 
 	for _, item := range f.items {
@@ -1746,8 +1766,8 @@ func (f *Form) applyFieldWidths() {
 
 		w := f.width - 1 // reserve 1 col so textinput cursor doesn't overflow
 		if layout == LabelInline || layout == LabelInlineRight {
-			// Subtract: label column + " " gap + marker
-			w -= maxLabelLen + 1
+			// Subtract: label column + "*" pad + " " gap + marker
+			w -= maxLabelLen + requiredPad + 1
 			if showMarker {
 				w -= 2 // "> " or "  "
 			}
@@ -2070,6 +2090,33 @@ func (f Form) focusMarkerFor(focused, showMarker bool) string {
 		return f.styles.Label.Render(Glyphs["focus"]) + " "
 	}
 	return "  "
+}
+
+// renderInlineLabel returns the label text for an inline row, padded to
+// maxLabelLen+requiredPad so all rows share a column, with the required
+// "*" marker rendered in its own style on required rows.
+func (f Form) renderInlineLabel(item FormItem, maxLabelLen, requiredPad int, rightAlign bool) string {
+	labelText := f.styles.Label.Render(item.Label)
+	suffix := strings.Repeat(" ", requiredPad)
+	if item.Required && requiredPad > 0 {
+		suffix = f.styles.Required.Render("*")
+	}
+	composed := labelText + suffix
+	style := lipgloss.NewStyle().Width(maxLabelLen + requiredPad)
+	if rightAlign {
+		style = style.Align(lipgloss.Right)
+	}
+	return style.Render(composed)
+}
+
+// renderTopLabel returns the label text for a top-layout row with the
+// required marker appended inline (no column padding needed).
+func (f Form) renderTopLabel(item FormItem) string {
+	labelText := f.styles.Label.Render(item.Label)
+	if item.Required {
+		return labelText + f.styles.Required.Render("*")
+	}
+	return labelText
 }
 
 // LayoutPtr returns a pointer to a LabelLayout value, for use in
