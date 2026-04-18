@@ -49,12 +49,35 @@ chroncal/
 ## Common commands
 
 ```bash
-make build      # Build the chroncal binary
-make test       # Run all tests (disables caching)
-make generate   # Regenerate Go code from SQL queries
-make lint       # Run go vet
-make clean      # Remove binary
+make build        # Build the chroncal binary
+make test         # Run all tests (disables caching)
+make test-race    # Run tests with the race detector (matches CI)
+make generate     # Regenerate Go code from SQL queries
+make fmt          # gofmt -w .
+make fmt-check    # Fail if any file needs gofmt
+make vet          # go vet ./...
+make lint         # golangci-lint run ./...
+make staticcheck  # staticcheck ./...
+make vulncheck    # govulncheck ./...
+make tidy-check   # Fail if go.mod/go.sum would change under `go mod tidy`
+make check        # fmt-check + vet + lint + vulncheck + test-race
+make tools        # Install govulncheck and staticcheck
+make clean        # Remove binary
 ```
+
+## Git hooks
+
+This repo ships a [lefthook](https://lefthook.dev) config that runs the
+fast quality checks on every commit and the race-enabled test suite on
+every push.
+
+```bash
+# one-time install per clone
+go install github.com/evilmartians/lefthook@latest
+lefthook install
+```
+
+Skip a single run with `LEFTHOOK=0 git commit ...` when you need to.
 
 ## Testing
 

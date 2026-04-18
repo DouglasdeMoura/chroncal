@@ -1,0 +1,37 @@
+# Git hooks managed by lefthook (https://lefthook.dev).
+#
+# Install once per clone:   lefthook install
+# Skip a single run:        LEFTHOOK=0 git commit ...
+#
+# Pre-commit runs the fast checks against the staged Go files; pre-push
+# runs the race-enabled test suite so remote branches stay green.
+
+pre-commit:
+  parallel: true
+  commands:
+    gofmt:
+      tags: fmt
+      glob: "*.go"
+      run: |
+        bad=$(gofmt -l {staged_files})
+        if [ -n "$bad" ]; then
+          echo "gofmt diffs:"
+          echo "$bad"
+          echo "run 'make fmt' to fix"
+          exit 1
+        fi
+
+    vet:
+      tags: lint
+      glob: "*.go"
+      run: go vet ./...
+
+    lint:
+      tags: lint
+      glob: "*.go"
+      run: golangci-lint run ./...
+
+pre-push:
+  commands:
+    test-race:
+      run: go test -race -count=1 ./...
