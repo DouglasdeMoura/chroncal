@@ -999,8 +999,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return calendarMutationDoneMsg{err: storeErr}
 				}
 				cred := auth.Credential{Username: saved.Username}
-				if calendar.NormalizeAuthType(saved.AuthType) == "basic" {
+				switch calendar.NormalizeAuthType(saved.AuthType) {
+				case "basic":
 					cred.Password = saved.Password
+				case "bearer":
+					cred.AccessToken = saved.Password
 				}
 				if cerr := m.app.Calendars.Connect(ctx, cal, calendar.RemoteLink{
 					RemoteURL:     saved.RemoteURL,

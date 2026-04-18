@@ -225,8 +225,12 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 				f.SetError(cdIdxUsername, "Username is required when Sync is on")
 				return nil
 			}
-			if authVal == "basic" && passVal == "" {
-				f.SetError(cdIdxPassword, "Password is required for basic auth")
+			if passVal == "" {
+				if authVal == "bearer" {
+					f.SetError(cdIdxPassword, "Access token is required for bearer auth")
+				} else {
+					f.SetError(cdIdxPassword, "Password is required for basic auth")
+				}
 				return nil
 			}
 
@@ -290,12 +294,26 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 				FormItem{Label: "Remote URL", Field: newRemoteURLField("", syncTheme), Required: true},
 				FormItem{Label: "Username", Field: newUsernameField(""), Required: true},
 				FormItem{Label: "Auth", Field: newAuthField("")},
-				FormItem{Label: "Password", Field: newPasswordField()},
+				FormItem{Label: "Password", Field: newPasswordField(), Required: true},
 				FormItem{Label: "Allow insecure", Field: NewCheckboxField("", false)},
 			)
 		case !syncOn && hasRemote:
 			f.RemoveItems(cdIdxSync + 1)
 			f.ClearError()
+		}
+
+		// Keep the Password row's label and placeholder in sync with the
+		// selected auth type: basic -> password, bearer -> access token.
+		if syncOn && f.ItemCount() > cdIdxPassword {
+			authVal := f.Field(cdIdxAuth).(*SelectField).Value()
+			pw := f.Field(cdIdxPassword).(*TextField)
+			if authVal == "bearer" {
+				f.SetItemLabel(cdIdxPassword, "Token")
+				pw.SetPlaceholder("paste your API token")
+			} else {
+				f.SetItemLabel(cdIdxPassword, "Password")
+				pw.SetPlaceholder("your password")
+			}
 		}
 	})
 	m.form = form
@@ -352,7 +370,7 @@ func newAuthField(authType string) *SelectField {
 }
 
 func newPasswordField() *TextField {
-	f := NewTextField("(basic auth only)")
+	f := NewTextField("your password")
 	f.SetCharLimit(256)
 	f.SetEchoPassword(true)
 	return f
