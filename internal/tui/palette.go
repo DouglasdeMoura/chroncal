@@ -1,11 +1,14 @@
 package tui
 
 import (
+	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"unicode"
 
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
@@ -16,12 +19,18 @@ import (
 // Action is invoked (and its returned tea.Msg dispatched) when the user
 // selects the command. Returning nil is allowed for commands that have
 // no follow-up message.
+//
+// PrefixChar is an optional 1-cell leading marker (e.g. "●" for events).
+// It's rendered in PrefixColor — kept separate from the Title so the
+// fuzzy matcher and the selected-row highlight both work cleanly.
 type PaletteCommand struct {
-	ID       string
-	Title    string
-	Category string
-	Shortcut string
-	Action   func() tea.Msg
+	ID          string
+	Title       string
+	Category    string
+	Shortcut    string
+	PrefixChar  string
+	PrefixColor string
+	Action      func() tea.Msg
 }
 
 // PaletteSelectedMsg is emitted when the user picks a command.
@@ -32,6 +41,19 @@ type PaletteSelectedMsg struct {
 
 // PaletteClosedMsg is emitted when the user dismisses the palette.
 type PaletteClosedMsg struct{}
+
+// PaletteSearchFunc returns a tea.Cmd that resolves asynchronously into
+// PaletteSearchResultsMsg. The palette invokes it whenever the query
+// changes so callers can populate dynamic results (e.g., event matches).
+type PaletteSearchFunc func(query string) tea.Cmd
+
+// PaletteSearchResultsMsg delivers async search results back to the
+// palette. Query is the input that produced Items; stale results (whose
+// Query no longer matches the current input) are discarded.
+type PaletteSearchResultsMsg struct {
+	Query string
+	Items []PaletteCommand
+}
 
 type paletteKeyMap struct {
 	Up     key.Binding
@@ -53,31 +75,70 @@ func defaultPaletteKeys() paletteKeyMap {
 	}
 }
 
+// Maximum number of rows visible in the list area. The dialog reserves
+// space for this many rows so the prompt stays anchored as the filter
+// changes; the underlying list handles paging when matches exceed this.
+const palettelistMaxRows = 10
+
+// paletteListItem wraps PaletteCommand so it satisfies list.Item.
+type paletteListItem struct{ cmd PaletteCommand }
+
+func (i paletteListItem) FilterValue() string { return i.cmd.Title }
+
 // PaletteModel renders a centered, fuzzy-filterable list of commands.
+//
+// commands are the static entries seeded at construction (navigation,
+// view-mode switches, etc.). dynamic holds async results from searchFn
+// and is merged into filtered on every refilter. The bubbles list owns
+// cursor state and scroll/paging; we drive it explicitly from our own
+// keymap so it never fights the textinput for keystrokes.
 type PaletteModel struct {
 	input    textinput.Model
+	list     list.Model
 	commands []PaletteCommand
-	filtered []int // indexes into commands, sorted by score desc
-	selected int
+	dynamic  []PaletteCommand
+	dynQuery string
+	searchFn PaletteSearchFunc
+	filtered []PaletteCommand
 	keys     paletteKeyMap
 	theme    Theme
 	width    int
 	height   int
+	ready    bool
 }
 
 // NewPaletteModel builds a palette seeded with the given commands.
-func NewPaletteModel(commands []PaletteCommand, theme Theme) (PaletteModel, tea.Cmd) {
+// searchFn, if non-nil, is invoked on every query change to fetch
+// additional entries asynchronously (e.g., matching events).
+func NewPaletteModel(commands []PaletteCommand, theme Theme, searchFn PaletteSearchFunc) (PaletteModel, tea.Cmd) {
 	in := textinput.New()
 	in.Placeholder = "Type to search…"
 	in.CharLimit = 100
 	in.Prompt = "› "
 	cmd := in.Focus()
 
+	l := list.New(nil, paletteDelegate{theme: theme}, 0, 0)
+	l.SetShowTitle(false)
+	l.SetShowFilter(false)
+	l.SetShowStatusBar(false)
+	l.SetShowPagination(false)
+	l.SetShowHelp(false)
+	l.SetFilteringEnabled(false)
+	// Disable list's own keybindings — the palette routes navigation
+	// explicitly so the textinput owns every other keypress.
+	l.KeyMap = list.KeyMap{}
+	// The empty-state string is formed as "No <plural>." — reuse the
+	// same wording as the rest of the TUI's search affordances.
+	l.SetStatusBarItemName("match", "matches")
+
 	m := PaletteModel{
 		input:    in,
+		list:     l,
 		commands: commands,
+		searchFn: searchFn,
 		keys:     defaultPaletteKeys(),
 		theme:    theme,
+		ready:    true,
 	}
 	m.refilter()
 	return m, cmd
@@ -85,13 +146,22 @@ func NewPaletteModel(commands []PaletteCommand, theme Theme) (PaletteModel, tea.
 
 // SetSize stores the available screen dimensions. The palette sizes itself
 // against this when rendering.
+//
+// A zero-value PaletteModel is a valid target (the app calls SetSize on
+// every resize whether or not the palette is open); ready guards the
+// embedded list.Model, whose SetSize panics without a delegate.
 func (m PaletteModel) SetSize(w, h int) PaletteModel {
 	m.width = w
 	m.height = h
-	boxW, _ := m.boxDims()
-	// Account for border + padding + prompt.
+	if !m.ready {
+		return m
+	}
+	boxW, boxH := m.boxDims()
 	inputW := max(boxW-6, 10)
 	m.input.SetWidth(inputW)
+	listW := max(boxW-4, 10)
+	listH := max(boxH-6, 1)
+	m.list.SetSize(listW, listH)
 	return m
 }
 
@@ -100,13 +170,14 @@ func (m PaletteModel) BoxSize() (int, int) {
 	return lipgloss.Size(m.View())
 }
 
-// boxDims computes the target outer dimensions before rendering.
+// boxDims returns the palette's outer dimensions. Height is fixed
+// (independent of the filtered count) so the input prompt stays anchored
+// at the top of the dialog while the user types.
 func (m PaletteModel) boxDims() (int, int) {
 	w := min(60, max(m.width-4, 30))
-	// Prompt line + blank + up to 10 rows + footer.
-	rows := max(min(len(m.filtered), 10), 1)
-	h := rows + 6
-	if h > m.height-2 {
+	// border (2) + prompt (1) + sep (1) + list (max rows) + sep (1) + footer (1)
+	h := palettelistMaxRows + 6
+	if m.height > 0 && h > m.height-2 {
 		h = max(m.height-2, 6)
 	}
 	return w, h
@@ -122,6 +193,13 @@ func (m PaletteModel) SetCommands(commands []PaletteCommand) PaletteModel {
 // Update handles input events for the palette.
 func (m PaletteModel) Update(msg tea.Msg) (PaletteModel, tea.Cmd) {
 	switch msg := msg.(type) {
+	case PaletteSearchResultsMsg:
+		if msg.Query == strings.TrimSpace(m.input.Value()) {
+			m.dynamic = msg.Items
+			m.dynQuery = msg.Query
+			m.refilter()
+		}
+		return m, nil
 	case tea.KeyPressMsg:
 		switch {
 		case key.Matches(msg, m.keys.Close):
@@ -130,27 +208,25 @@ func (m PaletteModel) Update(msg tea.Msg) (PaletteModel, tea.Cmd) {
 			if len(m.filtered) == 0 {
 				return m, nil
 			}
-			picked := m.commands[m.filtered[m.selected]]
+			idx := m.list.Index()
+			if idx < 0 || idx >= len(m.filtered) {
+				return m, nil
+			}
+			picked := m.filtered[idx]
 			return m, func() tea.Msg {
 				return PaletteSelectedMsg{Action: picked.Action}
 			}
 		case key.Matches(msg, m.keys.Up):
-			if m.selected > 0 {
-				m.selected--
-			}
+			m.list.CursorUp()
 			return m, nil
 		case key.Matches(msg, m.keys.Down):
-			if m.selected < len(m.filtered)-1 {
-				m.selected++
-			}
+			m.list.CursorDown()
 			return m, nil
 		case key.Matches(msg, m.keys.PgUp):
-			m.selected = 0
+			m.list.GoToStart()
 			return m, nil
 		case key.Matches(msg, m.keys.PgDown):
-			if len(m.filtered) > 0 {
-				m.selected = len(m.filtered) - 1
-			}
+			m.list.GoToEnd()
 			return m, nil
 		}
 	}
@@ -159,31 +235,50 @@ func (m PaletteModel) Update(msg tea.Msg) (PaletteModel, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	if m.input.Value() != prev {
+		query := strings.TrimSpace(m.input.Value())
+		if query != m.dynQuery {
+			m.dynamic = nil
+			m.dynQuery = ""
+		}
 		m.refilter()
+		if query != "" && m.searchFn != nil {
+			cmd = tea.Batch(cmd, m.searchFn(query))
+		}
 	}
 	return m, cmd
 }
 
-// refilter recomputes the filtered/sorted index list against the query.
+// refilter recomputes the merged, sorted list of commands and dynamic
+// search results against the current query.
+//
+// With an empty query we show the static command list only (dumping every
+// event on open would be noise). For a non-empty query, static commands
+// and dynamic items are scored together so a well-matching event can beat
+// a weakly-matching command.
 func (m *PaletteModel) refilter() {
 	query := strings.TrimSpace(m.input.Value())
 	type scored struct {
-		idx   int
+		cmd   PaletteCommand
 		score int
 	}
 	var matches []scored
 	if query == "" {
-		for i := range m.commands {
-			matches = append(matches, scored{idx: i, score: 0})
+		for _, c := range m.commands {
+			matches = append(matches, scored{cmd: c, score: 0})
 		}
 	} else {
-		for i, c := range m.commands {
+		pool := make([]PaletteCommand, 0, len(m.commands)+len(m.dynamic))
+		pool = append(pool, m.commands...)
+		if query == m.dynQuery {
+			pool = append(pool, m.dynamic...)
+		}
+		for _, c := range pool {
 			hay := c.Title
 			if c.Category != "" {
 				hay = c.Category + " " + c.Title
 			}
 			if s, ok := fuzzyScore(query, hay); ok {
-				matches = append(matches, scored{idx: i, score: s})
+				matches = append(matches, scored{cmd: c, score: s})
 			}
 		}
 		sort.SliceStable(matches, func(i, j int) bool {
@@ -191,11 +286,14 @@ func (m *PaletteModel) refilter() {
 		})
 	}
 	m.filtered = m.filtered[:0]
+	items := make([]list.Item, 0, len(matches))
 	for _, s := range matches {
-		m.filtered = append(m.filtered, s.idx)
+		m.filtered = append(m.filtered, s.cmd)
+		items = append(items, paletteListItem{cmd: s.cmd})
 	}
-	if m.selected >= len(m.filtered) {
-		m.selected = max(0, len(m.filtered)-1)
+	m.list.SetItems(items)
+	if m.list.Index() >= len(items) {
+		m.list.Select(max(0, len(items)-1))
 	}
 }
 
@@ -258,38 +356,18 @@ func (m PaletteModel) View() string {
 	if m.width <= 0 || m.height <= 0 {
 		return ""
 	}
-	boxW, boxH := m.boxDims()
+	boxW, _ := m.boxDims()
 	innerW := max(boxW-4, 20)
-	// rows area height = boxH - 2 border - 2 padding - 1 prompt - 1 footer
-	rowsH := max(boxH-6, 1)
 
 	promptLine := m.input.View()
-
-	// Build rows.
-	var rows []string
-	start := 0
-	if m.selected >= rowsH {
-		start = m.selected - rowsH + 1
-	}
-	end := min(start+rowsH, len(m.filtered))
-	for i := start; i < end; i++ {
-		cmdIdx := m.filtered[i]
-		c := m.commands[cmdIdx]
-		row := m.renderRow(c, innerW, i == m.selected)
-		rows = append(rows, row)
-	}
-	for len(rows) < rowsH {
-		rows = append(rows, strings.Repeat(" ", innerW))
-	}
-
 	footer := m.renderFooter(innerW)
-
 	sep := lipgloss.NewStyle().Faint(true).Render(strings.Repeat("─", innerW))
+
 	body := lipgloss.JoinVertical(
 		lipgloss.Left,
 		promptLine,
 		sep,
-		lipgloss.JoinVertical(lipgloss.Left, rows...),
+		m.list.View(),
 		sep,
 		footer,
 	)
@@ -301,30 +379,75 @@ func (m PaletteModel) View() string {
 		Render(body)
 }
 
-func (m PaletteModel) renderRow(c PaletteCommand, width int, selected bool) string {
-	title := c.Title
-	right := c.Shortcut
+// paletteDelegate renders one row per item. Each visual segment carries
+// the selected background so the highlight covers colored prefixes too —
+// rendering the row as a single style would let the prefix's ANSI reset
+// terminate the background mid-row.
+type paletteDelegate struct {
+	theme Theme
+}
 
-	// Layout: "  title   ...padding...   right"
+func (d paletteDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
+	li, ok := item.(paletteListItem)
+	if !ok {
+		return
+	}
+	width := m.Width()
+	if width <= 0 {
+		return
+	}
+	fmt.Fprint(w, renderPaletteRow(li.cmd, width, index == m.Index(), d.theme))
+}
+
+func (paletteDelegate) Height() int                             { return 1 }
+func (paletteDelegate) Spacing() int                            { return 0 }
+func (paletteDelegate) Update(tea.Msg, *list.Model) tea.Cmd { return nil }
+
+func renderPaletteRow(c PaletteCommand, width int, selected bool, theme Theme) string {
 	leftPad := "  "
-	avail := width - lipgloss.Width(leftPad) - lipgloss.Width(right)
+	leftPadW := lipgloss.Width(leftPad)
+
+	prefixChar := c.PrefixChar
+	prefixW := 0
+	if prefixChar != "" {
+		prefixW = lipgloss.Width(prefixChar) + 1 // +1 for trailing space
+	}
+
+	right := c.Shortcut
+	rightW := lipgloss.Width(right)
+
+	title := c.Title
+	avail := width - leftPadW - prefixW - rightW
 	if avail < lipgloss.Width(title)+1 {
-		// Truncate title to fit.
-		maxTitle := max(avail-1, 3)
-		title = truncate(title, maxTitle)
-		avail = width - lipgloss.Width(leftPad) - lipgloss.Width(right)
+		title = truncate(title, max(avail-1, 3))
 	}
 	gap := max(avail-lipgloss.Width(title), 1)
 
-	if right != "" {
-		right = lipgloss.NewStyle().Foreground(m.theme.TextDim).Render(right)
-	}
-	row := leftPad + title + strings.Repeat(" ", gap) + right
-	style := lipgloss.NewStyle().Width(width).Foreground(m.theme.Text)
+	// Apply the selected background to every segment so the highlight
+	// extends across the prefix's foreground color too.
+	base := lipgloss.NewStyle()
 	if selected {
-		style = style.Background(m.theme.Selected)
+		base = base.Background(theme.Selected)
 	}
-	return style.Render(row)
+
+	out := strings.Builder{}
+	out.WriteString(base.Render(leftPad))
+	if prefixChar != "" {
+		ps := base
+		if c.PrefixColor != "" {
+			ps = ps.Foreground(lipgloss.Color(c.PrefixColor))
+		} else {
+			ps = ps.Faint(true)
+		}
+		out.WriteString(ps.Render(prefixChar))
+		out.WriteString(base.Render(" "))
+	}
+	out.WriteString(base.Foreground(theme.Text).Render(title))
+	out.WriteString(base.Render(strings.Repeat(" ", gap)))
+	if right != "" {
+		out.WriteString(base.Foreground(theme.TextDim).Render(right))
+	}
+	return out.String()
 }
 
 func (m PaletteModel) renderFooter(width int) string {
@@ -343,9 +466,6 @@ func (m PaletteModel) renderFooter(width int) string {
 		segs = append(segs, keyStyle.Render(p[0])+" "+descStyle.Render(p[1]))
 	}
 	hint := strings.Join(segs, sep)
-	if len(m.filtered) == 0 && strings.TrimSpace(m.input.Value()) != "" {
-		hint = descStyle.Render("No matches.") + " " + hint
-	}
 	return lipgloss.NewStyle().
 		Width(width).
 		Align(lipgloss.Center).

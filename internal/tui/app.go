@@ -1456,7 +1456,7 @@ func (m Model) toggleSidebar() (tea.Model, tea.Cmd) {
 // openPalette initializes and shows the command palette.
 func (m Model) openPalette() (tea.Model, tea.Cmd) {
 	cmds := buildPaletteCommands(m)
-	palette, cmd := NewPaletteModel(cmds, m.theme)
+	palette, cmd := NewPaletteModel(cmds, m.theme, makePaletteSearchFunc(m))
 	palette = palette.SetSize(m.width, m.height)
 	m.palette = palette
 	m.paletteOpen = true
