@@ -295,13 +295,15 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 			authHelp := lipgloss.NewStyle().Foreground(syncTheme.Muted).Italic(true).Render(
 				"  Basic = password · Bearer = access token",
 			)
+			insecure := NewCheckboxField("", false)
+			insecure.SetContent(lipgloss.NewStyle().Foreground(syncTheme.Muted).Render("allow plain HTTP"))
 			f.AppendItems(
 				FormItem{Label: "Remote URL", Field: newRemoteURLField("", syncTheme), Required: true},
 				FormItem{Label: "Username", Field: newUsernameField(""), Required: true},
 				FormItem{Label: "Auth", Field: newAuthField("")},
 				FormItem{Label: "", Field: NewStaticField(authHelp, nil)},
 				FormItem{Label: "Password", Field: newPasswordField(), Required: true},
-				FormItem{Label: "Allow insecure", Field: NewCheckboxField("", false)},
+				FormItem{Label: "HTTP", Field: insecure},
 			)
 		case !syncOn && hasRemote:
 			f.RemoveItems(cdIdxSync + 1)
@@ -321,6 +323,30 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 				pw.SetPlaceholder("your password")
 			}
 		}
+
+		// Auto-enable HTTP (insecure) for localhost URLs so casual dev use
+		// doesn't require the flag. Shown as a greyed-out confirmation line.
+		// When the URL stops matching localhost the override is cleared so
+		// the user re-opts-in explicitly.
+		if syncOn && f.ItemCount() > cdIdxAllowInsecure {
+			urlVal := strings.TrimSpace(f.Field(cdIdxRemoteURL).(*TextField).Value())
+			insecure := f.Field(cdIdxAllowInsecure).(*CheckboxField)
+			wasAuto := insecure.AutoChecked()
+			if isLocalhostHTTP(urlVal) {
+				insecure.SetChecked(true)
+				insecure.SetAutoChecked(true)
+				insecure.SetDisabledWhen(func() (bool, string) {
+					return true, lipgloss.NewStyle().Foreground(syncTheme.Muted).Italic(true).
+						Render("auto-enabled for localhost")
+				})
+			} else {
+				if wasAuto {
+					insecure.SetChecked(false)
+					insecure.SetAutoChecked(false)
+				}
+				insecure.SetDisabledWhen(nil)
+			}
+		}
 	})
 	m.form = form
 
@@ -338,6 +364,20 @@ func syncEnabled(f *Form) bool {
 		return false
 	}
 	return cb.Checked()
+}
+
+// isLocalhostHTTP reports whether a URL uses http:// against localhost
+// or 127.0.0.1, in which case the dialog auto-enables the insecure flag.
+func isLocalhostHTTP(raw string) bool {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	if !strings.HasPrefix(s, "http://") {
+		return false
+	}
+	host := strings.TrimPrefix(s, "http://")
+	if i := strings.IndexAny(host, "/:"); i >= 0 {
+		host = host[:i]
+	}
+	return host == "localhost" || host == "127.0.0.1"
 }
 
 func remoteStatusLine(params CalendarDialogParams, theme Theme) string {

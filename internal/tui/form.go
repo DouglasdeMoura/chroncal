@@ -648,11 +648,12 @@ func (f *RecurrenceOnField) IsFocusable() bool { return true }
 
 // CheckboxField is a focusable toggle rendered as [✓] or [ ].
 type CheckboxField struct {
-	label      string
-	content    string
-	checked    bool
-	focused    bool
-	disabledFn func() (disabled bool, text string)
+	label       string
+	content     string
+	checked     bool
+	autoChecked bool // true when checked was set by the form, not the user
+	focused     bool
+	disabledFn  func() (disabled bool, text string)
 }
 
 func NewCheckboxField(label string, checked bool) *CheckboxField {
@@ -666,6 +667,12 @@ func (f *CheckboxField) SetChecked(v bool) { f.checked = v }
 // SetContent sets the text rendered to the right of the checkbox glyph.
 // When empty (default), only the glyph is shown.
 func (f *CheckboxField) SetContent(v string) { f.content = v }
+
+// AutoChecked reports whether the current checked state was set
+// programmatically by the form rather than by the user, which lets the
+// form revert the state when the upstream condition changes.
+func (f *CheckboxField) AutoChecked() bool     { return f.autoChecked }
+func (f *CheckboxField) SetAutoChecked(v bool) { f.autoChecked = v }
 
 // SetDisabledWhen registers a function that is evaluated on every Toggle and
 // View call. When it returns disabled=true the toggle is inert and View
@@ -681,6 +688,7 @@ func (f *CheckboxField) Toggle() {
 		}
 	}
 	f.checked = !f.checked
+	f.autoChecked = false
 }
 
 func (f *CheckboxField) Update(msg tea.Msg) tea.Cmd {
