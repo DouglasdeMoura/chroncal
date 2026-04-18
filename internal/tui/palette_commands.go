@@ -26,6 +26,13 @@ func buildPaletteCommands(m Model) []PaletteCommand {
 
 	return []PaletteCommand{
 		{
+			ID:       "nav.today",
+			Title:    "Go to Today",
+			Category: "Navigation",
+			Shortcut: "t",
+			Action:   func() tea.Msg { return GoToTodayMsg{} },
+		},
+		{
 			ID:       "event.new",
 			Title:    "Create Event",
 			Category: "Event",
@@ -65,13 +72,6 @@ func buildPaletteCommands(m Model) []PaletteCommand {
 			Category: "View",
 			Shortcut: "d",
 			Action:   func() tea.Msg { return SwitchViewMsg{Mode: viewDay} },
-		},
-		{
-			ID:       "nav.today",
-			Title:    "Go to Today",
-			Category: "Navigation",
-			Shortcut: "t",
-			Action:   func() tea.Msg { return GoToTodayMsg{} },
 		},
 		{
 			ID:       "ui.sidebar",
