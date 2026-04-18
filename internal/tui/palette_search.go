@@ -50,20 +50,27 @@ func eventPaletteCommand(ev event.Event, cal CalendarInfo) PaletteCommand {
 
 // paletteEventDate returns a compact, right-aligned date label for an
 // event's palette row. All-day events drop the time; cross-year events
-// show the year instead of the clock.
+// show the year instead of the clock. When the event has a same-day end
+// time, it's appended as `–HH:MM`.
 func paletteEventDate(ev event.Event) string {
-	t := ev.StartTime.Local()
-	if t.IsZero() {
+	start := ev.StartTime.Local()
+	if start.IsZero() {
 		return ""
 	}
+	const tag = "[Event] "
 	if ev.AllDay {
-		if t.Year() == time.Now().Year() {
-			return t.Format("Jan 2")
+		if start.Year() == time.Now().Year() {
+			return tag + start.Format("Jan 2")
 		}
-		return t.Format("Jan 2 2006")
+		return tag + start.Format("Jan 2 2006")
 	}
-	if t.Year() == time.Now().Year() {
-		return t.Format("Jan 2 15:04")
+	if start.Year() != time.Now().Year() {
+		return tag + start.Format("Jan 2 2006")
 	}
-	return t.Format("Jan 2 2006")
+	out := start.Format("Jan 2 15:04")
+	end := ev.EndTime.Local()
+	if !end.IsZero() && end.After(start) && sameDay(start, end) {
+		out += "–" + end.Format("15:04")
+	}
+	return tag + out
 }
