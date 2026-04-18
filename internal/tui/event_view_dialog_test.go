@@ -36,9 +36,11 @@ func TestEventViewDialog_RendersCoreFields(t *testing.T) {
 	out := m.View()
 	require.NotEmpty(t, out)
 
-	for _, want := range []string{ev.Title, "Date", "Time", "Duration", "Calendar", "Where", "Zoom", "Notes", "Edit", "Duplicate", "Delete", "Close"} {
+	for _, want := range []string{ev.Title, "Date", "Time", "Duration", "Calendar", "Where", "Zoom", "Notes", "Edit", "Duplicate", "Delete"} {
 		assert.Contains(t, out, want, "expected rendered dialog to contain %q", want)
 	}
+	// Close is not a button — dismissal is by esc, surfaced only in the footer hint.
+	assert.Contains(t, out, "esc close")
 }
 
 func TestEventViewDialog_ShowsRSVPForAttendee(t *testing.T) {
@@ -171,9 +173,9 @@ func TestFormatEventTimeRange(t *testing.T) {
 	assert.Equal(t, "", formatEventTimeRange(ev))
 }
 
-func TestEventViewDialog_TitleRowHasDeleteButton(t *testing.T) {
-	// No chrome heading: the event title leads the content, with the
-	// Delete button pinned to the right of that same row.
+func TestEventViewDialog_TitleRowIsTitleOnly(t *testing.T) {
+	// The title row carries only the event title. Destructive actions
+	// live in the bottom action bar, spatially separated.
 	m := NewEventViewDialogModel(testViewEvent(), CalendarInfo{Name: "Work"}, Theme{}).SetSize(120, 40)
 	out := m.View()
 
@@ -192,17 +194,17 @@ func TestEventViewDialog_TitleRowHasDeleteButton(t *testing.T) {
 		break
 	}
 	require.NotEmpty(t, titleRow)
-	assert.True(t, strings.HasPrefix(titleRow, "Weekly sync"), "title row should start with event title: %q", titleRow)
-	assert.Contains(t, titleRow, "Delete")
+	assert.Equal(t, "Weekly sync", titleRow, "title row should contain only the event title")
+	assert.NotContains(t, titleRow, "Delete", "Delete must not live in the title row")
 }
 
-func TestEventViewDialog_DeleteNotInBottomActions(t *testing.T) {
-	// With Delete pinned to the title row, the bottom action bar must
-	// not render a second Delete button.
+func TestEventViewDialog_DeleteRendersInActionBar(t *testing.T) {
+	// Delete sits in the bottom action bar, right-aligned with a gap
+	// separating it from Edit/Duplicate. Exactly one Delete button is
+	// rendered (the footer hint says "delete", lowercase).
 	m := NewEventViewDialogModel(testViewEvent(), CalendarInfo{Name: "Work"}, Theme{}).SetSize(120, 40)
 	plain := stripANSI(m.View())
-	count := strings.Count(plain, "Delete")
-	assert.Equal(t, 1, count, "expected exactly one Delete button, got %d", count)
+	assert.Equal(t, 1, strings.Count(plain, "Delete"), "expected exactly one Delete button")
 }
 
 func TestEventViewDialog_ViewIsStableAcrossRenders(t *testing.T) {

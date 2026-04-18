@@ -54,7 +54,6 @@ func defaultEventViewKeys() eventViewKeyMap {
 const (
 	viewZoneActions = 0
 	viewZoneRSVP    = 1
-	viewZoneDelete  = 2
 )
 
 // eventViewLabelWidth pads labels so values align in a column like the
@@ -77,6 +76,15 @@ type EventViewDialogModel struct {
 	focusedAction int
 	focusedRSVP   int
 }
+
+// eventViewActionEditIdx, eventViewActionDupIdx, and eventViewActionDeleteIdx
+// index the entries returned by actions(). Delete lives in the action bar but
+// is visually separated (right-aligned) from the left-side Edit/Duplicate pair.
+const (
+	eventViewActionEditIdx   = 0
+	eventViewActionDupIdx    = 1
+	eventViewActionDeleteIdx = 2
+)
 
 // NewEventViewDialogModel builds a read-only view of the given event.
 // The dialog omits a chrome title and relies on the event's own title
@@ -139,27 +147,19 @@ type eventViewAction struct {
 	msg     func() tea.Msg
 }
 
-// actions returns the buttons rendered in the bottom action bar
-// (left-to-right). Delete lives in the title row, not here, so it
-// doesn't share focus indexing with the other actions.
+// actions returns the buttons rendered in the bottom action bar.
+// Edit and Duplicate sit on the left (primary → secondary), Delete
+// is last and rendered with spatial separation so destructive intent
+// reads from position, not only color.
 func (m EventViewDialogModel) actions() []eventViewAction {
 	ev := m.event
 	return []eventViewAction{
 		{label: "Edit", variant: ButtonPrimary, zone: "action:edit",
 			msg: func() tea.Msg { return EventEditMsg{Event: ev} }},
-		{label: "Duplicate", variant: ButtonSecondary, zone: "action:duplicate",
+		{label: "Duplicate", variant: ButtonGhost, zone: "action:duplicate",
 			msg: func() tea.Msg { return EventDuplicateMsg{Event: ev} }},
-		{label: "Close", variant: ButtonSecondary, zone: "action:close",
-			msg: func() tea.Msg { return EventViewClosedMsg{} }},
-	}
-}
-
-// deleteAction is the destructive action pinned to the title row.
-func (m EventViewDialogModel) deleteAction() eventViewAction {
-	ev := m.event
-	return eventViewAction{
-		label: "Delete", variant: ButtonDanger, zone: "action:delete",
-		msg: func() tea.Msg { return EventDeleteMsg{Event: ev} },
+		{label: "Delete", variant: ButtonDanger, zone: "action:delete",
+			msg: func() tea.Msg { return EventDeleteMsg{Event: ev} }},
 	}
 }
 
@@ -184,11 +184,11 @@ func (m EventViewDialogModel) handleKey(msg tea.KeyPressMsg) (EventViewDialogMod
 		return m, func() tea.Msg { return EventViewClosedMsg{} }
 
 	case key.Matches(msg, m.keys.Edit):
-		return m, actions[0].msg
+		return m, actions[eventViewActionEditIdx].msg
 	case key.Matches(msg, m.keys.Duplicate):
-		return m, actions[1].msg
+		return m, actions[eventViewActionDupIdx].msg
 	case key.Matches(msg, m.keys.Delete):
-		return m, m.deleteAction().msg
+		return m, actions[eventViewActionDeleteIdx].msg
 
 	case key.Matches(msg, m.keys.RSVPYes):
 		if len(rsvp) > 0 {
@@ -212,8 +212,6 @@ func (m EventViewDialogModel) handleKey(msg tea.KeyPressMsg) (EventViewDialogMod
 		switch {
 		case m.focusZone == viewZoneRSVP && len(rsvp) > 0:
 			m.focusedRSVP = (m.focusedRSVP - 1 + len(rsvp)) % len(rsvp)
-		case m.focusZone == viewZoneDelete:
-			// Delete is the only control in its row — no-op.
 		case len(actions) > 0:
 			m.focusedAction = (m.focusedAction - 1 + len(actions)) % len(actions)
 		}
@@ -221,8 +219,6 @@ func (m EventViewDialogModel) handleKey(msg tea.KeyPressMsg) (EventViewDialogMod
 		switch {
 		case m.focusZone == viewZoneRSVP && len(rsvp) > 0:
 			m.focusedRSVP = (m.focusedRSVP + 1) % len(rsvp)
-		case m.focusZone == viewZoneDelete:
-			// Delete is the only control in its row — no-op.
 		case len(actions) > 0:
 			m.focusedAction = (m.focusedAction + 1) % len(actions)
 		}
@@ -233,8 +229,6 @@ func (m EventViewDialogModel) handleKey(msg tea.KeyPressMsg) (EventViewDialogMod
 			if m.focusedRSVP < len(rsvp) {
 				return m, rsvp[m.focusedRSVP].msg
 			}
-		case viewZoneDelete:
-			return m, m.deleteAction().msg
 		default:
 			if m.focusedAction < len(actions) {
 				return m, actions[m.focusedAction].msg
@@ -245,7 +239,7 @@ func (m EventViewDialogModel) handleKey(msg tea.KeyPressMsg) (EventViewDialogMod
 }
 
 // advanceFocus moves focus in Tab order: Actions → RSVP (if present)
-// → Delete → Actions (wrap). Shift-Tab moves in the reverse direction.
+// → Actions (wrap). Shift-Tab moves in the reverse direction.
 func (m EventViewDialogModel) advanceFocus(actions []eventViewAction, rsvp []dialogAction, dir int) EventViewDialogModel {
 	switch m.focusZone {
 	case viewZoneActions:
@@ -254,15 +248,20 @@ func (m EventViewDialogModel) advanceFocus(actions []eventViewAction, rsvp []dia
 			m.focusedAction = idx
 			return m
 		}
-		if dir > 0 {
-			if len(rsvp) > 0 {
+		if len(rsvp) > 0 {
+			if dir > 0 {
 				m.focusZone = viewZoneRSVP
 				m.focusedRSVP = 0
 			} else {
-				m.focusZone = viewZoneDelete
+				m.focusZone = viewZoneRSVP
+				m.focusedRSVP = len(rsvp) - 1
 			}
 		} else {
-			m.focusZone = viewZoneDelete
+			if dir > 0 {
+				m.focusedAction = 0
+			} else {
+				m.focusedAction = len(actions) - 1
+			}
 		}
 	case viewZoneRSVP:
 		idx := m.focusedRSVP + dir
@@ -270,24 +269,11 @@ func (m EventViewDialogModel) advanceFocus(actions []eventViewAction, rsvp []dia
 			m.focusedRSVP = idx
 			return m
 		}
+		m.focusZone = viewZoneActions
 		if dir > 0 {
-			m.focusZone = viewZoneDelete
-		} else {
-			m.focusZone = viewZoneActions
-			m.focusedAction = len(actions) - 1
-		}
-	case viewZoneDelete:
-		if dir > 0 {
-			m.focusZone = viewZoneActions
 			m.focusedAction = 0
 		} else {
-			if len(rsvp) > 0 {
-				m.focusZone = viewZoneRSVP
-				m.focusedRSVP = len(rsvp) - 1
-			} else {
-				m.focusZone = viewZoneActions
-				m.focusedAction = len(actions) - 1
-			}
+			m.focusedAction = len(actions) - 1
 		}
 	}
 	return m
@@ -303,10 +289,6 @@ func (m EventViewDialogModel) handleMouse(msg tea.MouseClickMsg) (EventViewDialo
 	target := mouseResolve(msg.X-ox, msg.Y-oy)
 	if target == "" {
 		return m, nil
-	}
-	if del := m.deleteAction(); target == del.zone {
-		m.focusZone = viewZoneDelete
-		return m, del.msg
 	}
 	actions := m.actions()
 	for i, a := range actions {
@@ -354,38 +336,34 @@ func (m EventViewDialogModel) renderRSVPRow(w int) string {
 	return truncateTo(faint.Render(padded)+value, w)
 }
 
-func (m EventViewDialogModel) renderActions() string {
+// renderActions lays out the action bar: Edit and Duplicate packed on
+// the left (primary → ghost), with Delete right-aligned and a gap that
+// spatially signals the destructive category. Falls back to simple
+// concatenation if the row can't fit within `w`.
+func (m EventViewDialogModel) renderActions(w int) string {
 	bs := DefaultButtonStyles()
 	actions := m.actions()
-	parts := make([]string, len(actions))
+	rendered := make([]string, len(actions))
 	for i, a := range actions {
 		focused := m.focusZone == viewZoneActions && i == m.focusedAction
-		parts[i] = mouseMark(a.zone, bs.Get(a.variant).Render(a.label, focused))
+		rendered[i] = mouseMark(a.zone, bs.Get(a.variant).Render(a.label, focused))
 	}
-	return strings.Join(parts, " ")
+	if len(rendered) < 3 {
+		return strings.Join(rendered, " ")
+	}
+	left := strings.Join(rendered[:2], " ")
+	right := rendered[2]
+	gap := max(w-lipgloss.Width(left)-lipgloss.Width(right), 1)
+	return left + strings.Repeat(" ", gap) + right
 }
 
-// renderTitleRow composites the event title (left, bold) with the
-// Delete button pinned to the right edge. The title truncates before
-// colliding with the button so the row always fits within `w`.
-func renderTitleRow(title string, del string, w int) string {
-	delW := lipgloss.Width(del)
-	// Reserve at least one space between title and button.
-	maxTitleW := max(w-delW-1, 1)
-	t := lipgloss.NewStyle().Bold(true).Render(truncateTo(title, maxTitleW))
-	gap := max(w-lipgloss.Width(t)-delW, 1)
-	return t + strings.Repeat(" ", gap) + del
-}
-
-// titleRow renders the Delete-embedded title bar along with the
-// dividing rule below it.
+// titleRow renders the bold event title above a faint dividing rule.
+// Destructive actions are deliberately absent here — they live in the
+// bottom action bar, away from the dialog's visual anchor.
 func (m EventViewDialogModel) titleRow(w int) []string {
-	del := m.deleteAction()
-	btn := mouseMark(del.zone,
-		DefaultButtonStyles().Danger.Render(del.label, m.focusZone == viewZoneDelete))
-	row := renderTitleRow(m.event.Title, btn, w)
+	title := lipgloss.NewStyle().Bold(true).Render(truncateTo(m.event.Title, w))
 	rule := lipgloss.NewStyle().Faint(true).Render(strings.Repeat("─", w))
-	return []string{row, rule}
+	return []string{title, rule}
 }
 
 // buildDetailLines composes the read-only field list for the dialog,
@@ -492,10 +470,7 @@ func (m EventViewDialogModel) View() string {
 	}
 
 	lines := m.buildDetailLines(cw)
-
-	actionsRow := m.renderActions()
-	btnPad := max(cw-lipgloss.Width(actionsRow), 0)
-	actionsRow = strings.Repeat(" ", btnPad) + actionsRow
+	actionsRow := m.renderActions(cw)
 
 	sep := lipgloss.NewStyle().Faint(true).Render(strings.Repeat("─", cw))
 	body := strings.Join(lines, "\n") + "\n\n" + sep + "\n" + actionsRow
