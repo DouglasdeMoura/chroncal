@@ -171,27 +171,38 @@ func TestFormatEventTimeRange(t *testing.T) {
 	assert.Equal(t, "", formatEventTimeRange(ev))
 }
 
-func TestEventViewDialog_OmitsChromeTitle(t *testing.T) {
-	// The dialog has no chrome heading; the event's own title is the
-	// only heading rendered.
+func TestEventViewDialog_TitleRowHasDeleteButton(t *testing.T) {
+	// No chrome heading: the event title leads the content, with the
+	// Delete button pinned to the right of that same row.
 	m := NewEventViewDialogModel(testViewEvent(), CalendarInfo{Name: "Work"}, Theme{}).SetSize(120, 40)
 	out := m.View()
-	// First non-blank line inside the border should be the event title,
-	// not the literal word "Event".
+
+	var titleRow string
 	for line := range strings.SplitSeq(out, "\n") {
 		trimmed := strings.TrimSpace(stripANSI(line))
 		if trimmed == "" || strings.HasPrefix(trimmed, "╭") {
 			continue
 		}
-		// Strip the left border char if present.
 		trimmed = strings.TrimLeft(trimmed, "│ ")
+		trimmed = strings.TrimRight(trimmed, " │")
 		if trimmed == "" {
 			continue
 		}
-		assert.Equal(t, "Weekly sync", strings.TrimRight(trimmed, " │"))
-		return
+		titleRow = trimmed
+		break
 	}
-	t.Fatal("no content line rendered")
+	require.NotEmpty(t, titleRow)
+	assert.True(t, strings.HasPrefix(titleRow, "Weekly sync"), "title row should start with event title: %q", titleRow)
+	assert.Contains(t, titleRow, "Delete")
+}
+
+func TestEventViewDialog_DeleteNotInBottomActions(t *testing.T) {
+	// With Delete pinned to the title row, the bottom action bar must
+	// not render a second Delete button.
+	m := NewEventViewDialogModel(testViewEvent(), CalendarInfo{Name: "Work"}, Theme{}).SetSize(120, 40)
+	plain := stripANSI(m.View())
+	count := strings.Count(plain, "Delete")
+	assert.Equal(t, 1, count, "expected exactly one Delete button, got %d", count)
 }
 
 func TestEventViewDialog_ViewIsStableAcrossRenders(t *testing.T) {
