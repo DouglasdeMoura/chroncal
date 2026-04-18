@@ -16,6 +16,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/auth"
+	"github.com/douglasdemoura/chroncal/internal/caldav"
 	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/config"
 	"github.com/douglasdemoura/chroncal/internal/event"
@@ -461,6 +462,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.(type) {
 		case CalendarSavedMsg, CalendarDeleteRequestedMsg, CalendarDialogClosedMsg,
 			CalendarDisconnectRemoteRequestedMsg,
+			CalendarTestRequestedMsg,
 			calendarDeleteCountMsg,
 			tea.BackgroundColorMsg, tea.WindowSizeMsg,
 			eventsLoadedMsg, calendarsLoadedMsg,
@@ -1028,6 +1030,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			credStore, _ := auth.NewCredentialStore(true)
 			return calendarMutationDoneMsg{err: m.app.Calendars.Disconnect(ctx, cal, credStore)}
+		}
+
+	case CalendarTestRequestedMsg:
+		req := msg
+		return m, func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+
+			serverURL, err := calendar.DeriveServerURL(req.URL, req.AllowInsecure)
+			if err != nil {
+				return CalendarTestResultMsg{Message: err.Error()}
+			}
+
+			var client *caldav.Client
+			switch calendar.NormalizeAuthType(req.AuthType) {
+			case "bearer":
+				client, err = caldav.NewBearerAuthClient(serverURL, req.Password)
+			default:
+				client, err = caldav.NewBasicAuthClient(serverURL, req.Username, req.Password)
+			}
+			if err != nil {
+				return CalendarTestResultMsg{Message: err.Error()}
+			}
+
+			cals, err := client.DiscoverCalendars(ctx)
+			if err != nil {
+				return CalendarTestResultMsg{Message: err.Error()}
+			}
+			msg := fmt.Sprintf("Connected · %d calendar(s) available", len(cals))
+			if len(cals) == 1 {
+				msg = "Connected · 1 calendar available"
+			}
+			return CalendarTestResultMsg{OK: true, Message: msg}
 		}
 
 	case CalendarDeleteRequestedMsg:
