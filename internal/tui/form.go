@@ -659,6 +659,7 @@ func (f *RecurrenceOnField) IsFocusable() bool { return true }
 type CheckboxField struct {
 	label       string
 	content     string
+	suffix      string
 	checked     bool
 	autoChecked bool // true when checked was set by the form, not the user
 	focused     bool
@@ -676,6 +677,11 @@ func (f *CheckboxField) SetChecked(v bool) { f.checked = v }
 // SetContent sets the text rendered to the right of the checkbox glyph.
 // When empty (default), only the glyph is shown.
 func (f *CheckboxField) SetContent(v string) { f.content = v }
+
+// SetSuffix sets text rendered after the content, outside the focus
+// highlight. Useful for warnings or hints that shouldn't invert when
+// the row is focused. Caller is responsible for any styling.
+func (f *CheckboxField) SetSuffix(v string) { f.suffix = v }
 
 // AutoChecked reports whether the current checked state was set
 // programmatically by the form rather than by the user, which lets the
@@ -724,11 +730,16 @@ func (f *CheckboxField) View() string {
 		style = style.Reverse(true)
 	}
 
+	var out string
 	if len(f.content) > 0 {
-		return style.Render(glyph + " " + f.content)
+		out = style.Render(glyph + " " + f.content)
+	} else {
+		out = style.Render(glyph)
 	}
-
-	return style.Render(glyph)
+	if f.suffix != "" {
+		out += "  " + f.suffix
+	}
+	return out
 }
 
 func (f *CheckboxField) Focus() tea.Cmd {

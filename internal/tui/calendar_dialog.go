@@ -310,6 +310,7 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 			if isLocalhostHTTP(urlVal) {
 				insecure.SetChecked(true)
 				insecure.SetAutoChecked(true)
+				insecure.SetSuffix("")
 				insecure.SetDisabledWhen(func() (bool, string) {
 					return true, lipgloss.NewStyle().Foreground(syncTheme.Muted).Italic(true).
 						Render("auto-enabled for localhost")
@@ -320,6 +321,13 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 					insecure.SetAutoChecked(false)
 				}
 				insecure.SetDisabledWhen(nil)
+				if insecure.Checked() {
+					insecure.SetSuffix(lipgloss.NewStyle().
+						Foreground(syncTheme.Error).
+						Render("(unencrypted)"))
+				} else {
+					insecure.SetSuffix("")
+				}
 			}
 		}
 	})

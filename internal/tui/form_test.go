@@ -943,6 +943,33 @@ func TestCalendarDialogRendering(t *testing.T) {
 	}
 }
 
+func TestCalendarDialogRendering_SyncOnHTTPChecked(t *testing.T) {
+	theme := Theme{}
+	m := NewCalendarDialogModel(CalendarDialogParams{Color: "#a6e3a1"}, theme)
+	m = m.SetSize(120, 40)
+
+	// Enable Sync, set a non-localhost URL, check the HTTP box.
+	rebuild := func() {
+		if m.form.onRebuild != nil {
+			m.form.onRebuild(&m.form)
+		}
+	}
+	m.form.Field(cdIdxSync).(*CheckboxField).Toggle()
+	rebuild()
+	m.form.Field(cdIdxRemoteURL).(*TextField).SetValue("https://cal.example.com/dav/")
+	rebuild()
+	m.form.Field(cdIdxAllowInsecure).(*CheckboxField).Toggle()
+	rebuild()
+
+	assert.Contains(t, m.form.View(), "unencrypted", "warning appears when checked")
+
+	cw := m.dialog.ContentWidth()
+	for i, l := range strings.Split(m.form.View(), "\n") {
+		w := lipgloss.Width(l)
+		assert.LessOrEqual(t, w, cw, "form line %d is %d cols, exceeds content width %d", i, w, cw)
+	}
+}
+
 func TestCalendarDialogRendering_EditLinked(t *testing.T) {
 	theme := Theme{}
 	m := NewCalendarDialogModel(CalendarDialogParams{
