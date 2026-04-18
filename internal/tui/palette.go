@@ -5,14 +5,30 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
 )
+
+// paletteSearchDebounce is the trailing-edge delay between the user's
+// last keystroke and the async search firing. Below typing cadence,
+// above the perceptible-lag threshold.
+const paletteSearchDebounce = 150 * time.Millisecond
+
+// paletteDebounceMsg fires after paletteSearchDebounce. The palette runs
+// the search only if gen still matches its current generation counter —
+// any keystroke since this tick was scheduled bumped the counter and
+// invalidated this message.
+type paletteDebounceMsg struct {
+	gen   int
+	query string
+}
 
 // PaletteCommand is a single entry shown in the command palette.
 //
@@ -93,18 +109,20 @@ func (i paletteListItem) FilterValue() string { return i.cmd.Title }
 // cursor state and scroll/paging; we drive it explicitly from our own
 // keymap so it never fights the textinput for keystrokes.
 type PaletteModel struct {
-	input    textinput.Model
-	list     list.Model
-	commands []PaletteCommand
-	dynamic  []PaletteCommand
-	dynQuery string
-	searchFn PaletteSearchFunc
-	filtered []PaletteCommand
-	keys     paletteKeyMap
-	theme    Theme
-	width    int
-	height   int
-	ready    bool
+	input     textinput.Model
+	list      list.Model
+	commands  []PaletteCommand
+	dynamic   []PaletteCommand
+	dynQuery  string
+	searchFn  PaletteSearchFunc
+	searchGen int
+	spinner   spinner.Model
+	filtered  []PaletteCommand
+	keys      paletteKeyMap
+	theme     Theme
+	width     int
+	height    int
+	ready     bool
 }
 
 // NewPaletteModel builds a palette seeded with the given commands.
@@ -131,17 +149,33 @@ func NewPaletteModel(commands []PaletteCommand, theme Theme, searchFn PaletteSea
 	// same wording as the rest of the TUI's search affordances.
 	l.SetStatusBarItemName("match", "matches")
 
+	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
+	sp.Style = lipgloss.NewStyle().Foreground(theme.TextDim)
+
 	m := PaletteModel{
 		input:    in,
 		list:     l,
 		commands: commands,
 		searchFn: searchFn,
+		spinner:  sp,
 		keys:     defaultPaletteKeys(),
 		theme:    theme,
 		ready:    true,
 	}
 	m.refilter()
 	return m, cmd
+}
+
+// isSearching reports whether the palette is awaiting async results for
+// the current query (debounce in flight or response not yet returned).
+// Used to swap "no matches" for a spinner so the empty state never
+// flashes between keystroke and first results.
+func (m PaletteModel) isSearching() bool {
+	if m.searchFn == nil {
+		return false
+	}
+	q := strings.TrimSpace(m.input.Value())
+	return q != "" && q != m.dynQuery
 }
 
 // SetSize stores the available screen dimensions. The palette sizes itself
@@ -193,6 +227,21 @@ func (m PaletteModel) SetCommands(commands []PaletteCommand) PaletteModel {
 // Update handles input events for the palette.
 func (m PaletteModel) Update(msg tea.Msg) (PaletteModel, tea.Cmd) {
 	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		if !m.isSearching() {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+	case paletteDebounceMsg:
+		if msg.gen != m.searchGen || m.searchFn == nil {
+			return m, nil
+		}
+		if msg.query != strings.TrimSpace(m.input.Value()) {
+			return m, nil
+		}
+		return m, m.searchFn(msg.query)
 	case PaletteSearchResultsMsg:
 		if msg.Query == strings.TrimSpace(m.input.Value()) {
 			m.dynamic = msg.Items
@@ -232,6 +281,7 @@ func (m PaletteModel) Update(msg tea.Msg) (PaletteModel, tea.Cmd) {
 	}
 
 	prev := m.input.Value()
+	wasSearching := m.isSearching()
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	if m.input.Value() != prev {
@@ -241,8 +291,20 @@ func (m PaletteModel) Update(msg tea.Msg) (PaletteModel, tea.Cmd) {
 			m.dynQuery = ""
 		}
 		m.refilter()
+		// Bump the generation on every keystroke so any in-flight
+		// debounce tick from a prior keystroke is dropped when it lands.
+		m.searchGen++
 		if query != "" && m.searchFn != nil {
-			cmd = tea.Batch(cmd, m.searchFn(query))
+			gen := m.searchGen
+			tick := tea.Tick(paletteSearchDebounce, func(time.Time) tea.Msg {
+				return paletteDebounceMsg{gen: gen, query: query}
+			})
+			cmd = tea.Batch(cmd, tick)
+			// Kick the spinner only on the leading edge — once it's
+			// already ticking, the spinner.Update chain keeps it going.
+			if !wasSearching {
+				cmd = tea.Batch(cmd, m.spinner.Tick)
+			}
 		}
 	}
 	return m, cmd
@@ -363,11 +425,16 @@ func (m PaletteModel) View() string {
 	footer := m.renderFooter(innerW)
 	sep := lipgloss.NewStyle().Faint(true).Render(strings.Repeat("─", innerW))
 
+	listView := m.list.View()
+	if m.isSearching() && len(m.filtered) == 0 {
+		listView = m.renderSearching(innerW)
+	}
+
 	body := lipgloss.JoinVertical(
 		lipgloss.Left,
 		promptLine,
 		sep,
-		m.list.View(),
+		listView,
 		sep,
 		footer,
 	)
@@ -399,8 +466,8 @@ func (d paletteDelegate) Render(w io.Writer, m list.Model, index int, item list.
 	fmt.Fprint(w, renderPaletteRow(li.cmd, width, index == m.Index(), d.theme))
 }
 
-func (paletteDelegate) Height() int                             { return 1 }
-func (paletteDelegate) Spacing() int                            { return 0 }
+func (paletteDelegate) Height() int                         { return 1 }
+func (paletteDelegate) Spacing() int                        { return 0 }
 func (paletteDelegate) Update(tea.Msg, *list.Model) tea.Cmd { return nil }
 
 func renderPaletteRow(c PaletteCommand, width int, selected bool, theme Theme) string {
@@ -448,6 +515,22 @@ func renderPaletteRow(c PaletteCommand, width int, selected bool, theme Theme) s
 		out.WriteString(base.Foreground(theme.TextDim).Render(right))
 	}
 	return out.String()
+}
+
+// renderSearching fills the list area with a centered spinner + label so
+// the dialog doesn't flash "No matches" between the keystroke and the
+// first result. Height matches m.list.Height() to keep the dialog stable.
+func (m PaletteModel) renderSearching(width int) string {
+	label := m.spinner.View() + " " + lipgloss.NewStyle().Foreground(m.theme.TextDim).Render("Searching…")
+	height := m.list.Height()
+	if height < 1 {
+		height = 1
+	}
+	return lipgloss.NewStyle().
+		Width(width).
+		Height(height).
+		Align(lipgloss.Center, lipgloss.Center).
+		Render(label)
 }
 
 func (m PaletteModel) renderFooter(width int) string {
