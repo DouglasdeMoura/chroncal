@@ -57,7 +57,7 @@ func TestParseOffsetTrigger_Unsupported(t *testing.T) {
 
 func TestAlarmSummary(t *testing.T) {
 	assert.Equal(t, "None", alarmSummary(nil))
-	assert.Equal(t, "15 min before", alarmSummary([]model.Alarm{
+	assert.Equal(t, "15 min. before", alarmSummary([]model.Alarm{
 		{TriggerValue: "-PT15M"},
 	}))
 	assert.Equal(t, "3 alarms", alarmSummary([]model.Alarm{
@@ -205,7 +205,7 @@ func TestEventForm_EditPrefillsAlarms(t *testing.T) {
 	assert.Equal(t, "Heads up", m.alarms[0].Description)
 
 	require.NotNil(t, m.alarmField)
-	assert.Equal(t, "30 min before", m.alarmField.Value())
+	assert.Equal(t, "30 min. before", m.alarmField.Value())
 }
 
 func TestEventForm_EnterOnAlarmsOpensEditor(t *testing.T) {
