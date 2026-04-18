@@ -174,7 +174,7 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		})
 	} else {
 		sync := NewCheckboxField("", false)
-		sync.SetContent(lipgloss.NewStyle().Foreground(theme.Muted).Render("Enable CalDAV sync"))
+		sync.SetContent("Enable CalDAV sync")
 		items = append(items, FormItem{Label: "Sync", Field: sync})
 	}
 
