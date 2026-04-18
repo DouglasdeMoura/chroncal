@@ -442,7 +442,7 @@ func FilterTimeInput(k tea.Key) bool {
 }
 
 func (m *EventFormModel) buildDialogAndForm() {
-	title := "New Event"
+	title := "Create Event"
 	if m.editID > 0 {
 		title = "Edit Event"
 	}
@@ -481,7 +481,7 @@ func (m *EventFormModel) buildDialogAndForm() {
 }
 
 func (m *EventFormModel) rebuildDialog() {
-	title := "New Event"
+	title := "Create Event"
 	if m.editID > 0 {
 		title = "Edit Event"
 	}

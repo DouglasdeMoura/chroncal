@@ -27,7 +27,7 @@ func buildPaletteCommands(m Model) []PaletteCommand {
 	return []PaletteCommand{
 		{
 			ID:       "event.new",
-			Title:    "New event",
+			Title:    "Create Event",
 			Category: "Event",
 			Shortcut: "c",
 			Action:   func() tea.Msg { return EventCreateMsg{Day: cursor} },
