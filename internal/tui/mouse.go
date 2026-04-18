@@ -224,11 +224,14 @@ func (mt *mouseTracker) sweep(content string) string {
 
 	for {
 		tok := lexer.next()
-		if tok.kind == ansiEOF {
-			break
-		}
 
 		switch tok.kind {
+		case ansiEOF:
+			mt.zones = zones
+			mt.names = nil
+			mt.nextID = 0
+			return out.String()
+
 		case ansiText:
 			for _, r := range tok.text {
 				if r == '\n' {
@@ -264,12 +267,6 @@ func (mt *mouseTracker) sweep(content string) string {
 			out.WriteString(tok.text)
 		}
 	}
-
-	mt.zones = zones
-	mt.names = nil
-	mt.nextID = 0
-
-	return out.String()
 }
 
 // resolve returns the name of the innermost zone containing (x, y), or ""
