@@ -820,67 +820,6 @@ func TestEnginePushRejectsOffOriginStoredRemoteURL(t *testing.T) {
 	}
 }
 
-func TestEnginePullSkipsOutOfCollectionRemoteHref(t *testing.T) {
-	t.Parallel()
-
-	engine, _, q := newTestEngine(t)
-	ctx := context.Background()
-
-	cals, err := q.ListCalendars(ctx)
-	if err != nil {
-		t.Fatalf("ListCalendars: %v", err)
-	}
-	calendarID := cals[0].ID
-
-	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
-		if r.Method != "REPORT" {
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-		return &http.Response{
-			StatusCode: http.StatusMultiStatus,
-			Status:     "207 Multi-Status",
-			Header:     http.Header{"Content-Type": []string{"application/xml"}},
-			Body: io.NopCloser(strings.NewReader(`<?xml version="1.0" encoding="utf-8"?>
-<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
-  <d:response>
-    <d:href>/other-calendar/off-origin-pulled.ics</d:href>
-    <d:propstat>
-      <d:prop>
-        <d:getetag>&quot;etag-off-origin&quot;</d:getetag>
-        <cal:calendar-data>BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//chroncal//tests//EN
-BEGIN:VEVENT
-UID:off-origin-pulled
-DTSTAMP:20260403T120000Z
-DTSTART:20260403T120000Z
-DTEND:20260403T130000Z
-SUMMARY:Off-origin pulled
-END:VEVENT
-END:VCALENDAR
-</cal:calendar-data>
-      </d:prop>
-      <d:status>HTTP/1.1 200 OK</d:status>
-    </d:propstat>
-  </d:response>
-</d:multistatus>`)),
-			Request: r,
-		}, nil
-	})
-
-	result, err := engine.pull(ctx, client, calendarID, "/calendar/")
-	if err != nil {
-		t.Fatalf("pull: %v", err)
-	}
-	if result.pulled != 0 {
-		t.Fatalf("pulled = %d, want 0", result.pulled)
-	}
-
-	if _, err := q.GetEventByUID(ctx, "off-origin-pulled"); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("GetEventByUID err = %v, want sql.ErrNoRows", err)
-	}
-}
-
 func TestEngineProcessTombstonesRejectsOffOriginRemoteURL(t *testing.T) {
 	t.Parallel()
 
@@ -981,6 +920,99 @@ func TestEnginePullDeletesLocalResourceWhenServerRemovesIt(t *testing.T) {
 		Uid:        "remote-deleted",
 	}); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("GetSyncResource err = %v, want sql.ErrNoRows", err)
+	}
+}
+
+// GMX (and other Cosmo-derived CalDAV servers) rewrite object hrefs on the
+// server side — a resource PUT at /cal/<user>/... is later reported under
+// /cal/<uuid>/... in REPORT responses. Pull must recognise the resource by
+// UID and avoid treating the path change as a remote deletion.
+func TestEnginePullPreservesLocalWhenServerRewritesHref(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	insertTestEvent(t, db, calendarID, "rewritten")
+
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calendarID,
+		Uid:          "rewritten",
+		OwnerType:    "event",
+		RemoteUrl:    "/calendar/user@example.com/rewritten.ics",
+		Etag:         "etag-before-rewrite",
+		Dirty:        0,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method != "REPORT" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		return &http.Response{
+			StatusCode: http.StatusMultiStatus,
+			Status:     "207 Multi-Status",
+			Header:     http.Header{"Content-Type": []string{"application/xml"}},
+			Body: io.NopCloser(strings.NewReader(`<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/calendar/00000000-0000-0000-0000-aaaaaaaaaaaa/rewritten.ics</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>&quot;etag-after-rewrite&quot;</d:getetag>
+        <cal:calendar-data>BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//chroncal//tests//EN
+BEGIN:VEVENT
+UID:rewritten
+DTSTAMP:20260403T120000Z
+DTSTART:20260403T120000Z
+DTEND:20260403T130000Z
+SUMMARY:Rewritten by server
+END:VEVENT
+END:VCALENDAR
+</cal:calendar-data>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`)),
+			Request: r,
+		}, nil
+	})
+
+	result, err := engine.pull(ctx, client, calendarID, "/calendar/user@example.com/")
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if result.deleted != 0 {
+		t.Fatalf("deleted = %d, want 0 (server rewrote path, not a deletion)", result.deleted)
+	}
+
+	if _, err := q.GetEventByUID(ctx, "rewritten"); err != nil {
+		t.Fatalf("GetEventByUID err = %v, event was unexpectedly deleted", err)
+	}
+
+	resources, err := q.ListSyncResourcesByCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("ListSyncResourcesByCalendar: %v", err)
+	}
+	if len(resources) != 1 {
+		t.Fatalf("sync_resources len = %d, want 1", len(resources))
+	}
+	if resources[0].Uid != "rewritten" {
+		t.Fatalf("uid = %q, want %q", resources[0].Uid, "rewritten")
+	}
+	if !strings.Contains(resources[0].RemoteUrl, "00000000-0000-0000-0000-aaaaaaaaaaaa") {
+		t.Fatalf("RemoteUrl = %q, expected it to track the new server path", resources[0].RemoteUrl)
 	}
 }
 

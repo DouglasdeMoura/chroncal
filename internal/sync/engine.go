@@ -444,24 +444,28 @@ func (e *Engine) pull(ctx context.Context, client *caldav.Client, calendarID int
 		}
 	}
 
-	// Process each remote resource
-	remoteHrefs := make(map[string]bool, len(resources))
+	// Track which UIDs the server still reports. Deletion detection is keyed
+	// by UID rather than path because some CalDAV servers (GMX/Cosmo) rewrite
+	// object hrefs after PUT — the server-returned href can differ from the
+	// one we stored, so path-based comparison produces false "deleted on
+	// server" signals and nukes healthy local resources.
+	remoteUIDs := make(map[string]bool, len(resources))
 	for _, res := range resources {
 		resPath, hrefErr := client.CanonicalObjectRef(remoteURL, res.Path)
 		if hrefErr != nil {
 			e.logger.Warn("skip out-of-scope remote href", "calendar_id", calendarID, "path", res.Path, "error", hrefErr)
 			continue
 		}
-		remoteHrefs[resPath] = true
 		if tombstonedPaths[resPath] {
 			e.logger.Debug("skip tombstoned remote resource by path", "path", resPath)
 			continue
 		}
 
-		local, exists := localByPath[resPath]
-		if exists && local.Etag == res.ETag {
-			// No change
-			continue
+		if local, exists := localByPath[resPath]; exists {
+			remoteUIDs[local.Uid] = true
+			if local.Etag == res.ETag {
+				continue
+			}
 		}
 
 		// Import the resource
@@ -487,6 +491,7 @@ func (e *Engine) pull(ctx context.Context, client *caldav.Client, calendarID int
 			e.logger.Warn("no UID in fetched resource", "path", res.Path)
 			continue
 		}
+		remoteUIDs[uid] = true
 		if tombstonedUIDs[uid] {
 			e.logger.Debug("skip tombstoned remote resource by uid", "uid", uid, "path", resPath)
 			continue
@@ -499,7 +504,10 @@ func (e *Engine) pull(ctx context.Context, client *caldav.Client, calendarID int
 			continue
 		}
 
-		// Upsert sync resource tracking
+		// Upsert sync resource tracking. UpsertSyncResource's ON CONFLICT is
+		// keyed by (calendar_id, uid), so a stale remote_url from a prior
+		// sync cycle (or from our PUT before the server rewrote the href)
+		// gets replaced here with the authoritative server path.
 		if err := e.q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
 			CalendarID:   calendarID,
 			Uid:          uid,
@@ -516,22 +524,27 @@ func (e *Engine) pull(ctx context.Context, client *caldav.Client, calendarID int
 		e.logger.Debug("pulled resource", "uid", uid, "path", res.Path, "etag", res.ETag)
 	}
 
-	// Detect deletions: local resources whose path is no longer on the server
-	for path, local := range localByPath {
-		if !remoteHrefs[path] {
-			e.logger.Debug("resource deleted on server", "uid", local.Uid, "path", path)
-			if err := e.deleteLocalResourceByUID(ctx, local.OwnerType, local.Uid); err != nil {
-				e.logger.Error("delete local resource", "uid", local.Uid, "owner_type", local.OwnerType, "error", err)
-				continue
-			}
-			if err := e.q.DeleteSyncResource(ctx, storage.DeleteSyncResourceParams{
-				CalendarID: calendarID,
-				Uid:        local.Uid,
-			}); err != nil {
-				e.logger.Error("delete sync resource", "uid", local.Uid, "error", err)
-			}
-			result.deleted++
+	// Detect deletions by UID. Local rows with no remote_url have never been
+	// pushed and must be left alone — they're still pending upload.
+	for _, local := range localResources {
+		if local.RemoteUrl == "" {
+			continue
 		}
+		if remoteUIDs[local.Uid] {
+			continue
+		}
+		e.logger.Debug("resource deleted on server", "uid", local.Uid, "remote_url", local.RemoteUrl)
+		if err := e.deleteLocalResourceByUID(ctx, local.OwnerType, local.Uid); err != nil {
+			e.logger.Error("delete local resource", "uid", local.Uid, "owner_type", local.OwnerType, "error", err)
+			continue
+		}
+		if err := e.q.DeleteSyncResource(ctx, storage.DeleteSyncResourceParams{
+			CalendarID: calendarID,
+			Uid:        local.Uid,
+		}); err != nil {
+			e.logger.Error("delete sync resource", "uid", local.Uid, "error", err)
+		}
+		result.deleted++
 	}
 
 	return result, nil

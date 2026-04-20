@@ -285,8 +285,15 @@ func (c *Client) CanonicalCollectionRef(ref string) (string, error) {
 }
 
 // CanonicalObjectRef resolves a calendar object href against the linked
-// calendar collection, validates origin and collection scope, and returns a
-// normalized server-relative path.
+// calendar collection, validates it stays on the configured CalDAV origin,
+// and returns a normalized server-relative path.
+//
+// We intentionally do not require the object path to stay within the
+// calendar collection's URL prefix: several CalDAV servers (GMX/Cosmo, for
+// example) rewrite object hrefs at the server — a resource PUT at
+// /cal/<user>/event.ics is reported back as /cal/<uuid>/event.ics. Enforcing
+// a collection prefix would reject those same-origin hrefs and corrupt sync.
+// Same-origin remains the security boundary.
 func (c *Client) CanonicalObjectRef(calendarRef, objectRef string) (string, error) {
 	collectionPath, err := c.CanonicalCollectionRef(calendarRef)
 	if err != nil {
@@ -317,8 +324,8 @@ func (c *Client) CanonicalObjectRef(calendarRef, objectRef string) (string, erro
 	}
 
 	objectPath := normalizePath(resolved.Path)
-	if !strings.HasPrefix(objectPath, collectionPath) || objectPath == strings.TrimSuffix(collectionPath, "/") {
-		return "", fmt.Errorf("calendar object href must stay within the linked collection")
+	if objectPath == "" || strings.HasSuffix(objectPath, "/") {
+		return "", fmt.Errorf("calendar object href must point to a resource, not a collection")
 	}
 	return objectPath, nil
 }
