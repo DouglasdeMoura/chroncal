@@ -85,7 +85,7 @@ func serviceCmd() *cobra.Command {
 on a schedule.
 
 On Linux this uses user-level systemd units. On macOS it uses a
-LaunchAgent.`,
+LaunchAgent. On Windows it registers a per-user Task Scheduler entry.`,
 		Example: `  chroncal service install
   chroncal service run
   chroncal service status
@@ -168,6 +168,8 @@ minute and also runs sync work when the configured sync interval is due.`,
 				}
 				data["HomeDir"] = home
 				return installDarwinService(cmd.Context(), w, data)
+			case "windows":
+				return installWindowsService(cmd.Context(), w, data)
 			default:
 				fmt.Fprintf(w, "No native service integration for %s.\n", runtime.GOOS)
 				fmt.Fprintf(w, "Use 'chroncal alarm daemon' to run alarm checks in a loop.\n")
@@ -275,6 +277,8 @@ func serviceUninstallCmd() *cobra.Command {
 				return uninstallLinuxService(cmd.Context(), w)
 			case "darwin":
 				return uninstallDarwinService(cmd.Context(), w)
+			case "windows":
+				return uninstallWindowsService(cmd.Context(), w)
 			default:
 				fmt.Fprintf(w, "No native service integration for %s.\n", runtime.GOOS)
 				return nil
@@ -311,6 +315,91 @@ func uninstallLinuxService(ctx context.Context, w interface{ Write([]byte) (int,
 	return nil
 }
 
+const windowsTaskName = "chroncal-alarm"
+
+// windowsWrapperPath returns the path to the .bat wrapper the Scheduled Task
+// executes. We can't pass env vars directly to schtasks, so the wrapper sets
+// them before invoking chroncal.
+func windowsWrapperPath() (string, error) {
+	dir := os.Getenv("LOCALAPPDATA")
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		dir = filepath.Join(home, "AppData", "Local")
+	}
+	return filepath.Join(dir, "chroncal", "chroncal-service.bat"), nil
+}
+
+const windowsWrapperTmpl = `@echo off
+{{if .SyncInterval}}set CHRONCAL_SYNC_INTERVAL={{.SyncInterval}}
+{{end}}{{if .SyncConflictStrategy}}set CHRONCAL_SYNC_CONFLICT_STRATEGY={{.SyncConflictStrategy}}
+{{end}}{{if .AllowUnsafeAlarmAudioAttach}}set CHRONCAL_SECURITY_ALLOW_UNSAFE_ALARM_AUDIO_ATTACH={{.AllowUnsafeAlarmAudioAttach}}
+{{end}}{{if .AllowUnsafeAlarmEmailAttendees}}set CHRONCAL_SECURITY_ALLOW_UNSAFE_ALARM_EMAIL_ATTENDEES={{.AllowUnsafeAlarmEmailAttendees}}
+{{end}}"{{.BinaryPath}}" service run
+`
+
+func installWindowsService(ctx context.Context, w interface{ Write([]byte) (int, error) }, data map[string]string) error {
+	wrapperPath, err := windowsWrapperPath()
+	if err != nil {
+		return fmt.Errorf("resolve wrapper path: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(wrapperPath), 0o755); err != nil {
+		return fmt.Errorf("create wrapper dir: %w", err)
+	}
+
+	content, err := renderTemplate(windowsWrapperTmpl, data)
+	if err != nil {
+		return fmt.Errorf("render wrapper template: %w", err)
+	}
+	if err := os.WriteFile(wrapperPath, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("write wrapper file: %w", err)
+	}
+	fmt.Fprintf(w, "Wrote %s\n", wrapperPath)
+
+	// /F overwrites an existing task of the same name. /SC MINUTE /MO 1 fires
+	// every minute — matches the systemd timer cadence.
+	out, err := exec.CommandContext(ctx, "schtasks",
+		"/Create", "/F",
+		"/TN", windowsTaskName,
+		"/TR", wrapperPath,
+		"/SC", "MINUTE",
+		"/MO", "1",
+	).CombinedOutput()
+	if len(out) > 0 {
+		fmt.Fprint(w, string(out))
+	}
+	if err != nil {
+		return fmt.Errorf("schtasks create: %w", err)
+	}
+	fmt.Fprintf(w, "Registered Scheduled Task %q (every minute).\n", windowsTaskName)
+	return nil
+}
+
+func uninstallWindowsService(ctx context.Context, w interface{ Write([]byte) (int, error) }) error {
+	out, err := exec.CommandContext(ctx, "schtasks", "/Delete", "/F", "/TN", windowsTaskName).CombinedOutput()
+	if len(out) > 0 {
+		fmt.Fprint(w, string(out))
+	}
+	if err != nil {
+		// Best-effort: continue cleanup even if the task didn't exist.
+		fmt.Fprintf(w, "schtasks delete: %v\n", err)
+	} else {
+		fmt.Fprintf(w, "Removed Scheduled Task %q.\n", windowsTaskName)
+	}
+
+	wrapperPath, err := windowsWrapperPath()
+	if err != nil {
+		return fmt.Errorf("resolve wrapper path: %w", err)
+	}
+	if err := os.Remove(wrapperPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove wrapper file: %w", err)
+	}
+	fmt.Fprintf(w, "Removed %s\n", wrapperPath)
+	return nil
+}
+
 func uninstallDarwinService(ctx context.Context, w interface{ Write([]byte) (int, error) }) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -337,7 +426,8 @@ func serviceStatusCmd() *cobra.Command {
 		Long: `Show the native background service status for the current OS.
 
 On Linux this proxies "systemctl --user status chroncal-alarm.timer".
-On macOS it proxies "launchctl list com.chroncal.alarm".`,
+On macOS it proxies "launchctl list com.chroncal.alarm".
+On Windows it proxies "schtasks /Query /TN chroncal-alarm /V /FO LIST".`,
 		Example: `  chroncal service status`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			w := cmd.OutOrStdout()
@@ -364,6 +454,17 @@ On macOS it proxies "launchctl list com.chroncal.alarm".`,
 				if err != nil {
 					if len(out) == 0 {
 						return fmt.Errorf("launchctl list: %w", err)
+					}
+				}
+				return nil
+			case "windows":
+				out, err := exec.CommandContext(cmd.Context(), "schtasks", "/Query", "/TN", windowsTaskName, "/V", "/FO", "LIST").CombinedOutput()
+				if len(out) > 0 {
+					fmt.Fprint(w, string(out))
+				}
+				if err != nil {
+					if len(out) == 0 {
+						return fmt.Errorf("schtasks query: %w", err)
 					}
 				}
 				return nil
