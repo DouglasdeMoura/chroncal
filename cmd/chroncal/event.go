@@ -224,6 +224,7 @@ func eventAddCmd() *cobra.Command {
 	var (
 		dateStr       string
 		timeStr       string
+		endDateStr    string
 		endTimeStr    string
 		durationStr   string
 		calendarName  string
@@ -257,6 +258,10 @@ func eventAddCmd() *cobra.Command {
 Omitting --time creates an all-day event. When --time is set, the event
 defaults to 1 hour unless --duration or --end-time is provided.
 
+Use --end-date to span multiple days. For all-day events --end-date is the
+last day inclusive. For timed events --end-date must be paired with
+--end-time to set the exact end moment.
+
 Defaults: status=CONFIRMED, class=PUBLIC, transparency=OPAQUE, calendar=Personal.
 Attendees default to RSVP=NEEDS-ACTION and ROLE=REQ-PARTICIPANT.
 Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
@@ -266,8 +271,15 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
   # All-day event (no --time flag)
   chroncal event add "Company Holiday" --date 2026-12-25
 
+  # Multi-day all-day event (--end-date is inclusive)
+  chroncal event add "Summer vacation" --date 2026-07-05 --end-date 2026-07-15
+
   # Event with explicit end time instead of duration
   chroncal event add "Workshop" --date 2026-05-10 --time 09:00 --end-time 12:30
+
+  # Timed event that crosses midnight
+  chroncal event add "Overnight hackathon" --date 2026-06-13 --time 18:00 \
+    --end-date 2026-06-14 --end-time 12:00
 
   # Recurring weekly meeting with alarm and attendees
   chroncal event add "Team Standup" --time 09:00 --duration 30m \
@@ -368,18 +380,47 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 			if endTimeStr != "" && cmd.Flags().Changed("duration") {
 				return fmt.Errorf("--end-time and --duration are mutually exclusive")
 			}
+			if endDateStr != "" && cmd.Flags().Changed("duration") {
+				return fmt.Errorf("--end-date and --duration are mutually exclusive")
+			}
+
+			var endDate time.Time
+			if endDateStr != "" {
+				endDate, err = time.ParseInLocation("2006-01-02", endDateStr, loc)
+				if err != nil {
+					return fmt.Errorf("parse end-date: %w", err)
+				}
+			}
 
 			var endTime time.Time
-			if endTimeStr != "" {
+			switch {
+			case allDay:
+				startTime = time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, loc)
+				if endDateStr != "" {
+					if endDate.Before(date) {
+						return fmt.Errorf("--end-date %s is before --date %s", endDateStr, date.Format("2006-01-02"))
+					}
+					endTime = time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, 1)
+				} else {
+					endTime = startTime.AddDate(0, 0, 1)
+				}
+			case endTimeStr != "":
 				t, err := time.Parse("15:04", endTimeStr)
 				if err != nil {
 					return fmt.Errorf("parse end-time: %w", err)
 				}
-				endTime = time.Date(date.Year(), date.Month(), date.Day(), t.Hour(), t.Minute(), 0, 0, loc)
-				if !endTime.After(startTime) {
-					return fmt.Errorf("--end-time %s is not after --time %s (use --duration for cross-midnight events)", endTimeStr, timeStr)
+				endRef := date
+				if endDateStr != "" {
+					endRef = endDate
 				}
-			} else {
+				endTime = time.Date(endRef.Year(), endRef.Month(), endRef.Day(), t.Hour(), t.Minute(), 0, 0, loc)
+				if !endTime.After(startTime) {
+					return fmt.Errorf("end %s is not after start %s (use --end-date to cross midnight, or --duration)",
+						endTime.Format("2006-01-02 15:04"), startTime.Format("2006-01-02 15:04"))
+				}
+			case endDateStr != "":
+				return fmt.Errorf("--end-date requires --end-time for timed events")
+			default:
 				dur := time.Hour
 				if durationStr != "" {
 					dur, err = time.ParseDuration(durationStr)
@@ -388,11 +429,6 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 					}
 				}
 				endTime = startTime.Add(dur)
-			}
-
-			if allDay {
-				startTime = time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, loc)
-				endTime = startTime.AddDate(0, 0, 1)
 			}
 
 			// For timed events, pass startTime so date-only EXDATE/RDATE
@@ -516,17 +552,14 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 				pushCalendarAfterWrite(a, e.CalendarID, io.Discard)
 				return nil
 			}
-			if allDay {
-				fmt.Fprintf(w, "Created: %s on %s (all day)\n", safeText(e.Title), e.StartTime.Local().Format("Mon, Jan 2 2006"))
-			} else {
-				fmt.Fprintf(w, "Created: %s on %s at %s – %s\n", safeText(e.Title), e.StartTime.Local().Format("Mon, Jan 2 2006"), e.StartTime.Local().Format("15:04"), endTime.Local().Format("15:04"))
-			}
+			fmt.Fprintf(w, "Created: %s %s\n", safeText(e.Title), formatEventWhen(e.StartTime, endTime, allDay))
 			pushCalendarAfterWrite(a, e.CalendarID, w)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&dateStr, "date", "", "event date (YYYY-MM-DD, default: today)")
 	cmd.Flags().StringVar(&timeStr, "time", "", "start time (HH:MM); omit for an all-day event")
+	cmd.Flags().StringVar(&endDateStr, "end-date", "", "end date (YYYY-MM-DD); for all-day it is the last day inclusive, for timed events must be paired with --end-time")
 	cmd.Flags().StringVar(&endTimeStr, "end-time", "", "end time (HH:MM, alternative to --duration; ignored for all-day)")
 	cmd.Flags().StringVar(&durationStr, "duration", "1h", "event duration (e.g. 30m, 1h30m; ignored for all-day)")
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "calendar name (default: first available)")
@@ -565,6 +598,7 @@ func eventUpdateCmd() *cobra.Command {
 		title         string
 		dateStr       string
 		timeStr       string
+		endDateStr    string
 		endTimeStr    string
 		durationStr   string
 		calendarName  string
@@ -750,24 +784,53 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 			if cmd.Flags().Changed("end-time") && cmd.Flags().Changed("duration") {
 				return fmt.Errorf("--end-time and --duration are mutually exclusive")
 			}
+			if cmd.Flags().Changed("end-date") && cmd.Flags().Changed("duration") {
+				return fmt.Errorf("--end-date and --duration are mutually exclusive")
+			}
 
-			if cmd.Flags().Changed("end-time") {
+			var endDate time.Time
+			if cmd.Flags().Changed("end-date") {
+				endDate, err = time.ParseInLocation("2006-01-02", endDateStr, loc)
+				if err != nil {
+					return fmt.Errorf("parse end-date: %w", err)
+				}
+			}
+
+			switch {
+			case p.AllDay:
+				if cmd.Flags().Changed("end-date") {
+					if endDate.Before(p.StartTime) {
+						return fmt.Errorf("--end-date %s is before start date %s",
+							endDateStr, p.StartTime.Format("2006-01-02"))
+					}
+					p.EndTime = time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, 1)
+				} else if cmd.Flags().Changed("date") {
+					span := max(int(existing.EndTime.Sub(existing.StartTime)/(24*time.Hour)), 1)
+					p.EndTime = p.StartTime.AddDate(0, 0, span)
+				}
+			case cmd.Flags().Changed("end-time"):
 				t, err := time.Parse("15:04", endTimeStr)
 				if err != nil {
 					return fmt.Errorf("parse end-time: %w", err)
 				}
-				p.EndTime = time.Date(p.StartTime.Year(), p.StartTime.Month(), p.StartTime.Day(), t.Hour(), t.Minute(), 0, 0, loc)
-				if !p.EndTime.After(p.StartTime) {
-					return fmt.Errorf("--end-time %s is not after start time %s (use --duration for cross-midnight events)",
-						endTimeStr, p.StartTime.Format("15:04"))
+				endRef := p.StartTime
+				if cmd.Flags().Changed("end-date") {
+					endRef = endDate
 				}
-			} else if cmd.Flags().Changed("duration") {
+				p.EndTime = time.Date(endRef.Year(), endRef.Month(), endRef.Day(), t.Hour(), t.Minute(), 0, 0, loc)
+				if !p.EndTime.After(p.StartTime) {
+					return fmt.Errorf("end %s is not after start %s (use --end-date to cross midnight, or --duration)",
+						p.EndTime.Format("2006-01-02 15:04"), p.StartTime.Format("2006-01-02 15:04"))
+				}
+			case cmd.Flags().Changed("end-date"):
+				return fmt.Errorf("--end-date requires --end-time for timed events")
+			case cmd.Flags().Changed("duration"):
 				dur, err := time.ParseDuration(durationStr)
 				if err != nil {
 					return fmt.Errorf("parse duration: %w", err)
 				}
 				p.EndTime = p.StartTime.Add(dur)
-			} else if cmd.Flags().Changed("date") || cmd.Flags().Changed("time") {
+			case cmd.Flags().Changed("date") || cmd.Flags().Changed("time"):
 				p.EndTime = p.StartTime.Add(existing.EndTime.Sub(existing.StartTime))
 			}
 
@@ -890,6 +953,7 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 	cmd.Flags().StringVar(&title, "title", "", "new title")
 	cmd.Flags().StringVar(&dateStr, "date", "", "new date (YYYY-MM-DD)")
 	cmd.Flags().StringVar(&timeStr, "time", "", "new start time (HH:MM)")
+	cmd.Flags().StringVar(&endDateStr, "end-date", "", "new end date (YYYY-MM-DD); all-day: last day inclusive, timed: pair with --end-time")
 	cmd.Flags().StringVar(&endTimeStr, "end-time", "", "new end time (HH:MM)")
 	cmd.Flags().StringVar(&durationStr, "duration", "", "new duration (e.g. 30m, 1h30m)")
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "move to calendar (by name)")
@@ -999,6 +1063,29 @@ recurring series.`,
 // When tz is non-empty, it is used as the IANA timezone for interpreting values
 // that lack an explicit offset (i.e. not RFC 3339). Falls back to local time.
 //
+// formatEventWhen renders a human-readable "when" clause for an event,
+// handling single-day, multi-day all-day, and cross-midnight timed events.
+// The end time is exclusive, matching how we store it internally.
+func formatEventWhen(start, end time.Time, allDay bool) string {
+	s := start.Local()
+	e := end.Local()
+	if allDay {
+		last := e.AddDate(0, 0, -1)
+		if s.Year() == last.Year() && s.YearDay() == last.YearDay() {
+			return fmt.Sprintf("on %s (all day)", s.Format("Mon, Jan 2 2006"))
+		}
+		return fmt.Sprintf("from %s to %s (all day)",
+			s.Format("Mon, Jan 2 2006"), last.Format("Mon, Jan 2 2006"))
+	}
+	if s.Year() == e.Year() && s.YearDay() == e.YearDay() {
+		return fmt.Sprintf("on %s at %s – %s",
+			s.Format("Mon, Jan 2 2006"), s.Format("15:04"), e.Format("15:04"))
+	}
+	return fmt.Sprintf("from %s %s to %s %s",
+		s.Format("Mon, Jan 2 2006"), s.Format("15:04"),
+		e.Format("Mon, Jan 2 2006"), e.Format("15:04"))
+}
+
 // startTime is the event's start time. When a date-only value (YYYY-MM-DD) is
 // provided for a timed event, the start time's hour and minute are overlaid onto
 // the parsed date so that EXDATE/RDATE values match the recurrence instance time

@@ -327,6 +327,32 @@ func safeDisplayValues(vals ...any) []any {
 }
 
 // printTable renders v as aligned columns using rodaine/table.
+// eventTableDateTime renders DATE and TIME columns for the events table,
+// expanding the DATE column to a range when the event spans multiple days.
+// The end time is exclusive, matching how we store it.
+func eventTableDateTime(start, end time.Time, allDay bool) (string, string) {
+	if allDay {
+		last := end.AddDate(0, 0, -1)
+		if start.Year() == last.Year() && start.YearDay() == last.YearDay() {
+			return start.Format("2006-01-02"), "all day"
+		}
+		endFmt := "01-02"
+		if start.Year() != last.Year() {
+			endFmt = "2006-01-02"
+		}
+		return start.Format("2006-01-02") + "→" + last.Format(endFmt), "all day"
+	}
+	timeRange := start.Format("15:04") + "–" + end.Format("15:04")
+	if start.Year() == end.Year() && start.YearDay() == end.YearDay() {
+		return start.Format("2006-01-02"), timeRange
+	}
+	endFmt := "01-02"
+	if start.Year() != end.Year() {
+		endFmt = "2006-01-02"
+	}
+	return start.Format("2006-01-02") + "→" + end.Format(endFmt), timeRange
+}
+
 func printTable(w io.Writer, v any) error {
 	switch data := v.(type) {
 	case []jsonEvent:
@@ -345,13 +371,7 @@ func printTable(w io.Writer, v any) error {
 		for _, e := range data {
 			start, _ := time.Parse(time.RFC3339, e.StartTime)
 			end, _ := time.Parse(time.RFC3339, e.EndTime)
-			date := start.Local().Format("2006-01-02")
-			var timeRange string
-			if e.AllDay {
-				timeRange = "all day"
-			} else {
-				timeRange = start.Local().Format("15:04") + "–" + end.Local().Format("15:04")
-			}
+			date, timeRange := eventTableDateTime(start.Local(), end.Local(), e.AllDay)
 			tbl.AddRow(safeDisplayValues(e.ID, e.UID, e.CalendarID, date, timeRange, e.Title,
 				e.Description, e.Location, e.AllDay, e.RecurrenceRule, e.Timezone,
 				e.Status, e.Transp, e.Sequence, e.Priority, e.Class, e.URL,
@@ -459,22 +479,36 @@ func printEvent(w io.Writer, e event.Event) {
 func printEventDetail(w io.Writer, e event.Event, showDate bool) {
 	i := ic()
 	fmt.Fprintf(w, "  %s %s\n", i.Title, textsafe.Display(e.Title))
-	if e.AllDay {
-		if showDate {
-			fmt.Fprintf(w, "  %s %s (all day)\n", i.Clock, e.StartTime.Local().Format("Mon, Jan 2 2006"))
-		} else {
+	s := e.StartTime.Local()
+	en := e.EndTime.Local()
+	sameDay := s.Year() == en.Year() && s.YearDay() == en.YearDay()
+	switch {
+	case e.AllDay:
+		last := en.AddDate(0, 0, -1)
+		allDaySameDay := s.Year() == last.Year() && s.YearDay() == last.YearDay()
+		switch {
+		case showDate && allDaySameDay:
+			fmt.Fprintf(w, "  %s %s (all day)\n", i.Clock, s.Format("Mon, Jan 2 2006"))
+		case showDate:
+			fmt.Fprintf(w, "  %s %s – %s (all day)\n", i.Clock,
+				s.Format("Mon, Jan 2 2006"), last.Format("Mon, Jan 2 2006"))
+		default:
 			fmt.Fprintf(w, "  %s all day\n", i.Clock)
 		}
-	} else {
-		if showDate {
-			fmt.Fprintf(w, "  %s %s – %s\n", i.Clock,
-				e.StartTime.Local().Format("Mon, Jan 2 2006 15:04"),
-				e.EndTime.Local().Format("15:04"))
-		} else {
-			fmt.Fprintf(w, "  %s %s – %s\n", i.Clock,
-				e.StartTime.Local().Format("15:04"),
-				e.EndTime.Local().Format("15:04"))
-		}
+	case showDate && sameDay:
+		fmt.Fprintf(w, "  %s %s – %s\n", i.Clock,
+			s.Format("Mon, Jan 2 2006 15:04"),
+			en.Format("15:04"))
+	case showDate:
+		fmt.Fprintf(w, "  %s %s – %s\n", i.Clock,
+			s.Format("Mon, Jan 2 2006 15:04"),
+			en.Format("Mon, Jan 2 2006 15:04"))
+	case sameDay:
+		fmt.Fprintf(w, "  %s %s – %s\n", i.Clock,
+			s.Format("15:04"), en.Format("15:04"))
+	default:
+		fmt.Fprintf(w, "  %s %s – %s\n", i.Clock,
+			s.Format("15:04"), en.Format("Mon, Jan 2 15:04"))
 	}
 	if e.Location != "" {
 		fmt.Fprintf(w, "  %s %s\n", i.Location, textsafe.Display(e.Location))
