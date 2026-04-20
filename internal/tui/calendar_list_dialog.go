@@ -25,13 +25,14 @@ type calendarListDialogKeyMap struct {
 	Edit     key.Binding
 	Delete   key.Binding
 	New      key.Binding
+	Sync     key.Binding
 	Tab      key.Binding
 	ShiftTab key.Binding
 	Enter    key.Binding
 }
 
 func (k calendarListDialogKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Tab, k.New, k.Edit, k.Close}
+	return []key.Binding{k.Up, k.Down, k.Tab, k.New, k.Edit, k.Sync, k.Close}
 }
 
 func defaultCalendarListDialogKeys() calendarListDialogKeyMap {
@@ -42,6 +43,7 @@ func defaultCalendarListDialogKeys() calendarListDialogKeyMap {
 		Edit:     key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
 		Delete:   key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "delete")),
 		New:      key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new")),
+		Sync:     key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sync")),
 		Tab:      key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "sections")),
 		ShiftTab: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev section")),
 		Enter:    key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter", "select")),
@@ -281,6 +283,11 @@ func (m CalendarListDialogModel) handleKey(msg tea.KeyPressMsg) (CalendarListDia
 	case key.Matches(msg, m.keys.Delete):
 		if _, ok := m.selectedID(); ok && len(actions) > 2 {
 			return m, actions[2].msg
+		}
+	case key.Matches(msg, m.keys.Sync):
+		if id, ok := m.selectedID(); ok {
+			name := m.calendars[id].Name
+			return m, func() tea.Msg { return SyncCalendarRequestedMsg{ID: id, Name: name} }
 		}
 	}
 	return m, nil

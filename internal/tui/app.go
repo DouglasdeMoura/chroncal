@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"image"
+	"io"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -20,6 +22,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/config"
 	"github.com/douglasdemoura/chroncal/internal/event"
+	syncpkg "github.com/douglasdemoura/chroncal/internal/sync"
 )
 
 type appFocus int
@@ -49,6 +52,7 @@ type appKeyMap struct {
 	Palette        key.Binding
 	CalendarCreate key.Binding
 	CalendarList   key.Binding
+	Sync           key.Binding
 }
 
 func defaultAppKeys() appKeyMap {
@@ -64,6 +68,7 @@ func defaultAppKeys() appKeyMap {
 		Palette:        key.NewBinding(key.WithKeys("/", "ctrl+p", "ctrl+k"), key.WithHelp("/", "commands")),
 		CalendarCreate: key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "new calendar")),
 		CalendarList:   key.NewBinding(key.WithKeys("L"), key.WithHelp("L", "calendars")),
+		Sync:           key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sync")),
 	}
 }
 
@@ -81,6 +86,7 @@ func (c compositeKeyMap) ShortHelp() []key.Binding {
 		c.appKeys.MonthView,
 		c.appKeys.WeekView,
 		c.appKeys.DayView,
+		c.appKeys.Sync,
 		c.appKeys.Palette,
 		c.appKeys.Help,
 		c.appKeys.Quit,
@@ -96,6 +102,7 @@ func (c compositeKeyMap) FullHelp() [][]key.Binding {
 		c.appKeys.Sidebar,
 		c.appKeys.CalendarCreate,
 		c.appKeys.CalendarList,
+		c.appKeys.Sync,
 		c.appKeys.SwitchFocus,
 		c.appKeys.Palette,
 		c.appKeys.Help,
@@ -158,6 +165,29 @@ type eventDeletedMsg struct {
 	err error
 }
 
+// SyncAllRequestedMsg asks the app to sync every connected calendar.
+type SyncAllRequestedMsg struct{}
+
+// SyncCalendarRequestedMsg asks the app to sync a single calendar.
+type SyncCalendarRequestedMsg struct {
+	ID   int64
+	Name string
+}
+
+// syncFinishedMsg is emitted when a sync run completes.
+type syncFinishedMsg struct {
+	summary string
+	err     error
+	reload  bool
+}
+
+// syncStatusExpiredMsg clears the footer status line after a delay. The token
+// is compared against the current statusToken so a newer status isn't wiped
+// by an old tick.
+type syncStatusExpiredMsg struct {
+	token int
+}
+
 type Model struct {
 	app             *app.App
 	theme           Theme
@@ -207,6 +237,13 @@ type Model struct {
 	// miniMonthEvents caches the raw events for the sidebar mini-month's
 	// displayed month so visibility toggles can re-filter without a DB hit.
 	miniMonthEvents []event.Event
+
+	// syncStatus is a transient footer line shown during/after a sync run.
+	// statusToken is bumped whenever the status changes so stale Tick
+	// expirations can tell whether they still own the current line.
+	syncStatus  string
+	statusToken int
+	syncing     bool
 }
 
 func NewModel(a *app.App) Model {
@@ -370,6 +407,86 @@ func (m Model) loadCalendars() tea.Cmd {
 	}
 }
 
+// newSyncService builds a sync.Service using the app's shared SQLite handle.
+// Logs are discarded so sync work doesn't clobber the rendered TUI; users
+// run `chroncal sync run` from a shell if they need verbose output.
+func (m Model) newSyncService() (*syncpkg.Service, error) {
+	credStore, err := auth.NewCredentialStore(true)
+	if err != nil {
+		return nil, fmt.Errorf("credential store: %w", err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	return syncpkg.NewService(m.app.DB, m.app.Queries, credStore, m.app.Calendars, m.app.Events, m.app.Todos, m.app.Journals, logger), nil
+}
+
+func (m Model) runSyncAll() tea.Cmd {
+	return func() tea.Msg {
+		svc, err := m.newSyncService()
+		if err != nil {
+			return syncFinishedMsg{err: err}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		results, err := svc.SyncAll(ctx, syncpkg.ConflictServerWins)
+		if err != nil {
+			return syncFinishedMsg{err: err}
+		}
+		if len(results) == 0 {
+			return syncFinishedMsg{summary: "No connected calendars to sync", reload: false}
+		}
+		var pushed, pulled, deleted, conflicts, errCount int
+		var firstErr error
+		for _, r := range results {
+			pushed += r.Pushed
+			pulled += r.Pulled
+			deleted += r.Deleted
+			conflicts += r.Conflicts
+			errCount += len(r.Errors)
+			if firstErr == nil && len(r.Errors) > 0 {
+				firstErr = r.Errors[0]
+			}
+		}
+		summary := fmt.Sprintf("Synced %d calendar(s) · pushed %d · pulled %d · deleted %d · conflicts %d",
+			len(results), pushed, pulled, deleted, conflicts)
+		if errCount > 0 {
+			return syncFinishedMsg{summary: summary, err: firstErr, reload: true}
+		}
+		return syncFinishedMsg{summary: summary, reload: true}
+	}
+}
+
+func (m Model) runSyncCalendar(id int64, name string) tea.Cmd {
+	return func() tea.Msg {
+		svc, err := m.newSyncService()
+		if err != nil {
+			return syncFinishedMsg{err: err}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		result, err := svc.SyncCalendar(ctx, id, syncpkg.ConflictServerWins)
+		if err != nil {
+			return syncFinishedMsg{err: err}
+		}
+		label := name
+		if label == "" {
+			label = "calendar"
+		}
+		summary := fmt.Sprintf("Synced %s · pushed %d · pulled %d · deleted %d · conflicts %d",
+			label, result.Pushed, result.Pulled, result.Deleted, result.Conflicts)
+		var firstErr error
+		if len(result.Errors) > 0 {
+			firstErr = result.Errors[0]
+		}
+		return syncFinishedMsg{summary: summary, err: firstErr, reload: true}
+	}
+}
+
+func (m Model) expireStatusAfter(d time.Duration, token int) tea.Cmd {
+	return tea.Tick(d, func(time.Time) tea.Msg {
+		return syncStatusExpiredMsg{token: token}
+	})
+}
+
 // navigateMainTo sets the active main view's cursor (and the month-view's
 // displayed month) to the given date. Callers typically follow this with
 // m.loadEvents() to refresh the query range.
@@ -404,10 +521,14 @@ func (m Model) Init() tea.Cmd {
 const sidebarWidth = 24
 
 func (m Model) footerHeight() int {
+	h := 1
 	if m.help.ShowAll {
-		return 8
+		h = 8
 	}
-	return 1
+	if m.syncStatus != "" {
+		h++
+	}
+	return h
 }
 
 func (m Model) mainDims() (int, int) {
@@ -1093,6 +1214,52 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.calendarListDialogOpen = false
 		return m, nil
 
+	case SyncAllRequestedMsg:
+		if m.syncing {
+			return m, nil
+		}
+		m.syncing = true
+		m.statusToken++
+		m.syncStatus = "Syncing all calendars…"
+		return m, m.runSyncAll()
+
+	case SyncCalendarRequestedMsg:
+		if m.syncing {
+			return m, nil
+		}
+		m.syncing = true
+		m.statusToken++
+		label := msg.Name
+		if label == "" {
+			label = "calendar"
+		}
+		m.syncStatus = fmt.Sprintf("Syncing %s…", label)
+		return m, m.runSyncCalendar(msg.ID, msg.Name)
+
+	case syncFinishedMsg:
+		m.syncing = false
+		m.statusToken++
+		if msg.err != nil {
+			if msg.summary != "" {
+				m.syncStatus = fmt.Sprintf("%s — %s", msg.summary, msg.err.Error())
+			} else {
+				m.syncStatus = "Sync failed: " + msg.err.Error()
+			}
+		} else {
+			m.syncStatus = msg.summary
+		}
+		cmds := []tea.Cmd{m.expireStatusAfter(6*time.Second, m.statusToken)}
+		if msg.reload {
+			cmds = append(cmds, m.loadEvents(), m.loadCalendars())
+		}
+		return m, tea.Batch(cmds...)
+
+	case syncStatusExpiredMsg:
+		if msg.token == m.statusToken && !m.syncing {
+			m.syncStatus = ""
+		}
+		return m, nil
+
 	case calendarMutationDoneMsg:
 		if msg.err != nil {
 			if m.calendarDialogOpen {
@@ -1334,6 +1501,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return CalendarDialogRequestedMsg{ID: 0} }
 		case key.Matches(msg, m.keys.CalendarList):
 			return m, func() tea.Msg { return CalendarListDialogRequestedMsg{} }
+		case key.Matches(msg, m.keys.Sync):
+			return m, func() tea.Msg { return SyncAllRequestedMsg{} }
 		case key.Matches(msg, m.keys.SwitchFocus):
 			// Only handle Tab/Shift+Tab at the app level when entering the
 			// sidebar from the main view. Forward Tab lands on the first
@@ -1453,10 +1622,21 @@ func (m Model) View() tea.View {
 
 	m.help.SetWidth(m.width - padding*4)
 	helpView := m.help.View(m.currentKeyMap())
+	footerContent := helpView
+	if m.syncStatus != "" {
+		statusColor := m.theme.Primary
+		if m.syncing {
+			statusColor = m.theme.Muted
+		}
+		statusLine := lipgloss.NewStyle().
+			Foreground(statusColor).
+			Render(m.syncStatus)
+		footerContent = lipgloss.JoinVertical(lipgloss.Left, statusLine, helpView)
+	}
 	footer := lipgloss.NewStyle().
 		Width(m.width - padding*2).
 		Padding(padding).
-		Render(helpView)
+		Render(footerContent)
 
 	v.Content = lipgloss.JoinVertical(lipgloss.Left, body, footer)
 
