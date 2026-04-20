@@ -1038,31 +1038,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 
-			serverURL, err := calendar.DeriveServerURL(req.URL, req.AllowInsecure)
+			name, err := caldav.VerifyCalendarURL(ctx, req.URL, req.Username, req.Password, req.AuthType, req.AllowInsecure)
 			if err != nil {
 				return CalendarTestResultMsg{Message: err.Error()}
 			}
-
-			var client *caldav.Client
-			switch calendar.NormalizeAuthType(req.AuthType) {
-			case "bearer":
-				client, err = caldav.NewBearerAuthClient(serverURL, req.Password)
-			default:
-				client, err = caldav.NewBasicAuthClient(serverURL, req.Username, req.Password)
+			message := "Connected"
+			if name != "" {
+				message = fmt.Sprintf("Connected · %s", name)
 			}
-			if err != nil {
-				return CalendarTestResultMsg{Message: err.Error()}
-			}
-
-			cals, err := client.DiscoverCalendars(ctx)
-			if err != nil {
-				return CalendarTestResultMsg{Message: err.Error()}
-			}
-			msg := fmt.Sprintf("Connected · %d calendar(s) available", len(cals))
-			if len(cals) == 1 {
-				msg = "Connected · 1 calendar available"
-			}
-			return CalendarTestResultMsg{OK: true, Message: msg}
+			return CalendarTestResultMsg{OK: true, Message: message}
 		}
 
 	case CalendarDeleteRequestedMsg:
