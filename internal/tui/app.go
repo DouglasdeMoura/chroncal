@@ -136,7 +136,8 @@ type eventRSVPUpdatedMsg struct {
 }
 
 type eventCreatedMsg struct {
-	err error
+	calendarID int64
+	err        error
 }
 
 type calendarMutationDoneMsg struct{ err error }
@@ -158,7 +159,8 @@ type eventViewLoadedMsg struct {
 }
 
 type eventUpdatedMsg struct {
-	err error
+	calendarID int64
+	err        error
 }
 
 type eventDeletedMsg struct {
@@ -174,11 +176,20 @@ type SyncCalendarRequestedMsg struct {
 	Name string
 }
 
-// syncFinishedMsg is emitted when a sync run completes.
+// syncFinishedMsg is emitted when a manual sync run completes.
 type syncFinishedMsg struct {
 	summary string
 	err     error
 	reload  bool
+}
+
+// opportunisticPushFinishedMsg is emitted after a save-time per-calendar push.
+// It doesn't drive the manual-sync state machine (m.syncing), so a push that
+// completes while a manual sync is mid-flight leaves the manual-sync status
+// line intact.
+type opportunisticPushFinishedMsg struct {
+	summary string
+	err     error
 }
 
 // syncStatusExpiredMsg clears the footer status line after a delay. The token
@@ -401,7 +412,12 @@ func (m Model) loadCalendars() tea.Cmd {
 		}
 		info := make(map[int64]CalendarInfo, len(cals))
 		for _, c := range cals {
-			info[c.ID] = CalendarInfo{Name: c.Name, Color: c.Color, OwnerEmail: c.OwnerEmail}
+			info[c.ID] = CalendarInfo{
+				Name:       c.Name,
+				Color:      c.Color,
+				OwnerEmail: c.OwnerEmail,
+				Synced:     c.AccountID != 0,
+			}
 		}
 		return calendarsLoadedMsg{calendars: info}
 	}
@@ -478,6 +494,44 @@ func (m Model) runSyncCalendar(id int64, name string) tea.Cmd {
 			firstErr = result.Errors[0]
 		}
 		return syncFinishedMsg{summary: summary, err: firstErr, reload: true}
+	}
+}
+
+// runOpportunisticPush pushes pending changes for a single calendar without
+// pulling. Best-effort: failures don't surface as errors — the dirty flag
+// survives and the background tick will retry. Returns nil for local-only
+// calendars (Synced=false) so callers can unconditionally batch it into the
+// post-save command without polluting the UI for offline calendars.
+func (m Model) runOpportunisticPush(calendarID int64) tea.Cmd {
+	info, ok := m.calendars[calendarID]
+	if !ok || !info.Synced {
+		return nil
+	}
+	name := info.Name
+	return func() tea.Msg {
+		svc, err := m.newSyncService()
+		if err != nil {
+			return opportunisticPushFinishedMsg{err: err}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		result, err := svc.PushCalendar(ctx, calendarID, syncpkg.ConflictServerWins)
+		if err != nil {
+			return opportunisticPushFinishedMsg{err: err}
+		}
+		if result.Pushed == 0 && result.Deleted == 0 && len(result.Errors) == 0 {
+			return opportunisticPushFinishedMsg{}
+		}
+		label := name
+		if label == "" {
+			label = "calendar"
+		}
+		summary := fmt.Sprintf("Synced %s · pushed %d · deleted %d", label, result.Pushed, result.Deleted)
+		var firstErr error
+		if len(result.Errors) > 0 {
+			firstErr = result.Errors[0]
+		}
+		return opportunisticPushFinishedMsg{summary: summary, err: firstErr}
 	}
 }
 
@@ -808,10 +862,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		alarms := msg.Alarms
 		if editID > 0 {
 			eventID := editID
+			calID := msg.CalendarID
 			return m, func() tea.Msg {
 				ctx := context.Background()
 				_, err := m.app.Events.Update(ctx, eventID, event.UpdateParams{
-					CalendarID:     msg.CalendarID,
+					CalendarID:     calID,
 					Title:          msg.Title,
 					Description:    msg.Description,
 					Location:       msg.Location,
@@ -825,19 +880,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					Class:          msg.Class,
 				})
 				if err != nil {
-					return eventUpdatedMsg{err: err}
+					return eventUpdatedMsg{calendarID: calID, err: err}
 				}
 				if err = m.app.Events.ReplaceAttendees(ctx, eventID, attendees); err != nil {
-					return eventUpdatedMsg{err: err}
+					return eventUpdatedMsg{calendarID: calID, err: err}
 				}
 				err = m.app.Events.ReplaceAlarms(ctx, eventID, alarms)
-				return eventUpdatedMsg{err: err}
+				return eventUpdatedMsg{calendarID: calID, err: err}
 			}
 		}
+		calID := msg.CalendarID
 		return m, func() tea.Msg {
 			ctx := context.Background()
 			created, err := m.app.Events.Create(ctx, event.CreateParams{
-				CalendarID:     msg.CalendarID,
+				CalendarID:     calID,
 				Title:          msg.Title,
 				Description:    msg.Description,
 				Location:       msg.Location,
@@ -851,17 +907,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Class:          msg.Class,
 			})
 			if err != nil {
-				return eventCreatedMsg{err: err}
+				return eventCreatedMsg{calendarID: calID, err: err}
 			}
 			if len(attendees) > 0 {
 				if err = m.app.Events.ReplaceAttendees(ctx, created.ID, attendees); err != nil {
-					return eventCreatedMsg{err: err}
+					return eventCreatedMsg{calendarID: calID, err: err}
 				}
 			}
 			if len(alarms) > 0 {
 				err = m.app.Events.ReplaceAlarms(ctx, created.ID, alarms)
 			}
-			return eventCreatedMsg{err: err}
+			return eventCreatedMsg{calendarID: calID, err: err}
 		}
 
 	case EventFormClosedMsg:
@@ -909,6 +965,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		cmds := []tea.Cmd{m.loadEvents()}
+		if push := m.runOpportunisticPush(msg.calendarID); push != nil {
+			cmds = append(cmds, push)
+		}
 		if m.viewReturnEvent.ID != 0 {
 			ev := m.viewReturnEvent
 			m.viewReturnEvent = event.Event{}
@@ -923,6 +982,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		cmds := []tea.Cmd{m.loadEvents()}
+		if push := m.runOpportunisticPush(msg.calendarID); push != nil {
+			cmds = append(cmds, push)
+		}
 		if m.viewReturnEvent.ID != 0 {
 			ev := m.viewReturnEvent
 			m.viewReturnEvent = event.Event{}
@@ -1258,6 +1320,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.loadEvents(), m.loadCalendars())
 		}
 		return m, tea.Batch(cmds...)
+
+	case opportunisticPushFinishedMsg:
+		// Don't stomp the manual-sync status line or reset m.syncing.
+		if m.syncing {
+			return m, nil
+		}
+		if msg.err == nil && msg.summary == "" {
+			return m, nil
+		}
+		m.statusToken++
+		if msg.err != nil {
+			if msg.summary != "" {
+				m.syncStatus = fmt.Sprintf("%s — %s", msg.summary, msg.err.Error())
+			} else {
+				m.syncStatus = "Sync failed: " + msg.err.Error()
+			}
+		} else {
+			m.syncStatus = msg.summary
+		}
+		return m, m.expireStatusAfter(4*time.Second, m.statusToken)
 
 	case syncStatusExpiredMsg:
 		if msg.token == m.statusToken && !m.syncing {

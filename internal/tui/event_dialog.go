@@ -107,6 +107,9 @@ type CalendarInfo struct {
 	Name       string
 	Color      string
 	OwnerEmail string
+	// Synced reports whether the calendar is linked to a CalDAV account.
+	// Drives opportunistic save-time push: local-only calendars skip it.
+	Synced bool
 }
 
 const (
