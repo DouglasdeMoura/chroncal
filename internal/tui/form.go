@@ -38,9 +38,11 @@ type FormField interface {
 
 // TextField wraps a bubbles textinput with optional keystroke filtering.
 type TextField struct {
-	input  textinput.Model
-	filter func(tea.Key) bool
-	suffix string
+	input    textinput.Model
+	filter   func(tea.Key) bool
+	suffix   string
+	disabled bool
+	dimStyle lipgloss.Style
 }
 
 func NewTextField(placeholder string) *TextField {
@@ -95,6 +97,9 @@ func (f *TextField) SetEchoPassword(on bool) {
 }
 
 func (f *TextField) Update(msg tea.Msg) tea.Cmd {
+	if f.disabled {
+		return nil
+	}
 	if f.filter != nil {
 		if msg, ok := msg.(tea.KeyPressMsg); ok {
 			if k := msg.Key(); k.Text != "" && !f.filter(k) {
@@ -108,13 +113,29 @@ func (f *TextField) Update(msg tea.Msg) tea.Cmd {
 }
 
 func (f *TextField) View() string {
+	if f.disabled {
+		val := f.input.Value()
+		if val == "" {
+			val = f.input.Placeholder
+		}
+		out := f.dimStyle.Render(val)
+		if f.suffix != "" {
+			out += " " + f.suffix
+		}
+		return out
+	}
 	if f.suffix == "" {
 		return f.input.View()
 	}
 	return f.input.View() + " " + f.suffix
 }
-func (f *TextField) Focus() tea.Cmd { return f.input.Focus() }
-func (f *TextField) Blur()          { f.input.Blur() }
+func (f *TextField) Focus() tea.Cmd {
+	if f.disabled {
+		return nil
+	}
+	return f.input.Focus()
+}
+func (f *TextField) Blur() { f.input.Blur() }
 func (f *TextField) SetWidth(w int) {
 	if f.suffix != "" {
 		// Pin the input to CharLimit so the suffix sits at a fixed column
@@ -128,7 +149,23 @@ func (f *TextField) SetWidth(w int) {
 	}
 	f.input.SetWidth(max(w, 1))
 }
-func (f *TextField) IsFocusable() bool { return true }
+func (f *TextField) IsFocusable() bool { return !f.disabled }
+
+// SetDisabled toggles disabled state. Disabled fields skip focus during
+// Tab navigation, ignore input, and render the value in a dimmed style.
+func (f *TextField) SetDisabled(v bool) {
+	if f.disabled == v {
+		return
+	}
+	f.disabled = v
+	if v {
+		f.input.Blur()
+	}
+}
+
+// SetDimStyle sets the style used to render the value when disabled.
+// Defaults to the zero style (no visual change beyond skipping the cursor).
+func (f *TextField) SetDimStyle(s lipgloss.Style) { f.dimStyle = s }
 
 // FilterDigits allows only digit characters (0-9).
 func FilterDigits(k tea.Key) bool {
@@ -672,6 +709,7 @@ type CheckboxField struct {
 	checked     bool
 	autoChecked bool // true when checked was set by the form, not the user
 	focused     bool
+	quietFocus  bool // when true, focus does not apply reverse styling
 	disabledFn  func() (disabled bool, text string)
 }
 
@@ -705,6 +743,11 @@ func (f *CheckboxField) SetDisabledWhen(fn func() (disabled bool, text string)) 
 	f.disabledFn = fn
 }
 
+// SetQuietFocus suppresses the default reverse-style highlight the checkbox
+// applies when focused. Useful for non-primary toggles where the focus
+// affordance comes from the form's focus marker.
+func (f *CheckboxField) SetQuietFocus(v bool) { f.quietFocus = v }
+
 func (f *CheckboxField) Toggle() {
 	if f.disabledFn != nil {
 		if disabled, _ := f.disabledFn(); disabled {
@@ -735,7 +778,7 @@ func (f *CheckboxField) View() string {
 		glyph = Glyphs["checkbox.on"]
 	}
 	style := lipgloss.NewStyle()
-	if f.focused {
+	if f.focused && !f.quietFocus {
 		style = style.Reverse(true)
 	}
 

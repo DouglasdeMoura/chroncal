@@ -95,8 +95,9 @@ var paletteSwatches = []string{
 
 // Form field indices. Local fields are always present. Index 4 is an empty
 // spacer row; index 5 is the Sync toggle in unlinked mode or a read-only
-// status line in linked mode. Remote fields (6..10) exist only when Sync
-// is on.
+// status line in linked mode. Remote fields (6..11) exist only when Sync
+// is on. The "Same as owner email" mirror lives inside the sync section
+// so it's only visible when a CalDAV connection is being configured.
 const (
 	cdIdxName        = 0
 	cdIdxColor       = 1
@@ -106,11 +107,12 @@ const (
 	cdIdxSync = 5
 
 	// Present only when Sync is on (unlinked mode only).
-	cdIdxRemoteURL     = 6
-	cdIdxUsername      = 7
-	cdIdxAuth          = 8
-	cdIdxPassword      = 9
-	cdIdxAllowInsecure = 10
+	cdIdxRemoteURL       = 6
+	cdIdxUsername        = 7
+	cdIdxSameAsOwnerMail = 8
+	cdIdxAuth            = 9
+	cdIdxPassword        = 10
+	cdIdxAllowInsecure   = 11
 )
 
 var authOptions = []SelectOption{
@@ -280,8 +282,14 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 	}
 
 	syncTheme := theme
+	// Snapshot of the remote section values, preserved across Sync toggles
+	// so accidentally flipping Sync off and back on doesn't wipe what the
+	// user has already typed.
+	var snap struct {
+		url, username, auth, password string
+		allowInsecure, sameAsOwner    bool
+	}
 	form.OnRebuild(func(f *Form) {
-		// Toggle remote fields on/off in lockstep with the Sync checkbox.
 		if linked {
 			return
 		}
@@ -289,19 +297,28 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		hasRemote := f.ItemCount() > cdIdxSync+1
 		switch {
 		case syncOn && !hasRemote:
-			insecure := NewCheckboxField("", false)
+			insecure := NewCheckboxField("", snap.allowInsecure)
 			insecure.SetContent("allow plain HTTP")
+			password := newPasswordField()
+			password.SetValue(snap.password)
 			f.AppendItems(
-				FormItem{Label: "Remote URL", Field: newRemoteURLField(""), Required: true},
-				FormItem{Label: "Username", Field: newUsernameField(""), Required: true},
-				FormItem{Label: "Auth", Field: newAuthField("")},
-				FormItem{Label: "Password", Field: newPasswordField(), Required: true},
+				FormItem{Label: "Remote URL", Field: newRemoteURLField(snap.url), Required: true},
+				FormItem{Label: "Username", Field: newMirroredUsernameField(snap.username, syncTheme), Required: true},
+				FormItem{Label: " ", Field: newSameAsOwnerMailCheckbox(snap.sameAsOwner)},
+				FormItem{Label: "Auth", Field: newAuthField(snap.auth)},
+				FormItem{Label: "Password", Field: password, Required: true},
 				FormItem{Label: "HTTP", Field: insecure},
 			)
 			f.SetActionButton("Test", ButtonSecondary, func() tea.Msg {
 				return testConnectionPressedMsg{}
 			})
 		case !syncOn && hasRemote:
+			snap.url = f.Field(cdIdxRemoteURL).(*TextField).Value()
+			snap.username = f.Field(cdIdxUsername).(*TextField).Value()
+			snap.auth = f.Field(cdIdxAuth).(*SelectField).Value()
+			snap.password = f.Field(cdIdxPassword).(*TextField).Value()
+			snap.allowInsecure = f.Field(cdIdxAllowInsecure).(*CheckboxField).Checked()
+			snap.sameAsOwner = f.Field(cdIdxSameAsOwnerMail).(*CheckboxField).Checked()
 			f.RemoveItems(cdIdxSync + 1)
 			f.ClearError()
 			f.ClearActionButtons()
@@ -352,10 +369,45 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 				}
 			}
 		}
+
+		// Mirror the owner email into the CalDAV username when the
+		// "Same as owner email" checkbox is checked. Runs last so the
+		// username field is guaranteed present when sync just went on.
+		applySameAsOwnerMail(f)
 	})
 	m.form = form
 
 	return m
+}
+
+// applySameAsOwnerMail drives the "Same as owner email" checkbox: when
+// checked with a non-empty Owner email, the CalDAV Username field is
+// pinned to that value and rendered as disabled. The checkbox itself is
+// always interactive and never has its styling altered by this helper.
+func applySameAsOwnerMail(f *Form) {
+	if f.ItemCount() <= cdIdxSameAsOwnerMail {
+		return
+	}
+	username, ok := f.Field(cdIdxUsername).(*TextField)
+	if !ok {
+		return
+	}
+	email, ok := f.Field(cdIdxEmail).(*TextField)
+	if !ok {
+		return
+	}
+	box, ok := f.Field(cdIdxSameAsOwnerMail).(*CheckboxField)
+	if !ok {
+		return
+	}
+
+	emailVal := strings.TrimSpace(email.Value())
+	if box.Checked() && emailVal != "" {
+		username.SetValue(emailVal)
+		username.SetDisabled(true)
+	} else {
+		username.SetDisabled(false)
+	}
 }
 
 // syncEnabled reports whether the Sync checkbox is currently on. Returns
@@ -424,6 +476,25 @@ func newPasswordField() *TextField {
 	f := NewTextField("your password")
 	f.SetCharLimit(256)
 	f.SetEchoPassword(true)
+	return f
+}
+
+// newSameAsOwnerMailCheckbox builds the "Same as owner email" mirror.
+// Focus is quiet (no reverse highlight) because the field is secondary to
+// the Username it drives.
+func newSameAsOwnerMailCheckbox(checked bool) *CheckboxField {
+	f := NewCheckboxField("", checked)
+	f.SetContent("Same as owner email")
+	f.SetQuietFocus(true)
+	return f
+}
+
+// newMirroredUsernameField builds the Username TextField used inside the
+// sync section. Its dim-style is set so the disabled state (driven by the
+// "Same as owner email" checkbox) reads clearly.
+func newMirroredUsernameField(value string, theme Theme) *TextField {
+	f := newUsernameField(value)
+	f.SetDimStyle(lipgloss.NewStyle().Foreground(theme.TextDim).Italic(true))
 	return f
 }
 
