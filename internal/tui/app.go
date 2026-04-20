@@ -164,7 +164,8 @@ type eventUpdatedMsg struct {
 }
 
 type eventDeletedMsg struct {
-	err error
+	calendarID int64
+	err        error
 }
 
 // SyncAllRequestedMsg asks the app to sync every connected calendar.
@@ -1379,7 +1380,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case 2: // All events
 				err = m.app.Events.DeleteSeries(context.Background(), ev.UID)
 			}
-			return eventDeletedMsg{err: err}
+			return eventDeletedMsg{calendarID: ev.CalendarID, err: err}
 		}
 
 	case ConfirmDialogResultMsg:
@@ -1402,7 +1403,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		ev := m.pendingDelete
 		return m, func() tea.Msg {
 			err := m.app.Events.Delete(context.Background(), ev.ID)
-			return eventDeletedMsg{err: err}
+			return eventDeletedMsg{calendarID: ev.CalendarID, err: err}
 		}
 
 	case eventDeletedMsg:
@@ -1411,7 +1412,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.viewDialogOpen = false
-		return m, m.loadEvents()
+		cmds := []tea.Cmd{m.loadEvents()}
+		if push := m.runOpportunisticPush(msg.calendarID); push != nil {
+			cmds = append(cmds, push)
+		}
+		return m, tea.Batch(cmds...)
 
 	case tea.MouseWheelMsg:
 		if !m.dialogOpen && !m.choiceOpen && !m.confirmOpen {

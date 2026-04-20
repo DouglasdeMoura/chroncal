@@ -961,9 +961,14 @@ recurring series.`,
 				}
 				w := cmd.OutOrStdout()
 				if outputFmt != "text" {
-					return printOutput(w, map[string]any{"deleted": true, "uid": e.UID, "series": true})
+					if err := printOutput(w, map[string]any{"deleted": true, "uid": e.UID, "series": true}); err != nil {
+						return err
+					}
+					pushCalendarAfterWrite(a, e.CalendarID, io.Discard)
+					return nil
 				}
 				fmt.Fprintf(w, "Deleted event series %q.\n", safeText(e.UID))
+				pushCalendarAfterWrite(a, e.CalendarID, w)
 				return nil
 			}
 
@@ -973,9 +978,14 @@ recurring series.`,
 
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
-				return printOutput(w, map[string]any{"deleted": true, "id": e.ID})
+				if err := printOutput(w, map[string]any{"deleted": true, "id": e.ID}); err != nil {
+					return err
+				}
+				pushCalendarAfterWrite(a, e.CalendarID, io.Discard)
+				return nil
 			}
 			fmt.Fprintf(w, "Deleted event %d.\n", e.ID)
+			pushCalendarAfterWrite(a, e.CalendarID, w)
 			return nil
 		},
 	}
