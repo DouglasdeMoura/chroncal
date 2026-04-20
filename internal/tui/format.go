@@ -34,6 +34,55 @@ func formatTimeColumn(ev event.Event) string {
 	}
 }
 
+// formatTimeColumnMulti returns the time-column label for an event on a
+// specific day within its span. Start day shows "HH:MM→     ", last day
+// shows "     →HH:MM", middle days are blank. All-day and single-day
+// events fall back to formatTimeColumn.
+func formatTimeColumnMulti(ev event.Event, dayIndex, totalDays int) string {
+	if ev.AllDay || totalDays <= 1 {
+		return formatTimeColumn(ev)
+	}
+	switch {
+	case dayIndex == 1:
+		return ev.StartTime.Local().Format("15:04") + "→     "
+	case dayIndex == totalDays:
+		return "     →" + ev.EndTime.Local().Format("15:04")
+	default:
+		return "           "
+	}
+}
+
+// effectiveStartOnDay returns the event's start time as experienced on a
+// given day: the original start for its first day, midnight of that day
+// for any continuation day. Used to sort multi-day events (which are
+// ongoing from 00:00 on continuation days) above single-day events.
+func effectiveStartOnDay(ev event.Event, day time.Time, dayIndex int) time.Time {
+	if dayIndex == 1 {
+		return ev.StartTime
+	}
+	return time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, day.Location())
+}
+
+// spanDays returns the local calendar days an event touches. The end time
+// is treated as exclusive, so an event ending exactly at midnight does not
+// count the following day.
+func spanDays(ev event.Event) []time.Time {
+	s := ev.StartTime.Local()
+	startDay := time.Date(s.Year(), s.Month(), s.Day(), 0, 0, 0, 0, s.Location())
+	e := ev.EndTime.Local()
+	if !e.After(s) {
+		return []time.Time{startDay}
+	}
+	var days []time.Time
+	for d := startDay; d.Before(e); d = d.AddDate(0, 0, 1) {
+		days = append(days, d)
+	}
+	if len(days) == 0 {
+		days = []time.Time{startDay}
+	}
+	return days
+}
+
 type FormatEventListOptions struct {
 	Events      []event.Event
 	ShowHeader  bool
@@ -70,10 +119,35 @@ func FormatEventList(opts FormatEventListOptions) string {
 		weekdayWidth = 3
 	}
 
-	eventsByDay := make(map[string][]event.Event)
+	type dayEntry struct {
+		ev        event.Event
+		dayIndex  int
+		totalDays int
+	}
+
+	eventsByDay := make(map[string][]dayEntry)
 	for _, ev := range opts.Events {
-		key := ev.StartTime.Local().Format("2006-01-02")
-		eventsByDay[key] = append(eventsByDay[key], ev)
+		days := spanDays(ev)
+		total := len(days)
+		for i, d := range days {
+			key := d.Format("2006-01-02")
+			eventsByDay[key] = append(eventsByDay[key], dayEntry{
+				ev:        ev,
+				dayIndex:  i + 1,
+				totalDays: total,
+			})
+		}
+	}
+
+	// Sort each day's entries so continuations of earlier events (which are
+	// active from the start of the day) appear before events starting later.
+	for k, entries := range eventsByDay {
+		day, _ := time.ParseInLocation("2006-01-02", k, time.Local)
+		sort.SliceStable(entries, func(a, b int) bool {
+			return effectiveStartOnDay(entries[a].ev, day, entries[a].dayIndex).
+				Before(effectiveStartOnDay(entries[b].ev, day, entries[b].dayIndex))
+		})
+		eventsByDay[k] = entries
 	}
 
 	months := make(map[string][]string)
@@ -97,10 +171,12 @@ func FormatEventList(opts FormatEventListOptions) string {
 	} else {
 		seen := make(map[string]bool)
 		for _, ev := range opts.Events {
-			dayKey := ev.StartTime.Local().Format("2006-01-02")
-			if !seen[dayKey] {
-				seen[dayKey] = true
-				addDay(ev.StartTime.Local())
+			for _, d := range spanDays(ev) {
+				dayKey := d.Format("2006-01-02")
+				if !seen[dayKey] {
+					seen[dayKey] = true
+					addDay(d)
+				}
 			}
 		}
 	}
@@ -131,16 +207,19 @@ func FormatEventList(opts FormatEventListOptions) string {
 			}
 
 			continuation := strings.Repeat(" ", len(dayPrefix))
-			for i, ev := range dayEvents {
+			for i, entry := range dayEvents {
 				if i == 0 {
 					out.WriteString(dayPrefix)
 				} else {
 					out.WriteString(continuation)
 				}
 				out.WriteString(" ")
-				out.WriteString(formatTimeColumn(ev))
+				out.WriteString(formatTimeColumnMulti(entry.ev, entry.dayIndex, entry.totalDays))
 				out.WriteString("  ")
-				out.WriteString(ev.Title)
+				out.WriteString(entry.ev.Title)
+				if entry.totalDays > 1 {
+					fmt.Fprintf(&out, " (day %d/%d)", entry.dayIndex, entry.totalDays)
+				}
 				out.WriteByte('\n')
 			}
 		}
