@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"mime"
 	"net/url"
 	"os"
@@ -509,13 +510,18 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
-				return printOutput(w, toJSONEvent(e))
+				if err := printOutput(w, toJSONEvent(e)); err != nil {
+					return err
+				}
+				pushCalendarAfterWrite(a, e.CalendarID, io.Discard)
+				return nil
 			}
 			if allDay {
 				fmt.Fprintf(w, "Created: %s on %s (all day)\n", safeText(e.Title), e.StartTime.Local().Format("Mon, Jan 2 2006"))
 			} else {
 				fmt.Fprintf(w, "Created: %s on %s at %s – %s\n", safeText(e.Title), e.StartTime.Local().Format("Mon, Jan 2 2006"), e.StartTime.Local().Format("15:04"), endTime.Local().Format("15:04"))
 			}
+			pushCalendarAfterWrite(a, e.CalendarID, w)
 			return nil
 		},
 	}
@@ -870,9 +876,14 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
-				return printOutput(w, toJSONEvent(e))
+				if err := printOutput(w, toJSONEvent(e)); err != nil {
+					return err
+				}
+				pushCalendarAfterWrite(a, e.CalendarID, io.Discard)
+				return nil
 			}
 			printEvent(w, e)
+			pushCalendarAfterWrite(a, e.CalendarID, w)
 			return nil
 		},
 	}
