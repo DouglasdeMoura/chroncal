@@ -392,17 +392,76 @@ func eventsToCalendar(events []event.Event, calendars map[int64]CalendarInfo, hi
 		if hidden[e.CalendarID] {
 			continue
 		}
-		out = append(out, CalendarEvent{
-			ID:        e.ID,
-			Title:     e.Title,
-			AllDay:    e.AllDay,
-			Day:       eventDay(e),
-			Color:     calendars[e.CalendarID].Color,
-			StartTime: eventDay(e),
-			EndTime:   e.EndTime.Local(),
-		})
+		color := calendars[e.CalendarID].Color
+		for _, day := range eventCalendarDays(e) {
+			start, end := clipEventToDay(e, day)
+			out = append(out, CalendarEvent{
+				ID:        e.ID,
+				Title:     e.Title,
+				AllDay:    e.AllDay,
+				Day:       day,
+				Color:     color,
+				StartTime: start,
+				EndTime:   end,
+			})
+		}
 	}
 	return out
+}
+
+// eventCalendarDays returns one entry for each local calendar day an event
+// touches. All-day events use UTC (their StartTime is a datestamp at 00:00
+// UTC, not a point in time). Timed events use local time.
+func eventCalendarDays(e event.Event) []time.Time {
+	if e.AllDay {
+		s := e.StartTime.UTC()
+		startDay := time.Date(s.Year(), s.Month(), s.Day(), 0, 0, 0, 0, time.UTC)
+		end := e.EndTime.UTC()
+		var days []time.Time
+		for d := startDay; d.Before(end); d = d.AddDate(0, 0, 1) {
+			days = append(days, d)
+		}
+		if len(days) == 0 {
+			days = []time.Time{startDay}
+		}
+		return days
+	}
+	s := e.StartTime.Local()
+	end := e.EndTime.Local()
+	startDay := time.Date(s.Year(), s.Month(), s.Day(), 0, 0, 0, 0, s.Location())
+	if !end.After(s) {
+		return []time.Time{startDay}
+	}
+	var days []time.Time
+	for d := startDay; d.Before(end); d = d.AddDate(0, 0, 1) {
+		days = append(days, d)
+	}
+	if len(days) == 0 {
+		days = []time.Time{startDay}
+	}
+	return days
+}
+
+// clipEventToDay returns the event's start and end times clipped to the
+// given calendar day. For all-day events the times are the event's original
+// values (views ignore them). For timed events spanning midnight, the end
+// of day 1 is pushed one second before midnight so the time-grid renderer
+// sees an in-day hour/minute (placeEvents reads only hour/minute).
+func clipEventToDay(e event.Event, day time.Time) (time.Time, time.Time) {
+	if e.AllDay {
+		return e.StartTime, e.EndTime
+	}
+	dayStart := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, day.Location())
+	dayEnd := dayStart.AddDate(0, 0, 1)
+	start := e.StartTime.Local()
+	if start.Before(dayStart) {
+		start = dayStart
+	}
+	end := e.EndTime.Local()
+	if !end.Before(dayEnd) {
+		end = dayEnd.Add(-time.Second)
+	}
+	return start, end
 }
 
 func (m Model) loadCalendars() tea.Cmd {
