@@ -15,10 +15,12 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/model"
 )
 
-// EventFormSaveMsg is emitted when the user saves the event form.
-// When EventID > 0 the save is an update; otherwise it is a create.
+// EventFormSaveMsg is emitted when the user saves the event form. The parent
+// decides whether this is an update or a create by reading the live form's
+// editID (m.form.editID) — the message cannot carry that value reliably
+// because the save closure is bound at form build time, before editID is set
+// in NewEventFormModelForEdit.
 type EventFormSaveMsg struct {
-	EventID        int64
 	CalendarID     int64
 	Title          string
 	Description    string
@@ -462,9 +464,14 @@ func (m *EventFormModel) buildDialogAndForm() {
 
 	m.form = NewForm("Save", formStyles, items...)
 
-	editID := m.editID
+	// NOTE: do not capture m.editID here — this closure is bound at form
+	// build time (which is "create mode"), and the captured pointer points
+	// to the heap-allocated struct that NewEventFormModel returned. The
+	// caller's mutation of editID (e.g. in NewEventFormModelForEdit) lands
+	// on a value copy and is invisible to this closure. The parent handler
+	// reads editID from its own m.form.editID at submit time instead.
 	m.form.OnSubmit(func(f *Form) tea.Cmd {
-		return m.save(f, editID)
+		return m.save(f)
 	})
 	m.form.OnCancel(func(f *Form) tea.Cmd {
 		return func() tea.Msg { return EventFormClosedMsg{} }
@@ -1179,7 +1186,7 @@ func (m EventFormModel) buildRecurrenceRule() string {
 	return rule
 }
 
-func (m EventFormModel) save(f *Form, editID int64) tea.Cmd {
+func (m EventFormModel) save(f *Form) tea.Cmd {
 	calIdx := 0
 	if m.calendarField != nil {
 		calIdx = m.calendarField.Selected()
@@ -1223,7 +1230,6 @@ func (m EventFormModel) save(f *Form, editID int64) tea.Cmd {
 		end := start.AddDate(0, 0, 1)
 		return func() tea.Msg {
 			return EventFormSaveMsg{
-				EventID:        editID,
 				CalendarID:     calID,
 				Title:          title,
 				Description:    strings.TrimSpace(m.descField.Value()),
@@ -1281,7 +1287,6 @@ func (m EventFormModel) save(f *Form, editID int64) tea.Cmd {
 
 	return func() tea.Msg {
 		return EventFormSaveMsg{
-			EventID:        editID,
 			CalendarID:     calID,
 			Title:          title,
 			Description:    desc,

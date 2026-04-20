@@ -798,11 +798,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case EventFormSaveMsg:
+		// editID is read from the live form model, not the message. The
+		// form's OnSubmit closure is bound before NewEventFormModelForEdit
+		// assigns editID, so EventFormSaveMsg cannot carry that value
+		// reliably — see event_form.go:EventFormSaveMsg for the rationale.
+		editID := m.form.editID
 		m.formOpen = false
 		attendees := msg.Attendees
 		alarms := msg.Alarms
-		if msg.EventID > 0 {
-			eventID := msg.EventID
+		if editID > 0 {
+			eventID := editID
 			return m, func() tea.Msg {
 				ctx := context.Background()
 				_, err := m.app.Events.Update(ctx, eventID, event.UpdateParams{

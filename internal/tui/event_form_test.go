@@ -193,13 +193,38 @@ func TestEventForm_EditHydratesShowAsAndVisibility(t *testing.T) {
 	assert.Equal(t, "PRIVATE", m.visibilityField.Value())
 }
 
+// TestEventForm_EditModeRetainsEditID is a regression test: after building
+// the form via NewEventFormModelForEdit, the live form model must carry the
+// edited event's ID so the app handler can dispatch an Update. Previously
+// the OnSubmit closure captured editID=0 (from the create-mode constructor)
+// and sent it through EventFormSaveMsg; the parent then fell into the Create
+// branch and created a duplicate event with a fresh UID.
+func TestEventForm_EditModeRetainsEditID(t *testing.T) {
+	m, _ := NewEventFormModelForEdit(event.Event{
+		ID:         42,
+		UID:        "original-uid",
+		Title:      "Pay the bills!!!",
+		StartTime:  time.Date(2026, 4, 22, 14, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 22, 15, 0, 0, 0, time.UTC),
+		CalendarID: 1,
+	}, testEventFormCalendars(), Theme{})
+
+	assert.Equal(t, int64(42), m.editID, "NewEventFormModelForEdit must populate editID on the returned form")
+
+	require.NotNil(t, m.form.onSubmit, "edit form must have an OnSubmit callback")
+	cmd := m.form.onSubmit(&m.form)
+	require.NotNil(t, cmd)
+	_, ok := cmd().(EventFormSaveMsg)
+	require.True(t, ok, "OnSubmit must emit EventFormSaveMsg")
+}
+
 func TestEventForm_SaveIncludesShowAsAndVisibility(t *testing.T) {
 	m, _ := NewEventFormModel(time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC), testEventFormCalendars(), Theme{})
 	m.titleField.SetValue("Planning")
 	m.transparencyField.SetSelected(1)
 	m.visibilityField.SetSelected(2)
 
-	cmd := m.save(&m.form, 0)
+	cmd := m.save(&m.form)
 	require.NotNil(t, cmd)
 	msg, ok := cmd().(EventFormSaveMsg)
 	require.True(t, ok)

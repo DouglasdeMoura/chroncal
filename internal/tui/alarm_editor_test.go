@@ -180,7 +180,7 @@ func TestEventForm_SaveRoundTripsAlarms(t *testing.T) {
 	m.titleField.SetValue("Deep work")
 	m.alarms = []model.Alarm{{TriggerValue: "-PT15M", Action: "DISPLAY"}}
 
-	cmd := m.save(&m.form, 0)
+	cmd := m.save(&m.form)
 	require.NotNil(t, cmd)
 	msg, ok := cmd().(EventFormSaveMsg)
 	require.True(t, ok)
