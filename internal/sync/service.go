@@ -36,6 +36,13 @@ func (s *Service) SyncCalendar(ctx context.Context, calendarID int64, strategy C
 	return s.engine.SyncCalendar(ctx, calendarID, strategy)
 }
 
+// PushCalendar pushes pending local changes for one calendar without pulling.
+// Intended for opportunistic save-time sync from CLI/TUI mutations. Failures
+// leave the dirty flag intact so the periodic tick can retry.
+func (s *Service) PushCalendar(ctx context.Context, calendarID int64, strategy ConflictStrategy) (*SyncResult, error) {
+	return s.engine.PushCalendar(ctx, calendarID, strategy)
+}
+
 // SyncAll syncs all calendars linked to accounts.
 func (s *Service) SyncAll(ctx context.Context, strategy ConflictStrategy) ([]*SyncResult, error) {
 	return s.engine.SyncAll(ctx, strategy)

@@ -109,12 +109,42 @@ func NewEngine(db *sql.DB, q *storage.Queries, credStore authpkg.CredentialStore
 	return &Engine{db: db, q: q, credStore: credStore, calendars: calendars, events: events, todos: todos, journals: journals, logger: logger}
 }
 
-// SyncCalendar runs a full sync cycle for one calendar.
-func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy ConflictStrategy) (result *SyncResult, err error) {
-	// Load calendar and account
+// loadCalendarClient loads the calendar, its account, and a ready CalDAV client.
+// Returns the calendar row and the remote calendar URL alongside the client.
+func (e *Engine) loadCalendarClient(ctx context.Context, calendarID int64) (storage.Calendar, *caldav.Client, string, error) {
 	cal, err := e.q.GetCalendar(ctx, calendarID)
 	if err != nil {
-		return nil, fmt.Errorf("get calendar: %w", err)
+		return storage.Calendar{}, nil, "", fmt.Errorf("get calendar: %w", err)
+	}
+	if cal.AccountID == nil || *cal.AccountID == 0 {
+		return cal, nil, "", fmt.Errorf("calendar %d is not linked to an account", calendarID)
+	}
+	account, err := e.q.GetAccount(ctx, *cal.AccountID)
+	if err != nil {
+		return cal, nil, "", fmt.Errorf("get account: %w", err)
+	}
+	cred, err := e.credStore.Get(account.ID)
+	if err != nil {
+		return cal, nil, "", fmt.Errorf("get credentials: %w", err)
+	}
+	client, err := caldav.NewClientFromCredential(account.ServerUrl, cred, func(updated authpkg.Credential) error {
+		return e.credStore.Set(updated)
+	})
+	if err != nil {
+		return cal, nil, "", fmt.Errorf("create client: %w", err)
+	}
+	remoteURL := storage.NullableToString(cal.RemoteUrl)
+	if remoteURL == "" {
+		return cal, nil, "", fmt.Errorf("calendar %d has no remote URL", calendarID)
+	}
+	return cal, client, remoteURL, nil
+}
+
+// SyncCalendar runs a full sync cycle for one calendar.
+func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy ConflictStrategy) (result *SyncResult, err error) {
+	cal, client, remoteURL, err := e.loadCalendarClient(ctx, calendarID)
+	if err != nil {
+		return nil, err
 	}
 	result = &SyncResult{CalendarID: cal.ID}
 	attemptedAt := time.Now().UTC().Format(time.RFC3339)
@@ -124,33 +154,6 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 			result.Errors = append(result.Errors, fmt.Errorf("update sync health: %w", updateErr))
 		}
 	}()
-
-	if cal.AccountID == nil || *cal.AccountID == 0 {
-		return nil, fmt.Errorf("calendar %d is not linked to an account", calendarID)
-	}
-
-	account, err := e.q.GetAccount(ctx, *cal.AccountID)
-	if err != nil {
-		return nil, fmt.Errorf("get account: %w", err)
-	}
-
-	// Get credentials and create client
-	cred, err := e.credStore.Get(account.ID)
-	if err != nil {
-		return nil, fmt.Errorf("get credentials: %w", err)
-	}
-
-	client, err := caldav.NewClientFromCredential(account.ServerUrl, cred, func(updated authpkg.Credential) error {
-		return e.credStore.Set(updated)
-	})
-	if err != nil {
-		return nil, fmt.Errorf("create client: %w", err)
-	}
-
-	remoteURL := storage.NullableToString(cal.RemoteUrl)
-	if remoteURL == "" {
-		return nil, fmt.Errorf("calendar %d has no remote URL", calendarID)
-	}
 
 	e.logger.Info("sync started", "calendar_id", calendarID, "remote_url", remoteURL)
 
@@ -205,6 +208,38 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 		"errors", len(result.Errors),
 	)
 
+	return result, nil
+}
+
+// PushCalendar runs only the push + tombstone phases for one calendar.
+// It is the write-only fast path used for opportunistic save-time sync:
+// local mutations are flushed upstream without pulling or rewriting
+// calendar metadata. Dirty resources that fail to push stay dirty, so the
+// next full SyncCalendar will retry them. Safe to call concurrently with
+// a full sync — both funnel through the same dirty/tombstone rows, and
+// the server arbitrates via ETag preconditions.
+func (e *Engine) PushCalendar(ctx context.Context, calendarID int64, strategy ConflictStrategy) (*SyncResult, error) {
+	_, client, remoteURL, err := e.loadCalendarClient(ctx, calendarID)
+	if err != nil {
+		return nil, err
+	}
+	result := &SyncResult{CalendarID: calendarID}
+
+	pushResult, err := e.push(ctx, client, calendarID, remoteURL, strategy)
+	if err != nil {
+		return result, fmt.Errorf("push: %w", err)
+	}
+	result.Pushed = pushResult.pushed
+	result.Conflicts = pushResult.conflicts
+	result.Errors = append(result.Errors, pushResult.errors...)
+
+	tombstoneResult, err := e.processTombstones(ctx, client, calendarID, remoteURL)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("tombstones: %w", err))
+	} else {
+		result.Deleted = tombstoneResult.deleted
+		result.Errors = append(result.Errors, tombstoneResult.errors...)
+	}
 	return result, nil
 }
 

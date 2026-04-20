@@ -321,3 +321,24 @@ func TestParseTime(t *testing.T) {
 		}
 	}
 }
+
+// TestService_PushCalendarRejectsLocalOnly guards the contract that
+// opportunistic save-time push will fail fast for calendars without a
+// linked account, so CLI/TUI callers can safely treat it as a no-op.
+func TestService_PushCalendarRejectsLocalOnly(t *testing.T) {
+	svc, q := newTestService(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	if len(cals) == 0 {
+		t.Fatal("expected at least one seeded calendar")
+	}
+
+	_, err = svc.PushCalendar(ctx, cals[0].ID, ConflictServerWins)
+	if err == nil {
+		t.Fatal("PushCalendar on local-only calendar: expected error, got nil")
+	}
+}
