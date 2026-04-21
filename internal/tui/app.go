@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
@@ -70,45 +69,6 @@ func defaultAppKeys() appKeyMap {
 		CalendarList:   key.NewBinding(key.WithKeys("L"), key.WithHelp("L", "calendars")),
 		Sync:           key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sync")),
 	}
-}
-
-// compositeKeyMap merges app-level and view-level keybindings for the help view.
-type compositeKeyMap struct {
-	viewShort []key.Binding
-	viewFull  [][]key.Binding
-	appKeys   appKeyMap
-}
-
-func (c compositeKeyMap) ShortHelp() []key.Binding {
-	return append(c.viewShort,
-		c.appKeys.Create,
-		c.appKeys.Sidebar,
-		c.appKeys.MonthView,
-		c.appKeys.WeekView,
-		c.appKeys.DayView,
-		c.appKeys.Sync,
-		c.appKeys.Palette,
-		c.appKeys.Help,
-		c.appKeys.Quit,
-	)
-}
-
-func (c compositeKeyMap) FullHelp() [][]key.Binding {
-	appGroup := []key.Binding{
-		c.appKeys.Create,
-		c.appKeys.MonthView,
-		c.appKeys.WeekView,
-		c.appKeys.DayView,
-		c.appKeys.Sidebar,
-		c.appKeys.CalendarCreate,
-		c.appKeys.CalendarList,
-		c.appKeys.Sync,
-		c.appKeys.SwitchFocus,
-		c.appKeys.Palette,
-		c.appKeys.Help,
-		c.appKeys.Quit,
-	}
-	return append(c.viewFull, appGroup)
 }
 
 type eventsLoadedMsg struct {
@@ -204,7 +164,6 @@ type Model struct {
 	app             *app.App
 	theme           Theme
 	keys            appKeyMap
-	help            help.Model
 	width           int
 	height          int
 	viewMode        viewMode
@@ -246,6 +205,9 @@ type Model struct {
 	calendarListDialog     CalendarListDialogModel
 	calendarListDialogOpen bool
 
+	helpDialog     HelpDialogModel
+	helpDialogOpen bool
+
 	// miniMonthEvents caches the raw events for the sidebar mini-month's
 	// displayed month so visibility toggles can re-filter without a DB hit.
 	miniMonthEvents []event.Event
@@ -276,7 +238,6 @@ func NewModel(a *app.App) Model {
 	return Model{
 		app:             a,
 		keys:            defaultAppKeys(),
-		help:            help.New(),
 		viewMode:        vm,
 		calendar:        NewCalendarModel(now),
 		week:            NewWeekModel(now),
@@ -634,20 +595,15 @@ func (m Model) Init() tea.Cmd {
 
 const sidebarWidth = 24
 
+// footerHeight returns the total rows the footer occupies. The footer is
+// always a single line: the "? help" hint (and optional sync status).
 func (m Model) footerHeight() int {
-	h := 1
-	if m.help.ShowAll {
-		h = 8
-	}
-	if m.syncStatus != "" {
-		h++
-	}
-	return h
+	return 1
 }
 
 func (m Model) mainDims() (int, int) {
 	padding := 1
-	contentHeight := m.height - m.footerHeight() - padding*2
+	contentHeight := m.height - m.footerHeight()
 	mainWidth := m.width - padding*2
 	if m.showSidebar {
 		mainWidth -= sidebarWidth
@@ -739,7 +695,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.week = m.week.SetSelectedColor(m.theme.Text)
 		m.day = m.day.SetSelectedColor(m.theme.Text)
 		m.sidebar = m.sidebar.SetTheme(m.theme)
-		m.help = newThemedHelp(m.theme)
 		return m, nil
 
 	case tea.WindowSizeMsg:
@@ -756,6 +711,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.form = m.form.SetSize(m.width, m.height)
 		m.palette = m.palette.SetSize(m.width, m.height)
 		m.calendarListDialog = m.calendarListDialog.SetSize(m.width, m.height)
+		m.helpDialog = m.helpDialog.SetSize(m.width, m.height)
 		m.ready = true
 		return m, nil
 
@@ -1010,14 +966,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ToggleSidebarMsg:
 		return m.toggleSidebar()
-
-	case ToggleHelpMsg:
-		m.help.ShowAll = !m.help.ShowAll
-		iw, ih := m.innerDims()
-		m.calendar = m.calendar.SetSize(iw, ih)
-		m.week = m.week.SetSize(iw, ih)
-		m.day = m.day.SetSize(iw, ih)
-		return m, nil
 
 	case eventCreatedMsg:
 		if msg.err != nil {
@@ -1342,6 +1290,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.calendarListDialogOpen = false
 		return m, nil
 
+	case HelpDialogRequestedMsg:
+		m.helpDialog = NewHelpDialogModel(m.theme).SetSize(m.width, m.height)
+		m.helpDialogOpen = true
+		return m, nil
+
+	case HelpDialogClosedMsg:
+		m.helpDialogOpen = false
+		return m, nil
+
 	case SyncAllRequestedMsg:
 		if m.syncing {
 			return m, nil
@@ -1542,6 +1499,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.calendarListDialog, cmd = m.calendarListDialog.Update(msg)
 			return m, cmd
 		}
+		if m.helpDialogOpen {
+			var cmd tea.Cmd
+			m.helpDialog, cmd = m.helpDialog.Update(msg)
+			return m, cmd
+		}
 		// Sidebar hit-test. The sidebar content starts at (padding, padding)
 		// inside the outer screen, with a 1-col right border. If the click
 		// lands inside that x-range we dispatch to the sidebar in its local
@@ -1634,13 +1596,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.calendarListDialog, cmd = m.calendarListDialog.Update(msg)
 			return m, cmd
 		}
+		if m.helpDialogOpen {
+			if msg.String() == "ctrl+c" {
+				return m, tea.Quit
+			}
+			var cmd tea.Cmd
+			m.helpDialog, cmd = m.helpDialog.Update(msg)
+			return m, cmd
+		}
 		switch {
 		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
 		case key.Matches(msg, m.keys.Palette):
 			return m.openPalette()
 		case key.Matches(msg, m.keys.Help):
-			return m.Update(ToggleHelpMsg{})
+			return m, func() tea.Msg { return HelpDialogRequestedMsg{} }
 		case key.Matches(msg, m.keys.MonthView):
 			return m.switchToView(viewMonth)
 		case key.Matches(msg, m.keys.WeekView):
@@ -1772,24 +1742,23 @@ func (m Model) View() tea.View {
 		body = main
 	}
 
-	m.help.SetWidth(m.width - padding*4)
-	helpView := m.help.View(m.currentKeyMap())
-	footerContent := helpView
+	keyStyle := lipgloss.NewStyle().Foreground(m.theme.Text)
+	descStyle := lipgloss.NewStyle().Foreground(m.theme.TextDim)
+	hint := keyStyle.Render("?") + " " + descStyle.Render("help")
+	var statusText string
 	if m.syncStatus != "" {
 		statusColor := m.theme.Primary
 		if m.syncing {
 			statusColor = m.theme.Muted
 		}
-		statusLine := lipgloss.NewStyle().
-			Foreground(statusColor).
-			Render(m.syncStatus)
-		footerContent = lipgloss.JoinVertical(lipgloss.Left, statusLine, helpView)
+		statusText = lipgloss.NewStyle().Foreground(statusColor).Render(m.syncStatus)
 	}
+	innerWidth := m.width - padding*2
+	gap := max(1, innerWidth-lipgloss.Width(statusText)-lipgloss.Width(hint))
 	footer := lipgloss.NewStyle().
-		Width(m.width - padding*2).
-		Padding(padding).
-		Render(footerContent)
-
+		PaddingLeft(padding).
+		PaddingRight(padding).
+		Render(statusText + strings.Repeat(" ", gap) + hint)
 	v.Content = lipgloss.JoinVertical(lipgloss.Left, body, footer)
 
 	if m.dialogOpen {
@@ -1846,6 +1815,10 @@ func (m Model) View() tea.View {
 	if m.paletteOpen {
 		bw, bh := m.palette.BoxSize()
 		v.Content = m.compositeOverlay(v.Content, m.palette.View(), bw, bh)
+	}
+	if m.helpDialogOpen {
+		bw, bh := m.helpDialog.BoxSize()
+		v.Content = m.compositeOverlay(v.Content, m.helpDialog.View(), bw, bh)
 	}
 
 	return v
@@ -2006,43 +1979,6 @@ func (m Model) saveUIState() {
 		ViewMode:        vm,
 		HiddenCalendars: ids,
 	})
-}
-
-func (m Model) currentKeyMap() compositeKeyMap {
-	appKeys := m.keys
-	// Disable the binding for the currently active view.
-	switch m.viewMode {
-	case viewMonth:
-		appKeys.MonthView.SetEnabled(false)
-	case viewWeek:
-		appKeys.WeekView.SetEnabled(false)
-	case viewDay:
-		appKeys.DayView.SetEnabled(false)
-	}
-	// Only show SwitchFocus when sidebar is visible.
-	appKeys.SwitchFocus.SetEnabled(m.showSidebar)
-
-	var viewShort []key.Binding
-	var viewFull [][]key.Binding
-	switch m.viewMode {
-	case viewDay:
-		k := m.day.keys
-		viewShort = k.ShortHelp()
-		viewFull = k.FullHelp()
-	case viewWeek:
-		k := m.week.keys
-		viewShort = k.ShortHelp()
-		viewFull = k.FullHelp()
-	default:
-		k := m.calendar.keys
-		viewShort = k.ShortHelp()
-		viewFull = k.FullHelp()
-	}
-	return compositeKeyMap{
-		viewShort: viewShort,
-		viewFull:  viewFull,
-		appKeys:   appKeys,
-	}
 }
 
 func Run(a *app.App) error {

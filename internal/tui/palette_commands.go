@@ -16,9 +16,6 @@ type GoToTodayMsg struct{}
 // ToggleSidebarMsg toggles the sidebar panel.
 type ToggleSidebarMsg struct{}
 
-// ToggleHelpMsg toggles the full-help footer.
-type ToggleHelpMsg struct{}
-
 // buildPaletteCommands returns the default commands exposed through the
 // palette, with bindings to the current app state (cursor, etc.).
 func buildPaletteCommands(m Model) []PaletteCommand {
@@ -86,7 +83,7 @@ func buildPaletteCommands(m Model) []PaletteCommand {
 			Title:    "Help",
 			Category: "View",
 			Shortcut: "?",
-			Action:   func() tea.Msg { return ToggleHelpMsg{} },
+			Action:   func() tea.Msg { return HelpDialogRequestedMsg{} },
 		},
 		{
 			ID:       "app.quit",
