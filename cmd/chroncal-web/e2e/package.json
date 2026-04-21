@@ -1,0 +1,13 @@
+{
+  "name": "chroncal-web-e2e",
+  "version": "0.0.0",
+  "description": "Playwright harness driving chroncal-web for e2e tests.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "smoke": "node smoke.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.59.1"
+  }
+}

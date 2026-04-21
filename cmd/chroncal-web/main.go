@@ -30,6 +30,7 @@ var resizeRE = regexp.MustCompile(`\x1b\[RESIZE:(\d+);(\d+)\]`)
 func main() {
 	addr := flag.String("addr", "127.0.0.1:3000", "listen address")
 	bin := flag.String("bin", "./chroncal", "path to the chroncal binary to spawn")
+	isolated := flag.Bool("isolated", false, "give each WebSocket session its own temp CHRONCAL_DB (for e2e tests)")
 	flag.Parse()
 
 	sub, err := fs.Sub(staticFS, "static")
@@ -52,16 +53,16 @@ func main() {
 		http.ServeFileFS(w, r, sub, "index.html")
 	})
 	mux.HandleFunc("/api/terminal", func(w http.ResponseWriter, r *http.Request) {
-		serveTerminal(w, r, *bin)
+		serveTerminal(w, r, *bin, *isolated)
 	})
 
-	log.Printf("chroncal-web listening on http://%s (bin=%s)", *addr, *bin)
+	log.Printf("chroncal-web listening on http://%s (bin=%s isolated=%t)", *addr, *bin, *isolated)
 	if err := http.ListenAndServe(*addr, mux); err != nil {
 		log.Fatalf("listen: %v", err)
 	}
 }
 
-func serveTerminal(w http.ResponseWriter, r *http.Request, bin string) {
+func serveTerminal(w http.ResponseWriter, r *http.Request, bin string, isolated bool) {
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns: []string{"*"},
 	})
@@ -74,8 +75,19 @@ func serveTerminal(w http.ResponseWriter, r *http.Request, bin string) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
+	env := append(os.Environ(), "TERM=xterm-256color")
+	if isolated {
+		dir, err := os.MkdirTemp("", "chroncal-web-*")
+		if err != nil {
+			log.Printf("mktemp: %v", err)
+			return
+		}
+		defer os.RemoveAll(dir)
+		env = append(env, "CHRONCAL_DB="+dir+"/chroncal.db")
+	}
+
 	cmd := exec.CommandContext(ctx, bin)
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	cmd.Env = env
 
 	f, err := pty.Start(cmd)
 	if err != nil {
