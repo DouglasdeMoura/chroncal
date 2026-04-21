@@ -73,7 +73,7 @@ func sortedCalendarIDs(calendars map[int64]CalendarInfo) []int64 {
 
 func (m CalendarListDialogModel) SetSize(w, h int) CalendarListDialogModel {
 	m.shell = m.shell.SetSize(w, h)
-	return m
+	return m.refresh()
 }
 
 func (m CalendarListDialogModel) SetSelectedColor(c color.Color) CalendarListDialogModel {
@@ -120,14 +120,12 @@ func (m CalendarListDialogModel) selectedID() (int64, bool) {
 // current calendar list and selection.
 func (m CalendarListDialogModel) refresh() CalendarListDialogModel {
 	rows := make([]string, len(m.order))
+	sel := m.shell.Selected()
+	listFocused := m.shell.FocusZone() == ListZoneList
+	rowW := m.listRowWidth()
 	for i, id := range m.order {
 		info := m.calendars[id]
-		glyph := "●"
-		if m.hidden[id] {
-			glyph = "○"
-		}
-		swatch := lipgloss.NewStyle().Foreground(lipgloss.Color(info.Color)).Render(glyph)
-		rows[i] = fmt.Sprintf("%s  %s", swatch, info.Name)
+		rows[i] = calendarRowLabel(info, m.hidden[id], i == sel && listFocused, rowW)
 	}
 	m.shell = m.shell.SetRows(rows)
 
@@ -189,6 +187,21 @@ func (m CalendarListDialogModel) labelWidth() int {
 	return 10
 }
 
+// listRowWidth mirrors the shell's list-column math so callers can pad rows
+// to the full visible width (needed when painting the selected row's
+// background all the way to the right edge).
+func (m CalendarListDialogModel) listRowWidth() int {
+	boxW, _ := m.shell.BoxSize()
+	if boxW == 0 {
+		return 0
+	}
+	innerW := max(boxW-5, 10)
+	if m.shell.isNarrow() {
+		return innerW
+	}
+	return listColumnWidth(innerW)
+}
+
 func (m CalendarListDialogModel) Update(msg tea.Msg) (CalendarListDialogModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
@@ -244,6 +257,36 @@ func (m CalendarListDialogModel) handleMouse(msg tea.MouseClickMsg) (CalendarLis
 }
 
 func (m CalendarListDialogModel) View() string { return m.shell.View() }
+
+// calendarRowLabel builds "<dot> <name>": the leading circle keeps its
+// calendar-color foreground with no background change; when the row is
+// selected the name — plus the remaining width of the row — takes on a
+// reverse-video background (font color), so the highlight stretches to the
+// right edge. rowW is the full list-column width; when 0 the chip falls
+// back to just sizing to the name.
+func calendarRowLabel(info CalendarInfo, hidden, selected bool, rowW int) string {
+	glyph := "●"
+	if hidden {
+		glyph = "○"
+	}
+	swatch := lipgloss.NewStyle().Foreground(lipgloss.Color(info.Color)).Render(glyph)
+
+	nameStyle := lipgloss.NewStyle()
+	if hidden {
+		nameStyle = nameStyle.Faint(true)
+	}
+	if selected {
+		nameStyle = nameStyle.Reverse(true).Bold(true)
+		// Reserve the swatch (1 cell) + separator space (1 cell) and let the
+		// chip style fill the rest, so trailing pad cells pick up Reverse.
+		if remaining := rowW - 2; remaining > 0 {
+			nameStyle = nameStyle.Width(remaining)
+		}
+	}
+	name := nameStyle.Render(" " + info.Name + " ")
+
+	return fmt.Sprintf("%s %s", swatch, name)
+}
 
 func calendarDetailLines(info CalendarInfo, w, labelWidth int) []string {
 	faint := lipgloss.NewStyle().Faint(true)

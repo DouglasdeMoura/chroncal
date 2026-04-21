@@ -216,12 +216,37 @@ func (m EventDialogModel) detailWidth() int {
 	return detailColumnWidth(innerW)
 }
 
+// listRowWidth mirrors the shell's list-column math so a selected row can
+// extend its reverse-video background to the right edge.
+func (m EventDialogModel) listRowWidth() int {
+	boxW, _ := m.shell.BoxSize()
+	if boxW == 0 {
+		return 0
+	}
+	innerW := max(boxW-5, 10)
+	if m.shell.isNarrow() {
+		return innerW
+	}
+	return listColumnWidth(innerW)
+}
+
 // refresh rebuilds the shell's rows, detail lines, actions, and help row
 // from the current day, events, and focus state.
 func (m EventDialogModel) refresh() EventDialogModel {
 	rows := make([]string, len(m.events))
+	sel := m.shell.Selected()
+	listFocused := m.shell.FocusZone() == ListZoneList
+	rowW := m.listRowWidth()
 	for i, ev := range m.events {
-		rows[i] = formatEventLabel(ev)
+		label := formatEventLabel(ev)
+		if i == sel && listFocused {
+			style := lipgloss.NewStyle().Reverse(true).Bold(true)
+			if rowW > 0 {
+				style = style.Width(rowW)
+			}
+			label = style.Render(label)
+		}
+		rows[i] = label
 	}
 	m.shell = m.shell.SetRows(rows)
 

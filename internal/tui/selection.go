@@ -6,19 +6,12 @@ import (
 	lipgloss "charm.land/lipgloss/v2"
 )
 
-// renderListRow formats a single list row with a shared selection treatment:
-// bold label when selected, plus a subtle row tint when focused.
-func renderListRow(label string, w int, selected, focused bool, tint color.Color) string {
+// renderListRow clamps a pre-styled label to w cells. Selection/focus styling
+// is the caller's responsibility — the shell passes selection state only so
+// callers that want a generic treatment can read it off their own models;
+// here it is unused.
+func renderListRow(label string, w int, _, _ bool, _ color.Color) string {
 	contentW := max(w, 1)
 	label = truncateTo(label, contentW)
-
-	content := lipgloss.NewStyle().Width(contentW)
-	if selected {
-		content = content.Bold(true)
-		if focused && tint != nil {
-			content = content.Background(tint)
-		}
-	}
-
-	return content.Render(label)
+	return lipgloss.NewStyle().Width(contentW).Render(label)
 }
