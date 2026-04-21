@@ -810,18 +810,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case CalendarDaySelectedMsg:
 		dayEvents := eventsOn(m.events, msg.Day)
+		if m.clickedEventID > 0 {
+			clicked := m.clickedEventID
+			m.clickedEventID = 0
+			for _, e := range dayEvents {
+				if e.ID == clicked {
+					ev := e
+					return m, func() tea.Msg { return EventViewRequestedMsg{Event: ev} }
+				}
+			}
+		}
 		m.dialog = NewEventDialogModel(msg.Day, dayEvents, m.calendars, newThemedHelp(m.theme)).
 			SetSelectedColor(m.theme.Selected).
 			SetSize(m.width, m.height)
-		if m.clickedEventID > 0 {
-			for i, e := range m.dialog.events {
-				if e.ID == m.clickedEventID {
-					m.dialog.selected = i
-					break
-				}
-			}
-			m.clickedEventID = 0
-		}
 		m.dialogOpen = true
 		return m, nil
 
