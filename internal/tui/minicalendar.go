@@ -396,24 +396,23 @@ func (m MiniMonthModel) View() string {
 		isCursor := key == cursorDay
 		isToday := key == todayKey
 		isEndpoint, isInRange := m.rangePosition(cur)
-		// Treat the grid as "focused" only when widget focus is on the grid
-		// sub-widget; otherwise show the cursor in the unfocused style so the
-		// active tab stop (a chevron) is the only filled highlight on screen.
-		gridFocused := m.focused && m.innerFocus == innerFocusGrid
 		switch {
-		case isCursor && gridFocused:
-			cell = lipgloss.NewStyle().Background(m.accentColor).Foreground(m.textColor).Bold(true).Render(num)
+		case isCursor:
+			// Reverse video (bg/fg swap). The cursor case wins over today so
+			// today's red tint never shows on the selected cell.
+			cell = lipgloss.NewStyle().Reverse(true).Bold(true).Render(num)
 		case isEndpoint:
 			// Range endpoints get the accent background even when unfocused,
 			// so the range stays visible while the cursor moves around.
 			cell = lipgloss.NewStyle().Background(m.accentColor).Foreground(m.textColor).Bold(true).Render(num)
-		case isCursor:
-			// Unfocused cursor: underline + bold so selection is still visible.
-			cell = lipgloss.NewStyle().Foreground(m.textColor).Bold(true).Underline(true).Render(num)
 		case isInRange:
 			cell = lipgloss.NewStyle().Background(m.rangeColor).Foreground(m.textColor).Render(num)
 		case isToday:
-			cell = lipgloss.NewStyle().Foreground(m.todayColor).Bold(true).Render(num)
+			// Fake a square outline with underline + overline (top + bottom
+			// sides). SGR 53/55 is not exposed by lipgloss, so wrap the
+			// lipgloss-rendered cell with raw escapes.
+			inner := lipgloss.NewStyle().Bold(true).Underline(true).Render(num)
+			cell = "\x1b[53m" + inner + "\x1b[55m"
 		}
 		b.WriteString(cell)
 		col++
