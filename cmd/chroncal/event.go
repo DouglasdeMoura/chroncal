@@ -45,6 +45,8 @@ func eventListCmd() *cobra.Command {
 		status       string
 		showWeekday  bool
 		verbose      bool
+		showID       bool
+		showCalendar bool
 	)
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -88,7 +90,7 @@ Without flags, the window defaults to today through the next 30 days.`,
 			}
 
 			var calendarNames map[int64]string
-			if verbose {
+			if verbose || showCalendar {
 				cals, err := a.Calendars.List(ctx)
 				if err != nil {
 					return fmt.Errorf("list calendars: %w", err)
@@ -115,6 +117,8 @@ Without flags, the window defaults to today through the next 30 days.`,
 				ShowWeekday:   showWeekday,
 				ShowMonth:     true,
 				Verbose:       verbose,
+				ShowID:        showID,
+				ShowCalendar:  showCalendar,
 				From:          from,
 				To:            to,
 			}))
@@ -127,6 +131,8 @@ Without flags, the window defaults to today through the next 30 days.`,
 	cmd.Flags().StringVar(&status, "status", "", "filter by status (TENTATIVE, CONFIRMED, CANCELLED)")
 	cmd.Flags().BoolVar(&showWeekday, "show-weekday", false, "show weekday abbreviation next to the date")
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "render a detailed time-rail view for each event")
+	cmd.Flags().BoolVar(&showID, "show-id", false, "show each event's numeric ID in text output")
+	cmd.Flags().BoolVar(&showCalendar, "show-calendar", false, "show the calendar name in text output")
 	return cmd
 }
 

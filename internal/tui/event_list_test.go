@@ -16,6 +16,34 @@ func withLocalUTC(t *testing.T) {
 	})
 }
 
+func TestFormatEventList_CompactCanShowEventIDAndCalendar(t *testing.T) {
+	withLocalUTC(t)
+
+	got := FormatEventList(FormatEventListOptions{
+		Events: []event.Event{{
+			ID:         42,
+			CalendarID: 1,
+			Title:      "Team Standup",
+			StartTime:  time.Date(2026, 4, 21, 9, 0, 0, 0, time.UTC),
+			EndTime:    time.Date(2026, 4, 21, 9, 30, 0, 0, time.UTC),
+		}},
+		CalendarNames: map[int64]string{1: "Work"},
+		ShowAllDays:   true,
+		ShowWeekday:   true,
+		ShowMonth:     true,
+		ShowID:        true,
+		ShowCalendar:  true,
+		From:          time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC),
+		To:            time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC),
+	})
+
+	want := "" +
+		"Apr 21 Tue 09:00–09:30  Team Standup (42) [Work]\n"
+	if got != want {
+		t.Fatalf("FormatEventList compact metadata mismatch\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}
+
 func TestFormatEventListVerbose_RendersTimeRailDetails(t *testing.T) {
 	withLocalUTC(t)
 
@@ -39,16 +67,16 @@ func TestFormatEventListVerbose_RendersTimeRailDetails(t *testing.T) {
 	}
 
 	got := FormatEventList(FormatEventListOptions{
-		Events:      events,
-		ShowAllDays: true,
-		ShowWeekday: true,
-		ShowMonth:   true,
-		CalendarNames: map[int64]string{
-			1: "Work",
-		},
-		From:    time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC),
-		To:      time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC),
-		Verbose: true,
+		Events:        events,
+		ShowAllDays:   true,
+		ShowWeekday:   true,
+		ShowMonth:     true,
+		CalendarNames: map[int64]string{1: "Work"},
+		ShowID:        true,
+		ShowCalendar:  true,
+		From:          time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC),
+		To:            time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC),
+		Verbose:       true,
 	})
 
 	want := "" +
@@ -80,16 +108,16 @@ func TestFormatEventListVerbose_RendersOvernightContinuation(t *testing.T) {
 	}
 
 	got := FormatEventList(FormatEventListOptions{
-		Events:      events,
-		ShowAllDays: true,
-		ShowWeekday: true,
-		ShowMonth:   true,
-		CalendarNames: map[int64]string{
-			2: "Ops",
-		},
-		From:    time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC),
-		To:      time.Date(2026, 4, 23, 0, 0, 0, 0, time.UTC),
-		Verbose: true,
+		Events:        events,
+		ShowAllDays:   true,
+		ShowWeekday:   true,
+		ShowMonth:     true,
+		CalendarNames: map[int64]string{2: "Ops"},
+		ShowID:        true,
+		ShowCalendar:  true,
+		From:          time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC),
+		To:            time.Date(2026, 4, 23, 0, 0, 0, 0, time.UTC),
+		Verbose:       true,
 	})
 
 	want := "" +

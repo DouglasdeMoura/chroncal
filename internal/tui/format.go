@@ -99,6 +99,10 @@ type FormatEventListOptions struct {
 	ShowMonth bool
 	// Verbose renders a richer time-rail view and suppresses empty days.
 	Verbose bool
+	// ShowID appends the event ID in text output.
+	ShowID bool
+	// ShowCalendar appends or prints the calendar name in text output.
+	ShowCalendar bool
 }
 
 type eventListDayEntry struct {
@@ -216,7 +220,7 @@ func FormatEventList(opts FormatEventListOptions) string {
 				out.WriteString(strings.Repeat("-", len(dayPrefix)))
 				out.WriteByte('\n')
 				for _, entry := range dayEvents {
-					writeVerboseEventListEntry(&out, entry, opts.CalendarNames)
+					writeVerboseEventListEntry(&out, entry, opts)
 				}
 				firstVerboseDay = false
 				continue
@@ -238,10 +242,7 @@ func FormatEventList(opts FormatEventListOptions) string {
 				out.WriteString(" ")
 				out.WriteString(formatTimeColumnMulti(entry.ev, entry.dayIndex, entry.totalDays))
 				out.WriteString("  ")
-				out.WriteString(entry.ev.Title)
-				if entry.totalDays > 1 {
-					fmt.Fprintf(&out, " (day %d/%d)", entry.dayIndex, entry.totalDays)
-				}
+				out.WriteString(compactEventLabel(entry, opts))
 				out.WriteByte('\n')
 			}
 		}
@@ -279,9 +280,25 @@ func verboseContinuationLabel(ev event.Event, dayIndex, totalDays int) string {
 	}
 }
 
-func writeVerboseEventListEntry(out *strings.Builder, entry eventListDayEntry, calendarNames map[int64]string) {
+func compactEventLabel(entry eventListDayEntry, opts FormatEventListOptions) string {
+	label := entry.ev.Title
+	if opts.ShowID && entry.ev.ID > 0 {
+		label += fmt.Sprintf(" (%d)", entry.ev.ID)
+	}
+	if entry.totalDays > 1 {
+		label += fmt.Sprintf(" (day %d/%d)", entry.dayIndex, entry.totalDays)
+	}
+	if opts.ShowCalendar {
+		if calendarLabel := formatCalendarLabel(entry.ev.CalendarID, opts.CalendarNames); calendarLabel != "" {
+			label += " [" + calendarLabel + "]"
+		}
+	}
+	return label
+}
+
+func writeVerboseEventListEntry(out *strings.Builder, entry eventListDayEntry, opts FormatEventListOptions) {
 	title := entry.ev.Title
-	if entry.ev.ID > 0 {
+	if opts.ShowID && entry.ev.ID > 0 {
 		title = fmt.Sprintf("%s (%d)", title, entry.ev.ID)
 	}
 	if entry.totalDays > 1 {
@@ -295,7 +312,7 @@ func writeVerboseEventListEntry(out *strings.Builder, entry eventListDayEntry, c
 	if entry.ev.Description != "" {
 		fmt.Fprintf(out, "%7s | %s\n", "", entry.ev.Description)
 	}
-	if metadata := verboseMetadataLine(entry.ev, calendarNames); metadata != "" {
+	if metadata := verboseMetadataLine(entry.ev, opts); metadata != "" {
 		fmt.Fprintf(out, "%7s | %s\n", "", metadata)
 	}
 	if continuation := verboseContinuationLabel(entry.ev, entry.dayIndex, entry.totalDays); continuation != "" {
@@ -303,15 +320,24 @@ func writeVerboseEventListEntry(out *strings.Builder, entry eventListDayEntry, c
 	}
 }
 
-func verboseMetadataLine(ev event.Event, calendarNames map[int64]string) string {
-	if ev.CalendarID <= 0 {
+func formatCalendarLabel(calendarID int64, calendarNames map[int64]string) string {
+	if calendarID <= 0 {
 		return ""
 	}
-	calendarLabel := fmt.Sprintf("%d", ev.CalendarID)
-	if name := calendarNames[ev.CalendarID]; name != "" {
-		calendarLabel = name
+	if name := calendarNames[calendarID]; name != "" {
+		return name
 	}
-	return "Calendar: " + calendarLabel
+	return fmt.Sprintf("%d", calendarID)
+}
+
+func verboseMetadataLine(ev event.Event, opts FormatEventListOptions) string {
+	if !opts.ShowCalendar {
+		return ""
+	}
+	if calendarLabel := formatCalendarLabel(ev.CalendarID, opts.CalendarNames); calendarLabel != "" {
+		return "Calendar: " + calendarLabel
+	}
+	return ""
 }
 
 // CalendarEvent is the rendering-only view of an event inside the month grid.
