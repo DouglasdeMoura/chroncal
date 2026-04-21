@@ -1,4 +1,5 @@
 /chroncal
+/chroncal-web
 *.db
 *.db-wal
 *.db-shm

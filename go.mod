@@ -7,6 +7,8 @@ require (
 	charm.land/bubbletea/v2 v2.0.6
 	charm.land/lipgloss/v2 v2.0.3
 	github.com/charmbracelet/ultraviolet v0.0.0-20260416155717-489999b90468
+	github.com/coder/websocket v1.8.14
+	github.com/creack/pty v1.1.24
 	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
 	github.com/emersion/go-webdav v0.7.0
 	github.com/gen2brain/beeep v0.11.2

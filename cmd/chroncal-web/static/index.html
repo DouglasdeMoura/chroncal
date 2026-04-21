@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>chroncal — web terminal (POC)</title>
+    <link rel="stylesheet" href="/static/terminal.css" />
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { height: 100%; background: #1e1e1e; }
+      #terminal { height: 100%; }
+    </style>
+  </head>
+  <body>
+    <div id="terminal"></div>
+    <script type="importmap">
+      {
+        "imports": {
+          "@wterm/core": "https://esm.sh/@wterm/core@0.1.9",
+          "@wterm/dom": "https://esm.sh/@wterm/dom@0.1.9"
+        }
+      }
+    </script>
+    <script type="module">
+      import { WTerm } from "@wterm/dom";
+
+      const container = document.getElementById("terminal");
+      const term = new WTerm(container, {
+        wasmUrl: "/wterm.wasm",
+        autoResize: true,
+      });
+
+      await term.init();
+
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      const ws = new WebSocket(`${proto}//${location.host}/api/terminal`);
+
+      ws.onopen = () => {
+        ws.send(`\x1b[RESIZE:${term.cols};${term.rows}]`);
+      };
+      ws.onmessage = (ev) => term.write(ev.data);
+      ws.onclose = () => term.write("\r\n\x1b[90m[session ended]\x1b[0m\r\n");
+
+      term.onData = (data) => {
+        if (ws.readyState === WebSocket.OPEN) ws.send(data);
+      };
+      term.onResize = (cols, rows) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(`\x1b[RESIZE:${cols};${rows}]`);
+        }
+      };
+
+      // Expose for e2e scripting (playwright can grab `__term` off the window).
+      window.__term = term;
+      window.__ws = ws;
+    </script>
+  </body>
+</html>
