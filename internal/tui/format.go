@@ -96,6 +96,14 @@ type FormatEventListOptions struct {
 	ShowWeekday bool
 	// ShowMonth controls whether the month label is displayed in the day prefix.
 	ShowMonth bool
+	// Verbose renders a richer time-rail view and suppresses empty days.
+	Verbose bool
+}
+
+type eventListDayEntry struct {
+	ev        event.Event
+	dayIndex  int
+	totalDays int
 }
 
 // formatWeekday returns a 1-, 2-, or 3-character English weekday label.
@@ -119,19 +127,13 @@ func FormatEventList(opts FormatEventListOptions) string {
 		weekdayWidth = 3
 	}
 
-	type dayEntry struct {
-		ev        event.Event
-		dayIndex  int
-		totalDays int
-	}
-
-	eventsByDay := make(map[string][]dayEntry)
+	eventsByDay := make(map[string][]eventListDayEntry)
 	for _, ev := range opts.Events {
 		days := spanDays(ev)
 		total := len(days)
 		for i, d := range days {
 			key := d.Format("2006-01-02")
-			eventsByDay[key] = append(eventsByDay[key], dayEntry{
+			eventsByDay[key] = append(eventsByDay[key], eventListDayEntry{
 				ev:        ev,
 				dayIndex:  i + 1,
 				totalDays: total,
@@ -182,6 +184,7 @@ func FormatEventList(opts FormatEventListOptions) string {
 	}
 
 	var out strings.Builder
+	firstVerboseDay := true
 	for _, monthKey := range monthOrder {
 		if opts.ShowHeader {
 			t, _ := time.Parse("2006-01", monthKey)
@@ -198,6 +201,24 @@ func FormatEventList(opts FormatEventListOptions) string {
 			}
 			if opts.ShowMonth {
 				dayPrefix = d.Format("Jan") + " " + dayPrefix
+			}
+
+			if opts.Verbose {
+				if len(dayEvents) == 0 {
+					continue
+				}
+				if !firstVerboseDay {
+					out.WriteByte('\n')
+				}
+				out.WriteString(dayPrefix)
+				out.WriteByte('\n')
+				out.WriteString(strings.Repeat("-", len(dayPrefix)))
+				out.WriteByte('\n')
+				for _, entry := range dayEvents {
+					writeVerboseEventListEntry(&out, entry)
+				}
+				firstVerboseDay = false
+				continue
 			}
 
 			if len(dayEvents) == 0 {
@@ -230,6 +251,49 @@ func FormatEventList(opts FormatEventListOptions) string {
 	}
 
 	return out.String()
+}
+
+func verboseTimeRailLabel(ev event.Event, dayIndex int) string {
+	switch {
+	case ev.AllDay:
+		return "all day"
+	case dayIndex == 1:
+		return ev.StartTime.Local().Format("15:04")
+	default:
+		return "00:00"
+	}
+}
+
+func verboseContinuationLabel(ev event.Event, dayIndex, totalDays int) string {
+	if totalDays <= 1 || ev.AllDay {
+		return ""
+	}
+	switch {
+	case dayIndex == 1:
+		return "ends " + ev.EndTime.Local().Format("Mon, Jan 2 15:04")
+	case dayIndex == totalDays:
+		return "until " + ev.EndTime.Local().Format("15:04")
+	default:
+		return "continues"
+	}
+}
+
+func writeVerboseEventListEntry(out *strings.Builder, entry eventListDayEntry) {
+	title := entry.ev.Title
+	if entry.totalDays > 1 {
+		title = fmt.Sprintf("%s (day %d/%d)", title, entry.dayIndex, entry.totalDays)
+	}
+
+	fmt.Fprintf(out, "%-7s | %s\n", verboseTimeRailLabel(entry.ev, entry.dayIndex), title)
+	if entry.ev.Location != "" {
+		fmt.Fprintf(out, "%7s | %s\n", "", entry.ev.Location)
+	}
+	if entry.ev.Description != "" {
+		fmt.Fprintf(out, "%7s | %s\n", "", entry.ev.Description)
+	}
+	if continuation := verboseContinuationLabel(entry.ev, entry.dayIndex, entry.totalDays); continuation != "" {
+		fmt.Fprintf(out, "%7s | %s\n", "", continuation)
+	}
 }
 
 // CalendarEvent is the rendering-only view of an event inside the month grid.
