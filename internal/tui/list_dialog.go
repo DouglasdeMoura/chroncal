@@ -48,6 +48,10 @@ type ListDialogZone int
 const (
 	ListZoneList ListDialogZone = iota
 	ListZoneActions
+	// ListZoneCustom lets callers signal "focus is in a region the shell
+	// doesn't manage" (e.g. the RSVP row in the event dialog). In that
+	// state the shell renders list and actions as unfocused.
+	ListZoneCustom
 )
 
 // ListDialogModel is the shared two-column (list + details) dialog chrome
@@ -122,6 +126,13 @@ func (m ListDialogModel) Selected() int { return m.selected }
 
 // FocusZone returns the currently focused region.
 func (m ListDialogModel) FocusZone() ListDialogZone { return m.focusZone }
+
+// SetFocusZone lets callers override focus (e.g. to ListZoneCustom when
+// owning a region the shell doesn't manage).
+func (m ListDialogModel) SetFocusZone(z ListDialogZone) ListDialogModel {
+	m.focusZone = z
+	return m
+}
 
 // SetDetailLines replaces the detail-pane body lines for the currently
 // selected row. The caller rebuilds these whenever selection changes.
@@ -309,6 +320,27 @@ func (m ListDialogModel) ClickAction(idx int) (ListDialogModel, tea.Cmd) {
 	m.focusZone = ListZoneActions
 	m.focusedAction = idx
 	return m, m.actions[idx].Msg
+}
+
+// DetailsOrigin returns the screen-space (x, y) of the first line of the
+// detail pane, so callers can hit-test buttons they composed into the
+// detail lines (e.g. RSVP buttons in the event dialog).
+func (m ListDialogModel) DetailsOrigin() (int, int) {
+	boxW, boxH := m.boxSize()
+	dialogX := (m.width - boxW) / 2
+	dialogY := (m.height - boxH) / 2
+	detailsX := dialogX + 2
+	detailsY := dialogY + 4
+	if m.isNarrow() {
+		rowCount := max(len(m.rows), 1)
+		bodyH := max(max(boxH-4, 6)-4, 3)
+		listH := min(max(rowCount+1, 3), max(bodyH/3, 3))
+		detailsY += listH + 1
+	} else {
+		innerW := max(boxW-5, 10)
+		detailsX += listColumnWidth(innerW) + dialogDividerWidth
+	}
+	return detailsX, detailsY
 }
 
 func (m ListDialogModel) actionBarOrigin() (int, int) {
