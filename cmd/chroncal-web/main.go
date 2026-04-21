@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/coder/websocket"
@@ -124,7 +125,10 @@ func serveTerminal(w http.ResponseWriter, r *http.Request, bin string, isolated 
 				}
 			}
 			if err != nil {
-				if !errors.Is(err, io.EOF) {
+				// EIO on the pty master is Linux's signal that the slave
+				// side (chroncal) has exited — same meaning as EOF on
+				// other platforms. Both are normal session termination.
+				if !errors.Is(err, io.EOF) && !errors.Is(err, syscall.EIO) {
 					log.Printf("pty read: %v", err)
 				}
 				return
