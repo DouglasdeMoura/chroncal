@@ -461,14 +461,16 @@ func (m MiniMonthModel) inRangeInclusive(d time.Time) bool {
 
 // rangePosition reports whether d is an endpoint of the current range, or
 // strictly between the endpoints. Returns (false, false) when range mode is
-// off or when no start has been pinned yet.
+// off or when no start has been pinned yet. When only the start is pinned,
+// the cursor stands in as a provisional end so the range previews live as
+// the user navigates.
 func (m MiniMonthModel) rangePosition(d time.Time) (isEndpoint, isInRange bool) {
 	if !m.rangeActive || m.rangeStart.IsZero() {
 		return false, false
 	}
 	lo, hi := m.rangeStart, m.rangeEnd
 	if hi.IsZero() {
-		hi = lo
+		hi = m.cursor
 	}
 	if hi.Before(lo) {
 		lo, hi = hi, lo
