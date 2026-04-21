@@ -386,7 +386,7 @@ func (m ListDialogModel) View() string {
 	title := lipgloss.NewStyle().
 		Bold(true).
 		Width(innerW).
-		Render(strings.Repeat(" ", selectionPrefixWidth) + m.title)
+		Render(m.title)
 
 	m.help.SetWidth(innerW)
 	helpText := m.help.ShortHelpView(m.shortHelp)
