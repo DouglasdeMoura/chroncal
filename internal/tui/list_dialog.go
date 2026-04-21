@@ -265,7 +265,7 @@ func (m ListDialogModel) RowAtPosition(x, y int) (int, bool) {
 
 	boxW, boxH := m.boxSize()
 	innerW := max(boxW-5, 10)
-	innerH := max(boxH-4, 6)
+	innerH := max(boxH-3, 6)
 	bodyH := max(innerH-4, 3)
 
 	dialogX := (m.width - boxW) / 2
@@ -345,7 +345,7 @@ func (m ListDialogModel) DetailsOrigin() (int, int) {
 	detailsY := dialogY + 4
 	if m.isNarrow() {
 		rowCount := max(len(m.rows), 1)
-		bodyH := max(max(boxH-4, 6)-4, 3)
+		bodyH := max(max(boxH-3, 6)-4, 3)
 		listH := min(max(rowCount+1, 3), max(bodyH/3, 3))
 		detailsY += listH + 1
 	} else {
@@ -358,7 +358,7 @@ func (m ListDialogModel) DetailsOrigin() (int, int) {
 func (m ListDialogModel) actionBarOrigin() (int, int) {
 	boxW, boxH := m.boxSize()
 	innerW := max(boxW-5, 10)
-	innerH := max(boxH-4, 6)
+	innerH := max(boxH-3, 6)
 	bodyH := max(innerH-4, 3)
 
 	dialogX := (m.width - boxW) / 2
@@ -380,7 +380,7 @@ func (m ListDialogModel) View() string {
 	}
 	boxW, boxH := m.boxSize()
 	innerW := max(boxW-5, 10)
-	innerH := max(boxH-4, 6)
+	innerH := max(boxH-3, 6)
 	bodyH := max(innerH-4, 3)
 
 	title := lipgloss.NewStyle().
@@ -389,7 +389,10 @@ func (m ListDialogModel) View() string {
 		Render(m.title)
 
 	m.help.SetWidth(innerW)
-	helpText := m.help.ShortHelpView(m.shortHelp)
+	helpText := lipgloss.NewStyle().
+		Width(innerW).
+		Align(lipgloss.Center).
+		Render(m.help.ShortHelpView(m.shortHelp))
 
 	var body string
 	if m.isNarrow() {
@@ -403,7 +406,7 @@ func (m ListDialogModel) View() string {
 	return lipgloss.NewStyle().
 		Width(boxW).
 		Height(boxH).
-		Padding(1, 2, 1, 1).
+		Padding(1, 2, 0, 1).
 		Border(lipgloss.RoundedBorder()).
 		Render(content)
 }
