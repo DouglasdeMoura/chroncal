@@ -401,12 +401,10 @@ func (m MiniMonthModel) View() string {
 			// Reverse video (bg/fg swap). The cursor case wins over today so
 			// today's red tint never shows on the selected cell.
 			cell = lipgloss.NewStyle().Reverse(true).Bold(true).Render(num)
-		case isEndpoint:
-			// Range endpoints get the accent background even when unfocused,
-			// so the range stays visible while the cursor moves around.
-			cell = lipgloss.NewStyle().Background(m.accentColor).Foreground(m.textColor).Bold(true).Render(num)
-		case isInRange:
-			cell = lipgloss.NewStyle().Background(m.rangeColor).Foreground(m.textColor).Render(num)
+		case isEndpoint, isInRange:
+			// Range days share the selected-day style so the range reads as
+			// one continuous selection.
+			cell = lipgloss.NewStyle().Reverse(true).Bold(true).Render(num)
 		case isToday:
 			// Fake a square outline with underline + overline (top + bottom
 			// sides). SGR 53/55 is not exposed by lipgloss, so wrap the
@@ -422,12 +420,11 @@ func (m MiniMonthModel) View() string {
 			rows++
 		} else {
 			// Paint the inter-day gap when the current day and the next
-			// are both inside the range (endpoint or middle), so the
-			// selection reads as a continuous ribbon instead of isolated
-			// cells separated by visible gaps.
+			// are both inside the range, so the selection reads as a
+			// continuous ribbon instead of isolated reversed cells.
 			next := cur.AddDate(0, 0, 1)
 			if next.Month() == first.Month() && m.inRangeInclusive(cur) && m.inRangeInclusive(next) {
-				b.WriteString(lipgloss.NewStyle().Background(m.rangeColor).Render(" "))
+				b.WriteString(lipgloss.NewStyle().Reverse(true).Render(" "))
 			} else {
 				b.WriteString(" ")
 			}
