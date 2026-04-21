@@ -4,9 +4,9 @@ go 1.25.1
 
 require (
 	charm.land/bubbles/v2 v2.1.0
-	charm.land/bubbletea/v2 v2.0.5
+	charm.land/bubbletea/v2 v2.0.6
 	charm.land/lipgloss/v2 v2.0.3
-	github.com/charmbracelet/ultraviolet v0.0.0-20260413211237-bd52878bcec2
+	github.com/charmbracelet/ultraviolet v0.0.0-20260416155717-489999b90468
 	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
 	github.com/emersion/go-webdav v0.7.0
 	github.com/gen2brain/beeep v0.11.2
