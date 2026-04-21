@@ -28,10 +28,12 @@ func actionBar(buttons string, w int) string {
 const dialogDividerWidth = 3
 
 // listColumnWidth returns the width of the list column for a two-column
-// dialog, targeting ~35% of innerW with sensible floor and headroom so the
-// detail pane always has room for labeled fields.
+// dialog. The list/detail split mirrors the dialog's golden-rectangle shape:
+// details take the φ share (~61.8%) of the space left after the divider,
+// the list takes the 1/φ share (~38.2%).
 func listColumnWidth(innerW int) int {
-	return max(min(innerW*35/100, innerW-24), 18)
+	avail := max(innerW-dialogDividerWidth, 0)
+	return max(min(avail*382/1000, innerW-24), 18)
 }
 
 // detailColumnWidth returns the width of the detail column given innerW,

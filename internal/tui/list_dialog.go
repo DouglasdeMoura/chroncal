@@ -176,12 +176,24 @@ func (m ListDialogModel) BoxSize() (int, int) {
 	return m.boxSize()
 }
 
+// goldenCellRatio keeps the dialog visually close to a golden rectangle on
+// screen. Terminal cells are roughly twice as tall as wide, so the cell
+// aspect is ~2φ ≈ 3.24 to render as φ:1 to the eye.
+const goldenCellRatio = 3.236
+
 func (m ListDialogModel) boxSize() (int, int) {
 	if m.isNarrow() {
 		return max(m.width-4, 20), max(m.height-4, 14)
 	}
-	boxW := min(max(m.width*2/3, 50), m.width-2)
 	boxH := min(max(m.height*2/3, 14), m.height-2)
+	boxW := int(float64(boxH) * goldenCellRatio)
+	if boxW > m.width-2 {
+		boxW = m.width - 2
+		boxH = min(max(int(float64(boxW)/goldenCellRatio), 14), m.height-2)
+	}
+	if boxW < 50 {
+		boxW = 50
+	}
 	return boxW, boxH
 }
 
