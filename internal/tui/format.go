@@ -282,7 +282,7 @@ func verboseContinuationLabel(ev event.Event, dayIndex, totalDays int) string {
 func writeVerboseEventListEntry(out *strings.Builder, entry eventListDayEntry, calendarNames map[int64]string) {
 	title := entry.ev.Title
 	if entry.ev.ID > 0 {
-		title = fmt.Sprintf("%s #%d", title, entry.ev.ID)
+		title = fmt.Sprintf("%s (%d)", title, entry.ev.ID)
 	}
 	if entry.totalDays > 1 {
 		title = fmt.Sprintf("%s (day %d/%d)", title, entry.dayIndex, entry.totalDays)

@@ -55,7 +55,7 @@ func TestFormatEventListVerbose_RendersTimeRailDetails(t *testing.T) {
 		"Apr 21 Tue\n" +
 		"----------\n" +
 		"all day | Offsite\n" +
-		"09:00   | Team Standup #42\n" +
+		"09:00   | Team Standup (42)\n" +
 		"        | Zoom\n" +
 		"        | Sprint planning\n" +
 		"        | Calendar: Work\n"
@@ -95,14 +95,14 @@ func TestFormatEventListVerbose_RendersOvernightContinuation(t *testing.T) {
 	want := "" +
 		"Apr 21 Tue\n" +
 		"----------\n" +
-		"22:00   | Maintenance window #55 (day 1/2)\n" +
+		"22:00   | Maintenance window (55) (day 1/2)\n" +
 		"        | API deploy + DB migration\n" +
 		"        | Calendar: Ops\n" +
 		"        | ends Wed, Apr 22 09:00\n" +
 		"\n" +
 		"Apr 22 Wed\n" +
 		"----------\n" +
-		"00:00   | Maintenance window #55 (day 2/2)\n" +
+		"00:00   | Maintenance window (55) (day 2/2)\n" +
 		"        | API deploy + DB migration\n" +
 		"        | Calendar: Ops\n" +
 		"        | until 09:00\n"
