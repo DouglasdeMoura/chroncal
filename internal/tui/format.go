@@ -281,6 +281,9 @@ func verboseContinuationLabel(ev event.Event, dayIndex, totalDays int) string {
 
 func writeVerboseEventListEntry(out *strings.Builder, entry eventListDayEntry, calendarNames map[int64]string) {
 	title := entry.ev.Title
+	if entry.ev.ID > 0 {
+		title = fmt.Sprintf("%s #%d", title, entry.ev.ID)
+	}
 	if entry.totalDays > 1 {
 		title = fmt.Sprintf("%s (day %d/%d)", title, entry.dayIndex, entry.totalDays)
 	}
@@ -301,22 +304,14 @@ func writeVerboseEventListEntry(out *strings.Builder, entry eventListDayEntry, c
 }
 
 func verboseMetadataLine(ev event.Event, calendarNames map[int64]string) string {
-	if ev.CalendarID <= 0 && ev.ID <= 0 {
+	if ev.CalendarID <= 0 {
 		return ""
 	}
-
-	parts := make([]string, 0, 2)
-	if ev.CalendarID > 0 {
-		calendarLabel := fmt.Sprintf("%d", ev.CalendarID)
-		if name := calendarNames[ev.CalendarID]; name != "" {
-			calendarLabel = name
-		}
-		parts = append(parts, "In "+calendarLabel+" calendar")
+	calendarLabel := fmt.Sprintf("%d", ev.CalendarID)
+	if name := calendarNames[ev.CalendarID]; name != "" {
+		calendarLabel = name
 	}
-	if ev.ID > 0 {
-		parts = append(parts, fmt.Sprintf("event #%d", ev.ID))
-	}
-	return strings.Join(parts, ", ")
+	return "Calendar: " + calendarLabel
 }
 
 // CalendarEvent is the rendering-only view of an event inside the month grid.
