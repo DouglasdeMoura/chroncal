@@ -87,6 +87,18 @@ Without flags, the window defaults to today through the next 30 days.`,
 				return fmt.Errorf("list events: %w", err)
 			}
 
+			var calendarNames map[int64]string
+			if verbose {
+				cals, err := a.Calendars.List(ctx)
+				if err != nil {
+					return fmt.Errorf("list calendars: %w", err)
+				}
+				calendarNames = make(map[int64]string, len(cals))
+				for _, cal := range cals {
+					calendarNames[cal.ID] = cal.Name
+				}
+			}
+
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
 				items := make([]jsonEvent, len(events))
@@ -95,18 +107,19 @@ Without flags, the window defaults to today through the next 30 days.`,
 				}
 				return printOutput(w, items)
 			}
-				fmt.Fprint(w, tui.FormatEventList(tui.FormatEventListOptions{
-					Events:      events,
-					ShowHeader:  false,
-					ShowAllDays: true,
-					ShowWeekday: showWeekday,
-					ShowMonth:   true,
-					Verbose:     verbose,
-					From:        from,
-					To:          to,
-				}))
-				return nil
-			},
+			fmt.Fprint(w, tui.FormatEventList(tui.FormatEventListOptions{
+				Events:        events,
+				CalendarNames: calendarNames,
+				ShowHeader:    false,
+				ShowAllDays:   true,
+				ShowWeekday:   showWeekday,
+				ShowMonth:     true,
+				Verbose:       verbose,
+				From:          from,
+				To:            to,
+			}))
+			return nil
+		},
 	}
 	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD, default: today)")
 	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 30 days from now)")

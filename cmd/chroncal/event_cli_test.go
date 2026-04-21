@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestEventListVerboseUsesTimeRailView(t *testing.T) {
 	setupCalendarCLITestEnv(t)
@@ -34,13 +37,18 @@ func TestEventListVerboseUsesTimeRailView(t *testing.T) {
 		t.Fatalf("event list --verbose: %v", err)
 	}
 
-	want := "" +
+	wantPrefix := "" +
 		"Apr 21 Tue\n" +
 		"----------\n" +
 		"09:00   | Team Standup\n" +
 		"        | Zoom\n" +
 		"        | Sprint planning\n"
-	if stdout != want {
-		t.Fatalf("event list --verbose output mismatch\nwant:\n%s\ngot:\n%s", want, stdout)
+	if !strings.HasPrefix(stdout, wantPrefix) {
+		t.Fatalf("event list --verbose output mismatch\nwant prefix:\n%s\ngot:\n%s", wantPrefix, stdout)
+	}
+	for _, needle := range []string{"calendar: Work", "id: ", "uid: "} {
+		if !strings.Contains(stdout, needle) {
+			t.Fatalf("event list --verbose output = %q, want substring %q", stdout, needle)
+		}
 	}
 }

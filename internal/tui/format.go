@@ -84,11 +84,12 @@ func spanDays(ev event.Event) []time.Time {
 }
 
 type FormatEventListOptions struct {
-	Events      []event.Event
-	ShowHeader  bool
-	ShowAllDays bool
-	From        time.Time
-	To          time.Time
+	Events        []event.Event
+	CalendarNames map[int64]string
+	ShowHeader    bool
+	ShowAllDays   bool
+	From          time.Time
+	To            time.Time
 	// WeekdayWidth controls the weekday label width (1, 2, or 3 chars).
 	// Zero or out-of-range values default to 3.
 	WeekdayWidth int
@@ -215,7 +216,7 @@ func FormatEventList(opts FormatEventListOptions) string {
 				out.WriteString(strings.Repeat("-", len(dayPrefix)))
 				out.WriteByte('\n')
 				for _, entry := range dayEvents {
-					writeVerboseEventListEntry(&out, entry)
+					writeVerboseEventListEntry(&out, entry, opts.CalendarNames)
 				}
 				firstVerboseDay = false
 				continue
@@ -278,7 +279,7 @@ func verboseContinuationLabel(ev event.Event, dayIndex, totalDays int) string {
 	}
 }
 
-func writeVerboseEventListEntry(out *strings.Builder, entry eventListDayEntry) {
+func writeVerboseEventListEntry(out *strings.Builder, entry eventListDayEntry, calendarNames map[int64]string) {
 	title := entry.ev.Title
 	if entry.totalDays > 1 {
 		title = fmt.Sprintf("%s (day %d/%d)", title, entry.dayIndex, entry.totalDays)
@@ -290,6 +291,19 @@ func writeVerboseEventListEntry(out *strings.Builder, entry eventListDayEntry) {
 	}
 	if entry.ev.Description != "" {
 		fmt.Fprintf(out, "%7s | %s\n", "", entry.ev.Description)
+	}
+	if entry.ev.CalendarID > 0 {
+		calendarLabel := fmt.Sprintf("%d", entry.ev.CalendarID)
+		if name := calendarNames[entry.ev.CalendarID]; name != "" {
+			calendarLabel = name
+		}
+		fmt.Fprintf(out, "%7s | calendar: %s\n", "", calendarLabel)
+	}
+	if entry.ev.ID > 0 {
+		fmt.Fprintf(out, "%7s | id: %d\n", "", entry.ev.ID)
+	}
+	if entry.ev.UID != "" {
+		fmt.Fprintf(out, "%7s | uid: %s\n", "", entry.ev.UID)
 	}
 	if continuation := verboseContinuationLabel(entry.ev, entry.dayIndex, entry.totalDays); continuation != "" {
 		fmt.Fprintf(out, "%7s | %s\n", "", continuation)

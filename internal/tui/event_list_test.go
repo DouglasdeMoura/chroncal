@@ -21,6 +21,9 @@ func TestFormatEventListVerbose_RendersTimeRailDetails(t *testing.T) {
 
 	events := []event.Event{
 		{
+			ID:          42,
+			UID:         "team-standup-uid",
+			CalendarID:  1,
 			Title:       "Team Standup",
 			Location:    "Zoom",
 			Description: "Sprint planning",
@@ -40,9 +43,12 @@ func TestFormatEventListVerbose_RendersTimeRailDetails(t *testing.T) {
 		ShowAllDays: true,
 		ShowWeekday: true,
 		ShowMonth:   true,
-		From:        time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC),
-		To:          time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC),
-		Verbose:     true,
+		CalendarNames: map[int64]string{
+			1: "Work",
+		},
+		From:    time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC),
+		To:      time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC),
+		Verbose: true,
 	})
 
 	want := "" +
@@ -51,7 +57,10 @@ func TestFormatEventListVerbose_RendersTimeRailDetails(t *testing.T) {
 		"all day | Offsite\n" +
 		"09:00   | Team Standup\n" +
 		"        | Zoom\n" +
-		"        | Sprint planning\n"
+		"        | Sprint planning\n" +
+		"        | calendar: Work\n" +
+		"        | id: 42\n" +
+		"        | uid: team-standup-uid\n"
 	if got != want {
 		t.Fatalf("FormatEventList verbose output mismatch\nwant:\n%s\ngot:\n%s", want, got)
 	}
@@ -62,6 +71,9 @@ func TestFormatEventListVerbose_RendersOvernightContinuation(t *testing.T) {
 
 	events := []event.Event{
 		{
+			ID:          55,
+			UID:         "maintenance-window-uid",
+			CalendarID:  2,
 			Title:       "Maintenance window",
 			Description: "API deploy + DB migration",
 			StartTime:   time.Date(2026, 4, 21, 22, 0, 0, 0, time.UTC),
@@ -74,9 +86,12 @@ func TestFormatEventListVerbose_RendersOvernightContinuation(t *testing.T) {
 		ShowAllDays: true,
 		ShowWeekday: true,
 		ShowMonth:   true,
-		From:        time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC),
-		To:          time.Date(2026, 4, 23, 0, 0, 0, 0, time.UTC),
-		Verbose:     true,
+		CalendarNames: map[int64]string{
+			2: "Ops",
+		},
+		From:    time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC),
+		To:      time.Date(2026, 4, 23, 0, 0, 0, 0, time.UTC),
+		Verbose: true,
 	})
 
 	want := "" +
@@ -84,12 +99,18 @@ func TestFormatEventListVerbose_RendersOvernightContinuation(t *testing.T) {
 		"----------\n" +
 		"22:00   | Maintenance window (day 1/2)\n" +
 		"        | API deploy + DB migration\n" +
+		"        | calendar: Ops\n" +
+		"        | id: 55\n" +
+		"        | uid: maintenance-window-uid\n" +
 		"        | ends Wed, Apr 22 09:00\n" +
 		"\n" +
 		"Apr 22 Wed\n" +
 		"----------\n" +
 		"00:00   | Maintenance window (day 2/2)\n" +
 		"        | API deploy + DB migration\n" +
+		"        | calendar: Ops\n" +
+		"        | id: 55\n" +
+		"        | uid: maintenance-window-uid\n" +
 		"        | until 09:00\n"
 	if got != want {
 		t.Fatalf("FormatEventList verbose overnight output mismatch\nwant:\n%s\ngot:\n%s", want, got)
