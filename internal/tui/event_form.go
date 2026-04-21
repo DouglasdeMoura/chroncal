@@ -144,7 +144,19 @@ type EventFormModel struct {
 	// Mini-month models for date picker overlays
 	datePicker          MiniMonthModel
 	endsDatePickerModel MiniMonthModel
-	dpBtnFocus          int // -1 = calendar focused, 0 = Cancel, 1 = Ok
+	// dpBtnFocus: -1 grid, 0 Cancel, 1 Ok, 2 range checkbox.
+	// 2 is only reachable inside the event-date picker (not ends-date).
+	dpBtnFocus int
+
+	// Multi-day range state (event-date picker only). rangeEnd is zero
+	// until the user pins it; when non-zero the form treats the event as
+	// spanning startDate..endDate.
+	rangeMode     bool
+	rangeStart    time.Time // pinned start (zero when no pin yet)
+	rangeEnd      time.Time // pinned end (zero when only start is pinned)
+	rangePickEnd  bool      // true = next Enter pins end; false = next Enter (re-)pins start
+	rangeEndDate  time.Time // persisted across picker opens: the end date the form will save
+	rangeHasEnd   bool      // true when rangeEndDate is meaningful (set on Ok in range mode)
 
 	// Dialog + Form
 	dialog Dialog
@@ -289,6 +301,38 @@ func NewEventFormModel(day time.Time, calendars map[int64]CalendarInfo, theme Th
 	return m, cmd
 }
 
+// multiDayEndDate reports whether the event spans more than one calendar
+// day and, if so, returns the last included day (inclusive, local). For
+// all-day events the stored end is exclusive midnight of the day after
+// the last included day; for timed events the actual end instant is used.
+func multiDayEndDate(ev event.Event) (time.Time, bool) {
+	if ev.AllDay {
+		s := ev.StartTime.UTC()
+		e := ev.EndTime.UTC()
+		startDay := time.Date(s.Year(), s.Month(), s.Day(), 0, 0, 0, 0, time.UTC)
+		// End is exclusive: subtract a minute to get the last included day.
+		last := e.Add(-time.Minute)
+		lastDay := time.Date(last.Year(), last.Month(), last.Day(), 0, 0, 0, 0, time.UTC)
+		if lastDay.After(startDay) {
+			return lastDay, true
+		}
+		return time.Time{}, false
+	}
+	s := ev.StartTime.Local()
+	e := ev.EndTime.Local()
+	startDay := time.Date(s.Year(), s.Month(), s.Day(), 0, 0, 0, 0, s.Location())
+	endDay := time.Date(e.Year(), e.Month(), e.Day(), 0, 0, 0, 0, e.Location())
+	// If the end instant is exactly midnight of the next day, the event
+	// doesn't actually touch that day (exclusive semantics).
+	if e.Equal(endDay) && !endDay.Equal(startDay) {
+		endDay = endDay.AddDate(0, 0, -1)
+	}
+	if endDay.After(startDay) {
+		return endDay, true
+	}
+	return time.Time{}, false
+}
+
 // NewEventFormModelForEdit creates a form pre-filled with an existing event's data.
 func NewEventFormModelForEdit(ev event.Event, calendars map[int64]CalendarInfo, theme Theme) (EventFormModel, tea.Cmd) {
 	m, cmd := NewEventFormModel(ev.StartTime, calendars, theme)
@@ -334,6 +378,15 @@ func NewEventFormModelForEdit(ev event.Event, calendars map[int64]CalendarInfo, 
 	if !ev.AllDay {
 		m.timeField.SetStartValue(ev.StartTime.In(displayLoc).Format("15:04"))
 		m.timeField.SetEndValue(ev.EndTime.In(displayLoc).Format("15:04"))
+	}
+
+	// Detect multi-day events and pre-fill the range. For all-day events
+	// the stored end is exclusive midnight of the day after the last
+	// included day; for timed events it's the actual end instant.
+	if endDate, ok := multiDayEndDate(ev); ok {
+		m.rangeHasEnd = true
+		m.rangeEndDate = endDate
+		m.dateField.SetRangeEnd(endDate)
 	}
 
 	// Select the correct calendar.
@@ -647,9 +700,22 @@ func (m *EventFormModel) tryOpenOverlay() tea.Cmd {
 }
 
 // openDatePicker initialises the MiniMonthModel and opens the overlay.
+// Restores any previously committed range so re-opening shows the user's
+// last selection rather than a blank state.
 func (m *EventFormModel) openDatePicker() {
 	m.datePicker = NewMiniMonthModel(m.day).Focus().FocusGrid().
-		SetTheme(m.theme.Selected, m.theme.Today, m.theme.Text, m.theme.Muted)
+		SetTheme(m.theme.Selected, m.theme.Today, m.theme.Text, m.theme.Muted).
+		SetRangeColor(m.theme.Selected)
+	m.rangeMode = m.rangeHasEnd
+	m.rangeStart = time.Time{}
+	m.rangeEnd = time.Time{}
+	m.rangePickEnd = false
+	if m.rangeHasEnd {
+		m.rangeStart = m.day
+		m.rangeEnd = m.rangeEndDate
+		m.rangePickEnd = false
+		m.datePicker = m.datePicker.SetRange(true, m.rangeStart, m.rangeEnd)
+	}
 	m.datePickerOpen = true
 	m.dpBtnFocus = -1
 }
@@ -804,6 +870,10 @@ func (m EventFormModel) updateDatePicker(msg tea.Msg) (EventFormModel, tea.Cmd) 
 	case "esc", "q":
 		m.datePickerOpen = false
 		return m, nil
+	case "r", "R":
+		// Global shortcut: toggle range mode from anywhere in the overlay.
+		m.toggleRangeMode()
+		return m, nil
 	case "tab":
 		m, m.datePicker = m.dpAdvanceFocus(m.datePicker)
 		return m, nil
@@ -812,18 +882,18 @@ func (m EventFormModel) updateDatePicker(msg tea.Msg) (EventFormModel, tea.Cmd) 
 		return m, nil
 	case "enter", "space":
 		switch {
+		case m.dpBtnFocus == 2: // Range checkbox
+			m.toggleRangeMode()
 		case m.dpBtnFocus == 0: // Cancel
 			m.datePickerOpen = false
 		case m.dpBtnFocus == 1: // Ok
-			m.day = m.datePicker.Cursor()
-			m.dateField.SetDate(m.day)
-			m.datePickerOpen = false
+			m.commitDatePickerSelection()
 		case !m.datePicker.AtEnd(): // Chevron focused: let MiniMonth handle it
 			m.datePicker, _ = m.datePicker.Update(kp)
-		default: // Grid focused: confirm date
-			m.day = m.datePicker.Cursor()
-			m.dateField.SetDate(m.day)
-			m.datePickerOpen = false
+		case m.rangeMode: // Grid + range mode: pin an endpoint
+			m.pinRangeEndpoint(m.datePicker.Cursor())
+		default: // Grid focused: confirm single date
+			m.commitDatePickerSelection()
 		}
 		return m, nil
 	}
@@ -832,6 +902,68 @@ func (m EventFormModel) updateDatePicker(msg tea.Msg) (EventFormModel, tea.Cmd) 
 		m.datePicker, _ = m.datePicker.Update(kp)
 	}
 	return m, nil
+}
+
+// toggleRangeMode flips range-mode on/off inside the date picker. Turning
+// it on auto-pins the current cursor as the range start so the user sees
+// immediate feedback; turning it off clears the end pin and keeps start as
+// the plain single-date selection.
+func (m *EventFormModel) toggleRangeMode() {
+	m.rangeMode = !m.rangeMode
+	if m.rangeMode {
+		m.rangeStart = m.datePicker.Cursor()
+		m.rangeEnd = time.Time{}
+		m.rangePickEnd = true
+		m.datePicker = m.datePicker.SetRange(true, m.rangeStart, m.rangeEnd)
+	} else {
+		m.rangeEnd = time.Time{}
+		m.rangePickEnd = false
+		m.datePicker = m.datePicker.SetRange(false, time.Time{}, time.Time{})
+	}
+}
+
+// pinRangeEndpoint commits the current cursor position as either the start
+// or the end of the range, depending on which endpoint is being picked.
+// After pinning end, the next Enter on a day re-pins start (reset cycle).
+func (m *EventFormModel) pinRangeEndpoint(d time.Time) {
+	if m.rangePickEnd {
+		m.rangeEnd = d
+		m.rangePickEnd = false
+	} else {
+		m.rangeStart = d
+		m.rangeEnd = time.Time{}
+		m.rangePickEnd = true
+	}
+	m.datePicker = m.datePicker.SetRange(true, m.rangeStart, m.rangeEnd)
+}
+
+// commitDatePickerSelection closes the overlay, writing the current cursor
+// (or range) back to the form. In range mode with both endpoints pinned,
+// the earlier endpoint becomes the event date and the later endpoint is
+// stored as rangeEndDate for the save path.
+func (m *EventFormModel) commitDatePickerSelection() {
+	if m.rangeMode && !m.rangeStart.IsZero() && !m.rangeEnd.IsZero() {
+		lo, hi := m.rangeStart, m.rangeEnd
+		if hi.Before(lo) {
+			lo, hi = hi, lo
+		}
+		m.day = lo
+		m.rangeEndDate = hi
+		m.rangeHasEnd = !sameDay(lo, hi)
+		m.dateField.SetDate(m.day)
+		if m.rangeHasEnd {
+			m.dateField.SetRangeEnd(m.rangeEndDate)
+		} else {
+			m.dateField.ClearRangeEnd()
+		}
+	} else {
+		m.day = m.datePicker.Cursor()
+		m.rangeHasEnd = false
+		m.rangeEndDate = time.Time{}
+		m.dateField.SetDate(m.day)
+		m.dateField.ClearRangeEnd()
+	}
+	m.datePickerOpen = false
 }
 
 func (m EventFormModel) updateEndsDatePicker(msg tea.Msg) (EventFormModel, tea.Cmd) {
@@ -873,12 +1005,20 @@ func (m EventFormModel) updateEndsDatePicker(msg tea.Msg) (EventFormModel, tea.C
 	return m, nil
 }
 
-// dpAdvanceFocus moves focus forward: ‹ → › → grid → Cancel → Ok → ‹.
+// dpAdvanceFocus moves focus forward through the event-date picker's tab
+// stops: ‹ → › → grid → [range checkbox] → Cancel → Ok → ‹.
+// The range checkbox stop is skipped when mm is the ends-date picker —
+// detected via the caller distinguishing event-date vs ends-date.
 func (m EventFormModel) dpAdvanceFocus(mm MiniMonthModel) (EventFormModel, MiniMonthModel) {
+	// Only the event-date picker exposes the range checkbox stop.
+	hasRange := m.datePickerOpen
 	if m.dpBtnFocus >= 0 {
-		if m.dpBtnFocus < 1 {
-			m.dpBtnFocus++
-		} else {
+		switch {
+		case hasRange && m.dpBtnFocus == 2: // checkbox → Cancel
+			m.dpBtnFocus = 0
+		case m.dpBtnFocus == 0: // Cancel → Ok
+			m.dpBtnFocus = 1
+		default: // Ok → ‹
 			m.dpBtnFocus = -1
 			mm = mm.Focus().FocusFirst()
 		}
@@ -886,19 +1026,27 @@ func (m EventFormModel) dpAdvanceFocus(mm MiniMonthModel) (EventFormModel, MiniM
 	}
 	if mm.AtEnd() {
 		mm = mm.Blur()
-		m.dpBtnFocus = 0
+		if hasRange {
+			m.dpBtnFocus = 2 // grid → range checkbox
+		} else {
+			m.dpBtnFocus = 0 // grid → Cancel (ends-date picker)
+		}
 	} else {
 		mm = mm.AdvanceFocus()
 	}
 	return m, mm
 }
 
-// dpRetreatFocus moves focus backward: Ok → Cancel → grid → › → ‹.
+// dpRetreatFocus moves focus backward: Ok → Cancel → [range checkbox] → grid → › → ‹.
 func (m EventFormModel) dpRetreatFocus(mm MiniMonthModel) (EventFormModel, MiniMonthModel) {
+	hasRange := m.datePickerOpen
 	if m.dpBtnFocus >= 0 {
-		if m.dpBtnFocus > 0 {
-			m.dpBtnFocus--
-		} else {
+		switch {
+		case m.dpBtnFocus == 1: // Ok → Cancel
+			m.dpBtnFocus = 0
+		case m.dpBtnFocus == 0 && hasRange: // Cancel → checkbox
+			m.dpBtnFocus = 2
+		default: // Cancel (no range) or checkbox → grid
 			m.dpBtnFocus = -1
 			mm = mm.Focus().FocusLast()
 		}
@@ -926,14 +1074,19 @@ func (m EventFormModel) handleDatePickerMouse(msg tea.MouseClickMsg) (EventFormM
 		return m, nil
 	}
 
-	// Button row: 8 calendar lines + 1 blank + 1 separator = Y index 10.
-	if mmY == 10 {
-		if m.datePickerButtonHit(mmX) == "cancel" {
+	// Checkbox row (Y=9 in event-date layout: 8 cal + 1 blank). Clicks on
+	// the label itself toggle range mode.
+	if mmY == 9 && mmX < len("[x] Date range")+2 {
+		m.toggleRangeMode()
+		return m, nil
+	}
+
+	if mmY == m.datePickerButtonRowY() {
+		switch m.datePickerButtonHit(mmX) {
+		case "cancel":
 			m.datePickerOpen = false
-		} else if m.datePickerButtonHit(mmX) == "ok" {
-			m.day = m.datePicker.Cursor()
-			m.dateField.SetDate(m.day)
-			m.datePickerOpen = false
+		case "ok":
+			m.commitDatePickerSelection()
 		}
 		return m, nil
 	}
@@ -953,9 +1106,11 @@ func (m EventFormModel) handleDatePickerMouse(msg tea.MouseClickMsg) (EventFormM
 	monthChanged := m.datePicker.DisplayMonth().Month() != prevMonth.Month() ||
 		m.datePicker.DisplayMonth().Year() != prevMonth.Year()
 	if !monthChanged && mmY >= 2 {
-		m.day = m.datePicker.Cursor()
-		m.dateField.SetDate(m.day)
-		m.datePickerOpen = false
+		if m.rangeMode {
+			m.pinRangeEndpoint(m.datePicker.Cursor())
+		} else {
+			m.commitDatePickerSelection()
+		}
 	}
 
 	return m, nil
@@ -991,11 +1146,11 @@ func (m EventFormModel) handleEndsDatePickerMouse(msg tea.MouseClickMsg) (EventF
 		return m, nil
 	}
 
-	// Button row: 8 calendar lines + 1 blank + 1 separator = Y index 10.
-	if mmY == 10 {
-		if m.datePickerButtonHit(mmX) == "cancel" {
+	if mmY == m.datePickerButtonRowY() {
+		switch m.datePickerButtonHit(mmX) {
+		case "cancel":
 			m.endsDatePicker = false
-		} else if m.datePickerButtonHit(mmX) == "ok" {
+		case "ok":
 			m.endsDate = m.endsDatePickerModel.Cursor()
 			m.endsDatePicker = false
 		}
@@ -1080,12 +1235,33 @@ func (m EventFormModel) TimezonePickerView() string {
 }
 
 // DatePickerBoxSize returns the outer dimensions of the date picker dialog.
-func (m EventFormModel) DatePickerBoxSize() (int, int) { return 40, 14 }
+// The event-date picker is taller to accommodate the Date-range checkbox
+// row and Start/End status line; the ends-date picker keeps the compact
+// size since it never shows range UI.
+func (m EventFormModel) DatePickerBoxSize() (int, int) {
+	if m.datePickerOpen {
+		return 40, 17
+	}
+	return 40, 14
+}
+
+// datePickerButtonRowY is the Y coordinate of the Cancel/Ok row inside the
+// date picker overlay's content area. Mouse handlers use it to detect
+// clicks on the button row. Event-date picker: 8 cal + 3 range + 1 blank
+// + 1 separator = 13. Ends-date picker: 8 + 1 + 1 = 10.
+func (m EventFormModel) datePickerButtonRowY() int {
+	if m.datePickerOpen {
+		return 13
+	}
+	return 10
+}
 
 // datePickerOverlayView renders a MiniMonthModel inside a bordered dialog
 // box with the calendar grid on the left and key hints stacked vertically
-// on the right.
-func (m EventFormModel) datePickerOverlayView(mm MiniMonthModel) string {
+// on the right. When supportRange is true (event-date picker), a
+// "Date range" checkbox row and a Start/End status line appear between
+// the grid and the button row.
+func (m EventFormModel) datePickerOverlayView(mm MiniMonthModel, supportRange bool) string {
 	boxW, boxH := m.DatePickerBoxSize()
 
 	calView := strings.TrimRight(mm.View(), "\n")
@@ -1106,11 +1282,14 @@ func (m EventFormModel) datePickerOverlayView(mm MiniMonthModel) string {
 		"[]" + "   " + descStyle.Render("month"),
 		"t" + "    " + descStyle.Render("today"),
 	}
+	if supportRange {
+		hintLines = append(hintLines, "r"+"    "+descStyle.Render("range"))
+	}
 
 	// Bottom-align hints with calendar lines.
 	hintStart := len(calLines) - len(hintLines)
 
-	resultLines := make([]string, 0, len(calLines)+3)
+	resultLines := make([]string, 0, len(calLines)+5)
 	for i, line := range calLines {
 		w := lipgloss.Width(line)
 		padded := line + strings.Repeat(" ", max(maxCalW-w, 0))
@@ -1120,8 +1299,22 @@ func (m EventFormModel) datePickerOverlayView(mm MiniMonthModel) string {
 		resultLines = append(resultLines, padded)
 	}
 
-	// Action buttons right-aligned at the bottom, separated by a line.
 	innerW := boxW - 4
+
+	// Range checkbox + status line (event-date picker only). Always emit
+	// 3 lines (blank + checkbox + status-or-blank) so the box height stays
+	// stable when the user toggles range mode.
+	if supportRange {
+		resultLines = append(resultLines, "")
+		resultLines = append(resultLines, m.renderRangeCheckbox())
+		if m.rangeMode {
+			resultLines = append(resultLines, m.renderRangeStatus())
+		} else {
+			resultLines = append(resultLines, "")
+		}
+	}
+
+	// Action buttons right-aligned at the bottom, separated by a line.
 	resultLines = append(resultLines, "")
 	sepStyle := lipgloss.NewStyle().Faint(true)
 	resultLines = append(resultLines, sepStyle.Render(strings.Repeat("─", innerW)))
@@ -1139,14 +1332,61 @@ func (m EventFormModel) datePickerOverlayView(mm MiniMonthModel) string {
 		Render(content)
 }
 
+// renderRangeCheckbox returns a single line: "[x] Date range" (or "[ ]"),
+// reversed when the checkbox is the focused tab stop so the user sees
+// where input will land.
+func (m EventFormModel) renderRangeCheckbox() string {
+	mark := "[ ]"
+	if m.rangeMode {
+		mark = "[x]"
+	}
+	label := mark + " Date range"
+	if m.dpBtnFocus == 2 {
+		return lipgloss.NewStyle().Reverse(true).Bold(true).Render(label)
+	}
+	return label
+}
+
+// renderRangeStatus returns a faint-labelled "Start: Apr 16   End: Apr 24"
+// line summarising what the user has pinned so far. The endpoint currently
+// being picked is emphasised; the other is shown as "—" when unpinned.
+func (m EventFormModel) renderRangeStatus() string {
+	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	valueStyle := lipgloss.NewStyle().Bold(true)
+	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+
+	fmtPin := func(t time.Time) string {
+		if t.IsZero() {
+			return dim.Render("—")
+		}
+		return valueStyle.Render(t.Format("Jan 2"))
+	}
+
+	startCell := fmtPin(m.rangeStart)
+	endCell := fmtPin(m.rangeEnd)
+
+	// Highlight the endpoint currently being picked so the flow is legible.
+	activeMark := lipgloss.NewStyle().Foreground(m.theme.Selected).Bold(true).Render("●")
+	startMark := " "
+	endMark := " "
+	if m.rangePickEnd {
+		endMark = activeMark
+	} else if m.rangeMode {
+		startMark = activeMark
+	}
+
+	return labelStyle.Render("Start:") + " " + startCell + startMark +
+		"   " + labelStyle.Render("End:") + " " + endCell + endMark
+}
+
 // DatePickerView renders the date picker as a standalone bordered dialog.
 func (m EventFormModel) DatePickerView() string {
-	return m.datePickerOverlayView(m.datePicker)
+	return m.datePickerOverlayView(m.datePicker, true)
 }
 
 // EndsDatePickerView renders the ends-date picker overlay.
 func (m EventFormModel) EndsDatePickerView() string {
-	return m.datePickerOverlayView(m.endsDatePickerModel)
+	return m.datePickerOverlayView(m.endsDatePickerModel, false)
 }
 
 // View renders the event form dialog.
@@ -1228,6 +1468,10 @@ func (m EventFormModel) save(f *Form) tea.Cmd {
 	if m.allDayField.Checked() {
 		start := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC)
 		end := start.AddDate(0, 0, 1)
+		if m.rangeHasEnd {
+			endDay := time.Date(m.rangeEndDate.Year(), m.rangeEndDate.Month(), m.rangeEndDate.Day(), 0, 0, 0, 0, time.UTC)
+			end = endDay.AddDate(0, 0, 1)
+		}
 		return func() tea.Msg {
 			return EventFormSaveMsg{
 				CalendarID:     calID,
@@ -1275,9 +1519,14 @@ func (m EventFormModel) save(f *Form) tea.Cmd {
 	// Interpret entered times in the selected timezone, then convert to UTC.
 	start := time.Date(day.Year(), day.Month(), day.Day(),
 		st.Hour(), st.Minute(), 0, 0, loc).UTC()
-	end := time.Date(day.Year(), day.Month(), day.Day(),
+	endDay := day
+	if m.rangeHasEnd {
+		endDay = m.rangeEndDate
+	}
+	end := time.Date(endDay.Year(), endDay.Month(), endDay.Day(),
 		et.Hour(), et.Minute(), 0, 0, loc).UTC()
-	if !end.After(start) {
+	// Same-day cross-midnight fallback (HH:MM→HH:MM where end ≤ start).
+	if !m.rangeHasEnd && !end.After(start) {
 		end = end.AddDate(0, 0, 1)
 	}
 

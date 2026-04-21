@@ -67,9 +67,16 @@ type MiniMonthModel struct {
 	todayColor   color.Color
 	textColor    color.Color
 	mutedColor   color.Color
+	rangeColor   color.Color
 	// eventDays holds "YYYY-MM-DD" keys for days that have at least one
 	// visible event; rendered as a combining dot below the day number.
 	eventDays map[string]bool
+	// Range highlight (opt-in). When rangeActive is true, days between
+	// rangeStart and rangeEnd render with the range background, and the
+	// two endpoints render with the cursor/accent highlight.
+	rangeActive bool
+	rangeStart  time.Time // zero if not yet pinned
+	rangeEnd    time.Time // zero if only start is pinned
 }
 
 func NewMiniMonthModel(initial time.Time) MiniMonthModel {
@@ -89,6 +96,32 @@ func (m MiniMonthModel) SetTheme(accent, today, text, muted color.Color) MiniMon
 	m.mutedColor = muted
 	return m
 }
+
+// SetRangeColor sets the background used for in-range (non-endpoint) days
+// when range mode is active. Endpoints continue to use the accent color.
+func (m MiniMonthModel) SetRangeColor(c color.Color) MiniMonthModel {
+	m.rangeColor = c
+	return m
+}
+
+// SetRange toggles range-highlight mode and specifies the current endpoints.
+// Pass the zero time for end if only start has been pinned. Sidebar callers
+// never invoke this, so their rendering is unaffected.
+func (m MiniMonthModel) SetRange(active bool, start, end time.Time) MiniMonthModel {
+	m.rangeActive = active
+	m.rangeStart = start
+	m.rangeEnd = end
+	return m
+}
+
+// RangeActive reports whether range-highlight mode is on.
+func (m MiniMonthModel) RangeActive() bool { return m.rangeActive }
+
+// RangeStart returns the currently pinned range start (zero if none).
+func (m MiniMonthModel) RangeStart() time.Time { return m.rangeStart }
+
+// RangeEnd returns the currently pinned range end (zero if none).
+func (m MiniMonthModel) RangeEnd() time.Time { return m.rangeEnd }
 
 // SetEventDays replaces the set of days (keyed "YYYY-MM-DD") that should be
 // marked as having at least one visible event. Passing nil clears the set.
@@ -362,6 +395,7 @@ func (m MiniMonthModel) View() string {
 		cell := num
 		isCursor := key == cursorDay
 		isToday := key == todayKey
+		isEndpoint, isInRange := m.rangePosition(cur)
 		// Treat the grid as "focused" only when widget focus is on the grid
 		// sub-widget; otherwise show the cursor in the unfocused style so the
 		// active tab stop (a chevron) is the only filled highlight on screen.
@@ -369,9 +403,15 @@ func (m MiniMonthModel) View() string {
 		switch {
 		case isCursor && gridFocused:
 			cell = lipgloss.NewStyle().Background(m.accentColor).Foreground(m.textColor).Bold(true).Render(num)
+		case isEndpoint:
+			// Range endpoints get the accent background even when unfocused,
+			// so the range stays visible while the cursor moves around.
+			cell = lipgloss.NewStyle().Background(m.accentColor).Foreground(m.textColor).Bold(true).Render(num)
 		case isCursor:
 			// Unfocused cursor: underline + bold so selection is still visible.
 			cell = lipgloss.NewStyle().Foreground(m.textColor).Bold(true).Underline(true).Render(num)
+		case isInRange:
+			cell = lipgloss.NewStyle().Background(m.rangeColor).Foreground(m.textColor).Render(num)
 		case isToday:
 			cell = lipgloss.NewStyle().Foreground(m.todayColor).Bold(true).Render(num)
 		}
@@ -404,6 +444,29 @@ func (m MiniMonthModel) View() string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// rangePosition reports whether d is an endpoint of the current range, or
+// strictly between the endpoints. Returns (false, false) when range mode is
+// off or when no start has been pinned yet.
+func (m MiniMonthModel) rangePosition(d time.Time) (isEndpoint, isInRange bool) {
+	if !m.rangeActive || m.rangeStart.IsZero() {
+		return false, false
+	}
+	lo, hi := m.rangeStart, m.rangeEnd
+	if hi.IsZero() {
+		hi = lo
+	}
+	if hi.Before(lo) {
+		lo, hi = hi, lo
+	}
+	if sameDay(d, lo) || sameDay(d, hi) {
+		return true, false
+	}
+	if d.After(lo) && d.Before(hi) {
+		return false, true
+	}
+	return false, false
 }
 
 // ---------------------------------------------------------------------------
