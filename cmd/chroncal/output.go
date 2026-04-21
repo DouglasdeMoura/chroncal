@@ -340,9 +340,9 @@ func eventTableDateTime(start, end time.Time, allDay bool) (string, string) {
 		if start.Year() != last.Year() {
 			endFmt = "2006-01-02"
 		}
-		return start.Format("2006-01-02") + "→" + last.Format(endFmt), "all day"
+		return start.Format("2006-01-02") + " to " + last.Format(endFmt), "all day"
 	}
-	timeRange := start.Format("15:04") + "–" + end.Format("15:04")
+	timeRange := start.Format("15:04") + " - " + end.Format("15:04")
 	if start.Year() == end.Year() && start.YearDay() == end.YearDay() {
 		return start.Format("2006-01-02"), timeRange
 	}
@@ -350,7 +350,109 @@ func eventTableDateTime(start, end time.Time, allDay bool) (string, string) {
 	if start.Year() != end.Year() {
 		endFmt = "2006-01-02"
 	}
-	return start.Format("2006-01-02") + "→" + end.Format(endFmt), timeRange
+	return start.Format("2006-01-02") + " to " + end.Format(endFmt), timeRange
+}
+
+func printDetailTitle(w io.Writer, title string) {
+	fmt.Fprintf(w, "  %s\n", textsafe.Display(title))
+}
+
+func printDetailField(w io.Writer, width int, label, value string) {
+	if value == "" {
+		return
+	}
+	fmt.Fprintf(w, "    %-*s %s\n", width, label+":", textsafe.Display(value))
+}
+
+func printDetailInt(w io.Writer, width int, label string, value int64) {
+	printDetailField(w, width, label, fmt.Sprintf("%d", value))
+}
+
+func printDetailCount(w io.Writer, width int, label string, count int) {
+	if count <= 0 {
+		return
+	}
+	printDetailField(w, width, label, fmt.Sprintf("%d", count))
+}
+
+func formatEventDetailWhen(start, end time.Time, allDay bool) string {
+	if allDay {
+		last := end.AddDate(0, 0, -1)
+		if start.Year() == last.Year() && start.YearDay() == last.YearDay() {
+			return start.Format("Mon, Jan 2 2006") + " (all day)"
+		}
+		return start.Format("Mon, Jan 2 2006") + " to " + last.Format("Mon, Jan 2 2006") + " (all day)"
+	}
+	if start.Year() == end.Year() && start.YearDay() == end.YearDay() {
+		return start.Format("Mon, Jan 2 2006 15:04") + " - " + end.Format("15:04")
+	}
+	return start.Format("Mon, Jan 2 2006 15:04") + " - " + end.Format("Mon, Jan 2 2006 15:04")
+}
+
+func formatEventListTime(start, end time.Time, allDay bool) string {
+	if allDay {
+		last := end.AddDate(0, 0, -1)
+		if start.Year() == last.Year() && start.YearDay() == last.YearDay() {
+			return "all day"
+		}
+		return "all day (" + start.Format("Mon, Jan 2 2006") + " to " + last.Format("Mon, Jan 2 2006") + ")"
+	}
+	if start.Year() == end.Year() && start.YearDay() == end.YearDay() {
+		return start.Format("15:04") + " - " + end.Format("15:04")
+	}
+	return start.Format("15:04") + " - " + end.Format("Mon, Jan 2 15:04")
+}
+
+func fmtModelRelations(relations []model.Relation) string {
+	if len(relations) == 0 {
+		return ""
+	}
+	parts := make([]string, len(relations))
+	for i, r := range relations {
+		parts[i] = textsafe.Display(r.RelType + ":" + r.RelUID)
+	}
+	return strings.Join(parts, ", ")
+}
+
+func formatTodoDate(date string) string {
+	if date == "" {
+		return ""
+	}
+	if d, err := time.Parse("2006-01-02", date); err == nil {
+		return d.Format("Mon, Jan 2 2006")
+	}
+	if d, err := time.Parse(time.RFC3339, date); err == nil {
+		return d.Local().Format("Mon, Jan 2 2006 15:04")
+	}
+	return textsafe.Display(date)
+}
+
+func formatDateTime(value string) string {
+	if value == "" {
+		return ""
+	}
+	if d, err := time.Parse(time.RFC3339, value); err == nil {
+		return d.Local().Format("Mon, Jan 2 2006 15:04")
+	}
+	return textsafe.Display(value)
+}
+
+func todoCheckbox(t todo.Todo) string {
+	if t.CompletedAt != "" || strings.EqualFold(t.Status, "COMPLETED") {
+		return "[x]"
+	}
+	return "[ ]"
+}
+
+func printEventSummary(w io.Writer, e event.Event) {
+	fmt.Fprintf(w, "  * %s\n", textsafe.Display(e.Title))
+	fmt.Fprintf(w, "    %s\n", formatEventListTime(e.StartTime.Local(), e.EndTime.Local(), e.AllDay))
+	if e.Location != "" {
+		fmt.Fprintf(w, "    %s\n", textsafe.Display(e.Location))
+	}
+	if e.Description != "" {
+		fmt.Fprintf(w, "    %s\n", textsafe.Display(e.Description))
+	}
 }
 
 func printTable(w io.Writer, v any) error {
@@ -477,65 +579,28 @@ func printEvent(w io.Writer, e event.Event) {
 }
 
 func printEventDetail(w io.Writer, e event.Event, showDate bool) {
-	i := ic()
-	fmt.Fprintf(w, "  %s %s\n", i.Title, textsafe.Display(e.Title))
-	s := e.StartTime.Local()
-	en := e.EndTime.Local()
-	sameDay := s.Year() == en.Year() && s.YearDay() == en.YearDay()
-	switch {
-	case e.AllDay:
-		last := en.AddDate(0, 0, -1)
-		allDaySameDay := s.Year() == last.Year() && s.YearDay() == last.YearDay()
-		switch {
-		case showDate && allDaySameDay:
-			fmt.Fprintf(w, "  %s %s (all day)\n", i.Clock, s.Format("Mon, Jan 2 2006"))
-		case showDate:
-			fmt.Fprintf(w, "  %s %s – %s (all day)\n", i.Clock,
-				s.Format("Mon, Jan 2 2006"), last.Format("Mon, Jan 2 2006"))
-		default:
-			fmt.Fprintf(w, "  %s all day\n", i.Clock)
-		}
-	case showDate && sameDay:
-		fmt.Fprintf(w, "  %s %s – %s\n", i.Clock,
-			s.Format("Mon, Jan 2 2006 15:04"),
-			en.Format("15:04"))
-	case showDate:
-		fmt.Fprintf(w, "  %s %s – %s\n", i.Clock,
-			s.Format("Mon, Jan 2 2006 15:04"),
-			en.Format("Mon, Jan 2 2006 15:04"))
-	case sameDay:
-		fmt.Fprintf(w, "  %s %s – %s\n", i.Clock,
-			s.Format("15:04"), en.Format("15:04"))
-	default:
-		fmt.Fprintf(w, "  %s %s – %s\n", i.Clock,
-			s.Format("15:04"), en.Format("Mon, Jan 2 15:04"))
+	const labelWidth = 10
+
+	printDetailTitle(w, e.Title)
+
+	if showDate {
+		printDetailField(w, labelWidth, "when", formatEventDetailWhen(e.StartTime.Local(), e.EndTime.Local(), e.AllDay))
+	} else {
+		printDetailField(w, labelWidth, "time", formatEventListTime(e.StartTime.Local(), e.EndTime.Local(), e.AllDay))
 	}
-	if e.Location != "" {
-		fmt.Fprintf(w, "  %s %s\n", i.Location, textsafe.Display(e.Location))
+	printDetailField(w, labelWidth, "location", e.Location)
+	printDetailField(w, labelWidth, "notes", e.Description)
+	if e.Status != "" && e.Status != "CONFIRMED" {
+		printDetailField(w, labelWidth, "status", e.Status)
 	}
-	if e.Description != "" {
-		fmt.Fprintf(w, "  %s %s\n", i.Notes, textsafe.Display(e.Description))
-	}
-	if e.Status != "CONFIRMED" {
-		fmt.Fprintf(w, "  %s %s\n", i.Status, textsafe.Display(e.Status))
-	}
-	if e.URL != "" {
-		fmt.Fprintf(w, "  %s %s\n", i.Link, textsafe.Display(e.URL))
-	}
-	if e.Categories != "" {
-		fmt.Fprintf(w, "  %s %s\n", i.Tags, textsafe.Display(e.Categories))
-	}
-	if e.Timezone != "" {
-		fmt.Fprintf(w, "  %s TZ: %s\n", i.Clock, textsafe.Display(e.Timezone))
-	}
-	fmt.Fprintf(w, "  %s Calendar %d\n", i.Folder, e.CalendarID)
-	fmt.Fprintf(w, "  %s %d  %s\n", i.ID, e.ID, textsafe.Display(e.UID))
-	if len(e.Alarms) > 0 {
-		fmt.Fprintf(w, "  %s %d reminder(s)\n", i.Bell, len(e.Alarms))
-	}
-	if len(e.Attendees) > 0 {
-		fmt.Fprintf(w, "  %s %d participant(s)\n", i.People, len(e.Attendees))
-	}
+	printDetailField(w, labelWidth, "url", e.URL)
+	printDetailField(w, labelWidth, "tags", e.Categories)
+	printDetailField(w, labelWidth, "timezone", e.Timezone)
+	printDetailInt(w, labelWidth, "calendar", e.CalendarID)
+	printDetailInt(w, labelWidth, "id", e.ID)
+	printDetailField(w, labelWidth, "uid", e.UID)
+	printDetailCount(w, labelWidth, "reminders", len(e.Alarms))
+	printDetailCount(w, labelWidth, "participants", len(e.Attendees))
 }
 
 func printEvents(w io.Writer, events []event.Event) {
@@ -544,7 +609,6 @@ func printEvents(w io.Writer, events []event.Event) {
 		return
 	}
 
-	i := ic()
 	var currentDate string
 	for idx, e := range events {
 		dateLabel := e.StartTime.Local().Format("Mon, Jan 2 2006")
@@ -552,26 +616,26 @@ func printEvents(w io.Writer, events []event.Event) {
 			if currentDate != "" {
 				fmt.Fprintln(w)
 			}
-			fmt.Fprintf(w, "  %s %s\n", i.Calendar, dateLabel)
-			fmt.Fprintf(w, "  %s\n", strings.Repeat("─", len(dateLabel)+4))
+			fmt.Fprintf(w, "  %s\n", dateLabel)
+			fmt.Fprintf(w, "  %s\n", strings.Repeat("-", len(dateLabel)))
+			fmt.Fprintln(w)
 			currentDate = dateLabel
 		}
 		if idx > 0 && events[idx-1].StartTime.Local().Format("Mon, Jan 2 2006") == dateLabel {
 			fmt.Fprintln(w)
 		}
-		printEventDetail(w, e, false)
+		printEventSummary(w, e)
 	}
 	fmt.Fprintln(w)
 }
 
 func printCalendar(w io.Writer, c calendar.Calendar) {
-	i := ic()
-	fmt.Fprintf(w, "  %s %s\n", i.Title, textsafe.Display(c.Name))
-	fmt.Fprintf(w, "  %s %s\n", i.Color, textsafe.Display(c.Color))
-	if c.Description != "" {
-		fmt.Fprintf(w, "  %s %s\n", i.Notes, textsafe.Display(c.Description))
-	}
-	fmt.Fprintf(w, "  %s %d\n", i.ID, c.ID)
+	const labelWidth = 13
+
+	printDetailTitle(w, c.Name)
+	printDetailField(w, labelWidth, "color", c.Color)
+	printDetailField(w, labelWidth, "description", c.Description)
+	printDetailInt(w, labelWidth, "id", c.ID)
 }
 
 func printCalendars(w io.Writer, cals []calendar.Calendar) {
@@ -682,88 +746,38 @@ func toJSONTodos(todos []todo.Todo) []jsonTodo {
 }
 
 func printTodo(w io.Writer, t todo.Todo) {
-	i := ic()
-	fmt.Fprintf(w, "  %s %s\n", i.Title, textsafe.Display(t.Summary))
-	fmt.Fprintf(w, "  %s %s\n", i.Status, textsafe.Display(t.Status))
-	if t.StartDate != "" {
-		start := t.ParseStartDate()
-		if _, err := time.Parse("2006-01-02", t.StartDate); err == nil {
-			fmt.Fprintf(w, "  %s Start %s\n", i.Clock, start.Format("Mon, Jan 2 2006"))
-		} else {
-			fmt.Fprintf(w, "  %s Start %s\n", i.Clock, start.Local().Format("Mon, Jan 2 2006 15:04"))
-		}
-	}
-	if t.DueDate != "" {
-		due := t.ParseDueDate()
-		if _, err := time.Parse("2006-01-02", t.DueDate); err == nil {
-			fmt.Fprintf(w, "  %s Due %s\n", i.Clock, due.Format("Mon, Jan 2 2006"))
-		} else {
-			fmt.Fprintf(w, "  %s Due %s\n", i.Clock, due.Local().Format("Mon, Jan 2 2006 15:04"))
-		}
-	}
-	if t.Duration != "" {
-		fmt.Fprintf(w, "  %s Duration %s\n", i.Clock, textsafe.Display(t.Duration))
-	}
-	if t.CompletedAt != "" {
-		if ca, err := time.Parse(time.RFC3339, t.CompletedAt); err == nil {
-			fmt.Fprintf(w, "  %s Completed %s\n", i.Clock, ca.Local().Format("Mon, Jan 2 2006 15:04"))
-		}
-	}
+	const labelWidth = 10
+
+	fmt.Fprintf(w, "  %s %s\n", todoCheckbox(t), textsafe.Display(t.Summary))
+	printDetailField(w, labelWidth, "status", t.Status)
+	printDetailField(w, labelWidth, "start", formatTodoDate(t.StartDate))
+	printDetailField(w, labelWidth, "due", formatTodoDate(t.DueDate))
+	printDetailField(w, labelWidth, "duration", t.Duration)
+	printDetailField(w, labelWidth, "completed", formatDateTime(t.CompletedAt))
 	if t.PercentComplete > 0 {
-		fmt.Fprintf(w, "  %s %d%%\n", i.Progress, t.PercentComplete)
+		printDetailField(w, labelWidth, "progress", fmt.Sprintf("%d%%", t.PercentComplete))
 	}
-	if t.Location != "" {
-		fmt.Fprintf(w, "  %s %s\n", i.Location, textsafe.Display(t.Location))
-	}
-	if t.Description != "" {
-		fmt.Fprintf(w, "  %s %s\n", i.Notes, textsafe.Display(t.Description))
-	}
-	if t.URL != "" {
-		fmt.Fprintf(w, "  %s %s\n", i.Link, textsafe.Display(t.URL))
-	}
-	if t.Categories != "" {
-		fmt.Fprintf(w, "  %s %s\n", i.Tags, textsafe.Display(t.Categories))
-	}
+	printDetailField(w, labelWidth, "location", t.Location)
+	printDetailField(w, labelWidth, "notes", t.Description)
+	printDetailField(w, labelWidth, "url", t.URL)
+	printDetailField(w, labelWidth, "tags", t.Categories)
 	if t.Class != "" && t.Class != "PUBLIC" {
-		fmt.Fprintf(w, "  %s %s\n", i.Status, textsafe.Display(t.Class))
+		printDetailField(w, labelWidth, "class", t.Class)
 	}
 	if t.Priority > 0 {
-		fmt.Fprintf(w, "  %s Priority %d\n", i.Priority, t.Priority)
+		printDetailField(w, labelWidth, "priority", fmt.Sprintf("%d", t.Priority))
 	}
-	if t.RecurrenceRule != "" {
-		fmt.Fprintf(w, "  %s %s\n", i.Clock, textsafe.Display(t.RecurrenceRule))
-	}
-	fmt.Fprintf(w, "  %s Calendar %d\n", i.Folder, t.CalendarID)
-	fmt.Fprintf(w, "  %s %d  %s\n", i.ID, t.ID, textsafe.Display(t.UID))
-	if len(t.Alarms) > 0 {
-		fmt.Fprintf(w, "  %s %d reminder(s)\n", i.Bell, len(t.Alarms))
-	}
-	if len(t.Attendees) > 0 {
-		fmt.Fprintf(w, "  %s %d participant(s)\n", i.People, len(t.Attendees))
-	}
-	if len(t.Attachments) > 0 {
-		fmt.Fprintf(w, "  %s %d attachment(s)\n", i.Link, len(t.Attachments))
-	}
-	if len(t.Comments) > 0 {
-		for _, c := range t.Comments {
-			fmt.Fprintf(w, "  %s %s\n", i.Notes, textsafe.Display(c))
-		}
-	}
-	if len(t.Contacts) > 0 {
-		for _, c := range t.Contacts {
-			fmt.Fprintf(w, "  %s %s\n", i.People, textsafe.Display(c))
-		}
-	}
-	if len(t.Resources) > 0 {
-		for _, r := range t.Resources {
-			fmt.Fprintf(w, "  %s %s\n", i.Bullet, textsafe.Display(r))
-		}
-	}
-	if len(t.Relations) > 0 {
-		for _, r := range t.Relations {
-			fmt.Fprintf(w, "  %s %s:%s\n", i.Link, textsafe.Display(r.RelType), textsafe.Display(r.RelUID))
-		}
-	}
+	printDetailField(w, labelWidth, "rrule", t.RecurrenceRule)
+	printDetailInt(w, labelWidth, "calendar", t.CalendarID)
+	printDetailInt(w, labelWidth, "id", t.ID)
+	printDetailField(w, labelWidth, "uid", t.UID)
+	printDetailCount(w, labelWidth, "reminders", len(t.Alarms))
+	printDetailCount(w, labelWidth, "participants", len(t.Attendees))
+	printDetailCount(w, labelWidth, "attachments", len(t.Attachments))
+	printDetailField(w, labelWidth, "comments", fmtStrings(t.Comments))
+	printDetailField(w, labelWidth, "contacts", fmtStrings(t.Contacts))
+	printDetailField(w, labelWidth, "resources", fmtStrings(t.Resources))
+	printDetailField(w, labelWidth, "relations", fmtModelRelations(t.Relations))
 }
 
 func printTodos(w io.Writer, todos []todo.Todo) {
@@ -845,55 +859,26 @@ func toJSONJournals(journals []journal.Journal) []jsonJournal {
 }
 
 func printJournal(w io.Writer, j journal.Journal) {
-	i := ic()
-	fmt.Fprintf(w, "  %s %s\n", i.Title, textsafe.Display(j.Summary))
-	fmt.Fprintf(w, "  %s %s\n", i.Status, textsafe.Display(j.Status))
-	if j.StartDate != "" {
-		start := j.ParseStartDate()
-		if _, err := time.Parse("2006-01-02", j.StartDate); err == nil {
-			fmt.Fprintf(w, "  %s %s\n", i.Clock, start.Format("Mon, Jan 2 2006"))
-		} else {
-			fmt.Fprintf(w, "  %s %s\n", i.Clock, start.Local().Format("Mon, Jan 2 2006 15:04"))
-		}
-	}
-	if j.Description != "" {
-		fmt.Fprintf(w, "  %s %s\n", i.Notes, textsafe.Display(j.Description))
-	}
-	if j.URL != "" {
-		fmt.Fprintf(w, "  %s %s\n", i.Link, textsafe.Display(j.URL))
-	}
-	if j.Categories != "" {
-		fmt.Fprintf(w, "  %s %s\n", i.Tags, textsafe.Display(j.Categories))
-	}
+	const labelWidth = 10
+
+	printDetailTitle(w, j.Summary)
+	printDetailField(w, labelWidth, "date", formatTodoDate(j.StartDate))
+	printDetailField(w, labelWidth, "status", j.Status)
+	printDetailField(w, labelWidth, "notes", j.Description)
+	printDetailField(w, labelWidth, "url", j.URL)
+	printDetailField(w, labelWidth, "tags", j.Categories)
 	if j.Class != "" && j.Class != "PUBLIC" {
-		fmt.Fprintf(w, "  %s %s\n", i.Status, textsafe.Display(j.Class))
+		printDetailField(w, labelWidth, "class", j.Class)
 	}
-	if j.RecurrenceRule != "" {
-		fmt.Fprintf(w, "  %s %s\n", i.Clock, textsafe.Display(j.RecurrenceRule))
-	}
-	fmt.Fprintf(w, "  %s Calendar %d\n", i.Folder, j.CalendarID)
-	fmt.Fprintf(w, "  %s %d  %s\n", i.ID, j.ID, textsafe.Display(j.UID))
-	if len(j.Attendees) > 0 {
-		fmt.Fprintf(w, "  %s %d participant(s)\n", i.People, len(j.Attendees))
-	}
-	if len(j.Attachments) > 0 {
-		fmt.Fprintf(w, "  %s %d attachment(s)\n", i.Link, len(j.Attachments))
-	}
-	if len(j.Comments) > 0 {
-		for _, c := range j.Comments {
-			fmt.Fprintf(w, "  %s %s\n", i.Notes, textsafe.Display(c))
-		}
-	}
-	if len(j.Contacts) > 0 {
-		for _, c := range j.Contacts {
-			fmt.Fprintf(w, "  %s %s\n", i.People, textsafe.Display(c))
-		}
-	}
-	if len(j.Relations) > 0 {
-		for _, r := range j.Relations {
-			fmt.Fprintf(w, "  %s %s:%s\n", i.Link, textsafe.Display(r.RelType), textsafe.Display(r.RelUID))
-		}
-	}
+	printDetailField(w, labelWidth, "rrule", j.RecurrenceRule)
+	printDetailInt(w, labelWidth, "calendar", j.CalendarID)
+	printDetailInt(w, labelWidth, "id", j.ID)
+	printDetailField(w, labelWidth, "uid", j.UID)
+	printDetailCount(w, labelWidth, "participants", len(j.Attendees))
+	printDetailCount(w, labelWidth, "attachments", len(j.Attachments))
+	printDetailField(w, labelWidth, "comments", fmtStrings(j.Comments))
+	printDetailField(w, labelWidth, "contacts", fmtStrings(j.Contacts))
+	printDetailField(w, labelWidth, "relations", fmtModelRelations(j.Relations))
 }
 
 func printJournals(w io.Writer, journals []journal.Journal) {
