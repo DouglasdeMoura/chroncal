@@ -46,9 +46,12 @@ func TestEventListVerboseUsesTimeRailView(t *testing.T) {
 	if !strings.HasPrefix(stdout, wantPrefix) {
 		t.Fatalf("event list --verbose output mismatch\nwant prefix:\n%s\ngot:\n%s", wantPrefix, stdout)
 	}
-	for _, needle := range []string{"calendar: Work", "id: ", "uid: "} {
+	for _, needle := range []string{"In Work calendar, event #"} {
 		if !strings.Contains(stdout, needle) {
 			t.Fatalf("event list --verbose output = %q, want substring %q", stdout, needle)
 		}
+	}
+	if strings.Contains(stdout, "uid: ") {
+		t.Fatalf("event list --verbose output = %q, should not show uid", stdout)
 	}
 }

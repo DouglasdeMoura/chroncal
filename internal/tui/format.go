@@ -292,22 +292,31 @@ func writeVerboseEventListEntry(out *strings.Builder, entry eventListDayEntry, c
 	if entry.ev.Description != "" {
 		fmt.Fprintf(out, "%7s | %s\n", "", entry.ev.Description)
 	}
-	if entry.ev.CalendarID > 0 {
-		calendarLabel := fmt.Sprintf("%d", entry.ev.CalendarID)
-		if name := calendarNames[entry.ev.CalendarID]; name != "" {
-			calendarLabel = name
-		}
-		fmt.Fprintf(out, "%7s | calendar: %s\n", "", calendarLabel)
-	}
-	if entry.ev.ID > 0 {
-		fmt.Fprintf(out, "%7s | id: %d\n", "", entry.ev.ID)
-	}
-	if entry.ev.UID != "" {
-		fmt.Fprintf(out, "%7s | uid: %s\n", "", entry.ev.UID)
+	if metadata := verboseMetadataLine(entry.ev, calendarNames); metadata != "" {
+		fmt.Fprintf(out, "%7s | %s\n", "", metadata)
 	}
 	if continuation := verboseContinuationLabel(entry.ev, entry.dayIndex, entry.totalDays); continuation != "" {
 		fmt.Fprintf(out, "%7s | %s\n", "", continuation)
 	}
+}
+
+func verboseMetadataLine(ev event.Event, calendarNames map[int64]string) string {
+	if ev.CalendarID <= 0 && ev.ID <= 0 {
+		return ""
+	}
+
+	parts := make([]string, 0, 2)
+	if ev.CalendarID > 0 {
+		calendarLabel := fmt.Sprintf("%d", ev.CalendarID)
+		if name := calendarNames[ev.CalendarID]; name != "" {
+			calendarLabel = name
+		}
+		parts = append(parts, "In "+calendarLabel+" calendar")
+	}
+	if ev.ID > 0 {
+		parts = append(parts, fmt.Sprintf("event #%d", ev.ID))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // CalendarEvent is the rendering-only view of an event inside the month grid.
