@@ -1076,7 +1076,7 @@ func (m EventFormModel) handleDatePickerMouse(msg tea.MouseClickMsg) (EventFormM
 
 	// Checkbox row (Y=9 in event-date layout: 8 cal + 1 blank). Clicks on
 	// the label itself toggle range mode.
-	if mmY == 9 && mmX < len("[x] Date range")+2 {
+	if mmY == 9 && mmX < len("[x] Multi-day")+2 {
 		m.toggleRangeMode()
 		return m, nil
 	}
@@ -1259,7 +1259,7 @@ func (m EventFormModel) datePickerButtonRowY() int {
 // datePickerOverlayView renders a MiniMonthModel inside a bordered dialog
 // box with the calendar grid on the left and key hints stacked vertically
 // on the right. When supportRange is true (event-date picker), a
-// "Date range" checkbox row and a Start/End status line appear between
+// "Multi-day" checkbox row and a Start/End status line appear between
 // the grid and the button row.
 func (m EventFormModel) datePickerOverlayView(mm MiniMonthModel, supportRange bool) string {
 	boxW, boxH := m.DatePickerBoxSize()
@@ -1332,7 +1332,7 @@ func (m EventFormModel) datePickerOverlayView(mm MiniMonthModel, supportRange bo
 		Render(content)
 }
 
-// renderRangeCheckbox returns a single line: "[x] Date range" (or "[ ]"),
+// renderRangeCheckbox returns a single line: "[x] Multi-day" (or "[ ]"),
 // reversed when the checkbox is the focused tab stop so the user sees
 // where input will land.
 func (m EventFormModel) renderRangeCheckbox() string {
@@ -1340,7 +1340,7 @@ func (m EventFormModel) renderRangeCheckbox() string {
 	if m.rangeMode {
 		mark = "[x]"
 	}
-	label := mark + " Date range"
+	label := mark + " Multi-day"
 	if m.dpBtnFocus == 2 {
 		return lipgloss.NewStyle().Reverse(true).Bold(true).Render(label)
 	}
