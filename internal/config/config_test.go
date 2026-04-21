@@ -94,40 +94,6 @@ from = "noreply@example.com"
 	}
 }
 
-func TestLoad_NerdFontsFromFile(t *testing.T) {
-	dir := t.TempDir()
-	configDir := filepath.Join(dir, "chroncal")
-	os.MkdirAll(configDir, 0o755)
-	os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(`nerd_fonts = true`), 0o644)
-
-	t.Setenv("XDG_CONFIG_HOME", dir)
-	t.Setenv("CHRONCAL_NERD_FONTS", "")
-
-	cfg := Load()
-	if !cfg.NerdFonts {
-		t.Error("NerdFonts = false, want true")
-	}
-}
-
-func TestLoad_NerdFontsFromEnv(t *testing.T) {
-	t.Setenv("CHRONCAL_NERD_FONTS", "true")
-
-	cfg := Load()
-	if !cfg.NerdFonts {
-		t.Error("NerdFonts = false, want true (from env)")
-	}
-}
-
-func TestLoad_NerdFontsDefault(t *testing.T) {
-	t.Setenv("CHRONCAL_NERD_FONTS", "")
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-
-	cfg := Load()
-	if cfg.NerdFonts {
-		t.Error("NerdFonts = true, want false (default)")
-	}
-}
-
 func TestLoad_SMTPFromEnv(t *testing.T) {
 	dir := t.TempDir()
 	configDir := filepath.Join(dir, "chroncal")

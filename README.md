@@ -271,7 +271,6 @@ Configuration is loaded in order of precedence:
 | Key | Description | Default |
 |-----|-------------|---------|
 | `db` | Path to SQLite database | `$XDG_DATA_HOME/chroncal/chroncal.db` |
-| `nerd_fonts` | Enable Nerd Font icons in TUI | `false` |
 | `product_id` | iCal PRODID for export | `-//chroncal//chroncal//EN` |
 
 ### SMTP (for email alarms)

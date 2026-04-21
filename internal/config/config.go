@@ -30,7 +30,6 @@ type SecurityConfig struct {
 
 type Config struct {
 	DB        string         `mapstructure:"db"`
-	NerdFonts bool           `mapstructure:"nerd_fonts"`
 	ProductID string         `mapstructure:"product_id"`
 	SMTP      SMTPConfig     `mapstructure:"smtp"`
 	Sync      SyncConfig     `mapstructure:"sync"`
@@ -65,7 +64,6 @@ func newViper() *viper.Viper {
 
 	// Bind env vars so Unmarshal picks them up even without a config file.
 	v.BindEnv("db")
-	v.BindEnv("nerd_fonts")
 	v.BindEnv("product_id")
 	v.BindEnv("smtp.host")
 	v.BindEnv("smtp.port")

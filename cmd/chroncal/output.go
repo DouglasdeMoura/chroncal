@@ -18,53 +18,6 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
-// icons holds display glyphs, switched by the nerd_fonts config flag.
-type icons struct {
-	Calendar string // date headers
-	Title    string // event/todo title
-	Clock    string // timed events, due dates
-	AllDay   string // all-day events
-	Location string // location field
-	Notes    string // description field
-	Status   string // status field
-	Link     string // URL field
-	Tags     string // categories field
-	Folder   string // calendar reference
-	ID       string // numeric ID + UID
-	Bell     string // alarms
-	People   string // attendees
-	Color    string // color swatch
-	Priority string // priority field
-	Progress string // progress bar
-	TodoOpen string // incomplete todo
-	TodoDone string // completed todo
-	Bullet   string // generic list bullet
-}
-
-var nerdIcons = icons{
-	Calendar: "󰃭", Title: "󰧆", Clock: "󰥔", AllDay: "󰸗", Location: "󰍎",
-	Notes: "󰎞", Status: "󰁪", Link: "󰌷", Tags: "󰓹",
-	Folder: "󰉋", ID: "󰻾", Bell: "󱃲", People: "󰡉",
-	Color: "󰏘", Priority: "󰁥", Progress: "󰓾",
-	TodoOpen: "󰄱", TodoDone: "󰄬", Bullet: "󰧞",
-}
-
-var plainIcons = icons{
-	Calendar: "#", Title: "*", Clock: "●", AllDay: "◆", Location: "@",
-	Notes: "…", Status: "!", Link: "~", Tags: "#",
-	Folder: ">", ID: "~", Bell: "♪", People: "&",
-	Color: "●", Priority: "!", Progress: "%",
-	TodoOpen: "○", TodoDone: "●", Bullet: "●",
-}
-
-// ic returns the active icon set based on cfg.NerdFonts.
-func ic() icons {
-	if cfg.NerdFonts {
-		return nerdIcons
-	}
-	return plainIcons
-}
-
 type jsonEvent struct {
 	ID             int64            `json:"id"`
 	UID            string           `json:"uid"`
