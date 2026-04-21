@@ -165,6 +165,30 @@ func TestMultiDayEndDate_EndAtMidnightDoesNotCountNextDay(t *testing.T) {
 	}
 }
 
+func TestMiniMonth_InRangeInclusive(t *testing.T) {
+	mm := NewMiniMonthModel(time.Date(2026, 4, 1, 0, 0, 0, 0, time.Local))
+	start := time.Date(2026, 4, 16, 0, 0, 0, 0, time.Local)
+	end := time.Date(2026, 4, 20, 0, 0, 0, 0, time.Local)
+	mm = mm.SetRange(true, start, end)
+
+	cases := []struct {
+		day  time.Time
+		want bool
+	}{
+		{time.Date(2026, 4, 15, 0, 0, 0, 0, time.Local), false},
+		{start, true},
+		{time.Date(2026, 4, 18, 0, 0, 0, 0, time.Local), true},
+		{end, true},
+		{time.Date(2026, 4, 21, 0, 0, 0, 0, time.Local), false},
+	}
+	for _, tc := range cases {
+		if got := mm.inRangeInclusive(tc.day); got != tc.want {
+			t.Errorf("inRangeInclusive(%s) = %v, want %v",
+				tc.day.Format("2006-01-02"), got, tc.want)
+		}
+	}
+}
+
 func TestDatePickerField_FormatRange(t *testing.T) {
 	f := NewDatePickerField(time.Date(2026, 4, 16, 0, 0, 0, 0, time.UTC))
 	f.SetRangeEnd(time.Date(2026, 4, 24, 0, 0, 0, 0, time.UTC))

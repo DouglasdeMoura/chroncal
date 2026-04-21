@@ -422,7 +422,16 @@ func (m MiniMonthModel) View() string {
 			col = 0
 			rows++
 		} else {
-			b.WriteString(" ")
+			// Paint the inter-day gap when the current day and the next
+			// are both inside the range (endpoint or middle), so the
+			// selection reads as a continuous ribbon instead of isolated
+			// cells separated by visible gaps.
+			next := cur.AddDate(0, 0, 1)
+			if next.Month() == first.Month() && m.inRangeInclusive(cur) && m.inRangeInclusive(next) {
+				b.WriteString(lipgloss.NewStyle().Background(m.rangeColor).Render(" "))
+			} else {
+				b.WriteString(" ")
+			}
 		}
 		cur = cur.AddDate(0, 0, 1)
 	}
@@ -444,6 +453,14 @@ func (m MiniMonthModel) View() string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// inRangeInclusive reports whether d is inside the current range, counting
+// both endpoints and middle days. Returns false when range mode is off or
+// when no start is pinned.
+func (m MiniMonthModel) inRangeInclusive(d time.Time) bool {
+	endpoint, middle := m.rangePosition(d)
+	return endpoint || middle
 }
 
 // rangePosition reports whether d is an endpoint of the current range, or
