@@ -71,7 +71,7 @@ func serveTerminal(w http.ResponseWriter, r *http.Request, bin string, isolated 
 		log.Printf("ws accept: %v", err)
 		return
 	}
-	defer ws.CloseNow()
+	defer func() { _ = ws.CloseNow() }()
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
