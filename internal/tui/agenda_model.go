@@ -448,43 +448,50 @@ func (m AgendaModel) renderMonthHeader(d time.Time) string {
 // selected, surfaces a "+ Create event" affordance to invite the user
 // to create on that day.
 func (m AgendaModel) renderEmptyDayRow(r agendaRow, selected bool) string {
-	base := lipgloss.NewStyle()
+	// Day column stays unpainted; the selection highlight starts where the
+	// time column would begin and runs to the end of the line.
+	unpainted := lipgloss.NewStyle()
+	highlight := lipgloss.NewStyle()
 	if selected {
-		base = base.Background(m.selectedColor)
+		highlight = highlight.Background(m.selectedColor)
 	}
-	dayCol := m.renderDayColumn(r, base, selected)
-	line := base.Render(strings.Repeat(" ", agendaLeftPad)) + dayCol
+	dayCol := m.renderDayColumn(r, unpainted, false)
+	prefix := unpainted.Render(strings.Repeat(" ", agendaLeftPad)) +
+		dayCol +
+		unpainted.Render(" "+strings.Repeat(" ", agendaDotColWidth))
+
+	tail := ""
 	if selected {
-		gap := base.Render(strings.Repeat(" ", 1+agendaDotColWidth))
-		hint := base.Foreground(m.theme.Primary).Bold(true).Render("+ Create event")
-		line += gap + hint
+		tail = highlight.Foreground(m.theme.Primary).Bold(true).Render("+ Create event")
 	}
-	return base.Width(m.width).Foreground(m.theme.Text).Render(line)
+	tailW := max(m.width-lipgloss.Width(prefix), 0)
+	return prefix + highlight.Width(tailW).Foreground(m.theme.Text).Render(tail)
 }
 
-// renderEventRow composes a single agenda line. When selected, the row's
-// background is propagated to every inner segment so the selection
-// highlight spans the full width without gaps where styled foregrounds
-// would otherwise emit ANSI resets.
+// renderEventRow composes a single agenda line. When selected, the
+// highlight starts at the time column and paints to the end of the line;
+// the day column is intentionally left unpainted so the date badge
+// remains visually anchored.
 func (m AgendaModel) renderEventRow(r agendaRow, selected bool) string {
 	ev := r.event
 
-	base := lipgloss.NewStyle()
+	unpainted := lipgloss.NewStyle()
+	highlight := lipgloss.NewStyle()
 	if selected {
-		base = base.Background(m.selectedColor).Bold(true)
+		highlight = highlight.Background(m.selectedColor).Bold(true)
 	}
 
-	dayCol := m.renderDayColumn(r, base, selected)
+	dayCol := m.renderDayColumn(r, unpainted, false)
 
 	cal := m.calendars[ev.CalendarID]
 	dotColor := m.theme.Muted
 	if cal.Color != "" {
 		dotColor = lipgloss.Color(cal.Color)
 	}
-	dot := base.Foreground(dotColor).Render(Glyphs["dot"])
+	dot := unpainted.Foreground(dotColor).Render(Glyphs["dot"])
 
 	timeText := agendaTimeText(ev, r.dayIndex, r.totalDays)
-	timeStyle := base.Foreground(m.theme.TextDim).Width(agendaTimeColWidth)
+	timeStyle := highlight.Foreground(m.theme.TextDim).Width(agendaTimeColWidth)
 	if ev.AllDay {
 		timeStyle = timeStyle.Italic(true)
 	}
@@ -495,29 +502,27 @@ func (m AgendaModel) renderEventRow(r agendaRow, selected bool) string {
 		title += fmt.Sprintf(" (day %d/%d)", r.dayIndex, r.totalDays)
 	}
 
-	fixedLeft := agendaLeftPad + agendaDayColWidth + 1 + agendaDotColWidth + agendaTimeColWidth
-	titleW := max(m.width-fixedLeft, 1)
-	titleCol := base.
+	prefix := unpainted.Render(strings.Repeat(" ", agendaLeftPad)) +
+		dayCol +
+		unpainted.Render(" ") +
+		unpainted.Width(agendaDotColWidth).Render(" "+dot+" ")
+
+	titleW := max(m.width-lipgloss.Width(prefix)-agendaTimeColWidth, 1)
+	titleCol := highlight.
 		Foreground(m.theme.Text).
 		Width(titleW).
 		Render(truncateTo(title, titleW))
 
-	line := base.Render(strings.Repeat(" ", agendaLeftPad)) +
-		dayCol +
-		base.Render(" ") +
-		base.Width(agendaDotColWidth).Render(" "+dot+" ") +
-		timeCol +
-		titleCol
-
-	return base.Width(m.width).Render(line)
+	return prefix + timeCol + titleCol
 }
 
-// renderDayColumn returns the 8-column-wide day label shown at the start of
-// the first event row of a calendar day. Continuation rows get a blank
+// renderDayColumn returns the 8-column-wide day label shown at the start
+// of the first event row of a calendar day. Continuation rows get a blank
 // column. Today's day number is rendered in a filled pill using the theme
-// "today" color — except when selected, where the pill is dropped so the
-// selection background paints the full cell without a competing fill.
-func (m AgendaModel) renderDayColumn(r agendaRow, base lipgloss.Style, selected bool) string {
+// "today" color. The day column is never painted by the selection
+// highlight — callers pass an empty base so the date badge stays visually
+// anchored regardless of row state.
+func (m AgendaModel) renderDayColumn(r agendaRow, base lipgloss.Style, _ bool) string {
 	if !r.firstOfDay {
 		return base.Render(strings.Repeat(" ", agendaDayColWidth))
 	}
@@ -530,16 +535,13 @@ func (m AgendaModel) renderDayColumn(r agendaRow, base lipgloss.Style, selected 
 
 	var weekdayStyle, numStyle lipgloss.Style
 	switch {
-	case isToday && !selected:
+	case isToday:
 		weekdayStyle = base.Foreground(m.theme.Primary).Bold(true)
 		numStyle = lipgloss.NewStyle().
 			Background(m.theme.Primary).
 			Foreground(m.theme.Surface).
 			Bold(true).
 			PaddingRight(1)
-	case isToday:
-		weekdayStyle = base.Foreground(m.theme.Primary).Bold(true)
-		numStyle = base.Foreground(m.theme.Primary).Bold(true).PaddingRight(1)
 	case isCursor:
 		weekdayStyle = base.Foreground(m.theme.Primary).Bold(true)
 		numStyle = base.Foreground(m.theme.Primary).Bold(true)
