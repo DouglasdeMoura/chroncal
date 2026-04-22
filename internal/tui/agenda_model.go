@@ -49,6 +49,10 @@ type AgendaCursorChangedMsg struct{ Day time.Time }
 // WindowStart()..WindowEnd() range and push them back via SetEvents.
 type AgendaReloadMsg struct{}
 
+// AgendaEmptyDaysToggledMsg is emitted when the user flips the "show
+// empty days" toggle so the host can persist the new value in UIState.
+type AgendaEmptyDaysToggledMsg struct{ ShowEmptyDays bool }
+
 type agendaKeyMap struct {
 	Up          key.Binding
 	Down        key.Binding
@@ -184,6 +188,17 @@ func (m AgendaModel) SetSelectedColor(c color.Color) AgendaModel {
 	return m
 }
 
+// ShowEmptyDays reports whether empty-day placeholder rows are rendered.
+func (m AgendaModel) ShowEmptyDays() bool { return m.showEmptyDays }
+
+// SetShowEmptyDays sets the visibility of empty-day placeholder rows
+// without rebuilding — callers should follow with SetEvents when the
+// change is user-facing.
+func (m AgendaModel) SetShowEmptyDays(v bool) AgendaModel {
+	m.showEmptyDays = v
+	return m
+}
+
 // SetEvents updates the cached event slice, the calendar info used for color
 // and name lookups, and rebuilds the rendered rows. When an anchor day was
 // set (e.g., by an infinite-scroll expansion), selection + scroll restore
@@ -305,7 +320,8 @@ func (m AgendaModel) Update(msg tea.Msg) (AgendaModel, tea.Cmd) {
 		m.rows = buildAgendaRows(m.events, m.windowStart, days, m.showEmptyDays)
 		m.selected = firstSelectableOnOrAfter(m.rows, m.cursor)
 		m.clampScroll()
-		return m, nil
+		show := m.showEmptyDays
+		return m, func() tea.Msg { return AgendaEmptyDaysToggledMsg{ShowEmptyDays: show} }
 	}
 	return m, nil
 }

@@ -256,7 +256,7 @@ func NewModel(a *app.App) Model {
 		calendar:        NewCalendarModel(now),
 		week:            NewWeekModel(now),
 		day:             NewDayModel(now),
-		agenda:          NewAgendaModel(now),
+		agenda:          NewAgendaModel(now).SetShowEmptyDays(ui.AgendaShowEmptyDays),
 		showSidebar:     ui.ShowSidebar,
 		hiddenCalendars: hidden,
 		focus:           focusCalendar,
@@ -860,6 +860,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case AgendaReloadMsg:
 		return m, m.loadEvents()
+
+	case AgendaEmptyDaysToggledMsg:
+		m.saveUIState()
+		return m, nil
 
 	case CalendarDaySelectedMsg:
 		dayEvents := eventsOn(m.events, msg.Day)
@@ -2109,9 +2113,10 @@ func (m Model) saveUIState() {
 	}
 	slices.Sort(ids)
 	_ = config.SaveUIState(config.UIState{
-		ShowSidebar:     m.showSidebar,
-		ViewMode:        vm,
-		HiddenCalendars: ids,
+		ShowSidebar:         m.showSidebar,
+		ViewMode:            vm,
+		HiddenCalendars:     ids,
+		AgendaShowEmptyDays: m.agenda.ShowEmptyDays(),
 	})
 }
 
