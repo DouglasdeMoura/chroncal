@@ -159,6 +159,12 @@ func (m ListDialogModel) HasTitleAction() bool { return m.titleAction != nil }
 // Only meaningful when FocusZone() == ListZoneActions.
 func (m ListDialogModel) FocusedAction() int { return m.focusedAction }
 
+// SelectedColor returns the theme color used to tint the selected row
+// when the list does not own focus. Callers apply it themselves so the
+// tint composes with their own row-level styling (calendar swatch, RSVP
+// indicators, etc.) without the shell needing to know about those.
+func (m ListDialogModel) SelectedColor() color.Color { return m.selectedColor }
+
 // SetDetailLines replaces the detail-pane body lines for the currently
 // selected row. The caller rebuilds these whenever selection changes.
 func (m ListDialogModel) SetDetailLines(lines []string) ListDialogModel {

@@ -251,10 +251,17 @@ func (m EventDialogModel) refresh() EventDialogModel {
 	sel := m.shell.Selected()
 	listFocused := m.shell.FocusZone() == ListZoneList
 	rowW := m.listRowWidth()
+	selBG := m.shell.SelectedColor()
 	for i, ev := range m.events {
 		label := formatEventLabel(ev)
-		if i == sel && listFocused {
-			style := lipgloss.NewStyle().Reverse(true).Bold(true)
+		if i == sel {
+			style := lipgloss.NewStyle()
+			switch {
+			case listFocused:
+				style = style.Reverse(true).Bold(true)
+			case selBG != nil:
+				style = style.Background(selBG)
+			}
 			if rowW > 0 {
 				style = style.Width(rowW)
 			}
@@ -441,9 +448,9 @@ func (m EventDialogModel) handleKey(msg tea.KeyPressMsg) (EventDialogModel, tea.
 		return m, func() tea.Msg { return EventDialogClosedMsg{} }
 
 	case key.Matches(msg, sk.Tab):
-		return m.cycleZone(true), nil
+		return m.cycleZone(true).refresh(), nil
 	case key.Matches(msg, sk.ShiftTab):
-		return m.cycleZone(false), nil
+		return m.cycleZone(false).refresh(), nil
 
 	case key.Matches(msg, m.keys.Left):
 		switch m.currentZone() {
@@ -568,7 +575,7 @@ func (m EventDialogModel) handleMouse(msg tea.MouseClickMsg) (EventDialogModel, 
 		shell, cmd := m.shell.ClickAction(idx)
 		m.shell = shell
 		m.rsvpFocused = false
-		return m, cmd
+		return m.refresh(), cmd
 	}
 	if idx, cmd, hit := m.hitRSVPBtn(msg.X, msg.Y); hit {
 		m = m.setZone(zoneRSVP)

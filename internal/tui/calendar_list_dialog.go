@@ -130,9 +130,10 @@ func (m CalendarListDialogModel) refresh() CalendarListDialogModel {
 	sel := m.shell.Selected()
 	listFocused := m.shell.FocusZone() == ListZoneList
 	rowW := m.listRowWidth()
+	selBG := m.shell.SelectedColor()
 	for i, id := range m.order {
 		info := m.calendars[id]
-		rows[i] = calendarRowLabel(info, m.hidden[id], i == sel && listFocused, rowW)
+		rows[i] = calendarRowLabel(info, m.hidden[id], i == sel, listFocused, selBG, rowW)
 	}
 	m.shell = m.shell.SetRows(rows)
 
@@ -262,7 +263,7 @@ func (m CalendarListDialogModel) handleMouse(msg tea.MouseClickMsg) (CalendarLis
 	if idx, ok := m.shell.ActionAtPosition(msg.X, msg.Y); ok {
 		shell, cmd := m.shell.ClickAction(idx)
 		m.shell = shell
-		return m, cmd
+		return m.refresh(), cmd
 	}
 	return m, nil
 }
@@ -272,10 +273,14 @@ func (m CalendarListDialogModel) View() string { return m.shell.View() }
 // calendarRowLabel builds "<dot> <name>": the leading circle keeps its
 // calendar-color foreground with no background change; when the row is
 // selected the name — plus the remaining width of the row — takes on a
-// reverse-video background (font color), so the highlight stretches to the
-// right edge. rowW is the full list-column width; when 0 the chip falls
-// back to just sizing to the name.
-func calendarRowLabel(info CalendarInfo, hidden, selected bool, rowW int) string {
+// tinted background so the highlight stretches to the right edge. While
+// the list owns focus, the background is the terminal's reverse-video
+// inversion plus bold; when focus is elsewhere, the row keeps a subtler
+// themed tint so the selection remains visible without drawing the eye
+// away from whichever control currently has focus. rowW is the full
+// list-column width; when 0 the chip falls back to just sizing to the
+// name.
+func calendarRowLabel(info CalendarInfo, hidden, selected, listFocused bool, selBG color.Color, rowW int) string {
 	glyph := "●"
 	if hidden {
 		glyph = "○"
@@ -287,9 +292,14 @@ func calendarRowLabel(info CalendarInfo, hidden, selected bool, rowW int) string
 		nameStyle = nameStyle.Faint(true)
 	}
 	if selected {
-		nameStyle = nameStyle.Reverse(true).Bold(true)
+		switch {
+		case listFocused:
+			nameStyle = nameStyle.Reverse(true).Bold(true)
+		case selBG != nil:
+			nameStyle = nameStyle.Background(selBG)
+		}
 		// Reserve the swatch (1 cell) + separator space (1 cell) and let the
-		// chip style fill the rest, so trailing pad cells pick up Reverse.
+		// chip style fill the rest, so trailing pad cells pick up the tint.
 		if remaining := rowW - 2; remaining > 0 {
 			nameStyle = nameStyle.Width(remaining)
 		}
