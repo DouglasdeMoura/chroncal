@@ -1864,7 +1864,12 @@ func (m Model) View() tea.View {
 
 	keyStyle := lipgloss.NewStyle().Foreground(m.theme.Text)
 	descStyle := lipgloss.NewStyle().Foreground(m.theme.TextDim)
+	sepStyle := lipgloss.NewStyle().Foreground(m.theme.Muted)
 	hint := keyStyle.Render("?") + " " + descStyle.Render("help")
+	if m.viewMode == viewAgenda {
+		toggleHint := keyStyle.Render("e") + " " + descStyle.Render("toggle empty days")
+		hint = toggleHint + sepStyle.Render(" · ") + hint
+	}
 	var statusText string
 	if m.syncStatus != "" {
 		statusColor := m.theme.Primary
