@@ -56,7 +56,7 @@ type appKeyMap struct {
 
 func defaultAppKeys() appKeyMap {
 	return appKeyMap{
-		Quit:           key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+		Quit:           key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 		MonthView:      key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "month")),
 		WeekView:       key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "week")),
 		DayView:        key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "day")),
@@ -204,6 +204,11 @@ type Model struct {
 
 	calendarListDialog     CalendarListDialogModel
 	calendarListDialogOpen bool
+
+	// pendingQuit is true while the confirm dialog is asking the user to
+	// confirm a 'q' quit. Distinguishes the quit flow from event/calendar
+	// delete flows that share ConfirmDialogModel.
+	pendingQuit bool
 
 	helpDialog     HelpDialogModel
 	helpDialogOpen bool
@@ -1411,6 +1416,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ConfirmDialogResultMsg:
 		m.confirmOpen = false
+		if m.pendingQuit {
+			m.pendingQuit = false
+			if msg.Confirmed {
+				return m, tea.Quit
+			}
+			return m, nil
+		}
 		if !msg.Confirmed {
 			m.pendingCalendarDelete = 0
 			return m, nil
@@ -1565,57 +1577,53 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyPressMsg:
+		// ctrl+c is guarded the same as `q` at the top level: it pops a
+		// confirm dialog instead of quitting outright. If the confirm is
+		// already open, let it handle the key normally (y/n/esc).
+		if msg.String() == "ctrl+c" && !m.confirmOpen {
+			m.pendingQuit = true
+			m.confirmDialog = NewConfirmDialogModel("Quit chroncal?", "Quit").
+				SetSize(m.width, m.height)
+			m.confirmOpen = true
+			return m, nil
+		}
 		if m.choiceOpen {
-			if msg.String() == "ctrl+c" {
-				return m, tea.Quit
-			}
 			var cmd tea.Cmd
 			m.choiceDialog, cmd = m.choiceDialog.Update(msg)
 			return m, cmd
 		}
 		if m.confirmOpen {
-			if msg.String() == "ctrl+c" {
-				return m, tea.Quit
-			}
 			var cmd tea.Cmd
 			m.confirmDialog, cmd = m.confirmDialog.Update(msg)
 			return m, cmd
 		}
 		if m.viewDialogOpen {
-			if msg.String() == "ctrl+c" {
-				return m, tea.Quit
-			}
 			var cmd tea.Cmd
 			m.viewDialog, cmd = m.viewDialog.Update(msg)
 			return m, cmd
 		}
 		if m.dialogOpen {
-			if msg.String() == "ctrl+c" {
-				return m, tea.Quit
-			}
 			var cmd tea.Cmd
 			m.dialog, cmd = m.dialog.Update(msg)
 			return m, cmd
 		}
 		if m.calendarListDialogOpen {
-			if msg.String() == "ctrl+c" {
-				return m, tea.Quit
-			}
 			var cmd tea.Cmd
 			m.calendarListDialog, cmd = m.calendarListDialog.Update(msg)
 			return m, cmd
 		}
 		if m.helpDialogOpen {
-			if msg.String() == "ctrl+c" {
-				return m, tea.Quit
-			}
 			var cmd tea.Cmd
 			m.helpDialog, cmd = m.helpDialog.Update(msg)
 			return m, cmd
 		}
 		switch {
 		case key.Matches(msg, m.keys.Quit):
-			return m, tea.Quit
+			m.pendingQuit = true
+			m.confirmDialog = NewConfirmDialogModel("Quit chroncal?", "Quit").
+				SetSize(m.width, m.height)
+			m.confirmOpen = true
+			return m, nil
 		case key.Matches(msg, m.keys.Palette):
 			return m.openPalette()
 		case key.Matches(msg, m.keys.Help):
