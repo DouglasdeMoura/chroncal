@@ -61,7 +61,7 @@ func defaultEventDialogKeys() eventDialogKeyMap {
 		Edit:      key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
 		Delete:    key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "delete")),
 		Duplicate: key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "duplicate")),
-		Create:    key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "new")),
+		Create:    key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "create")),
 		RSVPYes:   key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "RSVP yes")),
 		RSVPNo:    key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "RSVP no")),
 		RSVPMaybe: key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "RSVP maybe")),
@@ -121,7 +121,7 @@ func NewEventDialogModel(day time.Time, events []event.Event, calendars map[int6
 		return a.StartTime.Compare(b.StartTime)
 	})
 	newAction := ListDialogAction{
-		Label:   "Add Event",
+		Label:   "Create Event",
 		Primary: true,
 		Msg:     func() tea.Msg { return EventCreateMsg{Day: day} },
 	}
@@ -292,10 +292,18 @@ func (m EventDialogModel) refresh() EventDialogModel {
 
 func (m EventDialogModel) shortHelp() []key.Binding {
 	sk := m.shell.Keys()
+	nav := key.NewBinding(
+		key.WithKeys("up", "down", "k", "j"),
+		key.WithHelp("↑↓", "navigate"),
+	)
+	days := key.NewBinding(
+		key.WithKeys("left", "right", "h", "l"),
+		key.WithHelp("←→", "days"),
+	)
 	if len(m.events) == 0 {
-		return []key.Binding{m.keys.Left, m.keys.Right, sk.Enter, m.keys.Create, sk.Close}
+		return []key.Binding{days, sk.Enter, m.keys.Create, sk.Close}
 	}
-	return []key.Binding{sk.Up, sk.Down, m.keys.Left, m.keys.Right, sk.Tab, m.keys.Create, sk.Close}
+	return []key.Binding{nav, days, sk.Tab, m.keys.Create, sk.Close}
 }
 
 // zoneCycle returns the list of zones to cycle through with Tab, including

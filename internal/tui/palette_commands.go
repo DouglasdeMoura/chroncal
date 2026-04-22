@@ -38,7 +38,7 @@ func buildPaletteCommands(m Model) []PaletteCommand {
 		},
 		{
 			ID:       "calendar.new",
-			Title:    "Create Calendar",
+			Title:    "Add Calendar",
 			Category: "Calendar",
 			Shortcut: "l",
 			Action:   func() tea.Msg { return CalendarDialogRequestedMsg{ID: 0} },
