@@ -35,8 +35,28 @@ const helpDialogChrome = 7
 
 func NewHelpDialogModel(theme Theme) HelpDialogModel {
 	dialog := NewDialog("Keyboard Shortcuts", DefaultDialogStyles())
-	dialog.SetFooter("esc · q · ? to close")
 	return HelpDialogModel{dialog: dialog, theme: theme}
+}
+
+func (m HelpDialogModel) footerHint(scrollable bool) string {
+	keyStyle := lipgloss.NewStyle().Foreground(m.theme.Text)
+	descStyle := lipgloss.NewStyle().Foreground(m.theme.TextDim)
+	sepStyle := lipgloss.NewStyle().Foreground(m.theme.Muted)
+	sep := sepStyle.Render(" · ")
+
+	pairs := [][2]string{}
+	if scrollable {
+		pairs = append(pairs, [2]string{"↑↓", "scroll"})
+	}
+	pairs = append(pairs,
+		[2]string{"esc", "close"},
+	)
+
+	segs := make([]string, 0, len(pairs))
+	for _, p := range pairs {
+		segs = append(segs, keyStyle.Render(p[0])+" "+descStyle.Render(p[1]))
+	}
+	return strings.Join(segs, sep)
 }
 
 func (m HelpDialogModel) SetSize(w, h int) HelpDialogModel {
@@ -59,31 +79,36 @@ func (m HelpDialogModel) BoxSize() (int, int) {
 }
 
 func (m HelpDialogModel) Update(msg tea.Msg) (HelpDialogModel, tea.Cmd) {
-	kp, ok := msg.(tea.KeyPressMsg)
-	if !ok {
-		return m, nil
-	}
-	if key.Matches(kp, key.NewBinding(key.WithKeys("esc", "q", "?"))) {
-		return m, func() tea.Msg { return HelpDialogClosedMsg{} }
-	}
-
 	total := strings.Count(m.body(), "\n") + 1
 	vp := m.viewportHeight()
 	maxScroll := max(total-vp, 0)
 
-	switch kp.String() {
-	case "up", "k":
-		m.scroll--
-	case "down", "j":
-		m.scroll++
-	case "pgup":
-		m.scroll -= vp
-	case "pgdown", " ":
-		m.scroll += vp
-	case "home", "g":
-		m.scroll = 0
-	case "end", "G":
-		m.scroll = maxScroll
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		if key.Matches(msg, key.NewBinding(key.WithKeys("esc", "q", "?"))) {
+			return m, func() tea.Msg { return HelpDialogClosedMsg{} }
+		}
+		switch msg.String() {
+		case "up", "k":
+			m.scroll--
+		case "down", "j":
+			m.scroll++
+		case "pgup":
+			m.scroll -= vp
+		case "pgdown", " ":
+			m.scroll += vp
+		case "home", "g":
+			m.scroll = 0
+		case "end", "G":
+			m.scroll = maxScroll
+		}
+	case tea.MouseWheelMsg:
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			m.scroll -= 3
+		case tea.MouseWheelDown:
+			m.scroll += 3
+		}
 	}
 	m.scroll = max(min(m.scroll, maxScroll), 0)
 	return m, nil
@@ -260,11 +285,7 @@ func (m HelpDialogModel) View() string {
 	end := min(scroll+vp, total)
 	clipped := strings.Join(lines[scroll:end], "\n")
 
-	footer := "esc · q · ? to close"
-	if total > vp {
-		footer = "↑↓ scroll · " + footer
-	}
-	m.dialog.SetFooter(footer)
+	m.dialog.SetFooter(m.footerHint(total > vp))
 
 	return m.dialog.Box(clipped)
 }
