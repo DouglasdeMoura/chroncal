@@ -71,10 +71,8 @@ func defaultEventDialogKeys() eventDialogKeyMap {
 // dialogAction is the RSVP button representation shared with
 // event_view_dialog.go.
 type dialogAction struct {
-	label          string
-	underlineIndex int
-	msg            func() tea.Msg
-	danger         bool
+	label string
+	msg   func() tea.Msg
 }
 
 // CalendarInfo holds the display-relevant fields of a calendar.
