@@ -20,12 +20,18 @@ type HelpDialogModel struct {
 	theme  Theme
 	width  int
 	height int
+	scroll int
 }
 
 // helpTwoColThreshold is the minimum terminal width at which the help
 // dialog lays out shortcuts in two columns. Below this the dialog shrinks
 // to fit and renders a single stacked column.
 const helpTwoColThreshold = 80
+
+// helpDialogChrome counts the fixed rows the Dialog wraps around body
+// content: border top/bottom (2), padding top (1), title + blank (2),
+// blank + footer (2) = 7.
+const helpDialogChrome = 7
 
 func NewHelpDialogModel(theme Theme) HelpDialogModel {
 	dialog := NewDialog("Keyboard Shortcuts", DefaultDialogStyles())
@@ -53,12 +59,41 @@ func (m HelpDialogModel) BoxSize() (int, int) {
 }
 
 func (m HelpDialogModel) Update(msg tea.Msg) (HelpDialogModel, tea.Cmd) {
-	if msg, ok := msg.(tea.KeyPressMsg); ok {
-		if key.Matches(msg, key.NewBinding(key.WithKeys("esc", "q", "?"))) {
-			return m, func() tea.Msg { return HelpDialogClosedMsg{} }
-		}
+	kp, ok := msg.(tea.KeyPressMsg)
+	if !ok {
+		return m, nil
 	}
+	if key.Matches(kp, key.NewBinding(key.WithKeys("esc", "q", "?"))) {
+		return m, func() tea.Msg { return HelpDialogClosedMsg{} }
+	}
+
+	total := strings.Count(m.body(), "\n") + 1
+	vp := m.viewportHeight()
+	maxScroll := max(total-vp, 0)
+
+	switch kp.String() {
+	case "up", "k":
+		m.scroll--
+	case "down", "j":
+		m.scroll++
+	case "pgup":
+		m.scroll -= vp
+	case "pgdown", " ":
+		m.scroll += vp
+	case "home", "g":
+		m.scroll = 0
+	case "end", "G":
+		m.scroll = maxScroll
+	}
+	m.scroll = max(min(m.scroll, maxScroll), 0)
 	return m, nil
+}
+
+func (m HelpDialogModel) viewportHeight() int {
+	if m.height <= 0 {
+		return 1
+	}
+	return max(m.height-helpDialogChrome, 1)
 }
 
 type helpEntry struct {
@@ -192,7 +227,7 @@ func (m HelpDialogModel) renderColumn(sections []helpSection, width int) string 
 	return strings.TrimRight(out.String(), "\n")
 }
 
-func (m HelpDialogModel) View() string {
+func (m HelpDialogModel) body() string {
 	sections := m.sections()
 	width := m.dialog.ContentWidth()
 	if width <= 0 {
@@ -200,7 +235,7 @@ func (m HelpDialogModel) View() string {
 	}
 
 	if m.width > 0 && m.width < helpTwoColThreshold {
-		return m.dialog.Box(m.renderColumn(sections, width))
+		return m.renderColumn(sections, width)
 	}
 
 	mid := (len(sections) + 1) / 2
@@ -212,6 +247,24 @@ func (m HelpDialogModel) View() string {
 	leftCol := lipgloss.NewStyle().Width(colW).Render(leftBody)
 	rightCol := lipgloss.NewStyle().Width(colW).Render(rightBody)
 	spacer := lipgloss.NewStyle().Width(gap).Render("")
-	body := lipgloss.JoinHorizontal(lipgloss.Top, leftCol, spacer, rightCol)
-	return m.dialog.Box(body)
+	return lipgloss.JoinHorizontal(lipgloss.Top, leftCol, spacer, rightCol)
+}
+
+func (m HelpDialogModel) View() string {
+	body := m.body()
+	lines := strings.Split(body, "\n")
+	vp := m.viewportHeight()
+	total := len(lines)
+
+	scroll := max(min(m.scroll, max(total-vp, 0)), 0)
+	end := min(scroll+vp, total)
+	clipped := strings.Join(lines[scroll:end], "\n")
+
+	footer := "esc · q · ? to close"
+	if total > vp {
+		footer = "↑↓ scroll · " + footer
+	}
+	m.dialog.SetFooter(footer)
+
+	return m.dialog.Box(clipped)
 }
