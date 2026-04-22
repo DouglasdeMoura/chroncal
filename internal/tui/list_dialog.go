@@ -150,6 +150,15 @@ func (m ListDialogModel) SetFocusZone(z ListDialogZone) ListDialogModel {
 	return m
 }
 
+// HasTitleAction reports whether a title-line button is installed. Callers
+// that manage their own Tab order use this to decide whether to include
+// the title action as a focus stop.
+func (m ListDialogModel) HasTitleAction() bool { return m.titleAction != nil }
+
+// FocusedAction returns the index of the currently focused action button.
+// Only meaningful when FocusZone() == ListZoneActions.
+func (m ListDialogModel) FocusedAction() int { return m.focusedAction }
+
 // SetDetailLines replaces the detail-pane body lines for the currently
 // selected row. The caller rebuilds these whenever selection changes.
 func (m ListDialogModel) SetDetailLines(lines []string) ListDialogModel {
