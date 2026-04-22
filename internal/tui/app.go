@@ -277,9 +277,10 @@ func (m Model) loadEvents() tea.Cmd {
 		from = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.UTC)
 		to = from.AddDate(0, 0, 7)
 	case viewAgenda:
-		d := m.agenda.WindowStart()
-		from = time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC)
-		to = from.AddDate(0, 0, AgendaWindowDays)
+		ws := m.agenda.WindowStart()
+		we := m.agenda.WindowEnd()
+		from = time.Date(ws.Year(), ws.Month(), ws.Day(), 0, 0, 0, 0, time.UTC)
+		to = time.Date(we.Year(), we.Month(), we.Day(), 0, 0, 0, 0, time.UTC)
 	default:
 		month := m.calendar.Month()
 		from = time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, time.UTC)
