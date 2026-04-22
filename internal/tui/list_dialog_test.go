@@ -48,18 +48,53 @@ func TestListDialog_MoveDownClampsAtBottom(t *testing.T) {
 	}
 }
 
-func TestListDialog_TabCyclesBetweenListAndActions(t *testing.T) {
+func TestListDialog_TabCyclesThroughEveryAction(t *testing.T) {
 	m := makeListDialogFixture()
 	if got := m.FocusZone(); got != ListZoneList {
 		t.Fatalf("initial focus = %v, want ListZoneList", got)
 	}
-	m = m.CycleZone(true)
-	if got := m.FocusZone(); got != ListZoneActions {
-		t.Errorf("after CycleZone(true) focus = %v, want ListZoneActions", got)
+	// Fixture has three actions, no title action, so Tab visits:
+	// list → action[0] → action[1] → action[2] → list.
+	for i := range 3 {
+		m = m.CycleZone(true)
+		if got := m.FocusZone(); got != ListZoneActions {
+			t.Fatalf("CycleZone(true) #%d focus = %v, want ListZoneActions", i+1, got)
+		}
+		if got := m.focusedAction; got != i {
+			t.Errorf("CycleZone(true) #%d focusedAction = %d, want %d", i+1, got, i)
+		}
 	}
 	m = m.CycleZone(true)
 	if got := m.FocusZone(); got != ListZoneList {
-		t.Errorf("after second CycleZone(true) focus = %v, want ListZoneList", got)
+		t.Errorf("after wrapping focus = %v, want ListZoneList", got)
+	}
+}
+
+func TestListDialog_TabIncludesTitleAction(t *testing.T) {
+	action := ListDialogAction{Label: "New", Msg: func() tea.Msg { return "title" }}
+	m := makeListDialogFixture().SetTitleAction(&action)
+
+	// list → action[0] → action[1] → action[2] → title action → list
+	m = m.CycleZone(true).CycleZone(true).CycleZone(true).CycleZone(true)
+	if got := m.FocusZone(); got != ListZoneTitleAction {
+		t.Fatalf("expected title action focus after 4 tabs, got %v", got)
+	}
+	cmd := m.ActivateFocused()
+	if cmd == nil || cmd() != "title" {
+		t.Errorf("ActivateFocused on title action did not return title-action msg")
+	}
+	m = m.CycleZone(true)
+	if got := m.FocusZone(); got != ListZoneList {
+		t.Errorf("after wrapping from title action focus = %v, want ListZoneList", got)
+	}
+}
+
+func TestListDialog_ShiftTabReversesFromList(t *testing.T) {
+	action := ListDialogAction{Label: "New", Msg: func() tea.Msg { return "title" }}
+	m := makeListDialogFixture().SetTitleAction(&action)
+	m = m.CycleZone(false)
+	if got := m.FocusZone(); got != ListZoneTitleAction {
+		t.Errorf("shift+tab from list should land on title action, got %v", got)
 	}
 }
 

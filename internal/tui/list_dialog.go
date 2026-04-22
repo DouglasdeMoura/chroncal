@@ -48,6 +48,10 @@ type ListDialogZone int
 const (
 	ListZoneList ListDialogZone = iota
 	ListZoneActions
+	// ListZoneTitleAction means the right-aligned title-line button owns
+	// focus. Participates in Tab cycling so every focusable element in the
+	// dialog is reachable by keyboard.
+	ListZoneTitleAction
 	// ListZoneCustom lets callers signal "focus is in a region the shell
 	// doesn't manage" (e.g. the RSVP row in the event dialog). In that
 	// state the shell renders list and actions as unfocused.
@@ -101,6 +105,9 @@ func (m ListDialogModel) SetTitle(t string) ListDialogModel       { m.title = t;
 // dialog as a whole rather than the currently selected row.
 func (m ListDialogModel) SetTitleAction(a *ListDialogAction) ListDialogModel {
 	m.titleAction = a
+	if a == nil && m.focusZone == ListZoneTitleAction {
+		m.focusZone = ListZoneList
+	}
 	return m
 }
 func (m ListDialogModel) SetSelectedColor(c color.Color) ListDialogModel {
@@ -224,25 +231,44 @@ func (m ListDialogModel) MoveDown() ListDialogModel {
 	return m
 }
 
-// CycleZone moves focus forward (or backward) through the zones that have
-// something to focus on.
+// CycleZone advances focus to the next (or previous) focusable element in
+// the dialog — the list, each individual action button, and the title
+// action button — so Tab walks every control the way a webpage would. The
+// cycle order is: list → actions[0] → … → actions[n-1] → title action (if
+// present) → list.
 func (m ListDialogModel) CycleZone(forward bool) ListDialogModel {
-	zones := []ListDialogZone{ListZoneList}
-	if len(m.actions) > 0 {
-		zones = append(zones, ListZoneActions)
+	total := 1 + len(m.actions)
+	if m.titleAction != nil {
+		total++
 	}
-	for i, z := range zones {
-		if z != m.focusZone {
-			continue
-		}
-		if forward {
-			m.focusZone = zones[(i+1)%len(zones)]
-		} else {
-			m.focusZone = zones[(i-1+len(zones))%len(zones)]
-		}
+	if total == 1 {
+		m.focusZone = ListZoneList
 		return m
 	}
-	m.focusZone = ListZoneList
+
+	cur := 0
+	switch m.focusZone {
+	case ListZoneActions:
+		cur = 1 + m.focusedAction
+	case ListZoneTitleAction:
+		cur = 1 + len(m.actions)
+	}
+
+	delta := 1
+	if !forward {
+		delta = -1
+	}
+	next := (cur + delta + total) % total
+
+	switch {
+	case next == 0:
+		m.focusZone = ListZoneList
+	case next <= len(m.actions):
+		m.focusZone = ListZoneActions
+		m.focusedAction = next - 1
+	default:
+		m.focusZone = ListZoneTitleAction
+	}
 	return m
 }
 
@@ -257,10 +283,17 @@ func (m ListDialogModel) FocusAction(idx int) ListDialogModel {
 }
 
 // ActivateFocused returns the command for whichever zone currently has focus
-// (list Enter on an empty list, or the focused action button).
+// (the focused action button, or the title-action button).
 func (m ListDialogModel) ActivateFocused() tea.Cmd {
-	if m.focusZone == ListZoneActions && m.focusedAction >= 0 && m.focusedAction < len(m.actions) {
-		return m.actions[m.focusedAction].Msg
+	switch m.focusZone {
+	case ListZoneActions:
+		if m.focusedAction >= 0 && m.focusedAction < len(m.actions) {
+			return m.actions[m.focusedAction].Msg
+		}
+	case ListZoneTitleAction:
+		if m.titleAction != nil {
+			return m.titleAction.Msg
+		}
 	}
 	return nil
 }
@@ -554,7 +587,8 @@ func (m ListDialogModel) renderTitleRow(innerW int) string {
 	if m.titleAction == nil {
 		return lipgloss.NewStyle().Bold(true).Width(innerW).Render(m.title)
 	}
-	btn := renderTitleActionButton(*m.titleAction)
+	focused := m.focusZone == ListZoneTitleAction
+	btn := renderTitleActionButton(*m.titleAction, focused)
 	btnW := lipgloss.Width(btn)
 	titleW := max(innerW-btnW, 0)
 	titleStr := lipgloss.NewStyle().
@@ -567,9 +601,13 @@ func (m ListDialogModel) renderTitleRow(innerW int) string {
 // renderTitleActionButton renders a title-line button without the trailing
 // margin-right cell used by action-bar buttons so it sits flush with the
 // dialog's right edge.
-func renderTitleActionButton(a ListDialogAction) string {
-	style := DefaultButtonStyles().Primary.Normal.UnsetMarginRight()
-	return style.Render(a.Label)
+func renderTitleActionButton(a ListDialogAction, focused bool) string {
+	bs := DefaultButtonStyles().Primary
+	style := bs.Normal
+	if focused {
+		style = bs.Focused
+	}
+	return style.UnsetMarginRight().Render(a.Label)
 }
 
 // TitleActionAtPosition reports whether (x, y) lies within the title-line
@@ -586,7 +624,7 @@ func (m ListDialogModel) TitleActionAtPosition(x, y int) (tea.Cmd, bool) {
 	if y != titleY {
 		return nil, false
 	}
-	btnW := lipgloss.Width(renderTitleActionButton(*m.titleAction))
+	btnW := lipgloss.Width(renderTitleActionButton(*m.titleAction, false))
 	btnStartX := dialogX + 2 + innerW - btnW
 	if x < btnStartX || x >= btnStartX+btnW {
 		return nil, false
