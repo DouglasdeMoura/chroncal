@@ -44,6 +44,7 @@ func NewConfirmDialogModel(message, confirmLabel string) ConfirmDialogModel {
 	form.OnCancel(func(f *Form) tea.Cmd {
 		return func() tea.Msg { return ConfirmDialogResultMsg{Confirmed: false} }
 	})
+	form = form.FocusCancel()
 
 	return ConfirmDialogModel{dialog: dialog, form: form, contentWidth: cw}
 }

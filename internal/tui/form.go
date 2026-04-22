@@ -2228,6 +2228,14 @@ func (f Form) handleClick(target string) (Form, tea.Cmd) {
 	return f, nil
 }
 
+// FocusCancel moves focus to the Cancel button. Used by dialogs that want
+// the safe default when the dialog opens (e.g. destructive confirmations).
+func (f Form) FocusCancel() Form {
+	f.blurCurrent()
+	f.focused = f.cancelIndex()
+	return f
+}
+
 func (f Form) focusNext() (Form, tea.Cmd) {
 	f.blurCurrent()
 	f.focused = (f.focused + 1) % f.totalCount()
