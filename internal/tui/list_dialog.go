@@ -267,6 +267,8 @@ func (m ListDialogModel) CycleZone(forward bool) ListDialogModel {
 		cur = 1 + m.focusedAction
 	case ListZoneTitleAction:
 		cur = 1 + len(m.actions)
+	case ListZoneList, ListZoneCustom:
+		cur = 0
 	}
 
 	delta := 1
@@ -309,6 +311,7 @@ func (m ListDialogModel) ActivateFocused() tea.Cmd {
 		if m.titleAction != nil {
 			return m.titleAction.Msg
 		}
+	case ListZoneList, ListZoneCustom:
 	}
 	return nil
 }

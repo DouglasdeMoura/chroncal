@@ -329,6 +329,8 @@ func (m EventDialogModel) currentZone() int {
 		return zoneAction
 	case ListZoneTitleAction:
 		return zoneTitleAction
+	case ListZoneList, ListZoneCustom:
+		return zoneList
 	}
 	return zoneList
 }
@@ -383,6 +385,8 @@ func (m EventDialogModel) currentStop() tabStop {
 		return tabStop{kind: zoneAction, idx: m.shell.FocusedAction()}
 	case ListZoneTitleAction:
 		return tabStop{kind: zoneTitleAction}
+	case ListZoneList, ListZoneCustom:
+		return tabStop{kind: zoneList}
 	}
 	return tabStop{kind: zoneList}
 }
