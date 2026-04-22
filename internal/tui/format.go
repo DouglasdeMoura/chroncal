@@ -42,10 +42,10 @@ func formatTimeColumnMulti(ev event.Event, dayIndex, totalDays int) string {
 	if ev.AllDay || totalDays <= 1 {
 		return formatTimeColumn(ev)
 	}
-	switch {
-	case dayIndex == 1:
+	switch dayIndex {
+	case 1:
 		return ev.StartTime.Local().Format("15:04") + "→     "
-	case dayIndex == totalDays:
+	case totalDays:
 		return "     →" + ev.EndTime.Local().Format("15:04")
 	default:
 		return "           "
@@ -270,10 +270,10 @@ func verboseContinuationLabel(ev event.Event, dayIndex, totalDays int) string {
 	if totalDays <= 1 || ev.AllDay {
 		return ""
 	}
-	switch {
-	case dayIndex == 1:
+	switch dayIndex {
+	case 1:
 		return "ends " + ev.EndTime.Local().Format("Mon, Jan 2 15:04")
-	case dayIndex == totalDays:
+	case totalDays:
 		return "until " + ev.EndTime.Local().Format("15:04")
 	default:
 		return "continues"
