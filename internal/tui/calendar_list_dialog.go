@@ -50,7 +50,7 @@ type CalendarListDialogModel struct {
 // map and hidden set. Calendars are sorted by name for a stable list order.
 func NewCalendarListDialogModel(calendars map[int64]CalendarInfo, hidden map[int64]bool, h help.Model) CalendarListDialogModel {
 	newAction := ListDialogAction{
-		Label:   "New Calendar",
+		Label:   "+ Add Calendar",
 		Primary: true,
 		Msg:     func() tea.Msg { return CalendarDialogRequestedMsg{ID: 0} },
 	}
