@@ -22,9 +22,13 @@ type HelpDialogModel struct {
 	height int
 }
 
+// helpTwoColThreshold is the minimum terminal width at which the help
+// dialog lays out shortcuts in two columns. Below this the dialog shrinks
+// to fit and renders a single stacked column.
+const helpTwoColThreshold = 80
+
 func NewHelpDialogModel(theme Theme) HelpDialogModel {
 	dialog := NewDialog("Keyboard Shortcuts", DefaultDialogStyles())
-	dialog.SetWidth(100)
 	dialog.SetFooter("esc · q · ? to close")
 	return HelpDialogModel{dialog: dialog, theme: theme}
 }
@@ -33,6 +37,11 @@ func (m HelpDialogModel) SetSize(w, h int) HelpDialogModel {
 	m.width = w
 	m.height = h
 	m.dialog = m.dialog.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	if w >= helpTwoColThreshold {
+		m.dialog.SetWidth(min(100, w-2))
+	} else if w > 0 {
+		m.dialog.SetWidth(w)
+	}
 	return m
 }
 
@@ -188,6 +197,10 @@ func (m HelpDialogModel) View() string {
 	width := m.dialog.ContentWidth()
 	if width <= 0 {
 		width = 96
+	}
+
+	if m.width > 0 && m.width < helpTwoColThreshold {
+		return m.dialog.Box(m.renderColumn(sections, width))
 	}
 
 	mid := (len(sections) + 1) / 2
