@@ -29,7 +29,7 @@ func defaultCalendarListDialogKeys() calendarListDialogKeyMap {
 	return calendarListDialogKeyMap{
 		Edit:   key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
 		Delete: key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "delete")),
-		New:    key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new")),
+		New:    key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add")),
 	}
 }
 
