@@ -646,7 +646,52 @@ func (m Model) innerDims() (int, int) {
 	return mw - padding*2, mh - padding*2
 }
 
+// interceptGlobalKeys routes the quit guard (q / ctrl+c) and help (?) ahead
+// of any open dialog so they work from anywhere. A second ctrl+c while the
+// quit confirm is showing forces the exit. ctrl+c is truly global (it isn't
+// a character anyone types into a field); q and ? are suppressed while a
+// text-entry surface owns input (palette search, event form, calendar form)
+// so users can type those characters normally. The quit confirm additionally
+// blocks ?, and the help dialog handles its own close keys.
+func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
+	inQuitConfirm := m.confirmOpen && m.pendingQuit
+	if msg.String() == "ctrl+c" {
+		if inQuitConfirm {
+			return m, tea.Quit, true
+		}
+		if !m.confirmOpen {
+			m.pendingQuit = true
+			m.confirmDialog = NewConfirmDialogModel("Quit chroncal?", "Quit").
+				SetSize(m.width, m.height)
+			m.confirmOpen = true
+			return m, nil, true
+		}
+	}
+	textEntryActive := m.paletteOpen || m.formOpen || m.calendarDialogOpen
+	if key.Matches(msg, m.keys.Quit) && !m.confirmOpen && !textEntryActive {
+		m.pendingQuit = true
+		m.confirmDialog = NewConfirmDialogModel("Quit chroncal?", "Quit").
+			SetSize(m.width, m.height)
+		m.confirmOpen = true
+		return m, nil, true
+	}
+	if key.Matches(msg, m.keys.Help) && !inQuitConfirm && !m.helpDialogOpen && !textEntryActive {
+		return m, func() tea.Msg { return HelpDialogRequestedMsg{} }, true
+	}
+	return m, nil, false
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Global key bindings override any open dialog: ctrl+c / q always route
+	// through the quit guard, and ? opens the help dialog. The quit confirm
+	// itself is exempt so its y/n/esc keys keep working, and ? is a no-op
+	// while the help dialog is already up (it handles its own close keys).
+	if kp, ok := msg.(tea.KeyPressMsg); ok {
+		if newM, cmd, handled := m.interceptGlobalKeys(kp); handled {
+			return newM, cmd
+		}
+	}
+
 	// When the palette is open, it captures all input. Only specific
 	// parent-level messages (size, theme, palette-result) fall through.
 	if m.paletteOpen {
@@ -655,9 +700,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			tea.BackgroundColorMsg, tea.WindowSizeMsg:
 			// fall through to main switch
 		default:
-			if kp, ok := msg.(tea.KeyPressMsg); ok && kp.String() == "ctrl+c" {
-				return m, tea.Quit
-			}
 			var cmd tea.Cmd
 			m.palette, cmd = m.palette.Update(msg)
 			return m, cmd
@@ -678,9 +720,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			calendarMutationDoneMsg:
 			// fall through to main switch
 		default:
-			if kp, ok := msg.(tea.KeyPressMsg); ok && kp.String() == "ctrl+c" {
-				return m, tea.Quit
-			}
 			var cmd tea.Cmd
 			m.calendarDialog, cmd = m.calendarDialog.Update(msg)
 			return m, cmd
@@ -697,9 +736,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			eventCreatedMsg, eventUpdatedMsg:
 			// fall through to main switch
 		default:
-			if kp, ok := msg.(tea.KeyPressMsg); ok && kp.String() == "ctrl+c" {
-				return m, tea.Quit
-			}
 			var cmd tea.Cmd
 			m.form, cmd = m.form.Update(msg)
 			return m, cmd
@@ -1589,22 +1625,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyPressMsg:
-		// ctrl+c is guarded the same as `q` at the top level: it pops a
-		// confirm dialog instead of quitting outright. A second ctrl+c
-		// while the quit prompt is already showing forces the exit — an
-		// emergency escape hatch for users who really mean it.
-		if msg.String() == "ctrl+c" {
-			if m.confirmOpen && m.pendingQuit {
-				return m, tea.Quit
-			}
-			if !m.confirmOpen {
-				m.pendingQuit = true
-				m.confirmDialog = NewConfirmDialogModel("Quit chroncal?", "Quit").
-					SetSize(m.width, m.height)
-				m.confirmOpen = true
-				return m, nil
-			}
-		}
 		if m.choiceOpen {
 			var cmd tea.Cmd
 			m.choiceDialog, cmd = m.choiceDialog.Update(msg)
@@ -1636,16 +1656,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		switch {
-		case key.Matches(msg, m.keys.Quit):
-			m.pendingQuit = true
-			m.confirmDialog = NewConfirmDialogModel("Quit chroncal?", "Quit").
-				SetSize(m.width, m.height)
-			m.confirmOpen = true
-			return m, nil
 		case key.Matches(msg, m.keys.Palette):
 			return m.openPalette()
-		case key.Matches(msg, m.keys.Help):
-			return m, func() tea.Msg { return HelpDialogRequestedMsg{} }
 		case key.Matches(msg, m.keys.MonthView):
 			return m.switchToView(viewMonth)
 		case key.Matches(msg, m.keys.WeekView):
