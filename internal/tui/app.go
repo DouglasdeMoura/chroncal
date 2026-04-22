@@ -1543,6 +1543,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Button != tea.MouseLeft {
 			return m, nil
 		}
+		if m.helpDialogOpen {
+			var cmd tea.Cmd
+			m.helpDialog, cmd = m.helpDialog.Update(msg)
+			return m, cmd
+		}
 		if m.choiceOpen {
 			var cmd tea.Cmd
 			m.choiceDialog, cmd = m.choiceDialog.Update(msg)
@@ -1566,11 +1571,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.calendarListDialogOpen {
 			var cmd tea.Cmd
 			m.calendarListDialog, cmd = m.calendarListDialog.Update(msg)
-			return m, cmd
-		}
-		if m.helpDialogOpen {
-			var cmd tea.Cmd
-			m.helpDialog, cmd = m.helpDialog.Update(msg)
 			return m, cmd
 		}
 		// Sidebar hit-test. The sidebar content starts at (padding, padding)
@@ -1625,6 +1625,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyPressMsg:
+		// Help sits on top of every other overlay (see View()), so it must
+		// own input — including Esc — whenever it's open.
+		if m.helpDialogOpen {
+			var cmd tea.Cmd
+			m.helpDialog, cmd = m.helpDialog.Update(msg)
+			return m, cmd
+		}
 		if m.choiceOpen {
 			var cmd tea.Cmd
 			m.choiceDialog, cmd = m.choiceDialog.Update(msg)
@@ -1648,11 +1655,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.calendarListDialogOpen {
 			var cmd tea.Cmd
 			m.calendarListDialog, cmd = m.calendarListDialog.Update(msg)
-			return m, cmd
-		}
-		if m.helpDialogOpen {
-			var cmd tea.Cmd
-			m.helpDialog, cmd = m.helpDialog.Update(msg)
 			return m, cmd
 		}
 		switch {
