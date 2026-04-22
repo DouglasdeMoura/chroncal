@@ -1578,14 +1578,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		// ctrl+c is guarded the same as `q` at the top level: it pops a
-		// confirm dialog instead of quitting outright. If the confirm is
-		// already open, let it handle the key normally (y/n/esc).
-		if msg.String() == "ctrl+c" && !m.confirmOpen {
-			m.pendingQuit = true
-			m.confirmDialog = NewConfirmDialogModel("Quit chroncal?", "Quit").
-				SetSize(m.width, m.height)
-			m.confirmOpen = true
-			return m, nil
+		// confirm dialog instead of quitting outright. A second ctrl+c
+		// while the quit prompt is already showing forces the exit — an
+		// emergency escape hatch for users who really mean it.
+		if msg.String() == "ctrl+c" {
+			if m.confirmOpen && m.pendingQuit {
+				return m, tea.Quit
+			}
+			if !m.confirmOpen {
+				m.pendingQuit = true
+				m.confirmDialog = NewConfirmDialogModel("Quit chroncal?", "Quit").
+					SetSize(m.width, m.height)
+				m.confirmOpen = true
+				return m, nil
+			}
 		}
 		if m.choiceOpen {
 			var cmd tea.Cmd
