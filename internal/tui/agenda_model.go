@@ -766,7 +766,6 @@ func buildAgendaRows(events []event.Event, start time.Time, days int, showEmpty 
 	}
 
 	var rows []agendaRow
-	first := true
 	firstMonth := monthKey(start)
 	prevMonth := ""
 	for i := range days {
@@ -776,10 +775,6 @@ func buildAgendaRows(events []event.Event, start time.Time, days int, showEmpty 
 		if len(entries) == 0 && !showEmpty {
 			continue
 		}
-		if !first {
-			rows = append(rows, agendaRow{day: d, separator: true})
-		}
-		first = false
 		if mk := monthKey(d); mk != prevMonth && mk != firstMonth {
 			rows = append(rows, agendaRow{day: d, monthHeader: true})
 			rows = append(rows, agendaRow{day: d, separator: true})
