@@ -34,8 +34,6 @@ const (
 	agendaDayColWidth  = 8  // "Wed  22 " or "Wed  22 " with today badge
 	agendaDotColWidth  = 3  // " ● "
 	agendaTimeColWidth = 13 // "09:00–10:30  " / "All day      "
-	agendaTitleCalGap  = 2  // spaces between title and right-aligned calendar
-	agendaMaxCalendar  = 18 // soft cap on the right-aligned calendar column
 	agendaLeftPad      = 0  // leading space in front of the day column
 )
 
@@ -458,40 +456,19 @@ func (m AgendaModel) renderEventRow(r agendaRow, selected bool) string {
 		title += fmt.Sprintf(" (day %d/%d)", r.dayIndex, r.totalDays)
 	}
 
-	calLabel := cal.Name
-
 	fixedLeft := agendaLeftPad + agendaDayColWidth + 1 + agendaDotColWidth + agendaTimeColWidth
-	available := max(m.width-fixedLeft, 1)
-
-	// Drop the calendar label on very narrow widths so the title keeps its
-	// full run before truncation takes over.
-	calW := 0
-	if calLabel != "" && available >= 20 {
-		calW = min(lipgloss.Width(calLabel), agendaMaxCalendar)
-	}
-
-	titleW := available
-	if calW > 0 {
-		titleW = max(available-agendaTitleCalGap-calW, 1)
-	}
+	titleW := max(m.width-fixedLeft, 1)
 	titleCol := lipgloss.NewStyle().
 		Foreground(m.theme.Text).
 		Width(titleW).
 		Render(truncateTo(title, titleW))
-
-	rightCol := ""
-	if calW > 0 {
-		rightCol = strings.Repeat(" ", agendaTitleCalGap) +
-			lipgloss.NewStyle().Foreground(m.theme.TextDim).Render(truncateTo(calLabel, calW))
-	}
 
 	line := strings.Repeat(" ", agendaLeftPad) +
 		dayCol +
 		" " +
 		lipgloss.NewStyle().Width(agendaDotColWidth).Render(" "+dot+" ") +
 		timeCol +
-		titleCol +
-		rightCol
+		titleCol
 
 	rowStyle := lipgloss.NewStyle().Width(m.width)
 	if selected {
