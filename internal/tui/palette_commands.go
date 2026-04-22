@@ -37,20 +37,6 @@ func buildPaletteCommands(m Model) []PaletteCommand {
 			Action:   func() tea.Msg { return EventCreateMsg{Day: cursor} },
 		},
 		{
-			ID:       "calendar.new",
-			Title:    "Add Calendar",
-			Category: "Calendar",
-			Shortcut: "l",
-			Action:   func() tea.Msg { return CalendarDialogRequestedMsg{ID: 0} },
-		},
-		{
-			ID:       "calendar.manage",
-			Title:    "Calendars",
-			Category: "Calendar",
-			Shortcut: "r",
-			Action:   func() tea.Msg { return CalendarListDialogRequestedMsg{} },
-		},
-		{
 			ID:       "view.month",
 			Title:    "Month View",
 			Category: "View",
@@ -70,6 +56,20 @@ func buildPaletteCommands(m Model) []PaletteCommand {
 			Category: "View",
 			Shortcut: "d",
 			Action:   func() tea.Msg { return SwitchViewMsg{Mode: viewDay} },
+		},
+		{
+			ID:       "calendar.new",
+			Title:    "Add Calendar",
+			Category: "Calendar",
+			Shortcut: "l",
+			Action:   func() tea.Msg { return CalendarDialogRequestedMsg{ID: 0} },
+		},
+		{
+			ID:       "calendar.manage",
+			Title:    "Calendars",
+			Category: "Calendar",
+			Shortcut: "r",
+			Action:   func() tea.Msg { return CalendarListDialogRequestedMsg{} },
 		},
 		{
 			ID:       "ui.sidebar",
