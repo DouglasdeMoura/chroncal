@@ -24,7 +24,7 @@ type HelpDialogModel struct {
 
 func NewHelpDialogModel(theme Theme) HelpDialogModel {
 	dialog := NewDialog("Keyboard Shortcuts", DefaultDialogStyles())
-	dialog.SetWidth(80)
+	dialog.SetWidth(100)
 	dialog.SetFooter("esc · q · ? to close")
 	return HelpDialogModel{dialog: dialog, theme: theme}
 }
@@ -147,13 +147,7 @@ func (m HelpDialogModel) sections() []helpSection {
 	}
 }
 
-func (m HelpDialogModel) View() string {
-	sections := m.sections()
-	width := m.dialog.ContentWidth()
-	if width <= 0 {
-		width = 72
-	}
-
+func (m HelpDialogModel) renderColumn(sections []helpSection, width int) string {
 	header := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
 	keyStyle := lipgloss.NewStyle().Foreground(m.theme.Text)
 	descStyle := lipgloss.NewStyle().Foreground(m.theme.TextDim)
@@ -186,5 +180,25 @@ func (m HelpDialogModel) View() string {
 			out.WriteString("\n")
 		}
 	}
-	return m.dialog.Box(strings.TrimRight(out.String(), "\n"))
+	return strings.TrimRight(out.String(), "\n")
+}
+
+func (m HelpDialogModel) View() string {
+	sections := m.sections()
+	width := m.dialog.ContentWidth()
+	if width <= 0 {
+		width = 96
+	}
+
+	mid := (len(sections) + 1) / 2
+	gap := 4
+	colW := max((width-gap)/2, 20)
+
+	leftBody := m.renderColumn(sections[:mid], colW)
+	rightBody := m.renderColumn(sections[mid:], colW)
+	leftCol := lipgloss.NewStyle().Width(colW).Render(leftBody)
+	rightCol := lipgloss.NewStyle().Width(colW).Render(rightBody)
+	spacer := lipgloss.NewStyle().Width(gap).Render("")
+	body := lipgloss.JoinHorizontal(lipgloss.Top, leftCol, spacer, rightCol)
+	return m.dialog.Box(body)
 }
