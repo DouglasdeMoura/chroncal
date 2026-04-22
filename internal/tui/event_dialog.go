@@ -113,8 +113,15 @@ func NewEventDialogModel(day time.Time, events []event.Event, calendars map[int6
 		}
 		return a.StartTime.Compare(b.StartTime)
 	})
+	newAction := ListDialogAction{
+		Label:   "Add Event",
+		Primary: true,
+		Msg:     func() tea.Msg { return EventCreateMsg{Day: day} },
+	}
 	m := EventDialogModel{
-		shell:     NewListDialogModel(h).SetTitle(day.Format("Monday, January 2, 2006")),
+		shell: NewListDialogModel(h).
+			SetTitle(day.Format("Monday, January 2, 2006")).
+			SetTitleAction(&newAction),
 		day:       day,
 		events:    events,
 		calendars: calendars,
@@ -266,8 +273,7 @@ func (m EventDialogModel) refresh() EventDialogModel {
 
 	if len(m.events) == 0 {
 		faint := lipgloss.NewStyle().Faint(true)
-		createBtn := DefaultButtonStyles().Primary.Render("Create Event", true)
-		m.shell = m.shell.SetEmptyList("", []string{faint.Render("No events on this day."), "", createBtn})
+		m.shell = m.shell.SetEmptyList("", []string{faint.Render("No events on this day.")})
 		m.shell = m.shell.SetActions(nil)
 	} else {
 		m.shell = m.shell.SetActions(m.actions())
@@ -471,11 +477,11 @@ func (m EventDialogModel) handleMouse(msg tea.MouseClickMsg) (EventDialogModel, 
 		return m, nil
 	}
 
-	// Empty-state: a "Create Event" button rendered inside the detail pane.
+	if cmd, ok := m.shell.TitleActionAtPosition(msg.X, msg.Y); ok {
+		return m, cmd
+	}
+
 	if len(m.events) == 0 {
-		if cmd, ok := m.hitCreateEventBtn(msg.X, msg.Y); ok {
-			return m, cmd
-		}
 		return m, nil
 	}
 
@@ -496,17 +502,6 @@ func (m EventDialogModel) handleMouse(msg tea.MouseClickMsg) (EventDialogModel, 
 		return m.refresh(), cmd
 	}
 	return m, nil
-}
-
-func (m EventDialogModel) hitCreateEventBtn(x, y int) (tea.Cmd, bool) {
-	ox, oy := m.shell.DetailsOrigin()
-	btnY := oy + 2 // "No events on this day." + blank + button
-	btnW := lipgloss.Width(DefaultButtonStyles().Primary.Render("Create Event", false))
-	if y == btnY && x >= ox && x < ox+btnW {
-		day := m.day
-		return func() tea.Msg { return EventCreateMsg{Day: day} }, true
-	}
-	return nil, false
 }
 
 func (m EventDialogModel) hitRSVPBtn(x, y int) (int, tea.Cmd, bool) {

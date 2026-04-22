@@ -50,8 +50,15 @@ type CalendarListDialogModel struct {
 // NewCalendarListDialogModel builds a dialog populated from the given calendar
 // map and hidden set. Calendars are sorted by name for a stable list order.
 func NewCalendarListDialogModel(calendars map[int64]CalendarInfo, hidden map[int64]bool, h help.Model) CalendarListDialogModel {
+	newAction := ListDialogAction{
+		Label:   "Add Calendar",
+		Primary: true,
+		Msg:     func() tea.Msg { return CalendarDialogRequestedMsg{ID: 0} },
+	}
 	m := CalendarListDialogModel{
-		shell:     NewListDialogModel(h).SetTitle("Calendars"),
+		shell: NewListDialogModel(h).
+			SetTitle("Calendars").
+			SetTitleAction(&newAction),
 		calendars: calendars,
 		order:     sortedCalendarIDs(calendars),
 		hidden:    hidden,
@@ -145,20 +152,17 @@ func (m CalendarListDialogModel) refresh() CalendarListDialogModel {
 }
 
 func (m CalendarListDialogModel) buildActions() []ListDialogAction {
-	actions := []ListDialogAction{
-		{Label: "New", Primary: true, Msg: func() tea.Msg { return CalendarDialogRequestedMsg{ID: 0} }},
-	}
 	id, ok := m.selectedID()
 	if !ok {
-		return actions
+		return nil
 	}
 	info := m.calendars[id]
-	return append(actions,
-		ListDialogAction{Label: "Edit", Msg: func() tea.Msg { return CalendarDialogRequestedMsg{ID: id} }},
-		ListDialogAction{Label: "Delete", Danger: true, Msg: func() tea.Msg {
+	return []ListDialogAction{
+		{Label: "Edit", Msg: func() tea.Msg { return CalendarDialogRequestedMsg{ID: id} }},
+		{Label: "Delete", Danger: true, Msg: func() tea.Msg {
 			return CalendarDeleteRequestedMsg{ID: id, Name: info.Name}
 		}},
-	)
+	}
 }
 
 func (m CalendarListDialogModel) shortHelp() []key.Binding {
@@ -243,6 +247,9 @@ func (m CalendarListDialogModel) handleKey(msg tea.KeyPressMsg) (CalendarListDia
 func (m CalendarListDialogModel) handleMouse(msg tea.MouseClickMsg) (CalendarListDialogModel, tea.Cmd) {
 	if msg.Button != tea.MouseLeft {
 		return m, nil
+	}
+	if cmd, ok := m.shell.TitleActionAtPosition(msg.X, msg.Y); ok {
+		return m, cmd
 	}
 	if idx, ok := m.shell.RowAtPosition(msg.X, msg.Y); ok {
 		m.shell = m.shell.ClickRow(idx)

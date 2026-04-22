@@ -67,6 +67,7 @@ const (
 // here so each dialog collapses to its domain concerns.
 type ListDialogModel struct {
 	title         string
+	titleAction   *ListDialogAction
 	rows          []string
 	detailLines   []string
 	emptyList     string
@@ -94,6 +95,14 @@ func NewListDialogModel(h help.Model) ListDialogModel {
 
 func (m ListDialogModel) SetSize(w, h int) ListDialogModel        { m.width, m.height = w, h; return m }
 func (m ListDialogModel) SetTitle(t string) ListDialogModel       { m.title = t; return m }
+
+// SetTitleAction installs a right-aligned button on the title line, or clears
+// it when a is nil. Use for creation actions ("New", …) that belong to the
+// dialog as a whole rather than the currently selected row.
+func (m ListDialogModel) SetTitleAction(a *ListDialogAction) ListDialogModel {
+	m.titleAction = a
+	return m
+}
 func (m ListDialogModel) SetSelectedColor(c color.Color) ListDialogModel {
 	m.selectedColor = c
 	return m
@@ -383,10 +392,7 @@ func (m ListDialogModel) View() string {
 	innerH := max(boxH-3, 6)
 	bodyH := max(innerH-4, 3)
 
-	title := lipgloss.NewStyle().
-		Bold(true).
-		Width(innerW).
-		Render(m.title)
+	title := m.renderTitleRow(innerW)
 
 	m.help.SetWidth(innerW)
 	helpText := lipgloss.NewStyle().
@@ -540,6 +546,52 @@ func (m ListDialogModel) renderDetails(w, h int) string {
 	}
 	details := padLines(lines, w, detailsH)
 	return details + "\n" + actionBar(actionsLine, w)
+}
+
+// renderTitleRow composes the bold title with the optional right-aligned
+// title-action button, falling back to just the title when no action is set.
+func (m ListDialogModel) renderTitleRow(innerW int) string {
+	if m.titleAction == nil {
+		return lipgloss.NewStyle().Bold(true).Width(innerW).Render(m.title)
+	}
+	btn := renderTitleActionButton(*m.titleAction)
+	btnW := lipgloss.Width(btn)
+	titleW := max(innerW-btnW, 0)
+	titleStr := lipgloss.NewStyle().
+		Bold(true).
+		Width(titleW).
+		Render(truncateTo(m.title, titleW))
+	return lipgloss.JoinHorizontal(lipgloss.Top, titleStr, btn)
+}
+
+// renderTitleActionButton renders a title-line button without the trailing
+// margin-right cell used by action-bar buttons so it sits flush with the
+// dialog's right edge.
+func renderTitleActionButton(a ListDialogAction) string {
+	style := DefaultButtonStyles().Primary.Normal.UnsetMarginRight()
+	return style.Render(a.Label)
+}
+
+// TitleActionAtPosition reports whether (x, y) lies within the title-line
+// action button and, if so, returns its command.
+func (m ListDialogModel) TitleActionAtPosition(x, y int) (tea.Cmd, bool) {
+	if m.titleAction == nil || m.width <= 0 || m.height <= 0 {
+		return nil, false
+	}
+	boxW, boxH := m.boxSize()
+	innerW := max(boxW-5, 10)
+	dialogX := (m.width - boxW) / 2
+	dialogY := (m.height - boxH) / 2
+	titleY := dialogY + 2
+	if y != titleY {
+		return nil, false
+	}
+	btnW := lipgloss.Width(renderTitleActionButton(*m.titleAction))
+	btnStartX := dialogX + 2 + innerW - btnW
+	if x < btnStartX || x >= btnStartX+btnW {
+		return nil, false
+	}
+	return m.titleAction.Msg, true
 }
 
 // HandleKey is the shell's handler for keys it cares about (navigation, tab,
