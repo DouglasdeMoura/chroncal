@@ -321,11 +321,11 @@ func printDetailInt(w io.Writer, width int, label string, value int64) {
 	printDetailField(w, width, label, fmt.Sprintf("%d", value))
 }
 
-func printDetailCount(w io.Writer, width int, label string, count int) {
+func printDetailCount(w io.Writer, label string, count int) {
 	if count <= 0 {
 		return
 	}
-	printDetailField(w, width, label, fmt.Sprintf("%d", count))
+	printDetailField(w, 10, label, fmt.Sprintf("%d", count))
 }
 
 func formatEventDetailWhen(start, end time.Time, allDay bool) string {
@@ -552,8 +552,8 @@ func printEventDetail(w io.Writer, e event.Event, showDate bool) {
 	printDetailInt(w, labelWidth, "calendar", e.CalendarID)
 	printDetailInt(w, labelWidth, "id", e.ID)
 	printDetailField(w, labelWidth, "uid", e.UID)
-	printDetailCount(w, labelWidth, "reminders", len(e.Alarms))
-	printDetailCount(w, labelWidth, "participants", len(e.Attendees))
+	printDetailCount(w, "reminders", len(e.Alarms))
+	printDetailCount(w, "participants", len(e.Attendees))
 }
 
 func printEvents(w io.Writer, events []event.Event) {
@@ -724,9 +724,9 @@ func printTodo(w io.Writer, t todo.Todo) {
 	printDetailInt(w, labelWidth, "calendar", t.CalendarID)
 	printDetailInt(w, labelWidth, "id", t.ID)
 	printDetailField(w, labelWidth, "uid", t.UID)
-	printDetailCount(w, labelWidth, "reminders", len(t.Alarms))
-	printDetailCount(w, labelWidth, "participants", len(t.Attendees))
-	printDetailCount(w, labelWidth, "attachments", len(t.Attachments))
+	printDetailCount(w, "reminders", len(t.Alarms))
+	printDetailCount(w, "participants", len(t.Attendees))
+	printDetailCount(w, "attachments", len(t.Attachments))
 	printDetailField(w, labelWidth, "comments", fmtStrings(t.Comments))
 	printDetailField(w, labelWidth, "contacts", fmtStrings(t.Contacts))
 	printDetailField(w, labelWidth, "resources", fmtStrings(t.Resources))
@@ -827,8 +827,8 @@ func printJournal(w io.Writer, j journal.Journal) {
 	printDetailInt(w, labelWidth, "calendar", j.CalendarID)
 	printDetailInt(w, labelWidth, "id", j.ID)
 	printDetailField(w, labelWidth, "uid", j.UID)
-	printDetailCount(w, labelWidth, "participants", len(j.Attendees))
-	printDetailCount(w, labelWidth, "attachments", len(j.Attachments))
+	printDetailCount(w, "participants", len(j.Attendees))
+	printDetailCount(w, "attachments", len(j.Attachments))
 	printDetailField(w, labelWidth, "comments", fmtStrings(j.Comments))
 	printDetailField(w, labelWidth, "contacts", fmtStrings(j.Contacts))
 	printDetailField(w, labelWidth, "relations", fmtModelRelations(j.Relations))
