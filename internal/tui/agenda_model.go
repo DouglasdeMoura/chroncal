@@ -753,6 +753,7 @@ func buildAgendaRows(events []event.Event, start time.Time, days int, showEmpty 
 			continue
 		}
 		if mk := monthKey(d); mk != prevMonth && mk != firstMonth {
+			rows = append(rows, agendaRow{day: d, separator: true})
 			rows = append(rows, agendaRow{day: d, monthHeader: true})
 			rows = append(rows, agendaRow{day: d, separator: true})
 		}
