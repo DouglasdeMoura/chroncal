@@ -67,11 +67,11 @@ func (m HelpDialogModel) sections() []helpSection {
 		{
 			title: "Global",
 			entries: []helpEntry{
-				{"/  ·  ctrl+k", "command palette"},
+				{"/ · ctrl+k", "command palette"},
 				{"?", "this help"},
 				{"q", "quit"},
 				{"ctrl+c", "force quit"},
-				{"tab  ·  shift+tab", "switch focus (main ↔ sidebar)"},
+				{"tab · shift+tab", "switch focus (main ↔ sidebar)"},
 				{"\\", "toggle sidebar"},
 			},
 		},
@@ -89,9 +89,9 @@ func (m HelpDialogModel) sections() []helpSection {
 		{
 			title: "Navigation",
 			entries: []helpEntry{
-				{"↑ ↓ ← →  ·  h j k l", "move cursor / scroll"},
-				{"[  ·  pgup", "previous week / month"},
-				{"]  ·  pgdn", "next week / month"},
+				{"↑↓←→ · hjkl", "move cursor / scroll"},
+				{"[ · pgup", "previous week / month"},
+				{"] · pgdn", "next week / month"},
 				{"enter", "select day / view event"},
 				{"e", "toggle empty days (agenda)"},
 			},
@@ -107,8 +107,8 @@ func (m HelpDialogModel) sections() []helpSection {
 		{
 			title: "Command palette",
 			entries: []helpEntry{
-				{"↑ ↓  ·  ctrl+k/j", "move selection"},
-				{"pgup  ·  pgdn", "jump by page"},
+				{"↑↓ · ctrl+k/j", "move selection"},
+				{"pgup · pgdn", "jump by page"},
 				{"enter", "run command"},
 				{"esc", "close"},
 			},
@@ -119,10 +119,10 @@ func (m HelpDialogModel) sections() []helpSection {
 				{"e", "edit"},
 				{"d", "duplicate"},
 				{"t", "delete"},
-				{"y  ·  n  ·  m", "RSVP yes / no / maybe"},
-				{"tab  ·  shift+tab", "cycle sections"},
-				{"← →  ·  h l", "previous / next event"},
-				{"esc  ·  q", "close"},
+				{"y · n · m", "RSVP yes / no / maybe"},
+				{"tab · shift+tab", "cycle sections"},
+				{"←→ · hl", "previous / next event"},
+				{"esc · q", "close"},
 			},
 		},
 		{
@@ -132,13 +132,13 @@ func (m HelpDialogModel) sections() []helpSection {
 				{"e", "edit"},
 				{"t", "delete"},
 				{"space", "toggle visibility"},
-				{"↑ ↓  ·  tab", "move selection"},
+				{"↑↓ · tab", "move selection"},
 			},
 		},
 		{
 			title: "Forms & editors",
 			entries: []helpEntry{
-				{"tab  ·  shift+tab", "next / previous field"},
+				{"tab · shift+tab", "next / previous field"},
 				{"enter", "confirm / submit"},
 				{"ctrl+s", "save"},
 				{"esc", "cancel / close"},
