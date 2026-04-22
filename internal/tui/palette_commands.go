@@ -58,6 +58,13 @@ func buildPaletteCommands(m Model) []PaletteCommand {
 			Action:   func() tea.Msg { return SwitchViewMsg{Mode: viewDay} },
 		},
 		{
+			ID:       "view.agenda",
+			Title:    "Agenda View",
+			Category: "View",
+			Shortcut: "a",
+			Action:   func() tea.Msg { return SwitchViewMsg{Mode: viewAgenda} },
+		},
+		{
 			ID:       "calendar.new",
 			Title:    "Add Calendar",
 			Category: "Calendar",

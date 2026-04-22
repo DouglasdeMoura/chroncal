@@ -38,6 +38,7 @@ const (
 	viewMonth viewMode = iota
 	viewWeek
 	viewDay
+	viewAgenda
 )
 
 type appKeyMap struct {
@@ -45,6 +46,7 @@ type appKeyMap struct {
 	MonthView      key.Binding
 	WeekView       key.Binding
 	DayView        key.Binding
+	AgendaView     key.Binding
 	Sidebar        key.Binding
 	Create         key.Binding
 	SwitchFocus    key.Binding
@@ -61,6 +63,7 @@ func defaultAppKeys() appKeyMap {
 		MonthView:      key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "month")),
 		WeekView:       key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "week")),
 		DayView:        key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "day")),
+		AgendaView:     key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "agenda")),
 		Sidebar:        key.NewBinding(key.WithKeys("\\"), key.WithHelp("\\", "sidebar")),
 		Create:         key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "new")),
 		SwitchFocus:    key.NewBinding(key.WithKeys("tab", "shift+tab"), key.WithHelp("tab", "switch focus")),
@@ -171,6 +174,7 @@ type Model struct {
 	calendar       CalendarModel
 	week           WeekModel
 	day            DayModel
+	agenda         AgendaModel
 	events         []event.Event
 	calendars      map[int64]CalendarInfo
 	dialog         EventDialogModel
@@ -240,6 +244,8 @@ func NewModel(a *app.App) Model {
 		vm = viewWeek
 	case "day":
 		vm = viewDay
+	case "agenda":
+		vm = viewAgenda
 	}
 	sb := NewSidebarModel(NewMiniMonthModel(now), NewCalendarListModel(nil, hidden))
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
@@ -250,6 +256,7 @@ func NewModel(a *app.App) Model {
 		calendar:        NewCalendarModel(now),
 		week:            NewWeekModel(now),
 		day:             NewDayModel(now),
+		agenda:          NewAgendaModel(now),
 		showSidebar:     ui.ShowSidebar,
 		hiddenCalendars: hidden,
 		focus:           focusCalendar,
@@ -269,6 +276,10 @@ func (m Model) loadEvents() tea.Cmd {
 		start := m.week.WeekStartDate()
 		from = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.UTC)
 		to = from.AddDate(0, 0, 7)
+	case viewAgenda:
+		d := m.agenda.WindowStart()
+		from = time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC)
+		to = from.AddDate(0, 0, AgendaWindowDays)
 	default:
 		month := m.calendar.Month()
 		from = time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, time.UTC)
@@ -589,6 +600,8 @@ func (m Model) navigateMainTo(t time.Time) Model {
 		m.day.cursor = t
 	case viewWeek:
 		m.week.cursor = t
+	case viewAgenda:
+		m.agenda.cursor = t
 	default:
 		m.calendar.cursor = t
 		m.calendar.month = time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, t.Location())
@@ -604,7 +617,25 @@ func (m Model) refreshCalendarViews() Model {
 	m.calendar = m.calendar.SetEvents(calEvents)
 	m.week = m.week.SetEvents(calEvents)
 	m.day = m.day.SetEvents(calEvents)
+	m.agenda = m.agenda.SetEvents(filterVisibleEvents(m.events, m.hiddenCalendars), m.calendars)
 	return m
+}
+
+// filterVisibleEvents drops events whose calendar is currently hidden so the
+// agenda row list stays in sync with the toggle set without mutating the
+// original slice.
+func filterVisibleEvents(events []event.Event, hidden map[int64]bool) []event.Event {
+	if len(hidden) == 0 {
+		return events
+	}
+	out := make([]event.Event, 0, len(events))
+	for _, e := range events {
+		if hidden[e.CalendarID] {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 func (m Model) Init() tea.Cmd {
@@ -748,6 +779,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.calendar = m.calendar.SetSelectedColor(m.theme.Text)
 		m.week = m.week.SetSelectedColor(m.theme.Text)
 		m.day = m.day.SetSelectedColor(m.theme.Text)
+		m.agenda = m.agenda.SetTheme(m.theme)
 		m.sidebar = m.sidebar.SetTheme(m.theme)
 		return m, nil
 
@@ -758,6 +790,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.calendar = m.calendar.SetSize(iw, ih)
 		m.week = m.week.SetSize(iw, ih)
 		m.day = m.day.SetSize(iw, ih)
+		m.agenda = m.agenda.SetSize(iw, ih)
 		m.dialog = m.dialog.SetSize(m.width, m.height)
 		m.viewDialog = m.viewDialog.SetSize(m.width, m.height)
 		m.confirmDialog = m.confirmDialog.SetSize(m.width, m.height)
@@ -778,6 +811,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.day = m.day.SetEvents(calEvents)
 		case viewWeek:
 			m.week = m.week.SetEvents(calEvents)
+		case viewAgenda:
+			m.agenda = m.agenda.SetEvents(filterVisibleEvents(msg.events, m.hiddenCalendars), m.calendars)
 		default:
 			m.calendar = m.calendar.SetEvents(calEvents)
 		}
@@ -816,6 +851,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.loadEvents()
 
 	case DayChangedMsg:
+		return m, m.loadEvents()
+
+	case AgendaCursorChangedMsg:
 		return m, m.loadEvents()
 
 	case CalendarDaySelectedMsg:
@@ -1666,6 +1704,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.switchToView(viewWeek)
 		case key.Matches(msg, m.keys.DayView):
 			return m.switchToView(viewDay)
+		case key.Matches(msg, m.keys.AgendaView):
+			return m.switchToView(viewAgenda)
 		case key.Matches(msg, m.keys.Sidebar):
 			return m.toggleSidebar()
 		case key.Matches(msg, m.keys.CalendarCreate):
@@ -1700,6 +1740,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cursor = m.day.Cursor()
 			case viewWeek:
 				cursor = m.week.Cursor()
+			case viewAgenda:
+				cursor = m.agenda.SelectedDay()
 			default:
 				cursor = m.calendar.Cursor()
 			}
@@ -1718,6 +1760,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case viewWeek:
 				var cmd tea.Cmd
 				m.week, cmd = m.week.Update(msg)
+				return m, cmd
+			case viewAgenda:
+				var cmd tea.Cmd
+				m.agenda, cmd = m.agenda.Update(msg)
 				return m, cmd
 			default:
 				var cmd tea.Cmd
@@ -1757,6 +1803,8 @@ func (m Model) View() tea.View {
 		mainContent = m.day.View()
 	case viewWeek:
 		mainContent = m.week.View()
+	case viewAgenda:
+		mainContent = m.agenda.View()
 	default:
 		mainContent = m.calendar.View()
 	}
@@ -1926,6 +1974,8 @@ func (m Model) viewCursorAndToday() (time.Time, time.Time) {
 		return m.day.cursor, m.day.today
 	case viewWeek:
 		return m.week.cursor, m.week.today
+	case viewAgenda:
+		return m.agenda.cursor, m.agenda.today
 	default:
 		return m.calendar.cursor, m.calendar.today
 	}
@@ -1952,6 +2002,9 @@ func (m Model) switchToView(mode viewMode) (tea.Model, tea.Cmd) {
 	case viewDay:
 		m.day.cursor = cursor
 		m.day.today = today
+	case viewAgenda:
+		m.agenda.cursor = cursor
+		m.agenda.today = today
 	}
 	return m, m.switchView()
 }
@@ -1967,6 +2020,9 @@ func (m Model) goToToday() (tea.Model, tea.Cmd) {
 	case viewWeek:
 		m.week.cursor = today
 		m.week.today = today
+	case viewAgenda:
+		m.agenda.cursor = today
+		m.agenda.today = today
 	default:
 		m.calendar.cursor = today
 		m.calendar.today = today
@@ -1987,6 +2043,7 @@ func (m Model) toggleSidebar() (tea.Model, tea.Cmd) {
 	m.calendar = m.calendar.SetSize(iw, ih)
 	m.week = m.week.SetSize(iw, ih)
 	m.day = m.day.SetSize(iw, ih)
+	m.agenda = m.agenda.SetSize(iw, ih)
 	m.saveUIState()
 	return m, nil
 }
@@ -2007,6 +2064,7 @@ func (m *Model) switchView() tea.Cmd {
 	m.calendar = m.calendar.SetSize(iw, ih)
 	m.week = m.week.SetSize(iw, ih)
 	m.day = m.day.SetSize(iw, ih)
+	m.agenda = m.agenda.SetSize(iw, ih)
 	m.saveUIState()
 	return m.loadEvents()
 }
@@ -2018,6 +2076,8 @@ func (m Model) saveUIState() {
 		vm = "week"
 	case viewDay:
 		vm = "day"
+	case viewAgenda:
+		vm = "agenda"
 	default:
 		vm = "month"
 	}
