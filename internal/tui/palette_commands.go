@@ -79,6 +79,13 @@ func buildPaletteCommands(m Model) []PaletteCommand {
 			Action:   func() tea.Msg { return CalendarListDialogRequestedMsg{} },
 		},
 		{
+			ID:       "calendar.sync",
+			Title:    "Sync All Calendars",
+			Category: "Calendar",
+			Shortcut: "s",
+			Action:   func() tea.Msg { return SyncAllRequestedMsg{} },
+		},
+		{
 			ID:       "ui.sidebar",
 			Title:    "Toggle Sidebar",
 			Category: "View",
