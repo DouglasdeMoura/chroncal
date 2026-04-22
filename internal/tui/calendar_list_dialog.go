@@ -30,7 +30,6 @@ func defaultCalendarListDialogKeys() calendarListDialogKeyMap {
 		Edit:   key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
 		Delete: key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "delete")),
 		New:    key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new")),
-		Sync:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sync")),
 	}
 }
 
