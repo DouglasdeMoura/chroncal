@@ -82,8 +82,8 @@ type paletteKeyMap struct {
 
 func defaultPaletteKeys() paletteKeyMap {
 	return paletteKeyMap{
-		Up:     key.NewBinding(key.WithKeys("up", "ctrl+p", "ctrl+k")),
-		Down:   key.NewBinding(key.WithKeys("down", "ctrl+n", "ctrl+j")),
+		Up:     key.NewBinding(key.WithKeys("up", "ctrl+k")),
+		Down:   key.NewBinding(key.WithKeys("down", "ctrl+j")),
 		Enter:  key.NewBinding(key.WithKeys("enter")),
 		Close:  key.NewBinding(key.WithKeys("esc")),
 		PgUp:   key.NewBinding(key.WithKeys("pgup")),
