@@ -17,6 +17,20 @@ import (
 // AgendaWindowDays is the number of days rendered forward from the cursor.
 const AgendaWindowDays = 30
 
+// agendaWheelStep is the number of rows advanced per mouse-wheel tick.
+const agendaWheelStep = 3
+
+// Fixed column widths for the agenda row layout. Kept as constants so the
+// renderer and any layout tweaks stay in sync.
+const (
+	agendaDayColWidth  = 8  // "Wed  22 " or "Wed  22 " with today badge
+	agendaDotColWidth  = 3  // " ● "
+	agendaTimeColWidth = 13 // "09:00–10:30  " / "All day      "
+	agendaTitleCalGap  = 2  // spaces between title and right-aligned calendar
+	agendaMaxCalendar  = 18 // soft cap on the right-aligned calendar column
+	agendaLeftPad      = 0  // leading space in front of the day column
+)
+
 // AgendaCursorChangedMsg is emitted when the cursor moves to a new day, so
 // the host model can reload events for the new agenda window.
 type AgendaCursorChangedMsg struct{ Day time.Time }
@@ -47,16 +61,18 @@ func defaultAgendaKeys() agendaKeyMap {
 	}
 }
 
-// agendaRow is one rendered line in the agenda list. Rows are either a day
-// header (non-selectable) or an event row (selectable). Empty days surface
-// as a muted "No events" row so the cursor date is always visible.
+// agendaRow is one rendered line in the agenda. Event rows are selectable
+// and show the dot/time/title/calendar layout; separator rows are blank
+// spacers drawn between day groups; monthHeader rows repeat the top-of-
+// view title at each month boundary reached while scrolling forward.
 type agendaRow struct {
-	header    bool
-	day       time.Time
-	event     event.Event
-	dayIndex  int // 1-based position within a multi-day span
-	totalDays int
-	emptyDay  bool // true when the row is a placeholder for a day with no events
+	day         time.Time
+	event       event.Event
+	dayIndex    int // 1-based position within a multi-day span
+	totalDays   int
+	firstOfDay  bool
+	separator   bool
+	monthHeader bool
 }
 
 type AgendaModel struct {
@@ -65,7 +81,7 @@ type AgendaModel struct {
 	events    []event.Event
 	calendars map[int64]CalendarInfo
 	rows      []agendaRow
-	selected  int // index into rows; always points at a selectable row when any exist
+	selected  int // index into rows; -1 when empty
 	scroll    int
 	keys      agendaKeyMap
 	theme     Theme
@@ -78,9 +94,10 @@ type AgendaModel struct {
 func NewAgendaModel(today time.Time) AgendaModel {
 	t := today.Local()
 	return AgendaModel{
-		cursor: t,
-		today:  t,
-		keys:   defaultAgendaKeys(),
+		cursor:   t,
+		today:    t,
+		selected: -1,
+		keys:     defaultAgendaKeys(),
 	}
 }
 
@@ -128,7 +145,7 @@ func (m AgendaModel) SetEvents(events []event.Event, calendars map[int64]Calenda
 }
 
 // SelectedDay returns the day associated with the current selection, falling
-// back to the cursor when no row is selectable.
+// back to the cursor when no row is selected.
 func (m AgendaModel) SelectedDay() time.Time {
 	if m.selected >= 0 && m.selected < len(m.rows) {
 		return m.rows[m.selected].day
@@ -136,18 +153,21 @@ func (m AgendaModel) SelectedDay() time.Time {
 	return m.cursor
 }
 
-// SelectedEvent returns the event under the cursor, when the selected row is
-// an event row.
+// SelectedEvent returns the event under the cursor, when the selected row
+// is an event row (not a separator or month header).
 func (m AgendaModel) SelectedEvent() (event.Event, bool) {
 	if m.selected < 0 || m.selected >= len(m.rows) {
 		return event.Event{}, false
 	}
 	r := m.rows[m.selected]
-	if r.header || r.emptyDay {
+	if !isEventRow(r) {
 		return event.Event{}, false
 	}
 	return r.event, true
 }
+
+// isEventRow reports whether r is selectable (i.e., carries an event).
+func isEventRow(r agendaRow) bool { return !r.separator && !r.monthHeader }
 
 func (m AgendaModel) Update(msg tea.Msg) (AgendaModel, tea.Cmd) {
 	kp, ok := msg.(tea.KeyPressMsg)
@@ -206,83 +226,203 @@ func (m AgendaModel) View() string {
 	viewportH := max(m.height-headerLines, 1)
 
 	var out strings.Builder
-	out.WriteString(lipgloss.NewStyle().Bold(true).Width(m.width).Align(lipgloss.Left).
-		Render(fmt.Sprintf("Agenda · %s", m.cursor.Format("Monday, January 2, 2006"))))
-	out.WriteString("\n\n")
 
 	if len(m.rows) == 0 {
-		out.WriteString(lipgloss.NewStyle().Faint(true).Render("No events in the next 30 days."))
+		headerDay := m.cursor
+		out.WriteString(m.renderMonthHeader(headerDay))
+		out.WriteString("\n\n")
+		out.WriteString(lipgloss.NewStyle().Foreground(m.theme.TextDim).Render("  No events in the next 30 days."))
 		return out.String()
 	}
 
 	start := min(max(m.scroll, 0), m.maxScroll(viewportH))
 	end := min(start+viewportH, len(m.rows))
 
+	// Drive the fixed top header from the first visible row that carries a
+	// day, so scrolling past a month break updates the sticky title.
+	headerDay := m.cursor
 	for i := start; i < end; i++ {
-		if i > start {
+		if !m.rows[i].day.IsZero() {
+			headerDay = m.rows[i].day
+			break
+		}
+	}
+	out.WriteString(m.renderMonthHeader(headerDay))
+	out.WriteString("\n\n")
+
+	// Skip the leading run of separators / matching-month headers at the
+	// top of the viewport: the sticky header already names that month, so
+	// re-rendering them would just duplicate it. Extend end by the
+	// skipped count to keep the viewport filled.
+	activeMonth := monthKey(headerDay)
+	renderStart := start
+	for renderStart < end {
+		r := m.rows[renderStart]
+		if r.separator {
+			renderStart++
+			continue
+		}
+		if r.monthHeader && monthKey(r.day) == activeMonth {
+			renderStart++
+			continue
+		}
+		break
+	}
+	end = min(end+(renderStart-start), len(m.rows))
+
+	for i := renderStart; i < end; i++ {
+		if i > renderStart {
 			out.WriteByte('\n')
 		}
-		out.WriteString(m.renderRow(m.rows[i], i == m.selected))
+		if m.rows[i].separator {
+			out.WriteString(lipgloss.NewStyle().Width(m.width).Render(""))
+			continue
+		}
+		if m.rows[i].monthHeader {
+			out.WriteString(m.renderMonthHeader(m.rows[i].day))
+			continue
+		}
+		out.WriteString(m.renderEventRow(m.rows[i], i == m.selected))
 	}
 	return out.String()
 }
 
-func (m AgendaModel) renderRow(r agendaRow, selected bool) string {
-	if r.header {
-		return m.renderHeader(r.day)
-	}
-	if r.emptyDay {
-		return lipgloss.NewStyle().
-			Foreground(m.theme.TextDim).
-			Faint(true).
-			Width(m.width).
-			Render("  — no events —")
-	}
-	return m.renderEventRow(r, selected)
+// renderMonthHeader formats an in-list month title using the same style
+// as the top-of-view header so month transitions read clearly.
+func (m AgendaModel) renderMonthHeader(d time.Time) string {
+	style := lipgloss.NewStyle().Bold(true).Foreground(m.theme.Text)
+	return lipgloss.NewStyle().Width(m.width).Render(style.Render(d.Format("January 2006")))
 }
 
-func (m AgendaModel) renderHeader(d time.Time) string {
-	label := d.Format("Monday, Jan 2")
-	style := lipgloss.NewStyle().Bold(true)
-	if sameDay(d, m.today) {
-		label += " · Today"
-		style = style.Foreground(m.theme.Today)
-	} else if sameDay(d, m.cursor) {
-		style = style.Foreground(m.theme.Primary)
-	}
-	return style.Width(m.width).Render(label)
-}
-
+// renderEventRow composes a single agenda line.
 func (m AgendaModel) renderEventRow(r agendaRow, selected bool) string {
 	ev := r.event
-	timeCol := formatTimeColumnMulti(ev, r.dayIndex, r.totalDays)
+
+	dayCol := m.renderDayColumn(r)
 
 	cal := m.calendars[ev.CalendarID]
-	swatchColor := lipgloss.Color("8")
+	dotColor := m.theme.Muted
 	if cal.Color != "" {
-		swatchColor = lipgloss.Color(cal.Color)
+		dotColor = lipgloss.Color(cal.Color)
 	}
-	swatch := lipgloss.NewStyle().Foreground(swatchColor).Render("●")
+	dot := lipgloss.NewStyle().Foreground(dotColor).Render(Glyphs["dot"])
+
+	timeText := agendaTimeText(ev, r.dayIndex, r.totalDays)
+	timeStyle := lipgloss.NewStyle().Foreground(m.theme.TextDim).Width(agendaTimeColWidth)
+	if ev.AllDay {
+		timeStyle = timeStyle.Italic(true)
+	}
+	timeCol := timeStyle.Render(timeText)
 
 	title := ev.Title
 	if r.totalDays > 1 {
 		title += fmt.Sprintf(" (day %d/%d)", r.dayIndex, r.totalDays)
 	}
 
-	line := fmt.Sprintf("  %s  %s  %s", timeCol, swatch, title)
-	if cal.Name != "" {
-		suffix := lipgloss.NewStyle().Foreground(m.theme.TextDim).Render(" [" + cal.Name + "]")
-		line += suffix
+	calLabel := cal.Name
+
+	fixedLeft := agendaLeftPad + agendaDayColWidth + 1 + agendaDotColWidth + agendaTimeColWidth
+	available := max(m.width-fixedLeft, 1)
+
+	// Drop the calendar label on very narrow widths so the title keeps its
+	// full run before truncation takes over.
+	calW := 0
+	if calLabel != "" && available >= 20 {
+		calW = min(lipgloss.Width(calLabel), agendaMaxCalendar)
 	}
 
-	style := lipgloss.NewStyle().Width(m.width)
-	if selected {
-		style = style.Background(m.selectedColor).Foreground(m.theme.Text).Bold(true)
+	titleW := available
+	if calW > 0 {
+		titleW = max(available-agendaTitleCalGap-calW, 1)
 	}
-	return style.Render(line)
+	titleCol := lipgloss.NewStyle().
+		Foreground(m.theme.Text).
+		Width(titleW).
+		Render(truncateTo(title, titleW))
+
+	rightCol := ""
+	if calW > 0 {
+		rightCol = strings.Repeat(" ", agendaTitleCalGap) +
+			lipgloss.NewStyle().Foreground(m.theme.TextDim).Render(truncateTo(calLabel, calW))
+	}
+
+	line := strings.Repeat(" ", agendaLeftPad) +
+		dayCol +
+		" " +
+		lipgloss.NewStyle().Width(agendaDotColWidth).Render(" "+dot+" ") +
+		timeCol +
+		titleCol +
+		rightCol
+
+	rowStyle := lipgloss.NewStyle().Width(m.width)
+	if selected {
+		rowStyle = rowStyle.Background(m.selectedColor).Foreground(m.theme.Text).Bold(true)
+	}
+	return rowStyle.Render(line)
 }
 
-// ensureVisible scrolls the viewport so the selected row is in view.
+// renderDayColumn returns the 8-column-wide day label shown at the start of
+// the first event row of a calendar day. Continuation rows get a blank
+// column. Today's day number is rendered in a filled pill using the theme
+// "today" color.
+func (m AgendaModel) renderDayColumn(r agendaRow) string {
+	if !r.firstOfDay {
+		return strings.Repeat(" ", agendaDayColWidth)
+	}
+	d := r.day
+	weekday := d.Format("Mon")
+	dayNum := fmt.Sprintf("%d", d.Day())
+
+	isToday := sameDay(d, m.today)
+	isCursor := sameDay(d, m.cursor) && !isToday
+
+	var weekdayStyle, numStyle lipgloss.Style
+	switch {
+	case isToday:
+		weekdayStyle = lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
+		numStyle = lipgloss.NewStyle().
+			Background(m.theme.Primary).
+			Foreground(m.theme.Surface).
+			Bold(true).
+			PaddingRight(1)
+	case isCursor:
+		weekdayStyle = lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
+		numStyle = lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
+	default:
+		weekdayStyle = lipgloss.NewStyle().Foreground(m.theme.TextDim)
+		numStyle = lipgloss.NewStyle().Foreground(m.theme.Text).Bold(true)
+	}
+
+	body := numStyle.Render(dayNum) + " " + weekdayStyle.Render(weekday)
+	return lipgloss.NewStyle().Width(agendaDayColWidth).Render(body)
+}
+
+// agendaTimeText produces the compact time-column text for an event on a
+// given day of its span.
+func agendaTimeText(ev event.Event, dayIndex, totalDays int) string {
+	if ev.AllDay {
+		return "All day"
+	}
+	if totalDays <= 1 {
+		start := ev.StartTime.Local().Format("15:04")
+		if ev.EndTime.IsZero() {
+			return start
+		}
+		return start + "–" + ev.EndTime.Local().Format("15:04")
+	}
+	switch dayIndex {
+	case 1:
+		return ev.StartTime.Local().Format("15:04") + " " + Glyphs["time.arrow"]
+	case totalDays:
+		return Glyphs["time.arrow"] + " " + ev.EndTime.Local().Format("15:04")
+	default:
+		return "cont. " + Glyphs["time.arrow"]
+	}
+}
+
+// ensureVisible scrolls the viewport so the selected row is in view. When
+// the selected row is the first event of a day and a separator precedes
+// it, the separator is kept in view too.
 func (m *AgendaModel) ensureVisible() {
 	headerLines := 2
 	viewportH := max(m.height-headerLines, 1)
@@ -290,10 +430,8 @@ func (m *AgendaModel) ensureVisible() {
 		m.scroll = 0
 		return
 	}
-	// Keep the day header above the selected event in view too, when it's
-	// adjacent.
 	target := m.selected
-	if target > 0 && m.rows[target-1].header {
+	for target > 0 && !isEventRow(m.rows[target-1]) {
 		target--
 	}
 	if target < m.scroll {
@@ -322,9 +460,39 @@ func (m AgendaModel) maxScroll(viewportH int) int {
 	return max(len(m.rows)-viewportH, 0)
 }
 
-// buildAgendaRows expands events into selectable rows grouped by day headers,
-// covering the window [start, start+days). Events that span multiple days
-// produce one row per day in the window they touch.
+// ScrollBy advances the viewport by delta rows (positive scrolls down,
+// negative scrolls up) without moving the selection. Used by the mouse
+// wheel so scrolling feels decoupled from keyboard-driven selection.
+func (m *AgendaModel) ScrollBy(delta int) {
+	m.scroll += delta
+	m.clampScroll()
+}
+
+// HandleClick routes a mouse click at (x, y) — in agenda-local
+// coordinates — to the event row under the cursor. When the click lands
+// on an event row, selection moves to that row and an
+// EventViewRequestedMsg is returned so the host opens the view dialog,
+// mirroring the Enter key binding.
+func (m AgendaModel) HandleClick(_, y int) (AgendaModel, tea.Cmd) {
+	headerLines := 2
+	if y < headerLines {
+		return m, nil
+	}
+	viewportH := max(m.height-headerLines, 1)
+	start := min(max(m.scroll, 0), m.maxScroll(viewportH))
+	idx := start + (y - headerLines)
+	if idx < 0 || idx >= len(m.rows) || !isEventRow(m.rows[idx]) {
+		return m, nil
+	}
+	m.selected = idx
+	ev := m.rows[idx].event
+	return m, func() tea.Msg { return EventViewRequestedMsg{Event: ev} }
+}
+
+// buildAgendaRows expands events into per-day rows covering the window
+// [start, start+days). Events that span multiple days produce one row per
+// day they touch. The first event of each day is tagged firstOfDay so the
+// renderer can show the day-column label above it.
 func buildAgendaRows(events []event.Event, start time.Time, days int) []agendaRow {
 	end := start.AddDate(0, 0, days)
 
@@ -360,6 +528,9 @@ func buildAgendaRows(events []event.Event, start time.Time, days int) []agendaRo
 	}
 
 	var rows []agendaRow
+	first := true
+	firstMonth := monthKey(start)
+	prevMonth := ""
 	for i := range days {
 		d := start.AddDate(0, 0, i)
 		key := d.Format("2006-01-02")
@@ -367,47 +538,58 @@ func buildAgendaRows(events []event.Event, start time.Time, days int) []agendaRo
 		if len(entries) == 0 {
 			continue
 		}
-		rows = append(rows, agendaRow{header: true, day: d})
-		for _, entry := range entries {
+		if !first {
+			rows = append(rows, agendaRow{day: d, separator: true})
+		}
+		first = false
+		if mk := monthKey(d); mk != prevMonth && mk != firstMonth {
+			rows = append(rows, agendaRow{day: d, monthHeader: true})
+			rows = append(rows, agendaRow{day: d, separator: true})
+		}
+		prevMonth = monthKey(d)
+		for j, entry := range entries {
 			rows = append(rows, agendaRow{
-				day:       d,
-				event:     entry.ev,
-				dayIndex:  entry.dayIndex,
-				totalDays: entry.totalDays,
+				day:        d,
+				event:      entry.ev,
+				dayIndex:   entry.dayIndex,
+				totalDays:  entry.totalDays,
+				firstOfDay: j == 0,
 			})
 		}
 	}
 	return rows
 }
 
-// nextSelectable returns the next row index that isn't a day header, wrapping
-// at the end.
+func monthKey(t time.Time) string { return t.Format("2006-01") }
+
+// nextSelectable returns the next event-row index.
 func nextSelectable(rows []agendaRow, from int) int {
 	for i := from + 1; i < len(rows); i++ {
-		if !rows[i].header && !rows[i].emptyDay {
+		if isEventRow(rows[i]) {
 			return i
 		}
 	}
 	return from
 }
 
+// prevSelectable returns the previous event-row index.
 func prevSelectable(rows []agendaRow, from int) int {
 	for i := from - 1; i >= 0; i-- {
-		if !rows[i].header && !rows[i].emptyDay {
+		if isEventRow(rows[i]) {
 			return i
 		}
 	}
 	return from
 }
 
-// firstSelectableOnOrAfter returns the first event-row index whose day is on
-// or after the cursor. Falls back to the first selectable row, or -1 when
-// none exist.
+// firstSelectableOnOrAfter returns the first event-row index whose day is
+// on or after the cursor. Falls back to the first selectable row, or -1
+// when rows has none.
 func firstSelectableOnOrAfter(rows []agendaRow, cursor time.Time) int {
 	anchor := time.Date(cursor.Year(), cursor.Month(), cursor.Day(), 0, 0, 0, 0, cursor.Location())
 	first := -1
 	for i, r := range rows {
-		if r.header || r.emptyDay {
+		if !isEventRow(r) {
 			continue
 		}
 		if first < 0 {

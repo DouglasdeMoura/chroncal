@@ -1571,6 +1571,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.day.scrollOffset = ms
 					}
 				}
+			case viewAgenda:
+				switch msg.Button {
+				case tea.MouseWheelUp:
+					m.agenda.ScrollBy(-agendaWheelStep)
+				case tea.MouseWheelDown:
+					m.agenda.ScrollBy(agendaWheelStep)
+				}
 			default:
 				// viewMonth: no wheel scrolling
 			}
@@ -1650,6 +1657,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.clickedEventID = m.week.EventAtPosition(msg.X-ox, msg.Y-oy)
 			var cmd tea.Cmd
 			m.week, cmd = m.week.selectDay(day)
+			return m, cmd
+		case viewAgenda:
+			var cmd tea.Cmd
+			m.agenda, cmd = m.agenda.HandleClick(msg.X-ox, msg.Y-oy)
 			return m, cmd
 		default:
 			day, ok := m.calendar.DayAtPosition(msg.X-ox, msg.Y-oy)
