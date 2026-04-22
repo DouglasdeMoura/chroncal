@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"slices"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -319,5 +320,88 @@ func calendarDetailLines(info CalendarInfo, w, labelWidth int) []string {
 		lines = append(lines, detailLine(faint, "Owner", info.OwnerEmail, labelWidth, w))
 	}
 
+	lines = append(lines, detailLine(faint, "Events", formatEventCount(info.EventCount), labelWidth, w))
+
+	lines = append(lines, detailLine(faint, "Source", formatCalendarSource(info.Synced), labelWidth, w))
+
+	if info.Synced {
+		lines = append(lines, detailLine(faint, "Last sync", formatSyncTimestamp(info.LastSyncAt), labelWidth, w))
+		if info.LastSyncError != "" {
+			errStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#f38ba8"))
+			lines = append(lines, detailLine(faint, "Error", errStyle.Render(info.LastSyncError), labelWidth, w))
+		}
+	}
+
+	if !info.CreatedAt.IsZero() {
+		lines = append(lines, detailLine(faint, "Created", formatCalendarDate(info.CreatedAt), labelWidth, w))
+	}
+	if !info.UpdatedAt.IsZero() && !info.UpdatedAt.Equal(info.CreatedAt) {
+		lines = append(lines, detailLine(faint, "Updated", formatCalendarDate(info.UpdatedAt), labelWidth, w))
+	}
+
+	if info.Description != "" {
+		lines = append(lines, "")
+		for raw := range strings.SplitSeq(info.Description, "\n") {
+			lines = append(lines, wrapLine(raw, w)...)
+		}
+	}
+
 	return lines
+}
+
+func formatEventCount(n int64) string {
+	switch n {
+	case 0:
+		return "No events"
+	case 1:
+		return "1 event"
+	default:
+		return fmt.Sprintf("%d events", n)
+	}
+}
+
+func formatCalendarSource(synced bool) string {
+	if synced {
+		return "CalDAV"
+	}
+	return "Local only"
+}
+
+func formatSyncTimestamp(ts string) string {
+	if ts == "" {
+		return "Never"
+	}
+	t, err := time.Parse(time.RFC3339, ts)
+	if err != nil {
+		return ts
+	}
+	rel := formatRelativeTime(time.Since(t))
+	abs := t.Local().Format("2006-01-02 15:04")
+	return fmt.Sprintf("%s (%s)", rel, abs)
+}
+
+func formatCalendarDate(t time.Time) string {
+	return t.Local().Format("2006-01-02")
+}
+
+// formatRelativeTime clamps negative durations (future timestamps from clock
+// skew) to "just now" so they don't render as nonsense like "-3m ago".
+func formatRelativeTime(d time.Duration) string {
+	if d < time.Minute {
+		return "just now"
+	}
+	switch {
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	case d < 7*24*time.Hour:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	case d < 30*24*time.Hour:
+		return fmt.Sprintf("%dw ago", int(d.Hours()/(24*7)))
+	case d < 365*24*time.Hour:
+		return fmt.Sprintf("%dmo ago", int(d.Hours()/(24*30)))
+	default:
+		return fmt.Sprintf("%dy ago", int(d.Hours()/(24*365)))
+	}
 }

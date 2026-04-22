@@ -79,12 +79,19 @@ type dialogAction struct {
 
 // CalendarInfo holds the display-relevant fields of a calendar.
 type CalendarInfo struct {
-	Name       string
-	Color      string
-	OwnerEmail string
+	Name        string
+	Color       string
+	OwnerEmail  string
+	Description string
+	EventCount  int64
 	// Synced reports whether the calendar is linked to a CalDAV account.
 	// Drives opportunistic save-time push: local-only calendars skip it.
-	Synced bool
+	Synced              bool
+	LastSyncAt          string // RFC 3339, empty when never synced
+	LastSyncAttemptedAt string // RFC 3339, empty when never attempted
+	LastSyncError       string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 const narrowThreshold = 90

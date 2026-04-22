@@ -427,17 +427,26 @@ func clipEventToDay(e event.Event, day time.Time) (time.Time, time.Time) {
 
 func (m Model) loadCalendars() tea.Cmd {
 	return func() tea.Msg {
-		cals, err := m.app.Calendars.List(context.Background())
+		ctx := context.Background()
+		cals, err := m.app.Calendars.List(ctx)
 		if err != nil {
 			return calendarsLoadedMsg{err: err}
 		}
 		info := make(map[int64]CalendarInfo, len(cals))
 		for _, c := range cals {
+			count, _ := m.app.Events.CountByCalendar(ctx, c.ID)
 			info[c.ID] = CalendarInfo{
-				Name:       c.Name,
-				Color:      c.Color,
-				OwnerEmail: c.OwnerEmail,
-				Synced:     c.AccountID != 0,
+				Name:                c.Name,
+				Color:               c.Color,
+				OwnerEmail:          c.OwnerEmail,
+				Description:         c.Description,
+				EventCount:          count,
+				Synced:              c.AccountID != 0,
+				LastSyncAt:          c.LastSyncAt,
+				LastSyncAttemptedAt: c.LastSyncAttemptedAt,
+				LastSyncError:       c.LastSyncError,
+				CreatedAt:           c.CreatedAt,
+				UpdatedAt:           c.UpdatedAt,
 			}
 		}
 		return calendarsLoadedMsg{calendars: info}
