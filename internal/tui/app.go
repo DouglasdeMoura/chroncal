@@ -602,6 +602,7 @@ func (m Model) navigateMainTo(t time.Time) Model {
 		m.week.cursor = t
 	case viewAgenda:
 		m.agenda.cursor = t
+		m.agenda = m.agenda.ResetWindow(t)
 	default:
 		m.calendar.cursor = t
 		m.calendar.month = time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, t.Location())
@@ -854,6 +855,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.loadEvents()
 
 	case AgendaCursorChangedMsg:
+		m.agenda = m.agenda.ResetWindow(msg.Day)
+		return m, m.loadEvents()
+
+	case AgendaReloadMsg:
 		return m, m.loadEvents()
 
 	case CalendarDaySelectedMsg:
@@ -1572,12 +1577,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			case viewAgenda:
+				var cmd tea.Cmd
 				switch msg.Button {
 				case tea.MouseWheelUp:
-					m.agenda.ScrollBy(-agendaWheelStep)
+					cmd = m.agenda.ScrollBy(-agendaWheelStep)
 				case tea.MouseWheelDown:
-					m.agenda.ScrollBy(agendaWheelStep)
+					cmd = m.agenda.ScrollBy(agendaWheelStep)
 				}
+				return m, cmd
 			default:
 				// viewMonth: no wheel scrolling
 			}
@@ -2016,6 +2023,7 @@ func (m Model) switchToView(mode viewMode) (tea.Model, tea.Cmd) {
 	case viewAgenda:
 		m.agenda.cursor = cursor
 		m.agenda.today = today
+		m.agenda = m.agenda.ResetWindow(cursor)
 	}
 	return m, m.switchView()
 }
@@ -2034,6 +2042,7 @@ func (m Model) goToToday() (tea.Model, tea.Cmd) {
 	case viewAgenda:
 		m.agenda.cursor = today
 		m.agenda.today = today
+		m.agenda = m.agenda.ResetWindow(today)
 	default:
 		m.calendar.cursor = today
 		m.calendar.today = today

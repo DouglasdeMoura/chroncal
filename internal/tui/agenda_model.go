@@ -14,8 +14,16 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/event"
 )
 
-// AgendaWindowDays is the number of days rendered forward from the cursor.
-const AgendaWindowDays = 30
+// Agenda window sizing constants. The window grows as the user scrolls
+// near either edge (infinite scroll) but is clamped to AgendaMaxWindow
+// days so memory stays bounded — when one side expands past the cap,
+// the opposite edge is trimmed. Initial loads use AgendaWindowDays.
+const (
+	AgendaWindowDays  = 30
+	AgendaExpandStep  = 30
+	AgendaMaxWindow   = 120
+	AgendaPreloadRows = 6
+)
 
 // agendaWheelStep is the number of rows advanced per mouse-wheel tick.
 const agendaWheelStep = 3
@@ -35,29 +43,35 @@ const (
 // the host model can reload events for the new agenda window.
 type AgendaCursorChangedMsg struct{ Day time.Time }
 
+// AgendaReloadMsg is emitted when the agenda's window bounds changed
+// (e.g., the user scrolled near an edge and the window grew to preload
+// more events). The host should re-query events for the current
+// WindowStart()..WindowEnd() range and push them back via SetEvents.
+type AgendaReloadMsg struct{}
+
 type agendaKeyMap struct {
-	Up       key.Binding
-	Down     key.Binding
-	PrevDay  key.Binding
-	NextDay  key.Binding
-	PrevWeek key.Binding
-	NextWeek key.Binding
-	Today    key.Binding
-	Select   key.Binding
-	Create   key.Binding
+	Up        key.Binding
+	Down      key.Binding
+	PrevDay   key.Binding
+	NextDay   key.Binding
+	PrevMonth key.Binding
+	NextMonth key.Binding
+	Today     key.Binding
+	Select    key.Binding
+	Create    key.Binding
 }
 
 func defaultAgendaKeys() agendaKeyMap {
 	return agendaKeyMap{
-		Up:       key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "previous")),
-		Down:     key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "next")),
-		PrevDay:  key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "prev day")),
-		NextDay:  key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next day")),
-		PrevWeek: key.NewBinding(key.WithKeys("[", "pgup"), key.WithHelp("[", "prev week")),
-		NextWeek: key.NewBinding(key.WithKeys("]", "pgdown"), key.WithHelp("]", "next week")),
-		Today:    key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "today")),
-		Select:   key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter", "view")),
-		Create:   key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "new")),
+		Up:        key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "previous")),
+		Down:      key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "next")),
+		PrevDay:   key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "prev day")),
+		NextDay:   key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next day")),
+		PrevMonth: key.NewBinding(key.WithKeys("[", "pgup"), key.WithHelp("[", "prev month")),
+		NextMonth: key.NewBinding(key.WithKeys("]", "pgdown"), key.WithHelp("]", "next month")),
+		Today:     key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "today")),
+		Select:    key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter", "view")),
+		Create:    key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "new")),
 	}
 }
 
@@ -76,41 +90,72 @@ type agendaRow struct {
 }
 
 type AgendaModel struct {
-	cursor    time.Time
-	today     time.Time
-	events    []event.Event
-	calendars map[int64]CalendarInfo
-	rows      []agendaRow
-	selected  int // index into rows; -1 when empty
-	scroll    int
-	keys      agendaKeyMap
-	theme     Theme
-	width     int
-	height    int
+	cursor      time.Time
+	today       time.Time
+	windowStart time.Time // inclusive, day-aligned
+	windowEnd   time.Time // exclusive, day-aligned
+	events      []event.Event
+	calendars   map[int64]CalendarInfo
+	rows        []agendaRow
+	selected    int // index into rows; -1 when empty
+	scroll      int
+	keys        agendaKeyMap
+	theme       Theme
+	width       int
+	height      int
 	// selectedColor highlights the focused event row. Set to theme.Selected.
 	selectedColor color.Color
+	// anchorDay, when non-zero, is the day the agenda wants to scroll back
+	// to after the next SetEvents — used to keep the viewport stable across
+	// infinite-scroll window expansions.
+	anchorDay time.Time
+	// reloadPending prevents firing a second AgendaReloadMsg while the
+	// previous one is still in-flight; it's cleared by SetEvents.
+	reloadPending bool
 }
 
 func NewAgendaModel(today time.Time) AgendaModel {
-	t := today.Local()
+	t := dayAligned(today.Local())
 	return AgendaModel{
-		cursor:   t,
-		today:    t,
-		selected: -1,
-		keys:     defaultAgendaKeys(),
+		cursor:      t,
+		today:       t,
+		windowStart: t,
+		windowEnd:   t.AddDate(0, 0, AgendaWindowDays),
+		selected:    -1,
+		keys:        defaultAgendaKeys(),
 	}
 }
 
 func (m AgendaModel) Cursor() time.Time { return m.cursor }
 
 // WindowStart returns the first day included in the current agenda window.
-func (m AgendaModel) WindowStart() time.Time {
-	return time.Date(m.cursor.Year(), m.cursor.Month(), m.cursor.Day(), 0, 0, 0, 0, m.cursor.Location())
-}
+func (m AgendaModel) WindowStart() time.Time { return m.windowStart }
 
 // WindowEnd returns the exclusive end of the current agenda window.
-func (m AgendaModel) WindowEnd() time.Time {
-	return m.WindowStart().AddDate(0, 0, AgendaWindowDays)
+func (m AgendaModel) WindowEnd() time.Time { return m.windowEnd }
+
+// ResetWindow re-centers the window around day with the default initial
+// size. Use this after a "jump" navigation (today, sidebar click,
+// h/l/[/] keys) so the next load reads a tight range around the target.
+func (m AgendaModel) ResetWindow(day time.Time) AgendaModel {
+	d := dayAligned(day)
+	m.windowStart = d
+	m.windowEnd = d.AddDate(0, 0, AgendaWindowDays)
+	m.anchorDay = time.Time{}
+	m.reloadPending = false
+	return m
+}
+
+func dayAligned(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+}
+
+func firstOfMonth(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, t.Location())
+}
+
+func daysBetween(a, b time.Time) int {
+	return int(b.Sub(a).Hours()/24 + 0.5)
 }
 
 func (m AgendaModel) SetSize(w, h int) AgendaModel {
@@ -132,14 +177,33 @@ func (m AgendaModel) SetSelectedColor(c color.Color) AgendaModel {
 }
 
 // SetEvents updates the cached event slice, the calendar info used for color
-// and name lookups, and rebuilds the rendered rows. Selection is kept on the
-// first event on or after the cursor day so view switches / reloads don't
-// drop the user mid-list.
+// and name lookups, and rebuilds the rendered rows. When an anchor day was
+// set (e.g., by an infinite-scroll expansion), selection + scroll restore
+// to that day so the viewport stays visually stable across reloads;
+// otherwise selection falls back to the first event on or after the
+// cursor day.
 func (m AgendaModel) SetEvents(events []event.Event, calendars map[int64]CalendarInfo) AgendaModel {
 	m.events = events
 	m.calendars = calendars
-	m.rows = buildAgendaRows(events, m.WindowStart(), AgendaWindowDays)
-	m.selected = firstSelectableOnOrAfter(m.rows, m.cursor)
+	days := daysBetween(m.windowStart, m.windowEnd)
+	if days < 1 {
+		days = AgendaWindowDays
+	}
+	m.rows = buildAgendaRows(events, m.windowStart, days)
+	anchor := m.anchorDay
+	m.anchorDay = time.Time{}
+	m.reloadPending = false
+	if !anchor.IsZero() {
+		idx := firstSelectableOnOrAfter(m.rows, anchor)
+		if idx >= 0 {
+			m.selected = idx
+			m.scroll = idx
+		} else {
+			m.selected = firstSelectableOnOrAfter(m.rows, m.cursor)
+		}
+	} else {
+		m.selected = firstSelectableOnOrAfter(m.rows, m.cursor)
+	}
 	m.clampScroll()
 	return m
 }
@@ -179,19 +243,19 @@ func (m AgendaModel) Update(msg tea.Msg) (AgendaModel, tea.Cmd) {
 	case key.Matches(kp, m.keys.Up):
 		m.selected = prevSelectable(m.rows, m.selected)
 		m.ensureVisible()
-		return m, nil
+		return m, m.maybeExpandBackward()
 	case key.Matches(kp, m.keys.Down):
 		m.selected = nextSelectable(m.rows, m.selected)
 		m.ensureVisible()
-		return m, nil
+		return m, m.maybeExpandForward()
 	case key.Matches(kp, m.keys.PrevDay):
-		return m.moveCursor(-1)
+		return m.moveCursor(m.cursor.AddDate(0, 0, -1))
 	case key.Matches(kp, m.keys.NextDay):
-		return m.moveCursor(1)
-	case key.Matches(kp, m.keys.PrevWeek):
-		return m.moveCursor(-7)
-	case key.Matches(kp, m.keys.NextWeek):
-		return m.moveCursor(7)
+		return m.moveCursor(m.cursor.AddDate(0, 0, 1))
+	case key.Matches(kp, m.keys.PrevMonth):
+		return m.moveCursor(firstOfMonth(m.cursor).AddDate(0, -1, 0))
+	case key.Matches(kp, m.keys.NextMonth):
+		return m.moveCursor(firstOfMonth(m.cursor).AddDate(0, 1, 0))
 	case key.Matches(kp, m.keys.Today):
 		if sameDay(m.cursor, m.today) {
 			return m, nil
@@ -203,6 +267,10 @@ func (m AgendaModel) Update(msg tea.Msg) (AgendaModel, tea.Cmd) {
 		if ev, ok := m.SelectedEvent(); ok {
 			return m, func() tea.Msg { return EventViewRequestedMsg{Event: ev} }
 		}
+		if len(m.rows) == 0 {
+			day := m.SelectedDay()
+			return m, func() tea.Msg { return EventCreateMsg{Day: day} }
+		}
 		return m, nil
 	case key.Matches(kp, m.keys.Create):
 		day := m.SelectedDay()
@@ -211,8 +279,8 @@ func (m AgendaModel) Update(msg tea.Msg) (AgendaModel, tea.Cmd) {
 	return m, nil
 }
 
-func (m AgendaModel) moveCursor(deltaDays int) (AgendaModel, tea.Cmd) {
-	m.cursor = m.cursor.AddDate(0, 0, deltaDays)
+func (m AgendaModel) moveCursor(to time.Time) (AgendaModel, tea.Cmd) {
+	m.cursor = to
 	cursor := m.cursor
 	return m, func() tea.Msg { return AgendaCursorChangedMsg{Day: cursor} }
 }
@@ -231,7 +299,9 @@ func (m AgendaModel) View() string {
 		headerDay := m.cursor
 		out.WriteString(m.renderMonthHeader(headerDay))
 		out.WriteString("\n\n")
-		out.WriteString(lipgloss.NewStyle().Foreground(m.theme.TextDim).Render("  No events in the next 30 days."))
+		out.WriteString(lipgloss.NewStyle().Foreground(m.theme.TextDim).Render("No events this month."))
+		out.WriteString("\n\n")
+		out.WriteString(DefaultButtonStyles().Primary.Normal.Render("+ Create event"))
 		return out.String()
 	}
 
@@ -463,19 +533,105 @@ func (m AgendaModel) maxScroll(viewportH int) int {
 // ScrollBy advances the viewport by delta rows (positive scrolls down,
 // negative scrolls up) without moving the selection. Used by the mouse
 // wheel so scrolling feels decoupled from keyboard-driven selection.
-func (m *AgendaModel) ScrollBy(delta int) {
+// Returns a reload command only when the scroll direction matched an
+// edge the window can still grow toward.
+func (m *AgendaModel) ScrollBy(delta int) tea.Cmd {
+	if delta == 0 {
+		return nil
+	}
 	m.scroll += delta
 	m.clampScroll()
+	if delta < 0 {
+		return m.maybeExpandBackward()
+	}
+	return m.maybeExpandForward()
+}
+
+// maybeExpandBackward grows the window toward older dates when the
+// scroll or selection is within AgendaPreloadRows of the top. Trims
+// the far edge if the cap would be exceeded. Returns a reload command
+// only when the window actually changed; stamps an anchor day so
+// SetEvents can restore the viewport.
+func (m *AgendaModel) maybeExpandBackward() tea.Cmd {
+	if m.reloadPending || len(m.rows) == 0 {
+		return nil
+	}
+	atTop := m.scroll <= AgendaPreloadRows ||
+		(m.selected >= 0 && m.selected <= AgendaPreloadRows)
+	if !atTop {
+		return nil
+	}
+	newStart := m.windowStart.AddDate(0, 0, -AgendaExpandStep)
+	newEnd := m.windowEnd
+	if daysBetween(newStart, newEnd) > AgendaMaxWindow {
+		newEnd = newStart.AddDate(0, 0, AgendaMaxWindow)
+	}
+	if newStart.Equal(m.windowStart) && newEnd.Equal(m.windowEnd) {
+		return nil
+	}
+	m.windowStart, m.windowEnd = newStart, newEnd
+	m.stampAnchor()
+	m.reloadPending = true
+	return func() tea.Msg { return AgendaReloadMsg{} }
+}
+
+// maybeExpandForward is the mirror of maybeExpandBackward for the
+// bottom edge.
+func (m *AgendaModel) maybeExpandForward() tea.Cmd {
+	if m.reloadPending || len(m.rows) == 0 {
+		return nil
+	}
+	viewportH := m.viewportH()
+	maxScroll := m.maxScroll(viewportH)
+	atBottom := (maxScroll > 0 && m.scroll >= maxScroll-AgendaPreloadRows) ||
+		(m.selected >= 0 && m.selected >= len(m.rows)-AgendaPreloadRows)
+	if !atBottom {
+		return nil
+	}
+	newEnd := m.windowEnd.AddDate(0, 0, AgendaExpandStep)
+	newStart := m.windowStart
+	if daysBetween(newStart, newEnd) > AgendaMaxWindow {
+		newStart = newEnd.AddDate(0, 0, -AgendaMaxWindow)
+	}
+	if newStart.Equal(m.windowStart) && newEnd.Equal(m.windowEnd) {
+		return nil
+	}
+	m.windowStart, m.windowEnd = newStart, newEnd
+	m.stampAnchor()
+	m.reloadPending = true
+	return func() tea.Msg { return AgendaReloadMsg{} }
+}
+
+func (m *AgendaModel) stampAnchor() {
+	switch {
+	case m.scroll >= 0 && m.scroll < len(m.rows):
+		m.anchorDay = m.rows[m.scroll].day
+	case m.selected >= 0 && m.selected < len(m.rows):
+		m.anchorDay = m.rows[m.selected].day
+	}
+}
+
+func (m AgendaModel) viewportH() int {
+	return max(m.height-2, 1)
 }
 
 // HandleClick routes a mouse click at (x, y) — in agenda-local
 // coordinates — to the event row under the cursor. When the click lands
 // on an event row, selection moves to that row and an
 // EventViewRequestedMsg is returned so the host opens the view dialog,
-// mirroring the Enter key binding.
-func (m AgendaModel) HandleClick(_, y int) (AgendaModel, tea.Cmd) {
+// mirroring the Enter key binding. In the empty state, clicks on the
+// "+ Create event" button emit EventCreateMsg instead.
+func (m AgendaModel) HandleClick(x, y int) (AgendaModel, tea.Cmd) {
 	headerLines := 2
 	if y < headerLines {
+		return m, nil
+	}
+	if len(m.rows) == 0 {
+		btnW, btnY := m.emptyButtonBounds()
+		if y == btnY && x >= 2 && x < 2+btnW {
+			day := m.SelectedDay()
+			return m, func() tea.Msg { return EventCreateMsg{Day: day} }
+		}
 		return m, nil
 	}
 	viewportH := max(m.height-headerLines, 1)
@@ -487,6 +643,14 @@ func (m AgendaModel) HandleClick(_, y int) (AgendaModel, tea.Cmd) {
 	m.selected = idx
 	ev := m.rows[idx].event
 	return m, func() tea.Msg { return EventViewRequestedMsg{Event: ev} }
+}
+
+// emptyButtonBounds returns the visible width and local Y-line of the
+// "+ Create event" button rendered in the empty state.
+func (m AgendaModel) emptyButtonBounds() (int, int) {
+	btn := DefaultButtonStyles().Primary.Normal.Render("+ Create event")
+	// Header(1) + blank(1) + "No events"(1) + blank(1) + button line = y=4.
+	return lipgloss.Width(btn), 4
 }
 
 // buildAgendaRows expands events into per-day rows covering the window
