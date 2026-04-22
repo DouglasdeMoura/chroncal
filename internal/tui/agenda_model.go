@@ -448,35 +448,43 @@ func (m AgendaModel) renderMonthHeader(d time.Time) string {
 // selected, surfaces a "+ Create event" affordance to invite the user
 // to create on that day.
 func (m AgendaModel) renderEmptyDayRow(r agendaRow, selected bool) string {
-	dayCol := m.renderDayColumn(r)
-	line := strings.Repeat(" ", agendaLeftPad) + dayCol
+	base := lipgloss.NewStyle()
 	if selected {
-		gap := strings.Repeat(" ", 1+agendaDotColWidth)
-		hint := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true).Render("+ Create event")
+		base = base.Background(m.selectedColor)
+	}
+	dayCol := m.renderDayColumn(r, base, selected)
+	line := base.Render(strings.Repeat(" ", agendaLeftPad)) + dayCol
+	if selected {
+		gap := base.Render(strings.Repeat(" ", 1+agendaDotColWidth))
+		hint := base.Foreground(m.theme.Primary).Bold(true).Render("+ Create event")
 		line += gap + hint
 	}
-	rowStyle := lipgloss.NewStyle().Width(m.width)
-	if selected {
-		rowStyle = rowStyle.Background(m.selectedColor).Foreground(m.theme.Text)
-	}
-	return rowStyle.Render(line)
+	return base.Width(m.width).Foreground(m.theme.Text).Render(line)
 }
 
-// renderEventRow composes a single agenda line.
+// renderEventRow composes a single agenda line. When selected, the row's
+// background is propagated to every inner segment so the selection
+// highlight spans the full width without gaps where styled foregrounds
+// would otherwise emit ANSI resets.
 func (m AgendaModel) renderEventRow(r agendaRow, selected bool) string {
 	ev := r.event
 
-	dayCol := m.renderDayColumn(r)
+	base := lipgloss.NewStyle()
+	if selected {
+		base = base.Background(m.selectedColor).Bold(true)
+	}
+
+	dayCol := m.renderDayColumn(r, base, selected)
 
 	cal := m.calendars[ev.CalendarID]
 	dotColor := m.theme.Muted
 	if cal.Color != "" {
 		dotColor = lipgloss.Color(cal.Color)
 	}
-	dot := lipgloss.NewStyle().Foreground(dotColor).Render(Glyphs["dot"])
+	dot := base.Foreground(dotColor).Render(Glyphs["dot"])
 
 	timeText := agendaTimeText(ev, r.dayIndex, r.totalDays)
-	timeStyle := lipgloss.NewStyle().Foreground(m.theme.TextDim).Width(agendaTimeColWidth)
+	timeStyle := base.Foreground(m.theme.TextDim).Width(agendaTimeColWidth)
 	if ev.AllDay {
 		timeStyle = timeStyle.Italic(true)
 	}
@@ -489,32 +497,29 @@ func (m AgendaModel) renderEventRow(r agendaRow, selected bool) string {
 
 	fixedLeft := agendaLeftPad + agendaDayColWidth + 1 + agendaDotColWidth + agendaTimeColWidth
 	titleW := max(m.width-fixedLeft, 1)
-	titleCol := lipgloss.NewStyle().
+	titleCol := base.
 		Foreground(m.theme.Text).
 		Width(titleW).
 		Render(truncateTo(title, titleW))
 
-	line := strings.Repeat(" ", agendaLeftPad) +
+	line := base.Render(strings.Repeat(" ", agendaLeftPad)) +
 		dayCol +
-		" " +
-		lipgloss.NewStyle().Width(agendaDotColWidth).Render(" "+dot+" ") +
+		base.Render(" ") +
+		base.Width(agendaDotColWidth).Render(" "+dot+" ") +
 		timeCol +
 		titleCol
 
-	rowStyle := lipgloss.NewStyle().Width(m.width)
-	if selected {
-		rowStyle = rowStyle.Background(m.selectedColor).Foreground(m.theme.Text).Bold(true)
-	}
-	return rowStyle.Render(line)
+	return base.Width(m.width).Render(line)
 }
 
 // renderDayColumn returns the 8-column-wide day label shown at the start of
 // the first event row of a calendar day. Continuation rows get a blank
 // column. Today's day number is rendered in a filled pill using the theme
-// "today" color.
-func (m AgendaModel) renderDayColumn(r agendaRow) string {
+// "today" color — except when selected, where the pill is dropped so the
+// selection background paints the full cell without a competing fill.
+func (m AgendaModel) renderDayColumn(r agendaRow, base lipgloss.Style, selected bool) string {
 	if !r.firstOfDay {
-		return strings.Repeat(" ", agendaDayColWidth)
+		return base.Render(strings.Repeat(" ", agendaDayColWidth))
 	}
 	d := r.day
 	weekday := d.Format("Mon")
@@ -525,23 +530,26 @@ func (m AgendaModel) renderDayColumn(r agendaRow) string {
 
 	var weekdayStyle, numStyle lipgloss.Style
 	switch {
-	case isToday:
-		weekdayStyle = lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
+	case isToday && !selected:
+		weekdayStyle = base.Foreground(m.theme.Primary).Bold(true)
 		numStyle = lipgloss.NewStyle().
 			Background(m.theme.Primary).
 			Foreground(m.theme.Surface).
 			Bold(true).
 			PaddingRight(1)
+	case isToday:
+		weekdayStyle = base.Foreground(m.theme.Primary).Bold(true)
+		numStyle = base.Foreground(m.theme.Primary).Bold(true).PaddingRight(1)
 	case isCursor:
-		weekdayStyle = lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
-		numStyle = lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
+		weekdayStyle = base.Foreground(m.theme.Primary).Bold(true)
+		numStyle = base.Foreground(m.theme.Primary).Bold(true)
 	default:
-		weekdayStyle = lipgloss.NewStyle().Foreground(m.theme.TextDim)
-		numStyle = lipgloss.NewStyle().Foreground(m.theme.Text).Bold(true)
+		weekdayStyle = base.Foreground(m.theme.TextDim)
+		numStyle = base.Foreground(m.theme.Text).Bold(true)
 	}
 
-	body := numStyle.Render(dayNum) + " " + weekdayStyle.Render(weekday)
-	return lipgloss.NewStyle().Width(agendaDayColWidth).Render(body)
+	body := numStyle.Render(dayNum) + base.Render(" ") + weekdayStyle.Render(weekday)
+	return base.Width(agendaDayColWidth).Render(body)
 }
 
 // agendaTimeText produces the compact time-column text for an event on a
