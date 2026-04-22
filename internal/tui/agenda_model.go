@@ -198,11 +198,12 @@ func (m AgendaModel) SetShowEmptyDays(v bool) AgendaModel {
 }
 
 // SetEvents updates the cached event slice, the calendar info used for color
-// and name lookups, and rebuilds the rendered rows. When an anchor day was
-// set (e.g., by an infinite-scroll expansion), selection + scroll restore
-// to that day so the viewport stays visually stable across reloads;
-// otherwise selection falls back to the first event on or after the
-// cursor day.
+// and name lookups, and rebuilds the rendered rows. The previously-selected
+// event is re-located by identity so background reloads and infinite-scroll
+// expansions don't yank the user's selection away; when an anchor day was
+// set (by an edge expansion), scroll also restores to that day so the
+// viewport stays visually stable. Falls back to the cursor day when there
+// was no prior selection.
 func (m AgendaModel) SetEvents(events []event.Event, calendars map[int64]CalendarInfo) AgendaModel {
 	m.events = events
 	m.calendars = calendars
@@ -210,20 +211,58 @@ func (m AgendaModel) SetEvents(events []event.Event, calendars map[int64]Calenda
 	if days < 1 {
 		days = AgendaWindowDays
 	}
+
+	// Snapshot the current selection by identity so we can re-find it in
+	// the rebuilt rows.
+	var prevDay, prevStart time.Time
+	var prevID int64
+	var prevEmpty, hadSel bool
+	if m.selected >= 0 && m.selected < len(m.rows) {
+		r := m.rows[m.selected]
+		prevDay = r.day
+		prevEmpty = r.emptyDay
+		prevID = r.event.ID
+		prevStart = r.event.StartTime
+		hadSel = true
+	}
+
 	m.rows = buildAgendaRows(events, m.windowStart, days, m.showEmptyDays)
 	anchor := m.anchorDay
 	m.anchorDay = time.Time{}
 	m.reloadPending = false
-	if !anchor.IsZero() {
-		idx := firstSelectableOnOrAfter(m.rows, anchor)
-		if idx >= 0 {
-			m.selected = idx
-			m.scroll = idx
-		} else {
-			m.selected = firstSelectableOnOrAfter(m.rows, m.cursor)
+
+	m.selected = -1
+	if hadSel {
+		for i, r := range m.rows {
+			if !isSelectableRow(r) || !sameDay(r.day, prevDay) {
+				continue
+			}
+			if prevEmpty && r.emptyDay {
+				m.selected = i
+				break
+			}
+			if !prevEmpty && !r.emptyDay &&
+				r.event.ID == prevID && r.event.StartTime.Equal(prevStart) {
+				m.selected = i
+				break
+			}
 		}
-	} else {
-		m.selected = firstSelectableOnOrAfter(m.rows, m.cursor)
+		if m.selected < 0 {
+			m.selected = firstSelectableOnOrAfter(m.rows, prevDay)
+		}
+	}
+	if m.selected < 0 {
+		fallback := anchor
+		if fallback.IsZero() {
+			fallback = m.cursor
+		}
+		m.selected = firstSelectableOnOrAfter(m.rows, fallback)
+	}
+
+	if !anchor.IsZero() {
+		if idx := firstSelectableOnOrAfter(m.rows, anchor); idx >= 0 {
+			m.scroll = idx
+		}
 	}
 	m.clampScroll()
 	return m
@@ -365,28 +404,8 @@ func (m AgendaModel) View() string {
 	out.WriteString(m.renderMonthHeader(headerDay))
 	out.WriteString("\n\n")
 
-	// Skip the leading run of separators / matching-month headers at the
-	// top of the viewport: the sticky header already names that month, so
-	// re-rendering them would just duplicate it. Extend end by the
-	// skipped count to keep the viewport filled.
-	activeMonth := monthKey(headerDay)
-	renderStart := start
-	for renderStart < end {
-		r := m.rows[renderStart]
-		if r.separator {
-			renderStart++
-			continue
-		}
-		if r.monthHeader && monthKey(r.day) == activeMonth {
-			renderStart++
-			continue
-		}
-		break
-	}
-	end = min(end+(renderStart-start), len(m.rows))
-
-	for i := renderStart; i < end; i++ {
-		if i > renderStart {
+	for i := start; i < end; i++ {
+		if i > start {
 			out.WriteByte('\n')
 		}
 		if m.rows[i].separator {
