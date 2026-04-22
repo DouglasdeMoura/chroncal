@@ -50,35 +50,39 @@ type AgendaCursorChangedMsg struct{ Day time.Time }
 type AgendaReloadMsg struct{}
 
 type agendaKeyMap struct {
-	Up        key.Binding
-	Down      key.Binding
-	PrevDay   key.Binding
-	NextDay   key.Binding
-	PrevMonth key.Binding
-	NextMonth key.Binding
-	Today     key.Binding
-	Select    key.Binding
-	Create    key.Binding
+	Up          key.Binding
+	Down        key.Binding
+	PrevDay     key.Binding
+	NextDay     key.Binding
+	PrevMonth   key.Binding
+	NextMonth   key.Binding
+	Today       key.Binding
+	Select      key.Binding
+	Create      key.Binding
+	ToggleEmpty key.Binding
 }
 
 func defaultAgendaKeys() agendaKeyMap {
 	return agendaKeyMap{
-		Up:        key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "previous")),
-		Down:      key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "next")),
-		PrevDay:   key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "prev day")),
-		NextDay:   key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next day")),
-		PrevMonth: key.NewBinding(key.WithKeys("[", "pgup"), key.WithHelp("[", "prev month")),
-		NextMonth: key.NewBinding(key.WithKeys("]", "pgdown"), key.WithHelp("]", "next month")),
-		Today:     key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "today")),
-		Select:    key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter", "view")),
-		Create:    key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "new")),
+		Up:          key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "previous")),
+		Down:        key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "next")),
+		PrevDay:     key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "prev day")),
+		NextDay:     key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next day")),
+		PrevMonth:   key.NewBinding(key.WithKeys("[", "pgup"), key.WithHelp("[", "prev month")),
+		NextMonth:   key.NewBinding(key.WithKeys("]", "pgdown"), key.WithHelp("]", "next month")),
+		Today:       key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "today")),
+		Select:      key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter", "view")),
+		Create:      key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "new")),
+		ToggleEmpty: key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "empty days")),
 	}
 }
 
 // agendaRow is one rendered line in the agenda. Event rows are selectable
 // and show the dot/time/title/calendar layout; separator rows are blank
 // spacers drawn between day groups; monthHeader rows repeat the top-of-
-// view title at each month boundary reached while scrolling forward.
+// view title at each month boundary; emptyDay rows surface days with no
+// events (shown only when the toggle is on), rendered with the day
+// column and a faint "no events" label.
 type agendaRow struct {
 	day         time.Time
 	event       event.Event
@@ -87,6 +91,7 @@ type agendaRow struct {
 	firstOfDay  bool
 	separator   bool
 	monthHeader bool
+	emptyDay    bool
 }
 
 type AgendaModel struct {
@@ -112,6 +117,9 @@ type AgendaModel struct {
 	// reloadPending prevents firing a second AgendaReloadMsg while the
 	// previous one is still in-flight; it's cleared by SetEvents.
 	reloadPending bool
+	// showEmptyDays, when true, renders a placeholder row for each day
+	// in the window that has no events. Toggled by the "e" key.
+	showEmptyDays bool
 }
 
 func NewAgendaModel(today time.Time) AgendaModel {
@@ -189,7 +197,7 @@ func (m AgendaModel) SetEvents(events []event.Event, calendars map[int64]Calenda
 	if days < 1 {
 		days = AgendaWindowDays
 	}
-	m.rows = buildAgendaRows(events, m.windowStart, days)
+	m.rows = buildAgendaRows(events, m.windowStart, days, m.showEmptyDays)
 	anchor := m.anchorDay
 	m.anchorDay = time.Time{}
 	m.reloadPending = false
@@ -224,14 +232,24 @@ func (m AgendaModel) SelectedEvent() (event.Event, bool) {
 		return event.Event{}, false
 	}
 	r := m.rows[m.selected]
-	if !isEventRow(r) {
+	if !hasEvent(r) {
 		return event.Event{}, false
 	}
 	return r.event, true
 }
 
-// isEventRow reports whether r is selectable (i.e., carries an event).
-func isEventRow(r agendaRow) bool { return !r.separator && !r.monthHeader }
+// isSelectableRow reports whether r can be the current selection — event
+// rows and empty-day placeholders both qualify; separators and month
+// headers don't.
+func isSelectableRow(r agendaRow) bool {
+	return !r.separator && !r.monthHeader
+}
+
+// hasEvent reports whether r carries a real event (as opposed to an
+// empty-day placeholder).
+func hasEvent(r agendaRow) bool {
+	return isSelectableRow(r) && !r.emptyDay
+}
 
 func (m AgendaModel) Update(msg tea.Msg) (AgendaModel, tea.Cmd) {
 	kp, ok := msg.(tea.KeyPressMsg)
@@ -267,7 +285,10 @@ func (m AgendaModel) Update(msg tea.Msg) (AgendaModel, tea.Cmd) {
 		if ev, ok := m.SelectedEvent(); ok {
 			return m, func() tea.Msg { return EventViewRequestedMsg{Event: ev} }
 		}
-		if len(m.rows) == 0 {
+		// Empty list, or empty-day placeholder selected: treat Enter as
+		// "create event on the selected day".
+		if len(m.rows) == 0 ||
+			(m.selected >= 0 && m.selected < len(m.rows) && m.rows[m.selected].emptyDay) {
 			day := m.SelectedDay()
 			return m, func() tea.Msg { return EventCreateMsg{Day: day} }
 		}
@@ -275,6 +296,16 @@ func (m AgendaModel) Update(msg tea.Msg) (AgendaModel, tea.Cmd) {
 	case key.Matches(kp, m.keys.Create):
 		day := m.SelectedDay()
 		return m, func() tea.Msg { return EventCreateMsg{Day: day} }
+	case key.Matches(kp, m.keys.ToggleEmpty):
+		m.showEmptyDays = !m.showEmptyDays
+		days := daysBetween(m.windowStart, m.windowEnd)
+		if days < 1 {
+			days = AgendaWindowDays
+		}
+		m.rows = buildAgendaRows(m.events, m.windowStart, days, m.showEmptyDays)
+		m.selected = firstSelectableOnOrAfter(m.rows, m.cursor)
+		m.clampScroll()
+		return m, nil
 	}
 	return m, nil
 }
@@ -352,6 +383,10 @@ func (m AgendaModel) View() string {
 			out.WriteString(m.renderMonthHeader(m.rows[i].day))
 			continue
 		}
+		if m.rows[i].emptyDay {
+			out.WriteString(m.renderEmptyDayRow(m.rows[i], i == m.selected))
+			continue
+		}
 		out.WriteString(m.renderEventRow(m.rows[i], i == m.selected))
 	}
 	return out.String()
@@ -362,6 +397,24 @@ func (m AgendaModel) View() string {
 func (m AgendaModel) renderMonthHeader(d time.Time) string {
 	style := lipgloss.NewStyle().Bold(true).Foreground(m.theme.Text)
 	return lipgloss.NewStyle().Width(m.width).Render(style.Render(d.Format("January 2006")))
+}
+
+// renderEmptyDayRow draws a placeholder for a day with no events. When
+// selected, surfaces a "+ Create event" affordance to invite the user
+// to create on that day.
+func (m AgendaModel) renderEmptyDayRow(r agendaRow, selected bool) string {
+	dayCol := m.renderDayColumn(r)
+	line := strings.Repeat(" ", agendaLeftPad) + dayCol
+	if selected {
+		gap := strings.Repeat(" ", 1+agendaDotColWidth)
+		hint := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true).Render("+ Create event")
+		line += gap + hint
+	}
+	rowStyle := lipgloss.NewStyle().Width(m.width)
+	if selected {
+		rowStyle = rowStyle.Background(m.selectedColor).Foreground(m.theme.Text)
+	}
+	return rowStyle.Render(line)
 }
 
 // renderEventRow composes a single agenda line.
@@ -501,7 +554,7 @@ func (m *AgendaModel) ensureVisible() {
 		return
 	}
 	target := m.selected
-	for target > 0 && !isEventRow(m.rows[target-1]) {
+	for target > 0 && !isSelectableRow(m.rows[target-1]) {
 		target--
 	}
 	if target < m.scroll {
@@ -637,12 +690,16 @@ func (m AgendaModel) HandleClick(x, y int) (AgendaModel, tea.Cmd) {
 	viewportH := max(m.height-headerLines, 1)
 	start := min(max(m.scroll, 0), m.maxScroll(viewportH))
 	idx := start + (y - headerLines)
-	if idx < 0 || idx >= len(m.rows) || !isEventRow(m.rows[idx]) {
+	if idx < 0 || idx >= len(m.rows) || !isSelectableRow(m.rows[idx]) {
 		return m, nil
 	}
 	m.selected = idx
-	ev := m.rows[idx].event
-	return m, func() tea.Msg { return EventViewRequestedMsg{Event: ev} }
+	r := m.rows[idx]
+	if r.emptyDay {
+		day := r.day
+		return m, func() tea.Msg { return EventCreateMsg{Day: day} }
+	}
+	return m, func() tea.Msg { return EventViewRequestedMsg{Event: r.event} }
 }
 
 // emptyButtonBounds returns the visible width and local Y-line of the
@@ -656,8 +713,9 @@ func (m AgendaModel) emptyButtonBounds() (int, int) {
 // buildAgendaRows expands events into per-day rows covering the window
 // [start, start+days). Events that span multiple days produce one row per
 // day they touch. The first event of each day is tagged firstOfDay so the
-// renderer can show the day-column label above it.
-func buildAgendaRows(events []event.Event, start time.Time, days int) []agendaRow {
+// renderer can show the day-column label above it. When showEmpty is true,
+// days with no events get a non-selectable emptyDay placeholder row.
+func buildAgendaRows(events []event.Event, start time.Time, days int, showEmpty bool) []agendaRow {
 	end := start.AddDate(0, 0, days)
 
 	byDay := make(map[string][]eventListDayEntry)
@@ -699,7 +757,7 @@ func buildAgendaRows(events []event.Event, start time.Time, days int) []agendaRo
 		d := start.AddDate(0, 0, i)
 		key := d.Format("2006-01-02")
 		entries := byDay[key]
-		if len(entries) == 0 {
+		if len(entries) == 0 && !showEmpty {
 			continue
 		}
 		if !first {
@@ -711,6 +769,10 @@ func buildAgendaRows(events []event.Event, start time.Time, days int) []agendaRo
 			rows = append(rows, agendaRow{day: d, separator: true})
 		}
 		prevMonth = monthKey(d)
+		if len(entries) == 0 {
+			rows = append(rows, agendaRow{day: d, emptyDay: true, firstOfDay: true})
+			continue
+		}
 		for j, entry := range entries {
 			rows = append(rows, agendaRow{
 				day:        d,
@@ -726,34 +788,34 @@ func buildAgendaRows(events []event.Event, start time.Time, days int) []agendaRo
 
 func monthKey(t time.Time) string { return t.Format("2006-01") }
 
-// nextSelectable returns the next event-row index.
+// nextSelectable returns the next selectable row index.
 func nextSelectable(rows []agendaRow, from int) int {
 	for i := from + 1; i < len(rows); i++ {
-		if isEventRow(rows[i]) {
+		if isSelectableRow(rows[i]) {
 			return i
 		}
 	}
 	return from
 }
 
-// prevSelectable returns the previous event-row index.
+// prevSelectable returns the previous selectable row index.
 func prevSelectable(rows []agendaRow, from int) int {
 	for i := from - 1; i >= 0; i-- {
-		if isEventRow(rows[i]) {
+		if isSelectableRow(rows[i]) {
 			return i
 		}
 	}
 	return from
 }
 
-// firstSelectableOnOrAfter returns the first event-row index whose day is
-// on or after the cursor. Falls back to the first selectable row, or -1
-// when rows has none.
+// firstSelectableOnOrAfter returns the first selectable row index whose
+// day is on or after the cursor. Falls back to the first selectable
+// row, or -1 when rows has none.
 func firstSelectableOnOrAfter(rows []agendaRow, cursor time.Time) int {
 	anchor := time.Date(cursor.Year(), cursor.Month(), cursor.Day(), 0, 0, 0, 0, cursor.Location())
 	first := -1
 	for i, r := range rows {
-		if !isEventRow(r) {
+		if !isSelectableRow(r) {
 			continue
 		}
 		if first < 0 {
