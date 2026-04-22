@@ -392,20 +392,32 @@ func (m AgendaModel) View() string {
 	start := min(max(m.scroll, 0), m.maxScroll(viewportH))
 	end := min(start+viewportH, len(m.rows))
 
-	// Drive the fixed top header from the first visible row that carries a
-	// day, so scrolling past a month break updates the sticky title.
-	headerDay := m.cursor
-	for i := start; i < end; i++ {
-		if !m.rows[i].day.IsZero() {
+	// Sticky title uses position:sticky semantics — it reflects the most
+	// recent monthHeader at or above the viewport top, falling back to the
+	// window's first month when none has scrolled past yet.
+	headerDay := m.windowStart
+	for i := min(start, len(m.rows)-1); i >= 0; i-- {
+		if m.rows[i].monthHeader {
 			headerDay = m.rows[i].day
 			break
 		}
 	}
+	stickyMonth := monthKey(headerDay)
 	out.WriteString(m.renderMonthHeader(headerDay))
 	out.WriteString("\n\n")
 
-	for i := start; i < end; i++ {
-		if i > start {
+	// When the viewport top is the inline monthHeader for the sticky's
+	// month, skip that single row — the sticky already labels it — and
+	// extend the render range by one so the viewport stays filled.
+	renderStart := start
+	if renderStart < end && m.rows[renderStart].monthHeader &&
+		monthKey(m.rows[renderStart].day) == stickyMonth {
+		renderStart++
+		end = min(end+1, len(m.rows))
+	}
+
+	for i := renderStart; i < end; i++ {
+		if i > renderStart {
 			out.WriteByte('\n')
 		}
 		if m.rows[i].separator {
