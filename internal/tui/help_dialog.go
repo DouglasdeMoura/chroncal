@@ -195,13 +195,14 @@ func (m HelpDialogModel) sections() []helpSection {
 			},
 		},
 		{
-			title: "Calendar list",
+			title: "Calendar popup",
 			entries: []helpEntry{
-				{"a", "add"},
+				{"a", "add calendar"},
 				{"e", "edit"},
 				{"t", "delete"},
 				{"space", "toggle visibility"},
 				{"↑↓ · tab", "move selection"},
+				{"esc · q", "close"},
 			},
 		},
 		{
