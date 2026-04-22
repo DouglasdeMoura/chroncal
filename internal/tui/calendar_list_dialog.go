@@ -166,7 +166,11 @@ func (m CalendarListDialogModel) buildActions() []ListDialogAction {
 
 func (m CalendarListDialogModel) shortHelp() []key.Binding {
 	sk := m.shell.Keys()
-	return []key.Binding{sk.Up, sk.Down, sk.Tab, m.keys.New, m.keys.Edit, m.keys.Sync, sk.Close}
+	nav := key.NewBinding(
+		key.WithKeys("up", "down", "k", "j"),
+		key.WithHelp("↑↓", "navigate"),
+	)
+	return []key.Binding{nav, sk.Tab, m.keys.New, m.keys.Edit, m.keys.Sync, sk.Close}
 }
 
 // detailWidth returns the width of the detail column for the current shell
