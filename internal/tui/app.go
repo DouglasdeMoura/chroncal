@@ -1652,10 +1652,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Only handle Tab/Shift+Tab at the app level when entering the
 			// sidebar from the main view. Forward Tab lands on the first
 			// sidebar tab stop (the prev-month chevron); backward Shift+Tab
-			// lands on the last (the "+ Add calendar" row). Once focus is
-			// inside the sidebar, the key falls through to m.sidebar.Update
-			// which cycles between its internal stops and emits
-			// SidebarFocusEscapedMsg to hand focus back to the main view.
+			// lands on the last (the bottom calendar list row). Once focus
+			// is inside the sidebar, the key falls through to
+			// m.sidebar.Update which cycles between its internal stops and
+			// emits SidebarFocusEscapedMsg to hand focus back to the main
+			// view.
 			if m.showSidebar && m.focus != focusSidebar {
 				m.focus = focusSidebar
 				if msg.String() == "shift+tab" {

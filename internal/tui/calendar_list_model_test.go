@@ -31,22 +31,6 @@ func TestCalendarList_SpaceTogglesVisibility(t *testing.T) {
 	}
 }
 
-func TestCalendarList_EnterOnAddRowEmitsZeroID(t *testing.T) {
-	m := makeListFixture().Focus()
-	m.cursor = 2 // Add row
-	cmd := m.activateCurrent()
-	if cmd == nil {
-		t.Fatal("expected a command")
-	}
-	msg, ok := cmd().(CalendarDialogRequestedMsg)
-	if !ok {
-		t.Fatalf("got %T", cmd())
-	}
-	if msg.ID != 0 {
-		t.Errorf("expected ID==0 for Add row, got %d", msg.ID)
-	}
-}
-
 func TestCalendarList_MoveCursorAdvances(t *testing.T) {
 	m := makeListFixture().Focus()
 	m.cursor = 0
@@ -89,31 +73,15 @@ func TestCalendarList_HandleClickTogglesItem(t *testing.T) {
 	}
 }
 
-func TestCalendarList_HandleClickOnAddRow(t *testing.T) {
-	m := makeListFixture().Focus()
-	// Items at y=0,1; blank at y=2; Add at y=3.
-	_, cmd := m.HandleClick(0, 3)
-	if cmd == nil {
-		t.Fatal("expected a command")
-	}
-	msg, ok := cmd().(CalendarDialogRequestedMsg)
-	if !ok {
-		t.Fatalf("got %T", cmd())
-	}
-	if msg.ID != 0 {
-		t.Errorf("expected Add row ID==0, got %d", msg.ID)
-	}
-}
-
-func TestCalendarList_HandleClickOnBlankGapIsNoop(t *testing.T) {
+func TestCalendarList_HandleClickBelowListIsNoop(t *testing.T) {
 	m := makeListFixture().Focus()
 	m.cursor = 0
-	nextM, cmd := m.HandleClick(0, 2) // blank gap
+	nextM, cmd := m.HandleClick(0, 5) // past the last item
 	if cmd != nil {
-		t.Errorf("expected no command for blank gap click")
+		t.Errorf("expected no command for click past end of list")
 	}
 	if nextM.cursor != 0 {
-		t.Errorf("cursor should not move on blank gap click")
+		t.Errorf("cursor should not move on click past end of list")
 	}
 }
 

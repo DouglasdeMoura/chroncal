@@ -30,7 +30,7 @@ type CalendarListItem struct {
 
 type calendarListKeyMap struct {
 	Up, Down, Tab, ShiftTab key.Binding
-	Toggle, Add             key.Binding
+	Toggle                  key.Binding
 }
 
 func defaultCalendarListKeys() calendarListKeyMap {
@@ -40,13 +40,11 @@ func defaultCalendarListKeys() calendarListKeyMap {
 		Tab:      key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next")),
 		ShiftTab: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev")),
 		Toggle:   key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "toggle visibility")),
-		Add:      key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "add calendar")),
 	}
 }
 
 // CalendarListModel renders a list of calendars (color swatch, name, visibility
-// indicator) followed by a "+ Add calendar" row. The cursor index spans both;
-// cursor == len(items) means the Add row is selected.
+// indicator).
 type CalendarListModel struct {
 	items       []CalendarListItem
 	hidden      map[int64]bool
@@ -81,8 +79,8 @@ func (m CalendarListModel) Focused() bool            { return m.focused }
 func (m CalendarListModel) Cursor() int              { return m.cursor }
 func (m CalendarListModel) ItemCount() int           { return len(m.items) }
 
-// RowCount includes the trailing "+ Add" row.
-func (m CalendarListModel) RowCount() int { return len(m.items) + 1 }
+// RowCount returns the number of selectable rows in the list.
+func (m CalendarListModel) RowCount() int { return len(m.items) }
 
 // SetItems replaces the items. Clamps cursor to the new range and prunes the
 // hidden set of any IDs no longer present.
@@ -122,11 +120,11 @@ func (m CalendarListModel) moveCursor(delta int) CalendarListModel {
 	return m
 }
 
-// toggleCurrent flips the hidden state of the item under the cursor (no-op on
-// the Add row) and returns the new model plus a command that emits
+// toggleCurrent flips the hidden state of the item under the cursor and
+// returns the new model plus a command that emits
 // CalendarVisibilityToggledMsg.
 func (m CalendarListModel) toggleCurrent() (CalendarListModel, tea.Cmd) {
-	if m.cursor >= len(m.items) {
+	if m.cursor < 0 || m.cursor >= len(m.items) {
 		return m, nil
 	}
 	id := m.items[m.cursor].ID
@@ -135,37 +133,17 @@ func (m CalendarListModel) toggleCurrent() (CalendarListModel, tea.Cmd) {
 	return m, func() tea.Msg { return CalendarVisibilityToggledMsg{ID: id, Hidden: hidden} }
 }
 
-// activateCurrent returns a command to open the dialog for the cursor row.
-// The Add row returns ID == 0.
-func (m CalendarListModel) activateCurrent() tea.Cmd {
-	var id int64
-	if m.cursor < len(m.items) {
-		id = m.items[m.cursor].ID
-	}
-	return func() tea.Msg { return CalendarDialogRequestedMsg{ID: id} }
-}
-
 // HandleClick hit-tests a click at (x, y) in the widget's local coordinates
 // (top-left of the first item row is (0, 0)). A click on an item row moves
-// the cursor there and toggles its visibility; a click on the "+ Add" row
-// opens the new-calendar dialog. y values outside the rendered rows are
-// no-ops. x is currently ignored — any click within the sidebar's x range
-// that lands on a row activates it.
+// the cursor there and toggles its visibility. y values outside the rendered
+// rows are no-ops. x is currently ignored — any click within the sidebar's
+// x range that lands on a row activates it.
 func (m CalendarListModel) HandleClick(_ int, y int) (CalendarListModel, tea.Cmd) {
-	if y < 0 {
+	if y < 0 || y >= len(m.items) {
 		return m, nil
 	}
-	n := len(m.items)
-	// Layout (see View): items at y=0..n-1, blank gap at y=n, "+ Add" at y=n+1.
-	if y < n {
-		m.cursor = y
-		return m.toggleCurrent()
-	}
-	if y == n+1 {
-		m.cursor = n
-		return m, m.activateCurrent()
-	}
-	return m, nil
+	m.cursor = y
+	return m.toggleCurrent()
 }
 
 func (m CalendarListModel) Update(msg tea.Msg) (CalendarListModel, tea.Cmd) {
@@ -183,8 +161,6 @@ func (m CalendarListModel) Update(msg tea.Msg) (CalendarListModel, tea.Cmd) {
 		return m.moveCursor(1), nil
 	case key.Matches(kp, m.keys.Toggle):
 		return m.toggleCurrent()
-	case key.Matches(kp, m.keys.Add) && m.cursor == len(m.items):
-		return m, m.activateCurrent()
 	}
 	return m, nil
 }
@@ -209,17 +185,9 @@ func (m CalendarListModel) View() string {
 			line = lipgloss.NewStyle().Background(m.accentColor).Foreground(m.textColor).Bold(true).Render(line)
 		}
 		b.WriteString(line)
-		b.WriteString("\n")
+		if i < len(m.items)-1 {
+			b.WriteString("\n")
+		}
 	}
-	// Blank gap separates the "+ Add calendar" action from the list of
-	// calendars so it reads as an action, not another list row.
-	b.WriteString("\n")
-	add := "+ Add calendar"
-	if m.focused && m.cursor == len(m.items) {
-		add = lipgloss.NewStyle().Background(m.accentColor).Foreground(m.textColor).Bold(true).Render(add)
-	} else {
-		add = lipgloss.NewStyle().Foreground(m.mutedColor).Render(add)
-	}
-	b.WriteString(add)
 	return b.String()
 }

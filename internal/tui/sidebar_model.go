@@ -60,8 +60,8 @@ func (m SidebarModel) FocusAtStart() SidebarModel {
 }
 
 // FocusAtEnd focuses the sidebar and places focus on the last tab stop:
-// the "+ Add calendar" row at the bottom of the list. Use this when entering
-// the sidebar via a backward Shift+Tab from the main view.
+// the bottom row of the calendar list. Use this when entering the sidebar
+// via a backward Shift+Tab from the main view.
 func (m SidebarModel) FocusAtEnd() SidebarModel {
 	m.focused = true
 	m.focus = sidebarFocusList
