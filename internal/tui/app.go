@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
 	uv "github.com/charmbracelet/ultraviolet"
@@ -161,21 +162,21 @@ type syncStatusExpiredMsg struct {
 }
 
 type Model struct {
-	app             *app.App
-	theme           Theme
-	keys            appKeyMap
-	width           int
-	height          int
-	viewMode        viewMode
-	calendar        CalendarModel
-	week            WeekModel
-	day             DayModel
-	events          []event.Event
-	calendars       map[int64]CalendarInfo
-	dialog          EventDialogModel
-	dialogOpen      bool
-	viewDialog      EventViewDialogModel
-	viewDialogOpen  bool
+	app            *app.App
+	theme          Theme
+	keys           appKeyMap
+	width          int
+	height         int
+	viewMode       viewMode
+	calendar       CalendarModel
+	week           WeekModel
+	day            DayModel
+	events         []event.Event
+	calendars      map[int64]CalendarInfo
+	dialog         EventDialogModel
+	dialogOpen     bool
+	viewDialog     EventViewDialogModel
+	viewDialogOpen bool
 	// viewReturnEvent is set when the event form is opened from the
 	// view dialog; after the form closes (save or cancel) the app
 	// reopens the view with this event so the user lands back where
@@ -223,6 +224,7 @@ type Model struct {
 	syncStatus  string
 	statusToken int
 	syncing     bool
+	syncSpinner spinner.Model
 }
 
 func NewModel(a *app.App) Model {
@@ -240,6 +242,7 @@ func NewModel(a *app.App) Model {
 		vm = viewDay
 	}
 	sb := NewSidebarModel(NewMiniMonthModel(now), NewCalendarListModel(nil, hidden))
+	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	return Model{
 		app:             a,
 		keys:            defaultAppKeys(),
@@ -251,6 +254,7 @@ func NewModel(a *app.App) Model {
 		hiddenCalendars: hidden,
 		focus:           focusCalendar,
 		sidebar:         sb,
+		syncSpinner:     sp,
 	}
 }
 
@@ -1320,7 +1324,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncing = true
 		m.statusToken++
 		m.syncStatus = "Syncing all calendars…"
-		return m, m.runSyncAll()
+		return m, tea.Batch(m.runSyncAll(), m.syncSpinner.Tick)
 
 	case SyncCalendarRequestedMsg:
 		if m.syncing {
@@ -1333,7 +1337,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			label = "calendar"
 		}
 		m.syncStatus = fmt.Sprintf("Syncing %s…", label)
-		return m, m.runSyncCalendar(msg.ID, msg.Name)
+		return m, tea.Batch(m.runSyncCalendar(msg.ID, msg.Name), m.syncSpinner.Tick)
+
+	case spinner.TickMsg:
+		if !m.syncing {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.syncSpinner, cmd = m.syncSpinner.Update(msg)
+		return m, cmd
 
 	case syncFinishedMsg:
 		m.syncing = false
@@ -1776,6 +1788,10 @@ func (m Model) View() tea.View {
 			statusColor = m.theme.Muted
 		}
 		statusText = lipgloss.NewStyle().Foreground(statusColor).Render(m.syncStatus)
+		if m.syncing {
+			m.syncSpinner.Style = lipgloss.NewStyle().Foreground(m.theme.TextDim)
+			statusText = m.syncSpinner.View() + " " + statusText
+		}
 	}
 	innerWidth := m.width - padding*2
 	gap := max(1, innerWidth-lipgloss.Width(statusText)-lipgloss.Width(hint))
