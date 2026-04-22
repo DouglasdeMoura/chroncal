@@ -725,6 +725,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// The quit guard sits on top of every other overlay (including help,
+	// palette, and text-entry dialogs), so it must own input whenever it's
+	// up. Without this, keystrokes like y/n/esc would be swallowed by
+	// whatever dialog happens to be underneath.
+	if m.confirmOpen && m.pendingQuit {
+		switch msg.(type) {
+		case tea.KeyPressMsg, tea.MouseClickMsg, tea.MouseWheelMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg, tea.PasteMsg:
+			var cmd tea.Cmd
+			m.confirmDialog, cmd = m.confirmDialog.Update(msg)
+			return m, cmd
+		}
+	}
+
 	// When the palette is open, it captures all input. Only specific
 	// parent-level messages (size, theme, palette-result) fall through.
 	if m.paletteOpen {
@@ -1943,7 +1956,10 @@ func (m Model) View() tea.View {
 		bw, bh := m.choiceDialog.BoxSize()
 		v.Content = m.compositeOverlay(v.Content, m.choiceDialog.View(), bw, bh)
 	}
-	if m.confirmOpen {
+	// Regular confirms belong in the normal stack, but the quit guard must
+	// sit above palette and help (which otherwise render on top) because it
+	// owns input whenever pendingQuit is set.
+	if m.confirmOpen && !m.pendingQuit {
 		bw, bh := m.confirmDialog.BoxSize()
 		v.Content = m.compositeOverlay(v.Content, m.confirmDialog.View(), bw, bh)
 	}
@@ -1954,6 +1970,10 @@ func (m Model) View() tea.View {
 	if m.helpDialogOpen {
 		bw, bh := m.helpDialog.BoxSize()
 		v.Content = m.compositeOverlay(v.Content, m.helpDialog.View(), bw, bh)
+	}
+	if m.confirmOpen && m.pendingQuit {
+		bw, bh := m.confirmDialog.BoxSize()
+		v.Content = m.compositeOverlay(v.Content, m.confirmDialog.View(), bw, bh)
 	}
 
 	return v

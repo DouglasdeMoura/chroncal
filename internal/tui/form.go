@@ -1538,10 +1538,14 @@ var formKeys = struct {
 	Tab      key.Binding
 	ShiftTab key.Binding
 	Enter    key.Binding
+	ArrowFwd key.Binding
+	ArrowBwd key.Binding
 }{
 	Tab:      key.NewBinding(key.WithKeys("tab")),
 	ShiftTab: key.NewBinding(key.WithKeys("shift+tab")),
 	Enter:    key.NewBinding(key.WithKeys("enter")),
+	ArrowFwd: key.NewBinding(key.WithKeys("right", "down")),
+	ArrowBwd: key.NewBinding(key.WithKeys("left", "up")),
 }
 
 // valuer is satisfied by fields that expose a text value (TextField,
@@ -1769,6 +1773,18 @@ func (f Form) Update(msg tea.Msg) (Form, tea.Cmd) {
 				}
 			}
 			return f.focusNext()
+		case key.Matches(msg, formKeys.ArrowBwd):
+			// Arrow keys act as alternate Tab/Shift-Tab, but only when the
+			// focus is on a button slot — fields (text inputs, selects,
+			// date pickers) still consume their own arrows for cursor or
+			// option movement.
+			if f.focused >= len(f.items) {
+				return f.focusPrev()
+			}
+		case key.Matches(msg, formKeys.ArrowFwd):
+			if f.focused >= len(f.items) {
+				return f.focusNext()
+			}
 		case key.Matches(msg, formKeys.Enter):
 			return f.handleEnter()
 		}
