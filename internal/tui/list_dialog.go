@@ -97,8 +97,8 @@ func NewListDialogModel(h help.Model) ListDialogModel {
 	}
 }
 
-func (m ListDialogModel) SetSize(w, h int) ListDialogModel        { m.width, m.height = w, h; return m }
-func (m ListDialogModel) SetTitle(t string) ListDialogModel       { m.title = t; return m }
+func (m ListDialogModel) SetSize(w, h int) ListDialogModel  { m.width, m.height = w, h; return m }
+func (m ListDialogModel) SetTitle(t string) ListDialogModel { m.title = t; return m }
 
 // SetTitleAction installs a right-aligned button on the title line, or clears
 // it when a is nil. Use for creation actions ("New", …) that belong to the

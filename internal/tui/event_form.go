@@ -151,12 +151,12 @@ type EventFormModel struct {
 	// Multi-day range state (event-date picker only). rangeEnd is zero
 	// until the user pins it; when non-zero the form treats the event as
 	// spanning startDate..endDate.
-	rangeMode     bool
-	rangeStart    time.Time // pinned start (zero when no pin yet)
-	rangeEnd      time.Time // pinned end (zero when only start is pinned)
-	rangePickEnd  bool      // true = next Enter pins end; false = next Enter (re-)pins start
-	rangeEndDate  time.Time // persisted across picker opens: the end date the form will save
-	rangeHasEnd   bool      // true when rangeEndDate is meaningful (set on Ok in range mode)
+	rangeMode    bool
+	rangeStart   time.Time // pinned start (zero when no pin yet)
+	rangeEnd     time.Time // pinned end (zero when only start is pinned)
+	rangePickEnd bool      // true = next Enter pins end; false = next Enter (re-)pins start
+	rangeEndDate time.Time // persisted across picker opens: the end date the form will save
+	rangeHasEnd  bool      // true when rangeEndDate is meaningful (set on Ok in range mode)
 
 	// Dialog + Form
 	dialog Dialog

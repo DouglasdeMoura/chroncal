@@ -419,4 +419,3 @@ func firstSelectableOnOrAfter(rows []agendaRow, cursor time.Time) int {
 	}
 	return first
 }
-

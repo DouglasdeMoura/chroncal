@@ -20,7 +20,7 @@ type verifyResponse struct {
 }
 
 type verifyPropStat struct {
-	Status string       `xml:"DAV: status"`
+	Status string        `xml:"DAV: status"`
 	Prop   verifyPropSet `xml:"DAV: prop"`
 }
 
