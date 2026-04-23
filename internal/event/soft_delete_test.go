@@ -244,6 +244,40 @@ func TestSoftDelete_ListFilteredExcludesDeleted(t *testing.T) {
 	}
 }
 
+// TestSoftDelete_PurgeByID_RefusesLiveRow verifies PurgeByID only drops
+// soft-deleted rows and returns ErrNotDeleted otherwise, so a caller can't
+// hard-delete a live event by passing the wrong ID.
+func TestSoftDelete_PurgeByID_RefusesLiveRow(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	e := createEvent(t, svc)
+
+	if err := svc.PurgeByID(ctx, e.ID); !errors.Is(err, ErrNotDeleted) {
+		t.Fatalf("PurgeByID on live row err = %v, want ErrNotDeleted", err)
+	}
+	if _, err := svc.Get(ctx, e.ID); err != nil {
+		t.Fatalf("live row should still be readable: %v", err)
+	}
+
+	if err := svc.PurgeByID(ctx, 999_999); !errors.Is(err, ErrNotDeleted) {
+		t.Fatalf("PurgeByID on missing row err = %v, want ErrNotDeleted", err)
+	}
+
+	if err := svc.Delete(ctx, e.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if err := svc.PurgeByID(ctx, e.ID); err != nil {
+		t.Fatalf("PurgeByID on soft-deleted row: %v", err)
+	}
+	deleted, err := svc.ListDeleted(ctx, e.CalendarID)
+	if err != nil {
+		t.Fatalf("ListDeleted: %v", err)
+	}
+	if len(deleted) != 0 {
+		t.Fatalf("ListDeleted after PurgeByID = %d, want 0", len(deleted))
+	}
+}
+
 // TestSoftDelete_SequenceBumpedOnRestore verifies Restore bumps sequence
 // so synced rows push cleanly to CalDAV servers.
 func TestSoftDelete_SequenceBumpedOnRestore(t *testing.T) {

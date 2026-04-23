@@ -610,6 +610,18 @@ func (q *Queries) ListRecurringEvents(ctx context.Context) ([]Event, error) {
 	return items, nil
 }
 
+const purgeEventByID = `-- name: PurgeEventByID :execrows
+DELETE FROM events WHERE id = ? AND deleted_at IS NOT NULL
+`
+
+func (q *Queries) PurgeEventByID(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, purgeEventByID, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const purgeSoftDeletedEvents = `-- name: PurgeSoftDeletedEvents :execrows
 DELETE FROM events WHERE deleted_at IS NOT NULL AND deleted_at < ?
 `

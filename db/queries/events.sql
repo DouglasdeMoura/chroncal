@@ -125,6 +125,9 @@ WHERE uid = ? AND deleted_at IS NOT NULL;
 -- name: PurgeSoftDeletedEvents :execrows
 DELETE FROM events WHERE deleted_at IS NOT NULL AND deleted_at < ?;
 
+-- name: PurgeEventByID :execrows
+DELETE FROM events WHERE id = ? AND deleted_at IS NOT NULL;
+
 -- name: ListDeletedEventsByCalendar :many
 SELECT * FROM events
 WHERE calendar_id = ? AND deleted_at IS NOT NULL

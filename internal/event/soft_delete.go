@@ -203,6 +203,20 @@ func (s *Service) PurgeDeleted(ctx context.Context, olderThan time.Time) (int, e
 	return int(n), nil
 }
 
+// PurgeByID hard-deletes a single soft-deleted row. Returns ErrNotDeleted if
+// the row is live (or absent) so callers can't accidentally purge a live event
+// by passing the wrong ID.
+func (s *Service) PurgeByID(ctx context.Context, id int64) error {
+	n, err := s.q.PurgeEventByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotDeleted
+	}
+	return nil
+}
+
 // restoreSingle un-hides one row by (uid, recurrence_id=”); used for
 // DeleteWithUndo and DeleteInstanceWithUndo single-row resurrection. For an
 // override, callers should fall back to RestoreByUID since we don't know the
