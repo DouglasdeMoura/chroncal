@@ -1629,16 +1629,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		ev := m.pendingDelete
 		return m, func() tea.Msg {
-			var err error
 			switch msg.Choice {
 			case 0: // This event
-				err = m.app.Events.DeleteInstance(context.Background(), ev.UID, ev.StartTime)
+				// Snapshotted so u can undo the EXDATE append.
+				snap, err := m.app.Events.DeleteInstanceWithSnapshot(context.Background(), ev.UID, ev.StartTime)
+				return eventDeletedMsg{
+					calendarID: ev.CalendarID,
+					snapshot:   snap,
+					title:      ev.Title,
+					err:        err,
+				}
 			case 1: // This and following
-				err = m.app.Events.DeleteFromInstance(context.Background(), ev.UID, ev.StartTime)
+				err := m.app.Events.DeleteFromInstance(context.Background(), ev.UID, ev.StartTime)
+				return eventDeletedMsg{calendarID: ev.CalendarID, err: err}
 			case 2: // All events
-				err = m.app.Events.DeleteSeries(context.Background(), ev.UID)
+				err := m.app.Events.DeleteSeries(context.Background(), ev.UID)
+				return eventDeletedMsg{calendarID: ev.CalendarID, err: err}
 			}
-			return eventDeletedMsg{calendarID: ev.CalendarID, err: err}
+			return eventDeletedMsg{calendarID: ev.CalendarID}
 		}
 
 	case ConfirmDialogResultMsg:
@@ -1682,13 +1690,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.viewDialogOpen = false
-		// Only offer undo when a snapshot was captured. Recurring-event
-		// deletes (DeleteInstance / DeleteFromInstance / DeleteSeries) go
-		// through ChoiceDialog and don't produce a snapshot, so the toast
-		// must not promise an "undo (u)" it can't deliver. Those deletes
-		// still reload events and push normally, just without a toast or
-		// deferred push.
-		if msg.snapshot.Event.UID == "" {
+		// Only offer undo when a snapshot was captured. "This and following"
+		// and "All events" on a recurring series go through ChoiceDialog
+		// without a snapshot (multi-step destructive changes aren't yet
+		// reversible), so the toast must not promise an "undo (u)" it
+		// can't deliver. Those deletes still reload events and push
+		// normally, just without a toast or deferred push.
+		if !msg.snapshot.IsValid() {
 			return m, tea.Batch(m.loadEvents(), m.runOpportunisticPush(msg.calendarID))
 		}
 		m.undoStack.Push(UndoEntry{
