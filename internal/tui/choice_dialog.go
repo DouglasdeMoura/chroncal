@@ -14,9 +14,10 @@ type ChoiceDialogResultMsg struct {
 
 // ChoiceDialogModel shows a centered prompt with N option buttons plus Cancel.
 type ChoiceDialogModel struct {
-	dialog  Dialog
-	form    Form
-	choices int // number of choice buttons (excludes Cancel)
+	dialog       Dialog
+	form         Form
+	choices      int // number of choice buttons (excludes Cancel)
+	contentWidth *int
 }
 
 const choiceDialogMaxWidth = 72
@@ -29,6 +30,8 @@ func NewChoiceDialogModel(message string, options ...string) ChoiceDialogModel {
 	formStyles.ButtonAlign = ButtonAlignCenter
 	formStyles.LabelLayout = LabelTop
 
+	cw := new(int)
+
 	// Use the first option as the submit button, the rest as action buttons.
 	submitLabel := "OK"
 	if len(options) > 0 {
@@ -37,7 +40,12 @@ func NewChoiceDialogModel(message string, options ...string) ChoiceDialogModel {
 
 	form := NewForm(submitLabel, formStyles,
 		FormItem{
-			Field: NewStaticField(message, nil),
+			Field: NewStaticField(message, func(s string) string {
+				if *cw > 0 {
+					return lipgloss.NewStyle().Width(*cw).Align(lipgloss.Center).Render(s)
+				}
+				return s
+			}),
 		},
 	)
 
@@ -54,8 +62,9 @@ func NewChoiceDialogModel(message string, options ...string) ChoiceDialogModel {
 	form.OnCancel(func(f *Form) tea.Cmd {
 		return func() tea.Msg { return ChoiceDialogResultMsg{Choice: -1} }
 	})
+	form, _ = form.focusIndex(form.submitIndex())
 
-	return ChoiceDialogModel{dialog: dialog, form: form, choices: len(options)}
+	return ChoiceDialogModel{dialog: dialog, form: form, choices: len(options), contentWidth: cw}
 }
 
 func (m ChoiceDialogModel) SetSize(w, h int) ChoiceDialogModel {
@@ -65,7 +74,11 @@ func (m ChoiceDialogModel) SetSize(w, h int) ChoiceDialogModel {
 		dw = choiceDialogMaxWidth
 	}
 	m.dialog.SetWidth(dw)
-	m.form.SetWidth(m.dialog.ContentWidth())
+	cw := m.dialog.ContentWidth()
+	if m.contentWidth != nil {
+		*m.contentWidth = cw
+	}
+	m.form.SetWidth(cw)
 	return m
 }
 
