@@ -308,7 +308,7 @@ func (m EventDialogModel) shortHelp() []key.Binding {
 	if len(m.events) == 0 {
 		return []key.Binding{days, sk.Enter, m.keys.Create, sk.Close}
 	}
-	return []key.Binding{nav, days, sk.Tab, m.keys.Create, sk.Close}
+	return []key.Binding{nav, days, sk.Tab, m.keys.Create, m.keys.Delete, sk.Close}
 }
 
 // Focus-zone IDs used by currentZone/setZone. Kept as ints so existing
