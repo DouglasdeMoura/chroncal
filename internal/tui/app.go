@@ -57,7 +57,6 @@ type appKeyMap struct {
 	Sync           key.Binding
 	Undo           key.Binding
 	TrashView      key.Binding
-	TrashClose     key.Binding
 }
 
 func defaultAppKeys() appKeyMap {
@@ -77,7 +76,6 @@ func defaultAppKeys() appKeyMap {
 		Sync:           key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sync")),
 		Undo:           key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "undo")),
 		TrashView:      key.NewBinding(key.WithKeys("D", "shift+d"), key.WithHelp("D", "trash")),
-		TrashClose:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 	}
 }
 
@@ -311,7 +309,6 @@ func NewModel(a *app.App) Model {
 		undoStack:       NewUndoStack(),
 		toast:           NewToastModel(theme),
 		footer:          NewFooterModel(theme),
-		trash:           NewTrashModel(),
 	}
 }
 
@@ -801,15 +798,10 @@ func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	// palette / form doesn't jump out).
 	if key.Matches(msg, m.keys.TrashView) && !m.trashOpen && !inQuitConfirm && !textEntryActive && !m.anyOverlayOpen() {
 		m.trashOpen = true
-		m.trash = m.trash.SetTheme(m.theme)
-		m.trash = m.trash.SetSize(m.width, m.height)
+		m.trash = NewTrashModel(m.calendars, newThemedHelp(m.theme)).
+			SetSelectedColor(m.theme.Selected).
+			SetSize(m.width, m.height)
 		return m, m.loadTrash(), true
-	}
-	// Esc closes trash and returns to the previous view. Kept separate from
-	// the trash model's Update so the close key is consistent app-wide.
-	if m.trashOpen && key.Matches(msg, m.keys.TrashClose) {
-		m.trashOpen = false
-		return m, nil, true
 	}
 	// Undo: only active on the main grid, with no overlay competing for input.
 	if key.Matches(msg, m.keys.Undo) && m.undoIsAllowed() {
@@ -973,7 +965,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sidebar = m.sidebar.SetTheme(m.theme)
 		m.toast.SetTheme(m.theme)
 		m.footer.SetTheme(m.theme)
-		m.trash = m.trash.SetTheme(m.theme)
+		if m.trashOpen {
+			m.trash = m.trash.SetSelectedColor(m.theme.Selected)
+		}
 		return m, nil
 
 	case tea.WindowSizeMsg:
@@ -1819,6 +1813,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		toastCmd := m.toast.Restored(msg.title)
 		return m, tea.Batch(m.loadEvents(), toastCmd)
 
+	case TrashDialogClosedMsg:
+		m.trashOpen = false
+		return m, nil
+
 	case trashLoadedMsg:
 		if msg.err != nil {
 			m.err = msg.err
@@ -1958,6 +1956,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.calendarListDialogOpen {
 			var cmd tea.Cmd
 			m.calendarListDialog, cmd = m.calendarListDialog.Update(msg)
+			return m, cmd
+		}
+		if m.trashOpen {
+			var cmd tea.Cmd
+			m.trash, cmd = m.trash.Update(msg)
 			return m, cmd
 		}
 		// Sidebar hit-test. The sidebar content starts at (padding, padding)

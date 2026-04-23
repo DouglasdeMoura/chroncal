@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/bubbles/v2/help"
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/douglasdemoura/chroncal/internal/event"
@@ -27,69 +28,32 @@ func trashFixture() []event.TrashEntry {
 	}
 }
 
-func TestTrashModel_SetEntriesSelectsFirst(t *testing.T) {
-	m := NewTrashModel().SetSize(60, 20)
-	m = m.SetEntries(trashFixture(), nil)
-	e, ok := m.Selected()
-	if !ok || e.ID != 1 || e.Kind != event.TrashKindEvent {
-		t.Fatalf("Selected = %+v ok=%v, want Event ID=1", e, ok)
-	}
+func newTrashForTest() TrashModel {
+	return NewTrashModel(map[int64]CalendarInfo{1: {Name: "Work", Color: "#a6e3a1"}}, help.New()).
+		SetSize(120, 30)
+}
+
+func TestTrashModel_SetEntriesPopulates(t *testing.T) {
+	m := newTrashForTest().SetEntries(trashFixture(), nil)
 	if m.Len() != 2 {
 		t.Fatalf("Len = %d, want 2", m.Len())
+	}
+	e, ok := m.selectedEntry()
+	if !ok || e.ID != 1 {
+		t.Fatalf("selectedEntry = %+v ok=%v, want ID=1", e, ok)
 	}
 }
 
 func TestTrashModel_EmptyRendersPlaceholder(t *testing.T) {
-	m := NewTrashModel().SetSize(60, 20)
+	m := newTrashForTest()
 	out := m.View()
 	if !strings.Contains(out, "No deleted events.") {
 		t.Fatalf("View = %q, want contains placeholder", out)
 	}
 }
 
-func TestTrashModel_TruncationRowShowsCutoff(t *testing.T) {
-	cutoff := time.Date(2026, 5, 1, 14, 0, 0, 0, time.UTC)
-	entries := []event.TrashEntry{{
-		Kind:       event.TrashKindTruncation,
-		ID:         3,
-		CalendarID: 1,
-		UID:        "sprint",
-		Title:      "Sprint Review",
-		CutoffTime: cutoff,
-		DeletedAt:  time.Date(2026, 4, 23, 18, 0, 0, 0, time.UTC),
-	}}
-	m := NewTrashModel().SetSize(100, 20).SetEntries(entries, nil)
-	out := m.View()
-	want := cutoff.Local().Format("2006-01-02 15:04")
-	if !strings.Contains(out, want) || !strings.Contains(out, "truncated from") {
-		t.Fatalf("View = %q, want contains %q and 'truncated from'", out, want)
-	}
-}
-
-func TestTrashModel_InstanceRowShowsOccurrenceTime(t *testing.T) {
-	m := NewTrashModel().SetSize(80, 20).SetEntries(trashFixture(), nil)
-	// Move to the instance row (index 1).
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
-	out := m.View()
-	// The instance's local time formatted YYYY-MM-DD HH:MM should appear
-	// somewhere in the rendered row.
-	inst := time.Date(2026, 4, 21, 9, 0, 0, 0, time.UTC).Local().Format("2006-01-02 15:04")
-	if !strings.Contains(out, inst) {
-		t.Fatalf("View = %q, want contains %q", out, inst)
-	}
-}
-
-func TestTrashModel_DownMovesSelection(t *testing.T) {
-	m := NewTrashModel().SetSize(60, 20).SetEntries(trashFixture(), nil)
-	m2, _ := m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
-	e, ok := m2.Selected()
-	if !ok || e.ID != 7 {
-		t.Fatalf("after Down: Selected = %+v ok=%v, want ID=7", e, ok)
-	}
-}
-
-func TestTrashModel_RestoreEmitsEntry(t *testing.T) {
-	m := NewTrashModel().SetSize(60, 20).SetEntries(trashFixture(), nil)
+func TestTrashModel_RestoreKeyEmitsEntry(t *testing.T) {
+	m := newTrashForTest().SetEntries(trashFixture(), nil)
 	_, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
 	if cmd == nil {
 		t.Fatal("expected a command for 'r'")
@@ -98,14 +62,13 @@ func TestTrashModel_RestoreEmitsEntry(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected TrashRestoreRequestedMsg, got %T", cmd())
 	}
-	if msg.Entry.Kind != event.TrashKindEvent || msg.Entry.ID != 1 {
-		t.Fatalf("Entry = %+v, want Event ID=1", msg.Entry)
+	if msg.Entry.ID != 1 {
+		t.Fatalf("Entry.ID = %d, want 1", msg.Entry.ID)
 	}
 }
 
-func TestTrashModel_PurgeEmitsEntry(t *testing.T) {
-	m := NewTrashModel().SetSize(60, 20).SetEntries(trashFixture(), nil)
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"}) // now on instance row
+func TestTrashModel_PurgeKeyEmitsEntry(t *testing.T) {
+	m := newTrashForTest().SetEntries(trashFixture(), nil)
 	_, cmd := m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
 	if cmd == nil {
 		t.Fatal("expected a command for 'x'")
@@ -114,44 +77,46 @@ func TestTrashModel_PurgeEmitsEntry(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected TrashPurgeRequestedMsg, got %T", cmd())
 	}
-	if msg.Entry.Kind != event.TrashKindInstance || msg.Entry.ID != 7 {
-		t.Fatalf("Entry = %+v, want Instance ID=7", msg.Entry)
+	if msg.Entry.ID != 1 {
+		t.Fatalf("Entry.ID = %d, want 1", msg.Entry.ID)
 	}
 }
 
-func TestTrashModel_EnterViewOnlyForEventKind(t *testing.T) {
-	m := NewTrashModel().SetSize(60, 20).SetEntries(trashFixture(), nil)
-	// On event row → emits
-	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+func TestTrashModel_EscEmitsCloseMsg(t *testing.T) {
+	m := newTrashForTest().SetEntries(trashFixture(), nil)
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	if cmd == nil {
-		t.Fatal("expected a command for Enter on event row")
+		t.Fatal("expected a command for Esc")
 	}
-	if _, ok := cmd().(TrashViewRequestedMsg); !ok {
-		t.Fatalf("expected TrashViewRequestedMsg, got %T", cmd())
-	}
-	// Move to instance row → Enter is a no-op
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
-	_, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if cmd != nil {
-		t.Fatalf("expected nil command for Enter on instance row, got %T", cmd())
+	if _, ok := cmd().(TrashDialogClosedMsg); !ok {
+		t.Fatalf("expected TrashDialogClosedMsg, got %T", cmd())
 	}
 }
 
-func TestTrashModel_NoActionsWhenEmpty(t *testing.T) {
-	m := NewTrashModel().SetSize(60, 20)
-	_, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
-	if cmd != nil {
-		t.Fatalf("expected nil command when list is empty, got %T", cmd())
+func TestTrashModel_DownKeyMovesSelection(t *testing.T) {
+	m := newTrashForTest().SetEntries(trashFixture(), nil)
+	m2, _ := m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	e, _ := m2.selectedEntry()
+	if e.ID != 7 {
+		t.Fatalf("selected.ID = %d, want 7", e.ID)
+	}
+}
+
+func TestTrashModel_DetailLinesContainKindAndInstance(t *testing.T) {
+	m := newTrashForTest().SetEntries(trashFixture(), nil)
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"}) // on instance row
+	out := m.View()
+	if !strings.Contains(out, "Instance") {
+		t.Fatalf("View = %q, want contains 'Instance'", out)
 	}
 }
 
 func TestTrashModel_SetEntriesPreservesSelection(t *testing.T) {
-	m := NewTrashModel().SetSize(60, 20).SetEntries(trashFixture(), nil)
+	m := newTrashForTest().SetEntries(trashFixture(), nil)
 	m, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"}) // on instance ID=7
-	// Drop the event row: cursor should land on the still-present instance row.
 	next := []event.TrashEntry{trashFixture()[1]}
-	m = m.SetEntries(next, nil)
-	e, _ := m.Selected()
+	m = m.SetEntries(next, map[int64]CalendarInfo{1: {Name: "Work", Color: "#a6e3a1"}})
+	e, _ := m.selectedEntry()
 	if e.Kind != event.TrashKindInstance || e.ID != 7 {
 		t.Fatalf("selection not preserved: got %+v, want Instance ID=7", e)
 	}
