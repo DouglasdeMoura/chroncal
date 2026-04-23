@@ -10,11 +10,23 @@ type EventFilterParams struct {
 	Category     string
 	FromTime     string
 	ToTime       string
+	// IncludeDeleted, when true, omits the default `deleted_at IS NULL`
+	// filter. Callers that need to see soft-deleted rows (trash views,
+	// --include-deleted flag) set this to true.
+	IncludeDeleted bool
+	// DeletedOnly, when true, inverts the default filter to
+	// `deleted_at IS NOT NULL`. Implies IncludeDeleted.
+	DeletedOnly bool
 }
 
 const eventCategoryExists = "EXISTS (SELECT 1 FROM event_categories ec WHERE ec.event_id = events.id AND ec.category = ?)"
 
 func (w *whereBuilder) addEventFilters(arg EventFilterParams) {
+	if arg.DeletedOnly {
+		w.add("deleted_at IS NOT NULL")
+	} else if !arg.IncludeDeleted {
+		w.add("deleted_at IS NULL")
+	}
 	if arg.CalendarID != 0 {
 		w.add("calendar_id = ?", arg.CalendarID)
 	}

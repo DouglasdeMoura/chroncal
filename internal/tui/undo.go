@@ -11,17 +11,13 @@ import (
 // conveys; the user expects a shallow, recent window.
 const UndoMaxDepth = 10
 
-// UndoMaxBytes caps the cumulative in-memory cost of the stack. Large inline
-// attachments can dominate footprint, so eviction runs on either the depth or
-// the byte budget, whichever is hit first.
-const UndoMaxBytes = 5 * 1024 * 1024 // 5 MiB
-
-// UndoEntry is a single reversible event delete. Entries hold data, not
-// closures: what to do with the snapshot is decided by the caller that pops,
-// which keeps the stack trivially testable and free of service dependencies.
+// UndoEntry is a single reversible event delete. Entries hold compact undo
+// metadata (UID + kind + optional RRULE pre-state); the actual rows live in
+// the database with deleted_at set and get un-hidden by Service.RestoreUndo.
+// Since entries are tiny (no snapshots, no blobs), a byte budget is no longer
+// needed.
 type UndoEntry struct {
-	Snapshot  event.DeletedSnapshot
-	Label     string
+	Meta      event.UndoMeta
 	DeletedAt time.Time
 }
 
@@ -30,7 +26,6 @@ type UndoEntry struct {
 // main update loop.
 type UndoStack struct {
 	entries []UndoEntry
-	bytes   int
 }
 
 // NewUndoStack returns an empty stack.
@@ -38,18 +33,11 @@ func NewUndoStack() *UndoStack {
 	return &UndoStack{}
 }
 
-// Push appends a new undo entry, evicting the oldest entries until both the
-// depth and byte budgets are satisfied.
+// Push appends a new undo entry, evicting the oldest entries until the depth
+// budget is satisfied.
 func (s *UndoStack) Push(e UndoEntry) {
 	s.entries = append(s.entries, e)
-	s.bytes += e.Snapshot.EstimatedBytes()
-	s.evict()
-}
-
-// evict drops oldest entries until both caps are satisfied.
-func (s *UndoStack) evict() {
-	for len(s.entries) > UndoMaxDepth || (s.bytes > UndoMaxBytes && len(s.entries) > 0) {
-		s.bytes -= s.entries[0].Snapshot.EstimatedBytes()
+	for len(s.entries) > UndoMaxDepth {
 		s.entries = s.entries[1:]
 	}
 }
@@ -72,15 +60,8 @@ func (s *UndoStack) Pop() (UndoEntry, bool) {
 	}
 	last := s.entries[len(s.entries)-1]
 	s.entries = s.entries[:len(s.entries)-1]
-	s.bytes -= last.Snapshot.EstimatedBytes()
-	if s.bytes < 0 {
-		s.bytes = 0
-	}
 	return last, true
 }
 
 // Len returns the current depth.
 func (s *UndoStack) Len() int { return len(s.entries) }
-
-// Bytes returns the current accumulated byte estimate.
-func (s *UndoStack) Bytes() int { return s.bytes }

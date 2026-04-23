@@ -131,16 +131,15 @@ type eventUpdatedMsg struct {
 
 type eventDeletedMsg struct {
 	calendarID int64
-	snapshot   event.DeletedSnapshot
+	meta       event.UndoMeta
 	title      string
 	err        error
 }
 
-// eventRestoredMsg is emitted after an Undo attempt. On success newID is
-// non-zero and err is nil. On failure err carries the reason.
+// eventRestoredMsg is emitted after an Undo attempt. On success err is nil.
+// On failure err carries the reason.
 type eventRestoredMsg struct {
 	title string
-	newID int64
 	err   error
 }
 
@@ -757,11 +756,11 @@ func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			// waiting for the 6-second window to elapse.
 			m.pushDeferralToken++
 			m.toast.Restoring()
-			snap := entry.Snapshot
-			title := entry.Label
+			meta := entry.Meta
+			title := meta.Label
 			cmd := func() tea.Msg {
-				newID, err := m.app.Events.Restore(context.Background(), snap)
-				return eventRestoredMsg{title: title, newID: newID, err: err}
+				err := m.app.Events.RestoreUndo(context.Background(), meta)
+				return eventRestoredMsg{title: title, err: err}
 			}
 			return m, cmd, true
 		}
@@ -1631,20 +1630,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, func() tea.Msg {
 			switch msg.Choice {
 			case 0: // This event
-				// Snapshotted so u can undo the EXDATE append.
-				snap, err := m.app.Events.DeleteInstanceWithSnapshot(context.Background(), ev.UID, ev.StartTime)
+				meta, err := m.app.Events.DeleteInstanceWithUndo(context.Background(), ev.UID, ev.StartTime)
 				return eventDeletedMsg{
 					calendarID: ev.CalendarID,
-					snapshot:   snap,
+					meta:       meta,
 					title:      ev.Title,
 					err:        err,
 				}
 			case 1: // This and following
-				err := m.app.Events.DeleteFromInstance(context.Background(), ev.UID, ev.StartTime)
-				return eventDeletedMsg{calendarID: ev.CalendarID, err: err}
+				meta, err := m.app.Events.DeleteFromInstanceWithUndo(context.Background(), ev.UID, ev.StartTime)
+				return eventDeletedMsg{
+					calendarID: ev.CalendarID,
+					meta:       meta,
+					title:      ev.Title,
+					err:        err,
+				}
 			case 2: // All events
-				err := m.app.Events.DeleteSeries(context.Background(), ev.UID)
-				return eventDeletedMsg{calendarID: ev.CalendarID, err: err}
+				meta, err := m.app.Events.DeleteSeriesWithUndo(context.Background(), ev.UID)
+				return eventDeletedMsg{
+					calendarID: ev.CalendarID,
+					meta:       meta,
+					title:      ev.Title,
+					err:        err,
+				}
 			}
 			return eventDeletedMsg{calendarID: ev.CalendarID}
 		}
@@ -1675,10 +1683,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		ev := m.pendingDelete
 		return m, func() tea.Msg {
-			snap, err := m.app.Events.DeleteWithSnapshot(context.Background(), ev.ID)
+			meta, err := m.app.Events.DeleteWithUndo(context.Background(), ev.ID)
 			return eventDeletedMsg{
 				calendarID: ev.CalendarID,
-				snapshot:   snap,
+				meta:       meta,
 				title:      ev.Title,
 				err:        err,
 			}
@@ -1690,18 +1698,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.viewDialogOpen = false
-		// Only offer undo when a snapshot was captured. "This and following"
-		// and "All events" on a recurring series go through ChoiceDialog
-		// without a snapshot (multi-step destructive changes aren't yet
-		// reversible), so the toast must not promise an "undo (u)" it
-		// can't deliver. Those deletes still reload events and push
-		// normally, just without a toast or deferred push.
-		if !msg.snapshot.IsValid() {
+		// Every soft-delete is reversible; push the undo entry unconditionally.
+		// UID being empty means no row was actually deleted (defensive).
+		if msg.meta.UID == "" {
 			return m, tea.Batch(m.loadEvents(), m.runOpportunisticPush(msg.calendarID))
 		}
 		m.undoStack.Push(UndoEntry{
-			Snapshot:  msg.snapshot,
-			Label:     msg.title,
+			Meta:      msg.meta,
 			DeletedAt: time.Now(),
 		})
 		synced := false // opportunistic push hasn't run yet when toast shows

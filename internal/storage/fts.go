@@ -23,6 +23,7 @@ func FTSQuery(input string) string {
 
 func (q *Queries) SearchEventsFTS(ctx context.Context, query string, calendarID int64, fromTime, toTime, filterStatus string) ([]Event, error) {
 	var w whereBuilder
+	w.add("deleted_at IS NULL")
 	w.add("id IN (SELECT rowid FROM events_fts WHERE events_fts MATCH ?)", query)
 	if calendarID != 0 {
 		w.add("calendar_id = ?", calendarID)

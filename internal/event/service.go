@@ -427,8 +427,8 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 			}
 		}
 
-		if err := qtx.DeleteEvent(ctx, id); err != nil {
-			return fmt.Errorf("delete event: %w", err)
+		if err := qtx.SoftDeleteEvent(ctx, id); err != nil {
+			return fmt.Errorf("soft-delete event: %w", err)
 		}
 		if err := tx.Commit(); err != nil {
 			return err
@@ -438,7 +438,7 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		return nil
 	}
 
-	return s.q.DeleteEvent(ctx, id)
+	return s.q.SoftDeleteEvent(ctx, id)
 }
 
 // DeleteInstance excludes a single occurrence of a recurring event by adding
@@ -471,8 +471,8 @@ func (s *Service) DeleteInstance(ctx context.Context, uid string, instanceTime t
 		RecurrenceID: recID,
 	})
 	if oErr == nil {
-		if err := qtx.DeleteEvent(ctx, override.ID); err != nil {
-			return fmt.Errorf("delete override: %w", err)
+		if err := qtx.SoftDeleteEvent(ctx, override.ID); err != nil {
+			return fmt.Errorf("soft-delete override: %w", err)
 		}
 	}
 
@@ -510,11 +510,11 @@ func (s *Service) DeleteFromInstance(ctx context.Context, uid string, instanceTi
 	}
 
 	cutoff := instanceTime.UTC().Format(time.RFC3339)
-	if err := qtx.DeleteOverridesAtOrAfter(ctx, storage.DeleteOverridesAtOrAfterParams{
+	if err := qtx.SoftDeleteOverridesAtOrAfter(ctx, storage.SoftDeleteOverridesAtOrAfterParams{
 		Uid:          uid,
 		RecurrenceID: cutoff,
 	}); err != nil {
-		return fmt.Errorf("delete future overrides: %w", err)
+		return fmt.Errorf("soft-delete future overrides: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -553,8 +553,8 @@ func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
-	if err := qtx.DeleteEventsByUID(ctx, uid); err != nil {
-		return fmt.Errorf("delete series: %w", err)
+	if err := qtx.SoftDeleteEventsByUID(ctx, uid); err != nil {
+		return fmt.Errorf("soft-delete series: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit delete series: %w", err)
@@ -1074,6 +1074,11 @@ func (s *Service) ReplaceRelations(ctx context.Context, eventID int64, relations
 // Converters
 
 func fromStorage(r storage.Event) Event {
+	var deletedAt *time.Time
+	if r.DeletedAt != nil && *r.DeletedAt != "" {
+		t := timeutil.ParseDateTime(*r.DeletedAt)
+		deletedAt = &t
+	}
 	return Event{
 		ID:             r.ID,
 		UID:            r.Uid,
@@ -1101,6 +1106,7 @@ func fromStorage(r storage.Event) Event {
 		DtStamp:        storage.NullableToString(r.Dtstamp),
 		CreatedAt:      timeutil.ParseDateTime(r.CreatedAt),
 		UpdatedAt:      timeutil.ParseDateTime(r.UpdatedAt),
+		DeletedAt:      deletedAt,
 	}
 }
 

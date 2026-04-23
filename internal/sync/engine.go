@@ -588,7 +588,11 @@ func (e *Engine) pull(ctx context.Context, client *caldav.Client, calendarID int
 func (e *Engine) deleteLocalResourceByUID(ctx context.Context, ownerType, uid string) error {
 	switch ownerType {
 	case "event":
-		return e.q.DeleteEventsByUID(ctx, uid)
+		// Soft-delete: row stays around for local recovery until the purge
+		// window expires. Sync resource row is cleared by the caller so a
+		// subsequent restore re-creates a fresh sync_resource via
+		// MarkResourceDirty.
+		return e.q.SoftDeleteEventsByUID(ctx, uid)
 	case "todo":
 		return e.q.DeleteTodosByUID(ctx, uid)
 	case "journal":

@@ -70,6 +70,7 @@ type Event struct {
 	Duration       *string
 	Dtstamp        *string
 	ConferenceUri  string
+	DeletedAt      *string
 }
 
 type EventAlarm struct {

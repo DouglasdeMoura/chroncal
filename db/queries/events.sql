@@ -1,23 +1,32 @@
 -- name: ListEventsByDateRange :many
-SELECT * FROM events WHERE start_time < ? AND end_time > ? ORDER BY start_time;
+SELECT * FROM events
+WHERE start_time < ? AND end_time > ? AND deleted_at IS NULL
+ORDER BY start_time;
 
 -- name: ListEventsByCalendarAndDateRange :many
-SELECT * FROM events WHERE calendar_id = ? AND start_time < ? AND end_time > ? ORDER BY start_time;
+SELECT * FROM events
+WHERE calendar_id = ? AND start_time < ? AND end_time > ? AND deleted_at IS NULL
+ORDER BY start_time;
 
 -- name: ListOverridesByUID :many
-SELECT * FROM events WHERE uid = ? AND recurrence_id != '' ORDER BY recurrence_id;
-
--- name: ListEventsByStatusAndDateRange :many
-SELECT * FROM events WHERE status = ? AND start_time < ? AND end_time > ? ORDER BY start_time;
+SELECT * FROM events
+WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NULL
+ORDER BY recurrence_id;
 
 -- name: GetEvent :one
-SELECT * FROM events WHERE id = ?;
+SELECT * FROM events WHERE id = ? AND deleted_at IS NULL;
 
 -- name: GetEventByUID :one
-SELECT * FROM events WHERE uid = ? AND recurrence_id = '';
+SELECT * FROM events WHERE uid = ? AND recurrence_id = '' AND deleted_at IS NULL;
 
 -- name: GetEventByUIDAndRecurrenceID :one
-SELECT * FROM events WHERE uid = ? AND recurrence_id = ?;
+SELECT * FROM events WHERE uid = ? AND recurrence_id = ? AND deleted_at IS NULL;
+
+-- name: GetEventIncludingDeleted :one
+SELECT * FROM events WHERE id = ?;
+
+-- name: GetEventByUIDIncludingDeleted :one
+SELECT * FROM events WHERE uid = ? AND recurrence_id = '' LIMIT 1;
 
 -- name: CreateEvent :one
 INSERT INTO events (
@@ -44,6 +53,10 @@ UPDATE events SET
 WHERE id = ? RETURNING *;
 
 -- name: UpsertEventByUID :one
+-- NOTE: ON CONFLICT UPDATE clears deleted_at. Callers outside the sync engine
+-- pull path should be aware this resurrects soft-deleted rows. The sync pull
+-- path is safe because tombstoned UIDs are filtered out before this runs
+-- (engine.go loads tombstones first and skips them during pull).
 INSERT INTO events (
     uid, calendar_id, title, description, location,
     start_time, end_time, all_day, recurrence_rule,
@@ -67,6 +80,7 @@ ON CONFLICT(uid, recurrence_id) DO UPDATE SET
     duration = excluded.duration,
     dtstamp = excluded.dtstamp,
     conference_uri = excluded.conference_uri,
+    deleted_at = NULL,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 RETURNING *;
 
@@ -76,27 +90,48 @@ UPDATE events SET exdates = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'
 -- name: UpdateEventRecurrenceRule :exec
 UPDATE events SET recurrence_rule = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?;
 
--- name: DeleteOverridesAtOrAfter :exec
-DELETE FROM events WHERE uid = ? AND recurrence_id != '' AND recurrence_id >= ?;
+-- name: SoftDeleteEvent :exec
+UPDATE events SET
+    deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = ? AND deleted_at IS NULL;
 
--- name: DeleteEvent :exec
-DELETE FROM events WHERE id = ?;
+-- name: SoftDeleteEventsByUID :exec
+UPDATE events SET
+    deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE uid = ? AND deleted_at IS NULL;
 
--- name: DeleteEventsByUID :exec
-DELETE FROM events WHERE uid = ?;
+-- name: SoftDeleteOverridesAtOrAfter :exec
+UPDATE events SET
+    deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE uid = ? AND recurrence_id != '' AND recurrence_id >= ? AND deleted_at IS NULL;
 
--- name: ListAllEvents :many
-SELECT * FROM events;
+-- name: RestoreEvent :exec
+UPDATE events SET
+    deleted_at = NULL,
+    sequence = sequence + 1,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = ? AND deleted_at IS NOT NULL;
+
+-- name: RestoreEventsByUID :exec
+UPDATE events SET
+    deleted_at = NULL,
+    sequence = sequence + 1,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE uid = ? AND deleted_at IS NOT NULL;
+
+-- name: PurgeSoftDeletedEvents :execrows
+DELETE FROM events WHERE deleted_at IS NOT NULL AND deleted_at < ?;
+
+-- name: ListDeletedEventsByCalendar :many
+SELECT * FROM events
+WHERE calendar_id = ? AND deleted_at IS NOT NULL
+ORDER BY deleted_at DESC;
 
 -- name: ListRecurringEvents :many
-SELECT * FROM events WHERE recurrence_rule IS NOT NULL AND recurrence_id = '';
+SELECT * FROM events WHERE recurrence_rule IS NOT NULL AND recurrence_id = '' AND deleted_at IS NULL;
 
 -- name: CountEventsByCalendar :one
-SELECT COUNT(*) FROM events WHERE calendar_id = ?;
-
--- name: ListRecurringEventsByCalendar :many
-SELECT * FROM events WHERE recurrence_rule IS NOT NULL AND recurrence_id = '' AND calendar_id = ?;
-
--- name: ListRecurringEventsByStatus :many
-SELECT * FROM events WHERE recurrence_rule IS NOT NULL AND recurrence_id = '' AND status = ?;
-
+SELECT COUNT(*) FROM events WHERE calendar_id = ? AND deleted_at IS NULL;

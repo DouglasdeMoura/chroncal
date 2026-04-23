@@ -35,6 +35,7 @@ type Event struct {
 	DtStamp        string // RFC 5545 DTSTAMP; empty = use UpdatedAt
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
+	DeletedAt      *time.Time // nil = not soft-deleted; set = soft-deleted at this time
 
 	// Transient fields — populated for import/export, not stored in events table
 	Alarms      []model.Alarm
