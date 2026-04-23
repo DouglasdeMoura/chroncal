@@ -126,6 +126,43 @@ newTime := duration.Add(time.Now(), "-PT15M")
 durStr := duration.FromGo(15 * time.Minute)  // "PT15M"
 ```
 
+### Soft-delete + restore + purge
+Events, todos, and journals share the same reversible-delete contract.
+`Delete` / `DeleteSeries` flip `deleted_at`; live reads gate on
+`deleted_at IS NULL`. Each domain service owns its own restore / purge:
+
+```go
+// Soft-delete: the Delete methods already do this.
+err := svc.Delete(ctx, id)        // sets deleted_at, keeps row
+err := svc.DeleteSeries(ctx, uid) // soft-deletes master + overrides
+
+// Restore:
+err := svc.RestoreByID(ctx, id)    // un-hides one row
+err := svc.RestoreByUID(ctx, uid)  // un-hides master + all overrides
+// Returns svc.ErrNotDeleted when the row is live or missing.
+
+// Purge (hard-delete soft-deleted rows):
+err := svc.PurgeByID(ctx, id)         // one row, refuses live rows
+n, err := svc.PurgeDeleted(ctx, cutoff) // all rows older than cutoff
+```
+
+Restoring a recurring override also clears the matching EXDATE on the
+master in the same transaction, so expansion sees the occurrence again.
+
+### List or purge mixed trash
+The `internal/trash` package aggregates all three domains:
+
+```go
+trashSvc := trash.NewService(a.Events, a.Todos, a.Journals)
+entries, err := trashSvc.List(ctx, calendarID) // newest-first, all kinds
+err = trashSvc.Restore(ctx, entries[0])
+err = trashSvc.Purge(ctx, entries[0])
+counts, err := trashSvc.PurgeOld(ctx, time.Now().Add(-30*24*time.Hour))
+```
+
+`Entry.Kind` (KindEvent, KindEventInstance, KindEventSeriesTail,
+KindTodo, KindJournal) tells the caller which fields are populated.
+
 ## Skill routing
 
 When the user's request matches an available skill, ALWAYS invoke it using the Skill
