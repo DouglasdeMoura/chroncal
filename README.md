@@ -244,6 +244,19 @@ chroncal service status
 
 All commands accept `-o, --output {text,table,json,yaml}` (default: text).
 
+### Destructive operations
+
+`event delete`, `todo delete`, `journal delete`, and `calendar delete` prompt
+for confirmation before destroying data. The prompt is bypassed when any of
+the following is true, so scripted use keeps working:
+
+- `--yes` / `-y` is passed
+- `CHRONCAL_ASSUME_YES=1` is set in the environment
+- `--output` is `json`, `yaml`, or `table` (machine-readable implies scripted)
+
+In a non-interactive shell without any of the above, the command refuses
+rather than silently auto-confirming.
+
 ## TUI
 
 Run `chroncal` with no arguments to launch the interactive terminal interface.

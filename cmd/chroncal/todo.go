@@ -919,6 +919,21 @@ recurring series.`,
 				return fmt.Errorf("--series and --recurrence-id are mutually exclusive")
 			}
 
+			question := fmt.Sprintf("Delete todo %q?", safeText(t.Summary))
+			if series {
+				question = fmt.Sprintf("Delete the entire recurring series %q (master + all overrides)?", safeText(t.Summary))
+			} else if recurrenceID != "" {
+				question = fmt.Sprintf("Delete override instance of %q at %s?", safeText(t.Summary), recurrenceID)
+			}
+			ok, err := confirmDestructive(cmd, question)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				fmt.Fprintln(cmd.OutOrStdout(), "Aborted.")
+				return nil
+			}
+
 			if series {
 				if err := a.Todos.DeleteSeries(ctx, t.UID); err != nil {
 					return fmt.Errorf("delete series: %w", err)
@@ -945,5 +960,6 @@ recurring series.`,
 	}
 	cmd.Flags().StringVar(&recurrenceID, "recurrence-id", "", "target a specific override instance (RFC 3339 timestamp)")
 	cmd.Flags().BoolVar(&series, "series", false, "delete the entire recurring series (master + all overrides)")
+	addConfirmFlag(cmd)
 	return cmd
 }

@@ -322,6 +322,27 @@ Use "chroncal calendar list" first if you need to confirm the ID.`,
 				return fmt.Errorf("invalid calendar ID: %w", err)
 			}
 
+			// Load the calendar before prompting so the user sees what's
+			// actually at risk (name + event count). Calendar delete
+			// cascades through events, todos, and journals, so a generic
+			// "Delete calendar 3?" is far too opaque for a one-keystroke
+			// destructive confirm.
+			cal, getErr := a.Calendars.Get(ctx, id)
+			if getErr != nil {
+				return notFoundErr(getErr, "calendar", id)
+			}
+			eventCount, _ := a.Queries.CountEventsByCalendar(ctx, id)
+			question := fmt.Sprintf("Delete calendar %q? Its %d event(s) and any todos/journals will be removed.",
+				safeText(cal.Name), eventCount)
+			ok, err := confirmDestructive(cmd, question)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				fmt.Fprintln(cmd.OutOrStdout(), "Aborted.")
+				return nil
+			}
+
 			if err := deleteCalendarWithCleanup(ctx, a, id); err != nil {
 				return notFoundErr(err, "calendar", id)
 			}
@@ -334,6 +355,7 @@ Use "chroncal calendar list" first if you need to confirm the ID.`,
 			return nil
 		},
 	}
+	addConfirmFlag(cmd)
 	return cmd
 }
 
