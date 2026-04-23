@@ -227,6 +227,7 @@ func (m TrashModel) Update(msg tea.Msg) (TrashModel, tea.Cmd) {
 }
 
 func (m TrashModel) handleKey(msg tea.KeyPressMsg) (TrashModel, tea.Cmd) {
+	sk := m.shell.Keys()
 	acts := m.buildActions()
 	switch {
 	case key.Matches(msg, m.keys.Restore):
@@ -241,6 +242,17 @@ func (m TrashModel) handleKey(msg tea.KeyPressMsg) (TrashModel, tea.Cmd) {
 			return m.refresh(), acts[1].Msg
 		}
 		return m, nil
+	case key.Matches(msg, sk.Enter):
+		// Enter on an event-kind row in the list zone opens the detail view.
+		// Instance and truncation entries have no full row to open, and
+		// Enter on those (or on a focused action button) falls through to the
+		// shell's default handler, which activates the focused button.
+		if m.shell.FocusZone() == ListZoneList {
+			if e, ok := m.selectedEntry(); ok && e.Kind == event.TrashKindEvent {
+				entry := e
+				return m, func() tea.Msg { return TrashViewRequestedMsg{Entry: entry} }
+			}
+		}
 	}
 
 	shell, cmd, _ := m.shell.HandleKey(msg, func() tea.Msg { return TrashDialogClosedMsg{} })

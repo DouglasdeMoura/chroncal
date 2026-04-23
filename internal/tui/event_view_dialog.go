@@ -147,11 +147,22 @@ type eventViewAction struct {
 	msg     func() tea.Msg
 }
 
+// isDeleted reports whether the viewed event is soft-deleted. Opened from
+// the trash view for a post-mortem look — editing or re-deleting makes no
+// sense in that state.
+func (m EventViewDialogModel) isDeleted() bool {
+	return m.event.DeletedAt != nil
+}
+
 // actions returns the buttons rendered in the bottom action bar.
 // Edit and Duplicate sit on the left (primary → secondary), Delete
 // is last and rendered with spatial separation so destructive intent
-// reads from position, not only color.
+// reads from position, not only color. Returns nil for soft-deleted
+// rows — restore must happen from the trash dialog first.
 func (m EventViewDialogModel) actions() []eventViewAction {
+	if m.isDeleted() {
+		return nil
+	}
 	ev := m.event
 	return []eventViewAction{
 		{label: "Edit", variant: ButtonPrimary, zone: "action:edit",
@@ -184,11 +195,17 @@ func (m EventViewDialogModel) handleKey(msg tea.KeyPressMsg) (EventViewDialogMod
 		return m, func() tea.Msg { return EventViewClosedMsg{} }
 
 	case key.Matches(msg, m.keys.Edit):
-		return m, actions[eventViewActionEditIdx].msg
+		if len(actions) > eventViewActionEditIdx {
+			return m, actions[eventViewActionEditIdx].msg
+		}
 	case key.Matches(msg, m.keys.Duplicate):
-		return m, actions[eventViewActionDupIdx].msg
+		if len(actions) > eventViewActionDupIdx {
+			return m, actions[eventViewActionDupIdx].msg
+		}
 	case key.Matches(msg, m.keys.Delete):
-		return m, actions[eventViewActionDeleteIdx].msg
+		if len(actions) > eventViewActionDeleteIdx {
+			return m, actions[eventViewActionDeleteIdx].msg
+		}
 
 	case key.Matches(msg, m.keys.RSVPYes):
 		if len(rsvp) > 0 {
@@ -376,6 +393,13 @@ func (m EventViewDialogModel) buildDetailLines(w int) []string {
 	lines = append(lines, m.titleRow(w)...)
 	lines = append(lines, "")
 
+	if m.isDeleted() && ev.DeletedAt != nil {
+		warn := lipgloss.NewStyle().Foreground(m.theme.Error).Bold(true)
+		banner := warn.Render("⊘ Deleted " + ev.DeletedAt.Local().Format("Mon, Jan 2 15:04") + " — restore from trash to edit")
+		lines = append(lines, truncateTo(banner, w))
+		lines = append(lines, "")
+	}
+
 	lines = append(lines, detailLine(faint, "Date", formatEventDateRange(ev), eventViewLabelWidth, w))
 	if t := formatEventTimeRange(ev); t != "" {
 		lines = append(lines, detailLine(faint, "Time", t, eventViewLabelWidth, w))
@@ -475,8 +499,11 @@ func (m EventViewDialogModel) View() string {
 	sep := lipgloss.NewStyle().Faint(true).Render(strings.Repeat("─", cw))
 	body := strings.Join(lines, "\n") + "\n\n" + sep + "\n" + actionsRow
 
-	helpKeys := []key.Binding{
-		m.keys.Edit, m.keys.Duplicate, m.keys.Delete, m.keys.Close,
+	var helpKeys []key.Binding
+	if m.isDeleted() {
+		helpKeys = []key.Binding{m.keys.Close}
+	} else {
+		helpKeys = []key.Binding{m.keys.Edit, m.keys.Duplicate, m.keys.Delete, m.keys.Close}
 	}
 	m.help.SetWidth(cw)
 	m.dialog.SetFooter(m.help.ShortHelpView(helpKeys))

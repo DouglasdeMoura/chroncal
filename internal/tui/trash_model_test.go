@@ -82,6 +82,34 @@ func TestTrashModel_PurgeKeyEmitsEntry(t *testing.T) {
 	}
 }
 
+func TestTrashModel_EnterOnEventRowEmitsViewMsg(t *testing.T) {
+	m := newTrashForTest().SetEntries(trashFixture(), nil)
+	// Selection starts on the event-kind row (ID=1).
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected a command for Enter on event row")
+	}
+	msg, ok := cmd().(TrashViewRequestedMsg)
+	if !ok {
+		t.Fatalf("expected TrashViewRequestedMsg, got %T", cmd())
+	}
+	if msg.Entry.Kind != event.TrashKindEvent || msg.Entry.ID != 1 {
+		t.Fatalf("Entry = %+v, want Event ID=1", msg.Entry)
+	}
+}
+
+func TestTrashModel_EnterOnInstanceRowFallsThrough(t *testing.T) {
+	m := newTrashForTest().SetEntries(trashFixture(), nil)
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"}) // move to instance row
+	// Enter on instance row should NOT emit a View msg — the shell handles it.
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd != nil {
+		if _, ok := cmd().(TrashViewRequestedMsg); ok {
+			t.Fatal("instance row should not emit TrashViewRequestedMsg")
+		}
+	}
+}
+
 func TestTrashModel_EscEmitsCloseMsg(t *testing.T) {
 	m := newTrashForTest().SetEntries(trashFixture(), nil)
 	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
