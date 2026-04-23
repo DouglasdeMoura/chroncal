@@ -7,7 +7,7 @@ import (
 
 func TestFooter_MonthContextShowsExpectedKeys(t *testing.T) {
 	f := NewFooterModel(NewTheme(true))
-	out := f.Render(FooterMonthWeekDay, 120, "", "", false)
+	out := f.Render(FooterMonthWeekDay, 120, "", "", false, true)
 
 	want := []string{"MONTH", "move", "open", "new", "today", "help"}
 	for _, w := range want {
@@ -19,15 +19,31 @@ func TestFooter_MonthContextShowsExpectedKeys(t *testing.T) {
 
 func TestFooter_AgendaEmptyShowsCreate(t *testing.T) {
 	f := NewFooterModel(NewTheme(true))
-	out := f.Render(FooterAgendaEmpty, 120, "", "", false)
+	out := f.Render(FooterAgendaEmpty, 120, "", "", false, true)
 	if !strings.Contains(out, "create event") {
 		t.Errorf("Render = %q, missing 'create event'", out)
 	}
 }
 
+func TestFooter_AgendaShowsDeleteWhenEventSelected(t *testing.T) {
+	f := NewFooterModel(NewTheme(true))
+	out := f.Render(FooterAgenda, 120, "", "", false, false)
+	if !strings.Contains(out, "x") || !strings.Contains(out, "delete") {
+		t.Errorf("Render = %q, missing x/delete hint", out)
+	}
+}
+
+func TestFooter_HidesTodayHintWhenAlreadyOnToday(t *testing.T) {
+	f := NewFooterModel(NewTheme(true))
+	out := f.Render(FooterMonthWeekDay, 120, "", "", false, false)
+	if strings.Contains(out, "today") {
+		t.Errorf("Render = %q, should hide today hint when already on today", out)
+	}
+}
+
 func TestFooter_EventPopupKeepsEForEdit(t *testing.T) {
 	f := NewFooterModel(NewTheme(true))
-	out := f.Render(FooterEventPopup, 120, "", "", false)
+	out := f.Render(FooterEventPopup, 120, "", "", false, false)
 	if !strings.Contains(out, "e") || !strings.Contains(out, "edit") {
 		t.Errorf("Render = %q, missing e/edit hint", out)
 	}
@@ -35,8 +51,8 @@ func TestFooter_EventPopupKeepsEForEdit(t *testing.T) {
 
 func TestFooter_EventPopupRSVPConditional(t *testing.T) {
 	f := NewFooterModel(NewTheme(true))
-	withRSVP := f.Render(FooterEventPopup, 120, "", "", true)
-	withoutRSVP := f.Render(FooterEventPopup, 120, "", "", false)
+	withRSVP := f.Render(FooterEventPopup, 120, "", "", true, false)
+	withoutRSVP := f.Render(FooterEventPopup, 120, "", "", false, false)
 	if !strings.Contains(withRSVP, "RSVP") {
 		t.Errorf("with RSVP = %q, missing 'RSVP'", withRSVP)
 	}
@@ -47,7 +63,7 @@ func TestFooter_EventPopupRSVPConditional(t *testing.T) {
 
 func TestFooter_ToastOverridesRightSide(t *testing.T) {
 	f := NewFooterModel(NewTheme(true))
-	out := f.Render(FooterMonthWeekDay, 120, "", "TOAST_HERE", false)
+	out := f.Render(FooterMonthWeekDay, 120, "", "TOAST_HERE", false, true)
 	if !strings.Contains(out, "TOAST_HERE") {
 		t.Errorf("Render = %q, missing toast override", out)
 	}
@@ -58,7 +74,7 @@ func TestFooter_ToastOverridesRightSide(t *testing.T) {
 
 func TestFooter_CollapsesBelow40Cols(t *testing.T) {
 	f := NewFooterModel(NewTheme(true))
-	out := f.Render(FooterEventPopup, 30, "", "", false)
+	out := f.Render(FooterEventPopup, 30, "", "", false, false)
 	if !strings.Contains(out, "?") {
 		t.Errorf("Render (narrow) = %q, missing ? help escape hatch", out)
 	}
@@ -76,7 +92,7 @@ func TestFooter_EllipsisBetween40And60(t *testing.T) {
 	// width inside the ellipsis band to force truncation even after the
 	// label has been dropped.
 	f := NewFooterModel(NewTheme(true))
-	out := f.Render(FooterCalendarPopup, 42, "syncing", "", false)
+	out := f.Render(FooterCalendarPopup, 42, "syncing", "", false, false)
 	if !strings.HasSuffix(out, "…") {
 		t.Errorf("Render (mid width) = %q, expected ellipsis suffix", out)
 	}
@@ -84,7 +100,7 @@ func TestFooter_EllipsisBetween40And60(t *testing.T) {
 
 func TestFooter_ZeroWidth(t *testing.T) {
 	f := NewFooterModel(NewTheme(true))
-	if out := f.Render(FooterMonthWeekDay, 0, "", "", false); out != "" {
+	if out := f.Render(FooterMonthWeekDay, 0, "", "", false, true); out != "" {
 		t.Errorf("Render (w=0) = %q, want empty", out)
 	}
 }
@@ -95,7 +111,7 @@ func TestFooter_LabelDroppedInEllipsisBand(t *testing.T) {
 	// first so commands survive longer. Test with CALENDARS (the longest
 	// label) to catch both short and long names.
 	f := NewFooterModel(NewTheme(true))
-	out := f.Render(FooterCalendarPopup, 55, "", "", false)
+	out := f.Render(FooterCalendarPopup, 55, "", "", false, false)
 	if strings.Contains(out, "CALENDARS") {
 		t.Errorf("Render (mid width) = %q, label should be dropped", out)
 	}
@@ -103,7 +119,7 @@ func TestFooter_LabelDroppedInEllipsisBand(t *testing.T) {
 
 func TestFooter_LabelPresentAtFullWidth(t *testing.T) {
 	f := NewFooterModel(NewTheme(true))
-	out := f.Render(FooterCalendarPopup, 120, "", "", false)
+	out := f.Render(FooterCalendarPopup, 120, "", "", false, false)
 	if !strings.Contains(out, "CALENDARS") {
 		t.Errorf("Render (full width) = %q, label should be visible", out)
 	}

@@ -164,6 +164,7 @@ func (m HelpDialogModel) sections() []helpSection {
 				{"[ · pgup", "previous week / month"},
 				{"] · pgdn", "next week / month"},
 				{"enter", "select day / view event"},
+				{"x", "delete selected event (agenda)"},
 				{"o", "toggle empty days (agenda)"},
 			},
 		},

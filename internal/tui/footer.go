@@ -53,20 +53,21 @@ func (f *FooterModel) SetTheme(theme Theme) { f.theme = theme }
 // Render composes one footer line for the given context and width. When
 // toast is non-empty, it replaces the right-side hint half; syncStatus is
 // rendered on the left. hasRSVP controls the optional RSVP keys on event
-// popups.
+// popups, and showTodayHint controls whether the footer should advertise
+// the `t today` shortcut when it is actionable in the active view.
 //
 // Below footerMinCols, the line collapses to "? help" + the single highest
 // value local action (so the user always has a path forward).
 // Between footerMinCols and footerEllipsisCols, the full hint list is
 // truncated with an ellipsis.
 // Above footerEllipsisCols, the full line renders.
-func (f FooterModel) Render(ctx FooterContext, width int, syncStatus, toast string, hasRSVP bool) string {
+func (f FooterModel) Render(ctx FooterContext, width int, syncStatus, toast string, hasRSVP, showTodayHint bool) string {
 	if width <= 0 {
 		return ""
 	}
 
 	prefixLabel := footerPrefix(ctx)
-	hints := footerHints(ctx, hasRSVP)
+	hints := footerHints(ctx, hasRSVP, showTodayHint)
 
 	// Collapse mode for very narrow terminals.
 	if width < footerMinCols {
@@ -192,29 +193,34 @@ func footerPrefix(ctx FooterContext) string {
 	return ""
 }
 
-func footerHints(ctx FooterContext, hasRSVP bool) []footerHint {
+func footerHints(ctx FooterContext, hasRSVP, showTodayHint bool) []footerHint {
 	switch ctx {
 	case FooterMonthWeekDay:
-		return []footerHint{
+		hints := []footerHint{
 			{"↑↓←→", "move"},
 			{"enter", "open"},
 			{"c", "new"},
-			{"t", "today"},
-			{"?", "help"},
 		}
+		if showTodayHint {
+			hints = append(hints, footerHint{"t", "today"})
+		}
+		return append(hints, footerHint{"?", "help"})
 	case FooterAgenda:
 		return []footerHint{
 			{"↑↓", "move"},
 			{"enter", "open"},
+			{"x", "delete"},
 			{"c", "new"},
 			{"?", "help"},
 		}
 	case FooterAgendaEmpty:
-		return []footerHint{
+		hints := []footerHint{
 			{"c", "create event"},
-			{"t", "today"},
-			{"?", "help"},
 		}
+		if showTodayHint {
+			hints = append(hints, footerHint{"t", "today"})
+		}
+		return append(hints, footerHint{"?", "help"})
 	case FooterEventPopup:
 		h := []footerHint{
 			{"e", "edit"},
@@ -249,8 +255,10 @@ func footerHints(ctx FooterContext, hasRSVP bool) []footerHint {
 // context when the footer has to collapse to near-nothing.
 func collapsedTopHint(ctx FooterContext) footerHint {
 	switch ctx {
-	case FooterMonthWeekDay, FooterAgenda:
+	case FooterMonthWeekDay:
 		return footerHint{"c", "new"}
+	case FooterAgenda:
+		return footerHint{"x", "delete"}
 	case FooterAgendaEmpty:
 		return footerHint{"c", "create"}
 	case FooterEventPopup:

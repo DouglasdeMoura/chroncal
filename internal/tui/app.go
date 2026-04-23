@@ -837,10 +837,10 @@ func (m Model) currentFooterContext() FooterContext {
 	}
 	switch m.viewMode {
 	case viewAgenda:
-		if len(m.events) == 0 {
-			return FooterAgendaEmpty
+		if _, ok := m.agenda.SelectedEvent(); ok {
+			return FooterAgenda
 		}
-		return FooterAgenda
+		return FooterAgendaEmpty
 	default:
 		return FooterMonthWeekDay
 	}
@@ -855,6 +855,18 @@ func (m Model) currentFooterHasRSVP() bool {
 	// The event view dialog exposes RSVP only when the user is an invited
 	// attendee; defer to its own rsvpActions helper via the dialog model.
 	return len(m.viewDialog.rsvpActions()) > 0
+}
+
+// currentFooterShowsTodayHint reports whether the active view's selected day
+// differs from today, making the `t today` footer hint actionable.
+func (m Model) currentFooterShowsTodayHint() bool {
+	switch m.currentFooterContext() {
+	case FooterMonthWeekDay, FooterAgendaEmpty:
+		cursor, today := m.viewCursorAndToday()
+		return !sameDay(cursor, today)
+	default:
+		return false
+	}
 }
 
 // undoIsAllowed reports whether the `u` key should trigger an undo. The guard
@@ -2225,7 +2237,14 @@ func (m Model) View() tea.View {
 		// "? help" is misleading while the help dialog itself is up.
 		footerLine = m.footer.RenderMinimal(innerWidth, statusText, m.toast.View(), !m.helpDialogOpen)
 	} else {
-		footerLine = m.footer.Render(m.currentFooterContext(), innerWidth, statusText, m.toast.View(), m.currentFooterHasRSVP())
+		footerLine = m.footer.Render(
+			m.currentFooterContext(),
+			innerWidth,
+			statusText,
+			m.toast.View(),
+			m.currentFooterHasRSVP(),
+			m.currentFooterShowsTodayHint(),
+		)
 	}
 	footer := lipgloss.NewStyle().
 		PaddingLeft(padding).
