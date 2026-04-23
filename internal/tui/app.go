@@ -1845,22 +1845,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.confirmOpen = true
 		return m, nil
 
-	case TrashViewRequestedMsg:
-		// Only TrashKindEvent reaches this case (the model guards it), so
-		// we can fetch the full row including deleted state for the detail
-		// view.
-		ctx := context.Background()
-		fresh, err := m.app.Events.GetIncludingDeleted(ctx, msg.Entry.ID)
-		if err != nil {
-			m.err = err
-			return m, nil
-		}
-		cal := m.calendars[fresh.CalendarID]
-		m.viewDialog = NewEventViewDialogModel(fresh, cal, m.theme).
-			SetSize(m.width, m.height)
-		m.viewDialogOpen = true
-		return m, nil
-
 	case trashActionDoneMsg:
 		if msg.err != nil {
 			cmd := m.toast.Failed(msg.err.Error())

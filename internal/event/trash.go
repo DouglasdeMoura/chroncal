@@ -36,6 +36,12 @@ const (
 // TrashKindEvent, ID is the events row ID. For TrashKindInstance, ID is
 // the event_exdate_deletes row ID. For TrashKindTruncation, ID is the
 // event_truncate_deletes row ID and CutoffTime/PreviousRRule are populated.
+//
+// Display-ready event fields (StartTime/EndTime/AllDay/Location/Description/
+// Status/Categories) are populated so the trash dialog can render full
+// details inline without opening a second view. For TrashKindInstance and
+// TrashKindTruncation these come from the master (the series shape), with
+// StartTime/EndTime shifted to the instance or cutoff window when relevant.
 type TrashEntry struct {
 	Kind          TrashKind
 	ID            int64
@@ -46,6 +52,14 @@ type TrashEntry struct {
 	CutoffTime    time.Time // populated for TrashKindTruncation
 	PreviousRRule string    // populated for TrashKindTruncation
 	DeletedAt     time.Time
+
+	StartTime   time.Time
+	EndTime     time.Time
+	AllDay      bool
+	Location    string
+	Description string
+	Status      string
+	Categories  string
 }
 
 // ListTrash merges soft-deleted events, EXDATE-based instance deletes,
@@ -66,60 +80,95 @@ func (s *Service) ListTrash(ctx context.Context, calendarID int64) ([]TrashEntry
 	}
 
 	entries := make([]TrashEntry, 0, len(evts)+len(instLogs)+len(truncLogs))
-	for _, e := range evts {
+	for _, r := range evts {
+		ev := fromStorage(r)
 		deletedAt := time.Time{}
-		if e.DeletedAt != nil {
-			deletedAt = parseStorageTime(*e.DeletedAt)
+		if ev.DeletedAt != nil {
+			deletedAt = *ev.DeletedAt
 		}
 		entries = append(entries, TrashEntry{
-			Kind:       TrashKindEvent,
-			ID:         e.ID,
-			CalendarID: e.CalendarID,
-			UID:        e.Uid,
-			Title:      e.Title,
-			DeletedAt:  deletedAt,
+			Kind:        TrashKindEvent,
+			ID:          ev.ID,
+			CalendarID:  ev.CalendarID,
+			UID:         ev.UID,
+			Title:       ev.Title,
+			DeletedAt:   deletedAt,
+			StartTime:   ev.StartTime,
+			EndTime:     ev.EndTime,
+			AllDay:      ev.AllDay,
+			Location:    ev.Location,
+			Description: ev.Description,
+			Status:      ev.Status,
+			Categories:  ev.Categories,
 		})
 	}
 
-	// For log rows, look up each master's title (including soft-deleted
-	// masters) so the trash view has something recognizable to display.
-	titles := make(map[string]string, len(instLogs)+len(truncLogs))
-	lookupTitle := func(uid string) string {
-		if t, ok := titles[uid]; ok {
-			return t
+	// For log rows, look up the master (including soft-deleted) once per
+	// UID so the trash dialog can render full context — title, location,
+	// description, status — without the user having to open a second view.
+	masters := make(map[string]*Event, len(instLogs)+len(truncLogs))
+	lookupMaster := func(uid string) *Event {
+		if m, ok := masters[uid]; ok {
+			return m
 		}
-		if m, err := s.q.GetEventByUIDIncludingDeleted(ctx, uid); err == nil {
-			titles[uid] = m.Title
-			return m.Title
+		if r, err := s.q.GetEventByUIDIncludingDeleted(ctx, uid); err == nil {
+			ev := fromStorage(r)
+			masters[uid] = &ev
+			return &ev
 		}
-		titles[uid] = ""
-		return ""
+		masters[uid] = nil
+		return nil
 	}
 
 	for _, l := range instLogs {
 		inst, _ := time.Parse(time.RFC3339, l.RecurrenceID)
-		entries = append(entries, TrashEntry{
+		entry := TrashEntry{
 			Kind:         TrashKindInstance,
 			ID:           l.ID,
 			CalendarID:   l.CalendarID,
 			UID:          l.Uid,
-			Title:        lookupTitle(l.Uid),
 			InstanceTime: inst,
 			DeletedAt:    parseStorageTime(l.DeletedAt),
-		})
+		}
+		if m := lookupMaster(l.Uid); m != nil {
+			entry.Title = m.Title
+			entry.AllDay = m.AllDay
+			entry.Location = m.Location
+			entry.Description = m.Description
+			entry.Status = m.Status
+			entry.Categories = m.Categories
+			// Project the master's duration onto this occurrence so
+			// "When" reads as "Fri, Apr 3 09:00 – 09:30" rather than
+			// the master's original time.
+			entry.StartTime = inst
+			if !m.EndTime.IsZero() && !m.StartTime.IsZero() {
+				entry.EndTime = inst.Add(m.EndTime.Sub(m.StartTime))
+			}
+		}
+		entries = append(entries, entry)
 	}
 	for _, l := range truncLogs {
 		cutoff, _ := time.Parse(time.RFC3339, l.CutoffTime)
-		entries = append(entries, TrashEntry{
+		entry := TrashEntry{
 			Kind:          TrashKindTruncation,
 			ID:            l.ID,
 			CalendarID:    l.CalendarID,
 			UID:           l.Uid,
-			Title:         lookupTitle(l.Uid),
 			CutoffTime:    cutoff,
 			PreviousRRule: l.PreviousRrule,
 			DeletedAt:     parseStorageTime(l.DeletedAt),
-		})
+		}
+		if m := lookupMaster(l.Uid); m != nil {
+			entry.Title = m.Title
+			entry.AllDay = m.AllDay
+			entry.Location = m.Location
+			entry.Description = m.Description
+			entry.Status = m.Status
+			entry.Categories = m.Categories
+			entry.StartTime = m.StartTime
+			entry.EndTime = m.EndTime
+		}
+		entries = append(entries, entry)
 	}
 
 	sort.SliceStable(entries, func(i, j int) bool {
