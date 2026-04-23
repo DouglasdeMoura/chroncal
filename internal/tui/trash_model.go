@@ -20,22 +20,26 @@ type TrashDialogClosedMsg struct{}
 // back via SetEntries.
 type TrashReloadMsg struct{}
 
-// TrashRestoreRequestedMsg asks the host to call Service.RestoreTrash.
-type TrashRestoreRequestedMsg struct{ Entry event.TrashEntry }
+// TrashRestoreRequestedMsg asks the host to call Service.RestoreTrash for
+// each entry. Single-entry when nothing is marked (acts on the cursor row),
+// multi-entry when the user has toggled marks with space.
+type TrashRestoreRequestedMsg struct{ Entries []event.TrashEntry }
 
-// TrashPurgeRequestedMsg asks the host to confirm and hard-remove the
-// selected entry via Service.PurgeTrashEntry.
-type TrashPurgeRequestedMsg struct{ Entry event.TrashEntry }
+// TrashPurgeRequestedMsg asks the host to confirm and hard-remove every
+// entry in the slice via Service.PurgeTrashEntry.
+type TrashPurgeRequestedMsg struct{ Entries []event.TrashEntry }
 
 type trashKeyMap struct {
 	Restore key.Binding
 	Purge   key.Binding
+	Mark    key.Binding
 }
 
 func defaultTrashKeys() trashKeyMap {
 	return trashKeyMap{
 		Restore: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "restore")),
 		Purge:   key.NewBinding(key.WithKeys("x", "delete"), key.WithHelp("x", "purge")),
+		Mark:    key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "select")),
 	}
 }
 
@@ -48,6 +52,12 @@ type TrashModel struct {
 	entries   []event.TrashEntry
 	calendars map[int64]CalendarInfo
 	keys      trashKeyMap
+	// marked is the set of entries the user has toggled with space. When
+	// non-empty, Restore/Purge act on every entry in the set instead of
+	// just the cursor row, and list rows render a checkbox prefix so the
+	// selection state is visible at a glance. Keyed by entryKey so the
+	// mapping survives kind-differentiated IDs.
+	marked map[string]bool
 }
 
 // NewTrashModel builds an empty trash dialog. Call SetEntries to populate
@@ -58,8 +68,16 @@ func NewTrashModel(calendars map[int64]CalendarInfo, h help.Model) TrashModel {
 			SetTitle("Recently deleted"),
 		calendars: calendars,
 		keys:      defaultTrashKeys(),
+		marked:    map[string]bool{},
 	}
 	return m.refresh()
+}
+
+// entryKey identifies a trash row across kinds so marks don't collide
+// between event rows and instance/truncation log rows that happen to
+// share an auto-increment ID.
+func entryKey(e event.TrashEntry) string {
+	return fmt.Sprintf("%d:%d", e.Kind, e.ID)
 }
 
 func (m TrashModel) SetSize(w, h int) TrashModel {
@@ -72,11 +90,25 @@ func (m TrashModel) SetSelectedColor(c color.Color) TrashModel {
 	return m
 }
 
-// SetEntries replaces the row list, preserving selection by kind+ID.
+// SetEntries replaces the row list, preserving selection by kind+ID and
+// pruning marks for entries no longer in the list (e.g. rows that were
+// just restored or purged by an earlier bulk action).
 func (m TrashModel) SetEntries(entries []event.TrashEntry, calendars map[int64]CalendarInfo) TrashModel {
 	prev, hadSel := m.selectedEntry()
 	m.entries = entries
 	m.calendars = calendars
+
+	if len(m.marked) > 0 {
+		present := make(map[string]bool, len(entries))
+		for _, e := range entries {
+			present[entryKey(e)] = true
+		}
+		for k := range m.marked {
+			if !present[k] {
+				delete(m.marked, k)
+			}
+		}
+	}
 
 	newSel := 0
 	if hadSel {
@@ -88,6 +120,50 @@ func (m TrashModel) SetEntries(entries []event.TrashEntry, calendars map[int64]C
 		}
 	}
 	m.shell = m.shell.SetSelected(newSel)
+	return m.refresh()
+}
+
+// ClearMarks discards the current multi-select set. Call after a bulk
+// action resolves so the next round starts clean.
+func (m TrashModel) ClearMarks() TrashModel {
+	if len(m.marked) == 0 {
+		return m
+	}
+	m.marked = map[string]bool{}
+	return m.refresh()
+}
+
+// markedEntries returns the entries targeted by the next action: the
+// marked set when non-empty, otherwise a single-element slice for the
+// cursor row. Empty slice when the list is empty.
+func (m TrashModel) markedEntries() []event.TrashEntry {
+	if len(m.marked) > 0 {
+		out := make([]event.TrashEntry, 0, len(m.marked))
+		for _, e := range m.entries {
+			if m.marked[entryKey(e)] {
+				out = append(out, e)
+			}
+		}
+		return out
+	}
+	if e, ok := m.selectedEntry(); ok {
+		return []event.TrashEntry{e}
+	}
+	return nil
+}
+
+// toggleMark flips the mark on the cursor row.
+func (m TrashModel) toggleMark() TrashModel {
+	e, ok := m.selectedEntry()
+	if !ok {
+		return m
+	}
+	k := entryKey(e)
+	if m.marked[k] {
+		delete(m.marked, k)
+	} else {
+		m.marked[k] = true
+	}
 	return m.refresh()
 }
 
@@ -142,8 +218,16 @@ func (m TrashModel) refresh() TrashModel {
 	listFocused := m.shell.FocusZone() == ListZoneList
 	rowW := m.listRowWidth()
 	selBG := m.shell.SelectedColor()
+	markMode := len(m.marked) > 0
 	for i, e := range m.entries {
 		label := formatTrashRowLabel(e)
+		if markMode {
+			prefix := Glyphs["checkbox.off"] + " "
+			if m.marked[entryKey(e)] {
+				prefix = Glyphs["checkbox.on"] + " "
+			}
+			label = prefix + label
+		}
 		if i == sel {
 			style := lipgloss.NewStyle()
 			switch {
@@ -182,14 +266,19 @@ func (m TrashModel) refresh() TrashModel {
 }
 
 func (m TrashModel) buildActions() []ListDialogAction {
-	e, ok := m.selectedEntry()
-	if !ok {
+	targets := m.markedEntries()
+	if len(targets) == 0 {
 		return nil
 	}
-	entry := e
+	restoreLabel := "Restore"
+	purgeLabel := "Purge"
+	if len(targets) > 1 {
+		restoreLabel = fmt.Sprintf("Restore (%d)", len(targets))
+		purgeLabel = fmt.Sprintf("Purge (%d)", len(targets))
+	}
 	return []ListDialogAction{
-		{Label: "Restore", Primary: true, Msg: func() tea.Msg { return TrashRestoreRequestedMsg{Entry: entry} }},
-		{Label: "Purge", Danger: true, Msg: func() tea.Msg { return TrashPurgeRequestedMsg{Entry: entry} }},
+		{Label: restoreLabel, Primary: true, Msg: func() tea.Msg { return TrashRestoreRequestedMsg{Entries: targets} }},
+		{Label: purgeLabel, Danger: true, Msg: func() tea.Msg { return TrashPurgeRequestedMsg{Entries: targets} }},
 	}
 }
 
@@ -202,7 +291,7 @@ func (m TrashModel) shortHelp() []key.Binding {
 	if len(m.entries) == 0 {
 		return []key.Binding{sk.Close}
 	}
-	return []key.Binding{nav, sk.Tab, m.keys.Restore, m.keys.Purge, sk.Close}
+	return []key.Binding{nav, sk.Tab, m.keys.Mark, m.keys.Restore, m.keys.Purge, sk.Close}
 }
 
 func (m TrashModel) Update(msg tea.Msg) (TrashModel, tea.Cmd) {
@@ -216,6 +305,10 @@ func (m TrashModel) Update(msg tea.Msg) (TrashModel, tea.Cmd) {
 }
 
 func (m TrashModel) handleKey(msg tea.KeyPressMsg) (TrashModel, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.keys.Mark):
+		return m.toggleMark(), nil
+	}
 	acts := m.buildActions()
 	switch {
 	case key.Matches(msg, m.keys.Restore):
@@ -251,6 +344,21 @@ func (m TrashModel) handleMouse(msg tea.MouseClickMsg) (TrashModel, tea.Cmd) {
 		return m.refresh(), cmd
 	}
 	return m, nil
+}
+
+// trashBulkTitle summarises the action target for toast + confirm prompts.
+// Single-entry: the entry's title. Multi-entry: an "N items" count, so the
+// user sees that the action covers every marked row rather than just the
+// cursor.
+func trashBulkTitle(entries []event.TrashEntry) string {
+	switch len(entries) {
+	case 0:
+		return ""
+	case 1:
+		return entries[0].Title
+	default:
+		return fmt.Sprintf("%d items", len(entries))
+	}
 }
 
 // formatTrashRowLabel renders the list row as just the title. The detail

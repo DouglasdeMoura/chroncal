@@ -268,10 +268,10 @@ type Model struct {
 	// trash is the "Recently deleted" overlay. While trashOpen is true
 	// the main content renders trash.View() instead of the active
 	// viewMode's model, and key input routes through m.trash.Update.
-	trash             TrashModel
-	trashOpen         bool
-	pendingPurgeEntry event.TrashEntry
-	pendingPurgeTitle string
+	trash               TrashModel
+	trashOpen           bool
+	pendingPurgeEntries []event.TrashEntry
+	pendingPurgeTitle   string
 }
 
 func NewModel(a *app.App) Model {
@@ -1728,18 +1728,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if !msg.Confirmed {
 			m.pendingCalendarDelete = 0
-			m.pendingPurgeEntry = event.TrashEntry{}
+			m.pendingPurgeEntries = nil
 			m.pendingPurgeTitle = ""
 			return m, nil
 		}
-		if m.pendingPurgeEntry.ID != 0 {
-			entry := m.pendingPurgeEntry
+		if len(m.pendingPurgeEntries) > 0 {
+			entries := m.pendingPurgeEntries
 			title := m.pendingPurgeTitle
-			m.pendingPurgeEntry = event.TrashEntry{}
+			m.pendingPurgeEntries = nil
 			m.pendingPurgeTitle = ""
 			return m, func() tea.Msg {
-				err := m.app.Events.PurgeTrashEntry(context.Background(), entry)
-				return trashActionDoneMsg{action: "purged", title: title, err: err}
+				for _, e := range entries {
+					if err := m.app.Events.PurgeTrashEntry(context.Background(), e); err != nil {
+						return trashActionDoneMsg{action: "purged", title: title, err: err}
+					}
+				}
+				return trashActionDoneMsg{action: "purged", title: title, err: nil}
 			}
 		}
 		if m.pendingCalendarDelete != 0 {
@@ -1829,17 +1833,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.loadTrash()
 
 	case TrashRestoreRequestedMsg:
-		entry := msg.Entry
-		title := entry.Title
+		entries := msg.Entries
+		if len(entries) == 0 {
+			return m, nil
+		}
+		title := trashBulkTitle(entries)
 		return m, func() tea.Msg {
-			err := m.app.Events.RestoreTrash(context.Background(), entry)
-			return trashActionDoneMsg{action: "restored", title: title, err: err}
+			for _, e := range entries {
+				if err := m.app.Events.RestoreTrash(context.Background(), e); err != nil {
+					return trashActionDoneMsg{action: "restored", title: title, err: err}
+				}
+			}
+			return trashActionDoneMsg{action: "restored", title: title, err: nil}
 		}
 
 	case TrashPurgeRequestedMsg:
-		m.pendingPurgeEntry = msg.Entry
-		m.pendingPurgeTitle = msg.Entry.Title
-		message := fmt.Sprintf("Purge %q forever? This can't be undone.", msg.Entry.Title)
+		if len(msg.Entries) == 0 {
+			return m, nil
+		}
+		m.pendingPurgeEntries = msg.Entries
+		m.pendingPurgeTitle = trashBulkTitle(msg.Entries)
+		var message string
+		if len(msg.Entries) == 1 {
+			message = fmt.Sprintf("Purge %q forever? This can't be undone.", msg.Entries[0].Title)
+		} else {
+			message = fmt.Sprintf("Purge %d items forever? This can't be undone.", len(msg.Entries))
+		}
 		m.confirmDialog = NewConfirmDialogModel(message, "Purge").
 			SetSize(m.width, m.height)
 		m.confirmOpen = true
@@ -1850,6 +1869,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmd := m.toast.Failed(msg.err.Error())
 			return m, cmd
 		}
+		m.trash = m.trash.ClearMarks()
 		cmds := []tea.Cmd{m.loadTrash(), m.loadEvents()}
 		switch msg.action {
 		case "restored":

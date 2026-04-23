@@ -62,8 +62,8 @@ func TestTrashModel_RestoreKeyEmitsEntry(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected TrashRestoreRequestedMsg, got %T", cmd())
 	}
-	if msg.Entry.ID != 1 {
-		t.Fatalf("Entry.ID = %d, want 1", msg.Entry.ID)
+	if len(msg.Entries) != 1 || msg.Entries[0].ID != 1 {
+		t.Fatalf("Entries = %+v, want single entry with ID=1", msg.Entries)
 	}
 }
 
@@ -77,8 +77,52 @@ func TestTrashModel_PurgeKeyEmitsEntry(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected TrashPurgeRequestedMsg, got %T", cmd())
 	}
-	if msg.Entry.ID != 1 {
-		t.Fatalf("Entry.ID = %d, want 1", msg.Entry.ID)
+	if len(msg.Entries) != 1 || msg.Entries[0].ID != 1 {
+		t.Fatalf("Entries = %+v, want single entry with ID=1", msg.Entries)
+	}
+}
+
+func TestTrashModel_SpaceTogglesMark(t *testing.T) {
+	m := newTrashForTest().SetEntries(trashFixture(), nil)
+	// Mark row 0 (Event ID=1), move to row 1 and mark it too.
+	m, _ = m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	m, _ = m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
+
+	// Restore should now emit both entries.
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
+	if cmd == nil {
+		t.Fatal("expected a command for 'r' after marking")
+	}
+	msg, ok := cmd().(TrashRestoreRequestedMsg)
+	if !ok {
+		t.Fatalf("expected TrashRestoreRequestedMsg, got %T", cmd())
+	}
+	if len(msg.Entries) != 2 {
+		t.Fatalf("Entries len = %d, want 2 (both marked rows)", len(msg.Entries))
+	}
+}
+
+func TestTrashModel_SpaceUntoggles(t *testing.T) {
+	m := newTrashForTest().SetEntries(trashFixture(), nil)
+	m, _ = m.Update(tea.KeyPressMsg{Code: ' ', Text: " "}) // mark row 0
+	m, _ = m.Update(tea.KeyPressMsg{Code: ' ', Text: " "}) // unmark row 0
+	// Back to single-row semantics: restore emits only the cursor entry.
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
+	msg := cmd().(TrashRestoreRequestedMsg)
+	if len(msg.Entries) != 1 || msg.Entries[0].ID != 1 {
+		t.Fatalf("Entries = %+v, want single entry with ID=1", msg.Entries)
+	}
+}
+
+func TestTrashModel_ClearMarksWipesSet(t *testing.T) {
+	m := newTrashForTest().SetEntries(trashFixture(), nil)
+	m, _ = m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
+	m = m.ClearMarks()
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
+	msg := cmd().(TrashRestoreRequestedMsg)
+	if len(msg.Entries) != 1 {
+		t.Fatalf("after ClearMarks: Entries len = %d, want 1", len(msg.Entries))
 	}
 }
 
