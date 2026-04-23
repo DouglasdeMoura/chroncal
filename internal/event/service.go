@@ -476,6 +476,17 @@ func (s *Service) DeleteInstance(ctx context.Context, uid string, instanceTime t
 		}
 	}
 
+	// Log the EXDATE-based delete so the trash view can surface it.
+	// ON CONFLICT upserts deleted_at, so deleting the same instance twice
+	// keeps exactly one log row with the latest timestamp.
+	if err := qtx.RecordEventExdateDelete(ctx, storage.RecordEventExdateDeleteParams{
+		CalendarID:   master.CalendarID,
+		Uid:          uid,
+		RecurrenceID: recID,
+	}); err != nil {
+		return fmt.Errorf("record exdate delete: %w", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return err
 	}
