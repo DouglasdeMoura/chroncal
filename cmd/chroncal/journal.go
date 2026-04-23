@@ -31,7 +31,7 @@ contacts, attendees, and related-item metadata.`,
 	cmd.AddCommand(
 		journalListCmd(), journalGetCmd(), journalAddCmd(), journalUpdateCmd(),
 		journalDeleteCmd(), journalSearchCmd(),
-		journalRestoreCmd(), journalPurgeDeletedCmd(),
+		journalRestoreCmd(), journalPurgeCmd(), journalPurgeDeletedCmd(),
 	)
 	return cmd
 }
@@ -707,6 +707,69 @@ the next sync cycle recreates it remotely.`,
 			return nil
 		},
 	}
+	return cmd
+}
+
+func journalPurgeCmd() *cobra.Command {
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "purge <id>",
+		Short: "Hard-delete a single soft-deleted journal entry",
+		Long: `Purge permanently removes one soft-deleted journal entry from the
+database.
+
+The entry must already be soft-deleted. Purging a live entry is refused;
+use 'journal delete' first. Purging is not reversible — child rows cascade.`,
+		Example: `  chroncal journal purge 3
+  chroncal journal purge 3 --yes`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := strconv.ParseInt(args[0], 10, 64)
+			if err != nil {
+				return fmt.Errorf("parse id %q: %w", args[0], err)
+			}
+
+			a, err := initApp()
+			if err != nil {
+				return err
+			}
+			defer a.Close()
+			ctx := context.Background()
+
+			j, err := a.Journals.GetIncludingDeleted(ctx, id)
+			if err != nil {
+				return fmt.Errorf("get journal: %w", err)
+			}
+			if j.DeletedAt == nil {
+				return fmt.Errorf("journal %d is live; run 'journal delete %d' first", id, id)
+			}
+
+			question := fmt.Sprintf("Purge journal %q (id %d)? This cannot be undone.", safeText(j.Summary), id)
+			ok, err := confirmDestructive(cmd, question)
+			if err != nil {
+				return err
+			}
+			if !ok && !yes {
+				fmt.Fprintln(cmd.OutOrStdout(), "Aborted.")
+				return nil
+			}
+
+			if err := a.Journals.PurgeByID(ctx, id); err != nil {
+				if errors.Is(err, journal.ErrNotDeleted) {
+					return fmt.Errorf("journal %d not found or not soft-deleted", id)
+				}
+				return fmt.Errorf("purge: %w", err)
+			}
+
+			w := cmd.OutOrStdout()
+			if outputFmt != "text" {
+				return printOutput(w, map[string]any{"purged": true, "id": id})
+			}
+			fmt.Fprintf(w, "Purged journal %d.\n", id)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&yes, "yes", false, "skip interactive confirmation")
 	return cmd
 }
 

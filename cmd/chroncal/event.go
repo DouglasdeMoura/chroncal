@@ -37,7 +37,7 @@ alarms, attendees, attachments, and other iCalendar metadata.`,
 	cmd.AddCommand(
 		eventListCmd(), eventGetCmd(), eventAddCmd(), eventUpdateCmd(),
 		eventDeleteCmd(), eventSearchCmd(),
-		eventRestoreCmd(), eventPurgeDeletedCmd(),
+		eventRestoreCmd(), eventPurgeCmd(), eventPurgeDeletedCmd(),
 	)
 	return cmd
 }
@@ -195,6 +195,69 @@ the next sync cycle recreates it remotely (with a fresh resource URL).`,
 			return nil
 		},
 	}
+	return cmd
+}
+
+func eventPurgeCmd() *cobra.Command {
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "purge <id>",
+		Short: "Hard-delete a single soft-deleted event",
+		Long: `Purge permanently removes one soft-deleted event from the database.
+
+The event must already be soft-deleted. Purging a live event is refused;
+use 'event delete' first. Purging is not reversible — child rows (alarms,
+attendees, attachments, overrides) cascade.`,
+		Example: `  chroncal event purge 42
+  chroncal event purge 42 --yes`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := strconv.ParseInt(args[0], 10, 64)
+			if err != nil {
+				return fmt.Errorf("parse id %q: %w", args[0], err)
+			}
+
+			a, err := initApp()
+			if err != nil {
+				return err
+			}
+			defer a.Close()
+			ctx := context.Background()
+
+			e, err := a.Events.GetIncludingDeleted(ctx, id)
+			if err != nil {
+				return fmt.Errorf("get event: %w", err)
+			}
+			if e.DeletedAt == nil {
+				return fmt.Errorf("event %d is live; run 'event delete %d' first", id, id)
+			}
+
+			question := fmt.Sprintf("Purge event %q (id %d)? This cannot be undone.", safeText(e.Title), id)
+			ok, err := confirmDestructive(cmd, question)
+			if err != nil {
+				return err
+			}
+			if !ok && !yes {
+				fmt.Fprintln(cmd.OutOrStdout(), "Aborted.")
+				return nil
+			}
+
+			if err := a.Events.PurgeByID(ctx, id); err != nil {
+				if errors.Is(err, event.ErrNotDeleted) {
+					return fmt.Errorf("event %d not found or not soft-deleted", id)
+				}
+				return fmt.Errorf("purge: %w", err)
+			}
+
+			w := cmd.OutOrStdout()
+			if outputFmt != "text" {
+				return printOutput(w, map[string]any{"purged": true, "id": id})
+			}
+			fmt.Fprintf(w, "Purged event %d.\n", id)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&yes, "yes", false, "skip interactive confirmation")
 	return cmd
 }
 
