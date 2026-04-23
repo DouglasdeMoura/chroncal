@@ -20,6 +20,7 @@ const (
 	ToastRestoring                         // "Restoring…"
 	ToastRestored                          // "✓ Restored 'X'"
 	ToastFailed                            // "Undo failed: <reason>"
+	ToastPurged                            // "✓ Purged 'X'"
 )
 
 // ToastAutoDismissDelay is the default 6-second window a deleted-toast lives
@@ -105,6 +106,18 @@ func (t *ToastModel) Restored(title string) tea.Cmd {
 	return t.scheduleDismiss(ToastRestoredDismissDelay)
 }
 
+// Purged confirms a successful hard-delete from the trash view. Uses the
+// same short dismiss window as Restored — the row has already disappeared
+// from the list by the time the toast shows.
+func (t *ToastModel) Purged(title string) tea.Cmd {
+	t.token++
+	t.state = ToastPurged
+	t.title = title
+	t.reason = ""
+	t.deadline = time.Now().Add(ToastRestoredDismissDelay)
+	return t.scheduleDismiss(ToastRestoredDismissDelay)
+}
+
 // Clear hides the toast immediately and invalidates any pending tick.
 func (t *ToastModel) Clear() {
 	t.token++
@@ -127,7 +140,7 @@ func (t *ToastModel) Update(msg tea.Msg) bool {
 	// Only auto-dismiss from the terminal display states. Restoring is a
 	// transient indicator owned by the caller, not the timer.
 	switch t.state {
-	case ToastDeletedUnsynced, ToastDeletedSynced, ToastRestored, ToastFailed:
+	case ToastDeletedUnsynced, ToastDeletedSynced, ToastRestored, ToastFailed, ToastPurged:
 		t.state = ToastEmpty
 		t.title = ""
 		t.reason = ""
@@ -168,6 +181,12 @@ func (t ToastModel) View() string {
 		label := "Restored event"
 		if t.title != "" {
 			label = fmt.Sprintf("Restored %q", t.title)
+		}
+		return fmt.Sprintf("%s %s", okStyle.Render("✓"), dimStyle.Render(label))
+	case ToastPurged:
+		label := "Purged forever"
+		if t.title != "" {
+			label = fmt.Sprintf("Purged %q forever", t.title)
 		}
 		return fmt.Sprintf("%s %s", okStyle.Render("✓"), dimStyle.Render(label))
 	case ToastFailed:

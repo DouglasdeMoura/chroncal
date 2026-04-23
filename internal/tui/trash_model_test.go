@@ -47,6 +47,25 @@ func TestTrashModel_EmptyRendersPlaceholder(t *testing.T) {
 	}
 }
 
+func TestTrashModel_TruncationRowShowsCutoff(t *testing.T) {
+	cutoff := time.Date(2026, 5, 1, 14, 0, 0, 0, time.UTC)
+	entries := []event.TrashEntry{{
+		Kind:       event.TrashKindTruncation,
+		ID:         3,
+		CalendarID: 1,
+		UID:        "sprint",
+		Title:      "Sprint Review",
+		CutoffTime: cutoff,
+		DeletedAt:  time.Date(2026, 4, 23, 18, 0, 0, 0, time.UTC),
+	}}
+	m := NewTrashModel().SetSize(100, 20).SetEntries(entries, nil)
+	out := m.View()
+	want := cutoff.Local().Format("2006-01-02 15:04")
+	if !strings.Contains(out, want) || !strings.Contains(out, "truncated from") {
+		t.Fatalf("View = %q, want contains %q and 'truncated from'", out, want)
+	}
+}
+
 func TestTrashModel_InstanceRowShowsOccurrenceTime(t *testing.T) {
 	m := NewTrashModel().SetSize(80, 20).SetEntries(trashFixture(), nil)
 	// Move to the instance row (index 1).

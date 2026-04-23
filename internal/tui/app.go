@@ -1870,8 +1870,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		cmds := []tea.Cmd{m.loadTrash(), m.loadEvents()}
-		if msg.action == "restored" {
+		switch msg.action {
+		case "restored":
 			cmds = append(cmds, m.toast.Restored(msg.title))
+		case "purged":
+			cmds = append(cmds, m.toast.Purged(msg.title))
 		}
 		return m, tea.Batch(cmds...)
 

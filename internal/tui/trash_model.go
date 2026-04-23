@@ -212,8 +212,15 @@ func (m TrashModel) renderRow(idx int, selected bool) string {
 	if title == "" {
 		title = "(untitled)"
 	}
-	if e.Kind == event.TrashKindInstance && !e.InstanceTime.IsZero() {
-		title = title + "  · " + e.InstanceTime.Local().Format("2006-01-02 15:04")
+	switch e.Kind {
+	case event.TrashKindInstance:
+		if !e.InstanceTime.IsZero() {
+			title += "  · " + e.InstanceTime.Local().Format("2006-01-02 15:04")
+		}
+	case event.TrashKindTruncation:
+		if !e.CutoffTime.IsZero() {
+			title += "  · truncated from " + e.CutoffTime.Local().Format("2006-01-02 15:04")
+		}
 	}
 
 	prefix := dateCol + base.Render(" ") + base.Width(3).Render(" "+dot+" ")
