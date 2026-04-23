@@ -23,6 +23,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/config"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	syncpkg "github.com/douglasdemoura/chroncal/internal/sync"
+	"github.com/douglasdemoura/chroncal/internal/trash"
 )
 
 type appFocus int
@@ -270,7 +271,7 @@ type Model struct {
 	// viewMode's model, and key input routes through m.trash.Update.
 	trash               TrashModel
 	trashOpen           bool
-	pendingPurgeEntries []event.TrashEntry
+	pendingPurgeEntries []trash.Entry
 	pendingPurgeTitle   string
 }
 
@@ -372,10 +373,10 @@ func (m Model) loadMiniMonthEvents() tea.Cmd {
 	}
 }
 
-// trashLoadedMsg carries the trash entries (soft-deleted events + EXDATE-based
-// instance deletes) for the visible calendar(s) and an error if any query failed.
+// trashLoadedMsg carries trash entries across events, todos, and journals
+// for the visible calendar(s), plus an error if any domain query failed.
 type trashLoadedMsg struct {
-	entries []event.TrashEntry
+	entries []trash.Entry
 	err     error
 }
 
@@ -387,17 +388,17 @@ type trashActionDoneMsg struct {
 	err    error
 }
 
-// loadTrash queries ListTrash across all visible calendars and hands the
-// result to the trash model via trashLoadedMsg.
+// loadTrash queries the trash aggregator across all visible calendars
+// and hands the result to the trash model via trashLoadedMsg.
 func (m Model) loadTrash() tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
-		var out []event.TrashEntry
+		var out []trash.Entry
 		for id := range m.calendars {
 			if m.hiddenCalendars[id] {
 				continue
 			}
-			entries, err := m.app.Events.ListTrash(ctx, id)
+			entries, err := m.app.Trash.List(ctx, id)
 			if err != nil {
 				return trashLoadedMsg{err: err}
 			}
@@ -1739,7 +1740,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingPurgeTitle = ""
 			return m, func() tea.Msg {
 				for _, e := range entries {
-					if err := m.app.Events.PurgeTrashEntry(context.Background(), e); err != nil {
+					if err := m.app.Trash.Purge(context.Background(), e); err != nil {
 						return trashActionDoneMsg{action: "purged", title: title, err: err}
 					}
 				}
@@ -1840,7 +1841,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		title := trashBulkTitle(entries)
 		return m, func() tea.Msg {
 			for _, e := range entries {
-				if err := m.app.Events.RestoreTrash(context.Background(), e); err != nil {
+				if err := m.app.Trash.Restore(context.Background(), e); err != nil {
 					return trashActionDoneMsg{action: "restored", title: title, err: err}
 				}
 			}

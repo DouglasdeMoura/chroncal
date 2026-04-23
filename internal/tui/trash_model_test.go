@@ -8,16 +8,16 @@ import (
 	"charm.land/bubbles/v2/help"
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/trash"
 )
 
-func trashFixture() []event.TrashEntry {
+func trashFixture() []trash.Entry {
 	t1 := time.Date(2026, 4, 22, 10, 0, 0, 0, time.UTC)
 	t2 := time.Date(2026, 4, 21, 9, 30, 0, 0, time.UTC)
-	return []event.TrashEntry{
-		{Kind: event.TrashKindEvent, ID: 1, CalendarID: 1, Title: "Lunch", DeletedAt: t1},
+	return []trash.Entry{
+		{Kind: trash.KindEvent, ID: 1, CalendarID: 1, Title: "Lunch", DeletedAt: t1},
 		{
-			Kind:         event.TrashKindInstance,
+			Kind:         trash.KindEventInstance,
 			ID:           7,
 			CalendarID:   1,
 			UID:          "standup",
@@ -47,7 +47,7 @@ func TestTrashModel_SetEntriesPopulates(t *testing.T) {
 func TestTrashModel_EmptyRendersPlaceholder(t *testing.T) {
 	m := newTrashForTest()
 	out := m.View()
-	if !strings.Contains(out, "No deleted events.") {
+	if !strings.Contains(out, "Nothing in the trash.") {
 		t.Fatalf("View = %q, want contains placeholder", out)
 	}
 }
@@ -171,10 +171,10 @@ func TestTrashModel_DetailLinesContainKindAndInstance(t *testing.T) {
 func TestTrashModel_SetEntriesPreservesSelection(t *testing.T) {
 	m := newTrashForTest().SetEntries(trashFixture(), nil)
 	m, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"}) // on instance ID=7
-	next := []event.TrashEntry{trashFixture()[1]}
+	next := []trash.Entry{trashFixture()[1]}
 	m = m.SetEntries(next, map[int64]CalendarInfo{1: {Name: "Work", Color: "#a6e3a1"}})
 	e, _ := m.selectedEntry()
-	if e.Kind != event.TrashKindInstance || e.ID != 7 {
+	if e.Kind != trash.KindEventInstance || e.ID != 7 {
 		t.Fatalf("selection not preserved: got %+v, want Instance ID=7", e)
 	}
 }

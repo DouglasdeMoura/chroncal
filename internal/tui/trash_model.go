@@ -10,24 +10,24 @@ import (
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
 
-	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/trash"
 )
 
 // TrashDialogClosedMsg is emitted when the dialog requests to close.
 type TrashDialogClosedMsg struct{}
 
-// TrashReloadMsg asks the host to re-query ListTrash and push the result
-// back via SetEntries.
+// TrashReloadMsg asks the host to re-query the trash aggregator and push
+// the result back via SetEntries.
 type TrashReloadMsg struct{}
 
-// TrashRestoreRequestedMsg asks the host to call Service.RestoreTrash for
-// each entry. Single-entry when nothing is marked (acts on the cursor row),
+// TrashRestoreRequestedMsg asks the host to call Service.Restore on each
+// entry. Single-entry when nothing is marked (acts on the cursor row),
 // multi-entry when the user has toggled marks with space.
-type TrashRestoreRequestedMsg struct{ Entries []event.TrashEntry }
+type TrashRestoreRequestedMsg struct{ Entries []trash.Entry }
 
 // TrashPurgeRequestedMsg asks the host to confirm and hard-remove every
-// entry in the slice via Service.PurgeTrashEntry.
-type TrashPurgeRequestedMsg struct{ Entries []event.TrashEntry }
+// entry in the slice via Service.Purge.
+type TrashPurgeRequestedMsg struct{ Entries []trash.Entry }
 
 type trashKeyMap struct {
 	Restore key.Binding
@@ -49,7 +49,7 @@ func defaultTrashKeys() trashKeyMap {
 // domain messages. Actions: Restore (primary), Purge (danger).
 type TrashModel struct {
 	shell     ListDialogModel
-	entries   []event.TrashEntry
+	entries   []trash.Entry
 	calendars map[int64]CalendarInfo
 	keys      trashKeyMap
 	// marked is the set of entries the user has toggled with space. When
@@ -61,7 +61,7 @@ type TrashModel struct {
 }
 
 // NewTrashModel builds an empty trash dialog. Call SetEntries to populate
-// rows once the host has fetched them via Service.ListTrash.
+// rows once the host has fetched them via trash.Service.List.
 func NewTrashModel(calendars map[int64]CalendarInfo, h help.Model) TrashModel {
 	m := TrashModel{
 		shell: NewListDialogModel(h).
@@ -74,9 +74,8 @@ func NewTrashModel(calendars map[int64]CalendarInfo, h help.Model) TrashModel {
 }
 
 // entryKey identifies a trash row across kinds so marks don't collide
-// between event rows and instance/truncation log rows that happen to
-// share an auto-increment ID.
-func entryKey(e event.TrashEntry) string {
+// between rows from different domains that happen to share an ID.
+func entryKey(e trash.Entry) string {
 	return fmt.Sprintf("%d:%d", e.Kind, e.ID)
 }
 
@@ -93,7 +92,7 @@ func (m TrashModel) SetSelectedColor(c color.Color) TrashModel {
 // SetEntries replaces the row list, preserving selection by kind+ID and
 // pruning marks for entries no longer in the list (e.g. rows that were
 // just restored or purged by an earlier bulk action).
-func (m TrashModel) SetEntries(entries []event.TrashEntry, calendars map[int64]CalendarInfo) TrashModel {
+func (m TrashModel) SetEntries(entries []trash.Entry, calendars map[int64]CalendarInfo) TrashModel {
 	prev, hadSel := m.selectedEntry()
 	m.entries = entries
 	m.calendars = calendars
@@ -136,9 +135,9 @@ func (m TrashModel) ClearMarks() TrashModel {
 // markedEntries returns the entries targeted by the next action: the
 // marked set when non-empty, otherwise a single-element slice for the
 // cursor row. Empty slice when the list is empty.
-func (m TrashModel) markedEntries() []event.TrashEntry {
+func (m TrashModel) markedEntries() []trash.Entry {
 	if len(m.marked) > 0 {
-		out := make([]event.TrashEntry, 0, len(m.marked))
+		out := make([]trash.Entry, 0, len(m.marked))
 		for _, e := range m.entries {
 			if m.marked[entryKey(e)] {
 				out = append(out, e)
@@ -147,7 +146,7 @@ func (m TrashModel) markedEntries() []event.TrashEntry {
 		return out
 	}
 	if e, ok := m.selectedEntry(); ok {
-		return []event.TrashEntry{e}
+		return []trash.Entry{e}
 	}
 	return nil
 }
@@ -171,10 +170,10 @@ func (m TrashModel) BoxSize() (int, int) { return m.shell.BoxSize() }
 func (m TrashModel) View() string        { return m.shell.View() }
 func (m TrashModel) Len() int            { return len(m.entries) }
 
-func (m TrashModel) selectedEntry() (event.TrashEntry, bool) {
+func (m TrashModel) selectedEntry() (trash.Entry, bool) {
 	idx := m.shell.Selected()
 	if idx < 0 || idx >= len(m.entries) {
-		return event.TrashEntry{}, false
+		return trash.Entry{}, false
 	}
 	return m.entries[idx], true
 }
@@ -255,7 +254,7 @@ func (m TrashModel) refresh() TrashModel {
 
 	if len(m.entries) == 0 {
 		faint := lipgloss.NewStyle().Faint(true)
-		m.shell = m.shell.SetEmptyList("", []string{faint.Render("No deleted events.")})
+		m.shell = m.shell.SetEmptyList("", []string{faint.Render("Nothing in the trash.")})
 		m.shell = m.shell.SetActions(nil)
 	} else {
 		m.shell = m.shell.SetActions(m.buildActions())
@@ -347,10 +346,8 @@ func (m TrashModel) handleMouse(msg tea.MouseClickMsg) (TrashModel, tea.Cmd) {
 }
 
 // trashBulkTitle summarises the action target for toast + confirm prompts.
-// Single-entry: the entry's title. Multi-entry: an "N items" count, so the
-// user sees that the action covers every marked row rather than just the
-// cursor.
-func trashBulkTitle(entries []event.TrashEntry) string {
+// Single-entry: the entry's title. Multi-entry: an "N items" count.
+func trashBulkTitle(entries []trash.Entry) string {
 	switch len(entries) {
 	case 0:
 		return ""
@@ -365,18 +362,20 @@ func trashBulkTitle(entries []event.TrashEntry) string {
 // pane on the right carries every timestamp the user might need, so the
 // left column stays compact and the selection highlight paints a clean
 // unbroken bar across the row.
-func formatTrashRowLabel(e event.TrashEntry) string {
+func formatTrashRowLabel(e trash.Entry) string {
 	if e.Title == "" {
 		return "(untitled)"
 	}
 	return e.Title
 }
 
-// trashDetailLines renders the right-pane fields for a TrashEntry. The
+// trashDetailLines renders the right-pane fields for a trash entry. The
 // dialog is the ONLY place this data shows, so callers should not offer a
 // secondary "open view" action — everything the user needs to decide
-// whether to restore or purge lives here.
-func trashDetailLines(e event.TrashEntry, cal CalendarInfo, w, labelWidth int) []string {
+// whether to restore or purge lives here. Detail content branches on
+// Kind so todos show due-date/status/progress and journals show a start
+// date where events would show a time range.
+func trashDetailLines(e trash.Entry, cal CalendarInfo, w, labelWidth int) []string {
 	faint := lipgloss.NewStyle().Faint(true)
 
 	title := e.Title
@@ -388,32 +387,43 @@ func trashDetailLines(e event.TrashEntry, cal CalendarInfo, w, labelWidth int) [
 	lines = append(lines, strings.Split(paneTitle(title, w), "\n")...)
 	lines = append(lines, "")
 
-	lines = append(lines, detailLine(faint, "Kind", trashKindLabel(e.Kind), labelWidth, w))
+	lines = append(lines, detailLine(faint, "Kind", e.Kind.Label(), labelWidth, w))
 	if !e.DeletedAt.IsZero() {
 		lines = append(lines, detailLine(faint, "Deleted", e.DeletedAt.Local().Format("Mon, Jan 2 15:04"), labelWidth, w))
 	}
 
-	// Kind-specific pointer into the original series timeline.
 	switch e.Kind {
-	case event.TrashKindInstance:
+	case trash.KindEventInstance:
 		if !e.InstanceTime.IsZero() {
 			lines = append(lines, detailLine(faint, "Instance", e.InstanceTime.Local().Format("Mon, Jan 2 15:04"), labelWidth, w))
 		}
-	case event.TrashKindTruncation:
+	case trash.KindEventSeriesTail:
 		if !e.CutoffTime.IsZero() {
 			lines = append(lines, detailLine(faint, "Cutoff", e.CutoffTime.Local().Format("Mon, Jan 2 15:04"), labelWidth, w))
 		}
+	case trash.KindTodo:
+		if !e.DueDate.IsZero() {
+			lines = append(lines, detailLine(faint, "Due", e.DueDate.Local().Format("Mon, Jan 2 15:04"), labelWidth, w))
+		}
+		if e.PercentComplete > 0 {
+			lines = append(lines, detailLine(faint, "Progress", fmt.Sprintf("%d%%", e.PercentComplete), labelWidth, w))
+		}
+	case trash.KindJournal:
+		if !e.StartTime.IsZero() {
+			lines = append(lines, detailLine(faint, "Entry date", e.StartTime.Local().Format("Mon, Jan 2"), labelWidth, w))
+		}
 	}
 
-	// When / duration / all-day, when we know them.
-	if when := trashWhen(e); when != "" {
-		lines = append(lines, detailLine(faint, "When", when, labelWidth, w))
-	}
-	if dur := trashDuration(e); dur != "" {
-		lines = append(lines, detailLine(faint, "Duration", dur, labelWidth, w))
-	}
-	if e.AllDay {
-		lines = append(lines, detailLine(faint, "All day", Glyphs["checkbox.on"], labelWidth, w))
+	if e.Kind.IsEvent() {
+		if when := trashWhen(e); when != "" {
+			lines = append(lines, detailLine(faint, "When", when, labelWidth, w))
+		}
+		if dur := trashDuration(e); dur != "" {
+			lines = append(lines, detailLine(faint, "Duration", dur, labelWidth, w))
+		}
+		if e.AllDay {
+			lines = append(lines, detailLine(faint, "All day", Glyphs["checkbox.on"], labelWidth, w))
+		}
 	}
 
 	if cal.Name != "" {
@@ -432,7 +442,7 @@ func trashDetailLines(e event.TrashEntry, cal CalendarInfo, w, labelWidth int) [
 	if e.Categories != "" {
 		lines = append(lines, detailLine(faint, "Tags", e.Categories, labelWidth, w))
 	}
-	if e.Kind == event.TrashKindTruncation && e.PreviousRRule != "" {
+	if e.Kind == trash.KindEventSeriesTail && e.PreviousRRule != "" {
 		lines = append(lines, detailLine(faint, "Repeat", e.PreviousRRule, labelWidth, w))
 	}
 
@@ -446,10 +456,10 @@ func trashDetailLines(e event.TrashEntry, cal CalendarInfo, w, labelWidth int) [
 	return lines
 }
 
-// trashWhen renders a "Fri, Apr 3 09:00 – 09:30" style range when the
-// entry carries start/end times, matching the event view dialog's "When"
-// row so deleted and live rows read the same way.
-func trashWhen(e event.TrashEntry) string {
+// trashWhen renders a "Fri, Apr 3 09:00 – 09:30" style range for event-
+// kind entries. Returns empty for non-event kinds (todos/journals use
+// their own Due / Entry-date rows).
+func trashWhen(e trash.Entry) string {
 	if e.AllDay {
 		return "all day"
 	}
@@ -467,7 +477,7 @@ func trashWhen(e event.TrashEntry) string {
 	return fmt.Sprintf("%s – %s", start.Format("Mon, Jan 2 15:04"), end.Format("Mon, Jan 2 15:04"))
 }
 
-func trashDuration(e event.TrashEntry) string {
+func trashDuration(e trash.Entry) string {
 	if e.AllDay || e.StartTime.IsZero() || e.EndTime.IsZero() {
 		return ""
 	}
@@ -487,18 +497,5 @@ func trashDuration(e event.TrashEntry) string {
 		return fmt.Sprintf("%d hours", h)
 	default:
 		return fmt.Sprintf("%dh %dm", h, m)
-	}
-}
-
-func trashKindLabel(k event.TrashKind) string {
-	switch k {
-	case event.TrashKindEvent:
-		return "Event"
-	case event.TrashKindInstance:
-		return "Instance"
-	case event.TrashKindTruncation:
-		return "Series tail"
-	default:
-		return "Unknown"
 	}
 }

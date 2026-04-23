@@ -14,6 +14,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/recurrence"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/todo"
+	"github.com/douglasdemoura/chroncal/internal/trash"
 )
 
 type App struct {
@@ -25,6 +26,7 @@ type App struct {
 	Journals    *journal.Service
 	Alarms      *alarm.Service
 	Recurrences *recurrence.Service
+	Trash       *trash.Service
 }
 
 func New(dbPath string) (*App, error) {
@@ -46,6 +48,7 @@ func New(dbPath string) (*App, error) {
 		Journals:    journalSvc,
 		Alarms:      alarm.NewService(db, queries, eventSvc, todoSvc),
 		Recurrences: recurrence.NewService(db, queries),
+		Trash:       trash.NewService(eventSvc, todoSvc, journalSvc),
 	}, nil
 }
 
