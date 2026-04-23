@@ -257,6 +257,29 @@ the following is true, so scripted use keeps working:
 In a non-interactive shell without any of the above, the command refuses
 rather than silently auto-confirming.
 
+### Soft-delete + restore
+
+Events, todos, and journals are soft-deleted by default. The row stays in
+the database with a `deleted_at` timestamp so you can restore it later.
+After a retention window (default 30 days) a background purge hard-deletes
+rows older than the cutoff.
+
+```
+chroncal event   restore <id|uid>
+chroncal todo    restore <id|uid>
+chroncal journal restore <id|uid>
+
+chroncal event   purge-deleted [--older-than DURATION] [--yes]
+chroncal todo    purge-deleted [--older-than DURATION] [--yes]
+chroncal journal purge-deleted [--older-than DURATION] [--yes]
+```
+
+List soft-deleted candidates with `--include-deleted` on the matching
+`list` command. In the TUI, press `D` to open the mixed "Recently deleted"
+dialog which spans all three resource types; `r` restores the cursor row,
+`x` purges it, and space toggles multi-select so you can bulk restore or
+bulk purge.
+
 ## TUI
 
 Run `chroncal` with no arguments to launch the interactive terminal interface.
