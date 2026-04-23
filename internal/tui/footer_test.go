@@ -25,6 +25,14 @@ func TestFooter_AgendaEmptyShowsCreate(t *testing.T) {
 	}
 }
 
+func TestFooter_EventPopupKeepsEForEdit(t *testing.T) {
+	f := NewFooterModel(NewTheme(true))
+	out := f.Render(FooterEventPopup, 120, "", "", false)
+	if !strings.Contains(out, "e") || !strings.Contains(out, "edit") {
+		t.Errorf("Render = %q, missing e/edit hint", out)
+	}
+}
+
 func TestFooter_EventPopupRSVPConditional(t *testing.T) {
 	f := NewFooterModel(NewTheme(true))
 	withRSVP := f.Render(FooterEventPopup, 120, "", "", true)

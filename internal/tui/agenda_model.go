@@ -75,7 +75,7 @@ func defaultAgendaKeys() agendaKeyMap {
 		Today:       key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "today")),
 		Select:      key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter", "view")),
 		Create:      key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "new")),
-		ToggleEmpty: key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "empty days")),
+		ToggleEmpty: key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "empty days")),
 	}
 }
 
@@ -120,7 +120,7 @@ type AgendaModel struct {
 	// previous one is still in-flight; it's cleared by SetEvents.
 	reloadPending bool
 	// showEmptyDays, when true, renders a placeholder row for each day
-	// in the window that has no events. Toggled by the "e" key.
+	// in the window that has no events. Toggled by the "o" key.
 	showEmptyDays bool
 }
 
