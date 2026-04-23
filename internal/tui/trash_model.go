@@ -222,11 +222,12 @@ func (m TrashModel) renderRow(idx int, selected bool) string {
 		highlight = highlight.Background(m.theme.Selected).Bold(true)
 	}
 
+	// Date column mirrors FormatEventList's compact format: "Jan 02 Mon 15:04".
 	deletedText := "—"
 	if !e.DeletedAt.IsZero() {
-		deletedText = e.DeletedAt.Local().Format("2006-01-02 15:04")
+		deletedText = e.DeletedAt.Local().Format("Jan 02 Mon 15:04")
 	}
-	dateCol := base.Foreground(m.theme.TextDim).Width(18).Render(deletedText)
+	dateCol := base.Foreground(m.theme.TextDim).Width(17).Render(deletedText)
 
 	cal := m.calendars[e.CalendarID]
 	dotColor := m.theme.Muted
