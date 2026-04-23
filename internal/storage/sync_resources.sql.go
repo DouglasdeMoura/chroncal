@@ -89,6 +89,20 @@ func (q *Queries) DeleteTombstonesByCalendar(ctx context.Context, calendarID int
 	return err
 }
 
+const deleteTombstonesByCalendarAndUID = `-- name: DeleteTombstonesByCalendarAndUID :exec
+DELETE FROM tombstones WHERE calendar_id = ? AND uid = ?
+`
+
+type DeleteTombstonesByCalendarAndUIDParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+func (q *Queries) DeleteTombstonesByCalendarAndUID(ctx context.Context, arg DeleteTombstonesByCalendarAndUIDParams) error {
+	_, err := q.db.ExecContext(ctx, deleteTombstonesByCalendarAndUID, arg.CalendarID, arg.Uid)
+	return err
+}
+
 const getSyncResource = `-- name: GetSyncResource :one
 SELECT id, calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy FROM sync_resources WHERE calendar_id = ? AND uid = ?
 `

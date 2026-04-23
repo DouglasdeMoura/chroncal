@@ -40,5 +40,8 @@ DELETE FROM tombstones WHERE id = ?;
 -- name: DeleteTombstonesByCalendar :exec
 DELETE FROM tombstones WHERE calendar_id = ?;
 
+-- name: DeleteTombstonesByCalendarAndUID :exec
+DELETE FROM tombstones WHERE calendar_id = ? AND uid = ?;
+
 -- name: DeleteStaleTombstones :exec
 DELETE FROM tombstones WHERE deleted_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-30 days');
