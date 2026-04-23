@@ -140,6 +140,14 @@ type EventContact struct {
 	Text    string
 }
 
+type EventExdateDelete struct {
+	ID           int64
+	CalendarID   int64
+	Uid          string
+	RecurrenceID string
+	DeletedAt    string
+}
+
 type EventRelation struct {
 	ID      int64
 	EventID int64
