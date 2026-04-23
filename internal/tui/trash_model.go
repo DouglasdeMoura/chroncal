@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"image/color"
 	"strings"
-	"time"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -254,55 +253,15 @@ func (m TrashModel) handleMouse(msg tea.MouseClickMsg) (TrashModel, tea.Cmd) {
 	return m, nil
 }
 
-// formatTrashRowLabel builds the list-column row: "MMM DD HH:MM  <title>".
-// The leading time is the when-it-happened moment — the event's scheduled
-// start for TrashKindEvent, the excluded occurrence for TrashKindInstance,
-// or the truncation cutoff for TrashKindTruncation. Falls back to the
-// deleted-at timestamp when the scheduled time is unknown. No calendar
-// dot: the row renders as a single pre-formatted string so the selection
-// highlight paints the full width without mid-row foreground resets.
+// formatTrashRowLabel renders the list row as just the title. The detail
+// pane on the right carries every timestamp the user might need, so the
+// left column stays compact and the selection highlight paints a clean
+// unbroken bar across the row.
 func formatTrashRowLabel(e event.TrashEntry) string {
-	title := e.Title
-	if title == "" {
-		title = "(untitled)"
+	if e.Title == "" {
+		return "(untitled)"
 	}
-
-	when := trashRowTimestamp(e)
-	datePart := ""
-	timePart := ""
-	if !when.IsZero() {
-		datePart = when.Local().Format("Jan 02")
-		if e.AllDay {
-			timePart = "all day"
-		} else {
-			timePart = when.Local().Format("15:04")
-		}
-	}
-	if datePart == "" {
-		return title
-	}
-	return fmt.Sprintf("%s %s  %s", datePart, timePart, title)
-}
-
-// trashRowTimestamp returns the "when" to lead the row with, chosen per
-// kind. DeletedAt is the last-resort fallback for event rows created
-// without a StartTime (defensive).
-func trashRowTimestamp(e event.TrashEntry) time.Time {
-	switch e.Kind {
-	case event.TrashKindInstance:
-		if !e.InstanceTime.IsZero() {
-			return e.InstanceTime
-		}
-	case event.TrashKindTruncation:
-		if !e.CutoffTime.IsZero() {
-			return e.CutoffTime
-		}
-	case event.TrashKindEvent:
-		if !e.StartTime.IsZero() {
-			return e.StartTime
-		}
-	}
-	return e.DeletedAt
+	return e.Title
 }
 
 // trashDetailLines renders the right-pane fields for a TrashEntry. The
