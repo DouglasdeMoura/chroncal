@@ -19,6 +19,8 @@ type ChoiceDialogModel struct {
 	choices int // number of choice buttons (excludes Cancel)
 }
 
+const choiceDialogMaxWidth = 72
+
 func NewChoiceDialogModel(message string, options ...string) ChoiceDialogModel {
 	styles := DefaultDialogStyles()
 	dialog := NewDialog("", styles)
@@ -58,6 +60,11 @@ func NewChoiceDialogModel(message string, options ...string) ChoiceDialogModel {
 
 func (m ChoiceDialogModel) SetSize(w, h int) ChoiceDialogModel {
 	m.dialog = m.dialog.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	dw := w
+	if dw > choiceDialogMaxWidth {
+		dw = choiceDialogMaxWidth
+	}
+	m.dialog.SetWidth(dw)
 	m.form.SetWidth(m.dialog.ContentWidth())
 	return m
 }
