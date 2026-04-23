@@ -38,7 +38,7 @@ func defaultEventViewKeys() eventViewKeyMap {
 	return eventViewKeyMap{
 		Edit:      key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
 		Duplicate: key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "duplicate")),
-		Delete:    key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "delete")),
+		Delete:    key.NewBinding(key.WithKeys("x", "delete"), key.WithHelp("x", "delete")),
 		Close:     key.NewBinding(key.WithKeys("esc", "q"), key.WithHelp("esc", "close")),
 		Tab:       key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next")),
 		ShiftTab:  key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev")),

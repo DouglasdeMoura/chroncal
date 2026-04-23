@@ -216,3 +216,16 @@ func TestEventViewDialog_ViewIsStableAcrossRenders(t *testing.T) {
 	assert.Equal(t, first, second)
 	assert.False(t, strings.Contains(first, "\x1b[0z"), "mouse markers should be swept")
 }
+
+func TestEventViewDialog_XKeyTriggersDelete(t *testing.T) {
+	// The x key (and the Delete key) must trigger the delete binding across
+	// all three dialogs after the t→x sweep.
+	m := NewEventViewDialogModel(testViewEvent(), CalendarInfo{Name: "Work"}, Theme{}).SetSize(120, 40)
+	// Focus the delete action.
+	m.focusZone = viewZoneActions
+	m.focusedAction = eventViewActionDeleteIdx
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	if cmd == nil {
+		t.Fatal("x should produce a command (delete request)")
+	}
+}

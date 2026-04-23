@@ -138,10 +138,12 @@ func (m HelpDialogModel) sections() []helpSection {
 			entries: []helpEntry{
 				{"/ · ctrl+k", "command palette"},
 				{"?", "this help"},
+				{"u", "undo last event delete"},
 				{"q", "quit"},
 				{"ctrl+c", "force quit"},
 				{"tab · shift+tab", "switch focus (main ↔ sidebar)"},
 				{"\\", "toggle sidebar"},
+				{"footer", "context-sensitive hints below the grid"},
 			},
 		},
 		{
@@ -187,7 +189,7 @@ func (m HelpDialogModel) sections() []helpSection {
 			entries: []helpEntry{
 				{"e", "edit"},
 				{"d", "duplicate"},
-				{"t", "delete"},
+				{"x · delete", "delete"},
 				{"y · n · m", "RSVP yes / no / maybe"},
 				{"tab · shift+tab", "cycle sections"},
 				{"←→ · hl", "previous / next event"},
@@ -199,7 +201,7 @@ func (m HelpDialogModel) sections() []helpSection {
 			entries: []helpEntry{
 				{"a", "add calendar"},
 				{"e", "edit"},
-				{"t", "delete"},
+				{"x · delete", "delete"},
 				{"space", "toggle visibility"},
 				{"↑↓ · tab", "move selection"},
 				{"esc · q", "close"},

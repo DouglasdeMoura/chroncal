@@ -59,7 +59,7 @@ func defaultEventDialogKeys() eventDialogKeyMap {
 		Left:      key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "previous")),
 		Right:     key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next")),
 		Edit:      key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
-		Delete:    key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "delete")),
+		Delete:    key.NewBinding(key.WithKeys("x", "delete"), key.WithHelp("x", "delete")),
 		Duplicate: key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "duplicate")),
 		Create:    key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "create")),
 		RSVPYes:   key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "RSVP yes")),

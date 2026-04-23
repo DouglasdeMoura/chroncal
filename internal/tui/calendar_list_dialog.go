@@ -29,7 +29,7 @@ type calendarListDialogKeyMap struct {
 func defaultCalendarListDialogKeys() calendarListDialogKeyMap {
 	return calendarListDialogKeyMap{
 		Edit:   key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
-		Delete: key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "delete")),
+		Delete: key.NewBinding(key.WithKeys("x", "delete"), key.WithHelp("x", "delete")),
 		New:    key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add")),
 	}
 }
