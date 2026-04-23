@@ -161,6 +161,15 @@ type EventResource struct {
 	Text    string
 }
 
+type EventTruncateDelete struct {
+	ID            int64
+	CalendarID    int64
+	Uid           string
+	CutoffTime    string
+	PreviousRrule string
+	DeletedAt     string
+}
+
 type EventsFt struct {
 	Title       string
 	Description string

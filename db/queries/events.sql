@@ -122,6 +122,13 @@ UPDATE events SET
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE uid = ? AND deleted_at IS NOT NULL;
 
+-- name: RestoreOverridesAtOrAfter :exec
+UPDATE events SET
+    deleted_at = NULL,
+    sequence = sequence + 1,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE uid = ? AND recurrence_id != '' AND recurrence_id >= ? AND deleted_at IS NOT NULL;
+
 -- name: PurgeSoftDeletedEvents :execrows
 DELETE FROM events WHERE deleted_at IS NOT NULL AND deleted_at < ?;
 

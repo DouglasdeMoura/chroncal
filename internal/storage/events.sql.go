@@ -660,6 +660,24 @@ func (q *Queries) RestoreEventsByUID(ctx context.Context, uid string) error {
 	return err
 }
 
+const restoreOverridesAtOrAfter = `-- name: RestoreOverridesAtOrAfter :exec
+UPDATE events SET
+    deleted_at = NULL,
+    sequence = sequence + 1,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE uid = ? AND recurrence_id != '' AND recurrence_id >= ? AND deleted_at IS NOT NULL
+`
+
+type RestoreOverridesAtOrAfterParams struct {
+	Uid          string
+	RecurrenceID string
+}
+
+func (q *Queries) RestoreOverridesAtOrAfter(ctx context.Context, arg RestoreOverridesAtOrAfterParams) error {
+	_, err := q.db.ExecContext(ctx, restoreOverridesAtOrAfter, arg.Uid, arg.RecurrenceID)
+	return err
+}
+
 const softDeleteEvent = `-- name: SoftDeleteEvent :exec
 UPDATE events SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
