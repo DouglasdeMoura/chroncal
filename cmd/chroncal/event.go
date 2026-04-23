@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -33,20 +34,25 @@ alarms, attendees, attachments, and other iCalendar metadata.`,
   chroncal event add "Demo" --date 2026-04-10 --time 14:00 --duration 1h
   chroncal event get 42`,
 	}
-	cmd.AddCommand(eventListCmd(), eventGetCmd(), eventAddCmd(), eventUpdateCmd(), eventDeleteCmd(), eventSearchCmd())
+	cmd.AddCommand(
+		eventListCmd(), eventGetCmd(), eventAddCmd(), eventUpdateCmd(),
+		eventDeleteCmd(), eventSearchCmd(),
+		eventRestoreCmd(), eventPurgeDeletedCmd(),
+	)
 	return cmd
 }
 
 func eventListCmd() *cobra.Command {
 	var (
-		fromStr      string
-		toStr        string
-		calendarName string
-		status       string
-		showWeekday  bool
-		verbose      bool
-		showID       bool
-		showCalendar bool
+		fromStr        string
+		toStr          string
+		calendarName   string
+		status         string
+		showWeekday    bool
+		verbose        bool
+		showID         bool
+		showCalendar   bool
+		includeDeleted bool
 	)
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -80,10 +86,11 @@ Without flags, the window defaults to today through the next 30 days.`,
 			}
 
 			events, err := a.Recurrences.ListFilteredEvents(ctx, recurrence.EventListParams{
-				CalendarID: calID,
-				Status:     status,
-				From:       from,
-				To:         to,
+				CalendarID:     calID,
+				Status:         status,
+				From:           from,
+				To:             to,
+				IncludeDeleted: includeDeleted,
 			})
 			if err != nil {
 				return fmt.Errorf("list events: %w", err)
@@ -133,6 +140,129 @@ Without flags, the window defaults to today through the next 30 days.`,
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "render a detailed time-rail view for each event")
 	cmd.Flags().BoolVar(&showID, "show-id", false, "show each event's numeric ID in text output")
 	cmd.Flags().BoolVar(&showCalendar, "show-calendar", false, "show the calendar name in text output")
+	cmd.Flags().BoolVar(&includeDeleted, "include-deleted", false, "include soft-deleted events (see `events restore`)")
+	return cmd
+}
+
+func eventRestoreCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "restore <id-or-uid>",
+		Short: "Restore a soft-deleted event",
+		Long: `Restore clears the deletion marker on a soft-deleted event so it
+reappears in list and TUI views.
+
+The event must have been deleted via chroncal (soft-delete, not purged).
+Use 'events list --include-deleted' to see deletable candidates.
+
+If the event was synced to a remote server, restore marks it dirty so
+the next sync cycle recreates it remotely (with a fresh resource URL).`,
+		Example: `  chroncal event restore 42
+  chroncal event restore my-event-uid`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			a, err := initApp()
+			if err != nil {
+				return err
+			}
+			defer a.Close()
+			ctx := context.Background()
+
+			ref := args[0]
+			w := cmd.OutOrStdout()
+
+			if id, parseErr := strconv.ParseInt(ref, 10, 64); parseErr == nil {
+				if err := a.Events.RestoreByID(ctx, id); err != nil {
+					if errors.Is(err, event.ErrNotDeleted) {
+						return fmt.Errorf("event %d not found (may have been purged)", id)
+					}
+					return fmt.Errorf("restore event: %w", err)
+				}
+				if outputFmt != "text" {
+					return printOutput(w, map[string]any{"restored": true, "id": id})
+				}
+				fmt.Fprintf(w, "Restored event %d.\n", id)
+				return nil
+			}
+
+			// UID path: restore every row sharing the UID.
+			if err := a.Events.RestoreByUID(ctx, ref); err != nil {
+				return fmt.Errorf("restore event: %w", err)
+			}
+			if outputFmt != "text" {
+				return printOutput(w, map[string]any{"restored": true, "uid": ref})
+			}
+			fmt.Fprintf(w, "Restored event(s) with uid %q.\n", safeText(ref))
+			return nil
+		},
+	}
+	return cmd
+}
+
+func eventPurgeDeletedCmd() *cobra.Command {
+	var (
+		olderThanStr string
+		yes          bool
+	)
+	cmd := &cobra.Command{
+		Use:   "purge-deleted",
+		Short: "Hard-delete soft-deleted events older than --older-than",
+		Long: `Purge permanently removes soft-deleted events from the database.
+
+By default, only events soft-deleted more than 30 days ago are purged.
+Use --older-than to pick a different age (e.g. 7d, 24h, 720h).
+
+This operation is destructive and not reversible. Attachments and other
+child rows cascade. Soft-delete protection is bypassed for anything
+matching the age threshold.`,
+		Example: `  chroncal event purge-deleted                   # 30 days by default
+  chroncal event purge-deleted --older-than 7d   # older than a week
+  chroncal event purge-deleted --older-than 0s --yes  # purge everything soft-deleted`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			d, err := time.ParseDuration(olderThanStr)
+			if err != nil {
+				return fmt.Errorf("parse --older-than %q: %w", olderThanStr, err)
+			}
+			if d < 0 {
+				return fmt.Errorf("--older-than must be non-negative, got %s", d)
+			}
+
+			// Sub-hour windows are especially destructive — require --yes
+			// or an interactive confirm regardless of scripted-vs-tty.
+			if d < time.Hour {
+				prompt := fmt.Sprintf("Purge ALL events soft-deleted in the last %s? This cannot be undone.", d)
+				ok, err := confirmDestructive(cmd, prompt)
+				if err != nil {
+					return err
+				}
+				if !ok && !yes {
+					fmt.Fprintln(cmd.OutOrStdout(), "Aborted.")
+					return nil
+				}
+			}
+
+			a, err := initApp()
+			if err != nil {
+				return err
+			}
+			defer a.Close()
+			ctx := context.Background()
+
+			cutoff := time.Now().Add(-d)
+			n, err := a.Events.PurgeDeleted(ctx, cutoff)
+			if err != nil {
+				return fmt.Errorf("purge: %w", err)
+			}
+
+			w := cmd.OutOrStdout()
+			if outputFmt != "text" {
+				return printOutput(w, map[string]any{"purged": n, "older_than": d.String()})
+			}
+			fmt.Fprintf(w, "Purged %d event(s) soft-deleted more than %s ago.\n", n, d)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&olderThanStr, "older-than", "720h", "age threshold (Go duration, e.g. 30d=720h, 168h=7 days)")
+	cmd.Flags().BoolVar(&yes, "yes", false, "skip interactive confirmation for sub-hour windows")
 	return cmd
 }
 

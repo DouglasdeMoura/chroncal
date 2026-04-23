@@ -14,12 +14,12 @@ import (
 type ToastState int
 
 const (
-	ToastEmpty            ToastState = iota // nothing to show
-	ToastDeletedUnsynced                    // "Deleted 'X' — undo (u)"
-	ToastDeletedSynced                      // "Deleted 'X' (synced) — undo (u)"
-	ToastRestoring                          // "Restoring…"
-	ToastRestored                           // "✓ Restored 'X'"
-	ToastFailed                             // "Undo failed: <reason>"
+	ToastEmpty           ToastState = iota // nothing to show
+	ToastDeletedUnsynced                   // "Deleted 'X' — undo (u)"
+	ToastDeletedSynced                     // "Deleted 'X' (synced) — undo (u)"
+	ToastRestoring                         // "Restoring…"
+	ToastRestored                          // "✓ Restored 'X'"
+	ToastFailed                            // "Undo failed: <reason>"
 )
 
 // ToastAutoDismissDelay is the default 6-second window a deleted-toast lives

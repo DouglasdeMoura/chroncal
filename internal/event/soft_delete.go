@@ -147,6 +147,22 @@ func (s *Service) RestoreUndo(ctx context.Context, meta UndoMeta) error {
 	}
 }
 
+// RestoreByUID un-hides every soft-deleted row with the given UID (master and
+// overrides). Used by the CLI `events restore <uid>` path.
+func (s *Service) RestoreByUID(ctx context.Context, uid string) error {
+	master, err := s.q.GetEventByUIDIncludingDeleted(ctx, uid)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("get master: %w", err)
+	}
+	if err := s.q.RestoreEventsByUID(ctx, uid); err != nil {
+		return fmt.Errorf("restore by uid: %w", err)
+	}
+	if err == nil {
+		return s.reconcileSyncAfterRestore(ctx, master.CalendarID, uid, "")
+	}
+	return nil
+}
+
 // RestoreByID un-hides a single soft-deleted row. Used by the CLI
 // `events restore <id>` path. Reconciles sync state so subsequent pushes
 // re-CREATE the resource on the server if necessary.
@@ -187,7 +203,7 @@ func (s *Service) PurgeDeleted(ctx context.Context, olderThan time.Time) (int, e
 	return int(n), nil
 }
 
-// restoreSingle un-hides one row by (uid, recurrence_id=''); used for
+// restoreSingle un-hides one row by (uid, recurrence_id=”); used for
 // DeleteWithUndo and DeleteInstanceWithUndo single-row resurrection. For an
 // override, callers should fall back to RestoreByUID since we don't know the
 // recurrence_id. UndoKindSingle always targets the master UID, so this
@@ -272,7 +288,7 @@ func (s *Service) restoreFromInstance(ctx context.Context, meta UndoMeta) error 
 //   - Case A (local-only, no sync_resource): no-ops.
 //   - Case B (tombstone present): clear the tombstone.
 //   - Case C (tombstone + sync_resource both gone): MarkResourceDirty creates
-//     a fresh sync_resource with remote_url='' so the next push allocates a
+//     a fresh sync_resource with remote_url=” so the next push allocates a
 //     new href.
 //
 // Override rows (recurrenceID != "") don't own a sync_resource; for them we

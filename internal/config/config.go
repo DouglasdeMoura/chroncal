@@ -28,13 +28,26 @@ type SecurityConfig struct {
 	AllowUnsafeAlarmEmailAttendees bool `mapstructure:"allow_unsafe_alarm_email_attendees"`
 }
 
-type Config struct {
-	DB        string         `mapstructure:"db"`
-	ProductID string         `mapstructure:"product_id"`
-	SMTP      SMTPConfig     `mapstructure:"smtp"`
-	Sync      SyncConfig     `mapstructure:"sync"`
-	Security  SecurityConfig `mapstructure:"security"`
+// SoftDeleteConfig tunes the soft-delete retention window. Rows soft-deleted
+// more than PurgeDays days ago are purged (hard-deleted, children cascaded)
+// by the background purge job. Zero disables automatic purging; `chroncal
+// event purge-deleted` remains available for manual cleanup.
+type SoftDeleteConfig struct {
+	PurgeDays int `mapstructure:"purge_days"`
 }
+
+type Config struct {
+	DB         string           `mapstructure:"db"`
+	ProductID  string           `mapstructure:"product_id"`
+	SMTP       SMTPConfig       `mapstructure:"smtp"`
+	Sync       SyncConfig       `mapstructure:"sync"`
+	Security   SecurityConfig   `mapstructure:"security"`
+	SoftDelete SoftDeleteConfig `mapstructure:"soft_delete"`
+}
+
+// DefaultSoftDeletePurgeDays is applied when SoftDelete.PurgeDays is zero or
+// unset (viper Unmarshal leaves unset ints at zero).
+const DefaultSoftDeletePurgeDays = 30
 
 // Load reads configuration with precedence: env > config file > defaults.
 // The caller is responsible for applying flag overrides on top.
@@ -74,6 +87,7 @@ func newViper() *viper.Viper {
 	v.BindEnv("sync.conflict_strategy")
 	v.BindEnv("security.allow_unsafe_alarm_audio_attach")
 	v.BindEnv("security.allow_unsafe_alarm_email_attendees")
+	v.BindEnv("soft_delete.purge_days")
 
 	return v
 }

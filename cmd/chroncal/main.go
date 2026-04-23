@@ -17,6 +17,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/ical"
 	"github.com/douglasdemoura/chroncal/internal/journal"
+	"github.com/douglasdemoura/chroncal/internal/maintenance"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 	"github.com/douglasdemoura/chroncal/internal/tui"
 )
@@ -90,6 +91,20 @@ Helpful conventions:
 			return err
 		}
 		defer a.Close()
+
+		// Kick off the soft-delete purge loop for long-running TUI sessions.
+		// PurgeDays=0 (or negative) disables; otherwise runs once up front
+		// then every 24h. Detached goroutine — ctx is bound to process
+		// lifetime via the signal handler in the TUI loop below.
+		purgeDays := cfg.SoftDelete.PurgeDays
+		if purgeDays == 0 {
+			purgeDays = config.DefaultSoftDeletePurgeDays
+		}
+		if purgeDays > 0 {
+			purger := maintenance.NewPurger(a.Events, purgeDays, nil)
+			go purger.RunDaily(context.Background())
+		}
+
 		return tui.Run(a)
 	},
 }
