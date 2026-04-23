@@ -131,6 +131,160 @@ func TestTrash_InstanceDeleteIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestTrash_TruncationLoggedAndRestorable verifies:
+//   - DeleteFromInstance captures the pre-truncation RRULE in the log
+//   - ListTrash surfaces the entry as TrashKindTruncation
+//   - RestoreTrash rewrites the RRULE back AND un-hides soft-deleted overrides
+func TestTrash_TruncationLoggedAndRestorable(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:            "sprint-review",
+		CalendarID:     1,
+		Title:          "Sprint Review",
+		StartTime:      time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;COUNT=10",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	originalRRULE := master.RecurrenceRule
+
+	// Add an override past the cutoff that will be soft-deleted by truncation.
+	override, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:          master.UID,
+		CalendarID:   1,
+		Title:        "Sprint Review (moved)",
+		StartTime:    time.Date(2026, 4, 22, 15, 0, 0, 0, time.UTC),
+		EndTime:      time.Date(2026, 4, 22, 16, 0, 0, 0, time.UTC),
+		RecurrenceID: time.Date(2026, 4, 22, 14, 0, 0, 0, time.UTC).Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	cutoff := time.Date(2026, 4, 22, 14, 0, 0, 0, time.UTC)
+	if err := svc.DeleteFromInstance(ctx, master.UID, cutoff); err != nil {
+		t.Fatalf("DeleteFromInstance: %v", err)
+	}
+
+	// The log row should surface as TrashKindTruncation (alongside the
+	// soft-deleted override which surfaces as TrashKindEvent).
+	entries, err := svc.ListTrash(ctx, 1)
+	if err != nil {
+		t.Fatalf("ListTrash: %v", err)
+	}
+	var trunc, evtEntry *TrashEntry
+	for i := range entries {
+		switch entries[i].Kind {
+		case TrashKindTruncation:
+			trunc = &entries[i]
+		case TrashKindEvent:
+			if entries[i].ID == override.ID {
+				evtEntry = &entries[i]
+			}
+		}
+	}
+	if trunc == nil {
+		t.Fatalf("ListTrash: no TrashKindTruncation entry, got %+v", entries)
+	}
+	if trunc.PreviousRRule != originalRRULE {
+		t.Fatalf("PreviousRRule = %q, want %q", trunc.PreviousRRule, originalRRULE)
+	}
+	if !trunc.CutoffTime.Equal(cutoff) {
+		t.Fatalf("CutoffTime = %v, want %v", trunc.CutoffTime, cutoff)
+	}
+	if evtEntry == nil {
+		t.Fatalf("override %d should also appear as TrashKindEvent", override.ID)
+	}
+
+	// RRULE should currently be truncated (UNTIL set).
+	m, err := svc.Get(ctx, master.ID)
+	if err != nil {
+		t.Fatalf("Get master: %v", err)
+	}
+	if m.RecurrenceRule == originalRRULE {
+		t.Fatalf("RRULE not truncated: still %q", m.RecurrenceRule)
+	}
+
+	// Restore via the trash entry.
+	if err := svc.RestoreTrash(ctx, *trunc); err != nil {
+		t.Fatalf("RestoreTrash: %v", err)
+	}
+	m, err = svc.Get(ctx, master.ID)
+	if err != nil {
+		t.Fatalf("Get master after restore: %v", err)
+	}
+	if m.RecurrenceRule != originalRRULE {
+		t.Fatalf("RRULE not restored: got %q, want %q", m.RecurrenceRule, originalRRULE)
+	}
+	if _, err := svc.Get(ctx, override.ID); err != nil {
+		t.Fatalf("override not restored: %v", err)
+	}
+
+	// Both entries should be gone from trash.
+	entries, _ = svc.ListTrash(ctx, 1)
+	if len(entries) != 0 {
+		t.Fatalf("ListTrash after restore = %d, want 0 (%+v)", len(entries), entries)
+	}
+}
+
+// TestTrash_PurgeTruncationKeepsRRuleTruncated verifies that purging a
+// truncation entry drops the log row only — the master's RRULE stays
+// truncated and soft-deleted overrides stay deleted.
+func TestTrash_PurgeTruncationKeepsRRuleTruncated(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:            "weekly-trunc",
+		CalendarID:     1,
+		Title:          "Weekly trunc",
+		StartTime:      time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 1, 10, 30, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;COUNT=8",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	originalRRULE := master.RecurrenceRule
+	cutoff := time.Date(2026, 4, 15, 10, 0, 0, 0, time.UTC)
+	if err := svc.DeleteFromInstance(ctx, master.UID, cutoff); err != nil {
+		t.Fatalf("DeleteFromInstance: %v", err)
+	}
+
+	entries, _ := svc.ListTrash(ctx, 1)
+	var trunc TrashEntry
+	for _, e := range entries {
+		if e.Kind == TrashKindTruncation {
+			trunc = e
+			break
+		}
+	}
+	if trunc.ID == 0 {
+		t.Fatalf("no truncation entry: %+v", entries)
+	}
+
+	if err := svc.PurgeTrashEntry(ctx, trunc); err != nil {
+		t.Fatalf("PurgeTrashEntry: %v", err)
+	}
+	// Truncation entry is gone, but master's RRULE stays truncated.
+	entries, _ = svc.ListTrash(ctx, 1)
+	for _, e := range entries {
+		if e.Kind == TrashKindTruncation {
+			t.Fatalf("truncation entry still present after purge: %+v", e)
+		}
+	}
+	m, err := svc.Get(ctx, master.ID)
+	if err != nil {
+		t.Fatalf("Get master: %v", err)
+	}
+	if m.RecurrenceRule == originalRRULE {
+		t.Fatalf("RRULE un-truncated after purge: %q", m.RecurrenceRule)
+	}
+}
+
 // TestTrash_PurgeInstanceKeepsExdate verifies that purging an instance-kind
 // entry drops the log row but leaves the EXDATE on the master — the
 // "forever delete" semantics for per-instance deletes.

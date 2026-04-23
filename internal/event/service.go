@@ -495,16 +495,18 @@ func (s *Service) DeleteInstance(ctx context.Context, uid string, instanceTime t
 }
 
 // DeleteFromInstance truncates a recurring series so that instances at or
-// after instanceTime are removed. It sets UNTIL on the RRULE and deletes
-// any overrides at or after the cutoff.
+// after instanceTime are removed. It sets UNTIL on the RRULE, soft-deletes
+// any overrides at or after the cutoff, and records the pre-truncation
+// RRULE in event_truncate_deletes so the trash view can restore it atomically.
 func (s *Service) DeleteFromInstance(ctx context.Context, uid string, instanceTime time.Time) error {
 	master, err := s.q.GetEventByUID(ctx, uid)
 	if err != nil {
 		return fmt.Errorf("get master: %w", err)
 	}
 
+	prevRRule := storage.NullableToString(master.RecurrenceRule)
 	until := instanceTime.UTC().Add(-time.Second)
-	rule := setRRuleUntil(storage.NullableToString(master.RecurrenceRule), until)
+	rule := setRRuleUntil(prevRRule, until)
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -526,6 +528,15 @@ func (s *Service) DeleteFromInstance(ctx context.Context, uid string, instanceTi
 		RecurrenceID: cutoff,
 	}); err != nil {
 		return fmt.Errorf("soft-delete future overrides: %w", err)
+	}
+
+	if err := qtx.RecordEventTruncateDelete(ctx, storage.RecordEventTruncateDeleteParams{
+		CalendarID:    master.CalendarID,
+		Uid:           uid,
+		CutoffTime:    cutoff,
+		PreviousRrule: prevRRule,
+	}); err != nil {
+		return fmt.Errorf("record truncate: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
