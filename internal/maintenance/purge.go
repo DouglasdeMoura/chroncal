@@ -31,8 +31,8 @@ func NewPurger(events *event.Service, days int, logger *slog.Logger) *Purger {
 
 // RunOnce purges rows soft-deleted more than Days ago. Safe to call
 // concurrently from multiple processes — SQLite serializes the DELETE.
-// Returns the total number of rows purged across events and the
-// instance-delete log.
+// Returns the total number of rows purged across events, the instance-
+// delete log, and the truncation log.
 func (p *Purger) RunOnce(ctx context.Context) (int, error) {
 	if p.days <= 0 {
 		return 0, nil
@@ -42,15 +42,20 @@ func (p *Purger) RunOnce(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("purge events: %w", err)
 	}
-	logsPurged, err := p.events.PurgeOldInstanceDeletes(ctx, cutoff)
+	instLogsPurged, err := p.events.PurgeOldInstanceDeletes(ctx, cutoff)
 	if err != nil {
 		return eventsPurged, fmt.Errorf("purge instance-delete log: %w", err)
 	}
-	total := eventsPurged + logsPurged
+	truncLogsPurged, err := p.events.PurgeOldTruncationDeletes(ctx, cutoff)
+	if err != nil {
+		return eventsPurged + instLogsPurged, fmt.Errorf("purge truncation log: %w", err)
+	}
+	total := eventsPurged + instLogsPurged + truncLogsPurged
 	if total > 0 {
 		p.logger.Info("soft-delete purge",
 			"events_purged", eventsPurged,
-			"instance_logs_purged", logsPurged,
+			"instance_logs_purged", instLogsPurged,
+			"truncation_logs_purged", truncLogsPurged,
 			"older_than_days", p.days,
 		)
 	}

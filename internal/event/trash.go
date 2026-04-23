@@ -158,6 +158,18 @@ func (s *Service) PurgeOldInstanceDeletes(ctx context.Context, olderThan time.Ti
 	return int(n), nil
 }
 
+// PurgeOldTruncationDeletes drops event_truncate_deletes rows older than
+// olderThan. Returns the number of rows purged. The truncated RRULE and
+// soft-deleted overrides on the master stay in place.
+func (s *Service) PurgeOldTruncationDeletes(ctx context.Context, olderThan time.Time) (int, error) {
+	cutoff := olderThan.UTC().Format(storageTimeFormat)
+	n, err := s.q.PurgeOldEventTruncateDeletes(ctx, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}
+
 // PurgeTrashEntry hard-removes entry from the trash. For TrashKindEvent it
 // drops the events row; for TrashKindInstance and TrashKindTruncation it
 // drops the log row only — the EXDATE (or truncated RRULE + deleted
