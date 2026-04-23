@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image/color"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -143,7 +144,7 @@ func (m TrashModel) refresh() TrashModel {
 	rowW := m.listRowWidth()
 	selBG := m.shell.SelectedColor()
 	for i, e := range m.entries {
-		label := formatTrashRowLabel(e, m.calendars)
+		label := formatTrashRowLabel(e)
 		if i == sel {
 			style := lipgloss.NewStyle()
 			switch {
@@ -253,39 +254,55 @@ func (m TrashModel) handleMouse(msg tea.MouseClickMsg) (TrashModel, tea.Cmd) {
 	return m, nil
 }
 
-// formatTrashRowLabel builds the list-column row: "HH:MM  <title>" for
-// entries that carry a meaningful instance/cutoff time, otherwise the
-// deleted_at time and title. Matches event_dialog's row density so both
-// dialogs feel consistent.
-func formatTrashRowLabel(e event.TrashEntry, calendars map[int64]CalendarInfo) string {
+// formatTrashRowLabel builds the list-column row: "MMM DD HH:MM  <title>".
+// The leading time is the when-it-happened moment — the event's scheduled
+// start for TrashKindEvent, the excluded occurrence for TrashKindInstance,
+// or the truncation cutoff for TrashKindTruncation. Falls back to the
+// deleted-at timestamp when the scheduled time is unknown. No calendar
+// dot: the row renders as a single pre-formatted string so the selection
+// highlight paints the full width without mid-row foreground resets.
+func formatTrashRowLabel(e event.TrashEntry) string {
 	title := e.Title
 	if title == "" {
 		title = "(untitled)"
 	}
-	timeLabel := ""
+
+	when := trashRowTimestamp(e)
+	datePart := ""
+	timePart := ""
+	if !when.IsZero() {
+		datePart = when.Local().Format("Jan 02")
+		if e.AllDay {
+			timePart = "all day"
+		} else {
+			timePart = when.Local().Format("15:04")
+		}
+	}
+	if datePart == "" {
+		return title
+	}
+	return fmt.Sprintf("%s %s  %s", datePart, timePart, title)
+}
+
+// trashRowTimestamp returns the "when" to lead the row with, chosen per
+// kind. DeletedAt is the last-resort fallback for event rows created
+// without a StartTime (defensive).
+func trashRowTimestamp(e event.TrashEntry) time.Time {
 	switch e.Kind {
 	case event.TrashKindInstance:
 		if !e.InstanceTime.IsZero() {
-			timeLabel = e.InstanceTime.Local().Format("15:04")
+			return e.InstanceTime
 		}
 	case event.TrashKindTruncation:
 		if !e.CutoffTime.IsZero() {
-			timeLabel = e.CutoffTime.Local().Format("15:04")
+			return e.CutoffTime
 		}
 	case event.TrashKindEvent:
-		if !e.DeletedAt.IsZero() {
-			timeLabel = e.DeletedAt.Local().Format("15:04")
+		if !e.StartTime.IsZero() {
+			return e.StartTime
 		}
 	}
-	if timeLabel == "" {
-		timeLabel = "• "
-	}
-
-	dot := ""
-	if cal, ok := calendars[e.CalendarID]; ok && cal.Color != "" {
-		dot = lipgloss.NewStyle().Foreground(lipgloss.Color(cal.Color)).Render("●") + " "
-	}
-	return fmt.Sprintf("%s  %s%s", timeLabel, dot, title)
+	return e.DeletedAt
 }
 
 // trashDetailLines renders the right-pane fields for a TrashEntry. The
