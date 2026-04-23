@@ -24,8 +24,8 @@ type TrashRestoreRequestedMsg struct{ Entry event.TrashEntry }
 type TrashPurgeRequestedMsg struct{ Entry event.TrashEntry }
 
 // TrashViewRequestedMsg asks the host to open the read-only detail view
-// for a soft-deleted event. Only fires for TrashKindEvent — instance
-// deletes don't have a full row to show.
+// for a soft-deleted event. Only fires for TrashKindEvent — instance and
+// truncation deletes don't have a full row to show.
 type TrashViewRequestedMsg struct{ Entry event.TrashEntry }
 
 type trashKeyMap struct {
@@ -45,8 +45,15 @@ func defaultTrashKeys() trashKeyMap {
 	}
 }
 
-// TrashModel lists trash entries (soft-deleted events and EXDATE-based
-// instance deletes) for the visible calendars, newest first.
+// trashDialogMaxWidth caps the dialog at a readable size on wide terminals.
+const trashDialogMaxWidth = 80
+
+// trashDialogMinHeight is the minimum body height when the terminal is small.
+const trashDialogMinHeight = 6
+
+// TrashModel is the "Recently deleted" dialog. It's a centered bordered
+// box (not a full-view replacement) listing soft-deleted events, EXDATE-
+// based instance deletes, and RRULE truncations, newest first.
 type TrashModel struct {
 	entries   []event.TrashEntry
 	calendars map[int64]CalendarInfo
@@ -54,21 +61,36 @@ type TrashModel struct {
 	scroll    int
 	keys      trashKeyMap
 	theme     Theme
-	width     int
-	height    int
+	dialog    Dialog
+	termW     int
+	termH     int
 }
 
-// NewTrashModel returns an empty trash model. SetEntries populates it.
+// NewTrashModel returns an empty trash dialog. SetEntries populates it.
 func NewTrashModel() TrashModel {
+	styles := DefaultDialogStyles()
+	d := NewDialog("Recently deleted", styles)
 	return TrashModel{
 		keys:     defaultTrashKeys(),
 		selected: -1,
+		dialog:   d,
 	}
 }
 
+// SetSize takes the full terminal width/height; the dialog picks its own
+// inner box from there.
 func (m TrashModel) SetSize(w, h int) TrashModel {
-	m.width = w
-	m.height = h
+	m.termW = w
+	m.termH = h
+	dw := w - 4
+	if dw > trashDialogMaxWidth {
+		dw = trashDialogMaxWidth
+	}
+	if dw < 20 {
+		dw = 20
+	}
+	m.dialog = m.dialog.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	m.dialog.SetWidth(dw)
 	m.clampScroll()
 	return m
 }
@@ -78,9 +100,9 @@ func (m TrashModel) SetTheme(t Theme) TrashModel {
 	return m
 }
 
-// SetEntries updates the row list. Keeps the selection anchored to the
-// same entry (by kind + ID) when possible so reloads after a restore or
-// purge don't yank the cursor away.
+// SetEntries updates the row list, anchoring the selection to the same
+// entry (by kind + ID) when possible so restore/purge reloads don't yank
+// the cursor away.
 func (m TrashModel) SetEntries(entries []event.TrashEntry, calendars map[int64]CalendarInfo) TrashModel {
 	var prevKind event.TrashKind
 	var prevID int64
@@ -120,6 +142,14 @@ func (m TrashModel) Selected() (event.TrashEntry, bool) {
 // Len returns the number of rows currently rendered.
 func (m TrashModel) Len() int { return len(m.entries) }
 
+// BoxSize returns the rendered dialog box size for compositeOverlay.
+func (m TrashModel) BoxSize() (int, int) {
+	if m.termW <= 0 || m.termH <= 0 {
+		return 0, 0
+	}
+	return lipgloss.Size(m.View())
+}
+
 func (m TrashModel) Update(msg tea.Msg) (TrashModel, tea.Cmd) {
 	kp, ok := msg.(tea.KeyPressMsg)
 	if !ok {
@@ -155,39 +185,36 @@ func (m TrashModel) Update(msg tea.Msg) (TrashModel, tea.Cmd) {
 }
 
 func (m TrashModel) View() string {
-	if m.width <= 0 || m.height <= 0 {
-		return ""
-	}
-	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(m.theme.Text)
 	hintStyle := lipgloss.NewStyle().Foreground(m.theme.TextDim)
 
-	var out strings.Builder
-	out.WriteString(headerStyle.Render("Recently deleted"))
-	out.WriteByte('\n')
-	out.WriteString(hintStyle.Render("r restore · x purge · enter view · esc back"))
-	out.WriteString("\n\n")
+	var body strings.Builder
+	body.WriteString(hintStyle.Render("r restore · x purge · enter view · esc back"))
+	body.WriteString("\n\n")
 
 	if len(m.entries) == 0 {
-		out.WriteString(hintStyle.Render("No deleted events."))
-		return out.String()
+		body.WriteString(hintStyle.Render("No deleted events."))
+		return m.dialog.Box(body.String())
 	}
 
-	headerLines := 4
-	viewportH := max(m.height-headerLines, 1)
+	viewportH := m.bodyHeight()
 	start := min(max(m.scroll, 0), m.maxScroll(viewportH))
 	end := min(start+viewportH, len(m.entries))
 	for i := start; i < end; i++ {
 		if i > start {
-			out.WriteByte('\n')
+			body.WriteByte('\n')
 		}
-		out.WriteString(m.renderRow(i, i == m.selected))
+		body.WriteString(m.renderRow(i, i == m.selected))
 	}
-	return out.String()
+	return m.dialog.Box(body.String())
 }
 
-// renderRow draws one line: [deleted-date] [calendar dot] [title (· instance time for instance deletes)].
+// renderRow draws one line: [deleted-date] [calendar dot] [title (· occurrence or truncation cutoff)].
 func (m TrashModel) renderRow(idx int, selected bool) string {
 	e := m.entries[idx]
+	w := m.dialog.ContentWidth()
+	if w <= 0 {
+		w = trashDialogMaxWidth
+	}
 
 	base := lipgloss.NewStyle()
 	highlight := lipgloss.NewStyle()
@@ -224,15 +251,31 @@ func (m TrashModel) renderRow(idx int, selected bool) string {
 	}
 
 	prefix := dateCol + base.Render(" ") + base.Width(3).Render(" "+dot+" ")
-	titleW := max(m.width-lipgloss.Width(prefix), 1)
+	titleW := max(w-lipgloss.Width(prefix), 1)
 	titleCell := highlight.Foreground(m.theme.Text).Width(titleW).Render(truncateTo(title, titleW))
 
 	return prefix + titleCell
 }
 
+// bodyHeight returns the number of entry rows that fit in the dialog.
+// The dialog chrome reserves space for the title, the hint line, and a
+// blank separator; the rest is body.
+func (m TrashModel) bodyHeight() int {
+	if m.termH <= 0 {
+		return trashDialogMinHeight
+	}
+	// Reserve room for border (2), padding (2 top/bottom), title row (1),
+	// blank separator after title (1), hint row (1), blank after hint (1).
+	chrome := 8
+	h := m.termH - chrome - 4
+	if h < trashDialogMinHeight {
+		return trashDialogMinHeight
+	}
+	return h
+}
+
 func (m *TrashModel) ensureVisible() {
-	headerLines := 4
-	viewportH := max(m.height-headerLines, 1)
+	viewportH := m.bodyHeight()
 	if m.selected < 0 {
 		m.scroll = 0
 		return
@@ -248,8 +291,7 @@ func (m *TrashModel) ensureVisible() {
 }
 
 func (m *TrashModel) clampScroll() {
-	headerLines := 4
-	viewportH := max(m.height-headerLines, 1)
+	viewportH := m.bodyHeight()
 	ms := m.maxScroll(viewportH)
 	if m.scroll > ms {
 		m.scroll = ms

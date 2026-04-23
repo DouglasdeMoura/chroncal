@@ -802,8 +802,7 @@ func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	if key.Matches(msg, m.keys.TrashView) && !m.trashOpen && !inQuitConfirm && !textEntryActive && !m.anyOverlayOpen() {
 		m.trashOpen = true
 		m.trash = m.trash.SetTheme(m.theme)
-		iw, ih := m.innerDims()
-		m.trash = m.trash.SetSize(iw, ih)
+		m.trash = m.trash.SetSize(m.width, m.height)
 		return m, m.loadTrash(), true
 	}
 	// Esc closes trash and returns to the previous view. Kept separate from
@@ -985,7 +984,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.week = m.week.SetSize(iw, ih)
 		m.day = m.day.SetSize(iw, ih)
 		m.agenda = m.agenda.SetSize(iw, ih)
-		m.trash = m.trash.SetSize(iw, ih)
+		m.trash = m.trash.SetSize(m.width, m.height)
 		m.dialog = m.dialog.SetSize(m.width, m.height)
 		m.viewDialog = m.viewDialog.SetSize(m.width, m.height)
 		m.confirmDialog = m.confirmDialog.SetSize(m.width, m.height)
@@ -2157,20 +2156,15 @@ func (m Model) View() tea.View {
 	mainWidth, contentHeight := m.mainDims()
 
 	var mainContent string
-	switch {
-	case m.trashOpen:
-		mainContent = m.trash.View()
+	switch m.viewMode {
+	case viewDay:
+		mainContent = m.day.View()
+	case viewWeek:
+		mainContent = m.week.View()
+	case viewAgenda:
+		mainContent = m.agenda.View()
 	default:
-		switch m.viewMode {
-		case viewDay:
-			mainContent = m.day.View()
-		case viewWeek:
-			mainContent = m.week.View()
-		case viewAgenda:
-			mainContent = m.agenda.View()
-		default:
-			mainContent = m.calendar.View()
-		}
+		mainContent = m.calendar.View()
 	}
 	if m.err != nil {
 		mainContent = lipgloss.NewStyle().Foreground(m.theme.Error).Render("Error: " + m.err.Error())
@@ -2269,6 +2263,10 @@ func (m Model) View() tea.View {
 	if m.calendarListDialogOpen {
 		bw, bh := m.calendarListDialog.BoxSize()
 		v.Content = m.compositeOverlay(v.Content, m.calendarListDialog.View(), bw, bh)
+	}
+	if m.trashOpen {
+		bw, bh := m.trash.BoxSize()
+		v.Content = m.compositeOverlay(v.Content, m.trash.View(), bw, bh)
 	}
 	if m.calendarDialogOpen {
 		bw, bh := m.calendarDialog.BoxSize()
