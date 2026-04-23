@@ -586,17 +586,17 @@ func (e *Engine) pull(ctx context.Context, client *caldav.Client, calendarID int
 }
 
 func (e *Engine) deleteLocalResourceByUID(ctx context.Context, ownerType, uid string) error {
+	// Soft-delete across every owner type so a remote DELETE that races with
+	// a user action doesn't nuke the local row — it stays in trash until the
+	// retention window expires. The caller clears the sync_resource so a
+	// later restore re-CREATEs a fresh one via MarkResourceDirty.
 	switch ownerType {
 	case "event":
-		// Soft-delete: row stays around for local recovery until the purge
-		// window expires. Sync resource row is cleared by the caller so a
-		// subsequent restore re-creates a fresh sync_resource via
-		// MarkResourceDirty.
 		return e.q.SoftDeleteEventsByUID(ctx, uid)
 	case "todo":
-		return e.q.DeleteTodosByUID(ctx, uid)
+		return e.q.SoftDeleteTodosByUID(ctx, uid)
 	case "journal":
-		return e.q.DeleteJournalsByUID(ctx, uid)
+		return e.q.SoftDeleteJournalsByUID(ctx, uid)
 	default:
 		return fmt.Errorf("unsupported owner type %q", ownerType)
 	}
