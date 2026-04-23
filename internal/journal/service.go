@@ -330,13 +330,16 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Journal, err
 // journal that has override instances. Use DeleteSeries instead.
 var ErrHasOverrides = fmt.Errorf("journal has overrides: use DeleteSeries to delete the entire series")
 
+// Delete soft-deletes a journal by ID. For a standalone journal it flips
+// deleted_at; for an override it adds EXDATE to the master and soft-
+// deletes the override in the same transaction. A recurring master with
+// live overrides is rejected — callers must use DeleteSeries.
 func (s *Service) Delete(ctx context.Context, id int64) error {
 	j, err := s.Get(ctx, id)
 	if err != nil {
 		return err
 	}
 
-	// If this is a recurring master, check for overrides.
 	if j.RecurrenceRule != "" && j.RecurrenceID == "" {
 		overrides, err := s.q.ListJournalOverridesByUID(ctx, j.UID)
 		if err != nil {
@@ -347,13 +350,10 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		}
 	}
 
-	// If this is a standalone journal (no recurrence or a solo master), create
-	// a tombstone so the sync engine can send a DELETE to the server.
 	if j.RecurrenceID == "" {
 		_, _ = storage.CreateTombstoneIfSynced(ctx, s.db, j.CalendarID, j.UID)
 	}
 
-	// If this is an override, add EXDATE to the master.
 	if j.RecurrenceID != "" {
 		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
@@ -377,23 +377,28 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 			}
 		}
 
-		if err := qtx.DeleteJournal(ctx, id); err != nil {
-			return fmt.Errorf("delete journal: %w", err)
+		if err := qtx.SoftDeleteJournal(ctx, id); err != nil {
+			return fmt.Errorf("soft-delete journal: %w", err)
 		}
 		if err := tx.Commit(); err != nil {
 			return err
 		}
-		// Mark the master dirty — its EXDATE was modified.
 		_ = storage.MarkResourceDirty(ctx, s.db, j.CalendarID, j.UID, "journal")
 		return nil
 	}
 
-	return s.q.DeleteJournal(ctx, id)
+	if err := s.q.SoftDeleteJournal(ctx, id); err != nil {
+		return err
+	}
+	_ = storage.MarkResourceDirty(ctx, s.db, j.CalendarID, j.UID, "journal")
+	return nil
 }
 
-// DeleteSeries deletes a recurring master journal and all its overrides.
+// DeleteSeries soft-deletes a recurring master journal and every override
+// sharing its UID. A tombstone is queued when the master is synced so the
+// next push sends DELETE to the server; the local rows stay in place
+// until purge so the user can restore them.
 func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
-	// Look up the master to get calendarID for tombstone creation.
 	master, err := s.q.GetJournalByUID(ctx, uid)
 	if err == nil {
 		_, _ = storage.CreateTombstoneIfSynced(ctx, s.db, master.CalendarID, uid)
@@ -406,11 +411,14 @@ func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
-	if err := qtx.DeleteJournalsByUID(ctx, uid); err != nil {
-		return fmt.Errorf("delete series: %w", err)
+	if err := qtx.SoftDeleteJournalsByUID(ctx, uid); err != nil {
+		return fmt.Errorf("soft-delete series: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit delete series: %w", err)
+	}
+	if err == nil {
+		_ = storage.MarkResourceDirty(ctx, s.db, master.CalendarID, uid, "journal")
 	}
 	return nil
 }

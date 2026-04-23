@@ -1,36 +1,46 @@
 -- name: ListJournals :many
-SELECT * FROM journals WHERE status != 'CANCELLED' ORDER BY start_date, summary;
+SELECT * FROM journals
+WHERE status != 'CANCELLED' AND deleted_at IS NULL
+ORDER BY start_date, summary;
 
 -- name: ListJournalsByCalendar :many
-SELECT * FROM journals WHERE calendar_id = ? AND status != 'CANCELLED' ORDER BY start_date, summary;
+SELECT * FROM journals
+WHERE calendar_id = ? AND status != 'CANCELLED' AND deleted_at IS NULL
+ORDER BY start_date, summary;
 
 -- name: ListJournalsByStatus :many
-SELECT * FROM journals WHERE status = ? ORDER BY start_date, summary;
+SELECT * FROM journals WHERE status = ? AND deleted_at IS NULL ORDER BY start_date, summary;
 
 -- name: ListJournalsByStartDateRange :many
-SELECT * FROM journals WHERE start_date >= ? AND start_date < ? ORDER BY start_date, summary;
+SELECT * FROM journals WHERE start_date >= ? AND start_date < ? AND deleted_at IS NULL ORDER BY start_date, summary;
 
 -- name: ListAllJournals :many
-SELECT * FROM journals ORDER BY start_date, summary;
+SELECT * FROM journals WHERE deleted_at IS NULL ORDER BY start_date, summary;
 
 -- name: ListRecurringJournals :many
-SELECT * FROM journals WHERE recurrence_rule IS NOT NULL AND recurrence_id = '';
+SELECT * FROM journals WHERE recurrence_rule IS NOT NULL AND recurrence_id = '' AND deleted_at IS NULL;
 
 -- name: ListRecurringJournalsByCalendar :many
-SELECT * FROM journals WHERE recurrence_rule IS NOT NULL AND recurrence_id = '' AND calendar_id = ?;
+SELECT * FROM journals WHERE recurrence_rule IS NOT NULL AND recurrence_id = '' AND calendar_id = ? AND deleted_at IS NULL;
 
 
 -- name: GetJournal :one
+SELECT * FROM journals WHERE id = ? AND deleted_at IS NULL;
+
+-- name: GetJournalIncludingDeleted :one
 SELECT * FROM journals WHERE id = ?;
 
 -- name: GetJournalByUID :one
+SELECT * FROM journals WHERE uid = ? AND recurrence_id = '' AND deleted_at IS NULL;
+
+-- name: GetJournalByUIDIncludingDeleted :one
 SELECT * FROM journals WHERE uid = ? AND recurrence_id = '';
 
 -- name: GetJournalByUIDAndRecurrenceID :one
-SELECT * FROM journals WHERE uid = ? AND recurrence_id = ?;
+SELECT * FROM journals WHERE uid = ? AND recurrence_id = ? AND deleted_at IS NULL;
 
 -- name: ListJournalOverridesByUID :many
-SELECT * FROM journals WHERE uid = ? AND recurrence_id != '' ORDER BY recurrence_id;
+SELECT * FROM journals WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NULL ORDER BY recurrence_id;
 
 
 -- name: DeleteJournalsByUID :exec
@@ -74,6 +84,7 @@ ON CONFLICT(uid, recurrence_id) DO UPDATE SET
     sequence = MAX(excluded.sequence, journals.sequence + 1),
     exdates = excluded.exdates, rdates = excluded.rdates,
     dtstamp = excluded.dtstamp,
+    deleted_at = NULL,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 RETURNING *;
 
@@ -82,3 +93,40 @@ UPDATE journals SET exdates = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'no
 
 -- name: DeleteJournal :exec
 DELETE FROM journals WHERE id = ?;
+
+-- name: SoftDeleteJournal :exec
+UPDATE journals SET
+    deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = ? AND deleted_at IS NULL;
+
+-- name: SoftDeleteJournalsByUID :exec
+UPDATE journals SET
+    deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE uid = ? AND deleted_at IS NULL;
+
+-- name: RestoreJournal :exec
+UPDATE journals SET
+    deleted_at = NULL,
+    sequence = sequence + 1,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = ? AND deleted_at IS NOT NULL;
+
+-- name: RestoreJournalsByUID :exec
+UPDATE journals SET
+    deleted_at = NULL,
+    sequence = sequence + 1,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE uid = ? AND deleted_at IS NOT NULL;
+
+-- name: PurgeSoftDeletedJournals :execrows
+DELETE FROM journals WHERE deleted_at IS NOT NULL AND deleted_at < ?;
+
+-- name: PurgeJournalByID :execrows
+DELETE FROM journals WHERE id = ? AND deleted_at IS NOT NULL;
+
+-- name: ListDeletedJournalsByCalendar :many
+SELECT * FROM journals
+WHERE calendar_id = ? AND deleted_at IS NOT NULL
+ORDER BY deleted_at DESC;
