@@ -1,36 +1,46 @@
 -- name: ListTodos :many
-SELECT * FROM todos WHERE status != 'COMPLETED' AND status != 'CANCELLED' ORDER BY due_date, summary;
+SELECT * FROM todos
+WHERE status != 'COMPLETED' AND status != 'CANCELLED' AND deleted_at IS NULL
+ORDER BY due_date, summary;
 
 -- name: ListTodosByCalendar :many
-SELECT * FROM todos WHERE calendar_id = ? AND status != 'COMPLETED' AND status != 'CANCELLED' ORDER BY due_date, summary;
+SELECT * FROM todos
+WHERE calendar_id = ? AND status != 'COMPLETED' AND status != 'CANCELLED' AND deleted_at IS NULL
+ORDER BY due_date, summary;
 
 -- name: ListTodosByStatus :many
-SELECT * FROM todos WHERE status = ? ORDER BY due_date, summary;
+SELECT * FROM todos WHERE status = ? AND deleted_at IS NULL ORDER BY due_date, summary;
 
 -- name: ListTodosByDueDateRange :many
-SELECT * FROM todos WHERE due_date >= ? AND due_date < ? ORDER BY due_date, summary;
+SELECT * FROM todos WHERE due_date >= ? AND due_date < ? AND deleted_at IS NULL ORDER BY due_date, summary;
 
 -- name: ListAllTodos :many
-SELECT * FROM todos ORDER BY due_date, summary;
+SELECT * FROM todos WHERE deleted_at IS NULL ORDER BY due_date, summary;
 
 -- name: ListRecurringTodos :many
-SELECT * FROM todos WHERE recurrence_rule IS NOT NULL AND recurrence_id = '';
+SELECT * FROM todos WHERE recurrence_rule IS NOT NULL AND recurrence_id = '' AND deleted_at IS NULL;
 
 -- name: ListRecurringTodosByCalendar :many
-SELECT * FROM todos WHERE recurrence_rule IS NOT NULL AND recurrence_id = '' AND calendar_id = ?;
+SELECT * FROM todos WHERE recurrence_rule IS NOT NULL AND recurrence_id = '' AND calendar_id = ? AND deleted_at IS NULL;
 
 
 -- name: GetTodo :one
+SELECT * FROM todos WHERE id = ? AND deleted_at IS NULL;
+
+-- name: GetTodoIncludingDeleted :one
 SELECT * FROM todos WHERE id = ?;
 
 -- name: GetTodoByUID :one
+SELECT * FROM todos WHERE uid = ? AND recurrence_id = '' AND deleted_at IS NULL;
+
+-- name: GetTodoByUIDIncludingDeleted :one
 SELECT * FROM todos WHERE uid = ? AND recurrence_id = '';
 
 -- name: GetTodoByUIDAndRecurrenceID :one
-SELECT * FROM todos WHERE uid = ? AND recurrence_id = ?;
+SELECT * FROM todos WHERE uid = ? AND recurrence_id = ? AND deleted_at IS NULL;
 
 -- name: ListTodoOverridesByUID :many
-SELECT * FROM todos WHERE uid = ? AND recurrence_id != '' ORDER BY recurrence_id;
+SELECT * FROM todos WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NULL ORDER BY recurrence_id;
 
 
 -- name: DeleteTodosByUID :exec
@@ -89,6 +99,7 @@ ON CONFLICT(uid, recurrence_id) DO UPDATE SET
     exdates = excluded.exdates, rdates = excluded.rdates,
     geo = excluded.geo,
     dtstamp = excluded.dtstamp,
+    deleted_at = NULL,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 RETURNING *;
 
@@ -98,3 +109,39 @@ UPDATE todos SET exdates = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 -- name: DeleteTodo :exec
 DELETE FROM todos WHERE id = ?;
 
+-- name: SoftDeleteTodo :exec
+UPDATE todos SET
+    deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = ? AND deleted_at IS NULL;
+
+-- name: SoftDeleteTodosByUID :exec
+UPDATE todos SET
+    deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE uid = ? AND deleted_at IS NULL;
+
+-- name: RestoreTodo :exec
+UPDATE todos SET
+    deleted_at = NULL,
+    sequence = sequence + 1,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = ? AND deleted_at IS NOT NULL;
+
+-- name: RestoreTodosByUID :exec
+UPDATE todos SET
+    deleted_at = NULL,
+    sequence = sequence + 1,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE uid = ? AND deleted_at IS NOT NULL;
+
+-- name: PurgeSoftDeletedTodos :execrows
+DELETE FROM todos WHERE deleted_at IS NOT NULL AND deleted_at < ?;
+
+-- name: PurgeTodoByID :execrows
+DELETE FROM todos WHERE id = ? AND deleted_at IS NOT NULL;
+
+-- name: ListDeletedTodosByCalendar :many
+SELECT * FROM todos
+WHERE calendar_id = ? AND deleted_at IS NOT NULL
+ORDER BY deleted_at DESC;

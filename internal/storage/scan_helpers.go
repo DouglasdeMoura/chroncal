@@ -32,7 +32,7 @@ func scanEvents(rows *sql.Rows) ([]Event, error) {
 // id, uid, calendar_id, summary, description, location, due_date, start_date,
 // duration, completed_at, percent_complete, status, priority, class, url,
 // recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, geo,
-// created_at, updated_at, dtstamp.
+// created_at, updated_at, dtstamp, deleted_at.
 func scanTodos(rows *sql.Rows) ([]Todo, error) {
 	defer rows.Close()
 	items := make([]Todo, 0, 64)
@@ -45,6 +45,7 @@ func scanTodos(rows *sql.Rows) ([]Todo, error) {
 			&i.Class, &i.Url, &i.RecurrenceRule, &i.Timezone,
 			&i.Sequence, &i.Exdates, &i.Rdates, &i.RecurrenceID,
 			&i.Geo, &i.CreatedAt, &i.UpdatedAt, &i.Dtstamp,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -56,7 +57,7 @@ func scanTodos(rows *sql.Rows) ([]Todo, error) {
 // scanJournals reads rows into []Journal. Column order must match the journals table:
 // id, uid, calendar_id, summary, description, start_date, status, class, url,
 // recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp,
-// created_at, updated_at.
+// created_at, updated_at, deleted_at.
 func scanJournals(rows *sql.Rows) ([]Journal, error) {
 	defer rows.Close()
 	items := make([]Journal, 0, 64)
@@ -68,6 +69,7 @@ func scanJournals(rows *sql.Rows) ([]Journal, error) {
 			&i.RecurrenceRule, &i.Timezone, &i.Sequence,
 			&i.Exdates, &i.Rdates, &i.RecurrenceID, &i.Dtstamp,
 			&i.CreatedAt, &i.UpdatedAt,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}

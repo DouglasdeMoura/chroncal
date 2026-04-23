@@ -4,17 +4,33 @@ import "context"
 
 const todoCategoryExists = "EXISTS (SELECT 1 FROM todo_categories tc WHERE tc.todo_id = todos.id AND tc.category = ?)"
 
+// todoDeletedFilter appends the canonical deleted_at clause used by every
+// todos read path. Default: hide soft-deleted rows. Callers that need to
+// see them (trash views, --include-deleted) set IncludeDeleted or
+// DeletedOnly on their *FilteredParams.
+func todoDeletedFilter(w *whereBuilder, includeDeleted, deletedOnly bool) {
+	switch {
+	case deletedOnly:
+		w.add("deleted_at IS NOT NULL")
+	case !includeDeleted:
+		w.add("deleted_at IS NULL")
+	}
+}
+
 type ListTodosFilteredParams struct {
-	CalendarID    int64
-	FilterStatus  string
-	HideCompleted int64
-	FromDate      string
-	ToDate        string
+	CalendarID     int64
+	FilterStatus   string
+	HideCompleted  int64
+	FromDate       string
+	ToDate         string
+	IncludeDeleted bool
+	DeletedOnly    bool
 }
 
 func (q *Queries) ListTodosFiltered(ctx context.Context, arg ListTodosFilteredParams) ([]Todo, error) {
 	var w whereBuilder
 	w.add("recurrence_rule IS NULL AND recurrence_id = ''")
+	todoDeletedFilter(&w, arg.IncludeDeleted, arg.DeletedOnly)
 	if arg.CalendarID != 0 {
 		w.add("calendar_id = ?", arg.CalendarID)
 	}
@@ -35,14 +51,17 @@ func (q *Queries) ListTodosFiltered(ctx context.Context, arg ListTodosFilteredPa
 }
 
 type ListRecurringTodosFilteredParams struct {
-	CalendarID    int64
-	FilterStatus  string
-	HideCompleted int64
+	CalendarID     int64
+	FilterStatus   string
+	HideCompleted  int64
+	IncludeDeleted bool
+	DeletedOnly    bool
 }
 
 func (q *Queries) ListRecurringTodosFiltered(ctx context.Context, arg ListRecurringTodosFilteredParams) ([]Todo, error) {
 	var w whereBuilder
 	w.add("recurrence_rule IS NOT NULL AND recurrence_id = ''")
+	todoDeletedFilter(&w, arg.IncludeDeleted, arg.DeletedOnly)
 	if arg.CalendarID != 0 {
 		w.add("calendar_id = ?", arg.CalendarID)
 	}
@@ -61,10 +80,13 @@ type ListTodosForExportParams struct {
 	Category        string
 	FilterStatus    string
 	CompletedFilter int64
+	IncludeDeleted  bool
+	DeletedOnly     bool
 }
 
 func (q *Queries) ListTodosForExport(ctx context.Context, arg ListTodosForExportParams) ([]Todo, error) {
 	var w whereBuilder
+	todoDeletedFilter(&w, arg.IncludeDeleted, arg.DeletedOnly)
 	if arg.CalendarID != 0 {
 		w.add("calendar_id = ?", arg.CalendarID)
 	}

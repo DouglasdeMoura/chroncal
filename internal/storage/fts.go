@@ -43,6 +43,7 @@ func (q *Queries) SearchEventsFTS(ctx context.Context, query string, calendarID 
 
 func (q *Queries) SearchTodosFTS(ctx context.Context, query string, calendarID int64, filterStatus string, completedFilter int64) ([]Todo, error) {
 	var w whereBuilder
+	w.add("deleted_at IS NULL")
 	w.add("id IN (SELECT rowid FROM todos_fts WHERE todos_fts MATCH ?)", query)
 	if calendarID != 0 {
 		w.add("calendar_id = ?", calendarID)
@@ -61,6 +62,7 @@ func (q *Queries) SearchTodosFTS(ctx context.Context, query string, calendarID i
 
 func (q *Queries) SearchJournalsFTS(ctx context.Context, query string, calendarID int64, filterStatus string) ([]Journal, error) {
 	var w whereBuilder
+	w.add("deleted_at IS NULL")
 	w.add("id IN (SELECT rowid FROM journals_fts WHERE journals_fts MATCH ?)", query)
 	if calendarID != 0 {
 		w.add("calendar_id = ?", calendarID)
