@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,7 +28,11 @@ contacts, attendees, and related-item metadata.`,
   chroncal journal add "Sprint retro" --date 2026-04-01
   chroncal journal search retro`,
 	}
-	cmd.AddCommand(journalListCmd(), journalGetCmd(), journalAddCmd(), journalUpdateCmd(), journalDeleteCmd(), journalSearchCmd())
+	cmd.AddCommand(
+		journalListCmd(), journalGetCmd(), journalAddCmd(), journalUpdateCmd(),
+		journalDeleteCmd(), journalSearchCmd(),
+		journalRestoreCmd(), journalPurgeDeletedCmd(),
+	)
 	return cmd
 }
 
@@ -648,6 +654,119 @@ entire recurring series.`,
 	cmd.Flags().StringVar(&recurrenceID, "recurrence-id", "", "target a specific override instance (RFC 3339 timestamp)")
 	cmd.Flags().BoolVar(&series, "series", false, "delete the entire recurring series (master + all overrides)")
 	addConfirmFlag(cmd)
+	return cmd
+}
+
+func journalRestoreCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "restore <id-or-uid>",
+		Short: "Restore a soft-deleted journal entry",
+		Long: `Restore clears the deletion marker on a soft-deleted journal entry
+so it reappears in list and TUI views.
+
+If the journal was synced to a remote server, restore marks it dirty so
+the next sync cycle recreates it remotely.`,
+		Example: `  chroncal journal restore 3
+  chroncal journal restore retro-uid`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			a, err := initApp()
+			if err != nil {
+				return err
+			}
+			defer a.Close()
+			ctx := context.Background()
+
+			ref := args[0]
+			w := cmd.OutOrStdout()
+
+			if id, parseErr := strconv.ParseInt(ref, 10, 64); parseErr == nil {
+				if err := a.Journals.RestoreByID(ctx, id); err != nil {
+					if errors.Is(err, journal.ErrNotDeleted) {
+						return fmt.Errorf("journal %d not found (may have been purged)", id)
+					}
+					return fmt.Errorf("restore journal: %w", err)
+				}
+				if outputFmt != "text" {
+					return printOutput(w, map[string]any{"restored": true, "id": id})
+				}
+				fmt.Fprintf(w, "Restored journal %d.\n", id)
+				return nil
+			}
+
+			if err := a.Journals.RestoreByUID(ctx, ref); err != nil {
+				return fmt.Errorf("restore journal: %w", err)
+			}
+			if outputFmt != "text" {
+				return printOutput(w, map[string]any{"restored": true, "uid": ref})
+			}
+			fmt.Fprintf(w, "Restored journal(s) with uid %q.\n", safeText(ref))
+			return nil
+		},
+	}
+	return cmd
+}
+
+func journalPurgeDeletedCmd() *cobra.Command {
+	var (
+		olderThanStr string
+		yes          bool
+	)
+	cmd := &cobra.Command{
+		Use:   "purge-deleted",
+		Short: "Hard-delete soft-deleted journals older than --older-than",
+		Long: `Purge permanently removes soft-deleted journal entries from the
+database. By default only rows soft-deleted more than 30 days ago are
+purged. Use --older-than to pick a different age.
+
+This operation is destructive and not reversible. Attachments and other
+child rows cascade.`,
+		Example: `  chroncal journal purge-deleted
+  chroncal journal purge-deleted --older-than 7d
+  chroncal journal purge-deleted --older-than 0s --yes`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			d, err := time.ParseDuration(olderThanStr)
+			if err != nil {
+				return fmt.Errorf("parse --older-than %q: %w", olderThanStr, err)
+			}
+			if d < 0 {
+				return fmt.Errorf("--older-than must be non-negative, got %s", d)
+			}
+			if d < time.Hour {
+				prompt := fmt.Sprintf("Purge ALL journals soft-deleted in the last %s? This cannot be undone.", d)
+				ok, err := confirmDestructive(cmd, prompt)
+				if err != nil {
+					return err
+				}
+				if !ok && !yes {
+					fmt.Fprintln(cmd.OutOrStdout(), "Aborted.")
+					return nil
+				}
+			}
+
+			a, err := initApp()
+			if err != nil {
+				return err
+			}
+			defer a.Close()
+			ctx := context.Background()
+
+			cutoff := time.Now().Add(-d)
+			n, err := a.Journals.PurgeDeleted(ctx, cutoff)
+			if err != nil {
+				return fmt.Errorf("purge: %w", err)
+			}
+
+			w := cmd.OutOrStdout()
+			if outputFmt != "text" {
+				return printOutput(w, map[string]any{"purged": n, "older_than": d.String()})
+			}
+			fmt.Fprintf(w, "Purged %d journal(s) soft-deleted more than %s ago.\n", n, d)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&olderThanStr, "older-than", "720h", "age threshold (Go duration, e.g. 30d=720h, 168h=7 days)")
+	cmd.Flags().BoolVar(&yes, "yes", false, "skip interactive confirmation for sub-hour windows")
 	return cmd
 }
 

@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,7 +28,11 @@ the same calendar organization model used by events.`,
   chroncal todo add "Ship release" --due 2026-04-15
   chroncal todo complete 7`,
 	}
-	cmd.AddCommand(todoListCmd(), todoGetCmd(), todoAddCmd(), todoUpdateCmd(), todoDeleteCmd(), todoCompleteCmd(), todoSearchCmd())
+	cmd.AddCommand(
+		todoListCmd(), todoGetCmd(), todoAddCmd(), todoUpdateCmd(),
+		todoDeleteCmd(), todoCompleteCmd(), todoSearchCmd(),
+		todoRestoreCmd(), todoPurgeDeletedCmd(),
+	)
 	return cmd
 }
 
@@ -961,5 +967,121 @@ recurring series.`,
 	cmd.Flags().StringVar(&recurrenceID, "recurrence-id", "", "target a specific override instance (RFC 3339 timestamp)")
 	cmd.Flags().BoolVar(&series, "series", false, "delete the entire recurring series (master + all overrides)")
 	addConfirmFlag(cmd)
+	return cmd
+}
+
+func todoRestoreCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "restore <id-or-uid>",
+		Short: "Restore a soft-deleted todo",
+		Long: `Restore clears the deletion marker on a soft-deleted todo so it
+reappears in list and TUI views.
+
+The todo must have been deleted via chroncal (soft-delete, not purged).
+
+If the todo was synced to a remote server, restore marks it dirty so
+the next sync cycle recreates it remotely (with a fresh resource URL).`,
+		Example: `  chroncal todo restore 7
+  chroncal todo restore weekly-review-uid`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			a, err := initApp()
+			if err != nil {
+				return err
+			}
+			defer a.Close()
+			ctx := context.Background()
+
+			ref := args[0]
+			w := cmd.OutOrStdout()
+
+			if id, parseErr := strconv.ParseInt(ref, 10, 64); parseErr == nil {
+				if err := a.Todos.RestoreByID(ctx, id); err != nil {
+					if errors.Is(err, todo.ErrNotDeleted) {
+						return fmt.Errorf("todo %d not found (may have been purged)", id)
+					}
+					return fmt.Errorf("restore todo: %w", err)
+				}
+				if outputFmt != "text" {
+					return printOutput(w, map[string]any{"restored": true, "id": id})
+				}
+				fmt.Fprintf(w, "Restored todo %d.\n", id)
+				return nil
+			}
+
+			if err := a.Todos.RestoreByUID(ctx, ref); err != nil {
+				return fmt.Errorf("restore todo: %w", err)
+			}
+			if outputFmt != "text" {
+				return printOutput(w, map[string]any{"restored": true, "uid": ref})
+			}
+			fmt.Fprintf(w, "Restored todo(s) with uid %q.\n", safeText(ref))
+			return nil
+		},
+	}
+	return cmd
+}
+
+func todoPurgeDeletedCmd() *cobra.Command {
+	var (
+		olderThanStr string
+		yes          bool
+	)
+	cmd := &cobra.Command{
+		Use:   "purge-deleted",
+		Short: "Hard-delete soft-deleted todos older than --older-than",
+		Long: `Purge permanently removes soft-deleted todos from the database.
+
+By default, only todos soft-deleted more than 30 days ago are purged.
+Use --older-than to pick a different age (e.g. 7d, 24h, 720h).
+
+This operation is destructive and not reversible. Attachments and other
+child rows cascade.`,
+		Example: `  chroncal todo purge-deleted                   # 30 days by default
+  chroncal todo purge-deleted --older-than 7d   # older than a week
+  chroncal todo purge-deleted --older-than 0s --yes  # purge everything soft-deleted`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			d, err := time.ParseDuration(olderThanStr)
+			if err != nil {
+				return fmt.Errorf("parse --older-than %q: %w", olderThanStr, err)
+			}
+			if d < 0 {
+				return fmt.Errorf("--older-than must be non-negative, got %s", d)
+			}
+			if d < time.Hour {
+				prompt := fmt.Sprintf("Purge ALL todos soft-deleted in the last %s? This cannot be undone.", d)
+				ok, err := confirmDestructive(cmd, prompt)
+				if err != nil {
+					return err
+				}
+				if !ok && !yes {
+					fmt.Fprintln(cmd.OutOrStdout(), "Aborted.")
+					return nil
+				}
+			}
+
+			a, err := initApp()
+			if err != nil {
+				return err
+			}
+			defer a.Close()
+			ctx := context.Background()
+
+			cutoff := time.Now().Add(-d)
+			n, err := a.Todos.PurgeDeleted(ctx, cutoff)
+			if err != nil {
+				return fmt.Errorf("purge: %w", err)
+			}
+
+			w := cmd.OutOrStdout()
+			if outputFmt != "text" {
+				return printOutput(w, map[string]any{"purged": n, "older_than": d.String()})
+			}
+			fmt.Fprintf(w, "Purged %d todo(s) soft-deleted more than %s ago.\n", n, d)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&olderThanStr, "older-than", "720h", "age threshold (Go duration, e.g. 30d=720h, 168h=7 days)")
+	cmd.Flags().BoolVar(&yes, "yes", false, "skip interactive confirmation for sub-hour windows")
 	return cmd
 }
