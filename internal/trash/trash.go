@@ -295,10 +295,12 @@ func unmapEventKind(k Kind) event.TrashKind {
 
 func fromTodo(td todo.Todo) Entry {
 	deletedAt := time.Time{}
-	if !td.UpdatedAt.IsZero() {
-		// UpdatedAt is bumped alongside deleted_at in SoftDeleteTodo, so
-		// it's the closest stand-in for when the user hit delete. The
-		// todo service doesn't surface deleted_at directly.
+	if td.DeletedAt != nil {
+		deletedAt = *td.DeletedAt
+	} else if !td.UpdatedAt.IsZero() {
+		// Fallback for pre-v3 rows that were deleted before DeletedAt was
+		// surfaced on the domain model; UpdatedAt is bumped alongside
+		// deleted_at in SoftDeleteTodo, so it's a close stand-in.
 		deletedAt = td.UpdatedAt
 	}
 	dueDate := time.Time{}
@@ -327,7 +329,9 @@ func fromTodo(td todo.Todo) Entry {
 
 func fromJournal(j journal.Journal) Entry {
 	deletedAt := time.Time{}
-	if !j.UpdatedAt.IsZero() {
+	if j.DeletedAt != nil {
+		deletedAt = *j.DeletedAt
+	} else if !j.UpdatedAt.IsZero() {
 		deletedAt = j.UpdatedAt
 	}
 	startDate := time.Time{}

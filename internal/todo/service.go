@@ -952,6 +952,11 @@ func (s *Service) ReplaceRelations(ctx context.Context, todoID int64, relations 
 // Converters
 
 func fromStorage(r storage.Todo) Todo {
+	var deletedAt *time.Time
+	if r.DeletedAt != nil && *r.DeletedAt != "" {
+		t := timeutil.ParseDateTime(*r.DeletedAt)
+		deletedAt = &t
+	}
 	return Todo{
 		ID:              r.ID,
 		UID:             r.Uid,
@@ -978,6 +983,7 @@ func fromStorage(r storage.Todo) Todo {
 		DtStamp:         storage.NullableToString(r.Dtstamp),
 		CreatedAt:       timeutil.ParseDateTime(r.CreatedAt),
 		UpdatedAt:       timeutil.ParseDateTime(r.UpdatedAt),
+		DeletedAt:       deletedAt,
 	}
 }
 

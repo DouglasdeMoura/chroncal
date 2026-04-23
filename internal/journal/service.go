@@ -706,6 +706,11 @@ func (s *Service) ReplaceRelations(ctx context.Context, journalID int64, relatio
 // Converters
 
 func fromStorage(r storage.Journal) Journal {
+	var deletedAt *time.Time
+	if r.DeletedAt != nil && *r.DeletedAt != "" {
+		t := timeutil.ParseDateTime(*r.DeletedAt)
+		deletedAt = &t
+	}
 	return Journal{
 		ID:             r.ID,
 		UID:            r.Uid,
@@ -725,6 +730,7 @@ func fromStorage(r storage.Journal) Journal {
 		DtStamp:        storage.NullableToString(r.Dtstamp),
 		CreatedAt:      timeutil.ParseDateTime(r.CreatedAt),
 		UpdatedAt:      timeutil.ParseDateTime(r.UpdatedAt),
+		DeletedAt:      deletedAt,
 	}
 }
 

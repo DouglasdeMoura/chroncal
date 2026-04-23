@@ -27,6 +27,7 @@ type Journal struct {
 	DtStamp        string // RFC 5545 DTSTAMP; empty = use UpdatedAt
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
+	DeletedAt      *time.Time // nil = not soft-deleted; set = soft-deleted at this time
 
 	Attendees   []model.Attendee
 	Attachments []model.Attachment
