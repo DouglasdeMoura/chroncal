@@ -38,11 +38,12 @@ contacts, attendees, and related-item metadata.`,
 
 func journalListCmd() *cobra.Command {
 	var (
-		calendarName string
-		status       string
-		all          bool
-		fromStr      string
-		toStr        string
+		calendarName   string
+		status         string
+		all            bool
+		fromStr        string
+		toStr          string
+		includeDeleted bool
 	)
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -81,10 +82,11 @@ CANCELLED entries.`,
 			}
 
 			journals, err := a.Recurrences.ListFilteredJournals(ctx, recurrence.JournalListParams{
-				CalendarID: calID,
-				Status:     filterStatus,
-				From:       from,
-				To:         to,
+				CalendarID:     calID,
+				Status:         filterStatus,
+				From:           from,
+				To:             to,
+				IncludeDeleted: includeDeleted,
 			})
 			if err != nil {
 				return fmt.Errorf("list journals: %w", err)
@@ -103,6 +105,7 @@ CANCELLED entries.`,
 	cmd.Flags().BoolVar(&all, "all", false, "include draft, final, and cancelled entries together")
 	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD, default: today)")
 	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 14 days from now)")
+	cmd.Flags().BoolVar(&includeDeleted, "include-deleted", false, "include soft-deleted journals (see `journal restore`)")
 	return cmd
 }
 

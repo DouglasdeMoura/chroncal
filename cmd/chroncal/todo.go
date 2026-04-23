@@ -38,11 +38,12 @@ the same calendar organization model used by events.`,
 
 func todoListCmd() *cobra.Command {
 	var (
-		calendarName string
-		status       string
-		all          bool
-		fromStr      string
-		toStr        string
+		calendarName   string
+		status         string
+		all            bool
+		fromStr        string
+		toStr          string
+		includeDeleted bool
 	)
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -76,11 +77,12 @@ By default completed and cancelled todos are hidden unless you pass
 			}
 
 			todos, err := a.Recurrences.ListFilteredTodos(ctx, recurrence.TodoListParams{
-				CalendarID:    calID,
-				Status:        status,
-				HideCompleted: !all && status == "",
-				From:          from,
-				To:            to,
+				CalendarID:     calID,
+				Status:         status,
+				HideCompleted:  !all && status == "",
+				From:           from,
+				To:             to,
+				IncludeDeleted: includeDeleted,
 			})
 			if err != nil {
 				return fmt.Errorf("list todos: %w", err)
@@ -99,6 +101,7 @@ By default completed and cancelled todos are hidden unless you pass
 	cmd.Flags().BoolVar(&all, "all", false, "include completed and cancelled")
 	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD, default: today)")
 	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 14 days from now)")
+	cmd.Flags().BoolVar(&includeDeleted, "include-deleted", false, "include soft-deleted todos (see `todo restore`)")
 	return cmd
 }
 

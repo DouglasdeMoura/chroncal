@@ -705,6 +705,10 @@ type TodoListParams struct {
 	HideCompleted bool
 	From          time.Time
 	To            time.Time
+	// IncludeDeleted, when true, returns soft-deleted todos alongside live
+	// rows. Default (false) hides them, matching the live-query contract
+	// every other service method honors.
+	IncludeDeleted bool
 }
 
 // ListFilteredTodos returns todos matching all supplied filters. When a date
@@ -727,11 +731,12 @@ func (s *Service) ListFilteredTodos(ctx context.Context, p TodoListParams) ([]to
 	}
 
 	rows, err := s.q.ListTodosFiltered(ctx, storage.ListTodosFilteredParams{
-		CalendarID:    p.CalendarID,
-		FilterStatus:  p.Status,
-		HideCompleted: hideCompleted,
-		FromDate:      fromStr,
-		ToDate:        toStr,
+		CalendarID:     p.CalendarID,
+		FilterStatus:   p.Status,
+		HideCompleted:  hideCompleted,
+		FromDate:       fromStr,
+		ToDate:         toStr,
+		IncludeDeleted: p.IncludeDeleted,
 	})
 	if err != nil {
 		return nil, err
@@ -743,9 +748,10 @@ func (s *Service) ListFilteredTodos(ctx context.Context, p TodoListParams) ([]to
 	}
 
 	recurringRows, err := s.q.ListRecurringTodosFiltered(ctx, storage.ListRecurringTodosFilteredParams{
-		CalendarID:    p.CalendarID,
-		FilterStatus:  p.Status,
-		HideCompleted: hideCompleted,
+		CalendarID:     p.CalendarID,
+		FilterStatus:   p.Status,
+		HideCompleted:  hideCompleted,
+		IncludeDeleted: p.IncludeDeleted,
 	})
 	if err != nil {
 		return nil, err
@@ -876,6 +882,9 @@ type JournalListParams struct {
 	Status     string
 	From       time.Time
 	To         time.Time
+	// IncludeDeleted, when true, returns soft-deleted journals alongside
+	// live rows. Default (false) hides them.
+	IncludeDeleted bool
 }
 
 func journalFromRow(row storage.Journal) journal.Journal {
@@ -1047,10 +1056,11 @@ func (s *Service) ListFilteredJournals(ctx context.Context, p JournalListParams)
 	}
 
 	rows, err := s.q.ListJournalsFiltered(ctx, storage.ListJournalsFilteredParams{
-		CalendarID:   p.CalendarID,
-		FilterStatus: p.Status,
-		FromDate:     fromStr,
-		ToDate:       toStr,
+		CalendarID:     p.CalendarID,
+		FilterStatus:   p.Status,
+		FromDate:       fromStr,
+		ToDate:         toStr,
+		IncludeDeleted: p.IncludeDeleted,
 	})
 	if err != nil {
 		return nil, err
@@ -1062,8 +1072,9 @@ func (s *Service) ListFilteredJournals(ctx context.Context, p JournalListParams)
 	}
 
 	recurringRows, err := s.q.ListRecurringJournalsFiltered(ctx, storage.ListRecurringJournalsFilteredParams{
-		CalendarID:   p.CalendarID,
-		FilterStatus: p.Status,
+		CalendarID:     p.CalendarID,
+		FilterStatus:   p.Status,
+		IncludeDeleted: p.IncludeDeleted,
 	})
 	if err != nil {
 		return nil, err
