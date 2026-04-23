@@ -11,16 +11,38 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
 
-// DeletedSnapshot is a self-contained record of an event that was just
-// deleted, sufficient to restore it verbatim via Service.Restore. It carries
-// the event itself, all hydrated transient children, and (for overrides) a
-// capture of the master's EXDATE list and UpdatedAt at the moment of delete,
-// so a later restore can detect whether the master has drifted since.
+// DeleteKind discriminates the two reversible delete shapes the service can
+// snapshot. Consumers (TUI undo stack) treat snapshots as opaque data; only
+// Service.Restore interprets them.
+type DeleteKind int
+
+const (
+	// DeleteKindFull covers the removal of an entire event row — standalone,
+	// override, or solo master. Restore re-inserts the row and its nine
+	// transient child slices and reconciles sync state.
+	DeleteKindFull DeleteKind = iota
+	// DeleteKindInstance covers "this occurrence only" on a recurring master.
+	// No row is deleted; the master gains an EXDATE entry. Restore removes
+	// that EXDATE so the occurrence reappears on next expansion.
+	DeleteKindInstance
+)
+
+// DeletedSnapshot is a self-contained record of a just-completed delete,
+// sufficient to reverse it via Service.Restore. Two flavors, discriminated by
+// Kind: a full event-row delete (with hydrated transient children and
+// optional master-state capture for overrides), or a single-instance delete
+// against a recurring master (with the occurrence time plus master-state
+// capture for drift detection).
 //
-// DeletedSnapshot is data, not behavior: callers (e.g. the TUI undo stack)
-// keep it in memory without knowing how to restore it. Only the service
-// decides how to reverse the delete.
+// DeletedSnapshot is data, not behavior: callers keep it in memory without
+// knowing how to restore it. Only the service decides how to reverse the
+// delete.
 type DeletedSnapshot struct {
+	Kind DeleteKind
+
+	// Full-delete fields (Kind == DeleteKindFull).
+
+	// Event is the entire event row with its nine transient slices hydrated.
 	Event Event
 
 	// MasterExDatesAtDelete is the full EXDATE list on the master as observed
@@ -30,12 +52,41 @@ type DeletedSnapshot struct {
 	// MasterUpdatedAtAtDelete is the master's updated_at when delete ran.
 	// Used to detect master drift during restore of an override.
 	MasterUpdatedAtAtDelete time.Time
+
+	// Instance-delete fields (Kind == DeleteKindInstance).
+
+	// InstanceUID is the UID of the recurring master whose occurrence was
+	// excluded.
+	InstanceUID string
+	// InstanceTime is the occurrence time (the value that was appended to the
+	// master's EXDATE list).
+	InstanceTime time.Time
+	// InstanceCalendarID is the calendar owning the master; cached so the
+	// undo path can mark the resource dirty without a second DB lookup.
+	InstanceCalendarID int64
+	// InstanceTitle carries the master title for display in the toast.
+	InstanceTitle string
+}
+
+// IsValid reports whether the snapshot has enough content to be restored.
+// The TUI uses this to decide whether to enqueue undo and show the toast.
+func (s DeletedSnapshot) IsValid() bool {
+	switch s.Kind {
+	case DeleteKindFull:
+		return s.Event.UID != ""
+	case DeleteKindInstance:
+		return s.InstanceUID != "" && !s.InstanceTime.IsZero()
+	}
+	return false
 }
 
 // EstimatedBytes returns a best-effort byte cost of this snapshot, used by
 // the TUI undo stack to enforce a byte budget on top of the depth budget.
-// Attachment blobs dominate; everything else is small.
+// Attachment blobs dominate for full deletes; instance deletes are tiny.
 func (s DeletedSnapshot) EstimatedBytes() int {
+	if s.Kind == DeleteKindInstance {
+		return len(s.InstanceUID) + len(s.InstanceTitle) + 128
+	}
 	n := len(s.Event.Title) + len(s.Event.Description) + len(s.Event.Location)
 	for _, a := range s.Event.Attachments {
 		n += len(a.Data)
@@ -125,9 +176,45 @@ func (s *Service) DeleteWithSnapshot(ctx context.Context, id int64) (DeletedSnap
 	return snap, nil
 }
 
-// Restore reverses a DeleteWithSnapshot, re-inserting the event row with its
-// original UID and recurrence_id, re-populating the nine transient child
-// tables, and reconciling sync state via a three-case state machine:
+// DeleteInstanceWithSnapshot excludes a single occurrence of a recurring
+// master by appending instanceTime to the master's EXDATE list, returning a
+// snapshot that lets Restore reinstate the occurrence. The underlying work
+// reuses Service.DeleteInstance; this wrapper only captures the master's
+// pre-delete EXDATE list and UpdatedAt so a later restore can detect drift.
+//
+// Only the "this occurrence only" flavor of recurring delete is snapshotted.
+// "This and following" (DeleteFromInstance) and "all events" (DeleteSeries)
+// are out of scope for undo — they're multi-step destructive changes that
+// the snapshot format does not yet carry.
+func (s *Service) DeleteInstanceWithSnapshot(ctx context.Context, uid string, instanceTime time.Time) (DeletedSnapshot, error) {
+	master, err := s.q.GetEventByUID(ctx, uid)
+	if err != nil {
+		return DeletedSnapshot{}, fmt.Errorf("get master: %w", err)
+	}
+
+	snap := DeletedSnapshot{
+		Kind:                  DeleteKindInstance,
+		InstanceUID:           uid,
+		InstanceTime:          instanceTime,
+		InstanceCalendarID:    master.CalendarID,
+		InstanceTitle:         master.Title,
+		MasterExDatesAtDelete: storage.NullableToString(master.Exdates),
+	}
+	if t, perr := time.Parse(time.RFC3339, master.UpdatedAt); perr == nil {
+		snap.MasterUpdatedAtAtDelete = t
+	}
+
+	if err := s.DeleteInstance(ctx, uid, instanceTime); err != nil {
+		return DeletedSnapshot{}, err
+	}
+	return snap, nil
+}
+
+// Restore reverses a DeleteWithSnapshot or DeleteInstanceWithSnapshot,
+// dispatching on the snapshot's Kind. For full deletes it re-inserts the
+// event row with its original UID and recurrence_id, re-populating the nine
+// transient child tables, and reconciling sync state via a three-case state
+// machine:
 //
 //  1. Local-only calendar / resource never uploaded: no sync work.
 //  2. Tombstone exists: delete the tombstone (delete hasn't been pushed).
@@ -144,7 +231,15 @@ func (s *Service) DeleteWithSnapshot(ctx context.Context, id int64) (DeletedSnap
 // Restore uses a plain INSERT (not upsert): if a different row now occupies
 // (uid, recurrence_id), the unique constraint fails and the caller learns
 // that the slot has been reclaimed.
+//
+// For instance deletes (Kind == DeleteKindInstance), Restore removes the
+// matching occurrence from the master's current EXDATE list. If the master
+// has advanced since delete (updated_at moved forward) and no longer carries
+// that exclusion, the restore aborts with ErrMasterChanged.
 func (s *Service) Restore(ctx context.Context, snap DeletedSnapshot) (int64, error) {
+	if snap.Kind == DeleteKindInstance {
+		return 0, s.restoreInstance(ctx, snap)
+	}
 	evt := snap.Event
 	if evt.UID == "" {
 		return 0, fmt.Errorf("restore: empty UID")
@@ -308,3 +403,60 @@ func (s *Service) Restore(ctx context.Context, snap DeletedSnapshot) (int64, err
 	return newID, nil
 }
 
+
+// restoreInstance reverses DeleteInstanceWithSnapshot by removing the
+// snapshotted occurrence time from the master's current EXDATE list. When
+// the occurrence is already absent and the master has advanced since the
+// snapshot, it returns ErrMasterChanged so the caller can surface the
+// conflict instead of silently overwriting a newer decision.
+func (s *Service) restoreInstance(ctx context.Context, snap DeletedSnapshot) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+
+	master, err := qtx.GetEventByUID(ctx, snap.InstanceUID)
+	if err != nil {
+		return fmt.Errorf("restore instance: master missing: %w", err)
+	}
+
+	currentExDates := ParseTimeList(storage.NullableToString(master.Exdates))
+	filtered := make([]time.Time, 0, len(currentExDates))
+	found := false
+	for _, t := range currentExDates {
+		if t.Equal(snap.InstanceTime) {
+			found = true
+			continue
+		}
+		filtered = append(filtered, t)
+	}
+	if !found {
+		// Master doesn't carry this EXDATE anymore. Either it never did
+		// (odd — our own DeleteInstance put it there) or a sync pull /
+		// external edit removed it after the snapshot. If the master has
+		// advanced beyond snapshot time, respect that decision.
+		if masterUpdated, perr := time.Parse(time.RFC3339, master.UpdatedAt); perr == nil {
+			if masterUpdated.After(snap.MasterUpdatedAtAtDelete) {
+				return ErrMasterChanged
+			}
+		}
+		// Master matches snapshot and neither has the EXDATE — nothing to
+		// remove, restoration is vacuously complete.
+		return tx.Commit()
+	}
+
+	if err := qtx.UpdateEventExdates(ctx, storage.UpdateEventExdatesParams{
+		Exdates: storage.StringToNullable(SerializeTimeList(filtered)),
+		ID:      master.ID,
+	}); err != nil {
+		return fmt.Errorf("update master exdates: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	_ = storage.MarkResourceDirty(ctx, s.db, master.CalendarID, snap.InstanceUID, "event")
+	return nil
+}

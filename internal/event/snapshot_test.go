@@ -191,6 +191,125 @@ func TestRestore_RejectsConflictingSlot(t *testing.T) {
 	}
 }
 
+func TestDeleteInstanceWithSnapshot_RoundTrip(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	master, err := svc.Create(ctx, CreateParams{
+		CalendarID:     1,
+		Title:          "Weekly sync",
+		StartTime:      time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 1, 9, 30, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+
+	instance := time.Date(2026, 4, 8, 9, 0, 0, 0, time.UTC)
+	snap, err := svc.DeleteInstanceWithSnapshot(ctx, master.UID, instance)
+	if err != nil {
+		t.Fatalf("DeleteInstanceWithSnapshot: %v", err)
+	}
+	if snap.Kind != DeleteKindInstance {
+		t.Errorf("Kind = %v, want DeleteKindInstance", snap.Kind)
+	}
+	if !snap.IsValid() {
+		t.Error("snapshot should be valid")
+	}
+	if snap.InstanceTitle != "Weekly sync" {
+		t.Errorf("InstanceTitle = %q, want Weekly sync", snap.InstanceTitle)
+	}
+
+	// After delete, the master should carry exactly one EXDATE matching the
+	// instance time.
+	after, err := svc.GetByUID(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("get master after delete: %v", err)
+	}
+	exDates := ParseTimeList(after.ExDates)
+	if len(exDates) != 1 || !exDates[0].Equal(instance) {
+		t.Fatalf("master ExDates = %v, want exactly [%v]", exDates, instance)
+	}
+
+	// Restore via the unified Service.Restore entry point.
+	if _, err := svc.Restore(ctx, snap); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	after, err = svc.GetByUID(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("get master after restore: %v", err)
+	}
+	if got := ParseTimeList(after.ExDates); len(got) != 0 {
+		t.Errorf("master ExDates after restore = %v, want empty", got)
+	}
+}
+
+func TestRestoreInstance_MasterAdvancedWithoutExDateReturnsErrMasterChanged(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	master, err := svc.Create(ctx, CreateParams{
+		CalendarID:     1,
+		Title:          "Weekly",
+		StartTime:      time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 1, 9, 30, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	instance := time.Date(2026, 4, 8, 9, 0, 0, 0, time.UTC)
+	snap, err := svc.DeleteInstanceWithSnapshot(ctx, master.UID, instance)
+	if err != nil {
+		t.Fatalf("DeleteInstanceWithSnapshot: %v", err)
+	}
+
+	// Simulate a sync pull / external edit: wipe the EXDATE list AND move
+	// UpdatedAt forward so the restore sees both "absent" and "newer".
+	future := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
+	if _, err := svc.db.ExecContext(ctx,
+		"UPDATE events SET exdates = '', updated_at = ? WHERE id = ?",
+		future, master.ID); err != nil {
+		t.Fatalf("simulate sync edit: %v", err)
+	}
+
+	if _, err := svc.Restore(ctx, snap); !errors.Is(err, ErrMasterChanged) {
+		t.Fatalf("Restore = %v, want ErrMasterChanged", err)
+	}
+}
+
+func TestSnapshot_IsValid(t *testing.T) {
+	tests := []struct {
+		name string
+		s    DeletedSnapshot
+		want bool
+	}{
+		{"full with UID", DeletedSnapshot{Event: Event{UID: "abc"}}, true},
+		{"full without UID", DeletedSnapshot{Event: Event{}}, false},
+		{
+			"instance populated",
+			DeletedSnapshot{
+				Kind:         DeleteKindInstance,
+				InstanceUID:  "abc",
+				InstanceTime: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+			},
+			true,
+		},
+		{"instance missing UID", DeletedSnapshot{Kind: DeleteKindInstance, InstanceTime: time.Now()}, false},
+		{"instance zero time", DeletedSnapshot{Kind: DeleteKindInstance, InstanceUID: "abc"}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.s.IsValid(); got != tc.want {
+				t.Errorf("IsValid = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestEstimatedBytes_AccountsForAttachments(t *testing.T) {
 	big := make([]byte, 1024*1024) // 1 MB
 	snap := DeletedSnapshot{
