@@ -15,7 +15,7 @@ Built for people who live in the terminal and want their calendar data local, po
 - **Interactive TUI** with month, week, day, and agenda views
 - **Full CLI** for scripting and automation
 - **iCal import/export** with broad RFC 5545 coverage (VEVENT, VTODO, VJOURNAL, VALARM, VTIMEZONE)
-- **CalDAV sync** with account discovery, linked calendars, conflict handling, and sync status
+- **CalDAV sync** with per-calendar remote connections, conflict handling, and sync status
 - **Free/busy queries** from local data or remote CalDAV `VFREEBUSY` reports
 - **Recurring events and todos** via RRULE, RDATE, and EXDATE
 - **Recurring journals** via RRULE, RDATE, and EXDATE
@@ -79,9 +79,9 @@ chroncal ical import calendar.ics --calendar Work
 # Export to iCal
 chroncal ical export --calendar Work -f work.ics
 
-# Discover and link a remote CalDAV calendar after adding an account
-chroncal account discover "Google Work"
-chroncal calendar link "Work" --account "Google Work" --remote-url /remote/calendar/path/
+# Connect a local calendar to a remote CalDAV URL at create time
+chroncal calendar create "Work" --remote-url https://cal.example.com/dav/calendars/work/ \
+    --username alice --auth basic
 
 # Run sync and inspect status
 chroncal sync run --calendar Work
@@ -138,12 +138,23 @@ Journal flags: `--date`, `--description`, `--calendar`, `--status`, `--class`, `
 ```
 chroncal calendar list
 chroncal calendar get     <id>
-chroncal calendar create  "<name>" [--color HEX] [--description TEXT]
-chroncal calendar link    <id|name> --account <id|name> --remote-url <href>
-chroncal calendar update  <id> [--name NAME] [--color HEX] [--description TEXT]
-chroncal calendar unlink  <id|name>
+chroncal calendar create  "<name>" [--color HEX] [--description TEXT] [--email ADDR] [remote flags]
+chroncal calendar update  <id|name> [--name NAME] [--color HEX] [--description TEXT] [--email ADDR] [remote flags] [--disconnect-remote]
 chroncal calendar delete  <id>
 ```
+
+Remote flags (used with `create` or `update` to attach a CalDAV URL directly
+to a calendar — there is no separate `account` concept):
+
+```
+--remote-url <href>
+--username <user>
+--auth {basic,bearer,oauth2}
+--oauth-client-id <id>
+--allow-insecure
+```
+
+Pass `--disconnect-remote` on `update` to remove a calendar's remote link.
 
 ### iCal import/export
 
@@ -156,57 +167,40 @@ Imports are bounded to reduce resource exhaustion from untrusted calendar
 data. `chroncal ical import` rejects `.ics` payloads larger than 8 MiB and
 inline base64 attachments larger than 1 MiB decoded.
 
-### CalDAV accounts and sync
+### Sync
 
 ```
-chroncal account add       "<name>" [flags]
-chroncal account discover  <name|id>
-chroncal account list
-chroncal account remove    <name|id>
-
-chroncal sync run          [--calendar NAME] [--conflict MODE]
+chroncal sync run       [--calendar NAME] [--conflict MODE]
 chroncal sync status
 chroncal sync conflicts
-chroncal sync resolve      <id> --pick {local,server}
-chroncal sync reset        [--calendar NAME]
+chroncal sync resolve   <id> --pick {local,server}
+chroncal sync reset     [--calendar NAME]
 ```
 
-`chroncal account discover` lists remote calendars and their supported component sets. Link a local calendar to one of those remote hrefs with `chroncal calendar link` before running sync.
+Sync operates on each connected calendar independently. To connect a local
+calendar to a remote CalDAV URL, use the remote flags on `calendar create` or
+`calendar update` (see above).
 
 ### Google Calendar via CalDAV
 
 Google Calendar requires OAuth 2.0 and only exposes `VEVENT` over CalDAV.
 
-Account credentials are stored in the OS keyring by default. Only use
-`--allow-plaintext` on systems where no keyring backend is available and you
-accept the local at-rest risk.
-
-chroncal uses OAuth PKCE for installed-app flows, so you only need the client
-ID for Google CalDAV setup. Refresh tokens are reused automatically and updated
-tokens are persisted back to the configured credential store.
+Credentials are stored in the OS keyring by default. chroncal uses OAuth PKCE
+for installed-app flows, so you only need the client ID for Google CalDAV
+setup; refresh tokens are reused automatically.
 
 1. Create a desktop OAuth client in the [Google Cloud Console](https://console.cloud.google.com/).
 2. Enable the Google Calendar API for that project.
-3. Add the account:
+3. Create the calendar with the Google CalDAV URL attached:
 
 ```bash
-chroncal account add "Google Work" \
-  --server https://apidata.googleusercontent.com/caldav/v2 \
+chroncal calendar create "Work" \
+  --remote-url "https://apidata.googleusercontent.com/caldav/v2/YOUR_CALENDAR_ID/events/" \
   --auth oauth2 \
   --oauth-client-id "YOUR_CLIENT_ID.apps.googleusercontent.com"
 ```
 
-4. Discover remote calendars and link one to a local calendar:
-
-```bash
-chroncal account discover "Google Work"
-chroncal calendar create "Work"
-chroncal calendar link "Work" \
-  --account "Google Work" \
-  --remote-url /caldav/v2/YOUR_CALENDAR_ID/events/
-```
-
-5. Run sync and inspect status:
+4. Run sync and inspect status:
 
 ```bash
 chroncal sync run --calendar "Work"
@@ -256,7 +250,11 @@ Run `chroncal` with no arguments to launch the interactive terminal interface.
 
 **Views**: month, week, day, agenda. Switch with `m`, `w`, `d`, `a`.
 
-The TUI supports creating and editing events and todos, browsing calendars in a sidebar, and viewing full event/todo details including alarms, attendees, and attachments.
+The TUI supports creating, editing, viewing, and deleting events, with full
+details including alarms, attendees, and attachments. Use `u` to undo a
+delete. Calendars are browsable in a sidebar with create / edit / delete
+from the calendar popup. Todo and journal management live in the CLI for
+now.
 
 ## Configuration
 
