@@ -55,6 +55,7 @@ type appKeyMap struct {
 	CalendarCreate key.Binding
 	CalendarList   key.Binding
 	Sync           key.Binding
+	Undo           key.Binding
 }
 
 func defaultAppKeys() appKeyMap {
@@ -72,6 +73,7 @@ func defaultAppKeys() appKeyMap {
 		CalendarCreate: key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "new calendar")),
 		CalendarList:   key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "calendars")),
 		Sync:           key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sync")),
+		Undo:           key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "undo")),
 	}
 }
 
@@ -129,7 +131,26 @@ type eventUpdatedMsg struct {
 
 type eventDeletedMsg struct {
 	calendarID int64
+	snapshot   event.DeletedSnapshot
+	title      string
 	err        error
+}
+
+// eventRestoredMsg is emitted after an Undo attempt. On success newID is
+// non-zero and err is nil. On failure err carries the reason.
+type eventRestoredMsg struct {
+	title string
+	newID int64
+	err   error
+}
+
+// deferredPushMsg fires after the undo window elapses, signalling that any
+// deferred opportunistic delete push for a given (calendar, token) should
+// now run. The token is compared against m.pushDeferralToken; a mismatch
+// means a restore has since cancelled the push.
+type deferredPushMsg struct {
+	calendarID int64
+	token      int
 }
 
 // SyncAllRequestedMsg asks the app to sync every connected calendar.
@@ -229,6 +250,19 @@ type Model struct {
 	statusToken int
 	syncing     bool
 	syncSpinner spinner.Model
+
+	// undoStack remembers event deletes so 'u' can reverse them.
+	undoStack *UndoStack
+	// toast is a single-slot affordance that surfaces the most recent undo
+	// opportunity, or a restoring/failed status after 'u' is pressed.
+	toast ToastModel
+	// footer composes the contextual help line below the main content.
+	footer FooterModel
+	// pushDeferrals counts opportunistic delete pushes currently deferred
+	// waiting for the undo window to expire. The counter exists purely so
+	// the deferred closure can detect that a later restore invalidated it
+	// (pushDeferralToken bumped) and skip pushing.
+	pushDeferralToken int
 }
 
 func NewModel(a *app.App) Model {
@@ -249,6 +283,7 @@ func NewModel(a *app.App) Model {
 	}
 	sb := NewSidebarModel(NewMiniMonthModel(now), NewCalendarListModel(nil, hidden))
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
+	theme := NewTheme(true)
 	return Model{
 		app:             a,
 		keys:            defaultAppKeys(),
@@ -262,6 +297,9 @@ func NewModel(a *app.App) Model {
 		focus:           focusCalendar,
 		sidebar:         sb,
 		syncSpinner:     sp,
+		undoStack:       NewUndoStack(),
+		toast:           NewToastModel(theme),
+		footer:          NewFooterModel(theme),
 	}
 }
 
@@ -711,7 +749,81 @@ func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	if key.Matches(msg, m.keys.Help) && !inQuitConfirm && !m.helpDialogOpen && !textEntryActive {
 		return m, func() tea.Msg { return HelpDialogRequestedMsg{} }, true
 	}
+	// Undo: only active on the main grid, with no overlay competing for input.
+	if key.Matches(msg, m.keys.Undo) && m.undoIsAllowed() {
+		entry, ok := m.undoStack.Peek()
+		if ok {
+			// Bumping the token invalidates any delete-push that was still
+			// waiting for the 6-second window to elapse.
+			m.pushDeferralToken++
+			m.toast.Restoring()
+			snap := entry.Snapshot
+			title := entry.Label
+			cmd := func() tea.Msg {
+				newID, err := m.app.Events.Restore(context.Background(), snap)
+				return eventRestoredMsg{title: title, newID: newID, err: err}
+			}
+			return m, cmd, true
+		}
+	}
 	return m, nil, false
+}
+
+// currentFooterContext maps the app's focus/view state to a FooterContext,
+// the input the pure-render FooterModel wants.
+func (m Model) currentFooterContext() FooterContext {
+	switch {
+	case m.calendarListDialogOpen:
+		return FooterCalendarPopup
+	case m.viewDialogOpen:
+		return FooterEventPopup
+	case m.focus == focusSidebar:
+		return FooterSidebar
+	}
+	switch m.viewMode {
+	case viewAgenda:
+		if len(m.events) == 0 {
+			return FooterAgendaEmpty
+		}
+		return FooterAgenda
+	default:
+		return FooterMonthWeekDay
+	}
+}
+
+// currentFooterHasRSVP reports whether the event-popup footer should advertise
+// RSVP keys. Only meaningful when the event view dialog is open.
+func (m Model) currentFooterHasRSVP() bool {
+	if !m.viewDialogOpen {
+		return false
+	}
+	// The event view dialog exposes RSVP only when the user is an invited
+	// attendee; defer to its own rsvpActions helper via the dialog model.
+	return len(m.viewDialog.rsvpActions()) > 0
+}
+
+// undoIsAllowed reports whether the `u` key should trigger an undo. The guard
+// is intentionally strict: any overlay, editor, or palette that might consume
+// character input takes priority, otherwise a stray `u` in a title field
+// would silently trigger a restore.
+func (m Model) undoIsAllowed() bool {
+	if m.focus != focusCalendar {
+		return false
+	}
+	if m.anyOverlayOpen() {
+		return false
+	}
+	return m.undoStack != nil && m.undoStack.Len() > 0
+}
+
+// anyOverlayOpen reports whether any dialog, form, or palette is currently
+// on screen. While one is up it owns input and renders its own help row, so
+// the app footer should degrade to status + toast rather than duplicate the
+// dialog's hints.
+func (m Model) anyOverlayOpen() bool {
+	return m.paletteOpen || m.formOpen || m.viewDialogOpen || m.dialogOpen ||
+		m.confirmOpen || m.choiceOpen ||
+		m.calendarDialogOpen || m.calendarListDialogOpen || m.helpDialogOpen
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -796,6 +908,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.day = m.day.SetSelectedColor(m.theme.Text)
 		m.agenda = m.agenda.SetTheme(m.theme)
 		m.sidebar = m.sidebar.SetTheme(m.theme)
+		m.toast.SetTheme(m.theme)
+		m.footer.SetTheme(m.theme)
 		return m, nil
 
 	case tea.WindowSizeMsg:
@@ -1488,6 +1602,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case toastTickMsg:
+		m.toast.Update(msg)
+		return m, nil
+
 	case calendarMutationDoneMsg:
 		if msg.err != nil {
 			if m.calendarDialogOpen {
@@ -1549,8 +1667,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		ev := m.pendingDelete
 		return m, func() tea.Msg {
-			err := m.app.Events.Delete(context.Background(), ev.ID)
-			return eventDeletedMsg{calendarID: ev.CalendarID, err: err}
+			snap, err := m.app.Events.DeleteWithSnapshot(context.Background(), ev.ID)
+			return eventDeletedMsg{
+				calendarID: ev.CalendarID,
+				snapshot:   snap,
+				title:      ev.Title,
+				err:        err,
+			}
 		}
 
 	case eventDeletedMsg:
@@ -1559,11 +1682,53 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.viewDialogOpen = false
-		cmds := []tea.Cmd{m.loadEvents()}
-		if push := m.runOpportunisticPush(msg.calendarID); push != nil {
-			cmds = append(cmds, push)
+		// Only offer undo when a snapshot was captured. Recurring-event
+		// deletes (DeleteInstance / DeleteFromInstance / DeleteSeries) go
+		// through ChoiceDialog and don't produce a snapshot, so the toast
+		// must not promise an "undo (u)" it can't deliver. Those deletes
+		// still reload events and push normally, just without a toast or
+		// deferred push.
+		if msg.snapshot.Event.UID == "" {
+			return m, tea.Batch(m.loadEvents(), m.runOpportunisticPush(msg.calendarID))
 		}
-		return m, tea.Batch(cmds...)
+		m.undoStack.Push(UndoEntry{
+			Snapshot:  msg.snapshot,
+			Label:     msg.title,
+			DeletedAt: time.Now(),
+		})
+		synced := false // opportunistic push hasn't run yet when toast shows
+		toastCmd := m.toast.Deleted(msg.title, synced)
+		m.pushDeferralToken++
+		token := m.pushDeferralToken
+		calID := msg.calendarID
+		deferCmd := tea.Tick(ToastAutoDismissDelay, func(time.Time) tea.Msg {
+			return deferredPushMsg{calendarID: calID, token: token}
+		})
+		return m, tea.Batch(m.loadEvents(), toastCmd, deferCmd)
+
+	case deferredPushMsg:
+		// If a restore bumped the token between the delete and this tick,
+		// the deferred push is stale — drop it.
+		if msg.token != m.pushDeferralToken {
+			return m, nil
+		}
+		if push := m.runOpportunisticPush(msg.calendarID); push != nil {
+			return m, push
+		}
+		return m, nil
+
+	case eventRestoredMsg:
+		if msg.err != nil {
+			// Route the dismiss tick — previously dropped, so failed toasts
+			// never auto-cleared in the live app.
+			cmd := m.toast.Failed(msg.err.Error())
+			// Leave the entry on the stack so the user can retry with
+			// different context (e.g. restoring the calendar first).
+			return m, cmd
+		}
+		m.undoStack.Pop()
+		toastCmd := m.toast.Restored(msg.title)
+		return m, tea.Batch(m.loadEvents(), toastCmd)
 
 	case tea.MouseWheelMsg:
 		if m.helpDialogOpen {
@@ -1881,14 +2046,6 @@ func (m Model) View() tea.View {
 		body = main
 	}
 
-	keyStyle := lipgloss.NewStyle().Foreground(m.theme.Text)
-	descStyle := lipgloss.NewStyle().Foreground(m.theme.TextDim)
-	sepStyle := lipgloss.NewStyle().Foreground(m.theme.Muted)
-	hint := keyStyle.Render("?") + " " + descStyle.Render("help")
-	if m.viewMode == viewAgenda {
-		toggleHint := keyStyle.Render("e") + " " + descStyle.Render("toggle empty days")
-		hint = toggleHint + sepStyle.Render(" · ") + hint
-	}
 	var statusText string
 	if m.syncStatus != "" {
 		statusColor := m.theme.Primary
@@ -1902,11 +2059,18 @@ func (m Model) View() tea.View {
 		}
 	}
 	innerWidth := m.width - padding*2
-	gap := max(1, innerWidth-lipgloss.Width(statusText)-lipgloss.Width(hint))
+	var footerLine string
+	if m.anyOverlayOpen() {
+		// A dialog owns the bottom of the screen; don't duplicate its hints.
+		// "? help" is misleading while the help dialog itself is up.
+		footerLine = m.footer.RenderMinimal(innerWidth, statusText, m.toast.View(), !m.helpDialogOpen)
+	} else {
+		footerLine = m.footer.Render(m.currentFooterContext(), innerWidth, statusText, m.toast.View(), m.currentFooterHasRSVP())
+	}
 	footer := lipgloss.NewStyle().
 		PaddingLeft(padding).
 		PaddingRight(padding).
-		Render(statusText + strings.Repeat(" ", gap) + hint)
+		Render(footerLine)
 	v.Content = lipgloss.JoinVertical(lipgloss.Left, body, footer)
 
 	if m.dialogOpen {
