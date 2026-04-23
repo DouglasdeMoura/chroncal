@@ -101,7 +101,7 @@ Helpful conventions:
 			purgeDays = config.DefaultSoftDeletePurgeDays
 		}
 		if purgeDays > 0 {
-			purger := maintenance.NewPurger(a.Events, purgeDays, nil)
+			purger := maintenance.NewPurger(a.Trash, purgeDays, nil)
 			go purger.RunDaily(context.Background())
 		}
 

@@ -8,54 +8,49 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/trash"
 )
 
-// Purger knows how to hard-delete soft-deleted rows older than a retention
-// window. Keep it small on purpose: just events in v1; todos and journals
-// expand in v3.
+// Purger hard-deletes soft-deleted rows older than a retention window
+// across every trash-eligible domain (events, todos, journals) plus the
+// event-specific instance and truncation logs. It delegates to the
+// trash aggregator so new domains only need to be added once there.
 type Purger struct {
-	events *event.Service
+	trash  *trash.Service
 	days   int
 	logger *slog.Logger
 }
 
-// NewPurger returns a Purger bound to the given services. A days value of 0
-// disables automatic purging; callers should guard the call to RunOnce.
-func NewPurger(events *event.Service, days int, logger *slog.Logger) *Purger {
+// NewPurger returns a Purger bound to the trash aggregator. A days value
+// of 0 disables automatic purging; callers should guard the call to
+// RunOnce.
+func NewPurger(trashSvc *trash.Service, days int, logger *slog.Logger) *Purger {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Purger{events: events, days: days, logger: logger}
+	return &Purger{trash: trashSvc, days: days, logger: logger}
 }
 
 // RunOnce purges rows soft-deleted more than Days ago. Safe to call
 // concurrently from multiple processes — SQLite serializes the DELETE.
-// Returns the total number of rows purged across events, the instance-
-// delete log, and the truncation log.
+// Returns the total number of rows purged across every domain + log.
 func (p *Purger) RunOnce(ctx context.Context) (int, error) {
 	if p.days <= 0 {
 		return 0, nil
 	}
 	cutoff := time.Now().Add(-time.Duration(p.days) * 24 * time.Hour)
-	eventsPurged, err := p.events.PurgeDeleted(ctx, cutoff)
+	counts, err := p.trash.PurgeOld(ctx, cutoff)
 	if err != nil {
-		return 0, fmt.Errorf("purge events: %w", err)
+		return 0, fmt.Errorf("trash purge: %w", err)
 	}
-	instLogsPurged, err := p.events.PurgeOldInstanceDeletes(ctx, cutoff)
-	if err != nil {
-		return eventsPurged, fmt.Errorf("purge instance-delete log: %w", err)
-	}
-	truncLogsPurged, err := p.events.PurgeOldTruncationDeletes(ctx, cutoff)
-	if err != nil {
-		return eventsPurged + instLogsPurged, fmt.Errorf("purge truncation log: %w", err)
-	}
-	total := eventsPurged + instLogsPurged + truncLogsPurged
+	total := counts.Events + counts.EventInstanceLogs + counts.EventTruncateLogs + counts.Todos + counts.Journals
 	if total > 0 {
 		p.logger.Info("soft-delete purge",
-			"events_purged", eventsPurged,
-			"instance_logs_purged", instLogsPurged,
-			"truncation_logs_purged", truncLogsPurged,
+			"events_purged", counts.Events,
+			"instance_logs_purged", counts.EventInstanceLogs,
+			"truncation_logs_purged", counts.EventTruncateLogs,
+			"todos_purged", counts.Todos,
+			"journals_purged", counts.Journals,
 			"older_than_days", p.days,
 		)
 	}
