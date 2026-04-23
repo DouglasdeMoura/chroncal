@@ -113,6 +113,18 @@ func (s *Service) RestoreTrash(ctx context.Context, entry TrashEntry) error {
 	}
 }
 
+// PurgeOldInstanceDeletes drops event_exdate_deletes rows older than olderThan.
+// Returns the number of rows purged. The corresponding EXDATEs on the master
+// stay in place — the user intended those instances to be gone.
+func (s *Service) PurgeOldInstanceDeletes(ctx context.Context, olderThan time.Time) (int, error) {
+	cutoff := olderThan.UTC().Format(storageTimeFormat)
+	n, err := s.q.PurgeOldEventExdateDeletes(ctx, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}
+
 // PurgeTrashEntry hard-removes entry from the trash. For TrashKindEvent it
 // drops the events row; for TrashKindInstance it drops the log row (the
 // EXDATE stays on the master — that's the "deleted forever" semantic).

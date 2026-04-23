@@ -31,23 +31,30 @@ func NewPurger(events *event.Service, days int, logger *slog.Logger) *Purger {
 
 // RunOnce purges rows soft-deleted more than Days ago. Safe to call
 // concurrently from multiple processes — SQLite serializes the DELETE.
-// Returns the number of rows purged.
+// Returns the total number of rows purged across events and the
+// instance-delete log.
 func (p *Purger) RunOnce(ctx context.Context) (int, error) {
 	if p.days <= 0 {
 		return 0, nil
 	}
 	cutoff := time.Now().Add(-time.Duration(p.days) * 24 * time.Hour)
-	n, err := p.events.PurgeDeleted(ctx, cutoff)
+	eventsPurged, err := p.events.PurgeDeleted(ctx, cutoff)
 	if err != nil {
 		return 0, fmt.Errorf("purge events: %w", err)
 	}
-	if n > 0 {
+	logsPurged, err := p.events.PurgeOldInstanceDeletes(ctx, cutoff)
+	if err != nil {
+		return eventsPurged, fmt.Errorf("purge instance-delete log: %w", err)
+	}
+	total := eventsPurged + logsPurged
+	if total > 0 {
 		p.logger.Info("soft-delete purge",
-			"events_purged", n,
+			"events_purged", eventsPurged,
+			"instance_logs_purged", logsPurged,
 			"older_than_days", p.days,
 		)
 	}
-	return n, nil
+	return total, nil
 }
 
 // RunDaily fires RunOnce once on start, then every 24h until ctx is done.
