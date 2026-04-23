@@ -169,6 +169,54 @@ func TestSoftDelete_PurgeByID_RefusesLiveRow(t *testing.T) {
 	}
 }
 
+// TestSoftDelete_RestoreOverrideClearsExdate verifies that restoring a
+// recurring override also strips the matching EXDATE from the master.
+func TestSoftDelete_RestoreOverrideClearsExdate(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "daily-uid", CalendarID: 1, Summary: "Daily Journal",
+		StartDate:      "2026-04-01",
+		RecurrenceRule: "FREQ=DAILY;COUNT=5",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	override, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: master.UID, CalendarID: 1, Summary: "Daily Journal (amended)",
+		StartDate:    "2026-04-03",
+		RecurrenceID: time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC).Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	if err := svc.Delete(ctx, override.ID); err != nil {
+		t.Fatalf("Delete override: %v", err)
+	}
+
+	afterDelete, err := svc.GetByUID(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("get master after delete: %v", err)
+	}
+	if afterDelete.ExDates == "" {
+		t.Fatal("master.ExDates empty after override delete — EXDATE should have been added")
+	}
+
+	if err := svc.RestoreByID(ctx, override.ID); err != nil {
+		t.Fatalf("RestoreByID override: %v", err)
+	}
+
+	afterRestore, err := svc.GetByUID(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("get master after restore: %v", err)
+	}
+	if afterRestore.ExDates != "" {
+		t.Fatalf("master.ExDates = %q, want empty after override restore", afterRestore.ExDates)
+	}
+}
+
 // TestSoftDelete_SequenceBumpedOnRestore verifies Restore bumps sequence
 // so synced journals push cleanly.
 func TestSoftDelete_SequenceBumpedOnRestore(t *testing.T) {
