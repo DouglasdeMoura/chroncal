@@ -434,13 +434,17 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Todo, error)
 // todo that has override instances. Use DeleteSeries instead.
 var ErrHasOverrides = fmt.Errorf("todo has overrides: use DeleteSeries to delete the entire series")
 
+// Delete soft-deletes a todo by ID. For a standalone todo it flips
+// deleted_at; for an override it adds EXDATE to the master and soft-
+// deletes the override in the same transaction so undo can reverse both
+// sides. A recurring master with live overrides is rejected — callers
+// must use DeleteSeries.
 func (s *Service) Delete(ctx context.Context, id int64) error {
 	td, err := s.Get(ctx, id)
 	if err != nil {
 		return err
 	}
 
-	// If this is a recurring master, check for overrides.
 	if td.RecurrenceRule != "" && td.RecurrenceID == "" {
 		overrides, err := s.q.ListTodoOverridesByUID(ctx, td.UID)
 		if err != nil {
@@ -451,13 +455,10 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		}
 	}
 
-	// If this is a standalone todo (no recurrence or a solo master), create
-	// a tombstone so the sync engine can send a DELETE to the server.
 	if td.RecurrenceID == "" {
 		_, _ = storage.CreateTombstoneIfSynced(ctx, s.db, td.CalendarID, td.UID)
 	}
 
-	// If this is an override, add EXDATE to the master.
 	if td.RecurrenceID != "" {
 		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
@@ -481,23 +482,28 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 			}
 		}
 
-		if err := qtx.DeleteTodo(ctx, id); err != nil {
-			return fmt.Errorf("delete todo: %w", err)
+		if err := qtx.SoftDeleteTodo(ctx, id); err != nil {
+			return fmt.Errorf("soft-delete todo: %w", err)
 		}
 		if err := tx.Commit(); err != nil {
 			return err
 		}
-		// Mark the master dirty — its EXDATE was modified.
 		_ = storage.MarkResourceDirty(ctx, s.db, td.CalendarID, td.UID, "todo")
 		return nil
 	}
 
-	return s.q.DeleteTodo(ctx, id)
+	if err := s.q.SoftDeleteTodo(ctx, id); err != nil {
+		return err
+	}
+	_ = storage.MarkResourceDirty(ctx, s.db, td.CalendarID, td.UID, "todo")
+	return nil
 }
 
-// DeleteSeries deletes a recurring master todo and all its overrides.
+// DeleteSeries soft-deletes a recurring master todo and every override
+// sharing its UID. A tombstone is created when the master is synced so
+// the next push sends DELETE to the server; the local rows stay in
+// place until purge so the user can restore them.
 func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
-	// Look up the master to get calendarID for tombstone creation.
 	master, err := s.q.GetTodoByUID(ctx, uid)
 	if err == nil {
 		_, _ = storage.CreateTombstoneIfSynced(ctx, s.db, master.CalendarID, uid)
@@ -510,11 +516,14 @@ func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
-	if err := qtx.DeleteTodosByUID(ctx, uid); err != nil {
-		return fmt.Errorf("delete series: %w", err)
+	if err := qtx.SoftDeleteTodosByUID(ctx, uid); err != nil {
+		return fmt.Errorf("soft-delete series: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit delete series: %w", err)
+	}
+	if err == nil {
+		_ = storage.MarkResourceDirty(ctx, s.db, master.CalendarID, uid, "todo")
 	}
 	return nil
 }
