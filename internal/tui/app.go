@@ -56,6 +56,8 @@ type appKeyMap struct {
 	CalendarList   key.Binding
 	Sync           key.Binding
 	Undo           key.Binding
+	TrashView      key.Binding
+	TrashClose     key.Binding
 }
 
 func defaultAppKeys() appKeyMap {
@@ -74,6 +76,8 @@ func defaultAppKeys() appKeyMap {
 		CalendarList:   key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "calendars")),
 		Sync:           key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sync")),
 		Undo:           key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "undo")),
+		TrashView:      key.NewBinding(key.WithKeys("shift+d"), key.WithHelp("D", "trash")),
+		TrashClose:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 	}
 }
 
@@ -262,6 +266,14 @@ type Model struct {
 	// the deferred closure can detect that a later restore invalidated it
 	// (pushDeferralToken bumped) and skip pushing.
 	pushDeferralToken int
+
+	// trash is the "Recently deleted" overlay. While trashOpen is true
+	// the main content renders trash.View() instead of the active
+	// viewMode's model, and key input routes through m.trash.Update.
+	trash             TrashModel
+	trashOpen         bool
+	pendingPurgeID    int64
+	pendingPurgeTitle string
 }
 
 func NewModel(a *app.App) Model {
@@ -299,6 +311,7 @@ func NewModel(a *app.App) Model {
 		undoStack:       NewUndoStack(),
 		toast:           NewToastModel(theme),
 		footer:          NewFooterModel(theme),
+		trash:           NewTrashModel(),
 	}
 }
 
@@ -359,6 +372,41 @@ func (m Model) loadMiniMonthEvents() tea.Cmd {
 			events[i] = evt
 		}
 		return miniMonthEventsLoadedMsg{month: from, events: events, err: err}
+	}
+}
+
+// trashLoadedMsg carries the soft-deleted events for the selected calendar(s)
+// and an error if the query failed.
+type trashLoadedMsg struct {
+	events []event.Event
+	err    error
+}
+
+// trashActionDoneMsg reports the result of a restore or purge. The title is
+// carried so the toast line can reference the event after the row is gone.
+type trashActionDoneMsg struct {
+	action string // "restored" or "purged"
+	title  string
+	err    error
+}
+
+// loadTrash queries ListDeleted across all visible calendars and hands the
+// result to the trash model via trashLoadedMsg.
+func (m Model) loadTrash() tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		var out []event.Event
+		for id := range m.calendars {
+			if m.hiddenCalendars[id] {
+				continue
+			}
+			rows, err := m.app.Events.ListDeleted(ctx, id)
+			if err != nil {
+				return trashLoadedMsg{err: err}
+			}
+			out = append(out, rows...)
+		}
+		return trashLoadedMsg{events: out}
 	}
 }
 
@@ -748,6 +796,22 @@ func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	if key.Matches(msg, m.keys.Help) && !inQuitConfirm && !m.helpDialogOpen && !textEntryActive {
 		return m, func() tea.Msg { return HelpDialogRequestedMsg{} }, true
 	}
+	// Trash: shift+D opens the Recently-deleted overlay from the main grid.
+	// Blocked while a text-entry surface owns input (so typing "D" in the
+	// palette / form doesn't jump out).
+	if key.Matches(msg, m.keys.TrashView) && !m.trashOpen && !inQuitConfirm && !textEntryActive && !m.anyOverlayOpen() {
+		m.trashOpen = true
+		m.trash = m.trash.SetTheme(m.theme)
+		iw, ih := m.innerDims()
+		m.trash = m.trash.SetSize(iw, ih)
+		return m, m.loadTrash(), true
+	}
+	// Esc closes trash and returns to the previous view. Kept separate from
+	// the trash model's Update so the close key is consistent app-wide.
+	if m.trashOpen && key.Matches(msg, m.keys.TrashClose) {
+		m.trashOpen = false
+		return m, nil, true
+	}
 	// Undo: only active on the main grid, with no overlay competing for input.
 	if key.Matches(msg, m.keys.Undo) && m.undoIsAllowed() {
 		entry, ok := m.undoStack.Peek()
@@ -822,7 +886,8 @@ func (m Model) undoIsAllowed() bool {
 func (m Model) anyOverlayOpen() bool {
 	return m.paletteOpen || m.formOpen || m.viewDialogOpen || m.dialogOpen ||
 		m.confirmOpen || m.choiceOpen ||
-		m.calendarDialogOpen || m.calendarListDialogOpen || m.helpDialogOpen
+		m.calendarDialogOpen || m.calendarListDialogOpen || m.helpDialogOpen ||
+		m.trashOpen
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -909,6 +974,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sidebar = m.sidebar.SetTheme(m.theme)
 		m.toast.SetTheme(m.theme)
 		m.footer.SetTheme(m.theme)
+		m.trash = m.trash.SetTheme(m.theme)
 		return m, nil
 
 	case tea.WindowSizeMsg:
@@ -919,6 +985,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.week = m.week.SetSize(iw, ih)
 		m.day = m.day.SetSize(iw, ih)
 		m.agenda = m.agenda.SetSize(iw, ih)
+		m.trash = m.trash.SetSize(iw, ih)
 		m.dialog = m.dialog.SetSize(m.width, m.height)
 		m.viewDialog = m.viewDialog.SetSize(m.width, m.height)
 		m.confirmDialog = m.confirmDialog.SetSize(m.width, m.height)
@@ -1668,7 +1735,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if !msg.Confirmed {
 			m.pendingCalendarDelete = 0
+			m.pendingPurgeID = 0
+			m.pendingPurgeTitle = ""
 			return m, nil
+		}
+		if m.pendingPurgeID != 0 {
+			id := m.pendingPurgeID
+			title := m.pendingPurgeTitle
+			m.pendingPurgeID = 0
+			m.pendingPurgeTitle = ""
+			return m, func() tea.Msg {
+				err := m.app.Events.PurgeByID(context.Background(), id)
+				return trashActionDoneMsg{action: "purged", title: title, err: err}
+			}
 		}
 		if m.pendingCalendarDelete != 0 {
 			id := m.pendingCalendarDelete
@@ -1740,6 +1819,68 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.undoStack.Pop()
 		toastCmd := m.toast.Restored(msg.title)
 		return m, tea.Batch(m.loadEvents(), toastCmd)
+
+	case trashLoadedMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		m.trash = m.trash.SetEvents(msg.events, m.calendars)
+		return m, nil
+
+	case TrashReloadMsg:
+		return m, m.loadTrash()
+
+	case TrashRestoreRequestedMsg:
+		id := msg.ID
+		// Title lookup from the currently-loaded trash rows so the toast
+		// can name the event even after the row disappears on reload.
+		title := ""
+		for _, ev := range m.trash.events {
+			if ev.ID == id {
+				title = ev.Title
+				break
+			}
+		}
+		return m, func() tea.Msg {
+			err := m.app.Events.RestoreByID(context.Background(), id)
+			return trashActionDoneMsg{action: "restored", title: title, err: err}
+		}
+
+	case TrashPurgeRequestedMsg:
+		id := msg.ID
+		title := ""
+		for _, ev := range m.trash.events {
+			if ev.ID == id {
+				title = ev.Title
+				break
+			}
+		}
+		m.pendingPurgeID = id
+		m.pendingPurgeTitle = title
+		message := fmt.Sprintf("Purge %q forever? This can't be undone.", title)
+		m.confirmDialog = NewConfirmDialogModel(message, "Purge").
+			SetSize(m.width, m.height)
+		m.confirmOpen = true
+		return m, nil
+
+	case TrashViewRequestedMsg:
+		cal := m.calendars[msg.Event.CalendarID]
+		m.viewDialog = NewEventViewDialogModel(msg.Event, cal, m.theme).
+			SetSize(m.width, m.height)
+		m.viewDialogOpen = true
+		return m, nil
+
+	case trashActionDoneMsg:
+		if msg.err != nil {
+			cmd := m.toast.Failed(msg.err.Error())
+			return m, cmd
+		}
+		cmds := []tea.Cmd{m.loadTrash(), m.loadEvents()}
+		if msg.action == "restored" {
+			cmds = append(cmds, m.toast.Restored(msg.title))
+		}
+		return m, tea.Batch(cmds...)
 
 	case tea.MouseWheelMsg:
 		if m.helpDialogOpen {
@@ -1912,6 +2053,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.calendarListDialog, cmd = m.calendarListDialog.Update(msg)
 			return m, cmd
 		}
+		if m.trashOpen {
+			var cmd tea.Cmd
+			m.trash, cmd = m.trash.Update(msg)
+			return m, cmd
+		}
 		switch {
 		case key.Matches(msg, m.keys.Palette):
 			return m.openPalette()
@@ -2015,15 +2161,20 @@ func (m Model) View() tea.View {
 	mainWidth, contentHeight := m.mainDims()
 
 	var mainContent string
-	switch m.viewMode {
-	case viewDay:
-		mainContent = m.day.View()
-	case viewWeek:
-		mainContent = m.week.View()
-	case viewAgenda:
-		mainContent = m.agenda.View()
+	switch {
+	case m.trashOpen:
+		mainContent = m.trash.View()
 	default:
-		mainContent = m.calendar.View()
+		switch m.viewMode {
+		case viewDay:
+			mainContent = m.day.View()
+		case viewWeek:
+			mainContent = m.week.View()
+		case viewAgenda:
+			mainContent = m.agenda.View()
+		default:
+			mainContent = m.calendar.View()
+		}
 	}
 	if m.err != nil {
 		mainContent = lipgloss.NewStyle().Foreground(m.theme.Error).Render("Error: " + m.err.Error())
