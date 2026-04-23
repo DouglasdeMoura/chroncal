@@ -217,6 +217,39 @@ func TestSoftDelete_RestoreOverrideClearsExdate(t *testing.T) {
 	}
 }
 
+// TestSoftDelete_UpsertClearsDeletedAt verifies UpsertByUID on a soft-
+// deleted journal re-hydrates it (ON CONFLICT clears deleted_at).
+func TestSoftDelete_UpsertClearsDeletedAt(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	created, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "upsert-uid", CalendarID: 1, Summary: "Original", StartDate: "2026-04-01",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := svc.Delete(ctx, created.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := svc.Get(ctx, created.ID); err == nil {
+		t.Fatal("row should be hidden after Delete")
+	}
+
+	revived, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "upsert-uid", CalendarID: 1, Summary: "Revived", StartDate: "2026-04-01",
+	})
+	if err != nil {
+		t.Fatalf("UpsertByUID revive: %v", err)
+	}
+	if revived.ID != created.ID {
+		t.Fatalf("upsert returned new ID %d, want same row %d", revived.ID, created.ID)
+	}
+	if _, err := svc.Get(ctx, created.ID); err != nil {
+		t.Fatalf("Get after upsert revive: %v", err)
+	}
+}
+
 // TestSoftDelete_SequenceBumpedOnRestore verifies Restore bumps sequence
 // so synced journals push cleanly.
 func TestSoftDelete_SequenceBumpedOnRestore(t *testing.T) {

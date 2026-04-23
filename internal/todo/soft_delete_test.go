@@ -236,6 +236,42 @@ func TestSoftDelete_RestoreOverrideClearsExdate(t *testing.T) {
 	}
 }
 
+// TestSoftDelete_UpsertClearsDeletedAt verifies that UpsertByUID on a
+// soft-deleted row re-hydrates it (ON CONFLICT clears deleted_at). This
+// is the path a remote re-CREATE after a local delete would take: the
+// server sends a row with the old UID and the local should come back
+// as live, not stay hidden.
+func TestSoftDelete_UpsertClearsDeletedAt(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	created, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "upsert-uid", CalendarID: 1, Summary: "Original",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := svc.Delete(ctx, created.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := svc.Get(ctx, created.ID); err == nil {
+		t.Fatal("row should be hidden after Delete")
+	}
+
+	revived, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "upsert-uid", CalendarID: 1, Summary: "Revived",
+	})
+	if err != nil {
+		t.Fatalf("UpsertByUID revive: %v", err)
+	}
+	if revived.ID != created.ID {
+		t.Fatalf("upsert returned new ID %d, want same row %d", revived.ID, created.ID)
+	}
+	if _, err := svc.Get(ctx, created.ID); err != nil {
+		t.Fatalf("Get after upsert revive: %v", err)
+	}
+}
+
 // TestSoftDelete_SequenceBumpedOnRestore verifies Restore bumps sequence
 // so synced todos push cleanly.
 func TestSoftDelete_SequenceBumpedOnRestore(t *testing.T) {
