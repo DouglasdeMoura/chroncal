@@ -272,7 +272,7 @@ type Model struct {
 	// viewMode's model, and key input routes through m.trash.Update.
 	trash             TrashModel
 	trashOpen         bool
-	pendingPurgeID    int64
+	pendingPurgeEntry event.TrashEntry
 	pendingPurgeTitle string
 }
 
@@ -375,11 +375,11 @@ func (m Model) loadMiniMonthEvents() tea.Cmd {
 	}
 }
 
-// trashLoadedMsg carries the soft-deleted events for the selected calendar(s)
-// and an error if the query failed.
+// trashLoadedMsg carries the trash entries (soft-deleted events + EXDATE-based
+// instance deletes) for the visible calendar(s) and an error if any query failed.
 type trashLoadedMsg struct {
-	events []event.Event
-	err    error
+	entries []event.TrashEntry
+	err     error
 }
 
 // trashActionDoneMsg reports the result of a restore or purge. The title is
@@ -390,23 +390,23 @@ type trashActionDoneMsg struct {
 	err    error
 }
 
-// loadTrash queries ListDeleted across all visible calendars and hands the
+// loadTrash queries ListTrash across all visible calendars and hands the
 // result to the trash model via trashLoadedMsg.
 func (m Model) loadTrash() tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
-		var out []event.Event
+		var out []event.TrashEntry
 		for id := range m.calendars {
 			if m.hiddenCalendars[id] {
 				continue
 			}
-			rows, err := m.app.Events.ListDeleted(ctx, id)
+			entries, err := m.app.Events.ListTrash(ctx, id)
 			if err != nil {
 				return trashLoadedMsg{err: err}
 			}
-			out = append(out, rows...)
+			out = append(out, entries...)
 		}
-		return trashLoadedMsg{events: out}
+		return trashLoadedMsg{entries: out}
 	}
 }
 
@@ -1735,17 +1735,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if !msg.Confirmed {
 			m.pendingCalendarDelete = 0
-			m.pendingPurgeID = 0
+			m.pendingPurgeEntry = event.TrashEntry{}
 			m.pendingPurgeTitle = ""
 			return m, nil
 		}
-		if m.pendingPurgeID != 0 {
-			id := m.pendingPurgeID
+		if m.pendingPurgeEntry.ID != 0 {
+			entry := m.pendingPurgeEntry
 			title := m.pendingPurgeTitle
-			m.pendingPurgeID = 0
+			m.pendingPurgeEntry = event.TrashEntry{}
 			m.pendingPurgeTitle = ""
 			return m, func() tea.Msg {
-				err := m.app.Events.PurgeByID(context.Background(), id)
+				err := m.app.Events.PurgeTrashEntry(context.Background(), entry)
 				return trashActionDoneMsg{action: "purged", title: title, err: err}
 			}
 		}
@@ -1825,48 +1825,41 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 			return m, nil
 		}
-		m.trash = m.trash.SetEvents(msg.events, m.calendars)
+		m.trash = m.trash.SetEntries(msg.entries, m.calendars)
 		return m, nil
 
 	case TrashReloadMsg:
 		return m, m.loadTrash()
 
 	case TrashRestoreRequestedMsg:
-		id := msg.ID
-		// Title lookup from the currently-loaded trash rows so the toast
-		// can name the event even after the row disappears on reload.
-		title := ""
-		for _, ev := range m.trash.events {
-			if ev.ID == id {
-				title = ev.Title
-				break
-			}
-		}
+		entry := msg.Entry
+		title := entry.Title
 		return m, func() tea.Msg {
-			err := m.app.Events.RestoreByID(context.Background(), id)
+			err := m.app.Events.RestoreTrash(context.Background(), entry)
 			return trashActionDoneMsg{action: "restored", title: title, err: err}
 		}
 
 	case TrashPurgeRequestedMsg:
-		id := msg.ID
-		title := ""
-		for _, ev := range m.trash.events {
-			if ev.ID == id {
-				title = ev.Title
-				break
-			}
-		}
-		m.pendingPurgeID = id
-		m.pendingPurgeTitle = title
-		message := fmt.Sprintf("Purge %q forever? This can't be undone.", title)
+		m.pendingPurgeEntry = msg.Entry
+		m.pendingPurgeTitle = msg.Entry.Title
+		message := fmt.Sprintf("Purge %q forever? This can't be undone.", msg.Entry.Title)
 		m.confirmDialog = NewConfirmDialogModel(message, "Purge").
 			SetSize(m.width, m.height)
 		m.confirmOpen = true
 		return m, nil
 
 	case TrashViewRequestedMsg:
-		cal := m.calendars[msg.Event.CalendarID]
-		m.viewDialog = NewEventViewDialogModel(msg.Event, cal, m.theme).
+		// Only TrashKindEvent reaches this case (the model guards it), so
+		// we can fetch the full row including deleted state for the detail
+		// view.
+		ctx := context.Background()
+		fresh, err := m.app.Events.GetIncludingDeleted(ctx, msg.Entry.ID)
+		if err != nil {
+			m.err = err
+			return m, nil
+		}
+		cal := m.calendars[fresh.CalendarID]
+		m.viewDialog = NewEventViewDialogModel(fresh, cal, m.theme).
 			SetSize(m.width, m.height)
 		m.viewDialogOpen = true
 		return m, nil

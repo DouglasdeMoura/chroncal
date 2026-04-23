@@ -192,6 +192,17 @@ func (s *Service) ListDeleted(ctx context.Context, calendarID int64) ([]Event, e
 	return fromStorageSlice(rows), nil
 }
 
+// GetIncludingDeleted returns a row by ID even if it's been soft-deleted.
+// Used by the trash view's detail popup where the user wants to inspect
+// what was deleted before restoring.
+func (s *Service) GetIncludingDeleted(ctx context.Context, id int64) (Event, error) {
+	r, err := s.q.GetEventIncludingDeleted(ctx, id)
+	if err != nil {
+		return Event{}, err
+	}
+	return fromStorage(r), nil
+}
+
 // PurgeDeleted hard-deletes rows soft-deleted before olderThan. Returns the
 // number of rows purged. Children cascade via existing FK ON DELETE CASCADE.
 func (s *Service) PurgeDeleted(ctx context.Context, olderThan time.Time) (int, error) {

@@ -10,21 +10,23 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/event"
 )
 
-// TrashReloadMsg asks the host to re-query ListDeleted and push the result
-// back via SetEvents. Emitted after a successful restore/purge so the row
-// disappears from the list.
+// TrashReloadMsg asks the host to re-query ListTrash and push the result
+// back via SetEntries. Emitted after a successful restore/purge so the
+// row disappears from the list.
 type TrashReloadMsg struct{}
 
-// TrashRestoreRequestedMsg asks the host to call Service.RestoreByID.
-type TrashRestoreRequestedMsg struct{ ID int64 }
+// TrashRestoreRequestedMsg asks the host to call Service.RestoreTrash
+// for the selected entry.
+type TrashRestoreRequestedMsg struct{ Entry event.TrashEntry }
 
-// TrashPurgeRequestedMsg asks the host to confirm and hard-delete one row
-// via Service.PurgeByID.
-type TrashPurgeRequestedMsg struct{ ID int64 }
+// TrashPurgeRequestedMsg asks the host to confirm and hard-remove the
+// selected entry via Service.PurgeTrashEntry.
+type TrashPurgeRequestedMsg struct{ Entry event.TrashEntry }
 
 // TrashViewRequestedMsg asks the host to open the read-only detail view
-// for a soft-deleted event.
-type TrashViewRequestedMsg struct{ Event event.Event }
+// for a soft-deleted event. Only fires for TrashKindEvent — instance
+// deletes don't have a full row to show.
+type TrashViewRequestedMsg struct{ Entry event.TrashEntry }
 
 type trashKeyMap struct {
 	Up, Down key.Binding
@@ -43,12 +45,10 @@ func defaultTrashKeys() trashKeyMap {
 	}
 }
 
-// TrashModel lists soft-deleted events for the currently-selected calendar,
-// newest first. It's a read-mostly view: the user can restore (r), purge
-// forever (x), or open the detail view (Enter). Actions are emitted as
-// messages so the host owns the Service call and reload sequencing.
+// TrashModel lists trash entries (soft-deleted events and EXDATE-based
+// instance deletes) for the visible calendars, newest first.
 type TrashModel struct {
-	events    []event.Event
+	entries   []event.TrashEntry
 	calendars map[int64]CalendarInfo
 	selected  int
 	scroll    int
@@ -58,7 +58,7 @@ type TrashModel struct {
 	height    int
 }
 
-// NewTrashModel returns an empty trash model. SetEvents populates it.
+// NewTrashModel returns an empty trash model. SetEntries populates it.
 func NewTrashModel() TrashModel {
 	return TrashModel{
 		keys:     defaultTrashKeys(),
@@ -78,43 +78,47 @@ func (m TrashModel) SetTheme(t Theme) TrashModel {
 	return m
 }
 
-// SetEvents updates the row list. Keeps the selection anchored to the same
-// event ID when possible so reloads after a restore/purge don't yank the
-// cursor away; falls back to the previous index clamped to the new length.
-func (m TrashModel) SetEvents(events []event.Event, calendars map[int64]CalendarInfo) TrashModel {
+// SetEntries updates the row list. Keeps the selection anchored to the
+// same entry (by kind + ID) when possible so reloads after a restore or
+// purge don't yank the cursor away.
+func (m TrashModel) SetEntries(entries []event.TrashEntry, calendars map[int64]CalendarInfo) TrashModel {
+	var prevKind event.TrashKind
 	var prevID int64
-	if m.selected >= 0 && m.selected < len(m.events) {
-		prevID = m.events[m.selected].ID
+	var hadSel bool
+	if m.selected >= 0 && m.selected < len(m.entries) {
+		prevKind = m.entries[m.selected].Kind
+		prevID = m.entries[m.selected].ID
+		hadSel = true
 	}
-	m.events = events
+	m.entries = entries
 	m.calendars = calendars
 
 	m.selected = -1
-	if prevID != 0 {
-		for i, ev := range events {
-			if ev.ID == prevID {
+	if hadSel {
+		for i, e := range entries {
+			if e.Kind == prevKind && e.ID == prevID {
 				m.selected = i
 				break
 			}
 		}
 	}
-	if m.selected < 0 && len(events) > 0 {
+	if m.selected < 0 && len(entries) > 0 {
 		m.selected = 0
 	}
 	m.clampScroll()
 	return m
 }
 
-// SelectedEvent returns the event under the cursor, if any.
-func (m TrashModel) SelectedEvent() (event.Event, bool) {
-	if m.selected < 0 || m.selected >= len(m.events) {
-		return event.Event{}, false
+// Selected returns the entry under the cursor, if any.
+func (m TrashModel) Selected() (event.TrashEntry, bool) {
+	if m.selected < 0 || m.selected >= len(m.entries) {
+		return event.TrashEntry{}, false
 	}
-	return m.events[m.selected], true
+	return m.entries[m.selected], true
 }
 
 // Len returns the number of rows currently rendered.
-func (m TrashModel) Len() int { return len(m.events) }
+func (m TrashModel) Len() int { return len(m.entries) }
 
 func (m TrashModel) Update(msg tea.Msg) (TrashModel, tea.Cmd) {
 	kp, ok := msg.(tea.KeyPressMsg)
@@ -129,24 +133,22 @@ func (m TrashModel) Update(msg tea.Msg) (TrashModel, tea.Cmd) {
 		}
 		return m, nil
 	case key.Matches(kp, m.keys.Down):
-		if m.selected >= 0 && m.selected < len(m.events)-1 {
+		if m.selected >= 0 && m.selected < len(m.entries)-1 {
 			m.selected++
 			m.ensureVisible()
 		}
 		return m, nil
 	case key.Matches(kp, m.keys.Restore):
-		if ev, ok := m.SelectedEvent(); ok {
-			id := ev.ID
-			return m, func() tea.Msg { return TrashRestoreRequestedMsg{ID: id} }
+		if e, ok := m.Selected(); ok {
+			return m, func() tea.Msg { return TrashRestoreRequestedMsg{Entry: e} }
 		}
 	case key.Matches(kp, m.keys.Purge):
-		if ev, ok := m.SelectedEvent(); ok {
-			id := ev.ID
-			return m, func() tea.Msg { return TrashPurgeRequestedMsg{ID: id} }
+		if e, ok := m.Selected(); ok {
+			return m, func() tea.Msg { return TrashPurgeRequestedMsg{Entry: e} }
 		}
 	case key.Matches(kp, m.keys.View):
-		if ev, ok := m.SelectedEvent(); ok {
-			return m, func() tea.Msg { return TrashViewRequestedMsg{Event: ev} }
+		if e, ok := m.Selected(); ok && e.Kind == event.TrashKindEvent {
+			return m, func() tea.Msg { return TrashViewRequestedMsg{Entry: e} }
 		}
 	}
 	return m, nil
@@ -165,7 +167,7 @@ func (m TrashModel) View() string {
 	out.WriteString(hintStyle.Render("r restore · x purge · enter view · esc back"))
 	out.WriteString("\n\n")
 
-	if len(m.events) == 0 {
+	if len(m.entries) == 0 {
 		out.WriteString(hintStyle.Render("No deleted events."))
 		return out.String()
 	}
@@ -173,7 +175,7 @@ func (m TrashModel) View() string {
 	headerLines := 4
 	viewportH := max(m.height-headerLines, 1)
 	start := min(max(m.scroll, 0), m.maxScroll(viewportH))
-	end := min(start+viewportH, len(m.events))
+	end := min(start+viewportH, len(m.entries))
 	for i := start; i < end; i++ {
 		if i > start {
 			out.WriteByte('\n')
@@ -183,9 +185,9 @@ func (m TrashModel) View() string {
 	return out.String()
 }
 
-// renderRow draws one deleted-event line: [deleted-date] [calendar dot] [title].
+// renderRow draws one line: [deleted-date] [calendar dot] [title (· instance time for instance deletes)].
 func (m TrashModel) renderRow(idx int, selected bool) string {
-	ev := m.events[idx]
+	e := m.entries[idx]
 
 	base := lipgloss.NewStyle()
 	highlight := lipgloss.NewStyle()
@@ -194,23 +196,31 @@ func (m TrashModel) renderRow(idx int, selected bool) string {
 	}
 
 	deletedText := "—"
-	if ev.DeletedAt != nil {
-		deletedText = ev.DeletedAt.Local().Format("2006-01-02 15:04")
+	if !e.DeletedAt.IsZero() {
+		deletedText = e.DeletedAt.Local().Format("2006-01-02 15:04")
 	}
 	dateCol := base.Foreground(m.theme.TextDim).Width(18).Render(deletedText)
 
-	cal := m.calendars[ev.CalendarID]
+	cal := m.calendars[e.CalendarID]
 	dotColor := m.theme.Muted
 	if cal.Color != "" {
 		dotColor = lipgloss.Color(cal.Color)
 	}
 	dot := base.Foreground(dotColor).Render(Glyphs["dot"])
 
+	title := e.Title
+	if title == "" {
+		title = "(untitled)"
+	}
+	if e.Kind == event.TrashKindInstance && !e.InstanceTime.IsZero() {
+		title = title + "  · " + e.InstanceTime.Local().Format("2006-01-02 15:04")
+	}
+
 	prefix := dateCol + base.Render(" ") + base.Width(3).Render(" "+dot+" ")
 	titleW := max(m.width-lipgloss.Width(prefix), 1)
-	title := highlight.Foreground(m.theme.Text).Width(titleW).Render(truncateTo(ev.Title, titleW))
+	titleCell := highlight.Foreground(m.theme.Text).Width(titleW).Render(truncateTo(title, titleW))
 
-	return prefix + title
+	return prefix + titleCell
 }
 
 func (m *TrashModel) ensureVisible() {
@@ -243,6 +253,5 @@ func (m *TrashModel) clampScroll() {
 }
 
 func (m TrashModel) maxScroll(viewportH int) int {
-	return max(len(m.events)-viewportH, 0)
+	return max(len(m.entries)-viewportH, 0)
 }
-
