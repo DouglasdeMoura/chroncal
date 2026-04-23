@@ -34,3 +34,7 @@ go.work.sum
 .crush
 .agents
 
+# Session-scratch TODO list; lives at the repo root for ergonomics but is
+# intentionally untracked.
+/TODOS.md
+
