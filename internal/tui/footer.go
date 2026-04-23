@@ -208,6 +208,7 @@ func footerHints(ctx FooterContext, hasRSVP, showTodayHint bool) []footerHint {
 	case FooterAgenda:
 		return []footerHint{
 			{"↑↓", "move"},
+			{"[]", "month"},
 			{"enter", "open"},
 			{"x", "delete"},
 			{"c", "new"},
