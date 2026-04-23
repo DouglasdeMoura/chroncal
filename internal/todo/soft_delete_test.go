@@ -185,6 +185,57 @@ func TestSoftDelete_PurgeByID_RefusesLiveRow(t *testing.T) {
 	}
 }
 
+// TestSoftDelete_RestoreOverrideClearsExdate verifies that restoring a
+// recurring override not only un-hides the row but also strips the
+// matching EXDATE from the master — so recurrence expansion surfaces the
+// occurrence again. Without this, the row would exist in the DB but
+// stay hidden from live views.
+func TestSoftDelete_RestoreOverrideClearsExdate(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "weekly-uid", CalendarID: 1, Summary: "Weekly Review",
+		DueDate:        time.Date(2026, 4, 1, 23, 59, 59, 0, time.UTC).Format(time.RFC3339),
+		RecurrenceRule: "FREQ=WEEKLY;COUNT=5",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	override, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: master.UID, CalendarID: 1, Summary: "Weekly Review (moved)",
+		DueDate:      time.Date(2026, 4, 15, 23, 59, 59, 0, time.UTC).Format(time.RFC3339),
+		RecurrenceID: time.Date(2026, 4, 15, 23, 59, 59, 0, time.UTC).Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	if err := svc.Delete(ctx, override.ID); err != nil {
+		t.Fatalf("Delete override: %v", err)
+	}
+
+	afterDelete, err := svc.GetByUID(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("get master after delete: %v", err)
+	}
+	if afterDelete.ExDates == "" {
+		t.Fatal("master.ExDates empty after override delete — EXDATE should have been added")
+	}
+
+	if err := svc.RestoreByID(ctx, override.ID); err != nil {
+		t.Fatalf("RestoreByID override: %v", err)
+	}
+
+	afterRestore, err := svc.GetByUID(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("get master after restore: %v", err)
+	}
+	if afterRestore.ExDates != "" {
+		t.Fatalf("master.ExDates = %q, want empty after override restore", afterRestore.ExDates)
+	}
+}
+
 // TestSoftDelete_SequenceBumpedOnRestore verifies Restore bumps sequence
 // so synced todos push cleanly.
 func TestSoftDelete_SequenceBumpedOnRestore(t *testing.T) {

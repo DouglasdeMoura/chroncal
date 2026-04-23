@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
 
 // ErrNotDeleted is returned by Restore / Purge when the target row is not
@@ -15,9 +17,12 @@ import (
 // it was purged). The CLI collapses this with ErrNotFound.
 var ErrNotDeleted = errors.New("todo: row not soft-deleted (may have been purged)")
 
-// RestoreByID un-hides a single soft-deleted todo. Reconciles sync state
-// so the next push re-CREATEs the resource on the server if the row was
-// tombstoned or its sync_resource was already cleaned up.
+// RestoreByID un-hides a single soft-deleted todo. For an override it
+// also strips the matching EXDATE from the master in the same
+// transaction — otherwise the restored occurrence reappears as a row in
+// the DB but stays hidden from expansion because the series still
+// excludes that slot. Reconciles sync state so the next push re-CREATEs
+// the resource server-side if the row was tombstoned.
 func (s *Service) RestoreByID(ctx context.Context, id int64) error {
 	r, err := s.q.GetTodoIncludingDeleted(ctx, id)
 	if err != nil {
@@ -29,10 +34,65 @@ func (s *Service) RestoreByID(ctx context.Context, id int64) error {
 	if r.DeletedAt == nil || *r.DeletedAt == "" {
 		return ErrNotDeleted
 	}
-	if err := s.q.RestoreTodo(ctx, id); err != nil {
+
+	// Standalone or master: just un-hide. No EXDATE to reverse.
+	if r.RecurrenceID == "" {
+		if err := s.q.RestoreTodo(ctx, id); err != nil {
+			return fmt.Errorf("restore todo: %w", err)
+		}
+		return s.reconcileSyncAfterRestore(ctx, r.CalendarID, r.Uid)
+	}
+
+	// Override: restore the row AND drop its EXDATE entry from the master
+	// so expansion surfaces the occurrence again. Both changes must land
+	// together or the row is visible-but-excluded.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+
+	if err := qtx.RestoreTodo(ctx, id); err != nil {
 		return fmt.Errorf("restore todo: %w", err)
 	}
+
+	master, err := qtx.GetTodoByUID(ctx, r.Uid)
+	if err == nil {
+		existing := timeutil.ParseTimeList(storage.NullableToString(master.Exdates))
+		target, parseErr := timeutil.ParseRecurrenceID(r.RecurrenceID)
+		if parseErr == nil {
+			filtered := removeTimeFromList(existing, target)
+			if len(filtered) != len(existing) {
+				if err := qtx.UpdateTodoExdates(ctx, storage.UpdateTodoExdatesParams{
+					Exdates: storage.StringToNullable(timeutil.SerializeTimeList(filtered)),
+					ID:      master.ID,
+				}); err != nil {
+					return fmt.Errorf("update exdates: %w", err)
+				}
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
 	return s.reconcileSyncAfterRestore(ctx, r.CalendarID, r.Uid)
+}
+
+// removeTimeFromList returns list with every element equal to target
+// (after UTC normalization) removed. Used to reverse an EXDATE insertion
+// when restoring a recurring override.
+func removeTimeFromList(list []time.Time, target time.Time) []time.Time {
+	out := make([]time.Time, 0, len(list))
+	targetKey := target.UTC().Format(time.RFC3339)
+	for _, t := range list {
+		if strings.EqualFold(t.UTC().Format(time.RFC3339), targetKey) {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
 }
 
 // RestoreByUID un-hides every soft-deleted row with the given UID —
