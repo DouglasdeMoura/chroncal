@@ -693,7 +693,10 @@ func (e *Engine) syncCalendarMetadata(ctx context.Context, client *caldav.Client
 	return nil
 }
 
-// exportResource exports a local resource to iCal bytes.
+// exportResource exports a local resource to iCal bytes. CalDAV tracks one
+// resource per UID, but recurring resources are stored as a master row plus
+// override rows sharing the UID. Export must bundle master + overrides so
+// instance edits round-trip to the server.
 func (e *Engine) exportResource(ctx context.Context, ownerType string, uid string) ([]byte, error) {
 	switch ownerType {
 	case "event":
@@ -701,44 +704,68 @@ func (e *Engine) exportResource(ctx context.Context, ownerType string, uid strin
 		if err != nil {
 			return nil, fmt.Errorf("get event by uid %s: %w", uid, err)
 		}
-		evt.Alarms, _ = e.events.ListAlarms(ctx, evt.ID)
-		evt.Attendees, _ = e.events.ListAttendees(ctx, evt.ID)
-		evt.Attachments, _ = e.events.ListAttachments(ctx, evt.ID)
-		evt.Comments, _ = e.events.ListComments(ctx, evt.ID)
-		evt.Contacts, _ = e.events.ListContacts(ctx, evt.ID)
-		evt.Resources, _ = e.events.ListResources(ctx, evt.ID)
-		evt.Relations, _ = e.events.ListRelations(ctx, evt.ID)
-		evt.XProperties, _ = e.events.ListXProperties(ctx, evt.ID)
-		return icalPkg.ExportEvents([]event.Event{evt}, "")
+		hydrateEvent(ctx, e, &evt)
+		overrides, _ := e.events.ListOverridesByUID(ctx, uid)
+		for i := range overrides {
+			hydrateEvent(ctx, e, &overrides[i])
+		}
+		return icalPkg.ExportEvents(append([]event.Event{evt}, overrides...), "")
 	case "todo":
 		t, err := e.todos.GetByUID(ctx, uid)
 		if err != nil {
 			return nil, fmt.Errorf("get todo by uid %s: %w", uid, err)
 		}
-		t.Alarms, _ = e.todos.ListAlarms(ctx, t.ID)
-		t.Attendees, _ = e.todos.ListAttendees(ctx, t.ID)
-		t.Attachments, _ = e.todos.ListAttachments(ctx, t.ID)
-		t.Comments, _ = e.todos.ListComments(ctx, t.ID)
-		t.Contacts, _ = e.todos.ListContacts(ctx, t.ID)
-		t.Resources, _ = e.todos.ListResources(ctx, t.ID)
-		t.Relations, _ = e.todos.ListRelations(ctx, t.ID)
-		t.XProperties, _ = e.todos.ListXProperties(ctx, t.ID)
-		return icalPkg.ExportTodos([]todo.Todo{t}, "")
+		hydrateTodo(ctx, e, &t)
+		overrides, _ := e.todos.ListOverridesByUID(ctx, uid)
+		for i := range overrides {
+			hydrateTodo(ctx, e, &overrides[i])
+		}
+		return icalPkg.ExportTodos(append([]todo.Todo{t}, overrides...), "")
 	case "journal":
 		j, err := e.journals.GetByUID(ctx, uid)
 		if err != nil {
 			return nil, fmt.Errorf("get journal by uid %s: %w", uid, err)
 		}
-		j.Attendees, _ = e.journals.ListAttendees(ctx, j.ID)
-		j.Attachments, _ = e.journals.ListAttachments(ctx, j.ID)
-		j.Comments, _ = e.journals.ListComments(ctx, j.ID)
-		j.Contacts, _ = e.journals.ListContacts(ctx, j.ID)
-		j.Relations, _ = e.journals.ListRelations(ctx, j.ID)
-		j.XProperties, _ = e.journals.ListXProperties(ctx, j.ID)
-		return icalPkg.ExportJournals([]journal.Journal{j}, "")
+		hydrateJournal(ctx, e, &j)
+		overrides, _ := e.journals.ListOverridesByUID(ctx, uid)
+		for i := range overrides {
+			hydrateJournal(ctx, e, &overrides[i])
+		}
+		return icalPkg.ExportJournals(append([]journal.Journal{j}, overrides...), "")
 	default:
 		return nil, fmt.Errorf("unknown owner type: %s", ownerType)
 	}
+}
+
+func hydrateEvent(ctx context.Context, e *Engine, evt *event.Event) {
+	evt.Alarms, _ = e.events.ListAlarms(ctx, evt.ID)
+	evt.Attendees, _ = e.events.ListAttendees(ctx, evt.ID)
+	evt.Attachments, _ = e.events.ListAttachments(ctx, evt.ID)
+	evt.Comments, _ = e.events.ListComments(ctx, evt.ID)
+	evt.Contacts, _ = e.events.ListContacts(ctx, evt.ID)
+	evt.Resources, _ = e.events.ListResources(ctx, evt.ID)
+	evt.Relations, _ = e.events.ListRelations(ctx, evt.ID)
+	evt.XProperties, _ = e.events.ListXProperties(ctx, evt.ID)
+}
+
+func hydrateTodo(ctx context.Context, e *Engine, t *todo.Todo) {
+	t.Alarms, _ = e.todos.ListAlarms(ctx, t.ID)
+	t.Attendees, _ = e.todos.ListAttendees(ctx, t.ID)
+	t.Attachments, _ = e.todos.ListAttachments(ctx, t.ID)
+	t.Comments, _ = e.todos.ListComments(ctx, t.ID)
+	t.Contacts, _ = e.todos.ListContacts(ctx, t.ID)
+	t.Resources, _ = e.todos.ListResources(ctx, t.ID)
+	t.Relations, _ = e.todos.ListRelations(ctx, t.ID)
+	t.XProperties, _ = e.todos.ListXProperties(ctx, t.ID)
+}
+
+func hydrateJournal(ctx context.Context, e *Engine, j *journal.Journal) {
+	j.Attendees, _ = e.journals.ListAttendees(ctx, j.ID)
+	j.Attachments, _ = e.journals.ListAttachments(ctx, j.ID)
+	j.Comments, _ = e.journals.ListComments(ctx, j.ID)
+	j.Contacts, _ = e.journals.ListContacts(ctx, j.ID)
+	j.Relations, _ = e.journals.ListRelations(ctx, j.ID)
+	j.XProperties, _ = e.journals.ListXProperties(ctx, j.ID)
 }
 
 // persistImported saves parsed iCal data to the local database using the same
