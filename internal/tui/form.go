@@ -1633,6 +1633,17 @@ func (bs ButtonStyles) Get(v ButtonVariant) ButtonStyle {
 }
 
 // DefaultButtonStyles returns button styles driven by the active theme.
+//
+// Focus treatment by variant:
+//   - Primary / Danger: keep their accent identity, shift to a more
+//     saturated variant of the same hue so the button stays "primary"
+//     or "dangerous" but visibly lights up.
+//   - Secondary / Ghost: no brand accent to amplify, so focus uses the
+//     neutral Selected token (the same highlight as list-row cursor
+//     and calendar selection), with SelectedText on top for contrast.
+//     This keeps the "cursor parked here" signal consistent across
+//     the whole UI instead of flashing a pink/magenta accent that has
+//     no semantic tie to focus.
 func DefaultButtonStyles() ButtonStyles {
 	base := lipgloss.NewStyle().Padding(0, 2).MarginRight(1)
 	t := activeTheme
@@ -1643,7 +1654,7 @@ func DefaultButtonStyles() ButtonStyles {
 		},
 		Secondary: ButtonStyle{
 			Normal:  base.Background(t.ButtonSecondaryBg).Foreground(t.ButtonText),
-			Focused: base.Background(t.FormHighlight).Foreground(t.ButtonText),
+			Focused: base.Background(t.Selected).Foreground(t.SelectedText),
 		},
 		Danger: ButtonStyle{
 			Normal:  base.Background(t.ButtonDangerBg).Foreground(t.ButtonText),
@@ -1651,7 +1662,7 @@ func DefaultButtonStyles() ButtonStyles {
 		},
 		Ghost: ButtonStyle{
 			Normal:  base.Foreground(t.ButtonGhostFg),
-			Focused: base.Foreground(t.ButtonText).Background(t.FormHighlight),
+			Focused: base.Background(t.Selected).Foreground(t.SelectedText),
 		},
 	}
 }
