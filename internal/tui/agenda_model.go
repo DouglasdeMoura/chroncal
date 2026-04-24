@@ -266,6 +266,21 @@ func (m AgendaModel) SetEvents(events []event.Event, calendars map[int64]Calenda
 		if idx := firstSelectableOnOrAfter(m.rows, anchor); idx >= 0 {
 			m.scroll = idx
 		}
+	} else {
+		// Full refresh after a jump (`[`/`]`/`t`/sidebar click) — scroll
+		// so the newly-landed selection is at the top of the viewport.
+		// Without this the scroll keeps its stale value and the user can
+		// land on (for example) today's first event while the viewport
+		// still shows rows well below today.
+		if m.selected >= 0 {
+			target := m.selected
+			for target > 0 && !isSelectableRow(m.rows[target-1]) {
+				target--
+			}
+			m.scroll = target
+		} else {
+			m.scroll = 0
+		}
 	}
 	m.clampScroll()
 	return m
