@@ -2362,20 +2362,24 @@ func (m Model) View() tea.View {
 
 	var body string
 	if m.showSidebar {
-		sidebarBorder := m.theme.Border
-		if m.focus == focusSidebar {
-			sidebarBorder = m.theme.Primary
-		}
+		// Match the calendar grid: unfocused border renders with SGR 2
+		// (faint) against the terminal's default fg so the two chromes
+		// share the same subdued tone regardless of theme. Focused
+		// state swaps to the brand accent.
 		sb := m.sidebar.SetSize(sidebarWidth-padding*2, contentHeight-padding*2)
-		sidebar := lipgloss.NewStyle().
+		sidebarStyle := lipgloss.NewStyle().
 			Width(sidebarWidth).
 			Height(contentHeight).
 			Padding(padding).
 			BorderRight(true).
 			BorderStyle(lipgloss.NormalBorder()).
-			BorderForeground(sidebarBorder).
-			Foreground(m.theme.Text).
-			Render(sb.View())
+			Foreground(m.theme.Text)
+		if m.focus == focusSidebar {
+			sidebarStyle = sidebarStyle.BorderForeground(m.theme.Primary)
+		} else {
+			sidebarStyle = sidebarStyle.Faint(true)
+		}
+		sidebar := sidebarStyle.Render(sb.View())
 		body = lipgloss.JoinHorizontal(lipgloss.Top, sidebar, main)
 	} else {
 		body = main
