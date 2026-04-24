@@ -400,25 +400,38 @@ func (m AgendaModel) View() string {
 	end := min(start+viewportH, len(m.rows))
 
 	// Sticky title uses position:sticky semantics — it reflects the most
-	// recent monthHeader at or above the viewport top, falling back to the
-	// window's first month when none has scrolled past yet.
+	// recent monthHeader at or above the viewport top. When none has
+	// scrolled past yet, use the day of the first visible row instead of
+	// windowStart: events can start in a later month than windowStart if
+	// earlier months are empty (common after a backward expansion), and
+	// falling back to windowStart would advertise a month the user can't
+	// see any events from.
 	headerDay := m.windowStart
+	foundAbove := false
 	for i := min(start, len(m.rows)-1); i >= 0; i-- {
 		if m.rows[i].monthHeader {
 			headerDay = m.rows[i].day
+			foundAbove = true
 			break
 		}
+	}
+	if !foundAbove && start < len(m.rows) {
+		headerDay = m.rows[start].day
 	}
 	stickyMonth := monthKey(headerDay)
 	out.WriteString(m.renderMonthHeader(headerDay))
 	out.WriteString("\n\n")
 
-	// When the viewport top is the inline monthHeader for the sticky's
-	// month, skip that single row — the sticky already labels it — and
-	// extend the render range by one so the viewport stays filled.
+	// Skip any leading separator/monthHeader rows that label the sticky's
+	// month — otherwise the user sees the month name twice back-to-back
+	// (once in the sticky, once inline). Extend the render range so the
+	// viewport stays filled.
 	renderStart := start
-	if renderStart < end && m.rows[renderStart].monthHeader &&
-		monthKey(m.rows[renderStart].day) == stickyMonth {
+	for renderStart < end {
+		r := m.rows[renderStart]
+		if !(r.monthHeader || r.separator) || monthKey(r.day) != stickyMonth {
+			break
+		}
 		renderStart++
 		end = min(end+1, len(m.rows))
 	}
@@ -624,6 +637,14 @@ func (m AgendaModel) maxScroll(viewportH int) int {
 	return max(len(m.rows)-viewportH, 0)
 }
 
+// MaybeFillViewport returns a forward-expansion command when the loaded
+// rows don't fill the visible area — used by the host after a fresh
+// SetEvents (e.g. after `[`/`]` jumps) so sparse months automatically
+// pull in the next month's events instead of leaving blank rows below.
+func (m *AgendaModel) MaybeFillViewport() tea.Cmd {
+	return m.maybeExpandForward()
+}
+
 // ScrollBy advances the viewport by delta rows (positive scrolls down,
 // negative scrolls up) without moving the selection. Used by the mouse
 // wheel so scrolling feels decoupled from keyboard-driven selection.
@@ -642,10 +663,13 @@ func (m *AgendaModel) ScrollBy(delta int) tea.Cmd {
 }
 
 // maybeExpandBackward grows the window toward older dates when the
-// scroll or selection is within AgendaPreloadRows of the top. Trims
-// the far edge if the cap would be exceeded. Returns a reload command
-// only when the window actually changed; stamps an anchor day so
-// SetEvents can restore the viewport.
+// scroll or selection is within AgendaPreloadRows of the top. The far
+// edge (windowEnd) is held fixed — sliding it backward would drop
+// content the user is still looking at, and when the newly-included
+// earlier range is empty in the DB the agenda would appear to "lose"
+// all its data. Once the window has grown to AgendaMaxWindow against
+// the fixed far edge, further backward expansion is refused; the user
+// jumps further back with the []/h keys instead.
 func (m *AgendaModel) maybeExpandBackward() tea.Cmd {
 	if m.reloadPending || len(m.rows) == 0 {
 		return nil
@@ -656,41 +680,49 @@ func (m *AgendaModel) maybeExpandBackward() tea.Cmd {
 		return nil
 	}
 	newStart := m.windowStart.AddDate(0, 0, -AgendaExpandStep)
-	newEnd := m.windowEnd
-	if daysBetween(newStart, newEnd) > AgendaMaxWindow {
-		newEnd = newStart.AddDate(0, 0, AgendaMaxWindow)
+	minStart := m.windowEnd.AddDate(0, 0, -AgendaMaxWindow)
+	if newStart.Before(minStart) {
+		newStart = minStart
 	}
-	if newStart.Equal(m.windowStart) && newEnd.Equal(m.windowEnd) {
+	if !newStart.Before(m.windowStart) {
 		return nil
 	}
-	m.windowStart, m.windowEnd = newStart, newEnd
+	m.windowStart = newStart
 	m.stampAnchor()
 	m.reloadPending = true
 	return func() tea.Msg { return AgendaReloadMsg{} }
 }
 
 // maybeExpandForward is the mirror of maybeExpandBackward for the
-// bottom edge.
+// bottom edge — the near edge (windowStart) is held fixed for the same
+// reason. It also fires when the loaded rows don't fill the viewport
+// (e.g. after `[`/`]` jumps land on a sparse month), so the next month
+// flows in automatically instead of waiting for the user to navigate.
 func (m *AgendaModel) maybeExpandForward() tea.Cmd {
-	if m.reloadPending || len(m.rows) == 0 {
+	if m.reloadPending {
 		return nil
 	}
 	viewportH := m.viewportH()
+	underfilled := len(m.rows) > 0 && len(m.rows) < viewportH
+	if len(m.rows) == 0 {
+		return nil
+	}
 	maxScroll := m.maxScroll(viewportH)
-	atBottom := (maxScroll > 0 && m.scroll >= maxScroll-AgendaPreloadRows) ||
+	atBottom := underfilled ||
+		(maxScroll > 0 && m.scroll >= maxScroll-AgendaPreloadRows) ||
 		(m.selected >= 0 && m.selected >= len(m.rows)-AgendaPreloadRows)
 	if !atBottom {
 		return nil
 	}
 	newEnd := m.windowEnd.AddDate(0, 0, AgendaExpandStep)
-	newStart := m.windowStart
-	if daysBetween(newStart, newEnd) > AgendaMaxWindow {
-		newStart = newEnd.AddDate(0, 0, -AgendaMaxWindow)
+	maxEnd := m.windowStart.AddDate(0, 0, AgendaMaxWindow)
+	if newEnd.After(maxEnd) {
+		newEnd = maxEnd
 	}
-	if newStart.Equal(m.windowStart) && newEnd.Equal(m.windowEnd) {
+	if !newEnd.After(m.windowEnd) {
 		return nil
 	}
-	m.windowStart, m.windowEnd = newStart, newEnd
+	m.windowEnd = newEnd
 	m.stampAnchor()
 	m.reloadPending = true
 	return func() tea.Msg { return AgendaReloadMsg{} }

@@ -81,6 +81,12 @@ func defaultAppKeys() appKeyMap {
 }
 
 type eventsLoadedMsg struct {
+	// from and to identify the query range so the handler can drop stale
+	// responses when the active view's range has moved on (e.g., rapid
+	// month navigation in the agenda fires multiple loads and the last to
+	// arrive must not overwrite the current window's rows with empty data).
+	from   time.Time
+	to     time.Time
 	events []event.Event
 	err    error
 }
@@ -313,27 +319,33 @@ func NewModel(a *app.App) Model {
 	}
 }
 
-func (m Model) loadEvents() tea.Cmd {
-	var from, to time.Time
+// expectedEventRange returns the [from, to) UTC range the active view
+// currently expects from loadEvents. It's used to seed each query and
+// to validate incoming eventsLoadedMsg against stale async responses.
+func (m Model) expectedEventRange() (time.Time, time.Time) {
 	switch m.viewMode {
 	case viewDay:
 		d := m.day.Cursor()
-		from = time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC)
-		to = from.AddDate(0, 0, 1)
+		from := time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC)
+		return from, from.AddDate(0, 0, 1)
 	case viewWeek:
 		start := m.week.WeekStartDate()
-		from = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.UTC)
-		to = from.AddDate(0, 0, 7)
+		from := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.UTC)
+		return from, from.AddDate(0, 0, 7)
 	case viewAgenda:
 		ws := m.agenda.WindowStart()
 		we := m.agenda.WindowEnd()
-		from = time.Date(ws.Year(), ws.Month(), ws.Day(), 0, 0, 0, 0, time.UTC)
-		to = time.Date(we.Year(), we.Month(), we.Day(), 0, 0, 0, 0, time.UTC)
+		return time.Date(ws.Year(), ws.Month(), ws.Day(), 0, 0, 0, 0, time.UTC),
+			time.Date(we.Year(), we.Month(), we.Day(), 0, 0, 0, 0, time.UTC)
 	default:
 		month := m.calendar.Month()
-		from = time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, time.UTC)
-		to = from.AddDate(0, 1, 0)
+		from := time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, time.UTC)
+		return from, from.AddDate(0, 1, 0)
 	}
+}
+
+func (m Model) loadEvents() tea.Cmd {
+	from, to := m.expectedEventRange()
 	mainCmd := func() tea.Msg {
 		expanded, err := m.app.Recurrences.ListExpandedEvents(context.Background(), from, to)
 		events := make([]event.Event, len(expanded))
@@ -345,7 +357,7 @@ func (m Model) loadEvents() tea.Cmd {
 			evt.StartTime = e.InstanceTime
 			events[i] = evt
 		}
-		return eventsLoadedMsg{events: events, err: err}
+		return eventsLoadedMsg{from: from, to: to, events: events, err: err}
 	}
 	// The mini-month shows a full month regardless of the main view's range,
 	// so refresh its per-day event counts alongside every main reload.
@@ -1004,6 +1016,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case eventsLoadedMsg:
+		// Guard against a stale load: rapid navigation (e.g. repeated [/] in
+		// the agenda) fires multiple in-flight queries; drop any whose range
+		// no longer matches the active view so a late stale response can't
+		// overwrite correct rows with an empty set.
+		expectedFrom, expectedTo := m.expectedEventRange()
+		if !msg.from.Equal(expectedFrom) || !msg.to.Equal(expectedTo) {
+			return m, nil
+		}
 		m.err = msg.err
 		m.events = msg.events
 		calEvents := eventsToCalendar(msg.events, m.calendars, m.hiddenCalendars)
@@ -1020,6 +1040,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.dialogOpen {
 			dayEvents := eventsOn(m.events, m.dialog.day)
 			m.dialog = m.dialog.SetEvents(dayEvents)
+		}
+		// After an agenda load lands, pull in the next month if the loaded
+		// rows don't fill the viewport — prevents the user from staring at
+		// blank space below a sparse month until they navigate.
+		if m.viewMode == viewAgenda {
+			if cmd := m.agenda.MaybeFillViewport(); cmd != nil {
+				return m, cmd
+			}
 		}
 		return m, nil
 
