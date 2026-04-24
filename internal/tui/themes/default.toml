@@ -1,0 +1,72 @@
+# tcal default theme.
+#
+# Each color token accepts one of two shapes:
+#
+#   foo = "#abc123"                     # flat hex
+#   foo = "240"                         # flat ANSI 256 palette index
+#   foo = { light = "...", dark = "..." }  # light/dark variants (any of the above on each side)
+#
+# Flat values apply to both backgrounds. Structural chrome varies with the
+# terminal background; badges/forms/buttons use fixed ANSI 256 values by
+# default for stable contrast.
+
+name        = "default"
+description = "Default tcal theme — structural chrome adapts to terminal background"
+
+# ---------------------------------------------------------------------------
+# Structural chrome
+# ---------------------------------------------------------------------------
+
+primary   = { light = "#7C3AED", dark = "#A78BFA" }
+secondary = { light = "#0284C7", dark = "#38BDF8" }
+accent    = { light = "#059669", dark = "#34D399" }
+muted     = { light = "#9CA3AF", dark = "#6B7280" }
+text      = { light = "#1F2937", dark = "#F9FAFB" }
+text_dim  = { light = "#6B7280", dark = "#9CA3AF" }
+border    = { light = "#D1D5DB", dark = "#374151" }
+today     = { light = "#DC2626", dark = "#F87171" }
+selected  = { light = "#EDE9FE", dark = "#312E81" }
+surface   = { light = "#F9FAFB", dark = "#111827" }
+error     = { light = "#DC2626", dark = "#F87171" }
+
+# ---------------------------------------------------------------------------
+# Badges (BadgeText is the shared foreground)
+# ---------------------------------------------------------------------------
+
+badge_ok      = "28"
+badge_warn    = "172"
+badge_danger  = "124"
+badge_info    = "61"
+badge_neutral = "240"
+badge_text    = "255"
+
+# ---------------------------------------------------------------------------
+# Form internals
+# ---------------------------------------------------------------------------
+
+form_label     = "240"
+form_required  = "9"
+form_error     = "9"
+form_highlight = "63"
+
+# ---------------------------------------------------------------------------
+# Buttons (ButtonText is the shared foreground)
+# ---------------------------------------------------------------------------
+
+button_primary_bg         = "61"
+button_primary_focused_bg = "63"
+button_secondary_bg       = "240"
+button_danger_bg          = "52"
+button_danger_focused_bg  = "160"
+button_ghost_fg           = "240"
+button_text               = "255"
+
+# ---------------------------------------------------------------------------
+# Calendar palette swatches (hex strings, shown in the calendar dialog)
+# ---------------------------------------------------------------------------
+
+calendar_swatches = [
+  "#0074D9", "#7FDBFF", "#B10DC9",
+  "#85144b", "#FF4136", "#FF851B",
+  "#FFDC00", "#3D9970",
+]
