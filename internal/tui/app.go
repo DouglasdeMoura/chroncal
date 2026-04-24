@@ -1132,7 +1132,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case viewWeek:
 			m.week = m.week.SetEvents(calEvents)
 		case viewAgenda:
-			m.agenda = m.agenda.SetEvents(filterVisibleEvents(msg.events, m.hiddenCalendars), m.calendars)
+			// Pass m.events (the merged cache) rather than msg.events (which
+			// is only the delta for incremental responses) — otherwise a
+			// merge would rebuild the agenda rows with only the newly-
+			// fetched slice and the previously-shown events would vanish.
+			m.agenda = m.agenda.SetEvents(filterVisibleEvents(m.events, m.hiddenCalendars), m.calendars)
 		default:
 			m.calendar = m.calendar.SetEvents(calEvents)
 		}
