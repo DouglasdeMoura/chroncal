@@ -6,11 +6,17 @@
 # terminal theme (or Omarchy theme, which themes the terminal) and tcal
 # follows automatically with zero restart.
 #
-# ANSI indices: 0 black, 1 red, 2 green, 3 yellow, 4 blue, 5 magenta,
-# 6 cyan, 7 white; 8-15 are the "bright" equivalents.
+# Base16 index conventions (used by Omarchy and most modern themes):
+#   0 base00  default background
+#   7 base05  default foreground  (always contrasts with bg)
+#   8 base03  subdued / comment   (mid-tone on both light and dark)
+#  15 base07  background-adjacent (caution: can be close to bg on inverted themes)
 #
-# Light/dark variants flip between normal and bright so contrast reads
-# well on both backgrounds.
+# Those three — 0, 7, 8 — are the only indices whose semantics stay
+# stable across both light and dark Base16 variants. Use them for
+# text/background/muted. Hues (1-6, 9-14) keep their identity on either
+# variant, so we can use them for accents with optional brightness
+# variants.
 
 name        = "system"
 description = "Inherits the terminal's ANSI 0-15 palette (Omarchy-friendly)"
@@ -25,23 +31,25 @@ primary   = { light = "4", dark = "12" }
 secondary = { light = "6", dark = "14" }
 # Positive / accent: green
 accent    = { light = "2", dark = "10" }
-# De-emphasized chrome: bright black (usually a gray)
+# De-emphasized chrome: base03 (gray on any theme).
 muted     = "8"
-# Main text: let the terminal pick the default foreground
-text      = { light = "0", dark = "15" }
-# Lower-contrast text: bright black
+# Default foreground — base05 always contrasts with the terminal bg on
+# both light and dark themes. Do NOT use ANSI 0/15 here; on inverted
+# light themes (e.g. Omarchy ALucard) ANSI 0 can be the cream bg color.
+text      = "7"
+# Lower-contrast text: base03.
 text_dim  = "8"
-# Borders: bright black (gray)
+# Borders: base03 (gray).
 border    = "8"
-# "Today" highlight: red
+# "Today" highlight: red.
 today     = { light = "1", dark = "9" }
-# Selected row highlight background
-selected  = { light = "7", dark = "0" }
-# Panel background — leaving this as terminal default reads best, but
-# Theme.Surface is used as a foreground against Primary in some rendering
-# paths, so map it to the opposite of `text`.
-surface   = { light = "15", dark = "0" }
-# Errors: red
+# Selected row highlight — base03 reads as a visible gray against both
+# the default bg and the default fg, so it never collapses.
+selected  = "8"
+# Panel background — base00 matches the terminal default so Surface can
+# be used as a "reset background" foreground against colored cells.
+surface   = "0"
+# Errors: red.
 error     = { light = "1", dark = "9" }
 
 # ---------------------------------------------------------------------------
@@ -53,8 +61,8 @@ badge_warn    = "3"
 badge_danger  = "1"
 badge_info    = "4"
 badge_neutral = "8"
-# Badge foreground: bright white reads on every ANSI background.
-badge_text    = "15"
+# Badge foreground: base05 (always readable against any accent bg).
+badge_text    = "7"
 
 # ---------------------------------------------------------------------------
 # Form internals
@@ -73,10 +81,11 @@ form_highlight = { light = "5", dark = "13" }
 button_primary_bg         = { light = "4", dark = "12" }
 button_primary_focused_bg = { light = "5", dark = "13" }
 button_secondary_bg       = "8"
-button_danger_bg          = { light = "1", dark = "1" }
-button_danger_focused_bg  = { light = "9", dark = "9" }
+button_danger_bg          = "1"
+button_danger_focused_bg  = "9"
 button_ghost_fg           = "8"
-button_text               = "15"
+# Button foreground: base05 (always readable against any accent bg).
+button_text               = "7"
 
 # ---------------------------------------------------------------------------
 # Calendar palette swatches
