@@ -330,9 +330,10 @@ func (m AgendaModel) Update(msg tea.Msg) (AgendaModel, tea.Cmd) {
 	case key.Matches(kp, m.keys.NextMonth):
 		return m.moveCursor(firstOfMonth(m.cursor).AddDate(0, 1, 0))
 	case key.Matches(kp, m.keys.Today):
-		if sameDay(m.cursor, m.today) {
-			return m, nil
-		}
+		// Unconditional: the cursor stays at today during scrolling, so
+		// gating on sameDay(cursor, today) would make `t` a no-op even
+		// when the user has scrolled far away from today. Always reset
+		// the window so the viewport snaps back to today's events.
 		m.cursor = m.today
 		cursor := m.cursor
 		return m, func() tea.Msg { return AgendaCursorChangedMsg{Day: cursor} }

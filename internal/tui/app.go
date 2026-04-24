@@ -944,6 +944,12 @@ func (m Model) currentFooterShowsTodayHint() bool {
 	case FooterMonthWeekDay, FooterAgendaEmpty:
 		cursor, today := m.viewCursorAndToday()
 		return !sameDay(cursor, today)
+	case FooterAgenda:
+		// Agenda navigation moves the selected row, not m.cursor — so we
+		// look at the selected day (falls back to cursor when nothing is
+		// selected) and compare against today.
+		_, today := m.viewCursorAndToday()
+		return !sameDay(m.agenda.SelectedDay(), today)
 	default:
 		return false
 	}
