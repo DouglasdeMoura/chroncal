@@ -1635,12 +1635,12 @@ func (bs ButtonStyles) Get(v ButtonVariant) ButtonStyle {
 // DefaultButtonStyles returns button styles driven by the active theme.
 //
 // Focus treatment by variant:
-//   - Primary / Danger: keep their accent identity, shift to a more
-//     saturated variant of the same hue so the button stays "primary"
-//     or "dangerous" but visibly lights up.
-//   - Secondary: neutral Selected gray at rest (matches the palette's
-//     list-row selection hue), FormHighlight on focus.
-//   - Ghost: no background at rest, FormHighlight on focus.
+//   - Primary: keeps its own saturated accent on focus so the hero
+//     action stays visually dominant even under cursor.
+//   - Secondary / Danger / Ghost: share FormHighlight as the focus
+//     background, so "cursor is here" reads as a single consistent
+//     flash across the form. Each variant keeps its own idle look
+//     (Selected gray, red fill, transparent) for semantic identity.
 func DefaultButtonStyles() ButtonStyles {
 	base := lipgloss.NewStyle().Padding(0, 2).MarginRight(1)
 	t := activeTheme
@@ -1655,7 +1655,7 @@ func DefaultButtonStyles() ButtonStyles {
 		},
 		Danger: ButtonStyle{
 			Normal:  base.Background(t.ButtonDangerBg).Foreground(t.ButtonText),
-			Focused: base.Background(t.ButtonDangerFocusedBg).Foreground(t.ButtonText),
+			Focused: base.Background(t.FormHighlight).Foreground(t.ButtonText),
 		},
 		Ghost: ButtonStyle{
 			Normal:  base.Foreground(t.ButtonGhostFg),
