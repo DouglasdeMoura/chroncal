@@ -52,16 +52,17 @@ func defaultWeekKeys() weekKeyMap {
 }
 
 type WeekModel struct {
-	cursor        time.Time
-	today         time.Time
-	events        []CalendarEvent
-	keys          weekKeyMap
-	width         int
-	height        int
-	weekStart     time.Weekday
-	selectedColor color.Color
-	scrollOffset  int
-	linesPerHour  int
+	cursor          time.Time
+	today           time.Time
+	events          []CalendarEvent
+	keys            weekKeyMap
+	width           int
+	height          int
+	weekStart       time.Weekday
+	selectedColor   color.Color
+	scrollOffset    int
+	linesPerHour    int
+	showWeekNumbers bool
 }
 
 func NewWeekModel(today time.Time) WeekModel {
@@ -98,6 +99,11 @@ func (m WeekModel) SetEvents(events []CalendarEvent) WeekModel {
 
 func (m WeekModel) SetSelectedColor(c color.Color) WeekModel {
 	m.selectedColor = c
+	return m
+}
+
+func (m WeekModel) SetShowWeekNumbers(show bool) WeekModel {
+	m.showWeekNumbers = show
 	return m
 }
 
@@ -263,15 +269,16 @@ func (m WeekModel) View() string {
 	}
 	scrollOffset := min(max(m.scrollOffset, 0), m.maxScroll())
 	return WeekGrid(WeekOptions{
-		WeekStart:     m.WeekStartDate(),
-		Events:        m.events,
-		Today:         m.today,
-		Selected:      m.cursor,
-		Width:         m.width,
-		Height:        m.height,
-		ShowHeader:    true,
-		SelectedColor: m.selectedColor,
-		ScrollOffset:  scrollOffset,
-		LinesPerHour:  m.linesPerHour,
+		WeekStart:       m.WeekStartDate(),
+		Events:          m.events,
+		Today:           m.today,
+		Selected:        m.cursor,
+		Width:           m.width,
+		Height:          m.height,
+		ShowHeader:      true,
+		ShowWeekNumbers: m.showWeekNumbers,
+		SelectedColor:   m.selectedColor,
+		ScrollOffset:    scrollOffset,
+		LinesPerHour:    m.linesPerHour,
 	})
 }

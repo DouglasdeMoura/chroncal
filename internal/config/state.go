@@ -14,6 +14,7 @@ type UIState struct {
 	ViewMode            string  `json:"view_mode,omitempty"`
 	HiddenCalendars     []int64 `json:"hidden_calendars,omitempty"`
 	AgendaShowEmptyDays bool    `json:"agenda_show_empty_days,omitempty"`
+	ShowWeekNumbers     bool    `json:"show_week_numbers,omitempty"`
 }
 
 func defaultUIState() UIState {

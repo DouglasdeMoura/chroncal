@@ -362,9 +362,20 @@ type CalendarOptions struct {
 	Height           int
 	ShowHeader       bool
 	ShowAdjacentDays bool
+	ShowWeekNumbers  bool
 	// SelectedColor, when non-nil, redraws the selected cell's borders in
 	// this color. Use the theme's text color for a "highlighted cursor" look.
 	SelectedColor color.Color
+}
+
+// isoWeekForRow returns the ISO week number of the Thursday within the
+// week row that starts at anchor+week*7 (with weekStart as the first
+// column). Thursday is always in the same ISO week as the row's dates.
+func isoWeekForRow(anchor time.Time, weekStart time.Weekday, week int) int {
+	thursdayOffset := (int(time.Thursday) - int(weekStart) + 7) % 7
+	d := anchor.AddDate(0, 0, week*7+thursdayOffset)
+	_, w := d.ISOWeek()
+	return w
 }
 
 // calendarGridAnchor returns the date of the top-left cell of the calendar
@@ -432,16 +443,25 @@ func Calendar(opts CalendarOptions) string {
 	rows := make([][]string, 6)
 	for week := range 6 {
 		row := make([]string, 7)
+		weekLabel := ""
+		if opts.ShowWeekNumbers {
+			weekLabel = fmt.Sprintf("W%d", isoWeekForRow(anchor, opts.WeekStartsOn, week))
+		}
 		for col := range 7 {
 			d := anchor.AddDate(0, 0, week*7+col)
 			dayKey := d.Format("2006-01-02")
 			inMonth := d.Month() == first.Month() && d.Year() == first.Year()
 
+			label := ""
+			if col == 0 {
+				label = weekLabel
+			}
+
 			if !inMonth && !opts.ShowAdjacentDays {
-				row[col] = blankCell(cellWs[col], cellHs[week])
+				row[col] = blankCellWithWeekLabel(cellWs[col], cellHs[week], label)
 				continue
 			}
-			row[col] = buildCalendarCell(d, dayKey == todayKey, inMonth, eventsByDay[dayKey], cellWs[col], cellHs[week])
+			row[col] = buildCalendarCell(d, dayKey == todayKey, inMonth, eventsByDay[dayKey], cellWs[col], cellHs[week], label)
 		}
 		rows[week] = row
 	}
@@ -580,15 +600,33 @@ func substituteAtVisPos(line string, subs map[int]rune) string {
 }
 
 func blankCell(w, h int) string {
+	return blankCellWithWeekLabel(w, h, "")
+}
+
+func blankCellWithWeekLabel(w, h int, weekLabel string) string {
 	line := strings.Repeat(" ", w)
 	lines := make([]string, h)
 	for i := range h {
 		lines[i] = line
 	}
+	if weekLabel != "" && h > 0 {
+		lines[0] = renderWeekLabelLine(weekLabel, "", w)
+	}
 	return strings.Join(lines, "\n")
 }
 
-func buildCalendarCell(d time.Time, isToday, inMonth bool, events []CalendarEvent, cellW, cellH int) string {
+// renderWeekLabelLine composes the first line of a calendar cell: the
+// faint "Wnn" label on the left, and the day-number block (already styled)
+// right-aligned, padded so the whole line is exactly cellW wide.
+func renderWeekLabelLine(weekLabel, dayRendered string, cellW int) string {
+	faintLabel := lipgloss.NewStyle().Faint(true).Render(weekLabel)
+	labelW := lipgloss.Width(faintLabel)
+	dayW := lipgloss.Width(dayRendered)
+	pad := max(cellW-labelW-dayW, 0)
+	return faintLabel + strings.Repeat(" ", pad) + dayRendered
+}
+
+func buildCalendarCell(d time.Time, isToday, inMonth bool, events []CalendarEvent, cellW, cellH int, weekLabel string) string {
 	dayNum := fmt.Sprintf("%d", d.Day())
 
 	numStyle := lipgloss.NewStyle()
@@ -600,8 +638,13 @@ func buildCalendarCell(d time.Time, isToday, inMonth bool, events []CalendarEven
 	}
 
 	rendered := numStyle.Render(dayNum)
-	padW := max(cellW-lipgloss.Width(rendered), 0)
-	numLine := strings.Repeat(" ", padW) + rendered
+	var numLine string
+	if weekLabel != "" {
+		numLine = renderWeekLabelLine(weekLabel, rendered, cellW)
+	} else {
+		padW := max(cellW-lipgloss.Width(rendered), 0)
+		numLine = strings.Repeat(" ", padW) + rendered
+	}
 
 	maxEventLines := cellH - 1
 	pills := make([]string, 0, maxEventLines)
@@ -629,16 +672,17 @@ func buildCalendarCell(d time.Time, isToday, inMonth bool, events []CalendarEven
 }
 
 type WeekOptions struct {
-	WeekStart     time.Time
-	Events        []CalendarEvent
-	Today         time.Time
-	Selected      time.Time
-	Width         int
-	Height        int
-	ShowHeader    bool
-	SelectedColor color.Color
-	ScrollOffset  int
-	LinesPerHour  int
+	WeekStart       time.Time
+	Events          []CalendarEvent
+	Today           time.Time
+	Selected        time.Time
+	Width           int
+	Height          int
+	ShowHeader      bool
+	ShowWeekNumbers bool
+	SelectedColor   color.Color
+	ScrollOffset    int
+	LinesPerHour    int
 }
 
 type placedEvent struct {
@@ -838,7 +882,13 @@ func WeekGrid(opts WeekOptions) string {
 		out.WriteString("\n\n")
 	}
 
-	out.WriteString(renderWeekColumnHeaders(anchor, colWs, todayKey, selectedKey, opts.SelectedColor))
+	weekNumLabel := ""
+	if opts.ShowWeekNumbers {
+		thursdayOffset := (int(time.Thursday) - int(anchor.Weekday()) + 7) % 7
+		_, wn := anchor.AddDate(0, 0, thursdayOffset).ISOWeek()
+		weekNumLabel = fmt.Sprintf("W%d", wn)
+	}
+	out.WriteString(renderWeekColumnHeaders(anchor, colWs, todayKey, selectedKey, opts.SelectedColor, weekNumLabel))
 	out.WriteString("\n")
 
 	out.WriteString(renderWeekHRule(colWs, "┌", "┬", "", true, selectedCol, opts.SelectedColor))
@@ -888,9 +938,13 @@ func WeekGrid(opts WeekOptions) string {
 	return out.String()
 }
 
-func renderWeekColumnHeaders(anchor time.Time, colWs []int, todayKey, selectedKey string, selectedColor color.Color) string {
+func renderWeekColumnHeaders(anchor time.Time, colWs []int, todayKey, selectedKey string, selectedColor color.Color, weekNumLabel string) string {
 	var b strings.Builder
-	b.WriteString("        ")
+	if weekNumLabel != "" {
+		b.WriteString(lipgloss.NewStyle().Faint(true).Width(timeLabelWidth).Align(lipgloss.Center).Render(weekNumLabel))
+	} else {
+		b.WriteString(strings.Repeat(" ", timeLabelWidth))
+	}
 	b.WriteString(" ")
 	for i := range 7 {
 		if i > 0 {

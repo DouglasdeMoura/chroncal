@@ -143,6 +143,7 @@ func (m HelpDialogModel) sections() []helpSection {
 				{"ctrl+c", "force quit"},
 				{"tab · shift+tab", "switch focus (main ↔ sidebar)"},
 				{"\\", "toggle sidebar"},
+				{"#", "toggle week numbers (month/week)"},
 				{"footer", "context-sensitive hints below the grid"},
 			},
 		},

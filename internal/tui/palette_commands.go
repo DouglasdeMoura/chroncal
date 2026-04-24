@@ -16,6 +16,9 @@ type GoToTodayMsg struct{}
 // ToggleSidebarMsg toggles the sidebar panel.
 type ToggleSidebarMsg struct{}
 
+// ToggleWeekNumbersMsg toggles the ISO week-number gutter in month/week views.
+type ToggleWeekNumbersMsg struct{}
+
 // buildPaletteCommands returns the default commands exposed through the
 // palette, with bindings to the current app state (cursor, etc.).
 func buildPaletteCommands(m Model) []PaletteCommand {
@@ -91,6 +94,13 @@ func buildPaletteCommands(m Model) []PaletteCommand {
 			Category: "View",
 			Shortcut: "\\",
 			Action:   func() tea.Msg { return ToggleSidebarMsg{} },
+		},
+		{
+			ID:       "ui.week_numbers",
+			Title:    "Toggle Week Numbers",
+			Category: "View",
+			Shortcut: "#",
+			Action:   func() tea.Msg { return ToggleWeekNumbersMsg{} },
 		},
 		{
 			ID:       "ui.help",

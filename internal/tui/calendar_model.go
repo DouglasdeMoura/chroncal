@@ -59,15 +59,16 @@ func defaultCalendarKeys() calendarKeyMap {
 }
 
 type CalendarModel struct {
-	month         time.Time
-	cursor        time.Time
-	today         time.Time
-	events        []CalendarEvent
-	keys          calendarKeyMap
-	width         int
-	height        int
-	weekStart     time.Weekday
-	selectedColor color.Color
+	month           time.Time
+	cursor          time.Time
+	today           time.Time
+	events          []CalendarEvent
+	keys            calendarKeyMap
+	width           int
+	height          int
+	weekStart       time.Weekday
+	selectedColor   color.Color
+	showWeekNumbers bool
 }
 
 func NewCalendarModel(today time.Time) CalendarModel {
@@ -102,6 +103,11 @@ func (m CalendarModel) SetWeekStart(w time.Weekday) CalendarModel {
 
 func (m CalendarModel) SetSelectedColor(c color.Color) CalendarModel {
 	m.selectedColor = c
+	return m
+}
+
+func (m CalendarModel) SetShowWeekNumbers(show bool) CalendarModel {
+	m.showWeekNumbers = show
 	return m
 }
 
@@ -268,6 +274,7 @@ func (m CalendarModel) View() string {
 		Height:           m.height,
 		ShowHeader:       true,
 		ShowAdjacentDays: true,
+		ShowWeekNumbers:  m.showWeekNumbers,
 		SelectedColor:    m.selectedColor,
 	})
 }

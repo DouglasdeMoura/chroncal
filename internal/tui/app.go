@@ -49,6 +49,7 @@ type appKeyMap struct {
 	DayView        key.Binding
 	AgendaView     key.Binding
 	Sidebar        key.Binding
+	WeekNumbers    key.Binding
 	Create         key.Binding
 	SwitchFocus    key.Binding
 	Help           key.Binding
@@ -68,6 +69,7 @@ func defaultAppKeys() appKeyMap {
 		DayView:        key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "day")),
 		AgendaView:     key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "agenda")),
 		Sidebar:        key.NewBinding(key.WithKeys("\\"), key.WithHelp("\\", "sidebar")),
+		WeekNumbers:    key.NewBinding(key.WithKeys("#"), key.WithHelp("#", "week numbers")),
 		Create:         key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "new")),
 		SwitchFocus:    key.NewBinding(key.WithKeys("tab", "shift+tab"), key.WithHelp("tab", "switch focus")),
 		Help:           key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
@@ -238,6 +240,7 @@ type Model struct {
 	err             error
 	ready           bool
 	showSidebar     bool
+	showWeekNumbers bool
 	focus           appFocus
 	hiddenCalendars map[int64]bool
 	clickedEventID  int64
@@ -315,11 +318,12 @@ func NewModel(a *app.App) Model {
 		app:             a,
 		keys:            defaultAppKeys(),
 		viewMode:        vm,
-		calendar:        NewCalendarModel(now),
-		week:            NewWeekModel(now),
+		calendar:        NewCalendarModel(now).SetShowWeekNumbers(ui.ShowWeekNumbers),
+		week:            NewWeekModel(now).SetShowWeekNumbers(ui.ShowWeekNumbers),
 		day:             NewDayModel(now),
 		agenda:          NewAgendaModel(now).SetShowEmptyDays(ui.AgendaShowEmptyDays),
 		showSidebar:     ui.ShowSidebar,
+		showWeekNumbers: ui.ShowWeekNumbers,
 		hiddenCalendars: hidden,
 		focus:           focusCalendar,
 		sidebar:         sb,
@@ -1403,6 +1407,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ToggleSidebarMsg:
 		return m.toggleSidebar()
 
+	case ToggleWeekNumbersMsg:
+		return m.toggleWeekNumbers()
+
 	case eventCreatedMsg:
 		if msg.err != nil {
 			m.err = msg.err
@@ -2227,6 +2234,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.switchToView(viewAgenda)
 		case key.Matches(msg, m.keys.Sidebar):
 			return m.toggleSidebar()
+		case key.Matches(msg, m.keys.WeekNumbers):
+			return m.toggleWeekNumbers()
 		case key.Matches(msg, m.keys.CalendarCreate):
 			return m, func() tea.Msg { return CalendarDialogRequestedMsg{ID: 0} }
 		case key.Matches(msg, m.keys.CalendarList):
@@ -2599,6 +2608,15 @@ func (m Model) goToToday() (tea.Model, tea.Cmd) {
 	return m, m.loadEvents()
 }
 
+// toggleWeekNumbers toggles the ISO week-number gutter in month/week views.
+func (m Model) toggleWeekNumbers() (tea.Model, tea.Cmd) {
+	m.showWeekNumbers = !m.showWeekNumbers
+	m.calendar = m.calendar.SetShowWeekNumbers(m.showWeekNumbers)
+	m.week = m.week.SetShowWeekNumbers(m.showWeekNumbers)
+	m.saveUIState()
+	return m, nil
+}
+
 // toggleSidebar toggles the sidebar panel and resyncs view sizes.
 func (m Model) toggleSidebar() (tea.Model, tea.Cmd) {
 	m.showSidebar = !m.showSidebar
@@ -2659,6 +2677,7 @@ func (m Model) saveUIState() {
 		ViewMode:            vm,
 		HiddenCalendars:     ids,
 		AgendaShowEmptyDays: m.agenda.ShowEmptyDays(),
+		ShowWeekNumbers:     m.showWeekNumbers,
 	})
 }
 
