@@ -921,8 +921,12 @@ func (m Model) currentFooterContext() FooterContext {
 			return FooterAgenda
 		}
 		return FooterAgendaEmpty
+	case viewWeek:
+		return FooterWeek
+	case viewDay:
+		return FooterDay
 	default:
-		return FooterMonthWeekDay
+		return FooterMonth
 	}
 }
 
@@ -941,7 +945,7 @@ func (m Model) currentFooterHasRSVP() bool {
 // differs from today, making the `t today` footer hint actionable.
 func (m Model) currentFooterShowsTodayHint() bool {
 	switch m.currentFooterContext() {
-	case FooterMonthWeekDay, FooterAgendaEmpty:
+	case FooterMonth, FooterWeek, FooterDay, FooterAgendaEmpty:
 		cursor, today := m.viewCursorAndToday()
 		return !sameDay(cursor, today)
 	case FooterAgenda:
@@ -2111,6 +2115,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.trash, cmd = m.trash.Update(msg)
 			return m, cmd
 		}
+		// Footer label hit-test: clicking the context label (MONTH/WEEK/DAY/
+		// AGENDA) cycles through views. The sweep in View() populates the
+		// tracker with the footer label's zone whenever no overlay is open.
+		if target := MouseResolve(msg.X, msg.Y); target == "footer:label" {
+			return m.cycleView()
+		}
 		// Sidebar hit-test. The sidebar content starts at (padding, padding)
 		// inside the outer screen, with a 1-col right border. If the click
 		// lands inside that x-range we dispatch to the sidebar in its local
@@ -2382,6 +2392,12 @@ func (m Model) View() tea.View {
 		PaddingRight(padding).
 		Render(footerLine)
 	v.Content = lipgloss.JoinVertical(lipgloss.Left, body, footer)
+	// Strip mouse-tracking markers embedded by the footer label so they don't
+	// leak into terminal output, and populate the tracker's zones so clicks
+	// on the label can be resolved. Overlays, if any, will overwrite zones
+	// during their own View() sweeps below — that's fine, since the footer
+	// label isn't clickable while an overlay owns input.
+	v.Content = MouseSweep(v.Content)
 
 	if m.dialogOpen {
 		v.Content = m.compositeDialog(v.Content)
@@ -2539,6 +2555,23 @@ func (m Model) switchToView(mode viewMode) (tea.Model, tea.Cmd) {
 		m.agenda = m.agenda.ResetWindow(cursor)
 	}
 	return m, m.switchView()
+}
+
+// cycleView advances to the next view mode in the order month → week → day
+// → agenda → month, preserving cursor/today across the switch.
+func (m Model) cycleView() (tea.Model, tea.Cmd) {
+	var next viewMode
+	switch m.viewMode {
+	case viewMonth:
+		next = viewWeek
+	case viewWeek:
+		next = viewDay
+	case viewDay:
+		next = viewAgenda
+	default:
+		next = viewMonth
+	}
+	return m.switchToView(next)
 }
 
 // goToToday moves the cursor in the active view to today and reloads events.

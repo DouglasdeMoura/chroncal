@@ -12,7 +12,9 @@ import (
 type FooterContext int
 
 const (
-	FooterMonthWeekDay FooterContext = iota
+	FooterMonth FooterContext = iota
+	FooterWeek
+	FooterDay
 	FooterAgenda
 	FooterAgendaEmpty
 	FooterEventPopup
@@ -74,46 +76,49 @@ func (f FooterModel) Render(ctx FooterContext, width int, syncStatus, toast stri
 		return f.renderCollapsed(ctx, width, hints)
 	}
 
-	left := f.composeLeft(prefixLabel, syncStatus)
+	// Between 40 and 60 cols, the hint list gets truncated with an ellipsis.
+	// Label is lower-priority than actionable hints, so drop it before
+	// truncation so commands survive longer.
+	showLabel := prefixLabel != "" && width >= footerEllipsisCols
+	label := ""
+	if showLabel {
+		label = prefixLabel
+	}
+
+	left := f.composeLeft(label, syncStatus)
 	right := toast
 	if right == "" {
-		// Between 40 and 60 cols, the hint list gets truncated with an
-		// ellipsis. Label is lower-priority than actionable hints, so drop
-		// it before truncation so commands survive longer.
-		showLabel := prefixLabel != "" && width >= footerEllipsisCols
-		label := ""
-		if showLabel {
-			label = prefixLabel
-		}
-		right = f.composeHints(label, hints)
+		right = f.composeHints(hints)
 	}
 
 	return f.joinFooter(left, right, width)
 }
 
-// composeLeft produces the left half of the footer: a context label,
-// separator, and optional sync status. When toast is absent the hint side
-// also shows the prefix, so we omit it here to avoid duplicate labels.
+// composeLeft produces the left half of the footer: a context label followed
+// by an optional sync status. Either (or both) may be empty. The label is
+// marked as clickable so the app can cycle views when the user clicks it.
 func (f FooterModel) composeLeft(prefix, syncStatus string) string {
-	if syncStatus == "" {
-		return ""
+	labelStyle := lipgloss.NewStyle().Foreground(f.theme.Muted).Bold(true)
+	sepStyle := lipgloss.NewStyle().Foreground(f.theme.Muted)
+
+	parts := make([]string, 0, 2)
+	if prefix != "" {
+		parts = append(parts, mouseMark("footer:label", labelStyle.Render(prefix)))
 	}
-	return syncStatus
+	if syncStatus != "" {
+		parts = append(parts, syncStatus)
+	}
+	return strings.Join(parts, sepStyle.Render(" · "))
 }
 
-// composeHints renders "PREFIX · key desc · key desc · ?". The prefix is
-// rendered in Muted so users visually register that the line is contextual.
-func (f FooterModel) composeHints(prefix string, hints []footerHint) string {
+// composeHints renders "key desc · key desc · ?".
+func (f FooterModel) composeHints(hints []footerHint) string {
 	keyStyle := lipgloss.NewStyle().Foreground(f.theme.Text)
 	descStyle := lipgloss.NewStyle().Foreground(f.theme.TextDim)
 	sepStyle := lipgloss.NewStyle().Foreground(f.theme.Muted)
-	labelStyle := lipgloss.NewStyle().Foreground(f.theme.Muted).Bold(true)
 
 	sep := sepStyle.Render(" · ")
-	parts := make([]string, 0, len(hints)+1)
-	if prefix != "" {
-		parts = append(parts, labelStyle.Render(prefix))
-	}
+	parts := make([]string, 0, len(hints))
 	for _, h := range hints {
 		parts = append(parts, keyStyle.Render(h.keys)+" "+descStyle.Render(h.desc))
 	}
@@ -179,8 +184,12 @@ func (f FooterModel) RenderMinimal(width int, syncStatus, toast string, showHelp
 
 func footerPrefix(ctx FooterContext) string {
 	switch ctx {
-	case FooterMonthWeekDay:
+	case FooterMonth:
 		return "MONTH"
+	case FooterWeek:
+		return "WEEK"
+	case FooterDay:
+		return "DAY"
 	case FooterAgenda, FooterAgendaEmpty:
 		return "AGENDA"
 	case FooterEventPopup:
@@ -195,7 +204,7 @@ func footerPrefix(ctx FooterContext) string {
 
 func footerHints(ctx FooterContext, hasRSVP, showTodayHint bool) []footerHint {
 	switch ctx {
-	case FooterMonthWeekDay:
+	case FooterMonth, FooterWeek, FooterDay:
 		hints := []footerHint{
 			{"↑↓←→", "move"},
 			{"enter", "open"},
@@ -261,7 +270,7 @@ func footerHints(ctx FooterContext, hasRSVP, showTodayHint bool) []footerHint {
 // context when the footer has to collapse to near-nothing.
 func collapsedTopHint(ctx FooterContext) footerHint {
 	switch ctx {
-	case FooterMonthWeekDay:
+	case FooterMonth, FooterWeek, FooterDay:
 		return footerHint{"c", "new"}
 	case FooterAgenda:
 		return footerHint{"x", "delete"}

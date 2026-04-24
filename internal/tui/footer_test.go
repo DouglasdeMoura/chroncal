@@ -7,7 +7,7 @@ import (
 
 func TestFooter_MonthContextShowsExpectedKeys(t *testing.T) {
 	f := NewFooterModel(NewTheme(true))
-	out := f.Render(FooterMonthWeekDay, 120, "", "", false, true)
+	out := f.Render(FooterMonth, 120, "", "", false, true)
 
 	want := []string{"MONTH", "move", "open", "new", "today", "help"}
 	for _, w := range want {
@@ -41,7 +41,7 @@ func TestFooter_AgendaShowsDeleteWhenEventSelected(t *testing.T) {
 
 func TestFooter_HidesTodayHintWhenAlreadyOnToday(t *testing.T) {
 	f := NewFooterModel(NewTheme(true))
-	out := f.Render(FooterMonthWeekDay, 120, "", "", false, false)
+	out := f.Render(FooterMonth, 120, "", "", false, false)
 	if strings.Contains(out, "today") {
 		t.Errorf("Render = %q, should hide today hint when already on today", out)
 	}
@@ -69,7 +69,7 @@ func TestFooter_EventPopupRSVPConditional(t *testing.T) {
 
 func TestFooter_ToastOverridesRightSide(t *testing.T) {
 	f := NewFooterModel(NewTheme(true))
-	out := f.Render(FooterMonthWeekDay, 120, "", "TOAST_HERE", false, true)
+	out := f.Render(FooterMonth, 120, "", "TOAST_HERE", false, true)
 	if !strings.Contains(out, "TOAST_HERE") {
 		t.Errorf("Render = %q, missing toast override", out)
 	}
@@ -106,7 +106,7 @@ func TestFooter_EllipsisBetween40And60(t *testing.T) {
 
 func TestFooter_ZeroWidth(t *testing.T) {
 	f := NewFooterModel(NewTheme(true))
-	if out := f.Render(FooterMonthWeekDay, 0, "", "", false, true); out != "" {
+	if out := f.Render(FooterMonth, 0, "", "", false, true); out != "" {
 		t.Errorf("Render (w=0) = %q, want empty", out)
 	}
 }
