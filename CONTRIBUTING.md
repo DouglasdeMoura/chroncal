@@ -22,27 +22,37 @@ That's it. The database is SQLite (pure Go driver, no CGO), so there are no syst
 
 ```
 chroncal/
-├── cmd/chroncal/           # CLI commands (cobra)
+├── cmd/chroncal/     # CLI commands (cobra)
 ├── internal/
-│   ├── alarm/          # Alarm checking, firing, state
-│   ├── app/            # Application initialization
-│   ├── calendar/       # Calendar service
-│   ├── config/         # Configuration loading
-│   ├── duration/       # RFC 5545 duration parsing
-│   ├── event/          # Event service and models
-│   ├── ical/           # iCal import/export
-│   ├── model/          # Shared models (Alarm, Attendee, etc.)
-│   ├── notify/         # Desktop notifications
-│   ├── recurrence/     # RRULE expansion
-│   ├── storage/        # Database layer (sqlc-generated)
-│   ├── testutil/       # Test helpers
-│   ├── todo/           # Todo service and models
-│   └── tui/            # Terminal UI (bubbletea)
+│   ├── alarm/        # Alarm checking, firing, state
+│   ├── app/          # Application initialization
+│   ├── auth/         # CalDAV auth (basic, bearer, OAuth2 PKCE, keyring)
+│   ├── caldav/       # CalDAV client (discovery, REPORT, free/busy)
+│   ├── calendar/     # Calendar service
+│   ├── config/       # Configuration loading
+│   ├── duration/     # RFC 5545 duration parsing
+│   ├── event/        # Event service and models
+│   ├── freebusy/     # Local free/busy computation + remote query
+│   ├── ical/         # iCal import/export
+│   ├── journal/      # Journal service and models
+│   ├── maintenance/  # Background soft-delete purge loop
+│   ├── model/        # Shared models (Alarm, Attendee, etc.)
+│   ├── notify/       # Desktop notifications + SMTP email
+│   ├── recurrence/   # RRULE expansion
+│   ├── retry/        # HTTP retry/backoff helpers
+│   ├── storage/      # Database layer (sqlc-generated + hand-written)
+│   ├── sync/         # CalDAV sync engine, conflict handling
+│   ├── testutil/     # Test helpers
+│   ├── textsafe/     # Safe rendering of untrusted strings
+│   ├── timeutil/     # Time helpers (ranges, timezones)
+│   ├── todo/         # Todo service and models
+│   ├── trash/        # Mixed soft-delete / restore across domains
+│   └── tui/          # Terminal UI (bubbletea)
 ├── db/
-│   ├── migrations/     # SQL schema migrations (goose)
-│   └── queries/        # SQL queries for sqlc
-├── sqlc.yaml           # sqlc configuration
-├── Makefile            # Build commands
+│   ├── migrations/   # SQL schema migrations (goose)
+│   └── queries/      # SQL queries for sqlc
+├── sqlc.yaml         # sqlc configuration
+├── Makefile          # Build commands
 └── go.mod
 ```
 
@@ -50,8 +60,10 @@ chroncal/
 
 ```bash
 make build        # Build the chroncal binary
+make run          # Build and run chroncal
 make test         # Run all tests (disables caching)
 make test-race    # Run tests with the race detector (matches CI)
+make coverage     # Run tests and emit coverage.out + textual summary
 make generate     # Regenerate Go code from SQL queries
 make fmt          # gofmt -w .
 make fmt-check    # Fail if any file needs gofmt
@@ -62,7 +74,7 @@ make vulncheck    # govulncheck ./...
 make tidy-check   # Fail if go.mod/go.sum would change under `go mod tidy`
 make check        # fmt-check + vet + lint + vulncheck + test-race
 make tools        # Install govulncheck and staticcheck
-make clean        # Remove binary
+make clean        # Remove the binary and coverage output
 ```
 
 ## Git hooks

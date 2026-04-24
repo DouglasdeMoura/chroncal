@@ -2,7 +2,7 @@
 
 ## Service Layer Pattern
 
-Each domain (event, todo, calendar, alarm, recurrence) has a service in `internal/{domain}/`:
+Each domain has a service in `internal/{domain}/` following the same shape:
 
 ```go
 type Service struct {
@@ -15,15 +15,28 @@ func NewService(db *sql.DB, q *storage.Queries) *Service {
 }
 ```
 
-- **event** - CRUD, search, export, recurrence-aware queries
-- **todo** - CRUD, search, completion
-- **calendar** - CRUD, color management
+Core data services:
+- **event** - CRUD, search, export, recurrence-aware queries, soft-delete/restore/purge
+- **todo** - CRUD, search, completion, soft-delete/restore/purge
+- **journal** - CRUD, search, soft-delete/restore/purge
+- **calendar** - CRUD, color management, remote-link metadata
 - **alarm** - Check due alarms, fire, dismiss, snooze
-- **recurrence** - Expand recurring events/todos, handle overrides
+- **recurrence** - Expand recurring events/todos/journals, handle overrides
+- **trash** - Mixed soft-delete view across event/todo/journal (list, restore, purge)
+
+Integration / infrastructure services (same `NewService(...)` shape where
+applicable, but wiring varies — some take extra dependencies):
+- **sync** - CalDAV sync engine, conflict detection and resolution
+- **caldav** - Low-level CalDAV client (discovery, REPORT, PROPFIND, VFREEBUSY)
+- **freebusy** - Local free/busy computation plus remote CalDAV query
+- **auth** - Credential storage (OS keyring, optional plaintext), OAuth2 PKCE
+- **maintenance** - Background purge loop for soft-deleted rows
+- **notify** - Desktop notifications plus SMTP email for EMAIL alarms
+- **retry** - HTTP retry/backoff helpers shared by sync and caldav
 
 Models live in `internal/{domain}/model.go` (e.g., `event.Event`) and shared models in `internal/model/` (e.g., `model.Alarm`, `model.Attendee`).
 
-CLI commands live in `cmd/chroncal/`, one file per resource group. Each exports a `Command()` function returning a `*cobra.Command`. Commands use `resolveEvent()` / `resolveTodo()` helpers to resolve references by ID, UID, or UID+recurrenceID.
+CLI commands live in `cmd/chroncal/`, one file per resource group. Each exports a `Command()` function returning a `*cobra.Command`. Commands use `resolveEvent()` / `resolveTodo()` / `resolveJournal()` helpers to resolve references by ID, UID, or UID+recurrenceID.
 
 ## Storage Layer
 

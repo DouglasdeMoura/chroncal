@@ -96,12 +96,15 @@ chroncal freebusy --calendar Work --from 2026-04-01 --to 2026-04-30
 ### Events
 
 ```
-chroncal event list    [--from DATE] [--to DATE] [--calendar NAME] [--status STATUS]
-chroncal event get     <id|uid> [--recurrence-id ID]
-chroncal event search  <query> [--calendar NAME] [--from DATE] [--to DATE] [--status STATUS]
-chroncal event add     "<title>" [flags]
-chroncal event update  <id|uid> [flags] [--recurrence-id ID]
-chroncal event delete  <id|uid> [--recurrence-id ID]
+chroncal event list           [--from DATE] [--to DATE] [--calendar NAME] [--status STATUS] [--include-deleted]
+chroncal event get            <id|uid> [--recurrence-id ID]
+chroncal event search         <query> [--calendar NAME] [--from DATE] [--to DATE] [--status STATUS]
+chroncal event add            "<title>" [flags]
+chroncal event update         <id|uid> [flags] [--recurrence-id ID]
+chroncal event delete         <id|uid> [--recurrence-id ID] [--yes]
+chroncal event restore        <id|uid>
+chroncal event purge          <id> [--yes]
+chroncal event purge-deleted  [--older-than DURATION] [--yes]
 ```
 
 Event flags: `--date`, `--time`, `--end-time`, `--duration`, `--timezone`, `--location`, `--description`, `--calendar`, `--status`, `--class`, `--transparency`, `--priority`, `--url`, `--categories`, `--geo`, `--rrule`, `--exdate`, `--rdate`, `--attach`, `--alarm`, `--attendee`, `--organizer`, `--contact`, `--resource`, `--comment`, `--related-to`
@@ -109,13 +112,16 @@ Event flags: `--date`, `--time`, `--end-time`, `--duration`, `--timezone`, `--lo
 ### Todos
 
 ```
-chroncal todo list      [--calendar NAME] [--status STATUS] [--all] [--from DATE] [--to DATE]
-chroncal todo get       <id|uid> [--recurrence-id ID]
-chroncal todo search    <query> [--calendar NAME] [--status STATUS] [--completed] [--incomplete]
-chroncal todo add       "<summary>" [flags]
-chroncal todo update    <id|uid> [flags] [--recurrence-id ID]
-chroncal todo complete  <id|uid> [--recurrence-id ID]
-chroncal todo delete    <id|uid> [--recurrence-id ID]
+chroncal todo list           [--calendar NAME] [--status STATUS] [--all] [--from DATE] [--to DATE] [--include-deleted]
+chroncal todo get            <id|uid> [--recurrence-id ID]
+chroncal todo search         <query> [--calendar NAME] [--status STATUS] [--completed] [--incomplete]
+chroncal todo add            "<summary>" [flags]
+chroncal todo update         <id|uid> [flags] [--recurrence-id ID]
+chroncal todo complete       <id|uid> [--recurrence-id ID]
+chroncal todo delete         <id|uid> [--recurrence-id ID] [--yes]
+chroncal todo restore        <id|uid>
+chroncal todo purge          <id> [--yes]
+chroncal todo purge-deleted  [--older-than DURATION] [--yes]
 ```
 
 Todo flags: `--due`, `--start`, `--duration`, `--location`, `--description`, `--calendar`, `--status`, `--progress`, `--class`, `--priority`, `--url`, `--categories`, `--geo`, `--rrule`, `--exdate`, `--rdate`, `--attach`, `--alarm`, `--attendee`, `--organizer`, `--contact`, `--resource`, `--comment`, `--related-to`
@@ -123,12 +129,15 @@ Todo flags: `--due`, `--start`, `--duration`, `--location`, `--description`, `--
 ### Journals
 
 ```
-chroncal journal list    [--from DATE] [--to DATE] [--calendar NAME] [--status STATUS] [--all]
-chroncal journal get     <id|uid> [--recurrence-id ID]
-chroncal journal search  <query> [--calendar NAME] [--from DATE] [--to DATE] [--status STATUS]
-chroncal journal add     "<summary>" [flags]
-chroncal journal update  <id|uid> [flags] [--recurrence-id ID]
-chroncal journal delete  <id|uid> [--recurrence-id ID]
+chroncal journal list           [--from DATE] [--to DATE] [--calendar NAME] [--status STATUS] [--all] [--include-deleted]
+chroncal journal get            <id|uid> [--recurrence-id ID]
+chroncal journal search         <query> [--calendar NAME] [--from DATE] [--to DATE] [--status STATUS]
+chroncal journal add            "<summary>" [flags]
+chroncal journal update         <id|uid> [flags] [--recurrence-id ID]
+chroncal journal delete         <id|uid> [--recurrence-id ID] [--yes]
+chroncal journal restore        <id|uid>
+chroncal journal purge          <id> [--yes]
+chroncal journal purge-deleted  [--older-than DURATION] [--yes]
 ```
 
 Journal flags: `--date`, `--description`, `--calendar`, `--status`, `--class`, `--url`, `--categories`, `--rrule`, `--exdate`, `--rdate`, `--attach`, `--attendee`, `--organizer`, `--contact`, `--comment`, `--related-to`
@@ -234,8 +243,8 @@ chroncal alarm missed   [--days N]            # Show missed alarms (default look
 ### Service (alarm background service)
 
 ```
-chroncal service install    # Install systemd timer (Linux) or launchd agent (macOS)
-chroncal service run        # Run one background-service cycle now
+chroncal service install              # Install systemd timer (Linux) or launchd agent (macOS)
+chroncal service run                  # Run one background-service cycle now (alias: tick)
 chroncal service uninstall
 chroncal service status
 ```
@@ -306,6 +315,16 @@ Configuration is loaded in order of precedence:
 |-----|-------------|---------|
 | `db` | Path to SQLite database | `$XDG_DATA_HOME/chroncal/chroncal.db` |
 | `product_id` | iCal PRODID for export | `-//chroncal//chroncal//EN` |
+| `ui.theme` | Built-in TUI theme name under `internal/tui/themes/` (e.g. `default`, `system`) | `default` |
+| `soft_delete.purge_days` | Days to retain soft-deleted rows before the background purge. `0` disables automatic purging. | `30` |
+| `sync.interval` | Minimum interval between background CalDAV syncs performed by `chroncal service run` | (unset — sync runs every tick) |
+| `sync.conflict_strategy` | Default conflict-resolution mode when `sync run --conflict` is not passed | (unset) |
+| `security.allow_unsafe_alarm_audio_attach` | Allow AUDIO alarms to attach arbitrary URIs. Off by default. | `false` |
+| `security.allow_unsafe_alarm_email_attendees` | Allow EMAIL alarms to send to unverified attendee addresses. Off by default. | `false` |
+
+Every key is also available as an environment variable (`CHRONCAL_` prefix,
+dots become underscores): for example `CHRONCAL_UI_THEME`,
+`CHRONCAL_SOFT_DELETE_PURGE_DAYS`, `CHRONCAL_SYNC_INTERVAL`.
 
 ### SMTP (for email alarms)
 
