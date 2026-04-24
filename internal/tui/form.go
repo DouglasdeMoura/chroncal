@@ -349,7 +349,7 @@ func (f *SelectField) View() string {
 	}
 	label := labelStyle.Render(f.renderOptionLabel(f.options[f.selected], f.focused))
 
-	flash := lipgloss.NewStyle().Foreground(lipgloss.Color("63"))
+	flash := lipgloss.NewStyle().Foreground(activeTheme.FormHighlight)
 	prev := Glyphs["select.prev"]
 	next := Glyphs["select.next"]
 
@@ -455,7 +455,7 @@ func (f *QuantitySelectField) unitText() string {
 	}
 	label := labelStyle.Render(f.unit.renderOptionLabel(f.unit.options[f.unit.selected], unitFocused))
 
-	flash := lipgloss.NewStyle().Foreground(lipgloss.Color("63"))
+	flash := lipgloss.NewStyle().Foreground(activeTheme.FormHighlight)
 	prev := Glyphs["select.prev"]
 	next := Glyphs["select.next"]
 	if f.unit.highlight == selectLeft {
@@ -1632,25 +1632,26 @@ func (bs ButtonStyles) Get(v ButtonVariant) ButtonStyle {
 	}
 }
 
-// DefaultButtonStyles returns minimal button styles suitable for testing.
+// DefaultButtonStyles returns button styles driven by the active theme.
 func DefaultButtonStyles() ButtonStyles {
 	base := lipgloss.NewStyle().Padding(0, 2).MarginRight(1)
+	t := activeTheme
 	return ButtonStyles{
 		Primary: ButtonStyle{
-			Normal:  base.Background(lipgloss.Color("61")).Foreground(lipgloss.Color("255")).Bold(true),
-			Focused: base.Background(lipgloss.Color("63")).Foreground(lipgloss.Color("255")).Bold(true),
+			Normal:  base.Background(t.ButtonPrimaryBg).Foreground(t.ButtonText).Bold(true),
+			Focused: base.Background(t.ButtonPrimaryFocusedBg).Foreground(t.ButtonText).Bold(true),
 		},
 		Secondary: ButtonStyle{
-			Normal:  base.Background(lipgloss.Color("240")).Foreground(lipgloss.Color("255")),
-			Focused: base.Background(lipgloss.Color("63")).Foreground(lipgloss.Color("255")),
+			Normal:  base.Background(t.ButtonSecondaryBg).Foreground(t.ButtonText),
+			Focused: base.Background(t.FormHighlight).Foreground(t.ButtonText),
 		},
 		Danger: ButtonStyle{
-			Normal:  base.Background(lipgloss.Color("52")).Foreground(lipgloss.Color("255")),
-			Focused: base.Background(lipgloss.Color("160")).Foreground(lipgloss.Color("255")),
+			Normal:  base.Background(t.ButtonDangerBg).Foreground(t.ButtonText),
+			Focused: base.Background(t.ButtonDangerFocusedBg).Foreground(t.ButtonText),
 		},
 		Ghost: ButtonStyle{
-			Normal:  base.Foreground(lipgloss.Color("240")),
-			Focused: base.Foreground(lipgloss.Color("255")).Background(lipgloss.Color("63")),
+			Normal:  base.Foreground(t.ButtonGhostFg),
+			Focused: base.Foreground(t.ButtonText).Background(t.FormHighlight),
 		},
 	}
 }
@@ -1676,13 +1677,13 @@ type FormStyles struct {
 	ButtonRule      bool         // when true, render a horizontal rule above buttons
 }
 
-// DefaultFormStyles returns minimal styles suitable for testing or as a
-// starting point.
+// DefaultFormStyles returns form styles driven by the active theme.
 func DefaultFormStyles() FormStyles {
+	t := activeTheme
 	return FormStyles{
-		Label:    lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
-		Required: lipgloss.NewStyle().Foreground(lipgloss.Color("9")),
-		Error:    lipgloss.NewStyle().Foreground(lipgloss.Color("9")),
+		Label:    lipgloss.NewStyle().Foreground(t.FormLabel),
+		Required: lipgloss.NewStyle().Foreground(t.FormRequired),
+		Error:    lipgloss.NewStyle().Foreground(t.FormError),
 		Buttons:  DefaultButtonStyles(),
 	}
 }

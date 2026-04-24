@@ -21,15 +21,15 @@ const (
 func badgeBackground(v badgeVariant) color.Color {
 	switch v {
 	case badgeOK:
-		return lipgloss.Color("28") // green
+		return activeTheme.BadgeOK
 	case badgeWarn:
-		return lipgloss.Color("172") // amber
+		return activeTheme.BadgeWarn
 	case badgeDanger:
-		return lipgloss.Color("124") // red
+		return activeTheme.BadgeDanger
 	case badgeInfo:
-		return lipgloss.Color("61") // purple
+		return activeTheme.BadgeInfo
 	default:
-		return lipgloss.Color("240") // gray
+		return activeTheme.BadgeNeutral
 	}
 }
 
@@ -39,7 +39,7 @@ func badgeBackground(v badgeVariant) color.Color {
 func badge(text string, v badgeVariant) string {
 	return lipgloss.NewStyle().
 		Background(badgeBackground(v)).
-		Foreground(lipgloss.Color("255")).
+		Foreground(activeTheme.BadgeText).
 		Padding(0, 1).
 		Render(text)
 }

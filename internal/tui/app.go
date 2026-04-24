@@ -314,6 +314,7 @@ func NewModel(a *app.App) Model {
 	sb := NewSidebarModel(NewMiniMonthModel(now), NewCalendarListModel(nil, hidden))
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	theme := NewTheme(true)
+	SetActiveTheme(theme)
 	return Model{
 		app:             a,
 		keys:            defaultAppKeys(),
@@ -1065,6 +1066,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.BackgroundColorMsg:
 		m.theme = NewTheme(msg.IsDark())
+		SetActiveTheme(m.theme)
 		m.calendar = m.calendar.SetSelectedColor(m.theme.Text)
 		m.week = m.week.SetSelectedColor(m.theme.Text)
 		m.day = m.day.SetSelectedColor(m.theme.Text)

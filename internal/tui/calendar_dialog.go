@@ -85,13 +85,6 @@ type testConnectionPressedMsg struct{}
 // CalendarDialogClosedMsg is emitted when the user cancels the dialog.
 type CalendarDialogClosedMsg struct{}
 
-// paletteSwatches is the preset color grid shown in the calendar dialog.
-var paletteSwatches = []string{
-	"#0074D9", "#7FDBFF", "#B10DC9",
-	"#85144b", "#FF4136", "#FF851B",
-	"#FFDC00", "#3D9970",
-}
-
 // Form field indices. Local fields are always present. Index 4 is an empty
 // spacer row; index 5 is the Sync toggle in unlinked mode or a read-only
 // status line in linked mode. Remote fields (6..11) exist only when Sync
@@ -172,7 +165,7 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 	nameField.SetValue(params.Name)
 	nameField.SetCharLimit(256)
 
-	colorField := NewColorField(paletteSwatches, params.Color, theme.TextDim)
+	colorField := NewColorField(theme.CalendarSwatches, params.Color, theme.TextDim)
 
 	descField := NewTextField("Shared family schedule")
 	descField.SetValue(params.Description)
