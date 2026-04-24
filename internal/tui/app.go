@@ -1072,9 +1072,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.BackgroundColorMsg:
 		m.theme = LoadTheme(m.themeName, msg.IsDark())
 		SetActiveTheme(m.theme)
-		m.calendar = m.calendar.SetSelectedColor(m.theme.Text)
-		m.week = m.week.SetSelectedColor(m.theme.Text)
-		m.day = m.day.SetSelectedColor(m.theme.Text)
+		m.calendar = m.calendar.SetSelectedColor(m.theme.Selected)
+		m.week = m.week.SetSelectedColor(m.theme.Selected)
+		m.day = m.day.SetSelectedColor(m.theme.Selected)
 		m.agenda = m.agenda.SetTheme(m.theme)
 		m.sidebar = m.sidebar.SetTheme(m.theme)
 		m.toast.SetTheme(m.theme)

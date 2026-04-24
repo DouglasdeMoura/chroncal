@@ -633,7 +633,15 @@ func buildCalendarCell(d time.Time, isToday, inMonth bool, events []CalendarEven
 	numStyle := lipgloss.NewStyle()
 	switch {
 	case isToday:
-		numStyle = numStyle.Reverse(true).Bold(true).Padding(0, 1)
+		// Explicit fg/bg rather than Reverse(true): some terminal themes
+		// (e.g. Omarchy light themes with OSC-11 cream backgrounds) don't
+		// swap reliably between the ANSI 0/7 palette and the OSC-10/11
+		// defaults, which can collapse Reverse to fg==bg.
+		numStyle = numStyle.
+			Background(activeTheme.Today).
+			Foreground(activeTheme.Surface).
+			Bold(true).
+			Padding(0, 1)
 	case !inMonth:
 		numStyle = numStyle.Faint(true)
 	}
@@ -959,7 +967,12 @@ func renderWeekColumnHeaders(anchor time.Time, colWs []int, todayKey, selectedKe
 		numStyle := lipgloss.NewStyle().Faint(true)
 		if dayKey == todayKey {
 			style = style.Faint(false).Bold(true)
-			numStyle = numStyle.Faint(false).Bold(true).Reverse(true).Padding(0, 1)
+			numStyle = numStyle.
+				Faint(false).
+				Bold(true).
+				Background(activeTheme.Today).
+				Foreground(activeTheme.Surface).
+				Padding(0, 1)
 		}
 		if dayKey == selectedKey && selectedColor != nil {
 			style = style.Foreground(selectedColor).Bold(true).Faint(false)

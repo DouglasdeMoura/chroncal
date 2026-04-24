@@ -398,13 +398,23 @@ func (m MiniMonthModel) View() string {
 		isEndpoint, isInRange := m.rangePosition(cur)
 		switch {
 		case isCursor:
-			// Reverse video (bg/fg swap). The cursor case wins over today so
+			// Explicit fg/bg so the cursor stays visible on terminals where
+			// Reverse(true) (SGR 7) and the ANSI 0/7 palette disagree with
+			// the OSC-10/11 defaults. The cursor case wins over today so
 			// today's red tint never shows on the selected cell.
-			cell = lipgloss.NewStyle().Reverse(true).Bold(true).Render(num)
+			cell = lipgloss.NewStyle().
+				Background(activeTheme.Text).
+				Foreground(activeTheme.Surface).
+				Bold(true).
+				Render(num)
 		case isEndpoint, isInRange:
 			// Range days share the selected-day style so the range reads as
 			// one continuous selection.
-			cell = lipgloss.NewStyle().Reverse(true).Bold(true).Render(num)
+			cell = lipgloss.NewStyle().
+				Background(activeTheme.Text).
+				Foreground(activeTheme.Surface).
+				Bold(true).
+				Render(num)
 		case isToday:
 			// Fake a square outline with underline + overline (top + bottom
 			// sides). SGR 53/55 is not exposed by lipgloss, so wrap the
@@ -424,7 +434,9 @@ func (m MiniMonthModel) View() string {
 			// continuous ribbon instead of isolated reversed cells.
 			next := cur.AddDate(0, 0, 1)
 			if next.Month() == first.Month() && m.inRangeInclusive(cur) && m.inRangeInclusive(next) {
-				b.WriteString(lipgloss.NewStyle().Reverse(true).Render(" "))
+				b.WriteString(lipgloss.NewStyle().
+					Background(activeTheme.Text).
+					Render(" "))
 			} else {
 				b.WriteString(" ")
 			}
