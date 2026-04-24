@@ -1113,11 +1113,10 @@ func hitSubCol(matches []placedEvent, xInCol, totalWidth int) int64 {
 
 func renderTimeCellContent(p placedEvent, row, width int) string {
 	relRow := row - p.startRow
-	bg := lipgloss.Color("8")
-	fg := lipgloss.Color("15")
+	var bg, fg color.Color = lipgloss.Color("8"), lipgloss.Color("15")
 	if p.event.Color != "" {
 		bg = lipgloss.Color(p.event.Color)
-		fg = lipgloss.Color("0")
+		fg = oklch.ContrastingFg(bg)
 	}
 
 	var text string
@@ -1210,10 +1209,11 @@ func renderEventPill(ev CalendarEvent, cellW int, faint bool) string {
 	var bg, fg color.Color = lipgloss.Color("8"), lipgloss.Color("15")
 	if ev.Color != "" {
 		bg = lipgloss.Color(ev.Color)
-		fg = lipgloss.Color("0")
 	}
 	if faint {
 		bg = oklch.Dim(bg, 0.78)
+	}
+	if ev.Color != "" || faint {
 		fg = oklch.ContrastingFg(bg)
 	}
 	return lipgloss.NewStyle().Background(bg).Foreground(fg).

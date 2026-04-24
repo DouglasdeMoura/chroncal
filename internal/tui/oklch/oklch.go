@@ -78,20 +78,23 @@ func Dim(c color.Color, factor float64) color.Color {
 }
 
 // ContrastingFg returns a foreground color with strong L contrast against bg
-// while keeping bg's hue. Dark bg (L<0.6) → L=0.80; light bg → L=0.30. Chroma
-// is reduced to 20% so text reads as a softly tinted gray rather than a
-// saturated second color. Falls back to white on a transparent bg.
+// while keeping bg's hue. Dark bg (L<0.55) → L=0.92; light bg → L=0.18, so
+// the worst-case ΔL is ~0.37 — comfortably readable across all hues, since
+// in OKLCh perceived contrast tracks ΔL independent of hue. Chroma is kept
+// at 35% so the text reads as a tinted member of the calendar's color
+// family rather than plain white/black. Falls back to white on a
+// transparent bg.
 func ContrastingFg(bg color.Color) color.Color {
 	L, C, H, ok := FromColor(bg)
 	if !ok {
 		return lipgloss.Color("15")
 	}
-	if L < 0.6 {
-		L = 0.80
+	if L < 0.55 {
+		L = 0.92
 	} else {
-		L = 0.30
+		L = 0.18
 	}
-	C *= 0.2
+	C *= 0.35
 	return ToColor(L, C, H)
 }
 
