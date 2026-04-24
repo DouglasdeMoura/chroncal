@@ -506,10 +506,16 @@ func renderPaletteRow(c PaletteCommand, width int, selected bool, theme Theme) s
 	} else {
 		out.WriteString(base.Render("  "))
 	}
-	out.WriteString(base.Foreground(theme.Text).Render(title))
+	titleFg := theme.Text
+	rightFg := theme.TextDim
+	if selected {
+		titleFg = theme.SelectedText
+		rightFg = theme.SelectedText
+	}
+	out.WriteString(base.Foreground(titleFg).Render(title))
 	out.WriteString(base.Render(strings.Repeat(" ", gap)))
 	if right != "" {
-		out.WriteString(base.Foreground(theme.TextDim).Render(right))
+		out.WriteString(base.Foreground(rightFg).Render(right))
 	}
 	return out.String()
 }

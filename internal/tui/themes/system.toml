@@ -45,7 +45,13 @@ border    = "8"
 today     = { light = "1", dark = "9" }
 # Selected row highlight — base03 reads as a visible gray against both
 # the default bg and the default fg, so it never collapses.
-selected  = "8"
+selected      = "8"
+# Text painted on top of Selected. Same inverse-luminance rationale as
+# badge_text / button_text: base00 is the light bg on any light theme
+# and base07 is the brightest color on any dark theme, so either reads
+# as a high-contrast light foreground against the mid-tone gray of
+# Selected — which is what breaks down when using `text` (base05).
+selected_text = { light = "0", dark = "15" }
 # Panel background — base00 matches the terminal default so Surface can
 # be used as a "reset background" foreground against colored cells.
 surface   = "0"

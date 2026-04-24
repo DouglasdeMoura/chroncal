@@ -27,8 +27,13 @@ type Theme struct {
 	Border    color.Color
 	Today     color.Color
 	Selected  color.Color
-	Surface   color.Color
-	Error     color.Color
+	// SelectedText is the foreground color to use when painting text on
+	// top of Selected. On themes where Selected and Text may converge
+	// (e.g. Base16 system themes where both resolve to dark indices),
+	// this token lets the theme break the tie explicitly.
+	SelectedText color.Color
+	Surface      color.Color
+	Error        color.Color
 
 	// Badge pills (BadgeText is the shared foreground).
 	BadgeOK      color.Color

@@ -258,7 +258,7 @@ func (m EventDialogModel) refresh() EventDialogModel {
 			case listFocused:
 				style = style.Reverse(true).Bold(true)
 			case selBG != nil:
-				style = style.Background(selBG)
+				style = style.Background(selBG).Foreground(activeTheme.SelectedText)
 			}
 			if rowW > 0 {
 				style = style.Width(rowW)

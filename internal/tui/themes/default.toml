@@ -24,10 +24,13 @@ muted     = { light = "#9CA3AF", dark = "#6B7280" }
 text      = { light = "#1F2937", dark = "#F9FAFB" }
 text_dim  = { light = "#6B7280", dark = "#9CA3AF" }
 border    = { light = "#D1D5DB", dark = "#374151" }
-today     = { light = "#DC2626", dark = "#F87171" }
-selected  = { light = "#EDE9FE", dark = "#312E81" }
-surface   = { light = "#F9FAFB", dark = "#111827" }
-error     = { light = "#DC2626", dark = "#F87171" }
+today          = { light = "#DC2626", dark = "#F87171" }
+selected       = { light = "#EDE9FE", dark = "#312E81" }
+# Text color drawn on top of Selected. Same as `text` by default because
+# the default theme picks Selected/Text from opposite luminance ranges.
+selected_text  = { light = "#1F2937", dark = "#F9FAFB" }
+surface        = { light = "#F9FAFB", dark = "#111827" }
+error          = { light = "#DC2626", dark = "#F87171" }
 
 # ---------------------------------------------------------------------------
 # Badges (BadgeText is the shared foreground)

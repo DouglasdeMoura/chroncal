@@ -502,7 +502,11 @@ func (m AgendaModel) renderEmptyDayRow(r agendaRow, selected bool) string {
 		tail = highlight.Foreground(m.theme.Primary).Bold(true).Render("+ Create event")
 	}
 	tailW := max(m.width-lipgloss.Width(prefix), 0)
-	return prefix + highlight.Width(tailW).Foreground(m.theme.Text).Render(tail)
+	tailFg := m.theme.Text
+	if selected {
+		tailFg = m.theme.SelectedText
+	}
+	return prefix + highlight.Width(tailW).Foreground(tailFg).Render(tail)
 }
 
 // renderEventRow composes a single agenda line. When selected, the
@@ -528,7 +532,11 @@ func (m AgendaModel) renderEventRow(r agendaRow, selected bool) string {
 	dot := unpainted.Foreground(dotColor).Render(Glyphs["dot"])
 
 	timeText := agendaTimeText(ev, r.dayIndex, r.totalDays)
-	timeStyle := highlight.Foreground(m.theme.TextDim).Width(agendaTimeColWidth)
+	timeFg := m.theme.TextDim
+	if selected {
+		timeFg = m.theme.SelectedText
+	}
+	timeStyle := highlight.Foreground(timeFg).Width(agendaTimeColWidth)
 	if ev.AllDay {
 		timeStyle = timeStyle.Italic(true)
 	}
@@ -545,8 +553,12 @@ func (m AgendaModel) renderEventRow(r agendaRow, selected bool) string {
 		unpainted.Width(agendaDotColWidth).Render(" "+dot+" ")
 
 	titleW := max(m.width-lipgloss.Width(prefix)-agendaTimeColWidth, 1)
+	titleFg := m.theme.Text
+	if selected {
+		titleFg = m.theme.SelectedText
+	}
 	titleCol := highlight.
-		Foreground(m.theme.Text).
+		Foreground(titleFg).
 		Width(titleW).
 		Render(truncateTo(title, titleW))
 

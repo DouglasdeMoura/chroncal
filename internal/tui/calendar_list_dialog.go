@@ -296,7 +296,7 @@ func calendarRowLabel(info CalendarInfo, hidden, selected, listFocused bool, sel
 		case listFocused:
 			nameStyle = nameStyle.Reverse(true).Bold(true)
 		case selBG != nil:
-			nameStyle = nameStyle.Background(selBG)
+			nameStyle = nameStyle.Background(selBG).Foreground(activeTheme.SelectedText)
 		}
 		// Reserve the swatch (1 cell) + separator space (1 cell) and let the
 		// chip style fill the rest, so trailing pad cells pick up the tint.

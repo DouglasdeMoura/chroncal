@@ -31,10 +31,11 @@ type rawTheme struct {
 	Text      any `toml:"text"`
 	TextDim   any `toml:"text_dim"`
 	Border    any `toml:"border"`
-	Today     any `toml:"today"`
-	Selected  any `toml:"selected"`
-	Surface   any `toml:"surface"`
-	Error     any `toml:"error"`
+	Today        any `toml:"today"`
+	Selected     any `toml:"selected"`
+	SelectedText any `toml:"selected_text"`
+	Surface      any `toml:"surface"`
+	Error        any `toml:"error"`
 
 	// Badges.
 	BadgeOK      any `toml:"badge_ok"`
@@ -186,10 +187,11 @@ func resolveTheme(r *rawTheme, hasDarkBG bool) (Theme, error) {
 		Text:      pick("text", r.Text),
 		TextDim:   pick("text_dim", r.TextDim),
 		Border:    pick("border", r.Border),
-		Today:     pick("today", r.Today),
-		Selected:  pick("selected", r.Selected),
-		Surface:   pick("surface", r.Surface),
-		Error:     pick("error", r.Error),
+		Today:        pick("today", r.Today),
+		Selected:     pick("selected", r.Selected),
+		SelectedText: pick("selected_text", r.SelectedText),
+		Surface:      pick("surface", r.Surface),
+		Error:        pick("error", r.Error),
 
 		BadgeOK:      pick("badge_ok", r.BadgeOK),
 		BadgeWarn:    pick("badge_warn", r.BadgeWarn),
