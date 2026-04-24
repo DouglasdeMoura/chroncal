@@ -64,6 +64,25 @@ func ToColor(L, C, H float64) color.Color {
 	return lipgloss.Color(fmt.Sprintf("#%02x%02x%02x", r, g, b))
 }
 
+// ShiftLightness returns c with its OKLCh L shifted by delta, clamped to
+// [0, 1]. Hue and chroma are preserved. Positive delta makes the color
+// lighter, negative makes it darker. Useful for deriving a "just
+// noticeable" highlight from a background without guessing at the theme.
+func ShiftLightness(c color.Color, delta float64) color.Color {
+	L, C, H, ok := FromColor(c)
+	if !ok {
+		return c
+	}
+	L += delta
+	if L < 0 {
+		L = 0
+	}
+	if L > 1 {
+		L = 1
+	}
+	return ToColor(L, C, H)
+}
+
 // Dim desaturates c and pulls its lightness toward mid (L=0.55) in OKLCh,
 // keeping hue stable. factor ∈ [0,1]: 0 = unchanged, 1 = fully neutral gray.
 func Dim(c color.Color, factor float64) color.Color {

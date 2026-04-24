@@ -24,6 +24,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/event"
 	syncpkg "github.com/douglasdemoura/chroncal/internal/sync"
 	"github.com/douglasdemoura/chroncal/internal/trash"
+	"github.com/douglasdemoura/chroncal/internal/tui/oklch"
 )
 
 type appFocus int
@@ -1071,6 +1072,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.BackgroundColorMsg:
 		m.theme = LoadTheme(m.themeName, msg.IsDark())
+		// System theme opts into a terminal-adaptive Selected color:
+		// derive it from the actual terminal background reported over
+		// OSC 11 by shifting OKLCh lightness ±8 %. That guarantees a
+		// visible-but-subtle highlight on any terminal theme — the
+		// static Dracula Selection hexes in system.toml are the
+		// fallback when OSC 11 doesn't answer (e.g. tmux without
+		// passthrough).
+		if m.themeName == "system" && msg.Color != nil {
+			delta := 0.08
+			if !msg.IsDark() {
+				delta = -0.08
+			}
+			m.theme.Selected = oklch.ShiftLightness(msg.Color, delta)
+		}
 		SetActiveTheme(m.theme)
 		// Month/week/day views use the selected-color as a vibrant
 		// BORDER stroke around the cursor cell; Primary (the brand
