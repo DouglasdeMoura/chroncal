@@ -6,6 +6,7 @@ import (
 	"image"
 	"io"
 	"log/slog"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -2722,6 +2723,19 @@ func (m Model) saveUIState() {
 func Run(a *app.App, themeName string) error {
 	model := NewModel(a, themeName)
 	p := tea.NewProgram(model)
+
+	// Fire our own OSC 11 query up front — BEFORE Bubble Tea takes over
+	// stdin — and feed the result in as a synthetic BackgroundColorMsg.
+	// Bubble Tea's built-in query doesn't always answer reliably inside
+	// tmux or on terminals that defer the response; doing it here gives
+	// us a deterministic opportunity to seed the adaptive theme before
+	// first paint. If the terminal doesn't respond, lipgloss returns an
+	// error and we silently fall through to whatever Bubble Tea detects
+	// (or to the theme's static fallback if that also fails).
+	if bg, err := lipgloss.BackgroundColor(os.Stdin, os.Stdout); err == nil && bg != nil {
+		go func() { p.Send(tea.BackgroundColorMsg{Color: bg}) }()
+	}
+
 	_, err := p.Run()
 	return err
 }
