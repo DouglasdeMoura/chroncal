@@ -105,7 +105,7 @@ Helpful conventions:
 			go purger.RunDaily(context.Background())
 		}
 
-		return tui.Run(a)
+		return tui.Run(a, cfg.UI.Theme)
 	},
 }
 

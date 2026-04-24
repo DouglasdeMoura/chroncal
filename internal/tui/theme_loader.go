@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image/color"
 	"io/fs"
+	"os"
 	"strings"
 	"sync"
 
@@ -76,6 +77,27 @@ func LoadBuiltinTheme(name string, hasDarkBG bool) (Theme, error) {
 		return Theme{}, err
 	}
 	return resolveTheme(raw, hasDarkBG)
+}
+
+// LoadTheme resolves a theme by name with a safe fallback to the default.
+// An empty name is treated as the default. Unknown or malformed themes log
+// the error and fall back to the default so a typo in config.toml cannot
+// make the TUI unusable.
+func LoadTheme(name string, hasDarkBG bool) Theme {
+	if name == "" {
+		name = DefaultThemeName
+	}
+	t, err := LoadBuiltinTheme(name, hasDarkBG)
+	if err == nil {
+		return t
+	}
+	fmt.Fprintf(os.Stderr, "theme %q failed to load (%v); falling back to %q\n",
+		name, err, DefaultThemeName)
+	def, err := LoadBuiltinTheme(DefaultThemeName, hasDarkBG)
+	if err != nil {
+		panic("built-in default theme failed to load: " + err.Error())
+	}
+	return def
 }
 
 // BuiltinThemeNames returns the list of embedded theme identifiers.

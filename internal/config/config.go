@@ -36,6 +36,14 @@ type SoftDeleteConfig struct {
 	PurgeDays int `mapstructure:"purge_days"`
 }
 
+// UIConfig holds hand-editable TUI appearance preferences. Distinct from
+// UIState (state.go), which tracks machine-written session state.
+type UIConfig struct {
+	// Theme is the name of a built-in theme under internal/tui/themes/
+	// (e.g. "default", "system"). Empty falls back to the default.
+	Theme string `mapstructure:"theme"`
+}
+
 type Config struct {
 	DB         string           `mapstructure:"db"`
 	ProductID  string           `mapstructure:"product_id"`
@@ -43,6 +51,7 @@ type Config struct {
 	Sync       SyncConfig       `mapstructure:"sync"`
 	Security   SecurityConfig   `mapstructure:"security"`
 	SoftDelete SoftDeleteConfig `mapstructure:"soft_delete"`
+	UI         UIConfig         `mapstructure:"ui"`
 }
 
 // DefaultSoftDeletePurgeDays is applied when SoftDelete.PurgeDays is zero or
@@ -88,6 +97,7 @@ func newViper() *viper.Viper {
 	v.BindEnv("security.allow_unsafe_alarm_audio_attach")
 	v.BindEnv("security.allow_unsafe_alarm_email_attendees")
 	v.BindEnv("soft_delete.purge_days")
+	v.BindEnv("ui.theme")
 
 	return v
 }

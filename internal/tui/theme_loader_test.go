@@ -91,3 +91,32 @@ func TestLoadUnknownThemeReturnsError(t *testing.T) {
 		t.Fatal("expected error loading unknown theme")
 	}
 }
+
+func TestLoadSystemTheme(t *testing.T) {
+	for _, dark := range []bool{true, false} {
+		th, err := LoadBuiltinTheme("system", dark)
+		if err != nil {
+			t.Fatalf("system (dark=%v): %v", dark, err)
+		}
+		if th.Primary == nil || th.BadgeOK == nil || th.FormHighlight == nil {
+			t.Errorf("system (dark=%v): tokens unexpectedly nil", dark)
+		}
+		if len(th.CalendarSwatches) == 0 {
+			t.Errorf("system (dark=%v): calendar swatches empty", dark)
+		}
+	}
+}
+
+func TestLoadThemeFallsBackOnUnknown(t *testing.T) {
+	th := LoadTheme("does-not-exist", true)
+	if th.Primary == nil {
+		t.Fatal("fallback theme should still populate tokens")
+	}
+}
+
+func TestLoadThemeEmptyNameIsDefault(t *testing.T) {
+	th := LoadTheme("", true)
+	if th.Primary == nil {
+		t.Fatal("empty name should resolve to default")
+	}
+}

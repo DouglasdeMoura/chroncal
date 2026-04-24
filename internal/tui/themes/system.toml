@@ -1,0 +1,93 @@
+# tcal "system" theme — inherits the terminal's ANSI palette.
+#
+# Every token references an ANSI palette index (0-15) instead of a hex
+# value, so the terminal emulator's own theme drives the final colors.
+# This is the same approach as lazygit, fzf, and tig: change your
+# terminal theme (or Omarchy theme, which themes the terminal) and tcal
+# follows automatically with zero restart.
+#
+# ANSI indices: 0 black, 1 red, 2 green, 3 yellow, 4 blue, 5 magenta,
+# 6 cyan, 7 white; 8-15 are the "bright" equivalents.
+#
+# Light/dark variants flip between normal and bright so contrast reads
+# well on both backgrounds.
+
+name        = "system"
+description = "Inherits the terminal's ANSI 0-15 palette (Omarchy-friendly)"
+
+# ---------------------------------------------------------------------------
+# Structural chrome
+# ---------------------------------------------------------------------------
+
+# Brand/headers: blue
+primary   = { light = "4", dark = "12" }
+# Secondary accents: cyan
+secondary = { light = "6", dark = "14" }
+# Positive / accent: green
+accent    = { light = "2", dark = "10" }
+# De-emphasized chrome: bright black (usually a gray)
+muted     = "8"
+# Main text: let the terminal pick the default foreground
+text      = { light = "0", dark = "15" }
+# Lower-contrast text: bright black
+text_dim  = "8"
+# Borders: bright black (gray)
+border    = "8"
+# "Today" highlight: red
+today     = { light = "1", dark = "9" }
+# Selected row highlight background
+selected  = { light = "7", dark = "0" }
+# Panel background — leaving this as terminal default reads best, but
+# Theme.Surface is used as a foreground against Primary in some rendering
+# paths, so map it to the opposite of `text`.
+surface   = { light = "15", dark = "0" }
+# Errors: red
+error     = { light = "1", dark = "9" }
+
+# ---------------------------------------------------------------------------
+# Badges
+# ---------------------------------------------------------------------------
+
+badge_ok      = "2"
+badge_warn    = "3"
+badge_danger  = "1"
+badge_info    = "4"
+badge_neutral = "8"
+# Badge foreground: bright white reads on every ANSI background.
+badge_text    = "15"
+
+# ---------------------------------------------------------------------------
+# Form internals
+# ---------------------------------------------------------------------------
+
+form_label     = "8"
+form_required  = { light = "1", dark = "9" }
+form_error     = { light = "1", dark = "9" }
+# Flash / select highlight: magenta.
+form_highlight = { light = "5", dark = "13" }
+
+# ---------------------------------------------------------------------------
+# Buttons
+# ---------------------------------------------------------------------------
+
+button_primary_bg         = { light = "4", dark = "12" }
+button_primary_focused_bg = { light = "5", dark = "13" }
+button_secondary_bg       = "8"
+button_danger_bg          = { light = "1", dark = "1" }
+button_danger_focused_bg  = { light = "9", dark = "9" }
+button_ghost_fg           = "8"
+button_text               = "15"
+
+# ---------------------------------------------------------------------------
+# Calendar palette swatches
+#
+# ANSI only offers 16 colors, which is too few for distinctive per-calendar
+# colors. Keep hex swatches here so users still get a useful palette in the
+# calendar dialog even when the rest of the UI inherits the terminal theme.
+# ---------------------------------------------------------------------------
+
+calendar_swatches = [
+  "#0074D9", "#7FDBFF", "#B10DC9",
+  "#85144b", "#FF4136", "#FF851B",
+  "#FFDC00", "#3D9970",
+]

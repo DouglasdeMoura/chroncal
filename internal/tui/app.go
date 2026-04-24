@@ -203,6 +203,7 @@ type syncStatusExpiredMsg struct {
 type Model struct {
 	app            *app.App
 	theme          Theme
+	themeName      string
 	keys           appKeyMap
 	width          int
 	height         int
@@ -295,7 +296,10 @@ type Model struct {
 	pendingPurgeTitle   string
 }
 
-func NewModel(a *app.App) Model {
+// NewModel builds the root TUI model. themeName selects a built-in theme
+// (see internal/tui/themes/*.toml); empty or unknown names fall back to
+// DefaultThemeName.
+func NewModel(a *app.App, themeName string) Model {
 	ui := config.LoadUIState()
 	hidden := make(map[int64]bool, len(ui.HiddenCalendars))
 	for _, id := range ui.HiddenCalendars {
@@ -313,10 +317,11 @@ func NewModel(a *app.App) Model {
 	}
 	sb := NewSidebarModel(NewMiniMonthModel(now), NewCalendarListModel(nil, hidden))
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	theme := NewTheme(true)
+	theme := LoadTheme(themeName, true)
 	SetActiveTheme(theme)
 	return Model{
 		app:             a,
+		themeName:       themeName,
 		keys:            defaultAppKeys(),
 		viewMode:        vm,
 		calendar:        NewCalendarModel(now).SetShowWeekNumbers(ui.ShowWeekNumbers),
@@ -1065,7 +1070,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.BackgroundColorMsg:
-		m.theme = NewTheme(msg.IsDark())
+		m.theme = LoadTheme(m.themeName, msg.IsDark())
 		SetActiveTheme(m.theme)
 		m.calendar = m.calendar.SetSelectedColor(m.theme.Text)
 		m.week = m.week.SetSelectedColor(m.theme.Text)
@@ -2683,8 +2688,8 @@ func (m Model) saveUIState() {
 	})
 }
 
-func Run(a *app.App) error {
-	model := NewModel(a)
+func Run(a *app.App, themeName string) error {
+	model := NewModel(a, themeName)
 	p := tea.NewProgram(model)
 	_, err := p.Run()
 	return err
