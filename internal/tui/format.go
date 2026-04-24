@@ -438,6 +438,10 @@ func Calendar(opts CalendarOptions) string {
 	if !opts.Today.IsZero() {
 		todayKey = opts.Today.Local().Format("2006-01-02")
 	}
+	selectedKey := ""
+	if !opts.Selected.IsZero() {
+		selectedKey = opts.Selected.Local().Format("2006-01-02")
+	}
 
 	cellWs, cellHs, _ := calendarGridSizes(opts.Width, opts.Height, opts.ShowHeader)
 
@@ -462,7 +466,7 @@ func Calendar(opts CalendarOptions) string {
 				row[col] = blankCellWithWeekLabel(cellWs[col], cellHs[week], label)
 				continue
 			}
-			row[col] = buildCalendarCell(d, dayKey == todayKey, inMonth, eventsByDay[dayKey], cellWs[col], cellHs[week], label)
+			row[col] = buildCalendarCell(d, dayKey == todayKey, dayKey == selectedKey, inMonth, eventsByDay[dayKey], cellWs[col], cellHs[week], label)
 		}
 		rows[week] = row
 	}
@@ -627,7 +631,7 @@ func renderWeekLabelLine(weekLabel, dayRendered string, cellW int) string {
 	return faintLabel + strings.Repeat(" ", pad) + dayRendered
 }
 
-func buildCalendarCell(d time.Time, isToday, inMonth bool, events []CalendarEvent, cellW, cellH int, weekLabel string) string {
+func buildCalendarCell(d time.Time, isToday, isSelected, inMonth bool, events []CalendarEvent, cellW, cellH int, weekLabel string) string {
 	dayNum := fmt.Sprintf("%d", d.Day())
 
 	numStyle := lipgloss.NewStyle()
@@ -642,6 +646,11 @@ func buildCalendarCell(d time.Time, isToday, inMonth bool, events []CalendarEven
 			Foreground(activeTheme.Surface).
 			Bold(true).
 			Padding(0, 1)
+	case isSelected:
+		// Paint the selected day's number in the same accent used by the
+		// cell-border highlight, so the cursor day pops even when the
+		// border alone is subtle against the terminal bg.
+		numStyle = numStyle.Foreground(activeTheme.Primary).Bold(true)
 	case !inMonth:
 		numStyle = numStyle.Faint(true)
 	}
