@@ -49,9 +49,6 @@ func TestMaybeExpandBackward_DoesNotSlideWindowEnd(t *testing.T) {
 		t.Fatalf("windowEnd slid from %v to %v; backward expansion must hold the far edge",
 			origEnd.Format("2006-01-02"), m.WindowEnd().Format("2006-01-02"))
 	}
-	if daysBetween(m.WindowStart(), m.WindowEnd()) > AgendaMaxWindow {
-		t.Fatalf("window exceeded AgendaMaxWindow: %d", daysBetween(m.WindowStart(), m.WindowEnd()))
-	}
 	// Anchor event must still be in the window.
 	if ev.StartTime.Before(m.WindowStart()) || !ev.StartTime.Before(m.WindowEnd()) {
 		t.Fatalf("anchor event (%v) fell out of window [%v, %v)",
@@ -61,10 +58,11 @@ func TestMaybeExpandBackward_DoesNotSlideWindowEnd(t *testing.T) {
 	}
 }
 
-// TestMaybeExpandBackward_RefusesAtMaxWindow verifies that once the window
-// has grown to AgendaMaxWindow against the fixed far edge, further backward
-// expansion is refused (no reload command emitted).
-func TestMaybeExpandBackward_RefusesAtMaxWindow(t *testing.T) {
+// TestMaybeExpandBackward_GrowsIndefinitely verifies the infinite-scroll
+// contract: the backward expander keeps growing windowStart on repeated
+// top-edge triggers so the user can navigate arbitrarily far back. The
+// old cap at AgendaMaxWindow left users stuck after ~3 months.
+func TestMaybeExpandBackward_GrowsIndefinitely(t *testing.T) {
 	today := time.Date(2026, 4, 23, 0, 0, 0, 0, time.Local)
 	ev := event.Event{
 		ID:        1,
@@ -72,12 +70,18 @@ func TestMaybeExpandBackward_RefusesAtMaxWindow(t *testing.T) {
 		EndTime:   time.Date(2026, 4, 23, 10, 0, 0, 0, time.Local),
 	}
 	m := NewAgendaModel(today).SetSize(80, 24).SetEvents([]event.Event{ev}, nil)
-	m = scrollAgendaToTop(t, m, []event.Event{ev}, 20)
 
+	// 20 backward expansions = 600 days — well past any previous cap.
+	m = scrollAgendaToTop(t, m, []event.Event{ev}, 20)
+	if got := daysBetween(m.WindowStart(), m.WindowEnd()); got < 20*AgendaExpandStep {
+		t.Fatalf("window did not grow through 20 expansions: %d days", got)
+	}
+
+	// The 21st press still returns a reload command — no hard cap.
 	m.scroll = 0
 	m.selected = 0
-	if cmd := m.maybeExpandBackward(); cmd != nil {
-		t.Fatalf("expected no further expansion at max window; got cmd = %T", cmd())
+	if cmd := m.maybeExpandBackward(); cmd == nil {
+		t.Fatal("expected another backward expansion to be allowed (infinite scroll)")
 	}
 }
 
@@ -109,9 +113,6 @@ func TestMaybeExpandForward_DoesNotSlideWindowStart(t *testing.T) {
 	if !m.WindowStart().Equal(origStart) {
 		t.Fatalf("windowStart slid from %v to %v; forward expansion must hold the near edge",
 			origStart.Format("2006-01-02"), m.WindowStart().Format("2006-01-02"))
-	}
-	if daysBetween(m.WindowStart(), m.WindowEnd()) > AgendaMaxWindow {
-		t.Fatalf("window exceeded AgendaMaxWindow: %d", daysBetween(m.WindowStart(), m.WindowEnd()))
 	}
 }
 

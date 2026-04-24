@@ -15,13 +15,14 @@ import (
 )
 
 // Agenda window sizing constants. The window grows as the user scrolls
-// near either edge (infinite scroll) but is clamped to AgendaMaxWindow
-// days so memory stays bounded — when one side expands past the cap,
-// the opposite edge is trimmed. Initial loads use AgendaWindowDays.
+// near either edge (infinite scroll); there is no hard cap — the opposite
+// edge is never slid, because doing so would drop content the user is
+// still looking at. Memory is bounded by the user's scrolling: each
+// expansion adds AgendaExpandStep days, so a typical session stays well
+// under any meaningful limit. Initial loads use AgendaWindowDays.
 const (
 	AgendaWindowDays  = 30
 	AgendaExpandStep  = 30
-	AgendaMaxWindow   = 120
 	AgendaPreloadRows = 6
 )
 
@@ -667,9 +668,8 @@ func (m *AgendaModel) ScrollBy(delta int) tea.Cmd {
 // edge (windowEnd) is held fixed — sliding it backward would drop
 // content the user is still looking at, and when the newly-included
 // earlier range is empty in the DB the agenda would appear to "lose"
-// all its data. Once the window has grown to AgendaMaxWindow against
-// the fixed far edge, further backward expansion is refused; the user
-// jumps further back with the []/h keys instead.
+// all its data. The window has no hard cap so infinite scroll keeps
+// working; memory stays bounded by the user's scrolling.
 func (m *AgendaModel) maybeExpandBackward() tea.Cmd {
 	if m.reloadPending || len(m.rows) == 0 {
 		return nil
@@ -679,15 +679,7 @@ func (m *AgendaModel) maybeExpandBackward() tea.Cmd {
 	if !atTop {
 		return nil
 	}
-	newStart := m.windowStart.AddDate(0, 0, -AgendaExpandStep)
-	minStart := m.windowEnd.AddDate(0, 0, -AgendaMaxWindow)
-	if newStart.Before(minStart) {
-		newStart = minStart
-	}
-	if !newStart.Before(m.windowStart) {
-		return nil
-	}
-	m.windowStart = newStart
+	m.windowStart = m.windowStart.AddDate(0, 0, -AgendaExpandStep)
 	m.stampAnchor()
 	m.reloadPending = true
 	return func() tea.Msg { return AgendaReloadMsg{} }
@@ -699,14 +691,11 @@ func (m *AgendaModel) maybeExpandBackward() tea.Cmd {
 // (e.g. after `[`/`]` jumps land on a sparse month), so the next month
 // flows in automatically instead of waiting for the user to navigate.
 func (m *AgendaModel) maybeExpandForward() tea.Cmd {
-	if m.reloadPending {
+	if m.reloadPending || len(m.rows) == 0 {
 		return nil
 	}
 	viewportH := m.viewportH()
-	underfilled := len(m.rows) > 0 && len(m.rows) < viewportH
-	if len(m.rows) == 0 {
-		return nil
-	}
+	underfilled := len(m.rows) < viewportH
 	maxScroll := m.maxScroll(viewportH)
 	atBottom := underfilled ||
 		(maxScroll > 0 && m.scroll >= maxScroll-AgendaPreloadRows) ||
@@ -714,15 +703,7 @@ func (m *AgendaModel) maybeExpandForward() tea.Cmd {
 	if !atBottom {
 		return nil
 	}
-	newEnd := m.windowEnd.AddDate(0, 0, AgendaExpandStep)
-	maxEnd := m.windowStart.AddDate(0, 0, AgendaMaxWindow)
-	if newEnd.After(maxEnd) {
-		newEnd = maxEnd
-	}
-	if !newEnd.After(m.windowEnd) {
-		return nil
-	}
-	m.windowEnd = newEnd
+	m.windowEnd = m.windowEnd.AddDate(0, 0, AgendaExpandStep)
 	m.stampAnchor()
 	m.reloadPending = true
 	return func() tea.Msg { return AgendaReloadMsg{} }

@@ -85,8 +85,13 @@ type eventsLoadedMsg struct {
 	// responses when the active view's range has moved on (e.g., rapid
 	// month navigation in the agenda fires multiple loads and the last to
 	// arrive must not overwrite the current window's rows with empty data).
-	from   time.Time
-	to     time.Time
+	from time.Time
+	to   time.Time
+	// merge=true means this is an incremental slice to append to the
+	// existing m.events (agenda infinite-scroll path); merge=false means
+	// replace m.events entirely (full refresh — initial load, cursor
+	// jump, view change, post-mutation reload).
+	merge  bool
 	events []event.Event
 	err    error
 }
@@ -205,6 +210,12 @@ type Model struct {
 	day            DayModel
 	agenda         AgendaModel
 	events         []event.Event
+	// loadedFrom/loadedTo track the [from, to) UTC range currently covered
+	// by m.events so agenda expansion can query only the newly-added
+	// slice instead of re-querying the whole window each time. Zero values
+	// mean "no prior load" and force a full refresh.
+	loadedFrom     time.Time
+	loadedTo       time.Time
 	calendars      map[int64]CalendarInfo
 	dialog         EventDialogModel
 	dialogOpen     bool
@@ -346,6 +357,35 @@ func (m Model) expectedEventRange() (time.Time, time.Time) {
 
 func (m Model) loadEvents() tea.Cmd {
 	from, to := m.expectedEventRange()
+	return m.queryEventsRange(from, to, false)
+}
+
+// loadEventsIncremental queries only the newly-added slice of an agenda
+// expansion when the loaded range shares an edge with the new expected
+// range — infinite-scroll stays O(1 step) in query cost even after the
+// user has scrolled years back. Falls back to a full refresh when the
+// ranges don't share an edge (e.g. after a cursor jump).
+func (m Model) loadEventsIncremental() tea.Cmd {
+	wantFrom, wantTo := m.expectedEventRange()
+	if m.loadedFrom.IsZero() || m.loadedTo.IsZero() {
+		return m.queryEventsRange(wantFrom, wantTo, false)
+	}
+	// Forward extension: near edge unchanged, far edge pushed later.
+	if m.loadedFrom.Equal(wantFrom) && m.loadedTo.Before(wantTo) {
+		return m.queryEventsRange(m.loadedTo, wantTo, true)
+	}
+	// Backward extension: far edge unchanged, near edge pushed earlier.
+	if m.loadedTo.Equal(wantTo) && wantFrom.Before(m.loadedFrom) {
+		return m.queryEventsRange(wantFrom, m.loadedFrom, true)
+	}
+	// No shared edge — full refresh.
+	return m.queryEventsRange(wantFrom, wantTo, false)
+}
+
+// queryEventsRange runs the recurrence-expanded query for [from, to) and
+// returns an eventsLoadedMsg tagged with the queried range and whether
+// the result is a merge (incremental) or a replacement (full refresh).
+func (m Model) queryEventsRange(from, to time.Time, merge bool) tea.Cmd {
 	mainCmd := func() tea.Msg {
 		expanded, err := m.app.Recurrences.ListExpandedEvents(context.Background(), from, to)
 		events := make([]event.Event, len(expanded))
@@ -357,11 +397,39 @@ func (m Model) loadEvents() tea.Cmd {
 			evt.StartTime = e.InstanceTime
 			events[i] = evt
 		}
-		return eventsLoadedMsg{from: from, to: to, events: events, err: err}
+		return eventsLoadedMsg{from: from, to: to, merge: merge, events: events, err: err}
 	}
 	// The mini-month shows a full month regardless of the main view's range,
 	// so refresh its per-day event counts alongside every main reload.
 	return tea.Batch(mainCmd, m.loadMiniMonthEvents())
+}
+
+// mergeEvents dedup-appends new events into existing. The dedup key is
+// (ID, StartTime.UTC()) — unique for both non-recurring events and
+// recurrence instances. Needed when a multi-day event straddles the
+// incremental slice boundary and gets returned by both queries.
+func mergeEvents(existing, incoming []event.Event) []event.Event {
+	seen := make(map[string]struct{}, len(existing)+len(incoming))
+	out := make([]event.Event, 0, len(existing)+len(incoming))
+	add := func(e event.Event) {
+		key := eventDedupKey(e)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		out = append(out, e)
+	}
+	for _, e := range existing {
+		add(e)
+	}
+	for _, e := range incoming {
+		add(e)
+	}
+	return out
+}
+
+func eventDedupKey(e event.Event) string {
+	return e.StartTime.UTC().Format(time.RFC3339) + "|" + fmt.Sprint(e.ID)
 }
 
 // loadMiniMonthEvents queries the single-month range displayed by the sidebar
@@ -1020,12 +1088,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// the agenda) fires multiple in-flight queries; drop any whose range
 		// no longer matches the active view so a late stale response can't
 		// overwrite correct rows with an empty set.
+		//
+		// For full (merge=false) responses the query range must equal the
+		// current expected range exactly. For incremental (merge=true)
+		// responses the queried slice must lie inside the expected range
+		// and abut the currently-loaded range so the append is meaningful;
+		// otherwise the user has since jumped elsewhere.
 		expectedFrom, expectedTo := m.expectedEventRange()
-		if !msg.from.Equal(expectedFrom) || !msg.to.Equal(expectedTo) {
+		if msg.merge {
+			if msg.from.Before(expectedFrom) || msg.to.After(expectedTo) {
+				return m, nil
+			}
+			if !msg.from.Equal(m.loadedTo) && !msg.to.Equal(m.loadedFrom) {
+				return m, nil
+			}
+		} else if !msg.from.Equal(expectedFrom) || !msg.to.Equal(expectedTo) {
 			return m, nil
 		}
 		m.err = msg.err
-		m.events = msg.events
+		if msg.merge {
+			m.events = mergeEvents(m.events, msg.events)
+			if msg.from.Before(m.loadedFrom) {
+				m.loadedFrom = msg.from
+			}
+			if msg.to.After(m.loadedTo) {
+				m.loadedTo = msg.to
+			}
+		} else {
+			m.events = msg.events
+			m.loadedFrom = msg.from
+			m.loadedTo = msg.to
+		}
 		calEvents := eventsToCalendar(msg.events, m.calendars, m.hiddenCalendars)
 		switch m.viewMode {
 		case viewDay:
@@ -1087,7 +1180,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.loadEvents()
 
 	case AgendaReloadMsg:
-		return m, m.loadEvents()
+		return m, m.loadEventsIncremental()
 
 	case AgendaEmptyDaysToggledMsg:
 		m.saveUIState()
