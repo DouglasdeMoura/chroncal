@@ -207,6 +207,7 @@ func footerHints(ctx FooterContext, hasRSVP, showTodayHint bool) []footerHint {
 	case FooterMonth, FooterWeek, FooterDay:
 		hints := []footerHint{
 			{"↑↓←→", "move"},
+			{"[]", bracketDesc(ctx)},
 			{"enter", "open"},
 			{"c", "new"},
 		}
@@ -264,6 +265,20 @@ func footerHints(ctx FooterContext, hasRSVP, showTodayHint bool) []footerHint {
 		}
 	}
 	return nil
+}
+
+// bracketDesc returns the description for the "[]" bracket-navigation hint
+// in views where it jumps by the view's natural unit.
+func bracketDesc(ctx FooterContext) string {
+	switch ctx {
+	case FooterMonth:
+		return "month"
+	case FooterWeek:
+		return "week"
+	case FooterDay:
+		return "day"
+	}
+	return ""
 }
 
 // collapsedTopHint returns the single most important hint for the given
