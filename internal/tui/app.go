@@ -1086,6 +1086,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				delta = -0.08
 			}
 			m.theme.Selected = oklch.ShiftLightness(msg.Color, delta)
+			// Secondary buttons need more weight than a list-row fill —
+			// at ±0.08 the pill barely separates from the terminal bg on
+			// low-contrast themes. Use ±0.18 so the button reads as a
+			// tappable surface, while list-row Selected stays subtle.
+			btnDelta := 0.18
+			if !msg.IsDark() {
+				btnDelta = -0.18
+			}
+			m.theme.ButtonSecondaryBg = oklch.ShiftLightness(msg.Color, btnDelta)
 		}
 		SetActiveTheme(m.theme)
 		// Month/week/day views use the selected-color as a vibrant

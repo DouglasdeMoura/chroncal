@@ -14,6 +14,8 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
+
+	"github.com/douglasdemoura/chroncal/internal/tui/oklch"
 )
 
 // ---------------------------------------------------------------------------
@@ -1636,7 +1638,11 @@ func (bs ButtonStyles) Get(v ButtonVariant) ButtonStyle {
 //
 // Focus treatment by variant:
 //   - Primary: keeps its own saturated accent on focus so the hero
-//     action stays visually dominant even under cursor.
+//     action stays visually dominant even under cursor. Both idle and
+//     focused bgs are darkened in OKLCh space so the pill reads as a
+//     "filled primary action" rather than a soft pastel highlight, and
+//     the fg is computed via oklch.ContrastingFg for guaranteed
+//     perceptual contrast regardless of the configured palette.
 //   - Secondary / Danger / Ghost: share FormHighlight as the focus
 //     background, so "cursor is here" reads as a single consistent
 //     flash across the form. Each variant keeps its own idle look
@@ -1644,13 +1650,15 @@ func (bs ButtonStyles) Get(v ButtonVariant) ButtonStyle {
 func DefaultButtonStyles() ButtonStyles {
 	base := lipgloss.NewStyle().Padding(0, 2).MarginRight(1)
 	t := activeTheme
+	primaryBg := oklch.ShiftLightness(t.ButtonPrimaryBg, -0.22)
+	primaryFocusedBg := oklch.ShiftLightness(t.ButtonPrimaryFocusedBg, -0.22)
 	return ButtonStyles{
 		Primary: ButtonStyle{
-			Normal:  base.Background(t.ButtonPrimaryBg).Foreground(t.ButtonText).Bold(true),
-			Focused: base.Background(t.ButtonPrimaryFocusedBg).Foreground(t.ButtonText).Bold(true),
+			Normal:  base.Background(primaryBg).Foreground(oklch.ContrastingFg(primaryBg)).Bold(true),
+			Focused: base.Background(primaryFocusedBg).Foreground(oklch.ContrastingFg(primaryFocusedBg)).Bold(true),
 		},
 		Secondary: ButtonStyle{
-			Normal:  base.Background(t.Selected).Foreground(t.SelectedText),
+			Normal:  base.Background(t.ButtonSecondaryBg).Foreground(oklch.ContrastingFg(t.ButtonSecondaryBg)),
 			Focused: base.Background(t.FormHighlight).Foreground(t.ButtonText),
 		},
 		Danger: ButtonStyle{
