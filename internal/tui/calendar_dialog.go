@@ -87,9 +87,9 @@ type CalendarDialogClosedMsg struct{}
 
 // paletteSwatches is the preset color grid shown in the calendar dialog.
 var paletteSwatches = []string{
-	"#0074D9", "#7FDBFF", "#39CCCC", "#B10DC9",
-	"#F012BE", "#85144b", "#FF4136", "#FF851B",
-	"#FFDC00", "#3D9970", "#2ECC40", "#01FF70",
+	"#0074D9", "#7FDBFF", "#B10DC9",
+	"#85144b", "#FF4136", "#FF851B",
+	"#FFDC00", "#3D9970",
 }
 
 // Form field indices. Local fields are always present. Index 4 is an empty
@@ -172,7 +172,7 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 	nameField.SetValue(params.Name)
 	nameField.SetCharLimit(256)
 
-	colorField := NewColorField(paletteSwatches, params.Color, theme.Selected, theme.Muted, theme.TextDim)
+	colorField := NewColorField(paletteSwatches, params.Color, theme.TextDim)
 
 	descField := NewTextField("Shared family schedule")
 	descField.SetValue(params.Description)

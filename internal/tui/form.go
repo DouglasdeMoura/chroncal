@@ -873,19 +873,15 @@ func (f *OpenerField) IsFocusable() bool { return true }
 // PaletteField is a FormField that cycles through color swatches with
 // left/right arrows. The selected swatch is wrapped in brackets.
 type PaletteField struct {
-	swatches    []string
-	selected    int // -1 for custom/off-palette
-	focused     bool
-	accentColor color.Color
-	mutedColor  color.Color
+	swatches []string
+	selected int // -1 for custom/off-palette
+	focused  bool
 }
 
-func NewPaletteField(swatches []string, selected int, accent, muted color.Color) *PaletteField {
+func NewPaletteField(swatches []string, selected int) *PaletteField {
 	return &PaletteField{
-		swatches:    swatches,
-		selected:    selected,
-		accentColor: accent,
-		mutedColor:  muted,
+		swatches: swatches,
+		selected: selected,
 	}
 }
 
@@ -928,21 +924,23 @@ func (f *PaletteField) View() string {
 	dot := func(c string) string {
 		return lipgloss.NewStyle().Foreground(lipgloss.Color(c)).Render(Glyphs["dot"])
 	}
+	br := lipgloss.NewStyle().Bold(true)
 	parts := make([]string, 0, len(f.swatches))
 	for i, c := range f.swatches {
 		target := "palette:" + strconv.Itoa(i)
 		if i == f.selected {
-			brCol := f.mutedColor
-			if f.focused {
-				brCol = f.accentColor
-			}
-			br := lipgloss.NewStyle().Foreground(brCol).Bold(true)
 			parts = append(parts, mouseMark(target, br.Render("[")+dot(c)+br.Render("]")))
 		} else {
 			parts = append(parts, mouseMark(target, dot(c)))
 		}
 	}
-	return strings.Join(parts, " ")
+	out := strings.Join(parts, " ")
+	// Reserve the same width whether a swatch is selected or not so the
+	// trailing hex input keeps a fixed column.
+	if f.selected < 0 {
+		out += "  "
+	}
+	return out
 }
 
 func (f *PaletteField) Focus() tea.Cmd {
@@ -1035,7 +1033,7 @@ type ColorField struct {
 
 // NewColorField builds a composite palette+hex control pre-seeded with the
 // given hex value.
-func NewColorField(swatches []string, hex string, accent, muted, dim color.Color) *ColorField {
+func NewColorField(swatches []string, hex string, dim color.Color) *ColorField {
 	idx := -1
 	for i, c := range swatches {
 		if strings.EqualFold(strings.TrimSpace(hex), c) {
@@ -1043,7 +1041,7 @@ func NewColorField(swatches []string, hex string, accent, muted, dim color.Color
 			break
 		}
 	}
-	p := NewPaletteField(swatches, idx, accent, muted)
+	p := NewPaletteField(swatches, idx)
 	h := NewHexColorField("#rrggbb", dim)
 	h.SetValue(hex)
 	h.input.SetCharLimit(7)
