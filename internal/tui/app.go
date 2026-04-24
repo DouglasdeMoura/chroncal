@@ -1072,9 +1072,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.BackgroundColorMsg:
 		m.theme = LoadTheme(m.themeName, msg.IsDark())
 		SetActiveTheme(m.theme)
-		m.calendar = m.calendar.SetSelectedColor(m.theme.Selected)
-		m.week = m.week.SetSelectedColor(m.theme.Selected)
-		m.day = m.day.SetSelectedColor(m.theme.Selected)
+		// Month/week/day views use the selected-color as a vibrant
+		// BORDER stroke around the cursor cell; Primary (the brand
+		// accent) always stands out against the cell background. The
+		// neutral theme.Selected is reserved for list-row FILLS
+		// (trash, event list, palette, …) where a muted highlight is
+		// what you want.
+		m.calendar = m.calendar.SetSelectedColor(m.theme.Primary)
+		m.week = m.week.SetSelectedColor(m.theme.Primary)
+		m.day = m.day.SetSelectedColor(m.theme.Primary)
 		m.agenda = m.agenda.SetTheme(m.theme)
 		m.sidebar = m.sidebar.SetTheme(m.theme)
 		m.toast.SetTheme(m.theme)
