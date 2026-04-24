@@ -353,9 +353,9 @@ func (m Model) expectedEventRange() (time.Time, time.Time) {
 		return time.Date(ws.Year(), ws.Month(), ws.Day(), 0, 0, 0, 0, time.UTC),
 			time.Date(we.Year(), we.Month(), we.Day(), 0, 0, 0, 0, time.UTC)
 	default:
-		month := m.calendar.Month()
-		from := time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, time.UTC)
-		return from, from.AddDate(0, 1, 0)
+		anchor := calendarGridAnchor(m.calendar.Month(), m.calendar.WeekStart())
+		from := time.Date(anchor.Year(), anchor.Month(), anchor.Day(), 0, 0, 0, 0, time.UTC)
+		return from, from.AddDate(0, 0, 42)
 	}
 }
 

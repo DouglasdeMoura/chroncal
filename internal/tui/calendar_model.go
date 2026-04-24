@@ -111,8 +111,9 @@ func (m CalendarModel) SetShowWeekNumbers(show bool) CalendarModel {
 	return m
 }
 
-func (m CalendarModel) Cursor() time.Time { return m.cursor }
-func (m CalendarModel) Month() time.Time  { return m.month }
+func (m CalendarModel) Cursor() time.Time    { return m.cursor }
+func (m CalendarModel) Month() time.Time     { return m.month }
+func (m CalendarModel) WeekStart() time.Weekday { return m.weekStart }
 
 type cellHit struct {
 	Day   time.Time

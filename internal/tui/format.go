@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"image/color"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -654,7 +655,7 @@ func buildCalendarCell(d time.Time, isToday, inMonth bool, events []CalendarEven
 			overflow = len(events) - maxEventLines + 1
 			break
 		}
-		pills = append(pills, renderEventPill(ev, cellW))
+		pills = append(pills, renderEventPill(ev, cellW, !inMonth))
 	}
 	if overflow > 0 && len(pills) > 0 {
 		pills[len(pills)-1] = lipgloss.NewStyle().Faint(true).
@@ -1063,7 +1064,7 @@ func renderWeekAllDayRows(events []CalendarEvent, anchor time.Time, colWs []int,
 				out.WriteString(faintSep)
 			}
 			if row < len(eventsByCol[i]) {
-				out.WriteString(renderEventPill(eventsByCol[i][row], colWs[i]))
+				out.WriteString(renderEventPill(eventsByCol[i][row], colWs[i], false))
 			} else {
 				out.WriteString(strings.Repeat(" ", colWs[i]))
 			}
@@ -1196,7 +1197,7 @@ func renderTimeLabel(row, lph int, isNowRow bool, nowTimeLabel string) string {
 	return strings.Repeat(" ", timeLabelWidth)
 }
 
-func renderEventPill(ev CalendarEvent, cellW int) string {
+func renderEventPill(ev CalendarEvent, cellW int, faint bool) string {
 	text := " " + ev.Title
 	if lipgloss.Width(text) > cellW {
 		r := []rune(text)
@@ -1206,14 +1207,148 @@ func renderEventPill(ev CalendarEvent, cellW int) string {
 		}
 	}
 
-	bg := lipgloss.Color("8")
-	fg := lipgloss.Color("15")
+	var bg, fg color.Color = lipgloss.Color("8"), lipgloss.Color("15")
 	if ev.Color != "" {
 		bg = lipgloss.Color(ev.Color)
 		fg = lipgloss.Color("0")
 	}
+	if faint {
+		bg = dimColor(bg, 0.78)
+		fg = contrastingFg(bg)
+	}
 	return lipgloss.NewStyle().Background(bg).Foreground(fg).
 		Width(cellW).Render(text)
+}
+
+// dimColor desaturates c and pulls its lightness toward mid in OKLCh space.
+// Operating on L/C/H (not RGB) keeps hue stable while chroma and lightness
+// shift — see https://evilmartians.com/chronicles/oklch-in-css-why-quit-rgb-hsl.
+// factor ∈ [0,1]: 0 = unchanged, 1 = fully neutral at targetL.
+func dimColor(c color.Color, factor float64) color.Color {
+	L, C, H, ok := colorToOklch(c)
+	if !ok {
+		return c
+	}
+	const targetL = 0.55
+	L = L*(1-factor) + targetL*factor
+	C *= 1 - factor
+	return oklchToColor(L, C, H)
+}
+
+// contrastingFg returns a foreground color with strong L contrast against bg.
+// Dark bg (L<0.6) → L=0.95, light bg → L=0.15; hue is preserved and chroma
+// is reduced so the text reads as a tinted near-white/black rather than a
+// saturated second color.
+func contrastingFg(bg color.Color) color.Color {
+	L, C, H, ok := colorToOklch(bg)
+	if !ok {
+		return lipgloss.Color("15")
+	}
+	if L < 0.6 {
+		L = 0.80
+	} else {
+		L = 0.30
+	}
+	C *= 0.2
+	return oklchToColor(L, C, H)
+}
+
+// colorToOklch resolves c through lipgloss (hex, ANSI 256, named) and
+// converts sRGB → OKLCh in one hop. ok=false for fully-transparent colors.
+func colorToOklch(c color.Color) (L, C, H float64, ok bool) {
+	r, g, b, a := c.RGBA()
+	if a == 0 {
+		return 0, 0, 0, false
+	}
+	L, C, H = rgbToOklch(uint8(r>>8), uint8(g>>8), uint8(b>>8))
+	return L, C, H, true
+}
+
+// rgbToOklch: sRGB 8-bit → OKLCh. Internally goes via linear-light RGB and
+// OKLab — OKLCh is OKLab in polar form, so that hop can't be skipped.
+func rgbToOklch(r, g, b uint8) (L, C, H float64) {
+	lr := srgbToLinear(float64(r) / 255)
+	lg := srgbToLinear(float64(g) / 255)
+	lb := srgbToLinear(float64(b) / 255)
+	LL, A, B := linearToOklab(lr, lg, lb)
+	return LL, math.Hypot(A, B), math.Atan2(B, A)
+}
+
+// oklchToRgb: OKLCh → sRGB 8-bit, gamut-mapped by reducing chroma (preserving
+// L and H) until the result fits in sRGB — the hue-preserving approach the
+// CSS Color 4 spec recommends. Falls back to achromatic L if mapping fails.
+func oklchToRgb(L, C, H float64) (r, g, b uint8) {
+	for i := 0; i < 16; i++ {
+		A := C * math.Cos(H)
+		B := C * math.Sin(H)
+		lr, lg, lb := oklabToLinear(L, A, B)
+		if inGamut(lr) && inGamut(lg) && inGamut(lb) {
+			return uint8(linearToSrgb(lr)*255 + 0.5),
+				uint8(linearToSrgb(lg)*255 + 0.5),
+				uint8(linearToSrgb(lb)*255 + 0.5)
+		}
+		C *= 0.85
+	}
+	s := uint8(linearToSrgb(clamp01(L))*255 + 0.5)
+	return s, s, s
+}
+
+func oklchToColor(L, C, H float64) color.Color {
+	r, g, b := oklchToRgb(L, C, H)
+	return lipgloss.Color(fmt.Sprintf("#%02x%02x%02x", r, g, b))
+}
+
+func inGamut(v float64) bool { return v >= -0.0001 && v <= 1.0001 }
+
+func srgbToLinear(v float64) float64 {
+	if v <= 0.04045 {
+		return v / 12.92
+	}
+	return math.Pow((v+0.055)/1.055, 2.4)
+}
+
+func linearToSrgb(v float64) float64 {
+	if v <= 0.0031308 {
+		return v * 12.92
+	}
+	return 1.055*math.Pow(v, 1.0/2.4) - 0.055
+}
+
+func clamp01(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
+}
+
+// linearToOklab / oklabToLinear: Björn Ottosson, https://bottosson.github.io/posts/oklab/
+func linearToOklab(r, g, b float64) (L, A, B float64) {
+	l := 0.4122214708*r + 0.5363325363*g + 0.0514459929*b
+	m := 0.2119034982*r + 0.6806995451*g + 0.1073969566*b
+	s := 0.0883024619*r + 0.2817188376*g + 0.6299787005*b
+	l_ := math.Cbrt(l)
+	m_ := math.Cbrt(m)
+	s_ := math.Cbrt(s)
+	L = 0.2104542553*l_ + 0.7936177850*m_ - 0.0040720468*s_
+	A = 1.9779984951*l_ - 2.4285922050*m_ + 0.4505937099*s_
+	B = 0.0259040371*l_ + 0.7827717662*m_ - 0.8086757660*s_
+	return
+}
+
+func oklabToLinear(L, A, B float64) (r, g, b float64) {
+	l_ := L + 0.3963377774*A + 0.2158037573*B
+	m_ := L - 0.1055613458*A - 0.0638541728*B
+	s_ := L - 0.0894841775*A - 1.2914855480*B
+	l := l_ * l_ * l_
+	m := m_ * m_ * m_
+	s := s_ * s_ * s_
+	r = 4.0767416621*l - 3.3077115913*m + 0.2309699292*s
+	g = -1.2684380046*l + 2.6097574011*m - 0.3413193965*s
+	b = -0.0041960863*l - 0.7034186147*m + 1.7076147010*s
+	return
 }
 
 type DayOptions struct {
@@ -1367,7 +1502,7 @@ func renderDayAllDayRows(events []CalendarEvent, day time.Time, colWidth int, nu
 		}
 		out.WriteString(faintSep)
 		if row < len(allDayEvents) {
-			out.WriteString(renderEventPill(allDayEvents[row], colWidth))
+			out.WriteString(renderEventPill(allDayEvents[row], colWidth, false))
 		} else {
 			out.WriteString(strings.Repeat(" ", colWidth))
 		}
