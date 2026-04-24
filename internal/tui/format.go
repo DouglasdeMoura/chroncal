@@ -974,10 +974,9 @@ func renderWeekColumnHeaders(anchor time.Time, colWs []int, todayKey, selectedKe
 		dayNum := fmt.Sprintf("%d", d.Day())
 		style := lipgloss.NewStyle().Faint(true)
 		numStyle := lipgloss.NewStyle().Faint(true)
-		switch {
-		case dayKey == todayKey:
-			// Today wins over selected so today's filled pill keeps its
-			// identity even when the cursor is parked on it.
+		if dayKey == todayKey {
+			// Today number is always the filled pill — the cursor never
+			// overrides today's identity on the number itself.
 			style = style.Faint(false).Bold(true)
 			numStyle = numStyle.
 				Faint(false).
@@ -985,9 +984,15 @@ func renderWeekColumnHeaders(anchor time.Time, colWs []int, todayKey, selectedKe
 				Background(activeTheme.Today).
 				Foreground(activeTheme.Surface).
 				Padding(0, 1)
-		case dayKey == selectedKey && selectedColor != nil:
+		}
+		if dayKey == selectedKey && selectedColor != nil {
+			// The weekday label picks up the cursor accent in both cases,
+			// but we skip the number when it's also today so the filled
+			// pill keeps its today colors.
 			style = style.Foreground(selectedColor).Bold(true).Faint(false)
-			numStyle = numStyle.Foreground(selectedColor).Bold(true).Faint(false)
+			if dayKey != todayKey {
+				numStyle = numStyle.Foreground(selectedColor).Bold(true).Faint(false)
+			}
 		}
 		label := style.Render(dayName) + " " + numStyle.Render(dayNum)
 		colStyle := lipgloss.NewStyle().Width(colWs[i]).Align(lipgloss.Center)
