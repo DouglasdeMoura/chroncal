@@ -1,85 +1,88 @@
-# tcal "system" theme — inherits the terminal's ANSI palette.
+# tcal "system" theme — terminal palette for chrome, Dracula hex for accents.
 #
-# Every token references an ANSI palette index (0-15) instead of a hex
-# value, so the terminal emulator's own theme drives the final colors.
-# This is the same approach as lazygit, fzf, and tig: change your
-# terminal theme (or Omarchy theme, which themes the terminal) and tcal
-# follows automatically with zero restart.
+# Structural chrome (text, bg, muted, border, form_label, button_secondary_bg)
+# references ANSI palette indices so the terminal emulator's theme drives
+# those tones. That keeps the app rooted in the user's terminal — change
+# your Omarchy/terminal theme and the chrome follows automatically.
 #
-# Base16 index conventions (used by Omarchy and most modern themes):
+# ACCENT colors (primary, danger, ok, info, today, form_highlight, …) are
+# fixed Dracula hexes instead of ANSI indices. Why: ANSI index rendering
+# varies enormously by terminal theme (Tokyo Night's ANSI 4 is a pale blue
+# close to its bright_white; Alucard's ANSI 0 can be the cream bg itself).
+# That makes it impossible to pick a single ANSI-indexed "text on accent"
+# color that reads well everywhere. Dracula's accent palette is designed
+# for high luminance contrast against both light (#F1F1F0) and dark
+# (#282A36) backgrounds, so a single dark text color (#282A36) reads on
+# every accent, on every terminal — no palette guessing required.
+#
+# Base16 index conventions used below:
 #   0 base00  default background
 #   7 base05  default foreground  (always contrasts with bg)
 #   8 base03  subdued / comment   (mid-tone on both light and dark)
-#  15 base07  background-adjacent (caution: can be close to bg on inverted themes)
+#  15 base07  background-adjacent (caution: varies on inverted themes)
 #
-# Those three — 0, 7, 8 — are the only indices whose semantics stay
-# stable across both light and dark Base16 variants. Use them for
-# text/background/muted. Hues (1-6, 9-14) keep their identity on either
-# variant, so we can use them for accents with optional brightness
-# variants.
+# Dracula spec: https://draculatheme.com/spec
 
 name        = "system"
-description = "Inherits the terminal's ANSI 0-15 palette (Omarchy-friendly)"
+description = "Terminal ANSI chrome + fixed Dracula accent palette"
 
 # ---------------------------------------------------------------------------
-# Structural chrome
+# Structural chrome — ANSI-inherited
 # ---------------------------------------------------------------------------
 
-# Brand/headers: blue
-primary   = { light = "4", dark = "12" }
-# Secondary accents: cyan
-secondary = { light = "6", dark = "14" }
-# Positive / accent: green
-accent    = { light = "2", dark = "10" }
 # De-emphasized chrome: base03 (gray on any theme).
 muted     = "8"
-# Default foreground — base05 always contrasts with the terminal bg on
-# both light and dark themes. Do NOT use ANSI 0/15 here; on inverted
-# light themes (e.g. Omarchy ALucard) ANSI 0 can be the cream bg color.
+# Default foreground — base05 always contrasts with the terminal bg.
+# Do NOT use ANSI 0/15 here; on inverted themes they can collapse to bg.
 text      = "7"
 # Lower-contrast text: base03.
 text_dim  = "8"
 # Borders: base03 (gray).
 border    = "8"
-# "Today" highlight: red.
-today     = { light = "1", dark = "9" }
-# Selected row highlight. We deliberately DO NOT use an ANSI index
-# here: ANSI 8 (base03) is themed very differently across palettes —
-# on Dracula's Alucard it lands on an olive/brown that reads as dark
-# against the terminal's default foreground, collapsing "selected" to
-# near-invisible. Instead we use the Dracula spec's "Selection" token,
-# which is a dedicated UI color outside the ANSI palette:
-#   - Dracula (dark):  #44475A (mid-dark neutral gray)
-#   - Alucard (light): #CFCFDE (light neutral cool gray)
-# Both are neutral enough to work on non-Dracula themes too, and both
-# reliably contrast with base05 (default fg) in their respective modes.
-# See https://draculatheme.com/spec
-selected      = { light = "#CFCFDE", dark = "#44475A" }
-# Text on top of Selected. base05 (default fg) is always the right
-# direction against the neutral Selection gray above: dark-on-light on
-# light themes, light-on-dark on dark themes.
-selected_text = "7"
 # Panel background — base00 matches the terminal default so Surface can
 # be used as a "reset background" foreground against colored cells.
 surface   = "0"
-# Errors: red.
-error     = { light = "1", dark = "9" }
+
+# Selected row highlight. Dracula's dedicated Selection token — neutral
+# cool gray outside the ANSI palette; reliably contrasts with base05
+# (default fg) on both the Dracula and Alucard themes. When Bubble Tea
+# reports the actual terminal bg over OSC 11, app.go overrides this with
+# an adaptive ±8 % L shift from that bg, so it also adapts to
+# non-Dracula terminals. These hexes are the fallback.
+selected      = { light = "#CFCFDE", dark = "#44475A" }
+# Text on top of Selected. base05 (default fg) is always the right
+# direction against the neutral Selection gray: dark-on-light on light
+# themes, light-on-dark on dark themes.
+selected_text = "7"
+
+# ---------------------------------------------------------------------------
+# Accent palette — Dracula hexes (stable across terminals)
+# ---------------------------------------------------------------------------
+
+# Brand/headers: Dracula Purple.
+primary   = "#BD93F9"
+# Secondary accents: Dracula Cyan.
+secondary = "#8BE9FD"
+# Positive / accent: Dracula Green.
+accent    = "#50FA7B"
+# "Today" highlight: Dracula Red.
+today     = "#FF5555"
+# Errors: Dracula Red.
+error     = "#FF5555"
 
 # ---------------------------------------------------------------------------
 # Badges
 # ---------------------------------------------------------------------------
 
-badge_ok      = "2"
-badge_warn    = "3"
-badge_danger  = "1"
-badge_info    = "4"
+badge_ok      = "#50FA7B"
+badge_warn    = "#FFB86C"
+badge_danger  = "#FF5555"
+badge_info    = "#8BE9FD"
 badge_neutral = "8"
-# Badge foreground: opposite luminance of the terminal bg. On light
-# themes base00 is the (light) bg color itself, so base00 reads as a
-# high-contrast light fg over any colored accent bg; on dark themes
-# base07 is the brightest color and plays the same role. This is the
-# inverse direction of `text`, which is why it has its own token.
-badge_text    = { light = "0", dark = "15" }
+# Badge foreground: Dracula's dark bg color. Every Dracula accent sits
+# at mid luminance (L ~0.70–0.85 in OKLCh), so #282A36 (L ~0.22) reads
+# on all of them; ΔL ~0.5 is well above WCAG comfort.
+badge_text    = "#282A36"
 
 # ---------------------------------------------------------------------------
 # Form internals
@@ -89,23 +92,26 @@ badge_text    = { light = "0", dark = "15" }
 # Base16 themes (notably inverted light ones like Omarchy ALucard)
 # base03 sits very close to the background and labels disappear.
 form_label     = "7"
-form_required  = { light = "1", dark = "9" }
-form_error     = { light = "1", dark = "9" }
-# Flash / select highlight: magenta.
-form_highlight = { light = "5", dark = "13" }
+form_required  = "#FF5555"
+form_error     = "#FF5555"
+# Flash / select-arrow / non-primary button focus: Dracula Pink.
+form_highlight = "#FF79C6"
 
 # ---------------------------------------------------------------------------
 # Buttons
 # ---------------------------------------------------------------------------
 
-button_primary_bg         = { light = "4", dark = "12" }
-button_primary_focused_bg = { light = "5", dark = "13" }
+button_primary_bg         = "#BD93F9"
+button_primary_focused_bg = "#FF79C6"
+# Secondary at rest uses Selected (neutral gray, adaptive from OSC 11
+# when available — see app.go). Focused variants all share
+# form_highlight so the focus signal is consistent across variants.
 button_secondary_bg       = "8"
-button_danger_bg          = "1"
-button_danger_focused_bg  = "9"
+button_danger_bg          = "#FF5555"
+button_danger_focused_bg  = "#FF79C6"
 button_ghost_fg           = "8"
-# Button foreground: inverse luminance of the terminal bg (see badge_text).
-button_text               = { light = "0", dark = "15" }
+# Button foreground on filled accent bgs — same dark as badge_text.
+button_text               = "#282A36"
 
 # ---------------------------------------------------------------------------
 # Calendar palette swatches
