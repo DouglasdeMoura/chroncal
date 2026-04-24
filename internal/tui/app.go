@@ -2362,24 +2362,30 @@ func (m Model) View() tea.View {
 
 	var body string
 	if m.showSidebar {
-		// Match the calendar grid: unfocused border renders with SGR 2
-		// (faint) against the terminal's default fg so the two chromes
-		// share the same subdued tone regardless of theme. Focused
-		// state swaps to the brand accent.
+		// Render content and border as two siblings joined horizontally
+		// so Faint (used to match the calendar grid chrome when
+		// unfocused) applies to the border glyphs only and never
+		// dims the sidebar's inner text.
 		sb := m.sidebar.SetSize(sidebarWidth-padding*2, contentHeight-padding*2)
-		sidebarStyle := lipgloss.NewStyle().
+		inner := lipgloss.NewStyle().
 			Width(sidebarWidth).
 			Height(contentHeight).
 			Padding(padding).
-			BorderRight(true).
-			BorderStyle(lipgloss.NormalBorder()).
-			Foreground(m.theme.Text)
+			Foreground(m.theme.Text).
+			Render(sb.View())
+
+		borderStyle := lipgloss.NewStyle().Faint(true)
 		if m.focus == focusSidebar {
-			sidebarStyle = sidebarStyle.BorderForeground(m.theme.Primary)
-		} else {
-			sidebarStyle = sidebarStyle.Faint(true)
+			borderStyle = lipgloss.NewStyle().Foreground(m.theme.Primary)
 		}
-		sidebar := sidebarStyle.Render(sb.View())
+		borderChar := borderStyle.Render("│")
+		borderLines := make([]string, contentHeight)
+		for i := range borderLines {
+			borderLines[i] = borderChar
+		}
+		border := strings.Join(borderLines, "\n")
+
+		sidebar := lipgloss.JoinHorizontal(lipgloss.Top, inner, border)
 		body = lipgloss.JoinHorizontal(lipgloss.Top, sidebar, main)
 	} else {
 		body = main
