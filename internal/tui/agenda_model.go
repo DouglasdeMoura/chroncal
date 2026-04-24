@@ -746,7 +746,7 @@ func (m AgendaModel) viewportH() int {
 // "+ Create event" button emit EventCreateMsg instead.
 func (m AgendaModel) HandleClick(x, y int) (AgendaModel, tea.Cmd) {
 	headerLines := 2
-	if y < headerLines {
+	if y < headerLines || y >= m.height {
 		return m, nil
 	}
 	if len(m.rows) == 0 {
@@ -758,6 +758,9 @@ func (m AgendaModel) HandleClick(x, y int) (AgendaModel, tea.Cmd) {
 		return m, nil
 	}
 	viewportH := max(m.height-headerLines, 1)
+	if y-headerLines >= viewportH {
+		return m, nil
+	}
 	start := min(max(m.scroll, 0), m.maxScroll(viewportH))
 	idx := start + (y - headerLines)
 	if idx < 0 || idx >= len(m.rows) || !isSelectableRow(m.rows[idx]) {

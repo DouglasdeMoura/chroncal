@@ -58,3 +58,26 @@ func TestAgendaUpdate_XKeyNoopOnEmptyDayPlaceholder(t *testing.T) {
 		t.Fatalf("expected no command for empty-day placeholder, got %T", cmd())
 	}
 }
+
+func TestAgendaHandleClick_BelowViewportIsNoop(t *testing.T) {
+	day := time.Date(2026, 4, 23, 0, 0, 0, 0, time.Local)
+	ev := event.Event{
+		ID:        7,
+		Title:     "Standup",
+		StartTime: time.Date(2026, 4, 23, 9, 0, 0, 0, time.Local),
+		EndTime:   time.Date(2026, 4, 23, 9, 30, 0, 0, time.Local),
+	}
+
+	m := NewAgendaModel(day).SetEvents([]event.Event{ev}, nil).SetSize(80, 5)
+
+	// A click at y == m.height (or beyond) lands in the footer area, not on
+	// any agenda row, and must not open an event.
+	_, cmd := m.HandleClick(10, 5)
+	if cmd != nil {
+		t.Fatalf("click at y=m.height produced a command (%T); want noop", cmd())
+	}
+	_, cmd = m.HandleClick(10, 10)
+	if cmd != nil {
+		t.Fatalf("click well below viewport produced a command (%T); want noop", cmd())
+	}
+}
