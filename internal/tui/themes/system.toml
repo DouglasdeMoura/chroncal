@@ -56,11 +56,15 @@ selected      = { light = "#CFCFDE", dark = "#44475A" }
 selected_text = "7"
 
 # ---------------------------------------------------------------------------
-# Accent palette — Dracula hexes (stable across terminals)
+# Accent palette
 # ---------------------------------------------------------------------------
 
-# Brand/headers: Dracula Purple.
-primary   = "#BD93F9"
+# Brand / cursor highlight — inherits the terminal's ANSI blue so the
+# calendar selected-day border picks up the user's terminal accent.
+# Intentionally NOT a fixed hex: this token drives the month-grid cell
+# border (no text-on-fill contrast problem to solve there) and the
+# calendar should feel like it belongs to the terminal theme.
+primary   = { light = "4", dark = "12" }
 # Secondary accents: Dracula Cyan.
 secondary = "#8BE9FD"
 # Positive / accent: Dracula Green.
