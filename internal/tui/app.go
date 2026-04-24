@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"image"
+	"image/color"
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -2724,18 +2726,43 @@ func Run(a *app.App, themeName string) error {
 	model := NewModel(a, themeName)
 	p := tea.NewProgram(model)
 
-	// Fire our own OSC 11 query up front — BEFORE Bubble Tea takes over
-	// stdin — and feed the result in as a synthetic BackgroundColorMsg.
-	// Bubble Tea's built-in query doesn't always answer reliably inside
-	// tmux or on terminals that defer the response; doing it here gives
-	// us a deterministic opportunity to seed the adaptive theme before
-	// first paint. If the terminal doesn't respond, lipgloss returns an
-	// error and we silently fall through to whatever Bubble Tea detects
-	// (or to the theme's static fallback if that also fails).
+	// Detect terminal background with a layered strategy so the adaptive
+	// theming works even when OSC 11 doesn't get answered (common inside
+	// tmux without passthrough, or on a handful of terminal builds).
+	//
+	// 1. Fire our own OSC 11 query BEFORE Bubble Tea takes over stdin —
+	//    if the terminal answers, use the real RGB.
+	// 2. Otherwise, look for Omarchy's light.mode flag at
+	//    ~/.config/omarchy/current/theme/light.mode; if it exists, treat
+	//    the terminal as light and seed with a neutral cream.
+	// 3. Otherwise, stay silent — the theme's static fallback applies.
+	//
+	// Result is fed in as a synthetic BackgroundColorMsg so the existing
+	// handler in Update does the actual re-theming.
+	var detectedBG color.Color
 	if bg, err := lipgloss.BackgroundColor(os.Stdin, os.Stdout); err == nil && bg != nil {
-		go func() { p.Send(tea.BackgroundColorMsg{Color: bg}) }()
+		detectedBG = bg
+	} else if omarchyIsLight() {
+		detectedBG = lipgloss.Color("#F1F1F0")
+	}
+	if detectedBG != nil {
+		go func() { p.Send(tea.BackgroundColorMsg{Color: detectedBG}) }()
 	}
 
 	_, err := p.Run()
 	return err
+}
+
+// omarchyIsLight reports whether the Omarchy desktop is currently on a
+// light theme. Omarchy writes an empty `light.mode` file into the active
+// theme's directory as an authoritative signal; its absence means dark.
+// Returns false on non-Omarchy systems (the file path simply doesn't
+// exist), which keeps this as a pure extra-fallback signal.
+func omarchyIsLight() bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(filepath.Join(home, ".config", "omarchy", "current", "theme", "light.mode"))
+	return err == nil
 }
