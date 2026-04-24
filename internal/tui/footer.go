@@ -212,11 +212,13 @@ func footerHints(ctx FooterContext, hasRSVP, showTodayHint bool) []footerHint {
 			{"enter", "open"},
 			{"x", "delete"},
 			{"c", "new"},
+			{"o", "empty days"},
 			{"?", "help"},
 		}
 	case FooterAgendaEmpty:
 		hints := []footerHint{
 			{"c", "create event"},
+			{"o", "empty days"},
 		}
 		if showTodayHint {
 			hints = append(hints, footerHint{"t", "today"})

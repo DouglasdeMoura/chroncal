@@ -23,6 +23,9 @@ func TestFooter_AgendaEmptyShowsCreate(t *testing.T) {
 	if !strings.Contains(out, "create event") {
 		t.Errorf("Render = %q, missing 'create event'", out)
 	}
+	if !strings.Contains(out, "empty days") {
+		t.Errorf("Render = %q, missing 'empty days' toggle hint", out)
+	}
 }
 
 func TestFooter_AgendaShowsDeleteWhenEventSelected(t *testing.T) {
@@ -30,6 +33,9 @@ func TestFooter_AgendaShowsDeleteWhenEventSelected(t *testing.T) {
 	out := f.Render(FooterAgenda, 120, "", "", false, false)
 	if !strings.Contains(out, "x") || !strings.Contains(out, "delete") {
 		t.Errorf("Render = %q, missing x/delete hint", out)
+	}
+	if !strings.Contains(out, "empty days") {
+		t.Errorf("Render = %q, missing 'empty days' toggle hint", out)
 	}
 }
 
