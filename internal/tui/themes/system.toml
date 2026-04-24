@@ -61,14 +61,21 @@ badge_warn    = "3"
 badge_danger  = "1"
 badge_info    = "4"
 badge_neutral = "8"
-# Badge foreground: base05 (always readable against any accent bg).
-badge_text    = "7"
+# Badge foreground: opposite luminance of the terminal bg. On light
+# themes base00 is the (light) bg color itself, so base00 reads as a
+# high-contrast light fg over any colored accent bg; on dark themes
+# base07 is the brightest color and plays the same role. This is the
+# inverse direction of `text`, which is why it has its own token.
+badge_text    = { light = "0", dark = "15" }
 
 # ---------------------------------------------------------------------------
 # Form internals
 # ---------------------------------------------------------------------------
 
-form_label     = "8"
+# Labels use base05 (default fg) rather than base03, because on some
+# Base16 themes (notably inverted light ones like Omarchy ALucard)
+# base03 sits very close to the background and labels disappear.
+form_label     = "7"
 form_required  = { light = "1", dark = "9" }
 form_error     = { light = "1", dark = "9" }
 # Flash / select highlight: magenta.
@@ -84,8 +91,8 @@ button_secondary_bg       = "8"
 button_danger_bg          = "1"
 button_danger_focused_bg  = "9"
 button_ghost_fg           = "8"
-# Button foreground: base05 (always readable against any accent bg).
-button_text               = "7"
+# Button foreground: inverse luminance of the terminal bg (see badge_text).
+button_text               = { light = "0", dark = "15" }
 
 # ---------------------------------------------------------------------------
 # Calendar palette swatches
