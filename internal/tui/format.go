@@ -974,7 +974,10 @@ func renderWeekColumnHeaders(anchor time.Time, colWs []int, todayKey, selectedKe
 		dayNum := fmt.Sprintf("%d", d.Day())
 		style := lipgloss.NewStyle().Faint(true)
 		numStyle := lipgloss.NewStyle().Faint(true)
-		if dayKey == todayKey {
+		switch {
+		case dayKey == todayKey:
+			// Today wins over selected so today's filled pill keeps its
+			// identity even when the cursor is parked on it.
 			style = style.Faint(false).Bold(true)
 			numStyle = numStyle.
 				Faint(false).
@@ -982,8 +985,7 @@ func renderWeekColumnHeaders(anchor time.Time, colWs []int, todayKey, selectedKe
 				Background(activeTheme.Today).
 				Foreground(activeTheme.Surface).
 				Padding(0, 1)
-		}
-		if dayKey == selectedKey && selectedColor != nil {
+		case dayKey == selectedKey && selectedColor != nil:
 			style = style.Foreground(selectedColor).Bold(true).Faint(false)
 			numStyle = numStyle.Foreground(selectedColor).Bold(true).Faint(false)
 		}
