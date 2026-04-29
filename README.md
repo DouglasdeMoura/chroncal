@@ -195,26 +195,52 @@ calendar to a remote CalDAV URL, use the remote flags on `calendar create` or
 Google Calendar requires OAuth 2.0 and only exposes `VEVENT` over CalDAV.
 
 Credentials are stored in the OS keyring by default. chroncal uses OAuth PKCE
-for installed-app flows, so you only need the client ID for Google CalDAV
-setup; refresh tokens are reused automatically.
+for installed-app flows, but Google's token endpoint also requires the Desktop
+client's `client_secret` even with PKCE — so both the client ID *and* the
+client secret are needed at setup time. Refresh tokens (and the client secret)
+are persisted to the keyring after the first authorization, so subsequent
+syncs run unattended.
 
-1. Create a desktop OAuth client in the [Google Cloud Console](https://console.cloud.google.com/).
-2. Enable the Google Calendar API for that project.
-3. Create the calendar with the Google CalDAV URL attached:
+> **Plaintext fallback caveat.** On systems without an OS keyring, the
+> `--allow-plaintext` fallback writes credentials (including the Google
+> `client_secret`) to a 0600-mode file under `~/.config/chroncal/`. The mode
+> protects against casual `cat`, but not against backups, filesystem
+> snapshots, or sync tools (Dropbox, iCloud, rsync) that ignore Unix
+> permissions. Install a keyring provider (e.g. `libsecret` + `gnome-keyring`
+> on Linux) before using OAuth on shared or backed-up hosts.
 
-```bash
-chroncal calendar create "Work" \
-  --remote-url "https://apidata.googleusercontent.com/caldav/v2/YOUR_CALENDAR_ID/events/" \
-  --auth oauth2 \
-  --oauth-client-id "YOUR_CLIENT_ID.apps.googleusercontent.com"
-```
+1. Create a **Desktop app** OAuth client in the [Google Cloud Console](https://console.cloud.google.com/apis/credentials). Note both the client ID and the client secret.
+2. Add `https://www.googleapis.com/auth/calendar` to the OAuth consent screen, and add yourself as a Test user while it's in Testing mode.
+3. Enable **both** APIs on the project — they are separate services:
 
-4. Run sync and inspect status:
+   ```bash
+   gcloud services enable calendar-json.googleapis.com --project=YOUR_PROJECT
+   gcloud services enable caldav.googleapis.com         --project=YOUR_PROJECT
+   ```
 
-```bash
-chroncal sync run --calendar "Work"
-chroncal sync status
-```
+   The Calendar JSON API alone is not enough; the CalDAV endpoint will return
+   `403 accessNotConfigured` until `caldav.googleapis.com` is enabled.
+
+4. Create the calendar with the Google CalDAV URL attached. Provide the
+   client secret via the `GOOGLE_CLIENT_SECRET` environment variable, or let
+   chroncal prompt for it interactively (echo disabled). The secret is
+   intentionally **not** accepted as a CLI flag — flags leak via process
+   listings and shell history.
+
+   ```bash
+   GOOGLE_CLIENT_SECRET="GOCSPX-…" chroncal calendar create "Work" \
+     --remote-url "https://apidata.googleusercontent.com/caldav/v2/YOUR_CALENDAR_ID/events/" \
+     --username "you@example.com" \
+     --auth oauth2 \
+     --oauth-client-id "YOUR_CLIENT_ID.apps.googleusercontent.com"
+   ```
+
+5. Run sync and inspect status:
+
+   ```bash
+   chroncal sync run --calendar "Work"
+   chroncal sync status
+   ```
 
 Google limitations:
 

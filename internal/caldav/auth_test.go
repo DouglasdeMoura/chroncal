@@ -20,7 +20,7 @@ func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 func TestNewClientFromCredential_RefreshesExpiredOAuthToken(t *testing.T) {
 	prevRefresh := refreshGoogleTokenFn
 	refreshCalls := 0
-	refreshGoogleTokenFn = func(ctx context.Context, clientID, refreshToken string) (*auth.GoogleOAuthResult, error) {
+	refreshGoogleTokenFn = func(ctx context.Context, clientID, clientSecret, refreshToken string) (*auth.GoogleOAuthResult, error) {
 		refreshCalls++
 		return &auth.GoogleOAuthResult{
 			AccessToken:  "fresh-token",
@@ -103,7 +103,7 @@ func TestNewClientFromCredential_RefreshesExpiredOAuthToken(t *testing.T) {
 
 func TestOAuth2HTTPClient_FailsFastOnNonTransientRefreshError(t *testing.T) {
 	prevRefresh := refreshGoogleTokenFn
-	refreshGoogleTokenFn = func(ctx context.Context, clientID, refreshToken string) (*auth.GoogleOAuthResult, error) {
+	refreshGoogleTokenFn = func(ctx context.Context, clientID, clientSecret, refreshToken string) (*auth.GoogleOAuthResult, error) {
 		return nil, errors.New("token refresh failed (400): invalid_grant")
 	}
 	t.Cleanup(func() { refreshGoogleTokenFn = prevRefresh })
@@ -150,7 +150,7 @@ func TestOAuth2HTTPClient_FailsFastOnNonTransientRefreshError(t *testing.T) {
 
 func TestOAuth2HTTPClient_ProceedsWithStaleTokenOnTransientRefreshError(t *testing.T) {
 	prevRefresh := refreshGoogleTokenFn
-	refreshGoogleTokenFn = func(ctx context.Context, clientID, refreshToken string) (*auth.GoogleOAuthResult, error) {
+	refreshGoogleTokenFn = func(ctx context.Context, clientID, clientSecret, refreshToken string) (*auth.GoogleOAuthResult, error) {
 		return nil, errors.New("token refresh failed (503): Service Unavailable")
 	}
 	t.Cleanup(func() { refreshGoogleTokenFn = prevRefresh })

@@ -44,7 +44,12 @@ type GoogleOAuthResult struct {
 
 // GoogleOAuthFlow performs the installed-app loopback redirect flow for Google OAuth 2.0.
 // It starts a temporary HTTP server, opens the user's browser, and waits for the redirect.
-func GoogleOAuthFlow(ctx context.Context, clientID string) (*GoogleOAuthResult, error) {
+//
+// Pass an empty clientSecret to omit it from the token request. Google's
+// Desktop OAuth clients require a non-empty client secret even with PKCE; the
+// caller is responsible for sourcing it (e.g. env var, prompt) and rejecting
+// empty values when targeting Google.
+func GoogleOAuthFlow(ctx context.Context, clientID, clientSecret string) (*GoogleOAuthResult, error) {
 	// Start a temporary listener on a random port
 	var lc net.ListenConfig
 	listener, err := lc.Listen(ctx, "tcp", "127.0.0.1:0")
@@ -133,10 +138,10 @@ func GoogleOAuthFlow(ctx context.Context, clientID string) (*GoogleOAuthResult, 
 	}
 
 	// Exchange code for tokens
-	return exchangeGoogleCode(ctx, clientID, code, redirectURI, codeVerifier)
+	return exchangeGoogleCode(ctx, clientID, clientSecret, code, redirectURI, codeVerifier)
 }
 
-func exchangeGoogleCode(ctx context.Context, clientID, code, redirectURI, codeVerifier string) (*GoogleOAuthResult, error) {
+func exchangeGoogleCode(ctx context.Context, clientID, clientSecret, code, redirectURI, codeVerifier string) (*GoogleOAuthResult, error) {
 	return retry.Retry(ctx, tokenRetryOptions, func(ctx context.Context) (*GoogleOAuthResult, error) {
 		data := url.Values{
 			"code":          {code},
@@ -144,6 +149,9 @@ func exchangeGoogleCode(ctx context.Context, clientID, code, redirectURI, codeVe
 			"redirect_uri":  {redirectURI},
 			"grant_type":    {"authorization_code"},
 			"code_verifier": {codeVerifier},
+		}
+		if clientSecret != "" {
+			data.Set("client_secret", clientSecret)
 		}
 
 		req, err := http.NewRequestWithContext(ctx, "POST", googleTokenURL, strings.NewReader(data.Encode()))
@@ -181,12 +189,19 @@ func exchangeGoogleCode(ctx context.Context, clientID, code, redirectURI, codeVe
 }
 
 // RefreshGoogleToken refreshes an expired access token.
-func RefreshGoogleToken(ctx context.Context, clientID, refreshToken string) (*GoogleOAuthResult, error) {
+//
+// Pass an empty clientSecret to omit it from the refresh request. Google's
+// Desktop OAuth clients require a non-empty client secret; the caller is
+// responsible for surfacing a clear error when the secret is missing.
+func RefreshGoogleToken(ctx context.Context, clientID, clientSecret, refreshToken string) (*GoogleOAuthResult, error) {
 	return retry.Retry(ctx, tokenRetryOptions, func(ctx context.Context) (*GoogleOAuthResult, error) {
 		data := url.Values{
 			"client_id":     {clientID},
 			"refresh_token": {refreshToken},
 			"grant_type":    {"refresh_token"},
+		}
+		if clientSecret != "" {
+			data.Set("client_secret", clientSecret)
 		}
 
 		req, err := http.NewRequestWithContext(ctx, "POST", googleTokenURL, strings.NewReader(data.Encode()))

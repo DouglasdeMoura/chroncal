@@ -30,7 +30,7 @@ func NewClientFromCredential(endpoint string, cred auth.Credential, persist func
 		}
 		if cred.RefreshToken != "" && cred.OAuthClientID != "" {
 			httpClient.refreshFn = func(ctx context.Context) (string, time.Time, error) {
-				refreshed, err := refreshGoogleTokenFn(ctx, cred.OAuthClientID, cred.RefreshToken)
+				refreshed, err := refreshGoogleTokenFn(ctx, cred.OAuthClientID, cred.OAuthClientSecret, cred.RefreshToken)
 				if err != nil {
 					return "", time.Time{}, err
 				}

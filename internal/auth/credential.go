@@ -21,7 +21,8 @@ type Credential struct {
 	RefreshToken string `json:"refresh_token,omitempty"`
 	TokenExpiry  string `json:"token_expiry,omitempty"` // RFC 3339
 	// OAuth client config (stored with credential, not in DB)
-	OAuthClientID string `json:"oauth_client_id,omitempty"`
+	OAuthClientID     string `json:"oauth_client_id,omitempty"`
+	OAuthClientSecret string `json:"oauth_client_secret,omitempty"`
 }
 
 // CredentialStore provides read/write access to account credentials.
@@ -139,6 +140,9 @@ func (s *PlaintextFileStore) Set(cred Credential) error {
 		return fmt.Errorf("write credential: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "Warning: credentials stored in plaintext at %s\n", path)
+	if cred.OAuthClientSecret != "" {
+		fmt.Fprintf(os.Stderr, "Warning: OAuth client secret persisted to disk in cleartext. Backups, snapshots, and sync tools (Dropbox, iCloud, rsync) will see it. Install an OS keyring (libsecret on Linux) to avoid this.\n")
+	}
 	return nil
 }
 

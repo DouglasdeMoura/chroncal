@@ -102,16 +102,21 @@ func buildCalendarCredential(ctx context.Context, flags calendarRemoteFlags) (au
 		}
 		return auth.Credential{Username: flags.Username, Password: string(passwordBytes)}, nil
 	case "oauth2":
-		result, err := auth.GoogleOAuthFlow(ctx, flags.OAuthClientID)
+		clientSecret, err := readGoogleClientSecret()
+		if err != nil {
+			return auth.Credential{}, err
+		}
+		result, err := auth.GoogleOAuthFlow(ctx, flags.OAuthClientID, clientSecret)
 		if err != nil {
 			return auth.Credential{}, fmt.Errorf("OAuth flow: %w", err)
 		}
 		return auth.Credential{
-			Username:      flags.Username,
-			AccessToken:   result.AccessToken,
-			RefreshToken:  result.RefreshToken,
-			TokenExpiry:   result.Expiry.Format("2006-01-02T15:04:05Z07:00"),
-			OAuthClientID: flags.OAuthClientID,
+			Username:          flags.Username,
+			AccessToken:       result.AccessToken,
+			RefreshToken:      result.RefreshToken,
+			TokenExpiry:       result.Expiry.Format("2006-01-02T15:04:05Z07:00"),
+			OAuthClientID:     flags.OAuthClientID,
+			OAuthClientSecret: clientSecret,
 		}, nil
 	default:
 		return auth.Credential{}, fmt.Errorf("invalid auth type %q", flags.AuthType)
@@ -120,4 +125,31 @@ func buildCalendarCredential(ctx context.Context, flags calendarRemoteFlags) (au
 
 func normalizeAuthType(authType string) string {
 	return calendarpkg.NormalizeAuthType(authType)
+}
+
+// readGoogleClientSecret obtains the Desktop OAuth client secret. Google's
+// token endpoint requires it for Desktop clients even with PKCE, so it is
+// mandatory for the oauth2 auth type. We never accept it as a CLI flag — that
+// would expose it in /proc/<pid>/cmdline and shell history. Sources, in order:
+//
+//  1. GOOGLE_CLIENT_SECRET env var (handy for scripted setup).
+//  2. Interactive prompt via terminal (echo disabled), matching basic-auth UX.
+func readGoogleClientSecret() (string, error) {
+	if s := strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_SECRET")); s != "" {
+		return s, nil
+	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return "", fmt.Errorf("Google OAuth requires a client secret: set GOOGLE_CLIENT_SECRET or run interactively")
+	}
+	fmt.Print("Google OAuth client secret: ")
+	secretBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Println()
+	if err != nil {
+		return "", fmt.Errorf("read client secret: %w", err)
+	}
+	secret := strings.TrimSpace(string(secretBytes))
+	if secret == "" {
+		return "", fmt.Errorf("client secret is required")
+	}
+	return secret, nil
 }
