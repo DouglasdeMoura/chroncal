@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"golang.org/x/term"
 
 	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/auth"
+	"github.com/douglasdemoura/chroncal/internal/caldav"
 	calendarpkg "github.com/douglasdemoura/chroncal/internal/calendar"
 )
 
@@ -71,11 +73,24 @@ func connectCalendarRemote(ctx context.Context, a *app.App, cal calendarpkg.Cale
 		return err
 	}
 
+	// Best-effort PROPFIND for the remote calendar-color so the calendar
+	// adopts the server's color on link. Auth password for the metadata
+	// fetch is whichever secret matches the auth type — basic password,
+	// bearer token, or OAuth access token.
+	metaPassword := cred.Password
+	if cred.AccessToken != "" {
+		metaPassword = cred.AccessToken
+	}
+	metaCtx, metaCancel := context.WithTimeout(ctx, 10*time.Second)
+	meta, _ := caldav.FetchCalendarMetadata(metaCtx, flags.RemoteURL, flags.Username, metaPassword, flags.AuthType, flags.AllowInsecure)
+	metaCancel()
+
 	return a.Calendars.Connect(ctx, cal, calendarpkg.RemoteLink{
 		RemoteURL:     flags.RemoteURL,
 		Username:      flags.Username,
 		AuthType:      flags.AuthType,
 		AllowInsecure: flags.AllowInsecure,
+		RemoteColor:   meta.Color,
 	}, cred, credStore)
 }
 

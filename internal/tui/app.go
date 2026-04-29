@@ -1685,11 +1685,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case "bearer":
 					cred.AccessToken = saved.Password
 				}
+
+				// Best-effort PROPFIND for the remote calendar-color so the
+				// UI shows the server's color immediately, before the first
+				// sync runs. Fetch failures are non-fatal — Connect proceeds
+				// without seeding the color.
+				metaCtx, metaCancel := context.WithTimeout(ctx, 10*time.Second)
+				meta, _ := caldav.FetchCalendarMetadata(metaCtx, saved.RemoteURL, saved.Username, saved.Password, saved.AuthType, saved.AllowInsecure)
+				metaCancel()
+
 				if cerr := m.app.Calendars.Connect(ctx, cal, calendar.RemoteLink{
 					RemoteURL:     saved.RemoteURL,
 					Username:      saved.Username,
 					AuthType:      saved.AuthType,
 					AllowInsecure: saved.AllowInsecure,
+					RemoteColor:   meta.Color,
 				}, cred, credStore); cerr != nil {
 					return calendarMutationDoneMsg{err: cerr}
 				}
@@ -1716,13 +1726,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 
-			name, err := caldav.VerifyCalendarURL(ctx, req.URL, req.Username, req.Password, req.AuthType, req.AllowInsecure)
+			meta, err := caldav.VerifyCalendarURL(ctx, req.URL, req.Username, req.Password, req.AuthType, req.AllowInsecure)
 			if err != nil {
 				return CalendarTestResultMsg{Message: err.Error()}
 			}
 			message := "Connected"
-			if name != "" {
-				message = fmt.Sprintf("Connected · %s", name)
+			if meta.DisplayName != "" {
+				message = fmt.Sprintf("Connected · %s", meta.DisplayName)
 			}
 			return CalendarTestResultMsg{OK: true, Message: message}
 		}

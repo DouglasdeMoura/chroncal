@@ -21,6 +21,11 @@ type RemoteLink struct {
 	Username      string
 	AuthType      string // "basic", "bearer", "oauth2"
 	AllowInsecure bool
+	// RemoteColor is the Apple-style calendar-color advertised by the
+	// remote collection (e.g. fetched via PROPFIND at link time). When
+	// non-empty, Connect adopts it as the calendar's color so the UI shows
+	// the same color the remote uses without waiting for the first sync.
+	RemoteColor string
 }
 
 // Connect links a calendar to a remote CalDAV URL and stores the credential.
@@ -65,6 +70,11 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 				_ = tx.Rollback()
 				return fmt.Errorf("link calendar: %w", err)
 			}
+			// Intentionally skip seeding RemoteColor on re-link: the calendar
+			// is already linked, the user may have just edited Color in the
+			// same save (Update set color_dirty=1), and the next sync's
+			// syncCalendarMetadata reconciles colors with proper dirty-flag
+			// handling. Seeding here would clobber the local edit.
 			if err := tx.Commit(); err != nil {
 				return fmt.Errorf("commit remote calendar link: %w", err)
 			}
@@ -94,6 +104,16 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 	}); err != nil {
 		_ = tx.Rollback()
 		return fmt.Errorf("link calendar: %w", err)
+	}
+	if link.RemoteColor != "" {
+		if err := qtx.UpdateCalendarColorFromSync(ctx, storage.UpdateCalendarColorFromSyncParams{
+			ID:          cal.ID,
+			Color:       link.RemoteColor,
+			RemoteColor: storage.StringToNullable(link.RemoteColor),
+		}); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("seed remote calendar color: %w", err)
+		}
 	}
 
 	cred.AccountID = account.ID
