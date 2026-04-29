@@ -50,6 +50,7 @@ type CalendarListModel struct {
 	hidden      map[int64]bool
 	cursor      int
 	focused     bool
+	width       int
 	keys        calendarListKeyMap
 	accentColor color.Color
 	mutedColor  color.Color
@@ -75,6 +76,10 @@ func (m CalendarListModel) SetTheme(accent, muted, text color.Color) CalendarLis
 
 func (m CalendarListModel) Focus() CalendarListModel { m.focused = true; return m }
 func (m CalendarListModel) Blur() CalendarListModel  { m.focused = false; return m }
+
+// SetWidth sets the available render width so long calendar names truncate
+// with an ellipsis instead of wrapping onto the next line.
+func (m CalendarListModel) SetWidth(w int) CalendarListModel { m.width = w; return m }
 func (m CalendarListModel) Focused() bool            { return m.focused }
 func (m CalendarListModel) Cursor() int              { return m.cursor }
 func (m CalendarListModel) ItemCount() int           { return len(m.items) }
@@ -177,6 +182,10 @@ func (m CalendarListModel) View() string {
 		}
 		swatch := lipgloss.NewStyle().Foreground(lipgloss.Color(it.Color)).Render(glyph)
 		name := it.Name
+		// "swatch + space" consumes 2 cells; reserve the rest for the name.
+		if m.width > 2 {
+			name = truncateTo(name, m.width-2)
+		}
 		if m.hidden[it.ID] {
 			name = lipgloss.NewStyle().Foreground(m.mutedColor).Render(name)
 		}

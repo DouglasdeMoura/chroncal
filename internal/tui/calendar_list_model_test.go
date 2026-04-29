@@ -1,7 +1,10 @@
 package tui
 
 import (
+	"strings"
 	"testing"
+
+	lipgloss "charm.land/lipgloss/v2"
 )
 
 func makeListFixture() CalendarListModel {
@@ -90,5 +93,42 @@ func TestCalendarList_SetItemsPrunesStaleHiddenIDs(t *testing.T) {
 	m = m.SetItems([]CalendarListItem{{ID: 1, Name: "Default", Color: "#a6e3a1"}})
 	if m.hidden[2] {
 		t.Errorf("stale ID 2 should have been pruned: %v", m.hidden)
+	}
+}
+
+func TestCalendarList_ViewTruncatesLongNamesWithEllipsis(t *testing.T) {
+	items := []CalendarListItem{
+		{ID: 1, Name: "GMX", Color: "#a6e3a1"},
+		{ID: 2, Name: "maildodouglas@gmail.com", Color: "#f5c2e7"},
+	}
+	m := NewCalendarListModel(items, nil).SetWidth(22)
+	out := m.View()
+	if !strings.Contains(out, "GMX") {
+		t.Errorf("short name should render untruncated; got %q", out)
+	}
+	if strings.Contains(out, "maildodouglas@gmail.com") {
+		t.Errorf("long name should be truncated; got %q", out)
+	}
+	if !strings.Contains(out, "…") {
+		t.Errorf("expected ellipsis in output; got %q", out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if w := lipgloss.Width(line); w > 22 {
+			t.Errorf("rendered line exceeds width 22 (got %d): %q", w, line)
+		}
+	}
+}
+
+func TestCalendarList_ViewWithoutWidthDoesNotTruncate(t *testing.T) {
+	items := []CalendarListItem{
+		{ID: 1, Name: "maildodouglas@gmail.com", Color: "#f5c2e7"},
+	}
+	m := NewCalendarListModel(items, nil) // no SetWidth call
+	out := m.View()
+	if !strings.Contains(out, "maildodouglas@gmail.com") {
+		t.Errorf("expected full name when width is unset; got %q", out)
+	}
+	if strings.Contains(out, "…") {
+		t.Errorf("did not expect ellipsis when width is unset; got %q", out)
 	}
 }
