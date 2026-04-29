@@ -144,7 +144,7 @@ func fetchCalendarMetadata(ctx context.Context, calendarURL string, httpClient w
 				meta.DisplayName = strings.TrimSpace(ps.Prop.DisplayName)
 			}
 			if meta.Color == "" {
-				meta.Color = strings.TrimSpace(ps.Prop.CalendarColor)
+				meta.Color = NormalizeCalendarColor(ps.Prop.CalendarColor)
 			}
 			if ps.Prop.ResourceType.Calendar != nil {
 				isCalendar = true

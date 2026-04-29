@@ -46,8 +46,8 @@ func TestVerifyCalendarURL_ReturnsDisplayNameAndColor(t *testing.T) {
 	if meta.DisplayName != "Work" {
 		t.Errorf("DisplayName = %q, want Work", meta.DisplayName)
 	}
-	if meta.Color != "#9FE1E7FF" {
-		t.Errorf("Color = %q, want #9FE1E7FF (round-tripped from server)", meta.Color)
+	if meta.Color != "#9FE1E7" {
+		t.Errorf("Color = %q, want #9FE1E7 (alpha must be stripped so lipgloss renders it)", meta.Color)
 	}
 	if !strings.Contains(bodySeen, "<ic:calendar-color/>") {
 		t.Errorf("PROPFIND body must request ic:calendar-color so the UI can adopt the server color at link time, got: %s", bodySeen)

@@ -55,6 +55,27 @@ func TestGetCalendarColor(t *testing.T) {
 	}
 }
 
+func TestNormalizeCalendarColor(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		in, want string
+	}{
+		{"#9FE1E7FF", "#9FE1E7"},
+		{"  #9FE1E7FF ", "#9FE1E7"},
+		{"9FE1E7FF", "#9FE1E7"},
+		{"#9FE1E7", "#9FE1E7"},
+		{"9FE1E7", "#9FE1E7"},
+		{"", ""},
+		{"red", "red"},
+	}
+	for _, c := range cases {
+		if got := NormalizeCalendarColor(c.in); got != c.want {
+			t.Errorf("NormalizeCalendarColor(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestSetCalendarColor(t *testing.T) {
 	t.Parallel()
 

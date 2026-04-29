@@ -63,7 +63,7 @@ func GetCalendarColor(ctx context.Context, httpClient webdav.HTTPClient, calenda
 			code := parseStatusCode(propstat.Status)
 			switch {
 			case code >= 200 && code < 300:
-				return strings.TrimSpace(propstat.Prop.CalendarColor), nil
+				return NormalizeCalendarColor(propstat.Prop.CalendarColor), nil
 			case code == http.StatusNotFound:
 				return "", nil
 			case code != 0:
@@ -73,6 +73,36 @@ func GetCalendarColor(ctx context.Context, httpClient webdav.HTTPClient, calenda
 	}
 
 	return "", nil
+}
+
+// NormalizeCalendarColor canonicalises a calendar-color string into the
+// 6-digit `#RRGGBB` form that downstream renderers (lipgloss, browsers,
+// most ANSI 24-bit consumers) accept. Apple's calendar-color extension —
+// which Google, Apple, and Fastmail all serve — uses `#RRGGBBAA` with an
+// alpha byte; lipgloss silently drops 8-digit hex back to NoColor, so the
+// raw value renders as the default foreground.
+//
+// Behaviour:
+//   - "  #9FE1E7FF " → "#9FE1E7"
+//   - "#9FE1E7"      → "#9FE1E7"
+//   - "9FE1E7FF"     → "#9FE1E7" (Apple sometimes omits the leading '#')
+//   - ""             → ""
+//   - any other shape is returned trimmed and lower-cased prefix only;
+//     callers should not assume a valid hex.
+func NormalizeCalendarColor(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return ""
+	}
+	hex := strings.TrimPrefix(s, "#")
+	switch len(hex) {
+	case 8:
+		return "#" + hex[:6]
+	case 6:
+		return "#" + hex
+	default:
+		return s
+	}
 }
 
 // GetCalendarColor fetches the current calendar-color for a calendar href.
