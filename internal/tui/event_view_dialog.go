@@ -437,17 +437,29 @@ func (m EventViewDialogModel) renderActions(w int) string {
 
 // titleRow renders the bold event title above a faint dividing rule.
 // Destructive actions are deliberately absent here — they live in the
-// bottom action bar, away from the dialog's visual anchor. When the
-// body has scrolled-away content above or below, small ↑/↓ glyphs are
-// embedded in the rule to advertise the scroll affordance.
+// bottom action bar, away from the dialog's visual anchor.
 func (m EventViewDialogModel) titleRow(w int) []string {
 	faint := lipgloss.NewStyle().Faint(true)
 	title := lipgloss.NewStyle().Bold(true).Render(truncateTo(m.event.Title, w))
 	rule := faint.Render(strings.Repeat("─", w))
-	if hint := m.scrollHint(); hint != "" && w > lipgloss.Width(hint)+2 {
-		rule = faint.Render(strings.Repeat("─", w-lipgloss.Width(hint)-1)) + " " + faint.Render(hint)
-	}
 	return []string{title, rule}
+}
+
+// actionsSeparator renders the faint rule that sits between the body
+// and the action bar. When the body has scrolled-away content above or
+// below, a small "↑↓ more" glyph is centered on the rule to advertise
+// the scroll affordance — placed here (not on the title rule) so it
+// sits next to the help footer where users look for controls.
+func (m EventViewDialogModel) actionsSeparator(w int) string {
+	faint := lipgloss.NewStyle().Faint(true)
+	hint := m.scrollHint()
+	hw := lipgloss.Width(hint)
+	if hint == "" || w <= hw+2 {
+		return faint.Render(strings.Repeat("─", w))
+	}
+	left := (w - hw - 2) / 2
+	right := w - hw - 2 - left
+	return faint.Render(strings.Repeat("─", left)) + " " + faint.Render(hint) + " " + faint.Render(strings.Repeat("─", right))
 }
 
 // scrollHint returns " ↑↓" / " ↑" / " ↓" depending on what the user can
@@ -596,7 +608,7 @@ func (m EventViewDialogModel) View() string {
 	m.body.SetHeight(m.viewportHeight())
 	m.body.SetContentLines(bodyLines)
 
-	sep := lipgloss.NewStyle().Faint(true).Render(strings.Repeat("─", cw))
+	sep := m.actionsSeparator(cw)
 	parts := append(titleLines, m.body.View(), sep, actionsRow)
 	body := strings.Join(parts, "\n")
 
