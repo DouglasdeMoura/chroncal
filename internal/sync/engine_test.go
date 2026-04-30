@@ -333,6 +333,100 @@ func TestEngineExportResourceFallsBackToOrphanOverride(t *testing.T) {
 	}
 }
 
+// TestEnginePullClearsDirtyAfterImport prevents the regression where pull's
+// persistImported call flipped dirty=1 (via the event service's Replace*
+// methods which mark the sync_resource dirty as a side effect for user
+// edits) and UpsertSyncResource's `dirty = MAX(...)` clause preserved that
+// 1, so every sync re-dirtied resources it had just imported and the next
+// push round-tripped them back to the server. The engine must explicitly
+// clear dirty after a sync-driven import so the resource lands clean.
+func TestEnginePullClearsDirtyAfterImport(t *testing.T) {
+	t.Parallel()
+
+	engine, _, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	const responseBody = `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/calendar/post-import.ics</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>&quot;etag-fresh&quot;</d:getetag>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+  <d:sync-token>https://example.com/sync/abc</d:sync-token>
+</d:multistatus>`
+
+	const fetchBody = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//chroncal//tests//EN
+BEGIN:VEVENT
+UID:post-import-uid
+DTSTAMP:20260403T120000Z
+DTSTART:20260403T120000Z
+DTEND:20260403T130000Z
+SUMMARY:Post-import event
+ATTENDEE;CN=Other;ROLE=CHAIR;PARTSTAT=ACCEPTED:mailto:other@example.com
+END:VEVENT
+END:VCALENDAR
+`
+
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method != "REPORT" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			return nil, nil
+		}
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read req body: %v", err)
+		}
+		body := responseBody
+		if strings.Contains(string(raw), "calendar-multiget") {
+			body = `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/calendar/post-import.ics</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>&quot;etag-fresh&quot;</d:getetag>
+        <cal:calendar-data>` + fetchBody + `</cal:calendar-data>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`
+		}
+		return &http.Response{
+			StatusCode: http.StatusMultiStatus,
+			Status:     "207 Multi-Status",
+			Header:     http.Header{"Content-Type": []string{"application/xml"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    r,
+		}, nil
+	})
+
+	if _, err := engine.pull(ctx, client, calendarID, "/calendar/"); err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+
+	dirty, err := q.ListDirtySyncResources(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("ListDirtySyncResources: %v", err)
+	}
+	if len(dirty) != 0 {
+		t.Fatalf("dirty after pull = %d, want 0 (sync-imports must land clean)", len(dirty))
+	}
+}
+
 func TestEnginePushRecordsConflictOnPreconditionFailure(t *testing.T) {
 	t.Parallel()
 

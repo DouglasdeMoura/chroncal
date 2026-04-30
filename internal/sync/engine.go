@@ -626,6 +626,17 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 		}); err != nil {
 			e.logger.Error("upsert sync resource", "uid", uid, "error", err)
 		}
+		// persistImported flips dirty=1 via the Replace* services'
+		// MarkResourceDirty side effect, and UpsertSyncResource's MAX
+		// clause preserves it. Force dirty=0 — the server's version is
+		// now authoritative. See applySyncCollection for the full note.
+		if err := e.q.ClearSyncResourceDirty(ctx, storage.ClearSyncResourceDirtyParams{
+			CalendarID: calendarID,
+			Uid:        uid,
+			Etag:       res.ETag,
+		}); err != nil {
+			e.logger.Warn("clear post-import dirty", "uid", uid, "error", err)
+		}
 
 		result.pulled++
 		e.logger.Debug("pulled resource", "uid", uid, "path", res.Path, "etag", res.ETag)
@@ -781,6 +792,21 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 				SyncStrategy: "sync-token",
 			}); err != nil {
 				e.logger.Error("upsert sync resource", "uid", uid, "error", err)
+			}
+			// persistImported goes through the event/todo/journal services,
+			// whose Replace* methods all flip dirty=1 via MarkResourceDirty
+			// as a side effect (correct for user-initiated edits, wrong for
+			// sync-driven imports). UpsertSyncResource's `dirty = MAX(...)`
+			// clause then preserves that 1, so without an explicit clear here
+			// every pull re-dirties everything it just absorbed and the next
+			// push round-trips it back to the server. Force dirty=0 since the
+			// server's version is now authoritative locally.
+			if err := e.q.ClearSyncResourceDirty(ctx, storage.ClearSyncResourceDirtyParams{
+				CalendarID: calendarID,
+				Uid:        uid,
+				Etag:       res.ETag,
+			}); err != nil {
+				e.logger.Warn("clear post-import dirty", "uid", uid, "error", err)
 			}
 			result.pulled++
 		}
