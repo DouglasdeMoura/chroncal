@@ -254,6 +254,85 @@ func TestEnginePushSkipsForeignOrganizedEvents(t *testing.T) {
 	}
 }
 
+// TestEnginePushClearsDirtyWhenLocalRowMissing verifies that a dirty
+// sync_resource pointing at a UID with no live event row stops retrying.
+// This unblocks zombie rows left over from inconsistent state (e.g. user
+// purged the local event but the sync_resource survived) instead of
+// emitting "get event by uid" errors on every sync run.
+func TestEnginePushClearsDirtyWhenLocalRowMissing(t *testing.T) {
+	t.Parallel()
+
+	engine, _, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID: calendarID, Uid: "ghost-uid", OwnerType: "event",
+		RemoteUrl: "/calendar/ghost.ics", Dirty: 1, SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		t.Fatalf("unexpected HTTP %s %s — push should not have hit the wire", r.Method, r.URL.Path)
+		return nil, nil
+	})
+
+	result, err := engine.push(ctx, client, calendarID, "/calendar/", ConflictServerWins)
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if len(result.errors) != 0 {
+		t.Fatalf("errors = %d, want 0: %v", len(result.errors), result.errors)
+	}
+
+	dirty, err := q.ListDirtySyncResources(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("ListDirtySyncResources: %v", err)
+	}
+	if len(dirty) != 0 {
+		t.Fatalf("dirty after push = %d, want 0", len(dirty))
+	}
+}
+
+// TestEngineExportResourceFallsBackToOrphanOverride covers Google's
+// `<master>_R<rid>@google.com` orphan-instance pattern: the iCal stream
+// gives an isolated occurrence with a synthetic suffixed UID and a
+// RECURRENCE-ID, so we import an override row but never receive a master.
+// The exporter must still emit something pushable instead of erroring.
+func TestEngineExportResourceFallsBackToOrphanOverride(t *testing.T) {
+	t.Parallel()
+
+	engine, db, _ := newTestEngine(t)
+	ctx := context.Background()
+
+	const uid = "abc_R20250609T190000@google.com"
+	if _, err := db.ExecContext(ctx,
+		"INSERT INTO events (uid, calendar_id, title, start_time, end_time, status, transp, class, recurrence_id) VALUES (?, 1, ?, ?, ?, 'CONFIRMED', 'OPAQUE', 'PUBLIC', ?)",
+		uid, "Orphan instance",
+		"2025-06-09T19:00:00Z", "2025-06-09T20:00:00Z",
+		"2025-06-09T19:00:00Z",
+	); err != nil {
+		t.Fatalf("insert orphan override: %v", err)
+	}
+
+	data, err := engine.exportResource(ctx, "event", uid)
+	if err != nil {
+		t.Fatalf("exportResource: %v", err)
+	}
+	if !strings.Contains(string(data), "UID:"+uid) {
+		t.Fatalf("export missing UID:\n%s", string(data))
+	}
+	if !strings.Contains(string(data), "RECURRENCE-ID") {
+		t.Fatalf("export missing RECURRENCE-ID:\n%s", string(data))
+	}
+}
+
 func TestEnginePushRecordsConflictOnPreconditionFailure(t *testing.T) {
 	t.Parallel()
 

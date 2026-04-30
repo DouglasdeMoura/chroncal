@@ -310,6 +310,22 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 		// Export the local resource to iCal
 		icalData, err := e.exportResource(ctx, res.OwnerType, res.Uid)
 		if err != nil {
+			if errors.Is(err, errResourceMissing) {
+				// No live local row backs this dirty sync_resource (the user
+				// purged it from trash, or the master/override pair got into
+				// an inconsistent state). Retrying every sync just races the
+				// same null lookup, so clear the flag and let processTombstones
+				// handle any remote-side cleanup.
+				e.logger.Info("clear dirty: local resource missing", "uid", res.Uid, "owner_type", res.OwnerType)
+				if cerr := e.q.ClearSyncResourceDirty(ctx, storage.ClearSyncResourceDirtyParams{
+					CalendarID: calendarID,
+					Uid:        res.Uid,
+					Etag:       res.Etag,
+				}); cerr != nil {
+					e.logger.Error("clear missing-resource dirty", "uid", res.Uid, "error", cerr)
+				}
+				continue
+			}
 			e.logger.Error("export resource failed", "uid", res.Uid, "error", err)
 			result.errors = append(result.errors, fmt.Errorf("export %s: %w", res.Uid, err))
 			continue
@@ -946,45 +962,64 @@ func (e *Engine) syncCalendarMetadata(ctx context.Context, client *caldav.Client
 	return nil
 }
 
+// errResourceMissing reports that no live local row exists for a UID we were
+// asked to export. Push uses errors.Is on this to distinguish a missing local
+// row (clear the dirty flag, stop retrying) from a real export failure.
+var errResourceMissing = errors.New("local resource missing for uid")
+
 // exportResource exports a local resource to iCal bytes. CalDAV tracks one
-// resource per UID, but recurring resources are stored as a master row plus
-// override rows sharing the UID. Export must bundle master + overrides so
-// instance edits round-trip to the server.
+// resource per UID; recurring resources are stored as a master row plus
+// override rows sharing the UID. Normally we bundle master + overrides so
+// instance edits round-trip to the server. Google sometimes serves a single
+// orphan instance under a UID like `<master>_R<recurrence-id>@google.com`
+// with a RECURRENCE-ID property and no master in the same iCal stream — we
+// import those as override rows with no master sibling, so the master lookup
+// fails. Fall back to listing every live row under the UID and exporting the
+// non-empty result; only return errResourceMissing when nothing remains.
 func (e *Engine) exportResource(ctx context.Context, ownerType string, uid string) ([]byte, error) {
 	switch ownerType {
 	case "event":
-		evt, err := e.events.GetByUID(ctx, uid)
-		if err != nil {
-			return nil, fmt.Errorf("get event by uid %s: %w", uid, err)
+		var rows []event.Event
+		if evt, err := e.events.GetByUID(ctx, uid); err == nil {
+			rows = append(rows, evt)
 		}
-		hydrateEvent(ctx, e, &evt)
 		overrides, _ := e.events.ListOverridesByUID(ctx, uid)
-		for i := range overrides {
-			hydrateEvent(ctx, e, &overrides[i])
+		rows = append(rows, overrides...)
+		if len(rows) == 0 {
+			return nil, fmt.Errorf("%w: event uid %s", errResourceMissing, uid)
 		}
-		return icalPkg.ExportEvents(append([]event.Event{evt}, overrides...), "")
+		for i := range rows {
+			hydrateEvent(ctx, e, &rows[i])
+		}
+		return icalPkg.ExportEvents(rows, "")
 	case "todo":
-		t, err := e.todos.GetByUID(ctx, uid)
-		if err != nil {
-			return nil, fmt.Errorf("get todo by uid %s: %w", uid, err)
+		var rows []todo.Todo
+		if t, err := e.todos.GetByUID(ctx, uid); err == nil {
+			rows = append(rows, t)
 		}
-		hydrateTodo(ctx, e, &t)
 		overrides, _ := e.todos.ListOverridesByUID(ctx, uid)
-		for i := range overrides {
-			hydrateTodo(ctx, e, &overrides[i])
+		rows = append(rows, overrides...)
+		if len(rows) == 0 {
+			return nil, fmt.Errorf("%w: todo uid %s", errResourceMissing, uid)
 		}
-		return icalPkg.ExportTodos(append([]todo.Todo{t}, overrides...), "")
+		for i := range rows {
+			hydrateTodo(ctx, e, &rows[i])
+		}
+		return icalPkg.ExportTodos(rows, "")
 	case "journal":
-		j, err := e.journals.GetByUID(ctx, uid)
-		if err != nil {
-			return nil, fmt.Errorf("get journal by uid %s: %w", uid, err)
+		var rows []journal.Journal
+		if j, err := e.journals.GetByUID(ctx, uid); err == nil {
+			rows = append(rows, j)
 		}
-		hydrateJournal(ctx, e, &j)
 		overrides, _ := e.journals.ListOverridesByUID(ctx, uid)
-		for i := range overrides {
-			hydrateJournal(ctx, e, &overrides[i])
+		rows = append(rows, overrides...)
+		if len(rows) == 0 {
+			return nil, fmt.Errorf("%w: journal uid %s", errResourceMissing, uid)
 		}
-		return icalPkg.ExportJournals(append([]journal.Journal{j}, overrides...), "")
+		for i := range rows {
+			hydrateJournal(ctx, e, &rows[i])
+		}
+		return icalPkg.ExportJournals(rows, "")
 	default:
 		return nil, fmt.Errorf("unknown owner type: %s", ownerType)
 	}
