@@ -249,10 +249,14 @@ func (m TrashModel) refresh() TrashModel {
 
 	if e, ok := m.selectedEntry(); ok {
 		cal := m.calendars[e.CalendarID]
+		title := e.Title
+		if title == "" {
+			title = "(untitled)"
+		}
 		lines := trashDetailLines(e, cal, m.detailWidth(), m.labelWidth())
-		m.shell = m.shell.SetDetailLines(lines)
+		m.shell = m.shell.SetDetailTitle(title).SetDetailLines(lines)
 	} else {
-		m.shell = m.shell.SetDetailLines(nil)
+		m.shell = m.shell.SetDetailTitle("").SetDetailLines(nil)
 	}
 
 	if len(m.entries) == 0 {
@@ -381,19 +385,12 @@ func formatTrashRowLabel(e trash.Entry) string {
 // secondary "open view" action — everything the user needs to decide
 // whether to restore or purge lives here. Detail content branches on
 // Kind so todos show due-date/status/progress and journals show a start
-// date where events would show a time range.
+// date where events would show a time range. The entry title is pinned
+// by the shell via SetDetailTitle and must not be prepended here.
 func trashDetailLines(e trash.Entry, cal CalendarInfo, w, labelWidth int) []string {
 	faint := lipgloss.NewStyle().Faint(true)
 
-	title := e.Title
-	if title == "" {
-		title = "(untitled)"
-	}
-
 	var lines []string
-	lines = append(lines, strings.Split(paneTitle(title, w), "\n")...)
-	lines = append(lines, "")
-
 	lines = append(lines, detailLine(faint, "Kind", e.Kind.Label(), labelWidth, w))
 	if !e.DeletedAt.IsZero() {
 		lines = append(lines, detailLine(faint, "Deleted", e.DeletedAt.Local().Format("Mon, Jan 2 15:04"), labelWidth, w))

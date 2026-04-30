@@ -139,9 +139,9 @@ func (m CalendarListDialogModel) refresh() CalendarListDialogModel {
 
 	if id, ok := m.selectedID(); ok {
 		info := m.calendars[id]
-		m.shell = m.shell.SetDetailLines(calendarDetailLines(info, m.detailWidth(), m.labelWidth()))
+		m.shell = m.shell.SetDetailTitle(info.Name).SetDetailLines(calendarDetailLines(info, m.detailWidth(), m.labelWidth()))
 	} else {
-		m.shell = m.shell.SetDetailLines(nil)
+		m.shell = m.shell.SetDetailTitle("").SetDetailLines(nil)
 	}
 	if len(m.order) == 0 {
 		m.shell = m.shell.SetEmptyList("", []string{lipgloss.NewStyle().Faint(true).Render("No calendars yet.")})
@@ -313,12 +313,12 @@ func calendarRowLabel(info CalendarInfo, hidden, selected, listFocused bool, sel
 	return fmt.Sprintf("%s %s", swatch, name)
 }
 
+// calendarDetailLines returns the scrollable body of the detail pane.
+// The calendar name is pinned by the shell via SetDetailTitle.
 func calendarDetailLines(info CalendarInfo, w, labelWidth int) []string {
 	faint := lipgloss.NewStyle().Faint(true)
 
 	var lines []string
-	lines = append(lines, strings.Split(paneTitle(info.Name, w), "\n")...)
-	lines = append(lines, "")
 
 	dot := "●"
 	if info.Color != "" {

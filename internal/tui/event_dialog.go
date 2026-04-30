@@ -281,9 +281,9 @@ func (m EventDialogModel) refresh() EventDialogModel {
 			rsvpLine = m.renderRSVPLine(att, rsvp, w)
 		}
 		lines, _ := eventDetailLines(ev, cal, w, m.labelWidth(), rsvpLine)
-		m.shell = m.shell.SetDetailLines(lines)
+		m.shell = m.shell.SetDetailTitle(ev.Title).SetDetailLines(lines)
 	} else {
-		m.shell = m.shell.SetDetailLines(nil)
+		m.shell = m.shell.SetDetailTitle("").SetDetailLines(nil)
 	}
 
 	if len(m.events) == 0 {
@@ -613,8 +613,11 @@ func (m EventDialogModel) hitRSVPBtn(x, y int) (int, tea.Cmd, bool) {
 		return 0, nil, false
 	}
 
-	ox, oy := m.shell.DetailsOrigin()
-	rsvpY := oy + rowIdx
+	rsvpY, ok := m.shell.BodyRowScreenY(rowIdx)
+	if !ok {
+		return 0, nil, false
+	}
+	ox, _ := m.shell.DetailsOrigin()
 	rsvpX := ox + labelColWidth("Your RSVP", m.labelWidth())
 	btnW := rsvpButtonWidth()
 
@@ -686,13 +689,12 @@ func rsvpButtonLabel(baseLabel, rsvpStatus string) string {
 }
 
 // eventDetailLines returns detail lines and the index of the RSVP row (-1 if none).
+// The event title is pinned by the shell via SetDetailTitle, so callers must
+// not prepend it here — these lines scroll, the title does not.
 func eventDetailLines(ev event.Event, cal CalendarInfo, w, labelWidth int, rsvpLine string) ([]string, int) {
 	faint := lipgloss.NewStyle().Faint(true)
 
 	var lines []string
-	lines = append(lines, strings.Split(paneTitle(ev.Title, w), "\n")...)
-	lines = append(lines, "")
-
 	lines = append(lines, detailLine(faint, "When", formatWhen(ev), labelWidth, w))
 
 	dur := formatDuration(ev)

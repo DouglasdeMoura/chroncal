@@ -82,6 +82,7 @@ type ListDialogModel struct {
 	title         string
 	titleAction   *ListDialogAction
 	rows          []string
+	detailTitle   string
 	detailLines   []string
 	emptyList     string
 	emptyDetails  []string
@@ -196,6 +197,16 @@ func (m ListDialogModel) SetDetailLines(lines []string) ListDialogModel {
 	return m
 }
 
+// SetDetailTitle pins a title row above the scrollable body. The shell
+// renders it as a bold line plus a faint horizontal rule that stay in
+// place while the body scrolls — same anchor users see in the single-event
+// dialog. Empty string clears the pinned title.
+func (m ListDialogModel) SetDetailTitle(t string) ListDialogModel {
+	m.detailTitle = t
+	m.syncBody()
+	return m
+}
+
 // SetEmptyList configures what shows on the left when rows is empty.
 // emptyDetails render in the detail pane in that same state.
 func (m ListDialogModel) SetEmptyList(listMsg string, details []string) ListDialogModel {
@@ -244,6 +255,9 @@ func (m *ListDialogModel) syncBody() {
 	if len(m.actions) > 0 {
 		detailH = max(detailH-2, 1)
 	}
+	if m.hasPinnedTitle() {
+		detailH = max(detailH-2, 1)
+	}
 
 	lines := m.detailLines
 	if len(m.rows) == 0 {
@@ -252,6 +266,14 @@ func (m *ListDialogModel) syncBody() {
 	m.body.SetWidth(detailW)
 	m.body.SetHeight(detailH)
 	m.body.SetContentLines(lines)
+}
+
+// hasPinnedTitle reports whether the shell should reserve two lines at the
+// top of the detail pane for a pinned title row. The empty-state pane
+// (no rows) intentionally skips the title since emptyDetails carries its
+// own messaging.
+func (m ListDialogModel) hasPinnedTitle() bool {
+	return m.detailTitle != "" && len(m.rows) > 0
 }
 
 // SetShortHelp replaces the bottom help-line key bindings.
@@ -485,6 +507,22 @@ func (m ListDialogModel) DetailsOrigin() (int, int) {
 	return detailsX, detailsY
 }
 
+// BodyRowScreenY translates a content-row index inside the scrollable
+// detail body to its screen-space Y, factoring in the pinned title row
+// (+2 lines when present) and the current scroll offset. Returns false
+// when the row is scrolled out of view.
+func (m ListDialogModel) BodyRowScreenY(idx int) (int, bool) {
+	_, oy := m.DetailsOrigin()
+	if m.hasPinnedTitle() {
+		oy += 2
+	}
+	visible := idx - m.body.YOffset()
+	if visible < 0 || visible >= m.body.Height() {
+		return 0, false
+	}
+	return oy + visible, true
+}
+
 func (m ListDialogModel) actionBarOrigin() (int, int) {
 	boxW, boxH := m.boxSize()
 	innerW := max(boxW-5, 10)
@@ -656,19 +694,34 @@ func (m *ListDialogModel) renderDetails(w, h int) string {
 		lines = m.emptyDetails
 	}
 
+	bodyH := h
+	var pinned string
+	if m.hasPinnedTitle() {
+		pinned = paneTitle(m.detailTitle, w)
+		bodyH = max(bodyH-2, 1)
+	}
+
 	if len(m.actions) == 0 {
 		m.body.SetWidth(w)
-		m.body.SetHeight(h)
+		m.body.SetHeight(bodyH)
 		m.body.SetContentLines(lines)
+		if pinned != "" {
+			return pinned + "\n" + m.body.View()
+		}
 		return m.body.View()
 	}
 
-	detailsH := max(h-2, 1)
+	bodyH = max(bodyH-2, 1)
 	m.body.SetWidth(w)
-	m.body.SetHeight(detailsH)
+	m.body.SetHeight(bodyH)
 	m.body.SetContentLines(lines)
 
-	return m.body.View() + "\n" + m.actionsSeparator(w) + "\n" + m.renderActions(w)
+	parts := make([]string, 0, 4)
+	if pinned != "" {
+		parts = append(parts, pinned)
+	}
+	parts = append(parts, m.body.View(), m.actionsSeparator(w), m.renderActions(w))
+	return strings.Join(parts, "\n")
 }
 
 // actionsSeparator renders the faint rule that sits between the detail
