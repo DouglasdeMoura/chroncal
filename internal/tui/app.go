@@ -186,6 +186,40 @@ type syncFinishedMsg struct {
 	reload  bool
 }
 
+// syncTarget identifies one calendar in a multi-calendar sync run.
+type syncTarget struct {
+	ID   int64
+	Name string
+}
+
+// syncTotals accumulates per-calendar SyncResult counts across a SyncAll run.
+type syncTotals struct {
+	pushed    int
+	pulled    int
+	deleted   int
+	conflicts int
+	errCount  int
+	firstErr  error
+}
+
+// syncAllPlannedMsg is emitted by runSyncAllPlan after listing the connected
+// calendars. The Update handler uses it to seed the per-calendar progress
+// loop so the footer can show "Syncing X (i/N)…" instead of one static line.
+type syncAllPlannedMsg struct {
+	targets []syncTarget
+}
+
+// syncCalendarFinishedMsg is emitted after each per-calendar SyncCalendar
+// call inside a SyncAll run. The Update handler accumulates totals and
+// either kicks off the next target or finalizes the summary.
+type syncCalendarFinishedMsg struct {
+	index  int
+	total  int
+	name   string
+	result *syncpkg.SyncResult
+	err    error
+}
+
 // opportunisticPushFinishedMsg is emitted after a save-time per-calendar push.
 // It doesn't drive the manual-sync state machine (m.syncing), so a push that
 // completes while a manual sync is mid-flight leaves the manual-sync status
@@ -275,6 +309,11 @@ type Model struct {
 	statusToken int
 	syncing     bool
 	syncSpinner spinner.Model
+	// syncTargets and syncTotals drive a per-calendar SyncAll run so the
+	// footer can show progress as each calendar finishes instead of one
+	// opaque "Syncing all calendars…" line.
+	syncTargets []syncTarget
+	syncTotals  syncTotals
 
 	// undoStack remembers event deletes so 'u' can reverse them.
 	undoStack *UndoStack
@@ -661,39 +700,40 @@ func (m Model) newSyncService() (*syncpkg.Service, error) {
 	return syncpkg.NewService(m.app.DB, m.app.Queries, credStore, m.app.Calendars, m.app.Events, m.app.Todos, m.app.Journals, logger), nil
 }
 
-func (m Model) runSyncAll() tea.Cmd {
+// runSyncAllPlan lists the connected calendars and emits a syncAllPlannedMsg
+// so the Update loop can step through them one at a time. The actual sync work
+// happens in runSyncOne so the footer can refresh between calendars.
+func (m Model) runSyncAllPlan() tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		cals, err := m.app.Queries.ListCalendars(ctx)
+		if err != nil {
+			return syncFinishedMsg{err: err}
+		}
+		var targets []syncTarget
+		for _, c := range cals {
+			if c.AccountID == nil || *c.AccountID == 0 {
+				continue
+			}
+			targets = append(targets, syncTarget{ID: c.ID, Name: c.Name})
+		}
+		return syncAllPlannedMsg{targets: targets}
+	}
+}
+
+// runSyncOne syncs a single calendar inside a SyncAll run and emits
+// syncCalendarFinishedMsg so the Update loop can advance to the next target
+// (or finalize) and refresh the footer.
+func (m Model) runSyncOne(target syncTarget, index, total int) tea.Cmd {
 	return func() tea.Msg {
 		svc, err := m.newSyncService()
 		if err != nil {
-			return syncFinishedMsg{err: err}
+			return syncCalendarFinishedMsg{index: index, total: total, name: target.Name, err: err}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
-		results, err := svc.SyncAll(ctx, syncpkg.ConflictServerWins)
-		if err != nil {
-			return syncFinishedMsg{err: err}
-		}
-		if len(results) == 0 {
-			return syncFinishedMsg{summary: "No connected calendars to sync", reload: false}
-		}
-		var pushed, pulled, deleted, conflicts, errCount int
-		var firstErr error
-		for _, r := range results {
-			pushed += r.Pushed
-			pulled += r.Pulled
-			deleted += r.Deleted
-			conflicts += r.Conflicts
-			errCount += len(r.Errors)
-			if firstErr == nil && len(r.Errors) > 0 {
-				firstErr = r.Errors[0]
-			}
-		}
-		summary := fmt.Sprintf("Synced %d calendar(s) · pushed %d · pulled %d · deleted %d · conflicts %d",
-			len(results), pushed, pulled, deleted, conflicts)
-		if errCount > 0 {
-			return syncFinishedMsg{summary: summary, err: firstErr, reload: true}
-		}
-		return syncFinishedMsg{summary: summary, reload: true}
+		result, err := svc.SyncCalendar(ctx, target.ID, syncpkg.ConflictServerWins)
+		return syncCalendarFinishedMsg{index: index, total: total, name: target.Name, result: result, err: err}
 	}
 }
 
@@ -721,6 +761,21 @@ func (m Model) runSyncCalendar(id int64, name string) tea.Cmd {
 		}
 		return syncFinishedMsg{summary: summary, err: firstErr, reload: true}
 	}
+}
+
+// syncProgressLabel produces a short calendar label for the per-calendar
+// progress footer. Calendar names can be long (Apple/Google often exceed 40
+// chars) and would push the spinner off the visible status line.
+func syncProgressLabel(name string) string {
+	if name == "" {
+		return "calendar"
+	}
+	const max = 32
+	runes := []rune(name)
+	if len(runes) <= max {
+		return name
+	}
+	return string(runes[:max-1]) + "…"
 }
 
 // runOpportunisticPush pushes pending changes for a single calendar without
@@ -1796,8 +1851,57 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.syncing = true
 		m.statusToken++
-		m.syncStatus = "Syncing all calendars…"
-		return m, tea.Batch(m.runSyncAll(), m.syncSpinner.Tick)
+		m.syncStatus = "Preparing sync…"
+		m.syncTargets = nil
+		m.syncTotals = syncTotals{}
+		return m, tea.Batch(m.runSyncAllPlan(), m.syncSpinner.Tick)
+
+	case syncAllPlannedMsg:
+		if len(msg.targets) == 0 {
+			m.syncing = false
+			m.statusToken++
+			m.syncStatus = "No connected calendars to sync"
+			return m, m.expireStatusAfter(6*time.Second, m.statusToken)
+		}
+		m.syncTargets = msg.targets
+		m.syncTotals = syncTotals{}
+		first := msg.targets[0]
+		m.statusToken++
+		m.syncStatus = fmt.Sprintf("Syncing %s (1/%d)…", syncProgressLabel(first.Name), len(msg.targets))
+		return m, m.runSyncOne(first, 0, len(msg.targets))
+
+	case syncCalendarFinishedMsg:
+		if msg.result != nil {
+			m.syncTotals.pushed += msg.result.Pushed
+			m.syncTotals.pulled += msg.result.Pulled
+			m.syncTotals.deleted += msg.result.Deleted
+			m.syncTotals.conflicts += msg.result.Conflicts
+			m.syncTotals.errCount += len(msg.result.Errors)
+			if m.syncTotals.firstErr == nil && len(msg.result.Errors) > 0 {
+				m.syncTotals.firstErr = msg.result.Errors[0]
+			}
+		}
+		if msg.err != nil {
+			m.syncTotals.errCount++
+			if m.syncTotals.firstErr == nil {
+				m.syncTotals.firstErr = msg.err
+			}
+		}
+		next := msg.index + 1
+		if next >= msg.total {
+			summary := fmt.Sprintf("Synced %d calendar(s) · pushed %d · pulled %d · deleted %d · conflicts %d",
+				msg.total, m.syncTotals.pushed, m.syncTotals.pulled, m.syncTotals.deleted, m.syncTotals.conflicts)
+			finishErr := m.syncTotals.firstErr
+			m.syncTargets = nil
+			m.syncTotals = syncTotals{}
+			return m, func() tea.Msg {
+				return syncFinishedMsg{summary: summary, err: finishErr, reload: true}
+			}
+		}
+		target := m.syncTargets[next]
+		m.statusToken++
+		m.syncStatus = fmt.Sprintf("Syncing %s (%d/%d)…", syncProgressLabel(target.Name), next+1, msg.total)
+		return m, m.runSyncOne(target, next, msg.total)
 
 	case SyncCalendarRequestedMsg:
 		if m.syncing {
