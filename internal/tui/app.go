@@ -2192,6 +2192,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.helpDialog, cmd = m.helpDialog.Update(msg)
 			return m, cmd
 		}
+		if m.viewDialogOpen {
+			var cmd tea.Cmd
+			m.viewDialog, cmd = m.viewDialog.Update(msg)
+			return m, cmd
+		}
 		if !m.dialogOpen && !m.choiceOpen && !m.confirmOpen {
 			switch m.viewMode {
 			case viewWeek:

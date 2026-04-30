@@ -217,6 +217,62 @@ func TestEventViewDialog_ViewIsStableAcrossRenders(t *testing.T) {
 	assert.False(t, strings.Contains(first, "\x1b[0z"), "mouse markers should be swept")
 }
 
+func TestEventViewDialog_LongContentFitsInTerminal(t *testing.T) {
+	// Events with many attendees and long descriptions used to render a
+	// box taller than the terminal, so compositeOverlay clipped the top
+	// and bottom rows (including the action bar). The body now lives in
+	// a viewport that bounds the dialog to the terminal height.
+	ev := testViewEvent()
+	ev.Description = strings.Repeat("Lorem ipsum dolor sit amet.\n", 100)
+	for i := 0; i < 50; i++ {
+		ev.Attendees = append(ev.Attendees, model.Attendee{Email: "att@example.com"})
+	}
+	const termH = 24
+	m := NewEventViewDialogModel(ev, CalendarInfo{Name: "Work"}, Theme{}).SetSize(120, termH)
+
+	_, bh := m.BoxSize()
+	require.LessOrEqual(t, bh, termH, "rendered box must fit inside the terminal")
+
+	// Action bar must still render even with huge content.
+	out := m.View()
+	assert.Contains(t, out, "Edit")
+	assert.Contains(t, out, "Delete")
+	// And the title rule should advertise more content below.
+	assert.Contains(t, out, "more")
+}
+
+func TestEventViewDialog_ScrollKeysMoveBody(t *testing.T) {
+	ev := testViewEvent()
+	ev.Description = strings.Repeat("scroll line\n", 100)
+	m := NewEventViewDialogModel(ev, CalendarInfo{Name: "Work"}, Theme{}).SetSize(120, 20)
+	require.True(t, m.bodyOverflows(), "test precondition: body must overflow")
+
+	require.Equal(t, 0, m.body.YOffset())
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	assert.Equal(t, 1, m.body.YOffset(), "down arrow should scroll body by 1")
+
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
+	assert.True(t, m.body.AtBottom(), "end should jump to bottom")
+
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyHome})
+	assert.True(t, m.body.AtTop(), "home should jump to top")
+}
+
+func TestEventViewDialog_MouseWheelScrollsBody(t *testing.T) {
+	ev := testViewEvent()
+	ev.Description = strings.Repeat("scroll line\n", 100)
+	m := NewEventViewDialogModel(ev, CalendarInfo{Name: "Work"}, Theme{}).SetSize(120, 20)
+	require.True(t, m.bodyOverflows(), "test precondition: body must overflow")
+	require.Equal(t, 0, m.body.YOffset())
+
+	m, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	assert.Greater(t, m.body.YOffset(), 0, "wheel down should scroll the body forward")
+
+	prev := m.body.YOffset()
+	m, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	assert.Less(t, m.body.YOffset(), prev, "wheel up should scroll the body back")
+}
+
 func TestEventViewDialog_XKeyTriggersDelete(t *testing.T) {
 	// The x key (and the Delete key) must trigger the delete binding across
 	// all three dialogs after the t→x sweep.

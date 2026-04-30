@@ -6,6 +6,7 @@ import (
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
 
@@ -20,34 +21,46 @@ type EventViewRequestedMsg struct{ Event event.Event }
 type EventViewClosedMsg struct{}
 
 type eventViewKeyMap struct {
-	Edit      key.Binding
-	Duplicate key.Binding
-	Delete    key.Binding
-	Close     key.Binding
-	Tab       key.Binding
-	ShiftTab  key.Binding
-	Left      key.Binding
-	Right     key.Binding
-	Enter     key.Binding
-	RSVPYes   key.Binding
-	RSVPNo    key.Binding
-	RSVPMaybe key.Binding
+	Edit       key.Binding
+	Duplicate  key.Binding
+	Delete     key.Binding
+	Close      key.Binding
+	Tab        key.Binding
+	ShiftTab   key.Binding
+	Left       key.Binding
+	Right      key.Binding
+	Enter      key.Binding
+	RSVPYes    key.Binding
+	RSVPNo     key.Binding
+	RSVPMaybe  key.Binding
+	ScrollUp   key.Binding
+	ScrollDown key.Binding
+	PageUp     key.Binding
+	PageDown   key.Binding
+	Home       key.Binding
+	End        key.Binding
 }
 
 func defaultEventViewKeys() eventViewKeyMap {
 	return eventViewKeyMap{
-		Edit:      key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
-		Duplicate: key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "duplicate")),
-		Delete:    key.NewBinding(key.WithKeys("x", "delete"), key.WithHelp("x", "delete")),
-		Close:     key.NewBinding(key.WithKeys("esc", "q"), key.WithHelp("esc", "close")),
-		Tab:       key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next")),
-		ShiftTab:  key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev")),
-		Left:      key.NewBinding(key.WithKeys("left", "h")),
-		Right:     key.NewBinding(key.WithKeys("right", "l")),
-		Enter:     key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter", "select")),
-		RSVPYes:   key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "RSVP yes")),
-		RSVPNo:    key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "RSVP no")),
-		RSVPMaybe: key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "RSVP maybe")),
+		Edit:       key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
+		Duplicate:  key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "duplicate")),
+		Delete:     key.NewBinding(key.WithKeys("x", "delete"), key.WithHelp("x", "delete")),
+		Close:      key.NewBinding(key.WithKeys("esc", "q"), key.WithHelp("esc", "close")),
+		Tab:        key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next")),
+		ShiftTab:   key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev")),
+		Left:       key.NewBinding(key.WithKeys("left", "h")),
+		Right:      key.NewBinding(key.WithKeys("right", "l")),
+		Enter:      key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter", "select")),
+		RSVPYes:    key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "RSVP yes")),
+		RSVPNo:     key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "RSVP no")),
+		RSVPMaybe:  key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "RSVP maybe")),
+		ScrollUp:   key.NewBinding(key.WithKeys("up", "k")),
+		ScrollDown: key.NewBinding(key.WithKeys("down", "j")),
+		PageUp:     key.NewBinding(key.WithKeys("pgup", "ctrl+b")),
+		PageDown:   key.NewBinding(key.WithKeys("pgdown", "ctrl+f")),
+		Home:       key.NewBinding(key.WithKeys("home")),
+		End:        key.NewBinding(key.WithKeys("end")),
 	}
 }
 
@@ -69,6 +82,7 @@ type EventViewDialogModel struct {
 	keys          eventViewKeyMap
 	help          help.Model
 	dialog        Dialog
+	body          viewport.Model
 	width         int
 	height        int
 	theme         Theme
@@ -92,12 +106,15 @@ const (
 func NewEventViewDialogModel(ev event.Event, cal CalendarInfo, theme Theme) EventViewDialogModel {
 	dialog := NewDialog("", DefaultDialogStyles())
 	dialog.SetWidth(60)
+	vp := viewport.New()
+	vp.MouseWheelEnabled = true
 	return EventViewDialogModel{
 		event:    ev,
 		calendar: cal,
 		keys:     defaultEventViewKeys(),
 		help:     newThemedHelp(theme),
 		dialog:   dialog,
+		body:     vp,
 		theme:    theme,
 	}
 }
@@ -106,7 +123,28 @@ func (m EventViewDialogModel) SetSize(w, h int) EventViewDialogModel {
 	m.width = w
 	m.height = h
 	m.dialog = m.dialog.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	cw := m.dialog.ContentWidth()
+	m.body.SetWidth(cw)
+	m.body.SetHeight(m.viewportHeight())
+	if cw > 0 {
+		m.body.SetContentLines(m.buildBodyLines(cw))
+	}
 	return m
+}
+
+// viewportHeight returns the height available for the scrollable body,
+// after subtracting the dialog's chrome (border, top padding), the
+// pinned title row + rule, the action separator + button row, and the
+// help footer with its leading blank line. Clamped to a minimum of 1
+// so a too-small terminal still renders something.
+func (m EventViewDialogModel) viewportHeight() int {
+	const chromeLines = 2 + // top + bottom border
+		1 + // top padding (PaddingY)
+		2 + // pinned title + faint rule
+		1 + // action separator
+		1 + // action row
+		2 // blank line + footer
+	return max(m.height-chromeLines, 1)
 }
 
 func (m EventViewDialogModel) BoxSize() (int, int) {
@@ -182,6 +220,10 @@ func (m EventViewDialogModel) Update(msg tea.Msg) (EventViewDialogModel, tea.Cmd
 		return m.handleKey(msg)
 	case tea.MouseClickMsg:
 		return m.handleMouse(msg)
+	case tea.MouseWheelMsg:
+		var cmd tea.Cmd
+		m.body, cmd = m.body.Update(msg)
+		return m, cmd
 	}
 	return m, nil
 }
@@ -191,6 +233,25 @@ func (m EventViewDialogModel) handleKey(msg tea.KeyPressMsg) (EventViewDialogMod
 	rsvp := m.rsvpActions()
 
 	switch {
+	case key.Matches(msg, m.keys.ScrollUp):
+		m.body.ScrollUp(1)
+		return m, nil
+	case key.Matches(msg, m.keys.ScrollDown):
+		m.body.ScrollDown(1)
+		return m, nil
+	case key.Matches(msg, m.keys.PageUp):
+		m.body.PageUp()
+		return m, nil
+	case key.Matches(msg, m.keys.PageDown):
+		m.body.PageDown()
+		return m, nil
+	case key.Matches(msg, m.keys.Home):
+		m.body.GotoTop()
+		return m, nil
+	case key.Matches(msg, m.keys.End):
+		m.body.GotoBottom()
+		return m, nil
+
 	case key.Matches(msg, m.keys.Close):
 		return m, func() tea.Msg { return EventViewClosedMsg{} }
 
@@ -376,22 +437,56 @@ func (m EventViewDialogModel) renderActions(w int) string {
 
 // titleRow renders the bold event title above a faint dividing rule.
 // Destructive actions are deliberately absent here — they live in the
-// bottom action bar, away from the dialog's visual anchor.
+// bottom action bar, away from the dialog's visual anchor. When the
+// body has scrolled-away content above or below, small ↑/↓ glyphs are
+// embedded in the rule to advertise the scroll affordance.
 func (m EventViewDialogModel) titleRow(w int) []string {
+	faint := lipgloss.NewStyle().Faint(true)
 	title := lipgloss.NewStyle().Bold(true).Render(truncateTo(m.event.Title, w))
-	rule := lipgloss.NewStyle().Faint(true).Render(strings.Repeat("─", w))
+	rule := faint.Render(strings.Repeat("─", w))
+	if hint := m.scrollHint(); hint != "" && w > lipgloss.Width(hint)+2 {
+		rule = faint.Render(strings.Repeat("─", w-lipgloss.Width(hint)-1)) + " " + faint.Render(hint)
+	}
 	return []string{title, rule}
+}
+
+// scrollHint returns " ↑↓" / " ↑" / " ↓" depending on what the user can
+// still scroll to. Empty when the body fits without scrolling.
+func (m EventViewDialogModel) scrollHint() string {
+	if !m.bodyOverflows() {
+		return ""
+	}
+	switch {
+	case m.body.AtTop():
+		return "↓ more"
+	case m.body.AtBottom():
+		return "↑ more"
+	default:
+		return "↑↓ more"
+	}
 }
 
 // buildDetailLines composes the read-only field list for the dialog,
 // skipping empty fields so the layout only surfaces meaningful values.
+// The title row is included at the top so callers that render without a
+// scrollable viewport (tests, simple snapshots) see the same layout as
+// before. View() pins the title separately and feeds only the body to
+// the viewport.
 func (m EventViewDialogModel) buildDetailLines(w int) []string {
+	lines := append([]string{}, m.titleRow(w)...)
+	lines = append(lines, m.buildBodyLines(w)...)
+	return lines
+}
+
+// buildBodyLines returns every line below the title row — the part that
+// scrolls inside the viewport when content exceeds available height.
+// A leading blank line preserves the visual gap between the title rule
+// and the first detail row that the un-scrolled rendering relied on.
+func (m EventViewDialogModel) buildBodyLines(w int) []string {
 	faint := lipgloss.NewStyle().Faint(true)
 	ev := m.event
 
-	var lines []string
-	lines = append(lines, m.titleRow(w)...)
-	lines = append(lines, "")
+	lines := []string{""}
 
 	if m.isDeleted() && ev.DeletedAt != nil {
 		warn := lipgloss.NewStyle().Foreground(m.theme.Error).Bold(true)
@@ -493,11 +588,17 @@ func (m EventViewDialogModel) View() string {
 		return ""
 	}
 
-	lines := m.buildDetailLines(cw)
+	titleLines := m.titleRow(cw)
+	bodyLines := m.buildBodyLines(cw)
 	actionsRow := m.renderActions(cw)
 
+	m.body.SetWidth(cw)
+	m.body.SetHeight(m.viewportHeight())
+	m.body.SetContentLines(bodyLines)
+
 	sep := lipgloss.NewStyle().Faint(true).Render(strings.Repeat("─", cw))
-	body := strings.Join(lines, "\n") + "\n\n" + sep + "\n" + actionsRow
+	parts := append(titleLines, m.body.View(), sep, actionsRow)
+	body := strings.Join(parts, "\n")
 
 	var helpKeys []key.Binding
 	if m.isDeleted() {
@@ -509,6 +610,12 @@ func (m EventViewDialogModel) View() string {
 	m.dialog.SetFooter(m.help.ShortHelpView(helpKeys))
 
 	return mouseSweep(m.dialog.Box(body))
+}
+
+// bodyOverflows reports whether the scrollable body has more content
+// than the viewport can show at once.
+func (m EventViewDialogModel) bodyOverflows() bool {
+	return m.body.TotalLineCount() > m.body.VisibleLineCount()
 }
 
 // formatEventDateRange returns a single date or date range string for the
