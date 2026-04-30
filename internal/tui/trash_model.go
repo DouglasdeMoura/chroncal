@@ -228,6 +228,9 @@ func (m TrashModel) refresh() TrashModel {
 			label = prefix + label
 		}
 		if i == sel {
+			if rowW > 0 {
+				label = truncateTo(label, rowW)
+			}
 			style := lipgloss.NewStyle()
 			switch {
 			case listFocused:

@@ -253,6 +253,9 @@ func (m EventDialogModel) refresh() EventDialogModel {
 	for i, ev := range m.events {
 		label := formatEventLabel(ev)
 		if i == sel {
+			if rowW > 0 {
+				label = truncateTo(label, rowW)
+			}
 			style := lipgloss.NewStyle()
 			switch {
 			case listFocused:
