@@ -77,8 +77,12 @@ func (c *Client) SyncCollection(ctx context.Context, calendarPath string, syncTo
 			return nil, ErrSyncTokenInvalid
 		}
 		return nil, fmt.Errorf("REPORT sync-collection: HTTP %d", resp.StatusCode)
-	case http.StatusBadRequest, http.StatusMethodNotAllowed, http.StatusNotImplemented:
-		// Server doesn't grok sync-collection. Caller should fall back.
+	case http.StatusBadRequest, http.StatusMethodNotAllowed,
+		http.StatusUnsupportedMediaType, http.StatusUnprocessableEntity,
+		http.StatusNotImplemented:
+		// Server doesn't grok sync-collection — saw GMX (Cosmo-derived)
+		// return 422 here; other servers return 400/405/415/501. Caller
+		// should fall back to a full QueryAll.
 		return nil, ErrSyncCollectionUnsupported
 	default:
 		return nil, fmt.Errorf("REPORT sync-collection: HTTP %d", resp.StatusCode)

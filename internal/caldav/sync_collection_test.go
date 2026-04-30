@@ -150,6 +150,8 @@ func TestSyncCollectionUnsupportedOnNotImplemented(t *testing.T) {
 	}{
 		{"501 Not Implemented", http.StatusNotImplemented},
 		{"405 Method Not Allowed", http.StatusMethodNotAllowed},
+		{"422 Unprocessable Entity", http.StatusUnprocessableEntity},
+		{"415 Unsupported Media Type", http.StatusUnsupportedMediaType},
 		{"400 Bad Request", http.StatusBadRequest},
 	} {
 		tc := tc
