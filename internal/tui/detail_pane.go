@@ -15,14 +15,6 @@ func paneTitle(text string, w int) string {
 	return title + "\n" + rule
 }
 
-// actionBar anchors a row of buttons to the bottom of a detail pane with a
-// faint separator rule above, visually grouping the actions as a distinct
-// region rather than floating buttons in whitespace.
-func actionBar(buttons string, w int) string {
-	rule := lipgloss.NewStyle().Faint(true).Render(strings.Repeat("─", w))
-	return rule + "\n" + buttons
-}
-
 // dialogDividerWidth is the cell width of the vertical divider between the
 // list and detail panes in a two-column dialog.
 const dialogDividerWidth = 3

@@ -217,6 +217,10 @@ func (m CalendarListDialogModel) Update(msg tea.Msg) (CalendarListDialogModel, t
 		return m.handleKey(msg)
 	case tea.MouseClickMsg:
 		return m.handleMouse(msg)
+	case tea.MouseWheelMsg:
+		shell, cmd := m.shell.HandleMouseWheel(msg)
+		m.shell = shell
+		return m, cmd
 	}
 	return m, nil
 }

@@ -7,6 +7,7 @@ import (
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
 )
@@ -29,6 +30,10 @@ type ListDialogKeys struct {
 	ShiftTab key.Binding
 	Enter    key.Binding
 	Close    key.Binding
+	PageUp   key.Binding
+	PageDown key.Binding
+	Home     key.Binding
+	End      key.Binding
 }
 
 func defaultListDialogKeys() ListDialogKeys {
@@ -39,6 +44,10 @@ func defaultListDialogKeys() ListDialogKeys {
 		ShiftTab: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev section")),
 		Enter:    key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter", "select")),
 		Close:    key.NewBinding(key.WithKeys("esc", "q"), key.WithHelp("esc", "close")),
+		PageUp:   key.NewBinding(key.WithKeys("pgup", "ctrl+b")),
+		PageDown: key.NewBinding(key.WithKeys("pgdown", "ctrl+f")),
+		Home:     key.NewBinding(key.WithKeys("home")),
+		End:      key.NewBinding(key.WithKeys("end")),
 	}
 }
 
@@ -86,18 +95,26 @@ type ListDialogModel struct {
 	focusZone     ListDialogZone
 	selectedColor color.Color
 	width, height int
+	body          viewport.Model
 }
 
 // NewListDialogModel builds an empty shell. Callers call the Setters on the
 // returned value before rendering.
 func NewListDialogModel(h help.Model) ListDialogModel {
+	vp := viewport.New()
+	vp.MouseWheelEnabled = true
 	return ListDialogModel{
 		keys: defaultListDialogKeys(),
 		help: h,
+		body: vp,
 	}
 }
 
-func (m ListDialogModel) SetSize(w, h int) ListDialogModel  { m.width, m.height = w, h; return m }
+func (m ListDialogModel) SetSize(w, h int) ListDialogModel {
+	m.width, m.height = w, h
+	m.syncBody()
+	return m
+}
 func (m ListDialogModel) SetTitle(t string) ListDialogModel { m.title = t; return m }
 
 // SetTitleAction installs a right-aligned button on the title line, or clears
@@ -122,16 +139,22 @@ func (m ListDialogModel) SetRows(rows []string) ListDialogModel {
 	if m.selected >= len(rows) {
 		m.selected = max(len(rows)-1, 0)
 	}
+	m.syncBody()
 	return m
 }
 
-// SetSelected moves the selection to idx (clamped).
+// SetSelected moves the selection to idx (clamped). The detail viewport
+// scrolls back to the top when the selection actually changes so a freshly
+// selected row's content starts from line one.
 func (m ListDialogModel) SetSelected(idx int) ListDialogModel {
 	if idx < 0 {
 		idx = 0
 	}
 	if idx >= len(m.rows) {
 		idx = max(len(m.rows)-1, 0)
+	}
+	if idx != m.selected {
+		m.body.GotoTop()
 	}
 	m.selected = idx
 	return m
@@ -169,6 +192,7 @@ func (m ListDialogModel) SelectedColor() color.Color { return m.selectedColor }
 // selected row. The caller rebuilds these whenever selection changes.
 func (m ListDialogModel) SetDetailLines(lines []string) ListDialogModel {
 	m.detailLines = lines
+	m.syncBody()
 	return m
 }
 
@@ -177,6 +201,7 @@ func (m ListDialogModel) SetDetailLines(lines []string) ListDialogModel {
 func (m ListDialogModel) SetEmptyList(listMsg string, details []string) ListDialogModel {
 	m.emptyList = listMsg
 	m.emptyDetails = details
+	m.syncBody()
 	return m
 }
 
@@ -189,7 +214,44 @@ func (m ListDialogModel) SetActions(actions []ListDialogAction) ListDialogModel 
 	if m.focusZone == ListZoneActions && len(actions) == 0 {
 		m.focusZone = ListZoneList
 	}
+	m.syncBody()
 	return m
+}
+
+// syncBody pushes the current detail dimensions and content into the body
+// viewport so HandleKey/HandleMouseWheel can scroll without waiting for the
+// next View() call to learn about layout. Width/height/content match the
+// values renderDetails would compute for the same model state.
+func (m *ListDialogModel) syncBody() {
+	if m.width <= 0 || m.height <= 0 {
+		return
+	}
+	boxW, boxH := m.boxSize()
+	innerW := max(boxW-5, 10)
+	innerH := max(boxH-3, 6)
+	bodyH := max(innerH-4, 3)
+
+	var detailW, detailH int
+	if m.isNarrow() {
+		rowCount := max(len(m.rows), 1)
+		listH := min(max(rowCount+1, 3), max(bodyH/3, 3))
+		detailW = innerW
+		detailH = max(bodyH-listH-1, 3)
+	} else {
+		detailW = detailColumnWidth(innerW)
+		detailH = bodyH
+	}
+	if len(m.actions) > 0 {
+		detailH = max(detailH-2, 1)
+	}
+
+	lines := m.detailLines
+	if len(m.rows) == 0 {
+		lines = m.emptyDetails
+	}
+	m.body.SetWidth(detailW)
+	m.body.SetHeight(detailH)
+	m.body.SetContentLines(lines)
 }
 
 // SetShortHelp replaces the bottom help-line key bindings.
@@ -231,10 +293,12 @@ func (m ListDialogModel) boxSize() (int, int) {
 func (m ListDialogModel) isNarrow() bool { return m.width < narrowThreshold }
 
 // MoveUp/MoveDown advance the selection inside the list zone. No-ops when the
-// list is empty or the focus is elsewhere.
+// list is empty or the focus is elsewhere. Selection-change resets the detail
+// viewport scroll so the new row's content starts from the top.
 func (m ListDialogModel) MoveUp() ListDialogModel {
 	if m.focusZone == ListZoneList && m.selected > 0 {
 		m.selected--
+		m.body.GotoTop()
 	}
 	return m
 }
@@ -242,6 +306,7 @@ func (m ListDialogModel) MoveUp() ListDialogModel {
 func (m ListDialogModel) MoveDown() ListDialogModel {
 	if m.focusZone == ListZoneList && m.selected < len(m.rows)-1 {
 		m.selected++
+		m.body.GotoTop()
 	}
 	return m
 }
@@ -374,10 +439,15 @@ func (m ListDialogModel) ActionAtPosition(x, y int) (int, bool) {
 	return 0, false
 }
 
-// ClickRow selects idx and focuses the list zone.
+// ClickRow selects idx and focuses the list zone. Resets the detail viewport
+// scroll on selection change so the freshly clicked row's content starts at
+// the top.
 func (m ListDialogModel) ClickRow(idx int) ListDialogModel {
 	if idx < 0 || idx >= len(m.rows) {
 		return m
+	}
+	if idx != m.selected {
+		m.body.GotoTop()
 	}
 	m.selected = idx
 	m.focusZone = ListZoneList
@@ -580,23 +650,63 @@ func (m ListDialogModel) renderActions(w int) string {
 	return truncateTo(strings.Join(parts, " "), w)
 }
 
-func (m ListDialogModel) renderDetails(w, h int) string {
+func (m *ListDialogModel) renderDetails(w, h int) string {
 	lines := m.detailLines
 	if len(m.rows) == 0 {
 		lines = m.emptyDetails
 	}
 
 	if len(m.actions) == 0 {
-		return padLines(lines, w, h)
+		m.body.SetWidth(w)
+		m.body.SetHeight(h)
+		m.body.SetContentLines(lines)
+		return m.body.View()
 	}
 
-	actionsLine := m.renderActions(w)
 	detailsH := max(h-2, 1)
-	if len(lines) > detailsH {
-		lines = lines[:detailsH]
+	m.body.SetWidth(w)
+	m.body.SetHeight(detailsH)
+	m.body.SetContentLines(lines)
+
+	return m.body.View() + "\n" + m.actionsSeparator(w) + "\n" + m.renderActions(w)
+}
+
+// actionsSeparator renders the faint rule that sits between the detail
+// body and the action bar. When the body has scrolled-away content above
+// or below, a centered "↑↓ more" hint is embedded in the rule to advertise
+// the scroll affordance — same treatment used in the single-event dialog.
+func (m ListDialogModel) actionsSeparator(w int) string {
+	faint := lipgloss.NewStyle().Faint(true)
+	hint := m.scrollHint()
+	hw := lipgloss.Width(hint)
+	if hint == "" || w <= hw+2 {
+		return faint.Render(strings.Repeat("─", w))
 	}
-	details := padLines(lines, w, detailsH)
-	return details + "\n" + actionBar(actionsLine, w)
+	left := (w - hw - 2) / 2
+	right := w - hw - 2 - left
+	return faint.Render(strings.Repeat("─", left)) + " " + faint.Render(hint) + " " + faint.Render(strings.Repeat("─", right))
+}
+
+// scrollHint returns "↓ more" / "↑ more" / "↑↓ more" depending on what
+// the user can still scroll to. Empty when the body fits without scrolling.
+func (m ListDialogModel) scrollHint() string {
+	if !m.bodyOverflows() {
+		return ""
+	}
+	switch {
+	case m.body.AtTop():
+		return "↓ more"
+	case m.body.AtBottom():
+		return "↑ more"
+	default:
+		return "↑↓ more"
+	}
+}
+
+// bodyOverflows reports whether the detail body has more content than
+// the viewport can show at once.
+func (m ListDialogModel) bodyOverflows() bool {
+	return m.body.TotalLineCount() > m.body.VisibleLineCount()
 }
 
 // renderTitleRow composes the bold title with the optional right-aligned
@@ -666,10 +776,44 @@ func (m ListDialogModel) HandleKey(msg tea.KeyPressMsg, onClose func() tea.Msg) 
 		return m.MoveUp(), nil, true
 	case key.Matches(msg, m.keys.Down):
 		return m.MoveDown(), nil, true
+	case key.Matches(msg, m.keys.PageUp):
+		m.body.PageUp()
+		return m, nil, true
+	case key.Matches(msg, m.keys.PageDown):
+		m.body.PageDown()
+		return m, nil, true
+	case key.Matches(msg, m.keys.Home):
+		m.body.GotoTop()
+		return m, nil, true
+	case key.Matches(msg, m.keys.End):
+		m.body.GotoBottom()
+		return m, nil, true
 	case key.Matches(msg, m.keys.Enter):
 		return m, m.ActivateFocused(), true
 	}
 	return m, nil, false
+}
+
+// HandleMouseWheel forwards mouse wheel events to the detail body so the
+// user can scroll long event content with the wheel — same affordance the
+// single-event dialog provides.
+func (m ListDialogModel) HandleMouseWheel(msg tea.MouseWheelMsg) (ListDialogModel, tea.Cmd) {
+	var cmd tea.Cmd
+	m.body, cmd = m.body.Update(msg)
+	return m, cmd
+}
+
+// ScrollDetailsUp/Down nudge the detail viewport by one line. Callers use
+// these when up/down arrows belong to the details pane (focus is on actions
+// or RSVP, not on the list itself).
+func (m ListDialogModel) ScrollDetailsUp() ListDialogModel {
+	m.body.ScrollUp(1)
+	return m
+}
+
+func (m ListDialogModel) ScrollDetailsDown() ListDialogModel {
+	m.body.ScrollDown(1)
+	return m
 }
 
 // Keys exposes the shell's default bindings so callers can compose ShortHelp.

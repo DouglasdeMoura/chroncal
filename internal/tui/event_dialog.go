@@ -439,6 +439,10 @@ func (m EventDialogModel) Update(msg tea.Msg) (EventDialogModel, tea.Cmd) {
 		return m.handleKey(msg)
 	case tea.MouseClickMsg:
 		return m.handleMouse(msg)
+	case tea.MouseWheelMsg:
+		shell, cmd := m.shell.HandleMouseWheel(msg)
+		m.shell = shell
+		return m, cmd
 	}
 	return m, nil
 }
@@ -496,6 +500,7 @@ func (m EventDialogModel) handleKey(msg tea.KeyPressMsg) (EventDialogModel, tea.
 			m.shell = m.shell.MoveUp()
 			return m.refresh(), nil
 		}
+		m.shell = m.shell.ScrollDetailsUp()
 		return m, nil
 
 	case key.Matches(msg, sk.Down):
@@ -503,6 +508,7 @@ func (m EventDialogModel) handleKey(msg tea.KeyPressMsg) (EventDialogModel, tea.
 			m.shell = m.shell.MoveDown()
 			return m.refresh(), nil
 		}
+		m.shell = m.shell.ScrollDetailsDown()
 		return m, nil
 
 	case key.Matches(msg, sk.Enter):

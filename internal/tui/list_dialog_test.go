@@ -151,3 +151,73 @@ func TestListDialog_CycleZoneSkipsActionsWhenEmpty(t *testing.T) {
 		t.Errorf("no actions: CycleZone should stay on list, got %v", got)
 	}
 }
+
+// makeOverflowingListDialog returns a fixture whose detail pane has more
+// lines than the available height, so scroll affordances must engage.
+func makeOverflowingListDialog() ListDialogModel {
+	long := make([]string, 80)
+	for i := range long {
+		long[i] = "detail line"
+	}
+	return NewListDialogModel(newThemedHelp(NewTheme(false))).
+		SetSize(120, 24).
+		SetTitle("Calendars").
+		SetRows([]string{"● Work", "● Personal"}).
+		SetDetailLines(long).
+		SetActions([]ListDialogAction{
+			{Label: "Edit", Msg: func() tea.Msg { return "edit" }},
+			{Label: "Delete", Danger: true, Msg: func() tea.Msg { return "delete" }},
+		})
+}
+
+func TestListDialog_OverflowSurfacesMoreHint(t *testing.T) {
+	m := makeOverflowingListDialog()
+	out := m.View()
+	if !strings.Contains(out, "more") {
+		t.Errorf("View() should advertise scrollable content via a more hint\n---\n%s\n---", out)
+	}
+}
+
+func TestListDialog_PageDownScrollsDetailBody(t *testing.T) {
+	m := makeOverflowingListDialog()
+	// Render once so the viewport learns its dimensions and content size.
+	_ = m.View()
+	if m.body.AtBottom() {
+		t.Fatalf("precondition: body should not start at bottom")
+	}
+
+	m, _, ok := m.HandleKey(tea.KeyPressMsg{Code: tea.KeyPgDown}, func() tea.Msg { return nil })
+	if !ok {
+		t.Fatalf("HandleKey did not consume PgDn")
+	}
+	if m.body.YOffset() == 0 {
+		t.Errorf("PgDn should move YOffset away from the top, got 0")
+	}
+}
+
+func TestListDialog_MouseWheelScrollsDetailBody(t *testing.T) {
+	m := makeOverflowingListDialog()
+	_ = m.View()
+	if got := m.body.YOffset(); got != 0 {
+		t.Fatalf("precondition: YOffset = %d, want 0", got)
+	}
+
+	m, _ = m.HandleMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	if m.body.YOffset() <= 0 {
+		t.Errorf("wheel down should advance YOffset, got %d", m.body.YOffset())
+	}
+}
+
+func TestListDialog_SelectionChangeResetsScroll(t *testing.T) {
+	m := makeOverflowingListDialog()
+	_ = m.View()
+	m, _ = m.HandleMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	if m.body.YOffset() == 0 {
+		t.Fatalf("precondition: YOffset should be > 0 after wheel-down")
+	}
+
+	m = m.MoveDown()
+	if got := m.body.YOffset(); got != 0 {
+		t.Errorf("changing selection should reset scroll, got YOffset = %d", got)
+	}
+}

@@ -2197,6 +2197,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewDialog, cmd = m.viewDialog.Update(msg)
 			return m, cmd
 		}
+		if m.dialogOpen {
+			var cmd tea.Cmd
+			m.dialog, cmd = m.dialog.Update(msg)
+			return m, cmd
+		}
+		if m.calendarListDialogOpen {
+			var cmd tea.Cmd
+			m.calendarListDialog, cmd = m.calendarListDialog.Update(msg)
+			return m, cmd
+		}
+		if m.trashOpen {
+			var cmd tea.Cmd
+			m.trash, cmd = m.trash.Update(msg)
+			return m, cmd
+		}
 		if !m.dialogOpen && !m.choiceOpen && !m.confirmOpen {
 			switch m.viewMode {
 			case viewWeek:
