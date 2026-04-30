@@ -1087,6 +1087,9 @@ func extractXPropertiesWithSet(props ical.Props, handled map[string]bool) []mode
 		if !isXProp && (handled == nil || handled[name]) {
 			continue
 		}
+		if isLibicalDiagnosticProp(name) {
+			continue
+		}
 		for _, prop := range props[name] {
 			params := "{}"
 			if len(prop.Params) > 0 {
@@ -1102,4 +1105,15 @@ func extractXPropertiesWithSet(props ical.Props, handled map[string]bool) []mode
 		}
 	}
 	return out
+}
+
+// isLibicalDiagnosticProp reports whether an X-property name is a libical
+// internal diagnostic marker. libical writes X-LIC-ERROR / X-LIC-ERRORTYPE
+// directly into the parsed property bag whenever it gives up on a malformed
+// property, so they look like X-properties to consumers but are really
+// parser-state. They round-trip into our DB on import and back onto the
+// wire on export, where strict CalDAV servers (Google) reject the resource
+// with HTTP 400. Drop them at both ends so they never reach the server.
+func isLibicalDiagnosticProp(name string) bool {
+	return strings.HasPrefix(name, "X-LIC-")
 }

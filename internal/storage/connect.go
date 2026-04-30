@@ -53,8 +53,24 @@ func Open(dbPath string) (*sql.DB, *Queries, error) {
 		conn.Close()
 		return nil, nil, fmt.Errorf("backfill alarm uids: %w", err)
 	}
+	if err := purgeLibicalDiagnosticXProps(conn); err != nil {
+		conn.Close()
+		return nil, nil, fmt.Errorf("purge libical diagnostic x-props: %w", err)
+	}
 
 	return conn, q, nil
+}
+
+// purgeLibicalDiagnosticXProps drops X-LIC-ERROR / X-LIC-ERRORTYPE rows that
+// older imports stored as round-trip x_properties. libical emits those as
+// inline parse-error markers; serializing them back out gets the resource
+// rejected with HTTP 400 by strict CalDAV servers (Google in particular).
+// Import and export both filter them now, but rows already in the DB still
+// poison every push until they're gone — so we sweep them on startup.
+func purgeLibicalDiagnosticXProps(conn *sql.DB) error {
+	_, err := conn.ExecContext(context.Background(),
+		`DELETE FROM x_properties WHERE name LIKE 'X-LIC-%'`)
+	return err
 }
 
 // backfillAlarmUIDs assigns random UUIDs to alarms that have empty UIDs.

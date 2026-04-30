@@ -849,9 +849,16 @@ func splitNonEmpty(s string) []string {
 }
 
 // emitXProperties writes X-properties (and other unhandled properties) onto an
-// iCal component for round-trip preservation.
+// iCal component for round-trip preservation. libical-internal annotations
+// (X-LIC-ERROR / X-LIC-ERRORTYPE) are skipped: those are diagnostic markers
+// emitted by libical when it encountered a parse error in the original
+// payload, not real properties. Echoing them back to a CalDAV server (Google
+// in particular) gets the whole resource rejected with HTTP 400.
 func emitXProperties(comp *ical.Component, xprops []model.XProperty) {
 	for _, xp := range xprops {
+		if isLibicalDiagnosticProp(xp.Name) {
+			continue
+		}
 		p := &ical.Prop{Name: xp.Name, Params: make(ical.Params)}
 		p.Value = xp.Value
 		if xp.Params != "" && xp.Params != "{}" {

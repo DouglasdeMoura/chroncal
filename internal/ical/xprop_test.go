@@ -149,6 +149,58 @@ func TestXPropertyRoundTrip(t *testing.T) {
 		}
 	})
 
+	t.Run("libical_diagnostic_props_dropped", func(t *testing.T) {
+		t.Parallel()
+		// libical writes X-LIC-ERROR / X-LIC-ERRORTYPE markers directly into
+		// the parsed property bag whenever it gives up on a malformed input.
+		// We must not store them on import (they're parser state, not real
+		// properties) and must not emit them on export — Google rejects the
+		// resource with HTTP 400 if these reach the wire.
+		icsData := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//test//EN\r\n" +
+			"BEGIN:VEVENT\r\n" +
+			"UID:libical-error-test\r\n" +
+			"DTSTART:20260401T140000Z\r\n" +
+			"DTEND:20260401T150000Z\r\n" +
+			"SUMMARY:Libical Error Test\r\n" +
+			"X-LIC-ERROR;X-LIC-ERRORTYPE=VALUE-PARSE-ERROR:No value for LOCATION property. Removing entire property:\r\n" +
+			"X-CUSTOM-KEEP:value\r\n" +
+			"END:VEVENT\r\n" +
+			"END:VCALENDAR\r\n"
+
+		result, err := ImportFile(strings.NewReader(icsData))
+		if err != nil {
+			t.Fatalf("import: %v", err)
+		}
+		if len(result.Events) != 1 {
+			t.Fatalf("imported %d events, want 1", len(result.Events))
+		}
+		got := result.Events[0]
+		for _, xp := range got.XProperties {
+			if strings.HasPrefix(xp.Name, "X-LIC-") {
+				t.Fatalf("imported X-LIC-* property %q (Params=%q): must be filtered", xp.Name, xp.Params)
+			}
+		}
+
+		// Even if a row sneaks into the DB from an older import, export must
+		// strip it before serialization.
+		evt := got
+		evt.XProperties = append(evt.XProperties, model.XProperty{
+			Name:   "X-LIC-ERROR",
+			Value:  "No value for LOCATION property. Removing entire property:",
+			Params: `{"X-LIC-ERRORTYPE":["VALUE-PARSE-ERROR"]}`,
+		})
+		data, err := ExportEvents([]event.Event{evt}, "")
+		if err != nil {
+			t.Fatalf("export: %v", err)
+		}
+		if strings.Contains(string(data), "X-LIC-ERROR") || strings.Contains(string(data), "X-LIC-ERRORTYPE") {
+			t.Fatalf("exported iCal still contains X-LIC-* annotation:\n%s", string(data))
+		}
+		if !strings.Contains(string(data), "X-CUSTOM-KEEP") {
+			t.Error("export dropped legitimate X-CUSTOM-KEEP property")
+		}
+	})
+
 	t.Run("raw_ics_import", func(t *testing.T) {
 		t.Parallel()
 		icsData := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//test//EN\r\n" +
