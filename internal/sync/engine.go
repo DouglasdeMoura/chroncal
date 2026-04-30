@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -432,6 +433,41 @@ type pullResult struct {
 }
 
 func (e *Engine) pull(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL string) (*pullResult, error) {
+	cal, err := e.q.GetCalendar(ctx, calendarID)
+	if err != nil {
+		return nil, fmt.Errorf("get calendar: %w", err)
+	}
+	storedToken := storage.NullableToString(cal.SyncToken)
+
+	// Fast path: RFC 6578 sync-collection. The server returns only the
+	// resources that changed since storedToken — no token means initial
+	// snapshot. We fetch bodies via multiget for just the changed paths,
+	// so steady-state syncs cost a single REPORT instead of downloading
+	// every resource on the calendar.
+	syncResult, syncErr := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (*caldav.SyncCollectionResult, error) {
+		return client.SyncCollection(ctx, remoteURL, storedToken)
+	})
+	if errors.Is(syncErr, caldav.ErrSyncTokenInvalid) && storedToken != "" {
+		e.logger.Info("sync-token invalid, performing full resync", "calendar_id", calendarID)
+		syncResult, syncErr = caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (*caldav.SyncCollectionResult, error) {
+			return client.SyncCollection(ctx, remoteURL, "")
+		})
+		storedToken = ""
+	}
+	if syncErr == nil {
+		return e.applySyncCollection(ctx, client, calendarID, remoteURL, cal, syncResult, storedToken == "")
+	}
+	if !errors.Is(syncErr, caldav.ErrSyncCollectionUnsupported) {
+		return nil, fmt.Errorf("sync-collection: %w", syncErr)
+	}
+	e.logger.Info("server lacks sync-collection support, falling back to QueryAll", "calendar_id", calendarID)
+	return e.pullFullSnapshot(ctx, client, calendarID, remoteURL)
+}
+
+// pullFullSnapshot is the legacy pull path: download every resource and
+// compare etags locally. Only used when the server doesn't support
+// sync-collection (RFC 6578).
+func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL string) (*pullResult, error) {
 	result := &pullResult{}
 
 	// Fetch all resources from server
@@ -580,6 +616,199 @@ func (e *Engine) pull(ctx context.Context, client *caldav.Client, calendarID int
 			e.logger.Error("delete sync resource", "uid", local.Uid, "error", err)
 		}
 		result.deleted++
+	}
+
+	return result, nil
+}
+
+// multigetBatchSize bounds how many hrefs go into a single calendar-multiget.
+// Servers (notably Google) reject very large multigets; 50 is the conservative
+// number used by other clients and keeps response sizes manageable.
+const multigetBatchSize = 50
+
+// applySyncCollection consumes the change list from a sync-collection REPORT,
+// fetches bodies for changed resources via calendar-multiget, persists them,
+// applies deletions, and stores the new sync-token. This is the fast path
+// for steady-state syncs against RFC 6578-capable servers.
+func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL string, cal storage.Calendar, syncResult *caldav.SyncCollectionResult, initialSnapshot bool) (*pullResult, error) {
+	result := &pullResult{}
+
+	tombstones, err := e.q.ListTombstonesByCalendar(ctx, calendarID)
+	if err != nil {
+		return nil, fmt.Errorf("list tombstones: %w", err)
+	}
+	tombstonedPaths := make(map[string]bool, len(tombstones))
+	tombstonedUIDs := make(map[string]bool, len(tombstones))
+	for _, ts := range tombstones {
+		if ts.RemoteUrl != "" {
+			if p, hrefErr := client.CanonicalObjectRef(remoteURL, ts.RemoteUrl); hrefErr == nil {
+				tombstonedPaths[p] = true
+			}
+		}
+		if ts.Uid != "" {
+			tombstonedUIDs[ts.Uid] = true
+		}
+	}
+
+	localResources, err := e.q.ListSyncResourcesByCalendar(ctx, calendarID)
+	if err != nil {
+		return nil, fmt.Errorf("list local resources: %w", err)
+	}
+	localByPath := make(map[string]storage.SyncResource, len(localResources))
+	for _, r := range localResources {
+		if r.RemoteUrl == "" {
+			continue
+		}
+		p, hrefErr := client.CanonicalObjectRef(remoteURL, r.RemoteUrl)
+		if hrefErr != nil {
+			continue
+		}
+		localByPath[p] = r
+	}
+
+	var fetchPaths []string
+	var deletedPaths []string
+	seenUIDs := make(map[string]bool, len(syncResult.Changes))
+	for _, ch := range syncResult.Changes {
+		canonical, hrefErr := client.CanonicalObjectRef(remoteURL, ch.Path)
+		if hrefErr != nil {
+			e.logger.Warn("skip out-of-scope change href", "calendar_id", calendarID, "path", ch.Path, "error", hrefErr)
+			continue
+		}
+		if ch.Deleted {
+			deletedPaths = append(deletedPaths, canonical)
+			continue
+		}
+		if tombstonedPaths[canonical] {
+			continue
+		}
+		if local, exists := localByPath[canonical]; exists && local.Etag == ch.ETag {
+			seenUIDs[local.Uid] = true
+			continue
+		}
+		fetchPaths = append(fetchPaths, canonical)
+	}
+
+	for start := 0; start < len(fetchPaths); start += multigetBatchSize {
+		end := start + multigetBatchSize
+		if end > len(fetchPaths) {
+			end = len(fetchPaths)
+		}
+		batch := fetchPaths[start:end]
+		resources, err := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) ([]caldav.Resource, error) {
+			return client.GetResources(ctx, remoteURL, batch)
+		})
+		if err != nil {
+			return nil, fmt.Errorf("multiget batch %d: %w", start, err)
+		}
+		for _, res := range resources {
+			resPath, hrefErr := client.CanonicalObjectRef(remoteURL, res.Path)
+			if hrefErr != nil {
+				e.logger.Warn("skip out-of-scope multiget href", "path", res.Path, "error", hrefErr)
+				continue
+			}
+			if res.Data == nil {
+				continue
+			}
+			var buf bytes.Buffer
+			enc := ical.NewEncoder(&buf)
+			if err := enc.Encode(res.Data); err != nil {
+				e.logger.Warn("encode fetched resource failed", "path", res.Path, "error", err)
+				continue
+			}
+			importResult, err := icalPkg.ImportFile(strings.NewReader(buf.String()))
+			if err != nil {
+				e.logger.Warn("import fetched resource failed", "path", res.Path, "error", err)
+				continue
+			}
+			uid := extractUID(importResult)
+			if uid == "" {
+				e.logger.Warn("no UID in fetched resource", "path", res.Path)
+				continue
+			}
+			seenUIDs[uid] = true
+			if tombstonedUIDs[uid] {
+				continue
+			}
+			ownerType := detectOwnerType(importResult)
+			if persistErr := e.persistImported(ctx, calendarID, importResult); persistErr != nil {
+				e.logger.Error("persist imported resource", "uid", uid, "path", res.Path, "error", persistErr)
+				continue
+			}
+			if err := e.q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+				CalendarID:   calendarID,
+				Uid:          uid,
+				OwnerType:    ownerType,
+				RemoteUrl:    resPath,
+				Etag:         res.ETag,
+				Dirty:        0,
+				SyncStrategy: "sync-token",
+			}); err != nil {
+				e.logger.Error("upsert sync resource", "uid", uid, "error", err)
+			}
+			result.pulled++
+		}
+	}
+
+	deletedUIDs := make(map[string]bool)
+	for _, p := range deletedPaths {
+		local, exists := localByPath[p]
+		if !exists {
+			continue
+		}
+		if seenUIDs[local.Uid] {
+			// Server reported a 404 on the old path but the same UID showed
+			// up at a new path within the same response — this is an href
+			// rewrite (Cosmo/GMX), not a real deletion. The fetch loop
+			// already upserted the new path; skip.
+			continue
+		}
+		deletedUIDs[local.Uid] = true
+	}
+
+	// Initial-snapshot pulls (empty stored token) only see ADDITIONS in the
+	// change list, never deletions. So any locally-tracked UID missing from
+	// the snapshot is gone on the server. This also handles upgrades from
+	// QueryAll-based deployments where calendars carry sync resources but
+	// no sync-token yet.
+	if initialSnapshot {
+		for _, local := range localResources {
+			if local.RemoteUrl == "" {
+				continue
+			}
+			if seenUIDs[local.Uid] || deletedUIDs[local.Uid] {
+				continue
+			}
+			deletedUIDs[local.Uid] = true
+		}
+	}
+
+	for _, local := range localResources {
+		if !deletedUIDs[local.Uid] {
+			continue
+		}
+		if err := e.deleteLocalResourceByUID(ctx, local.OwnerType, local.Uid); err != nil {
+			e.logger.Error("delete local resource", "uid", local.Uid, "owner_type", local.OwnerType, "error", err)
+			continue
+		}
+		if err := e.q.DeleteSyncResource(ctx, storage.DeleteSyncResourceParams{
+			CalendarID: calendarID,
+			Uid:        local.Uid,
+		}); err != nil {
+			e.logger.Error("delete sync resource", "uid", local.Uid, "error", err)
+		}
+		result.deleted++
+	}
+
+	if syncResult.SyncToken != "" {
+		token := syncResult.SyncToken
+		if err := e.q.UpdateCalendarSyncState(ctx, storage.UpdateCalendarSyncStateParams{
+			ID:        calendarID,
+			Ctag:      cal.Ctag,
+			SyncToken: &token,
+		}); err != nil {
+			e.logger.Warn("update sync token", "calendar_id", calendarID, "error", err)
+		}
 	}
 
 	return result, nil
