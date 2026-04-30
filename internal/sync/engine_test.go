@@ -429,9 +429,11 @@ END:VCALENDAR
 
 // TestEnginePullToleratesMultigetMissingPath verifies that a per-resource
 // 404 returned by calendar-multiget after sync-collection nominated the path
-// no longer aborts the whole pull. The sync-token must still be persisted,
-// the surviving resource imported, and the missing path treated as a
-// deletion if it had a local row.
+// no longer aborts the whole pull. Surviving resources still import; missing
+// paths are NOT soft-deleted (a 404 here can be a transient server quirk,
+// not a real deletion — we lost real user data the one time we tried that);
+// and the sync-token is held back so the next sync re-lists the same change
+// set and gets another chance to fetch the missing bodies.
 func TestEnginePullToleratesMultigetMissingPath(t *testing.T) {
 	t.Parallel()
 
@@ -544,16 +546,31 @@ END:VCALENDAR
 	if result.pulled != 1 {
 		t.Fatalf("pulled = %d, want 1 (alive event)", result.pulled)
 	}
-	if result.deleted != 1 {
-		t.Fatalf("deleted = %d, want 1 (racey-deleted treated as deletion via 404)", result.deleted)
+	if result.deleted != 0 {
+		t.Fatalf("deleted = %d, want 0 (multiget 404 must NOT soft-delete)", result.deleted)
 	}
 
+	// The "racey-deleted" event must still exist locally — multiget 404 is
+	// not enough evidence to remove user data.
+	if _, err := q.GetEventByUID(ctx, "racey-deleted"); err != nil {
+		t.Fatalf("racey-deleted was unexpectedly deleted: %v", err)
+	}
+	res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: "racey-deleted"})
+	if err != nil {
+		t.Fatalf("racey-deleted sync_resource was unexpectedly removed: %v", err)
+	}
+	if res.Etag != "etag-old" {
+		t.Fatalf("racey-deleted etag = %q, want etag-old preserved", res.Etag)
+	}
+
+	// Sync-token is held back so the next sync re-lists and retries the
+	// missing path.
 	calRow, err := q.GetCalendar(ctx, calendarID)
 	if err != nil {
 		t.Fatalf("GetCalendar: %v", err)
 	}
-	if storage.NullableToString(calRow.SyncToken) != "https://example.com/sync/post-race" {
-		t.Fatalf("sync_token = %q, want sync-token persisted despite per-resource 404", storage.NullableToString(calRow.SyncToken))
+	if tok := storage.NullableToString(calRow.SyncToken); tok != "" {
+		t.Fatalf("sync_token = %q, want empty (held back due to multiget miss)", tok)
 	}
 }
 

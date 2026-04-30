@@ -679,6 +679,7 @@ const multigetBatchSize = 50
 // for steady-state syncs against RFC 6578-capable servers.
 func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL string, cal storage.Calendar, syncResult *caldav.SyncCollectionResult, initialSnapshot bool) (*pullResult, error) {
 	result := &pullResult{}
+	multigetMisses := 0
 
 	tombstones, err := e.q.ListTombstonesByCalendar(ctx, calendarID)
 	if err != nil {
@@ -748,15 +749,31 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 		if err != nil {
 			return nil, fmt.Errorf("multiget batch %d: %w", start, err)
 		}
-		// Hrefs the server lost between sync-collection and multiget show up
-		// here as 404s. Treat them like a sync-collection deletion so the
-		// pull keeps progressing instead of aborting the whole batch.
+		// Per-resource 404s here are NOT treated as deletions. Some servers
+		// (Google) hand back hrefs in sync-collection that 404 on multiget
+		// for reasons that aren't actual deletions — race timing, path
+		// encoding quirks, or server-side glitches. Soft-deleting on a 404
+		// alone caused real data loss in production. Just log and skip;
+		// the local row and sync_resource keep their previous etag, so the
+		// next sync_collection call will list the path again and we get
+		// another chance to fetch its body. A real server-side deletion
+		// arrives as a sync-collection 404 on the response, not a multiget
+		// 404, and is handled by the deletedPaths flow above.
 		for _, miss := range multi.Missing {
+			multigetMisses++
+			e.logger.Warn("multiget href missing, skipping (will retry next sync)", "calendar_id", calendarID, "href", miss)
+			// Treat the missing path's UID as "still seen" so the initial
+			// snapshot deletion loop below doesn't conclude the resource
+			// is gone from the server. Otherwise an empty token + a
+			// transient multiget 404 would soft-delete the local event
+			// even though we have no actual evidence of deletion.
 			canonical, hrefErr := client.CanonicalObjectRef(remoteURL, miss)
 			if hrefErr != nil {
 				continue
 			}
-			deletedPaths = append(deletedPaths, canonical)
+			if local, exists := localByPath[canonical]; exists {
+				seenUIDs[local.Uid] = true
+			}
 		}
 		for _, res := range multi.Resources {
 			resPath, hrefErr := client.CanonicalObjectRef(remoteURL, res.Path)
@@ -872,7 +889,7 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 		result.deleted++
 	}
 
-	if syncResult.SyncToken != "" {
+	if syncResult.SyncToken != "" && multigetMisses == 0 {
 		token := syncResult.SyncToken
 		if err := e.q.UpdateCalendarSyncState(ctx, storage.UpdateCalendarSyncStateParams{
 			ID:        calendarID,
@@ -881,6 +898,15 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 		}); err != nil {
 			e.logger.Warn("update sync token", "calendar_id", calendarID, "error", err)
 		}
+	} else if multigetMisses > 0 {
+		// Pull made partial progress: some hrefs the server reported in
+		// sync-collection 404'd on multiget. We don't know if those are
+		// real deletions or transient errors, so we don't soft-delete
+		// them. We also don't advance the sync-token, so the next sync
+		// re-lists the same change set and gets another shot at fetching
+		// the missing bodies. Slow but safe.
+		e.logger.Warn("not advancing sync-token: multiget had missing paths",
+			"calendar_id", calendarID, "missing", multigetMisses)
 	}
 
 	return result, nil
