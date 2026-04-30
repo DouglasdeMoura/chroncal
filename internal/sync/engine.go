@@ -283,8 +283,28 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 		return nil, fmt.Errorf("list dirty: %w", err)
 	}
 
+	pushIdentity := e.resolvePushIdentity(ctx, calendarID)
+
 	result := &pushResult{}
 	for _, res := range dirty {
+		// CalDAV's PUT contract (RFC 4791 §4.1) only lets the organizer
+		// modify a meeting resource. Attendees are supposed to round-trip
+		// RSVP changes via iTIP REPLY, not PUT — Google rejects attendee
+		// PUTs with HTTP 400 / 500 and a vague <D:error/> body. Skipping
+		// foreign-organized events here clears the dirty flag so we stop
+		// retrying every sync; the local row is left untouched.
+		if pushIdentity != "" && res.OwnerType == "event" && !e.userOrganizesEvent(ctx, res.Uid, pushIdentity) {
+			e.logger.Info("skip push: not the organizer", "uid", res.Uid, "owner", pushIdentity)
+			if err := e.q.ClearSyncResourceDirty(ctx, storage.ClearSyncResourceDirtyParams{
+				CalendarID: calendarID,
+				Uid:        res.Uid,
+				Etag:       res.Etag,
+			}); err != nil {
+				e.logger.Error("clear non-owned dirty", "uid", res.Uid, "error", err)
+			}
+			continue
+		}
+
 		e.logger.Debug("pushing resource", "uid", res.Uid, "remote_url", res.RemoteUrl)
 
 		// Export the local resource to iCal
@@ -1183,6 +1203,59 @@ func (e *Engine) updateSyncHealth(ctx context.Context, calendarID int64, attempt
 		LastSyncAt:          storage.StringToNullable(lastSyncAt),
 		LastSyncError:       storage.StringToNullable(lastSyncError),
 	})
+}
+
+// resolvePushIdentity returns the email address the calendar owner uses to
+// PUT meeting resources. Prefers the calendar's stored owner_email and
+// falls back to the linked account's username (which is the user's email
+// for both basic-auth and OAuth providers we support). Returns empty when
+// neither is known — the caller should then skip the organizer gate
+// rather than guess.
+func (e *Engine) resolvePushIdentity(ctx context.Context, calendarID int64) string {
+	cal, err := e.q.GetCalendar(ctx, calendarID)
+	if err != nil {
+		return ""
+	}
+	if email := strings.TrimSpace(cal.OwnerEmail); email != "" {
+		return email
+	}
+	if cal.AccountID != nil && *cal.AccountID != 0 {
+		acc, err := e.q.GetAccount(ctx, *cal.AccountID)
+		if err == nil {
+			return acc.Username
+		}
+	}
+	return ""
+}
+
+// userOrganizesEvent reports whether the calendar owner can legitimately
+// PUT this event. Returns true when the event has no organizer attendee
+// (locally-created event) or when the organizer's email matches identity
+// (case-insensitive, mailto: prefix tolerated). Returns false only when
+// we can prove the user is just an attendee.
+func (e *Engine) userOrganizesEvent(ctx context.Context, uid, identity string) bool {
+	row, err := e.q.GetEventByUID(ctx, uid)
+	if err != nil {
+		return true
+	}
+	attendees, err := e.q.ListAttendeesByEventID(ctx, row.ID)
+	if err != nil {
+		return true
+	}
+	for _, a := range attendees {
+		if a.Organizer == 1 {
+			return strings.EqualFold(stripMailtoPrefix(a.Email), stripMailtoPrefix(identity))
+		}
+	}
+	return true
+}
+
+func stripMailtoPrefix(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) >= 7 && strings.EqualFold(s[:7], "mailto:") {
+		return s[7:]
+	}
+	return s
 }
 
 func summarizeSyncError(result *SyncResult, runErr error) string {

@@ -164,6 +164,96 @@ func TestEnginePushContinuesAfterResourceFailure(t *testing.T) {
 	}
 }
 
+// TestEnginePushSkipsForeignOrganizedEvents confirms that push refuses to
+// PUT meetings the calendar owner did not organize. CalDAV servers reject
+// attendee PUTs (Google returns HTTP 400 with a vague <D:error/>) so
+// retrying every sync is just dead weight — we clear the dirty flag and
+// leave the local row alone.
+func TestEnginePushSkipsForeignOrganizedEvents(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	if err := q.UpdateCalendarOwnerEmail(ctx, storage.UpdateCalendarOwnerEmailParams{
+		ID:         calendarID,
+		OwnerEmail: "me@example.com",
+	}); err != nil {
+		t.Fatalf("UpdateCalendarOwnerEmail: %v", err)
+	}
+
+	insertTestEvent(t, db, calendarID, "foreign-event")
+	insertTestEvent(t, db, calendarID, "owned-event")
+
+	var foreignID, ownedID int64
+	if err := db.QueryRowContext(ctx, `SELECT id FROM events WHERE uid='foreign-event'`).Scan(&foreignID); err != nil {
+		t.Fatalf("lookup foreign id: %v", err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT id FROM events WHERE uid='owned-event'`).Scan(&ownedID); err != nil {
+		t.Fatalf("lookup owned id: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO event_attendees (event_id, email, role, organizer) VALUES (?, ?, 'CHAIR', 1), (?, ?, 'REQ-PARTICIPANT', 0)`,
+		foreignID, "stranger@example.com",
+		foreignID, "me@example.com",
+	); err != nil {
+		t.Fatalf("insert foreign attendees: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO event_attendees (event_id, email, role, organizer) VALUES (?, ?, 'CHAIR', 1)`,
+		ownedID, "ME@example.com",
+	); err != nil {
+		t.Fatalf("insert owned attendees: %v", err)
+	}
+
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID: calendarID, Uid: "foreign-event", OwnerType: "event",
+		RemoteUrl: "/calendar/foreign-event.ics", Dirty: 1, SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource foreign: %v", err)
+	}
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID: calendarID, Uid: "owned-event", OwnerType: "event",
+		RemoteUrl: "/calendar/owned-event.ics", Dirty: 1, SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource owned: %v", err)
+	}
+
+	var puttedPaths []string
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodPut {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		puttedPaths = append(puttedPaths, r.URL.Path)
+		return newResponse(http.StatusCreated, map[string]string{"ETag": `"new-etag"`}), nil
+	})
+
+	result, err := engine.push(ctx, client, calendarID, "/calendar/", ConflictServerWins)
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if len(result.errors) != 0 {
+		t.Fatalf("errors = %d, want 0: %v", len(result.errors), result.errors)
+	}
+	if len(puttedPaths) != 1 || puttedPaths[0] != "/calendar/owned-event.ics" {
+		t.Fatalf("PUT paths = %v, want only /calendar/owned-event.ics", puttedPaths)
+	}
+
+	dirty, err := q.ListDirtySyncResources(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("ListDirtySyncResources: %v", err)
+	}
+	if len(dirty) != 0 {
+		t.Fatalf("dirty after push = %d, want 0 (foreign should be cleared, owned should be PUT)", len(dirty))
+	}
+}
+
 func TestEnginePushRecordsConflictOnPreconditionFailure(t *testing.T) {
 	t.Parallel()
 
