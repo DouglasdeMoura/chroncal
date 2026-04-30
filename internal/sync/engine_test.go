@@ -427,6 +427,136 @@ END:VCALENDAR
 	}
 }
 
+// TestEnginePullToleratesMultigetMissingPath verifies that a per-resource
+// 404 returned by calendar-multiget after sync-collection nominated the path
+// no longer aborts the whole pull. The sync-token must still be persisted,
+// the surviving resource imported, and the missing path treated as a
+// deletion if it had a local row.
+func TestEnginePullToleratesMultigetMissingPath(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	insertTestEvent(t, db, calendarID, "racey-deleted")
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calendarID,
+		Uid:          "racey-deleted",
+		OwnerType:    "event",
+		RemoteUrl:    "/calendar/racey-deleted.ics",
+		Etag:         "etag-old",
+		Dirty:        0,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+
+	const syncBody = `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/calendar/alive.ics</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>&quot;etag-alive&quot;</d:getetag>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+  <d:response>
+    <d:href>/calendar/racey-deleted.ics</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>&quot;etag-stale&quot;</d:getetag>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+  <d:sync-token>https://example.com/sync/post-race</d:sync-token>
+</d:multistatus>`
+
+	const aliveICS = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//chroncal//tests//EN
+BEGIN:VEVENT
+UID:alive-uid
+DTSTAMP:20260403T120000Z
+DTSTART:20260403T120000Z
+DTEND:20260403T130000Z
+SUMMARY:Alive
+END:VEVENT
+END:VCALENDAR
+`
+
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method != "REPORT" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			return nil, nil
+		}
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read req body: %v", err)
+		}
+		if !strings.Contains(string(raw), "calendar-multiget") {
+			return &http.Response{
+				StatusCode: http.StatusMultiStatus,
+				Status:     "207 Multi-Status",
+				Header:     http.Header{"Content-Type": []string{"application/xml"}},
+				Body:       io.NopCloser(strings.NewReader(syncBody)),
+				Request:    r,
+			}, nil
+		}
+		multigetBody := `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/calendar/alive.ics</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>&quot;etag-alive&quot;</d:getetag>
+        <cal:calendar-data>` + aliveICS + `</cal:calendar-data>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+  <d:response>
+    <d:href>/calendar/racey-deleted.ics</d:href>
+    <d:status>HTTP/1.1 404 Not Found</d:status>
+  </d:response>
+</d:multistatus>`
+		return &http.Response{
+			StatusCode: http.StatusMultiStatus,
+			Status:     "207 Multi-Status",
+			Header:     http.Header{"Content-Type": []string{"application/xml"}},
+			Body:       io.NopCloser(strings.NewReader(multigetBody)),
+			Request:    r,
+		}, nil
+	})
+
+	result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if result.pulled != 1 {
+		t.Fatalf("pulled = %d, want 1 (alive event)", result.pulled)
+	}
+	if result.deleted != 1 {
+		t.Fatalf("deleted = %d, want 1 (racey-deleted treated as deletion via 404)", result.deleted)
+	}
+
+	calRow, err := q.GetCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("GetCalendar: %v", err)
+	}
+	if storage.NullableToString(calRow.SyncToken) != "https://example.com/sync/post-race" {
+		t.Fatalf("sync_token = %q, want sync-token persisted despite per-resource 404", storage.NullableToString(calRow.SyncToken))
+	}
+}
+
 func TestEnginePushRecordsConflictOnPreconditionFailure(t *testing.T) {
 	t.Parallel()
 

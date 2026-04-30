@@ -742,13 +742,23 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 			end = len(fetchPaths)
 		}
 		batch := fetchPaths[start:end]
-		resources, err := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) ([]caldav.Resource, error) {
-			return client.GetResources(ctx, remoteURL, batch)
+		multi, err := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (*caldav.MultiGetResult, error) {
+			return client.MultiGetTolerant(ctx, remoteURL, batch)
 		})
 		if err != nil {
 			return nil, fmt.Errorf("multiget batch %d: %w", start, err)
 		}
-		for _, res := range resources {
+		// Hrefs the server lost between sync-collection and multiget show up
+		// here as 404s. Treat them like a sync-collection deletion so the
+		// pull keeps progressing instead of aborting the whole batch.
+		for _, miss := range multi.Missing {
+			canonical, hrefErr := client.CanonicalObjectRef(remoteURL, miss)
+			if hrefErr != nil {
+				continue
+			}
+			deletedPaths = append(deletedPaths, canonical)
+		}
+		for _, res := range multi.Resources {
 			resPath, hrefErr := client.CanonicalObjectRef(remoteURL, res.Path)
 			if hrefErr != nil {
 				e.logger.Warn("skip out-of-scope multiget href", "path", res.Path, "error", hrefErr)
