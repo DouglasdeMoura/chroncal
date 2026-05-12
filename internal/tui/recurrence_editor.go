@@ -512,7 +512,7 @@ func (m RecurrenceEditorModel) EndsDatePickerView() string {
 		}
 	}
 
-	descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	descStyle := lipgloss.NewStyle().Foreground(m.theme.TextDim)
 	hintLines := []string{
 		"←↓↑→" + " " + descStyle.Render("navigate"),
 		"[]" + "   " + descStyle.Render("month"),
@@ -532,7 +532,7 @@ func (m RecurrenceEditorModel) EndsDatePickerView() string {
 
 	innerW := boxW - 4
 	resultLines = append(resultLines, "")
-	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	sepStyle := lipgloss.NewStyle().Foreground(m.theme.Border)
 	resultLines = append(resultLines, sepStyle.Render(strings.Repeat("─", innerW)))
 	bs := DefaultButtonStyles()
 	cancelBtn := bs.Secondary.Render("Cancel", false)

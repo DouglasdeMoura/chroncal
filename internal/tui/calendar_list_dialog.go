@@ -341,7 +341,7 @@ func calendarDetailLines(info CalendarInfo, w, labelWidth int) []string {
 	if info.Synced {
 		lines = append(lines, detailLine(faint, "Last sync", formatSyncTimestamp(info.LastSyncAt), labelWidth, w))
 		if info.LastSyncError != "" {
-			errStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#f38ba8"))
+			errStyle := lipgloss.NewStyle().Foreground(activeTheme.Error)
 			lines = append(lines, detailLine(faint, "Error", errStyle.Render(info.LastSyncError), labelWidth, w))
 		}
 	}

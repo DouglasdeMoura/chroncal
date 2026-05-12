@@ -1217,7 +1217,7 @@ func (m EventFormModel) TimezonePickerView() string {
 	buttonRow = strings.Repeat(" ", btnPad) + buttonRow
 
 	// Key hints: dark keys, dimmed description, centered.
-	descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	descStyle := lipgloss.NewStyle().Foreground(m.theme.TextDim)
 	dot := descStyle.Render(Glyphs["separator.dot"])
 	hints := "↑↓" + " " + descStyle.Render("navigate") +
 		dot + "tab" + " " + descStyle.Render("next") +
@@ -1276,7 +1276,7 @@ func (m EventFormModel) datePickerOverlayView(mm MiniMonthModel, supportRange bo
 	}
 
 	// Vertically-stacked key hints: dark key, lighter description.
-	descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	descStyle := lipgloss.NewStyle().Foreground(m.theme.TextDim)
 	hintLines := []string{
 		"←↓↑→" + " " + descStyle.Render("navigate"),
 		"[]" + "   " + descStyle.Render("month"),
@@ -1351,9 +1351,9 @@ func (m EventFormModel) renderRangeCheckbox() string {
 // line summarising what the user has pinned so far. The endpoint currently
 // being picked is emphasised; the other is shown as "—" when unpinned.
 func (m EventFormModel) renderRangeStatus() string {
-	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	labelStyle := lipgloss.NewStyle().Foreground(m.theme.TextDim)
 	valueStyle := lipgloss.NewStyle().Bold(true)
-	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	dim := lipgloss.NewStyle().Foreground(m.theme.TextDim)
 
 	fmtPin := func(t time.Time) string {
 		if t.IsZero() {

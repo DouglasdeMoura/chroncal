@@ -872,7 +872,7 @@ func WeekGrid(opts WeekOptions) string {
 
 	faint := lipgloss.NewStyle().Faint(true)
 	faintSep := faint.Render("│")
-	nowStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
+	nowStyle := lipgloss.NewStyle().Foreground(ActiveTheme().Today).Bold(true)
 	nowSep := nowStyle.Render("│")
 
 	var selSep string
@@ -1142,7 +1142,8 @@ func hitSubCol(matches []placedEvent, xInCol, totalWidth int) int64 {
 
 func renderTimeCellContent(p placedEvent, row, width int) string {
 	relRow := row - p.startRow
-	var bg, fg color.Color = lipgloss.Color("8"), lipgloss.Color("15")
+	bg := ActiveTheme().Muted
+	fg := oklch.ContrastingFg(bg)
 	if p.event.Color != "" {
 		bg = lipgloss.Color(p.event.Color)
 		fg = oklch.ContrastingFg(bg)
@@ -1215,7 +1216,7 @@ func findWeekCol(anchor, d time.Time) int {
 
 func renderTimeLabel(row, lph int, isNowRow bool, nowTimeLabel string) string {
 	if isNowRow {
-		s := lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
+		s := lipgloss.NewStyle().Foreground(ActiveTheme().Today).Bold(true)
 		return s.Render(fmt.Sprintf("  %s", nowTimeLabel)) + " "
 	}
 	if row%lph == 0 {
@@ -1235,16 +1236,14 @@ func renderEventPill(ev CalendarEvent, cellW int, faint bool) string {
 		}
 	}
 
-	var bg, fg color.Color = lipgloss.Color("8"), lipgloss.Color("15")
+	bg := ActiveTheme().Muted
 	if ev.Color != "" {
 		bg = lipgloss.Color(ev.Color)
 	}
 	if faint {
 		bg = oklch.Dim(bg, 0.78)
 	}
-	if ev.Color != "" || faint {
-		fg = oklch.ContrastingFg(bg)
-	}
+	fg := oklch.ContrastingFg(bg)
 	return lipgloss.NewStyle().Background(bg).Foreground(fg).
 		Width(cellW).Render(text)
 }
@@ -1301,7 +1300,7 @@ func DayGrid(opts DayOptions) string {
 
 	faint := lipgloss.NewStyle().Faint(true)
 	faintSep := faint.Render("│")
-	nowStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
+	nowStyle := lipgloss.NewStyle().Foreground(ActiveTheme().Today).Bold(true)
 	nowSep := nowStyle.Render("│")
 
 	var out strings.Builder
