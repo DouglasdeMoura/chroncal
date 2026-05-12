@@ -341,7 +341,7 @@ Configuration is loaded in order of precedence:
 |-----|-------------|---------|
 | `db` | Path to SQLite database | `$XDG_DATA_HOME/chroncal/chroncal.db` |
 | `product_id` | iCal PRODID for export | `-//chroncal//chroncal//EN` |
-| `ui.theme` | Built-in TUI theme name under `internal/tui/themes/` (e.g. `default`, `system`) | `default` |
+| `ui.theme` | Built-in TUI theme name under `internal/tui/themes/` (`system` or `default`; see [TUI themes](#tui-themes)) | `system` |
 | `soft_delete.purge_days` | Days to retain soft-deleted rows before the background purge. `0` disables automatic purging. | `30` |
 | `sync.interval` | Minimum interval between background CalDAV syncs performed by `chroncal service run` | (unset — sync runs every tick) |
 | `sync.conflict_strategy` | Default conflict-resolution mode when `sync run --conflict` is not passed | (unset) |
@@ -351,6 +351,27 @@ Configuration is loaded in order of precedence:
 Every key is also available as an environment variable (`CHRONCAL_` prefix,
 dots become underscores): for example `CHRONCAL_UI_THEME`,
 `CHRONCAL_SOFT_DELETE_PURGE_DAYS`, `CHRONCAL_SYNC_INTERVAL`.
+
+### TUI themes
+
+The TUI ships two built-in themes:
+
+- **`system`** (default) — chrome (text, borders, surfaces, dim text)
+  inherits the terminal's ANSI palette (`color0..15`), so the TUI follows
+  themed terminal setups like
+  [Omarchy](https://learn.omacom.io/2/the-omarchy-manual/52/themes),
+  Catppuccin, Gruvbox, Tokyo Night, or anything that paints the standard
+  16 colors in your terminal config. The row-selection highlight adapts to
+  the live terminal background via OSC 11. Accent colors (buttons,
+  badges, "today", errors) sit on a fixed Dracula palette so the
+  text-on-accent contrast stays guaranteed across themes.
+- **`default`** — fixed designer palette (violet primary, sky secondary,
+  emerald accent) with light/dark variants. Ignores the terminal palette.
+  Pick this if you don't theme your terminal or want the same look on
+  every machine.
+
+Override with `ui.theme = "default"` in `config.toml` or
+`CHRONCAL_UI_THEME=default`.
 
 ### SMTP (for email alarms)
 

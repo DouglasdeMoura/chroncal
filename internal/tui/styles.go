@@ -8,7 +8,11 @@ import (
 )
 
 // DefaultThemeName is the built-in theme loaded when nothing overrides it.
-const DefaultThemeName = "default"
+// "system" inherits the terminal's ANSI palette for chrome and the live
+// terminal background for the selection highlight, so the TUI follows
+// themed terminal setups (Omarchy, Catppuccin, Gruvbox, …) out of the box.
+// The fixed-palette designer theme is still available as "default".
+const DefaultThemeName = "system"
 
 // Theme holds resolved colors for the current terminal background.
 //
@@ -96,8 +100,9 @@ func newThemedHelp(theme Theme) help.Model {
 }
 
 // NewTheme returns a Theme with colors resolved for light or dark
-// backgrounds. Delegates to the embedded built-in "default" theme; any
-// failure is a programming error because the file ships inside the binary.
+// backgrounds. Delegates to the embedded built-in theme named by
+// DefaultThemeName; any failure is a programming error because the file
+// ships inside the binary.
 func NewTheme(hasDarkBG bool) Theme {
 	t, err := LoadBuiltinTheme(DefaultThemeName, hasDarkBG)
 	if err != nil {
