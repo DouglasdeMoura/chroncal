@@ -39,13 +39,14 @@ type Theme struct {
 	Surface      color.Color
 	Error        color.Color
 
-	// Badge pills (BadgeText is the shared foreground).
+	// Badge pills. Text-on-accent foreground is computed at render time
+	// via oklch.ContrastingFg(bg) so the contrast tracks the resolved
+	// terminal palette automatically.
 	BadgeOK      color.Color
 	BadgeWarn    color.Color
 	BadgeDanger  color.Color
 	BadgeInfo    color.Color
 	BadgeNeutral color.Color
-	BadgeText    color.Color
 
 	// Form internals.
 	FormLabel     color.Color
@@ -53,14 +54,15 @@ type Theme struct {
 	FormError     color.Color
 	FormHighlight color.Color // select flash + focused-button accent
 
-	// Buttons (ButtonText is the shared foreground).
+	// Buttons. Text-on-accent foreground is computed at render time via
+	// oklch.ContrastingFg(bg); ButtonGhostFg remains explicit because
+	// the ghost variant has no background to derive contrast from.
 	ButtonPrimaryBg        color.Color
 	ButtonPrimaryFocusedBg color.Color
 	ButtonSecondaryBg      color.Color
 	ButtonDangerBg         color.Color
 	ButtonDangerFocusedBg  color.Color
 	ButtonGhostFg          color.Color
-	ButtonText             color.Color
 
 	// Calendar color palette (hex swatches shown in the calendar dialog).
 	CalendarSwatches []string
@@ -73,6 +75,14 @@ type Theme struct {
 // default from the init() below.
 var activeTheme Theme
 
+// activePalette is the terminal's 16-color ANSI palette as reported via
+// OSC 4 at boot. The theme loader consults it to resolve ANSI index
+// references (e.g. primary = "4") to the terminal's actual rendered RGB
+// — so themes can lean on terminal-supplied accents while still letting
+// OKLCh contrast computations work against real hex values. Nil when no
+// OSC 4 responses arrived (older terminals, tmux without passthrough).
+var activePalette *Palette
+
 func init() {
 	activeTheme = NewTheme(true)
 }
@@ -83,6 +93,14 @@ func SetActiveTheme(t Theme) { activeTheme = t }
 
 // ActiveTheme returns the currently installed package-level theme.
 func ActiveTheme() Theme { return activeTheme }
+
+// SetActivePalette installs the terminal's queried ANSI palette. Pass
+// nil to revert to lipgloss's default ANSI rendering.
+func SetActivePalette(p *Palette) { activePalette = p }
+
+// ActivePalette returns the currently installed terminal palette, or nil
+// when no OSC 4 responses have been recorded.
+func ActivePalette() *Palette { return activePalette }
 
 func newThemedHelp(theme Theme) help.Model {
 	h := help.New()

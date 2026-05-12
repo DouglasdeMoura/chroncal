@@ -6,11 +6,14 @@ import (
 	"image/color"
 	"io/fs"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 
 	lipgloss "charm.land/lipgloss/v2"
 	toml "github.com/pelletier/go-toml/v2"
+
+	"github.com/douglasdemoura/chroncal/internal/tui/oklch"
 )
 
 //go:embed themes/*.toml
@@ -43,7 +46,6 @@ type rawTheme struct {
 	BadgeDanger  any `toml:"badge_danger"`
 	BadgeInfo    any `toml:"badge_info"`
 	BadgeNeutral any `toml:"badge_neutral"`
-	BadgeText    any `toml:"badge_text"`
 
 	// Form.
 	FormLabel     any `toml:"form_label"`
@@ -58,7 +60,6 @@ type rawTheme struct {
 	ButtonDangerBg         any `toml:"button_danger_bg"`
 	ButtonDangerFocusedBg  any `toml:"button_danger_focused_bg"`
 	ButtonGhostFg          any `toml:"button_ghost_fg"`
-	ButtonText             any `toml:"button_text"`
 
 	// Calendar palette swatches.
 	CalendarSwatches []string `toml:"calendar_swatches"`
@@ -148,10 +149,16 @@ func readBuiltinRaw(name string) (*rawTheme, error) {
 //	"#abc123"                           // flat hex
 //	"240"                               // flat ANSI 256 palette index
 //	{ light = "...", dark = "..." }     // variant table
+//
+// ANSI indices 0..15 are translated to the terminal's actually-rendered
+// RGB via activePalette when an OSC 4 response is available — so themes
+// can lean on ANSI references (primary = "4") and still benefit from
+// exact OKLCh contrast computations against real hex values. Indices
+// 16..255 and unrecognized strings fall through to lipgloss.Color.
 func resolveColor(v any, hasDarkBG bool, field string) (color.Color, error) {
 	switch x := v.(type) {
 	case string:
-		return lipgloss.Color(x), nil
+		return resolveString(x), nil
 	case map[string]any:
 		key := "light"
 		if hasDarkBG {
@@ -161,7 +168,7 @@ func resolveColor(v any, hasDarkBG bool, field string) (color.Color, error) {
 		if !ok {
 			return nil, fmt.Errorf("field %q variant missing %q string", field, key)
 		}
-		return lipgloss.Color(s), nil
+		return resolveString(s), nil
 	case nil:
 		return nil, fmt.Errorf("field %q is missing", field)
 	default:
@@ -169,9 +176,45 @@ func resolveColor(v any, hasDarkBG bool, field string) (color.Color, error) {
 	}
 }
 
+// resolveString turns a single TOML color string into a color.Color. If
+// it's an ANSI index 0..15 and the queried terminal palette has a value
+// for that slot, the palette's hex wins; otherwise lipgloss handles it.
+func resolveString(s string) color.Color {
+	if idx, ok := ansi16Index(s); ok {
+		if c := activePalette.Lookup(idx); c != nil {
+			return c
+		}
+	}
+	return lipgloss.Color(s)
+}
+
+// ansi16Index returns the integer 0..15 if s is a bare decimal in that
+// range, otherwise ok=false.
+func ansi16Index(s string) (int, bool) {
+	if s == "" || len(s) > 2 {
+		return 0, false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return 0, false
+		}
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 || n > 15 {
+		return 0, false
+	}
+	return n, true
+}
+
 func resolveTheme(r *rawTheme, hasDarkBG bool) (Theme, error) {
 	var firstErr error
 	pick := func(field string, v any) color.Color {
+		// "auto" is a sentinel for "derive me at the end from other
+		// resolved tokens". Returning nil here lets the post-process
+		// step below fill it in once Text and Surface are known.
+		if isAutoSentinel(v) {
+			return nil
+		}
 		c, err := resolveColor(v, hasDarkBG, field)
 		if err != nil && firstErr == nil {
 			firstErr = err
@@ -198,7 +241,6 @@ func resolveTheme(r *rawTheme, hasDarkBG bool) (Theme, error) {
 		BadgeDanger:  pick("badge_danger", r.BadgeDanger),
 		BadgeInfo:    pick("badge_info", r.BadgeInfo),
 		BadgeNeutral: pick("badge_neutral", r.BadgeNeutral),
-		BadgeText:    pick("badge_text", r.BadgeText),
 
 		FormLabel:     pick("form_label", r.FormLabel),
 		FormRequired:  pick("form_required", r.FormRequired),
@@ -211,12 +253,38 @@ func resolveTheme(r *rawTheme, hasDarkBG bool) (Theme, error) {
 		ButtonDangerBg:         pick("button_danger_bg", r.ButtonDangerBg),
 		ButtonDangerFocusedBg:  pick("button_danger_focused_bg", r.ButtonDangerFocusedBg),
 		ButtonGhostFg:          pick("button_ghost_fg", r.ButtonGhostFg),
-		ButtonText:             pick("button_text", r.ButtonText),
 
 		CalendarSwatches: append([]string(nil), r.CalendarSwatches...),
 	}
 	if firstErr != nil {
 		return Theme{}, firstErr
 	}
+
+	// Post-process "auto" tokens once Text and Surface are resolved. On
+	// dark Base16 themes the ANSI dim color (base03 / color8) sits
+	// deliberately close to the background so it fades comments into the
+	// page — that's wrong for UI body-adjacent text we want the user to
+	// read. Deriving dim/muted via OKLab interpolation between Text and
+	// Surface gives a perceptually balanced mid-tone on any palette.
+	if t.TextDim == nil {
+		// 70 % text, 30 % surface — close enough to text to read as
+		// body-adjacent (footer hints, weekday header) on every bg.
+		t.TextDim = oklch.Mix(t.Text, t.Surface, 0.30)
+	}
+	if t.Muted == nil {
+		// 55 % text, 45 % surface — noticeably dimmer than TextDim but
+		// still well above the deliberately-faded base03 line.
+		t.Muted = oklch.Mix(t.Text, t.Surface, 0.45)
+	}
+
 	return t, nil
+}
+
+// isAutoSentinel reports whether a raw TOML color value is the string
+// literal "auto", which signals "compute me at theme-load time from
+// Text and Surface". Currently honored for the text_dim and muted
+// tokens; other fields fall through resolveColor as-is.
+func isAutoSentinel(v any) bool {
+	s, ok := v.(string)
+	return ok && s == "auto"
 }

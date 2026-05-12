@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"fmt"
 	"image/color"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,19 +21,33 @@ import (
 // is just a ceiling for the unresponsive case.
 const detectTimeout = 750 * time.Millisecond
 
-// detectTerminalBG best-effort detects a background color suitable for
-// seeding the adaptive theme. Returns a concrete bg color plus a
-// fallback hint (cream for light, near-black for dark) when only the
-// foreground is reported. Returns nil when the terminal answers neither
-// OSC 11 nor OSC 10 — callers should treat that as "unknown" and leave
-// the theme's static configuration in place.
+// Palette is the 16-entry ANSI color palette as actually rendered by the
+// terminal. Entries are nil when the terminal didn't answer the OSC 4
+// query for that index.
+type Palette [16]color.Color
+
+// Lookup returns the palette entry for an ANSI index, or nil when the
+// index is out of range or wasn't reported.
+func (p *Palette) Lookup(idx int) color.Color {
+	if p == nil || idx < 0 || idx > 15 {
+		return nil
+	}
+	return p[idx]
+}
+
+// detectTerminalState best-effort detects the terminal's background and
+// its 16-color ANSI palette. Returns a concrete bg color plus a fallback
+// hint (cream for light, near-black for dark) when only the foreground
+// is reported. The palette is non-nil when at least one OSC 4 response
+// arrived; individual entries are nil when that specific index wasn't
+// reported.
 //
 // Strategy:
 //
-//  1. Send OSC 11 (bg), OSC 10 (fg), and DA1 (Primary Device Attributes)
-//     together in a single raw-mode session. The DA1 response is a
-//     near-universal cutoff — every mainstream terminal answers it,
-//     which bounds the query even when the OSC sequences go ignored.
+//  1. Send OSC 11 (bg) + OSC 10 (fg) + OSC 4 (palette 0..15) + DA1
+//     (Primary Device Attributes) together in a single raw-mode session.
+//     DA1 is the cutoff — every mainstream terminal answers it, which
+//     bounds the query even when individual OSC sequences are ignored.
 //
 //  2. If OSC 11 answered, use that RGB directly.
 //
@@ -40,46 +56,55 @@ const detectTimeout = 750 * time.Millisecond
 //     dark theme) and return a neutral bg stand-in so downstream
 //     OKLCh-based adjustments still have something to work against.
 //
-//  4. If neither answers, return nil.
-func detectTerminalBG(in term.File, out term.File) color.Color {
-	bg, fg := queryTerminalColors(in, out, detectTimeout)
-	if bg != nil {
-		return bg
+//  4. If neither answers, the returned bg is nil. The palette may still
+//     have entries — they're independent queries.
+func detectTerminalState(in term.File, out term.File) (color.Color, *Palette) {
+	bg, fg, pal := queryTerminalColors(in, out, detectTimeout)
+	resolvedBG := bg
+	if resolvedBG == nil && fg != nil {
+		if L, _, _, ok := oklch.FromColor(fg); ok {
+			// Dark foreground implies a LIGHT terminal theme (and vice
+			// versa). Fall back to a neutral stand-in so the downstream
+			// adaptive Selected shift has a sensible anchor.
+			if L < 0.5 {
+				resolvedBG = lipgloss.Color("#F1F1F0") // neutral cream
+			} else {
+				resolvedBG = lipgloss.Color("#1E1E2E") // neutral near-black
+			}
+		}
 	}
-	if fg == nil {
-		return nil
+	if pal != nil && paletteEmpty(pal) {
+		pal = nil
 	}
-	L, _, _, ok := oklch.FromColor(fg)
-	if !ok {
-		return nil
-	}
-	// Dark foreground implies the terminal is running a LIGHT theme
-	// (and vice versa). Fall back to a neutral stand-in for bg so the
-	// downstream adaptive Selected shift has a sensible anchor.
-	if L < 0.5 {
-		return lipgloss.Color("#F1F1F0") // neutral cream
-	}
-	return lipgloss.Color("#1E1E2E") // neutral near-black
+	return resolvedBG, pal
 }
 
-// queryTerminalColors sends OSC 11 + OSC 10 + DA1 in a single raw-mode
-// session and returns whichever of bg / fg the terminal reported.
-// Either (or both) may be nil. Mirrors the internal pattern lipgloss
-// v2 uses for its own BackgroundColor helper, but with both color
-// queries issued together so we pay the MakeRaw/Restore cost once.
-func queryTerminalColors(in term.File, out term.File, timeout time.Duration) (bg, fg color.Color) {
+func paletteEmpty(p *Palette) bool {
+	for _, c := range p {
+		if c != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// queryTerminalColors sends OSC 11 + OSC 10 + OSC 4 (×16) + DA1 in a
+// single raw-mode session and returns whichever of bg / fg / palette
+// entries the terminal reported. Any output may be nil / empty. The
+// MakeRaw/Restore cost is paid once for the whole batch.
+func queryTerminalColors(in term.File, out term.File, timeout time.Duration) (bg, fg color.Color, pal *Palette) {
 	if !term.IsTerminal(in.Fd()) || !term.IsTerminal(out.Fd()) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	state, err := term.MakeRaw(in.Fd())
 	if err != nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	defer term.Restore(in.Fd(), state) //nolint:errcheck
 
 	rd, err := uv.NewCancelReader(in)
 	if err != nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	defer rd.Close() //nolint:errcheck
 
@@ -93,13 +118,22 @@ func queryTerminalColors(in term.File, out term.File, timeout time.Duration) (bg
 		}
 	}()
 
-	query := ansi.RequestBackgroundColor + ansi.RequestForegroundColor + ansi.RequestPrimaryDeviceAttributes
-	if _, err := io.WriteString(out, query); err != nil {
-		return nil, nil
+	var qb strings.Builder
+	qb.WriteString(ansi.RequestBackgroundColor)
+	qb.WriteString(ansi.RequestForegroundColor)
+	for i := 0; i < 16; i++ {
+		fmt.Fprintf(&qb, "\x1b]4;%d;?\x07", i)
+	}
+	qb.WriteString(ansi.RequestPrimaryDeviceAttributes)
+	if _, err := io.WriteString(out, qb.String()); err != nil {
+		return nil, nil, nil
 	}
 
 	pa := ansi.GetParser()
 	defer ansi.PutParser(pa)
+
+	var palette Palette
+	pal = &palette
 
 	var acc []byte
 	var buf [256]byte
@@ -107,7 +141,7 @@ func queryTerminalColors(in term.File, out term.File, timeout time.Duration) (bg
 	for {
 		n, err := rd.Read(buf[:])
 		if err != nil {
-			return bg, fg
+			return bg, fg, pal
 		}
 		p := buf[:]
 		for n > 0 {
@@ -118,18 +152,26 @@ func queryTerminalColors(in term.File, out term.File, timeout time.Duration) (bg
 				switch {
 				case ansi.HasOscPrefix(s):
 					parts := strings.Split(string(pa.Data()), ";")
-					if len(parts) == 2 {
-						c := ansi.XParseColor(parts[1])
-						switch pa.Command() {
-						case 10:
-							fg = c
-						case 11:
-							bg = c
+					switch pa.Command() {
+					case 10:
+						if len(parts) == 2 {
+							fg = ansi.XParseColor(parts[1])
+						}
+					case 11:
+						if len(parts) == 2 {
+							bg = ansi.XParseColor(parts[1])
+						}
+					case 4:
+						// Response: "4;INDEX;rgb:RRRR/GGGG/BBBB"
+						if len(parts) == 3 {
+							if idx, err := strconv.Atoi(parts[1]); err == nil && idx >= 0 && idx <= 15 {
+								palette[idx] = ansi.XParseColor(parts[2])
+							}
 						}
 					}
 				case ansi.HasCsiPrefix(s):
 					if pa.Command() == ansi.Command('?', 0, 'c') {
-						return bg, fg
+						return bg, fg, pal
 					}
 				}
 				acc = acc[:0]
@@ -140,4 +182,3 @@ func queryTerminalColors(in term.File, out term.File, timeout time.Duration) (bg
 		}
 	}
 }
-

@@ -41,7 +41,6 @@ badge_warn    = "172"
 badge_danger  = "124"
 badge_info    = "61"
 badge_neutral = "240"
-badge_text    = "255"
 
 # ---------------------------------------------------------------------------
 # Form internals
@@ -62,7 +61,6 @@ button_secondary_bg       = "240"
 button_danger_bg          = "52"
 button_danger_focused_bg  = "160"
 button_ghost_fg           = "240"
-button_text               = "255"
 
 # ---------------------------------------------------------------------------
 # Calendar palette swatches (hex strings, shown in the calendar dialog)

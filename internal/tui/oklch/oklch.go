@@ -83,6 +83,30 @@ func ShiftLightness(c color.Color, delta float64) color.Color {
 	return ToColor(L, C, H)
 }
 
+// Mix linearly interpolates between two colors in OKLab space.
+// t ∈ [0,1]: 0 returns a, 1 returns b. Interpolation happens on the (L, a, b)
+// axes (not (L, C, H)), so it stays perceptually uniform without the hue
+// discontinuity you'd get from interpolating a polar coordinate.
+//
+// Useful for deriving readable mid-tones from foreground+background pairs:
+// Mix(Text, Surface, 0.4) gives a "dim text" that tracks the actual palette
+// instead of guessing at a single hex that works on every theme.
+func Mix(a, b color.Color, t float64) color.Color {
+	aL, aC, aH, ok1 := FromColor(a)
+	bL, bC, bH, ok2 := FromColor(b)
+	if !ok1 || !ok2 {
+		return a
+	}
+	aA, aBB := aC*math.Cos(aH), aC*math.Sin(aH)
+	bA, bBB := bC*math.Cos(bH), bC*math.Sin(bH)
+	L := aL*(1-t) + bL*t
+	A := aA*(1-t) + bA*t
+	B := aBB*(1-t) + bBB*t
+	C := math.Hypot(A, B)
+	H := math.Atan2(B, A)
+	return ToColor(L, C, H)
+}
+
 // Dim desaturates c and pulls its lightness toward mid (L=0.55) in OKLCh,
 // keeping hue stable. factor ∈ [0,1]: 0 = unchanged, 1 = fully neutral gray.
 func Dim(c color.Color, factor float64) color.Color {

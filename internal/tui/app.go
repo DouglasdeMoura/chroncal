@@ -2889,23 +2889,27 @@ func (m Model) saveUIState() {
 }
 
 func Run(a *app.App, themeName string) error {
+	// Query the terminal before Bubble Tea takes over stdin. The helper
+	// sends OSC 11 (bg) + OSC 10 (fg) + OSC 4 (palette 0..15) + DA1 in
+	// one raw-mode session:
+	//
+	//   - bg: if reported, used as-is; otherwise inferred from fg
+	//     luminance with a neutral stand-in. Nil when nothing answers.
+	//   - palette: the terminal's actual 16-color ANSI rendering. Used
+	//     by the theme loader to resolve ANSI index references to real
+	//     hex values, so OKLCh contrast computations are exact.
+	//
+	// We install the palette globally before NewModel so the initial
+	// theme load (and every subsequent reload) can consult it. The bg
+	// arrives as a synthetic BackgroundColorMsg that the existing
+	// handler turns into a re-theme.
+	bg, palette := detectTerminalState(os.Stdin, os.Stdout)
+	SetActivePalette(palette)
+
 	model := NewModel(a, themeName)
 	p := tea.NewProgram(model)
 
-	// Query the terminal before Bubble Tea takes over stdin. The helper
-	// sends OSC 11 (bg) + OSC 10 (fg) + DA1 in one raw-mode session:
-	//
-	//   - If bg comes back, we use it directly.
-	//   - If only fg comes back (some terminals answer one but not the
-	//     other), OKLCh luminance on the fg tells us whether the theme
-	//     is light or dark; we return a neutral stand-in bg for the
-	//     adaptive Selected shift to work against.
-	//   - If neither answers (tmux without passthrough, rare terminals),
-	//     we stay silent and the theme's static fallback applies.
-	//
-	// Feed the result in as a synthetic BackgroundColorMsg so the
-	// existing handler does the actual re-theming.
-	if bg := detectTerminalBG(os.Stdin, os.Stdout); bg != nil {
+	if bg != nil {
 		go func() { p.Send(tea.BackgroundColorMsg{Color: bg}) }()
 	}
 

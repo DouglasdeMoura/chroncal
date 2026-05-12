@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	lipgloss "charm.land/lipgloss/v2"
+
+	"github.com/douglasdemoura/chroncal/internal/tui/oklch"
 )
 
 // badgeVariant controls the color scheme for a pill-style label.
@@ -35,11 +37,15 @@ func badgeBackground(v badgeVariant) color.Color {
 
 // badge renders a small pill with padded text and a colored background.
 // Used for status labels, response indicators, and other short metadata
-// that should read as a distinct token.
+// that should read as a distinct token. The foreground is computed from
+// the resolved background via OKLCh contrast — so the pill stays
+// readable on every terminal palette without hand-tuned per-theme text
+// colors.
 func badge(text string, v badgeVariant) string {
+	bg := badgeBackground(v)
 	return lipgloss.NewStyle().
-		Background(badgeBackground(v)).
-		Foreground(activeTheme.BadgeText).
+		Background(bg).
+		Foreground(oklch.ContrastingFg(bg)).
 		Padding(0, 1).
 		Render(text)
 }

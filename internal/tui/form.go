@@ -1652,6 +1652,7 @@ func DefaultButtonStyles() ButtonStyles {
 	t := activeTheme
 	primaryBg := oklch.ShiftLightness(t.ButtonPrimaryBg, -0.22)
 	primaryFocusedBg := oklch.ShiftLightness(t.ButtonPrimaryFocusedBg, -0.22)
+	highlightFg := oklch.ContrastingFg(t.FormHighlight)
 	return ButtonStyles{
 		Primary: ButtonStyle{
 			Normal:  base.Background(primaryBg).Foreground(oklch.ContrastingFg(primaryBg)).Bold(true),
@@ -1659,15 +1660,15 @@ func DefaultButtonStyles() ButtonStyles {
 		},
 		Secondary: ButtonStyle{
 			Normal:  base.Background(t.ButtonSecondaryBg).Foreground(oklch.ContrastingFg(t.ButtonSecondaryBg)),
-			Focused: base.Background(t.FormHighlight).Foreground(t.ButtonText),
+			Focused: base.Background(t.FormHighlight).Foreground(highlightFg),
 		},
 		Danger: ButtonStyle{
-			Normal:  base.Background(t.ButtonDangerBg).Foreground(t.ButtonText),
-			Focused: base.Background(t.FormHighlight).Foreground(t.ButtonText),
+			Normal:  base.Background(t.ButtonDangerBg).Foreground(oklch.ContrastingFg(t.ButtonDangerBg)),
+			Focused: base.Background(t.FormHighlight).Foreground(highlightFg),
 		},
 		Ghost: ButtonStyle{
 			Normal:  base.Foreground(t.ButtonGhostFg),
-			Focused: base.Foreground(t.ButtonText).Background(t.FormHighlight),
+			Focused: base.Foreground(highlightFg).Background(t.FormHighlight),
 		},
 	}
 }
