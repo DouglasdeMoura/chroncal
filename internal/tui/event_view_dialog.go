@@ -368,6 +368,9 @@ func (m EventViewDialogModel) handleMouse(msg tea.MouseClickMsg) (EventViewDialo
 	if target == "" {
 		return m, nil
 	}
+	if strings.HasPrefix(target, linkZonePrefix) {
+		return m, openURLCmd(target[len(linkZonePrefix):])
+	}
 	actions := m.actions()
 	for i, a := range actions {
 		if target == a.zone {
@@ -385,6 +388,16 @@ func (m EventViewDialogModel) handleMouse(msg tea.MouseClickMsg) (EventViewDialo
 		}
 	}
 	return m, nil
+}
+
+// detailLinkLine is detailLine for values that should be rendered as a
+// clickable link. The visible URL text is sized to the available column
+// width while the OSC 8 target and mouse-zone payload stay the full URL.
+func detailLinkLine(labelStyle lipgloss.Style, label, url string, lw, w int) string {
+	padded := strings.Repeat(" ", max(lw-len(label), 0)) + label
+	prefix := labelStyle.Render(padded) + "  "
+	available := w - labelColWidth(label, lw)
+	return prefix + renderLinkValue(url, available)
 }
 
 func (m EventViewDialogModel) renderRSVPRow(w int) string {
@@ -541,10 +554,10 @@ func (m EventViewDialogModel) buildBodyLines(w int) []string {
 		lines = append(lines, detailLine(faint, "Where", ev.Location, eventViewLabelWidth, w))
 	}
 	if ev.ConferenceURI != "" {
-		lines = append(lines, detailLine(faint, "Conference", ev.ConferenceURI, eventViewLabelWidth, w))
+		lines = append(lines, detailLinkLine(faint, "Conference", ev.ConferenceURI, eventViewLabelWidth, w))
 	}
 	if ev.URL != "" {
-		lines = append(lines, detailLine(faint, "URL", ev.URL, eventViewLabelWidth, w))
+		lines = append(lines, detailLinkLine(faint, "URL", ev.URL, eventViewLabelWidth, w))
 	}
 	if ev.Status != "" {
 		lines = append(lines, detailLine(faint, "Status", statusBadge(ev.Status), eventViewLabelWidth, w))
@@ -584,7 +597,9 @@ func (m EventViewDialogModel) buildBodyLines(w int) []string {
 		lines = append(lines, "")
 		lines = append(lines, faint.Render("Notes"))
 		for raw := range strings.SplitSeq(ev.Description, "\n") {
-			lines = append(lines, wrapLine(raw, w)...)
+			for _, wrapped := range wrapLine(raw, w) {
+				lines = append(lines, linkifyText(wrapped))
+			}
 		}
 	}
 
