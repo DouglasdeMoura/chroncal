@@ -125,6 +125,11 @@ type AgendaModel struct {
 	// showEmptyDays, when true, renders a placeholder row for each day
 	// in the window that has no events. Toggled by the "o" key.
 	showEmptyDays bool
+	// pendingSelectNow, when non-zero, asks the next SetEvents to select
+	// the first event on the cursor day that's current (ends after now)
+	// or upcoming, instead of falling back to the day's first event.
+	// One-shot — consumed and cleared on the next SetEvents.
+	pendingSelectNow time.Time
 }
 
 func NewAgendaModel(today time.Time) AgendaModel {
@@ -200,6 +205,16 @@ func (m AgendaModel) SetShowEmptyDays(v bool) AgendaModel {
 	return m
 }
 
+// SelectCurrentOrNext marks the next SetEvents to pick the first event
+// on the cursor day whose end time is after now (or any all-day event),
+// instead of the day's first event. One-shot — used when the user lands
+// on the agenda view on today so the cursor sits on what's happening
+// now or next, not on a meeting that already ended.
+func (m AgendaModel) SelectCurrentOrNext(now time.Time) AgendaModel {
+	m.pendingSelectNow = now
+	return m
+}
+
 // SetEvents updates the cached event slice, the calendar info used for color
 // and name lookups, and rebuilds the rendered rows. The previously-selected
 // event is re-located by identity so background reloads and infinite-scroll
@@ -260,6 +275,22 @@ func (m AgendaModel) SetEvents(events []event.Event, calendars map[int64]Calenda
 			fallback = m.cursor
 		}
 		m.selected = firstSelectableOnOrAfter(m.rows, fallback)
+	}
+
+	if !m.pendingSelectNow.IsZero() {
+		nowT := m.pendingSelectNow
+		if idx := firstCurrentOrNextOn(m.rows, m.cursor, nowT); idx >= 0 {
+			m.selected = idx
+			m.pendingSelectNow = time.Time{}
+		} else if hasEventOn(m.rows, m.cursor) {
+			// Cursor day has events but none are current/upcoming — accept
+			// the regular fallback (first event of today) and clear the
+			// flag so subsequent loads don't second-guess the user.
+			m.pendingSelectNow = time.Time{}
+		}
+		// else: no events on the cursor day yet (e.g., calendarsLoadedMsg
+		// arrived before eventsLoadedMsg at startup). Keep the flag so the
+		// next load can still apply it.
 	}
 
 	if !anchor.IsZero() {
@@ -887,6 +918,41 @@ func prevSelectable(rows []agendaRow, from int) int {
 		}
 	}
 	return from
+}
+
+// hasEventOn reports whether any selectable event row lies on day.
+func hasEventOn(rows []agendaRow, day time.Time) bool {
+	for _, r := range rows {
+		if hasEvent(r) && sameDay(r.day, day) {
+			return true
+		}
+	}
+	return false
+}
+
+// firstCurrentOrNextOn returns the first selectable event row on day
+// whose event is current (ends after now, or all-day) or upcoming (starts
+// at or after now). Returns -1 when no event row qualifies. Used to land
+// the cursor on what's happening now or next, not on a meeting that
+// already ended.
+func firstCurrentOrNextOn(rows []agendaRow, day, now time.Time) int {
+	for i, r := range rows {
+		if !hasEvent(r) || !sameDay(r.day, day) {
+			continue
+		}
+		ev := r.event
+		if ev.AllDay {
+			return i
+		}
+		end := ev.EndTime
+		if end.IsZero() {
+			end = ev.StartTime
+		}
+		if end.After(now) {
+			return i
+		}
+	}
+	return -1
 }
 
 // firstSelectableOnOrAfter returns the first selectable row index whose

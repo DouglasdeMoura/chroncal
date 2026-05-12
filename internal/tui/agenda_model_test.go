@@ -81,3 +81,148 @@ func TestAgendaHandleClick_BelowViewportIsNoop(t *testing.T) {
 		t.Fatalf("click well below viewport produced a command (%T); want noop", cmd())
 	}
 }
+
+func TestAgendaSelectCurrentOrNext_PicksOngoingEvent(t *testing.T) {
+	day := time.Date(2026, 4, 23, 0, 0, 0, 0, time.Local)
+	now := time.Date(2026, 4, 23, 10, 30, 0, 0, time.Local)
+	past := event.Event{
+		ID: 1, Title: "Standup",
+		StartTime: time.Date(2026, 4, 23, 9, 0, 0, 0, time.Local),
+		EndTime:   time.Date(2026, 4, 23, 9, 30, 0, 0, time.Local),
+	}
+	ongoing := event.Event{
+		ID: 2, Title: "Deep work",
+		StartTime: time.Date(2026, 4, 23, 10, 0, 0, 0, time.Local),
+		EndTime:   time.Date(2026, 4, 23, 11, 0, 0, 0, time.Local),
+	}
+	later := event.Event{
+		ID: 3, Title: "Review",
+		StartTime: time.Date(2026, 4, 23, 14, 0, 0, 0, time.Local),
+		EndTime:   time.Date(2026, 4, 23, 15, 0, 0, 0, time.Local),
+	}
+
+	m := NewAgendaModel(day).
+		SelectCurrentOrNext(now).
+		SetEvents([]event.Event{past, ongoing, later}, nil)
+
+	ev, ok := m.SelectedEvent()
+	if !ok {
+		t.Fatal("expected an event to be selected")
+	}
+	if ev.ID != ongoing.ID {
+		t.Fatalf("selected event ID = %d, want %d (ongoing)", ev.ID, ongoing.ID)
+	}
+}
+
+func TestAgendaSelectCurrentOrNext_PicksNextWhenNothingOngoing(t *testing.T) {
+	day := time.Date(2026, 4, 23, 0, 0, 0, 0, time.Local)
+	now := time.Date(2026, 4, 23, 12, 0, 0, 0, time.Local)
+	past := event.Event{
+		ID: 1, Title: "Standup",
+		StartTime: time.Date(2026, 4, 23, 9, 0, 0, 0, time.Local),
+		EndTime:   time.Date(2026, 4, 23, 9, 30, 0, 0, time.Local),
+	}
+	upcoming := event.Event{
+		ID: 2, Title: "Review",
+		StartTime: time.Date(2026, 4, 23, 14, 0, 0, 0, time.Local),
+		EndTime:   time.Date(2026, 4, 23, 15, 0, 0, 0, time.Local),
+	}
+
+	m := NewAgendaModel(day).
+		SelectCurrentOrNext(now).
+		SetEvents([]event.Event{past, upcoming}, nil)
+
+	ev, ok := m.SelectedEvent()
+	if !ok {
+		t.Fatal("expected an event to be selected")
+	}
+	if ev.ID != upcoming.ID {
+		t.Fatalf("selected event ID = %d, want %d (upcoming)", ev.ID, upcoming.ID)
+	}
+}
+
+func TestAgendaSelectCurrentOrNext_FallsBackWhenAllPast(t *testing.T) {
+	day := time.Date(2026, 4, 23, 0, 0, 0, 0, time.Local)
+	now := time.Date(2026, 4, 23, 23, 0, 0, 0, time.Local)
+	early := event.Event{
+		ID: 1, Title: "Standup",
+		StartTime: time.Date(2026, 4, 23, 9, 0, 0, 0, time.Local),
+		EndTime:   time.Date(2026, 4, 23, 9, 30, 0, 0, time.Local),
+	}
+	late := event.Event{
+		ID: 2, Title: "Review",
+		StartTime: time.Date(2026, 4, 23, 14, 0, 0, 0, time.Local),
+		EndTime:   time.Date(2026, 4, 23, 15, 0, 0, 0, time.Local),
+	}
+
+	m := NewAgendaModel(day).
+		SelectCurrentOrNext(now).
+		SetEvents([]event.Event{early, late}, nil)
+
+	ev, ok := m.SelectedEvent()
+	if !ok {
+		t.Fatal("expected an event to be selected")
+	}
+	// With no current/upcoming event, the regular fallback wins: the first
+	// event of the cursor day.
+	if ev.ID != early.ID {
+		t.Fatalf("selected event ID = %d, want %d (first of day)", ev.ID, early.ID)
+	}
+}
+
+func TestAgendaSelectCurrentOrNext_SurvivesEmptyFirstLoad(t *testing.T) {
+	// At app startup, the host may call SetEvents with an empty event slice
+	// (e.g., calendarsLoadedMsg arriving before eventsLoadedMsg drives
+	// refreshCalendarViews with m.events still nil). The pending flag must
+	// survive that empty load so the real event load can still consume it.
+	day := time.Date(2026, 4, 23, 0, 0, 0, 0, time.Local)
+	now := time.Date(2026, 4, 23, 10, 30, 0, 0, time.Local)
+	ongoing := event.Event{
+		ID: 2, Title: "Deep work",
+		StartTime: time.Date(2026, 4, 23, 10, 0, 0, 0, time.Local),
+		EndTime:   time.Date(2026, 4, 23, 11, 0, 0, 0, time.Local),
+	}
+
+	m := NewAgendaModel(day).
+		SelectCurrentOrNext(now).
+		SetEvents(nil, nil) // empty first load — flag must persist
+	m = m.SetEvents([]event.Event{ongoing}, nil)
+
+	ev, ok := m.SelectedEvent()
+	if !ok {
+		t.Fatal("expected an event to be selected")
+	}
+	if ev.ID != ongoing.ID {
+		t.Fatalf("selected event ID = %d, want %d (ongoing)", ev.ID, ongoing.ID)
+	}
+}
+
+func TestAgendaSelectCurrentOrNext_OneShotClearsAfterSetEvents(t *testing.T) {
+	day := time.Date(2026, 4, 23, 0, 0, 0, 0, time.Local)
+	now := time.Date(2026, 4, 23, 10, 30, 0, 0, time.Local)
+	first := event.Event{
+		ID: 1, Title: "Standup",
+		StartTime: time.Date(2026, 4, 23, 9, 0, 0, 0, time.Local),
+		EndTime:   time.Date(2026, 4, 23, 9, 30, 0, 0, time.Local),
+	}
+	second := event.Event{
+		ID: 2, Title: "Review",
+		StartTime: time.Date(2026, 4, 23, 14, 0, 0, 0, time.Local),
+		EndTime:   time.Date(2026, 4, 23, 15, 0, 0, 0, time.Local),
+	}
+
+	// First load consumes the pending flag and lands on the upcoming event.
+	m := NewAgendaModel(day).
+		SelectCurrentOrNext(now).
+		SetEvents([]event.Event{first, second}, nil)
+	if ev, _ := m.SelectedEvent(); ev.ID != second.ID {
+		t.Fatalf("first load: selected ID = %d, want %d", ev.ID, second.ID)
+	}
+
+	// A subsequent SetEvents must preserve the user's selection (no
+	// recurring "snap to upcoming" — the flag is one-shot).
+	m = m.SetEvents([]event.Event{first, second}, nil)
+	if ev, _ := m.SelectedEvent(); ev.ID != second.ID {
+		t.Fatalf("second load: selected ID = %d, want %d (selection preserved)", ev.ID, second.ID)
+	}
+}

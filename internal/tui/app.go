@@ -368,7 +368,7 @@ func NewModel(a *app.App, themeName string) Model {
 		calendar:        NewCalendarModel(now).SetShowWeekNumbers(ui.ShowWeekNumbers),
 		week:            NewWeekModel(now).SetShowWeekNumbers(ui.ShowWeekNumbers),
 		day:             NewDayModel(now),
-		agenda:          NewAgendaModel(now).SetShowEmptyDays(ui.AgendaShowEmptyDays),
+		agenda:          newAgendaForStartup(now, vm, ui.AgendaShowEmptyDays),
 		showSidebar:     ui.ShowSidebar,
 		showWeekNumbers: ui.ShowWeekNumbers,
 		hiddenCalendars: hidden,
@@ -379,6 +379,18 @@ func NewModel(a *app.App, themeName string) Model {
 		toast:           NewToastModel(theme),
 		footer:          NewFooterModel(theme),
 	}
+}
+
+// newAgendaForStartup builds the agenda model used by NewModel. When the
+// saved view mode is agenda, the cursor starts on today, so prime the
+// next SetEvents to land on the current/upcoming event — mirroring the
+// switch-to-agenda behavior so cold start matches mid-session switching.
+func newAgendaForStartup(now time.Time, vm viewMode, showEmptyDays bool) AgendaModel {
+	a := NewAgendaModel(now).SetShowEmptyDays(showEmptyDays)
+	if vm == viewAgenda {
+		a = a.SelectCurrentOrNext(now)
+	}
+	return a
 }
 
 // expectedEventRange returns the [from, to) UTC range the active view
@@ -2754,6 +2766,9 @@ func (m Model) switchToView(mode viewMode) (tea.Model, tea.Cmd) {
 		m.agenda.cursor = cursor
 		m.agenda.today = today
 		m.agenda = m.agenda.ResetWindow(cursor)
+		if sameDay(cursor, today) {
+			m.agenda = m.agenda.SelectCurrentOrNext(time.Now())
+		}
 	}
 	return m, m.switchView()
 }
