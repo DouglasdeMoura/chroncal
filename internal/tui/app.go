@@ -667,6 +667,15 @@ func (m Model) loadCalendars() tea.Cmd {
 		if err != nil {
 			return calendarsLoadedMsg{err: err}
 		}
+		// Pre-fetch accounts so we can stamp each linked calendar with its
+		// server URL — the event view uses this to detect Google-hosted
+		// calendars and inject an authuser hint into meeting links.
+		accountServerURLs := map[int64]string{}
+		if accounts, aerr := m.app.Queries.ListAccounts(ctx); aerr == nil {
+			for _, a := range accounts {
+				accountServerURLs[a.ID] = a.ServerUrl
+			}
+		}
 		info := make(map[int64]CalendarInfo, len(cals))
 		for _, c := range cals {
 			count, _ := m.app.Events.CountByCalendar(ctx, c.ID)
@@ -677,6 +686,7 @@ func (m Model) loadCalendars() tea.Cmd {
 				Description:         c.Description,
 				EventCount:          count,
 				Synced:              c.AccountID != 0,
+				AccountServerURL:    accountServerURLs[c.AccountID],
 				LastSyncAt:          c.LastSyncAt,
 				LastSyncAttemptedAt: c.LastSyncAttemptedAt,
 				LastSyncError:       c.LastSyncError,

@@ -392,12 +392,24 @@ func (m EventViewDialogModel) handleMouse(msg tea.MouseClickMsg) (EventViewDialo
 
 // detailLinkLine is detailLine for values that should be rendered as a
 // clickable link. The visible URL text is sized to the available column
-// width while the OSC 8 target and mouse-zone payload stay the full URL.
-func detailLinkLine(labelStyle lipgloss.Style, label, url string, lw, w int) string {
+// width while the OSC 8 target and mouse-zone payload stay the full URL —
+// or its rewriter output when the calendar has one (e.g., Google authuser).
+func detailLinkLine(labelStyle lipgloss.Style, label, url string, lw, w int, rw urlRewriter) string {
 	padded := strings.Repeat(" ", max(lw-len(label), 0)) + label
 	prefix := labelStyle.Render(padded) + "  "
 	available := w - labelColWidth(label, lw)
-	return prefix + renderLinkValue(url, available)
+	return prefix + renderLinkValue(url, available, rw)
+}
+
+// linkRewriter returns the URL rewriter to apply to clickable links in this
+// event. Currently produces a Google authuser hint when the calendar is
+// linked to a Google account and we know the user's email. Returns nil
+// otherwise so links open unchanged.
+func (m EventViewDialogModel) linkRewriter() urlRewriter {
+	if !isGoogleAccountServer(m.calendar.AccountServerURL) {
+		return nil
+	}
+	return googleAuthuserRewriter(m.calendar.OwnerEmail)
 }
 
 func (m EventViewDialogModel) renderRSVPRow(w int) string {
@@ -553,11 +565,12 @@ func (m EventViewDialogModel) buildBodyLines(w int) []string {
 	if ev.Location != "" {
 		lines = append(lines, detailLine(faint, "Where", ev.Location, eventViewLabelWidth, w))
 	}
+	rw := m.linkRewriter()
 	if ev.ConferenceURI != "" {
-		lines = append(lines, detailLinkLine(faint, "Conference", ev.ConferenceURI, eventViewLabelWidth, w))
+		lines = append(lines, detailLinkLine(faint, "Conference", ev.ConferenceURI, eventViewLabelWidth, w, rw))
 	}
 	if ev.URL != "" {
-		lines = append(lines, detailLinkLine(faint, "URL", ev.URL, eventViewLabelWidth, w))
+		lines = append(lines, detailLinkLine(faint, "URL", ev.URL, eventViewLabelWidth, w, rw))
 	}
 	if ev.Status != "" {
 		lines = append(lines, detailLine(faint, "Status", statusBadge(ev.Status), eventViewLabelWidth, w))
@@ -598,7 +611,7 @@ func (m EventViewDialogModel) buildBodyLines(w int) []string {
 		lines = append(lines, faint.Render("Notes"))
 		for raw := range strings.SplitSeq(ev.Description, "\n") {
 			for _, wrapped := range wrapLine(raw, w) {
-				lines = append(lines, linkifyText(wrapped))
+				lines = append(lines, linkifyText(wrapped, rw))
 			}
 		}
 	}

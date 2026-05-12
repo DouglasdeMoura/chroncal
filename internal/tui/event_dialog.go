@@ -84,7 +84,11 @@ type CalendarInfo struct {
 	EventCount  int64
 	// Synced reports whether the calendar is linked to a CalDAV account.
 	// Drives opportunistic save-time push: local-only calendars skip it.
-	Synced              bool
+	Synced bool
+	// AccountServerURL is the linked CalDAV account's principal URL, used by
+	// the event view to detect Google-hosted calendars so meeting links can
+	// pre-select the right account. Empty for local-only calendars.
+	AccountServerURL    string
 	LastSyncAt          string // RFC 3339, empty when never synced
 	LastSyncAttemptedAt string // RFC 3339, empty when never attempted
 	LastSyncError       string
