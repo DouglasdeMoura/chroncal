@@ -36,13 +36,13 @@ queries the connected remote CalDAV calendar instead.`,
   chroncal freebusy --calendar Work --from 2026-04-01T09:00:00-03:00 --to 2026-04-01T18:00:00-03:00
   chroncal freebusy --calendar Work --remote --from 2026-04-01 --to 2026-04-07 --format ical`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			from, err := parseFreeBusyTime(fromStr)
+			from, err := parseFreeBusyTime("from", fromStr)
 			if err != nil {
-				return errInvalidInputf("parse --from: %v", err)
+				return err
 			}
-			to, err := parseFreeBusyTime(toStr)
+			to, err := parseFreeBusyTime("to", toStr)
 			if err != nil {
-				return errInvalidInputf("parse --to: %v", err)
+				return err
 			}
 			if !to.After(from) {
 				return errInvalidInputf("--to must be after --from")
@@ -151,22 +151,14 @@ queries the connected remote CalDAV calendar instead.`,
 	return cmd
 }
 
-func parseFreeBusyTime(input string) (time.Time, error) {
-	for _, layout := range []string{
-		"2006-01-02",
-		time.RFC3339,
-	} {
-		if layout == "2006-01-02" {
-			if t, err := time.ParseInLocation(layout, input, time.Local); err == nil {
-				return t, nil
-			}
-			continue
-		}
-		if t, err := time.Parse(layout, input); err == nil {
-			return t, nil
-		}
+func parseFreeBusyTime(flag, input string) (time.Time, error) {
+	if t, err := time.ParseInLocation("2006-01-02", input, time.Local); err == nil {
+		return t, nil
 	}
-	return time.Time{}, fmt.Errorf("unsupported time %q", input)
+	if t, err := time.Parse(time.RFC3339, input); err == nil {
+		return t, nil
+	}
+	return time.Time{}, errInvalidInputf("--%s: invalid value %q (expected YYYY-MM-DD or RFC3339 timestamp)", flag, input)
 }
 
 func printFreeBusy(w io.Writer, label string, remote bool, result freebusy.Result) {

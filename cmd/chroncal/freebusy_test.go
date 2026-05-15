@@ -25,7 +25,7 @@ func TestParseFreeBusyTime(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseFreeBusyTime(tt.input)
+			got, err := parseFreeBusyTime("from", tt.input)
 			if err != nil {
 				t.Fatalf("parseFreeBusyTime: %v", err)
 			}

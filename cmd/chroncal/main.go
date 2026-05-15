@@ -307,18 +307,49 @@ func parseDateRange(fromStr, toStr string) (time.Time, time.Time, error) {
 
 	if fromStr != "" {
 		var err error
-		from, err = time.ParseInLocation("2006-01-02", fromStr, time.Local)
+		from, err = parseCLIDate("from", fromStr, time.Local)
 		if err != nil {
-			return time.Time{}, time.Time{}, errInvalidInputf("parse --from: %v", err)
+			return time.Time{}, time.Time{}, err
 		}
 	}
 	if toStr != "" {
 		var err error
-		to, err = time.ParseInLocation("2006-01-02", toStr, time.Local)
+		to, err = parseCLIDate("to", toStr, time.Local)
 		if err != nil {
-			return time.Time{}, time.Time{}, errInvalidInputf("parse --to: %v", err)
+			return time.Time{}, time.Time{}, err
 		}
 		to = to.AddDate(0, 0, 1) // half-open: include the entire end day
 	}
 	return from, to, nil
+}
+
+// parseCLIDate parses a YYYY-MM-DD flag value, replacing time.Parse's
+// verbose "parsing time ... cannot parse / out of range" surface with a
+// clean "--<flag>: invalid date ..." message.
+func parseCLIDate(flag, value string, loc *time.Location) (time.Time, error) {
+	t, err := time.ParseInLocation("2006-01-02", value, loc)
+	if err != nil {
+		return time.Time{}, errInvalidInputf("--%s: invalid date %q (expected YYYY-MM-DD)", flag, value)
+	}
+	return t, nil
+}
+
+// parseCLITime parses an HH:MM flag value with the same clean-error
+// contract as parseCLIDate.
+func parseCLITime(flag, value string) (time.Time, error) {
+	t, err := time.Parse("15:04", value)
+	if err != nil {
+		return time.Time{}, errInvalidInputf("--%s: invalid time %q (expected HH:MM)", flag, value)
+	}
+	return t, nil
+}
+
+// parseCLIDuration parses a Go duration string (e.g. 30m, 1h30m) with
+// the same clean-error contract as parseCLIDate.
+func parseCLIDuration(flag, value string) (time.Duration, error) {
+	d, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, errInvalidInputf("--%s: invalid duration %q (e.g. 30m, 1h30m)", flag, value)
+	}
+	return d, nil
 }

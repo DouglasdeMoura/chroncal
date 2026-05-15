@@ -578,18 +578,18 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 
 			date := now.In(loc)
 			if dateStr != "" {
-				date, err = time.ParseInLocation("2006-01-02", dateStr, loc)
+				date, err = parseCLIDate("date", dateStr, loc)
 				if err != nil {
-					return errInvalidInputf("parse date: %v", err)
+					return err
 				}
 			}
 
 			allDay := timeStr == ""
 			startTime := time.Date(date.Year(), date.Month(), date.Day(), 9, 0, 0, 0, loc)
 			if timeStr != "" {
-				t, err := time.Parse("15:04", timeStr)
+				t, err := parseCLITime("time", timeStr)
 				if err != nil {
-					return errInvalidInputf("parse time: %v", err)
+					return err
 				}
 				startTime = time.Date(date.Year(), date.Month(), date.Day(), t.Hour(), t.Minute(), 0, 0, loc)
 			}
@@ -603,9 +603,9 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 
 			var endDate time.Time
 			if endDateStr != "" {
-				endDate, err = time.ParseInLocation("2006-01-02", endDateStr, loc)
+				endDate, err = parseCLIDate("end-date", endDateStr, loc)
 				if err != nil {
-					return errInvalidInputf("parse end-date: %v", err)
+					return err
 				}
 			}
 
@@ -622,9 +622,9 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 					endTime = startTime.AddDate(0, 0, 1)
 				}
 			case endTimeStr != "":
-				t, err := time.Parse("15:04", endTimeStr)
+				t, err := parseCLITime("end-time", endTimeStr)
 				if err != nil {
-					return errInvalidInputf("parse end-time: %v", err)
+					return err
 				}
 				endRef := date
 				if endDateStr != "" {
@@ -640,9 +640,9 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 			default:
 				dur := time.Hour
 				if durationStr != "" {
-					dur, err = time.ParseDuration(durationStr)
+					dur, err = parseCLIDuration("duration", durationStr)
 					if err != nil {
-						return errInvalidInputf("parse duration: %v", err)
+						return err
 					}
 				}
 				endTime = startTime.Add(dur)
@@ -983,16 +983,16 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 			if cmd.Flags().Changed("date") || cmd.Flags().Changed("time") {
 				date := p.StartTime.In(loc)
 				if cmd.Flags().Changed("date") {
-					d, err := time.ParseInLocation("2006-01-02", dateStr, loc)
+					d, err := parseCLIDate("date", dateStr, loc)
 					if err != nil {
-						return errInvalidInputf("parse date: %v", err)
+						return err
 					}
 					date = time.Date(d.Year(), d.Month(), d.Day(), date.Hour(), date.Minute(), 0, 0, loc)
 				}
 				if cmd.Flags().Changed("time") {
-					t, err := time.Parse("15:04", timeStr)
+					t, err := parseCLITime("time", timeStr)
 					if err != nil {
-						return errInvalidInputf("parse time: %v", err)
+						return err
 					}
 					date = time.Date(date.Year(), date.Month(), date.Day(), t.Hour(), t.Minute(), 0, 0, loc)
 					p.AllDay = false
@@ -1009,9 +1009,9 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 
 			var endDate time.Time
 			if cmd.Flags().Changed("end-date") {
-				endDate, err = time.ParseInLocation("2006-01-02", endDateStr, loc)
+				endDate, err = parseCLIDate("end-date", endDateStr, loc)
 				if err != nil {
-					return errInvalidInputf("parse end-date: %v", err)
+					return err
 				}
 			}
 
@@ -1028,9 +1028,9 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 					p.EndTime = p.StartTime.AddDate(0, 0, span)
 				}
 			case cmd.Flags().Changed("end-time"):
-				t, err := time.Parse("15:04", endTimeStr)
+				t, err := parseCLITime("end-time", endTimeStr)
 				if err != nil {
-					return errInvalidInputf("parse end-time: %v", err)
+					return err
 				}
 				endRef := p.StartTime
 				if cmd.Flags().Changed("end-date") {
@@ -1044,9 +1044,9 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 			case cmd.Flags().Changed("end-date"):
 				return errInvalidInputf("--end-date requires --end-time for timed events")
 			case cmd.Flags().Changed("duration"):
-				dur, err := time.ParseDuration(durationStr)
+				dur, err := parseCLIDuration("duration", durationStr)
 				if err != nil {
-					return errInvalidInputf("parse duration: %v", err)
+					return err
 				}
 				p.EndTime = p.StartTime.Add(dur)
 			case cmd.Flags().Changed("date") || cmd.Flags().Changed("time"):
