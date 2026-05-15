@@ -42,6 +42,15 @@ func notFoundErr(err error, resource string, id any) error {
 	return err
 }
 
+// errInvalidInputf is the validation-error counterpart to notFoundErr: it
+// produces a *cliError tagged with code "invalid_input" so JSON/YAML
+// consumers can dispatch on bad-flag / bad-format failures separately
+// from genuine internal errors. Use it for date/duration parse failures,
+// empty required values, mutually-exclusive flags, and similar.
+func errInvalidInputf(format string, args ...any) error {
+	return &cliError{Code: "invalid_input", Msg: fmt.Sprintf(format, args...)}
+}
+
 // printCLIError writes err to stderr in the format that matches --output.
 // Text/table mode keeps "Error: <msg>"; JSON/YAML emit a structured
 // payload. Aborted errors drop the "Error: " prefix in text mode — they
@@ -126,7 +135,7 @@ Helpful conventions:
 		case "text", "table", "json", "yaml":
 			return nil
 		default:
-			return fmt.Errorf("invalid output format %q (must be text, table, json, or yaml)", outputFmt)
+			return errInvalidInputf("invalid output format %q (must be text, table, json, or yaml)", outputFmt)
 		}
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -281,14 +290,14 @@ func parseDateRange(fromStr, toStr string) (time.Time, time.Time, error) {
 		var err error
 		from, err = time.ParseInLocation("2006-01-02", fromStr, time.Local)
 		if err != nil {
-			return time.Time{}, time.Time{}, fmt.Errorf("parse --from: %w", err)
+			return time.Time{}, time.Time{}, errInvalidInputf("parse --from: %v", err)
 		}
 	}
 	if toStr != "" {
 		var err error
 		to, err = time.ParseInLocation("2006-01-02", toStr, time.Local)
 		if err != nil {
-			return time.Time{}, time.Time{}, fmt.Errorf("parse --to: %w", err)
+			return time.Time{}, time.Time{}, errInvalidInputf("parse --to: %v", err)
 		}
 		to = to.AddDate(0, 0, 1) // half-open: include the entire end day
 	}

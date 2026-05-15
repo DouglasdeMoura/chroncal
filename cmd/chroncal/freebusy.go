@@ -38,14 +38,14 @@ queries the connected remote CalDAV calendar instead.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			from, err := parseFreeBusyTime(fromStr)
 			if err != nil {
-				return fmt.Errorf("parse --from: %w", err)
+				return errInvalidInputf("parse --from: %v", err)
 			}
 			to, err := parseFreeBusyTime(toStr)
 			if err != nil {
-				return fmt.Errorf("parse --to: %w", err)
+				return errInvalidInputf("parse --to: %v", err)
 			}
 			if !to.After(from) {
-				return fmt.Errorf("--to must be after --from")
+				return errInvalidInputf("--to must be after --from")
 			}
 
 			a, err := initApp()

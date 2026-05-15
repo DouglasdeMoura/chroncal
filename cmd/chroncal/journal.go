@@ -201,7 +201,7 @@ Defaults: status=FINAL, class=PUBLIC, calendar=Personal.`,
 			ctx := context.Background()
 
 			if strings.TrimSpace(args[0]) == "" {
-				return fmt.Errorf("journal summary must not be empty")
+				return errInvalidInputf("journal summary must not be empty")
 			}
 
 			calID, err := resolveCalendarID(ctx, a, calendarName)
@@ -214,14 +214,14 @@ Defaults: status=FINAL, class=PUBLIC, calendar=Personal.`,
 				switch strings.ToUpper(status) {
 				case "DRAFT", "FINAL", "CANCELLED":
 				default:
-					return fmt.Errorf("invalid --status %q: must be DRAFT, FINAL, or CANCELLED", status)
+					return errInvalidInputf("invalid --status %q: must be DRAFT, FINAL, or CANCELLED", status)
 				}
 			}
 			if class != "" {
 				switch strings.ToUpper(class) {
 				case "PUBLIC", "PRIVATE", "CONFIDENTIAL":
 				default:
-					return fmt.Errorf("invalid --class %q: must be PUBLIC, PRIVATE, or CONFIDENTIAL", class)
+					return errInvalidInputf("invalid --class %q: must be PUBLIC, PRIVATE, or CONFIDENTIAL", class)
 				}
 			}
 			if err := validateRRule(rrule); err != nil {
@@ -234,7 +234,7 @@ Defaults: status=FINAL, class=PUBLIC, calendar=Personal.`,
 			var startDate string
 			if dateStr != "" {
 				if _, err := time.Parse("2006-01-02", dateStr); err != nil {
-					return fmt.Errorf("parse date: expected YYYY-MM-DD, got %q", dateStr)
+					return errInvalidInputf("parse date: expected YYYY-MM-DD, got %q", dateStr)
 				}
 				startDate = dateStr
 			}
@@ -438,7 +438,7 @@ Repeatable flags (--attendee, --comment, --contact, --attach,
 				if dateStr == "" {
 					p.StartDate = ""
 				} else if _, err := time.Parse("2006-01-02", dateStr); err != nil {
-					return fmt.Errorf("parse date: expected YYYY-MM-DD or empty to clear, got %q", dateStr)
+					return errInvalidInputf("parse date: expected YYYY-MM-DD or empty to clear, got %q", dateStr)
 				} else {
 					p.StartDate = dateStr
 				}
@@ -447,7 +447,7 @@ Repeatable flags (--attendee, --comment, --contact, --attach,
 				switch strings.ToUpper(status) {
 				case "DRAFT", "FINAL", "CANCELLED":
 				default:
-					return fmt.Errorf("invalid --status %q: must be DRAFT, FINAL, or CANCELLED", status)
+					return errInvalidInputf("invalid --status %q: must be DRAFT, FINAL, or CANCELLED", status)
 				}
 				p.Status = strings.ToUpper(status)
 			}
@@ -455,7 +455,7 @@ Repeatable flags (--attendee, --comment, --contact, --attach,
 				switch strings.ToUpper(class) {
 				case "PUBLIC", "PRIVATE", "CONFIDENTIAL":
 				default:
-					return fmt.Errorf("invalid --class %q: must be PUBLIC, PRIVATE, or CONFIDENTIAL", class)
+					return errInvalidInputf("invalid --class %q: must be PUBLIC, PRIVATE, or CONFIDENTIAL", class)
 				}
 				p.Class = strings.ToUpper(class)
 			}
@@ -614,7 +614,7 @@ entire recurring series.`,
 			}
 
 			if series && recurrenceID != "" {
-				return fmt.Errorf("--series and --recurrence-id are mutually exclusive")
+				return errInvalidInputf("--series and --recurrence-id are mutually exclusive")
 			}
 
 			question := fmt.Sprintf("Delete journal %q?", safeText(j.Summary))
@@ -722,7 +722,7 @@ use 'journal delete' first. Purging is not reversible — child rows cascade.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := strconv.ParseInt(args[0], 10, 64)
 			if err != nil {
-				return fmt.Errorf("parse id %q: %w", args[0], err)
+				return errInvalidInputf("parse id %q: %v", args[0], err)
 			}
 
 			a, err := initApp()
@@ -781,10 +781,10 @@ child rows cascade.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			d, err := time.ParseDuration(olderThanStr)
 			if err != nil {
-				return fmt.Errorf("parse --older-than %q: %w", olderThanStr, err)
+				return errInvalidInputf("parse --older-than %q: %v", olderThanStr, err)
 			}
 			if d < 0 {
-				return fmt.Errorf("--older-than must be non-negative, got %s", d)
+				return errInvalidInputf("--older-than must be non-negative, got %s", d)
 			}
 			if d < time.Hour {
 				prompt := fmt.Sprintf("Purge ALL journals soft-deleted in the last %s? This cannot be undone.", d)

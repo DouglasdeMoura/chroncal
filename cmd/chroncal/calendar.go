@@ -86,7 +86,7 @@ func calendarGetCmd() *cobra.Command {
 
 			id, err := strconv.ParseInt(args[0], 10, 64)
 			if err != nil {
-				return fmt.Errorf("invalid calendar ID: %w", err)
+				return errInvalidInputf("invalid calendar ID: %v", err)
 			}
 
 			c, err := a.Calendars.Get(context.Background(), id)
@@ -129,7 +129,7 @@ behavior.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if strings.TrimSpace(args[0]) == "" {
-				return fmt.Errorf("calendar name must not be empty")
+				return errInvalidInputf("calendar name must not be empty")
 			}
 			if err := validateCalendarRemoteFlags(remoteURL, username, authType, oauthClientID, allowInsecure, false); err != nil {
 				return err
@@ -319,7 +319,7 @@ Use "chroncal calendar list" first if you need to confirm the ID.`,
 
 			id, err := strconv.ParseInt(args[0], 10, 64)
 			if err != nil {
-				return fmt.Errorf("invalid calendar ID: %w", err)
+				return errInvalidInputf("invalid calendar ID: %v", err)
 			}
 
 			// Load the calendar before prompting so the user sees what's

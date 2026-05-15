@@ -288,7 +288,7 @@ and percent-complete to 100.`,
 			ctx := context.Background()
 
 			if strings.TrimSpace(args[0]) == "" {
-				return fmt.Errorf("todo summary must not be empty")
+				return errInvalidInputf("todo summary must not be empty")
 			}
 
 			calID, err := resolveCalendarID(ctx, a, calendarName)
@@ -301,21 +301,21 @@ and percent-complete to 100.`,
 				switch strings.ToUpper(status) {
 				case "NEEDS-ACTION", "IN-PROCESS", "COMPLETED", "CANCELLED":
 				default:
-					return fmt.Errorf("invalid --status %q: must be NEEDS-ACTION, IN-PROCESS, COMPLETED, or CANCELLED", status)
+					return errInvalidInputf("invalid --status %q: must be NEEDS-ACTION, IN-PROCESS, COMPLETED, or CANCELLED", status)
 				}
 			}
 			if class != "" {
 				switch strings.ToUpper(class) {
 				case "PUBLIC", "PRIVATE", "CONFIDENTIAL":
 				default:
-					return fmt.Errorf("invalid --class %q: must be PUBLIC, PRIVATE, or CONFIDENTIAL", class)
+					return errInvalidInputf("invalid --class %q: must be PUBLIC, PRIVATE, or CONFIDENTIAL", class)
 				}
 			}
 			if progress < 0 || progress > 100 {
-				return fmt.Errorf("invalid --progress %d: must be 0-100", progress)
+				return errInvalidInputf("invalid --progress %d: must be 0-100", progress)
 			}
 			if priority < 0 || priority > 9 {
-				return fmt.Errorf("invalid --priority %d: must be 0-9", priority)
+				return errInvalidInputf("invalid --priority %d: must be 0-9", priority)
 			}
 			if err := validateRRule(rrule); err != nil {
 				return err
@@ -330,7 +330,7 @@ and percent-complete to 100.`,
 			var dueDate string
 			if dueStr != "" {
 				if _, err := time.Parse("2006-01-02", dueStr); err != nil {
-					return fmt.Errorf("parse due date: expected YYYY-MM-DD, got %q", dueStr)
+					return errInvalidInputf("parse due date: expected YYYY-MM-DD, got %q", dueStr)
 				}
 				dueDate = dueStr
 			}
@@ -338,7 +338,7 @@ and percent-complete to 100.`,
 			var startDate string
 			if startStr != "" {
 				if _, err := time.Parse("2006-01-02", startStr); err != nil {
-					return fmt.Errorf("parse start date: expected YYYY-MM-DD, got %q", startStr)
+					return errInvalidInputf("parse start date: expected YYYY-MM-DD, got %q", startStr)
 				}
 				startDate = startStr
 			}
@@ -350,16 +350,16 @@ and percent-complete to 100.`,
 				} else if strings.HasPrefix(strings.ToUpper(durationStr), "P") {
 					durationVal = durationStr
 				} else {
-					return fmt.Errorf("parse duration: %q (use Go format like 1h30m or RFC 5545 like PT1H30M)", durationStr)
+					return errInvalidInputf("parse duration: %q (use Go format like 1h30m or RFC 5545 like PT1H30M)", durationStr)
 				}
 			}
 
 			if dueDate != "" && durationVal != "" {
-				return fmt.Errorf("--due and --duration are mutually exclusive (RFC 5545 §3.6.2)")
+				return errInvalidInputf("--due and --duration are mutually exclusive (RFC 5545 §3.6.2)")
 			}
 
 			if startDate != "" && dueDate != "" && startDate > dueDate {
-				return fmt.Errorf("--start %s is after --due %s (RFC 5545 §3.6.2: DTSTART must be before DUE)", startDate, dueDate)
+				return errInvalidInputf("--start %s is after --due %s (RFC 5545 §3.6.2: DTSTART must be before DUE)", startDate, dueDate)
 			}
 
 			if strings.EqualFold(status, "COMPLETED") && progress != 0 && progress != 100 {
@@ -631,7 +631,7 @@ a --progress value other than 100.`,
 				if dueStr == "" {
 					p.DueDate = ""
 				} else if _, err := time.Parse("2006-01-02", dueStr); err != nil {
-					return fmt.Errorf("parse due date: expected YYYY-MM-DD or empty to clear, got %q", dueStr)
+					return errInvalidInputf("parse due date: expected YYYY-MM-DD or empty to clear, got %q", dueStr)
 				} else {
 					p.DueDate = dueStr
 				}
@@ -640,7 +640,7 @@ a --progress value other than 100.`,
 				if startStr == "" {
 					p.StartDate = ""
 				} else if _, err := time.Parse("2006-01-02", startStr); err != nil {
-					return fmt.Errorf("parse start date: expected YYYY-MM-DD or empty to clear, got %q", startStr)
+					return errInvalidInputf("parse start date: expected YYYY-MM-DD or empty to clear, got %q", startStr)
 				} else {
 					p.StartDate = startStr
 				}
@@ -653,14 +653,14 @@ a --progress value other than 100.`,
 				} else if strings.HasPrefix(strings.ToUpper(durationStr), "P") {
 					p.Duration = durationStr
 				} else {
-					return fmt.Errorf("parse duration: %q (use Go format like 1h30m or RFC 5545 like PT1H30M)", durationStr)
+					return errInvalidInputf("parse duration: %q (use Go format like 1h30m or RFC 5545 like PT1H30M)", durationStr)
 				}
 			}
 			if cmd.Flags().Changed("status") {
 				switch strings.ToUpper(status) {
 				case "NEEDS-ACTION", "IN-PROCESS", "COMPLETED", "CANCELLED":
 				default:
-					return fmt.Errorf("invalid --status %q: must be NEEDS-ACTION, IN-PROCESS, COMPLETED, or CANCELLED", status)
+					return errInvalidInputf("invalid --status %q: must be NEEDS-ACTION, IN-PROCESS, COMPLETED, or CANCELLED", status)
 				}
 				p.Status = strings.ToUpper(status)
 				if strings.ToUpper(status) == "COMPLETED" {
@@ -670,7 +670,7 @@ a --progress value other than 100.`,
 			}
 			if cmd.Flags().Changed("progress") {
 				if progress < 0 || progress > 100 {
-					return fmt.Errorf("invalid --progress %d: must be 0-100", progress)
+					return errInvalidInputf("invalid --progress %d: must be 0-100", progress)
 				}
 				p.PercentComplete = progress
 			}
@@ -678,7 +678,7 @@ a --progress value other than 100.`,
 				switch strings.ToUpper(class) {
 				case "PUBLIC", "PRIVATE", "CONFIDENTIAL":
 				default:
-					return fmt.Errorf("invalid --class %q: must be PUBLIC, PRIVATE, or CONFIDENTIAL", class)
+					return errInvalidInputf("invalid --class %q: must be PUBLIC, PRIVATE, or CONFIDENTIAL", class)
 				}
 				p.Class = strings.ToUpper(class)
 			}
@@ -691,7 +691,7 @@ a --progress value other than 100.`,
 			}
 			if cmd.Flags().Changed("priority") {
 				if priority < 0 || priority > 9 {
-					return fmt.Errorf("invalid --priority %d: must be 0-9", priority)
+					return errInvalidInputf("invalid --priority %d: must be 0-9", priority)
 				}
 				p.Priority = priority
 			}
@@ -732,11 +732,11 @@ a --progress value other than 100.`,
 			}
 
 			if p.DueDate != "" && p.Duration != "" {
-				return fmt.Errorf("--due and --duration are mutually exclusive (RFC 5545 §3.6.2)")
+				return errInvalidInputf("--due and --duration are mutually exclusive (RFC 5545 §3.6.2)")
 			}
 
 			if p.StartDate != "" && p.DueDate != "" && p.StartDate > p.DueDate {
-				return fmt.Errorf("--start %s is after --due %s (RFC 5545 §3.6.2: DTSTART must be before DUE)", p.StartDate, p.DueDate)
+				return errInvalidInputf("--start %s is after --due %s (RFC 5545 §3.6.2: DTSTART must be before DUE)", p.StartDate, p.DueDate)
 			}
 
 			if p.Status == "COMPLETED" && cmd.Flags().Changed("progress") && p.PercentComplete != 100 {
@@ -927,7 +927,7 @@ recurring series.`,
 			}
 
 			if series && recurrenceID != "" {
-				return fmt.Errorf("--series and --recurrence-id are mutually exclusive")
+				return errInvalidInputf("--series and --recurrence-id are mutually exclusive")
 			}
 
 			question := fmt.Sprintf("Delete todo %q?", safeText(t.Summary))
@@ -1036,7 +1036,7 @@ use 'todo delete' first. Purging is not reversible — child rows cascade.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := strconv.ParseInt(args[0], 10, 64)
 			if err != nil {
-				return fmt.Errorf("parse id %q: %w", args[0], err)
+				return errInvalidInputf("parse id %q: %v", args[0], err)
 			}
 
 			a, err := initApp()
@@ -1096,10 +1096,10 @@ child rows cascade.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			d, err := time.ParseDuration(olderThanStr)
 			if err != nil {
-				return fmt.Errorf("parse --older-than %q: %w", olderThanStr, err)
+				return errInvalidInputf("parse --older-than %q: %v", olderThanStr, err)
 			}
 			if d < 0 {
-				return fmt.Errorf("--older-than must be non-negative, got %s", d)
+				return errInvalidInputf("--older-than must be non-negative, got %s", d)
 			}
 			if d < time.Hour {
 				prompt := fmt.Sprintf("Purge ALL todos soft-deleted in the last %s? This cannot be undone.", d)

@@ -213,7 +213,7 @@ attendees, attachments, overrides) cascade.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := strconv.ParseInt(args[0], 10, 64)
 			if err != nil {
-				return fmt.Errorf("parse id %q: %w", args[0], err)
+				return errInvalidInputf("parse id %q: %v", args[0], err)
 			}
 
 			a, err := initApp()
@@ -274,10 +274,10 @@ matching the age threshold.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			d, err := time.ParseDuration(olderThanStr)
 			if err != nil {
-				return fmt.Errorf("parse --older-than %q: %w", olderThanStr, err)
+				return errInvalidInputf("parse --older-than %q: %v", olderThanStr, err)
 			}
 			if d < 0 {
-				return fmt.Errorf("--older-than must be non-negative, got %s", d)
+				return errInvalidInputf("--older-than must be non-negative, got %s", d)
 			}
 
 			// Sub-hour windows are especially destructive — require --yes
@@ -530,7 +530,7 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 			ctx := context.Background()
 
 			if strings.TrimSpace(args[0]) == "" {
-				return fmt.Errorf("event title must not be empty")
+				return errInvalidInputf("event title must not be empty")
 			}
 
 			calID, err := resolveCalendarID(ctx, a, calendarName)
@@ -564,7 +564,7 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 			if dateStr != "" {
 				date, err = time.ParseInLocation("2006-01-02", dateStr, loc)
 				if err != nil {
-					return fmt.Errorf("parse date: %w", err)
+					return errInvalidInputf("parse date: %v", err)
 				}
 			}
 
@@ -573,23 +573,23 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 			if timeStr != "" {
 				t, err := time.Parse("15:04", timeStr)
 				if err != nil {
-					return fmt.Errorf("parse time: %w", err)
+					return errInvalidInputf("parse time: %v", err)
 				}
 				startTime = time.Date(date.Year(), date.Month(), date.Day(), t.Hour(), t.Minute(), 0, 0, loc)
 			}
 
 			if endTimeStr != "" && cmd.Flags().Changed("duration") {
-				return fmt.Errorf("--end-time and --duration are mutually exclusive")
+				return errInvalidInputf("--end-time and --duration are mutually exclusive")
 			}
 			if endDateStr != "" && cmd.Flags().Changed("duration") {
-				return fmt.Errorf("--end-date and --duration are mutually exclusive")
+				return errInvalidInputf("--end-date and --duration are mutually exclusive")
 			}
 
 			var endDate time.Time
 			if endDateStr != "" {
 				endDate, err = time.ParseInLocation("2006-01-02", endDateStr, loc)
 				if err != nil {
-					return fmt.Errorf("parse end-date: %w", err)
+					return errInvalidInputf("parse end-date: %v", err)
 				}
 			}
 
@@ -599,7 +599,7 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 				startTime = time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, loc)
 				if endDateStr != "" {
 					if endDate.Before(date) {
-						return fmt.Errorf("--end-date %s is before --date %s", endDateStr, date.Format("2006-01-02"))
+						return errInvalidInputf("--end-date %s is before --date %s", endDateStr, date.Format("2006-01-02"))
 					}
 					endTime = time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, 1)
 				} else {
@@ -608,7 +608,7 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 			case endTimeStr != "":
 				t, err := time.Parse("15:04", endTimeStr)
 				if err != nil {
-					return fmt.Errorf("parse end-time: %w", err)
+					return errInvalidInputf("parse end-time: %v", err)
 				}
 				endRef := date
 				if endDateStr != "" {
@@ -616,17 +616,17 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 				}
 				endTime = time.Date(endRef.Year(), endRef.Month(), endRef.Day(), t.Hour(), t.Minute(), 0, 0, loc)
 				if !endTime.After(startTime) {
-					return fmt.Errorf("end %s is not after start %s (use --end-date to cross midnight, or --duration)",
+					return errInvalidInputf("end %s is not after start %s (use --end-date to cross midnight, or --duration)",
 						endTime.Format("2006-01-02 15:04"), startTime.Format("2006-01-02 15:04"))
 				}
 			case endDateStr != "":
-				return fmt.Errorf("--end-date requires --end-time for timed events")
+				return errInvalidInputf("--end-date requires --end-time for timed events")
 			default:
 				dur := time.Hour
 				if durationStr != "" {
 					dur, err = time.ParseDuration(durationStr)
 					if err != nil {
-						return fmt.Errorf("parse duration: %w", err)
+						return errInvalidInputf("parse duration: %v", err)
 					}
 				}
 				endTime = startTime.Add(dur)
@@ -641,11 +641,11 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 			}
 			parsedExDates, err := parseDateFlags(exdates, timezone, exrdateRef)
 			if err != nil {
-				return fmt.Errorf("--exception-date-times: %w", err)
+				return errInvalidInputf("--exception-date-times: %v", err)
 			}
 			parsedRDates, err := parseDateFlags(rdates, timezone, exrdateRef)
 			if err != nil {
-				return fmt.Errorf("--recurrence-date-times: %w", err)
+				return errInvalidInputf("--recurrence-date-times: %v", err)
 			}
 
 			// Validate all parseable flags before creating the event so a
@@ -969,14 +969,14 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 				if cmd.Flags().Changed("date") {
 					d, err := time.ParseInLocation("2006-01-02", dateStr, loc)
 					if err != nil {
-						return fmt.Errorf("parse date: %w", err)
+						return errInvalidInputf("parse date: %v", err)
 					}
 					date = time.Date(d.Year(), d.Month(), d.Day(), date.Hour(), date.Minute(), 0, 0, loc)
 				}
 				if cmd.Flags().Changed("time") {
 					t, err := time.Parse("15:04", timeStr)
 					if err != nil {
-						return fmt.Errorf("parse time: %w", err)
+						return errInvalidInputf("parse time: %v", err)
 					}
 					date = time.Date(date.Year(), date.Month(), date.Day(), t.Hour(), t.Minute(), 0, 0, loc)
 					p.AllDay = false
@@ -985,17 +985,17 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 			}
 
 			if cmd.Flags().Changed("end-time") && cmd.Flags().Changed("duration") {
-				return fmt.Errorf("--end-time and --duration are mutually exclusive")
+				return errInvalidInputf("--end-time and --duration are mutually exclusive")
 			}
 			if cmd.Flags().Changed("end-date") && cmd.Flags().Changed("duration") {
-				return fmt.Errorf("--end-date and --duration are mutually exclusive")
+				return errInvalidInputf("--end-date and --duration are mutually exclusive")
 			}
 
 			var endDate time.Time
 			if cmd.Flags().Changed("end-date") {
 				endDate, err = time.ParseInLocation("2006-01-02", endDateStr, loc)
 				if err != nil {
-					return fmt.Errorf("parse end-date: %w", err)
+					return errInvalidInputf("parse end-date: %v", err)
 				}
 			}
 
@@ -1003,7 +1003,7 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 			case p.AllDay:
 				if cmd.Flags().Changed("end-date") {
 					if endDate.Before(p.StartTime) {
-						return fmt.Errorf("--end-date %s is before start date %s",
+						return errInvalidInputf("--end-date %s is before start date %s",
 							endDateStr, p.StartTime.Format("2006-01-02"))
 					}
 					p.EndTime = time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, 1)
@@ -1014,7 +1014,7 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 			case cmd.Flags().Changed("end-time"):
 				t, err := time.Parse("15:04", endTimeStr)
 				if err != nil {
-					return fmt.Errorf("parse end-time: %w", err)
+					return errInvalidInputf("parse end-time: %v", err)
 				}
 				endRef := p.StartTime
 				if cmd.Flags().Changed("end-date") {
@@ -1022,15 +1022,15 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 				}
 				p.EndTime = time.Date(endRef.Year(), endRef.Month(), endRef.Day(), t.Hour(), t.Minute(), 0, 0, loc)
 				if !p.EndTime.After(p.StartTime) {
-					return fmt.Errorf("end %s is not after start %s (use --end-date to cross midnight, or --duration)",
+					return errInvalidInputf("end %s is not after start %s (use --end-date to cross midnight, or --duration)",
 						p.EndTime.Format("2006-01-02 15:04"), p.StartTime.Format("2006-01-02 15:04"))
 				}
 			case cmd.Flags().Changed("end-date"):
-				return fmt.Errorf("--end-date requires --end-time for timed events")
+				return errInvalidInputf("--end-date requires --end-time for timed events")
 			case cmd.Flags().Changed("duration"):
 				dur, err := time.ParseDuration(durationStr)
 				if err != nil {
-					return fmt.Errorf("parse duration: %w", err)
+					return errInvalidInputf("parse duration: %v", err)
 				}
 				p.EndTime = p.StartTime.Add(dur)
 			case cmd.Flags().Changed("date") || cmd.Flags().Changed("time"):
@@ -1046,7 +1046,7 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 				}
 				parsed, err := parseDateFlags(exdates, tz, exrdateRef)
 				if err != nil {
-					return fmt.Errorf("--exception-date-times: %w", err)
+					return errInvalidInputf("--exception-date-times: %v", err)
 				}
 				p.ExDates = parsed
 			}
@@ -1057,7 +1057,7 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 				}
 				parsed, err := parseDateFlags(rdates, tz, exrdateRef)
 				if err != nil {
-					return fmt.Errorf("--recurrence-date-times: %w", err)
+					return errInvalidInputf("--recurrence-date-times: %v", err)
 				}
 				p.RDates = parsed
 			}
@@ -1219,7 +1219,7 @@ recurring series.`,
 			}
 
 			if series && recurrenceID != "" {
-				return fmt.Errorf("--series and --recurrence-id are mutually exclusive")
+				return errInvalidInputf("--series and --recurrence-id are mutually exclusive")
 			}
 
 			question := fmt.Sprintf("Delete event %q?", safeText(e.Title))
@@ -1340,7 +1340,7 @@ func parseDateFlags(flags []string, tz string, startTime time.Time) (string, err
 			}
 		}
 		if err != nil {
-			return "", fmt.Errorf("parse date %q: expected YYYY-MM-DD or YYYY-MM-DDTHH:MM", val)
+			return "", errInvalidInputf("parse date %q: expected YYYY-MM-DD or YYYY-MM-DDTHH:MM", val)
 		}
 		// For date-only values on timed events, overlay the event's start
 		// time so that the EXDATE/RDATE matches the recurrence instance.
@@ -1396,7 +1396,7 @@ func parseRelationFlags(flags []string) ([]model.Relation, error) {
 			}
 		}
 		if uid == "" {
-			return nil, fmt.Errorf("--related-to %q: UID must not be empty", val)
+			return nil, errInvalidInputf("--related-to %q: UID must not be empty", val)
 		}
 		out = append(out, model.Relation{RelType: relType, RelUID: uid})
 	}
@@ -1614,25 +1614,25 @@ func validateEventEnums(status, class, transp string, priority int64) error {
 		switch strings.ToUpper(status) {
 		case "TENTATIVE", "CONFIRMED", "CANCELLED":
 		default:
-			return fmt.Errorf("invalid --status %q: must be TENTATIVE, CONFIRMED, or CANCELLED", status)
+			return errInvalidInputf("invalid --status %q: must be TENTATIVE, CONFIRMED, or CANCELLED", status)
 		}
 	}
 	if class != "" {
 		switch strings.ToUpper(class) {
 		case "PUBLIC", "PRIVATE", "CONFIDENTIAL":
 		default:
-			return fmt.Errorf("invalid --class %q: must be PUBLIC, PRIVATE, or CONFIDENTIAL", class)
+			return errInvalidInputf("invalid --class %q: must be PUBLIC, PRIVATE, or CONFIDENTIAL", class)
 		}
 	}
 	if transp != "" {
 		switch strings.ToUpper(transp) {
 		case "OPAQUE", "TRANSPARENT":
 		default:
-			return fmt.Errorf("invalid --transparency %q: must be OPAQUE or TRANSPARENT", transp)
+			return errInvalidInputf("invalid --transparency %q: must be OPAQUE or TRANSPARENT", transp)
 		}
 	}
 	if priority < 0 || priority > 9 {
-		return fmt.Errorf("invalid --priority %d: must be 0-9", priority)
+		return errInvalidInputf("invalid --priority %d: must be 0-9", priority)
 	}
 	return nil
 }
@@ -1651,12 +1651,12 @@ func validateRRule(rrule string) error {
 		if strings.HasPrefix(part, "FREQ=") {
 			freq := strings.TrimPrefix(part, "FREQ=")
 			if !validFreqs[freq] {
-				return fmt.Errorf("invalid --rrule FREQ=%s: must be one of SECONDLY, MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY, YEARLY", freq)
+				return errInvalidInputf("invalid --rrule FREQ=%s: must be one of SECONDLY, MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY, YEARLY", freq)
 			}
 			return nil
 		}
 	}
-	return fmt.Errorf("invalid --rrule %q: must contain FREQ= (e.g. FREQ=WEEKLY;BYDAY=MO)", rrule)
+	return errInvalidInputf("invalid --rrule %q: must contain FREQ= (e.g. FREQ=WEEKLY;BYDAY=MO)", rrule)
 }
 
 // validateGeo checks that a GEO value is "lat;lon" with valid ranges per
@@ -1667,21 +1667,21 @@ func validateGeo(geo string) error {
 	}
 	parts := strings.SplitN(geo, ";", 2)
 	if len(parts) != 2 {
-		return fmt.Errorf("invalid --geo %q: must be lat;lon (e.g. 37.386;-122.083)", geo)
+		return errInvalidInputf("invalid --geo %q: must be lat;lon (e.g. 37.386;-122.083)", geo)
 	}
 	lat, err := strconv.ParseFloat(parts[0], 64)
 	if err != nil {
-		return fmt.Errorf("invalid --geo latitude %q: must be a number", parts[0])
+		return errInvalidInputf("invalid --geo latitude %q: must be a number", parts[0])
 	}
 	lon, err := strconv.ParseFloat(parts[1], 64)
 	if err != nil {
-		return fmt.Errorf("invalid --geo longitude %q: must be a number", parts[1])
+		return errInvalidInputf("invalid --geo longitude %q: must be a number", parts[1])
 	}
 	if lat < -90 || lat > 90 {
-		return fmt.Errorf("invalid --geo latitude %.6f: must be between -90 and 90", lat)
+		return errInvalidInputf("invalid --geo latitude %.6f: must be between -90 and 90", lat)
 	}
 	if lon < -180 || lon > 180 {
-		return fmt.Errorf("invalid --geo longitude %.6f: must be between -180 and 180", lon)
+		return errInvalidInputf("invalid --geo longitude %.6f: must be between -180 and 180", lon)
 	}
 	return nil
 }
@@ -1694,10 +1694,10 @@ func validateURL(u string) error {
 	}
 	parsed, err := url.Parse(u)
 	if err != nil {
-		return fmt.Errorf("invalid --url %q: %w", u, err)
+		return errInvalidInputf("invalid --url %q: %v", u, err)
 	}
 	if parsed.Scheme == "" {
-		return fmt.Errorf("invalid --url %q: must include a scheme (e.g. https://example.com)", u)
+		return errInvalidInputf("invalid --url %q: must include a scheme (e.g. https://example.com)", u)
 	}
 	return nil
 }
@@ -1707,7 +1707,7 @@ func validateURL(u string) error {
 // RFC 5545 Section 3.8.6.3.
 func validateAlarmTrigger(trigger string) error {
 	if trigger == "" {
-		return fmt.Errorf("alarm trigger must not be empty")
+		return errInvalidInputf("alarm trigger must not be empty")
 	}
 	// Try RFC 3339 absolute datetime first.
 	if _, err := time.Parse(time.RFC3339, trigger); err == nil {
@@ -1715,7 +1715,7 @@ func validateAlarmTrigger(trigger string) error {
 	}
 	// Strict RFC 5545 duration validation.
 	if err := duration.Validate(trigger); err != nil {
-		return fmt.Errorf("invalid alarm trigger %q: must be an ISO 8601 duration (e.g. -PT15M) or RFC 3339 datetime", trigger)
+		return errInvalidInputf("invalid alarm trigger %q: must be an ISO 8601 duration (e.g. -PT15M) or RFC 3339 datetime", trigger)
 	}
 	return nil
 }
