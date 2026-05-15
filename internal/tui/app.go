@@ -2342,6 +2342,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 		}
+		// Click landed outside the sidebar — pull focus back to the main
+		// view so subsequent keystrokes target the calendar rather than
+		// the sidebar that was last clicked.
+		if m.focus == focusSidebar {
+			m.sidebar = m.sidebar.Blur()
+			m.focus = focusCalendar
+		}
 		ox, oy := m.calendarOffset()
 		switch m.viewMode {
 		case viewDay:
