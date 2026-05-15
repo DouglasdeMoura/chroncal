@@ -279,6 +279,29 @@ chroncal service status
 
 All commands accept `-o, --output {text,table,json,yaml}` (default: text).
 
+### Scripting and LLM use
+
+The CLI is meant to be driven from shells and language models, not just typed by hand. The agent-friendly path:
+
+- Pass `-o json` (or `--output json`) on every read/write command. The shape is stable, omits empty optional fields, and write commands return the new row so a script can capture the `id` / `uid`.
+- Check the exit code. `0` on success, non-zero on any failure. Errors go to **stderr**, never stdout, so `cmd -o json | jq …` is safe — on failure stdout is empty.
+- Errors honor `-o json`. They emit one JSON object on stderr with a `code` field:
+
+  ```json
+  {"code": "not_found", "error": "event 999 not found"}
+  ```
+
+  Codes are `not_found`, `invalid_input`, `aborted`, or `error` (catch-all). Dispatch on `code`, surface `error` to the user.
+- References accept either the numeric `id` or the string `uid`. Recurring overrides additionally take `--recurrence-id <RFC3339>` to target a single instance.
+- Dates are `YYYY-MM-DD`. Times are `HH:MM` local unless a command accepts `--timezone`. Durations are Go-style (`30m`, `1h30m`) and some flags also accept RFC 5545 (`PT1H30M`).
+- If you want plain text (no JSON), pass `--compact` to `event list` for one line per event (`DATE  TIME  TITLE`), suitable for `grep`, `awk`, and friends.
+
+```bash
+# Round-trip: create then read back the new event
+uid=$(chroncal event add "Demo" --date 2026-06-01 --time 09:00 --output json | jq -r .uid)
+chroncal event get "$uid" --output json
+```
+
 ### Destructive operations
 
 `event delete`, `todo delete`, `journal delete`, and `calendar delete` prompt
