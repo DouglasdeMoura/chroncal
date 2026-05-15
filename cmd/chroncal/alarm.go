@@ -315,6 +315,7 @@ Dismissed alarms are permanently removed from this list.`,
 				if outputFmt != "text" {
 					return printOutput(w, []any{})
 				}
+				fmt.Fprintln(w, "No pending alarms.")
 				return nil
 			}
 
