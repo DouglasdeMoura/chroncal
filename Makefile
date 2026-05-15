@@ -1,18 +1,12 @@
-.PHONY: build build-web run run-web test test-race coverage generate \
+.PHONY: build run test test-race coverage generate \
         fmt fmt-check vet lint staticcheck vulncheck tidy-check \
         check tools clean
 
 build:
 	go build -o chroncal ./cmd/chroncal
 
-build-web:
-	go build -o chroncal-web ./cmd/chroncal-web
-
 run: build
 	./chroncal
-
-run-web: build build-web
-	./chroncal-web
 
 test:
 	go test ./internal/... -count=1
@@ -69,4 +63,4 @@ tools:
 # --- Housekeeping --------------------------------------------------------
 
 clean:
-	rm -f chroncal chroncal-web coverage.out
+	rm -f chroncal coverage.out
