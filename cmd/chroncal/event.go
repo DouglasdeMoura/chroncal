@@ -754,6 +754,8 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 				return nil
 			}
 			fmt.Fprintf(w, "Created: %s %s\n", safeText(e.Title), formatEventWhen(e.StartTime, endTime, allDay))
+			printDetailInt(w, 10, "id", e.ID)
+			printDetailField(w, 10, "uid", e.UID)
 			pushCalendarAfterWrite(a, e.CalendarID, w)
 			return nil
 		},

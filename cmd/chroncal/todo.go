@@ -474,6 +474,8 @@ and percent-complete to 100.`,
 				msg += fmt.Sprintf(" (due %s)", t.ParseDueDate().Format("Jan 2"))
 			}
 			fmt.Fprintln(w, msg)
+			printDetailInt(w, 10, "id", t.ID)
+			printDetailField(w, 10, "uid", t.UID)
 			return nil
 		},
 	}

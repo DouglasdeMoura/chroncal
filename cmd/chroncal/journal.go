@@ -325,6 +325,8 @@ Defaults: status=FINAL, class=PUBLIC, calendar=Personal.`,
 			} else {
 				fmt.Fprintln(w, msg)
 			}
+			printDetailInt(w, 10, "id", j.ID)
+			printDetailField(w, 10, "uid", j.UID)
 			return nil
 		},
 	}
