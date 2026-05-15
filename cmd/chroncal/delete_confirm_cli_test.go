@@ -69,7 +69,7 @@ func TestEventDelete_WithYes_Proceeds(t *testing.T) {
 	}
 }
 
-func TestEventDelete_JSONOutputBypassesPrompt(t *testing.T) {
+func TestEventDelete_JSONOutputStillRequiresYes(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 
 	if _, _, err := runChroncalCommand(t, "calendar", "create", "Work"); err != nil {
@@ -85,16 +85,36 @@ func TestEventDelete_JSONOutputBypassesPrompt(t *testing.T) {
 		t.Fatalf("event add: %v", err)
 	}
 
-	stdout, _, err := runChroncalCommand(t, "event", "delete", "1", "--output", "json")
+	stdout, stderr, err := runChroncalCommand(t, "event", "delete", "1", "--output", "json")
+	if err == nil {
+		t.Fatalf("event delete --output json should refuse without --yes, got stdout=%q stderr=%q", stdout, stderr)
+	}
+	if stdout != "" {
+		t.Errorf("expected empty stdout on refusal, got %q", stdout)
+	}
+	if !strings.Contains(stderr, `"code": "aborted"`) && !strings.Contains(stderr, `"code":"aborted"`) {
+		t.Errorf("expected structured aborted error on stderr, got %q", stderr)
+	}
+	// The event must still exist.
+	got, _, err := runChroncalCommand(t, "event", "get", "1", "--output", "json")
 	if err != nil {
-		t.Fatalf("event delete --output json: %v (stdout=%q)", err, stdout)
+		t.Fatalf("event was deleted despite refusal; get failed: %v", err)
+	}
+	if !strings.Contains(got, "Standup") {
+		t.Fatalf("event was deleted despite refusal; get=%q", got)
+	}
+
+	// With --yes, JSON mode proceeds.
+	stdout, _, err = runChroncalCommand(t, "event", "delete", "1", "--output", "json", "--yes")
+	if err != nil {
+		t.Fatalf("event delete --output json --yes: %v (stdout=%q)", err, stdout)
 	}
 	if !strings.Contains(stdout, `"deleted":true`) && !strings.Contains(stdout, `"deleted": true`) {
 		t.Errorf("expected JSON success payload, got stdout=%q", stdout)
 	}
 }
 
-func TestCalendarDelete_RefusalIncludesEventCount(t *testing.T) {
+func TestCalendarDelete_JSONOutputStillRequiresYes(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 
 	if _, _, err := runChroncalCommand(t, "calendar", "create", "Work"); err != nil {
@@ -110,13 +130,18 @@ func TestCalendarDelete_RefusalIncludesEventCount(t *testing.T) {
 		t.Fatalf("event add: %v", err)
 	}
 
-	// Calendar delete refuses in non-interactive shell, but we still want
-	// to verify the prompt question *would* include the event count for
-	// a real user. --yes bypasses confirmation but --output json does too;
-	// using json keeps the path deterministic.
-	stdout, _, err := runChroncalCommand(t, "calendar", "delete", "1", "--output", "json")
+	stdout, stderr, err := runChroncalCommand(t, "calendar", "delete", "1", "--output", "json")
+	if err == nil {
+		t.Fatalf("calendar delete --output json should refuse without --yes, got stdout=%q stderr=%q", stdout, stderr)
+	}
+	if !strings.Contains(stderr, `"code": "aborted"`) && !strings.Contains(stderr, `"code":"aborted"`) {
+		t.Errorf("expected structured aborted error on stderr, got %q", stderr)
+	}
+
+	// With --yes, JSON mode proceeds.
+	stdout, _, err = runChroncalCommand(t, "calendar", "delete", "1", "--output", "json", "--yes")
 	if err != nil {
-		t.Fatalf("calendar delete --output json: %v (stdout=%q)", err, stdout)
+		t.Fatalf("calendar delete --output json --yes: %v (stdout=%q)", err, stdout)
 	}
 	if !strings.Contains(stdout, `"deleted":true`) && !strings.Contains(stdout, `"deleted": true`) {
 		t.Errorf("expected JSON success payload, got stdout=%q", stdout)

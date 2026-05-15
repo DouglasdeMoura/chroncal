@@ -316,7 +316,9 @@ func TestHelperProcess(t *testing.T) {
 	rootCmd.SetArgs(args[sep+1:])
 
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprint(os.Stderr, err.Error())
+		// Mirror main()'s error path so tests see the same stderr format
+		// real users do (text or structured JSON/YAML).
+		printCLIError(err)
 		os.Exit(1)
 	}
 

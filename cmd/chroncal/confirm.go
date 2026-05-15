@@ -26,10 +26,14 @@ var errAborted = &cliError{Code: "aborted", Msg: "aborted"}
 // The prompt is skipped (auto-confirmed) in these cases:
 //   - --yes / -y was passed
 //   - CHRONCAL_ASSUME_YES is set to 1/true/yes
-//   - outputFmt is not "text" (scripted, machine-readable)
 //
-// In a non-interactive shell (stdin or stdout not a TTY) the function
-// refuses rather than silently auto-confirming.
+// In every other case — including --output json/yaml — the function
+// requires either an interactive TTY confirm or --yes. Auto-confirming
+// just because output is machine-readable would make scripted callers
+// strictly more dangerous than interactive ones, which is the wrong
+// shape for a destructive verb. Refusal is rendered as a structured
+// payload by main()'s error printer, so JSON consumers see a parseable
+// "code": "aborted" response.
 //
 // question is the full prompt (e.g. `Delete event "Standup"?`). The
 // function appends "[y/N] " — default is no.
@@ -38,12 +42,6 @@ func confirmDestructive(cmd *cobra.Command, question string) error {
 		return nil
 	}
 	if envYes(os.Getenv("CHRONCAL_ASSUME_YES")) {
-		return nil
-	}
-	// Scripted output formats bypass the prompt: a JSON/YAML consumer is
-	// scripting explicitly and we shouldn't interleave prompt text with
-	// the payload it parses.
-	if outputFmt != "text" {
 		return nil
 	}
 
