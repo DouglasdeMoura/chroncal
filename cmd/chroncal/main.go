@@ -22,12 +22,50 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/tui"
 )
 
-// notFoundErr wraps sql.ErrNoRows into a user-friendly message.
+// cliError carries a machine-readable code alongside a human message, so
+// JSON/YAML output mode can emit `{"error": ..., "code": ...}` for the
+// common failure categories. Code is one of: "not_found", "invalid_input",
+// "aborted", "error" (default).
+type cliError struct {
+	Code string
+	Msg  string
+}
+
+func (e *cliError) Error() string { return e.Msg }
+
+// notFoundErr wraps sql.ErrNoRows into a user-friendly message tagged with
+// code "not_found" so machine consumers can dispatch on it.
 func notFoundErr(err error, resource string, id any) error {
 	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("%s %v not found", resource, id)
+		return &cliError{Code: "not_found", Msg: fmt.Sprintf("%s %v not found", resource, id)}
 	}
 	return err
+}
+
+// printCLIError writes err to stderr in the format that matches --output.
+// Text/table mode keeps "Error: <msg>"; JSON/YAML emit a structured
+// payload. Aborted errors drop the "Error: " prefix in text mode — they
+// originate from a deliberate refusal, not a system failure.
+func printCLIError(err error) {
+	code := "error"
+	var ce *cliError
+	if errors.As(err, &ce) {
+		code = ce.Code
+	}
+	msg := err.Error()
+
+	if outputFmt == "json" || outputFmt == "yaml" {
+		payload := map[string]any{"error": msg, "code": code}
+		if perr := printOutput(os.Stderr, payload); perr == nil {
+			return
+		}
+		// Fall through to text if the encoder somehow failed.
+	}
+	if code == "aborted" {
+		fmt.Fprintln(os.Stderr, msg)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "Error: %s\n", msg)
 }
 
 var (
@@ -158,10 +196,7 @@ func init() {
 
 func main() {
 	if err := rootCmd.Execute(); err != nil {
-		// errAborted has already written its user-facing message; just exit.
-		if !errors.Is(err, errAborted) {
-			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
-		}
+		printCLIError(err)
 		os.Exit(1)
 	}
 }

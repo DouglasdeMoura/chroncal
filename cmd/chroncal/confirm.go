@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,17 +11,17 @@ import (
 	"golang.org/x/term"
 )
 
-// errAborted is the sentinel returned by confirmDestructive when the user
-// declined the prompt, the shell is non-interactive without --yes, or any
-// other refusal path. main() recognizes it and exits non-zero without
-// re-printing — the message has already been written to stderr.
-var errAborted = errors.New("aborted")
+// errAborted is the canonical "user/shell refused a destructive op"
+// sentinel. Concrete returns from confirmDestructive carry the same code
+// ("aborted") but a more specific message, so main()'s error printer can
+// route them uniformly without re-implementing the refusal text here.
+var errAborted = &cliError{Code: "aborted", Msg: "aborted"}
 
 // confirmDestructive prompts the user to confirm a destructive operation.
 //
-// Returns nil when the operation should proceed. Returns errAborted (or a
-// wrapped IO error) otherwise. All user-facing refusal messages are written
-// to stderr; stdout is reserved for command output.
+// Returns nil when the operation should proceed. Returns a *cliError with
+// code "aborted" otherwise. The caller propagates the error; main() prints
+// the user-facing message (text or JSON, depending on --output).
 //
 // The prompt is skipped (auto-confirmed) in these cases:
 //   - --yes / -y was passed
@@ -51,12 +50,10 @@ func confirmDestructive(cmd *cobra.Command, question string) error {
 	stdin := int(os.Stdin.Fd())
 	stdout := int(os.Stdout.Fd())
 	if !term.IsTerminal(stdin) || !term.IsTerminal(stdout) {
-		// Redirected stdin or stdout. Refusing is safer than silently
-		// auto-confirming — the caller likely expected an interactive
-		// safety net.
-		fmt.Fprintln(cmd.ErrOrStderr(),
-			"Refusing destructive operation from a non-interactive shell; pass --yes to confirm.")
-		return errAborted
+		return &cliError{
+			Code: "aborted",
+			Msg:  "Refusing destructive operation from a non-interactive shell; pass --yes to confirm.",
+		}
 	}
 
 	// Write the prompt to stderr so stdout stays clean for data consumers
@@ -71,8 +68,7 @@ func confirmDestructive(cmd *cobra.Command, question string) error {
 	if answer == "y" || answer == "yes" {
 		return nil
 	}
-	fmt.Fprintln(cmd.ErrOrStderr(), "Aborted.")
-	return errAborted
+	return &cliError{Code: "aborted", Msg: "Aborted."}
 }
 
 // addConfirmFlag attaches the standard --yes / -y flag to a command. Keep
