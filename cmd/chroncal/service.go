@@ -90,6 +90,8 @@ LaunchAgent. On Windows it registers a per-user Task Scheduler entry.`,
   chroncal service run
   chroncal service status
   chroncal service uninstall`,
+		Args: rejectUnknownSubcommand,
+		RunE: groupRunE,
 	}
 	cmd.AddCommand(serviceInstallCmd(), serviceUninstallCmd(), serviceStatusCmd(), tickCmd())
 	return cmd

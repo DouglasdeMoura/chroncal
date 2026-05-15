@@ -24,6 +24,8 @@ calendar for sync.`,
   chroncal calendar create "Work"
   chroncal calendar create "Work" --remote-url https://cal.example.com/dav/calendars/work/ --username alice --auth bearer
   chroncal calendar update Work --remote-url https://cal.example.com/dav/calendars/work/ --username alice --auth bearer`,
+		Args: rejectUnknownSubcommand,
+		RunE: groupRunE,
 	}
 	cmd.AddCommand(
 		calendarListCmd(),

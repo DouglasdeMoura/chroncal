@@ -27,6 +27,8 @@ contacts, attendees, and related-item metadata.`,
 		Example: `  chroncal journal list
   chroncal journal add "Sprint retro" --date 2026-04-01
   chroncal journal search retro`,
+		Args: rejectUnknownSubcommand,
+		RunE: groupRunE,
 	}
 	cmd.AddCommand(
 		journalListCmd(), journalGetCmd(), journalAddCmd(), journalUpdateCmd(),

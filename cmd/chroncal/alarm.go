@@ -80,6 +80,8 @@ that runs "chroncal alarm check" on an interval.`,
   chroncal alarm list
   chroncal alarm snooze 12 --for 10m
   chroncal alarm daemon`,
+		Args: rejectUnknownSubcommand,
+		RunE: groupRunE,
 	}
 	cmd.AddCommand(alarmCheckCmd(), alarmListCmd(), alarmDismissCmd(), alarmSnoozeCmd(), alarmDaemonCmd(), alarmMissedCmd())
 	return cmd

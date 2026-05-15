@@ -82,6 +82,25 @@ var (
 	cfg       config.Config
 )
 
+// groupRunE is RunE for a parent command with subcommands. Pairing it
+// with Args: rejectUnknownSubcommand makes cobra validate args before
+// RunE runs, which turns `chroncal alarm tick` (no such subcommand)
+// into a clean "unknown command" error with exit 1 instead of silently
+// printing help with exit 0.
+func groupRunE(cmd *cobra.Command, _ []string) error {
+	return cmd.Help()
+}
+
+// rejectUnknownSubcommand is the Args validator for parent commands.
+// Like cobra.NoArgs but tags the error with code "invalid_input" so
+// --output json consumers can dispatch on it.
+func rejectUnknownSubcommand(cmd *cobra.Command, args []string) error {
+	if len(args) > 0 {
+		return errInvalidInputf("unknown command %q for %q", args[0], cmd.CommandPath())
+	}
+	return nil
+}
+
 const (
 	groupPlanning    = "planning"
 	groupIntegration = "integration"

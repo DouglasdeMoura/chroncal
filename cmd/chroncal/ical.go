@@ -28,6 +28,8 @@ Import accepts VEVENT, VTODO, and VJOURNAL components. Export can emit
 any combination of those resource types.`,
 		Example: `  chroncal ical import ./calendar.ics
   chroncal ical export --calendar Work --file work.ics`,
+		Args: rejectUnknownSubcommand,
+		RunE: groupRunE,
 	}
 	cmd.AddCommand(icalImportCmd(), icalExportCmd())
 	return cmd

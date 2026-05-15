@@ -25,6 +25,8 @@ conflicts for calendars connected to remote CalDAV calendars.`,
 		Example: `  chroncal sync run
   chroncal sync status
   chroncal sync conflicts`,
+		Args: rejectUnknownSubcommand,
+		RunE: groupRunE,
 	}
 	cmd.AddCommand(syncRunCmd(), syncStatusCmd(), syncConflictsCmd(), syncResolveCmd(), syncResetCmd())
 	return cmd

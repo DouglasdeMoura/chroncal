@@ -33,6 +33,8 @@ alarms, attendees, attachments, and other iCalendar metadata.`,
 		Example: `  chroncal event list
   chroncal event add "Demo" --date 2026-04-10 --time 14:00 --duration 1h
   chroncal event get 42`,
+		Args: rejectUnknownSubcommand,
+		RunE: groupRunE,
 	}
 	cmd.AddCommand(
 		eventListCmd(), eventGetCmd(), eventAddCmd(), eventUpdateCmd(),
