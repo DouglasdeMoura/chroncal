@@ -42,8 +42,13 @@ const (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "chroncal",
-	Short: "Terminal calendar with a TUI, scripting, and sync support",
+	Use: "chroncal",
+	// SilenceUsage stops cobra from dumping the full Examples/Flags block on
+	// every RunE error. The actual error is printed by cobra (or our own
+	// formatter in main) on stderr; the help block belongs to `--help`, not
+	// to a failure mode.
+	SilenceUsage: true,
+	Short:        "Terminal calendar with a TUI, scripting, and sync support",
 	Long: `chroncal is a local-first terminal calendar backed by SQLite.
 
 Run chroncal with no arguments to open the interactive TUI. Use subcommands
