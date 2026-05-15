@@ -67,12 +67,19 @@ run to a single local calendar.`,
 				strategy = syncPkg.ConflictPrompt
 			}
 
+			// Look up names for every calendar up front so both the JSON and
+			// text views can label results without re-querying per result.
+			cals, err := a.Calendars.List(ctx)
+			if err != nil {
+				return err
+			}
+			calNames := make(map[int64]string, len(cals))
+			for _, c := range cals {
+				calNames[c.ID] = c.Name
+			}
+
+			var results []*syncPkg.SyncResult
 			if calendarName != "" {
-				// Resolve calendar by name
-				cals, err := a.Calendars.List(ctx)
-				if err != nil {
-					return err
-				}
 				var calID int64
 				for _, c := range cals {
 					if c.Name == calendarName {
@@ -81,24 +88,21 @@ run to a single local calendar.`,
 					}
 				}
 				if calID == 0 {
-					return fmt.Errorf("calendar %q not found", calendarName)
+					return &cliError{Code: "not_found", Msg: fmt.Sprintf("calendar %q not found", calendarName)}
 				}
-
-				result, err := svc.SyncCalendar(ctx, calID, strategy)
+				r, err := svc.SyncCalendar(ctx, calID, strategy)
 				if err != nil {
 					return err
 				}
-				printSyncResult(result)
+				results = []*syncPkg.SyncResult{r}
 			} else {
-				results, err := svc.SyncAll(ctx, strategy)
+				results, err = svc.SyncAll(ctx, strategy)
 				if err != nil {
 					return err
-				}
-				for _, r := range results {
-					printSyncResult(r)
 				}
 			}
-			return nil
+
+			return renderSyncRunResults(cmd, results, calNames)
 		},
 	}
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "Sync only this calendar")
@@ -269,4 +273,48 @@ This does not delete your local calendars or entries.`,
 
 func printSyncResult(r *syncPkg.SyncResult) {
 	writeSyncResult(os.Stdout, os.Stderr, r)
+}
+
+// renderSyncRunResults emits per-calendar results plus a top-level summary,
+// using the active --output format. A run with no connected calendars
+// reports synced=0 rather than producing empty stdout so an agent can
+// distinguish "nothing to do" from "command crashed."
+func renderSyncRunResults(cmd *cobra.Command, results []*syncPkg.SyncResult, calNames map[int64]string) error {
+	w := cmd.OutOrStdout()
+
+	if outputFmt != "text" {
+		items := make([]map[string]any, 0, len(results))
+		totalErrors := 0
+		for _, r := range results {
+			errMsgs := make([]string, 0, len(r.Errors))
+			for _, e := range r.Errors {
+				errMsgs = append(errMsgs, e.Error())
+			}
+			totalErrors += len(r.Errors)
+			items = append(items, map[string]any{
+				"calendar_id":   r.CalendarID,
+				"calendar_name": calNames[r.CalendarID],
+				"pushed":        r.Pushed,
+				"pulled":        r.Pulled,
+				"deleted":       r.Deleted,
+				"conflicts":     r.Conflicts,
+				"errors":        errMsgs,
+			})
+		}
+		return printOutput(w, map[string]any{
+			"synced":  len(results),
+			"errors":  totalErrors,
+			"results": items,
+		})
+	}
+
+	if len(results) == 0 {
+		fmt.Fprintln(w, "No connected calendars. Use 'chroncal calendar update <name> --remote-url ...' to set up sync.")
+		return nil
+	}
+	for _, r := range results {
+		writeSyncResult(w, cmd.ErrOrStderr(), r)
+	}
+	fmt.Fprintf(w, "Synced %d calendar(s).\n", len(results))
+	return nil
 }
