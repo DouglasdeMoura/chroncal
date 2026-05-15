@@ -1292,7 +1292,7 @@ func formatEventWhen(start, end time.Time, allDay bool) string {
 			s.Format("Mon, Jan 2 2006"), last.Format("Mon, Jan 2 2006"))
 	}
 	if s.Year() == e.Year() && s.YearDay() == e.YearDay() {
-		return fmt.Sprintf("on %s at %s – %s",
+		return fmt.Sprintf("on %s at %s - %s",
 			s.Format("Mon, Jan 2 2006"), s.Format("15:04"), e.Format("15:04"))
 	}
 	return fmt.Sprintf("from %s %s to %s %s",
