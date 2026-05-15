@@ -116,11 +116,17 @@ Without flags, the window defaults to today through the next 30 days.`,
 				}
 				return printOutput(w, items)
 			}
+			if len(events) == 0 {
+				fmt.Fprintln(w, "No events found.")
+				return nil
+			}
+			// ShowAllDays:false suppresses date-only stub lines for days
+			// with no events. Days with events still render normally.
 			fmt.Fprint(w, tui.FormatEventList(tui.FormatEventListOptions{
 				Events:        events,
 				CalendarNames: calendarNames,
 				ShowHeader:    false,
-				ShowAllDays:   true,
+				ShowAllDays:   false,
 				ShowWeekday:   showWeekday,
 				ShowMonth:     true,
 				Verbose:       verbose,
