@@ -334,13 +334,8 @@ Use "chroncal calendar list" first if you need to confirm the ID.`,
 			eventCount, _ := a.Queries.CountEventsByCalendar(ctx, id)
 			question := fmt.Sprintf("Delete calendar %q? Its %d event(s) and any todos/journals will be removed.",
 				safeText(cal.Name), eventCount)
-			ok, err := confirmDestructive(cmd, question)
-			if err != nil {
+			if err := confirmDestructive(cmd, question); err != nil {
 				return err
-			}
-			if !ok {
-				fmt.Fprintln(cmd.OutOrStdout(), "Aborted.")
-				return nil
 			}
 
 			if err := deleteCalendarWithCleanup(ctx, a, id); err != nil {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,57 +12,67 @@ import (
 	"golang.org/x/term"
 )
 
+// errAborted is the sentinel returned by confirmDestructive when the user
+// declined the prompt, the shell is non-interactive without --yes, or any
+// other refusal path. main() recognizes it and exits non-zero without
+// re-printing — the message has already been written to stderr.
+var errAborted = errors.New("aborted")
+
 // confirmDestructive prompts the user to confirm a destructive operation.
 //
-// The function returns (true, nil) when the operation should proceed. It
-// returns (false, nil) when the user explicitly declined at an interactive
-// prompt — callers should print a short "Aborted." line and return nil.
-// It returns an error only when reading from stdin failed.
+// Returns nil when the operation should proceed. Returns errAborted (or a
+// wrapped IO error) otherwise. All user-facing refusal messages are written
+// to stderr; stdout is reserved for command output.
 //
-// The prompt is skipped (auto-confirmed) in any of these cases:
-//   - --yes / -y was passed on cmd (cobra --yes flag)
+// The prompt is skipped (auto-confirmed) in these cases:
+//   - --yes / -y was passed
 //   - CHRONCAL_ASSUME_YES is set to 1/true/yes
 //   - outputFmt is not "text" (scripted, machine-readable)
-//   - stdin is not a terminal (pipe or redirect)
-//   - also auto-declines when stdout is a pipe and no --yes was given,
-//     because printing a prompt nobody can answer would hang
+//
+// In a non-interactive shell (stdin or stdout not a TTY) the function
+// refuses rather than silently auto-confirming.
 //
 // question is the full prompt (e.g. `Delete event "Standup"?`). The
 // function appends "[y/N] " — default is no.
-func confirmDestructive(cmd *cobra.Command, question string) (bool, error) {
+func confirmDestructive(cmd *cobra.Command, question string) error {
 	if yes, _ := cmd.Flags().GetBool("yes"); yes {
-		return true, nil
+		return nil
 	}
 	if envYes(os.Getenv("CHRONCAL_ASSUME_YES")) {
-		return true, nil
+		return nil
 	}
 	// Scripted output formats bypass the prompt: a JSON/YAML consumer is
 	// scripting explicitly and we shouldn't interleave prompt text with
 	// the payload it parses.
 	if outputFmt != "text" {
-		return true, nil
+		return nil
 	}
 
 	stdin := int(os.Stdin.Fd())
 	stdout := int(os.Stdout.Fd())
 	if !term.IsTerminal(stdin) || !term.IsTerminal(stdout) {
-		// Redirected stdin or stdout. Rather than silently auto-confirm a
-		// destructive op from an unsuspecting pipeline, refuse and hint at
-		// --yes. Silent auto-confirm here would be dangerous (the caller
-		// probably expected an interactive safety net).
-		fmt.Fprintf(cmd.ErrOrStderr(),
-			"Refusing destructive operation from a non-interactive shell; pass --yes to confirm.\n")
-		return false, nil
+		// Redirected stdin or stdout. Refusing is safer than silently
+		// auto-confirming — the caller likely expected an interactive
+		// safety net.
+		fmt.Fprintln(cmd.ErrOrStderr(),
+			"Refusing destructive operation from a non-interactive shell; pass --yes to confirm.")
+		return errAborted
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "%s [y/N] ", question)
+	// Write the prompt to stderr so stdout stays clean for data consumers
+	// even in the interactive case.
+	fmt.Fprintf(cmd.ErrOrStderr(), "%s [y/N] ", question)
 	r := bufio.NewReader(cmd.InOrStdin())
 	line, err := r.ReadString('\n')
 	if err != nil && err != io.EOF {
-		return false, fmt.Errorf("read confirmation: %w", err)
+		return fmt.Errorf("read confirmation: %w", err)
 	}
 	answer := strings.ToLower(strings.TrimSpace(line))
-	return answer == "y" || answer == "yes", nil
+	if answer == "y" || answer == "yes" {
+		return nil
+	}
+	fmt.Fprintln(cmd.ErrOrStderr(), "Aborted.")
+	return errAborted
 }
 
 // addConfirmFlag attaches the standard --yes / -y flag to a command. Keep

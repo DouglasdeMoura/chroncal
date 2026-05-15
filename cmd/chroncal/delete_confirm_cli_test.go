@@ -27,14 +27,11 @@ func TestEventDelete_WithoutYes_RefusesInNonInteractiveShell(t *testing.T) {
 	}
 
 	stdout, stderr, err := runChroncalCommand(t, "event", "delete", "1")
-	if err != nil {
-		t.Fatalf("event delete unexpectedly errored: %v", err)
+	if err == nil {
+		t.Fatalf("event delete should have exited non-zero on refusal, got stdout=%q stderr=%q", stdout, stderr)
 	}
 	if !strings.Contains(stderr, "Refusing destructive operation") {
 		t.Fatalf("expected refusal message in stderr, got stderr=%q stdout=%q", stderr, stdout)
-	}
-	if !strings.Contains(stdout, "Aborted") {
-		t.Errorf("expected 'Aborted' confirmation in stdout, got %q", stdout)
 	}
 	// The event must still exist. Fetch by ID to bypass the date-range
 	// filter on `event list`.

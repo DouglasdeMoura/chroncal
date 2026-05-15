@@ -934,13 +934,8 @@ recurring series.`,
 			} else if recurrenceID != "" {
 				question = fmt.Sprintf("Delete override instance of %q at %s?", safeText(t.Summary), recurrenceID)
 			}
-			ok, err := confirmDestructive(cmd, question)
-			if err != nil {
+			if err := confirmDestructive(cmd, question); err != nil {
 				return err
-			}
-			if !ok {
-				fmt.Fprintln(cmd.OutOrStdout(), "Aborted.")
-				return nil
 			}
 
 			if series {
@@ -1026,7 +1021,6 @@ the next sync cycle recreates it remotely (with a fresh resource URL).`,
 }
 
 func todoPurgeCmd() *cobra.Command {
-	var yes bool
 	cmd := &cobra.Command{
 		Use:   "purge <id>",
 		Short: "Hard-delete a single soft-deleted todo",
@@ -1059,13 +1053,8 @@ use 'todo delete' first. Purging is not reversible — child rows cascade.`,
 			}
 
 			question := fmt.Sprintf("Purge todo %q (id %d)? This cannot be undone.", safeText(td.Summary), id)
-			ok, err := confirmDestructive(cmd, question)
-			if err != nil {
+			if err := confirmDestructive(cmd, question); err != nil {
 				return err
-			}
-			if !ok && !yes {
-				fmt.Fprintln(cmd.OutOrStdout(), "Aborted.")
-				return nil
 			}
 
 			if err := a.Todos.PurgeByID(ctx, id); err != nil {
@@ -1083,15 +1072,12 @@ use 'todo delete' first. Purging is not reversible — child rows cascade.`,
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&yes, "yes", false, "skip interactive confirmation")
+	addConfirmFlag(cmd)
 	return cmd
 }
 
 func todoPurgeDeletedCmd() *cobra.Command {
-	var (
-		olderThanStr string
-		yes          bool
-	)
+	var olderThanStr string
 	cmd := &cobra.Command{
 		Use:   "purge-deleted",
 		Short: "Hard-delete soft-deleted todos older than --older-than",
@@ -1115,13 +1101,8 @@ child rows cascade.`,
 			}
 			if d < time.Hour {
 				prompt := fmt.Sprintf("Purge ALL todos soft-deleted in the last %s? This cannot be undone.", d)
-				ok, err := confirmDestructive(cmd, prompt)
-				if err != nil {
+				if err := confirmDestructive(cmd, prompt); err != nil {
 					return err
-				}
-				if !ok && !yes {
-					fmt.Fprintln(cmd.OutOrStdout(), "Aborted.")
-					return nil
 				}
 			}
 
@@ -1147,6 +1128,6 @@ child rows cascade.`,
 		},
 	}
 	cmd.Flags().StringVar(&olderThanStr, "older-than", "720h", "age threshold (Go duration, e.g. 30d=720h, 168h=7 days)")
-	cmd.Flags().BoolVar(&yes, "yes", false, "skip interactive confirmation for sub-hour windows")
+	addConfirmFlag(cmd)
 	return cmd
 }
