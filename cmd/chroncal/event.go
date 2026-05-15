@@ -377,7 +377,15 @@ roughly when the event occurred.`,
 				}
 				return printOutput(w, items)
 			}
-			printEvents(w, events)
+			if len(events) == 0 {
+				fmt.Fprintln(w, "No events found.")
+				return nil
+			}
+			fmt.Fprint(w, tui.FormatEventList(tui.FormatEventListOptions{
+				Events:      events,
+				ShowAllDays: false,
+				ShowMonth:   true,
+			}))
 			return nil
 		},
 	}

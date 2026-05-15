@@ -10,6 +10,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/todo"
+	"github.com/douglasdemoura/chroncal/internal/tui"
 )
 
 func withLocalUTC(t *testing.T) {
@@ -165,16 +166,14 @@ func TestPrintEvent_UsesASCIIDetailLayout(t *testing.T) {
 	assertASCII(t, got)
 }
 
-func TestPrintEvents_PreservesGroupedAgendaInASCII(t *testing.T) {
+func TestEventListAndSearch_ShareTheSameFlatFormat(t *testing.T) {
 	withLocalUTC(t)
 
 	events := []event.Event{
 		{
-			Title:       "Team Standup",
-			Location:    "Zoom",
-			Description: "Sprint planning",
-			StartTime:   time.Date(2026, 4, 21, 9, 0, 0, 0, time.UTC),
-			EndTime:     time.Date(2026, 4, 21, 9, 30, 0, 0, time.UTC),
+			Title:     "Team Standup",
+			StartTime: time.Date(2026, 4, 21, 9, 0, 0, 0, time.UTC),
+			EndTime:   time.Date(2026, 4, 21, 9, 30, 0, 0, time.UTC),
 		},
 		{
 			Title:     "1:1 with Alex",
@@ -183,26 +182,21 @@ func TestPrintEvents_PreservesGroupedAgendaInASCII(t *testing.T) {
 		},
 	}
 
-	var buf bytes.Buffer
-	printEvents(&buf, events)
-
-	got := buf.String()
-	want := "" +
-		"  Tue, Apr 21 2026\n" +
-		"  ----------------\n" +
-		"\n" +
-		"  * Team Standup\n" +
-		"    09:00 - 09:30\n" +
-		"    Zoom\n" +
-		"    Sprint planning\n" +
-		"\n" +
-		"  * 1:1 with Alex\n" +
-		"    13:00 - 14:00\n" +
-		"\n"
-	if got != want {
-		t.Fatalf("printEvents output mismatch\nwant:\n%s\ngot:\n%s", want, got)
+	// Both `event list` and `event search` invoke this with the same
+	// options. Locking the option set guards against the two commands
+	// drifting apart again.
+	opts := tui.FormatEventListOptions{
+		Events:      events,
+		ShowAllDays: false,
+		ShowMonth:   true,
 	}
-	assertASCII(t, got)
+	got := tui.FormatEventList(opts)
+	want := "" +
+		"Apr 21 09:00–09:30  Team Standup\n" +
+		"       13:00–14:00  1:1 with Alex\n"
+	if got != want {
+		t.Fatalf("unified event list format mismatch\nwant:\n%s\ngot:\n%s", want, got)
+	}
 }
 
 func TestPrintTodo_UsesASCIIDetailLayout(t *testing.T) {
@@ -302,11 +296,6 @@ func TestPrintTodo_UsesCompletedCheckbox(t *testing.T) {
 func TestPrintTextOutputDoesNotEmitLegacyGlyphs(t *testing.T) {
 	withLocalUTC(t)
 
-	type renderCase struct {
-		name string
-		out  string
-	}
-
 	var eventBuf bytes.Buffer
 	printEvent(&eventBuf, event.Event{
 		Title:     "Meeting",
@@ -314,25 +303,15 @@ func TestPrintTextOutputDoesNotEmitLegacyGlyphs(t *testing.T) {
 		EndTime:   time.Date(2026, 4, 21, 10, 0, 0, 0, time.UTC),
 	})
 
-	var listBuf bytes.Buffer
-	printEvents(&listBuf, []event.Event{{
-		Title:     "Meeting",
-		StartTime: time.Date(2026, 4, 21, 9, 0, 0, 0, time.UTC),
-		EndTime:   time.Date(2026, 4, 21, 10, 0, 0, 0, time.UTC),
-	}})
-
-	cases := []renderCase{
-		{name: "event detail", out: eventBuf.String()},
-		{name: "event list", out: listBuf.String()},
-	}
-
+	// Detail output (event get / update) must stay ASCII-only. The list
+	// path uses tui.FormatEventList, which intentionally renders an
+	// en-dash between times — that surface is tested separately.
+	got := eventBuf.String()
 	legacyGlyphs := []string{"●", "◆", "…", "→", "–", "─", "✓", "✗", "○", "♪", "@"}
-	for _, tc := range cases {
-		for _, glyph := range legacyGlyphs {
-			if strings.Contains(tc.out, glyph) {
-				t.Fatalf("%s output contains legacy glyph %q in %q", tc.name, glyph, tc.out)
-			}
+	for _, glyph := range legacyGlyphs {
+		if strings.Contains(got, glyph) {
+			t.Fatalf("event detail output contains legacy glyph %q in %q", glyph, got)
 		}
-		assertASCII(t, tc.out)
 	}
+	assertASCII(t, got)
 }

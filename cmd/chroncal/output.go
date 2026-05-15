@@ -397,17 +397,6 @@ func todoCheckbox(t todo.Todo) string {
 	return "[ ]"
 }
 
-func printEventSummary(w io.Writer, e event.Event) {
-	fmt.Fprintf(w, "  * %s\n", textsafe.Display(e.Title))
-	fmt.Fprintf(w, "    %s\n", formatEventListTime(e.StartTime.Local(), e.EndTime.Local(), e.AllDay))
-	if e.Location != "" {
-		fmt.Fprintf(w, "    %s\n", textsafe.Display(e.Location))
-	}
-	if e.Description != "" {
-		fmt.Fprintf(w, "    %s\n", textsafe.Display(e.Description))
-	}
-}
-
 func printTable(w io.Writer, v any) error {
 	switch data := v.(type) {
 	case []jsonEvent:
@@ -554,32 +543,6 @@ func printEventDetail(w io.Writer, e event.Event, showDate bool) {
 	printDetailField(w, labelWidth, "uid", e.UID)
 	printDetailCount(w, "reminders", len(e.Alarms))
 	printDetailCount(w, "participants", len(e.Attendees))
-}
-
-func printEvents(w io.Writer, events []event.Event) {
-	if len(events) == 0 {
-		fmt.Fprintln(w, "No events found.")
-		return
-	}
-
-	var currentDate string
-	for idx, e := range events {
-		dateLabel := e.StartTime.Local().Format("Mon, Jan 2 2006")
-		if dateLabel != currentDate {
-			if currentDate != "" {
-				fmt.Fprintln(w)
-			}
-			fmt.Fprintf(w, "  %s\n", dateLabel)
-			fmt.Fprintf(w, "  %s\n", strings.Repeat("-", len(dateLabel)))
-			fmt.Fprintln(w)
-			currentDate = dateLabel
-		}
-		if idx > 0 && events[idx-1].StartTime.Local().Format("Mon, Jan 2 2006") == dateLabel {
-			fmt.Fprintln(w)
-		}
-		printEventSummary(w, e)
-	}
-	fmt.Fprintln(w)
 }
 
 func printCalendar(w io.Writer, c calendar.Calendar) {
