@@ -19,6 +19,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/recurrence"
+	"github.com/douglasdemoura/chroncal/internal/textsafe"
 	"github.com/douglasdemoura/chroncal/internal/tui"
 )
 
@@ -52,6 +53,7 @@ func eventListCmd() *cobra.Command {
 		status         string
 		showWeekday    bool
 		verbose        bool
+		compact        bool
 		showID         bool
 		showCalendar   bool
 		includeDeleted bool
@@ -65,7 +67,8 @@ instances that fall inside the requested window.
 Without flags, the window defaults to today through the next 30 days.`,
 		Example: `  chroncal event list
   chroncal event list --calendar Work --from 2026-04-01 --to 2026-04-07
-  chroncal event list --status CONFIRMED --output json`,
+  chroncal event list --status CONFIRMED --output json
+  chroncal event list --compact   # one line per event (script-friendly)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -99,7 +102,7 @@ Without flags, the window defaults to today through the next 30 days.`,
 			}
 
 			var calendarNames map[int64]string
-			if verbose || showCalendar {
+			if verbose || showCalendar || compact {
 				cals, err := a.Calendars.List(ctx)
 				if err != nil {
 					return fmt.Errorf("list calendars: %w", err)
@@ -120,6 +123,12 @@ Without flags, the window defaults to today through the next 30 days.`,
 			}
 			if len(events) == 0 {
 				fmt.Fprintln(w, "No events found.")
+				return nil
+			}
+			if compact {
+				for _, e := range events {
+					fmt.Fprintln(w, formatCompactEvent(e, calendarNames, showID, showCalendar))
+				}
 				return nil
 			}
 			// ShowAllDays:false suppresses date-only stub lines for days
@@ -146,10 +155,54 @@ Without flags, the window defaults to today through the next 30 days.`,
 	cmd.Flags().StringVar(&status, "status", "", "filter by status (TENTATIVE, CONFIRMED, CANCELLED)")
 	cmd.Flags().BoolVar(&showWeekday, "show-weekday", false, "show weekday abbreviation next to the date")
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "render a detailed time-rail view for each event")
+	cmd.Flags().BoolVar(&compact, "compact", false, "one line per event (DATE  TIME  TITLE); skips empty-day stubs")
 	cmd.Flags().BoolVar(&showID, "show-id", false, "show each event's numeric ID in text output")
 	cmd.Flags().BoolVar(&showCalendar, "show-calendar", false, "show the calendar name in text output")
 	cmd.Flags().BoolVar(&includeDeleted, "include-deleted", false, "include soft-deleted events (see `events restore`)")
+	cmd.MarkFlagsMutuallyExclusive("compact", "verbose")
 	return cmd
+}
+
+// formatCompactEvent renders one event as three whitespace-separated columns
+// suitable for line-per-event scripting: date(-range), time(-range or all-day),
+// and title. The columns are padded to fixed widths so an awk/cut user can
+// extract them by position, but the title still contains arbitrary text and
+// must be read as "rest of line". Date ranges use ISO 8601 interval syntax
+// (start/end). --show-id prefixes "[id]" and --show-calendar suffixes "(name)".
+func formatCompactEvent(e event.Event, calendarNames map[int64]string, showID, showCalendar bool) string {
+	const (
+		dateColWidth = 23 // "YYYY-MM-DD/YYYY-MM-DD" + 2 trailing spaces
+		timeColWidth = 13 // "HH:MM-HH:MM" + 2 trailing spaces
+	)
+	start := e.StartTime.Local()
+	end := e.EndTime.Local()
+	var dateCol, timeCol string
+	if e.AllDay {
+		last := end.AddDate(0, 0, -1)
+		if start.Year() == last.Year() && start.YearDay() == last.YearDay() {
+			dateCol = start.Format("2006-01-02")
+		} else {
+			dateCol = start.Format("2006-01-02") + "/" + last.Format("2006-01-02")
+		}
+		timeCol = "all-day"
+	} else if start.Year() == end.Year() && start.YearDay() == end.YearDay() {
+		dateCol = start.Format("2006-01-02")
+		timeCol = start.Format("15:04") + "-" + end.Format("15:04")
+	} else {
+		dateCol = start.Format("2006-01-02") + "/" + end.Format("2006-01-02")
+		timeCol = start.Format("15:04") + "-" + end.Format("15:04")
+	}
+	var b strings.Builder
+	if showID {
+		fmt.Fprintf(&b, "[%d]  ", e.ID)
+	}
+	fmt.Fprintf(&b, "%-*s%-*s%s", dateColWidth, dateCol, timeColWidth, timeCol, textsafe.Display(e.Title))
+	if showCalendar {
+		if name, ok := calendarNames[e.CalendarID]; ok && name != "" {
+			fmt.Fprintf(&b, "  (%s)", textsafe.Display(name))
+		}
+	}
+	return b.String()
 }
 
 func eventRestoreCmd() *cobra.Command {
