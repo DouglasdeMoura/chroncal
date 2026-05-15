@@ -1096,9 +1096,9 @@ child rows cascade.`,
   chroncal todo purge-deleted --older-than 7d   # older than a week
   chroncal todo purge-deleted --older-than 0s --yes  # purge everything soft-deleted`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			d, err := time.ParseDuration(olderThanStr)
+			d, err := parseCLIDuration("older-than", olderThanStr)
 			if err != nil {
-				return errInvalidInputf("parse --older-than %q: %v", olderThanStr, err)
+				return err
 			}
 			if d < 0 {
 				return errInvalidInputf("--older-than must be non-negative, got %s", d)

@@ -559,14 +559,14 @@ Exporting and re-importing a calendar will not preserve snooze times.`,
 			// Todo alarm snooze: simple duration-based, no event bounds.
 			if isTodo {
 				if untilStart {
-					return fmt.Errorf("--until-start is not supported for todo alarms")
+					return errInvalidInputf("--until-start is not supported for todo alarms")
 				}
-				dur, err := time.ParseDuration(forDur)
+				dur, err := parseCLIDuration("for", forDur)
 				if err != nil {
-					return fmt.Errorf("parse --for duration: %w", err)
+					return err
 				}
 				if dur <= 0 {
-					return fmt.Errorf("snooze duration must be positive (e.g. 5m, 1h)")
+					return errInvalidInputf("--for: snooze duration must be positive (e.g. 5m, 1h)")
 				}
 				until := now.Add(dur)
 				if err := a.Alarms.SnoozeTodoAlarm(ctx, stateID, until); err != nil {
@@ -591,12 +591,12 @@ Exporting and re-importing a calendar will not preserve snooze times.`,
 					return fmt.Errorf("snooze until start: %w", err)
 				}
 			} else {
-				dur, err := time.ParseDuration(forDur)
+				dur, err := parseCLIDuration("for", forDur)
 				if err != nil {
-					return fmt.Errorf("parse --for duration: %w", err)
+					return err
 				}
 				if dur <= 0 {
-					return fmt.Errorf("snooze duration must be positive (e.g. 5m, 1h)")
+					return errInvalidInputf("--for: snooze duration must be positive (e.g. 5m, 1h)")
 				}
 				res, err = a.Alarms.ComputeSnooze(ctx, stateID, dur, now)
 				if err != nil {
@@ -674,9 +674,9 @@ See "chroncal alarm check --help" for notification types and SMTP configuration.
 			}
 			defer a.Close()
 
-			dur, err := time.ParseDuration(interval)
+			dur, err := parseCLIDuration("interval", interval)
 			if err != nil {
-				return fmt.Errorf("parse --interval: %w", err)
+				return err
 			}
 
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

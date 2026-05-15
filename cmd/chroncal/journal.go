@@ -781,9 +781,9 @@ child rows cascade.`,
   chroncal journal purge-deleted --older-than 7d
   chroncal journal purge-deleted --older-than 0s --yes`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			d, err := time.ParseDuration(olderThanStr)
+			d, err := parseCLIDuration("older-than", olderThanStr)
 			if err != nil {
-				return errInvalidInputf("parse --older-than %q: %v", olderThanStr, err)
+				return err
 			}
 			if d < 0 {
 				return errInvalidInputf("--older-than must be non-negative, got %s", d)
