@@ -115,6 +115,11 @@ var rootCmd = &cobra.Command{
 	// printed its own user-facing line to stderr).
 	SilenceUsage:  true,
 	SilenceErrors: true,
+	// rejectUnknownSubcommand replaces cobra's default legacyArgs so that
+	// `chroncal foobar` returns a *cliError tagged "invalid_input" instead
+	// of a plain string error — keeping --output json error shape uniform
+	// at the root just like it is on every subcommand group.
+	Args: rejectUnknownSubcommand,
 	Short:         "Terminal calendar with a TUI, scripting, and sync support",
 	Long: `chroncal is a local-first terminal calendar backed by SQLite.
 
