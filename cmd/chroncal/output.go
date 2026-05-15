@@ -23,24 +23,24 @@ type jsonEvent struct {
 	UID            string           `json:"uid"`
 	CalendarID     int64            `json:"calendar_id"`
 	Title          string           `json:"title"`
-	Description    string           `json:"description"`
-	Location       string           `json:"location"`
+	Description    string           `json:"description,omitempty"`
+	Location       string           `json:"location,omitempty"`
 	StartTime      string           `json:"start_time"`
 	EndTime        string           `json:"end_time"`
 	AllDay         bool             `json:"all_day"`
-	RecurrenceRule string           `json:"recurrence_rule"`
-	Timezone       string           `json:"timezone"`
+	RecurrenceRule string           `json:"recurrence_rule,omitempty"`
+	Timezone       string           `json:"timezone,omitempty"`
 	Status         string           `json:"status"`
 	Transp         string           `json:"transp"`
 	Sequence       int64            `json:"sequence"`
-	Priority       int64            `json:"priority"`
+	Priority       int64            `json:"priority,omitempty"`
 	Class          string           `json:"class"`
-	URL            string           `json:"url"`
-	Categories     string           `json:"categories"`
-	ExDates        string           `json:"exdates"`
-	RDates         string           `json:"rdates"`
-	RecurrenceID   string           `json:"recurrence_id"`
-	Geo            string           `json:"geo"`
+	URL            string           `json:"url,omitempty"`
+	Categories     string           `json:"categories,omitempty"`
+	ExDates        string           `json:"exdates,omitempty"`
+	RDates         string           `json:"rdates,omitempty"`
+	RecurrenceID   string           `json:"recurrence_id,omitempty"`
+	Geo            string           `json:"geo,omitempty"`
 	CreatedAt      string           `json:"created_at"`
 	UpdatedAt      string           `json:"updated_at"`
 	Alarms         []jsonAlarm      `json:"alarms,omitempty"`
@@ -72,10 +72,10 @@ type jsonAlarmAttendee struct {
 type jsonAttendee struct {
 	ID         int64  `json:"id"`
 	Email      string `json:"email"`
-	Name       string `json:"name"`
+	Name       string `json:"name,omitempty"`
 	RSVPStatus string `json:"rsvp_status"`
 	Role       string `json:"role"`
-	Organizer  bool   `json:"organizer"`
+	Organizer  bool   `json:"organizer,omitempty"`
 }
 
 type jsonAttachment struct {
@@ -103,7 +103,7 @@ type jsonCalendar struct {
 	ID          int64  `json:"id"`
 	Name        string `json:"name"`
 	Color       string `json:"color"`
-	Description string `json:"description"`
+	Description string `json:"description,omitempty"`
 	CreatedAt   string `json:"created_at"`
 	UpdatedAt   string `json:"updated_at"`
 }
@@ -611,24 +611,24 @@ type jsonTodo struct {
 	UID             string           `json:"uid"`
 	CalendarID      int64            `json:"calendar_id"`
 	Summary         string           `json:"summary"`
-	Description     string           `json:"description"`
-	Location        string           `json:"location"`
-	DueDate         string           `json:"due_date"`
-	StartDate       string           `json:"start_date"`
-	Duration        string           `json:"duration"`
-	CompletedAt     string           `json:"completed_at"`
-	PercentComplete int64            `json:"percent_complete"`
+	Description     string           `json:"description,omitempty"`
+	Location        string           `json:"location,omitempty"`
+	DueDate         string           `json:"due_date,omitempty"`
+	StartDate       string           `json:"start_date,omitempty"`
+	Duration        string           `json:"duration,omitempty"`
+	CompletedAt     string           `json:"completed_at,omitempty"`
+	PercentComplete int64            `json:"percent_complete,omitempty"`
 	Status          string           `json:"status"`
-	Priority        int64            `json:"priority"`
+	Priority        int64            `json:"priority,omitempty"`
 	Class           string           `json:"class"`
-	URL             string           `json:"url"`
-	Categories      string           `json:"categories"`
-	RecurrenceRule  string           `json:"recurrence_rule"`
-	ExDates         string           `json:"exdates"`
-	RDates          string           `json:"rdates"`
-	RecurrenceID    string           `json:"recurrence_id"`
-	Timezone        string           `json:"timezone"`
-	Geo             string           `json:"geo"`
+	URL             string           `json:"url,omitempty"`
+	Categories      string           `json:"categories,omitempty"`
+	RecurrenceRule  string           `json:"recurrence_rule,omitempty"`
+	ExDates         string           `json:"exdates,omitempty"`
+	RDates          string           `json:"rdates,omitempty"`
+	RecurrenceID    string           `json:"recurrence_id,omitempty"`
+	Timezone        string           `json:"timezone,omitempty"`
+	Geo             string           `json:"geo,omitempty"`
 	Sequence        int64            `json:"sequence"`
 	CreatedAt       string           `json:"created_at"`
 	UpdatedAt       string           `json:"updated_at"`
@@ -753,17 +753,17 @@ type jsonJournal struct {
 	UID            string           `json:"uid"`
 	CalendarID     int64            `json:"calendar_id"`
 	Summary        string           `json:"summary"`
-	Description    string           `json:"description"`
-	StartDate      string           `json:"start_date"`
+	Description    string           `json:"description,omitempty"`
+	StartDate      string           `json:"start_date,omitempty"`
 	Status         string           `json:"status"`
 	Class          string           `json:"class"`
-	URL            string           `json:"url"`
-	Categories     string           `json:"categories"`
-	RecurrenceRule string           `json:"recurrence_rule"`
-	ExDates        string           `json:"exdates"`
-	RDates         string           `json:"rdates"`
-	RecurrenceID   string           `json:"recurrence_id"`
-	Timezone       string           `json:"timezone"`
+	URL            string           `json:"url,omitempty"`
+	Categories     string           `json:"categories,omitempty"`
+	RecurrenceRule string           `json:"recurrence_rule,omitempty"`
+	ExDates        string           `json:"exdates,omitempty"`
+	RDates         string           `json:"rdates,omitempty"`
+	RecurrenceID   string           `json:"recurrence_id,omitempty"`
+	Timezone       string           `json:"timezone,omitempty"`
 	Sequence       int64            `json:"sequence"`
 	CreatedAt      string           `json:"created_at"`
 	UpdatedAt      string           `json:"updated_at"`
