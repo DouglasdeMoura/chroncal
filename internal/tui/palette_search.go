@@ -70,7 +70,7 @@ func paletteEventDate(ev event.Event) string {
 	out := start.Format("Jan 2 15:04")
 	end := ev.EndTime.Local()
 	if !end.IsZero() && end.After(start) && sameDay(start, end) {
-		out += "–" + end.Format("15:04")
+		out += "-" + end.Format("15:04")
 	}
 	return tag + out
 }

@@ -31,7 +31,7 @@ func formatTimeColumn(ev event.Event) string {
 	case ev.EndTime.IsZero():
 		return ev.StartTime.Local().Format("15:04") + "      "
 	default:
-		return ev.StartTime.Local().Format("15:04") + "–" + ev.EndTime.Local().Format("15:04")
+		return ev.StartTime.Local().Format("15:04") + "-" + ev.EndTime.Local().Format("15:04")
 	}
 }
 
@@ -1155,7 +1155,7 @@ func renderTimeCellContent(p placedEvent, row, width int) string {
 		text = " " + p.event.Title
 	case 1:
 		if !p.event.EndTime.IsZero() {
-			text = " " + p.event.StartTime.Format("15:04") + "–" + p.event.EndTime.Format("15:04")
+			text = " " + p.event.StartTime.Format("15:04") + "-" + p.event.EndTime.Format("15:04")
 		}
 	}
 

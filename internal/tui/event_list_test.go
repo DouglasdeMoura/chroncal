@@ -38,7 +38,7 @@ func TestFormatEventList_CompactCanShowEventIDAndCalendar(t *testing.T) {
 	})
 
 	want := "" +
-		"Apr 21 Tue 09:00–09:30  Team Standup (42) [Work]\n"
+		"Apr 21 Tue 09:00-09:30  Team Standup (42) [Work]\n"
 	if got != want {
 		t.Fatalf("FormatEventList compact metadata mismatch\nwant:\n%s\ngot:\n%s", want, got)
 	}

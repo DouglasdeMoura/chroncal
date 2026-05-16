@@ -192,8 +192,8 @@ func TestEventListAndSearch_ShareTheSameFlatFormat(t *testing.T) {
 	}
 	got := tui.FormatEventList(opts)
 	want := "" +
-		"Apr 21 09:00–09:30  Team Standup\n" +
-		"       13:00–14:00  1:1 with Alex\n"
+		"Apr 21 09:00-09:30  Team Standup\n" +
+		"       13:00-14:00  1:1 with Alex\n"
 	if got != want {
 		t.Fatalf("unified event list format mismatch\nwant:\n%s\ngot:\n%s", want, got)
 	}
@@ -304,8 +304,8 @@ func TestPrintTextOutputDoesNotEmitLegacyGlyphs(t *testing.T) {
 	})
 
 	// Detail output (event get / update) must stay ASCII-only. The list
-	// path uses tui.FormatEventList, which intentionally renders an
-	// en-dash between times — that surface is tested separately.
+	// path uses tui.FormatEventList, which also renders ASCII hyphens
+	// between times — that surface is tested separately.
 	got := eventBuf.String()
 	legacyGlyphs := []string{"●", "◆", "…", "→", "–", "─", "✓", "✗", "○", "♪", "@"}
 	for _, glyph := range legacyGlyphs {
