@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	calendarpkg "github.com/douglasdemoura/chroncal/internal/calendar"
+	"github.com/douglasdemoura/chroncal/internal/textsafe"
 )
 
 func calendarCmd() *cobra.Command {
@@ -38,12 +39,14 @@ calendar for sync.`,
 }
 
 func calendarListCmd() *cobra.Command {
+	var compact bool
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List all calendars",
 		Long:  `Show the local calendars available in your chroncal database.`,
 		Example: `  chroncal calendar list
-  chroncal calendar list --output json`,
+  chroncal calendar list --output json
+  chroncal calendar list --compact   # one line per calendar (script-friendly)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -64,11 +67,30 @@ func calendarListCmd() *cobra.Command {
 				}
 				return printOutput(w, items)
 			}
+			if compact {
+				if len(cals) == 0 {
+					fmt.Fprintln(w, "No calendars found.")
+					return nil
+				}
+				for _, c := range cals {
+					fmt.Fprintln(w, formatCompactCalendar(c))
+				}
+				return nil
+			}
 			printCalendars(w, cals)
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&compact, "compact", false, "one line per calendar (NAME  COLOR)")
 	return cmd
+}
+
+// formatCompactCalendar renders one calendar as a single line:
+// "Personal  #7C3AED". Name is padded to a fixed column width so the
+// color column lines up across rows.
+func formatCompactCalendar(c calendarpkg.Calendar) string {
+	const nameColWidth = 20
+	return fmt.Sprintf("%-*s%s", nameColWidth, textsafe.Display(c.Name), c.Color)
 }
 
 func calendarGetCmd() *cobra.Command {

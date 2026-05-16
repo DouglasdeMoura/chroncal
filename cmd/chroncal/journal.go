@@ -13,6 +13,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/recurrence"
+	"github.com/douglasdemoura/chroncal/internal/textsafe"
 )
 
 func journalCmd() *cobra.Command {
@@ -45,6 +46,7 @@ func journalListCmd() *cobra.Command {
 		all            bool
 		fromStr        string
 		toStr          string
+		compact        bool
 		includeDeleted bool
 	)
 	cmd := &cobra.Command{
@@ -56,7 +58,8 @@ Use --status when you want to narrow the list to DRAFT, FINAL, or
 CANCELLED entries.`,
 		Example: `  chroncal journal list
   chroncal journal list --calendar Work --from 2026-04-01 --to 2026-04-30
-  chroncal journal list --status DRAFT --output json`,
+  chroncal journal list --status DRAFT --output json
+  chroncal journal list --compact   # one line per entry (script-friendly)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -98,6 +101,16 @@ CANCELLED entries.`,
 			if outputFmt != "text" {
 				return printOutput(w, toJSONJournals(journals))
 			}
+			if compact {
+				if len(journals) == 0 {
+					fmt.Fprintln(w, "No journal entries found.")
+					return nil
+				}
+				for _, j := range journals {
+					fmt.Fprintln(w, formatCompactJournal(j))
+				}
+				return nil
+			}
 			printJournals(w, journals)
 			return nil
 		},
@@ -107,8 +120,25 @@ CANCELLED entries.`,
 	cmd.Flags().BoolVar(&all, "all", false, "include draft, final, and cancelled entries together")
 	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD, default: today)")
 	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 14 days from now)")
+	cmd.Flags().BoolVar(&compact, "compact", false, "one line per entry (DATE  SUMMARY)")
 	cmd.Flags().BoolVar(&includeDeleted, "include-deleted", false, "include soft-deleted journals (see `journal restore`)")
 	return cmd
+}
+
+// formatCompactJournal renders one journal entry as a single line:
+// "2026-05-15  Notes". Entries without a start date show "-" in the
+// date column (12-char width).
+func formatCompactJournal(j journal.Journal) string {
+	const dateColWidth = 12
+	date := "-"
+	if j.StartDate != "" {
+		if _, err := time.Parse("2006-01-02", j.StartDate); err == nil {
+			date = j.StartDate
+		} else if d, err := time.Parse(time.RFC3339, j.StartDate); err == nil {
+			date = d.Local().Format("2006-01-02")
+		}
+	}
+	return fmt.Sprintf("%-*s%s", dateColWidth, date, textsafe.Display(j.Summary))
 }
 
 func journalGetCmd() *cobra.Command {

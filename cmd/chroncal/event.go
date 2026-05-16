@@ -382,6 +382,7 @@ func eventSearchCmd() *cobra.Command {
 		fromStr      string
 		toStr        string
 		status       string
+		compact      bool
 	)
 	cmd := &cobra.Command{
 		Use:   "search <query>",
@@ -393,7 +394,8 @@ Use --from and --to to narrow the search window when you already know
 roughly when the event occurred.`,
 		Example: `  chroncal event search standup
   chroncal event search deploy --calendar Work --status CONFIRMED
-  chroncal event search conference --from 2026-04-01T00:00:00Z --to 2026-05-01T00:00:00Z`,
+  chroncal event search conference --from 2026-04-01T00:00:00Z --to 2026-05-01T00:00:00Z
+  chroncal event search standup --compact`,
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
@@ -434,6 +436,12 @@ roughly when the event occurred.`,
 				fmt.Fprintln(w, "No events found.")
 				return nil
 			}
+			if compact {
+				for _, e := range events {
+					fmt.Fprintln(w, formatCompactEvent(e, nil, false, false))
+				}
+				return nil
+			}
 			fmt.Fprint(w, tui.FormatEventList(tui.FormatEventListOptions{
 				Events:      events,
 				ShowAllDays: false,
@@ -446,6 +454,7 @@ roughly when the event occurred.`,
 	cmd.Flags().StringVar(&fromStr, "from", "", "start date filter (RFC3339)")
 	cmd.Flags().StringVar(&toStr, "to", "", "end date filter (RFC3339)")
 	cmd.Flags().StringVar(&status, "status", "", "status filter (TENTATIVE, CONFIRMED, CANCELLED)")
+	cmd.Flags().BoolVar(&compact, "compact", false, "one line per event (DATE  TIME  TITLE); same shape as event list --compact")
 	return cmd
 }
 

@@ -13,6 +13,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/duration"
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/recurrence"
+	"github.com/douglasdemoura/chroncal/internal/textsafe"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
@@ -45,6 +46,7 @@ func todoListCmd() *cobra.Command {
 		all            bool
 		fromStr        string
 		toStr          string
+		compact        bool
 		includeDeleted bool
 	)
 	cmd := &cobra.Command{
@@ -56,7 +58,8 @@ By default completed and cancelled todos are hidden unless you pass
 --all or filter explicitly with --status.`,
 		Example: `  chroncal todo list
   chroncal todo list --all
-  chroncal todo list --calendar Work --from 2026-04-01 --to 2026-04-30 --output json`,
+  chroncal todo list --calendar Work --from 2026-04-01 --to 2026-04-30 --output json
+  chroncal todo list --compact   # one line per todo (script-friendly)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -94,6 +97,16 @@ By default completed and cancelled todos are hidden unless you pass
 			if outputFmt != "text" {
 				return printOutput(w, toJSONTodos(todos))
 			}
+			if compact {
+				if len(todos) == 0 {
+					fmt.Fprintln(w, "No todos found.")
+					return nil
+				}
+				for _, t := range todos {
+					fmt.Fprintln(w, formatCompactTodo(t))
+				}
+				return nil
+			}
 			printTodos(w, todos)
 			return nil
 		},
@@ -103,8 +116,26 @@ By default completed and cancelled todos are hidden unless you pass
 	cmd.Flags().BoolVar(&all, "all", false, "include completed and cancelled")
 	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD, default: today)")
 	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 14 days from now)")
+	cmd.Flags().BoolVar(&compact, "compact", false, "one line per todo ([STATUS] DUE  TITLE)")
 	cmd.Flags().BoolVar(&includeDeleted, "include-deleted", false, "include soft-deleted todos (see `todo restore`)")
 	return cmd
+}
+
+// formatCompactTodo renders one todo as a single line for scripting:
+// "[x] 2026-05-25  Write report". The checkbox uses [x] when completed,
+// [ ] otherwise; the date column is YYYY-MM-DD or "-" (no due date)
+// padded to 12 chars so titles line up.
+func formatCompactTodo(t todo.Todo) string {
+	const dueColWidth = 12
+	due := "-"
+	if t.DueDate != "" {
+		if _, err := time.Parse("2006-01-02", t.DueDate); err == nil {
+			due = t.DueDate
+		} else if d, err := time.Parse(time.RFC3339, t.DueDate); err == nil {
+			due = d.Local().Format("2006-01-02")
+		}
+	}
+	return fmt.Sprintf("%s %-*s%s", todoCheckbox(t), dueColWidth, due, textsafe.Display(t.Summary))
 }
 
 func todoSearchCmd() *cobra.Command {
