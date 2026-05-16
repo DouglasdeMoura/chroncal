@@ -123,7 +123,7 @@ specific overridden instance from a recurring series.`,
 		Example: `  chroncal journal get 12
   chroncal journal get weekly-review-uid
   chroncal journal get weekly-review-uid --recurrence-id 2026-04-10T00:00:00Z --output json`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -193,7 +193,7 @@ Defaults: status=FINAL, class=PUBLIC, calendar=Personal.`,
   # Recurring weekly journal
   chroncal journal add "Weekly review" --date 2026-04-01 \
     --rrule "FREQ=WEEKLY;BYDAY=FR"`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -401,7 +401,7 @@ Repeatable flags (--attendee, --comment, --contact, --attach,
 
   # Move to a different calendar
   chroncal journal update 1 --calendar Work`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -601,7 +601,7 @@ entire recurring series.`,
 		Example: `  chroncal journal delete 12
   chroncal journal delete weekly-review-uid --recurrence-id 2026-04-10T00:00:00Z
   chroncal journal delete weekly-review-uid --series`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -670,7 +670,7 @@ If the journal was synced to a remote server, restore marks it dirty so
 the next sync cycle recreates it remotely.`,
 		Example: `  chroncal journal restore 3
   chroncal journal restore retro-uid`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -720,7 +720,7 @@ The entry must already be soft-deleted. Purging a live entry is refused;
 use 'journal delete' first. Purging is not reversible — child rows cascade.`,
 		Example: `  chroncal journal purge 3
   chroncal journal purge 3 --yes`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := strconv.ParseInt(args[0], 10, 64)
 			if err != nil {
@@ -834,7 +834,7 @@ description, and categories.`,
 		Example: `  chroncal journal search retro
   chroncal journal search architecture --calendar Work
   chroncal journal search research --status DRAFT --output json`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {

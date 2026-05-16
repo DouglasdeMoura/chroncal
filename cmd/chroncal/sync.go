@@ -195,7 +195,7 @@ func syncResolveCmd() *cobra.Command {
 Use "chroncal sync conflicts" first to find the conflict ID.`,
 		Example: `  chroncal sync resolve 12 --pick local
   chroncal sync resolve 12 --pick server`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := strconv.ParseInt(args[0], 10, 64)
 			if err != nil {

@@ -461,7 +461,7 @@ For todo alarms, use the "t" prefix shown in "alarm list" (e.g. t3).`,
 
   # Dismiss todo alarm state #3
   chroncal alarm dismiss t3`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -538,7 +538,7 @@ Exporting and re-importing a calendar will not preserve snooze times.`,
 
   # Check snooze status in the pending list
   chroncal alarm list`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -631,7 +631,7 @@ Exporting and re-importing a calendar will not preserve snooze times.`,
 	}
 	cmd.Flags().StringVar(&forDur, "for", "15m", "snooze duration (e.g. 15m, 1h)")
 	cmd.Flags().BoolVar(&untilStart, "until-start", false, "snooze until the event starts (event alarms only)")
-	cmd.MarkFlagsMutuallyExclusive("for", "until-start")
+	mutuallyExclusive(cmd, "for", "until-start")
 	return cmd
 }
 

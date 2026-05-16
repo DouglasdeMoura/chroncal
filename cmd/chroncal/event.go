@@ -159,7 +159,7 @@ Without flags, the window defaults to today through the next 30 days.`,
 	cmd.Flags().BoolVar(&showID, "show-id", false, "show each event's numeric ID in text output")
 	cmd.Flags().BoolVar(&showCalendar, "show-calendar", false, "show the calendar name in text output")
 	cmd.Flags().BoolVar(&includeDeleted, "include-deleted", false, "include soft-deleted events (see `events restore`)")
-	cmd.MarkFlagsMutuallyExclusive("compact", "verbose")
+	mutuallyExclusive(cmd, "compact", "verbose")
 	return cmd
 }
 
@@ -219,7 +219,7 @@ If the event was synced to a remote server, restore marks it dirty so
 the next sync cycle recreates it remotely (with a fresh resource URL).`,
 		Example: `  chroncal event restore 42
   chroncal event restore my-event-uid`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -270,7 +270,7 @@ use 'event delete' first. Purging is not reversible — child rows (alarms,
 attendees, attachments, overrides) cascade.`,
 		Example: `  chroncal event purge 42
   chroncal event purge 42 --yes`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := strconv.ParseInt(args[0], 10, 64)
 			if err != nil {
@@ -394,7 +394,7 @@ roughly when the event occurred.`,
 		Example: `  chroncal event search standup
   chroncal event search deploy --calendar Work --status CONFIRMED
   chroncal event search conference --from 2026-04-01T00:00:00Z --to 2026-05-01T00:00:00Z`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -462,7 +462,7 @@ recurring series.`,
 		Example: `  chroncal event get 42
   chroncal event get 6d7d8c3b-uid
   chroncal event get team-standup-uid --recurrence-id 2026-04-06T12:00:00Z --output json`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -589,7 +589,7 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
   # Link events with RELATED-TO (parent/child/sibling)
   chroncal event add "Sprint Planning" --time 14:00 \
     --related-to "PARENT:quarterly-review-uid"`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -908,7 +908,7 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 		Example: `  chroncal event update 42 --title "Demo with customer"
   chroncal event update release-meeting --date 2026-04-11 --time 15:00
   chroncal event update standup-uid --recurrence-id 2026-04-07T12:00:00Z --location "Room 4B"`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -1273,7 +1273,7 @@ recurring series.`,
 		Example: `  chroncal event delete 42
   chroncal event delete standup-uid --recurrence-id 2026-04-07T12:00:00Z
   chroncal event delete standup-uid --series`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {

@@ -101,6 +101,42 @@ func rejectUnknownSubcommand(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// exactArgs is cobra.ExactArgs(n) but re-tags the resulting error as
+// "invalid_input" so --output json consumers see a uniform code field
+// for arg-count failures instead of the catch-all "error".
+func exactArgs(n int) cobra.PositionalArgs {
+	inner := cobra.ExactArgs(n)
+	return func(cmd *cobra.Command, args []string) error {
+		if err := inner(cmd, args); err != nil {
+			return &cliError{Code: "invalid_input", Msg: err.Error()}
+		}
+		return nil
+	}
+}
+
+// mutuallyExclusive enforces that at most one of the named flags is set,
+// returning a *cliError tagged "invalid_input" on conflict. We use this
+// instead of cobra.MarkFlagsMutuallyExclusive so the error lands in the
+// same taxonomy as every other validation error.
+func mutuallyExclusive(cmd *cobra.Command, flags ...string) {
+	prev := cmd.PreRunE
+	cmd.PreRunE = func(c *cobra.Command, args []string) error {
+		set := make([]string, 0, len(flags))
+		for _, name := range flags {
+			if c.Flags().Changed(name) {
+				set = append(set, "--"+name)
+			}
+		}
+		if len(set) > 1 {
+			return errInvalidInputf("%s are mutually exclusive", strings.Join(set, " and "))
+		}
+		if prev != nil {
+			return prev(c, args)
+		}
+		return nil
+	}
+}
+
 const (
 	groupPlanning    = "planning"
 	groupIntegration = "integration"

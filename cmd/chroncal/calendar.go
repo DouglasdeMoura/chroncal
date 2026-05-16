@@ -78,7 +78,7 @@ func calendarGetCmd() *cobra.Command {
 		Long:  `Show one calendar, including its metadata and sync link details.`,
 		Example: `  chroncal calendar get 1
   chroncal calendar get 1 --output json`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -128,7 +128,7 @@ behavior.`,
 		Example: `  chroncal calendar create "Work"
   chroncal calendar create "Family" --color "#0F766E" --description "Shared family schedule"
   chroncal calendar create "Work" --remote-url https://cal.example.com/dav/calendars/work/ --username alice --auth bearer`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if strings.TrimSpace(args[0]) == "" {
 				return errInvalidInputf("calendar name must not be empty")
@@ -212,7 +212,7 @@ Only the flags you pass are changed.`,
 		Example: `  chroncal calendar update 1 --name "Deep Work"
   chroncal calendar update Work --color "#2563EB" --description "Focus blocks and deadlines"
   chroncal calendar update Work --remote-url https://cal.example.com/dav/calendars/work/ --username alice --auth bearer`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -310,7 +310,7 @@ func calendarDeleteCmd() *cobra.Command {
 Use "chroncal calendar list" first if you need to confirm the ID.`,
 		Example: `  chroncal calendar delete 3
   chroncal calendar delete 3 --output json`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {

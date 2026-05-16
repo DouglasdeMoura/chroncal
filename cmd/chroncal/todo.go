@@ -122,7 +122,7 @@ and categories.`,
 		Example: `  chroncal todo search release
   chroncal todo search invoice --completed
   chroncal todo search onboarding --calendar Work --status IN-PROCESS`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -183,7 +183,7 @@ specific overridden instance from a recurring series.`,
 		Example: `  chroncal todo get 7
   chroncal todo get weekly-review-uid
   chroncal todo get weekly-review-uid --recurrence-id 2026-04-10T00:00:00Z --output json`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -280,7 +280,7 @@ and percent-complete to 100.`,
   # Todo with start date and estimated duration
   chroncal todo add "Database migration" --start 2026-04-10 \
     --duration 4h --priority 1`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -584,7 +584,7 @@ a --progress value other than 100.`,
 
   # Clear the location
   chroncal todo update 1 --location ""`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -870,7 +870,7 @@ func todoCompleteCmd() *cobra.Command {
 its progress to 100%.`,
 		Example: `  chroncal todo complete 7
   chroncal todo complete weekly-review-uid --recurrence-id 2026-04-10T00:00:00Z`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -914,7 +914,7 @@ recurring series.`,
 		Example: `  chroncal todo delete 7
   chroncal todo delete weekly-review-uid --recurrence-id 2026-04-10T00:00:00Z
   chroncal todo delete weekly-review-uid --series`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -985,7 +985,7 @@ If the todo was synced to a remote server, restore marks it dirty so
 the next sync cycle recreates it remotely (with a fresh resource URL).`,
 		Example: `  chroncal todo restore 7
   chroncal todo restore weekly-review-uid`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -1034,7 +1034,7 @@ The todo must already be soft-deleted. Purging a live todo is refused;
 use 'todo delete' first. Purging is not reversible — child rows cascade.`,
 		Example: `  chroncal todo purge 7
   chroncal todo purge 7 --yes`,
-		Args: cobra.ExactArgs(1),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := strconv.ParseInt(args[0], 10, 64)
 			if err != nil {
