@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -13,6 +14,27 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	syncPkg "github.com/douglasdemoura/chroncal/internal/sync"
 )
+
+// classifySyncError re-tags configuration-style sync failures (no remote
+// link, no remote URL, missing credentials) as "invalid_input" so JSON
+// consumers can distinguish "you haven't set this up yet" from a genuine
+// runtime sync failure. Matching is by message substring because the
+// internal/sync package returns plain fmt.Errorf chains; the alternative
+// would be exporting sentinel errors from that package.
+func classifySyncError(err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "is not linked to an account"),
+		strings.Contains(msg, "is not connected to a remote calendar"),
+		strings.Contains(msg, "has no remote URL"),
+		strings.Contains(msg, "get credentials:"):
+		return &cliError{Code: "invalid_input", Msg: msg}
+	}
+	return err
+}
 
 const syncRunTimeout = 5 * time.Minute
 
@@ -94,13 +116,13 @@ run to a single local calendar.`,
 				}
 				r, err := svc.SyncCalendar(ctx, calID, strategy)
 				if err != nil {
-					return err
+					return classifySyncError(err)
 				}
 				results = []*syncPkg.SyncResult{r}
 			} else {
 				results, err = svc.SyncAll(ctx, strategy)
 				if err != nil {
-					return err
+					return classifySyncError(err)
 				}
 			}
 

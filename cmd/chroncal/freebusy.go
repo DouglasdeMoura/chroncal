@@ -77,10 +77,10 @@ queries the connected remote CalDAV calendar instead.`,
 
 			if remote {
 				if calendarName == "" {
-					return fmt.Errorf("--calendar is required with --remote")
+					return errInvalidInputf("--calendar is required with --remote")
 				}
 				if calendarRef.AccountID == 0 || calendarRef.RemoteURL == "" {
-					return fmt.Errorf("calendar %q is not connected to a remote calendar", calendarRef.Name)
+					return errInvalidInputf("calendar %q is not connected to a remote calendar", calendarRef.Name)
 				}
 
 				credStore, err := auth.NewCredentialStore(true)
