@@ -294,7 +294,7 @@ The CLI is meant to be driven from shells and language models, not just typed by
   Codes are `not_found`, `invalid_input`, `aborted`, or `error` (catch-all). Dispatch on `code`, surface `error` to the user.
 - References accept either the numeric `id` or the string `uid`. Recurring overrides additionally take `--recurrence-id <RFC3339>` to target a single instance.
 - Dates are `YYYY-MM-DD`. Times are `HH:MM` local unless a command accepts `--timezone`. Durations are Go-style (`30m`, `1h30m`) and some flags also accept RFC 5545 (`PT1H30M`).
-- If you want plain text (no JSON), pass `--compact` to `event list` for one line per event (`DATE  TIME  TITLE`), suitable for `grep`, `awk`, and friends.
+- If you want plain text (no JSON), pass `--compact` for one line per row, suitable for `grep`, `awk`, and friends. Available on `event list`, `event search`, `todo list`, `journal list`, and `calendar list`.
 
 ```bash
 # Round-trip: create then read back the new event
