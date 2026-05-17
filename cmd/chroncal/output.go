@@ -279,6 +279,25 @@ func safeDisplayValues(vals ...any) []any {
 	return out
 }
 
+// tableField is a single row in the vertical (key/value) table layout.
+type tableField struct {
+	label string
+	value any
+}
+
+// printVerticalTable renders a single record as a two-column FIELD/VALUE
+// table. Used for "get" commands so --output table doesn't produce a
+// 30-column horizontal row that overflows a normal terminal width.
+func printVerticalTable(w io.Writer, rows []tableField) error {
+	tbl := table.New("FIELD", "VALUE")
+	tbl.WithWriter(w)
+	for _, r := range rows {
+		tbl.AddRow(r.label, safeDisplayValue(r.value))
+	}
+	tbl.Print()
+	return nil
+}
+
 // printTable renders v as aligned columns using rodaine/table.
 // eventTableDateTime renders DATE and TIME columns for the events table,
 // expanding the DATE column to a range when the event spans multiple days.
@@ -429,7 +448,42 @@ func printTable(w io.Writer, v any) error {
 		return nil
 
 	case jsonEvent:
-		return printTable(w, []jsonEvent{data})
+		start, _ := time.Parse(time.RFC3339, data.StartTime)
+		end, _ := time.Parse(time.RFC3339, data.EndTime)
+		date, timeRange := eventTableDateTime(start.Local(), end.Local(), data.AllDay)
+		return printVerticalTable(w, []tableField{
+			{"ID", data.ID},
+			{"UID", data.UID},
+			{"CAL", data.CalendarID},
+			{"DATE", date},
+			{"TIME", timeRange},
+			{"TITLE", data.Title},
+			{"DESCRIPTION", data.Description},
+			{"LOCATION", data.Location},
+			{"ALL DAY", data.AllDay},
+			{"RRULE", data.RecurrenceRule},
+			{"TZ", data.Timezone},
+			{"STATUS", data.Status},
+			{"TRANSP", data.Transp},
+			{"SEQ", data.Sequence},
+			{"PRI", data.Priority},
+			{"CLASS", data.Class},
+			{"URL", data.URL},
+			{"CATEGORIES", data.Categories},
+			{"EXDATES", data.ExDates},
+			{"RDATES", data.RDates},
+			{"REC-ID", data.RecurrenceID},
+			{"GEO", data.Geo},
+			{"ALARMS", fmtAlarms(data.Alarms)},
+			{"ATTENDEES", fmtAttendees(data.Attendees)},
+			{"ATTACHMENTS", fmtAttachments(data.Attachments)},
+			{"COMMENTS", fmtStrings(data.Comments)},
+			{"CONTACTS", fmtStrings(data.Contacts)},
+			{"RESOURCES", fmtStrings(data.Resources)},
+			{"RELATIONS", fmtRelations(data.Relations)},
+			{"CREATED", data.CreatedAt},
+			{"UPDATED", data.UpdatedAt},
+		})
 
 	case []jsonCalendar:
 		if len(data) == 0 {
@@ -445,7 +499,14 @@ func printTable(w io.Writer, v any) error {
 		return nil
 
 	case jsonCalendar:
-		return printTable(w, []jsonCalendar{data})
+		return printVerticalTable(w, []tableField{
+			{"ID", data.ID},
+			{"NAME", data.Name},
+			{"COLOR", data.Color},
+			{"DESCRIPTION", data.Description},
+			{"CREATED", data.CreatedAt},
+			{"UPDATED", data.UpdatedAt},
+		})
 
 	case []jsonTodo:
 		if len(data) == 0 {
@@ -480,7 +541,42 @@ func printTable(w io.Writer, v any) error {
 		return nil
 
 	case jsonTodo:
-		return printTable(w, []jsonTodo{data})
+		due := ""
+		if data.DueDate != "" {
+			if _, err := time.Parse("2006-01-02", data.DueDate); err == nil {
+				due = data.DueDate
+			} else if d, err := time.Parse(time.RFC3339, data.DueDate); err == nil {
+				due = d.Local().Format("2006-01-02")
+			}
+		}
+		return printVerticalTable(w, []tableField{
+			{"ID", data.ID},
+			{"UID", data.UID},
+			{"CAL", data.CalendarID},
+			{"SUMMARY", data.Summary},
+			{"DESCRIPTION", data.Description},
+			{"LOCATION", data.Location},
+			{"DUE", due},
+			{"START", data.StartDate},
+			{"DURATION", data.Duration},
+			{"COMPLETED", data.CompletedAt},
+			{"PROGRESS", data.PercentComplete},
+			{"STATUS", data.Status},
+			{"PRI", data.Priority},
+			{"CLASS", data.Class},
+			{"URL", data.URL},
+			{"CATEGORIES", data.Categories},
+			{"SEQ", data.Sequence},
+			{"ALARMS", fmtAlarms(data.Alarms)},
+			{"ATTENDEES", fmtAttendees(data.Attendees)},
+			{"ATTACHMENTS", fmtAttachments(data.Attachments)},
+			{"COMMENTS", fmtStrings(data.Comments)},
+			{"CONTACTS", fmtStrings(data.Contacts)},
+			{"RESOURCES", fmtStrings(data.Resources)},
+			{"RELATIONS", fmtRelations(data.Relations)},
+			{"CREATED", data.CreatedAt},
+			{"UPDATED", data.UpdatedAt},
+		})
 
 	case []jsonJournal:
 		if len(data) == 0 {
@@ -507,7 +603,31 @@ func printTable(w io.Writer, v any) error {
 		return nil
 
 	case jsonJournal:
-		return printTable(w, []jsonJournal{data})
+		return printVerticalTable(w, []tableField{
+			{"ID", data.ID},
+			{"UID", data.UID},
+			{"CAL", data.CalendarID},
+			{"SUMMARY", data.Summary},
+			{"DESCRIPTION", data.Description},
+			{"DATE", data.StartDate},
+			{"STATUS", data.Status},
+			{"CLASS", data.Class},
+			{"URL", data.URL},
+			{"CATEGORIES", data.Categories},
+			{"SEQ", data.Sequence},
+			{"RRULE", data.RecurrenceRule},
+			{"EXDATES", data.ExDates},
+			{"RDATES", data.RDates},
+			{"REC-ID", data.RecurrenceID},
+			{"TZ", data.Timezone},
+			{"ATTENDEES", fmtAttendees(data.Attendees)},
+			{"ATTACHMENTS", fmtAttachments(data.Attachments)},
+			{"COMMENTS", fmtStrings(data.Comments)},
+			{"CONTACTS", fmtStrings(data.Contacts)},
+			{"RELATIONS", fmtRelations(data.Relations)},
+			{"CREATED", data.CreatedAt},
+			{"UPDATED", data.UpdatedAt},
+		})
 
 	default:
 		return printJSON(w, v)
