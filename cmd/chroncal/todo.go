@@ -127,15 +127,7 @@ By default completed and cancelled todos are hidden unless you pass
 // padded to 12 chars so titles line up.
 func formatCompactTodo(t todo.Todo) string {
 	const dueColWidth = 12
-	due := "-"
-	if t.DueDate != "" {
-		if _, err := time.Parse("2006-01-02", t.DueDate); err == nil {
-			due = t.DueDate
-		} else if d, err := time.Parse(time.RFC3339, t.DueDate); err == nil {
-			due = d.Local().Format("2006-01-02")
-		}
-	}
-	return fmt.Sprintf("%s %-*s%s", todoCheckbox(t), dueColWidth, due, textsafe.Display(t.Summary))
+	return fmt.Sprintf("%s %-*s%s", todoCheckbox(t), dueColWidth, compactDateColumn(t.DueDate), textsafe.Display(t.Summary))
 }
 
 func todoSearchCmd() *cobra.Command {

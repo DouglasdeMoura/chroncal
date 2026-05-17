@@ -130,15 +130,7 @@ CANCELLED entries.`,
 // date column (12-char width).
 func formatCompactJournal(j journal.Journal) string {
 	const dateColWidth = 12
-	date := "-"
-	if j.StartDate != "" {
-		if _, err := time.Parse("2006-01-02", j.StartDate); err == nil {
-			date = j.StartDate
-		} else if d, err := time.Parse(time.RFC3339, j.StartDate); err == nil {
-			date = d.Local().Format("2006-01-02")
-		}
-	}
-	return fmt.Sprintf("%-*s%s", dateColWidth, date, textsafe.Display(j.Summary))
+	return fmt.Sprintf("%-*s%s", dateColWidth, compactDateColumn(j.StartDate), textsafe.Display(j.Summary))
 }
 
 func journalGetCmd() *cobra.Command {

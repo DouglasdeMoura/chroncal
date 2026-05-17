@@ -386,6 +386,32 @@ func fmtModelRelations(relations []model.Relation) string {
 	return strings.Join(parts, ", ")
 }
 
+// parseListDate normalizes a stored date string (YYYY-MM-DD or RFC 3339)
+// to YYYY-MM-DD for list-style output, returning "" when stored is empty
+// or unparseable. Compact callers wrap the empty case with a "-"
+// placeholder so the column still aligns under fixed-width padding.
+func parseListDate(stored string) string {
+	if stored == "" {
+		return ""
+	}
+	if _, err := time.Parse("2006-01-02", stored); err == nil {
+		return stored
+	}
+	if t, err := time.Parse(time.RFC3339, stored); err == nil {
+		return t.Local().Format("2006-01-02")
+	}
+	return ""
+}
+
+// compactDateColumn is parseListDate with a "-" placeholder so the
+// column has a printable cell even when the underlying value is empty.
+func compactDateColumn(stored string) string {
+	if d := parseListDate(stored); d != "" {
+		return d
+	}
+	return "-"
+}
+
 func formatTodoDate(date string) string {
 	if date == "" {
 		return ""
@@ -521,14 +547,7 @@ func printTable(w io.Writer, v any) error {
 			"CREATED", "UPDATED")
 		tbl.WithWriter(w)
 		for _, t := range data {
-			due := ""
-			if t.DueDate != "" {
-				if _, err := time.Parse("2006-01-02", t.DueDate); err == nil {
-					due = t.DueDate
-				} else if d, err := time.Parse(time.RFC3339, t.DueDate); err == nil {
-					due = d.Local().Format("2006-01-02")
-				}
-			}
+			due := parseListDate(t.DueDate)
 			tbl.AddRow(safeDisplayValues(t.ID, t.UID, t.CalendarID, t.Summary, t.Description, t.Location,
 				due, t.StartDate, t.Duration, t.CompletedAt, t.PercentComplete,
 				t.Status, t.Priority, t.Class, t.URL, t.Categories, t.Sequence,
@@ -541,14 +560,7 @@ func printTable(w io.Writer, v any) error {
 		return nil
 
 	case jsonTodo:
-		due := ""
-		if data.DueDate != "" {
-			if _, err := time.Parse("2006-01-02", data.DueDate); err == nil {
-				due = data.DueDate
-			} else if d, err := time.Parse(time.RFC3339, data.DueDate); err == nil {
-				due = d.Local().Format("2006-01-02")
-			}
-		}
+		due := parseListDate(data.DueDate)
 		return printVerticalTable(w, []tableField{
 			{"ID", data.ID},
 			{"UID", data.UID},
