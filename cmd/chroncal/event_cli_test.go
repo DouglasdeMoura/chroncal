@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -91,5 +92,47 @@ func TestEventListCompactCanShowEventIDAndCalendar(t *testing.T) {
 		if !strings.Contains(stdout, needle) {
 			t.Fatalf("event list output = %q, want substring %q", stdout, needle)
 		}
+	}
+}
+
+// TestNotFoundErrorHasNoWrapPrefix locks in that user-facing error
+// messages don't leak the internal fmt.Errorf wrap chain (e.g.
+// "get event: event 999 not found"). printCLIError prefers the
+// *cliError.Msg over the outer wrapped message.
+func TestNotFoundErrorHasNoWrapPrefix(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+
+	_, _, err := runChroncalCommand(t, "event", "get", "999")
+	if err == nil {
+		t.Fatal("event get 999 should fail")
+	}
+	got := err.Error()
+	if !strings.Contains(got, "event 999 not found") {
+		t.Fatalf("error = %q, want it to contain %q", got, "event 999 not found")
+	}
+	if strings.Contains(got, "get event:") {
+		t.Fatalf("error = %q, should not leak the 'get event:' wrap prefix", got)
+	}
+}
+
+func TestNotFoundErrorJSONHasNoWrapPrefix(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+
+	_, stderr, err := runChroncalCommand(t, "event", "get", "999", "--output", "json")
+	if err == nil {
+		t.Fatal("event get 999 --output json should fail")
+	}
+	var payload struct {
+		Code  string `json:"code"`
+		Error string `json:"error"`
+	}
+	if jerr := json.Unmarshal([]byte(stderr), &payload); jerr != nil {
+		t.Fatalf("decode error payload %q: %v", stderr, jerr)
+	}
+	if payload.Code != "not_found" {
+		t.Fatalf("code = %q, want %q", payload.Code, "not_found")
+	}
+	if payload.Error != "event 999 not found" {
+		t.Fatalf("error = %q, want %q (no wrap prefix)", payload.Error, "event 999 not found")
 	}
 }

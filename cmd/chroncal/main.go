@@ -55,13 +55,19 @@ func errInvalidInputf(format string, args ...any) error {
 // Text/table mode keeps "Error: <msg>"; JSON/YAML emit a structured
 // payload. Aborted errors drop the "Error: " prefix in text mode — they
 // originate from a deliberate refusal, not a system failure.
+//
+// When the chain contains a *cliError we surface its Msg directly,
+// stripping any fmt.Errorf wrap prefixes that would otherwise leak
+// internal call sites (e.g. "get event: event 999 not found") into the
+// user-facing message.
 func printCLIError(err error) {
 	code := "error"
+	msg := err.Error()
 	var ce *cliError
 	if errors.As(err, &ce) {
 		code = ce.Code
+		msg = ce.Msg
 	}
-	msg := err.Error()
 
 	if outputFmt == "json" || outputFmt == "yaml" {
 		payload := map[string]any{"error": msg, "code": code}
