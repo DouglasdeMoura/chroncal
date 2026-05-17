@@ -44,6 +44,32 @@ func TestSyncStatusEmptyMessageIsCalendarCentric(t *testing.T) {
 	}
 }
 
+func TestSyncStatusHonorsOutputJSON(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+
+	stdout, _, err := runChroncalCommand(t, "sync", "status", "--output", "json")
+	if err != nil {
+		t.Fatalf("sync status --output json: %v", err)
+	}
+	got := strings.TrimSpace(stdout)
+	if got != "[]" {
+		t.Fatalf("sync status --output json = %q, want %q", got, "[]")
+	}
+}
+
+func TestSyncConflictsHonorsOutputJSON(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+
+	stdout, _, err := runChroncalCommand(t, "sync", "conflicts", "--output", "json")
+	if err != nil {
+		t.Fatalf("sync conflicts --output json: %v", err)
+	}
+	got := strings.TrimSpace(stdout)
+	if got != "[]" {
+		t.Fatalf("sync conflicts --output json = %q, want %q", got, "[]")
+	}
+}
+
 func TestFreeBusyRemoteErrorUsesCalendarCentricLanguage(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 

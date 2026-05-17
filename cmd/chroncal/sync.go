@@ -157,18 +157,41 @@ for each connected calendar.`,
 				return err
 			}
 
-			if len(statuses) == 0 {
-				fmt.Println("No connected calendars. Use 'chroncal calendar create ... --remote-url ...' or 'chroncal calendar update ... --remote-url ...' to set up sync.")
-				return nil
-			}
-
-			w := cmd.OutOrStdout()
-			for _, s := range statuses {
-				writeSyncStatusLine(w, s)
-			}
-			return nil
+			return renderSyncStatuses(cmd, statuses)
 		},
 	}
+}
+
+// renderSyncStatuses emits sync status using --output. For text mode an
+// empty list returns the setup hint; JSON/YAML return [] so a script can
+// branch on length rather than parsing prose.
+func renderSyncStatuses(cmd *cobra.Command, statuses []syncPkg.SyncStatus) error {
+	w := cmd.OutOrStdout()
+
+	if outputFmt != "text" {
+		items := make([]map[string]any, 0, len(statuses))
+		for _, s := range statuses {
+			items = append(items, map[string]any{
+				"calendar_id":            s.CalendarID,
+				"calendar_name":          s.CalendarName,
+				"last_sync_at":           s.LastSyncAt,
+				"last_sync_attempted_at": s.LastSyncAttemptedAt,
+				"last_sync_error":        s.LastSyncError,
+				"pending_push":           s.PendingPush,
+				"conflicts":              s.Conflicts,
+			})
+		}
+		return printOutput(w, items)
+	}
+
+	if len(statuses) == 0 {
+		fmt.Fprintln(w, "No connected calendars. Use 'chroncal calendar create ... --remote-url ...' or 'chroncal calendar update ... --remote-url ...' to set up sync.")
+		return nil
+	}
+	for _, s := range statuses {
+		writeSyncStatusLine(w, s)
+	}
+	return nil
 }
 
 func syncConflictsCmd() *cobra.Command {
@@ -193,18 +216,39 @@ func syncConflictsCmd() *cobra.Command {
 				return err
 			}
 
-			if len(conflicts) == 0 {
-				fmt.Println("No unresolved conflicts.")
-				return nil
-			}
-
-			w := cmd.OutOrStdout()
-			for _, c := range conflicts {
-				writeSyncConflictLine(w, c)
-			}
-			return nil
+			return renderSyncConflicts(cmd, conflicts)
 		},
 	}
+}
+
+// renderSyncConflicts emits unresolved conflicts using --output.
+// DetectedAt is serialized as UTC RFC 3339 so JSON consumers get a
+// stable, timezone-independent value.
+func renderSyncConflicts(cmd *cobra.Command, conflicts []syncPkg.Conflict) error {
+	w := cmd.OutOrStdout()
+
+	if outputFmt != "text" {
+		items := make([]map[string]any, 0, len(conflicts))
+		for _, c := range conflicts {
+			items = append(items, map[string]any{
+				"id":          c.ID,
+				"calendar_id": c.CalendarID,
+				"owner_type":  c.OwnerType,
+				"uid":         c.UID,
+				"detected_at": c.DetectedAt.UTC().Format(time.RFC3339),
+			})
+		}
+		return printOutput(w, items)
+	}
+
+	if len(conflicts) == 0 {
+		fmt.Fprintln(w, "No unresolved conflicts.")
+		return nil
+	}
+	for _, c := range conflicts {
+		writeSyncConflictLine(w, c)
+	}
+	return nil
 }
 
 func syncResolveCmd() *cobra.Command {
