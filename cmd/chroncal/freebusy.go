@@ -130,8 +130,8 @@ queries the connected remote CalDAV calendar instead.`,
 				return printOutput(cmd.OutOrStdout(), map[string]any{
 					"calendar": label,
 					"remote":   remote,
-					"start":    result.Start.Local().Format(time.RFC3339),
-					"end":      result.End.Local().Format(time.RFC3339),
+					"start":    result.Start.UTC().Format(time.RFC3339),
+					"end":      result.End.UTC().Format(time.RFC3339),
 					"periods":  toJSONFreeBusyPeriods(result.Periods),
 				})
 			}
@@ -185,8 +185,8 @@ func toJSONFreeBusyPeriods(periods []freebusy.Period) []map[string]string {
 	out := make([]map[string]string, len(periods))
 	for i, period := range periods {
 		out[i] = map[string]string{
-			"start": period.Start.Local().Format(time.RFC3339),
-			"end":   period.End.Local().Format(time.RFC3339),
+			"start": period.Start.UTC().Format(time.RFC3339),
+			"end":   period.End.UTC().Format(time.RFC3339),
 			"type":  period.Type,
 		}
 	}

@@ -185,7 +185,7 @@ func runAlarmCheck(ctx context.Context, a *app.App, w io.Writer, now time.Time, 
 					"alarm_id":   da.Alarm.ID,
 					"state_id":   stateID,
 					"action":     da.Alarm.Action,
-					"trigger_at": da.TriggerAt.Format(time.RFC3339),
+					"trigger_at": da.TriggerAt.UTC().Format(time.RFC3339),
 					"status":     fmt.Sprintf("error: %v", fireErr),
 				})
 			}
@@ -199,7 +199,7 @@ func runAlarmCheck(ctx context.Context, a *app.App, w io.Writer, now time.Time, 
 				"alarm_id":   da.Alarm.ID,
 				"state_id":   stateID,
 				"action":     da.Alarm.Action,
-				"trigger_at": da.TriggerAt.Format(time.RFC3339),
+				"trigger_at": da.TriggerAt.UTC().Format(time.RFC3339),
 				"status":     "fired",
 			})
 		} else {
@@ -233,7 +233,7 @@ func runAlarmCheck(ctx context.Context, a *app.App, w io.Writer, now time.Time, 
 					"alarm_id":   tda.Alarm.ID,
 					"state_id":   stateID,
 					"action":     tda.Alarm.Action,
-					"trigger_at": tda.TriggerAt.Format(time.RFC3339),
+					"trigger_at": tda.TriggerAt.UTC().Format(time.RFC3339),
 					"status":     fmt.Sprintf("error: %v", fireErr),
 				})
 			}
@@ -247,7 +247,7 @@ func runAlarmCheck(ctx context.Context, a *app.App, w io.Writer, now time.Time, 
 				"alarm_id":   tda.Alarm.ID,
 				"state_id":   stateID,
 				"action":     tda.Alarm.Action,
-				"trigger_at": tda.TriggerAt.Format(time.RFC3339),
+				"trigger_at": tda.TriggerAt.UTC().Format(time.RFC3339),
 				"status":     "fired",
 			})
 		} else {

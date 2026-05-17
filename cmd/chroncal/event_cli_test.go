@@ -115,6 +115,60 @@ func TestNotFoundErrorHasNoWrapPrefix(t *testing.T) {
 	}
 }
 
+// TestEventJSONTimestampsAreUTC locks in the documented policy that
+// --output json emits RFC 3339 in UTC (Z suffix) regardless of the
+// terminal's TZ. Text mode keeps local time and is covered elsewhere.
+func TestEventJSONTimestampsAreUTC(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "America/New_York")
+
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Work"); err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+	if _, _, err := runChroncalCommand(t,
+		"event", "add", "Standup",
+		"--calendar", "Work",
+		"--date", "2026-04-21",
+		"--time", "09:00",
+		"--duration", "30m",
+	); err != nil {
+		t.Fatalf("event add: %v", err)
+	}
+
+	stdout, _, err := runChroncalCommand(t,
+		"event", "list",
+		"--from", "2026-04-21",
+		"--to", "2026-04-21",
+		"--output", "json",
+	)
+	if err != nil {
+		t.Fatalf("event list --output json: %v", err)
+	}
+
+	var events []struct {
+		StartTime string `json:"start_time"`
+		EndTime   string `json:"end_time"`
+		CreatedAt string `json:"created_at"`
+		UpdatedAt string `json:"updated_at"`
+	}
+	if jerr := json.Unmarshal([]byte(stdout), &events); jerr != nil {
+		t.Fatalf("decode %q: %v", stdout, jerr)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1", len(events))
+	}
+	e := events[0]
+	for _, ts := range []string{e.StartTime, e.EndTime, e.CreatedAt, e.UpdatedAt} {
+		if !strings.HasSuffix(ts, "Z") {
+			t.Fatalf("timestamp %q is not UTC (no Z suffix); JSON output must be in UTC", ts)
+		}
+	}
+	// 09:00 America/New_York on 2026-04-21 is 13:00 UTC (EDT, UTC-4).
+	if e.StartTime != "2026-04-21T13:00:00Z" {
+		t.Fatalf("start_time = %q, want %q (09:00 EDT = 13:00 UTC)", e.StartTime, "2026-04-21T13:00:00Z")
+	}
+}
+
 func TestNotFoundErrorJSONHasNoWrapPrefix(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 

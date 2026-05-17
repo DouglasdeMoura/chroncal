@@ -171,6 +171,9 @@ when you want copy-pasteable, scriptable access from the shell or an LLM.
 Helpful conventions:
   Dates use YYYY-MM-DD.
   Times use HH:MM in your local timezone unless a command accepts --timezone.
+  Text output renders timestamps in your local timezone; --output json or
+  --output yaml emit RFC 3339 UTC (e.g. 2026-04-01T09:00:00Z) so scripts
+  can compare them without dealing with offsets.
   Machine-friendly output: --output json or --output yaml.
   Event, todo, and journal commands accept either a numeric ID or a UID.
   Recurring overrides can be targeted with --recurrence-id.`,

@@ -116,8 +116,8 @@ func toJSONEvent(e event.Event) jsonEvent {
 		Title:          e.Title,
 		Description:    e.Description,
 		Location:       e.Location,
-		StartTime:      e.StartTime.Local().Format(time.RFC3339),
-		EndTime:        e.EndTime.Local().Format(time.RFC3339),
+		StartTime:      e.StartTime.UTC().Format(time.RFC3339),
+		EndTime:        e.EndTime.UTC().Format(time.RFC3339),
 		AllDay:         e.AllDay,
 		RecurrenceRule: e.RecurrenceRule,
 		Timezone:       e.Timezone,
@@ -132,8 +132,8 @@ func toJSONEvent(e event.Event) jsonEvent {
 		RDates:         e.RDates,
 		RecurrenceID:   e.RecurrenceID,
 		Geo:            e.Geo,
-		CreatedAt:      e.CreatedAt.Local().Format(time.RFC3339),
-		UpdatedAt:      e.UpdatedAt.Local().Format(time.RFC3339),
+		CreatedAt:      e.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:      e.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 	for _, a := range e.Alarms {
 		je.Alarms = append(je.Alarms, jsonAlarm{
@@ -168,8 +168,8 @@ func toJSONCalendar(c calendar.Calendar) jsonCalendar {
 		Name:        c.Name,
 		Color:       c.Color,
 		Description: c.Description,
-		CreatedAt:   c.CreatedAt.Local().Format(time.RFC3339),
-		UpdatedAt:   c.UpdatedAt.Local().Format(time.RFC3339),
+		CreatedAt:   c.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:   c.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 }
 
@@ -615,8 +615,8 @@ func toJSONTodo(t todo.Todo) jsonTodo {
 		RecurrenceRule: t.RecurrenceRule, ExDates: t.ExDates, RDates: t.RDates,
 		RecurrenceID: t.RecurrenceID, Timezone: t.Timezone, Geo: t.Geo,
 		Sequence:  t.Sequence,
-		CreatedAt: t.CreatedAt.Local().Format(time.RFC3339),
-		UpdatedAt: t.UpdatedAt.Local().Format(time.RFC3339),
+		CreatedAt: t.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt: t.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 	for _, a := range t.Alarms {
 		jt.Alarms = append(jt.Alarms, jsonAlarm{
@@ -746,8 +746,8 @@ func toJSONJournal(j journal.Journal) jsonJournal {
 		RecurrenceRule: j.RecurrenceRule, ExDates: j.ExDates, RDates: j.RDates,
 		RecurrenceID: j.RecurrenceID, Timezone: j.Timezone,
 		Sequence:  j.Sequence,
-		CreatedAt: j.CreatedAt.Local().Format(time.RFC3339),
-		UpdatedAt: j.UpdatedAt.Local().Format(time.RFC3339),
+		CreatedAt: j.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt: j.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 	for _, a := range j.Attendees {
 		jj.Attendees = append(jj.Attendees, jsonAttendee{
