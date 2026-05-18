@@ -120,11 +120,11 @@ func TestRecurrenceOnField_FocusedViewShowsRightAlignedHelp(t *testing.T) {
 	f.SetWidth(28)
 
 	view := f.View()
-	assert.NotContains(t, view, "click")
+	assert.NotContains(t, view, "space")
 
 	f.Focus()
 	view = f.View()
-	assert.Contains(t, view, "click")
+	assert.Contains(t, view, "space")
 }
 
 func TestRecurrenceOnField_FocusedDayDoesNotUseFaintText(t *testing.T) {

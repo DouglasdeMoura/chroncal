@@ -643,16 +643,14 @@ func (f *RecurrenceOnField) View() string {
 	for i := range 7 {
 		label := weekDayLabels[i]
 		style := lipgloss.NewStyle()
+		cursorHere := f.focused && i == f.weekDayCursor
 		if f.weekDays[i] {
-			style = style.Bold(true)
-		} else {
+			style = style.Reverse(true)
+		} else if !cursorHere {
 			style = style.Faint(true)
 		}
-		if f.focused && i == f.weekDayCursor {
-			style = lipgloss.NewStyle().Reverse(true)
-			if f.weekDays[i] {
-				style = style.Bold(true)
-			}
+		if cursorHere {
+			style = style.Bold(true)
 		}
 		rendered := style.Render(label)
 		plainParts = append(plainParts, rendered)
@@ -664,11 +662,11 @@ func (f *RecurrenceOnField) View() string {
 		return row
 	}
 
-	hint := lipgloss.NewStyle().Faint(true).Render("click toggle")
+	hint := lipgloss.NewStyle().Faint(true).Render("space toggle")
 	if rowWidth := lipgloss.Width(plainRow); f.width > 0 {
 		hintWidth := lipgloss.Width(hint)
 		if rowWidth+1+hintWidth > f.width {
-			hint = lipgloss.NewStyle().Faint(true).Render("click")
+			hint = lipgloss.NewStyle().Faint(true).Render("space")
 		}
 	}
 	if f.width <= 0 {
