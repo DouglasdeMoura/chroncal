@@ -494,13 +494,7 @@ and percent-complete to 100.`,
 			if outputFmt != "text" {
 				return printOutput(w, toJSONTodo(t))
 			}
-			msg := fmt.Sprintf("Created: %s", safeText(t.Summary))
-			if dueDate != "" {
-				msg += fmt.Sprintf(" (due %s)", t.ParseDueDate().Format("Jan 2"))
-			}
-			fmt.Fprintln(w, msg)
-			printDetailInt(w, 10, "id", t.ID)
-			printDetailField(w, 10, "uid", t.UID)
+			printTodo(w, t)
 			return nil
 		},
 	}

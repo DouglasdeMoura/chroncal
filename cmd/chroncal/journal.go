@@ -343,14 +343,7 @@ Defaults: status=FINAL, class=PUBLIC, calendar=Personal.`,
 			if outputFmt != "text" {
 				return printOutput(w, toJSONJournal(j))
 			}
-			msg := fmt.Sprintf("Created: %s", j.Summary)
-			if startDate != "" {
-				fmt.Fprintf(w, "%s (date %s)\n", msg, j.ParseStartDate().Format("Jan 2"))
-			} else {
-				fmt.Fprintln(w, msg)
-			}
-			printDetailInt(w, 10, "id", j.ID)
-			printDetailField(w, 10, "uid", j.UID)
+			printJournal(w, j)
 			return nil
 		},
 	}

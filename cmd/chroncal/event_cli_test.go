@@ -95,6 +95,51 @@ func TestEventListCompactCanShowEventIDAndCalendar(t *testing.T) {
 	}
 }
 
+// TestEventAddAndUpdateShareDetailBlock locks in that event add and event
+// update emit the same detail-block shape used by event get, so the
+// CLI doesn't have one prose summary on create and a structured block
+// on update.
+func TestEventAddAndUpdateShareDetailBlock(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Work"); err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+
+	addOut, _, err := runChroncalCommand(t,
+		"event", "add", "Standup",
+		"--calendar", "Work",
+		"--date", "2026-04-21",
+		"--time", "09:00",
+		"--duration", "30m",
+	)
+	if err != nil {
+		t.Fatalf("event add: %v", err)
+	}
+	if strings.HasPrefix(strings.TrimSpace(addOut), "Created:") {
+		t.Fatalf("event add output starts with 'Created:' prose; want the same detail block as event get:\n%s", addOut)
+	}
+	for _, needle := range []string{"  Standup\n", "    when:", "    id:", "    uid:"} {
+		if !strings.Contains(addOut, needle) {
+			t.Fatalf("event add output = %q, missing %q", addOut, needle)
+		}
+	}
+
+	updateOut, _, err := runChroncalCommand(t,
+		"event", "update", "1",
+		"--title", "Daily Standup",
+	)
+	if err != nil {
+		t.Fatalf("event update: %v", err)
+	}
+	for _, needle := range []string{"  Daily Standup\n", "    when:", "    id:", "    uid:"} {
+		if !strings.Contains(updateOut, needle) {
+			t.Fatalf("event update output = %q, missing %q", updateOut, needle)
+		}
+	}
+}
+
 // TestNotFoundErrorHasNoWrapPrefix locks in that user-facing error
 // messages don't leak the internal fmt.Errorf wrap chain (e.g.
 // "get event: event 999 not found"). printCLIError prefers the

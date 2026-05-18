@@ -831,9 +831,7 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 				pushCalendarAfterWrite(a, e.CalendarID, io.Discard)
 				return nil
 			}
-			fmt.Fprintf(w, "Created: %s %s\n", safeText(e.Title), formatEventWhen(e.StartTime, endTime, allDay))
-			printDetailInt(w, 10, "id", e.ID)
-			printDetailField(w, 10, "uid", e.UID)
+			printEvent(w, e)
 			pushCalendarAfterWrite(a, e.CalendarID, w)
 			return nil
 		},
@@ -1348,34 +1346,6 @@ recurring series.`,
 	cmd.Flags().BoolVar(&series, "series", false, "delete the entire recurring series (master + all overrides)")
 	addConfirmFlag(cmd)
 	return cmd
-}
-
-// parseDateFlags normalizes date/datetime flag values to RFC 3339 for storage.
-// Accepted formats: YYYY-MM-DD, YYYY-MM-DDTHH:MM, RFC 3339.
-// When tz is non-empty, it is used as the IANA timezone for interpreting values
-// that lack an explicit offset (i.e. not RFC 3339). Falls back to local time.
-//
-// formatEventWhen renders a human-readable "when" clause for an event,
-// handling single-day, multi-day all-day, and cross-midnight timed events.
-// The end time is exclusive, matching how we store it internally.
-func formatEventWhen(start, end time.Time, allDay bool) string {
-	s := start.Local()
-	e := end.Local()
-	if allDay {
-		last := e.AddDate(0, 0, -1)
-		if s.Year() == last.Year() && s.YearDay() == last.YearDay() {
-			return fmt.Sprintf("on %s (all day)", s.Format("Mon, Jan 2 2006"))
-		}
-		return fmt.Sprintf("from %s to %s (all day)",
-			s.Format("Mon, Jan 2 2006"), last.Format("Mon, Jan 2 2006"))
-	}
-	if s.Year() == e.Year() && s.YearDay() == e.YearDay() {
-		return fmt.Sprintf("on %s at %s - %s",
-			s.Format("Mon, Jan 2 2006"), s.Format("15:04"), e.Format("15:04"))
-	}
-	return fmt.Sprintf("from %s %s to %s %s",
-		s.Format("Mon, Jan 2 2006"), s.Format("15:04"),
-		e.Format("Mon, Jan 2 2006"), e.Format("15:04"))
 }
 
 // startTime is the event's start time. When a date-only value (YYYY-MM-DD) is
