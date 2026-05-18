@@ -27,7 +27,7 @@ var errAborted = &cliError{Code: "aborted", Msg: "aborted"}
 //   - --yes / -y was passed
 //   - CHRONCAL_ASSUME_YES is set to 1/true/yes
 //
-// In every other case — including --output json/yaml — the function
+// In every other case — including --output json — the function
 // requires either an interactive TTY confirm or --yes. Auto-confirming
 // just because output is machine-readable would make scripted callers
 // strictly more dangerous than interactive ones, which is the wrong

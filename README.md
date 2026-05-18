@@ -277,7 +277,7 @@ chroncal service status
 
 ### Global flags
 
-All commands accept `-o, --output {text,table,json,yaml}` (default: text).
+All commands accept `-o, --output {text,json}` (default: text).
 
 ### Scripting and LLM use
 
@@ -310,7 +310,7 @@ the following is true, so scripted use keeps working:
 
 - `--yes` / `-y` is passed
 - `CHRONCAL_ASSUME_YES=1` is set in the environment
-- `--output` is `json`, `yaml`, or `table` (machine-readable implies scripted)
+- `--output` is `json` (machine-readable implies scripted)
 
 In a non-interactive shell without any of the above, the command refuses
 rather than silently auto-confirming.

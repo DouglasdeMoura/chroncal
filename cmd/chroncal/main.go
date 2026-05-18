@@ -52,8 +52,8 @@ func errInvalidInputf(format string, args ...any) error {
 }
 
 // printCLIError writes err to stderr in the format that matches --output.
-// Text/table mode keeps "Error: <msg>"; JSON/YAML emit a structured
-// payload. Aborted errors drop the "Error: " prefix in text mode — they
+// Text mode keeps "Error: <msg>"; JSON emits a structured payload.
+// Aborted errors drop the "Error: " prefix in text mode — they
 // originate from a deliberate refusal, not a system failure.
 //
 // When the chain contains a *cliError we surface its Msg directly,
@@ -69,7 +69,7 @@ func printCLIError(err error) {
 		msg = ce.Msg
 	}
 
-	if outputFmt == "json" || outputFmt == "yaml" {
+	if outputFmt == "json" {
 		payload := map[string]any{"error": msg, "code": code}
 		if perr := printOutput(os.Stderr, payload); perr == nil {
 			return
@@ -171,10 +171,10 @@ when you want copy-pasteable, scriptable access from the shell or an LLM.
 Helpful conventions:
   Dates use YYYY-MM-DD.
   Times use HH:MM in your local timezone unless a command accepts --timezone.
-  Text output renders timestamps in your local timezone; --output json or
-  --output yaml emit RFC 3339 UTC (e.g. 2026-04-01T09:00:00Z) so scripts
-  can compare them without dealing with offsets.
-  Machine-friendly output: --output json or --output yaml.
+  Text output renders timestamps in your local timezone; --output json
+  emits RFC 3339 UTC (e.g. 2026-04-01T09:00:00Z) so scripts can compare
+  them without dealing with offsets.
+  Machine-friendly output: --output json.
   Event, todo, and journal commands accept either a numeric ID or a UID.
   Recurring overrides can be targeted with --recurrence-id.`,
 	Example: `  # Open the interactive terminal UI
@@ -201,10 +201,10 @@ Helpful conventions:
 			ical.ProductID = cfg.ProductID
 		}
 		switch outputFmt {
-		case "text", "table", "json", "yaml":
+		case "text", "json":
 			return nil
 		default:
-			return errInvalidInputf("invalid output format %q (must be text, table, json, or yaml)", outputFmt)
+			return errInvalidInputf("invalid output format %q (must be text or json)", outputFmt)
 		}
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -245,7 +245,7 @@ func initApp() (*app.App, error) {
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVarP(&outputFmt, "output", "o", "text", "output format (text, table, json, yaml)")
+	rootCmd.PersistentFlags().StringVarP(&outputFmt, "output", "o", "text", "output format (text, json)")
 
 	rootCmd.AddGroup(
 		&cobra.Group{ID: groupPlanning, Title: "Planning and Scheduling"},
