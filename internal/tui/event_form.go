@@ -40,6 +40,12 @@ type EventFormSaveMsg struct {
 // EventFormClosedMsg is emitted when the user closes the event form.
 type EventFormClosedMsg struct{}
 
+// eventFormSubmitNowMsg is emitted by the form's OnSubmit closure after
+// validation passes. It is intercepted by EventFormModel.Update so the
+// save runs against the up-to-date model rather than the stale captured
+// receiver inside the OnSubmit closure (see EventFormSaveMsg note).
+type eventFormSubmitNowMsg struct{}
+
 func newEventFormSeparator() *StaticField {
 	return NewStaticField("", nil)
 }
@@ -517,14 +523,14 @@ func (m *EventFormModel) buildDialogAndForm() {
 
 	m.form = NewForm("Save", formStyles, items...)
 
-	// NOTE: do not capture m.editID here — this closure is bound at form
-	// build time (which is "create mode"), and the captured pointer points
-	// to the heap-allocated struct that NewEventFormModel returned. The
-	// caller's mutation of editID (e.g. in NewEventFormModelForEdit) lands
-	// on a value copy and is invisible to this closure. The parent handler
-	// reads editID from its own m.form.editID at submit time instead.
+	// NOTE: this closure must NOT read state from the captured m. Any
+	// value-typed field on EventFormModel (editID, customRule, alarms, day,
+	// endsDate, range state…) lands on the caller's value copy, not on the
+	// m captured here, so reading them would yield stale data. Instead the
+	// closure just emits eventFormSubmitNowMsg; EventFormModel.Update
+	// intercepts that message and runs save() on the live model.
 	m.form.OnSubmit(func(f *Form) tea.Cmd {
-		return m.save(f)
+		return func() tea.Msg { return eventFormSubmitNowMsg{} }
 	})
 	m.form.OnCancel(func(f *Form) tea.Cmd {
 		return func() tea.Msg { return EventFormClosedMsg{} }
@@ -756,6 +762,13 @@ func (m EventFormModel) Update(msg tea.Msg) (EventFormModel, tea.Cmd) {
 	// Window resize
 	if msg, ok := msg.(tea.WindowSizeMsg); ok {
 		return m.SetSize(msg.Width, msg.Height), nil
+	}
+
+	// Form OnSubmit emits this after validation. Run save against the live
+	// model here so we don't read stale state from the OnSubmit closure's
+	// captured receiver.
+	if _, ok := msg.(eventFormSubmitNowMsg); ok {
+		return m, m.save(&m.form)
 	}
 
 	// Overlays capture all input when open.
@@ -1405,14 +1418,19 @@ func (m EventFormModel) View() string {
 }
 
 func (m EventFormModel) buildRecurrenceRule() string {
-	if m.repeatIdx == 0 {
+	// Read straight from the pointer-backed fields so we don't depend on
+	// the cached m.repeatIdx / m.ends, which are populated by syncFromForm
+	// on the form's captured receiver — not on every value copy of the
+	// model that reaches save().
+	repeatIdx := m.repeatField.Selected()
+	if repeatIdx == 0 {
 		return ""
 	}
-	if m.repeatIdx == repeatCustomIdx {
+	if repeatIdx == repeatCustomIdx {
 		return m.customRule
 	}
-	rule := repeatPresets[m.repeatIdx].Rule
-	switch m.ends {
+	rule := repeatPresets[repeatIdx].Rule
+	switch endsMode(m.endsField.Selected()) {
 	case endsAfter:
 		count := strings.TrimSpace(m.endsCountField.Value())
 		if count != "" {

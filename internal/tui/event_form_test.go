@@ -214,8 +214,10 @@ func TestEventForm_EditModeRetainsEditID(t *testing.T) {
 	require.NotNil(t, m.form.onSubmit, "edit form must have an OnSubmit callback")
 	cmd := m.form.onSubmit(&m.form)
 	require.NotNil(t, cmd)
-	_, ok := cmd().(EventFormSaveMsg)
-	require.True(t, ok, "OnSubmit must emit EventFormSaveMsg")
+	// OnSubmit emits a deferred submit marker; the model's Update then runs
+	// save() against the live receiver to avoid stale captured state.
+	_, ok := cmd().(eventFormSubmitNowMsg)
+	require.True(t, ok, "OnSubmit must emit eventFormSubmitNowMsg")
 }
 
 func TestEventForm_SaveIncludesShowAsAndVisibility(t *testing.T) {
