@@ -25,7 +25,7 @@ Built for people who live in the terminal and want their calendar data local, po
 - **Attendees, attachments, comments, contacts, resources, and relations**
 - **SQLite storage** with automatic migrations
 - **Cross-platform** (Linux, macOS, Windows)
-- **Four output formats**: text, table, JSON, YAML
+- **Two output formats**: text for humans, JSON for scripts and LLMs
 
 ## Installation
 
@@ -283,7 +283,8 @@ All commands accept `-o, --output {text,json}` (default: text).
 
 The CLI is meant to be driven from shells and language models, not just typed by hand. The agent-friendly path:
 
-- Pass `-o json` (or `--output json`) on every read/write command. The shape is stable, omits empty optional fields, and write commands return the new row so a script can capture the `id` / `uid`.
+- Pass `-o json` (or `--output json`) on every read/write command. The shape is stable, omits empty optional fields, and write commands return the new row so a script can capture the `id` / `uid`. This applies to read commands too — `sync status`, `sync conflicts`, `freebusy`, and `alarm list` all emit JSON arrays/objects under `-o json`; an empty result is `[]`, not prose.
+- Timestamps in JSON are RFC 3339 UTC with a `Z` suffix (`2026-04-21T13:00:00Z`). Text mode prints in your local timezone; only JSON normalizes to UTC so cross-machine comparisons stay honest.
 - Check the exit code. `0` on success, non-zero on any failure. Errors go to **stderr**, never stdout, so `cmd -o json | jq …` is safe — on failure stdout is empty.
 - Errors honor `-o json`. They emit one JSON object on stderr with a `code` field:
 
@@ -291,7 +292,7 @@ The CLI is meant to be driven from shells and language models, not just typed by
   {"code": "not_found", "error": "event 999 not found"}
   ```
 
-  Codes are `not_found`, `invalid_input`, `aborted`, or `error` (catch-all). Dispatch on `code`, surface `error` to the user.
+  Codes are `not_found`, `invalid_input`, `aborted`, or `error` (catch-all). The `error` field is the user-facing message; internal call-chain prefixes (e.g. `get event:`) are stripped, so dispatch on `code` and surface `error` directly.
 - References accept either the numeric `id` or the string `uid`. Recurring overrides additionally take `--recurrence-id <RFC3339>` to target a single instance.
 - Dates are `YYYY-MM-DD`. Times are `HH:MM` local unless a command accepts `--timezone`. Durations are Go-style (`30m`, `1h30m`) and some flags also accept RFC 5545 (`PT1H30M`).
 - If you want plain text (no JSON), pass `--compact` for one line per row, suitable for `grep`, `awk`, and friends. Available on `event list`, `event search`, `todo list`, `journal list`, and `calendar list`.
