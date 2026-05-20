@@ -109,6 +109,104 @@ func (m RecurrenceEditorModel) SetSize(w, h int) RecurrenceEditorModel {
 	return m
 }
 
+// LoadRule reconstructs the editor's fields from an RRULE string so that
+// reopening a custom recurrence preserves the user's prior choices. Without
+// this, opening the editor on an existing event resets every field to the
+// defaults and confirming overwrites the saved rule.
+func (m *RecurrenceEditorModel) LoadRule(rule string) {
+	if rule == "" {
+		return
+	}
+
+	var weekDays [7]bool
+	weekDaysSet := false
+	monthlyMode := 0
+
+	for _, part := range strings.Split(rule, ";") {
+		key, val, ok := strings.Cut(part, "=")
+		if !ok {
+			continue
+		}
+		key = strings.ToUpper(strings.TrimSpace(key))
+		val = strings.TrimSpace(val)
+
+		switch key {
+		case "FREQ":
+			for i, f := range recFrequencies {
+				if strings.EqualFold(f.Freq, val) {
+					m.eachField.SetSelected(i)
+					break
+				}
+			}
+		case "INTERVAL":
+			if n, err := strconv.Atoi(val); err == nil && n > 0 {
+				m.eachField.SetAmount(strconv.Itoa(n))
+			}
+		case "BYDAY":
+			for _, code := range strings.Split(val, ",") {
+				code = strings.ToUpper(strings.TrimSpace(code))
+				if code == "" {
+					continue
+				}
+				// Trim a leading "+N" / "-N" / "N" prefix used by MONTHLY
+				// rules (e.g. "4FR" → 4th Friday). For the weekly editor we
+				// just need the trailing two-letter day code.
+				dayPart := code
+				for len(dayPart) > 0 {
+					c := dayPart[0]
+					if (c >= '0' && c <= '9') || c == '+' || c == '-' {
+						dayPart = dayPart[1:]
+						continue
+					}
+					break
+				}
+				for i, dc := range weekDayRRule {
+					if dc == dayPart {
+						weekDays[i] = true
+						weekDaysSet = true
+						break
+					}
+				}
+				if len(code) != len(dayPart) {
+					// Prefix present → monthly Nth-weekday form.
+					monthlyMode = 1
+				}
+			}
+		case "COUNT":
+			m.endsField.SetSelected(int(endsAfter))
+			m.endsCountField.SetValue(val)
+		case "UNTIL":
+			m.endsField.SetSelected(int(endsOnDate))
+			if t, err := time.Parse("20060102T150405Z", val); err == nil {
+				m.endsDate = t
+			} else if t, err := time.Parse("20060102", val); err == nil {
+				m.endsDate = t
+			}
+		}
+	}
+
+	switch m.currentFreq() {
+	case "WEEKLY":
+		if weekDaysSet {
+			cursor := m.onField.WeekDayCursor()
+			if !weekDays[cursor] {
+				for i, on := range weekDays {
+					if on {
+						cursor = i
+						break
+					}
+				}
+			}
+			m.onField.SetWeekly(weekDays, cursor)
+		}
+	case "MONTHLY":
+		m.onField.SetMonthly(m.startDate, monthlyMode)
+	}
+
+	m.updatePreview()
+	m.buildForm()
+}
+
 func (m RecurrenceEditorModel) Done() bool               { return m.done }
 func (m RecurrenceEditorModel) Cancelled() bool          { return m.cancelled }
 func (m RecurrenceEditorModel) EndsDatePickerOpen() bool { return m.endsDatePicker }

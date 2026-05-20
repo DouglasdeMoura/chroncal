@@ -689,6 +689,9 @@ func (m *EventFormModel) tryOpenOverlay() tea.Cmd {
 	case efKeyRepeat:
 		if m.repeatField.Selected() == repeatCustomIdx {
 			m.rruleEditor = NewRecurrenceEditorModel(m.day, m.width, m.height, m.theme)
+			if m.customRule != "" {
+				m.rruleEditor.LoadRule(m.customRule)
+			}
 			m.rruleEditorOpen = true
 			return noopCmd
 		}
