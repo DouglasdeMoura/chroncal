@@ -469,6 +469,7 @@ func (m Model) dispatchEditScope(editID int64, choice int, save EventFormSaveMsg
 		Timezone:       save.Timezone,
 		Transp:         save.Transp,
 		Class:          save.Class,
+		Categories:     save.Categories,
 	}
 
 	var writtenID int64
@@ -1572,6 +1573,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					Timezone:       msg.Timezone,
 					Transp:         msg.Transp,
 					Class:          msg.Class,
+					Categories:     msg.Categories,
 				})
 				if err != nil {
 					return eventUpdatedMsg{calendarID: calID, err: err}
@@ -1599,6 +1601,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Timezone:       msg.Timezone,
 				Transp:         msg.Transp,
 				Class:          msg.Class,
+				Categories:     msg.Categories,
 			})
 			if err != nil {
 				return eventCreatedMsg{calendarID: calID, err: err}

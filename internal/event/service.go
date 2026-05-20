@@ -572,21 +572,9 @@ func (s *Service) UpdateInstance(ctx context.Context, uid string, instanceTime t
 	}
 	recID := instanceTime.UTC().Format(time.RFC3339)
 
-	// When the caller doesn't supply categories, carry them over from the
-	// master so the override behaves like a normal occurrence of the series.
-	// The TUI form doesn't plumb categories through EventFormSaveMsg yet, so
-	// without this carry-over every override would lose categorisation.
+	// Caller is the source of truth for categories. An empty p.Categories
+	// means the user explicitly cleared the tags on this override.
 	carriedCats := ParseCategoryList(p.Categories)
-	if p.Categories == "" {
-		mc, mErr := qtx.ListCategoriesByEventID(ctx, master.ID)
-		if mErr != nil {
-			return Event{}, fmt.Errorf("read master categories: %w", mErr)
-		}
-		carriedCats = make([]string, 0, len(mc))
-		for _, c := range mc {
-			carriedCats = append(carriedCats, c.Category)
-		}
-	}
 
 	var r storage.Event
 	if existing, gErr := qtx.GetEventByUIDAndRecurrenceID(ctx, storage.GetEventByUIDAndRecurrenceIDParams{
@@ -770,20 +758,9 @@ func (s *Service) UpdateFromInstance(ctx context.Context, uid string, instanceTi
 		return Event{}, fmt.Errorf("record truncate: %w", err)
 	}
 
-	// Carry categories from the old master to the new series when the caller
-	// doesn't supply them — the form doesn't plumb categories through yet,
-	// and a split should feel like a continuation of the original series.
+	// Caller is the source of truth for categories. An empty p.Categories
+	// means the new split series starts with no tags.
 	carriedCats := ParseCategoryList(p.Categories)
-	if p.Categories == "" {
-		mc, mErr := qtx.ListCategoriesByEventID(ctx, master.ID)
-		if mErr != nil {
-			return Event{}, fmt.Errorf("read master categories: %w", mErr)
-		}
-		carriedCats = make([]string, 0, len(mc))
-		for _, c := range mc {
-			carriedCats = append(carriedCats, c.Category)
-		}
-	}
 
 	newUID := uuid.New().String()
 	r, err := qtx.CreateEvent(ctx, storage.CreateEventParams{

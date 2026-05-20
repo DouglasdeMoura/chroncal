@@ -38,6 +38,7 @@ type EventFormSaveMsg struct {
 	Timezone       string
 	Transp         string
 	Class          string
+	Categories     string
 	Attendees      []model.Attendee
 	Alarms         []model.Alarm
 	InstanceTime   time.Time
@@ -110,6 +111,7 @@ const (
 	efKeyLocation    = "location"
 	efKeyConference  = "conference"
 	efKeyDescription = "description"
+	efKeyTags        = "tags"
 )
 
 // EventFormModel is the Bubble Tea model for the event creation/edit form.
@@ -141,6 +143,7 @@ type EventFormModel struct {
 	locationField     *TextField
 	conferenceField   *TextField
 	descField         *TextAreaField
+	tagsField         *TextField
 
 	// Overlay state
 	allDay             bool
@@ -311,6 +314,9 @@ func NewEventFormModel(day time.Time, calendars map[int64]CalendarInfo, theme Th
 	m.descField.SetCharLimit(500)
 	m.descField.SetHeight(3)
 
+	m.tagsField = NewTextField("Comma-separated tags")
+	m.tagsField.SetCharLimit(500)
+
 	// Build dialog + form
 	m.buildDialogAndForm()
 
@@ -433,6 +439,10 @@ func NewEventFormModelForEditInstance(ev event.Event, instanceTime time.Time, ca
 			emails = append(emails, a.Email)
 		}
 		m.peopleField.SetValue(strings.Join(emails, ", "))
+	}
+
+	if ev.Categories != "" {
+		m.tagsField.SetValue(ev.Categories)
 	}
 
 	// Pre-fill alarms.
@@ -635,6 +645,9 @@ func (m *EventFormModel) buildFormItems() ([]FormItem, []string) {
 
 	items = append(items, FormItem{Label: "Notes", Field: m.descField})
 	keys = append(keys, efKeyDescription)
+
+	items = append(items, FormItem{Label: "Tags", Field: m.tagsField})
+	keys = append(keys, efKeyTags)
 
 	if m.calendarField != nil {
 		items = append(items, FormItem{Label: "Calendar", Field: m.calendarField})
@@ -1527,6 +1540,7 @@ func (m EventFormModel) save(f *Form) tea.Cmd {
 				Timezone:       tzName,
 				Transp:         m.transparencyField.Value(),
 				Class:          m.visibilityField.Value(),
+				Categories:     strings.TrimSpace(m.tagsField.Value()),
 				Attendees:      attendees,
 				Alarms:         m.alarms,
 				InstanceTime:   m.instanceTime,
@@ -1589,6 +1603,7 @@ func (m EventFormModel) save(f *Form) tea.Cmd {
 			Timezone:       tzName,
 			Transp:         m.transparencyField.Value(),
 			Class:          m.visibilityField.Value(),
+			Categories:     strings.TrimSpace(m.tagsField.Value()),
 			Attendees:      attendees,
 			Alarms:         m.alarms,
 			InstanceTime:   m.instanceTime,

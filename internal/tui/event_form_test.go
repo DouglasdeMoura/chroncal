@@ -30,6 +30,7 @@ func TestEventForm_PlacesCalendarAfterNotes(t *testing.T) {
 	alarmsSeparatorIdx := -1
 	peopleItemIdx := -1
 	notesItemIdx := -1
+	tagsItemIdx := -1
 	calendarItemIdx := -1
 	transpItemIdx := -1
 	classItemIdx := -1
@@ -46,6 +47,8 @@ func TestEventForm_PlacesCalendarAfterNotes(t *testing.T) {
 			peopleItemIdx = i
 		case "Notes":
 			notesItemIdx = i
+		case "Tags":
+			tagsItemIdx = i
 		case "Calendar":
 			calendarItemIdx = i
 		case "Show as":
@@ -68,6 +71,7 @@ func TestEventForm_PlacesCalendarAfterNotes(t *testing.T) {
 	}
 
 	notesIdx := -1
+	tagsIdx := -1
 	calendarIdx := -1
 	transpIdx := -1
 	classIdx := -1
@@ -76,6 +80,8 @@ func TestEventForm_PlacesCalendarAfterNotes(t *testing.T) {
 		switch key {
 		case efKeyDescription:
 			notesIdx = i
+		case efKeyTags:
+			tagsIdx = i
 		case efKeyCalendar:
 			calendarIdx = i
 		case efKeyTransp:
@@ -88,11 +94,13 @@ func TestEventForm_PlacesCalendarAfterNotes(t *testing.T) {
 	}
 
 	assert.NotEqual(t, -1, notesIdx)
+	assert.NotEqual(t, -1, tagsIdx)
 	assert.NotEqual(t, -1, calendarIdx)
 	assert.NotEqual(t, -1, transpIdx)
 	assert.NotEqual(t, -1, classIdx)
 	assert.NotEqual(t, -1, peopleIdx)
-	assert.Equal(t, notesIdx+1, calendarIdx)
+	assert.Equal(t, notesIdx+1, tagsIdx)
+	assert.Equal(t, tagsIdx+1, calendarIdx)
 	assert.Equal(t, calendarIdx+1, transpIdx)
 	assert.Equal(t, transpIdx+1, classIdx)
 	assert.NotEqual(t, -1, titleItemIdx)
@@ -102,6 +110,7 @@ func TestEventForm_PlacesCalendarAfterNotes(t *testing.T) {
 	assert.NotEqual(t, -1, alarmsSeparatorIdx)
 	assert.NotEqual(t, -1, peopleItemIdx)
 	assert.NotEqual(t, -1, notesItemIdx)
+	assert.NotEqual(t, -1, tagsItemIdx)
 	assert.NotEqual(t, -1, calendarItemIdx)
 	assert.NotEqual(t, -1, transpItemIdx)
 	assert.NotEqual(t, -1, classItemIdx)
@@ -111,7 +120,8 @@ func TestEventForm_PlacesCalendarAfterNotes(t *testing.T) {
 	assert.Greater(t, alarmsItemIdx, classItemIdx)
 	assert.Equal(t, repeatItemIdx+1, repeatSeparatorIdx)
 	assert.Equal(t, repeatSeparatorIdx+1, peopleItemIdx)
-	assert.Equal(t, notesItemIdx+1, calendarItemIdx)
+	assert.Equal(t, notesItemIdx+1, tagsItemIdx)
+	assert.Equal(t, tagsItemIdx+1, calendarItemIdx)
 	assert.Equal(t, calendarItemIdx+1, transpItemIdx)
 	assert.Equal(t, transpItemIdx+1, classItemIdx)
 	assert.Equal(t, classItemIdx+1, alarmsSeparatorIdx)

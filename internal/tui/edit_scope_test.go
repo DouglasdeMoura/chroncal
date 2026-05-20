@@ -67,6 +67,34 @@ func TestEventForm_NonInstanceSaveLeavesInstanceTimeZero(t *testing.T) {
 		"non-instance form must not synthesise an InstanceTime")
 }
 
+// Regression: the form used to drop Categories on save. Loading an event with
+// "work,sync" categories, then submitting unchanged, must round-trip the same
+// string through EventFormSaveMsg — otherwise Events.Update silently wipes
+// every category via ReplaceCategories(empty list).
+func TestEventForm_SavePreservesCategories(t *testing.T) {
+	day := time.Date(2026, 5, 20, 9, 0, 0, 0, time.UTC)
+	ev := stubRecurringEvent(day)
+	ev.Categories = "work,sync"
+
+	m, _ := NewEventFormModelForEdit(ev, testEventFormCalendars(), Theme{})
+	m = m.SetSize(120, 40)
+
+	require.Equal(t, "work,sync", m.tagsField.Value(),
+		"form must pre-load categories from the edited event")
+
+	_, cmd := m.Update(keyPressMsg("ctrl+s"))
+	require.NotNil(t, cmd)
+	first := cmd()
+	if _, ok := first.(eventFormSubmitNowMsg); ok {
+		_, cmd = m.Update(first)
+		first = cmd()
+	}
+	save, ok := first.(EventFormSaveMsg)
+	require.True(t, ok, "expected EventFormSaveMsg, got %T", first)
+	require.Equal(t, "work,sync", save.Categories,
+		"save must round-trip the categories back so Update doesn't wipe them")
+}
+
 func stubRecurringEvent(day time.Time) event.Event {
 	return event.Event{
 		ID:             42,

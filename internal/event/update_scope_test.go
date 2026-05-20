@@ -202,7 +202,10 @@ func TestUpdateFromInstance_SoftDeletesFutureOverrides(t *testing.T) {
 	}
 }
 
-func TestUpdateInstance_CarriesMasterCategoriesWhenEmpty(t *testing.T) {
+// Caller is the source of truth for categories. Empty Categories on update
+// means "no categories" — UpdateInstance/UpdateFromInstance no longer inherit
+// from master, so users can clear tags via the form and have it persist.
+func TestUpdateInstance_EmptyCategoriesClearsOverrideTags(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 	master := newRecurringMaster(t, svc, "cats-uid-1", "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH")
@@ -216,7 +219,45 @@ func TestUpdateInstance_CarriesMasterCategoriesWhenEmpty(t *testing.T) {
 		Title:      "Standup (moved)",
 		StartTime:  time.Date(2026, 5, 20, 9, 30, 0, 0, time.UTC),
 		EndTime:    time.Date(2026, 5, 20, 10, 0, 0, 0, time.UTC),
-		// Categories intentionally left empty — should inherit from master.
+		// Empty Categories means the user cleared tags on the override.
+	})
+	if err != nil {
+		t.Fatalf("UpdateInstance: %v", err)
+	}
+
+	cats, err := svc.ListCategories(ctx, override.ID)
+	if err != nil {
+		t.Fatalf("list override categories: %v", err)
+	}
+	if len(cats) != 0 {
+		t.Errorf("expected 0 categories on override, got %d: %v", len(cats), cats)
+	}
+
+	// Master is untouched.
+	mc, err := svc.ListCategories(ctx, master.ID)
+	if err != nil {
+		t.Fatalf("list master categories: %v", err)
+	}
+	if len(mc) != 2 {
+		t.Errorf("master categories should be unchanged, got %v", mc)
+	}
+}
+
+func TestUpdateInstance_NonEmptyCategoriesHonored(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master := newRecurringMaster(t, svc, "cats-uid-1b", "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH")
+	if err := svc.ReplaceCategories(ctx, master.ID, []string{"work"}); err != nil {
+		t.Fatalf("seed master categories: %v", err)
+	}
+
+	instance := time.Date(2026, 5, 20, 9, 0, 0, 0, time.UTC)
+	override, err := svc.UpdateInstance(ctx, master.UID, instance, UpdateParams{
+		CalendarID: master.CalendarID,
+		Title:      "Standup (moved)",
+		StartTime:  time.Date(2026, 5, 20, 9, 30, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 5, 20, 10, 0, 0, 0, time.UTC),
+		Categories: "personal,errand",
 	})
 	if err != nil {
 		t.Fatalf("UpdateInstance: %v", err)
@@ -227,37 +268,7 @@ func TestUpdateInstance_CarriesMasterCategoriesWhenEmpty(t *testing.T) {
 		t.Fatalf("list override categories: %v", err)
 	}
 	if len(cats) != 2 {
-		t.Fatalf("expected 2 inherited categories, got %d: %v", len(cats), cats)
-	}
-}
-
-func TestUpdateFromInstance_CarriesMasterCategoriesWhenEmpty(t *testing.T) {
-	svc := newTestService(t)
-	ctx := context.Background()
-	master := newRecurringMaster(t, svc, "cats-uid-2", "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH")
-	if err := svc.ReplaceCategories(ctx, master.ID, []string{"work", "sync"}); err != nil {
-		t.Fatalf("seed master categories: %v", err)
-	}
-
-	cutoff := time.Date(2026, 5, 27, 9, 0, 0, 0, time.UTC)
-	split, err := svc.UpdateFromInstance(ctx, master.UID, cutoff, UpdateParams{
-		CalendarID:     master.CalendarID,
-		Title:          "Standup (new room)",
-		StartTime:      cutoff,
-		EndTime:        cutoff.Add(30 * time.Minute),
-		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH",
-		// Categories intentionally empty — should inherit from old master.
-	})
-	if err != nil {
-		t.Fatalf("UpdateFromInstance: %v", err)
-	}
-
-	cats, err := svc.ListCategories(ctx, split.ID)
-	if err != nil {
-		t.Fatalf("list split categories: %v", err)
-	}
-	if len(cats) != 2 {
-		t.Fatalf("expected 2 inherited categories, got %d: %v", len(cats), cats)
+		t.Errorf("expected 2 caller-supplied categories, got %d: %v", len(cats), cats)
 	}
 }
 
