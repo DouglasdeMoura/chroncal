@@ -546,6 +546,295 @@ func (s *Service) DeleteFromInstance(ctx context.Context, uid string, instanceTi
 	return nil
 }
 
+// UpdateInstance creates or updates a per-occurrence override of a recurring
+// event. The override is stored as a separate row with the same UID as the
+// master and a RecurrenceID matching the original (un-edited) instance start
+// in UTC. The master row is not modified, so the recurrence rule and every
+// other instance keep working unchanged.
+//
+// instanceTime is the original occurrence time used as the override key (its
+// RECURRENCE-ID). The new StartTime/EndTime in p reflect the user's edits and
+// may differ — e.g. moving Wednesday's standup from 9:00 to 9:30 sets
+// RecurrenceID=2026-05-20T09:00:00Z but StartTime=2026-05-20T09:30:00Z.
+func (s *Service) UpdateInstance(ctx context.Context, uid string, instanceTime time.Time, p UpdateParams) (Event, error) {
+	p.applyDefaults()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Event{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+
+	master, err := qtx.GetEventByUID(ctx, uid)
+	if err != nil {
+		return Event{}, fmt.Errorf("get master: %w", err)
+	}
+	recID := instanceTime.UTC().Format(time.RFC3339)
+
+	// When the caller doesn't supply categories, carry them over from the
+	// master so the override behaves like a normal occurrence of the series.
+	// The TUI form doesn't plumb categories through EventFormSaveMsg yet, so
+	// without this carry-over every override would lose categorisation.
+	carriedCats := ParseCategoryList(p.Categories)
+	if p.Categories == "" {
+		mc, mErr := qtx.ListCategoriesByEventID(ctx, master.ID)
+		if mErr != nil {
+			return Event{}, fmt.Errorf("read master categories: %w", mErr)
+		}
+		carriedCats = make([]string, 0, len(mc))
+		for _, c := range mc {
+			carriedCats = append(carriedCats, c.Category)
+		}
+	}
+
+	var r storage.Event
+	if existing, gErr := qtx.GetEventByUIDAndRecurrenceID(ctx, storage.GetEventByUIDAndRecurrenceIDParams{
+		Uid:          uid,
+		RecurrenceID: recID,
+	}); gErr == nil {
+		r, err = qtx.UpdateEvent(ctx, overrideUpdateParams(existing.ID, p))
+		if err != nil {
+			return Event{}, fmt.Errorf("update override: %w", err)
+		}
+	} else {
+		r, err = qtx.CreateEvent(ctx, overrideCreateParams(uid, recID, master.Sequence+1, p))
+		if err != nil {
+			// Concurrent override creation race: the UNIQUE(uid, recurrence_id)
+			// constraint protects against duplicate rows, so retry as update.
+			if isUniqueViolationOnRecurrenceID(err) {
+				existing, eErr := qtx.GetEventByUIDAndRecurrenceID(ctx, storage.GetEventByUIDAndRecurrenceIDParams{
+					Uid:          uid,
+					RecurrenceID: recID,
+				})
+				if eErr != nil {
+					return Event{}, fmt.Errorf("retry get override: %w", eErr)
+				}
+				r, err = qtx.UpdateEvent(ctx, overrideUpdateParams(existing.ID, p))
+				if err != nil {
+					return Event{}, fmt.Errorf("retry update override: %w", err)
+				}
+			} else {
+				return Event{}, fmt.Errorf("create override: %w", err)
+			}
+		}
+	}
+
+	if err := qtx.DeleteCategoriesByEventID(ctx, r.ID); err != nil {
+		return Event{}, fmt.Errorf("clear override categories: %w", err)
+	}
+	for _, c := range carriedCats {
+		if _, err := qtx.CreateEventCategory(ctx, storage.CreateEventCategoryParams{
+			EventID:  r.ID,
+			Category: c,
+		}); err != nil {
+			return Event{}, fmt.Errorf("create override category: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return Event{}, fmt.Errorf("commit override: %w", err)
+	}
+
+	e := fromStorage(r)
+	e.Categories = strings.Join(carriedCats, ",")
+	_ = storage.MarkResourceDirty(ctx, s.db, master.CalendarID, uid, "event")
+	return e, nil
+}
+
+// overrideUpdateParams builds the storage params for updating an existing
+// override row. Recurrence-related fields are pinned to empty because an
+// override never owns its own rule.
+func overrideUpdateParams(id int64, p UpdateParams) storage.UpdateEventParams {
+	return storage.UpdateEventParams{
+		ID:             id,
+		Title:          p.Title,
+		Description:    storage.StringToNullable(p.Description),
+		Location:       storage.StringToNullable(p.Location),
+		StartTime:      p.StartTime.Format(time.RFC3339),
+		EndTime:        p.EndTime.Format(time.RFC3339),
+		AllDay:         storage.BoolToInt(p.AllDay),
+		RecurrenceRule: storage.StringToNullable(""),
+		CalendarID:     p.CalendarID,
+		Timezone:       storage.StringToNullable(p.Timezone),
+		Status:         p.Status,
+		Transp:         p.Transp,
+		Priority:       p.Priority,
+		Class:          p.Class,
+		Url:            storage.StringToNullable(p.URL),
+		Exdates:        storage.StringToNullable(""),
+		Rdates:         storage.StringToNullable(""),
+		Geo:            storage.StringToNullable(p.Geo),
+		Duration:       storage.StringToNullable(p.DurationValue),
+		Dtstamp:        storage.StringToNullable(p.DtStamp),
+		ConferenceUri:  p.ConferenceURI,
+	}
+}
+
+// overrideCreateParams builds the storage params for inserting a fresh
+// override row. seq should be the master's sequence + 1 so this override
+// shows up as a later revision in iCal SEQUENCE terms.
+func overrideCreateParams(uid, recID string, seq int64, p UpdateParams) storage.CreateEventParams {
+	return storage.CreateEventParams{
+		Uid:            uid,
+		CalendarID:     p.CalendarID,
+		Title:          p.Title,
+		Description:    storage.StringToNullable(p.Description),
+		Location:       storage.StringToNullable(p.Location),
+		StartTime:      p.StartTime.Format(time.RFC3339),
+		EndTime:        p.EndTime.Format(time.RFC3339),
+		AllDay:         storage.BoolToInt(p.AllDay),
+		RecurrenceRule: storage.StringToNullable(""),
+		Timezone:       storage.StringToNullable(p.Timezone),
+		Status:         p.Status,
+		Transp:         p.Transp,
+		Sequence:       seq,
+		Priority:       p.Priority,
+		Class:          p.Class,
+		Url:            storage.StringToNullable(p.URL),
+		Exdates:        storage.StringToNullable(""),
+		Rdates:         storage.StringToNullable(""),
+		RecurrenceID:   recID,
+		Geo:            storage.StringToNullable(p.Geo),
+		Duration:       storage.StringToNullable(p.DurationValue),
+		Dtstamp:        storage.StringToNullable(p.DtStamp),
+		ConferenceUri:  p.ConferenceURI,
+	}
+}
+
+// isUniqueViolationOnRecurrenceID returns true when err is a SQLite UNIQUE
+// constraint violation on the (uid, recurrence_id) index — i.e. a concurrent
+// override creation lost a race.
+func isUniqueViolationOnRecurrenceID(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "UNIQUE constraint failed") &&
+		strings.Contains(msg, "recurrence_id")
+}
+
+// UpdateFromInstance splits a recurring series at instanceTime, leaving the
+// past intact and applying the user's edits to a new series that starts at
+// instanceTime. Internally it:
+//
+//  1. Truncates the master's RRULE with UNTIL=instanceTime-1s.
+//  2. Soft-deletes any overrides at or after the cutoff (those instances will
+//     never expand again, so an override there would be unreachable).
+//  3. Creates a brand-new event (fresh UID) carrying p's field values plus the
+//     RecurrenceRule the caller passes in — typically the same rule the user
+//     had, possibly edited.
+//
+// Both rows are marked dirty so CalDAV sync ships the truncation and the new
+// series together. Pre-truncation state is recorded in event_truncate_deletes
+// so the trash view can offer an atomic restore later.
+func (s *Service) UpdateFromInstance(ctx context.Context, uid string, instanceTime time.Time, p UpdateParams) (Event, error) {
+	p.applyDefaults()
+	master, err := s.q.GetEventByUID(ctx, uid)
+	if err != nil {
+		return Event{}, fmt.Errorf("get master: %w", err)
+	}
+
+	prevRRule := storage.NullableToString(master.RecurrenceRule)
+	until := instanceTime.UTC().Add(-time.Second)
+	truncatedRule := setRRuleUntil(prevRRule, until)
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Event{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+
+	if err := qtx.UpdateEventRecurrenceRule(ctx, storage.UpdateEventRecurrenceRuleParams{
+		RecurrenceRule: storage.StringToNullable(truncatedRule),
+		ID:             master.ID,
+	}); err != nil {
+		return Event{}, fmt.Errorf("truncate master rrule: %w", err)
+	}
+
+	cutoff := instanceTime.UTC().Format(time.RFC3339)
+	if err := qtx.SoftDeleteOverridesAtOrAfter(ctx, storage.SoftDeleteOverridesAtOrAfterParams{
+		Uid:          uid,
+		RecurrenceID: cutoff,
+	}); err != nil {
+		return Event{}, fmt.Errorf("soft-delete future overrides: %w", err)
+	}
+
+	if err := qtx.RecordEventTruncateDelete(ctx, storage.RecordEventTruncateDeleteParams{
+		CalendarID:    master.CalendarID,
+		Uid:           uid,
+		CutoffTime:    cutoff,
+		PreviousRrule: prevRRule,
+	}); err != nil {
+		return Event{}, fmt.Errorf("record truncate: %w", err)
+	}
+
+	// Carry categories from the old master to the new series when the caller
+	// doesn't supply them — the form doesn't plumb categories through yet,
+	// and a split should feel like a continuation of the original series.
+	carriedCats := ParseCategoryList(p.Categories)
+	if p.Categories == "" {
+		mc, mErr := qtx.ListCategoriesByEventID(ctx, master.ID)
+		if mErr != nil {
+			return Event{}, fmt.Errorf("read master categories: %w", mErr)
+		}
+		carriedCats = make([]string, 0, len(mc))
+		for _, c := range mc {
+			carriedCats = append(carriedCats, c.Category)
+		}
+	}
+
+	newUID := uuid.New().String()
+	r, err := qtx.CreateEvent(ctx, storage.CreateEventParams{
+		Uid:            newUID,
+		CalendarID:     p.CalendarID,
+		Title:          p.Title,
+		Description:    storage.StringToNullable(p.Description),
+		Location:       storage.StringToNullable(p.Location),
+		StartTime:      p.StartTime.Format(time.RFC3339),
+		EndTime:        p.EndTime.Format(time.RFC3339),
+		AllDay:         storage.BoolToInt(p.AllDay),
+		RecurrenceRule: storage.StringToNullable(p.RecurrenceRule),
+		Timezone:       storage.StringToNullable(p.Timezone),
+		Status:         p.Status,
+		Transp:         p.Transp,
+		Sequence:       0,
+		Priority:       p.Priority,
+		Class:          p.Class,
+		Url:            storage.StringToNullable(p.URL),
+		Exdates:        storage.StringToNullable(""),
+		Rdates:         storage.StringToNullable(""),
+		RecurrenceID:   "",
+		Geo:            storage.StringToNullable(p.Geo),
+		Duration:       storage.StringToNullable(p.DurationValue),
+		Dtstamp:        storage.StringToNullable(p.DtStamp),
+		ConferenceUri:  p.ConferenceURI,
+	})
+	if err != nil {
+		return Event{}, fmt.Errorf("create split series: %w", err)
+	}
+
+	for _, c := range carriedCats {
+		if _, err := qtx.CreateEventCategory(ctx, storage.CreateEventCategoryParams{
+			EventID:  r.ID,
+			Category: c,
+		}); err != nil {
+			return Event{}, fmt.Errorf("create split category: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return Event{}, fmt.Errorf("commit split: %w", err)
+	}
+
+	e := fromStorage(r)
+	e.Categories = strings.Join(carriedCats, ",")
+	_ = storage.MarkResourceDirty(ctx, s.db, master.CalendarID, uid, "event")
+	_ = storage.MarkResourceDirty(ctx, s.db, p.CalendarID, newUID, "event")
+	return e, nil
+}
+
 // setRRuleUntil adds or replaces the UNTIL parameter in an RRULE string.
 func setRRuleUntil(rule string, until time.Time) string {
 	untilStr := "UNTIL=" + until.UTC().Format("20060102T150405Z")

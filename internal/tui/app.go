@@ -133,9 +133,20 @@ type calendarDeleteCountMsg struct {
 }
 
 type eventEditLoadedMsg struct {
-	event event.Event
-	err   error
+	event        event.Event
+	instanceTime time.Time
+	err          error
 }
+
+// pendingScopeKind tags which kind of recurring-scope action a ChoiceDialog
+// is currently driving. Zero means no scope dialog is open.
+type pendingScopeKind int
+
+const (
+	pendingScopeNone pendingScopeKind = iota
+	pendingScopeDelete
+	pendingScopeEdit
+)
 
 type eventViewLoadedMsg struct {
 	event event.Event
@@ -143,6 +154,17 @@ type eventViewLoadedMsg struct {
 }
 
 type eventUpdatedMsg struct {
+	calendarID int64
+	err        error
+}
+
+// eventUpdateAfterScopeMsg is fired by dispatchEditScope after a scope-routed
+// edit (UpdateInstance / UpdateFromInstance / Update) completes. It exists so
+// the agenda reloads without us re-using eventUpdatedMsg, which currently
+// drives the "return to view dialog" behaviour that doesn't apply when the
+// underlying row may have been replaced (e.g. "this and following" splits to
+// a new UID).
+type eventUpdateAfterScopeMsg struct {
 	calendarID int64
 	err        error
 }
@@ -274,7 +296,12 @@ type Model struct {
 	palette         PaletteModel
 	paletteOpen     bool
 	pendingDelete   event.Event
-	err             error
+	// pendingScopeKind disambiguates which flow the open choice dialog is
+	// driving — recurring delete vs recurring edit. Both reuse the same
+	// ChoiceDialogModel and ChoiceDialogResultMsg.
+	pendingScopeKind pendingScopeKind
+	pendingEditSave  EventFormSaveMsg
+	err              error
 	ready           bool
 	showSidebar     bool
 	showWeekNumbers bool
@@ -416,6 +443,70 @@ func (m Model) expectedEventRange() (time.Time, time.Time) {
 		from := time.Date(anchor.Year(), anchor.Month(), anchor.Day(), 0, 0, 0, 0, time.UTC)
 		return from, from.AddDate(0, 0, 42)
 	}
+}
+
+// dispatchEditScope routes a deferred EventFormSaveMsg to the right service
+// method based on the user's choice in the scope dialog. choice indices match
+// the dialog order: 0=this event only, 1=this and following, 2=all events.
+// Returns the message the agenda loop should consume next.
+func (m Model) dispatchEditScope(editID int64, choice int, save EventFormSaveMsg) tea.Msg {
+	ctx := context.Background()
+	master, err := m.app.Events.Get(ctx, editID)
+	if err != nil {
+		return eventUpdateAfterScopeMsg{calendarID: save.CalendarID, err: err}
+	}
+
+	params := event.UpdateParams{
+		CalendarID:     save.CalendarID,
+		Title:          save.Title,
+		Description:    save.Description,
+		Location:       save.Location,
+		ConferenceURI:  save.ConferenceURI,
+		StartTime:      save.StartTime,
+		EndTime:        save.EndTime,
+		AllDay:         save.AllDay,
+		RecurrenceRule: save.RecurrenceRule,
+		Timezone:       save.Timezone,
+		Transp:         save.Transp,
+		Class:          save.Class,
+	}
+
+	var writtenID int64
+	switch choice {
+	case 0: // This event only
+		written, err := m.app.Events.UpdateInstance(ctx, master.UID, save.InstanceTime, params)
+		if err != nil {
+			return eventUpdateAfterScopeMsg{calendarID: save.CalendarID, err: err}
+		}
+		writtenID = written.ID
+	case 1: // This and following
+		written, err := m.app.Events.UpdateFromInstance(ctx, master.UID, save.InstanceTime, params)
+		if err != nil {
+			return eventUpdateAfterScopeMsg{calendarID: save.CalendarID, err: err}
+		}
+		writtenID = written.ID
+	default: // All events
+		// The form opened showing the clicked instance's time, so save.StartTime
+		// is relative to that occurrence — not the master's DTSTART. Apply the
+		// delta to the master to shift the whole series, and preserve whatever
+		// duration the user left on the form.
+		delta := save.StartTime.Sub(save.InstanceTime)
+		newDuration := save.EndTime.Sub(save.StartTime)
+		params.StartTime = master.StartTime.Add(delta)
+		params.EndTime = params.StartTime.Add(newDuration)
+		if _, err := m.app.Events.Update(ctx, master.ID, params); err != nil {
+			return eventUpdateAfterScopeMsg{calendarID: save.CalendarID, err: err}
+		}
+		writtenID = master.ID
+	}
+
+	if err := m.app.Events.ReplaceAttendees(ctx, writtenID, save.Attendees); err != nil {
+		return eventUpdateAfterScopeMsg{calendarID: save.CalendarID, err: err}
+	}
+	if err := m.app.Events.ReplaceAlarms(ctx, writtenID, save.Alarms); err != nil {
+		return eventUpdateAfterScopeMsg{calendarID: save.CalendarID, err: err}
+	}
+	return eventUpdateAfterScopeMsg{calendarID: save.CalendarID}
 }
 
 func (m Model) loadEvents() tea.Cmd {
@@ -1346,6 +1437,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case EventEditMsg:
 		ev := msg.Event
+		// ev.StartTime carries the clicked occurrence's time for recurring
+		// events (queryEventsRange overwrites it with InstanceTime). The
+		// fresh Get below returns the master row, which has the original
+		// DTSTART — so we capture the clicked instance time first and pass
+		// it alongside so the form can prompt for scope on save.
+		instanceTime := ev.StartTime
+		instanceEnd := ev.EndTime
 		return m, func() tea.Msg {
 			ctx := context.Background()
 			fresh, err := m.app.Events.Get(ctx, ev.ID)
@@ -1357,6 +1455,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return eventEditLoadedMsg{err: err}
 			}
 			fresh.Attendees = attendees
+			// For a recurring instance, overwrite the master's DTSTART with
+			// the clicked occurrence so the form's date/time fields reflect
+			// what the user actually clicked, not the original series start.
+			if fresh.RecurrenceRule != "" && !instanceTime.IsZero() {
+				fresh.StartTime = instanceTime
+				if !instanceEnd.IsZero() {
+					fresh.EndTime = instanceEnd
+				}
+				return eventEditLoadedMsg{event: fresh, instanceTime: instanceTime}
+			}
 			return eventEditLoadedMsg{event: fresh}
 		}
 
@@ -1366,7 +1474,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		var cmd tea.Cmd
-		m.form, cmd = NewEventFormModelForEdit(msg.event, m.calendars, m.theme)
+		m.form, cmd = NewEventFormModelForEditInstance(msg.event, msg.instanceTime, m.calendars, m.theme)
 		m.form = m.form.SetSize(m.width, m.height)
 		m.formOpen = true
 		m.dialogOpen = false
@@ -1432,6 +1540,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.formOpen = false
 		attendees := msg.Attendees
 		alarms := msg.Alarms
+		// Editing one occurrence of a recurring series → defer the actual
+		// write until the user picks a scope. The dialog dispatch
+		// (ChoiceDialogResultMsg below) reads m.pendingEditSave and routes
+		// to UpdateInstance / UpdateFromInstance / Update.
+		if editID > 0 && !msg.InstanceTime.IsZero() {
+			m.pendingEditSave = msg
+			m.pendingScopeKind = pendingScopeEdit
+			m.choiceDialog = NewChoiceDialogModel(
+				fmt.Sprintf("Update %q?", msg.Title),
+				"This event", "This and following", "All events",
+			).SetSize(m.width, m.height)
+			m.choiceOpen = true
+			return m, nil
+		}
 		if editID > 0 {
 			eventID := editID
 			calID := msg.CalendarID
@@ -1518,6 +1640,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case GoToTodayMsg:
 		return m.goToToday()
+
+	case eventUpdateAfterScopeMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			m.viewReturnEvent = event.Event{}
+			return m, nil
+		}
+		cmds := []tea.Cmd{m.loadEvents()}
+		if push := m.runOpportunisticPush(msg.calendarID); push != nil {
+			cmds = append(cmds, push)
+		}
+		// On scope-dispatched edits we don't return to the prior view dialog;
+		// the underlying row may have been replaced (e.g. "This and following"
+		// creates a new master with a fresh UID).
+		m.viewReturnEvent = event.Event{}
+		return m, tea.Batch(cmds...)
 
 	case ToggleSidebarMsg:
 		return m.toggleSidebar()
@@ -1637,6 +1775,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case EventDeleteMsg:
 		m.pendingDelete = msg.Event
 		if msg.Event.RecurrenceRule != "" {
+			m.pendingScopeKind = pendingScopeDelete
 			m.choiceDialog = NewChoiceDialogModel(
 				fmt.Sprintf("Delete %q?", msg.Event.Title),
 				"This event", "This and following", "All events",
@@ -2012,8 +2151,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ChoiceDialogResultMsg:
 		m.choiceOpen = false
+		kind := m.pendingScopeKind
+		m.pendingScopeKind = pendingScopeNone
 		if msg.Choice < 0 {
+			m.pendingEditSave = EventFormSaveMsg{}
+			m.pendingDelete = event.Event{}
 			return m, nil
+		}
+		if kind == pendingScopeEdit {
+			save := m.pendingEditSave
+			m.pendingEditSave = EventFormSaveMsg{}
+			editID := m.form.editID
+			choice := msg.Choice
+			return m, func() tea.Msg {
+				return m.dispatchEditScope(editID, choice, save)
+			}
 		}
 		ev := m.pendingDelete
 		return m, func() tea.Msg {

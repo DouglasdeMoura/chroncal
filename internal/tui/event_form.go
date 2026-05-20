@@ -20,6 +20,11 @@ import (
 // editID (m.form.editID) — the message cannot carry that value reliably
 // because the save closure is bound at form build time, before editID is set
 // in NewEventFormModelForEdit.
+//
+// InstanceTime is the original (un-edited) occurrence time when the form was
+// opened on a recurring instance — used by the parent to dispatch a scope
+// prompt (this event / this and following / all events). Zero means the form
+// was opened on a non-recurring event or a fresh create.
 type EventFormSaveMsg struct {
 	CalendarID     int64
 	Title          string
@@ -35,6 +40,7 @@ type EventFormSaveMsg struct {
 	Class          string
 	Attendees      []model.Attendee
 	Alarms         []model.Alarm
+	InstanceTime   time.Time
 }
 
 // EventFormClosedMsg is emitted when the user closes the event form.
@@ -112,6 +118,11 @@ type EventFormModel struct {
 	day         time.Time
 	calendars   []calendarOption
 	calendarIdx int
+
+	// instanceTime is the un-edited occurrence start when the form is editing
+	// one instance of a recurring series. Zero for fresh creates, non-recurring
+	// events, or when editing the master from a non-instance entry point.
+	instanceTime time.Time
 
 	// Fields (pointer types survive form rebuilds)
 	titleField        *TextField
@@ -341,8 +352,17 @@ func multiDayEndDate(ev event.Event) (time.Time, bool) {
 
 // NewEventFormModelForEdit creates a form pre-filled with an existing event's data.
 func NewEventFormModelForEdit(ev event.Event, calendars map[int64]CalendarInfo, theme Theme) (EventFormModel, tea.Cmd) {
+	return NewEventFormModelForEditInstance(ev, time.Time{}, calendars, theme)
+}
+
+// NewEventFormModelForEditInstance is like NewEventFormModelForEdit but also
+// records the instance time the user clicked on for a recurring event. The
+// instance time travels with the form so the parent can prompt for scope
+// (this event / this and following / all events) on save.
+func NewEventFormModelForEditInstance(ev event.Event, instanceTime time.Time, calendars map[int64]CalendarInfo, theme Theme) (EventFormModel, tea.Cmd) {
 	m, cmd := NewEventFormModel(ev.StartTime, calendars, theme)
 	m.editID = ev.ID
+	m.instanceTime = instanceTime
 	m.titleField.SetValue(ev.Title)
 	m.locationField.SetValue(ev.Location)
 	m.conferenceField.SetValue(ev.ConferenceURI)
@@ -1509,6 +1529,7 @@ func (m EventFormModel) save(f *Form) tea.Cmd {
 				Class:          m.visibilityField.Value(),
 				Attendees:      attendees,
 				Alarms:         m.alarms,
+				InstanceTime:   m.instanceTime,
 			}
 		}
 	}
@@ -1570,6 +1591,7 @@ func (m EventFormModel) save(f *Form) tea.Cmd {
 			Class:          m.visibilityField.Value(),
 			Attendees:      attendees,
 			Alarms:         m.alarms,
+			InstanceTime:   m.instanceTime,
 		}
 	}
 }
