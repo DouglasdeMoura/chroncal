@@ -1028,7 +1028,6 @@ func (m Model) innerDims() (int, int) {
 func (m Model) openQuitConfirm() Model {
 	m.pendingQuit = true
 	m.confirmDialog = NewConfirmDialogModel("Quit chroncal?", "Quit").
-		Subdued().
 		SetSize(m.width, m.height)
 	m.confirmOpen = true
 	return m

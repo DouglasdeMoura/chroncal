@@ -38,6 +38,9 @@ func NewConfirmDialogModel(message, confirmLabel string) ConfirmDialogModel {
 			}),
 		},
 	)
+	// Confirm prompts default to Secondary — same neutral pill as Cancel.
+	// Destructive callers opt into the Danger variant explicitly below.
+	form.SetSubmitVariant(ButtonSecondary)
 	form.OnSubmit(func(f *Form) tea.Cmd {
 		return func() tea.Msg { return ConfirmDialogResultMsg{Confirmed: true} }
 	})
@@ -53,13 +56,6 @@ func NewConfirmDialogModel(message, confirmLabel string) ConfirmDialogModel {
 // delete / discard / purge prompts so the action reads as destructive.
 func (m ConfirmDialogModel) Destructive() ConfirmDialogModel {
 	m.form.SetSubmitVariant(ButtonDanger)
-	return m
-}
-
-// Subdued styles the confirm button with the Secondary variant, matching
-// Cancel. Use when the action is low-stakes and shouldn't draw the eye.
-func (m ConfirmDialogModel) Subdued() ConfirmDialogModel {
-	m.form.SetSubmitVariant(ButtonSecondary)
 	return m
 }
 
