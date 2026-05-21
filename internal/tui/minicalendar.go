@@ -419,10 +419,14 @@ func (m MiniMonthModel) View() string {
 				Bold(true).
 				Render(num)
 		case isToday:
-			// Bold + accent color is enough signal when today isn't the
-			// focused day; the underline/overline outline would otherwise
-			// compete with the cursor highlight for attention.
-			cell = lipgloss.NewStyle().Foreground(m.todayColor).Bold(true).Render(num)
+			// Match the month view's today cell: red background with
+			// surface-color text. Explicit fg/bg (no Reverse) for the
+			// same OSC-10/11 reliability reason as the cursor case.
+			cell = lipgloss.NewStyle().
+				Background(activeTheme.Today).
+				Foreground(activeTheme.Surface).
+				Bold(true).
+				Render(num)
 		}
 		b.WriteString(cell)
 		col++
