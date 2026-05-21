@@ -552,6 +552,7 @@ func (m *EventFormModel) buildDialogAndForm() {
 	m.fieldKeys = keys
 
 	m.form = NewForm("Save", formStyles, items...)
+	m.form.SetSubmitVariant(ButtonSecondary)
 
 	// NOTE: this closure must NOT read state from the captured m. Any
 	// value-typed field on EventFormModel (editID, customRule, alarms, day,
