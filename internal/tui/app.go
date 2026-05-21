@@ -2926,6 +2926,10 @@ func (m Model) switchToView(mode viewMode) (tea.Model, tea.Cmd) {
 	if m.viewMode == mode {
 		return m, nil
 	}
+	if m.focus == focusSidebar {
+		m.sidebar = m.sidebar.Blur()
+		m.focus = focusCalendar
+	}
 	cursor, today := m.viewCursorAndToday()
 	m.viewMode = mode
 	switch mode {
