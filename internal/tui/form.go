@@ -1592,7 +1592,6 @@ type ButtonVariant int
 const (
 	Button       ButtonVariant = iota // neutral default (submit / cancel / routine action)
 	ButtonDanger                      // destructive action
-	ButtonGhost                       // minimal / text-only
 )
 
 // ButtonStyle holds the normal and focused styles for a button variant.
@@ -1613,29 +1612,23 @@ func (bs ButtonStyle) Render(label string, focused bool) string {
 type ButtonStyles struct {
 	Normal ButtonStyle
 	Danger ButtonStyle
-	Ghost  ButtonStyle
 }
 
 // Get returns the ButtonStyle for the given variant.
 func (bs ButtonStyles) Get(v ButtonVariant) ButtonStyle {
-	switch v {
-	case ButtonDanger:
+	if v == ButtonDanger {
 		return bs.Danger
-	case ButtonGhost:
-		return bs.Ghost
-	default:
-		return bs.Normal
 	}
+	return bs.Normal
 }
 
 // DefaultButtonStyles returns button styles driven by the active theme.
 //
-// All variants share FormHighlight as the focused background so "cursor is
-// here" reads as a single consistent flash across the form, independent of
-// the button's semantic color. Each variant keeps its own idle look
-// (neutral fill, danger red, ghost transparent) for semantic identity, and
-// every fg is computed via oklch.ContrastingFg for guaranteed perceptual
-// contrast regardless of the configured palette.
+// Both variants share FormHighlight as the focused background so "cursor
+// is here" reads as a single consistent flash across the form, independent
+// of the button's semantic color. Idle backgrounds differ (neutral fill vs
+// danger red) for semantic identity. Foregrounds are computed via
+// oklch.ContrastingFg so contrast tracks the resolved palette.
 func DefaultButtonStyles() ButtonStyles {
 	base := lipgloss.NewStyle().Padding(0, 2).MarginRight(1)
 	t := activeTheme
@@ -1648,10 +1641,6 @@ func DefaultButtonStyles() ButtonStyles {
 		Danger: ButtonStyle{
 			Normal:  base.Background(t.ButtonDangerBg).Foreground(oklch.ContrastingFg(t.ButtonDangerBg)),
 			Focused: base.Background(t.FormHighlight).Foreground(highlightFg),
-		},
-		Ghost: ButtonStyle{
-			Normal:  base.Foreground(t.ButtonGhostFg),
-			Focused: base.Foreground(highlightFg).Background(t.FormHighlight),
 		},
 	}
 }

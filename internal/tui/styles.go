@@ -55,11 +55,9 @@ type Theme struct {
 	FormHighlight color.Color // select flash + focused-button accent
 
 	// Buttons. Text-on-accent foreground is computed at render time via
-	// oklch.ContrastingFg(bg); ButtonGhostFg remains explicit because
-	// the ghost variant has no background to derive contrast from.
+	// oklch.ContrastingFg(bg).
 	ButtonBg       color.Color
 	ButtonDangerBg color.Color
-	ButtonGhostFg  color.Color
 
 	// Calendar color palette (hex swatches shown in the calendar dialog).
 	CalendarSwatches []string

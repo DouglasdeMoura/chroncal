@@ -56,7 +56,6 @@ type rawTheme struct {
 	// Buttons.
 	ButtonBg       any `toml:"button_bg"`
 	ButtonDangerBg any `toml:"button_danger_bg"`
-	ButtonGhostFg  any `toml:"button_ghost_fg"`
 
 	// Calendar palette swatches.
 	CalendarSwatches []string `toml:"calendar_swatches"`
@@ -246,7 +245,6 @@ func resolveTheme(r *rawTheme, hasDarkBG bool) (Theme, error) {
 
 		ButtonBg:       pick("button_bg", r.ButtonBg),
 		ButtonDangerBg: pick("button_danger_bg", r.ButtonDangerBg),
-		ButtonGhostFg:  pick("button_ghost_fg", r.ButtonGhostFg),
 
 		CalendarSwatches: append([]string(nil), r.CalendarSwatches...),
 	}

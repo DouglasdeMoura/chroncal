@@ -57,7 +57,6 @@ form_highlight = "63"
 
 button_bg        = "240"
 button_danger_bg = "52"
-button_ghost_fg  = "240"
 
 # ---------------------------------------------------------------------------
 # Calendar palette swatches (hex strings, shown in the calendar dialog)

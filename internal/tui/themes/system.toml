@@ -99,7 +99,6 @@ form_highlight = "5"   # base0E magenta — focus flash / non-primary focus bg
 
 button_bg        = "8"   # neutral gray; app.go overrides adaptively
 button_danger_bg = "1"   # red
-button_ghost_fg  = "8"   # transparent button foreground
 
 # ---------------------------------------------------------------------------
 # Calendar palette swatches

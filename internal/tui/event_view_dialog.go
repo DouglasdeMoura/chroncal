@@ -205,7 +205,7 @@ func (m EventViewDialogModel) actions() []eventViewAction {
 	return []eventViewAction{
 		{label: "Edit", variant: Button, zone: "action:edit",
 			msg: func() tea.Msg { return EventEditMsg{Event: ev} }},
-		{label: "Duplicate", variant: ButtonGhost, zone: "action:duplicate",
+		{label: "Duplicate", variant: Button, zone: "action:duplicate",
 			msg: func() tea.Msg { return EventDuplicateMsg{Event: ev} }},
 		{label: "Delete", variant: ButtonDanger, zone: "action:delete",
 			msg: func() tea.Msg { return EventDeleteMsg{Event: ev} }},
