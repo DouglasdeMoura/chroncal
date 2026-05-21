@@ -50,9 +50,16 @@ func NewConfirmDialogModel(message, confirmLabel string) ConfirmDialogModel {
 }
 
 // Destructive styles the confirm button with the Danger variant. Use for
-// quit / delete / discard prompts so the action reads as destructive.
+// delete / discard / purge prompts so the action reads as destructive.
 func (m ConfirmDialogModel) Destructive() ConfirmDialogModel {
 	m.form.SetSubmitVariant(ButtonDanger)
+	return m
+}
+
+// Subdued styles the confirm button with the Secondary variant, matching
+// Cancel. Use when the action is low-stakes and shouldn't draw the eye.
+func (m ConfirmDialogModel) Subdued() ConfirmDialogModel {
+	m.form.SetSubmitVariant(ButtonSecondary)
 	return m
 }
 
