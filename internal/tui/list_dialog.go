@@ -568,9 +568,12 @@ func (m ListDialogModel) View() string {
 
 	content := lipgloss.JoinVertical(lipgloss.Left, title, "", body, "", helpText)
 
+	// Width/Height are intentionally omitted: the joined content already
+	// matches the inner dimensions (innerW × innerH), so adding explicit
+	// box dimensions only forces lipgloss to re-measure and re-wrap every
+	// byte of styled content — a measurable cost on dense dialogs (96+
+	// rows). Padding + Border alone produce the same boxW×boxH frame.
 	return lipgloss.NewStyle().
-		Width(boxW).
-		Height(boxH).
 		Padding(1, 2, 0, 1).
 		Border(lipgloss.RoundedBorder()).
 		Render(content)
@@ -657,10 +660,11 @@ func (m ListDialogModel) renderList(w, h int) string {
 		}
 		indicator = truncateTo(indicator, w)
 
+		faintIndicator := lipgloss.NewStyle().Faint(true).Render(indicator)
 		if len(lines) >= h {
-			lines[h-1] = lipgloss.NewStyle().Width(w).Faint(true).Render(indicator)
+			lines[h-1] = faintIndicator
 		} else {
-			lines = append(lines, lipgloss.NewStyle().Width(w).Faint(true).Render(indicator))
+			lines = append(lines, faintIndicator)
 		}
 	}
 
