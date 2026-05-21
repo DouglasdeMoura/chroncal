@@ -1049,6 +1049,7 @@ func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	if key.Matches(msg, m.keys.Quit) && !m.confirmOpen && !textEntryActive {
 		m.pendingQuit = true
 		m.confirmDialog = NewConfirmDialogModel("Quit chroncal?", "Quit").
+			Subdued().
 			SetSize(m.width, m.height)
 		m.confirmOpen = true
 		return m, nil, true
