@@ -62,6 +62,8 @@ type agendaKeyMap struct {
 	Today       key.Binding
 	Select      key.Binding
 	Create      key.Binding
+	Edit        key.Binding
+	Duplicate   key.Binding
 	Delete      key.Binding
 	ToggleEmpty key.Binding
 }
@@ -77,6 +79,8 @@ func defaultAgendaKeys() agendaKeyMap {
 		Today:       key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "today")),
 		Select:      key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter", "view")),
 		Create:      key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "new")),
+		Edit:        key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
+		Duplicate:   key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("ctrl+d", "duplicate")),
 		Delete:      key.NewBinding(key.WithKeys("x", "delete"), key.WithHelp("x", "delete")),
 		ToggleEmpty: key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "empty days")),
 	}
@@ -398,6 +402,16 @@ func (m AgendaModel) Update(msg tea.Msg) (AgendaModel, tea.Cmd) {
 	case key.Matches(kp, m.keys.Create):
 		day := m.SelectedDay()
 		return m, func() tea.Msg { return EventCreateMsg{Day: day} }
+	case key.Matches(kp, m.keys.Edit):
+		if ev, ok := m.SelectedEvent(); ok {
+			return m, func() tea.Msg { return EventEditMsg{Event: ev} }
+		}
+		return m, nil
+	case key.Matches(kp, m.keys.Duplicate):
+		if ev, ok := m.SelectedEvent(); ok {
+			return m, func() tea.Msg { return EventDuplicateMsg{Event: ev} }
+		}
+		return m, nil
 	case key.Matches(kp, m.keys.Delete):
 		if ev, ok := m.SelectedEvent(); ok {
 			return m, func() tea.Msg { return EventDeleteMsg{Event: ev} }

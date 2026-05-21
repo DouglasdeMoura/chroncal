@@ -190,7 +190,7 @@ func (m HelpDialogModel) sections() []helpSection {
 			title: "Event popup",
 			entries: []helpEntry{
 				{"e", "edit"},
-				{"d", "duplicate"},
+				{"ctrl+d", "duplicate"},
 				{"x · delete", "delete"},
 				{"y · n · m", "RSVP yes / no / maybe"},
 				{"tab · shift+tab", "cycle sections"},

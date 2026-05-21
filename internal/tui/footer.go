@@ -220,6 +220,8 @@ func footerHints(ctx FooterContext, hasRSVP, showTodayHint bool) []footerHint {
 			{"↑↓", "move"},
 			{"[]", "month"},
 			{"enter", "open"},
+			{"e", "edit"},
+			{"ctrl+d", "duplicate"},
 			{"x", "delete"},
 			{"c", "new"},
 			{"o", "empty days"},
