@@ -54,8 +54,7 @@ type rawTheme struct {
 	FormHighlight any `toml:"form_highlight"`
 
 	// Buttons.
-	ButtonBg       any `toml:"button_bg"`
-	ButtonDangerBg any `toml:"button_danger_bg"`
+	ButtonBg any `toml:"button_bg"`
 
 	// Calendar palette swatches.
 	CalendarSwatches []string `toml:"calendar_swatches"`
@@ -243,8 +242,7 @@ func resolveTheme(r *rawTheme, hasDarkBG bool) (Theme, error) {
 		FormError:     pick("form_error", r.FormError),
 		FormHighlight: pick("form_highlight", r.FormHighlight),
 
-		ButtonBg:       pick("button_bg", r.ButtonBg),
-		ButtonDangerBg: pick("button_danger_bg", r.ButtonDangerBg),
+		ButtonBg: pick("button_bg", r.ButtonBg),
 
 		CalendarSwatches: append([]string(nil), r.CalendarSwatches...),
 	}

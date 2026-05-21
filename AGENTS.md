@@ -81,8 +81,13 @@ CLI commands live in `cmd/chroncal/`, one file per resource group. Each exports 
 - All-day events have time component 00:00:00.
 
 ### TUI Buttons
-- Exactly two variants: `Button` (neutral default) and `ButtonDanger` (red,
-  for destructive actions). No Primary, no Secondary, no Ghost.
+- Exactly two variants: `Button` (neutral default) and `ButtonDanger`
+  (destructive). No Primary, no Secondary, no Ghost.
+- `ButtonDanger` shares the same pill shape and background as `Button`;
+  only the *label* is colored (`Theme.Error`, bold). This is the Apple
+  pattern — red word on a neutral pill, not a flashing red button —
+  picked so destructive actions read as semantically distinct without
+  being visually loud.
 - Color carries one signal: destructive or not. Focus highlight carries
   the other: which button Enter triggers. Do not conflate them.
 - `Form.SetSubmitVariant` defaults to `Button`; only destructive prompts

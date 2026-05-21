@@ -1624,11 +1624,12 @@ func (bs ButtonStyles) Get(v ButtonVariant) ButtonStyle {
 
 // DefaultButtonStyles returns button styles driven by the active theme.
 //
-// Both variants share FormHighlight as the focused background so "cursor
-// is here" reads as a single consistent flash across the form, independent
-// of the button's semantic color. Idle backgrounds differ (neutral fill vs
-// danger red) for semantic identity. Foregrounds are computed via
-// oklch.ContrastingFg so contrast tracks the resolved palette.
+// Danger and Normal share the same pill shape and background — color
+// signals destructive intent only on the label (Apple-style: a red word
+// on a neutral pill, not a flashing red button). Both variants share
+// FormHighlight as the focused background so "cursor is here" reads as
+// a single consistent flash, and the danger label stays red across the
+// focus transition so the semantic signal survives.
 func DefaultButtonStyles() ButtonStyles {
 	base := lipgloss.NewStyle().Padding(0, 2).MarginRight(1)
 	t := activeTheme
@@ -1639,8 +1640,8 @@ func DefaultButtonStyles() ButtonStyles {
 			Focused: base.Background(t.FormHighlight).Foreground(highlightFg),
 		},
 		Danger: ButtonStyle{
-			Normal:  base.Background(t.ButtonDangerBg).Foreground(oklch.ContrastingFg(t.ButtonDangerBg)),
-			Focused: base.Background(t.FormHighlight).Foreground(highlightFg),
+			Normal:  base.Background(t.ButtonBg).Foreground(t.Error).Bold(true),
+			Focused: base.Background(t.FormHighlight).Foreground(t.Error).Bold(true),
 		},
 	}
 }

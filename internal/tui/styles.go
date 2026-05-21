@@ -54,10 +54,10 @@ type Theme struct {
 	FormError     color.Color
 	FormHighlight color.Color // select flash + focused-button accent
 
-	// Buttons. Text-on-accent foreground is computed at render time via
-	// oklch.ContrastingFg(bg).
-	ButtonBg       color.Color
-	ButtonDangerBg color.Color
+	// Buttons. The danger variant uses Theme.Error as its foreground
+	// instead of a separate bg, so there is only one button background
+	// token.
+	ButtonBg color.Color
 
 	// Calendar color palette (hex swatches shown in the calendar dialog).
 	CalendarSwatches []string
