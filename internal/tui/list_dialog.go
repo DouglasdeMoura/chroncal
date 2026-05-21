@@ -566,17 +566,57 @@ func (m ListDialogModel) View() string {
 		body = m.viewColumns(innerW, bodyH)
 	}
 
-	content := lipgloss.JoinVertical(lipgloss.Left, title, "", body, "", helpText)
+	// Build the framed dialog manually instead of going through
+	// lipgloss.NewStyle().Border().Render(content): that path forces
+	// lipgloss to re-wrap and re-measure every grapheme of the styled
+	// content, which is by far the biggest single cost on a dense
+	// dialog (96+ rows). Each content line is already innerW cells
+	// wide, so we can splice them between hand-built border + padding
+	// strings and skip the global measurement pass entirely.
+	contentLines := make([]string, 0, innerH)
+	contentLines = append(contentLines, title, "")
+	contentLines = append(contentLines, strings.Split(body, "\n")...)
+	contentLines = append(contentLines, "", helpText)
+	return framedDialog(boxW, contentLines)
+}
 
-	// Width/Height are intentionally omitted: the joined content already
-	// matches the inner dimensions (innerW × innerH), so adding explicit
-	// box dimensions only forces lipgloss to re-measure and re-wrap every
-	// byte of styled content — a measurable cost on dense dialogs (96+
-	// rows). Padding + Border alone produce the same boxW×boxH frame.
-	return lipgloss.NewStyle().
-		Padding(1, 2, 0, 1).
-		Border(lipgloss.RoundedBorder()).
-		Render(content)
+// framedDialog wraps innerLines with the rounded border + (1,2,0,1)
+// padding the dialog has always used. innerLines are assumed to be at
+// the inner content width (boxW - 5). Lines that fall short are
+// padded with plain spaces; if a styled line carries trailing ANSI
+// resets, those resets terminate before the padding so the gap stays
+// transparent — matching what lipgloss produced before.
+func framedDialog(boxW int, innerLines []string) string {
+	const (
+		padLeft  = 1
+		padRight = 2
+	)
+	innerW := boxW - 2 - padLeft - padRight
+	top := "╭" + strings.Repeat("─", boxW-2) + "╮"
+	bottom := "╰" + strings.Repeat("─", boxW-2) + "╯"
+	leftPad := strings.Repeat(" ", padLeft)
+	rightPad := strings.Repeat(" ", padRight)
+	emptyRow := "│" + leftPad + strings.Repeat(" ", innerW) + rightPad + "│"
+
+	var b strings.Builder
+	b.Grow(boxW * (len(innerLines) + 3))
+	b.WriteString(top)
+	b.WriteByte('\n')
+	b.WriteString(emptyRow)
+	b.WriteByte('\n')
+	for _, line := range innerLines {
+		b.WriteString("│")
+		b.WriteString(leftPad)
+		lineW := lipgloss.Width(line)
+		b.WriteString(line)
+		if lineW < innerW {
+			b.WriteString(strings.Repeat(" ", innerW-lineW))
+		}
+		b.WriteString(rightPad)
+		b.WriteString("│\n")
+	}
+	b.WriteString(bottom)
+	return b.String()
 }
 
 func (m *ListDialogModel) viewColumns(innerW, bodyH int) string {
