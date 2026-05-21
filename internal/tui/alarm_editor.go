@@ -261,6 +261,7 @@ func (m *AlarmListEditorModel) buildEditForm(a model.Alarm) {
 	m.fieldKeys = []string{"offset", "action"}
 
 	m.form = NewForm("Save", styles, items...)
+	m.form.SetSubmitVariant(ButtonSecondary)
 	m.form.OnSubmit(func(f *Form) tea.Cmd {
 		return func() tea.Msg { return alarmEditorSaveForm }
 	})

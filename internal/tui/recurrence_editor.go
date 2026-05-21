@@ -223,6 +223,7 @@ func (m *RecurrenceEditorModel) buildForm() {
 
 	if m.form.ItemCount() == 0 {
 		m.form = NewForm("Ok", styles, items...)
+		m.form.SetSubmitVariant(ButtonSecondary)
 		m.form.OnSubmit(func(f *Form) tea.Cmd {
 			return func() tea.Msg { return recurrenceEditorDone }
 		})
