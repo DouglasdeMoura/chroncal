@@ -8,11 +8,27 @@ import (
 
 // paneTitle renders the detail pane heading: bold title on the first line,
 // a faint horizontal rule on the second. Shared so both dialogs anchor the
-// detail pane with the same visual weight.
+// detail pane with the same visual weight. Both lines are padded to w
+// cells so the result can be spliced into a row-zipped column without a
+// trailing measurement pass.
 func paneTitle(text string, w int) string {
 	title := lipgloss.NewStyle().Bold(true).Render(truncateTo(text, w))
+	title = padTrailing(title, w)
 	rule := lipgloss.NewStyle().Faint(true).Render(strings.Repeat("─", w))
 	return title + "\n" + rule
+}
+
+// padTrailing extends s with plain spaces so it is exactly w cells wide.
+// If s is already w-wide (or wider) it is returned unchanged. Lipgloss
+// styled strings with trailing SGR resets keep their resets before the
+// spaces, so the padding is unstyled and matches the rendering lipgloss
+// would have produced.
+func padTrailing(s string, w int) string {
+	cw := lipgloss.Width(s)
+	if cw >= w {
+		return s
+	}
+	return s + strings.Repeat(" ", w-cw)
 }
 
 // dialogDividerWidth is the cell width of the vertical divider between the

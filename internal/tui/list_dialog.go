@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"encoding/binary"
 	"fmt"
+	"hash/fnv"
 	"image/color"
 	"strings"
 
@@ -97,6 +99,23 @@ type ListDialogModel struct {
 	selectedColor color.Color
 	width, height int
 	body          viewport.Model
+	// cache holds per-frame memoized sub-renders that don't depend on
+	// the selection (action bar, help line). It's a pointer so that
+	// value copies of the model — which the bubbletea Update cycle
+	// produces continuously — share the same cache and don't have to
+	// re-render unchanging chrome on every keystroke.
+	cache *viewRenderCache
+}
+
+// viewRenderCache memoizes the action bar and help line. Each entry
+// stores both the rendered string and a fingerprint computed from the
+// inputs that affect it; the cache is invalidated lazily by comparing
+// fingerprints on read, not eagerly on Set*.
+type viewRenderCache struct {
+	actionsKey uint64
+	actions    string
+	helpKey    uint64
+	help       string
 }
 
 // NewListDialogModel builds an empty shell. Callers call the Setters on the
@@ -105,9 +124,10 @@ func NewListDialogModel(h help.Model) ListDialogModel {
 	vp := viewport.New()
 	vp.MouseWheelEnabled = true
 	return ListDialogModel{
-		keys: defaultListDialogKeys(),
-		help: h,
-		body: vp,
+		keys:  defaultListDialogKeys(),
+		help:  h,
+		body:  vp,
+		cache: &viewRenderCache{},
 	}
 }
 
@@ -552,12 +572,7 @@ func (m ListDialogModel) View() string {
 	bodyH := max(innerH-4, 3)
 
 	title := m.renderTitleRow(innerW)
-
-	m.help.SetWidth(innerW)
-	helpText := lipgloss.NewStyle().
-		Width(innerW).
-		Align(lipgloss.Center).
-		Render(m.help.ShortHelpView(m.shortHelp))
+	helpText := m.renderHelpLine(innerW)
 
 	var body string
 	if m.isNarrow() {
@@ -621,13 +636,14 @@ func (m *ListDialogModel) viewColumns(innerW, bodyH int) string {
 	detailsW := detailColumnWidth(innerW)
 
 	m.adjustScroll(bodyH)
-	// renderList (via padLines) and renderDivider both guarantee each
-	// emitted line is exactly w cells wide, so we can split them without
-	// the per-line lipgloss.Width measurement splitAndPad would do. Only
-	// renderDetails has variable-width lines and needs the slow path.
+	// All three column renderers now produce lines that are exactly w
+	// cells wide (renderList via padLines, renderDivider by construction,
+	// renderDetails by padding its variable-width parts internally), so
+	// we can split each without the per-line lipgloss.Width measurement
+	// splitAndPad would do.
 	listCol := trustedSplit(m.renderList(listW, bodyH), listW, bodyH)
 	dividerCol := trustedSplit(m.renderDivider(dialogDividerWidth, bodyH), dialogDividerWidth, bodyH)
-	detailsCol := splitAndPad(m.renderDetails(detailsW, bodyH), detailsW, bodyH)
+	detailsCol := trustedSplit(m.renderDetails(detailsW, bodyH), detailsW, bodyH)
 
 	// Manual row-zip: lipgloss.JoinHorizontal re-measures every grapheme
 	// of every line in every column to align them. We've already padded
@@ -803,6 +819,10 @@ func (m ListDialogModel) renderDivider(w, h int) string {
 }
 
 func (m ListDialogModel) renderActions(w int) string {
+	key := m.actionsCacheKey(w)
+	if m.cache != nil && key == m.cache.actionsKey && m.cache.actions != "" {
+		return m.cache.actions
+	}
 	bs := DefaultButtonStyles()
 	parts := make([]string, len(m.actions))
 	for i, a := range m.actions {
@@ -816,7 +836,86 @@ func (m ListDialogModel) renderActions(w int) string {
 			parts[i] = bs.Normal.Render(a.Label, focused)
 		}
 	}
-	return truncateTo(strings.Join(parts, " "), w)
+	out := truncateTo(strings.Join(parts, " "), w)
+	if m.cache != nil {
+		m.cache.actionsKey = key
+		m.cache.actions = out
+	}
+	return out
+}
+
+// renderHelpLine produces the centered short-help line at the bottom
+// of the dialog. The result is memoized: shortHelp only changes when
+// the caller swaps focus zones or transitions between empty/non-empty
+// states, so caching it skips a full lipgloss render (and the bubbles
+// help layout it wraps) on every key press while the user scrolls.
+func (m ListDialogModel) renderHelpLine(innerW int) string {
+	key := m.helpCacheKey(innerW)
+	if m.cache != nil && key == m.cache.helpKey && m.cache.help != "" {
+		return m.cache.help
+	}
+	m.help.SetWidth(innerW)
+	out := lipgloss.NewStyle().
+		Width(innerW).
+		Align(lipgloss.Center).
+		Render(m.help.ShortHelpView(m.shortHelp))
+	if m.cache != nil {
+		m.cache.helpKey = key
+		m.cache.help = out
+	}
+	return out
+}
+
+// helpCacheKey fingerprints the inputs that affect renderHelpLine: the
+// inner width and every binding's key + help text. shortHelp is
+// rebuilt by the caller on each refresh so identity comparison would
+// always miss; content-based fingerprinting hits whenever the rendered
+// output would be identical.
+func (m ListDialogModel) helpCacheKey(innerW int) uint64 {
+	h := fnv.New64a()
+	var buf [8]byte
+	binary.LittleEndian.PutUint64(buf[:], uint64(innerW))
+	h.Write(buf[:])
+	for _, b := range m.shortHelp {
+		help := b.Help()
+		h.Write([]byte(help.Key))
+		h.Write([]byte{0})
+		h.Write([]byte(help.Desc))
+		h.Write([]byte{0})
+		var flags byte
+		if b.Enabled() {
+			flags = 1
+		}
+		h.Write([]byte{flags})
+	}
+	return h.Sum64()
+}
+
+// actionsCacheKey returns a 64-bit fingerprint of every input that
+// affects renderActions' output. Each Set* on the model that touches
+// one of those inputs naturally changes the fingerprint, so the cache
+// invalidates lazily without needing eager bookkeeping.
+func (m ListDialogModel) actionsCacheKey(w int) uint64 {
+	h := fnv.New64a()
+	var buf [8]byte
+	binary.LittleEndian.PutUint64(buf[:], uint64(w))
+	h.Write(buf[:])
+	binary.LittleEndian.PutUint64(buf[:], uint64(m.focusZone))
+	h.Write(buf[:])
+	binary.LittleEndian.PutUint64(buf[:], uint64(m.focusedAction))
+	h.Write(buf[:])
+	for _, a := range m.actions {
+		h.Write([]byte(a.Label))
+		var flags byte
+		if a.Danger {
+			flags |= 1
+		}
+		if a.Primary {
+			flags |= 2
+		}
+		h.Write([]byte{flags, 0})
+	}
+	return h.Sum64()
 }
 
 func (m *ListDialogModel) renderDetails(w, h int) string {
@@ -851,7 +950,10 @@ func (m *ListDialogModel) renderDetails(w, h int) string {
 	if pinned != "" {
 		parts = append(parts, pinned)
 	}
-	parts = append(parts, m.body.View(), m.actionsSeparator(w), m.renderActions(w))
+	// renderActions returns ≤ w cells (truncateTo); pad it so the whole
+	// detail column is width-correct and viewColumns can trustedSplit it
+	// without re-measuring every body line.
+	parts = append(parts, m.body.View(), m.actionsSeparator(w), padTrailing(m.renderActions(w), w))
 	return strings.Join(parts, "\n")
 }
 
