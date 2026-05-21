@@ -1001,18 +1001,44 @@ func wrapLine(s string, w int) []string {
 	return out
 }
 
+// padLines normalizes lines into exactly h rows, each w cells wide.
+// Avoids lipgloss.NewStyle().Width(w).Render — that path wraps and
+// re-measures each line through lipgloss's full layout machinery,
+// which is ~30µs/line and adds up on dense dialogs. Plain
+// measurement + space padding gives the same visual result.
 func padLines(lines []string, w, h int) string {
-	blank := strings.Repeat(" ", w)
-	out := make([]string, 0, h)
-	for _, l := range lines {
-		if len(out) >= h {
-			break
+	if w <= 0 {
+		if h <= 0 {
+			return ""
 		}
-		padded := lipgloss.NewStyle().Width(w).Render(l)
-		out = append(out, padded)
+		return strings.Repeat("\n", h-1)
 	}
-	for len(out) < h {
-		out = append(out, blank)
+	blank := strings.Repeat(" ", w)
+	var b strings.Builder
+	b.Grow((w + 1) * h)
+	for i := 0; i < h; i++ {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		if i >= len(lines) {
+			b.WriteString(blank)
+			continue
+		}
+		l := lines[i]
+		cw := lipgloss.Width(l)
+		switch {
+		case cw == w:
+			b.WriteString(l)
+		case cw < w:
+			b.WriteString(l)
+			b.WriteString(strings.Repeat(" ", w-cw))
+		default:
+			t := truncateTo(l, w)
+			b.WriteString(t)
+			if tw := lipgloss.Width(t); tw < w {
+				b.WriteString(strings.Repeat(" ", w-tw))
+			}
+		}
 	}
-	return strings.Join(out, "\n")
+	return b.String()
 }

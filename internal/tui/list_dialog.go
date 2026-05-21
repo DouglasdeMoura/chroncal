@@ -624,11 +624,61 @@ func (m *ListDialogModel) viewColumns(innerW, bodyH int) string {
 	detailsW := detailColumnWidth(innerW)
 
 	m.adjustScroll(bodyH)
-	list := m.renderList(listW, bodyH)
-	divider := m.renderDivider(dialogDividerWidth, bodyH)
-	details := m.renderDetails(detailsW, bodyH)
+	listCol := splitAndPad(m.renderList(listW, bodyH), listW, bodyH)
+	dividerCol := splitAndPad(m.renderDivider(dialogDividerWidth, bodyH), dialogDividerWidth, bodyH)
+	detailsCol := splitAndPad(m.renderDetails(detailsW, bodyH), detailsW, bodyH)
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, list, divider, details)
+	// Manual row-zip: lipgloss.JoinHorizontal re-measures every grapheme
+	// of every line in every column to align them. We've already padded
+	// each column to its fixed cell width, so straight concatenation
+	// produces the same visual output without the measurement pass.
+	var b strings.Builder
+	b.Grow((listW + dialogDividerWidth + detailsW + 1) * bodyH)
+	for i := 0; i < bodyH; i++ {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(listCol[i])
+		b.WriteString(dividerCol[i])
+		b.WriteString(detailsCol[i])
+	}
+	return b.String()
+}
+
+// splitAndPad splits a multi-line column into exactly h rows, each padded
+// (with plain spaces) or truncated to w cells. Used by viewColumns to
+// guarantee every column line is cell-aligned without going through
+// lipgloss.JoinHorizontal — the measurement happens once per line here,
+// not once per line per join.
+func splitAndPad(s string, w, h int) []string {
+	if w <= 0 {
+		out := make([]string, h)
+		return out
+	}
+	lines := strings.Split(s, "\n")
+	out := make([]string, h)
+	blank := strings.Repeat(" ", w)
+	for i := 0; i < h; i++ {
+		if i >= len(lines) {
+			out[i] = blank
+			continue
+		}
+		l := lines[i]
+		cw := lipgloss.Width(l)
+		switch {
+		case cw == w:
+			out[i] = l
+		case cw < w:
+			out[i] = l + strings.Repeat(" ", w-cw)
+		default:
+			t := truncateTo(l, w)
+			if tw := lipgloss.Width(t); tw < w {
+				t += strings.Repeat(" ", w-tw)
+			}
+			out[i] = t
+		}
+	}
+	return out
 }
 
 func (m *ListDialogModel) viewStacked(innerW, bodyH int) string {
