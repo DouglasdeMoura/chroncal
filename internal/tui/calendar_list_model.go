@@ -46,15 +46,16 @@ func defaultCalendarListKeys() calendarListKeyMap {
 // CalendarListModel renders a list of calendars (color swatch, name, visibility
 // indicator).
 type CalendarListModel struct {
-	items       []CalendarListItem
-	hidden      map[int64]bool
-	cursor      int
-	focused     bool
-	width       int
-	keys        calendarListKeyMap
-	accentColor color.Color
-	mutedColor  color.Color
-	textColor   color.Color
+	items            []CalendarListItem
+	hidden           map[int64]bool
+	cursor           int
+	focused          bool
+	width            int
+	keys             calendarListKeyMap
+	accentColor      color.Color
+	mutedColor       color.Color
+	textColor        color.Color
+	selectedTextColor color.Color
 }
 
 func NewCalendarListModel(items []CalendarListItem, hidden map[int64]bool) CalendarListModel {
@@ -67,10 +68,11 @@ func NewCalendarListModel(items []CalendarListItem, hidden map[int64]bool) Calen
 	}
 }
 
-func (m CalendarListModel) SetTheme(accent, muted, text color.Color) CalendarListModel {
+func (m CalendarListModel) SetTheme(accent, muted, text, selectedText color.Color) CalendarListModel {
 	m.accentColor = accent
 	m.mutedColor = muted
 	m.textColor = text
+	m.selectedTextColor = selectedText
 	return m
 }
 
@@ -173,6 +175,7 @@ func (m CalendarListModel) Update(msg tea.Msg) (CalendarListModel, tea.Cmd) {
 func (m CalendarListModel) View() string {
 	var b strings.Builder
 	for i, it := range m.items {
+		selected := m.focused && i == m.cursor
 		// Filled dot = visible, hollow dot = hidden. A single glyph carries
 		// both the calendar's color identity and its on/off state, avoiding
 		// the previous ● + ✓ doubling.
@@ -180,18 +183,41 @@ func (m CalendarListModel) View() string {
 		if m.hidden[it.ID] {
 			glyph = "○"
 		}
-		swatch := lipgloss.NewStyle().Foreground(lipgloss.Color(it.Color)).Render(glyph)
 		name := it.Name
 		// "swatch + space" consumes 2 cells; reserve the rest for the name.
 		if m.width > 2 {
 			name = truncateTo(name, m.width-2)
 		}
-		if m.hidden[it.ID] {
-			name = lipgloss.NewStyle().Foreground(m.mutedColor).Render(name)
-		}
-		line := fmt.Sprintf("%s %s", swatch, name)
-		if m.focused && i == m.cursor {
-			line = lipgloss.NewStyle().Background(m.accentColor).Foreground(m.textColor).Bold(true).Render(line)
+		var line string
+		if selected {
+			fg := m.selectedTextColor
+			if fg == nil {
+				fg = m.textColor
+			}
+			// Render every segment with the selected background explicitly.
+			// Wrapping the whole line in a single Background+Width style lets
+			// the swatch's inner ANSI reset punch through the bg fill on some
+			// terminals; per-segment painting avoids that.
+			swatch := lipgloss.NewStyle().
+				Background(m.accentColor).
+				Foreground(lipgloss.Color(it.Color)).
+				Render(glyph)
+			nameRendered := lipgloss.NewStyle().
+				Background(m.accentColor).
+				Foreground(fg).
+				Bold(true).
+				Render(name)
+			bgFill := lipgloss.NewStyle().Background(m.accentColor)
+			line = swatch + bgFill.Render(" ") + nameRendered
+			if pad := m.width - lipgloss.Width(line); pad > 0 {
+				line += bgFill.Render(strings.Repeat(" ", pad))
+			}
+		} else {
+			swatch := lipgloss.NewStyle().Foreground(lipgloss.Color(it.Color)).Render(glyph)
+			if m.hidden[it.ID] {
+				name = lipgloss.NewStyle().Foreground(m.mutedColor).Render(name)
+			}
+			line = fmt.Sprintf("%s %s", swatch, name)
 		}
 		b.WriteString(line)
 		if i < len(m.items)-1 {

@@ -11,7 +11,7 @@ import (
 // highlights render correctly.
 func (m SidebarModel) SetTheme(t Theme) SidebarModel {
 	m.miniMonth = m.miniMonth.SetTheme(t.Selected, t.Today, t.Text, t.Muted)
-	m.list = m.list.SetTheme(t.Selected, t.Muted, t.Text)
+	m.list = m.list.SetTheme(t.Selected, t.Muted, t.Text, t.SelectedText)
 	return m
 }
 
