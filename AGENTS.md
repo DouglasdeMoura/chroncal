@@ -80,6 +80,20 @@ CLI commands live in `cmd/chroncal/`, one file per resource group. Each exports 
 - Go code uses `time.Time` with `time.UTC`.
 - All-day events have time component 00:00:00.
 
+### TUI Buttons
+- Exactly two variants: `Button` (neutral default) and `ButtonDanger` (red,
+  for destructive actions). No Primary, no Secondary, no Ghost.
+- Color carries one signal: destructive or not. Focus highlight carries
+  the other: which button Enter triggers. Do not conflate them.
+- `Form.SetSubmitVariant` defaults to `Button`; only destructive prompts
+  need to opt in via `ConfirmDialogModel.Destructive()`.
+- For hand-rolled buttons that bypass `Form`, render via
+  `ButtonStyles.Normal` (or `.Danger` for destructive). Don't reach for a
+  "more prominent" style — there isn't one, by design.
+- Confirm dialogs focus Cancel by default (`form.FocusCancel()`), so a
+  reflex Enter cancels rather than confirms. Keep that behavior when
+  building new destructive prompts.
+
 ## Common Tasks
 
 ### Find an event by ID or UID
