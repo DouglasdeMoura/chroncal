@@ -196,6 +196,7 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 	}
 
 	form := NewForm("Save", formStyles, items...)
+	form.SetSubmitVariant(ButtonSecondary)
 
 	savedID := params.ID
 	linked := params.RemoteLinked
