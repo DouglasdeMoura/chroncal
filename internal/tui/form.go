@@ -1624,24 +1624,32 @@ func (bs ButtonStyles) Get(v ButtonVariant) ButtonStyle {
 
 // DefaultButtonStyles returns button styles driven by the active theme.
 //
-// Danger and Normal share the same pill shape and background — color
-// signals destructive intent only on the label (Apple-style: a red word
-// on a neutral pill, not a flashing red button). Both variants share
-// FormHighlight as the focused background so "cursor is here" reads as
-// a single consistent flash, and the danger label stays red across the
-// focus transition so the semantic signal survives.
+// At rest, Danger is a quiet variant of Normal: same pill shape and
+// background, only the label is bold red (Theme.Error). This matches
+// Apple's iOS pattern of red text on a neutral pill rather than a
+// flashing red button.
+//
+// On focus, the two variants diverge deliberately. Normal flips to
+// FormHighlight (the theme's selection accent), but Danger inverts to a
+// red-on-contrasting-fg pill. That divergence costs us "single focus
+// signal" uniformity, but it's the only way to keep destructive intent
+// readable across themes whose FormHighlight lands in the warm/red end
+// of the spectrum (Dracula's pink, Osaka's orange, Flexoki's coral) —
+// red text on a warm highlight is unreadable. Putting the red on the
+// background and computing a contrasting label via oklch.ContrastingFg
+// guarantees legibility on every theme and emphasizes the destructive
+// signal exactly when the user is about to commit it.
 func DefaultButtonStyles() ButtonStyles {
 	base := lipgloss.NewStyle().Padding(0, 2).MarginRight(1)
 	t := activeTheme
-	highlightFg := oklch.ContrastingFg(t.FormHighlight)
 	return ButtonStyles{
 		Normal: ButtonStyle{
 			Normal:  base.Background(t.ButtonBg).Foreground(oklch.ContrastingFg(t.ButtonBg)),
-			Focused: base.Background(t.FormHighlight).Foreground(highlightFg),
+			Focused: base.Background(t.FormHighlight).Foreground(oklch.ContrastingFg(t.FormHighlight)),
 		},
 		Danger: ButtonStyle{
 			Normal:  base.Background(t.ButtonBg).Foreground(t.Error).Bold(true),
-			Focused: base.Background(t.FormHighlight).Foreground(t.Error).Bold(true),
+			Focused: base.Background(t.Error).Foreground(oklch.ContrastingFg(t.Error)).Bold(true),
 		},
 	}
 }

@@ -83,11 +83,15 @@ CLI commands live in `cmd/chroncal/`, one file per resource group. Each exports 
 ### TUI Buttons
 - Exactly two variants: `Button` (neutral default) and `ButtonDanger`
   (destructive). No Primary, no Secondary, no Ghost.
-- `ButtonDanger` shares the same pill shape and background as `Button`;
-  only the *label* is colored (`Theme.Error`, bold). This is the Apple
-  pattern — red word on a neutral pill, not a flashing red button —
-  picked so destructive actions read as semantically distinct without
-  being visually loud.
+- `ButtonDanger` at rest shares the same pill and background as
+  `Button`; only the *label* is bold red (`Theme.Error`). On focus
+  Danger inverts (red bg, contrasting fg) instead of using
+  `FormHighlight` — needed because some themes have a warm/red focus
+  highlight that makes red text on it unreadable. Putting the red on
+  the background and computing a contrasting label via
+  `oklch.ContrastingFg` guarantees legibility on every theme and
+  emphasizes the destructive signal exactly when the user is about to
+  commit.
 - Color carries one signal: destructive or not. Focus highlight carries
   the other: which button Enter triggers. Do not conflate them.
 - `Form.SetSubmitVariant` defaults to `Button`; only destructive prompts
