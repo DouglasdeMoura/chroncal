@@ -30,6 +30,7 @@ type CalendarListItem struct {
 type calendarListKeyMap struct {
 	Up, Down, Tab, ShiftTab key.Binding
 	Toggle                  key.Binding
+	Open                    key.Binding
 }
 
 func defaultCalendarListKeys() calendarListKeyMap {
@@ -39,6 +40,7 @@ func defaultCalendarListKeys() calendarListKeyMap {
 		Tab:      key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next")),
 		ShiftTab: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev")),
 		Toggle:   key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "toggle visibility")),
+		Open:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
 	}
 }
 
@@ -167,6 +169,12 @@ func (m CalendarListModel) Update(msg tea.Msg) (CalendarListModel, tea.Cmd) {
 		return m.moveCursor(1), nil
 	case key.Matches(kp, m.keys.Toggle):
 		return m.toggleCurrent()
+	case key.Matches(kp, m.keys.Open):
+		if m.cursor < 0 || m.cursor >= len(m.items) {
+			return m, nil
+		}
+		id := m.items[m.cursor].ID
+		return m, func() tea.Msg { return CalendarDialogRequestedMsg{ID: id} }
 	}
 	return m, nil
 }

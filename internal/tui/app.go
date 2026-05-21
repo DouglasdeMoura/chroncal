@@ -1868,6 +1868,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Description: cal.Description,
 				OwnerEmail:  cal.OwnerEmail,
 				RemoteURL:   cal.RemoteURL,
+				IsDefault:   cal.IsDefault,
 			}
 			if cal.AccountID != 0 {
 				if acct, aerr := m.app.Queries.GetAccount(ctx, cal.AccountID); aerr == nil {
@@ -1876,6 +1877,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					params.RemoteUsername = acct.Username
 				}
 			}
+		} else {
+			// Create mode: only offer the "Save and Set as Default" path
+			// when another calendar already exists. The first calendar
+			// auto-defaults silently in the service, so the button would
+			// be redundant — and confusing if it appeared to do nothing.
+			params.OfferDefault = len(m.calendars) > 0
 		}
 		m.calendarDialog = NewCalendarDialogModel(params, m.theme).SetSize(m.width, m.height)
 		m.calendarDialogOpen = true
@@ -1933,6 +1940,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					RemoteColor:   meta.Color,
 				}, cred, credStore); cerr != nil {
 					return calendarMutationDoneMsg{err: cerr}
+				}
+			}
+
+			// MakeDefault only matters on create; edit-mode default moves
+			// through the dedicated CalendarSetDefaultRequestedMsg path so
+			// the rule stays in one place.
+			if saved.ID == 0 && saved.MakeDefault {
+				if derr := m.app.Calendars.SetDefault(ctx, cal.ID); derr != nil {
+					return calendarMutationDoneMsg{err: derr}
 				}
 			}
 

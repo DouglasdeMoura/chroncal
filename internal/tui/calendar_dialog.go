@@ -26,6 +26,17 @@ type CalendarDialogParams struct {
 	// the calendar is linked so the dialog can show connection details.
 	RemoteAuthType string
 	RemoteUsername string
+
+	// IsDefault marks the calendar being edited as the current default. It
+	// drives the dialog's "Default calendar" badge and hides the redundant
+	// Set-as-Default action. Ignored in create mode.
+	IsDefault bool
+
+	// OfferDefault enables the "Set as default after saving" checkbox in
+	// create mode. Callers set it when at least one calendar already
+	// exists, since the first calendar is auto-promoted by the service
+	// (the checkbox would be meaningless and noisy in that case).
+	OfferDefault bool
 }
 
 // CalendarSavedMsg is emitted when the user saves the dialog. ID == 0 means
@@ -36,6 +47,11 @@ type CalendarSavedMsg struct {
 	Color       string
 	Description string
 	OwnerEmail  string
+
+	// MakeDefault, when true on a create (ID == 0), instructs the parent to
+	// promote the just-created calendar to default after the row is saved.
+	// Ignored on edit — defaultness moves via SetDefault, not Save.
+	MakeDefault bool
 
 	// Remote connection — only meaningful when RemoteURL is non-empty and
 	// the calendar is not already linked. OAuth flows are handled via the
@@ -81,6 +97,12 @@ type CalendarTestResultMsg struct {
 // button so the dialog can read the current field values before asking
 // the parent to perform the actual connection check.
 type testConnectionPressedMsg struct{}
+
+// calendarSavePromotePressedMsg is an internal sentinel emitted by the
+// "Save and Set as Default" button. The dialog catches it, sets the
+// makeDefault flag observed by OnSubmit, and triggers the normal Save
+// pipeline so the same validation runs.
+type calendarSavePromotePressedMsg struct{}
 
 // CalendarDialogClosedMsg is emitted when the user cancels the dialog.
 type CalendarDialogClosedMsg struct{}
@@ -139,6 +161,12 @@ type CalendarDialogModel struct {
 	accentColor  color.Color
 	mutedColor   color.Color
 	textDimColor color.Color
+
+	// saveMakeDefault is shared by reference with the OnSubmit closure so
+	// the "Save and Set as Default" path can flip the MakeDefault bit on
+	// the upcoming CalendarSavedMsg without re-implementing form
+	// validation. Cleared automatically after each submit.
+	saveMakeDefault *bool
 }
 
 // NewCalendarDialogModel builds a dialog for create (params.ID==0) or edit.
@@ -146,6 +174,13 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 	title := "New calendar"
 	if params.ID > 0 {
 		title = "Edit calendar"
+		// Apple's "Get Info" sheet shows the default badge inline with the
+		// title — readable at a glance and impossible to confuse with an
+		// editable field. We do the same so users opening a calendar via
+		// the sidebar's Return keypress see the state immediately.
+		if params.IsDefault {
+			title += " · Default"
+		}
 	}
 	if params.Color == "" {
 		params.Color = "#a6e3a1"
@@ -199,6 +234,7 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 
 	savedID := params.ID
 	linked := params.RemoteLinked
+	saveMakeDefault := new(bool)
 	form.OnSubmit(func(f *Form) tea.Cmd {
 		nameVal := strings.TrimSpace(f.Field(cdIdxName).(*TextField).Value())
 		hexVal := strings.TrimSpace(f.Field(cdIdxColor).(*ColorField).Value())
@@ -211,7 +247,9 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 			Color:       hexVal,
 			Description: descVal,
 			OwnerEmail:  emailVal,
+			MakeDefault: *saveMakeDefault,
 		}
+		*saveMakeDefault = false
 
 		if !linked && syncEnabled(f) {
 			urlVal := strings.TrimSpace(f.Field(cdIdxRemoteURL).(*TextField).Value())
@@ -252,16 +290,17 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 	})
 
 	m := CalendarDialogModel{
-		id:           params.ID,
-		name:         params.Name,
-		linked:       params.RemoteLinked,
-		dialog:       dialog,
-		form:         form,
-		help:         newThemedHelp(theme),
-		theme:        theme,
-		accentColor:  theme.Selected,
-		mutedColor:   theme.Muted,
-		textDimColor: theme.TextDim,
+		id:              params.ID,
+		name:            params.Name,
+		linked:          params.RemoteLinked,
+		dialog:          dialog,
+		form:            form,
+		help:            newThemedHelp(theme),
+		theme:           theme,
+		accentColor:     theme.Selected,
+		mutedColor:      theme.Muted,
+		textDimColor:    theme.TextDim,
+		saveMakeDefault: saveMakeDefault,
 	}
 
 	if params.RemoteLinked {
@@ -269,6 +308,27 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		name := params.Name
 		form.SetLeadingActionButton("Disconnect", ButtonDanger, func() tea.Msg {
 			return CalendarDisconnectRemoteRequestedMsg{ID: id, Name: name}
+		})
+	}
+
+	// Edit mode, not yet default: surface "Set as Default" so the user
+	// can reach the action without backing out into the manage-calendars
+	// list. Hidden when already default — no valid "unset" exists.
+	if params.ID > 0 && !params.IsDefault {
+		id := params.ID
+		name := params.Name
+		form.SetLeadingActionButton("Set as Default", Button, func() tea.Msg {
+			return CalendarSetDefaultRequestedMsg{ID: id, Name: name}
+		})
+	}
+
+	// Create mode with at least one calendar already on disk: offer to
+	// promote the new row to default in one save, instead of forcing a
+	// follow-up trip through the list dialog. Suppressed for the very
+	// first calendar since the service auto-promotes that row silently.
+	if params.ID == 0 && params.OfferDefault {
+		form.SetLeadingActionButton("Save and Set as Default", Button, func() tea.Msg {
+			return calendarSavePromotePressedMsg{}
 		})
 	}
 
@@ -506,6 +566,15 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 
 	if _, ok := msg.(testConnectionPressedMsg); ok {
 		return m.handleTestPressed()
+	}
+
+	if _, ok := msg.(calendarSavePromotePressedMsg); ok {
+		if m.saveMakeDefault != nil {
+			*m.saveMakeDefault = true
+		}
+		var cmd tea.Cmd
+		m.form, cmd = m.form.Submit()
+		return m, cmd
 	}
 
 	if tr, ok := msg.(CalendarTestResultMsg); ok {
