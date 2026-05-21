@@ -125,9 +125,12 @@ func (m EventViewDialogModel) SetSize(w, h int) EventViewDialogModel {
 	m.dialog = m.dialog.Update(tea.WindowSizeMsg{Width: w, Height: h})
 	cw := m.dialog.ContentWidth()
 	m.body.SetWidth(cw)
-	m.body.SetHeight(m.viewportHeight())
 	if cw > 0 {
-		m.body.SetContentLines(m.buildBodyLines(cw))
+		bodyLines := m.buildBodyLines(cw)
+		m.body.SetHeight(min(len(bodyLines), m.viewportHeight()))
+		m.body.SetContentLines(bodyLines)
+	} else {
+		m.body.SetHeight(m.viewportHeight())
 	}
 	return m
 }
@@ -633,7 +636,7 @@ func (m EventViewDialogModel) View() string {
 	actionsRow := m.renderActions(cw)
 
 	m.body.SetWidth(cw)
-	m.body.SetHeight(m.viewportHeight())
+	m.body.SetHeight(min(len(bodyLines), m.viewportHeight()))
 	m.body.SetContentLines(bodyLines)
 
 	sep := m.actionsSeparator(cw)
