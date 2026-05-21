@@ -1023,6 +1023,17 @@ func (m Model) innerDims() (int, int) {
 	return mw - padding*2, mh - padding*2
 }
 
+// openQuitConfirm builds and opens the quit-confirm dialog. Shared by the
+// q and ctrl+c entry points so the two keystrokes can't drift in styling.
+func (m Model) openQuitConfirm() Model {
+	m.pendingQuit = true
+	m.confirmDialog = NewConfirmDialogModel("Quit chroncal?", "Quit").
+		Subdued().
+		SetSize(m.width, m.height)
+	m.confirmOpen = true
+	return m
+}
+
 // interceptGlobalKeys routes the quit guard (q / ctrl+c) and help (?) ahead
 // of any open dialog so they work from anywhere. A second ctrl+c while the
 // quit confirm is showing forces the exit. ctrl+c is truly global (it isn't
@@ -1037,22 +1048,12 @@ func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			return m, tea.Quit, true
 		}
 		if !m.confirmOpen {
-			m.pendingQuit = true
-			m.confirmDialog = NewConfirmDialogModel("Quit chroncal?", "Quit").
-				Subdued().
-				SetSize(m.width, m.height)
-			m.confirmOpen = true
-			return m, nil, true
+			return m.openQuitConfirm(), nil, true
 		}
 	}
 	textEntryActive := m.paletteOpen || m.formOpen || m.calendarDialogOpen
 	if key.Matches(msg, m.keys.Quit) && !m.confirmOpen && !textEntryActive {
-		m.pendingQuit = true
-		m.confirmDialog = NewConfirmDialogModel("Quit chroncal?", "Quit").
-			Subdued().
-			SetSize(m.width, m.height)
-		m.confirmOpen = true
-		return m, nil, true
+		return m.openQuitConfirm(), nil, true
 	}
 	if key.Matches(msg, m.keys.Help) && !inQuitConfirm && !m.helpDialogOpen && !textEntryActive {
 		return m, func() tea.Msg { return HelpDialogRequestedMsg{} }, true
