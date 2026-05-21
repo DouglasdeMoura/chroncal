@@ -54,12 +54,10 @@ type rawTheme struct {
 	FormHighlight any `toml:"form_highlight"`
 
 	// Buttons.
-	ButtonPrimaryBg        any `toml:"button_primary_bg"`
-	ButtonPrimaryFocusedBg any `toml:"button_primary_focused_bg"`
-	ButtonSecondaryBg      any `toml:"button_secondary_bg"`
-	ButtonDangerBg         any `toml:"button_danger_bg"`
-	ButtonDangerFocusedBg  any `toml:"button_danger_focused_bg"`
-	ButtonGhostFg          any `toml:"button_ghost_fg"`
+	ButtonPrimaryBg   any `toml:"button_primary_bg"`
+	ButtonSecondaryBg any `toml:"button_secondary_bg"`
+	ButtonDangerBg    any `toml:"button_danger_bg"`
+	ButtonGhostFg     any `toml:"button_ghost_fg"`
 
 	// Calendar palette swatches.
 	CalendarSwatches []string `toml:"calendar_swatches"`
@@ -247,12 +245,10 @@ func resolveTheme(r *rawTheme, hasDarkBG bool) (Theme, error) {
 		FormError:     pick("form_error", r.FormError),
 		FormHighlight: pick("form_highlight", r.FormHighlight),
 
-		ButtonPrimaryBg:        pick("button_primary_bg", r.ButtonPrimaryBg),
-		ButtonPrimaryFocusedBg: pick("button_primary_focused_bg", r.ButtonPrimaryFocusedBg),
-		ButtonSecondaryBg:      pick("button_secondary_bg", r.ButtonSecondaryBg),
-		ButtonDangerBg:         pick("button_danger_bg", r.ButtonDangerBg),
-		ButtonDangerFocusedBg:  pick("button_danger_focused_bg", r.ButtonDangerFocusedBg),
-		ButtonGhostFg:          pick("button_ghost_fg", r.ButtonGhostFg),
+		ButtonPrimaryBg:   pick("button_primary_bg", r.ButtonPrimaryBg),
+		ButtonSecondaryBg: pick("button_secondary_bg", r.ButtonSecondaryBg),
+		ButtonDangerBg:    pick("button_danger_bg", r.ButtonDangerBg),
+		ButtonGhostFg:     pick("button_ghost_fg", r.ButtonGhostFg),
 
 		CalendarSwatches: append([]string(nil), r.CalendarSwatches...),
 	}
