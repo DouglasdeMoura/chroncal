@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"image/color"
 	"maps"
 	"strings"
@@ -183,43 +182,35 @@ func (m CalendarListModel) View() string {
 		if m.hidden[it.ID] {
 			glyph = "○"
 		}
-		name := it.Name
-		// "swatch + space" consumes 2 cells; reserve the rest for the name.
-		if m.width > 2 {
-			name = truncateTo(name, m.width-2)
+		// Swatch keeps its calendar-color foreground in every state — its
+		// job is to identify the calendar, not signal selection.
+		swatch := lipgloss.NewStyle().Foreground(lipgloss.Color(it.Color)).Render(glyph)
+
+		// Mirror the manage-calendars dialog's selection treatment:
+		// inverted (Reverse) + bold for the focused row, faint for hidden.
+		// Reverse swaps terminal fg/bg so the chip pops regardless of theme,
+		// avoiding the muddy-tint problem of explicit Background()+Width().
+		nameStyle := lipgloss.NewStyle()
+		if m.hidden[it.ID] && !selected {
+			nameStyle = nameStyle.Foreground(m.mutedColor)
 		}
-		var line string
 		if selected {
-			fg := m.selectedTextColor
-			if fg == nil {
-				fg = m.textColor
+			nameStyle = nameStyle.Reverse(true).Bold(true)
+			// Reserve the swatch (1 cell) + separator space (1 cell) and let
+			// the chip fill the rest, so trailing pad cells pick up the tint.
+			if remaining := m.width - 2; remaining > 0 {
+				nameStyle = nameStyle.Width(remaining)
 			}
-			// Render every segment with the selected background explicitly.
-			// Wrapping the whole line in a single Background+Width style lets
-			// the swatch's inner ANSI reset punch through the bg fill on some
-			// terminals; per-segment painting avoids that.
-			swatch := lipgloss.NewStyle().
-				Background(m.accentColor).
-				Foreground(lipgloss.Color(it.Color)).
-				Render(glyph)
-			nameRendered := lipgloss.NewStyle().
-				Background(m.accentColor).
-				Foreground(fg).
-				Bold(true).
-				Render(name)
-			bgFill := lipgloss.NewStyle().Background(m.accentColor)
-			line = swatch + bgFill.Render(" ") + nameRendered
-			if pad := m.width - lipgloss.Width(line); pad > 0 {
-				line += bgFill.Render(strings.Repeat(" ", pad))
-			}
-		} else {
-			swatch := lipgloss.NewStyle().Foreground(lipgloss.Color(it.Color)).Render(glyph)
-			if m.hidden[it.ID] {
-				name = lipgloss.NewStyle().Foreground(m.mutedColor).Render(name)
-			}
-			line = fmt.Sprintf("%s %s", swatch, name)
 		}
-		b.WriteString(line)
+		// Pad the chip with surrounding spaces so the inverted block has
+		// breathing room on both sides of the label, matching the dialog.
+		nameText := it.Name
+		if m.width > 4 {
+			nameText = truncateTo(nameText, m.width-4)
+		}
+		name := nameStyle.Render(" " + nameText + " ")
+
+		b.WriteString(swatch + " " + name)
 		if i < len(m.items)-1 {
 			b.WriteString("\n")
 		}

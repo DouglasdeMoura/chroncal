@@ -343,7 +343,10 @@ func (m MiniMonthModel) View() string {
 	// Header: chevrons are real tab stops (Tab / click) for month navigation.
 	// Each gets a filled highlight when inner focus lands on it.
 	mutedStyle := lipgloss.NewStyle().Foreground(m.mutedColor)
-	focusedChevronStyle := lipgloss.NewStyle().Background(m.accentColor).Foreground(m.textColor).Bold(true)
+	// Match the calendar-list and manage-calendars dialog: Reverse swaps
+	// terminal fg/bg so the focused tab stop pops on every theme, without
+	// the muddy faint-tint problem of explicit Background(accent).
+	focusedChevronStyle := lipgloss.NewStyle().Reverse(true).Bold(true)
 	var leftChev, rightChev string
 	if m.focused && m.innerFocus == innerFocusPrev {
 		leftChev = focusedChevronStyle.Render("‹")
@@ -416,11 +419,10 @@ func (m MiniMonthModel) View() string {
 				Bold(true).
 				Render(num)
 		case isToday:
-			// Fake a square outline with underline + overline (top + bottom
-			// sides). SGR 53/55 is not exposed by lipgloss, so wrap the
-			// lipgloss-rendered cell with raw escapes.
-			inner := lipgloss.NewStyle().Bold(true).Underline(true).Render(num)
-			cell = "\x1b[53m" + inner + "\x1b[55m"
+			// Bold + accent color is enough signal when today isn't the
+			// focused day; the underline/overline outline would otherwise
+			// compete with the cursor highlight for attention.
+			cell = lipgloss.NewStyle().Foreground(m.todayColor).Bold(true).Render(num)
 		}
 		b.WriteString(cell)
 		col++
