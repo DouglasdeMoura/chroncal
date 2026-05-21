@@ -9,6 +9,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/event"
 
 	"charm.land/bubbles/v2/help"
+	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
 )
 
@@ -59,6 +60,20 @@ func BenchmarkEventDialogView(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		_ = m.View()
+	}
+}
+
+func BenchmarkEventDialogDown(b *testing.B) {
+	evs := benchEvents(96)
+	day := time.Date(2026, 5, 30, 0, 0, 0, 0, time.Local)
+	m := NewEventDialogModel(day, evs, map[int64]CalendarInfo{}, help.New()).SetSize(120, 40)
+	_ = m.View()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		m2, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		m = m2
 		_ = m.View()
 	}
 }

@@ -103,13 +103,30 @@ const narrowThreshold = 90
 // (selected day, sorted events) and the RSVP row, which is composed into
 // the detail lines rather than handled by the shell.
 type EventDialogModel struct {
-	shell       ListDialogModel
-	day         time.Time
+	shell ListDialogModel
+	day   time.Time
+	// events is the sorted list shown in the dialog.
+	// eventLabels is the per-row "HH:MM  Title" string pre-formatted once
+	// per events change. Refresh restyles only the selected row instead of
+	// rebuilding every label per keystroke — a measurable win when the
+	// dialog has dozens of events.
 	events      []event.Event
+	eventLabels []string
 	calendars   map[int64]CalendarInfo
 	keys        eventDialogKeyMap
 	focusedRSVP int
 	rsvpFocused bool
+}
+
+// buildEventLabels precomputes the unstyled row labels for the current
+// events slice. Called from the constructor and SetEvents so refresh
+// can reuse the labels across navigation keystrokes.
+func (m EventDialogModel) buildEventLabels() EventDialogModel {
+	m.eventLabels = make([]string, len(m.events))
+	for i, ev := range m.events {
+		m.eventLabels[i] = formatEventLabel(ev)
+	}
+	return m
 }
 
 func NewEventDialogModel(day time.Time, events []event.Event, calendars map[int64]CalendarInfo, h help.Model) EventDialogModel {
@@ -136,6 +153,7 @@ func NewEventDialogModel(day time.Time, events []event.Event, calendars map[int6
 		calendars: calendars,
 		keys:      defaultEventDialogKeys(),
 	}
+	m = m.buildEventLabels()
 	return m.refresh()
 }
 
@@ -151,6 +169,7 @@ func (m EventDialogModel) SetSelectedColor(c color.Color) EventDialogModel {
 
 func (m EventDialogModel) SetEvents(events []event.Event) EventDialogModel {
 	m.events = events
+	m = m.buildEventLabels()
 	if sel := m.shell.Selected(); sel >= len(events) {
 		m.shell = m.shell.SetSelected(max(0, len(events)-1))
 	}
@@ -254,25 +273,29 @@ func (m EventDialogModel) refresh() EventDialogModel {
 	listFocused := m.shell.FocusZone() == ListZoneList
 	rowW := m.listRowWidth()
 	selBG := m.shell.SelectedColor()
-	for i, ev := range m.events {
-		label := formatEventLabel(ev)
-		if i == sel {
-			if rowW > 0 {
-				label = truncateTo(label, rowW)
-			}
-			style := lipgloss.NewStyle()
-			switch {
-			case listFocused:
-				style = style.Reverse(true).Bold(true)
-			case selBG != nil:
-				style = style.Background(selBG).Foreground(activeTheme.SelectedText)
-			}
-			if rowW > 0 {
-				style = style.Width(rowW)
-			}
-			label = style.Render(label)
+	// Reuse pre-formatted labels (built once per events change in
+	// buildEventLabels). Only the selected row gets re-styled per
+	// keystroke; the other rows are direct pointer copies.
+	if len(m.eventLabels) != len(m.events) {
+		m = m.buildEventLabels()
+	}
+	copy(rows, m.eventLabels)
+	if sel >= 0 && sel < len(rows) {
+		label := rows[sel]
+		if rowW > 0 {
+			label = truncateTo(label, rowW)
 		}
-		rows[i] = label
+		style := lipgloss.NewStyle()
+		switch {
+		case listFocused:
+			style = style.Reverse(true).Bold(true)
+		case selBG != nil:
+			style = style.Background(selBG).Foreground(activeTheme.SelectedText)
+		}
+		if rowW > 0 {
+			style = style.Width(rowW)
+		}
+		rows[sel] = style.Render(label)
 	}
 	m.shell = m.shell.SetRows(rows)
 

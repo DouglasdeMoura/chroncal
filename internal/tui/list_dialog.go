@@ -155,12 +155,15 @@ func (m ListDialogModel) SetSelectedColor(c color.Color) ListDialogModel {
 
 // SetRows replaces the list rows. The caller is responsible for pre-rendering
 // each row (swatch, time prefix, …). Scroll and selection are clamped.
+// Doesn't touch the body viewport: rows live in the left column only,
+// while the body shows the right-column details. Other setters
+// (SetDetailLines, SetActions, SetDetailTitle, SetEmptyList, SetSize)
+// trigger syncBody when they actually need it.
 func (m ListDialogModel) SetRows(rows []string) ListDialogModel {
 	m.rows = rows
 	if m.selected >= len(rows) {
 		m.selected = max(len(rows)-1, 0)
 	}
-	m.syncBody()
 	return m
 }
 
