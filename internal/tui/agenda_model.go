@@ -629,20 +629,16 @@ func (m AgendaModel) renderDayColumn(r agendaRow, base lipgloss.Style, _ bool) s
 	dayNum := fmt.Sprintf("%d", d.Day())
 
 	isToday := sameDay(d, m.today)
-	isCursor := sameDay(d, m.cursor) && !isToday
 
 	var weekdayStyle, numStyle lipgloss.Style
 	switch {
 	case isToday:
-		weekdayStyle = base.Foreground(m.theme.Primary).Bold(true)
+		weekdayStyle = base.Foreground(m.theme.Today).Bold(true)
 		numStyle = lipgloss.NewStyle().
-			Background(m.theme.Primary).
+			Background(m.theme.Today).
 			Foreground(m.theme.Surface).
 			Bold(true).
 			PaddingRight(1)
-	case isCursor:
-		weekdayStyle = base.Foreground(m.theme.Primary).Bold(true)
-		numStyle = base.Foreground(m.theme.Primary).Bold(true)
 	default:
 		weekdayStyle = base.Foreground(m.theme.TextDim)
 		numStyle = base.Foreground(m.theme.Text).Bold(true)
