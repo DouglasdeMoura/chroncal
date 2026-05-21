@@ -603,11 +603,19 @@ func (m *ListDialogModel) viewStacked(innerW, bodyH int) string {
 }
 
 func (m *ListDialogModel) adjustScroll(visibleH int) {
+	// When the list overflows, renderList reserves the last visible row
+	// for the scroll indicator (e.g. "5/96 ▼"), overwriting whatever row
+	// would otherwise sit there. Treat that slot as out of bounds for the
+	// selection so the highlighted row never lands on it.
+	contentH := visibleH
+	if len(m.rows) > visibleH && contentH > 1 {
+		contentH = visibleH - 1
+	}
 	if m.selected < m.scroll {
 		m.scroll = m.selected
 	}
-	if m.selected >= m.scroll+visibleH {
-		m.scroll = m.selected - visibleH + 1
+	if m.selected >= m.scroll+contentH {
+		m.scroll = m.selected - contentH + 1
 	}
 	if m.scroll < 0 {
 		m.scroll = 0
@@ -633,7 +641,7 @@ func (m ListDialogModel) renderList(w, h int) string {
 	}
 
 	if total > h {
-		indicator := fmt.Sprintf(" %d/%d ", m.selected+1, total)
+		indicator := fmt.Sprintf("%d/%d ", m.selected+1, total)
 		arrows := ""
 		if m.scroll > 0 {
 			arrows += "▲"
