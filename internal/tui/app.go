@@ -1039,6 +1039,7 @@ func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		if !m.confirmOpen {
 			m.pendingQuit = true
 			m.confirmDialog = NewConfirmDialogModel("Quit chroncal?", "Quit").
+				Destructive().
 				SetSize(m.width, m.height)
 			m.confirmOpen = true
 			return m, nil, true
@@ -1788,7 +1789,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.confirmDialog = NewConfirmDialogModel(
 				fmt.Sprintf("Delete %q?", msg.Event.Title),
 				"Delete",
-			).SetSize(m.width, m.height)
+			).Destructive().SetSize(m.width, m.height)
 			m.confirmOpen = true
 		}
 		return m, nil
@@ -1980,6 +1981,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.confirmDialog = NewConfirmDialogModel(message, "Delete").
+			Destructive().
 			SetSize(m.width, m.height)
 		m.confirmOpen = true
 		return m, nil
@@ -2344,6 +2346,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			message = fmt.Sprintf("Purge %d items forever? This can't be undone.", len(msg.Entries))
 		}
 		m.confirmDialog = NewConfirmDialogModel(message, "Purge").
+			Destructive().
 			SetSize(m.width, m.height)
 		m.confirmOpen = true
 		return m, nil

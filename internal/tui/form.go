@@ -1720,6 +1720,7 @@ type Form struct {
 	items         []FormItem
 	styles        FormStyles
 	submitLabel   string
+	submitVariant ButtonVariant
 	cancelVariant ButtonVariant
 	actionButtons []FormActionButton
 	focused       int
@@ -1737,6 +1738,7 @@ func NewForm(submitLabel string, styles FormStyles, items ...FormItem) Form {
 		items:         items,
 		styles:        styles,
 		submitLabel:   submitLabel,
+		submitVariant: ButtonPrimary,
 		cancelVariant: ButtonSecondary,
 	}
 	for i, item := range items {
@@ -1903,7 +1905,8 @@ func (f Form) View() string {
 	bs := f.styles.Buttons
 	leadParts := make([]string, 0, len(f.actionButtons))
 	rightParts := make([]string, 0, len(f.actionButtons)+2)
-	rightParts = append(rightParts, mouseMark("submit", bs.Primary.Render(f.submitLabel, f.focused == f.submitIndex())))
+	submitStyle := bs.Get(f.submitVariant)
+	rightParts = append(rightParts, mouseMark("submit", submitStyle.Render(f.submitLabel, f.focused == f.submitIndex())))
 	for i, ab := range f.actionButtons {
 		style := bs.Get(ab.Variant)
 		btn := mouseMark(actionTarget(i), style.Render(ab.Label, f.focused == f.actionIndex(i)))
@@ -1979,6 +1982,10 @@ func (f *Form) SetLeadingActionButton(label string, variant ButtonVariant, onPre
 
 func (f *Form) SetCancelVariant(v ButtonVariant) {
 	f.cancelVariant = v
+}
+
+func (f *Form) SetSubmitVariant(v ButtonVariant) {
+	f.submitVariant = v
 }
 
 func (f *Form) OnSubmit(fn func(f *Form) tea.Cmd) {

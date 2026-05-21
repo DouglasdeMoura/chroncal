@@ -49,6 +49,13 @@ func NewConfirmDialogModel(message, confirmLabel string) ConfirmDialogModel {
 	return ConfirmDialogModel{dialog: dialog, form: form, contentWidth: cw}
 }
 
+// Destructive styles the confirm button with the Danger variant. Use for
+// quit / delete / discard prompts so the action reads as destructive.
+func (m ConfirmDialogModel) Destructive() ConfirmDialogModel {
+	m.form.SetSubmitVariant(ButtonDanger)
+	return m
+}
+
 func (m ConfirmDialogModel) SetSize(w, h int) ConfirmDialogModel {
 	const maxWidth = 50
 	dw := w
