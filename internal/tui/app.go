@@ -146,6 +146,7 @@ const (
 	pendingScopeNone pendingScopeKind = iota
 	pendingScopeDelete
 	pendingScopeEdit
+	pendingScopeCalendarPromote
 )
 
 type eventViewLoadedMsg struct {
@@ -259,18 +260,18 @@ type syncStatusExpiredMsg struct {
 }
 
 type Model struct {
-	app            *app.App
-	theme          Theme
-	themeName      string
-	keys           appKeyMap
-	width          int
-	height         int
-	viewMode       viewMode
-	calendar       CalendarModel
-	week           WeekModel
-	day            DayModel
-	agenda         AgendaModel
-	events         []event.Event
+	app       *app.App
+	theme     Theme
+	themeName string
+	keys      appKeyMap
+	width     int
+	height    int
+	viewMode  viewMode
+	calendar  CalendarModel
+	week      WeekModel
+	day       DayModel
+	agenda    AgendaModel
+	events    []event.Event
 	// loadedFrom/loadedTo track the [from, to) UTC range currently covered
 	// by m.events so agenda expansion can query only the newly-added
 	// slice instead of re-querying the whole window each time. Zero values
@@ -302,17 +303,21 @@ type Model struct {
 	pendingScopeKind pendingScopeKind
 	pendingEditSave  EventFormSaveMsg
 	err              error
-	ready           bool
-	showSidebar     bool
-	showWeekNumbers bool
-	focus           appFocus
-	hiddenCalendars map[int64]bool
-	clickedEventID  int64
+	ready            bool
+	showSidebar      bool
+	showWeekNumbers  bool
+	focus            appFocus
+	hiddenCalendars  map[int64]bool
+	clickedEventID   int64
 
-	sidebar               SidebarModel
-	calendarDialog        CalendarDialogModel
-	calendarDialogOpen    bool
-	pendingCalendarDelete int64
+	sidebar                     SidebarModel
+	calendarDialog              CalendarDialogModel
+	calendarDialogOpen          bool
+	pendingCalendarDelete       int64
+	pendingCalendarDeleteName   string
+	pendingCalendarPromote      int64   // new default to promote when deleting the current default
+	pendingCalendarPromoteName  string  // human-readable name of the promotion target
+	pendingCalendarPromoteCands []int64 // candidate calendar IDs by ChoiceDialog button index
 
 	calendarListDialog     CalendarListDialogModel
 	calendarListDialogOpen bool
@@ -796,6 +801,7 @@ func (m Model) loadCalendars() tea.Cmd {
 				LastSyncError:       c.LastSyncError,
 				CreatedAt:           c.CreatedAt,
 				UpdatedAt:           c.UpdatedAt,
+				IsDefault:           c.IsDefault,
 			}
 		}
 		return calendarsLoadedMsg{calendars: info}
@@ -1213,6 +1219,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case CalendarSavedMsg, CalendarDeleteRequestedMsg, CalendarDialogClosedMsg,
 			CalendarDisconnectRemoteRequestedMsg,
 			CalendarTestRequestedMsg,
+			CalendarSetDefaultRequestedMsg,
 			calendarDeleteCountMsg,
 			tea.BackgroundColorMsg, tea.WindowSizeMsg,
 			eventsLoadedMsg, calendarsLoadedMsg,
@@ -1944,6 +1951,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return calendarMutationDoneMsg{err: m.app.Calendars.Disconnect(ctx, cal, credStore)}
 		}
 
+	case CalendarSetDefaultRequestedMsg:
+		id := msg.ID
+		return m, func() tea.Msg {
+			return calendarMutationDoneMsg{err: m.app.Calendars.SetDefault(context.Background(), id)}
+		}
+
 	case CalendarTestRequestedMsg:
 		req := msg
 		return m, func() tea.Msg {
@@ -1964,7 +1977,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case CalendarDeleteRequestedMsg:
 		// Fetch the event count before showing the confirm dialog so the
 		// user knows how many events will be deleted alongside the calendar.
+		// When the target is the current default, slot in a picker dialog
+		// before the destructive confirm so the user explicitly chooses
+		// the replacement default — never silently promoted.
 		id, name := msg.ID, msg.Name
+		info, known := m.calendars[id]
+		if known && info.IsDefault {
+			candidates := defaultPromotionCandidates(m.calendars, id)
+			if len(candidates) == 0 {
+				// Last calendar: service will return ErrLastCalendar; let
+				// the normal confirm flow surface the error verbatim.
+				return m, func() tea.Msg {
+					count, _ := m.app.Events.CountByCalendar(context.Background(), id)
+					return calendarDeleteCountMsg{id: id, name: name, eventCount: count}
+				}
+			}
+			m.pendingCalendarDelete = id
+			m.pendingCalendarDeleteName = name
+			m.pendingCalendarPromoteCands = make([]int64, len(candidates))
+			labels := make([]string, len(candidates))
+			for i, c := range candidates {
+				m.pendingCalendarPromoteCands[i] = c.id
+				labels[i] = c.name
+			}
+			m.pendingScopeKind = pendingScopeCalendarPromote
+			message := fmt.Sprintf("%q is the default calendar.\n\nChoose a new default before deleting it:", name)
+			m.choiceDialog = NewChoiceDialogModel(message, m.theme, labels...).
+				SetSize(m.width, m.height)
+			m.choiceOpen = true
+			return m, nil
+		}
 		return m, func() tea.Msg {
 			count, _ := m.app.Events.CountByCalendar(context.Background(), id)
 			return calendarDeleteCountMsg{id: id, name: name, eventCount: count}
@@ -1976,6 +2018,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// losing their in-progress changes. The confirm dialog takes input
 		// priority, so the edit dialog is visible but inert.
 		m.pendingCalendarDelete = msg.id
+		m.pendingCalendarDeleteName = msg.name
 		message := fmt.Sprintf("Delete calendar %q?", msg.name)
 		if msg.eventCount > 0 {
 			if msg.eventCount == 1 {
@@ -1983,6 +2026,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				message = fmt.Sprintf("Delete calendar %q?\n\n%d events will be deleted", msg.name, msg.eventCount)
 			}
+		}
+		if m.pendingCalendarPromoteName != "" {
+			message += fmt.Sprintf("\n\n%q will become the default.", m.pendingCalendarPromoteName)
 		}
 		m.confirmDialog = NewConfirmDialogModel(message, "Delete", m.theme).
 			Destructive().
@@ -2175,7 +2221,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Choice < 0 {
 			m.pendingEditSave = EventFormSaveMsg{}
 			m.pendingDelete = event.Event{}
+			if kind == pendingScopeCalendarPromote {
+				m.pendingCalendarDelete = 0
+				m.pendingCalendarDeleteName = ""
+				m.pendingCalendarPromote = 0
+				m.pendingCalendarPromoteName = ""
+				m.pendingCalendarPromoteCands = nil
+			}
 			return m, nil
+		}
+		if kind == pendingScopeCalendarPromote {
+			if msg.Choice < 0 || msg.Choice >= len(m.pendingCalendarPromoteCands) {
+				m.pendingCalendarDelete = 0
+				m.pendingCalendarDeleteName = ""
+				m.pendingCalendarPromoteCands = nil
+				return m, nil
+			}
+			promoteID := m.pendingCalendarPromoteCands[msg.Choice]
+			m.pendingCalendarPromote = promoteID
+			if info, ok := m.calendars[promoteID]; ok {
+				m.pendingCalendarPromoteName = info.Name
+			}
+			id, name := m.pendingCalendarDelete, m.pendingCalendarDeleteName
+			m.pendingCalendarPromoteCands = nil
+			return m, func() tea.Msg {
+				count, _ := m.app.Events.CountByCalendar(context.Background(), id)
+				return calendarDeleteCountMsg{id: id, name: name, eventCount: count}
+			}
 		}
 		if kind == pendingScopeEdit {
 			save := m.pendingEditSave
@@ -2228,6 +2300,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if !msg.Confirmed {
 			m.pendingCalendarDelete = 0
+			m.pendingCalendarDeleteName = ""
+			m.pendingCalendarPromote = 0
+			m.pendingCalendarPromoteName = ""
 			m.pendingPurgeEntries = nil
 			m.pendingPurgeTitle = ""
 			return m, nil
@@ -2248,12 +2323,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.pendingCalendarDelete != 0 {
 			id := m.pendingCalendarDelete
+			newDefaultID := m.pendingCalendarPromote
 			m.pendingCalendarDelete = 0
+			m.pendingCalendarDeleteName = ""
+			m.pendingCalendarPromote = 0
+			m.pendingCalendarPromoteName = ""
 			// Delete confirmed: close the edit dialog too.
 			m.calendarDialogOpen = false
 			return m, func() tea.Msg {
 				credStore, _ := auth.NewCredentialStore(true)
-				err := m.app.Calendars.DeleteWithRemoteCleanup(context.Background(), id, credStore)
+				err := m.app.Calendars.DeleteWithRemoteCleanup(context.Background(), id, newDefaultID, credStore)
 				return calendarMutationDoneMsg{err: err}
 			}
 		}

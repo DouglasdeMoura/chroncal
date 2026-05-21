@@ -303,3 +303,159 @@ func TestCalendarService_DeleteNonLastCalendarAllowed(t *testing.T) {
 		t.Fatalf("expected 1 calendar after delete, got %d", len(cals))
 	}
 }
+
+func TestCalendarService_SeedCalendarIsDefault(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	def, err := svc.GetDefault(ctx)
+	if err != nil {
+		t.Fatalf("GetDefault: %v", err)
+	}
+	if def.Name != "Personal" || !def.IsDefault {
+		t.Errorf("seed default = %+v, want Personal IsDefault=true", def)
+	}
+}
+
+func TestCalendarService_CreateDoesNotStealDefault(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	// A second calendar must NOT take the default away from the seed.
+	c, err := svc.Create(ctx, "Work", "#0284C7", "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if c.IsDefault {
+		t.Errorf("newly-created calendar should not be default when one already exists")
+	}
+	def, err := svc.GetDefault(ctx)
+	if err != nil {
+		t.Fatalf("GetDefault: %v", err)
+	}
+	if def.Name != "Personal" {
+		t.Errorf("default = %q, want %q", def.Name, "Personal")
+	}
+}
+
+func TestCalendarService_SetDefaultIsExclusive(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	work, err := svc.Create(ctx, "Work", "#0284C7", "")
+	if err != nil {
+		t.Fatalf("Create Work: %v", err)
+	}
+	if err := svc.SetDefault(ctx, work.ID); err != nil {
+		t.Fatalf("SetDefault: %v", err)
+	}
+	def, err := svc.GetDefault(ctx)
+	if err != nil {
+		t.Fatalf("GetDefault: %v", err)
+	}
+	if def.ID != work.ID {
+		t.Errorf("default ID = %d, want %d", def.ID, work.ID)
+	}
+	// The old default should no longer carry the flag.
+	cals, _ := svc.List(ctx)
+	defaults := 0
+	for _, c := range cals {
+		if c.IsDefault {
+			defaults++
+		}
+	}
+	if defaults != 1 {
+		t.Errorf("expected exactly 1 default after SetDefault, got %d", defaults)
+	}
+}
+
+func TestCalendarService_DeleteDefaultRefusesWithoutPromotion(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	if _, err := svc.Create(ctx, "Work", "#0284C7", ""); err != nil {
+		t.Fatalf("Create Work: %v", err)
+	}
+	def, _ := svc.GetDefault(ctx)
+	err := svc.Delete(ctx, def.ID)
+	if !errors.Is(err, ErrDefaultCalendarRequiresPromotion) {
+		t.Errorf("Delete default got err=%v, want ErrDefaultCalendarRequiresPromotion", err)
+	}
+	// Calendar must still exist.
+	if _, err := svc.Get(ctx, def.ID); err != nil {
+		t.Errorf("default calendar should still exist after refused delete: %v", err)
+	}
+}
+
+func TestCalendarService_DeleteAndPromote(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	work, err := svc.Create(ctx, "Work", "#0284C7", "")
+	if err != nil {
+		t.Fatalf("Create Work: %v", err)
+	}
+	def, _ := svc.GetDefault(ctx)
+	if err := svc.DeleteAndPromote(ctx, def.ID, work.ID); err != nil {
+		t.Fatalf("DeleteAndPromote: %v", err)
+	}
+	if _, err := svc.Get(ctx, def.ID); err == nil {
+		t.Errorf("expected old default to be deleted")
+	}
+	newDef, err := svc.GetDefault(ctx)
+	if err != nil {
+		t.Fatalf("GetDefault after promote: %v", err)
+	}
+	if newDef.ID != work.ID || !newDef.IsDefault {
+		t.Errorf("new default = %+v, want id=%d IsDefault=true", newDef, work.ID)
+	}
+}
+
+func TestCalendarService_DeleteAndPromoteRejectsSelf(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	if _, err := svc.Create(ctx, "Work", "#0284C7", ""); err != nil {
+		t.Fatalf("Create Work: %v", err)
+	}
+	def, _ := svc.GetDefault(ctx)
+	err := svc.DeleteAndPromote(ctx, def.ID, def.ID)
+	if !errors.Is(err, ErrInvalidPromotionTarget) {
+		t.Errorf("got err=%v, want ErrInvalidPromotionTarget", err)
+	}
+}
+
+func TestCalendarService_DeleteAndPromoteRejectsUnknownTarget(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	if _, err := svc.Create(ctx, "Work", "#0284C7", ""); err != nil {
+		t.Fatalf("Create Work: %v", err)
+	}
+	def, _ := svc.GetDefault(ctx)
+	err := svc.DeleteAndPromote(ctx, def.ID, 9999)
+	if !errors.Is(err, ErrInvalidPromotionTarget) {
+		t.Errorf("got err=%v, want ErrInvalidPromotionTarget", err)
+	}
+}
+
+func TestCalendarService_DeleteNonDefaultAllowedWithoutPromotion(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	work, err := svc.Create(ctx, "Work", "#0284C7", "")
+	if err != nil {
+		t.Fatalf("Create Work: %v", err)
+	}
+	// Personal stays default; deleting Work needs no promotion.
+	if err := svc.Delete(ctx, work.ID); err != nil {
+		t.Errorf("Delete non-default: %v", err)
+	}
+	def, err := svc.GetDefault(ctx)
+	if err != nil {
+		t.Fatalf("GetDefault: %v", err)
+	}
+	if def.Name != "Personal" {
+		t.Errorf("default = %q, want Personal", def.Name)
+	}
+}

@@ -177,7 +177,12 @@ func (s *Service) Disconnect(ctx context.Context, cal Calendar, credStore auth.C
 // DeleteWithRemoteCleanup deletes a calendar, and when its backing account is
 // a hidden per-calendar account with no other calendars attached, also deletes
 // that account and its stored credential.
-func (s *Service) DeleteWithRemoteCleanup(ctx context.Context, id int64, credStore auth.CredentialStore) error {
+//
+// When the target is the current default, newDefaultID must point to a
+// different existing calendar; the promotion happens in the same transaction
+// so the database never observes a missing default. Pass newDefaultID = 0
+// when the target is not the default.
+func (s *Service) DeleteWithRemoteCleanup(ctx context.Context, id, newDefaultID int64, credStore auth.CredentialStore) error {
 	cal, err := s.Get(ctx, id)
 	if err != nil {
 		return err
@@ -189,6 +194,18 @@ func (s *Service) DeleteWithRemoteCleanup(ctx context.Context, id int64, credSto
 	}
 	if count <= 1 {
 		return ErrLastCalendar
+	}
+
+	if cal.IsDefault {
+		if newDefaultID == 0 {
+			return ErrDefaultCalendarRequiresPromotion
+		}
+		if newDefaultID == id {
+			return ErrInvalidPromotionTarget
+		}
+		if _, err := s.q.GetCalendar(ctx, newDefaultID); err != nil {
+			return ErrInvalidPromotionTarget
+		}
 	}
 
 	var (
@@ -214,6 +231,15 @@ func (s *Service) DeleteWithRemoteCleanup(ctx context.Context, id int64, credSto
 	qtx := s.q.WithTx(tx)
 	if err := qtx.DeleteCalendar(ctx, id); err != nil {
 		return err
+	}
+
+	if cal.IsDefault {
+		if err := qtx.ClearDefaultCalendar(ctx); err != nil {
+			return fmt.Errorf("clear default: %w", err)
+		}
+		if err := qtx.SetCalendarAsDefault(ctx, newDefaultID); err != nil {
+			return fmt.Errorf("promote default: %w", err)
+		}
 	}
 
 	if hasAccount && hiddenAccount {

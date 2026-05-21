@@ -23,4 +23,6 @@ type Calendar struct {
 	LastSyncError       string // Concise summary of the last sync failure
 	RemoteColor         string // Last known remote calendar-color value
 	ColorDirty          bool   // Local color changed and needs remote sync
+
+	IsDefault bool // True when this is the default calendar
 }

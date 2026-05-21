@@ -168,7 +168,7 @@ func TestDeleteCalendarWithCleanup_RemovesHiddenAccountAndCredential(t *testing.
 		newCalendarCredentialStore = prevFactory
 	})
 
-	if err := deleteCalendarWithCleanup(ctx, a, 2); err != nil {
+	if err := deleteCalendarWithCleanup(ctx, a, 2, 0); err != nil {
 		t.Fatalf("deleteCalendarWithCleanup: %v", err)
 	}
 

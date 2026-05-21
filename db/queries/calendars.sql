@@ -67,3 +67,21 @@ UPDATE calendars SET
     owner_email = ?,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ?;
+
+-- name: GetDefaultCalendar :one
+SELECT * FROM calendars WHERE is_default = 1 LIMIT 1;
+
+-- name: ClearDefaultCalendar :exec
+UPDATE calendars SET
+    is_default = 0,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE is_default = 1;
+
+-- name: SetCalendarAsDefault :exec
+UPDATE calendars SET
+    is_default = 1,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = ?;
+
+-- name: CountDefaultCalendars :one
+SELECT COUNT(*) FROM calendars WHERE is_default = 1;

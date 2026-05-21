@@ -17,6 +17,16 @@ var ErrLastCalendar = errors.New("cannot delete the last calendar")
 // ErrDuplicateName is returned when a calendar name already exists.
 var ErrDuplicateName = errors.New("a calendar with this name already exists")
 
+// ErrDefaultCalendarRequiresPromotion is returned by Delete when the target
+// row is the current default. Callers must pick a replacement and call
+// DeleteAndPromote instead, so the default is never silently moved.
+var ErrDefaultCalendarRequiresPromotion = errors.New("cannot delete the default calendar without promoting a replacement")
+
+// ErrInvalidPromotionTarget is returned by DeleteAndPromote when the
+// replacement default ID is the same as the calendar being deleted, or
+// does not exist.
+var ErrInvalidPromotionTarget = errors.New("invalid promotion target for default calendar")
+
 type Service struct {
 	db *sql.DB
 	q  *storage.Queries
@@ -47,7 +57,14 @@ func (s *Service) Get(ctx context.Context, id int64) (Calendar, error) {
 }
 
 func (s *Service) Create(ctx context.Context, name, color, description string) (Calendar, error) {
-	r, err := s.q.CreateCalendar(ctx, storage.CreateCalendarParams{
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Calendar{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	qtx := s.q.WithTx(tx)
+	r, err := qtx.CreateCalendar(ctx, storage.CreateCalendarParams{
 		Name:        name,
 		Color:       color,
 		Description: storage.StringToNullable(description),
@@ -56,6 +73,25 @@ func (s *Service) Create(ctx context.Context, name, color, description string) (
 		if isUniqueViolation(err, "calendars.name") {
 			return Calendar{}, ErrDuplicateName
 		}
+		return Calendar{}, err
+	}
+
+	// If no other calendar holds the default, promote this one. This is
+	// the silent "first calendar wins" rule, matching how Mail.app marks
+	// the first added account as default — it never leaves the user
+	// without a default to write into.
+	count, err := qtx.CountDefaultCalendars(ctx)
+	if err != nil {
+		return Calendar{}, fmt.Errorf("count default calendars: %w", err)
+	}
+	if count == 0 {
+		if err := qtx.SetCalendarAsDefault(ctx, r.ID); err != nil {
+			return Calendar{}, fmt.Errorf("set default: %w", err)
+		}
+		r.IsDefault = 1
+	}
+
+	if err := tx.Commit(); err != nil {
 		return Calendar{}, err
 	}
 	return fromStorage(r), nil
@@ -110,6 +146,18 @@ func (s *Service) SetOwnerEmail(ctx context.Context, id int64, email string) err
 }
 
 func (s *Service) Delete(ctx context.Context, id int64) error {
+	return s.deleteWithOptionalPromotion(ctx, id, 0)
+}
+
+// DeleteAndPromote deletes a calendar and, when it is the current default,
+// promotes newDefaultID in the same transaction so the database is never
+// observed without a default. Pass newDefaultID = 0 when the target is not
+// the default; the call then behaves exactly like Delete.
+func (s *Service) DeleteAndPromote(ctx context.Context, id, newDefaultID int64) error {
+	return s.deleteWithOptionalPromotion(ctx, id, newDefaultID)
+}
+
+func (s *Service) deleteWithOptionalPromotion(ctx context.Context, id, newDefaultID int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -120,7 +168,8 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 
 	// Return not-found before the count guard so callers can distinguish
 	// a missing ID from the last-calendar constraint.
-	if _, err := qtx.GetCalendar(ctx, id); err != nil {
+	target, err := qtx.GetCalendar(ctx, id)
+	if err != nil {
 		return err
 	}
 
@@ -132,13 +181,69 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		return ErrLastCalendar
 	}
 
+	if target.IsDefault == 1 {
+		if newDefaultID == 0 {
+			return ErrDefaultCalendarRequiresPromotion
+		}
+		if newDefaultID == id {
+			return ErrInvalidPromotionTarget
+		}
+		if _, err := qtx.GetCalendar(ctx, newDefaultID); err != nil {
+			return ErrInvalidPromotionTarget
+		}
+	}
+
 	if err := qtx.DeleteCalendar(ctx, id); err != nil {
 		return fmt.Errorf("delete calendar: %w", err)
 	}
+
+	if target.IsDefault == 1 {
+		if err := qtx.ClearDefaultCalendar(ctx); err != nil {
+			return fmt.Errorf("clear default: %w", err)
+		}
+		if err := qtx.SetCalendarAsDefault(ctx, newDefaultID); err != nil {
+			return fmt.Errorf("promote default: %w", err)
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit delete calendar: %w", err)
 	}
 	return nil
+}
+
+// SetDefault makes id the only default calendar. It is idempotent and
+// transactional so the partial unique index never sees two defaults at once.
+func (s *Service) SetDefault(ctx context.Context, id int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	qtx := s.q.WithTx(tx)
+	if _, err := qtx.GetCalendar(ctx, id); err != nil {
+		return err
+	}
+	if err := qtx.ClearDefaultCalendar(ctx); err != nil {
+		return fmt.Errorf("clear default: %w", err)
+	}
+	if err := qtx.SetCalendarAsDefault(ctx, id); err != nil {
+		return fmt.Errorf("set default: %w", err)
+	}
+	return tx.Commit()
+}
+
+// GetDefault returns the current default calendar, or sql.ErrNoRows if no
+// default exists. A live database should always have exactly one default
+// because Create promotes the first calendar automatically; callers that
+// hit ErrNoRows are looking at a database in an inconsistent state.
+func (s *Service) GetDefault(ctx context.Context) (Calendar, error) {
+	r, err := s.q.GetDefaultCalendar(ctx)
+	if err != nil {
+		return Calendar{}, err
+	}
+	return fromStorage(r), nil
 }
 
 func (s *Service) ListByAccount(ctx context.Context, accountID int64) ([]Calendar, error) {
@@ -212,6 +317,7 @@ func fromStorage(r storage.Calendar) Calendar {
 		LastSyncError:       storage.NullableToString(r.LastSyncError),
 		RemoteColor:         storage.NullableToString(r.RemoteColor),
 		ColorDirty:          r.ColorDirty != 0,
+		IsDefault:           r.IsDefault != 0,
 	}
 }
 

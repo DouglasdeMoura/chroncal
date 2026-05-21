@@ -94,6 +94,7 @@ type CalendarInfo struct {
 	LastSyncError       string
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
+	IsDefault           bool
 }
 
 const narrowThreshold = 90

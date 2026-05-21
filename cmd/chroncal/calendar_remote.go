@@ -99,9 +99,9 @@ func disconnectCalendarRemote(ctx context.Context, a *app.App, cal calendarpkg.C
 	return a.Calendars.Disconnect(ctx, cal, credStore)
 }
 
-func deleteCalendarWithCleanup(ctx context.Context, a *app.App, id int64) error {
+func deleteCalendarWithCleanup(ctx context.Context, a *app.App, id, newDefaultID int64) error {
 	credStore, _ := newCalendarCredentialStore(true)
-	return a.Calendars.DeleteWithRemoteCleanup(ctx, id, credStore)
+	return a.Calendars.DeleteWithRemoteCleanup(ctx, id, newDefaultID, credStore)
 }
 
 func buildCalendarCredential(ctx context.Context, flags calendarRemoteFlags) (auth.Credential, error) {

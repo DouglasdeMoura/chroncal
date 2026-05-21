@@ -314,16 +314,27 @@ func resolveTodo(ctx context.Context, a *app.App, ref, recurrenceID string) (tod
 }
 
 func resolveCalendarID(ctx context.Context, a *app.App, name string) (int64, error) {
-	cals, err := a.Calendars.List(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("list calendars: %w", err)
-	}
 	if name == "" {
-		// No calendar specified: use the first available calendar.
+		// No calendar specified: use the database's default. Falls back to
+		// the first calendar if the default row was somehow deleted out of
+		// band — never silently picks "no calendar" because every write
+		// needs a parent calendar.
+		def, err := a.Calendars.GetDefault(ctx)
+		if err == nil {
+			return def.ID, nil
+		}
+		cals, listErr := a.Calendars.List(ctx)
+		if listErr != nil {
+			return 0, fmt.Errorf("list calendars: %w", listErr)
+		}
 		if len(cals) == 0 {
 			return 0, fmt.Errorf("no calendars exist")
 		}
 		return cals[0].ID, nil
+	}
+	cals, err := a.Calendars.List(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("list calendars: %w", err)
 	}
 	for _, c := range cals {
 		if strings.EqualFold(c.Name, name) {

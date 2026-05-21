@@ -19,18 +19,28 @@ type CalendarListDialogClosedMsg struct{}
 // CalendarListDialogRequestedMsg opens the manage-calendars dialog.
 type CalendarListDialogRequestedMsg struct{}
 
+// CalendarSetDefaultRequestedMsg asks the app to promote the given
+// calendar to default. The app handler updates the database and
+// reloads the calendar list.
+type CalendarSetDefaultRequestedMsg struct {
+	ID   int64
+	Name string
+}
+
 type calendarListDialogKeyMap struct {
-	Edit   key.Binding
-	Delete key.Binding
-	New    key.Binding
-	Sync   key.Binding
+	Edit       key.Binding
+	Delete     key.Binding
+	New        key.Binding
+	Sync       key.Binding
+	SetDefault key.Binding
 }
 
 func defaultCalendarListDialogKeys() calendarListDialogKeyMap {
 	return calendarListDialogKeyMap{
-		Edit:   key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
-		Delete: key.NewBinding(key.WithKeys("x", "delete"), key.WithHelp("x", "delete")),
-		New:    key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add")),
+		Edit:       key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
+		Delete:     key.NewBinding(key.WithKeys("x", "delete"), key.WithHelp("x", "delete")),
+		New:        key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add")),
+		SetDefault: key.NewBinding(key.WithKeys("*"), key.WithHelp("*", "set default")),
 	}
 }
 
@@ -65,6 +75,30 @@ func NewCalendarListDialogModel(calendars map[int64]CalendarInfo, hidden map[int
 		keys:      defaultCalendarListDialogKeys(),
 	}
 	return m.refresh()
+}
+
+// calendarPromotionCandidate is a stable (id, name) pair used to populate
+// the default-promotion picker — buttons are addressed by index, so the
+// order must match the slice that gets stored in the model.
+type calendarPromotionCandidate struct {
+	id   int64
+	name string
+}
+
+// defaultPromotionCandidates returns every calendar other than excludeID,
+// sorted by name so the picker's first option is the alphabetical default.
+// Lives next to the dialog so the row label and the picker share their
+// sort rule via sortedCalendarIDs.
+func defaultPromotionCandidates(calendars map[int64]CalendarInfo, excludeID int64) []calendarPromotionCandidate {
+	ids := sortedCalendarIDs(calendars)
+	out := make([]calendarPromotionCandidate, 0, len(ids))
+	for _, id := range ids {
+		if id == excludeID {
+			continue
+		}
+		out = append(out, calendarPromotionCandidate{id: id, name: calendars[id].Name})
+	}
+	return out
 }
 
 func sortedCalendarIDs(calendars map[int64]CalendarInfo) []int64 {
@@ -158,12 +192,25 @@ func (m CalendarListDialogModel) buildActions() []ListDialogAction {
 		return nil
 	}
 	info := m.calendars[id]
-	return []ListDialogAction{
+	actions := []ListDialogAction{
 		{Label: "Edit", Msg: func() tea.Msg { return CalendarDialogRequestedMsg{ID: id} }},
-		{Label: "Delete", Danger: true, Msg: func() tea.Msg {
-			return CalendarDeleteRequestedMsg{ID: id, Name: info.Name}
-		}},
 	}
+	// Hide "Set as Default" when the selected row is already the default —
+	// showing a button that no-ops is exactly the kind of dead control the
+	// HIG warns against.
+	if !info.IsDefault {
+		actions = append(actions, ListDialogAction{
+			Label: "Set as Default",
+			Msg: func() tea.Msg {
+				return CalendarSetDefaultRequestedMsg{ID: id, Name: info.Name}
+			},
+		})
+	}
+	actions = append(actions, ListDialogAction{
+		Label: "Delete", Danger: true,
+		Msg: func() tea.Msg { return CalendarDeleteRequestedMsg{ID: id, Name: info.Name} },
+	})
+	return actions
 }
 
 func (m CalendarListDialogModel) shortHelp() []key.Binding {
@@ -172,7 +219,7 @@ func (m CalendarListDialogModel) shortHelp() []key.Binding {
 		key.WithKeys("up", "down", "k", "j"),
 		key.WithHelp("↑↓", "navigate"),
 	)
-	return []key.Binding{nav, sk.Tab, m.keys.New, m.keys.Edit, m.keys.Delete, m.keys.Sync, sk.Close}
+	return []key.Binding{nav, sk.Tab, m.keys.New, m.keys.Edit, m.keys.SetDefault, m.keys.Delete, m.keys.Sync, sk.Close}
 }
 
 // detailWidth returns the width of the detail column for the current shell
@@ -246,6 +293,15 @@ func (m CalendarListDialogModel) handleKey(msg tea.KeyPressMsg) (CalendarListDia
 			return m, func() tea.Msg { return SyncCalendarRequestedMsg{ID: id, Name: name} }
 		}
 		return m, nil
+	case key.Matches(msg, m.keys.SetDefault):
+		if id, ok := m.selectedID(); ok {
+			info := m.calendars[id]
+			if info.IsDefault {
+				return m, nil
+			}
+			return m, func() tea.Msg { return CalendarSetDefaultRequestedMsg{ID: id, Name: info.Name} }
+		}
+		return m, nil
 	}
 
 	shell, cmd, _ := m.shell.HandleKey(msg, func() tea.Msg { return CalendarListDialogClosedMsg{} })
@@ -295,6 +351,10 @@ func calendarRowLabel(info CalendarInfo, hidden, selected, listFocused bool, sel
 	if hidden {
 		nameStyle = nameStyle.Faint(true)
 	}
+	label := info.Name
+	if info.IsDefault {
+		label += " (Default)"
+	}
 	if selected {
 		switch {
 		case listFocused:
@@ -308,7 +368,7 @@ func calendarRowLabel(info CalendarInfo, hidden, selected, listFocused bool, sel
 			nameStyle = nameStyle.Width(remaining)
 		}
 	}
-	name := nameStyle.Render(" " + info.Name + " ")
+	name := nameStyle.Render(" " + label + " ")
 
 	return fmt.Sprintf("%s %s", swatch, name)
 }

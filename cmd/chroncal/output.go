@@ -101,6 +101,7 @@ type jsonCalendar struct {
 	Name        string `json:"name"`
 	Color       string `json:"color"`
 	Description string `json:"description,omitempty"`
+	IsDefault   bool   `json:"is_default,omitempty"`
 	CreatedAt   string `json:"created_at"`
 	UpdatedAt   string `json:"updated_at"`
 }
@@ -165,6 +166,7 @@ func toJSONCalendar(c calendar.Calendar) jsonCalendar {
 		Name:        c.Name,
 		Color:       c.Color,
 		Description: c.Description,
+		IsDefault:   c.IsDefault,
 		CreatedAt:   c.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:   c.UpdatedAt.UTC().Format(time.RFC3339),
 	}
@@ -342,7 +344,11 @@ func printEventDetail(w io.Writer, e event.Event, showDate bool) {
 func printCalendar(w io.Writer, c calendar.Calendar) {
 	const labelWidth = 13
 
-	printDetailTitle(w, c.Name)
+	title := c.Name
+	if c.IsDefault {
+		title += " (Default)"
+	}
+	printDetailTitle(w, title)
 	printDetailField(w, labelWidth, "color", c.Color)
 	printDetailField(w, labelWidth, "description", c.Description)
 	printDetailInt(w, labelWidth, "id", c.ID)

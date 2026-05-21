@@ -1,13 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
+	"github.com/douglasdemoura/chroncal/internal/app"
 	calendarpkg "github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/textsafe"
 )
@@ -34,7 +39,65 @@ calendar for sync.`,
 		calendarCreateCmd(),
 		calendarUpdateCmd(),
 		calendarDeleteCmd(),
+		calendarSetDefaultCmd(),
 	)
+	return cmd
+}
+
+func calendarSetDefaultCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "set-default <id|name>",
+		Short: "Mark a calendar as the default",
+		Long: `Promote a calendar to the default. New events, todos, and journals
+without an explicit --calendar use the default.
+
+Exactly one calendar is default at any time.`,
+		Example: `  chroncal calendar set-default Work
+  chroncal calendar set-default 2`,
+		Args: exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			a, err := initApp()
+			if err != nil {
+				return err
+			}
+			defer a.Close()
+			ctx := context.Background()
+
+			cals, err := a.Calendars.List(ctx)
+			if err != nil {
+				return fmt.Errorf("list calendars: %w", err)
+			}
+			target, err := findCalendarByRef(cals, args[0])
+			if err != nil {
+				return err
+			}
+
+			if target.IsDefault {
+				w := cmd.OutOrStdout()
+				if outputFmt != "text" {
+					return printOutput(w, toJSONCalendar(target))
+				}
+				fmt.Fprintf(w, "Calendar %q is already the default.\n", target.Name)
+				return nil
+			}
+
+			if err := a.Calendars.SetDefault(ctx, target.ID); err != nil {
+				return fmt.Errorf("set default: %w", err)
+			}
+
+			updated, err := a.Calendars.Get(ctx, target.ID)
+			if err != nil {
+				return fmt.Errorf("get calendar: %w", err)
+			}
+
+			w := cmd.OutOrStdout()
+			if outputFmt != "text" {
+				return printOutput(w, toJSONCalendar(updated))
+			}
+			fmt.Fprintf(w, "Default calendar set to %q.\n", updated.Name)
+			return nil
+		},
+	}
 	return cmd
 }
 
@@ -86,11 +149,16 @@ func calendarListCmd() *cobra.Command {
 }
 
 // formatCompactCalendar renders one calendar as a single line:
-// "Personal  #7C3AED". Name is padded to a fixed column width so the
-// color column lines up across rows.
+// "Personal  #7C3AED". A leading "* " marks the default so a glance at
+// the list is enough to see which calendar new events land in. Name is
+// padded to a fixed column width so the color column lines up across rows.
 func formatCompactCalendar(c calendarpkg.Calendar) string {
 	const nameColWidth = 20
-	return fmt.Sprintf("%-*s%s", nameColWidth, textsafe.Display(c.Name), c.Color)
+	prefix := "  "
+	if c.IsDefault {
+		prefix = "* "
+	}
+	return fmt.Sprintf("%s%-*s%s", prefix, nameColWidth, textsafe.Display(c.Name), c.Color)
 }
 
 func calendarGetCmd() *cobra.Command {
@@ -324,14 +392,21 @@ Only the flags you pass are changed.`,
 }
 
 func calendarDeleteCmd() *cobra.Command {
+	var promote string
 	cmd := &cobra.Command{
 		Use:   "delete <id>",
 		Short: "Delete a calendar",
 		Long: `Delete a local calendar by numeric ID.
 
-Use "chroncal calendar list" first if you need to confirm the ID.`,
+Use "chroncal calendar list" first if you need to confirm the ID.
+
+If the target is the current default, pass --promote <id|name> to choose
+its replacement. With --yes (no --promote), the alphabetically-first
+remaining calendar is promoted automatically and the choice is logged
+to stderr.`,
 		Example: `  chroncal calendar delete 3
-  chroncal calendar delete 3 --output json`,
+  chroncal calendar delete 3 --output json
+  chroncal calendar delete 3 --promote Work`,
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
@@ -356,26 +431,132 @@ Use "chroncal calendar list" first if you need to confirm the ID.`,
 				return notFoundErr(getErr, "calendar", id)
 			}
 			eventCount, _ := a.Queries.CountEventsByCalendar(ctx, id)
+
+			var (
+				newDefaultID   int64
+				newDefaultName string
+			)
+			if cal.IsDefault {
+				newDefault, err := resolveNewDefault(cmd, a, ctx, cal, promote)
+				if err != nil {
+					return err
+				}
+				newDefaultID = newDefault.ID
+				newDefaultName = newDefault.Name
+			}
+
 			question := fmt.Sprintf("Delete calendar %q? Its %d event(s) and any todos/journals will be removed.",
 				safeText(cal.Name), eventCount)
+			if newDefaultID != 0 {
+				question += fmt.Sprintf(" %q will become the default.", safeText(newDefaultName))
+			}
 			if err := confirmDestructive(cmd, question); err != nil {
 				return err
 			}
 
-			if err := deleteCalendarWithCleanup(ctx, a, id); err != nil {
+			if err := deleteCalendarWithCleanup(ctx, a, id, newDefaultID); err != nil {
 				return notFoundErr(err, "calendar", id)
 			}
 
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
-				return printOutput(w, map[string]any{"deleted": true, "id": id})
+				out := map[string]any{"deleted": true, "id": id}
+				if newDefaultID != 0 {
+					out["promoted_default_id"] = newDefaultID
+					out["promoted_default_name"] = newDefaultName
+				}
+				return printOutput(w, out)
 			}
 			fmt.Fprintf(w, "Deleted calendar %d.\n", id)
+			if newDefaultID != 0 {
+				fmt.Fprintf(w, "Promoted %q to default.\n", newDefaultName)
+			}
 			return nil
 		},
 	}
 	addConfirmFlag(cmd)
+	cmd.Flags().StringVar(&promote, "promote", "", "calendar (id or name) to promote to default when deleting the current default")
 	return cmd
+}
+
+// resolveNewDefault picks the calendar that will take over as default after
+// deleting cal. It honors --promote when given, falls back to interactive
+// prompt on a TTY, and uses the alphabetically-first remaining calendar
+// when running with --yes / CHRONCAL_ASSUME_YES (auditing the choice to
+// stderr so scripted callers always see what changed).
+func resolveNewDefault(cmd *cobra.Command, a *app.App, ctx context.Context, cal calendarpkg.Calendar, promote string) (calendarpkg.Calendar, error) {
+	cals, err := a.Calendars.List(ctx)
+	if err != nil {
+		return calendarpkg.Calendar{}, fmt.Errorf("list calendars: %w", err)
+	}
+	candidates := make([]calendarpkg.Calendar, 0, len(cals))
+	for _, c := range cals {
+		if c.ID != cal.ID {
+			candidates = append(candidates, c)
+		}
+	}
+	if len(candidates) == 0 {
+		return calendarpkg.Calendar{}, calendarpkg.ErrLastCalendar
+	}
+
+	if promote != "" {
+		chosen, err := findCalendarByRef(candidates, promote)
+		if err != nil {
+			return calendarpkg.Calendar{}, errInvalidInputf("promote: %v", err)
+		}
+		return chosen, nil
+	}
+
+	// Alphabetical preselect — List() already orders by name.
+	preselect := candidates[0]
+
+	if assumeYes(cmd) {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Promoting %q to default.\n", preselect.Name)
+		return preselect, nil
+	}
+
+	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+		return calendarpkg.Calendar{}, &cliError{
+			Code: "aborted",
+			Msg:  "refusing to auto-promote default from a non-interactive shell; pass --promote <id|name>",
+		}
+	}
+
+	return promptForNewDefault(cmd, cal, candidates, preselect)
+}
+
+func promptForNewDefault(cmd *cobra.Command, cal calendarpkg.Calendar, candidates []calendarpkg.Calendar, preselect calendarpkg.Calendar) (calendarpkg.Calendar, error) {
+	fmt.Fprintf(cmd.ErrOrStderr(), "%q is the default calendar. Choose its replacement:\n", cal.Name)
+	for _, c := range candidates {
+		marker := "  "
+		if c.ID == preselect.ID {
+			marker = "> "
+		}
+		fmt.Fprintf(cmd.ErrOrStderr(), "%s%d  %s\n", marker, c.ID, c.Name)
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "Enter id or name (default %q): ", preselect.Name)
+
+	r := bufio.NewReader(cmd.InOrStdin())
+	line, err := r.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return calendarpkg.Calendar{}, fmt.Errorf("read promotion target: %w", err)
+	}
+	answer := strings.TrimSpace(line)
+	if answer == "" {
+		return preselect, nil
+	}
+	chosen, err := findCalendarByRef(candidates, answer)
+	if err != nil {
+		return calendarpkg.Calendar{}, errInvalidInputf("promote: %v", err)
+	}
+	return chosen, nil
+}
+
+func assumeYes(cmd *cobra.Command) bool {
+	if yes, _ := cmd.Flags().GetBool("yes"); yes {
+		return true
+	}
+	return envYes(os.Getenv("CHRONCAL_ASSUME_YES"))
 }
 
 func findCalendarByRef(cals []calendarpkg.Calendar, ref string) (calendarpkg.Calendar, error) {
