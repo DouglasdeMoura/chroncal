@@ -159,12 +159,16 @@ func (m AgendaModel) WindowEnd() time.Time { return m.windowEnd }
 // ResetWindow re-centers the window around day with the default initial
 // size. Use this after a "jump" navigation (today, sidebar click,
 // h/l/[/] keys) so the next load reads a tight range around the target.
+// Clears the prior selection so the next SetEvents lands the cursor day
+// (or first event on/after it) at the top of the viewport — the prior
+// selection's identity no longer applies after an explicit jump.
 func (m AgendaModel) ResetWindow(day time.Time) AgendaModel {
 	d := dayAligned(day)
 	m.windowStart = d
 	m.windowEnd = d.AddDate(0, 0, AgendaWindowDays)
 	m.anchorDay = time.Time{}
 	m.reloadPending = false
+	m.selected = -1
 	return m
 }
 
