@@ -3090,7 +3090,13 @@ func Run(a *app.App, themeName string) error {
 	SetActivePalette(palette)
 
 	model := NewModel(a, themeName)
-	p := tea.NewProgram(model)
+	// Bubbletea renders on a frame-rate ticker (default 60 FPS). At 60
+	// FPS only ~16 ms is spent per visible frame, so when the user
+	// holds a navigation key the highlight steps once per ~16 ms even
+	// though our Update+View takes <1 ms. Bumping to the max (120 FPS)
+	// halves the perceived step latency under key repeat without
+	// changing app code paths.
+	p := tea.NewProgram(model, tea.WithFPS(120))
 
 	if bg != nil {
 		go func() { p.Send(tea.BackgroundColorMsg{Color: bg}) }()
