@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
@@ -19,10 +20,11 @@ type ConfirmDialogResultMsg struct {
 type ConfirmDialogModel struct {
 	dialog       Dialog
 	form         Form
+	help         help.Model
 	contentWidth *int // shared with styleFn closure for centering
 }
 
-func NewConfirmDialogModel(message, confirmLabel string) ConfirmDialogModel {
+func NewConfirmDialogModel(message, confirmLabel string, theme Theme) ConfirmDialogModel {
 	styles := DefaultDialogStyles()
 	dialog := NewDialog("", styles)
 
@@ -49,7 +51,12 @@ func NewConfirmDialogModel(message, confirmLabel string) ConfirmDialogModel {
 	})
 	form = form.FocusCancel()
 
-	return ConfirmDialogModel{dialog: dialog, form: form, contentWidth: cw}
+	return ConfirmDialogModel{
+		dialog:       dialog,
+		form:         form,
+		help:         newThemedHelp(theme),
+		contentWidth: cw,
+	}
 }
 
 // Destructive styles the confirm button with the Danger variant. Use for
@@ -104,5 +111,11 @@ func (m ConfirmDialogModel) Update(msg tea.Msg) (ConfirmDialogModel, tea.Cmd) {
 }
 
 func (m ConfirmDialogModel) View() string {
+	helpKeys := []key.Binding{
+		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "switch")),
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select")),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
+	}
+	m.dialog.SetFooter(m.help.ShortHelpView(helpKeys))
 	return m.dialog.Box(m.form.View())
 }

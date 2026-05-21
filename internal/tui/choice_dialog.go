@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
@@ -16,13 +17,14 @@ type ChoiceDialogResultMsg struct {
 type ChoiceDialogModel struct {
 	dialog       Dialog
 	form         Form
+	help         help.Model
 	choices      int // number of choice buttons (excludes Cancel)
 	contentWidth *int
 }
 
 const choiceDialogMaxWidth = 72
 
-func NewChoiceDialogModel(message string, options ...string) ChoiceDialogModel {
+func NewChoiceDialogModel(message string, theme Theme, options ...string) ChoiceDialogModel {
 	styles := DefaultDialogStyles()
 	dialog := NewDialog("", styles)
 
@@ -63,7 +65,13 @@ func NewChoiceDialogModel(message string, options ...string) ChoiceDialogModel {
 	})
 	form, _ = form.focusIndex(form.submitIndex())
 
-	return ChoiceDialogModel{dialog: dialog, form: form, choices: len(options), contentWidth: cw}
+	return ChoiceDialogModel{
+		dialog:       dialog,
+		form:         form,
+		help:         newThemedHelp(theme),
+		choices:      len(options),
+		contentWidth: cw,
+	}
 }
 
 func (m ChoiceDialogModel) SetSize(w, h int) ChoiceDialogModel {
@@ -103,5 +111,11 @@ func (m ChoiceDialogModel) Update(msg tea.Msg) (ChoiceDialogModel, tea.Cmd) {
 }
 
 func (m ChoiceDialogModel) View() string {
+	helpKeys := []key.Binding{
+		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "switch")),
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select")),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
+	}
+	m.dialog.SetFooter(m.help.ShortHelpView(helpKeys))
 	return m.dialog.Box(m.form.View())
 }

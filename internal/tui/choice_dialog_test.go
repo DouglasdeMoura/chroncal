@@ -10,6 +10,7 @@ import (
 func TestChoiceDialogSetSizeUsesFixedWidth(t *testing.T) {
 	m := NewChoiceDialogModel(
 		`Delete "Team Standup"?`,
+		ActiveTheme(),
 		"This event", "This and following", "All events",
 	).SetSize(120, 40)
 
@@ -22,6 +23,7 @@ func TestChoiceDialogSetSizeUsesFixedWidth(t *testing.T) {
 func TestChoiceDialogSetSizeCapsToViewport(t *testing.T) {
 	m := NewChoiceDialogModel(
 		`Delete "Team Standup"?`,
+		ActiveTheme(),
 		"This event", "This and following", "All events",
 	).SetSize(50, 20)
 
@@ -35,6 +37,7 @@ func TestChoiceDialogCentersMessage(t *testing.T) {
 	message := `Delete "Team Standup"?`
 	m := NewChoiceDialogModel(
 		message,
+		ActiveTheme(),
 		"This event", "This and following", "All events",
 	).SetSize(50, 20)
 
@@ -47,6 +50,7 @@ func TestChoiceDialogCentersMessage(t *testing.T) {
 func TestChoiceDialogFocusesFirstButton(t *testing.T) {
 	m := NewChoiceDialogModel(
 		`Delete "Team Standup"?`,
+		ActiveTheme(),
 		"This event", "This and following", "All events",
 	)
 

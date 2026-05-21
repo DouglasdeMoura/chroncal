@@ -1027,7 +1027,7 @@ func (m Model) innerDims() (int, int) {
 // q and ctrl+c entry points so the two keystrokes can't drift in styling.
 func (m Model) openQuitConfirm() Model {
 	m.pendingQuit = true
-	m.confirmDialog = NewConfirmDialogModel("Quit chroncal?", "Quit").
+	m.confirmDialog = NewConfirmDialogModel("Quit chroncal?", "Quit", m.theme).
 		SetSize(m.width, m.height)
 	m.confirmOpen = true
 	return m
@@ -1552,6 +1552,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingScopeKind = pendingScopeEdit
 			m.choiceDialog = NewChoiceDialogModel(
 				fmt.Sprintf("Update %q?", msg.Title),
+				m.theme,
 				"This event", "This and following", "All events",
 			).SetSize(m.width, m.height)
 			m.choiceOpen = true
@@ -1783,6 +1784,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingScopeKind = pendingScopeDelete
 			m.choiceDialog = NewChoiceDialogModel(
 				fmt.Sprintf("Delete %q?", msg.Event.Title),
+				m.theme,
 				"This event", "This and following", "All events",
 			).SetSize(m.width, m.height)
 			m.choiceOpen = true
@@ -1790,6 +1792,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.confirmDialog = NewConfirmDialogModel(
 				fmt.Sprintf("Delete %q?", msg.Event.Title),
 				"Delete",
+				m.theme,
 			).Destructive().SetSize(m.width, m.height)
 			m.confirmOpen = true
 		}
@@ -1981,7 +1984,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				message = fmt.Sprintf("Delete calendar %q?\n\n%d events will be deleted", msg.name, msg.eventCount)
 			}
 		}
-		m.confirmDialog = NewConfirmDialogModel(message, "Delete").
+		m.confirmDialog = NewConfirmDialogModel(message, "Delete", m.theme).
 			Destructive().
 			SetSize(m.width, m.height)
 		m.confirmOpen = true
@@ -2346,7 +2349,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			message = fmt.Sprintf("Purge %d items forever? This can't be undone.", len(msg.Entries))
 		}
-		m.confirmDialog = NewConfirmDialogModel(message, "Purge").
+		m.confirmDialog = NewConfirmDialogModel(message, "Purge", m.theme).
 			Destructive().
 			SetSize(m.width, m.height)
 		m.confirmOpen = true
