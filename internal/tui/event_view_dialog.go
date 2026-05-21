@@ -530,7 +530,7 @@ func (m EventViewDialogModel) buildBodyLines(w int) []string {
 
 	if m.isDeleted() && ev.DeletedAt != nil {
 		warn := lipgloss.NewStyle().Foreground(m.theme.Error).Bold(true)
-		banner := warn.Render("⊘ Deleted " + ev.DeletedAt.Local().Format("Mon, Jan 2 15:04") + " — restore from trash to edit")
+		banner := warn.Render("⊘ Deleted " + ev.DeletedAt.Local().Format("Mon, Jan 2 15:04") + " — restore from Recently Deleted to edit")
 		lines = append(lines, truncateTo(banner, w))
 		lines = append(lines, "")
 	}

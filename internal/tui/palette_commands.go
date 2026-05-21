@@ -103,6 +103,13 @@ func buildPaletteCommands(m Model) []PaletteCommand {
 			Action:   func() tea.Msg { return ToggleWeekNumbersMsg{} },
 		},
 		{
+			ID:       "trash.view",
+			Title:    "Recently Deleted",
+			Category: "View",
+			Shortcut: "D",
+			Action:   func() tea.Msg { return TrashViewRequestedMsg{} },
+		},
+		{
 			ID:       "ui.help",
 			Title:    "Help",
 			Category: "View",

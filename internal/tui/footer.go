@@ -214,7 +214,7 @@ func footerHints(ctx FooterContext, hasRSVP, showTodayHint bool) []footerHint {
 		if showTodayHint {
 			hints = append(hints, footerHint{"t", "today"})
 		}
-		return append(hints, footerHint{"?", "help"})
+		return append(hints, footerHint{"D", "recently deleted"}, footerHint{"?", "help"})
 	case FooterAgenda:
 		hints := []footerHint{
 			{"↑↓", "move"},
@@ -227,7 +227,7 @@ func footerHints(ctx FooterContext, hasRSVP, showTodayHint bool) []footerHint {
 		if showTodayHint {
 			hints = append(hints, footerHint{"t", "today"})
 		}
-		return append(hints, footerHint{"?", "help"})
+		return append(hints, footerHint{"D", "recently deleted"}, footerHint{"?", "help"})
 	case FooterAgendaEmpty:
 		hints := []footerHint{
 			{"c", "create event"},
@@ -236,7 +236,7 @@ func footerHints(ctx FooterContext, hasRSVP, showTodayHint bool) []footerHint {
 		if showTodayHint {
 			hints = append(hints, footerHint{"t", "today"})
 		}
-		return append(hints, footerHint{"?", "help"})
+		return append(hints, footerHint{"D", "recently deleted"}, footerHint{"?", "help"})
 	case FooterEventPopup:
 		h := []footerHint{
 			{"e", "edit"},

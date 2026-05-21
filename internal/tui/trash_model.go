@@ -13,6 +13,10 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/trash"
 )
 
+// TrashViewRequestedMsg asks the host to open the trash overlay. Emitted by
+// the command palette so its handling matches the shift+D keybinding.
+type TrashViewRequestedMsg struct{}
+
 // TrashDialogClosedMsg is emitted when the dialog requests to close.
 type TrashDialogClosedMsg struct{}
 

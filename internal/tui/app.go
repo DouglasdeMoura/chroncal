@@ -80,7 +80,7 @@ func defaultAppKeys() appKeyMap {
 		CalendarList:   key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "calendars")),
 		Sync:           key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sync")),
 		Undo:           key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "undo")),
-		TrashView:      key.NewBinding(key.WithKeys("D", "shift+d"), key.WithHelp("D", "trash")),
+		TrashView:      key.NewBinding(key.WithKeys("D", "shift+d"), key.WithHelp("D", "recently deleted")),
 	}
 }
 
@@ -2010,6 +2010,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.helpDialog = NewHelpDialogModel(m.theme).SetSize(m.width, m.height)
 		m.helpDialogOpen = true
 		return m, nil
+
+	case TrashViewRequestedMsg:
+		if m.trashOpen {
+			return m, nil
+		}
+		m.trashOpen = true
+		m.trash = NewTrashModel(m.calendars, newThemedHelp(m.theme)).
+			SetSelectedColor(m.theme.Selected).
+			SetSize(m.width, m.height)
+		return m, m.loadTrash()
 
 	case HelpDialogClosedMsg:
 		m.helpDialogOpen = false
