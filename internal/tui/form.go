@@ -1634,27 +1634,23 @@ func (bs ButtonStyles) Get(v ButtonVariant) ButtonStyle {
 
 // DefaultButtonStyles returns button styles driven by the active theme.
 //
-// Focus treatment by variant:
-//   - Primary: keeps its own saturated accent on focus so the hero
-//     action stays visually dominant even under cursor. Both idle and
-//     focused bgs are darkened in OKLCh space so the pill reads as a
-//     "filled primary action" rather than a soft pastel highlight, and
-//     the fg is computed via oklch.ContrastingFg for guaranteed
-//     perceptual contrast regardless of the configured palette.
-//   - Secondary / Danger / Ghost: share FormHighlight as the focus
-//     background, so "cursor is here" reads as a single consistent
-//     flash across the form. Each variant keeps its own idle look
-//     (Selected gray, red fill, transparent) for semantic identity.
+// All variants share FormHighlight as the focused background so "cursor is
+// here" reads as a single consistent flash across the form, independent of
+// the button's semantic color. Each variant keeps its own idle look
+// (primary accent, secondary gray, danger red, ghost transparent) for
+// semantic identity. The primary idle bg is darkened in OKLCh space so the
+// pill reads as a filled action rather than a soft pastel highlight, and
+// every fg is computed via oklch.ContrastingFg for guaranteed perceptual
+// contrast regardless of the configured palette.
 func DefaultButtonStyles() ButtonStyles {
 	base := lipgloss.NewStyle().Padding(0, 2).MarginRight(1)
 	t := activeTheme
 	primaryBg := oklch.ShiftLightness(t.ButtonPrimaryBg, -0.22)
-	primaryFocusedBg := oklch.ShiftLightness(t.ButtonPrimaryFocusedBg, -0.22)
 	highlightFg := oklch.ContrastingFg(t.FormHighlight)
 	return ButtonStyles{
 		Primary: ButtonStyle{
 			Normal:  base.Background(primaryBg).Foreground(oklch.ContrastingFg(primaryBg)).Bold(true),
-			Focused: base.Background(primaryFocusedBg).Foreground(oklch.ContrastingFg(primaryFocusedBg)).Bold(true),
+			Focused: base.Background(t.FormHighlight).Foreground(highlightFg).Bold(true),
 		},
 		Secondary: ButtonStyle{
 			Normal:  base.Background(t.ButtonSecondaryBg).Foreground(oklch.ContrastingFg(t.ButtonSecondaryBg)),
