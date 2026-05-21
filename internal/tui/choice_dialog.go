@@ -48,6 +48,10 @@ func NewChoiceDialogModel(message string, options ...string) ChoiceDialogModel {
 			}),
 		},
 	)
+	// Choice options are peers — none deserves to read as the recommended
+	// action. Render the submit slot as Secondary so all options look alike;
+	// focus highlight signals which one Enter triggers.
+	form.SetSubmitVariant(ButtonSecondary)
 
 	for i := 1; i < len(options); i++ {
 		idx := i
