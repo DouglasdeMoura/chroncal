@@ -1265,7 +1265,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !msg.IsDark() {
 				btnDelta = -0.18
 			}
-			m.theme.ButtonSecondaryBg = oklch.ShiftLightness(msg.Color, btnDelta)
+			m.theme.ButtonBg = oklch.ShiftLightness(msg.Color, btnDelta)
 		}
 		SetActiveTheme(m.theme)
 		// Month/week/day views use the selected-color as a vibrant

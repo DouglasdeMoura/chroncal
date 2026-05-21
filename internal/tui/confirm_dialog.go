@@ -38,9 +38,6 @@ func NewConfirmDialogModel(message, confirmLabel string) ConfirmDialogModel {
 			}),
 		},
 	)
-	// Confirm prompts default to Secondary — same neutral pill as Cancel.
-	// Destructive callers opt into the Danger variant explicitly below.
-	form.SetSubmitVariant(ButtonSecondary)
 	form.OnSubmit(func(f *Form) tea.Cmd {
 		return func() tea.Msg { return ConfirmDialogResultMsg{Confirmed: true} }
 	})

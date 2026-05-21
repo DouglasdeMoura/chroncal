@@ -196,7 +196,6 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 	}
 
 	form := NewForm("Save", formStyles, items...)
-	form.SetSubmitVariant(ButtonSecondary)
 
 	savedID := params.ID
 	linked := params.RemoteLinked
@@ -301,7 +300,7 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 				FormItem{Label: "Password", Field: password, Required: true},
 				FormItem{Label: "HTTP", Field: insecure},
 			)
-			f.SetActionButton("Test", ButtonSecondary, func() tea.Msg {
+			f.SetActionButton("Test", Button, func() tea.Msg {
 				return testConnectionPressedMsg{}
 			})
 		case !syncOn && hasRemote:

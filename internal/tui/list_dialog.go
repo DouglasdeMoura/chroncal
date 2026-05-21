@@ -680,9 +680,9 @@ func (m ListDialogModel) renderActions(w int) string {
 		case a.Danger:
 			parts[i] = bs.Danger.Render(a.Label, focused)
 		case a.Primary:
-			parts[i] = bs.Primary.Render(a.Label, focused)
+			parts[i] = bs.Normal.Render(a.Label, focused)
 		default:
-			parts[i] = bs.Secondary.Render(a.Label, focused)
+			parts[i] = bs.Normal.Render(a.Label, focused)
 		}
 	}
 	return truncateTo(strings.Join(parts, " "), w)
@@ -783,7 +783,7 @@ func (m ListDialogModel) renderTitleRow(innerW int) string {
 // margin-right cell used by action-bar buttons so it sits flush with the
 // dialog's right edge.
 func renderTitleActionButton(a ListDialogAction, focused bool) string {
-	bs := DefaultButtonStyles().Primary
+	bs := DefaultButtonStyles().Normal
 	style := bs.Normal
 	if focused {
 		style = bs.Focused

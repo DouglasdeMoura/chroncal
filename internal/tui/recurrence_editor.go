@@ -223,7 +223,6 @@ func (m *RecurrenceEditorModel) buildForm() {
 
 	if m.form.ItemCount() == 0 {
 		m.form = NewForm("Ok", styles, items...)
-		m.form.SetSubmitVariant(ButtonSecondary)
 		m.form.OnSubmit(func(f *Form) tea.Cmd {
 			return func() tea.Msg { return recurrenceEditorDone }
 		})
@@ -634,8 +633,8 @@ func (m RecurrenceEditorModel) EndsDatePickerView() string {
 	sepStyle := lipgloss.NewStyle().Foreground(m.theme.Border)
 	resultLines = append(resultLines, sepStyle.Render(strings.Repeat("─", innerW)))
 	bs := DefaultButtonStyles()
-	cancelBtn := bs.Secondary.Render("Cancel", false)
-	okBtn := bs.Primary.Render("Ok", false)
+	cancelBtn := bs.Normal.Render("Cancel", false)
+	okBtn := bs.Normal.Render("Ok", false)
 	buttonRow := cancelBtn + " " + okBtn
 	btnPad := max(innerW-lipgloss.Width(buttonRow), 0)
 	resultLines = append(resultLines, strings.Repeat(" ", btnPad)+buttonRow)

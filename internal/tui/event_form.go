@@ -552,7 +552,6 @@ func (m *EventFormModel) buildDialogAndForm() {
 	m.fieldKeys = keys
 
 	m.form = NewForm("Save", formStyles, items...)
-	m.form.SetSubmitVariant(ButtonSecondary)
 
 	// NOTE: this closure must NOT read state from the captured m. Any
 	// value-typed field on EventFormModel (editID, customRule, alarms, day,
@@ -1171,8 +1170,8 @@ func (m EventFormModel) datePickerButtonHit(x int) string {
 	boxW, _ := m.DatePickerBoxSize()
 	innerW := boxW - 4
 	bs := DefaultButtonStyles()
-	cancelW := lipgloss.Width(bs.Secondary.Render("Cancel", false))
-	okW := lipgloss.Width(bs.Primary.Render("Ok", false))
+	cancelW := lipgloss.Width(bs.Normal.Render("Cancel", false))
+	okW := lipgloss.Width(bs.Normal.Render("Ok", false))
 	totalW := cancelW + 1 + okW
 	pad := max(innerW-totalW, 0)
 	if x >= pad && x < pad+cancelW {
@@ -1260,8 +1259,8 @@ func (m EventFormModel) TimezonePickerView() string {
 	// Action buttons right-aligned.
 	bs := DefaultButtonStyles()
 	focus := m.timezonePicker.BtnFocus()
-	cancelBtn := bs.Secondary.Render("Cancel", focus == tzFocusCancel)
-	okBtn := bs.Primary.Render("Ok", focus == tzFocusOk)
+	cancelBtn := bs.Normal.Render("Cancel", focus == tzFocusCancel)
+	okBtn := bs.Normal.Render("Ok", focus == tzFocusOk)
 	buttonRow := cancelBtn + " " + okBtn
 	btnPad := max(innerW-lipgloss.Width(buttonRow), 0)
 	buttonRow = strings.Repeat(" ", btnPad) + buttonRow
@@ -1369,8 +1368,8 @@ func (m EventFormModel) datePickerOverlayView(mm MiniMonthModel, supportRange bo
 	sepStyle := lipgloss.NewStyle().Faint(true)
 	resultLines = append(resultLines, sepStyle.Render(strings.Repeat("─", innerW)))
 	bs := DefaultButtonStyles()
-	cancelBtn := bs.Secondary.Render("Cancel", m.dpBtnFocus == 0)
-	okBtn := bs.Primary.Render("Ok", m.dpBtnFocus == 1)
+	cancelBtn := bs.Normal.Render("Cancel", m.dpBtnFocus == 0)
+	okBtn := bs.Normal.Render("Ok", m.dpBtnFocus == 1)
 	buttonRow := cancelBtn + " " + okBtn
 	btnPad := max(innerW-lipgloss.Width(buttonRow), 0)
 	resultLines = append(resultLines, strings.Repeat(" ", btnPad)+buttonRow)

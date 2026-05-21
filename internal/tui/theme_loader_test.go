@@ -21,8 +21,8 @@ func TestLoadBuiltinDefault(t *testing.T) {
 		if th.FormHighlight == nil {
 			t.Errorf("dark=%v: FormHighlight is nil", dark)
 		}
-		if th.ButtonPrimaryBg == nil {
-			t.Errorf("dark=%v: ButtonPrimaryBg is nil", dark)
+		if th.ButtonBg == nil {
+			t.Errorf("dark=%v: ButtonBg is nil", dark)
 		}
 		if len(th.CalendarSwatches) == 0 {
 			t.Errorf("dark=%v: CalendarSwatches is empty", dark)

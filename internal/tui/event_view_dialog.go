@@ -203,7 +203,7 @@ func (m EventViewDialogModel) actions() []eventViewAction {
 	}
 	ev := m.event
 	return []eventViewAction{
-		{label: "Edit", variant: ButtonPrimary, zone: "action:edit",
+		{label: "Edit", variant: Button, zone: "action:edit",
 			msg: func() tea.Msg { return EventEditMsg{Event: ev} }},
 		{label: "Duplicate", variant: ButtonGhost, zone: "action:duplicate",
 			msg: func() tea.Msg { return EventDuplicateMsg{Event: ev} }},
@@ -433,7 +433,7 @@ func (m EventViewDialogModel) renderRSVPRow(w int) string {
 			l = strings.Repeat(" ", leftPad) + l + strings.Repeat(" ", right)
 		}
 		focused := m.focusZone == viewZoneRSVP && i == m.focusedRSVP
-		parts = append(parts, mouseMark("rsvp:"+a.label, DefaultButtonStyles().Secondary.Render(l, focused)))
+		parts = append(parts, mouseMark("rsvp:"+a.label, DefaultButtonStyles().Normal.Render(l, focused)))
 	}
 	value := strings.Join(parts, " ")
 	return truncateTo(faint.Render(padded)+value, w)

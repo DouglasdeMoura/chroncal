@@ -1590,10 +1590,9 @@ type FormItem struct {
 type ButtonVariant int
 
 const (
-	ButtonPrimary   ButtonVariant = iota // submit / main action
-	ButtonSecondary                      // cancel / neutral
-	ButtonDanger                         // destructive action
-	ButtonGhost                          // minimal / text-only
+	Button       ButtonVariant = iota // neutral default (submit / cancel / routine action)
+	ButtonDanger                      // destructive action
+	ButtonGhost                       // minimal / text-only
 )
 
 // ButtonStyle holds the normal and focused styles for a button variant.
@@ -1612,23 +1611,20 @@ func (bs ButtonStyle) Render(label string, focused bool) string {
 
 // ButtonStyles holds style pairs for every button variant.
 type ButtonStyles struct {
-	Primary   ButtonStyle
-	Secondary ButtonStyle
-	Danger    ButtonStyle
-	Ghost     ButtonStyle
+	Normal ButtonStyle
+	Danger ButtonStyle
+	Ghost  ButtonStyle
 }
 
 // Get returns the ButtonStyle for the given variant.
 func (bs ButtonStyles) Get(v ButtonVariant) ButtonStyle {
 	switch v {
-	case ButtonPrimary:
-		return bs.Primary
 	case ButtonDanger:
 		return bs.Danger
 	case ButtonGhost:
 		return bs.Ghost
 	default:
-		return bs.Secondary
+		return bs.Normal
 	}
 }
 
@@ -1637,23 +1633,16 @@ func (bs ButtonStyles) Get(v ButtonVariant) ButtonStyle {
 // All variants share FormHighlight as the focused background so "cursor is
 // here" reads as a single consistent flash across the form, independent of
 // the button's semantic color. Each variant keeps its own idle look
-// (primary accent, secondary gray, danger red, ghost transparent) for
-// semantic identity. The primary idle bg is darkened in OKLCh space so the
-// pill reads as a filled action rather than a soft pastel highlight, and
+// (neutral fill, danger red, ghost transparent) for semantic identity, and
 // every fg is computed via oklch.ContrastingFg for guaranteed perceptual
 // contrast regardless of the configured palette.
 func DefaultButtonStyles() ButtonStyles {
 	base := lipgloss.NewStyle().Padding(0, 2).MarginRight(1)
 	t := activeTheme
-	primaryBg := oklch.ShiftLightness(t.ButtonPrimaryBg, -0.22)
 	highlightFg := oklch.ContrastingFg(t.FormHighlight)
 	return ButtonStyles{
-		Primary: ButtonStyle{
-			Normal:  base.Background(primaryBg).Foreground(oklch.ContrastingFg(primaryBg)).Bold(true),
-			Focused: base.Background(t.FormHighlight).Foreground(highlightFg).Bold(true),
-		},
-		Secondary: ButtonStyle{
-			Normal:  base.Background(t.ButtonSecondaryBg).Foreground(oklch.ContrastingFg(t.ButtonSecondaryBg)),
+		Normal: ButtonStyle{
+			Normal:  base.Background(t.ButtonBg).Foreground(oklch.ContrastingFg(t.ButtonBg)),
 			Focused: base.Background(t.FormHighlight).Foreground(highlightFg),
 		},
 		Danger: ButtonStyle{
@@ -1734,8 +1723,8 @@ func NewForm(submitLabel string, styles FormStyles, items ...FormItem) Form {
 		items:         items,
 		styles:        styles,
 		submitLabel:   submitLabel,
-		submitVariant: ButtonPrimary,
-		cancelVariant: ButtonSecondary,
+		submitVariant: Button,
+		cancelVariant: Button,
 	}
 	for i, item := range items {
 		if item.Field.IsFocusable() {

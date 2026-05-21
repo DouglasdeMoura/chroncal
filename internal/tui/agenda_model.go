@@ -440,7 +440,7 @@ func (m AgendaModel) View() string {
 		out.WriteString("\n\n")
 		out.WriteString(lipgloss.NewStyle().Foreground(m.theme.TextDim).Render("No events this month."))
 		out.WriteString("\n\n")
-		out.WriteString(DefaultButtonStyles().Primary.Normal.Render("+ Create event"))
+		out.WriteString(DefaultButtonStyles().Normal.Normal.Render("+ Create event"))
 		return out.String()
 	}
 
@@ -821,7 +821,7 @@ func (m AgendaModel) HandleClick(x, y int) (AgendaModel, tea.Cmd) {
 // emptyButtonBounds returns the visible width and local Y-line of the
 // "+ Create event" button rendered in the empty state.
 func (m AgendaModel) emptyButtonBounds() (int, int) {
-	btn := DefaultButtonStyles().Primary.Normal.Render("+ Create event")
+	btn := DefaultButtonStyles().Normal.Normal.Render("+ Create event")
 	// Header(1) + blank(1) + "No events"(1) + blank(1) + button line = y=4.
 	return lipgloss.Width(btn), 4
 }

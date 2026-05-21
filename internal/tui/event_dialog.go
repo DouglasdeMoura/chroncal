@@ -656,7 +656,7 @@ func (m EventDialogModel) renderRSVPLine(att model.Attendee, rsvp []dialogAction
 			right := pad - leftPad
 			l = strings.Repeat(" ", leftPad) + l + strings.Repeat(" ", right)
 		}
-		parts = append(parts, DefaultButtonStyles().Secondary.Render(l, m.rsvpFocused && i == m.focusedRSVP))
+		parts = append(parts, DefaultButtonStyles().Normal.Render(l, m.rsvpFocused && i == m.focusedRSVP))
 	}
 	value := strings.Join(parts, " ")
 

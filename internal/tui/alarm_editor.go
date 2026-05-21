@@ -261,7 +261,6 @@ func (m *AlarmListEditorModel) buildEditForm(a model.Alarm) {
 	m.fieldKeys = []string{"offset", "action"}
 
 	m.form = NewForm("Save", styles, items...)
-	m.form.SetSubmitVariant(ButtonSecondary)
 	m.form.OnSubmit(func(f *Form) tea.Cmd {
 		return func() tea.Msg { return alarmEditorSaveForm }
 	})
@@ -583,9 +582,9 @@ func (m AlarmListEditorModel) renderList() string {
 	lines = append(lines, faint.Render(strings.Repeat("─", innerW)))
 
 	bs := DefaultButtonStyles()
-	newBtn := mouseMark("alarm:list:new", bs.Secondary.Render("+ New alarm", m.btnFocus == 0))
-	cancelBtn := mouseMark("alarm:list:cancel", bs.Secondary.Render("Cancel", m.btnFocus == 1))
-	saveBtn := mouseMark("alarm:list:save", bs.Primary.Render("Save", m.btnFocus == 2))
+	newBtn := mouseMark("alarm:list:new", bs.Normal.Render("+ New alarm", m.btnFocus == 0))
+	cancelBtn := mouseMark("alarm:list:cancel", bs.Normal.Render("Cancel", m.btnFocus == 1))
+	saveBtn := mouseMark("alarm:list:save", bs.Normal.Render("Save", m.btnFocus == 2))
 
 	rightRow := cancelBtn + " " + saveBtn
 	gap := max(innerW-lipgloss.Width(newBtn)-lipgloss.Width(rightRow), 1)
