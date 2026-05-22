@@ -41,19 +41,28 @@ func TestHelpDialog_WindowsSectionDocumentsTrashRestore(t *testing.T) {
 	}
 }
 
-func TestHelpDialog_HasFourTopLevelSections(t *testing.T) {
-	// The Apple-style rewrite collapses what used to be 11 widget-shaped
-	// buckets into 4 task-shaped ones. Locking the count down so future
-	// additions stay inside an existing group instead of sprouting a new
-	// section for every new dialog.
+func TestHelpDialog_TopLevelSectionsAreTaskShaped(t *testing.T) {
+	// The Apple-style layout collapses what used to be 11 widget-shaped
+	// buckets into a small fixed list of task-shaped ones. Locking the
+	// order down so future additions stay inside an existing group
+	// instead of sprouting a new section for every new dialog. Command
+	// Palette is its own section — it has palette-specific keys
+	// (ctrl+k/j navigation, pgup/pgdn) that don't apply elsewhere.
+	want := []string{"Getting Around", "Events", "Calendars", "Command Palette", "Windows"}
 	sections := NewHelpDialogModel(NewTheme(true)).sections()
-	if got, want := len(sections), 4; got != want {
-		t.Fatalf("section count = %d, want %d", got, want)
+	if got := len(sections); got != len(want) {
+		t.Fatalf("section count = %d, want %d", got, len(want))
 	}
-	for i, want := range []string{"Getting Around", "Events", "Calendars", "Windows"} {
-		if sections[i].title != want {
-			t.Errorf("section[%d] = %q, want %q", i, sections[i].title, want)
+	for i, w := range want {
+		if sections[i].title != w {
+			t.Errorf("section[%d] = %q, want %q", i, sections[i].title, w)
 		}
+	}
+}
+
+func TestHelpDialog_CommandPaletteSectionDocumentsOpen(t *testing.T) {
+	if got := findHelpEntry(t, "Command Palette", "open"); got != "/ · ctrl+k" {
+		t.Fatalf("palette open key = %q, want %q", got, "/ · ctrl+k")
 	}
 }
 

@@ -174,11 +174,21 @@ func (m HelpDialogModel) sections() []helpSection {
 			},
 		},
 		{
+			title: "Command Palette",
+			entries: []helpEntry{
+				{"/ · ctrl+k", "open"},
+				{"↑↓ · ctrl+k/j", "move selection"},
+				{"pgup · pgdn", "jump by page"},
+				{"enter", "run command"},
+				{"esc", "close"},
+			},
+		},
+		{
 			title: "Windows",
 			entries: []helpEntry{
 				{"D · shift+d", "recently deleted"},
 				{"r (trash)", "restore"},
-				{"? · /", "this help · command palette"},
+				{"?", "this help"},
 				{"\\", "toggle sidebar"},
 				{"#", "toggle week numbers"},
 				{"tab · shift+tab", "move focus"},
