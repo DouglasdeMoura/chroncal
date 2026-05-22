@@ -221,16 +221,17 @@ func (m TrashModel) refresh() TrashModel {
 	listFocused := m.shell.FocusZone() == ListZoneList
 	rowW := m.listRowWidth()
 	selBG := m.shell.SelectedColor()
-	markMode := len(m.marked) > 0
 	for i, e := range m.entries {
-		label := formatTrashRowLabel(e)
-		if markMode {
-			prefix := Glyphs["checkbox.off"] + " "
-			if m.marked[entryKey(e)] {
-				prefix = Glyphs["checkbox.on"] + " "
-			}
-			label = prefix + label
+		// Checkboxes are always visible — the empty box teaches users
+		// that batch-select exists without forcing them to discover
+		// Space first. Mirrors Finder's list-view checkbox mode and
+		// Mail's edit-mode circles, which stay drawn whether anything
+		// is selected or not.
+		prefix := Glyphs["checkbox.off"] + " "
+		if m.marked[entryKey(e)] {
+			prefix = Glyphs["checkbox.on"] + " "
 		}
+		label := prefix + formatTrashRowLabel(e)
 		if i == sel {
 			if rowW > 0 {
 				label = truncateTo(label, rowW)

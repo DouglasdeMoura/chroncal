@@ -82,6 +82,33 @@ func TestTrashModel_PurgeKeyEmitsEntry(t *testing.T) {
 	}
 }
 
+func TestTrashModel_CheckboxesAreAlwaysVisible(t *testing.T) {
+	// Empty checkbox should appear next to every row even when nothing
+	// is marked. Teaches the affordance instead of hiding it behind
+	// the Space keypress, matching Finder list-view's always-on
+	// checkbox column and Mail's persistent edit-mode circles.
+	m := newTrashForTest().SetEntries(trashFixture(), nil)
+	out := m.View()
+	if !strings.Contains(out, Glyphs["checkbox.off"]) {
+		t.Fatalf("empty checkbox %q not in view:\n%s", Glyphs["checkbox.off"], out)
+	}
+	if strings.Contains(out, Glyphs["checkbox.on"]) {
+		t.Fatalf("filled checkbox %q rendered with nothing marked", Glyphs["checkbox.on"])
+	}
+}
+
+func TestTrashModel_CheckboxFillsWhenMarked(t *testing.T) {
+	m := newTrashForTest().SetEntries(trashFixture(), nil)
+	m, _ = m.Update(tea.KeyPressMsg{Code: ' ', Text: " "}) // mark row 0
+	out := m.View()
+	if !strings.Contains(out, Glyphs["checkbox.on"]) {
+		t.Fatalf("filled checkbox %q not in view after marking:\n%s", Glyphs["checkbox.on"], out)
+	}
+	if !strings.Contains(out, Glyphs["checkbox.off"]) {
+		t.Fatalf("empty checkbox %q missing — only the marked row should fill", Glyphs["checkbox.off"])
+	}
+}
+
 func TestTrashModel_SpaceTogglesMark(t *testing.T) {
 	m := newTrashForTest().SetEntries(trashFixture(), nil)
 	// Mark row 0 (Event ID=1), move to row 1 and mark it too.
