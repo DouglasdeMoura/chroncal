@@ -192,10 +192,11 @@ func (m HelpDialogModel) sections() []helpSection {
 				{"\\", "toggle sidebar"},
 				{"#", "toggle week numbers"},
 				{"tab · shift+tab", "move focus"},
-				{"esc · q", "close current dialog"},
+				{"esc · q", "close (read-only dialogs)"},
+				{"esc", "close (forms)"},
 				{"ctrl+s", "save form"},
 				{"ctrl+c", "force quit"},
-				{"q", "quit"},
+				{"q (main view)", "quit"},
 			},
 		},
 	}

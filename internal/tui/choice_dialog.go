@@ -98,9 +98,10 @@ func (m ChoiceDialogModel) Update(msg tea.Msg) (ChoiceDialogModel, tea.Cmd) {
 		return m.SetSize(msg.Width, msg.Height), nil
 	}
 
-	// Esc → cancel.
+	// Esc / q → cancel. Choice dialogs offer button options, never
+	// text input, so the vim-style `q` close is safe here.
 	if msg, ok := msg.(tea.KeyPressMsg); ok {
-		if key.Matches(msg, key.NewBinding(key.WithKeys("esc"))) {
+		if key.Matches(msg, key.NewBinding(key.WithKeys("esc", "q"))) {
 			return m, func() tea.Msg { return ChoiceDialogResultMsg{Choice: -1} }
 		}
 	}

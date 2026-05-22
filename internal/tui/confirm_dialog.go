@@ -91,9 +91,11 @@ func (m ConfirmDialogModel) Update(msg tea.Msg) (ConfirmDialogModel, tea.Cmd) {
 		return m.SetSize(msg.Width, msg.Height), nil
 	}
 
-	// Esc → cancel.
+	// Esc / q → cancel. Confirm dialogs have no text fields, so the
+	// vim-style `q` close is unambiguous here (unlike form dialogs,
+	// where it would swallow the letter being typed).
 	if msg, ok := msg.(tea.KeyPressMsg); ok {
-		if key.Matches(msg, key.NewBinding(key.WithKeys("esc"))) {
+		if key.Matches(msg, key.NewBinding(key.WithKeys("esc", "q"))) {
 			return m, func() tea.Msg { return ConfirmDialogResultMsg{Confirmed: false} }
 		}
 		// Y/N keyboard shortcuts.
