@@ -153,16 +153,63 @@ func TestTrashModel_ClearMarksWipesSet(t *testing.T) {
 	}
 }
 
-func TestTrashModel_ActionsAreRestoreAndPurgeOnly(t *testing.T) {
+func TestTrashModel_ActionsAreRestorePurgeAndPurgeAll(t *testing.T) {
 	// The trash dialog shows all necessary info inline; no secondary View
 	// action is surfaced, regardless of entry kind.
 	m := newTrashForTest().SetEntries(trashFixture(), nil)
-	if got := len(m.buildActions()); got != 2 {
-		t.Fatalf("event-row actions = %d, want 2 (Restore + Purge)", got)
+	assertActionLabels := func(label string) {
+		t.Helper()
+		actions := m.buildActions()
+		if got := len(actions); got != 3 {
+			t.Fatalf("%s actions = %d, want 3 (Restore + Purge + Purge All)", label, got)
+		}
+		if actions[0].Label != "Restore" {
+			t.Errorf("%s actions[0] = %q, want Restore", label, actions[0].Label)
+		}
+		if actions[1].Label != "Purge" {
+			t.Errorf("%s actions[1] = %q, want Purge", label, actions[1].Label)
+		}
+		// Purge All carries a count so users see what they're nuking.
+		if !strings.HasPrefix(actions[2].Label, "Purge All (") {
+			t.Errorf("%s actions[2] = %q, want prefix %q", label, actions[2].Label, "Purge All (")
+		}
+		if !actions[2].Danger {
+			t.Errorf("%s Purge All must be Danger", label)
+		}
 	}
+	assertActionLabels("event-row")
 	m, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
-	if got := len(m.buildActions()); got != 2 {
-		t.Fatalf("instance-row actions = %d, want 2 (Restore + Purge)", got)
+	assertActionLabels("instance-row")
+}
+
+func TestTrashModel_PurgeAllTargetsEveryEntry(t *testing.T) {
+	// Purge All ignores the cursor / marked set and always operates on
+	// the full visible list, even when the user has highlighted one
+	// specific row. Locks the "broader scope" contract in.
+	m := newTrashForTest().SetEntries(trashFixture(), nil)
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'X', Text: "X"})
+	if cmd == nil {
+		t.Fatal("X (Purge All) produced no command")
+	}
+	msg, ok := cmd().(TrashPurgeRequestedMsg)
+	if !ok {
+		t.Fatalf("X produced %T, want TrashPurgeRequestedMsg", cmd())
+	}
+	if len(msg.Entries) != 2 {
+		t.Fatalf("Purge All Entries len = %d, want 2 (every trash entry)", len(msg.Entries))
+	}
+}
+
+func TestTrashModel_PurgeAllHiddenWhenTrashEmpty(t *testing.T) {
+	// No entries → no actions at all, so Purge All can't fire from
+	// either the button or the keybinding.
+	m := newTrashForTest()
+	if got := len(m.buildActions()); got != 0 {
+		t.Fatalf("empty trash actions = %d, want 0", got)
+	}
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'X', Text: "X"})
+	if cmd != nil {
+		t.Fatalf("X with empty trash should be a no-op, got %T", cmd())
 	}
 }
 

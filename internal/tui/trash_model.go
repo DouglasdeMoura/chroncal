@@ -34,16 +34,22 @@ type TrashRestoreRequestedMsg struct{ Entries []trash.Entry }
 type TrashPurgeRequestedMsg struct{ Entries []trash.Entry }
 
 type trashKeyMap struct {
-	Restore key.Binding
-	Purge   key.Binding
-	Mark    key.Binding
+	Restore  key.Binding
+	Purge    key.Binding
+	PurgeAll key.Binding
+	Mark     key.Binding
 }
 
 func defaultTrashKeys() trashKeyMap {
 	return trashKeyMap{
 		Restore: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "restore")),
 		Purge:   key.NewBinding(key.WithKeys("x", "delete"), key.WithHelp("x", "purge")),
-		Mark:    key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "select")),
+		// shift+X uses the same root letter as purge with shift =
+		// "broader scope", matching the c/C and d/D pairs the app
+		// already uses (new event vs manage calendars, undo delete
+		// vs Recently Deleted).
+		PurgeAll: key.NewBinding(key.WithKeys("X", "shift+x"), key.WithHelp("X", "purge all")),
+		Mark:     key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "select")),
 	}
 }
 
@@ -287,10 +293,25 @@ func (m TrashModel) buildActions() []ListDialogAction {
 		restoreLabel = fmt.Sprintf("Restore (%d)", len(targets))
 		purgeLabel = fmt.Sprintf("Purge (%d)", len(targets))
 	}
-	return []ListDialogAction{
+	actions := []ListDialogAction{
 		{Label: restoreLabel, Primary: true, Msg: func() tea.Msg { return TrashRestoreRequestedMsg{Entries: targets} }},
 		{Label: purgeLabel, Danger: true, Msg: func() tea.Msg { return TrashPurgeRequestedMsg{Entries: targets} }},
 	}
+	// Purge All sits last in the action row so it's both rightmost
+	// visually (matching Photos.app / Notes.app's "Delete All" placement
+	// at the far edge) and tabbed last (so a reflex Tab from Restore
+	// doesn't land on the broadest destructive action first). The (N)
+	// count keeps the scope distinct from per-row Purge at a glance.
+	// Hidden when the trash is empty: buildActions returns nil up top
+	// for that case, so the empty-list guard already covers it.
+	all := make([]trash.Entry, len(m.entries))
+	copy(all, m.entries)
+	purgeAllLabel := fmt.Sprintf("Purge All (%d)", len(m.entries))
+	actions = append(actions, ListDialogAction{
+		Label: purgeAllLabel, Danger: true,
+		Msg: func() tea.Msg { return TrashPurgeRequestedMsg{Entries: all} },
+	})
+	return actions
 }
 
 func (m TrashModel) shortHelp() []key.Binding {
@@ -302,7 +323,7 @@ func (m TrashModel) shortHelp() []key.Binding {
 	if len(m.entries) == 0 {
 		return []key.Binding{sk.Close}
 	}
-	return []key.Binding{nav, sk.Tab, m.keys.Mark, m.keys.Restore, m.keys.Purge, sk.Close}
+	return []key.Binding{nav, sk.Tab, m.keys.Mark, m.keys.Restore, m.keys.Purge, m.keys.PurgeAll, sk.Close}
 }
 
 func (m TrashModel) Update(msg tea.Msg) (TrashModel, tea.Cmd) {
@@ -336,6 +357,15 @@ func (m TrashModel) handleKey(msg tea.KeyPressMsg) (TrashModel, tea.Cmd) {
 		if len(acts) > 1 {
 			m.shell = m.shell.FocusAction(1)
 			return m.refresh(), acts[1].Msg
+		}
+		return m, nil
+	case key.Matches(msg, m.keys.PurgeAll):
+		// Purge All is always the last action when entries exist;
+		// buildActions returns nil for an empty trash, so the
+		// len(acts) check also guards against an empty list.
+		if len(acts) > 2 {
+			m.shell = m.shell.FocusAction(len(acts) - 1)
+			return m.refresh(), acts[len(acts)-1].Msg
 		}
 		return m, nil
 	}
