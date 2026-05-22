@@ -206,6 +206,7 @@ func (m HelpDialogModel) sections() []helpSection {
 				{"x · delete (trash)", "purge"},
 				{"X · shift+x (trash)", "purge all"},
 				{"space (trash)", "select / deselect"},
+				{"A · shift+a (trash)", "select all / clear selection"},
 				{"?", "this help"},
 				{"\\", "toggle sidebar"},
 				{"#", "toggle week numbers"},

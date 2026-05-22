@@ -200,6 +200,40 @@ func TestTrashModel_PurgeAllTargetsEveryEntry(t *testing.T) {
 	}
 }
 
+func TestTrashModel_MarkAllSelectsEveryEntry(t *testing.T) {
+	m := newTrashForTest().SetEntries(trashFixture(), nil)
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'A', Text: "A"})
+
+	// Restore should now act on every row, not just the cursor.
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
+	msg := cmd().(TrashRestoreRequestedMsg)
+	if len(msg.Entries) != 2 {
+		t.Fatalf("after Mark All: Restore Entries len = %d, want 2", len(msg.Entries))
+	}
+}
+
+func TestTrashModel_MarkAllTogglesOffOnSecondPress(t *testing.T) {
+	m := newTrashForTest().SetEntries(trashFixture(), nil)
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'A', Text: "A"}) // select all
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'A', Text: "A"}) // clear
+
+	// Back to single-row semantics: Restore acts on the cursor only.
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
+	msg := cmd().(TrashRestoreRequestedMsg)
+	if len(msg.Entries) != 1 || msg.Entries[0].ID != 1 {
+		t.Fatalf("after toggle off: Entries = %+v, want single entry with ID=1", msg.Entries)
+	}
+}
+
+func TestTrashModel_MarkAllNoOpOnEmptyTrash(t *testing.T) {
+	m := newTrashForTest()
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'A', Text: "A"})
+	// No entries → still nothing marked, no panic.
+	if got := len(m.marked); got != 0 {
+		t.Fatalf("marked = %d, want 0 (empty trash)", got)
+	}
+}
+
 func TestTrashModel_PurgeAllHiddenWhenTrashEmpty(t *testing.T) {
 	// No entries → no actions at all, so Purge All can't fire from
 	// either the button or the keybinding.

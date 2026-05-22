@@ -38,6 +38,7 @@ type trashKeyMap struct {
 	Purge    key.Binding
 	PurgeAll key.Binding
 	Mark     key.Binding
+	MarkAll  key.Binding
 }
 
 func defaultTrashKeys() trashKeyMap {
@@ -50,6 +51,10 @@ func defaultTrashKeys() trashKeyMap {
 		// vs Recently Deleted).
 		PurgeAll: key.NewBinding(key.WithKeys("X", "shift+x"), key.WithHelp("X", "purge all")),
 		Mark:     key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "select")),
+		// A / shift+a is the TUI equivalent of macOS Cmd+A. Toggles so
+		// a second press deselects, mirroring how Finder's Cmd+A then
+		// Esc-equivalent works without needing a separate "clear" key.
+		MarkAll: key.NewBinding(key.WithKeys("A", "shift+a"), key.WithHelp("A", "select all")),
 	}
 }
 
@@ -159,6 +164,24 @@ func (m TrashModel) markedEntries() []trash.Entry {
 		return []trash.Entry{e}
 	}
 	return nil
+}
+
+// toggleMarkAll selects every entry when at least one is unmarked,
+// otherwise clears the mark set. Mirrors Cmd+A → Cmd+A in Finder: a
+// second press of the same key gives you back the empty state.
+func (m TrashModel) toggleMarkAll() TrashModel {
+	if len(m.entries) == 0 {
+		return m
+	}
+	if len(m.marked) == len(m.entries) {
+		m.marked = map[string]bool{}
+		return m.refresh()
+	}
+	m.marked = make(map[string]bool, len(m.entries))
+	for _, e := range m.entries {
+		m.marked[entryKey(e)] = true
+	}
+	return m.refresh()
 }
 
 // toggleMark flips the mark on the cursor row.
@@ -323,7 +346,7 @@ func (m TrashModel) shortHelp() []key.Binding {
 	if len(m.entries) == 0 {
 		return []key.Binding{sk.Close}
 	}
-	return []key.Binding{nav, sk.Tab, m.keys.Mark, m.keys.Restore, m.keys.Purge, m.keys.PurgeAll, sk.Close}
+	return []key.Binding{nav, sk.Tab, m.keys.Mark, m.keys.MarkAll, m.keys.Restore, m.keys.Purge, m.keys.PurgeAll, sk.Close}
 }
 
 func (m TrashModel) Update(msg tea.Msg) (TrashModel, tea.Cmd) {
@@ -344,6 +367,8 @@ func (m TrashModel) handleKey(msg tea.KeyPressMsg) (TrashModel, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Mark):
 		return m.toggleMark(), nil
+	case key.Matches(msg, m.keys.MarkAll):
+		return m.toggleMarkAll(), nil
 	}
 	acts := m.buildActions()
 	switch {
