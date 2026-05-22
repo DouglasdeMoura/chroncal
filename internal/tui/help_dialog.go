@@ -139,7 +139,7 @@ func (m HelpDialogModel) sections() []helpSection {
 				{"/ · ctrl+k", "command palette"},
 				{"?", "this help"},
 				{"u", "undo last event delete"},
-				{"D", "recently deleted"},
+				{"D · shift+d", "recently deleted"},
 				{"q", "quit"},
 				{"ctrl+c", "force quit"},
 				{"tab · shift+tab", "switch focus (main ↔ sidebar)"},
@@ -169,7 +169,7 @@ func (m HelpDialogModel) sections() []helpSection {
 			},
 		},
 		{
-			title: "Agenda",
+			title: "Agenda view",
 			entries: []helpEntry{
 				{"e", "edit selected event"},
 				{"ctrl+d", "duplicate"},
@@ -186,7 +186,7 @@ func (m HelpDialogModel) sections() []helpSection {
 			},
 		},
 		{
-			title: "Sidebar calendars",
+			title: "Sidebar",
 			entries: []helpEntry{
 				{"↑↓ · jk", "move selection"},
 				{"space", "toggle visibility"},
@@ -226,8 +226,9 @@ func (m HelpDialogModel) sections() []helpSection {
 			},
 		},
 		{
-			title: "Recently Deleted",
+			title: "Recently Deleted popup",
 			entries: []helpEntry{
+				{"D · shift+d", "open"},
 				{"r", "restore"},
 				{"x · delete", "purge"},
 				{"space", "select / deselect"},
