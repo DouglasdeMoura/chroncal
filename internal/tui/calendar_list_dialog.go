@@ -31,7 +31,6 @@ type calendarListDialogKeyMap struct {
 	Edit       key.Binding
 	Delete     key.Binding
 	New        key.Binding
-	Sync       key.Binding
 	SetDefault key.Binding
 }
 
@@ -219,7 +218,7 @@ func (m CalendarListDialogModel) shortHelp() []key.Binding {
 		key.WithKeys("up", "down", "k", "j"),
 		key.WithHelp("↑↓", "navigate"),
 	)
-	return []key.Binding{nav, sk.Tab, m.keys.New, m.keys.Edit, m.keys.SetDefault, m.keys.Delete, m.keys.Sync, sk.Close}
+	return []key.Binding{nav, sk.Tab, m.keys.New, m.keys.Edit, m.keys.SetDefault, m.keys.Delete, sk.Close}
 }
 
 // detailWidth returns the width of the detail column for the current shell
@@ -285,12 +284,6 @@ func (m CalendarListDialogModel) handleKey(msg tea.KeyPressMsg) (CalendarListDia
 		if id, ok := m.selectedID(); ok {
 			info := m.calendars[id]
 			return m, func() tea.Msg { return CalendarDeleteRequestedMsg{ID: id, Name: info.Name} }
-		}
-		return m, nil
-	case key.Matches(msg, m.keys.Sync):
-		if id, ok := m.selectedID(); ok {
-			name := m.calendars[id].Name
-			return m, func() tea.Msg { return SyncCalendarRequestedMsg{ID: id, Name: name} }
 		}
 		return m, nil
 	case key.Matches(msg, m.keys.SetDefault):

@@ -139,6 +139,7 @@ func (m HelpDialogModel) sections() []helpSection {
 				{"/ · ctrl+k", "command palette"},
 				{"?", "this help"},
 				{"u", "undo last event delete"},
+				{"D", "recently deleted"},
 				{"q", "quit"},
 				{"ctrl+c", "force quit"},
 				{"tab · shift+tab", "switch focus (main ↔ sidebar)"},
@@ -165,8 +166,15 @@ func (m HelpDialogModel) sections() []helpSection {
 				{"[ · pgup", "previous week / month"},
 				{"] · pgdn", "next week / month"},
 				{"enter", "select day / view event"},
-				{"x", "delete selected event (agenda)"},
-				{"o", "toggle empty days (agenda)"},
+			},
+		},
+		{
+			title: "Agenda",
+			entries: []helpEntry{
+				{"e", "edit selected event"},
+				{"ctrl+d", "duplicate"},
+				{"x · delete", "delete"},
+				{"o", "toggle empty days"},
 			},
 		},
 		{
@@ -175,6 +183,14 @@ func (m HelpDialogModel) sections() []helpSection {
 				{"l", "add calendar"},
 				{"r", "manage calendars"},
 				{"s", "sync all calendars"},
+			},
+		},
+		{
+			title: "Sidebar calendars",
+			entries: []helpEntry{
+				{"↑↓ · jk", "move selection"},
+				{"space", "toggle visibility"},
+				{"enter", "open calendar"},
 			},
 		},
 		{
@@ -203,9 +219,18 @@ func (m HelpDialogModel) sections() []helpSection {
 			entries: []helpEntry{
 				{"a", "add calendar"},
 				{"e", "edit"},
+				{"*", "set as default"},
 				{"x · delete", "delete"},
-				{"space", "toggle visibility"},
 				{"↑↓ · tab", "move selection"},
+				{"esc · q", "close"},
+			},
+		},
+		{
+			title: "Recently Deleted",
+			entries: []helpEntry{
+				{"r", "restore"},
+				{"x · delete", "purge"},
+				{"space", "select / deselect"},
 				{"esc · q", "close"},
 			},
 		},
