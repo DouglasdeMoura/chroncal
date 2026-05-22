@@ -131,117 +131,61 @@ type helpSection struct {
 	entries []helpEntry
 }
 
+// sections groups shortcuts by task — "what is the user trying to do?" —
+// rather than by which widget owns the binding. This mirrors the
+// macOS Keyboard Shortcuts panel: a shortcut appears exactly once,
+// near its sibling actions, and context tags in parens disambiguate
+// the few keys whose meaning depends on focus (e.g. "enter (sidebar)").
 func (m HelpDialogModel) sections() []helpSection {
 	return []helpSection{
 		{
-			title: "Global",
+			title: "Getting Around",
 			entries: []helpEntry{
-				{"/ · ctrl+k", "command palette"},
-				{"?", "this help"},
-				{"u", "undo last event delete"},
-				{"D · shift+d", "recently deleted"},
-				{"q", "quit"},
-				{"ctrl+c", "force quit"},
-				{"tab · shift+tab", "switch focus (main ↔ sidebar)"},
-				{"\\", "toggle sidebar"},
-				{"#", "toggle week numbers (month/week)"},
-				{"footer", "context-sensitive hints below the grid"},
-			},
-		},
-		{
-			title: "Views",
-			entries: []helpEntry{
-				{"m", "month view"},
-				{"w", "week view"},
-				{"d", "day view"},
-				{"a", "agenda view"},
-				{"t", "go to today"},
-				{"c", "new event"},
-			},
-		},
-		{
-			title: "Navigation",
-			entries: []helpEntry{
-				{"↑↓←→ · hjkl", "move cursor / scroll"},
+				{"←→↑↓ · hjkl", "move cursor"},
 				{"[ · pgup", "previous week / month"},
 				{"] · pgdn", "next week / month"},
-				{"enter", "select day / view event"},
+				{"t", "today"},
+				{"m · w · d · a", "month / week / day / agenda view"},
 			},
 		},
 		{
-			title: "Agenda view",
+			title: "Events",
 			entries: []helpEntry{
-				{"e", "edit selected event"},
+				{"c", "new event"},
+				{"enter", "open / select day"},
+				{"e", "edit"},
 				{"ctrl+d", "duplicate"},
 				{"x · delete", "delete"},
-				{"o", "toggle empty days"},
+				{"u", "undo last delete"},
+				{"o", "toggle empty days (agenda)"},
+				{"←→ · hl", "previous / next event (popup)"},
+				{"y · n · m", "RSVP yes / no / maybe"},
 			},
 		},
 		{
 			title: "Calendars",
 			entries: []helpEntry{
-				{"l", "add calendar"},
+				{"l", "new calendar"},
 				{"r", "manage calendars"},
-				{"s", "sync all calendars"},
-			},
-		},
-		{
-			title: "Sidebar",
-			entries: []helpEntry{
-				{"↑↓ · jk", "move selection"},
-				{"space", "toggle visibility"},
-				{"enter", "open calendar"},
-			},
-		},
-		{
-			title: "Command palette",
-			entries: []helpEntry{
-				{"↑↓ · ctrl+k/j", "move selection"},
-				{"pgup · pgdn", "jump by page"},
-				{"enter", "run command"},
-				{"esc", "close"},
-			},
-		},
-		{
-			title: "Event popup",
-			entries: []helpEntry{
-				{"e", "edit"},
-				{"ctrl+d", "duplicate"},
-				{"x · delete", "delete"},
-				{"y · n · m", "RSVP yes / no / maybe"},
-				{"tab · shift+tab", "cycle sections"},
-				{"←→ · hl", "previous / next event"},
-				{"esc · q", "close"},
-			},
-		},
-		{
-			title: "Calendar popup",
-			entries: []helpEntry{
-				{"a", "add calendar"},
-				{"e", "edit"},
+				{"s", "sync all"},
+				{"enter (sidebar)", "open calendar"},
+				{"space (sidebar)", "toggle visibility"},
 				{"*", "set as default"},
-				{"x · delete", "delete"},
-				{"↑↓ · tab", "move selection"},
-				{"esc · q", "close"},
 			},
 		},
 		{
-			title: "Recently Deleted popup",
+			title: "Windows",
 			entries: []helpEntry{
-				{"D · shift+d", "open"},
-				{"r", "restore"},
-				{"x · delete", "purge"},
-				{"space", "select / deselect"},
-				{"esc · q", "close"},
-			},
-		},
-		{
-			title: "Forms & editors",
-			entries: []helpEntry{
-				{"tab · shift+tab", "next / previous field"},
-				{"enter", "confirm / submit"},
-				{"ctrl+s", "save"},
-				{"esc", "cancel / close"},
+				{"D · shift+d", "recently deleted"},
+				{"r (trash)", "restore"},
+				{"? · /", "this help · command palette"},
+				{"\\", "toggle sidebar"},
+				{"#", "toggle week numbers"},
+				{"tab · shift+tab", "move focus"},
+				{"esc · q", "close current dialog"},
+				{"ctrl+s", "save form"},
+				{"ctrl+c", "force quit"},
+				{"q", "quit"},
 			},
 		},
 	}
