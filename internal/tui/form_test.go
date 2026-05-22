@@ -371,6 +371,50 @@ func TestForm_CancelAction(t *testing.T) {
 	assert.True(t, cancelled)
 }
 
+func TestForm_TabVisitsLeadingActionsBeforeSubmit(t *testing.T) {
+	// Layout (visual reading order, left-to-right):
+	//   [Set as Default] [Disconnect]   Field   [Save] [Test] [Cancel]
+	// Tab order should mirror that: field → Set as Default → Disconnect →
+	// Save → Test → Cancel, then wrap.
+	form := newTestForm(FormItem{Label: "Field", Field: NewTextField("v")})
+	form.SetLeadingActionButton("Set as Default", Button, func() tea.Msg { return nil })
+	form.SetLeadingActionButton("Disconnect", ButtonDanger, func() tea.Msg { return nil })
+	form.SetActionButton("Test", Button, func() tea.Msg { return nil })
+
+	assert.Equal(t, 0, form.Focused(), "field")
+	formPressTab(&form)
+	assert.Equal(t, 1, form.Focused(), "Set as Default (first leading)")
+	formPressTab(&form)
+	assert.Equal(t, 2, form.Focused(), "Disconnect (second leading)")
+	formPressTab(&form)
+	assert.Equal(t, 3, form.Focused(), "Save (submit)")
+	formPressTab(&form)
+	assert.Equal(t, 4, form.Focused(), "Test (trailing)")
+	formPressTab(&form)
+	assert.Equal(t, 5, form.Focused(), "Cancel")
+	formPressTab(&form)
+	assert.Equal(t, 0, form.Focused(), "wraps to field")
+}
+
+func TestForm_ShiftTabReversesLeadingActions(t *testing.T) {
+	form := newTestForm(FormItem{Label: "Field", Field: NewTextField("v")})
+	form.SetLeadingActionButton("Set as Default", Button, func() tea.Msg { return nil })
+	form.SetLeadingActionButton("Disconnect", ButtonDanger, func() tea.Msg { return nil })
+
+	// Cancel is last; Shift+Tab walks back through Save → Disconnect →
+	// Set as Default → Field, matching visual reading order in reverse.
+	formPressShiftTab(&form)
+	assert.Equal(t, 4, form.Focused(), "Cancel")
+	formPressShiftTab(&form)
+	assert.Equal(t, 3, form.Focused(), "Save")
+	formPressShiftTab(&form)
+	assert.Equal(t, 2, form.Focused(), "Disconnect")
+	formPressShiftTab(&form)
+	assert.Equal(t, 1, form.Focused(), "Set as Default")
+	formPressShiftTab(&form)
+	assert.Equal(t, 0, form.Focused(), "Field")
+}
+
 func TestForm_NoFields(t *testing.T) {
 	form := newTestForm()
 	assert.Equal(t, 0, form.Focused(), "submit button")

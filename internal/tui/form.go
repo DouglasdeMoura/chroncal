@@ -2403,9 +2403,44 @@ func (f Form) focusIndex(i int) (Form, tea.Cmd) {
 	return f, f.focusCurrent()
 }
 
-func (f Form) submitIndex() int { return len(f.items) }
+// Focus / Tab order is visual reading order, left-to-right:
+//
+//	fields → leading actions → submit → trailing actions → cancel
+//
+// Leading buttons render on the left of the button row (Disconnect, Set
+// as Default, …), so they are tabbed through before Submit. Trailing
+// buttons (Test, …) render on the right of Submit and are tabbed after
+// it, before Cancel. Cancel is always last — Esc shortcut still wins for
+// the safe exit. This mirrors AppKit's "Full Keyboard Access" order
+// where Tab follows visual position rather than registration order.
+func (f Form) leadingCount() int {
+	n := 0
+	for _, ab := range f.actionButtons {
+		if ab.Leading {
+			n++
+		}
+	}
+	return n
+}
 
-func (f Form) actionIndex(i int) int { return len(f.items) + 1 + i }
+func (f Form) submitIndex() int { return len(f.items) + f.leadingCount() }
+
+// actionIndex maps a position in f.actionButtons to its focus index,
+// taking the leading/trailing split into account so each button's tab
+// position matches where it renders on screen.
+func (f Form) actionIndex(i int) int {
+	leading := f.actionButtons[i].Leading
+	pos := 0
+	for j := 0; j < i; j++ {
+		if f.actionButtons[j].Leading == leading {
+			pos++
+		}
+	}
+	if leading {
+		return len(f.items) + pos
+	}
+	return f.submitIndex() + 1 + pos
+}
 
 func (f Form) cancelIndex() int { return len(f.items) + 1 + len(f.actionButtons) }
 

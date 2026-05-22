@@ -303,22 +303,26 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		saveMakeDefault: saveMakeDefault,
 	}
 
-	if params.RemoteLinked {
-		id := params.ID
-		name := params.Name
-		form.SetLeadingActionButton("Disconnect", ButtonDanger, func() tea.Msg {
-			return CalendarDisconnectRemoteRequestedMsg{ID: id, Name: name}
-		})
-	}
-
 	// Edit mode, not yet default: surface "Set as Default" so the user
 	// can reach the action without backing out into the manage-calendars
 	// list. Hidden when already default — no valid "unset" exists.
+	// Registered before Disconnect so Tab order is benign-then-destructive
+	// (and visually Set as Default sits left of Disconnect on the leading
+	// side) — a reflex Tab from Save should never land on a destructive
+	// action first.
 	if params.ID > 0 && !params.IsDefault {
 		id := params.ID
 		name := params.Name
 		form.SetLeadingActionButton("Set as Default", Button, func() tea.Msg {
 			return CalendarSetDefaultRequestedMsg{ID: id, Name: name}
+		})
+	}
+
+	if params.RemoteLinked {
+		id := params.ID
+		name := params.Name
+		form.SetLeadingActionButton("Disconnect", ButtonDanger, func() tea.Msg {
+			return CalendarDisconnectRemoteRequestedMsg{ID: id, Name: name}
 		})
 	}
 
