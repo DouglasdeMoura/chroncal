@@ -77,7 +77,7 @@ func defaultAppKeys() appKeyMap {
 		Help:           key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		Palette:        key.NewBinding(key.WithKeys("/", "ctrl+k"), key.WithHelp("/", "commands")),
 		CalendarCreate: key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "new calendar")),
-		CalendarList:   key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "calendars")),
+		CalendarList:   key.NewBinding(key.WithKeys("C", "shift+c"), key.WithHelp("C", "calendars")),
 		Sync:           key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sync")),
 		Undo:           key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "undo")),
 		TrashView:      key.NewBinding(key.WithKeys("D", "shift+d"), key.WithHelp("D", "recently deleted")),
