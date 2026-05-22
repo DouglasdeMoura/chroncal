@@ -153,15 +153,17 @@ func TestTrashModel_ClearMarksWipesSet(t *testing.T) {
 	}
 }
 
-func TestTrashModel_ActionsAreRestorePurgeAndPurgeAll(t *testing.T) {
-	// The trash dialog shows all necessary info inline; no secondary View
-	// action is surfaced, regardless of entry kind.
+func TestTrashModel_BottomActionsAreRestoreAndPurgeOnly(t *testing.T) {
+	// Bottom action row stays focused on per-row scope: Restore and
+	// Purge act on the cursor / marked set. Purge All is broader and
+	// lives in the title bar so users don't conflate the two — see
+	// TestTrashModel_PurgeAllLivesInTitleBar.
 	m := newTrashForTest().SetEntries(trashFixture(), nil)
 	assertActionLabels := func(label string) {
 		t.Helper()
 		actions := m.buildActions()
-		if got := len(actions); got != 3 {
-			t.Fatalf("%s actions = %d, want 3 (Restore + Purge + Purge All)", label, got)
+		if got := len(actions); got != 2 {
+			t.Fatalf("%s actions = %d, want 2 (Restore + Purge)", label, got)
 		}
 		if actions[0].Label != "Restore" {
 			t.Errorf("%s actions[0] = %q, want Restore", label, actions[0].Label)
@@ -169,17 +171,27 @@ func TestTrashModel_ActionsAreRestorePurgeAndPurgeAll(t *testing.T) {
 		if actions[1].Label != "Purge" {
 			t.Errorf("%s actions[1] = %q, want Purge", label, actions[1].Label)
 		}
-		// Purge All carries a count so users see what they're nuking.
-		if !strings.HasPrefix(actions[2].Label, "Purge All (") {
-			t.Errorf("%s actions[2] = %q, want prefix %q", label, actions[2].Label, "Purge All (")
-		}
-		if !actions[2].Danger {
-			t.Errorf("%s Purge All must be Danger", label)
-		}
 	}
 	assertActionLabels("event-row")
 	m, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	assertActionLabels("instance-row")
+}
+
+func TestTrashModel_PurgeAllLivesInTitleBar(t *testing.T) {
+	// Purge All renders as the dialog's title-bar action — separated
+	// from per-row Restore / Purge at the bottom, matching Photos.app
+	// / Notes.app placement of "Delete All" in the trash header.
+	m := newTrashForTest().SetEntries(trashFixture(), nil)
+	action := m.purgeAllTitleAction()
+	if action == nil {
+		t.Fatal("purgeAllTitleAction returned nil with entries present")
+	}
+	if !strings.HasPrefix(action.Label, "Purge All (") {
+		t.Errorf("title action label = %q, want prefix %q", action.Label, "Purge All (")
+	}
+	if !action.Danger {
+		t.Errorf("title action must be Danger")
+	}
 }
 
 func TestTrashModel_PurgeAllTargetsEveryEntry(t *testing.T) {
@@ -235,11 +247,14 @@ func TestTrashModel_MarkAllNoOpOnEmptyTrash(t *testing.T) {
 }
 
 func TestTrashModel_PurgeAllHiddenWhenTrashEmpty(t *testing.T) {
-	// No entries → no actions at all, so Purge All can't fire from
-	// either the button or the keybinding.
+	// No entries → no title action and no bottom-row actions. The
+	// key binding is also a no-op so it never fires on an empty list.
 	m := newTrashForTest()
 	if got := len(m.buildActions()); got != 0 {
 		t.Fatalf("empty trash actions = %d, want 0", got)
+	}
+	if m.purgeAllTitleAction() != nil {
+		t.Errorf("empty trash should not install a title-bar Purge All button")
 	}
 	_, cmd := m.Update(tea.KeyPressMsg{Code: 'X', Text: "X"})
 	if cmd != nil {

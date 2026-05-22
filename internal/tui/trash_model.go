@@ -301,6 +301,7 @@ func (m TrashModel) refresh() TrashModel {
 		m.shell = m.shell.SetActions(m.buildActions())
 	}
 
+	m.shell = m.shell.SetTitleAction(m.purgeAllTitleAction())
 	m.shell = m.shell.SetShortHelp(m.shortHelp())
 	return m
 }
@@ -316,25 +317,28 @@ func (m TrashModel) buildActions() []ListDialogAction {
 		restoreLabel = fmt.Sprintf("Restore (%d)", len(targets))
 		purgeLabel = fmt.Sprintf("Purge (%d)", len(targets))
 	}
-	actions := []ListDialogAction{
+	return []ListDialogAction{
 		{Label: restoreLabel, Primary: true, Msg: func() tea.Msg { return TrashRestoreRequestedMsg{Entries: targets} }},
 		{Label: purgeLabel, Danger: true, Msg: func() tea.Msg { return TrashPurgeRequestedMsg{Entries: targets} }},
 	}
-	// Purge All sits last in the action row so it's both rightmost
-	// visually (matching Photos.app / Notes.app's "Delete All" placement
-	// at the far edge) and tabbed last (so a reflex Tab from Restore
-	// doesn't land on the broadest destructive action first). The (N)
-	// count keeps the scope distinct from per-row Purge at a glance.
-	// Hidden when the trash is empty: buildActions returns nil up top
-	// for that case, so the empty-list guard already covers it.
+}
+
+// purgeAllTitleAction returns the "Purge All (N)" button installed in
+// the title bar — visually separated from per-row Restore / Purge at
+// the bottom, matching Photos.app / Notes.app placement of "Delete All"
+// in the trash window header. Returns nil when the trash is empty so
+// the slot disappears entirely.
+func (m TrashModel) purgeAllTitleAction() *ListDialogAction {
+	if len(m.entries) == 0 {
+		return nil
+	}
 	all := make([]trash.Entry, len(m.entries))
 	copy(all, m.entries)
-	purgeAllLabel := fmt.Sprintf("Purge All (%d)", len(m.entries))
-	actions = append(actions, ListDialogAction{
-		Label: purgeAllLabel, Danger: true,
+	label := fmt.Sprintf("Purge All (%d)", len(m.entries))
+	return &ListDialogAction{
+		Label: label, Danger: true,
 		Msg: func() tea.Msg { return TrashPurgeRequestedMsg{Entries: all} },
-	})
-	return actions
+	}
 }
 
 func (m TrashModel) shortHelp() []key.Binding {
@@ -385,12 +389,11 @@ func (m TrashModel) handleKey(msg tea.KeyPressMsg) (TrashModel, tea.Cmd) {
 		}
 		return m, nil
 	case key.Matches(msg, m.keys.PurgeAll):
-		// Purge All is always the last action when entries exist;
-		// buildActions returns nil for an empty trash, so the
-		// len(acts) check also guards against an empty list.
-		if len(acts) > 2 {
-			m.shell = m.shell.FocusAction(len(acts) - 1)
-			return m.refresh(), acts[len(acts)-1].Msg
+		// Purge All lives in the title bar, not the action row, so
+		// fire its msg directly. purgeAllTitleAction returns nil for
+		// an empty trash, so the guard mirrors what the button hides.
+		if action := m.purgeAllTitleAction(); action != nil {
+			return m, action.Msg
 		}
 		return m, nil
 	}
@@ -403,6 +406,9 @@ func (m TrashModel) handleKey(msg tea.KeyPressMsg) (TrashModel, tea.Cmd) {
 func (m TrashModel) handleMouse(msg tea.MouseClickMsg) (TrashModel, tea.Cmd) {
 	if msg.Button != tea.MouseLeft {
 		return m, nil
+	}
+	if cmd, ok := m.shell.TitleActionAtPosition(msg.X, msg.Y); ok {
+		return m, cmd
 	}
 	if idx, ok := m.shell.RowAtPosition(msg.X, msg.Y); ok {
 		m.shell = m.shell.ClickRow(idx)
