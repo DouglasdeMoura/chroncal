@@ -48,7 +48,7 @@ func TestHelpDialog_TopLevelSectionsAreTaskShaped(t *testing.T) {
 	// instead of sprouting a new section for every new dialog. Command
 	// Palette is its own section — it has palette-specific keys
 	// (ctrl+k/j navigation, pgup/pgdn) that don't apply elsewhere.
-	want := []string{"Getting Around", "Events", "Calendars", "Command Palette", "Windows"}
+	want := []string{"Getting Around", "Events", "Alarms", "Calendars", "Command Palette", "Windows"}
 	sections := NewHelpDialogModel(NewTheme(true)).sections()
 	if got := len(sections); got != len(want) {
 		t.Fatalf("section count = %d, want %d", got, len(want))
@@ -63,6 +63,36 @@ func TestHelpDialog_TopLevelSectionsAreTaskShaped(t *testing.T) {
 func TestHelpDialog_CommandPaletteSectionDocumentsOpen(t *testing.T) {
 	if got := findHelpEntry(t, "Command Palette", "open"); got != "/ · ctrl+k" {
 		t.Fatalf("palette open key = %q, want %q", got, "/ · ctrl+k")
+	}
+}
+
+func TestHelpDialog_WindowsSectionDocumentsTrashPurgeAndSelect(t *testing.T) {
+	if got := findHelpEntry(t, "Windows", "purge"); got != "x · delete (trash)" {
+		t.Fatalf("trash purge key = %q, want %q", got, "x · delete (trash)")
+	}
+	if got := findHelpEntry(t, "Windows", "select / deselect"); got != "space (trash)" {
+		t.Fatalf("trash select key = %q, want %q", got, "space (trash)")
+	}
+}
+
+func TestHelpDialog_GettingAroundDocumentsMiniCalendarJump(t *testing.T) {
+	if got := findHelpEntry(t, "Getting Around", "jump main view to selected day"); got != "enter (mini calendar)" {
+		t.Fatalf("mini-calendar jump key = %q, want %q", got, "enter (mini calendar)")
+	}
+}
+
+func TestHelpDialog_AlarmsSectionDocumentsCoreActions(t *testing.T) {
+	for _, c := range []struct {
+		desc string
+		want string
+	}{
+		{"new alarm", "n (list)"},
+		{"edit alarm", "e (list)"},
+		{"delete alarm", "d (list)"},
+	} {
+		if got := findHelpEntry(t, "Alarms", c.desc); got != c.want {
+			t.Errorf("alarms %q key = %q, want %q", c.desc, got, c.want)
+		}
 	}
 }
 

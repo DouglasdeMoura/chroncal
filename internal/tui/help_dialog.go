@@ -146,6 +146,7 @@ func (m HelpDialogModel) sections() []helpSection {
 				{"] · pgdn", "next week / month"},
 				{"t", "today"},
 				{"m · w · d · a", "month / week / day / agenda view"},
+				{"enter (mini calendar)", "jump main view to selected day"},
 			},
 		},
 		{
@@ -160,6 +161,20 @@ func (m HelpDialogModel) sections() []helpSection {
 				{"o", "toggle empty days (agenda)"},
 				{"←→ · hl", "previous / next event (popup)"},
 				{"y · n · m", "RSVP yes / no / maybe"},
+			},
+		},
+		{
+			title: "Alarms",
+			entries: []helpEntry{
+				// Bindings live inside the alarm sub-editor that opens from
+				// the event form; tags clarify which list/editor owns each
+				// letter, since e/d/n collide with global shortcuts.
+				{"n (list)", "new alarm"},
+				{"e (list)", "edit alarm"},
+				{"d (list)", "delete alarm"},
+				{"tab · shift+tab", "move between alarms / fields"},
+				{"ctrl+s", "save alarm"},
+				{"esc", "back to event"},
 			},
 		},
 		{
@@ -188,6 +203,8 @@ func (m HelpDialogModel) sections() []helpSection {
 			entries: []helpEntry{
 				{"D · shift+d", "recently deleted"},
 				{"r (trash)", "restore"},
+				{"x · delete (trash)", "purge"},
+				{"space (trash)", "select / deselect"},
 				{"?", "this help"},
 				{"\\", "toggle sidebar"},
 				{"#", "toggle week numbers"},
