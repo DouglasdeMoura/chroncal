@@ -86,11 +86,11 @@ func NewService(e *event.Service, t *todo.Service, j *journal.Service) *Service 
 // PurgeCounts reports how many rows each domain dropped from a PurgeOld
 // call so callers (maintenance, CLI) can log per-domain numbers.
 type PurgeCounts struct {
-	Events             int
-	EventInstanceLogs  int
-	EventTruncateLogs  int
-	Todos              int
-	Journals           int
+	Events            int
+	EventInstanceLogs int
+	EventTruncateLogs int
+	Todos             int
+	Journals          int
 }
 
 // List returns every trash entry for calendarID across all domains,

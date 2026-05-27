@@ -9,9 +9,9 @@ import (
 	"time"
 
 	lipgloss "charm.land/lipgloss/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
-	uv "github.com/charmbracelet/ultraviolet"
 
 	"github.com/douglasdemoura/chroncal/internal/tui/oklch"
 )
