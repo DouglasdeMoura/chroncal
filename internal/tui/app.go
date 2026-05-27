@@ -808,6 +808,24 @@ func (m Model) loadCalendars() tea.Cmd {
 	}
 }
 
+// syncHealthFor derives the sidebar health marker state from a calendar's
+// persisted sync fields. Local-only calendars (not Synced) get no marker;
+// a recorded last_sync_error is the only loud (SyncHealthError) state. Because
+// these fields are written by every sync attempt — manual, and the background
+// `chroncal tick` cron — the marker surfaces failures the user never triggered.
+func syncHealthFor(info CalendarInfo) SyncHealth {
+	switch {
+	case !info.Synced:
+		return SyncHealthNone
+	case info.LastSyncError != "":
+		return SyncHealthError
+	case info.LastSyncAt != "":
+		return SyncHealthOK
+	default:
+		return SyncHealthPending
+	}
+}
+
 // newSyncService builds a sync.Service using the app's shared SQLite handle.
 // Logs are discarded so sync work doesn't clobber the rendered TUI; users
 // run `chroncal sync run` from a shell if they need verbose output.
@@ -1383,7 +1401,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.calendars = msg.calendars
 			items := make([]CalendarListItem, 0, len(m.calendars))
 			for id, c := range m.calendars {
-				items = append(items, CalendarListItem{ID: id, Name: c.Name, Color: c.Color})
+				items = append(items, CalendarListItem{ID: id, Name: c.Name, Color: c.Color, Health: syncHealthFor(c)})
 			}
 			slices.SortFunc(items, func(a, b CalendarListItem) int { return strings.Compare(a.Name, b.Name) })
 			m.sidebar = m.sidebar.SetList(m.sidebar.List().SetItems(items))
@@ -1875,6 +1893,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					params.RemoteLinked = true
 					params.RemoteAuthType = acct.AuthType
 					params.RemoteUsername = acct.Username
+					params.LastSyncAt = cal.LastSyncAt
+					params.LastSyncAttemptedAt = cal.LastSyncAttemptedAt
+					params.LastSyncError = cal.LastSyncError
 				}
 			}
 		} else {
@@ -2178,9 +2199,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.syncStatus = msg.summary
 		}
-		cmds := []tea.Cmd{m.expireStatusAfter(6*time.Second, m.statusToken)}
+		// Always reload calendars so the sidebar health marker reflects the
+		// just-attempted sync — including a *failed* run (reload == false),
+		// whose error was persisted by updateSyncHealth before we got here.
+		// Events only change on a successful pull, so reload those only then.
+		cmds := []tea.Cmd{m.expireStatusAfter(6*time.Second, m.statusToken), m.loadCalendars()}
 		if msg.reload {
-			cmds = append(cmds, m.loadEvents(), m.loadCalendars())
+			cmds = append(cmds, m.loadEvents())
 		}
 		return m, tea.Batch(cmds...)
 

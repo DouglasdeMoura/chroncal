@@ -3,6 +3,7 @@ package tui
 import (
 	"image/color"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -26,6 +27,14 @@ type CalendarDialogParams struct {
 	// the calendar is linked so the dialog can show connection details.
 	RemoteAuthType string
 	RemoteUsername string
+
+	// LastSyncAt, LastSyncAttemptedAt, and LastSyncError are display-only sync
+	// health, populated when the calendar is linked. A non-empty LastSyncError
+	// is the "why" behind the sidebar ⚠ marker; the dialog surfaces it here so
+	// the user can read the reason and the fix one keystroke from the list.
+	LastSyncAt          string // RFC 3339, empty when never synced cleanly
+	LastSyncAttemptedAt string // RFC 3339, empty when never attempted
+	LastSyncError       string
 
 	// IsDefault marks the calendar being edited as the current default. It
 	// drives the dialog's "Default calendar" badge and hides the redundant
@@ -224,6 +233,12 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 			Label: "",
 			Field: NewStaticField(summary, nil),
 		})
+		// Surface sync health (one static field per line so the form's
+		// height math stays one-line-per-item). Empty when the calendar has
+		// synced cleanly and never been attempted-with-error.
+		for _, line := range syncHealthDialogLines(params, theme) {
+			items = append(items, FormItem{Label: "", Field: NewStaticField(line, nil)})
+		}
 	} else {
 		sync := NewCheckboxField("", false)
 		sync.SetContent("Enable CalDAV sync")
@@ -505,6 +520,72 @@ func remoteStatusLine(params CalendarDialogParams, theme Theme) string {
 		details += "  (" + params.RemoteAuthType + ")"
 	}
 	return label + " " + details
+}
+
+// syncHealthDialogLines renders the calendar's sync health for the dialog: a
+// loud error line plus an actionable re-link hint when the last sync failed, or
+// a quiet "Last synced" line otherwise. Returns nil for unlinked calendars or
+// linked-but-never-attempted ones (nothing useful to say yet).
+func syncHealthDialogLines(params CalendarDialogParams, theme Theme) []string {
+	if !params.RemoteLinked {
+		return nil
+	}
+	if params.LastSyncError != "" {
+		errStyle := lipgloss.NewStyle().Foreground(theme.Error)
+		hintStyle := lipgloss.NewStyle().Foreground(theme.Muted)
+		lines := []string{errStyle.Render("⚠ Last sync failed: " + humanizeSyncError(params.LastSyncError))}
+		if hint := reLinkHint(params); hint != "" {
+			lines = append(lines, hintStyle.Render(hint))
+		}
+		return lines
+	}
+	if params.LastSyncAt != "" {
+		return []string{lipgloss.NewStyle().Foreground(theme.Muted).Render("Last synced: " + formatSyncTime(params.LastSyncAt))}
+	}
+	return nil
+}
+
+// humanizeSyncError condenses a raw sync error into one readable line. Google's
+// invalid_grant (expired/revoked OAuth refresh token) is the common case worth
+// translating; everything else falls back to the first line of the raw error.
+func humanizeSyncError(raw string) string {
+	if strings.Contains(raw, "invalid_grant") {
+		return "Google login expired — re-authentication needed"
+	}
+	line := raw
+	if i := strings.IndexByte(line, '\n'); i >= 0 {
+		line = line[:i]
+	}
+	line = strings.TrimSpace(line)
+	const max = 80
+	if r := []rune(line); len(r) > max {
+		line = string(r[:max-1]) + "…"
+	}
+	return line
+}
+
+// reLinkHint returns the fix for errors that need re-authentication, or "" when
+// no specific remedy applies. Re-linking re-runs the OAuth flow and stores a
+// fresh refresh token (cmd/chroncal/calendar_remote.go buildCalendarCredential).
+func reLinkHint(params CalendarDialogParams) string {
+	if strings.Contains(params.LastSyncError, "invalid_grant") {
+		name := params.Name
+		if name == "" {
+			name = "<name>"
+		}
+		return "Re-link: chroncal calendar update " + name + " --auth oauth2"
+	}
+	return ""
+}
+
+// formatSyncTime renders an RFC 3339 timestamp as a compact local-ish line.
+// Falls back to the raw value if it doesn't parse.
+func formatSyncTime(rfc3339 string) string {
+	t, err := time.Parse(time.RFC3339, rfc3339)
+	if err != nil {
+		return rfc3339
+	}
+	return t.Format("2006-01-02 15:04 MST")
 }
 
 func newRemoteURLField(value string) *TextField {
