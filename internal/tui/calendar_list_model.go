@@ -20,11 +20,33 @@ type CalendarVisibilityToggledMsg struct {
 // calendar dialog. ID == 0 means "create a new calendar".
 type CalendarDialogRequestedMsg struct{ ID int64 }
 
+// SyncHealth describes a calendar's last-known sync state, used to render an
+// ambient health marker in the list. It is derived from the persisted
+// last_sync_error / last_sync_at fields, not computed live, so it reflects the
+// most recent sync attempt — including background `chroncal tick` runs the user
+// never triggered.
+type SyncHealth int
+
+const (
+	// SyncHealthNone is a calendar not linked to a CalDAV account; it has no
+	// sync state and renders no marker.
+	SyncHealthNone SyncHealth = iota
+	// SyncHealthOK is a linked calendar whose last sync completed cleanly.
+	SyncHealthOK
+	// SyncHealthError is a linked calendar whose last sync attempt recorded an
+	// error. This is the only state that renders a (loud) marker.
+	SyncHealthError
+	// SyncHealthPending is a linked calendar that has never completed a clean
+	// sync but has no recorded error yet.
+	SyncHealthPending
+)
+
 // CalendarListItem is the display data for a single row.
 type CalendarListItem struct {
-	ID    int64
-	Name  string
-	Color string // hex like "#a6e3a1"
+	ID     int64
+	Name   string
+	Color  string // hex like "#a6e3a1"
+	Health SyncHealth
 }
 
 type calendarListKeyMap struct {
@@ -47,16 +69,17 @@ func defaultCalendarListKeys() calendarListKeyMap {
 // CalendarListModel renders a list of calendars (color swatch, name, visibility
 // indicator).
 type CalendarListModel struct {
-	items            []CalendarListItem
-	hidden           map[int64]bool
-	cursor           int
-	focused          bool
-	width            int
-	keys             calendarListKeyMap
-	accentColor      color.Color
-	mutedColor       color.Color
-	textColor        color.Color
+	items             []CalendarListItem
+	hidden            map[int64]bool
+	cursor            int
+	focused           bool
+	width             int
+	keys              calendarListKeyMap
+	accentColor       color.Color
+	mutedColor        color.Color
+	textColor         color.Color
 	selectedTextColor color.Color
+	errColor          color.Color
 }
 
 func NewCalendarListModel(items []CalendarListItem, hidden map[int64]bool) CalendarListModel {
@@ -69,11 +92,12 @@ func NewCalendarListModel(items []CalendarListItem, hidden map[int64]bool) Calen
 	}
 }
 
-func (m CalendarListModel) SetTheme(accent, muted, text, selectedText color.Color) CalendarListModel {
+func (m CalendarListModel) SetTheme(accent, muted, text, selectedText, errColor color.Color) CalendarListModel {
 	m.accentColor = accent
 	m.mutedColor = muted
 	m.textColor = text
 	m.selectedTextColor = selectedText
+	m.errColor = errColor
 	return m
 }
 
@@ -83,9 +107,9 @@ func (m CalendarListModel) Blur() CalendarListModel  { m.focused = false; return
 // SetWidth sets the available render width so long calendar names truncate
 // with an ellipsis instead of wrapping onto the next line.
 func (m CalendarListModel) SetWidth(w int) CalendarListModel { m.width = w; return m }
-func (m CalendarListModel) Focused() bool            { return m.focused }
-func (m CalendarListModel) Cursor() int              { return m.cursor }
-func (m CalendarListModel) ItemCount() int           { return len(m.items) }
+func (m CalendarListModel) Focused() bool                    { return m.focused }
+func (m CalendarListModel) Cursor() int                      { return m.cursor }
+func (m CalendarListModel) ItemCount() int                   { return len(m.items) }
 
 // RowCount returns the number of selectable rows in the list.
 func (m CalendarListModel) RowCount() int { return len(m.items) }
@@ -194,6 +218,19 @@ func (m CalendarListModel) View() string {
 		// job is to identify the calendar, not signal selection.
 		swatch := lipgloss.NewStyle().Foreground(lipgloss.Color(it.Color)).Render(glyph)
 
+		// Health marker: a trailing ⚠ on calendars whose last sync failed.
+		// Only SyncHealthError is loud; every other state renders nothing so
+		// the row stays calm. The marker lives in its own reserved trailing
+		// cell *outside* the (possibly Reverse'd) name chip, so the inverted
+		// selection block never paints over it. markerCells accounts for the
+		// glyph plus its one leading separator space.
+		marker := ""
+		markerCells := 0
+		if it.Health == SyncHealthError {
+			marker = lipgloss.NewStyle().Foreground(m.errColor).Render("⚠")
+			markerCells = lipgloss.Width(marker) + 1
+		}
+
 		// Mirror the manage-calendars dialog's selection treatment:
 		// inverted (Reverse) + bold for the focused row, faint for hidden.
 		// Reverse swaps terminal fg/bg so the chip pops regardless of theme,
@@ -204,21 +241,25 @@ func (m CalendarListModel) View() string {
 		}
 		if selected {
 			nameStyle = nameStyle.Reverse(true).Bold(true)
-			// Reserve the swatch (1 cell) + separator space (1 cell) and let
-			// the chip fill the rest, so trailing pad cells pick up the tint.
-			if remaining := m.width - 2; remaining > 0 {
+			// Reserve the swatch (1 cell) + separator space (1 cell) + the
+			// health marker cells, and let the chip fill the rest so trailing
+			// pad cells pick up the tint without overrunning the marker.
+			if remaining := m.width - 2 - markerCells; remaining > 0 {
 				nameStyle = nameStyle.Width(remaining)
 			}
 		}
 		// Pad the chip with surrounding spaces so the inverted block has
 		// breathing room on both sides of the label, matching the dialog.
 		nameText := it.Name
-		if m.width > 4 {
-			nameText = truncateTo(nameText, m.width-4)
+		if avail := m.width - 4 - markerCells; m.width > 4 && avail > 0 {
+			nameText = truncateTo(nameText, avail)
 		}
 		name := nameStyle.Render(" " + nameText + " ")
 
 		b.WriteString(swatch + " " + name)
+		if marker != "" {
+			b.WriteString(" " + marker)
+		}
 		if i < len(m.items)-1 {
 			b.WriteString("\n")
 		}
