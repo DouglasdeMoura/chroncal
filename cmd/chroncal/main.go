@@ -161,8 +161,8 @@ var rootCmd = &cobra.Command{
 	// `chroncal foobar` returns a *cliError tagged "invalid_input" instead
 	// of a plain string error — keeping --output json error shape uniform
 	// at the root just like it is on every subcommand group.
-	Args: rejectUnknownSubcommand,
-	Short:         "Terminal calendar with a TUI, scripting, and sync support",
+	Args:  rejectUnknownSubcommand,
+	Short: "Terminal calendar with a TUI, scripting, and sync support",
 	Long: `chroncal is a local-first terminal calendar backed by SQLite.
 
 Run chroncal with no arguments to open the interactive TUI. Use subcommands

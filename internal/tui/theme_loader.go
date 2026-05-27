@@ -27,13 +27,13 @@ type rawTheme struct {
 	Description string `toml:"description"`
 
 	// Structural chrome.
-	Primary   any `toml:"primary"`
-	Secondary any `toml:"secondary"`
-	Accent    any `toml:"accent"`
-	Muted     any `toml:"muted"`
-	Text      any `toml:"text"`
-	TextDim   any `toml:"text_dim"`
-	Border    any `toml:"border"`
+	Primary      any `toml:"primary"`
+	Secondary    any `toml:"secondary"`
+	Accent       any `toml:"accent"`
+	Muted        any `toml:"muted"`
+	Text         any `toml:"text"`
+	TextDim      any `toml:"text_dim"`
+	Border       any `toml:"border"`
 	Today        any `toml:"today"`
 	Selected     any `toml:"selected"`
 	SelectedText any `toml:"selected_text"`
@@ -218,13 +218,13 @@ func resolveTheme(r *rawTheme, hasDarkBG bool) (Theme, error) {
 	}
 
 	t := Theme{
-		Primary:   pick("primary", r.Primary),
-		Secondary: pick("secondary", r.Secondary),
-		Accent:    pick("accent", r.Accent),
-		Muted:     pick("muted", r.Muted),
-		Text:      pick("text", r.Text),
-		TextDim:   pick("text_dim", r.TextDim),
-		Border:    pick("border", r.Border),
+		Primary:      pick("primary", r.Primary),
+		Secondary:    pick("secondary", r.Secondary),
+		Accent:       pick("accent", r.Accent),
+		Muted:        pick("muted", r.Muted),
+		Text:         pick("text", r.Text),
+		TextDim:      pick("text_dim", r.TextDim),
+		Border:       pick("border", r.Border),
 		Today:        pick("today", r.Today),
 		Selected:     pick("selected", r.Selected),
 		SelectedText: pick("selected_text", r.SelectedText),

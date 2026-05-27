@@ -130,9 +130,9 @@ func buildSyncCollectionBody(syncToken string) string {
 }
 
 type syncCollectionMultiStatus struct {
-	XMLName   xml.Name                   `xml:"DAV: multistatus"`
-	Responses []syncCollectionResponse   `xml:"DAV: response"`
-	SyncToken string                     `xml:"DAV: sync-token"`
+	XMLName   xml.Name                 `xml:"DAV: multistatus"`
+	Responses []syncCollectionResponse `xml:"DAV: response"`
+	SyncToken string                   `xml:"DAV: sync-token"`
 }
 
 type syncCollectionResponse struct {

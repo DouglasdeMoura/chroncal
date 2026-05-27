@@ -124,8 +124,8 @@ func buildMultiGetBody(hrefs []string) string {
 }
 
 type multiGetMultiStatus struct {
-	XMLName   xml.Name             `xml:"DAV: multistatus"`
-	Responses []multiGetResponse   `xml:"DAV: response"`
+	XMLName   xml.Name           `xml:"DAV: multistatus"`
+	Responses []multiGetResponse `xml:"DAV: response"`
 }
 
 type multiGetResponse struct {
