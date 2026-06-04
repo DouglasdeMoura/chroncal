@@ -25,7 +25,7 @@ require (
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/term v0.43.0
 	golang.org/x/text v0.37.0
-	modernc.org/sqlite v1.50.1
+	modernc.org/sqlite v1.51.0
 )
 
 require (
