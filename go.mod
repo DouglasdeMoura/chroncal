@@ -15,7 +15,7 @@ require (
 	github.com/emersion/go-webdav v0.7.0
 	github.com/gen2brain/beeep v0.11.2
 	github.com/google/uuid v1.6.0
-	github.com/mattn/go-runewidth v0.0.23
+	github.com/mattn/go-runewidth v0.0.24
 	github.com/pelletier/go-toml/v2 v2.3.1
 	github.com/pressly/goose/v3 v3.27.1
 	github.com/spf13/cobra v1.10.2
