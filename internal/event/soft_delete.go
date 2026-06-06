@@ -158,7 +158,7 @@ func (s *Service) RestoreByUID(ctx context.Context, uid string) error {
 		return fmt.Errorf("restore by uid: %w", err)
 	}
 	if err == nil {
-		return s.reconcileSyncAfterRestore(ctx, master.CalendarID, uid, "")
+		return s.reconcileSyncAfterRestore(ctx, master.CalendarID, uid)
 	}
 	return nil
 }
@@ -180,7 +180,7 @@ func (s *Service) RestoreByID(ctx context.Context, id int64) error {
 	if err := s.q.RestoreEvent(ctx, id); err != nil {
 		return fmt.Errorf("restore event: %w", err)
 	}
-	return s.reconcileSyncAfterRestore(ctx, r.CalendarID, r.Uid, r.RecurrenceID)
+	return s.reconcileSyncAfterRestore(ctx, r.CalendarID, r.Uid)
 }
 
 // ListDeleted returns soft-deleted events for a calendar, newest first.
@@ -252,7 +252,7 @@ func (s *Service) restoreSingle(ctx context.Context, uid string) error {
 	if err := s.q.RestoreEvent(ctx, r.ID); err != nil {
 		return err
 	}
-	return s.reconcileSyncAfterRestore(ctx, r.CalendarID, r.Uid, r.RecurrenceID)
+	return s.reconcileSyncAfterRestore(ctx, r.CalendarID, r.Uid)
 }
 
 func (s *Service) restoreSeries(ctx context.Context, uid string) error {
@@ -265,7 +265,7 @@ func (s *Service) restoreSeries(ctx context.Context, uid string) error {
 		return err
 	}
 	if err == nil {
-		return s.reconcileSyncAfterRestore(ctx, master.CalendarID, uid, "")
+		return s.reconcileSyncAfterRestore(ctx, master.CalendarID, uid)
 	}
 	return nil
 }
@@ -316,9 +316,9 @@ func (s *Service) restoreFromInstance(ctx context.Context, meta UndoMeta) error 
 //     a fresh sync_resource with remote_url=” so the next push allocates a
 //     new href.
 //
-// Override rows (recurrenceID != "") don't own a sync_resource; for them we
-// mark the master dirty instead.
-func (s *Service) reconcileSyncAfterRestore(ctx context.Context, calendarID int64, uid, recurrenceID string) error {
+// Override rows don't own a sync_resource; callers pass the master's UID so
+// the master is marked dirty instead, which covers the override on push.
+func (s *Service) reconcileSyncAfterRestore(ctx context.Context, calendarID int64, uid string) error {
 	_ = s.q.DeleteTombstonesByCalendarAndUID(ctx, storage.DeleteTombstonesByCalendarAndUIDParams{
 		CalendarID: calendarID,
 		Uid:        uid,

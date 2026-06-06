@@ -506,18 +506,6 @@ func (m EventViewDialogModel) scrollHint() string {
 	}
 }
 
-// buildDetailLines composes the read-only field list for the dialog,
-// skipping empty fields so the layout only surfaces meaningful values.
-// The title row is included at the top so callers that render without a
-// scrollable viewport (tests, simple snapshots) see the same layout as
-// before. View() pins the title separately and feeds only the body to
-// the viewport.
-func (m EventViewDialogModel) buildDetailLines(w int) []string {
-	lines := append([]string{}, m.titleRow(w)...)
-	lines = append(lines, m.buildBodyLines(w)...)
-	return lines
-}
-
 // buildBodyLines returns every line below the title row — the part that
 // scrolls inside the viewport when content exceeds available height.
 // A leading blank line preserves the visual gap between the title rule

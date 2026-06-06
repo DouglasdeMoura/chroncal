@@ -185,10 +185,13 @@ func TestTrash_TruncationLoggedAndRestorable(t *testing.T) {
 			if entries[i].ID == override.ID {
 				evtEntry = &entries[i]
 			}
+		default:
+			// Other kinds are irrelevant to this assertion.
 		}
 	}
 	if trunc == nil {
 		t.Fatalf("ListTrash: no TrashKindTruncation entry, got %+v", entries)
+		return
 	}
 	if trunc.PreviousRRule != originalRRULE {
 		t.Fatalf("PreviousRRule = %q, want %q", trunc.PreviousRRule, originalRRULE)

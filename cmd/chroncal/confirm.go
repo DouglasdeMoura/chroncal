@@ -11,12 +11,6 @@ import (
 	"golang.org/x/term"
 )
 
-// errAborted is the canonical "user/shell refused a destructive op"
-// sentinel. Concrete returns from confirmDestructive carry the same code
-// ("aborted") but a more specific message, so main()'s error printer can
-// route them uniformly without re-implementing the refusal text here.
-var errAborted = &cliError{Code: "aborted", Msg: "aborted"}
-
 // confirmDestructive prompts the user to confirm a destructive operation.
 //
 // Returns nil when the operation should proceed. Returns a *cliError with

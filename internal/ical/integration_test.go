@@ -451,6 +451,7 @@ END:VCALENDAR
 
 	if alice == nil {
 		t.Fatal("alice not found in attendees")
+		return
 	}
 	if alice.CUType != "INDIVIDUAL" {
 		t.Errorf("alice.CUType = %q, want INDIVIDUAL", alice.CUType)
@@ -479,6 +480,7 @@ END:VCALENDAR
 
 	if room == nil {
 		t.Fatal("room not found in attendees")
+		return
 	}
 	if room.CUType != "ROOM" {
 		t.Errorf("room.CUType = %q, want ROOM", room.CUType)
@@ -486,6 +488,7 @@ END:VCALENDAR
 
 	if organizer == nil {
 		t.Fatal("organizer not found")
+		return
 	}
 	if organizer.SentBy != "assistant@example.com" {
 		t.Errorf("organizer.SentBy = %q, want assistant@example.com", organizer.SentBy)
@@ -521,6 +524,7 @@ END:VCALENDAR
 
 	if aliceRT == nil {
 		t.Fatal("alice not found after roundtrip")
+		return
 	}
 	if !aliceRT.RSVPRequested {
 		t.Error("roundtrip: alice.RSVPRequested lost")
@@ -546,6 +550,7 @@ END:VCALENDAR
 
 	if roomRT == nil {
 		t.Fatal("room not found after roundtrip")
+		return
 	}
 	if roomRT.CUType != "ROOM" {
 		t.Errorf("roundtrip: room.CUType = %q, want ROOM", roomRT.CUType)

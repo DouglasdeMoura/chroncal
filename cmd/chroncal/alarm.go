@@ -461,7 +461,7 @@ For todo alarms, use the "t" prefix shown in "alarm list" (e.g. t3).`,
 
   # Dismiss todo alarm state #3
   chroncal alarm dismiss t3`,
-		Args: exactArgs(1),
+		Args: exactOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -538,7 +538,7 @@ Exporting and re-importing a calendar will not preserve snooze times.`,
 
   # Check snooze status in the pending list
   chroncal alarm list`,
-		Args: exactArgs(1),
+		Args: exactOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {

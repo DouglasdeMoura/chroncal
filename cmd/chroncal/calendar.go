@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -54,7 +55,7 @@ without an explicit --calendar use the default.
 Exactly one calendar is default at any time.`,
 		Example: `  chroncal calendar set-default Work
   chroncal calendar set-default 2`,
-		Args: exactArgs(1),
+		Args: exactOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -168,7 +169,7 @@ func calendarGetCmd() *cobra.Command {
 		Long:  `Show one calendar, including its metadata and sync link details.`,
 		Example: `  chroncal calendar get 1
   chroncal calendar get 1 --output json`,
-		Args: exactArgs(1),
+		Args: exactOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -218,7 +219,7 @@ behavior.`,
 		Example: `  chroncal calendar create "Work"
   chroncal calendar create "Family" --color "#0F766E" --description "Shared family schedule"
   chroncal calendar create "Work" --remote-url https://cal.example.com/dav/calendars/work/ --username alice --auth bearer`,
-		Args: exactArgs(1),
+		Args: exactOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if strings.TrimSpace(args[0]) == "" {
 				return errInvalidInputf("calendar name must not be empty")
@@ -302,7 +303,7 @@ Only the flags you pass are changed.`,
 		Example: `  chroncal calendar update 1 --name "Deep Work"
   chroncal calendar update Work --color "#2563EB" --description "Focus blocks and deadlines"
   chroncal calendar update Work --remote-url https://cal.example.com/dav/calendars/work/ --username alice --auth bearer`,
-		Args: exactArgs(1),
+		Args: exactOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -407,7 +408,7 @@ to stderr.`,
 		Example: `  chroncal calendar delete 3
   chroncal calendar delete 3 --output json
   chroncal calendar delete 3 --promote Work`,
-		Args: exactArgs(1),
+		Args: exactOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -538,7 +539,7 @@ func promptForNewDefault(cmd *cobra.Command, cal calendarpkg.Calendar, candidate
 
 	r := bufio.NewReader(cmd.InOrStdin())
 	line, err := r.ReadString('\n')
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) {
 		return calendarpkg.Calendar{}, fmt.Errorf("read promotion target: %w", err)
 	}
 	answer := strings.TrimSpace(line)

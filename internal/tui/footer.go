@@ -73,7 +73,7 @@ func (f FooterModel) Render(ctx FooterContext, width int, syncStatus, toast stri
 
 	// Collapse mode for very narrow terminals.
 	if width < footerMinCols {
-		return f.renderCollapsed(ctx, width, hints)
+		return f.renderCollapsed(ctx, width)
 	}
 
 	// Between 40 and 60 cols, the hint list gets truncated with an ellipsis.
@@ -129,7 +129,7 @@ func (f FooterModel) composeHints(hints []footerHint) string {
 // a single high-value hint plus "?" as an escape hatch. The hint chosen is
 // the first destructive-or-primary action for the context, with "? help"
 // always rendered as a fallback.
-func (f FooterModel) renderCollapsed(ctx FooterContext, width int, hints []footerHint) string {
+func (f FooterModel) renderCollapsed(ctx FooterContext, width int) string {
 	keyStyle := lipgloss.NewStyle().Foreground(f.theme.Text)
 	descStyle := lipgloss.NewStyle().Foreground(f.theme.TextDim)
 	sepStyle := lipgloss.NewStyle().Foreground(f.theme.Muted)
@@ -279,8 +279,10 @@ func bracketDesc(ctx FooterContext) string {
 		return "week"
 	case FooterDay:
 		return "day"
+	default:
+		// Other contexts don't use bracket navigation.
+		return ""
 	}
-	return ""
 }
 
 // collapsedTopHint returns the single most important hint for the given

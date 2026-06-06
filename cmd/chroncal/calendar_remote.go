@@ -154,7 +154,7 @@ func readGoogleClientSecret() (string, error) {
 		return s, nil
 	}
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		return "", fmt.Errorf("Google OAuth requires a client secret: set GOOGLE_CLIENT_SECRET or run interactively")
+		return "", fmt.Errorf("a Google OAuth client secret is required: set GOOGLE_CLIENT_SECRET or run interactively")
 	}
 	fmt.Print("Google OAuth client secret: ")
 	secretBytes, err := term.ReadPassword(int(os.Stdin.Fd()))

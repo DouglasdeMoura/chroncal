@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"net/url"
 	"os/exec"
 	"regexp"
@@ -195,14 +196,17 @@ func openURLCmd(url string) tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
+		// Fire-and-forget browser launch: there is no surrounding request
+		// to inherit a deadline from, so Background is the honest context.
+		ctx := context.Background()
 		var cmd *exec.Cmd
 		switch runtime.GOOS {
 		case "darwin":
-			cmd = exec.Command("open", url)
+			cmd = exec.CommandContext(ctx, "open", url)
 		case "windows":
-			cmd = exec.Command("cmd", "/c", "start", "", url)
+			cmd = exec.CommandContext(ctx, "cmd", "/c", "start", "", url)
 		default:
-			cmd = exec.Command("xdg-open", url)
+			cmd = exec.CommandContext(ctx, "xdg-open", url)
 		}
 		_ = cmd.Start()
 		return nil

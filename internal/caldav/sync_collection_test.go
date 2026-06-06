@@ -154,7 +154,6 @@ func TestSyncCollectionUnsupportedOnNotImplemented(t *testing.T) {
 		{"415 Unsupported Media Type", http.StatusUnsupportedMediaType},
 		{"400 Bad Request", http.StatusBadRequest},
 	} {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			client := newSyncCollectionClient(t, func(req *http.Request) (*http.Response, error) {

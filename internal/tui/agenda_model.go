@@ -495,7 +495,7 @@ func (m AgendaModel) View() string {
 	renderStart := start
 	for renderStart < end {
 		r := m.rows[renderStart]
-		if !(r.monthHeader || r.separator) || monthKey(r.day) != stickyMonth {
+		if (!r.monthHeader && !r.separator) || monthKey(r.day) != stickyMonth {
 			break
 		}
 		renderStart++

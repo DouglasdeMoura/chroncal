@@ -261,7 +261,7 @@ func syncResolveCmd() *cobra.Command {
 Use "chroncal sync conflicts" first to find the conflict ID.`,
 		Example: `  chroncal sync resolve 12 --pick local
   chroncal sync resolve 12 --pick server`,
-		Args: exactArgs(1),
+		Args: exactOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := strconv.ParseInt(args[0], 10, 64)
 			if err != nil {
@@ -337,10 +337,6 @@ This does not delete your local calendars or entries.`,
 	}
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "Reset only this calendar")
 	return cmd
-}
-
-func printSyncResult(r *syncPkg.SyncResult) {
-	writeSyncResult(os.Stdout, os.Stderr, r)
 }
 
 // renderSyncRunResults emits per-calendar results plus a top-level summary,
