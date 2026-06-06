@@ -56,9 +56,18 @@ tidy-check:
 
 check: fmt-check vet lint vulncheck test-race
 
+# Build the lint/vuln tools with the same toolchain the module targets.
+# `go install pkg@latest` runs module-less and ignores this repo's
+# `toolchain` directive, so a tool built under an older Go can't parse the
+# newer stdlib/config and `make check` fails (lint: "language version used
+# to build golangci-lint is lower than the targeted Go version"). GOVERSION
+# is queried inside the module, where the toolchain directive applies.
+GOTOOLCHAIN_VER := $(shell go env GOVERSION)
+
 tools:
-	go install golang.org/x/vuln/cmd/govulncheck@latest
-	go install honnef.co/go/tools/cmd/staticcheck@latest
+	GOTOOLCHAIN=$(GOTOOLCHAIN_VER) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+	GOTOOLCHAIN=$(GOTOOLCHAIN_VER) go install golang.org/x/vuln/cmd/govulncheck@latest
+	GOTOOLCHAIN=$(GOTOOLCHAIN_VER) go install honnef.co/go/tools/cmd/staticcheck@latest
 
 # --- Housekeeping --------------------------------------------------------
 
