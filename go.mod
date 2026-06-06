@@ -6,9 +6,9 @@ toolchain go1.26.4
 
 require (
 	charm.land/bubbles/v2 v2.1.0
-	charm.land/bubbletea/v2 v2.0.6
+	charm.land/bubbletea/v2 v2.0.7
 	charm.land/lipgloss/v2 v2.0.3
-	github.com/charmbracelet/ultraviolet v0.0.0-20260416155717-489999b90468
+	github.com/charmbracelet/ultraviolet v0.0.0-20260525132238-948f4557a654
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
@@ -25,7 +25,7 @@ require (
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/term v0.43.0
 	golang.org/x/text v0.37.0
-	modernc.org/sqlite v1.50.1
+	modernc.org/sqlite v1.51.0
 )
 
 require (
@@ -71,7 +71,7 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.44.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
