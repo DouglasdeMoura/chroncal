@@ -38,3 +38,7 @@ go.work.sum
 /TODOS.md
 
 .antigravitycli
+
+# Claude Code harness state (the directory itself holds tracked project
+# instructions, so ignore only the runtime artifacts).
+.claude/scheduled_tasks.lock
