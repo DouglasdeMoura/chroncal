@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/retry"
@@ -42,21 +43,54 @@ type GoogleOAuthResult struct {
 	Expiry       time.Time
 }
 
-// GoogleOAuthFlow performs the installed-app loopback redirect flow for Google OAuth 2.0.
-// It starts a temporary HTTP server, opens the user's browser, and waits for the redirect.
+// PendingOAuthFlow is a started, not-yet-authorized Google OAuth flow: the
+// loopback listener is bound, the redirect handler is serving, and the
+// browser may already be open. Call Wait to block for the redirect and
+// exchange the code, or Close to abandon the flow and release the listener.
+//
+// The split exists so UIs (the TUI's pending modal) can render AuthURL and a
+// waiting state between the two phases without the flow printing anything;
+// GoogleOAuthFlow composes Start+Wait and keeps the CLI's printed output.
+type PendingOAuthFlow struct {
+	// AuthURL is the Google consent URL. UIs show it when the browser
+	// could not be opened so the user can open it manually.
+	AuthURL string
+	// BrowserOpened reports whether the local browser launch succeeded.
+	BrowserOpened bool
+
+	clientID     string
+	clientSecret string
+	redirectURI  string
+	state        string
+	codeVerifier string
+
+	server   *http.Server
+	listener net.Listener
+	codeCh   chan string
+	errCh    chan error
+
+	closeOnce sync.Once
+}
+
+// openBrowserFn is swappable in tests so StartGoogleOAuthFlow doesn't spawn
+// a real browser process.
+var openBrowserFn = openBrowser
+
+// StartGoogleOAuthFlow binds the loopback listener, builds the consent URL,
+// starts the redirect handler, and tries to open the user's browser. It
+// never prints; callers own all user-facing output.
 //
 // Pass an empty clientSecret to omit it from the token request. Google's
-// Desktop OAuth clients require a non-empty client secret even with PKCE; the
-// caller is responsible for sourcing it (e.g. env var, prompt) and rejecting
-// empty values when targeting Google.
-func GoogleOAuthFlow(ctx context.Context, clientID, clientSecret string) (*GoogleOAuthResult, error) {
+// Desktop OAuth clients require a non-empty client secret even with PKCE;
+// the caller is responsible for sourcing it and rejecting empty values when
+// targeting Google.
+func StartGoogleOAuthFlow(ctx context.Context, clientID, clientSecret string) (*PendingOAuthFlow, error) {
 	// Start a temporary listener on a random port
 	var lc net.ListenConfig
 	listener, err := lc.Listen(ctx, "tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("start listener: %w", err)
 	}
-	defer listener.Close()
 
 	port := listener.Addr().(*net.TCPAddr).Port
 	redirectURI := fmt.Sprintf("http://127.0.0.1:%d", port)
@@ -64,11 +98,13 @@ func GoogleOAuthFlow(ctx context.Context, clientID, clientSecret string) (*Googl
 	// Generate CSRF state token
 	stateBytes := make([]byte, 16)
 	if _, err := rand.Read(stateBytes); err != nil {
+		listener.Close()
 		return nil, fmt.Errorf("generate state token: %w", err)
 	}
 	state := hex.EncodeToString(stateBytes)
 	codeVerifier, err := generateCodeVerifier()
 	if err != nil {
+		listener.Close()
 		return nil, fmt.Errorf("generate code verifier: %w", err)
 	}
 	codeChallenge := codeChallengeS256(codeVerifier)
@@ -83,22 +119,23 @@ func GoogleOAuthFlow(ctx context.Context, clientID, clientSecret string) (*Googl
 		url.QueryEscape(codeChallenge),
 	)
 
-	// Try to open browser
-	if err := openBrowser(ctx, authURL); err != nil {
-		fmt.Printf("Open this URL in your browser to authorize:\n\n  %s\n\n", authURL)
-	} else {
-		fmt.Println("Browser opened for Google authorization. Waiting for redirect...")
+	p := &PendingOAuthFlow{
+		AuthURL:      authURL,
+		clientID:     clientID,
+		clientSecret: clientSecret,
+		redirectURI:  redirectURI,
+		state:        state,
+		codeVerifier: codeVerifier,
+		listener:     listener,
+		codeCh:       make(chan string, 1),
+		errCh:        make(chan error, 1),
 	}
-
-	// Wait for the redirect with the authorization code
-	codeCh := make(chan string, 1)
-	errCh := make(chan error, 1)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// Validate CSRF state token
-		if r.URL.Query().Get("state") != state {
-			errCh <- fmt.Errorf("oauth error: state mismatch (possible CSRF)")
+		if r.URL.Query().Get("state") != p.state {
+			p.sendErr(fmt.Errorf("oauth error: state mismatch (possible CSRF)"))
 			fmt.Fprint(w, "<html><body><h1>Authorization failed</h1><p>State mismatch. Please try again.</p></body></html>")
 			return
 		}
@@ -109,27 +146,49 @@ func GoogleOAuthFlow(ctx context.Context, clientID, clientSecret string) (*Googl
 			if errMsg == "" {
 				errMsg = "no authorization code received"
 			}
-			errCh <- fmt.Errorf("oauth error: %s", errMsg)
+			p.sendErr(fmt.Errorf("oauth error: %s", errMsg))
 			fmt.Fprintf(w, "<html><body><h1>Authorization failed</h1><p>%s</p></body></html>", html.EscapeString(errMsg))
 			return
 		}
-		codeCh <- code
+		select {
+		case p.codeCh <- code:
+		default:
+		}
 		fmt.Fprint(w, "<html><body><h1>Authorization successful</h1><p>You can close this window.</p></body></html>")
 	})
 
-	server := &http.Server{Handler: mux}
+	p.server = &http.Server{Handler: mux}
 	go func() {
-		if err := server.Serve(listener); err != http.ErrServerClosed {
-			errCh <- err
+		if err := p.server.Serve(listener); err != http.ErrServerClosed {
+			p.sendErr(err)
 		}
 	}()
-	defer func() { _ = server.Shutdown(context.Background()) }()
 
-	// Wait for code or error
+	// The handler is serving before the browser opens, so a fast redirect
+	// can't race a not-yet-listening server.
+	p.BrowserOpened = openBrowserFn(ctx, authURL) == nil
+	return p, nil
+}
+
+// sendErr delivers an error without blocking; only the first error matters
+// and Wait may have already returned.
+func (p *PendingOAuthFlow) sendErr(err error) {
+	select {
+	case p.errCh <- err:
+	default:
+	}
+}
+
+// Wait blocks until the redirect arrives, the context is cancelled, or the
+// flow times out, then exchanges the authorization code for tokens. The
+// loopback server is shut down on every exit path.
+func (p *PendingOAuthFlow) Wait(ctx context.Context) (*GoogleOAuthResult, error) {
+	defer p.Close()
+
 	var code string
 	select {
-	case code = <-codeCh:
-	case err := <-errCh:
+	case code = <-p.codeCh:
+	case err := <-p.errCh:
 		return nil, err
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -138,7 +197,45 @@ func GoogleOAuthFlow(ctx context.Context, clientID, clientSecret string) (*Googl
 	}
 
 	// Exchange code for tokens
-	return exchangeGoogleCode(ctx, clientID, clientSecret, code, redirectURI, codeVerifier)
+	return exchangeGoogleCode(ctx, p.clientID, p.clientSecret, code, p.redirectURI, p.codeVerifier)
+}
+
+// Close abandons the flow and releases the listener. Idempotent; safe to
+// call after Wait (which closes via defer) and on a flow that never reached
+// Wait — the Esc-between-Start-and-Wait window in the TUI.
+func (p *PendingOAuthFlow) Close() {
+	p.closeOnce.Do(func() {
+		if p.server != nil {
+			_ = p.server.Shutdown(context.Background())
+		}
+		if p.listener != nil {
+			_ = p.listener.Close()
+		}
+	})
+}
+
+// flowBanner returns the exact lines GoogleOAuthFlow has always printed
+// after starting the flow. Kept as a pure function so the CLI output stays
+// byte-for-byte stable under test.
+func flowBanner(authURL string, browserOpened bool) string {
+	if browserOpened {
+		return "Browser opened for Google authorization. Waiting for redirect...\n"
+	}
+	return fmt.Sprintf("Open this URL in your browser to authorize:\n\n  %s\n\n", authURL)
+}
+
+// GoogleOAuthFlow performs the installed-app loopback redirect flow for Google OAuth 2.0.
+// It starts a temporary HTTP server, opens the user's browser, and waits for the redirect.
+//
+// This is the printing CLI wrapper around StartGoogleOAuthFlow + Wait; UIs
+// that own their rendering call those two directly.
+func GoogleOAuthFlow(ctx context.Context, clientID, clientSecret string) (*GoogleOAuthResult, error) {
+	flow, err := StartGoogleOAuthFlow(ctx, clientID, clientSecret)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Print(flowBanner(flow.AuthURL, flow.BrowserOpened))
+	return flow.Wait(ctx)
 }
 
 func exchangeGoogleCode(ctx context.Context, clientID, clientSecret, code, redirectURI, codeVerifier string) (*GoogleOAuthResult, error) {
