@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -45,13 +46,23 @@ var (
 
 // NewCredentialStore returns the best available credential store.
 // It tries strategies in order: OS keyring, encrypted file, plaintext.
-// Plaintext is only used if allowPlaintext is true.
+// Plaintext is only used if allowPlaintext is true. Plaintext-storage
+// warnings go to stderr; full-screen UIs that own the terminal use
+// NewCredentialStoreWithWarnings to route them elsewhere.
 func NewCredentialStore(allowPlaintext bool) (CredentialStore, error) {
+	return NewCredentialStoreWithWarnings(allowPlaintext, os.Stderr)
+}
+
+// NewCredentialStoreWithWarnings is NewCredentialStore with the
+// plaintext-storage warnings routed to warn instead of stderr. The TUI
+// passes a collector and surfaces the warnings in its own chrome — raw
+// stderr writes would corrupt the bubbletea renderer mid-frame.
+func NewCredentialStoreWithWarnings(allowPlaintext bool, warn io.Writer) (CredentialStore, error) {
 	dir, err := credentialDir()
 	if err != nil {
 		return nil, err
 	}
-	plaintext := &PlaintextFileStore{dir: dir}
+	plaintext := &PlaintextFileStore{dir: dir, warn: warn}
 
 	if probeErr := keyringUnavailableReason(); probeErr == nil {
 		return &migratingCredentialStore{
@@ -112,6 +123,17 @@ func (s *KeyringStore) Delete(accountID int64) error {
 // Requires explicit --allow-plaintext flag.
 type PlaintextFileStore struct {
 	dir string
+	// warn receives the plaintext-storage warnings emitted by Set. Nil
+	// falls back to stderr so zero-value construction keeps CLI behavior.
+	warn io.Writer
+}
+
+// warnWriter returns the configured warning sink, defaulting to stderr.
+func (s *PlaintextFileStore) warnWriter() io.Writer {
+	if s.warn != nil {
+		return s.warn
+	}
+	return os.Stderr
 }
 
 func (s *PlaintextFileStore) Get(accountID int64) (Credential, error) {
@@ -139,9 +161,10 @@ func (s *PlaintextFileStore) Set(cred Credential) error {
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("write credential: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "Warning: credentials stored in plaintext at %s\n", path)
+	w := s.warnWriter()
+	fmt.Fprintf(w, "Warning: credentials stored in plaintext at %s\n", path)
 	if cred.OAuthClientSecret != "" {
-		fmt.Fprintf(os.Stderr, "Warning: OAuth client secret persisted to disk in cleartext. Backups, snapshots, and sync tools (Dropbox, iCloud, rsync) will see it. Install an OS keyring (libsecret on Linux) to avoid this.\n")
+		fmt.Fprintf(w, "Warning: OAuth client secret persisted to disk in cleartext. Backups, snapshots, and sync tools (Dropbox, iCloud, rsync) will see it. Install an OS keyring (libsecret on Linux) to avoid this.\n")
 	}
 	return nil
 }

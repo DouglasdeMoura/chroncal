@@ -252,6 +252,68 @@ type opportunisticPushFinishedMsg struct {
 	err     error
 }
 
+// oauthFlowPurpose records why an OAuth flow is running so the
+// oauthFlowDoneMsg handler knows what to do with the tokens.
+type oauthFlowPurpose struct {
+	// isConnect distinguishes linking a new account (true) from
+	// re-authenticating an existing one (false).
+	isConnect    bool
+	calendarID   int64
+	calendarName string
+
+	// Re-auth: the stored credential (client config + username source).
+	accountID int64
+	cred      auth.Credential
+
+	// Connect: the dialog's save parameters and the already-created row.
+	saved CalendarSavedMsg
+	cal   calendar.Calendar
+}
+
+// calendarReauthReadyMsg carries the loaded credential for a re-auth whose
+// client config is complete; the handler launches the flow with it.
+type calendarReauthReadyMsg struct {
+	calendarID int64
+	name       string
+	accountID  int64
+	cred       auth.Credential
+	err        error
+}
+
+// calendarReauthNeedsConfigMsg reopens the calendar dialog in the
+// missing-config fallback mode: the stored credential predates client-secret
+// storage, so the user must enter the OAuth client config once.
+type calendarReauthNeedsConfigMsg struct {
+	calendarID      int64
+	clientIDPrefill string
+}
+
+// calendarOAuthConnectPendingMsg is emitted after an oauth2 save has written
+// the calendar row (and owner email / default) but before the link exists.
+// The handler closes the dialog and starts the browser flow; Connect runs
+// only after the flow succeeds.
+type calendarOAuthConnectPendingMsg struct {
+	cal   calendar.Calendar
+	saved CalendarSavedMsg
+}
+
+// oauthCredentialStoredMsg reports the post-flow credential write for a
+// re-auth. A Set failure after a successful consent is a distinct state:
+// the consent was spent but nothing is corrupted, and re-authenticating
+// again is safe.
+type oauthCredentialStoredMsg struct {
+	calendarID int64
+	name       string
+	err        error
+}
+
+// oauthConnectFinishedMsg reports the post-flow Connect for a new link.
+type oauthConnectFinishedMsg struct {
+	calendarID int64
+	name       string
+	err        error
+}
+
 // syncStatusExpiredMsg clears the footer status line after a delay. The token
 // is compared against the current statusToken so a newer status isn't wiped
 // by an old tick.
@@ -310,9 +372,15 @@ type Model struct {
 	hiddenCalendars  map[int64]bool
 	clickedEventID   int64
 
-	sidebar                     SidebarModel
-	calendarDialog              CalendarDialogModel
-	calendarDialogOpen          bool
+	sidebar            SidebarModel
+	calendarDialog     CalendarDialogModel
+	calendarDialogOpen bool
+
+	// OAuth pending modal plus what to do with the tokens when it finishes
+	// (re-authenticate an existing account vs link a new one).
+	oauthFlow                   OAuthFlowModel
+	oauthFlowOpen               bool
+	oauthPurpose                oauthFlowPurpose
 	pendingCalendarDelete       int64
 	pendingCalendarDeleteName   string
 	pendingCalendarPromote      int64   // new default to promote when deleting the current default
@@ -410,6 +478,7 @@ func NewModel(a *app.App, themeName string) Model {
 		undoStack:       NewUndoStack(),
 		toast:           NewToastModel(theme),
 		footer:          NewFooterModel(theme),
+		oauthFlow:       NewOAuthFlowModel(theme),
 	}
 }
 
@@ -827,10 +896,11 @@ func syncHealthFor(info CalendarInfo) SyncHealth {
 }
 
 // newSyncService builds a sync.Service using the app's shared SQLite handle.
-// Logs are discarded so sync work doesn't clobber the rendered TUI; users
+// Logs and credential-store warnings are discarded so sync work (including
+// token-refresh persistence mid-run) doesn't clobber the rendered TUI; users
 // run `chroncal sync run` from a shell if they need verbose output.
 func (m Model) newSyncService() (*syncpkg.Service, error) {
-	credStore, err := auth.NewCredentialStore(true)
+	credStore, err := auth.NewCredentialStoreWithWarnings(true, io.Discard)
 	if err != nil {
 		return nil, fmt.Errorf("credential store: %w", err)
 	}
@@ -898,6 +968,78 @@ func (m Model) runSyncCalendar(id int64, name string) tea.Cmd {
 			firstErr = result.Errors[0]
 		}
 		return syncFinishedMsg{summary: summary, err: firstErr, reload: true}
+	}
+}
+
+// startOAuthFlow closes the calendar dialog, opens the pending modal, and
+// launches the browser authorization with the given client config. The
+// caller has already recorded m.oauthPurpose.
+func (m Model) startOAuthFlow(clientID, clientSecret string) (Model, tea.Cmd) {
+	m.calendarDialogOpen = false
+	m.oauthFlowOpen = true
+	m.oauthFlow = m.oauthFlow.SetSize(m.width, m.height)
+	var cmd tea.Cmd
+	m.oauthFlow, cmd = m.oauthFlow.Start(clientID, clientSecret)
+	return m, cmd
+}
+
+// finishOAuthReauth persists the fresh tokens for a re-authenticated
+// account. A full re-consent returns a new refresh token (unlike
+// RefreshGoogleToken, which preserves the old one); the stored credential's
+// username and client config are kept, the token triple is replaced.
+func (m Model) finishOAuthReauth(result *auth.GoogleOAuthResult) tea.Cmd {
+	p := m.oauthPurpose
+	return func() tea.Msg {
+		credStore, err := auth.NewCredentialStoreWithWarnings(true, io.Discard)
+		if err != nil {
+			return oauthCredentialStoredMsg{calendarID: p.calendarID, name: p.calendarName, err: err}
+		}
+		cred := p.cred
+		cred.AccountID = p.accountID
+		cred.AccessToken = result.AccessToken
+		cred.RefreshToken = result.RefreshToken
+		cred.TokenExpiry = result.Expiry.Format(time.RFC3339)
+		if err := credStore.Set(cred); err != nil {
+			return oauthCredentialStoredMsg{calendarID: p.calendarID, name: p.calendarName, err: err}
+		}
+		return oauthCredentialStoredMsg{calendarID: p.calendarID, name: p.calendarName}
+	}
+}
+
+// finishOAuthConnect links the already-created calendar row to the remote
+// using the fresh tokens, mirroring the basic/bearer connect path (metadata
+// fetch is best-effort, authed with the access token like the CLI does).
+func (m Model) finishOAuthConnect(result *auth.GoogleOAuthResult) tea.Cmd {
+	p := m.oauthPurpose
+	return func() tea.Msg {
+		ctx := context.Background()
+		credStore, err := auth.NewCredentialStoreWithWarnings(true, io.Discard)
+		if err != nil {
+			return oauthConnectFinishedMsg{calendarID: p.cal.ID, name: p.cal.Name, err: err}
+		}
+		cred := auth.Credential{
+			Username:          p.saved.Username,
+			AccessToken:       result.AccessToken,
+			RefreshToken:      result.RefreshToken,
+			TokenExpiry:       result.Expiry.Format(time.RFC3339),
+			OAuthClientID:     p.saved.OAuthClientID,
+			OAuthClientSecret: p.saved.OAuthClientSecret,
+		}
+
+		metaCtx, metaCancel := context.WithTimeout(ctx, 10*time.Second)
+		meta, _ := caldav.FetchCalendarMetadata(metaCtx, p.saved.RemoteURL, p.saved.Username, result.AccessToken, p.saved.AuthType, p.saved.AllowInsecure)
+		metaCancel()
+
+		if cerr := m.app.Calendars.Connect(ctx, p.cal, calendar.RemoteLink{
+			RemoteURL:     p.saved.RemoteURL,
+			Username:      p.saved.Username,
+			AuthType:      p.saved.AuthType,
+			AllowInsecure: p.saved.AllowInsecure,
+			RemoteColor:   meta.Color,
+		}, cred, credStore); cerr != nil {
+			return oauthConnectFinishedMsg{calendarID: p.cal.ID, name: p.cal.Name, err: cerr}
+		}
+		return oauthConnectFinishedMsg{calendarID: p.cal.ID, name: p.cal.Name}
 	}
 }
 
@@ -1068,6 +1210,7 @@ func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	inQuitConfirm := m.confirmOpen && m.pendingQuit
 	if msg.String() == "ctrl+c" {
 		if inQuitConfirm {
+			m.oauthFlow.Abort() // release any in-flight OAuth listener
 			return m, tea.Quit, true
 		}
 		if !m.confirmOpen {
@@ -1188,7 +1331,7 @@ func (m Model) anyOverlayOpen() bool {
 	return m.paletteOpen || m.formOpen || m.viewDialogOpen || m.dialogOpen ||
 		m.confirmOpen || m.choiceOpen ||
 		m.calendarDialogOpen || m.calendarListDialogOpen || m.helpDialogOpen ||
-		m.trashOpen
+		m.trashOpen || m.oauthFlowOpen
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1211,6 +1354,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyPressMsg, tea.MouseClickMsg, tea.MouseWheelMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg, tea.PasteMsg:
 			var cmd tea.Cmd
 			m.confirmDialog, cmd = m.confirmDialog.Update(msg)
+			return m, cmd
+		}
+	}
+
+	// The OAuth pending modal owns key and mouse input while it's up
+	// (below only the quit guard). Flow lifecycle messages, loads, and
+	// sizes fall through to the main switch, which routes them to the
+	// modal and dispatches the outcome.
+	if m.oauthFlowOpen && (!m.confirmOpen || !m.pendingQuit) {
+		switch msg.(type) {
+		case tea.KeyPressMsg, tea.MouseClickMsg:
+			var cmd tea.Cmd
+			m.oauthFlow, cmd = m.oauthFlow.Update(msg)
 			return m, cmd
 		}
 	}
@@ -1238,10 +1394,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			CalendarDisconnectRemoteRequestedMsg,
 			CalendarTestRequestedMsg,
 			CalendarSetDefaultRequestedMsg,
+			CalendarReauthRequestedMsg,
+			calendarReauthReadyMsg, calendarReauthNeedsConfigMsg,
 			calendarDeleteCountMsg,
 			tea.BackgroundColorMsg, tea.WindowSizeMsg,
 			eventsLoadedMsg, calendarsLoadedMsg,
-			calendarMutationDoneMsg:
+			calendarMutationDoneMsg,
+			calendarOAuthConnectPendingMsg:
 			// fall through to main switch
 		default:
 			var cmd tea.Cmd
@@ -1305,6 +1464,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.agenda = m.agenda.SetTheme(m.theme)
 		m.sidebar = m.sidebar.SetTheme(m.theme)
 		m.toast.SetTheme(m.theme)
+		m.oauthFlow = m.oauthFlow.SetTheme(m.theme)
 		m.footer.SetTheme(m.theme)
 		if m.trashOpen {
 			m.trash = m.trash.SetSelectedColor(m.theme.Selected)
@@ -1328,6 +1488,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.palette = m.palette.SetSize(m.width, m.height)
 		m.calendarListDialog = m.calendarListDialog.SetSize(m.width, m.height)
 		m.helpDialog = m.helpDialog.SetSize(m.width, m.height)
+		m.oauthFlow = m.oauthFlow.SetSize(m.width, m.height)
 		m.ready = true
 		return m, nil
 
@@ -1932,8 +2093,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return calendarMutationDoneMsg{err: err}
 			}
 
+			// oauth2 saves defer the link until the browser flow completes.
+			// The row, owner email, and default are committed now, so a
+			// cancelled or failed flow leaves a usable local calendar
+			// rather than a half-link.
+			if saved.RemoteURL != "" && calendar.NormalizeAuthType(saved.AuthType) == "oauth2" {
+				if saved.ID == 0 && saved.MakeDefault {
+					if derr := m.app.Calendars.SetDefault(ctx, cal.ID); derr != nil {
+						return calendarMutationDoneMsg{err: derr}
+					}
+				}
+				return calendarOAuthConnectPendingMsg{cal: cal, saved: saved}
+			}
+
 			if saved.RemoteURL != "" {
-				credStore, storeErr := auth.NewCredentialStore(true)
+				// Discard, don't stderr: plaintext-store warnings written
+				// mid-frame corrupt the renderer. Plaintext is an explicit
+				// opt-in whose warning the user saw at setup; the keyring
+				// is the default store and emits nothing.
+				credStore, storeErr := auth.NewCredentialStoreWithWarnings(true, io.Discard)
 				if storeErr != nil {
 					return calendarMutationDoneMsg{err: storeErr}
 				}
@@ -1976,6 +2154,161 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return calendarMutationDoneMsg{err: nil}
 		}
 
+	case CalendarReauthRequestedMsg:
+		// One flow at a time; a manual sync mid-flight would race the
+		// credential write.
+		if m.oauthFlowOpen || m.syncing {
+			return m, nil
+		}
+		req := msg
+		return m, func() tea.Msg {
+			ctx := context.Background()
+			cal, err := m.app.Calendars.Get(ctx, req.ID)
+			if err != nil {
+				return calendarReauthReadyMsg{err: err}
+			}
+			if cal.AccountID == 0 {
+				return calendarReauthReadyMsg{err: fmt.Errorf("calendar %q is not linked to an account", cal.Name)}
+			}
+			credStore, err := auth.NewCredentialStoreWithWarnings(true, io.Discard)
+			if err != nil {
+				return calendarReauthReadyMsg{err: err}
+			}
+			cred, err := credStore.Get(cal.AccountID)
+			if err != nil {
+				return calendarReauthReadyMsg{err: fmt.Errorf("load credential: %w", err)}
+			}
+			// Config entered in the fallback dialog overrides the stored one.
+			if req.ClientID != "" {
+				cred.OAuthClientID = req.ClientID
+			}
+			if req.ClientSecret != "" {
+				cred.OAuthClientSecret = req.ClientSecret
+			}
+			// Credentials linked before the client secret was persisted
+			// can't re-auth silently — route to the config-entry fallback.
+			if cred.OAuthClientID == "" || cred.OAuthClientSecret == "" {
+				return calendarReauthNeedsConfigMsg{calendarID: req.ID, clientIDPrefill: cred.OAuthClientID}
+			}
+			return calendarReauthReadyMsg{calendarID: req.ID, name: cal.Name, accountID: cal.AccountID, cred: cred}
+		}
+
+	case calendarReauthReadyMsg:
+		if msg.err != nil {
+			m.statusToken++
+			m.syncStatus = "Re-authentication failed: " + msg.err.Error()
+			return m, m.expireStatusAfter(8*time.Second, m.statusToken)
+		}
+		m.oauthPurpose = oauthFlowPurpose{
+			calendarID:   msg.calendarID,
+			calendarName: msg.name,
+			accountID:    msg.accountID,
+			cred:         msg.cred,
+		}
+		return m.startOAuthFlow(msg.cred.OAuthClientID, msg.cred.OAuthClientSecret)
+
+	case calendarReauthNeedsConfigMsg:
+		// Premise-2 fallback: reopen the dialog with editable client-config
+		// rows. Mirrors the CalendarDialogRequestedMsg open path.
+		ctx := context.Background()
+		cal, err := m.app.Calendars.Get(ctx, msg.calendarID)
+		if err != nil {
+			m.err = err
+			return m, nil
+		}
+		params := CalendarDialogParams{
+			ID:                   cal.ID,
+			Name:                 cal.Name,
+			Color:                cal.Color,
+			Description:          cal.Description,
+			OwnerEmail:           cal.OwnerEmail,
+			RemoteURL:            cal.RemoteURL,
+			IsDefault:            cal.IsDefault,
+			LastSyncAt:           cal.LastSyncAt,
+			LastSyncAttemptedAt:  cal.LastSyncAttemptedAt,
+			LastSyncError:        cal.LastSyncError,
+			NeedOAuthConfig:      true,
+			OAuthClientIDPrefill: msg.clientIDPrefill,
+		}
+		if cal.AccountID != 0 {
+			if acct, aerr := m.app.Queries.GetAccount(ctx, cal.AccountID); aerr == nil {
+				params.RemoteLinked = true
+				params.RemoteAuthType = acct.AuthType
+				params.RemoteUsername = acct.Username
+			}
+		}
+		m.calendarDialog = NewCalendarDialogModel(params, m.theme).SetSize(m.width, m.height)
+		m.calendarDialogOpen = true
+		return m, nil
+
+	case calendarOAuthConnectPendingMsg:
+		m.oauthPurpose = oauthFlowPurpose{
+			isConnect:    true,
+			calendarID:   msg.cal.ID,
+			calendarName: msg.cal.Name,
+			saved:        msg.saved,
+			cal:          msg.cal,
+		}
+		// The row already exists; refresh the sidebar before the (long) flow.
+		newM, cmd := m.startOAuthFlow(msg.saved.OAuthClientID, msg.saved.OAuthClientSecret)
+		return newM, tea.Batch(cmd, newM.loadCalendars())
+
+	case oauthFlowStartedMsg:
+		var cmd tea.Cmd
+		m.oauthFlow, cmd = m.oauthFlow.Update(msg)
+		return m, cmd
+
+	case oauthFlowDoneMsg:
+		var cmd tea.Cmd
+		m.oauthFlow, cmd = m.oauthFlow.Update(msg)
+		switch m.oauthFlow.State() {
+		case OAuthFlowDone:
+			m.oauthFlowOpen = false
+			if m.oauthPurpose.isConnect {
+				return m, m.finishOAuthConnect(msg.result)
+			}
+			return m, m.finishOAuthReauth(msg.result)
+		case OAuthFlowCancelled:
+			m.oauthFlowOpen = false
+			m.statusToken++
+			if m.oauthPurpose.isConnect {
+				m.syncStatus = fmt.Sprintf("Authorization cancelled — %q saved as a local calendar", m.oauthPurpose.calendarName)
+			} else {
+				m.syncStatus = "Authorization cancelled"
+			}
+			return m, m.expireStatusAfter(6*time.Second, m.statusToken)
+		default:
+			// Failed: the modal stays up showing the error; esc closes it.
+		}
+		return m, cmd
+
+	case oauthFlowClosedMsg:
+		m.oauthFlowOpen = false
+		return m, nil
+
+	case oauthCredentialStoredMsg:
+		if msg.err != nil {
+			// Consent succeeded but the write didn't — distinct from a flow
+			// failure; nothing is corrupted and repeating is safe.
+			m.statusToken++
+			m.syncStatus = fmt.Sprintf("Authorized, but storing the tokens failed: %s — re-authenticating again is safe", msg.err)
+			return m, m.expireStatusAfter(10*time.Second, m.statusToken)
+		}
+		// Success ends with a sync of this calendar so the persisted health
+		// flips and the sidebar ⚠ clears.
+		return m, func() tea.Msg { return SyncCalendarRequestedMsg{ID: msg.calendarID, Name: msg.name} }
+
+	case oauthConnectFinishedMsg:
+		if msg.err != nil {
+			m.statusToken++
+			m.syncStatus = fmt.Sprintf("Connect failed: %s — %q stays local", msg.err, msg.name)
+			return m, tea.Batch(m.expireStatusAfter(10*time.Second, m.statusToken), m.loadCalendars())
+		}
+		return m, tea.Batch(
+			m.loadCalendars(),
+			func() tea.Msg { return SyncCalendarRequestedMsg{ID: msg.calendarID, Name: msg.name} },
+		)
+
 	case CalendarDisconnectRemoteRequestedMsg:
 		id := msg.ID
 		return m, func() tea.Msg {
@@ -1984,7 +2317,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if err != nil {
 				return calendarMutationDoneMsg{err: err}
 			}
-			credStore, _ := auth.NewCredentialStore(true)
+			credStore, _ := auth.NewCredentialStoreWithWarnings(true, io.Discard)
 			return calendarMutationDoneMsg{err: m.app.Calendars.Disconnect(ctx, cal, credStore)}
 		}
 
@@ -2180,12 +2513,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.runSyncCalendar(msg.ID, msg.Name), m.syncSpinner.Tick)
 
 	case spinner.TickMsg:
-		if !m.syncing {
+		// Two spinners can be live: the sync footer's and the OAuth pending
+		// modal's. Each bubbles spinner ignores ticks that aren't its own,
+		// so routing to both is safe.
+		var cmds []tea.Cmd
+		if m.oauthFlowOpen {
+			var c tea.Cmd
+			m.oauthFlow, c = m.oauthFlow.Update(msg)
+			if c != nil {
+				cmds = append(cmds, c)
+			}
+		}
+		if m.syncing {
+			var c tea.Cmd
+			m.syncSpinner, c = m.syncSpinner.Update(msg)
+			if c != nil {
+				cmds = append(cmds, c)
+			}
+		}
+		if len(cmds) == 0 {
 			return m, nil
 		}
-		var cmd tea.Cmd
-		m.syncSpinner, cmd = m.syncSpinner.Update(msg)
-		return m, cmd
+		return m, tea.Batch(cmds...)
 
 	case syncFinishedMsg:
 		m.syncing = false
@@ -2335,6 +2684,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.pendingQuit {
 			m.pendingQuit = false
 			if msg.Confirmed {
+				m.oauthFlow.Abort() // release any in-flight OAuth listener
 				return m, tea.Quit
 			}
 			return m, nil
@@ -2372,7 +2722,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Delete confirmed: close the edit dialog too.
 			m.calendarDialogOpen = false
 			return m, func() tea.Msg {
-				credStore, _ := auth.NewCredentialStore(true)
+				credStore, _ := auth.NewCredentialStoreWithWarnings(true, io.Discard)
 				err := m.app.Calendars.DeleteWithRemoteCleanup(context.Background(), id, newDefaultID, credStore)
 				return calendarMutationDoneMsg{err: err}
 			}
@@ -2957,6 +3307,10 @@ func (m Model) View() tea.View {
 	if m.calendarDialogOpen {
 		bw, bh := m.calendarDialog.BoxSize()
 		v.Content = m.compositeOverlay(v.Content, m.calendarDialog.View(), bw, bh)
+	}
+	if m.oauthFlowOpen {
+		bw, bh := m.oauthFlow.BoxSize()
+		v.Content = m.compositeOverlay(v.Content, m.oauthFlow.View(), bw, bh)
 	}
 	if m.choiceOpen {
 		bw, bh := m.choiceDialog.BoxSize()

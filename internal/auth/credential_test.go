@@ -263,3 +263,25 @@ func TestNewCredentialStore_MigratesLegacyPlaintextCredentials(t *testing.T) {
 		t.Fatal("expected migrated credential to be stored in keyring backing store")
 	}
 }
+
+func TestPlaintextFileStore_WarningsRouteToInjectedWriter(t *testing.T) {
+	var buf strings.Builder
+	store := &PlaintextFileStore{dir: t.TempDir(), warn: &buf}
+
+	err := store.Set(Credential{
+		AccountID:         7,
+		OAuthClientID:     "cid",
+		OAuthClientSecret: "shh",
+	})
+	if err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "credentials stored in plaintext") {
+		t.Errorf("missing plaintext-location warning; got %q", out)
+	}
+	if !strings.Contains(out, "OAuth client secret persisted to disk") {
+		t.Errorf("missing OAuth-secret warning; got %q", out)
+	}
+}

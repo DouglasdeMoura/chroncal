@@ -46,6 +46,14 @@ type CalendarDialogParams struct {
 	// exists, since the first calendar is auto-promoted by the service
 	// (the checkbox would be meaningless and noisy in that case).
 	OfferDefault bool
+
+	// NeedOAuthConfig opens a linked OAuth calendar's dialog with editable
+	// Client ID / Client secret rows. Used when re-authentication finds the
+	// stored credential incomplete (linked before the client secret was
+	// persisted). OAuthClientIDPrefill seeds the Client ID row when the
+	// stored credential has the ID but not the secret.
+	NeedOAuthConfig      bool
+	OAuthClientIDPrefill string
 }
 
 // CalendarSavedMsg is emitted when the user saves the dialog. ID == 0 means
@@ -63,13 +71,29 @@ type CalendarSavedMsg struct {
 	MakeDefault bool
 
 	// Remote connection — only meaningful when RemoteURL is non-empty and
-	// the calendar is not already linked. OAuth flows are handled via the
-	// CLI, not the dialog.
+	// the calendar is not already linked.
 	RemoteURL     string
 	Username      string
-	AuthType      string // "basic" | "bearer"
-	Password      string // populated only when AuthType == "basic"
+	AuthType      string // "basic" | "bearer" | "oauth2"
+	Password      string // basic: password; bearer: access token
 	AllowInsecure bool
+
+	// OAuth client config — populated only when AuthType == "oauth2". The
+	// parent launches the browser authorization flow with these before
+	// linking the calendar.
+	OAuthClientID     string
+	OAuthClientSecret string
+}
+
+// CalendarReauthRequestedMsg is emitted when the user presses Re-authenticate
+// on a linked OAuth calendar. ClientID/ClientSecret are set only by the
+// missing-config fallback (credentials stored before the client secret was
+// kept); empty means "use the stored credential's client config".
+type CalendarReauthRequestedMsg struct {
+	ID           int64
+	Name         string
+	ClientID     string
+	ClientSecret string
 }
 
 // CalendarDeleteRequestedMsg is emitted when the user presses Delete in the
@@ -129,18 +153,30 @@ const (
 	// Index 4 is an empty spacer StaticField.
 	cdIdxSync = 5
 
-	// Present only when Sync is on (unlinked mode only).
+	// Present only when Sync is on (unlinked mode only). Rows 10+ depend
+	// on the selected auth type; the constants below describe the two
+	// layouts. Form.RemoveItems is tail-truncation only, so switching
+	// layouts rebuilds everything from cdIdxPassword down (see OnRebuild).
 	cdIdxRemoteURL       = 6
 	cdIdxUsername        = 7
 	cdIdxSameAsOwnerMail = 8
 	cdIdxAuth            = 9
-	cdIdxPassword        = 10
-	cdIdxAllowInsecure   = 11
+
+	// basic/bearer layout:
+	cdIdxPassword      = 10
+	cdIdxAllowInsecure = 11
+
+	// oauth2 layout (replaces the Password row with two client-config rows,
+	// shifting the HTTP checkbox down one):
+	cdIdxOAuthClientID      = 10
+	cdIdxOAuthClientSecret  = 11
+	cdIdxOAuthAllowInsecure = 12
 )
 
 var authOptions = []SelectOption{
 	{Label: "Basic", Value: "basic"},
 	{Label: "Bearer", Value: "bearer"},
+	{Label: "Google OAuth", Value: "oauth2"},
 }
 
 func authOptionIndex(authType string) int {
@@ -227,6 +263,14 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		{Label: "", Field: NewStaticField("", nil)},
 	}
 
+	// Fallback config fields for re-auth on a credential that predates
+	// client-secret storage. Built up front so the Re-authenticate button
+	// closure can read them at press time without reaching into the form.
+	var (
+		oauthIDField     *TextField
+		oauthSecretField *TextField
+	)
+
 	if params.RemoteLinked {
 		summary := remoteStatusLine(params, theme)
 		items = append(items, FormItem{
@@ -238,6 +282,17 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		// synced cleanly and never been attempted-with-error.
 		for _, line := range syncHealthDialogLines(params, theme) {
 			items = append(items, FormItem{Label: "", Field: NewStaticField(line, nil)})
+		}
+		if params.NeedOAuthConfig {
+			hint := lipgloss.NewStyle().Foreground(theme.Muted).
+				Render("Stored credential is missing the OAuth client config — enter it once to re-authenticate.")
+			oauthIDField = newOAuthClientIDField(params.OAuthClientIDPrefill)
+			oauthSecretField = newOAuthClientSecretField()
+			items = append(items,
+				FormItem{Label: "", Field: NewStaticField(hint, nil)},
+				FormItem{Label: "Client ID", Field: oauthIDField, Required: true},
+				FormItem{Label: "Client secret", Field: oauthSecretField, Required: true},
+			)
 		}
 	} else {
 		sync := NewCheckboxField("", false)
@@ -270,8 +325,6 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 			urlVal := strings.TrimSpace(f.Field(cdIdxRemoteURL).(*TextField).Value())
 			userVal := strings.TrimSpace(f.Field(cdIdxUsername).(*TextField).Value())
 			authVal := f.Field(cdIdxAuth).(*SelectField).Value()
-			passVal := f.Field(cdIdxPassword).(*TextField).Value()
-			allowIns := f.Field(cdIdxAllowInsecure).(*CheckboxField).Checked()
 
 			if urlVal == "" {
 				f.SetError(cdIdxRemoteURL, "Remote URL is required when Sync is on")
@@ -281,20 +334,41 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 				f.SetError(cdIdxUsername, "Username is required when Sync is on")
 				return nil
 			}
-			if passVal == "" {
-				if authVal == "bearer" {
-					f.SetError(cdIdxPassword, "Access token is required for bearer auth")
-				} else {
-					f.SetError(cdIdxPassword, "Password is required for basic auth")
+
+			// The tail rows depend on the auth type (see the cdIdx*
+			// comment); authVal is the layout's source of truth here
+			// because any auth change fires OnRebuild before Submit.
+			if calendarAuthIsOAuth(authVal) {
+				clientID := strings.TrimSpace(f.Field(cdIdxOAuthClientID).(*TextField).Value())
+				clientSecret := strings.TrimSpace(f.Field(cdIdxOAuthClientSecret).(*TextField).Value())
+				if clientID == "" {
+					f.SetError(cdIdxOAuthClientID, "Client ID is required for Google OAuth")
+					return nil
 				}
-				return nil
+				if clientSecret == "" {
+					f.SetError(cdIdxOAuthClientSecret, "Client secret is required for Google OAuth")
+					return nil
+				}
+				msg.OAuthClientID = clientID
+				msg.OAuthClientSecret = clientSecret
+				msg.AllowInsecure = f.Field(cdIdxOAuthAllowInsecure).(*CheckboxField).Checked()
+			} else {
+				passVal := f.Field(cdIdxPassword).(*TextField).Value()
+				if passVal == "" {
+					if authVal == "bearer" {
+						f.SetError(cdIdxPassword, "Access token is required for bearer auth")
+					} else {
+						f.SetError(cdIdxPassword, "Password is required for basic auth")
+					}
+					return nil
+				}
+				msg.Password = passVal
+				msg.AllowInsecure = f.Field(cdIdxAllowInsecure).(*CheckboxField).Checked()
 			}
 
 			msg.RemoteURL = urlVal
 			msg.Username = userVal
 			msg.AuthType = authVal
-			msg.Password = passVal
-			msg.AllowInsecure = allowIns
 		}
 
 		return func() tea.Msg { return msg }
@@ -333,6 +407,27 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		})
 	}
 
+	// Linked OAuth calendars get Re-authenticate, registered before
+	// Disconnect so Tab order stays benign-then-destructive. When the
+	// dialog is in the missing-config fallback mode, the button reads the
+	// client config fields at press time; otherwise it sends empty config
+	// and the parent uses the stored credential.
+	if params.RemoteLinked && calendarAuthIsOAuth(params.RemoteAuthType) {
+		id := params.ID
+		name := params.Name
+		idField, secretField := oauthIDField, oauthSecretField
+		form.SetLeadingActionButton("Re-authenticate", Button, func() tea.Msg {
+			msg := CalendarReauthRequestedMsg{ID: id, Name: name}
+			if idField != nil {
+				msg.ClientID = strings.TrimSpace(idField.Value())
+			}
+			if secretField != nil {
+				msg.ClientSecret = strings.TrimSpace(secretField.Value())
+			}
+			return msg
+		})
+	}
+
 	if params.RemoteLinked {
 		id := params.ID
 		name := params.Name
@@ -353,12 +448,56 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 
 	syncTheme := theme
 	// Snapshot of the remote section values, preserved across Sync toggles
-	// so accidentally flipping Sync off and back on doesn't wipe what the
-	// user has already typed.
+	// and auth-layout switches so flipping things back and forth doesn't
+	// wipe what the user has already typed.
 	var snap struct {
-		url, username, auth, password string
-		allowInsecure, sameAsOwner    bool
+		url, username, auth, password    string
+		oauthClientID, oauthClientSecret string
+		allowInsecure, sameAsOwner       bool
 	}
+	// oauthLayout tracks which tail layout the form currently has (see the
+	// cdIdx* comment): false = Password+HTTP, true = ClientID+Secret+HTTP.
+	// Form.RemoveItems is tail-truncation only, so layout changes rebuild
+	// from cdIdxPassword down rather than swapping a row in place.
+	oauthLayout := new(bool)
+
+	// appendAuthTail appends the rows after the Auth select for the given
+	// auth type and updates the layout tracker.
+	appendAuthTail := func(f *Form, authVal string) {
+		insecure := NewCheckboxField("", snap.allowInsecure)
+		insecure.SetContent("allow plain HTTP")
+		if calendarAuthIsOAuth(authVal) {
+			secret := newOAuthClientSecretField()
+			secret.SetValue(snap.oauthClientSecret)
+			f.AppendItems(
+				FormItem{Label: "Client ID", Field: newOAuthClientIDField(snap.oauthClientID), Required: true},
+				FormItem{Label: "Client secret", Field: secret, Required: true},
+				FormItem{Label: "HTTP", Field: insecure},
+			)
+			*oauthLayout = true
+			return
+		}
+		password := newPasswordField()
+		password.SetValue(snap.password)
+		f.AppendItems(
+			FormItem{Label: "Password", Field: password, Required: true},
+			FormItem{Label: "HTTP", Field: insecure},
+		)
+		*oauthLayout = false
+	}
+
+	// snapshotAuthTail records the current tail values, layout-aware.
+	snapshotAuthTail := func(f *Form) {
+		if *oauthLayout {
+			snap.oauthClientID = f.Field(cdIdxOAuthClientID).(*TextField).Value()
+			snap.oauthClientSecret = f.Field(cdIdxOAuthClientSecret).(*TextField).Value()
+			snap.allowInsecure = f.Field(cdIdxOAuthAllowInsecure).(*CheckboxField).Checked()
+			return
+		}
+		snap.password = f.Field(cdIdxPassword).(*TextField).Value()
+		snap.allowInsecure = f.Field(cdIdxAllowInsecure).(*CheckboxField).Checked()
+	}
+
 	form.OnRebuild(func(f *Form) {
 		if linked {
 			return
@@ -367,18 +506,13 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		hasRemote := f.ItemCount() > cdIdxSync+1
 		switch {
 		case syncOn && !hasRemote:
-			insecure := NewCheckboxField("", snap.allowInsecure)
-			insecure.SetContent("allow plain HTTP")
-			password := newPasswordField()
-			password.SetValue(snap.password)
 			f.AppendItems(
 				FormItem{Label: "Remote URL", Field: newRemoteURLField(snap.url), Required: true},
 				FormItem{Label: "Username", Field: newMirroredUsernameField(snap.username, syncTheme), Required: true},
 				FormItem{Label: " ", Field: newSameAsOwnerMailCheckbox(snap.sameAsOwner)},
 				FormItem{Label: "Auth", Field: newAuthField(snap.auth)},
-				FormItem{Label: "Password", Field: password, Required: true},
-				FormItem{Label: "HTTP", Field: insecure},
 			)
+			appendAuthTail(f, snap.auth)
 			f.SetActionButton("Test", Button, func() tea.Msg {
 				return testConnectionPressedMsg{}
 			})
@@ -386,17 +520,29 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 			snap.url = f.Field(cdIdxRemoteURL).(*TextField).Value()
 			snap.username = f.Field(cdIdxUsername).(*TextField).Value()
 			snap.auth = f.Field(cdIdxAuth).(*SelectField).Value()
-			snap.password = f.Field(cdIdxPassword).(*TextField).Value()
-			snap.allowInsecure = f.Field(cdIdxAllowInsecure).(*CheckboxField).Checked()
 			snap.sameAsOwner = f.Field(cdIdxSameAsOwnerMail).(*CheckboxField).Checked()
+			snapshotAuthTail(f)
 			f.RemoveItems(cdIdxSync + 1)
 			f.ClearError()
 			f.ClearActionButtons()
 		}
 
+		// Rebuild the tail when the selected auth type changes layout
+		// (basic/bearer <-> oauth2).
+		if syncOn && f.ItemCount() > cdIdxAuth {
+			authVal := f.Field(cdIdxAuth).(*SelectField).Value()
+			if calendarAuthIsOAuth(authVal) != *oauthLayout {
+				snapshotAuthTail(f)
+				f.RemoveItems(cdIdxPassword)
+				f.ClearError()
+				appendAuthTail(f, authVal)
+			}
+		}
+
 		// Keep the Password row's label and placeholder in sync with the
 		// selected auth type: basic -> password, bearer -> access token.
-		if syncOn && f.ItemCount() > cdIdxPassword {
+		// (The oauth2 layout has no Password row.)
+		if syncOn && !*oauthLayout && f.ItemCount() > cdIdxPassword {
 			authVal := f.Field(cdIdxAuth).(*SelectField).Value()
 			pw := f.Field(cdIdxPassword).(*TextField)
 			if authVal == "bearer" {
@@ -412,9 +558,13 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		// doesn't require the flag. Shown as a greyed-out confirmation line.
 		// When the URL stops matching localhost the override is cleared so
 		// the user re-opts-in explicitly.
-		if syncOn && f.ItemCount() > cdIdxAllowInsecure {
+		insecureIdx := cdIdxAllowInsecure
+		if *oauthLayout {
+			insecureIdx = cdIdxOAuthAllowInsecure
+		}
+		if syncOn && f.ItemCount() > insecureIdx {
 			urlVal := strings.TrimSpace(f.Field(cdIdxRemoteURL).(*TextField).Value())
-			insecure := f.Field(cdIdxAllowInsecure).(*CheckboxField)
+			insecure := f.Field(insecureIdx).(*CheckboxField)
 			wasAuto := insecure.AutoChecked()
 			if isLocalhostHTTP(urlVal) {
 				insecure.SetChecked(true)
@@ -565,10 +715,13 @@ func humanizeSyncError(raw string) string {
 }
 
 // reLinkHint returns the fix for errors that need re-authentication, or "" when
-// no specific remedy applies. Re-linking re-runs the OAuth flow and stores a
-// fresh refresh token (cmd/chroncal/calendar_remote.go buildCalendarCredential).
+// no specific remedy applies. The Re-authenticate action button re-runs the
+// OAuth flow in-app and stores a fresh refresh token.
 func reLinkHint(params CalendarDialogParams) string {
 	if strings.Contains(params.LastSyncError, "invalid_grant") {
+		if calendarAuthIsOAuth(params.RemoteAuthType) {
+			return "Press Re-authenticate below to fix."
+		}
 		name := params.Name
 		if name == "" {
 			name = "<name>"
@@ -610,6 +763,26 @@ func newAuthField(authType string) *SelectField {
 
 func newPasswordField() *TextField {
 	f := NewTextField("your password")
+	f.SetCharLimit(256)
+	f.SetEchoPassword(true)
+	return f
+}
+
+// calendarAuthIsOAuth reports whether an auth-type string selects the OAuth
+// flow (and therefore the ClientID/Secret tail layout in the dialog).
+func calendarAuthIsOAuth(authType string) bool {
+	return strings.EqualFold(strings.TrimSpace(authType), "oauth2")
+}
+
+func newOAuthClientIDField(value string) *TextField {
+	f := NewTextField("xxxx.apps.googleusercontent.com")
+	f.SetValue(value)
+	f.SetCharLimit(256)
+	return f
+}
+
+func newOAuthClientSecretField() *TextField {
+	f := NewTextField("paste your client secret")
 	f.SetCharLimit(256)
 	f.SetEchoPassword(true)
 	return f
@@ -722,6 +895,13 @@ func (m CalendarDialogModel) View() string {
 // authenticated ping. Errors show inline without contacting the server.
 func (m CalendarDialogModel) handleTestPressed() (CalendarDialogModel, tea.Cmd) {
 	if m.form.ItemCount() <= cdIdxAllowInsecure {
+		return m, nil
+	}
+	// The oauth2 layout has no password to ping with — there is no token
+	// until the browser flow runs, which happens on save.
+	if calendarAuthIsOAuth(m.form.Field(cdIdxAuth).(*SelectField).Value()) {
+		m.testStatus = lipgloss.NewStyle().Foreground(m.theme.TextDim).Italic(true).
+			Render("Test runs after Google authorization — save to connect")
 		return m, nil
 	}
 	url := strings.TrimSpace(m.form.Field(cdIdxRemoteURL).(*TextField).Value())
