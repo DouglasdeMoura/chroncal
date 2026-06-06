@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 	"testing"
+
+	lipgloss "charm.land/lipgloss/v2"
 )
 
 // oauthDialogFixture builds an unlinked dialog with Sync on and auth set to
@@ -186,7 +188,7 @@ func TestCalendarDialog_NeedOAuthConfigFallback(t *testing.T) {
 	}, Theme{}).SetSize(120, 40)
 
 	view := m.View()
-	if !strings.Contains(view, "missing the OAuth client config") {
+	if !strings.Contains(view, "OAuth client config") {
 		t.Errorf("fallback dialog should explain why config entry is needed; got %q", view)
 	}
 
@@ -230,12 +232,43 @@ func TestCalendarDialog_ReLinkHintPointsAtButtonForOAuth(t *testing.T) {
 		LastSyncError:  `token refresh failed (400): {"error": "invalid_grant"}`,
 	}, Theme{})
 	if len(lines) != 2 {
-		t.Fatalf("expected error + hint lines, got %q", lines)
+		t.Fatalf("expected error + hint lines, got %+v", lines)
 	}
-	if !strings.Contains(lines[1], "Re-authenticate") {
-		t.Errorf("oauth hint should point at the in-app button; got %q", lines[1])
+	if !strings.Contains(lines[1].text, "Re-authenticate") {
+		t.Errorf("oauth hint should point at the in-app button; got %+v", lines[1])
 	}
-	if strings.Contains(lines[1], "chroncal calendar update") {
-		t.Errorf("oauth hint should not point at the CLI anymore; got %q", lines[1])
+	if strings.Contains(lines[1].text, "chroncal calendar update") {
+		t.Errorf("oauth hint should not point at the CLI anymore; got %+v", lines[1])
+	}
+}
+
+// TestCalendarDialog_LinkedOAuthErrorFitsWidth reproduces the "crumbled"
+// edit dialog: a linked Google calendar with a long CalDAV URL, a sync
+// error, and all three action buttons (Set as Default + Re-authenticate +
+// Disconnect). Every rendered line must fit the dialog's content width —
+// no mid-word URL wraps, no button row spilling onto a ragged second line.
+func TestCalendarDialog_LinkedOAuthErrorFitsWidth(t *testing.T) {
+	m := NewCalendarDialogModel(CalendarDialogParams{
+		ID:             12,
+		Name:           "douglas.demoura@familywellhealth.com",
+		Color:          "#FD7941",
+		Description:    "Shared family schedule",
+		OwnerEmail:     "douglas.demoura@familywellhealth.com",
+		RemoteURL:      "https://apidata.googleusercontent.com/caldav/v2/douglas.demoura@familywellhealth.com/events/",
+		RemoteLinked:   true,
+		RemoteAuthType: "oauth2",
+		RemoteUsername: "douglas.demoura@familywellhealth.com",
+		LastSyncError:  `oauth token refresh: token refresh failed (400): {"error": "invalid_grant"}`,
+		IsDefault:      false, // keeps the Set as Default button in play
+	}, Theme{}).SetSize(120, 40)
+
+	cw := m.dialog.ContentWidth()
+	if cw <= 0 {
+		t.Fatal("ContentWidth not set")
+	}
+	for i, l := range strings.Split(m.form.View(), "\n") {
+		if w := lipgloss.Width(l); w > cw {
+			t.Errorf("form line %d is %d cols, exceeds content width %d: %q", i, w, cw, l)
+		}
 	}
 }

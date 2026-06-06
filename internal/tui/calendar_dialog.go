@@ -212,6 +212,11 @@ type CalendarDialogModel struct {
 	// the upcoming CalendarSavedMsg without re-implementing form
 	// validation. Cleared automatically after each submit.
 	saveMakeDefault *bool
+
+	// contentWidth is shared with the static-line styleFns so long values
+	// (remote URLs, sync errors) truncate to the dialog's content width at
+	// render time instead of wrapping inside the box.
+	contentWidth *int
 }
 
 // NewCalendarDialogModel builds a dialog for create (params.ID==0) or edit.
@@ -271,25 +276,55 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		oauthSecretField *TextField
 	)
 
+	// contentWidth is shared with the static-line styleFns (same pattern as
+	// ConfirmDialogModel): the dialog's content width isn't known until
+	// SetSize, and long values (Google CalDAV URLs easily exceed 90 chars)
+	// must truncate to one row instead of wrapping raggedly inside the box.
+	contentWidth := new(int)
+
+	// staticLine builds a one-row static field: truncate to the content
+	// width first, then style — slicing after styling would cut through
+	// ANSI escapes.
+	staticLine := func(text string, style lipgloss.Style) FormItem {
+		return FormItem{Label: "", Field: NewStaticField(text, func(s string) string {
+			if *contentWidth > 0 {
+				s = truncateTo(s, *contentWidth)
+			}
+			return style.Render(s)
+		})}
+	}
+	// labeledLine keeps the muted "Label:" prefix two-tone while the value
+	// truncates to whatever width remains beside it.
+	labeledLine := func(label, value string) FormItem {
+		lbl := lipgloss.NewStyle().Foreground(theme.Muted).Render(label) + " "
+		lblW := lipgloss.Width(lbl)
+		return FormItem{Label: "", Field: NewStaticField(value, func(s string) string {
+			if avail := *contentWidth - lblW; *contentWidth > 0 && avail > 0 {
+				s = truncateTo(s, avail)
+			}
+			return lbl + s
+		})}
+	}
+
 	if params.RemoteLinked {
-		summary := remoteStatusLine(params, theme)
-		items = append(items, FormItem{
-			Label: "",
-			Field: NewStaticField(summary, nil),
-		})
+		// One row each, truncated — the URL and account can both exceed the
+		// dialog width on Google calendars.
+		items = append(items, labeledLine("Remote:", params.RemoteURL))
+		if account := remoteAccountSummary(params); account != "" {
+			items = append(items, labeledLine("Account:", account))
+		}
 		// Surface sync health (one static field per line so the form's
 		// height math stays one-line-per-item). Empty when the calendar has
 		// synced cleanly and never been attempted-with-error.
 		for _, line := range syncHealthDialogLines(params, theme) {
-			items = append(items, FormItem{Label: "", Field: NewStaticField(line, nil)})
+			items = append(items, staticLine(line.text, line.style))
 		}
 		if params.NeedOAuthConfig {
-			hint := lipgloss.NewStyle().Foreground(theme.Muted).
-				Render("Stored credential is missing the OAuth client config — enter it once to re-authenticate.")
 			oauthIDField = newOAuthClientIDField(params.OAuthClientIDPrefill)
 			oauthSecretField = newOAuthClientSecretField()
 			items = append(items,
-				FormItem{Label: "", Field: NewStaticField(hint, nil)},
+				staticLine("Enter the OAuth client config once to re-authenticate.",
+					lipgloss.NewStyle().Foreground(theme.Muted)),
 				FormItem{Label: "Client ID", Field: oauthIDField, Required: true},
 				FormItem{Label: "Client secret", Field: oauthSecretField, Required: true},
 			)
@@ -390,6 +425,7 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		mutedColor:      theme.Muted,
 		textDimColor:    theme.TextDim,
 		saveMakeDefault: saveMakeDefault,
+		contentWidth:    contentWidth,
 	}
 
 	// Edit mode, not yet default: surface "Set as Default" so the user
@@ -657,40 +693,52 @@ func isLocalhostHTTP(raw string) bool {
 	return host == "localhost" || host == "127.0.0.1"
 }
 
-func remoteStatusLine(params CalendarDialogParams, theme Theme) string {
-	label := lipgloss.NewStyle().Foreground(theme.Muted).Render("Remote:")
-	details := params.RemoteURL
-	if params.RemoteUsername != "" {
-		details += "  (" + params.RemoteUsername
-		if params.RemoteAuthType != "" {
-			details += ", " + params.RemoteAuthType
-		}
-		details += ")"
-	} else if params.RemoteAuthType != "" {
-		details += "  (" + params.RemoteAuthType + ")"
+// remoteAccountSummary compacts username + auth type into one value, e.g.
+// "alice@example.com (oauth2)". Empty when neither is known.
+func remoteAccountSummary(params CalendarDialogParams) string {
+	switch {
+	case params.RemoteUsername != "" && params.RemoteAuthType != "":
+		return params.RemoteUsername + " (" + params.RemoteAuthType + ")"
+	case params.RemoteUsername != "":
+		return params.RemoteUsername
+	case params.RemoteAuthType != "":
+		return params.RemoteAuthType
 	}
-	return label + " " + details
+	return ""
+}
+
+// syncHealthLine is one row of the linked dialog's sync summary: raw text
+// plus the style to apply after width truncation. Styling happens at render
+// time (inside the StaticField's styleFn) so the text can be truncated to
+// the dialog's content width without slicing through ANSI escapes.
+type syncHealthLine struct {
+	text  string
+	style lipgloss.Style
 }
 
 // syncHealthDialogLines renders the calendar's sync health for the dialog: a
 // loud error line plus an actionable re-link hint when the last sync failed, or
 // a quiet "Last synced" line otherwise. Returns nil for unlinked calendars or
 // linked-but-never-attempted ones (nothing useful to say yet).
-func syncHealthDialogLines(params CalendarDialogParams, theme Theme) []string {
+func syncHealthDialogLines(params CalendarDialogParams, theme Theme) []syncHealthLine {
 	if !params.RemoteLinked {
 		return nil
 	}
 	if params.LastSyncError != "" {
-		errStyle := lipgloss.NewStyle().Foreground(theme.Error)
-		hintStyle := lipgloss.NewStyle().Foreground(theme.Muted)
-		lines := []string{errStyle.Render("⚠ Last sync failed: " + humanizeSyncError(params.LastSyncError))}
+		lines := []syncHealthLine{{
+			text:  "⚠ Sync failed: " + humanizeSyncError(params.LastSyncError),
+			style: lipgloss.NewStyle().Foreground(theme.Error),
+		}}
 		if hint := reLinkHint(params); hint != "" {
-			lines = append(lines, hintStyle.Render(hint))
+			lines = append(lines, syncHealthLine{text: hint, style: lipgloss.NewStyle().Foreground(theme.Muted)})
 		}
 		return lines
 	}
 	if params.LastSyncAt != "" {
-		return []string{lipgloss.NewStyle().Foreground(theme.Muted).Render("Last synced: " + formatSyncTime(params.LastSyncAt))}
+		return []syncHealthLine{{
+			text:  "Last synced: " + formatSyncTime(params.LastSyncAt),
+			style: lipgloss.NewStyle().Foreground(theme.Muted),
+		}}
 	}
 	return nil
 }
@@ -700,7 +748,10 @@ func syncHealthDialogLines(params CalendarDialogParams, theme Theme) []string {
 // translating; everything else falls back to the first line of the raw error.
 func humanizeSyncError(raw string) string {
 	if strings.Contains(raw, "invalid_grant") {
-		return "Google login expired — re-authentication needed"
+		// Short on purpose: the hint line right below carries the action
+		// ("Press Re-authenticate below to fix."), and the dialog line
+		// must fit ~56 cols after the "⚠ Sync failed: " prefix.
+		return "Google login expired"
 	}
 	line := raw
 	if i := strings.IndexByte(line, '\n'); i >= 0 {
@@ -810,6 +861,9 @@ func newMirroredUsernameField(value string, theme Theme) *TextField {
 func (m CalendarDialogModel) SetSize(w, h int) CalendarDialogModel {
 	m.dialog = m.dialog.Update(tea.WindowSizeMsg{Width: w, Height: h})
 	m.form.SetWidth(m.dialog.ContentWidth())
+	if m.contentWidth != nil {
+		*m.contentWidth = m.dialog.ContentWidth()
+	}
 	return m
 }
 
