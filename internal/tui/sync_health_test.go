@@ -88,13 +88,13 @@ func TestSyncHealthDialogLines_InvalidGrant(t *testing.T) {
 	}
 	lines := syncHealthDialogLines(params, theme)
 	if len(lines) != 2 {
-		t.Fatalf("expected error line + hint, got %d: %q", len(lines), lines)
+		t.Fatalf("expected error line + hint, got %d: %+v", len(lines), lines)
 	}
-	if !strings.Contains(lines[0], "Google login expired") {
-		t.Errorf("error line should humanize invalid_grant; got %q", lines[0])
+	if !strings.Contains(lines[0].text, "Google login expired") {
+		t.Errorf("error line should humanize invalid_grant; got %+v", lines[0])
 	}
-	if !strings.Contains(lines[1], "calendar update gmail") || !strings.Contains(lines[1], "--auth oauth2") {
-		t.Errorf("hint should name the re-link command with the calendar; got %q", lines[1])
+	if !strings.Contains(lines[1].text, "calendar update gmail") || !strings.Contains(lines[1].text, "--auth oauth2") {
+		t.Errorf("hint should name the re-link command with the calendar; got %+v", lines[1])
 	}
 }
 
@@ -103,18 +103,18 @@ func TestSyncHealthDialogLines_HealthyAndUnlinked(t *testing.T) {
 
 	healthy := CalendarDialogParams{RemoteLinked: true, LastSyncAt: "2026-05-27T17:29:10Z"}
 	lines := syncHealthDialogLines(healthy, theme)
-	if len(lines) != 1 || !strings.Contains(lines[0], "Last synced") {
-		t.Errorf("healthy linked calendar should show one Last-synced line; got %q", lines)
+	if len(lines) != 1 || !strings.Contains(lines[0].text, "Last synced") {
+		t.Errorf("healthy linked calendar should show one Last-synced line; got %+v", lines)
 	}
 
 	unlinked := CalendarDialogParams{RemoteLinked: false, LastSyncError: "boom"}
 	if got := syncHealthDialogLines(unlinked, theme); got != nil {
-		t.Errorf("unlinked calendar should produce no sync lines; got %q", got)
+		t.Errorf("unlinked calendar should produce no sync lines; got %+v", got)
 	}
 
 	neverAttempted := CalendarDialogParams{RemoteLinked: true}
 	if got := syncHealthDialogLines(neverAttempted, theme); got != nil {
-		t.Errorf("linked-but-never-attempted should produce no lines; got %q", got)
+		t.Errorf("linked-but-never-attempted should produce no lines; got %+v", got)
 	}
 }
 

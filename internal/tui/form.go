@@ -1915,9 +1915,26 @@ func (f Form) View() string {
 	var buttons string
 	if len(leadParts) > 0 {
 		leadGroup := lipgloss.JoinHorizontal(lipgloss.Top, leadParts...)
-		spacerW := max(alignWidth-lipgloss.Width(leadGroup)-lipgloss.Width(rightGroup), 1)
-		spacer := lipgloss.NewStyle().Width(spacerW).Render("")
-		buttons = leadGroup + spacer + rightGroup
+		needed := lipgloss.Width(leadGroup) + lipgloss.Width(rightGroup)
+		if alignWidth > 0 && needed+1 > alignWidth {
+			// The action set doesn't fit beside Submit/Cancel. Degrade to
+			// two tidy rows — leading actions left, Submit/Cancel aligned
+			// on their own row — instead of letting the container wrap the
+			// joined line mid-pill.
+			right := rightGroup
+			if f.styles.ButtonAlign != ButtonAlignLeft {
+				align := lipgloss.Right
+				if f.styles.ButtonAlign == ButtonAlignCenter {
+					align = lipgloss.Center
+				}
+				right = lipgloss.NewStyle().Width(alignWidth).Align(align).Render(rightGroup)
+			}
+			buttons = leadGroup + "\n" + right
+		} else {
+			spacerW := max(alignWidth-lipgloss.Width(leadGroup)-lipgloss.Width(rightGroup), 1)
+			spacer := lipgloss.NewStyle().Width(spacerW).Render("")
+			buttons = leadGroup + spacer + rightGroup
+		}
 	} else {
 		buttons = rightGroup
 		if alignWidth > 0 && f.styles.ButtonAlign != ButtonAlignLeft {
