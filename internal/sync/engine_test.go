@@ -1746,3 +1746,25 @@ END:VCALENDAR
 		t.Fatalf("sync_token = %q, want FINAL-TOKEN", tok)
 	}
 }
+
+func TestSummarizeSyncError(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		result *SyncResult
+		runErr error
+		want   string
+	}{
+		{"run error wins", &SyncResult{Errors: []error{errors.New("ignored")}}, errors.New("boom"), "boom"},
+		{"no errors", &SyncResult{}, nil, ""},
+		{"single", &SyncResult{Errors: []error{errors.New("e1")}}, nil, "e1"},
+		{"multi", &SyncResult{Errors: []error{errors.New("e1"), errors.New("e2"), errors.New("e3")}}, nil, "e1 (+2 more)"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := summarizeSyncError(c.result, c.runErr); got != c.want {
+				t.Errorf("summarizeSyncError = %q, want %q", got, c.want)
+			}
+		})
+	}
+}

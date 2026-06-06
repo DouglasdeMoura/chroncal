@@ -109,6 +109,12 @@ func NewOAuthFlowModel(theme Theme) OAuthFlowModel {
 // modal to Starting. The returned cmd performs the (blocking) listener bind
 // and browser launch off the update loop.
 func (m OAuthFlowModel) Start(clientID, clientSecret string) (OAuthFlowModel, tea.Cmd) {
+	// Defense-in-depth: never strand a prior flow's Wait goroutine or its
+	// bound loopback listener. If Start is somehow called while one is live
+	// (re-entrancy the app-level guard should already prevent), abort it
+	// first — the dropped cancel func + *PendingOAuthFlow would otherwise be
+	// unreachable.
+	m.Abort()
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	m.state = OAuthFlowStarting

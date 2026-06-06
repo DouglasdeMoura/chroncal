@@ -378,9 +378,21 @@ type Model struct {
 
 	// OAuth pending modal plus what to do with the tokens when it finishes
 	// (re-authenticate an existing account vs link a new one).
-	oauthFlow                   OAuthFlowModel
-	oauthFlowOpen               bool
-	oauthPurpose                oauthFlowPurpose
+	oauthFlow     OAuthFlowModel
+	oauthFlowOpen bool
+	oauthPurpose  oauthFlowPurpose
+	// oauthPending guards the window between a Re-authenticate / connect
+	// request and the modal actually opening: the request dispatches an
+	// async credential load, so oauthFlowOpen is still false when a second
+	// fast press arrives. This flips synchronously so the second press is
+	// rejected. Cleared on every terminal path (flow opened, load failed,
+	// fallback dialog shown).
+	oauthPending bool
+	// pendingSyncCalendar holds a calendar whose sync was requested while
+	// another sync was running (e.g. a re-auth completing mid-sync).
+	// syncFinishedMsg drains it so the post-reauth sync isn't lost and the
+	// sidebar ⚠ always clears. Zero ID means nothing queued.
+	pendingSyncCalendar         syncTarget
 	pendingCalendarDelete       int64
 	pendingCalendarDeleteName   string
 	pendingCalendarPromote      int64   // new default to promote when deleting the current default
@@ -975,6 +987,7 @@ func (m Model) runSyncCalendar(id int64, name string) tea.Cmd {
 // launches the browser authorization with the given client config. The
 // caller has already recorded m.oauthPurpose.
 func (m Model) startOAuthFlow(clientID, clientSecret string) (Model, tea.Cmd) {
+	m.oauthPending = false // the flow is opening now; release the request guard
 	m.calendarDialogOpen = false
 	m.oauthFlowOpen = true
 	m.oauthFlow = m.oauthFlow.SetSize(m.width, m.height)
@@ -1217,7 +1230,7 @@ func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			return m.openQuitConfirm(), nil, true
 		}
 	}
-	textEntryActive := m.paletteOpen || m.formOpen || m.calendarDialogOpen
+	textEntryActive := m.paletteOpen || m.formOpen || m.calendarDialogOpen || m.oauthFlowOpen
 	if key.Matches(msg, m.keys.Quit) && !m.confirmOpen && !textEntryActive {
 		return m.openQuitConfirm(), nil, true
 	}
@@ -2156,10 +2169,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case CalendarReauthRequestedMsg:
 		// One flow at a time; a manual sync mid-flight would race the
-		// credential write.
-		if m.oauthFlowOpen || m.syncing {
+		// credential write. oauthPending closes the gap before the async
+		// credential load lands and sets oauthFlowOpen — without it, a
+		// double-press would launch two flows and leak the first listener.
+		if m.oauthFlowOpen || m.oauthPending || m.syncing {
 			return m, nil
 		}
+		m.oauthPending = true
 		req := msg
 		return m, func() tea.Msg {
 			ctx := context.Background()
@@ -2195,6 +2211,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case calendarReauthReadyMsg:
 		if msg.err != nil {
+			m.oauthPending = false
 			m.statusToken++
 			m.syncStatus = "Re-authentication failed: " + msg.err.Error()
 			return m, m.expireStatusAfter(8*time.Second, m.statusToken)
@@ -2209,7 +2226,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case calendarReauthNeedsConfigMsg:
 		// Premise-2 fallback: reopen the dialog with editable client-config
-		// rows. Mirrors the CalendarDialogRequestedMsg open path.
+		// rows. Mirrors the CalendarDialogRequestedMsg open path. The flow
+		// hasn't opened, so release the pending guard — the user will press
+		// Re-authenticate again from the reopened dialog.
+		m.oauthPending = false
 		ctx := context.Background()
 		cal, err := m.app.Calendars.Get(ctx, msg.calendarID)
 		if err != nil {
@@ -2279,6 +2299,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.expireStatusAfter(6*time.Second, m.statusToken)
 		default:
 			// Failed: the modal stays up showing the error; esc closes it.
+			// Abort so the chained Waiting-phase context cancel func is
+			// invoked now rather than leaking until process exit (Wait's
+			// deferred Close already released the listener).
+			m.oauthFlow.Abort()
 		}
 		return m, cmd
 
@@ -2501,6 +2525,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case SyncCalendarRequestedMsg:
 		if m.syncing {
+			// A sync is already running (e.g. re-auth finished mid-sync).
+			// Queue this one so it isn't lost — syncFinishedMsg drains it,
+			// guaranteeing the post-reauth sync runs and the ⚠ clears.
+			m.pendingSyncCalendar = syncTarget(msg)
 			return m, nil
 		}
 		m.syncing = true
@@ -2555,6 +2583,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds := []tea.Cmd{m.expireStatusAfter(6*time.Second, m.statusToken), m.loadCalendars()}
 		if msg.reload {
 			cmds = append(cmds, m.loadEvents())
+		}
+		// Drain a sync queued while this one ran (e.g. a re-auth that
+		// completed mid-sync). Re-dispatch as a fresh request now that
+		// m.syncing is false so the deferred sync actually runs.
+		if m.pendingSyncCalendar.ID != 0 {
+			next := m.pendingSyncCalendar
+			m.pendingSyncCalendar = syncTarget{}
+			cmds = append(cmds, func() tea.Msg {
+				return SyncCalendarRequestedMsg(next)
+			})
 		}
 		return m, tea.Batch(cmds...)
 
