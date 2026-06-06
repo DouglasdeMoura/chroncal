@@ -50,7 +50,7 @@ again updates existing items instead of blindly duplicating them.`,
 		Example: `  chroncal ical import ./calendar.ics
   chroncal ical import ./team.ics --calendar Work
   chroncal ical import ./dump.ics --output json`,
-		Args: exactArgs(1),
+		Args: exactOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {

@@ -908,12 +908,12 @@ func syncProgressLabel(name string) string {
 	if name == "" {
 		return "calendar"
 	}
-	const max = 32
+	const maxLen = 32
 	runes := []rune(name)
-	if len(runes) <= max {
+	if len(runes) <= maxLen {
 		return name
 	}
-	return string(runes[:max-1]) + "…"
+	return string(runes[:maxLen-1]) + "…"
 }
 
 // runOpportunisticPush pushes pending changes for a single calendar without

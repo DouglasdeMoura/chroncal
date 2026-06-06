@@ -482,6 +482,9 @@ func trashDetailLines(e trash.Entry, cal CalendarInfo, w, labelWidth int) []stri
 		if !e.StartTime.IsZero() {
 			lines = append(lines, detailLine(faint, "Entry date", e.StartTime.Local().Format("Mon, Jan 2"), labelWidth, w))
 		}
+	default:
+		// KindEvent has no kind-specific detail line; the shared event
+		// fields render below via IsEvent().
 	}
 
 	if e.Kind.IsEvent() {

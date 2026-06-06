@@ -557,9 +557,9 @@ func humanizeSyncError(raw string) string {
 		line = line[:i]
 	}
 	line = strings.TrimSpace(line)
-	const max = 80
-	if r := []rune(line); len(r) > max {
-		line = string(r[:max-1]) + "…"
+	const maxLen = 80
+	if r := []rune(line); len(r) > maxLen {
+		line = string(r[:maxLen-1]) + "…"
 	}
 	return line
 }

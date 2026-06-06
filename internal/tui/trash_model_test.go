@@ -57,6 +57,7 @@ func TestTrashModel_RestoreKeyEmitsEntry(t *testing.T) {
 	_, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
 	if cmd == nil {
 		t.Fatal("expected a command for 'r'")
+		return
 	}
 	msg, ok := cmd().(TrashRestoreRequestedMsg)
 	if !ok {
@@ -72,6 +73,7 @@ func TestTrashModel_PurgeKeyEmitsEntry(t *testing.T) {
 	_, cmd := m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
 	if cmd == nil {
 		t.Fatal("expected a command for 'x'")
+		return
 	}
 	msg, ok := cmd().(TrashPurgeRequestedMsg)
 	if !ok {
@@ -120,6 +122,7 @@ func TestTrashModel_SpaceTogglesMark(t *testing.T) {
 	_, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
 	if cmd == nil {
 		t.Fatal("expected a command for 'r' after marking")
+		return
 	}
 	msg, ok := cmd().(TrashRestoreRequestedMsg)
 	if !ok {
@@ -185,6 +188,7 @@ func TestTrashModel_PurgeAllLivesInTitleBar(t *testing.T) {
 	action := m.purgeAllTitleAction()
 	if action == nil {
 		t.Fatal("purgeAllTitleAction returned nil with entries present")
+		return
 	}
 	if !strings.HasPrefix(action.Label, "Purge All (") {
 		t.Errorf("title action label = %q, want prefix %q", action.Label, "Purge All (")
@@ -202,6 +206,7 @@ func TestTrashModel_PurgeAllTargetsEveryEntry(t *testing.T) {
 	_, cmd := m.Update(tea.KeyPressMsg{Code: 'X', Text: "X"})
 	if cmd == nil {
 		t.Fatal("X (Purge All) produced no command")
+		return
 	}
 	msg, ok := cmd().(TrashPurgeRequestedMsg)
 	if !ok {
@@ -267,6 +272,7 @@ func TestTrashModel_EscEmitsCloseMsg(t *testing.T) {
 	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	if cmd == nil {
 		t.Fatal("expected a command for Esc")
+		return
 	}
 	if _, ok := cmd().(TrashDialogClosedMsg); !ok {
 		t.Fatalf("expected TrashDialogClosedMsg, got %T", cmd())

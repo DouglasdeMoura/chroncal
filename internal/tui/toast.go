@@ -144,6 +144,8 @@ func (t *ToastModel) Update(msg tea.Msg) bool {
 		t.state = ToastEmpty
 		t.title = ""
 		t.reason = ""
+	default:
+		// Empty and Restoring are not timer-dismissed.
 	}
 	return true
 }
@@ -193,8 +195,10 @@ func (t ToastModel) View() string {
 		return fmt.Sprintf("%s %s",
 			errStyle.Render("✗"),
 			dimStyle.Render("Undo failed: "+t.reason))
+	default:
+		// ToastEmpty is short-circuited above; nothing else renders.
+		return ""
 	}
-	return ""
 }
 
 func (t ToastModel) scheduleDismiss(d time.Duration) tea.Cmd {

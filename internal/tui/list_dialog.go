@@ -692,43 +692,6 @@ func trustedSplit(s string, w, h int) []string {
 	return out
 }
 
-// splitAndPad splits a multi-line column into exactly h rows, each padded
-// (with plain spaces) or truncated to w cells. Used by viewColumns to
-// guarantee every column line is cell-aligned without going through
-// lipgloss.JoinHorizontal — the measurement happens once per line here,
-// not once per line per join. Use trustedSplit instead when the column
-// renderer already guarantees each line is w cells wide.
-func splitAndPad(s string, w, h int) []string {
-	if w <= 0 {
-		out := make([]string, h)
-		return out
-	}
-	lines := strings.Split(s, "\n")
-	out := make([]string, h)
-	blank := strings.Repeat(" ", w)
-	for i := 0; i < h; i++ {
-		if i >= len(lines) {
-			out[i] = blank
-			continue
-		}
-		l := lines[i]
-		cw := lipgloss.Width(l)
-		switch {
-		case cw == w:
-			out[i] = l
-		case cw < w:
-			out[i] = l + strings.Repeat(" ", w-cw)
-		default:
-			t := truncateTo(l, w)
-			if tw := lipgloss.Width(t); tw < w {
-				t += strings.Repeat(" ", w-tw)
-			}
-			out[i] = t
-		}
-	}
-	return out
-}
-
 func (m *ListDialogModel) viewStacked(innerW, bodyH int) string {
 	rowCount := max(len(m.rows), 1)
 	listH := min(max(rowCount+1, 3), max(bodyH/3, 3))

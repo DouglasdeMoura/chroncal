@@ -604,10 +604,6 @@ func substituteAtVisPos(line string, subs map[int]rune) string {
 	return out.String()
 }
 
-func blankCell(w, h int) string {
-	return blankCellWithWeekLabel(w, h, "")
-}
-
 func blankCellWithWeekLabel(w, h int, weekLabel string) string {
 	line := strings.Repeat(" ", w)
 	lines := make([]string, h)
