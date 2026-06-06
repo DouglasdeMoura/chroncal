@@ -1918,9 +1918,11 @@ func (f Form) View() string {
 		needed := lipgloss.Width(leadGroup) + lipgloss.Width(rightGroup)
 		if alignWidth > 0 && needed+1 > alignWidth {
 			// The action set doesn't fit beside Submit/Cancel. Degrade to
-			// two tidy rows — leading actions left, Submit/Cancel aligned
-			// on their own row — instead of letting the container wrap the
-			// joined line mid-pill.
+			// two rows instead of letting the container wrap the joined
+			// line mid-pill: leading actions spread across their own row
+			// (space-between, so e.g. three actions sit left / centered /
+			// right), a blank line for breathing room, then Submit/Cancel
+			// aligned on their own row.
 			right := rightGroup
 			if f.styles.ButtonAlign != ButtonAlignLeft {
 				align := lipgloss.Right
@@ -1929,7 +1931,7 @@ func (f Form) View() string {
 				}
 				right = lipgloss.NewStyle().Width(alignWidth).Align(align).Render(rightGroup)
 			}
-			buttons = leadGroup + "\n" + right
+			buttons = spreadRow(leadParts, alignWidth) + "\n\n" + right
 		} else {
 			spacerW := max(alignWidth-lipgloss.Width(leadGroup)-lipgloss.Width(rightGroup), 1)
 			spacer := lipgloss.NewStyle().Width(spacerW).Render("")
@@ -1958,6 +1960,40 @@ func (f Form) View() string {
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
+
+// spreadRow lays parts out across width with space-between justification:
+// the first part flush left, the last flush right, the rest spaced evenly
+// in between (three parts read as left / center / right). Falls back to
+// single-space gaps when the parts don't fit.
+func spreadRow(parts []string, width int) string {
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	total := 0
+	for _, p := range parts {
+		total += lipgloss.Width(p)
+	}
+	gaps := len(parts) - 1
+	space := width - total
+	if space < gaps {
+		// Too tight to justify; keep the pills readable with minimal gaps.
+		return strings.Join(parts, " ")
+	}
+	base := space / gaps
+	extra := space % gaps
+	var b strings.Builder
+	for i, p := range parts {
+		if i > 0 {
+			gap := base
+			if i <= extra {
+				gap++
+			}
+			b.WriteString(strings.Repeat(" ", gap))
+		}
+		b.WriteString(p)
+	}
+	return b.String()
 }
 
 // SetActionButton adds an action button. Can be called multiple times to

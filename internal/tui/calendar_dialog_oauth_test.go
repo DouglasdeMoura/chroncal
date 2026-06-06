@@ -272,3 +272,42 @@ func TestCalendarDialog_LinkedOAuthErrorFitsWidth(t *testing.T) {
 		}
 	}
 }
+
+// TestCalendarDialog_OverflowButtonRowLayout pins the two-row button
+// degradation: leading actions spread across their own row (first left,
+// last flush right), one blank line, then Save/Cancel right-aligned to the
+// same edge.
+func TestCalendarDialog_OverflowButtonRowLayout(t *testing.T) {
+	m := NewCalendarDialogModel(CalendarDialogParams{
+		ID:             12,
+		Name:           "douglas.demoura@familywellhealth.com",
+		RemoteURL:      "https://apidata.googleusercontent.com/caldav/v2/x/events/",
+		RemoteLinked:   true,
+		RemoteAuthType: "oauth2",
+	}, Theme{}).SetSize(120, 40)
+
+	lines := strings.Split(m.form.View(), "\n")
+	actionRow, saveRow := -1, -1
+	for i, l := range lines {
+		if strings.Contains(l, "Disconnect") {
+			actionRow = i
+		}
+		if strings.Contains(l, "Save") && strings.Contains(l, "Cancel") {
+			saveRow = i
+		}
+	}
+	if actionRow < 0 || saveRow < 0 {
+		t.Fatalf("missing rows: actionRow=%d saveRow=%d\n%s", actionRow, saveRow, m.form.View())
+	}
+	if !strings.Contains(lines[actionRow], "Re-authenticate") || !strings.Contains(lines[actionRow], "Set as Default") {
+		t.Errorf("all three actions should share one row; got %q", lines[actionRow])
+	}
+	if saveRow != actionRow+2 || strings.TrimSpace(lines[actionRow+1]) != "" {
+		t.Errorf("want one blank line between actions and Save/Cancel; rows %d and %d", actionRow, saveRow)
+	}
+	// Disconnect's row is justified to the full form width, so its right
+	// edge matches the right-aligned Save/Cancel row.
+	if aw, sw := lipgloss.Width(strings.TrimRight(lines[actionRow], " ")), lipgloss.Width(strings.TrimRight(lines[saveRow], " ")); aw != sw {
+		t.Errorf("Disconnect right edge (%d) should match Save/Cancel right edge (%d)", aw, sw)
+	}
+}
