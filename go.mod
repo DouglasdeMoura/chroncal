@@ -2,7 +2,7 @@ module github.com/douglasdemoura/chroncal
 
 go 1.25.7
 
-toolchain go1.26.2
+toolchain go1.26.4
 
 require (
 	charm.land/bubbles/v2 v2.1.0
