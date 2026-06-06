@@ -32,9 +32,18 @@ type SyncChange struct {
 
 // SyncCollectionResult holds the parsed multistatus from a sync-collection
 // REPORT. SyncToken is the new token to store for the next incremental sync.
+//
+// Truncated reports the RFC 6578 §3.6 marker: the server limited the result
+// set (Google pages large initial snapshots) and flagged it with a
+// <response> for the collection itself carrying 507 Insufficient Storage.
+// SyncToken then represents only the PARTIAL state — callers must repeat
+// the REPORT with it to fetch the rest, and must never treat a truncated
+// change list as a complete inventory (diffing local state against a
+// partial page is how events get wrongly deleted).
 type SyncCollectionResult struct {
 	SyncToken string
 	Changes   []SyncChange
+	Truncated bool
 }
 
 // SyncCollection runs an RFC 6578 sync-collection REPORT against the calendar
@@ -101,8 +110,18 @@ func (c *Client) SyncCollection(ctx context.Context, calendarPath string, syncTo
 		}
 		// Top-level <status>404</status> marks deletions; updates carry their
 		// 200 status inside <propstat> alongside <getetag>.
-		if code := parseStatusCode(r.Status); code == http.StatusNotFound {
+		switch code := parseStatusCode(r.Status); {
+		case code == http.StatusNotFound:
 			result.Changes = append(result.Changes, SyncChange{Path: href, Deleted: true})
+			continue
+		case code == http.StatusInsufficientStorage:
+			// RFC 6578 §3.6 truncation marker (the href is the collection
+			// itself). Not a change — record and skip, or it pollutes the
+			// multiget fetch list.
+			result.Truncated = true
+			continue
+		case code != 0 && (code < 200 || code >= 300):
+			// Any other non-2xx top-level status isn't a resource change.
 			continue
 		}
 		var etag string

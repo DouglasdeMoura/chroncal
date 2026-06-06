@@ -1584,3 +1584,165 @@ func TestEngineSyncCalendarMetadataAdoptsRemoteColor(t *testing.T) {
 		t.Fatalf("ColorDirty = %d, want 0", cal.ColorDirty)
 	}
 }
+
+// TestEnginePullPaginatesTruncatedSyncCollection reproduces the Google
+// initial-snapshot data loss: the server truncates the sync-collection
+// response (RFC 6578 §3.6 — a 507 marker on the collection plus a
+// continuation token). The engine must page until complete and diff local
+// state against the UNION of pages. Before the fix, every local UID beyond
+// page one was soft-deleted (73 real events on one production calendar).
+func TestEnginePullPaginatesTruncatedSyncCollection(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	// "survivor" exists locally and on the server — but only on PAGE TWO of
+	// the truncated snapshot. "gone-uid" exists locally and on neither page.
+	insertTestEvent(t, db, calendarID, "survivor")
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID: calendarID, Uid: "survivor", OwnerType: "event",
+		RemoteUrl: "/calendar/survivor.ics", Etag: "etag-survivor",
+		Dirty: 0, SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource survivor: %v", err)
+	}
+	insertTestEvent(t, db, calendarID, "gone-uid")
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID: calendarID, Uid: "gone-uid", OwnerType: "event",
+		RemoteUrl: "/calendar/gone.ics", Etag: "etag-gone",
+		Dirty: 0, SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource gone: %v", err)
+	}
+
+	const pageOne = `<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+ <D:response>
+  <D:href>/calendar/new-a.ics</D:href>
+  <D:propstat>
+   <D:status>HTTP/1.1 200 OK</D:status>
+   <D:prop><D:getetag>&quot;etag-a&quot;</D:getetag></D:prop>
+  </D:propstat>
+ </D:response>
+ <D:response>
+  <D:href>/calendar/</D:href>
+  <D:status>HTTP/1.1 507 Insufficient Storage</D:status>
+ </D:response>
+ <D:sync-token>PAGE2-TOKEN</D:sync-token>
+</D:multistatus>`
+
+	const pageTwo = `<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+ <D:response>
+  <D:href>/calendar/survivor.ics</D:href>
+  <D:propstat>
+   <D:status>HTTP/1.1 200 OK</D:status>
+   <D:prop><D:getetag>&quot;etag-survivor&quot;</D:getetag></D:prop>
+  </D:propstat>
+ </D:response>
+ <D:sync-token>FINAL-TOKEN</D:sync-token>
+</D:multistatus>`
+
+	const newAICS = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//chroncal//tests//EN
+BEGIN:VEVENT
+UID:new-a-uid
+DTSTAMP:20260606T120000Z
+DTSTART:20260606T120000Z
+DTEND:20260606T130000Z
+SUMMARY:New A
+END:VEVENT
+END:VCALENDAR
+`
+
+	var reportCalls int
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method != "REPORT" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			return nil, nil
+		}
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read req body: %v", err)
+		}
+		body := string(raw)
+		if strings.Contains(body, "calendar-multiget") {
+			if !strings.Contains(body, "new-a.ics") {
+				t.Fatalf("multiget should only fetch the new resource, got:\n%s", body)
+			}
+			multigetBody := `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/calendar/new-a.ics</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>&quot;etag-a&quot;</d:getetag>
+        <cal:calendar-data>` + newAICS + `</cal:calendar-data>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`
+			return &http.Response{
+				StatusCode: http.StatusMultiStatus,
+				Status:     "207 Multi-Status",
+				Header:     http.Header{"Content-Type": []string{"application/xml"}},
+				Body:       io.NopCloser(strings.NewReader(multigetBody)),
+				Request:    r,
+			}, nil
+		}
+		// sync-collection REPORTs: page 1 for the empty token, page 2 for
+		// the continuation token.
+		reportCalls++
+		page := pageOne
+		if strings.Contains(body, "PAGE2-TOKEN") {
+			page = pageTwo
+		}
+		return &http.Response{
+			StatusCode: http.StatusMultiStatus,
+			Status:     "207 Multi-Status",
+			Header:     http.Header{"Content-Type": []string{"application/xml"}},
+			Body:       io.NopCloser(strings.NewReader(page)),
+			Request:    r,
+		}, nil
+	})
+
+	result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if reportCalls != 2 {
+		t.Fatalf("sync-collection REPORTs = %d, want 2 (pagination)", reportCalls)
+	}
+	if result.pulled != 1 {
+		t.Fatalf("pulled = %d, want 1 (new-a)", result.pulled)
+	}
+	if result.deleted != 1 {
+		t.Fatalf("deleted = %d, want 1 (only gone-uid)", result.deleted)
+	}
+
+	// The page-two event must survive the initial-snapshot deletion sweep.
+	if _, err := q.GetEventByUID(ctx, "survivor"); err != nil {
+		t.Fatalf("survivor was deleted by the partial-page sweep: %v", err)
+	}
+	// The genuinely-absent event must still be removed.
+	if _, err := q.GetEventByUID(ctx, "gone-uid"); err == nil {
+		t.Fatal("gone-uid should have been soft-deleted")
+	}
+	// The FINAL page's token is the one stored.
+	calRow, err := q.GetCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("GetCalendar: %v", err)
+	}
+	if tok := storage.NullableToString(calRow.SyncToken); tok != "FINAL-TOKEN" {
+		t.Fatalf("sync_token = %q, want FINAL-TOKEN", tok)
+	}
+}
