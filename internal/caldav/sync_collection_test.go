@@ -202,3 +202,57 @@ func TestSyncCollectionEscapesTokenInRequestBody(t *testing.T) {
 		t.Fatalf("token escape missing in body:\n%s", capturedBody)
 	}
 }
+
+// TestSyncCollectionDetectsTruncation pins RFC 6578 §3.6 handling using the
+// exact response shape Google CalDAV returns when the initial snapshot
+// exceeds its page size: a <response> for the collection itself carrying
+// HTTP/1.1 507 Insufficient Storage plus a continuation sync-token. The
+// marker must set Truncated and must NOT appear in Changes — treating it as
+// a change once polluted multiget, and treating the page as a complete
+// snapshot soft-deleted every event beyond page one.
+func TestSyncCollectionDetectsTruncation(t *testing.T) {
+	t.Parallel()
+
+	const responseBody = `<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+ <D:response>
+  <D:href>/calendar/event-1.ics</D:href>
+  <D:propstat>
+   <D:status>HTTP/1.1 200 OK</D:status>
+   <D:prop><D:getetag>"63913236442"</D:getetag></D:prop>
+  </D:propstat>
+ </D:response>
+ <D:response>
+  <D:href>/calendar/</D:href>
+  <D:status>HTTP/1.1 507 Insufficient Storage</D:status>
+ </D:response>
+ <D:sync-token>/calendar/sync/page-2-token</D:sync-token>
+</D:multistatus>`
+
+	client := newSyncCollectionClient(t, func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusMultiStatus,
+			Status:     "207 Multi-Status",
+			Header:     http.Header{"Content-Type": []string{"application/xml"}},
+			Body:       io.NopCloser(strings.NewReader(responseBody)),
+			Request:    req,
+		}, nil
+	})
+
+	result, err := client.SyncCollection(context.Background(), "/calendar/", "")
+	if err != nil {
+		t.Fatalf("SyncCollection: %v", err)
+	}
+	if !result.Truncated {
+		t.Error("Truncated = false, want true (507 marker present)")
+	}
+	if result.SyncToken != "/calendar/sync/page-2-token" {
+		t.Errorf("SyncToken = %q, want continuation token", result.SyncToken)
+	}
+	if len(result.Changes) != 1 {
+		t.Fatalf("Changes = %d, want 1 (the 507 marker must not be a change)", len(result.Changes))
+	}
+	if result.Changes[0].Path != "/calendar/event-1.ics" {
+		t.Errorf("Changes[0].Path = %q", result.Changes[0].Path)
+	}
+}

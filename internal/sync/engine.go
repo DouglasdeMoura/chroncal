@@ -480,25 +480,58 @@ func (e *Engine) pull(ctx context.Context, client *caldav.Client, calendarID int
 	// snapshot. We fetch bodies via multiget for just the changed paths,
 	// so steady-state syncs cost a single REPORT instead of downloading
 	// every resource on the calendar.
-	syncResult, syncErr := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (*caldav.SyncCollectionResult, error) {
-		return client.SyncCollection(ctx, remoteURL, storedToken)
-	})
-	if errors.Is(syncErr, caldav.ErrSyncTokenInvalid) && storedToken != "" {
-		e.logger.Info("sync-token invalid, performing full resync", "calendar_id", calendarID)
-		syncResult, syncErr = caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (*caldav.SyncCollectionResult, error) {
-			return client.SyncCollection(ctx, remoteURL, "")
+	//
+	// Servers may TRUNCATE the result set (§3.6): a 507 marker on the
+	// collection plus a continuation token. Google pages large initial
+	// snapshots this way. We loop until the response is complete and only
+	// then apply — diffing local state against a partial page once
+	// soft-deleted every event beyond page one.
+	token := storedToken
+	merged := &caldav.SyncCollectionResult{}
+	for page := 0; ; page++ {
+		syncResult, syncErr := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (*caldav.SyncCollectionResult, error) {
+			return client.SyncCollection(ctx, remoteURL, token)
 		})
-		storedToken = ""
+		if page == 0 {
+			if errors.Is(syncErr, caldav.ErrSyncTokenInvalid) && token != "" {
+				e.logger.Info("sync-token invalid, performing full resync", "calendar_id", calendarID)
+				syncResult, syncErr = caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (*caldav.SyncCollectionResult, error) {
+					return client.SyncCollection(ctx, remoteURL, "")
+				})
+				storedToken = ""
+			}
+			if errors.Is(syncErr, caldav.ErrSyncCollectionUnsupported) {
+				e.logger.Info("server lacks sync-collection support, falling back to QueryAll", "calendar_id", calendarID)
+				return e.pullFullSnapshot(ctx, client, calendarID, remoteURL)
+			}
+		}
+		if syncErr != nil {
+			return nil, fmt.Errorf("sync-collection: %w", syncErr)
+		}
+
+		merged.Changes = append(merged.Changes, syncResult.Changes...)
+		merged.SyncToken = syncResult.SyncToken
+		merged.Truncated = syncResult.Truncated
+		if !syncResult.Truncated {
+			break
+		}
+		if syncResult.SyncToken == "" {
+			return nil, fmt.Errorf("sync-collection: truncated response without a continuation token")
+		}
+		if page+1 >= maxSyncCollectionPages {
+			return nil, fmt.Errorf("sync-collection: still truncated after %d pages", maxSyncCollectionPages)
+		}
+		e.logger.Info("sync-collection truncated, fetching next page",
+			"calendar_id", calendarID, "page", page+1, "changes_so_far", len(merged.Changes))
+		token = syncResult.SyncToken
 	}
-	if syncErr == nil {
-		return e.applySyncCollection(ctx, client, calendarID, remoteURL, cal, syncResult, storedToken == "")
-	}
-	if !errors.Is(syncErr, caldav.ErrSyncCollectionUnsupported) {
-		return nil, fmt.Errorf("sync-collection: %w", syncErr)
-	}
-	e.logger.Info("server lacks sync-collection support, falling back to QueryAll", "calendar_id", calendarID)
-	return e.pullFullSnapshot(ctx, client, calendarID, remoteURL)
+	return e.applySyncCollection(ctx, client, calendarID, remoteURL, cal, merged, storedToken == "")
 }
+
+// maxSyncCollectionPages bounds the truncation-pagination loop. Google's
+// pages carry ~90 changes; 200 pages is far beyond any real calendar and
+// turns a server paging bug into an error instead of an infinite loop.
+const maxSyncCollectionPages = 200
 
 // pullFullSnapshot is the legacy pull path: download every resource and
 // compare etags locally. Only used when the server doesn't support
@@ -860,7 +893,13 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 	// the snapshot is gone on the server. This also handles upgrades from
 	// QueryAll-based deployments where calendars carry sync resources but
 	// no sync-token yet.
-	if initialSnapshot {
+	//
+	// HARD GUARD: never run this sweep on a truncated change list. pull()
+	// paginates until complete, so Truncated is false here on every normal
+	// path — but a partial inventory driving deletions is exactly the bug
+	// that mass-deleted local events, so the invariant is enforced where
+	// the damage would happen, not just where the data is fetched.
+	if initialSnapshot && !syncResult.Truncated {
 		for _, local := range localResources {
 			if local.RemoteUrl == "" {
 				continue
@@ -889,7 +928,7 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 		result.deleted++
 	}
 
-	if syncResult.SyncToken != "" && multigetMisses == 0 {
+	if syncResult.SyncToken != "" && multigetMisses == 0 && !syncResult.Truncated {
 		token := syncResult.SyncToken
 		if err := e.q.UpdateCalendarSyncState(ctx, storage.UpdateCalendarSyncStateParams{
 			ID:        calendarID,
