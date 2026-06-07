@@ -15,7 +15,7 @@ Built for people who live in the terminal and want their calendar data local, po
 - **Interactive TUI** with month, week, day, and agenda views
 - **Full CLI** for scripting and automation
 - **iCal import/export** with broad RFC 5545 coverage (VEVENT, VTODO, VJOURNAL, VALARM, VTIMEZONE)
-- **CalDAV sync** with per-calendar remote connections, conflict handling, and sync status
+- **CalDAV sync** with per-calendar remote connections, conflict handling, at-a-glance sync health, and in-app Google re-authentication
 - **Free/busy queries** from local data or remote CalDAV `VFREEBUSY` reports
 - **Recurring events and todos** via RRULE, RDATE, and EXDATE
 - **Recurring journals** via RRULE, RDATE, and EXDATE
@@ -359,6 +359,12 @@ details including alarms, attendees, and attachments. Use `u` to undo a
 delete. Calendars are browsable in a sidebar with create / edit / delete
 from the calendar popup. Todo and journal management live in the CLI for
 now.
+
+Sync health is visible at a glance: a calendar whose last sync failed shows
+a `⚠` next to it in the sidebar, and opening it explains why (and offers a
+fix). Remote calendars can be connected and re-authenticated without leaving
+the TUI — see [Google Calendar via CalDAV](#google-calendar-via-caldav) for
+the OAuth flow.
 
 ## Configuration
 
