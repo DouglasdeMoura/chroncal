@@ -105,8 +105,13 @@ func TestStartGoogleOAuthFlow_WaitExchangesCode(t *testing.T) {
 	}
 }
 
-func TestStartGoogleOAuthFlow_StateMismatchFailsWait(t *testing.T) {
+// TestStartGoogleOAuthFlow_BadStateDoesNotAbort verifies that an unrelated
+// localhost request with a wrong/missing state (a browser prefetch, favicon
+// probe, or port scan) is rejected with 403 and does NOT abort the flow —
+// the legitimate redirect that follows still completes Wait.
+func TestStartGoogleOAuthFlow_BadStateDoesNotAbort(t *testing.T) {
 	stubBrowser(t, errors.New("no browser"))
+	stubTokenExchange(t)
 
 	flow, err := StartGoogleOAuthFlow(context.Background(), "cid", "secret")
 	if err != nil {
@@ -116,22 +121,41 @@ func TestStartGoogleOAuthFlow_StateMismatchFailsWait(t *testing.T) {
 
 	u, _ := url.Parse(flow.AuthURL)
 	redirect := u.Query().Get("redirect_uri")
-	go func() {
-		req, rerr := http.NewRequestWithContext(context.Background(), http.MethodGet,
-			redirect+"/?state=wrong&code=authcode", nil)
+	state := u.Query().Get("state")
+
+	get := func(query string) (int, error) {
+		req, rerr := http.NewRequestWithContext(context.Background(), http.MethodGet, redirect+"/?"+query, nil)
 		if rerr != nil {
-			return
+			return 0, rerr
 		}
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			resp.Body.Close()
+		resp, derr := http.DefaultClient.Do(req)
+		if derr != nil {
+			return 0, derr
 		}
+		defer resp.Body.Close()
+		return resp.StatusCode, nil
+	}
+
+	// A bogus-state probe must be rejected (403) and must not unblock Wait.
+	if code, gerr := get("state=wrong&code=authcode"); gerr != nil {
+		t.Fatalf("probe request: %v", gerr)
+	} else if code != http.StatusForbidden {
+		t.Errorf("probe status = %d, want 403", code)
+	}
+
+	// The real redirect (correct state) then completes the flow.
+	go func() {
+		_, _ = get("state=" + state + "&code=authcode")
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := flow.Wait(ctx); err == nil || !strings.Contains(err.Error(), "state mismatch") {
-		t.Fatalf("Wait err = %v, want state mismatch", err)
+	result, werr := flow.Wait(ctx)
+	if werr != nil {
+		t.Fatalf("Wait after probe + real redirect: %v", werr)
+	}
+	if result.AccessToken != "tok" {
+		t.Errorf("AccessToken = %q, want tok", result.AccessToken)
 	}
 }
 

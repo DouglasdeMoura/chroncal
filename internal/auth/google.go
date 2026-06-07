@@ -133,16 +133,25 @@ func StartGoogleOAuthFlow(ctx context.Context, clientID, clientSecret string) (*
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// Validate CSRF state token
-		if r.URL.Query().Get("state") != p.state {
-			p.sendErr(fmt.Errorf("oauth error: state mismatch (possible CSRF)"))
-			fmt.Fprint(w, "<html><body><h1>Authorization failed</h1><p>State mismatch. Please try again.</p></body></html>")
+		q := r.URL.Query()
+
+		// A bad or missing state does NOT abort the flow: any unrelated
+		// localhost request (browser prefetch, favicon probe, a port
+		// scanner) would otherwise kill an in-progress re-auth without
+		// knowing the CSRF token. Reject just this request and keep
+		// waiting for the legitimate redirect.
+		if q.Get("state") != p.state {
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, "<html><body><h1>Ignored</h1><p>Unexpected request. You can close this window.</p></body></html>")
 			return
 		}
 
-		code := r.URL.Query().Get("code")
+		// Past the state check this is the real redirect. An explicit
+		// error param (user denied consent) or a missing code is a genuine
+		// flow failure and aborts.
+		code := q.Get("code")
 		if code == "" {
-			errMsg := r.URL.Query().Get("error")
+			errMsg := q.Get("error")
 			if errMsg == "" {
 				errMsg = "no authorization code received"
 			}
@@ -157,7 +166,10 @@ func StartGoogleOAuthFlow(ctx context.Context, clientID, clientSecret string) (*
 		fmt.Fprint(w, "<html><body><h1>Authorization successful</h1><p>You can close this window.</p></body></html>")
 	})
 
-	p.server = &http.Server{Handler: mux}
+	// ReadHeaderTimeout bounds a slow/stuck local client so it can't tie up
+	// the handler goroutine; Close uses a bounded Shutdown so Esc/timeout
+	// can't hang the TUI on such a client.
+	p.server = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if err := p.server.Serve(listener); err != http.ErrServerClosed {
 			p.sendErr(err)
@@ -206,7 +218,12 @@ func (p *PendingOAuthFlow) Wait(ctx context.Context) (*GoogleOAuthResult, error)
 func (p *PendingOAuthFlow) Close() {
 	p.closeOnce.Do(func() {
 		if p.server != nil {
-			_ = p.server.Shutdown(context.Background())
+			// Bounded: a slow-loris local client must not make Shutdown
+			// (and therefore Esc/cancel in the TUI) block indefinitely.
+			// The listener Close below force-drops anything still hanging.
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = p.server.Shutdown(shutdownCtx)
+			cancel()
 		}
 		if p.listener != nil {
 			_ = p.listener.Close()
