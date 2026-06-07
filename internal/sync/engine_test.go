@@ -1840,6 +1840,21 @@ func TestPendingDeletions_ExplicitAlwaysDeletes(t *testing.T) {
 	}
 }
 
+// TestPendingDeletions_DedupExplicitAndAbsence exercises the dedup branch
+// (owner already set) when a UID is both explicitly deleted and absent from a
+// COMPLETE inventory — it must appear exactly once, not double-counted.
+func TestPendingDeletions_DedupExplicitAndAbsence(t *testing.T) {
+	t.Parallel()
+	p := newPendingDeletions(discardLogger())
+	p.markExplicit(storage.SyncResource{Uid: "dup", OwnerType: "event"})
+	p.inferFromAbsence(1,
+		[]storage.SyncResource{{Uid: "dup", OwnerType: "event", RemoteUrl: "/dup.ics"}},
+		map[string]bool{}, true, "complete")
+	if got := uidSet(p.owner); len(got) != 1 || !got["dup"] {
+		t.Errorf("dup should be present exactly once, got %v", got)
+	}
+}
+
 // TestEnginePullMultigetMissWithholdsAbsenceDeletions pins the stricter
 // behavior the chokepoint enforces: if even one body 404s on multiget during
 // an initial snapshot, the inventory is incomplete, so NO absence-inferred
@@ -1920,5 +1935,99 @@ func TestEnginePullMultigetMissWithholdsAbsenceDeletions(t *testing.T) {
 	calRow, _ := q.GetCalendar(ctx, calendarID)
 	if tok := storage.NullableToString(calRow.SyncToken); tok != "" {
 		t.Errorf("sync_token = %q, want empty (held back on incomplete pull)", tok)
+	}
+}
+
+// TestEnginePullFullSnapshotDeletesAbsent covers the legacy QueryAll fallback
+// (servers without RFC 6578 sync-collection, e.g. GMX) now that its deletions
+// route through the pendingDeletions chokepoint. A sync-collection REPORT that
+// returns "unsupported" makes pull() fall back to pullFullSnapshot; a local
+// pushed row absent from the QueryAll result must be deleted, while a
+// never-pushed row (empty remote_url) must survive.
+func TestEnginePullFullSnapshotDeletesAbsent(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	insertTestEvent(t, db, calendarID, "gone-uid")
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID: calendarID, Uid: "gone-uid", OwnerType: "event",
+		RemoteUrl: "/calendar/gone.ics", Etag: "e1", Dirty: 0, SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource gone: %v", err)
+	}
+	insertTestEvent(t, db, calendarID, "local-only")
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID: calendarID, Uid: "local-only", OwnerType: "event",
+		RemoteUrl: "", Etag: "", Dirty: 1, SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource local-only: %v", err)
+	}
+
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		raw, _ := io.ReadAll(r.Body)
+		body := string(raw)
+		// sync-collection REPORT -> reply 422 so the engine falls back to QueryAll.
+		if strings.Contains(body, "sync-collection") {
+			return &http.Response{
+				StatusCode: http.StatusUnprocessableEntity,
+				Status:     "422 Unprocessable Entity",
+				Header:     http.Header{"Content-Type": []string{"application/xml"}},
+				Body:       io.NopCloser(strings.NewReader(`<?xml version="1.0"?><error xmlns="DAV:"/>`)),
+				Request:    r,
+			}, nil
+		}
+		// calendar-query REPORT (QueryAll): return an inventory WITHOUT gone.ics.
+		queryBody := `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/calendar/survivor.ics</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>&quot;s1&quot;</d:getetag>
+        <cal:calendar-data>BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//chroncal//tests//EN
+BEGIN:VEVENT
+UID:survivor-uid
+DTSTAMP:20260606T120000Z
+DTSTART:20260606T120000Z
+DTEND:20260606T130000Z
+SUMMARY:Survivor
+END:VEVENT
+END:VCALENDAR
+</cal:calendar-data>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`
+		return &http.Response{
+			StatusCode: http.StatusMultiStatus,
+			Status:     "207 Multi-Status",
+			Header:     http.Header{"Content-Type": []string{"application/xml"}},
+			Body:       io.NopCloser(strings.NewReader(queryBody)),
+			Request:    r,
+		}, nil
+	})
+
+	result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+	if err != nil {
+		t.Fatalf("pull (fullsnapshot): %v", err)
+	}
+	if result.deleted != 1 {
+		t.Fatalf("deleted = %d, want 1 (gone-uid absent from QueryAll)", result.deleted)
+	}
+	if _, err := q.GetEventByUID(ctx, "gone-uid"); err == nil {
+		t.Error("gone-uid should be deleted (absent from complete QueryAll inventory)")
+	}
+	if _, err := q.GetEventByUID(ctx, "local-only"); err != nil {
+		t.Errorf("never-pushed local-only row must survive: %v", err)
 	}
 }
