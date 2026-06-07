@@ -227,9 +227,20 @@ func TestNewCredentialStore_PrefersKeyringWhenAvailable(t *testing.T) {
 
 func TestNewCredentialStore_MigratesLegacyPlaintextCredentials(t *testing.T) {
 	dir := t.TempDir()
+	// Redirect the config dir the way each platform actually resolves it:
+	// credentialDir honors XDG_CONFIG_HOME only on Linux; macOS uses
+	// os.UserConfigDir ($HOME/Library/Application Support). Set both, then
+	// derive the legacy dir from credentialDir itself so the test seeds the
+	// legacy credential exactly where NewCredentialStore's internal plaintext
+	// store looks for it — on any platform. (Hardcoding the Linux XDG layout
+	// is what made this test fail on the macOS CI runner.)
 	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
 
-	legacyDir := filepath.Join(dir, "chroncal", "credentials")
+	legacyDir, err := credentialDir()
+	if err != nil {
+		t.Fatalf("credentialDir: %v", err)
+	}
 	legacyStore := &PlaintextFileStore{dir: legacyDir}
 	legacyCred := Credential{
 		AccountID: 99,
