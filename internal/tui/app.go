@@ -1010,7 +1010,14 @@ func (m Model) finishOAuthReauth(result *auth.GoogleOAuthResult) tea.Cmd {
 		cred := p.cred
 		cred.AccountID = p.accountID
 		cred.AccessToken = result.AccessToken
-		cred.RefreshToken = result.RefreshToken
+		// Preserve the existing refresh token if Google didn't return a new
+		// one. access_type=offline&prompt=consent normally forces a fresh
+		// refresh token, but if it ever comes back empty, overwriting would
+		// strip the account's ability to refresh and brick sync once the
+		// access token expires (~1h). Keep the old one in that case.
+		if result.RefreshToken != "" {
+			cred.RefreshToken = result.RefreshToken
+		}
 		cred.TokenExpiry = result.Expiry.Format(time.RFC3339)
 		if err := credStore.Set(cred); err != nil {
 			return oauthCredentialStoredMsg{calendarID: p.calendarID, name: p.calendarName, err: err}
