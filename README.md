@@ -242,10 +242,19 @@ syncs run unattended.
    chroncal sync status
    ```
 
+You can also connect a Google calendar and re-authenticate an expired one
+directly from the TUI: open a calendar (the sidebar shows a ⚠ when its last
+sync failed) and use the **Re-authenticate** action, or pick **Google OAuth**
+as the auth type when creating one. The browser authorization runs without
+leaving the app.
+
 Google limitations:
 
 - Google CalDAV only supports `VEVENT`. Use Nextcloud, Radicale, or Fastmail for `VTODO` and `VJOURNAL`.
-- Google does not support `sync-collection` REPORT, so chroncal falls back to ctag + ETag comparison.
+- Google paginates large `sync-collection` REPORT responses (RFC 6578 §3.6),
+  returning a `507` marker plus a continuation token; chroncal follows the
+  pages and applies the union, so the initial sync of a big calendar pulls
+  every event.
 
 ### Free/busy
 
