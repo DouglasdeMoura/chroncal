@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -1766,5 +1767,158 @@ func TestSummarizeSyncError(t *testing.T) {
 				t.Errorf("summarizeSyncError = %q, want %q", got, c.want)
 			}
 		})
+	}
+}
+
+// discardLogger returns a logger that drops everything, for pure-function
+// tests of the deletion chokepoint.
+func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+func uidSet(rs map[string]string) map[string]bool {
+	out := make(map[string]bool, len(rs))
+	for uid := range rs {
+		out[uid] = true
+	}
+	return out
+}
+
+// TestPendingDeletions_AbsenceGate is the core invariant: absence-inferred
+// deletions are withheld unless the inventory is complete. This is the single
+// guard that three production data-loss bugs would now hit.
+func TestPendingDeletions_AbsenceGate(t *testing.T) {
+	t.Parallel()
+	locals := []storage.SyncResource{
+		{Uid: "a", OwnerType: "event", RemoteUrl: "/a.ics"},
+		{Uid: "b", OwnerType: "event", RemoteUrl: "/b.ics"},
+		{Uid: "never-pushed", OwnerType: "event", RemoteUrl: ""}, // must never delete
+	}
+	seen := map[string]bool{"a": true} // server still has "a"; "b" is absent
+
+	t.Run("incomplete inventory withholds all", func(t *testing.T) {
+		p := newPendingDeletions(discardLogger())
+		p.inferFromAbsence(1, locals, seen, false, "truncated")
+		if got := uidSet(p.owner); len(got) != 0 {
+			t.Errorf("incomplete inventory must withhold; got %v", got)
+		}
+	})
+
+	t.Run("complete inventory deletes only the absent, pushed row", func(t *testing.T) {
+		p := newPendingDeletions(discardLogger())
+		p.inferFromAbsence(1, locals, seen, true, "complete")
+		got := uidSet(p.owner)
+		if !got["b"] {
+			t.Error("absent pushed row b should be marked for deletion")
+		}
+		if got["a"] {
+			t.Error("seen row a must not be deleted")
+		}
+		if got["never-pushed"] {
+			t.Error("never-pushed row (empty remote_url) must never be deleted")
+		}
+	})
+}
+
+// TestPendingDeletions_ExplicitAlwaysDeletes confirms explicit (server-404)
+// deletions are sound regardless of completeness, and dedupe with absence.
+func TestPendingDeletions_ExplicitAlwaysDeletes(t *testing.T) {
+	t.Parallel()
+	p := newPendingDeletions(discardLogger())
+	p.markExplicit(storage.SyncResource{Uid: "gone", OwnerType: "event"})
+	p.markExplicit(storage.SyncResource{Uid: "", OwnerType: "event"}) // empty UID ignored
+	// An incomplete inventory must not erase an explicit deletion.
+	p.inferFromAbsence(1, []storage.SyncResource{{Uid: "x", OwnerType: "event", RemoteUrl: "/x.ics"}},
+		map[string]bool{}, false, "truncated")
+	got := uidSet(p.owner)
+	if !got["gone"] {
+		t.Error("explicit deletion should always be marked")
+	}
+	if got[""] {
+		t.Error("empty UID must be ignored")
+	}
+	if got["x"] {
+		t.Error("absence deletion must stay withheld under incomplete inventory")
+	}
+}
+
+// TestEnginePullMultigetMissWithholdsAbsenceDeletions pins the stricter
+// behavior the chokepoint enforces: if even one body 404s on multiget during
+// an initial snapshot, the inventory is incomplete, so NO absence-inferred
+// deletion runs that round — not just the missed path. A locally-tracked row
+// absent from the snapshot must survive until a clean sync confirms it.
+func TestEnginePullMultigetMissWithholdsAbsenceDeletions(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	// "absent" is tracked locally but will NOT appear in the snapshot at all
+	// (a genuine candidate for absence-deletion). "racey" appears in the
+	// change list but 404s on multiget (the incompleteness trigger).
+	insertTestEvent(t, db, calendarID, "absent")
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID: calendarID, Uid: "absent", OwnerType: "event",
+		RemoteUrl: "/calendar/absent.ics", Etag: "e1", Dirty: 0, SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource absent: %v", err)
+	}
+	insertTestEvent(t, db, calendarID, "racey")
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID: calendarID, Uid: "racey", OwnerType: "event",
+		RemoteUrl: "/calendar/racey.ics", Etag: "old", Dirty: 0, SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource racey: %v", err)
+	}
+
+	// Initial snapshot (empty token): lists only "racey" (changed), which
+	// then 404s on multiget. "absent" is not listed at all.
+	const syncBody = `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/calendar/racey.ics</d:href>
+    <d:propstat><d:prop><d:getetag>&quot;new&quot;</d:getetag></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat>
+  </d:response>
+  <d:sync-token>https://example.com/sync/t1</d:sync-token>
+</d:multistatus>`
+
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		raw, _ := io.ReadAll(r.Body)
+		if !strings.Contains(string(raw), "calendar-multiget") {
+			return &http.Response{StatusCode: http.StatusMultiStatus, Status: "207 Multi-Status",
+				Header: http.Header{"Content-Type": []string{"application/xml"}},
+				Body:   io.NopCloser(strings.NewReader(syncBody)), Request: r}, nil
+		}
+		// racey.ics 404s on multiget.
+		multigetBody := `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response><d:href>/calendar/racey.ics</d:href><d:status>HTTP/1.1 404 Not Found</d:status></d:response>
+</d:multistatus>`
+		return &http.Response{StatusCode: http.StatusMultiStatus, Status: "207 Multi-Status",
+			Header: http.Header{"Content-Type": []string{"application/xml"}},
+			Body:   io.NopCloser(strings.NewReader(multigetBody)), Request: r}, nil
+	})
+
+	result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if result.deleted != 0 {
+		t.Fatalf("deleted = %d, want 0 (incomplete inventory must withhold ALL absence deletions)", result.deleted)
+	}
+	// Both rows must still exist — neither the missed one nor the absent one.
+	if _, err := q.GetEventByUID(ctx, "absent"); err != nil {
+		t.Errorf("absent row was wrongly deleted against a partial inventory: %v", err)
+	}
+	if _, err := q.GetEventByUID(ctx, "racey"); err != nil {
+		t.Errorf("racey row (multiget miss) was wrongly deleted: %v", err)
+	}
+	// Token must not advance on an incomplete pull.
+	calRow, _ := q.GetCalendar(ctx, calendarID)
+	if tok := storage.NullableToString(calRow.SyncToken); tok != "" {
+		t.Errorf("sync_token = %q, want empty (held back on incomplete pull)", tok)
 	}
 }
