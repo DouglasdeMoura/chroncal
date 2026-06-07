@@ -675,28 +675,15 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 		e.logger.Debug("pulled resource", "uid", uid, "path", res.Path, "etag", res.ETag)
 	}
 
-	// Detect deletions by UID. Local rows with no remote_url have never been
-	// pushed and must be left alone — they're still pending upload.
-	for _, local := range localResources {
-		if local.RemoteUrl == "" {
-			continue
-		}
-		if remoteUIDs[local.Uid] {
-			continue
-		}
-		e.logger.Debug("resource deleted on server", "uid", local.Uid, "remote_url", local.RemoteUrl)
-		if err := e.deleteLocalResourceByUID(ctx, local.OwnerType, local.Uid); err != nil {
-			e.logger.Error("delete local resource", "uid", local.Uid, "owner_type", local.OwnerType, "error", err)
-			continue
-		}
-		if err := e.q.DeleteSyncResource(ctx, storage.DeleteSyncResourceParams{
-			CalendarID: calendarID,
-			Uid:        local.Uid,
-		}); err != nil {
-			e.logger.Error("delete sync resource", "uid", local.Uid, "error", err)
-		}
-		result.deleted++
-	}
+	// Deletions go through the same chokepoint as the sync-collection path.
+	// QueryAll downloads the entire collection or returns an error (handled
+	// above), so by construction the inventory is complete — but routing
+	// through inferFromAbsence keeps the invariant uniform, so a future
+	// partial-fetch optimization here cannot silently start deleting against
+	// a partial view without flipping the complete flag.
+	deletions := newPendingDeletions(e.logger)
+	deletions.inferFromAbsence(calendarID, localResources, remoteUIDs, true, "complete (QueryAll)")
+	result.deleted += deletions.apply(ctx, e, calendarID)
 
 	return result, nil
 }
@@ -705,6 +692,101 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 // Servers (notably Google) reject very large multigets; 50 is the conservative
 // number used by other clients and keeps response sizes manageable.
 const multigetBatchSize = 50
+
+// pendingDeletions is the single chokepoint for the sync engine's most
+// dangerous operation: removing local rows because the server no longer has
+// them. Three production data-loss incidents — multiget 404s, href rewrites,
+// and RFC 6578 §3.6 truncation — all share one root cause: a local row was
+// deleted because it was ABSENT from a remote view that turned out to be
+// incomplete. The two recorders below encode the only safe rule. Explicit
+// deletions carry positive evidence (the server returned 404 for a specific
+// href) and are always sound; absence-inferred deletions require a provably
+// complete inventory and are withheld otherwise. Every deletion the pull
+// performs goes through apply(), so a new "this looks deleted" code path
+// cannot reach the executor without choosing one of these two doors.
+type pendingDeletions struct {
+	logger *slog.Logger
+	owner  map[string]string // uid -> ownerType, deduped across both sources
+}
+
+func newPendingDeletions(logger *slog.Logger) *pendingDeletions {
+	return &pendingDeletions{logger: logger, owner: make(map[string]string)}
+}
+
+// markExplicit records a deletion backed by positive evidence: the server
+// returned 404 for this resource's specific href. Sound regardless of
+// inventory completeness.
+func (p *pendingDeletions) markExplicit(r storage.SyncResource) {
+	if r.Uid != "" {
+		p.owner[r.Uid] = r.OwnerType
+	}
+}
+
+// inferFromAbsence records a deletion for every local resource missing from
+// the remote inventory (`seen`) — but ONLY when complete is true. When the
+// inventory is partial it withholds the entire sweep (logging the count and
+// reason) so a partial view can never drive deletions; the rows are
+// re-evaluated on the next clean sync. complete MUST be computed by the
+// caller as "every resource the server has was observed this pull." Local
+// rows with no remote_url are skipped — they were never pushed.
+func (p *pendingDeletions) inferFromAbsence(calendarID int64, locals []storage.SyncResource, seen map[string]bool, complete bool, reason string) {
+	var candidates []storage.SyncResource
+	for _, local := range locals {
+		if local.RemoteUrl == "" {
+			continue
+		}
+		if seen[local.Uid] || p.owner[local.Uid] != "" {
+			continue
+		}
+		candidates = append(candidates, local)
+	}
+	if len(candidates) == 0 {
+		return
+	}
+	if !complete {
+		p.logger.Warn("withholding absence-inferred deletions: incomplete inventory",
+			"calendar_id", calendarID, "withheld", len(candidates), "reason", reason)
+		return
+	}
+	for _, c := range candidates {
+		p.owner[c.Uid] = c.OwnerType
+	}
+}
+
+// apply executes the accumulated deletions: soft-delete each local owner row
+// and drop its sync_resource. Returns the count actually deleted.
+func (p *pendingDeletions) apply(ctx context.Context, e *Engine, calendarID int64) int {
+	deleted := 0
+	for uid, ownerType := range p.owner {
+		if err := e.deleteLocalResourceByUID(ctx, ownerType, uid); err != nil {
+			e.logger.Error("delete local resource", "uid", uid, "owner_type", ownerType, "error", err)
+			continue
+		}
+		if err := e.q.DeleteSyncResource(ctx, storage.DeleteSyncResourceParams{
+			CalendarID: calendarID,
+			Uid:        uid,
+		}); err != nil {
+			e.logger.Error("delete sync resource", "uid", uid, "error", err)
+		}
+		deleted++
+	}
+	return deleted
+}
+
+// absenceWithholdReason describes why an absence sweep was (or wasn't) safe,
+// for the withhold log line.
+func absenceWithholdReason(truncated bool, multigetMisses int) string {
+	switch {
+	case truncated && multigetMisses > 0:
+		return fmt.Sprintf("response truncated and %d multiget miss(es)", multigetMisses)
+	case truncated:
+		return "response truncated (RFC 6578 §3.6)"
+	case multigetMisses > 0:
+		return fmt.Sprintf("%d multiget miss(es)", multigetMisses)
+	default:
+		return "complete"
+	}
+}
 
 // applySyncCollection consumes the change list from a sync-collection REPORT,
 // fetches bodies for changed resources via calendar-multiget, persists them,
@@ -872,63 +954,42 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 		}
 	}
 
-	deletedUIDs := make(map[string]bool)
-	for _, p := range deletedPaths {
-		local, exists := localByPath[p]
-		if !exists {
+	// All deletions funnel through one chokepoint (see pendingDeletions).
+	// The inventory is "complete" only when nothing limited our view of the
+	// server's resources: the response wasn't truncated and every changed
+	// body was fetched.
+	inventoryComplete := !syncResult.Truncated && multigetMisses == 0
+	deletions := newPendingDeletions(e.logger)
+
+	// Explicit deletions: the server returned a top-level 404 for these
+	// hrefs. Positive evidence — sound even if the inventory is incomplete.
+	// Exception: an href rewrite (Cosmo/GMX) shows the same UID 404'd at the
+	// old path but present at a new one within the same response; the fetch
+	// loop already re-upserted it, so a seen UID is not a deletion.
+	for _, pth := range deletedPaths {
+		local, exists := localByPath[pth]
+		if !exists || seenUIDs[local.Uid] {
 			continue
 		}
-		if seenUIDs[local.Uid] {
-			// Server reported a 404 on the old path but the same UID showed
-			// up at a new path within the same response — this is an href
-			// rewrite (Cosmo/GMX), not a real deletion. The fetch loop
-			// already upserted the new path; skip.
-			continue
-		}
-		deletedUIDs[local.Uid] = true
+		deletions.markExplicit(local)
 	}
 
-	// Initial-snapshot pulls (empty stored token) only see ADDITIONS in the
-	// change list, never deletions. So any locally-tracked UID missing from
-	// the snapshot is gone on the server. This also handles upgrades from
-	// QueryAll-based deployments where calendars carry sync resources but
-	// no sync-token yet.
-	//
-	// HARD GUARD: never run this sweep on a truncated change list. pull()
-	// paginates until complete, so Truncated is false here on every normal
-	// path — but a partial inventory driving deletions is exactly the bug
-	// that mass-deleted local events, so the invariant is enforced where
-	// the damage would happen, not just where the data is fetched.
-	if initialSnapshot && !syncResult.Truncated {
-		for _, local := range localResources {
-			if local.RemoteUrl == "" {
-				continue
-			}
-			if seenUIDs[local.Uid] || deletedUIDs[local.Uid] {
-				continue
-			}
-			deletedUIDs[local.Uid] = true
-		}
+	// Absence-inferred deletions: an initial snapshot lists only additions,
+	// so a locally-tracked UID missing from it is gone on the server — but
+	// only when the inventory is complete. Incremental pulls carry deletions
+	// explicitly (above), so absence inference applies to initial snapshots
+	// only. The gate withholds the sweep on a partial inventory; pull()
+	// paginates so the common path is complete, but the invariant is
+	// enforced here, where the deletion happens, not only where data is
+	// fetched.
+	if initialSnapshot {
+		deletions.inferFromAbsence(calendarID, localResources, seenUIDs,
+			inventoryComplete, absenceWithholdReason(syncResult.Truncated, multigetMisses))
 	}
 
-	for _, local := range localResources {
-		if !deletedUIDs[local.Uid] {
-			continue
-		}
-		if err := e.deleteLocalResourceByUID(ctx, local.OwnerType, local.Uid); err != nil {
-			e.logger.Error("delete local resource", "uid", local.Uid, "owner_type", local.OwnerType, "error", err)
-			continue
-		}
-		if err := e.q.DeleteSyncResource(ctx, storage.DeleteSyncResourceParams{
-			CalendarID: calendarID,
-			Uid:        local.Uid,
-		}); err != nil {
-			e.logger.Error("delete sync resource", "uid", local.Uid, "error", err)
-		}
-		result.deleted++
-	}
+	result.deleted += deletions.apply(ctx, e, calendarID)
 
-	if syncResult.SyncToken != "" && multigetMisses == 0 && !syncResult.Truncated {
+	if syncResult.SyncToken != "" && inventoryComplete {
 		token := syncResult.SyncToken
 		if err := e.q.UpdateCalendarSyncState(ctx, storage.UpdateCalendarSyncStateParams{
 			ID:        calendarID,
