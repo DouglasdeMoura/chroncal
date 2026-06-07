@@ -42,3 +42,6 @@ go.work.sum
 # Claude Code harness state (the directory itself holds tracked project
 # instructions, so ignore only the runtime artifacts).
 .claude/scheduled_tasks.lock
+
+# Local retro snapshots (/retro history; machine-local like TODOS.md)
+.context/
