@@ -10,6 +10,14 @@ updates:
       - dependencies
     open-pull-requests-limit: 10
     minimum-version-age: 7 days
+    groups:
+      charm:
+        patterns:
+          - "charm.land/*"
+          - "github.com/charmbracelet/*"
+        update-types:
+          - minor
+          - patch
 
   - package-ecosystem: github-actions
     directory: /
