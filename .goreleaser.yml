@@ -5,44 +5,41 @@ builds:
     binary: chroncal
     env:
       - CGO_ENABLED=0
-    goos:
-      - linux
-      - darwin
-      - windows
-      - freebsd
-      - openbsd
-      - netbsd
-      - dragonfly
-      - solaris
-      - illumos
-      - aix
-      - plan9
-    goarch:
-      - amd64
-      - arm64
-      - arm
-      - "386"
-      - ppc64
-      - ppc64le
-      - mips
-      - mipsle
-      - mips64
-      - mips64le
-      - riscv64
-      - s390x
-      - loong64
-    goarm:
-      - "6"
-      - "7"
+    # Explicit target list rather than a goos/goarch cross-product: the
+    # pure-Go SQLite driver (modernc.org/sqlite -> modernc.org/libc) only
+    # ships generated code for a fixed set of platforms, and goreleaser
+    # fails the whole release if any single target won't compile. These 18
+    # targets are the ones verified to build; mips*, ppc64 (big-endian),
+    # windows/arm, freebsd/386+arm, netbsd, dragonfly, solaris, illumos,
+    # aix, and plan9 are excluded because modernc.org/libc has no support.
+    targets:
+      - linux_amd64
+      - linux_arm64
+      - linux_arm_6
+      - linux_arm_7
+      - linux_386
+      - linux_riscv64
+      - linux_s390x
+      - linux_ppc64le
+      - linux_loong64
+      - darwin_amd64
+      - darwin_arm64
+      - windows_amd64
+      - windows_arm64
+      - windows_386
+      - freebsd_amd64
+      - freebsd_arm64
+      - openbsd_amd64
+      - openbsd_arm64
     ldflags:
       - -s -w -X main.version={{.Version}} -X main.commit={{.ShortCommit}} -X main.date={{.Date}}
 
 archives:
-  - format: tar.gz
+  - formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:
       - goos: windows
-        format: zip
+        formats: [zip]
 
 checksum:
   name_template: checksums.txt
