@@ -1,0 +1,16 @@
+[server]
+hosts = 0.0.0.0:5232
+
+# Local-testing config only: no authentication, wide-open rights.
+# Matches the anonymous access the integration tests expect at
+# http://localhost:5232 (see internal/ical/radicale_test.go).
+# DO NOT use this anywhere reachable from the network.
+[auth]
+type = none
+
+[storage]
+filesystem_folder = /data/collections
+
+[rights]
+type = from_file
+file = /config/rights
