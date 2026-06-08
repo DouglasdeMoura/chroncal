@@ -777,9 +777,7 @@ func eventDetailLines(ev event.Event, cal CalendarInfo, w, labelWidth int, rsvpL
 
 	if ev.Description != "" {
 		lines = append(lines, "")
-		for raw := range strings.SplitSeq(ev.Description, "\n") {
-			lines = append(lines, wrapLine(raw, w)...)
-		}
+		lines = append(lines, descriptionLines(ev.Description, w, nil, false)...)
 	}
 
 	return lines, rsvpIdx

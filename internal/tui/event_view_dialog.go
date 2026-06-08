@@ -600,11 +600,7 @@ func (m EventViewDialogModel) buildBodyLines(w int) []string {
 	if ev.Description != "" {
 		lines = append(lines, "")
 		lines = append(lines, faint.Render("Notes"))
-		for raw := range strings.SplitSeq(ev.Description, "\n") {
-			for _, wrapped := range wrapLine(raw, w) {
-				lines = append(lines, linkifyText(wrapped, rw))
-			}
-		}
+		lines = append(lines, descriptionLines(ev.Description, w, rw, true)...)
 	}
 
 	return lines

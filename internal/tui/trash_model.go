@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"image/color"
-	"strings"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -521,9 +520,7 @@ func trashDetailLines(e trash.Entry, cal CalendarInfo, w, labelWidth int) []stri
 
 	if e.Description != "" {
 		lines = append(lines, "")
-		for raw := range strings.SplitSeq(e.Description, "\n") {
-			lines = append(lines, wrapLine(raw, w)...)
-		}
+		lines = append(lines, descriptionLines(e.Description, w, nil, false)...)
 	}
 
 	return lines
