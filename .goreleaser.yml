@@ -50,9 +50,30 @@ checksum:
 
 changelog:
   sort: asc
+  # Drop non-user-facing commits. Patterns are unanchored to the scope so
+  # both "docs:" and "docs(cli):" match (the old "^docs:" form silently
+  # let every scoped chore/docs commit leak into the changelog).
   filters:
     exclude:
-      - "^docs:"
-      - "^chore:"
-      - "^ci:"
-      - "^style:"
+      - "^docs"
+      - "^chore"
+      - "^ci"
+      - "^style"
+      - "^test"
+      - "^build"
+      - "^refactor"
+      - "^Merge "
+  # Group what's left by Conventional Commit type so the release notes read
+  # as Features / Bug fixes / Performance rather than a flat list.
+  groups:
+    - title: "🚀 Features"
+      regexp: '^feat'
+      order: 0
+    - title: "🐛 Bug fixes"
+      regexp: '^fix'
+      order: 1
+    - title: "⚡ Performance"
+      regexp: '^perf'
+      order: 2
+    - title: "Other changes"
+      order: 999
