@@ -973,8 +973,7 @@ func (m Model) runSyncCalendar(id int64, name string) tea.Cmd {
 		if label == "" {
 			label = "calendar"
 		}
-		summary := fmt.Sprintf("Synced %s · pushed %d · pulled %d · deleted %d · conflicts %d",
-			label, result.Pushed, result.Pulled, result.Deleted, result.Conflicts)
+		summary := syncSummary(label, result.Pushed, result.Pulled, result.Deleted, result.Conflicts)
 		var firstErr error
 		if len(result.Errors) > 0 {
 			firstErr = result.Errors[0]
@@ -1107,13 +1106,40 @@ func (m Model) runOpportunisticPush(calendarID int64) tea.Cmd {
 		if label == "" {
 			label = "calendar"
 		}
-		summary := fmt.Sprintf("Synced %s · pushed %d · deleted %d", label, result.Pushed, result.Deleted)
+		summary := syncSummary(label, result.Pushed, 0, result.Deleted, 0)
 		var firstErr error
 		if len(result.Errors) > 0 {
 			firstErr = result.Errors[0]
 		}
 		return opportunisticPushFinishedMsg{summary: summary, err: firstErr}
 	}
+}
+
+// syncSummary builds the footer confirmation for a completed sync, listing
+// only the non-zero counters. A no-op sync reads "Synced Work · up to date"
+// instead of dragging four "· 0" segments behind it.
+func syncSummary(label string, pushed, pulled, deleted, conflicts int) string {
+	var parts []string
+	if pushed > 0 {
+		parts = append(parts, fmt.Sprintf("pushed %d", pushed))
+	}
+	if pulled > 0 {
+		parts = append(parts, fmt.Sprintf("pulled %d", pulled))
+	}
+	if deleted > 0 {
+		parts = append(parts, fmt.Sprintf("deleted %d", deleted))
+	}
+	if conflicts > 0 {
+		noun := "conflict"
+		if conflicts > 1 {
+			noun = "conflicts"
+		}
+		parts = append(parts, fmt.Sprintf("%d %s", conflicts, noun))
+	}
+	if len(parts) == 0 {
+		return fmt.Sprintf("Synced %s · up to date", label)
+	}
+	return fmt.Sprintf("Synced %s · %s", label, strings.Join(parts, " · "))
 }
 
 func (m Model) expireStatusAfter(d time.Duration, token int) tea.Cmd {
@@ -2520,8 +2546,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		next := msg.index + 1
 		if next >= msg.total {
-			summary := fmt.Sprintf("Synced %d calendar(s) · pushed %d · pulled %d · deleted %d · conflicts %d",
-				msg.total, m.syncTotals.pushed, m.syncTotals.pulled, m.syncTotals.deleted, m.syncTotals.conflicts)
+			label := fmt.Sprintf("%d calendar(s)", msg.total)
+			summary := syncSummary(label, m.syncTotals.pushed, m.syncTotals.pulled, m.syncTotals.deleted, m.syncTotals.conflicts)
 			finishErr := m.syncTotals.firstErr
 			m.syncTargets = nil
 			m.syncTotals = syncTotals{}
