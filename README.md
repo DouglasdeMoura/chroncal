@@ -29,6 +29,32 @@ Built for people who live in the terminal and want their calendar data local, po
 
 ## Installation
 
+### Prebuilt binary
+
+No Go toolchain required. Grab the archive for your platform from the
+[latest release](https://github.com/DouglasdeMoura/chroncal/releases/latest)
+— builds are published for Linux, macOS, Windows, FreeBSD, and OpenBSD across
+amd64, arm64, and several other architectures.
+
+```bash
+# Set VERSION to the current release (see the releases page above), and
+# PLATFORM to your OS/arch — e.g. linux_amd64, darwin_arm64, linux_arm64.
+VERSION=<current-version>
+PLATFORM=linux_amd64
+curl -LO "https://github.com/DouglasdeMoura/chroncal/releases/download/v${VERSION}/chroncal_${VERSION}_${PLATFORM}.tar.gz"
+
+# Verify the download against the published checksums (optional but recommended).
+curl -LO "https://github.com/DouglasdeMoura/chroncal/releases/download/v${VERSION}/checksums.txt"
+sha256sum --ignore-missing -c checksums.txt
+
+# Extract and move onto your PATH.
+tar -xzf "chroncal_${VERSION}_${PLATFORM}.tar.gz"
+sudo install chroncal /usr/local/bin/
+```
+
+On Windows, download the `..._windows_amd64.zip` asset, extract it, and put
+`chroncal.exe` somewhere on your `PATH`.
+
 ### From source
 
 Requires [Go](https://go.dev/) 1.25+.
