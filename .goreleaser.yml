@@ -36,7 +36,11 @@ builds:
 
 archives:
   - formats: [tar.gz]
-    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    # Append the ARM version (v6/v7) so the two linux_arm targets don't
+    # both resolve to ..._linux_arm.tar.gz and collide during archiving.
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
     format_overrides:
       - goos: windows
         formats: [zip]
