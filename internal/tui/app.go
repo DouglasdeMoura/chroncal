@@ -1564,7 +1564,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.calendar = m.calendar.SetEvents(calEvents)
 		}
 		if m.dialogOpen {
-			dayEvents := eventsOn(m.events, m.dialog.day)
+			dayEvents := eventsOn(filterVisibleEvents(m.events, m.hiddenCalendars), m.dialog.day)
 			m.dialog = m.dialog.SetEvents(dayEvents)
 		}
 		// After an agenda load lands, pull in the next month if the loaded
@@ -1620,7 +1620,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case CalendarDaySelectedMsg:
-		dayEvents := eventsOn(m.events, msg.Day)
+		dayEvents := eventsOn(filterVisibleEvents(m.events, m.hiddenCalendars), msg.Day)
 		if m.clickedEventID > 0 {
 			clicked := m.clickedEventID
 			m.clickedEventID = 0
@@ -2049,6 +2049,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m = m.refreshCalendarViews()
 		// Re-filter cached mini-month events against the new visibility set.
 		m = m.refreshMiniMonthDays()
+		if m.dialogOpen {
+			dayEvents := eventsOn(filterVisibleEvents(m.events, m.hiddenCalendars), m.dialog.day)
+			m.dialog = m.dialog.SetEvents(dayEvents)
+		}
 		return m, nil
 
 	case CalendarDialogRequestedMsg:
