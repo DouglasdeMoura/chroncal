@@ -72,6 +72,14 @@ func hyperlink(url, text string) string {
 // optional rewriter transforms the click target (e.g., to inject Google's
 // authuser hint) without changing the visible URL text.
 func linkifyText(s string, rw urlRewriter) string {
+	return linkifyTextZoned(s, rw, true)
+}
+
+// linkifyTextZoned is linkifyText with control over mouse zones. When zones is
+// false it emits OSC 8 hyperlinks only — clickable in terminals that honor
+// OSC 8 — without the mouseMark markers, which would leak on surfaces that
+// don't sweep them (the day and trash dialogs).
+func linkifyTextZoned(s string, rw urlRewriter, zones bool) string {
 	if s == "" || !strings.Contains(s, "http") {
 		return s
 	}
@@ -94,7 +102,11 @@ func linkifyText(s string, rw urlRewriter) string {
 		tailLen := len(raw) - len(trimmed)
 		target := rw.rewrite(trimmed)
 		b.WriteString(s[last:start])
-		b.WriteString(mouseMark(linkZonePrefix+target, hyperlink(target, trimmed)))
+		link := hyperlink(target, trimmed)
+		if zones {
+			link = mouseMark(linkZonePrefix+target, link)
+		}
+		b.WriteString(link)
 		if tailLen > 0 {
 			b.WriteString(raw[len(trimmed):])
 		}

@@ -101,6 +101,27 @@ func TestRenderHTMLDescription_Wrapping(t *testing.T) {
 	}
 }
 
+func TestRenderHTMLDescription_BareURLLinkified(t *testing.T) {
+	// A URL in the text but outside any <a> tag should still be clickable.
+	out := strings.Join(renderHTMLDescription(
+		"<p>Join here: https://meet.test/abc before noon.</p>", 80, nil, false), "\n")
+	if !strings.Contains(out, "\x1b]8;;https://meet.test/abc\x1b\\") {
+		t.Errorf("bare URL not linkified: %q", out)
+	}
+	// Surrounding words stay intact.
+	if !strings.Contains(stripANSI(out), "Join here:") || !strings.Contains(stripANSI(out), "before noon.") {
+		t.Errorf("surrounding text lost: %q", stripANSI(out))
+	}
+}
+
+func TestRenderHTMLDescription_BareURLTrailingPunctuation(t *testing.T) {
+	// Trailing punctuation must not be swallowed into the link target.
+	out := strings.Join(renderHTMLDescription("<p>see https://x.test/p.</p>", 80, nil, false), "\n")
+	if !strings.Contains(out, "\x1b]8;;https://x.test/p\x1b\\") {
+		t.Errorf("expected trimmed URL target: %q", out)
+	}
+}
+
 func TestRenderHTMLDescription_RejectsUnsafeHref(t *testing.T) {
 	// javascript: and control-byte URLs must never become OSC 8 hyperlinks.
 	for _, href := range []string{

@@ -267,7 +267,6 @@ func (r *htmlRenderer) splitWord(wd htmlWord) []htmlWord {
 // styleWord renders one token with its inline styling and, for anchors, wraps
 // it as an OSC 8 hyperlink (plus a clickable mouseMark zone when zones are on).
 func (r *htmlRenderer) styleWord(wd htmlWord) string {
-	text := wd.text
 	st := lipgloss.NewStyle()
 	styled := false
 	if wd.style.bold {
@@ -282,19 +281,33 @@ func (r *htmlRenderer) styleWord(wd htmlWord) string {
 	if wd.style.strike {
 		st, styled = st.Strikethrough(true), true
 	}
-	if styled {
-		text = st.Render(text)
+	render := func(s string) string {
+		if styled {
+			return st.Render(s)
+		}
+		return s
 	}
+
+	// Explicit <a href> anchor.
 	if wd.style.href != "" {
 		target := r.rw.rewrite(wd.style.href)
 		if isSafeHTTPURL(target) {
-			text = hyperlink(target, text)
+			label := hyperlink(target, render(wd.text))
 			if r.zones {
-				text = mouseMark(linkZonePrefix+target, text)
+				label = mouseMark(linkZonePrefix+target, label)
 			}
+			return label
 		}
+		return render(wd.text)
 	}
-	return text
+
+	// Bare URL sitting in the text, outside any anchor tag. Make it clickable
+	// the same way plain-text descriptions do, honoring the zones flag. Inline
+	// styling on a bare-URL word is dropped in favor of the clickable link.
+	if linked := linkifyTextZoned(wd.text, r.rw, r.zones); linked != wd.text {
+		return linked
+	}
+	return render(wd.text)
 }
 
 // isSafeHTTPURL reports whether s is an http(s) URL free of control bytes.
