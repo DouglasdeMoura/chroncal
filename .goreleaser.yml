@@ -128,6 +128,9 @@ aur_sources:
     private_key: "{{ .Env.AUR_KEY }}"
     git_url: ssh://aur@aur.archlinux.org/chroncal.git
     disable: '{{ if index .Env "AUR_KEY" }}false{{ else }}true{{ end }}'
+    # Default is x86_64/aarch64 only; the source package builds fine on the
+    # other Arch-supported targets the Go toolchain covers.
+    arches: [x86_64, aarch64, armv7h, armv6h, i686]
     makedepends: [go]
     commit_author:
       name: github-actions[bot]

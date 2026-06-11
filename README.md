@@ -218,6 +218,20 @@ Before cutting a release:
 10. Confirm `go install github.com/douglasdemoura/chroncal/cmd/chroncal@<tag>` works.
 11. Confirm `mise use -g github:DouglasdeMoura/chroncal@<version>` resolves the release.
 
+If a release run fails after some assets were already uploaded, do not just
+rerun it: GoReleaser refuses to overwrite existing release assets and the
+rerun dies with `already_exists` before reaching the package publishers.
+Delete the assets first, then rerun the failed job — the release object and
+its notes are kept, and all channels get hashes consistent with the fresh
+assets:
+
+```bash
+for a in $(gh release view vX.Y.Z --json assets --jq '.assets[].name'); do
+  gh release delete-asset vX.Y.Z "$a" -y
+done
+gh run rerun <run-id> --failed
+```
+
 Required repository secrets:
 
 | Secret | Purpose | Required |
