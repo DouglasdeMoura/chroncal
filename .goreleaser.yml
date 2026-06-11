@@ -60,28 +60,34 @@ source:
 # keys off its token env var and disables itself (or skips upload) when the
 # secret is absent, so a missing token never fails the whole release.
 
-# Deliberately on the deprecated formula publisher rather than
-# `homebrew_casks`: casks are macOS-only and this tap also serves Linux
-# users. Revisit if goreleaser v3 removes `brews`.
-brews:
+# Casks replaced formulas for prebuilt binaries (goreleaser deprecated
+# `brews` in v2.10, removal in v2.16). Casks work on Linux since
+# Homebrew 4.5 (April 2025). The tap carries a tap_migrations.json that
+# moves existing formula installs over on `brew upgrade`.
+homebrew_casks:
   - name: chroncal
     repository:
       owner: DouglasdeMoura
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    directory: Formula
+    directory: Casks
     homepage: https://github.com/DouglasdeMoura/chroncal
     description: Terminal-first calendar, todo, and journal manager
-    license: MIT
     skip_upload: '{{ if index .Env "HOMEBREW_TAP_TOKEN" }}false{{ else }}true{{ end }}'
     commit_msg_template: "chroncal {{ .Version }}"
     commit_author:
       name: github-actions[bot]
       email: github-actions[bot]@users.noreply.github.com
-    install: |
-      bin.install "chroncal"
-    test: |
-      assert_match version.to_s, shell_output("#{bin}/chroncal --version")
+    binaries:
+      - chroncal
+    # The binaries are not signed/notarized, so macOS quarantines them on
+    # download; strip the attribute or Gatekeeper blocks the first run.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/chroncal"]
+          end
 
 scoops:
   - name: chroncal

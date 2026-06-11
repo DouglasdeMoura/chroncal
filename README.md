@@ -84,10 +84,13 @@ Uninstall:
 brew uninstall chroncal
 ```
 
-GoReleaser pushes the formula to `DouglasdeMoura/homebrew-tap` automatically
-on each release (when the `HOMEBREW_TAP_TOKEN` repository secret is
-configured). If Homebrew is temporarily unavailable for a new release, use
-the install script, mise, Nix, or `go install`.
+chroncal ships as a Homebrew cask (prebuilt binary). On Linux this needs
+Homebrew 4.5+ (April 2025), which added cask support. GoReleaser pushes the
+cask to `DouglasdeMoura/homebrew-tap` automatically on each release (when the
+`HOMEBREW_TAP_TOKEN` repository secret is configured); installs from the old
+formula migrate to the cask on `brew upgrade`. If Homebrew is temporarily
+unavailable for a new release, use the install script, mise, Nix, or
+`go install`.
 
 ### Go install
 
@@ -205,10 +208,7 @@ Before cutting a release:
 1. Make sure CI is green on `master`.
 2. Bump the `VERSION` file to the new version (no leading `v`) — the release
    workflow refuses to run if it does not match the tag.
-3. Run `goreleaser check` locally if GoReleaser is installed. Exit code 2
-   with a `brews` deprecation warning is expected (casks are macOS-only, so
-   the formula publisher is kept deliberately); only exit code 1 means the
-   config is broken.
+3. Run `goreleaser check` locally if GoReleaser is installed.
 4. Create a `v*` tag and push it.
 5. Confirm the GitHub Release includes archives, `checksums.txt`, and install snippets.
 6. Confirm the install script works for the new tag.
@@ -249,7 +249,7 @@ copy the `got:` hash into `flake.nix`, and rerun the build. A monthly
 `update-flake-lock` workflow opens a PR refreshing the flake inputs.
 
 GoReleaser publishes everything in one run — release assets, Homebrew
-formula, Scoop manifest, and both AUR packages; no manual packaging steps
+cask, Scoop manifest, and both AUR packages; no manual packaging steps
 remain.
 
 Future package channel: `.deb` and `.rpm` assets can be added later with

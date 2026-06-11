@@ -174,6 +174,14 @@ chore: maintenance tasks
 
 When touching import/export code, follow RFC 5545. Round-trip fidelity matters: importing and re-exporting a `.ics` file should preserve all properties.
 
+## Releases (maintainers)
+
+Releases are fully automated: bump the `VERSION` file, push a matching `v*`
+tag, and GoReleaser publishes the GitHub Release, Homebrew cask, Scoop
+manifest, and both AUR packages. The step-by-step checklist, required
+secrets, and failure-recovery procedure live in the
+[Maintainer checklist](README.md#maintainer-checklist) section of the README.
+
 ## Need help?
 
 Open an issue on [GitHub](https://github.com/DouglasdeMoura/chroncal/issues).
