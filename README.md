@@ -152,7 +152,7 @@ developer shell with Go, GoReleaser, golangci-lint, govulncheck, and sqlc.
 
 ### Scoop (Windows)
 
-After the Scoop bucket is published, Windows users can install with:
+Windows users can install with:
 
 ```powershell
 scoop bucket add chroncal https://github.com/DouglasdeMoura/scoop-bucket
@@ -165,8 +165,8 @@ Upgrade:
 scoop update chroncal
 ```
 
-The manifest template lives at `packaging/scoop/chroncal.json`. Copy it into the
-bucket repository when publishing or updating the package.
+The manifest template lives at `packaging/scoop/chroncal.json` and is published
+to `DouglasdeMoura/scoop-bucket`.
 
 ### Arch Linux AUR
 
