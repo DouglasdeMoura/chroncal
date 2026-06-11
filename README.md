@@ -37,7 +37,6 @@ Built for people who live in the terminal and want their calendar data local, po
 | mise | macOS, Linux | Users who already manage tools with mise |
 | Nix | Linux, macOS | `nix run` and profile installs |
 | Scoop | Windows | Managed Windows installs |
-| GitHub Releases | Linux, macOS, Windows, FreeBSD, OpenBSD | Manual binary downloads |
 | Build from source | Any platform with Go 1.25+ | Contributors and packagers |
 
 ### Install script (Linux / macOS / BSD)
@@ -87,7 +86,7 @@ brew uninstall chroncal
 The release workflow updates `DouglasdeMoura/homebrew-tap` automatically when
 the maintainer configures the `HOMEBREW_TAP_TOKEN` repository secret. If
 Homebrew is temporarily unavailable for a new release, use the install script,
-GitHub Releases, or `go install`.
+mise, Nix, or `go install`.
 
 ### Go install
 
@@ -168,26 +167,6 @@ scoop update chroncal
 
 The manifest template lives at `packaging/scoop/chroncal.json`. Copy it into the
 bucket repository when publishing or updating the package.
-
-### GitHub Releases
-
-Download the archive for your platform from the
-[latest release](https://github.com/DouglasdeMoura/chroncal/releases/latest).
-Builds are published for Linux, macOS, Windows, FreeBSD, and OpenBSD across
-amd64, arm64, and several other architectures.
-
-```bash
-VERSION=0.2.2
-PLATFORM=linux_amd64
-curl -LO "https://github.com/DouglasdeMoura/chroncal/releases/download/v${VERSION}/chroncal_${VERSION}_${PLATFORM}.tar.gz"
-curl -LO "https://github.com/DouglasdeMoura/chroncal/releases/download/v${VERSION}/checksums.txt"
-sha256sum --ignore-missing -c checksums.txt
-tar -xzf "chroncal_${VERSION}_${PLATFORM}.tar.gz"
-sudo install chroncal /usr/local/bin/
-```
-
-On Windows, download the `..._windows_amd64.zip` asset, extract it, and put
-`chroncal.exe` somewhere on your `PATH`.
 
 ### Arch Linux AUR
 
