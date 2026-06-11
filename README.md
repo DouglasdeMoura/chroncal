@@ -170,7 +170,7 @@ to `DouglasdeMoura/scoop-bucket`.
 
 ### Arch Linux AUR
 
-The repository includes package templates for two AUR packages:
+Two AUR packages are published:
 
 ```bash
 yay -S chroncal-bin  # prebuilt Linux binary from GitHub Releases
@@ -224,7 +224,11 @@ Run `nix build .#chroncal`; if Nix reports a fixed-output hash mismatch, copy
 the `got:` hash into `flake.nix`, then rerun the build.
 
 The release workflow updates the Homebrew tap and Scoop bucket after GoReleaser
-publishes assets. Keep `packaging/aur/` current when publishing AUR updates.
+publishes assets. For AUR updates, bump `pkgver`/`sha256sums` in
+`packaging/aur/chroncal/PKGBUILD` and `packaging/aur/chroncal-bin/PKGBUILD`,
+run `makepkg --printsrcinfo > .SRCINFO` in each directory, then push to
+`ssh://aur@aur.archlinux.org/chroncal.git` and
+`ssh://aur@aur.archlinux.org/chroncal-bin.git`.
 
 Future package channel: `.deb` and `.rpm` assets can be added later with
 GoReleaser nFPM once the primary package manager channels are stable.
