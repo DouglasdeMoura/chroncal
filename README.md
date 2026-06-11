@@ -359,7 +359,12 @@ chroncal calendar get     <id>
 chroncal calendar create  "<name>" [--color HEX] [--description TEXT] [--email ADDR] [remote flags]
 chroncal calendar update  <id|name> [--name NAME] [--color HEX] [--description TEXT] [--email ADDR] [remote flags] [--disconnect-remote]
 chroncal calendar delete  <id>
+chroncal calendar set-default <id|name>
 ```
+
+`set-default` promotes a calendar to the default; new events, todos, and
+journals without an explicit `--calendar` land there. Exactly one calendar
+is default at any time.
 
 Remote flags (used with `create` or `update` to attach a CalDAV URL directly
 to a calendar — there is no separate `account` concept):
