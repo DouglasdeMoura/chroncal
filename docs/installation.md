@@ -10,6 +10,8 @@ work needed to keep those channels healthy.
 | Homebrew | macOS, Linux | Users who want managed install and upgrade commands |
 | Go install | Any platform with Go 1.25+ | Go users and contributors |
 | mise | macOS, Linux | Users who already manage tools with mise |
+| Nix | Linux, macOS | Nix users who want `nix run` or profile installs |
+| Scoop | Windows | Windows users who want managed install and upgrade commands |
 | GitHub Releases | Linux, macOS, Windows, FreeBSD, OpenBSD | Users who want prebuilt binaries without package managers |
 | Build from source | Any platform with Go 1.25+ | Contributors and packagers |
 
@@ -114,6 +116,47 @@ sudo install chroncal /usr/local/bin/
 Windows users should download the `chroncal_<version>_windows_amd64.zip` asset,
 extract it, and place `chroncal.exe` on `PATH`.
 
+## Nix
+
+Run without installing:
+
+```bash
+nix run github:DouglasdeMoura/chroncal
+```
+
+Install to your profile:
+
+```bash
+nix profile install github:DouglasdeMoura/chroncal
+```
+
+Build the package from a clone:
+
+```bash
+nix build .#chroncal
+```
+
+The flake exposes `packages.default`, `packages.chroncal`, `apps.default`, and a
+developer shell with Go, GoReleaser, golangci-lint, govulncheck, and sqlc.
+
+## Scoop
+
+After the Scoop bucket is published, Windows users can install with:
+
+```powershell
+scoop bucket add chroncal https://github.com/DouglasdeMoura/scoop-bucket
+scoop install chroncal
+```
+
+Upgrade:
+
+```powershell
+scoop update chroncal
+```
+
+The manifest template lives at `packaging/scoop/chroncal.json`. Copy it into the
+bucket repository when publishing or updating the package.
+
 ## Build From Source
 
 ```bash
@@ -169,6 +212,26 @@ These are good follow-up contributions once the primary release flow is stable:
 | Channel | Suggested artifact |
 | --- | --- |
 | Arch Linux AUR publishing | Copy `packaging/aur/chroncal` and `packaging/aur/chroncal-bin` into their AUR repos |
-| Nix | `flake.nix` exposing `packages.default` and `apps.default` |
-| Scoop | `packaging/scoop/chroncal.json` plus a maintained bucket |
+| Scoop publishing | Copy `packaging/scoop/chroncal.json` into `DouglasdeMoura/scoop-bucket` |
 | Debian / RPM | GoReleaser nFPM-generated `.deb` and `.rpm` assets |
+
+## Nix Maintainer Notes
+
+When `go.mod` or `go.sum` changes, the flake's `vendorHash` may need an update.
+Run this from a machine with Nix installed:
+
+```bash
+nix build .#chroncal
+```
+
+If the build reports a fixed-output hash mismatch, copy the `got:` hash into
+`flake.nix`, then rerun the build.
+
+## Scoop Maintainer Notes
+
+For each release:
+
+1. Update `version` in `packaging/scoop/chroncal.json`.
+2. Update `hash` from the Windows amd64 release asset checksum.
+3. Copy the manifest into the Scoop bucket repository.
+4. Run `scoop install chroncal` from the bucket before announcing it.
