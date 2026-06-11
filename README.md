@@ -37,6 +37,7 @@ Built for people who live in the terminal and want their calendar data local, po
 | mise | macOS, Linux | Users who already manage tools with mise |
 | Nix | Linux, macOS | `nix run` and profile installs |
 | Scoop | Windows | Managed Windows installs |
+| AUR | Arch Linux | `yay`/`paru` users (binary or source package) |
 | Build from source | Any platform with Go 1.25+ | Contributors and packagers |
 
 ### Install script (Linux / macOS / BSD)
@@ -53,7 +54,7 @@ curl -fsSL https://raw.githubusercontent.com/DouglasdeMoura/chroncal/master/scri
 Pin an exact version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/DouglasdeMoura/chroncal/master/scripts/install.sh | env VERSION=v0.2.2 sh
+curl -fsSL https://raw.githubusercontent.com/DouglasdeMoura/chroncal/master/scripts/install.sh | env VERSION=v0.2.3 sh
 ```
 
 Install somewhere else:
@@ -99,7 +100,7 @@ go install github.com/douglasdemoura/chroncal/cmd/chroncal@latest
 Pin an exact release:
 
 ```bash
-go install github.com/douglasdemoura/chroncal/cmd/chroncal@v0.2.2
+go install github.com/douglasdemoura/chroncal/cmd/chroncal@v0.2.3
 ```
 
 The binary is usually installed to `$(go env GOPATH)/bin/chroncal`. Make sure
@@ -116,7 +117,7 @@ mise use -g github:DouglasdeMoura/chroncal
 Pin an exact release globally:
 
 ```bash
-mise use -g github:DouglasdeMoura/chroncal@0.2.2
+mise use -g github:DouglasdeMoura/chroncal@0.2.3
 ```
 
 If a just-published release does not appear yet, clear mise's GitHub release
