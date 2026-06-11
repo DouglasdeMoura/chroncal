@@ -1,0 +1,28 @@
+name: Update flake.lock
+
+# Keeps the flake's nixpkgs/flake-utils inputs fresh. Note: PRs opened with
+# the default GITHUB_TOKEN do not trigger other workflows, so the Nix CI
+# check will not run on the bot's PR automatically — close and reopen the PR
+# (or push to its branch) to trigger it before merging.
+on:
+  schedule:
+    - cron: "0 6 1 * *" # monthly, 1st at 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    name: Update flake inputs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: DeterminateSystems/nix-installer-action@v22
+
+      - uses: DeterminateSystems/update-flake-lock@v28
+        with:
+          pr-title: "chore(nix): update flake.lock"
+          commit-msg: "chore(nix): update flake.lock"
