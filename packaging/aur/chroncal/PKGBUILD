@@ -1,7 +1,7 @@
 # Maintainer: Douglas de Moura <douglas@demoura.dev>
 
 pkgname=chroncal
-pkgver=0.2.2
+pkgver=0.2.3
 pkgrel=1
 pkgdesc='Terminal-first calendar, todo, and journal manager'
 arch=('x86_64' 'aarch64' 'armv7h' 'armv6h' 'i686')
@@ -9,7 +9,7 @@ url='https://github.com/DouglasdeMoura/chroncal'
 license=('MIT')
 makedepends=('go')
 source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
-sha256sums=('2ddb8e23491a3ccfe105a90c950043fae8ea77c12a4586a69fe51f16fe30c5bc')
+sha256sums=('91d8eca7476294423333a786a43b0326b0655d70bc451f48fe8539c3be7de77b')
 
 build() {
   cd "${pkgname}-${pkgver}"

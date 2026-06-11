@@ -206,9 +206,10 @@ Before cutting a release:
 4. Confirm the GitHub Release includes archives, `checksums.txt`, and install snippets.
 5. Confirm the install script works for the new tag.
 6. Confirm `brew tap douglasdemoura/tap && brew install chroncal` works after the Homebrew tap update.
-7. Confirm `go install github.com/douglasdemoura/chroncal/cmd/chroncal@<tag>` works.
-8. Confirm `mise use -g github:DouglasdeMoura/chroncal@<version>` resolves the release.
-9. Confirm `nix build .#chroncal` passes if `go.mod` or `go.sum` changed.
+7. Confirm `scoop update chroncal` sees the new Scoop manifest.
+8. Confirm `go install github.com/douglasdemoura/chroncal/cmd/chroncal@<tag>` works.
+9. Confirm `mise use -g github:DouglasdeMoura/chroncal@<version>` resolves the release.
+10. Confirm `nix build .#chroncal` passes if `go.mod` or `go.sum` changed.
 
 Required repository secrets:
 
@@ -216,15 +217,14 @@ Required repository secrets:
 | --- | --- | --- |
 | `GITHUB_TOKEN` | Created automatically by GitHub Actions; publishes release assets | Yes |
 | `HOMEBREW_TAP_TOKEN` | Personal access token with write access to `DouglasdeMoura/homebrew-tap` | No, but Homebrew updates are skipped without it |
+| `SCOOP_BUCKET_TOKEN` | Personal access token with write access to `DouglasdeMoura/scoop-bucket` | No, but Scoop updates fall back to `HOMEBREW_TAP_TOKEN` if it has access |
 
 When `go.mod` or `go.sum` changes, the flake's `vendorHash` may need an update.
 Run `nix build .#chroncal`; if Nix reports a fixed-output hash mismatch, copy
 the `got:` hash into `flake.nix`, then rerun the build.
 
-For each Scoop release, update `version` and `hash` in
-`packaging/scoop/chroncal.json`, copy the manifest into the Scoop bucket
-repository, and run `scoop install chroncal` from that bucket before announcing
-it.
+The release workflow updates the Homebrew tap and Scoop bucket after GoReleaser
+publishes assets. Keep `packaging/aur/` current when publishing AUR updates.
 
 Future package channel: `.deb` and `.rpm` assets can be added later with
 GoReleaser nFPM once the primary package manager channels are stable.
