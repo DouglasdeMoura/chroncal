@@ -72,8 +72,20 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check GoReleaser config
-        uses: goreleaser/goreleaser-action@v7
+      - uses: goreleaser/goreleaser-action@v7
         with:
           version: "~> v2"
-          args: check
+          install-only: true
+
+      # `goreleaser check` exits 1 for invalid config and 2 for valid config
+      # that uses deprecated properties. We use `brews` knowingly (its cask
+      # replacement is macOS-only and the tap also serves Linux), so tolerate
+      # exactly exit code 2.
+      - name: Check GoReleaser config
+        run: |
+          goreleaser check && exit 0
+          if [ $? -eq 2 ]; then
+            echo "::warning::goreleaser config uses deprecated properties (expected: brews; see .goreleaser.yml)"
+            exit 0
+          fi
+          exit 1

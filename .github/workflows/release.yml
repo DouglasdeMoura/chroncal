@@ -33,6 +33,10 @@ jobs:
             exit 1
           fi
 
+      # GoReleaser publishes everything: release assets, the Homebrew
+      # formula, the Scoop manifest, and both AUR packages. Each packaging
+      # token is optional — when one is unset, that channel skips itself in
+      # .goreleaser.yml and the rest of the release proceeds.
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
@@ -40,159 +44,9 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # SSH private key registered to the AUR maintainer account. When
-          # unset, the aurs/aur_sources sections disable themselves and the
-          # release proceeds without AUR publishing.
+          # SSH private key registered to the AUR maintainer account.
           AUR_KEY: ${{ secrets.AUR_KEY }}
-
-      - name: Update Homebrew tap
-        env:
+          # PATs with write access to the tap/bucket repos; Scoop falls back
+          # to the Homebrew token when no dedicated token is configured.
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        run: |
-          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
-            echo "::warning::Skipping Homebrew tap update — HOMEBREW_TAP_TOKEN is not configured"
-            exit 0
-          fi
-
-          VERSION="${GITHUB_REF_NAME#v}"
-          CHECKSUMS="dist/checksums.txt"
-
-          checksum() {
-            awk -v file="$1" '$2 == file { print $1 }' "$CHECKSUMS"
-          }
-
-          DARWIN_AMD64_SHA="$(checksum "chroncal_${VERSION}_darwin_amd64.tar.gz")"
-          DARWIN_ARM64_SHA="$(checksum "chroncal_${VERSION}_darwin_arm64.tar.gz")"
-          LINUX_AMD64_SHA="$(checksum "chroncal_${VERSION}_linux_amd64.tar.gz")"
-          LINUX_ARM64_SHA="$(checksum "chroncal_${VERSION}_linux_arm64.tar.gz")"
-
-          for value in DARWIN_AMD64_SHA DARWIN_ARM64_SHA LINUX_AMD64_SHA LINUX_ARM64_SHA; do
-            if [ -z "${!value}" ]; then
-              echo "::error::Missing checksum for $value in $CHECKSUMS"
-              exit 1
-            fi
-          done
-
-          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/DouglasdeMoura/homebrew-tap.git" tap
-          mkdir -p tap/Formula
-
-          cat > tap/Formula/chroncal.rb <<'FORMULA'
-          class Chroncal < Formula
-            desc "Terminal-first calendar, todo, and journal manager"
-            homepage "https://github.com/DouglasdeMoura/chroncal"
-            version "VERSION_PLACEHOLDER"
-            license "MIT"
-
-            on_macos do
-              on_intel do
-                url "https://github.com/DouglasdeMoura/chroncal/releases/download/v#{version}/chroncal_#{version}_darwin_amd64.tar.gz"
-                sha256 "DARWIN_AMD64_SHA_PLACEHOLDER"
-              end
-
-              on_arm do
-                url "https://github.com/DouglasdeMoura/chroncal/releases/download/v#{version}/chroncal_#{version}_darwin_arm64.tar.gz"
-                sha256 "DARWIN_ARM64_SHA_PLACEHOLDER"
-              end
-            end
-
-            on_linux do
-              on_intel do
-                url "https://github.com/DouglasdeMoura/chroncal/releases/download/v#{version}/chroncal_#{version}_linux_amd64.tar.gz"
-                sha256 "LINUX_AMD64_SHA_PLACEHOLDER"
-              end
-
-              on_arm do
-                url "https://github.com/DouglasdeMoura/chroncal/releases/download/v#{version}/chroncal_#{version}_linux_arm64.tar.gz"
-                sha256 "LINUX_ARM64_SHA_PLACEHOLDER"
-              end
-            end
-
-            def install
-              bin.install "chroncal"
-            end
-
-            test do
-              assert_match version.to_s, shell_output("#{bin}/chroncal --version")
-            end
-          end
-          FORMULA
-
-          sed -i "s/VERSION_PLACEHOLDER/${VERSION}/" tap/Formula/chroncal.rb
-          sed -i "s/DARWIN_AMD64_SHA_PLACEHOLDER/${DARWIN_AMD64_SHA}/" tap/Formula/chroncal.rb
-          sed -i "s/DARWIN_ARM64_SHA_PLACEHOLDER/${DARWIN_ARM64_SHA}/" tap/Formula/chroncal.rb
-          sed -i "s/LINUX_AMD64_SHA_PLACEHOLDER/${LINUX_AMD64_SHA}/" tap/Formula/chroncal.rb
-          sed -i "s/LINUX_ARM64_SHA_PLACEHOLDER/${LINUX_ARM64_SHA}/" tap/Formula/chroncal.rb
-
-          cd tap
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/chroncal.rb
-          git diff --cached --quiet && exit 0
-          git commit -m "chroncal ${VERSION}"
-          git push
-
-      - name: Update Scoop bucket
-        env:
-          SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
-          PACKAGE_REPOS_TOKEN: ${{ secrets.PACKAGE_REPOS_TOKEN }}
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        run: |
-          TOKEN="${SCOOP_BUCKET_TOKEN:-${PACKAGE_REPOS_TOKEN:-${HOMEBREW_TAP_TOKEN:-}}}"
-          if [ -z "$TOKEN" ]; then
-            echo "::warning::Skipping Scoop bucket update — SCOOP_BUCKET_TOKEN, PACKAGE_REPOS_TOKEN, or HOMEBREW_TAP_TOKEN is not configured"
-            exit 0
-          fi
-
-          VERSION="${GITHUB_REF_NAME#v}"
-          CHECKSUMS="dist/checksums.txt"
-
-          checksum() {
-            awk -v file="$1" '$2 == file { print $1 }' "$CHECKSUMS"
-          }
-
-          WINDOWS_AMD64_SHA="$(checksum "chroncal_${VERSION}_windows_amd64.zip")"
-
-          if [ -z "$WINDOWS_AMD64_SHA" ]; then
-            echo "::error::Missing Windows amd64 checksum in $CHECKSUMS"
-            exit 1
-          fi
-
-          git clone "https://x-access-token:${TOKEN}@github.com/DouglasdeMoura/scoop-bucket.git" scoop-bucket
-          mkdir -p scoop-bucket/bucket
-
-          cat > scoop-bucket/bucket/chroncal.json <<'MANIFEST'
-          {
-            "version": "VERSION_PLACEHOLDER",
-            "description": "Terminal-first calendar, todo, and journal manager",
-            "homepage": "https://github.com/DouglasdeMoura/chroncal",
-            "license": "MIT",
-            "architecture": {
-              "64bit": {
-                "url": "https://github.com/DouglasdeMoura/chroncal/releases/download/vVERSION_PLACEHOLDER/chroncal_VERSION_PLACEHOLDER_windows_amd64.zip",
-                "hash": "WINDOWS_AMD64_SHA_PLACEHOLDER"
-              }
-            },
-            "bin": "chroncal.exe",
-            "checkver": {
-              "github": "https://github.com/DouglasdeMoura/chroncal"
-            },
-            "autoupdate": {
-              "architecture": {
-                "64bit": {
-                  "url": "https://github.com/DouglasdeMoura/chroncal/releases/download/v$version/chroncal_$version_windows_amd64.zip"
-                }
-              }
-            }
-          }
-          MANIFEST
-
-          sed -i "s/VERSION_PLACEHOLDER/${VERSION}/g" scoop-bucket/bucket/chroncal.json
-          sed -i "s/WINDOWS_AMD64_SHA_PLACEHOLDER/${WINDOWS_AMD64_SHA}/" scoop-bucket/bucket/chroncal.json
-
-          cd scoop-bucket
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add bucket/chroncal.json
-          git diff --cached --quiet && exit 0
-          git commit -m "chroncal ${VERSION}"
-          git push
+          SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN || secrets.HOMEBREW_TAP_TOKEN }}

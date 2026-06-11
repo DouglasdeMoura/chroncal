@@ -56,10 +56,49 @@ source:
   name_template: "{{ .ProjectName }}-{{ .Version }}"
   prefix_template: "{{ .ProjectName }}-{{ .Version }}/"
 
-# Both AUR packages are generated and pushed on release. `disable` keys off
-# AUR_KEY so a missing secret skips AUR publishing with a warning instead of
-# failing the whole release — same graceful degradation as the Homebrew and
-# Scoop steps in release.yml.
+# All package channels below follow the same graceful degradation: each one
+# keys off its token env var and disables itself (or skips upload) when the
+# secret is absent, so a missing token never fails the whole release.
+
+# Deliberately on the deprecated formula publisher rather than
+# `homebrew_casks`: casks are macOS-only and this tap also serves Linux
+# users. Revisit if goreleaser v3 removes `brews`.
+brews:
+  - name: chroncal
+    repository:
+      owner: DouglasdeMoura
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/DouglasdeMoura/chroncal
+    description: Terminal-first calendar, todo, and journal manager
+    license: MIT
+    skip_upload: '{{ if index .Env "HOMEBREW_TAP_TOKEN" }}false{{ else }}true{{ end }}'
+    commit_msg_template: "chroncal {{ .Version }}"
+    commit_author:
+      name: github-actions[bot]
+      email: github-actions[bot]@users.noreply.github.com
+    install: |
+      bin.install "chroncal"
+    test: |
+      assert_match version.to_s, shell_output("#{bin}/chroncal --version")
+
+scoops:
+  - name: chroncal
+    repository:
+      owner: DouglasdeMoura
+      name: scoop-bucket
+      token: "{{ .Env.SCOOP_BUCKET_TOKEN }}"
+    directory: bucket
+    homepage: https://github.com/DouglasdeMoura/chroncal
+    description: Terminal-first calendar, todo, and journal manager
+    license: MIT
+    skip_upload: '{{ if index .Env "SCOOP_BUCKET_TOKEN" }}false{{ else }}true{{ end }}'
+    commit_msg_template: "chroncal {{ .Version }}"
+    commit_author:
+      name: github-actions[bot]
+      email: github-actions[bot]@users.noreply.github.com
+
 aurs:
   - name: chroncal-bin
     homepage: https://github.com/DouglasdeMoura/chroncal
@@ -124,6 +163,15 @@ release:
 
     # mise
     mise use -g github:DouglasdeMoura/chroncal@{{ .Version }}
+
+    # Arch Linux (AUR)
+    yay -S chroncal-bin
+
+    # Nix
+    nix run github:DouglasdeMoura/chroncal
+
+    # Windows (Scoop, in PowerShell)
+    scoop bucket add chroncal https://github.com/DouglasdeMoura/scoop-bucket; scoop install chroncal
     ```
 
     Download prebuilt archives and `checksums.txt` from the assets below.
