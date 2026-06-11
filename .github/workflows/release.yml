@@ -114,3 +114,69 @@ jobs:
           git diff --cached --quiet && exit 0
           git commit -m "chroncal ${VERSION}"
           git push
+
+      - name: Update Scoop bucket
+        env:
+          SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+          PACKAGE_REPOS_TOKEN: ${{ secrets.PACKAGE_REPOS_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          TOKEN="${SCOOP_BUCKET_TOKEN:-${PACKAGE_REPOS_TOKEN:-${HOMEBREW_TAP_TOKEN:-}}}"
+          if [ -z "$TOKEN" ]; then
+            echo "::warning::Skipping Scoop bucket update — SCOOP_BUCKET_TOKEN, PACKAGE_REPOS_TOKEN, or HOMEBREW_TAP_TOKEN is not configured"
+            exit 0
+          fi
+
+          VERSION="${GITHUB_REF_NAME#v}"
+          CHECKSUMS="dist/checksums.txt"
+
+          checksum() {
+            awk -v file="$1" '$2 == file { print $1 }' "$CHECKSUMS"
+          }
+
+          WINDOWS_AMD64_SHA="$(checksum "chroncal_${VERSION}_windows_amd64.zip")"
+
+          if [ -z "$WINDOWS_AMD64_SHA" ]; then
+            echo "::error::Missing Windows amd64 checksum in $CHECKSUMS"
+            exit 1
+          fi
+
+          git clone "https://x-access-token:${TOKEN}@github.com/DouglasdeMoura/scoop-bucket.git" scoop-bucket
+          mkdir -p scoop-bucket/bucket
+
+          cat > scoop-bucket/bucket/chroncal.json <<'MANIFEST'
+          {
+            "version": "VERSION_PLACEHOLDER",
+            "description": "Terminal-first calendar, todo, and journal manager",
+            "homepage": "https://github.com/DouglasdeMoura/chroncal",
+            "license": "MIT",
+            "architecture": {
+              "64bit": {
+                "url": "https://github.com/DouglasdeMoura/chroncal/releases/download/vVERSION_PLACEHOLDER/chroncal_VERSION_PLACEHOLDER_windows_amd64.zip",
+                "hash": "WINDOWS_AMD64_SHA_PLACEHOLDER"
+              }
+            },
+            "bin": "chroncal.exe",
+            "checkver": {
+              "github": "https://github.com/DouglasdeMoura/chroncal"
+            },
+            "autoupdate": {
+              "architecture": {
+                "64bit": {
+                  "url": "https://github.com/DouglasdeMoura/chroncal/releases/download/v$version/chroncal_$version_windows_amd64.zip"
+                }
+              }
+            }
+          }
+          MANIFEST
+
+          sed -i "s/VERSION_PLACEHOLDER/${VERSION}/g" scoop-bucket/bucket/chroncal.json
+          sed -i "s/WINDOWS_AMD64_SHA_PLACEHOLDER/${WINDOWS_AMD64_SHA}/" scoop-bucket/bucket/chroncal.json
+
+          cd scoop-bucket
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add bucket/chroncal.json
+          git diff --cached --quiet && exit 0
+          git commit -m "chroncal ${VERSION}"
+          git push
