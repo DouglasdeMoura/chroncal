@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
 )
 
@@ -62,6 +63,32 @@ func TestCalendarDialog_OAuthLayoutFitsSmallTerminal(t *testing.T) {
 	}
 	if !strings.Contains(out, "more") {
 		t.Fatalf("scroll hint should render when body overflows, got %q", out)
+	}
+}
+
+func TestCalendarDialog_MouseWheelScrollSurvivesRender(t *testing.T) {
+	m := oauthDialogFixture(t, "oauth2").SetSize(120, 15)
+	if !m.bodyOverflows() {
+		t.Fatal("test precondition: calendar form body should overflow")
+	}
+
+	for range 30 {
+		var cmd tea.Cmd
+		m, cmd = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+		if cmd != nil {
+			t.Fatalf("mouse wheel returned unexpected command %T", cmd)
+		}
+	}
+	if !m.body.AtBottom() {
+		t.Fatal("mouse wheel should scroll the body to the bottom")
+	}
+
+	out := m.View()
+	if !strings.Contains(out, "Client secret") {
+		t.Fatalf("rendering must preserve the wheel-scrolled viewport, got %q", out)
+	}
+	if !strings.Contains(out, "↑ more") {
+		t.Fatalf("bottom scroll hint should render after wheel scrolling, got %q", out)
 	}
 }
 

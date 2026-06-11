@@ -786,7 +786,7 @@ func (m EventFormModel) SetSize(w, h int) EventFormModel {
 	m.height = h
 	m.dialog = m.dialog.Update(tea.WindowSizeMsg{Width: w, Height: h})
 	m.form.SetWidth(m.dialog.ContentWidth())
-	m.syncBodyViewport()
+	m.syncBodyViewport(true)
 	return m
 }
 
@@ -799,7 +799,7 @@ func (m EventFormModel) formViewportHeight() int {
 	return max(m.height-chromeLines-actionLines, 1)
 }
 
-func (m *EventFormModel) syncBodyViewport() {
+func (m *EventFormModel) syncBodyViewport(keepFocusVisible bool) {
 	if m.width <= 0 || m.height <= 0 {
 		return
 	}
@@ -811,7 +811,9 @@ func (m *EventFormModel) syncBodyViewport() {
 	m.body.SetWidth(cw)
 	m.body.SetHeight(min(len(bodyLines), m.formViewportHeight()))
 	m.body.SetContentLines(bodyLines)
-	m.keepFocusedFieldVisible()
+	if keepFocusVisible {
+		m.keepFocusedFieldVisible()
+	}
 }
 
 func (m *EventFormModel) keepFocusedFieldVisible() {
@@ -938,14 +940,14 @@ func (m EventFormModel) Update(msg tea.Msg) (EventFormModel, tea.Cmd) {
 	}
 	if mw, ok := msg.(tea.MouseWheelMsg); ok {
 		var cmd tea.Cmd
-		m.syncBodyViewport()
+		m.syncBodyViewport(false)
 		m.body, cmd = m.body.Update(mw)
 		return m, cmd
 	}
 
 	var cmd tea.Cmd
 	m.form, cmd = m.form.Update(msg)
-	m.syncBodyViewport()
+	m.syncBodyViewport(true)
 	return m, cmd
 }
 
@@ -1530,7 +1532,7 @@ func (m EventFormModel) View() string {
 		m.keys.Close,
 	}
 	m.dialog.SetFooter(m.help.ShortHelpView(helpKeys))
-	m.syncBodyViewport()
+	m.syncBodyViewport(false)
 	cw := m.dialog.ContentWidth()
 	body := strings.Join([]string{
 		m.body.View(),

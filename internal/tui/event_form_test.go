@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/stretchr/testify/assert"
@@ -252,6 +253,29 @@ func TestEventForm_EditDialogFitsSmallTerminal(t *testing.T) {
 	assert.Contains(t, out, "Save")
 	assert.Contains(t, out, "Cancel")
 	assert.Contains(t, out, "more")
+}
+
+func TestEventForm_MouseWheelScrollSurvivesRender(t *testing.T) {
+	m, _ := NewEventFormModelForEdit(event.Event{
+		ID:         42,
+		Title:      "Very detailed planning session",
+		StartTime:  time.Date(2026, 4, 22, 14, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 22, 15, 0, 0, 0, time.UTC),
+		CalendarID: 1,
+	}, testEventFormCalendars(), Theme{})
+	m = m.SetSize(120, 15)
+	require.True(t, m.bodyOverflows(), "test precondition: form body should overflow")
+
+	for range 30 {
+		var cmd tea.Cmd
+		m, cmd = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+		require.Nil(t, cmd)
+	}
+	require.True(t, m.body.AtBottom(), "mouse wheel should scroll the body to the bottom")
+
+	out := m.View()
+	assert.Contains(t, out, "Alarms", "rendering must preserve the wheel-scrolled viewport")
+	assert.Contains(t, out, "↑ more")
 }
 
 func TestEventForm_SaveIncludesShowAsAndVisibility(t *testing.T) {
