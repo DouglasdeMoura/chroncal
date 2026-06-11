@@ -53,6 +53,9 @@ release:
     ## Install
 
     ```bash
+    # Prebuilt binary installer (Linux / macOS / BSD)
+    curl -fsSL https://raw.githubusercontent.com/DouglasdeMoura/chroncal/master/scripts/install.sh | sh
+
     # macOS / Linux (Homebrew)
     brew tap douglasdemoura/tap && brew install chroncal
 

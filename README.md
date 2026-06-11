@@ -29,11 +29,65 @@ Built for people who live in the terminal and want their calendar data local, po
 
 ## Installation
 
+| Method | Platforms | Best for |
+| --- | --- | --- |
+| Install script | Linux, macOS, FreeBSD, OpenBSD | Prebuilt binary users who want one command |
+| Homebrew | macOS, Linux | Managed installs and upgrades |
+| Go install | Any platform with Go 1.25+ | Go users and contributors |
+| mise | macOS, Linux | Users who already manage tools with mise |
+| Nix | Linux, macOS | `nix run` and profile installs |
+| Scoop | Windows | Managed Windows installs |
+| GitHub Releases | Linux, macOS, Windows, FreeBSD, OpenBSD | Manual binary downloads |
+| Build from source | Any platform with Go 1.25+ | Contributors and packagers |
+
+### Install script (Linux / macOS / BSD)
+
+No Go toolchain required. The installer detects your OS and architecture,
+downloads the latest release archive, verifies it against `checksums.txt`, and
+installs `chroncal` to `/usr/local/bin` when possible. If `sudo` is unavailable,
+it falls back to `~/.local/bin`.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/DouglasdeMoura/chroncal/master/scripts/install.sh | sh
+```
+
+Pin an exact version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/DouglasdeMoura/chroncal/master/scripts/install.sh | env VERSION=v0.2.2 sh
+```
+
+Install somewhere else:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/DouglasdeMoura/chroncal/master/scripts/install.sh | env INSTALL_DIR="$HOME/.local/bin" sh
+```
+
+If your environment cannot run checksum tools, you can opt out with
+`VERIFY_CHECKSUM=0`, but checksum verification is recommended.
+
 ### Homebrew (macOS / Linux)
 
 ```bash
 brew tap douglasdemoura/tap && brew install chroncal
 ```
+
+Upgrade:
+
+```bash
+brew update && brew upgrade chroncal
+```
+
+Uninstall:
+
+```bash
+brew uninstall chroncal
+```
+
+The release workflow updates `DouglasdeMoura/homebrew-tap` automatically when
+the maintainer configures the `HOMEBREW_TAP_TOKEN` repository secret. If
+Homebrew is temporarily unavailable for a new release, use the install script,
+GitHub Releases, or `go install`.
 
 ### Go install
 
@@ -43,44 +97,91 @@ Requires [Go](https://go.dev/) 1.25+.
 go install github.com/douglasdemoura/chroncal/cmd/chroncal@latest
 ```
 
+Pin an exact release:
+
+```bash
+go install github.com/douglasdemoura/chroncal/cmd/chroncal@v0.2.2
+```
+
+The binary is usually installed to `$(go env GOPATH)/bin/chroncal`. Make sure
+that directory is on your `PATH`.
+
 ### mise
+
+Install the latest GitHub release globally:
 
 ```bash
 mise use -g github:DouglasdeMoura/chroncal
 ```
 
+Pin an exact release globally:
+
+```bash
+mise use -g github:DouglasdeMoura/chroncal@0.2.2
+```
+
+If a just-published release does not appear yet, clear mise's GitHub release
+cache first:
+
+```bash
+mise cache clear
+mise ls-remote github:DouglasdeMoura/chroncal
+```
+
 ### Nix
+
+Run without installing:
 
 ```bash
 nix run github:DouglasdeMoura/chroncal
 ```
 
+Install to your profile:
+
+```bash
+nix profile install github:DouglasdeMoura/chroncal
+```
+
+Build the package from a clone:
+
+```bash
+nix build .#chroncal
+```
+
+The flake exposes `packages.default`, `packages.chroncal`, `apps.default`, and a
+developer shell with Go, GoReleaser, golangci-lint, govulncheck, and sqlc.
+
 ### Scoop (Windows)
+
+After the Scoop bucket is published, Windows users can install with:
 
 ```powershell
 scoop bucket add chroncal https://github.com/DouglasdeMoura/scoop-bucket
 scoop install chroncal
 ```
 
+Upgrade:
+
+```powershell
+scoop update chroncal
+```
+
+The manifest template lives at `packaging/scoop/chroncal.json`. Copy it into the
+bucket repository when publishing or updating the package.
+
 ### GitHub Releases
 
-No Go toolchain required. Grab the archive for your platform from the
-[latest release](https://github.com/DouglasdeMoura/chroncal/releases/latest)
-— builds are published for Linux, macOS, Windows, FreeBSD, and OpenBSD across
+Download the archive for your platform from the
+[latest release](https://github.com/DouglasdeMoura/chroncal/releases/latest).
+Builds are published for Linux, macOS, Windows, FreeBSD, and OpenBSD across
 amd64, arm64, and several other architectures.
 
 ```bash
-# Set VERSION to the current release (see the releases page above), and
-# PLATFORM to your OS/arch — e.g. linux_amd64, darwin_arm64, linux_arm64.
-VERSION=<current-version>
+VERSION=0.2.2
 PLATFORM=linux_amd64
 curl -LO "https://github.com/DouglasdeMoura/chroncal/releases/download/v${VERSION}/chroncal_${VERSION}_${PLATFORM}.tar.gz"
-
-# Verify the download against the published checksums (optional but recommended).
 curl -LO "https://github.com/DouglasdeMoura/chroncal/releases/download/v${VERSION}/checksums.txt"
 sha256sum --ignore-missing -c checksums.txt
-
-# Extract and move onto your PATH.
 tar -xzf "chroncal_${VERSION}_${PLATFORM}.tar.gz"
 sudo install chroncal /usr/local/bin/
 ```
@@ -88,17 +189,66 @@ sudo install chroncal /usr/local/bin/
 On Windows, download the `..._windows_amd64.zip` asset, extract it, and put
 `chroncal.exe` somewhere on your `PATH`.
 
+### Arch Linux AUR
+
+The repository includes package templates for two AUR packages:
+
+```bash
+yay -S chroncal-bin  # prebuilt Linux binary from GitHub Releases
+yay -S chroncal      # builds from source with your local Go toolchain
+```
+
+`chroncal-bin` is fastest for x86_64 and aarch64 users. `chroncal` is the right
+choice when you want to build locally or use another Arch-supported CPU target.
+See `packaging/aur/README.md` for maintainer instructions.
+
 ### Build from source
 
 ```bash
 git clone https://github.com/DouglasdeMoura/chroncal.git
 cd chroncal
 make build
-./chroncal
+./chroncal version
 ```
 
-See [Installation](docs/installation.md) for upgrades, checksum verification,
-package manager status, and contributor notes for maintaining install channels.
+Run the test suite before sending changes:
+
+```bash
+go test ./...
+```
+
+### Maintainer checklist
+
+Before cutting a release:
+
+1. Make sure CI is green on `master`.
+2. Run `goreleaser check` locally if GoReleaser is installed.
+3. Create a `v*` tag and push it.
+4. Confirm the GitHub Release includes archives, `checksums.txt`, and install snippets.
+5. Confirm the install script works for the new tag.
+6. Confirm `brew tap douglasdemoura/tap && brew install chroncal` works after the Homebrew tap update.
+7. Confirm `go install github.com/douglasdemoura/chroncal/cmd/chroncal@<tag>` works.
+8. Confirm `mise use -g github:DouglasdeMoura/chroncal@<version>` resolves the release.
+9. Confirm `nix build .#chroncal` passes if `go.mod` or `go.sum` changed.
+
+Required repository secrets:
+
+| Secret | Purpose | Required |
+| --- | --- | --- |
+| `GITHUB_TOKEN` | Created automatically by GitHub Actions; publishes release assets | Yes |
+| `HOMEBREW_TAP_TOKEN` | Personal access token with write access to `DouglasdeMoura/homebrew-tap` | No, but Homebrew updates are skipped without it |
+
+When `go.mod` or `go.sum` changes, the flake's `vendorHash` may need an update.
+Run `nix build .#chroncal`; if Nix reports a fixed-output hash mismatch, copy
+the `got:` hash into `flake.nix`, then rerun the build.
+
+For each Scoop release, update `version` and `hash` in
+`packaging/scoop/chroncal.json`, copy the manifest into the Scoop bucket
+repository, and run `scoop install chroncal` from that bucket before announcing
+it.
+
+Future package channel: `.deb` and `.rpm` assets can be added later with
+GoReleaser nFPM once the primary package manager channels are stable.
 
 ## Quick start
 
