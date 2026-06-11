@@ -1806,7 +1806,7 @@ func (f Form) Update(msg tea.Msg) (Form, tea.Cmd) {
 	return f, nil
 }
 
-func (f Form) View() string {
+func (f Form) fieldParts() []string {
 	var parts []string
 
 	// Compute the widest label among inline items so all inline labels
@@ -1885,6 +1885,10 @@ func (f Form) View() string {
 		}
 	}
 
+	return parts
+}
+
+func (f Form) buttonRow() string {
 	bs := f.styles.Buttons
 	leadParts := make([]string, 0, len(f.actionButtons))
 	rightParts := make([]string, 0, len(f.actionButtons)+2)
@@ -1907,10 +1911,7 @@ func (f Form) View() string {
 	// Use the form's width (typically set from Dialog.ContentWidth()) so
 	// buttons align relative to the container, not the field rows. Fall
 	// back to the natural content width when no explicit width is set.
-	alignWidth := f.width
-	if alignWidth <= 0 {
-		alignWidth = lipgloss.Width(lipgloss.JoinVertical(lipgloss.Left, parts...))
-	}
+	alignWidth := f.buttonAlignWidth()
 
 	var buttons string
 	if len(leadParts) > 0 {
@@ -1948,16 +1949,67 @@ func (f Form) View() string {
 		}
 	}
 
+	return buttons
+}
+
+func (f Form) buttonAlignWidth() int {
+	alignWidth := f.width
+	if alignWidth <= 0 {
+		alignWidth = lipgloss.Width(lipgloss.JoinVertical(lipgloss.Left, f.fieldParts()...))
+	}
+	return alignWidth
+}
+
+func (f Form) buttonParts() []string {
+	buttons := f.buttonRow()
 	if f.styles.ButtonRule {
-		ruleWidth := alignWidth
+		ruleWidth := f.buttonAlignWidth()
 		if ruleWidth <= 0 {
 			ruleWidth = lipgloss.Width(buttons)
 		}
 		rule := strings.Repeat(Glyphs["separator.horizontal"], ruleWidth)
-		parts = append(parts, "", lipgloss.NewStyle().Faint(true).Render(rule), buttons)
-	} else {
-		parts = append(parts, "", buttons)
+		return []string{lipgloss.NewStyle().Faint(true).Render(rule), buttons}
 	}
+	return []string{buttons}
+}
+
+// BodyView renders only the form fields, excluding the bottom action row.
+// Dialogs with constrained height can put this body in a viewport while
+// keeping Save/Cancel pinned below it.
+func (f Form) BodyView() string {
+	return lipgloss.JoinVertical(lipgloss.Left, f.fieldParts()...)
+}
+
+// ActionsView renders the form action separator and buttons without the
+// leading blank line used by the full form view.
+func (f Form) ActionsView() string {
+	return lipgloss.JoinVertical(lipgloss.Left, f.buttonParts()...)
+}
+
+// ButtonRowView renders only the form buttons. Scrollable dialogs use this
+// with their own separator so they can include scroll state in the rule.
+func (f Form) ButtonRowView() string {
+	return f.buttonRow()
+}
+
+// FocusedLine returns the first rendered body line for the focused item.
+// It is used by scrollable dialogs to keep the active field visible.
+func (f Form) FocusedLine() int {
+	parts := f.fieldParts()
+	line := 0
+	for i, part := range parts {
+		if i == f.focused {
+			return line
+		}
+		line += max(lipgloss.Height(part), 1)
+	}
+	return 0
+}
+
+func (f Form) View() string {
+	parts := f.fieldParts()
+	parts = append(parts, "")
+	parts = append(parts, f.buttonParts()...)
 
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }

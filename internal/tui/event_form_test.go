@@ -230,6 +230,30 @@ func TestEventForm_EditModeRetainsEditID(t *testing.T) {
 	require.True(t, ok, "OnSubmit must emit eventFormSubmitNowMsg")
 }
 
+func TestEventForm_EditDialogFitsSmallTerminal(t *testing.T) {
+	m, _ := NewEventFormModelForEdit(event.Event{
+		ID:          42,
+		Title:       "Very detailed planning session",
+		Description: strings.Repeat("Long notes that make the form tall.\n", 30),
+		StartTime:   time.Date(2026, 4, 22, 14, 0, 0, 0, time.UTC),
+		EndTime:     time.Date(2026, 4, 22, 15, 0, 0, 0, time.UTC),
+		CalendarID:  1,
+		Categories:  "planning, review",
+	}, testEventFormCalendars(), Theme{})
+	const termH = 15
+	m = m.SetSize(120, termH)
+
+	_, bh := m.BoxSize()
+	require.LessOrEqual(t, bh, termH, "rendered edit form must fit inside the terminal")
+	require.True(t, m.bodyOverflows(), "test precondition: form body should overflow")
+
+	out := m.View()
+	assert.Contains(t, out, "Edit Event")
+	assert.Contains(t, out, "Save")
+	assert.Contains(t, out, "Cancel")
+	assert.Contains(t, out, "more")
+}
+
 func TestEventForm_SaveIncludesShowAsAndVisibility(t *testing.T) {
 	m, _ := NewEventFormModel(time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC), testEventFormCalendars(), Theme{})
 	m.titleField.SetValue("Planning")

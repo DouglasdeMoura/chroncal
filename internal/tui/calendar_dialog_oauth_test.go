@@ -46,6 +46,25 @@ func TestCalendarDialog_OAuthLayoutSwapsRows(t *testing.T) {
 	}
 }
 
+func TestCalendarDialog_OAuthLayoutFitsSmallTerminal(t *testing.T) {
+	m := oauthDialogFixture(t, "oauth2").SetSize(120, 15)
+
+	_, bh := lipgloss.Size(m.View())
+	if bh > 15 {
+		t.Fatalf("rendered calendar dialog height = %d, want <= 15", bh)
+	}
+	if !m.bodyOverflows() {
+		t.Fatal("test precondition: calendar form body should overflow")
+	}
+	out := m.View()
+	if !strings.Contains(out, "New calendar") || !strings.Contains(out, "Save") || !strings.Contains(out, "Cancel") {
+		t.Fatalf("title and actions should stay visible in small terminal, got %q", out)
+	}
+	if !strings.Contains(out, "more") {
+		t.Fatalf("scroll hint should render when body overflows, got %q", out)
+	}
+}
+
 func TestCalendarDialog_OAuthLayoutSwitchPreservesValues(t *testing.T) {
 	m := oauthDialogFixture(t, "basic")
 	rebuild := func() {
