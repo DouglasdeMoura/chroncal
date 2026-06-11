@@ -7,6 +7,7 @@ import (
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
 )
@@ -200,6 +201,7 @@ type CalendarDialogModel struct {
 	linked       bool
 	dialog       Dialog
 	form         Form
+	body         viewport.Model
 	help         help.Model
 	testStatus   string
 	theme        Theme
@@ -419,6 +421,7 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		linked:          params.RemoteLinked,
 		dialog:          dialog,
 		form:            form,
+		body:            viewport.New(),
 		help:            newThemedHelp(theme),
 		theme:           theme,
 		accentColor:     theme.Selected,
@@ -427,6 +430,7 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		saveMakeDefault: saveMakeDefault,
 		contentWidth:    contentWidth,
 	}
+	m.body.MouseWheelEnabled = true
 
 	// Edit mode, not yet default: surface "Set as Default" so the user
 	// can reach the action without backing out into the manage-calendars
@@ -864,7 +868,78 @@ func (m CalendarDialogModel) SetSize(w, h int) CalendarDialogModel {
 	if m.contentWidth != nil {
 		*m.contentWidth = m.dialog.ContentWidth()
 	}
+	m.syncBodyViewport()
 	return m
+}
+
+func (m CalendarDialogModel) formViewportHeight() int {
+	const chromeLines = 2 + // top + bottom border
+		1 + // top padding (PaddingY)
+		2 + // dialog title + blank line
+		2 // blank line + help footer
+	extra := 0
+	if m.testStatus != "" {
+		extra = 1
+	}
+	actionLines := 1 + max(lipgloss.Height(m.form.ButtonRowView()), 1) // separator + buttons
+	return max(m.dialog.height-chromeLines-actionLines-extra, 1)
+}
+
+func (m *CalendarDialogModel) syncBodyViewport() {
+	cw := m.dialog.ContentWidth()
+	if cw <= 0 || m.dialog.height <= 0 {
+		return
+	}
+	bodyLines := strings.Split(m.form.BodyView(), "\n")
+	m.body.SetWidth(cw)
+	m.body.SetHeight(min(len(bodyLines), m.formViewportHeight()))
+	m.body.SetContentLines(bodyLines)
+	m.keepFocusedFieldVisible()
+}
+
+func (m *CalendarDialogModel) keepFocusedFieldVisible() {
+	if m.body.Height() <= 0 {
+		return
+	}
+	line := m.form.FocusedLine()
+	if line < m.body.YOffset() {
+		m.body.ScrollUp(m.body.YOffset() - line)
+		return
+	}
+	bottom := m.body.YOffset() + m.body.Height() - 1
+	if line > bottom {
+		m.body.ScrollDown(line - bottom)
+	}
+}
+
+func (m CalendarDialogModel) bodyOverflows() bool {
+	return m.body.TotalLineCount() > m.body.VisibleLineCount()
+}
+
+func (m CalendarDialogModel) scrollHint() string {
+	if !m.bodyOverflows() {
+		return ""
+	}
+	switch {
+	case m.body.AtTop():
+		return "↓ more"
+	case m.body.AtBottom():
+		return "↑ more"
+	default:
+		return "↑↓ more"
+	}
+}
+
+func (m CalendarDialogModel) actionsSeparator(w int) string {
+	faint := lipgloss.NewStyle().Faint(true)
+	hint := m.scrollHint()
+	hw := lipgloss.Width(hint)
+	if hint == "" || w <= hw+2 {
+		return faint.Render(strings.Repeat("─", w))
+	}
+	left := (w - hw - 2) / 2
+	right := w - hw - 2 - left
+	return faint.Render(strings.Repeat("─", left)) + " " + faint.Render(hint) + " " + faint.Render(strings.Repeat("─", right))
 }
 
 func (m CalendarDialogModel) BoxSize() (int, int) {
@@ -877,7 +952,9 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 	}
 
 	if _, ok := msg.(testConnectionPressedMsg); ok {
-		return m.handleTestPressed()
+		m, cmd := m.handleTestPressed()
+		m.syncBodyViewport()
+		return m, cmd
 	}
 
 	if _, ok := msg.(calendarSavePromotePressedMsg); ok {
@@ -897,6 +974,7 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 			m.testStatus = lipgloss.NewStyle().Foreground(m.theme.Error).
 				Render("✗ " + tr.Message)
 		}
+		m.syncBodyViewport()
 		return m, nil
 	}
 
@@ -923,9 +1001,16 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 		}
 		return m, nil
 	}
+	if mw, ok := msg.(tea.MouseWheelMsg); ok {
+		var cmd tea.Cmd
+		m.syncBodyViewport()
+		m.body, cmd = m.body.Update(mw)
+		return m, cmd
+	}
 
 	var cmd tea.Cmd
 	m.form, cmd = m.form.Update(msg)
+	m.syncBodyViewport()
 	return m, cmd
 }
 
@@ -936,10 +1021,14 @@ func (m CalendarDialogModel) View() string {
 		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 	}
 	m.dialog.SetFooter(m.help.ShortHelpView(helpKeys))
-	body := m.form.View()
+	m.syncBodyViewport()
+	cw := m.dialog.ContentWidth()
+	parts := []string{m.body.View()}
 	if m.testStatus != "" {
-		body += "\n" + m.testStatus
+		parts = append(parts, truncateTo(m.testStatus, cw))
 	}
+	parts = append(parts, m.actionsSeparator(cw), m.form.ButtonRowView())
+	body := strings.Join(parts, "\n")
 	content := mouseSweep(m.dialog.Box(body))
 	return content
 }

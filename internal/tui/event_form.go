@@ -8,6 +8,7 @@ import (
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
 
@@ -181,6 +182,7 @@ type EventFormModel struct {
 	// Dialog + Form
 	dialog Dialog
 	form   Form
+	body   viewport.Model
 	// fieldKeys maps form item index → field key for OnFieldEnter
 	fieldKeys []string
 
@@ -574,6 +576,8 @@ func (m *EventFormModel) buildDialogAndForm() {
 	m.form.OnRebuild(func(f *Form) {
 		m.syncFromForm()
 	})
+	m.body = viewport.New()
+	m.body.MouseWheelEnabled = true
 }
 
 func (m *EventFormModel) rebuildDialog() {
@@ -782,7 +786,77 @@ func (m EventFormModel) SetSize(w, h int) EventFormModel {
 	m.height = h
 	m.dialog = m.dialog.Update(tea.WindowSizeMsg{Width: w, Height: h})
 	m.form.SetWidth(m.dialog.ContentWidth())
+	m.syncBodyViewport()
 	return m
+}
+
+func (m EventFormModel) formViewportHeight() int {
+	const chromeLines = 2 + // top + bottom border
+		1 + // top padding (PaddingY)
+		2 + // dialog title + blank line
+		2 // blank line + help footer
+	actionLines := 1 + max(lipgloss.Height(m.form.ButtonRowView()), 1) // separator + buttons
+	return max(m.height-chromeLines-actionLines, 1)
+}
+
+func (m *EventFormModel) syncBodyViewport() {
+	if m.width <= 0 || m.height <= 0 {
+		return
+	}
+	cw := m.dialog.ContentWidth()
+	if cw <= 0 {
+		return
+	}
+	bodyLines := strings.Split(m.form.BodyView(), "\n")
+	m.body.SetWidth(cw)
+	m.body.SetHeight(min(len(bodyLines), m.formViewportHeight()))
+	m.body.SetContentLines(bodyLines)
+	m.keepFocusedFieldVisible()
+}
+
+func (m *EventFormModel) keepFocusedFieldVisible() {
+	if m.body.Height() <= 0 {
+		return
+	}
+	line := m.form.FocusedLine()
+	if line < m.body.YOffset() {
+		m.body.ScrollUp(m.body.YOffset() - line)
+		return
+	}
+	bottom := m.body.YOffset() + m.body.Height() - 1
+	if line > bottom {
+		m.body.ScrollDown(line - bottom)
+	}
+}
+
+func (m EventFormModel) bodyOverflows() bool {
+	return m.body.TotalLineCount() > m.body.VisibleLineCount()
+}
+
+func (m EventFormModel) scrollHint() string {
+	if !m.bodyOverflows() {
+		return ""
+	}
+	switch {
+	case m.body.AtTop():
+		return "↓ more"
+	case m.body.AtBottom():
+		return "↑ more"
+	default:
+		return "↑↓ more"
+	}
+}
+
+func (m EventFormModel) actionsSeparator(w int) string {
+	faint := lipgloss.NewStyle().Faint(true)
+	hint := m.scrollHint()
+	hw := lipgloss.Width(hint)
+	if hint == "" || w <= hw+2 {
+		return faint.Render(strings.Repeat("─", w))
+	}
+	left := (w - hw - 2) / 2
+	right := w - hw - 2 - left
+	return faint.Render(strings.Repeat("─", left)) + " " + faint.Render(hint) + " " + faint.Render(strings.Repeat("─", right))
 }
 
 // BoxSize returns the outer dimensions of the form dialog.
@@ -862,9 +936,16 @@ func (m EventFormModel) Update(msg tea.Msg) (EventFormModel, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if mw, ok := msg.(tea.MouseWheelMsg); ok {
+		var cmd tea.Cmd
+		m.syncBodyViewport()
+		m.body, cmd = m.body.Update(mw)
+		return m, cmd
+	}
 
 	var cmd tea.Cmd
 	m.form, cmd = m.form.Update(msg)
+	m.syncBodyViewport()
 	return m, cmd
 }
 
@@ -1449,7 +1530,14 @@ func (m EventFormModel) View() string {
 		m.keys.Close,
 	}
 	m.dialog.SetFooter(m.help.ShortHelpView(helpKeys))
-	content := mouseSweep(m.dialog.Box(m.form.View()))
+	m.syncBodyViewport()
+	cw := m.dialog.ContentWidth()
+	body := strings.Join([]string{
+		m.body.View(),
+		m.actionsSeparator(cw),
+		m.form.ButtonRowView(),
+	}, "\n")
+	content := mouseSweep(m.dialog.Box(body))
 	return content
 }
 
