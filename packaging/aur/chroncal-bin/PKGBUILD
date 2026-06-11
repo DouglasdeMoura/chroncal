@@ -1,0 +1,23 @@
+# Maintainer: Douglas de Moura <douglas@demoura.dev>
+
+pkgname=chroncal-bin
+_pkgname=chroncal
+pkgver=0.2.2
+pkgrel=1
+pkgdesc='Terminal-first calendar, todo, and journal manager'
+arch=('x86_64' 'aarch64')
+url='https://github.com/DouglasdeMoura/chroncal'
+license=('MIT')
+provides=('chroncal')
+conflicts=('chroncal')
+source=("LICENSE::${url}/raw/v${pkgver}/LICENSE")
+source_x86_64=("${_pkgname}-${pkgver}-linux-amd64.tar.gz::${url}/releases/download/v${pkgver}/${_pkgname}_${pkgver}_linux_amd64.tar.gz")
+source_aarch64=("${_pkgname}-${pkgver}-linux-arm64.tar.gz::${url}/releases/download/v${pkgver}/${_pkgname}_${pkgver}_linux_arm64.tar.gz")
+sha256sums=('2e78ee45f8646d82acb7951979d4dbe02f90221d6a8e13f74604aef40932a366')
+sha256sums_x86_64=('7ed61cde3c7c7c07f45f7dd4c3e7b75fbd38b2877d926dd538ff758ea2f86154')
+sha256sums_aarch64=('f1d1a00a05ff49e63da80a28d0458094f24412cd1b8679d31926b8256f5d2cf5')
+
+package() {
+  install -Dm755 chroncal "${pkgdir}/usr/bin/chroncal"
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

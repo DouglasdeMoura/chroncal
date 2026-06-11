@@ -48,6 +48,23 @@ archives:
 checksum:
   name_template: checksums.txt
 
+release:
+  header: |
+    ## Install
+
+    ```bash
+    # macOS / Linux (Homebrew)
+    brew tap douglasdemoura/tap && brew install chroncal
+
+    # Go toolchain
+    go install github.com/douglasdemoura/chroncal/cmd/chroncal@{{ .Tag }}
+
+    # mise
+    mise use -g github:DouglasdeMoura/chroncal@{{ .Version }}
+    ```
+
+    Download prebuilt archives and `checksums.txt` from the assets below.
+
 changelog:
   sort: asc
   # Drop non-user-facing commits. Patterns are unanchored to the scope so

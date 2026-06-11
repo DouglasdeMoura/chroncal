@@ -29,7 +29,27 @@ Built for people who live in the terminal and want their calendar data local, po
 
 ## Installation
 
-### Prebuilt binary
+### Homebrew (macOS / Linux)
+
+```bash
+brew tap douglasdemoura/tap && brew install chroncal
+```
+
+### Go install
+
+Requires [Go](https://go.dev/) 1.25+.
+
+```bash
+go install github.com/douglasdemoura/chroncal/cmd/chroncal@latest
+```
+
+### mise
+
+```bash
+mise use -g github:DouglasdeMoura/chroncal
+```
+
+### GitHub Releases
 
 No Go toolchain required. Grab the archive for your platform from the
 [latest release](https://github.com/DouglasdeMoura/chroncal/releases/latest)
@@ -55,15 +75,7 @@ sudo install chroncal /usr/local/bin/
 On Windows, download the `..._windows_amd64.zip` asset, extract it, and put
 `chroncal.exe` somewhere on your `PATH`.
 
-### From source
-
-Requires [Go](https://go.dev/) 1.25+.
-
-```bash
-go install github.com/douglasdemoura/chroncal/cmd/chroncal@latest
-```
-
-### Build locally
+### Build from source
 
 ```bash
 git clone https://github.com/DouglasdeMoura/chroncal.git
@@ -71,6 +83,9 @@ cd chroncal
 make build
 ./chroncal
 ```
+
+See [Installation](docs/installation.md) for upgrades, checksum verification,
+package manager status, and contributor notes for maintaining install channels.
 
 ## Quick start
 
