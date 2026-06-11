@@ -1,0 +1,37 @@
+name: Nix
+
+# Catches a stale flake vendorHash at PR time (it must change whenever
+# go.mod/go.sum change) instead of after release, when `nix run` would
+# already be broken for users.
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - go.mod
+      - go.sum
+      - flake.nix
+      - flake.lock
+      - VERSION
+  pull_request:
+    paths:
+      - go.mod
+      - go.sum
+      - flake.nix
+      - flake.lock
+      - VERSION
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: nix build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: DeterminateSystems/nix-installer-action@v22
+
+      - name: Build and test via the flake
+        run: nix build .#chroncal --no-link --print-build-logs

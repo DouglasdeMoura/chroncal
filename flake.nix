@@ -16,7 +16,9 @@
       system:
       let
         pkgs = import nixpkgs { inherit system; };
-        version = "0.2.2";
+        # Single source of truth for the released version; the release
+        # workflow refuses to run if VERSION does not match the tag.
+        version = pkgs.lib.trim (builtins.readFile ./VERSION);
         go = pkgs.go_1_26;
         chroncal = pkgs.buildGoModule {
           pname = "chroncal";
