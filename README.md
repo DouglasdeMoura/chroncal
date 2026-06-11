@@ -49,6 +49,19 @@ go install github.com/douglasdemoura/chroncal/cmd/chroncal@latest
 mise use -g github:DouglasdeMoura/chroncal
 ```
 
+### Nix
+
+```bash
+nix run github:DouglasdeMoura/chroncal
+```
+
+### Scoop (Windows)
+
+```powershell
+scoop bucket add chroncal https://github.com/DouglasdeMoura/scoop-bucket
+scoop install chroncal
+```
+
 ### GitHub Releases
 
 No Go toolchain required. Grab the archive for your platform from the
