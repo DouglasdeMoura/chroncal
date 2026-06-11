@@ -868,7 +868,7 @@ func (m CalendarDialogModel) SetSize(w, h int) CalendarDialogModel {
 	if m.contentWidth != nil {
 		*m.contentWidth = m.dialog.ContentWidth()
 	}
-	m.syncBodyViewport()
+	m.syncBodyViewport(true)
 	return m
 }
 
@@ -885,7 +885,7 @@ func (m CalendarDialogModel) formViewportHeight() int {
 	return max(m.dialog.height-chromeLines-actionLines-extra, 1)
 }
 
-func (m *CalendarDialogModel) syncBodyViewport() {
+func (m *CalendarDialogModel) syncBodyViewport(keepFocusVisible bool) {
 	cw := m.dialog.ContentWidth()
 	if cw <= 0 || m.dialog.height <= 0 {
 		return
@@ -894,7 +894,9 @@ func (m *CalendarDialogModel) syncBodyViewport() {
 	m.body.SetWidth(cw)
 	m.body.SetHeight(min(len(bodyLines), m.formViewportHeight()))
 	m.body.SetContentLines(bodyLines)
-	m.keepFocusedFieldVisible()
+	if keepFocusVisible {
+		m.keepFocusedFieldVisible()
+	}
 }
 
 func (m *CalendarDialogModel) keepFocusedFieldVisible() {
@@ -953,7 +955,7 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 
 	if _, ok := msg.(testConnectionPressedMsg); ok {
 		m, cmd := m.handleTestPressed()
-		m.syncBodyViewport()
+		m.syncBodyViewport(true)
 		return m, cmd
 	}
 
@@ -974,7 +976,7 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 			m.testStatus = lipgloss.NewStyle().Foreground(m.theme.Error).
 				Render("✗ " + tr.Message)
 		}
-		m.syncBodyViewport()
+		m.syncBodyViewport(true)
 		return m, nil
 	}
 
@@ -1003,14 +1005,14 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 	}
 	if mw, ok := msg.(tea.MouseWheelMsg); ok {
 		var cmd tea.Cmd
-		m.syncBodyViewport()
+		m.syncBodyViewport(false)
 		m.body, cmd = m.body.Update(mw)
 		return m, cmd
 	}
 
 	var cmd tea.Cmd
 	m.form, cmd = m.form.Update(msg)
-	m.syncBodyViewport()
+	m.syncBodyViewport(true)
 	return m, cmd
 }
 
@@ -1021,7 +1023,7 @@ func (m CalendarDialogModel) View() string {
 		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 	}
 	m.dialog.SetFooter(m.help.ShortHelpView(helpKeys))
-	m.syncBodyViewport()
+	m.syncBodyViewport(false)
 	cw := m.dialog.ContentWidth()
 	parts := []string{m.body.View()}
 	if m.testStatus != "" {
