@@ -24,15 +24,15 @@ Core data services:
 - **recurrence** - Expand recurring events/todos/journals, handle overrides
 - **trash** - Mixed soft-delete view across event/todo/journal (list, restore, purge)
 
-Integration / infrastructure services (same `NewService(...)` shape where
-applicable, but wiring varies — some take extra dependencies):
-- **sync** - CalDAV sync engine, conflict detection and resolution
-- **caldav** - Low-level CalDAV client (discovery, REPORT, PROPFIND, VFREEBUSY)
-- **freebusy** - Local free/busy computation plus remote CalDAV query
-- **auth** - Credential storage (OS keyring, optional plaintext), OAuth2 PKCE
-- **maintenance** - Background purge loop for soft-deleted rows
-- **notify** - Desktop notifications plus SMTP email for EMAIL alarms
-- **retry** - HTTP retry/backoff helpers shared by sync and caldav
+Integration / infrastructure packages (these do NOT follow the `NewService`
+shape above — constructors and wiring vary per package):
+- **sync** - CalDAV sync engine, conflict detection and resolution (`NewService` with extra dependencies)
+- **caldav** - Low-level CalDAV client (discovery, REPORT, PROPFIND, VFREEBUSY) — `NewClient`
+- **freebusy** - Local free/busy computation plus remote CalDAV query — plain functions (`Compute`)
+- **auth** - Credential storage (OS keyring, optional plaintext), OAuth2 PKCE — plain functions
+- **maintenance** - Background purge loop for soft-deleted rows — `NewPurger`
+- **notify** - Desktop notifications plus SMTP email for EMAIL alarms — plain functions (`Display`, `Audio`, `Email`)
+- **retry** - HTTP retry/backoff helpers shared by sync and caldav — plain functions
 
 Models live in `internal/{domain}/model.go` (e.g., `event.Event`) and shared models in `internal/model/` (e.g., `model.Alarm`, `model.Attendee`).
 
