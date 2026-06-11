@@ -205,7 +205,10 @@ Before cutting a release:
 1. Make sure CI is green on `master`.
 2. Bump the `VERSION` file to the new version (no leading `v`) — the release
    workflow refuses to run if it does not match the tag.
-3. Run `goreleaser check` locally if GoReleaser is installed.
+3. Run `goreleaser check` locally if GoReleaser is installed. Exit code 2
+   with a `brews` deprecation warning is expected (casks are macOS-only, so
+   the formula publisher is kept deliberately); only exit code 1 means the
+   config is broken.
 4. Create a `v*` tag and push it.
 5. Confirm the GitHub Release includes archives, `checksums.txt`, and install snippets.
 6. Confirm the install script works for the new tag.
