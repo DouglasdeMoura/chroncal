@@ -48,6 +48,66 @@ archives:
 checksum:
   name_template: checksums.txt
 
+# The source archive is what `aur_sources` builds from, so the AUR source
+# package pins the exact released tree instead of GitHub's mutable
+# auto-generated tarball.
+source:
+  enabled: true
+  name_template: "{{ .ProjectName }}-{{ .Version }}"
+  prefix_template: "{{ .ProjectName }}-{{ .Version }}/"
+
+# Both AUR packages are generated and pushed on release. `disable` keys off
+# AUR_KEY so a missing secret skips AUR publishing with a warning instead of
+# failing the whole release — same graceful degradation as the Homebrew and
+# Scoop steps in release.yml.
+aurs:
+  - name: chroncal-bin
+    homepage: https://github.com/DouglasdeMoura/chroncal
+    description: Terminal-first calendar, todo, and journal manager
+    license: MIT
+    maintainers:
+      - Douglas de Moura <douglas at demoura dot dev>
+    private_key: "{{ .Env.AUR_KEY }}"
+    git_url: ssh://aur@aur.archlinux.org/chroncal-bin.git
+    disable: '{{ if index .Env "AUR_KEY" }}false{{ else }}true{{ end }}'
+    provides: [chroncal]
+    conflicts: [chroncal]
+    commit_author:
+      name: github-actions[bot]
+      email: github-actions[bot]@users.noreply.github.com
+    package: |-
+      install -Dm755 "./chroncal" "${pkgdir}/usr/bin/chroncal"
+      install -Dm644 "./LICENSE" "${pkgdir}/usr/share/licenses/chroncal-bin/LICENSE"
+
+aur_sources:
+  - name: chroncal
+    homepage: https://github.com/DouglasdeMoura/chroncal
+    description: Terminal-first calendar, todo, and journal manager
+    license: MIT
+    maintainers:
+      - Douglas de Moura <douglas at demoura dot dev>
+    private_key: "{{ .Env.AUR_KEY }}"
+    git_url: ssh://aur@aur.archlinux.org/chroncal.git
+    disable: '{{ if index .Env "AUR_KEY" }}false{{ else }}true{{ end }}'
+    makedepends: [go]
+    commit_author:
+      name: github-actions[bot]
+      email: github-actions[bot]@users.noreply.github.com
+    prepare: |-
+      cd "${pkgname}-${pkgver}"
+      go mod download
+    build: |-
+      cd "${pkgname}-${pkgver}"
+      export CGO_ENABLED=0
+      export GOPATH="${srcdir}/gopath"
+      export GOCACHE="${srcdir}/gocache"
+      export GOFLAGS="-trimpath -mod=readonly -modcacherw"
+      go build -ldflags "-s -w -X main.version=${pkgver} -X main.commit={{ .ShortCommit }} -X main.date={{ .Date }}" -o chroncal ./cmd/chroncal
+    package: |-
+      cd "${pkgname}-${pkgver}"
+      install -Dm755 "./chroncal" "${pkgdir}/usr/bin/chroncal"
+      install -Dm644 "./LICENSE" "${pkgdir}/usr/share/licenses/chroncal/LICENSE"
+
 release:
   header: |
     ## Install
