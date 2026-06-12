@@ -148,6 +148,7 @@ type AlarmListEditorModel struct {
 
 	actionField *SelectField
 	offsetField *QuantitySelectField
+	editBefore  bool // sign of the trigger being edited (true = before anchor)
 
 	form      Form
 	fieldKeys []string
@@ -240,13 +241,18 @@ func (m *AlarmListEditorModel) buildEditForm(a model.Alarm) {
 	for i, u := range alarmUnits {
 		unitOpts[i] = SelectOption{Label: u.Label, Value: string(u.Code)}
 	}
-	qty, unitIdx, _, ok := parseOffsetTrigger(a.TriggerValue)
+	qty, unitIdx, before, ok := parseOffsetTrigger(a.TriggerValue)
 	if !ok {
-		qty, unitIdx = 15, 0
+		qty, unitIdx, before = 15, 0, true
 	}
+	m.editBefore = before
 	m.offsetField = NewQuantitySelectField(unitOpts, unitIdx)
 	m.offsetField.SetAmount(strconv.Itoa(qty))
-	m.offsetField.SetSuffix("before")
+	suffix := "before"
+	if !before {
+		suffix = "after"
+	}
+	m.offsetField.SetSuffix(suffix)
 
 	styles := DefaultFormStyles()
 	styles.LabelLayout = LabelInline
@@ -276,7 +282,7 @@ func (m *AlarmListEditorModel) applyEditForm() {
 		qty = 1
 	}
 	unitIdx := m.offsetField.Selected()
-	trigger := buildOffsetTrigger(qty, unitIdx, true)
+	trigger := buildOffsetTrigger(qty, unitIdx, m.editBefore)
 
 	action := strings.ToUpper(m.actionField.Value())
 
@@ -291,6 +297,7 @@ func (m *AlarmListEditorModel) applyEditForm() {
 		alarm.ID = orig.ID
 		alarm.EventID = orig.EventID
 		alarm.UID = orig.UID
+		alarm.Related = orig.Related
 		alarm.Repeat = orig.Repeat
 		alarm.Duration = orig.Duration
 		alarm.Acknowledged = orig.Acknowledged
