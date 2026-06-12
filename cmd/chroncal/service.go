@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"text/template"
 
 	"github.com/spf13/cobra"
@@ -107,6 +108,12 @@ func resolveBinaryPath() (string, error) {
 	resolved, err := filepath.EvalSymlinks(exe)
 	if err != nil {
 		return "", fmt.Errorf("eval symlinks: %w", err)
+	}
+	// The path is interpolated into service definitions (unit file, plist,
+	// batch wrapper) without per-format escaping; a control character would
+	// inject directives. Legal paths never contain them.
+	if strings.ContainsAny(resolved, "\n\r") {
+		return "", fmt.Errorf("executable path %q contains control characters", resolved)
 	}
 	return resolved, nil
 }
