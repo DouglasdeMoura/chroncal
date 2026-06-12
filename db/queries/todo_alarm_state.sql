@@ -46,3 +46,9 @@ SELECT * FROM todo_alarm_state WHERE id = ?;
 
 -- name: PurgeAcknowledgedTodoAlarmStates :execrows
 DELETE FROM todo_alarm_state WHERE acked_at IS NOT NULL AND trigger_at < ?;
+
+-- name: PurgeStaleUnacknowledgedTodoAlarmStates :execrows
+DELETE FROM todo_alarm_state
+WHERE acked_at IS NULL
+  AND trigger_at < ?
+  AND (snoozed_to IS NULL OR snoozed_to < trigger_at);

@@ -36,3 +36,9 @@ DELETE FROM alarm_state WHERE event_id = ?;
 
 -- name: PurgeAcknowledgedAlarmStates :execrows
 DELETE FROM alarm_state WHERE acked_at IS NOT NULL AND trigger_at < ?;
+
+-- name: PurgeStaleUnacknowledgedAlarmStates :execrows
+DELETE FROM alarm_state
+WHERE acked_at IS NULL
+  AND trigger_at < ?
+  AND (snoozed_to IS NULL OR snoozed_to < trigger_at);

@@ -73,20 +73,43 @@ func (p *Purger) RunOnce(ctx context.Context) (int, error) {
 	return total, nil
 }
 
+// staleUnackedMultiplier sets the secondary retention for fired-but-never-
+// acknowledged alarm-state rows: they back "alarm list", so they live much
+// longer than acked history, but rescheduled events leave rows whose trigger
+// never recurs and unbounded growth helps nobody.
+const staleUnackedMultiplier = 4
+
 // purgeAlarmStates deletes acknowledged alarm-state rows whose trigger time
-// is older than the cutoff. Pending (unacked) and snoozed rows are kept —
-// they back "alarm list" and snooze re-firing.
+// is older than the cutoff, plus unacknowledged rows older than four times
+// the retention window (excluding rows snoozed into the future). Recently
+// fired pending rows are kept — they back "alarm list" and snooze re-firing.
 func (p *Purger) purgeAlarmStates(ctx context.Context, cutoff time.Time) (int, error) {
 	cutoffStr := cutoff.UTC().Format(time.RFC3339)
+	total := 0
 	events, err := p.q.PurgeAcknowledgedAlarmStates(ctx, cutoffStr)
 	if err != nil {
-		return 0, fmt.Errorf("purge alarm states: %w", err)
+		return total, fmt.Errorf("purge alarm states: %w", err)
 	}
+	total += int(events)
 	todos, err := p.q.PurgeAcknowledgedTodoAlarmStates(ctx, cutoffStr)
 	if err != nil {
-		return int(events), fmt.Errorf("purge todo alarm states: %w", err)
+		return total, fmt.Errorf("purge todo alarm states: %w", err)
 	}
-	return int(events + todos), nil
+	total += int(todos)
+
+	staleCutoff := time.Now().Add(-time.Duration(p.days*staleUnackedMultiplier) * 24 * time.Hour)
+	staleCutoffStr := staleCutoff.UTC().Format(time.RFC3339)
+	staleEvents, err := p.q.PurgeStaleUnacknowledgedAlarmStates(ctx, staleCutoffStr)
+	if err != nil {
+		return total, fmt.Errorf("purge stale unacked alarm states: %w", err)
+	}
+	total += int(staleEvents)
+	staleTodos, err := p.q.PurgeStaleUnacknowledgedTodoAlarmStates(ctx, staleCutoffStr)
+	if err != nil {
+		return total, fmt.Errorf("purge stale unacked todo alarm states: %w", err)
+	}
+	total += int(staleTodos)
+	return total, nil
 }
 
 // RunDaily fires RunOnce once on start, then every 24h until ctx is done.

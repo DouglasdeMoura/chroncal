@@ -229,6 +229,21 @@ func (q *Queries) PurgeAcknowledgedAlarmStates(ctx context.Context, triggerAt st
 	return result.RowsAffected()
 }
 
+const purgeStaleUnacknowledgedAlarmStates = `-- name: PurgeStaleUnacknowledgedAlarmStates :execrows
+DELETE FROM alarm_state
+WHERE acked_at IS NULL
+  AND trigger_at < ?
+  AND (snoozed_to IS NULL OR snoozed_to < trigger_at)
+`
+
+func (q *Queries) PurgeStaleUnacknowledgedAlarmStates(ctx context.Context, triggerAt string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, purgeStaleUnacknowledgedAlarmStates, triggerAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const refireAlarmState = `-- name: RefireAlarmState :exec
 UPDATE alarm_state SET fired_at = ?, snoozed_to = NULL WHERE id = ?
 `
