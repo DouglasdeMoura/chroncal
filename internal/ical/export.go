@@ -679,6 +679,8 @@ func buildValarm(alarm model.Alarm) *ical.Component {
 		valarm.Props.Add(p)
 	}
 
+	emitXProperties(valarm, alarm.XProperties)
+
 	return valarm
 }
 

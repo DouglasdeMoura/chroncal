@@ -21,11 +21,15 @@ type Alarm struct {
 	AttachURI     string // optional sound URI for AUDIO alarms (RFC 5545 Section 3.6.6)
 	AttachFmtType string // FMTTYPE param for ATTACH (e.g. "audio/basic")
 	Attendees     []AlarmAttendee
+	XProperties   []XProperty // X-* extension props, round-trip only
 }
 
 // ContentEqual returns true if two alarms have identical content (all fields
-// except ID, EventID, UID, and Acknowledged). Used by ReplaceAlarms to match
-// incoming alarms against existing ones for merge-based updates.
+// except ID, EventID, UID, Acknowledged, and XProperties). Used by
+// ReplaceAlarms to match incoming alarms against existing ones for
+// merge-based updates. XProperties are excluded so a remote X-prop tweak
+// doesn't break the match and lose alarm state; matched alarms get their
+// X-properties rewritten unconditionally instead.
 func (a Alarm) ContentEqual(b Alarm) bool {
 	if !strings.EqualFold(a.Action, b.Action) {
 		return false

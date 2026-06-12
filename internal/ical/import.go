@@ -630,6 +630,9 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 		})
 	}
 
+	// X-* extension properties — preserved for round-trip fidelity only.
+	alarm.XProperties = extractXPropertiesWithSet(comp.Props, nil)
+
 	return alarm, warn
 }
 

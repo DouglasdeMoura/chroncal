@@ -672,6 +672,62 @@ func TestRoundtrip_AlarmRepeatDurationRelated(t *testing.T) {
 	}
 }
 
+func TestRoundtrip_AlarmXProperties(t *testing.T) {
+	t.Parallel()
+	original := event.Event{
+		UID:       "roundtrip-alarm-xprops",
+		Title:     "Alarm XProp Event",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+		Alarms: []model.Alarm{
+			{
+				Action:       "DISPLAY",
+				TriggerValue: "-PT15M",
+				Related:      "START",
+				XProperties: []model.XProperty{
+					{Name: "X-APPLE-DEFAULT-ALARM", Value: "TRUE"},
+					{Name: "X-WR-ALARMUID", Value: "abc-123", Params: `{"X-TEST":["yes"]}`},
+				},
+			},
+		},
+	}
+
+	data, err := ExportEvents([]event.Event{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	result, err := ImportFile(strings.NewReader(string(data)))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Events) != 1 || len(result.Events[0].Alarms) != 1 {
+		t.Fatalf("reimported %d events", len(result.Events))
+	}
+	got := result.Events[0].Alarms[0]
+
+	if len(got.XProperties) != 2 {
+		t.Fatalf("Alarm XProperties count: %d, want 2 (%+v)", len(got.XProperties), got.XProperties)
+	}
+	byName := map[string]model.XProperty{}
+	for _, xp := range got.XProperties {
+		byName[xp.Name] = xp
+	}
+	if xp := byName["X-APPLE-DEFAULT-ALARM"]; xp.Value != "TRUE" {
+		t.Errorf("X-APPLE-DEFAULT-ALARM value: %q, want TRUE", xp.Value)
+	}
+	if xp := byName["X-WR-ALARMUID"]; xp.Value != "abc-123" {
+		t.Errorf("X-WR-ALARMUID value: %q, want abc-123", xp.Value)
+	}
+	if xp := byName["X-WR-ALARMUID"]; !strings.Contains(xp.Params, "X-TEST") {
+		t.Errorf("X-WR-ALARMUID params: %q, want X-TEST param preserved", xp.Params)
+	}
+}
+
 func TestRoundtrip_BlobAttachment(t *testing.T) {
 	t.Parallel()
 	blobData := []byte("Hello, this is a test PDF content")

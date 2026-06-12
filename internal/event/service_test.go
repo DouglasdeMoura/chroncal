@@ -336,6 +336,58 @@ func TestEventService_Alarms(t *testing.T) {
 	}
 }
 
+func TestEventService_ReplaceAlarms_UIDMatchPreservesRow(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	e := createEvent(t, svc)
+
+	err := svc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{UID: "alarm-uid-1", Action: "DISPLAY", TriggerValue: "-PT15M"},
+	})
+	if err != nil {
+		t.Fatalf("ReplaceAlarms error: %v", err)
+	}
+	alarms, _ := svc.ListAlarms(ctx, e.ID)
+	if len(alarms) != 1 {
+		t.Fatalf("alarms = %d, want 1", len(alarms))
+	}
+	origID := alarms[0].ID
+
+	// Same UID, changed trigger: must update the row in place so alarm_state
+	// rows keyed to its ID survive, not delete + recreate.
+	err = svc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{UID: "alarm-uid-1", Action: "DISPLAY", TriggerValue: "-PT30M"},
+	})
+	if err != nil {
+		t.Fatalf("ReplaceAlarms (trigger change) error: %v", err)
+	}
+	alarms, _ = svc.ListAlarms(ctx, e.ID)
+	if len(alarms) != 1 {
+		t.Fatalf("after trigger change: alarms = %d, want 1", len(alarms))
+	}
+	if alarms[0].ID != origID {
+		t.Errorf("alarm row ID changed %d -> %d; UID-matched edit must update in place", origID, alarms[0].ID)
+	}
+	if alarms[0].TriggerValue != "-PT30M" {
+		t.Errorf("TriggerValue = %q, want %q", alarms[0].TriggerValue, "-PT30M")
+	}
+
+	// A different UID is a genuinely new alarm: row must be replaced.
+	err = svc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{UID: "alarm-uid-2", Action: "DISPLAY", TriggerValue: "-PT45M"},
+	})
+	if err != nil {
+		t.Fatalf("ReplaceAlarms (new uid) error: %v", err)
+	}
+	alarms, _ = svc.ListAlarms(ctx, e.ID)
+	if len(alarms) != 1 {
+		t.Fatalf("after new uid: alarms = %d, want 1", len(alarms))
+	}
+	if alarms[0].ID == origID {
+		t.Errorf("alarm row ID %d reused for different UID; want a new row", origID)
+	}
+}
+
 func TestEventService_Attendees(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()

@@ -230,6 +230,46 @@ func (q *Queries) UpdateAlarmAcknowledged(ctx context.Context, arg UpdateAlarmAc
 	return err
 }
 
+const updateAlarmContentByID = `-- name: UpdateAlarmContentByID :exec
+UPDATE event_alarms
+SET action = ?, trigger_value = ?, description = ?, summary = ?, repeat = ?,
+    duration = ?, related = ?, acknowledged = ?, attach_uri = ?, attach_fmttype = ?
+WHERE id = ? AND event_id = ?
+`
+
+type UpdateAlarmContentByIDParams struct {
+	Action        string
+	TriggerValue  string
+	Description   *string
+	Summary       *string
+	Repeat        int64
+	Duration      *string
+	Related       string
+	Acknowledged  *string
+	AttachUri     *string
+	AttachFmttype *string
+	ID            int64
+	EventID       int64
+}
+
+func (q *Queries) UpdateAlarmContentByID(ctx context.Context, arg UpdateAlarmContentByIDParams) error {
+	_, err := q.db.ExecContext(ctx, updateAlarmContentByID,
+		arg.Action,
+		arg.TriggerValue,
+		arg.Description,
+		arg.Summary,
+		arg.Repeat,
+		arg.Duration,
+		arg.Related,
+		arg.Acknowledged,
+		arg.AttachUri,
+		arg.AttachFmttype,
+		arg.ID,
+		arg.EventID,
+	)
+	return err
+}
+
 const updateAlarmUID = `-- name: UpdateAlarmUID :exec
 UPDATE event_alarms SET uid = ? WHERE id = ?
 `

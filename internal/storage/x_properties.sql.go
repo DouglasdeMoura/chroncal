@@ -7,6 +7,7 @@ package storage
 
 import (
 	"context"
+	"strings"
 )
 
 const deleteXPropertiesByOwner = `-- name: DeleteXPropertiesByOwner :exec
@@ -62,6 +63,59 @@ type ListXPropertiesByOwnerParams struct {
 
 func (q *Queries) ListXPropertiesByOwner(ctx context.Context, arg ListXPropertiesByOwnerParams) ([]XProperty, error) {
 	rows, err := q.db.QueryContext(ctx, listXPropertiesByOwner, arg.OwnerType, arg.OwnerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []XProperty
+	for rows.Next() {
+		var i XProperty
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerType,
+			&i.OwnerID,
+			&i.Name,
+			&i.Value,
+			&i.Params,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listXPropertiesByOwnerIDs = `-- name: ListXPropertiesByOwnerIDs :many
+SELECT id, owner_type, owner_id, name, value, params
+FROM x_properties
+WHERE owner_type = ? AND owner_id IN (/*SLICE:owner_ids*/?)
+ORDER BY id
+`
+
+type ListXPropertiesByOwnerIDsParams struct {
+	OwnerType string
+	OwnerIds  []int64
+}
+
+func (q *Queries) ListXPropertiesByOwnerIDs(ctx context.Context, arg ListXPropertiesByOwnerIDsParams) ([]XProperty, error) {
+	query := listXPropertiesByOwnerIDs
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.OwnerType)
+	if len(arg.OwnerIds) > 0 {
+		for _, v := range arg.OwnerIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:owner_ids*/?", strings.Repeat(",?", len(arg.OwnerIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:owner_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
 	if err != nil {
 		return nil, err
 	}

@@ -63,6 +63,15 @@ func (q *Queries) CreateTodoAlarm(ctx context.Context, arg CreateTodoAlarmParams
 	return i, err
 }
 
+const deleteTodoAlarmByID = `-- name: DeleteTodoAlarmByID :exec
+DELETE FROM todo_alarms WHERE id = ?
+`
+
+func (q *Queries) DeleteTodoAlarmByID(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, deleteTodoAlarmByID, id)
+	return err
+}
+
 const deleteTodoAlarmsByTodoID = `-- name: DeleteTodoAlarmsByTodoID :exec
 DELETE FROM todo_alarms WHERE todo_id = ?
 `
@@ -165,6 +174,46 @@ type UpdateTodoAlarmAcknowledgedParams struct {
 
 func (q *Queries) UpdateTodoAlarmAcknowledged(ctx context.Context, arg UpdateTodoAlarmAcknowledgedParams) error {
 	_, err := q.db.ExecContext(ctx, updateTodoAlarmAcknowledged, arg.Acknowledged, arg.ID)
+	return err
+}
+
+const updateTodoAlarmContentByID = `-- name: UpdateTodoAlarmContentByID :exec
+UPDATE todo_alarms
+SET action = ?, trigger_value = ?, description = ?, summary = ?, repeat = ?,
+    duration = ?, related = ?, acknowledged = ?, attach_uri = ?, attach_fmttype = ?
+WHERE id = ? AND todo_id = ?
+`
+
+type UpdateTodoAlarmContentByIDParams struct {
+	Action        string
+	TriggerValue  string
+	Description   *string
+	Summary       *string
+	Repeat        int64
+	Duration      *string
+	Related       string
+	Acknowledged  *string
+	AttachUri     *string
+	AttachFmttype *string
+	ID            int64
+	TodoID        int64
+}
+
+func (q *Queries) UpdateTodoAlarmContentByID(ctx context.Context, arg UpdateTodoAlarmContentByIDParams) error {
+	_, err := q.db.ExecContext(ctx, updateTodoAlarmContentByID,
+		arg.Action,
+		arg.TriggerValue,
+		arg.Description,
+		arg.Summary,
+		arg.Repeat,
+		arg.Duration,
+		arg.Related,
+		arg.Acknowledged,
+		arg.AttachUri,
+		arg.AttachFmttype,
+		arg.ID,
+		arg.TodoID,
+	)
 	return err
 }
 

@@ -877,6 +877,7 @@ func buildAlarmsWithAttendees(ctx context.Context, q *storage.Queries, rows []st
 		alarms[i] = fromStorageAlarm(r)
 		alarms[i].Attendees = attMap[r.ID]
 	}
+	storage.AttachAlarmXProperties(ctx, q, storage.OwnerTypeEventAlarm, alarms)
 	return alarms
 }
 
@@ -949,6 +950,61 @@ func alarmUID(a model.Alarm) string {
 	return uuid.New().String()
 }
 
+// matchAlarmByUID tries to match an incoming alarm with existing ones by
+// RFC 9074 UID. Used as a fallback when content matching fails so an edited
+// alarm (e.g. a changed trigger) updates its row in place instead of being
+// deleted and re-created, which would cascade away its alarm_state and
+// resurrect dismissed firings.
+func matchAlarmByUID(existing []model.Alarm, matched []bool, a model.Alarm) (int, bool) {
+	if a.UID == "" {
+		return 0, false
+	}
+	for j, ex := range existing {
+		if matched[j] || ex.UID == "" {
+			continue
+		}
+		if ex.UID == a.UID {
+			return j, true
+		}
+	}
+	return 0, false
+}
+
+// updateAlarmInPlace rewrites a UID-matched alarm's content on its existing
+// row, preserving the row ID so alarm_state entries keyed to it survive.
+func updateAlarmInPlace(ctx context.Context, qtx *storage.Queries, eventID int64, a model.Alarm, ex model.Alarm) error {
+	if err := qtx.UpdateAlarmContentByID(ctx, storage.UpdateAlarmContentByIDParams{
+		Action:        a.Action,
+		TriggerValue:  a.TriggerValue,
+		Description:   storage.StringToNullable(a.Description),
+		Summary:       storage.StringToNullable(a.Summary),
+		Repeat:        int64(a.Repeat),
+		Duration:      storage.StringToNullable(a.Duration),
+		Related:       a.Related,
+		Acknowledged:  storage.StringToNullable(a.Acknowledged),
+		AttachUri:     storage.StringToNullable(a.AttachURI),
+		AttachFmttype: storage.StringToNullable(a.AttachFmtType),
+		ID:            ex.ID,
+		EventID:       eventID,
+	}); err != nil {
+		return fmt.Errorf("update alarm content: %w", err)
+	}
+	if err := qtx.DeleteAlarmAttendeesByAlarmID(ctx, ex.ID); err != nil {
+		return fmt.Errorf("delete alarm attendees: %w", err)
+	}
+	for _, att := range a.Attendees {
+		_, err := qtx.CreateAlarmAttendee(ctx, storage.CreateAlarmAttendeeParams{
+			AlarmID: ex.ID,
+			Email:   att.Email,
+			Name:    storage.StringToNullable(att.Name),
+		})
+		if err != nil {
+			return fmt.Errorf("create alarm attendee: %w", err)
+		}
+	}
+	return storage.ReplaceAlarmXProperties(ctx, qtx, storage.OwnerTypeEventAlarm, ex.ID, a.XProperties)
+}
+
 // syncMatchedAlarm syncs a matched alarm's UID and ACKNOWLEDGED state.
 func syncMatchedAlarm(ctx context.Context, qtx *storage.Queries, eventID int64, a model.Alarm, ex model.Alarm) error {
 	// If existing alarm has no UID, backfill it now.
@@ -970,7 +1026,9 @@ func syncMatchedAlarm(ctx context.Context, qtx *storage.Queries, eventID int64, 
 			return fmt.Errorf("update alarm acknowledged: %w", err)
 		}
 	}
-	return nil
+	// X-properties are excluded from content matching; refresh them so a
+	// remote X-prop change still lands.
+	return storage.ReplaceAlarmXProperties(ctx, qtx, storage.OwnerTypeEventAlarm, ex.ID, a.XProperties)
 }
 
 // createNewAlarm creates a new alarm and its attendees.
@@ -1002,7 +1060,7 @@ func createNewAlarm(ctx context.Context, qtx *storage.Queries, eventID int64, a 
 			return fmt.Errorf("create alarm attendee: %w", err)
 		}
 	}
-	return nil
+	return storage.ReplaceAlarmXProperties(ctx, qtx, storage.OwnerTypeEventAlarm, row.ID, a.XProperties)
 }
 
 // deleteUnmatchedAlarms deletes existing alarms that were not matched.
@@ -1038,10 +1096,25 @@ func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []mod
 	for i := range alarms {
 		applyAlarmDefaults(&alarms[i])
 	}
+	var unmatched []model.Alarm
 	for _, a := range alarms {
 		if j, found := matchAlarm(existing, matched, a); found {
 			matched[j] = true
 			if err := syncMatchedAlarm(ctx, qtx, eventID, a, existing[j]); err != nil {
+				return err
+			}
+		} else {
+			unmatched = append(unmatched, a)
+		}
+	}
+
+	// Second pass: alarms whose content changed but whose RFC 9074 UID is
+	// stable are the same alarm edited, not a new one. Update in place so
+	// the row ID — and the alarm_state rows hanging off it — survive.
+	for _, a := range unmatched {
+		if j, found := matchAlarmByUID(existing, matched, a); found {
+			matched[j] = true
+			if err := updateAlarmInPlace(ctx, qtx, eventID, a, existing[j]); err != nil {
 				return err
 			}
 		} else {

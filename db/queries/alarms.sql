@@ -22,3 +22,9 @@ UPDATE event_alarms SET acknowledged = ? WHERE id = ? AND event_id = ?;
 
 -- name: ListAlarmsWithEmptyUID :many
 SELECT * FROM event_alarms WHERE uid IS NULL;
+
+-- name: UpdateAlarmContentByID :exec
+UPDATE event_alarms
+SET action = ?, trigger_value = ?, description = ?, summary = ?, repeat = ?,
+    duration = ?, related = ?, acknowledged = ?, attach_uri = ?, attach_fmttype = ?
+WHERE id = ? AND event_id = ?;

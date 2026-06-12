@@ -579,6 +579,7 @@ func (s *Service) ListAlarms(ctx context.Context, todoID int64) ([]model.Alarm, 
 			Attendees:     attMap[r.ID],
 		}
 	}
+	storage.AttachAlarmXProperties(ctx, s.q, storage.OwnerTypeTodoAlarm, alarms)
 	return alarms, nil
 }
 
@@ -590,53 +591,229 @@ func (s *Service) ReplaceAlarms(ctx context.Context, todoID int64, alarms []mode
 	defer tx.Rollback()
 
 	qtx := s.q.WithTx(tx)
-	if err := qtx.DeleteTodoAlarmsByTodoID(ctx, todoID); err != nil {
-		return fmt.Errorf("delete alarms: %w", err)
+
+	// Merge instead of wipe-and-recreate: deleting a todo alarm row cascades
+	// away its todo_alarm_state, which would resurrect dismissed firings on
+	// every sync rewrite. Mirrors event.Service.ReplaceAlarms.
+	existing, err := loadExistingTodoAlarms(ctx, qtx, todoID)
+	if err != nil {
+		return err
 	}
+
+	for i := range alarms {
+		if alarms[i].Action == "" {
+			alarms[i].Action = alarmAction
+		}
+		if alarms[i].Related == "" {
+			alarms[i].Related = alarmRelated
+		}
+	}
+
+	matched := make([]bool, len(existing))
+	var unmatched []model.Alarm
 	for _, a := range alarms {
-		if a.Action == "" {
-			a.Action = alarmAction
+		if j, found := matchTodoAlarm(existing, matched, a); found {
+			matched[j] = true
+			if err := syncMatchedTodoAlarm(ctx, qtx, a, existing[j]); err != nil {
+				return err
+			}
+		} else {
+			unmatched = append(unmatched, a)
 		}
-		if a.Related == "" {
-			a.Related = alarmRelated
-		}
-		uid := a.UID
-		if uid == "" {
-			uid = uuid.New().String()
-		}
-		row, err := qtx.CreateTodoAlarm(ctx, storage.CreateTodoAlarmParams{
-			TodoID:        todoID,
-			Uid:           storage.StringToNullable(uid),
-			Action:        a.Action,
-			TriggerValue:  a.TriggerValue,
-			Description:   storage.StringToNullable(a.Description),
-			Summary:       storage.StringToNullable(a.Summary),
-			Repeat:        int64(a.Repeat),
-			Duration:      storage.StringToNullable(a.Duration),
-			Related:       a.Related,
-			Acknowledged:  storage.StringToNullable(a.Acknowledged),
-			AttachUri:     storage.StringToNullable(a.AttachURI),
-			AttachFmttype: storage.StringToNullable(a.AttachFmtType),
-		})
-		if err != nil {
-			return fmt.Errorf("create alarm: %w", err)
-		}
-		for _, att := range a.Attendees {
-			_, err := qtx.CreateTodoAlarmAttendee(ctx, storage.CreateTodoAlarmAttendeeParams{
-				AlarmID: row.ID,
-				Email:   att.Email,
-				Name:    storage.StringToNullable(att.Name),
-			})
-			if err != nil {
-				return fmt.Errorf("create alarm attendee: %w", err)
+	}
+
+	// Second pass: content changed but the RFC 9074 UID is stable — the same
+	// alarm edited. Update in place so the row ID (and its state) survives.
+	for _, a := range unmatched {
+		if j, found := matchTodoAlarmByUID(existing, matched, a); found {
+			matched[j] = true
+			if err := updateTodoAlarmInPlace(ctx, qtx, todoID, a, existing[j]); err != nil {
+				return err
+			}
+		} else {
+			if err := createNewTodoAlarm(ctx, qtx, todoID, a); err != nil {
+				return err
 			}
 		}
 	}
+
+	for j, ex := range existing {
+		if !matched[j] {
+			if err := qtx.DeleteTodoAlarmByID(ctx, ex.ID); err != nil {
+				return fmt.Errorf("delete unmatched alarm: %w", err)
+			}
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return err
 	}
 	s.markDirtyByID(ctx, todoID)
 	return nil
+}
+
+// loadExistingTodoAlarms loads a todo's alarms with attendees inside the
+// transaction for merge matching.
+func loadExistingTodoAlarms(ctx context.Context, qtx *storage.Queries, todoID int64) ([]model.Alarm, error) {
+	rows, err := qtx.ListTodoAlarmsByTodoID(ctx, todoID)
+	if err != nil {
+		return nil, fmt.Errorf("list existing alarms: %w", err)
+	}
+	alarms := make([]model.Alarm, len(rows))
+	for i, r := range rows {
+		attRows, err := qtx.ListTodoAlarmAttendeesByAlarmID(ctx, r.ID)
+		if err != nil {
+			return nil, fmt.Errorf("list alarm attendees: %w", err)
+		}
+		atts := make([]model.AlarmAttendee, len(attRows))
+		for k, ar := range attRows {
+			atts[k] = model.AlarmAttendee{ID: ar.ID, Email: ar.Email, Name: storage.NullableToString(ar.Name)}
+		}
+		alarms[i] = model.Alarm{
+			ID: r.ID, EventID: r.TodoID,
+			UID:           storage.NullableToString(r.Uid),
+			Action:        r.Action,
+			TriggerValue:  r.TriggerValue,
+			Description:   storage.NullableToString(r.Description),
+			Summary:       storage.NullableToString(r.Summary),
+			Repeat:        int(r.Repeat),
+			Duration:      storage.NullableToString(r.Duration),
+			Related:       r.Related,
+			Acknowledged:  storage.NullableToString(r.Acknowledged),
+			AttachURI:     storage.NullableToString(r.AttachUri),
+			AttachFmtType: storage.NullableToString(r.AttachFmttype),
+			Attendees:     atts,
+		}
+	}
+	return alarms, nil
+}
+
+// matchTodoAlarm tries to match an incoming alarm with existing ones by content.
+func matchTodoAlarm(existing []model.Alarm, matched []bool, a model.Alarm) (int, bool) {
+	for j, ex := range existing {
+		if matched[j] {
+			continue
+		}
+		if a.ContentEqual(ex) {
+			return j, true
+		}
+	}
+	return 0, false
+}
+
+// matchTodoAlarmByUID matches an incoming alarm against unmatched existing
+// ones by RFC 9074 UID.
+func matchTodoAlarmByUID(existing []model.Alarm, matched []bool, a model.Alarm) (int, bool) {
+	if a.UID == "" {
+		return 0, false
+	}
+	for j, ex := range existing {
+		if matched[j] || ex.UID == "" {
+			continue
+		}
+		if ex.UID == a.UID {
+			return j, true
+		}
+	}
+	return 0, false
+}
+
+// syncMatchedTodoAlarm syncs a content-matched alarm's UID and ACKNOWLEDGED state.
+func syncMatchedTodoAlarm(ctx context.Context, qtx *storage.Queries, a model.Alarm, ex model.Alarm) error {
+	if ex.UID == "" {
+		uid := a.UID
+		if uid == "" {
+			uid = uuid.New().String()
+		}
+		if err := qtx.UpdateTodoAlarmUID(ctx, storage.UpdateTodoAlarmUIDParams{
+			Uid: storage.StringToNullable(uid),
+			ID:  ex.ID,
+		}); err != nil {
+			return fmt.Errorf("backfill alarm uid: %w", err)
+		}
+	}
+	if a.Acknowledged != ex.Acknowledged && model.ValidateAcknowledged(a.Acknowledged) {
+		if err := qtx.UpdateTodoAlarmAcknowledged(ctx, storage.UpdateTodoAlarmAcknowledgedParams{
+			Acknowledged: storage.StringToNullable(a.Acknowledged),
+			ID:           ex.ID,
+		}); err != nil {
+			return fmt.Errorf("update alarm acknowledged: %w", err)
+		}
+	}
+	// X-properties are excluded from content matching; refresh them so a
+	// remote X-prop change still lands.
+	return storage.ReplaceAlarmXProperties(ctx, qtx, storage.OwnerTypeTodoAlarm, ex.ID, a.XProperties)
+}
+
+// updateTodoAlarmInPlace rewrites a UID-matched alarm's content on its
+// existing row, preserving the row ID so todo_alarm_state entries survive.
+func updateTodoAlarmInPlace(ctx context.Context, qtx *storage.Queries, todoID int64, a model.Alarm, ex model.Alarm) error {
+	if err := qtx.UpdateTodoAlarmContentByID(ctx, storage.UpdateTodoAlarmContentByIDParams{
+		Action:        a.Action,
+		TriggerValue:  a.TriggerValue,
+		Description:   storage.StringToNullable(a.Description),
+		Summary:       storage.StringToNullable(a.Summary),
+		Repeat:        int64(a.Repeat),
+		Duration:      storage.StringToNullable(a.Duration),
+		Related:       a.Related,
+		Acknowledged:  storage.StringToNullable(a.Acknowledged),
+		AttachUri:     storage.StringToNullable(a.AttachURI),
+		AttachFmttype: storage.StringToNullable(a.AttachFmtType),
+		ID:            ex.ID,
+		TodoID:        todoID,
+	}); err != nil {
+		return fmt.Errorf("update alarm content: %w", err)
+	}
+	if err := qtx.DeleteTodoAlarmAttendeesByAlarmID(ctx, ex.ID); err != nil {
+		return fmt.Errorf("delete alarm attendees: %w", err)
+	}
+	for _, att := range a.Attendees {
+		_, err := qtx.CreateTodoAlarmAttendee(ctx, storage.CreateTodoAlarmAttendeeParams{
+			AlarmID: ex.ID,
+			Email:   att.Email,
+			Name:    storage.StringToNullable(att.Name),
+		})
+		if err != nil {
+			return fmt.Errorf("create alarm attendee: %w", err)
+		}
+	}
+	return storage.ReplaceAlarmXProperties(ctx, qtx, storage.OwnerTypeTodoAlarm, ex.ID, a.XProperties)
+}
+
+// createNewTodoAlarm creates a new todo alarm and its attendees.
+func createNewTodoAlarm(ctx context.Context, qtx *storage.Queries, todoID int64, a model.Alarm) error {
+	uid := a.UID
+	if uid == "" {
+		uid = uuid.New().String()
+	}
+	row, err := qtx.CreateTodoAlarm(ctx, storage.CreateTodoAlarmParams{
+		TodoID:        todoID,
+		Uid:           storage.StringToNullable(uid),
+		Action:        a.Action,
+		TriggerValue:  a.TriggerValue,
+		Description:   storage.StringToNullable(a.Description),
+		Summary:       storage.StringToNullable(a.Summary),
+		Repeat:        int64(a.Repeat),
+		Duration:      storage.StringToNullable(a.Duration),
+		Related:       a.Related,
+		Acknowledged:  storage.StringToNullable(a.Acknowledged),
+		AttachUri:     storage.StringToNullable(a.AttachURI),
+		AttachFmttype: storage.StringToNullable(a.AttachFmtType),
+	})
+	if err != nil {
+		return fmt.Errorf("create alarm: %w", err)
+	}
+	for _, att := range a.Attendees {
+		_, err := qtx.CreateTodoAlarmAttendee(ctx, storage.CreateTodoAlarmAttendeeParams{
+			AlarmID: row.ID,
+			Email:   att.Email,
+			Name:    storage.StringToNullable(att.Name),
+		})
+		if err != nil {
+			return fmt.Errorf("create alarm attendee: %w", err)
+		}
+	}
+	return storage.ReplaceAlarmXProperties(ctx, qtx, storage.OwnerTypeTodoAlarm, row.ID, a.XProperties)
 }
 
 // Attendee CRUD

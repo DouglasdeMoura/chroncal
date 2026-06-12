@@ -8,6 +8,15 @@ SELECT * FROM todo_alarms WHERE todo_id = ? ORDER BY id;
 -- name: DeleteTodoAlarmsByTodoID :exec
 DELETE FROM todo_alarms WHERE todo_id = ?;
 
+-- name: DeleteTodoAlarmByID :exec
+DELETE FROM todo_alarms WHERE id = ?;
+
+-- name: UpdateTodoAlarmContentByID :exec
+UPDATE todo_alarms
+SET action = ?, trigger_value = ?, description = ?, summary = ?, repeat = ?,
+    duration = ?, related = ?, acknowledged = ?, attach_uri = ?, attach_fmttype = ?
+WHERE id = ? AND todo_id = ?;
+
 -- name: ListTodoAlarmsWithEmptyUID :many
 SELECT * FROM todo_alarms WHERE uid IS NULL;
 
