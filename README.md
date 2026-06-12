@@ -755,7 +755,7 @@ Point it at chroncal's icon and you're done — find it afterwards with
 
 ```bash
 omarchy tui install chroncal chroncal float \
-  https://raw.githubusercontent.com/DouglasdeMoura/chroncal/master/assets/chroncal-256.png
+  https://raw.githubusercontent.com/DouglasdeMoura/chroncal/master/assets/chroncal-512.png
 ```
 
 The four arguments are `name command window-style icon-url`. `float` opens
