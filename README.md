@@ -489,6 +489,37 @@ chroncal alarm daemon   [--interval DURATION] # Run alarm checks in a loop (defa
 chroncal alarm missed   [--days N]            # Show missed alarms (default lookback: 7 days)
 ```
 
+Attach alarms when creating or updating events and todos with `--alarm`
+(repeatable). The format is `[ACTION:]TRIGGER[:DESC:REPEAT:DURATION:RELATED:ATTENDEES]`,
+where ACTION is `DISPLAY` (default), `EMAIL`, or `AUDIO`, and TRIGGER is an
+RFC 5545 duration relative to the start (`-PT15M` = 15 minutes before) or an
+RFC 3339 absolute time. Only the trigger is required:
+
+```bash
+chroncal event add "Standup" --date 2026-06-15 --time 09:00 --alarm "-PT15M"
+chroncal event add "Release" --date 2026-06-15 --time 14:00 --alarm "DISPLAY:-PT30M::3:PT5M"  # repeat 3x every 5 min
+```
+
+See `chroncal event add --help` for the extended fields.
+
+#### Getting notified
+
+Storing an alarm is not enough by itself — something has to run
+`chroncal alarm check` periodically to fire it. Two options:
+
+1. **Background service (recommended):** `chroncal service install` sets up a
+   user-level systemd timer (Linux) or launchd agent (macOS) that ticks every
+   minute. No terminal needs to stay open.
+2. **Foreground loop:** `chroncal alarm daemon` checks every 30 seconds until
+   interrupted. Useful for testing or tmux-resident setups.
+
+With either in place, a `DISPLAY` alarm pops a desktop notification at trigger
+time (15 minutes before the event in the example above). `AUDIO` alarms also
+play a sound, and `EMAIL` alarms send mail — see
+[SMTP (for email alarms)](#smtp-for-email-alarms) and the
+`security.allow_unsafe_alarm_*` config options. If nothing appears, check
+[Desktop notification backends](#desktop-notification-backends).
+
 ### Service (alarm background service)
 
 ```
@@ -496,6 +527,13 @@ chroncal service install              # Install systemd timer (Linux) or launchd
 chroncal service run                  # Run one background-service cycle now (alias: tick)
 chroncal service uninstall
 chroncal service status
+```
+
+The installed unit runs `chroncal service run` every minute, which fires due
+alarms and — when a sync interval is configured — also runs CalDAV sync:
+
+```bash
+chroncal service install --sync-interval 15m   # or set sync.interval in config.toml
 ```
 
 ### Global flags
@@ -644,10 +682,13 @@ Or via environment: `CHRONCAL_SMTP_HOST`, `CHRONCAL_SMTP_PORT`, `CHRONCAL_SMTP_U
 ### Desktop notification backends
 
 `chroncal alarm check` records fired alarms even in headless environments, but
-`DISPLAY` and `AUDIO` notifications still need an OS notification backend.
-On minimal containers or SSH sessions without desktop tooling, notification
-delivery can fail even though the alarm is detected and listed by
-`chroncal alarm list`.
+`DISPLAY` and `AUDIO` notifications still need an OS notification backend. On
+Linux that means a D-Bus notification daemon — the one built into GNOME or KDE,
+or a standalone daemon such as `mako` or `dunst` on lighter setups. On macOS,
+notifications work out of the box. On minimal containers or SSH sessions
+without desktop tooling, notification delivery can fail even though the alarm
+is detected and listed by `chroncal alarm list`. Sound playback on Linux uses
+`paplay` (with `aplay` as fallback); macOS uses `afplay`.
 
 ## Data storage
 
