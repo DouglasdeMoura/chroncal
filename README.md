@@ -249,8 +249,9 @@ The flake reads its version from the `VERSION` file, so Nix needs no
 per-release edits. When `go.mod` or `go.sum` changes, the flake's `vendorHash`
 must change with it — the Nix CI workflow builds the flake on any PR touching
 those files and fails on a mismatch. To fix one, run `nix build .#chroncal`,
-copy the `got:` hash into `flake.nix`, and rerun the build. A monthly
-`update-flake-lock` workflow opens a PR refreshing the flake inputs.
+copy the `got:` hash into `flake.nix`, and rerun the build. The
+`update-flake-lock` workflow opens a PR refreshing the flake inputs monthly,
+manually, and after a successful release workflow.
 
 GoReleaser publishes everything in one run — release assets, Homebrew
 cask, Scoop manifest, and both AUR packages; no manual packaging steps

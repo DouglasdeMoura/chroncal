@@ -21,6 +21,8 @@ jobs:
         with:
           go-version: "1.26"
 
+      - uses: DeterminateSystems/nix-installer-action@v22
+
       # The flake derives its version from the VERSION file, so a tag whose
       # VERSION was not bumped would ship a release whose `nix run` reports
       # the previous version. Fail fast instead.
@@ -32,6 +34,9 @@ jobs:
             echo "::error::VERSION file ($file_version) does not match tag ($tag_version); bump VERSION before tagging"
             exit 1
           fi
+
+      - name: Build and test via the flake
+        run: nix build .#chroncal --no-link --print-build-logs
 
       # GoReleaser publishes everything: release assets, the Homebrew
       # formula, the Scoop manifest, and both AUR packages. Each packaging

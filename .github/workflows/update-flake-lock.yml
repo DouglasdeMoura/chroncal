@@ -1,13 +1,18 @@
 name: Update flake.lock
 
-# Keeps the flake's nixpkgs/flake-utils inputs fresh. Note: PRs opened with
-# the default GITHUB_TOKEN do not trigger other workflows, so the Nix CI
-# check will not run on the bot's PR automatically — close and reopen the PR
-# (or push to its branch) to trigger it before merging.
+# Keeps the flake's nixpkgs/flake-utils inputs fresh. This runs monthly,
+# manually, and after the Release workflow succeeds. Do not use `on: release`:
+# releases are created by GoReleaser with GITHUB_TOKEN, and GitHub suppresses
+# most follow-up workflow events created by GITHUB_TOKEN.
 on:
   schedule:
     - cron: "0 6 1 * *" # monthly, 1st at 06:00 UTC
   workflow_dispatch:
+  workflow_run:
+    workflows:
+      - Release
+    types:
+      - completed
 
 permissions:
   contents: write
@@ -16,6 +21,7 @@ permissions:
 jobs:
   update:
     name: Update flake inputs
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
