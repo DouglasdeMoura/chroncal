@@ -58,6 +58,10 @@ type Config struct {
 // unset (viper Unmarshal leaves unset ints at zero).
 const DefaultSoftDeletePurgeDays = 30
 
+// DefaultSMTPPort is applied when SMTP.Port is unset, matching the
+// documented default (587, submission with STARTTLS).
+const DefaultSMTPPort = 587
+
 // Load reads configuration with precedence: env > config file > defaults.
 // The caller is responsible for applying flag overrides on top.
 func Load() Config {
@@ -71,6 +75,9 @@ func Load() Config {
 
 	var cfg Config
 	v.Unmarshal(&cfg) //nolint:errcheck // best-effort; zero-value Config is safe
+	if cfg.SMTP.Port == 0 {
+		cfg.SMTP.Port = DefaultSMTPPort
+	}
 	return cfg
 }
 
