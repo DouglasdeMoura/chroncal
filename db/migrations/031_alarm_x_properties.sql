@@ -120,6 +120,8 @@ DROP TRIGGER IF EXISTS events_x_properties_ad;
 DROP TRIGGER IF EXISTS todos_x_properties_ad;
 DROP TRIGGER IF EXISTS journals_x_properties_ad;
 
+-- Intentional, unrecoverable data loss: the pre-031 CHECK constraint cannot
+-- hold alarm-owned rows, so rolling back discards all VALARM X-properties.
 DELETE FROM x_properties WHERE owner_type IN ('event_alarm', 'todo_alarm');
 
 CREATE TABLE x_properties_old (

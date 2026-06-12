@@ -40,7 +40,7 @@ CLI commands live in `cmd/chroncal/`, one file per resource group. Each exports 
 
 ## Storage Layer
 
-- Hand-written files in `internal/storage/`: `connect.go` (DB setup), `nullable.go` (helpers), `query_builder.go` (dynamic WHERE construction), `scan_helpers.go` (row scanners), `events_dynamic.go` and `todos_dynamic.go` (filtered query methods). Everything else is sqlc-generated and will be overwritten by `make generate`.
+- Hand-written files in `internal/storage/`: `connect.go` (DB setup), `nullable.go` (helpers), `query_builder.go` (dynamic WHERE construction), `scan_helpers.go` (row scanners), `events_dynamic.go` and `todos_dynamic.go` (filtered query methods), `xprop_helpers.go` (alarm X-property attach/replace shared by event and todo services). Everything else is sqlc-generated and will be overwritten by `make generate`.
 - The dynamic query files replace sqlc's `arg = '' OR column = arg` pattern with runtime WHERE clause construction so SQLite can use indexes. Queries use `SELECT *`, so if a migration adds columns to `events` or `todos`, only update the scan functions in `scan_helpers.go` to match.
 - **Never edit `*.sql.go` files or `db.go` or `models.go` directly.**
 - Add new queries to `db/queries/*.sql`, then run `make generate`.
