@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/chroncal-256.png" width="128" alt="chroncal icon">
+</p>
+
 # chroncal
 
 [![CI](https://github.com/DouglasdeMoura/chroncal/actions/workflows/ci.yml/badge.svg)](https://github.com/DouglasdeMoura/chroncal/actions/workflows/ci.yml)
@@ -733,6 +737,71 @@ Live interoperability QA has been run against Nextcloud CalDAV with:
 Nextcloud does not expose a `VJOURNAL` collection by default, but chroncal
 interoperates cleanly with a dedicated CalDAV calendar created with
 `supported-calendar-component-set = VJOURNAL`.
+
+## Desktop icon
+
+chroncal ships an application icon under [`assets/`](assets/): a vector master
+(`chroncal.svg`) plus rasterized PNGs from 16px to 512px. Being a terminal app,
+chroncal is normally launched by typing `chroncal` (or a shell alias), exactly
+like `lazygit` or `lazydocker` — the icon is there for when you'd rather give it
+a graphical launcher tile.
+
+### Omarchy
+
+[Omarchy](https://omarchy.org/) has a built-in command for turning a terminal
+app into a launcher tile, so you don't have to write a `.desktop` file by hand.
+Point it at chroncal's icon and you're done — find it afterwards with
+**SUPER + SPACE**:
+
+```bash
+omarchy tui install chroncal chroncal float \
+  https://raw.githubusercontent.com/DouglasdeMoura/chroncal/master/assets/chroncal-256.png
+```
+
+The four arguments are `name command window-style icon-url`. `float` opens
+chroncal in a centered floating window (Omarchy's `TUI.float` window rule); pass
+`tile` instead to have it tile like a normal window. The launcher runs chroncal
+through `xdg-terminal-exec`, so it opens in whatever terminal you've configured —
+nothing is hardcoded. The icon is downloaded into
+`~/.local/share/applications/icons/`, so it keeps working after the command
+finishes.
+
+If you have the repo cloned, point at the local vector master instead for a
+crisp icon at any size (it's referenced in place, so keep the file around):
+
+```bash
+omarchy tui install chroncal chroncal float "$PWD/assets/chroncal.svg"
+```
+
+Remove the launcher later with `omarchy tui remove chroncal`.
+
+### Other launchers (walker, rofi, GNOME, KDE)
+
+On any other freedesktop setup, register the icon with a `.desktop` entry by
+hand:
+
+```bash
+# Install the icon into your user icon theme
+install -Dm644 assets/chroncal.svg \
+  ~/.local/share/icons/hicolor/scalable/apps/chroncal.svg
+
+# Create a launcher entry that opens chroncal in your terminal
+cat > ~/.local/share/applications/chroncal.desktop <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=chroncal
+Comment=Terminal calendar
+Exec=alacritty -e chroncal
+Terminal=false
+Icon=chroncal
+Categories=Utility;Calendar;Office;
+EOF
+```
+
+Swap `alacritty` for your terminal of choice (`ghostty`, `kitty`, `foot`, …).
+The icon's deep petrol tile is tuned to keep its silhouette against dark
+wallpapers like the ones Omarchy ships with, so it stays legible in the
+launcher rather than melting into the background.
 
 ## Contributing
 
