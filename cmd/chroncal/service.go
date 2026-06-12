@@ -11,6 +11,8 @@ import (
 	"text/template"
 
 	"github.com/spf13/cobra"
+
+	syncPkg "github.com/douglasdemoura/chroncal/internal/sync"
 )
 
 const systemdServiceTmpl = `[Unit]
@@ -143,6 +145,20 @@ minute and also runs sync work when the configured sync interval is due.`,
 			effectiveSyncInterval := syncInterval
 			if effectiveSyncInterval == "" {
 				effectiveSyncInterval = cfg.Sync.Interval
+			}
+			// The values below are interpolated into service definitions
+			// (unit file, plist, batch wrapper). Reject anything that
+			// doesn't parse rather than escaping per-format: a config value
+			// with a newline must never reach a template.
+			if effectiveSyncInterval != "" {
+				if _, err := parseCLIDuration("sync-interval", effectiveSyncInterval); err != nil {
+					return err
+				}
+			}
+			if s := cfg.Sync.ConflictStrategy; s != "" &&
+				s != string(syncPkg.ConflictServerWins) && s != string(syncPkg.ConflictPrompt) {
+				return errInvalidInputf("sync.conflict_strategy: invalid value %q (use %q or %q)",
+					s, syncPkg.ConflictServerWins, syncPkg.ConflictPrompt)
 			}
 
 			data := map[string]string{
