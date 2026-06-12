@@ -854,17 +854,20 @@ func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
 
 // buildAlarmsWithAttendees converts storage alarm rows into model.Alarm
 // values with attendees batch-loaded.
-func buildAlarmsWithAttendees(ctx context.Context, q *storage.Queries, rows []storage.EventAlarm) []model.Alarm {
+func buildAlarmsWithAttendees(ctx context.Context, q *storage.Queries, rows []storage.EventAlarm) ([]model.Alarm, error) {
 	if len(rows) == 0 {
-		return nil
+		return nil, nil
 	}
 	alarmIDs := make([]int64, len(rows))
 	for i, r := range rows {
 		alarmIDs[i] = r.ID
 	}
+	// Load failures propagate: attendees feed content matching in
+	// ReplaceAlarms and X-properties feed export/sync pushes, so a silently
+	// degraded alarm set would corrupt merges or rewrite the server copy.
 	attRows, err := q.ListAlarmAttendeesByAlarmIDs(ctx, alarmIDs)
 	if err != nil {
-		log.Printf("buildAlarmsWithAttendees: failed to load attendees for %d alarms: %v", len(alarmIDs), err)
+		return nil, fmt.Errorf("load alarm attendees: %w", err)
 	}
 	attMap := make(map[int64][]model.AlarmAttendee, len(rows))
 	for _, ar := range attRows {
@@ -877,8 +880,10 @@ func buildAlarmsWithAttendees(ctx context.Context, q *storage.Queries, rows []st
 		alarms[i] = fromStorageAlarm(r)
 		alarms[i].Attendees = attMap[r.ID]
 	}
-	storage.AttachAlarmXProperties(ctx, q, storage.OwnerTypeEventAlarm, alarms)
-	return alarms
+	if err := storage.AttachAlarmXProperties(ctx, q, storage.OwnerTypeEventAlarm, alarms); err != nil {
+		return nil, err
+	}
+	return alarms, nil
 }
 
 func (s *Service) ListAlarms(ctx context.Context, eventID int64) ([]model.Alarm, error) {
@@ -886,7 +891,7 @@ func (s *Service) ListAlarms(ctx context.Context, eventID int64) ([]model.Alarm,
 	if err != nil {
 		return nil, err
 	}
-	return buildAlarmsWithAttendees(ctx, s.q, rows), nil
+	return buildAlarmsWithAttendees(ctx, s.q, rows)
 }
 
 // ListAlarmsByEventIDs fetches alarms for multiple event IDs in a single batch query.
@@ -899,7 +904,10 @@ func (s *Service) ListAlarmsByEventIDs(ctx context.Context, eventIDs []int64) (m
 	if err != nil {
 		return nil, err
 	}
-	alarms := buildAlarmsWithAttendees(ctx, s.q, alarmRows)
+	alarms, err := buildAlarmsWithAttendees(ctx, s.q, alarmRows)
+	if err != nil {
+		return nil, err
+	}
 	if len(alarms) == 0 {
 		return nil, nil
 	}
@@ -916,7 +924,7 @@ func loadExistingAlarms(ctx context.Context, qtx *storage.Queries, eventID int64
 	if err != nil {
 		return nil, fmt.Errorf("list existing alarms: %w", err)
 	}
-	return buildAlarmsWithAttendees(ctx, qtx, rows), nil
+	return buildAlarmsWithAttendees(ctx, qtx, rows)
 }
 
 // applyAlarmDefaults sets default values for alarm fields.
@@ -930,10 +938,16 @@ func applyAlarmDefaults(a *model.Alarm) {
 }
 
 // matchAlarm tries to match an incoming alarm with existing ones by content.
-// Returns true and the index if matched, false otherwise.
+// Returns true and the index if matched, false otherwise. Rows whose
+// non-empty RFC 9074 UIDs differ are never paired: the UID identifies the
+// alarm, and a content coincidence across different UIDs would attach
+// alarm_state to the wrong definition and churn UIDs on the server.
 func matchAlarm(existing []model.Alarm, matched []bool, a model.Alarm) (int, bool) {
 	for j, ex := range existing {
 		if matched[j] {
+			continue
+		}
+		if a.UID != "" && ex.UID != "" && a.UID != ex.UID {
 			continue
 		}
 		if a.ContentEqual(ex) {
@@ -973,6 +987,12 @@ func matchAlarmByUID(existing []model.Alarm, matched []bool, a model.Alarm) (int
 // updateAlarmInPlace rewrites a UID-matched alarm's content on its existing
 // row, preserving the row ID so alarm_state entries keyed to it survive.
 func updateAlarmInPlace(ctx context.Context, qtx *storage.Queries, eventID int64, a model.Alarm, ex model.Alarm) error {
+	// Same ACKNOWLEDGED policy as syncMatchedAlarm: a malformed incoming
+	// value must not clobber valid stored state.
+	ack := a.Acknowledged
+	if !model.ValidateAcknowledged(ack) {
+		ack = ex.Acknowledged
+	}
 	if err := qtx.UpdateAlarmContentByID(ctx, storage.UpdateAlarmContentByIDParams{
 		Action:        a.Action,
 		TriggerValue:  a.TriggerValue,
@@ -981,7 +1001,7 @@ func updateAlarmInPlace(ctx context.Context, qtx *storage.Queries, eventID int64
 		Repeat:        int64(a.Repeat),
 		Duration:      storage.StringToNullable(a.Duration),
 		Related:       a.Related,
-		Acknowledged:  storage.StringToNullable(a.Acknowledged),
+		Acknowledged:  storage.StringToNullable(ack),
 		AttachUri:     storage.StringToNullable(a.AttachURI),
 		AttachFmttype: storage.StringToNullable(a.AttachFmtType),
 		ID:            ex.ID,
@@ -1001,6 +1021,9 @@ func updateAlarmInPlace(ctx context.Context, qtx *storage.Queries, eventID int64
 		if err != nil {
 			return fmt.Errorf("create alarm attendee: %w", err)
 		}
+	}
+	if a.XProperties == nil || model.XPropsContentEqual(a.XProperties, ex.XProperties) {
+		return nil
 	}
 	return storage.ReplaceAlarmXProperties(ctx, qtx, storage.OwnerTypeEventAlarm, ex.ID, a.XProperties)
 }
@@ -1027,13 +1050,31 @@ func syncMatchedAlarm(ctx context.Context, qtx *storage.Queries, eventID int64, 
 		}
 	}
 	// X-properties are excluded from content matching; refresh them so a
-	// remote X-prop change still lands.
+	// remote X-prop change still lands. nil means the caller has no X-prop
+	// knowledge (CLI flags, TUI fallback paths) — keep the stored rows; only
+	// a non-nil slice (import/sync always populates one) is authoritative.
+	if a.XProperties == nil || model.XPropsContentEqual(a.XProperties, ex.XProperties) {
+		return nil
+	}
 	return storage.ReplaceAlarmXProperties(ctx, qtx, storage.OwnerTypeEventAlarm, ex.ID, a.XProperties)
 }
 
-// createNewAlarm creates a new alarm and its attendees.
+// isUniqueUIDViolation reports whether an insert failed on the global
+// alarm-UID unique index.
+func isUniqueUIDViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "UNIQUE constraint failed") && strings.Contains(msg, ".uid")
+}
+
+// createNewAlarm creates a new alarm and its attendees. Alarm UIDs are
+// globally unique; servers sometimes duplicate an event (same VALARM UIDs on
+// both copies), which would otherwise fail this event's sync forever — on
+// collision, mint a fresh local UID instead.
 func createNewAlarm(ctx context.Context, qtx *storage.Queries, eventID int64, a model.Alarm) error {
-	row, err := qtx.CreateAlarm(ctx, storage.CreateAlarmParams{
+	params := storage.CreateAlarmParams{
 		EventID:       eventID,
 		Uid:           storage.StringToNullable(alarmUID(a)),
 		Action:        a.Action,
@@ -1046,7 +1087,12 @@ func createNewAlarm(ctx context.Context, qtx *storage.Queries, eventID int64, a 
 		Acknowledged:  storage.StringToNullable(a.Acknowledged),
 		AttachUri:     storage.StringToNullable(a.AttachURI),
 		AttachFmttype: storage.StringToNullable(a.AttachFmtType),
-	})
+	}
+	row, err := qtx.CreateAlarm(ctx, params)
+	if isUniqueUIDViolation(err) {
+		params.Uid = storage.StringToNullable(uuid.New().String())
+		row, err = qtx.CreateAlarm(ctx, params)
+	}
 	if err != nil {
 		return fmt.Errorf("create alarm: %w", err)
 	}
@@ -1059,6 +1105,9 @@ func createNewAlarm(ctx context.Context, qtx *storage.Queries, eventID int64, a 
 		if err != nil {
 			return fmt.Errorf("create alarm attendee: %w", err)
 		}
+	}
+	if len(a.XProperties) == 0 {
+		return nil
 	}
 	return storage.ReplaceAlarmXProperties(ctx, qtx, storage.OwnerTypeEventAlarm, row.ID, a.XProperties)
 }

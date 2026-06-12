@@ -22,9 +22,12 @@ type TodoDueAlarm struct {
 	StateID   int64
 }
 
-// TodoAlarmLister defines the interface for listing todo alarms
+// TodoAlarmLister defines the interface for listing todo alarms.
+// ListAlarmsLean omits X-properties (round-trip-only metadata) — the check
+// loop calls it per todo every tick and never reads them.
 type TodoAlarmLister interface {
 	ListAlarms(ctx context.Context, todoID int64) ([]model.Alarm, error)
+	ListAlarmsLean(ctx context.Context, todoID int64) ([]model.Alarm, error)
 }
 
 // TodoService handles alarm operations for todos
@@ -60,7 +63,7 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 			continue
 		}
 
-		alarms, err := s.todos.ListAlarms(ctx, t.ID)
+		alarms, err := s.todos.ListAlarmsLean(ctx, t.ID)
 		if err != nil || len(alarms) == 0 {
 			continue
 		}
@@ -240,7 +243,7 @@ func (s *TodoService) ListExpiredTodoSnoozed(ctx context.Context, now time.Time)
 		}
 		t := todoFromRow(row)
 
-		alarms, err := s.todos.ListAlarms(ctx, t.ID)
+		alarms, err := s.todos.ListAlarmsLean(ctx, t.ID)
 		if err != nil {
 			continue
 		}

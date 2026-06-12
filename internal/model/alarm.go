@@ -6,6 +6,11 @@ import (
 	"time"
 )
 
+// MaxAlarmRepeat caps RFC 5545 REPEAT counts. The spec sets no bound, but
+// every repeat becomes a tracked trigger time in the alarm check loop, so an
+// absurd value (imported or typed) would hang or OOM every check.
+const MaxAlarmRepeat = 100
+
 type Alarm struct {
 	ID            int64
 	EventID       int64

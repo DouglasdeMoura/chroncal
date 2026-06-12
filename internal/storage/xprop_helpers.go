@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"fmt"
-	"log"
 
 	"github.com/douglasdemoura/chroncal/internal/model"
 )
@@ -15,11 +14,13 @@ const (
 )
 
 // AttachAlarmXProperties batch-loads X-properties for the given alarms and
-// attaches them by alarm ID. Best-effort: a load failure leaves XProperties
-// nil rather than failing the alarm fetch.
-func AttachAlarmXProperties(ctx context.Context, q *Queries, ownerType string, alarms []model.Alarm) {
+// attaches them by alarm ID. A load failure is returned, not swallowed: the
+// result feeds export and sync pushes, and silently-nil XProperties would
+// rewrite the server copy without them — turning a transient local read
+// error into permanent remote data loss.
+func AttachAlarmXProperties(ctx context.Context, q *Queries, ownerType string, alarms []model.Alarm) error {
 	if len(alarms) == 0 {
-		return
+		return nil
 	}
 	ids := make([]int64, len(alarms))
 	for i, a := range alarms {
@@ -30,11 +31,10 @@ func AttachAlarmXProperties(ctx context.Context, q *Queries, ownerType string, a
 		OwnerIds:  ids,
 	})
 	if err != nil {
-		log.Printf("AttachAlarmXProperties: failed to load x-properties for %d alarms: %v", len(ids), err)
-		return
+		return fmt.Errorf("load alarm x-properties: %w", err)
 	}
 	if len(rows) == 0 {
-		return
+		return nil
 	}
 	byOwner := make(map[int64][]model.XProperty)
 	for _, r := range rows {
@@ -46,6 +46,7 @@ func AttachAlarmXProperties(ctx context.Context, q *Queries, ownerType string, a
 	for i := range alarms {
 		alarms[i].XProperties = byOwner[alarms[i].ID]
 	}
+	return nil
 }
 
 // ReplaceAlarmXProperties rewrites an alarm's X-properties. Call inside the

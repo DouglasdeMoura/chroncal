@@ -306,6 +306,7 @@ func (m *AlarmListEditorModel) applyEditForm() {
 		alarm.Attendees = orig.Attendees
 		alarm.Description = orig.Description
 		alarm.Summary = orig.Summary
+		alarm.XProperties = orig.XProperties
 		m.alarms[m.editIdx] = alarm
 	} else {
 		m.alarms = append(m.alarms, alarm)

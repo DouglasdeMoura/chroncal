@@ -590,8 +590,10 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 		alarm.Summary = prop.Value
 	}
 	if prop := comp.Props.Get("REPEAT"); prop != nil {
-		if v, err := strconv.Atoi(prop.Value); err == nil {
-			alarm.Repeat = v
+		// Clamp: REPEAT expands into per-trigger state in the check loop,
+		// so an absurd imported value must not hang or OOM every check.
+		if v, err := strconv.Atoi(prop.Value); err == nil && v > 0 {
+			alarm.Repeat = min(v, model.MaxAlarmRepeat)
 		}
 	}
 	if prop := comp.Props.Get(ical.PropDuration); prop != nil {
@@ -631,7 +633,13 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 	}
 
 	// X-* extension properties — preserved for round-trip fidelity only.
+	// Normalize to a non-nil slice: for ReplaceAlarms, non-nil means "this
+	// is the complete X-prop set" (empty = remote cleared them), while nil
+	// means "caller has no X-prop knowledge, keep stored rows".
 	alarm.XProperties = extractXPropertiesWithSet(comp.Props, nil)
+	if alarm.XProperties == nil {
+		alarm.XProperties = []model.XProperty{}
+	}
 
 	return alarm, warn
 }

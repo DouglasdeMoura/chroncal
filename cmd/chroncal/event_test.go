@@ -257,3 +257,22 @@ func captureStderr(t *testing.T, fn func()) string {
 	}
 	return string(out)
 }
+
+func TestParseOneAlarm_RepeatBounds(t *testing.T) {
+	cases := []struct {
+		val     string
+		wantErr bool
+	}{
+		{"DISPLAY:-PT15M::3:PT5M", false},
+		{"DISPLAY:-PT15M", false},
+		{"DISPLAY:-PT15M::-1:PT5M", true},
+		{"DISPLAY:-PT15M::101:PT5M", true},
+		{"DISPLAY:-PT15M::2000000000:PT5M", true},
+	}
+	for _, tc := range cases {
+		_, err := parseOneAlarm(tc.val)
+		if (err != nil) != tc.wantErr {
+			t.Errorf("parseOneAlarm(%q) err = %v, wantErr %v", tc.val, err, tc.wantErr)
+		}
+	}
+}

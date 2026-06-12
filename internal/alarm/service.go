@@ -145,7 +145,7 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 				continue
 			}
 
-			alarms, err := s.todos.ListAlarms(ctx, td.ID)
+			alarms, err := s.todos.ListAlarmsLean(ctx, td.ID)
 			if err != nil || len(alarms) == 0 {
 				continue
 			}
@@ -584,12 +584,15 @@ func computeTriggerTime(evt event.Event, a model.Alarm) (time.Time, error) {
 
 // buildRepeatTriggers returns a list of trigger times for a repeating alarm.
 // The result includes the initial trigger time plus additional firings
-// at the specified duration interval, up to the repeat count.
+// at the specified duration interval, up to the repeat count. The count is
+// clamped to model.MaxAlarmRepeat as defense in depth — rows written before
+// the cap existed (or by other tools) must not blow up the check loop.
 func buildRepeatTriggers(triggerAt time.Time, repeat int, durStr string) []time.Time {
 	triggers := []time.Time{triggerAt}
 	if repeat <= 0 || durStr == "" {
 		return triggers
 	}
+	repeat = min(repeat, model.MaxAlarmRepeat)
 	for i := 1; i <= repeat; i++ {
 		triggerAt = duration.Add(triggerAt, durStr)
 		if triggerAt.IsZero() || triggerAt.Equal(triggers[len(triggers)-1]) {

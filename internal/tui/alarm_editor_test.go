@@ -224,3 +224,27 @@ func TestEventForm_EnterOnAlarmsOpensEditor(t *testing.T) {
 	assert.NotNil(t, cmd)
 	assert.True(t, m.alarmEditorOpen)
 }
+
+func TestAlarmEditor_EditPreservesAfterSignRelatedAndXProps(t *testing.T) {
+	m := NewAlarmListEditorModel([]model.Alarm{{
+		Action:       "DISPLAY",
+		TriggerValue: "PT30M", // 30 minutes AFTER the anchor
+		Related:      "END",
+		XProperties:  []model.XProperty{{Name: "X-APPLE-DEFAULT-ALARM", Value: "TRUE"}},
+	}}, 80, 24, Theme{})
+
+	m.cursor = 0
+	m, _ = m.Update(keyMsg("e"))
+	require.Equal(t, alarmModeEdit, m.mode)
+
+	// Save unchanged: sign, RELATED, and X-properties must all survive.
+	m, cmd := m.Update(keyMsg("ctrl+s"))
+	require.NotNil(t, cmd)
+	m, _ = m.Update(cmd())
+	require.Len(t, m.Alarms(), 1)
+	got := m.Alarms()[0]
+	assert.Equal(t, "PT30M", got.TriggerValue, "after-anchor sign must survive an edit")
+	assert.Equal(t, "END", got.Related, "RELATED must survive an edit")
+	require.Len(t, got.XProperties, 1, "X-properties must survive an edit")
+	assert.Equal(t, "X-APPLE-DEFAULT-ALARM", got.XProperties[0].Name)
+}

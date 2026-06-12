@@ -170,3 +170,12 @@ allow_unsafe_alarm_email_attendees = true
 		t.Fatal("Security.AllowUnsafeAlarmEmailAttendees = false, want true")
 	}
 }
+
+func TestLoad_SMTPPortDefaultsWhenUnset(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir()) // no config file
+	t.Setenv("CHRONCAL_SMTP_PORT", "")
+	cfg := Load()
+	if cfg.SMTP.Port != DefaultSMTPPort {
+		t.Errorf("SMTP.Port = %d, want %d when unset", cfg.SMTP.Port, DefaultSMTPPort)
+	}
+}

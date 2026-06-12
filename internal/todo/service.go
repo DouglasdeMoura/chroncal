@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -540,6 +539,18 @@ func (s *Service) ListOverridesByUID(ctx context.Context, uid string) ([]Todo, e
 // Alarm CRUD
 
 func (s *Service) ListAlarms(ctx context.Context, todoID int64) ([]model.Alarm, error) {
+	return s.listAlarms(ctx, todoID, true)
+}
+
+// ListAlarmsLean returns a todo's alarms with attendees (needed to fire
+// EMAIL alarms) but without X-properties, which are round-trip-only and
+// never read at fire time. The alarm check loop calls this per todo every
+// tick, so it skips the per-todo x_properties query that export/sync need.
+func (s *Service) ListAlarmsLean(ctx context.Context, todoID int64) ([]model.Alarm, error) {
+	return s.listAlarms(ctx, todoID, false)
+}
+
+func (s *Service) listAlarms(ctx context.Context, todoID int64, withXProps bool) ([]model.Alarm, error) {
 	rows, err := s.q.ListTodoAlarmsByTodoID(ctx, todoID)
 	if err != nil {
 		return nil, err
@@ -551,9 +562,12 @@ func (s *Service) ListAlarms(ctx context.Context, todoID int64) ([]model.Alarm, 
 	for i, r := range rows {
 		alarmIDs[i] = r.ID
 	}
+	// Load failures propagate: attendees feed content matching in
+	// ReplaceAlarms and X-properties feed export/sync pushes, so a silently
+	// degraded alarm set would corrupt merges or rewrite the server copy.
 	attRows, err := s.q.ListTodoAlarmAttendeesByAlarmIDs(ctx, alarmIDs)
 	if err != nil {
-		log.Printf("ListAlarms: failed to load attendees for %d alarms: %v", len(alarmIDs), err)
+		return nil, fmt.Errorf("load alarm attendees: %w", err)
 	}
 	attMap := make(map[int64][]model.AlarmAttendee, len(rows))
 	for _, ar := range attRows {
@@ -563,24 +577,33 @@ func (s *Service) ListAlarms(ctx context.Context, todoID int64) ([]model.Alarm, 
 	}
 	alarms := make([]model.Alarm, len(rows))
 	for i, r := range rows {
-		alarms[i] = model.Alarm{
-			ID: r.ID, EventID: r.TodoID,
-			UID:           storage.NullableToString(r.Uid),
-			Action:        r.Action,
-			TriggerValue:  r.TriggerValue,
-			Description:   storage.NullableToString(r.Description),
-			Summary:       storage.NullableToString(r.Summary),
-			Repeat:        int(r.Repeat),
-			Duration:      storage.NullableToString(r.Duration),
-			Related:       r.Related,
-			Acknowledged:  storage.NullableToString(r.Acknowledged),
-			AttachURI:     storage.NullableToString(r.AttachUri),
-			AttachFmtType: storage.NullableToString(r.AttachFmttype),
-			Attendees:     attMap[r.ID],
+		alarms[i] = fromStorageTodoAlarm(r)
+		alarms[i].Attendees = attMap[r.ID]
+	}
+	if withXProps {
+		if err := storage.AttachAlarmXProperties(ctx, s.q, storage.OwnerTypeTodoAlarm, alarms); err != nil {
+			return nil, err
 		}
 	}
-	storage.AttachAlarmXProperties(ctx, s.q, storage.OwnerTypeTodoAlarm, alarms)
 	return alarms, nil
+}
+
+// fromStorageTodoAlarm maps a todo_alarms row to the shared alarm model.
+func fromStorageTodoAlarm(r storage.TodoAlarm) model.Alarm {
+	return model.Alarm{
+		ID: r.ID, EventID: r.TodoID,
+		UID:           storage.NullableToString(r.Uid),
+		Action:        r.Action,
+		TriggerValue:  r.TriggerValue,
+		Description:   storage.NullableToString(r.Description),
+		Summary:       storage.NullableToString(r.Summary),
+		Repeat:        int(r.Repeat),
+		Duration:      storage.NullableToString(r.Duration),
+		Related:       r.Related,
+		Acknowledged:  storage.NullableToString(r.Acknowledged),
+		AttachURI:     storage.NullableToString(r.AttachUri),
+		AttachFmtType: storage.NullableToString(r.AttachFmttype),
+	}
 }
 
 func (s *Service) ReplaceAlarms(ctx context.Context, todoID int64, alarms []model.Alarm) error {
@@ -600,6 +623,8 @@ func (s *Service) ReplaceAlarms(ctx context.Context, todoID int64, alarms []mode
 		return err
 	}
 
+	// Copy before applying defaults — the caller's slice must not be mutated.
+	alarms = append([]model.Alarm(nil), alarms...)
 	for i := range alarms {
 		if alarms[i].Action == "" {
 			alarms[i].Action = alarmAction
@@ -652,46 +677,50 @@ func (s *Service) ReplaceAlarms(ctx context.Context, todoID int64, alarms []mode
 	return nil
 }
 
-// loadExistingTodoAlarms loads a todo's alarms with attendees inside the
-// transaction for merge matching.
+// loadExistingTodoAlarms loads a todo's alarms with attendees and
+// X-properties inside the transaction for merge matching.
 func loadExistingTodoAlarms(ctx context.Context, qtx *storage.Queries, todoID int64) ([]model.Alarm, error) {
 	rows, err := qtx.ListTodoAlarmsByTodoID(ctx, todoID)
 	if err != nil {
 		return nil, fmt.Errorf("list existing alarms: %w", err)
 	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	alarmIDs := make([]int64, len(rows))
+	for i, r := range rows {
+		alarmIDs[i] = r.ID
+	}
+	attRows, err := qtx.ListTodoAlarmAttendeesByAlarmIDs(ctx, alarmIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list alarm attendees: %w", err)
+	}
+	attMap := make(map[int64][]model.AlarmAttendee, len(rows))
+	for _, ar := range attRows {
+		attMap[ar.AlarmID] = append(attMap[ar.AlarmID], model.AlarmAttendee{
+			ID: ar.ID, Email: ar.Email, Name: storage.NullableToString(ar.Name),
+		})
+	}
 	alarms := make([]model.Alarm, len(rows))
 	for i, r := range rows {
-		attRows, err := qtx.ListTodoAlarmAttendeesByAlarmID(ctx, r.ID)
-		if err != nil {
-			return nil, fmt.Errorf("list alarm attendees: %w", err)
-		}
-		atts := make([]model.AlarmAttendee, len(attRows))
-		for k, ar := range attRows {
-			atts[k] = model.AlarmAttendee{ID: ar.ID, Email: ar.Email, Name: storage.NullableToString(ar.Name)}
-		}
-		alarms[i] = model.Alarm{
-			ID: r.ID, EventID: r.TodoID,
-			UID:           storage.NullableToString(r.Uid),
-			Action:        r.Action,
-			TriggerValue:  r.TriggerValue,
-			Description:   storage.NullableToString(r.Description),
-			Summary:       storage.NullableToString(r.Summary),
-			Repeat:        int(r.Repeat),
-			Duration:      storage.NullableToString(r.Duration),
-			Related:       r.Related,
-			Acknowledged:  storage.NullableToString(r.Acknowledged),
-			AttachURI:     storage.NullableToString(r.AttachUri),
-			AttachFmtType: storage.NullableToString(r.AttachFmttype),
-			Attendees:     atts,
-		}
+		alarms[i] = fromStorageTodoAlarm(r)
+		alarms[i].Attendees = attMap[r.ID]
+	}
+	if err := storage.AttachAlarmXProperties(ctx, qtx, storage.OwnerTypeTodoAlarm, alarms); err != nil {
+		return nil, err
 	}
 	return alarms, nil
 }
 
-// matchTodoAlarm tries to match an incoming alarm with existing ones by content.
+// matchTodoAlarm tries to match an incoming alarm with existing ones by
+// content. Rows whose non-empty RFC 9074 UIDs differ are never paired —
+// see event.matchAlarm for the rationale.
 func matchTodoAlarm(existing []model.Alarm, matched []bool, a model.Alarm) (int, bool) {
 	for j, ex := range existing {
 		if matched[j] {
+			continue
+		}
+		if a.UID != "" && ex.UID != "" && a.UID != ex.UID {
 			continue
 		}
 		if a.ContentEqual(ex) {
@@ -741,13 +770,23 @@ func syncMatchedTodoAlarm(ctx context.Context, qtx *storage.Queries, a model.Ala
 		}
 	}
 	// X-properties are excluded from content matching; refresh them so a
-	// remote X-prop change still lands.
+	// remote X-prop change still lands. nil means the caller has no X-prop
+	// knowledge — keep the stored rows; only a non-nil slice is authoritative.
+	if a.XProperties == nil || model.XPropsContentEqual(a.XProperties, ex.XProperties) {
+		return nil
+	}
 	return storage.ReplaceAlarmXProperties(ctx, qtx, storage.OwnerTypeTodoAlarm, ex.ID, a.XProperties)
 }
 
 // updateTodoAlarmInPlace rewrites a UID-matched alarm's content on its
 // existing row, preserving the row ID so todo_alarm_state entries survive.
 func updateTodoAlarmInPlace(ctx context.Context, qtx *storage.Queries, todoID int64, a model.Alarm, ex model.Alarm) error {
+	// Same ACKNOWLEDGED policy as syncMatchedTodoAlarm: a malformed
+	// incoming value must not clobber valid stored state.
+	ack := a.Acknowledged
+	if !model.ValidateAcknowledged(ack) {
+		ack = ex.Acknowledged
+	}
 	if err := qtx.UpdateTodoAlarmContentByID(ctx, storage.UpdateTodoAlarmContentByIDParams{
 		Action:        a.Action,
 		TriggerValue:  a.TriggerValue,
@@ -756,7 +795,7 @@ func updateTodoAlarmInPlace(ctx context.Context, qtx *storage.Queries, todoID in
 		Repeat:        int64(a.Repeat),
 		Duration:      storage.StringToNullable(a.Duration),
 		Related:       a.Related,
-		Acknowledged:  storage.StringToNullable(a.Acknowledged),
+		Acknowledged:  storage.StringToNullable(ack),
 		AttachUri:     storage.StringToNullable(a.AttachURI),
 		AttachFmttype: storage.StringToNullable(a.AttachFmtType),
 		ID:            ex.ID,
@@ -777,16 +816,31 @@ func updateTodoAlarmInPlace(ctx context.Context, qtx *storage.Queries, todoID in
 			return fmt.Errorf("create alarm attendee: %w", err)
 		}
 	}
+	if a.XProperties == nil || model.XPropsContentEqual(a.XProperties, ex.XProperties) {
+		return nil
+	}
 	return storage.ReplaceAlarmXProperties(ctx, qtx, storage.OwnerTypeTodoAlarm, ex.ID, a.XProperties)
 }
 
-// createNewTodoAlarm creates a new todo alarm and its attendees.
+// isUniqueUIDViolation reports whether an insert failed on the global
+// alarm-UID unique index.
+func isUniqueUIDViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "UNIQUE constraint failed") && strings.Contains(msg, ".uid")
+}
+
+// createNewTodoAlarm creates a new todo alarm and its attendees. On a global
+// UID collision (e.g. a server duplicating a todo with its VALARM UIDs),
+// mint a fresh local UID instead of failing the sync forever.
 func createNewTodoAlarm(ctx context.Context, qtx *storage.Queries, todoID int64, a model.Alarm) error {
 	uid := a.UID
 	if uid == "" {
 		uid = uuid.New().String()
 	}
-	row, err := qtx.CreateTodoAlarm(ctx, storage.CreateTodoAlarmParams{
+	params := storage.CreateTodoAlarmParams{
 		TodoID:        todoID,
 		Uid:           storage.StringToNullable(uid),
 		Action:        a.Action,
@@ -799,7 +853,12 @@ func createNewTodoAlarm(ctx context.Context, qtx *storage.Queries, todoID int64,
 		Acknowledged:  storage.StringToNullable(a.Acknowledged),
 		AttachUri:     storage.StringToNullable(a.AttachURI),
 		AttachFmttype: storage.StringToNullable(a.AttachFmtType),
-	})
+	}
+	row, err := qtx.CreateTodoAlarm(ctx, params)
+	if isUniqueUIDViolation(err) {
+		params.Uid = storage.StringToNullable(uuid.New().String())
+		row, err = qtx.CreateTodoAlarm(ctx, params)
+	}
 	if err != nil {
 		return fmt.Errorf("create alarm: %w", err)
 	}
@@ -812,6 +871,9 @@ func createNewTodoAlarm(ctx context.Context, qtx *storage.Queries, todoID int64,
 		if err != nil {
 			return fmt.Errorf("create alarm attendee: %w", err)
 		}
+	}
+	if len(a.XProperties) == 0 {
+		return nil
 	}
 	return storage.ReplaceAlarmXProperties(ctx, qtx, storage.OwnerTypeTodoAlarm, row.ID, a.XProperties)
 }

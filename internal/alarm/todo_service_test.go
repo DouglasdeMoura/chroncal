@@ -19,6 +19,10 @@ func (m *mockTodoAlarmLister) ListAlarms(ctx context.Context, todoID int64) ([]m
 	return m.alarms, nil
 }
 
+func (m *mockTodoAlarmLister) ListAlarmsLean(ctx context.Context, todoID int64) ([]model.Alarm, error) {
+	return m.ListAlarms(ctx, todoID)
+}
+
 func TestCheckTodoAlarms_DueAlarm(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 

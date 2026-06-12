@@ -448,3 +448,95 @@ func TestTodoService_Attendees(t *testing.T) {
 		t.Errorf("email = %q", attendees[0].Email)
 	}
 }
+
+func TestTodoService_ReplaceAlarms_UIDMatchPreservesRow(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	td := createTodo(t, svc)
+
+	err := svc.ReplaceAlarms(ctx, td.ID, []model.Alarm{
+		{UID: "todo-alarm-1", Action: "DISPLAY", TriggerValue: "-PT15M"},
+	})
+	if err != nil {
+		t.Fatalf("ReplaceAlarms error: %v", err)
+	}
+	alarms, err := svc.ListAlarms(ctx, td.ID)
+	if err != nil || len(alarms) != 1 {
+		t.Fatalf("ListAlarms: %v (n=%d)", err, len(alarms))
+	}
+	origID := alarms[0].ID
+
+	// Same UID, changed trigger: must update the row in place so
+	// todo_alarm_state rows keyed to its ID survive.
+	err = svc.ReplaceAlarms(ctx, td.ID, []model.Alarm{
+		{UID: "todo-alarm-1", Action: "DISPLAY", TriggerValue: "-PT30M"},
+	})
+	if err != nil {
+		t.Fatalf("ReplaceAlarms (trigger change) error: %v", err)
+	}
+	alarms, _ = svc.ListAlarms(ctx, td.ID)
+	if len(alarms) != 1 || alarms[0].ID != origID {
+		t.Errorf("UID-matched edit must update in place; got %+v want ID %d", alarms, origID)
+	}
+	if alarms[0].TriggerValue != "-PT30M" {
+		t.Errorf("TriggerValue = %q, want -PT30M", alarms[0].TriggerValue)
+	}
+
+	// A different UID is a genuinely new alarm: row must be replaced.
+	err = svc.ReplaceAlarms(ctx, td.ID, []model.Alarm{
+		{UID: "todo-alarm-2", Action: "DISPLAY", TriggerValue: "-PT45M"},
+	})
+	if err != nil {
+		t.Fatalf("ReplaceAlarms (new uid) error: %v", err)
+	}
+	alarms, _ = svc.ListAlarms(ctx, td.ID)
+	if len(alarms) != 1 || alarms[0].ID == origID {
+		t.Errorf("different UID must create a new row; got %+v", alarms)
+	}
+}
+
+func TestTodoService_ReplaceAlarms_XPropertiesRoundTrip(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	td := createTodo(t, svc)
+
+	err := svc.ReplaceAlarms(ctx, td.ID, []model.Alarm{{
+		UID: "todo-alarm-xp", Action: "DISPLAY", TriggerValue: "-PT15M",
+		XProperties: []model.XProperty{{Name: "X-TEST-PROP", Value: "v1"}},
+	}})
+	if err != nil {
+		t.Fatalf("ReplaceAlarms error: %v", err)
+	}
+	alarms, err := svc.ListAlarms(ctx, td.ID)
+	if err != nil || len(alarms) != 1 {
+		t.Fatalf("ListAlarms: %v (n=%d)", err, len(alarms))
+	}
+	if len(alarms[0].XProperties) != 1 || alarms[0].XProperties[0].Value != "v1" {
+		t.Fatalf("XProperties = %+v, want X-TEST-PROP=v1", alarms[0].XProperties)
+	}
+
+	// nil XProperties = caller has no X-prop knowledge: stored rows survive.
+	err = svc.ReplaceAlarms(ctx, td.ID, []model.Alarm{{
+		UID: "todo-alarm-xp", Action: "DISPLAY", TriggerValue: "-PT15M",
+	}})
+	if err != nil {
+		t.Fatalf("ReplaceAlarms (nil xprops) error: %v", err)
+	}
+	alarms, _ = svc.ListAlarms(ctx, td.ID)
+	if len(alarms) != 1 || len(alarms[0].XProperties) != 1 {
+		t.Fatalf("nil XProperties must keep stored rows; got %+v", alarms)
+	}
+
+	// Empty non-nil slice = authoritative empty set: stored rows cleared.
+	err = svc.ReplaceAlarms(ctx, td.ID, []model.Alarm{{
+		UID: "todo-alarm-xp", Action: "DISPLAY", TriggerValue: "-PT15M",
+		XProperties: []model.XProperty{},
+	}})
+	if err != nil {
+		t.Fatalf("ReplaceAlarms (empty xprops) error: %v", err)
+	}
+	alarms, _ = svc.ListAlarms(ctx, td.ID)
+	if len(alarms) != 1 || len(alarms[0].XProperties) != 0 {
+		t.Fatalf("empty XProperties must clear stored rows; got %+v", alarms[0].XProperties)
+	}
+}

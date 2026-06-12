@@ -15,6 +15,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/alarm"
 	"github.com/douglasdemoura/chroncal/internal/app"
+	"github.com/douglasdemoura/chroncal/internal/config"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/notify"
 	"github.com/douglasdemoura/chroncal/internal/storage"
@@ -61,18 +62,20 @@ func fireAlarm(da alarm.DueAlarm, policy alarmExecutionPolicy) error {
 }
 
 // markAndFireEventAlarm records the firing state for a due event alarm and
-// dispatches its notification. Marking errors are reported to stderr; the
-// returned state ID is 0 when marking failed. The returned error is the
-// notification delivery error, if any.
-func markAndFireEventAlarm(ctx context.Context, a *app.App, da alarm.DueAlarm, policy alarmExecutionPolicy) (int64, error) {
+// dispatches its notification. Marking errors are reported to stderr and
+// returned (the daemon's failure breaker counts them — a mark failure means
+// the alarm will re-fire next tick); the returned state ID is 0 when marking
+// failed. The last return value is the notification delivery error, if any.
+func markAndFireEventAlarm(ctx context.Context, a *app.App, da alarm.DueAlarm, policy alarmExecutionPolicy) (int64, error, error) {
 	stateID := da.StateID
+	var markErr error
 	if stateID != 0 {
-		if markErr := a.Alarms.MarkRefired(ctx, stateID); markErr != nil {
+		if markErr = a.Alarms.MarkRefired(ctx, stateID); markErr != nil {
 			fmt.Fprintf(os.Stderr, "chroncal: mark-refired error: event=%q: %v\n", safeText(da.Event.Title), markErr)
 		}
 	} else {
-		newID, markErr := a.Alarms.MarkFired(ctx, da)
-		if markErr != nil {
+		var newID int64
+		if newID, markErr = a.Alarms.MarkFired(ctx, da); markErr != nil {
 			fmt.Fprintf(os.Stderr, "chroncal: mark-fired error: event=%q: %v\n", safeText(da.Event.Title), markErr)
 		} else {
 			stateID = newID
@@ -84,19 +87,20 @@ func markAndFireEventAlarm(ctx context.Context, a *app.App, da alarm.DueAlarm, p
 		fmt.Fprintf(os.Stderr, "chroncal: alarm error: %s (event=%q action=%s): %v\n",
 			da.TriggerAt.Local().Format("15:04"), safeText(da.Event.Title), da.Alarm.Action, fireErr)
 	}
-	return stateID, fireErr
+	return stateID, markErr, fireErr
 }
 
 // markAndFireTodoAlarm is the todo counterpart of markAndFireEventAlarm.
-func markAndFireTodoAlarm(ctx context.Context, a *app.App, tda alarm.TodoDueAlarm, policy alarmExecutionPolicy) (int64, error) {
+func markAndFireTodoAlarm(ctx context.Context, a *app.App, tda alarm.TodoDueAlarm, policy alarmExecutionPolicy) (int64, error, error) {
 	stateID := tda.StateID
+	var markErr error
 	if stateID != 0 {
-		if markErr := a.Alarms.MarkTodoRefired(ctx, stateID); markErr != nil {
+		if markErr = a.Alarms.MarkTodoRefired(ctx, stateID); markErr != nil {
 			fmt.Fprintf(os.Stderr, "chroncal: mark-refired error: todo=%q: %v\n", safeText(tda.Todo.Summary), markErr)
 		}
 	} else {
-		newID, markErr := a.Alarms.MarkTodoFired(ctx, tda)
-		if markErr != nil {
+		var newID int64
+		if newID, markErr = a.Alarms.MarkTodoFired(ctx, tda); markErr != nil {
 			fmt.Fprintf(os.Stderr, "chroncal: mark-fired error: todo=%q: %v\n", safeText(tda.Todo.Summary), markErr)
 		} else {
 			stateID = newID
@@ -108,7 +112,7 @@ func markAndFireTodoAlarm(ctx context.Context, a *app.App, tda alarm.TodoDueAlar
 		fmt.Fprintf(os.Stderr, "chroncal: todo alarm error: %s (todo=%q action=%s): %v\n",
 			tda.TriggerAt.Local().Format("15:04"), safeText(tda.Todo.Summary), tda.Alarm.Action, fireErr)
 	}
-	return stateID, fireErr
+	return stateID, markErr, fireErr
 }
 
 func alarmCmd() *cobra.Command {
@@ -211,7 +215,7 @@ func runAlarmCheck(ctx context.Context, a *app.App, w io.Writer, now time.Time, 
 
 	var results []map[string]any
 	for _, da := range due {
-		stateID, fireErr := markAndFireEventAlarm(ctx, a, da, policy)
+		stateID, _, fireErr := markAndFireEventAlarm(ctx, a, da, policy)
 		if fireErr != nil {
 			if outputFmt != "text" {
 				results = append(results, map[string]any{
@@ -243,7 +247,7 @@ func runAlarmCheck(ctx context.Context, a *app.App, w io.Writer, now time.Time, 
 	}
 
 	for _, tda := range todoDue {
-		stateID, fireErr := markAndFireTodoAlarm(ctx, a, tda, policy)
+		stateID, _, fireErr := markAndFireTodoAlarm(ctx, a, tda, policy)
 		if fireErr != nil {
 			if outputFmt != "text" {
 				results = append(results, map[string]any{
@@ -708,39 +712,53 @@ See "chroncal alarm check --help" for notification types and SMTP configuration.
 			ticker := time.NewTicker(dur)
 			defer ticker.Stop()
 
-			// Run immediately on start, then on each tick.
+			// Run immediately on start, then on each tick. Returns an error
+			// when the database is unhealthy: either Check itself failed, or
+			// a fired alarm could not be marked (an unmarked alarm re-fires
+			// every tick, so persistent mark failures mean notification spam).
 			runCheck := func() error {
 				due, todoDue, err := a.Alarms.Check(ctx, time.Now())
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "chroncal: check error: %v\n", err)
 					return err
 				}
+				var dbErr error
 				for _, da := range due {
-					if _, fireErr := markAndFireEventAlarm(ctx, a, da, policy); fireErr != nil {
+					_, markErr, fireErr := markAndFireEventAlarm(ctx, a, da, policy)
+					if markErr != nil {
+						dbErr = markErr
+					}
+					if fireErr != nil {
 						continue
 					}
 					writeAlarmCheckLine(w, da.TriggerAt, da.Alarm.Action, da.Event.Title, false)
 				}
 				for _, tda := range todoDue {
-					if _, fireErr := markAndFireTodoAlarm(ctx, a, tda, policy); fireErr != nil {
+					_, markErr, fireErr := markAndFireTodoAlarm(ctx, a, tda, policy)
+					if markErr != nil {
+						dbErr = markErr
+					}
+					if fireErr != nil {
 						continue
 					}
 					writeAlarmCheckLine(w, tda.TriggerAt, tda.Alarm.Action, tda.Todo.Summary, true)
 				}
-				return nil
+				return dbErr
 			}
 
-			// A single failed check is transient (e.g. the TUI holds the
-			// write lock past the busy timeout); a long unbroken run of
-			// failures means the database is gone or corrupt and silently
-			// retrying forever would mask it.
-			const maxConsecutiveCheckFailures = 10
+			// A failed tick is usually transient (the TUI holding the write
+			// lock past the busy timeout, a backup tool pinning the file), so
+			// the threshold is generous — 30 ticks is 15 minutes at the
+			// default interval. An unbroken run that long means the database
+			// is gone, corrupt, or read-only, and silently retrying forever
+			// would mask dead notifications (or spam re-fired ones).
+			const maxConsecutiveTickFailures = 30
 			consecutiveFailures := 0
 			tick := func() error {
 				if runCheck() != nil {
 					consecutiveFailures++
-					if consecutiveFailures >= maxConsecutiveCheckFailures {
-						return fmt.Errorf("alarm check failed %d times in a row; giving up", consecutiveFailures)
+					if consecutiveFailures >= maxConsecutiveTickFailures {
+						return fmt.Errorf("alarm tick failed %d times in a row; giving up", consecutiveFailures)
 					}
 				} else {
 					consecutiveFailures = 0
@@ -816,6 +834,20 @@ system was not running when they became due.`,
 
 			now := time.Now()
 			lookback := time.Duration(days) * 24 * time.Hour
+
+			// "Missed" is inferred from the absence of an alarm-state row,
+			// but the maintenance purge deletes acknowledged rows older
+			// than the soft-delete retention — beyond that horizon a
+			// dismissed alarm is indistinguishable from a missed one.
+			retentionDays := cfg.SoftDelete.PurgeDays
+			if retentionDays == 0 {
+				retentionDays = config.DefaultSoftDeletePurgeDays
+			}
+			if retentionDays > 0 && days > retentionDays {
+				fmt.Fprintf(os.Stderr, "chroncal: warning: lookback of %d days exceeds the %d-day alarm-history retention; results older than %d days may include alarms that were actually dismissed\n",
+					days, retentionDays, retentionDays)
+			}
+
 			missedEvents, missedTodos, err := a.Alarms.CheckMissed(context.Background(), now, lookback)
 			if err != nil {
 				return fmt.Errorf("check missed: %w", err)

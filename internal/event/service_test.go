@@ -853,3 +853,112 @@ func TestEventService_ListAlarmsByEventIDs_Correctness(t *testing.T) {
 		t.Errorf("non-existent eventIDs: got map with %d entries, want 0", len(nonExistentMap))
 	}
 }
+
+func TestEventService_ReplaceAlarms_XPropertiesRoundTrip(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	e := createEvent(t, svc)
+
+	err := svc.ReplaceAlarms(ctx, e.ID, []model.Alarm{{
+		UID: "evt-alarm-xp", Action: "DISPLAY", TriggerValue: "-PT15M",
+		XProperties: []model.XProperty{{Name: "X-APPLE-DEFAULT-ALARM", Value: "TRUE"}},
+	}})
+	if err != nil {
+		t.Fatalf("ReplaceAlarms error: %v", err)
+	}
+	alarms, err := svc.ListAlarms(ctx, e.ID)
+	if err != nil || len(alarms) != 1 {
+		t.Fatalf("ListAlarms: %v (n=%d)", err, len(alarms))
+	}
+	if len(alarms[0].XProperties) != 1 || alarms[0].XProperties[0].Name != "X-APPLE-DEFAULT-ALARM" {
+		t.Fatalf("XProperties = %+v, want X-APPLE-DEFAULT-ALARM round-tripped", alarms[0].XProperties)
+	}
+
+	// nil XProperties (CLI/TUI paths with no X-prop knowledge) keep stored rows.
+	err = svc.ReplaceAlarms(ctx, e.ID, []model.Alarm{{
+		UID: "evt-alarm-xp", Action: "DISPLAY", TriggerValue: "-PT15M",
+	}})
+	if err != nil {
+		t.Fatalf("ReplaceAlarms (nil xprops) error: %v", err)
+	}
+	alarms, _ = svc.ListAlarms(ctx, e.ID)
+	if len(alarms) != 1 || len(alarms[0].XProperties) != 1 {
+		t.Fatalf("nil XProperties must keep stored rows; got %+v", alarms)
+	}
+
+	// Empty non-nil slice (import path after remote cleared them) wipes.
+	err = svc.ReplaceAlarms(ctx, e.ID, []model.Alarm{{
+		UID: "evt-alarm-xp", Action: "DISPLAY", TriggerValue: "-PT15M",
+		XProperties: []model.XProperty{},
+	}})
+	if err != nil {
+		t.Fatalf("ReplaceAlarms (empty xprops) error: %v", err)
+	}
+	alarms, _ = svc.ListAlarms(ctx, e.ID)
+	if len(alarms) != 1 || len(alarms[0].XProperties) != 0 {
+		t.Fatalf("empty XProperties must clear stored rows; got %+v", alarms[0].XProperties)
+	}
+}
+
+func TestEventService_ReplaceAlarms_ContentMatchRespectsUID(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	e := createEvent(t, svc)
+
+	err := svc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{UID: "uid-a", Action: "DISPLAY", TriggerValue: "-PT15M"},
+	})
+	if err != nil {
+		t.Fatalf("ReplaceAlarms error: %v", err)
+	}
+	alarms, _ := svc.ListAlarms(ctx, e.ID)
+	origID := alarms[0].ID
+
+	// Identical content but a different non-empty UID is a different alarm:
+	// the old row must be replaced, never content-matched (UID stealing
+	// would attach the old row's alarm_state to the wrong definition).
+	err = svc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{UID: "uid-b", Action: "DISPLAY", TriggerValue: "-PT15M"},
+	})
+	if err != nil {
+		t.Fatalf("ReplaceAlarms (uid swap) error: %v", err)
+	}
+	alarms, _ = svc.ListAlarms(ctx, e.ID)
+	if len(alarms) != 1 {
+		t.Fatalf("alarms = %d, want 1", len(alarms))
+	}
+	if alarms[0].ID == origID {
+		t.Errorf("row %d was content-matched across differing UIDs; want a new row", origID)
+	}
+	if alarms[0].UID != "uid-b" {
+		t.Errorf("UID = %q, want uid-b", alarms[0].UID)
+	}
+}
+
+func TestEventService_ReplaceAlarms_CrossEventUIDCollision(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	e1 := createEvent(t, svc)
+	e2 := createEvent(t, svc)
+
+	if err := svc.ReplaceAlarms(ctx, e1.ID, []model.Alarm{
+		{UID: "dup-uid", Action: "DISPLAY", TriggerValue: "-PT15M"},
+	}); err != nil {
+		t.Fatalf("ReplaceAlarms e1: %v", err)
+	}
+
+	// Same VALARM UID on a second event (servers duplicate events): the
+	// insert must not fail the sync — a fresh local UID is minted instead.
+	if err := svc.ReplaceAlarms(ctx, e2.ID, []model.Alarm{
+		{UID: "dup-uid", Action: "DISPLAY", TriggerValue: "-PT15M"},
+	}); err != nil {
+		t.Fatalf("ReplaceAlarms e2 (uid collision): %v", err)
+	}
+	alarms, err := svc.ListAlarms(ctx, e2.ID)
+	if err != nil || len(alarms) != 1 {
+		t.Fatalf("ListAlarms e2: %v (n=%d)", err, len(alarms))
+	}
+	if alarms[0].UID == "dup-uid" || alarms[0].UID == "" {
+		t.Errorf("e2 alarm UID = %q, want a freshly minted non-empty UID", alarms[0].UID)
+	}
+}
