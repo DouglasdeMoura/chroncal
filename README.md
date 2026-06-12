@@ -528,18 +528,24 @@ play a sound, and `EMAIL` alarms send mail — see
 ### Service (alarm background service)
 
 ```
-chroncal service install              # Install systemd timer (Linux), launchd agent (macOS), or Scheduled Task (Windows)
+chroncal service install              # Install service; syncs CalDAV every 15m by default
 chroncal service run                  # Run one background-service cycle now (alias: tick)
 chroncal service uninstall
 chroncal service status
 ```
 
 The installed unit runs `chroncal service run` every minute, which fires due
-alarms and — when a sync interval is configured — also runs CalDAV sync:
+alarms and also runs CalDAV sync when the configured sync interval is due.
+`chroncal service install` defaults that interval to 15 minutes; pass a
+different interval to tune it:
 
 ```bash
-chroncal service install --sync-interval 15m   # or set sync.interval in config.toml
+chroncal service install --sync-interval 5m
 ```
+
+Set `sync.interval` in `config.toml` to change the default used by future
+installs, or pass `--sync-interval ""` when installing to disable background
+sync while keeping alarm checks.
 
 ### Global flags
 
@@ -639,7 +645,7 @@ Configuration is loaded in order of precedence:
 | `product_id` | iCal PRODID for export | `-//chroncal//chroncal//EN` |
 | `ui.theme` | Built-in TUI theme name under `internal/tui/themes/` (`system` or `default`; see [TUI themes](#tui-themes)) | `system` |
 | `soft_delete.purge_days` | Days to retain soft-deleted rows before the background purge. `0` disables automatic purging. | `30` |
-| `sync.interval` | Minimum interval between background CalDAV syncs performed by `chroncal service run` | (unset — sync runs every tick) |
+| `sync.interval` | Minimum interval between background CalDAV syncs performed by `chroncal service run`; `service install` defaults to `15m` when this is unset | (unset — no sync unless the installed service sets `CHRONCAL_SYNC_INTERVAL`) |
 | `sync.conflict_strategy` | Default conflict-resolution mode when `sync run --conflict` is not passed | (unset) |
 | `security.allow_unsafe_alarm_audio_attach` | Allow AUDIO alarms to attach arbitrary URIs. Off by default. | `false` |
 | `security.allow_unsafe_alarm_email_attendees` | Allow EMAIL alarms to send to unverified attendee addresses. Off by default. | `false` |

@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/douglasdemoura/chroncal/internal/config"
 )
 
 func TestSystemdServiceTemplateUsesServiceRunAndSyncInterval(t *testing.T) {
@@ -56,6 +58,39 @@ func TestLaunchdTemplateUsesServiceRunAndSyncInterval(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "<integer>60</integer>") {
 		t.Fatalf("launchd plist missing one-minute schedule:\n%s", rendered)
+	}
+}
+
+func TestServiceInstallDefaultsSyncIntervalTo15Minutes(t *testing.T) {
+	oldCfg := cfg
+	t.Cleanup(func() { cfg = oldCfg })
+	cfg = config.Config{}
+
+	cmd := serviceInstallCmd()
+	flag := cmd.Flags().Lookup("sync-interval")
+	if flag == nil {
+		t.Fatal("service install missing sync-interval flag")
+	}
+	if got := flag.DefValue; got != "15m" {
+		t.Fatalf("sync-interval default = %q, want 15m", got)
+	}
+	if got := flag.Value.String(); got != "15m" {
+		t.Fatalf("sync-interval value = %q, want 15m", got)
+	}
+}
+
+func TestServiceInstallUsesConfiguredSyncIntervalDefault(t *testing.T) {
+	oldCfg := cfg
+	t.Cleanup(func() { cfg = oldCfg })
+	cfg = config.Config{Sync: config.SyncConfig{Interval: "30m"}}
+
+	cmd := serviceInstallCmd()
+	flag := cmd.Flags().Lookup("sync-interval")
+	if flag == nil {
+		t.Fatal("service install missing sync-interval flag")
+	}
+	if got := flag.DefValue; got != "30m" {
+		t.Fatalf("sync-interval default = %q, want 30m", got)
 	}
 }
 

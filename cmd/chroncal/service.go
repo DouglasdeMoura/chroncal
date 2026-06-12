@@ -135,13 +135,15 @@ func serviceInstallCmd() *cobra.Command {
 	var flagPolicy alarmExecutionPolicy
 	cmd := &cobra.Command{
 		Use:   "install",
-		Short: "Install alarm notification service for the current OS",
+		Short: "Install background alarm and sync service for the current OS",
 		Long: `Install the native background service that runs chroncal on a
 schedule.
 
 The installed service runs "chroncal service run", which checks alarms every
-minute and also runs sync work when the configured sync interval is due.`,
+minute and also runs sync work when the configured sync interval is due. By
+		default, service install configures sync every 15 minutes.`,
 		Example: `  chroncal service install
+  chroncal service install --sync-interval ""
   chroncal service install --sync-interval 15m`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			w := cmd.OutOrStdout()
@@ -150,9 +152,6 @@ minute and also runs sync work when the configured sync interval is due.`,
 				return err
 			}
 			effectiveSyncInterval := syncInterval
-			if effectiveSyncInterval == "" {
-				effectiveSyncInterval = cfg.Sync.Interval
-			}
 			// The values below are interpolated into service definitions
 			// (unit file, plist, batch wrapper). Reject anything that
 			// doesn't parse rather than escaping per-format: a config value
@@ -202,9 +201,16 @@ minute and also runs sync work when the configured sync interval is due.`,
 			}
 		},
 	}
-	cmd.Flags().StringVar(&syncInterval, "sync-interval", cfg.Sync.Interval, "how often service run should run sync work (for example 15m); empty disables sync")
+	cmd.Flags().StringVar(&syncInterval, "sync-interval", serviceInstallDefaultSyncInterval(), "how often service run should run sync work (for example 15m); empty disables sync")
 	bindAlarmExecutionPolicyFlags(cmd, &flagPolicy)
 	return cmd
+}
+
+func serviceInstallDefaultSyncInterval() string {
+	if cfg.Sync.Interval != "" {
+		return cfg.Sync.Interval
+	}
+	return "15m"
 }
 
 func systemdUserDir() (string, error) {
