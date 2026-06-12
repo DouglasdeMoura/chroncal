@@ -27,7 +27,7 @@ type ExecutionPolicy struct {
 
 // FormatNotification formats a DueAlarm into a title and body suitable for display.
 // Title is the event title. Body contains the formatted time and, when present,
-// the location. The description is included only if it is non-empty and not "Reminder".
+// the location. The description is included only when it is not generic reminder boilerplate.
 func FormatNotification(da alarm.DueAlarm) (title, body string) {
 	title = textsafe.Display(da.Event.Title)
 
@@ -41,7 +41,7 @@ func FormatNotification(da alarm.DueAlarm) (title, body string) {
 	}
 
 	desc := da.Alarm.Description
-	if desc != "" && desc != "Reminder" {
+	if !isGenericAlarmDescription(desc) {
 		parts = append(parts, textsafe.Display(desc))
 	}
 
@@ -52,6 +52,17 @@ func FormatNotification(da alarm.DueAlarm) (title, body string) {
 
 	body = strings.Join(parts, " - ")
 	return title, body
+}
+
+func isGenericAlarmDescription(desc string) bool {
+	normalized := strings.TrimSpace(desc)
+	normalized = strings.TrimSuffix(normalized, ".")
+	switch strings.ToLower(normalized) {
+	case "", "reminder", "this is an event reminder":
+		return true
+	default:
+		return false
+	}
 }
 
 // Display sends a desktop notification for the given alarm.

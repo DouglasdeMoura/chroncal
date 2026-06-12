@@ -90,6 +90,26 @@ func TestFormatNotification_WithDescription(t *testing.T) {
 	}
 }
 
+func TestFormatNotification_SuppressesGenericEventReminderDescription(t *testing.T) {
+	da := alarm.DueAlarm{
+		Event: event.Event{
+			Title:     "Team Standup",
+			StartTime: time.Date(2026, 3, 27, 9, 30, 0, 0, time.Local),
+		},
+		Alarm: model.Alarm{
+			Action:      "DISPLAY",
+			Description: "this is an event reminder",
+		},
+	}
+
+	_, body := FormatNotification(da)
+
+	want := "Fri Mar 27, 09:30"
+	if body != want {
+		t.Errorf("body = %q, want %q", body, want)
+	}
+}
+
 func TestFormatNotification_ZeroStartTime(t *testing.T) {
 	da := alarm.DueAlarm{
 		Event: event.Event{
