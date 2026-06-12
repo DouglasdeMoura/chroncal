@@ -508,8 +508,8 @@ Storing an alarm is not enough by itself — something has to run
 `chroncal alarm check` periodically to fire it. Two options:
 
 1. **Background service (recommended):** `chroncal service install` sets up a
-   user-level systemd timer (Linux) or launchd agent (macOS) that ticks every
-   minute. No terminal needs to stay open.
+   user-level systemd timer (Linux), launchd agent (macOS), or Scheduled Task
+   (Windows) that ticks every minute. No terminal needs to stay open.
 2. **Foreground loop:** `chroncal alarm daemon` checks every 30 seconds until
    interrupted. Useful for testing or tmux-resident setups.
 
@@ -523,7 +523,7 @@ play a sound, and `EMAIL` alarms send mail — see
 ### Service (alarm background service)
 
 ```
-chroncal service install              # Install systemd timer (Linux) or launchd agent (macOS)
+chroncal service install              # Install systemd timer (Linux), launchd agent (macOS), or Scheduled Task (Windows)
 chroncal service run                  # Run one background-service cycle now (alias: tick)
 chroncal service uninstall
 chroncal service status
@@ -684,11 +684,13 @@ Or via environment: `CHRONCAL_SMTP_HOST`, `CHRONCAL_SMTP_PORT`, `CHRONCAL_SMTP_U
 `chroncal alarm check` records fired alarms even in headless environments, but
 `DISPLAY` and `AUDIO` notifications still need an OS notification backend. On
 Linux that means a D-Bus notification daemon — the one built into GNOME or KDE,
-or a standalone daemon such as `mako` or `dunst` on lighter setups. On macOS,
-notifications work out of the box. On minimal containers or SSH sessions
-without desktop tooling, notification delivery can fail even though the alarm
-is detected and listed by `chroncal alarm list`. Sound playback on Linux uses
-`paplay` (with `aplay` as fallback); macOS uses `afplay`.
+or a standalone daemon such as `mako` or `dunst` on lighter setups. On macOS
+and Windows (toast notifications), they work out of the box. On minimal
+containers or SSH sessions without desktop tooling, notification delivery can
+fail even though the alarm is detected and listed by `chroncal alarm list`.
+Sound playback on Linux uses `paplay` (with `aplay` as fallback) and macOS uses
+`afplay`; Windows has no sound-file playback, so `AUDIO` alarms show the toast
+with a system beep instead.
 
 ## Data storage
 
