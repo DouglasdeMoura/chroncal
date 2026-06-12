@@ -1570,7 +1570,7 @@ func parseOneAlarm(val string) (model.Alarm, error) {
 	}
 	if len(parts) > 2 && parts[2] != "" {
 		r, err := strconv.Atoi(parts[2])
-		if err != nil {
+		if err != nil || r < 0 {
 			return model.Alarm{}, fmt.Errorf("alarm %q: invalid repeat count %q", val, parts[2])
 		}
 		a.Repeat = r
