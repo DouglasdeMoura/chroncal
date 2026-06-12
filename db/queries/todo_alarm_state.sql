@@ -43,3 +43,6 @@ ORDER BY trigger_at;
 
 -- name: GetTodoAlarmStateByID :one
 SELECT * FROM todo_alarm_state WHERE id = ?;
+
+-- name: PurgeAcknowledgedTodoAlarmStates :execrows
+DELETE FROM todo_alarm_state WHERE acked_at IS NOT NULL AND trigger_at < ?;

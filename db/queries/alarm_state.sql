@@ -33,3 +33,6 @@ SELECT * FROM alarm_state WHERE event_id = ? ORDER BY trigger_at;
 
 -- name: DeleteAlarmStatesByEventID :exec
 DELETE FROM alarm_state WHERE event_id = ?;
+
+-- name: PurgeAcknowledgedAlarmStates :execrows
+DELETE FROM alarm_state WHERE acked_at IS NOT NULL AND trigger_at < ?;

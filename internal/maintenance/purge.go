@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/trash"
 )
 
@@ -15,20 +16,24 @@ import (
 // across every trash-eligible domain (events, todos, journals) plus the
 // event-specific instance and truncation logs. It delegates to the
 // trash aggregator so new domains only need to be added once there.
+// It also trims acknowledged alarm-state rows past the same window —
+// rescheduled events leave state rows whose trigger time never recurs,
+// and acked history serves no purpose once it is weeks old.
 type Purger struct {
 	trash  *trash.Service
+	q      *storage.Queries
 	days   int
 	logger *slog.Logger
 }
 
 // NewPurger returns a Purger bound to the trash aggregator. A days value
 // of 0 disables automatic purging; callers should guard the call to
-// RunOnce.
-func NewPurger(trashSvc *trash.Service, days int, logger *slog.Logger) *Purger {
+// RunOnce. q may be nil, which skips alarm-state cleanup.
+func NewPurger(trashSvc *trash.Service, q *storage.Queries, days int, logger *slog.Logger) *Purger {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Purger{trash: trashSvc, days: days, logger: logger}
+	return &Purger{trash: trashSvc, q: q, days: days, logger: logger}
 }
 
 // RunOnce purges rows soft-deleted more than Days ago. Safe to call
@@ -54,7 +59,34 @@ func (p *Purger) RunOnce(ctx context.Context) (int, error) {
 			"older_than_days", p.days,
 		)
 	}
+
+	if p.q != nil {
+		states, err := p.purgeAlarmStates(ctx, cutoff)
+		if err != nil {
+			// Alarm-state cleanup is housekeeping; don't fail the purge run.
+			p.logger.Warn("alarm-state purge failed", "error", err)
+		} else if states > 0 {
+			p.logger.Info("alarm-state purge", "states_purged", states, "older_than_days", p.days)
+			total += states
+		}
+	}
 	return total, nil
+}
+
+// purgeAlarmStates deletes acknowledged alarm-state rows whose trigger time
+// is older than the cutoff. Pending (unacked) and snoozed rows are kept —
+// they back "alarm list" and snooze re-firing.
+func (p *Purger) purgeAlarmStates(ctx context.Context, cutoff time.Time) (int, error) {
+	cutoffStr := cutoff.UTC().Format(time.RFC3339)
+	events, err := p.q.PurgeAcknowledgedAlarmStates(ctx, cutoffStr)
+	if err != nil {
+		return 0, fmt.Errorf("purge alarm states: %w", err)
+	}
+	todos, err := p.q.PurgeAcknowledgedTodoAlarmStates(ctx, cutoffStr)
+	if err != nil {
+		return int(events), fmt.Errorf("purge todo alarm states: %w", err)
+	}
+	return int(events + todos), nil
 }
 
 // RunDaily fires RunOnce once on start, then every 24h until ctx is done.

@@ -217,6 +217,18 @@ func (q *Queries) ListPendingAlarmStates(ctx context.Context) ([]AlarmState, err
 	return items, nil
 }
 
+const purgeAcknowledgedAlarmStates = `-- name: PurgeAcknowledgedAlarmStates :execrows
+DELETE FROM alarm_state WHERE acked_at IS NOT NULL AND trigger_at < ?
+`
+
+func (q *Queries) PurgeAcknowledgedAlarmStates(ctx context.Context, triggerAt string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, purgeAcknowledgedAlarmStates, triggerAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const refireAlarmState = `-- name: RefireAlarmState :exec
 UPDATE alarm_state SET fired_at = ?, snoozed_to = NULL WHERE id = ?
 `
