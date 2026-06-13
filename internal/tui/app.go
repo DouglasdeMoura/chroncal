@@ -321,6 +321,8 @@ type syncStatusExpiredMsg struct {
 	token int
 }
 
+type clockTickMsg struct{ token int }
+
 type Model struct {
 	app       *app.App
 	theme     Theme
@@ -433,7 +435,9 @@ type Model struct {
 	// opportunity, or a restoring/failed status after 'u' is pressed.
 	toast ToastModel
 	// footer composes the contextual help line below the main content.
-	footer FooterModel
+	footer             FooterModel
+	clockTickToken     int
+	clockTickScheduled bool
 	// pushDeferrals counts opportunistic delete pushes currently deferred
 	// waiting for the undo window to expire. The counter exists purely so
 	// the deferred closure can detect that a later restore invalidated it
@@ -473,24 +477,25 @@ func NewModel(a *app.App, themeName string) Model {
 	theme := LoadTheme(themeName, true)
 	SetActiveTheme(theme)
 	return Model{
-		app:             a,
-		themeName:       themeName,
-		keys:            defaultAppKeys(),
-		viewMode:        vm,
-		calendar:        NewCalendarModel(now).SetShowWeekNumbers(ui.ShowWeekNumbers),
-		week:            NewWeekModel(now).SetShowWeekNumbers(ui.ShowWeekNumbers),
-		day:             NewDayModel(now),
-		agenda:          newAgendaForStartup(now, vm, ui.AgendaShowEmptyDays),
-		showSidebar:     ui.ShowSidebar,
-		showWeekNumbers: ui.ShowWeekNumbers,
-		hiddenCalendars: hidden,
-		focus:           focusCalendar,
-		sidebar:         sb,
-		syncSpinner:     sp,
-		undoStack:       NewUndoStack(),
-		toast:           NewToastModel(theme),
-		footer:          NewFooterModel(theme),
-		oauthFlow:       NewOAuthFlowModel(theme),
+		app:                a,
+		themeName:          themeName,
+		keys:               defaultAppKeys(),
+		viewMode:           vm,
+		calendar:           NewCalendarModel(now).SetShowWeekNumbers(ui.ShowWeekNumbers),
+		week:               NewWeekModel(now).SetShowWeekNumbers(ui.ShowWeekNumbers),
+		day:                NewDayModel(now),
+		agenda:             newAgendaForStartup(now, vm, ui.AgendaShowEmptyDays),
+		showSidebar:        ui.ShowSidebar,
+		showWeekNumbers:    ui.ShowWeekNumbers,
+		hiddenCalendars:    hidden,
+		focus:              focusCalendar,
+		sidebar:            sb,
+		syncSpinner:        sp,
+		undoStack:          NewUndoStack(),
+		toast:              NewToastModel(theme),
+		footer:             NewFooterModel(theme),
+		clockTickScheduled: clockTickEnabledFor(vm),
+		oauthFlow:          NewOAuthFlowModel(theme),
 	}
 }
 
@@ -1148,6 +1153,46 @@ func (m Model) expireStatusAfter(d time.Duration, token int) tea.Cmd {
 	})
 }
 
+func nextClockTickDelay(now time.Time) time.Duration {
+	nextMinute := now.Truncate(time.Minute).Add(time.Minute)
+	d := nextMinute.Sub(now)
+	if d <= 0 {
+		return time.Minute
+	}
+	return d
+}
+
+func nextClockTick(token int) tea.Cmd {
+	return tea.Tick(nextClockTickDelay(time.Now()), func(time.Time) tea.Msg {
+		return clockTickMsg{token: token}
+	})
+}
+
+func clockTickEnabledFor(mode viewMode) bool {
+	return mode == viewDay || mode == viewWeek
+}
+
+func (m Model) clockTickEnabled() bool {
+	return clockTickEnabledFor(m.viewMode)
+}
+
+func (m Model) scheduleClockTick() (Model, tea.Cmd) {
+	if !m.clockTickEnabled() || m.clockTickScheduled {
+		return m, nil
+	}
+	m.clockTickToken++
+	m.clockTickScheduled = true
+	return m, nextClockTick(m.clockTickToken)
+}
+
+func (m Model) disableClockTick() Model {
+	if m.clockTickScheduled {
+		m.clockTickToken++
+		m.clockTickScheduled = false
+	}
+	return m
+}
+
 // navigateMainTo sets the active main view's cursor (and the month-view's
 // displayed month) to the given date. Callers typically follow this with
 // m.loadEvents() to refresh the query range.
@@ -1197,7 +1242,11 @@ func filterVisibleEvents(events []event.Event, hidden map[int64]bool) []event.Ev
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(tea.RequestBackgroundColor, m.loadEvents(), m.loadCalendars())
+	cmds := []tea.Cmd{tea.RequestBackgroundColor, m.loadEvents(), m.loadCalendars()}
+	if m.clockTickScheduled {
+		cmds = append(cmds, nextClockTick(m.clockTickToken))
+	}
+	return tea.Batch(cmds...)
 }
 
 const sidebarWidth = 24
@@ -1381,6 +1430,17 @@ func (m Model) anyOverlayOpen() bool {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if msg, ok := msg.(clockTickMsg); ok {
+		if msg.token != m.clockTickToken {
+			return m, nil
+		}
+		m.clockTickScheduled = false
+		if !m.clockTickEnabled() {
+			return m, nil
+		}
+		return m.scheduleClockTick()
+	}
+
 	// Global key bindings override any open dialog: ctrl+c / q always route
 	// through the quit guard, and ? opens the help dialog. The quit confirm
 	// itself is exempt so its y/n/esc keys keep working, and ? is a no-op
@@ -3473,7 +3533,9 @@ func (m Model) viewCursorAndToday() (time.Time, time.Time) {
 // Safe to call even when already in the requested mode (no-op).
 func (m Model) switchToView(mode viewMode) (tea.Model, tea.Cmd) {
 	if m.viewMode == mode {
-		return m, nil
+		var cmd tea.Cmd
+		m, cmd = m.scheduleClockTick()
+		return m, cmd
 	}
 	if m.focus == focusSidebar {
 		m.sidebar = m.sidebar.Blur()
@@ -3502,7 +3564,17 @@ func (m Model) switchToView(mode viewMode) (tea.Model, tea.Cmd) {
 			m.agenda = m.agenda.SelectCurrentOrNext(time.Now())
 		}
 	}
-	return m, m.switchView()
+	cmds := []tea.Cmd{m.switchView()}
+	if m.clockTickEnabled() {
+		var cmd tea.Cmd
+		m, cmd = m.scheduleClockTick()
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	} else {
+		m = m.disableClockTick()
+	}
+	return m, tea.Batch(cmds...)
 }
 
 // cycleView advances to the next view mode in the order month → week → day
