@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -180,6 +181,45 @@ func TestCalendarUpdateRejectsDisconnectAndRemoteURLTogether(t *testing.T) {
 	if !strings.Contains(err.Error(), "disconnect") || !strings.Contains(err.Error(), "remote-url") {
 		t.Fatalf("error = %v, want a clear validation failure mentioning both flags", err)
 	}
+}
+
+func TestCalendarListJSONIncludesOwnerEmail(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	ctx := context.Background()
+	cal, err := a.Calendars.Create(ctx, "Work", "#7C3AED", "")
+	if err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+	if err := a.Calendars.SetOwnerEmail(ctx, cal.ID, "me@example.com"); err != nil {
+		t.Fatalf("set owner email: %v", err)
+	}
+	if err := a.Close(); err != nil {
+		t.Fatalf("close app: %v", err)
+	}
+
+	stdout, _, err := runChroncalCommand(t, "calendar", "list", "--output", "json")
+	if err != nil {
+		t.Fatalf("calendar list json: %v", err)
+	}
+
+	var cals []jsonCalendar
+	if err := json.Unmarshal([]byte(stdout), &cals); err != nil {
+		t.Fatalf("decode calendar json: %v\n%s", err, stdout)
+	}
+	for _, got := range cals {
+		if got.Name == "Work" {
+			if got.OwnerEmail != "me@example.com" {
+				t.Fatalf("owner_email = %q, want %q", got.OwnerEmail, "me@example.com")
+			}
+			return
+		}
+	}
+	t.Fatalf("calendar list did not include Work: %s", stdout)
 }
 
 func setupCalendarCLITestEnv(t *testing.T) string {
