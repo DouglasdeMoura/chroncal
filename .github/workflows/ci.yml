@@ -64,6 +64,20 @@ jobs:
       - name: Build
         run: go build -o chroncal ./cmd/chroncal
 
+  flake:
+    name: Nix flake build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: DeterminateSystems/nix-installer-action@v22
+
+      # Build via the flake, exactly as the release does. This catches a stale
+      # vendorHash — e.g. a dependency bump that changed go.sum but not
+      # flake.nix — on the PR instead of failing the release after tagging.
+      - name: Build via the flake
+        run: nix build .#chroncal --no-link --print-build-logs
+
   release-config:
     name: Release config
     runs-on: ubuntu-latest
