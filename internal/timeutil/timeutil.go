@@ -28,7 +28,11 @@ func ParseDate(s string) time.Time {
 }
 
 // ParseRecurrenceID parses a recurrence ID string in RFC 3339 or date-only
-// (2006-01-02) format for all-day events.
+// (2006-01-02) format for all-day events. Date-only IDs resolve to local
+// midnight, matching how all-day occurrences are stored (import records
+// VALUE=DATE as local midnight) so the ID compares equal to the occurrence it
+// identifies. In practice sync and import always normalise recurrence IDs to
+// full UTC RFC 3339, so the date-only branch is a defensive fallback.
 func ParseRecurrenceID(id string) (time.Time, error) {
 	if t, err := time.Parse(time.RFC3339, id); err == nil {
 		return t, nil

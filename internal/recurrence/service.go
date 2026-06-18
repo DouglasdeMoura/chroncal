@@ -46,6 +46,60 @@ func tzForExpansion(tz string) *time.Location {
 	return loc
 }
 
+// inWindow reports whether an occurrence at t falls within the half-open
+// window [from, to). Recurrence ranges are half-open everywhere in chroncal.
+func inWindow(t, from, to time.Time) bool {
+	return !t.Before(from) && t.Before(to)
+}
+
+// eventOccursAt reports whether the recurring master evt produces an occurrence
+// whose instance key equals recurrenceID. An override whose RECURRENCE-ID is not
+// a genuine occurrence of its master is an orphan — left behind when a series is
+// truncated or split — and is not part of the recurrence set, so it must not be
+// expanded. The comparison uses the same instance key the suppression map keys
+// on (InstanceTime.UTC() formatted as RFC 3339 vs the raw recurrence_id string),
+// so suppression and orphan-detection can never disagree about a given slot.
+func eventOccursAt(evt event.Event, recurrenceID string) bool {
+	t, err := timeutil.ParseRecurrenceID(recurrenceID)
+	if err != nil {
+		return false
+	}
+	for _, inst := range ExpandEvent(evt, t.Add(-time.Second), t.Add(time.Second)) {
+		if inst.InstanceTime.UTC().Format(time.RFC3339) == recurrenceID {
+			return true
+		}
+	}
+	return false
+}
+
+// todoOccursAt is the todo analogue of eventOccursAt.
+func todoOccursAt(td todo.Todo, recurrenceID string) bool {
+	t, err := timeutil.ParseRecurrenceID(recurrenceID)
+	if err != nil {
+		return false
+	}
+	for _, inst := range ExpandTodo(td, t.Add(-time.Second), t.Add(time.Second)) {
+		if inst.InstanceTime.UTC().Format(time.RFC3339) == recurrenceID {
+			return true
+		}
+	}
+	return false
+}
+
+// journalOccursAt is the journal analogue of eventOccursAt.
+func journalOccursAt(j journal.Journal, recurrenceID string) bool {
+	t, err := timeutil.ParseRecurrenceID(recurrenceID)
+	if err != nil {
+		return false
+	}
+	for _, inst := range ExpandJournal(j, t.Add(-time.Second), t.Add(time.Second)) {
+		if inst.InstanceTime.UTC().Format(time.RFC3339) == recurrenceID {
+			return true
+		}
+	}
+	return false
+}
+
 // ExpandEvent generates all occurrences of an event within a date range
 // Returns instances even for non-recurring events (single instance)
 func ExpandEvent(evt event.Event, from, to time.Time) []ExpandedEvent {
@@ -196,27 +250,40 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 		evt := eventFromRow(row)
 		expanded := ExpandEvent(evt, from, to)
 
-		// Fetch overrides for this master and substitute them.
+		// Fetch overrides for this master.
 		overrides, _ := s.q.ListOverridesByUID(ctx, row.Uid)
-		overrideMap := make(map[string]storage.Event, len(overrides))
+		overridden := make(map[string]struct{}, len(overrides))
 		for _, o := range overrides {
-			overrideMap[o.RecurrenceID] = o
+			overridden[o.RecurrenceID] = struct{}{}
 		}
 
+		// Emit master instances, skipping any slot that has been overridden;
+		// the override is emitted separately below at its own occurrence time.
 		for _, inst := range expanded {
 			instKey := inst.InstanceTime.UTC().Format(time.RFC3339)
-			if o, ok := overrideMap[instKey]; ok {
-				if strings.EqualFold(o.Status, "CANCELLED") {
-					continue
-				}
-				oe := eventFromRow(o)
-				results = append(results, ExpandedEvent{
-					Event:        oe,
-					InstanceTime: oe.StartTime,
-				})
-			} else {
-				results = append(results, inst)
+			if _, ok := overridden[instKey]; ok {
+				continue
 			}
+			results = append(results, inst)
+		}
+
+		// Emit overrides whose own occurrence falls within [from, to). A moved
+		// occurrence belongs to its new day, not the day of the slot it replaced.
+		for _, o := range overrides {
+			if strings.EqualFold(o.Status, "CANCELLED") {
+				continue
+			}
+			oe := eventFromRow(o)
+			if !inWindow(oe.StartTime, from, to) {
+				continue
+			}
+			if !eventOccursAt(evt, o.RecurrenceID) {
+				continue // orphan override (no matching master occurrence)
+			}
+			results = append(results, ExpandedEvent{
+				Event:        oe,
+				InstanceTime: oe.StartTime,
+			})
 		}
 	}
 
@@ -335,27 +402,39 @@ func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Event,
 
 		// Fetch overrides for this master.
 		overrides, _ := s.q.ListOverridesByUID(ctx, row.Uid)
-		overrideMap := make(map[string]storage.Event, len(overrides))
+		overridden := make(map[string]struct{}, len(overrides))
 		for _, o := range overrides {
-			overrideMap[o.RecurrenceID] = o
+			overridden[o.RecurrenceID] = struct{}{}
 		}
 
+		// Emit master instances, skipping any slot that has been overridden;
+		// the override is emitted separately below at its own occurrence time.
 		for _, inst := range expanded {
 			instKey := inst.InstanceTime.UTC().Format(time.RFC3339)
-			if o, ok := overrideMap[instKey]; ok {
-				// Override replaces this instance.
-				if strings.EqualFold(o.Status, "CANCELLED") {
-					continue // CANCELLED override suppresses the instance.
-				}
-				oe := eventFromRow(o)
-				result = append(result, oe)
-			} else {
-				e := inst.Event
-				dur := e.EndTime.Sub(e.StartTime)
-				e.StartTime = inst.InstanceTime
-				e.EndTime = inst.InstanceTime.Add(dur)
-				result = append(result, e)
+			if _, ok := overridden[instKey]; ok {
+				continue
 			}
+			e := inst.Event
+			dur := e.EndTime.Sub(e.StartTime)
+			e.StartTime = inst.InstanceTime
+			e.EndTime = inst.InstanceTime.Add(dur)
+			result = append(result, e)
+		}
+
+		// Emit overrides whose own occurrence falls within [from, to). A moved
+		// occurrence belongs to its new day, not the day of the slot it replaced.
+		for _, o := range overrides {
+			if strings.EqualFold(o.Status, "CANCELLED") {
+				continue // CANCELLED override suppresses the instance.
+			}
+			oe := eventFromRow(o)
+			if !inWindow(oe.StartTime, from, to) {
+				continue
+			}
+			if !eventOccursAt(evt, o.RecurrenceID) {
+				continue // orphan override (no matching master occurrence)
+			}
+			result = append(result, oe)
 		}
 	}
 	return result
@@ -549,52 +628,75 @@ func (s *Service) expandRecurringTodoRows(ctx context.Context, rows []storage.To
 
 		// Fetch overrides for this master.
 		overrides, _ := s.q.ListTodoOverridesByUID(ctx, row.Uid)
-		overrideMap := make(map[string]storage.Todo, len(overrides))
+		overridden := make(map[string]struct{}, len(overrides))
 		for _, o := range overrides {
-			overrideMap[o.RecurrenceID] = o
+			overridden[o.RecurrenceID] = struct{}{}
 		}
 
+		// Emit master instances, skipping any slot that has been overridden;
+		// the override is emitted separately below at its own occurrence time.
 		for _, inst := range expanded {
 			instKey := inst.InstanceTime.UTC().Format(time.RFC3339)
-			if o, ok := overrideMap[instKey]; ok {
-				if strings.EqualFold(o.Status, "CANCELLED") {
-					continue // CANCELLED override suppresses the instance.
-				}
-				ot := todoFromRow(o)
-				result = append(result, ot)
-			} else {
-				t := inst.Todo
-				anchor := t.ParseStartDate()
-				if anchor.IsZero() {
-					anchor = t.ParseDueDate()
-				}
-				if !anchor.IsZero() {
-					offset := inst.InstanceTime.Sub(anchor)
-					if t.DueDate != "" {
-						due := t.ParseDueDate()
-						if !due.IsZero() {
-							newDue := due.Add(offset)
-							if timeutil.IsDateOnly(t.DueDate) {
-								t.DueDate = newDue.Format("2006-01-02")
-							} else {
-								t.DueDate = newDue.Format(time.RFC3339)
-							}
-						}
-					}
-					if t.StartDate != "" {
-						start := t.ParseStartDate()
-						if !start.IsZero() {
-							newStart := start.Add(offset)
-							if timeutil.IsDateOnly(t.StartDate) {
-								t.StartDate = newStart.Format("2006-01-02")
-							} else {
-								t.StartDate = newStart.Format(time.RFC3339)
-							}
-						}
-					}
-				}
-				result = append(result, t)
+			if _, ok := overridden[instKey]; ok {
+				continue
 			}
+			t := inst.Todo
+			anchor := t.ParseStartDate()
+			if anchor.IsZero() {
+				anchor = t.ParseDueDate()
+			}
+			if !anchor.IsZero() {
+				offset := inst.InstanceTime.Sub(anchor)
+				if t.DueDate != "" {
+					due := t.ParseDueDate()
+					if !due.IsZero() {
+						newDue := due.Add(offset)
+						if timeutil.IsDateOnly(t.DueDate) {
+							t.DueDate = newDue.Format("2006-01-02")
+						} else {
+							t.DueDate = newDue.Format(time.RFC3339)
+						}
+					}
+				}
+				if t.StartDate != "" {
+					start := t.ParseStartDate()
+					if !start.IsZero() {
+						newStart := start.Add(offset)
+						if timeutil.IsDateOnly(t.StartDate) {
+							t.StartDate = newStart.Format("2006-01-02")
+						} else {
+							t.StartDate = newStart.Format(time.RFC3339)
+						}
+					}
+				}
+			}
+			result = append(result, t)
+		}
+
+		// Emit overrides whose own occurrence falls within [from, to). A moved
+		// occurrence belongs to its new day, not the day of the slot it replaced.
+		for _, o := range overrides {
+			if strings.EqualFold(o.Status, "CANCELLED") {
+				continue // CANCELLED override suppresses the instance.
+			}
+			if !todoOccursAt(td, o.RecurrenceID) {
+				continue // orphan override (no matching master occurrence)
+			}
+			ot := todoFromRow(o)
+			anchor := ot.ParseStartDate()
+			if anchor.IsZero() {
+				anchor = ot.ParseDueDate()
+			}
+			if anchor.IsZero() {
+				// No datable anchor: fall back to the replaced slot for the
+				// window check. recurrence_id parses here because todoOccursAt
+				// above already returned true for it.
+				anchor, _ = timeutil.ParseRecurrenceID(o.RecurrenceID)
+			}
+			if !inWindow(anchor, from, to) {
+				continue
+			}
+			result = append(result, ot)
 		}
 	}
 	return result
@@ -1010,32 +1112,53 @@ func (s *Service) expandRecurringJournalRows(ctx context.Context, rows []storage
 		expanded := ExpandJournal(j, from, to)
 
 		overrides, _ := s.q.ListJournalOverridesByUID(ctx, row.Uid)
-		overrideMap := make(map[string]storage.Journal, len(overrides))
+		overridden := make(map[string]struct{}, len(overrides))
 		for _, o := range overrides {
-			overrideMap[o.RecurrenceID] = o
+			overridden[o.RecurrenceID] = struct{}{}
 		}
 
+		// Emit master instances, skipping any slot that has been overridden;
+		// the override is emitted separately below at its own occurrence time.
 		for _, inst := range expanded {
 			instKey := inst.InstanceTime.UTC().Format(time.RFC3339)
-			if o, ok := overrideMap[instKey]; ok {
-				if strings.EqualFold(o.Status, "CANCELLED") {
-					continue
-				}
-				result = append(result, journalFromRow(o))
-			} else {
-				jj := inst.Journal
-				anchor := jj.ParseStartDate()
-				if !anchor.IsZero() && jj.StartDate != "" {
-					offset := inst.InstanceTime.Sub(anchor)
-					newStart := anchor.Add(offset)
-					if timeutil.IsDateOnly(jj.StartDate) {
-						jj.StartDate = newStart.Format("2006-01-02")
-					} else {
-						jj.StartDate = newStart.Format(time.RFC3339)
-					}
-				}
-				result = append(result, jj)
+			if _, ok := overridden[instKey]; ok {
+				continue
 			}
+			jj := inst.Journal
+			anchor := jj.ParseStartDate()
+			if !anchor.IsZero() && jj.StartDate != "" {
+				offset := inst.InstanceTime.Sub(anchor)
+				newStart := anchor.Add(offset)
+				if timeutil.IsDateOnly(jj.StartDate) {
+					jj.StartDate = newStart.Format("2006-01-02")
+				} else {
+					jj.StartDate = newStart.Format(time.RFC3339)
+				}
+			}
+			result = append(result, jj)
+		}
+
+		// Emit overrides whose own occurrence falls within [from, to). A moved
+		// occurrence belongs to its new day, not the day of the slot it replaced.
+		for _, o := range overrides {
+			if strings.EqualFold(o.Status, "CANCELLED") {
+				continue
+			}
+			if !journalOccursAt(j, o.RecurrenceID) {
+				continue // orphan override (no matching master occurrence)
+			}
+			oj := journalFromRow(o)
+			anchor := oj.ParseStartDate()
+			if anchor.IsZero() {
+				// No datable anchor: fall back to the replaced slot for the
+				// window check. recurrence_id parses here because journalOccursAt
+				// above already returned true for it.
+				anchor, _ = timeutil.ParseRecurrenceID(o.RecurrenceID)
+			}
+			if !inWindow(anchor, from, to) {
+				continue
+			}
+			result = append(result, oj)
 		}
 	}
 	return result
