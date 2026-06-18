@@ -796,6 +796,57 @@ func TestMovedOverride_WiderWindowNoDuplication(t *testing.T) {
 	}
 }
 
+// TestMovedOverride_ExDatedSlot verifies that an override whose RECURRENCE-ID
+// slot is also EXDATE'd on the master is still emitted, not dropped as an
+// orphan. RFC 5545 lets a master carry an EXDATE and a separate RECURRENCE-ID
+// override for the same slot; the override replaces (wins over) the slot, so
+// orphan detection must ignore EXDATEs when checking whether the slot is a
+// genuine master occurrence.
+func TestMovedOverride_ExDatedSlot(t *testing.T) {
+	ctx := context.Background()
+	db, q := testutil.NewTestDB(t)
+	eventsSvc := event.NewService(db, q)
+	recurSvc := NewService(db, q)
+
+	master, err := eventsSvc.Create(ctx, event.CreateParams{
+		CalendarID:     1,
+		Title:          "Weekly Standup",
+		StartTime:      time.Date(2026, 4, 6, 9, 0, 0, 0, time.UTC), // Monday
+		EndTime:        time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
+		ExDates:        "2026-04-13T09:00:00Z", // the slot the override replaces
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	// Override the EXDATE'd Apr 13 slot, moved to Apr 14 14:00.
+	if _, err := eventsSvc.UpsertByUID(ctx, event.UpsertParams{
+		UID:          master.UID,
+		CalendarID:   1,
+		Title:        "Standup (moved)",
+		StartTime:    time.Date(2026, 4, 14, 14, 0, 0, 0, time.UTC),
+		EndTime:      time.Date(2026, 4, 14, 15, 0, 0, 0, time.UTC),
+		RecurrenceID: "2026-04-13T09:00:00Z",
+	}); err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	from := time.Date(2026, 4, 14, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 4, 15, 0, 0, 0, 0, time.UTC)
+	want := time.Date(2026, 4, 14, 14, 0, 0, 0, time.UTC)
+
+	events, err := recurSvc.ListExpandedByDateRange(ctx, from, to)
+	if err != nil {
+		t.Fatalf("ListExpandedByDateRange: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1 (override must survive an EXDATE'd slot)", len(events))
+	}
+	if !events[0].StartTime.Equal(want) {
+		t.Errorf("start = %v, want %v", events[0].StartTime, want)
+	}
+}
+
 // TestMovedOverride_MultiDaySpansWindow verifies that a moved override which is
 // a multi-day event appears in a queried window it overlaps even when its start
 // precedes the window. Override emission must use [start, end) overlap, matching
@@ -948,8 +999,11 @@ func TestMovedOverride_OrphanDropped(t *testing.T) {
 // agreement: an all-day master with an override carrying a date-only
 // RECURRENCE-ID must expand to exactly one occurrence per day — never a
 // duplicate (slot shown plus override) nor a vanished day (slot suppressed and
-// override dropped). The two checks key off the same instance string, so they
-// agree regardless of the host timezone.
+// override dropped). Both checks normalize the recurrence_id the same way
+// (canonicalRecurrenceID), so they always agree on count. Which row wins for a
+// date-only id is host-timezone dependent (all-day rows are stored at
+// local-midnight), but it does not matter here: sync and import always emit
+// full UTC RFC 3339 recurrence_ids, so the date-only form is a defensive edge.
 func TestAllDayDateOnlyOverride_Consistent(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	eventsSvc := event.NewService(db, q)

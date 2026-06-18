@@ -56,8 +56,22 @@ func inWindow(t, from, to time.Time) bool {
 // [from, to). This matches the SQL range predicate (start_time < to AND
 // end_time > from) used for non-recurring events, so a multi-day override that
 // spans into the window is not dropped just because its start precedes it.
+// (Regular RRULE instances are still matched by their start via rrule.Between;
+// aligning those with overlap is a broader, separate change.)
 func overlapsWindow(start, end, from, to time.Time) bool {
 	return start.Before(to) && end.After(from)
+}
+
+// canonicalRecurrenceID normalizes a stored recurrence_id to the same UTC
+// RFC 3339 form used for expanded instance keys, so a date-only or zoned id
+// compares equal to the occurrence it identifies. Suppression and orphan
+// detection must use the same normalization (or neither) to stay in agreement;
+// falls back to the raw string when it cannot be parsed.
+func canonicalRecurrenceID(rid string) string {
+	if t, err := timeutil.ParseRecurrenceID(rid); err == nil {
+		return t.UTC().Format(time.RFC3339)
+	}
+	return rid
 }
 
 // eventOccursAt reports whether the recurring master evt produces an occurrence
@@ -72,8 +86,13 @@ func eventOccursAt(evt event.Event, recurrenceID string) bool {
 	if err != nil {
 		return false
 	}
+	// A RECURRENCE-ID override replaces (wins over) its slot, so ignore the
+	// master's EXDATEs here: an EXDATE for the same slot must not make a
+	// legitimate override look like an orphan. evt is a value copy.
+	evt.ExDates = ""
+	want := t.UTC().Format(time.RFC3339)
 	for _, inst := range ExpandEvent(evt, t.Add(-time.Second), t.Add(time.Second)) {
-		if inst.InstanceTime.UTC().Format(time.RFC3339) == recurrenceID {
+		if inst.InstanceTime.UTC().Format(time.RFC3339) == want {
 			return true
 		}
 	}
@@ -86,8 +105,10 @@ func todoOccursAt(td todo.Todo, recurrenceID string) bool {
 	if err != nil {
 		return false
 	}
+	td.ExDates = ""
+	want := t.UTC().Format(time.RFC3339)
 	for _, inst := range ExpandTodo(td, t.Add(-time.Second), t.Add(time.Second)) {
-		if inst.InstanceTime.UTC().Format(time.RFC3339) == recurrenceID {
+		if inst.InstanceTime.UTC().Format(time.RFC3339) == want {
 			return true
 		}
 	}
@@ -100,8 +121,10 @@ func journalOccursAt(j journal.Journal, recurrenceID string) bool {
 	if err != nil {
 		return false
 	}
+	j.ExDates = ""
+	want := t.UTC().Format(time.RFC3339)
 	for _, inst := range ExpandJournal(j, t.Add(-time.Second), t.Add(time.Second)) {
-		if inst.InstanceTime.UTC().Format(time.RFC3339) == recurrenceID {
+		if inst.InstanceTime.UTC().Format(time.RFC3339) == want {
 			return true
 		}
 	}
@@ -262,7 +285,7 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 		overrides, _ := s.q.ListOverridesByUID(ctx, row.Uid)
 		overridden := make(map[string]struct{}, len(overrides))
 		for _, o := range overrides {
-			overridden[o.RecurrenceID] = struct{}{}
+			overridden[canonicalRecurrenceID(o.RecurrenceID)] = struct{}{}
 		}
 
 		// Emit master instances, skipping any slot that has been overridden;
@@ -412,7 +435,7 @@ func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Event,
 		overrides, _ := s.q.ListOverridesByUID(ctx, row.Uid)
 		overridden := make(map[string]struct{}, len(overrides))
 		for _, o := range overrides {
-			overridden[o.RecurrenceID] = struct{}{}
+			overridden[canonicalRecurrenceID(o.RecurrenceID)] = struct{}{}
 		}
 
 		// Emit master instances, skipping any slot that has been overridden;
@@ -638,7 +661,7 @@ func (s *Service) expandRecurringTodoRows(ctx context.Context, rows []storage.To
 		overrides, _ := s.q.ListTodoOverridesByUID(ctx, row.Uid)
 		overridden := make(map[string]struct{}, len(overrides))
 		for _, o := range overrides {
-			overridden[o.RecurrenceID] = struct{}{}
+			overridden[canonicalRecurrenceID(o.RecurrenceID)] = struct{}{}
 		}
 
 		// Emit master instances, skipping any slot that has been overridden;
@@ -1122,7 +1145,7 @@ func (s *Service) expandRecurringJournalRows(ctx context.Context, rows []storage
 		overrides, _ := s.q.ListJournalOverridesByUID(ctx, row.Uid)
 		overridden := make(map[string]struct{}, len(overrides))
 		for _, o := range overrides {
-			overridden[o.RecurrenceID] = struct{}{}
+			overridden[canonicalRecurrenceID(o.RecurrenceID)] = struct{}{}
 		}
 
 		// Emit master instances, skipping any slot that has been overridden;
