@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/journal"
+	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
 func TestExpandDailyEvent(t *testing.T) {
@@ -51,6 +53,45 @@ func TestExpandEvent_CancelledMasterHasNoOccurrences(t *testing.T) {
 	evt.RecurrenceRule = ""
 	if got := ExpandEvent(evt, base.Add(-time.Hour), base.Add(time.Hour)); len(got) != 1 {
 		t.Errorf("cancelled non-recurring event = %d instances, want 1 (caller decides)", len(got))
+	}
+}
+
+func TestExpandTodo_CancelledMasterHasNoOccurrences(t *testing.T) {
+	from := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	td := todo.Todo{
+		UID:            "cancelled-todo",
+		Summary:        "Cancelled Weekly Todo",
+		DueDate:        "2026-04-06",
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
+		Status:         "CANCELLED",
+	}
+	if got := ExpandTodo(td, from, to); got != nil {
+		t.Errorf("cancelled recurring todo master expanded into %d instances, want none", len(got))
+	}
+	// A cancelled non-recurring todo is still returned (caller decides).
+	td.RecurrenceRule = ""
+	if got := ExpandTodo(td, from, to); len(got) != 1 {
+		t.Errorf("cancelled non-recurring todo = %d instances, want 1", len(got))
+	}
+}
+
+func TestExpandJournal_CancelledMasterHasNoOccurrences(t *testing.T) {
+	from := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	j := journal.Journal{
+		UID:            "cancelled-journal",
+		StartDate:      "2026-04-06",
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
+		Status:         "CANCELLED",
+	}
+	if got := ExpandJournal(j, from, to); got != nil {
+		t.Errorf("cancelled recurring journal master expanded into %d instances, want none", len(got))
+	}
+	// A cancelled non-recurring journal is still returned (caller decides).
+	j.RecurrenceRule = ""
+	if got := ExpandJournal(j, from, to); len(got) != 1 {
+		t.Errorf("cancelled non-recurring journal = %d instances, want 1", len(got))
 	}
 }
 
