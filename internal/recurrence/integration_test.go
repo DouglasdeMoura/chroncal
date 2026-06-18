@@ -243,6 +243,63 @@ func TestListExpandedByDateRange_NoDuplication(t *testing.T) {
 // CANCELLED recurring master starting before the export window must still be
 // emitted, since STATUS:CANCELLED is how a downstream client is told to drop
 // the series.
+// TestCancelledMaster_DropsLiveOverride locks in Google/iCloud whole-series
+// cancel parity: when a recurring master is CANCELLED, even a still-CONFIRMED
+// override instance is suppressed from display/alarms/free-busy (all of which
+// flow through expansion). This is a deliberate behavior, not an accident — a
+// surviving instance of a cancelled series must not linger.
+func TestCancelledMaster_DropsLiveOverride(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	eventsSvc := event.NewService(db, q)
+	recurSvc := NewService(db, q)
+	ctx := context.Background()
+
+	master, err := eventsSvc.Create(ctx, event.CreateParams{
+		CalendarID:     1,
+		Title:          "Weekly",
+		StartTime:      time.Date(2026, 4, 6, 9, 0, 0, 0, time.UTC), // Monday
+		EndTime:        time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	// Cancel the whole series.
+	if _, err := eventsSvc.UpsertByUID(ctx, event.UpsertParams{
+		UID: master.UID, CalendarID: 1, Title: "Weekly",
+		StartTime:      time.Date(2026, 4, 6, 9, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
+		Status:         "CANCELLED",
+	}); err != nil {
+		t.Fatalf("cancel master: %v", err)
+	}
+	// A still-CONFIRMED override on the Apr 13 instance, moved to 14:00.
+	if _, err := eventsSvc.UpsertByUID(ctx, event.UpsertParams{
+		UID: master.UID, CalendarID: 1, Title: "Weekly (kept instance)",
+		StartTime:    time.Date(2026, 4, 13, 14, 0, 0, 0, time.UTC),
+		EndTime:      time.Date(2026, 4, 13, 15, 0, 0, 0, time.UTC),
+		RecurrenceID: "2026-04-13T09:00:00Z",
+		Status:       "CONFIRMED",
+	}); err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	// Wide window covering several would-be occurrences and the override.
+	from := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	events, err := recurSvc.ListExpandedByDateRange(ctx, from, to)
+	if err != nil {
+		t.Fatalf("ListExpandedByDateRange: %v", err)
+	}
+	if len(events) != 0 {
+		for i, e := range events {
+			t.Logf("  events[%d]: %s at %v (status=%s)", i, e.Title, e.StartTime, e.Status)
+		}
+		t.Fatalf("cancelled series produced %d events, want 0 (whole-series cancel)", len(events))
+	}
+}
+
 func TestExportExpandedByDateRange_IncludesCancelledMaster(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	eventsSvc := event.NewService(db, q)

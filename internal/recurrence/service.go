@@ -131,18 +131,25 @@ func journalOccursAt(j journal.Journal, recurrenceID string) bool {
 	return false
 }
 
+// cancelledRecurringMaster reports whether the row is a recurring master that
+// has been cancelled. Cancelling a recurring series cancels the whole series, so
+// such a master expands to no occurrences. Because display, alarms, and
+// free/busy all flow through the Expand* functions, all three intentionally see
+// nothing for a cancelled series — including any still-CONFIRMED override, which
+// is dropped with the series (matching Google/iCloud whole-series-cancel
+// semantics). Non-recurring cancelled events are left untouched for the caller
+// to show or hide. ICS export deliberately bypasses this via a status-stripped
+// probe so a CANCELLED master still round-trips (see ExportExpandedByDateRange).
+// RecurrenceRule and Status are exported strings on event.Event, todo.Todo, and
+// journal.Journal alike.
+func cancelledRecurringMaster(recurrenceRule, status string) bool {
+	return recurrenceRule != "" && strings.EqualFold(status, "CANCELLED")
+}
+
 // ExpandEvent generates all occurrences of an event within a date range
 // Returns instances even for non-recurring events (single instance)
 func ExpandEvent(evt event.Event, from, to time.Time) []ExpandedEvent {
-	// A cancelled recurring master has no occurrences. Without this guard a
-	// series the organiser cancelled — or one left stale by a sync that could
-	// not remove it — keeps expanding into phantom instances. Cancelling a
-	// recurring series cancels the whole series, so any surviving override is
-	// dropped with it (matching Google/iCloud semantics). Non-recurring
-	// cancelled events are left untouched for the caller to show or hide. ICS
-	// export deliberately bypasses this guard so a CANCELLED master still
-	// round-trips (see ExportExpandedByDateRange).
-	if evt.RecurrenceRule != "" && strings.EqualFold(evt.Status, "CANCELLED") {
+	if cancelledRecurringMaster(evt.RecurrenceRule, evt.Status) {
 		return nil
 	}
 	if evt.RecurrenceRule == "" {
@@ -932,8 +939,8 @@ func (s *Service) ListFilteredTodos(ctx context.Context, p TodoListParams) ([]to
 // The anchor date is DTSTART if present, else DUE. For non-recurring todos
 // a single instance is returned if the anchor falls in range.
 func ExpandTodo(td todo.Todo, from, to time.Time) []ExpandedTodo {
-	// A cancelled recurring master has no occurrences (see ExpandEvent).
-	if td.RecurrenceRule != "" && strings.EqualFold(td.Status, "CANCELLED") {
+	// A cancelled recurring master has no occurrences (see cancelledRecurringMaster).
+	if cancelledRecurringMaster(td.RecurrenceRule, td.Status) {
 		return nil
 	}
 	anchor := td.ParseStartDate()
@@ -1088,8 +1095,8 @@ func (s *Service) populateJournalCategories(ctx context.Context, journals []jour
 
 // ExpandJournal generates all occurrences of a journal within a date range.
 func ExpandJournal(j journal.Journal, from, to time.Time) []ExpandedJournal {
-	// A cancelled recurring master has no occurrences (see ExpandEvent).
-	if j.RecurrenceRule != "" && strings.EqualFold(j.Status, "CANCELLED") {
+	// A cancelled recurring master has no occurrences (see cancelledRecurringMaster).
+	if cancelledRecurringMaster(j.RecurrenceRule, j.Status) {
 		return nil
 	}
 	anchor := j.ParseStartDate()
