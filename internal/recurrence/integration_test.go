@@ -3,6 +3,7 @@ package recurrence
 import (
 	"context"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -234,6 +235,55 @@ func TestListExpandedByDateRange_NoDuplication(t *testing.T) {
 	// Should get exactly 3 instances, not duplicated.
 	if len(events) != 3 {
 		t.Fatalf("got %d events, want 3", len(events))
+	}
+}
+
+// TestExportExpandedByDateRange_IncludesCancelledMaster guards that the
+// display-time cancelled-master suppression does NOT leak into ICS export: a
+// CANCELLED recurring master starting before the export window must still be
+// emitted, since STATUS:CANCELLED is how a downstream client is told to drop
+// the series.
+func TestExportExpandedByDateRange_IncludesCancelledMaster(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	eventsSvc := event.NewService(db, q)
+	recurSvc := NewService(db, q)
+	ctx := context.Background()
+
+	master, err := eventsSvc.Create(ctx, event.CreateParams{
+		CalendarID:     1,
+		Title:          "Cancelled Weekly Export",
+		StartTime:      time.Date(2020, 1, 6, 9, 0, 0, 0, time.UTC), // before the window
+		EndTime:        time.Date(2020, 1, 6, 10, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	if _, err := eventsSvc.UpsertByUID(ctx, event.UpsertParams{
+		UID: master.UID, CalendarID: 1, Title: "Cancelled Weekly Export",
+		StartTime:      time.Date(2020, 1, 6, 9, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2020, 1, 6, 10, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
+		Status:         "CANCELLED",
+	}); err != nil {
+		t.Fatalf("cancel master: %v", err)
+	}
+
+	events, err := recurSvc.ExportExpandedByDateRange(ctx, ExportFilterParams{
+		From: time.Date(2026, 3, 30, 0, 0, 0, 0, time.UTC),
+		To:   time.Date(2026, 4, 13, 0, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("ExportExpandedByDateRange: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1 (cancelled master must still export)", len(events))
+	}
+	if !strings.EqualFold(events[0].Status, "CANCELLED") {
+		t.Errorf("exported master Status = %q, want CANCELLED", events[0].Status)
+	}
+	if events[0].RecurrenceRule == "" {
+		t.Error("exported master lost its RecurrenceRule")
 	}
 }
 

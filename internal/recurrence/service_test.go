@@ -32,6 +32,28 @@ func TestExpandDailyEvent(t *testing.T) {
 	}
 }
 
+func TestExpandEvent_CancelledMasterHasNoOccurrences(t *testing.T) {
+	base := time.Date(2026, 4, 6, 14, 0, 0, 0, time.UTC)
+	evt := event.Event{
+		UID:            "cancelled-weekly",
+		Title:          "Cancelled Weekly",
+		StartTime:      base,
+		EndTime:        base.Add(time.Hour),
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
+		Status:         "CANCELLED",
+	}
+
+	if got := ExpandEvent(evt, base.Add(-time.Hour), base.AddDate(0, 2, 0)); got != nil {
+		t.Errorf("cancelled recurring master expanded into %d instances, want none", len(got))
+	}
+
+	// A cancelled NON-recurring event is left to the caller (still returned).
+	evt.RecurrenceRule = ""
+	if got := ExpandEvent(evt, base.Add(-time.Hour), base.Add(time.Hour)); len(got) != 1 {
+		t.Errorf("cancelled non-recurring event = %d instances, want 1 (caller decides)", len(got))
+	}
+}
+
 func TestExpandWeeklyEvent(t *testing.T) {
 	base := time.Date(2026, 4, 6, 14, 0, 0, 0, time.UTC) // Monday
 	evt := event.Event{
