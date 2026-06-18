@@ -796,6 +796,86 @@ func TestMovedOverride_WiderWindowNoDuplication(t *testing.T) {
 	}
 }
 
+// TestMovedOverride_MultiDaySpansWindow verifies that a moved override which is
+// a multi-day event appears in a queried window it overlaps even when its start
+// precedes the window. Override emission must use [start, end) overlap, matching
+// the non-recurring range path, not start-in-window — otherwise a multi-day
+// override is dropped from every day after its start.
+func TestMovedOverride_MultiDaySpansWindow(t *testing.T) {
+	ctx := context.Background()
+	db, q := testutil.NewTestDB(t)
+	eventsSvc := event.NewService(db, q)
+	recurSvc := NewService(db, q)
+
+	master, err := eventsSvc.Create(ctx, event.CreateParams{
+		CalendarID:     1,
+		Title:          "Weekly Standup",
+		StartTime:      time.Date(2026, 4, 6, 9, 0, 0, 0, time.UTC), // Monday
+		EndTime:        time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	// Move the Apr 6 occurrence to a multi-day span: Apr 5 10:00 -> Apr 8 12:00.
+	if _, err := eventsSvc.UpsertByUID(ctx, event.UpsertParams{
+		UID:          master.UID,
+		CalendarID:   1,
+		Title:        "Standup Offsite (moved)",
+		StartTime:    time.Date(2026, 4, 5, 10, 0, 0, 0, time.UTC),
+		EndTime:      time.Date(2026, 4, 8, 12, 0, 0, 0, time.UTC),
+		RecurrenceID: "2026-04-06T09:00:00Z",
+	}); err != nil {
+		t.Fatalf("create multi-day override: %v", err)
+	}
+
+	// Query a single day (Apr 7) the override spans but does not start on, and on
+	// which the master produces no instance (Apr 7 is not a Monday).
+	from := time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 4, 8, 0, 0, 0, 0, time.UTC)
+	wantStart := time.Date(2026, 4, 5, 10, 0, 0, 0, time.UTC)
+
+	for _, tc := range []struct {
+		name  string
+		start func() (time.Time, int, error)
+	}{
+		{"ListExpandedByDateRange", func() (time.Time, int, error) {
+			e, err := recurSvc.ListExpandedByDateRange(ctx, from, to)
+			if len(e) == 0 {
+				return time.Time{}, len(e), err
+			}
+			return e[0].StartTime, len(e), err
+		}},
+		{"ListExpandedEvents", func() (time.Time, int, error) {
+			e, err := recurSvc.ListExpandedEvents(ctx, from, to)
+			if len(e) == 0 {
+				return time.Time{}, len(e), err
+			}
+			return e[0].StartTime, len(e), err
+		}},
+		{"ListFilteredEvents", func() (time.Time, int, error) {
+			e, err := recurSvc.ListFilteredEvents(ctx, EventListParams{From: from, To: to})
+			if len(e) == 0 {
+				return time.Time{}, len(e), err
+			}
+			return e[0].StartTime, len(e), err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			start, n, err := tc.start()
+			if err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+			if n != 1 {
+				t.Fatalf("got %d events, want 1 (multi-day override overlapping the window)", n)
+			}
+			if !start.Equal(wantStart) {
+				t.Errorf("start = %v, want %v", start, wantStart)
+			}
+		})
+	}
+}
+
 // TestMovedOverride_OrphanDropped verifies that an override whose RECURRENCE-ID
 // is not a genuine occurrence of its master (e.g. left behind after the series
 // was truncated or split) is not expanded, even when its own start falls inside

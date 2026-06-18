@@ -52,6 +52,14 @@ func inWindow(t, from, to time.Time) bool {
 	return !t.Before(from) && t.Before(to)
 }
 
+// overlapsWindow reports whether the half-open interval [start, end) intersects
+// [from, to). This matches the SQL range predicate (start_time < to AND
+// end_time > from) used for non-recurring events, so a multi-day override that
+// spans into the window is not dropped just because its start precedes it.
+func overlapsWindow(start, end, from, to time.Time) bool {
+	return start.Before(to) && end.After(from)
+}
+
 // eventOccursAt reports whether the recurring master evt produces an occurrence
 // whose instance key equals recurrenceID. An override whose RECURRENCE-ID is not
 // a genuine occurrence of its master is an orphan — left behind when a series is
@@ -274,7 +282,7 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 				continue
 			}
 			oe := eventFromRow(o)
-			if !inWindow(oe.StartTime, from, to) {
+			if !overlapsWindow(oe.StartTime, oe.EndTime, from, to) {
 				continue
 			}
 			if !eventOccursAt(evt, o.RecurrenceID) {
@@ -428,7 +436,7 @@ func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Event,
 				continue // CANCELLED override suppresses the instance.
 			}
 			oe := eventFromRow(o)
-			if !inWindow(oe.StartTime, from, to) {
+			if !overlapsWindow(oe.StartTime, oe.EndTime, from, to) {
 				continue
 			}
 			if !eventOccursAt(evt, o.RecurrenceID) {
