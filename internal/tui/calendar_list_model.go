@@ -149,12 +149,13 @@ func (m CalendarListModel) SetItems(items []CalendarListItem) CalendarListModel 
 // calendar — which would make the next keystroke act on the wrong one. Falls
 // back to SetItems' clamp when the current calendar is gone.
 func (m CalendarListModel) SetItemsPreservingCursor(items []CalendarListItem) CalendarListModel {
-	curID := int64(-1)
-	if m.cursor >= 0 && m.cursor < len(m.items) {
+	var curID int64
+	hasCursor := m.cursor >= 0 && m.cursor < len(m.items)
+	if hasCursor {
 		curID = m.items[m.cursor].ID
 	}
 	m = m.SetItems(items)
-	if curID >= 0 {
+	if hasCursor {
 		for i, it := range items {
 			if it.ID == curID {
 				m.cursor = i
