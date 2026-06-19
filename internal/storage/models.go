@@ -42,6 +42,7 @@ type Calendar struct {
 	ColorDirty          int64
 	OwnerEmail          string
 	IsDefault           int64
+	DisplayOrder        int64
 }
 
 type Event struct {
