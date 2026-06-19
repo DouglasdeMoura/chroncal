@@ -29,10 +29,11 @@ type CalendarSetDefaultRequestedMsg struct {
 }
 
 type calendarListDialogKeyMap struct {
-	Edit       key.Binding
-	Delete     key.Binding
-	New        key.Binding
-	SetDefault key.Binding
+	Edit             key.Binding
+	Delete           key.Binding
+	New              key.Binding
+	SetDefault       key.Binding
+	MoveUp, MoveDown key.Binding
 }
 
 func defaultCalendarListDialogKeys() calendarListDialogKeyMap {
@@ -41,6 +42,8 @@ func defaultCalendarListDialogKeys() calendarListDialogKeyMap {
 		Delete:     key.NewBinding(key.WithKeys("x", "delete"), key.WithHelp("x", "delete")),
 		New:        key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add")),
 		SetDefault: key.NewBinding(key.WithKeys("*"), key.WithHelp("*", "set default")),
+		MoveUp:     key.NewBinding(key.WithKeys("shift+up", "K"), key.WithHelp("shift+↑/K", "move up")),
+		MoveDown:   key.NewBinding(key.WithKeys("shift+down", "J"), key.WithHelp("shift+↓/J", "move down")),
 	}
 }
 
@@ -227,7 +230,11 @@ func (m CalendarListDialogModel) shortHelp() []key.Binding {
 		key.WithKeys("up", "down", "k", "j"),
 		key.WithHelp("↑↓", "navigate"),
 	)
-	return []key.Binding{nav, sk.Tab, m.keys.New, m.keys.Edit, m.keys.SetDefault, m.keys.Delete, sk.Close}
+	reorder := key.NewBinding(
+		key.WithKeys("shift+up", "shift+down", "K", "J"),
+		key.WithHelp("shift+↑↓", "reorder"),
+	)
+	return []key.Binding{nav, reorder, sk.Tab, m.keys.New, m.keys.Edit, m.keys.SetDefault, m.keys.Delete, sk.Close}
 }
 
 // detailWidth returns the width of the detail column for the current shell
@@ -304,11 +311,33 @@ func (m CalendarListDialogModel) handleKey(msg tea.KeyPressMsg) (CalendarListDia
 			return m, func() tea.Msg { return CalendarSetDefaultRequestedMsg{ID: id, Name: info.Name} }
 		}
 		return m, nil
+	case key.Matches(msg, m.keys.MoveUp):
+		return m.moveSelected(-1)
+	case key.Matches(msg, m.keys.MoveDown):
+		return m.moveSelected(1)
 	}
 
 	shell, cmd, _ := m.shell.HandleKey(msg, func() tea.Msg { return CalendarListDialogClosedMsg{} })
 	m.shell = shell
 	return m.refresh(), cmd
+}
+
+// moveSelected swaps the selected calendar with its neighbour delta rows away
+// (±1), keeps the selection on the moved calendar, and emits
+// CalendarReorderedMsg with the new top-to-bottom ID order so the app persists
+// it and keeps the sidebar in sync. The local swap mirrors the sidebar list's
+// optimistic behavior so the dialog updates without waiting for the round-trip.
+func (m CalendarListDialogModel) moveSelected(delta int) (CalendarListDialogModel, tea.Cmd) {
+	i := m.shell.Selected()
+	j := i + delta
+	if i < 0 || i >= len(m.order) || j < 0 || j >= len(m.order) {
+		return m, nil
+	}
+	order := slices.Clone(m.order)
+	order[i], order[j] = order[j], order[i]
+	m.order = order
+	m.shell = m.shell.SetSelected(j)
+	return m.refresh(), func() tea.Msg { return CalendarReorderedMsg{IDs: order} }
 }
 
 func (m CalendarListDialogModel) handleMouse(msg tea.MouseClickMsg) (CalendarListDialogModel, tea.Cmd) {
