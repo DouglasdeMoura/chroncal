@@ -1,11 +1,15 @@
 -- name: ListCalendars :many
-SELECT * FROM calendars ORDER BY name;
+SELECT * FROM calendars ORDER BY display_order, name;
 
 -- name: GetCalendar :one
 SELECT * FROM calendars WHERE id = ?;
 
 -- name: CreateCalendar :one
-INSERT INTO calendars (name, color, description) VALUES (?, ?, ?) RETURNING *;
+-- display_order is computed as MAX+1 (0 for the first calendar) so new
+-- calendars append to the bottom of the sidebar instead of all colliding at 0.
+INSERT INTO calendars (name, color, description, display_order)
+VALUES (?, ?, ?, (SELECT COALESCE(MAX(display_order), -1) + 1 FROM calendars))
+RETURNING *;
 
 -- name: UpdateCalendar :one
 UPDATE calendars SET name = ?, color = ?, description = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ? RETURNING *;
@@ -17,7 +21,13 @@ SELECT COUNT(*) FROM calendars;
 DELETE FROM calendars WHERE id = ?;
 
 -- name: ListCalendarsByAccount :many
-SELECT * FROM calendars WHERE account_id = ? ORDER BY name;
+SELECT * FROM calendars WHERE account_id = ? ORDER BY display_order, name;
+
+-- name: SetCalendarDisplayOrder :exec
+UPDATE calendars SET
+    display_order = ?,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = ?;
 
 -- name: UpdateCalendarSyncState :exec
 UPDATE calendars SET

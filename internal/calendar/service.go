@@ -48,6 +48,31 @@ func (s *Service) List(ctx context.Context) ([]Calendar, error) {
 	return cals, nil
 }
 
+// SetOrder persists the given calendar IDs as display order 0..n-1 in a single
+// transaction, so the sidebar (and manage-calendars dialog) render in this
+// order. The caller passes the full ordered ID list — typically the sidebar's
+// current row order after a move — making the operation idempotent and
+// self-healing against any drift. IDs not present in the slice are left
+// untouched.
+func (s *Service) SetOrder(ctx context.Context, ids []int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	qtx := s.q.WithTx(tx)
+	for i, id := range ids {
+		if err := qtx.SetCalendarDisplayOrder(ctx, storage.SetCalendarDisplayOrderParams{
+			DisplayOrder: int64(i),
+			ID:           id,
+		}); err != nil {
+			return fmt.Errorf("set display order: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
 func (s *Service) Get(ctx context.Context, id int64) (Calendar, error) {
 	r, err := s.q.GetCalendar(ctx, id)
 	if err != nil {
@@ -306,6 +331,7 @@ func fromStorage(r storage.Calendar) Calendar {
 		Color:               r.Color,
 		Description:         storage.NullableToString(r.Description),
 		OwnerEmail:          r.OwnerEmail,
+		DisplayOrder:        r.DisplayOrder,
 		CreatedAt:           timeutil.ParseDateTime(r.CreatedAt),
 		UpdatedAt:           timeutil.ParseDateTime(r.UpdatedAt),
 		AccountID:           accountID,

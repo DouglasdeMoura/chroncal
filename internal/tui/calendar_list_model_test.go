@@ -57,6 +57,51 @@ func TestCalendarList_MoveCursorClampsAtEdges(t *testing.T) {
 	}
 }
 
+func TestCalendarList_MoveCurrentSwapsAndEmitsOrder(t *testing.T) {
+	m := makeListFixture().Focus()
+	m.cursor = 0 // Default (ID 1)
+	nextM, cmd := m.moveCurrent(1)
+	if cmd == nil {
+		t.Fatal("expected a reorder command")
+	}
+	msg, ok := cmd().(CalendarReorderedMsg)
+	if !ok {
+		t.Fatalf("expected CalendarReorderedMsg, got %T", cmd())
+	}
+	if want := []int64{2, 1}; len(msg.IDs) != 2 || msg.IDs[0] != want[0] || msg.IDs[1] != want[1] {
+		t.Errorf("reordered IDs got %v want %v", msg.IDs, want)
+	}
+	if nextM.cursor != 1 {
+		t.Errorf("cursor should follow the moved item: got %d want 1", nextM.cursor)
+	}
+	if nextM.items[1].ID != 1 {
+		t.Errorf("moved item not at new position: %+v", nextM.items)
+	}
+}
+
+func TestCalendarList_MoveCurrentAtEdgesIsNoop(t *testing.T) {
+	m := makeListFixture().Focus()
+	m.cursor = 0
+	if _, cmd := m.moveCurrent(-1); cmd != nil {
+		t.Error("moveCurrent(-1) at top should be a no-op")
+	}
+	m.cursor = m.RowCount() - 1
+	if _, cmd := m.moveCurrent(1); cmd != nil {
+		t.Error("moveCurrent(+1) at bottom should be a no-op")
+	}
+}
+
+func TestCalendarList_MoveCurrentDoesNotMutateOriginal(t *testing.T) {
+	m := makeListFixture().Focus()
+	m.cursor = 0
+	_, _ = m.moveCurrent(1)
+	// The receiver's backing array must be untouched: the parent still holds
+	// this slice until it commits the returned model.
+	if m.items[0].ID != 1 || m.items[1].ID != 2 {
+		t.Errorf("original items mutated by moveCurrent: %+v", m.items)
+	}
+}
+
 func TestCalendarList_HandleClickTogglesItem(t *testing.T) {
 	m := makeListFixture().Focus()
 	m.cursor = 0

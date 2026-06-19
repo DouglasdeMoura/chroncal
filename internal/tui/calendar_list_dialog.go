@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"cmp"
 	"fmt"
 	"image/color"
 	"slices"
@@ -57,7 +58,8 @@ type CalendarListDialogModel struct {
 }
 
 // NewCalendarListDialogModel builds a dialog populated from the given calendar
-// map and hidden set. Calendars are sorted by name for a stable list order.
+// map and hidden set. Calendars follow the persisted sidebar display order
+// (name as a tiebreak) so this dialog matches the sidebar.
 func NewCalendarListDialogModel(calendars map[int64]CalendarInfo, hidden map[int64]bool, h help.Model) CalendarListDialogModel {
 	newAction := ListDialogAction{
 		Label:   "+ Add Calendar",
@@ -84,10 +86,10 @@ type calendarPromotionCandidate struct {
 	name string
 }
 
-// defaultPromotionCandidates returns every calendar other than excludeID,
-// sorted by name so the picker's first option is the alphabetical default.
-// Lives next to the dialog so the row label and the picker share their
-// sort rule via sortedCalendarIDs.
+// defaultPromotionCandidates returns every calendar other than excludeID, in
+// the persisted sidebar display order so the picker matches the list. Lives
+// next to the dialog so the row label and the picker share their sort rule
+// via sortedCalendarIDs.
 func defaultPromotionCandidates(calendars map[int64]CalendarInfo, excludeID int64) []calendarPromotionCandidate {
 	ids := sortedCalendarIDs(calendars)
 	out := make([]calendarPromotionCandidate, 0, len(ids))
@@ -100,13 +102,20 @@ func defaultPromotionCandidates(calendars map[int64]CalendarInfo, excludeID int6
 	return out
 }
 
+// compareCalendarOrder orders calendars by their persisted sidebar position,
+// falling back to name for ties. Shared by the sidebar list and the
+// manage-calendars dialog so both render calendars in the same order.
+func compareCalendarOrder(aOrder int64, aName string, bOrder int64, bName string) int {
+	return cmp.Or(cmp.Compare(aOrder, bOrder), strings.Compare(aName, bName))
+}
+
 func sortedCalendarIDs(calendars map[int64]CalendarInfo) []int64 {
 	ids := make([]int64, 0, len(calendars))
 	for id := range calendars {
 		ids = append(ids, id)
 	}
 	slices.SortFunc(ids, func(a, b int64) int {
-		return strings.Compare(calendars[a].Name, calendars[b].Name)
+		return compareCalendarOrder(calendars[a].DisplayOrder, calendars[a].Name, calendars[b].DisplayOrder, calendars[b].Name)
 	})
 	return ids
 }

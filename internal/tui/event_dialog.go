@@ -82,6 +82,8 @@ type CalendarInfo struct {
 	OwnerEmail  string
 	Description string
 	EventCount  int64
+	// DisplayOrder is the persisted sidebar sort position (lower sorts first).
+	DisplayOrder int64
 	// Synced reports whether the calendar is linked to a CalDAV account.
 	// Drives opportunistic save-time push: local-only calendars skip it.
 	Synced bool
