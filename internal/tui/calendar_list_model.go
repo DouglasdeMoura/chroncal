@@ -143,6 +143,28 @@ func (m CalendarListModel) SetItems(items []CalendarListItem) CalendarListModel 
 	return m
 }
 
+// SetItemsPreservingCursor replaces the items but keeps the cursor on whatever
+// calendar it currently points at (by ID) rather than by raw index, so a
+// reorder or reload that shifts rows doesn't leave the highlight on a different
+// calendar — which would make the next keystroke act on the wrong one. Falls
+// back to SetItems' clamp when the current calendar is gone.
+func (m CalendarListModel) SetItemsPreservingCursor(items []CalendarListItem) CalendarListModel {
+	curID := int64(-1)
+	if m.cursor >= 0 && m.cursor < len(m.items) {
+		curID = m.items[m.cursor].ID
+	}
+	m = m.SetItems(items)
+	if curID >= 0 {
+		for i, it := range items {
+			if it.ID == curID {
+				m.cursor = i
+				break
+			}
+		}
+	}
+	return m
+}
+
 // HiddenSet returns a copy of the current hidden set.
 func (m CalendarListModel) HiddenSet() map[int64]bool {
 	out := make(map[int64]bool, len(m.hidden))

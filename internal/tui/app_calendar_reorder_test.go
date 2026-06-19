@@ -116,6 +116,48 @@ func TestCalendarReorder_DialogOriginatedSyncsSidebarAndDialog(t *testing.T) {
 	}
 }
 
+// TestCalendarReorder_DialogReorderKeepsSidebarCursorOnSameCalendar verifies a
+// dialog-originated reorder that shifts rows keeps the sidebar cursor on the
+// same calendar (by identity), so the next sidebar keystroke doesn't act on the
+// wrong one.
+func TestCalendarReorder_DialogReorderKeepsSidebarCursorOnSameCalendar(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	now := time.Date(2026, 6, 19, 0, 0, 0, 0, time.UTC)
+	items := []CalendarListItem{
+		{ID: 1, Name: "Alpha", Order: 0},
+		{ID: 2, Name: "Bravo", Order: 1},
+		{ID: 3, Name: "Charlie", Order: 2},
+	}
+	cl := NewCalendarListModel(items, nil)
+	cl.cursor = 1 // sidebar highlight on Bravo (id 2)
+	cals := map[int64]CalendarInfo{
+		1: {Name: "Alpha", DisplayOrder: 0},
+		2: {Name: "Bravo", DisplayOrder: 1},
+		3: {Name: "Charlie", DisplayOrder: 2},
+	}
+	m := Model{
+		sidebar:   NewSidebarModel(NewMiniMonthModel(now), cl),
+		calendars: cals,
+	}
+
+	// Dialog moves Charlie to the top: [3,1,2]. Bravo shifts index 1 → 2.
+	updated, _ := m.Update(CalendarReorderedMsg{IDs: []int64{3, 1, 2}})
+	m = updated.(Model)
+
+	order := sidebarOrderIDs(m)
+	if !slices.Equal(order, []int64{3, 1, 2}) {
+		t.Fatalf("sidebar order = %v want [3 1 2]", order)
+	}
+	cur := m.sidebar.List().Cursor()
+	if cur < 0 || cur >= len(order) {
+		t.Fatalf("cursor out of range: %d", cur)
+	}
+	if order[cur] != 2 {
+		t.Errorf("sidebar cursor on calendar %d, want 2 (Bravo) — cursor did not follow the calendar", order[cur])
+	}
+}
+
 // TestCalendarReorder_StaleSaveDoesNotClearNewerReorder verifies that when a
 // second reorder happens while the first save is still in flight, the late
 // confirmation of the first save does not drop the newer pending order.
