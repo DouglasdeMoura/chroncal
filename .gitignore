@@ -45,3 +45,5 @@ go.work.sum
 
 # Local retro snapshots (/retro history; machine-local like TODOS.md)
 .context/
+
+.gstack
