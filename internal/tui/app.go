@@ -910,6 +910,21 @@ func (m Model) loadCalendars() tea.Cmd {
 	}
 }
 
+// sortedCalendarListItems builds the sidebar's calendar rows from the calendar
+// map and sorts them by the user's persisted display order (name as a tiebreak,
+// e.g. rows that share a backfilled default). Shared by the reload handler and
+// the reorder handler so both produce identical row order.
+func sortedCalendarListItems(calendars map[int64]CalendarInfo) []CalendarListItem {
+	items := make([]CalendarListItem, 0, len(calendars))
+	for id, c := range calendars {
+		items = append(items, CalendarListItem{ID: id, Name: c.Name, Color: c.Color, Health: syncHealthFor(c), Order: c.DisplayOrder})
+	}
+	slices.SortFunc(items, func(a, b CalendarListItem) int {
+		return compareCalendarOrder(a.Order, a.Name, b.Order, b.Name)
+	})
+	return items
+}
+
 // syncHealthFor derives the sidebar health marker state from a calendar's
 // persisted sync fields. Local-only calendars (not Synced) get no marker;
 // a recorded last_sync_error is the only loud (SyncHealthError) state. Because
@@ -1692,16 +1707,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.calendars[id] = c
 				}
 			}
-			items := make([]CalendarListItem, 0, len(m.calendars))
-			for id, c := range m.calendars {
-				items = append(items, CalendarListItem{ID: id, Name: c.Name, Color: c.Color, Health: syncHealthFor(c), Order: c.DisplayOrder})
-			}
-			// Honor the user's persisted sidebar order; fall back to name for
-			// any ties (e.g. rows that share a backfilled default).
-			slices.SortFunc(items, func(a, b CalendarListItem) int {
-				return compareCalendarOrder(a.Order, a.Name, b.Order, b.Name)
-			})
-			m.sidebar = m.sidebar.SetList(m.sidebar.List().SetItems(items))
+			m.sidebar = m.sidebar.SetList(m.sidebar.List().SetItems(sortedCalendarListItems(m.calendars)))
 			// Prune stale hidden IDs after CalendarListModel has done its pruning.
 			m.hiddenCalendars = m.sidebar.List().HiddenSet()
 			m.saveUIState()
@@ -2172,10 +2178,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case CalendarReorderedMsg:
-		// The sidebar list already reflects the new order locally; mirror it
-		// into m.calendars so any later reload-from-cache (e.g. the manage
-		// dialog) stays coherent, and record it as pending so a reload that
-		// races the async SetOrder below doesn't revert to the stale DB order.
+		// A reorder can originate from either the sidebar list or the manage
+		// dialog; mirror it into m.calendars so both views (and any later
+		// reload-from-cache) stay coherent, and record it as pending so a
+		// reload racing the async SetOrder below doesn't revert to the stale DB
+		// order.
 		ids := msg.IDs
 		if m.pendingOrder == nil {
 			m.pendingOrder = make(map[int64]int64, len(ids))
@@ -2187,6 +2194,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.calendars[id] = info
 			}
 		}
+		// Re-sort the sidebar from the updated order. This is what makes a
+		// dialog-originated reorder show up behind the dialog; for a
+		// sidebar-originated one it just re-applies the order the list already
+		// swapped to, keeping the cursor on the moved calendar.
+		m.sidebar = m.sidebar.SetList(m.sidebar.List().SetItems(sortedCalendarListItems(m.calendars)))
 		if m.calendarListDialogOpen {
 			m.calendarListDialog = m.calendarListDialog.SetCalendars(m.calendars, m.hiddenCalendars)
 		}

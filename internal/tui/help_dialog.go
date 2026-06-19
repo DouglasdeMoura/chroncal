@@ -185,7 +185,7 @@ func (m HelpDialogModel) sections() []helpSection {
 				{"s", "sync all"},
 				{"enter (sidebar)", "open calendar"},
 				{"space (sidebar)", "toggle visibility"},
-				{"shift+↑/↓ (sidebar)", "reorder calendar"},
+				{"shift+↑/↓ · K/J", "reorder calendar (sidebar or manage dialog)"},
 				{"*", "set as default"},
 			},
 		},
