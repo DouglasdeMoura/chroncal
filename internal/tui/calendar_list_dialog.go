@@ -231,7 +231,7 @@ func (m CalendarListDialogModel) shortHelp() []key.Binding {
 		key.WithHelp("↑↓", "navigate"),
 	)
 	reorder := key.NewBinding(
-		key.WithKeys("shift+up", "shift+down", "K", "J"),
+		key.WithKeys(append(m.keys.MoveUp.Keys(), m.keys.MoveDown.Keys()...)...),
 		key.WithHelp("shift+↑↓", "reorder"),
 	)
 	return []key.Binding{nav, reorder, sk.Tab, m.keys.New, m.keys.Edit, m.keys.SetDefault, m.keys.Delete, sk.Close}
@@ -311,9 +311,12 @@ func (m CalendarListDialogModel) handleKey(msg tea.KeyPressMsg) (CalendarListDia
 			return m, func() tea.Msg { return CalendarSetDefaultRequestedMsg{ID: id, Name: info.Name} }
 		}
 		return m, nil
-	case key.Matches(msg, m.keys.MoveUp):
+	// Reorder only when the list itself owns focus; when the user has Tabbed
+	// to the action buttons or the title action, fall through so shift+↑/↓ and
+	// K/J don't silently reorder (and persist) a row the user isn't looking at.
+	case m.shell.FocusZone() == ListZoneList && key.Matches(msg, m.keys.MoveUp):
 		return m.moveSelected(-1)
-	case key.Matches(msg, m.keys.MoveDown):
+	case m.shell.FocusZone() == ListZoneList && key.Matches(msg, m.keys.MoveDown):
 		return m.moveSelected(1)
 	}
 

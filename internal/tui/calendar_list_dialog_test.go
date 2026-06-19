@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"charm.land/bubbles/v2/help"
+	tea "charm.land/bubbletea/v2"
 )
 
 func makeCalListDialogFixture() CalendarListDialogModel {
@@ -62,5 +63,42 @@ func TestCalendarListDialog_MoveSelectedDoesNotMutateOriginalOrder(t *testing.T)
 	_, _ = m.moveSelected(1)
 	if want := []int64{1, 2, 3}; !slices.Equal(m.order, want) {
 		t.Errorf("original order mutated by moveSelected: got %v, want %v", m.order, want)
+	}
+}
+
+// TestCalendarListDialog_ReorderIgnoredWhenActionsFocused locks in the
+// focus-zone guard: a move key pressed while the action buttons (not the list)
+// own focus must not reorder or persist anything.
+func TestCalendarListDialog_ReorderIgnoredWhenActionsFocused(t *testing.T) {
+	m := makeCalListDialogFixture()
+	m.shell = m.shell.SetSelected(0)
+	m.shell = m.shell.SetFocusZone(ListZoneActions)
+
+	m2, cmd := m.handleKey(tea.KeyPressMsg{Code: 'J', Text: "J"}) // move-down key
+	if !slices.Equal(m2.order, []int64{1, 2, 3}) {
+		t.Errorf("order changed while actions zone focused: got %v", m2.order)
+	}
+	if cmd != nil {
+		if _, ok := cmd().(CalendarReorderedMsg); ok {
+			t.Error("reorder emitted while actions zone focused")
+		}
+	}
+}
+
+// TestCalendarListDialog_MoveSelectedSingleAndEmpty covers the bounds-guard
+// edge cases the 3-item fixture can't reach.
+func TestCalendarListDialog_MoveSelectedSingleAndEmpty(t *testing.T) {
+	single := NewCalendarListDialogModel(map[int64]CalendarInfo{1: {Name: "Solo"}}, nil, help.New())
+	single.shell = single.shell.SetSelected(0)
+	if _, cmd := single.moveSelected(1); cmd != nil {
+		t.Error("single-item move down should be a no-op")
+	}
+	if _, cmd := single.moveSelected(-1); cmd != nil {
+		t.Error("single-item move up should be a no-op")
+	}
+
+	empty := NewCalendarListDialogModel(map[int64]CalendarInfo{}, nil, help.New())
+	if _, cmd := empty.moveSelected(1); cmd != nil {
+		t.Error("empty-list move should be a no-op")
 	}
 }
