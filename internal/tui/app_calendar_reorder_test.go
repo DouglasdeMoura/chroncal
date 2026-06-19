@@ -4,6 +4,8 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"charm.land/bubbles/v2/help"
 )
 
 // sidebarOrderIDs returns the calendar IDs in the order the sidebar list
@@ -73,6 +75,44 @@ func TestCalendarReorder_PendingOrderSurvivesStaleReload(t *testing.T) {
 	m = updated.(Model)
 	if got := sidebarOrderIDs(m); !slices.Equal(got, []int64{2, 1}) {
 		t.Fatalf("post-save reload wrong order: got %v want [2 1]", got)
+	}
+}
+
+// TestCalendarReorder_DialogOriginatedSyncsSidebarAndDialog verifies a reorder
+// emitted by the manage dialog (where the sidebar list was NOT pre-swapped)
+// re-sorts the background sidebar from m.calendars and keeps the open dialog in
+// sync — the two branches the dialog feature added to the handler.
+func TestCalendarReorder_DialogOriginatedSyncsSidebarAndDialog(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	now := time.Date(2026, 6, 19, 0, 0, 0, 0, time.UTC)
+	items := []CalendarListItem{
+		{ID: 1, Name: "Alpha", Order: 0},
+		{ID: 2, Name: "Bravo", Order: 1},
+		{ID: 3, Name: "Charlie", Order: 2},
+	}
+	cals := map[int64]CalendarInfo{
+		1: {Name: "Alpha", DisplayOrder: 0},
+		2: {Name: "Bravo", DisplayOrder: 1},
+		3: {Name: "Charlie", DisplayOrder: 2},
+	}
+	m := Model{
+		sidebar:                NewSidebarModel(NewMiniMonthModel(now), NewCalendarListModel(items, nil)),
+		calendars:              cals,
+		calendarListDialogOpen: true,
+		calendarListDialog:     NewCalendarListDialogModel(cals, nil, help.New()),
+	}
+
+	// Dialog moved Bravo above Alpha; only the dialog swapped locally, so the
+	// sidebar must be re-sorted by the handler, not by a prior list swap.
+	updated, _ := m.Update(CalendarReorderedMsg{IDs: []int64{2, 1, 3}})
+	m = updated.(Model)
+
+	if got := sidebarOrderIDs(m); !slices.Equal(got, []int64{2, 1, 3}) {
+		t.Fatalf("sidebar not synced to dialog reorder: got %v want [2 1 3]", got)
+	}
+	if got := m.calendarListDialog.order; !slices.Equal(got, []int64{2, 1, 3}) {
+		t.Fatalf("open dialog not synced to reorder: got %v want [2 1 3]", got)
 	}
 }
 

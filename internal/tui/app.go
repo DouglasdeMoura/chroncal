@@ -1705,6 +1705,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if c, ok := m.calendars[id]; ok {
 					c.DisplayOrder = pos
 					m.calendars[id] = c
+				} else {
+					// Gone from a full reload (deleted) — drop the stale pending
+					// entry so the map can't grow without bound across
+					// reorder+delete cycles.
+					delete(m.pendingOrder, id)
 				}
 			}
 			m.sidebar = m.sidebar.SetList(m.sidebar.List().SetItems(sortedCalendarListItems(m.calendars)))
