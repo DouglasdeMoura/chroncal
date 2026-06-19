@@ -2202,8 +2202,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Re-sort the sidebar from the updated order. This is what makes a
 		// dialog-originated reorder show up behind the dialog; for a
 		// sidebar-originated one it just re-applies the order the list already
-		// swapped to, keeping the cursor on the moved calendar.
-		m.sidebar = m.sidebar.SetList(m.sidebar.List().SetItems(sortedCalendarListItems(m.calendars)))
+		// swapped to. Preserve the cursor by calendar identity so a reorder
+		// (from either surface) never leaves the sidebar highlight on a
+		// different calendar than before.
+		m.sidebar = m.sidebar.SetList(m.sidebar.List().SetItemsPreservingCursor(sortedCalendarListItems(m.calendars)))
 		if m.calendarListDialogOpen {
 			m.calendarListDialog = m.calendarListDialog.SetCalendars(m.calendars, m.hiddenCalendars)
 		}
