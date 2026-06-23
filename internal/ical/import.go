@@ -723,11 +723,29 @@ func parseCategoriesFromProps(props ical.Props) string {
 func parseDateListFromProps(props ical.Props, propName string) string {
 	var dates []string
 	for _, prop := range props.Values(propName) {
+		var loc *time.Location
+		if tzid := prop.Params.Get(ical.ParamTimezoneID); tzid != "" {
+			if loaded, err := time.LoadLocation(tzid); err == nil {
+				loc = loaded
+			}
+		}
 		parts := strings.Split(prop.Value, ",")
 		for _, p := range parts {
 			p = strings.TrimSpace(p)
 			if p == "" {
 				continue
+			}
+			if strings.EqualFold(prop.Params.Get("VALUE"), "DATE") {
+				if t, err := time.Parse("20060102", p); err == nil {
+					dates = append(dates, t.Format("2006-01-02"))
+				}
+				continue
+			}
+			if loc != nil {
+				if t, err := time.ParseInLocation("20060102T150405", p, loc); err == nil {
+					dates = append(dates, t.UTC().Format(time.RFC3339))
+					continue
+				}
 			}
 			for _, layout := range []string{
 				"20060102T150405Z",
