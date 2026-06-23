@@ -19,6 +19,21 @@ func TestMarkResourceDirty_NoopWhenNoSyncResource(t *testing.T) {
 	}
 }
 
+func TestMarkResourceDirty_ReturnsCalendarLookupError(t *testing.T) {
+	db, _, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	err = MarkResourceDirty(context.Background(), db, 1, "uid", "event")
+	if err == nil {
+		t.Fatal("MarkResourceDirty err = nil, want database error")
+	}
+}
+
 func TestMarkResourceDirty_SkipsZeroCalendarOrEmptyUID(t *testing.T) {
 	db, _, err := Open(":memory:")
 	if err != nil {
@@ -48,6 +63,24 @@ func TestCreateTombstoneIfSynced_NoopWhenNotSynced(t *testing.T) {
 	}
 	if created {
 		t.Error("should not create tombstone when no sync resource exists")
+	}
+}
+
+func TestCreateTombstoneIfSynced_ReturnsSyncResourceLookupError(t *testing.T) {
+	db, _, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	created, err := CreateTombstoneIfSynced(context.Background(), db, 1, "uid")
+	if err == nil {
+		t.Fatal("CreateTombstoneIfSynced err = nil, want database error")
+	}
+	if created {
+		t.Fatal("CreateTombstoneIfSynced created = true, want false on database error")
 	}
 }
 
