@@ -443,3 +443,55 @@ func TestSoftDelete_SequenceBumpedOnRestore(t *testing.T) {
 		t.Fatalf("Sequence not bumped: before=%d after=%d", originalSeq, restored.Sequence)
 	}
 }
+
+// TestSoftDelete_UndoInstanceDeletePreservesPreexistingEXDATE verifies that
+// undoing a single-instance delete removes only the EXDATE that delete added,
+// leaving a pre-existing exclusion for the same slot intact. The "EXDATE +
+// live override at the same slot" shape arrives via import/sync; without
+// remove-one semantics the undo would strip both EXDATEs and the base
+// occurrence could resurface once the override is later removed.
+func TestSoftDelete_UndoInstanceDeletePreservesPreexistingEXDATE(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	const slot = "2026-04-08T10:00:00Z"
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:            "preexisting-exdate",
+		CalendarID:     1,
+		Title:          "Weekly Review",
+		StartTime:      time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;COUNT=3",
+		ExDates:        slot, // pre-existing exclusion at the same slot
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	if _, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:          master.UID,
+		CalendarID:   1,
+		Title:        "Weekly Review (moved)",
+		StartTime:    time.Date(2026, 4, 8, 14, 0, 0, 0, time.UTC),
+		EndTime:      time.Date(2026, 4, 8, 15, 0, 0, 0, time.UTC),
+		RecurrenceID: slot,
+	}); err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	instance := time.Date(2026, 4, 8, 10, 0, 0, 0, time.UTC)
+	meta, err := svc.DeleteInstanceWithUndo(ctx, master.UID, instance)
+	if err != nil {
+		t.Fatalf("DeleteInstanceWithUndo: %v", err)
+	}
+	if err := svc.RestoreUndo(ctx, meta); err != nil {
+		t.Fatalf("RestoreUndo: %v", err)
+	}
+
+	restoredMaster, err := svc.Get(ctx, master.ID)
+	if err != nil {
+		t.Fatalf("Get master after restore: %v", err)
+	}
+	if got := len(restoredMaster.ParseExDates()); got != 1 {
+		t.Fatalf("EXDATE count after undo = %d, want 1 (pre-existing exclusion preserved) (%q)", got, restoredMaster.ExDates)
+	}
+}
