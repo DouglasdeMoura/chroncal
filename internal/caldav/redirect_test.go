@@ -1,6 +1,7 @@
 package caldav
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -24,7 +25,7 @@ func TestDefaultHTTPClientStripsAuthOnCrossHostRedirect(t *testing.T) {
 	}))
 	defer legit.Close()
 
-	req, err := http.NewRequest(http.MethodGet, legit.URL, nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, legit.URL, nil)
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
@@ -61,7 +62,7 @@ func TestBearerAuthClientStripsAuthOnCrossHostRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBearerAuthClient: %v", err)
 	}
-	req, err := http.NewRequest(http.MethodGet, legit.URL, nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, legit.URL, nil)
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
@@ -97,7 +98,7 @@ func TestBasicAuthClientStripsAuthOnCrossHostRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBasicAuthClient: %v", err)
 	}
-	req, err := http.NewRequest(http.MethodGet, legit.URL, nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, legit.URL, nil)
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
@@ -128,7 +129,7 @@ func TestDefaultHTTPClientKeepsAuthOnSameHostRedirect(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/", nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/", nil)
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
@@ -153,11 +154,13 @@ func TestDefaultHTTPClientCapsRedirects(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	req, err := http.NewRequest(http.MethodGet, srv.URL, nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
-	if _, err := defaultHTTPClient.Do(req); err == nil {
+	resp, err := defaultHTTPClient.Do(req)
+	if err == nil {
+		resp.Body.Close()
 		t.Fatal("Do err = nil, want redirect-cap error")
 	}
 }
