@@ -235,11 +235,11 @@ func setEventTimes(vevent *ical.Event, e event.Event) {
 	useDuration := e.DurationValue != ""
 
 	if e.AllDay {
-		vevent.Props.SetDate(ical.PropDateTimeStart, e.StartTime)
+		vevent.Props.SetDate(ical.PropDateTimeStart, allDayExportDate(e.StartTime, e.Timezone))
 		if useDuration {
 			setPropDuration(vevent, e.DurationValue)
 		} else {
-			vevent.Props.SetDate(ical.PropDateTimeEnd, e.EndTime)
+			vevent.Props.SetDate(ical.PropDateTimeEnd, allDayExportDate(e.EndTime, e.Timezone))
 		}
 	} else if e.Timezone == "FLOATING" {
 		local := e.StartTime.Local()
@@ -281,6 +281,28 @@ func setEventTimes(vevent *ical.Event, e event.Event) {
 			vevent.Props.SetDateTime(ical.PropDateTimeEnd, e.EndTime.UTC())
 		}
 	}
+}
+
+func allDayExportDate(t time.Time, timezone string) time.Time {
+	// A stored instant already at midnight UTC carries its calendar date
+	// directly (the TUI stores all-day events as midnight UTC, regardless of
+	// the event's Timezone). Converting it into another zone would shift the
+	// date — e.g. 2026-04-15T00:00Z in America/New_York is 2026-04-14.
+	if t.Location() == time.UTC && t.Hour() == 0 && t.Minute() == 0 && t.Second() == 0 && t.Nanosecond() == 0 {
+		return t
+	}
+	if timezone != "" && timezone != "FLOATING" {
+		if loc, err := time.LoadLocation(timezone); err == nil {
+			return t.In(loc)
+		}
+	}
+	if t.Location() != time.UTC {
+		return t
+	}
+	if t.Hour() != 0 || t.Minute() != 0 || t.Second() != 0 || t.Nanosecond() != 0 {
+		return t.In(time.Local)
+	}
+	return t.UTC()
 }
 
 func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
