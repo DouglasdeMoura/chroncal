@@ -41,9 +41,28 @@ type Change struct {
 
 const defaultHTTPTimeout = 30 * time.Second
 const maxHTTPResponseBytes = 8 << 20
+const maxRedirects = 10
 
-var defaultHTTPClient = &http.Client{Timeout: defaultHTTPTimeout}
+var defaultHTTPClient = &http.Client{
+	Timeout:       defaultHTTPTimeout,
+	CheckRedirect: checkRedirect,
+}
 var errResponseTooLarge = errors.New("caldav response exceeds configured limits")
+
+func checkRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= maxRedirects {
+		return fmt.Errorf("stopped after %d redirects", maxRedirects)
+	}
+	if len(via) > 0 && !sameRedirectHost(req.URL, via[0].URL) {
+		req.Header.Del("Authorization")
+		req.Header.Del("Cookie")
+	}
+	return nil
+}
+
+func sameRedirectHost(a, b *url.URL) bool {
+	return strings.EqualFold(a.Host, b.Host)
+}
 
 // Client wraps the go-webdav CalDAV client with error handling and auth.
 type Client struct {
