@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
 
 // ErrNotDeleted is returned by Restore when the target row is not soft-deleted
@@ -41,6 +42,9 @@ type UndoMeta struct {
 	UID       string
 	Label     string
 	DeletedAt time.Time
+
+	// UndoKindSingle only, when undoing DeleteInstanceWithUndo.
+	RecurrenceID string
 
 	// UndoKindFromInstance only.
 	MasterRRuleBefore   string
@@ -81,10 +85,11 @@ func (s *Service) DeleteInstanceWithUndo(ctx context.Context, uid string, instan
 		return UndoMeta{}, err
 	}
 	return UndoMeta{
-		Kind:      UndoKindSingle,
-		UID:       uid,
-		Label:     label,
-		DeletedAt: time.Now().UTC(),
+		Kind:         UndoKindSingle,
+		UID:          uid,
+		Label:        label,
+		DeletedAt:    time.Now().UTC(),
+		RecurrenceID: instanceTime.UTC().Format(time.RFC3339),
 	}, nil
 }
 
@@ -137,7 +142,7 @@ func (s *Service) DeleteSeriesWithUndo(ctx context.Context, uid string) (UndoMet
 func (s *Service) RestoreUndo(ctx context.Context, meta UndoMeta) error {
 	switch meta.Kind {
 	case UndoKindSingle:
-		return s.restoreSingle(ctx, meta.UID)
+		return s.restoreSingle(ctx, meta.UID, meta.RecurrenceID)
 	case UndoKindSeries:
 		return s.restoreSeries(ctx, meta.UID)
 	case UndoKindFromInstance:
@@ -154,8 +159,8 @@ func (s *Service) RestoreByUID(ctx context.Context, uid string) error {
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("get master: %w", err)
 	}
-	if err := s.q.RestoreEventsByUID(ctx, uid); err != nil {
-		return fmt.Errorf("restore by uid: %w", err)
+	if err := s.restoreEventsByUIDClearingExdates(ctx, uid); err != nil {
+		return err
 	}
 	if err == nil {
 		return s.reconcileSyncAfterRestore(ctx, master.CalendarID, uid)
@@ -176,6 +181,12 @@ func (s *Service) RestoreByID(ctx context.Context, id int64) error {
 	}
 	if r.DeletedAt == nil || *r.DeletedAt == "" {
 		return ErrNotDeleted
+	}
+	if r.RecurrenceID != "" {
+		if err := s.restoreOverrideByID(ctx, r); err != nil {
+			return err
+		}
+		return s.reconcileSyncAfterRestore(ctx, r.CalendarID, r.Uid)
 	}
 	if err := s.q.RestoreEvent(ctx, id); err != nil {
 		return fmt.Errorf("restore event: %w", err)
@@ -233,21 +244,27 @@ func (s *Service) PurgeByID(ctx context.Context, id int64) error {
 // override, callers should fall back to RestoreByUID since we don't know the
 // recurrence_id. UndoKindSingle always targets the master UID, so this
 // finds the master.
-func (s *Service) restoreSingle(ctx context.Context, uid string) error {
+func (s *Service) restoreSingle(ctx context.Context, uid, recurrenceID string) error {
 	r, err := s.q.GetEventByUIDIncludingDeleted(ctx, uid)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			// Might be an override-only delete where the master UID has no
 			// master row; fall back to UID-wide restore.
-			return s.restoreSeries(ctx, uid)
+			return s.restoreEventsByUIDClearingExdates(ctx, uid)
 		}
 		return err
 	}
 	if r.DeletedAt == nil || *r.DeletedAt == "" {
+		if recurrenceID != "" {
+			if err := s.restoreEXDATEOnly(ctx, uid, recurrenceID, r.CalendarID); err != nil {
+				return err
+			}
+			return nil
+		}
 		// Master is live; an override was probably the thing deleted.
 		// Fall back to RestoreByUID which un-hides any deleted overrides
 		// sharing this UID.
-		return s.q.RestoreEventsByUID(ctx, uid)
+		return s.restoreEventsByUIDClearingExdates(ctx, uid)
 	}
 	if err := s.q.RestoreEvent(ctx, r.ID); err != nil {
 		return err
@@ -261,11 +278,114 @@ func (s *Service) restoreSeries(ctx context.Context, uid string) error {
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	if err := s.q.RestoreEventsByUID(ctx, uid); err != nil {
+	if err := s.restoreEventsByUIDClearingExdates(ctx, uid); err != nil {
 		return err
 	}
 	if err == nil {
 		return s.reconcileSyncAfterRestore(ctx, master.CalendarID, uid)
+	}
+	return nil
+}
+
+func (s *Service) restoreOverrideByID(ctx context.Context, r storage.Event) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+
+	if err := qtx.RestoreEvent(ctx, r.ID); err != nil {
+		return fmt.Errorf("restore event: %w", err)
+	}
+	if err := clearMasterEXDATE(ctx, qtx, r.Uid, r.RecurrenceID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Service) restoreEXDATEOnly(ctx context.Context, uid, recurrenceID string, calendarID int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+
+	// DeleteInstance soft-deletes the override at this recurrence_id (if one
+	// existed) alongside adding the EXDATE; un-hide it so undo restores the
+	// customized occurrence, not just the base instance. No-ops when the
+	// deleted instance had no override.
+	if err := qtx.RestoreEventByUIDAndRecurrenceID(ctx, storage.RestoreEventByUIDAndRecurrenceIDParams{
+		Uid:          uid,
+		RecurrenceID: recurrenceID,
+	}); err != nil {
+		return fmt.Errorf("restore override: %w", err)
+	}
+	if err := clearMasterEXDATE(ctx, qtx, uid, recurrenceID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return s.reconcileSyncAfterRestore(ctx, calendarID, uid)
+}
+
+func (s *Service) restoreEventsByUIDClearingExdates(ctx context.Context, uid string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+
+	recurrenceIDs, err := qtx.ListDeletedOverrideRecurrenceIDs(ctx, uid)
+	if err != nil {
+		return fmt.Errorf("list deleted override recurrence ids: %w", err)
+	}
+	if err := qtx.RestoreEventsByUID(ctx, uid); err != nil {
+		return fmt.Errorf("restore by uid: %w", err)
+	}
+	for _, recurrenceID := range recurrenceIDs {
+		if err := clearMasterEXDATE(ctx, qtx, uid, recurrenceID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func clearMasterEXDATE(ctx context.Context, qtx *storage.Queries, uid, recurrenceID string) error {
+	master, err := qtx.GetEventByUID(ctx, uid)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("get master: %w", err)
+	}
+	target, err := timeutil.ParseRecurrenceID(recurrenceID)
+	if err != nil {
+		return fmt.Errorf("parse recurrence_id %q: %w", recurrenceID, err)
+	}
+	existing := ParseTimeList(storage.NullableToString(master.Exdates))
+	filtered := removeTimeFromList(existing, target)
+	if len(filtered) != len(existing) {
+		if err := qtx.UpdateEventExdates(ctx, storage.UpdateEventExdatesParams{
+			Exdates: storage.StringToNullable(SerializeTimeList(filtered)),
+			ID:      master.ID,
+		}); err != nil {
+			return fmt.Errorf("update exdates: %w", err)
+		}
+	}
+	log, err := qtx.GetEventExdateDeleteByUIDRecurrence(ctx, storage.GetEventExdateDeleteByUIDRecurrenceParams{
+		Uid:          uid,
+		RecurrenceID: recurrenceID,
+	})
+	if err == nil {
+		if err := qtx.DeleteEventExdateDelete(ctx, log.ID); err != nil {
+			return fmt.Errorf("delete exdate log: %w", err)
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("get exdate log: %w", err)
 	}
 	return nil
 }
