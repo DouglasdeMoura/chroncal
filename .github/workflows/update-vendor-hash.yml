@@ -4,15 +4,16 @@ name: Update flake vendorHash
 # vendorHash, which breaks `nix build` (the buildGoModule go-modules FOD
 # hash no longer matches). This workflow recomputes the hash on any PR that
 # touches go.mod/go.sum and pushes the fix back to the PR branch so the
-# (required) `nix build` check goes green and Dependabot auto-merge can
-# proceed.
+# (required) "Nix flake build" check goes green and Dependabot auto-merge
+# can proceed.
 #
 # The push uses a PAT (FLAKE_HASH_PAT), NOT GITHUB_TOKEN: commits pushed
-# with GITHUB_TOKEN do not re-trigger workflows, so the required `nix build`
-# check would never re-run on the fixed commit and the PR would stay
-# blocked. A PAT push re-triggers CI normally. For Dependabot PRs the secret
-# must exist as a *Dependabot* secret (Dependabot runs cannot read Actions
-# secrets); add it under both for human PRs that touch go.sum too.
+# with GITHUB_TOKEN do not re-trigger workflows, so the required check would
+# never re-run on the fixed commit and the PR would stay blocked. A PAT push
+# re-triggers CI normally. For Dependabot PRs the secret must exist as a
+# *Dependabot* secret (Dependabot runs cannot read Actions secrets); add it
+# under Actions too for human PRs that touch go.sum. Until the secret is set
+# the job no-ops with a warning instead of failing.
 on:
   pull_request:
     paths:
@@ -30,14 +31,29 @@ jobs:
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
+      - name: Check for PAT
+        id: pat
+        env:
+          PAT: ${{ secrets.FLAKE_HASH_PAT }}
+        run: |
+          if [ -n "$PAT" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::FLAKE_HASH_PAT is not set; skipping vendorHash auto-fix. Add it as a Dependabot (and Actions) secret to enable."
+          fi
+
       - uses: actions/checkout@v7
+        if: steps.pat.outputs.present == 'true'
         with:
           ref: ${{ github.head_ref }}
           token: ${{ secrets.FLAKE_HASH_PAT }}
 
       - uses: DeterminateSystems/nix-installer-action@v22
+        if: steps.pat.outputs.present == 'true'
 
       - name: Recompute and fix vendorHash if stale
+        if: steps.pat.outputs.present == 'true'
         run: |
           set -euo pipefail
 
