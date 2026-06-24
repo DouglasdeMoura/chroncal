@@ -3,6 +3,7 @@ package tui
 import (
 	"image/color"
 	"maps"
+	"slices"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -47,10 +48,17 @@ type CalendarListItem struct {
 	Name   string
 	Color  string // hex like "#a6e3a1"
 	Health SyncHealth
+	Order  int64 // persisted sidebar sort position (lower sorts first)
 }
+
+// CalendarReorderedMsg is emitted when the user moves a calendar in the list.
+// IDs is the full row order, top to bottom, so the parent can persist
+// display_order = index for each.
+type CalendarReorderedMsg struct{ IDs []int64 }
 
 type calendarListKeyMap struct {
 	Up, Down, Tab, ShiftTab key.Binding
+	MoveUp, MoveDown        key.Binding
 	Toggle                  key.Binding
 	Open                    key.Binding
 }
@@ -61,6 +69,8 @@ func defaultCalendarListKeys() calendarListKeyMap {
 		Down:     key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
 		Tab:      key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next")),
 		ShiftTab: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev")),
+		MoveUp:   key.NewBinding(key.WithKeys("shift+up", "K"), key.WithHelp("shift+↑/K", "move up")),
+		MoveDown: key.NewBinding(key.WithKeys("shift+down", "J"), key.WithHelp("shift+↓/J", "move down")),
 		Toggle:   key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "toggle visibility")),
 		Open:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
 	}
@@ -133,6 +143,29 @@ func (m CalendarListModel) SetItems(items []CalendarListItem) CalendarListModel 
 	return m
 }
 
+// SetItemsPreservingCursor replaces the items but keeps the cursor on whatever
+// calendar it currently points at (by ID) rather than by raw index, so a
+// reorder or reload that shifts rows doesn't leave the highlight on a different
+// calendar — which would make the next keystroke act on the wrong one. Falls
+// back to SetItems' clamp when the current calendar is gone.
+func (m CalendarListModel) SetItemsPreservingCursor(items []CalendarListItem) CalendarListModel {
+	var curID int64
+	hasCursor := m.cursor >= 0 && m.cursor < len(m.items)
+	if hasCursor {
+		curID = m.items[m.cursor].ID
+	}
+	m = m.SetItems(items)
+	if hasCursor {
+		for i, it := range items {
+			if it.ID == curID {
+				m.cursor = i
+				break
+			}
+		}
+	}
+	return m
+}
+
 // HiddenSet returns a copy of the current hidden set.
 func (m CalendarListModel) HiddenSet() map[int64]bool {
 	out := make(map[int64]bool, len(m.hidden))
@@ -150,6 +183,30 @@ func (m CalendarListModel) moveCursor(delta int) CalendarListModel {
 		m.cursor = m.RowCount() - 1
 	}
 	return m
+}
+
+// moveCurrent swaps the item under the cursor with its neighbour delta rows
+// away (±1), keeping the cursor on the moved item so repeated presses keep
+// dragging the same calendar. Returns a command emitting CalendarReorderedMsg
+// with the new top-to-bottom ID order, or nil if the move would fall off the
+// list's edge.
+func (m CalendarListModel) moveCurrent(delta int) (CalendarListModel, tea.Cmd) {
+	j := m.cursor + delta
+	if m.cursor < 0 || m.cursor >= len(m.items) || j < 0 || j >= len(m.items) {
+		return m, nil
+	}
+	// Copy the slice before mutating: the value receiver shares the backing
+	// array with whatever the parent stored, so an in-place swap would also
+	// reorder that aliased view before the new model is committed.
+	items := slices.Clone(m.items)
+	items[m.cursor], items[j] = items[j], items[m.cursor]
+	m.items = items
+	m.cursor = j
+	ids := make([]int64, len(items))
+	for i, it := range items {
+		ids[i] = it.ID
+	}
+	return m, func() tea.Msg { return CalendarReorderedMsg{IDs: ids} }
 }
 
 // toggleCurrent flips the hidden state of the item under the cursor and
@@ -187,6 +244,10 @@ func (m CalendarListModel) Update(msg tea.Msg) (CalendarListModel, tea.Cmd) {
 		return m, nil
 	}
 	switch {
+	case key.Matches(kp, m.keys.MoveUp):
+		return m.moveCurrent(-1)
+	case key.Matches(kp, m.keys.MoveDown):
+		return m.moveCurrent(1)
 	case key.Matches(kp, m.keys.Up), key.Matches(kp, m.keys.ShiftTab):
 		return m.moveCursor(-1), nil
 	case key.Matches(kp, m.keys.Down), key.Matches(kp, m.keys.Tab):

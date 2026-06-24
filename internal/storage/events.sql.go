@@ -373,6 +373,35 @@ func (q *Queries) ListDeletedEventsByCalendar(ctx context.Context, calendarID in
 	return items, nil
 }
 
+const listDeletedOverrideRecurrenceIDs = `-- name: ListDeletedOverrideRecurrenceIDs :many
+SELECT recurrence_id FROM events
+WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NOT NULL
+ORDER BY recurrence_id
+`
+
+func (q *Queries) ListDeletedOverrideRecurrenceIDs(ctx context.Context, uid string) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listDeletedOverrideRecurrenceIDs, uid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var recurrence_id string
+		if err := rows.Scan(&recurrence_id); err != nil {
+			return nil, err
+		}
+		items = append(items, recurrence_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEventsByCalendarAndDateRange = `-- name: ListEventsByCalendarAndDateRange :many
 SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events
 WHERE calendar_id = ? AND start_time < ? AND end_time > ? AND deleted_at IS NULL
@@ -644,6 +673,24 @@ WHERE id = ? AND deleted_at IS NOT NULL
 
 func (q *Queries) RestoreEvent(ctx context.Context, id int64) error {
 	_, err := q.db.ExecContext(ctx, restoreEvent, id)
+	return err
+}
+
+const restoreEventByUIDAndRecurrenceID = `-- name: RestoreEventByUIDAndRecurrenceID :exec
+UPDATE events SET
+    deleted_at = NULL,
+    sequence = sequence + 1,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE uid = ? AND recurrence_id = ? AND deleted_at IS NOT NULL
+`
+
+type RestoreEventByUIDAndRecurrenceIDParams struct {
+	Uid          string
+	RecurrenceID string
+}
+
+func (q *Queries) RestoreEventByUIDAndRecurrenceID(ctx context.Context, arg RestoreEventByUIDAndRecurrenceIDParams) error {
+	_, err := q.db.ExecContext(ctx, restoreEventByUIDAndRecurrenceID, arg.Uid, arg.RecurrenceID)
 	return err
 }
 

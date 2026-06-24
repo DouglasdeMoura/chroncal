@@ -13,6 +13,11 @@ SELECT * FROM events
 WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NULL
 ORDER BY recurrence_id;
 
+-- name: ListDeletedOverrideRecurrenceIDs :many
+SELECT recurrence_id FROM events
+WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NOT NULL
+ORDER BY recurrence_id;
+
 -- name: GetEvent :one
 SELECT * FROM events WHERE id = ? AND deleted_at IS NULL;
 
@@ -128,6 +133,13 @@ UPDATE events SET
     sequence = sequence + 1,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE uid = ? AND recurrence_id != '' AND recurrence_id >= ? AND deleted_at IS NOT NULL;
+
+-- name: RestoreEventByUIDAndRecurrenceID :exec
+UPDATE events SET
+    deleted_at = NULL,
+    sequence = sequence + 1,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE uid = ? AND recurrence_id = ? AND deleted_at IS NOT NULL;
 
 -- name: PurgeSoftDeletedEvents :execrows
 DELETE FROM events WHERE deleted_at IS NOT NULL AND deleted_at < ?;

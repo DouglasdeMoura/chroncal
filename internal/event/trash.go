@@ -328,13 +328,18 @@ func (s *Service) restoreTruncationByLogID(ctx context.Context, logID int64) err
 	return nil
 }
 
-// removeTimeFromList returns list with every element equal to target (after
-// UTC normalization) removed. Used to reverse an EXDATE insertion.
+// removeTimeFromList returns list with the first element equal to target
+// (after UTC normalization) removed. Used to reverse a single EXDATE
+// insertion: DeleteInstance appends one EXDATE per delete, so undo must drop
+// exactly one — removing every match would discard a pre-existing exclusion
+// for the same slot (e.g. an imported EXDATE alongside a detached override).
 func removeTimeFromList(list []time.Time, target time.Time) []time.Time {
 	out := make([]time.Time, 0, len(list))
 	targetKey := target.UTC().Format(time.RFC3339)
+	removed := false
 	for _, t := range list {
-		if strings.EqualFold(t.UTC().Format(time.RFC3339), targetKey) {
+		if !removed && strings.EqualFold(t.UTC().Format(time.RFC3339), targetKey) {
+			removed = true
 			continue
 		}
 		out = append(out, t)

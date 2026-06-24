@@ -13,6 +13,8 @@ type Calendar struct {
 
 	OwnerEmail string // Email of the calendar owner (for RSVP matching)
 
+	DisplayOrder int64 // Sidebar sort position; lower sorts first
+
 	// Sync fields — populated when calendar is linked to a remote account
 	AccountID           int64  // 0 = local-only calendar
 	RemoteURL           string // CalDAV calendar URL (href)

@@ -3,6 +3,7 @@ package recurrence
 import (
 	"context"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -234,6 +235,112 @@ func TestListExpandedByDateRange_NoDuplication(t *testing.T) {
 	// Should get exactly 3 instances, not duplicated.
 	if len(events) != 3 {
 		t.Fatalf("got %d events, want 3", len(events))
+	}
+}
+
+// TestExportExpandedByDateRange_IncludesCancelledMaster guards that the
+// display-time cancelled-master suppression does NOT leak into ICS export: a
+// CANCELLED recurring master starting before the export window must still be
+// emitted, since STATUS:CANCELLED is how a downstream client is told to drop
+// the series.
+// TestCancelledMaster_DropsLiveOverride locks in Google/iCloud whole-series
+// cancel parity: when a recurring master is CANCELLED, even a still-CONFIRMED
+// override instance is suppressed from display/alarms/free-busy (all of which
+// flow through expansion). This is a deliberate behavior, not an accident — a
+// surviving instance of a cancelled series must not linger.
+func TestCancelledMaster_DropsLiveOverride(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	eventsSvc := event.NewService(db, q)
+	recurSvc := NewService(db, q)
+	ctx := context.Background()
+
+	master, err := eventsSvc.Create(ctx, event.CreateParams{
+		CalendarID:     1,
+		Title:          "Weekly",
+		StartTime:      time.Date(2026, 4, 6, 9, 0, 0, 0, time.UTC), // Monday
+		EndTime:        time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	// Cancel the whole series.
+	if _, err := eventsSvc.UpsertByUID(ctx, event.UpsertParams{
+		UID: master.UID, CalendarID: 1, Title: "Weekly",
+		StartTime:      time.Date(2026, 4, 6, 9, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
+		Status:         "CANCELLED",
+	}); err != nil {
+		t.Fatalf("cancel master: %v", err)
+	}
+	// A still-CONFIRMED override on the Apr 13 instance, moved to 14:00.
+	if _, err := eventsSvc.UpsertByUID(ctx, event.UpsertParams{
+		UID: master.UID, CalendarID: 1, Title: "Weekly (kept instance)",
+		StartTime:    time.Date(2026, 4, 13, 14, 0, 0, 0, time.UTC),
+		EndTime:      time.Date(2026, 4, 13, 15, 0, 0, 0, time.UTC),
+		RecurrenceID: "2026-04-13T09:00:00Z",
+		Status:       "CONFIRMED",
+	}); err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	// Wide window covering several would-be occurrences and the override.
+	from := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	events, err := recurSvc.ListExpandedByDateRange(ctx, from, to)
+	if err != nil {
+		t.Fatalf("ListExpandedByDateRange: %v", err)
+	}
+	if len(events) != 0 {
+		for i, e := range events {
+			t.Logf("  events[%d]: %s at %v (status=%s)", i, e.Title, e.StartTime, e.Status)
+		}
+		t.Fatalf("cancelled series produced %d events, want 0 (whole-series cancel)", len(events))
+	}
+}
+
+func TestExportExpandedByDateRange_IncludesCancelledMaster(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	eventsSvc := event.NewService(db, q)
+	recurSvc := NewService(db, q)
+	ctx := context.Background()
+
+	master, err := eventsSvc.Create(ctx, event.CreateParams{
+		CalendarID:     1,
+		Title:          "Cancelled Weekly Export",
+		StartTime:      time.Date(2020, 1, 6, 9, 0, 0, 0, time.UTC), // before the window
+		EndTime:        time.Date(2020, 1, 6, 10, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	if _, err := eventsSvc.UpsertByUID(ctx, event.UpsertParams{
+		UID: master.UID, CalendarID: 1, Title: "Cancelled Weekly Export",
+		StartTime:      time.Date(2020, 1, 6, 9, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2020, 1, 6, 10, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
+		Status:         "CANCELLED",
+	}); err != nil {
+		t.Fatalf("cancel master: %v", err)
+	}
+
+	events, err := recurSvc.ExportExpandedByDateRange(ctx, ExportFilterParams{
+		From: time.Date(2026, 3, 30, 0, 0, 0, 0, time.UTC),
+		To:   time.Date(2026, 4, 13, 0, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("ExportExpandedByDateRange: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1 (cancelled master must still export)", len(events))
+	}
+	if !strings.EqualFold(events[0].Status, "CANCELLED") {
+		t.Errorf("exported master Status = %q, want CANCELLED", events[0].Status)
+	}
+	if events[0].RecurrenceRule == "" {
+		t.Error("exported master lost its RecurrenceRule")
 	}
 }
 
@@ -637,5 +744,484 @@ func TestDeleteOverrideThenReexpand(t *testing.T) {
 		if e.StartTime.Equal(excluded) {
 			t.Error("Apr 13 instance should be excluded after override deletion")
 		}
+	}
+}
+
+// movedOverrideFixture creates a weekly-Monday master and moves its Apr 6
+// (Monday) occurrence to Apr 8 (Wednesday) at 14:00. The override's RECURRENCE-ID
+// slot (Apr 6) and its new start (Apr 8) fall on different days, which is the
+// shape that previously made a moved occurrence surface on the wrong day.
+func movedOverrideFixture(t *testing.T) (*event.Service, *Service) {
+	t.Helper()
+	db, q := testutil.NewTestDB(t)
+	eventsSvc := event.NewService(db, q)
+	recurSvc := NewService(db, q)
+	ctx := context.Background()
+
+	master, err := eventsSvc.Create(ctx, event.CreateParams{
+		CalendarID:     1,
+		Title:          "Weekly Standup",
+		StartTime:      time.Date(2026, 4, 6, 9, 0, 0, 0, time.UTC), // Monday
+		EndTime:        time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	// Move the Apr 6 occurrence to Wednesday Apr 8.
+	if _, err := eventsSvc.UpsertByUID(ctx, event.UpsertParams{
+		UID:          master.UID,
+		CalendarID:   1,
+		Title:        "Weekly Standup (moved)",
+		StartTime:    time.Date(2026, 4, 8, 14, 0, 0, 0, time.UTC), // Wednesday
+		EndTime:      time.Date(2026, 4, 8, 15, 0, 0, 0, time.UTC),
+		RecurrenceID: "2026-04-06T09:00:00Z",
+	}); err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+	return eventsSvc, recurSvc
+}
+
+// TestMovedOverride_OutOfSlotWindow verifies that a moved occurrence appears on
+// its new day and is absent from the day of the slot it replaced, across every
+// event expansion path (ListExpandedByDateRange, ListExpandedEvents,
+// ListFilteredEvents). Regression test for the moved-override-day bug.
+func TestMovedOverride_OutOfSlotWindow(t *testing.T) {
+	ctx := context.Background()
+	_, recurSvc := movedOverrideFixture(t)
+
+	// Window covering only the original slot day (Apr 6). The occurrence moved
+	// away, so nothing should show here.
+	slotFrom := time.Date(2026, 4, 6, 0, 0, 0, 0, time.UTC)
+	slotTo := time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC)
+
+	// Window covering only the new day (Apr 8). Exactly the moved override.
+	movedFrom := time.Date(2026, 4, 8, 0, 0, 0, 0, time.UTC)
+	movedTo := time.Date(2026, 4, 9, 0, 0, 0, 0, time.UTC)
+
+	wantMoved := time.Date(2026, 4, 8, 14, 0, 0, 0, time.UTC)
+
+	t.Run("ListExpandedByDateRange", func(t *testing.T) {
+		slot, err := recurSvc.ListExpandedByDateRange(ctx, slotFrom, slotTo)
+		if err != nil {
+			t.Fatalf("expand slot window: %v", err)
+		}
+		if len(slot) != 0 {
+			t.Errorf("original slot window: got %d events, want 0", len(slot))
+		}
+		moved, err := recurSvc.ListExpandedByDateRange(ctx, movedFrom, movedTo)
+		if err != nil {
+			t.Fatalf("expand moved window: %v", err)
+		}
+		if len(moved) != 1 {
+			t.Fatalf("moved window: got %d events, want 1", len(moved))
+		}
+		if !moved[0].StartTime.Equal(wantMoved) {
+			t.Errorf("moved start = %v, want %v", moved[0].StartTime, wantMoved)
+		}
+		if moved[0].Title != "Weekly Standup (moved)" {
+			t.Errorf("moved title = %q, want %q", moved[0].Title, "Weekly Standup (moved)")
+		}
+	})
+
+	t.Run("ListExpandedEvents", func(t *testing.T) {
+		slot, err := recurSvc.ListExpandedEvents(ctx, slotFrom, slotTo)
+		if err != nil {
+			t.Fatalf("expand slot window: %v", err)
+		}
+		if len(slot) != 0 {
+			t.Errorf("original slot window: got %d events, want 0", len(slot))
+		}
+		moved, err := recurSvc.ListExpandedEvents(ctx, movedFrom, movedTo)
+		if err != nil {
+			t.Fatalf("expand moved window: %v", err)
+		}
+		if len(moved) != 1 {
+			t.Fatalf("moved window: got %d events, want 1", len(moved))
+		}
+		if !moved[0].StartTime.Equal(wantMoved) {
+			t.Errorf("moved start = %v, want %v", moved[0].StartTime, wantMoved)
+		}
+	})
+
+	t.Run("ListFilteredEvents", func(t *testing.T) {
+		slot, err := recurSvc.ListFilteredEvents(ctx, EventListParams{From: slotFrom, To: slotTo})
+		if err != nil {
+			t.Fatalf("filter slot window: %v", err)
+		}
+		if len(slot) != 0 {
+			t.Errorf("original slot window: got %d events, want 0", len(slot))
+		}
+		moved, err := recurSvc.ListFilteredEvents(ctx, EventListParams{From: movedFrom, To: movedTo})
+		if err != nil {
+			t.Fatalf("filter moved window: %v", err)
+		}
+		if len(moved) != 1 {
+			t.Fatalf("moved window: got %d events, want 1", len(moved))
+		}
+		if !moved[0].StartTime.Equal(wantMoved) {
+			t.Errorf("moved start = %v, want %v", moved[0].StartTime, wantMoved)
+		}
+	})
+}
+
+// TestMovedOverride_WiderWindowNoDuplication verifies that a window spanning both
+// the original slot and the moved day yields the moved occurrence once (not the
+// suppressed Apr 6 slot, and not a duplicate), alongside the series' other
+// untouched occurrences.
+func TestMovedOverride_WiderWindowNoDuplication(t *testing.T) {
+	ctx := context.Background()
+	_, recurSvc := movedOverrideFixture(t)
+
+	// Apr 6 through Apr 19 (exclusive): master Mondays are Apr 6 (moved away)
+	// and Apr 13. Expect the moved override on Apr 8 and the Apr 13 instance.
+	from := time.Date(2026, 4, 6, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 4, 19, 0, 0, 0, 0, time.UTC)
+
+	events, err := recurSvc.ListExpandedByDateRange(ctx, from, to)
+	if err != nil {
+		t.Fatalf("expand: %v", err)
+	}
+	if len(events) != 2 {
+		for i, e := range events {
+			t.Logf("  events[%d]: %s at %v", i, e.Title, e.StartTime)
+		}
+		t.Fatalf("got %d events, want 2", len(events))
+	}
+	wantApr8 := time.Date(2026, 4, 8, 14, 0, 0, 0, time.UTC)
+	wantApr13 := time.Date(2026, 4, 13, 9, 0, 0, 0, time.UTC)
+	if !events[0].StartTime.Equal(wantApr8) {
+		t.Errorf("events[0].StartTime = %v, want %v", events[0].StartTime, wantApr8)
+	}
+	if !events[1].StartTime.Equal(wantApr13) {
+		t.Errorf("events[1].StartTime = %v, want %v", events[1].StartTime, wantApr13)
+	}
+	for _, e := range events {
+		if e.StartTime.Day() == 6 {
+			t.Error("Apr 6 slot should be suppressed (its occurrence moved to Apr 8)")
+		}
+	}
+}
+
+// TestMovedOverride_ExDatedSlot verifies that an override whose RECURRENCE-ID
+// slot is also EXDATE'd on the master is still emitted, not dropped as an
+// orphan. RFC 5545 lets a master carry an EXDATE and a separate RECURRENCE-ID
+// override for the same slot; the override replaces (wins over) the slot, so
+// orphan detection must ignore EXDATEs when checking whether the slot is a
+// genuine master occurrence.
+func TestMovedOverride_ExDatedSlot(t *testing.T) {
+	ctx := context.Background()
+	db, q := testutil.NewTestDB(t)
+	eventsSvc := event.NewService(db, q)
+	recurSvc := NewService(db, q)
+
+	master, err := eventsSvc.Create(ctx, event.CreateParams{
+		CalendarID:     1,
+		Title:          "Weekly Standup",
+		StartTime:      time.Date(2026, 4, 6, 9, 0, 0, 0, time.UTC), // Monday
+		EndTime:        time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
+		ExDates:        "2026-04-13T09:00:00Z", // the slot the override replaces
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	// Override the EXDATE'd Apr 13 slot, moved to Apr 14 14:00.
+	if _, err := eventsSvc.UpsertByUID(ctx, event.UpsertParams{
+		UID:          master.UID,
+		CalendarID:   1,
+		Title:        "Standup (moved)",
+		StartTime:    time.Date(2026, 4, 14, 14, 0, 0, 0, time.UTC),
+		EndTime:      time.Date(2026, 4, 14, 15, 0, 0, 0, time.UTC),
+		RecurrenceID: "2026-04-13T09:00:00Z",
+	}); err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	from := time.Date(2026, 4, 14, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 4, 15, 0, 0, 0, 0, time.UTC)
+	want := time.Date(2026, 4, 14, 14, 0, 0, 0, time.UTC)
+
+	events, err := recurSvc.ListExpandedByDateRange(ctx, from, to)
+	if err != nil {
+		t.Fatalf("ListExpandedByDateRange: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1 (override must survive an EXDATE'd slot)", len(events))
+	}
+	if !events[0].StartTime.Equal(want) {
+		t.Errorf("start = %v, want %v", events[0].StartTime, want)
+	}
+}
+
+// TestMovedOverride_MultiDaySpansWindow verifies that a moved override which is
+// a multi-day event appears in a queried window it overlaps even when its start
+// precedes the window. Override emission must use [start, end) overlap, matching
+// the non-recurring range path, not start-in-window — otherwise a multi-day
+// override is dropped from every day after its start.
+func TestMovedOverride_MultiDaySpansWindow(t *testing.T) {
+	ctx := context.Background()
+	db, q := testutil.NewTestDB(t)
+	eventsSvc := event.NewService(db, q)
+	recurSvc := NewService(db, q)
+
+	master, err := eventsSvc.Create(ctx, event.CreateParams{
+		CalendarID:     1,
+		Title:          "Weekly Standup",
+		StartTime:      time.Date(2026, 4, 6, 9, 0, 0, 0, time.UTC), // Monday
+		EndTime:        time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	// Move the Apr 6 occurrence to a multi-day span: Apr 5 10:00 -> Apr 8 12:00.
+	if _, err := eventsSvc.UpsertByUID(ctx, event.UpsertParams{
+		UID:          master.UID,
+		CalendarID:   1,
+		Title:        "Standup Offsite (moved)",
+		StartTime:    time.Date(2026, 4, 5, 10, 0, 0, 0, time.UTC),
+		EndTime:      time.Date(2026, 4, 8, 12, 0, 0, 0, time.UTC),
+		RecurrenceID: "2026-04-06T09:00:00Z",
+	}); err != nil {
+		t.Fatalf("create multi-day override: %v", err)
+	}
+
+	// Query a single day (Apr 7) the override spans but does not start on, and on
+	// which the master produces no instance (Apr 7 is not a Monday).
+	from := time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 4, 8, 0, 0, 0, 0, time.UTC)
+	wantStart := time.Date(2026, 4, 5, 10, 0, 0, 0, time.UTC)
+
+	for _, tc := range []struct {
+		name  string
+		start func() (time.Time, int, error)
+	}{
+		{"ListExpandedByDateRange", func() (time.Time, int, error) {
+			e, err := recurSvc.ListExpandedByDateRange(ctx, from, to)
+			if len(e) == 0 {
+				return time.Time{}, len(e), err
+			}
+			return e[0].StartTime, len(e), err
+		}},
+		{"ListExpandedEvents", func() (time.Time, int, error) {
+			e, err := recurSvc.ListExpandedEvents(ctx, from, to)
+			if len(e) == 0 {
+				return time.Time{}, len(e), err
+			}
+			return e[0].StartTime, len(e), err
+		}},
+		{"ListFilteredEvents", func() (time.Time, int, error) {
+			e, err := recurSvc.ListFilteredEvents(ctx, EventListParams{From: from, To: to})
+			if len(e) == 0 {
+				return time.Time{}, len(e), err
+			}
+			return e[0].StartTime, len(e), err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			start, n, err := tc.start()
+			if err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+			if n != 1 {
+				t.Fatalf("got %d events, want 1 (multi-day override overlapping the window)", n)
+			}
+			if !start.Equal(wantStart) {
+				t.Errorf("start = %v, want %v", start, wantStart)
+			}
+		})
+	}
+}
+
+// TestMovedOverride_OrphanDropped verifies that an override whose RECURRENCE-ID
+// is not a genuine occurrence of its master (e.g. left behind after the series
+// was truncated or split) is not expanded, even when its own start falls inside
+// the query window. This is the shape that produced a phantom occurrence when a
+// recurring series was rescheduled "this and following".
+func TestMovedOverride_OrphanDropped(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	eventsSvc := event.NewService(db, q)
+	recurSvc := NewService(db, q)
+	ctx := context.Background()
+
+	// Master generates only Apr 6 and Apr 13 (COUNT=2).
+	master, err := eventsSvc.Create(ctx, event.CreateParams{
+		CalendarID:     1,
+		Title:          "Truncated Weekly",
+		StartTime:      time.Date(2026, 4, 6, 9, 0, 0, 0, time.UTC), // Monday
+		EndTime:        time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO;COUNT=2",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+
+	// Orphan override: RECURRENCE-ID Apr 20 is past the COUNT=2 series, so the
+	// master never produces that occurrence.
+	if _, err := eventsSvc.UpsertByUID(ctx, event.UpsertParams{
+		UID:          master.UID,
+		CalendarID:   1,
+		Title:        "Orphan",
+		StartTime:    time.Date(2026, 4, 20, 9, 0, 0, 0, time.UTC),
+		EndTime:      time.Date(2026, 4, 20, 10, 0, 0, 0, time.UTC),
+		RecurrenceID: "2026-04-20T09:00:00Z",
+	}); err != nil {
+		t.Fatalf("create orphan override: %v", err)
+	}
+
+	from := time.Date(2026, 4, 20, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC)
+
+	for _, tc := range []struct {
+		name string
+		run  func() (int, error)
+	}{
+		{"ListExpandedByDateRange", func() (int, error) {
+			e, err := recurSvc.ListExpandedByDateRange(ctx, from, to)
+			return len(e), err
+		}},
+		{"ListExpandedEvents", func() (int, error) {
+			e, err := recurSvc.ListExpandedEvents(ctx, from, to)
+			return len(e), err
+		}},
+		{"ListFilteredEvents", func() (int, error) {
+			e, err := recurSvc.ListFilteredEvents(ctx, EventListParams{From: from, To: to})
+			return len(e), err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			n, err := tc.run()
+			if err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+			if n != 0 {
+				t.Errorf("orphan override expanded: got %d events, want 0", n)
+			}
+		})
+	}
+}
+
+// TestAllDayDateOnlyOverride_Consistent guards the suppression/occursAt
+// agreement: an all-day master with an override carrying a date-only
+// RECURRENCE-ID must expand to exactly one occurrence per day — never a
+// duplicate (slot shown plus override) nor a vanished day (slot suppressed and
+// override dropped). Both checks normalize the recurrence_id the same way
+// (canonicalRecurrenceID), so they always agree on count. Which row wins for a
+// date-only id is host-timezone dependent (all-day rows are stored at
+// local-midnight), but it does not matter here: sync and import always emit
+// full UTC RFC 3339 recurrence_ids, so the date-only form is a defensive edge.
+func TestAllDayDateOnlyOverride_Consistent(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	eventsSvc := event.NewService(db, q)
+	recurSvc := NewService(db, q)
+	ctx := context.Background()
+
+	if _, err := eventsSvc.UpsertByUID(ctx, event.UpsertParams{
+		UID: "allday-daily", CalendarID: 1, Title: "Daily AllDay",
+		StartTime:      time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 2, 0, 0, 0, 0, time.UTC),
+		AllDay:         true,
+		RecurrenceRule: "FREQ=DAILY",
+	}); err != nil {
+		t.Fatalf("create all-day master: %v", err)
+	}
+	// In-place edit of the Apr 8 occurrence with a date-only RECURRENCE-ID.
+	if _, err := eventsSvc.UpsertByUID(ctx, event.UpsertParams{
+		UID: "allday-daily", CalendarID: 1, Title: "Daily AllDay (edited)",
+		StartTime:    time.Date(2026, 4, 8, 0, 0, 0, 0, time.UTC),
+		EndTime:      time.Date(2026, 4, 9, 0, 0, 0, 0, time.UTC),
+		AllDay:       true,
+		RecurrenceID: "2026-04-08",
+	}); err != nil {
+		t.Fatalf("create all-day override: %v", err)
+	}
+
+	from := time.Date(2026, 4, 8, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 4, 9, 0, 0, 0, 0, time.UTC)
+
+	for _, tc := range []struct {
+		name string
+		run  func() (int, error)
+	}{
+		{"ListExpandedByDateRange", func() (int, error) {
+			e, err := recurSvc.ListExpandedByDateRange(ctx, from, to)
+			return len(e), err
+		}},
+		{"ListExpandedEvents", func() (int, error) {
+			e, err := recurSvc.ListExpandedEvents(ctx, from, to)
+			return len(e), err
+		}},
+		{"ListFilteredEvents", func() (int, error) {
+			e, err := recurSvc.ListFilteredEvents(ctx, EventListParams{From: from, To: to})
+			return len(e), err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			n, err := tc.run()
+			if err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+			if n != 1 {
+				t.Errorf("all-day Apr 8: got %d events, want exactly 1 (no duplicate, no vanish)", n)
+			}
+		})
+	}
+}
+
+// TestMovedOverride_Todo verifies the same moved-occurrence semantics for the
+// recurring todo expansion path.
+func TestMovedOverride_Todo(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	todoSvc := todo.NewService(db, q)
+	recurSvc := NewService(db, q)
+	ctx := context.Background()
+
+	master, err := todoSvc.Create(ctx, todo.CreateParams{
+		CalendarID:     1,
+		Summary:        "Weekly Review",
+		DueDate:        "2026-04-06", // Monday
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
+	})
+	if err != nil {
+		t.Fatalf("create recurring todo: %v", err)
+	}
+	// Move the Apr 6 occurrence to Wednesday Apr 8.
+	if _, err := todoSvc.UpsertByUID(ctx, todo.UpsertParams{
+		UID:          master.UID,
+		CalendarID:   1,
+		Summary:      "Weekly Review (moved)",
+		DueDate:      "2026-04-08",
+		RecurrenceID: "2026-04-06T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("create todo override: %v", err)
+	}
+
+	// Original slot day: nothing (occurrence moved away).
+	slot, err := recurSvc.ListExpandedTodosByDueDateRange(ctx,
+		time.Date(2026, 4, 6, 0, 0, 0, 0, time.UTC),
+		time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("expand slot window: %v", err)
+	}
+	if len(slot) != 0 {
+		for i, td := range slot {
+			t.Logf("  slot[%d]: %s due=%s", i, td.Summary, td.DueDate)
+		}
+		t.Errorf("original slot window: got %d todos, want 0", len(slot))
+	}
+
+	// New day: exactly the moved override.
+	moved, err := recurSvc.ListExpandedTodosByDueDateRange(ctx,
+		time.Date(2026, 4, 8, 0, 0, 0, 0, time.UTC),
+		time.Date(2026, 4, 9, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("expand moved window: %v", err)
+	}
+	if len(moved) != 1 {
+		t.Fatalf("moved window: got %d todos, want 1", len(moved))
+	}
+	if moved[0].DueDate != "2026-04-08" {
+		t.Errorf("moved due = %q, want %q", moved[0].DueDate, "2026-04-08")
 	}
 }

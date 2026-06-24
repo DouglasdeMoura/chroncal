@@ -63,6 +63,37 @@ func TestCalendarService_Create(t *testing.T) {
 	}
 }
 
+func TestCalendarService_CreateAppendsDisplayOrder(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	// The seed "Personal" calendar holds the lowest display_order; newly
+	// created calendars must append after it (MAX+1) rather than collide at 0.
+	seed, _ := svc.List(ctx)
+	first, err := svc.Create(ctx, "Aardvark", "#111", "")
+	if err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+	second, err := svc.Create(ctx, "Beaver", "#222", "")
+	if err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+
+	if first.DisplayOrder != seed[0].DisplayOrder+1 {
+		t.Errorf("first created DisplayOrder = %d, want %d", first.DisplayOrder, seed[0].DisplayOrder+1)
+	}
+	if second.DisplayOrder != first.DisplayOrder+1 {
+		t.Errorf("second created DisplayOrder = %d, want %d", second.DisplayOrder, first.DisplayOrder+1)
+	}
+
+	// List orders by display_order, so the newest calendar lands at the bottom
+	// even though "Beaver" would sort before some existing names alphabetically.
+	cals, _ := svc.List(ctx)
+	if cals[len(cals)-1].Name != "Beaver" {
+		t.Errorf("last calendar = %q, want %q (newest appends to bottom)", cals[len(cals)-1].Name, "Beaver")
+	}
+}
+
 func TestCalendarService_Get(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()

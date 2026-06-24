@@ -102,6 +102,149 @@ func TestSoftDelete_Series(t *testing.T) {
 	}
 }
 
+func TestSoftDelete_RestoreOverrideByIDClearsMasterEXDATE(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:            "restore-override-exdate",
+		CalendarID:     1,
+		Title:          "Weekly Review",
+		StartTime:      time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;COUNT=3",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	override, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:          master.UID,
+		CalendarID:   1,
+		Title:        "Weekly Review (moved)",
+		StartTime:    time.Date(2026, 4, 8, 14, 0, 0, 0, time.UTC),
+		EndTime:      time.Date(2026, 4, 8, 15, 0, 0, 0, time.UTC),
+		RecurrenceID: "2026-04-08T10:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	if err := svc.Delete(ctx, override.ID); err != nil {
+		t.Fatalf("Delete override: %v", err)
+	}
+	deletedMaster, err := svc.Get(ctx, master.ID)
+	if err != nil {
+		t.Fatalf("Get master after delete: %v", err)
+	}
+	if got := len(deletedMaster.ParseExDates()); got != 1 {
+		t.Fatalf("EXDATE count after delete = %d, want 1", got)
+	}
+
+	if err := svc.RestoreByID(ctx, override.ID); err != nil {
+		t.Fatalf("RestoreByID override: %v", err)
+	}
+	if _, err := svc.Get(ctx, override.ID); err != nil {
+		t.Fatalf("Get override after restore: %v", err)
+	}
+	restoredMaster, err := svc.Get(ctx, master.ID)
+	if err != nil {
+		t.Fatalf("Get master after restore: %v", err)
+	}
+	if got := len(restoredMaster.ParseExDates()); got != 0 {
+		t.Fatalf("EXDATE count after restore = %d, want 0 (%q)", got, restoredMaster.ExDates)
+	}
+}
+
+func TestSoftDelete_RestoreByUIDClearsOverrideEXDATEs(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:            "restore-uid-exdates",
+		CalendarID:     1,
+		Title:          "Weekly Sync",
+		StartTime:      time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;COUNT=3",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	override, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:          master.UID,
+		CalendarID:   1,
+		Title:        "Weekly Sync (moved)",
+		StartTime:    time.Date(2026, 4, 8, 14, 0, 0, 0, time.UTC),
+		EndTime:      time.Date(2026, 4, 8, 15, 0, 0, 0, time.UTC),
+		RecurrenceID: "2026-04-08T10:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	if err := svc.Delete(ctx, override.ID); err != nil {
+		t.Fatalf("Delete override: %v", err)
+	}
+	if err := svc.RestoreByUID(ctx, master.UID); err != nil {
+		t.Fatalf("RestoreByUID: %v", err)
+	}
+	restoredMaster, err := svc.Get(ctx, master.ID)
+	if err != nil {
+		t.Fatalf("Get master after restore: %v", err)
+	}
+	if got := len(restoredMaster.ParseExDates()); got != 0 {
+		t.Fatalf("EXDATE count after RestoreByUID = %d, want 0 (%q)", got, restoredMaster.ExDates)
+	}
+}
+
+func TestSoftDelete_RestoreUndoDeleteInstanceClearsEXDATE(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:            "undo-instance-exdate",
+		CalendarID:     1,
+		Title:          "Office Hours",
+		StartTime:      time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;COUNT=3",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	instance := time.Date(2026, 4, 8, 9, 0, 0, 0, time.UTC)
+
+	meta, err := svc.DeleteInstanceWithUndo(ctx, master.UID, instance)
+	if err != nil {
+		t.Fatalf("DeleteInstanceWithUndo: %v", err)
+	}
+	deletedMaster, err := svc.Get(ctx, master.ID)
+	if err != nil {
+		t.Fatalf("Get master after delete: %v", err)
+	}
+	if got := len(deletedMaster.ParseExDates()); got != 1 {
+		t.Fatalf("EXDATE count after delete = %d, want 1", got)
+	}
+
+	if err := svc.RestoreUndo(ctx, meta); err != nil {
+		t.Fatalf("RestoreUndo: %v", err)
+	}
+	restoredMaster, err := svc.Get(ctx, master.ID)
+	if err != nil {
+		t.Fatalf("Get master after restore: %v", err)
+	}
+	if got := len(restoredMaster.ParseExDates()); got != 0 {
+		t.Fatalf("EXDATE count after RestoreUndo = %d, want 0 (%q)", got, restoredMaster.ExDates)
+	}
+	trash, err := svc.ListTrash(ctx, 1)
+	if err != nil {
+		t.Fatalf("ListTrash: %v", err)
+	}
+	if len(trash) != 0 {
+		t.Fatalf("trash entries after RestoreUndo = %d, want 0", len(trash))
+	}
+}
+
 // TestSoftDelete_FromInstance_RRULE verifies DeleteFromInstanceWithUndo
 // captures the pre-truncation RRULE and RestoreUndo rewrites it back.
 func TestSoftDelete_FromInstance_RRULE(t *testing.T) {
@@ -298,5 +441,57 @@ func TestSoftDelete_SequenceBumpedOnRestore(t *testing.T) {
 	}
 	if restored.Sequence <= originalSeq {
 		t.Fatalf("Sequence not bumped: before=%d after=%d", originalSeq, restored.Sequence)
+	}
+}
+
+// TestSoftDelete_UndoInstanceDeletePreservesPreexistingEXDATE verifies that
+// undoing a single-instance delete removes only the EXDATE that delete added,
+// leaving a pre-existing exclusion for the same slot intact. The "EXDATE +
+// live override at the same slot" shape arrives via import/sync; without
+// remove-one semantics the undo would strip both EXDATEs and the base
+// occurrence could resurface once the override is later removed.
+func TestSoftDelete_UndoInstanceDeletePreservesPreexistingEXDATE(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	const slot = "2026-04-08T10:00:00Z"
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:            "preexisting-exdate",
+		CalendarID:     1,
+		Title:          "Weekly Review",
+		StartTime:      time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;COUNT=3",
+		ExDates:        slot, // pre-existing exclusion at the same slot
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	if _, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:          master.UID,
+		CalendarID:   1,
+		Title:        "Weekly Review (moved)",
+		StartTime:    time.Date(2026, 4, 8, 14, 0, 0, 0, time.UTC),
+		EndTime:      time.Date(2026, 4, 8, 15, 0, 0, 0, time.UTC),
+		RecurrenceID: slot,
+	}); err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	instance := time.Date(2026, 4, 8, 10, 0, 0, 0, time.UTC)
+	meta, err := svc.DeleteInstanceWithUndo(ctx, master.UID, instance)
+	if err != nil {
+		t.Fatalf("DeleteInstanceWithUndo: %v", err)
+	}
+	if err := svc.RestoreUndo(ctx, meta); err != nil {
+		t.Fatalf("RestoreUndo: %v", err)
+	}
+
+	restoredMaster, err := svc.Get(ctx, master.ID)
+	if err != nil {
+		t.Fatalf("Get master after restore: %v", err)
+	}
+	if got := len(restoredMaster.ParseExDates()); got != 1 {
+		t.Fatalf("EXDATE count after undo = %d, want 1 (pre-existing exclusion preserved) (%q)", got, restoredMaster.ExDates)
 	}
 }

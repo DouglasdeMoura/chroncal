@@ -126,6 +126,15 @@ type eventCreatedMsg struct {
 
 type calendarMutationDoneMsg struct{ err error }
 
+// calendarOrderSavedMsg reports the result of persisting a sidebar reorder.
+// Success is silent (the list already shows the new order); failure surfaces
+// as a toast. ids carries the order that was written so the handler can clear
+// the matching pendingOrder entries without discarding a newer reorder.
+type calendarOrderSavedMsg struct {
+	ids []int64
+	err error
+}
+
 type calendarDeleteCountMsg struct {
 	id         int64
 	name       string
@@ -343,7 +352,13 @@ type Model struct {
 	loadedFrom     time.Time
 	loadedTo       time.Time
 	calendars      map[int64]CalendarInfo
-	dialog         EventDialogModel
+	// pendingOrder holds an optimistic sidebar order (calendar ID → position)
+	// for a reorder whose async SetOrder has not yet confirmed. It is overlaid
+	// onto reloads so an interleaved loadCalendars (e.g. a sync finishing
+	// mid-save) can't snap calendars back to the stale DB order, and cleared
+	// once calendarOrderSavedMsg confirms the write.
+	pendingOrder map[int64]int64
+	dialog       EventDialogModel
 	dialogOpen     bool
 	viewDialog     EventViewDialogModel
 	viewDialogOpen bool
@@ -880,6 +895,7 @@ func (m Model) loadCalendars() tea.Cmd {
 				OwnerEmail:          c.OwnerEmail,
 				Description:         c.Description,
 				EventCount:          count,
+				DisplayOrder:        c.DisplayOrder,
 				Synced:              c.AccountID != 0,
 				AccountServerURL:    accountServerURLs[c.AccountID],
 				LastSyncAt:          c.LastSyncAt,
@@ -892,6 +908,21 @@ func (m Model) loadCalendars() tea.Cmd {
 		}
 		return calendarsLoadedMsg{calendars: info}
 	}
+}
+
+// sortedCalendarListItems builds the sidebar's calendar rows from the calendar
+// map and sorts them by the user's persisted display order (name as a tiebreak,
+// e.g. rows that share a backfilled default). Shared by the reload handler and
+// the reorder handler so both produce identical row order.
+func sortedCalendarListItems(calendars map[int64]CalendarInfo) []CalendarListItem {
+	items := make([]CalendarListItem, 0, len(calendars))
+	for id, c := range calendars {
+		items = append(items, CalendarListItem{ID: id, Name: c.Name, Color: c.Color, Health: syncHealthFor(c), Order: c.DisplayOrder})
+	}
+	slices.SortFunc(items, func(a, b CalendarListItem) int {
+		return compareCalendarOrder(a.Order, a.Name, b.Order, b.Name)
+	})
+	return items
 }
 
 // syncHealthFor derives the sidebar health marker state from a calendar's
@@ -1666,12 +1697,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case calendarsLoadedMsg:
 		if msg.err == nil {
 			m.calendars = msg.calendars
-			items := make([]CalendarListItem, 0, len(m.calendars))
-			for id, c := range m.calendars {
-				items = append(items, CalendarListItem{ID: id, Name: c.Name, Color: c.Color, Health: syncHealthFor(c)})
+			// Overlay any unconfirmed reorder so a reload that races an
+			// in-flight SetOrder reflects the user's move instead of the stale
+			// DB order. Applied to m.calendars itself so the sidebar items and
+			// the manage dialog (both built below from m.calendars) agree.
+			for id, pos := range m.pendingOrder {
+				if c, ok := m.calendars[id]; ok {
+					c.DisplayOrder = pos
+					m.calendars[id] = c
+				} else {
+					// Gone from a full reload (deleted) — drop the stale pending
+					// entry so the map can't grow without bound across
+					// reorder+delete cycles.
+					delete(m.pendingOrder, id)
+				}
 			}
-			slices.SortFunc(items, func(a, b CalendarListItem) int { return strings.Compare(a.Name, b.Name) })
-			m.sidebar = m.sidebar.SetList(m.sidebar.List().SetItems(items))
+			m.sidebar = m.sidebar.SetList(m.sidebar.List().SetItems(sortedCalendarListItems(m.calendars)))
 			// Prune stale hidden IDs after CalendarListModel has done its pruning.
 			m.hiddenCalendars = m.sidebar.List().HiddenSet()
 			m.saveUIState()
@@ -2138,6 +2179,51 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.dialogOpen {
 			dayEvents := eventsOn(filterVisibleEvents(m.events, m.hiddenCalendars), m.dialog.day)
 			m.dialog = m.dialog.SetEvents(dayEvents)
+		}
+		return m, nil
+
+	case CalendarReorderedMsg:
+		// A reorder can originate from either the sidebar list or the manage
+		// dialog; mirror it into m.calendars so both views (and any later
+		// reload-from-cache) stay coherent, and record it as pending so a
+		// reload racing the async SetOrder below doesn't revert to the stale DB
+		// order.
+		ids := msg.IDs
+		if m.pendingOrder == nil {
+			m.pendingOrder = make(map[int64]int64, len(ids))
+		}
+		for i, id := range ids {
+			m.pendingOrder[id] = int64(i)
+			if info, ok := m.calendars[id]; ok {
+				info.DisplayOrder = int64(i)
+				m.calendars[id] = info
+			}
+		}
+		// Re-sort the sidebar from the updated order. This is what makes a
+		// dialog-originated reorder show up behind the dialog; for a
+		// sidebar-originated one it just re-applies the order the list already
+		// swapped to. Preserve the cursor by calendar identity so a reorder
+		// (from either surface) never leaves the sidebar highlight on a
+		// different calendar than before.
+		m.sidebar = m.sidebar.SetList(m.sidebar.List().SetItemsPreservingCursor(sortedCalendarListItems(m.calendars)))
+		if m.calendarListDialogOpen {
+			m.calendarListDialog = m.calendarListDialog.SetCalendars(m.calendars, m.hiddenCalendars)
+		}
+		return m, func() tea.Msg {
+			return calendarOrderSavedMsg{ids: ids, err: m.app.Calendars.SetOrder(context.Background(), ids)}
+		}
+
+	case calendarOrderSavedMsg:
+		if msg.err != nil {
+			return m, m.toast.Failed(msg.err.Error())
+		}
+		// Clear only the positions this save confirmed: a newer reorder may
+		// have updated m.pendingOrder while this write was in flight, and that
+		// one stays pending until its own save lands.
+		for i, id := range msg.ids {
+			if m.pendingOrder[id] == int64(i) {
+				delete(m.pendingOrder, id)
+			}
 		}
 		return m, nil
 

@@ -22,7 +22,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
         go: ["1.26"]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v6
         with:
@@ -35,7 +35,7 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v6
         with:
@@ -55,7 +55,7 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v6
         with:
@@ -64,11 +64,25 @@ jobs:
       - name: Build
         run: go build -o chroncal ./cmd/chroncal
 
+  flake:
+    name: Nix flake build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: DeterminateSystems/nix-installer-action@v22
+
+      # Build via the flake, exactly as the release does. This catches a stale
+      # vendorHash — e.g. a dependency bump that changed go.sum but not
+      # flake.nix — on the PR instead of failing the release after tagging.
+      - name: Build via the flake
+        run: nix build .#chroncal --no-link --print-build-logs
+
   release-config:
     name: Release config
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 

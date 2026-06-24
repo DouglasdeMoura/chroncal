@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"cmp"
 	"fmt"
 	"image/color"
 	"slices"
@@ -28,10 +29,11 @@ type CalendarSetDefaultRequestedMsg struct {
 }
 
 type calendarListDialogKeyMap struct {
-	Edit       key.Binding
-	Delete     key.Binding
-	New        key.Binding
-	SetDefault key.Binding
+	Edit             key.Binding
+	Delete           key.Binding
+	New              key.Binding
+	SetDefault       key.Binding
+	MoveUp, MoveDown key.Binding
 }
 
 func defaultCalendarListDialogKeys() calendarListDialogKeyMap {
@@ -40,6 +42,8 @@ func defaultCalendarListDialogKeys() calendarListDialogKeyMap {
 		Delete:     key.NewBinding(key.WithKeys("x", "delete"), key.WithHelp("x", "delete")),
 		New:        key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add")),
 		SetDefault: key.NewBinding(key.WithKeys("*"), key.WithHelp("*", "set default")),
+		MoveUp:     key.NewBinding(key.WithKeys("shift+up", "K"), key.WithHelp("shift+↑/K", "move up")),
+		MoveDown:   key.NewBinding(key.WithKeys("shift+down", "J"), key.WithHelp("shift+↓/J", "move down")),
 	}
 }
 
@@ -57,7 +61,8 @@ type CalendarListDialogModel struct {
 }
 
 // NewCalendarListDialogModel builds a dialog populated from the given calendar
-// map and hidden set. Calendars are sorted by name for a stable list order.
+// map and hidden set. Calendars follow the persisted sidebar display order
+// (name as a tiebreak) so this dialog matches the sidebar.
 func NewCalendarListDialogModel(calendars map[int64]CalendarInfo, hidden map[int64]bool, h help.Model) CalendarListDialogModel {
 	newAction := ListDialogAction{
 		Label:   "+ Add Calendar",
@@ -84,10 +89,10 @@ type calendarPromotionCandidate struct {
 	name string
 }
 
-// defaultPromotionCandidates returns every calendar other than excludeID,
-// sorted by name so the picker's first option is the alphabetical default.
-// Lives next to the dialog so the row label and the picker share their
-// sort rule via sortedCalendarIDs.
+// defaultPromotionCandidates returns every calendar other than excludeID, in
+// the persisted sidebar display order so the picker matches the list. Lives
+// next to the dialog so the row label and the picker share their sort rule
+// via sortedCalendarIDs.
 func defaultPromotionCandidates(calendars map[int64]CalendarInfo, excludeID int64) []calendarPromotionCandidate {
 	ids := sortedCalendarIDs(calendars)
 	out := make([]calendarPromotionCandidate, 0, len(ids))
@@ -100,13 +105,20 @@ func defaultPromotionCandidates(calendars map[int64]CalendarInfo, excludeID int6
 	return out
 }
 
+// compareCalendarOrder orders calendars by their persisted sidebar position,
+// falling back to name for ties. Shared by the sidebar list and the
+// manage-calendars dialog so both render calendars in the same order.
+func compareCalendarOrder(aOrder int64, aName string, bOrder int64, bName string) int {
+	return cmp.Or(cmp.Compare(aOrder, bOrder), strings.Compare(aName, bName))
+}
+
 func sortedCalendarIDs(calendars map[int64]CalendarInfo) []int64 {
 	ids := make([]int64, 0, len(calendars))
 	for id := range calendars {
 		ids = append(ids, id)
 	}
 	slices.SortFunc(ids, func(a, b int64) int {
-		return strings.Compare(calendars[a].Name, calendars[b].Name)
+		return compareCalendarOrder(calendars[a].DisplayOrder, calendars[a].Name, calendars[b].DisplayOrder, calendars[b].Name)
 	})
 	return ids
 }
@@ -218,7 +230,11 @@ func (m CalendarListDialogModel) shortHelp() []key.Binding {
 		key.WithKeys("up", "down", "k", "j"),
 		key.WithHelp("↑↓", "navigate"),
 	)
-	return []key.Binding{nav, sk.Tab, m.keys.New, m.keys.Edit, m.keys.SetDefault, m.keys.Delete, sk.Close}
+	reorder := key.NewBinding(
+		key.WithKeys(append(m.keys.MoveUp.Keys(), m.keys.MoveDown.Keys()...)...),
+		key.WithHelp("shift+↑↓", "reorder"),
+	)
+	return []key.Binding{nav, reorder, sk.Tab, m.keys.New, m.keys.Edit, m.keys.SetDefault, m.keys.Delete, sk.Close}
 }
 
 // detailWidth returns the width of the detail column for the current shell
@@ -295,11 +311,36 @@ func (m CalendarListDialogModel) handleKey(msg tea.KeyPressMsg) (CalendarListDia
 			return m, func() tea.Msg { return CalendarSetDefaultRequestedMsg{ID: id, Name: info.Name} }
 		}
 		return m, nil
+	// Reorder only when the list itself owns focus; when the user has Tabbed
+	// to the action buttons or the title action, fall through so shift+↑/↓ and
+	// K/J don't silently reorder (and persist) a row the user isn't looking at.
+	case m.shell.FocusZone() == ListZoneList && key.Matches(msg, m.keys.MoveUp):
+		return m.moveSelected(-1)
+	case m.shell.FocusZone() == ListZoneList && key.Matches(msg, m.keys.MoveDown):
+		return m.moveSelected(1)
 	}
 
 	shell, cmd, _ := m.shell.HandleKey(msg, func() tea.Msg { return CalendarListDialogClosedMsg{} })
 	m.shell = shell
 	return m.refresh(), cmd
+}
+
+// moveSelected swaps the selected calendar with its neighbour delta rows away
+// (±1), keeps the selection on the moved calendar, and emits
+// CalendarReorderedMsg with the new top-to-bottom ID order so the app persists
+// it and keeps the sidebar in sync. The local swap mirrors the sidebar list's
+// optimistic behavior so the dialog updates without waiting for the round-trip.
+func (m CalendarListDialogModel) moveSelected(delta int) (CalendarListDialogModel, tea.Cmd) {
+	i := m.shell.Selected()
+	j := i + delta
+	if i < 0 || i >= len(m.order) || j < 0 || j >= len(m.order) {
+		return m, nil
+	}
+	order := slices.Clone(m.order)
+	order[i], order[j] = order[j], order[i]
+	m.order = order
+	m.shell = m.shell.SetSelected(j)
+	return m.refresh(), func() tea.Msg { return CalendarReorderedMsg{IDs: order} }
 }
 
 func (m CalendarListDialogModel) handleMouse(msg tea.MouseClickMsg) (CalendarListDialogModel, tea.Cmd) {

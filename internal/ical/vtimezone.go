@@ -140,10 +140,23 @@ func resolveComponentTZIDs(comp *goical.Component, tzMap map[string]*time.Locati
 			return
 		}
 		// VTIMEZONE-derived fixed zone — parse using the offset and rewrite as UTC.
+		// EXDATE/RDATE may carry a comma-separated list of datetimes in a single
+		// value, so convert each element. Only rewrite if every element parses,
+		// otherwise leave the value untouched.
 		if loc, ok := tzMap[tzid]; ok {
-			t, err := time.ParseInLocation("20060102T150405", p.Value, loc)
-			if err == nil {
-				p.Value = t.UTC().Format("20060102T150405Z")
+			parts := strings.Split(p.Value, ",")
+			converted := make([]string, len(parts))
+			allOK := true
+			for i, part := range parts {
+				t, err := time.ParseInLocation("20060102T150405", strings.TrimSpace(part), loc)
+				if err != nil {
+					allOK = false
+					break
+				}
+				converted[i] = t.UTC().Format("20060102T150405Z")
+			}
+			if allOK {
+				p.Value = strings.Join(converted, ",")
 				p.Params.Del(goical.ParamTimezoneID)
 			}
 		}
@@ -153,8 +166,16 @@ func resolveComponentTZIDs(comp *goical.Component, tzMap map[string]*time.Locati
 		goical.PropDateTimeStart,
 		goical.PropDateTimeEnd,
 		goical.PropDue,
+		goical.PropExceptionDates,
+		goical.PropRecurrenceDates,
+		goical.PropRecurrenceID,
 	} {
-		resolvePropTZID(comp.Props.Get(propName))
+		key := strings.ToUpper(propName)
+		props := comp.Props[key]
+		for i := range props {
+			resolvePropTZID(&props[i])
+		}
+		comp.Props[key] = props
 	}
 
 	// Also resolve TRIGGER TZIDs in VALARM sub-components.
