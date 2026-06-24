@@ -393,15 +393,50 @@ func (m EventViewDialogModel) handleMouse(msg tea.MouseClickMsg) (EventViewDialo
 	return m, nil
 }
 
+// detailLabelPrefix renders the right-aligned label column plus its two-space
+// gap and returns the rendered prefix together with the cell width left for
+// the value. Shared by the link detail-line helpers so the column math lives
+// in one place.
+func detailLabelPrefix(labelStyle lipgloss.Style, label string, lw, w int) (prefix string, available int) {
+	padded := strings.Repeat(" ", max(lw-len(label), 0)) + label
+	return labelStyle.Render(padded) + "  ", w - labelColWidth(label, lw)
+}
+
 // detailLinkLine is detailLine for values that should be rendered as a
 // clickable link. The visible URL text is sized to the available column
 // width while the OSC 8 target and mouse-zone payload stay the full URL —
 // or its rewriter output when the calendar has one (e.g., Google authuser).
 func detailLinkLine(labelStyle lipgloss.Style, label, url string, lw, w int, rw urlRewriter) string {
-	padded := strings.Repeat(" ", max(lw-len(label), 0)) + label
-	prefix := labelStyle.Render(padded) + "  "
-	available := w - labelColWidth(label, lw)
+	prefix, available := detailLabelPrefix(labelStyle, label, lw, w)
 	return prefix + renderLinkValue(url, available, rw)
+}
+
+// detailLinkifiedLine is detailLine for a free-text value that may contain a
+// URL somewhere inside it (e.g., "Room 4 — join at https://…"). The plain
+// value is truncated to the column width *first*, then linkified, so the OSC 8
+// and mouse-zone escapes are always emitted complete. (truncateTo cuts on the
+// stripped plain text and stripANSI does not understand OSC 8, so linkifying
+// before truncating would slice a hyperlink mid-sequence and leave it
+// unterminated — corrupting the rest of the dialog.)
+func detailLinkifiedLine(labelStyle lipgloss.Style, label, value string, lw, w int, rw urlRewriter) string {
+	prefix, available := detailLabelPrefix(labelStyle, label, lw, w)
+	return prefix + linkifyText(truncateTo(value, available), rw)
+}
+
+// isBareURL reports whether s is a single http/https URL with no surrounding
+// text. Such a value is best rendered via detailLinkLine, which keeps the full
+// URL as the click target while truncating only the visible text — truncating
+// it as free text would corrupt the click target. The check reuses urlPattern
+// (the package's canonical URL grammar) so "bare" means the same thing here as
+// it does in linkifyText: the whole trimmed value is one URL with no interior
+// whitespace or excluded characters.
+func isBareURL(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	loc := urlPattern.FindStringIndex(s)
+	return loc != nil && loc[0] == 0 && loc[1] == len(s)
 }
 
 // linkRewriter returns the URL rewriter to apply to clickable links in this
@@ -553,10 +588,14 @@ func (m EventViewDialogModel) buildBodyLines(w int) []string {
 		}
 		lines = append(lines, detailLine(faint, "Calendar", dot+" "+m.calendar.Name, eventViewLabelWidth, w))
 	}
-	if ev.Location != "" {
-		lines = append(lines, detailLine(faint, "Where", ev.Location, eventViewLabelWidth, w))
-	}
 	rw := m.linkRewriter()
+	if ev.Location != "" {
+		if isBareURL(ev.Location) {
+			lines = append(lines, detailLinkLine(faint, "Where", strings.TrimSpace(ev.Location), eventViewLabelWidth, w, rw))
+		} else {
+			lines = append(lines, detailLinkifiedLine(faint, "Where", ev.Location, eventViewLabelWidth, w, rw))
+		}
+	}
 	if ev.ConferenceURI != "" {
 		lines = append(lines, detailLinkLine(faint, "Conference", ev.ConferenceURI, eventViewLabelWidth, w, rw))
 	}

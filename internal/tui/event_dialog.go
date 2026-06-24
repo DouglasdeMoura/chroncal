@@ -786,8 +786,8 @@ func eventDetailLines(ev event.Event, cal CalendarInfo, w, labelWidth int, rsvpL
 }
 
 func detailLine(labelStyle lipgloss.Style, label, value string, lw, w int) string {
-	padded := strings.Repeat(" ", max(lw-len(label), 0)) + label
-	return truncateTo(labelStyle.Render(padded)+"  "+value, w)
+	prefix, _ := detailLabelPrefix(labelStyle, label, lw, w)
+	return truncateTo(prefix+value, w)
 }
 
 // labelColWidth returns the on-screen cell width consumed by the label column

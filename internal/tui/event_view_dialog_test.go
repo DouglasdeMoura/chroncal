@@ -43,6 +43,78 @@ func TestEventViewDialog_RendersCoreFields(t *testing.T) {
 	assert.Contains(t, out, "esc close")
 }
 
+func TestEventViewDialog_BareURLLocationIsClickable(t *testing.T) {
+	defaultMouseTracker = &mouseTracker{}
+	ev := testViewEvent()
+	ev.Location = "https://zoom.us/j/123456789"
+	cal := CalendarInfo{Name: "Work"}
+
+	m := NewEventViewDialogModel(ev, cal, Theme{}).SetSize(120, 40)
+	out := m.View()
+
+	// OSC 8 hyperlink target carries the full URL (survives the render sweep).
+	assert.Contains(t, out, "\x1b]8;;"+ev.Location)
+	// The render registered a clickable mouse zone for the URL.
+	assert.True(t, hasMouseZone(defaultMouseTracker, linkZonePrefix+ev.Location))
+}
+
+func TestEventViewDialog_URLInsideLocationIsClickable(t *testing.T) {
+	defaultMouseTracker = &mouseTracker{}
+	ev := testViewEvent()
+	ev.Location = "Room 4: https://meet.example.com/abc"
+	cal := CalendarInfo{Name: "Work"}
+
+	m := NewEventViewDialogModel(ev, cal, Theme{}).SetSize(160, 40)
+	out := m.View()
+
+	assert.Contains(t, out, "Room 4")
+	// The embedded URL is the OSC 8 / click target; surrounding text is plain.
+	assert.Contains(t, out, "\x1b]8;;https://meet.example.com/abc")
+	assert.True(t, hasMouseZone(defaultMouseTracker, linkZonePrefix+"https://meet.example.com/abc"))
+}
+
+func TestEventViewDialog_PlainTextLocationHasNoLink(t *testing.T) {
+	defaultMouseTracker = &mouseTracker{}
+	ev := testViewEvent()
+	ev.Location = "Conference Room B"
+	cal := CalendarInfo{Name: "Work"}
+
+	m := NewEventViewDialogModel(ev, cal, Theme{}).SetSize(120, 40)
+	out := m.View()
+
+	assert.Contains(t, out, "Conference Room B")
+	assert.NotContains(t, out, "\x1b]8;;")
+}
+
+func TestEventViewDialog_OverflowingLinkifiedLocationStaysTerminated(t *testing.T) {
+	defaultMouseTracker = &mouseTracker{}
+	ev := testViewEvent()
+	// A text+URL Location far wider than the dialog column, forcing truncation
+	// inside detailLinkifiedLine.
+	ev.Location = "Room 4: https://meet.example.com/" + strings.Repeat("abcdef", 12)
+	cal := CalendarInfo{Name: "Work"}
+
+	m := NewEventViewDialogModel(ev, cal, Theme{}).SetSize(60, 40)
+	out := m.View()
+
+	// Every OSC 8 sequence (open and close) starts with this introducer; a
+	// balanced (even) count means no hyperlink was sliced mid-sequence and
+	// left unterminated to corrupt the rest of the dialog.
+	assert.Equal(t, 0, strings.Count(out, "\x1b]8;;")%2,
+		"OSC 8 hyperlink sequences must stay balanced after truncation")
+}
+
+// hasMouseZone reports whether the render registered a clickable zone with the
+// given name. mouseSweep (run inside View) moves marked regions into zones.
+func hasMouseZone(mt *mouseTracker, name string) bool {
+	for _, z := range mt.zones {
+		if z.name == name {
+			return true
+		}
+	}
+	return false
+}
+
 func TestEventViewDialog_ShowsRSVPForAttendee(t *testing.T) {
 	ev := testViewEvent()
 	ev.Attendees = []model.Attendee{
