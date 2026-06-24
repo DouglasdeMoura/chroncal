@@ -205,6 +205,38 @@ func TestImport_FullEvent(t *testing.T) {
 	}
 }
 
+func TestImport_EventEXDATEAndRDATERespectTZID(t *testing.T) {
+	t.Parallel()
+	ics := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:tzid-exdate-rdate
+DTSTAMP:20260401T100000Z
+DTSTART;TZID=America/New_York:20260401T090000
+DTEND;TZID=America/New_York:20260401T100000
+RRULE:FREQ=WEEKLY;COUNT=3
+EXDATE;TZID=America/New_York:20260408T090000
+RDATE;TZID=America/New_York:20260422T090000
+SUMMARY:TZID recurrence dates
+END:VEVENT
+END:VCALENDAR`
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %d, want 1", len(result.Events))
+	}
+	e := result.Events[0]
+	if e.ExDates != "2026-04-08T13:00:00Z" {
+		t.Fatalf("ExDates = %q, want 2026-04-08T13:00:00Z", e.ExDates)
+	}
+	if e.RDates != "2026-04-22T13:00:00Z" {
+		t.Fatalf("RDates = %q, want 2026-04-22T13:00:00Z", e.RDates)
+	}
+}
+
 func TestImport_AllDayEvent(t *testing.T) {
 	t.Parallel()
 	result, _ := ImportFile(strings.NewReader(allDayEventICS))

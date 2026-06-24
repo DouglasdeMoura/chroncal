@@ -140,6 +140,39 @@ func TestExport_AllDayEvent_PositiveUTCOffset(t *testing.T) {
 	}
 }
 
+func TestExport_AllDayEvent_StoredUTCInstantUsesLocalDate(t *testing.T) {
+	prevLocal := time.Local
+	time.Local = time.FixedZone("UTC+12", 12*60*60)
+	t.Cleanup(func() { time.Local = prevLocal })
+
+	// This is how a UTC-normalized all-day 2026-04-15 in UTC+12 is stored:
+	// local midnight is the previous UTC date at 12:00. Export must preserve the
+	// calendar date, not the UTC date of the stored instant.
+	events := []event.Event{{
+		UID:       "allday-stored-utc",
+		Title:     "Stored Auckland Day",
+		StartTime: time.Date(2026, 4, 14, 12, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 15, 12, 0, 0, 0, time.UTC),
+		AllDay:    true,
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}}
+
+	data, err := ExportEvents(events, "")
+	if err != nil {
+		t.Fatalf("ExportEvents: %v", err)
+	}
+	ics := string(data)
+	if !strings.Contains(ics, "DTSTART;VALUE=DATE:20260415") {
+		t.Fatalf("expected DTSTART date 20260415, got:\n%s", ics)
+	}
+	if !strings.Contains(ics, "DTEND;VALUE=DATE:20260416") {
+		t.Fatalf("expected DTEND date 20260416, got:\n%s", ics)
+	}
+}
+
 func TestExport_MultipleExdatesRdates(t *testing.T) {
 	t.Parallel()
 	events := []event.Event{{

@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"errors"
 )
 
 // MarkResourceDirty marks a resource as needing sync. If the calendar is
@@ -15,13 +16,19 @@ func MarkResourceDirty(ctx context.Context, db *sql.DB, calendarID int64, uid, o
 	}
 	// Only act if the calendar is linked to an account.
 	var accountID *int64
-	_ = db.QueryRowContext(ctx,
+	err := db.QueryRowContext(ctx,
 		`SELECT account_id FROM calendars WHERE id = ?`, calendarID,
 	).Scan(&accountID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
 	if accountID == nil || *accountID == 0 {
 		return nil
 	}
-	_, err := db.ExecContext(ctx,
+	_, err = db.ExecContext(ctx,
 		`INSERT INTO sync_resources (calendar_id, uid, owner_type, dirty, sync_strategy)
 		 VALUES (?, ?, ?, 1, 'sync-token')
 		 ON CONFLICT(calendar_id, uid) DO UPDATE SET dirty = 1`,
@@ -42,7 +49,13 @@ func CreateTombstoneIfSynced(ctx context.Context, db *sql.DB, calendarID int64, 
 		`SELECT remote_url FROM sync_resources WHERE calendar_id = ? AND uid = ?`,
 		calendarID, uid,
 	).Scan(&remoteURL)
-	if err != nil || remoteURL == "" {
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if remoteURL == "" {
 		return false, nil
 	}
 	_, err = db.ExecContext(ctx,
