@@ -1,0 +1,69 @@
+name: Update flake vendorHash
+
+# Dependabot Go-dependency bumps change go.sum but never the flake's
+# vendorHash, which breaks `nix build` (the buildGoModule go-modules FOD
+# hash no longer matches). This workflow recomputes the hash on any PR that
+# touches go.mod/go.sum and pushes the fix back to the PR branch so the
+# (required) `nix build` check goes green and Dependabot auto-merge can
+# proceed.
+#
+# The push uses a PAT (FLAKE_HASH_PAT), NOT GITHUB_TOKEN: commits pushed
+# with GITHUB_TOKEN do not re-trigger workflows, so the required `nix build`
+# check would never re-run on the fixed commit and the PR would stay
+# blocked. A PAT push re-triggers CI normally. For Dependabot PRs the secret
+# must exist as a *Dependabot* secret (Dependabot runs cannot read Actions
+# secrets); add it under both for human PRs that touch go.sum too.
+on:
+  pull_request:
+    paths:
+      - go.mod
+      - go.sum
+
+permissions:
+  contents: write
+
+jobs:
+  vendor-hash:
+    name: Recompute vendorHash
+    # Only same-repo branches can be pushed to (fork PRs have no write token
+    # and no secrets); Dependabot branches live in this repo, so they qualify.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.head_ref }}
+          token: ${{ secrets.FLAKE_HASH_PAT }}
+
+      - uses: DeterminateSystems/nix-installer-action@v22
+
+      - name: Recompute and fix vendorHash if stale
+        run: |
+          set -euo pipefail
+
+          if nix build .#chroncal --no-link --print-build-logs > build.log 2>&1; then
+            echo "vendorHash is already correct; nothing to do."
+            exit 0
+          fi
+
+          got=$(grep -oE 'got:[[:space:]]+sha256-[A-Za-z0-9+/=]+' build.log \
+            | head -1 | grep -oE 'sha256-[A-Za-z0-9+/=]+' || true)
+          if [ -z "${got:-}" ]; then
+            echo "::error::nix build failed, but not due to a vendorHash mismatch:"
+            cat build.log
+            exit 1
+          fi
+
+          current=$(grep -oE 'vendorHash = "sha256-[A-Za-z0-9+/=]+"' flake.nix \
+            | grep -oE 'sha256-[A-Za-z0-9+/=]+')
+          echo "Updating vendorHash: $current -> $got"
+          sed -i "s|$current|$got|" flake.nix
+
+          # Confirm the new hash actually builds before pushing it.
+          nix build .#chroncal --no-link --print-build-logs
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add flake.nix
+          git commit -m "chore(nix): update vendorHash for dependency change"
+          git push

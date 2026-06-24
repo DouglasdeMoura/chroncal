@@ -3,6 +3,13 @@ name: Nix
 # Catches a stale flake vendorHash at PR time (it must change whenever
 # go.mod/go.sum change) instead of after release, when `nix run` would
 # already be broken for users.
+#
+# `nix build` is a REQUIRED status check on master, so the pull_request
+# trigger is intentionally NOT path-filtered: a required check that gets
+# skipped (because a PR didn't touch the filtered paths) reports as pending
+# forever and blocks the merge. Running it on every PR guarantees the
+# context is always reported. The push trigger keeps its path filter since
+# master only needs a rebuild when these files move.
 on:
   push:
     branches:
@@ -14,12 +21,6 @@ on:
       - flake.lock
       - VERSION
   pull_request:
-    paths:
-      - go.mod
-      - go.sum
-      - flake.nix
-      - flake.lock
-      - VERSION
 
 permissions:
   contents: read
