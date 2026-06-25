@@ -19,6 +19,9 @@ SELECT * FROM sync_resources WHERE calendar_id = ? AND dirty = 1 ORDER BY id;
 -- name: MarkSyncResourceDirty :exec
 UPDATE sync_resources SET dirty = 1 WHERE calendar_id = ? AND uid = ?;
 
+-- name: MarkSyncResourceDirtyClearEtag :exec
+UPDATE sync_resources SET dirty = 1, etag = '' WHERE calendar_id = ? AND uid = ?;
+
 -- name: ClearSyncResourceDirty :exec
 UPDATE sync_resources SET dirty = 0, etag = ? WHERE calendar_id = ? AND uid = ?;
 

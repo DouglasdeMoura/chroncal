@@ -247,6 +247,20 @@ func (q *Queries) MarkSyncResourceDirty(ctx context.Context, arg MarkSyncResourc
 	return err
 }
 
+const markSyncResourceDirtyClearEtag = `-- name: MarkSyncResourceDirtyClearEtag :exec
+UPDATE sync_resources SET dirty = 1, etag = '' WHERE calendar_id = ? AND uid = ?
+`
+
+type MarkSyncResourceDirtyClearEtagParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+func (q *Queries) MarkSyncResourceDirtyClearEtag(ctx context.Context, arg MarkSyncResourceDirtyClearEtagParams) error {
+	_, err := q.db.ExecContext(ctx, markSyncResourceDirtyClearEtag, arg.CalendarID, arg.Uid)
+	return err
+}
+
 const upsertSyncResource = `-- name: UpsertSyncResource :exec
 INSERT INTO sync_resources (calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy)
 VALUES (?, ?, ?, ?, ?, ?, ?)

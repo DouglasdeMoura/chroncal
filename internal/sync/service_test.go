@@ -251,6 +251,70 @@ func TestService_ResolveConflict_Server(t *testing.T) {
 	}
 }
 
+func TestService_ResolveConflict_Local(t *testing.T) {
+	svc, q := newTestService(t)
+	ctx := context.Background()
+
+	cals, _ := q.ListCalendars(ctx)
+	calID := cals[0].ID
+
+	// The stored etag is the stale value that already failed If-Match.
+	err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calID,
+		Uid:          "resolve-local-uid",
+		OwnerType:    "event",
+		RemoteUrl:    "https://example.com/cal/resolve-local-uid.ics",
+		Etag:         "stale-etag",
+		Dirty:        0,
+		SyncStrategy: "sync-token",
+	})
+	if err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+
+	err = q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+		CalendarID: calID,
+		OwnerType:  "event",
+		OwnerID:    1,
+		Uid:        "resolve-local-uid",
+		LocalIcal:  "local",
+		ServerIcal: "server",
+		ServerEtag: "etag-456",
+	})
+	if err != nil {
+		t.Fatalf("CreateSyncConflict: %v", err)
+	}
+
+	conflicts, _ := q.ListSyncConflicts(ctx)
+	err = svc.ResolveConflict(ctx, conflicts[0].ID, "local")
+	if err != nil {
+		t.Fatalf("ResolveConflict local: %v", err)
+	}
+
+	// Conflict should be deleted
+	remaining, _ := q.ListSyncConflicts(ctx)
+	if len(remaining) != 0 {
+		t.Errorf("expected 0 conflicts after resolve, got %d", len(remaining))
+	}
+
+	res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{
+		CalendarID: calID,
+		Uid:        "resolve-local-uid",
+	})
+	if err != nil {
+		t.Fatalf("GetSyncResource: %v", err)
+	}
+	// Resource must be dirty so the next sync pushes the local version.
+	if res.Dirty != 1 {
+		t.Fatalf("Dirty = %d, want 1", res.Dirty)
+	}
+	// The stale etag must be cleared so the next push is an unconditional
+	// (blind) PUT instead of re-sending the failed If-Match forever.
+	if res.Etag != "" {
+		t.Fatalf("Etag = %q, want empty so the next push is unconditional", res.Etag)
+	}
+}
+
 func TestService_ResetCalendar(t *testing.T) {
 	svc, q := newTestService(t)
 	ctx := context.Background()
