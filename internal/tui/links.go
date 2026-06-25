@@ -137,14 +137,19 @@ func linkifyTextZoned(s string, rw urlRewriter, zones bool) string {
 // zoommtg:) still get wrapped. The visible text is truncated to fit the
 // available width while the click/OSC 8 target stays the full URL. The
 // optional rewriter rewrites the click target only — what the user sees
-// stays the original.
-func renderLinkValue(raw string, available int, rw urlRewriter) string {
+// stays the original. When zones is false the OSC 8 hyperlink is emitted
+// without the mouseMark zone marker, for surfaces that don't MouseSweep.
+func renderLinkValue(raw string, available int, rw urlRewriter, zones bool) string {
 	if raw == "" {
 		return ""
 	}
 	visible := truncateTo(raw, available)
 	target := rw.rewrite(raw)
-	return mouseMark(linkZonePrefix+target, hyperlink(target, visible))
+	link := hyperlink(target, visible)
+	if zones {
+		link = mouseMark(linkZonePrefix+target, link)
+	}
+	return link
 }
 
 // renderLinkifiedValue renders a free-text value that may contain URLs, sized
@@ -155,13 +160,15 @@ func renderLinkValue(raw string, available int, rw urlRewriter) string {
 // address as the click target even when its visible text is ellipsized by the
 // truncation — so an overflowing embedded link still opens the right place,
 // the same full-target guarantee renderLinkValue gives bare-URL fields. The
-// optional rewriter transforms the click target only.
-func renderLinkifiedValue(value string, available int, rw urlRewriter) string {
+// optional rewriter transforms the click target only. When zones is false the
+// OSC 8 hyperlinks are emitted without mouseMark zone markers, for surfaces
+// that don't MouseSweep.
+func renderLinkifiedValue(value string, available int, rw urlRewriter, zones bool) string {
 	if available <= 0 {
 		return ""
 	}
 	visible := truncateTo(value, available)
-	return linkifySegment(visible, value, rw, true)
+	return linkifySegment(visible, value, rw, zones)
 }
 
 // googleAuthuserRewriter returns a urlRewriter that appends authuser=<email>

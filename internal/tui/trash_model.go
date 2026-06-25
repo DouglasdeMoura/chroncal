@@ -282,11 +282,12 @@ func (m TrashModel) refresh() TrashModel {
 
 	if e, ok := m.selectedEntry(); ok {
 		cal := m.calendars[e.CalendarID]
+		rw := eventMetaURLRewriter(cal)
 		title := e.Title
 		if title == "" {
 			title = "(untitled)"
 		}
-		lines := trashDetailLines(e, cal, m.detailWidth(), m.labelWidth())
+		lines := trashDetailLines(e, cal, m.detailWidth(), m.labelWidth(), rw)
 		m.shell = m.shell.SetDetailTitle(title).SetDetailLines(lines)
 	} else {
 		m.shell = m.shell.SetDetailTitle("").SetDetailLines(nil)
@@ -452,7 +453,7 @@ func formatTrashRowLabel(e trash.Entry) string {
 // Kind so todos show due-date/status/progress and journals show a start
 // date where events would show a time range. The entry title is pinned
 // by the shell via SetDetailTitle and must not be prepended here.
-func trashDetailLines(e trash.Entry, cal CalendarInfo, w, labelWidth int) []string {
+func trashDetailLines(e trash.Entry, cal CalendarInfo, w, labelWidth int, rw urlRewriter) []string {
 	faint := lipgloss.NewStyle().Faint(true)
 
 	var lines []string
@@ -498,25 +499,21 @@ func trashDetailLines(e trash.Entry, cal CalendarInfo, w, labelWidth int) []stri
 		}
 	}
 
-	if cal.Name != "" {
-		dot := "●"
-		if cal.Color != "" {
-			dot = lipgloss.NewStyle().Foreground(lipgloss.Color(cal.Color)).Render("●")
-		}
-		lines = append(lines, detailLine(faint, "Calendar", dot+" "+cal.Name, labelWidth, w))
+	repeat := ""
+	if e.Kind == trash.KindEventSeriesTail {
+		repeat = e.PreviousRRule
 	}
-	if e.Location != "" {
-		lines = append(lines, detailLine(faint, "Where", e.Location, labelWidth, w))
-	}
-	if e.Status != "" {
-		lines = append(lines, detailLine(faint, "Status", statusBadge(e.Status), labelWidth, w))
-	}
-	if e.Categories != "" {
-		lines = append(lines, detailLine(faint, "Tags", e.Categories, labelWidth, w))
-	}
-	if e.Kind == trash.KindEventSeriesTail && e.PreviousRRule != "" {
-		lines = append(lines, detailLine(faint, "Repeat", e.PreviousRRule, labelWidth, w))
-	}
+	lines = append(lines, eventMetaDetailLines(eventMetaDetailLinesOptions{
+		labelStyle:  faint,
+		width:       w,
+		labelWidth:  labelWidth,
+		urlRewriter: rw,
+		calendar:    cal,
+		location:    e.Location,
+		status:      e.Status,
+		tags:        e.Categories,
+		repeat:      repeat,
+	})...)
 
 	if e.Description != "" {
 		lines = append(lines, "")
