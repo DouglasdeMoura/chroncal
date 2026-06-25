@@ -199,6 +199,29 @@ counts, err := trashSvc.PurgeOld(ctx, time.Now().Add(-30*24*time.Hour))
 `Entry.Kind` (KindEvent, KindEventInstance, KindEventSeriesTail,
 KindTodo, KindJournal) tells the caller which fields are populated.
 
+## AI-assisted contributions
+
+Follow the [Linux kernel AI coding assistant
+guidelines](https://docs.kernel.org/process/coding-assistants.html) for any
+AI-assisted commit in this repo.
+
+- The human contributor is the sole git author. AI tools are not authors and
+  must not appear in `Co-authored-by` trailers.
+- AI agents must **not** add `Signed-off-by` tags.
+- When AI assistance materially shaped a commit, add an `Assisted-by` trailer
+  to the commit message body (not the author field):
+
+  ```
+  Assisted-by: AGENT_NAME:MODEL_VERSION [TOOL1] [TOOL2]
+  ```
+
+  Use the actual agent framework and model version (e.g.
+  `Assisted-by: Cursor:gpt-5.3-codex`). List only specialized analysis tools
+  in brackets — not git, editors, gcc, or make.
+- Do not use `Co-developed-by` or `Co-authored-by` for AI attribution.
+- Use `git commit-tree` (or amend with a message file) when the environment
+  would otherwise inject `Co-authored-by: Cursor <cursoragent@cursor.com>`.
+
 ## Skill routing
 
 When the user's request matches an available skill, ALWAYS invoke it using the Skill
