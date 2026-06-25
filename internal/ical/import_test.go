@@ -317,6 +317,65 @@ END:VCALENDAR`
 	}
 }
 
+// Regression test for issue #64 (Codex review follow-up): date-only
+// EXDATE/RDATE values for all-day events must normalize to midnight UTC, the
+// same as DTSTART. Otherwise, on a non-UTC host an EXDATE;VALUE=DATE would land
+// on the wrong UTC day and fail to suppress the occurrence, and an
+// RDATE;VALUE=DATE would be added at a host-shifted instant.
+func TestImport_AllDayEXDATERDATE_NormalizeToUTC(t *testing.T) {
+	// Mutates time.Local, so this test cannot run in parallel.
+	prevLocal := time.Local
+	time.Local = time.FixedZone("UTC+12", 12*60*60)
+	t.Cleanup(func() { time.Local = prevLocal })
+
+	const ics = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//test//test//EN
+BEGIN:VEVENT
+UID:allday-exdate-1
+DTSTAMP:20260401T100000Z
+DTSTART;VALUE=DATE:20260401
+DTEND;VALUE=DATE:20260402
+RRULE:FREQ=DAILY;COUNT=3
+EXDATE;VALUE=DATE:20260402
+RDATE;VALUE=DATE:20260410
+END:VEVENT
+END:VCALENDAR`
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %d, want 1", len(result.Events))
+	}
+	evt := result.Events[0]
+
+	from := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	expanded := recurrence.ExpandEvent(evt, from, to)
+
+	got := make(map[string]bool, len(expanded))
+	for _, occ := range expanded {
+		got[occ.InstanceTime.UTC().Format(time.RFC3339)] = true
+	}
+
+	// EXDATE;VALUE=DATE:20260402 must suppress the 2026-04-02 occurrence.
+	if got["2026-04-02T00:00:00Z"] {
+		t.Error("2026-04-02T00:00:00Z occurrence was not suppressed by EXDATE;VALUE=DATE")
+	}
+	// The other RRULE occurrences must remain.
+	for _, want := range []string{"2026-04-01T00:00:00Z", "2026-04-03T00:00:00Z"} {
+		if !got[want] {
+			t.Errorf("missing RRULE occurrence %s", want)
+		}
+	}
+	// RDATE;VALUE=DATE:20260410 must add an occurrence at midnight UTC.
+	if !got["2026-04-10T00:00:00Z"] {
+		t.Errorf("RDATE;VALUE=DATE occurrence not added at 2026-04-10T00:00:00Z; got %v", got)
+	}
+}
+
 func TestImport_MinimalTodo(t *testing.T) {
 	t.Parallel()
 	result, err := ImportFile(strings.NewReader(minimalTodoICS))
