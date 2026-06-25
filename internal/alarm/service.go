@@ -253,7 +253,13 @@ func (s *Service) checkEventAlarms(ctx context.Context, now time.Time) ([]DueAla
 					TriggerAt: triggerKey,
 				})
 				if err == nil {
-					continue
+					continue // already fired/acknowledged
+				}
+				if !errors.Is(err, sql.ErrNoRows) {
+					// Transient DB error (e.g. SQLITE_BUSY): we can't tell
+					// whether this alarm already fired, so abort rather than
+					// risk re-firing it. Propagate to the caller.
+					return nil, fmt.Errorf("get alarm state: %w", err)
 				}
 
 				due = append(due, DueAlarm{

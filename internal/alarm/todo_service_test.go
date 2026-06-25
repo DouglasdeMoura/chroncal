@@ -69,6 +69,56 @@ func TestCheckTodoAlarms_DueAlarm(t *testing.T) {
 	}
 }
 
+// TestCheckTodoAlarms_TransientStateErrorDoesNotFire is the todo-side mirror of
+// TestCheck_TransientStateErrorDoesNotFire: a transient (non-ErrNoRows) error
+// from GetTodoAlarmState must abort and propagate, never be treated as "not
+// fired". We drop todo_alarm_state to force a "no such table" error.
+func TestCheckTodoAlarms_TransientStateErrorDoesNotFire(t *testing.T) {
+	ctx := context.Background()
+	db, q := newFileTestDB(t)
+
+	todoSvc := todo.NewService(db, q)
+	base := time.Date(2026, 4, 1, 17, 0, 0, 0, time.UTC)
+	if _, err := todoSvc.Create(ctx, todo.CreateParams{
+		CalendarID: 1,
+		Summary:    "Submit Report",
+		DueDate:    base.Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("create todo: %v", err)
+	}
+
+	checkTime := time.Date(2026, 4, 1, 16, 30, 0, 0, time.UTC)
+	triggerKey := time.Date(2026, 4, 1, 16, 0, 0, 0, time.UTC).Format(time.RFC3339)
+	const alarmID = 1
+	mockLister := &mockTodoAlarmLister{
+		alarms: []model.Alarm{{
+			ID:           alarmID,
+			UID:          "todo-alarm-1",
+			Action:       "DISPLAY",
+			TriggerValue: "-PT1H",
+			Description:  "Report due in 1 hour",
+		}},
+	}
+
+	// Poison row: todo_id holds TEXT, so GetTodoAlarmState's int64 Scan of that
+	// row fails (stand-in for a transient DB error like SQLITE_BUSY).
+	// snoozed_to stays NULL so ListExpiredTodoSnoozed (which filters snoozed_to
+	// IS NOT NULL) skips it — isolating the failure to the in-loop
+	// GetTodoAlarmState lookup.
+	insertPoisonAlarmState(ctx, t, db,
+		"INSERT INTO todo_alarm_state (alarm_id, todo_id, trigger_at) VALUES (?, 'not-an-int', ?)",
+		alarmID, triggerKey)
+
+	todoAlarmSvc := NewTodoService(db, q, mockLister)
+	due, err := todoAlarmSvc.CheckTodos(ctx, checkTime)
+	if err == nil {
+		t.Fatal("expected error from transient GetTodoAlarmState failure, got nil")
+	}
+	if len(due) != 0 {
+		t.Fatalf("got %d due todo alarms on transient error, want 0 (must not re-fire)", len(due))
+	}
+}
+
 func TestCheckTodoAlarms_SkipsCompleted(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 
