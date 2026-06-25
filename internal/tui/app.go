@@ -349,16 +349,16 @@ type Model struct {
 	// by m.events so agenda expansion can query only the newly-added
 	// slice instead of re-querying the whole window each time. Zero values
 	// mean "no prior load" and force a full refresh.
-	loadedFrom     time.Time
-	loadedTo       time.Time
-	calendars      map[int64]CalendarInfo
+	loadedFrom time.Time
+	loadedTo   time.Time
+	calendars  map[int64]CalendarInfo
 	// pendingOrder holds an optimistic sidebar order (calendar ID → position)
 	// for a reorder whose async SetOrder has not yet confirmed. It is overlaid
 	// onto reloads so an interleaved loadCalendars (e.g. a sync finishing
 	// mid-save) can't snap calendars back to the stale DB order, and cleared
 	// once calendarOrderSavedMsg confirms the write.
-	pendingOrder map[int64]int64
-	dialog       EventDialogModel
+	pendingOrder   map[int64]int64
+	dialog         EventDialogModel
 	dialogOpen     bool
 	viewDialog     EventViewDialogModel
 	viewDialogOpen bool
