@@ -280,38 +280,41 @@ func main() {
 	}
 }
 
-// resolveEvent looks up an event by numeric ID, string UID, or UID + recurrence-id.
-func resolveEvent(ctx context.Context, a *app.App, ref, recurrenceID string) (event.Event, error) {
-	var e event.Event
+// resolveRef looks up a resource by numeric ID, string UID, or UID +
+// recurrence-id, using the three lookup functions for the resource kind. It
+// is the shared body behind resolveEvent / resolveTodo / resolveJournal.
+func resolveRef[T any](
+	ctx context.Context,
+	ref, recurrenceID, kind string,
+	getByID func(context.Context, int64) (T, error),
+	getByUID func(context.Context, string) (T, error),
+	getByUIDAndRecurrenceID func(context.Context, string, string) (T, error),
+) (T, error) {
+	var v T
 	var err error
 	if id, parseErr := strconv.ParseInt(ref, 10, 64); parseErr == nil {
-		e, err = a.Events.Get(ctx, id)
+		v, err = getByID(ctx, id)
 	} else if recurrenceID != "" {
-		e, err = a.Events.GetByUIDAndRecurrenceID(ctx, ref, recurrenceID)
+		v, err = getByUIDAndRecurrenceID(ctx, ref, recurrenceID)
 	} else {
-		e, err = a.Events.GetByUID(ctx, ref)
+		v, err = getByUID(ctx, ref)
 	}
 	if err != nil {
-		return e, notFoundErr(err, "event", ref)
+		return v, notFoundErr(err, kind, ref)
 	}
-	return e, nil
+	return v, nil
+}
+
+// resolveEvent looks up an event by numeric ID, string UID, or UID + recurrence-id.
+func resolveEvent(ctx context.Context, a *app.App, ref, recurrenceID string) (event.Event, error) {
+	return resolveRef(ctx, ref, recurrenceID, "event",
+		a.Events.Get, a.Events.GetByUID, a.Events.GetByUIDAndRecurrenceID)
 }
 
 // resolveTodo looks up a todo by numeric ID, string UID, or UID + recurrence-id.
 func resolveTodo(ctx context.Context, a *app.App, ref, recurrenceID string) (todo.Todo, error) {
-	var t todo.Todo
-	var err error
-	if id, parseErr := strconv.ParseInt(ref, 10, 64); parseErr == nil {
-		t, err = a.Todos.Get(ctx, id)
-	} else if recurrenceID != "" {
-		t, err = a.Todos.GetByUIDAndRecurrenceID(ctx, ref, recurrenceID)
-	} else {
-		t, err = a.Todos.GetByUID(ctx, ref)
-	}
-	if err != nil {
-		return t, notFoundErr(err, "todo", ref)
-	}
-	return t, nil
+	return resolveRef(ctx, ref, recurrenceID, "todo",
+		a.Todos.Get, a.Todos.GetByUID, a.Todos.GetByUIDAndRecurrenceID)
 }
 
 func resolveCalendarID(ctx context.Context, a *app.App, name string) (int64, error) {
@@ -347,19 +350,8 @@ func resolveCalendarID(ctx context.Context, a *app.App, name string) (int64, err
 
 // resolveJournal looks up a journal by numeric ID, string UID, or UID + recurrence-id.
 func resolveJournal(ctx context.Context, a *app.App, ref, recurrenceID string) (journal.Journal, error) {
-	var j journal.Journal
-	var err error
-	if id, parseErr := strconv.ParseInt(ref, 10, 64); parseErr == nil {
-		j, err = a.Journals.Get(ctx, id)
-	} else if recurrenceID != "" {
-		j, err = a.Journals.GetByUIDAndRecurrenceID(ctx, ref, recurrenceID)
-	} else {
-		j, err = a.Journals.GetByUID(ctx, ref)
-	}
-	if err != nil {
-		return j, notFoundErr(err, "journal", ref)
-	}
-	return j, nil
+	return resolveRef(ctx, ref, recurrenceID, "journal",
+		a.Journals.Get, a.Journals.GetByUID, a.Journals.GetByUIDAndRecurrenceID)
 }
 
 func parseDateRange(fromStr, toStr string) (time.Time, time.Time, error) {
