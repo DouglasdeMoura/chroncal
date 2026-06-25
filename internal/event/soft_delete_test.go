@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
 
 // TestSoftDelete_Standalone verifies:
@@ -345,7 +347,7 @@ func TestSoftDelete_FromInstance_UndoAfterGap(t *testing.T) {
 	// Backdate the master's updated_at well into the past so its last real edit
 	// is more than one second before the truncation — the production scenario
 	// the old guard failed on.
-	pastEdit := time.Now().UTC().Add(-1 * time.Hour).Format(storageTimeFormat)
+	pastEdit := time.Now().UTC().Add(-1 * time.Hour).Format(timeutil.StorageTimeFormat)
 	if _, err := svc.db.ExecContext(ctx,
 		"UPDATE events SET updated_at = ? WHERE id = ?", pastEdit, master.ID); err != nil {
 		t.Fatalf("backdate updated_at: %v", err)
@@ -391,7 +393,7 @@ func TestSoftDelete_FromInstance_UndoAfterGap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeleteFromInstanceWithUndo (2): %v", err)
 	}
-	future := time.Now().UTC().Add(1 * time.Hour).Format(storageTimeFormat)
+	future := time.Now().UTC().Add(1 * time.Hour).Format(timeutil.StorageTimeFormat)
 	if _, err := svc.db.ExecContext(ctx,
 		"UPDATE events SET updated_at = ? WHERE id = ?", future, master.ID); err != nil {
 		t.Fatalf("simulate concurrent edit: %v", err)

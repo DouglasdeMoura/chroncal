@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
 
 // TrashKind discriminates the three shapes a trash row can have: a full
@@ -199,7 +200,7 @@ func (s *Service) RestoreTrash(ctx context.Context, entry TrashEntry) error {
 // Returns the number of rows purged. The corresponding EXDATEs on the master
 // stay in place — the user intended those instances to be gone.
 func (s *Service) PurgeOldInstanceDeletes(ctx context.Context, olderThan time.Time) (int, error) {
-	cutoff := olderThan.UTC().Format(storageTimeFormat)
+	cutoff := olderThan.UTC().Format(timeutil.StorageTimeFormat)
 	n, err := s.q.PurgeOldEventExdateDeletes(ctx, cutoff)
 	if err != nil {
 		return 0, err
@@ -211,7 +212,7 @@ func (s *Service) PurgeOldInstanceDeletes(ctx context.Context, olderThan time.Ti
 // olderThan. Returns the number of rows purged. The truncated RRULE and
 // soft-deleted overrides on the master stay in place.
 func (s *Service) PurgeOldTruncationDeletes(ctx context.Context, olderThan time.Time) (int, error) {
-	cutoff := olderThan.UTC().Format(storageTimeFormat)
+	cutoff := olderThan.UTC().Format(timeutil.StorageTimeFormat)
 	n, err := s.q.PurgeOldEventTruncateDeletes(ctx, cutoff)
 	if err != nil {
 		return 0, err

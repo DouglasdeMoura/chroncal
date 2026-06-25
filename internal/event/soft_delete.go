@@ -227,7 +227,7 @@ func (s *Service) GetIncludingDeleted(ctx context.Context, id int64) (Event, err
 // PurgeDeleted hard-deletes rows soft-deleted before olderThan. Returns the
 // number of rows purged. Children cascade via existing FK ON DELETE CASCADE.
 func (s *Service) PurgeDeleted(ctx context.Context, olderThan time.Time) (int, error) {
-	cutoff := olderThan.UTC().Format(storageTimeFormat)
+	cutoff := olderThan.UTC().Format(timeutil.StorageTimeFormat)
 	n, err := s.q.PurgeSoftDeletedEvents(ctx, &cutoff)
 	if err != nil {
 		return 0, err
@@ -457,13 +457,11 @@ func (s *Service) reconcileSyncAfterRestore(ctx context.Context, calendarID int6
 	return nil
 }
 
-const storageTimeFormat = "2006-01-02T15:04:05Z"
-
 func parseStorageTime(s string) time.Time {
 	if s == "" {
 		return time.Time{}
 	}
-	t, err := time.Parse(storageTimeFormat, s)
+	t, err := time.Parse(timeutil.StorageTimeFormat, s)
 	if err != nil {
 		t, _ = time.Parse(time.RFC3339, s)
 	}
