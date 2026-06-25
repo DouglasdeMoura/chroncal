@@ -387,11 +387,14 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 		if strings.EqualFold(prop.Params.Get("VALUE"), "DATE") {
 			allDay = true
 			// VALUE=DATE represents a calendar date, not a specific UTC instant.
-			// Store as midnight in the local timezone so the date component is
-			// preserved regardless of the machine's UTC offset. This keeps
-			// round-trips stable: export → import produces the same local date.
-			startTime = time.Date(startTime.Year(), startTime.Month(), startTime.Day(), 0, 0, 0, 0, time.Local)
-			endTime = time.Date(endTime.Year(), endTime.Month(), endTime.Day(), 0, 0, 0, 0, time.Local)
+			// Store as midnight UTC so the stored instant is independent of the
+			// importing host's timezone (AGENTS.md: "All database times are
+			// RFC 3339 strings in UTC"; "All-day events have time component
+			// 00:00:00"). Using time.Local here would store a host-dependent
+			// instant — e.g. under TZ=UTC+12 midnight local is 12:00Z the day
+			// before, corrupting the calendar date and recurrence occurrences.
+			startTime = time.Date(startTime.Year(), startTime.Month(), startTime.Day(), 0, 0, 0, 0, time.UTC)
+			endTime = time.Date(endTime.Year(), endTime.Month(), endTime.Day(), 0, 0, 0, 0, time.UTC)
 		}
 	}
 
