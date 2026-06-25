@@ -304,6 +304,35 @@ func (q *Queries) ListAllJournals(ctx context.Context) ([]Journal, error) {
 	return items, nil
 }
 
+const listDeletedJournalOverrideRecurrenceIDs = `-- name: ListDeletedJournalOverrideRecurrenceIDs :many
+SELECT recurrence_id FROM journals
+WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NOT NULL
+ORDER BY recurrence_id
+`
+
+func (q *Queries) ListDeletedJournalOverrideRecurrenceIDs(ctx context.Context, uid string) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listDeletedJournalOverrideRecurrenceIDs, uid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var recurrence_id string
+		if err := rows.Scan(&recurrence_id); err != nil {
+			return nil, err
+		}
+		items = append(items, recurrence_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDeletedJournalsByCalendar = `-- name: ListDeletedJournalsByCalendar :many
 SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at FROM journals
 WHERE calendar_id = ? AND deleted_at IS NOT NULL

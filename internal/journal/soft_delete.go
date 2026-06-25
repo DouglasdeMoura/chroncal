@@ -50,28 +50,46 @@ func (s *Service) RestoreByID(ctx context.Context, id int64) error {
 	if err := qtx.RestoreJournal(ctx, id); err != nil {
 		return fmt.Errorf("restore journal: %w", err)
 	}
-
-	master, err := qtx.GetJournalByUID(ctx, r.Uid)
-	if err == nil {
-		existing := timeutil.ParseTimeList(storage.NullableToString(master.Exdates))
-		target, parseErr := timeutil.ParseRecurrenceID(r.RecurrenceID)
-		if parseErr == nil {
-			filtered := removeTimeFromList(existing, target)
-			if len(filtered) != len(existing) {
-				if err := qtx.UpdateJournalExdates(ctx, storage.UpdateJournalExdatesParams{
-					Exdates: storage.StringToNullable(timeutil.SerializeTimeList(filtered)),
-					ID:      master.ID,
-				}); err != nil {
-					return fmt.Errorf("update exdates: %w", err)
-				}
-			}
-		}
+	if err := clearMasterEXDATE(ctx, qtx, r.Uid, r.RecurrenceID); err != nil {
+		return err
 	}
 
 	if err := tx.Commit(); err != nil {
 		return err
 	}
 	return s.reconcileSyncAfterRestore(ctx, r.CalendarID, r.Uid)
+}
+
+// clearMasterEXDATE removes the EXDATE entry for recurrenceID from the
+// master journal with uid, reversing the exclusion that the instance-delete
+// path added. No-op when the master is gone, the recurrence_id is
+// unparseable, or the EXDATE was already absent. Must run inside the same
+// transaction (qtx) that un-hides the override so the row is never
+// visible-but-excluded.
+func clearMasterEXDATE(ctx context.Context, qtx *storage.Queries, uid, recurrenceID string) error {
+	master, err := qtx.GetJournalByUID(ctx, uid)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("get master: %w", err)
+	}
+	target, err := timeutil.ParseRecurrenceID(recurrenceID)
+	if err != nil {
+		return nil
+	}
+	existing := timeutil.ParseTimeList(storage.NullableToString(master.Exdates))
+	filtered := removeTimeFromList(existing, target)
+	if len(filtered) == len(existing) {
+		return nil
+	}
+	if err := qtx.UpdateJournalExdates(ctx, storage.UpdateJournalExdatesParams{
+		Exdates: storage.StringToNullable(timeutil.SerializeTimeList(filtered)),
+		ID:      master.ID,
+	}); err != nil {
+		return fmt.Errorf("update exdates: %w", err)
+	}
+	return nil
 }
 
 // removeTimeFromList returns list with every element equal to target
@@ -90,19 +108,52 @@ func removeTimeFromList(list []time.Time, target time.Time) []time.Time {
 }
 
 // RestoreByUID un-hides every soft-deleted row sharing uid — master plus
-// overrides. Used by the CLI `journals restore <uid>` path.
+// overrides — and strips the matching EXDATE from the master for each
+// restored override in the same transaction. Without the EXDATE cleanup the
+// master would keep excluding those slots while also carrying the now-live
+// overrides, which round-trips to iCal as a self-contradicting series
+// (EXDATE + override for the same occurrence). Used by the CLI
+// `journals restore <uid>` path. Mirrors event.RestoreByUID.
 func (s *Service) RestoreByUID(ctx context.Context, uid string) error {
 	master, err := s.q.GetJournalByUIDIncludingDeleted(ctx, uid)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("get master: %w", err)
 	}
-	if err := s.q.RestoreJournalsByUID(ctx, uid); err != nil {
-		return fmt.Errorf("restore by uid: %w", err)
+	if err := s.restoreByUIDClearingExdates(ctx, uid); err != nil {
+		return err
 	}
 	if err == nil {
 		return s.reconcileSyncAfterRestore(ctx, master.CalendarID, uid)
 	}
 	return nil
+}
+
+// restoreByUIDClearingExdates un-hides every soft-deleted row for uid and
+// clears the master EXDATE for each override that was soft-deleted, all in
+// one transaction. The recurrence IDs are read before the restore because
+// afterwards the rows are live and no longer match the deleted-overrides
+// query.
+func (s *Service) restoreByUIDClearingExdates(ctx context.Context, uid string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+
+	recurrenceIDs, err := qtx.ListDeletedJournalOverrideRecurrenceIDs(ctx, uid)
+	if err != nil {
+		return fmt.Errorf("list deleted override recurrence ids: %w", err)
+	}
+	if err := qtx.RestoreJournalsByUID(ctx, uid); err != nil {
+		return fmt.Errorf("restore by uid: %w", err)
+	}
+	for _, recurrenceID := range recurrenceIDs {
+		if err := clearMasterEXDATE(ctx, qtx, uid, recurrenceID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // ListDeleted returns soft-deleted journals for a calendar, newest-first.

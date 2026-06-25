@@ -412,6 +412,35 @@ func (q *Queries) ListAllTodos(ctx context.Context) ([]Todo, error) {
 	return items, nil
 }
 
+const listDeletedTodoOverrideRecurrenceIDs = `-- name: ListDeletedTodoOverrideRecurrenceIDs :many
+SELECT recurrence_id FROM todos
+WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NOT NULL
+ORDER BY recurrence_id
+`
+
+func (q *Queries) ListDeletedTodoOverrideRecurrenceIDs(ctx context.Context, uid string) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listDeletedTodoOverrideRecurrenceIDs, uid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var recurrence_id string
+		if err := rows.Scan(&recurrence_id); err != nil {
+			return nil, err
+		}
+		items = append(items, recurrence_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDeletedTodosByCalendar = `-- name: ListDeletedTodosByCalendar :many
 SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, geo, created_at, updated_at, dtstamp, deleted_at FROM todos
 WHERE calendar_id = ? AND deleted_at IS NOT NULL

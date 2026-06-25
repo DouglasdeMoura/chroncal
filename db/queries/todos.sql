@@ -42,6 +42,11 @@ SELECT * FROM todos WHERE uid = ? AND recurrence_id = ? AND deleted_at IS NULL;
 -- name: ListTodoOverridesByUID :many
 SELECT * FROM todos WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NULL ORDER BY recurrence_id;
 
+-- name: ListDeletedTodoOverrideRecurrenceIDs :many
+SELECT recurrence_id FROM todos
+WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NOT NULL
+ORDER BY recurrence_id;
+
 
 -- name: DeleteTodosByUID :exec
 DELETE FROM todos WHERE uid = ?;
