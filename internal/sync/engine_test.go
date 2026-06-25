@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/caldav"
@@ -16,6 +17,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/event"
 	icalPkg "github.com/douglasdemoura/chroncal/internal/ical"
 	"github.com/douglasdemoura/chroncal/internal/journal"
+	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/testutil"
 	"github.com/douglasdemoura/chroncal/internal/todo"
@@ -426,6 +428,86 @@ END:VCALENDAR
 	}
 	if len(dirty) != 0 {
 		t.Fatalf("dirty after pull = %d, want 0 (sync-imports must land clean)", len(dirty))
+	}
+}
+
+// TestEnginePersistImportedKeepsDirtyOnChildReplaceError pins issue #69: a
+// transient failure while replacing an imported resource's child collections
+// (alarms/attendees/...) must propagate out of persistImported. Previously the
+// Replace* errors were discarded with `_ =`, so the caller cleared the dirty
+// flag and the stale children were never retried. Here we let the parent
+// UpsertByUID succeed but force ReplaceAlarms to fail (by dropping the
+// event_alarms table), then assert persistImported returns an error and the
+// sync_resource stays dirty so the next sync retries it.
+func TestEnginePersistImportedKeepsDirtyOnChildReplaceError(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	const uid = "child-replace-fail"
+
+	// Seed a dirty sync_resource for the UID, mirroring a resource the pull
+	// loop is about to absorb. If persistImported swallowed the child error,
+	// the caller would clear this flag.
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calendarID,
+		Uid:          uid,
+		OwnerType:    "event",
+		RemoteUrl:    "/calendar/child-replace-fail.ics",
+		Etag:         "etag-old",
+		Dirty:        1,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+
+	// Drop the event_alarms table so the parent event upsert still succeeds but
+	// the subsequent ReplaceAlarms fails, simulating a transient child-replace
+	// error.
+	if _, err := db.ExecContext(ctx, "DROP TABLE event_alarms"); err != nil {
+		t.Fatalf("drop event_alarms table: %v", err)
+	}
+
+	result := icalPkg.ImportResult{
+		Events: []event.Event{{
+			UID:        uid,
+			CalendarID: calendarID,
+			Title:      "Has alarm",
+			StartTime:  time.Date(2026, 4, 3, 10, 0, 0, 0, time.UTC),
+			EndTime:    time.Date(2026, 4, 3, 11, 0, 0, 0, time.UTC),
+			Alarms: []model.Alarm{{
+				Action:       "DISPLAY",
+				TriggerValue: "-PT15M",
+				Description:  "Reminder",
+				Related:      "START",
+			}},
+		}},
+	}
+
+	if err := engine.persistImported(ctx, calendarID, result); err == nil {
+		t.Fatal("persistImported returned nil, want child-replace error to propagate")
+	}
+
+	dirty, err := q.ListDirtySyncResources(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("ListDirtySyncResources: %v", err)
+	}
+	var found bool
+	for _, r := range dirty {
+		if r.Uid == uid {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("resource %q no longer dirty after child-replace failure; sync would never retry", uid)
 	}
 }
 

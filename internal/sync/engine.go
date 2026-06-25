@@ -1244,15 +1244,32 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 		// Replace child collections unconditionally so server-side removals
 		// (an empty list) are propagated, mirroring how Categories are handled
 		// via UpsertByUID. A full CalDAV pull sends the complete component, so
-		// the absence of a property means "cleared", not "unknown".
-		_ = e.events.ReplaceAlarms(ctx, saved.ID, ev.Alarms)
-		_ = e.events.ReplaceAttendees(ctx, saved.ID, ev.Attendees)
-		_ = e.events.ReplaceAttachments(ctx, saved.ID, ev.Attachments)
-		_ = e.events.ReplaceComments(ctx, saved.ID, ev.Comments)
-		_ = e.events.ReplaceContacts(ctx, saved.ID, ev.Contacts)
-		_ = e.events.ReplaceResources(ctx, saved.ID, ev.Resources)
-		_ = e.events.ReplaceRelations(ctx, saved.ID, ev.Relations)
-		_ = e.events.ReplaceXProperties(ctx, saved.ID, ev.XProperties)
+		// the absence of a property means "cleared", not "unknown". Propagate
+		// any replace error so the caller keeps the resource dirty and retries.
+		if err := e.events.ReplaceAlarms(ctx, saved.ID, ev.Alarms); err != nil {
+			return fmt.Errorf("replace alarms for event %q: %w", ev.UID, err)
+		}
+		if err := e.events.ReplaceAttendees(ctx, saved.ID, ev.Attendees); err != nil {
+			return fmt.Errorf("replace attendees for event %q: %w", ev.UID, err)
+		}
+		if err := e.events.ReplaceAttachments(ctx, saved.ID, ev.Attachments); err != nil {
+			return fmt.Errorf("replace attachments for event %q: %w", ev.UID, err)
+		}
+		if err := e.events.ReplaceComments(ctx, saved.ID, ev.Comments); err != nil {
+			return fmt.Errorf("replace comments for event %q: %w", ev.UID, err)
+		}
+		if err := e.events.ReplaceContacts(ctx, saved.ID, ev.Contacts); err != nil {
+			return fmt.Errorf("replace contacts for event %q: %w", ev.UID, err)
+		}
+		if err := e.events.ReplaceResources(ctx, saved.ID, ev.Resources); err != nil {
+			return fmt.Errorf("replace resources for event %q: %w", ev.UID, err)
+		}
+		if err := e.events.ReplaceRelations(ctx, saved.ID, ev.Relations); err != nil {
+			return fmt.Errorf("replace relations for event %q: %w", ev.UID, err)
+		}
+		if err := e.events.ReplaceXProperties(ctx, saved.ID, ev.XProperties); err != nil {
+			return fmt.Errorf("replace xproperties for event %q: %w", ev.UID, err)
+		}
 	}
 
 	// Import todos
@@ -1274,14 +1291,30 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 		}
 		// Replace child collections unconditionally so server-side removals
 		// (an empty list) are propagated. See the event loop above.
-		_ = e.todos.ReplaceAlarms(ctx, saved.ID, t.Alarms)
-		_ = e.todos.ReplaceAttendees(ctx, saved.ID, t.Attendees)
-		_ = e.todos.ReplaceAttachments(ctx, saved.ID, t.Attachments)
-		_ = e.todos.ReplaceComments(ctx, saved.ID, t.Comments)
-		_ = e.todos.ReplaceContacts(ctx, saved.ID, t.Contacts)
-		_ = e.todos.ReplaceResources(ctx, saved.ID, t.Resources)
-		_ = e.todos.ReplaceRelations(ctx, saved.ID, t.Relations)
-		_ = e.todos.ReplaceXProperties(ctx, saved.ID, t.XProperties)
+		if err := e.todos.ReplaceAlarms(ctx, saved.ID, t.Alarms); err != nil {
+			return fmt.Errorf("replace alarms for todo %q: %w", t.UID, err)
+		}
+		if err := e.todos.ReplaceAttendees(ctx, saved.ID, t.Attendees); err != nil {
+			return fmt.Errorf("replace attendees for todo %q: %w", t.UID, err)
+		}
+		if err := e.todos.ReplaceAttachments(ctx, saved.ID, t.Attachments); err != nil {
+			return fmt.Errorf("replace attachments for todo %q: %w", t.UID, err)
+		}
+		if err := e.todos.ReplaceComments(ctx, saved.ID, t.Comments); err != nil {
+			return fmt.Errorf("replace comments for todo %q: %w", t.UID, err)
+		}
+		if err := e.todos.ReplaceContacts(ctx, saved.ID, t.Contacts); err != nil {
+			return fmt.Errorf("replace contacts for todo %q: %w", t.UID, err)
+		}
+		if err := e.todos.ReplaceResources(ctx, saved.ID, t.Resources); err != nil {
+			return fmt.Errorf("replace resources for todo %q: %w", t.UID, err)
+		}
+		if err := e.todos.ReplaceRelations(ctx, saved.ID, t.Relations); err != nil {
+			return fmt.Errorf("replace relations for todo %q: %w", t.UID, err)
+		}
+		if err := e.todos.ReplaceXProperties(ctx, saved.ID, t.XProperties); err != nil {
+			return fmt.Errorf("replace xproperties for todo %q: %w", t.UID, err)
+		}
 	}
 
 	// Import journals
@@ -1301,12 +1334,24 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 		}
 		// Replace child collections unconditionally so server-side removals
 		// (an empty list) are propagated. See the event loop above.
-		_ = e.journals.ReplaceAttendees(ctx, saved.ID, j.Attendees)
-		_ = e.journals.ReplaceAttachments(ctx, saved.ID, j.Attachments)
-		_ = e.journals.ReplaceComments(ctx, saved.ID, j.Comments)
-		_ = e.journals.ReplaceContacts(ctx, saved.ID, j.Contacts)
-		_ = e.journals.ReplaceRelations(ctx, saved.ID, j.Relations)
-		_ = e.journals.ReplaceXProperties(ctx, saved.ID, j.XProperties)
+		if err := e.journals.ReplaceAttendees(ctx, saved.ID, j.Attendees); err != nil {
+			return fmt.Errorf("replace attendees for journal %q: %w", j.UID, err)
+		}
+		if err := e.journals.ReplaceAttachments(ctx, saved.ID, j.Attachments); err != nil {
+			return fmt.Errorf("replace attachments for journal %q: %w", j.UID, err)
+		}
+		if err := e.journals.ReplaceComments(ctx, saved.ID, j.Comments); err != nil {
+			return fmt.Errorf("replace comments for journal %q: %w", j.UID, err)
+		}
+		if err := e.journals.ReplaceContacts(ctx, saved.ID, j.Contacts); err != nil {
+			return fmt.Errorf("replace contacts for journal %q: %w", j.UID, err)
+		}
+		if err := e.journals.ReplaceRelations(ctx, saved.ID, j.Relations); err != nil {
+			return fmt.Errorf("replace relations for journal %q: %w", j.UID, err)
+		}
+		if err := e.journals.ReplaceXProperties(ctx, saved.ID, j.XProperties); err != nil {
+			return fmt.Errorf("replace xproperties for journal %q: %w", j.UID, err)
+		}
 	}
 
 	return nil
