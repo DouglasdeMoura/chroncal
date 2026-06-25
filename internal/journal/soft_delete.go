@@ -62,10 +62,10 @@ func (s *Service) RestoreByID(ctx context.Context, id int64) error {
 
 // clearMasterEXDATE removes the EXDATE entry for recurrenceID from the
 // master journal with uid, reversing the exclusion that the instance-delete
-// path added. No-op when the master is gone, the recurrence_id is
-// unparseable, or the EXDATE was already absent. Must run inside the same
-// transaction (qtx) that un-hides the override so the row is never
-// visible-but-excluded.
+// path added. No-op when the master is gone or the EXDATE was already
+// absent; a malformed recurrence_id is a data-integrity error and is
+// propagated rather than swallowed. Must run inside the same transaction
+// (qtx) that un-hides the override so the row is never visible-but-excluded.
 func clearMasterEXDATE(ctx context.Context, qtx *storage.Queries, uid, recurrenceID string) error {
 	master, err := qtx.GetJournalByUID(ctx, uid)
 	if err != nil {
@@ -76,7 +76,7 @@ func clearMasterEXDATE(ctx context.Context, qtx *storage.Queries, uid, recurrenc
 	}
 	target, err := timeutil.ParseRecurrenceID(recurrenceID)
 	if err != nil {
-		return nil
+		return fmt.Errorf("parse recurrence_id %q: %w", recurrenceID, err)
 	}
 	existing := timeutil.ParseTimeList(storage.NullableToString(master.Exdates))
 	filtered := removeTimeFromList(existing, target)
