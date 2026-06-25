@@ -14,6 +14,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/caldav"
 	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/event"
+	icalPkg "github.com/douglasdemoura/chroncal/internal/ical"
 	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/testutil"
@@ -2029,5 +2030,91 @@ END:VCALENDAR
 	}
 	if _, err := q.GetEventByUID(ctx, "local-only"); err != nil {
 		t.Errorf("never-pushed local-only row must survive: %v", err)
+	}
+}
+
+// TestPersistImportedClearsRemovedAlarms is a regression test for issue #65:
+// a CalDAV pull that re-imports an existing UID whose server component no
+// longer carries an alarm must clear the locally stored alarm. Before the
+// fix, persistImported only replaced child collections when the server sent a
+// non-empty list, so server-side removals were silently dropped and stale
+// alarms lingered.
+func TestPersistImportedClearsRemovedAlarms(t *testing.T) {
+	t.Parallel()
+
+	engine, _, q := newTestEngine(t)
+	ctx := context.Background()
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	const withAlarm = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//chroncal//tests//EN
+BEGIN:VEVENT
+UID:alarm-removal-uid
+DTSTAMP:20260403T120000Z
+DTSTART:20260403T120000Z
+DTEND:20260403T130000Z
+SUMMARY:Has an alarm
+BEGIN:VALARM
+ACTION:DISPLAY
+TRIGGER:-PT15M
+DESCRIPTION:Meeting reminder
+END:VALARM
+END:VEVENT
+END:VCALENDAR
+`
+
+	withAlarmResult, err := icalPkg.ImportFile(strings.NewReader(withAlarm))
+	if err != nil {
+		t.Fatalf("ImportFile (with alarm): %v", err)
+	}
+	if err := engine.persistImported(ctx, calendarID, withAlarmResult); err != nil {
+		t.Fatalf("persistImported (with alarm): %v", err)
+	}
+
+	saved, err := q.GetEventByUID(ctx, "alarm-removal-uid")
+	if err != nil {
+		t.Fatalf("GetEventByUID: %v", err)
+	}
+	alarms, err := engine.events.ListAlarms(ctx, saved.ID)
+	if err != nil {
+		t.Fatalf("ListAlarms (after first import): %v", err)
+	}
+	if len(alarms) != 1 {
+		t.Fatalf("alarms after first import = %d, want 1", len(alarms))
+	}
+
+	// Re-import the same UID with no VALARM: the server dropped the alarm.
+	const noAlarm = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//chroncal//tests//EN
+BEGIN:VEVENT
+UID:alarm-removal-uid
+DTSTAMP:20260403T140000Z
+DTSTART:20260403T120000Z
+DTEND:20260403T130000Z
+SUMMARY:Alarm removed on server
+END:VEVENT
+END:VCALENDAR
+`
+
+	noAlarmResult, err := icalPkg.ImportFile(strings.NewReader(noAlarm))
+	if err != nil {
+		t.Fatalf("ImportFile (no alarm): %v", err)
+	}
+	if err := engine.persistImported(ctx, calendarID, noAlarmResult); err != nil {
+		t.Fatalf("persistImported (no alarm): %v", err)
+	}
+
+	alarms, err = engine.events.ListAlarms(ctx, saved.ID)
+	if err != nil {
+		t.Fatalf("ListAlarms (after re-import): %v", err)
+	}
+	if len(alarms) != 0 {
+		t.Fatalf("alarms after server-side removal = %d, want 0 (stale alarm not cleared)", len(alarms))
 	}
 }

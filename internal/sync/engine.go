@@ -1248,30 +1248,18 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 		if err != nil {
 			return fmt.Errorf("upsert event %q: %w", ev.UID, err)
 		}
-		if len(ev.Alarms) > 0 {
-			_ = e.events.ReplaceAlarms(ctx, saved.ID, ev.Alarms)
-		}
-		if len(ev.Attendees) > 0 {
-			_ = e.events.ReplaceAttendees(ctx, saved.ID, ev.Attendees)
-		}
-		if len(ev.Attachments) > 0 {
-			_ = e.events.ReplaceAttachments(ctx, saved.ID, ev.Attachments)
-		}
-		if len(ev.Comments) > 0 {
-			_ = e.events.ReplaceComments(ctx, saved.ID, ev.Comments)
-		}
-		if len(ev.Contacts) > 0 {
-			_ = e.events.ReplaceContacts(ctx, saved.ID, ev.Contacts)
-		}
-		if len(ev.Resources) > 0 {
-			_ = e.events.ReplaceResources(ctx, saved.ID, ev.Resources)
-		}
-		if len(ev.Relations) > 0 {
-			_ = e.events.ReplaceRelations(ctx, saved.ID, ev.Relations)
-		}
-		if len(ev.XProperties) > 0 {
-			_ = e.events.ReplaceXProperties(ctx, saved.ID, ev.XProperties)
-		}
+		// Replace child collections unconditionally so server-side removals
+		// (an empty list) are propagated, mirroring how Categories are handled
+		// via UpsertByUID. A full CalDAV pull sends the complete component, so
+		// the absence of a property means "cleared", not "unknown".
+		_ = e.events.ReplaceAlarms(ctx, saved.ID, ev.Alarms)
+		_ = e.events.ReplaceAttendees(ctx, saved.ID, ev.Attendees)
+		_ = e.events.ReplaceAttachments(ctx, saved.ID, ev.Attachments)
+		_ = e.events.ReplaceComments(ctx, saved.ID, ev.Comments)
+		_ = e.events.ReplaceContacts(ctx, saved.ID, ev.Contacts)
+		_ = e.events.ReplaceResources(ctx, saved.ID, ev.Resources)
+		_ = e.events.ReplaceRelations(ctx, saved.ID, ev.Relations)
+		_ = e.events.ReplaceXProperties(ctx, saved.ID, ev.XProperties)
 	}
 
 	// Import todos
@@ -1291,30 +1279,16 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 		if err != nil {
 			return fmt.Errorf("upsert todo %q: %w", t.UID, err)
 		}
-		if len(t.Alarms) > 0 {
-			_ = e.todos.ReplaceAlarms(ctx, saved.ID, t.Alarms)
-		}
-		if len(t.Attendees) > 0 {
-			_ = e.todos.ReplaceAttendees(ctx, saved.ID, t.Attendees)
-		}
-		if len(t.Attachments) > 0 {
-			_ = e.todos.ReplaceAttachments(ctx, saved.ID, t.Attachments)
-		}
-		if len(t.Comments) > 0 {
-			_ = e.todos.ReplaceComments(ctx, saved.ID, t.Comments)
-		}
-		if len(t.Contacts) > 0 {
-			_ = e.todos.ReplaceContacts(ctx, saved.ID, t.Contacts)
-		}
-		if len(t.Resources) > 0 {
-			_ = e.todos.ReplaceResources(ctx, saved.ID, t.Resources)
-		}
-		if len(t.Relations) > 0 {
-			_ = e.todos.ReplaceRelations(ctx, saved.ID, t.Relations)
-		}
-		if len(t.XProperties) > 0 {
-			_ = e.todos.ReplaceXProperties(ctx, saved.ID, t.XProperties)
-		}
+		// Replace child collections unconditionally so server-side removals
+		// (an empty list) are propagated. See the event loop above.
+		_ = e.todos.ReplaceAlarms(ctx, saved.ID, t.Alarms)
+		_ = e.todos.ReplaceAttendees(ctx, saved.ID, t.Attendees)
+		_ = e.todos.ReplaceAttachments(ctx, saved.ID, t.Attachments)
+		_ = e.todos.ReplaceComments(ctx, saved.ID, t.Comments)
+		_ = e.todos.ReplaceContacts(ctx, saved.ID, t.Contacts)
+		_ = e.todos.ReplaceResources(ctx, saved.ID, t.Resources)
+		_ = e.todos.ReplaceRelations(ctx, saved.ID, t.Relations)
+		_ = e.todos.ReplaceXProperties(ctx, saved.ID, t.XProperties)
 	}
 
 	// Import journals
@@ -1332,24 +1306,14 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 		if err != nil {
 			return fmt.Errorf("upsert journal %q: %w", j.UID, err)
 		}
-		if len(j.Attendees) > 0 {
-			_ = e.journals.ReplaceAttendees(ctx, saved.ID, j.Attendees)
-		}
-		if len(j.Attachments) > 0 {
-			_ = e.journals.ReplaceAttachments(ctx, saved.ID, j.Attachments)
-		}
-		if len(j.Comments) > 0 {
-			_ = e.journals.ReplaceComments(ctx, saved.ID, j.Comments)
-		}
-		if len(j.Contacts) > 0 {
-			_ = e.journals.ReplaceContacts(ctx, saved.ID, j.Contacts)
-		}
-		if len(j.Relations) > 0 {
-			_ = e.journals.ReplaceRelations(ctx, saved.ID, j.Relations)
-		}
-		if len(j.XProperties) > 0 {
-			_ = e.journals.ReplaceXProperties(ctx, saved.ID, j.XProperties)
-		}
+		// Replace child collections unconditionally so server-side removals
+		// (an empty list) are propagated. See the event loop above.
+		_ = e.journals.ReplaceAttendees(ctx, saved.ID, j.Attendees)
+		_ = e.journals.ReplaceAttachments(ctx, saved.ID, j.Attachments)
+		_ = e.journals.ReplaceComments(ctx, saved.ID, j.Comments)
+		_ = e.journals.ReplaceContacts(ctx, saved.ID, j.Contacts)
+		_ = e.journals.ReplaceRelations(ctx, saved.ID, j.Relations)
+		_ = e.journals.ReplaceXProperties(ctx, saved.ID, j.XProperties)
 	}
 
 	return nil
