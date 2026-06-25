@@ -785,6 +785,14 @@ func eventDetailLines(ev event.Event, cal CalendarInfo, w, labelWidth int, rsvpL
 	return lines, rsvpIdx
 }
 
+// detailLabelPrefix renders the right-aligned label column plus its two-space
+// gap and returns the rendered prefix together with the cell width left for
+// the value.
+func detailLabelPrefix(labelStyle lipgloss.Style, label string, lw, w int) (prefix string, available int) {
+	padded := strings.Repeat(" ", max(lw-len(label), 0)) + label
+	return labelStyle.Render(padded) + "  ", w - labelColWidth(label, lw)
+}
+
 func detailLine(labelStyle lipgloss.Style, label, value string, lw, w int) string {
 	prefix, _ := detailLabelPrefix(labelStyle, label, lw, w)
 	return truncateTo(prefix+value, w)
