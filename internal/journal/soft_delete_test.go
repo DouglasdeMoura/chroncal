@@ -217,6 +217,67 @@ func TestSoftDelete_RestoreOverrideClearsExdate(t *testing.T) {
 	}
 }
 
+// TestSoftDelete_RestoreByUIDClearsExdate is the regression test for
+// issue #72: restoring a recurring series by UID must strip the EXDATEs
+// the instance-delete path added to the master, just like RestoreByID
+// does for a single override. Otherwise the master keeps excluding the
+// slot while also carrying the now-live override, which exports to iCal
+// as a self-contradicting series.
+func TestSoftDelete_RestoreByUIDClearsExdate(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "daily-uid", CalendarID: 1, Summary: "Daily Journal",
+		StartDate:      "2026-04-01",
+		RecurrenceRule: "FREQ=DAILY;COUNT=5",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	override, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: master.UID, CalendarID: 1, Summary: "Daily Journal (amended)",
+		StartDate:    "2026-04-03",
+		RecurrenceID: time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC).Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	// Delete the *instance* (not the series): this adds the EXDATE to the
+	// master and soft-deletes the override.
+	if err := svc.Delete(ctx, override.ID); err != nil {
+		t.Fatalf("Delete override: %v", err)
+	}
+	afterDelete, err := svc.GetByUID(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("get master after delete: %v", err)
+	}
+	if afterDelete.ExDates == "" {
+		t.Fatal("master.ExDates empty after override delete — EXDATE should have been added")
+	}
+
+	// Restore by UID (the `journals restore <uid>` path). Before the fix
+	// this un-hid the override but left the stale EXDATE on the master.
+	if err := svc.RestoreByUID(ctx, master.UID); err != nil {
+		t.Fatalf("RestoreByUID: %v", err)
+	}
+	afterRestore, err := svc.GetByUID(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("get master after restore: %v", err)
+	}
+	if afterRestore.ExDates != "" {
+		t.Fatalf("master.ExDates = %q, want empty after RestoreByUID", afterRestore.ExDates)
+	}
+	overrides, err := svc.ListOverridesByUID(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("ListOverridesByUID: %v", err)
+	}
+	if len(overrides) != 1 {
+		t.Fatalf("overrides after restore = %d, want 1", len(overrides))
+	}
+}
+
 // TestSoftDelete_UpsertClearsDeletedAt verifies UpsertByUID on a soft-
 // deleted journal re-hydrates it (ON CONFLICT clears deleted_at).
 func TestSoftDelete_UpsertClearsDeletedAt(t *testing.T) {

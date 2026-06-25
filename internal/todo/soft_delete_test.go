@@ -236,6 +236,67 @@ func TestSoftDelete_RestoreOverrideClearsExdate(t *testing.T) {
 	}
 }
 
+// TestSoftDelete_RestoreByUIDClearsExdate is the regression test for
+// issue #72: restoring a recurring series by UID must strip the EXDATEs
+// the instance-delete path added to the master, just like RestoreByID
+// does for a single override. Otherwise the master keeps excluding the
+// slot while also carrying the now-live override, which exports to iCal
+// as a self-contradicting series.
+func TestSoftDelete_RestoreByUIDClearsExdate(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "weekly-uid", CalendarID: 1, Summary: "Weekly Review",
+		DueDate:        time.Date(2026, 4, 1, 23, 59, 59, 0, time.UTC).Format(time.RFC3339),
+		RecurrenceRule: "FREQ=WEEKLY;COUNT=5",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	override, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: master.UID, CalendarID: 1, Summary: "Weekly Review (moved)",
+		DueDate:      time.Date(2026, 4, 15, 23, 59, 59, 0, time.UTC).Format(time.RFC3339),
+		RecurrenceID: time.Date(2026, 4, 15, 23, 59, 59, 0, time.UTC).Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	// Delete the *instance* (not the series): this adds the EXDATE to the
+	// master and soft-deletes the override.
+	if err := svc.Delete(ctx, override.ID); err != nil {
+		t.Fatalf("Delete override: %v", err)
+	}
+	afterDelete, err := svc.GetByUID(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("get master after delete: %v", err)
+	}
+	if afterDelete.ExDates == "" {
+		t.Fatal("master.ExDates empty after override delete — EXDATE should have been added")
+	}
+
+	// Restore by UID (the `todos restore <uid>` path). Before the fix this
+	// un-hid the override but left the stale EXDATE on the master.
+	if err := svc.RestoreByUID(ctx, master.UID); err != nil {
+		t.Fatalf("RestoreByUID: %v", err)
+	}
+	afterRestore, err := svc.GetByUID(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("get master after restore: %v", err)
+	}
+	if afterRestore.ExDates != "" {
+		t.Fatalf("master.ExDates = %q, want empty after RestoreByUID", afterRestore.ExDates)
+	}
+	overrides, err := svc.ListOverridesByUID(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("ListOverridesByUID: %v", err)
+	}
+	if len(overrides) != 1 {
+		t.Fatalf("overrides after restore = %d, want 1", len(overrides))
+	}
+}
+
 // TestSoftDelete_UpsertClearsDeletedAt verifies that UpsertByUID on a
 // soft-deleted row re-hydrates it (ON CONFLICT clears deleted_at). This
 // is the path a remote re-CREATE after a local delete would take: the

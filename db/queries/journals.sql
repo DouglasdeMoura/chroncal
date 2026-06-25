@@ -42,6 +42,11 @@ SELECT * FROM journals WHERE uid = ? AND recurrence_id = ? AND deleted_at IS NUL
 -- name: ListJournalOverridesByUID :many
 SELECT * FROM journals WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NULL ORDER BY recurrence_id;
 
+-- name: ListDeletedJournalOverrideRecurrenceIDs :many
+SELECT recurrence_id FROM journals
+WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NOT NULL
+ORDER BY recurrence_id;
+
 
 -- name: DeleteJournalsByUID :exec
 DELETE FROM journals WHERE uid = ?;
