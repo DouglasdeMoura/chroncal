@@ -106,18 +106,23 @@ func TestEvent_ParseExDates(t *testing.T) {
 	}
 }
 
-func TestParseTimeList_DateOnlyUsesLocal(t *testing.T) {
+func TestParseTimeList_DateOnlyIsMidnightUTC(t *testing.T) {
 	t.Parallel()
 	got := ParseTimeList("2026-04-03")
 	if len(got) != 1 {
 		t.Fatalf("ParseTimeList date-only returned %d items, want 1", len(got))
 	}
-	want := time.Date(2026, 4, 3, 0, 0, 0, 0, time.Local)
+	// The instant must be exactly midnight UTC (issue #64), independent of host TZ.
+	want := time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC)
 	if !got[0].Equal(want) {
 		t.Errorf("ParseTimeList(\"2026-04-03\") = %v, want %v", got[0], want)
 	}
-	if got[0].Location() != time.Local {
-		t.Errorf("ParseTimeList date-only location = %v, want time.Local", got[0].Location())
+	if got[0].UTC().Hour() != 0 || got[0].UTC().Minute() != 0 || got[0].UTC().Second() != 0 {
+		t.Errorf("ParseTimeList date-only UTC clock = %v, want midnight UTC", got[0].UTC())
+	}
+	// The all-day marker must round-trip back to a date-only string.
+	if s := SerializeTimeList(got); s != "2026-04-03" {
+		t.Errorf("round-trip SerializeTimeList = %q, want \"2026-04-03\"", s)
 	}
 }
 
@@ -144,11 +149,16 @@ func TestSerializeTimeList(t *testing.T) {
 			time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
 			time.Date(2026, 4, 2, 10, 0, 0, 0, time.UTC),
 		}, "2026-04-01T10:00:00Z,2026-04-02T10:00:00Z"},
-		{"date-only", []time.Time{time.Date(2026, 4, 3, 0, 0, 0, 0, time.Local)}, "2026-04-03"},
-		{"mixed", []time.Time{
-			time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
-			time.Date(2026, 4, 3, 0, 0, 0, 0, time.Local),
-		}, "2026-04-01T10:00:00Z,2026-04-03"},
+		// A timed occurrence that happens to fall on midnight UTC must NOT be
+		// downgraded to a date-only string (that would export as an invalid
+		// VALUE=DATE on a timed event). Only the dateOnlyLoc marker produced by
+		// ParseTimeList yields date-only output.
+		{"timed midnight UTC stays rfc3339", []time.Time{time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC)}, "2026-04-03T00:00:00Z"},
+		{"date-only", ParseTimeList("2026-04-03"), "2026-04-03"},
+		{"mixed", append(
+			[]time.Time{time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)},
+			ParseTimeList("2026-04-03")...,
+		), "2026-04-01T10:00:00Z,2026-04-03"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

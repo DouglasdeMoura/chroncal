@@ -624,18 +624,22 @@ func TestDelete_AllDayOverrideAddsDateOnlyEXDATE(t *testing.T) {
 	}
 
 	master, _ := svc.GetByUID(ctx, "allday-exd")
-	// The EXDATE should be in date-only format matching the all-day event.
+	// The EXDATE should be stored in date-only format matching the all-day event.
+	if master.ExDates != "2026-04-08" {
+		t.Errorf("stored exdates = %q, want \"2026-04-08\" (date-only)", master.ExDates)
+	}
 	exdates := master.ParseExDates()
 	if len(exdates) != 1 {
 		t.Fatalf("exdates count = %d, want 1", len(exdates))
 	}
-	// Verify it's midnight in Local (date-only format).
+	// All-day date-only values normalize to midnight UTC (issue #64), so the
+	// EXDATE matches how the all-day occurrence is stored.
 	ex := exdates[0]
-	if ex.Location() != time.Local {
-		t.Errorf("exdate location = %v, want time.Local (date-only)", ex.Location())
+	if !ex.Equal(time.Date(2026, 4, 8, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("exdate = %v, want 2026-04-08T00:00:00Z", ex)
 	}
-	if ex.Hour() != 0 || ex.Minute() != 0 {
-		t.Errorf("exdate time = %v, want midnight", ex)
+	if ex.UTC().Hour() != 0 || ex.UTC().Minute() != 0 {
+		t.Errorf("exdate time = %v, want midnight UTC", ex)
 	}
 }
 

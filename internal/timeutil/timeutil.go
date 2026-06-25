@@ -5,6 +5,16 @@ import (
 	"time"
 )
 
+// dateOnlyLoc tags date-only (all-day) values parsed by ParseTimeList and
+// ParseRecurrenceID. It has a zero offset, so the resulting instant is exactly
+// midnight UTC — consistent with how all-day events are stored (issue #64) and
+// with EXDATE/RDATE matching, which is purely instant-based. Its distinct
+// identity (it is not time.UTC) lets SerializeTimeList re-emit these values as
+// date-only "YYYY-MM-DD" strings — and therefore as iCal VALUE=DATE — without
+// misclassifying a timed occurrence that merely happens to fall on midnight
+// UTC, which must round-trip as a full RFC 3339 DATE-TIME.
+var dateOnlyLoc = time.FixedZone("DATE", 0)
+
 // IsDateOnly returns true if s is a date-only string in YYYY-MM-DD format.
 func IsDateOnly(s string) bool {
 	if len(s) != 10 {
@@ -28,11 +38,12 @@ func ParseDate(s string) time.Time {
 }
 
 // ParseRecurrenceID parses a recurrence ID string in RFC 3339 or date-only
-// (2006-01-02) format for all-day events. Date-only IDs resolve to local
-// midnight, matching how all-day occurrences are stored (import records
-// VALUE=DATE as local midnight) so the ID compares equal to the occurrence it
-// identifies. In practice sync and import always normalise recurrence IDs to
-// full UTC RFC 3339, so the date-only branch is a defensive fallback.
+// (2006-01-02) format for all-day events. Date-only IDs resolve to midnight
+// UTC (via dateOnlyLoc), matching how all-day occurrences are stored (import
+// records VALUE=DATE as midnight UTC) so the ID compares equal to the
+// occurrence it identifies. In practice sync and import always normalise
+// recurrence IDs to full UTC RFC 3339, so the date-only branch is a defensive
+// fallback.
 func ParseRecurrenceID(id string) (time.Time, error) {
 	if t, err := time.Parse(time.RFC3339, id); err == nil {
 		return t, nil
@@ -41,7 +52,7 @@ func ParseRecurrenceID(id string) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local), nil
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, dateOnlyLoc), nil
 }
 
 // ParseDateTime parses s as an RFC 3339 datetime.
@@ -67,26 +78,31 @@ func ParseTimeList(s string) []time.Time {
 		if t, err := time.Parse(time.RFC3339, p); err == nil {
 			out = append(out, t)
 		} else if t, err := time.Parse("2006-01-02", p); err == nil {
-			// Parse date-only into time.Local to match how all-day events
-			// are stored (import.go uses time.Local for VALUE=DATE).
-			out = append(out, time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local))
+			// Parse date-only into midnight UTC (via dateOnlyLoc) to match how
+			// all-day events are stored (import.go records VALUE=DATE as
+			// midnight UTC). Using time.Local here would shift the instant by
+			// the host offset, so an all-day EXDATE/RDATE would land on the
+			// wrong UTC day and fail to match (or mis-add) the occurrence on
+			// non-UTC hosts. dateOnlyLoc keeps the all-day signal for
+			// SerializeTimeList without affecting the (instant-based) matching.
+			out = append(out, time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, dateOnlyLoc))
 		}
 	}
 	return out
 }
 
-// SerializeTimeList is the inverse of ParseTimeList. It formats each time as
-// date-only ("2006-01-02") when the time component is midnight in time.Local
-// (matching all-day event EXDATEs), or RFC 3339 otherwise.
+// SerializeTimeList is the inverse of ParseTimeList. It formats a value as
+// date-only ("2006-01-02") only when it carries the all-day marker
+// (dateOnlyLoc, set by ParseTimeList for VALUE=DATE values); every other value
+// — including a timed occurrence that happens to fall on midnight UTC — is
+// formatted as full RFC 3339 so it round-trips as an iCal DATE-TIME.
 func SerializeTimeList(times []time.Time) string {
 	if len(times) == 0 {
 		return ""
 	}
 	parts := make([]string, len(times))
 	for i, t := range times {
-		local := t.In(time.Local)
-		if local.Hour() == 0 && local.Minute() == 0 && local.Second() == 0 && local.Nanosecond() == 0 &&
-			t.Location() == time.Local {
+		if t.Location() == dateOnlyLoc {
 			parts[i] = t.Format("2006-01-02")
 		} else {
 			parts[i] = t.UTC().Format(time.RFC3339)
