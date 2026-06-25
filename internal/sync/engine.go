@@ -378,16 +378,9 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 							result.conflicts++
 							continue
 						}
-						importResult, err := icalPkg.ImportFile(strings.NewReader(buf.String()))
-						if err != nil {
+						if _, err := e.importICal(ctx, calendarID, buf.String()); err != nil {
 							e.logger.Error("import server resource failed", "uid", res.Uid, "error", err)
 							result.errors = append(result.errors, fmt.Errorf("import server resource %s: %w", res.Uid, err))
-							result.conflicts++
-							continue
-						}
-						if err := e.persistImported(ctx, calendarID, importResult); err != nil {
-							e.logger.Error("persist server resource failed", "uid", res.Uid, "error", err)
-							result.errors = append(result.errors, fmt.Errorf("persist server resource %s: %w", res.Uid, err))
 							result.conflicts++
 							continue
 						}
@@ -1320,15 +1313,25 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 }
 
 // importICal parses raw iCal data and persists it to the local database via
-// persistImported, the same path auto-resolve (ConflictServerWins) uses to
-// accept the server version. Used by manual conflict resolution so the local
+// persistImported. It is the shared accept-the-server-version path used both by
+// auto-resolve (ConflictServerWins) and manual conflict resolution, so the local
 // row actually reflects the server data instead of the divergent local copy.
-func (e *Engine) importICal(ctx context.Context, calendarID int64, data string) error {
+//
+// imported reports whether the payload carried at least one VEVENT/VTODO/
+// VJOURNAL component. ImportFile returns no error for empty or component-less
+// input, so callers that must not accept the server version without applying it
+// (e.g. clearing the dirty flag) check imported to avoid silently stamping the
+// server ETag onto an unchanged local row.
+func (e *Engine) importICal(ctx context.Context, calendarID int64, data string) (imported bool, err error) {
 	importResult, err := icalPkg.ImportFile(strings.NewReader(data))
 	if err != nil {
-		return fmt.Errorf("import ical: %w", err)
+		return false, fmt.Errorf("import ical: %w", err)
 	}
-	return e.persistImported(ctx, calendarID, importResult)
+	if err := e.persistImported(ctx, calendarID, importResult); err != nil {
+		return false, err
+	}
+	imported = len(importResult.Events) > 0 || len(importResult.Todos) > 0 || len(importResult.Journals) > 0
+	return imported, nil
 }
 
 func parseICalData(data []byte) (*ical.Calendar, error) {
