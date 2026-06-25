@@ -191,16 +191,35 @@ func TestService_ResolveConflict_InvalidPick(t *testing.T) {
 	}
 }
 
+// TestService_ResolveConflict_Server is the regression test for issue #67:
+// resolving a conflict to "server" must import the recorded server iCal into
+// the local row (so the local view reflects the server), then clear the dirty
+// flag with the server ETag. Before the fix the local row kept its divergent
+// local copy while the ETag claimed it matched the server.
 func TestService_ResolveConflict_Server(t *testing.T) {
-	svc, q := newTestService(t)
+	svc, db, q := newTestServiceWithDB(t)
 	ctx := context.Background()
 
 	cals, _ := q.ListCalendars(ctx)
 	calID := cals[0].ID
 
+	const uid = "resolve-server-uid"
+	events := event.NewService(db, q)
+
+	// Seed the local row with the divergent LOCAL version.
+	if _, err := events.UpsertByUID(ctx, event.UpsertParams{
+		UID:        uid,
+		CalendarID: calID,
+		Title:      "Local Title",
+		StartTime:  time.Date(2026, 4, 3, 10, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 3, 11, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("seed local event: %v", err)
+	}
+
 	err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
 		CalendarID:   calID,
-		Uid:          "resolve-server-uid",
+		Uid:          uid,
 		OwnerType:    "event",
 		RemoteUrl:    "https://example.com/cal/resolve-server-uid.ics",
 		Etag:         "etag-before",
@@ -211,13 +230,25 @@ func TestService_ResolveConflict_Server(t *testing.T) {
 		t.Fatalf("UpsertSyncResource: %v", err)
 	}
 
+	// The server version differs from the local row: it carries "Server Title".
+	serverIcal := "BEGIN:VCALENDAR\r\n" +
+		"VERSION:2.0\r\n" +
+		"PRODID:-//chroncal//test//EN\r\n" +
+		"BEGIN:VEVENT\r\n" +
+		"UID:" + uid + "\r\n" +
+		"DTSTART:20260403T120000Z\r\n" +
+		"DTEND:20260403T130000Z\r\n" +
+		"SUMMARY:Server Title\r\n" +
+		"END:VEVENT\r\n" +
+		"END:VCALENDAR\r\n"
+
 	err = q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 		CalendarID: calID,
 		OwnerType:  "event",
 		OwnerID:    1,
-		Uid:        "resolve-server-uid",
+		Uid:        uid,
 		LocalIcal:  "local",
-		ServerIcal: "server",
+		ServerIcal: serverIcal,
 		ServerEtag: "etag-456",
 	})
 	if err != nil {
@@ -236,9 +267,18 @@ func TestService_ResolveConflict_Server(t *testing.T) {
 		t.Errorf("expected 0 conflicts after resolve, got %d", len(remaining))
 	}
 
+	// The local row must now reflect the SERVER version.
+	evt, err := events.GetByUID(ctx, uid)
+	if err != nil {
+		t.Fatalf("GetByUID: %v", err)
+	}
+	if evt.Title != "Server Title" {
+		t.Fatalf("local Title = %q, want %q (server data not imported)", evt.Title, "Server Title")
+	}
+
 	res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{
 		CalendarID: calID,
-		Uid:        "resolve-server-uid",
+		Uid:        uid,
 	})
 	if err != nil {
 		t.Fatalf("GetSyncResource: %v", err)
