@@ -77,18 +77,36 @@ func isAlarmAlreadyClaimed(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
 }
 
-// markAndFireEventAlarm claims a due event alarm and, only on a successful
-// claim, dispatches its notification. The claim is the INSERT performed by
-// MarkFired (or the refire of an already-owned snoozed state): firing is
-// gated on it so two overlapping checkers cannot both notify for the same
-// alarm. A lost claim race (the (alarm_id, trigger_at) UNIQUE constraint)
-// is treated as "someone else fired it" — no notification, no error.
+// fireResult reports the outcome of a mark-and-fire attempt. The three
+// outcomes are mutually distinguishable so callers never record a false
+// "fired" entry:
 //
-// Genuine marking errors are reported to stderr and returned (the daemon's
-// failure breaker counts them — a mark failure means the alarm will re-fire
-// next tick); the returned state ID is 0 when marking failed. The last
-// return value is the notification delivery error, if any.
-func markAndFireEventAlarm(ctx context.Context, a *app.App, da alarm.DueAlarm, policy alarmExecutionPolicy) (int64, error, error) {
+//   - Fired == true: the alarm was claimed and the notification dispatched
+//     (FireErr may still report a delivery failure). StateID is the claimed row.
+//   - Fired == false, MarkErr == nil: the claim was lost to a concurrent
+//     checker (benign UNIQUE-constraint race) — nothing was dispatched, and
+//     callers must emit no record for it.
+//   - MarkErr != nil: a genuine marking failure — the daemon's failure breaker
+//     counts it, and the alarm re-fires next tick.
+type fireResult struct {
+	StateID int64
+	Fired   bool
+	MarkErr error
+	FireErr error
+}
+
+// markAndFireEventAlarm claims a due event alarm and, only on a successful
+// claim, dispatches its notification. For a fresh fire (StateID == 0) the claim
+// is the INSERT performed by MarkFired, guarded by the (alarm_id, trigger_at)
+// UNIQUE index: when two checkers overlap, both observe "no state" and both try
+// to insert, but only one wins. The loser's UNIQUE-constraint error is reported
+// as a non-fired, non-error result so callers suppress output for it.
+//
+// Note: the refire path (StateID != 0, an expired-snoozed alarm) uses MarkRefired,
+// an UPDATE-by-id with no claim semantics, so two overlapping checkers can still
+// both refire one snoozed alarm. That is a separate, pre-existing gap tracked
+// outside this change; the dedup here covers only the fresh-fire INSERT path.
+func markAndFireEventAlarm(ctx context.Context, a *app.App, da alarm.DueAlarm, policy alarmExecutionPolicy) fireResult {
 	stateID := da.StateID
 	var markErr error
 	op := "mark-fired"
@@ -103,10 +121,10 @@ func markAndFireEventAlarm(ctx context.Context, a *app.App, da alarm.DueAlarm, p
 	}
 	if markErr != nil {
 		if isAlarmAlreadyClaimed(markErr) {
-			return 0, nil, nil // another checker already fired this alarm
+			return fireResult{} // another checker already fired this alarm
 		}
 		fmt.Fprintf(os.Stderr, "chroncal: %s error: event=%q: %v\n", op, safeText(da.Event.Title), markErr)
-		return stateID, markErr, nil
+		return fireResult{StateID: stateID, MarkErr: markErr}
 	}
 
 	fireErr := fireAlarmFn(da, policy)
@@ -114,11 +132,11 @@ func markAndFireEventAlarm(ctx context.Context, a *app.App, da alarm.DueAlarm, p
 		fmt.Fprintf(os.Stderr, "chroncal: alarm error: %s (event=%q action=%s): %v\n",
 			da.TriggerAt.Local().Format("15:04"), safeText(da.Event.Title), da.Alarm.Action, fireErr)
 	}
-	return stateID, markErr, fireErr
+	return fireResult{StateID: stateID, Fired: true, FireErr: fireErr}
 }
 
 // markAndFireTodoAlarm is the todo counterpart of markAndFireEventAlarm.
-func markAndFireTodoAlarm(ctx context.Context, a *app.App, tda alarm.TodoDueAlarm, policy alarmExecutionPolicy) (int64, error, error) {
+func markAndFireTodoAlarm(ctx context.Context, a *app.App, tda alarm.TodoDueAlarm, policy alarmExecutionPolicy) fireResult {
 	stateID := tda.StateID
 	var markErr error
 	op := "mark-fired"
@@ -133,10 +151,10 @@ func markAndFireTodoAlarm(ctx context.Context, a *app.App, tda alarm.TodoDueAlar
 	}
 	if markErr != nil {
 		if isAlarmAlreadyClaimed(markErr) {
-			return 0, nil, nil // another checker already fired this alarm
+			return fireResult{} // another checker already fired this alarm
 		}
 		fmt.Fprintf(os.Stderr, "chroncal: %s error: todo=%q: %v\n", op, safeText(tda.Todo.Summary), markErr)
-		return stateID, markErr, nil
+		return fireResult{StateID: stateID, MarkErr: markErr}
 	}
 
 	fireErr := fireAlarmFn(todoDueAlarmToDueAlarm(tda), policy)
@@ -144,7 +162,7 @@ func markAndFireTodoAlarm(ctx context.Context, a *app.App, tda alarm.TodoDueAlar
 		fmt.Fprintf(os.Stderr, "chroncal: todo alarm error: %s (todo=%q action=%s): %v\n",
 			tda.TriggerAt.Local().Format("15:04"), safeText(tda.Todo.Summary), tda.Alarm.Action, fireErr)
 	}
-	return stateID, markErr, fireErr
+	return fireResult{StateID: stateID, Fired: true, FireErr: fireErr}
 }
 
 func alarmCmd() *cobra.Command {
@@ -232,8 +250,17 @@ and exits 0.`,
 	return cmd
 }
 
+// afterCheckForTest, when non-nil, runs once after Check returns the due set
+// but before any alarm is claimed. It is a test seam for deterministically
+// interleaving a second checker into the Check-then-claim window so the
+// lost-claim suppression path can be exercised end-to-end. nil in production.
+var afterCheckForTest func()
+
 func runAlarmCheck(ctx context.Context, a *app.App, w io.Writer, now time.Time, policy alarmExecutionPolicy) error {
 	due, todoDue, err := a.Alarms.Check(ctx, now)
+	if afterCheckForTest != nil {
+		afterCheckForTest()
+	}
 	if err != nil {
 		return fmt.Errorf("check alarms: %w", err)
 	}
@@ -247,65 +274,54 @@ func runAlarmCheck(ctx context.Context, a *app.App, w io.Writer, now time.Time, 
 
 	var results []map[string]any
 	for _, da := range due {
-		stateID, _, fireErr := markAndFireEventAlarm(ctx, a, da, policy)
-		if fireErr != nil {
-			if outputFmt != "text" {
-				results = append(results, map[string]any{
-					"event_id":   da.Event.ID,
-					"event":      da.Event.Title,
-					"alarm_id":   da.Alarm.ID,
-					"state_id":   stateID,
-					"action":     da.Alarm.Action,
-					"trigger_at": da.TriggerAt.UTC().Format(time.RFC3339),
-					"status":     fmt.Sprintf("error: %v", fireErr),
-				})
-			}
+		res := markAndFireEventAlarm(ctx, a, da, policy)
+		if !res.Fired {
+			// Lost claim race or genuine mark failure: no notification was
+			// dispatched, so emit no record (a false "fired" entry would
+			// break scripts consuming -o json).
 			continue
 		}
 
 		if outputFmt != "text" {
+			status := "fired"
+			if res.FireErr != nil {
+				status = fmt.Sprintf("error: %v", res.FireErr)
+			}
 			results = append(results, map[string]any{
 				"event_id":   da.Event.ID,
 				"event":      da.Event.Title,
 				"alarm_id":   da.Alarm.ID,
-				"state_id":   stateID,
+				"state_id":   res.StateID,
 				"action":     da.Alarm.Action,
 				"trigger_at": da.TriggerAt.UTC().Format(time.RFC3339),
-				"status":     "fired",
+				"status":     status,
 			})
-		} else {
+		} else if res.FireErr == nil {
 			writeAlarmCheckLine(w, da.TriggerAt, da.Alarm.Action, da.Event.Title, false)
 		}
 	}
 
 	for _, tda := range todoDue {
-		stateID, _, fireErr := markAndFireTodoAlarm(ctx, a, tda, policy)
-		if fireErr != nil {
-			if outputFmt != "text" {
-				results = append(results, map[string]any{
-					"todo_id":    tda.Todo.ID,
-					"todo":       tda.Todo.Summary,
-					"alarm_id":   tda.Alarm.ID,
-					"state_id":   stateID,
-					"action":     tda.Alarm.Action,
-					"trigger_at": tda.TriggerAt.UTC().Format(time.RFC3339),
-					"status":     fmt.Sprintf("error: %v", fireErr),
-				})
-			}
+		res := markAndFireTodoAlarm(ctx, a, tda, policy)
+		if !res.Fired {
 			continue
 		}
 
 		if outputFmt != "text" {
+			status := "fired"
+			if res.FireErr != nil {
+				status = fmt.Sprintf("error: %v", res.FireErr)
+			}
 			results = append(results, map[string]any{
 				"todo_id":    tda.Todo.ID,
 				"todo":       tda.Todo.Summary,
 				"alarm_id":   tda.Alarm.ID,
-				"state_id":   stateID,
+				"state_id":   res.StateID,
 				"action":     tda.Alarm.Action,
 				"trigger_at": tda.TriggerAt.UTC().Format(time.RFC3339),
-				"status":     "fired",
+				"status":     status,
 			})
-		} else {
+		} else if res.FireErr == nil {
 			writeAlarmCheckLine(w, tda.TriggerAt, tda.Alarm.Action, tda.Todo.Summary, true)
 		}
 	}
@@ -756,21 +772,21 @@ See "chroncal alarm check --help" for notification types and SMTP configuration.
 				}
 				var dbErr error
 				for _, da := range due {
-					_, markErr, fireErr := markAndFireEventAlarm(ctx, a, da, policy)
-					if markErr != nil {
-						dbErr = markErr
+					res := markAndFireEventAlarm(ctx, a, da, policy)
+					if res.MarkErr != nil {
+						dbErr = res.MarkErr
 					}
-					if fireErr != nil {
+					if !res.Fired || res.FireErr != nil {
 						continue
 					}
 					writeAlarmCheckLine(w, da.TriggerAt, da.Alarm.Action, da.Event.Title, false)
 				}
 				for _, tda := range todoDue {
-					_, markErr, fireErr := markAndFireTodoAlarm(ctx, a, tda, policy)
-					if markErr != nil {
-						dbErr = markErr
+					res := markAndFireTodoAlarm(ctx, a, tda, policy)
+					if res.MarkErr != nil {
+						dbErr = res.MarkErr
 					}
-					if fireErr != nil {
+					if !res.Fired || res.FireErr != nil {
 						continue
 					}
 					writeAlarmCheckLine(w, tda.TriggerAt, tda.Alarm.Action, tda.Todo.Summary, true)
