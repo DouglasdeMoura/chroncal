@@ -148,8 +148,12 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 			return fmt.Errorf("clear dirty: %w", err)
 		}
 	case "local":
-		// Mark the resource as dirty so next sync pushes local version
-		if err := s.q.MarkSyncResourceDirty(ctx, storage.MarkSyncResourceDirtyParams{
+		// Mark the resource as dirty so the next sync pushes the local
+		// version, and clear the stored etag. The stored etag is the stale
+		// value that already failed If-Match; reusing it would re-trigger
+		// HTTP 412 forever. Emptying it makes the next push an unconditional
+		// (blind) PUT, so "local wins" actually overwrites the server.
+		if err := s.q.MarkSyncResourceDirtyClearEtag(ctx, storage.MarkSyncResourceDirtyClearEtagParams{
 			CalendarID: conflict.CalendarID,
 			Uid:        conflict.Uid,
 		}); err != nil {
