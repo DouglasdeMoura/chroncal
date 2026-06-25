@@ -499,9 +499,20 @@ func (s *Service) DeleteInstance(ctx context.Context, uid string, instanceTime t
 // any overrides at or after the cutoff, and records the pre-truncation
 // RRULE in event_truncate_deletes so the trash view can restore it atomically.
 func (s *Service) DeleteFromInstance(ctx context.Context, uid string, instanceTime time.Time) error {
+	_, err := s.deleteFromInstance(ctx, uid, instanceTime)
+	return err
+}
+
+// deleteFromInstance performs the truncation and returns the master's
+// updated_at as written by this operation, read back inside the same
+// transaction. Returning the in-tx value (rather than a post-commit read)
+// closes a TOCTOU window: a concurrent writer editing the master after our
+// commit but before a separate read would otherwise have its updated_at
+// captured as the undo baseline, letting RestoreUndo clobber that edit.
+func (s *Service) deleteFromInstance(ctx context.Context, uid string, instanceTime time.Time) (string, error) {
 	master, err := s.q.GetEventByUID(ctx, uid)
 	if err != nil {
-		return fmt.Errorf("get master: %w", err)
+		return "", fmt.Errorf("get master: %w", err)
 	}
 
 	prevRRule := storage.NullableToString(master.RecurrenceRule)
@@ -510,7 +521,7 @@ func (s *Service) DeleteFromInstance(ctx context.Context, uid string, instanceTi
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return "", fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
@@ -519,7 +530,7 @@ func (s *Service) DeleteFromInstance(ctx context.Context, uid string, instanceTi
 		RecurrenceRule: storage.StringToNullable(rule),
 		ID:             master.ID,
 	}); err != nil {
-		return fmt.Errorf("update rrule: %w", err)
+		return "", fmt.Errorf("update rrule: %w", err)
 	}
 
 	cutoff := instanceTime.UTC().Format(time.RFC3339)
@@ -527,7 +538,7 @@ func (s *Service) DeleteFromInstance(ctx context.Context, uid string, instanceTi
 		Uid:          uid,
 		RecurrenceID: cutoff,
 	}); err != nil {
-		return fmt.Errorf("soft-delete future overrides: %w", err)
+		return "", fmt.Errorf("soft-delete future overrides: %w", err)
 	}
 
 	if err := qtx.RecordEventTruncateDelete(ctx, storage.RecordEventTruncateDeleteParams{
@@ -536,14 +547,23 @@ func (s *Service) DeleteFromInstance(ctx context.Context, uid string, instanceTi
 		CutoffTime:    cutoff,
 		PreviousRrule: prevRRule,
 	}); err != nil {
-		return fmt.Errorf("record truncate: %w", err)
+		return "", fmt.Errorf("record truncate: %w", err)
 	}
 
+	// Read the master's updated_at back inside the transaction so the value we
+	// return reflects exactly this truncation's write, with no chance of an
+	// interleaved external edit in between.
+	truncated, err := qtx.GetEventByUID(ctx, uid)
+	if err != nil {
+		return "", fmt.Errorf("read back master: %w", err)
+	}
+	postUpdated := truncated.UpdatedAt
+
 	if err := tx.Commit(); err != nil {
-		return err
+		return "", err
 	}
 	_ = storage.MarkResourceDirty(ctx, s.db, master.CalendarID, uid, "event")
-	return nil
+	return postUpdated, nil
 }
 
 // UpdateInstance creates or updates a per-occurrence override of a recurring

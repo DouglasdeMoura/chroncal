@@ -103,20 +103,18 @@ func (s *Service) DeleteFromInstanceWithUndo(ctx context.Context, uid string, in
 	}
 	prevRRule := storage.NullableToString(master.RecurrenceRule)
 
-	if err := s.DeleteFromInstance(ctx, uid, instanceTime); err != nil {
+	// deleteFromInstance bumps the master's updated_at (UpdateEventRecurrenceRule
+	// sets updated_at=now) and returns that post-truncation value, read back
+	// inside the truncation transaction. The stale-master guard in
+	// restoreFromInstance must expect this value, not the pre-truncation one —
+	// otherwise the truncation's own write looks like a concurrent external edit
+	// and Undo always fails. Capturing it in-tx (rather than via a separate read
+	// after commit) also prevents a concurrent external edit landing between
+	// commit and read from being mistaken for the baseline. Only edits that
+	// advance updated_at *past* this point trip the guard.
+	postUpdated, err := s.deleteFromInstance(ctx, uid, instanceTime)
+	if err != nil {
 		return UndoMeta{}, err
-	}
-
-	// DeleteFromInstance bumps the master's updated_at (UpdateEventRecurrenceRule
-	// sets updated_at=now). The stale-master guard in restoreFromInstance must
-	// expect that post-truncation value, not the pre-truncation one — otherwise
-	// the truncation's own write looks like a concurrent external edit and Undo
-	// always fails. Re-read the master to capture the timestamp the guard should
-	// legitimately tolerate; only edits that advance updated_at *past* this point
-	// (i.e. genuine concurrent writes) trip the guard.
-	postUpdated := master.UpdatedAt
-	if truncated, err := s.q.GetEventByUID(ctx, uid); err == nil {
-		postUpdated = truncated.UpdatedAt
 	}
 
 	return UndoMeta{
