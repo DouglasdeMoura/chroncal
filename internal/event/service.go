@@ -259,7 +259,15 @@ func (s *Service) markDirtyByID(ctx context.Context, eventID int64) {
 
 func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
 	p.applyDefaults()
-	r, err := s.q.CreateEvent(ctx, storage.CreateEventParams{
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Event{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+
+	r, err := qtx.CreateEvent(ctx, storage.CreateEventParams{
 		Uid:            uuid.New().String(),
 		CalendarID:     p.CalendarID,
 		Title:          p.Title,
@@ -289,9 +297,12 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
 	}
 	e := fromStorage(r)
 	if cats := ParseCategoryList(p.Categories); len(cats) > 0 {
-		if err := s.ReplaceCategories(ctx, e.ID, cats); err != nil {
+		if err := replaceCategoriesTx(ctx, qtx, e.ID, cats); err != nil {
 			return Event{}, fmt.Errorf("replace categories: %w", err)
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return Event{}, fmt.Errorf("commit create event: %w", err)
 	}
 	e.Categories = p.Categories
 	_ = storage.MarkResourceDirty(ctx, s.db, e.CalendarID, e.UID, "event")
@@ -300,7 +311,15 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
 
 func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, error) {
 	p.applyDefaults()
-	r, err := s.q.UpdateEvent(ctx, storage.UpdateEventParams{
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Event{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+
+	r, err := qtx.UpdateEvent(ctx, storage.UpdateEventParams{
 		ID:             id,
 		Title:          p.Title,
 		Description:    storage.StringToNullable(p.Description),
@@ -327,8 +346,11 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, 
 		return Event{}, err
 	}
 	e := fromStorage(r)
-	if err := s.ReplaceCategories(ctx, e.ID, ParseCategoryList(p.Categories)); err != nil {
+	if err := replaceCategoriesTx(ctx, qtx, e.ID, ParseCategoryList(p.Categories)); err != nil {
 		return Event{}, fmt.Errorf("replace categories: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return Event{}, fmt.Errorf("commit update event: %w", err)
 	}
 	e.Categories = p.Categories
 	_ = storage.MarkResourceDirty(ctx, s.db, e.CalendarID, e.UID, "event")
@@ -1287,7 +1309,19 @@ func (s *Service) ReplaceCategories(ctx context.Context, eventID int64, categori
 	}
 	defer tx.Rollback()
 
-	qtx := s.q.WithTx(tx)
+	if err := replaceCategoriesTx(ctx, s.q.WithTx(tx), eventID, categories); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit replace categories: %w", err)
+	}
+	return nil
+}
+
+// replaceCategoriesTx replaces an event's categories using a tx-bound Queries.
+// It does not open or commit a transaction, so callers can compose it with
+// other writes inside a single transaction.
+func replaceCategoriesTx(ctx context.Context, qtx *storage.Queries, eventID int64, categories []string) error {
 	if err := qtx.DeleteCategoriesByEventID(ctx, eventID); err != nil {
 		return fmt.Errorf("delete categories: %w", err)
 	}
@@ -1299,9 +1333,6 @@ func (s *Service) ReplaceCategories(ctx context.Context, eventID int64, categori
 		if err != nil {
 			return fmt.Errorf("create category: %w", err)
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit replace categories: %w", err)
 	}
 	return nil
 }
