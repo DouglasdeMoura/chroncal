@@ -91,7 +91,9 @@ func isAlarmAlreadyClaimed(err error) bool {
 func markAndFireEventAlarm(ctx context.Context, a *app.App, da alarm.DueAlarm, policy alarmExecutionPolicy) (int64, error, error) {
 	stateID := da.StateID
 	var markErr error
+	op := "mark-fired"
 	if stateID != 0 {
+		op = "mark-refired"
 		markErr = a.Alarms.MarkRefired(ctx, stateID)
 	} else {
 		var newID int64
@@ -103,7 +105,7 @@ func markAndFireEventAlarm(ctx context.Context, a *app.App, da alarm.DueAlarm, p
 		if isAlarmAlreadyClaimed(markErr) {
 			return 0, nil, nil // another checker already fired this alarm
 		}
-		fmt.Fprintf(os.Stderr, "chroncal: mark-fired error: event=%q: %v\n", safeText(da.Event.Title), markErr)
+		fmt.Fprintf(os.Stderr, "chroncal: %s error: event=%q: %v\n", op, safeText(da.Event.Title), markErr)
 		return stateID, markErr, nil
 	}
 
@@ -119,7 +121,9 @@ func markAndFireEventAlarm(ctx context.Context, a *app.App, da alarm.DueAlarm, p
 func markAndFireTodoAlarm(ctx context.Context, a *app.App, tda alarm.TodoDueAlarm, policy alarmExecutionPolicy) (int64, error, error) {
 	stateID := tda.StateID
 	var markErr error
+	op := "mark-fired"
 	if stateID != 0 {
+		op = "mark-refired"
 		markErr = a.Alarms.MarkTodoRefired(ctx, stateID)
 	} else {
 		var newID int64
@@ -131,7 +135,7 @@ func markAndFireTodoAlarm(ctx context.Context, a *app.App, tda alarm.TodoDueAlar
 		if isAlarmAlreadyClaimed(markErr) {
 			return 0, nil, nil // another checker already fired this alarm
 		}
-		fmt.Fprintf(os.Stderr, "chroncal: mark-fired error: todo=%q: %v\n", safeText(tda.Todo.Summary), markErr)
+		fmt.Fprintf(os.Stderr, "chroncal: %s error: todo=%q: %v\n", op, safeText(tda.Todo.Summary), markErr)
 		return stateID, markErr, nil
 	}
 
