@@ -38,6 +38,12 @@ func parseStateID(s string) (int64, bool, error) {
 	return id, false, nil
 }
 
+// fireAlarmFn is the notification dispatcher used by the mark-and-fire
+// helpers. It is a package var so tests can observe whether a notification
+// was actually dispatched (the duplicate-claim regression hinges on it NOT
+// being called when a competing checker already claimed the alarm).
+var fireAlarmFn = fireAlarm
+
 // fireAlarm dispatches the notification for a due alarm.
 // EMAIL and AUDIO fall back to DISPLAY on failure.
 //
@@ -61,28 +67,47 @@ func fireAlarm(da alarm.DueAlarm, policy alarmExecutionPolicy) error {
 	}
 }
 
-// markAndFireEventAlarm records the firing state for a due event alarm and
-// dispatches its notification. Marking errors are reported to stderr and
-// returned (the daemon's failure breaker counts them — a mark failure means
-// the alarm will re-fire next tick); the returned state ID is 0 when marking
-// failed. The last return value is the notification delivery error, if any.
+// isAlarmAlreadyClaimed reports whether err is the SQLite UNIQUE-constraint
+// violation on the (alarm_id, trigger_at) index. That index lets MarkFired
+// act as an atomic claim: when two checkers overlap, both observe "no state"
+// and both try to insert, but only one INSERT wins — the loser gets this
+// error. It is a benign race, not a database fault, so callers skip firing
+// without counting it against the daemon's failure breaker.
+func isAlarmAlreadyClaimed(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
+}
+
+// markAndFireEventAlarm claims a due event alarm and, only on a successful
+// claim, dispatches its notification. The claim is the INSERT performed by
+// MarkFired (or the refire of an already-owned snoozed state): firing is
+// gated on it so two overlapping checkers cannot both notify for the same
+// alarm. A lost claim race (the (alarm_id, trigger_at) UNIQUE constraint)
+// is treated as "someone else fired it" — no notification, no error.
+//
+// Genuine marking errors are reported to stderr and returned (the daemon's
+// failure breaker counts them — a mark failure means the alarm will re-fire
+// next tick); the returned state ID is 0 when marking failed. The last
+// return value is the notification delivery error, if any.
 func markAndFireEventAlarm(ctx context.Context, a *app.App, da alarm.DueAlarm, policy alarmExecutionPolicy) (int64, error, error) {
 	stateID := da.StateID
 	var markErr error
 	if stateID != 0 {
-		if markErr = a.Alarms.MarkRefired(ctx, stateID); markErr != nil {
-			fmt.Fprintf(os.Stderr, "chroncal: mark-refired error: event=%q: %v\n", safeText(da.Event.Title), markErr)
-		}
+		markErr = a.Alarms.MarkRefired(ctx, stateID)
 	} else {
 		var newID int64
-		if newID, markErr = a.Alarms.MarkFired(ctx, da); markErr != nil {
-			fmt.Fprintf(os.Stderr, "chroncal: mark-fired error: event=%q: %v\n", safeText(da.Event.Title), markErr)
-		} else {
+		if newID, markErr = a.Alarms.MarkFired(ctx, da); markErr == nil {
 			stateID = newID
 		}
 	}
+	if markErr != nil {
+		if isAlarmAlreadyClaimed(markErr) {
+			return 0, nil, nil // another checker already fired this alarm
+		}
+		fmt.Fprintf(os.Stderr, "chroncal: mark-fired error: event=%q: %v\n", safeText(da.Event.Title), markErr)
+		return stateID, markErr, nil
+	}
 
-	fireErr := fireAlarm(da, policy)
+	fireErr := fireAlarmFn(da, policy)
 	if fireErr != nil {
 		fmt.Fprintf(os.Stderr, "chroncal: alarm error: %s (event=%q action=%s): %v\n",
 			da.TriggerAt.Local().Format("15:04"), safeText(da.Event.Title), da.Alarm.Action, fireErr)
@@ -95,19 +120,22 @@ func markAndFireTodoAlarm(ctx context.Context, a *app.App, tda alarm.TodoDueAlar
 	stateID := tda.StateID
 	var markErr error
 	if stateID != 0 {
-		if markErr = a.Alarms.MarkTodoRefired(ctx, stateID); markErr != nil {
-			fmt.Fprintf(os.Stderr, "chroncal: mark-refired error: todo=%q: %v\n", safeText(tda.Todo.Summary), markErr)
-		}
+		markErr = a.Alarms.MarkTodoRefired(ctx, stateID)
 	} else {
 		var newID int64
-		if newID, markErr = a.Alarms.MarkTodoFired(ctx, tda); markErr != nil {
-			fmt.Fprintf(os.Stderr, "chroncal: mark-fired error: todo=%q: %v\n", safeText(tda.Todo.Summary), markErr)
-		} else {
+		if newID, markErr = a.Alarms.MarkTodoFired(ctx, tda); markErr == nil {
 			stateID = newID
 		}
 	}
+	if markErr != nil {
+		if isAlarmAlreadyClaimed(markErr) {
+			return 0, nil, nil // another checker already fired this alarm
+		}
+		fmt.Fprintf(os.Stderr, "chroncal: mark-fired error: todo=%q: %v\n", safeText(tda.Todo.Summary), markErr)
+		return stateID, markErr, nil
+	}
 
-	fireErr := fireAlarm(todoDueAlarmToDueAlarm(tda), policy)
+	fireErr := fireAlarmFn(todoDueAlarmToDueAlarm(tda), policy)
 	if fireErr != nil {
 		fmt.Fprintf(os.Stderr, "chroncal: todo alarm error: %s (todo=%q action=%s): %v\n",
 			tda.TriggerAt.Local().Format("15:04"), safeText(tda.Todo.Summary), tda.Alarm.Action, fireErr)
