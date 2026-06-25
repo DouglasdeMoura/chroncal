@@ -12,6 +12,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/textsafe"
+	"github.com/douglasdemoura/chroncal/internal/timeutil"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
@@ -264,7 +265,7 @@ func parseListDate(stored string) string {
 	if stored == "" {
 		return ""
 	}
-	if _, err := time.Parse("2006-01-02", stored); err == nil {
+	if timeutil.IsDateOnly(stored) {
 		return stored
 	}
 	if t, err := time.Parse(time.RFC3339, stored); err == nil {
@@ -286,7 +287,8 @@ func formatTodoDate(date string) string {
 	if date == "" {
 		return ""
 	}
-	if d, err := time.Parse("2006-01-02", date); err == nil {
+	if timeutil.IsDateOnly(date) {
+		d, _ := time.Parse("2006-01-02", date)
 		return d.Format("Mon, Jan 2 2006")
 	}
 	if d, err := time.Parse(time.RFC3339, date); err == nil {
