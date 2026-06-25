@@ -1319,6 +1319,18 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 	return nil
 }
 
+// importICal parses raw iCal data and persists it to the local database via
+// persistImported, the same path auto-resolve (ConflictServerWins) uses to
+// accept the server version. Used by manual conflict resolution so the local
+// row actually reflects the server data instead of the divergent local copy.
+func (e *Engine) importICal(ctx context.Context, calendarID int64, data string) error {
+	importResult, err := icalPkg.ImportFile(strings.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("import ical: %w", err)
+	}
+	return e.persistImported(ctx, calendarID, importResult)
+}
+
 func parseICalData(data []byte) (*ical.Calendar, error) {
 	dec := ical.NewDecoder(bytes.NewReader(data))
 	return dec.Decode()

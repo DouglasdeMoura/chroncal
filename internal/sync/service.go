@@ -138,8 +138,14 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 
 	switch pick {
 	case "server":
-		// Server version is already the current local state after auto-resolve.
-		// Accept it by clearing the pending local push and storing the server ETag.
+		// Accept the server version: import the recorded server iCal into the
+		// local row so it reflects the server state, then clear the pending
+		// local push and store the server ETag. Without the import the local
+		// row keeps its divergent local copy while the ETag claims it matches
+		// the server, so a later local edit silently overwrites the server.
+		if err := s.engine.importICal(ctx, conflict.CalendarID, conflict.ServerIcal); err != nil {
+			return fmt.Errorf("import server version: %w", err)
+		}
 		if err := s.q.ClearSyncResourceDirty(ctx, storage.ClearSyncResourceDirtyParams{
 			CalendarID: conflict.CalendarID,
 			Uid:        conflict.Uid,
