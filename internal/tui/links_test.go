@@ -116,7 +116,7 @@ func TestIsGoogleAccountServer(t *testing.T) {
 func TestRenderLinkValue_AppliesRewriterToTargetNotVisibleText(t *testing.T) {
 	defaultMouseTracker = &mouseTracker{}
 	rw := googleAuthuserRewriter("me@example.com")
-	out := renderLinkValue("https://meet.google.com/abc", 80, rw)
+	out := renderLinkValue("https://meet.google.com/abc", 80, rw, true)
 
 	// OSC 8 target carries the rewritten URL so modifier-click in honoring
 	// terminals opens the right account.
@@ -138,7 +138,7 @@ func TestRenderLinkValue_KeepsExactTargetForTrailingSubDelimiter(t *testing.T) {
 	// sub-delimiter must keep that character in the click target — the prose
 	// trimURLTail behavior would wrongly drop it.
 	raw := "https://example.com/confirm!"
-	out := renderLinkValue(raw, 80, nil)
+	out := renderLinkValue(raw, 80, nil, true)
 
 	assert.Contains(t, out, "\x1b]8;;"+raw+"\x1b\\", "OSC 8 target must keep the trailing '!'")
 
@@ -152,7 +152,7 @@ func TestRenderLinkValue_WrapsNonHTTPScheme(t *testing.T) {
 	// zoommtg:// link, a mailto: URL). renderLinkValue wraps the whole value
 	// regardless of scheme rather than regressing to plain text.
 	raw := "zoommtg://zoom.us/join?confno=123"
-	out := renderLinkValue(raw, 80, nil)
+	out := renderLinkValue(raw, 80, nil, true)
 
 	assert.Contains(t, out, "\x1b]8;;"+raw+"\x1b\\", "non-http URI must still get an OSC 8 link")
 

@@ -305,12 +305,13 @@ func (m EventDialogModel) refresh() EventDialogModel {
 	w := m.detailWidth()
 	if ev, ok := m.selectedEvent(); ok {
 		cal := m.calendars[ev.CalendarID]
+		rw := eventMetaURLRewriter(cal)
 		rsvpLine := ""
 		if rsvp := m.rsvpActions(); len(rsvp) > 0 {
 			att, _ := m.userAttendee()
 			rsvpLine = m.renderRSVPLine(att, rsvp, w)
 		}
-		lines, _ := eventDetailLines(ev, cal, w, m.labelWidth(), rsvpLine)
+		lines, _ := eventDetailLines(ev, cal, w, m.labelWidth(), rsvpLine, rw)
 		m.shell = m.shell.SetDetailTitle(ev.Title).SetDetailLines(lines)
 	} else {
 		m.shell = m.shell.SetDetailTitle("").SetDetailLines(nil)
@@ -636,9 +637,10 @@ func (m EventDialogModel) hitRSVPBtn(x, y int) (int, tea.Cmd, bool) {
 		return 0, nil, false
 	}
 	cal := m.calendars[ev.CalendarID]
+	rw := eventMetaURLRewriter(cal)
 	att, _ := m.userAttendee()
 	rsvpLine := m.renderRSVPLine(att, rsvp, m.detailWidth())
-	_, rowIdx := eventDetailLines(ev, cal, m.detailWidth(), m.labelWidth(), rsvpLine)
+	_, rowIdx := eventDetailLines(ev, cal, m.detailWidth(), m.labelWidth(), rsvpLine, rw)
 	if rowIdx < 0 {
 		return 0, nil, false
 	}
@@ -718,10 +720,103 @@ func rsvpButtonLabel(baseLabel, rsvpStatus string) string {
 	return baseLabel
 }
 
+type eventMetaDetailLinesOptions struct {
+	labelStyle  lipgloss.Style
+	width       int
+	labelWidth  int
+	urlRewriter urlRewriter
+	// interactive enables mouse-zone markers on the linkified URL rows. Only
+	// set it on surfaces that MouseSweep their own output (the full event
+	// view). The list-pane and trash detail panes composite plain shell.View()
+	// output after the app's single MouseSweep, so their markers would never
+	// be stripped — they leave it false and emit OSC 8 links only.
+	interactive bool
+
+	calendar   CalendarInfo
+	location   string
+	conference string
+	url        string
+	status     string
+	tags       string
+	repeat     string
+	showAs     string
+	visibility string
+}
+
+// eventMetaURLRewriter returns a link rewriter for event metadata rows. It
+// rewrites supported Google URLs to include authuser when possible; otherwise
+// it returns an identity rewriter so URL fields are still clickable.
+func eventMetaURLRewriter(cal CalendarInfo) urlRewriter {
+	if isGoogleAccountServer(cal.AccountServerURL) {
+		if rw := googleAuthuserRewriter(cal.OwnerEmail); rw != nil {
+			return rw
+		}
+	}
+	return func(raw string) string { return raw }
+}
+
+// eventMetaDetailLines renders shared metadata rows used by list-pane detail,
+// full event view, and trash details.
+func eventMetaDetailLines(opts eventMetaDetailLinesOptions) []string {
+	lines := make([]string, 0, 9)
+	add := func(label, value string) {
+		if value == "" {
+			return
+		}
+		lines = append(lines, detailLine(opts.labelStyle, label, value, opts.labelWidth, opts.width))
+	}
+	// addLinkified renders a free-text field (Where) that may merely *contain*
+	// a URL. addURL renders a known URL-valued field (Conference, URL) whose
+	// whole value is a single URI, kept exact and scheme-agnostic. Both fall
+	// back to plain text when there is no rewriter and only emit mouse zones
+	// on interactive (swept) surfaces.
+	addLinkified := func(label, value string) {
+		if value == "" {
+			return
+		}
+		if opts.urlRewriter == nil {
+			add(label, value)
+			return
+		}
+		lines = append(lines, detailLinkifiedLine(opts.labelStyle, label, value, opts.labelWidth, opts.width, opts.urlRewriter, opts.interactive))
+	}
+	addURL := func(label, value string) {
+		if value == "" {
+			return
+		}
+		if opts.urlRewriter == nil {
+			add(label, value)
+			return
+		}
+		lines = append(lines, detailURLField(opts.labelStyle, label, value, opts.labelWidth, opts.width, opts.urlRewriter, opts.interactive))
+	}
+
+	if opts.calendar.Name != "" {
+		dot := "●"
+		if opts.calendar.Color != "" {
+			dot = lipgloss.NewStyle().Foreground(lipgloss.Color(opts.calendar.Color)).Render("●")
+		}
+		add("Calendar", dot+" "+opts.calendar.Name)
+	}
+
+	addLinkified("Where", opts.location)
+	addURL("Conference", opts.conference)
+	addURL("URL", opts.url)
+	if opts.status != "" {
+		add("Status", statusBadge(opts.status))
+	}
+	add("Tags", opts.tags)
+	add("Repeat", opts.repeat)
+	add("Show as", opts.showAs)
+	add("Visibility", opts.visibility)
+
+	return lines
+}
+
 // eventDetailLines returns detail lines and the index of the RSVP row (-1 if none).
 // The event title is pinned by the shell via SetDetailTitle, so callers must
 // not prepend it here — these lines scroll, the title does not.
-func eventDetailLines(ev event.Event, cal CalendarInfo, w, labelWidth int, rsvpLine string) ([]string, int) {
+func eventDetailLines(ev event.Event, cal CalendarInfo, w, labelWidth int, rsvpLine string, rw urlRewriter) ([]string, int) {
 	faint := lipgloss.NewStyle().Faint(true)
 
 	var lines []string
@@ -732,29 +827,18 @@ func eventDetailLines(ev event.Event, cal CalendarInfo, w, labelWidth int, rsvpL
 		lines = append(lines, detailLine(faint, "Duration", dur, labelWidth, w))
 	}
 
-	if cal.Name != "" {
-		dot := "●"
-		if cal.Color != "" {
-			dot = lipgloss.NewStyle().Foreground(lipgloss.Color(cal.Color)).Render("●")
-		}
-		lines = append(lines, detailLine(faint, "Calendar", dot+" "+cal.Name, labelWidth, w))
-	}
-
-	if ev.Location != "" {
-		lines = append(lines, detailLine(faint, "Where", ev.Location, labelWidth, w))
-	}
-	if ev.Status != "" {
-		lines = append(lines, detailLine(faint, "Status", statusBadge(ev.Status), labelWidth, w))
-	}
-	if ev.Categories != "" {
-		lines = append(lines, detailLine(faint, "Tags", ev.Categories, labelWidth, w))
-	}
-	if ev.URL != "" {
-		lines = append(lines, detailLine(faint, "URL", ev.URL, labelWidth, w))
-	}
-	if ev.ConferenceURI != "" {
-		lines = append(lines, detailLine(faint, "Conference", ev.ConferenceURI, labelWidth, w))
-	}
+	lines = append(lines, eventMetaDetailLines(eventMetaDetailLinesOptions{
+		labelStyle:  faint,
+		width:       w,
+		labelWidth:  labelWidth,
+		urlRewriter: rw,
+		calendar:    cal,
+		location:    ev.Location,
+		conference:  ev.ConferenceURI,
+		url:         ev.URL,
+		status:      ev.Status,
+		tags:        ev.Categories,
+	})...)
 	rsvpIdx := -1
 	if rsvpLine != "" {
 		rsvpIdx = len(lines)

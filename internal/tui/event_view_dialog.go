@@ -398,31 +398,28 @@ func (m EventViewDialogModel) handleMouse(msg tea.MouseClickMsg) (EventViewDialo
 // wraps the whole value as the click target — exact and scheme-agnostic, so
 // trailing sub-delimiters survive and non-http schemes (mailto:, zoommtg:)
 // still link. Use detailLinkifiedLine instead for free-text fields that merely
-// *contain* a URL.
-func detailURLField(labelStyle lipgloss.Style, label, value string, lw, w int, rw urlRewriter) string {
+// *contain* a URL. zones controls whether clickable mouse-zone markers are
+// emitted (only safe on surfaces that MouseSweep their output).
+func detailURLField(labelStyle lipgloss.Style, label, value string, lw, w int, rw urlRewriter, zones bool) string {
 	prefix, available := detailLabelPrefix(labelStyle, label, lw, w)
-	return prefix + renderLinkValue(value, available, rw)
+	return prefix + renderLinkValue(value, available, rw, zones)
 }
 
 // detailLinkifiedLine is detailLine for a free-text value that may contain a
 // URL somewhere inside it (e.g., "Room 4 — join at https://…") or be a bare
 // URL. renderLinkifiedValue makes each embedded URL clickable while keeping its
 // full address as the click target, so the rendering is correct whether the
-// value is plain text, a bare URL, or text with an embedded link.
-func detailLinkifiedLine(labelStyle lipgloss.Style, label, value string, lw, w int, rw urlRewriter) string {
+// value is plain text, a bare URL, or text with an embedded link. zones
+// controls whether clickable mouse-zone markers are emitted (only safe on
+// surfaces that MouseSweep their output).
+func detailLinkifiedLine(labelStyle lipgloss.Style, label, value string, lw, w int, rw urlRewriter, zones bool) string {
 	prefix, available := detailLabelPrefix(labelStyle, label, lw, w)
-	return prefix + renderLinkifiedValue(value, available, rw)
+	return prefix + renderLinkifiedValue(value, available, rw, zones)
 }
 
-// linkRewriter returns the URL rewriter to apply to clickable links in this
-// event. Currently produces a Google authuser hint when the calendar is
-// linked to a Google account and we know the user's email. Returns nil
-// otherwise so links open unchanged.
+// linkRewriter returns the metadata-row URL rewriter for this event.
 func (m EventViewDialogModel) linkRewriter() urlRewriter {
-	if !isGoogleAccountServer(m.calendar.AccountServerURL) {
-		return nil
-	}
-	return googleAuthuserRewriter(m.calendar.OwnerEmail)
+	return eventMetaURLRewriter(m.calendar)
 }
 
 func (m EventViewDialogModel) renderRSVPRow(w int) string {
@@ -546,44 +543,26 @@ func (m EventViewDialogModel) buildBodyLines(w int) []string {
 	if ev.Timezone != "" {
 		lines = append(lines, detailLine(faint, "Timezone", ev.Timezone, eventViewLabelWidth, w))
 	}
-	if rep := describeRecurrence(ev.RecurrenceRule); rep != "" {
-		lines = append(lines, detailLine(faint, "Repeat", rep, eventViewLabelWidth, w))
-	}
-
-	hasMeta := m.calendar.Name != "" || ev.Location != "" || ev.ConferenceURI != "" ||
-		ev.URL != "" || ev.Status != "" || ev.Categories != "" ||
-		ev.Transp != "" || ev.Class != ""
-	if hasMeta {
-		lines = append(lines, "")
-	}
-	if m.calendar.Name != "" {
-		dot := Glyphs["dot"]
-		if m.calendar.Color != "" {
-			dot = lipgloss.NewStyle().Foreground(lipgloss.Color(m.calendar.Color)).Render(Glyphs["dot"])
-		}
-		lines = append(lines, detailLine(faint, "Calendar", dot+" "+m.calendar.Name, eventViewLabelWidth, w))
-	}
 	rw := m.linkRewriter()
-	if ev.Location != "" {
-		lines = append(lines, detailLinkifiedLine(faint, "Where", ev.Location, eventViewLabelWidth, w, rw))
-	}
-	if ev.ConferenceURI != "" {
-		lines = append(lines, detailURLField(faint, "Conference", ev.ConferenceURI, eventViewLabelWidth, w, rw))
-	}
-	if ev.URL != "" {
-		lines = append(lines, detailURLField(faint, "URL", ev.URL, eventViewLabelWidth, w, rw))
-	}
-	if ev.Status != "" {
-		lines = append(lines, detailLine(faint, "Status", statusBadge(ev.Status), eventViewLabelWidth, w))
-	}
-	if ev.Categories != "" {
-		lines = append(lines, detailLine(faint, "Tags", ev.Categories, eventViewLabelWidth, w))
-	}
-	if v := formatShowAs(ev.Transp); v != "" {
-		lines = append(lines, detailLine(faint, "Show as", v, eventViewLabelWidth, w))
-	}
-	if v := formatVisibility(ev.Class); v != "" {
-		lines = append(lines, detailLine(faint, "Visibility", v, eventViewLabelWidth, w))
+	metaLines := eventMetaDetailLines(eventMetaDetailLinesOptions{
+		labelStyle:  faint,
+		width:       w,
+		labelWidth:  eventViewLabelWidth,
+		urlRewriter: rw,
+		interactive: true,
+		calendar:    m.calendar,
+		location:    ev.Location,
+		conference:  ev.ConferenceURI,
+		url:         ev.URL,
+		status:      ev.Status,
+		tags:        ev.Categories,
+		repeat:      describeRecurrence(ev.RecurrenceRule),
+		showAs:      formatShowAs(ev.Transp),
+		visibility:  formatVisibility(ev.Class),
+	})
+	if len(metaLines) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, metaLines...)
 	}
 
 	if rsvpLine := m.renderRSVPRow(w); rsvpLine != "" {
