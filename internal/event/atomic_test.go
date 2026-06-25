@@ -13,7 +13,7 @@ import (
 func countRows(t *testing.T, db *sql.DB, query string, args ...any) int {
 	t.Helper()
 	var n int
-	if err := db.QueryRow(query, args...).Scan(&n); err != nil {
+	if err := db.QueryRowContext(context.Background(), query, args...).Scan(&n); err != nil {
 		t.Fatalf("count query %q: %v", query, err)
 	}
 	return n
@@ -23,7 +23,7 @@ func countRows(t *testing.T, db *sql.DB, query string, args ...any) int {
 // child-write fails inside Create/Update, simulating a partial failure.
 func dropCategoriesTable(t *testing.T, db *sql.DB) {
 	t.Helper()
-	if _, err := db.Exec(`DROP TABLE event_categories`); err != nil {
+	if _, err := db.ExecContext(context.Background(), `DROP TABLE event_categories`); err != nil {
 		t.Fatalf("drop event_categories: %v", err)
 	}
 }
