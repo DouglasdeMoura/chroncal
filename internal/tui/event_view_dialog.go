@@ -393,20 +393,22 @@ func (m EventViewDialogModel) handleMouse(msg tea.MouseClickMsg) (EventViewDialo
 	return m, nil
 }
 
-// detailLinkLine is detailLine for values that should be rendered as a
-// clickable link. The visible URL text is sized to the available column
-// width while the OSC 8 target and mouse-zone payload stay the full URL —
-// or its rewriter output when the calendar has one (e.g., Google authuser).
-func detailLinkLine(labelStyle lipgloss.Style, label, url string, lw, w int, rw urlRewriter) string {
+// detailURLField is detailLine for a known URL-valued field (ev.URL,
+// ev.ConferenceURI) whose entire value is a single URI. renderLinkValue
+// wraps the whole value as the click target — exact and scheme-agnostic, so
+// trailing sub-delimiters survive and non-http schemes (mailto:, zoommtg:)
+// still link. Use detailLinkifiedLine instead for free-text fields that merely
+// *contain* a URL.
+func detailURLField(labelStyle lipgloss.Style, label, value string, lw, w int, rw urlRewriter) string {
 	prefix, available := detailLabelPrefix(labelStyle, label, lw, w)
-	return prefix + renderLinkValue(url, available, rw)
+	return prefix + renderLinkValue(value, available, rw)
 }
 
 // detailLinkifiedLine is detailLine for a free-text value that may contain a
 // URL somewhere inside it (e.g., "Room 4 — join at https://…") or be a bare
-// URL. renderLinkifiedValue makes each URL clickable while keeping its full
-// address as the click target, so the rendering is correct whether the value
-// is plain text, a bare URL, or text with an embedded link.
+// URL. renderLinkifiedValue makes each embedded URL clickable while keeping its
+// full address as the click target, so the rendering is correct whether the
+// value is plain text, a bare URL, or text with an embedded link.
 func detailLinkifiedLine(labelStyle lipgloss.Style, label, value string, lw, w int, rw urlRewriter) string {
 	prefix, available := detailLabelPrefix(labelStyle, label, lw, w)
 	return prefix + renderLinkifiedValue(value, available, rw)
@@ -566,10 +568,10 @@ func (m EventViewDialogModel) buildBodyLines(w int) []string {
 		lines = append(lines, detailLinkifiedLine(faint, "Where", ev.Location, eventViewLabelWidth, w, rw))
 	}
 	if ev.ConferenceURI != "" {
-		lines = append(lines, detailLinkLine(faint, "Conference", ev.ConferenceURI, eventViewLabelWidth, w, rw))
+		lines = append(lines, detailURLField(faint, "Conference", ev.ConferenceURI, eventViewLabelWidth, w, rw))
 	}
 	if ev.URL != "" {
-		lines = append(lines, detailLinkLine(faint, "URL", ev.URL, eventViewLabelWidth, w, rw))
+		lines = append(lines, detailURLField(faint, "URL", ev.URL, eventViewLabelWidth, w, rw))
 	}
 	if ev.Status != "" {
 		lines = append(lines, detailLine(faint, "Status", statusBadge(ev.Status), eventViewLabelWidth, w))
