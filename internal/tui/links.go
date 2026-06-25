@@ -142,14 +142,7 @@ func renderLinkValue(raw string, available int, rw urlRewriter) string {
 	if raw == "" {
 		return ""
 	}
-	visible := raw
-	if available > 0 {
-		r := []rune(raw)
-		if len(r) > available {
-			cut := max(available-1, 1)
-			visible = string(r[:cut]) + "…"
-		}
-	}
+	visible := truncateTo(raw, available)
 	target := rw.rewrite(raw)
 	return mouseMark(linkZonePrefix+target, hyperlink(target, visible))
 }
