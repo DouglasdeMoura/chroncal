@@ -308,10 +308,13 @@ func TestService_ResolveConflict_Local(t *testing.T) {
 	if res.Dirty != 1 {
 		t.Fatalf("Dirty = %d, want 1", res.Dirty)
 	}
-	// The stale etag must be cleared so the next push is an unconditional
-	// (blind) PUT instead of re-sending the failed If-Match forever.
-	if res.Etag != "" {
-		t.Fatalf("Etag = %q, want empty so the next push is unconditional", res.Etag)
+	// The stale stored etag must be replaced with the conflict's ServerEtag
+	// (the value the server had at conflict-detection time). This breaks the
+	// 412 loop while keeping the concurrency check: the next push sends
+	// If-Match: <ServerEtag>, succeeding if the server is unchanged and
+	// surfacing a fresh conflict if it changed again.
+	if res.Etag != "etag-456" {
+		t.Fatalf("Etag = %q, want %q (the conflict ServerEtag)", res.Etag, "etag-456")
 	}
 }
 

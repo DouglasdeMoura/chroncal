@@ -247,17 +247,18 @@ func (q *Queries) MarkSyncResourceDirty(ctx context.Context, arg MarkSyncResourc
 	return err
 }
 
-const markSyncResourceDirtyClearEtag = `-- name: MarkSyncResourceDirtyClearEtag :exec
-UPDATE sync_resources SET dirty = 1, etag = '' WHERE calendar_id = ? AND uid = ?
+const markSyncResourceDirtyWithEtag = `-- name: MarkSyncResourceDirtyWithEtag :exec
+UPDATE sync_resources SET dirty = 1, etag = ? WHERE calendar_id = ? AND uid = ?
 `
 
-type MarkSyncResourceDirtyClearEtagParams struct {
+type MarkSyncResourceDirtyWithEtagParams struct {
+	Etag       string
 	CalendarID int64
 	Uid        string
 }
 
-func (q *Queries) MarkSyncResourceDirtyClearEtag(ctx context.Context, arg MarkSyncResourceDirtyClearEtagParams) error {
-	_, err := q.db.ExecContext(ctx, markSyncResourceDirtyClearEtag, arg.CalendarID, arg.Uid)
+func (q *Queries) MarkSyncResourceDirtyWithEtag(ctx context.Context, arg MarkSyncResourceDirtyWithEtagParams) error {
+	_, err := q.db.ExecContext(ctx, markSyncResourceDirtyWithEtag, arg.Etag, arg.CalendarID, arg.Uid)
 	return err
 }
 
