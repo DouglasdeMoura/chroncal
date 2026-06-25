@@ -136,6 +136,57 @@ func renderLinkValue(raw string, available int, rw urlRewriter) string {
 	return mouseMark(linkZonePrefix+target, hyperlink(target, visible))
 }
 
+// renderLinkifiedValue renders a free-text value that may contain URLs, sized
+// to `available` cells. The value is truncated to width first, so the OSC 8 /
+// mouse-zone escapes it emits are always complete (truncateTo cuts the plain
+// text and stripANSI does not understand OSC 8, so linkifying before
+// truncating could leave a hyperlink unterminated). Each URL keeps its FULL
+// address as the click target even when its visible text is ellipsized by the
+// truncation — so an overflowing embedded link still opens the right place,
+// the same full-target guarantee renderLinkValue gives bare-URL fields. The
+// optional rewriter transforms the click target only.
+func renderLinkifiedValue(value string, available int, rw urlRewriter) string {
+	if available <= 0 {
+		return ""
+	}
+	visible := truncateTo(value, available)
+	fullMatches := urlPattern.FindAllString(value, -1)
+	idxs := urlPattern.FindAllStringIndex(visible, -1)
+	if len(fullMatches) == 0 || len(idxs) == 0 {
+		return visible
+	}
+	var b strings.Builder
+	b.Grow(len(visible) + 64*len(idxs))
+	last := 0
+	for i, m := range idxs {
+		start, end := m[0], m[1]
+		seen := visible[start:end]
+		b.WriteString(visible[last:start])
+		last = end
+		// trimURLTail leaves a truncation ellipsis in place but strips
+		// over-captured punctuation, mirroring linkifyText.
+		vis := trimURLTail(seen)
+		if vis == "" {
+			b.WriteString(seen)
+			continue
+		}
+		// The i-th visible URL aligns with the i-th URL in the full value
+		// (truncation only removes a suffix), so its full address is the
+		// click target even when vis is an ellipsized prefix.
+		target := vis
+		if i < len(fullMatches) {
+			if full := trimURLTail(fullMatches[i]); full != "" {
+				target = full
+			}
+		}
+		target = rw.rewrite(target)
+		b.WriteString(mouseMark(linkZonePrefix+target, hyperlink(target, vis)))
+		b.WriteString(seen[len(vis):]) // over-captured tail stays plain text
+	}
+	b.WriteString(visible[last:])
+	return b.String()
+}
+
 // googleAuthuserRewriter returns a urlRewriter that appends authuser=<email>
 // to URLs on Google services that honor it (Meet, Calendar, Docs, Drive,
 // Mail). Returns nil when email is empty so callers can pass it through to

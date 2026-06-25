@@ -104,6 +104,24 @@ func TestEventViewDialog_OverflowingLinkifiedLocationStaysTerminated(t *testing.
 		"OSC 8 hyperlink sequences must stay balanced after truncation")
 }
 
+func TestEventViewDialog_OverflowingEmbeddedURLKeepsFullClickTarget(t *testing.T) {
+	defaultMouseTracker = &mouseTracker{}
+	ev := testViewEvent()
+	fullURL := "https://meet.example.com/" + strings.Repeat("abcdef", 12)
+	ev.Location = "Room 4: " + fullURL
+	cal := CalendarInfo{Name: "Work"}
+
+	// Narrow enough to ellipsize the visible URL text.
+	m := NewEventViewDialogModel(ev, cal, Theme{}).SetSize(60, 40)
+	out := m.View()
+
+	// Visible text is truncated, but the click target (OSC 8 + mouse zone)
+	// must stay the full URL — clicking an ellipsized link still opens the
+	// right place.
+	assert.Contains(t, out, "\x1b]8;;"+fullURL)
+	assert.True(t, hasMouseZone(defaultMouseTracker, linkZonePrefix+fullURL))
+}
+
 // hasMouseZone reports whether the render registered a clickable zone with the
 // given name. mouseSweep (run inside View) moves marked regions into zones.
 func hasMouseZone(mt *mouseTracker, name string) bool {

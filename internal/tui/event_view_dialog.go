@@ -412,31 +412,13 @@ func detailLinkLine(labelStyle lipgloss.Style, label, url string, lw, w int, rw 
 }
 
 // detailLinkifiedLine is detailLine for a free-text value that may contain a
-// URL somewhere inside it (e.g., "Room 4 — join at https://…"). The plain
-// value is truncated to the column width *first*, then linkified, so the OSC 8
-// and mouse-zone escapes are always emitted complete. (truncateTo cuts on the
-// stripped plain text and stripANSI does not understand OSC 8, so linkifying
-// before truncating would slice a hyperlink mid-sequence and leave it
-// unterminated — corrupting the rest of the dialog.)
+// URL somewhere inside it (e.g., "Room 4 — join at https://…") or be a bare
+// URL. renderLinkifiedValue makes each URL clickable while keeping its full
+// address as the click target, so the rendering is correct whether the value
+// is plain text, a bare URL, or text with an embedded link.
 func detailLinkifiedLine(labelStyle lipgloss.Style, label, value string, lw, w int, rw urlRewriter) string {
 	prefix, available := detailLabelPrefix(labelStyle, label, lw, w)
-	return prefix + linkifyText(truncateTo(value, available), rw)
-}
-
-// isBareURL reports whether s is a single http/https URL with no surrounding
-// text. Such a value is best rendered via detailLinkLine, which keeps the full
-// URL as the click target while truncating only the visible text — truncating
-// it as free text would corrupt the click target. The check reuses urlPattern
-// (the package's canonical URL grammar) so "bare" means the same thing here as
-// it does in linkifyText: the whole trimmed value is one URL with no interior
-// whitespace or excluded characters.
-func isBareURL(s string) bool {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return false
-	}
-	loc := urlPattern.FindStringIndex(s)
-	return loc != nil && loc[0] == 0 && loc[1] == len(s)
+	return prefix + renderLinkifiedValue(value, available, rw)
 }
 
 // linkRewriter returns the URL rewriter to apply to clickable links in this
@@ -590,11 +572,7 @@ func (m EventViewDialogModel) buildBodyLines(w int) []string {
 	}
 	rw := m.linkRewriter()
 	if ev.Location != "" {
-		if isBareURL(ev.Location) {
-			lines = append(lines, detailLinkLine(faint, "Where", strings.TrimSpace(ev.Location), eventViewLabelWidth, w, rw))
-		} else {
-			lines = append(lines, detailLinkifiedLine(faint, "Where", ev.Location, eventViewLabelWidth, w, rw))
-		}
+		lines = append(lines, detailLinkifiedLine(faint, "Where", ev.Location, eventViewLabelWidth, w, rw))
 	}
 	if ev.ConferenceURI != "" {
 		lines = append(lines, detailLinkLine(faint, "Conference", ev.ConferenceURI, eventViewLabelWidth, w, rw))
