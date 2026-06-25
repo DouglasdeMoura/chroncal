@@ -3,6 +3,7 @@ package alarm
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -108,7 +109,13 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 						TriggerAt: triggerKey,
 					})
 					if err == nil {
-						continue
+						continue // already fired/acknowledged
+					}
+					if !errors.Is(err, sql.ErrNoRows) {
+						// Transient DB error (e.g. SQLITE_BUSY): we can't
+						// tell whether this alarm already fired, so abort
+						// rather than risk re-firing it. Propagate.
+						return nil, fmt.Errorf("get todo alarm state: %w", err)
 					}
 
 					due = append(due, TodoDueAlarm{

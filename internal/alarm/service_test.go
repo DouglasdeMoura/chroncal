@@ -2,12 +2,15 @@ package alarm
 
 import (
 	"context"
+	"database/sql"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/testutil"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
@@ -27,6 +30,39 @@ func newTestServicesWithTodos(t *testing.T) (*Service, *event.Service, *todo.Ser
 	todoSvc := todo.NewService(db, q)
 	alarmSvc := NewService(db, q, evtSvc, todoSvc)
 	return alarmSvc, evtSvc, todoSvc
+}
+
+// newFileTestDB opens a file-backed test DB (not :memory:) so that a pinned
+// connection sees the same schema as the pool. The transient-error regression
+// tests need to insert a deliberately malformed row on a connection with
+// foreign keys disabled, which an in-memory-per-connection DB cannot share.
+func newFileTestDB(t *testing.T) (*sql.DB, *storage.Queries) {
+	t.Helper()
+	db, q, err := storage.Open(filepath.Join(t.TempDir(), "alarm_test.db"))
+	if err != nil {
+		t.Fatalf("open test db: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db, q
+}
+
+// insertPoisonAlarmState inserts a malformed *_alarm_state row used to force a
+// non-ErrNoRows error out of GetAlarmState / GetTodoAlarmState. It pins a
+// single connection and disables foreign keys on it so the malformed row (a
+// TEXT value in an integer FK column) can be written.
+func insertPoisonAlarmState(ctx context.Context, t *testing.T, db *sql.DB, query string, args ...any) {
+	t.Helper()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("pin connection: %v", err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys=OFF"); err != nil {
+		t.Fatalf("disable foreign keys: %v", err)
+	}
+	if _, err := conn.ExecContext(ctx, query, args...); err != nil {
+		t.Fatalf("insert poison row: %v", err)
+	}
 }
 
 func TestCheck_FiresDueAlarm(t *testing.T) {
@@ -113,6 +149,63 @@ func TestCheck_SkipsAlreadyFired(t *testing.T) {
 	}
 	if len(due) != 0 {
 		t.Fatalf("second check: got %d, want 0", len(due))
+	}
+}
+
+// TestCheck_TransientStateErrorDoesNotFire guards against re-firing an alarm
+// when GetAlarmState returns a transient (non-ErrNoRows) error. A SQLITE_BUSY
+// or similar error must abort the per-alarm evaluation and propagate, never be
+// treated as "not fired".
+//
+// We simulate the transient error precisely: a poison alarm_state row whose
+// event_id holds a TEXT value fails the int64 Scan in GetAlarmState (a
+// non-ErrNoRows error) while leaving snoozed_to NULL so the later
+// ListExpiredSnoozedAlarmStates query — which filters on snoozed_to IS NOT
+// NULL — still succeeds. That isolates the failure to the in-loop
+// GetAlarmState lookup, which is the code path under test.
+func TestCheck_TransientStateErrorDoesNotFire(t *testing.T) {
+	db, q := newFileTestDB(t)
+	evtSvc := event.NewService(db, q)
+	svc := NewService(db, q, evtSvc, nil)
+	ctx := context.Background()
+
+	now := time.Date(2026, 4, 1, 17, 0, 0, 0, time.UTC)
+	start := now.Add(10 * time.Minute) // alarm fires at start-15m = 5m ago
+	e, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "Meeting",
+		StartTime:  start,
+		EndTime:    start.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT15M"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	alarms, err := evtSvc.ListAlarms(ctx, e.ID)
+	if err != nil || len(alarms) != 1 {
+		t.Fatalf("list alarms: got %d (err %v), want 1", len(alarms), err)
+	}
+	triggerKey := start.Add(-15 * time.Minute).UTC().Format(time.RFC3339)
+
+	// Poison row: event_id holds TEXT, so GetAlarmState's int64 Scan of that
+	// row fails. snoozed_to stays NULL so ListExpiredSnoozedAlarmStates (which
+	// filters snoozed_to IS NOT NULL) skips it — isolating the failure to the
+	// in-loop GetAlarmState lookup.
+	insertPoisonAlarmState(ctx, t, db,
+		"INSERT INTO alarm_state (alarm_id, event_id, trigger_at) VALUES (?, 'not-an-int', ?)",
+		alarms[0].ID, triggerKey)
+
+	due, _, err := svc.Check(ctx, now)
+	if err == nil {
+		t.Fatal("expected error from transient GetAlarmState failure, got nil")
+	}
+	if len(due) != 0 {
+		t.Fatalf("got %d due alarms on transient error, want 0 (must not re-fire)", len(due))
 	}
 }
 
