@@ -358,6 +358,71 @@ func TestService_ResolveConflict_Local(t *testing.T) {
 	}
 }
 
+// TestService_ResolveConflict_ServerEmptyIcal guards against the silent
+// no-op: a conflict whose ServerIcal carries no importable component (empty or
+// component-less) must NOT clear dirty or stamp the server ETag, because doing
+// so would leave the divergent local row in place while claiming it matches the
+// server — the exact data-loss the "server" branch exists to prevent. The
+// resolve should fail and leave the dirty flag and conflict intact for a retry.
+func TestService_ResolveConflict_ServerEmptyIcal(t *testing.T) {
+	svc, q := newTestService(t)
+	ctx := context.Background()
+
+	cals, _ := q.ListCalendars(ctx)
+	calID := cals[0].ID
+
+	const uid = "resolve-server-empty-uid"
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calID,
+		Uid:          uid,
+		OwnerType:    "event",
+		RemoteUrl:    "https://example.com/cal/" + uid + ".ics",
+		Etag:         "etag-before",
+		Dirty:        1,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+
+	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+		CalendarID: calID,
+		OwnerType:  "event",
+		OwnerID:    1,
+		Uid:        uid,
+		LocalIcal:  "local",
+		ServerIcal: "", // server payload failed to encode at conflict-record time
+		ServerEtag: "etag-456",
+	}); err != nil {
+		t.Fatalf("CreateSyncConflict: %v", err)
+	}
+
+	conflicts, _ := q.ListSyncConflicts(ctx)
+	if err := svc.ResolveConflict(ctx, conflicts[0].ID, "server"); err == nil {
+		t.Fatal("ResolveConflict server with empty ServerIcal: expected error, got nil")
+	}
+
+	// The dirty flag and ETag must be untouched so the next sync can retry.
+	res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{
+		CalendarID: calID,
+		Uid:        uid,
+	})
+	if err != nil {
+		t.Fatalf("GetSyncResource: %v", err)
+	}
+	if res.Dirty != 1 {
+		t.Fatalf("Dirty = %d, want 1 (must stay dirty)", res.Dirty)
+	}
+	if res.Etag != "etag-before" {
+		t.Fatalf("Etag = %q, want %q (must not adopt server ETag)", res.Etag, "etag-before")
+	}
+
+	// The conflict must remain for a later retry, not be silently consumed.
+	remaining, _ := q.ListSyncConflicts(ctx)
+	if len(remaining) != 1 {
+		t.Fatalf("conflicts after failed resolve = %d, want 1", len(remaining))
+	}
+}
+
 func TestService_ResetCalendar(t *testing.T) {
 	svc, q := newTestService(t)
 	ctx := context.Background()

@@ -143,8 +143,16 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 		// local push and store the server ETag. Without the import the local
 		// row keeps its divergent local copy while the ETag claims it matches
 		// the server, so a later local edit silently overwrites the server.
-		if err := s.engine.importICal(ctx, conflict.CalendarID, conflict.ServerIcal); err != nil {
+		imported, err := s.engine.importICal(ctx, conflict.CalendarID, conflict.ServerIcal)
+		if err != nil {
 			return fmt.Errorf("import server version: %w", err)
+		}
+		if !imported {
+			// ImportFile returns no error for empty or component-less iCal, so a
+			// blank ServerIcal would otherwise clear dirty and stamp the server
+			// ETag onto the unchanged local row — the silent-overwrite bug this
+			// branch exists to prevent. Refuse instead of resolving falsely.
+			return fmt.Errorf("server version has no importable data for %q", conflict.Uid)
 		}
 		if err := s.q.ClearSyncResourceDirty(ctx, storage.ClearSyncResourceDirtyParams{
 			CalendarID: conflict.CalendarID,
