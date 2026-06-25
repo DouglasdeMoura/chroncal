@@ -319,6 +319,73 @@ func TestSoftDelete_FromInstance_RRULE(t *testing.T) {
 	}
 }
 
+// TestSoftDelete_FromInstance_UndoAfterGap reproduces issue #66: when the
+// master's last real edit predates the truncation by more than one second,
+// the stale-master guard used to mistake the truncation's own updated_at bump
+// for a concurrent external edit and reject the Undo. The guard must compare
+// against the master's POST-truncation updated_at, so Undo succeeds here while
+// still detecting genuine later edits.
+func TestSoftDelete_FromInstance_UndoAfterGap(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:            "gap-review-uid",
+		CalendarID:     1,
+		Title:          "Sprint Review",
+		StartTime:      time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;COUNT=10",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	originalRRULE := master.RecurrenceRule
+
+	// Backdate the master's updated_at well into the past so its last real edit
+	// is more than one second before the truncation — the production scenario
+	// the old guard failed on.
+	pastEdit := time.Now().UTC().Add(-1 * time.Hour).Format(storageTimeFormat)
+	if _, err := svc.db.ExecContext(ctx,
+		"UPDATE events SET updated_at = ? WHERE id = ?", pastEdit, master.ID); err != nil {
+		t.Fatalf("backdate updated_at: %v", err)
+	}
+
+	cutoff := time.Date(2026, 4, 22, 14, 0, 0, 0, time.UTC)
+	meta, err := svc.DeleteFromInstanceWithUndo(ctx, master.UID, cutoff)
+	if err != nil {
+		t.Fatalf("DeleteFromInstanceWithUndo: %v", err)
+	}
+
+	// Undo must succeed even though the master's prior edit was >1s ago.
+	if err := svc.RestoreUndo(ctx, meta); err != nil {
+		t.Fatalf("RestoreUndo after gap: %v", err)
+	}
+	restored, err := svc.Get(ctx, master.ID)
+	if err != nil {
+		t.Fatalf("Get master after restore: %v", err)
+	}
+	if restored.RecurrenceRule != originalRRULE {
+		t.Fatalf("RRULE not restored: got %q, want %q", restored.RecurrenceRule, originalRRULE)
+	}
+
+	// The guard must still catch a genuine concurrent edit. Re-truncate to get
+	// fresh undo meta, then advance updated_at past the captured post-truncation
+	// value to simulate an external write, and confirm Undo is rejected.
+	meta2, err := svc.DeleteFromInstanceWithUndo(ctx, master.UID, cutoff)
+	if err != nil {
+		t.Fatalf("DeleteFromInstanceWithUndo (2): %v", err)
+	}
+	future := time.Now().UTC().Add(1 * time.Hour).Format(storageTimeFormat)
+	if _, err := svc.db.ExecContext(ctx,
+		"UPDATE events SET updated_at = ? WHERE id = ?", future, master.ID); err != nil {
+		t.Fatalf("simulate concurrent edit: %v", err)
+	}
+	if err := svc.RestoreUndo(ctx, meta2); err == nil {
+		t.Fatal("RestoreUndo should reject a master edited after truncation")
+	}
+}
+
 // TestSoftDelete_PurgeDeleted drops rows past the retention window and
 // leaves fresh soft-deletes alone.
 func TestSoftDelete_PurgeDeleted(t *testing.T) {
