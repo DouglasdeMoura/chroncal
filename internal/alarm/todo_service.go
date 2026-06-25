@@ -195,7 +195,7 @@ func computeTodoTriggerTimeForInstance(inst recurrence.ExpandedTodo, alarm model
 	}
 
 	// Absolute triggers
-	return parseAbsoluteTrigger(alarm.TriggerValue, inst.Timezone)
+	return model.ParseAbsoluteTime(alarm.TriggerValue, inst.Timezone)
 }
 
 // MarkTodoAlarmFired records that a todo alarm has fired

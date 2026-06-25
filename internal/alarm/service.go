@@ -103,31 +103,14 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 			if err != nil {
 				continue
 			}
-
-			triggers := buildRepeatTriggers(triggerAt, a.Repeat, a.Duration)
-
-			for _, t := range triggers {
-				if t.After(now) || now.Sub(t) <= StaleThreshold {
-					continue // not stale yet
-				}
-				triggerKey := t.UTC().Format(time.RFC3339)
-				_, err := s.q.GetAlarmState(ctx, storage.GetAlarmStateParams{
-					AlarmID:   a.ID,
-					TriggerAt: triggerKey,
-				})
-				if err == nil {
-					continue // already fired/acknowledged
-				}
-				if !errors.Is(err, sql.ErrNoRows) {
-					continue // real DB error, skip rather than false-positive
-				}
+			s.collectMissedTriggers(ctx, triggerAt, a, now, s.eventAlarmStateExists, func(t time.Time) {
 				missed = append(missed, MissedAlarm{
 					EventTitle: expEvt.Title,
 					AlarmID:    a.ID,
 					TriggerAt:  t,
 					Age:        now.Sub(t),
 				})
-			}
+			})
 		}
 	}
 
@@ -157,37 +140,78 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 					if err != nil {
 						continue
 					}
-
-					triggers := buildRepeatTriggers(triggerAt, a.Repeat, a.Duration)
-
-					for _, t := range triggers {
-						if t.After(now) || now.Sub(t) <= StaleThreshold {
-							continue
-						}
-						triggerKey := t.UTC().Format(time.RFC3339)
-						_, err := s.q.GetTodoAlarmState(ctx, storage.GetTodoAlarmStateParams{
-							AlarmID:   a.ID,
-							TriggerAt: triggerKey,
-						})
-						if err == nil {
-							continue
-						}
-						if !errors.Is(err, sql.ErrNoRows) {
-							continue
-						}
+					s.collectMissedTriggers(ctx, triggerAt, a, now, s.todoAlarmStateExists, func(t time.Time) {
 						missedTodos = append(missedTodos, MissedTodoAlarm{
 							TodoSummary: td.Summary,
 							AlarmID:     a.ID,
 							TriggerAt:   t,
 							Age:         now.Sub(t),
 						})
-					}
+					})
 				}
 			}
 		}
 	}
 
 	return missed, missedTodos, nil
+}
+
+// collectMissedTriggers walks every repeat trigger of an alarm whose initial
+// firing is triggerAt, and calls record(t) for each one that is stale (past
+// StaleThreshold) and has no state row according to stateExists. stateExists
+// reports whether a state row exists for the (alarm, triggerKey) pair; a real
+// DB error there is treated as "skip" rather than a false-positive miss.
+func (s *Service) collectMissedTriggers(
+	ctx context.Context,
+	triggerAt time.Time,
+	a model.Alarm,
+	now time.Time,
+	stateExists func(ctx context.Context, alarmID int64, triggerKey string) (bool, error),
+	record func(t time.Time),
+) {
+	for _, t := range buildRepeatTriggers(triggerAt, a.Repeat, a.Duration) {
+		if t.After(now) || now.Sub(t) <= StaleThreshold {
+			continue // not stale yet
+		}
+		triggerKey := t.UTC().Format(time.RFC3339)
+		exists, err := stateExists(ctx, a.ID, triggerKey)
+		if err != nil || exists {
+			continue // already fired/acknowledged, or DB error: skip
+		}
+		record(t)
+	}
+}
+
+// eventAlarmStateExists reports whether an alarm_state row exists for the
+// given event alarm and trigger key.
+func (s *Service) eventAlarmStateExists(ctx context.Context, alarmID int64, triggerKey string) (bool, error) {
+	_, err := s.q.GetAlarmState(ctx, storage.GetAlarmStateParams{
+		AlarmID:   alarmID,
+		TriggerAt: triggerKey,
+	})
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return false, err
+}
+
+// todoAlarmStateExists reports whether a todo_alarm_state row exists for the
+// given todo alarm and trigger key.
+func (s *Service) todoAlarmStateExists(ctx context.Context, alarmID int64, triggerKey string) (bool, error) {
+	_, err := s.q.GetTodoAlarmState(ctx, storage.GetTodoAlarmStateParams{
+		AlarmID:   alarmID,
+		TriggerAt: triggerKey,
+	})
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return false, err
 }
 
 // checkEventAlarms finds due event alarms
@@ -314,27 +338,7 @@ func computeTriggerTimeForInstance(expEvt recurrence.ExpandedEvent, alarm model.
 		return duration.Add(anchor, trigger), nil
 	}
 
-	return parseAbsoluteTrigger(trigger, expEvt.Timezone)
-}
-
-// parseAbsoluteTrigger parses an absolute trigger value (iCal UTC, floating, or RFC 3339).
-// Floating times are interpreted in the given timezone if non-empty.
-func parseAbsoluteTrigger(trigger, timezone string) (time.Time, error) {
-	if t, err := time.Parse("20060102T150405Z", trigger); err == nil {
-		return t, nil
-	}
-	if t, err := time.Parse("20060102T150405", trigger); err == nil {
-		if timezone != "" {
-			if loc, lerr := time.LoadLocation(timezone); lerr == nil {
-				return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), 0, loc), nil
-			}
-		}
-		return t, nil
-	}
-	if t, err := time.Parse(time.RFC3339, trigger); err == nil {
-		return t, nil
-	}
-	return time.Time{}, fmt.Errorf("invalid trigger format: %q", trigger)
+	return model.ParseAbsoluteTime(trigger, expEvt.Timezone)
 }
 
 // ListExpiredSnoozed returns snoozed alarms whose snooze-until time is at or
