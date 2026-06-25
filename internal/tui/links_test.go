@@ -160,6 +160,51 @@ func TestRenderLinkValue_WrapsNonHTTPScheme(t *testing.T) {
 	assert.Equal(t, "link:"+raw, mouseResolve(0, 0))
 }
 
+func TestRenderLinkifiedValue_TruncationMidURLKeepsFullClickTarget(t *testing.T) {
+	defaultMouseTracker = &mouseTracker{}
+	value := "https://example.com/really/long/path/that/overflows"
+
+	out := renderLinkifiedValue(value, 20, nil, true)
+	cleaned := mouseSweep(out)
+
+	assert.Contains(t, cleaned, "https://example.com…")
+	assert.Equal(t, "link:https://example.com/really/long/path/that/overflows", mouseResolve(5, 0))
+}
+
+func TestRenderLinkifiedValue_TwoURLsSecondTruncatedAwayFirstStillClickable(t *testing.T) {
+	defaultMouseTracker = &mouseTracker{}
+	first := "https://one.example.com/path"
+	second := "https://two.example.com/path"
+	value := "See " + first + " and " + second
+
+	out := renderLinkifiedValue(value, 34, nil, true)
+	cleaned := mouseSweep(out)
+
+	assert.Contains(t, cleaned, first)
+	assert.NotContains(t, cleaned, second)
+	assert.Equal(t, "link:"+first, mouseResolve(len("See ")+2, 0))
+}
+
+func TestRenderLinkifiedValue_TrailingPunctuationAfterTruncateToStaysOutsideZone(t *testing.T) {
+	defaultMouseTracker = &mouseTracker{}
+	value := "Open https://example.com/path), and additional text"
+
+	out := renderLinkifiedValue(value, 34, nil, true)
+	cleaned := mouseSweep(out)
+	url := "https://example.com/path"
+	punctX := len("Open ") + len(url)
+
+	assert.Contains(t, cleaned, url)
+	assert.Contains(t, cleaned, "\x1b]8;;\x1b\\),")
+	assert.Equal(t, "link:"+url, mouseResolve(len("Open ")+3, 0))
+	assert.Equal(t, "", mouseResolve(punctX, 0))
+}
+
+func TestRenderLinkifiedValue_NoURLReturnsOriginalText(t *testing.T) {
+	value := "no links here, just words"
+	assert.Equal(t, value, renderLinkifiedValue(value, 80, nil, true))
+}
+
 func TestOpenURLCmd_RejectsNonHTTP(t *testing.T) {
 	assert.Nil(t, openURLCmd("javascript:alert(1)"))
 	assert.Nil(t, openURLCmd("file:///etc/passwd"))
