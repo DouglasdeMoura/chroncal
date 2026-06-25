@@ -132,6 +132,34 @@ func TestRenderLinkValue_AppliesRewriterToTargetNotVisibleText(t *testing.T) {
 	assert.Equal(t, "link:https://meet.google.com/abc?authuser=me%40example.com", target)
 }
 
+func TestRenderLinkValue_KeepsExactTargetForTrailingSubDelimiter(t *testing.T) {
+	defaultMouseTracker = &mouseTracker{}
+	// A structured URL field whose value legitimately ends in a URL
+	// sub-delimiter must keep that character in the click target — the prose
+	// trimURLTail behavior would wrongly drop it.
+	raw := "https://example.com/confirm!"
+	out := renderLinkValue(raw, 80, nil)
+
+	assert.Contains(t, out, "\x1b]8;;"+raw+"\x1b\\", "OSC 8 target must keep the trailing '!'")
+
+	_ = mouseSweep(out)
+	assert.Equal(t, "link:"+raw, mouseResolve(0, 0), "mouse target must keep the trailing '!'")
+}
+
+func TestRenderLinkValue_WrapsNonHTTPScheme(t *testing.T) {
+	defaultMouseTracker = &mouseTracker{}
+	// Known URI fields may hold non-http schemes (an imported CONFERENCE
+	// zoommtg:// link, a mailto: URL). renderLinkValue wraps the whole value
+	// regardless of scheme rather than regressing to plain text.
+	raw := "zoommtg://zoom.us/join?confno=123"
+	out := renderLinkValue(raw, 80, nil)
+
+	assert.Contains(t, out, "\x1b]8;;"+raw+"\x1b\\", "non-http URI must still get an OSC 8 link")
+
+	_ = mouseSweep(out)
+	assert.Equal(t, "link:"+raw, mouseResolve(0, 0))
+}
+
 func TestOpenURLCmd_RejectsNonHTTP(t *testing.T) {
 	assert.Nil(t, openURLCmd("javascript:alert(1)"))
 	assert.Nil(t, openURLCmd("file:///etc/passwd"))

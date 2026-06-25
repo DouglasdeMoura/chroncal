@@ -75,51 +75,69 @@ func linkifyText(s string, rw urlRewriter) string {
 	return linkifyTextZoned(s, rw, true)
 }
 
+// linkifySegment renders `visible` (already width-constrained when needed), using
+// `full` when click targets must survive suffix truncation.
+func linkifySegment(visible, full string, rw urlRewriter, zones bool) string {
+	if visible == "" || !strings.Contains(visible, "http") {
+		return visible
+	}
+	idxs := urlPattern.FindAllStringIndex(visible, -1)
+	if len(idxs) == 0 {
+		return visible
+	}
+	fullMatches := urlPattern.FindAllString(full, -1)
+	var b strings.Builder
+	b.Grow(len(visible) + 64*len(idxs))
+	last := 0
+	for i, m := range idxs {
+		start, end := m[0], m[1]
+		seen := visible[start:end]
+		b.WriteString(visible[last:start])
+		last = end
+		// trimURLTail keeps truncation ellipses but strips over-captured
+		// punctuation, mirroring linkifyText behavior.
+		vis := trimURLTail(seen)
+		if vis == "" {
+			b.WriteString(seen)
+			continue
+		}
+		// The i-th visible URL aligns with the i-th full URL because visible is
+		// either identical to full or a suffix-truncated prefix of full.
+		target := vis
+		if i < len(fullMatches) {
+			if full := trimURLTail(fullMatches[i]); full != "" {
+				target = full
+			}
+		}
+		target = rw.rewrite(target)
+		link := hyperlink(target, vis)
+		if zones {
+			link = mouseMark(linkZonePrefix+target, link)
+		}
+		b.WriteString(link)
+		b.WriteString(seen[len(vis):]) // over-captured tail stays plain text
+	}
+	b.WriteString(visible[last:])
+	return b.String()
+}
+
 // linkifyTextZoned is linkifyText with control over mouse zones. When zones is
 // false it emits OSC 8 hyperlinks only — clickable in terminals that honor
 // OSC 8 — without the mouseMark markers, which would leak on surfaces that
 // don't sweep them (the day and trash dialogs).
 func linkifyTextZoned(s string, rw urlRewriter, zones bool) string {
-	if s == "" || !strings.Contains(s, "http") {
-		return s
-	}
-	idxs := urlPattern.FindAllStringIndex(s, -1)
-	if len(idxs) == 0 {
-		return s
-	}
-	var b strings.Builder
-	b.Grow(len(s) + 64*len(idxs))
-	last := 0
-	for _, m := range idxs {
-		start, end := m[0], m[1]
-		raw := s[start:end]
-		trimmed := trimURLTail(raw)
-		if trimmed == "" {
-			b.WriteString(s[last:end])
-			last = end
-			continue
-		}
-		tailLen := len(raw) - len(trimmed)
-		target := rw.rewrite(trimmed)
-		b.WriteString(s[last:start])
-		link := hyperlink(target, trimmed)
-		if zones {
-			link = mouseMark(linkZonePrefix+target, link)
-		}
-		b.WriteString(link)
-		if tailLen > 0 {
-			b.WriteString(raw[len(trimmed):])
-		}
-		last = end
-	}
-	b.WriteString(s[last:])
-	return b.String()
+	return linkifySegment(s, s, rw, zones)
 }
 
 // renderLinkValue wraps a known URL value (e.g., ev.URL or ev.ConferenceURI)
-// as a clickable link. The visible text is truncated to fit available width
-// while the click/OSC 8 target stays the full URL. The optional rewriter
-// rewrites the click target only — what the user sees stays the original.
+// as a clickable link. The whole value is the click target — it is NOT run
+// through the prose linkifier, so the exact stored URI survives verbatim:
+// trailing sub-delimiters (a "...&x=1!" query, a Wikipedia "(disambiguation)"
+// link) are kept rather than trimmed, and non-http schemes (mailto:,
+// zoommtg:) still get wrapped. The visible text is truncated to fit the
+// available width while the click/OSC 8 target stays the full URL. The
+// optional rewriter rewrites the click target only — what the user sees
+// stays the original.
 func renderLinkValue(raw string, available int, rw urlRewriter) string {
 	if raw == "" {
 		return ""
@@ -150,41 +168,7 @@ func renderLinkifiedValue(value string, available int, rw urlRewriter) string {
 		return ""
 	}
 	visible := truncateTo(value, available)
-	fullMatches := urlPattern.FindAllString(value, -1)
-	idxs := urlPattern.FindAllStringIndex(visible, -1)
-	if len(fullMatches) == 0 || len(idxs) == 0 {
-		return visible
-	}
-	var b strings.Builder
-	b.Grow(len(visible) + 64*len(idxs))
-	last := 0
-	for i, m := range idxs {
-		start, end := m[0], m[1]
-		seen := visible[start:end]
-		b.WriteString(visible[last:start])
-		last = end
-		// trimURLTail leaves a truncation ellipsis in place but strips
-		// over-captured punctuation, mirroring linkifyText.
-		vis := trimURLTail(seen)
-		if vis == "" {
-			b.WriteString(seen)
-			continue
-		}
-		// The i-th visible URL aligns with the i-th URL in the full value
-		// (truncation only removes a suffix), so its full address is the
-		// click target even when vis is an ellipsized prefix.
-		target := vis
-		if i < len(fullMatches) {
-			if full := trimURLTail(fullMatches[i]); full != "" {
-				target = full
-			}
-		}
-		target = rw.rewrite(target)
-		b.WriteString(mouseMark(linkZonePrefix+target, hyperlink(target, vis)))
-		b.WriteString(seen[len(vis):]) // over-captured tail stays plain text
-	}
-	b.WriteString(visible[last:])
-	return b.String()
+	return linkifySegment(visible, value, rw, true)
 }
 
 // googleAuthuserRewriter returns a urlRewriter that appends authuser=<email>
