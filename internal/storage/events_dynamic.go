@@ -22,11 +22,7 @@ type EventFilterParams struct {
 const eventCategoryExists = "EXISTS (SELECT 1 FROM event_categories ec WHERE ec.event_id = events.id AND ec.category = ?)"
 
 func (w *whereBuilder) addEventFilters(arg EventFilterParams) {
-	if arg.DeletedOnly {
-		w.add("deleted_at IS NOT NULL")
-	} else if !arg.IncludeDeleted {
-		w.add("deleted_at IS NULL")
-	}
+	w.addSoftDeleteFilter(arg.IncludeDeleted, arg.DeletedOnly)
 	if arg.CalendarID != 0 {
 		w.add("calendar_id = ?", arg.CalendarID)
 	}

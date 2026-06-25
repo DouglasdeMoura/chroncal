@@ -4,18 +4,6 @@ import "context"
 
 const journalCategoryExists = "EXISTS (SELECT 1 FROM journal_categories jc WHERE jc.journal_id = journals.id AND jc.category = ?)"
 
-// journalDeletedFilter mirrors todoDeletedFilter / event equivalents so the
-// journals read path hides soft-deleted rows by default and exposes an
-// explicit opt-in for trash views.
-func journalDeletedFilter(w *whereBuilder, includeDeleted, deletedOnly bool) {
-	switch {
-	case deletedOnly:
-		w.add("deleted_at IS NOT NULL")
-	case !includeDeleted:
-		w.add("deleted_at IS NULL")
-	}
-}
-
 type ListJournalsFilteredParams struct {
 	CalendarID     int64
 	FilterStatus   string
@@ -29,7 +17,7 @@ type ListJournalsFilteredParams struct {
 func (q *Queries) ListJournalsFiltered(ctx context.Context, arg ListJournalsFilteredParams) ([]Journal, error) {
 	var w whereBuilder
 	w.add("recurrence_rule IS NULL AND recurrence_id = ''")
-	journalDeletedFilter(&w, arg.IncludeDeleted, arg.DeletedOnly)
+	w.addSoftDeleteFilter(arg.IncludeDeleted, arg.DeletedOnly)
 	if arg.CalendarID != 0 {
 		w.add("calendar_id = ?", arg.CalendarID)
 	}
@@ -59,7 +47,7 @@ type ListRecurringJournalsFilteredParams struct {
 func (q *Queries) ListRecurringJournalsFiltered(ctx context.Context, arg ListRecurringJournalsFilteredParams) ([]Journal, error) {
 	var w whereBuilder
 	w.add("recurrence_rule IS NOT NULL AND recurrence_id = ''")
-	journalDeletedFilter(&w, arg.IncludeDeleted, arg.DeletedOnly)
+	w.addSoftDeleteFilter(arg.IncludeDeleted, arg.DeletedOnly)
 	if arg.CalendarID != 0 {
 		w.add("calendar_id = ?", arg.CalendarID)
 	}
@@ -80,7 +68,7 @@ type ListJournalsForExportParams struct {
 
 func (q *Queries) ListJournalsForExport(ctx context.Context, arg ListJournalsForExportParams) ([]Journal, error) {
 	var w whereBuilder
-	journalDeletedFilter(&w, arg.IncludeDeleted, arg.DeletedOnly)
+	w.addSoftDeleteFilter(arg.IncludeDeleted, arg.DeletedOnly)
 	if arg.CalendarID != 0 {
 		w.add("calendar_id = ?", arg.CalendarID)
 	}
