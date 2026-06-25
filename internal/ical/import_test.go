@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/douglasdemoura/chroncal/internal/recurrence"
 )
 
 const minimalEventICS = `BEGIN:VCALENDAR
@@ -245,6 +247,73 @@ func TestImport_AllDayEvent(t *testing.T) {
 	}
 	if !result.Events[0].AllDay {
 		t.Error("AllDay = false, want true")
+	}
+}
+
+// Regression test for issue #64: all-day (VALUE=DATE) events must be stored
+// at midnight UTC, independent of the importing host's timezone. Before the
+// fix the importer built the date in time.Local and then called .UTC(), so the
+// stored instant shifted by the host offset (e.g. under UTC+12 midnight local
+// became 12:00Z the previous day), corrupting the calendar date and recurrence
+// occurrences.
+func TestImport_AllDayEvent_StoresMidnightUTC_RegardlessOfHostTZ(t *testing.T) {
+	// Mutates time.Local, so this test cannot run in parallel.
+	prevLocal := time.Local
+	time.Local = time.FixedZone("UTC+12", 12*60*60)
+	t.Cleanup(func() { time.Local = prevLocal })
+
+	const recurringAllDayICS = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//test//test//EN
+BEGIN:VEVENT
+UID:allday-recur-1
+DTSTAMP:20260401T100000Z
+DTSTART;VALUE=DATE:20260401
+DTEND;VALUE=DATE:20260402
+RRULE:FREQ=DAILY;COUNT=3
+SUMMARY:All Day Recurring
+END:VEVENT
+END:VCALENDAR`
+
+	result, err := ImportFile(strings.NewReader(recurringAllDayICS))
+	if err != nil {
+		t.Fatalf("ImportFile: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %d, want 1", len(result.Events))
+	}
+	evt := result.Events[0]
+
+	if !evt.AllDay {
+		t.Error("AllDay = false, want true")
+	}
+
+	wantStart := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	wantEnd := time.Date(2026, 4, 2, 0, 0, 0, 0, time.UTC)
+	if !evt.StartTime.Equal(wantStart) {
+		t.Errorf("StartTime = %s, want %s", evt.StartTime.Format(time.RFC3339), wantStart.Format(time.RFC3339))
+	}
+	if !evt.EndTime.Equal(wantEnd) {
+		t.Errorf("EndTime = %s, want %s", evt.EndTime.Format(time.RFC3339), wantEnd.Format(time.RFC3339))
+	}
+	// Stored instant must be exactly midnight UTC, not a host-dependent offset.
+	if h, m, s := evt.StartTime.UTC().Clock(); h != 0 || m != 0 || s != 0 {
+		t.Errorf("StartTime UTC clock = %02d:%02d:%02d, want 00:00:00", h, m, s)
+	}
+
+	// Recurrence occurrences must stay on the correct UTC day.
+	from := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	expanded := recurrence.ExpandEvent(evt, from, to)
+	if len(expanded) != 3 {
+		t.Fatalf("expanded occurrences = %d, want 3", len(expanded))
+	}
+	for i, occ := range expanded {
+		want := time.Date(2026, 4, 1+i, 0, 0, 0, 0, time.UTC)
+		if !occ.InstanceTime.UTC().Equal(want) {
+			t.Errorf("occurrence[%d] = %s, want %s", i,
+				occ.InstanceTime.UTC().Format(time.RFC3339), want.Format(time.RFC3339))
+		}
 	}
 }
 
