@@ -1,9 +1,6 @@
 package storage
 
-import (
-	"context"
-	"strings"
-)
+import "context"
 
 // ListAttendeesByEventIDs returns attendees for the given event IDs.
 // Hand-written because database/sql does not support slice parameters.
@@ -11,14 +8,8 @@ func (q *Queries) ListAttendeesByEventIDs(ctx context.Context, ids []int64) ([]E
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	placeholders := strings.Repeat("?,", len(ids))
-	placeholders = placeholders[:len(placeholders)-1]
+	placeholders, args := expandInPlaceholders(ids)
 	query := "SELECT id, event_id, email, name, rsvp_status, role, organizer, cutype, rsvp, sent_by, delegated_to, delegated_from, member, dir, language FROM event_attendees WHERE event_id IN (" + placeholders + ") ORDER BY event_id, organizer DESC, name"
-
-	args := make([]interface{}, len(ids))
-	for i, id := range ids {
-		args[i] = id
-	}
 
 	rows, err := q.db.QueryContext(ctx, query, args...)
 	if err != nil {

@@ -1,9 +1,6 @@
 package storage
 
-import (
-	"context"
-	"strings"
-)
+import "context"
 
 // ListCategoriesByEventIDs returns categories for the given event IDs.
 // Hand-written because database/sql does not support slice parameters.
@@ -11,14 +8,8 @@ func (q *Queries) ListCategoriesByEventIDs(ctx context.Context, ids []int64) ([]
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	placeholders := strings.Repeat("?,", len(ids))
-	placeholders = placeholders[:len(placeholders)-1] // trim trailing comma
+	placeholders, args := expandInPlaceholders(ids)
 	query := "SELECT event_id, category FROM event_categories WHERE event_id IN (" + placeholders + ") ORDER BY event_id, category"
-
-	args := make([]interface{}, len(ids))
-	for i, id := range ids {
-		args[i] = id
-	}
 
 	rows, err := q.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -42,14 +33,8 @@ func (q *Queries) ListCategoriesByTodoIDs(ctx context.Context, ids []int64) ([]T
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	placeholders := strings.Repeat("?,", len(ids))
-	placeholders = placeholders[:len(placeholders)-1]
+	placeholders, args := expandInPlaceholders(ids)
 	query := "SELECT todo_id, category FROM todo_categories WHERE todo_id IN (" + placeholders + ") ORDER BY todo_id, category"
-
-	args := make([]interface{}, len(ids))
-	for i, id := range ids {
-		args[i] = id
-	}
 
 	rows, err := q.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -73,14 +58,8 @@ func (q *Queries) ListCategoriesByJournalIDs(ctx context.Context, ids []int64) (
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	placeholders := strings.Repeat("?,", len(ids))
-	placeholders = placeholders[:len(placeholders)-1]
+	placeholders, args := expandInPlaceholders(ids)
 	query := "SELECT journal_id, category FROM journal_categories WHERE journal_id IN (" + placeholders + ") ORDER BY journal_id, category"
-
-	args := make([]interface{}, len(ids))
-	for i, id := range ids {
-		args[i] = id
-	}
 
 	rows, err := q.db.QueryContext(ctx, query, args...)
 	if err != nil {

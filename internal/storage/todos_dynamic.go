@@ -4,16 +4,18 @@ import "context"
 
 const todoCategoryExists = "EXISTS (SELECT 1 FROM todo_categories tc WHERE tc.todo_id = todos.id AND tc.category = ?)"
 
-// todoDeletedFilter appends the canonical deleted_at clause used by every
-// todos read path. Default: hide soft-deleted rows. Callers that need to
-// see them (trash views, --include-deleted) set IncludeDeleted or
-// DeletedOnly on their *FilteredParams.
-func todoDeletedFilter(w *whereBuilder, includeDeleted, deletedOnly bool) {
-	switch {
-	case deletedOnly:
-		w.add("deleted_at IS NOT NULL")
-	case !includeDeleted:
-		w.add("deleted_at IS NULL")
+// addTodoListFilters appends the calendar / status / hide-completed clauses
+// shared verbatim by ListTodosFiltered and ListRecurringTodosFiltered, in the
+// same order so positional args line up.
+func (w *whereBuilder) addTodoListFilters(calendarID int64, filterStatus string, hideCompleted int64) {
+	if calendarID != 0 {
+		w.add("calendar_id = ?", calendarID)
+	}
+	if filterStatus != "" {
+		w.add("status = ?", filterStatus)
+	}
+	if hideCompleted != 0 {
+		w.add("status != 'COMPLETED' AND status != 'CANCELLED'")
 	}
 }
 
@@ -30,16 +32,8 @@ type ListTodosFilteredParams struct {
 func (q *Queries) ListTodosFiltered(ctx context.Context, arg ListTodosFilteredParams) ([]Todo, error) {
 	var w whereBuilder
 	w.add("recurrence_rule IS NULL AND recurrence_id = ''")
-	todoDeletedFilter(&w, arg.IncludeDeleted, arg.DeletedOnly)
-	if arg.CalendarID != 0 {
-		w.add("calendar_id = ?", arg.CalendarID)
-	}
-	if arg.FilterStatus != "" {
-		w.add("status = ?", arg.FilterStatus)
-	}
-	if arg.HideCompleted != 0 {
-		w.add("status != 'COMPLETED' AND status != 'CANCELLED'")
-	}
+	w.addSoftDeleteFilter(arg.IncludeDeleted, arg.DeletedOnly)
+	w.addTodoListFilters(arg.CalendarID, arg.FilterStatus, arg.HideCompleted)
 	if arg.FromDate != "" {
 		w.add("(due_date IS NULL OR due_date >= ?)", arg.FromDate)
 	}
@@ -61,16 +55,8 @@ type ListRecurringTodosFilteredParams struct {
 func (q *Queries) ListRecurringTodosFiltered(ctx context.Context, arg ListRecurringTodosFilteredParams) ([]Todo, error) {
 	var w whereBuilder
 	w.add("recurrence_rule IS NOT NULL AND recurrence_id = ''")
-	todoDeletedFilter(&w, arg.IncludeDeleted, arg.DeletedOnly)
-	if arg.CalendarID != 0 {
-		w.add("calendar_id = ?", arg.CalendarID)
-	}
-	if arg.FilterStatus != "" {
-		w.add("status = ?", arg.FilterStatus)
-	}
-	if arg.HideCompleted != 0 {
-		w.add("status != 'COMPLETED' AND status != 'CANCELLED'")
-	}
+	w.addSoftDeleteFilter(arg.IncludeDeleted, arg.DeletedOnly)
+	w.addTodoListFilters(arg.CalendarID, arg.FilterStatus, arg.HideCompleted)
 	where, args := w.build()
 	return q.queryTodos(ctx, where, args, "due_date ASC, summary ASC")
 }
@@ -86,7 +72,7 @@ type ListTodosForExportParams struct {
 
 func (q *Queries) ListTodosForExport(ctx context.Context, arg ListTodosForExportParams) ([]Todo, error) {
 	var w whereBuilder
-	todoDeletedFilter(&w, arg.IncludeDeleted, arg.DeletedOnly)
+	w.addSoftDeleteFilter(arg.IncludeDeleted, arg.DeletedOnly)
 	if arg.CalendarID != 0 {
 		w.add("calendar_id = ?", arg.CalendarID)
 	}
