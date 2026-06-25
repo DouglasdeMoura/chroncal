@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -71,16 +72,30 @@ func triggerValuesEqual(a, b string) bool {
 }
 
 func parseTriggerTime(s string) (time.Time, bool) {
-	for _, layout := range []string{
-		"20060102T150405Z", // iCal UTC
-		time.RFC3339,       // RFC 3339
-		"20060102T150405",  // iCal floating (no timezone)
-	} {
-		if t, err := time.Parse(layout, s); err == nil {
-			return t, true
-		}
+	t, err := ParseAbsoluteTime(s, "")
+	return t, err == nil
+}
+
+// ParseAbsoluteTime parses an absolute iCal datetime value in any of the three
+// recognized forms: iCal UTC (20060102T150405Z), iCal floating (20060102T150405),
+// or RFC 3339. A floating value is interpreted in timezone (a tz database name)
+// when non-empty and loadable; otherwise it is returned with its zero offset.
+func ParseAbsoluteTime(value, timezone string) (time.Time, error) {
+	if t, err := time.Parse("20060102T150405Z", value); err == nil {
+		return t, nil
 	}
-	return time.Time{}, false
+	if t, err := time.Parse("20060102T150405", value); err == nil {
+		if timezone != "" {
+			if loc, lerr := time.LoadLocation(timezone); lerr == nil {
+				return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), 0, loc), nil
+			}
+		}
+		return t, nil
+	}
+	if t, err := time.Parse(time.RFC3339, value); err == nil {
+		return t, nil
+	}
+	return time.Time{}, fmt.Errorf("invalid trigger format: %q", value)
 }
 
 func attendeesEqual(a, b []AlarmAttendee) bool {
