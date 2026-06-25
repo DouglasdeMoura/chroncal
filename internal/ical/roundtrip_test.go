@@ -1826,6 +1826,82 @@ func TestRoundtrip_EventDurationFloating(t *testing.T) {
 	}
 }
 
+// TestRoundtrip_FloatingClockHostIndependent verifies that floating-time
+// values export the stored wall clock unchanged, regardless of the host's
+// local timezone. Import interprets a floating DTSTART as UTC (storing the
+// wall clock as e.g. 09:00:00Z), so export must format the UTC wall clock —
+// not e.Local() — otherwise the displayed clock shifts on non-UTC hosts.
+func TestRoundtrip_FloatingClockHostIndependent(t *testing.T) {
+	// Force a non-UTC host timezone so .Local() would visibly shift the clock.
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatalf("load location: %v", err)
+	}
+	orig := time.Local
+	time.Local = loc
+	t.Cleanup(func() { time.Local = orig })
+
+	t.Run("event", func(t *testing.T) {
+		data, err := ExportEvents([]event.Event{{
+			UID:       "floating-event",
+			Title:     "Floating",
+			StartTime: time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC),
+			EndTime:   time.Date(2026, 4, 1, 9, 30, 0, 0, time.UTC),
+			Timezone:  "FLOATING",
+			Status:    "CONFIRMED",
+			Transp:    "OPAQUE",
+		}}, "")
+		if err != nil {
+			t.Fatalf("export: %v", err)
+		}
+		exported := string(data)
+		if !strings.Contains(exported, "DTSTART:20260401T090000") {
+			t.Errorf("floating DTSTART clock shifted by host TZ; want DTSTART:20260401T090000\n%s", exported)
+		}
+		if !strings.Contains(exported, "DTEND:20260401T093000") {
+			t.Errorf("floating DTEND clock shifted by host TZ; want DTEND:20260401T093000\n%s", exported)
+		}
+	})
+
+	t.Run("todo", func(t *testing.T) {
+		data, err := ExportTodos([]todo.Todo{{
+			UID:       "floating-todo",
+			Summary:   "Floating",
+			StartDate: "2026-04-01T09:00:00Z",
+			DueDate:   "2026-04-01T17:00:00Z",
+			Timezone:  "FLOATING",
+			Status:    "NEEDS-ACTION",
+		}}, "")
+		if err != nil {
+			t.Fatalf("export: %v", err)
+		}
+		exported := string(data)
+		if !strings.Contains(exported, "DTSTART:20260401T090000") {
+			t.Errorf("floating todo DTSTART clock shifted by host TZ; want DTSTART:20260401T090000\n%s", exported)
+		}
+		if !strings.Contains(exported, "DUE:20260401T170000") {
+			t.Errorf("floating todo DUE clock shifted by host TZ; want DUE:20260401T170000\n%s", exported)
+		}
+	})
+
+	t.Run("journal", func(t *testing.T) {
+		data, err := ExportJournals([]journal.Journal{{
+			UID:       "floating-journal",
+			Summary:   "Floating",
+			StartDate: "2026-04-01T09:00:00Z",
+			Timezone:  "FLOATING",
+			Status:    "FINAL",
+		}}, "")
+		if err != nil {
+			t.Fatalf("export: %v", err)
+		}
+		exported := string(data)
+		if !strings.Contains(exported, "DTSTART:20260401T090000") {
+			t.Errorf("floating journal DTSTART clock shifted by host TZ; want DTSTART:20260401T090000\n%s", exported)
+		}
+	})
+}
+
 func TestRoundtrip_EventDurationWithTimezone(t *testing.T) {
 	t.Parallel()
 	original := event.Event{

@@ -242,13 +242,14 @@ func setEventTimes(vevent *ical.Event, e event.Event) {
 			vevent.Props.SetDate(ical.PropDateTimeEnd, allDayExportDate(e.EndTime, e.Timezone))
 		}
 	} else if e.Timezone == "FLOATING" {
-		local := e.StartTime.Local()
-		setPropFloating(vevent, ical.PropDateTimeStart, local)
+		// Floating times are host-independent wall clocks. Import interprets
+		// them as UTC, so export must emit the stored UTC wall clock (not
+		// .Local(), which would shift the clock on non-UTC hosts).
+		setPropFloating(vevent, ical.PropDateTimeStart, e.StartTime.UTC())
 		if useDuration {
 			setPropDuration(vevent, e.DurationValue)
 		} else {
-			local = e.EndTime.Local()
-			setPropFloating(vevent, ical.PropDateTimeEnd, local)
+			setPropFloating(vevent, ical.PropDateTimeEnd, e.EndTime.UTC())
 		}
 	} else if e.Timezone != "" {
 		loc, err := time.LoadLocation(e.Timezone)
@@ -345,7 +346,7 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 			} else if due, err := time.Parse(time.RFC3339, t.DueDate); err == nil {
 				if t.Timezone == "FLOATING" {
 					p := &ical.Prop{Name: ical.PropDue}
-					p.Value = due.Local().Format("20060102T150405")
+					p.Value = due.UTC().Format("20060102T150405")
 					vtodo.Props.Set(p)
 				} else if t.Timezone != "" {
 					if loc, lerr := time.LoadLocation(t.Timezone); lerr == nil {
@@ -367,7 +368,7 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 			} else if start, err := time.Parse(time.RFC3339, t.StartDate); err == nil {
 				if t.Timezone == "FLOATING" {
 					p := &ical.Prop{Name: ical.PropDateTimeStart}
-					p.Value = start.Local().Format("20060102T150405")
+					p.Value = start.UTC().Format("20060102T150405")
 					vtodo.Props.Set(p)
 				} else if t.Timezone != "" {
 					if loc, lerr := time.LoadLocation(t.Timezone); lerr == nil {
@@ -955,7 +956,7 @@ func ExportJournals(journals []journal.Journal, calName string) ([]byte, error) 
 			} else if start, err := time.Parse(time.RFC3339, j.StartDate); err == nil {
 				if j.Timezone == "FLOATING" {
 					p := &ical.Prop{Name: ical.PropDateTimeStart}
-					p.Value = start.Local().Format("20060102T150405")
+					p.Value = start.UTC().Format("20060102T150405")
 					vjournal.Props.Set(p)
 				} else if j.Timezone != "" {
 					if loc, lerr := time.LoadLocation(j.Timezone); lerr == nil {
