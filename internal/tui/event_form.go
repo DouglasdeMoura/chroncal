@@ -492,10 +492,7 @@ func parseRecurrenceRule(rule string, fallbackDate time.Time) (int, string, ends
 			ends = endsAfter
 		case strings.HasPrefix(upper, "UNTIL="):
 			ends = endsOnDate
-			val := strings.TrimPrefix(upper, "UNTIL=")
-			if t, err := time.Parse("20060102T150405Z", val); err == nil {
-				endsDate = t
-			} else if t, err := time.Parse("20060102", val); err == nil {
+			if t, ok := parseRRuleUntil(strings.TrimPrefix(upper, "UNTIL=")); ok {
 				endsDate = t
 			}
 		default:
@@ -514,6 +511,24 @@ func parseRecurrenceRule(rule string, fallbackDate time.Time) (int, string, ends
 	}
 
 	return repeatCustomIdx, rule, ends, endsDate
+}
+
+// parseRRuleUntil parses an RRULE UNTIL value as either a UTC datetime
+// (20060102T150405Z) or a date-only value (20060102), returning ok=false when
+// neither layout matches.
+func parseRRuleUntil(val string) (time.Time, bool) {
+	if t, err := time.Parse("20060102T150405Z", val); err == nil {
+		return t, true
+	}
+	if t, err := time.Parse("20060102", val); err == nil {
+		return t, true
+	}
+	return time.Time{}, false
+}
+
+// formatRRuleUntil renders a time as an RRULE UNTIL value in iCal UTC form.
+func formatRRuleUntil(t time.Time) string {
+	return t.UTC().Format("20060102T150405Z")
 }
 
 func rruleParam(rule, name string) string {
@@ -1563,7 +1578,7 @@ func (m EventFormModel) buildRecurrenceRule() string {
 			rule += ";COUNT=" + count
 		}
 	case endsOnDate:
-		rule += ";UNTIL=" + m.endsDate.UTC().Format("20060102T150405Z")
+		rule += ";UNTIL=" + formatRRuleUntil(m.endsDate)
 	default:
 		// endsNever
 	}

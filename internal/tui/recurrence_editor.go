@@ -177,9 +177,7 @@ func (m *RecurrenceEditorModel) LoadRule(rule string) {
 			m.endsCountField.SetValue(val)
 		case "UNTIL":
 			m.endsField.SetSelected(int(endsOnDate))
-			if t, err := time.Parse("20060102T150405Z", val); err == nil {
-				m.endsDate = t
-			} else if t, err := time.Parse("20060102", val); err == nil {
+			if t, ok := parseRRuleUntil(val); ok {
 				m.endsDate = t
 			}
 		}
@@ -520,7 +518,7 @@ func (m RecurrenceEditorModel) BuildRule() string {
 			rule += ";COUNT=" + c
 		}
 	case endsOnDate:
-		rule += ";UNTIL=" + m.endsDate.UTC().Format("20060102T150405Z")
+		rule += ";UNTIL=" + formatRRuleUntil(m.endsDate)
 	}
 
 	return rule
