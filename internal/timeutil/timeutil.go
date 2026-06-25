@@ -15,6 +15,11 @@ import (
 // UTC, which must round-trip as a full RFC 3339 DATE-TIME.
 var dateOnlyLoc = time.FixedZone("DATE", 0)
 
+// StorageTimeFormat is the canonical layout for UTC timestamps written to the
+// database (e.g. deleted_at cutoffs). It is RFC 3339 without the explicit
+// numeric offset, since all stored times are UTC.
+const StorageTimeFormat = "2006-01-02T15:04:05Z"
+
 // IsDateOnly returns true if s is a date-only string in YYYY-MM-DD format.
 func IsDateOnly(s string) bool {
 	if len(s) != 10 {
