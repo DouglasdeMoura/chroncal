@@ -357,6 +357,21 @@ func TestSoftDelete_FromInstance_UndoAfterGap(t *testing.T) {
 		t.Fatalf("DeleteFromInstanceWithUndo: %v", err)
 	}
 
+	// The captured baseline must be the truncation's own write (not the stale
+	// pre-truncation value), so it equals the master's current updated_at.
+	var dbUpdated string
+	if err := svc.db.QueryRowContext(ctx,
+		"SELECT updated_at FROM events WHERE id = ?", master.ID).Scan(&dbUpdated); err != nil {
+		t.Fatalf("read updated_at: %v", err)
+	}
+	if got := meta.MasterUpdatedBefore; !got.Equal(parseStorageTime(dbUpdated)) {
+		t.Fatalf("MasterUpdatedBefore = %s, want %s (the truncation's own write)",
+			got.Format(time.RFC3339), dbUpdated)
+	}
+	if !meta.MasterUpdatedBefore.After(parseStorageTime(pastEdit)) {
+		t.Fatal("MasterUpdatedBefore did not advance past the backdated edit")
+	}
+
 	// Undo must succeed even though the master's prior edit was >1s ago.
 	if err := svc.RestoreUndo(ctx, meta); err != nil {
 		t.Fatalf("RestoreUndo after gap: %v", err)
