@@ -36,6 +36,12 @@ queries the connected remote CalDAV calendar instead.`,
   chroncal freebusy --calendar Work --from 2026-04-01T09:00:00-03:00 --to 2026-04-01T18:00:00-03:00
   chroncal freebusy --calendar Work --remote --from 2026-04-01 --to 2026-04-07 --format ical`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			switch format {
+			case "text", "ical":
+			default:
+				return errInvalidInputf("invalid --format %q (must be text or ical)", format)
+			}
+
 			from, err := parseFreeBusyTime("from", fromStr, false)
 			if err != nil {
 				return err
