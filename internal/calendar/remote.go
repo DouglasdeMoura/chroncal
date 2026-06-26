@@ -2,6 +2,8 @@ package calendar
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"path"
@@ -41,6 +43,13 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 
 	if cal.AccountID != 0 {
 		existing, err := s.q.GetAccount(ctx, cal.AccountID)
+		// Only sql.ErrNoRows (the account row is genuinely gone) may fall
+		// through to the create-new path. A transient read failure must be
+		// propagated; treating it as not-found would repoint the calendar to a
+		// brand-new hidden account and orphan the old credential (issue #300).
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("get account: %w", err)
+		}
 		if err == nil && strings.HasPrefix(existing.Name, hiddenAccountPrefix) {
 			cred.AccountID = existing.ID
 

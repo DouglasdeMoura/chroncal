@@ -2,11 +2,28 @@ package calendar
 
 import (
 	"context"
+	"database/sql"
+	"strings"
 	"testing"
 
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
+
+// failGetAccountDB wraps a DBTX and turns the GetAccount read into a
+// non-ErrNoRows failure (a "no such column" scan error), simulating a
+// transient DB error while leaving every other query untouched.
+type failGetAccountDB struct {
+	storage.DBTX
+}
+
+func (d failGetAccountDB) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
+	if strings.Contains(query, "FROM accounts WHERE id = ?") {
+		return d.DBTX.QueryRowContext(ctx, "SELECT no_such_column FROM accounts WHERE id = ?", args...)
+	}
+	return d.DBTX.QueryRowContext(ctx, query, args...)
+}
 
 type memCredStore struct {
 	creds map[int64]auth.Credential
@@ -195,6 +212,71 @@ func TestConnect_RelinkRestoresCredentialOnTxFailure(t *testing.T) {
 	}
 	if got.Password != "old-pass" {
 		t.Errorf("stored password = %q, want %q: a failed re-link must not leave the keyring holding the new credential", got.Password, "old-pass")
+	}
+}
+
+func TestConnect_RelinkPropagatesTransientGetAccountError(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	svc := NewService(db, q)
+	ctx := context.Background()
+
+	// Calendar 1 is already linked to a hidden account whose name differs from
+	// hiddenAccountName(1), so the buggy create-new path would NOT collide on
+	// the UNIQUE(name) constraint and would happily spawn a duplicate account.
+	account, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name:      "__calendar_99",
+		ServerUrl: "https://example.com",
+		AuthType:  "basic",
+		Username:  "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID:        1,
+		AccountID: &account.ID,
+		RemoteUrl: storage.StringToNullable("https://example.com/dav/calendars/work/"),
+	}); err != nil {
+		t.Fatalf("LinkCalendarToAccount: %v", err)
+	}
+
+	// The keyring already holds the credential for the linked account.
+	store := &memCredStore{}
+	if err := store.Set(auth.Credential{AccountID: account.ID, Username: "user", Password: "old-pass"}); err != nil {
+		t.Fatalf("seed old credential: %v", err)
+	}
+
+	cal, err := svc.Get(ctx, 1)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	// A Service whose GetAccount read fails transiently (a non-ErrNoRows
+	// error). Transactional writes still go through the real *sql.Tx, so the
+	// create-new path can succeed if the code reaches it.
+	faulty := NewService(db, storage.New(failGetAccountDB{db}))
+
+	link := RemoteLink{
+		RemoteURL:     "https://example.com/dav/calendars/work/",
+		Username:      "user",
+		AuthType:      "basic",
+		AllowInsecure: false,
+	}
+	newCred := auth.Credential{Username: "user", Password: "new-pass"}
+
+	if err := faulty.Connect(ctx, cal, link, newCred, store); err == nil {
+		t.Fatal("Connect: expected a transient GetAccount error to propagate, got nil (fell through to create a duplicate hidden account)")
+	}
+
+	accounts, err := q.ListAccounts(ctx)
+	if err != nil {
+		t.Fatalf("ListAccounts: %v", err)
+	}
+	if len(accounts) != 1 {
+		t.Errorf("account count = %d, want 1: a transient read error must not spawn a duplicate hidden account", len(accounts))
+	}
+	if len(store.creds) != 1 {
+		t.Errorf("credential count = %d, want 1: a transient read error must not orphan the old credential behind a new one", len(store.creds))
 	}
 }
 
