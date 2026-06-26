@@ -324,8 +324,10 @@ to stdout.`,
 				if derr != nil {
 					return derr
 				}
-				fromTime = from.Format(time.RFC3339)
-				toTime = to.Format(time.RFC3339)
+				// Normalize to UTC so the RFC3339 bounds compare lexically
+				// against UTC-stored start/end strings (issue #305).
+				fromTime = from.UTC().Format(time.RFC3339)
+				toTime = to.UTC().Format(time.RFC3339)
 			}
 
 			// Load events
