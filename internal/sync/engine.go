@@ -328,7 +328,7 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 		// PUTs with HTTP 400 / 500 and a vague <D:error/> body. Skipping
 		// foreign-organized events here clears the dirty flag so we stop
 		// retrying every sync; the local row is left untouched.
-		if pushIdentity != "" && res.OwnerType == "event" && !e.userOrganizesEvent(ctx, res.Uid, pushIdentity) {
+		if pushIdentity != "" && res.OwnerType == ownerTypeEvent && !e.userOrganizesEvent(ctx, res.Uid, pushIdentity) {
 			e.logger.Info("skip push: not the organizer", "uid", res.Uid, "owner", pushIdentity)
 			if err := e.q.ClearSyncResourceDirty(ctx, storage.ClearSyncResourceDirtyParams{
 				CalendarID: calendarID,
@@ -463,7 +463,10 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 						if encodeErr != nil {
 							e.logger.Warn("encode server resource for conflict record", "uid", res.Uid, "error", encodeErr)
 						}
-						ownerID := e.lookupOwnerID(ctx, res.OwnerType, res.Uid)
+						ownerID, lookupErr := e.lookupOwnerID(ctx, res.OwnerType, res.Uid)
+						if lookupErr != nil {
+							e.logger.Warn("lookup owner id for conflict record", "uid", res.Uid, "owner_type", res.OwnerType, "error", lookupErr)
+						}
 						_ = e.q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 							CalendarID: calendarID,
 							OwnerType:  res.OwnerType,
@@ -1086,42 +1089,151 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 	return result, nil
 }
 
+// Owner-type strings stamped on every sync_resource row and CalDAV change
+// record. CalDAV tracks one resource per UID, partitioned by component type.
+const (
+	ownerTypeEvent   = "event"
+	ownerTypeTodo    = "todo"
+	ownerTypeJournal = "journal"
+)
+
+// errUnknownOwnerType reports a sync_resource OwnerType the engine doesn't
+// recognize. Every owner-type dispatch surfaces it instead of guessing, so a
+// new (or misspelled) component type fails loudly rather than silently
+// mis-resolving — notably, lookupOwnerID no longer reports ID 0 without error.
+var errUnknownOwnerType = errors.New("unknown owner type")
+
+// ownerOps bundles the per-component-type operations the sync engine
+// dispatches on a sync_resource's OwnerType. Each component type is enumerated
+// exactly once in ownerOpsByType, so adding a fourth type is a single map
+// entry rather than synchronized edits to parallel switches — and a missed
+// type can't compile cleanly into a silent mis-dispatch.
+type ownerOps struct {
+	softDeleteByUID func(ctx context.Context, e *Engine, uid string) error
+	lookupID        func(ctx context.Context, e *Engine, uid string) (int64, error)
+	export          func(ctx context.Context, e *Engine, uid string) ([]byte, error)
+}
+
+var ownerOpsByType = map[string]ownerOps{
+	ownerTypeEvent: {
+		softDeleteByUID: func(ctx context.Context, e *Engine, uid string) error {
+			return e.q.SoftDeleteEventsByUID(ctx, uid)
+		},
+		lookupID: func(ctx context.Context, e *Engine, uid string) (int64, error) {
+			row, err := e.q.GetEventByUID(ctx, uid)
+			if err != nil {
+				return 0, err
+			}
+			return row.ID, nil
+		},
+		export: func(ctx context.Context, e *Engine, uid string) ([]byte, error) {
+			return exportResourceFor(ctx, e, uid, ownerTypeEvent,
+				e.events.GetByUID, e.events.ListOverridesByUID, hydrateEvent, icalPkg.ExportEvents)
+		},
+	},
+	ownerTypeTodo: {
+		softDeleteByUID: func(ctx context.Context, e *Engine, uid string) error {
+			return e.q.SoftDeleteTodosByUID(ctx, uid)
+		},
+		lookupID: func(ctx context.Context, e *Engine, uid string) (int64, error) {
+			row, err := e.q.GetTodoByUID(ctx, uid)
+			if err != nil {
+				return 0, err
+			}
+			return row.ID, nil
+		},
+		export: func(ctx context.Context, e *Engine, uid string) ([]byte, error) {
+			return exportResourceFor(ctx, e, uid, ownerTypeTodo,
+				e.todos.GetByUID, e.todos.ListOverridesByUID, hydrateTodo, icalPkg.ExportTodos)
+		},
+	},
+	ownerTypeJournal: {
+		softDeleteByUID: func(ctx context.Context, e *Engine, uid string) error {
+			return e.q.SoftDeleteJournalsByUID(ctx, uid)
+		},
+		lookupID: func(ctx context.Context, e *Engine, uid string) (int64, error) {
+			row, err := e.q.GetJournalByUID(ctx, uid)
+			if err != nil {
+				return 0, err
+			}
+			return row.ID, nil
+		},
+		export: func(ctx context.Context, e *Engine, uid string) ([]byte, error) {
+			return exportResourceFor(ctx, e, uid, ownerTypeJournal,
+				e.journals.GetByUID, e.journals.ListOverridesByUID, hydrateJournal, icalPkg.ExportJournals)
+		},
+	},
+}
+
+// exportResourceFor bundles a UID's master row plus its override rows into an
+// iCal payload. CalDAV tracks one resource per UID; recurring resources are
+// stored as a master row plus override rows sharing the UID, and we normally
+// bundle master + overrides so instance edits round-trip to the server. Google
+// sometimes serves a single orphan instance under a UID like
+// `<master>_R<recurrence-id>@google.com` with a RECURRENCE-ID property and no
+// master in the same iCal stream — we import those as override rows with no
+// master sibling, so the master lookup fails. We therefore append every live
+// row under the UID and export the non-empty result, returning
+// errResourceMissing only when nothing remains.
+func exportResourceFor[T any](
+	ctx context.Context,
+	e *Engine,
+	uid, kind string,
+	get func(context.Context, string) (T, error),
+	listOverrides func(context.Context, string) ([]T, error),
+	hydrate func(context.Context, *Engine, *T),
+	export func([]T, string) ([]byte, error),
+) ([]byte, error) {
+	var rows []T
+	if row, err := get(ctx, uid); err == nil {
+		rows = append(rows, row)
+	}
+	overrides, err := listOverrides(ctx, uid)
+	if err != nil {
+		return nil, fmt.Errorf("list overrides for %s uid %s: %w", kind, uid, err)
+	}
+	rows = append(rows, overrides...)
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("%w: %s uid %s", errResourceMissing, kind, uid)
+	}
+	for i := range rows {
+		hydrate(ctx, e, &rows[i])
+	}
+	return export(rows, "")
+}
+
+// ownerOpsFor resolves the dispatch table for an owner type, returning
+// errUnknownOwnerType for anything not registered above.
+func ownerOpsFor(ownerType string) (ownerOps, error) {
+	ops, ok := ownerOpsByType[ownerType]
+	if !ok {
+		return ownerOps{}, fmt.Errorf("%w: %q", errUnknownOwnerType, ownerType)
+	}
+	return ops, nil
+}
+
 func (e *Engine) deleteLocalResourceByUID(ctx context.Context, ownerType, uid string) error {
 	// Soft-delete across every owner type so a remote DELETE that races with
 	// a user action doesn't nuke the local row — it stays in trash until the
 	// retention window expires. The caller clears the sync_resource so a
 	// later restore re-CREATEs a fresh one via MarkResourceDirty.
-	switch ownerType {
-	case "event":
-		return e.q.SoftDeleteEventsByUID(ctx, uid)
-	case "todo":
-		return e.q.SoftDeleteTodosByUID(ctx, uid)
-	case "journal":
-		return e.q.SoftDeleteJournalsByUID(ctx, uid)
-	default:
-		return fmt.Errorf("unsupported owner type %q", ownerType)
+	ops, err := ownerOpsFor(ownerType)
+	if err != nil {
+		return err
 	}
+	return ops.softDeleteByUID(ctx, e, uid)
 }
 
-func (e *Engine) lookupOwnerID(ctx context.Context, ownerType, uid string) int64 {
-	switch ownerType {
-	case "event":
-		row, err := e.q.GetEventByUID(ctx, uid)
-		if err == nil {
-			return row.ID
-		}
-	case "todo":
-		row, err := e.q.GetTodoByUID(ctx, uid)
-		if err == nil {
-			return row.ID
-		}
-	case "journal":
-		row, err := e.q.GetJournalByUID(ctx, uid)
-		if err == nil {
-			return row.ID
-		}
+// lookupOwnerID resolves the local row ID backing a UID for the given owner
+// type. It returns errUnknownOwnerType for an unrecognized type and the
+// underlying lookup error when no live row exists, so callers never silently
+// attribute a record to ID 0.
+func (e *Engine) lookupOwnerID(ctx context.Context, ownerType, uid string) (int64, error) {
+	ops, err := ownerOpsFor(ownerType)
+	if err != nil {
+		return 0, err
 	}
-	return 0
+	return ops.lookupID(ctx, e, uid)
 }
 
 type tombstoneResult struct {
@@ -1240,71 +1352,14 @@ func (e *Engine) syncCalendarMetadata(ctx context.Context, client *caldav.Client
 // row (clear the dirty flag, stop retrying) from a real export failure.
 var errResourceMissing = errors.New("local resource missing for uid")
 
-// exportResource exports a local resource to iCal bytes. CalDAV tracks one
-// resource per UID; recurring resources are stored as a master row plus
-// override rows sharing the UID. Normally we bundle master + overrides so
-// instance edits round-trip to the server. Google sometimes serves a single
-// orphan instance under a UID like `<master>_R<recurrence-id>@google.com`
-// with a RECURRENCE-ID property and no master in the same iCal stream — we
-// import those as override rows with no master sibling, so the master lookup
-// fails. Fall back to listing every live row under the UID and exporting the
-// non-empty result; only return errResourceMissing when nothing remains.
+// exportResource exports a local resource to iCal bytes, dispatching on owner
+// type. See exportResourceFor for the master/override bundling behavior.
 func (e *Engine) exportResource(ctx context.Context, ownerType string, uid string) ([]byte, error) {
-	switch ownerType {
-	case "event":
-		var rows []event.Event
-		if evt, err := e.events.GetByUID(ctx, uid); err == nil {
-			rows = append(rows, evt)
-		}
-		overrides, err := e.events.ListOverridesByUID(ctx, uid)
-		if err != nil {
-			return nil, fmt.Errorf("list overrides for event uid %s: %w", uid, err)
-		}
-		rows = append(rows, overrides...)
-		if len(rows) == 0 {
-			return nil, fmt.Errorf("%w: event uid %s", errResourceMissing, uid)
-		}
-		for i := range rows {
-			hydrateEvent(ctx, e, &rows[i])
-		}
-		return icalPkg.ExportEvents(rows, "")
-	case "todo":
-		var rows []todo.Todo
-		if t, err := e.todos.GetByUID(ctx, uid); err == nil {
-			rows = append(rows, t)
-		}
-		overrides, err := e.todos.ListOverridesByUID(ctx, uid)
-		if err != nil {
-			return nil, fmt.Errorf("list overrides for todo uid %s: %w", uid, err)
-		}
-		rows = append(rows, overrides...)
-		if len(rows) == 0 {
-			return nil, fmt.Errorf("%w: todo uid %s", errResourceMissing, uid)
-		}
-		for i := range rows {
-			hydrateTodo(ctx, e, &rows[i])
-		}
-		return icalPkg.ExportTodos(rows, "")
-	case "journal":
-		var rows []journal.Journal
-		if j, err := e.journals.GetByUID(ctx, uid); err == nil {
-			rows = append(rows, j)
-		}
-		overrides, err := e.journals.ListOverridesByUID(ctx, uid)
-		if err != nil {
-			return nil, fmt.Errorf("list overrides for journal uid %s: %w", uid, err)
-		}
-		rows = append(rows, overrides...)
-		if len(rows) == 0 {
-			return nil, fmt.Errorf("%w: journal uid %s", errResourceMissing, uid)
-		}
-		for i := range rows {
-			hydrateJournal(ctx, e, &rows[i])
-		}
-		return icalPkg.ExportJournals(rows, "")
-	default:
-		return nil, fmt.Errorf("unknown owner type: %s", ownerType)
+	ops, err := ownerOpsFor(ownerType)
+	if err != nil {
+		return nil, err
 	}
+	return ops.export(ctx, e, uid)
 }
 
 func hydrateEvent(ctx context.Context, e *Engine, evt *event.Event) {
@@ -1578,9 +1633,9 @@ func (e *Engine) dropTombstonedFromImport(ctx context.Context, calendarID int64,
 		}
 	}
 
-	result.Events = filterTombstoned(e.logger, result.Events, tombstoned, "event", func(ev event.Event) string { return ev.UID })
-	result.Todos = filterTombstoned(e.logger, result.Todos, tombstoned, "todo", func(t todo.Todo) string { return t.UID })
-	result.Journals = filterTombstoned(e.logger, result.Journals, tombstoned, "journal", func(j journal.Journal) string { return j.UID })
+	result.Events = filterTombstoned(e.logger, result.Events, tombstoned, ownerTypeEvent, func(ev event.Event) string { return ev.UID })
+	result.Todos = filterTombstoned(e.logger, result.Todos, tombstoned, ownerTypeTodo, func(t todo.Todo) string { return t.UID })
+	result.Journals = filterTombstoned(e.logger, result.Journals, tombstoned, ownerTypeJournal, func(j journal.Journal) string { return j.UID })
 
 	return result, nil
 }
@@ -1620,15 +1675,15 @@ func extractUID(result icalPkg.ImportResult) string {
 
 func detectOwnerType(result icalPkg.ImportResult) string {
 	if len(result.Events) > 0 {
-		return "event"
+		return ownerTypeEvent
 	}
 	if len(result.Todos) > 0 {
-		return "todo"
+		return ownerTypeTodo
 	}
 	if len(result.Journals) > 0 {
-		return "journal"
+		return ownerTypeJournal
 	}
-	return "event"
+	return ownerTypeEvent
 }
 
 func (e *Engine) updateSyncHealth(ctx context.Context, calendarID int64, attemptedAt string, result *SyncResult, runErr error) error {
