@@ -3149,7 +3149,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.trash, cmd = m.trash.Update(msg)
 			return m, cmd
 		}
-		if !m.dialogOpen && !m.choiceOpen && !m.confirmOpen {
+		if !m.dialogOpen && !m.choiceOpen && !m.confirmOpen && !m.oauthFlowOpen {
 			switch m.viewMode {
 			case viewWeek:
 				switch msg.Button {
