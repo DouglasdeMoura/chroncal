@@ -113,12 +113,9 @@ func resolveLocalAudioPath(uri string, policy ExecutionPolicy) string {
 	if !filepath.IsAbs(path) {
 		return ""
 	}
-	if _, err := os.Stat(path); err != nil {
-		return "" // File doesn't exist.
-	}
 	info, err := os.Stat(path)
 	if err != nil || !info.Mode().IsRegular() {
-		return ""
+		return "" // File doesn't exist or isn't a regular file.
 	}
 	if !isLikelyAudioFile(path) {
 		return ""
