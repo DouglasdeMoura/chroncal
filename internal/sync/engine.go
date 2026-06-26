@@ -512,12 +512,11 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 							result.conflicts++
 							continue
 						}
-						// Clear dirty and update ETag to accept server version
-						if err := e.q.ClearSyncResourceDirty(ctx, storage.ClearSyncResourceDirtyParams{
-							CalendarID: calendarID,
-							Uid:        res.Uid,
-							Etag:       serverRes.ETag,
-						}); err != nil {
+						// Clear dirty and update ETag to accept server version.
+						// Guard the clear on the post-import rev so a local edit
+						// landing between the import and here is not silently
+						// dropped (lost update). See issues #92 and #417.
+						if err := e.clearDirtyAfterImport(ctx, calendarID, res.Uid, serverRes.ETag); err != nil {
 							e.logger.Error("clear dirty after conflict", "uid", res.Uid, "error", err)
 						}
 					}
@@ -620,6 +619,41 @@ func (e *Engine) putAlreadyLanded(ctx context.Context, client *caldav.Client, pa
 		return "", false
 	}
 	return serverRes.ETag, true
+}
+
+// afterImportRevCapture, when non-nil, runs inside clearDirtyAfterImport between
+// reading the post-import rev and the conditional clear. It is nil in production
+// and exists only so tests can simulate a concurrent local edit landing in that
+// window to exercise the rev guard. See issue #417.
+var afterImportRevCapture func()
+
+// clearDirtyAfterImport adopts the server ETag and clears the dirty flag for a
+// resource whose local row we just overwrote with the server's version
+// (accept-server conflict resolution or a pull), but only when no local edit has
+// landed since the import. importICal/persistImported route through the
+// event/todo/journal services, which flip dirty=1 and bump rev via
+// MarkResourceDirty as a side effect; we read that post-import rev and feed it to
+// FinalizePushedResource so the clear becomes a no-op when a concurrent user edit
+// bumped rev again before we got here. An unconditional clear would wipe that
+// edit's dirty flag and silently drop it — the same lost-update race
+// FinalizePushedResource guards on the push path. See issues #92 and #417.
+func (e *Engine) clearDirtyAfterImport(ctx context.Context, calendarID int64, uid, etag string) error {
+	res, err := e.q.GetSyncResource(ctx, storage.GetSyncResourceParams{
+		CalendarID: calendarID,
+		Uid:        uid,
+	})
+	if err != nil {
+		return err
+	}
+	if afterImportRevCapture != nil {
+		afterImportRevCapture()
+	}
+	return e.q.FinalizePushedResource(ctx, storage.FinalizePushedResourceParams{
+		CalendarID: calendarID,
+		Uid:        uid,
+		Etag:       etag,
+		Rev:        res.Rev,
+	})
 }
 
 type pullResult struct {
@@ -821,13 +855,11 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 		}
 		// persistImported flips dirty=1 via the Replace* services'
 		// MarkResourceDirty side effect, and UpsertSyncResource's MAX
-		// clause preserves it. Force dirty=0 — the server's version is
-		// now authoritative. See applySyncCollection for the full note.
-		if err := e.q.ClearSyncResourceDirty(ctx, storage.ClearSyncResourceDirtyParams{
-			CalendarID: calendarID,
-			Uid:        uid,
-			Etag:       res.ETag,
-		}); err != nil {
+		// clause preserves it. Clear dirty — the server's version is now
+		// authoritative — but guard the clear on the post-import rev so a
+		// concurrent local edit is not silently dropped (issue #417). See
+		// applySyncCollection for the full note.
+		if err := e.clearDirtyAfterImport(ctx, calendarID, uid, res.ETag); err != nil {
 			e.logger.Warn("clear post-import dirty", "uid", uid, "error", err)
 		}
 
@@ -1122,13 +1154,11 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 			// sync-driven imports). UpsertSyncResource's `dirty = MAX(...)`
 			// clause then preserves that 1, so without an explicit clear here
 			// every pull re-dirties everything it just absorbed and the next
-			// push round-trips it back to the server. Force dirty=0 since the
-			// server's version is now authoritative locally.
-			if err := e.q.ClearSyncResourceDirty(ctx, storage.ClearSyncResourceDirtyParams{
-				CalendarID: calendarID,
-				Uid:        uid,
-				Etag:       res.ETag,
-			}); err != nil {
+			// push round-trips it back to the server. Clear dirty since the
+			// server's version is now authoritative locally, but guard the
+			// clear on the post-import rev so a concurrent local edit is not
+			// silently dropped (issue #417).
+			if err := e.clearDirtyAfterImport(ctx, calendarID, uid, res.ETag); err != nil {
 				e.logger.Warn("clear post-import dirty", "uid", uid, "error", err)
 			}
 			result.pulled++
