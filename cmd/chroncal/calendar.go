@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -312,16 +313,34 @@ Only the flags you pass are changed.`,
 			defer a.Close()
 			ctx := context.Background()
 
-			if err := validateCalendarRemoteFlags(remoteURL, username, authType, oauthClientID, allowInsecure, disconnectRemote); err != nil {
-				return err
-			}
-
 			cals, err := a.Calendars.List(ctx)
 			if err != nil {
 				return fmt.Errorf("list calendars: %w", err)
 			}
 			existing, err := findCalendarByRef(cals, args[0])
 			if err != nil {
+				return err
+			}
+
+			// Preserve the existing remote auth type when re-pointing
+			// --remote-url at an already linked calendar without --auth.
+			// Defaulting to "basic" here would prompt for a password and
+			// overwrite a stored bearer/OAuth token (issue #430).
+			if !disconnectRemote && strings.TrimSpace(remoteURL) != "" &&
+				!cmd.Flags().Changed("auth") && existing.AccountID != 0 {
+				account, err := a.Queries.GetAccount(ctx, existing.AccountID)
+				// A missing account row means the link is orphaned; let
+				// Connect recreate it from the flag default rather than
+				// failing the update. Any other read error is propagated.
+				if err != nil && !errors.Is(err, sql.ErrNoRows) {
+					return fmt.Errorf("get account: %w", err)
+				}
+				if err == nil {
+					authType = account.AuthType
+				}
+			}
+
+			if err := validateCalendarRemoteFlags(remoteURL, username, authType, oauthClientID, allowInsecure, disconnectRemote); err != nil {
 				return err
 			}
 
