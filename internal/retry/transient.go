@@ -98,11 +98,7 @@ func IsTransient(err error) bool {
 		return true
 	}
 
-	switch statusCode(err) {
-	case 408, 425, 429:
-		return true
-	}
-	if code := statusCode(err); code >= 500 {
+	if IsRetryableStatus(statusCode(err)) {
 		return true
 	}
 
@@ -113,6 +109,17 @@ func IsTransient(err error) bool {
 		strings.Contains(msg, "no such host") ||
 		strings.Contains(msg, "server misbehaving") ||
 		strings.Contains(msg, "timeout")
+}
+
+// IsRetryableStatus reports whether an HTTP status code is worth retrying:
+// 408 (request timeout), 425 (too early), 429 (too many requests), or any 5xx.
+// It is the single source of truth shared by IsTransient and the CalDAV client.
+func IsRetryableStatus(code int) bool {
+	switch code {
+	case 408, 425, 429:
+		return true
+	}
+	return code >= 500
 }
 
 // IsConflict reports whether err represents a sync conflict.

@@ -314,10 +314,10 @@ This does not delete your local calendars or entries.`,
 			}
 
 			var connected, failed int
-			// Resolve --calendar the same way every other command does
-			// (by ID or case-insensitive name) so behavior is uniform.
-			// findCalendarByRef already reports not_found for an unknown name,
-			// so a non-zero targetID is guaranteed to match a calendar below.
+			// Resolve --calendar by ID or case-insensitive name via the shared
+			// findCalendarByRef helper. It already reports not_found for an
+			// unknown reference, so a non-zero targetID is guaranteed to match a
+			// calendar below.
 			var targetID int64
 			if calendarName != "" {
 				target, err := findCalendarByRef(cals, calendarName)

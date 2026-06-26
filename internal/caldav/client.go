@@ -484,32 +484,21 @@ func httpError(resp *http.Response) error {
 		}
 	}
 
-	var err error
-	if bodyText == "" {
-		err = retry.NewHTTPError(resp.StatusCode, fmt.Errorf("HTTP %s", status))
-	} else {
-		err = retry.NewHTTPError(resp.StatusCode, fmt.Errorf("HTTP %s: %s", status, bodyText))
+	msg := fmt.Sprintf("HTTP %s", status)
+	if bodyText != "" {
+		msg = fmt.Sprintf("HTTP %s: %s", status, bodyText)
 	}
+	err := retry.NewHTTPError(resp.StatusCode, errors.New(msg))
 
 	// Servers ask clients to back off via Retry-After (typically on 429 or
 	// 503). Thread that hint out as a typed transient error so the retry
 	// layer can honor it as a floor instead of hammering with fixed backoff.
-	if isRetryableStatus(resp.StatusCode) {
+	if retry.IsRetryableStatus(resp.StatusCode) {
 		if d, ok := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()); ok {
 			return &retry.TransientError{Err: err, RetryAfter: d}
 		}
 	}
 	return err
-}
-
-// isRetryableStatus reports whether an HTTP status is worth retrying and may
-// carry a Retry-After hint.
-func isRetryableStatus(code int) bool {
-	switch code {
-	case http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests:
-		return true
-	}
-	return code >= 500
 }
 
 // parseRetryAfter parses an HTTP Retry-After header value, which is either a

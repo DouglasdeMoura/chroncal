@@ -81,10 +81,7 @@ again updates existing items instead of blindly duplicating them.`,
 
 			if len(result.Warnings) > 0 {
 				fmt.Fprintf(os.Stderr, "chroncal: %d warning(s) during import:\n", len(result.Warnings))
-				limit := 5
-				if len(result.Warnings) < limit {
-					limit = len(result.Warnings)
-				}
+				limit := min(5, len(result.Warnings))
 				for _, w := range result.Warnings[:limit] {
 					fmt.Fprintf(os.Stderr, "  - %s\n", safeText(w))
 				}
