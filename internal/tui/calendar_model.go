@@ -247,9 +247,9 @@ func (m CalendarModel) Update(msg tea.Msg) (CalendarModel, tea.Cmd) {
 	case key.Matches(keyMsg, m.keys.Right):
 		target = m.cursor.AddDate(0, 0, 1)
 	case key.Matches(keyMsg, m.keys.PrevMonth):
-		target = m.cursor.AddDate(0, -1, 0)
+		target = addMonthClamped(m.cursor, -1)
 	case key.Matches(keyMsg, m.keys.NextMonth):
-		target = m.cursor.AddDate(0, 1, 0)
+		target = addMonthClamped(m.cursor, 1)
 	case key.Matches(keyMsg, m.keys.Today):
 		target = m.today
 	case key.Matches(keyMsg, m.keys.Select):
