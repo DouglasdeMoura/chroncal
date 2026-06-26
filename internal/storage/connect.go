@@ -36,6 +36,15 @@ func Open(dbPath string) (*sql.DB, *Queries, error) {
 		return nil, nil, fmt.Errorf("open database: %w", err)
 	}
 
+	// A plain ":memory:" database is private to each connection with
+	// modernc.org/sqlite, so migrations applied on one pooled connection are
+	// invisible to the next. Pin the pool to a single connection so every
+	// query — including concurrent ones — sees the same schema and data.
+	// File-backed databases keep the default unbounded pool.
+	if dbPath == ":memory:" {
+		conn.SetMaxOpenConns(1)
+	}
+
 	if err := runMigrations(conn); err != nil {
 		conn.Close()
 		return nil, nil, fmt.Errorf("run migrations: %w", err)

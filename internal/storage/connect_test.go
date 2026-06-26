@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func TestOpen_InMemory(t *testing.T) {
@@ -96,6 +97,59 @@ func TestBackfillAlarmUIDs_TodoOnly(t *testing.T) {
 	if len(remaining) != 0 {
 		t.Fatalf("expected 0 todo alarms with empty uid after backfill, got %d", len(remaining))
 	}
+}
+
+// TestOpen_InMemorySchemaVisibleAcrossConnections guards issue #214: a plain
+// ":memory:" DSN is a private per-connection database with modernc.org/sqlite.
+// Migrations run on whichever connection the pool hands out first; without
+// pinning the pool to a single connection, a second concurrent connection sees
+// a brand-new, schema-less database and reads fail with "no such table".
+func TestOpen_InMemorySchemaVisibleAcrossConnections(t *testing.T) {
+	db, _, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open(:memory:) error: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+
+	// Hold one pooled connection open inside a live transaction so the read
+	// below is forced onto a different connection.
+	txReady := make(chan struct{})
+	txErr := make(chan error, 1)
+	txDone := make(chan struct{})
+	go func() {
+		defer close(txDone)
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			txErr <- err
+			close(txReady)
+			return
+		}
+		close(txReady)
+		// Keep the connection busy long enough that the pool must use a
+		// second connection for any concurrent query.
+		time.Sleep(200 * time.Millisecond)
+		_ = tx.Rollback()
+	}()
+
+	<-txReady
+	select {
+	case err := <-txErr:
+		t.Fatalf("BeginTx: %v", err)
+	default:
+	}
+
+	// Before the fix, an unpinned in-memory pool hands this query a brand-new,
+	// schema-less connection and the read fails with "no such table". After
+	// the fix the pool is pinned to a single connection for ":memory:", so the
+	// read blocks until the transaction releases the connection and then
+	// succeeds against the same schema.
+	var n int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM calendars").Scan(&n); err != nil {
+		t.Fatalf("read calendars on second connection: %v", err)
+	}
+	<-txDone
 }
 
 func TestOpen_ForeignKeys(t *testing.T) {
