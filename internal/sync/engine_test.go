@@ -168,6 +168,84 @@ func TestEnginePushContinuesAfterResourceFailure(t *testing.T) {
 	}
 }
 
+// TestEnginePushPreservesConcurrentEditDuringPut is the regression test for
+// issue #92: a concurrent local edit that arrives while the PUT is in flight
+// must not be silently dropped. Push exports the pre-edit body, PUTs it, and
+// then clears the dirty flag. If the clear is unconditional it wipes the
+// dirty=1 the concurrent edit set, so the edit is never pushed (lost update).
+// The clear must be gated on the resource revision captured before the PUT.
+func TestEnginePushPreservesConcurrentEditDuringPut(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+
+	// Link the seeded calendar to an account so service-layer mutations
+	// (here, the simulated concurrent edit) flip the dirty flag.
+	account, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name:      "test",
+		ServerUrl: "https://example.com",
+		AuthType:  "basic",
+		Username:  "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+	remoteCalURL := "https://example.com/cal"
+	if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID:        calendarID,
+		AccountID: &account.ID,
+		RemoteUrl: &remoteCalURL,
+	}); err != nil {
+		t.Fatalf("LinkCalendarToAccount: %v", err)
+	}
+
+	insertTestEvent(t, db, calendarID, "concurrent-edit")
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calendarID,
+		Uid:          "concurrent-edit",
+		OwnerType:    "event",
+		RemoteUrl:    "/calendar/concurrent-edit.ics",
+		Etag:         "",
+		Dirty:        1,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method == http.MethodPut {
+			// Simulate a user edit landing during the multi-second PUT
+			// round-trip: the service-layer mutation marks the resource
+			// dirty again. The exported body the server just received does
+			// not contain this edit.
+			if err := storage.MarkResourceDirty(ctx, db, calendarID, "concurrent-edit", "event"); err != nil {
+				t.Fatalf("simulate concurrent edit: %v", err)
+			}
+		}
+		return newResponse(http.StatusCreated, map[string]string{"ETag": `"etag-new"`}), nil
+	})
+
+	if _, err := engine.push(ctx, client, calendarID, "/calendar/", ConflictServerWins); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+
+	// The concurrent edit must survive: the resource stays dirty so the next
+	// push sends the edited body.
+	dirty, err := q.ListDirtySyncResources(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("ListDirtySyncResources: %v", err)
+	}
+	if len(dirty) != 1 {
+		t.Fatalf("dirty after push = %d, want 1 (concurrent edit must not be dropped)", len(dirty))
+	}
+}
+
 // TestEnginePushSkipsForeignOrganizedEvents confirms that push refuses to
 // PUT meetings the calendar owner did not organize. CalDAV servers reject
 // attendee PUTs (Google returns HTTP 400 with a vague <D:error/>) so

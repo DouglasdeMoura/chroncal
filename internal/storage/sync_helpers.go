@@ -28,10 +28,13 @@ func MarkResourceDirty(ctx context.Context, db *sql.DB, calendarID int64, uid, o
 	if accountID == nil || *accountID == 0 {
 		return nil
 	}
+	// Bump rev on every edit so a concurrent push (which captured the prior
+	// rev before exporting the body) refuses to clear dirty and silently drop
+	// this edit. See FinalizePushedResource and issue #92.
 	_, err = db.ExecContext(ctx,
 		`INSERT INTO sync_resources (calendar_id, uid, owner_type, dirty, sync_strategy)
 		 VALUES (?, ?, ?, 1, 'sync-token')
-		 ON CONFLICT(calendar_id, uid) DO UPDATE SET dirty = 1`,
+		 ON CONFLICT(calendar_id, uid) DO UPDATE SET dirty = 1, rev = rev + 1`,
 		calendarID, uid, ownerType,
 	)
 	return err

@@ -425,13 +425,20 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 			continue
 		}
 
-		// Clear dirty flag and update ETag
-		if err := e.q.ClearSyncResourceDirty(ctx, storage.ClearSyncResourceDirtyParams{
+		// Store the new server ETag and clear the dirty flag — but only clear
+		// dirty if the resource has not been edited since we captured res.Rev
+		// (before exporting the body we just PUT). A local edit landing during
+		// the PUT round-trip bumps rev and keeps dirty=1; an unconditional
+		// clear here would wipe that flag and silently drop the edit (lost
+		// update). The ETag still advances so the next push's If-Match matches
+		// the server. See issue #92.
+		if err := e.q.FinalizePushedResource(ctx, storage.FinalizePushedResourceParams{
 			CalendarID: calendarID,
 			Uid:        res.Uid,
 			Etag:       newEtag,
+			Rev:        res.Rev,
 		}); err != nil {
-			e.logger.Error("clear dirty failed", "uid", res.Uid, "error", err)
+			e.logger.Error("finalize pushed resource failed", "uid", res.Uid, "error", err)
 		}
 
 		// Update remote URL if it was newly assigned

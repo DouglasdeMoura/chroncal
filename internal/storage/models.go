@@ -287,6 +287,7 @@ type SyncResource struct {
 	Etag         string
 	Dirty        int64
 	SyncStrategy string
+	Rev          int64
 }
 
 type Timezone struct {

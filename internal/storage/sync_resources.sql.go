@@ -103,8 +103,39 @@ func (q *Queries) DeleteTombstonesByCalendarAndUID(ctx context.Context, arg Dele
 	return err
 }
 
+const finalizePushedResource = `-- name: FinalizePushedResource :exec
+UPDATE sync_resources
+SET etag = ?,
+    dirty = CASE WHEN rev = ? THEN 0 ELSE dirty END
+WHERE calendar_id = ? AND uid = ?
+`
+
+type FinalizePushedResourceParams struct {
+	Etag       string
+	Rev        int64
+	CalendarID int64
+	Uid        string
+}
+
+// Records the new server ETag after a successful PUT and optimistically clears
+// the dirty flag. The ETag always advances to the server's current version so
+// the next push's If-Match does not 412 against a change we just made. Dirty
+// is cleared only when rev still matches the value captured before the body was
+// exported and PUT: a local edit that landed during the PUT round-trip bumps
+// rev (via MarkSyncResourceDirty / MarkResourceDirty), so dirty stays 1 and the
+// edit survives to the next push instead of being silently dropped. See #92.
+func (q *Queries) FinalizePushedResource(ctx context.Context, arg FinalizePushedResourceParams) error {
+	_, err := q.db.ExecContext(ctx, finalizePushedResource,
+		arg.Etag,
+		arg.Rev,
+		arg.CalendarID,
+		arg.Uid,
+	)
+	return err
+}
+
 const getSyncResource = `-- name: GetSyncResource :one
-SELECT id, calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy FROM sync_resources WHERE calendar_id = ? AND uid = ?
+SELECT id, calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy, rev FROM sync_resources WHERE calendar_id = ? AND uid = ?
 `
 
 type GetSyncResourceParams struct {
@@ -124,12 +155,13 @@ func (q *Queries) GetSyncResource(ctx context.Context, arg GetSyncResourceParams
 		&i.Etag,
 		&i.Dirty,
 		&i.SyncStrategy,
+		&i.Rev,
 	)
 	return i, err
 }
 
 const listDirtySyncResources = `-- name: ListDirtySyncResources :many
-SELECT id, calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy FROM sync_resources WHERE calendar_id = ? AND dirty = 1 ORDER BY id
+SELECT id, calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy, rev FROM sync_resources WHERE calendar_id = ? AND dirty = 1 ORDER BY id
 `
 
 func (q *Queries) ListDirtySyncResources(ctx context.Context, calendarID int64) ([]SyncResource, error) {
@@ -150,6 +182,7 @@ func (q *Queries) ListDirtySyncResources(ctx context.Context, calendarID int64) 
 			&i.Etag,
 			&i.Dirty,
 			&i.SyncStrategy,
+			&i.Rev,
 		); err != nil {
 			return nil, err
 		}
@@ -165,7 +198,7 @@ func (q *Queries) ListDirtySyncResources(ctx context.Context, calendarID int64) 
 }
 
 const listSyncResourcesByCalendar = `-- name: ListSyncResourcesByCalendar :many
-SELECT id, calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy FROM sync_resources WHERE calendar_id = ? ORDER BY id
+SELECT id, calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy, rev FROM sync_resources WHERE calendar_id = ? ORDER BY id
 `
 
 func (q *Queries) ListSyncResourcesByCalendar(ctx context.Context, calendarID int64) ([]SyncResource, error) {
@@ -186,6 +219,7 @@ func (q *Queries) ListSyncResourcesByCalendar(ctx context.Context, calendarID in
 			&i.Etag,
 			&i.Dirty,
 			&i.SyncStrategy,
+			&i.Rev,
 		); err != nil {
 			return nil, err
 		}
@@ -234,7 +268,7 @@ func (q *Queries) ListTombstonesByCalendar(ctx context.Context, calendarID int64
 }
 
 const markSyncResourceDirty = `-- name: MarkSyncResourceDirty :exec
-UPDATE sync_resources SET dirty = 1 WHERE calendar_id = ? AND uid = ?
+UPDATE sync_resources SET dirty = 1, rev = rev + 1 WHERE calendar_id = ? AND uid = ?
 `
 
 type MarkSyncResourceDirtyParams struct {
@@ -248,7 +282,7 @@ func (q *Queries) MarkSyncResourceDirty(ctx context.Context, arg MarkSyncResourc
 }
 
 const markSyncResourceDirtyWithEtag = `-- name: MarkSyncResourceDirtyWithEtag :exec
-UPDATE sync_resources SET dirty = 1, etag = ? WHERE calendar_id = ? AND uid = ?
+UPDATE sync_resources SET dirty = 1, rev = rev + 1, etag = ? WHERE calendar_id = ? AND uid = ?
 `
 
 type MarkSyncResourceDirtyWithEtagParams struct {

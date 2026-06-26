@@ -17,13 +17,26 @@ SELECT * FROM sync_resources WHERE calendar_id = ? ORDER BY id;
 SELECT * FROM sync_resources WHERE calendar_id = ? AND dirty = 1 ORDER BY id;
 
 -- name: MarkSyncResourceDirty :exec
-UPDATE sync_resources SET dirty = 1 WHERE calendar_id = ? AND uid = ?;
+UPDATE sync_resources SET dirty = 1, rev = rev + 1 WHERE calendar_id = ? AND uid = ?;
 
 -- name: MarkSyncResourceDirtyWithEtag :exec
-UPDATE sync_resources SET dirty = 1, etag = ? WHERE calendar_id = ? AND uid = ?;
+UPDATE sync_resources SET dirty = 1, rev = rev + 1, etag = ? WHERE calendar_id = ? AND uid = ?;
 
 -- name: ClearSyncResourceDirty :exec
 UPDATE sync_resources SET dirty = 0, etag = ? WHERE calendar_id = ? AND uid = ?;
+
+-- name: FinalizePushedResource :exec
+-- Records the new server ETag after a successful PUT and optimistically clears
+-- the dirty flag. The ETag always advances to the server's current version so
+-- the next push's If-Match does not 412 against a change we just made. Dirty
+-- is cleared only when rev still matches the value captured before the body was
+-- exported and PUT: a local edit that landed during the PUT round-trip bumps
+-- rev (via MarkSyncResourceDirty / MarkResourceDirty), so dirty stays 1 and the
+-- edit survives to the next push instead of being silently dropped. See #92.
+UPDATE sync_resources
+SET etag = ?,
+    dirty = CASE WHEN rev = ? THEN 0 ELSE dirty END
+WHERE calendar_id = ? AND uid = ?;
 
 -- name: DeleteSyncResource :exec
 DELETE FROM sync_resources WHERE calendar_id = ? AND uid = ?;
