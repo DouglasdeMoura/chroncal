@@ -208,6 +208,48 @@ func TestExport_MultipleExdatesRdates(t *testing.T) {
 	}
 }
 
+// Regression test for issue #421: a floating recurring component (no TZID,
+// no Z on DTSTART) must emit EXDATE/RDATE as floating values too. Emitting
+// them with a trailing Z creates a value-type mismatch against DTSTART, so
+// CalDAV servers that match EXDATE against RRULE occurrences by exact string
+// fail to suppress the excluded occurrence and a deleted instance reappears.
+func TestExport_FloatingExdatesRdatesNoZ(t *testing.T) {
+	t.Parallel()
+	events := []event.Event{{
+		UID:            "floating-exdate",
+		Title:          "Recurring Floating",
+		StartTime:      time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 1, 13, 0, 0, 0, time.UTC),
+		Timezone:       "FLOATING",
+		RecurrenceRule: "FREQ=WEEKLY",
+		Status:         "CONFIRMED",
+		Transp:         "OPAQUE",
+		ExDates:        "2026-04-15T12:00:00Z",
+		RDates:         "2026-05-06T12:00:00Z",
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}}
+
+	data, err := ExportEvents(events, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	ics := string(data)
+
+	if !strings.Contains(ics, "EXDATE:20260415T120000") {
+		t.Errorf("expected floating EXDATE 20260415T120000, got:\n%s", ics)
+	}
+	if !strings.Contains(ics, "RDATE:20260506T120000") {
+		t.Errorf("expected floating RDATE 20260506T120000, got:\n%s", ics)
+	}
+	if strings.Contains(ics, "20260415T120000Z") {
+		t.Errorf("EXDATE must not carry a trailing Z for a floating component:\n%s", ics)
+	}
+	if strings.Contains(ics, "20260506T120000Z") {
+		t.Errorf("RDATE must not carry a trailing Z for a floating component:\n%s", ics)
+	}
+}
+
 func TestExport_CategoriesNotEscaped(t *testing.T) {
 	t.Parallel()
 	events := []event.Event{{

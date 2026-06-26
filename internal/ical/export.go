@@ -104,10 +104,10 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 		}
 
 		// EXDATE
-		emitDateListOnComponent(vevent.Component, ical.PropExceptionDates, e.ExDates)
+		emitDateListOnComponent(vevent.Component, ical.PropExceptionDates, e.ExDates, e.Timezone)
 
 		// RDATE
-		emitDateListOnComponent(vevent.Component, ical.PropRecurrenceDates, e.RDates)
+		emitDateListOnComponent(vevent.Component, ical.PropRecurrenceDates, e.RDates, e.Timezone)
 
 		// RECURRENCE-ID
 		if e.RecurrenceID != "" {
@@ -443,8 +443,8 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 		}
 
 		// Dates
-		emitDateListOnComponent(vtodo, ical.PropExceptionDates, t.ExDates)
-		emitDateListOnComponent(vtodo, ical.PropRecurrenceDates, t.RDates)
+		emitDateListOnComponent(vtodo, ical.PropExceptionDates, t.ExDates, t.Timezone)
+		emitDateListOnComponent(vtodo, ical.PropRecurrenceDates, t.RDates, t.Timezone)
 
 		if t.RecurrenceID != "" {
 			// A VTODO is all-day when its recurrence anchor (DTSTART, else DUE)
@@ -633,7 +633,7 @@ func extractVTIMEZONEBlocks(s string) []string {
 	return blocks
 }
 
-func emitDateListOnComponent(comp *ical.Component, propName, dates string) {
+func emitDateListOnComponent(comp *ical.Component, propName, dates, timezone string) {
 	if dates == "" {
 		return
 	}
@@ -649,7 +649,15 @@ func emitDateListOnComponent(comp *ical.Component, propName, dates string) {
 		}
 		if t, err := time.Parse(time.RFC3339, ds); err == nil {
 			prop := &ical.Prop{Name: propName, Params: make(ical.Params)}
-			prop.SetDateTime(t.UTC())
+			if timezone == "FLOATING" {
+				// Floating components store wall-clock numbers; emit
+				// EXDATE/RDATE as floating (no Z) so the value type matches
+				// DTSTART. A trailing Z is a value-type mismatch that stops
+				// servers from suppressing the excluded occurrence (#421).
+				prop.Value = t.UTC().Format("20060102T150405")
+			} else {
+				prop.SetDateTime(t.UTC())
+			}
 			comp.Props.Add(prop)
 		}
 	}
@@ -1085,8 +1093,8 @@ func ExportJournals(journals []journal.Journal, calName string) ([]byte, error) 
 		}
 
 		// Dates
-		emitDateListOnComponent(vjournal, ical.PropExceptionDates, j.ExDates)
-		emitDateListOnComponent(vjournal, ical.PropRecurrenceDates, j.RDates)
+		emitDateListOnComponent(vjournal, ical.PropExceptionDates, j.ExDates, j.Timezone)
+		emitDateListOnComponent(vjournal, ical.PropRecurrenceDates, j.RDates, j.Timezone)
 
 		if j.RecurrenceID != "" {
 			// A VJOURNAL is all-day when its DTSTART is a date-only value;

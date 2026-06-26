@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/recurrence"
 )
 
@@ -236,6 +237,51 @@ END:VCALENDAR`
 	}
 	if e.RDates != "2026-04-22T13:00:00Z" {
 		t.Fatalf("RDates = %q, want 2026-04-22T13:00:00Z", e.RDates)
+	}
+}
+
+// Regression test for issue #421: a floating recurring event (DTSTART with
+// no TZID and no Z) whose EXDATE/RDATE are also floating must round-trip back
+// out as floating values. UTC-converting them on export breaks occurrence
+// exclusion on servers that match EXDATE against RRULE occurrences by string.
+func TestImport_EventFloatingEXDATERoundTrip(t *testing.T) {
+	t.Parallel()
+	ics := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:floating-exdate-rdate
+DTSTAMP:20260401T100000Z
+DTSTART:20260401T120000
+DTEND:20260401T130000
+RRULE:FREQ=WEEKLY;COUNT=6
+EXDATE:20260415T120000
+RDATE:20260506T120000
+SUMMARY:Floating recurrence dates
+END:VEVENT
+END:VCALENDAR`
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %d, want 1", len(result.Events))
+	}
+	e := result.Events[0]
+	if e.Timezone != "FLOATING" {
+		t.Fatalf("Timezone = %q, want FLOATING", e.Timezone)
+	}
+
+	data, err := ExportEvents([]event.Event{e}, "")
+	if err != nil {
+		t.Fatalf("ExportEvents: %v", err)
+	}
+	out := string(data)
+	if !strings.Contains(out, "EXDATE:20260415T120000") || strings.Contains(out, "20260415T120000Z") {
+		t.Errorf("EXDATE should round-trip as floating, got:\n%s", out)
+	}
+	if !strings.Contains(out, "RDATE:20260506T120000") || strings.Contains(out, "20260506T120000Z") {
+		t.Errorf("RDATE should round-trip as floating, got:\n%s", out)
 	}
 }
 
