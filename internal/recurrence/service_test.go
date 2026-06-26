@@ -213,6 +213,41 @@ func TestExpandWithRDate(t *testing.T) {
 	}
 }
 
+func TestExpandWithSubSecondRDate(t *testing.T) {
+	base := time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
+	// RDATE carrying fractional seconds. The rrule iterator yields RDATE
+	// values truncated to whole seconds, so a raw time.Time map lookup
+	// (which compares the monotonic-free wall clock incl. nanoseconds)
+	// misses and the occurrence is mislabelled as a normal RRULE instance.
+	extraDate := base.AddDate(0, 0, 10).Add(500 * time.Millisecond)
+	evt := event.Event{
+		ID:             40,
+		UID:            "test-rdate-subsecond",
+		Title:          "Special Event",
+		StartTime:      base,
+		EndTime:        base.Add(time.Hour),
+		RecurrenceRule: "FREQ=DAILY;COUNT=3",
+		RDates:         extraDate.Format(time.RFC3339Nano),
+	}
+
+	instances := ExpandEvent(evt, base.Add(-time.Hour), extraDate.Add(time.Hour))
+
+	// The added occurrence (truncated to the second) must be marked override.
+	want := extraDate.Truncate(time.Second)
+	found := false
+	for _, inst := range instances {
+		if inst.InstanceTime.Equal(want) {
+			found = true
+			if !inst.IsOverride {
+				t.Errorf("sub-second RDATE instance at %s not marked as override", want)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("RDATE instance at %s not found among %d instances", want, len(instances))
+	}
+}
+
 func TestExpandNonRecurring(t *testing.T) {
 	evt := event.Event{
 		ID:        5,

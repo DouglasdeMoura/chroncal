@@ -162,6 +162,26 @@ func cancelledRecurringMaster(recurrenceRule, status string) bool {
 	return recurrenceRule != "" && strings.EqualFold(status, "CANCELLED")
 }
 
+// rdateKey canonicalizes an RDATE/occurrence instant for membership lookups.
+// The rrule iterator yields RDATE values truncated to whole seconds, so keying
+// on a second-granularity UTC RFC 3339 string avoids sub-second precision or
+// representation drift causing a missed match (which would mislabel an
+// explicitly-added occurrence as a plain RRULE instance). See issue #128.
+func rdateKey(t time.Time) string {
+	return t.UTC().Truncate(time.Second).Format(time.RFC3339)
+}
+
+// buildRDateSet returns a canonical-string set of RDATE instants for O(1)
+// IsOverride membership checks. Keys are timezone-independent (rdateKey
+// normalizes to UTC), so no location conversion is needed here.
+func buildRDateSet(rdates []time.Time) map[string]struct{} {
+	set := make(map[string]struct{}, len(rdates))
+	for _, rd := range rdates {
+		set[rdateKey(rd)] = struct{}{}
+	}
+	return set
+}
+
 // ExpandEvent generates all occurrences of an event within a date range
 // Returns instances even for non-recurring events (single instance)
 func ExpandEvent(evt event.Event, from, to time.Time) []ExpandedEvent {
@@ -223,14 +243,7 @@ func ExpandEvent(evt event.Event, from, to time.Time) []ExpandedEvent {
 		set.RDate(rd)
 	}
 
-	// Build a set of RDATE times for O(1) membership checks below.
-	rdateSet := make(map[time.Time]struct{}, len(rdates))
-	for _, rd := range rdates {
-		if loc != nil {
-			rd = rd.In(loc)
-		}
-		rdateSet[rd] = struct{}{}
-	}
+	rdateSet := buildRDateSet(rdates)
 
 	// A multi-day instance whose start precedes 'from' can still overlap the
 	// window via its duration, so begin generation one instance-duration early
@@ -254,7 +267,7 @@ func ExpandEvent(evt event.Event, from, to time.Time) []ExpandedEvent {
 	var instances []ExpandedEvent
 	for _, occ := range occurrences {
 		utcOcc := occ.UTC()
-		_, isRDate := rdateSet[occ]
+		_, isRDate := rdateSet[rdateKey(occ)]
 
 		instances = append(instances, ExpandedEvent{
 			Event:        evt,
@@ -1026,13 +1039,7 @@ func ExpandTodo(td todo.Todo, from, to time.Time) []ExpandedTodo {
 		set.RDate(rd)
 	}
 
-	rdateSet := make(map[time.Time]struct{}, len(rdates))
-	for _, rd := range rdates {
-		if loc != nil {
-			rd = rd.In(loc)
-		}
-		rdateSet[rd] = struct{}{}
-	}
+	rdateSet := buildRDateSet(rdates)
 
 	// A todo spanning START->DUE can straddle the window start, so generate
 	// from from-duration and keep occurrences by [start, end) overlap. The
@@ -1056,7 +1063,7 @@ func ExpandTodo(td todo.Todo, from, to time.Time) []ExpandedTodo {
 	var instances []ExpandedTodo
 	for _, occ := range occurrences {
 		utcOcc := occ.UTC()
-		_, isRDate := rdateSet[occ]
+		_, isRDate := rdateSet[rdateKey(occ)]
 		instances = append(instances, ExpandedTodo{
 			Todo:         td,
 			InstanceTime: utcOcc,
@@ -1182,13 +1189,7 @@ func ExpandJournal(j journal.Journal, from, to time.Time) []ExpandedJournal {
 		}
 		set.RDate(rd)
 	}
-	rdateSet := make(map[time.Time]struct{}, len(rdates))
-	for _, rd := range rdates {
-		if loc != nil {
-			rd = rd.In(loc)
-		}
-		rdateSet[rd] = struct{}{}
-	}
+	rdateSet := buildRDateSet(rdates)
 
 	occurrences := set.Between(localFrom, localTo, true)
 	filteredOcc := occurrences[:0]
@@ -1200,7 +1201,7 @@ func ExpandJournal(j journal.Journal, from, to time.Time) []ExpandedJournal {
 
 	var instances []ExpandedJournal
 	for _, occ := range filteredOcc {
-		_, isRDate := rdateSet[occ]
+		_, isRDate := rdateSet[rdateKey(occ)]
 		instances = append(instances, ExpandedJournal{Journal: j, InstanceTime: occ.UTC(), IsOverride: isRDate})
 	}
 	return instances
