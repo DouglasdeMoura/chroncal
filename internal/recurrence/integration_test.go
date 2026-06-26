@@ -1659,3 +1659,102 @@ func TestExpandedInstancesCarryConferenceURI(t *testing.T) {
 		}
 	}
 }
+
+// TestListExpandedByDateRange_RDateOnly verifies the full DB-level path for
+// RDATE-only recurrence (no RRULE). Previously the ListRecurringEvents SQL
+// query excluded such rows (recurrence_rule IS NOT NULL), so they were
+// silently emitted as non-recurring singletons with only their DTSTART
+// occurrence visible (issue #362).
+func TestListExpandedByDateRange_RDateOnly(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	eventsSvc := event.NewService(db, q)
+	recurSvc := NewService(db, q)
+	ctx := context.Background()
+
+	base := time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
+	rdate1 := time.Date(2026, 4, 15, 9, 0, 0, 0, time.UTC)
+	rdate2 := time.Date(2026, 4, 22, 9, 0, 0, 0, time.UTC)
+
+	_, err := eventsSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "RDATE-only event",
+		StartTime:  base,
+		EndTime:    base.Add(time.Hour),
+		// No RecurrenceRule: pure RDATE recurrence.
+		RDates: rdate1.Format(time.RFC3339) + "," + rdate2.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("create event: %v", err)
+	}
+
+	from := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+
+	events, err := recurSvc.ListExpandedByDateRange(ctx, from, to)
+	if err != nil {
+		t.Fatalf("ListExpandedByDateRange: %v", err)
+	}
+
+	// Expect: DTSTART (Apr 1) + RDATE1 (Apr 15) + RDATE2 (Apr 22) = 3 instances.
+	if len(events) != 3 {
+		for i, e := range events {
+			t.Logf("  events[%d]: %s start=%v", i, e.Title, e.StartTime)
+		}
+		t.Fatalf("got %d events, want 3 (DTSTART + 2 RDATEs); RDATE-only expansion broken", len(events))
+	}
+
+	wantTimes := []time.Time{base, rdate1, rdate2}
+	for i, want := range wantTimes {
+		if !events[i].StartTime.Equal(want) {
+			t.Errorf("events[%d].StartTime = %v, want %v", i, events[i].StartTime, want)
+		}
+		if events[i].Title != "RDATE-only event" {
+			t.Errorf("events[%d].Title = %q, want %q", i, events[i].Title, "RDATE-only event")
+		}
+	}
+}
+
+// TestListExpandedEvents_RDateOnly verifies the TUI display path
+// (ListExpandedEvents) for RDATE-only recurrence.
+func TestListExpandedEvents_RDateOnly(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	eventsSvc := event.NewService(db, q)
+	recurSvc := NewService(db, q)
+	ctx := context.Background()
+
+	base := time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
+	rdate1 := time.Date(2026, 4, 15, 9, 0, 0, 0, time.UTC)
+
+	_, err := eventsSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "RDATE-only display",
+		StartTime:  base,
+		EndTime:    base.Add(time.Hour),
+		RDates:     rdate1.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("create event: %v", err)
+	}
+
+	from := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+
+	expanded, err := recurSvc.ListExpandedEvents(ctx, from, to)
+	if err != nil {
+		t.Fatalf("ListExpandedEvents: %v", err)
+	}
+
+	if len(expanded) != 2 {
+		for i, e := range expanded {
+			t.Logf("  expanded[%d]: %s instanceTime=%v", i, e.Title, e.InstanceTime)
+		}
+		t.Fatalf("got %d expanded events, want 2 (DTSTART + 1 RDATE)", len(expanded))
+	}
+
+	wantTimes := []time.Time{base, rdate1}
+	for i, want := range wantTimes {
+		if !expanded[i].InstanceTime.Equal(want) {
+			t.Errorf("expanded[%d].InstanceTime = %v, want %v", i, expanded[i].InstanceTime, want)
+		}
+	}
+}

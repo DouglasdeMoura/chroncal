@@ -160,7 +160,7 @@ WHERE calendar_id = ? AND deleted_at IS NOT NULL
 ORDER BY deleted_at DESC;
 
 -- name: ListRecurringEvents :many
-SELECT * FROM events WHERE recurrence_rule IS NOT NULL AND recurrence_id = '' AND deleted_at IS NULL;
+SELECT * FROM events WHERE (recurrence_rule IS NOT NULL OR (rdates IS NOT NULL AND rdates != '')) AND recurrence_id = '' AND deleted_at IS NULL;
 
 -- name: CountEventsByCalendar :one
 SELECT COUNT(*) FROM events WHERE calendar_id = ? AND deleted_at IS NULL;

@@ -627,7 +627,7 @@ func (q *Queries) ListJournalsByStatus(ctx context.Context, status string) ([]Jo
 }
 
 const listRecurringJournals = `-- name: ListRecurringJournals :many
-SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at FROM journals WHERE recurrence_rule IS NOT NULL AND recurrence_id = '' AND deleted_at IS NULL
+SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at FROM journals WHERE (recurrence_rule IS NOT NULL OR (rdates IS NOT NULL AND rdates != '')) AND recurrence_id = '' AND deleted_at IS NULL
 `
 
 func (q *Queries) ListRecurringJournals(ctx context.Context) ([]Journal, error) {

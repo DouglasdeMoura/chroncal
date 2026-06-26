@@ -42,7 +42,8 @@ func (w *whereBuilder) addEventFilters(arg EventFilterParams) {
 
 func (q *Queries) ListEventsFiltered(ctx context.Context, arg EventFilterParams) ([]Event, error) {
 	var w whereBuilder
-	w.add("recurrence_rule IS NULL AND recurrence_id = ''")
+	// Non-recurring, non-RDATE-only masters (RDATE-only handled by ListRecurringEventsFiltered).
+	w.add("recurrence_rule IS NULL AND (rdates IS NULL OR rdates = '') AND recurrence_id = ''")
 	w.addEventFilters(arg)
 	where, args := w.build()
 	return q.queryEvents(ctx, where, args, "start_time ASC")
@@ -50,7 +51,8 @@ func (q *Queries) ListEventsFiltered(ctx context.Context, arg EventFilterParams)
 
 func (q *Queries) ListRecurringEventsFiltered(ctx context.Context, arg EventFilterParams) ([]Event, error) {
 	var w whereBuilder
-	w.add("recurrence_rule IS NOT NULL AND recurrence_id = ''")
+	// RRULE masters and RDATE-only masters (no RRULE but has RDATEs); both need expansion.
+	w.add("(recurrence_rule IS NOT NULL OR (rdates IS NOT NULL AND rdates != '')) AND recurrence_id = ''")
 	w.addEventFilters(arg)
 	where, args := w.build()
 	return q.queryEvents(ctx, where, args, "start_time ASC")

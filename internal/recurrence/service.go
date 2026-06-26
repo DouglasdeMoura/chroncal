@@ -154,15 +154,29 @@ type rruleSet struct {
 // newRRuleSet parses an "RRULE:"-prefixed rule anchored at dtstart in timezone
 // tz, applying exDates/rDates. includeExDates controls whether the EXDATEs are
 // applied: occurrence expansion needs them, but orphan detection must not (see
-// occursAt). ok is false when rule is empty or fails to parse; callers fall back
-// to a single instance.
+// occursAt). ok is false only when there is truly nothing to expand (rule is
+// empty AND no rDates); callers fall back to a single instance in that case.
+//
+// RFC 5545 §3.8.5.2 permits RDATE-only recurrence with no RRULE. When rule is
+// empty but rDates is non-empty, an empty rrule.Set is built and DTSTART is
+// added as an implicit occurrence (RFC 5545 makes DTSTART an occurrence of the
+// recurrence set even without an RRULE). DTSTART is intentionally excluded from
+// rdateSet so it is not mislabelled IsOverride.
 func newRRuleSet(rule, tz string, dtstart time.Time, dur time.Duration, exDates, rDates []time.Time, includeExDates bool) (rruleSet, bool) {
-	if rule == "" {
+	// Nothing to expand: no RRULE and no explicit RDATEs.
+	if rule == "" && len(rDates) == 0 {
 		return rruleSet{}, false
 	}
-	set, err := rrule.StrToRRuleSet("RRULE:" + rule)
-	if err != nil {
-		return rruleSet{}, false
+	var set *rrule.Set
+	if rule != "" {
+		var err error
+		set, err = rrule.StrToRRuleSet("RRULE:" + rule)
+		if err != nil {
+			return rruleSet{}, false
+		}
+	} else {
+		// RDATE-only: start with an empty set; occurrences come from RDates.
+		set = &rrule.Set{}
 	}
 	loc := tzForExpansion(tz)
 	if loc != nil {
@@ -182,6 +196,12 @@ func newRRuleSet(rule, tz string, dtstart time.Time, dur time.Duration, exDates,
 			rd = rd.In(loc)
 		}
 		set.RDate(rd)
+	}
+	// For RDATE-only sets, rrule.Set won't produce DTSTART without an RRULE.
+	// Add DTSTART as an explicit RDate so it appears in expansion. It is not
+	// added to rdateSet so the DTSTART occurrence is not mislabelled IsOverride.
+	if rule == "" {
+		set.RDate(dtstart)
 	}
 	if dur < 0 {
 		dur = 0
@@ -265,6 +285,15 @@ func (s *Service) journalOverridesByUID(ctx context.Context, masters []storage.J
 // journal.Journal alike.
 func cancelledRecurringMaster(recurrenceRule, status string) bool {
 	return recurrenceRule != "" && strings.EqualFold(status, "CANCELLED")
+}
+
+// isRDateOnlyMaster reports whether a storage row's rdates field marks it as an
+// RDATE-only recurring master: no RRULE but at least one RDATE stored. Such
+// rows must follow the recurring-expansion path even though recurrence_rule IS
+// NULL, so Go-level filters that would otherwise include them as non-recurring
+// singletons must skip them.
+func isRDateOnlyMaster(rdates *string) bool {
+	return rdates != nil && *rdates != ""
 }
 
 // rdateKey canonicalizes an RDATE/occurrence instant for membership lookups.
@@ -398,8 +427,8 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 	var results []ExpandedEvent
 
 	for _, row := range rangeRows {
-		// Skip recurring masters (handled below) but keep non-recurring events.
-		if row.RecurrenceRule != nil && row.RecurrenceID == "" {
+		// Skip recurring masters (RRULE or RDATE-only) — handled via recurRows below.
+		if row.RecurrenceID == "" && (row.RecurrenceRule != nil || isRDateOnlyMaster(row.Rdates)) {
 			continue
 		}
 		// Skip overrides; they're merged during recurring expansion below.
@@ -658,10 +687,12 @@ func (s *Service) ListExpandedByDateRange(ctx context.Context, from, to time.Tim
 	if err != nil {
 		return nil, err
 	}
-	// Keep only non-recurring from the date-range results.
+	// Keep only non-recurring, non-RDATE-only masters from the date-range results.
+	// RDATE-only masters (RecurrenceRule IS NULL but Rdates non-empty) must follow
+	// the recurring-expansion path below, not be emitted as singletons here.
 	var result []event.Event
 	for _, row := range rangeRows {
-		if row.RecurrenceRule == nil && row.RecurrenceID == "" {
+		if row.RecurrenceRule == nil && row.RecurrenceID == "" && !isRDateOnlyMaster(row.Rdates) {
 			result = append(result, event.FromStorage(row))
 		}
 	}
@@ -998,9 +1029,10 @@ func (s *Service) ListExpandedTodosByDueDateRange(ctx context.Context, from, to 
 	if err != nil {
 		return nil, err
 	}
+	// Keep only non-recurring, non-RDATE-only masters from the due-date results.
 	var result []todo.Todo
 	for _, row := range rangeRows {
-		if row.RecurrenceRule == nil && row.RecurrenceID == "" {
+		if row.RecurrenceRule == nil && row.RecurrenceID == "" && !isRDateOnlyMaster(row.Rdates) {
 			result = append(result, todoFromRow(row))
 		}
 	}

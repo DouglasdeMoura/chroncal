@@ -18,7 +18,7 @@ SELECT * FROM journals WHERE start_date >= ? AND start_date < ? AND deleted_at I
 SELECT * FROM journals WHERE deleted_at IS NULL ORDER BY start_date, summary;
 
 -- name: ListRecurringJournals :many
-SELECT * FROM journals WHERE recurrence_rule IS NOT NULL AND recurrence_id = '' AND deleted_at IS NULL;
+SELECT * FROM journals WHERE (recurrence_rule IS NOT NULL OR (rdates IS NOT NULL AND rdates != '')) AND recurrence_id = '' AND deleted_at IS NULL;
 
 -- name: ListRecurringJournalsByCalendar :many
 SELECT * FROM journals WHERE recurrence_rule IS NOT NULL AND recurrence_id = '' AND calendar_id = ? AND deleted_at IS NULL;

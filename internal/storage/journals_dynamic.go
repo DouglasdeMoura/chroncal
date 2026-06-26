@@ -31,7 +31,8 @@ type ListJournalsFilteredParams struct {
 
 func (q *Queries) ListJournalsFiltered(ctx context.Context, arg ListJournalsFilteredParams) ([]Journal, error) {
 	var w whereBuilder
-	w.add("recurrence_rule IS NULL AND recurrence_id = ''")
+	// Non-recurring, non-RDATE-only masters (RDATE-only handled by ListRecurringJournalsFiltered).
+	w.add("recurrence_rule IS NULL AND (rdates IS NULL OR rdates = '') AND recurrence_id = ''")
 	w.addSoftDeleteFilter(arg.IncludeDeleted, arg.DeletedOnly)
 	w.addJournalListFilters(arg.CalendarID, arg.FilterStatus, arg.HideCancelled)
 	if arg.FromDate != "" {
@@ -54,7 +55,8 @@ type ListRecurringJournalsFilteredParams struct {
 
 func (q *Queries) ListRecurringJournalsFiltered(ctx context.Context, arg ListRecurringJournalsFilteredParams) ([]Journal, error) {
 	var w whereBuilder
-	w.add("recurrence_rule IS NOT NULL AND recurrence_id = ''")
+	// RRULE masters and RDATE-only masters (no RRULE but has RDATEs); both need expansion.
+	w.add("(recurrence_rule IS NOT NULL OR (rdates IS NOT NULL AND rdates != '')) AND recurrence_id = ''")
 	w.addSoftDeleteFilter(arg.IncludeDeleted, arg.DeletedOnly)
 	w.addJournalListFilters(arg.CalendarID, arg.FilterStatus, arg.HideCancelled)
 	where, args := w.build()
