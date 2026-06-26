@@ -363,6 +363,39 @@ func TestEventViewDialog_MouseWheelScrollsBody(t *testing.T) {
 	assert.Less(t, m.body.YOffset(), prev, "wheel up should scroll the body back")
 }
 
+// Regression for #311: after a successful RSVP, the open view dialog must
+// repaint with the new status. Previously the handler only called
+// loadEvents() (the grid behind the dialog), so the dialog kept showing the
+// stale status until the user closed and reopened it.
+func TestEventRSVPUpdated_RefreshesOpenViewDialog(t *testing.T) {
+	ev := testViewEvent()
+	ev.Attendees = []model.Attendee{
+		{Email: "me@example.com", RSVPStatus: "NEEDS-ACTION"},
+	}
+	cal := CalendarInfo{Name: "Work", Color: "#a6e3a1", OwnerEmail: "me@example.com"}
+
+	m := Model{
+		width:          120,
+		height:         40,
+		viewDialogOpen: true,
+		viewDialog:     NewEventViewDialogModel(ev, cal, Theme{}).SetSize(120, 40),
+		calendars:      map[int64]CalendarInfo{ev.CalendarID: cal},
+	}
+	require.NotContains(t, m.viewDialog.View(), "Yes ✓",
+		"precondition: dialog should show the pending status, not ACCEPTED")
+
+	// Simulate the DB write completing with the owner now ACCEPTED.
+	updated := ev
+	updated.Attendees = []model.Attendee{
+		{Email: "me@example.com", RSVPStatus: "ACCEPTED"},
+	}
+	next, _ := m.Update(eventRSVPUpdatedMsg{event: updated})
+	m = next.(Model)
+
+	assert.Contains(t, m.viewDialog.View(), "Yes ✓",
+		"open view dialog must reflect the new RSVP status without reopening")
+}
+
 func TestEventViewDialog_XKeyTriggersDelete(t *testing.T) {
 	// The x key (and the Delete key) must trigger the delete binding across
 	// all three dialogs after the t→x sweep.

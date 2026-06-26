@@ -116,7 +116,8 @@ type calendarsLoadedMsg struct {
 }
 
 type eventRSVPUpdatedMsg struct {
-	err error
+	event event.Event
+	err   error
 }
 
 type eventCreatedMsg struct {
@@ -2071,14 +2072,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					break
 				}
 			}
-			err = m.app.Events.ReplaceAttendees(ctx, ev.ID, attendees)
-			return eventRSVPUpdatedMsg{err: err}
+			if err := m.app.Events.ReplaceAttendees(ctx, ev.ID, attendees); err != nil {
+				return eventRSVPUpdatedMsg{err: err}
+			}
+			ev.Attendees = attendees
+			return eventRSVPUpdatedMsg{event: ev}
 		}
 
 	case eventRSVPUpdatedMsg:
 		if msg.err != nil {
 			m.err = msg.err
 			return m, nil
+		}
+		// Rebuild the open view dialog so the user sees their new RSVP
+		// status immediately; loadEvents only repaints the grid behind it.
+		if m.viewDialogOpen && m.viewDialog.event.ID == msg.event.ID {
+			cal := m.calendars[msg.event.CalendarID]
+			m.viewDialog = NewEventViewDialogModel(msg.event, cal, m.theme).
+				SetSize(m.width, m.height)
 		}
 		return m, m.loadEvents()
 
