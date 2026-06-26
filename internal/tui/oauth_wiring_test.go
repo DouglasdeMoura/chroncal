@@ -191,6 +191,27 @@ func TestNoPendingSyncNoRedispatch(t *testing.T) {
 	}
 }
 
+// TestOAuthModalBlocksWheelScroll verifies that a tea.MouseWheelMsg delivered
+// while the OAuth pending modal is open does NOT scroll the background
+// week/day grid (issue #355).
+func TestOAuthModalBlocksWheelScroll(t *testing.T) {
+	// Build a minimal week-view model with a known non-zero scrollOffset.
+	// linesPerHour=4 means a WheelDown event would add 4 to scrollOffset.
+	wm := WeekModel{linesPerHour: 4, scrollOffset: 8}
+	m := Model{
+		oauthFlowOpen: true,
+		viewMode:      viewWeek,
+		week:          wm,
+	}
+
+	wheel := tea.MouseWheelMsg{Button: tea.MouseWheelDown}
+	m = updateModel(t, m, wheel)
+
+	if m.week.scrollOffset != 8 {
+		t.Errorf("scrollOffset = %d, want 8; wheel scroll must be blocked when OAuth modal is open", m.week.scrollOffset)
+	}
+}
+
 // TestOAuthModalSuppressesGlobalHelpKey ensures the OAuth pending modal owns
 // input: pressing "?" while it's open must NOT open the Help dialog over it
 // (interceptGlobalKeys gates Help/quit behind text-entry surfaces, which now
