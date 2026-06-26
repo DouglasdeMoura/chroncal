@@ -255,7 +255,13 @@ func (s *migratingCredentialStore) Delete(accountID int64) error {
 		return err
 	}
 	if s.legacy != nil {
-		_ = s.legacy.Delete(accountID)
+		// Surface a real legacy-delete failure: discarding it would
+		// report success while the credential survives in the legacy
+		// store. PlaintextFileStore.Delete already treats a missing
+		// file as success, so only genuine failures reach here.
+		if err := s.legacy.Delete(accountID); err != nil {
+			return err
+		}
 	}
 	return nil
 }

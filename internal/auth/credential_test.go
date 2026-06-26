@@ -275,6 +275,52 @@ func TestNewCredentialStore_MigratesLegacyPlaintextCredentials(t *testing.T) {
 	}
 }
 
+func TestMigratingCredentialStore_DeleteSurfacesLegacyError(t *testing.T) {
+	dir := t.TempDir()
+	legacy := &PlaintextFileStore{dir: dir}
+
+	// Force the legacy delete to fail with a real (non not-found) error by
+	// planting a non-empty directory where Delete expects to remove a file.
+	// os.Remove on a non-empty directory returns ENOTEMPTY, which is not
+	// os.IsNotExist, so PlaintextFileStore.Delete surfaces a wrapped error.
+	credPath := legacy.path(42)
+	if err := os.MkdirAll(filepath.Join(credPath, "blocker"), 0o700); err != nil {
+		t.Fatalf("seed blocker dir: %v", err)
+	}
+
+	backing := map[string]string{}
+	overrideKeyringForTest(t, true, backing)
+
+	store := &migratingCredentialStore{
+		primary: &KeyringStore{},
+		legacy:  legacy,
+	}
+
+	// The primary (keyring) delete succeeds, but the legacy delete fails.
+	// Delete must surface that failure rather than reporting success while
+	// the credential survives in the legacy store.
+	if err := store.Delete(42); err == nil {
+		t.Fatal("Delete should surface the legacy store error, got nil")
+	}
+}
+
+func TestMigratingCredentialStore_DeleteIgnoresLegacyNotFound(t *testing.T) {
+	// A missing legacy credential is not a failure: Delete should report
+	// success when both stores have nothing left to remove.
+	legacy := &PlaintextFileStore{dir: t.TempDir()}
+	backing := map[string]string{}
+	overrideKeyringForTest(t, true, backing)
+
+	store := &migratingCredentialStore{
+		primary: &KeyringStore{},
+		legacy:  legacy,
+	}
+
+	if err := store.Delete(7); err != nil {
+		t.Fatalf("Delete should ignore a missing legacy credential, got %v", err)
+	}
+}
+
 func TestPlaintextFileStore_WarningsRouteToInjectedWriter(t *testing.T) {
 	var buf strings.Builder
 	store := &PlaintextFileStore{dir: t.TempDir(), warn: &buf}
