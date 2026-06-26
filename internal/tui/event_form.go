@@ -532,20 +532,34 @@ func parseRecurrenceRule(rule string, fallbackDate time.Time) (int, string, ends
 
 // parseRRuleUntil parses an RRULE UNTIL value as either a UTC datetime
 // (20060102T150405Z) or a date-only value (20060102), returning ok=false when
-// neither layout matches.
+// neither layout matches. The result is expressed in the local zone so the
+// end-of-day anchor written by formatRRuleUntil maps back to the calendar day
+// the user picked (see issue #146).
 func parseRRuleUntil(val string) (time.Time, bool) {
 	if t, err := time.Parse("20060102T150405Z", val); err == nil {
-		return t, true
+		return t.Local(), true
 	}
 	if t, err := time.Parse("20060102", val); err == nil {
-		return t, true
+		// A date-only UNTIL is a floating calendar date, not an absolute
+		// instant; reinterpret the wall-clock date in the local zone so it is
+		// not shifted a day by the parser's UTC default.
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local), true
 	}
 	return time.Time{}, false
 }
 
 // formatRRuleUntil renders a time as an RRULE UNTIL value in iCal UTC form.
+//
+// The ends-date arrives from the date picker as local midnight, i.e. the start
+// of the chosen end day. UNTIL is inclusive, so anchoring there would exclude
+// every same-day occurrence (they fire at the event's start time, later than
+// midnight) and, for a positive UTC offset, would even roll the UTC value back
+// to the previous calendar day. Anchor to the final second of that local day
+// before converting to UTC so the chosen end day is always covered.
 func formatRRuleUntil(t time.Time) string {
-	return t.UTC().Format("20060102T150405Z")
+	y, mo, d := t.Date()
+	endOfDay := time.Date(y, mo, d, 23, 59, 59, 0, t.Location())
+	return endOfDay.UTC().Format("20060102T150405Z")
 }
 
 func rruleParam(rule, name string) string {

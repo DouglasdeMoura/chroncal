@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -81,7 +82,20 @@ func TestRecurrenceEditor_LoadRuleRestoresIntervalCountUntilMonthly(t *testing.T
 		m.LoadRule("FREQ=DAILY;UNTIL=20260620T000000Z")
 		require.Equal(t, "DAILY", m.currentFreq())
 		require.Equal(t, endsOnDate, m.currentEnds())
-		require.Equal(t, "FREQ=DAILY;UNTIL=20260620T000000Z", m.BuildRule())
+
+		// UNTIL is rebuilt anchored to end-of-day (issue #146), so the exact
+		// clock value differs from the loaded one; what must be preserved is
+		// the chosen calendar day in the user's zone.
+		rule := m.BuildRule()
+		until, ok := strings.CutPrefix(rule, "FREQ=DAILY;UNTIL=")
+		require.True(t, ok, "rebuilt rule should keep FREQ=DAILY;UNTIL=, got %q", rule)
+		parsed, ok := parseRRuleUntil(until)
+		require.True(t, ok, "rebuilt UNTIL %q should parse", until)
+		loaded, ok := parseRRuleUntil("20260620T000000Z")
+		require.True(t, ok)
+		require.Equal(t, loaded.Year(), parsed.Year())
+		require.Equal(t, loaded.YearDay(), parsed.YearDay(),
+			"rebuilt UNTIL should fall on the same calendar day as loaded")
 	})
 
 	t.Run("monthly nth weekday", func(t *testing.T) {
