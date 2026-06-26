@@ -380,10 +380,13 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 		endTime, _ = ve.Props.DateTime(ical.PropDateTimeEnd, nil)
 	}
 	if endTime.IsZero() {
-		if prop := ve.Props.Get(ical.PropDuration); prop != nil {
+		if prop := ve.Props.Get(ical.PropDuration); prop != nil && duration.Validate(prop.Value) == nil {
 			durationValue = prop.Value
 			endTime = addDuration(startTime, prop.Value)
 		} else {
+			// No DURATION, or a malformed one (go-ical stores the raw value
+			// without validating). Fall back to a 1h span and drop the bad
+			// value so it is neither persisted nor re-exported.
 			endTime = startTime.Add(time.Hour)
 		}
 	}
