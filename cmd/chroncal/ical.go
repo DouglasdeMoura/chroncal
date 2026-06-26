@@ -338,6 +338,21 @@ to stdout.`,
 			if !toT.IsZero() {
 				toTime = toT.UTC().Format(time.RFC3339)
 			}
+			// Todos and journals store DUE / DTSTART as date-only
+			// ("YYYY-MM-DD") for all-day items, so use date-only bounds
+			// (matching ListTodosFiltered / ListJournalsFiltered) instead of
+			// the RFC3339 bounds used for events. A datetime bound would
+			// lexically exclude a date-only value on the lower boundary.
+			// Format the local wall-clock date the user typed (the bounds were
+			// parsed at local midnight); don't convert to UTC, which would shift
+			// the date by a day west of UTC and skew the filter.
+			var fromDate, toDate string
+			if !fromT.IsZero() {
+				fromDate = fromT.Format("2006-01-02")
+			}
+			if !toT.IsZero() {
+				toDate = toT.Format("2006-01-02")
+			}
 
 			// Load events
 			var events []event.Event
@@ -387,6 +402,8 @@ to stdout.`,
 			if includeTodos {
 				todos, err = a.Todos.ExportFiltered(ctx, todo.ExportParams{
 					CalendarID: calID,
+					From:       fromDate,
+					To:         toDate,
 					Category:   category,
 					Status:     status,
 				})
@@ -403,6 +420,8 @@ to stdout.`,
 			if includeJournals {
 				journals, err = a.Journals.ExportFiltered(ctx, journal.ExportParams{
 					CalendarID: calID,
+					From:       fromDate,
+					To:         toDate,
 					Category:   category,
 					Status:     status,
 				})

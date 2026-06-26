@@ -74,3 +74,54 @@ func TestJournalService_Search(t *testing.T) {
 		})
 	}
 }
+
+// TestJournalService_ExportFiltered_DateRange covers issue #429: export
+// --from/--to must actually restrict journals by start date instead of being a
+// silent no-op.
+func TestJournalService_ExportFiltered_DateRange(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	svc := NewService(db, q)
+	ctx := context.Background()
+	calID := testCalendar(t, q)
+
+	mustCreateJournal(t, svc, ctx, CreateParams{
+		CalendarID: calID,
+		Summary:    "January entry",
+		StartDate:  "2026-01-15",
+	})
+	mustCreateJournal(t, svc, ctx, CreateParams{
+		CalendarID: calID,
+		Summary:    "June entry",
+		StartDate:  "2026-06-15",
+	})
+	mustCreateJournal(t, svc, ctx, CreateParams{
+		CalendarID: calID,
+		Summary:    "No start date",
+	})
+
+	tests := []struct {
+		name    string
+		params  ExportParams
+		wantLen int
+	}{
+		{"no range exports all", ExportParams{}, 3},
+		{"from bound only", ExportParams{From: "2026-03-01"}, 2}, // June + dateless
+		{"to bound only", ExportParams{To: "2026-03-01"}, 2},     // January + dateless
+		{"narrow window around June", ExportParams{From: "2026-06-01", To: "2026-07-01"}, 2},
+		{"window excludes both dated journals", ExportParams{From: "2026-03-01", To: "2026-04-01"}, 1}, // dateless only
+		{"lower boundary is inclusive", ExportParams{From: "2026-06-15", To: "2026-07-01"}, 2},
+		{"upper boundary is exclusive", ExportParams{From: "2026-01-01", To: "2026-06-15"}, 2}, // January + dateless
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results, err := svc.ExportFiltered(ctx, tt.params)
+			if err != nil {
+				t.Fatalf("export: %v", err)
+			}
+			if len(results) != tt.wantLen {
+				t.Errorf("got %d results, want %d", len(results), tt.wantLen)
+			}
+		})
+	}
+}

@@ -23,6 +23,8 @@ type SearchParams struct {
 
 type ExportParams struct {
 	CalendarID int64  // 0 = all
+	From       string // date-only ("YYYY-MM-DD") or empty
+	To         string // date-only ("YYYY-MM-DD") or empty
 	Category   string // empty = all
 	Status     string // empty = all
 }
@@ -167,6 +169,8 @@ func (s *Service) Search(ctx context.Context, p SearchParams) ([]Journal, error)
 func (s *Service) ExportFiltered(ctx context.Context, p ExportParams) ([]Journal, error) {
 	rows, err := s.q.ListJournalsForExport(ctx, storage.ListJournalsForExportParams{
 		CalendarID:   p.CalendarID,
+		FromDate:     p.From,
+		ToDate:       p.To,
 		Category:     p.Category,
 		FilterStatus: p.Status,
 	})

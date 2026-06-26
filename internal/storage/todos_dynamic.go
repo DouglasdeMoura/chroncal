@@ -68,6 +68,8 @@ type ListTodosForExportParams struct {
 	Category        string
 	FilterStatus    string
 	CompletedFilter int64
+	FromDate        string
+	ToDate          string
 	IncludeDeleted  bool
 	DeletedOnly     bool
 }
@@ -88,6 +90,14 @@ func (q *Queries) ListTodosForExport(ctx context.Context, arg ListTodosForExport
 		w.add("completed_at IS NOT NULL")
 	} else if arg.CompletedFilter == 2 {
 		w.add("completed_at IS NULL")
+	}
+	// Match the half-open [from, to) date semantics used by
+	// ListTodosFiltered; dateless todos pass the filter (NULL stays in).
+	if arg.FromDate != "" {
+		w.add("(due_date IS NULL OR due_date >= ?)", arg.FromDate)
+	}
+	if arg.ToDate != "" {
+		w.add("(due_date IS NULL OR due_date < ?)", arg.ToDate)
 	}
 	where, args := w.build()
 	return q.queryTodos(ctx, where, args, "due_date ASC, summary ASC")

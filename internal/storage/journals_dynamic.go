@@ -67,6 +67,8 @@ type ListJournalsForExportParams struct {
 	CalendarID     int64
 	Category       string
 	FilterStatus   string
+	FromDate       string
+	ToDate         string
 	IncludeDeleted bool
 	DeletedOnly    bool
 }
@@ -82,6 +84,14 @@ func (q *Queries) ListJournalsForExport(ctx context.Context, arg ListJournalsFor
 	}
 	if arg.FilterStatus != "" {
 		w.add("status = ?", arg.FilterStatus)
+	}
+	// Match the half-open [from, to) date semantics used by
+	// ListJournalsFiltered; dateless journals pass the filter (NULL stays in).
+	if arg.FromDate != "" {
+		w.add("(start_date IS NULL OR start_date >= ?)", arg.FromDate)
+	}
+	if arg.ToDate != "" {
+		w.add("(start_date IS NULL OR start_date < ?)", arg.ToDate)
 	}
 	where, args := w.build()
 	return q.queryJournals(ctx, where, args, "start_date ASC, summary ASC")
