@@ -88,6 +88,68 @@ func TestClientPutResourceSendsIfMatch(t *testing.T) {
 	}
 }
 
+func TestNormalizeAndFormatIfMatch(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name          string
+		raw           string
+		wantNorm, ifM string
+	}{
+		{"strong", `"abc"`, "abc", `"abc"`},
+		{"strong_unquoted", "abc", "abc", `"abc"`},
+		{"strong_spaced", ` "abc" `, "abc", `"abc"`},
+		// Weak validators must keep their W/ marker through normalization and
+		// must NOT be asserted as strong validators in If-Match (RFC 7232 §3.1).
+		{"weak", `W/"abc"`, `W/abc`, ""},
+		{"weak_spaced", `W/ "abc"`, `W/abc`, ""},
+		{"empty", "", "", ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := normalizeETag(tc.raw); got != tc.wantNorm {
+				t.Fatalf("normalizeETag(%q) = %q, want %q", tc.raw, got, tc.wantNorm)
+			}
+			if got := formatIfMatch(tc.raw); got != tc.ifM {
+				t.Fatalf("formatIfMatch(%q) = %q, want %q", tc.raw, got, tc.ifM)
+			}
+		})
+	}
+}
+
+// TestClientPutResourceWeakETagOmitsIfMatch verifies that a weak validator is
+// not echoed into If-Match as a strong tag. Doing so makes the strong
+// comparison fail server-side and produces perpetual 412s.
+func TestClientPutResourceWeakETagOmitsIfMatch(t *testing.T) {
+	t.Parallel()
+
+	client, err := NewClient(putTestHTTPClient{do: func(req *http.Request) (*http.Response, error) {
+		if got := req.Header.Get("If-Match"); got != "" {
+			t.Fatalf("If-Match = %q, want empty for weak validator", got)
+		}
+		return &http.Response{
+			StatusCode: http.StatusNoContent,
+			Status:     "204 No Content",
+			Header:     http.Header{"Etag": []string{`W/"etag-after"`}},
+			Body:       io.NopCloser(http.NoBody),
+			Request:    req,
+		}, nil
+	}}, "https://example.com")
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	etag, err := client.PutResource(context.Background(), "/cal/test.ics", testCalendar(t), `W/"etag-before"`)
+	if err != nil {
+		t.Fatalf("PutResource: %v", err)
+	}
+	if etag != `W/etag-after` {
+		t.Fatalf("etag = %q, want %q", etag, `W/etag-after`)
+	}
+}
+
 func TestClientDeleteResourceReportsGone(t *testing.T) {
 	t.Parallel()
 
