@@ -415,6 +415,71 @@ func TestEngineExportResourceFallsBackToOrphanOverride(t *testing.T) {
 	}
 }
 
+// TestEngineExportResourcePropagatesOverrideListError guards a data-loss bug:
+// exportResource used to discard the ListOverridesByUID error. For a recurring
+// resource (master row + override rows sharing the UID) a transient read error
+// (e.g. SQLite busy/locked) on the override list would then be silently dropped
+// — GetByUID still supplied the master, the non-empty guard passed, and the
+// exporter produced a master-ONLY iCal. PUTting that payload to the server
+// overwrites and deletes every overridden occurrence. The export must fail
+// instead of emitting a partial body. We force the override read to fail by
+// seeding a corrupt override row (non-numeric value in the INTEGER sequence
+// column) that the master lookup never reads but the override scan does.
+func TestEngineExportResourcePropagatesOverrideListError(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		ownerType string
+		insertOK  string
+		insertBad string
+	}{
+		{
+			ownerType: "event",
+			insertOK: "INSERT INTO events (uid, calendar_id, title, start_time, end_time) " +
+				"VALUES (?, 1, 'Master', '2025-06-09T19:00:00Z', '2025-06-09T20:00:00Z')",
+			insertBad: "INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_id, sequence) " +
+				"VALUES (?, 1, 'Override', '2025-06-09T19:00:00Z', '2025-06-09T20:00:00Z', '2025-06-09T19:00:00Z', 'not-an-int')",
+		},
+		{
+			ownerType: "todo",
+			insertOK:  "INSERT INTO todos (uid, calendar_id, summary) VALUES (?, 1, 'Master')",
+			insertBad: "INSERT INTO todos (uid, calendar_id, summary, recurrence_id, sequence) " +
+				"VALUES (?, 1, 'Override', '2025-06-09T19:00:00Z', 'not-an-int')",
+		},
+		{
+			ownerType: "journal",
+			insertOK:  "INSERT INTO journals (uid, calendar_id, summary) VALUES (?, 1, 'Master')",
+			insertBad: "INSERT INTO journals (uid, calendar_id, summary, recurrence_id, sequence) " +
+				"VALUES (?, 1, 'Override', '2025-06-09T19:00:00Z', 'not-an-int')",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.ownerType, func(t *testing.T) {
+			t.Parallel()
+
+			engine, db, _ := newTestEngine(t)
+			ctx := context.Background()
+			const uid = "recurring-uid"
+
+			if _, err := db.ExecContext(ctx, tc.insertOK, uid); err != nil {
+				t.Fatalf("insert master: %v", err)
+			}
+			if _, err := db.ExecContext(ctx, tc.insertBad, uid); err != nil {
+				t.Fatalf("insert corrupt override: %v", err)
+			}
+
+			data, err := engine.exportResource(ctx, tc.ownerType, uid)
+			if err == nil {
+				t.Fatalf("exportResource returned nil error; master-only export would delete overrides on the server:\n%s", string(data))
+			}
+			if errors.Is(err, errResourceMissing) {
+				t.Fatalf("exportResource reported missing resource, want the override read error: %v", err)
+			}
+		})
+	}
+}
+
 // TestEnginePullClearsDirtyAfterImport prevents the regression where pull's
 // persistImported call flipped dirty=1 (via the event service's Replace*
 // methods which mark the sync_resource dirty as a side effect for user

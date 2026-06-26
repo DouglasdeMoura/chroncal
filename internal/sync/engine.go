@@ -1187,7 +1187,10 @@ func (e *Engine) exportResource(ctx context.Context, ownerType string, uid strin
 		if evt, err := e.events.GetByUID(ctx, uid); err == nil {
 			rows = append(rows, evt)
 		}
-		overrides, _ := e.events.ListOverridesByUID(ctx, uid)
+		overrides, err := e.events.ListOverridesByUID(ctx, uid)
+		if err != nil {
+			return nil, fmt.Errorf("list overrides for event uid %s: %w", uid, err)
+		}
 		rows = append(rows, overrides...)
 		if len(rows) == 0 {
 			return nil, fmt.Errorf("%w: event uid %s", errResourceMissing, uid)
@@ -1201,7 +1204,10 @@ func (e *Engine) exportResource(ctx context.Context, ownerType string, uid strin
 		if t, err := e.todos.GetByUID(ctx, uid); err == nil {
 			rows = append(rows, t)
 		}
-		overrides, _ := e.todos.ListOverridesByUID(ctx, uid)
+		overrides, err := e.todos.ListOverridesByUID(ctx, uid)
+		if err != nil {
+			return nil, fmt.Errorf("list overrides for todo uid %s: %w", uid, err)
+		}
 		rows = append(rows, overrides...)
 		if len(rows) == 0 {
 			return nil, fmt.Errorf("%w: todo uid %s", errResourceMissing, uid)
@@ -1215,7 +1221,10 @@ func (e *Engine) exportResource(ctx context.Context, ownerType string, uid strin
 		if j, err := e.journals.GetByUID(ctx, uid); err == nil {
 			rows = append(rows, j)
 		}
-		overrides, _ := e.journals.ListOverridesByUID(ctx, uid)
+		overrides, err := e.journals.ListOverridesByUID(ctx, uid)
+		if err != nil {
+			return nil, fmt.Errorf("list overrides for journal uid %s: %w", uid, err)
+		}
 		rows = append(rows, overrides...)
 		if len(rows) == 0 {
 			return nil, fmt.Errorf("%w: journal uid %s", errResourceMissing, uid)
