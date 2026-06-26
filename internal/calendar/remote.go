@@ -173,6 +173,7 @@ func (s *Service) Disconnect(ctx context.Context, cal Calendar, credStore auth.C
 		return fmt.Errorf("unlink calendar: %w", err)
 	}
 
+	var deleteCredential bool
 	if strings.HasPrefix(account.Name, hiddenAccountPrefix) {
 		linked, err := qtx.ListCalendarsByAccount(ctx, &account.ID)
 		if err != nil {
@@ -184,13 +185,14 @@ func (s *Service) Disconnect(ctx context.Context, cal Calendar, credStore auth.C
 				_ = tx.Rollback()
 				return fmt.Errorf("delete hidden account: %w", err)
 			}
+			deleteCredential = true
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit remote calendar disconnect: %w", err)
 	}
 
-	if credStore != nil && strings.HasPrefix(account.Name, hiddenAccountPrefix) {
+	if credStore != nil && deleteCredential {
 		_ = credStore.Delete(account.ID)
 	}
 	return nil
@@ -264,6 +266,7 @@ func (s *Service) DeleteWithRemoteCleanup(ctx context.Context, id, newDefaultID 
 		}
 	}
 
+	var deleteCredential bool
 	if hasAccount && hiddenAccount {
 		linked, err := qtx.ListCalendarsByAccount(ctx, &account.ID)
 		if err != nil {
@@ -273,6 +276,7 @@ func (s *Service) DeleteWithRemoteCleanup(ctx context.Context, id, newDefaultID 
 			if err := qtx.DeleteAccount(ctx, account.ID); err != nil {
 				return fmt.Errorf("delete hidden account: %w", err)
 			}
+			deleteCredential = true
 		}
 	}
 
@@ -280,7 +284,7 @@ func (s *Service) DeleteWithRemoteCleanup(ctx context.Context, id, newDefaultID 
 		return err
 	}
 
-	if hasAccount && hiddenAccount && credStore != nil {
+	if deleteCredential && credStore != nil {
 		_ = credStore.Delete(account.ID)
 	}
 	return nil
