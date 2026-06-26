@@ -23,6 +23,23 @@ func TestSyncResetMatchesCalendarCaseInsensitively(t *testing.T) {
 	}
 }
 
+// TestSyncRunRejectsInvalidConflictStrategy guards against issue #215:
+// `sync run --conflict <bad>` must be rejected up front rather than
+// silently falling back to server-wins (which would discard local edits
+// for a user who meant "prompt" but mistyped, e.g. "Prompt").
+func TestSyncRunRejectsInvalidConflictStrategy(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	createLinkedCalendarForTest(t, dbPath)
+
+	_, stderr, err := runChroncalCommand(t, "sync", "run", "--conflict", "Prompt")
+	if err == nil {
+		t.Fatalf("sync run --conflict Prompt was accepted; expected an invalid-input error")
+	}
+	if !strings.Contains(stderr, "conflict") || !strings.Contains(stderr, "Prompt") {
+		t.Fatalf("sync run --conflict Prompt: error did not mention the bad value; stderr = %q", stderr)
+	}
+}
+
 // TestSyncRunMatchesCalendarCaseInsensitively guards against issue #112:
 // `sync run --calendar work` must resolve a calendar named "Work"
 // case-insensitively. Before the fix the run loop compared names with ==,
