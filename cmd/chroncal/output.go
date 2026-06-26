@@ -338,11 +338,17 @@ func printEventDetail(w io.Writer, e event.Event, showDate bool) {
 	printDetailField(w, labelWidth, "url", e.URL)
 	printDetailField(w, labelWidth, "tags", e.Categories)
 	printDetailField(w, labelWidth, "timezone", e.Timezone)
+	printDetailField(w, labelWidth, "rrule", e.RecurrenceRule)
 	printDetailInt(w, labelWidth, "calendar", e.CalendarID)
 	printDetailInt(w, labelWidth, "id", e.ID)
 	printDetailField(w, labelWidth, "uid", e.UID)
 	printDetailCount(w, "reminders", len(e.Alarms))
 	printDetailCount(w, "participants", len(e.Attendees))
+	printDetailCount(w, "attachments", len(e.Attachments))
+	printDetailField(w, labelWidth, "comments", fmtStrings(e.Comments))
+	printDetailField(w, labelWidth, "contacts", fmtStrings(e.Contacts))
+	printDetailField(w, labelWidth, "resources", fmtStrings(e.Resources))
+	printDetailField(w, labelWidth, "relations", fmtModelRelations(e.Relations))
 }
 
 func printCalendar(w io.Writer, c calendar.Calendar) {

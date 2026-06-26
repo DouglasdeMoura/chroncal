@@ -9,6 +9,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/journal"
+	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 	"github.com/douglasdemoura/chroncal/internal/tui"
 )
@@ -130,6 +131,46 @@ func TestPrintEvent_UsesASCIIDetailLayout(t *testing.T) {
 		"    uid:       team-standup-uid\n"
 	if got != want {
 		t.Fatalf("printEvent output mismatch\nwant:\n%s\ngot:\n%s", want, got)
+	}
+	assertASCII(t, got)
+}
+
+func TestPrintEvent_RendersRecurrenceAndCollectionFields(t *testing.T) {
+	withLocalUTC(t)
+
+	var buf bytes.Buffer
+	printEvent(&buf, event.Event{
+		ID:             42,
+		UID:            "team-standup-uid",
+		Title:          "Team Standup",
+		StartTime:      time.Date(2026, 4, 21, 9, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 21, 9, 30, 0, 0, time.UTC),
+		CalendarID:     1,
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
+		Attachments:    []model.Attachment{{URI: "https://example.com/agenda.pdf"}},
+		Comments:       []string{"bring laptop"},
+		Contacts:       []string{"Alex Doe"},
+		Resources:      []string{"Projector"},
+		Relations:      []model.Relation{{RelType: "PARENT", RelUID: "parent-uid"}},
+	})
+
+	got := buf.String()
+	for _, want := range []string{
+		"rrule:",
+		"FREQ=WEEKLY;BYDAY=MO",
+		"attachments: 1",
+		"comments:",
+		"bring laptop",
+		"contacts:",
+		"Alex Doe",
+		"resources:",
+		"Projector",
+		"relations:",
+		"PARENT:parent-uid",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("printEvent output missing %q\ngot:\n%s", want, got)
+		}
 	}
 	assertASCII(t, got)
 }
