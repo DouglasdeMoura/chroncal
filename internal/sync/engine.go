@@ -186,18 +186,26 @@ func (e *Engine) loadCalendarClient(ctx context.Context, calendarID int64) (stor
 
 // SyncCalendar runs a full sync cycle for one calendar.
 func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy ConflictStrategy) (result *SyncResult, err error) {
+	// Register the health-update defer before loading the client so that an
+	// early return from loadCalendarClient (missing credentials, no linked
+	// account, empty RemoteUrl) still records the failed attempt — otherwise
+	// LastSyncError stays stale and the ambient ⚠ glyph never lights up for a
+	// permanently failing calendar (issue #416).
+	attemptedAt := time.Now().UTC().Format(time.RFC3339)
+	defer func() {
+		if updateErr := e.updateSyncHealth(ctx, calendarID, attemptedAt, result, err); updateErr != nil {
+			e.logger.Warn("update sync health failed", "calendar_id", calendarID, "error", updateErr)
+			if result != nil {
+				result.Errors = append(result.Errors, fmt.Errorf("update sync health: %w", updateErr))
+			}
+		}
+	}()
+
 	cal, account, client, remoteURL, err := e.loadCalendarClient(ctx, calendarID)
 	if err != nil {
 		return nil, err
 	}
 	result = &SyncResult{CalendarID: cal.ID}
-	attemptedAt := time.Now().UTC().Format(time.RFC3339)
-	defer func() {
-		if updateErr := e.updateSyncHealth(ctx, cal.ID, attemptedAt, result, err); updateErr != nil {
-			e.logger.Warn("update sync health failed", "calendar_id", cal.ID, "error", updateErr)
-			result.Errors = append(result.Errors, fmt.Errorf("update sync health: %w", updateErr))
-		}
-	}()
 
 	e.logger.Info("sync started", "calendar_id", calendarID, "remote_url", remoteURL)
 
