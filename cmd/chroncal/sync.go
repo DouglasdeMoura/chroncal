@@ -70,6 +70,15 @@ run to a single local calendar.`,
   chroncal sync run --calendar Work
   chroncal sync run --conflict prompt`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Validate the flag up front so a typo (e.g. "Prompt", "ask")
+			// fails loudly instead of silently falling back to server-wins
+			// and discarding local edits. Mirrors the service.go check.
+			strategy := syncPkg.ConflictStrategy(conflict)
+			if strategy != syncPkg.ConflictServerWins && strategy != syncPkg.ConflictPrompt {
+				return errInvalidInputf("--conflict: invalid value %q (use %q or %q)",
+					conflict, syncPkg.ConflictServerWins, syncPkg.ConflictPrompt)
+			}
+
 			a, err := initApp()
 			if err != nil {
 				return err
@@ -85,11 +94,6 @@ run to a single local calendar.`,
 
 			logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 			svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, logger)
-
-			strategy := syncPkg.ConflictServerWins
-			if conflict == "prompt" {
-				strategy = syncPkg.ConflictPrompt
-			}
 
 			// Look up names for every calendar up front so both the JSON and
 			// text views can label results without re-querying per result.
