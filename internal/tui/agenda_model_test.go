@@ -197,6 +197,47 @@ func TestAgendaSelectCurrentOrNext_SurvivesEmptyFirstLoad(t *testing.T) {
 	}
 }
 
+// TestAgendaHandleClick_EmptyStateButtonBounds verifies that the click hit-test
+// for the "+ Create event" pill in the empty state matches the rendered pill
+// bounds exactly. The pill is rendered at x=0 with width btnW, so:
+//   - x=0        (left edge)        must trigger EventCreateMsg
+//   - x=btnW-1   (right edge)       must trigger EventCreateMsg
+//   - x=btnW     (one past right)   must be a noop
+func TestAgendaHandleClick_EmptyStateButtonBounds(t *testing.T) {
+	day := time.Date(2026, 4, 23, 0, 0, 0, 0, time.Local)
+	// No events → empty state. Height 10 ensures y=4 is inside the viewport.
+	m := NewAgendaModel(day).SetEvents(nil, nil).SetSize(80, 10)
+
+	btnW, btnY := m.emptyButtonBounds()
+	if btnW <= 0 {
+		t.Fatalf("emptyButtonBounds: width = %d, want > 0", btnW)
+	}
+
+	// x=0: left edge of the pill — must fire EventCreateMsg.
+	_, cmd := m.HandleClick(0, btnY)
+	if cmd == nil {
+		t.Fatal("HandleClick(x=0, y=btnY): got nil cmd, want EventCreateMsg (left pill edge)")
+	}
+	if _, ok := cmd().(EventCreateMsg); !ok {
+		t.Fatalf("HandleClick(x=0, y=btnY): cmd() = %T, want EventCreateMsg", cmd())
+	}
+
+	// x=btnW-1: right edge of the pill — must fire EventCreateMsg.
+	_, cmd = m.HandleClick(btnW-1, btnY)
+	if cmd == nil {
+		t.Fatal("HandleClick(x=btnW-1, y=btnY): got nil cmd, want EventCreateMsg (right pill edge)")
+	}
+	if _, ok := cmd().(EventCreateMsg); !ok {
+		t.Fatalf("HandleClick(x=btnW-1, y=btnY): cmd() = %T, want EventCreateMsg", cmd())
+	}
+
+	// x=btnW: one column past the right edge — must be a noop.
+	_, cmd = m.HandleClick(btnW, btnY)
+	if cmd != nil {
+		t.Fatalf("HandleClick(x=btnW, y=btnY): got %T, want nil (outside pill)", cmd())
+	}
+}
+
 func TestAgendaSelectCurrentOrNext_OneShotClearsAfterSetEvents(t *testing.T) {
 	day := time.Date(2026, 4, 23, 0, 0, 0, 0, time.Local)
 	now := time.Date(2026, 4, 23, 10, 30, 0, 0, time.Local)
