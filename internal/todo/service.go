@@ -340,7 +340,17 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Todo, error) {
 	if p.Status == "COMPLETED" {
 		completedAt = time.Now().UTC().Format(time.RFC3339)
 	}
-	r, err := s.q.CreateTodo(ctx, storage.CreateTodoParams{
+
+	// One transaction wraps the todo row and its categories so a failing
+	// category write rolls the row back instead of committing an orphan whose
+	// MarkResourceDirty never ran (issue #222, mirror of event issue #73).
+	qtx, commit, rollback, err := s.txscope(ctx)
+	if err != nil {
+		return Todo{}, err
+	}
+	defer rollback()
+
+	r, err := qtx.CreateTodo(ctx, storage.CreateTodoParams{
 		Uid:             uuid.New().String(),
 		CalendarID:      p.CalendarID,
 		Summary:         p.Summary,
@@ -368,11 +378,18 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Todo, error) {
 		return Todo{}, err
 	}
 	t := fromStorage(r)
-	if err := s.ReplaceCategories(ctx, t.ID, timeutil.ParseCategoryList(p.Categories)); err != nil {
-		return Todo{}, fmt.Errorf("replace categories: %w", err)
+	if cats := timeutil.ParseCategoryList(p.Categories); len(cats) > 0 {
+		// A fresh row has no categories yet, so the DELETE in
+		// replaceCategoriesTx is pure overhead when there's nothing to add.
+		if err := replaceCategoriesTx(ctx, qtx, t.ID, cats); err != nil {
+			return Todo{}, fmt.Errorf("replace categories: %w", err)
+		}
+	}
+	if err := commit(); err != nil {
+		return Todo{}, fmt.Errorf("commit create todo: %w", err)
 	}
 	t.Categories = p.Categories
-	_ = storage.MarkResourceDirty(ctx, s.db, t.CalendarID, t.UID, "todo")
+	_ = storage.MarkResourceDirty(ctx, s.dirtyExec(), t.CalendarID, t.UID, "todo")
 	return t, nil
 }
 
@@ -385,7 +402,17 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, e
 	if err := validateTiming(p.DueDate, p.StartDate, p.Duration); err != nil {
 		return Todo{}, err
 	}
-	r, err := s.q.UpdateTodo(ctx, storage.UpdateTodoParams{
+
+	// One transaction wraps the todo row and its categories so a failing
+	// category write rolls the row update back instead of committing a
+	// half-updated row whose MarkResourceDirty never ran (issue #222).
+	qtx, commit, rollback, err := s.txscope(ctx)
+	if err != nil {
+		return Todo{}, err
+	}
+	defer rollback()
+
+	r, err := qtx.UpdateTodo(ctx, storage.UpdateTodoParams{
 		ID:              id,
 		Summary:         p.Summary,
 		Description:     storage.StringToNullable(p.Description),
@@ -411,11 +438,14 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, e
 		return Todo{}, err
 	}
 	t := fromStorage(r)
-	if err := s.ReplaceCategories(ctx, t.ID, timeutil.ParseCategoryList(p.Categories)); err != nil {
+	if err := replaceCategoriesTx(ctx, qtx, t.ID, timeutil.ParseCategoryList(p.Categories)); err != nil {
 		return Todo{}, fmt.Errorf("replace categories: %w", err)
 	}
+	if err := commit(); err != nil {
+		return Todo{}, fmt.Errorf("commit update todo: %w", err)
+	}
 	t.Categories = p.Categories
-	_ = storage.MarkResourceDirty(ctx, s.db, t.CalendarID, t.UID, "todo")
+	_ = storage.MarkResourceDirty(ctx, s.dirtyExec(), t.CalendarID, t.UID, "todo")
 	return t, nil
 }
 
@@ -434,7 +464,18 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Todo, error)
 	if err := validateTiming(p.DueDate, p.StartDate, p.Duration); err != nil {
 		return Todo{}, err
 	}
-	r, err := s.q.UpsertTodoByUID(ctx, storage.UpsertTodoByUIDParams{
+
+	// One transaction wraps the todo row and its categories so a failing
+	// category write rolls the upsert back instead of leaving an orphan row
+	// (issue #222). txscope joins the sync engine's outer transaction when
+	// UpsertByUID is called via WithTx.
+	qtx, commit, rollback, err := s.txscope(ctx)
+	if err != nil {
+		return Todo{}, err
+	}
+	defer rollback()
+
+	r, err := qtx.UpsertTodoByUID(ctx, storage.UpsertTodoByUIDParams{
 		Uid:             p.UID,
 		CalendarID:      p.CalendarID,
 		Summary:         p.Summary,
@@ -462,8 +503,11 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Todo, error)
 		return Todo{}, err
 	}
 	t := fromStorage(r)
-	if err := s.ReplaceCategories(ctx, t.ID, timeutil.ParseCategoryList(p.Categories)); err != nil {
+	if err := replaceCategoriesTx(ctx, qtx, t.ID, timeutil.ParseCategoryList(p.Categories)); err != nil {
 		return Todo{}, fmt.Errorf("replace categories: %w", err)
+	}
+	if err := commit(); err != nil {
+		return Todo{}, fmt.Errorf("commit upsert todo: %w", err)
 	}
 	t.Categories = p.Categories
 	return t, nil
@@ -1052,20 +1096,29 @@ func (s *Service) ReplaceCategories(ctx context.Context, todoID int64, categorie
 	}
 	defer rollback()
 
+	if err := replaceCategoriesTx(ctx, qtx, todoID, categories); err != nil {
+		return err
+	}
+	if err := commit(); err != nil {
+		return fmt.Errorf("commit replace categories: %w", err)
+	}
+	return nil
+}
+
+// replaceCategoriesTx wipes and rewrites a todo's categories using a tx-bound
+// Queries. It opens no transaction and does not commit, so callers can compose
+// it with the parent todo write inside one transaction (issue #222).
+func replaceCategoriesTx(ctx context.Context, qtx *storage.Queries, todoID int64, categories []string) error {
 	if err := qtx.DeleteCategoriesByTodoID(ctx, todoID); err != nil {
 		return fmt.Errorf("delete categories: %w", err)
 	}
 	for _, c := range categories {
-		_, err := qtx.CreateTodoCategory(ctx, storage.CreateTodoCategoryParams{
+		if _, err := qtx.CreateTodoCategory(ctx, storage.CreateTodoCategoryParams{
 			TodoID:   todoID,
 			Category: c,
-		})
-		if err != nil {
+		}); err != nil {
 			return fmt.Errorf("create category: %w", err)
 		}
-	}
-	if err := commit(); err != nil {
-		return fmt.Errorf("commit replace categories: %w", err)
 	}
 	return nil
 }
