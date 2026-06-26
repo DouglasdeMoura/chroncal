@@ -716,7 +716,10 @@ func rsvpMaxLabelWidth() int {
 }
 
 func rsvpButtonWidth() int {
-	return rsvpMaxLabelWidth() + 2 // +2 for button padding
+	// Measure through the actual rendered style (Padding(0,2).MarginRight(1))
+	// so that hitRSVPBtn computes hit zones and advances with the correct width.
+	label := strings.Repeat(" ", rsvpMaxLabelWidth())
+	return lipgloss.Width(DefaultButtonStyles().Normal.Render(label, false))
 }
 
 func rsvpButtonLabel(baseLabel, rsvpStatus string) string {
