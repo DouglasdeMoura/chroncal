@@ -856,6 +856,107 @@ END:VCALENDAR
 	}
 }
 
+// TestEnginePushSkipsUIDWithOpenConflict verifies that once a prompt-mode
+// conflict has been recorded for a UID, subsequent syncs do not re-PUT the
+// still-dirty resource and do not insert duplicate sync_conflicts rows. See
+// issue #104: the original code left the resource dirty with its stale ETag,
+// so every tick issued a wasted failing PUT and appended another conflict row.
+func TestEnginePushSkipsUIDWithOpenConflict(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	insertTestEvent(t, db, calendarID, "conflict-event")
+
+	var puts int
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		switch r.Method {
+		case http.MethodPut:
+			puts++
+			return &http.Response{
+				StatusCode: http.StatusPreconditionFailed,
+				Status:     "412 Precondition Failed",
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("precondition failed")),
+				Request:    r,
+			}, nil
+		case http.MethodGet:
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header: http.Header{
+					"Content-Type": []string{"text/calendar; charset=utf-8"},
+					"Etag":         []string{`"etag-server"`},
+				},
+				Body: io.NopCloser(strings.NewReader(`BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//chroncal//tests//EN
+BEGIN:VEVENT
+UID:conflict-event
+DTSTAMP:20260403T120000Z
+DTSTART:20260403T120000Z
+DTEND:20260403T130000Z
+SUMMARY:Server version
+END:VEVENT
+END:VCALENDAR
+`)),
+				Request: r,
+			}, nil
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			return nil, nil
+		}
+	})
+
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calendarID,
+		Uid:          "conflict-event",
+		OwnerType:    "event",
+		RemoteUrl:    "/calendar/conflict-event.ics",
+		Etag:         `"etag-before"`,
+		Dirty:        1,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource conflict-event: %v", err)
+	}
+
+	// First sync: detects the 412 and records the conflict.
+	if _, err := engine.push(ctx, client, calendarID, "", ConflictPrompt); err != nil {
+		t.Fatalf("first push: %v", err)
+	}
+	if puts != 1 {
+		t.Fatalf("PUTs after first push = %d, want 1", puts)
+	}
+
+	// Second sync: the conflict is still unresolved, so the resource must be
+	// skipped entirely — no second PUT, no duplicate conflict row.
+	result, err := engine.push(ctx, client, calendarID, "", ConflictPrompt)
+	if err != nil {
+		t.Fatalf("second push: %v", err)
+	}
+	if puts != 1 {
+		t.Fatalf("PUTs after second push = %d, want 1 (resource with open conflict must not be re-PUT)", puts)
+	}
+	if result.conflicts != 0 {
+		t.Fatalf("second push conflicts = %d, want 0", result.conflicts)
+	}
+
+	conflicts, err := q.ListSyncConflictsByCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("ListSyncConflictsByCalendar: %v", err)
+	}
+	if len(conflicts) != 1 {
+		t.Fatalf("sync conflicts = %d, want 1 (no duplicate rows)", len(conflicts))
+	}
+}
+
 func TestEnginePushServerWinsAdoptsServerVersion(t *testing.T) {
 	t.Parallel()
 

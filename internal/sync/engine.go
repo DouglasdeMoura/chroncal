@@ -305,6 +305,29 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 			continue
 		}
 
+		// In prompt mode, skip resources that already have an open,
+		// unresolved conflict. The local row is still dirty and carries the
+		// ETag that already failed If-Match, so re-PUTing it just 412s again
+		// and records another conflict every sync. Hold off until the user
+		// resolves it via ResolveConflict, which clears the conflict and
+		// refreshes the ETag. See issue #104. ServerWins is excluded: it
+		// never records conflict rows and clears dirty on its own 412, so it
+		// has no loop to break — and skipping it would strand a stale
+		// conflict row left over from a prior prompt-mode run. The condition
+		// mirrors the conflict-recording branch below, which treats every
+		// non-ServerWins strategy as prompt mode.
+		if strategy != ConflictServerWins {
+			if open, cerr := e.q.CountOpenSyncConflicts(ctx, storage.CountOpenSyncConflictsParams{
+				CalendarID: calendarID,
+				Uid:        res.Uid,
+			}); cerr != nil {
+				e.logger.Error("check open conflict", "uid", res.Uid, "error", cerr)
+			} else if open > 0 {
+				e.logger.Debug("skip push: open conflict pending resolution", "uid", res.Uid)
+				continue
+			}
+		}
+
 		e.logger.Debug("pushing resource", "uid", res.Uid, "remote_url", res.RemoteUrl)
 
 		// Export the local resource to iCal
