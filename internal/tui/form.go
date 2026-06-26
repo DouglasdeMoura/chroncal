@@ -252,7 +252,11 @@ func (f *TextAreaField) IsFocusable() bool { return true }
 // SelectOption is a single entry in a SelectField.
 type SelectOption struct {
 	Label string
-	Value string
+	// PluralLabel, when set, is shown by QuantitySelectField in place of
+	// Label whenever the amount is not exactly 1 (e.g. "Days" for "2").
+	// Empty means the option has no separate plural form.
+	PluralLabel string
+	Value       string
 }
 
 // selectHighlight tracks which arrow was just pressed.
@@ -327,6 +331,14 @@ func (f *SelectField) updateMaxWidth() {
 	for _, o := range f.options {
 		if w := lipgloss.Width(f.renderOptionLabel(o, false)); w > maxW {
 			maxW = w
+		}
+		// Reserve room for the plural form too so the unit column does
+		// not shift when QuantitySelectField swaps "Day" for "Days".
+		if o.PluralLabel != "" {
+			plural := SelectOption{Label: o.PluralLabel, Value: o.Value}
+			if w := lipgloss.Width(f.renderOptionLabel(plural, false)); w > maxW {
+				maxW = w
+			}
 		}
 	}
 	f.maxWidth = maxW
@@ -473,6 +485,18 @@ func (f *QuantitySelectField) amountText() string {
 	return mouseMark("quantityselect:amount", style.Render(v))
 }
 
+// amountIsOne reports whether the entered amount is exactly 1, which
+// governs singular/plural agreement of the unit label. An empty input
+// falls back to the placeholder ("1"), matching what amountText shows.
+func (f *QuantitySelectField) amountIsOne() bool {
+	v := strings.TrimSpace(f.amount.Value())
+	if v == "" {
+		v = f.amount.input.Placeholder
+	}
+	n, err := strconv.Atoi(v)
+	return err == nil && n == 1
+}
+
 func (f *QuantitySelectField) unitText() string {
 	if len(f.unit.options) == 0 {
 		return ""
@@ -482,7 +506,11 @@ func (f *QuantitySelectField) unitText() string {
 	if unitFocused && f.unit.renderLabel == nil {
 		labelStyle = labelStyle.Reverse(true)
 	}
-	label := labelStyle.Render(f.unit.renderOptionLabel(f.unit.options[f.unit.selected], unitFocused))
+	opt := f.unit.options[f.unit.selected]
+	if opt.PluralLabel != "" && !f.amountIsOne() {
+		opt.Label = opt.PluralLabel
+	}
+	label := labelStyle.Render(f.unit.renderOptionLabel(opt, unitFocused))
 
 	flash := lipgloss.NewStyle().Foreground(activeTheme.FormHighlight)
 	prev := Glyphs["select.prev"]

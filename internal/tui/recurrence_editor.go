@@ -68,8 +68,11 @@ type RecurrenceEditorModel struct {
 func NewRecurrenceEditorModel(startDate time.Time, w, h int, theme Theme) RecurrenceEditorModel {
 	eachOpts := make([]SelectOption, len(recFrequencies))
 	for i, freq := range recFrequencies {
-		label := strings.ToUpper(freq.Unit[0][:1]) + freq.Unit[0][1:]
-		eachOpts[i] = SelectOption{Label: label, Value: freq.Freq}
+		eachOpts[i] = SelectOption{
+			Label:       titleCase(freq.Unit[0]),
+			PluralLabel: titleCase(freq.Unit[1]),
+			Value:       freq.Freq,
+		}
 	}
 
 	endsField := NewSelectField(nil)
