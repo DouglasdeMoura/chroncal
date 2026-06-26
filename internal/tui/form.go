@@ -45,6 +45,7 @@ type TextField struct {
 	suffix   string
 	disabled bool
 	dimStyle lipgloss.Style
+	validate func(string) string
 }
 
 func NewTextField(placeholder string) *TextField {
@@ -76,6 +77,21 @@ func (f *TextField) SetCharLimit(n int)      { f.input.CharLimit = n }
 func (f *TextField) Position() int           { return f.input.Position() }
 func (f *TextField) SetCursor(pos int)       { f.input.SetCursor(pos) }
 func (f *TextField) SetSuffix(s string)      { f.suffix = s }
+
+// SetValidate installs a validation hook run by Form.validate before
+// submit. The hook receives the trimmed field value and returns an error
+// message, or "" when the value is acceptable. When no hook is set the
+// field always validates.
+func (f *TextField) SetValidate(fn func(string) string) { f.validate = fn }
+
+// Validate implements the validator interface. It delegates to the hook
+// installed via SetValidate, returning "" (valid) when none is set.
+func (f *TextField) Validate() string {
+	if f.validate == nil {
+		return ""
+	}
+	return f.validate(strings.TrimSpace(f.input.Value()))
+}
 
 // SetFilter sets a function that gates printable keystrokes. When set, a key
 // with non-empty Text is forwarded to the underlying input only if fn returns
@@ -538,7 +554,14 @@ func (f *QuantitySelectField) HandleClickTarget(target string) tea.Cmd {
 }
 
 func (f *QuantitySelectField) Validate() string {
-	raw := strings.TrimSpace(f.amount.Value())
+	return validatePositiveInt(strings.TrimSpace(f.amount.Value()))
+}
+
+// validatePositiveInt reports an error message when raw is not a whole
+// number greater than zero, or "" when it is. Shared by the quantity
+// field and the recurrence "Ends: After N times" count fields so an
+// empty or zero count can never persist an unbounded or invalid RRULE.
+func validatePositiveInt(raw string) string {
 	n, err := strconv.Atoi(raw)
 	if err != nil {
 		return "Value must be a whole number"

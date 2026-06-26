@@ -84,6 +84,7 @@ func NewRecurrenceEditorModel(startDate time.Time, w, h int, theme Theme) Recurr
 	endsCountField.SetDigitsOnly()
 	endsCountField.SetSuffix("times")
 	endsCountField.SetValue("1")
+	endsCountField.SetValidate(validatePositiveInt)
 
 	m := RecurrenceEditorModel{
 		startDate:      startDate,

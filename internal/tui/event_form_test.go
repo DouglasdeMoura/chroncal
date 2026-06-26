@@ -279,6 +279,20 @@ func TestEventForm_MouseWheelScrollSurvivesRender(t *testing.T) {
 	assert.Contains(t, out, "↑ more")
 }
 
+func TestEventForm_EndsAfterBlocksEmptyAndZeroCount(t *testing.T) {
+	for _, count := range []string{"", "0"} {
+		m, _ := NewEventFormModel(time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC), testEventFormCalendars(), Theme{})
+		m.titleField.SetValue("Standup")
+		m.repeatField.SetSelected(1) // a recurring preset
+		m.endsField.SetSelected(int(endsAfter))
+		m.rebuildDialog() // rebuild items so the count field is present
+		m.endsCountField.SetValue(count)
+
+		_, valid := m.form.validate()
+		assert.Falsef(t, valid, "Ends=After with count %q must block submit", count)
+	}
+}
+
 func TestEventForm_SaveIncludesShowAsAndVisibility(t *testing.T) {
 	m, _ := NewEventFormModel(time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC), testEventFormCalendars(), Theme{})
 	m.titleField.SetValue("Planning")

@@ -49,6 +49,18 @@ func TestRecurrenceEditor_EndsAfterIncludesCount(t *testing.T) {
 	assert.Equal(t, "FREQ=WEEKLY;BYDAY=FR;COUNT=10", m.BuildRule())
 }
 
+func TestRecurrenceEditor_EndsAfterBlocksEmptyAndZeroCount(t *testing.T) {
+	for _, count := range []string{"", "0"} {
+		m := NewRecurrenceEditorModel(time.Date(2026, 4, 24, 0, 0, 0, 0, time.UTC), 120, 40, Theme{})
+		m.endsField.SetSelected(int(endsAfter))
+		m.syncFromForm() // rebuild items so the count field is present
+		m.endsCountField.SetValue(count)
+
+		_, valid := m.form.validate()
+		assert.Falsef(t, valid, "Ends=After with count %q must block submit", count)
+	}
+}
+
 func TestRecurrenceEditor_MonthlyOnFieldUpdatesRule(t *testing.T) {
 	m := NewRecurrenceEditorModel(time.Date(2026, 4, 24, 0, 0, 0, 0, time.UTC), 120, 40, Theme{})
 	m.eachField.SetSelected(2)
