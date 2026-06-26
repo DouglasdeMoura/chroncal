@@ -216,6 +216,48 @@ func TestMaybeFillViewport_TriggersForwardExpansionWhenUnderfilled(t *testing.T)
 	}
 }
 
+// TestMaybeFillViewport_StopsExpandingWhenNoNewRows reproduces issue #93:
+// on a sparse calendar whose few rows never fill a tall viewport, the host
+// re-queries the same event set after each forward expansion, so the
+// auto-fill must settle instead of growing windowEnd forward without bound.
+func TestMaybeFillViewport_StopsExpandingWhenNoNewRows(t *testing.T) {
+	jumpDay := time.Date(2026, 4, 1, 0, 0, 0, 0, time.Local)
+	// A handful of events, all inside the initial window — more than zero
+	// rows but far fewer than the viewport height (38), so every load is
+	// "underfilled" yet no future expansion can ever add a row.
+	events := []event.Event{
+		{ID: 1, Title: "A", StartTime: jumpDay.Add(9 * time.Hour), EndTime: jumpDay.Add(10 * time.Hour)},
+		{ID: 2, Title: "B", StartTime: jumpDay.AddDate(0, 0, 2).Add(9 * time.Hour), EndTime: jumpDay.AddDate(0, 0, 2).Add(10 * time.Hour)},
+		{ID: 3, Title: "C", StartTime: jumpDay.AddDate(0, 0, 4).Add(9 * time.Hour), EndTime: jumpDay.AddDate(0, 0, 4).Add(10 * time.Hour)},
+	}
+	m := NewAgendaModel(jumpDay).SetSize(80, 40).SetTheme(NewTheme(true))
+	m = m.ResetWindow(jumpDay)
+	m = m.SetEvents(events, nil)
+
+	// Simulate the host loop: each non-nil MaybeFillViewport command grows
+	// the window and triggers a reload that replays the same events. The
+	// loop must terminate; an unbounded auto-fill never returns nil.
+	const maxSteps = 50
+	steps := 0
+	for {
+		cmd := m.MaybeFillViewport()
+		if cmd == nil {
+			break
+		}
+		if _, ok := cmd().(AgendaReloadMsg); !ok {
+			t.Fatalf("expected AgendaReloadMsg, got %T", cmd())
+		}
+		steps++
+		if steps > maxSteps {
+			t.Fatalf("auto-fill never settled: still expanding after %d steps "+
+				"(windowEnd=%v) — runaway forward expansion (issue #93)",
+				steps, m.WindowEnd().Format("2006-01-02"))
+		}
+		// Host re-queries the (unchanged) event set over the grown window.
+		m = m.SetEvents(events, nil)
+	}
+}
+
 // TestMaybeFillViewport_NoopWhenFull verifies the auto-fill doesn't fire
 // when rows already fill the viewport — otherwise every load would spawn
 // a pointless reload round-trip.

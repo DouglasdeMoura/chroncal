@@ -126,6 +126,13 @@ type AgendaModel struct {
 	// reloadPending prevents firing a second AgendaReloadMsg while the
 	// previous one is still in-flight; it's cleared by SetEvents.
 	reloadPending bool
+	// fillExpandRows bounds the underfill-driven auto-fill (see
+	// MaybeFillViewport). It records len(rows) at the last auto-fill
+	// expansion so the next one is suppressed unless the row count actually
+	// grew — otherwise a sparse calendar in a tall terminal would extend
+	// windowEnd forward without bound. -1 means "no auto-fill yet"; reset
+	// to -1 on a jump (ResetWindow) or once the viewport fills.
+	fillExpandRows int
 	// showEmptyDays, when true, renders a placeholder row for each day
 	// in the window that has no events. Toggled by the "o" key.
 	showEmptyDays bool
@@ -139,12 +146,13 @@ type AgendaModel struct {
 func NewAgendaModel(today time.Time) AgendaModel {
 	t := dayAligned(today.Local())
 	return AgendaModel{
-		cursor:      t,
-		today:       t,
-		windowStart: t,
-		windowEnd:   t.AddDate(0, 0, AgendaWindowDays),
-		selected:    -1,
-		keys:        defaultAgendaKeys(),
+		cursor:         t,
+		today:          t,
+		windowStart:    t,
+		windowEnd:      t.AddDate(0, 0, AgendaWindowDays),
+		selected:       -1,
+		keys:           defaultAgendaKeys(),
+		fillExpandRows: -1,
 	}
 }
 
@@ -168,6 +176,7 @@ func (m AgendaModel) ResetWindow(day time.Time) AgendaModel {
 	m.windowEnd = d.AddDate(0, 0, AgendaWindowDays)
 	m.anchorDay = time.Time{}
 	m.reloadPending = false
+	m.fillExpandRows = -1
 	m.selected = -1
 	return m
 }
@@ -715,8 +724,42 @@ func (m AgendaModel) maxScroll(viewportH int) int {
 // rows don't fill the visible area — used by the host after a fresh
 // SetEvents (e.g. after `[`/`]` jumps) so sparse months automatically
 // pull in the next month's events instead of leaving blank rows below.
+//
+// The host calls this after every load, including the load it triggers,
+// so it must self-terminate. Unlike scroll-driven expansion there's no
+// scroll position to bound it; instead it stops once an expansion fails
+// to add rows. Without that guard a calendar with a few events in a tall
+// terminal — underfilled but non-empty — would grow windowEnd forward
+// without bound, re-querying an ever-larger range on every step.
 func (m *AgendaModel) MaybeFillViewport() tea.Cmd {
-	return m.maybeExpandForward()
+	if m.reloadPending || len(m.rows) == 0 {
+		return nil
+	}
+	if len(m.rows) >= m.viewportH() {
+		// Viewport is full; nothing to auto-fill. Clear the guard so a
+		// later jump to another sparse month can auto-fill afresh.
+		m.fillExpandRows = -1
+		return nil
+	}
+	// Underfilled: pull in the next step, but only while each expansion
+	// keeps adding rows. Once the row count stops growing, the future is
+	// empty (or sparse enough that no step adds anything) — stop.
+	if m.fillExpandRows >= 0 && len(m.rows) <= m.fillExpandRows {
+		return nil
+	}
+	m.fillExpandRows = len(m.rows)
+	m.windowEnd = m.windowEnd.AddDate(0, 0, AgendaExpandStep)
+	return m.requestReload()
+}
+
+// requestReload stamps the scroll anchor, marks a reload in flight, and
+// returns the command that asks the host to re-query the current window.
+// All three window-growth paths funnel through here so the reloadPending
+// handshake (cleared by SetEvents) is asserted in exactly one place.
+func (m *AgendaModel) requestReload() tea.Cmd {
+	m.stampAnchor()
+	m.reloadPending = true
+	return func() tea.Msg { return AgendaReloadMsg{} }
 }
 
 // ScrollBy advances the viewport by delta rows (positive scrolls down,
@@ -753,33 +796,29 @@ func (m *AgendaModel) maybeExpandBackward() tea.Cmd {
 		return nil
 	}
 	m.windowStart = m.windowStart.AddDate(0, 0, -AgendaExpandStep)
-	m.stampAnchor()
-	m.reloadPending = true
-	return func() tea.Msg { return AgendaReloadMsg{} }
+	return m.requestReload()
 }
 
 // maybeExpandForward is the mirror of maybeExpandBackward for the
 // bottom edge — the near edge (windowStart) is held fixed for the same
-// reason. It also fires when the loaded rows don't fill the viewport
-// (e.g. after `[`/`]` jumps land on a sparse month), so the next month
-// flows in automatically instead of waiting for the user to navigate.
+// reason. It fires when the scroll or selection is within
+// AgendaPreloadRows of the last row, so infinite scroll keeps feeding the
+// next month in as the user moves down. (The underfill case — a sparse
+// month that never fills the viewport — is handled by MaybeFillViewport,
+// which bounds itself so it can't loop forever.)
 func (m *AgendaModel) maybeExpandForward() tea.Cmd {
 	if m.reloadPending || len(m.rows) == 0 {
 		return nil
 	}
 	viewportH := m.viewportH()
-	underfilled := len(m.rows) < viewportH
 	maxScroll := m.maxScroll(viewportH)
-	atBottom := underfilled ||
-		(maxScroll > 0 && m.scroll >= maxScroll-AgendaPreloadRows) ||
+	atBottom := (maxScroll > 0 && m.scroll >= maxScroll-AgendaPreloadRows) ||
 		(m.selected >= 0 && m.selected >= len(m.rows)-AgendaPreloadRows)
 	if !atBottom {
 		return nil
 	}
 	m.windowEnd = m.windowEnd.AddDate(0, 0, AgendaExpandStep)
-	m.stampAnchor()
-	m.reloadPending = true
-	return func() tea.Msg { return AgendaReloadMsg{} }
+	return m.requestReload()
 }
 
 func (m *AgendaModel) stampAnchor() {
