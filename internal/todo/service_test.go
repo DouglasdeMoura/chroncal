@@ -128,6 +128,58 @@ func TestTodoService_Complete_MarksResourceDirty(t *testing.T) {
 	}
 }
 
+// TestTodoService_Complete_MarksResourceDirtyUnderTx asserts that when Complete
+// runs on a WithTx-bound service, the dirty mark joins the outer transaction and
+// survives the commit. Before the fix Complete marked dirty on s.db rather than
+// s.dirtyExec(): a second connection (or the single :memory: pool connection,
+// already held by the outer tx) could never take the write lock the outer tx
+// holds, so MarkResourceDirty's discarded error meant the completion silently
+// never synced.
+func TestTodoService_Complete_MarksResourceDirtyUnderTx(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	testutil.LinkCalendarToAccount(t, svc.db)
+
+	td := createTodo(t, svc)
+
+	// Creation dirties the row; clear it so the test isolates Complete.
+	if err := svc.q.ClearSyncResourceDirty(ctx, storage.ClearSyncResourceDirtyParams{
+		Etag: "", CalendarID: td.CalendarID, Uid: td.UID,
+	}); err != nil {
+		t.Fatalf("ClearSyncResourceDirty: %v", err)
+	}
+	if dirty, _ := svc.q.ListDirtySyncResources(ctx, td.CalendarID); len(dirty) != 0 {
+		t.Fatalf("precondition: expected 0 dirty resources, got %d", len(dirty))
+	}
+
+	// Bound the Complete call so the buggy path (which blocks on the pool
+	// connection held by the outer tx) fails fast instead of deadlocking.
+	callCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	tx, err := svc.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := svc.WithTx(tx).Complete(callCtx, td.ID); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	dirty, err := svc.q.ListDirtySyncResources(ctx, td.CalendarID)
+	if err != nil {
+		t.Fatalf("ListDirtySyncResources: %v", err)
+	}
+	if len(dirty) != 1 || dirty[0].Uid != td.UID {
+		t.Fatalf("Complete under tx did not mark resource dirty: got %d dirty resources", len(dirty))
+	}
+}
+
 func TestTodoService_ListAll(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()

@@ -470,7 +470,7 @@ func (s *Service) Complete(ctx context.Context, id int64) (Todo, error) {
 		return Todo{}, err
 	}
 	t := fromStorage(r)
-	_ = storage.MarkResourceDirty(ctx, s.db, t.CalendarID, t.UID, "todo")
+	_ = storage.MarkResourceDirty(ctx, s.dirtyExec(), t.CalendarID, t.UID, "todo")
 	return t, nil
 }
 
