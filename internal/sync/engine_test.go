@@ -968,6 +968,43 @@ func TestEnginePullIncompletePullMarksCalendarUnhealthy(t *testing.T) {
 	}
 }
 
+// TestEngineSyncCalendarRecordsHealthOnEarlyClientFailure is the regression
+// test for issue #416: when loadCalendarClient returns early (missing
+// credentials, no linked account, empty RemoteUrl) the updateSyncHealth defer
+// used to be registered after that call, so it never ran. LastSyncAttemptedAt /
+// LastSyncError stayed stale and the ambient ⚠ sidebar glyph (which keys on a
+// non-empty LastSyncError) stayed dark while the calendar was permanently
+// failing — notably OAuth calendars with revoked credentials.
+func TestEngineSyncCalendarRecordsHealthOnEarlyClientFailure(t *testing.T) {
+	t.Parallel()
+
+	engine, _, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	// The default calendar has no linked account, so loadCalendarClient
+	// returns early before any sync phase runs.
+	if _, err := engine.SyncCalendar(ctx, calendarID, ConflictServerWins); err == nil {
+		t.Fatal("SyncCalendar: want error from loadCalendarClient, got nil")
+	}
+
+	calRow, err := q.GetCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("GetCalendar: %v", err)
+	}
+	if got := storage.NullableToString(calRow.LastSyncError); got == "" {
+		t.Fatal("LastSyncError empty: an unsyncable calendar still shows healthy")
+	}
+	if got := storage.NullableToString(calRow.LastSyncAttemptedAt); got == "" {
+		t.Fatal("LastSyncAttemptedAt empty: the failed sync attempt was not recorded")
+	}
+}
+
 // TestEnginePushSerializesConcurrentNewResourceCreate is the regression test
 // for issue #225: two concurrent push runs for the same calendar (e.g. an
 // opportunistic save-time PushCalendar racing a periodic SyncCalendar) must not
