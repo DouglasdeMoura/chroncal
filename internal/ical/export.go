@@ -384,7 +384,14 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 				}
 			}
 		}
-		if t.Duration != "" {
+		// RFC 5545 (and go-ical's encoder) only accept DURATION on a VTODO when
+		// DTSTART is present and DUE is absent. A stored todo can violate this
+		// (import enforces no mutual exclusion), and a single bad component makes
+		// enc.Encode reject the whole calendar, dropping every todo. Drop the
+		// conflicting DURATION instead so the rest of the batch still exports.
+		if t.Duration != "" &&
+			vtodo.Props.Get(ical.PropDue) == nil &&
+			vtodo.Props.Get(ical.PropDateTimeStart) != nil {
 			p := &ical.Prop{Name: ical.PropDuration}
 			p.Value = t.Duration
 			vtodo.Props.Set(p)

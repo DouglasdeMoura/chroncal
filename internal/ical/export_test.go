@@ -488,6 +488,76 @@ func TestExport_TodoAllFields(t *testing.T) {
 	}
 }
 
+// TestExport_TodoDurationWithoutStart guards issue #102: a stored VTODO with
+// DURATION but no DTSTART (which go-ical's encoder rejects) must not abort the
+// whole export batch and drop every todo.
+func TestExport_TodoDurationWithoutStart(t *testing.T) {
+	t.Parallel()
+	todos := []todo.Todo{
+		{
+			UID:       "todo-bad-duration",
+			Summary:   "Bad Duration",
+			Status:    "NEEDS-ACTION",
+			Duration:  "PT1H", // DURATION without DTSTART -> encoder rejects
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		},
+		{
+			UID:       "todo-good",
+			Summary:   "Good Todo",
+			Status:    "NEEDS-ACTION",
+			DueDate:   "2026-04-05T17:00:00Z",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		},
+	}
+
+	data, err := ExportTodos(todos, "")
+	if err != nil {
+		t.Fatalf("ExportTodos error: %v", err)
+	}
+	ics := string(data)
+
+	// The good todo must survive (no all-or-nothing failure).
+	if !strings.Contains(ics, "UID:todo-good") {
+		t.Errorf("good todo dropped; export aborted by malformed sibling")
+	}
+	// The malformed todo must still export, sanitized (DURATION dropped).
+	if !strings.Contains(ics, "UID:todo-bad-duration") {
+		t.Errorf("malformed todo missing from export")
+	}
+	if strings.Contains(ics, "DURATION:") {
+		t.Errorf("DURATION without DTSTART should have been dropped, got:\n%s", ics)
+	}
+}
+
+// TestExport_TodoDueAndDuration guards issue #102: DUE + DURATION together is
+// rejected by the encoder; DURATION must be dropped so the batch still encodes.
+func TestExport_TodoDueAndDuration(t *testing.T) {
+	t.Parallel()
+	todos := []todo.Todo{{
+		UID:       "todo-due-and-duration",
+		Summary:   "Due And Duration",
+		Status:    "NEEDS-ACTION",
+		DueDate:   "2026-04-05T17:00:00Z",
+		Duration:  "PT1H",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}}
+
+	data, err := ExportTodos(todos, "")
+	if err != nil {
+		t.Fatalf("ExportTodos error: %v", err)
+	}
+	ics := string(data)
+	if !strings.Contains(ics, "DUE:") {
+		t.Errorf("DUE should be preserved")
+	}
+	if strings.Contains(ics, "DURATION:") {
+		t.Errorf("DURATION should be dropped when DUE present, got:\n%s", ics)
+	}
+}
+
 func TestExport_MergeCalendars(t *testing.T) {
 	t.Parallel()
 	a := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:e1\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
