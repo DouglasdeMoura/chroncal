@@ -115,6 +115,9 @@ func TestClientDeleteResourceReportsGone(t *testing.T) {
 				if req.URL.String() != "https://example.com/cal/test.ics" {
 					t.Fatalf("url = %s, want https://example.com/cal/test.ics", req.URL.String())
 				}
+				if got := req.Header.Get("If-Match"); got != "" {
+					t.Fatalf("If-Match = %q, want empty for unconditional delete", got)
+				}
 				return &http.Response{
 					StatusCode: tc.statusCode,
 					Status:     http.StatusText(tc.statusCode),
@@ -126,7 +129,7 @@ func TestClientDeleteResourceReportsGone(t *testing.T) {
 				t.Fatalf("NewClient: %v", err)
 			}
 
-			err = client.DeleteResource(context.Background(), "/cal/test.ics")
+			err = client.DeleteResource(context.Background(), "/cal/test.ics", "")
 			if tc.wantErr != (err != nil) {
 				t.Fatalf("DeleteResource err = %v, wantErr = %v", err, tc.wantErr)
 			}
@@ -134,6 +137,62 @@ func TestClientDeleteResourceReportsGone(t *testing.T) {
 				t.Fatalf("errors.Is(err, ErrResourceGone) = %v, want %v (err = %v)", got, tc.wantGone, err)
 			}
 		})
+	}
+}
+
+func TestClientDeleteResourceSendsIfMatch(t *testing.T) {
+	t.Parallel()
+
+	client, err := NewClient(putTestHTTPClient{do: func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodDelete {
+			t.Fatalf("method = %s, want DELETE", req.Method)
+		}
+		if got := req.Header.Get("If-Match"); got != `"etag-known"` {
+			t.Fatalf("If-Match = %q, want %q", got, `"etag-known"`)
+		}
+		return &http.Response{
+			StatusCode: http.StatusNoContent,
+			Status:     "204 No Content",
+			Body:       io.NopCloser(http.NoBody),
+			Request:    req,
+		}, nil
+	}}, "https://example.com")
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	if err := client.DeleteResource(context.Background(), "/cal/test.ics", "etag-known"); err != nil {
+		t.Fatalf("DeleteResource: %v", err)
+	}
+}
+
+func TestClientDeleteResourceConflict(t *testing.T) {
+	t.Parallel()
+
+	client, err := NewClient(putTestHTTPClient{do: func(req *http.Request) (*http.Response, error) {
+		if got := req.Header.Get("If-Match"); got != `"etag-known"` {
+			t.Fatalf("If-Match = %q, want %q", got, `"etag-known"`)
+		}
+		return &http.Response{
+			StatusCode: http.StatusPreconditionFailed,
+			Status:     "412 Precondition Failed",
+			Body:       io.NopCloser(http.NoBody),
+			Request:    req,
+		}, nil
+	}}, "https://example.com")
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	err = client.DeleteResource(context.Background(), "/cal/test.ics", "etag-known")
+	if err == nil {
+		t.Fatal("DeleteResource err = nil, want conflict error")
+	}
+	if !IsConflict(err) {
+		t.Fatalf("IsConflict(%v) = false, want true", err)
+	}
+	if errors.Is(err, ErrResourceGone) {
+		t.Fatalf("a 412 must not be reported as ErrResourceGone (err = %v)", err)
 	}
 }
 

@@ -193,6 +193,7 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 		result.Errors = append(result.Errors, fmt.Errorf("tombstones: %w", err))
 	} else {
 		result.Deleted += tombstoneResult.deleted
+		result.Conflicts += tombstoneResult.conflicts
 		result.Errors = append(result.Errors, tombstoneResult.errors...)
 	}
 
@@ -240,6 +241,7 @@ func (e *Engine) PushCalendar(ctx context.Context, calendarID int64, strategy Co
 		result.Errors = append(result.Errors, fmt.Errorf("tombstones: %w", err))
 	} else {
 		result.Deleted = tombstoneResult.deleted
+		result.Conflicts += tombstoneResult.conflicts
 		result.Errors = append(result.Errors, tombstoneResult.errors...)
 	}
 	return result, nil
@@ -1089,14 +1091,27 @@ func (e *Engine) lookupOwnerID(ctx context.Context, ownerType, uid string) int64
 }
 
 type tombstoneResult struct {
-	deleted int
-	errors  []error
+	deleted   int
+	conflicts int
+	errors    []error
 }
 
 func (e *Engine) processTombstones(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL string) (*tombstoneResult, error) {
 	tombstones, err := e.q.ListTombstonesByCalendar(ctx, calendarID)
 	if err != nil {
 		return nil, fmt.Errorf("list tombstones: %w", err)
+	}
+
+	// Index the last-seen ETags so each DELETE can be made conditional. A real
+	// lookup failure must abort rather than silently degrade to unconditional
+	// DELETEs that could clobber a concurrent remote edit, so we surface it.
+	syncResources, err := e.q.ListSyncResourcesByCalendar(ctx, calendarID)
+	if err != nil {
+		return nil, fmt.Errorf("list sync resources: %w", err)
+	}
+	etagByUID := make(map[string]string, len(syncResources))
+	for _, sr := range syncResources {
+		etagByUID[sr.Uid] = sr.Etag
 	}
 
 	result := &tombstoneResult{}
@@ -1106,13 +1121,34 @@ func (e *Engine) processTombstones(ctx context.Context, client *caldav.Client, c
 			result.errors = append(result.errors, fmt.Errorf("validate tombstone %s: %w", ts.Uid, hrefErr))
 			continue
 		}
+		// Make the DELETE conditional on the ETag we last saw so the server
+		// rejects it (412) if the resource was edited remotely after our last
+		// sync. Without this, the tombstone push would silently destroy that
+		// concurrent edit. An untracked resource (never synced, or already
+		// cleaned up) has no ETag, which falls back to an unconditional DELETE.
+		etag := etagByUID[ts.Uid]
 		e.logger.Debug("deleting tombstone", "uid", ts.Uid, "remote_url", deletePath)
 		if _, err := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (struct{}, error) {
-			return struct{}{}, client.DeleteResource(ctx, deletePath)
+			return struct{}{}, client.DeleteResource(ctx, deletePath, etag)
 		}); err != nil && !errors.Is(err, caldav.ErrResourceGone) {
 			// A 404/410 means the resource is already absent server-side —
 			// the desired end state — so fall through and clear the local
 			// rows instead of re-issuing the DELETE on every sync.
+			if caldav.IsConflict(err) {
+				// 412: the resource was edited remotely after we last saw it.
+				// Honoring the delete would discard that edit, so abandon it.
+				// Drop the tombstone (stop re-issuing the DELETE every sync)
+				// but keep the sync_resource so the next pull re-imports the
+				// remote version, resurrecting the item with its remote edit.
+				// A delete-vs-edit conflict always preserves the remote edit
+				// (the non-destructive choice), independent of ConflictStrategy.
+				e.logger.Warn("tombstone delete conflict: remote edited, preserving remote version", "uid", ts.Uid)
+				if err := e.q.DeleteTombstone(ctx, ts.ID); err != nil {
+					e.logger.Warn("delete tombstone row after conflict failed", "uid", ts.Uid, "error", err)
+				}
+				result.conflicts++
+				continue
+			}
 			e.logger.Warn("delete remote resource failed", "uid", ts.Uid, "error", err)
 			result.errors = append(result.errors, fmt.Errorf("delete tombstone %s: %w", ts.Uid, err))
 			continue

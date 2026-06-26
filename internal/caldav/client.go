@@ -233,10 +233,20 @@ var ErrResourceGone = errors.New("caldav: resource already gone")
 
 // DeleteResource removes a resource by path. A 404/410 response is reported as
 // ErrResourceGone so callers can treat an already-absent resource as success.
-func (c *Client) DeleteResource(ctx context.Context, path string) error {
+//
+// If etag is non-empty, the DELETE is made conditional via an If-Match
+// precondition so the server rejects it (412 Precondition Failed) when the
+// resource was modified since we last saw it. This prevents a local
+// tombstone push from silently destroying a concurrent remote edit. A 412 is
+// returned as a typed conflict error (see IsConflict) so callers can preserve
+// the remote change instead of forcing the delete.
+func (c *Client) DeleteResource(ctx context.Context, path, etag string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.ResolveURL(path), nil)
 	if err != nil {
 		return fmt.Errorf("new DELETE request: %w", err)
+	}
+	if etag != "" {
+		req.Header.Set("If-Match", formatIfMatch(etag))
 	}
 
 	resp, err := c.httpClient.Do(req)
