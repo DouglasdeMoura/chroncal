@@ -385,11 +385,17 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 			durationValue = prop.Value
 			endTime = addDuration(startTime, prop.Value)
 			explicitEnd = true
-		} else {
-			// No DURATION, or a malformed one (go-ical stores the raw value
-			// without validating). Fall back to a 1h span and drop the bad
-			// value so it is neither persisted nor re-exported.
+		} else if prop != nil {
+			// Malformed DURATION (go-ical stores the raw value without validating).
+			// Fall back to a 1h span and drop the bad value so it is neither
+			// persisted nor re-exported.
 			endTime = startTime.Add(time.Hour)
+		} else {
+			// RFC 5545 §3.6.1: a VEVENT with DTSTART as DATE-TIME and no
+			// DTEND/DURATION is instantaneous (zero duration). The all-day
+			// case (VALUE=DATE) is handled below to apply the implicit one-day
+			// span instead.
+			endTime = startTime
 		}
 	} else {
 		explicitEnd = true
@@ -411,9 +417,7 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 				endTime = time.Date(endTime.Year(), endTime.Month(), endTime.Day(), 0, 0, 0, 0, time.UTC)
 			} else {
 				// RFC 5545 §3.6.1: an all-day VEVENT with no DTEND/DURATION has
-				// an implicit duration of one day. The timed +1h default above
-				// would otherwise be truncated back to startTime, storing a
-				// zero-length event.
+				// an implicit duration of one day.
 				endTime = startTime.AddDate(0, 0, 1)
 			}
 		}

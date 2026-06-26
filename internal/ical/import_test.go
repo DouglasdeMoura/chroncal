@@ -637,6 +637,44 @@ END:VCALENDAR`
 	}
 }
 
+// Regression test for issue #364: a timed (DATE-TIME) VEVENT with DTSTART but
+// no DTEND and no DURATION property must be imported as a zero-duration
+// (instantaneous) event, not a fabricated 1-hour block.
+// RFC 5545 §3.6.1: "If neither the 'dtend' nor the 'duration' property is not
+// present, then the event has a zero duration."
+func TestImport_TimedEvent_NoDTEND_NoDuration_ZeroLength(t *testing.T) {
+	t.Parallel()
+	const ics = "BEGIN:VCALENDAR\r\n" +
+		"VERSION:2.0\r\n" +
+		"PRODID:-//test//EN\r\n" +
+		"BEGIN:VEVENT\r\n" +
+		"UID:no-end-timed@example.com\r\n" +
+		"DTSTART:20260415T140000Z\r\n" +
+		"SUMMARY:Timed, no end\r\n" +
+		"END:VEVENT\r\n" +
+		"END:VCALENDAR\r\n"
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %d, want 1", len(result.Events))
+	}
+	evt := result.Events[0]
+	if evt.AllDay {
+		t.Error("AllDay = true, want false")
+	}
+	wantTime := time.Date(2026, 4, 15, 14, 0, 0, 0, time.UTC)
+	if !evt.StartTime.Equal(wantTime) {
+		t.Errorf("StartTime = %v, want %v", evt.StartTime, wantTime)
+	}
+	// RFC 5545 §3.6.1: DTSTART DATE-TIME with no DTEND/DURATION → zero duration.
+	if !evt.EndTime.Equal(evt.StartTime) {
+		t.Errorf("EndTime = %v, want %v (zero duration per RFC 5545 §3.6.1)", evt.EndTime, evt.StartTime)
+	}
+}
+
 func TestImport_MalformedDuration(t *testing.T) {
 	t.Parallel()
 	ics := `BEGIN:VCALENDAR
