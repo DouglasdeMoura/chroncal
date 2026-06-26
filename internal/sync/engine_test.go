@@ -1141,6 +1141,90 @@ func TestEngineProcessTombstonesContinuesAfterDeleteFailure(t *testing.T) {
 	}
 }
 
+func TestEngineProcessTombstonesTreatsGoneAsSuccess(t *testing.T) {
+	t.Parallel()
+
+	engine, _, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	deletes := 0
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodDelete {
+			t.Fatalf("unexpected method %s", r.Method)
+		}
+		deletes++
+		switch r.URL.Path {
+		case "/calendar/already-gone-404.ics":
+			return newResponse(http.StatusNotFound, nil), nil
+		case "/calendar/already-gone-410.ics":
+			return newResponse(http.StatusGone, nil), nil
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			return nil, nil
+		}
+	})
+
+	for _, tc := range []struct{ uid, path string }{
+		{"already-gone-404", "/calendar/already-gone-404.ics"},
+		{"already-gone-410", "/calendar/already-gone-410.ics"},
+	} {
+		if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+			CalendarID:   calendarID,
+			Uid:          tc.uid,
+			OwnerType:    "event",
+			RemoteUrl:    tc.path,
+			Etag:         "etag",
+			SyncStrategy: "sync-token",
+		}); err != nil {
+			t.Fatalf("UpsertSyncResource %q: %v", tc.uid, err)
+		}
+		if err := q.CreateTombstone(ctx, storage.CreateTombstoneParams{
+			CalendarID: calendarID,
+			Uid:        tc.uid,
+			RemoteUrl:  tc.path,
+		}); err != nil {
+			t.Fatalf("CreateTombstone %q: %v", tc.uid, err)
+		}
+	}
+
+	result, err := engine.processTombstones(ctx, client, calendarID, "/calendar/")
+	if err != nil {
+		t.Fatalf("processTombstones: %v", err)
+	}
+	// A resource already absent server-side (404/410) is the desired end
+	// state, so the tombstone is cleared rather than retried forever.
+	if result.deleted != 2 {
+		t.Fatalf("deleted = %d, want 2", result.deleted)
+	}
+	if len(result.errors) != 0 {
+		t.Fatalf("errors = %v, want none", result.errors)
+	}
+	if deletes != 2 {
+		t.Fatalf("delete requests = %d, want 2 (no retry of an already-gone resource)", deletes)
+	}
+
+	tombstones, err := q.ListTombstonesByCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("ListTombstonesByCalendar: %v", err)
+	}
+	if len(tombstones) != 0 {
+		t.Fatalf("remaining tombstones = %d, want 0", len(tombstones))
+	}
+	resources, err := q.ListSyncResourcesByCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("ListSyncResourcesByCalendar: %v", err)
+	}
+	if len(resources) != 0 {
+		t.Fatalf("remaining sync resources = %d, want 0", len(resources))
+	}
+}
+
 func TestEnginePullSkipsTombstonedRemoteResource(t *testing.T) {
 	t.Parallel()
 

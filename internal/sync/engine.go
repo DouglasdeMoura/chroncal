@@ -1110,7 +1110,10 @@ func (e *Engine) processTombstones(ctx context.Context, client *caldav.Client, c
 		e.logger.Debug("deleting tombstone", "uid", ts.Uid, "remote_url", deletePath)
 		if _, err := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (struct{}, error) {
 			return struct{}{}, client.DeleteResource(ctx, deletePath)
-		}); err != nil {
+		}); err != nil && !errors.Is(err, caldav.ErrResourceGone) {
+			// A 404/410 means the resource is already absent server-side —
+			// the desired end state — so fall through and clear the local
+			// rows instead of re-issuing the DELETE on every sync.
 			e.logger.Warn("delete remote resource failed", "uid", ts.Uid, "error", err)
 			result.errors = append(result.errors, fmt.Errorf("delete tombstone %s: %w", ts.Uid, err))
 			continue

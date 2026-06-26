@@ -225,9 +225,34 @@ func (c *Client) PutResource(ctx context.Context, path string, data *ical.Calend
 	return normalizeETag(resp.Header.Get("ETag")), nil
 }
 
-// DeleteResource removes a resource by path.
+// ErrResourceGone reports that a DELETE targeted a resource the server no
+// longer has (404 Not Found or 410 Gone). For tombstone processing this is the
+// desired end state, not a failure: the resource is already absent server-side,
+// so callers can clear their local sync bookkeeping instead of retrying.
+var ErrResourceGone = errors.New("caldav: resource already gone")
+
+// DeleteResource removes a resource by path. A 404/410 response is reported as
+// ErrResourceGone so callers can treat an already-absent resource as success.
 func (c *Client) DeleteResource(ctx context.Context, path string) error {
-	return c.inner.RemoveAll(ctx, path)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.ResolveURL(path), nil)
+	if err != nil {
+		return fmt.Errorf("new DELETE request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("delete resource: %w", err)
+	}
+	defer resp.Body.Close()
+
+	switch {
+	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone:
+		return ErrResourceGone
+	case resp.StatusCode/100 == 2:
+		return nil
+	default:
+		return fmt.Errorf("delete resource: %w", httpError(resp))
+	}
 }
 
 // GetResource fetches a single calendar object by path.

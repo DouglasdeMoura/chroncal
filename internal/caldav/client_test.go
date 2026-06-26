@@ -2,6 +2,7 @@ package caldav
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -84,6 +85,55 @@ func TestClientPutResourceSendsIfMatch(t *testing.T) {
 	}
 	if etag != "etag-after" {
 		t.Fatalf("etag = %q, want %q", etag, "etag-after")
+	}
+}
+
+func TestClientDeleteResourceReportsGone(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		statusCode int
+		wantGone   bool
+		wantErr    bool
+	}{
+		{"not found", http.StatusNotFound, true, true},
+		{"gone", http.StatusGone, true, true},
+		{"no content", http.StatusNoContent, false, false},
+		{"ok", http.StatusOK, false, false},
+		{"server error", http.StatusInternalServerError, false, true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			client, err := NewClient(putTestHTTPClient{do: func(req *http.Request) (*http.Response, error) {
+				if req.Method != http.MethodDelete {
+					t.Fatalf("method = %s, want DELETE", req.Method)
+				}
+				if req.URL.String() != "https://example.com/cal/test.ics" {
+					t.Fatalf("url = %s, want https://example.com/cal/test.ics", req.URL.String())
+				}
+				return &http.Response{
+					StatusCode: tc.statusCode,
+					Status:     http.StatusText(tc.statusCode),
+					Body:       io.NopCloser(http.NoBody),
+					Request:    req,
+				}, nil
+			}}, "https://example.com")
+			if err != nil {
+				t.Fatalf("NewClient: %v", err)
+			}
+
+			err = client.DeleteResource(context.Background(), "/cal/test.ics")
+			if tc.wantErr != (err != nil) {
+				t.Fatalf("DeleteResource err = %v, wantErr = %v", err, tc.wantErr)
+			}
+			if got := errors.Is(err, ErrResourceGone); got != tc.wantGone {
+				t.Fatalf("errors.Is(err, ErrResourceGone) = %v, want %v (err = %v)", got, tc.wantGone, err)
+			}
+		})
 	}
 }
 
