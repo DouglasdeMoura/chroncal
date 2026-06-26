@@ -234,9 +234,11 @@ func (s *migratingCredentialStore) Get(accountID int64) (Credential, error) {
 	if setErr := s.primary.Set(legacyCred); setErr != nil {
 		return Credential{}, setErr
 	}
-	if deleteErr := s.legacy.Delete(accountID); deleteErr != nil {
-		return Credential{}, deleteErr
-	}
+	// Migration succeeded: the caller now has the credential and the primary
+	// store owns it. Cleaning up the legacy copy is best-effort — a failure
+	// here must not turn a successful read into an error. A surviving legacy
+	// copy is reclaimed on the next Set or Delete.
+	_ = s.legacy.Delete(accountID)
 	return legacyCred, nil
 }
 
