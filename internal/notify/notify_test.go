@@ -1,6 +1,17 @@
 package notify
 
 import (
+	"bufio"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"fmt"
+	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -319,4 +330,223 @@ func TestEmail_RequiresExplicitUnsafeOptInForStoredAttendees(t *testing.T) {
 	if !strings.Contains(strings.ToLower(err.Error()), "unsafe") {
 		t.Fatalf("Email err = %q, want unsafe opt-in message", err)
 	}
+}
+
+// TestUseImplicitTLS verifies the connection-mode selection logic.
+// Port 465 and TLSMode "implicit" both trigger implicit-TLS (SMTPS); an
+// explicit TLSMode always overrides port-based detection.
+func TestUseImplicitTLS(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  config.SMTPConfig
+		want bool
+	}{
+		{"port 465 auto", config.SMTPConfig{Port: 465}, true},
+		{"port 587 auto", config.SMTPConfig{Port: 587}, false},
+		{"port 25 auto", config.SMTPConfig{Port: 25}, false},
+		{"tls=implicit explicit", config.SMTPConfig{Port: 587, TLSMode: "implicit"}, true},
+		{"tls=starttls explicit", config.SMTPConfig{Port: 587, TLSMode: "starttls"}, false},
+		{"tls=none explicit", config.SMTPConfig{Port: 587, TLSMode: "none"}, false},
+		{"port 465 tls=starttls explicit overrides", config.SMTPConfig{Port: 465, TLSMode: "starttls"}, false},
+		{"port 465 tls=implicit redundant", config.SMTPConfig{Port: 465, TLSMode: "implicit"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := useImplicitTLS(tt.cfg)
+			if got != tt.want {
+				t.Errorf("useImplicitTLS(%+v) = %v, want %v", tt.cfg, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestEmail_ImplicitTLS_SMTPSServer starts a local TLS SMTP server and verifies
+// that Email can deliver a message using implicit TLS (SMTPS / port 465).
+// This test exercises the code path that smtp.SendMail cannot handle.
+func TestEmail_ImplicitTLS_SMTPSServer(t *testing.T) {
+	cert := generateTestCert(t)
+	port, serverDone := startMinimalSMTPSServer(t, cert)
+
+	// Override dialTLS to skip certificate verification for the self-signed test cert.
+	origDial := dialTLS
+	dialTLS = func(addr, _ string) (net.Conn, error) {
+		return tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true}) //nolint:gosec
+	}
+	t.Cleanup(func() { dialTLS = origDial })
+
+	da := alarm.DueAlarm{
+		Event: event.Event{Title: "SMTPS Test"},
+		Alarm: model.Alarm{
+			Action:    "EMAIL",
+			Attendees: []model.AlarmAttendee{{Email: "user@example.com"}},
+		},
+	}
+
+	err := Email(da, config.SMTPConfig{
+		Host:    "127.0.0.1",
+		Port:    port,
+		From:    "sender@example.com",
+		TLSMode: "implicit",
+	}, ExecutionPolicy{AllowUnsafeEmailAttendees: true})
+	if err != nil {
+		t.Fatalf("Email (implicit TLS) error: %v", err)
+	}
+
+	select {
+	case serverErr := <-serverDone:
+		if serverErr != nil {
+			t.Fatalf("SMTPS server error: %v", serverErr)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout waiting for SMTPS server to finish")
+	}
+}
+
+// generateTestCert creates a self-signed ECDSA certificate for 127.0.0.1/localhost.
+func generateTestCert(t *testing.T) tls.Certificate {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "localhost"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+		DNSNames:     []string{"localhost"},
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privDER, err := x509.MarshalECPrivateKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := tls.X509KeyPair(
+		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}),
+		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: privDER}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cert
+}
+
+// startMinimalSMTPSServer starts a TLS SMTP listener on a random local port.
+// It accepts exactly one connection, runs a minimal SMTP dialog, and signals
+// completion (with any error) on the returned channel.
+func startMinimalSMTPSServer(t *testing.T, cert tls.Certificate) (port int, done <-chan error) {
+	t.Helper()
+	tlsCfg := &tls.Config{Certificates: []tls.Certificate{cert}}
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", tlsCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch := make(chan error, 1)
+	go func() {
+		defer ln.Close()
+		conn, err := ln.Accept()
+		if err != nil {
+			ch <- err
+			return
+		}
+		defer conn.Close()
+		ch <- runMinimalSMTPDialog(conn)
+	}()
+	return ln.Addr().(*net.TCPAddr).Port, ch
+}
+
+// runMinimalSMTPDialog handles one SMTP session: greeting → EHLO → MAIL FROM →
+// RCPT TO(s) → DATA → body → QUIT. No AUTH is required.
+func runMinimalSMTPDialog(conn net.Conn) error {
+	rdr := bufio.NewReader(conn)
+
+	send := func(line string) error {
+		_, err := fmt.Fprintf(conn, "%s\r\n", line)
+		return err
+	}
+	recv := func() (string, error) {
+		line, err := rdr.ReadString('\n')
+		return strings.TrimRight(line, "\r\n"), err
+	}
+
+	if err := send("220 localhost ESMTP test"); err != nil {
+		return err
+	}
+
+	// EHLO / HELO
+	line, err := recv()
+	if err != nil {
+		return err
+	}
+	upper := strings.ToUpper(line)
+	if !strings.HasPrefix(upper, "EHLO") && !strings.HasPrefix(upper, "HELO") {
+		return fmt.Errorf("expected EHLO/HELO, got %q", line)
+	}
+	if err := send("250 OK"); err != nil {
+		return err
+	}
+
+	// MAIL FROM
+	line, err = recv()
+	if err != nil {
+		return err
+	}
+	if !strings.HasPrefix(strings.ToUpper(line), "MAIL FROM:") {
+		return fmt.Errorf("expected MAIL FROM, got %q", line)
+	}
+	if err := send("250 OK"); err != nil {
+		return err
+	}
+
+	// One or more RCPT TO, then DATA
+	for {
+		line, err = recv()
+		if err != nil {
+			return err
+		}
+		up := strings.ToUpper(line)
+		if strings.HasPrefix(up, "RCPT TO:") {
+			if err := send("250 OK"); err != nil {
+				return err
+			}
+		} else if up == "DATA" {
+			break
+		} else {
+			return fmt.Errorf("expected RCPT TO or DATA, got %q", line)
+		}
+	}
+
+	if err := send("354 Start mail input; end with <CRLF>.<CRLF>"); err != nil {
+		return err
+	}
+
+	// Read body until lone "."
+	for {
+		line, err = recv()
+		if err != nil {
+			return err
+		}
+		if line == "." {
+			break
+		}
+	}
+	if err := send("250 OK"); err != nil {
+		return err
+	}
+
+	// QUIT
+	line, err = recv()
+	if err != nil {
+		return err
+	}
+	if strings.ToUpper(line) != "QUIT" {
+		return fmt.Errorf("expected QUIT, got %q", line)
+	}
+	return send("221 Bye")
 }

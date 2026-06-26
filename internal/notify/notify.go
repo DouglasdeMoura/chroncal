@@ -2,8 +2,10 @@ package notify
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"mime"
+	"net"
 	"net/mail"
 	"net/smtp"
 	"net/url"
@@ -161,6 +163,70 @@ func playSystemSound() error {
 	}
 }
 
+// smtpsPort is the IANA-assigned port for SMTPS (implicit-TLS submission).
+const smtpsPort = 465
+
+// dialTLS opens a TLS connection for SMTPS (implicit TLS). Tests may replace
+// this to inject a custom *tls.Config, e.g. one with InsecureSkipVerify set.
+var dialTLS = func(addr, serverName string) (net.Conn, error) {
+	return tls.Dial("tcp", addr, &tls.Config{ServerName: serverName})
+}
+
+// useImplicitTLS reports whether smtpCfg requires implicit TLS (SMTPS).
+// An explicit TLSMode always wins; when TLSMode is empty the port decides.
+func useImplicitTLS(smtpCfg config.SMTPConfig) bool {
+	switch smtpCfg.TLSMode {
+	case "implicit":
+		return true
+	case "starttls", "none":
+		return false
+	default: // "" or unrecognised: auto-detect by port
+		return smtpCfg.Port == smtpsPort
+	}
+}
+
+// sendMailImplicitTLS delivers a message over an already-TLS-wrapped connection
+// (SMTPS). It dials with tls.Dial so the TLS handshake happens before any SMTP
+// traffic, which is what port-465 servers expect.
+func sendMailImplicitTLS(addr, host string, auth smtp.Auth, from string, to []string, msg []byte) error {
+	conn, err := dialTLS(addr, host)
+	if err != nil {
+		return fmt.Errorf("dial SMTPS %s: %w", addr, err)
+	}
+	defer conn.Close()
+
+	c, err := smtp.NewClient(conn, host)
+	if err != nil {
+		return fmt.Errorf("smtp client: %w", err)
+	}
+	defer c.Close()
+
+	if auth != nil {
+		if err := c.Auth(auth); err != nil {
+			return fmt.Errorf("smtp auth: %w", err)
+		}
+	}
+	if err := c.Mail(from); err != nil {
+		return fmt.Errorf("smtp MAIL FROM: %w", err)
+	}
+	for _, r := range to {
+		if err := c.Rcpt(r); err != nil {
+			return fmt.Errorf("smtp RCPT TO <%s>: %w", r, err)
+		}
+	}
+	w, err := c.Data()
+	if err != nil {
+		return fmt.Errorf("smtp DATA: %w", err)
+	}
+	if _, err := w.Write(msg); err != nil {
+		return fmt.Errorf("smtp write body: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return fmt.Errorf("smtp end DATA: %w", err)
+	}
+	return c.Quit()
+}
+
 // Email sends an email notification for an EMAIL action alarm.
 // It sends to the alarm's attendees using the provided SMTP configuration.
 // Returns an error if no attendees are configured or SMTP is not configured.
@@ -207,6 +273,9 @@ func Email(da alarm.DueAlarm, smtpCfg config.SMTPConfig, policy ExecutionPolicy)
 		auth = smtp.PlainAuth("", smtpCfg.Username, smtpCfg.Password, smtpCfg.Host)
 	}
 
+	if useImplicitTLS(smtpCfg) {
+		return sendMailImplicitTLS(addr, smtpCfg.Host, auth, smtpCfg.From, to, []byte(msg))
+	}
 	return smtp.SendMail(addr, auth, smtpCfg.From, to, []byte(msg))
 }
 
