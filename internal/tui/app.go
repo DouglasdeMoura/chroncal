@@ -2864,6 +2864,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Choice < 0 {
 			m.pendingEditSave = EventFormSaveMsg{}
 			m.pendingDelete = event.Event{}
+			m.viewReturnEvent = event.Event{}
 			if kind == pendingScopeCalendarPromote {
 				m.pendingCalendarDelete = 0
 				m.pendingCalendarDeleteName = ""
