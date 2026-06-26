@@ -2066,11 +2066,20 @@ func (f Form) ButtonRowView() string {
 func (f Form) FocusedLine() int {
 	parts := f.fieldParts()
 	line := 0
-	for i, part := range parts {
-		if i == f.focused {
+	part := 0
+	// fieldParts emits one part per item, except the errored field which
+	// emits a second part for its error line. Walk items (not parts) so the
+	// returned offset tracks f.focused, which is an item index.
+	for item := 0; item < len(f.items) && part < len(parts); item++ {
+		if item == f.focused {
 			return line
 		}
-		line += max(lipgloss.Height(part), 1)
+		line += max(lipgloss.Height(parts[part]), 1)
+		part++
+		if f.error != "" && item == f.errorField && part < len(parts) {
+			line += max(lipgloss.Height(parts[part]), 1)
+			part++
+		}
 	}
 	return 0
 }

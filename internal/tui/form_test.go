@@ -620,6 +620,32 @@ func TestForm_ValidationFocusesFirstError(t *testing.T) {
 	assert.Equal(t, "Second is required", form.Error())
 }
 
+func TestForm_FocusedLineAccountsForErrorLine(t *testing.T) {
+	// With LabelTop each field row is two lines tall; a validation error
+	// inserts an extra one-line part after its field's row. FocusedLine must
+	// count items (not parts) so the error line shifts later fields down by
+	// exactly one rather than letting the part index run ahead of the item
+	// index.
+	newForm := func() Form {
+		return newTestForm(
+			FormItem{Label: "First", Field: NewTextField("first")},
+			FormItem{Label: "Second", Field: NewTextField("second")},
+			FormItem{Label: "Third", Field: NewTextField("third")},
+		)
+	}
+
+	noError := newForm()
+	noError.focused = 2
+	assert.Equal(t, 4, noError.FocusedLine(),
+		"two field rows of height 2 precede the third field")
+
+	withError := newForm()
+	withError.SetError(0, "bad value")
+	withError.focused = 2
+	assert.Equal(t, 5, withError.FocusedLine(),
+		"the error line below the first field shifts the third field down one")
+}
+
 func TestForm_OnRebuildCalledOnKeyPress(t *testing.T) {
 	form := newTestForm(
 		FormItem{Label: "Field", Field: NewTextField("val")},
