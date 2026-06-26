@@ -367,6 +367,10 @@ This does not delete your local calendars or entries.`,
 // using the active --output format. A run with no connected calendars
 // reports synced=0 rather than producing empty stdout so an agent can
 // distinguish "nothing to do" from "command crashed."
+//
+// Returns a non-nil error when any calendar reported per-phase sync errors
+// so that `sync run` exits non-zero, consistent with `ical import` and
+// `sync reset` (issue #359).
 func renderSyncRunResults(cmd *cobra.Command, results []*syncPkg.SyncResult, calNames map[int64]string) error {
 	w := cmd.OutOrStdout()
 
@@ -389,21 +393,32 @@ func renderSyncRunResults(cmd *cobra.Command, results []*syncPkg.SyncResult, cal
 				"errors":        errMsgs,
 			})
 		}
-		return printOutput(w, map[string]any{
+		if err := printOutput(w, map[string]any{
 			"synced":  len(results),
 			"errors":  totalErrors,
 			"results": items,
-		})
+		}); err != nil {
+			return err
+		}
+		if totalErrors > 0 {
+			return &cliError{Code: "error", Msg: fmt.Sprintf("sync run completed with %d error(s)", totalErrors)}
+		}
+		return nil
 	}
 
 	if len(results) == 0 {
 		fmt.Fprintln(w, "No connected calendars. Use 'chroncal calendar update <name> --remote-url ...' to set up sync.")
 		return nil
 	}
+	totalErrors := 0
 	for _, r := range results {
 		writeSyncResult(w, cmd.ErrOrStderr(), r)
+		totalErrors += len(r.Errors)
 	}
 	fmt.Fprintf(w, "Synced %d calendar(s).\n", len(results))
+	if totalErrors > 0 {
+		return &cliError{Code: "error", Msg: fmt.Sprintf("sync run completed with %d error(s)", totalErrors)}
+	}
 	return nil
 }
 
