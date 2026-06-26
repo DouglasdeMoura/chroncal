@@ -319,18 +319,34 @@ This does not delete your local calendars or entries.`,
 				return err
 			}
 
+			var nameFound, connected, failed int
 			for _, c := range cals {
 				if calendarName != "" && c.Name != calendarName {
 					continue
 				}
+				nameFound++
 				if c.AccountID == 0 {
 					continue
 				}
+				connected++
 				if err := svc.ResetCalendar(ctx, c.ID); err != nil {
+					failed++
 					fmt.Fprintf(os.Stderr, "reset %s: %s\n", safeText(c.Name), safeText(err.Error()))
 					continue
 				}
 				fmt.Printf("Reset sync state for %q\n", safeText(c.Name))
+			}
+
+			if calendarName != "" {
+				if nameFound == 0 {
+					return &cliError{Code: "not_found", Msg: fmt.Sprintf("calendar %q not found", calendarName)}
+				}
+				if connected == 0 {
+					return &cliError{Code: "invalid_input", Msg: fmt.Sprintf("calendar %q is not connected to a remote; no sync state to reset", calendarName)}
+				}
+			}
+			if failed > 0 {
+				return &cliError{Code: "error", Msg: fmt.Sprintf("failed to reset %d calendar(s)", failed)}
 			}
 			return nil
 		},
