@@ -53,6 +53,7 @@ func TestCalendarCreateCreatesLocalOnlyCalendar(t *testing.T) {
 
 func TestCalendarCreateCanConnectRemoteCalendar(t *testing.T) {
 	dbPath := setupCalendarCLITestEnv(t)
+	t.Setenv("CHRONCAL_BEARER_TOKEN", "test-token")
 
 	_, _, err := runChroncalCommand(t,
 		"calendar", "create", "Work",
@@ -96,6 +97,7 @@ func TestCalendarCreateCanConnectRemoteCalendar(t *testing.T) {
 
 func TestCalendarUpdateCanConnectRemoteCalendar(t *testing.T) {
 	dbPath := setupCalendarCLITestEnv(t)
+	t.Setenv("CHRONCAL_BEARER_TOKEN", "test-token")
 
 	_, _, err := runChroncalCommand(t, "calendar", "create", "Work")
 	if err != nil {
