@@ -123,6 +123,29 @@ func TestCalendarUpdateCanConnectRemoteCalendar(t *testing.T) {
 	assertConnectedCalendarAndAccount(t, dbPath, "Work", "https://cal.example.com/dav/calendars/work/", "https://cal.example.com/dav", "bearer", "alice")
 }
 
+// TestCalendarUpdatePreservesAuthTypeWhenReconnectingWithoutAuthFlag is the
+// regression guard for issue #430: re-pointing --remote-url at an already
+// linked calendar without passing --auth must keep the stored auth type
+// (here "bearer") instead of resetting it to the "basic" flag default, which
+// would prompt for a password and clobber the existing bearer/OAuth token.
+func TestCalendarUpdatePreservesAuthTypeWhenReconnectingWithoutAuthFlag(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	t.Setenv("CHRONCAL_BEARER_TOKEN", "test-token")
+
+	createLinkedCalendarForTest(t, dbPath)
+
+	_, _, err := runChroncalCommand(t,
+		"calendar", "update", "Work",
+		"--remote-url", "https://cal.example.com/dav/calendars/renamed/",
+		"--username", "alice",
+	)
+	if err != nil {
+		t.Fatalf("calendar update with new remote URL: %v", err)
+	}
+
+	assertConnectedCalendarAndAccount(t, dbPath, "Work", "https://cal.example.com/dav/calendars/renamed/", "https://cal.example.com/dav", "bearer", "alice")
+}
+
 func TestCalendarUpdateCanDisconnectRemoteCalendar(t *testing.T) {
 	dbPath := setupCalendarCLITestEnv(t)
 
