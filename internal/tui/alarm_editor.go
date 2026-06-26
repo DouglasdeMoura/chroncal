@@ -46,6 +46,14 @@ var alarmActionOpts = []SelectOption{
 	{Label: "Audio", Value: "AUDIO"},
 }
 
+// alarmTimingOpts is the before/after toggle controlling the sign of a
+// relative trigger. Index 0 ("before") maps to a negative offset, index 1
+// ("after") to a positive one.
+var alarmTimingOpts = []SelectOption{
+	{Label: "before", Value: "before"},
+	{Label: "after", Value: "after"},
+}
+
 // parseOffsetTrigger parses a relative-trigger string like "-PT15M" into
 // (qty, unitIdx, before). Only single-unit offsets are supported so the
 // editor stays lossless; absolute triggers and mixed forms return ok=false.
@@ -148,7 +156,7 @@ type AlarmListEditorModel struct {
 
 	actionField *SelectField
 	offsetField *QuantitySelectField
-	editBefore  bool // sign of the trigger being edited (true = before anchor)
+	timingField *SelectField // before/after toggle for the trigger sign
 
 	form      Form
 	fieldKeys []string
@@ -245,14 +253,15 @@ func (m *AlarmListEditorModel) buildEditForm(a model.Alarm) {
 	if !ok {
 		qty, unitIdx, before = 15, 0, true
 	}
-	m.editBefore = before
 	m.offsetField = NewQuantitySelectField(unitOpts, unitIdx)
 	m.offsetField.SetAmount(strconv.Itoa(qty))
-	suffix := "before"
-	if !before {
-		suffix = "after"
+
+	m.timingField = NewSelectField(alarmTimingOpts)
+	timingIdx := 1 // "after"
+	if before {
+		timingIdx = 0 // "before"
 	}
-	m.offsetField.SetSuffix(suffix)
+	m.timingField.SetSelected(timingIdx)
 
 	styles := DefaultFormStyles()
 	styles.LabelLayout = LabelInline
@@ -262,9 +271,10 @@ func (m *AlarmListEditorModel) buildEditForm(a model.Alarm) {
 
 	items := []FormItem{
 		{Label: "Remind me", Field: m.offsetField},
+		{Label: "Timing", Field: m.timingField},
 		{Label: actionLabelFor(m.actionField.Value()), Field: m.actionField},
 	}
-	m.fieldKeys = []string{"offset", "action"}
+	m.fieldKeys = []string{"offset", "timing", "action"}
 
 	m.form = NewForm("Save", styles, items...)
 	m.form.OnSubmit(func(f *Form) tea.Cmd {
@@ -282,7 +292,8 @@ func (m *AlarmListEditorModel) applyEditForm() {
 		qty = 1
 	}
 	unitIdx := m.offsetField.Selected()
-	trigger := buildOffsetTrigger(qty, unitIdx, m.editBefore)
+	before := m.timingField.Selected() == 0
+	trigger := buildOffsetTrigger(qty, unitIdx, before)
 
 	action := strings.ToUpper(m.actionField.Value())
 
@@ -375,7 +386,7 @@ func (m *AlarmListEditorModel) syncActionLabel() {
 	if m.actionField == nil {
 		return
 	}
-	m.form.SetItemLabel(1, actionLabelFor(m.actionField.Value()))
+	m.form.SetItemLabel(2, actionLabelFor(m.actionField.Value()))
 }
 
 // actionLabelFor returns the grammatically correct article for the action.
