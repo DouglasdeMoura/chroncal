@@ -325,7 +325,7 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 		if row.RecurrenceID != "" {
 			continue
 		}
-		evt := eventFromRow(row)
+		evt := event.FromStorage(row)
 		results = append(results, ExpandedEvent{
 			Event:        evt,
 			InstanceTime: evt.StartTime,
@@ -333,7 +333,7 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 	}
 
 	for _, row := range recurRows {
-		evt := eventFromRow(row)
+		evt := event.FromStorage(row)
 		expanded := ExpandEvent(evt, from, to)
 
 		// Fetch overrides for this master.
@@ -359,7 +359,7 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 			if strings.EqualFold(o.Status, "CANCELLED") {
 				continue
 			}
-			oe := eventFromRow(o)
+			oe := event.FromStorage(o)
 			if !overlapsWindow(oe.StartTime, oe.EndTime, from, to) {
 				continue
 			}
@@ -452,43 +452,13 @@ func attendeeFromStorage(r storage.EventAttendee) model.Attendee {
 	}
 }
 
-func eventFromRow(row storage.Event) event.Event {
-	return event.Event{
-		ID:             row.ID,
-		UID:            row.Uid,
-		CalendarID:     row.CalendarID,
-		Title:          row.Title,
-		Description:    storage.NullableToString(row.Description),
-		Location:       storage.NullableToString(row.Location),
-		StartTime:      timeutil.ParseDateTime(row.StartTime),
-		EndTime:        timeutil.ParseDateTime(row.EndTime),
-		AllDay:         row.AllDay != 0,
-		RecurrenceRule: storage.NullableToString(row.RecurrenceRule),
-		Timezone:       storage.NullableToString(row.Timezone),
-		Status:         row.Status,
-		Transp:         row.Transp,
-		Sequence:       row.Sequence,
-		Priority:       row.Priority,
-		Class:          row.Class,
-		URL:            storage.NullableToString(row.Url),
-		ExDates:        storage.NullableToString(row.Exdates),
-		RDates:         storage.NullableToString(row.Rdates),
-		RecurrenceID:   row.RecurrenceID,
-		Geo:            storage.NullableToString(row.Geo),
-		DurationValue:  storage.NullableToString(row.Duration),
-		DtStamp:        storage.NullableToString(row.Dtstamp),
-		CreatedAt:      timeutil.ParseDateTime(row.CreatedAt),
-		UpdatedAt:      timeutil.ParseDateTime(row.UpdatedAt),
-	}
-}
-
 // expandRecurringRows expands recurring event rows into Event instances with
 // StartTime/EndTime adjusted to each occurrence. For each master, overrides
 // (rows with a matching RECURRENCE-ID) replace the original RRULE instance.
 func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Event, from, to time.Time) []event.Event {
 	var result []event.Event
 	for _, row := range rows {
-		evt := eventFromRow(row)
+		evt := event.FromStorage(row)
 		expanded := ExpandEvent(evt, from, to)
 
 		// Fetch overrides for this master.
@@ -518,7 +488,7 @@ func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Event,
 			if strings.EqualFold(o.Status, "CANCELLED") {
 				continue // CANCELLED override suppresses the instance.
 			}
-			oe := eventFromRow(o)
+			oe := event.FromStorage(o)
 			if !overlapsWindow(oe.StartTime, oe.EndTime, from, to) {
 				continue
 			}
@@ -546,7 +516,7 @@ func (s *Service) ListExpandedByDateRange(ctx context.Context, from, to time.Tim
 	var result []event.Event
 	for _, row := range rangeRows {
 		if row.RecurrenceRule == nil && row.RecurrenceID == "" {
-			result = append(result, eventFromRow(row))
+			result = append(result, event.FromStorage(row))
 		}
 	}
 
@@ -602,7 +572,7 @@ func (s *Service) ExportExpandedByDateRange(ctx context.Context, p ExportFilterP
 	seen := make(map[int64]bool)
 	for _, row := range rangeRows {
 		if row.RecurrenceRule == nil {
-			result = append(result, eventFromRow(row))
+			result = append(result, event.FromStorage(row))
 			seen[row.ID] = true
 		}
 	}
@@ -619,7 +589,7 @@ func (s *Service) ExportExpandedByDateRange(ctx context.Context, p ExportFilterP
 		if seen[row.ID] {
 			continue
 		}
-		evt := eventFromRow(row)
+		evt := event.FromStorage(row)
 		// Export must emit a cancelled master (STATUS:CANCELLED is how a
 		// downstream client is told to drop the series), so the in-range probe
 		// ignores the cancelled-expansion guard — unlike display, which hides it.
@@ -878,7 +848,7 @@ func (s *Service) ListFilteredEvents(ctx context.Context, p EventListParams) ([]
 
 	var result []event.Event
 	for _, row := range rangeRows {
-		result = append(result, eventFromRow(row))
+		result = append(result, event.FromStorage(row))
 	}
 
 	recurringRows, err := s.q.ListRecurringEventsFiltered(ctx, storage.EventFilterParams{
@@ -894,7 +864,7 @@ func (s *Service) ListFilteredEvents(ctx context.Context, p EventListParams) ([]
 		result = append(result, s.expandRecurringRows(ctx, recurringRows, p.From, p.To)...)
 	} else {
 		for _, row := range recurringRows {
-			result = append(result, eventFromRow(row))
+			result = append(result, event.FromStorage(row))
 		}
 	}
 

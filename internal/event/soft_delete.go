@@ -60,7 +60,7 @@ func (s *Service) DeleteWithUndo(ctx context.Context, id int64) (UndoMeta, error
 	if err != nil {
 		return UndoMeta{}, err
 	}
-	evt := fromStorage(r)
+	evt := FromStorage(r)
 	if err := s.Delete(ctx, id); err != nil {
 		return UndoMeta{}, err
 	}
@@ -221,7 +221,7 @@ func (s *Service) GetIncludingDeleted(ctx context.Context, id int64) (Event, err
 	if err != nil {
 		return Event{}, err
 	}
-	return fromStorage(r), nil
+	return FromStorage(r), nil
 }
 
 // PurgeDeleted hard-deletes rows soft-deleted before olderThan. Returns the

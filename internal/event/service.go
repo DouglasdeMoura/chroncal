@@ -258,7 +258,7 @@ func (s *Service) Get(ctx context.Context, id int64) (Event, error) {
 	if err != nil {
 		return Event{}, err
 	}
-	e := fromStorage(r)
+	e := FromStorage(r)
 	s.populateSingleCategories(ctx, &e)
 	return e, nil
 }
@@ -268,7 +268,7 @@ func (s *Service) GetByUID(ctx context.Context, uid string) (Event, error) {
 	if err != nil {
 		return Event{}, err
 	}
-	e := fromStorage(r)
+	e := FromStorage(r)
 	s.populateSingleCategories(ctx, &e)
 	return e, nil
 }
@@ -281,7 +281,7 @@ func (s *Service) GetByUIDAndRecurrenceID(ctx context.Context, uid, recurrenceID
 	if err != nil {
 		return Event{}, err
 	}
-	e := fromStorage(r)
+	e := FromStorage(r)
 	s.populateSingleCategories(ctx, &e)
 	return e, nil
 }
@@ -333,7 +333,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
 	if err != nil {
 		return Event{}, err
 	}
-	e := fromStorage(r)
+	e := FromStorage(r)
 	if cats := ParseCategoryList(p.Categories); len(cats) > 0 {
 		if err := replaceCategoriesTx(ctx, qtx, e.ID, cats); err != nil {
 			return Event{}, fmt.Errorf("replace categories: %w", err)
@@ -433,7 +433,7 @@ func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p Update
 	if err != nil {
 		return Event{}, err
 	}
-	e := fromStorage(r)
+	e := FromStorage(r)
 	if err := replaceCategoriesTx(ctx, qtx, e.ID, ParseCategoryList(p.Categories)); err != nil {
 		return Event{}, fmt.Errorf("replace categories: %w", err)
 	}
@@ -478,7 +478,7 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error
 	if err != nil {
 		return Event{}, err
 	}
-	e := fromStorage(r)
+	e := FromStorage(r)
 	if err := replaceCategoriesTx(ctx, qtx, e.ID, ParseCategoryList(p.Categories)); err != nil {
 		return Event{}, fmt.Errorf("replace categories: %w", err)
 	}
@@ -498,7 +498,7 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
-	evt := fromStorage(r)
+	evt := FromStorage(r)
 
 	// If this is a recurring master, check for overrides.
 	if evt.RecurrenceRule != "" && evt.RecurrenceID == "" {
@@ -828,7 +828,7 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 		return Event{}, 0, err
 	}
 
-	e := fromStorage(r)
+	e := FromStorage(r)
 	e.Categories = timeutil.JoinCategoryList(carriedCats)
 	return e, master.CalendarID, nil
 }
@@ -1046,7 +1046,7 @@ func updateFromInstanceTx(ctx context.Context, qtx *storage.Queries, uid string,
 		return Event{}, 0, err
 	}
 
-	e := fromStorage(r)
+	e := FromStorage(r)
 	e.Categories = timeutil.JoinCategoryList(carriedCats)
 	return e, master.CalendarID, nil
 }
@@ -1760,7 +1760,10 @@ func (s *Service) ReplaceRelations(ctx context.Context, eventID int64, relations
 
 // Converters
 
-func fromStorage(r storage.Event) Event {
+// FromStorage maps a storage.Event row to a domain Event. It is exported so
+// recurrence expansion shares one mapper with the event service, preventing the
+// two from drifting (every new storage.Event column lands here once).
+func FromStorage(r storage.Event) Event {
 	var deletedAt *time.Time
 	if r.DeletedAt != nil && *r.DeletedAt != "" {
 		t := timeutil.ParseDateTime(*r.DeletedAt)
@@ -1800,7 +1803,7 @@ func fromStorage(r storage.Event) Event {
 func fromStorageSlice(rows []storage.Event) []Event {
 	events := make([]Event, len(rows))
 	for i, r := range rows {
-		events[i] = fromStorage(r)
+		events[i] = FromStorage(r)
 	}
 	return events
 }
