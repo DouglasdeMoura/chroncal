@@ -119,7 +119,7 @@ CANCELLED entries.`,
 	cmd.Flags().StringVar(&status, "status", "", "filter by status (DRAFT, FINAL, CANCELLED)")
 	cmd.Flags().BoolVar(&all, "all", false, "include draft, final, and cancelled entries together")
 	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD, default: today)")
-	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 14 days from now)")
+	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 30 days from now)")
 	cmd.Flags().BoolVar(&compact, "compact", false, "one line per entry (DATE  SUMMARY)")
 	cmd.Flags().BoolVar(&includeDeleted, "include-deleted", false, "include soft-deleted journals (see `journal restore`)")
 	return cmd
