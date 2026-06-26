@@ -575,12 +575,13 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		if err := qtx.SoftDeleteEvent(ctx, id); err != nil {
 			return fmt.Errorf("soft-delete event: %w", err)
 		}
-		if err := tx.Commit(); err != nil {
-			return err
+		// Mark the master dirty — its EXDATE was modified — inside the same
+		// transaction so a failed mark rolls the EXDATE change back rather than
+		// committing a change that is never pushed (issue #107).
+		if err := storage.MarkResourceDirty(ctx, tx, evt.CalendarID, evt.UID, "event"); err != nil {
+			return fmt.Errorf("mark resource dirty: %w", err)
 		}
-		// Mark the master dirty — its EXDATE was modified.
-		_ = storage.MarkResourceDirty(ctx, s.db, evt.CalendarID, evt.UID, "event")
-		return nil
+		return tx.Commit()
 	}
 
 	// Unreachable: RecurrenceID is either "" (handled above) or non-empty.
@@ -1076,12 +1077,6 @@ func setRRuleUntil(rule string, until time.Time, allDay bool) string {
 
 // DeleteSeries deletes a recurring master event and all its overrides.
 func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
-	// Look up the master to get calendarID for tombstone creation.
-	master, err := s.q.GetEventByUID(ctx, uid)
-	if err == nil {
-		_, _ = storage.CreateTombstoneIfSynced(ctx, s.db, master.CalendarID, uid)
-	}
-
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -1089,13 +1084,20 @@ func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
+	// Look up the master to get calendarID for tombstone creation. The
+	// tombstone and the soft-delete commit together so a failed tombstone
+	// write can't leave a tombstone for a still-live series whose next sync
+	// would DELETE it from the server (issue #107).
+	if master, err := qtx.GetEventByUID(ctx, uid); err == nil {
+		if _, err := storage.CreateTombstoneIfSynced(ctx, tx, master.CalendarID, uid); err != nil {
+			return fmt.Errorf("create tombstone: %w", err)
+		}
+	}
+
 	if err := qtx.SoftDeleteEventsByUID(ctx, uid); err != nil {
 		return fmt.Errorf("soft-delete series: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit delete series: %w", err)
-	}
-	return nil
+	return tx.Commit()
 }
 
 // Alarm CRUD

@@ -313,9 +313,11 @@ This does not delete your local calendars or entries.`,
 				return err
 			}
 
-			var nameFound, connected, failed int
+			var connected, failed int
 			// Resolve --calendar the same way every other command does
 			// (by ID or case-insensitive name) so behavior is uniform.
+			// findCalendarByRef already reports not_found for an unknown name,
+			// so a non-zero targetID is guaranteed to match a calendar below.
 			var targetID int64
 			if calendarName != "" {
 				target, err := findCalendarByRef(cals, calendarName)
@@ -329,7 +331,6 @@ This does not delete your local calendars or entries.`,
 				if targetID != 0 && c.ID != targetID {
 					continue
 				}
-				nameFound++
 				if c.AccountID == 0 {
 					continue
 				}
@@ -342,13 +343,8 @@ This does not delete your local calendars or entries.`,
 				fmt.Printf("Reset sync state for %q\n", safeText(c.Name))
 			}
 
-			if calendarName != "" {
-				if nameFound == 0 {
-					return &cliError{Code: "not_found", Msg: fmt.Sprintf("calendar %q not found", calendarName)}
-				}
-				if connected == 0 {
-					return &cliError{Code: "invalid_input", Msg: fmt.Sprintf("calendar %q is not connected to a remote; no sync state to reset", calendarName)}
-				}
+			if calendarName != "" && connected == 0 {
+				return &cliError{Code: "invalid_input", Msg: fmt.Sprintf("calendar %q is not connected to a remote; no sync state to reset", calendarName)}
 			}
 			if failed > 0 {
 				return &cliError{Code: "error", Msg: fmt.Sprintf("failed to reset %d calendar(s)", failed)}

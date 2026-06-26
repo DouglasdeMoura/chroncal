@@ -113,3 +113,60 @@ func TestDelete_TombstoneIsAtomic(t *testing.T) {
 			"the tombstone is not atomic with the soft-delete", *deletedAt)
 	}
 }
+
+// TestDeleteSeries_TombstoneIsAtomic is the DeleteSeries analogue of
+// TestDelete_TombstoneIsAtomic: a recurring master's series-delete must write
+// its tombstone inside the soft-delete transaction so a failed tombstone write
+// can't leave a tombstone for a still-live series (which the next sync would
+// DELETE from the server). Regression test for the issue #107 gap that the
+// original fix left in DeleteSeries.
+func TestDeleteSeries_TombstoneIsAtomic(t *testing.T) {
+	svc := newTestService(t)
+	makeSyncedCalendar(t, svc)
+	ctx := context.Background()
+
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:            "series-atomic",
+		CalendarID:     1,
+		Title:          "Standup",
+		StartTime:      time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 1, 9, 15, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=DAILY;COUNT=5",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+
+	// Mark the resource as already synced so DeleteSeries takes the
+	// tombstone-creating path.
+	if err := svc.q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   master.CalendarID,
+		Uid:          master.UID,
+		OwnerType:    "event",
+		RemoteUrl:    "https://example.com/cal/series.ics",
+		Etag:         "etag-1",
+		Dirty:        0,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("upsert sync resource: %v", err)
+	}
+
+	if _, err := svc.db.ExecContext(ctx, `DROP TABLE tombstones`); err != nil {
+		t.Fatalf("drop tombstones: %v", err)
+	}
+
+	if err := svc.DeleteSeries(ctx, master.UID); err == nil {
+		t.Fatal("DeleteSeries succeeded but the tombstone write failed; the error was discarded")
+	}
+
+	// The series must still be live: the soft-delete rolled back.
+	var deletedAt *string
+	if err := svc.db.QueryRowContext(ctx,
+		`SELECT deleted_at FROM events WHERE id = ?`, master.ID).Scan(&deletedAt); err != nil {
+		t.Fatalf("read master: %v", err)
+	}
+	if deletedAt != nil && *deletedAt != "" {
+		t.Fatalf("series was soft-deleted (deleted_at=%q) despite the tombstone write failing; "+
+			"DeleteSeries tombstone is not atomic with the soft-delete", *deletedAt)
+	}
+}

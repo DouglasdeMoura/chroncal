@@ -450,11 +450,13 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		if err := qtx.SoftDeleteJournal(ctx, id); err != nil {
 			return fmt.Errorf("soft-delete journal: %w", err)
 		}
-		if err := tx.Commit(); err != nil {
-			return err
+		// Mark the master dirty — its EXDATE was modified — inside the same
+		// transaction so a failed mark rolls the EXDATE change back rather than
+		// committing a change that is never pushed (issue #107).
+		if err := storage.MarkResourceDirty(ctx, tx, j.CalendarID, j.UID, "journal"); err != nil {
+			return fmt.Errorf("mark resource dirty: %w", err)
 		}
-		_ = storage.MarkResourceDirty(ctx, s.db, j.CalendarID, j.UID, "journal")
-		return nil
+		return tx.Commit()
 	}
 
 	// Unreachable: RecurrenceID is either "" (handled above) or non-empty.
@@ -470,12 +472,6 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 // next push sends DELETE to the server; the local rows stay in place
 // until purge so the user can restore them.
 func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
-	master, mErr := s.q.GetJournalByUID(ctx, uid)
-	haveMaster := mErr == nil
-	if haveMaster {
-		_, _ = storage.CreateTombstoneIfSynced(ctx, s.db, master.CalendarID, uid)
-	}
-
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -483,16 +479,27 @@ func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
+	// Tombstone, dirty-mark, and soft-delete commit together so a failed
+	// sync-tracking write can't leave a tombstone for a still-live series
+	// whose next sync would DELETE it from the server (issue #107). A missing
+	// master means there is nothing to track.
+	master, mErr := qtx.GetJournalByUID(ctx, uid)
+	haveMaster := mErr == nil
+	if haveMaster {
+		if _, err := storage.CreateTombstoneIfSynced(ctx, tx, master.CalendarID, uid); err != nil {
+			return fmt.Errorf("create tombstone: %w", err)
+		}
+	}
+
 	if err := qtx.SoftDeleteJournalsByUID(ctx, uid); err != nil {
 		return fmt.Errorf("soft-delete series: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit delete series: %w", err)
-	}
 	if haveMaster {
-		_ = storage.MarkResourceDirty(ctx, s.db, master.CalendarID, uid, "journal")
+		if err := storage.MarkResourceDirty(ctx, tx, master.CalendarID, uid, "journal"); err != nil {
+			return fmt.Errorf("mark resource dirty: %w", err)
+		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 // ListOverridesByUID returns all override instances for a given UID.
