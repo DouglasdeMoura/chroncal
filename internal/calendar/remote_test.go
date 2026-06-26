@@ -130,6 +130,74 @@ func TestConnect_RelinkDoesNotClobberLocalColorEdit(t *testing.T) {
 	}
 }
 
+func TestConnect_RelinkRestoresCredentialOnTxFailure(t *testing.T) {
+	svc, q, _ := newTestServiceWithDB(t)
+	ctx := context.Background()
+
+	// Calendar 1 is linked to a hidden account whose name differs from the
+	// name Connect will rename it to (hiddenAccountName(1) == "__calendar_1").
+	account, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name:      "__calendar_99",
+		ServerUrl: "https://example.com",
+		AuthType:  "basic",
+		Username:  "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID:        1,
+		AccountID: &account.ID,
+		RemoteUrl: storage.StringToNullable("https://example.com/dav/calendars/work/"),
+	}); err != nil {
+		t.Fatalf("LinkCalendarToAccount: %v", err)
+	}
+
+	// A second hidden account already owns the name Connect will try to rename
+	// the first account to, so UpdateAccount hits a UNIQUE(name) violation and
+	// the re-link transaction fails after credStore.Set would have run.
+	if _, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name:      "__calendar_1",
+		ServerUrl: "https://other.example.com",
+		AuthType:  "basic",
+		Username:  "user",
+	}); err != nil {
+		t.Fatalf("CreateAccount (collision): %v", err)
+	}
+
+	// The keyring already holds the old credential for the linked account.
+	store := &memCredStore{}
+	oldCred := auth.Credential{AccountID: account.ID, Username: "user", Password: "old-pass"}
+	if err := store.Set(oldCred); err != nil {
+		t.Fatalf("seed old credential: %v", err)
+	}
+
+	cal, err := svc.Get(ctx, 1)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	link := RemoteLink{
+		RemoteURL:     "https://example.com/dav/calendars/work/",
+		Username:      "user",
+		AuthType:      "basic",
+		AllowInsecure: false,
+	}
+	newCred := auth.Credential{Username: "user", Password: "new-pass"}
+
+	if err := svc.Connect(ctx, cal, link, newCred, store); err == nil {
+		t.Fatal("Connect: expected error from UNIQUE(name) collision, got nil")
+	}
+
+	got, err := store.Get(account.ID)
+	if err != nil {
+		t.Fatalf("Get credential after failed Connect: %v", err)
+	}
+	if got.Password != "old-pass" {
+		t.Errorf("stored password = %q, want %q: a failed re-link must not leave the keyring holding the new credential", got.Password, "old-pass")
+	}
+}
+
 func TestConnect_NoRemoteColor_LeavesLocalColor(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()

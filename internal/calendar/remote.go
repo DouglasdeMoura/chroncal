@@ -43,9 +43,6 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 		existing, err := s.q.GetAccount(ctx, cal.AccountID)
 		if err == nil && strings.HasPrefix(existing.Name, hiddenAccountPrefix) {
 			cred.AccountID = existing.ID
-			if err := credStore.Set(cred); err != nil {
-				return fmt.Errorf("store credentials: %w", err)
-			}
 
 			tx, err := s.db.BeginTx(ctx, nil)
 			if err != nil {
@@ -75,7 +72,23 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 			// same save (Update set color_dirty=1), and the next sync's
 			// syncCalendarMetadata reconciles colors with proper dirty-flag
 			// handling. Seeding here would clobber the local edit.
+			//
+			// Capture the prior credential so a failed commit can roll the
+			// keyring back to it; otherwise the account row keeps its old
+			// settings while the keyring holds the new secret -- a mismatch
+			// that breaks the next sync. Write the new credential only after
+			// the DB writes succeed, mirroring the new-account path below.
+			prevCred, prevErr := credStore.Get(existing.ID)
+			if err := credStore.Set(cred); err != nil {
+				_ = tx.Rollback()
+				return fmt.Errorf("store credentials: %w", err)
+			}
 			if err := tx.Commit(); err != nil {
+				if prevErr == nil {
+					_ = credStore.Set(prevCred)
+				} else {
+					_ = credStore.Delete(existing.ID)
+				}
 				return fmt.Errorf("commit remote calendar link: %w", err)
 			}
 			return nil
