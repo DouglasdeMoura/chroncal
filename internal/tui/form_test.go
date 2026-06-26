@@ -356,6 +356,29 @@ func TestForm_FocusCycling(t *testing.T) {
 	assert.Equal(t, 0, form.Focused(), "wraps to first field")
 }
 
+func TestForm_FocusedLine(t *testing.T) {
+	form := newTestForm(
+		FormItem{Label: "First", Field: NewTextField("first")},
+		FormItem{Label: "Second", Field: NewTextField("second")},
+	)
+
+	// Focus on a field returns that field's first body line.
+	assert.Equal(t, 0, form.FocusedLine(), "first field")
+	formPressTab(&form)
+	assert.Greater(t, form.FocusedLine(), 0, "second field is below the first")
+
+	// Focus on the Submit/Cancel button row is not a body field, so
+	// FocusedLine must not point back into the body (regression #408:
+	// returning 0 scrolled the body to the top when Tab reached the buttons).
+	formPressTab(&form)
+	assert.Equal(t, form.submitIndex(), form.Focused(), "submit button")
+	assert.Less(t, form.FocusedLine(), 0, "submit button is not a body field")
+
+	formPressTab(&form)
+	assert.Equal(t, form.cancelIndex(), form.Focused(), "cancel button")
+	assert.Less(t, form.FocusedLine(), 0, "cancel button is not a body field")
+}
+
 func TestForm_ShiftTabCycling(t *testing.T) {
 	form := newTestForm(
 		FormItem{Label: "First", Field: NewTextField("first")},
