@@ -54,8 +54,9 @@ type Config struct {
 	UI         UIConfig         `mapstructure:"ui"`
 }
 
-// DefaultSoftDeletePurgeDays is applied when SoftDelete.PurgeDays is zero or
-// unset (viper Unmarshal leaves unset ints at zero).
+// DefaultSoftDeletePurgeDays is applied by Load when the purge_days key is
+// genuinely unset. An explicit purge_days=0 is preserved as 0 (disabled) per
+// the SoftDeleteConfig contract.
 const DefaultSoftDeletePurgeDays = 30
 
 // DefaultSMTPPort is applied when SMTP.Port is unset, matching the
@@ -77,6 +78,13 @@ func Load() Config {
 	v.Unmarshal(&cfg) //nolint:errcheck // best-effort; zero-value Config is safe
 	if cfg.SMTP.Port == 0 {
 		cfg.SMTP.Port = DefaultSMTPPort
+	}
+	// Apply the purge-days default only when the key is genuinely unset.
+	// An explicit purge_days=0 means "disable automatic purging" per the
+	// documented contract, so it must survive as 0 rather than be rewritten
+	// to the default. viper.IsSet distinguishes unset from an explicit 0.
+	if !v.IsSet("soft_delete.purge_days") {
+		cfg.SoftDelete.PurgeDays = DefaultSoftDeletePurgeDays
 	}
 	return cfg
 }

@@ -216,14 +216,11 @@ Helpful conventions:
 		defer a.Close()
 
 		// Kick off the soft-delete purge loop for long-running TUI sessions.
-		// PurgeDays=0 (or negative) disables; otherwise runs once up front
-		// then every 24h. Detached goroutine — ctx is bound to process
+		// config.Load already resolved the default; PurgeDays=0 (or negative)
+		// means the user disabled purging, so leave it off. Otherwise run once
+		// up front then every 24h. Detached goroutine — ctx is bound to process
 		// lifetime via the signal handler in the TUI loop below.
-		purgeDays := cfg.SoftDelete.PurgeDays
-		if purgeDays == 0 {
-			purgeDays = config.DefaultSoftDeletePurgeDays
-		}
-		if purgeDays > 0 {
+		if purgeDays := cfg.SoftDelete.PurgeDays; purgeDays > 0 {
 			purger := maintenance.NewPurger(a.Trash, a.Queries, purgeDays, nil)
 			go purger.RunDaily(context.Background())
 		}

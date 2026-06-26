@@ -171,6 +171,46 @@ allow_unsafe_alarm_email_attendees = true
 	}
 }
 
+func TestLoad_PurgeDaysDefaultsWhenUnset(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir()) // no config file
+	t.Setenv("CHRONCAL_SOFT_DELETE_PURGE_DAYS", "")
+	cfg := Load()
+	if cfg.SoftDelete.PurgeDays != DefaultSoftDeletePurgeDays {
+		t.Errorf("PurgeDays = %d, want %d when unset", cfg.SoftDelete.PurgeDays, DefaultSoftDeletePurgeDays)
+	}
+}
+
+func TestLoad_PurgeDaysZeroDisables(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "chroncal")
+	os.MkdirAll(configDir, 0o755)
+	os.WriteFile(filepath.Join(configDir, "config.toml"), []byte("[soft_delete]\npurge_days = 0\n"), 0o644)
+
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("CHRONCAL_SOFT_DELETE_PURGE_DAYS", "")
+
+	cfg := Load()
+	if cfg.SoftDelete.PurgeDays != 0 {
+		t.Errorf("PurgeDays = %d, want 0 (explicit 0 must stay disabled, not default to %d)",
+			cfg.SoftDelete.PurgeDays, DefaultSoftDeletePurgeDays)
+	}
+}
+
+func TestLoad_PurgeDaysExplicitValue(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "chroncal")
+	os.MkdirAll(configDir, 0o755)
+	os.WriteFile(filepath.Join(configDir, "config.toml"), []byte("[soft_delete]\npurge_days = 7\n"), 0o644)
+
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("CHRONCAL_SOFT_DELETE_PURGE_DAYS", "")
+
+	cfg := Load()
+	if cfg.SoftDelete.PurgeDays != 7 {
+		t.Errorf("PurgeDays = %d, want 7", cfg.SoftDelete.PurgeDays)
+	}
+}
+
 func TestLoad_SMTPPortDefaultsWhenUnset(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir()) // no config file
 	t.Setenv("CHRONCAL_SMTP_PORT", "")

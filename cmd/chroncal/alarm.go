@@ -15,7 +15,6 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/alarm"
 	"github.com/douglasdemoura/chroncal/internal/app"
-	"github.com/douglasdemoura/chroncal/internal/config"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/notify"
 	"github.com/douglasdemoura/chroncal/internal/storage"
@@ -894,10 +893,10 @@ system was not running when they became due.`,
 			// but the maintenance purge deletes acknowledged rows older
 			// than the soft-delete retention — beyond that horizon a
 			// dismissed alarm is indistinguishable from a missed one.
+			// config.Load already resolved the default; PurgeDays<=0 means
+			// purging is disabled, so history is retained indefinitely and
+			// no retention warning applies.
 			retentionDays := cfg.SoftDelete.PurgeDays
-			if retentionDays == 0 {
-				retentionDays = config.DefaultSoftDeletePurgeDays
-			}
 			if retentionDays > 0 && days > retentionDays {
 				fmt.Fprintf(os.Stderr, "chroncal: warning: lookback of %d days exceeds the %d-day alarm-history retention; results older than %d days may include alarms that were actually dismissed\n",
 					days, retentionDays, retentionDays)
