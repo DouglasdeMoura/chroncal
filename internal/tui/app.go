@@ -1535,11 +1535,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// When the palette is open, it captures all input. Only specific
-	// parent-level messages (size, theme, palette-result) fall through.
+	// parent-level messages (size, theme, palette-result, and
+	// spinner ticks) fall through.
 	if m.paletteOpen {
 		switch msg.(type) {
 		case PaletteSelectedMsg, PaletteClosedMsg,
-			tea.BackgroundColorMsg, tea.WindowSizeMsg:
+			tea.BackgroundColorMsg, tea.WindowSizeMsg,
+			spinner.TickMsg:
 			// fall through to main switch
 		default:
 			var cmd tea.Cmd
@@ -1563,7 +1565,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			tea.BackgroundColorMsg, tea.WindowSizeMsg,
 			eventsLoadedMsg, calendarsLoadedMsg,
 			calendarMutationDoneMsg,
-			calendarOAuthConnectPendingMsg:
+			calendarOAuthConnectPendingMsg,
+			spinner.TickMsg:
 			// fall through to main switch
 		default:
 			var cmd tea.Cmd
@@ -1579,7 +1582,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case EventFormSaveMsg, EventFormClosedMsg,
 			tea.BackgroundColorMsg, tea.WindowSizeMsg,
 			eventsLoadedMsg, calendarsLoadedMsg,
-			eventCreatedMsg, eventUpdatedMsg:
+			eventCreatedMsg, eventUpdatedMsg,
+			spinner.TickMsg:
 			// fall through to main switch
 		default:
 			var cmd tea.Cmd
@@ -2756,13 +2760,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.runSyncCalendar(msg.ID, msg.Name), m.syncSpinner.Tick)
 
 	case spinner.TickMsg:
-		// Two spinners can be live: the sync footer's and the OAuth pending
-		// modal's. Each bubbles spinner ignores ticks that aren't its own,
-		// so routing to both is safe.
+		// Multiple spinners can be live simultaneously: the sync footer's, the
+		// OAuth pending modal's, and the palette's search spinner. Each bubbles
+		// spinner ignores ticks that aren't its own (ID check), so routing to
+		// all active sub-components is safe. Spinner ticks are whitelisted
+		// through every overlay guard so they always reach this handler rather
+		// than being silently consumed by the overlay.
 		var cmds []tea.Cmd
 		if m.oauthFlowOpen {
 			var c tea.Cmd
 			m.oauthFlow, c = m.oauthFlow.Update(msg)
+			if c != nil {
+				cmds = append(cmds, c)
+			}
+		}
+		if m.paletteOpen {
+			var c tea.Cmd
+			m.palette, c = m.palette.Update(msg)
 			if c != nil {
 				cmds = append(cmds, c)
 			}
