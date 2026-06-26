@@ -2892,6 +2892,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Choice < 0 || msg.Choice >= len(m.pendingCalendarPromoteCands) {
 				m.pendingCalendarDelete = 0
 				m.pendingCalendarDeleteName = ""
+				m.pendingCalendarPromote = 0
+				m.pendingCalendarPromoteName = ""
 				m.pendingCalendarPromoteCands = nil
 				return m, nil
 			}
