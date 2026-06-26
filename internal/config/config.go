@@ -18,6 +18,17 @@ type SMTPConfig struct {
 	Username string `mapstructure:"username"`
 	Password string `mapstructure:"password"`
 	From     string `mapstructure:"from"`
+	// TLSMode controls how TLS is established for the SMTP connection.
+	// Valid values:
+	//   ""           – auto-detect: port 465 uses implicit TLS (SMTPS), all
+	//                  other ports use STARTTLS via smtp.SendMail.
+	//   "implicit"   – always use implicit TLS (tls.Dial before the SMTP
+	//                  handshake); required for SMTPS / port 465.
+	//   "starttls"   – always use STARTTLS (smtp.SendMail); explicit override
+	//                  that disables the port-465 auto-detection.
+	//   "none"       – skip implicit TLS; delegates to smtp.SendMail which
+	//                  still negotiates STARTTLS when the server offers it.
+	TLSMode string `mapstructure:"tls"`
 }
 
 type SyncConfig struct {
@@ -126,6 +137,7 @@ func newViper() *viper.Viper {
 	v.BindEnv("smtp.username")
 	v.BindEnv("smtp.password")
 	v.BindEnv("smtp.from")
+	v.BindEnv("smtp.tls")
 	v.BindEnv("sync.interval")
 	v.BindEnv("sync.conflict_strategy")
 	v.BindEnv("security.allow_unsafe_alarm_audio_attach")
