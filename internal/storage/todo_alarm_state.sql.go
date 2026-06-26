@@ -9,6 +9,20 @@ import (
 	"context"
 )
 
+const acknowledgeTodoAlarmState = `-- name: AcknowledgeTodoAlarmState :exec
+UPDATE todo_alarm_state SET acked_at = ? WHERE id = ?
+`
+
+type AcknowledgeTodoAlarmStateParams struct {
+	AckedAt *string
+	ID      int64
+}
+
+func (q *Queries) AcknowledgeTodoAlarmState(ctx context.Context, arg AcknowledgeTodoAlarmStateParams) error {
+	_, err := q.db.ExecContext(ctx, acknowledgeTodoAlarmState, arg.AckedAt, arg.ID)
+	return err
+}
+
 const countTodoAlarmStates = `-- name: CountTodoAlarmStates :one
 SELECT COUNT(*) FROM todo_alarm_state WHERE todo_id = ?
 `
@@ -303,25 +317,16 @@ func (q *Queries) RefireTodoAlarmState(ctx context.Context, arg RefireTodoAlarmS
 	return result.RowsAffected()
 }
 
-const updateTodoAlarmState = `-- name: UpdateTodoAlarmState :exec
-UPDATE todo_alarm_state 
-SET fired_at = ?, acked_at = ?, snoozed_to = ?
-WHERE id = ?
+const snoozeTodoAlarmState = `-- name: SnoozeTodoAlarmState :exec
+UPDATE todo_alarm_state SET snoozed_to = ? WHERE id = ?
 `
 
-type UpdateTodoAlarmStateParams struct {
-	FiredAt   *string
-	AckedAt   *string
+type SnoozeTodoAlarmStateParams struct {
 	SnoozedTo *string
 	ID        int64
 }
 
-func (q *Queries) UpdateTodoAlarmState(ctx context.Context, arg UpdateTodoAlarmStateParams) error {
-	_, err := q.db.ExecContext(ctx, updateTodoAlarmState,
-		arg.FiredAt,
-		arg.AckedAt,
-		arg.SnoozedTo,
-		arg.ID,
-	)
+func (q *Queries) SnoozeTodoAlarmState(ctx context.Context, arg SnoozeTodoAlarmStateParams) error {
+	_, err := q.db.ExecContext(ctx, snoozeTodoAlarmState, arg.SnoozedTo, arg.ID)
 	return err
 }

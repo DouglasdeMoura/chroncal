@@ -287,6 +287,93 @@ func TestSnoozeTodoAlarm(t *testing.T) {
 	}
 }
 
+func TestDismissTodoAlarm_PreservesFiredAt(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+
+	todoSvc := todo.NewService(db, q)
+	base := time.Date(2026, 4, 1, 17, 0, 0, 0, time.UTC)
+	newTodo, _ := todoSvc.Create(context.Background(), todo.CreateParams{
+		CalendarID: 1,
+		Summary:    "Test Todo",
+		DueDate:    base.Format(time.RFC3339),
+	})
+	alarm, _ := q.CreateTodoAlarm(context.Background(), storage.CreateTodoAlarmParams{
+		TodoID:       newTodo.ID,
+		Uid:          storage.StringToNullable("test-alarm-uid"),
+		Action:       "DISPLAY",
+		TriggerValue: "-PT1H",
+		Related:      "START",
+	})
+
+	todoAlarmSvc := NewTodoService(db, q, &mockTodoAlarmLister{})
+
+	triggerAt := time.Date(2026, 4, 1, 16, 0, 0, 0, time.UTC)
+	stateID, _ := todoAlarmSvc.MarkTodoAlarmFired(context.Background(), alarm.ID, newTodo.ID, triggerAt)
+
+	if err := todoAlarmSvc.DismissTodoAlarm(context.Background(), stateID); err != nil {
+		t.Fatalf("dismiss: %v", err)
+	}
+
+	state, err := q.GetTodoAlarmState(context.Background(), storage.GetTodoAlarmStateParams{
+		AlarmID:   alarm.ID,
+		TriggerAt: triggerAt.UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("get state: %v", err)
+	}
+
+	if state.AckedAt == nil {
+		t.Error("expected alarm to be dismissed (acked_at set)")
+	}
+	if state.FiredAt == nil {
+		t.Error("dismiss must preserve fired_at, but it was cleared")
+	}
+}
+
+func TestSnoozeTodoAlarm_PreservesFiredAt(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+
+	todoSvc := todo.NewService(db, q)
+	base := time.Date(2026, 4, 1, 17, 0, 0, 0, time.UTC)
+	newTodo, _ := todoSvc.Create(context.Background(), todo.CreateParams{
+		CalendarID: 1,
+		Summary:    "Test Todo",
+		DueDate:    base.Format(time.RFC3339),
+	})
+	alarm, _ := q.CreateTodoAlarm(context.Background(), storage.CreateTodoAlarmParams{
+		TodoID:       newTodo.ID,
+		Uid:          storage.StringToNullable("test-alarm-uid"),
+		Action:       "DISPLAY",
+		TriggerValue: "-PT1H",
+		Related:      "START",
+	})
+
+	todoAlarmSvc := NewTodoService(db, q, &mockTodoAlarmLister{})
+
+	triggerAt := time.Date(2026, 4, 1, 16, 0, 0, 0, time.UTC)
+	stateID, _ := todoAlarmSvc.MarkTodoAlarmFired(context.Background(), alarm.ID, newTodo.ID, triggerAt)
+
+	snoozeUntil := time.Date(2026, 4, 1, 17, 0, 0, 0, time.UTC)
+	if err := todoAlarmSvc.SnoozeTodoAlarm(context.Background(), stateID, snoozeUntil); err != nil {
+		t.Fatalf("snooze: %v", err)
+	}
+
+	state, err := q.GetTodoAlarmState(context.Background(), storage.GetTodoAlarmStateParams{
+		AlarmID:   alarm.ID,
+		TriggerAt: triggerAt.UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("get state: %v", err)
+	}
+
+	if state.SnoozedTo == nil {
+		t.Error("expected snooze time to be set")
+	}
+	if state.FiredAt == nil {
+		t.Error("snooze must preserve fired_at, but it was cleared")
+	}
+}
+
 func TestListExpiredTodoSnoozed(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 

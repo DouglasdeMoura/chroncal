@@ -7,10 +7,11 @@ INSERT INTO todo_alarm_state (alarm_id, todo_id, trigger_at, fired_at, acked_at,
 VALUES (?, ?, ?, ?, ?, ?)
 RETURNING *;
 
--- name: UpdateTodoAlarmState :exec
-UPDATE todo_alarm_state 
-SET fired_at = ?, acked_at = ?, snoozed_to = ?
-WHERE id = ?;
+-- name: AcknowledgeTodoAlarmState :exec
+UPDATE todo_alarm_state SET acked_at = ? WHERE id = ?;
+
+-- name: SnoozeTodoAlarmState :exec
+UPDATE todo_alarm_state SET snoozed_to = ? WHERE id = ?;
 
 -- name: ListTodoAlarmStates :many
 SELECT * FROM todo_alarm_state 

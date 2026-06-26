@@ -226,18 +226,18 @@ func (s *TodoService) MarkTodoAlarmFired(ctx context.Context, alarmID, todoID in
 // DismissTodoAlarm acknowledges a fired todo alarm
 func (s *TodoService) DismissTodoAlarm(ctx context.Context, stateID int64) error {
 	now := time.Now().UTC().Format(time.RFC3339)
-	return s.q.UpdateTodoAlarmState(ctx, storage.UpdateTodoAlarmStateParams{
-		ID:      stateID,
+	return s.q.AcknowledgeTodoAlarmState(ctx, storage.AcknowledgeTodoAlarmStateParams{
 		AckedAt: &now,
+		ID:      stateID,
 	})
 }
 
 // SnoozeTodoAlarm reschedules a todo alarm
 func (s *TodoService) SnoozeTodoAlarm(ctx context.Context, stateID int64, snoozeUntil time.Time) error {
 	snoozeStr := snoozeUntil.UTC().Format(time.RFC3339)
-	return s.q.UpdateTodoAlarmState(ctx, storage.UpdateTodoAlarmStateParams{
-		ID:        stateID,
+	return s.q.SnoozeTodoAlarmState(ctx, storage.SnoozeTodoAlarmStateParams{
 		SnoozedTo: &snoozeStr,
+		ID:        stateID,
 	})
 }
 
