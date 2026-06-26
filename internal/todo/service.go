@@ -168,8 +168,14 @@ func defaults(status, class string) (string, string) {
 	return status, class
 }
 
-func completedAtIfMissing(status, completedAt string) string {
-	if status == "COMPLETED" && completedAt == "" {
+// completedAtFor reconciles the completed_at timestamp with the status: a
+// COMPLETED todo gets a timestamp (preserving any existing one, else now),
+// and any other status clears it so reopened todos don't keep a stale value.
+func completedAtFor(status, completedAt string) string {
+	if status != "COMPLETED" {
+		return ""
+	}
+	if completedAt == "" {
 		return time.Now().UTC().Format(time.RFC3339)
 	}
 	return completedAt
@@ -197,10 +203,21 @@ func (p *CreateParams) applyDefaults() {
 
 func (p *UpsertParams) applyDefaults() {
 	p.Status, p.Class = defaults(p.Status, p.Class)
-	p.CompletedAt = completedAtIfMissing(p.Status, p.CompletedAt)
-	if p.Status == "COMPLETED" {
-		p.PercentComplete = 100
+	p.CompletedAt = completedAtFor(p.Status, p.CompletedAt)
+	p.PercentComplete = percentCompleteFor(p.Status, p.PercentComplete)
+}
+
+// percentCompleteFor reconciles percent-complete with the status: a COMPLETED
+// todo is forced to 100, and a stale 100 left over from completion is reset to
+// 0 when the todo is reopened to a non-completed status.
+func percentCompleteFor(status string, percent int64) int64 {
+	if status == "COMPLETED" {
+		return 100
 	}
+	if percent == 100 {
+		return 0
+	}
+	return percent
 }
 
 func (s *Service) Search(ctx context.Context, p SearchParams) ([]Todo, error) {
@@ -378,10 +395,8 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Todo, error) {
 
 func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, error) {
 	p.Status, p.Class = defaults(p.Status, p.Class)
-	p.CompletedAt = completedAtIfMissing(p.Status, p.CompletedAt)
-	if p.Status == "COMPLETED" {
-		p.PercentComplete = 100
-	}
+	p.CompletedAt = completedAtFor(p.Status, p.CompletedAt)
+	p.PercentComplete = percentCompleteFor(p.Status, p.PercentComplete)
 	if err := validateTiming(p.DueDate, p.StartDate, p.Duration); err != nil {
 		return Todo{}, err
 	}

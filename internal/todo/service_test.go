@@ -292,6 +292,44 @@ func TestTodoService_UpdateToCompleted(t *testing.T) {
 	}
 }
 
+func TestTodoService_ReopenCompletedClearsCompletion(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	created := createTodo(t, svc)
+
+	completed, err := svc.Update(ctx, created.ID, UpdateParams{
+		Summary:    created.Summary,
+		DueDate:    created.DueDate,
+		CalendarID: 1,
+		Status:     "COMPLETED",
+	})
+	if err != nil {
+		t.Fatalf("Update to COMPLETED: %v", err)
+	}
+	if completed.CompletedAt == "" || completed.PercentComplete != 100 {
+		t.Fatalf("precondition: want completed_at set and 100%%, got %q / %d",
+			completed.CompletedAt, completed.PercentComplete)
+	}
+
+	reopened, err := svc.Update(ctx, created.ID, UpdateParams{
+		Summary:         created.Summary,
+		DueDate:         created.DueDate,
+		CalendarID:      1,
+		Status:          "IN-PROCESS",
+		CompletedAt:     completed.CompletedAt,
+		PercentComplete: completed.PercentComplete,
+	})
+	if err != nil {
+		t.Fatalf("Update to IN-PROCESS: %v", err)
+	}
+	if reopened.CompletedAt != "" {
+		t.Errorf("CompletedAt = %q, want cleared when reopening", reopened.CompletedAt)
+	}
+	if reopened.PercentComplete == 100 {
+		t.Errorf("PercentComplete = 100, want reset when reopening")
+	}
+}
+
 func TestTodoService_UpsertByUID(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
