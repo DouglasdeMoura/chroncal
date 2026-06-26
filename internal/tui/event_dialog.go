@@ -11,6 +11,7 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/model"
@@ -1038,20 +1039,21 @@ func truncateTo(s string, w int) string {
 	if strings.ContainsRune(s, '\x1b') {
 		plain = stripANSI(s)
 	}
-	r := []rune(plain)
-	cut := min(w-1, len(r))
+
+	// Width-bounded prefix that reserves one cell for the ellipsis. ansi.Cut
+	// measures display width and respects grapheme clusters, so wide runes
+	// (CJK/emoji) no longer overflow the column the way a rune-index slice
+	// would (issue #213).
+	head := ansi.Cut(plain, 0, w-1)
 
 	// Prefer breaking at whitespace within a small look-back window so
 	// truncation doesn't slice mid-word. If no whitespace is within reach
 	// (e.g., a single long token), fall back to a hard cut.
-	lookback := cut / 3
-	for i := cut; i > cut-lookback && i > 1; i-- {
-		if r[i-1] == ' ' || r[i-1] == '\t' {
-			trimmed := strings.TrimRight(string(r[:i-1]), " \t")
-			return trimmed + " …"
-		}
+	if idx := strings.LastIndexAny(head, " \t"); idx >= 0 &&
+		lipgloss.Width(head[idx:]) <= lipgloss.Width(head)/3 {
+		return strings.TrimRight(head[:idx], " \t") + " …"
 	}
-	return string(r[:cut]) + "…"
+	return head + "…"
 }
 
 func stripANSI(s string) string {
