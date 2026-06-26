@@ -2759,3 +2759,70 @@ func TestPersistImportedRollsBackOnReplaceFailure(t *testing.T) {
 		t.Fatalf("expected event %q to be absent after rollback, got err=%v", uid, err)
 	}
 }
+
+// TestLookupOwnerIDUnknownTypeErrors guards the owner-type dispatch: an
+// unrecognized owner-type string must fail loudly rather than silently
+// resolving to ID 0, which would mis-attribute a sync conflict record.
+func TestLookupOwnerIDUnknownTypeErrors(t *testing.T) {
+	t.Parallel()
+
+	engine, _, _ := newTestEngine(t)
+	ctx := context.Background()
+
+	id, err := engine.lookupOwnerID(ctx, "bogus", "some-uid")
+	if !errors.Is(err, errUnknownOwnerType) {
+		t.Fatalf("lookupOwnerID(bogus) err = %v, want errUnknownOwnerType", err)
+	}
+	if id != 0 {
+		t.Fatalf("lookupOwnerID(bogus) id = %d, want 0", id)
+	}
+}
+
+// TestLookupOwnerIDResolvesByType confirms a known owner type resolves its row
+// ID, and that a missing UID surfaces the lookup error instead of 0.
+func TestLookupOwnerIDResolvesByType(t *testing.T) {
+	t.Parallel()
+
+	engine, db, _ := newTestEngine(t)
+	ctx := context.Background()
+
+	const uid = "lookup-evt-1"
+	insertTestEvent(t, db, 1, uid)
+
+	want, err := engine.events.GetByUID(ctx, uid)
+	if err != nil {
+		t.Fatalf("GetByUID: %v", err)
+	}
+
+	got, err := engine.lookupOwnerID(ctx, "event", uid)
+	if err != nil {
+		t.Fatalf("lookupOwnerID(event): %v", err)
+	}
+	if got != want.ID {
+		t.Fatalf("lookupOwnerID(event) = %d, want %d", got, want.ID)
+	}
+
+	if _, err := engine.lookupOwnerID(ctx, "event", "missing-uid"); err == nil {
+		t.Fatal("lookupOwnerID(event, missing-uid) err = nil, want lookup error")
+	}
+}
+
+// TestOwnerDispatchRejectsUnknownTypeUniformly confirms every owner-type
+// dispatch entry point reports an unknown type through the same error, so a
+// new component type can't be silently skipped by one site.
+func TestOwnerDispatchRejectsUnknownTypeUniformly(t *testing.T) {
+	t.Parallel()
+
+	engine, _, _ := newTestEngine(t)
+	ctx := context.Background()
+
+	if err := engine.deleteLocalResourceByUID(ctx, "bogus", "uid"); !errors.Is(err, errUnknownOwnerType) {
+		t.Fatalf("deleteLocalResourceByUID err = %v, want errUnknownOwnerType", err)
+	}
+	if _, err := engine.lookupOwnerID(ctx, "bogus", "uid"); !errors.Is(err, errUnknownOwnerType) {
+		t.Fatalf("lookupOwnerID err = %v, want errUnknownOwnerType", err)
+	}
+	if _, err := engine.exportResource(ctx, "bogus", "uid"); !errors.Is(err, errUnknownOwnerType) {
+		t.Fatalf("exportResource err = %v, want errUnknownOwnerType", err)
+	}
+}
