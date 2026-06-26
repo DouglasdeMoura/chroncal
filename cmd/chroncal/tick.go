@@ -52,7 +52,7 @@ func runTick(ctx context.Context, w io.Writer, now time.Time, policy alarmExecut
 		return nil
 	}
 
-	credStore, err := auth.NewCredentialStore(true)
+	credStore, err := auth.NewCredentialStore(a.AllowPlaintext)
 	if err != nil {
 		return fmt.Errorf("credential store: %w", err)
 	}

@@ -83,7 +83,7 @@ queries the connected remote CalDAV calendar instead.`,
 					return errInvalidInputf("calendar %q is not connected to a remote calendar", calendarRef.Name)
 				}
 
-				credStore, err := auth.NewCredentialStore(true)
+				credStore, err := auth.NewCredentialStore(a.AllowPlaintext)
 				if err != nil {
 					return fmt.Errorf("credential store: %w", err)
 				}

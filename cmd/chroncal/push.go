@@ -32,7 +32,7 @@ var pushCalendarAfterWrite = func(a *app.App, calendarID int64, w io.Writer) {
 		return
 	}
 
-	credStore, err := auth.NewCredentialStore(true)
+	credStore, err := auth.NewCredentialStore(a.AllowPlaintext)
 	if err != nil {
 		fmt.Fprintf(w, "note: skipped auto-sync (%v)\n", err)
 		return

@@ -26,6 +26,11 @@ type SyncConfig struct {
 type SecurityConfig struct {
 	AllowUnsafeAlarmAudioAttach    bool `mapstructure:"allow_unsafe_alarm_audio_attach"`
 	AllowUnsafeAlarmEmailAttendees bool `mapstructure:"allow_unsafe_alarm_email_attendees"`
+	// AllowPlaintext opts in to the plaintext credential-store fallback when
+	// no OS keyring is available. Defaults to false: without it, credential
+	// writes fail rather than silently persisting secrets in cleartext. The
+	// --allow-plaintext flag also enables it.
+	AllowPlaintext bool `mapstructure:"allow_plaintext"`
 }
 
 // SoftDeleteConfig tunes the soft-delete retention window. Rows soft-deleted
@@ -111,6 +116,7 @@ func newViper() *viper.Viper {
 	v.BindEnv("sync.conflict_strategy")
 	v.BindEnv("security.allow_unsafe_alarm_audio_attach")
 	v.BindEnv("security.allow_unsafe_alarm_email_attendees")
+	v.BindEnv("security.allow_plaintext")
 	v.BindEnv("soft_delete.purge_days")
 	v.BindEnv("ui.theme")
 
