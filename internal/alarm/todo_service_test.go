@@ -469,6 +469,83 @@ func TestListExpiredTodoSnoozed_SkipsDismissed(t *testing.T) {
 	}
 }
 
+// TestCheckTodos_OverrideAwareness is the regression test for issue #366:
+// when a recurring todo has an override (a row with the same UID but a
+// non-empty recurrence_id), CheckTodos must not fire the master's alarm for
+// the overridden slot in addition to the override's own alarm.
+//
+// Without the fix, ExpandTodo on the master still produces the overridden
+// occurrence (no EXDATE is set when a CalDAV override arrives), while
+// ExpandTodo on the override row emits a single instance at the same time.
+// Because the master and override have distinct alarm_ids, the unique
+// (alarm_id, trigger_at) state index does not prevent the double firing.
+func TestCheckTodos_OverrideAwareness(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	ctx := context.Background()
+	todoSvc := todo.NewService(db, q)
+
+	// Master: daily recurring, first occurrence Apr 1 17:00 UTC.
+	firstOcc := time.Date(2026, 4, 1, 17, 0, 0, 0, time.UTC)
+	master, err := todoSvc.UpsertByUID(ctx, todo.UpsertParams{
+		UID:            "override-alarm-test",
+		CalendarID:     1,
+		Summary:        "Daily Stand-up",
+		DueDate:        firstOcc.Format(time.RFC3339),
+		RecurrenceRule: "FREQ=DAILY",
+	})
+	if err != nil {
+		t.Fatalf("upsert master todo: %v", err)
+	}
+	if err := todoSvc.ReplaceAlarms(ctx, master.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT1H"},
+	}); err != nil {
+		t.Fatalf("replace master alarms: %v", err)
+	}
+
+	// Override for the Apr 2 occurrence at the same due time, different summary.
+	// No EXDATE is added to the master — matching CalDAV sync behaviour where the
+	// server pushes an override without also updating the master's EXDATE list.
+	apr2 := time.Date(2026, 4, 2, 17, 0, 0, 0, time.UTC)
+	override, err := todoSvc.UpsertByUID(ctx, todo.UpsertParams{
+		UID:          "override-alarm-test",
+		CalendarID:   1,
+		Summary:      "Daily Stand-up (rescheduled)",
+		DueDate:      apr2.Format(time.RFC3339),
+		RecurrenceID: apr2.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert override todo: %v", err)
+	}
+	if err := todoSvc.ReplaceAlarms(ctx, override.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT1H"},
+	}); err != nil {
+		t.Fatalf("replace override alarms: %v", err)
+	}
+
+	// Check at Apr 2 17:30 UTC.  The Apr 2 16:00 trigger is 1.5 h old, well
+	// within StaleThreshold=24 h.  The master expands Apr 2 via RRULE (no EXDATE),
+	// so without the fix both the master alarm and the override alarm fire — 2 due
+	// alarms.  With the fix the master's Apr 2 slot is suppressed and only the
+	// override's alarm fires — 1 due alarm.
+	checkTime := time.Date(2026, 4, 2, 17, 30, 0, 0, time.UTC)
+	todoAlarmSvc := NewTodoService(db, q, todoSvc)
+	due, err := todoAlarmSvc.CheckTodos(ctx, checkTime)
+	if err != nil {
+		t.Fatalf("check todos: %v", err)
+	}
+
+	if len(due) != 1 {
+		t.Errorf("CheckTodos = %d due alarms, want 1; master must not fire for overridden slot (issue #366)", len(due))
+		for i, d := range due {
+			t.Logf("  [%d] todo_id=%d summary=%q trigger=%v", i, d.Todo.ID, d.Todo.Summary, d.TriggerAt)
+		}
+		return
+	}
+	if due[0].Todo.ID != override.ID {
+		t.Errorf("due alarm is for todo ID %d (master=%d), want override ID %d", due[0].Todo.ID, master.ID, override.ID)
+	}
+}
+
 // TestCheckTodos_FiresLongLeadTimeAlarm guards issue #98 on the todo path: a
 // todo due 7 days out with a "1 week before" alarm must fire now even though
 // the todo instance is far past the base forward window. Uses the real todo

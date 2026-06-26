@@ -12,6 +12,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/recurrence"
 	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/timeutil"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
@@ -61,6 +62,12 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 		return nil, fmt.Errorf("list todos: %w", err)
 	}
 
+	// Build per-UID suppression sets from override rows so the master's RRULE
+	// expansion skips any slot that has been overridden. The override row itself
+	// is still iterated below and produces the correct single instance at its own
+	// (possibly rescheduled) time with its own alarm definition.
+	overrideKeys := buildOverrideSuppressionKeys(rows)
+
 	var due []TodoDueAlarm
 
 	for _, row := range rows {
@@ -78,6 +85,21 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 
 		// Expand recurring instances (returns single instance for non-recurring)
 		instances := recurrence.ExpandTodo(t, windowStart, windowEnd)
+
+		// For recurring masters, suppress occurrences that have been overridden.
+		// Without this, the master fires its alarm for the overridden slot while
+		// the override row also fires its own alarm — causing a duplicate.
+		if t.RecurrenceRule != "" && t.RecurrenceID == "" {
+			if suppressed := overrideKeys[t.UID]; len(suppressed) > 0 {
+				kept := instances[:0]
+				for _, inst := range instances {
+					if _, ok := suppressed[inst.InstanceTime.UTC().Format(time.RFC3339)]; !ok {
+						kept = append(kept, inst)
+					}
+				}
+				instances = kept
+			}
+		}
 
 		for _, inst := range instances {
 			for _, a := range alarms {
@@ -143,6 +165,32 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 	due = append(due, snoozed...)
 
 	return due, nil
+}
+
+// buildOverrideSuppressionKeys returns a per-UID set of canonical instance-time
+// keys (UTC RFC 3339) derived from override rows in the full todo list. When
+// expanding a recurring master, any instance whose time is in the set for its
+// UID must be skipped: the slot has been overridden and the override row itself
+// carries the alarm definition to fire at its own (possibly rescheduled) time.
+// A malformed recurrence_id is silently skipped — the master will fire for
+// that slot, which is preferable to silently dropping a legitimate alarm.
+func buildOverrideSuppressionKeys(rows []storage.Todo) map[string]map[string]struct{} {
+	m := make(map[string]map[string]struct{})
+	for _, row := range rows {
+		if row.RecurrenceID == "" {
+			continue
+		}
+		t, err := timeutil.ParseRecurrenceID(row.RecurrenceID)
+		if err != nil {
+			continue
+		}
+		key := t.UTC().Format(time.RFC3339)
+		if m[row.Uid] == nil {
+			m[row.Uid] = make(map[string]struct{})
+		}
+		m[row.Uid][key] = struct{}{}
+	}
+	return m
 }
 
 // todoFromRow converts a storage view row to a todo.Todo
