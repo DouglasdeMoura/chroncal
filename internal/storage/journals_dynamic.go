@@ -4,10 +4,25 @@ import "context"
 
 const journalCategoryExists = "EXISTS (SELECT 1 FROM journal_categories jc WHERE jc.journal_id = journals.id AND jc.category = ?)"
 
+// addJournalListFilters appends the calendar / status / hide-cancelled clauses
+// shared verbatim by ListJournalsFiltered and ListRecurringJournalsFiltered, in
+// the same order so positional args line up.
+func (w *whereBuilder) addJournalListFilters(calendarID int64, filterStatus string, hideCancelled int64) {
+	if calendarID != 0 {
+		w.add("calendar_id = ?", calendarID)
+	}
+	if filterStatus != "" {
+		w.add("status = ?", filterStatus)
+	}
+	if hideCancelled != 0 {
+		w.add("status != 'CANCELLED'")
+	}
+}
+
 type ListJournalsFilteredParams struct {
 	CalendarID     int64
 	FilterStatus   string
-	HideDrafts     int64
+	HideCancelled  int64
 	FromDate       string
 	ToDate         string
 	IncludeDeleted bool
@@ -18,15 +33,7 @@ func (q *Queries) ListJournalsFiltered(ctx context.Context, arg ListJournalsFilt
 	var w whereBuilder
 	w.add("recurrence_rule IS NULL AND recurrence_id = ''")
 	w.addSoftDeleteFilter(arg.IncludeDeleted, arg.DeletedOnly)
-	if arg.CalendarID != 0 {
-		w.add("calendar_id = ?", arg.CalendarID)
-	}
-	if arg.FilterStatus != "" {
-		w.add("status = ?", arg.FilterStatus)
-	}
-	if arg.HideDrafts != 0 {
-		w.add("status != 'CANCELLED'")
-	}
+	w.addJournalListFilters(arg.CalendarID, arg.FilterStatus, arg.HideCancelled)
 	if arg.FromDate != "" {
 		w.add("(start_date IS NULL OR start_date >= ?)", arg.FromDate)
 	}
@@ -40,6 +47,7 @@ func (q *Queries) ListJournalsFiltered(ctx context.Context, arg ListJournalsFilt
 type ListRecurringJournalsFilteredParams struct {
 	CalendarID     int64
 	FilterStatus   string
+	HideCancelled  int64
 	IncludeDeleted bool
 	DeletedOnly    bool
 }
@@ -48,12 +56,7 @@ func (q *Queries) ListRecurringJournalsFiltered(ctx context.Context, arg ListRec
 	var w whereBuilder
 	w.add("recurrence_rule IS NOT NULL AND recurrence_id = ''")
 	w.addSoftDeleteFilter(arg.IncludeDeleted, arg.DeletedOnly)
-	if arg.CalendarID != 0 {
-		w.add("calendar_id = ?", arg.CalendarID)
-	}
-	if arg.FilterStatus != "" {
-		w.add("status = ?", arg.FilterStatus)
-	}
+	w.addJournalListFilters(arg.CalendarID, arg.FilterStatus, arg.HideCancelled)
 	where, args := w.build()
 	return q.queryJournals(ctx, where, args, "start_date ASC, summary ASC")
 }

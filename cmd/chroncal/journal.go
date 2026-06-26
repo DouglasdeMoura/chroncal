@@ -54,7 +54,8 @@ func journalListCmd() *cobra.Command {
 		Short: "List journal entries",
 		Long: `List journal entries in a date window.
 
-Use --status when you want to narrow the list to DRAFT, FINAL, or
+CANCELLED entries are hidden by default. Pass --all to include them, or
+filter explicitly with --status to narrow the list to DRAFT, FINAL, or
 CANCELLED entries.`,
 		Example: `  chroncal journal list
   chroncal journal list --calendar Work --from 2026-04-01 --to 2026-04-30
@@ -81,14 +82,10 @@ CANCELLED entries.`,
 				}
 			}
 
-			filterStatus := status
-			if !all && status == "" {
-				filterStatus = ""
-			}
-
 			journals, err := a.Recurrences.ListFilteredJournals(ctx, recurrence.JournalListParams{
 				CalendarID:     calID,
-				Status:         filterStatus,
+				Status:         status,
+				HideCancelled:  !all && status == "",
 				From:           from,
 				To:             to,
 				IncludeDeleted: includeDeleted,
@@ -117,7 +114,7 @@ CANCELLED entries.`,
 	}
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "filter by calendar name")
 	cmd.Flags().StringVar(&status, "status", "", "filter by status (DRAFT, FINAL, CANCELLED)")
-	cmd.Flags().BoolVar(&all, "all", false, "include draft, final, and cancelled entries together")
+	cmd.Flags().BoolVar(&all, "all", false, "include cancelled entries (hidden by default)")
 	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD, default: today)")
 	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 30 days from now)")
 	cmd.Flags().BoolVar(&compact, "compact", false, "one line per entry (DATE  SUMMARY)")

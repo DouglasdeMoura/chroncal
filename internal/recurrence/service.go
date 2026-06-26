@@ -1086,8 +1086,12 @@ type ExpandedJournal struct {
 type JournalListParams struct {
 	CalendarID int64
 	Status     string
-	From       time.Time
-	To         time.Time
+	// HideCancelled, when true, omits CANCELLED journals. Default (false)
+	// returns every status, matching the iCal model where a cancelled
+	// journal is still a real row the caller may want to see.
+	HideCancelled bool
+	From          time.Time
+	To            time.Time
 	// IncludeDeleted, when true, returns soft-deleted journals alongside
 	// live rows. Default (false) hides them.
 	IncludeDeleted bool
@@ -1270,6 +1274,11 @@ func (s *Service) expandRecurringJournalRows(ctx context.Context, rows []storage
 // date range is provided, recurring journals are expanded; otherwise master
 // entries are returned as-is.
 func (s *Service) ListFilteredJournals(ctx context.Context, p JournalListParams) ([]journal.Journal, error) {
+	hideCancelled := int64(0)
+	if p.HideCancelled {
+		hideCancelled = 1
+	}
+
 	fromStr := ""
 	toStr := ""
 	hasRange := !p.From.IsZero() || !p.To.IsZero()
@@ -1283,6 +1292,7 @@ func (s *Service) ListFilteredJournals(ctx context.Context, p JournalListParams)
 	rows, err := s.q.ListJournalsFiltered(ctx, storage.ListJournalsFilteredParams{
 		CalendarID:     p.CalendarID,
 		FilterStatus:   p.Status,
+		HideCancelled:  hideCancelled,
 		FromDate:       fromStr,
 		ToDate:         toStr,
 		IncludeDeleted: p.IncludeDeleted,
@@ -1299,6 +1309,7 @@ func (s *Service) ListFilteredJournals(ctx context.Context, p JournalListParams)
 	recurringRows, err := s.q.ListRecurringJournalsFiltered(ctx, storage.ListRecurringJournalsFilteredParams{
 		CalendarID:     p.CalendarID,
 		FilterStatus:   p.Status,
+		HideCancelled:  hideCancelled,
 		IncludeDeleted: p.IncludeDeleted,
 	})
 	if err != nil {
