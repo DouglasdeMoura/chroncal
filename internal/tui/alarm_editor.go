@@ -374,6 +374,16 @@ func (m AlarmListEditorModel) updateEditMode(msg tea.Msg) (AlarmListEditorModel,
 			return m, func() tea.Msg { return alarmEditorCancelForm }
 		}
 	}
+	if mc, ok := msg.(tea.MouseClickMsg); ok && mc.Button == tea.MouseLeft {
+		bw, bh := m.BoxSize()
+		ox := (m.width - bw) / 2
+		oy := (m.height - bh) / 2
+		target := mouseResolve(mc.X-ox, mc.Y-oy)
+		var cmd tea.Cmd
+		m.form, cmd = m.form.Update(MouseEvent{IsClick: true, Target: target})
+		m.syncActionLabel()
+		return m, cmd
+	}
 	var cmd tea.Cmd
 	m.form, cmd = m.form.Update(msg)
 	m.syncActionLabel()

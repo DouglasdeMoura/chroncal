@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/stretchr/testify/assert"
@@ -269,4 +270,82 @@ func TestAlarmEditor_AuthorsAfterTrigger(t *testing.T) {
 	require.Len(t, m.Alarms(), 1)
 	assert.Equal(t, "PT15M", m.Alarms()[0].TriggerValue,
 		"toggling the timing field must produce a positive (after-anchor) trigger")
+}
+
+func TestAlarmEditor_EditModeMouseClickOnSubmitSavesAlarm(t *testing.T) {
+	// Isolate this test from others that use the global mouse tracker.
+	saved := *defaultMouseTracker
+	defer func() { *defaultMouseTracker = saved }()
+	*defaultMouseTracker = mouseTracker{}
+
+	m := NewAlarmListEditorModel(nil, 80, 24, Theme{})
+	m, _ = m.Update(keyMsg("n"))
+	require.Equal(t, alarmModeEdit, m.mode)
+
+	// Render to register mouse zones for the edit-mode dialog.
+	_ = m.View()
+
+	// Find the "submit" zone registered by the form's button row.
+	var zone mouseZone
+	for _, z := range defaultMouseTracker.zones {
+		if z.name == "submit" {
+			zone = z
+			break
+		}
+	}
+	require.NotZero(t, zone, "expected 'submit' zone to be registered after rendering edit mode")
+
+	// Compute the offset for the dialog centered in the viewport.
+	bw, bh := m.BoxSize()
+	ox := (m.width - bw) / 2
+	oy := (m.height - bh) / 2
+
+	// Simulate a left-click on the submit button.
+	m, cmd := m.Update(tea.MouseClickMsg(tea.Mouse{
+		X:      ox + zone.startX,
+		Y:      oy + zone.startY,
+		Button: tea.MouseLeft,
+	}))
+	require.NotNil(t, cmd, "clicking the submit button must return a command (was dropped before fix)")
+
+	// Execute the command; the editor should apply the form and return to list mode.
+	m, _ = m.Update(cmd())
+	assert.Equal(t, alarmModeList, m.mode, "after clicking submit, editor must return to list mode")
+	assert.Len(t, m.Alarms(), 1, "clicking submit must save the default alarm")
+}
+
+func TestAlarmEditor_EditModeMouseClickOnCancelReturnsToList(t *testing.T) {
+	saved := *defaultMouseTracker
+	defer func() { *defaultMouseTracker = saved }()
+	*defaultMouseTracker = mouseTracker{}
+
+	m := NewAlarmListEditorModel(nil, 80, 24, Theme{})
+	m, _ = m.Update(keyMsg("n"))
+	require.Equal(t, alarmModeEdit, m.mode)
+
+	_ = m.View()
+
+	var zone mouseZone
+	for _, z := range defaultMouseTracker.zones {
+		if z.name == "cancel" {
+			zone = z
+			break
+		}
+	}
+	require.NotZero(t, zone, "expected 'cancel' zone to be registered after rendering edit mode")
+
+	bw, bh := m.BoxSize()
+	ox := (m.width - bw) / 2
+	oy := (m.height - bh) / 2
+
+	m, cmd := m.Update(tea.MouseClickMsg(tea.Mouse{
+		X:      ox + zone.startX,
+		Y:      oy + zone.startY,
+		Button: tea.MouseLeft,
+	}))
+	require.NotNil(t, cmd, "clicking the cancel button must return a command (was dropped before fix)")
+
+	m, _ = m.Update(cmd())
+	assert.Equal(t, alarmModeList, m.mode, "after clicking cancel, editor must return to list mode")
+	assert.Empty(t, m.Alarms(), "clicking cancel must not save the alarm")
 }
