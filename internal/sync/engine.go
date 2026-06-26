@@ -111,39 +111,40 @@ func NewEngine(db *sql.DB, q *storage.Queries, credStore authpkg.CredentialStore
 }
 
 // loadCalendarClient loads the calendar, its account, and a ready CalDAV client.
-// Returns the calendar row and the remote calendar URL alongside the client.
-func (e *Engine) loadCalendarClient(ctx context.Context, calendarID int64) (storage.Calendar, *caldav.Client, string, error) {
+// Returns the calendar row, its account, and the remote calendar URL alongside
+// the client so callers can reuse them without re-querying.
+func (e *Engine) loadCalendarClient(ctx context.Context, calendarID int64) (storage.Calendar, storage.Account, *caldav.Client, string, error) {
 	cal, err := e.q.GetCalendar(ctx, calendarID)
 	if err != nil {
-		return storage.Calendar{}, nil, "", fmt.Errorf("get calendar: %w", err)
+		return storage.Calendar{}, storage.Account{}, nil, "", fmt.Errorf("get calendar: %w", err)
 	}
 	if cal.AccountID == nil || *cal.AccountID == 0 {
-		return cal, nil, "", fmt.Errorf("calendar %d is not linked to an account", calendarID)
+		return cal, storage.Account{}, nil, "", fmt.Errorf("calendar %d is not linked to an account", calendarID)
 	}
 	account, err := e.q.GetAccount(ctx, *cal.AccountID)
 	if err != nil {
-		return cal, nil, "", fmt.Errorf("get account: %w", err)
+		return cal, storage.Account{}, nil, "", fmt.Errorf("get account: %w", err)
 	}
 	cred, err := e.credStore.Get(account.ID)
 	if err != nil {
-		return cal, nil, "", fmt.Errorf("get credentials: %w", err)
+		return cal, account, nil, "", fmt.Errorf("get credentials: %w", err)
 	}
 	client, err := caldav.NewClientFromCredential(account.ServerUrl, cred, func(updated authpkg.Credential) error {
 		return e.credStore.Set(updated)
 	})
 	if err != nil {
-		return cal, nil, "", fmt.Errorf("create client: %w", err)
+		return cal, account, nil, "", fmt.Errorf("create client: %w", err)
 	}
 	remoteURL := storage.NullableToString(cal.RemoteUrl)
 	if remoteURL == "" {
-		return cal, nil, "", fmt.Errorf("calendar %d has no remote URL", calendarID)
+		return cal, account, nil, "", fmt.Errorf("calendar %d has no remote URL", calendarID)
 	}
-	return cal, client, remoteURL, nil
+	return cal, account, client, remoteURL, nil
 }
 
 // SyncCalendar runs a full sync cycle for one calendar.
 func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy ConflictStrategy) (result *SyncResult, err error) {
-	cal, client, remoteURL, err := e.loadCalendarClient(ctx, calendarID)
+	cal, account, client, remoteURL, err := e.loadCalendarClient(ctx, calendarID)
 	if err != nil {
 		return nil, err
 	}
@@ -165,7 +166,7 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 	}
 
 	// Phase 1: Push dirty resources
-	pushResult, err := e.push(ctx, client, calendarID, remoteURL, strategy)
+	pushResult, err := e.push(ctx, client, calendarID, remoteURL, resolvePushIdentity(cal, account), strategy)
 	if err != nil {
 		e.logger.Error("push failed", "calendar_id", calendarID, "error", err)
 		result.Errors = append(result.Errors, fmt.Errorf("push: %w", err))
@@ -220,13 +221,13 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 // a full sync — both funnel through the same dirty/tombstone rows, and
 // the server arbitrates via ETag preconditions.
 func (e *Engine) PushCalendar(ctx context.Context, calendarID int64, strategy ConflictStrategy) (*SyncResult, error) {
-	_, client, remoteURL, err := e.loadCalendarClient(ctx, calendarID)
+	cal, account, client, remoteURL, err := e.loadCalendarClient(ctx, calendarID)
 	if err != nil {
 		return nil, err
 	}
 	result := &SyncResult{CalendarID: calendarID}
 
-	pushResult, err := e.push(ctx, client, calendarID, remoteURL, strategy)
+	pushResult, err := e.push(ctx, client, calendarID, remoteURL, resolvePushIdentity(cal, account), strategy)
 	if err != nil {
 		return result, fmt.Errorf("push: %w", err)
 	}
@@ -277,13 +278,11 @@ type pushResult struct {
 	errors    []error
 }
 
-func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL string, strategy ConflictStrategy) (*pushResult, error) {
+func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL, pushIdentity string, strategy ConflictStrategy) (*pushResult, error) {
 	dirty, err := e.q.ListDirtySyncResources(ctx, calendarID)
 	if err != nil {
 		return nil, fmt.Errorf("list dirty: %w", err)
 	}
-
-	pushIdentity := e.resolvePushIdentity(ctx, calendarID)
 
 	result := &pushResult{}
 	for _, res := range dirty {
@@ -1574,20 +1573,14 @@ func (e *Engine) updateSyncHealth(ctx context.Context, calendarID int64, attempt
 // falls back to the linked account's username (which is the user's email
 // for both basic-auth and OAuth providers we support). Returns empty when
 // neither is known — the caller should then skip the organizer gate
-// rather than guess.
-func (e *Engine) resolvePushIdentity(ctx context.Context, calendarID int64) string {
-	cal, err := e.q.GetCalendar(ctx, calendarID)
-	if err != nil {
-		return ""
-	}
+// rather than guess. The cal and account rows are passed in by the caller
+// (already loaded by loadCalendarClient), so this performs no queries.
+func resolvePushIdentity(cal storage.Calendar, account storage.Account) string {
 	if email := strings.TrimSpace(cal.OwnerEmail); email != "" {
 		return email
 	}
 	if cal.AccountID != nil && *cal.AccountID != 0 {
-		acc, err := e.q.GetAccount(ctx, *cal.AccountID)
-		if err == nil {
-			return acc.Username
-		}
+		return account.Username
 	}
 	return ""
 }

@@ -145,7 +145,7 @@ func TestEnginePushContinuesAfterResourceFailure(t *testing.T) {
 		t.Fatalf("UpsertSyncResource push-success: %v", err)
 	}
 
-	result, err := engine.push(ctx, client, calendarID, "", ConflictServerWins)
+	result, err := engine.push(ctx, client, calendarID, "", "", ConflictServerWins)
 	if err != nil {
 		t.Fatalf("push: %v", err)
 	}
@@ -231,7 +231,7 @@ func TestEnginePushPreservesConcurrentEditDuringPut(t *testing.T) {
 		return newResponse(http.StatusCreated, map[string]string{"ETag": `"etag-new"`}), nil
 	})
 
-	if _, err := engine.push(ctx, client, calendarID, "/calendar/", ConflictServerWins); err != nil {
+	if _, err := engine.push(ctx, client, calendarID, "/calendar/", "", ConflictServerWins); err != nil {
 		t.Fatalf("push: %v", err)
 	}
 
@@ -243,6 +243,58 @@ func TestEnginePushPreservesConcurrentEditDuringPut(t *testing.T) {
 	}
 	if len(dirty) != 1 {
 		t.Fatalf("dirty after push = %d, want 1 (concurrent edit must not be dropped)", len(dirty))
+	}
+}
+
+// TestResolvePushIdentity locks in the precedence rules for the push
+// identity now that it is resolved from the already-loaded calendar and
+// account rows instead of re-querying the database: a non-empty (trimmed)
+// owner_email wins, otherwise the linked account's username is used, and
+// an unlinked calendar with no owner_email yields the empty string so the
+// caller skips the organizer gate.
+func TestResolvePushIdentity(t *testing.T) {
+	t.Parallel()
+
+	accountID := int64(7)
+	tests := []struct {
+		name    string
+		cal     storage.Calendar
+		account storage.Account
+		want    string
+	}{
+		{
+			name:    "owner email wins",
+			cal:     storage.Calendar{OwnerEmail: "owner@example.com", AccountID: &accountID},
+			account: storage.Account{Username: "login@example.com"},
+			want:    "owner@example.com",
+		},
+		{
+			name:    "owner email trimmed",
+			cal:     storage.Calendar{OwnerEmail: "  owner@example.com  ", AccountID: &accountID},
+			account: storage.Account{Username: "login@example.com"},
+			want:    "owner@example.com",
+		},
+		{
+			name:    "falls back to account username",
+			cal:     storage.Calendar{OwnerEmail: "   ", AccountID: &accountID},
+			account: storage.Account{Username: "login@example.com"},
+			want:    "login@example.com",
+		},
+		{
+			name:    "no owner email and no account is empty",
+			cal:     storage.Calendar{},
+			account: storage.Account{Username: "login@example.com"},
+			want:    "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := resolvePushIdentity(tt.cal, tt.account); got != tt.want {
+				t.Fatalf("resolvePushIdentity() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -316,7 +368,7 @@ func TestEnginePushSkipsForeignOrganizedEvents(t *testing.T) {
 		return newResponse(http.StatusCreated, map[string]string{"ETag": `"new-etag"`}), nil
 	})
 
-	result, err := engine.push(ctx, client, calendarID, "/calendar/", ConflictServerWins)
+	result, err := engine.push(ctx, client, calendarID, "/calendar/", "me@example.com", ConflictServerWins)
 	if err != nil {
 		t.Fatalf("push: %v", err)
 	}
@@ -365,7 +417,7 @@ func TestEnginePushClearsDirtyWhenLocalRowMissing(t *testing.T) {
 		return nil, nil
 	})
 
-	result, err := engine.push(ctx, client, calendarID, "/calendar/", ConflictServerWins)
+	result, err := engine.push(ctx, client, calendarID, "/calendar/", "", ConflictServerWins)
 	if err != nil {
 		t.Fatalf("push: %v", err)
 	}
@@ -809,7 +861,7 @@ END:VCALENDAR
 		t.Fatalf("UpsertSyncResource conflict-event: %v", err)
 	}
 
-	result, err := engine.push(ctx, client, calendarID, "", ConflictPrompt)
+	result, err := engine.push(ctx, client, calendarID, "", "", ConflictPrompt)
 	if err != nil {
 		t.Fatalf("push: %v", err)
 	}
@@ -928,7 +980,7 @@ END:VCALENDAR
 	}
 
 	// First sync: detects the 412 and records the conflict.
-	if _, err := engine.push(ctx, client, calendarID, "", ConflictPrompt); err != nil {
+	if _, err := engine.push(ctx, client, calendarID, "", "", ConflictPrompt); err != nil {
 		t.Fatalf("first push: %v", err)
 	}
 	if puts != 1 {
@@ -937,7 +989,7 @@ END:VCALENDAR
 
 	// Second sync: the conflict is still unresolved, so the resource must be
 	// skipped entirely — no second PUT, no duplicate conflict row.
-	result, err := engine.push(ctx, client, calendarID, "", ConflictPrompt)
+	result, err := engine.push(ctx, client, calendarID, "", "", ConflictPrompt)
 	if err != nil {
 		t.Fatalf("second push: %v", err)
 	}
@@ -1028,7 +1080,7 @@ END:VCALENDAR
 		t.Fatalf("UpsertSyncResource: %v", err)
 	}
 
-	result, err := engine.push(ctx, client, calendarID, "", ConflictServerWins)
+	result, err := engine.push(ctx, client, calendarID, "", "", ConflictServerWins)
 	if err != nil {
 		t.Fatalf("push: %v", err)
 	}
@@ -1427,7 +1479,7 @@ END:VCALENDAR
 		}
 	})
 
-	pushResult, err := engine.push(ctx, client, calendarID, "/calendar/", ConflictServerWins)
+	pushResult, err := engine.push(ctx, client, calendarID, "/calendar/", "", ConflictServerWins)
 	if err != nil {
 		t.Fatalf("push: %v", err)
 	}
@@ -1510,7 +1562,7 @@ func TestEnginePushIgnoresUIDWhenAssigningNewResourcePath(t *testing.T) {
 		}, nil
 	})
 
-	pushResult, err := engine.push(ctx, client, calendarID, "/calendar/", ConflictServerWins)
+	pushResult, err := engine.push(ctx, client, calendarID, "/calendar/", "", ConflictServerWins)
 	if err != nil {
 		t.Fatalf("push: %v", err)
 	}
@@ -1562,7 +1614,7 @@ func TestEnginePushRejectsOffOriginStoredRemoteURL(t *testing.T) {
 		return newResponse(http.StatusCreated, map[string]string{"ETag": `"etag-off-origin"`}), nil
 	})
 
-	result, err := engine.push(ctx, client, calendarID, "/calendar/", ConflictServerWins)
+	result, err := engine.push(ctx, client, calendarID, "/calendar/", "", ConflictServerWins)
 	if err != nil {
 		t.Fatalf("push: %v", err)
 	}
