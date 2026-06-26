@@ -140,7 +140,7 @@ func (f FooterModel) renderCollapsed(ctx FooterContext, width int) string {
 		return help
 	}
 	line := keyStyle.Render(top.keys) + " " + descStyle.Render(top.desc) + sepStyle.Render(" · ") + help
-	return truncateFooter(line, width)
+	return truncateTo(line, width)
 }
 
 // joinFooter splits left/right into a single line, applying ellipsis
@@ -150,7 +150,7 @@ func (f FooterModel) joinFooter(left, right string, width int) string {
 		// Narrow-but-not-collapsed: show the right side only, truncated with
 		// ellipsis. Left (sync status) is dropped to preserve hint
 		// discoverability.
-		return truncateFooter(right, width)
+		return truncateTo(right, width)
 	}
 	lw := lipgloss.Width(left)
 	rw := lipgloss.Width(right)
@@ -177,7 +177,7 @@ func (f FooterModel) RenderMinimal(width int, syncStatus, toast string, showHelp
 		right = keyStyle.Render("?") + " " + descStyle.Render("help")
 	}
 	if width < footerEllipsisCols {
-		return truncateFooter(right, width)
+		return truncateTo(right, width)
 	}
 	return f.joinFooter(syncStatus, right, width)
 }
@@ -303,21 +303,4 @@ func collapsedTopHint(ctx FooterContext) footerHint {
 		return footerHint{"space", "toggle"}
 	}
 	return footerHint{}
-}
-
-func truncateFooter(s string, width int) string {
-	if lipgloss.Width(s) <= width {
-		return s
-	}
-	if width <= 1 {
-		return ""
-	}
-	// Lipgloss handles ANSI-aware width; trim one rune at a time from the
-	// rendered form. This isn't the fastest path but fires rarely — only
-	// when the terminal is under 60 columns.
-	runes := []rune(s)
-	for len(runes) > 0 && lipgloss.Width(string(runes)) > width-1 {
-		runes = runes[:len(runes)-1]
-	}
-	return string(runes) + "…"
 }
