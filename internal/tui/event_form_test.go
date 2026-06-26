@@ -463,3 +463,36 @@ func TestEventForm_EditPreservesAttendeeMetadata(t *testing.T) {
 	assert.Equal(t, "ROOM", room.CUType)
 	assert.Equal(t, "Big Room", room.Name)
 }
+
+// TestEventForm_EditTimedMultiDayMidnightEndPreservesEnd guards against issue
+// #208: editing a timed multi-day event whose end instant is exactly midnight
+// (e.g. Apr 1 09:00 -> Apr 3 00:00, occupying Apr 1 and Apr 2) and saving with
+// no changes must not shift the end back a full day. multiDayEndDate stores the
+// last *included* day (Apr 2); the save path must re-add the exclusive midnight
+// day so the saved end is still Apr 3 00:00, not Apr 2 00:00.
+func TestEventForm_EditTimedMultiDayMidnightEndPreservesEnd(t *testing.T) {
+	origLocal := time.Local
+	time.Local = time.UTC
+	defer func() { time.Local = origLocal }()
+
+	start := time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC)
+
+	m, _ := NewEventFormModelForEdit(event.Event{
+		ID:         11,
+		CalendarID: 1,
+		Title:      "Conference",
+		StartTime:  start,
+		EndTime:    end,
+		Timezone:   "UTC",
+	}, testEventFormCalendars(), Theme{})
+
+	cmd := m.save(&m.form)
+	require.NotNil(t, cmd)
+	msg, ok := cmd().(EventFormSaveMsg)
+	require.True(t, ok)
+
+	assert.Equal(t, start, msg.StartTime)
+	assert.Truef(t, end.Equal(msg.EndTime),
+		"no-op edit shifted end: want %s, got %s", end, msg.EndTime)
+}
