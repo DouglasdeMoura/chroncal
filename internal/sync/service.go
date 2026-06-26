@@ -131,18 +131,27 @@ func (s *Service) ListConflicts(ctx context.Context) ([]Conflict, error) {
 
 // ResolveConflict resolves a conflict by picking local or server version.
 func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick string) error {
+	if pick != "server" && pick != "local" {
+		return fmt.Errorf("invalid pick: %q (use 'local' or 'server')", pick)
+	}
+
 	conflict, err := s.q.GetSyncConflict(ctx, conflictID)
 	if err != nil {
 		return fmt.Errorf("get conflict: %w", err)
 	}
 
-	switch pick {
-	case "server":
+	if pick == "server" {
 		// Accept the server version: import the recorded server iCal into the
-		// local row so it reflects the server state, then clear the pending
-		// local push and store the server ETag. Without the import the local
-		// row keeps its divergent local copy while the ETag claims it matches
-		// the server, so a later local edit silently overwrites the server.
+		// local row so it reflects the server state. Without the import the
+		// local row keeps its divergent local copy while the ETag (cleared
+		// below) claims it matches the server, so a later local edit silently
+		// overwrites the server. importICal is tombstone-aware, so a UID the
+		// user has locally deleted is not resurrected here (issue #89 gap #2).
+		//
+		// The import runs before the transaction below because it flows through
+		// the event/todo/journal services, which use their own connection.
+		// UpsertByUID is idempotent, so if the transaction fails to commit the
+		// conflict survives and the whole resolution replays cleanly.
 		imported, err := s.engine.importICal(ctx, conflict.CalendarID, conflict.ServerIcal)
 		if err != nil {
 			return fmt.Errorf("import server version: %w", err)
@@ -154,7 +163,24 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 			// branch exists to prevent. Refuse instead of resolving falsely.
 			return fmt.Errorf("server version has no importable data for %q", conflict.Uid)
 		}
-		if err := s.q.ClearSyncResourceDirty(ctx, storage.ClearSyncResourceDirtyParams{
+	}
+
+	// Wrap the dirty/etag mutation and the conflict deletion in one transaction
+	// so a failure can't half-resolve the conflict — e.g. dirty cleared with a
+	// stale ETag but the conflict still recorded, which would re-trigger an HTTP
+	// 412 loop on the next push. Issue #89 gap #3.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+
+	switch pick {
+	case "server":
+		// Clear the pending local push and adopt the server ETag now that the
+		// local row reflects the server version.
+		if err := qtx.ClearSyncResourceDirty(ctx, storage.ClearSyncResourceDirtyParams{
 			CalendarID: conflict.CalendarID,
 			Uid:        conflict.Uid,
 			Etag:       conflict.ServerEtag,
@@ -171,18 +197,19 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 		// If-Match: <ServerEtag>, which succeeds if the server is unchanged
 		// (fixing the loop) but 412s and surfaces a fresh conflict if the
 		// server was edited again after this conflict was recorded.
-		if err := s.q.MarkSyncResourceDirtyWithEtag(ctx, storage.MarkSyncResourceDirtyWithEtagParams{
+		if err := qtx.MarkSyncResourceDirtyWithEtag(ctx, storage.MarkSyncResourceDirtyWithEtagParams{
 			CalendarID: conflict.CalendarID,
 			Uid:        conflict.Uid,
 			Etag:       conflict.ServerEtag,
 		}); err != nil {
 			return fmt.Errorf("mark dirty: %w", err)
 		}
-	default:
-		return fmt.Errorf("invalid pick: %q (use 'local' or 'server')", pick)
 	}
 
-	return s.q.DeleteSyncConflict(ctx, conflictID)
+	if err := qtx.DeleteSyncConflict(ctx, conflictID); err != nil {
+		return fmt.Errorf("delete conflict: %w", err)
+	}
+	return tx.Commit()
 }
 
 // ResetCalendar clears all sync state for a calendar without deleting local data.

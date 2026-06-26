@@ -1372,11 +1372,68 @@ func (e *Engine) importICal(ctx context.Context, calendarID int64, data string) 
 	if err != nil {
 		return false, fmt.Errorf("import ical: %w", err)
 	}
+	// imported reflects whether the SERVER payload carried any component. It is
+	// computed before tombstone filtering so the empty-iCal guard in callers
+	// still fires for a genuinely empty server version, and never falsely fires
+	// just because the only component was tombstoned away.
+	imported = len(importResult.Events) > 0 || len(importResult.Todos) > 0 || len(importResult.Journals) > 0
+
+	// Tombstone-aware import: drop any UID the user has locally deleted
+	// (tombstoned, pending propagation to the server). UpsertByUID clears
+	// deleted_at, so persisting a tombstoned UID would resurrect a row the user
+	// just deleted. The pull path filters tombstoned UIDs inline (see the NOTE
+	// in db/queries/events.sql); doing the same here keeps the accept-server
+	// conflict paths — manual `sync resolve <id> server` and auto
+	// ConflictServerWins — consistent with it. Issue #89 gap #2.
+	importResult, err = e.dropTombstonedFromImport(ctx, calendarID, importResult)
+	if err != nil {
+		return false, err
+	}
 	if err := e.persistImported(ctx, calendarID, importResult); err != nil {
 		return false, err
 	}
-	imported = len(importResult.Events) > 0 || len(importResult.Todos) > 0 || len(importResult.Journals) > 0
 	return imported, nil
+}
+
+// dropTombstonedFromImport removes events/todos/journals whose UID is
+// tombstoned for the calendar, so an accept-server import never resurrects a
+// row the user has locally deleted. Returns the result unchanged when nothing
+// is tombstoned.
+func (e *Engine) dropTombstonedFromImport(ctx context.Context, calendarID int64, result icalPkg.ImportResult) (icalPkg.ImportResult, error) {
+	tombstones, err := e.q.ListTombstonesByCalendar(ctx, calendarID)
+	if err != nil {
+		return result, fmt.Errorf("list tombstones: %w", err)
+	}
+	if len(tombstones) == 0 {
+		return result, nil
+	}
+	tombstoned := make(map[string]bool, len(tombstones))
+	for _, ts := range tombstones {
+		if ts.Uid != "" {
+			tombstoned[ts.Uid] = true
+		}
+	}
+
+	result.Events = filterTombstoned(e.logger, result.Events, tombstoned, "event", func(ev event.Event) string { return ev.UID })
+	result.Todos = filterTombstoned(e.logger, result.Todos, tombstoned, "todo", func(t todo.Todo) string { return t.UID })
+	result.Journals = filterTombstoned(e.logger, result.Journals, tombstoned, "journal", func(j journal.Journal) string { return j.UID })
+
+	return result, nil
+}
+
+// filterTombstoned returns items whose UID (via uidOf) is not tombstoned,
+// logging each one it drops. The result reuses a zero-capacity head of the
+// input so append always allocates fresh and never clobbers the caller's slice.
+func filterTombstoned[T any](logger *slog.Logger, items []T, tombstoned map[string]bool, ownerType string, uidOf func(T) string) []T {
+	kept := items[:0:0]
+	for _, it := range items {
+		if uid := uidOf(it); tombstoned[uid] {
+			logger.Info("skip accept-server import: UID tombstoned locally", "uid", uid, "owner_type", ownerType)
+			continue
+		}
+		kept = append(kept, it)
+	}
+	return kept
 }
 
 func parseICalData(data []byte) (*ical.Calendar, error) {

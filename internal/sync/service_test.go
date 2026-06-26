@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -288,6 +289,92 @@ func TestService_ResolveConflict_Server(t *testing.T) {
 	}
 	if res.Etag != "etag-456" {
 		t.Fatalf("Etag = %q, want %q", res.Etag, "etag-456")
+	}
+}
+
+// TestService_ResolveConflict_ServerDoesNotResurrectDeleted is the regression
+// test for issue #89 (gap #2): accepting the server version of a conflict must
+// NOT un-delete a row the user has locally soft-deleted and tombstoned for
+// propagation. UpsertByUID clears deleted_at, so without tombstone-aware import
+// the resolve resurrects the local row and contradicts the pending delete. The
+// tombstone-safe pull path skips tombstoned UIDs; the resolve path must match.
+func TestService_ResolveConflict_ServerDoesNotResurrectDeleted(t *testing.T) {
+	svc, db, q := newTestServiceWithDB(t)
+	ctx := context.Background()
+
+	cals, _ := q.ListCalendars(ctx)
+	calID := cals[0].ID
+
+	const uid = "resolve-server-deleted-uid"
+	events := event.NewService(db, q)
+
+	created, err := events.UpsertByUID(ctx, event.UpsertParams{
+		UID:        uid,
+		CalendarID: calID,
+		Title:      "Local Title",
+		StartTime:  time.Date(2026, 4, 3, 10, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 3, 11, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("seed local event: %v", err)
+	}
+
+	// Mark the resource synced (non-empty remote_url) so deleting it queues a
+	// tombstone via CreateTombstoneIfSynced.
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calID,
+		Uid:          uid,
+		OwnerType:    "event",
+		RemoteUrl:    "https://example.com/cal/" + uid + ".ics",
+		Etag:         "etag-before",
+		Dirty:        1,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+
+	// User deletes the event locally: soft-deletes the row and queues a tombstone.
+	if err := events.Delete(ctx, created.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := events.GetByUID(ctx, uid); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("precondition: event should be soft-deleted, GetByUID err = %v", err)
+	}
+
+	// A pre-existing conflict for the same UID carries the server's version.
+	serverIcal := "BEGIN:VCALENDAR\r\n" +
+		"VERSION:2.0\r\nPRODID:-//chroncal//test//EN\r\n" +
+		"BEGIN:VEVENT\r\nUID:" + uid + "\r\n" +
+		"DTSTART:20260403T120000Z\r\nDTEND:20260403T130000Z\r\n" +
+		"SUMMARY:Server Title\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+		CalendarID: calID, OwnerType: "event", OwnerID: created.ID, Uid: uid,
+		LocalIcal: "local", ServerIcal: serverIcal, ServerEtag: "etag-456",
+	}); err != nil {
+		t.Fatalf("CreateSyncConflict: %v", err)
+	}
+
+	conflicts, _ := q.ListSyncConflicts(ctx)
+	if err := svc.ResolveConflict(ctx, conflicts[0].ID, "server"); err != nil {
+		t.Fatalf("ResolveConflict server: %v", err)
+	}
+
+	// The row must STAY deleted — the pending local delete wins, matching the
+	// tombstone-safe pull path. Resurrection here is the bug.
+	if _, err := events.GetByUID(ctx, uid); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("event was resurrected by resolve 'server'; GetByUID err = %v, want sql.ErrNoRows", err)
+	}
+
+	// The tombstone must survive so the delete still propagates to the server.
+	tombstones, _ := q.ListTombstonesByCalendar(ctx, calID)
+	if len(tombstones) != 1 {
+		t.Fatalf("tombstones = %d, want 1 (delete intent must survive)", len(tombstones))
+	}
+
+	// The conflict must be cleared so we stop looping.
+	remaining, _ := q.ListSyncConflicts(ctx)
+	if len(remaining) != 0 {
+		t.Fatalf("conflicts after resolve = %d, want 0", len(remaining))
 	}
 }
 
