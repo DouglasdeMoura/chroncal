@@ -277,7 +277,14 @@ func (s *Service) markDirtyByID(ctx context.Context, journalID int64) {
 
 func (s *Service) Create(ctx context.Context, p CreateParams) (Journal, error) {
 	p.applyDefaults()
-	r, err := s.q.CreateJournal(ctx, storage.CreateJournalParams{
+
+	qtx, commit, rollback, err := s.txscope(ctx)
+	if err != nil {
+		return Journal{}, err
+	}
+	defer rollback()
+
+	r, err := qtx.CreateJournal(ctx, storage.CreateJournalParams{
 		Uid:            uuid.New().String(),
 		CalendarID:     p.CalendarID,
 		Summary:        p.Summary,
@@ -298,17 +305,27 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Journal, error) {
 		return Journal{}, err
 	}
 	j := fromStorage(r)
-	if err := s.ReplaceCategories(ctx, j.ID, timeutil.ParseCategoryList(p.Categories)); err != nil {
+	if err := replaceCategoriesTx(ctx, qtx, j.ID, timeutil.ParseCategoryList(p.Categories)); err != nil {
 		return Journal{}, fmt.Errorf("replace categories: %w", err)
 	}
+	if err := commit(); err != nil {
+		return Journal{}, fmt.Errorf("commit create journal: %w", err)
+	}
 	j.Categories = p.Categories
-	_ = storage.MarkResourceDirty(ctx, s.db, j.CalendarID, j.UID, "journal")
+	_ = storage.MarkResourceDirty(ctx, s.dirtyExec(), j.CalendarID, j.UID, "journal")
 	return j, nil
 }
 
 func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Journal, error) {
 	p.Status, p.Class = defaults(p.Status, p.Class)
-	r, err := s.q.UpdateJournal(ctx, storage.UpdateJournalParams{
+
+	qtx, commit, rollback, err := s.txscope(ctx)
+	if err != nil {
+		return Journal{}, err
+	}
+	defer rollback()
+
+	r, err := qtx.UpdateJournal(ctx, storage.UpdateJournalParams{
 		ID:             id,
 		Summary:        p.Summary,
 		Description:    storage.StringToNullable(p.Description),
@@ -327,17 +344,27 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Journal
 		return Journal{}, err
 	}
 	j := fromStorage(r)
-	if err := s.ReplaceCategories(ctx, j.ID, timeutil.ParseCategoryList(p.Categories)); err != nil {
+	if err := replaceCategoriesTx(ctx, qtx, j.ID, timeutil.ParseCategoryList(p.Categories)); err != nil {
 		return Journal{}, fmt.Errorf("replace categories: %w", err)
 	}
+	if err := commit(); err != nil {
+		return Journal{}, fmt.Errorf("commit update journal: %w", err)
+	}
 	j.Categories = p.Categories
-	_ = storage.MarkResourceDirty(ctx, s.db, j.CalendarID, j.UID, "journal")
+	_ = storage.MarkResourceDirty(ctx, s.dirtyExec(), j.CalendarID, j.UID, "journal")
 	return j, nil
 }
 
 func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Journal, error) {
 	p.applyDefaults()
-	r, err := s.q.UpsertJournalByUID(ctx, storage.UpsertJournalByUIDParams{
+
+	qtx, commit, rollback, err := s.txscope(ctx)
+	if err != nil {
+		return Journal{}, err
+	}
+	defer rollback()
+
+	r, err := qtx.UpsertJournalByUID(ctx, storage.UpsertJournalByUIDParams{
 		Uid:            p.UID,
 		CalendarID:     p.CalendarID,
 		Summary:        p.Summary,
@@ -358,8 +385,11 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Journal, err
 		return Journal{}, err
 	}
 	j := fromStorage(r)
-	if err := s.ReplaceCategories(ctx, j.ID, timeutil.ParseCategoryList(p.Categories)); err != nil {
+	if err := replaceCategoriesTx(ctx, qtx, j.ID, timeutil.ParseCategoryList(p.Categories)); err != nil {
 		return Journal{}, fmt.Errorf("replace categories: %w", err)
+	}
+	if err := commit(); err != nil {
+		return Journal{}, fmt.Errorf("commit upsert journal: %w", err)
 	}
 	j.Categories = p.Categories
 	return j, nil
@@ -621,6 +651,19 @@ func (s *Service) ReplaceCategories(ctx context.Context, journalID int64, catego
 	}
 	defer rollback()
 
+	if err := replaceCategoriesTx(ctx, qtx, journalID, categories); err != nil {
+		return err
+	}
+	if err := commit(); err != nil {
+		return fmt.Errorf("commit replace categories: %w", err)
+	}
+	return nil
+}
+
+// replaceCategoriesTx replaces a journal's categories using a tx-bound Queries.
+// It does not open or commit a transaction, so callers can compose it with the
+// journal row write inside a single transaction.
+func replaceCategoriesTx(ctx context.Context, qtx *storage.Queries, journalID int64, categories []string) error {
 	if err := qtx.DeleteCategoriesByJournalID(ctx, journalID); err != nil {
 		return fmt.Errorf("delete categories: %w", err)
 	}
@@ -632,9 +675,6 @@ func (s *Service) ReplaceCategories(ctx context.Context, journalID int64, catego
 		if err != nil {
 			return fmt.Errorf("create category: %w", err)
 		}
-	}
-	if err := commit(); err != nil {
-		return fmt.Errorf("commit replace categories: %w", err)
 	}
 	return nil
 }
