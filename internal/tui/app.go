@@ -1302,6 +1302,21 @@ func (m Model) innerDims() (int, int) {
 	return mw - padding*2, mh - padding*2
 }
 
+// clearConfirmPending drops the pending state owned by a destructive confirm
+// (event delete, trash purge, calendar delete). Used when ctrl+c abandons such
+// a confirm in favor of the quit confirm, so the destructive action can never
+// fire afterward.
+func (m Model) clearConfirmPending() Model {
+	m.pendingDelete = event.Event{}
+	m.pendingPurgeEntries = nil
+	m.pendingPurgeTitle = ""
+	m.pendingCalendarDelete = 0
+	m.pendingCalendarDeleteName = ""
+	m.pendingCalendarPromote = 0
+	m.pendingCalendarPromoteName = ""
+	return m
+}
+
 // openQuitConfirm builds and opens the quit-confirm dialog. Shared by the
 // q and ctrl+c entry points so the two keystrokes can't drift in styling.
 func (m Model) openQuitConfirm() Model {
@@ -1326,9 +1341,14 @@ func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.oauthFlow.Abort() // release any in-flight OAuth listener
 			return m, tea.Quit, true
 		}
-		if !m.confirmOpen {
-			return m.openQuitConfirm(), nil, true
-		}
+		// ctrl+c is truly global: even when a destructive (non-quit)
+		// confirm — event delete, trash purge, calendar delete — owns
+		// input, replace it with the quit confirm rather than letting the
+		// keystroke fall through to confirmDialog.Update (which ignores
+		// it). Clearing the abandoned confirm's pending state keeps the
+		// destructive action from firing later.
+		m = m.clearConfirmPending()
+		return m.openQuitConfirm(), nil, true
 	}
 	textEntryActive := m.paletteOpen || m.formOpen || m.calendarDialogOpen || m.oauthFlowOpen
 	if key.Matches(msg, m.keys.Quit) && !m.confirmOpen && !textEntryActive {
