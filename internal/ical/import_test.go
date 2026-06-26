@@ -239,6 +239,36 @@ END:VCALENDAR`
 	}
 }
 
+// Regression test for issue #297: RDATE;VALUE=PERIOD values must not be
+// silently dropped. RFC 5545 §3.8.5.2 permits period-form RDATEs; at minimum
+// the start instant of each period must be captured as a recurrence date.
+func TestImport_EventRDATEPeriod(t *testing.T) {
+	t.Parallel()
+	ics := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:rdate-period
+DTSTAMP:20260401T100000Z
+DTSTART:20260401T090000Z
+DTEND:20260401T100000Z
+RRULE:FREQ=WEEKLY;COUNT=2
+RDATE;VALUE=PERIOD:19960403T020000Z/19960403T040000Z,19960404T010000Z/PT3H
+SUMMARY:Period RDATE
+END:VEVENT
+END:VCALENDAR`
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %d, want 1", len(result.Events))
+	}
+	if got := result.Events[0].RDates; got != "1996-04-03T02:00:00Z,1996-04-04T01:00:00Z" {
+		t.Fatalf("RDates = %q, want %q", got, "1996-04-03T02:00:00Z,1996-04-04T01:00:00Z")
+	}
+}
+
 func TestImport_AllDayEvent(t *testing.T) {
 	t.Parallel()
 	result, _ := ImportFile(strings.NewReader(allDayEventICS))
