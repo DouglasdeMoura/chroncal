@@ -543,7 +543,9 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		return err
 	}
 
-	if td.RecurrenceRule != "" && td.RecurrenceID == "" {
+	// RDATE-only masters (no RRULE) are recurring too, so guard on either rule
+	// or RDATEs; otherwise their overrides would be orphaned (#415).
+	if (td.RecurrenceRule != "" || td.RDates != "") && td.RecurrenceID == "" {
 		overrides, err := s.q.ListTodoOverridesByUID(ctx, td.UID)
 		if err != nil {
 			return fmt.Errorf("check overrides: %w", err)
