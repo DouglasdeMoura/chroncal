@@ -2072,7 +2072,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					SetSize(m.width, m.height)
 				return m, m.loadEvents()
 			}
-			dayEvents := eventsOn(m.events, msg.Day)
+			dayEvents := eventsOn(filterVisibleEvents(m.events, m.hiddenCalendars), msg.Day)
 			m.dialog = NewEventDialogModel(msg.Day, dayEvents, m.calendars, newThemedHelp(m.theme)).
 				SetSelectedColor(m.theme.Selected).
 				SetSize(m.width, m.height)
@@ -2087,7 +2087,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					SetSize(m.width, m.height)
 				return m, m.loadEvents()
 			}
-			dayEvents := eventsOn(m.events, msg.Day)
+			dayEvents := eventsOn(filterVisibleEvents(m.events, m.hiddenCalendars), msg.Day)
 			m.dialog = NewEventDialogModel(msg.Day, dayEvents, m.calendars, newThemedHelp(m.theme)).
 				SetSelectedColor(m.theme.Selected).
 				SetSize(m.width, m.height)
@@ -2101,7 +2101,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				SetSize(m.width, m.height)
 			return m, m.loadEvents()
 		}
-		dayEvents := eventsOn(m.events, msg.Day)
+		dayEvents := eventsOn(filterVisibleEvents(m.events, m.hiddenCalendars), msg.Day)
 		m.dialog = NewEventDialogModel(msg.Day, dayEvents, m.calendars, newThemedHelp(m.theme)).
 			SetSelectedColor(m.theme.Selected).
 			SetSize(m.width, m.height)
