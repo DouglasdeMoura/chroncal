@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -210,6 +211,15 @@ func TestRunAlarmCheckEmitsNoFiredRecordOnLostClaim(t *testing.T) {
 	}
 	if len(records) != 0 {
 		t.Fatalf("checker B emitted %d record(s) on a lost claim, want 0: %s", len(records), bOut.String())
+	}
+
+	// The wire shape must be an empty JSON array, not null (issue #217). A
+	// non-empty due set whose alarms all lose the claim race left results as a
+	// nil slice, which json.Encode renders as `null` and breaks consumers
+	// doing `jq '.[]'`. This must match the zero-due-set branch, which emits
+	// `[]`. json.Unmarshal accepts both null and [], so assert the raw shape.
+	if got := strings.TrimSpace(bOut.String()); got != "[]" {
+		t.Fatalf("checker B JSON shape on all-claims-lost = %q, want %q", got, "[]")
 	}
 }
 

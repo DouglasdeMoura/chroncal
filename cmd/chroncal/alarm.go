@@ -278,7 +278,10 @@ func runAlarmCheck(ctx context.Context, a *app.App, w io.Writer, now time.Time, 
 		return nil
 	}
 
-	var results []map[string]any
+	// Non-nil so the JSON branch emits [] (not null) when every due alarm is
+	// suppressed (lost-claim race or mark failure), matching the zero-due-set
+	// branch above and keeping the wire shape stable for consumers (issue #217).
+	results := []map[string]any{}
 	for _, da := range due {
 		res := markAndFireEventAlarm(ctx, a, da, policy)
 		if !res.Fired {
