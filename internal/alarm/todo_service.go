@@ -46,8 +46,15 @@ func NewTodoService(db *sql.DB, q *storage.Queries, todos TodoAlarmLister) *Todo
 // CheckTodos finds due alarms for todos within the stale threshold window.
 // Recurring todos are expanded via RRULE so alarms fire for each occurrence.
 func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueAlarm, error) {
+	// Widen the forward window for lead times beyond the base window so todos
+	// far in the future (e.g. -P1W on a todo due in 7 days) still fire.
+	triggers, err := s.q.ListDistinctTodoAlarmTriggers(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list todo alarm triggers: %w", err)
+	}
+	forward := baseForwardWindow + maxLeadTime(triggers)
 	windowStart := now.Add(-StaleThreshold - 24*time.Hour)
-	windowEnd := now.Add(StaleThreshold + 24*time.Hour)
+	windowEnd := now.Add(forward)
 
 	rows, err := s.q.ListAllTodos(ctx)
 	if err != nil {

@@ -18,6 +18,35 @@ import (
 // StaleThreshold is the maximum age of an unfired alarm before it is skipped.
 const StaleThreshold = 24 * time.Hour
 
+// baseForwardWindow is the minimum distance past `now` that the expansion
+// window reaches, before accounting for configured alarm lead times. It covers
+// the common short reminders (-PT15M, -P1D, …) without a DB scan and provides
+// a safety margin for DST/day-arithmetic drift in the lead-time estimate.
+const baseForwardWindow = StaleThreshold + 24*time.Hour
+
+// maxLeadTime returns how far in the future an event/todo instance may sit and
+// still have an alarm due now, derived from the configured trigger durations.
+// triggerAt = instanceTime + offset, so an alarm is due now (triggerAt ~= now)
+// when instanceTime = now - offset; only negative offsets ("N before") push the
+// instance into the future, and the largest such magnitude bounds the window.
+// Absolute (RFC 3339) and zero/positive triggers contribute nothing. RELATED=END
+// is ignored because it only ever needs a *smaller* forward window than START
+// (the event end is later than its start), so treating every trigger as START
+// is a safe over-estimate.
+func maxLeadTime(triggers []string) time.Duration {
+	ref := time.Now()
+	var longest time.Duration
+	for _, trig := range triggers {
+		if duration.Validate(trig) != nil {
+			continue // absolute or malformed trigger: not a relative lead time
+		}
+		if lead := ref.Sub(duration.Add(ref, trig)); lead > longest {
+			longest = lead
+		}
+	}
+	return longest
+}
+
 // DueAlarm represents an alarm that should fire now.
 type DueAlarm struct {
 	Event     event.Event
@@ -73,7 +102,19 @@ type MissedTodoAlarm struct {
 // (no alarm_state / todo_alarm_state entry) and are past the stale threshold.
 func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.Duration) ([]MissedAlarm, []MissedTodoAlarm, error) {
 	windowStart := now.Add(-lookback)
-	windowEnd := now
+
+	// Extend windowEnd by the longest alarm lead time so a still-future event
+	// whose (now-stale) trigger already passed is expanded and reported missed.
+	// Future triggers are filtered out downstream by collectMissedTriggers.
+	eventTriggers, err := s.q.ListDistinctAlarmTriggers(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	todoTriggers, err := s.q.ListDistinctTodoAlarmTriggers(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	windowEnd := now.Add(maxLeadTime(append(eventTriggers, todoTriggers...)))
 
 	// --- Event alarms ---
 	recurSvc := recurrence.NewService(s.db, s.q)
@@ -216,8 +257,15 @@ func (s *Service) todoAlarmStateExists(ctx context.Context, alarmID int64, trigg
 
 // checkEventAlarms finds due event alarms
 func (s *Service) checkEventAlarms(ctx context.Context, now time.Time) ([]DueAlarm, error) {
+	// Size the forward window so events whose alarm lead time exceeds the base
+	// window (e.g. -P1W on an event 7 days out) are still expanded and fire.
+	triggers, err := s.q.ListDistinctAlarmTriggers(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list alarm triggers: %w", err)
+	}
+	forward := baseForwardWindow + maxLeadTime(triggers)
 	windowStart := now.Add(-StaleThreshold - 24*time.Hour)
-	windowEnd := now.Add(StaleThreshold + 24*time.Hour)
+	windowEnd := now.Add(forward)
 
 	recurSvc := recurrence.NewService(s.db, s.q)
 	expandedEvents, err := recurSvc.ListExpandedEvents(ctx, windowStart, windowEnd, recurrence.SkipCategories())

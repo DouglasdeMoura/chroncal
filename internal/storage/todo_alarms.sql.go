@@ -81,6 +81,33 @@ func (q *Queries) DeleteTodoAlarmsByTodoID(ctx context.Context, todoID int64) er
 	return err
 }
 
+const listDistinctTodoAlarmTriggers = `-- name: ListDistinctTodoAlarmTriggers :many
+SELECT DISTINCT trigger_value FROM todo_alarms
+`
+
+func (q *Queries) ListDistinctTodoAlarmTriggers(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listDistinctTodoAlarmTriggers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var trigger_value string
+		if err := rows.Scan(&trigger_value); err != nil {
+			return nil, err
+		}
+		items = append(items, trigger_value)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTodoAlarmsByTodoID = `-- name: ListTodoAlarmsByTodoID :many
 SELECT id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype FROM todo_alarms WHERE todo_id = ? ORDER BY id
 `

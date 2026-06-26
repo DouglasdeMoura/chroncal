@@ -5,6 +5,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *;
 -- name: ListAlarmsByEventID :many
 SELECT * FROM event_alarms WHERE event_id = ? ORDER BY id;
 
+-- name: ListDistinctAlarmTriggers :many
+SELECT DISTINCT trigger_value FROM event_alarms;
+
 -- name: ListAlarmsByEventIDs :many
 SELECT * FROM event_alarms WHERE event_id IN (sqlc.slice(event_ids)) ORDER BY event_id, id;
 

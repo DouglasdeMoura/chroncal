@@ -328,3 +328,37 @@ func TestListExpiredTodoSnoozed(t *testing.T) {
 		t.Errorf("expired snoozed = %d, want 1", len(expired))
 	}
 }
+
+// TestCheckTodos_FiresLongLeadTimeAlarm guards issue #98 on the todo path: a
+// todo due 7 days out with a "1 week before" alarm must fire now even though
+// the todo instance is far past the base forward window. Uses the real todo
+// service so the DB-backed trigger scan that sizes the window is exercised.
+func TestCheckTodos_FiresLongLeadTimeAlarm(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	todoSvc := todo.NewService(db, q)
+	ctx := context.Background()
+
+	due := time.Now().Add(7 * 24 * time.Hour)
+	td, err := todoSvc.Create(ctx, todo.CreateParams{
+		CalendarID: 1,
+		Summary:    "Far Deadline",
+		DueDate:    due.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("create todo: %v", err)
+	}
+	if err := todoSvc.ReplaceAlarms(ctx, td.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-P1W", Description: "1 week reminder"},
+	}); err != nil {
+		t.Fatalf("replace alarms: %v", err)
+	}
+
+	todoAlarmSvc := NewTodoService(db, q, todoSvc)
+	got, err := todoAlarmSvc.CheckTodos(ctx, time.Now())
+	if err != nil {
+		t.Fatalf("check todos: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d due todo alarms, want 1 (long-lead-time alarm missed)", len(got))
+	}
+}

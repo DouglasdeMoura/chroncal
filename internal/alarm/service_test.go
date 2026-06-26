@@ -1096,6 +1096,44 @@ func TestCheckMissed_SkipsNotYetStaleTodo(t *testing.T) {
 	}
 }
 
+// TestCheck_FiresLongLeadTimeAlarm guards issue #98: an alarm with a lead time
+// beyond the fixed 48h expansion window (e.g. -P1W on an event 7 days out)
+// must still fire when its trigger time arrives. The event instance sits far
+// past now+48h, so a fixed window silently drops it.
+func TestCheck_FiresLongLeadTimeAlarm(t *testing.T) {
+	svc, evtSvc := newTestServices(t)
+	ctx := context.Background()
+
+	// Event starts in exactly 7 days; a "1 week before" alarm is due now.
+	start := time.Now().Add(7 * 24 * time.Hour)
+	e, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "Far Meeting",
+		StartTime:  start,
+		EndTime:    start.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-P1W", Description: "1 week reminder"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	due, _, err := svc.Check(ctx, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 1 {
+		t.Fatalf("got %d due alarms, want 1 (long-lead-time alarm missed)", len(due))
+	}
+	if due[0].Event.ID != e.ID {
+		t.Errorf("event ID = %d, want %d", due[0].Event.ID, e.ID)
+	}
+}
+
 func mustLoadLocation(name string) *time.Location {
 	loc, err := time.LoadLocation(name)
 	if err != nil {

@@ -215,6 +215,33 @@ func (q *Queries) ListAlarmsWithEmptyUID(ctx context.Context) ([]EventAlarm, err
 	return items, nil
 }
 
+const listDistinctAlarmTriggers = `-- name: ListDistinctAlarmTriggers :many
+SELECT DISTINCT trigger_value FROM event_alarms
+`
+
+func (q *Queries) ListDistinctAlarmTriggers(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listDistinctAlarmTriggers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var trigger_value string
+		if err := rows.Scan(&trigger_value); err != nil {
+			return nil, err
+		}
+		items = append(items, trigger_value)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateAlarmAcknowledged = `-- name: UpdateAlarmAcknowledged :exec
 UPDATE event_alarms SET acknowledged = ? WHERE id = ? AND event_id = ?
 `
