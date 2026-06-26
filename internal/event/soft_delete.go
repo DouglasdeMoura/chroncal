@@ -394,7 +394,7 @@ func clearMasterEXDATE(ctx context.Context, qtx *storage.Queries, uid, recurrenc
 		return fmt.Errorf("parse recurrence_id %q: %w", recurrenceID, err)
 	}
 	existing := ParseTimeList(storage.NullableToString(master.Exdates))
-	filtered := removeTimeFromList(existing, target)
+	filtered := timeutil.RemoveTimeFromList(existing, target)
 	if len(filtered) != len(existing) {
 		if err := qtx.UpdateEventExdates(ctx, storage.UpdateEventExdatesParams{
 			Exdates: storage.StringToNullable(SerializeTimeList(filtered)),

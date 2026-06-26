@@ -127,6 +127,26 @@ func SerializeTimeList(times []time.Time) string {
 	return strings.Join(parts, ",")
 }
 
+// RemoveTimeFromList returns list with the first element equal to target
+// (after UTC normalization) removed. Used to reverse a single EXDATE
+// insertion: soft-delete appends exactly one EXDATE per delete, so undo must
+// drop exactly one — removing every match would discard a pre-existing
+// exclusion for the same slot (e.g. an imported EXDATE alongside a detached
+// override). Shared by the event, todo, and journal restore paths.
+func RemoveTimeFromList(list []time.Time, target time.Time) []time.Time {
+	out := make([]time.Time, 0, len(list))
+	targetKey := target.UTC().Format(time.RFC3339)
+	removed := false
+	for _, t := range list {
+		if !removed && strings.EqualFold(t.UTC().Format(time.RFC3339), targetKey) {
+			removed = true
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
 // JoinCategoryList joins category values into a single comma-separated string,
 // backslash-escaping any backslash or comma inside an individual value so the
 // result is an exact inverse of ParseCategoryList. This keeps a category that

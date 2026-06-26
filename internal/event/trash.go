@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/storage"
@@ -269,7 +268,7 @@ func (s *Service) restoreInstanceByLogID(ctx context.Context, logID int64) error
 	if err != nil {
 		return fmt.Errorf("parse recurrence_id %q: %w", log.RecurrenceID, err)
 	}
-	filtered := removeTimeFromList(existing, target)
+	filtered := timeutil.RemoveTimeFromList(existing, target)
 	if err := qtx.UpdateEventExdates(ctx, storage.UpdateEventExdatesParams{
 		Exdates: storage.StringToNullable(SerializeTimeList(filtered)),
 		ID:      master.ID,
@@ -328,23 +327,4 @@ func (s *Service) restoreTruncationByLogID(ctx context.Context, logID int64) err
 		return fmt.Errorf("mark resource dirty: %w", err)
 	}
 	return tx.Commit()
-}
-
-// removeTimeFromList returns list with the first element equal to target
-// (after UTC normalization) removed. Used to reverse a single EXDATE
-// insertion: DeleteInstance appends one EXDATE per delete, so undo must drop
-// exactly one — removing every match would discard a pre-existing exclusion
-// for the same slot (e.g. an imported EXDATE alongside a detached override).
-func removeTimeFromList(list []time.Time, target time.Time) []time.Time {
-	out := make([]time.Time, 0, len(list))
-	targetKey := target.UTC().Format(time.RFC3339)
-	removed := false
-	for _, t := range list {
-		if !removed && strings.EqualFold(t.UTC().Format(time.RFC3339), targetKey) {
-			removed = true
-			continue
-		}
-		out = append(out, t)
-	}
-	return out
 }

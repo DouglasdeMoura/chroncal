@@ -3,6 +3,7 @@ package timeutil
 import (
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestCategoryListRoundtrip(t *testing.T) {
@@ -70,5 +71,69 @@ func TestJoinCategoryList_EscapesAndDropsEmpty(t *testing.T) {
 	}
 	if got := JoinCategoryList([]string{"a", "  ", "", "b"}); got != "a,b" {
 		t.Errorf("JoinCategoryList dropped-empty = %q, want %q", got, "a,b")
+	}
+}
+
+func TestRemoveTimeFromList(t *testing.T) {
+	t.Parallel()
+	mustParse := func(s string) time.Time {
+		v, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			t.Fatalf("parse %q: %v", s, err)
+		}
+		return v
+	}
+	keys := func(times []time.Time) []string {
+		out := make([]string, len(times))
+		for i, v := range times {
+			out[i] = v.UTC().Format(time.RFC3339)
+		}
+		return out
+	}
+	cases := []struct {
+		name   string
+		list   []time.Time
+		target time.Time
+		want   []string
+	}{
+		{
+			name:   "removes single match",
+			list:   []time.Time{mustParse("2026-04-01T10:00:00Z"), mustParse("2026-04-02T10:00:00Z")},
+			target: mustParse("2026-04-01T10:00:00Z"),
+			want:   []string{"2026-04-02T10:00:00Z"},
+		},
+		{
+			name:   "drops only the first of a duplicate pair",
+			list:   []time.Time{mustParse("2026-04-01T10:00:00Z"), mustParse("2026-04-01T10:00:00Z")},
+			target: mustParse("2026-04-01T10:00:00Z"),
+			want:   []string{"2026-04-01T10:00:00Z"},
+		},
+		{
+			name:   "matches across timezone offsets after UTC normalization",
+			list:   []time.Time{mustParse("2026-04-01T12:00:00+02:00")},
+			target: mustParse("2026-04-01T10:00:00Z"),
+			want:   []string{},
+		},
+		{
+			name:   "no match leaves list unchanged",
+			list:   []time.Time{mustParse("2026-04-01T10:00:00Z")},
+			target: mustParse("2026-04-02T10:00:00Z"),
+			want:   []string{"2026-04-01T10:00:00Z"},
+		},
+		{
+			name:   "empty list",
+			list:   nil,
+			target: mustParse("2026-04-01T10:00:00Z"),
+			want:   []string{},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := keys(RemoveTimeFromList(tc.list, tc.target))
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("RemoveTimeFromList = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

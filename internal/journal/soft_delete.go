@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/storage"
@@ -95,7 +94,7 @@ func clearMasterEXDATE(ctx context.Context, qtx *storage.Queries, uid, recurrenc
 		return fmt.Errorf("parse recurrence_id %q: %w", recurrenceID, err)
 	}
 	existing := timeutil.ParseTimeList(storage.NullableToString(master.Exdates))
-	filtered := removeTimeFromList(existing, target)
+	filtered := timeutil.RemoveTimeFromList(existing, target)
 	if len(filtered) != len(existing) {
 		if err := qtx.UpdateJournalExdates(ctx, storage.UpdateJournalExdatesParams{
 			Exdates: storage.StringToNullable(timeutil.SerializeTimeList(filtered)),
@@ -108,25 +107,6 @@ func clearMasterEXDATE(ctx context.Context, qtx *storage.Queries, uid, recurrenc
 		return fmt.Errorf("delete exdate log: %w", err)
 	}
 	return nil
-}
-
-// removeTimeFromList returns list with the first element equal to target
-// (after UTC normalization) removed. Used to reverse an EXDATE insertion
-// when restoring a recurring override: a delete added exactly one EXDATE, so
-// restore strips exactly one — any duplicate (e.g. a pre-existing imported
-// exclusion at the same slot) is preserved. Mirrors event.removeTimeFromList.
-func removeTimeFromList(list []time.Time, target time.Time) []time.Time {
-	out := make([]time.Time, 0, len(list))
-	targetKey := target.UTC().Format(time.RFC3339)
-	removed := false
-	for _, t := range list {
-		if !removed && strings.EqualFold(t.UTC().Format(time.RFC3339), targetKey) {
-			removed = true
-			continue
-		}
-		out = append(out, t)
-	}
-	return out
 }
 
 // RestoreByUID un-hides every soft-deleted row sharing uid — master plus
