@@ -783,7 +783,7 @@ func buildVTimezone(tzID string) (*ical.Component, error) {
 		return fmt.Sprintf("%s%02d%02d", sign, secs/3600, (secs%3600)/60)
 	}
 
-	addSubComp := func(compName, tzName string, offset, fromOffset int, dtstart time.Time) {
+	addSubComp := func(compName, tzName string, offset, fromOffset int, dtstart time.Time, rrule string) {
 		comp := ical.NewComponent(compName)
 
 		p := &ical.Prop{Name: ical.PropDateTimeStart}
@@ -802,13 +802,23 @@ func buildVTimezone(tzID string) (*ical.Component, error) {
 		p.Value = tzName
 		comp.Props.Set(p)
 
+		// A yearly RRULE makes the transition apply to every year rather than
+		// the single export year, so events far in the past/future still
+		// resolve the right offset from the embedded VTIMEZONE (RFC 5545
+		// Section 3.6.5).
+		if rrule != "" {
+			p = &ical.Prop{Name: ical.PropRecurrenceRule}
+			p.Value = rrule
+			comp.Props.Set(p)
+		}
+
 		vtz.Children = append(vtz.Children, comp)
 	}
 
 	if len(transitions) == 0 {
 		// No DST — single STANDARD component
 		addSubComp("STANDARD", janName, janOffset, janOffset,
-			time.Date(refYear, 1, 1, 0, 0, 0, 0, loc))
+			time.Date(refYear, 1, 1, 0, 0, 0, 0, loc), "")
 	} else {
 		for _, tr := range transitions {
 			// The transition was detected between month M-1 and M, but the
@@ -818,7 +828,8 @@ func buildVTimezone(tzID string) (*ical.Component, error) {
 			if tr.offset > tr.fromOffset {
 				compName = "DAYLIGHT"
 			}
-			addSubComp(compName, tr.name, tr.offset, tr.fromOffset, dtstart)
+			addSubComp(compName, tr.name, tr.offset, tr.fromOffset, dtstart,
+				transitionRRULE(dtstart))
 		}
 	}
 
@@ -842,6 +853,25 @@ func findTransitionDay(loc *time.Location, year int, detectedMonth time.Month, p
 		}
 	}
 	return searchEnd
+}
+
+// transitionRRULE builds a yearly RFC 5545 recurrence rule describing when a
+// DST transition repeats, derived from the weekday-of-month of dtstart. Most
+// IANA zones transition on a fixed ordinal weekday (e.g. "2nd Sunday of March"
+// -> FREQ=YEARLY;BYMONTH=3;BYDAY=2SU). When the weekday is the last such
+// weekday of the month, BYDAY uses -1 (e.g. last Sunday -> BYDAY=-1SU), which
+// also matches the common European rule.
+func transitionRRULE(dtstart time.Time) string {
+	weekdays := [...]string{"SU", "MO", "TU", "WE", "TH", "FR", "SA"}
+	wd := weekdays[dtstart.Weekday()]
+	month := int(dtstart.Month())
+	// Last occurrence of this weekday in the month? (One week later spills
+	// into the next month.)
+	if dtstart.AddDate(0, 0, 7).Month() != dtstart.Month() {
+		return fmt.Sprintf("FREQ=YEARLY;BYMONTH=%d;BYDAY=-1%s", month, wd)
+	}
+	nth := (dtstart.Day()-1)/7 + 1
+	return fmt.Sprintf("FREQ=YEARLY;BYMONTH=%d;BYDAY=%d%s", month, nth, wd)
 }
 
 // setAttendeeParams adds RFC 5545 ATTENDEE parameters beyond the base CN/PARTSTAT/ROLE.

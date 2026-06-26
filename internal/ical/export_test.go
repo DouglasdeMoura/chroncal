@@ -319,6 +319,44 @@ func TestExport_VTimezonePresent(t *testing.T) {
 	}
 }
 
+func TestExport_VTimezoneRecurringTransitions(t *testing.T) {
+	t.Parallel()
+	// An event years away from "now" must still get a VTIMEZONE whose
+	// transitions cover its date. Emitting recurring RRULE transition rules
+	// (rather than one-shot DTSTARTs in the current year) satisfies this.
+	events := []event.Event{{
+		UID:       "vtz-recurring",
+		Title:     "Future TZ Event",
+		StartTime: time.Date(2035, 7, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2035, 7, 1, 15, 0, 0, 0, time.UTC),
+		Timezone:  "America/New_York",
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}}
+
+	data, _ := ExportEvents(events, "")
+	ics := string(data)
+
+	if !strings.Contains(ics, "BEGIN:VTIMEZONE") {
+		t.Fatalf("missing VTIMEZONE block:\n%s", ics)
+	}
+	// DST transitions must be expressed as yearly recurrence rules so the
+	// VTIMEZONE applies to every year, not just the export year.
+	if !strings.Contains(ics, "RRULE:FREQ=YEARLY") {
+		t.Errorf("VTIMEZONE missing recurring RRULE transition:\n%s", ics)
+	}
+	// America/New_York: DST begins the 2nd Sunday of March, ends the 1st
+	// Sunday of November.
+	if !strings.Contains(ics, "FREQ=YEARLY;BYMONTH=3;BYDAY=2SU") {
+		t.Errorf("missing DAYLIGHT transition rule (2nd Sunday of March):\n%s", ics)
+	}
+	if !strings.Contains(ics, "FREQ=YEARLY;BYMONTH=11;BYDAY=1SU") {
+		t.Errorf("missing STANDARD transition rule (1st Sunday of November):\n%s", ics)
+	}
+}
+
 func TestExport_VTimezoneNoDST(t *testing.T) {
 	t.Parallel()
 	// Asia/Kolkata does not observe DST
