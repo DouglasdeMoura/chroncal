@@ -54,12 +54,21 @@ func inWindow(t, from, to time.Time) bool {
 
 // overlapsWindow reports whether the half-open interval [start, end) intersects
 // [from, to). This matches the SQL range predicate (start_time < to AND
-// end_time > from) used for non-recurring events, so a multi-day override that
-// spans into the window is not dropped just because its start precedes it.
-// (Regular RRULE instances are still matched by their start via rrule.Between;
-// aligning those with overlap is a broader, separate change.)
+// end_time > from) used for non-recurring events, so a multi-day instance or
+// override that spans into the window is not dropped just because its start
+// precedes it. Regular RRULE instances are filtered by this same overlap in
+// ExpandEvent/ExpandTodo, generating from from-duration so a straddling
+// occurrence is produced before being kept.
 func overlapsWindow(start, end, from, to time.Time) bool {
 	return start.Before(to) && end.After(from)
+}
+
+// keepOccurrence reports whether an expanded occurrence at occ with instance
+// duration dur belongs in the half-open window [from, to): its [occ, occ+dur)
+// interval overlaps the window, or (for a zero-duration occurrence whose open
+// end boundary overlapsWindow would reject) occ itself falls inside it.
+func keepOccurrence(occ time.Time, dur time.Duration, from, to time.Time) bool {
+	return overlapsWindow(occ, occ.Add(dur), from, to) || inWindow(occ, from, to)
 }
 
 // canonicalRecurrenceID normalizes a stored recurrence_id to the same UTC
@@ -216,12 +225,20 @@ func ExpandEvent(evt event.Event, from, to time.Time) []ExpandedEvent {
 		rdateSet[rd] = struct{}{}
 	}
 
-	// Get all occurrences in range [from, to)
-	occurrences := set.Between(localFrom, localTo, true)
-	// Enforce half-open upper bound: exclude occurrences exactly at 'to'.
+	// A multi-day instance whose start precedes 'from' can still overlap the
+	// window via its duration, so begin generation one instance-duration early
+	// and keep occurrences by [start, end) overlap rather than start alone.
+	dur := evt.EndTime.Sub(evt.StartTime)
+	if dur < 0 {
+		dur = 0
+	}
+
+	// Get all occurrences that could overlap [from, to).
+	occurrences := set.Between(localFrom.Add(-dur), localTo, true)
+	// Keep occurrences whose [start, start+dur) interval overlaps the window.
 	filtered := occurrences[:0]
 	for _, occ := range occurrences {
-		if occ.Before(localTo) {
+		if keepOccurrence(occ, dur, localFrom, localTo) {
 			filtered = append(filtered, occ)
 		}
 	}
@@ -1005,10 +1022,20 @@ func ExpandTodo(td todo.Todo, from, to time.Time) []ExpandedTodo {
 		rdateSet[rd] = struct{}{}
 	}
 
-	occurrences := set.Between(localFrom, localTo, true)
+	// A todo spanning START->DUE can straddle the window start, so generate
+	// from from-duration and keep occurrences by [start, end) overlap. The
+	// span is the START->DUE distance; a due-only (point) todo has none.
+	dur := time.Duration(0)
+	if start := td.ParseStartDate(); !start.IsZero() {
+		if due := td.ParseDueDate(); !due.IsZero() && due.After(start) {
+			dur = due.Sub(start)
+		}
+	}
+
+	occurrences := set.Between(localFrom.Add(-dur), localTo, true)
 	filteredOcc := occurrences[:0]
 	for _, occ := range occurrences {
-		if occ.Before(localTo) {
+		if keepOccurrence(occ, dur, localFrom, localTo) {
 			filteredOcc = append(filteredOcc, occ)
 		}
 	}

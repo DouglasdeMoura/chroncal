@@ -9,6 +9,32 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
+func TestExpandEvent_MultiDayInstanceStraddlingWindowStart(t *testing.T) {
+	// A weekly 3-day on-call block: Friday 09:00 -> Sunday 09:00.
+	friday := time.Date(2026, 4, 3, 9, 0, 0, 0, time.UTC) // first Friday
+	evt := event.Event{
+		ID:             1,
+		UID:            "oncall-weekly",
+		Title:          "On-call",
+		StartTime:      friday,
+		EndTime:        friday.AddDate(0, 0, 2), // Sunday 09:00 (48h span)
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=FR;COUNT=4",
+	}
+
+	// Query a window that opens Saturday: the block began Friday (before the
+	// window) but runs through Sunday, so it overlaps and must appear.
+	from := time.Date(2026, 4, 4, 0, 0, 0, 0, time.UTC) // Saturday
+	to := time.Date(2026, 4, 5, 0, 0, 0, 0, time.UTC)   // Sunday 00:00
+
+	instances := ExpandEvent(evt, from, to)
+	if len(instances) != 1 {
+		t.Fatalf("ExpandEvent() = %d instances, want 1 (straddling instance dropped)", len(instances))
+	}
+	if !instances[0].InstanceTime.Equal(friday) {
+		t.Errorf("instance start = %v, want %v", instances[0].InstanceTime, friday)
+	}
+}
+
 func TestExpandDailyEvent(t *testing.T) {
 	base := time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
 	evt := event.Event{
