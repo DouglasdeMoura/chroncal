@@ -525,6 +525,14 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		qtx := s.q.WithTx(tx)
 
 		master, err := qtx.GetTodoByUID(ctx, td.UID)
+		// A genuine lookup error (e.g. SQLITE_BUSY) must not collapse into the
+		// "no master" path: that would soft-delete the override while skipping
+		// its EXDATE/provenance bookkeeping, resurrecting the occurrence via
+		// series expansion (issue #290). Only a missing master (ErrNoRows)
+		// legitimately skips the bookkeeping.
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("get master: %w", err)
+		}
 		if err == nil {
 			existing := timeutil.ParseTimeList(storage.NullableToString(master.Exdates))
 			recIDTime, parseErr := timeutil.ParseRecurrenceID(td.RecurrenceID)
@@ -590,6 +598,12 @@ func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
 	// whose next sync would DELETE it from the server (issue #107). A missing
 	// master means there is nothing to track.
 	master, mErr := qtx.GetTodoByUID(ctx, uid)
+	// Only ErrNoRows means "no master to track"; a genuine lookup error must
+	// abort so the series isn't soft-deleted locally without a tombstone or
+	// dirty mark, which would let it resurface on the next pull (issue #290).
+	if mErr != nil && !errors.Is(mErr, sql.ErrNoRows) {
+		return fmt.Errorf("get master: %w", mErr)
+	}
 	haveMaster := mErr == nil
 	if haveMaster {
 		if _, err := storage.CreateTombstoneIfSynced(ctx, tx, master.CalendarID, uid); err != nil {
