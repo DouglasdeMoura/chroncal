@@ -80,9 +80,14 @@ func (s *Service) ListTrash(ctx context.Context, calendarID int64) ([]TrashEntry
 		return nil, fmt.Errorf("list truncate deletes: %w", err)
 	}
 
+	deletedEvents := make([]Event, len(evts))
+	for i, r := range evts {
+		deletedEvents[i] = fromStorage(r)
+	}
+	s.populateCategories(ctx, deletedEvents)
+
 	entries := make([]TrashEntry, 0, len(evts)+len(instLogs)+len(truncLogs))
-	for _, r := range evts {
-		ev := fromStorage(r)
+	for _, ev := range deletedEvents {
 		deletedAt := time.Time{}
 		if ev.DeletedAt != nil {
 			deletedAt = *ev.DeletedAt
@@ -107,19 +112,26 @@ func (s *Service) ListTrash(ctx context.Context, calendarID int64) ([]TrashEntry
 	// For log rows, look up the master (including soft-deleted) once per
 	// UID so the trash dialog can render full context — title, location,
 	// description, status — without the user having to open a second view.
+	// Fetch each distinct master once, then batch category population into a
+	// single query rather than one per master.
 	masters := make(map[string]*Event, len(instLogs)+len(truncLogs))
-	lookupMaster := func(uid string) *Event {
-		if m, ok := masters[uid]; ok {
-			return m
-		}
-		if r, err := s.q.GetEventByUIDIncludingDeleted(ctx, uid); err == nil {
-			ev := fromStorage(r)
-			masters[uid] = &ev
-			return &ev
-		}
-		masters[uid] = nil
-		return nil
+	for _, l := range instLogs {
+		masters[l.Uid] = nil
 	}
+	for _, l := range truncLogs {
+		masters[l.Uid] = nil
+	}
+	masterList := make([]Event, 0, len(masters))
+	for uid := range masters {
+		if r, err := s.q.GetEventByUIDIncludingDeleted(ctx, uid); err == nil {
+			masterList = append(masterList, fromStorage(r))
+		}
+	}
+	s.populateCategories(ctx, masterList)
+	for i := range masterList {
+		masters[masterList[i].UID] = &masterList[i]
+	}
+	lookupMaster := func(uid string) *Event { return masters[uid] }
 
 	for _, l := range instLogs {
 		inst, _ := time.Parse(time.RFC3339, l.RecurrenceID)

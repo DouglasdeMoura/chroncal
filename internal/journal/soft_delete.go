@@ -184,7 +184,9 @@ func (s *Service) ListDeleted(ctx context.Context, calendarID int64) ([]Journal,
 	if err != nil {
 		return nil, err
 	}
-	return fromStorageSlice(rows), nil
+	journals := fromStorageSlice(rows)
+	s.populateCategories(ctx, journals)
+	return journals, nil
 }
 
 // GetIncludingDeleted returns a journal by ID even if it has been soft-
