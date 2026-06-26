@@ -599,6 +599,35 @@ END:VCALENDAR`
 	}
 }
 
+func TestImport_MalformedDuration(t *testing.T) {
+	t.Parallel()
+	ics := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:bad-dur-test
+DTSTAMP:20260401T100000Z
+DTSTART:20260401T140000Z
+DURATION:garbage
+SUMMARY:Bad Duration Event
+END:VEVENT
+END:VCALENDAR`
+	result, _ := ImportFile(strings.NewReader(ics))
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %d", len(result.Events))
+	}
+	e := result.Events[0]
+	if !e.EndTime.After(e.StartTime) {
+		t.Errorf("EndTime = %s is not after StartTime = %s; want sane fallback",
+			e.EndTime.Format(time.RFC3339), e.StartTime.Format(time.RFC3339))
+	}
+	if want := e.StartTime.Add(time.Hour); !e.EndTime.Equal(want) {
+		t.Errorf("EndTime = %s, want fallback %s", e.EndTime.Format(time.RFC3339), want.Format(time.RFC3339))
+	}
+	if e.DurationValue != "" {
+		t.Errorf("DurationValue = %q, want empty (malformed value should be cleared)", e.DurationValue)
+	}
+}
+
 func TestImport_Attach(t *testing.T) {
 	t.Parallel()
 	ics := `BEGIN:VCALENDAR
