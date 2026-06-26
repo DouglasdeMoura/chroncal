@@ -193,6 +193,36 @@ func TestQuantitySelectField_DefaultsToOneWeek(t *testing.T) {
 	assert.Equal(t, "WEEKLY", f.Value())
 }
 
+func TestQuantitySelectField_PluralizesUnitByAmount(t *testing.T) {
+	f := NewQuantitySelectField([]SelectOption{
+		{Label: "Day", PluralLabel: "Days", Value: "DAILY"},
+		{Label: "Week", PluralLabel: "Weeks", Value: "WEEKLY"},
+	}, 1) // default Week
+
+	f.SetAmount("1")
+	one := mouseSweep(f.View())
+	assert.Contains(t, one, "Week")
+	assert.NotContains(t, one, "Weeks")
+
+	f.SetAmount("2")
+	many := mouseSweep(f.View())
+	assert.Contains(t, many, "Weeks")
+}
+
+func TestRecurrenceEditor_RepeatEveryPluralizesUnit(t *testing.T) {
+	m := NewRecurrenceEditorModel(time.Date(2026, 4, 24, 0, 0, 0, 0, time.UTC), 120, 40, Theme{})
+	m.eachField.SetSelected(0) // Daily
+
+	m.eachField.SetAmount("1")
+	one := mouseSweep(m.eachField.View())
+	assert.Contains(t, one, "Day")
+	assert.NotContains(t, one, "Days")
+
+	m.eachField.SetAmount("2")
+	many := mouseSweep(m.eachField.View())
+	assert.Contains(t, many, "Days")
+}
+
 func TestQuantitySelectField_ValidateRequiresPositiveInteger(t *testing.T) {
 	f := NewQuantitySelectField([]SelectOption{
 		{Label: "Day", Value: "DAILY"},
