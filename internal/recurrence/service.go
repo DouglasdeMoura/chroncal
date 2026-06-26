@@ -849,11 +849,14 @@ type EventListParams struct {
 }
 
 // ListFilteredEvents returns events matching all supplied filters. Calendar,
-// status, and date-range filters compose freely. Recurring events are always
-// expanded within the date range, with overrides applied.
+// status, and date-range filters compose freely. When a date range is
+// provided, recurring events are expanded within it, with overrides applied;
+// otherwise recurring masters are returned as-is, matching the
+// todo/journal contract.
 func (s *Service) ListFilteredEvents(ctx context.Context, p EventListParams) ([]event.Event, error) {
 	fromStr := ""
 	toStr := ""
+	hasRange := !p.From.IsZero() || !p.To.IsZero()
 	if !p.From.IsZero() {
 		fromStr = p.From.Format(time.RFC3339)
 	}
@@ -887,7 +890,13 @@ func (s *Service) ListFilteredEvents(ctx context.Context, p EventListParams) ([]
 	if err != nil {
 		return nil, err
 	}
-	result = append(result, s.expandRecurringRows(ctx, recurringRows, p.From, p.To)...)
+	if hasRange {
+		result = append(result, s.expandRecurringRows(ctx, recurringRows, p.From, p.To)...)
+	} else {
+		for _, row := range recurringRows {
+			result = append(result, eventFromRow(row))
+		}
+	}
 
 	s.populateEventCategories(ctx, result)
 	sort.Slice(result, func(i, j int) bool {

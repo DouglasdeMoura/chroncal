@@ -522,6 +522,61 @@ func TestListExpandedByDateRange_CancelledOverride(t *testing.T) {
 	}
 }
 
+func TestListFilteredEvents_DefaultIncludesRecurring(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	eventsSvc := event.NewService(db, q)
+	recurSvc := NewService(db, q)
+	ctx := context.Background()
+
+	// Recurring weekly event.
+	_, err := eventsSvc.Create(ctx, event.CreateParams{
+		CalendarID:     1,
+		Title:          "Weekly Sync",
+		StartTime:      time.Date(2020, 1, 6, 9, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2020, 1, 6, 10, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
+	})
+	if err != nil {
+		t.Fatalf("create recurring: %v", err)
+	}
+
+	// Non-recurring event.
+	_, err = eventsSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "One-off Meeting",
+		StartTime:  time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("create one-off: %v", err)
+	}
+
+	// Default list with no date range must include recurring masters,
+	// mirroring the todo/journal contract.
+	events, err := recurSvc.ListFilteredEvents(ctx, EventListParams{})
+	if err != nil {
+		t.Fatalf("ListFilteredEvents: %v", err)
+	}
+
+	if len(events) != 2 {
+		for i, e := range events {
+			t.Logf("  events[%d]: %s start=%s rrule=%s", i, e.Title, e.StartTime, e.RecurrenceRule)
+		}
+		t.Fatalf("got %d events, want 2", len(events))
+	}
+
+	found := map[string]bool{}
+	for _, e := range events {
+		found[e.Title] = true
+	}
+	if !found["Weekly Sync"] {
+		t.Error("missing recurring event 'Weekly Sync'")
+	}
+	if !found["One-off Meeting"] {
+		t.Error("missing one-off event 'One-off Meeting'")
+	}
+}
+
 func TestListFilteredTodos_DefaultIncludesRecurring(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	todoSvc := todo.NewService(db, q)
