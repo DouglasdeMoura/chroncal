@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	lipgloss "charm.land/lipgloss/v2"
 )
 
 func makeListDialogFixture() ListDialogModel {
@@ -219,5 +220,57 @@ func TestListDialog_SelectionChangeResetsScroll(t *testing.T) {
 	m = m.MoveDown()
 	if got := m.body.YOffset(); got != 0 {
 		t.Errorf("changing selection should reset scroll, got YOffset = %d", got)
+	}
+}
+
+// TestListDialog_ActionAtPositionWidthMatchesRender verifies that the
+// action-bar hit-test uses the actual rendered button width (lipgloss
+// Padding+Margin) rather than len(label)+2.
+//
+// The bug: ActionAtPosition modelled each button as w=len(label)+2 and
+// advanced cx by w+1.  DefaultButtonStyles uses Padding(0,2) (+4 cells)
+// and MarginRight(1) (+1 cell), so the real per-button width is len+5.
+// The undercount accumulates left-to-right, eventually routing a click
+// inside a safe button's pill into the next (possibly destructive) button.
+//
+// Concrete failure (trash dialog, [Restore, Purge]):
+//   - len("Restore")+2 = 9; buggy "Restore" range: [ox, ox+9)
+//   - After buggy advance: "Purge" starts at ox+10
+//   - Actual rendered "Restore" width = len+5 = 12; real range [ox, ox+12)
+//   - Clicking at ox+10 is inside "Restore"'s pill, but the bug routes it
+//     to "Purge" (the destructive button).
+func TestListDialog_ActionAtPositionWidthMatchesRender(t *testing.T) {
+	m := NewListDialogModel(newThemedHelp(NewTheme(false))).
+		SetSize(120, 30).
+		SetTitle("Trash").
+		SetRows([]string{"deleted item"}).
+		SetActions([]ListDialogAction{
+			{Label: "Restore", Msg: func() tea.Msg { return "restore" }},
+			{Label: "Purge", Danger: true, Msg: func() tea.Msg { return "purge" }},
+		})
+
+	ox, oy := m.actionBarOrigin()
+
+	// ox+10 is inside "Restore"'s actual pill (real width=12) but past the
+	// buggy boundary (len("Restore")+2=9).  With the bug the click routes
+	// to "Purge"; after the fix it must route to "Restore" (index 0).
+	clickX := ox + len("Restore") + 3 // = ox+10; within pill, past buggy width
+	idx, ok := m.ActionAtPosition(clickX, oy)
+	if !ok {
+		t.Fatalf("ActionAtPosition(%d,%d): no match; click is inside Restore's pill", clickX, oy)
+	}
+	if idx != 0 {
+		t.Errorf("ActionAtPosition(%d,%d) = %d, want 0 (Restore); "+
+			"a click inside Restore's pill must not route to Purge (1)", clickX, oy, idx)
+	}
+
+	// Sanity-check: a click clearly inside "Purge" must still return 1.
+	bs := DefaultButtonStyles()
+	restoreW := lipgloss.Width(bs.Normal.Render("Restore", false))
+	purgeStartX := ox + restoreW + 1 // +1 for the strings.Join(" ") separator
+	purgeIdx, purgeOK := m.ActionAtPosition(purgeStartX+1, oy)
+	if !purgeOK || purgeIdx != 1 {
+		t.Errorf("ActionAtPosition(%d,%d) = (%d, %v), want (1, true): "+
+			"click inside Purge's pill must route to Purge", purgeStartX+1, oy, purgeIdx, purgeOK)
 	}
 }
