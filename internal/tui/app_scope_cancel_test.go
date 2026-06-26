@@ -69,3 +69,30 @@ func TestChoiceDialogCancel_NoSpuriousReopenOnNextUpdate(t *testing.T) {
 	require.False(t, reopened,
 		"spurious EventViewRequestedMsg must not be dispatched after scope-dialog cancel")
 }
+
+// Regression (#407): the defensive out-of-bounds branch of the
+// calendar-promote choice handler must clear all four promote fields, just
+// like the cancel path. Otherwise a stale pendingCalendarPromoteName leaks
+// into the next calendar-delete confirm text.
+func TestChoiceDialogPromoteOOB_ClearsAllPendingFields(t *testing.T) {
+	m := Model{
+		pendingScopeKind:            pendingScopeCalendarPromote,
+		pendingCalendarDelete:       7,
+		pendingCalendarDeleteName:   "Work",
+		pendingCalendarPromote:      9,
+		pendingCalendarPromoteName:  "Home",
+		pendingCalendarPromoteCands: nil, // empty: any non-negative Choice is OOB
+	}
+
+	// Choice 0 with no candidates triggers the defensive OOB branch.
+	updated, _ := m.Update(ChoiceDialogResultMsg{Choice: 0})
+	m = updated.(Model)
+
+	require.Equal(t, int64(0), m.pendingCalendarDelete)
+	require.Equal(t, "", m.pendingCalendarDeleteName)
+	require.Equal(t, int64(0), m.pendingCalendarPromote,
+		"OOB branch must clear pendingCalendarPromote")
+	require.Equal(t, "", m.pendingCalendarPromoteName,
+		"OOB branch must clear pendingCalendarPromoteName")
+	require.Nil(t, m.pendingCalendarPromoteCands)
+}
