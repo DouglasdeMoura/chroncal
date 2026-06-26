@@ -471,6 +471,7 @@ func (m RecurrenceEditorModel) HandleEndsDateMouse(msg tea.MouseClickMsg, picker
 	const buttonRowRY = 8
 	if ry == buttonRowRY {
 		mmX := msg.X - ox - 2
+		innerW := pickerBoxW - 4
 		bs := DefaultButtonStyles()
 		cancelW := lipgloss.Width(bs.Normal.Render("Cancel", false))
 		okW := lipgloss.Width(bs.Normal.Render("Ok", false))
