@@ -70,7 +70,7 @@ CANCELLED entries.`,
 			defer a.Close()
 			ctx := context.Background()
 
-			from, to, err := parseDateRange(fromStr, toStr)
+			from, to, err := parseListDateRange(fromStr, toStr)
 			if err != nil {
 				return err
 			}
@@ -116,8 +116,8 @@ CANCELLED entries.`,
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "filter by calendar name")
 	cmd.Flags().StringVar(&status, "status", "", "filter by status (DRAFT, FINAL, CANCELLED)")
 	cmd.Flags().BoolVar(&all, "all", false, "include cancelled entries (hidden by default)")
-	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD, default: today)")
-	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 30 days from now)")
+	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD); with no date flags, past entries are included")
+	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 30 days after --from)")
 	cmd.Flags().BoolVar(&compact, "compact", false, "one line per entry (DATE  SUMMARY)")
 	cmd.Flags().BoolVar(&includeDeleted, "include-deleted", false, "include soft-deleted journals (see `journal restore`)")
 	return cmd

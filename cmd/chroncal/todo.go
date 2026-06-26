@@ -69,7 +69,7 @@ By default completed and cancelled todos are hidden unless you pass
 			defer a.Close()
 			ctx := context.Background()
 
-			from, to, err := parseDateRange(fromStr, toStr)
+			from, to, err := parseListDateRange(fromStr, toStr)
 			if err != nil {
 				return err
 			}
@@ -115,8 +115,8 @@ By default completed and cancelled todos are hidden unless you pass
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "filter by calendar name")
 	cmd.Flags().StringVar(&status, "status", "", "filter by status (NEEDS-ACTION, IN-PROCESS, COMPLETED, CANCELLED)")
 	cmd.Flags().BoolVar(&all, "all", false, "include completed and cancelled")
-	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD, default: today)")
-	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 30 days from now)")
+	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD); with no date flags, overdue todos are included")
+	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 30 days after --from)")
 	cmd.Flags().BoolVar(&compact, "compact", false, "one line per todo ([STATUS] DUE  TITLE)")
 	cmd.Flags().BoolVar(&includeDeleted, "include-deleted", false, "include soft-deleted todos (see `todo restore`)")
 	return cmd
