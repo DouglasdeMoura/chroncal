@@ -232,6 +232,10 @@ func (m *TimezonePickerModel) applyFilter() {
 	if m.cursor >= len(m.filtered) {
 		m.cursor = max(len(m.filtered)-1, 0)
 	}
+	// Clamp offset so it never exceeds the maximum valid scroll position for
+	// the new (smaller) result set; otherwise ensureVisible only shrinks
+	// offset to the cursor position, which can leave top results off-screen.
+	m.offset = min(m.offset, max(len(m.filtered)-tzPickerVisibleRows, 0))
 	m.ensureVisible()
 }
 
