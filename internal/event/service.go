@@ -752,15 +752,21 @@ func (s *Service) deleteFromInstance(ctx context.Context, uid string, instanceTi
 		return "", fmt.Errorf("get master: %w", err)
 	}
 
+	// An RDATE-only master (no RRULE) has no recurrence rule to truncate.
+	// Synthesizing an "UNTIL=..." here would be an invalid bare RRULE that fails
+	// to parse, collapsing the whole series to its DTSTART (issue #414). Leave
+	// the rule NULL; the future-override soft-delete and truncation record below
+	// still apply.
 	prevRRule := storage.NullableToString(master.RecurrenceRule)
-	until := instanceTime.UTC().Add(-time.Second)
-	rule := setRRuleUntil(prevRRule, until, master.AllDay == 1)
-
-	if err := qtx.UpdateEventRecurrenceRule(ctx, storage.UpdateEventRecurrenceRuleParams{
-		RecurrenceRule: storage.StringToNullable(rule),
-		ID:             master.ID,
-	}); err != nil {
-		return "", fmt.Errorf("update rrule: %w", err)
+	if prevRRule != "" {
+		until := instanceTime.UTC().Add(-time.Second)
+		rule := setRRuleUntil(prevRRule, until, master.AllDay == 1)
+		if err := qtx.UpdateEventRecurrenceRule(ctx, storage.UpdateEventRecurrenceRuleParams{
+			RecurrenceRule: storage.StringToNullable(rule),
+			ID:             master.ID,
+		}); err != nil {
+			return "", fmt.Errorf("update rrule: %w", err)
+		}
 	}
 
 	cutoff := instanceTime.UTC().Format(time.RFC3339)
@@ -1045,15 +1051,19 @@ func updateFromInstanceTx(ctx context.Context, qtx *storage.Queries, uid string,
 		return Event{}, 0, fmt.Errorf("get master: %w", err)
 	}
 
+	// An RDATE-only master (no RRULE) has no recurrence rule to truncate;
+	// synthesizing an "UNTIL=..." would corrupt it into an unparseable RRULE
+	// (issue #414). Leave the rule NULL when there is nothing to truncate.
 	prevRRule := storage.NullableToString(master.RecurrenceRule)
-	until := instanceTime.UTC().Add(-time.Second)
-	truncatedRule := setRRuleUntil(prevRRule, until, master.AllDay == 1)
-
-	if err := qtx.UpdateEventRecurrenceRule(ctx, storage.UpdateEventRecurrenceRuleParams{
-		RecurrenceRule: storage.StringToNullable(truncatedRule),
-		ID:             master.ID,
-	}); err != nil {
-		return Event{}, 0, fmt.Errorf("truncate master rrule: %w", err)
+	if prevRRule != "" {
+		until := instanceTime.UTC().Add(-time.Second)
+		truncatedRule := setRRuleUntil(prevRRule, until, master.AllDay == 1)
+		if err := qtx.UpdateEventRecurrenceRule(ctx, storage.UpdateEventRecurrenceRuleParams{
+			RecurrenceRule: storage.StringToNullable(truncatedRule),
+			ID:             master.ID,
+		}); err != nil {
+			return Event{}, 0, fmt.Errorf("truncate master rrule: %w", err)
+		}
 	}
 
 	cutoff := instanceTime.UTC().Format(time.RFC3339)
@@ -1120,6 +1130,12 @@ func setRRuleUntil(rule string, until time.Time, allDay bool) string {
 	parts := strings.Split(rule, ";")
 	out := parts[:0]
 	for _, p := range parts {
+		// strings.Split("", ";") yields [""]; that empty element must not
+		// survive, or it would join into a leading ";" separator and a bogus
+		// ";UNTIL=..." RRULE (issue #414).
+		if p == "" {
+			continue
+		}
 		if !strings.HasPrefix(strings.ToUpper(p), "UNTIL=") && !strings.HasPrefix(strings.ToUpper(p), "COUNT=") {
 			out = append(out, p)
 		}
