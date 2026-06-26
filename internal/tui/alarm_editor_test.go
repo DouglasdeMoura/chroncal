@@ -248,3 +248,25 @@ func TestAlarmEditor_EditPreservesAfterSignRelatedAndXProps(t *testing.T) {
 	require.Len(t, got.XProperties, 1, "X-properties must survive an edit")
 	assert.Equal(t, "X-APPLE-DEFAULT-ALARM", got.XProperties[0].Name)
 }
+
+func TestAlarmEditor_AuthorsAfterTrigger(t *testing.T) {
+	// A brand-new alarm defaults to "before"; the user must be able to flip
+	// the timing toggle to author an RFC 5545 positive ("after") trigger.
+	m := NewAlarmListEditorModel(nil, 80, 24, Theme{})
+	m, _ = m.Update(keyMsg("n"))
+	require.Equal(t, alarmModeEdit, m.mode)
+
+	// Tab off the offset field (amount -> unit -> next field) to land on the
+	// before/after timing toggle, then switch it from "before" to "after".
+	m, _ = m.Update(keyMsg("tab"))
+	m, _ = m.Update(keyMsg("tab"))
+	m, _ = m.Update(keyMsg("right"))
+
+	m, cmd := m.Update(keyMsg("ctrl+s"))
+	require.NotNil(t, cmd)
+	m, _ = m.Update(cmd())
+
+	require.Len(t, m.Alarms(), 1)
+	assert.Equal(t, "PT15M", m.Alarms()[0].TriggerValue,
+		"toggling the timing field must produce a positive (after-anchor) trigger")
+}
