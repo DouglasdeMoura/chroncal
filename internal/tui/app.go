@@ -513,7 +513,7 @@ func NewModel(a *app.App, themeName string) Model {
 		undoStack:          NewUndoStack(),
 		toast:              NewToastModel(theme),
 		footer:             NewFooterModel(theme),
-		clockTickScheduled: clockTickEnabledFor(vm),
+		clockTickScheduled: true,
 		oauthFlow:          NewOAuthFlowModel(theme),
 	}
 }
@@ -1190,16 +1190,11 @@ func nextClockTick(token int) tea.Cmd {
 	})
 }
 
-func clockTickEnabledFor(mode viewMode) bool {
-	return mode == viewDay || mode == viewWeek
-}
-
-func (m Model) clockTickEnabled() bool {
-	return clockTickEnabledFor(m.viewMode)
-}
-
+// scheduleClockTick arms the once-a-minute tick if one isn't already pending.
+// Every view runs it: day/week need it to advance the now-line, and all views
+// need it so the "today" cell highlight follows the midnight day rollover.
 func (m Model) scheduleClockTick() (Model, tea.Cmd) {
-	if !m.clockTickEnabled() || m.clockTickScheduled {
+	if m.clockTickScheduled {
 		return m, nil
 	}
 	m.clockTickToken++
@@ -1207,11 +1202,19 @@ func (m Model) scheduleClockTick() (Model, tea.Cmd) {
 	return m, nextClockTick(m.clockTickToken)
 }
 
-func (m Model) disableClockTick() Model {
-	if m.clockTickScheduled {
-		m.clockTickToken++
-		m.clockTickScheduled = false
-	}
+// refreshToday recomputes the local "today" date and propagates it into every
+// view model. The views render their "today" highlight from these stored
+// fields, so without this they freeze on the date captured at startup once the
+// app is left open across midnight. Day view's grid and the sidebar mini-month
+// recompute today at render time and are already immune; refreshing the stored
+// fields keeps week, month, and agenda current and ensures a later view switch
+// carries the right date.
+func (m Model) refreshToday(now time.Time) Model {
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	m.day.today = today
+	m.week.today = today
+	m.agenda.today = today
+	m.calendar.today = today
 	return m
 }
 
@@ -1477,9 +1480,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.clockTickScheduled = false
-		if !m.clockTickEnabled() {
-			return m, nil
-		}
+		m = m.refreshToday(time.Now())
 		return m.scheduleClockTick()
 	}
 
@@ -3660,14 +3661,10 @@ func (m Model) switchToView(mode viewMode) (tea.Model, tea.Cmd) {
 		}
 	}
 	cmds := []tea.Cmd{m.switchView()}
-	if m.clockTickEnabled() {
-		var cmd tea.Cmd
-		m, cmd = m.scheduleClockTick()
-		if cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-	} else {
-		m = m.disableClockTick()
+	var cmd tea.Cmd
+	m, cmd = m.scheduleClockTick()
+	if cmd != nil {
+		cmds = append(cmds, cmd)
 	}
 	return m, tea.Batch(cmds...)
 }
