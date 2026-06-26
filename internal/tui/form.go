@@ -2265,6 +2265,24 @@ func (f Form) FormStaticField(i int) *StaticField {
 
 // Private
 
+// focusedSelect returns the SelectField behind a generic "select:prev/next"
+// arrow click for the given field, or nil if the field doesn't currently own
+// a focused select. It unwraps the RecurrenceOnField composite, whose nested
+// monthly select renders those same generic targets.
+func focusedSelect(field FormField) *SelectField {
+	switch fld := field.(type) {
+	case *SelectField:
+		if fld.focused {
+			return fld
+		}
+	case *RecurrenceOnField:
+		if fld.mode == RecurrenceOnMonthly && fld.monthly.focused {
+			return fld.monthly
+		}
+	}
+	return nil
+}
+
 func (f Form) handleClick(target string) (Form, tea.Cmd) {
 	if target == "" {
 		return f, nil
@@ -2273,19 +2291,23 @@ func (f Form) handleClick(target string) (Form, tea.Cmd) {
 	// Select arrow clicks: find the SelectField that owns the arrow,
 	// focus it, and simulate the corresponding keypress.
 	if target == "select:prev" || target == "select:next" {
+		key := "right"
+		if target == "select:prev" {
+			key = "left"
+		}
 		for i := range f.items {
-			if sf, ok := f.items[i].Field.(*SelectField); ok && sf.focused {
-				var cmd tea.Cmd
-				if target == "select:prev" {
-					cmd = sf.Update(keyMsg("left"))
-				} else {
-					cmd = sf.Update(keyMsg("right"))
-				}
-				if f.onRebuild != nil {
-					f.onRebuild(&f)
-				}
-				return f, cmd
+			// A focused RecurrenceOnField in monthly mode renders its nested
+			// monthly select's arrows with these same generic targets, so
+			// resolve against it too — not only top-level SelectFields.
+			sf := focusedSelect(f.items[i].Field)
+			if sf == nil {
+				continue
 			}
+			cmd := sf.Update(keyMsg(key))
+			if f.onRebuild != nil {
+				f.onRebuild(&f)
+			}
+			return f, cmd
 		}
 		return f, nil
 	}

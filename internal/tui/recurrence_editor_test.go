@@ -70,6 +70,35 @@ func TestRecurrenceEditor_MonthlyOnFieldUpdatesRule(t *testing.T) {
 	assert.Equal(t, "FREQ=MONTHLY;BYDAY=4FR", m.BuildRule())
 }
 
+func TestRecurrenceEditor_MonthlyOnFieldArrowClickAdvancesSelection(t *testing.T) {
+	m := NewRecurrenceEditorModel(time.Date(2026, 4, 24, 0, 0, 0, 0, time.UTC), 120, 40, Theme{})
+	m.eachField.SetSelected(2) // Monthly
+	m.syncFromForm()
+
+	onIdx := -1
+	for i, item := range m.form.items {
+		if item.Label == "On" {
+			onIdx = i
+			break
+		}
+	}
+	require.NotEqual(t, -1, onIdx)
+
+	// Focus the On field so its nested monthly select is focused, matching
+	// the state when the user clicks its ◀ / ▶ arrows.
+	m.form, _ = m.form.focusIndex(onIdx)
+	require.Equal(t, RecurrenceOnMonthly, m.onField.Mode())
+	require.Equal(t, 0, m.onField.MonthlyMode())
+
+	// Clicking the ▶ arrow must advance the selection (day N → Nth-weekday).
+	m.form, _ = m.form.handleClick("select:next")
+	assert.Equal(t, 1, m.onField.MonthlyMode())
+
+	// Clicking the ◀ arrow must move it back.
+	m.form, _ = m.form.handleClick("select:prev")
+	assert.Equal(t, 0, m.onField.MonthlyMode())
+}
+
 func TestRecurrenceEditor_EachFieldIntervalAndUnitUpdateRule(t *testing.T) {
 	m := NewRecurrenceEditorModel(time.Date(2026, 4, 24, 0, 0, 0, 0, time.UTC), 120, 40, Theme{})
 	m.eachField.SetAmount("2")
