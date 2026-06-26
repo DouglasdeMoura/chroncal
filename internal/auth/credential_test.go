@@ -97,6 +97,14 @@ func TestPlaintextFileStore_GetMissing(t *testing.T) {
 	}
 }
 
+func TestPlaintextFileStore_GetMissingReturnsErrNotFound(t *testing.T) {
+	store := &PlaintextFileStore{dir: t.TempDir()}
+	_, err := store.Get(999)
+	if !errors.Is(err, errCredentialNotFound) {
+		t.Errorf("Get for non-existent account should satisfy errors.Is(err, errCredentialNotFound), got %v", err)
+	}
+}
+
 func TestPlaintextFileStore_DeleteMissing(t *testing.T) {
 	store := &PlaintextFileStore{dir: t.TempDir()}
 	// Deleting a non-existent credential should not error
@@ -268,7 +276,7 @@ func TestNewCredentialStore_MigratesLegacyPlaintextCredentials(t *testing.T) {
 		t.Fatalf("Get returned %+v", got)
 	}
 
-	if _, err := legacyStore.Get(99); !errors.Is(err, os.ErrNotExist) {
+	if _, err := legacyStore.Get(99); !errors.Is(err, errCredentialNotFound) {
 		t.Fatalf("legacy credential should be removed after migration, got %v", err)
 	}
 	if len(backing) == 0 {
