@@ -26,6 +26,9 @@ func (q *Queries) ClearSyncResourceDirty(ctx context.Context, arg ClearSyncResou
 
 const createTombstone = `-- name: CreateTombstone :exec
 INSERT INTO tombstones (calendar_id, uid, remote_url) VALUES (?, ?, ?)
+ON CONFLICT(calendar_id, uid) DO UPDATE SET
+    remote_url = excluded.remote_url,
+    deleted_at = excluded.deleted_at
 `
 
 type CreateTombstoneParams struct {

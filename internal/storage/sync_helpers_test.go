@@ -148,6 +148,52 @@ func TestCreateTombstoneIfSynced_CreatesTombstone(t *testing.T) {
 	}
 }
 
+func TestCreateTombstoneIfSynced_DedupesRepeatedDeletes(t *testing.T) {
+	db, q, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	cals, _ := q.ListCalendars(ctx)
+	calID := cals[0].ID
+
+	err = q.UpsertSyncResource(ctx, UpsertSyncResourceParams{
+		CalendarID:   calID,
+		Uid:          "dup-tombstone-uid",
+		OwnerType:    "event",
+		RemoteUrl:    "https://example.com/cal/event.ics",
+		Etag:         "etag-123",
+		Dirty:        0,
+		SyncStrategy: "sync-token",
+	})
+	if err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+
+	// Delete the synced resource twice (e.g. delete, restore via sync, delete
+	// again before a sync flush). Both calls must succeed and collapse onto a
+	// single tombstone row for the (calendar_id, uid) pair.
+	for i := 0; i < 2; i++ {
+		created, err := CreateTombstoneIfSynced(ctx, db, calID, "dup-tombstone-uid")
+		if err != nil {
+			t.Fatalf("CreateTombstoneIfSynced (call %d): %v", i, err)
+		}
+		if !created {
+			t.Fatalf("CreateTombstoneIfSynced (call %d) created = false, want true", i)
+		}
+	}
+
+	tombstones, err := q.ListTombstonesByCalendar(ctx, calID)
+	if err != nil {
+		t.Fatalf("ListTombstones: %v", err)
+	}
+	if len(tombstones) != 1 {
+		t.Fatalf("expected 1 tombstone after repeated deletes, got %d", len(tombstones))
+	}
+}
+
 func TestMarkResourceDirty_SetsDirtyFlag(t *testing.T) {
 	db, q, err := Open(":memory:")
 	if err != nil {

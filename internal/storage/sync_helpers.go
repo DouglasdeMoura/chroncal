@@ -62,7 +62,10 @@ func CreateTombstoneIfSynced(ctx context.Context, db *sql.DB, calendarID int64, 
 		return false, nil
 	}
 	_, err = db.ExecContext(ctx,
-		`INSERT INTO tombstones (calendar_id, uid, remote_url) VALUES (?, ?, ?)`,
+		`INSERT INTO tombstones (calendar_id, uid, remote_url) VALUES (?, ?, ?)
+		 ON CONFLICT(calendar_id, uid) DO UPDATE SET
+		     remote_url = excluded.remote_url,
+		     deleted_at = excluded.deleted_at`,
 		calendarID, uid, remoteURL,
 	)
 	if err != nil {

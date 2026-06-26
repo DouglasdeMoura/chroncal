@@ -45,7 +45,10 @@ DELETE FROM sync_resources WHERE calendar_id = ? AND uid = ?;
 DELETE FROM sync_resources WHERE calendar_id = ?;
 
 -- name: CreateTombstone :exec
-INSERT INTO tombstones (calendar_id, uid, remote_url) VALUES (?, ?, ?);
+INSERT INTO tombstones (calendar_id, uid, remote_url) VALUES (?, ?, ?)
+ON CONFLICT(calendar_id, uid) DO UPDATE SET
+    remote_url = excluded.remote_url,
+    deleted_at = excluded.deleted_at;
 
 -- name: ListTombstonesByCalendar :many
 SELECT * FROM tombstones WHERE calendar_id = ? ORDER BY deleted_at;
