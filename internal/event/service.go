@@ -1282,6 +1282,7 @@ func updateAlarmInPlace(ctx context.Context, qtx *storage.Queries, eventID int64
 		Acknowledged:  storage.StringToNullable(ack),
 		AttachUri:     storage.StringToNullable(a.AttachURI),
 		AttachFmttype: storage.StringToNullable(a.AttachFmtType),
+		AttachBinary:  a.AttachBinary,
 		ID:            ex.ID,
 		EventID:       eventID,
 	}); err != nil {
@@ -1365,6 +1366,7 @@ func createNewAlarm(ctx context.Context, qtx *storage.Queries, eventID int64, a 
 		Acknowledged:  storage.StringToNullable(a.Acknowledged),
 		AttachUri:     storage.StringToNullable(a.AttachURI),
 		AttachFmttype: storage.StringToNullable(a.AttachFmtType),
+		AttachBinary:  a.AttachBinary,
 	}
 	row, err := qtx.CreateAlarm(ctx, params)
 	if isUniqueUIDViolation(err) {
@@ -1883,6 +1885,7 @@ func fromStorageAlarm(r storage.EventAlarm) model.Alarm {
 		Related:       r.Related,
 		Acknowledged:  storage.NullableToString(r.Acknowledged),
 		AttachURI:     storage.NullableToString(r.AttachUri),
+		AttachBinary:  r.AttachBinary,
 		AttachFmtType: storage.NullableToString(r.AttachFmttype),
 	}
 }

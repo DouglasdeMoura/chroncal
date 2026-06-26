@@ -1,6 +1,6 @@
 -- name: CreateAlarm :one
-INSERT INTO event_alarms (event_id, uid, action, trigger_value, description, summary, repeat, duration, related, acknowledged, attach_uri, attach_fmttype)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *;
+INSERT INTO event_alarms (event_id, uid, action, trigger_value, description, summary, repeat, duration, related, acknowledged, attach_uri, attach_fmttype, attach_binary)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *;
 
 -- name: ListAlarmsByEventID :many
 SELECT * FROM event_alarms WHERE event_id = ? ORDER BY id;
@@ -29,5 +29,6 @@ SELECT * FROM event_alarms WHERE uid IS NULL;
 -- name: UpdateAlarmContentByID :exec
 UPDATE event_alarms
 SET action = ?, trigger_value = ?, description = ?, summary = ?, repeat = ?,
-    duration = ?, related = ?, acknowledged = ?, attach_uri = ?, attach_fmttype = ?
+    duration = ?, related = ?, acknowledged = ?, attach_uri = ?, attach_fmttype = ?,
+    attach_binary = ?
 WHERE id = ? AND event_id = ?;

@@ -1751,6 +1751,65 @@ func TestRoundtrip_AlarmAttachURI(t *testing.T) {
 	}
 }
 
+func TestRoundtrip_AlarmAttachBinary(t *testing.T) {
+	t.Parallel()
+	// AUDIO alarm with an inline BASE64 ATTACH (embedded sound) should
+	// roundtrip without losing the binary payload (issue #298).
+	sound := []byte("fake-wav-bytes\x00\x01\x02\xff")
+	original := event.Event{
+		UID:       "roundtrip-alarm-attach-binary",
+		Title:     "Event with Embedded Audio Alarm",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		Alarms: []model.Alarm{
+			{
+				Action:        "AUDIO",
+				TriggerValue:  "-PT15M",
+				Description:   "Alarm",
+				AttachBinary:  sound,
+				AttachFmtType: "audio/basic",
+			},
+		},
+		CreatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+		UpdatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+	}
+
+	data, err := ExportEvents([]event.Event{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	ics := string(data)
+	if !strings.Contains(ics, "ENCODING=BASE64") {
+		t.Errorf("exported ICS missing ENCODING=BASE64:\n%s", ics)
+	}
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("reimported %d events, want 1", len(result.Events))
+	}
+
+	got := result.Events[0]
+	if len(got.Alarms) != 1 {
+		t.Fatalf("Alarms: got %d, want 1", len(got.Alarms))
+	}
+	alarm := got.Alarms[0]
+	if !bytes.Equal(alarm.AttachBinary, sound) {
+		t.Errorf("AttachBinary: got %v, want %v", alarm.AttachBinary, sound)
+	}
+	if alarm.AttachFmtType != "audio/basic" {
+		t.Errorf("AttachFmtType: got %q, want %q", alarm.AttachFmtType, "audio/basic")
+	}
+	if alarm.AttachURI != "" {
+		t.Errorf("AttachURI: got %q, want empty", alarm.AttachURI)
+	}
+}
+
 func TestRoundtrip_EventDuration(t *testing.T) {
 	t.Parallel()
 	original := event.Event{

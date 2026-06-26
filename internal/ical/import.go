@@ -624,9 +624,16 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 		}
 	}
 
-	// ATTACH (sound URI for AUDIO alarms)
+	// ATTACH (sound for AUDIO alarms): either a URI or an inline BASE64 blob.
 	if prop := comp.Props.Get(ical.PropAttach); prop != nil {
-		if prop.Params.Get("ENCODING") != "BASE64" {
+		if prop.Params.Get("ENCODING") == "BASE64" {
+			if data, err := decodeInlineAttachment(prop.Value); err != nil {
+				warn = fmt.Sprintf("VALARM ATTACH: %v", err)
+			} else {
+				alarm.AttachBinary = data
+				alarm.AttachFmtType = prop.Params.Get("FMTTYPE")
+			}
+		} else {
 			alarm.AttachURI = prop.Value
 			alarm.AttachFmtType = prop.Params.Get("FMTTYPE")
 		}
@@ -853,20 +860,31 @@ func addDuration(t time.Time, dur string) time.Time {
 	return duration.Add(t, dur)
 }
 
+// decodeInlineAttachment decodes a BASE64 ATTACH value, enforcing the inline
+// size limit. The length is checked before decoding so a deliberately oversized
+// payload is rejected without allocating a large buffer.
+func decodeInlineAttachment(value string) ([]byte, error) {
+	if base64.StdEncoding.DecodedLen(len(value)) > maxInlineAttachmentBytes {
+		return nil, fmt.Errorf("%w: inline attachment exceeds %d bytes", errImportLimitExceeded, maxInlineAttachmentBytes)
+	}
+	data, err := base64.StdEncoding.DecodeString(value)
+	if err != nil {
+		return nil, fmt.Errorf("decode inline attachment: %w", err)
+	}
+	if len(data) > maxInlineAttachmentBytes {
+		return nil, fmt.Errorf("%w: inline attachment exceeds %d bytes", errImportLimitExceeded, maxInlineAttachmentBytes)
+	}
+	return data, nil
+}
+
 func parseAttachmentsFromProps(props ical.Props) ([]model.Attachment, error) {
 	var out []model.Attachment
 	for _, prop := range props.Values(ical.PropAttach) {
 		fmttype := prop.Params.Get("FMTTYPE")
 		if prop.Params.Get("ENCODING") == "BASE64" {
-			if base64.StdEncoding.DecodedLen(len(prop.Value)) > maxInlineAttachmentBytes {
-				return nil, fmt.Errorf("%w: inline attachment exceeds %d bytes", errImportLimitExceeded, maxInlineAttachmentBytes)
-			}
-			data, err := base64.StdEncoding.DecodeString(prop.Value)
+			data, err := decodeInlineAttachment(prop.Value)
 			if err != nil {
-				return nil, fmt.Errorf("decode inline attachment: %w", err)
-			}
-			if len(data) > maxInlineAttachmentBytes {
-				return nil, fmt.Errorf("%w: inline attachment exceeds %d bytes", errImportLimitExceeded, maxInlineAttachmentBytes)
+				return nil, err
 			}
 			out = append(out, model.Attachment{
 				FmtType:  fmttype,

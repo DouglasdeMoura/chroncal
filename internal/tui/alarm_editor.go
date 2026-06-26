@@ -302,6 +302,7 @@ func (m *AlarmListEditorModel) applyEditForm() {
 		alarm.Duration = orig.Duration
 		alarm.Acknowledged = orig.Acknowledged
 		alarm.AttachURI = orig.AttachURI
+		alarm.AttachBinary = orig.AttachBinary
 		alarm.AttachFmtType = orig.AttachFmtType
 		alarm.Attendees = orig.Attendees
 		alarm.Description = orig.Description
