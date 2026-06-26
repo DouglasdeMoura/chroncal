@@ -1,8 +1,12 @@
 package tui
 
 import (
+	"image/color"
+	"strings"
 	"testing"
 	"time"
+
+	lipgloss "charm.land/lipgloss/v2"
 )
 
 func TestMiniMonth_ArrowAdvancesMonthAtBoundary(t *testing.T) {
@@ -41,5 +45,39 @@ func TestMiniMonth_TodayKeySnapsBoth(t *testing.T) {
 	}
 	if m.displayMonth.Year() != today.Year() || m.displayMonth.Month() != today.Month() {
 		t.Errorf("displayMonth not today: got %s", m.displayMonth.Format("2006-01"))
+	}
+}
+
+// TestMiniMonth_RangeColorAppliedToMiddleDays verifies that SetRangeColor is
+// honoured by View: in-range (non-endpoint) days must render with the
+// configured rangeColor background, not with the same cursor/endpoint style.
+//
+// Before the fix, View collapsed the isEndpoint and isInRange cases into one
+// identical Background(activeTheme.Text) block and never consulted
+// m.rangeColor, so the rangeColor ANSI escape code never appeared in the
+// output. After the fix the two cases are separate and middle days use
+// m.rangeColor.
+func TestMiniMonth_RangeColorAppliedToMiddleDays(t *testing.T) {
+	// April 2026, cursor at Apr 10 (outside the range so it does not
+	// interfere with endpoint styling). Range: Apr 16 – Apr 20.
+	// Middle days Apr 17–Apr 19 must use rangeColor; endpoints Apr 16
+	// and Apr 20 use the accent style.
+	rangeColor := color.RGBA{R: 0x80, G: 0x00, B: 0xff, A: 0xff} // #8000ff – distinctive purple
+	mm := NewMiniMonthModel(time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC)).
+		SetRangeColor(rangeColor).
+		SetRange(true,
+			time.Date(2026, 4, 16, 0, 0, 0, 0, time.UTC),
+			time.Date(2026, 4, 20, 0, 0, 0, 0, time.UTC))
+
+	out := mm.View()
+
+	// Derive the expected ANSI background escape from a lipgloss dry-run so
+	// the test stays independent of the exact SGR byte sequence.
+	rangeStyled := lipgloss.NewStyle().Background(rangeColor).Render("x")
+	bgEsc := strings.SplitN(rangeStyled, "x", 2)[0]
+
+	if !strings.Contains(out, bgEsc) {
+		t.Errorf("View() does not apply rangeColor to in-range days;\n"+
+			"ANSI code %q not found in output:\n%q", bgEsc, out)
 	}
 }

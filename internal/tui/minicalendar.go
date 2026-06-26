@@ -410,14 +410,24 @@ func (m MiniMonthModel) View() string {
 				Foreground(activeTheme.Surface).
 				Bold(true).
 				Render(num)
-		case isEndpoint, isInRange:
-			// Range days share the selected-day style so the range reads as
-			// one continuous selection.
+		case isEndpoint:
+			// Endpoints use the same strong accent as the cursor so they read
+			// as the pinned start/end of the selection.
 			cell = lipgloss.NewStyle().
 				Background(activeTheme.Text).
 				Foreground(activeTheme.Surface).
 				Bold(true).
 				Render(num)
+		case isInRange:
+			// Middle days use the configured rangeColor so the interior of the
+			// selection is visually distinct from the endpoints. When rangeColor
+			// has not been set the cell is left unstyled.
+			if m.rangeColor != nil {
+				cell = lipgloss.NewStyle().
+					Background(m.rangeColor).
+					Foreground(activeTheme.SelectedText).
+					Render(num)
+			}
 		case isToday:
 			// Match the month view's today cell: red background with
 			// surface-color text. Explicit fg/bg (no Reverse) for the
@@ -440,9 +450,18 @@ func (m MiniMonthModel) View() string {
 			// continuous ribbon instead of isolated reversed cells.
 			next := cur.AddDate(0, 0, 1)
 			if next.Month() == first.Month() && m.inRangeInclusive(cur) && m.inRangeInclusive(next) {
-				b.WriteString(lipgloss.NewStyle().
-					Background(activeTheme.Text).
-					Render(" "))
+				nextEndpoint, _ := m.rangePosition(next)
+				if !isEndpoint && !nextEndpoint && m.rangeColor != nil {
+					// Gap between two middle days: use rangeColor ribbon.
+					b.WriteString(lipgloss.NewStyle().
+						Background(m.rangeColor).
+						Render(" "))
+				} else {
+					// Gap adjacent to an endpoint: use the stronger accent.
+					b.WriteString(lipgloss.NewStyle().
+						Background(activeTheme.Text).
+						Render(" "))
+				}
 			} else {
 				b.WriteString(" ")
 			}
