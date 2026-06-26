@@ -337,7 +337,10 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 		expanded := ExpandEvent(evt, from, to)
 
 		// Fetch overrides for this master.
-		overrides, _ := s.q.ListOverridesByUID(ctx, row.Uid)
+		overrides, err := s.q.ListOverridesByUID(ctx, row.Uid)
+		if err != nil {
+			return nil, err
+		}
 		overridden := make(map[string]struct{}, len(overrides))
 		for _, o := range overrides {
 			overridden[canonicalRecurrenceID(o.RecurrenceID)] = struct{}{}
@@ -455,14 +458,17 @@ func attendeeFromStorage(r storage.EventAttendee) model.Attendee {
 // expandRecurringRows expands recurring event rows into Event instances with
 // StartTime/EndTime adjusted to each occurrence. For each master, overrides
 // (rows with a matching RECURRENCE-ID) replace the original RRULE instance.
-func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Event, from, to time.Time) []event.Event {
+func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Event, from, to time.Time) ([]event.Event, error) {
 	var result []event.Event
 	for _, row := range rows {
 		evt := event.FromStorage(row)
 		expanded := ExpandEvent(evt, from, to)
 
 		// Fetch overrides for this master.
-		overrides, _ := s.q.ListOverridesByUID(ctx, row.Uid)
+		overrides, err := s.q.ListOverridesByUID(ctx, row.Uid)
+		if err != nil {
+			return nil, err
+		}
 		overridden := make(map[string]struct{}, len(overrides))
 		for _, o := range overrides {
 			overridden[canonicalRecurrenceID(o.RecurrenceID)] = struct{}{}
@@ -498,7 +504,7 @@ func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Event,
 			result = append(result, oe)
 		}
 	}
-	return result
+	return result, nil
 }
 
 // ListExpandedByDateRange returns non-recurring events in [from,to) merged
@@ -524,7 +530,11 @@ func (s *Service) ListExpandedByDateRange(ctx context.Context, from, to time.Tim
 	if err != nil {
 		return nil, err
 	}
-	result = append(result, s.expandRecurringRows(ctx, recurringRows, from, to)...)
+	expanded, err := s.expandRecurringRows(ctx, recurringRows, from, to)
+	if err != nil {
+		return nil, err
+	}
+	result = append(result, expanded...)
 
 	s.populateEventCategories(ctx, result)
 	sort.Slice(result, func(i, j int) bool {
@@ -861,7 +871,11 @@ func (s *Service) ListFilteredEvents(ctx context.Context, p EventListParams) ([]
 		return nil, err
 	}
 	if hasRange {
-		result = append(result, s.expandRecurringRows(ctx, recurringRows, p.From, p.To)...)
+		expanded, err := s.expandRecurringRows(ctx, recurringRows, p.From, p.To)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, expanded...)
 	} else {
 		for _, row := range recurringRows {
 			result = append(result, event.FromStorage(row))
