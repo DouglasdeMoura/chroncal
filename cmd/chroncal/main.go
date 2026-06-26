@@ -354,7 +354,6 @@ func resolveJournal(ctx context.Context, a *app.App, ref, recurrenceID string) (
 func parseDateRange(fromStr, toStr string) (time.Time, time.Time, error) {
 	now := time.Now()
 	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
-	to := from.AddDate(0, 0, 30)
 
 	if fromStr != "" {
 		var err error
@@ -363,6 +362,10 @@ func parseDateRange(fromStr, toStr string) (time.Time, time.Time, error) {
 			return time.Time{}, time.Time{}, err
 		}
 	}
+	// Default the window end to 30 days after `from` (not after today), so a
+	// `--from` far in the future without `--to` still yields a forward,
+	// non-empty range instead of an inverted one (issue #111).
+	to := from.AddDate(0, 0, 30)
 	if toStr != "" {
 		var err error
 		to, err = parseCLIDate("to", toStr, time.Local)
