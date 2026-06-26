@@ -34,6 +34,34 @@ func TestTextField_DigitsOnly(t *testing.T) {
 	assert.Equal(t, "53", f.Value())
 }
 
+func TestFilterDigits_MultiRuneText(t *testing.T) {
+	// FilterDigits must inspect every rune in a multi-character key event
+	// (e.g. a paste delivered as a single KeyPressMsg). The old implementation
+	// only checked k.Text[0] cast to rune, so a paste like "12ab" slipped
+	// through because the leading '1' is a digit.
+
+	tests := []struct {
+		text    string
+		wantVal string
+		desc    string
+	}{
+		{"12ab", "", "leading digit followed by letters must be rejected"},
+		{"1a2", "", "non-digit in the middle must be rejected"},
+		{"123", "123", "all-digit paste must be accepted"},
+		{"a12", "", "leading non-digit must be rejected"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.desc, func(t *testing.T) {
+			f := NewTextField("n")
+			f.SetDigitsOnly()
+			f.Focus()
+			f.Update(keyPressMsg(tc.text))
+			assert.Equal(t, tc.wantVal, f.Value(), tc.desc)
+		})
+	}
+}
+
 func TestTextField_CustomFilter(t *testing.T) {
 	f := NewTextField("hex")
 	f.SetFilter(func(k tea.Key) bool {
