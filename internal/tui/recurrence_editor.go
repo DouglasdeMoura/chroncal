@@ -50,6 +50,12 @@ type RecurrenceEditorModel struct {
 
 	endsDate       time.Time
 	endsDatePicker bool
+	// endsDateRevert holds the committed ends date captured when the picker
+	// opens, so Cancel/Esc can discard in-picker navigation (issue #410).
+	endsDateRevert time.Time
+	// endsDateBtnFocus tracks keyboard focus inside the picker:
+	// -1 grid, 0 Cancel, 1 Ok. Tab cycles grid -> Cancel -> Ok -> grid.
+	endsDateBtnFocus int
 
 	form      Form
 	fieldKeys []string
@@ -354,10 +360,28 @@ func (m *RecurrenceEditorModel) tryOpenOverlay() tea.Cmd {
 		return nil
 	}
 	if m.fieldKeys[idx] == recFieldEnds && m.currentEnds() == endsOnDate {
-		m.endsDatePicker = true
+		m.openEndsDatePicker()
 		return noopCmd
 	}
 	return nil
+}
+
+// openEndsDatePicker opens the ends-date picker, staging the current ends date
+// so Cancel/Esc can revert any in-picker navigation, and focusing the grid.
+func (m *RecurrenceEditorModel) openEndsDatePicker() {
+	m.endsDateRevert = m.endsDate
+	m.endsDateBtnFocus = -1
+	m.endsDatePicker = true
+}
+
+// cancelEndsDatePicker discards in-picker navigation, restoring the ends date
+// captured when the picker opened, and closes the overlay.
+func (m RecurrenceEditorModel) cancelEndsDatePicker() RecurrenceEditorModel {
+	m.endsDate = m.endsDateRevert
+	m.endsDatePicker = false
+	m.updatePreview()
+	m.syncFromForm()
+	return m
 }
 
 // Update handles all messages for the recurrence editor.
@@ -416,7 +440,7 @@ func (m RecurrenceEditorModel) Update(msg tea.Msg) (RecurrenceEditorModel, tea.C
 			m.fieldKeys[idx] == recFieldEnds &&
 			m.currentEnds() == endsOnDate &&
 			target == fieldTarget(idx) {
-			m.endsDatePicker = true
+			m.openEndsDatePicker()
 		}
 		return m, cmd
 	}
@@ -428,6 +452,36 @@ func (m RecurrenceEditorModel) Update(msg tea.Msg) (RecurrenceEditorModel, tea.C
 }
 
 func (m RecurrenceEditorModel) handleEndsDateKey(msg tea.KeyPressMsg) RecurrenceEditorModel {
+	switch msg.String() {
+	case "esc", "q":
+		return m.cancelEndsDatePicker()
+	case "tab":
+		// grid (-1) -> Cancel (0) -> Ok (1) -> grid (-1)
+		m.endsDateBtnFocus++
+		if m.endsDateBtnFocus > 1 {
+			m.endsDateBtnFocus = -1
+		}
+		return m
+	case "shift+tab":
+		// grid (-1) -> Ok (1) -> Cancel (0) -> grid (-1)
+		m.endsDateBtnFocus--
+		if m.endsDateBtnFocus < -1 {
+			m.endsDateBtnFocus = 1
+		}
+		return m
+	case "enter", "space":
+		if m.endsDateBtnFocus == 0 { // Cancel
+			return m.cancelEndsDatePicker()
+		}
+		// Ok (1) or grid (-1): commit the navigated date.
+		m.endsDatePicker = false
+		return m
+	}
+
+	// Arrow / month / today navigation only applies while the grid is focused.
+	if m.endsDateBtnFocus != -1 {
+		return m
+	}
 	switch msg.String() {
 	case "left", "h":
 		m.endsDate = m.endsDate.AddDate(0, 0, -1)
@@ -443,8 +497,6 @@ func (m RecurrenceEditorModel) handleEndsDateKey(msg tea.KeyPressMsg) Recurrence
 		m.endsDate = addMonthClamped(m.endsDate, 1)
 	case "t":
 		m.endsDate = time.Now()
-	case "enter", "space", "esc", "q":
-		m.endsDatePicker = false
 	}
 	m.updatePreview()
 	m.syncFromForm()
@@ -478,7 +530,7 @@ func (m RecurrenceEditorModel) HandleEndsDateMouse(msg tea.MouseClickMsg, picker
 		btnPad := max(innerW-cancelW-1-okW, 0)
 		switch {
 		case mmX >= btnPad && mmX < btnPad+cancelW:
-			m.endsDatePicker = false
+			return m.cancelEndsDatePicker()
 		case mmX >= btnPad+cancelW+1 && mmX < btnPad+cancelW+1+okW:
 			m.endsDatePicker = false
 		}
@@ -656,8 +708,8 @@ func (m RecurrenceEditorModel) EndsDatePickerView() string {
 	sepStyle := lipgloss.NewStyle().Foreground(m.theme.Border)
 	resultLines = append(resultLines, sepStyle.Render(strings.Repeat("─", innerW)))
 	bs := DefaultButtonStyles()
-	cancelBtn := bs.Normal.Render("Cancel", false)
-	okBtn := bs.Normal.Render("Ok", false)
+	cancelBtn := bs.Normal.Render("Cancel", m.endsDateBtnFocus == 0)
+	okBtn := bs.Normal.Render("Ok", m.endsDateBtnFocus == 1)
 	buttonRow := cancelBtn + " " + okBtn
 	btnPad := max(innerW-lipgloss.Width(buttonRow), 0)
 	resultLines = append(resultLines, strings.Repeat(" ", btnPad)+buttonRow)
