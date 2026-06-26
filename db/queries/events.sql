@@ -107,6 +107,13 @@ UPDATE events SET
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE uid = ? AND deleted_at IS NULL;
 
+-- name: ListLiveOverrideRecurrenceIDsAtOrAfter :many
+-- The recurrence_ids a truncation is about to hide: live overrides at/after
+-- the cutoff. Captured before SoftDeleteOverridesAtOrAfter so restore can
+-- re-show only these and not overrides deleted independently (issue #287).
+SELECT recurrence_id FROM events
+WHERE uid = ? AND recurrence_id != '' AND recurrence_id >= ? AND deleted_at IS NULL;
+
 -- name: SoftDeleteOverridesAtOrAfter :exec
 UPDATE events SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),

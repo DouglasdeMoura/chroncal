@@ -527,6 +527,42 @@ func (q *Queries) ListEventsByDateRange(ctx context.Context, arg ListEventsByDat
 	return items, nil
 }
 
+const listLiveOverrideRecurrenceIDsAtOrAfter = `-- name: ListLiveOverrideRecurrenceIDsAtOrAfter :many
+SELECT recurrence_id FROM events
+WHERE uid = ? AND recurrence_id != '' AND recurrence_id >= ? AND deleted_at IS NULL
+`
+
+type ListLiveOverrideRecurrenceIDsAtOrAfterParams struct {
+	Uid          string
+	RecurrenceID string
+}
+
+// The recurrence_ids a truncation is about to hide: live overrides at/after
+// the cutoff. Captured before SoftDeleteOverridesAtOrAfter so restore can
+// re-show only these and not overrides deleted independently (issue #287).
+func (q *Queries) ListLiveOverrideRecurrenceIDsAtOrAfter(ctx context.Context, arg ListLiveOverrideRecurrenceIDsAtOrAfterParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listLiveOverrideRecurrenceIDsAtOrAfter, arg.Uid, arg.RecurrenceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var recurrence_id string
+		if err := rows.Scan(&recurrence_id); err != nil {
+			return nil, err
+		}
+		items = append(items, recurrence_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOverridesByUID = `-- name: ListOverridesByUID :many
 SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events
 WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NULL
