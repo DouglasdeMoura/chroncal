@@ -341,6 +341,93 @@ func computeTriggerTimeForInstance(expEvt recurrence.ExpandedEvent, alarm model.
 	return model.ParseAbsoluteTime(trigger, expEvt.Timezone)
 }
 
+// resolveStateEvent returns the event whose start/end times correspond to the
+// specific occurrence an alarm_state fired for.
+//
+// alarm_state stores the master row's event_id (whose StartTime/EndTime are the
+// first occurrence) plus the instance's trigger_at. For a recurring series the
+// master times are wrong for any occurrence past the first, so we re-expand the
+// series and pick the instance whose computed trigger (including repeats) equals
+// the stored trigger_at. Non-recurring events, and any case where no instance
+// matches, fall back to the stored master event.
+func (s *Service) resolveStateEvent(ctx context.Context, st storage.AlarmState) (event.Event, error) {
+	master, err := s.events.Get(ctx, st.EventID)
+	if err != nil {
+		return event.Event{}, err
+	}
+	if master.RecurrenceRule == "" {
+		return master, nil
+	}
+
+	// Find the alarm definition that fired so we can replay its trigger math.
+	alarms, err := s.events.ListAlarms(ctx, master.ID)
+	if err != nil {
+		return master, nil // best effort: fall back to the master row
+	}
+	var matched model.Alarm
+	for _, a := range alarms {
+		if a.ID == st.AlarmID {
+			matched = a
+			break
+		}
+	}
+	if matched.ID == 0 {
+		return master, nil
+	}
+
+	triggerAt, err := time.Parse(time.RFC3339, st.TriggerAt)
+	if err != nil {
+		return master, nil
+	}
+
+	// Bound the expansion window to comfortably contain the instance: the
+	// trigger sits at most |offset| (+ the event span, for RELATED=END alarms)
+	// away from the occurrence it belongs to.
+	radius := triggerSearchRadius(matched, master.Span(), triggerAt)
+	recurSvc := recurrence.NewService(s.db, s.q)
+	expanded, err := recurSvc.ListExpandedEvents(ctx, triggerAt.Add(-radius), triggerAt.Add(radius), recurrence.SkipCategories())
+	if err != nil {
+		return master, nil
+	}
+	for _, expEvt := range expanded {
+		if expEvt.ID != master.ID {
+			continue
+		}
+		base, err := computeTriggerTimeForInstance(expEvt, matched)
+		if err != nil {
+			continue
+		}
+		for _, t := range buildRepeatTriggers(base, matched.Repeat, matched.Duration) {
+			if t.Equal(triggerAt) {
+				inst := expEvt.Event
+				inst.StartTime = expEvt.InstanceTime
+				inst.EndTime = expEvt.InstanceTime.Add(expEvt.Span())
+				return inst, nil
+			}
+		}
+	}
+	return master, nil
+}
+
+// triggerSearchRadius returns a window half-width around a stored trigger_at
+// guaranteed to contain the occurrence the alarm fired for. It accounts for the
+// alarm's lead time, the event span (RELATED=END alarms anchor on the end), and
+// always leaves StaleThreshold+24h of slack.
+func triggerSearchRadius(a model.Alarm, span time.Duration, ref time.Time) time.Duration {
+	radius := StaleThreshold + 24*time.Hour
+	if span > 0 {
+		radius += span
+	}
+	if duration.Validate(a.TriggerValue) == nil {
+		offset := duration.Add(ref, a.TriggerValue).Sub(ref)
+		if offset < 0 {
+			offset = -offset
+		}
+		radius += offset
+	}
+	return radius
+}
+
 // ListExpiredSnoozed returns snoozed alarms whose snooze-until time is at or
 // before now. The caller should re-fire and mark them via MarkRefired.
 func (s *Service) ListExpiredSnoozed(ctx context.Context, now time.Time) ([]DueAlarm, error) {
@@ -352,7 +439,7 @@ func (s *Service) ListExpiredSnoozed(ctx context.Context, now time.Time) ([]DueA
 
 	var due []DueAlarm
 	for _, st := range states {
-		evt, err := s.events.Get(ctx, st.EventID)
+		evt, err := s.resolveStateEvent(ctx, st)
 		if err != nil {
 			continue // event may have been deleted
 		}
@@ -487,7 +574,7 @@ func (s *Service) ComputeSnooze(ctx context.Context, stateID int64, dur time.Dur
 		return SnoozeResult{}, fmt.Errorf("alarm state %d is already dismissed", stateID)
 	}
 
-	evt, err := s.events.Get(ctx, st.EventID)
+	evt, err := s.resolveStateEvent(ctx, st)
 	if err != nil {
 		return SnoozeResult{}, fmt.Errorf("get event %d: %w", st.EventID, err)
 	}
@@ -533,7 +620,7 @@ func (s *Service) SnoozeUntilStart(ctx context.Context, stateID int64, now time.
 		return SnoozeResult{}, fmt.Errorf("alarm state %d is already dismissed", stateID)
 	}
 
-	evt, err := s.events.Get(ctx, st.EventID)
+	evt, err := s.resolveStateEvent(ctx, st)
 	if err != nil {
 		return SnoozeResult{}, fmt.Errorf("get event %d: %w", st.EventID, err)
 	}
