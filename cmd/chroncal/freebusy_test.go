@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -53,6 +54,23 @@ func TestParseFreeBusyTime(t *testing.T) {
 				t.Fatalf("parseFreeBusyTime(%q) = %s, want %s", tt.input, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestFreeBusyRejectsInvalidFormat(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+
+	_, stderr, err := runChroncalCommand(t,
+		"freebusy",
+		"--from", "2026-04-01",
+		"--to", "2026-04-07",
+		"--format", "json",
+	)
+	if err == nil {
+		t.Fatalf("expected error for invalid --format value, got none (stderr=%q)", stderr)
+	}
+	if !strings.Contains(stderr, "format") {
+		t.Fatalf("expected error mentioning format, got: %s", stderr)
 	}
 }
 
