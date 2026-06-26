@@ -367,3 +367,137 @@ func TestExpandEvent_FloatingTime(t *testing.T) {
 		}
 	}
 }
+
+// The following tests lock in recurring-expansion behavior for the todo and
+// journal paths (events are exercised above), so a shared expansion core can
+// be proven behavior-preserving for all three entity kinds.
+
+func TestExpandTodo_DailyRecurring(t *testing.T) {
+	td := todo.Todo{
+		UID:            "daily-todo",
+		Summary:        "Daily Task",
+		DueDate:        "2026-04-01T09:00:00Z",
+		RecurrenceRule: "FREQ=DAILY;COUNT=5",
+	}
+	from := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC)
+
+	instances := ExpandTodo(td, from, to)
+	if len(instances) != 5 {
+		t.Fatalf("ExpandTodo() = %d instances, want 5", len(instances))
+	}
+	for i, inst := range instances {
+		want := time.Date(2026, 4, 1+i, 9, 0, 0, 0, time.UTC)
+		if !inst.InstanceTime.Equal(want) {
+			t.Errorf("instance[%d] = %v, want %v", i, inst.InstanceTime, want)
+		}
+	}
+}
+
+func TestExpandTodo_WithExDateAndRDate(t *testing.T) {
+	base := time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
+	extra := base.AddDate(0, 0, 10)
+	td := todo.Todo{
+		UID:            "todo-exrd",
+		Summary:        "Task",
+		DueDate:        base.Format(time.RFC3339),
+		RecurrenceRule: "FREQ=DAILY;COUNT=5",
+		ExDates:        base.AddDate(0, 0, 2).Format(time.RFC3339), // drop day 3
+		RDates:         extra.Format(time.RFC3339),                 // add extra
+	}
+
+	instances := ExpandTodo(td, base.Add(-time.Hour), extra.Add(time.Hour))
+	// 5 from RRULE - 1 EXDATE + 1 RDATE = 5.
+	if len(instances) != 5 {
+		t.Fatalf("ExpandTodo() = %d instances, want 5", len(instances))
+	}
+	foundRDate := false
+	for _, inst := range instances {
+		if inst.InstanceTime.Equal(base.AddDate(0, 0, 2)) {
+			t.Error("excluded EXDATE present in instances")
+		}
+		if inst.InstanceTime.Equal(extra) && inst.IsOverride {
+			foundRDate = true
+		}
+	}
+	if !foundRDate {
+		t.Error("RDATE instance not found or not marked as override")
+	}
+}
+
+func TestExpandJournal_DailyRecurring(t *testing.T) {
+	j := journal.Journal{
+		UID:            "daily-journal",
+		StartDate:      "2026-04-01",
+		RecurrenceRule: "FREQ=DAILY;COUNT=5",
+	}
+	from := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC)
+
+	instances := ExpandJournal(j, from, to)
+	if len(instances) != 5 {
+		t.Fatalf("ExpandJournal() = %d instances, want 5", len(instances))
+	}
+	for i, inst := range instances {
+		want := time.Date(2026, 4, 1+i, 0, 0, 0, 0, time.UTC)
+		if !inst.InstanceTime.Equal(want) {
+			t.Errorf("instance[%d] = %v, want %v", i, inst.InstanceTime, want)
+		}
+	}
+}
+
+func TestExpandJournal_WithExDateAndRDate(t *testing.T) {
+	base := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	extra := base.AddDate(0, 0, 10)
+	j := journal.Journal{
+		UID:            "journal-exrd",
+		StartDate:      base.Format(time.RFC3339),
+		RecurrenceRule: "FREQ=DAILY;COUNT=5",
+		ExDates:        base.AddDate(0, 0, 2).Format(time.RFC3339),
+		RDates:         extra.Format(time.RFC3339),
+	}
+
+	instances := ExpandJournal(j, base.Add(-time.Hour), extra.Add(time.Hour))
+	if len(instances) != 5 {
+		t.Fatalf("ExpandJournal() = %d instances, want 5", len(instances))
+	}
+	foundRDate := false
+	for _, inst := range instances {
+		if inst.InstanceTime.Equal(base.AddDate(0, 0, 2)) {
+			t.Error("excluded EXDATE present in instances")
+		}
+		if inst.InstanceTime.Equal(extra) && inst.IsOverride {
+			foundRDate = true
+		}
+	}
+	if !foundRDate {
+		t.Error("RDATE instance not found or not marked as override")
+	}
+}
+
+// TestExpandJournal_HalfOpenWindow locks in that journal expansion honors the
+// half-open [from, to) window: an occurrence exactly at from is kept, one
+// exactly at to is excluded.
+func TestExpandJournal_HalfOpenWindow(t *testing.T) {
+	j := journal.Journal{
+		UID:            "journal-window",
+		StartDate:      "2026-04-01",
+		RecurrenceRule: "FREQ=DAILY;COUNT=10",
+	}
+	from := time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 4, 6, 0, 0, 0, 0, time.UTC)
+
+	instances := ExpandJournal(j, from, to)
+	// Apr 3, 4, 5 included; Apr 6 (== to) excluded.
+	if len(instances) != 3 {
+		t.Fatalf("ExpandJournal() = %d instances, want 3", len(instances))
+	}
+	if !instances[0].InstanceTime.Equal(from) {
+		t.Errorf("first instance = %v, want %v (from boundary inclusive)", instances[0].InstanceTime, from)
+	}
+	for _, inst := range instances {
+		if !inst.InstanceTime.Before(to) {
+			t.Errorf("instance %v not before to boundary %v", inst.InstanceTime, to)
+		}
+	}
+}

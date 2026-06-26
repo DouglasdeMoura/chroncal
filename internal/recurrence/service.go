@@ -182,43 +182,48 @@ func buildRDateSet(rdates []time.Time) map[string]struct{} {
 	return set
 }
 
-// ExpandEvent generates all occurrences of an event within a date range
-// Returns instances even for non-recurring events (single instance)
-func ExpandEvent(evt event.Event, from, to time.Time) []ExpandedEvent {
-	if cancelledRecurringMaster(evt.RecurrenceRule, evt.Status) {
-		return nil
-	}
-	if evt.RecurrenceRule == "" {
-		// Non-recurring event - return single instance if in range
-		if evt.StartTime.Before(from) || !evt.StartTime.Before(to) {
+// occurrence is one in-window expansion result: the instance instant (UTC) and
+// whether it was contributed by an RDATE rather than the RRULE.
+type occurrence struct {
+	InstanceTime time.Time
+	IsOverride   bool
+}
+
+// expandRecurrence is the shared core behind ExpandEvent/ExpandTodo/
+// ExpandJournal. Given an occurrence's anchor (DTSTART), instance duration,
+// timezone, and parsed EXDATE/RDATE lists, it returns the occurrences whose
+// [start, start+dur) interval overlaps the half-open window [from, to).
+//
+// Callers resolve the entity-specific anchor (event start; todo start-or-due;
+// journal start) and apply the cancelled-master guard before calling. A blank
+// or unparseable recurrenceRule falls back to a single instance at the anchor
+// when it lies in range.
+//
+// A named timezone expands in that timezone so wall-clock times are preserved
+// across DST boundaries. Generation begins one instance-duration early so a
+// multi-day instance straddling the window start is produced before being kept
+// by [start, end) overlap rather than start alone.
+func expandRecurrence(recurrenceRule, timezone string, anchor time.Time, dur time.Duration, exDates, rdates []time.Time, from, to time.Time) []occurrence {
+	// fallback is the single-instance result for an entity with no usable RRULE:
+	// the anchor itself, but only when it lies in the half-open window.
+	fallback := func() []occurrence {
+		if anchor.Before(from) || !anchor.Before(to) {
 			return nil
 		}
-		return []ExpandedEvent{{
-			Event:        evt,
-			InstanceTime: evt.StartTime,
-			IsOverride:   false,
-		}}
+		return []occurrence{{InstanceTime: anchor}}
 	}
 
-	// Parse RRULE
-	rruleStr := "RRULE:" + evt.RecurrenceRule
-	set, err := rrule.StrToRRuleSet(rruleStr)
+	if recurrenceRule == "" {
+		return fallback()
+	}
+
+	set, err := rrule.StrToRRuleSet("RRULE:" + recurrenceRule)
 	if err != nil {
-		// Invalid RRULE - fall back to single instance
-		if evt.StartTime.Before(from) || !evt.StartTime.Before(to) {
-			return nil
-		}
-		return []ExpandedEvent{{
-			Event:        evt,
-			InstanceTime: evt.StartTime,
-			IsOverride:   false,
-		}}
+		return fallback() // invalid RRULE - fall back to single instance
 	}
 
-	// If the event has a named timezone, expand in that timezone so
-	// wall-clock times are preserved across DST boundaries.
-	loc := tzForExpansion(evt.Timezone)
-	dtstart := evt.StartTime
+	loc := tzForExpansion(timezone)
+	dtstart := anchor
 	localFrom, localTo := from, to
 	if loc != nil {
 		dtstart = dtstart.In(loc)
@@ -227,15 +232,12 @@ func ExpandEvent(evt event.Event, from, to time.Time) []ExpandedEvent {
 	}
 
 	set.DTStart(dtstart)
-
-	for _, ex := range evt.ParseExDates() {
+	for _, ex := range exDates {
 		if loc != nil {
 			ex = ex.In(loc)
 		}
 		set.ExDate(ex)
 	}
-
-	rdates := evt.ParseRDates()
 	for _, rd := range rdates {
 		if loc != nil {
 			rd = rd.In(loc)
@@ -245,37 +247,38 @@ func ExpandEvent(evt event.Event, from, to time.Time) []ExpandedEvent {
 
 	rdateSet := buildRDateSet(rdates)
 
-	// A multi-day instance whose start precedes 'from' can still overlap the
-	// window via its duration, so begin generation one instance-duration early
-	// and keep occurrences by [start, end) overlap rather than start alone.
+	between := set.Between(localFrom.Add(-dur), localTo, true)
+	out := make([]occurrence, 0, len(between))
+	for _, occ := range between {
+		if !keepOccurrence(occ, dur, localFrom, localTo) {
+			continue
+		}
+		_, isRDate := rdateSet[rdateKey(occ)]
+		out = append(out, occurrence{InstanceTime: occ.UTC(), IsOverride: isRDate})
+	}
+	return out
+}
+
+// ExpandEvent generates all occurrences of an event within a date range
+// Returns instances even for non-recurring events (single instance)
+func ExpandEvent(evt event.Event, from, to time.Time) []ExpandedEvent {
+	if cancelledRecurringMaster(evt.RecurrenceRule, evt.Status) {
+		return nil
+	}
 	dur := evt.EndTime.Sub(evt.StartTime)
 	if dur < 0 {
 		dur = 0
 	}
-
-	// Get all occurrences that could overlap [from, to).
-	occurrences := set.Between(localFrom.Add(-dur), localTo, true)
-	// Keep occurrences whose [start, start+dur) interval overlaps the window.
-	filtered := occurrences[:0]
-	for _, occ := range occurrences {
-		if keepOccurrence(occ, dur, localFrom, localTo) {
-			filtered = append(filtered, occ)
-		}
-	}
-	occurrences = filtered
+	occs := expandRecurrence(evt.RecurrenceRule, evt.Timezone, evt.StartTime, dur, evt.ParseExDates(), evt.ParseRDates(), from, to)
 
 	var instances []ExpandedEvent
-	for _, occ := range occurrences {
-		utcOcc := occ.UTC()
-		_, isRDate := rdateSet[rdateKey(occ)]
-
+	for _, o := range occs {
 		instances = append(instances, ExpandedEvent{
 			Event:        evt,
-			InstanceTime: utcOcc,
-			IsOverride:   isRDate,
+			InstanceTime: o.InstanceTime,
+			IsOverride:   o.IsOverride,
 		})
 	}
-
 	return instances
 }
 
@@ -336,7 +339,9 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 		evt := event.FromStorage(row)
 		expanded := ExpandEvent(evt, from, to)
 
-		// Fetch overrides for this master.
+		// Fetch overrides for this master. A failed override fetch must not
+		// render the master as if it had none — propagate so callers don't
+		// silently show a stale, un-overridden series.
 		overrides, err := s.q.ListOverridesByUID(ctx, row.Uid)
 		if err != nil {
 			return nil, err
@@ -455,56 +460,105 @@ func attendeeFromStorage(r storage.EventAttendee) model.Attendee {
 	}
 }
 
-// expandRecurringRows expands recurring event rows into Event instances with
-// StartTime/EndTime adjusted to each occurrence. For each master, overrides
-// (rows with a matching RECURRENCE-ID) replace the original RRULE instance.
-func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Event, from, to time.Time) ([]event.Event, error) {
-	var result []event.Event
-	for _, row := range rows {
-		evt := event.FromStorage(row)
-		expanded := ExpandEvent(evt, from, to)
+// recurringKind bundles the entity-specific operations expandRecurringRowsBy
+// needs to merge a recurring master with its overrides. Row is the storage row,
+// Model the domain model, and Inst the Expand* result (which carries the model
+// plus its InstanceTime).
+type recurringKind[Row any, Model any, Inst any] struct {
+	fromRow       func(Row) Model
+	expand        func(Model, time.Time, time.Time) []Inst
+	instTime      func(Inst) time.Time
+	applyInstance func(Inst) Model // master instance adjusted to its occurrence time
+	uid           func(Row) string
+	status        func(Row) string
+	recurrenceID  func(Row) string
+	listOverrides func(context.Context, string) ([]Row, error)
+	occursAt      func(master Model, recurrenceID string) bool
+	// emitOverride builds an override's model and reports whether its own
+	// occurrence falls within [from, to).
+	emitOverride func(o Row, from, to time.Time) (Model, bool)
+}
 
-		// Fetch overrides for this master.
-		overrides, err := s.q.ListOverridesByUID(ctx, row.Uid)
+// expandRecurringRowsBy expands recurring master rows into per-occurrence
+// Models, applying overrides. For each master, an override (a row with a
+// matching RECURRENCE-ID) suppresses the original RRULE instance and is emitted
+// separately at its own occurrence time. CANCELLED and orphan overrides are
+// dropped. This is the shared engine behind the event/todo/journal variants.
+func expandRecurringRowsBy[Row any, Model any, Inst any](ctx context.Context, k recurringKind[Row, Model, Inst], rows []Row, from, to time.Time) ([]Model, error) {
+	var result []Model
+	for _, row := range rows {
+		master := k.fromRow(row)
+		expanded := k.expand(master, from, to)
+
+		// Fetch overrides for this master. A failed override fetch must not
+		// render the master as if it had none — propagate so callers don't
+		// silently show a stale, un-overridden series.
+		overrides, err := k.listOverrides(ctx, k.uid(row))
 		if err != nil {
 			return nil, err
 		}
 		overridden := make(map[string]struct{}, len(overrides))
 		for _, o := range overrides {
-			overridden[canonicalRecurrenceID(o.RecurrenceID)] = struct{}{}
+			overridden[canonicalRecurrenceID(k.recurrenceID(o))] = struct{}{}
 		}
 
 		// Emit master instances, skipping any slot that has been overridden;
 		// the override is emitted separately below at its own occurrence time.
 		for _, inst := range expanded {
-			instKey := inst.InstanceTime.UTC().Format(time.RFC3339)
+			instKey := k.instTime(inst).UTC().Format(time.RFC3339)
 			if _, ok := overridden[instKey]; ok {
 				continue
 			}
-			e := inst.Event
-			dur := e.EndTime.Sub(e.StartTime)
-			e.StartTime = inst.InstanceTime
-			e.EndTime = inst.InstanceTime.Add(dur)
-			result = append(result, e)
+			result = append(result, k.applyInstance(inst))
 		}
 
 		// Emit overrides whose own occurrence falls within [from, to). A moved
 		// occurrence belongs to its new day, not the day of the slot it replaced.
+		// The cheap window check runs before the orphan probe (occursAt expands
+		// the master in memory), so out-of-window overrides short-circuit.
 		for _, o := range overrides {
-			if strings.EqualFold(o.Status, "CANCELLED") {
+			if strings.EqualFold(k.status(o), "CANCELLED") {
 				continue // CANCELLED override suppresses the instance.
 			}
-			oe := event.FromStorage(o)
-			if !overlapsWindow(oe.StartTime, oe.EndTime, from, to) {
-				continue
+			model, ok := k.emitOverride(o, from, to)
+			if !ok {
+				continue // override's own occurrence is outside the window
 			}
-			if !eventOccursAt(evt, o.RecurrenceID) {
+			if !k.occursAt(master, k.recurrenceID(o)) {
 				continue // orphan override (no matching master occurrence)
 			}
-			result = append(result, oe)
+			result = append(result, model)
 		}
 	}
 	return result, nil
+}
+
+// expandRecurringRows expands recurring event rows into Event instances with
+// StartTime/EndTime adjusted to each occurrence. For each master, overrides
+// (rows with a matching RECURRENCE-ID) replace the original RRULE instance.
+func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Event, from, to time.Time) ([]event.Event, error) {
+	k := recurringKind[storage.Event, event.Event, ExpandedEvent]{
+		fromRow:  event.FromStorage,
+		expand:   ExpandEvent,
+		instTime: func(i ExpandedEvent) time.Time { return i.InstanceTime },
+		applyInstance: func(i ExpandedEvent) event.Event {
+			e := i.Event
+			dur := e.EndTime.Sub(e.StartTime)
+			e.StartTime = i.InstanceTime
+			e.EndTime = i.InstanceTime.Add(dur)
+			return e
+		},
+		uid:           func(r storage.Event) string { return r.Uid },
+		status:        func(r storage.Event) string { return r.Status },
+		recurrenceID:  func(r storage.Event) string { return r.RecurrenceID },
+		listOverrides: s.q.ListOverridesByUID,
+		occursAt:      eventOccursAt,
+		emitOverride: func(o storage.Event, from, to time.Time) (event.Event, bool) {
+			oe := event.FromStorage(o)
+			return oe, overlapsWindow(oe.StartTime, oe.EndTime, from, to)
+		},
+	}
+	return expandRecurringRowsBy(ctx, k, rows, from, to)
 }
 
 // ListExpandedByDateRange returns non-recurring events in [from,to) merged
@@ -647,117 +701,87 @@ func todoFromRow(row storage.Todo) todo.Todo {
 	}
 }
 
-func (s *Service) populateEventCategories(ctx context.Context, events []event.Event) {
-	if len(events) == 0 {
+// populateCategories batch-loads categories for items and assigns the joined
+// category string to each via setCats. idOf yields an item's primary key,
+// fetch loads the join rows for a set of ids, and rowCat splits a join row into
+// its (id, category) pair. A fetch error is swallowed: categories augment a
+// listing rather than gate it, matching the per-domain behavior this unifies.
+func populateCategories[T any, R any](
+	ctx context.Context,
+	items []T,
+	idOf func(T) int64,
+	fetch func(context.Context, []int64) ([]R, error),
+	rowCat func(R) (id int64, category string),
+	setCats func(item *T, joined string),
+) {
+	if len(items) == 0 {
 		return
 	}
-	ids := make([]int64, len(events))
-	for i := range events {
-		ids[i] = events[i].ID
+	ids := make([]int64, len(items))
+	for i := range items {
+		ids[i] = idOf(items[i])
 	}
-	rows, err := s.q.ListCategoriesByEventIDs(ctx, ids)
+	rows, err := fetch(ctx, ids)
 	if err != nil {
 		return
 	}
-	catMap := make(map[int64][]string, len(events))
+	catMap := make(map[int64][]string, len(items))
 	for _, r := range rows {
-		catMap[r.EventID] = append(catMap[r.EventID], r.Category)
+		id, cat := rowCat(r)
+		catMap[id] = append(catMap[id], cat)
 	}
-	for i := range events {
-		if cats, ok := catMap[events[i].ID]; ok {
-			events[i].Categories = timeutil.JoinCategoryList(cats)
+	for i := range items {
+		if cats, ok := catMap[idOf(items[i])]; ok {
+			setCats(&items[i], timeutil.JoinCategoryList(cats))
 		}
 	}
 }
 
+func (s *Service) populateEventCategories(ctx context.Context, events []event.Event) {
+	populateCategories(ctx, events,
+		func(e event.Event) int64 { return e.ID },
+		s.q.ListCategoriesByEventIDs,
+		func(r storage.EventCategory) (int64, string) { return r.EventID, r.Category },
+		func(e *event.Event, joined string) { e.Categories = joined },
+	)
+}
+
 func (s *Service) populateTodoCategories(ctx context.Context, todos []todo.Todo) {
-	if len(todos) == 0 {
-		return
-	}
-	ids := make([]int64, len(todos))
-	for i := range todos {
-		ids[i] = todos[i].ID
-	}
-	rows, err := s.q.ListCategoriesByTodoIDs(ctx, ids)
-	if err != nil {
-		return
-	}
-	catMap := make(map[int64][]string, len(todos))
-	for _, r := range rows {
-		catMap[r.TodoID] = append(catMap[r.TodoID], r.Category)
-	}
-	for i := range todos {
-		if cats, ok := catMap[todos[i].ID]; ok {
-			todos[i].Categories = timeutil.JoinCategoryList(cats)
-		}
-	}
+	populateCategories(ctx, todos,
+		func(t todo.Todo) int64 { return t.ID },
+		s.q.ListCategoriesByTodoIDs,
+		func(r storage.TodoCategory) (int64, string) { return r.TodoID, r.Category },
+		func(t *todo.Todo, joined string) { t.Categories = joined },
+	)
 }
 
 // expandRecurringTodoRows expands recurring todo rows into Todo instances with
 // DueDate/StartDate adjusted to each occurrence. For each master, overrides
 // (rows with a matching RECURRENCE-ID) replace the original RRULE instance.
-func (s *Service) expandRecurringTodoRows(ctx context.Context, rows []storage.Todo, from, to time.Time) []todo.Todo {
-	var result []todo.Todo
-	for _, row := range rows {
-		td := todoFromRow(row)
-		expanded := ExpandTodo(td, from, to)
-
-		// Fetch overrides for this master.
-		overrides, _ := s.q.ListTodoOverridesByUID(ctx, row.Uid)
-		overridden := make(map[string]struct{}, len(overrides))
-		for _, o := range overrides {
-			overridden[canonicalRecurrenceID(o.RecurrenceID)] = struct{}{}
-		}
-
-		// Emit master instances, skipping any slot that has been overridden;
-		// the override is emitted separately below at its own occurrence time.
-		for _, inst := range expanded {
-			instKey := inst.InstanceTime.UTC().Format(time.RFC3339)
-			if _, ok := overridden[instKey]; ok {
-				continue
-			}
-			t := inst.Todo
+func (s *Service) expandRecurringTodoRows(ctx context.Context, rows []storage.Todo, from, to time.Time) ([]todo.Todo, error) {
+	k := recurringKind[storage.Todo, todo.Todo, ExpandedTodo]{
+		fromRow:  todoFromRow,
+		expand:   ExpandTodo,
+		instTime: func(i ExpandedTodo) time.Time { return i.InstanceTime },
+		applyInstance: func(i ExpandedTodo) todo.Todo {
+			t := i.Todo
 			anchor := t.ParseStartDate()
 			if anchor.IsZero() {
 				anchor = t.ParseDueDate()
 			}
 			if !anchor.IsZero() {
-				offset := inst.InstanceTime.Sub(anchor)
-				if t.DueDate != "" {
-					due := t.ParseDueDate()
-					if !due.IsZero() {
-						newDue := due.Add(offset)
-						if timeutil.IsDateOnly(t.DueDate) {
-							t.DueDate = newDue.Format("2006-01-02")
-						} else {
-							t.DueDate = newDue.Format(time.RFC3339)
-						}
-					}
-				}
-				if t.StartDate != "" {
-					start := t.ParseStartDate()
-					if !start.IsZero() {
-						newStart := start.Add(offset)
-						if timeutil.IsDateOnly(t.StartDate) {
-							t.StartDate = newStart.Format("2006-01-02")
-						} else {
-							t.StartDate = newStart.Format(time.RFC3339)
-						}
-					}
-				}
+				offset := i.InstanceTime.Sub(anchor)
+				t.DueDate = shiftDateString(t.DueDate, t.ParseDueDate(), offset)
+				t.StartDate = shiftDateString(t.StartDate, t.ParseStartDate(), offset)
 			}
-			result = append(result, t)
-		}
-
-		// Emit overrides whose own occurrence falls within [from, to). A moved
-		// occurrence belongs to its new day, not the day of the slot it replaced.
-		for _, o := range overrides {
-			if strings.EqualFold(o.Status, "CANCELLED") {
-				continue // CANCELLED override suppresses the instance.
-			}
-			if !todoOccursAt(td, o.RecurrenceID) {
-				continue // orphan override (no matching master occurrence)
-			}
+			return t
+		},
+		uid:           func(r storage.Todo) string { return r.Uid },
+		status:        func(r storage.Todo) string { return r.Status },
+		recurrenceID:  func(r storage.Todo) string { return r.RecurrenceID },
+		listOverrides: s.q.ListTodoOverridesByUID,
+		occursAt:      todoOccursAt,
+		emitOverride: func(o storage.Todo, from, to time.Time) (todo.Todo, bool) {
 			ot := todoFromRow(o)
 			anchor := ot.ParseStartDate()
 			if anchor.IsZero() {
@@ -765,17 +789,29 @@ func (s *Service) expandRecurringTodoRows(ctx context.Context, rows []storage.To
 			}
 			if anchor.IsZero() {
 				// No datable anchor: fall back to the replaced slot for the
-				// window check. recurrence_id parses here because todoOccursAt
-				// above already returned true for it.
+				// window check. An unparseable recurrence_id leaves anchor zero,
+				// which fails inWindow and is dropped (the orphan probe that
+				// follows would drop it too).
 				anchor, _ = timeutil.ParseRecurrenceID(o.RecurrenceID)
 			}
-			if !inWindow(anchor, from, to) {
-				continue
-			}
-			result = append(result, ot)
-		}
+			return ot, inWindow(anchor, from, to)
+		},
 	}
-	return result
+	return expandRecurringRowsBy(ctx, k, rows, from, to)
+}
+
+// shiftDateString returns value advanced by offset, preserving its date-only or
+// RFC 3339 representation. It returns value unchanged when it is empty or its
+// parsed form (parsed) is zero, so a blank or unparseable field is left intact.
+func shiftDateString(value string, parsed time.Time, offset time.Duration) string {
+	if value == "" || parsed.IsZero() {
+		return value
+	}
+	shifted := parsed.Add(offset)
+	if timeutil.IsDateOnly(value) {
+		return shifted.Format("2006-01-02")
+	}
+	return shifted.Format(time.RFC3339)
 }
 
 // ListExpandedTodosByDueDateRange returns non-recurring todos in [from,to)
@@ -801,7 +837,11 @@ func (s *Service) ListExpandedTodosByDueDateRange(ctx context.Context, from, to 
 	if err != nil {
 		return nil, err
 	}
-	result = append(result, s.expandRecurringTodoRows(ctx, recurringRows, from, to)...)
+	expanded, err := s.expandRecurringTodoRows(ctx, recurringRows, from, to)
+	if err != nil {
+		return nil, err
+	}
+	result = append(result, expanded...)
 
 	s.populateTodoCategories(ctx, result)
 	sort.Slice(result, func(i, j int) bool {
@@ -948,7 +988,11 @@ func (s *Service) ListFilteredTodos(ctx context.Context, p TodoListParams) ([]to
 		return nil, err
 	}
 	if hasRange {
-		result = append(result, s.expandRecurringTodoRows(ctx, recurringRows, p.From, p.To)...)
+		expanded, err := s.expandRecurringTodoRows(ctx, recurringRows, p.From, p.To)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, expanded...)
 	} else {
 		for _, row := range recurringRows {
 			result = append(result, todoFromRow(row))
@@ -986,57 +1030,9 @@ func ExpandTodo(td todo.Todo, from, to time.Time) []ExpandedTodo {
 		return nil
 	}
 
-	if td.RecurrenceRule == "" {
-		if anchor.Before(from) || !anchor.Before(to) {
-			return nil
-		}
-		return []ExpandedTodo{{
-			Todo:         td,
-			InstanceTime: anchor,
-		}}
-	}
-
-	rruleStr := "RRULE:" + td.RecurrenceRule
-	set, err := rrule.StrToRRuleSet(rruleStr)
-	if err != nil {
-		if anchor.Before(from) || !anchor.Before(to) {
-			return nil
-		}
-		return []ExpandedTodo{{
-			Todo:         td,
-			InstanceTime: anchor,
-		}}
-	}
-
-	loc := tzForExpansion(td.Timezone)
-	dtstart := anchor
-	localFrom, localTo := from, to
-	if loc != nil {
-		dtstart = dtstart.In(loc)
-		localFrom = from.In(loc)
-		localTo = to.In(loc)
-	}
-
-	set.DTStart(dtstart)
-	for _, ex := range td.ParseExDates() {
-		if loc != nil {
-			ex = ex.In(loc)
-		}
-		set.ExDate(ex)
-	}
-	rdates := td.ParseRDates()
-	for _, rd := range rdates {
-		if loc != nil {
-			rd = rd.In(loc)
-		}
-		set.RDate(rd)
-	}
-
-	rdateSet := buildRDateSet(rdates)
-
-	// A todo spanning START->DUE can straddle the window start, so generate
-	// from from-duration and keep occurrences by [start, end) overlap. The
-	// span is the START->DUE distance; a due-only (point) todo has none.
+	// A todo spanning START->DUE can straddle the window start, so the shared
+	// core generates from from-duration. The span is the START->DUE distance; a
+	// due-only (point) todo has none.
 	dur := time.Duration(0)
 	if start := td.ParseStartDate(); !start.IsZero() {
 		if due := td.ParseDueDate(); !due.IsZero() && due.After(start) {
@@ -1044,23 +1040,14 @@ func ExpandTodo(td todo.Todo, from, to time.Time) []ExpandedTodo {
 		}
 	}
 
-	occurrences := set.Between(localFrom.Add(-dur), localTo, true)
-	filteredOcc := occurrences[:0]
-	for _, occ := range occurrences {
-		if keepOccurrence(occ, dur, localFrom, localTo) {
-			filteredOcc = append(filteredOcc, occ)
-		}
-	}
-	occurrences = filteredOcc
+	occs := expandRecurrence(td.RecurrenceRule, td.Timezone, anchor, dur, td.ParseExDates(), td.ParseRDates(), from, to)
 
 	var instances []ExpandedTodo
-	for _, occ := range occurrences {
-		utcOcc := occ.UTC()
-		_, isRDate := rdateSet[rdateKey(occ)]
+	for _, o := range occs {
 		instances = append(instances, ExpandedTodo{
 			Todo:         td,
-			InstanceTime: utcOcc,
-			IsOverride:   isRDate,
+			InstanceTime: o.InstanceTime,
+			IsOverride:   o.IsOverride,
 		})
 	}
 	return instances
@@ -1114,26 +1101,12 @@ func journalFromRow(row storage.Journal) journal.Journal {
 }
 
 func (s *Service) populateJournalCategories(ctx context.Context, journals []journal.Journal) {
-	if len(journals) == 0 {
-		return
-	}
-	ids := make([]int64, len(journals))
-	for i := range journals {
-		ids[i] = journals[i].ID
-	}
-	rows, err := s.q.ListCategoriesByJournalIDs(ctx, ids)
-	if err != nil {
-		return
-	}
-	catMap := make(map[int64][]string, len(journals))
-	for _, r := range rows {
-		catMap[r.JournalID] = append(catMap[r.JournalID], r.Category)
-	}
-	for i := range journals {
-		if cats, ok := catMap[journals[i].ID]; ok {
-			journals[i].Categories = timeutil.JoinCategoryList(cats)
-		}
-	}
+	populateCategories(ctx, journals,
+		func(j journal.Journal) int64 { return j.ID },
+		s.q.ListCategoriesByJournalIDs,
+		func(r storage.JournalCategory) (int64, string) { return r.JournalID, r.Category },
+		func(j *journal.Journal, joined string) { j.Categories = joined },
+	)
 }
 
 // ExpandJournal generates all occurrences of a journal within a date range.
@@ -1147,120 +1120,51 @@ func ExpandJournal(j journal.Journal, from, to time.Time) []ExpandedJournal {
 		return nil
 	}
 
-	if j.RecurrenceRule == "" {
-		if anchor.Before(from) || !anchor.Before(to) {
-			return nil
-		}
-		return []ExpandedJournal{{Journal: j, InstanceTime: anchor}}
-	}
-
-	rruleStr := "RRULE:" + j.RecurrenceRule
-	set, err := rrule.StrToRRuleSet(rruleStr)
-	if err != nil {
-		if anchor.Before(from) || !anchor.Before(to) {
-			return nil
-		}
-		return []ExpandedJournal{{Journal: j, InstanceTime: anchor}}
-	}
-
-	loc := tzForExpansion(j.Timezone)
-	dtstart := anchor
-	localFrom, localTo := from, to
-	if loc != nil {
-		dtstart = dtstart.In(loc)
-		localFrom = from.In(loc)
-		localTo = to.In(loc)
-	}
-
-	set.DTStart(dtstart)
-	for _, ex := range j.ParseExDates() {
-		if loc != nil {
-			ex = ex.In(loc)
-		}
-		set.ExDate(ex)
-	}
-	rdates := j.ParseRDates()
-	for _, rd := range rdates {
-		if loc != nil {
-			rd = rd.In(loc)
-		}
-		set.RDate(rd)
-	}
-	rdateSet := buildRDateSet(rdates)
-
-	occurrences := set.Between(localFrom, localTo, true)
-	filteredOcc := occurrences[:0]
-	for _, occ := range occurrences {
-		if occ.Before(localTo) {
-			filteredOcc = append(filteredOcc, occ)
-		}
-	}
+	// Journals are point-in-time (no DURATION), so the instance duration is zero.
+	occs := expandRecurrence(j.RecurrenceRule, j.Timezone, anchor, 0, j.ParseExDates(), j.ParseRDates(), from, to)
 
 	var instances []ExpandedJournal
-	for _, occ := range filteredOcc {
-		_, isRDate := rdateSet[rdateKey(occ)]
-		instances = append(instances, ExpandedJournal{Journal: j, InstanceTime: occ.UTC(), IsOverride: isRDate})
+	for _, o := range occs {
+		instances = append(instances, ExpandedJournal{
+			Journal:      j,
+			InstanceTime: o.InstanceTime,
+			IsOverride:   o.IsOverride,
+		})
 	}
 	return instances
 }
 
-func (s *Service) expandRecurringJournalRows(ctx context.Context, rows []storage.Journal, from, to time.Time) []journal.Journal {
-	var result []journal.Journal
-	for _, row := range rows {
-		j := journalFromRow(row)
-		expanded := ExpandJournal(j, from, to)
-
-		overrides, _ := s.q.ListJournalOverridesByUID(ctx, row.Uid)
-		overridden := make(map[string]struct{}, len(overrides))
-		for _, o := range overrides {
-			overridden[canonicalRecurrenceID(o.RecurrenceID)] = struct{}{}
-		}
-
-		// Emit master instances, skipping any slot that has been overridden;
-		// the override is emitted separately below at its own occurrence time.
-		for _, inst := range expanded {
-			instKey := inst.InstanceTime.UTC().Format(time.RFC3339)
-			if _, ok := overridden[instKey]; ok {
-				continue
+func (s *Service) expandRecurringJournalRows(ctx context.Context, rows []storage.Journal, from, to time.Time) ([]journal.Journal, error) {
+	k := recurringKind[storage.Journal, journal.Journal, ExpandedJournal]{
+		fromRow:  journalFromRow,
+		expand:   ExpandJournal,
+		instTime: func(i ExpandedJournal) time.Time { return i.InstanceTime },
+		applyInstance: func(i ExpandedJournal) journal.Journal {
+			jj := i.Journal
+			if anchor := jj.ParseStartDate(); !anchor.IsZero() {
+				jj.StartDate = shiftDateString(jj.StartDate, anchor, i.InstanceTime.Sub(anchor))
 			}
-			jj := inst.Journal
-			anchor := jj.ParseStartDate()
-			if !anchor.IsZero() && jj.StartDate != "" {
-				offset := inst.InstanceTime.Sub(anchor)
-				newStart := anchor.Add(offset)
-				if timeutil.IsDateOnly(jj.StartDate) {
-					jj.StartDate = newStart.Format("2006-01-02")
-				} else {
-					jj.StartDate = newStart.Format(time.RFC3339)
-				}
-			}
-			result = append(result, jj)
-		}
-
-		// Emit overrides whose own occurrence falls within [from, to). A moved
-		// occurrence belongs to its new day, not the day of the slot it replaced.
-		for _, o := range overrides {
-			if strings.EqualFold(o.Status, "CANCELLED") {
-				continue
-			}
-			if !journalOccursAt(j, o.RecurrenceID) {
-				continue // orphan override (no matching master occurrence)
-			}
+			return jj
+		},
+		uid:           func(r storage.Journal) string { return r.Uid },
+		status:        func(r storage.Journal) string { return r.Status },
+		recurrenceID:  func(r storage.Journal) string { return r.RecurrenceID },
+		listOverrides: s.q.ListJournalOverridesByUID,
+		occursAt:      journalOccursAt,
+		emitOverride: func(o storage.Journal, from, to time.Time) (journal.Journal, bool) {
 			oj := journalFromRow(o)
 			anchor := oj.ParseStartDate()
 			if anchor.IsZero() {
 				// No datable anchor: fall back to the replaced slot for the
-				// window check. recurrence_id parses here because journalOccursAt
-				// above already returned true for it.
+				// window check. An unparseable recurrence_id leaves anchor zero,
+				// which fails inWindow and is dropped (the orphan probe that
+				// follows would drop it too).
 				anchor, _ = timeutil.ParseRecurrenceID(o.RecurrenceID)
 			}
-			if !inWindow(anchor, from, to) {
-				continue
-			}
-			result = append(result, oj)
-		}
+			return oj, inWindow(anchor, from, to)
+		},
 	}
-	return result
+	return expandRecurringRowsBy(ctx, k, rows, from, to)
 }
 
 // ListFilteredJournals returns journals matching all supplied filters. When a
@@ -1309,7 +1213,11 @@ func (s *Service) ListFilteredJournals(ctx context.Context, p JournalListParams)
 		return nil, err
 	}
 	if hasRange {
-		result = append(result, s.expandRecurringJournalRows(ctx, recurringRows, p.From, p.To)...)
+		expanded, err := s.expandRecurringJournalRows(ctx, recurringRows, p.From, p.To)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, expanded...)
 	} else {
 		for _, row := range recurringRows {
 			result = append(result, journalFromRow(row))
