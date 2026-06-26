@@ -5,11 +5,20 @@ import (
 	"database/sql"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
+
+// panicCredStore panics from Set to simulate a panic raised inside Connect
+// after BeginTx but before Commit.
+type panicCredStore struct{}
+
+func (panicCredStore) Get(int64) (auth.Credential, error) { return auth.Credential{}, nil }
+func (panicCredStore) Set(auth.Credential) error          { panic("simulated credential-store panic") }
+func (panicCredStore) Delete(int64) error                 { return nil }
 
 // failGetAccountDB wraps a DBTX and turns the GetAccount read into a
 // non-ErrNoRows failure (a "no such column" scan error), simulating a
@@ -277,6 +286,45 @@ func TestConnect_RelinkPropagatesTransientGetAccountError(t *testing.T) {
 	}
 	if len(store.creds) != 1 {
 		t.Errorf("credential count = %d, want 1: a transient read error must not orphan the old credential behind a new one", len(store.creds))
+	}
+}
+
+// TestConnect_PanicDoesNotLeakTransaction verifies that a panic raised between
+// BeginTx and Commit in Connect does not leak the transaction. The in-memory
+// test pool is pinned to a single connection (storage.Open sets
+// SetMaxOpenConns(1) for ":memory:"), so a leaked transaction never returns its
+// connection to the pool and the next query blocks until its context expires.
+// A deferred rollback releases the connection, so the follow-up read returns
+// promptly.
+func TestConnect_PanicDoesNotLeakTransaction(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	cal, err := svc.Get(ctx, 1)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	link := RemoteLink{
+		RemoteURL:     "https://example.com/dav/calendars/work/",
+		Username:      "user",
+		AuthType:      "basic",
+		AllowInsecure: false,
+	}
+
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatal("Connect: expected the credential-store panic to propagate, got none")
+			}
+		}()
+		_ = svc.Connect(ctx, cal, link, auth.Credential{Username: "user"}, panicCredStore{})
+	}()
+
+	deadline, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if _, err := svc.Get(deadline, 1); err != nil {
+		t.Fatalf("read after panicked Connect failed (transaction leaked, connection not released): %v", err)
 	}
 }
 

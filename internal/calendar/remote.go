@@ -57,6 +57,7 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 			if err != nil {
 				return fmt.Errorf("begin tx: %w", err)
 			}
+			defer tx.Rollback()
 			qtx := s.q.WithTx(tx)
 			if err := qtx.UpdateAccount(ctx, storage.UpdateAccountParams{
 				ID:        existing.ID,
@@ -65,7 +66,6 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 				AuthType:  link.AuthType,
 				Username:  link.Username,
 			}); err != nil {
-				_ = tx.Rollback()
 				return fmt.Errorf("update hidden account: %w", err)
 			}
 			if err := qtx.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
@@ -73,7 +73,6 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 				AccountID: &existing.ID,
 				RemoteUrl: storage.StringToNullable(link.RemoteURL),
 			}); err != nil {
-				_ = tx.Rollback()
 				return fmt.Errorf("link calendar: %w", err)
 			}
 			// Intentionally skip seeding RemoteColor on re-link: the calendar
@@ -89,7 +88,6 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 			// the DB writes succeed, mirroring the new-account path below.
 			prevCred, prevErr := credStore.Get(existing.ID)
 			if err := credStore.Set(cred); err != nil {
-				_ = tx.Rollback()
 				return fmt.Errorf("store credentials: %w", err)
 			}
 			if err := tx.Commit(); err != nil {
@@ -108,6 +106,7 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
+	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 	account, err := qtx.CreateAccount(ctx, storage.CreateAccountParams{
 		Name:      hiddenAccountName(cal.ID),
@@ -116,7 +115,6 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 		Username:  link.Username,
 	})
 	if err != nil {
-		_ = tx.Rollback()
 		return fmt.Errorf("create hidden account: %w", err)
 	}
 	if err := qtx.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
@@ -124,7 +122,6 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 		AccountID: &account.ID,
 		RemoteUrl: storage.StringToNullable(link.RemoteURL),
 	}); err != nil {
-		_ = tx.Rollback()
 		return fmt.Errorf("link calendar: %w", err)
 	}
 	if link.RemoteColor != "" {
@@ -133,14 +130,12 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 			Color:       link.RemoteColor,
 			RemoteColor: storage.StringToNullable(link.RemoteColor),
 		}); err != nil {
-			_ = tx.Rollback()
 			return fmt.Errorf("seed remote calendar color: %w", err)
 		}
 	}
 
 	cred.AccountID = account.ID
 	if err := credStore.Set(cred); err != nil {
-		_ = tx.Rollback()
 		return fmt.Errorf("store credentials: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
