@@ -1285,6 +1285,58 @@ func TestMovedOverride_Todo(t *testing.T) {
 	}
 }
 
+// TestMovedOverride_TodoMultiDaySpansWindow verifies that a multi-day todo
+// override whose START precedes the query window but whose DUE falls inside it
+// is kept. The override window check must use [START, DUE) interval overlap
+// (honoring todoDuration), matching the master-occurrence path and the event
+// override path -- not a point test on the anchor alone, which would drop the
+// override from every window after its start. Regression test for issue #288.
+func TestMovedOverride_TodoMultiDaySpansWindow(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	todoSvc := todo.NewService(db, q)
+	recurSvc := NewService(db, q)
+	ctx := context.Background()
+
+	master, err := todoSvc.Create(ctx, todo.CreateParams{
+		CalendarID:     1,
+		Summary:        "Weekly Review",
+		StartDate:      "2026-04-06T09:00:00Z", // Monday
+		DueDate:        "2026-04-06T10:00:00Z",
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
+	})
+	if err != nil {
+		t.Fatalf("create recurring todo: %v", err)
+	}
+	// Move the Apr 6 occurrence to a multi-day span: START Apr 5 10:00 ->
+	// DUE Apr 8 12:00.
+	if _, err := todoSvc.UpsertByUID(ctx, todo.UpsertParams{
+		UID:          master.UID,
+		CalendarID:   1,
+		Summary:      "Review Offsite (moved)",
+		StartDate:    "2026-04-05T10:00:00Z",
+		DueDate:      "2026-04-08T12:00:00Z",
+		RecurrenceID: "2026-04-06T09:00:00Z",
+	}); err != nil {
+		t.Fatalf("create multi-day todo override: %v", err)
+	}
+
+	// Query a single day (Apr 7) the override spans but does not start on, and
+	// on which the master produces no instance (Apr 7 is not a Monday).
+	from := time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 4, 8, 0, 0, 0, 0, time.UTC)
+
+	got, err := recurSvc.ListExpandedTodosByDueDateRange(ctx, from, to)
+	if err != nil {
+		t.Fatalf("expand spanning window: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d todos, want 1 (multi-day override overlapping the window)", len(got))
+	}
+	if got[0].StartDate != "2026-04-05T10:00:00Z" {
+		t.Errorf("start = %q, want %q", got[0].StartDate, "2026-04-05T10:00:00Z")
+	}
+}
+
 // TestListExpandedByDateRange_OverrideEmptyEndTime locks in that an override
 // persisted with a blank/zero end_time (e.g. a point-in-time or improperly
 // migrated override) still appears. Previously overlapsWindow required

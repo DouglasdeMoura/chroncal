@@ -970,11 +970,15 @@ func (s *Service) expandRecurringTodoRows(ctx context.Context, rows []storage.To
 			if anchor.IsZero() {
 				// No datable anchor: fall back to the replaced slot for the
 				// window check. An unparseable recurrence_id leaves anchor zero,
-				// which fails inWindow and is dropped (the orphan probe that
-				// follows would drop it too).
+				// which fails keepOccurrence and is dropped (the orphan probe
+				// that follows would drop it too).
 				anchor, _ = timeutil.ParseRecurrenceID(o.RecurrenceID)
 			}
-			return ot, inWindow(anchor, from, to)
+			// Keep on [START, DUE) interval overlap (honoring todoDuration), so a
+			// multi-day override whose START precedes the window but whose DUE
+			// falls inside it is not dropped -- matching the master-occurrence
+			// path (keepOccurrence/between) and the event override path.
+			return ot, keepOccurrence(anchor, todoDuration(ot), from, to)
 		},
 	}
 	return expandRecurringRowsBy(ctx, k, rows, from, to)
