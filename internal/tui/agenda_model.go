@@ -847,7 +847,7 @@ func (m AgendaModel) HandleClick(x, y int) (AgendaModel, tea.Cmd) {
 	}
 	if len(m.rows) == 0 {
 		btnW, btnY := m.emptyButtonBounds()
-		if y == btnY && x >= 2 && x < 2+btnW {
+		if y == btnY && x < btnW {
 			day := m.SelectedDay()
 			return m, func() tea.Msg { return EventCreateMsg{Day: day} }
 		}
