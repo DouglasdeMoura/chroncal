@@ -10,6 +10,7 @@ import (
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 
+	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/caldav"
 	"github.com/douglasdemoura/chroncal/internal/calendar"
@@ -111,7 +112,11 @@ queries the connected remote CalDAV calendar instead.`,
 				if calendarRef.ID != 0 {
 					calendarIDs = []int64{calendarRef.ID}
 				}
-				result, err = freebusy.Compute(ctx, a.Recurrences, from.UTC(), to.UTC(), calendarIDs)
+				ownerEmails, err := freebusyOwnerEmails(ctx, a, calendarRef)
+				if err != nil {
+					return err
+				}
+				result, err = freebusy.Compute(ctx, a.Recurrences, from.UTC(), to.UTC(), calendarIDs, ownerEmails)
 				if err != nil {
 					return fmt.Errorf("compute freebusy: %w", err)
 				}
@@ -149,6 +154,32 @@ queries the connected remote CalDAV calendar instead.`,
 	_ = cmd.MarkFlagRequired("from")
 	_ = cmd.MarkFlagRequired("to")
 	return cmd
+}
+
+// freebusyOwnerEmails returns calendar ID -> owner email for the calendars
+// in scope, so Compute can drop instances the owner has DECLINED (issue
+// #302). For a single named calendar it uses the already-loaded ref; for
+// "All Calendars" it lists every calendar. Calendars without an owner email
+// are omitted, which leaves their PARTSTAT gate disabled.
+func freebusyOwnerEmails(ctx context.Context, a *app.App, calendarRef calendar.Calendar) (map[int64]string, error) {
+	owners := map[int64]string{}
+	add := func(id int64, email string) {
+		if id != 0 && email != "" {
+			owners[id] = email
+		}
+	}
+	if calendarRef.ID != 0 {
+		add(calendarRef.ID, calendarRef.OwnerEmail)
+		return owners, nil
+	}
+	calendars, err := a.Calendars.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list calendars: %w", err)
+	}
+	for _, c := range calendars {
+		add(c.ID, c.OwnerEmail)
+	}
+	return owners, nil
 }
 
 // parseFreeBusyTime parses a free/busy range bound that may be a date-only

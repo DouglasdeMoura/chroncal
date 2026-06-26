@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/recurrence"
 )
 
@@ -53,7 +54,7 @@ func TestCompute_UsesExpandedEventsAndFiltersCalendars(t *testing.T) {
 		},
 	}
 
-	result, err := Compute(context.Background(), source, from, to, []int64{2})
+	result, err := Compute(context.Background(), source, from, to, []int64{2}, nil)
 	if err != nil {
 		t.Fatalf("Compute: %v", err)
 	}
@@ -112,7 +113,7 @@ func TestCompute_RecurringInstancesUseInstanceTimeAndMergeOverlaps(t *testing.T)
 		},
 	}
 
-	result, err := Compute(context.Background(), source, from, to, nil)
+	result, err := Compute(context.Background(), source, from, to, nil, nil)
 	if err != nil {
 		t.Fatalf("Compute: %v", err)
 	}
@@ -170,7 +171,7 @@ func TestCompute_SkipsTransparentAndCancelledAndMapsTentative(t *testing.T) {
 		},
 	}
 
-	result, err := Compute(context.Background(), source, from, to, nil)
+	result, err := Compute(context.Background(), source, from, to, nil, nil)
 	if err != nil {
 		t.Fatalf("Compute: %v", err)
 	}
@@ -202,7 +203,7 @@ func TestCompute_PreservesAllDayIntervals(t *testing.T) {
 		},
 	}
 
-	result, err := Compute(context.Background(), source, from, to, nil)
+	result, err := Compute(context.Background(), source, from, to, nil, nil)
 	if err != nil {
 		t.Fatalf("Compute: %v", err)
 	}
@@ -214,5 +215,58 @@ func TestCompute_PreservesAllDayIntervals(t *testing.T) {
 	}
 	if !result.Periods[0].End.Equal(time.Date(2026, 4, 11, 0, 0, 0, 0, time.UTC)) {
 		t.Fatalf("end = %s", result.Periods[0].End)
+	}
+}
+
+// TestCompute_SkipsOwnerDeclinedInstances reproduces issue #302: an event
+// the calendar owner has DECLINED (attendee PARTSTAT=DECLINED) must not
+// count as busy, while a still-accepted event on the same range does.
+func TestCompute_SkipsOwnerDeclinedInstances(t *testing.T) {
+	t.Parallel()
+
+	from := time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 4, 11, 0, 0, 0, 0, time.UTC)
+	source := &stubExpandedEventSource{
+		events: []recurrence.ExpandedEvent{
+			{
+				Event: event.Event{
+					CalendarID: 1,
+					StartTime:  time.Date(2026, 4, 10, 9, 0, 0, 0, time.UTC),
+					EndTime:    time.Date(2026, 4, 10, 10, 0, 0, 0, time.UTC),
+					Status:     "CONFIRMED",
+					Transp:     "OPAQUE",
+					Attendees: []model.Attendee{
+						{Email: "mailto:me@example.com", RSVPStatus: "DECLINED"},
+						{Email: "organizer@example.com", RSVPStatus: "ACCEPTED", Organizer: true},
+					},
+				},
+				InstanceTime: time.Date(2026, 4, 10, 9, 0, 0, 0, time.UTC),
+			},
+			{
+				Event: event.Event{
+					CalendarID: 1,
+					StartTime:  time.Date(2026, 4, 10, 11, 0, 0, 0, time.UTC),
+					EndTime:    time.Date(2026, 4, 10, 12, 0, 0, 0, time.UTC),
+					Status:     "CONFIRMED",
+					Transp:     "OPAQUE",
+					Attendees: []model.Attendee{
+						{Email: "me@example.com", RSVPStatus: "ACCEPTED"},
+					},
+				},
+				InstanceTime: time.Date(2026, 4, 10, 11, 0, 0, 0, time.UTC),
+			},
+		},
+	}
+
+	ownerEmails := map[int64]string{1: "me@example.com"}
+	result, err := Compute(context.Background(), source, from, to, nil, ownerEmails)
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+	if len(result.Periods) != 1 {
+		t.Fatalf("periods = %d, want 1 (declined instance excluded)", len(result.Periods))
+	}
+	if !result.Periods[0].Start.Equal(time.Date(2026, 4, 10, 11, 0, 0, 0, time.UTC)) {
+		t.Fatalf("period start = %s, want 2026-04-10 11:00 UTC (accepted instance)", result.Periods[0].Start)
 	}
 }
