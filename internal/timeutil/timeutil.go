@@ -15,6 +15,16 @@ import (
 // UTC, which must round-trip as a full RFC 3339 DATE-TIME.
 var dateOnlyLoc = time.FixedZone("DATE", 0)
 
+// AsDateOnly returns t's calendar date re-tagged with the all-day marker
+// location (dateOnlyLoc), so SerializeTimeList emits it as a date-only
+// "YYYY-MM-DD" value — i.e. an iCal VALUE=DATE matching DTSTART;VALUE=DATE for
+// all-day events (RFC 5545 §3.8.5.1). It uses t's UTC calendar day, matching
+// how all-day occurrences are stored (midnight UTC).
+func AsDateOnly(t time.Time) time.Time {
+	u := t.UTC()
+	return time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, dateOnlyLoc)
+}
+
 // StorageTimeFormat is the canonical layout for UTC timestamps written to the
 // database (e.g. deleted_at cutoffs). It is RFC 3339 without the explicit
 // numeric offset, since all stored times are UTC.

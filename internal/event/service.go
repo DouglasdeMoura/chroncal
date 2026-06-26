@@ -582,6 +582,13 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 				// restore path treats the same parse failure as fatal.
 				return fmt.Errorf("parse recurrence_id %q: %w", evt.RecurrenceID, parseErr)
 			}
+			// All-day masters store recurrence_ids as full RFC 3339, so
+			// ParseRecurrenceID yields a UTC-located time. Re-tag it as
+			// date-only so the EXDATE serializes as VALUE=DATE matching
+			// DTSTART;VALUE=DATE on export (RFC 5545 §3.8.5.1, issue #221).
+			if master.AllDay == 1 {
+				recIDTime = timeutil.AsDateOnly(recIDTime)
+			}
 			existing = append(existing, recIDTime)
 			if err := qtx.UpdateEventExdates(ctx, storage.UpdateEventExdatesParams{
 				Exdates: storage.StringToNullable(SerializeTimeList(existing)),
@@ -635,7 +642,15 @@ func (s *Service) DeleteInstance(ctx context.Context, uid string, instanceTime t
 	}
 
 	existing := ParseTimeList(storage.NullableToString(master.Exdates))
-	existing = append(existing, instanceTime.UTC())
+	exdate := instanceTime.UTC()
+	// For an all-day master, tag the EXDATE as date-only so it serializes as
+	// VALUE=DATE matching DTSTART;VALUE=DATE on export; otherwise a strict
+	// CalDAV server ignores the mismatched DATE-TIME EXDATE and the deleted
+	// occurrence reappears (RFC 5545 §3.8.5.1, issue #221).
+	if master.AllDay == 1 {
+		exdate = timeutil.AsDateOnly(exdate)
+	}
+	existing = append(existing, exdate)
 	if err := qtx.UpdateEventExdates(ctx, storage.UpdateEventExdatesParams{
 		Exdates: storage.StringToNullable(SerializeTimeList(existing)),
 		ID:      master.ID,

@@ -643,6 +643,65 @@ func TestDelete_AllDayOverrideAddsDateOnlyEXDATE(t *testing.T) {
 	}
 }
 
+func TestDeleteInstance_AllDayStoresDateOnlyEXDATE(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "allday-inst", CalendarID: 1, Title: "Daily Standup",
+		StartTime:      time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 2, 0, 0, 0, 0, time.UTC),
+		AllDay:         true,
+		RecurrenceRule: "FREQ=DAILY",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+
+	instance := time.Date(2026, 4, 8, 0, 0, 0, 0, time.UTC)
+	if err := svc.DeleteInstance(ctx, master.UID, instance); err != nil {
+		t.Fatalf("DeleteInstance: %v", err)
+	}
+
+	got, _ := svc.GetByUID(ctx, master.UID)
+	// All-day master must store the EXDATE as a date-only value so iCal export
+	// emits EXDATE;VALUE=DATE matching DTSTART;VALUE=DATE (RFC 5545 §3.8.5.1).
+	if got.ExDates != "2026-04-08" {
+		t.Errorf("stored exdates = %q, want \"2026-04-08\" (date-only)", got.ExDates)
+	}
+}
+
+func TestDelete_AllDayOverrideRFC3339RecIDStoresDateOnlyEXDATE(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	svc.UpsertByUID(ctx, UpsertParams{
+		UID: "allday-ovr", CalendarID: 1, Title: "Daily Standup",
+		StartTime:      time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 2, 0, 0, 0, 0, time.UTC),
+		AllDay:         true,
+		RecurrenceRule: "FREQ=DAILY",
+	})
+	// Override stored with a full RFC 3339 recurrence_id, as sync/import produce.
+	svc.UpsertByUID(ctx, UpsertParams{
+		UID: "allday-ovr", CalendarID: 1, Title: "Standup (cancelled)",
+		StartTime:    time.Date(2026, 4, 8, 0, 0, 0, 0, time.UTC),
+		EndTime:      time.Date(2026, 4, 9, 0, 0, 0, 0, time.UTC),
+		AllDay:       true,
+		RecurrenceID: "2026-04-08T00:00:00Z",
+	})
+
+	override, _ := svc.GetByUIDAndRecurrenceID(ctx, "allday-ovr", "2026-04-08T00:00:00Z")
+	if err := svc.Delete(ctx, override.ID); err != nil {
+		t.Fatalf("Delete all-day override: %v", err)
+	}
+
+	master, _ := svc.GetByUID(ctx, "allday-ovr")
+	if master.ExDates != "2026-04-08" {
+		t.Errorf("stored exdates = %q, want \"2026-04-08\" (date-only)", master.ExDates)
+	}
+}
+
 func TestDeleteSeries_CascadesAll(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
