@@ -208,8 +208,8 @@ func (c *Client) PutResource(ctx context.Context, path string, data *ical.Calend
 		return "", fmt.Errorf("new PUT request: %w", err)
 	}
 	req.Header.Set("Content-Type", ical.MIMEType)
-	if etag != "" {
-		req.Header.Set("If-Match", formatIfMatch(etag))
+	if ifMatch := formatIfMatch(etag); ifMatch != "" {
+		req.Header.Set("If-Match", ifMatch)
 	}
 
 	resp, err := c.httpClient.Do(req)
@@ -524,16 +524,34 @@ func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
 	return 0, false
 }
 
+// normalizeETag strips surrounding whitespace and the quotes from an ETag,
+// preserving the weak "W/" marker (RFC 7232 §2.3) so callers can tell a weak
+// validator apart from a strong one. Weak tags are kept as "W/<opaque>", strong
+// tags as "<opaque>". Comparisons elsewhere are opaque equality, which stays
+// consistent because both sides flow through this function.
 func normalizeETag(etag string) string {
 	etag = strings.TrimSpace(etag)
-	etag = strings.TrimPrefix(etag, "W/")
-	etag = strings.TrimSpace(etag)
-	return strings.Trim(etag, `"`)
+	weak := false
+	if rest, ok := strings.CutPrefix(etag, "W/"); ok {
+		weak = true
+		etag = strings.TrimSpace(rest)
+	}
+	etag = strings.Trim(etag, `"`)
+	if weak && etag != "" {
+		return "W/" + etag
+	}
+	return etag
 }
 
+// formatIfMatch renders an ETag for the If-Match request header, or returns ""
+// when no precondition should be sent. RFC 7232 §3.1 mandates the strong
+// comparison function for If-Match, under which a weak validator never matches
+// (not even itself). Asserting a weak tag as strong would 412 on every push, so
+// weak validators yield no precondition and conflict detection falls back to
+// the sync-token/ctag pull comparison instead.
 func formatIfMatch(etag string) string {
 	etag = normalizeETag(etag)
-	if etag == "" {
+	if etag == "" || strings.HasPrefix(etag, "W/") {
 		return ""
 	}
 	return `"` + etag + `"`
