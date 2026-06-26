@@ -681,6 +681,44 @@ func TestSoftDelete_RestoreByUIDPreservesImportedEXDATE(t *testing.T) {
 	}
 }
 
+// TestSoftDelete_RestoreFromInstanceSurfacesMarkDirtyError verifies that a
+// failure to mark the master resource dirty during a from-instance undo is
+// propagated to the caller instead of being silently swallowed. Without it the
+// restored occurrences reappear locally but are never re-synced to the server.
+// Regression test for #252.
+func TestSoftDelete_RestoreFromInstanceSurfacesMarkDirtyError(t *testing.T) {
+	svc := newTestService(t)
+	makeSyncedCalendar(t, svc)
+	ctx := context.Background()
+
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:            "restore-from-instance-markdirty",
+		CalendarID:     1,
+		Title:          "Sprint Review",
+		StartTime:      time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;COUNT=10",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+
+	cutoff := time.Date(2026, 4, 22, 14, 0, 0, 0, time.UTC)
+	meta, err := svc.DeleteFromInstanceWithUndo(ctx, master.UID, cutoff)
+	if err != nil {
+		t.Fatalf("DeleteFromInstanceWithUndo: %v", err)
+	}
+
+	// Force the dirty-mark inside restoreFromInstance to fail.
+	if _, err := svc.db.ExecContext(ctx, "DROP TABLE sync_resources"); err != nil {
+		t.Fatalf("drop sync_resources: %v", err)
+	}
+
+	if err := svc.RestoreUndo(ctx, meta); err == nil {
+		t.Fatal("RestoreUndo returned nil, want error when MarkResourceDirty fails")
+	}
+}
+
 // TestSoftDelete_RestoreSurfacesTombstoneClearError verifies that a failure
 // to clear the queued tombstone during restore is propagated to the caller
 // instead of being silently swallowed. Regression test for #121.

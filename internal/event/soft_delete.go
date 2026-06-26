@@ -443,7 +443,9 @@ func (s *Service) restoreFromInstance(ctx context.Context, meta UndoMeta) error 
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	_ = storage.MarkResourceDirty(ctx, s.db, master.CalendarID, meta.UID, "event")
+	if err := storage.MarkResourceDirty(ctx, s.db, master.CalendarID, meta.UID, "event"); err != nil {
+		return fmt.Errorf("mark resource dirty after restore: %w", err)
+	}
 	return nil
 }
 
