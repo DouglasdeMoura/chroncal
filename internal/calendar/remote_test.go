@@ -312,3 +312,127 @@ func TestConnect_NoRemoteColor_LeavesLocalColor(t *testing.T) {
 		t.Errorf("RemoteColor = %q, want empty when fetch yielded nothing", got.RemoteColor)
 	}
 }
+
+// TestDisconnect_HiddenAccountWithMultipleCalendars_PreservesCredential verifies
+// that disconnecting one calendar from a shared hidden account does not delete
+// the stored credential when the account still has other calendars linked.
+func TestDisconnect_HiddenAccountWithMultipleCalendars_PreservesCredential(t *testing.T) {
+	svc, q, _ := newTestServiceWithDB(t)
+	ctx := context.Background()
+
+	// Create a second calendar.
+	cal2, err := q.CreateCalendar(ctx, storage.CreateCalendarParams{
+		Name:  "Work",
+		Color: "#0000ff",
+	})
+	if err != nil {
+		t.Fatalf("CreateCalendar: %v", err)
+	}
+
+	// Create a hidden account shared by both calendars.
+	account, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name:      hiddenAccountPrefix + "shared",
+		ServerUrl: "https://example.com",
+		AuthType:  "basic",
+		Username:  "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+
+	// Link both calendars to the same hidden account.
+	for _, calID := range []int64{1, cal2.ID} {
+		id := calID
+		if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+			ID:        id,
+			AccountID: &account.ID,
+			RemoteUrl: storage.StringToNullable("https://example.com/dav/"),
+		}); err != nil {
+			t.Fatalf("LinkCalendarToAccount(%d): %v", id, err)
+		}
+	}
+
+	// Seed the credential.
+	store := &memCredStore{}
+	if err := store.Set(auth.Credential{AccountID: account.ID, Username: "user", Password: "secret"}); err != nil {
+		t.Fatalf("seed credential: %v", err)
+	}
+
+	// Disconnect calendar 1 only. The account still has calendar 2 linked so
+	// the account row is not deleted, and the credential must survive.
+	cal1, err := svc.Get(ctx, 1)
+	if err != nil {
+		t.Fatalf("Get cal1: %v", err)
+	}
+	if err := svc.Disconnect(ctx, cal1, store); err != nil {
+		t.Fatalf("Disconnect: %v", err)
+	}
+
+	got, err := store.Get(account.ID)
+	if err != nil {
+		t.Fatalf("Get credential after Disconnect: %v", err)
+	}
+	if got.Password != "secret" {
+		t.Errorf("Disconnect: credential wrongly deleted when account survived; password = %q, want %q", got.Password, "secret")
+	}
+}
+
+// TestDeleteWithRemoteCleanup_HiddenAccountWithMultipleCalendars_PreservesCredential
+// verifies that deleting a calendar whose hidden account still serves another
+// calendar does not delete the stored credential.
+func TestDeleteWithRemoteCleanup_HiddenAccountWithMultipleCalendars_PreservesCredential(t *testing.T) {
+	svc, q, _ := newTestServiceWithDB(t)
+	ctx := context.Background()
+
+	// Create a second calendar.
+	cal2, err := q.CreateCalendar(ctx, storage.CreateCalendarParams{
+		Name:  "Work",
+		Color: "#0000ff",
+	})
+	if err != nil {
+		t.Fatalf("CreateCalendar: %v", err)
+	}
+
+	// Create a hidden account shared by both calendars.
+	account, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name:      hiddenAccountPrefix + "shared",
+		ServerUrl: "https://example.com",
+		AuthType:  "basic",
+		Username:  "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+
+	// Link both calendars to the same hidden account.
+	for _, calID := range []int64{1, cal2.ID} {
+		id := calID
+		if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+			ID:        id,
+			AccountID: &account.ID,
+			RemoteUrl: storage.StringToNullable("https://example.com/dav/"),
+		}); err != nil {
+			t.Fatalf("LinkCalendarToAccount(%d): %v", id, err)
+		}
+	}
+
+	// Seed the credential.
+	store := &memCredStore{}
+	if err := store.Set(auth.Credential{AccountID: account.ID, Username: "user", Password: "secret"}); err != nil {
+		t.Fatalf("seed credential: %v", err)
+	}
+
+	// Delete cal2 (non-default). The account still has calendar 1 linked so
+	// the account row is not deleted, and the credential must survive.
+	if err := svc.DeleteWithRemoteCleanup(ctx, cal2.ID, 0, store); err != nil {
+		t.Fatalf("DeleteWithRemoteCleanup: %v", err)
+	}
+
+	got, err := store.Get(account.ID)
+	if err != nil {
+		t.Fatalf("Get credential after DeleteWithRemoteCleanup: %v", err)
+	}
+	if got.Password != "secret" {
+		t.Errorf("DeleteWithRemoteCleanup: credential wrongly deleted when account survived; password = %q, want %q", got.Password, "secret")
+	}
+}
