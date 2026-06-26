@@ -1,9 +1,11 @@
 package sync
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -1096,6 +1098,115 @@ END:VCALENDAR
 	}
 	if dirty[0].Uid != "conflict-event" {
 		t.Fatalf("remaining dirty uid = %q, want conflict-event", dirty[0].Uid)
+	}
+}
+
+// TestEnginePushLostPutResponseIsNotFalseConflict reproduces issue #294: the
+// first PUT reaches the server and mutates the resource, but the response is
+// lost (a transient "connection reset"). Retry re-issues the PUT with the
+// stale pre-PUT If-Match, which the server now 412s because its ETag already
+// advanced. Without idempotency-aware recovery this surfaces as a spurious
+// conflict even though our write actually won. The push must instead detect
+// that the server holds exactly our payload and finalize it as a success.
+func TestEnginePushLostPutResponseIsNotFalseConflict(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	insertTestEvent(t, db, calendarID, "lost-put")
+
+	var putBody []byte
+	putCount := 0
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		switch r.Method {
+		case http.MethodPut:
+			body, _ := io.ReadAll(r.Body)
+			putBody = body
+			putCount++
+			if putCount == 1 {
+				// The PUT landed server-side, but the response is lost on the
+				// wire while reading it back. Classified transient.
+				return nil, fmt.Errorf("read response: connection reset by peer")
+			}
+			// The retried conditional PUT carries the stale If-Match, so the
+			// server (whose ETag already advanced) rejects it.
+			return &http.Response{
+				StatusCode: http.StatusPreconditionFailed,
+				Status:     "412 Precondition Failed",
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("precondition failed")),
+				Request:    r,
+			}, nil
+		case http.MethodGet:
+			// The server now holds exactly the body we PUT on the first try.
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header: http.Header{
+					"Content-Type": []string{"text/calendar; charset=utf-8"},
+					"Etag":         []string{`"etag-after"`},
+				},
+				Body:    io.NopCloser(bytes.NewReader(putBody)),
+				Request: r,
+			}, nil
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			return nil, nil
+		}
+	})
+
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calendarID,
+		Uid:          "lost-put",
+		OwnerType:    "event",
+		RemoteUrl:    "/calendar/lost-put.ics",
+		Etag:         `"etag-before"`,
+		Dirty:        1,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource lost-put: %v", err)
+	}
+
+	result, err := engine.push(ctx, client, calendarID, "", "", ConflictPrompt)
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if result.conflicts != 0 {
+		t.Fatalf("conflicts = %d, want 0 (lost response is not a real conflict)", result.conflicts)
+	}
+	if len(result.errors) != 0 {
+		t.Fatalf("errors = %v, want none", result.errors)
+	}
+	if result.pushed != 1 {
+		t.Fatalf("pushed = %d, want 1 (our write actually landed)", result.pushed)
+	}
+
+	// No spurious conflict row recorded.
+	conflicts, err := q.ListSyncConflictsByCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("ListSyncConflictsByCalendar: %v", err)
+	}
+	if len(conflicts) != 0 {
+		t.Fatalf("sync conflicts = %d, want 0", len(conflicts))
+	}
+
+	// The resource is finalized with the server's advanced ETag and no longer dirty.
+	res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: "lost-put"})
+	if err != nil {
+		t.Fatalf("GetSyncResource: %v", err)
+	}
+	if res.Etag != "etag-after" {
+		t.Fatalf("Etag = %q, want %q (adopted from the landed write)", res.Etag, "etag-after")
+	}
+	if res.Dirty != 0 {
+		t.Fatalf("Dirty = %d, want 0 (write succeeded)", res.Dirty)
 	}
 }
 

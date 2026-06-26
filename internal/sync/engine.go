@@ -413,9 +413,28 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 			}
 		}
 
-		// PUT to server
+		// PUT to server. A PUT can reach the server and mutate the resource
+		// even when its response is lost (e.g. connection reset while reading
+		// the body), which Retry classifies as transient. The retried PUT then
+		// re-sends the stale pre-PUT If-Match and the server — whose ETag has
+		// already advanced — answers 412, masquerading as a conflict. When an
+		// earlier attempt failed transiently, treat a 412 whose server body
+		// equals what we PUT as the success that actually happened. See #294.
+		priorAttemptMayHaveLanded := false
 		newEtag, putErr := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (string, error) {
-			return client.PutResource(ctx, putPath, cal, res.Etag)
+			etag, err := client.PutResource(ctx, putPath, cal, res.Etag)
+			if err == nil {
+				return etag, nil
+			}
+			// A 412 is never transient, so these branches are exclusive.
+			if caldav.IsTransient(err) {
+				priorAttemptMayHaveLanded = true
+			} else if priorAttemptMayHaveLanded && caldav.IsConflict(err) {
+				if landedEtag, ok := e.putAlreadyLanded(ctx, client, putPath, cal); ok {
+					return landedEtag, nil
+				}
+			}
+			return etag, err
 		})
 		if putErr != nil {
 			// Check for 412 Precondition Failed (ETag conflict)
@@ -523,6 +542,34 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 	}
 
 	return result, nil
+}
+
+// putAlreadyLanded reports whether the server's current body for path equals
+// the calendar we just PUT, returning the server's ETag when it matches. It
+// distinguishes a genuine 412 conflict from one caused by a retried PUT whose
+// predecessor actually landed before its response was lost: if the server now
+// holds exactly our payload, that earlier write won, so we adopt its ETag
+// instead of surfacing a false conflict. A mismatch (a real concurrent edit)
+// or any fetch/encode failure conservatively falls back to the 412. See #294.
+func (e *Engine) putAlreadyLanded(ctx context.Context, client *caldav.Client, path string, sent *ical.Calendar) (string, bool) {
+	serverRes, err := client.GetResource(ctx, path)
+	if err != nil {
+		return "", false
+	}
+	sentBody, err := caldav.EncodeCalendar(sent)
+	if err != nil {
+		return "", false
+	}
+	serverBody, err := caldav.EncodeCalendar(serverRes.Data)
+	if err != nil {
+		return "", false
+	}
+	// An empty ETag would disable the next push's If-Match precondition, so
+	// fall back to the 412 rather than adopt it as a successful write.
+	if serverRes.ETag == "" || !bytes.Equal(sentBody, serverBody) {
+		return "", false
+	}
+	return serverRes.ETag, true
 }
 
 type pullResult struct {
