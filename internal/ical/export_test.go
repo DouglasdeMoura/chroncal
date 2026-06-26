@@ -438,6 +438,60 @@ func TestExport_EventWithAlarms(t *testing.T) {
 	}
 }
 
+// TestExport_AlarmRepeatWithoutDuration guards RFC 5545 §3.8.6.2: REPEAT
+// MUST be paired with DURATION. A Repeat with no Duration must not emit a
+// bare REPEAT, which strict CalDAV servers (e.g. Google) reject with 400.
+func TestExport_AlarmRepeatWithoutDuration(t *testing.T) {
+	t.Parallel()
+	events := []event.Event{{
+		UID:       "alarm-repeat-no-duration",
+		Title:     "Alarm Event",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		Alarms: []model.Alarm{
+			{Action: "DISPLAY", TriggerValue: "-PT15M", Description: "no interval", Repeat: 3},
+		},
+	}}
+
+	data, _ := ExportEvents(events, "")
+	ics := string(data)
+	if strings.Contains(ics, "REPEAT") {
+		t.Errorf("emitted REPEAT without DURATION (non-conformant per RFC 5545 §3.8.6.2):\n%s", ics)
+	}
+}
+
+// TestExport_AlarmRepeatWithDuration confirms the conformant pair still
+// round-trips when both REPEAT and DURATION are present.
+func TestExport_AlarmRepeatWithDuration(t *testing.T) {
+	t.Parallel()
+	events := []event.Event{{
+		UID:       "alarm-repeat-with-duration",
+		Title:     "Alarm Event",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		Alarms: []model.Alarm{
+			{Action: "DISPLAY", TriggerValue: "-PT15M", Description: "repeat", Duration: "PT5M", Repeat: 3},
+		},
+	}}
+
+	data, _ := ExportEvents(events, "")
+	ics := string(data)
+	if !strings.Contains(ics, "REPEAT:3") {
+		t.Errorf("missing REPEAT:3 when DURATION present:\n%s", ics)
+	}
+	if !strings.Contains(ics, "DURATION:PT5M") {
+		t.Errorf("missing DURATION:PT5M:\n%s", ics)
+	}
+}
+
 func TestExport_EventWithAttendees(t *testing.T) {
 	t.Parallel()
 	events := []event.Event{{
