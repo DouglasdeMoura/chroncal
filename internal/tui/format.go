@@ -66,8 +66,25 @@ func effectiveStartOnDay(ev event.Event, day time.Time, dayIndex int) time.Time 
 
 // spanDays returns the local calendar days an event touches. The end time
 // is treated as exclusive, so an event ending exactly at midnight does not
-// count the following day.
+// count the following day. All-day events are stored as midnight-UTC
+// datestamps, so their span is derived from the UTC date — anchored at local
+// midnight to match the timed-event convention used by callers' window and
+// boundary comparisons — so they land on the correct day regardless of the
+// local timezone offset (mirrors eventCalendarDays).
 func spanDays(ev event.Event) []time.Time {
+	if ev.AllDay {
+		s := ev.StartTime.UTC()
+		e := ev.EndTime.UTC()
+		startDay := time.Date(s.Year(), s.Month(), s.Day(), 0, 0, 0, 0, time.Local)
+		var days []time.Time
+		for d := s; d.Before(e); d = d.AddDate(0, 0, 1) {
+			days = append(days, time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.Local))
+		}
+		if len(days) == 0 {
+			days = []time.Time{startDay}
+		}
+		return days
+	}
 	s := ev.StartTime.Local()
 	startDay := time.Date(s.Year(), s.Month(), s.Day(), 0, 0, 0, 0, s.Location())
 	e := ev.EndTime.Local()
