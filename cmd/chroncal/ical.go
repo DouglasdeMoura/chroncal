@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -122,8 +123,15 @@ again updates existing items instead of blindly duplicating them.`,
 			// Opportunistically push whatever landed to a CalDAV-linked
 			// calendar, mirroring the event/todo/journal write paths, so an
 			// import doesn't wait for the next `service run` tick (issue #115).
+			// In JSON mode the push seam's human-readable sync note must be
+			// discarded so it can't trail the JSON object on stdout and break
+			// downstream parsers (issue #255); text mode still shows it.
 			if len(summary.events)+len(summary.todos)+len(summary.journals) > 0 {
-				pushCalendarAfterWrite(a, calID, w)
+				pushWriter := w
+				if outputFmt != "text" {
+					pushWriter = io.Discard
+				}
+				pushCalendarAfterWrite(a, calID, pushWriter)
 			}
 
 			// A non-zero exit signals that the import was partial, but the

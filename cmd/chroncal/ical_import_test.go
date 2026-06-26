@@ -1,13 +1,20 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/douglasdemoura/chroncal/internal/app"
+	"github.com/douglasdemoura/chroncal/internal/config"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/ical"
 	"github.com/douglasdemoura/chroncal/internal/model"
@@ -132,6 +139,67 @@ func TestImportComponentsSurfacesChildFieldFailure(t *testing.T) {
 	// But the dropped alarm must be reported instead of only logged.
 	if !containsSubstring(result.Warnings, "alarms") {
 		t.Fatalf("warnings = %v, want a warning about the dropped alarm", result.Warnings)
+	}
+}
+
+// TestImportJSONOutputStaysValidWhenPushNotes is the regression test for
+// issue #255: `ical import --output json` passed the command's stdout writer
+// to the opportunistic push seam unconditionally, so the human-readable
+// "Synced to ..." note was appended after the JSON object, producing invalid
+// JSON on stdout. In JSON mode the note must go to io.Discard (matching the
+// event/todo/journal write paths) so stdout stays parseable.
+func TestImportJSONOutputStaysValidWhenPushNotes(t *testing.T) {
+	ctx := context.Background()
+	a := newImportTestApp(t)
+
+	if _, err := a.Calendars.Create(ctx, "Work", "", ""); err != nil {
+		t.Fatalf("create calendar: %v", err)
+	}
+
+	icsPath := filepath.Join(t.TempDir(), "in.ics")
+	ics := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//chroncal//test//EN\r\n" +
+		"BEGIN:VTODO\r\nUID:import-json-1\r\nSUMMARY:Imported task\r\nEND:VTODO\r\n" +
+		"END:VCALENDAR\r\n"
+	if err := os.WriteFile(icsPath, []byte(ics), 0o600); err != nil {
+		t.Fatalf("write ics: %v", err)
+	}
+
+	// Simulate a CalDAV-linked calendar that produces a pushable change: the
+	// real seam writes "Synced to ..." to the writer it is handed. In JSON
+	// mode it must be handed io.Discard, so this note must never reach stdout.
+	const syncNote = "Synced to Work · pushed 1 · deleted 0\n"
+	prev := pushCalendarAfterWrite
+	pushCalendarAfterWrite = func(_ *app.App, _ int64, w io.Writer) {
+		io.WriteString(w, syncNote)
+	}
+	t.Cleanup(func() { pushCalendarAfterWrite = prev })
+
+	prevFmt := outputFmt
+	outputFmt = "json"
+	t.Cleanup(func() { outputFmt = prevFmt })
+
+	root := &cobra.Command{
+		Use: "chroncal-test",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			cfg = config.Load()
+			return nil
+		},
+	}
+	root.AddCommand(icalCmd())
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"ical", "import", icsPath, "--calendar", "Work"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("ical import: %v", err)
+	}
+
+	if strings.Contains(out.String(), "Synced to") {
+		t.Fatalf("sync note leaked into JSON stdout:\n%s", out.String())
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(out.Bytes(), &parsed); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\noutput:\n%s", err, out.String())
 	}
 }
 
