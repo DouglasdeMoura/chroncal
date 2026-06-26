@@ -242,8 +242,13 @@ func (s *migratingCredentialStore) Get(accountID int64) (Credential, error) {
 	if legacyErr != nil {
 		return Credential{}, err
 	}
+	// Migrate into the primary store best-effort. A transient write failure
+	// (e.g. the keyring is momentarily unavailable) must not turn a successful
+	// legacy read into an error — that would lock the user out of sync for the
+	// whole process lifetime. On failure, return the legacy credential and keep
+	// the legacy copy so a later read can retry the migration.
 	if setErr := s.primary.Set(legacyCred); setErr != nil {
-		return Credential{}, setErr
+		return legacyCred, nil
 	}
 	// Migration succeeded: the caller now has the credential and the primary
 	// store owns it. Cleaning up the legacy copy is best-effort — a failure

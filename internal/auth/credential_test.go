@@ -421,6 +421,51 @@ func TestMigratingCredentialStore_GetIgnoresLegacyCleanupError(t *testing.T) {
 	}
 }
 
+// TestMigratingCredentialStore_GetReturnsLegacyWhenMigrationWriteFails
+// reproduces issue #423: when the primary keyring is transiently
+// unavailable for writes, the migration's primary.Set fails. Get must
+// still return the legacy credential (a successful read) rather than
+// turning the read into an error and locking the user out of sync for
+// the whole process lifetime.
+func TestMigratingCredentialStore_GetReturnsLegacyWhenMigrationWriteFails(t *testing.T) {
+	legacy := &PlaintextFileStore{dir: t.TempDir(), warn: io.Discard}
+
+	legacyCred := Credential{
+		AccountID: 42,
+		Username:  "legacy",
+		Password:  "plaintext-secret",
+	}
+	if err := legacy.Set(legacyCred); err != nil {
+		t.Fatalf("legacy Set: %v", err)
+	}
+
+	// Keyring reads miss (no migrated copy yet) and keyring writes fail,
+	// simulating a transient backend that can be read-probed but not written.
+	backing := map[string]string{}
+	overrideKeyringForTest(t, true, backing)
+	keyringSetFn = func(service, user, value string) error {
+		return errors.New("keyring temporarily unavailable")
+	}
+
+	store := &migratingCredentialStore{
+		primary: &KeyringStore{},
+		legacy:  legacy,
+	}
+
+	got, err := store.Get(42)
+	if err != nil {
+		t.Fatalf("Get should return the legacy credential when migration write fails, got %v", err)
+	}
+	if got.Username != "legacy" || got.Password != "plaintext-secret" {
+		t.Fatalf("Get returned %+v, want the legacy credential", got)
+	}
+	// The migration write failed, so the legacy copy must survive for a
+	// later retry rather than being deleted.
+	if _, err := legacy.Get(42); err != nil {
+		t.Fatalf("legacy credential should survive a failed migration write, got %v", err)
+	}
+}
+
 func TestPlaintextFileStore_WarningsRouteToInjectedWriter(t *testing.T) {
 	var buf strings.Builder
 	store := &PlaintextFileStore{dir: t.TempDir(), warn: &buf}
