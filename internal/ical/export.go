@@ -576,19 +576,25 @@ func MergeCalendars(a, b []byte) []byte {
 	}
 
 	// Remove header from b: find the earliest component marker regardless of
-	// type, so that a stream mixing VEVENT/VTODO/VJOURNAL does not lose the
-	// components that appear before the first marker of a later-searched type.
+	// type, so that a stream mixing VEVENT/VTODO/VJOURNAL/VFREEBUSY does not
+	// lose the components that appear before the first marker of a
+	// later-searched type. VFREEBUSY is included so a free/busy-only stream is
+	// still recognized; otherwise its BEGIN:VCALENDAR header would be appended
+	// verbatim, nesting a second VCALENDAR.
 	firstComp := -1
-	for _, marker := range []string{"BEGIN:VEVENT", "BEGIN:VTODO", "BEGIN:VJOURNAL"} {
+	for _, marker := range []string{"BEGIN:VEVENT", "BEGIN:VTODO", "BEGIN:VJOURNAL", "BEGIN:VFREEBUSY"} {
 		if idx := strings.Index(bStr, marker); idx >= 0 {
 			if firstComp < 0 || idx < firstComp {
 				firstComp = idx
 			}
 		}
 	}
-	if firstComp >= 0 {
-		bStr = bStr[firstComp:]
+	if firstComp < 0 {
+		// b has no components to contribute; keep only the (already extracted)
+		// VTIMEZONE blocks and avoid appending b's VCALENDAR header verbatim.
+		return []byte(aStr + extraTZ + "END:VCALENDAR\r\n")
 	}
+	bStr = bStr[firstComp:]
 
 	// Remove trailing END:VCALENDAR from b, then re-add it
 	if idx := strings.LastIndex(bStr, "END:VCALENDAR"); idx >= 0 {
