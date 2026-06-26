@@ -6,16 +6,24 @@ import (
 	"unicode/utf8"
 )
 
-// Display removes terminal escape sequences and collapses control characters
-// into safe plain text for human-facing terminal, notification, and email
-// rendering.
-func Display(s string) string {
+// StripEscapes removes terminal escape sequences (CSI `ESC [ … final` and OSC
+// `ESC ] … BEL|ST`) and lone ESC bytes, leaving every other byte untouched. It
+// preserves whitespace and other runes, so callers that measure or wrap text
+// can rely on byte/rune positions matching the visible output.
+func StripEscapes(s string) string {
+	if strings.IndexByte(s, 0x1b) < 0 {
+		// No ESC byte: nothing to strip, avoid allocating a copy.
+		return s
+	}
+
 	var b strings.Builder
+	b.Grow(len(s))
 
 	for i := 0; i < len(s); {
 		if s[i] == 0x1b {
 			switch {
 			case i+1 < len(s) && s[i+1] == '[':
+				// CSI: runs until a final byte in 0x40–0x7e.
 				i += 2
 				for i < len(s) {
 					c := s[i]
@@ -24,8 +32,8 @@ func Display(s string) string {
 						break
 					}
 				}
-				continue
 			case i+1 < len(s) && s[i+1] == ']':
+				// OSC: runs until BEL or ST (ESC \).
 				i += 2
 				for i < len(s) {
 					if s[i] == 0x07 {
@@ -38,13 +46,28 @@ func Display(s string) string {
 					}
 					i++
 				}
-				continue
 			default:
+				// Lone ESC: drop just the escape byte.
 				i++
-				continue
 			}
+			continue
 		}
 
+		b.WriteByte(s[i])
+		i++
+	}
+
+	return b.String()
+}
+
+// Display removes terminal escape sequences and collapses control characters
+// into safe plain text for human-facing terminal, notification, and email
+// rendering.
+func Display(s string) string {
+	s = StripEscapes(s)
+
+	var b strings.Builder
+	for i := 0; i < len(s); {
 		r, size := utf8.DecodeRuneInString(s[i:])
 		if r == utf8.RuneError && size == 1 {
 			i++

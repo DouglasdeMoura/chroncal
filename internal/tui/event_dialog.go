@@ -14,6 +14,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/textsafe"
 )
 
 // EventDialogClosedMsg is emitted when the dialog requests to close.
@@ -1054,27 +1055,12 @@ func truncateTo(s string, w int) string {
 	return string(r[:cut]) + "…"
 }
 
+// stripANSI removes terminal escape sequences while preserving whitespace and
+// other runes, so truncation and width measurement see the visible text. It
+// delegates to textsafe.StripEscapes so OSC sequences (e.g. OSC 8 hyperlinks)
+// are handled the same way as in the rest of the codebase.
 func stripANSI(s string) string {
-	var b strings.Builder
-	b.Grow(len(s))
-	for i := 0; i < len(s); {
-		if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '[' {
-			j := i + 2
-			for j < len(s) {
-				c := s[j]
-				if c >= 0x40 && c <= 0x7e {
-					j++
-					break
-				}
-				j++
-			}
-			i = j
-			continue
-		}
-		b.WriteByte(s[i])
-		i++
-	}
-	return b.String()
+	return textsafe.StripEscapes(s)
 }
 
 func wrapLine(s string, w int) []string {
