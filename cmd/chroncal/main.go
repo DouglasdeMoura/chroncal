@@ -290,6 +290,15 @@ func resolveRef[T any](
 	var v T
 	var err error
 	if id, parseErr := strconv.ParseInt(ref, 10, 64); parseErr == nil {
+		// A numeric ref addresses a single row by its unique ID. A
+		// recurrence-id can only narrow a UID to one instance, so pairing it
+		// with an ID is contradictory: honoring the ID would silently drop the
+		// recurrence-id (and, for delete/update, act on the master while the
+		// prompt claims to touch one occurrence). Reject instead of guessing.
+		// To target an override by recurrence-id, pass the series UID. See #114.
+		if recurrenceID != "" {
+			return v, errInvalidInputf("--recurrence-id cannot be combined with a numeric %s ID %q; use the series UID to address an override instance", kind, ref)
+		}
 		v, err = getByID(ctx, id)
 	} else if recurrenceID != "" {
 		v, err = getByUIDAndRecurrenceID(ctx, ref, recurrenceID)
