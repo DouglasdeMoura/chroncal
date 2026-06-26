@@ -746,7 +746,10 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 	// a partial view without flipping the complete flag.
 	deletions := newPendingDeletions(e.logger)
 	deletions.inferFromAbsence(calendarID, localResources, remoteUIDs, true, "complete (QueryAll)")
-	result.deleted += deletions.apply(ctx, e, calendarID)
+	// The full-snapshot path stores no sync-token, so a failed deletion here is
+	// self-healing: the next snapshot re-infers the absence and retries.
+	deleted, _ := deletions.apply(ctx, e, calendarID)
+	result.deleted += deleted
 
 	return result, nil
 }
@@ -817,12 +820,17 @@ func (p *pendingDeletions) inferFromAbsence(calendarID int64, locals []storage.S
 }
 
 // apply executes the accumulated deletions: soft-delete each local owner row
-// and drop its sync_resource. Returns the count actually deleted.
-func (p *pendingDeletions) apply(ctx context.Context, e *Engine, calendarID int64) int {
-	deleted := 0
+// and drop its sync_resource. Returns the count actually deleted and the count
+// that failed. A failed soft-delete (e.g. a transient SQLITE_BUSY) leaves the
+// local row orphaned: the server has dropped it but we haven't. The caller
+// must treat failed > 0 as an incomplete pull and withhold the sync-token, or
+// the server — now past the old token — never re-reports the deletion and the
+// orphan survives forever with no retry.
+func (p *pendingDeletions) apply(ctx context.Context, e *Engine, calendarID int64) (deleted, failed int) {
 	for uid, ownerType := range p.owner {
 		if err := e.deleteLocalResourceByUID(ctx, ownerType, uid); err != nil {
 			e.logger.Error("delete local resource", "uid", uid, "owner_type", ownerType, "error", err)
+			failed++
 			continue
 		}
 		if err := e.q.DeleteSyncResource(ctx, storage.DeleteSyncResourceParams{
@@ -833,7 +841,7 @@ func (p *pendingDeletions) apply(ctx context.Context, e *Engine, calendarID int6
 		}
 		deleted++
 	}
-	return deleted
+	return deleted, failed
 }
 
 // absenceWithholdReason describes why an absence sweep was (or wasn't) safe,
@@ -1064,9 +1072,10 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 			inventoryComplete, absenceWithholdReason(syncResult.Truncated, multigetMisses, persistFailures))
 	}
 
-	result.deleted += deletions.apply(ctx, e, calendarID)
+	deleted, deleteFailures := deletions.apply(ctx, e, calendarID)
+	result.deleted += deleted
 
-	if syncResult.SyncToken != "" && inventoryComplete {
+	if syncResult.SyncToken != "" && inventoryComplete && deleteFailures == 0 {
 		token := syncResult.SyncToken
 		if err := e.q.UpdateCalendarSyncState(ctx, storage.UpdateCalendarSyncStateParams{
 			ID:        calendarID,
@@ -1075,25 +1084,28 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 		}); err != nil {
 			e.logger.Warn("update sync token", "calendar_id", calendarID, "error", err)
 		}
-	} else if multigetMisses > 0 || persistFailures > 0 {
+	} else if multigetMisses > 0 || persistFailures > 0 || deleteFailures > 0 {
 		// Pull made partial progress: some hrefs the server reported in
 		// sync-collection 404'd on multiget, or a fetched body failed to
-		// persist locally. We don't know if the 404s are real deletions or
-		// transient errors, so we don't soft-delete them; and the persist
-		// failures left those resources behind the server. We don't advance
-		// the sync-token, so the next sync re-lists the same change set and
-		// gets another shot at fetching and storing the bodies. Slow but safe.
+		// persist locally, or a server-reported deletion failed to apply
+		// locally. We don't know if the multiget 404s are real deletions or
+		// transient errors, so we don't soft-delete them; the persist failures
+		// left those resources behind the server; and the failed deletions left
+		// orphaned rows the server has already dropped. We don't advance the
+		// sync-token, so the next sync re-lists the same change set and gets
+		// another shot at fetching, storing, and deleting. Slow but safe.
 		e.logger.Warn("not advancing sync-token: incomplete pull",
 			"calendar_id", calendarID, "multiget_misses", multigetMisses,
-			"persist_failures", persistFailures)
+			"persist_failures", persistFailures, "delete_failures", deleteFailures)
 		// Surface the incompleteness so the calendar is recorded unhealthy
 		// (LastSyncError) rather than healthy. A pull that can never converge
-		// — a permanent persist failure or an href that always 404s on
-		// multiget — otherwise only logs, leaving LastSyncError clear and the
-		// ambient ⚠ sidebar glyph dark while sync stays silently stuck.
+		// — a permanent persist failure, an href that always 404s on
+		// multiget, or a server-reported deletion that won't apply locally —
+		// otherwise only logs, leaving LastSyncError clear and the ambient ⚠
+		// sidebar glyph dark while sync stays silently stuck.
 		result.errors = append(result.errors, fmt.Errorf(
-			"incomplete pull: not advancing sync-token (%d multiget miss(es), %d persist failure(s))",
-			multigetMisses, persistFailures))
+			"incomplete pull: not advancing sync-token (%d multiget miss(es), %d persist failure(s), %d delete failure(s))",
+			multigetMisses, persistFailures, deleteFailures))
 	}
 
 	return result, nil

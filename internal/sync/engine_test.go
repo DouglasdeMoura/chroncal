@@ -1923,6 +1923,80 @@ func TestEnginePullDeletesLocalResourceWhenServerRemovesIt(t *testing.T) {
 	}
 }
 
+// A server-reported deletion (a top-level 404 in the sync-collection report)
+// whose local apply() fails — e.g. a transient SQLITE_BUSY, simulated here by
+// dropping the events table — must NOT advance the sync-token. Otherwise the
+// orphaned local row survives forever: the server is now behind the new token
+// and never re-reports the deletion, so there is no retry. The token must be
+// withheld so the next sync re-lists the same 404 and apply gets another shot.
+func TestEnginePullHoldsTokenWhenDeletionApplyFails(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calendarID,
+		Uid:          "orphan",
+		OwnerType:    "event",
+		RemoteUrl:    "/calendar/orphan.ics",
+		Etag:         "etag-orphan",
+		Dirty:        0,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+
+	cal, err := q.GetCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("GetCalendar: %v", err)
+	}
+
+	// Drop the events table so SoftDeleteEventsByUID errors, deterministically
+	// reproducing a failed apply() (the issue cites a transient SQLITE_BUSY).
+	// The calendars and sync_resources tables stay intact, so the token-write
+	// path is still reachable — only the deletion fails.
+	if _, err := db.ExecContext(ctx, "DROP TABLE events"); err != nil {
+		t.Fatalf("DROP TABLE events: %v", err)
+	}
+
+	// No multiget is expected: the only change is a deletion.
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		t.Fatalf("unexpected HTTP %s %s", r.Method, r.URL.Path)
+		return nil, nil
+	})
+
+	syncResult := &caldav.SyncCollectionResult{
+		SyncToken: "https://example.com/sync/next",
+		Changes: []caldav.SyncChange{
+			{Path: "/calendar/orphan.ics", Deleted: true},
+		},
+	}
+
+	result, err := engine.applySyncCollection(ctx, client, calendarID, "/calendar/", cal, syncResult, false)
+	if err != nil {
+		t.Fatalf("applySyncCollection: %v", err)
+	}
+	if result.deleted != 0 {
+		t.Fatalf("deleted = %d, want 0 (apply failed)", result.deleted)
+	}
+
+	// Token withheld so the next sync re-lists and retries the deletion.
+	calRow, err := q.GetCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("GetCalendar: %v", err)
+	}
+	if tok := storage.NullableToString(calRow.SyncToken); tok != "" {
+		t.Fatalf("sync_token = %q, want empty (held back on deletion-apply failure)", tok)
+	}
+}
+
 // GMX (and other Cosmo-derived CalDAV servers) rewrite object hrefs on the
 // server side — a resource PUT at /cal/<user>/... is later reported under
 // /cal/<uuid>/... in REPORT responses. Pull must recognise the resource by
