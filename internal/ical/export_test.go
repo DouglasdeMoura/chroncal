@@ -715,6 +715,59 @@ func TestExport_MergeCalendars_PreservesNewVTIMEZONE(t *testing.T) {
 	}
 }
 
+// TestMergeCalendars_MixedSecondStream_EventBeforeTodo exercises the case where
+// the second stream contains a VEVENT that precedes a VTODO. The if/else if
+// search order (VTODO first) used to cause all content before the first VTODO
+// to be silently dropped, including the leading VEVENT. See issue #365.
+func TestMergeCalendars_MixedSecondStream_EventBeforeTodo(t *testing.T) {
+	t.Parallel()
+	a := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:e1\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+	// b: VEVENT (e2) appears before VTODO (t1) — e2 must survive the merge.
+	b := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\n" +
+		"BEGIN:VEVENT\r\nUID:e2\r\nEND:VEVENT\r\n" +
+		"BEGIN:VTODO\r\nUID:t1\r\nEND:VTODO\r\n" +
+		"END:VCALENDAR\r\n")
+
+	merged := string(MergeCalendars(a, b))
+	if !strings.Contains(merged, "UID:e1") {
+		t.Error("UID:e1 from first calendar is missing")
+	}
+	if !strings.Contains(merged, "UID:e2") {
+		t.Error("UID:e2 (leading VEVENT of second calendar) was dropped")
+	}
+	if !strings.Contains(merged, "UID:t1") {
+		t.Error("UID:t1 from second calendar is missing")
+	}
+	if strings.Count(merged, "BEGIN:VCALENDAR") != 1 {
+		t.Errorf("expected 1 VCALENDAR header, got %d", strings.Count(merged, "BEGIN:VCALENDAR"))
+	}
+	if strings.Count(merged, "END:VCALENDAR") != 1 {
+		t.Errorf("expected 1 END:VCALENDAR, got %d", strings.Count(merged, "END:VCALENDAR"))
+	}
+}
+
+// TestMergeCalendars_MixedSecondStream_JournalBeforeTodo mirrors the event
+// case but with a VJOURNAL leading the second stream before a VTODO.
+func TestMergeCalendars_MixedSecondStream_JournalBeforeTodo(t *testing.T) {
+	t.Parallel()
+	a := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:e1\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+	b := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\n" +
+		"BEGIN:VJOURNAL\r\nUID:j1\r\nEND:VJOURNAL\r\n" +
+		"BEGIN:VTODO\r\nUID:t1\r\nEND:VTODO\r\n" +
+		"END:VCALENDAR\r\n")
+
+	merged := string(MergeCalendars(a, b))
+	if !strings.Contains(merged, "UID:j1") {
+		t.Error("UID:j1 (leading VJOURNAL of second calendar) was dropped")
+	}
+	if !strings.Contains(merged, "UID:t1") {
+		t.Error("UID:t1 from second calendar is missing")
+	}
+	if strings.Count(merged, "BEGIN:VCALENDAR") != 1 {
+		t.Errorf("expected 1 VCALENDAR header, got %d", strings.Count(merged, "BEGIN:VCALENDAR"))
+	}
+}
+
 func TestExport_MasterWithOverride(t *testing.T) {
 	t.Parallel()
 	events := []event.Event{
