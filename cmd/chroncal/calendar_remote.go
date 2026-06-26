@@ -106,8 +106,14 @@ func deleteCalendarWithCleanup(ctx context.Context, a *app.App, id, newDefaultID
 
 func buildCalendarCredential(ctx context.Context, flags calendarRemoteFlags) (auth.Credential, error) {
 	switch normalizeAuthType(flags.AuthType) {
-	case "", "bearer":
+	case "":
 		return auth.Credential{Username: flags.Username}, nil
+	case "bearer":
+		token, err := readBearerToken()
+		if err != nil {
+			return auth.Credential{}, err
+		}
+		return auth.Credential{Username: flags.Username, AccessToken: token}, nil
 	case "basic":
 		fmt.Print("Password: ")
 		passwordBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
@@ -140,6 +146,32 @@ func buildCalendarCredential(ctx context.Context, flags calendarRemoteFlags) (au
 
 func normalizeAuthType(authType string) string {
 	return calendarpkg.NormalizeAuthType(authType)
+}
+
+// readBearerToken obtains the bearer token for --auth bearer. We never accept
+// it as a CLI flag to avoid exposing secrets in /proc/<pid>/cmdline and shell
+// history. Sources, in order:
+//
+//  1. CHRONCAL_BEARER_TOKEN env var (handy for scripted/CI setup).
+//  2. Interactive prompt via terminal (echo disabled), matching basic-auth UX.
+func readBearerToken() (string, error) {
+	if s := strings.TrimSpace(os.Getenv("CHRONCAL_BEARER_TOKEN")); s != "" {
+		return s, nil
+	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return "", fmt.Errorf("a bearer token is required: set CHRONCAL_BEARER_TOKEN or run interactively")
+	}
+	fmt.Print("Bearer token: ")
+	tokenBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Println()
+	if err != nil {
+		return "", fmt.Errorf("read bearer token: %w", err)
+	}
+	token := strings.TrimSpace(string(tokenBytes))
+	if token == "" {
+		return "", fmt.Errorf("bearer token is required")
+	}
+	return token, nil
 }
 
 // readGoogleClientSecret obtains the Desktop OAuth client secret. Google's

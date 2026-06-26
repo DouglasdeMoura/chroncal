@@ -10,6 +10,53 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/auth"
 )
 
+// TestBuildCalendarCredential_BearerReadsFromEnvVar verifies that --auth bearer
+// picks up a token from CHRONCAL_BEARER_TOKEN and stores it as AccessToken.
+// This is the regression test for issue #360: previously bearer was grouped with
+// the empty-auth branch and returned a Credential with no token, causing every
+// subsequent sync call to fail with "credential has no password or access token".
+func TestBuildCalendarCredential_BearerReadsFromEnvVar(t *testing.T) {
+	t.Setenv("CHRONCAL_BEARER_TOKEN", "test-token-abc123")
+
+	cred, err := buildCalendarCredential(context.Background(), calendarRemoteFlags{
+		RemoteURL: "https://cal.example.com/dav/calendars/work/",
+		Username:  "alice",
+		AuthType:  "bearer",
+	})
+	if err != nil {
+		t.Fatalf("buildCalendarCredential: %v", err)
+	}
+	if cred.AccessToken != "test-token-abc123" {
+		t.Fatalf("AccessToken = %q, want %q", cred.AccessToken, "test-token-abc123")
+	}
+	if cred.Username != "alice" {
+		t.Fatalf("Username = %q, want %q", cred.Username, "alice")
+	}
+	// Password must not be set — bearer tokens are not basic-auth passwords.
+	if cred.Password != "" {
+		t.Fatalf("Password = %q, want empty for bearer auth", cred.Password)
+	}
+}
+
+// TestBuildCalendarCredential_BearerRequiresToken verifies that --auth bearer
+// without a token source returns a clear error rather than silently producing a
+// non-functional credential.
+func TestBuildCalendarCredential_BearerRequiresToken(t *testing.T) {
+	t.Setenv("CHRONCAL_BEARER_TOKEN", "")
+
+	_, err := buildCalendarCredential(context.Background(), calendarRemoteFlags{
+		RemoteURL: "https://cal.example.com/dav/calendars/work/",
+		Username:  "alice",
+		AuthType:  "bearer",
+	})
+	if err == nil {
+		t.Fatal("buildCalendarCredential should return an error when no bearer token is available")
+	}
+	if !strings.Contains(err.Error(), "bearer") && !strings.Contains(err.Error(), "token") {
+		t.Fatalf("error = %v, want a message mentioning bearer or token", err)
+	}
+}
+
 type failingCredentialStore struct {
 	setErr error
 }
@@ -45,6 +92,7 @@ func (s *recordingCredentialStore) Delete(accountID int64) error {
 
 func TestConnectCalendarRemote_RollsBackNewLinkWhenCredentialStoreFails(t *testing.T) {
 	dbPath := setupCalendarCLITestEnv(t)
+	t.Setenv("CHRONCAL_BEARER_TOKEN", "test-token")
 
 	a, err := app.New(dbPath)
 	if err != nil {
@@ -92,6 +140,7 @@ func TestConnectCalendarRemote_RollsBackNewLinkWhenCredentialStoreFails(t *testi
 
 func TestConnectCalendarRemote_RollsBackExistingHiddenAccountUpdateWhenCredentialStoreFails(t *testing.T) {
 	dbPath := setupCalendarCLITestEnv(t)
+	t.Setenv("CHRONCAL_BEARER_TOKEN", "test-token")
 
 	a, err := app.New(dbPath)
 	if err != nil {
