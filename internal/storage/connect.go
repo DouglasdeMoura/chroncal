@@ -82,7 +82,11 @@ func backfillAlarmUIDs(conn *sql.DB, q *Queries) error {
 	if err != nil {
 		return fmt.Errorf("list alarms with empty uid: %w", err)
 	}
-	if len(alarms) == 0 {
+	todoAlarms, err := q.ListTodoAlarmsWithEmptyUID(ctx)
+	if err != nil {
+		return fmt.Errorf("list todo alarms with empty uid: %w", err)
+	}
+	if len(alarms) == 0 && len(todoAlarms) == 0 {
 		return nil
 	}
 
@@ -100,17 +104,6 @@ func backfillAlarmUIDs(conn *sql.DB, q *Queries) error {
 		}); err != nil {
 			return err
 		}
-	}
-
-	todoAlarms, err := q.ListTodoAlarmsWithEmptyUID(ctx)
-	if err != nil {
-		return fmt.Errorf("list todo alarms with empty uid: %w", err)
-	}
-	if len(todoAlarms) == 0 {
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("commit alarm UID backfill: %w", err)
-		}
-		return nil
 	}
 	for _, a := range todoAlarms {
 		if err := qtx.UpdateTodoAlarmUID(ctx, UpdateTodoAlarmUIDParams{

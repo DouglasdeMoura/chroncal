@@ -53,6 +53,51 @@ func TestOpen_SeedData(t *testing.T) {
 	}
 }
 
+// TestBackfillAlarmUIDs_TodoOnly guards issue #95: when there are no event
+// alarms needing a UID but todo alarms do, the backfill must still assign
+// UUIDs to those todo alarms instead of early-returning on the empty event
+// alarm list.
+func TestBackfillAlarmUIDs_TodoOnly(t *testing.T) {
+	db, q, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open error: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+
+	// Seed a todo (calendar 1 is seeded by Open) and a todo alarm with a
+	// NULL uid, simulating a row carried over from the pre-UID schema. No
+	// event alarms exist, so the event alarm list is empty.
+	res, err := db.ExecContext(ctx,
+		`INSERT INTO todos (uid, calendar_id, summary) VALUES (?, 1, ?)`,
+		"todo-uid-95", "backfill me")
+	if err != nil {
+		t.Fatalf("insert todo: %v", err)
+	}
+	todoID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("LastInsertId: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO todo_alarms (todo_id, action, trigger_value, uid) VALUES (?, 'DISPLAY', '-PT15M', NULL)`,
+		todoID); err != nil {
+		t.Fatalf("insert todo alarm: %v", err)
+	}
+
+	if err := backfillAlarmUIDs(db, q); err != nil {
+		t.Fatalf("backfillAlarmUIDs error: %v", err)
+	}
+
+	remaining, err := q.ListTodoAlarmsWithEmptyUID(ctx)
+	if err != nil {
+		t.Fatalf("ListTodoAlarmsWithEmptyUID error: %v", err)
+	}
+	if len(remaining) != 0 {
+		t.Fatalf("expected 0 todo alarms with empty uid after backfill, got %d", len(remaining))
+	}
+}
+
 func TestOpen_ForeignKeys(t *testing.T) {
 	db, _, err := Open(":memory:")
 	if err != nil {
