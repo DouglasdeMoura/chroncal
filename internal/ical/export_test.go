@@ -993,6 +993,41 @@ func TestExport_TimedOverrideRecurrenceIDIsDateTime(t *testing.T) {
 	}
 }
 
+func TestExport_FloatingOverrideRecurrenceIDIsFloating(t *testing.T) {
+	t.Parallel()
+	events := []event.Event{
+		{
+			UID:          "floating-recurring",
+			Title:        "Workout (moved)",
+			StartTime:    time.Date(2026, 4, 13, 14, 0, 0, 0, time.UTC),
+			EndTime:      time.Date(2026, 4, 13, 15, 0, 0, 0, time.UTC),
+			Timezone:     "FLOATING",
+			Status:       "CONFIRMED",
+			RecurrenceID: "2026-04-13T09:00:00Z",
+		},
+	}
+	data, err := ExportEvents(events, "Test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := recurrenceIDLine(string(data))
+	if line == "" {
+		t.Fatal("missing RECURRENCE-ID")
+	}
+	if strings.Contains(line, "VALUE=DATE") {
+		t.Errorf("floating override RECURRENCE-ID must not carry VALUE=DATE, got %q", line)
+	}
+	if strings.Contains(line, "TZID") {
+		t.Errorf("floating override RECURRENCE-ID must not carry TZID, got %q", line)
+	}
+	if v := recurrenceIDValue(line); strings.HasSuffix(v, "Z") {
+		t.Errorf("floating override RECURRENCE-ID must not carry a Z suffix (must match floating DTSTART), got %q", line)
+	}
+	if !strings.Contains(recurrenceIDValue(line), "T") {
+		t.Errorf("floating override RECURRENCE-ID must keep its time component, got %q", line)
+	}
+}
+
 func TestExport_AllDayTodoOverrideRecurrenceIDIsDate(t *testing.T) {
 	t.Parallel()
 	todos := []todo.Todo{
