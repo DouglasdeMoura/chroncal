@@ -506,23 +506,44 @@ func TestListExpandedByDateRange_CancelledOverride(t *testing.T) {
 	from := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
 	to := time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC)
 
-	events, err := recurSvc.ListExpandedByDateRange(ctx, from, to)
-	if err != nil {
-		t.Fatalf("ListExpandedByDateRange: %v", err)
-	}
-
-	// Should get 2 instances (Apr 1, Apr 3). Apr 2 is cancelled.
-	if len(events) != 2 {
-		for i, e := range events {
-			t.Logf("  events[%d]: %s at %v (status=%s)", i, e.Title, e.StartTime, e.Status)
-		}
-		t.Fatalf("got %d events, want 2", len(events))
-	}
-
-	for _, e := range events {
-		if e.StartTime.Day() == 2 {
-			t.Error("cancelled Apr 2 instance appeared in results")
-		}
+	// Both expansion paths run the same merge engine and must drop the cancelled
+	// Apr 2 occurrence, leaving exactly Apr 1 and Apr 3.
+	for _, tc := range []struct {
+		name string
+		days func() ([]int, error)
+	}{
+		{"ListExpandedByDateRange", func() ([]int, error) {
+			events, err := recurSvc.ListExpandedByDateRange(ctx, from, to)
+			days := make([]int, len(events))
+			for i, e := range events {
+				days[i] = e.StartTime.Day()
+			}
+			return days, err
+		}},
+		{"ListExpandedEvents", func() ([]int, error) {
+			events, err := recurSvc.ListExpandedEvents(ctx, from, to)
+			days := make([]int, len(events))
+			for i, e := range events {
+				days[i] = e.InstanceTime.Day()
+			}
+			return days, err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			days, err := tc.days()
+			if err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+			// Should get 2 instances (Apr 1, Apr 3). Apr 2 is cancelled.
+			if len(days) != 2 {
+				t.Fatalf("got %d events (days %v), want 2", len(days), days)
+			}
+			for _, d := range days {
+				if d == 2 {
+					t.Error("cancelled Apr 2 instance appeared in results")
+				}
+			}
+		})
 	}
 }
 
