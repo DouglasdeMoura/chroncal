@@ -2378,6 +2378,89 @@ func TestEngineSyncCalendarMetadataPushesLocalColor(t *testing.T) {
 	}
 }
 
+// TestEngineSyncCalendarMetadataSkipsFetchWhenDirty reproduces issue #419: when
+// the local color is dirty, syncCalendarMetadata must not waste a PROPFIND to
+// fetch the remote color (whose value would be discarded anyway), and a failure
+// of that fetch must not block the pending color push. The mock server fails any
+// PROPFIND with 503; the push must still happen and ColorDirty must clear.
+func TestEngineSyncCalendarMetadataSkipsFetchWhenDirty(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+
+	account, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name:      "test",
+		ServerUrl: "https://example.com",
+		AuthType:  "basic",
+		Username:  "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID:        1,
+		AccountID: &account.ID,
+		RemoteUrl: storage.StringToNullable("https://example.com/cal/work"),
+	}); err != nil {
+		t.Fatalf("LinkCalendarToAccount: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		UPDATE calendars
+		SET color = '#112233', remote_color = '#445566', color_dirty = 1
+		WHERE id = 1
+	`); err != nil {
+		t.Fatalf("seed calendar color state: %v", err)
+	}
+
+	sawPropPatch := false
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		switch r.Method {
+		case "PROPFIND":
+			t.Fatalf("unexpected PROPFIND: remote color must not be fetched when local color is dirty")
+			return nil, nil
+		case "PROPPATCH":
+			sawPropPatch = true
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("ReadAll: %v", err)
+			}
+			if !strings.Contains(string(body), "#112233") {
+				t.Fatalf("PROPPATCH body = %s", string(body))
+			}
+			return &http.Response{
+				StatusCode: http.StatusMultiStatus,
+				Header:     http.Header{"Content-Type": []string{"application/xml"}},
+				Body: io.NopCloser(strings.NewReader(`<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response><d:href>/cal/work</d:href><d:propstat><d:prop /><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
+</d:multistatus>`)),
+			}, nil
+		default:
+			t.Fatalf("unexpected method %s", r.Method)
+			return nil, nil
+		}
+	})
+
+	if err := engine.syncCalendarMetadata(ctx, client, 1, "https://example.com/cal/work"); err != nil {
+		t.Fatalf("syncCalendarMetadata: %v", err)
+	}
+	if !sawPropPatch {
+		t.Fatal("expected color push PROPPATCH")
+	}
+
+	cal, err := q.GetCalendar(ctx, 1)
+	if err != nil {
+		t.Fatalf("GetCalendar: %v", err)
+	}
+	if got := storage.NullableToString(cal.RemoteColor); got != "#112233" {
+		t.Fatalf("RemoteColor = %q, want #112233", got)
+	}
+	if cal.ColorDirty != 0 {
+		t.Fatalf("ColorDirty = %d, want 0", cal.ColorDirty)
+	}
+}
+
 func TestEngineSyncCalendarMetadataAdoptsRemoteColor(t *testing.T) {
 	t.Parallel()
 
