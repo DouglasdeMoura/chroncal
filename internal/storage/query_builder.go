@@ -51,6 +51,47 @@ func expandInPlaceholders(ids []int64) (string, []interface{}) {
 	return placeholders, args
 }
 
+// loaderIDBatch bounds how many ids go into a single `id IN (...)` batch loader
+// query (categories, attendees). Like overrideUIDBatch it stays well under
+// SQLite's 32766 host-parameter cap so the IN clause never overflows on wide
+// recurrence expansions, at the cost of a few extra queries instead of one.
+const loaderIDBatch = 500
+
+// dedupeInt64s returns ids with duplicates removed, preserving first-seen
+// order. Recurrence expansion feeds one id per expanded instance, so the same
+// master row id repeats once per occurrence; collapsing the duplicates shrinks
+// the IN-clause loaders from O(instances) back to O(distinct rows).
+func dedupeInt64s(ids []int64) []int64 {
+	if len(ids) < 2 {
+		return ids
+	}
+	seen := make(map[int64]struct{}, len(ids))
+	out := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+// loadByIDChunks de-duplicates ids and runs load once per chunk that fits under
+// SQLite's host-parameter cap, concatenating the results. Each chunk passed to
+// load is small enough for a single `IN (...)` query.
+func loadByIDChunks[T any](ctx context.Context, ids []int64, load func(context.Context, []int64) ([]T, error)) ([]T, error) {
+	var out []T
+	for _, chunk := range chunkSlice(dedupeInt64s(ids), loaderIDBatch) {
+		rows, err := load(ctx, chunk)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rows...)
+	}
+	return out, nil
+}
+
 // expandStringPlaceholders is the string analogue of expandInPlaceholders,
 // building the "?,?,?" list and matching positional args for a SQL `IN (...)`
 // clause over string values (e.g. UIDs). Callers must ensure len(vals) > 0.
