@@ -836,6 +836,20 @@ END:VCALENDAR
 	if conflicts[0].ServerEtag != "etag-server" {
 		t.Fatalf("ServerEtag = %q, want %q", conflicts[0].ServerEtag, "etag-server")
 	}
+	// The recorded local body must be the exact iCal we attempted to PUT.
+	// The push path exports the resource once before the PUT and reuses that
+	// result for the conflict record instead of re-exporting (issue #264), so
+	// it must still match a fresh export of the same local resource.
+	wantLocal, err := engine.exportResource(ctx, "event", "conflict-event")
+	if err != nil {
+		t.Fatalf("exportResource: %v", err)
+	}
+	if conflicts[0].LocalIcal != string(wantLocal) {
+		t.Fatalf("LocalIcal = %q, want %q", conflicts[0].LocalIcal, string(wantLocal))
+	}
+	if !strings.Contains(conflicts[0].LocalIcal, "SUMMARY:Test conflict-event") {
+		t.Fatalf("LocalIcal missing local summary, got %q", conflicts[0].LocalIcal)
+	}
 	var evtID int64
 	if err := db.QueryRowContext(ctx, `SELECT id FROM events WHERE uid = ? AND recurrence_id = ''`, "conflict-event").Scan(&evtID); err != nil {
 		t.Fatalf("lookup event id: %v", err)
