@@ -2,6 +2,7 @@ package trash
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
@@ -169,5 +170,75 @@ func TestService_PurgeDispatchesByKind(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("entries after purge = %d, want 0", len(entries))
+	}
+}
+
+// TestEventTrashRoundTripPreservesAllFields guards the symmetry of
+// fromEventTrash/toEventTrash. Both are manual field-by-field copies
+// between event.TrashEntry and trash.Entry; because Go struct literals
+// don't require every field, adding a field to event.TrashEntry would
+// compile cleanly even if one converter forgot it — silently zeroing the
+// field on the round-trip. Since RestoreTrash/PurgeTrashEntry target rows
+// by InstanceTime/CutoffTime, a dropped discriminator could act on the
+// wrong instance.
+//
+// The test fills every event.TrashEntry field with a distinct non-zero
+// value via reflection, round-trips through fromEventTrash∘toEventTrash,
+// and demands an exact match. A future field that one converter drops
+// reverts to its zero value and fails the comparison. fillNonZero fails
+// the test on any field it doesn't know how to populate, forcing whoever
+// adds such a field to extend this guard rather than slip past it.
+func TestEventTrashRoundTripPreservesAllFields(t *testing.T) {
+	// The non-Kind fields are seeded once; only Kind varies per case so the
+	// map/unmapEventKind round-trip is exercised for every defined value.
+	var template event.TrashEntry
+	fillNonZero(t, reflect.ValueOf(&template).Elem(), "Kind")
+
+	for _, kind := range []event.TrashKind{
+		event.TrashKindEvent,
+		event.TrashKindInstance,
+		event.TrashKindTruncation,
+	} {
+		original := template
+		original.Kind = kind
+
+		got := toEventTrash(fromEventTrash(original))
+		if !reflect.DeepEqual(got, original) {
+			t.Errorf("round-trip dropped or altered a field for kind %d:\n got  %+v\n want %+v", kind, got, original)
+		}
+	}
+}
+
+// fillNonZero sets every exported field of struct value v (except the one
+// named skip) to a deterministic, field-distinct non-zero value. It fails
+// the test on any unhandled field type so the round-trip guard can't be
+// defeated by adding a field whose type it silently ignores.
+func fillNonZero(t *testing.T, v reflect.Value, skip string) {
+	t.Helper()
+	typ := v.Type()
+	for i := 0; i < v.NumField(); i++ {
+		field := typ.Field(i)
+		if field.Name == skip {
+			continue
+		}
+		f := v.Field(i)
+		if !f.CanSet() {
+			// Unexported fields would panic on Interface()/Set below; fail
+			// loudly so the guard stays honest as the struct grows.
+			t.Fatalf("fillNonZero: cannot set field %s; the round-trip guard only handles exported fields", field.Name)
+		}
+		switch f.Interface().(type) {
+		case time.Time:
+			// Distinct per field so a dropped or swapped time is caught.
+			f.Set(reflect.ValueOf(time.Date(2026, 1, 1+i, 0, 0, 0, 0, time.UTC)))
+		case string:
+			f.SetString(field.Name)
+		case bool:
+			f.SetBool(true)
+		case int64:
+			f.SetInt(int64(i + 1))
+		default:
+			t.Fatalf("fillNonZero: unhandled type %s for field %s; extend the round-trip guard", f.Type(), field.Name)
+		}
 	}
 }
