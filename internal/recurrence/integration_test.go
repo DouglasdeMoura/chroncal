@@ -1225,3 +1225,80 @@ func TestMovedOverride_Todo(t *testing.T) {
 		t.Errorf("moved due = %q, want %q", moved[0].DueDate, "2026-04-08")
 	}
 }
+
+// TestListExpandedByDateRange_OverrideEmptyEndTime locks in that an override
+// persisted with a blank/zero end_time (e.g. a point-in-time or improperly
+// migrated override) still appears. Previously overlapsWindow required
+// end.After(from), so a zero EndTime parsed from an empty string was treated as
+// not overlapping and the override was silently dropped -- and because the
+// master slot it replaces is suppressed, the occurrence vanished entirely.
+// Regression test for issue #127.
+func TestListExpandedByDateRange_OverrideEmptyEndTime(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	eventsSvc := event.NewService(db, q)
+	recurSvc := NewService(db, q)
+	ctx := context.Background()
+
+	// Weekly event: 4 occurrences starting Apr 6.
+	base := time.Date(2026, 4, 6, 9, 0, 0, 0, time.UTC)
+	master, err := eventsSvc.Create(ctx, event.CreateParams{
+		CalendarID:     1,
+		Title:          "Weekly Sync",
+		StartTime:      base,
+		EndTime:        base.Add(time.Hour),
+		RecurrenceRule: "FREQ=WEEKLY;COUNT=4",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+
+	// Override the Apr 13 instance in place (same start as the slot).
+	override, err := eventsSvc.UpsertByUID(ctx, event.UpsertParams{
+		UID:          master.UID,
+		CalendarID:   1,
+		Title:        "Weekly Sync (overridden)",
+		StartTime:    time.Date(2026, 4, 13, 9, 0, 0, 0, time.UTC),
+		EndTime:      time.Date(2026, 4, 13, 10, 0, 0, 0, time.UTC),
+		RecurrenceID: "2026-04-13T09:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	// Simulate a row persisted with a blank end_time.
+	if _, err := db.ExecContext(ctx,
+		"UPDATE events SET end_time = '' WHERE id = ?", override.ID); err != nil {
+		t.Fatalf("blank end_time: %v", err)
+	}
+
+	from := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	events, err := recurSvc.ListExpandedByDateRange(ctx, from, to)
+	if err != nil {
+		t.Fatalf("ListExpandedByDateRange: %v", err)
+	}
+
+	// 4 occurrences: Apr 6, Apr 13 (overridden), Apr 20, Apr 27.
+	if len(events) != 4 {
+		for i, e := range events {
+			t.Logf("  events[%d]: %s at %v", i, e.Title, e.StartTime)
+		}
+		t.Fatalf("got %d events, want 4", len(events))
+	}
+
+	// The Apr 13 occurrence must be present and be the override.
+	want := time.Date(2026, 4, 13, 9, 0, 0, 0, time.UTC)
+	var found *event.Event
+	for i := range events {
+		if events[i].StartTime.Equal(want) {
+			found = &events[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("Apr 13 occurrence missing from expansion")
+	}
+	if found.Title != "Weekly Sync (overridden)" {
+		t.Errorf("Apr 13 title = %q, want %q", found.Title, "Weekly Sync (overridden)")
+	}
+}

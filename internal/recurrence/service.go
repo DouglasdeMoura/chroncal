@@ -59,7 +59,14 @@ func inWindow(t, from, to time.Time) bool {
 // precedes it. Regular RRULE instances are filtered by this same overlap in
 // ExpandEvent/ExpandTodo, generating from from-duration so a straddling
 // occurrence is produced before being kept.
+//
+// A zero end (e.g. an override persisted with a blank end_time) is treated as
+// instantaneous and matched by its start alone, so the occurrence is not
+// silently dropped together with the master slot it replaces.
 func overlapsWindow(start, end, from, to time.Time) bool {
+	if end.IsZero() {
+		return inWindow(start, from, to)
+	}
 	return start.Before(to) && end.After(from)
 }
 
