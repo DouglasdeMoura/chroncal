@@ -379,3 +379,25 @@ func TestSoftDelete_SequenceBumpedOnRestore(t *testing.T) {
 		t.Fatalf("Sequence not bumped: before=%d after=%d", originalSeq, restored.Sequence)
 	}
 }
+
+// TestSoftDelete_RestoreSurfacesTombstoneClearError verifies that a failure
+// to clear the queued tombstone during restore is propagated to the caller
+// instead of being silently swallowed. Regression test for #121.
+func TestSoftDelete_RestoreSurfacesTombstoneClearError(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	j := createJournal(t, svc)
+
+	if err := svc.Delete(ctx, j.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	// Force the tombstone-clear inside reconcileSyncAfterRestore to fail.
+	if _, err := svc.db.ExecContext(ctx, "DROP TABLE tombstones"); err != nil {
+		t.Fatalf("drop tombstones: %v", err)
+	}
+
+	if err := svc.RestoreByID(ctx, j.ID); err == nil {
+		t.Fatal("RestoreByID returned nil, want error when tombstone clear fails")
+	}
+}

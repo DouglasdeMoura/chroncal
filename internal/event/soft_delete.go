@@ -458,11 +458,15 @@ func (s *Service) restoreFromInstance(ctx context.Context, meta UndoMeta) error 
 // Override rows don't own a sync_resource; callers pass the master's UID so
 // the master is marked dirty instead, which covers the override on push.
 func (s *Service) reconcileSyncAfterRestore(ctx context.Context, calendarID int64, uid string) error {
-	_ = s.q.DeleteTombstonesByCalendarAndUID(ctx, storage.DeleteTombstonesByCalendarAndUIDParams{
+	if err := s.q.DeleteTombstonesByCalendarAndUID(ctx, storage.DeleteTombstonesByCalendarAndUIDParams{
 		CalendarID: calendarID,
 		Uid:        uid,
-	})
-	_ = storage.MarkResourceDirty(ctx, s.db, calendarID, uid, "event")
+	}); err != nil {
+		return fmt.Errorf("clear tombstone after restore: %w", err)
+	}
+	if err := storage.MarkResourceDirty(ctx, s.db, calendarID, uid, "event"); err != nil {
+		return fmt.Errorf("mark resource dirty after restore: %w", err)
+	}
 	return nil
 }
 

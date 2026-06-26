@@ -239,10 +239,14 @@ func (s *Service) PurgeByID(ctx context.Context, id int64) error {
 // marks the resource dirty so the next push re-CREATEs it server-side if
 // the sync_resource was already swept out.
 func (s *Service) reconcileSyncAfterRestore(ctx context.Context, calendarID int64, uid string) error {
-	_ = s.q.DeleteTombstonesByCalendarAndUID(ctx, storage.DeleteTombstonesByCalendarAndUIDParams{
+	if err := s.q.DeleteTombstonesByCalendarAndUID(ctx, storage.DeleteTombstonesByCalendarAndUIDParams{
 		CalendarID: calendarID,
 		Uid:        uid,
-	})
-	_ = storage.MarkResourceDirty(ctx, s.db, calendarID, uid, "journal")
+	}); err != nil {
+		return fmt.Errorf("clear tombstone after restore: %w", err)
+	}
+	if err := storage.MarkResourceDirty(ctx, s.db, calendarID, uid, "journal"); err != nil {
+		return fmt.Errorf("mark resource dirty after restore: %w", err)
+	}
 	return nil
 }
