@@ -108,6 +108,70 @@ func TestRecurrenceEditor_EachFieldIntervalAndUnitUpdateRule(t *testing.T) {
 	assert.Equal(t, "FREQ=YEARLY;INTERVAL=2", m.BuildRule())
 }
 
+// TestRecurrenceEditor_EndsDatePickerButtonRowMouseClickable is the TDD
+// regression test for issue #344: clicking Cancel or Ok in the ends-date
+// picker overlay had no effect because HandleEndsDateMouse returned early
+// for any click with ry >= 6 (the button row is at ry == 8).
+func TestRecurrenceEditor_EndsDatePickerButtonRowMouseClickable(t *testing.T) {
+	startDate := time.Date(2026, 4, 24, 0, 0, 0, 0, time.UTC)
+	const screenW, screenH = 120, 40
+
+	newPickerModel := func() RecurrenceEditorModel {
+		m := NewRecurrenceEditorModel(startDate, screenW, screenH, Theme{})
+		m.endsField.SetSelected(int(endsOnDate))
+		m.syncFromForm()
+		m.endsDatePicker = true
+		return m
+	}
+
+	pickerBoxW, _ := newPickerModel().EndsDatePickerBoxSize() // 40
+	ox := (screenW - pickerBoxW) / 2                          // 40
+	oy := (screenH - 14) / 2                                  // 13
+	gridY := oy + 4                                           // 17
+
+	// Button row is 8 lines below the start of the grid
+	// (6 calendar rows + 1 blank line + 1 separator line).
+	const buttonRowRY = 8
+	btnY := gridY + buttonRowRY // 25
+
+	// Compute button x positions to match EndsDatePickerView rendering.
+	innerW := pickerBoxW - 6 // 34
+	bs := DefaultButtonStyles()
+	cancelW := lipgloss.Width(bs.Normal.Render("Cancel", false))
+	okW := lipgloss.Width(bs.Normal.Render("Ok", false))
+	totalW := cancelW + 1 + okW
+	btnPad := max(innerW-totalW, 0)
+	contentX := ox + 2 // absolute x of content area left edge
+
+	cancelX := contentX + btnPad           // leftmost pixel of Cancel button
+	okX := contentX + btnPad + cancelW + 1 // leftmost pixel of Ok button
+
+	t.Run("Cancel_closes_picker", func(t *testing.T) {
+		m := newPickerModel()
+		m, _ = m.Update(tea.MouseClickMsg(tea.Mouse{
+			X: cancelX, Y: btnY, Button: tea.MouseLeft,
+		}))
+		assert.False(t, m.endsDatePicker, "clicking Cancel must close the ends-date picker")
+	})
+
+	t.Run("Ok_closes_picker", func(t *testing.T) {
+		m := newPickerModel()
+		m, _ = m.Update(tea.MouseClickMsg(tea.Mouse{
+			X: okX, Y: btnY, Button: tea.MouseLeft,
+		}))
+		assert.False(t, m.endsDatePicker, "clicking Ok must close the ends-date picker")
+	})
+
+	t.Run("separator_row_does_not_close_picker", func(t *testing.T) {
+		m := newPickerModel()
+		separatorY := gridY + 7 // ry == 7, separator row
+		m, _ = m.Update(tea.MouseClickMsg(tea.Mouse{
+			X: cancelX, Y: separatorY, Button: tea.MouseLeft,
+		}))
+		assert.True(t, m.endsDatePicker, "clicking separator row must not close the picker")
+	})
+}
+
 func TestRecurrenceEditor_EnterOnEndsOnDateOpensPicker(t *testing.T) {
 	m := NewRecurrenceEditorModel(time.Date(2026, 4, 24, 0, 0, 0, 0, time.UTC), 120, 40, Theme{})
 	m.endsField.SetSelected(2)
