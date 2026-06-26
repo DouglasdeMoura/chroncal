@@ -286,10 +286,15 @@ func NewSelectField(options []SelectOption) *SelectField {
 	return f
 }
 
-func (f *SelectField) Selected() int                { return f.selected }
-func (f *SelectField) SetSelected(i int)            { f.selected = i }
-func (f *SelectField) SelectedOption() SelectOption { return f.options[f.selected] }
-func (f *SelectField) Value() string                { return f.options[f.selected].Value }
+func (f *SelectField) Selected() int     { return f.selected }
+func (f *SelectField) SetSelected(i int) { f.selected = i }
+func (f *SelectField) SelectedOption() SelectOption {
+	if f.selected < 0 || f.selected >= len(f.options) {
+		return SelectOption{}
+	}
+	return f.options[f.selected]
+}
+func (f *SelectField) Value() string { return f.SelectedOption().Value }
 func (f *SelectField) SetOptions(options []SelectOption) {
 	f.options = options
 	if len(f.options) == 0 {
@@ -336,6 +341,9 @@ func (f *SelectField) Update(msg tea.Msg) tea.Cmd {
 		return nil
 	case tea.KeyPressMsg:
 		n := len(f.options)
+		if n == 0 {
+			return nil
+		}
 		switch msg.String() {
 		case "left", "h":
 			f.selected = (f.selected - 1 + n) % n
@@ -391,8 +399,11 @@ func (f *SelectField) Blur() {
 	f.highlight = selectNone
 }
 
-func (f *SelectField) SetWidth(int)      {}
-func (f *SelectField) IsFocusable() bool { return true }
+func (f *SelectField) SetWidth(int) {}
+
+// IsFocusable reports false for an empty option set: a select with nothing
+// to choose has no useful interaction and must not capture focus or input.
+func (f *SelectField) IsFocusable() bool { return len(f.options) > 0 }
 
 // ---------------------------------------------------------------------------
 // QuantitySelectField

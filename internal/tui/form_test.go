@@ -199,6 +199,30 @@ func TestSelectField_ImplementsFormField(t *testing.T) {
 	var _ FormField = NewSelectField(testSelectOptions())
 }
 
+func TestSelectField_EmptyOptionsNoPanic(t *testing.T) {
+	f := NewSelectField(nil)
+
+	// Arrow/vim input on an empty option set must not panic
+	// (would divide by zero via (selected +/- 1 + n) % n).
+	assert.NotPanics(t, func() {
+		f.Update(keyPressMsg("right"))
+		f.Update(keyPressMsg("left"))
+		f.Update(keyPressMsg("l"))
+		f.Update(keyPressMsg("h"))
+	})
+	assert.Equal(t, 0, f.Selected())
+
+	// Value()/SelectedOption() must not panic on an empty option set
+	// (would index f.options[f.selected] out of range).
+	assert.NotPanics(t, func() {
+		assert.Equal(t, "", f.Value())
+		assert.Equal(t, SelectOption{}, f.SelectedOption())
+	})
+
+	// An empty select must not capture focus or input.
+	assert.False(t, f.IsFocusable())
+}
+
 // ---------------------------------------------------------------------------
 // CheckboxField tests
 // ---------------------------------------------------------------------------
