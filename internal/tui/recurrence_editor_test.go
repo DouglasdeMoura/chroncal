@@ -135,7 +135,7 @@ func TestRecurrenceEditor_EndsDatePickerButtonRowMouseClickable(t *testing.T) {
 	btnY := gridY + buttonRowRY // 25
 
 	// Compute button x positions to match EndsDatePickerView rendering.
-	innerW := pickerBoxW - 6 // 34
+	innerW := pickerBoxW - 4 // 36, matching EndsDatePickerView's boxW-4
 	bs := DefaultButtonStyles()
 	cancelW := lipgloss.Width(bs.Normal.Render("Cancel", false))
 	okW := lipgloss.Width(bs.Normal.Render("Ok", false))
