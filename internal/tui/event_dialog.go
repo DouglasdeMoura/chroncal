@@ -1032,6 +1032,31 @@ func pluralize(n int, unit string) string {
 	return fmt.Sprintf("%d %s", n, unit)
 }
 
+// wrapWordByWidth hard-breaks word into display-width chunks each at most w
+// cells wide. All chunks except the last are returned in out; the last is
+// returned as remainder so the caller can try appending subsequent words to it.
+func wrapWordByWidth(word string, w int) (out []string, last string) {
+	r := []rune(word)
+	for len(r) > 0 {
+		n, width := 0, 0
+		for n < len(r) {
+			cw := lipgloss.Width(string(r[n]))
+			if width+cw > w && n > 0 {
+				break
+			}
+			width += cw
+			n++
+		}
+		chunk := string(r[:n])
+		r = r[n:]
+		if len(r) == 0 {
+			return out, chunk
+		}
+		out = append(out, chunk)
+	}
+	return out, ""
+}
+
 func wrapLine(s string, w int) []string {
 	if w <= 0 {
 		return []string{""}
@@ -1046,22 +1071,26 @@ func wrapLine(s string, w int) []string {
 	var out []string
 	var cur string
 	for _, word := range words {
+		ww := lipgloss.Width(word)
 		if cur == "" {
-			if len([]rune(word)) > w {
-				r := []rune(word)
-				for len(r) > w {
-					out = append(out, string(r[:w]))
-					r = r[w:]
-				}
-				cur = string(r)
+			if ww > w {
+				chunks, last := wrapWordByWidth(word, w)
+				out = append(out, chunks...)
+				cur = last
 				continue
 			}
 			cur = word
 			continue
 		}
-		if len([]rune(cur))+1+len([]rune(word)) > w {
+		if lipgloss.Width(cur)+1+ww > w {
 			out = append(out, cur)
-			cur = word
+			if ww > w {
+				chunks, last := wrapWordByWidth(word, w)
+				out = append(out, chunks...)
+				cur = last
+			} else {
+				cur = word
+			}
 			continue
 		}
 		cur += " " + word
