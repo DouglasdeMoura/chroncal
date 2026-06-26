@@ -548,7 +548,7 @@ func (s *Service) deleteFromInstance(ctx context.Context, uid string, instanceTi
 
 	prevRRule := storage.NullableToString(master.RecurrenceRule)
 	until := instanceTime.UTC().Add(-time.Second)
-	rule := setRRuleUntil(prevRRule, until)
+	rule := setRRuleUntil(prevRRule, until, master.AllDay == 1)
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -776,7 +776,7 @@ func (s *Service) UpdateFromInstance(ctx context.Context, uid string, instanceTi
 
 	prevRRule := storage.NullableToString(master.RecurrenceRule)
 	until := instanceTime.UTC().Add(-time.Second)
-	truncatedRule := setRRuleUntil(prevRRule, until)
+	truncatedRule := setRRuleUntil(prevRRule, until, master.AllDay == 1)
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -864,8 +864,18 @@ func (s *Service) UpdateFromInstance(ctx context.Context, uid string, instanceTi
 }
 
 // setRRuleUntil adds or replaces the UNTIL parameter in an RRULE string.
-func setRRuleUntil(rule string, until time.Time) string {
-	untilStr := "UNTIL=" + until.UTC().Format("20060102T150405Z")
+//
+// RFC 5545 requires UNTIL's value type to match DTSTART: a DATE-valued
+// (all-day) series must use a DATE UNTIL (YYYYMMDD), while a DATE-TIME series
+// uses a UTC DATE-TIME (YYYYMMDDTHHMMSSZ). Emitting a DATE-TIME UNTIL on an
+// all-day series produces a type-mismatched RRULE that strict CalDAV servers
+// reject.
+func setRRuleUntil(rule string, until time.Time, allDay bool) string {
+	layout := "20060102T150405Z"
+	if allDay {
+		layout = "20060102"
+	}
+	untilStr := "UNTIL=" + until.UTC().Format(layout)
 	parts := strings.Split(rule, ";")
 	out := parts[:0]
 	for _, p := range parts {

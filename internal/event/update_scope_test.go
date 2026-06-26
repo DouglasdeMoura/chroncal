@@ -202,6 +202,60 @@ func TestUpdateFromInstance_SoftDeletesFutureOverrides(t *testing.T) {
 	}
 }
 
+// Truncating an all-day recurring series must emit a DATE-valued UNTIL
+// (YYYYMMDD) so the RRULE's UNTIL value type matches its DATE-valued DTSTART,
+// as RFC 5545 requires. A DATE-TIME UNTIL on an all-day series is rejected or
+// mis-handled by strict CalDAV servers.
+func TestDeleteFromInstance_AllDayEmitsDateOnlyUntil(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:            "allday-trunc-1",
+		CalendarID:     1,
+		Title:          "Daily all-day",
+		StartTime:      time.Date(2026, 5, 18, 0, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC),
+		AllDay:         true,
+		RecurrenceRule: "FREQ=DAILY",
+	})
+	if err != nil {
+		t.Fatalf("upsert all-day master: %v", err)
+	}
+
+	// Drop the May 20 occurrence and everything after it; May 19 is the last
+	// kept instance.
+	cutoff := time.Date(2026, 5, 20, 0, 0, 0, 0, time.UTC)
+	if err := svc.DeleteFromInstance(ctx, master.UID, cutoff); err != nil {
+		t.Fatalf("DeleteFromInstance: %v", err)
+	}
+
+	fresh, err := svc.GetByUID(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("get truncated master: %v", err)
+	}
+
+	until := rruleParamValue(fresh.RecurrenceRule, "UNTIL")
+	if until == "" {
+		t.Fatalf("expected UNTIL on truncated master, got %q", fresh.RecurrenceRule)
+	}
+	if strings.Contains(until, "T") || strings.Contains(until, "Z") {
+		t.Errorf("all-day series must use DATE UNTIL, got %q in %q", until, fresh.RecurrenceRule)
+	}
+	if until != "20260519" {
+		t.Errorf("UNTIL = %q, want last kept day 20260519", until)
+	}
+}
+
+func rruleParamValue(rule, name string) string {
+	for _, p := range strings.Split(rule, ";") {
+		if strings.HasPrefix(strings.ToUpper(p), name+"=") {
+			return p[len(name)+1:]
+		}
+	}
+	return ""
+}
+
 // Caller is the source of truth for categories. Empty Categories on update
 // means "no categories" — UpdateInstance/UpdateFromInstance no longer inherit
 // from master, so users can clear tags via the form and have it persist.
