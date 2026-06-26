@@ -394,6 +394,21 @@ func parseDateRange(fromStr, toStr string) (time.Time, time.Time, error) {
 	return from, to, nil
 }
 
+// parseListDateRange parses the optional --from/--to window for the
+// retrospective `todo list` / `journal list` views. With no flags it returns
+// an open (zero) range so overdue todos and past journal entries stay visible
+// by default (issue #304): the non-recurring rows are then listed unfiltered
+// and recurring masters are returned as-is. When either flag is set it
+// delegates to parseDateRange, preserving the finite forward window those
+// explicit queries expect (and which recurrence expansion requires, since a
+// half-open zero bound would expand to nothing — issue #111).
+func parseListDateRange(fromStr, toStr string) (time.Time, time.Time, error) {
+	if fromStr == "" && toStr == "" {
+		return time.Time{}, time.Time{}, nil
+	}
+	return parseDateRange(fromStr, toStr)
+}
+
 // parseCLIDate parses a YYYY-MM-DD flag value, replacing time.Parse's
 // verbose "parsing time ... cannot parse / out of range" surface with a
 // clean "--<flag>: invalid date ..." message.

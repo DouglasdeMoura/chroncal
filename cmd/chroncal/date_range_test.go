@@ -32,3 +32,33 @@ func TestParseDateRangeDefaultToFollowsFrom(t *testing.T) {
 		t.Fatalf("default to = %s, want %s (from+30)", to, wantTo)
 	}
 }
+
+// TestParseListDateRangeNoFlagsIsOpen guards issue #304: with neither --from
+// nor --to, the retrospective todo/journal lists must use an open (zero) range
+// so overdue todos and past journal entries are not filtered out.
+func TestParseListDateRangeNoFlagsIsOpen(t *testing.T) {
+	from, to, err := parseListDateRange("", "")
+	if err != nil {
+		t.Fatalf("parseListDateRange returned error: %v", err)
+	}
+	if !from.IsZero() || !to.IsZero() {
+		t.Fatalf("no-flags range = [%s, %s), want both zero (open)", from, to)
+	}
+}
+
+// TestParseListDateRangeWithFlagIsFinite guards against an open upper bound
+// once any flag is set: a half-open zero `to` would make recurrence expansion
+// (which appends only expanded instances, never masters) drop recurring
+// todos/journals entirely. Setting --from must yield a finite forward window.
+func TestParseListDateRangeWithFlagIsFinite(t *testing.T) {
+	from, to, err := parseListDateRange("2026-09-01", "")
+	if err != nil {
+		t.Fatalf("parseListDateRange returned error: %v", err)
+	}
+	if from.IsZero() || to.IsZero() {
+		t.Fatalf("range with --from = [%s, %s), want both non-zero (finite)", from, to)
+	}
+	if !to.After(from) {
+		t.Fatalf("expected to (%s) after from (%s)", to, from)
+	}
+}

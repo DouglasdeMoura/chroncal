@@ -26,14 +26,14 @@ func defaultWindowDays(t *testing.T) int {
 // TestListToFlagHelpMatchesDefaultWindow guards against the --to flag help text
 // drifting from the actual default window in parseDateRange. The todo and
 // journal list commands previously advertised "14 days" while the code
-// defaulted to 30 (issue #139).
+// defaulted to 30 (issue #139). Those retrospective lists now use an open
+// default window (issue #304); only `event list` keeps the forward
+// parseDateRange window this guard covers.
 func TestListToFlagHelpMatchesDefaultWindow(t *testing.T) {
 	want := fmt.Sprintf("%d days from now", defaultWindowDays(t))
 
 	cases := map[string]*cobra.Command{
-		"todo":    todoListCmd(),
-		"journal": journalListCmd(),
-		"event":   eventListCmd(),
+		"event": eventListCmd(),
 	}
 
 	for name, cmd := range cases {
