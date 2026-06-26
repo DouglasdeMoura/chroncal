@@ -285,8 +285,9 @@ func (q *Queries) PurgeStaleUnacknowledgedTodoAlarmStates(ctx context.Context, t
 	return result.RowsAffected()
 }
 
-const refireTodoAlarmState = `-- name: RefireTodoAlarmState :exec
-UPDATE todo_alarm_state SET fired_at = ?, snoozed_to = NULL WHERE id = ?
+const refireTodoAlarmState = `-- name: RefireTodoAlarmState :execrows
+UPDATE todo_alarm_state SET fired_at = ?, snoozed_to = NULL
+WHERE id = ? AND snoozed_to IS NOT NULL
 `
 
 type RefireTodoAlarmStateParams struct {
@@ -294,9 +295,12 @@ type RefireTodoAlarmStateParams struct {
 	ID      int64
 }
 
-func (q *Queries) RefireTodoAlarmState(ctx context.Context, arg RefireTodoAlarmStateParams) error {
-	_, err := q.db.ExecContext(ctx, refireTodoAlarmState, arg.FiredAt, arg.ID)
-	return err
+func (q *Queries) RefireTodoAlarmState(ctx context.Context, arg RefireTodoAlarmStateParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, refireTodoAlarmState, arg.FiredAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const updateTodoAlarmState = `-- name: UpdateTodoAlarmState :exec

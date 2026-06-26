@@ -102,17 +102,21 @@ type fireResult struct {
 // to insert, but only one wins. The loser's UNIQUE-constraint error is reported
 // as a non-fired, non-error result so callers suppress output for it.
 //
-// Note: the refire path (StateID != 0, an expired-snoozed alarm) uses MarkRefired,
-// an UPDATE-by-id with no claim semantics, so two overlapping checkers can still
-// both refire one snoozed alarm. That is a separate, pre-existing gap tracked
-// outside this change; the dedup here covers only the fresh-fire INSERT path.
+// The refire path (StateID != 0, an expired-snoozed alarm) uses MarkRefired,
+// whose UPDATE is gated on snoozed_to IS NOT NULL: when two checkers overlap,
+// both observe the expired-snoozed row, but only the one whose UPDATE clears
+// snoozed_to first affects a row and wins the claim. The loser sees claimed ==
+// false and is likewise reported as a non-fired, non-error result.
 func markAndFireEventAlarm(ctx context.Context, a *app.App, da alarm.DueAlarm, policy alarmExecutionPolicy) fireResult {
 	stateID := da.StateID
 	var markErr error
 	op := "mark-fired"
 	if stateID != 0 {
 		op = "mark-refired"
-		markErr = a.Alarms.MarkRefired(ctx, stateID)
+		var claimed bool
+		if claimed, markErr = a.Alarms.MarkRefired(ctx, stateID); markErr == nil && !claimed {
+			return fireResult{} // another checker already re-fired this alarm
+		}
 	} else {
 		var newID int64
 		if newID, markErr = a.Alarms.MarkFired(ctx, da); markErr == nil {
@@ -142,7 +146,10 @@ func markAndFireTodoAlarm(ctx context.Context, a *app.App, tda alarm.TodoDueAlar
 	op := "mark-fired"
 	if stateID != 0 {
 		op = "mark-refired"
-		markErr = a.Alarms.MarkTodoRefired(ctx, stateID)
+		var claimed bool
+		if claimed, markErr = a.Alarms.MarkTodoRefired(ctx, stateID); markErr == nil && !claimed {
+			return fireResult{} // another checker already re-fired this alarm
+		}
 	} else {
 		var newID int64
 		if newID, markErr = a.Alarms.MarkTodoFired(ctx, tda); markErr == nil {
