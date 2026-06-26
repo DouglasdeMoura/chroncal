@@ -88,8 +88,9 @@ func compPropText(c *goical.Component, name string) string {
 	return ""
 }
 
-// parseUTCOffset parses an RFC 5545 UTC-OFFSET value like "+0530" or "-0800"
-// and returns the offset in seconds.
+// parseUTCOffset parses an RFC 5545 UTC-OFFSET value like "+0530", "-0800",
+// or "+005258" (the optional trailing seconds component) and returns the
+// offset in seconds.
 func parseUTCOffset(s string) (int, error) {
 	s = strings.TrimSpace(s)
 	if len(s) < 5 {
@@ -103,8 +104,9 @@ func parseUTCOffset(s string) (int, error) {
 		sign = -1
 		s = s[1:]
 	}
-	if len(s) < 4 {
-		return 0, fmt.Errorf("utc-offset too short after sign: %q", s)
+	// After the sign, RFC 5545 allows "HHMM" or "HHMMSS".
+	if len(s) != 4 && len(s) != 6 {
+		return 0, fmt.Errorf("utc-offset has invalid length: %q", s)
 	}
 	hours, err := strconv.Atoi(s[:2])
 	if err != nil {
@@ -114,7 +116,14 @@ func parseUTCOffset(s string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return sign * (hours*3600 + minutes*60), nil
+	seconds := 0
+	if len(s) == 6 {
+		seconds, err = strconv.Atoi(s[4:6])
+		if err != nil {
+			return 0, err
+		}
+	}
+	return sign * (hours*3600 + minutes*60 + seconds), nil
 }
 
 // resolveComponentTZIDs rewrites TZID parameters on datetime properties
