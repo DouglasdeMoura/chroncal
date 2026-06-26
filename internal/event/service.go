@@ -319,6 +319,51 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, 
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
+	e, err := updateEventTx(ctx, qtx, id, p)
+	if err != nil {
+		return Event{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Event{}, fmt.Errorf("commit update event: %w", err)
+	}
+	_ = storage.MarkResourceDirty(ctx, s.db, e.CalendarID, e.UID, "event")
+	return e, nil
+}
+
+// UpdateWithRelations updates an event row together with its attendees and
+// alarms in a single transaction, so a failure in any child write rolls the
+// whole edit back (issue #87). The TUI edit path uses this instead of calling
+// Update and then ReplaceAttendees/ReplaceAlarms in separate transactions,
+// which could leave a half-updated row when a later child write failed.
+func (s *Service) UpdateWithRelations(ctx context.Context, id int64, p UpdateParams, attendees []model.Attendee, alarms []model.Alarm) (Event, error) {
+	p.applyDefaults()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Event{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+
+	e, err := updateEventTx(ctx, qtx, id, p)
+	if err != nil {
+		return Event{}, err
+	}
+	if err := replaceRelationsTx(ctx, qtx, e.ID, attendees, alarms); err != nil {
+		return Event{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Event{}, fmt.Errorf("commit update event: %w", err)
+	}
+	_ = storage.MarkResourceDirty(ctx, s.db, e.CalendarID, e.UID, "event")
+	return e, nil
+}
+
+// updateEventTx writes the event row and its categories using a tx-bound
+// Queries. It opens no transaction and does not commit or mark the resource
+// dirty, so callers can compose it with attendee/alarm writes inside one
+// transaction.
+func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p UpdateParams) (Event, error) {
 	r, err := qtx.UpdateEvent(ctx, storage.UpdateEventParams{
 		ID:             id,
 		Title:          p.Title,
@@ -349,17 +394,21 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, 
 	if err := replaceCategoriesTx(ctx, qtx, e.ID, ParseCategoryList(p.Categories)); err != nil {
 		return Event{}, fmt.Errorf("replace categories: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return Event{}, fmt.Errorf("commit update event: %w", err)
-	}
 	e.Categories = p.Categories
-	_ = storage.MarkResourceDirty(ctx, s.db, e.CalendarID, e.UID, "event")
 	return e, nil
 }
 
 func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error) {
 	p.applyDefaults()
-	r, err := s.q.UpsertEventByUID(ctx, storage.UpsertEventByUIDParams{
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Event{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+
+	r, err := qtx.UpsertEventByUID(ctx, storage.UpsertEventByUIDParams{
 		Uid:            p.UID,
 		CalendarID:     p.CalendarID,
 		Title:          p.Title,
@@ -388,8 +437,11 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error
 		return Event{}, err
 	}
 	e := fromStorage(r)
-	if err := s.ReplaceCategories(ctx, e.ID, ParseCategoryList(p.Categories)); err != nil {
+	if err := replaceCategoriesTx(ctx, qtx, e.ID, ParseCategoryList(p.Categories)); err != nil {
 		return Event{}, fmt.Errorf("replace categories: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return Event{}, fmt.Errorf("commit upsert event: %w", err)
 	}
 	e.Categories = p.Categories
 	return e, nil
@@ -622,9 +674,52 @@ func (s *Service) UpdateInstance(ctx context.Context, uid string, instanceTime t
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
+	e, calendarID, err := updateInstanceTx(ctx, qtx, uid, instanceTime, p)
+	if err != nil {
+		return Event{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Event{}, fmt.Errorf("commit override: %w", err)
+	}
+	_ = storage.MarkResourceDirty(ctx, s.db, calendarID, uid, "event")
+	return e, nil
+}
+
+// UpdateInstanceWithRelations is UpdateInstance plus an attendee/alarm write in
+// the same transaction, so the override row and its children commit atomically
+// (issue #87).
+func (s *Service) UpdateInstanceWithRelations(ctx context.Context, uid string, instanceTime time.Time, p UpdateParams, attendees []model.Attendee, alarms []model.Alarm) (Event, error) {
+	p.applyDefaults()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Event{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+
+	e, calendarID, err := updateInstanceTx(ctx, qtx, uid, instanceTime, p)
+	if err != nil {
+		return Event{}, err
+	}
+	if err := replaceRelationsTx(ctx, qtx, e.ID, attendees, alarms); err != nil {
+		return Event{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Event{}, fmt.Errorf("commit override: %w", err)
+	}
+	_ = storage.MarkResourceDirty(ctx, s.db, calendarID, uid, "event")
+	return e, nil
+}
+
+// updateInstanceTx creates or updates a per-occurrence override row and its
+// categories using a tx-bound Queries, returning the resulting event and the
+// master's calendar ID (for marking the resource dirty after commit). It opens
+// no transaction so callers can compose it with attendee/alarm writes.
+func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, instanceTime time.Time, p UpdateParams) (Event, int64, error) {
 	master, err := qtx.GetEventByUID(ctx, uid)
 	if err != nil {
-		return Event{}, fmt.Errorf("get master: %w", err)
+		return Event{}, 0, fmt.Errorf("get master: %w", err)
 	}
 	recID := instanceTime.UTC().Format(time.RFC3339)
 
@@ -639,7 +734,7 @@ func (s *Service) UpdateInstance(ctx context.Context, uid string, instanceTime t
 	}); gErr == nil {
 		r, err = qtx.UpdateEvent(ctx, overrideUpdateParams(existing.ID, p))
 		if err != nil {
-			return Event{}, fmt.Errorf("update override: %w", err)
+			return Event{}, 0, fmt.Errorf("update override: %w", err)
 		}
 	} else {
 		r, err = qtx.CreateEvent(ctx, overrideCreateParams(uid, recID, master.Sequence+1, p))
@@ -652,38 +747,25 @@ func (s *Service) UpdateInstance(ctx context.Context, uid string, instanceTime t
 					RecurrenceID: recID,
 				})
 				if eErr != nil {
-					return Event{}, fmt.Errorf("retry get override: %w", eErr)
+					return Event{}, 0, fmt.Errorf("retry get override: %w", eErr)
 				}
 				r, err = qtx.UpdateEvent(ctx, overrideUpdateParams(existing.ID, p))
 				if err != nil {
-					return Event{}, fmt.Errorf("retry update override: %w", err)
+					return Event{}, 0, fmt.Errorf("retry update override: %w", err)
 				}
 			} else {
-				return Event{}, fmt.Errorf("create override: %w", err)
+				return Event{}, 0, fmt.Errorf("create override: %w", err)
 			}
 		}
 	}
 
-	if err := qtx.DeleteCategoriesByEventID(ctx, r.ID); err != nil {
-		return Event{}, fmt.Errorf("clear override categories: %w", err)
-	}
-	for _, c := range carriedCats {
-		if _, err := qtx.CreateEventCategory(ctx, storage.CreateEventCategoryParams{
-			EventID:  r.ID,
-			Category: c,
-		}); err != nil {
-			return Event{}, fmt.Errorf("create override category: %w", err)
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return Event{}, fmt.Errorf("commit override: %w", err)
+	if err := replaceCategoriesTx(ctx, qtx, r.ID, carriedCats); err != nil {
+		return Event{}, 0, err
 	}
 
 	e := fromStorage(r)
 	e.Categories = timeutil.JoinCategoryList(carriedCats)
-	_ = storage.MarkResourceDirty(ctx, s.db, master.CalendarID, uid, "event")
-	return e, nil
+	return e, master.CalendarID, nil
 }
 
 // overrideUpdateParams builds the storage params for updating an existing
@@ -774,14 +856,6 @@ func isUniqueViolationOnRecurrenceID(err error) bool {
 // so the trash view can offer an atomic restore later.
 func (s *Service) UpdateFromInstance(ctx context.Context, uid string, instanceTime time.Time, p UpdateParams) (Event, error) {
 	p.applyDefaults()
-	master, err := s.q.GetEventByUID(ctx, uid)
-	if err != nil {
-		return Event{}, fmt.Errorf("get master: %w", err)
-	}
-
-	prevRRule := storage.NullableToString(master.RecurrenceRule)
-	until := instanceTime.UTC().Add(-time.Second)
-	truncatedRule := setRRuleUntil(prevRRule, until, master.AllDay == 1)
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -790,11 +864,66 @@ func (s *Service) UpdateFromInstance(ctx context.Context, uid string, instanceTi
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
+	e, masterCalendarID, err := updateFromInstanceTx(ctx, qtx, uid, instanceTime, p)
+	if err != nil {
+		return Event{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Event{}, fmt.Errorf("commit split: %w", err)
+	}
+	_ = storage.MarkResourceDirty(ctx, s.db, masterCalendarID, uid, "event")
+	_ = storage.MarkResourceDirty(ctx, s.db, e.CalendarID, e.UID, "event")
+	return e, nil
+}
+
+// UpdateFromInstanceWithRelations is UpdateFromInstance plus an attendee/alarm
+// write on the new split series in the same transaction, so the truncation, the
+// new master, and its children commit atomically (issue #87).
+func (s *Service) UpdateFromInstanceWithRelations(ctx context.Context, uid string, instanceTime time.Time, p UpdateParams, attendees []model.Attendee, alarms []model.Alarm) (Event, error) {
+	p.applyDefaults()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Event{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+
+	e, masterCalendarID, err := updateFromInstanceTx(ctx, qtx, uid, instanceTime, p)
+	if err != nil {
+		return Event{}, err
+	}
+	if err := replaceRelationsTx(ctx, qtx, e.ID, attendees, alarms); err != nil {
+		return Event{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Event{}, fmt.Errorf("commit split: %w", err)
+	}
+	_ = storage.MarkResourceDirty(ctx, s.db, masterCalendarID, uid, "event")
+	_ = storage.MarkResourceDirty(ctx, s.db, e.CalendarID, e.UID, "event")
+	return e, nil
+}
+
+// updateFromInstanceTx truncates the master series, soft-deletes future
+// overrides, records the pre-truncation state, and creates the new split-series
+// master with its categories, all using a tx-bound Queries. It returns the new
+// event and the master's calendar ID, opening no transaction so callers can
+// compose it with attendee/alarm writes.
+func updateFromInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, instanceTime time.Time, p UpdateParams) (Event, int64, error) {
+	master, err := qtx.GetEventByUID(ctx, uid)
+	if err != nil {
+		return Event{}, 0, fmt.Errorf("get master: %w", err)
+	}
+
+	prevRRule := storage.NullableToString(master.RecurrenceRule)
+	until := instanceTime.UTC().Add(-time.Second)
+	truncatedRule := setRRuleUntil(prevRRule, until, master.AllDay == 1)
+
 	if err := qtx.UpdateEventRecurrenceRule(ctx, storage.UpdateEventRecurrenceRuleParams{
 		RecurrenceRule: storage.StringToNullable(truncatedRule),
 		ID:             master.ID,
 	}); err != nil {
-		return Event{}, fmt.Errorf("truncate master rrule: %w", err)
+		return Event{}, 0, fmt.Errorf("truncate master rrule: %w", err)
 	}
 
 	cutoff := instanceTime.UTC().Format(time.RFC3339)
@@ -802,7 +931,7 @@ func (s *Service) UpdateFromInstance(ctx context.Context, uid string, instanceTi
 		Uid:          uid,
 		RecurrenceID: cutoff,
 	}); err != nil {
-		return Event{}, fmt.Errorf("soft-delete future overrides: %w", err)
+		return Event{}, 0, fmt.Errorf("soft-delete future overrides: %w", err)
 	}
 
 	if err := qtx.RecordEventTruncateDelete(ctx, storage.RecordEventTruncateDeleteParams{
@@ -811,7 +940,7 @@ func (s *Service) UpdateFromInstance(ctx context.Context, uid string, instanceTi
 		CutoffTime:    cutoff,
 		PreviousRrule: prevRRule,
 	}); err != nil {
-		return Event{}, fmt.Errorf("record truncate: %w", err)
+		return Event{}, 0, fmt.Errorf("record truncate: %w", err)
 	}
 
 	// Caller is the source of truth for categories. An empty p.Categories
@@ -845,27 +974,16 @@ func (s *Service) UpdateFromInstance(ctx context.Context, uid string, instanceTi
 		ConferenceUri:  p.ConferenceURI,
 	})
 	if err != nil {
-		return Event{}, fmt.Errorf("create split series: %w", err)
+		return Event{}, 0, fmt.Errorf("create split series: %w", err)
 	}
 
-	for _, c := range carriedCats {
-		if _, err := qtx.CreateEventCategory(ctx, storage.CreateEventCategoryParams{
-			EventID:  r.ID,
-			Category: c,
-		}); err != nil {
-			return Event{}, fmt.Errorf("create split category: %w", err)
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return Event{}, fmt.Errorf("commit split: %w", err)
+	if err := replaceCategoriesTx(ctx, qtx, r.ID, carriedCats); err != nil {
+		return Event{}, 0, err
 	}
 
 	e := fromStorage(r)
 	e.Categories = timeutil.JoinCategoryList(carriedCats)
-	_ = storage.MarkResourceDirty(ctx, s.db, master.CalendarID, uid, "event")
-	_ = storage.MarkResourceDirty(ctx, s.db, p.CalendarID, newUID, "event")
-	return e, nil
+	return e, master.CalendarID, nil
 }
 
 // setRRuleUntil adds or replaces the UNTIL parameter in an RRULE string.
@@ -1197,8 +1315,20 @@ func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []mod
 	}
 	defer tx.Rollback()
 
-	qtx := s.q.WithTx(tx)
+	if err := replaceAlarmsTx(ctx, s.q.WithTx(tx), eventID, alarms); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.markDirtyByID(ctx, eventID)
+	return nil
+}
 
+// replaceAlarmsTx reconciles an event's alarms (content/UID matching, in-place
+// edits, creates, deletes) using a tx-bound Queries. It opens no transaction so
+// callers can compose it with the event row write inside one transaction.
+func replaceAlarmsTx(ctx context.Context, qtx *storage.Queries, eventID int64, alarms []model.Alarm) error {
 	// Load existing alarms with attendees for content matching.
 	existing, err := loadExistingAlarms(ctx, qtx, eventID)
 	if err != nil {
@@ -1240,15 +1370,17 @@ func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []mod
 	}
 
 	// Delete existing alarms that were not matched (they were removed).
-	if err := deleteUnmatchedAlarms(ctx, qtx, existing, matched); err != nil {
-		return err
-	}
+	return deleteUnmatchedAlarms(ctx, qtx, existing, matched)
+}
 
-	if err := tx.Commit(); err != nil {
+// replaceRelationsTx replaces an event's attendees and alarms using a tx-bound
+// Queries, so the *WithRelations methods can write both child collections
+// inside the same transaction as the event row.
+func replaceRelationsTx(ctx context.Context, qtx *storage.Queries, eventID int64, attendees []model.Attendee, alarms []model.Alarm) error {
+	if err := replaceAttendeesTx(ctx, qtx, eventID, attendees); err != nil {
 		return err
 	}
-	s.markDirtyByID(ctx, eventID)
-	return nil
+	return replaceAlarmsTx(ctx, qtx, eventID, alarms)
 }
 
 // Attendee CRUD
@@ -1272,7 +1404,20 @@ func (s *Service) ReplaceAttendees(ctx context.Context, eventID int64, attendees
 	}
 	defer tx.Rollback()
 
-	qtx := s.q.WithTx(tx)
+	if err := replaceAttendeesTx(ctx, s.q.WithTx(tx), eventID, attendees); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.markDirtyByID(ctx, eventID)
+	return nil
+}
+
+// replaceAttendeesTx replaces an event's attendees using a tx-bound Queries. It
+// opens no transaction so callers can compose it with the event row write
+// inside one transaction.
+func replaceAttendeesTx(ctx context.Context, qtx *storage.Queries, eventID int64, attendees []model.Attendee) error {
 	if err := qtx.DeleteAttendeesByEventID(ctx, eventID); err != nil {
 		return fmt.Errorf("delete attendees: %w", err)
 	}
@@ -1301,10 +1446,6 @@ func (s *Service) ReplaceAttendees(ctx context.Context, eventID int64, attendees
 			return fmt.Errorf("create attendee: %w", err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	s.markDirtyByID(ctx, eventID)
 	return nil
 }
 

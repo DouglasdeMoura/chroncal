@@ -578,20 +578,14 @@ func (m Model) dispatchEditScope(editID int64, choice int, save EventFormSaveMsg
 		Categories:     save.Categories,
 	}
 
-	var writtenID int64
+	// Each branch writes the event row together with its attendees and alarms
+	// in a single transaction, so a failed child write rolls the whole edit
+	// back instead of leaving a half-updated row (issue #87).
 	switch choice {
 	case 0: // This event only
-		written, err := m.app.Events.UpdateInstance(ctx, master.UID, save.InstanceTime, params)
-		if err != nil {
-			return eventUpdateAfterScopeMsg{calendarID: save.CalendarID, err: err}
-		}
-		writtenID = written.ID
+		_, err = m.app.Events.UpdateInstanceWithRelations(ctx, master.UID, save.InstanceTime, params, save.Attendees, save.Alarms)
 	case 1: // This and following
-		written, err := m.app.Events.UpdateFromInstance(ctx, master.UID, save.InstanceTime, params)
-		if err != nil {
-			return eventUpdateAfterScopeMsg{calendarID: save.CalendarID, err: err}
-		}
-		writtenID = written.ID
+		_, err = m.app.Events.UpdateFromInstanceWithRelations(ctx, master.UID, save.InstanceTime, params, save.Attendees, save.Alarms)
 	default: // All events
 		// The form opened showing the clicked instance's time, so save.StartTime
 		// is relative to that occurrence — not the master's DTSTART. Apply the
@@ -601,16 +595,9 @@ func (m Model) dispatchEditScope(editID int64, choice int, save EventFormSaveMsg
 		newDuration := save.EndTime.Sub(save.StartTime)
 		params.StartTime = master.StartTime.Add(delta)
 		params.EndTime = params.StartTime.Add(newDuration)
-		if _, err := m.app.Events.Update(ctx, master.ID, params); err != nil {
-			return eventUpdateAfterScopeMsg{calendarID: save.CalendarID, err: err}
-		}
-		writtenID = master.ID
+		_, err = m.app.Events.UpdateWithRelations(ctx, master.ID, params, save.Attendees, save.Alarms)
 	}
-
-	if err := m.app.Events.ReplaceAttendees(ctx, writtenID, save.Attendees); err != nil {
-		return eventUpdateAfterScopeMsg{calendarID: save.CalendarID, err: err}
-	}
-	if err := m.app.Events.ReplaceAlarms(ctx, writtenID, save.Alarms); err != nil {
+	if err != nil {
 		return eventUpdateAfterScopeMsg{calendarID: save.CalendarID, err: err}
 	}
 	return eventUpdateAfterScopeMsg{calendarID: save.CalendarID}
@@ -1896,7 +1883,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			calID := msg.CalendarID
 			return m, func() tea.Msg {
 				ctx := context.Background()
-				_, err := m.app.Events.Update(ctx, eventID, event.UpdateParams{
+				// Update the row and its attendees/alarms in one transaction so a
+				// failed child write rolls the whole edit back (issue #87).
+				_, err := m.app.Events.UpdateWithRelations(ctx, eventID, event.UpdateParams{
 					CalendarID:     calID,
 					Title:          msg.Title,
 					Description:    msg.Description,
@@ -1910,14 +1899,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					Transp:         msg.Transp,
 					Class:          msg.Class,
 					Categories:     msg.Categories,
-				})
-				if err != nil {
-					return eventUpdatedMsg{calendarID: calID, err: err}
-				}
-				if err = m.app.Events.ReplaceAttendees(ctx, eventID, attendees); err != nil {
-					return eventUpdatedMsg{calendarID: calID, err: err}
-				}
-				err = m.app.Events.ReplaceAlarms(ctx, eventID, alarms)
+				}, attendees, alarms)
 				return eventUpdatedMsg{calendarID: calID, err: err}
 			}
 		}
