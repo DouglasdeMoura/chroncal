@@ -916,10 +916,30 @@ system was not running when they became due.`,
 
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
-				return printOutput(w, map[string]any{
-					"events": missedEvents,
-					"todos":  missedTodos,
-				})
+				// Flat array with a "type" discriminator, matching the
+				// shape of "alarm list"/"alarm check" so the
+				// `... -o json | jq '.[]'` idiom works across all alarm
+				// subcommands (issue #433).
+				items := make([]map[string]any, 0, len(missedEvents)+len(missedTodos))
+				for _, m := range missedEvents {
+					items = append(items, map[string]any{
+						"type":       "event",
+						"alarm_id":   m.AlarmID,
+						"title":      m.EventTitle,
+						"trigger_at": m.TriggerAt.UTC().Format(time.RFC3339),
+						"age":        m.Age,
+					})
+				}
+				for _, m := range missedTodos {
+					items = append(items, map[string]any{
+						"type":       "todo",
+						"alarm_id":   m.AlarmID,
+						"title":      m.TodoSummary,
+						"trigger_at": m.TriggerAt.UTC().Format(time.RFC3339),
+						"age":        m.Age,
+					})
+				}
+				return printOutput(w, items)
 			}
 
 			if len(missedEvents) == 0 && len(missedTodos) == 0 {
