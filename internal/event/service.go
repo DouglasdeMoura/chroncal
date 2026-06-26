@@ -339,11 +339,16 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
 			return Event{}, fmt.Errorf("replace categories: %w", err)
 		}
 	}
+	// Mark dirty inside the transaction so a failed sync-tracking write rolls
+	// the new event back rather than committing a row that can never be pushed
+	// (issue #107).
+	if err := storage.MarkResourceDirty(ctx, tx, e.CalendarID, e.UID, "event"); err != nil {
+		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return Event{}, fmt.Errorf("commit create event: %w", err)
 	}
 	e.Categories = p.Categories
-	_ = storage.MarkResourceDirty(ctx, s.db, e.CalendarID, e.UID, "event")
 	return e, nil
 }
 
@@ -507,9 +512,24 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 	}
 
 	// If this is a standalone event (no recurrence or a solo master), create
-	// a tombstone so the sync engine can send a DELETE to the server.
+	// a tombstone so the sync engine can send a DELETE to the server. The
+	// tombstone and the soft-delete commit together: if the tombstone write
+	// fails the soft-delete rolls back, so the next sync can never DELETE a
+	// still-live event from the server (issue #107).
 	if evt.RecurrenceID == "" {
-		_, _ = storage.CreateTombstoneIfSynced(ctx, s.db, evt.CalendarID, evt.UID)
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("begin tx: %w", err)
+		}
+		defer tx.Rollback()
+		qtx := s.q.WithTx(tx)
+		if _, err := storage.CreateTombstoneIfSynced(ctx, tx, evt.CalendarID, evt.UID); err != nil {
+			return fmt.Errorf("create tombstone: %w", err)
+		}
+		if err := qtx.SoftDeleteEvent(ctx, id); err != nil {
+			return fmt.Errorf("soft-delete event: %w", err)
+		}
+		return tx.Commit()
 	}
 
 	// If this is an override, add EXDATE to the master so the instance
@@ -563,6 +583,7 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		return nil
 	}
 
+	// Unreachable: RecurrenceID is either "" (handled above) or non-empty.
 	return s.q.SoftDeleteEvent(ctx, id)
 }
 

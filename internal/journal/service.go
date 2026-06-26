@@ -389,7 +389,25 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 	}
 
 	if j.RecurrenceID == "" {
-		_, _ = storage.CreateTombstoneIfSynced(ctx, s.db, j.CalendarID, j.UID)
+		// Tombstone + soft-delete commit together so a failed tombstone write
+		// can't leave a soft-deleted row whose next sync DELETEs a still-live
+		// server resource (issue #107).
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("begin tx: %w", err)
+		}
+		defer tx.Rollback()
+		qtx := s.q.WithTx(tx)
+		if _, err := storage.CreateTombstoneIfSynced(ctx, tx, j.CalendarID, j.UID); err != nil {
+			return fmt.Errorf("create tombstone: %w", err)
+		}
+		if err := qtx.SoftDeleteJournal(ctx, id); err != nil {
+			return fmt.Errorf("soft-delete journal: %w", err)
+		}
+		if err := storage.MarkResourceDirty(ctx, tx, j.CalendarID, j.UID, "journal"); err != nil {
+			return fmt.Errorf("mark resource dirty: %w", err)
+		}
+		return tx.Commit()
 	}
 
 	if j.RecurrenceID != "" {
@@ -439,6 +457,7 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		return nil
 	}
 
+	// Unreachable: RecurrenceID is either "" (handled above) or non-empty.
 	if err := s.q.SoftDeleteJournal(ctx, id); err != nil {
 		return err
 	}

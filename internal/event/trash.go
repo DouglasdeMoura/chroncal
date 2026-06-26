@@ -279,11 +279,10 @@ func (s *Service) restoreInstanceByLogID(ctx context.Context, logID int64) error
 	if err := qtx.DeleteEventExdateDelete(ctx, logID); err != nil {
 		return fmt.Errorf("delete log row: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return err
+	if err := storage.MarkResourceDirty(ctx, tx, master.CalendarID, log.Uid, "event"); err != nil {
+		return fmt.Errorf("mark resource dirty: %w", err)
 	}
-	_ = storage.MarkResourceDirty(ctx, s.db, master.CalendarID, log.Uid, "event")
-	return nil
+	return tx.Commit()
 }
 
 // restoreTruncationByLogID rewrites the master's RRULE back to the
@@ -325,11 +324,10 @@ func (s *Service) restoreTruncationByLogID(ctx context.Context, logID int64) err
 	if err := qtx.DeleteEventTruncateDelete(ctx, logID); err != nil {
 		return fmt.Errorf("delete log row: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return err
+	if err := storage.MarkResourceDirty(ctx, tx, master.CalendarID, log.Uid, "event"); err != nil {
+		return fmt.Errorf("mark resource dirty: %w", err)
 	}
-	_ = storage.MarkResourceDirty(ctx, s.db, master.CalendarID, log.Uid, "event")
-	return nil
+	return tx.Commit()
 }
 
 // removeTimeFromList returns list with the first element equal to target

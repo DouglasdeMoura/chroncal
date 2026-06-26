@@ -43,7 +43,11 @@ func MarkResourceDirty(ctx context.Context, db DBTX, calendarID int64, uid, owne
 // CreateTombstoneIfSynced inserts a tombstone row if the resource was
 // previously synced (has a sync_resources row with a non-empty remote_url).
 // Returns true if a tombstone was created.
-func CreateTombstoneIfSynced(ctx context.Context, db *sql.DB, calendarID int64, uid string) (bool, error) {
+//
+// db is a DBTX so callers can pass their own *sql.Tx, letting the tombstone
+// write commit (or roll back) atomically with the soft-delete it accompanies.
+// Pass *sql.DB only when there is no surrounding transaction.
+func CreateTombstoneIfSynced(ctx context.Context, db DBTX, calendarID int64, uid string) (bool, error) {
 	if calendarID == 0 || uid == "" {
 		return false, nil
 	}
