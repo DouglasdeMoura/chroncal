@@ -214,6 +214,73 @@ func TestEventJSONTimestampsAreUTC(t *testing.T) {
 	}
 }
 
+// TestEventSearchDateBoundsIncludeEndDay locks in the fix for issue #428:
+// `event search --from/--to` accept the same YYYY-MM-DD bounds as event
+// list and the half-open --to bound includes the entire end day. Before
+// the fix the raw "2026-04-30" string was compared lexicographically
+// against the RFC3339-stored start time ("2026-04-30T09:00:00Z"), so the
+// 'T' > '0' ordering silently excluded every event on the final day.
+func TestEventSearchDateBoundsIncludeEndDay(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Work"); err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+	if _, _, err := runChroncalCommand(t,
+		"event", "add", "Quarterly Review",
+		"--calendar", "Work",
+		"--date", "2026-04-30",
+		"--time", "09:00",
+		"--duration", "30m",
+	); err != nil {
+		t.Fatalf("event add: %v", err)
+	}
+
+	stdout, _, err := runChroncalCommand(t,
+		"event", "search", "Quarterly",
+		"--from", "2026-04-01",
+		"--to", "2026-04-30",
+		"--output", "json",
+	)
+	if err != nil {
+		t.Fatalf("event search: %v", err)
+	}
+
+	var events []struct {
+		Title string `json:"title"`
+	}
+	if jerr := json.Unmarshal([]byte(stdout), &events); jerr != nil {
+		t.Fatalf("decode %q: %v", stdout, jerr)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1 (event on the --to end day must be included)", len(events))
+	}
+	if events[0].Title != "Quarterly Review" {
+		t.Fatalf("title = %q, want %q", events[0].Title, "Quarterly Review")
+	}
+}
+
+// TestEventSearchInvalidDateBound locks in that unparseable --from/--to
+// values are rejected with a clean error instead of being passed through
+// verbatim into the lexicographic comparison (issue #428).
+func TestEventSearchInvalidDateBound(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Work"); err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+
+	_, _, err := runChroncalCommand(t, "event", "search", "anything", "--to", "not-a-date")
+	if err == nil {
+		t.Fatal("event search --to not-a-date should fail")
+	}
+	if !strings.Contains(err.Error(), "--to") {
+		t.Fatalf("error = %q, want it to mention the --to flag", err.Error())
+	}
+}
+
 func TestNotFoundErrorJSONHasNoWrapPrefix(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 

@@ -394,7 +394,7 @@ Use --from and --to to narrow the search window when you already know
 roughly when the event occurred.`,
 		Example: `  chroncal event search standup
   chroncal event search deploy --calendar Work --status CONFIRMED
-  chroncal event search conference --from 2026-04-01T00:00:00Z --to 2026-05-01T00:00:00Z
+  chroncal event search conference --from 2026-04-01 --to 2026-05-01
   chroncal event search standup --compact`,
 		Args: exactOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -413,11 +413,32 @@ roughly when the event occurred.`,
 				}
 			}
 
+			// Parse the YYYY-MM-DD --from/--to flags into RFC3339 UTC bounds
+			// before populating SearchParams. Search compares these strings
+			// lexicographically against UTC-stored start times, so feeding the
+			// raw "2026-04-30" through would make "2026-04-30T09:00:00Z" sort
+			// after the bound (since 'T' > '0') and silently drop every event
+			// on the end day (issue #428). parseExportDateBounds (not
+			// parseDateRange) treats each bound independently so a one-sided
+			// window stays open on the other side, and its half-open --to
+			// includes the entire end day.
+			fromT, toT, err := parseExportDateBounds(fromStr, toStr)
+			if err != nil {
+				return err
+			}
+			var from, to string
+			if !fromT.IsZero() {
+				from = fromT.UTC().Format(time.RFC3339)
+			}
+			if !toT.IsZero() {
+				to = toT.UTC().Format(time.RFC3339)
+			}
+
 			events, err := a.Events.Search(ctx, event.SearchParams{
 				Query:      args[0],
 				CalendarID: calID,
-				From:       fromStr,
-				To:         toStr,
+				From:       from,
+				To:         to,
 				Status:     status,
 			})
 			if err != nil {
@@ -451,8 +472,8 @@ roughly when the event occurred.`,
 		},
 	}
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "filter by calendar name")
-	cmd.Flags().StringVar(&fromStr, "from", "", "start date filter (RFC3339)")
-	cmd.Flags().StringVar(&toStr, "to", "", "end date filter (RFC3339)")
+	cmd.Flags().StringVar(&fromStr, "from", "", "start date filter (YYYY-MM-DD)")
+	cmd.Flags().StringVar(&toStr, "to", "", "end date filter (YYYY-MM-DD, inclusive)")
 	cmd.Flags().StringVar(&status, "status", "", "status filter (TENTATIVE, CONFIRMED, CANCELLED)")
 	cmd.Flags().BoolVar(&compact, "compact", false, "one line per event (DATE  TIME  TITLE); same shape as event list --compact")
 	return cmd
