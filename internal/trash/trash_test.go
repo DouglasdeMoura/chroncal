@@ -79,6 +79,25 @@ func TestService_ListMergesAllThreeDomains(t *testing.T) {
 	}
 }
 
+// TestFromJournalCopiesCategories guards that fromJournal carries the
+// journal's Categories into the unified Entry, mirroring fromTodo and
+// fromEventTrash. Without it the trash detail "Tags" row can never render
+// for journals even after categories are populated upstream (issue #291).
+func TestFromJournalCopiesCategories(t *testing.T) {
+	j := journal.Journal{
+		ID:         7,
+		CalendarID: 1,
+		UID:        "journal-uid",
+		Summary:    "Tagged Journal",
+		Categories: "notes,personal",
+	}
+
+	got := fromJournal(j)
+	if got.Categories != j.Categories {
+		t.Errorf("fromJournal Categories = %q, want %q", got.Categories, j.Categories)
+	}
+}
+
 // TestService_RestoreDispatchesByKind exercises the Restore path for
 // each domain: the underlying service un-hides its own row and List no
 // longer returns it.
