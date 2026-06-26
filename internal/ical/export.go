@@ -694,7 +694,10 @@ func buildValarm(alarm model.Alarm) *ical.Component {
 		p.Value = alarm.Duration
 		valarm.Props.Set(p)
 	}
-	if alarm.Repeat > 0 {
+	// RFC 5545 §3.8.6.2: REPEAT MUST be paired with DURATION. Emitting a
+	// bare REPEAT yields an invalid VALARM that strict CalDAV servers
+	// (e.g. Google) reject with HTTP 400, blocking the whole resource.
+	if alarm.Repeat > 0 && alarm.Duration != "" {
 		p := &ical.Prop{Name: "REPEAT"}
 		p.Value = strconv.Itoa(alarm.Repeat)
 		valarm.Props.Set(p)
