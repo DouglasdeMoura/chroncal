@@ -410,7 +410,16 @@ func NewEventFormModelForEditInstance(ev event.Event, instanceTime time.Time, ca
 		m.allDay = true
 	}
 	if !ev.AllDay {
-		m.timeField.SetStartValue(ev.StartTime.In(displayLoc).Format("15:04"))
+		// Anchor the Date field to the same wall-clock day as the Time
+		// field. NewEventFormModel seeded m.day from the raw (UTC)
+		// StartTime, but the Time field renders in displayLoc; if the
+		// event's UTC date differs from its display-tz date, save() would
+		// recombine a mismatched date and time and shift the event by a
+		// day. Re-anchoring m.day to displayLoc keeps both columns on the
+		// same day (see issue #91).
+		start := ev.StartTime.In(displayLoc)
+		m.day = start
+		m.timeField.SetStartValue(start.Format("15:04"))
 		m.timeField.SetEndValue(ev.EndTime.In(displayLoc).Format("15:04"))
 	}
 

@@ -292,6 +292,34 @@ func TestEventForm_SaveIncludesShowAsAndVisibility(t *testing.T) {
 	assert.Equal(t, "CONFIDENTIAL", msg.Class)
 }
 
+func TestEventForm_EditNoOpPreservesTimedStartAcrossUTCDateBoundary(t *testing.T) {
+	// Event stored 2026-04-16T02:00:00Z in America/New_York. Its UTC date
+	// (Apr 16) differs from its display-tz wall-clock date (Apr 15, 22:00 NY).
+	// A no-op edit (just save) must not shift the event by a day.
+	start := time.Date(2026, 4, 16, 2, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 4, 16, 3, 0, 0, 0, time.UTC)
+	m, _ := NewEventFormModelForEdit(event.Event{
+		ID:         7,
+		UID:        "boundary-uid",
+		Title:      "Late meeting",
+		StartTime:  start,
+		EndTime:    end,
+		Timezone:   "America/New_York",
+		CalendarID: 1,
+	}, testEventFormCalendars(), Theme{})
+
+	cmd := m.save(&m.form)
+	require.NotNil(t, cmd)
+	msg, ok := cmd().(EventFormSaveMsg)
+	require.True(t, ok)
+	assert.True(t, msg.StartTime.Equal(start),
+		"no-op edit must preserve StartTime; got %s want %s",
+		msg.StartTime.Format(time.RFC3339), start.Format(time.RFC3339))
+	assert.True(t, msg.EndTime.Equal(end),
+		"no-op edit must preserve EndTime; got %s want %s",
+		msg.EndTime.Format(time.RFC3339), end.Format(time.RFC3339))
+}
+
 func TestEventForm_EnterOnTimeDoesNotOpenDatePicker(t *testing.T) {
 	m, _ := NewEventFormModel(time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC), testEventFormCalendars(), Theme{})
 
