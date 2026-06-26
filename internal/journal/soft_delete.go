@@ -62,15 +62,31 @@ func (s *Service) RestoreByID(ctx context.Context, id int64) error {
 
 // clearMasterEXDATE removes the EXDATE entry for recurrenceID from the
 // master journal with uid, reversing the exclusion that the instance-delete
-// path added. No-op when the master is gone or the EXDATE was already
-// absent; a malformed recurrence_id is a data-integrity error and is
-// propagated rather than swallowed. Must run inside the same transaction
-// (qtx) that un-hides the override so the row is never visible-but-excluded.
+// path added. It only strips EXDATEs that a delete recorded in
+// journal_exdate_deletes; EXDATEs that arrived via import (or a series
+// delete, which never adds one) have no provenance row and survive restore —
+// otherwise RestoreByUID would silently drop a legitimate imported EXDATE
+// whose slot happens to match an override's recurrence_id (issue #86). A
+// malformed recurrence_id is a data-integrity error and is propagated rather
+// than swallowed. Must run inside the same transaction (qtx) that un-hides
+// the override so the row is never visible-but-excluded.
 func clearMasterEXDATE(ctx context.Context, qtx *storage.Queries, uid, recurrenceID string) error {
-	master, err := qtx.GetJournalByUID(ctx, uid)
+	log, err := qtx.GetJournalExdateDeleteByUIDRecurrence(ctx, storage.GetJournalExdateDeleteByUIDRecurrenceParams{
+		Uid:          uid,
+		RecurrenceID: recurrenceID,
+	})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
+		}
+		return fmt.Errorf("get exdate log: %w", err)
+	}
+
+	master, err := qtx.GetJournalByUID(ctx, uid)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// Master gone; drop the now-orphaned provenance row.
+			return qtx.DeleteJournalExdateDelete(ctx, log.ID)
 		}
 		return fmt.Errorf("get master: %w", err)
 	}
@@ -80,26 +96,32 @@ func clearMasterEXDATE(ctx context.Context, qtx *storage.Queries, uid, recurrenc
 	}
 	existing := timeutil.ParseTimeList(storage.NullableToString(master.Exdates))
 	filtered := removeTimeFromList(existing, target)
-	if len(filtered) == len(existing) {
-		return nil
+	if len(filtered) != len(existing) {
+		if err := qtx.UpdateJournalExdates(ctx, storage.UpdateJournalExdatesParams{
+			Exdates: storage.StringToNullable(timeutil.SerializeTimeList(filtered)),
+			ID:      master.ID,
+		}); err != nil {
+			return fmt.Errorf("update exdates: %w", err)
+		}
 	}
-	if err := qtx.UpdateJournalExdates(ctx, storage.UpdateJournalExdatesParams{
-		Exdates: storage.StringToNullable(timeutil.SerializeTimeList(filtered)),
-		ID:      master.ID,
-	}); err != nil {
-		return fmt.Errorf("update exdates: %w", err)
+	if err := qtx.DeleteJournalExdateDelete(ctx, log.ID); err != nil {
+		return fmt.Errorf("delete exdate log: %w", err)
 	}
 	return nil
 }
 
-// removeTimeFromList returns list with every element equal to target
+// removeTimeFromList returns list with the first element equal to target
 // (after UTC normalization) removed. Used to reverse an EXDATE insertion
-// when restoring a recurring override.
+// when restoring a recurring override: a delete added exactly one EXDATE, so
+// restore strips exactly one — any duplicate (e.g. a pre-existing imported
+// exclusion at the same slot) is preserved. Mirrors event.removeTimeFromList.
 func removeTimeFromList(list []time.Time, target time.Time) []time.Time {
 	out := make([]time.Time, 0, len(list))
 	targetKey := target.UTC().Format(time.RFC3339)
+	removed := false
 	for _, t := range list {
-		if strings.EqualFold(t.UTC().Format(time.RFC3339), targetKey) {
+		if !removed && strings.EqualFold(t.UTC().Format(time.RFC3339), targetKey) {
+			removed = true
 			continue
 		}
 		out = append(out, t)
@@ -180,6 +202,19 @@ func (s *Service) GetIncludingDeleted(ctx context.Context, id int64) (Journal, e
 func (s *Service) PurgeDeleted(ctx context.Context, olderThan time.Time) (int, error) {
 	cutoff := olderThan.UTC().Format(timeutil.StorageTimeFormat)
 	n, err := s.q.PurgeSoftDeletedJournals(ctx, &cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}
+
+// PurgeOldInstanceDeletes drops journal_exdate_deletes provenance rows older
+// than olderThan. Returns the number of rows purged. The corresponding
+// EXDATEs on the master stay in place — the user intended those instances to
+// be gone. Mirrors event.PurgeOldInstanceDeletes.
+func (s *Service) PurgeOldInstanceDeletes(ctx context.Context, olderThan time.Time) (int, error) {
+	cutoff := olderThan.UTC().Format(timeutil.StorageTimeFormat)
+	n, err := s.q.PurgeOldJournalExdateDeletes(ctx, cutoff)
 	if err != nil {
 		return 0, err
 	}

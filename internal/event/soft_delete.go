@@ -365,10 +365,27 @@ func (s *Service) restoreEventsByUIDClearingExdates(ctx context.Context, uid str
 }
 
 func clearMasterEXDATE(ctx context.Context, qtx *storage.Queries, uid, recurrenceID string) error {
-	master, err := qtx.GetEventByUID(ctx, uid)
+	// Only strip an EXDATE that a delete operation added. EXDATEs that arrived
+	// via import (or a series delete, which never adds one) have no provenance
+	// row and must survive restore — otherwise RestoreByUID silently drops a
+	// legitimate imported EXDATE whose slot happens to match an override's
+	// recurrence_id (issue #86).
+	log, err := qtx.GetEventExdateDeleteByUIDRecurrence(ctx, storage.GetEventExdateDeleteByUIDRecurrenceParams{
+		Uid:          uid,
+		RecurrenceID: recurrenceID,
+	})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
+		}
+		return fmt.Errorf("get exdate log: %w", err)
+	}
+
+	master, err := qtx.GetEventByUID(ctx, uid)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// Master gone; drop the now-orphaned provenance row.
+			return qtx.DeleteEventExdateDelete(ctx, log.ID)
 		}
 		return fmt.Errorf("get master: %w", err)
 	}
@@ -386,16 +403,8 @@ func clearMasterEXDATE(ctx context.Context, qtx *storage.Queries, uid, recurrenc
 			return fmt.Errorf("update exdates: %w", err)
 		}
 	}
-	log, err := qtx.GetEventExdateDeleteByUIDRecurrence(ctx, storage.GetEventExdateDeleteByUIDRecurrenceParams{
-		Uid:          uid,
-		RecurrenceID: recurrenceID,
-	})
-	if err == nil {
-		if err := qtx.DeleteEventExdateDelete(ctx, log.ID); err != nil {
-			return fmt.Errorf("delete exdate log: %w", err)
-		}
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("get exdate log: %w", err)
+	if err := qtx.DeleteEventExdateDelete(ctx, log.ID); err != nil {
+		return fmt.Errorf("delete exdate log: %w", err)
 	}
 	return nil
 }

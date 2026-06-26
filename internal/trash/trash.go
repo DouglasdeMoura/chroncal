@@ -86,11 +86,13 @@ func NewService(e *event.Service, t *todo.Service, j *journal.Service) *Service 
 // PurgeCounts reports how many rows each domain dropped from a PurgeOld
 // call so callers (maintenance, CLI) can log per-domain numbers.
 type PurgeCounts struct {
-	Events            int
-	EventInstanceLogs int
-	EventTruncateLogs int
-	Todos             int
-	Journals          int
+	Events              int
+	EventInstanceLogs   int
+	EventTruncateLogs   int
+	Todos               int
+	TodoInstanceLogs    int
+	Journals            int
+	JournalInstanceLogs int
 }
 
 // List returns every trash entry for calendarID across all domains,
@@ -209,6 +211,11 @@ func (s *Service) PurgeOld(ctx context.Context, olderThan time.Time) (PurgeCount
 			return counts, fmt.Errorf("purge todos: %w", err)
 		}
 		counts.Todos = n
+		n, err = s.todos.PurgeOldInstanceDeletes(ctx, olderThan)
+		if err != nil {
+			return counts, fmt.Errorf("purge todo instance logs: %w", err)
+		}
+		counts.TodoInstanceLogs = n
 	}
 	if s.journals != nil {
 		n, err := s.journals.PurgeDeleted(ctx, olderThan)
@@ -216,6 +223,11 @@ func (s *Service) PurgeOld(ctx context.Context, olderThan time.Time) (PurgeCount
 			return counts, fmt.Errorf("purge journals: %w", err)
 		}
 		counts.Journals = n
+		n, err = s.journals.PurgeOldInstanceDeletes(ctx, olderThan)
+		if err != nil {
+			return counts, fmt.Errorf("purge journal instance logs: %w", err)
+		}
+		counts.JournalInstanceLogs = n
 	}
 	return counts, nil
 }

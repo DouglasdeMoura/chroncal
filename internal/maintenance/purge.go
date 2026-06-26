@@ -48,14 +48,17 @@ func (p *Purger) RunOnce(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("trash purge: %w", err)
 	}
-	total := counts.Events + counts.EventInstanceLogs + counts.EventTruncateLogs + counts.Todos + counts.Journals
+	total := counts.Events + counts.EventInstanceLogs + counts.EventTruncateLogs +
+		counts.Todos + counts.TodoInstanceLogs + counts.Journals + counts.JournalInstanceLogs
 	if total > 0 {
 		p.logger.Info("soft-delete purge",
 			"events_purged", counts.Events,
 			"instance_logs_purged", counts.EventInstanceLogs,
 			"truncation_logs_purged", counts.EventTruncateLogs,
 			"todos_purged", counts.Todos,
+			"todo_instance_logs_purged", counts.TodoInstanceLogs,
 			"journals_purged", counts.Journals,
+			"journal_instance_logs_purged", counts.JournalInstanceLogs,
 			"older_than_days", p.days,
 		)
 	}

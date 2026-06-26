@@ -579,3 +579,53 @@ func TestSoftDelete_UndoInstanceDeletePreservesPreexistingEXDATE(t *testing.T) {
 		t.Fatalf("EXDATE count after undo = %d, want 1 (pre-existing exclusion preserved) (%q)", got, restoredMaster.ExDates)
 	}
 }
+
+// TestSoftDelete_RestoreByUIDPreservesImportedEXDATE is the regression test for
+// issue #86: an EXDATE that arrived via import (no delete added it) must
+// survive a DeleteSeries + RestoreByUID round-trip, even when an override
+// shares the same recurrence slot. RestoreByUID previously cleared the master
+// EXDATE for every soft-deleted override's recurrence_id unconditionally,
+// silently stripping the imported EXDATE.
+func TestSoftDelete_RestoreByUIDPreservesImportedEXDATE(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	const slot = "2026-04-08T10:00:00Z"
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:            "imported-exdate-restore",
+		CalendarID:     1,
+		Title:          "Weekly Sync",
+		StartTime:      time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;COUNT=3",
+		ExDates:        slot, // imported exclusion, not delete-added
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	if _, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:          master.UID,
+		CalendarID:   1,
+		Title:        "Weekly Sync (moved)",
+		StartTime:    time.Date(2026, 4, 8, 14, 0, 0, 0, time.UTC),
+		EndTime:      time.Date(2026, 4, 8, 15, 0, 0, 0, time.UTC),
+		RecurrenceID: slot,
+	}); err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	// DeleteSeries soft-deletes master + override WITHOUT adding any EXDATE.
+	if err := svc.DeleteSeries(ctx, master.UID); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+	if err := svc.RestoreByUID(ctx, master.UID); err != nil {
+		t.Fatalf("RestoreByUID: %v", err)
+	}
+	restoredMaster, err := svc.Get(ctx, master.ID)
+	if err != nil {
+		t.Fatalf("Get master after restore: %v", err)
+	}
+	if got := len(restoredMaster.ParseExDates()); got != 1 {
+		t.Fatalf("EXDATE count after RestoreByUID = %d, want 1 (imported exclusion preserved) (%q)", got, restoredMaster.ExDates)
+	}
+}

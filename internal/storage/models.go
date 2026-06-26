@@ -245,6 +245,14 @@ type JournalContact struct {
 	Text      string
 }
 
+type JournalExdateDelete struct {
+	ID           int64
+	CalendarID   int64
+	Uid          string
+	RecurrenceID string
+	DeletedAt    string
+}
+
 type JournalRelation struct {
 	ID        int64
 	JournalID int64
@@ -392,6 +400,14 @@ type TodoContact struct {
 	ID     int64
 	TodoID int64
 	Text   string
+}
+
+type TodoExdateDelete struct {
+	ID           int64
+	CalendarID   int64
+	Uid          string
+	RecurrenceID string
+	DeletedAt    string
 }
 
 type TodoRelation struct {

@@ -297,6 +297,57 @@ func TestSoftDelete_RestoreByUIDClearsExdate(t *testing.T) {
 	}
 }
 
+// TestSoftDelete_RestoreByUIDPreservesImportedExdate is the regression test
+// for issue #86: an EXDATE that came from an import (not from a per-instance
+// delete) must survive a DeleteSeries + RestoreByUID round-trip, even when an
+// override happens to share the same recurrence slot. RestoreByUID used to
+// clear the master EXDATE for every soft-deleted override's recurrence_id
+// unconditionally, silently stripping the imported EXDATE.
+func TestSoftDelete_RestoreByUIDPreservesImportedExdate(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	slotT := time.Date(2026, 4, 15, 23, 59, 59, 0, time.UTC).Format(time.RFC3339)
+
+	// Imported series: the master carries a legitimate EXDATE at slot T that
+	// no delete operation added.
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "weekly-uid", CalendarID: 1, Summary: "Weekly Review",
+		DueDate:        time.Date(2026, 4, 1, 23, 59, 59, 0, time.UTC).Format(time.RFC3339),
+		RecurrenceRule: "FREQ=WEEKLY;COUNT=5",
+		ExDates:        slotT,
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	// An override exists at the same slot T.
+	_, err = svc.UpsertByUID(ctx, UpsertParams{
+		UID: master.UID, CalendarID: 1, Summary: "Weekly Review (moved)",
+		DueDate:      slotT,
+		RecurrenceID: slotT,
+	})
+	if err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	// DeleteSeries soft-deletes master + override WITHOUT adding any EXDATE.
+	if err := svc.DeleteSeries(ctx, master.UID); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+
+	// RestoreByUID must not strip the imported EXDATE.
+	if err := svc.RestoreByUID(ctx, master.UID); err != nil {
+		t.Fatalf("RestoreByUID: %v", err)
+	}
+	afterRestore, err := svc.GetByUID(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("get master after restore: %v", err)
+	}
+	if afterRestore.ExDates == "" {
+		t.Fatalf("imported EXDATE at %s was stripped by RestoreByUID", slotT)
+	}
+}
+
 // TestSoftDelete_UpsertClearsDeletedAt verifies that UpsertByUID on a
 // soft-deleted row re-hydrates it (ON CONFLICT clears deleted_at). This
 // is the path a remote re-CREATE after a local delete would take: the

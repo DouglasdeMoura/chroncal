@@ -374,6 +374,15 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 				}); err != nil {
 					return fmt.Errorf("update exdates: %w", err)
 				}
+				// Record provenance so restore knows this EXDATE was
+				// delete-added (and may be stripped) rather than imported.
+				if err := qtx.RecordJournalExdateDelete(ctx, storage.RecordJournalExdateDeleteParams{
+					CalendarID:   master.CalendarID,
+					Uid:          j.UID,
+					RecurrenceID: j.RecurrenceID,
+				}); err != nil {
+					return fmt.Errorf("record exdate delete: %w", err)
+				}
 			}
 		}
 

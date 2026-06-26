@@ -278,6 +278,52 @@ func TestSoftDelete_RestoreByUIDClearsExdate(t *testing.T) {
 	}
 }
 
+// TestSoftDelete_RestoreByUIDPreservesImportedExdate is the regression test
+// for issue #86: an EXDATE that arrived via import (no delete added it) must
+// survive a DeleteSeries + RestoreByUID round-trip, even when an override
+// shares the same recurrence slot. RestoreByUID previously cleared the master
+// EXDATE for every soft-deleted override's recurrence_id unconditionally,
+// silently stripping the imported EXDATE.
+func TestSoftDelete_RestoreByUIDPreservesImportedExdate(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	slot := time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC).Format(time.RFC3339)
+
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "daily-uid", CalendarID: 1, Summary: "Daily Journal",
+		StartDate:      "2026-04-01",
+		RecurrenceRule: "FREQ=DAILY;COUNT=5",
+		ExDates:        slot, // imported exclusion, not delete-added
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	_, err = svc.UpsertByUID(ctx, UpsertParams{
+		UID: master.UID, CalendarID: 1, Summary: "Daily Journal (amended)",
+		StartDate:    "2026-04-03",
+		RecurrenceID: slot,
+	})
+	if err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	// DeleteSeries soft-deletes master + override WITHOUT adding any EXDATE.
+	if err := svc.DeleteSeries(ctx, master.UID); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+	if err := svc.RestoreByUID(ctx, master.UID); err != nil {
+		t.Fatalf("RestoreByUID: %v", err)
+	}
+	afterRestore, err := svc.GetByUID(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("get master after restore: %v", err)
+	}
+	if afterRestore.ExDates == "" {
+		t.Fatalf("imported EXDATE at %s was stripped by RestoreByUID", slot)
+	}
+}
+
 // TestSoftDelete_UpsertClearsDeletedAt verifies UpsertByUID on a soft-
 // deleted journal re-hydrates it (ON CONFLICT clears deleted_at).
 func TestSoftDelete_UpsertClearsDeletedAt(t *testing.T) {
