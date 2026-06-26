@@ -416,6 +416,59 @@ func TestListExpiredTodoSnoozed(t *testing.T) {
 	}
 }
 
+// TestListExpiredTodoSnoozed_SkipsDismissed guards issue #295: a fired todo
+// alarm that is snoozed and then dismissed must NOT re-fire once the snooze
+// expires. DismissTodoAlarm sets acked_at but leaves snoozed_to intact, so
+// without an acked_at guard the expired-snooze scan returns the dismissed row
+// and a phantom notification fires for an alarm the user explicitly dismissed.
+// The event path is immune because ListExpiredSnoozedAlarmStates carries
+// acked_at IS NULL; this asserts the todo query matches that contract.
+func TestListExpiredTodoSnoozed_SkipsDismissed(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+
+	todoSvc := todo.NewService(db, q)
+	base := time.Date(2026, 4, 1, 17, 0, 0, 0, time.UTC)
+	newTodo, _ := todoSvc.Create(context.Background(), todo.CreateParams{
+		CalendarID: 1,
+		Summary:    "Test Todo",
+		DueDate:    base.Format(time.RFC3339),
+	})
+	alarm, _ := q.CreateTodoAlarm(context.Background(), storage.CreateTodoAlarmParams{
+		TodoID:       newTodo.ID,
+		Uid:          storage.StringToNullable("test-alarm-uid"),
+		Action:       "DISPLAY",
+		TriggerValue: "-PT1H",
+		Related:      "START",
+	})
+
+	todoAlarmSvc := NewTodoService(db, q, &mockTodoAlarmLister{
+		alarms: []model.Alarm{{ID: alarm.ID, UID: "test-alarm-uid", Action: "DISPLAY", TriggerValue: "-PT1H"}},
+	})
+
+	// Fire, snooze, then dismiss the alarm.
+	triggerAt := time.Date(2026, 4, 1, 16, 0, 0, 0, time.UTC)
+	stateID, _ := todoAlarmSvc.MarkTodoAlarmFired(context.Background(), alarm.ID, newTodo.ID, triggerAt)
+
+	snoozeTime := time.Date(2026, 4, 1, 17, 0, 0, 0, time.UTC)
+	if err := todoAlarmSvc.SnoozeTodoAlarm(context.Background(), stateID, snoozeTime); err != nil {
+		t.Fatalf("snooze: %v", err)
+	}
+	if err := todoAlarmSvc.DismissTodoAlarm(context.Background(), stateID); err != nil {
+		t.Fatalf("dismiss: %v", err)
+	}
+
+	// After the snooze expires, the dismissed alarm must not re-fire.
+	checkTime := time.Date(2026, 4, 1, 17, 30, 0, 0, time.UTC)
+	expired, err := todoAlarmSvc.ListExpiredTodoSnoozed(context.Background(), checkTime)
+	if err != nil {
+		t.Fatalf("list expired: %v", err)
+	}
+
+	if len(expired) != 0 {
+		t.Errorf("expired snoozed = %d, want 0 (dismissed alarm must not re-fire, issue #295)", len(expired))
+	}
+}
+
 // TestCheckTodos_FiresLongLeadTimeAlarm guards issue #98 on the todo path: a
 // todo due 7 days out with a "1 week before" alarm must fire now even though
 // the todo instance is far past the base forward window. Uses the real todo

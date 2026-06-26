@@ -125,8 +125,11 @@ func (q *Queries) InsertTodoAlarmState(ctx context.Context, arg InsertTodoAlarmS
 }
 
 const listExpiredTodoSnoozed = `-- name: ListExpiredTodoSnoozed :many
-SELECT id, alarm_id, todo_id, trigger_at, fired_at, acked_at, snoozed_to FROM todo_alarm_state 
-WHERE snoozed_to IS NOT NULL AND snoozed_to <= ?
+SELECT id, alarm_id, todo_id, trigger_at, fired_at, acked_at, snoozed_to FROM todo_alarm_state
+WHERE fired_at IS NOT NULL
+  AND acked_at IS NULL
+  AND snoozed_to IS NOT NULL
+  AND snoozed_to <= ?
 ORDER BY snoozed_to
 `
 

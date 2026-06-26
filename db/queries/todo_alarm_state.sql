@@ -24,8 +24,11 @@ WHERE todo_id = ? AND fired_at IS NOT NULL AND acked_at IS NULL AND snoozed_to I
 ORDER BY fired_at DESC;
 
 -- name: ListExpiredTodoSnoozed :many
-SELECT * FROM todo_alarm_state 
-WHERE snoozed_to IS NOT NULL AND snoozed_to <= ?
+SELECT * FROM todo_alarm_state
+WHERE fired_at IS NOT NULL
+  AND acked_at IS NULL
+  AND snoozed_to IS NOT NULL
+  AND snoozed_to <= ?
 ORDER BY snoozed_to;
 
 -- name: RefireTodoAlarmState :execrows
