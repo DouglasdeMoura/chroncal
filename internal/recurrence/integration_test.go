@@ -10,94 +10,11 @@ import (
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/testutil"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
-
-// faultyDBTX wraps a storage.DBTX and forces any query whose text contains
-// failOn to fail, simulating a transient SQLite error mid-expansion. sqlc keeps
-// the `-- name: <QueryName>` comment in the query string, so matching on the
-// query name targets exactly one statement.
-type faultyDBTX struct {
-	storage.DBTX
-	failOn string
-}
-
-func (f faultyDBTX) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
-	if strings.Contains(query, f.failOn) {
-		return nil, errors.New("injected query failure")
-	}
-	return f.DBTX.QueryContext(ctx, query, args...)
-}
-
-// TestExpand_OverrideFetchErrorPropagates locks in that a failure fetching a
-// recurring master's overrides surfaces as an error instead of silently
-// degrading to "no overrides" — which would suppress nothing and emit the stale
-// master RRULE instance at its original time while the real override vanishes.
-// Regression test for issue #251.
-func TestExpand_OverrideFetchErrorPropagates(t *testing.T) {
-	db, q := testutil.NewTestDB(t)
-	eventsSvc := event.NewService(db, q)
-	ctx := context.Background()
-
-	// Weekly-Monday master whose Apr 6 occurrence is moved to Wed Apr 8 14:00.
-	master, err := eventsSvc.Create(ctx, event.CreateParams{
-		CalendarID:     1,
-		Title:          "Weekly Standup",
-		StartTime:      time.Date(2026, 4, 6, 9, 0, 0, 0, time.UTC), // Monday
-		EndTime:        time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC),
-		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
-	})
-	if err != nil {
-		t.Fatalf("create master: %v", err)
-	}
-	if _, err := eventsSvc.UpsertByUID(ctx, event.UpsertParams{
-		UID:          master.UID,
-		CalendarID:   1,
-		Title:        "Weekly Standup (moved)",
-		StartTime:    time.Date(2026, 4, 8, 14, 0, 0, 0, time.UTC),
-		EndTime:      time.Date(2026, 4, 8, 15, 0, 0, 0, time.UTC),
-		RecurrenceID: "2026-04-06T09:00:00Z",
-	}); err != nil {
-		t.Fatalf("create override: %v", err)
-	}
-
-	// A recurrence service whose override fetch fails. The master itself still
-	// loads, so expansion reaches the override fetch.
-	faultySvc := NewService(db, storage.New(faultyDBTX{DBTX: db, failOn: "ListOverridesByUID"}))
-
-	// Original slot day (Apr 6): with overrides discarded the master would emit
-	// the stale Apr 6 instance here; the fix must surface the error instead.
-	from := time.Date(2026, 4, 6, 0, 0, 0, 0, time.UTC)
-	to := time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC)
-
-	for _, tc := range []struct {
-		name string
-		run  func() (int, error)
-	}{
-		{"ListExpandedEvents", func() (int, error) {
-			e, err := faultySvc.ListExpandedEvents(ctx, from, to)
-			return len(e), err
-		}},
-		{"ListExpandedByDateRange", func() (int, error) {
-			e, err := faultySvc.ListExpandedByDateRange(ctx, from, to)
-			return len(e), err
-		}},
-		{"ListFilteredEvents", func() (int, error) {
-			e, err := faultySvc.ListFilteredEvents(ctx, EventListParams{From: from, To: to})
-			return len(e), err
-		}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			n, err := tc.run()
-			if err == nil {
-				t.Fatalf("override fetch failed but %s returned nil error with %d events "+
-					"(stale master instance leaked instead of surfacing the error)", tc.name, n)
-			}
-		})
-	}
-}
 
 func TestListExpandedByDateRange(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
@@ -1442,6 +1359,193 @@ func TestListExpandedByDateRange_OverrideEmptyEndTime(t *testing.T) {
 	}
 	if found.Title != "Weekly Sync (overridden)" {
 		t.Errorf("Apr 13 title = %q, want %q", found.Title, "Weekly Sync (overridden)")
+	}
+}
+
+// TestMovedOverride_Journal is the journal analogue of TestMovedOverride_Todo:
+// it exercises the recurring-journal merge path (overridden-slot suppression
+// and override emission at the moved occurrence) end to end.
+func TestMovedOverride_Journal(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	journalSvc := journal.NewService(db, q)
+	recurSvc := NewService(db, q)
+	ctx := context.Background()
+
+	master, err := journalSvc.Create(ctx, journal.CreateParams{
+		CalendarID:     1,
+		Summary:        "Weekly Reflection",
+		StartDate:      "2026-04-06", // Monday
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
+	})
+	if err != nil {
+		t.Fatalf("create recurring journal: %v", err)
+	}
+	// Move the Apr 6 occurrence to Wednesday Apr 8.
+	if _, err := journalSvc.UpsertByUID(ctx, journal.UpsertParams{
+		UID:          master.UID,
+		CalendarID:   1,
+		Summary:      "Weekly Reflection (moved)",
+		StartDate:    "2026-04-08",
+		RecurrenceID: "2026-04-06T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("create journal override: %v", err)
+	}
+
+	// Original slot day: nothing (occurrence moved away).
+	slot, err := recurSvc.ListFilteredJournals(ctx, JournalListParams{
+		From: time.Date(2026, 4, 6, 0, 0, 0, 0, time.UTC),
+		To:   time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("expand slot window: %v", err)
+	}
+	if len(slot) != 0 {
+		for i, j := range slot {
+			t.Logf("  slot[%d]: %s start=%s", i, j.Summary, j.StartDate)
+		}
+		t.Errorf("original slot window: got %d journals, want 0", len(slot))
+	}
+
+	// New day: exactly the moved override.
+	moved, err := recurSvc.ListFilteredJournals(ctx, JournalListParams{
+		From: time.Date(2026, 4, 8, 0, 0, 0, 0, time.UTC),
+		To:   time.Date(2026, 4, 9, 0, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("expand moved window: %v", err)
+	}
+	if len(moved) != 1 {
+		t.Fatalf("moved window: got %d journals, want 1", len(moved))
+	}
+	if moved[0].StartDate != "2026-04-08" {
+		t.Errorf("moved start = %q, want %q", moved[0].StartDate, "2026-04-08")
+	}
+	if moved[0].Summary != "Weekly Reflection (moved)" {
+		t.Errorf("moved summary = %q, want %q", moved[0].Summary, "Weekly Reflection (moved)")
+	}
+}
+
+// TestListFilteredJournals_RecurringExpansion locks in that a recurring journal
+// master expands into per-occurrence instances within the window, with
+// StartDate adjusted to each occurrence.
+func TestListFilteredJournals_RecurringExpansion(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	journalSvc := journal.NewService(db, q)
+	recurSvc := NewService(db, q)
+	ctx := context.Background()
+
+	if _, err := journalSvc.Create(ctx, journal.CreateParams{
+		CalendarID:     1,
+		Summary:        "Daily Log",
+		StartDate:      "2026-04-01",
+		RecurrenceRule: "FREQ=DAILY;COUNT=10",
+	}); err != nil {
+		t.Fatalf("create recurring journal: %v", err)
+	}
+
+	journals, err := recurSvc.ListFilteredJournals(ctx, JournalListParams{
+		From: time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC),
+		To:   time.Date(2026, 4, 6, 0, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("ListFilteredJournals: %v", err)
+	}
+	// Apr 1..5 inclusive (Apr 6 == to excluded).
+	if len(journals) != 5 {
+		for i, j := range journals {
+			t.Logf("  journals[%d]: %s start=%s", i, j.Summary, j.StartDate)
+		}
+		t.Fatalf("got %d journals, want 5", len(journals))
+	}
+	for i, j := range journals {
+		want := time.Date(2026, 4, 1+i, 0, 0, 0, 0, time.UTC).Format("2006-01-02")
+		if j.StartDate != want {
+			t.Errorf("journals[%d].StartDate = %q, want %q", i, j.StartDate, want)
+		}
+	}
+}
+
+// faultyDBTX wraps a storage.DBTX and forces any query whose text contains
+// failOn to fail, simulating a transient SQLite error mid-expansion. sqlc keeps
+// the `-- name: <QueryName>` comment in the query string, so matching on the
+// query name targets exactly one statement.
+type faultyDBTX struct {
+	storage.DBTX
+	failOn string
+}
+
+func (f faultyDBTX) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+	if strings.Contains(query, f.failOn) {
+		return nil, errors.New("injected query failure")
+	}
+	return f.DBTX.QueryContext(ctx, query, args...)
+}
+
+// TestExpand_OverrideFetchErrorPropagates locks in that a failure fetching a
+// recurring master's overrides surfaces as an error instead of silently
+// degrading to "no overrides" — which would suppress nothing and emit the stale
+// master RRULE instance at its original time while the real override vanishes.
+// Regression test for issue #251.
+func TestExpand_OverrideFetchErrorPropagates(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	eventsSvc := event.NewService(db, q)
+	ctx := context.Background()
+
+	// Weekly-Monday master whose Apr 6 occurrence is moved to Wed Apr 8 14:00.
+	master, err := eventsSvc.Create(ctx, event.CreateParams{
+		CalendarID:     1,
+		Title:          "Weekly Standup",
+		StartTime:      time.Date(2026, 4, 6, 9, 0, 0, 0, time.UTC), // Monday
+		EndTime:        time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	if _, err := eventsSvc.UpsertByUID(ctx, event.UpsertParams{
+		UID:          master.UID,
+		CalendarID:   1,
+		Title:        "Weekly Standup (moved)",
+		StartTime:    time.Date(2026, 4, 8, 14, 0, 0, 0, time.UTC),
+		EndTime:      time.Date(2026, 4, 8, 15, 0, 0, 0, time.UTC),
+		RecurrenceID: "2026-04-06T09:00:00Z",
+	}); err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	// A recurrence service whose override fetch fails. The master itself still
+	// loads, so expansion reaches the override fetch.
+	faultySvc := NewService(db, storage.New(faultyDBTX{DBTX: db, failOn: "ListOverridesByUID"}))
+
+	// Original slot day (Apr 6): with overrides discarded the master would emit
+	// the stale Apr 6 instance here; the fix must surface the error instead.
+	from := time.Date(2026, 4, 6, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC)
+
+	for _, tc := range []struct {
+		name string
+		run  func() (int, error)
+	}{
+		{"ListExpandedEvents", func() (int, error) {
+			e, err := faultySvc.ListExpandedEvents(ctx, from, to)
+			return len(e), err
+		}},
+		{"ListExpandedByDateRange", func() (int, error) {
+			e, err := faultySvc.ListExpandedByDateRange(ctx, from, to)
+			return len(e), err
+		}},
+		{"ListFilteredEvents", func() (int, error) {
+			e, err := faultySvc.ListFilteredEvents(ctx, EventListParams{From: from, To: to})
+			return len(e), err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			n, err := tc.run()
+			if err == nil {
+				t.Fatalf("override fetch failed but %s returned nil error with %d events "+
+					"(stale master instance leaked instead of surfacing the error)", tc.name, n)
+			}
+		})
 	}
 }
 
