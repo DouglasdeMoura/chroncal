@@ -10,7 +10,7 @@ import (
 // linked to an account (synced), this upserts a sync_resources row with
 // dirty=1. For local-only calendars this is a no-op.
 // Called by service-layer mutations (Create, Update, ReplaceAlarms, etc.).
-func MarkResourceDirty(ctx context.Context, db *sql.DB, calendarID int64, uid, ownerType string) error {
+func MarkResourceDirty(ctx context.Context, db DBTX, calendarID int64, uid, ownerType string) error {
 	if calendarID == 0 || uid == "" {
 		return nil
 	}

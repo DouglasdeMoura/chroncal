@@ -34,10 +34,48 @@ type ExportParams struct {
 type Service struct {
 	db *sql.DB
 	q  *storage.Queries
+	// tx is non-nil when the service runs inside a caller-managed
+	// transaction (see WithTx). When set, q is already bound to tx and the
+	// per-method write helpers join the outer transaction instead of opening
+	// their own, so a multi-step sequence commits or rolls back atomically.
+	tx *sql.Tx
 }
 
 func NewService(db *sql.DB, q *storage.Queries) *Service {
 	return &Service{db: db, q: q}
+}
+
+// WithTx returns a copy of the service whose writes run inside tx. The caller
+// owns tx (commit/rollback); the returned service's mutating methods neither
+// begin nor commit their own transaction, letting several calls compose into a
+// single atomic unit.
+func (s *Service) WithTx(tx *sql.Tx) *Service {
+	return &Service{db: s.db, q: s.q.WithTx(tx), tx: tx}
+}
+
+// txscope returns a transaction-scoped Queries plus commit and rollback
+// helpers. When the service already runs inside a caller-managed transaction
+// (see WithTx), the work joins that transaction: commit is a no-op and rollback
+// is left to the outer owner. Otherwise it opens and owns a fresh transaction.
+func (s *Service) txscope(ctx context.Context) (qtx *storage.Queries, commit func() error, rollback func(), err error) {
+	if s.tx != nil {
+		return s.q, func() error { return nil }, func() {}, nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("begin tx: %w", err)
+	}
+	return s.q.WithTx(tx), tx.Commit, func() { _ = tx.Rollback() }, nil
+}
+
+// dirtyExec returns the DBTX the dirty-marking side effect must use: the outer
+// transaction when one is active (so the write joins it and cannot deadlock
+// against the held write lock), otherwise the pooled *sql.DB.
+func (s *Service) dirtyExec() storage.DBTX {
+	if s.tx != nil {
+		return s.tx
+	}
+	return s.db
 }
 
 type CreateParams struct {
@@ -254,7 +292,7 @@ func (s *Service) markDirtyByID(ctx context.Context, eventID int64) {
 	if err != nil {
 		return
 	}
-	_ = storage.MarkResourceDirty(ctx, s.db, r.CalendarID, r.Uid, "event")
+	_ = storage.MarkResourceDirty(ctx, s.dirtyExec(), r.CalendarID, r.Uid, "event")
 }
 
 func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
@@ -401,12 +439,11 @@ func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p Update
 func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error) {
 	p.applyDefaults()
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
-		return Event{}, fmt.Errorf("begin tx: %w", err)
+		return Event{}, err
 	}
-	defer tx.Rollback()
-	qtx := s.q.WithTx(tx)
+	defer rollback()
 
 	r, err := qtx.UpsertEventByUID(ctx, storage.UpsertEventByUIDParams{
 		Uid:            p.UID,
@@ -440,7 +477,7 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error
 	if err := replaceCategoriesTx(ctx, qtx, e.ID, ParseCategoryList(p.Categories)); err != nil {
 		return Event{}, fmt.Errorf("replace categories: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
+	if err := commit(); err != nil {
 		return Event{}, fmt.Errorf("commit upsert event: %w", err)
 	}
 	e.Categories = p.Categories
@@ -1315,16 +1352,16 @@ func deleteUnmatchedAlarms(ctx context.Context, qtx *storage.Queries, existing [
 }
 
 func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []model.Alarm) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback()
-
-	if err := replaceAlarmsTx(ctx, s.q.WithTx(tx), eventID, alarms); err != nil {
 		return err
 	}
-	if err := tx.Commit(); err != nil {
+	defer rollback()
+
+	if err := replaceAlarmsTx(ctx, qtx, eventID, alarms); err != nil {
+		return err
+	}
+	if err := commit(); err != nil {
 		return err
 	}
 	s.markDirtyByID(ctx, eventID)
@@ -1404,16 +1441,16 @@ func (s *Service) ListAttendees(ctx context.Context, eventID int64) ([]model.Att
 }
 
 func (s *Service) ReplaceAttendees(ctx context.Context, eventID int64, attendees []model.Attendee) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback()
-
-	if err := replaceAttendeesTx(ctx, s.q.WithTx(tx), eventID, attendees); err != nil {
 		return err
 	}
-	if err := tx.Commit(); err != nil {
+	defer rollback()
+
+	if err := replaceAttendeesTx(ctx, qtx, eventID, attendees); err != nil {
+		return err
+	}
+	if err := commit(); err != nil {
 		return err
 	}
 	s.markDirtyByID(ctx, eventID)
@@ -1474,16 +1511,16 @@ func (s *Service) ListAllCategories(ctx context.Context) ([]string, error) {
 }
 
 func (s *Service) ReplaceCategories(ctx context.Context, eventID int64, categories []string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback()
-
-	if err := replaceCategoriesTx(ctx, s.q.WithTx(tx), eventID, categories); err != nil {
 		return err
 	}
-	if err := tx.Commit(); err != nil {
+	defer rollback()
+
+	if err := replaceCategoriesTx(ctx, qtx, eventID, categories); err != nil {
+		return err
+	}
+	if err := commit(); err != nil {
 		return fmt.Errorf("commit replace categories: %w", err)
 	}
 	return nil
@@ -1523,12 +1560,11 @@ func (s *Service) ListAttachments(ctx context.Context, eventID int64) ([]model.A
 }
 
 func (s *Service) ReplaceAttachments(ctx context.Context, eventID int64, attachments []model.Attachment) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return err
 	}
-	defer tx.Rollback()
-	qtx := s.q.WithTx(tx)
+	defer rollback()
 	if err := qtx.DeleteEventAttachmentsByEventID(ctx, eventID); err != nil {
 		return fmt.Errorf("delete attachments: %w", err)
 	}
@@ -1540,7 +1576,7 @@ func (s *Service) ReplaceAttachments(ctx context.Context, eventID int64, attachm
 			return fmt.Errorf("create attachment: %w", err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := commit(); err != nil {
 		return err
 	}
 	s.markDirtyByID(ctx, eventID)
@@ -1562,12 +1598,11 @@ func (s *Service) ListComments(ctx context.Context, eventID int64) ([]string, er
 }
 
 func (s *Service) ReplaceComments(ctx context.Context, eventID int64, comments []string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return err
 	}
-	defer tx.Rollback()
-	qtx := s.q.WithTx(tx)
+	defer rollback()
 	if err := qtx.DeleteEventCommentsByEventID(ctx, eventID); err != nil {
 		return fmt.Errorf("delete comments: %w", err)
 	}
@@ -1579,7 +1614,7 @@ func (s *Service) ReplaceComments(ctx context.Context, eventID int64, comments [
 			return fmt.Errorf("create comment: %w", err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := commit(); err != nil {
 		return err
 	}
 	s.markDirtyByID(ctx, eventID)
@@ -1601,12 +1636,11 @@ func (s *Service) ListContacts(ctx context.Context, eventID int64) ([]string, er
 }
 
 func (s *Service) ReplaceContacts(ctx context.Context, eventID int64, contacts []string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return err
 	}
-	defer tx.Rollback()
-	qtx := s.q.WithTx(tx)
+	defer rollback()
 	if err := qtx.DeleteEventContactsByEventID(ctx, eventID); err != nil {
 		return fmt.Errorf("delete contacts: %w", err)
 	}
@@ -1618,7 +1652,7 @@ func (s *Service) ReplaceContacts(ctx context.Context, eventID int64, contacts [
 			return fmt.Errorf("create contact: %w", err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := commit(); err != nil {
 		return err
 	}
 	s.markDirtyByID(ctx, eventID)
@@ -1640,12 +1674,11 @@ func (s *Service) ListResources(ctx context.Context, eventID int64) ([]string, e
 }
 
 func (s *Service) ReplaceResources(ctx context.Context, eventID int64, resources []string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return err
 	}
-	defer tx.Rollback()
-	qtx := s.q.WithTx(tx)
+	defer rollback()
 	if err := qtx.DeleteEventResourcesByEventID(ctx, eventID); err != nil {
 		return fmt.Errorf("delete resources: %w", err)
 	}
@@ -1657,7 +1690,7 @@ func (s *Service) ReplaceResources(ctx context.Context, eventID int64, resources
 			return fmt.Errorf("create resource: %w", err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := commit(); err != nil {
 		return err
 	}
 	s.markDirtyByID(ctx, eventID)
@@ -1679,12 +1712,11 @@ func (s *Service) ListRelations(ctx context.Context, eventID int64) ([]model.Rel
 }
 
 func (s *Service) ReplaceRelations(ctx context.Context, eventID int64, relations []model.Relation) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return err
 	}
-	defer tx.Rollback()
-	qtx := s.q.WithTx(tx)
+	defer rollback()
 	if err := qtx.DeleteEventRelationsByEventID(ctx, eventID); err != nil {
 		return fmt.Errorf("delete relations: %w", err)
 	}
@@ -1696,7 +1728,7 @@ func (s *Service) ReplaceRelations(ctx context.Context, eventID int64, relations
 			return fmt.Errorf("create relation: %w", err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := commit(); err != nil {
 		return err
 	}
 	s.markDirtyByID(ctx, eventID)
@@ -1821,12 +1853,11 @@ func (s *Service) ListXProperties(ctx context.Context, eventID int64) ([]model.X
 }
 
 func (s *Service) ReplaceXProperties(ctx context.Context, eventID int64, xprops []model.XProperty) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return err
 	}
-	defer tx.Rollback()
-	qtx := s.q.WithTx(tx)
+	defer rollback()
 	if err := qtx.DeleteXPropertiesByOwner(ctx, storage.DeleteXPropertiesByOwnerParams{
 		OwnerType: "event", OwnerID: eventID,
 	}); err != nil {
@@ -1840,7 +1871,7 @@ func (s *Service) ReplaceXProperties(ctx context.Context, eventID int64, xprops 
 			return fmt.Errorf("insert x-property: %w", err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := commit(); err != nil {
 		return err
 	}
 	s.markDirtyByID(ctx, eventID)

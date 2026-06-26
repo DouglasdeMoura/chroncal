@@ -2574,3 +2574,57 @@ END:VCALENDAR
 		t.Fatalf("victim etag = %q, want old preserved (persist failed)", res.Etag)
 	}
 }
+
+// TestPersistImportedRollsBackOnReplaceFailure verifies that persistImported is
+// atomic per resource: if any Replace* step fails after the event row and some
+// of its child collections have already been written, the entire resource is
+// rolled back rather than left in a partial state.
+func TestPersistImportedRollsBackOnReplaceFailure(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	const uid = "atomic-import"
+	result := icalPkg.ImportResult{
+		Events: []event.Event{{
+			UID:       uid,
+			Title:     "Meeting",
+			StartTime: time.Date(2026, 4, 3, 10, 0, 0, 0, time.UTC),
+			EndTime:   time.Date(2026, 4, 3, 11, 0, 0, 0, time.UTC),
+			Status:    "CONFIRMED",
+			Transp:    "OPAQUE",
+			Class:     "PUBLIC",
+			Alarms: []model.Alarm{{
+				Action:       "DISPLAY",
+				TriggerValue: "-PT15M",
+				Description:  "Reminder",
+				Related:      "START",
+			}},
+			Attendees: []model.Attendee{{Email: "a@example.com"}},
+			Comments:  []string{"note"},
+		}},
+	}
+
+	// Force the ReplaceComments step (which runs after the event upsert and
+	// after ReplaceAlarms/ReplaceAttendees succeed) to fail mid-sequence,
+	// mirroring a transient DB error.
+	if _, err := db.ExecContext(ctx, "DROP TABLE event_comments"); err != nil {
+		t.Fatalf("drop event_comments: %v", err)
+	}
+
+	if err := engine.persistImported(ctx, calendarID, result); err == nil {
+		t.Fatal("expected persistImported to fail when a Replace step errors")
+	}
+
+	// The whole resource must roll back: no partial event row left behind.
+	if _, err := engine.events.GetByUID(ctx, uid); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("expected event %q to be absent after rollback, got err=%v", uid, err)
+	}
+}

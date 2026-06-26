@@ -1273,137 +1273,174 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 		}
 	}
 
-	// Import events
+	// Import events. Each resource's upsert plus its child-collection replaces
+	// run in one transaction (inTx) so a mid-sequence failure rolls back to the
+	// prior consistent state rather than leaving a half-updated row (e.g. new
+	// alarms but stale attendees). The resource stays dirty and is retried.
 	for _, ev := range result.Events {
-		saved, err := e.events.UpsertByUID(ctx, event.UpsertParams{
-			UID: ev.UID, CalendarID: calendarID,
-			Title: ev.Title, Description: ev.Description, Location: ev.Location,
-			StartTime: ev.StartTime, EndTime: ev.EndTime, AllDay: ev.AllDay,
-			RecurrenceRule: ev.RecurrenceRule, Timezone: ev.Timezone,
-			Status: ev.Status, Transp: ev.Transp, Sequence: ev.Sequence,
-			Priority: ev.Priority, Class: ev.Class, URL: ev.URL,
-			ConferenceURI: ev.ConferenceURI,
-			Categories:    ev.Categories, ExDates: ev.ExDates, RDates: ev.RDates,
-			RecurrenceID: ev.RecurrenceID, Geo: ev.Geo,
-			DurationValue: ev.DurationValue, DtStamp: ev.DtStamp,
-		})
-		if err != nil {
-			return fmt.Errorf("upsert event %q: %w", ev.UID, err)
-		}
-		// Replace child collections unconditionally so server-side removals
-		// (an empty list) are propagated, mirroring how Categories are handled
-		// via UpsertByUID. A full CalDAV pull sends the complete component, so
-		// the absence of a property means "cleared", not "unknown". Propagate
-		// any replace error so the caller keeps the resource dirty and retries.
-		if err := e.events.ReplaceAlarms(ctx, saved.ID, ev.Alarms); err != nil {
-			return fmt.Errorf("replace alarms for event %q: %w", ev.UID, err)
-		}
-		if err := e.events.ReplaceAttendees(ctx, saved.ID, ev.Attendees); err != nil {
-			return fmt.Errorf("replace attendees for event %q: %w", ev.UID, err)
-		}
-		if err := e.events.ReplaceAttachments(ctx, saved.ID, ev.Attachments); err != nil {
-			return fmt.Errorf("replace attachments for event %q: %w", ev.UID, err)
-		}
-		if err := e.events.ReplaceComments(ctx, saved.ID, ev.Comments); err != nil {
-			return fmt.Errorf("replace comments for event %q: %w", ev.UID, err)
-		}
-		if err := e.events.ReplaceContacts(ctx, saved.ID, ev.Contacts); err != nil {
-			return fmt.Errorf("replace contacts for event %q: %w", ev.UID, err)
-		}
-		if err := e.events.ReplaceResources(ctx, saved.ID, ev.Resources); err != nil {
-			return fmt.Errorf("replace resources for event %q: %w", ev.UID, err)
-		}
-		if err := e.events.ReplaceRelations(ctx, saved.ID, ev.Relations); err != nil {
-			return fmt.Errorf("replace relations for event %q: %w", ev.UID, err)
-		}
-		if err := e.events.ReplaceXProperties(ctx, saved.ID, ev.XProperties); err != nil {
-			return fmt.Errorf("replace xproperties for event %q: %w", ev.UID, err)
+		if err := e.inTx(ctx, func(tx *sql.Tx) error {
+			events := e.events.WithTx(tx)
+			saved, err := events.UpsertByUID(ctx, event.UpsertParams{
+				UID: ev.UID, CalendarID: calendarID,
+				Title: ev.Title, Description: ev.Description, Location: ev.Location,
+				StartTime: ev.StartTime, EndTime: ev.EndTime, AllDay: ev.AllDay,
+				RecurrenceRule: ev.RecurrenceRule, Timezone: ev.Timezone,
+				Status: ev.Status, Transp: ev.Transp, Sequence: ev.Sequence,
+				Priority: ev.Priority, Class: ev.Class, URL: ev.URL,
+				ConferenceURI: ev.ConferenceURI,
+				Categories:    ev.Categories, ExDates: ev.ExDates, RDates: ev.RDates,
+				RecurrenceID: ev.RecurrenceID, Geo: ev.Geo,
+				DurationValue: ev.DurationValue, DtStamp: ev.DtStamp,
+			})
+			if err != nil {
+				return fmt.Errorf("upsert event %q: %w", ev.UID, err)
+			}
+			// Replace child collections unconditionally so server-side removals
+			// (an empty list) are propagated, mirroring how Categories are handled
+			// via UpsertByUID. A full CalDAV pull sends the complete component, so
+			// the absence of a property means "cleared", not "unknown". Propagate
+			// any replace error so the caller keeps the resource dirty and retries.
+			if err := events.ReplaceAlarms(ctx, saved.ID, ev.Alarms); err != nil {
+				return fmt.Errorf("replace alarms for event %q: %w", ev.UID, err)
+			}
+			if err := events.ReplaceAttendees(ctx, saved.ID, ev.Attendees); err != nil {
+				return fmt.Errorf("replace attendees for event %q: %w", ev.UID, err)
+			}
+			if err := events.ReplaceAttachments(ctx, saved.ID, ev.Attachments); err != nil {
+				return fmt.Errorf("replace attachments for event %q: %w", ev.UID, err)
+			}
+			if err := events.ReplaceComments(ctx, saved.ID, ev.Comments); err != nil {
+				return fmt.Errorf("replace comments for event %q: %w", ev.UID, err)
+			}
+			if err := events.ReplaceContacts(ctx, saved.ID, ev.Contacts); err != nil {
+				return fmt.Errorf("replace contacts for event %q: %w", ev.UID, err)
+			}
+			if err := events.ReplaceResources(ctx, saved.ID, ev.Resources); err != nil {
+				return fmt.Errorf("replace resources for event %q: %w", ev.UID, err)
+			}
+			if err := events.ReplaceRelations(ctx, saved.ID, ev.Relations); err != nil {
+				return fmt.Errorf("replace relations for event %q: %w", ev.UID, err)
+			}
+			if err := events.ReplaceXProperties(ctx, saved.ID, ev.XProperties); err != nil {
+				return fmt.Errorf("replace xproperties for event %q: %w", ev.UID, err)
+			}
+			return nil
+		}); err != nil {
+			return err
 		}
 	}
 
-	// Import todos
+	// Import todos. One transaction per resource; see the event loop above.
 	for _, t := range result.Todos {
-		saved, err := e.todos.UpsertByUID(ctx, todo.UpsertParams{
-			UID: t.UID, CalendarID: calendarID,
-			Summary: t.Summary, Description: t.Description, Location: t.Location,
-			DueDate: t.DueDate, StartDate: t.StartDate, Duration: t.Duration,
-			CompletedAt: t.CompletedAt, PercentComplete: t.PercentComplete,
-			Status: t.Status, Priority: t.Priority, Class: t.Class,
-			URL: t.URL, Categories: t.Categories,
-			RecurrenceRule: t.RecurrenceRule, Timezone: t.Timezone,
-			Sequence: t.Sequence, ExDates: t.ExDates, RDates: t.RDates,
-			RecurrenceID: t.RecurrenceID, Geo: t.Geo,
-			DtStamp: t.DtStamp,
-		})
-		if err != nil {
-			return fmt.Errorf("upsert todo %q: %w", t.UID, err)
-		}
-		// Replace child collections unconditionally so server-side removals
-		// (an empty list) are propagated. See the event loop above.
-		if err := e.todos.ReplaceAlarms(ctx, saved.ID, t.Alarms); err != nil {
-			return fmt.Errorf("replace alarms for todo %q: %w", t.UID, err)
-		}
-		if err := e.todos.ReplaceAttendees(ctx, saved.ID, t.Attendees); err != nil {
-			return fmt.Errorf("replace attendees for todo %q: %w", t.UID, err)
-		}
-		if err := e.todos.ReplaceAttachments(ctx, saved.ID, t.Attachments); err != nil {
-			return fmt.Errorf("replace attachments for todo %q: %w", t.UID, err)
-		}
-		if err := e.todos.ReplaceComments(ctx, saved.ID, t.Comments); err != nil {
-			return fmt.Errorf("replace comments for todo %q: %w", t.UID, err)
-		}
-		if err := e.todos.ReplaceContacts(ctx, saved.ID, t.Contacts); err != nil {
-			return fmt.Errorf("replace contacts for todo %q: %w", t.UID, err)
-		}
-		if err := e.todos.ReplaceResources(ctx, saved.ID, t.Resources); err != nil {
-			return fmt.Errorf("replace resources for todo %q: %w", t.UID, err)
-		}
-		if err := e.todos.ReplaceRelations(ctx, saved.ID, t.Relations); err != nil {
-			return fmt.Errorf("replace relations for todo %q: %w", t.UID, err)
-		}
-		if err := e.todos.ReplaceXProperties(ctx, saved.ID, t.XProperties); err != nil {
-			return fmt.Errorf("replace xproperties for todo %q: %w", t.UID, err)
+		if err := e.inTx(ctx, func(tx *sql.Tx) error {
+			todos := e.todos.WithTx(tx)
+			saved, err := todos.UpsertByUID(ctx, todo.UpsertParams{
+				UID: t.UID, CalendarID: calendarID,
+				Summary: t.Summary, Description: t.Description, Location: t.Location,
+				DueDate: t.DueDate, StartDate: t.StartDate, Duration: t.Duration,
+				CompletedAt: t.CompletedAt, PercentComplete: t.PercentComplete,
+				Status: t.Status, Priority: t.Priority, Class: t.Class,
+				URL: t.URL, Categories: t.Categories,
+				RecurrenceRule: t.RecurrenceRule, Timezone: t.Timezone,
+				Sequence: t.Sequence, ExDates: t.ExDates, RDates: t.RDates,
+				RecurrenceID: t.RecurrenceID, Geo: t.Geo,
+				DtStamp: t.DtStamp,
+			})
+			if err != nil {
+				return fmt.Errorf("upsert todo %q: %w", t.UID, err)
+			}
+			// Replace child collections unconditionally so server-side removals
+			// (an empty list) are propagated. See the event loop above.
+			if err := todos.ReplaceAlarms(ctx, saved.ID, t.Alarms); err != nil {
+				return fmt.Errorf("replace alarms for todo %q: %w", t.UID, err)
+			}
+			if err := todos.ReplaceAttendees(ctx, saved.ID, t.Attendees); err != nil {
+				return fmt.Errorf("replace attendees for todo %q: %w", t.UID, err)
+			}
+			if err := todos.ReplaceAttachments(ctx, saved.ID, t.Attachments); err != nil {
+				return fmt.Errorf("replace attachments for todo %q: %w", t.UID, err)
+			}
+			if err := todos.ReplaceComments(ctx, saved.ID, t.Comments); err != nil {
+				return fmt.Errorf("replace comments for todo %q: %w", t.UID, err)
+			}
+			if err := todos.ReplaceContacts(ctx, saved.ID, t.Contacts); err != nil {
+				return fmt.Errorf("replace contacts for todo %q: %w", t.UID, err)
+			}
+			if err := todos.ReplaceResources(ctx, saved.ID, t.Resources); err != nil {
+				return fmt.Errorf("replace resources for todo %q: %w", t.UID, err)
+			}
+			if err := todos.ReplaceRelations(ctx, saved.ID, t.Relations); err != nil {
+				return fmt.Errorf("replace relations for todo %q: %w", t.UID, err)
+			}
+			if err := todos.ReplaceXProperties(ctx, saved.ID, t.XProperties); err != nil {
+				return fmt.Errorf("replace xproperties for todo %q: %w", t.UID, err)
+			}
+			return nil
+		}); err != nil {
+			return err
 		}
 	}
 
-	// Import journals
+	// Import journals. One transaction per resource; see the event loop above.
 	for _, j := range result.Journals {
-		saved, err := e.journals.UpsertByUID(ctx, journal.UpsertParams{
-			UID: j.UID, CalendarID: calendarID,
-			Summary: j.Summary, Description: j.Description,
-			StartDate: j.StartDate, Status: j.Status, Class: j.Class,
-			URL: j.URL, Categories: j.Categories,
-			RecurrenceRule: j.RecurrenceRule, Timezone: j.Timezone,
-			Sequence: j.Sequence, ExDates: j.ExDates, RDates: j.RDates,
-			RecurrenceID: j.RecurrenceID,
-			DtStamp:      j.DtStamp,
-		})
-		if err != nil {
-			return fmt.Errorf("upsert journal %q: %w", j.UID, err)
-		}
-		// Replace child collections unconditionally so server-side removals
-		// (an empty list) are propagated. See the event loop above.
-		if err := e.journals.ReplaceAttendees(ctx, saved.ID, j.Attendees); err != nil {
-			return fmt.Errorf("replace attendees for journal %q: %w", j.UID, err)
-		}
-		if err := e.journals.ReplaceAttachments(ctx, saved.ID, j.Attachments); err != nil {
-			return fmt.Errorf("replace attachments for journal %q: %w", j.UID, err)
-		}
-		if err := e.journals.ReplaceComments(ctx, saved.ID, j.Comments); err != nil {
-			return fmt.Errorf("replace comments for journal %q: %w", j.UID, err)
-		}
-		if err := e.journals.ReplaceContacts(ctx, saved.ID, j.Contacts); err != nil {
-			return fmt.Errorf("replace contacts for journal %q: %w", j.UID, err)
-		}
-		if err := e.journals.ReplaceRelations(ctx, saved.ID, j.Relations); err != nil {
-			return fmt.Errorf("replace relations for journal %q: %w", j.UID, err)
-		}
-		if err := e.journals.ReplaceXProperties(ctx, saved.ID, j.XProperties); err != nil {
-			return fmt.Errorf("replace xproperties for journal %q: %w", j.UID, err)
+		if err := e.inTx(ctx, func(tx *sql.Tx) error {
+			journals := e.journals.WithTx(tx)
+			saved, err := journals.UpsertByUID(ctx, journal.UpsertParams{
+				UID: j.UID, CalendarID: calendarID,
+				Summary: j.Summary, Description: j.Description,
+				StartDate: j.StartDate, Status: j.Status, Class: j.Class,
+				URL: j.URL, Categories: j.Categories,
+				RecurrenceRule: j.RecurrenceRule, Timezone: j.Timezone,
+				Sequence: j.Sequence, ExDates: j.ExDates, RDates: j.RDates,
+				RecurrenceID: j.RecurrenceID,
+				DtStamp:      j.DtStamp,
+			})
+			if err != nil {
+				return fmt.Errorf("upsert journal %q: %w", j.UID, err)
+			}
+			// Replace child collections unconditionally so server-side removals
+			// (an empty list) are propagated. See the event loop above.
+			if err := journals.ReplaceAttendees(ctx, saved.ID, j.Attendees); err != nil {
+				return fmt.Errorf("replace attendees for journal %q: %w", j.UID, err)
+			}
+			if err := journals.ReplaceAttachments(ctx, saved.ID, j.Attachments); err != nil {
+				return fmt.Errorf("replace attachments for journal %q: %w", j.UID, err)
+			}
+			if err := journals.ReplaceComments(ctx, saved.ID, j.Comments); err != nil {
+				return fmt.Errorf("replace comments for journal %q: %w", j.UID, err)
+			}
+			if err := journals.ReplaceContacts(ctx, saved.ID, j.Contacts); err != nil {
+				return fmt.Errorf("replace contacts for journal %q: %w", j.UID, err)
+			}
+			if err := journals.ReplaceRelations(ctx, saved.ID, j.Relations); err != nil {
+				return fmt.Errorf("replace relations for journal %q: %w", j.UID, err)
+			}
+			if err := journals.ReplaceXProperties(ctx, saved.ID, j.XProperties); err != nil {
+				return fmt.Errorf("replace xproperties for journal %q: %w", j.UID, err)
+			}
+			return nil
+		}); err != nil {
+			return err
 		}
 	}
 
 	return nil
+}
+
+// inTx runs fn inside a single transaction, committing on success and rolling
+// back on any error. It is the atomicity boundary for persistImported: a failed
+// Replace* part-way through a resource unwinds the whole resource so the local
+// row never reflects a partial server component.
+func (e *Engine) inTx(ctx context.Context, fn func(*sql.Tx) error) error {
+	tx, err := e.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // importICal parses raw iCal data and persists it to the local database via

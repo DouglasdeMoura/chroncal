@@ -29,10 +29,48 @@ type ExportParams struct {
 type Service struct {
 	db *sql.DB
 	q  *storage.Queries
+	// tx is non-nil when the service runs inside a caller-managed
+	// transaction (see WithTx). When set, q is already bound to tx and the
+	// per-method write helpers join the outer transaction instead of opening
+	// their own, so a multi-step sequence commits or rolls back atomically.
+	tx *sql.Tx
 }
 
 func NewService(db *sql.DB, q *storage.Queries) *Service {
 	return &Service{db: db, q: q}
+}
+
+// WithTx returns a copy of the service whose writes run inside tx. The caller
+// owns tx (commit/rollback); the returned service's mutating methods neither
+// begin nor commit their own transaction, letting several calls compose into a
+// single atomic unit.
+func (s *Service) WithTx(tx *sql.Tx) *Service {
+	return &Service{db: s.db, q: s.q.WithTx(tx), tx: tx}
+}
+
+// txscope returns a transaction-scoped Queries plus commit and rollback
+// helpers. When the service already runs inside a caller-managed transaction
+// (see WithTx), the work joins that transaction: commit is a no-op and rollback
+// is left to the outer owner. Otherwise it opens and owns a fresh transaction.
+func (s *Service) txscope(ctx context.Context) (qtx *storage.Queries, commit func() error, rollback func(), err error) {
+	if s.tx != nil {
+		return s.q, func() error { return nil }, func() {}, nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("begin tx: %w", err)
+	}
+	return s.q.WithTx(tx), tx.Commit, func() { _ = tx.Rollback() }, nil
+}
+
+// dirtyExec returns the DBTX the dirty-marking side effect must use: the outer
+// transaction when one is active (so the write joins it and cannot deadlock
+// against the held write lock), otherwise the pooled *sql.DB.
+func (s *Service) dirtyExec() storage.DBTX {
+	if s.tx != nil {
+		return s.tx
+	}
+	return s.db
 }
 
 type CreateParams struct {
@@ -233,7 +271,7 @@ func (s *Service) markDirtyByID(ctx context.Context, journalID int64) {
 	if err != nil {
 		return
 	}
-	_ = storage.MarkResourceDirty(ctx, s.db, r.CalendarID, r.Uid, "journal")
+	_ = storage.MarkResourceDirty(ctx, s.dirtyExec(), r.CalendarID, r.Uid, "journal")
 }
 
 func (s *Service) Create(ctx context.Context, p CreateParams) (Journal, error) {
@@ -475,13 +513,12 @@ func (s *Service) ListAttendees(ctx context.Context, journalID int64) ([]model.A
 }
 
 func (s *Service) ReplaceAttendees(ctx context.Context, journalID int64, attendees []model.Attendee) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return err
 	}
-	defer tx.Rollback()
+	defer rollback()
 
-	qtx := s.q.WithTx(tx)
 	if err := qtx.DeleteJournalAttendeesByJournalID(ctx, journalID); err != nil {
 		return fmt.Errorf("delete attendees: %w", err)
 	}
@@ -511,7 +548,7 @@ func (s *Service) ReplaceAttendees(ctx context.Context, journalID int64, attende
 			return fmt.Errorf("create attendee: %w", err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := commit(); err != nil {
 		return err
 	}
 	s.markDirtyByID(ctx, journalID)
@@ -537,13 +574,12 @@ func (s *Service) ListAllCategories(ctx context.Context) ([]string, error) {
 }
 
 func (s *Service) ReplaceCategories(ctx context.Context, journalID int64, categories []string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return err
 	}
-	defer tx.Rollback()
+	defer rollback()
 
-	qtx := s.q.WithTx(tx)
 	if err := qtx.DeleteCategoriesByJournalID(ctx, journalID); err != nil {
 		return fmt.Errorf("delete categories: %w", err)
 	}
@@ -556,7 +592,7 @@ func (s *Service) ReplaceCategories(ctx context.Context, journalID int64, catego
 			return fmt.Errorf("create category: %w", err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := commit(); err != nil {
 		return fmt.Errorf("commit replace categories: %w", err)
 	}
 	return nil
@@ -577,12 +613,11 @@ func (s *Service) ListAttachments(ctx context.Context, journalID int64) ([]model
 }
 
 func (s *Service) ReplaceAttachments(ctx context.Context, journalID int64, attachments []model.Attachment) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return err
 	}
-	defer tx.Rollback()
-	qtx := s.q.WithTx(tx)
+	defer rollback()
 	if err := qtx.DeleteJournalAttachmentsByJournalID(ctx, journalID); err != nil {
 		return fmt.Errorf("delete attachments: %w", err)
 	}
@@ -594,7 +629,7 @@ func (s *Service) ReplaceAttachments(ctx context.Context, journalID int64, attac
 			return fmt.Errorf("create attachment: %w", err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := commit(); err != nil {
 		return err
 	}
 	s.markDirtyByID(ctx, journalID)
@@ -616,12 +651,11 @@ func (s *Service) ListComments(ctx context.Context, journalID int64) ([]string, 
 }
 
 func (s *Service) ReplaceComments(ctx context.Context, journalID int64, comments []string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return err
 	}
-	defer tx.Rollback()
-	qtx := s.q.WithTx(tx)
+	defer rollback()
 	if err := qtx.DeleteJournalCommentsByJournalID(ctx, journalID); err != nil {
 		return fmt.Errorf("delete comments: %w", err)
 	}
@@ -633,7 +667,7 @@ func (s *Service) ReplaceComments(ctx context.Context, journalID int64, comments
 			return fmt.Errorf("create comment: %w", err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := commit(); err != nil {
 		return err
 	}
 	s.markDirtyByID(ctx, journalID)
@@ -655,12 +689,11 @@ func (s *Service) ListContacts(ctx context.Context, journalID int64) ([]string, 
 }
 
 func (s *Service) ReplaceContacts(ctx context.Context, journalID int64, contacts []string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return err
 	}
-	defer tx.Rollback()
-	qtx := s.q.WithTx(tx)
+	defer rollback()
 	if err := qtx.DeleteJournalContactsByJournalID(ctx, journalID); err != nil {
 		return fmt.Errorf("delete contacts: %w", err)
 	}
@@ -672,7 +705,7 @@ func (s *Service) ReplaceContacts(ctx context.Context, journalID int64, contacts
 			return fmt.Errorf("create contact: %w", err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := commit(); err != nil {
 		return err
 	}
 	s.markDirtyByID(ctx, journalID)
@@ -694,12 +727,11 @@ func (s *Service) ListRelations(ctx context.Context, journalID int64) ([]model.R
 }
 
 func (s *Service) ReplaceRelations(ctx context.Context, journalID int64, relations []model.Relation) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return err
 	}
-	defer tx.Rollback()
-	qtx := s.q.WithTx(tx)
+	defer rollback()
 	if err := qtx.DeleteJournalRelationsByJournalID(ctx, journalID); err != nil {
 		return fmt.Errorf("delete relations: %w", err)
 	}
@@ -711,7 +743,7 @@ func (s *Service) ReplaceRelations(ctx context.Context, journalID int64, relatio
 			return fmt.Errorf("create relation: %w", err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := commit(); err != nil {
 		return err
 	}
 	s.markDirtyByID(ctx, journalID)
@@ -804,12 +836,11 @@ func (s *Service) ListXProperties(ctx context.Context, journalID int64) ([]model
 }
 
 func (s *Service) ReplaceXProperties(ctx context.Context, journalID int64, xprops []model.XProperty) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return err
 	}
-	defer tx.Rollback()
-	qtx := s.q.WithTx(tx)
+	defer rollback()
 	if err := qtx.DeleteXPropertiesByOwner(ctx, storage.DeleteXPropertiesByOwnerParams{
 		OwnerType: "journal", OwnerID: journalID,
 	}); err != nil {
@@ -823,7 +854,7 @@ func (s *Service) ReplaceXProperties(ctx context.Context, journalID int64, xprop
 			return fmt.Errorf("insert x-property: %w", err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := commit(); err != nil {
 		return err
 	}
 	s.markDirtyByID(ctx, journalID)
