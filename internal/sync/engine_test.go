@@ -853,6 +853,118 @@ END:VCALENDAR
 	}
 }
 
+// TestEnginePullIncompletePullMarksCalendarUnhealthy reproduces issue #293: a
+// pull that can never converge (here, an href the server keeps reporting as
+// changed but that 404s on every multiget) used to only log and return no
+// error, so SyncResult.Errors stayed empty and updateSyncHealth recorded the
+// calendar as healthy — the ambient ⚠ glyph never lit up despite sync being
+// permanently stuck. The incomplete pull must surface an error so the calendar
+// is recorded unhealthy.
+func TestEnginePullIncompletePullMarksCalendarUnhealthy(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	insertTestEvent(t, db, calendarID, "stuck-uid")
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calendarID,
+		Uid:          "stuck-uid",
+		OwnerType:    "event",
+		RemoteUrl:    "/calendar/stuck.ics",
+		Etag:         "etag-old",
+		Dirty:        0,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+
+	// The server reports stuck.ics as changed (new etag) but 404s it on
+	// multiget — a multiget miss that never converges.
+	const syncBody = `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/calendar/stuck.ics</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>&quot;etag-new&quot;</d:getetag>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+  <d:sync-token>https://example.com/sync/stuck</d:sync-token>
+</d:multistatus>`
+
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method != "REPORT" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			return nil, nil
+		}
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read req body: %v", err)
+		}
+		if !strings.Contains(string(raw), "calendar-multiget") {
+			return &http.Response{
+				StatusCode: http.StatusMultiStatus,
+				Status:     "207 Multi-Status",
+				Header:     http.Header{"Content-Type": []string{"application/xml"}},
+				Body:       io.NopCloser(strings.NewReader(syncBody)),
+				Request:    r,
+			}, nil
+		}
+		multigetBody := `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/calendar/stuck.ics</d:href>
+    <d:status>HTTP/1.1 404 Not Found</d:status>
+  </d:response>
+</d:multistatus>`
+		return &http.Response{
+			StatusCode: http.StatusMultiStatus,
+			Status:     "207 Multi-Status",
+			Header:     http.Header{"Content-Type": []string{"application/xml"}},
+			Body:       io.NopCloser(strings.NewReader(multigetBody)),
+			Request:    r,
+		}, nil
+	})
+
+	result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if len(result.errors) == 0 {
+		t.Fatal("incomplete pull surfaced no error: SyncResult.Errors stays empty and the calendar is recorded healthy")
+	}
+
+	// Mirror SyncCalendar's health bookkeeping: an incomplete pull's errors
+	// flow into SyncResult.Errors, which updateSyncHealth uses to decide
+	// healthy vs. stuck.
+	sr := &SyncResult{CalendarID: calendarID}
+	sr.Errors = append(sr.Errors, result.errors...)
+	attemptedAt := time.Now().UTC().Format(time.RFC3339)
+	if err := engine.updateSyncHealth(ctx, calendarID, attemptedAt, sr, nil); err != nil {
+		t.Fatalf("updateSyncHealth: %v", err)
+	}
+
+	calRow, err := q.GetCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("GetCalendar: %v", err)
+	}
+	if got := storage.NullableToString(calRow.LastSyncError); got == "" {
+		t.Fatal("LastSyncError empty: a permanently stuck calendar still shows healthy")
+	}
+	if got := storage.NullableToString(calRow.LastSyncAt); got != "" {
+		t.Fatalf("LastSyncAt = %q, want empty for an unconverged pull", got)
+	}
+}
+
 func TestEnginePushRecordsConflictOnPreconditionFailure(t *testing.T) {
 	t.Parallel()
 

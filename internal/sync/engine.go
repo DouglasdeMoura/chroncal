@@ -185,6 +185,7 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 	} else {
 		result.Pulled = pullResult.pulled
 		result.Deleted = pullResult.deleted
+		result.Errors = append(result.Errors, pullResult.errors...)
 	}
 
 	// Phase 3: Process tombstones
@@ -527,6 +528,7 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 type pullResult struct {
 	pulled  int
 	deleted int
+	errors  []error
 }
 
 func (e *Engine) pull(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL string) (*pullResult, error) {
@@ -1084,6 +1086,14 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 		e.logger.Warn("not advancing sync-token: incomplete pull",
 			"calendar_id", calendarID, "multiget_misses", multigetMisses,
 			"persist_failures", persistFailures)
+		// Surface the incompleteness so the calendar is recorded unhealthy
+		// (LastSyncError) rather than healthy. A pull that can never converge
+		// — a permanent persist failure or an href that always 404s on
+		// multiget — otherwise only logs, leaving LastSyncError clear and the
+		// ambient ⚠ sidebar glyph dark while sync stays silently stuck.
+		result.errors = append(result.errors, fmt.Errorf(
+			"incomplete pull: not advancing sync-token (%d multiget miss(es), %d persist failure(s))",
+			multigetMisses, persistFailures))
 	}
 
 	return result, nil
