@@ -309,17 +309,24 @@ func (s *Service) restoreTruncationByLogID(ctx context.Context, logID int64) err
 		}
 		return fmt.Errorf("get truncate log: %w", err)
 	}
-	master, err := s.q.GetEventByUID(ctx, log.Uid)
-	if err != nil {
-		return fmt.Errorf("get master: %w", err)
-	}
-
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
+
+	// Read the master inside the transaction so a concurrent purge/soft-delete
+	// between the read and the in-tx UPDATE can't make UpdateEventRecurrenceRule
+	// match 0 rows while we still consume the log row, silently dropping the
+	// RRULE restore (issue #413, mirrors restoreInstanceByLogID / #116).
+	master, err := qtx.GetEventByUID(ctx, log.Uid)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("get master: %w", ErrNotDeleted)
+		}
+		return fmt.Errorf("get master: %w", err)
+	}
 
 	if err := qtx.UpdateEventRecurrenceRule(ctx, storage.UpdateEventRecurrenceRuleParams{
 		RecurrenceRule: storage.StringToNullable(log.PreviousRrule),
