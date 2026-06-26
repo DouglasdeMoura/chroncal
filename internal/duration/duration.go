@@ -16,8 +16,10 @@ type parsed struct {
 	seconds int
 }
 
-// consumeComponent extracts the integer preceding letter in s.
-// If letter is absent, returns (s, 0, nil).
+// consumeComponent extracts the unsigned integer preceding letter in s.
+// If letter is absent, returns (s, 0, nil). Per RFC 5545 a component
+// value is one or more DIGITs with no embedded sign; the whole-duration
+// sign is handled once in parse, so "PT-1H" and "PT+1H" are rejected.
 func consumeComponent(s string, letter byte, orig string) (string, int, error) {
 	i := strings.IndexByte(s, letter)
 	if i < 0 {
@@ -26,9 +28,16 @@ func consumeComponent(s string, letter byte, orig string) (string, int, error) {
 	if i == 0 {
 		return "", 0, fmt.Errorf("invalid duration %q: %c requires a number", orig, letter)
 	}
-	v, err := strconv.Atoi(s[:i])
+	num := s[:i]
+	// strconv.Atoi rejects every non-digit except a leading sign, so a
+	// first-byte sign check is all that's needed to forbid per-component
+	// signs (num is non-empty here because i > 0).
+	if num[0] == '+' || num[0] == '-' {
+		return "", 0, fmt.Errorf("invalid duration %q: bad %c value %q", orig, letter, num)
+	}
+	v, err := strconv.Atoi(num)
 	if err != nil {
-		return "", 0, fmt.Errorf("invalid duration %q: bad %c value %q", orig, letter, s[:i])
+		return "", 0, fmt.Errorf("invalid duration %q: bad %c value %q", orig, letter, num)
 	}
 	return s[i+1:], v, nil
 }
@@ -111,34 +120,60 @@ func parse(s string) (parsed, error) {
 }
 
 // FromGo converts a Go time.Duration to an RFC 5545 duration string.
-// e.g. 1h30m → "PT1H30M", 90s → "PT1M30S", -15m → "-PT15M".
+// e.g. 1h30m → "PT1H30M", 90s → "PT1M30S", -15m → "-PT15M",
+// 48h → "P2D", 168h → "P1W".
+//
+// Whole days are emitted as the date form (P#D) and exact whole weeks as
+// the mutually-exclusive week form (P#W) so that nominal multi-day spans
+// round-trip through Add, which uses calendar-aware AddDate for days and
+// weeks. An absolute "PT48H" would otherwise drift by an hour across a
+// DST boundary.
+//
+// Sub-second precision is truncated toward zero: a Go duration carries
+// nanoseconds but RFC 5545 durations have whole-second granularity, so
+// 1500ms becomes "PT1S" and 500ms becomes "PT0S".
 func FromGo(d time.Duration) string {
-	if d == 0 {
+	total := int64(d / time.Second)
+	if total == 0 {
 		return "PT0S"
 	}
 	var b strings.Builder
-	neg := d < 0
-	if neg {
+	if total < 0 {
 		b.WriteByte('-')
-		d = -d
+		total = -total
 	}
 	b.WriteByte('P')
-	total := int(d / time.Second)
-	h := total / 3600
-	m := (total % 3600) / 60
-	s := total % 60
+
+	const secsPerDay = 86400
+	// Exact whole weeks use the week form, which RFC 5545 makes
+	// mutually exclusive with all other components.
+	if total%(7*secsPerDay) == 0 {
+		b.WriteString(strconv.FormatInt(total/(7*secsPerDay), 10))
+		b.WriteByte('W')
+		return b.String()
+	}
+
+	days := total / secsPerDay
+	rem := total % secsPerDay
+	h := rem / 3600
+	m := (rem % 3600) / 60
+	s := rem % 60
+	if days > 0 {
+		b.WriteString(strconv.FormatInt(days, 10))
+		b.WriteByte('D')
+	}
 	if h > 0 || m > 0 || s > 0 {
 		b.WriteByte('T')
 		if h > 0 {
-			b.WriteString(strconv.Itoa(h))
+			b.WriteString(strconv.FormatInt(h, 10))
 			b.WriteByte('H')
 		}
 		if m > 0 {
-			b.WriteString(strconv.Itoa(m))
+			b.WriteString(strconv.FormatInt(m, 10))
 			b.WriteByte('M')
 		}
 		if s > 0 {
-			b.WriteString(strconv.Itoa(s))
+			b.WriteString(strconv.FormatInt(s, 10))
 			b.WriteByte('S')
 		}
 	}

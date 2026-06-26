@@ -68,6 +68,16 @@ func TestValidate(t *testing.T) {
 		{"H without number", "-PTH", true},
 		{"M without number", "-PTM", true},
 		{"S without number", "-PTS", true},
+
+		// Per-component signs are forbidden by RFC 5545; only the
+		// whole-duration may carry a single leading sign.
+		{"signed hours", "PT-1H", true},
+		{"signed days", "P-1D", true},
+		{"signed weeks", "P-1W", true},
+		{"signed minutes after prefix", "-PT-15M", true},
+		{"signed seconds", "PT-30S", true},
+		{"plus signed minutes", "PT+15M", true},
+		{"signed trailing component", "PT1H-30M", true},
 	}
 
 	for _, tt := range tests {
@@ -75,6 +85,46 @@ func TestValidate(t *testing.T) {
 			err := Validate(tt.dur)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Validate(%q) error = %v, wantErr %v", tt.dur, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestFromGo(t *testing.T) {
+	tests := []struct {
+		name string
+		d    time.Duration
+		want string
+	}{
+		{"zero", 0, "PT0S"},
+		{"15 minutes", 15 * time.Minute, "PT15M"},
+		{"negative 15 minutes", -15 * time.Minute, "-PT15M"},
+		{"hour and a half", 90 * time.Minute, "PT1H30M"},
+		{"90 seconds", 90 * time.Second, "PT1M30S"},
+		// Whole days factor into the date form so nominal multi-day
+		// spans round-trip through Add without DST drift.
+		{"two days", 48 * time.Hour, "P2D"},
+		{"day and two hours", 26 * time.Hour, "P1DT2H"},
+		{"negative two days", -48 * time.Hour, "-P2D"},
+		// Exact whole weeks use the mutually-exclusive week form.
+		{"one week", 7 * 24 * time.Hour, "P1W"},
+		{"two weeks", 14 * 24 * time.Hour, "P2W"},
+		// Eight days is not a whole week: date form, not week form.
+		{"eight days", 8 * 24 * time.Hour, "P8D"},
+		// Sub-second input truncates to whole seconds (documented).
+		{"sub-second truncates", 1500 * time.Millisecond, "PT1S"},
+		{"under one second", 500 * time.Millisecond, "PT0S"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FromGo(tt.d)
+			if got != tt.want {
+				t.Errorf("FromGo(%v) = %q, want %q", tt.d, got, tt.want)
+			}
+			// Round-trip: the emitted string must validate.
+			if err := Validate(got); err != nil {
+				t.Errorf("Validate(FromGo(%v)=%q) = %v, want nil", tt.d, got, err)
 			}
 		})
 	}
