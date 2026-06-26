@@ -796,6 +796,52 @@ func TestMergeCalendars_MixedSecondStream_JournalBeforeTodo(t *testing.T) {
 	}
 }
 
+// TestMergeCalendars_FreeBusyOnlySecondStream covers issue #422: when the
+// second stream carries a VFREEBUSY component but no VEVENT/VTODO/VJOURNAL, the
+// component-marker search must still find it so b's BEGIN:VCALENDAR header is
+// stripped. Otherwise b is appended verbatim, nesting a second VCALENDAR.
+func TestMergeCalendars_FreeBusyOnlySecondStream(t *testing.T) {
+	t.Parallel()
+	a := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:e1\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+	b := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\n" +
+		"BEGIN:VFREEBUSY\r\nUID:fb1\r\nEND:VFREEBUSY\r\n" +
+		"END:VCALENDAR\r\n")
+
+	merged := string(MergeCalendars(a, b))
+	if !strings.Contains(merged, "UID:e1") {
+		t.Error("UID:e1 from first calendar is missing")
+	}
+	if !strings.Contains(merged, "BEGIN:VFREEBUSY") {
+		t.Error("VFREEBUSY from second calendar was dropped")
+	}
+	if strings.Count(merged, "BEGIN:VCALENDAR") != 1 {
+		t.Errorf("expected 1 VCALENDAR header, got %d", strings.Count(merged, "BEGIN:VCALENDAR"))
+	}
+	if strings.Count(merged, "END:VCALENDAR") != 1 {
+		t.Errorf("expected 1 END:VCALENDAR, got %d", strings.Count(merged, "END:VCALENDAR"))
+	}
+}
+
+// TestMergeCalendars_NoComponentsSecondStream covers issue #422: a second
+// stream with no components at all must not contribute a nested VCALENDAR
+// header to the merged output.
+func TestMergeCalendars_NoComponentsSecondStream(t *testing.T) {
+	t.Parallel()
+	a := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:e1\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+	b := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n")
+
+	merged := string(MergeCalendars(a, b))
+	if !strings.Contains(merged, "UID:e1") {
+		t.Error("UID:e1 from first calendar is missing")
+	}
+	if strings.Count(merged, "BEGIN:VCALENDAR") != 1 {
+		t.Errorf("expected 1 VCALENDAR header, got %d", strings.Count(merged, "BEGIN:VCALENDAR"))
+	}
+	if strings.Count(merged, "END:VCALENDAR") != 1 {
+		t.Errorf("expected 1 END:VCALENDAR, got %d", strings.Count(merged, "END:VCALENDAR"))
+	}
+}
+
 func TestExport_MasterWithOverride(t *testing.T) {
 	t.Parallel()
 	events := []event.Event{
