@@ -186,8 +186,15 @@ func (f *TextField) SetDisabled(v bool) {
 func (f *TextField) SetDimStyle(s lipgloss.Style) { f.dimStyle = s }
 
 // FilterDigits allows only digit characters (0-9).
+// Every rune in the key text must be a digit; a multi-rune event (e.g. a
+// paste) is rejected if any rune fails the check.
 func FilterDigits(k tea.Key) bool {
-	return k.Text == "" || unicode.IsDigit(rune(k.Text[0]))
+	for _, r := range k.Text {
+		if !unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return true
 }
 
 // ---------------------------------------------------------------------------
