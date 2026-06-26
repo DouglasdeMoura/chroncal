@@ -3,6 +3,7 @@ package event
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -572,6 +573,14 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		qtx := s.q.WithTx(tx)
 
 		master, err := qtx.GetEventByUID(ctx, evt.UID)
+		// A genuine lookup error (e.g. SQLITE_BUSY) must not collapse into the
+		// "no master" path: that would soft-delete the override while skipping
+		// its EXDATE/provenance bookkeeping, resurrecting the occurrence via
+		// series expansion (issue #412). Only a missing master (ErrNoRows)
+		// legitimately skips the bookkeeping.
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("get master: %w", err)
+		}
 		if err == nil {
 			existing := ParseTimeList(storage.NullableToString(master.Exdates))
 			recIDTime, parseErr := timeutil.ParseRecurrenceID(evt.RecurrenceID)

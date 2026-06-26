@@ -740,3 +740,62 @@ func TestSoftDelete_RestoreSurfacesTombstoneClearError(t *testing.T) {
 		t.Fatal("RestoreByID returned nil, want error when tombstone clear fails")
 	}
 }
+
+// TestSoftDelete_OverrideMasterLookupError is the regression test for issue
+// #412: deleting an override must not collapse a genuine DB error from the
+// master lookup into the "no master" path. On a non-ErrNoRows error the old
+// code soft-deleted the override while silently skipping the EXDATE and
+// provenance bookkeeping, resurrecting the occurrence via series expansion and
+// leaving it unrestorable via trash. Same failure mode as #290, fixed there in
+// the todo and journal services but never in the event service.
+func TestSoftDelete_OverrideMasterLookupError(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:            "weekly-uid",
+		CalendarID:     1,
+		Title:          "Weekly Review",
+		StartTime:      time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;COUNT=5",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	override, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:          master.UID,
+		CalendarID:   1,
+		Title:        "Weekly Review (moved)",
+		StartTime:    time.Date(2026, 4, 15, 14, 0, 0, 0, time.UTC),
+		EndTime:      time.Date(2026, 4, 15, 15, 0, 0, 0, time.UTC),
+		RecurrenceID: time.Date(2026, 4, 15, 10, 0, 0, 0, time.UTC).Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	// Force the master lookup (GetEventByUID) to fail with a genuine, non-
+	// ErrNoRows error by writing non-numeric text into the master's integer
+	// sequence column so its row scan fails. The override row that the initial
+	// Get(id) loads is untouched, and SoftDeleteEvent never scans, so the buggy
+	// path would still soft-delete the override and return nil.
+	if _, err := svc.db.ExecContext(ctx,
+		"UPDATE events SET sequence = 'corrupt' WHERE id = ?", master.ID); err != nil {
+		t.Fatalf("corrupt master sequence: %v", err)
+	}
+
+	if err := svc.Delete(ctx, override.ID); err == nil {
+		t.Fatal("Delete should propagate a non-ErrNoRows master-lookup error, got nil")
+	}
+
+	// Repair the master so reads work, then confirm the override is still
+	// live: the transaction must have rolled back.
+	if _, err := svc.db.ExecContext(ctx,
+		"UPDATE events SET sequence = 0 WHERE id = ?", master.ID); err != nil {
+		t.Fatalf("repair master sequence: %v", err)
+	}
+	if _, err := svc.Get(ctx, override.ID); err != nil {
+		t.Fatalf("override should still be live after failed delete: %v", err)
+	}
+}
