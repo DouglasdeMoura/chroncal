@@ -880,6 +880,10 @@ system was not running when they became due.`,
   chroncal alarm missed --days 3
   chroncal alarm missed --days 14 --output json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if days <= 0 {
+				return errInvalidInputf("--days must be a positive number of days, got %d", days)
+			}
+
 			a, err := initApp()
 			if err != nil {
 				return err
