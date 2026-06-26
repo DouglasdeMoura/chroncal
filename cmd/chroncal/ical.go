@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/ical"
 	"github.com/douglasdemoura/chroncal/internal/journal"
@@ -76,103 +77,10 @@ again updates existing items instead of blindly duplicating them.`,
 				return err
 			}
 
-			// Store imported VTIMEZONE components.
-			for _, tz := range result.Timezones {
-				if _, err := a.Queries.UpsertTimezone(ctx, storage.UpsertTimezoneParams{
-					Tzid:          tz.TZID,
-					VtimezoneData: tz.Data,
-				}); err != nil {
-					result.Warnings = append(result.Warnings, fmt.Sprintf("store VTIMEZONE %s: %v", tz.TZID, err))
-				}
-			}
-
-			// Import events
-			var importedEvents []event.Event
-			var newEvents, updatedEvents int
-			for _, e := range result.Events {
-				_, lookupErr := a.Events.GetByUID(ctx, e.UID)
-				saved, err := a.Events.UpsertByUID(ctx, event.UpsertParams{
-					UID: e.UID, CalendarID: calID,
-					Title: e.Title, Description: e.Description, Location: e.Location,
-					StartTime: e.StartTime, EndTime: e.EndTime, AllDay: e.AllDay,
-					RecurrenceRule: e.RecurrenceRule, Timezone: e.Timezone,
-					Status: e.Status, Transp: e.Transp, Sequence: e.Sequence,
-					Priority: e.Priority, Class: e.Class, URL: e.URL,
-					ConferenceURI: e.ConferenceURI,
-					Categories:    e.Categories, ExDates: e.ExDates, RDates: e.RDates,
-					RecurrenceID: e.RecurrenceID, Geo: e.Geo,
-					DurationValue: e.DurationValue, DtStamp: e.DtStamp,
-				})
-				if err != nil {
-					return fmt.Errorf("upsert event %q: %w", safeText(e.Title), err)
-				}
-				importEventFields(ctx, a.Events, saved.ID, e)
-				importedEvents = append(importedEvents, saved)
-				if lookupErr != nil {
-					newEvents++
-				} else {
-					updatedEvents++
-				}
-			}
-
-			// Import todos
-			var importedTodos []todo.Todo
-			var newTodos, updatedTodos int
-			for _, t := range result.Todos {
-				_, lookupErr := a.Todos.GetByUID(ctx, t.UID)
-				saved, err := a.Todos.UpsertByUID(ctx, todo.UpsertParams{
-					UID: t.UID, CalendarID: calID,
-					Summary: t.Summary, Description: t.Description, Location: t.Location,
-					DueDate: t.DueDate, StartDate: t.StartDate, Duration: t.Duration,
-					CompletedAt: t.CompletedAt, PercentComplete: t.PercentComplete,
-					Status: t.Status, Priority: t.Priority, Class: t.Class,
-					URL: t.URL, Categories: t.Categories,
-					RecurrenceRule: t.RecurrenceRule, Timezone: t.Timezone,
-					Sequence: t.Sequence, ExDates: t.ExDates, RDates: t.RDates,
-					RecurrenceID: t.RecurrenceID, Geo: t.Geo,
-					DtStamp: t.DtStamp,
-				})
-				if err != nil {
-					return fmt.Errorf("upsert todo %q: %w", safeText(t.Summary), err)
-				}
-				importTodoFields(ctx, a.Todos, saved.ID, t)
-				importedTodos = append(importedTodos, saved)
-				if lookupErr != nil {
-					newTodos++
-				} else {
-					updatedTodos++
-				}
-			}
-
-			// Import journals
-			var importedJournals []journal.Journal
-			var newJournals, updatedJournals int
-			for _, j := range result.Journals {
-				_, lookupErr := a.Journals.GetByUID(ctx, j.UID)
-				saved, err := a.Journals.UpsertByUID(ctx, journal.UpsertParams{
-					UID: j.UID, CalendarID: calID,
-					Summary: j.Summary, Description: j.Description,
-					StartDate: j.StartDate, Status: j.Status, Class: j.Class,
-					URL: j.URL, Categories: j.Categories,
-					RecurrenceRule: j.RecurrenceRule, Timezone: j.Timezone,
-					Sequence: j.Sequence, ExDates: j.ExDates, RDates: j.RDates,
-					RecurrenceID: j.RecurrenceID,
-					DtStamp:      j.DtStamp,
-				})
-				if err != nil {
-					return fmt.Errorf("upsert journal %q: %w", safeText(j.Summary), err)
-				}
-				importJournalFields(ctx, a.Journals, saved.ID, j)
-				importedJournals = append(importedJournals, saved)
-				if lookupErr != nil {
-					newJournals++
-				} else {
-					updatedJournals++
-				}
-			}
+			summary := importComponents(ctx, a, calID, &result)
 
 			if len(result.Warnings) > 0 {
-				fmt.Fprintf(os.Stderr, "chroncal: %d component(s) skipped during import:\n", len(result.Warnings))
+				fmt.Fprintf(os.Stderr, "chroncal: %d warning(s) during import:\n", len(result.Warnings))
 				limit := 5
 				if len(result.Warnings) < limit {
 					limit = len(result.Warnings)
@@ -188,31 +96,167 @@ again updates existing items instead of blindly duplicating them.`,
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
 				out := map[string]any{
-					"events":           toJSONEvents(importedEvents),
-					"todos":            toJSONTodos(importedTodos),
-					"journals":         toJSONJournals(importedJournals),
+					"events":           toJSONEvents(summary.events),
+					"todos":            toJSONTodos(summary.todos),
+					"journals":         toJSONJournals(summary.journals),
 					"freebusy":         result.FreeBusy,
-					"new_events":       newEvents,
-					"updated_events":   updatedEvents,
-					"new_todos":        newTodos,
-					"updated_todos":    updatedTodos,
-					"new_journals":     newJournals,
-					"updated_journals": updatedJournals,
+					"new_events":       summary.newEvents,
+					"updated_events":   summary.updatedEvents,
+					"new_todos":        summary.newTodos,
+					"updated_todos":    summary.updatedTodos,
+					"new_journals":     summary.newJournals,
+					"updated_journals": summary.updatedJournals,
+					"failed":           summary.failed,
 					"warnings":         result.Warnings,
 				}
-				return printOutput(w, out)
+				if err := printOutput(w, out); err != nil {
+					return err
+				}
+			} else {
+				fmt.Fprintf(w, "Imported %d new, updated %d existing (%d events, %d todos, %d journals).\n",
+					summary.newEvents+summary.newTodos+summary.newJournals,
+					summary.updatedEvents+summary.updatedTodos+summary.updatedJournals,
+					len(summary.events), len(summary.todos), len(summary.journals))
+				if len(result.FreeBusy) > 0 {
+					fmt.Fprintf(w, "Parsed %d VFREEBUSY component(s); they were not imported into local storage.\n", len(result.FreeBusy))
+				}
 			}
-			fmt.Fprintf(w, "Imported %d new, updated %d existing (%d events, %d todos, %d journals).\n",
-				newEvents+newTodos+newJournals, updatedEvents+updatedTodos+updatedJournals,
-				len(importedEvents), len(importedTodos), len(importedJournals))
-			if len(result.FreeBusy) > 0 {
-				fmt.Fprintf(w, "Parsed %d VFREEBUSY component(s); they were not imported into local storage.\n", len(result.FreeBusy))
+
+			// A non-zero exit signals that the import was partial, but the
+			// summary above still reports exactly what landed so the caller
+			// can retry only the failed components.
+			if summary.failed > 0 {
+				return fmt.Errorf("%d component(s) failed to import; see warnings", summary.failed)
 			}
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "calendar to import into (default: first available)")
 	return cmd
+}
+
+// icalImportSummary records what an import landed and what it dropped.
+type icalImportSummary struct {
+	events   []event.Event
+	todos    []todo.Todo
+	journals []journal.Journal
+
+	newEvents, updatedEvents     int
+	newTodos, updatedTodos       int
+	newJournals, updatedJournals int
+
+	// failed counts components whose own upsert failed (and were therefore
+	// skipped entirely). Child-field failures are recorded as warnings
+	// instead, since the parent component itself did land.
+	failed int
+}
+
+// importComponents upserts the parsed timezones, events, todos, and journals
+// into calID. A failure on any single component is recorded in
+// result.Warnings (and summary.failed) and the loop moves on, so one bad item
+// no longer aborts the run and discards the components that follow it. Child
+// collections (alarms, attendees, ...) that fail to attach are likewise
+// surfaced as warnings rather than silently dropped, so the import never
+// reports a clean success while quietly losing data.
+func importComponents(ctx context.Context, a *app.App, calID int64, result *ical.ImportResult) icalImportSummary {
+	var summary icalImportSummary
+
+	// Store imported VTIMEZONE components.
+	for _, tz := range result.Timezones {
+		if _, err := a.Queries.UpsertTimezone(ctx, storage.UpsertTimezoneParams{
+			Tzid:          tz.TZID,
+			VtimezoneData: tz.Data,
+		}); err != nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("store VTIMEZONE %s: %v", tz.TZID, err))
+		}
+	}
+
+	// Import events.
+	for _, e := range result.Events {
+		_, lookupErr := a.Events.GetByUID(ctx, e.UID)
+		saved, err := a.Events.UpsertByUID(ctx, event.UpsertParams{
+			UID: e.UID, CalendarID: calID,
+			Title: e.Title, Description: e.Description, Location: e.Location,
+			StartTime: e.StartTime, EndTime: e.EndTime, AllDay: e.AllDay,
+			RecurrenceRule: e.RecurrenceRule, Timezone: e.Timezone,
+			Status: e.Status, Transp: e.Transp, Sequence: e.Sequence,
+			Priority: e.Priority, Class: e.Class, URL: e.URL,
+			ConferenceURI: e.ConferenceURI,
+			Categories:    e.Categories, ExDates: e.ExDates, RDates: e.RDates,
+			RecurrenceID: e.RecurrenceID, Geo: e.Geo,
+			DurationValue: e.DurationValue, DtStamp: e.DtStamp,
+		})
+		if err != nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("import event %q: %v", safeText(e.Title), err))
+			summary.failed++
+			continue
+		}
+		result.Warnings = append(result.Warnings, importEventFields(ctx, a.Events, saved.ID, e)...)
+		summary.events = append(summary.events, saved)
+		if lookupErr != nil {
+			summary.newEvents++
+		} else {
+			summary.updatedEvents++
+		}
+	}
+
+	// Import todos.
+	for _, t := range result.Todos {
+		_, lookupErr := a.Todos.GetByUID(ctx, t.UID)
+		saved, err := a.Todos.UpsertByUID(ctx, todo.UpsertParams{
+			UID: t.UID, CalendarID: calID,
+			Summary: t.Summary, Description: t.Description, Location: t.Location,
+			DueDate: t.DueDate, StartDate: t.StartDate, Duration: t.Duration,
+			CompletedAt: t.CompletedAt, PercentComplete: t.PercentComplete,
+			Status: t.Status, Priority: t.Priority, Class: t.Class,
+			URL: t.URL, Categories: t.Categories,
+			RecurrenceRule: t.RecurrenceRule, Timezone: t.Timezone,
+			Sequence: t.Sequence, ExDates: t.ExDates, RDates: t.RDates,
+			RecurrenceID: t.RecurrenceID, Geo: t.Geo,
+			DtStamp: t.DtStamp,
+		})
+		if err != nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("import todo %q: %v", safeText(t.Summary), err))
+			summary.failed++
+			continue
+		}
+		result.Warnings = append(result.Warnings, importTodoFields(ctx, a.Todos, saved.ID, t)...)
+		summary.todos = append(summary.todos, saved)
+		if lookupErr != nil {
+			summary.newTodos++
+		} else {
+			summary.updatedTodos++
+		}
+	}
+
+	// Import journals.
+	for _, j := range result.Journals {
+		_, lookupErr := a.Journals.GetByUID(ctx, j.UID)
+		saved, err := a.Journals.UpsertByUID(ctx, journal.UpsertParams{
+			UID: j.UID, CalendarID: calID,
+			Summary: j.Summary, Description: j.Description,
+			StartDate: j.StartDate, Status: j.Status, Class: j.Class,
+			URL: j.URL, Categories: j.Categories,
+			RecurrenceRule: j.RecurrenceRule, Timezone: j.Timezone,
+			Sequence: j.Sequence, ExDates: j.ExDates, RDates: j.RDates,
+			RecurrenceID: j.RecurrenceID,
+			DtStamp:      j.DtStamp,
+		})
+		if err != nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("import journal %q: %v", safeText(j.Summary), err))
+			summary.failed++
+			continue
+		}
+		result.Warnings = append(result.Warnings, importJournalFields(ctx, a.Journals, saved.ID, j)...)
+		summary.journals = append(summary.journals, saved)
+		if lookupErr != nil {
+			summary.newJournals++
+		} else {
+			summary.updatedJournals++
+		}
+	}
+
+	return summary
 }
 
 func icalExportCmd() *cobra.Command {
