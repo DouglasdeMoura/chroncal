@@ -364,6 +364,7 @@ func fromJournal(j journal.Journal) Entry {
 		StartTime:   startDate,
 		Description: j.Description,
 		Status:      j.Status,
+		Categories:  j.Categories,
 	}
 }
 
