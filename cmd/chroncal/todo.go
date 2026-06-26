@@ -687,11 +687,9 @@ a --progress value other than 100.`,
 				default:
 					return errInvalidInputf("invalid --status %q: must be NEEDS-ACTION, IN-PROCESS, COMPLETED, or CANCELLED", status)
 				}
+				// The service reconciles completed_at and percent_complete
+				// with the status (set on completion, cleared on reopen).
 				p.Status = strings.ToUpper(status)
-				if strings.ToUpper(status) == "COMPLETED" {
-					p.CompletedAt = time.Now().UTC().Format(time.RFC3339)
-					p.PercentComplete = 100
-				}
 			}
 			if cmd.Flags().Changed("progress") {
 				if progress < 0 || progress > 100 {
