@@ -1347,9 +1347,10 @@ func (m Model) openQuitConfirm() Model {
 // interceptGlobalKeys routes the quit guard (q / ctrl+c) and help (?) ahead
 // of any open dialog so they work from anywhere. A second ctrl+c while the
 // quit confirm is showing forces the exit. ctrl+c is truly global (it isn't
-// a character anyone types into a field); q and ? are suppressed while a
-// text-entry surface owns input (palette search, event form, calendar form)
-// so users can type those characters normally. The quit confirm additionally
+// a character anyone types into a field); ? is suppressed while a text-entry
+// surface owns input (palette search, event form, calendar form) so users can
+// type it normally, and q is suppressed while any overlay is open so the
+// overlay's own close binding runs instead. The quit confirm additionally
 // blocks ?, and the help dialog handles its own close keys.
 func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	inQuitConfirm := m.confirmOpen && m.pendingQuit
@@ -1368,7 +1369,11 @@ func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		return m.openQuitConfirm(), nil, true
 	}
 	textEntryActive := m.paletteOpen || m.formOpen || m.calendarDialogOpen || m.oauthFlowOpen
-	if key.Matches(msg, m.keys.Quit) && !m.confirmOpen && !textEntryActive {
+	// q opens the quit confirm only from the bare grid. Any open overlay —
+	// text-entry (palette, form) or read-only/choice (event view, list,
+	// choice, calendar list, trash, help) — owns q so its own `q`-to-close
+	// binding runs instead of the global quit guard (issue #406).
+	if key.Matches(msg, m.keys.Quit) && !m.anyOverlayOpen() {
 		return m.openQuitConfirm(), nil, true
 	}
 	if key.Matches(msg, m.keys.Help) && !inQuitConfirm && !m.helpDialogOpen && !textEntryActive {
