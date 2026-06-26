@@ -463,6 +463,14 @@ type Model struct {
 	// (pushDeferralToken bumped) and skip pushing.
 	pushDeferralToken int
 
+	// undoRestoreInFlight is true between dispatching an undo restore and the
+	// eventRestoredMsg landing. The restore runs in an async tea.Cmd while
+	// Peek leaves the entry on the stack, so without this guard a reflexive
+	// second press of the undo key would Peek the same entry and dispatch a
+	// second RestoreUndo (issue #309) — a spurious "Undo failed" toast plus two
+	// overlapping restore transactions. Cleared when the message arrives.
+	undoRestoreInFlight bool
+
 	// trash is the "Recently deleted" overlay. While trashOpen is true
 	// the main content renders trash.View() instead of the active
 	// viewMode's model, and key input routes through m.trash.Update.
@@ -1381,6 +1389,7 @@ func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			// Bumping the token invalidates any delete-push that was still
 			// waiting for the 6-second window to elapse.
 			m.pushDeferralToken++
+			m.undoRestoreInFlight = true
 			m.toast.Restoring()
 			meta := entry.Meta
 			title := meta.Label
@@ -1458,6 +1467,9 @@ func (m Model) undoIsAllowed() bool {
 		return false
 	}
 	if m.anyOverlayOpen() {
+		return false
+	}
+	if m.undoRestoreInFlight {
 		return false
 	}
 	return m.undoStack != nil && m.undoStack.Len() > 0
@@ -3003,6 +3015,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case eventRestoredMsg:
+		// The restore has landed; allow the next undo to dispatch.
+		m.undoRestoreInFlight = false
 		if msg.err != nil {
 			// Route the dismiss tick — previously dropped, so failed toasts
 			// never auto-cleared in the live app.
