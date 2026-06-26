@@ -10,8 +10,8 @@ import (
 )
 
 const createTodoAlarm = `-- name: CreateTodoAlarm :one
-INSERT INTO todo_alarms (todo_id, uid, action, trigger_value, description, summary, repeat, duration, related, acknowledged, attach_uri, attach_fmttype)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype
+INSERT INTO todo_alarms (todo_id, uid, action, trigger_value, description, summary, repeat, duration, related, acknowledged, attach_uri, attach_fmttype, attach_binary)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype, attach_binary
 `
 
 type CreateTodoAlarmParams struct {
@@ -27,6 +27,7 @@ type CreateTodoAlarmParams struct {
 	Acknowledged  *string
 	AttachUri     *string
 	AttachFmttype *string
+	AttachBinary  []byte
 }
 
 func (q *Queries) CreateTodoAlarm(ctx context.Context, arg CreateTodoAlarmParams) (TodoAlarm, error) {
@@ -43,6 +44,7 @@ func (q *Queries) CreateTodoAlarm(ctx context.Context, arg CreateTodoAlarmParams
 		arg.Acknowledged,
 		arg.AttachUri,
 		arg.AttachFmttype,
+		arg.AttachBinary,
 	)
 	var i TodoAlarm
 	err := row.Scan(
@@ -59,6 +61,7 @@ func (q *Queries) CreateTodoAlarm(ctx context.Context, arg CreateTodoAlarmParams
 		&i.Acknowledged,
 		&i.AttachUri,
 		&i.AttachFmttype,
+		&i.AttachBinary,
 	)
 	return i, err
 }
@@ -109,7 +112,7 @@ func (q *Queries) ListDistinctTodoAlarmTriggers(ctx context.Context) ([]string, 
 }
 
 const listTodoAlarmsByTodoID = `-- name: ListTodoAlarmsByTodoID :many
-SELECT id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype FROM todo_alarms WHERE todo_id = ? ORDER BY id
+SELECT id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype, attach_binary FROM todo_alarms WHERE todo_id = ? ORDER BY id
 `
 
 func (q *Queries) ListTodoAlarmsByTodoID(ctx context.Context, todoID int64) ([]TodoAlarm, error) {
@@ -135,6 +138,7 @@ func (q *Queries) ListTodoAlarmsByTodoID(ctx context.Context, todoID int64) ([]T
 			&i.Acknowledged,
 			&i.AttachUri,
 			&i.AttachFmttype,
+			&i.AttachBinary,
 		); err != nil {
 			return nil, err
 		}
@@ -150,7 +154,7 @@ func (q *Queries) ListTodoAlarmsByTodoID(ctx context.Context, todoID int64) ([]T
 }
 
 const listTodoAlarmsWithEmptyUID = `-- name: ListTodoAlarmsWithEmptyUID :many
-SELECT id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype FROM todo_alarms WHERE uid IS NULL
+SELECT id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype, attach_binary FROM todo_alarms WHERE uid IS NULL
 `
 
 func (q *Queries) ListTodoAlarmsWithEmptyUID(ctx context.Context) ([]TodoAlarm, error) {
@@ -176,6 +180,7 @@ func (q *Queries) ListTodoAlarmsWithEmptyUID(ctx context.Context) ([]TodoAlarm, 
 			&i.Acknowledged,
 			&i.AttachUri,
 			&i.AttachFmttype,
+			&i.AttachBinary,
 		); err != nil {
 			return nil, err
 		}
@@ -207,7 +212,8 @@ func (q *Queries) UpdateTodoAlarmAcknowledged(ctx context.Context, arg UpdateTod
 const updateTodoAlarmContentByID = `-- name: UpdateTodoAlarmContentByID :exec
 UPDATE todo_alarms
 SET action = ?, trigger_value = ?, description = ?, summary = ?, repeat = ?,
-    duration = ?, related = ?, acknowledged = ?, attach_uri = ?, attach_fmttype = ?
+    duration = ?, related = ?, acknowledged = ?, attach_uri = ?, attach_fmttype = ?,
+    attach_binary = ?
 WHERE id = ? AND todo_id = ?
 `
 
@@ -222,6 +228,7 @@ type UpdateTodoAlarmContentByIDParams struct {
 	Acknowledged  *string
 	AttachUri     *string
 	AttachFmttype *string
+	AttachBinary  []byte
 	ID            int64
 	TodoID        int64
 }
@@ -238,6 +245,7 @@ func (q *Queries) UpdateTodoAlarmContentByID(ctx context.Context, arg UpdateTodo
 		arg.Acknowledged,
 		arg.AttachUri,
 		arg.AttachFmttype,
+		arg.AttachBinary,
 		arg.ID,
 		arg.TodoID,
 	)

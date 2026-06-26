@@ -697,6 +697,7 @@ func fromStorageTodoAlarm(r storage.TodoAlarm) model.Alarm {
 		Related:       r.Related,
 		Acknowledged:  storage.NullableToString(r.Acknowledged),
 		AttachURI:     storage.NullableToString(r.AttachUri),
+		AttachBinary:  r.AttachBinary,
 		AttachFmtType: storage.NullableToString(r.AttachFmttype),
 	}
 }
@@ -891,6 +892,7 @@ func updateTodoAlarmInPlace(ctx context.Context, qtx *storage.Queries, todoID in
 		Acknowledged:  storage.StringToNullable(ack),
 		AttachUri:     storage.StringToNullable(a.AttachURI),
 		AttachFmttype: storage.StringToNullable(a.AttachFmtType),
+		AttachBinary:  a.AttachBinary,
 		ID:            ex.ID,
 		TodoID:        todoID,
 	}); err != nil {
@@ -946,6 +948,7 @@ func createNewTodoAlarm(ctx context.Context, qtx *storage.Queries, todoID int64,
 		Acknowledged:  storage.StringToNullable(a.Acknowledged),
 		AttachUri:     storage.StringToNullable(a.AttachURI),
 		AttachFmttype: storage.StringToNullable(a.AttachFmtType),
+		AttachBinary:  a.AttachBinary,
 	}
 	row, err := qtx.CreateTodoAlarm(ctx, params)
 	if isUniqueUIDViolation(err) {

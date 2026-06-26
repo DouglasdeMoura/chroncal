@@ -1,6 +1,6 @@
 -- name: CreateTodoAlarm :one
-INSERT INTO todo_alarms (todo_id, uid, action, trigger_value, description, summary, repeat, duration, related, acknowledged, attach_uri, attach_fmttype)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *;
+INSERT INTO todo_alarms (todo_id, uid, action, trigger_value, description, summary, repeat, duration, related, acknowledged, attach_uri, attach_fmttype, attach_binary)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *;
 
 -- name: ListTodoAlarmsByTodoID :many
 SELECT * FROM todo_alarms WHERE todo_id = ? ORDER BY id;
@@ -17,7 +17,8 @@ DELETE FROM todo_alarms WHERE id = ?;
 -- name: UpdateTodoAlarmContentByID :exec
 UPDATE todo_alarms
 SET action = ?, trigger_value = ?, description = ?, summary = ?, repeat = ?,
-    duration = ?, related = ?, acknowledged = ?, attach_uri = ?, attach_fmttype = ?
+    duration = ?, related = ?, acknowledged = ?, attach_uri = ?, attach_fmttype = ?,
+    attach_binary = ?
 WHERE id = ? AND todo_id = ?;
 
 -- name: ListTodoAlarmsWithEmptyUID :many
