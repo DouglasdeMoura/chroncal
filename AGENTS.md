@@ -50,7 +50,7 @@ CLI commands live in `cmd/chroncal/`, one file per resource group. Each exports 
 ## Gotchas
 
 ### Database
-- `lower_unicode` is a custom SQLite function registered in `connect.go` for case-insensitive Unicode search. SQL queries reference it directly.
+- Case-insensitive Unicode search goes through FTS5 (`unicode61 remove_diacritics 2` tokenizer); see the `*_fts` virtual tables in `db/migrations/`. There is no custom `lower_unicode` SQLite function — a stale registration that no query referenced was removed. Do not reintroduce `strings.ToLower`-backed folding: it is simple case folding only and would not match the FTS tokenizer's diacritic-insensitive behavior.
 - `backfillAlarmUIDs` in `connect.go` assigns UUIDs to alarms from the pre-UID schema. Runs on every startup, no-ops when all alarms have UIDs.
 - SQLite pragmas set in `connect.go:Open()`: WAL mode, foreign keys ON, 5s busy timeout, synchronous=NORMAL.
 
