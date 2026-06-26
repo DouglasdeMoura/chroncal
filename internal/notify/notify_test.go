@@ -402,6 +402,55 @@ func TestEmail_ImplicitTLS_SMTPSServer(t *testing.T) {
 	}
 }
 
+func TestBuildEmailMessage_MIMEHeaders(t *testing.T) {
+	tests := []struct {
+		name    string
+		from    string
+		to      []string
+		subject string
+		body    string
+	}{
+		{
+			name:    "ascii",
+			from:    "sender@example.com",
+			to:      []string{"user@example.com"},
+			subject: "Reminder",
+			body:    "Meeting at noon",
+		},
+		{
+			name:    "non-ascii",
+			from:    "sender@example.com",
+			to:      []string{"a@example.com", "b@example.com"},
+			subject: "Reunião com café",
+			body:    "Não esqueça do açúcar — naïve façade ☕",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := string(buildEmailMessage(tt.from, tt.to, tt.subject, tt.body))
+
+			head, rest, found := strings.Cut(msg, "\r\n\r\n")
+			if !found {
+				t.Fatalf("message has no header/body separator:\n%q", msg)
+			}
+
+			if !strings.Contains(head, "MIME-Version: 1.0") {
+				t.Errorf("message headers missing MIME-Version:\n%q", head)
+			}
+			if !strings.Contains(head, "Content-Type: text/plain; charset=utf-8") {
+				t.Errorf("message headers missing UTF-8 Content-Type:\n%q", head)
+			}
+			if !strings.Contains(head, "Subject: "+tt.subject) {
+				t.Errorf("message headers missing Subject %q:\n%q", tt.subject, head)
+			}
+			if !strings.Contains(rest, tt.body) {
+				t.Errorf("message body = %q, want it to contain %q", rest, tt.body)
+			}
+		})
+	}
+}
+
 // generateTestCert creates a self-signed ECDSA certificate for 127.0.0.1/localhost.
 func generateTestCert(t *testing.T) tls.Certificate {
 	t.Helper()

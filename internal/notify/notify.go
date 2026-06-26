@@ -259,12 +259,7 @@ func Email(da alarm.DueAlarm, smtpCfg config.SMTPConfig, policy ExecutionPolicy)
 		return fmt.Errorf("no valid attendees for EMAIL alarm")
 	}
 
-	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\n\r\n%s\r\n",
-		textsafe.Display(smtpCfg.From),
-		strings.Join(to, ", "),
-		textsafe.Display(title),
-		textsafe.Display(body),
-	)
+	msg := buildEmailMessage(smtpCfg.From, to, title, body)
 
 	addr := fmt.Sprintf("%s:%d", smtpCfg.Host, smtpCfg.Port)
 
@@ -274,9 +269,24 @@ func Email(da alarm.DueAlarm, smtpCfg config.SMTPConfig, policy ExecutionPolicy)
 	}
 
 	if useImplicitTLS(smtpCfg) {
-		return sendMailImplicitTLS(addr, smtpCfg.Host, auth, smtpCfg.From, to, []byte(msg))
+		return sendMailImplicitTLS(addr, smtpCfg.Host, auth, smtpCfg.From, to, msg)
 	}
-	return smtp.SendMail(addr, auth, smtpCfg.From, to, []byte(msg))
+	return smtp.SendMail(addr, auth, smtpCfg.From, to, msg)
+}
+
+// buildEmailMessage assembles an RFC 5322 message with MIME headers declaring a
+// UTF-8 text/plain body. The Content-Type/charset header is required so strict
+// mail clients render non-ASCII titles and bodies as UTF-8 rather than defaulting
+// to US-ASCII (which produces mojibake).
+func buildEmailMessage(from string, to []string, subject, body string) []byte {
+	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\n"+
+		"MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n%s\r\n",
+		textsafe.Display(from),
+		strings.Join(to, ", "),
+		textsafe.Display(subject),
+		textsafe.Display(body),
+	)
+	return []byte(msg)
 }
 
 func isLikelyAudioFile(path string) bool {
