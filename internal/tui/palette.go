@@ -479,6 +479,21 @@ func renderPaletteRow(c PaletteCommand, width int, selected bool, theme Theme) s
 	right := c.Shortcut
 	rightW := lipgloss.Width(right)
 
+	// Budget the shortcut: guarantee the title zone has at least minTitleZone
+	// cells (room for a 3-cell clipped title plus a 1-cell gap). Without this
+	// cap a wide date label (e.g. "[Event] Jan 2 15:04-18:30" = 25 cells) fills
+	// the row at minimum palette width (listW=26), leaving the title truncated
+	// but the shortcut still appended at full width — overflowing the column.
+	const minTitleZone = 4
+	if maxRightW := width - prefixW - minTitleZone; rightW > maxRightW {
+		if maxRightW <= 0 {
+			right = ""
+		} else {
+			right = truncateTo(right, maxRightW)
+		}
+		rightW = lipgloss.Width(right)
+	}
+
 	title := c.Title
 	avail := width - prefixW - rightW
 	if avail < lipgloss.Width(title)+1 {
