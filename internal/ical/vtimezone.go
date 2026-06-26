@@ -148,10 +148,16 @@ func resolveComponentTZIDs(comp *goical.Component, tzMap map[string]*time.Locati
 			p.Params.Set(goical.ParamTimezoneID, iana)
 			return
 		}
-		// VTIMEZONE-derived fixed zone — parse using the offset and rewrite as UTC.
-		// EXDATE/RDATE may carry a comma-separated list of datetimes in a single
-		// value, so convert each element. Only rewrite if every element parses,
-		// otherwise leave the value untouched.
+		// VTIMEZONE-derived fixed zone — parse using the offset and rewrite the
+		// instant as UTC (go-ical's DateTime() can't LoadLocation a private
+		// TZID, so we resolve the offset here). The TZID parameter is kept so
+		// the original zone identity survives import: go-ical parses a value
+		// with a trailing "Z" as UTC and ignores the TZID, while the per-domain
+		// builders still read the TZID label into the stored Timezone. Dropping
+		// the param here would silently collapse the event to a plain UTC event
+		// (issue #131). EXDATE/RDATE may carry a comma-separated list of
+		// datetimes in a single value, so convert each element. Only rewrite if
+		// every element parses, otherwise leave the value untouched.
 		if loc, ok := tzMap[tzid]; ok {
 			parts := strings.Split(p.Value, ",")
 			converted := make([]string, len(parts))
@@ -166,7 +172,6 @@ func resolveComponentTZIDs(comp *goical.Component, tzMap map[string]*time.Locati
 			}
 			if allOK {
 				p.Value = strings.Join(converted, ",")
-				p.Params.Del(goical.ParamTimezoneID)
 			}
 		}
 	}

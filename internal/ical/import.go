@@ -80,8 +80,13 @@ func ImportFile(r io.Reader) (ImportResult, error) {
 			}
 			var buf bytes.Buffer
 			enc := ical.NewEncoder(&buf)
-			// Wrap in a minimal calendar for encoding.
+			// Wrap in a minimal calendar for encoding. go-ical's encoder
+			// rejects a VCALENDAR that is missing the mandatory PRODID and
+			// VERSION properties, so set them; otherwise Encode fails and the
+			// VTIMEZONE block is silently dropped from result.Timezones.
 			tmpCal := ical.NewCalendar()
+			tmpCal.Props.SetText(ical.PropVersion, "2.0")
+			tmpCal.Props.SetText(ical.PropProductID, ProductID)
 			tmpCal.Children = append(tmpCal.Children, child)
 			if err := enc.Encode(tmpCal); err == nil {
 				// Extract just the VTIMEZONE block from the encoded output.

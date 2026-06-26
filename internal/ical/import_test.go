@@ -986,3 +986,61 @@ func TestImport_VJournal_OptionalDTSTART(t *testing.T) {
 		t.Errorf("StartDate = %q, want empty", result.Journals[0].StartDate)
 	}
 }
+
+// TestImport_CustomVTimezone_PreservesZoneLabel covers issue #131: a TZID that
+// is neither IANA nor a Windows alias (a private VTIMEZONE) must keep its zone
+// identity on import. Previously resolveComponentTZIDs converted the value to
+// UTC and dropped the TZID param, so the event was stored with an empty
+// Timezone (silently becoming a plain UTC event). The instant must stay
+// correct AND the original TZID label must be preserved.
+func TestImport_CustomVTimezone_PreservesZoneLabel(t *testing.T) {
+	t.Parallel()
+	ics := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//test//EN\r\n" +
+		"BEGIN:VTIMEZONE\r\n" +
+		"TZID:Custom/Office\r\n" +
+		"BEGIN:STANDARD\r\n" +
+		"DTSTART:19700101T000000\r\n" +
+		"TZOFFSETFROM:+0100\r\n" +
+		"TZOFFSETTO:+0100\r\n" +
+		"TZNAME:OFC\r\n" +
+		"END:STANDARD\r\n" +
+		"END:VTIMEZONE\r\n" +
+		"BEGIN:VEVENT\r\n" +
+		"UID:custom-tz-1\r\n" +
+		"DTSTAMP:20240115T100000Z\r\n" +
+		"DTSTART;TZID=Custom/Office:20240115T120000\r\n" +
+		"DTEND;TZID=Custom/Office:20240115T130000\r\n" +
+		"SUMMARY:Custom Zone Event\r\n" +
+		"END:VEVENT\r\n" +
+		"END:VCALENDAR\r\n"
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile error: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %d, want 1", len(result.Events))
+	}
+	e := result.Events[0]
+	if e.Timezone != "Custom/Office" {
+		t.Errorf("Timezone = %q, want %q", e.Timezone, "Custom/Office")
+	}
+	// +0100 local 12:00 == 11:00 UTC; the instant must be preserved.
+	wantStart := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
+	if !e.StartTime.UTC().Equal(wantStart) {
+		t.Errorf("StartTime = %v, want %v", e.StartTime.UTC(), wantStart)
+	}
+	wantEnd := time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC)
+	if !e.EndTime.UTC().Equal(wantEnd) {
+		t.Errorf("EndTime = %v, want %v", e.EndTime.UTC(), wantEnd)
+	}
+	// The VTIMEZONE block must be retained for storage/export.
+	var found bool
+	for _, tz := range result.Timezones {
+		if tz.TZID == "Custom/Office" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("VTIMEZONE Custom/Office not captured in result.Timezones")
+	}
+}
