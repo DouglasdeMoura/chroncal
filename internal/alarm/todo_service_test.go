@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/recurrence"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/testutil"
 	"github.com/douglasdemoura/chroncal/internal/todo"
@@ -21,6 +22,39 @@ func (m *mockTodoAlarmLister) ListAlarms(ctx context.Context, todoID int64) ([]m
 
 func (m *mockTodoAlarmLister) ListAlarmsLean(ctx context.Context, todoID int64) ([]model.Alarm, error) {
 	return m.ListAlarms(ctx, todoID)
+}
+
+// TestComputeTodoTrigger_RelatedEnd_DtStartPlusDue guards issue #367: a VTODO
+// with DTSTART + DUE (no explicit DURATION) must anchor a RELATED=END trigger
+// at DUE, not at DTSTART. The bug fires the alarm (DUE−DTSTART) too early.
+func TestComputeTodoTrigger_RelatedEnd_DtStartPlusDue(t *testing.T) {
+	start := time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
+	due := time.Date(2026, 4, 1, 17, 0, 0, 0, time.UTC)
+
+	inst := recurrence.ExpandedTodo{
+		Todo: todo.Todo{
+			StartDate: start.Format(time.RFC3339),
+			DueDate:   due.Format(time.RFC3339),
+			// Duration deliberately empty: DTSTART+DUE, no explicit DURATION
+		},
+		InstanceTime: start, // anchor = DTSTART when present
+	}
+
+	alarm := model.Alarm{
+		Action:       "DISPLAY",
+		TriggerValue: "-PT30M", // 30 min before END
+		Related:      "END",
+	}
+
+	got, err := computeTodoTriggerTimeForInstance(inst, alarm)
+	if err != nil {
+		t.Fatalf("computeTodoTriggerTimeForInstance: %v", err)
+	}
+
+	want := due.Add(-30 * time.Minute) // 16:30 UTC
+	if !got.Equal(want) {
+		t.Errorf("RELATED=END with DTSTART+DUE: got %v, want %v (anchor must be DUE, not DTSTART)", got, want)
+	}
 }
 
 func TestCheckTodoAlarms_DueAlarm(t *testing.T) {
