@@ -475,6 +475,141 @@ func TestExpandJournal_WithExDateAndRDate(t *testing.T) {
 	}
 }
 
+// TestExpandEvent_RDateOnlyNoRRule locks in RFC 5545 §3.8.5.2: an event with
+// RDATEs but no RRULE must expand to its DTSTART occurrence and all
+// explicitly-listed RDATE occurrences (issue #362). Previously newRRuleSet
+// returned ok=false whenever rule == "", causing the rdateSet to be silently
+// ignored and only the DTSTART occurrence to appear.
+func TestExpandEvent_RDateOnlyNoRRule(t *testing.T) {
+	base := time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
+	rdate1 := time.Date(2026, 4, 15, 9, 0, 0, 0, time.UTC)
+	rdate2 := time.Date(2026, 4, 22, 9, 0, 0, 0, time.UTC)
+
+	evt := event.Event{
+		ID:        100,
+		UID:       "rdate-only-event",
+		Title:     "Irregular Meeting",
+		StartTime: base,
+		EndTime:   base.Add(time.Hour),
+		// No RecurrenceRule — pure RDATE recurrence.
+		RDates: rdate1.Format(time.RFC3339) + "," + rdate2.Format(time.RFC3339),
+	}
+
+	from := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+
+	instances := ExpandEvent(evt, from, to)
+	// Expect: DTSTART (Apr 1) + RDATE1 (Apr 15) + RDATE2 (Apr 22) = 3 instances.
+	if len(instances) != 3 {
+		t.Fatalf("ExpandEvent() = %d instances, want 3 (DTSTART + 2 RDATEs)", len(instances))
+	}
+
+	wantTimes := []time.Time{base, rdate1, rdate2}
+	for i, want := range wantTimes {
+		if !instances[i].InstanceTime.Equal(want) {
+			t.Errorf("instance[%d] = %v, want %v", i, instances[i].InstanceTime, want)
+		}
+	}
+
+	// DTSTART occurrence must NOT be marked IsOverride (it is the canonical start).
+	if instances[0].IsOverride {
+		t.Error("DTSTART occurrence must not be marked IsOverride")
+	}
+	// RDATE occurrences must be marked IsOverride.
+	if !instances[1].IsOverride {
+		t.Errorf("RDATE occurrence at %v not marked IsOverride", instances[1].InstanceTime)
+	}
+	if !instances[2].IsOverride {
+		t.Errorf("RDATE occurrence at %v not marked IsOverride", instances[2].InstanceTime)
+	}
+}
+
+// TestExpandEvent_RDateOnlyWithExDate verifies that an EXDATE on the DTSTART
+// of an RDATE-only event suppresses that occurrence while leaving the RDATEs.
+func TestExpandEvent_RDateOnlyWithExDate(t *testing.T) {
+	base := time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
+	rdate1 := time.Date(2026, 4, 15, 9, 0, 0, 0, time.UTC)
+
+	evt := event.Event{
+		ID:        101,
+		UID:       "rdate-only-exdate",
+		Title:     "Irregular Meeting (exdated start)",
+		StartTime: base,
+		EndTime:   base.Add(time.Hour),
+		ExDates:   base.Format(time.RFC3339), // exclude DTSTART
+		RDates:    rdate1.Format(time.RFC3339),
+	}
+
+	from := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+
+	instances := ExpandEvent(evt, from, to)
+	// DTSTART is excluded; only the RDATE should appear.
+	if len(instances) != 1 {
+		t.Fatalf("ExpandEvent() = %d instances, want 1 (DTSTART excluded by EXDATE)", len(instances))
+	}
+	if !instances[0].InstanceTime.Equal(rdate1) {
+		t.Errorf("instance = %v, want %v", instances[0].InstanceTime, rdate1)
+	}
+}
+
+// TestExpandTodo_RDateOnlyNoRRule mirrors TestExpandEvent_RDateOnlyNoRRule for
+// the todo entity.
+func TestExpandTodo_RDateOnlyNoRRule(t *testing.T) {
+	base := time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
+	rdate1 := time.Date(2026, 4, 15, 9, 0, 0, 0, time.UTC)
+
+	td := todo.Todo{
+		UID:     "rdate-only-todo",
+		Summary: "Irregular Task",
+		DueDate: base.Format(time.RFC3339),
+		// No RecurrenceRule.
+		RDates: rdate1.Format(time.RFC3339),
+	}
+
+	from := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+
+	instances := ExpandTodo(td, from, to)
+	if len(instances) != 2 {
+		t.Fatalf("ExpandTodo() = %d instances, want 2 (DTSTART + 1 RDATE)", len(instances))
+	}
+	if !instances[0].InstanceTime.Equal(base) {
+		t.Errorf("instance[0] = %v, want %v (DTSTART)", instances[0].InstanceTime, base)
+	}
+	if !instances[1].InstanceTime.Equal(rdate1) {
+		t.Errorf("instance[1] = %v, want %v (RDATE)", instances[1].InstanceTime, rdate1)
+	}
+}
+
+// TestExpandJournal_RDateOnlyNoRRule mirrors TestExpandEvent_RDateOnlyNoRRule
+// for the journal entity.
+func TestExpandJournal_RDateOnlyNoRRule(t *testing.T) {
+	base := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	rdate1 := time.Date(2026, 4, 15, 0, 0, 0, 0, time.UTC)
+
+	j := journal.Journal{
+		UID:       "rdate-only-journal",
+		StartDate: base.Format(time.RFC3339),
+		// No RecurrenceRule.
+		RDates: rdate1.Format(time.RFC3339),
+	}
+
+	from := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+
+	instances := ExpandJournal(j, from, to)
+	if len(instances) != 2 {
+		t.Fatalf("ExpandJournal() = %d instances, want 2 (DTSTART + 1 RDATE)", len(instances))
+	}
+	if !instances[0].InstanceTime.Equal(base) {
+		t.Errorf("instance[0] = %v, want %v (DTSTART)", instances[0].InstanceTime, base)
+	}
+	if !instances[1].InstanceTime.Equal(rdate1) {
+		t.Errorf("instance[1] = %v, want %v (RDATE)", instances[1].InstanceTime, rdate1)
+	}
+}
+
 // TestExpandJournal_HalfOpenWindow locks in that journal expansion honors the
 // half-open [from, to) window: an occurrence exactly at from is kept, one
 // exactly at to is excluded.

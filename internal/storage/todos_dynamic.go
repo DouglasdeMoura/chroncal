@@ -31,7 +31,8 @@ type ListTodosFilteredParams struct {
 
 func (q *Queries) ListTodosFiltered(ctx context.Context, arg ListTodosFilteredParams) ([]Todo, error) {
 	var w whereBuilder
-	w.add("recurrence_rule IS NULL AND recurrence_id = ''")
+	// Non-recurring, non-RDATE-only masters (RDATE-only handled by ListRecurringTodosFiltered).
+	w.add("recurrence_rule IS NULL AND (rdates IS NULL OR rdates = '') AND recurrence_id = ''")
 	w.addSoftDeleteFilter(arg.IncludeDeleted, arg.DeletedOnly)
 	w.addTodoListFilters(arg.CalendarID, arg.FilterStatus, arg.HideCompleted)
 	if arg.FromDate != "" {
@@ -54,7 +55,8 @@ type ListRecurringTodosFilteredParams struct {
 
 func (q *Queries) ListRecurringTodosFiltered(ctx context.Context, arg ListRecurringTodosFilteredParams) ([]Todo, error) {
 	var w whereBuilder
-	w.add("recurrence_rule IS NOT NULL AND recurrence_id = ''")
+	// RRULE masters and RDATE-only masters (no RRULE but has RDATEs); both need expansion.
+	w.add("(recurrence_rule IS NOT NULL OR (rdates IS NOT NULL AND rdates != '')) AND recurrence_id = ''")
 	w.addSoftDeleteFilter(arg.IncludeDeleted, arg.DeletedOnly)
 	w.addTodoListFilters(arg.CalendarID, arg.FilterStatus, arg.HideCompleted)
 	where, args := w.build()

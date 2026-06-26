@@ -18,7 +18,7 @@ SELECT * FROM todos WHERE due_date >= ? AND due_date < ? AND deleted_at IS NULL 
 SELECT * FROM todos WHERE deleted_at IS NULL ORDER BY due_date, summary;
 
 -- name: ListRecurringTodos :many
-SELECT * FROM todos WHERE recurrence_rule IS NOT NULL AND recurrence_id = '' AND deleted_at IS NULL;
+SELECT * FROM todos WHERE (recurrence_rule IS NOT NULL OR (rdates IS NOT NULL AND rdates != '')) AND recurrence_id = '' AND deleted_at IS NULL;
 
 -- name: ListRecurringTodosByCalendar :many
 SELECT * FROM todos WHERE recurrence_rule IS NOT NULL AND recurrence_id = '' AND calendar_id = ? AND deleted_at IS NULL;
