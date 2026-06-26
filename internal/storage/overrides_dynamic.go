@@ -17,7 +17,7 @@ const overrideUIDBatch = 500
 // support.
 func (q *Queries) ListOverridesByUIDs(ctx context.Context, uids []string) ([]Event, error) {
 	var out []Event
-	for _, chunk := range chunkStrings(uids, overrideUIDBatch) {
+	for _, chunk := range chunkSlice(uids, overrideUIDBatch) {
 		placeholders, args := expandStringPlaceholders(chunk)
 		where := "WHERE uid IN (" + placeholders + ") AND recurrence_id != '' AND deleted_at IS NULL /* ListOverridesByUIDs */"
 		rows, err := q.queryEvents(ctx, where, args, "uid ASC, recurrence_id ASC")
@@ -32,7 +32,7 @@ func (q *Queries) ListOverridesByUIDs(ctx context.Context, uids []string) ([]Eve
 // ListTodoOverridesByUIDs is the batched form of ListTodoOverridesByUID.
 func (q *Queries) ListTodoOverridesByUIDs(ctx context.Context, uids []string) ([]Todo, error) {
 	var out []Todo
-	for _, chunk := range chunkStrings(uids, overrideUIDBatch) {
+	for _, chunk := range chunkSlice(uids, overrideUIDBatch) {
 		placeholders, args := expandStringPlaceholders(chunk)
 		where := "WHERE uid IN (" + placeholders + ") AND recurrence_id != '' AND deleted_at IS NULL /* ListTodoOverridesByUIDs */"
 		rows, err := q.queryTodos(ctx, where, args, "uid ASC, recurrence_id ASC")
@@ -47,7 +47,7 @@ func (q *Queries) ListTodoOverridesByUIDs(ctx context.Context, uids []string) ([
 // ListJournalOverridesByUIDs is the batched form of ListJournalOverridesByUID.
 func (q *Queries) ListJournalOverridesByUIDs(ctx context.Context, uids []string) ([]Journal, error) {
 	var out []Journal
-	for _, chunk := range chunkStrings(uids, overrideUIDBatch) {
+	for _, chunk := range chunkSlice(uids, overrideUIDBatch) {
 		placeholders, args := expandStringPlaceholders(chunk)
 		where := "WHERE uid IN (" + placeholders + ") AND recurrence_id != '' AND deleted_at IS NULL /* ListJournalOverridesByUIDs */"
 		rows, err := q.queryJournals(ctx, where, args, "uid ASC, recurrence_id ASC")
@@ -59,13 +59,13 @@ func (q *Queries) ListJournalOverridesByUIDs(ctx context.Context, uids []string)
 	return out, nil
 }
 
-// chunkStrings splits vals into consecutive slices of at most size elements.
+// chunkSlice splits vals into consecutive slices of at most size elements.
 // Returns nil for empty input. The returned slices alias vals (no copy).
-func chunkStrings(vals []string, size int) [][]string {
+func chunkSlice[T any](vals []T, size int) [][]T {
 	if len(vals) == 0 {
 		return nil
 	}
-	var chunks [][]string
+	var chunks [][]T
 	for i := 0; i < len(vals); i += size {
 		end := i + size
 		if end > len(vals) {
