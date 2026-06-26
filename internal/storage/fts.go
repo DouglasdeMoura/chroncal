@@ -3,20 +3,39 @@ package storage
 import (
 	"context"
 	"strings"
+	"unicode"
 )
+
+// hasFTSToken reports whether w contains at least one character the FTS5
+// unicode61 tokenizer treats as part of a token (a letter or a digit).
+// Tokens made up solely of separators/punctuation produce no tokens once
+// indexed, so quoting them yields an empty MATCH phrase.
+func hasFTSToken(w string) bool {
+	for _, r := range w {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			return true
+		}
+	}
+	return false
+}
 
 // FTSQuery converts a user search string into safe FTS5 query syntax.
 // Each word gets quoted and suffixed with * for prefix matching, approximating
 // the old LIKE '%word%' behaviour at token boundaries.
+//
+// Words that carry no FTS-significant characters (e.g. "-" or "!") are
+// skipped: quoting them would emit an empty phrase ("-"*) that FTS5 matches
+// against nothing or rejects as a syntax error. When every word is dropped
+// the result is "", letting the caller bypass FTS entirely.
 func FTSQuery(input string) string {
 	words := strings.Fields(input)
-	if len(words) == 0 {
-		return ""
-	}
-	parts := make([]string, len(words))
-	for i, w := range words {
+	parts := make([]string, 0, len(words))
+	for _, w := range words {
+		if !hasFTSToken(w) {
+			continue
+		}
 		w = strings.ReplaceAll(w, "\"", "\"\"")
-		parts[i] = "\"" + w + "\"" + "*"
+		parts = append(parts, "\""+w+"\""+"*")
 	}
 	return strings.Join(parts, " ")
 }
