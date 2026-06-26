@@ -3330,3 +3330,139 @@ func TestOwnerDispatchRejectsUnknownTypeUniformly(t *testing.T) {
 		t.Fatalf("exportResource err = %v, want errUnknownOwnerType", err)
 	}
 }
+
+// linkCalendarToTestAccount links the first seeded calendar to a fresh account
+// so service-layer mutations (and the simulated concurrent edit below) flip the
+// dirty flag via MarkResourceDirty. Returns the calendar ID.
+func linkCalendarToTestAccount(t *testing.T, ctx context.Context, q *storage.Queries) int64 {
+	t.Helper()
+	account, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name:      "test",
+		ServerUrl: "https://example.com",
+		AuthType:  "basic",
+		Username:  "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+	remoteCalURL := "https://example.com/cal"
+	if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID:        calendarID,
+		AccountID: &account.ID,
+		RemoteUrl: &remoteCalURL,
+	}); err != nil {
+		t.Fatalf("LinkCalendarToAccount: %v", err)
+	}
+	return calendarID
+}
+
+// serverWinsConflictClient returns a CalDAV client whose PUT 412s and whose GET
+// returns the server's version of uid (SUMMARY "Server version", ETag
+// "etag-server"), driving the ConflictServerWins accept-server path.
+func serverWinsConflictClient(t *testing.T, uid string) *caldav.Client {
+	t.Helper()
+	path := "/calendar/" + uid + ".ics"
+	return newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		switch r.Method {
+		case http.MethodPut:
+			return &http.Response{
+				StatusCode: http.StatusPreconditionFailed,
+				Status:     "412 Precondition Failed",
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("precondition failed")),
+				Request:    r,
+			}, nil
+		case http.MethodGet:
+			if r.URL.Path != path {
+				t.Fatalf("GET path = %s, want %s", r.URL.Path, path)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header: http.Header{
+					"Content-Type": []string{"text/calendar; charset=utf-8"},
+					"Etag":         []string{`"etag-server"`},
+				},
+				Body: io.NopCloser(strings.NewReader("BEGIN:VCALENDAR\r\n" +
+					"VERSION:2.0\r\n" +
+					"PRODID:-//chroncal//tests//EN\r\n" +
+					"BEGIN:VEVENT\r\n" +
+					"UID:" + uid + "\r\n" +
+					"DTSTAMP:20260403T120000Z\r\n" +
+					"DTSTART:20260403T120000Z\r\n" +
+					"DTEND:20260403T130000Z\r\n" +
+					"SUMMARY:Server version\r\n" +
+					"END:VEVENT\r\n" +
+					"END:VCALENDAR\r\n")),
+				Request: r,
+			}, nil
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			return nil, nil
+		}
+	})
+}
+
+// TestEnginePushServerWinsPreservesConcurrentEdit reproduces issue #417: a local
+// edit landing in the window between the accept-server import and the dirty
+// clear must not be silently dropped. The afterImportRevCapture hook simulates
+// that edit; the rev-guarded clear must leave the resource dirty so the next
+// push sends it. With the previous unconditional clear this test fails because
+// the edit's dirty flag is wiped. Serial (no t.Parallel) because it mutates the
+// package-level hook.
+func TestEnginePushServerWinsPreservesConcurrentEdit(t *testing.T) {
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+	calendarID := linkCalendarToTestAccount(t, ctx, q)
+
+	insertTestEvent(t, db, calendarID, "srv-wins-race")
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calendarID,
+		Uid:          "srv-wins-race",
+		OwnerType:    "event",
+		RemoteUrl:    "/calendar/srv-wins-race.ics",
+		Etag:         `"etag-before"`,
+		Dirty:        1,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+
+	// Simulate a concurrent local edit landing after the import recorded the
+	// server version but before the dirty flag is cleared: it bumps rev and
+	// re-marks the resource dirty, exactly as a real service-layer mutation would.
+	var fired int
+	afterImportRevCapture = func() {
+		fired++
+		if err := storage.MarkResourceDirty(ctx, db, calendarID, "srv-wins-race", "event"); err != nil {
+			t.Errorf("simulate concurrent edit: %v", err)
+		}
+	}
+	t.Cleanup(func() { afterImportRevCapture = nil })
+
+	client := serverWinsConflictClient(t, "srv-wins-race")
+	if _, err := engine.push(ctx, client, calendarID, "", "", ConflictServerWins); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if fired != 1 {
+		t.Fatalf("afterImportRevCapture fired %d times, want 1", fired)
+	}
+
+	res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: "srv-wins-race"})
+	if err != nil {
+		t.Fatalf("GetSyncResource: %v", err)
+	}
+	if res.Dirty != 1 {
+		t.Fatalf("dirty = %d, want 1 (concurrent edit must not be dropped, #417)", res.Dirty)
+	}
+	// The ETag still advances to the server's version so the next push's If-Match
+	// matches the server, mirroring FinalizePushedResource on the push path.
+	if res.Etag != "etag-server" {
+		t.Fatalf("etag = %q, want %q", res.Etag, "etag-server")
+	}
+}
