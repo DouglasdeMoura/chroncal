@@ -376,6 +376,7 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 
 	var endTime time.Time
 	var durationValue string
+	explicitEnd := false
 	if prop := ve.Props.Get(ical.PropDateTimeEnd); prop != nil {
 		endTime, _ = ve.Props.DateTime(ical.PropDateTimeEnd, nil)
 	}
@@ -383,12 +384,15 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 		if prop := ve.Props.Get(ical.PropDuration); prop != nil && duration.Validate(prop.Value) == nil {
 			durationValue = prop.Value
 			endTime = addDuration(startTime, prop.Value)
+			explicitEnd = true
 		} else {
 			// No DURATION, or a malformed one (go-ical stores the raw value
 			// without validating). Fall back to a 1h span and drop the bad
 			// value so it is neither persisted nor re-exported.
 			endTime = startTime.Add(time.Hour)
 		}
+	} else {
+		explicitEnd = true
 	}
 
 	allDay := false
@@ -403,7 +407,15 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 			// instant — e.g. under TZ=UTC+12 midnight local is 12:00Z the day
 			// before, corrupting the calendar date and recurrence occurrences.
 			startTime = time.Date(startTime.Year(), startTime.Month(), startTime.Day(), 0, 0, 0, 0, time.UTC)
-			endTime = time.Date(endTime.Year(), endTime.Month(), endTime.Day(), 0, 0, 0, 0, time.UTC)
+			if explicitEnd {
+				endTime = time.Date(endTime.Year(), endTime.Month(), endTime.Day(), 0, 0, 0, 0, time.UTC)
+			} else {
+				// RFC 5545 §3.6.1: an all-day VEVENT with no DTEND/DURATION has
+				// an implicit duration of one day. The timed +1h default above
+				// would otherwise be truncated back to startTime, storing a
+				// zero-length event.
+				endTime = startTime.AddDate(0, 0, 1)
+			}
 		}
 	}
 
