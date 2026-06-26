@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/douglasdemoura/chroncal/internal/event"
 )
 
@@ -74,6 +75,36 @@ func TestUndoStack_DepthEviction(t *testing.T) {
 
 func labelFor(i int) string {
 	return string([]byte{byte('A' + i)})
+}
+
+// TestUndoDoublePress_DoesNotReDispatch reproduces issue #309: a reflexive
+// double-press of the undo key must not dispatch a second restore for the same
+// entry. Peek() does not pop, and the entry is only removed in the async
+// eventRestoredMsg success handler, so without an in-flight guard a second 'u'
+// before that message lands Peeks the same entry and fires a second
+// RestoreUndo (spurious "Undo failed" toast + two overlapping transactions).
+func TestUndoDoublePress_DoesNotReDispatch(t *testing.T) {
+	m := Model{
+		keys:      defaultAppKeys(),
+		focus:     focusCalendar,
+		undoStack: NewUndoStack(),
+	}
+	m.undoStack.Push(entry("A"))
+
+	undo := tea.KeyPressMsg{Code: 'u', Text: "u"}
+
+	// First press dispatches the restore.
+	m1, cmd1, handled1 := m.interceptGlobalKeys(undo)
+	if !handled1 || cmd1 == nil {
+		t.Fatalf("first undo press: handled=%v cmd!=nil=%v, want both true", handled1, cmd1 != nil)
+	}
+
+	// Second press, before the async eventRestoredMsg lands, must NOT dispatch
+	// another restore.
+	_, cmd2, _ := m1.interceptGlobalKeys(undo)
+	if cmd2 != nil {
+		t.Fatal("second undo press re-dispatched a restore while the first was still in flight")
+	}
 }
 
 // TestEventRestoredMsg_RemovesRestoredEntryNotTop reproduces issue #144: the
