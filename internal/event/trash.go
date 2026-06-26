@@ -249,17 +249,20 @@ func (s *Service) restoreInstanceByLogID(ctx context.Context, logID int64) error
 		}
 		return fmt.Errorf("get exdate log: %w", err)
 	}
-	master, err := s.q.GetEventByUID(ctx, log.Uid)
-	if err != nil {
-		return fmt.Errorf("get master: %w", err)
-	}
-
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
+
+	// Read the master inside the transaction so the EXDATE list we rewrite
+	// reflects a concurrent writer's changes rather than a pre-transaction
+	// snapshot (issue #116).
+	master, err := qtx.GetEventByUID(ctx, log.Uid)
+	if err != nil {
+		return fmt.Errorf("get master: %w", err)
+	}
 
 	existing := ParseTimeList(storage.NullableToString(master.Exdates))
 	target, err := time.Parse(time.RFC3339, log.RecurrenceID)

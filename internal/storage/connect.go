@@ -17,11 +17,19 @@ func Open(dbPath string) (*sql.DB, *Queries, error) {
 	// Encode pragmas in the DSN so every pooled connection gets them,
 	// not just the first one. PRAGMA foreign_keys is per-connection in
 	// SQLite; setting it via Exec on the pool only affects one conn.
+	// _txlock=immediate makes every read-write transaction acquire SQLite's
+	// write lock at BEGIN instead of lazily on first write. This serializes
+	// read-modify-write flows (e.g. appending an EXDATE to a master) so a
+	// concurrent writer cannot slip in between the read and the write and get
+	// its change silently clobbered, and it avoids the deferred-transaction
+	// upgrade deadlock that returns SQLITE_BUSY immediately. SQLite already
+	// allows only one writer at a time, so this costs no real concurrency.
 	dsn := dbPath +
 		"?_pragma=journal_mode(WAL)" +
 		"&_pragma=foreign_keys(ON)" +
 		"&_pragma=busy_timeout(5000)" +
-		"&_pragma=synchronous(NORMAL)"
+		"&_pragma=synchronous(NORMAL)" +
+		"&_txlock=immediate"
 
 	conn, err := sql.Open("sqlite", dsn)
 	if err != nil {

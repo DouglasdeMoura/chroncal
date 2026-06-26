@@ -532,17 +532,20 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 // DeleteInstance excludes a single occurrence of a recurring event by adding
 // an EXDATE to the master. instanceTime is the StartTime of the occurrence.
 func (s *Service) DeleteInstance(ctx context.Context, uid string, instanceTime time.Time) error {
-	master, err := s.q.GetEventByUID(ctx, uid)
-	if err != nil {
-		return fmt.Errorf("get master: %w", err)
-	}
-
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
+
+	// Read the master inside the transaction so the EXDATE list we recompute
+	// reflects a concurrent writer's changes (issue #116). Reading outside the
+	// tx let a second instance-delete clobber the first one's EXDATE.
+	master, err := qtx.GetEventByUID(ctx, uid)
+	if err != nil {
+		return fmt.Errorf("get master: %w", err)
+	}
 
 	existing := ParseTimeList(storage.NullableToString(master.Exdates))
 	existing = append(existing, instanceTime.UTC())
@@ -598,7 +601,17 @@ func (s *Service) DeleteFromInstance(ctx context.Context, uid string, instanceTi
 // commit but before a separate read would otherwise have its updated_at
 // captured as the undo baseline, letting RestoreUndo clobber that edit.
 func (s *Service) deleteFromInstance(ctx context.Context, uid string, instanceTime time.Time) (string, error) {
-	master, err := s.q.GetEventByUID(ctx, uid)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+
+	// Read the master inside the transaction so the RRULE we truncate reflects
+	// a concurrent writer's edits rather than a pre-transaction snapshot
+	// (issue #116).
+	master, err := qtx.GetEventByUID(ctx, uid)
 	if err != nil {
 		return "", fmt.Errorf("get master: %w", err)
 	}
@@ -606,13 +619,6 @@ func (s *Service) deleteFromInstance(ctx context.Context, uid string, instanceTi
 	prevRRule := storage.NullableToString(master.RecurrenceRule)
 	until := instanceTime.UTC().Add(-time.Second)
 	rule := setRRuleUntil(prevRRule, until, master.AllDay == 1)
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return "", fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback()
-	qtx := s.q.WithTx(tx)
 
 	if err := qtx.UpdateEventRecurrenceRule(ctx, storage.UpdateEventRecurrenceRuleParams{
 		RecurrenceRule: storage.StringToNullable(rule),
