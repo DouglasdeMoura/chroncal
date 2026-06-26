@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
 
@@ -81,6 +82,49 @@ func TestTodoService_List(t *testing.T) {
 	todos, _ := svc.List(ctx)
 	if len(todos) != 1 {
 		t.Errorf("List (incomplete) = %d, want 1", len(todos))
+	}
+}
+
+func TestTodoService_Complete_MarksResourceDirty(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	// Link calendar 1 to an account so sync tracking is active.
+	account, err := svc.q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name: "test", ServerUrl: "https://example.com", AuthType: "basic", Username: "u",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	remote := "https://example.com/cal/"
+	if err := svc.q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		AccountID: &account.ID, RemoteUrl: &remote, ID: 1,
+	}); err != nil {
+		t.Fatalf("LinkCalendarToAccount: %v", err)
+	}
+
+	td := createTodo(t, svc)
+
+	// Creation dirties the row; clear it so the test isolates Complete.
+	if err := svc.q.ClearSyncResourceDirty(ctx, storage.ClearSyncResourceDirtyParams{
+		Etag: "", CalendarID: td.CalendarID, Uid: td.UID,
+	}); err != nil {
+		t.Fatalf("ClearSyncResourceDirty: %v", err)
+	}
+	if dirty, _ := svc.q.ListDirtySyncResources(ctx, td.CalendarID); len(dirty) != 0 {
+		t.Fatalf("precondition: expected 0 dirty resources, got %d", len(dirty))
+	}
+
+	if _, err := svc.Complete(ctx, td.ID); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	dirty, err := svc.q.ListDirtySyncResources(ctx, td.CalendarID)
+	if err != nil {
+		t.Fatalf("ListDirtySyncResources: %v", err)
+	}
+	if len(dirty) != 1 || dirty[0].Uid != td.UID {
+		t.Fatalf("Complete did not mark resource dirty: got %d dirty resources", len(dirty))
 	}
 }
 

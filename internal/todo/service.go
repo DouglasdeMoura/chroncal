@@ -386,7 +386,9 @@ func (s *Service) Complete(ctx context.Context, id int64) (Todo, error) {
 	if err != nil {
 		return Todo{}, err
 	}
-	return fromStorage(r), nil
+	t := fromStorage(r)
+	_ = storage.MarkResourceDirty(ctx, s.db, t.CalendarID, t.UID, "todo")
+	return t, nil
 }
 
 func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Todo, error) {
