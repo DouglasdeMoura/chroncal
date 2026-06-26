@@ -1155,13 +1155,7 @@ func renderTimeCellContent(p placedEvent, row, width int) string {
 		}
 	}
 
-	if lipgloss.Width(text) > width {
-		r := []rune(text)
-		limit := max(width-1, 1)
-		if len(r) > limit {
-			text = string(r[:limit]) + "…"
-		}
-	}
+	text = truncateTo(text, width)
 
 	return lipgloss.NewStyle().Background(bg).Foreground(fg).Width(width).Render(text)
 }
@@ -1223,14 +1217,7 @@ func renderTimeLabel(row, lph int, isNowRow bool, nowTimeLabel string) string {
 }
 
 func renderEventPill(ev CalendarEvent, cellW int, faint bool) string {
-	text := " " + ev.Title
-	if lipgloss.Width(text) > cellW {
-		r := []rune(text)
-		limit := max(cellW-1, 1)
-		if len(r) > limit {
-			text = string(r[:limit]) + "…"
-		}
-	}
+	text := truncateTo(" "+ev.Title, cellW)
 
 	bg := ActiveTheme().Muted
 	if ev.Color != "" {
