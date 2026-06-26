@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/storage"
@@ -314,10 +315,7 @@ func (s *Service) restoreTruncationByLogID(ctx context.Context, logID int64) err
 	}); err != nil {
 		return fmt.Errorf("restore rrule: %w", err)
 	}
-	if err := qtx.RestoreOverridesAtOrAfter(ctx, storage.RestoreOverridesAtOrAfterParams{
-		Uid:          log.Uid,
-		RecurrenceID: log.CutoffTime,
-	}); err != nil {
+	if err := restoreTruncatedOverrides(ctx, qtx, log); err != nil {
 		return fmt.Errorf("restore overrides: %w", err)
 	}
 	if err := qtx.DeleteEventTruncateDelete(ctx, logID); err != nil {
@@ -327,4 +325,31 @@ func (s *Service) restoreTruncationByLogID(ctx context.Context, logID int64) err
 		return fmt.Errorf("mark resource dirty: %w", err)
 	}
 	return tx.Commit()
+}
+
+// restoreTruncatedOverrides un-hides the overrides a truncation soft-deleted.
+// When the log recorded provenance (hidden_overrides is non-NULL), it restores
+// only those specific overrides, so an override the user deleted independently
+// before the truncation stays deleted (issue #287). Pre-#287 log rows store
+// NULL provenance; for those it falls back to un-hiding every soft-deleted
+// override at/after the cutoff.
+func restoreTruncatedOverrides(ctx context.Context, qtx *storage.Queries, log storage.EventTruncateDelete) error {
+	if log.HiddenOverrides == nil {
+		return qtx.RestoreOverridesAtOrAfter(ctx, storage.RestoreOverridesAtOrAfterParams{
+			Uid:          log.Uid,
+			RecurrenceID: log.CutoffTime,
+		})
+	}
+	if *log.HiddenOverrides == "" {
+		return nil
+	}
+	for _, recID := range strings.Split(*log.HiddenOverrides, ",") {
+		if err := qtx.RestoreEventByUIDAndRecurrenceID(ctx, storage.RestoreEventByUIDAndRecurrenceIDParams{
+			Uid:          log.Uid,
+			RecurrenceID: recID,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }

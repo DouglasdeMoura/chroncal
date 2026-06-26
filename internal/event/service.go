@@ -681,6 +681,40 @@ func (s *Service) DeleteFromInstance(ctx context.Context, uid string, instanceTi
 	return err
 }
 
+// softDeleteOverridesAndRecordTruncation hides every live override at/after
+// cutoff and records the truncation so the trash view can restore it. It
+// captures the recurrence_ids it hides BEFORE soft-deleting them, so restore
+// re-shows exactly those overrides and never resurrects one the user deleted
+// independently (issue #287). Pairs with restoreTruncatedOverrides.
+func softDeleteOverridesAndRecordTruncation(ctx context.Context, qtx *storage.Queries, calendarID int64, uid, cutoff, prevRRule string) error {
+	hidden, err := qtx.ListLiveOverrideRecurrenceIDsAtOrAfter(ctx, storage.ListLiveOverrideRecurrenceIDsAtOrAfterParams{
+		Uid:          uid,
+		RecurrenceID: cutoff,
+	})
+	if err != nil {
+		return fmt.Errorf("list future overrides: %w", err)
+	}
+	hiddenList := strings.Join(hidden, ",")
+
+	if err := qtx.SoftDeleteOverridesAtOrAfter(ctx, storage.SoftDeleteOverridesAtOrAfterParams{
+		Uid:          uid,
+		RecurrenceID: cutoff,
+	}); err != nil {
+		return fmt.Errorf("soft-delete future overrides: %w", err)
+	}
+
+	if err := qtx.RecordEventTruncateDelete(ctx, storage.RecordEventTruncateDeleteParams{
+		CalendarID:      calendarID,
+		Uid:             uid,
+		CutoffTime:      cutoff,
+		PreviousRrule:   prevRRule,
+		HiddenOverrides: &hiddenList,
+	}); err != nil {
+		return fmt.Errorf("record truncate: %w", err)
+	}
+	return nil
+}
+
 // deleteFromInstance performs the truncation and returns the master's
 // updated_at as written by this operation, read back inside the same
 // transaction. Returning the in-tx value (rather than a post-commit read)
@@ -715,20 +749,8 @@ func (s *Service) deleteFromInstance(ctx context.Context, uid string, instanceTi
 	}
 
 	cutoff := instanceTime.UTC().Format(time.RFC3339)
-	if err := qtx.SoftDeleteOverridesAtOrAfter(ctx, storage.SoftDeleteOverridesAtOrAfterParams{
-		Uid:          uid,
-		RecurrenceID: cutoff,
-	}); err != nil {
-		return "", fmt.Errorf("soft-delete future overrides: %w", err)
-	}
-
-	if err := qtx.RecordEventTruncateDelete(ctx, storage.RecordEventTruncateDeleteParams{
-		CalendarID:    master.CalendarID,
-		Uid:           uid,
-		CutoffTime:    cutoff,
-		PreviousRrule: prevRRule,
-	}); err != nil {
-		return "", fmt.Errorf("record truncate: %w", err)
+	if err := softDeleteOverridesAndRecordTruncation(ctx, qtx, master.CalendarID, uid, cutoff, prevRRule); err != nil {
+		return "", err
 	}
 
 	// Read the master's updated_at back inside the transaction so the value we
@@ -1020,20 +1042,8 @@ func updateFromInstanceTx(ctx context.Context, qtx *storage.Queries, uid string,
 	}
 
 	cutoff := instanceTime.UTC().Format(time.RFC3339)
-	if err := qtx.SoftDeleteOverridesAtOrAfter(ctx, storage.SoftDeleteOverridesAtOrAfterParams{
-		Uid:          uid,
-		RecurrenceID: cutoff,
-	}); err != nil {
-		return Event{}, 0, fmt.Errorf("soft-delete future overrides: %w", err)
-	}
-
-	if err := qtx.RecordEventTruncateDelete(ctx, storage.RecordEventTruncateDeleteParams{
-		CalendarID:    master.CalendarID,
-		Uid:           uid,
-		CutoffTime:    cutoff,
-		PreviousRrule: prevRRule,
-	}); err != nil {
-		return Event{}, 0, fmt.Errorf("record truncate: %w", err)
+	if err := softDeleteOverridesAndRecordTruncation(ctx, qtx, master.CalendarID, uid, cutoff, prevRRule); err != nil {
+		return Event{}, 0, err
 	}
 
 	// Caller is the source of truth for categories. An empty p.Categories

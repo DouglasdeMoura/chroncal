@@ -288,6 +288,82 @@ func TestTrash_PurgeTruncationKeepsRRuleTruncated(t *testing.T) {
 	}
 }
 
+// TestTrash_TruncationRestoreKeepsIndependentlyDeletedOverride reproduces
+// issue #287: an override deleted independently (before the truncation) must
+// stay deleted when the truncation is restored. The truncation only hides
+// overrides that were live at truncation time, so restoring it must not
+// resurrect an override the user had already deleted on its own.
+func TestTrash_TruncationRestoreKeepsIndependentlyDeletedOverride(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:            "standup",
+		CalendarID:     1,
+		Title:          "Standup",
+		StartTime:      time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 1, 9, 30, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;COUNT=10",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+
+	// User customizes the Apr 22 instance (creates an override).
+	overrideTime := time.Date(2026, 4, 22, 9, 0, 0, 0, time.UTC)
+	override, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:          master.UID,
+		CalendarID:   1,
+		Title:        "Standup (moved)",
+		StartTime:    time.Date(2026, 4, 22, 10, 0, 0, 0, time.UTC),
+		EndTime:      time.Date(2026, 4, 22, 10, 30, 0, 0, time.UTC),
+		RecurrenceID: overrideTime.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	// User then deletes that single customized instance on its own. This
+	// soft-deletes the override row and adds an EXDATE on the master.
+	if err := svc.DeleteInstance(ctx, master.UID, overrideTime); err != nil {
+		t.Fatalf("DeleteInstance: %v", err)
+	}
+	if _, err := svc.Get(ctx, override.ID); err == nil {
+		t.Fatalf("override should be soft-deleted after DeleteInstance")
+	}
+
+	// Later, user truncates the series "this and following" from an earlier
+	// cutoff (Apr 8). The already-deleted Apr 22 override is untouched.
+	cutoff := time.Date(2026, 4, 8, 9, 0, 0, 0, time.UTC)
+	if err := svc.DeleteFromInstance(ctx, master.UID, cutoff); err != nil {
+		t.Fatalf("DeleteFromInstance: %v", err)
+	}
+
+	entries, err := svc.ListTrash(ctx, 1)
+	if err != nil {
+		t.Fatalf("ListTrash: %v", err)
+	}
+	var trunc TrashEntry
+	for _, e := range entries {
+		if e.Kind == TrashKindTruncation {
+			trunc = e
+			break
+		}
+	}
+	if trunc.ID == 0 {
+		t.Fatalf("no truncation entry: %+v", entries)
+	}
+
+	// Restore the truncation. This must NOT resurrect the override the user
+	// independently deleted before the truncation.
+	if err := svc.RestoreTrash(ctx, trunc); err != nil {
+		t.Fatalf("RestoreTrash: %v", err)
+	}
+	if _, err := svc.Get(ctx, override.ID); err == nil {
+		t.Fatalf("issue #287: independently-deleted override resurrected by truncation restore")
+	}
+}
+
 // TestTrash_PurgeInstanceKeepsExdate verifies that purging an instance-kind
 // entry drops the log row but leaves the EXDATE on the master — the
 // "forever delete" semantics for per-instance deletes.
