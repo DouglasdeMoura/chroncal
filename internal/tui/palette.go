@@ -482,7 +482,7 @@ func renderPaletteRow(c PaletteCommand, width int, selected bool, theme Theme) s
 	title := c.Title
 	avail := width - prefixW - rightW
 	if avail < lipgloss.Width(title)+1 {
-		title = truncate(title, max(avail-1, 3))
+		title = truncateTo(title, max(avail-1, 3))
 	}
 	gap := max(avail-lipgloss.Width(title), 1)
 
@@ -556,18 +556,4 @@ func (m PaletteModel) renderFooter(width int) string {
 		Width(width).
 		Align(lipgloss.Center).
 		Render(hint)
-}
-
-func truncate(s string, n int) string {
-	if n <= 0 {
-		return ""
-	}
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	if n <= 1 {
-		return string(r[:n])
-	}
-	return string(r[:n-1]) + "…"
 }
