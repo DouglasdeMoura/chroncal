@@ -739,6 +739,12 @@ func parseDateListFromProps(props ical.Props, propName string) string {
 			if p == "" {
 				continue
 			}
+			// RDATE;VALUE=PERIOD values are "start/end" or "start/duration"
+			// (RFC 5545 §3.8.5.2). Keep the start instant; the period's
+			// duration is not represented in the comma-separated RDATE store.
+			if i := strings.IndexByte(p, '/'); i >= 0 {
+				p = p[:i]
+			}
 			if strings.EqualFold(prop.Params.Get("VALUE"), "DATE") {
 				if t, err := time.Parse("20060102", p); err == nil {
 					dates = append(dates, t.Format("2006-01-02"))
