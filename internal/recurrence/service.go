@@ -692,6 +692,18 @@ type ExportFilterParams struct {
 	To         time.Time
 }
 
+// rangeBoundUTC formats a date-range query bound as an RFC3339 string in UTC,
+// or "" for the zero time. Normalizing to UTC is required because these bounds
+// are compared lexically against the UTC-stored start/end strings (issue #305):
+// a non-UTC offset left in the formatted string breaks that comparison near
+// window edges.
+func rangeBoundUTC(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
 // ExportExpandedByDateRange returns recurring event masters (not expanded
 // instances) that have at least one occurrence in [from,to), merged with
 // non-recurring events whose start_time is in range. This is for ICS export
@@ -699,14 +711,8 @@ type ExportFilterParams struct {
 // instances. All filters (calendar, category, status) are applied at the
 // SQL level.
 func (s *Service) ExportExpandedByDateRange(ctx context.Context, p ExportFilterParams) ([]event.Event, error) {
-	fromStr := ""
-	toStr := ""
-	if !p.From.IsZero() {
-		fromStr = p.From.Format(time.RFC3339)
-	}
-	if !p.To.IsZero() {
-		toStr = p.To.Format(time.RFC3339)
-	}
+	fromStr := rangeBoundUTC(p.From)
+	toStr := rangeBoundUTC(p.To)
 
 	rangeRows, err := s.q.ListEventsForExport(ctx, storage.EventFilterParams{
 		CalendarID:   p.CalendarID,
@@ -1040,15 +1046,9 @@ type EventListParams struct {
 // otherwise recurring masters are returned as-is, matching the
 // todo/journal contract.
 func (s *Service) ListFilteredEvents(ctx context.Context, p EventListParams) ([]event.Event, error) {
-	fromStr := ""
-	toStr := ""
-	hasRange := !p.From.IsZero() || !p.To.IsZero()
-	if !p.From.IsZero() {
-		fromStr = p.From.Format(time.RFC3339)
-	}
-	if !p.To.IsZero() {
-		toStr = p.To.Format(time.RFC3339)
-	}
+	fromStr := rangeBoundUTC(p.From)
+	toStr := rangeBoundUTC(p.To)
+	hasRange := fromStr != "" || toStr != ""
 
 	rangeRows, err := s.q.ListEventsFiltered(ctx, storage.EventFilterParams{
 		CalendarID:     p.CalendarID,
