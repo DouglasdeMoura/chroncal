@@ -472,23 +472,28 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		if err == nil {
 			existing := timeutil.ParseTimeList(storage.NullableToString(master.Exdates))
 			recIDTime, parseErr := timeutil.ParseRecurrenceID(td.RecurrenceID)
-			if parseErr == nil {
-				existing = append(existing, recIDTime)
-				if err := qtx.UpdateTodoExdates(ctx, storage.UpdateTodoExdatesParams{
-					Exdates: storage.StringToNullable(timeutil.SerializeTimeList(existing)),
-					ID:      master.ID,
-				}); err != nil {
-					return fmt.Errorf("update exdates: %w", err)
-				}
-				// Record provenance so restore knows this EXDATE was
-				// delete-added (and may be stripped) rather than imported.
-				if err := qtx.RecordTodoExdateDelete(ctx, storage.RecordTodoExdateDeleteParams{
-					CalendarID:   master.CalendarID,
-					Uid:          td.UID,
-					RecurrenceID: td.RecurrenceID,
-				}); err != nil {
-					return fmt.Errorf("record exdate delete: %w", err)
-				}
+			if parseErr != nil {
+				// A malformed recurrence_id can't be excluded from the
+				// master, so soft-deleting the override would resurrect the
+				// occurrence via series expansion. Fail loudly instead — the
+				// restore path treats the same parse failure as fatal.
+				return fmt.Errorf("parse recurrence_id %q: %w", td.RecurrenceID, parseErr)
+			}
+			existing = append(existing, recIDTime)
+			if err := qtx.UpdateTodoExdates(ctx, storage.UpdateTodoExdatesParams{
+				Exdates: storage.StringToNullable(timeutil.SerializeTimeList(existing)),
+				ID:      master.ID,
+			}); err != nil {
+				return fmt.Errorf("update exdates: %w", err)
+			}
+			// Record provenance so restore knows this EXDATE was
+			// delete-added (and may be stripped) rather than imported.
+			if err := qtx.RecordTodoExdateDelete(ctx, storage.RecordTodoExdateDeleteParams{
+				CalendarID:   master.CalendarID,
+				Uid:          td.UID,
+				RecurrenceID: td.RecurrenceID,
+			}); err != nil {
+				return fmt.Errorf("record exdate delete: %w", err)
 			}
 		}
 

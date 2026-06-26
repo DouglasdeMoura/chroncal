@@ -157,6 +157,57 @@ func TestSoftDelete_RestoreOverrideByIDClearsMasterEXDATE(t *testing.T) {
 	}
 }
 
+// TestSoftDelete_MalformedRecurrenceID is the regression test for
+// issue #120: deleting an override whose recurrence_id cannot be parsed
+// must fail loudly rather than soft-delete the row while silently
+// skipping the EXDATE addition. Otherwise the override is hidden but the
+// master keeps expanding the occurrence, resurrecting the "deleted" slot.
+// The restore path already propagates this parse error; delete must too.
+func TestSoftDelete_MalformedRecurrenceID(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:            "malformed-recid",
+		CalendarID:     1,
+		Title:          "Weekly Review",
+		StartTime:      time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;COUNT=3",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	override, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:          master.UID,
+		CalendarID:   1,
+		Title:        "Weekly Review (moved)",
+		StartTime:    time.Date(2026, 4, 8, 14, 0, 0, 0, time.UTC),
+		EndTime:      time.Date(2026, 4, 8, 15, 0, 0, 0, time.UTC),
+		RecurrenceID: "2026-04-08T10:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	// Simulate corrupt/imported data: a non-parseable recurrence_id.
+	if _, err := svc.db.ExecContext(ctx,
+		"UPDATE events SET recurrence_id = ? WHERE id = ?", "not-a-date", override.ID); err != nil {
+		t.Fatalf("corrupt recurrence_id: %v", err)
+	}
+
+	// Delete must fail rather than silently skip the EXDATE addition.
+	if err := svc.Delete(ctx, override.ID); err == nil {
+		t.Fatal("Delete with malformed recurrence_id should fail, got nil")
+	}
+
+	// The override must remain live (transaction rolled back), so the
+	// occurrence is still represented by the override and not resurrected.
+	if _, err := svc.Get(ctx, override.ID); err != nil {
+		t.Fatalf("override should still be live after failed delete: %v", err)
+	}
+}
+
 func TestSoftDelete_RestoreByUIDClearsOverrideEXDATEs(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()

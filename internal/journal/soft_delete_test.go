@@ -217,6 +217,51 @@ func TestSoftDelete_RestoreOverrideClearsExdate(t *testing.T) {
 	}
 }
 
+// TestSoftDelete_MalformedRecurrenceID is the regression test for
+// issue #120: deleting an override whose recurrence_id cannot be parsed
+// must fail loudly rather than soft-delete the row while silently
+// skipping the EXDATE addition. Otherwise the override is hidden but the
+// master keeps expanding the occurrence, resurrecting the "deleted" slot.
+// The restore path already propagates this parse error; delete must too.
+func TestSoftDelete_MalformedRecurrenceID(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "daily-uid", CalendarID: 1, Summary: "Daily Journal",
+		StartDate:      "2026-04-01",
+		RecurrenceRule: "FREQ=DAILY;COUNT=5",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	override, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: master.UID, CalendarID: 1, Summary: "Daily Journal (amended)",
+		StartDate:    "2026-04-03",
+		RecurrenceID: time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC).Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	// Simulate corrupt/imported data: a non-parseable recurrence_id.
+	if _, err := svc.db.ExecContext(ctx,
+		"UPDATE journals SET recurrence_id = ? WHERE id = ?", "not-a-date", override.ID); err != nil {
+		t.Fatalf("corrupt recurrence_id: %v", err)
+	}
+
+	// Delete must fail rather than silently skip the EXDATE addition.
+	if err := svc.Delete(ctx, override.ID); err == nil {
+		t.Fatal("Delete with malformed recurrence_id should fail, got nil")
+	}
+
+	// The override must remain live (transaction rolled back), so the
+	// occurrence is still represented by the override and not resurrected.
+	if _, err := svc.Get(ctx, override.ID); err != nil {
+		t.Fatalf("override should still be live after failed delete: %v", err)
+	}
+}
+
 // TestSoftDelete_RestoreByUIDClearsExdate is the regression test for
 // issue #72: restoring a recurring series by UID must strip the EXDATEs
 // the instance-delete path added to the master, just like RestoreByID
