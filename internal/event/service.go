@@ -529,8 +529,9 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 	}
 	evt := FromStorage(r)
 
-	// If this is a recurring master, check for overrides.
-	if evt.RecurrenceRule != "" && evt.RecurrenceID == "" {
+	// If this is a recurring master, check for overrides. RDATE-only masters
+	// (no RRULE) are recurring too, so guard on either rule or RDATEs (#415).
+	if (evt.RecurrenceRule != "" || evt.RDates != "") && evt.RecurrenceID == "" {
 		overrides, err := s.q.ListOverridesByUID(ctx, evt.UID)
 		if err != nil {
 			return fmt.Errorf("check overrides: %w", err)

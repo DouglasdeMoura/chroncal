@@ -510,6 +510,34 @@ func TestDelete_MasterWithOverridesRefused(t *testing.T) {
 	}
 }
 
+// TestDelete_RDateMasterWithOverridesRefused covers an RDATE-only recurring
+// master (no RRULE). Its overrides must still block single-row deletion;
+// otherwise the master is soft-deleted and the override rows are orphaned
+// (issue #415).
+func TestDelete_RDateMasterWithOverridesRefused(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	svc.UpsertByUID(ctx, UpsertParams{
+		UID: "del-rdate-master", CalendarID: 1, Title: "RDATE series",
+		StartTime: time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC),
+		RDates:    "2026-04-08T10:00:00Z",
+	})
+	svc.UpsertByUID(ctx, UpsertParams{
+		UID: "del-rdate-master", CalendarID: 1, Title: "RDATE series (moved)",
+		StartTime:    time.Date(2026, 4, 8, 14, 0, 0, 0, time.UTC),
+		EndTime:      time.Date(2026, 4, 8, 15, 0, 0, 0, time.UTC),
+		RecurrenceID: "2026-04-08T10:00:00Z",
+	})
+
+	master, _ := svc.GetByUID(ctx, "del-rdate-master")
+	err := svc.Delete(ctx, master.ID)
+	if !errors.Is(err, ErrHasOverrides) {
+		t.Fatalf("Delete RDATE master with overrides: got %v, want ErrHasOverrides", err)
+	}
+}
+
 func TestDelete_MasterNoOverridesSucceeds(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
