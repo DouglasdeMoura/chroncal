@@ -101,8 +101,15 @@ func TestNormalizeAndFormatIfMatch(t *testing.T) {
 		{"strong_spaced", ` "abc" `, "abc", `"abc"`},
 		// Weak validators must keep their W/ marker through normalization and
 		// must NOT be asserted as strong validators in If-Match (RFC 7232 §3.1).
-		{"weak", `W/"abc"`, `W/abc`, ""},
-		{"weak_spaced", `W/ "abc"`, `W/abc`, ""},
+		{"weak", `W/"abc"`, `W/"abc"`, ""},
+		{"weak_spaced", `W/ "abc"`, `W/"abc"`, ""},
+		// A strong validator whose opaque value merely starts with "W/" must not
+		// be misread as weak: the weak marker is "W/" before the opening quote.
+		{"strong_w_prefix", `"W/abc"`, `W/abc`, `"W/abc"`},
+		// The normalized strong form re-enters normalizeETag/formatIfMatch (the
+		// stored ETag is the normalized value), so the classification must be
+		// idempotent and keep emitting an If-Match.
+		{"strong_w_prefix_normalized", `W/abc`, `W/abc`, `"W/abc"`},
 		{"empty", "", "", ""},
 	}
 
@@ -145,8 +152,8 @@ func TestClientPutResourceWeakETagOmitsIfMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PutResource: %v", err)
 	}
-	if etag != `W/etag-after` {
-		t.Fatalf("etag = %q, want %q", etag, `W/etag-after`)
+	if etag != `W/"etag-after"` {
+		t.Fatalf("etag = %q, want %q", etag, `W/"etag-after"`)
 	}
 }
 

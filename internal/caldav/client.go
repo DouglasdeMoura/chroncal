@@ -534,21 +534,31 @@ func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
 	return 0, false
 }
 
-// normalizeETag strips surrounding whitespace and the quotes from an ETag,
-// preserving the weak "W/" marker (RFC 7232 §2.3) so callers can tell a weak
-// validator apart from a strong one. Weak tags are kept as "W/<opaque>", strong
-// tags as "<opaque>". Comparisons elsewhere are opaque equality, which stays
-// consistent because both sides flow through this function.
+// normalizeETag strips surrounding whitespace and the outer quotes from an
+// ETag, preserving the weak "W/" marker (RFC 7232 §2.3) so callers can tell a
+// weak validator apart from a strong one. Weak tags are kept quoted as
+// `W/"<opaque>"`, strong tags as bare `<opaque>`. Retaining the quotes on weak
+// tags keeps the representation unambiguous: a strong validator whose opaque
+// value happens to start with "W/" (e.g. `"W/abc"` normalizing to `W/abc`)
+// would otherwise be indistinguishable from a weak `W/"abc"`. Because the weak
+// marker is the literal "W/" *before* the opening quote, it is detected before
+// the quotes are stripped. Comparisons elsewhere are opaque equality, which
+// stays consistent because both sides flow through this function, and the
+// function is idempotent so a stored normalized value re-normalizes to itself.
 func normalizeETag(etag string) string {
 	etag = strings.TrimSpace(etag)
 	weak := false
 	if rest, ok := strings.CutPrefix(etag, "W/"); ok {
-		weak = true
-		etag = strings.TrimSpace(rest)
+		// A lenient tolerance for "W/ " (marker followed by space) matches some
+		// servers; only treat it as weak when an opening quote follows.
+		if trimmed := strings.TrimSpace(rest); strings.HasPrefix(trimmed, `"`) {
+			weak = true
+			etag = trimmed
+		}
 	}
 	etag = strings.Trim(etag, `"`)
 	if weak && etag != "" {
-		return "W/" + etag
+		return `W/"` + etag + `"`
 	}
 	return etag
 }
@@ -561,7 +571,10 @@ func normalizeETag(etag string) string {
 // the sync-token/ctag pull comparison instead.
 func formatIfMatch(etag string) string {
 	etag = normalizeETag(etag)
-	if etag == "" || strings.HasPrefix(etag, "W/") {
+	// A weak validator normalizes to `W/"<opaque>"`; the `W/"` prefix (marker
+	// plus opening quote) distinguishes it from a strong opaque value that
+	// merely begins with "W/".
+	if etag == "" || strings.HasPrefix(etag, `W/"`) {
 		return ""
 	}
 	return `"` + etag + `"`
