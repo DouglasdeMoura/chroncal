@@ -1732,6 +1732,16 @@ func (m EventFormModel) save(f *Form) tea.Cmd {
 	endDay := day
 	if m.rangeHasEnd {
 		endDay = m.rangeEndDate
+		// rangeEndDate holds the last *included* day (multiDayEndDate
+		// subtracts the exclusive midnight day for display). A midnight
+		// end time means the event runs through the end of that day, i.e.
+		// to exclusive midnight of the following day, so re-add the day
+		// here to keep the save path symmetric with the display path and
+		// avoid silently shifting the end back 24h (issue #208). Mirrors
+		// the all-day branch's endDay.AddDate(0, 0, 1).
+		if et.Hour() == 0 && et.Minute() == 0 {
+			endDay = endDay.AddDate(0, 0, 1)
+		}
 	}
 	end := time.Date(endDay.Year(), endDay.Month(), endDay.Day(),
 		et.Hour(), et.Minute(), 0, 0, loc).UTC()
