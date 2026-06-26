@@ -413,62 +413,17 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 		})
 	}
 
-	// Batch-fetch every master's overrides in one query, then group by UID. A
-	// failed override fetch must not render the master as if it had none —
-	// propagate so callers don't silently show a stale, un-overridden series.
-	overridesByUID, err := s.eventOverridesByUID(ctx, recurRows)
+	// Merge recurring masters with their overrides through the shared engine.
+	// expandedEventKind keeps ExpandedEvent as both the master Model and the
+	// emitted output, so each occurrence's InstanceTime survives (unlike
+	// expandRecurringRows, which folds the occurrence time into Event.Start/End).
+	// The engine batch-fetches overrides and propagates any fetch error, so a
+	// failed lookup never renders a master as if it had none.
+	recurResults, err := expandRecurringRowsBy(ctx, expandedEventKind(s), recurRows, from, to)
 	if err != nil {
 		return nil, err
 	}
-
-	for _, row := range recurRows {
-		evt := event.FromStorage(row)
-		expanded := ExpandEvent(evt, from, to)
-
-		overrides := overridesByUID[row.Uid]
-		overridden := make(map[string]struct{}, len(overrides))
-		for _, ov := range overrides {
-			overridden[canonicalRecurrenceID(ov.RecurrenceID)] = struct{}{}
-		}
-
-		// Emit master instances, skipping any slot that has been overridden;
-		// the override is emitted separately below at its own occurrence time.
-		for _, inst := range expanded {
-			instKey := inst.InstanceTime.UTC().Format(time.RFC3339)
-			if _, ok := overridden[instKey]; ok {
-				continue
-			}
-			results = append(results, inst)
-		}
-
-		// Overrides are the exception, not the rule; skip the override work
-		// (including the second RRULE parse the checker needs) for the common
-		// case of a master with none.
-		if len(overrides) == 0 {
-			continue
-		}
-
-		// Emit overrides whose own occurrence falls within [from, to). A moved
-		// occurrence belongs to its new day, not the day of the slot it replaced.
-		// The master's RRULE is parsed once for all of its overrides.
-		checker := newEventOccChecker(evt)
-		for _, ov := range overrides {
-			if strings.EqualFold(ov.Status, "CANCELLED") {
-				continue
-			}
-			oe := event.FromStorage(ov)
-			if !overlapsWindow(oe.StartTime, oe.EndTime, from, to) {
-				continue
-			}
-			if !checker.occursAt(ov.RecurrenceID) {
-				continue // orphan override (no matching master occurrence)
-			}
-			results = append(results, ExpandedEvent{
-				Event:        oe,
-				InstanceTime: oe.StartTime,
-			})
-		}
-	}
+	results = append(results, recurResults...)
 
 	if len(results) > 0 {
 		ids := make([]int64, len(results))
@@ -635,6 +590,33 @@ func expandRecurringRowsBy[Row any, Model any, Inst any](ctx context.Context, k 
 		}
 	}
 	return result, nil
+}
+
+// expandedEventKind drives expandRecurringRowsBy for ListExpandedEvents, which
+// needs each occurrence's InstanceTime preserved. ExpandedEvent serves as both
+// the master Model and the emitted output, so applyInstance is identity: the
+// per-occurrence InstanceTime that expandRecurringRows discards (it collapses
+// the occurrence into Event.Start/End) is kept here.
+func expandedEventKind(s *Service) recurringKind[storage.Event, ExpandedEvent, ExpandedEvent] {
+	return recurringKind[storage.Event, ExpandedEvent, ExpandedEvent]{
+		fromRow: func(r storage.Event) ExpandedEvent {
+			return ExpandedEvent{Event: event.FromStorage(r)}
+		},
+		expand: func(m ExpandedEvent, from, to time.Time) []ExpandedEvent {
+			return ExpandEvent(m.Event, from, to)
+		},
+		instTime:       func(i ExpandedEvent) time.Time { return i.InstanceTime },
+		applyInstance:  func(i ExpandedEvent) ExpandedEvent { return i },
+		uid:            func(r storage.Event) string { return r.Uid },
+		status:         func(r storage.Event) string { return r.Status },
+		recurrenceID:   func(r storage.Event) string { return r.RecurrenceID },
+		overridesByUID: s.eventOverridesByUID,
+		newOccChecker:  func(m ExpandedEvent) occChecker { return newEventOccChecker(m.Event) },
+		emitOverride: func(o storage.Event, from, to time.Time) (ExpandedEvent, bool) {
+			oe := event.FromStorage(o)
+			return ExpandedEvent{Event: oe, InstanceTime: oe.StartTime}, overlapsWindow(oe.StartTime, oe.EndTime, from, to)
+		},
+	}
 }
 
 // expandRecurringRows expands recurring event rows into Event instances with
