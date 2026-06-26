@@ -492,6 +492,34 @@ func TestExport_AlarmRepeatWithDuration(t *testing.T) {
 	}
 }
 
+// TestExport_AlarmDurationWithoutRepeat guards RFC 5545 §3.8.6.3: DURATION
+// MUST be paired with REPEAT. An alarm with Duration set but Repeat == 0 must
+// not emit a bare DURATION, which strict CalDAV servers (e.g. Google) reject
+// with HTTP 400, blocking the whole resource. This is the inverse of the bug
+// fixed for bare REPEAT (issue #363).
+func TestExport_AlarmDurationWithoutRepeat(t *testing.T) {
+	t.Parallel()
+	events := []event.Event{{
+		UID:       "alarm-duration-no-repeat",
+		Title:     "Alarm Event",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		Alarms: []model.Alarm{
+			{Action: "DISPLAY", TriggerValue: "-PT15M", Description: "no repeat count", Duration: "PT5M"},
+		},
+	}}
+
+	data, _ := ExportEvents(events, "")
+	ics := string(data)
+	if strings.Contains(ics, "\nDURATION:") {
+		t.Errorf("emitted DURATION without REPEAT (non-conformant per RFC 5545 §3.8.6.3):\n%s", ics)
+	}
+}
+
 func TestExport_EventWithAttendees(t *testing.T) {
 	t.Parallel()
 	events := []event.Event{{

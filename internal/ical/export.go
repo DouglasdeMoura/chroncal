@@ -689,18 +689,16 @@ func buildValarm(alarm model.Alarm) *ical.Component {
 	if alarm.Summary != "" {
 		valarm.Props.SetText(ical.PropSummary, alarm.Summary)
 	}
-	if alarm.Duration != "" {
+	// RFC 5545 §3.8.6.3: DURATION and REPEAT MUST appear together; emitting
+	// either one without the other yields an invalid VALARM that strict CalDAV
+	// servers (e.g. Google) reject with HTTP 400, blocking the whole resource.
+	if alarm.Repeat > 0 && alarm.Duration != "" {
 		p := &ical.Prop{Name: ical.PropDuration}
 		p.Value = alarm.Duration
 		valarm.Props.Set(p)
-	}
-	// RFC 5545 §3.8.6.2: REPEAT MUST be paired with DURATION. Emitting a
-	// bare REPEAT yields an invalid VALARM that strict CalDAV servers
-	// (e.g. Google) reject with HTTP 400, blocking the whole resource.
-	if alarm.Repeat > 0 && alarm.Duration != "" {
-		p := &ical.Prop{Name: "REPEAT"}
-		p.Value = strconv.Itoa(alarm.Repeat)
-		valarm.Props.Set(p)
+		p2 := &ical.Prop{Name: "REPEAT"}
+		p2.Value = strconv.Itoa(alarm.Repeat)
+		valarm.Props.Set(p2)
 	}
 	// ACKNOWLEDGED (RFC 9074) — round-trip only.
 	if alarm.Acknowledged != "" {
