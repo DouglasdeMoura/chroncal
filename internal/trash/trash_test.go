@@ -261,3 +261,71 @@ func fillNonZero(t *testing.T, v reflect.Value, skip string) {
 		}
 	}
 }
+
+// TestService_ListPopulatesCategories soft-deletes an event, todo, and
+// journal that each carry categories, then verifies List surfaces those
+// categories on the unified Entry. Without category population the trash
+// detail "Tags" row renders blank (issue #224).
+func TestService_ListPopulatesCategories(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	events := event.NewService(db, q)
+	todos := todo.NewService(db, q)
+	journals := journal.NewService(db, q)
+	svc := NewService(events, todos, journals)
+	ctx := context.Background()
+
+	ev, err := events.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "Cat Event",
+		StartTime:  time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 5, 1, 11, 0, 0, 0, time.UTC),
+		Categories: "work,urgent",
+	})
+	if err != nil {
+		t.Fatalf("create event: %v", err)
+	}
+	td, err := todos.Create(ctx, todo.CreateParams{CalendarID: 1, Summary: "Cat Todo"})
+	if err != nil {
+		t.Fatalf("create todo: %v", err)
+	}
+	if err := todos.ReplaceCategories(ctx, td.ID, []string{"home", "chores"}); err != nil {
+		t.Fatalf("todo categories: %v", err)
+	}
+	j, err := journals.Create(ctx, journal.CreateParams{CalendarID: 1, Summary: "Cat Journal", StartDate: "2026-05-03"})
+	if err != nil {
+		t.Fatalf("create journal: %v", err)
+	}
+	if err := journals.ReplaceCategories(ctx, j.ID, []string{"notes", "personal"}); err != nil {
+		t.Fatalf("journal categories: %v", err)
+	}
+
+	if err := events.Delete(ctx, ev.ID); err != nil {
+		t.Fatalf("delete event: %v", err)
+	}
+	if err := todos.Delete(ctx, td.ID); err != nil {
+		t.Fatalf("delete todo: %v", err)
+	}
+	if err := journals.Delete(ctx, j.ID); err != nil {
+		t.Fatalf("delete journal: %v", err)
+	}
+
+	entries, err := svc.List(ctx, 1)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	// Categories come back normalized (sorted) by JoinCategoryList.
+	want := map[Kind]string{
+		KindEvent:   "urgent,work",
+		KindTodo:    "chores,home",
+		KindJournal: "notes,personal",
+	}
+	got := make(map[Kind]string, len(entries))
+	for _, e := range entries {
+		got[e.Kind] = e.Categories
+	}
+	for kind, wantCats := range want {
+		if got[kind] != wantCats {
+			t.Errorf("%s Categories = %q, want %q", kind.Label(), got[kind], wantCats)
+		}
+	}
+}

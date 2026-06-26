@@ -162,7 +162,9 @@ func (s *Service) ListDeleted(ctx context.Context, calendarID int64) ([]Todo, er
 	if err != nil {
 		return nil, err
 	}
-	return fromStorageSlice(rows), nil
+	todos := fromStorageSlice(rows)
+	s.populateCategories(ctx, todos)
+	return todos, nil
 }
 
 // GetIncludingDeleted returns a todo by ID even if it has been soft-
