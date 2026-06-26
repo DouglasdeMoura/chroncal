@@ -162,6 +162,12 @@ type EventFormModel struct {
 	alarmEditor        AlarmListEditorModel
 	alarmEditorOpen    bool
 
+	// origAttendees retains the full attendee structs from the event being
+	// edited. The People field only surfaces email addresses, so on save we
+	// re-attach each email's original Role/RSVPStatus/CUType/CN instead of
+	// flattening everyone back to defaults (issue #109).
+	origAttendees []model.Attendee
+
 	// Mini-month models for date picker overlays
 	datePicker          MiniMonthModel
 	endsDatePickerModel MiniMonthModel
@@ -445,6 +451,7 @@ func NewEventFormModelForEditInstance(ev event.Event, instanceTime time.Time, ca
 
 	// Pre-fill attendees.
 	if len(ev.Attendees) > 0 {
+		m.origAttendees = append([]model.Attendee(nil), ev.Attendees...)
 		emails := make([]string, 0, len(ev.Attendees))
 		for _, a := range ev.Attendees {
 			emails = append(emails, a.Email)
@@ -1609,19 +1616,37 @@ func (m EventFormModel) save(f *Form) tea.Cmd {
 	title := strings.TrimSpace(m.titleField.Value())
 	tzName := m.timezoneField.Value()
 
-	// Parse comma-separated emails into attendees.
+	// Parse comma-separated emails into attendees. The People field only
+	// exposes email addresses, so re-attach each email's original participation
+	// metadata (Role/RSVPStatus/CUType/CN, etc.) instead of overwriting it with
+	// defaults. New emails get the standard defaults (issue #109).
+	orig := make(map[string]model.Attendee, len(m.origAttendees))
+	for _, a := range m.origAttendees {
+		orig[strings.ToLower(a.Email)] = a
+	}
 	var attendees []model.Attendee
 	if raw := strings.TrimSpace(m.peopleField.Value()); raw != "" {
+		seen := make(map[string]bool)
 		for _, part := range strings.Split(raw, ",") {
 			email := strings.TrimSpace(part)
-			if email != "" {
-				attendees = append(attendees, model.Attendee{
-					Email:      email,
-					Role:       "REQ-PARTICIPANT",
-					RSVPStatus: "NEEDS-ACTION",
-					CUType:     "INDIVIDUAL",
-				})
+			if email == "" {
+				continue
 			}
+			key := strings.ToLower(email)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			if prev, ok := orig[key]; ok {
+				attendees = append(attendees, prev)
+				continue
+			}
+			attendees = append(attendees, model.Attendee{
+				Email:      email,
+				Role:       "REQ-PARTICIPANT",
+				RSVPStatus: "NEEDS-ACTION",
+				CUType:     "INDIVIDUAL",
+			})
 		}
 	}
 

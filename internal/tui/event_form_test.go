@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
 	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -395,4 +396,56 @@ func TestEventForm_EnterOnAllDayDisablesTimeImmediately(t *testing.T) {
 
 	assert.True(t, m.allDayField.Checked())
 	assert.False(t, m.timeField.IsFocusable())
+}
+
+// TestEventForm_EditPreservesAttendeeMetadata guards against issue #109:
+// editing an event must not flatten attendee Role/RSVPStatus/CUType/CN back to
+// defaults. A CHAIR who has ACCEPTED must remain a CHAIR who has ACCEPTED after
+// an unrelated title edit, and unchanged attendees must keep their display name.
+func TestEventForm_EditPreservesAttendeeMetadata(t *testing.T) {
+	m, _ := NewEventFormModelForEdit(event.Event{
+		ID:         7,
+		CalendarID: 1,
+		Title:      "Standup",
+		Attendees: []model.Attendee{
+			{
+				Email:      "chair@example.com",
+				Name:       "Chair Person",
+				Role:       "CHAIR",
+				RSVPStatus: "ACCEPTED",
+				CUType:     "INDIVIDUAL",
+			},
+			{
+				Email:      "room@example.com",
+				Name:       "Big Room",
+				Role:       "OPT-PARTICIPANT",
+				RSVPStatus: "TENTATIVE",
+				CUType:     "ROOM",
+			},
+		},
+	}, testEventFormCalendars(), Theme{})
+
+	m.titleField.SetValue("Standup (renamed)")
+
+	cmd := m.save(&m.form)
+	require.NotNil(t, cmd)
+	msg, ok := cmd().(EventFormSaveMsg)
+	require.True(t, ok)
+
+	require.Len(t, msg.Attendees, 2)
+	byEmail := map[string]model.Attendee{}
+	for _, a := range msg.Attendees {
+		byEmail[a.Email] = a
+	}
+
+	chair := byEmail["chair@example.com"]
+	assert.Equal(t, "CHAIR", chair.Role)
+	assert.Equal(t, "ACCEPTED", chair.RSVPStatus)
+	assert.Equal(t, "Chair Person", chair.Name)
+
+	room := byEmail["room@example.com"]
+	assert.Equal(t, "OPT-PARTICIPANT", room.Role)
+	assert.Equal(t, "TENTATIVE", room.RSVPStatus)
+	assert.Equal(t, "ROOM", room.CUType)
+	assert.Equal(t, "Big Room", room.Name)
 }
