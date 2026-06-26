@@ -676,7 +676,7 @@ func (s *Service) UpdateInstance(ctx context.Context, uid string, instanceTime t
 	}
 
 	e := fromStorage(r)
-	e.Categories = strings.Join(carriedCats, ",")
+	e.Categories = timeutil.JoinCategoryList(carriedCats)
 	_ = storage.MarkResourceDirty(ctx, s.db, master.CalendarID, uid, "event")
 	return e, nil
 }
@@ -857,7 +857,7 @@ func (s *Service) UpdateFromInstance(ctx context.Context, uid string, instanceTi
 	}
 
 	e := fromStorage(r)
-	e.Categories = strings.Join(carriedCats, ",")
+	e.Categories = timeutil.JoinCategoryList(carriedCats)
 	_ = storage.MarkResourceDirty(ctx, s.db, master.CalendarID, uid, "event")
 	_ = storage.MarkResourceDirty(ctx, s.db, p.CalendarID, newUID, "event")
 	return e, nil
@@ -1594,7 +1594,7 @@ func (s *Service) populateSingleCategories(ctx context.Context, e *Event) {
 		log.Printf("populateSingleCategories failed for event %d: %v", e.ID, err)
 		return
 	}
-	e.Categories = strings.Join(cats, ",")
+	e.Categories = timeutil.JoinCategoryList(cats)
 }
 
 func (s *Service) populateCategories(ctx context.Context, events []Event) {
@@ -1616,7 +1616,7 @@ func (s *Service) populateCategories(ctx context.Context, events []Event) {
 	}
 	for i := range events {
 		if cats, ok := catMap[events[i].ID]; ok {
-			events[i].Categories = strings.Join(cats, ",")
+			events[i].Categories = timeutil.JoinCategoryList(cats)
 		}
 	}
 }

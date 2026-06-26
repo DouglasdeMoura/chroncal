@@ -752,7 +752,7 @@ func (s *Service) populateSingleCategories(ctx context.Context, j *Journal) {
 	for i, r := range rows {
 		cats[i] = r.Category
 	}
-	j.Categories = strings.Join(cats, ",")
+	j.Categories = timeutil.JoinCategoryList(cats)
 }
 
 func (s *Service) populateCategories(ctx context.Context, journals []Journal) {
@@ -773,7 +773,7 @@ func (s *Service) populateCategories(ctx context.Context, journals []Journal) {
 	}
 	for i := range journals {
 		if cats, ok := catMap[journals[i].ID]; ok {
-			journals[i].Categories = strings.Join(cats, ",")
+			journals[i].Categories = timeutil.JoinCategoryList(cats)
 		}
 	}
 }

@@ -368,7 +368,7 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 				}
 				for i := range results {
 					if c, ok := catMap[results[i].ID]; ok {
-						results[i].Categories = strings.Join(c, ",")
+						results[i].Categories = timeutil.JoinCategoryList(c)
 					}
 				}
 			}
@@ -660,7 +660,7 @@ func (s *Service) populateEventCategories(ctx context.Context, events []event.Ev
 	}
 	for i := range events {
 		if cats, ok := catMap[events[i].ID]; ok {
-			events[i].Categories = strings.Join(cats, ",")
+			events[i].Categories = timeutil.JoinCategoryList(cats)
 		}
 	}
 }
@@ -683,7 +683,7 @@ func (s *Service) populateTodoCategories(ctx context.Context, todos []todo.Todo)
 	}
 	for i := range todos {
 		if cats, ok := catMap[todos[i].ID]; ok {
-			todos[i].Categories = strings.Join(cats, ",")
+			todos[i].Categories = timeutil.JoinCategoryList(cats)
 		}
 	}
 }
@@ -1115,7 +1115,7 @@ func (s *Service) populateJournalCategories(ctx context.Context, journals []jour
 	}
 	for i := range journals {
 		if cats, ok := catMap[journals[i].ID]; ok {
-			journals[i].Categories = strings.Join(cats, ",")
+			journals[i].Categories = timeutil.JoinCategoryList(cats)
 		}
 	}
 }

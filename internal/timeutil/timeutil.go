@@ -116,17 +116,64 @@ func SerializeTimeList(times []time.Time) string {
 	return strings.Join(parts, ",")
 }
 
-// ParseCategoryList splits a comma-separated string into trimmed non-empty values.
+// JoinCategoryList joins category values into a single comma-separated string,
+// backslash-escaping any backslash or comma inside an individual value so the
+// result is an exact inverse of ParseCategoryList. This keeps a category that
+// legitimately contains a comma (e.g. "Foo, Bar") as one value across the
+// in-memory comma-joined representation. Empty/whitespace-only values are
+// dropped.
+func JoinCategoryList(cats []string) string {
+	parts := make([]string, 0, len(cats))
+	for _, c := range cats {
+		if c = strings.TrimSpace(c); c != "" {
+			parts = append(parts, escapeCategory(c))
+		}
+	}
+	return strings.Join(parts, ",")
+}
+
+func escapeCategory(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, ",", `\,`)
+	return s
+}
+
+// ParseCategoryList splits a comma-separated string produced by
+// JoinCategoryList into trimmed non-empty values. Commas escaped as "\," are
+// treated as part of a value rather than separators, and "\\" decodes to a
+// single backslash.
 func ParseCategoryList(s string) []string {
 	if s == "" {
 		return nil
 	}
-	parts := strings.Split(s, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if v := strings.TrimSpace(p); v != "" {
+	var (
+		out     []string
+		b       strings.Builder
+		escaped bool
+	)
+	flush := func() {
+		if v := strings.TrimSpace(b.String()); v != "" {
 			out = append(out, v)
 		}
+		b.Reset()
 	}
+	for _, r := range s {
+		switch {
+		case escaped:
+			b.WriteRune(r)
+			escaped = false
+		case r == '\\':
+			escaped = true
+		case r == ',':
+			flush()
+		default:
+			b.WriteRune(r)
+		}
+	}
+	if escaped {
+		// Trailing lone backslash: preserve it literally.
+		b.WriteByte('\\')
+	}
+	flush()
 	return out
 }

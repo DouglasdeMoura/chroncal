@@ -1246,7 +1246,7 @@ func (s *Service) populateSingleCategories(ctx context.Context, t *Todo) {
 	for j, r := range rows {
 		cats[j] = r.Category
 	}
-	t.Categories = strings.Join(cats, ",")
+	t.Categories = timeutil.JoinCategoryList(cats)
 }
 
 func (s *Service) populateCategories(ctx context.Context, todos []Todo) {
@@ -1267,7 +1267,7 @@ func (s *Service) populateCategories(ctx context.Context, todos []Todo) {
 	}
 	for i := range todos {
 		if cats, ok := catMap[todos[i].ID]; ok {
-			todos[i].Categories = strings.Join(cats, ",")
+			todos[i].Categories = timeutil.JoinCategoryList(cats)
 		}
 	}
 }

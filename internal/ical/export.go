@@ -99,7 +99,7 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 			// SetTextList handles escaping within individual values and
 			// uses unescaped commas as separators per RFC 5545 Section 3.8.1.2.
 			catProp := &ical.Prop{Name: ical.PropCategories}
-			catProp.SetTextList(strings.Split(e.Categories, ","))
+			catProp.SetTextList(e.ParseCategories())
 			vevent.Props.Set(catProp)
 		}
 
@@ -432,7 +432,7 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 
 		if t.Categories != "" {
 			catProp := &ical.Prop{Name: ical.PropCategories}
-			catProp.SetTextList(strings.Split(t.Categories, ","))
+			catProp.SetTextList(t.ParseCategories())
 			vtodo.Props.Set(catProp)
 		}
 
@@ -1018,7 +1018,7 @@ func ExportJournals(journals []journal.Journal, calName string) ([]byte, error) 
 
 		if j.Categories != "" {
 			catProp := &ical.Prop{Name: ical.PropCategories}
-			catProp.SetTextList(strings.Split(j.Categories, ","))
+			catProp.SetTextList(j.ParseCategories())
 			vjournal.Props.Set(catProp)
 		}
 

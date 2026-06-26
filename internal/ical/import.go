@@ -19,6 +19,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/freebusy"
 	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/timeutil"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
@@ -533,14 +534,13 @@ func parseCategories(ve ical.Event) string {
 		// handling both RFC-correct "CATEGORIES:a,b" and legacy
 		// escaped "CATEGORIES:a\,b" inputs.
 		if list, err := prop.TextList(); err == nil {
-			for _, s := range list {
-				if s = strings.TrimSpace(s); s != "" {
-					cats = append(cats, s)
-				}
-			}
+			cats = append(cats, list...)
 		}
 	}
-	return strings.Join(cats, ",")
+	// Join with comma-escaping so a category value that itself contains a
+	// comma (e.g. "Foo, Bar") stays a single value through the in-memory
+	// comma-joined representation instead of fragmenting on round-trip.
+	return timeutil.JoinCategoryList(cats)
 }
 
 // parseAlarm extracts a model.Alarm from a VALARM component.
@@ -713,14 +713,10 @@ func parseCategoriesFromProps(props ical.Props) string {
 	var cats []string
 	for _, prop := range props.Values(ical.PropCategories) {
 		if list, err := prop.TextList(); err == nil {
-			for _, s := range list {
-				if s = strings.TrimSpace(s); s != "" {
-					cats = append(cats, s)
-				}
-			}
+			cats = append(cats, list...)
 		}
 	}
-	return strings.Join(cats, ",")
+	return timeutil.JoinCategoryList(cats)
 }
 
 func parseDateListFromProps(props ical.Props, propName string) string {

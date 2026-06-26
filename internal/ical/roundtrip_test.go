@@ -2204,3 +2204,53 @@ func TestRoundtrip_Journal(t *testing.T) {
 		}
 	}
 }
+
+// TestRoundtrip_CategoryWithEmbeddedComma guards against fragmenting a single
+// CATEGORIES value that legitimately contains a comma (issue #101). A category
+// like "Foo, Bar" must survive import -> store -> export -> import as one value,
+// not be split into two categories on every round-trip.
+func TestRoundtrip_CategoryWithEmbeddedComma(t *testing.T) {
+	t.Parallel()
+	const ics = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//test//EN
+BEGIN:VEVENT
+UID:cat-comma
+DTSTAMP:20260401T100000Z
+DTSTART:20260401T140000Z
+DTEND:20260401T150000Z
+SUMMARY:Comma Category
+CATEGORIES:Foo\, Bar,Baz
+END:VEVENT
+END:VCALENDAR`
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("imported %d events, want 1", len(result.Events))
+	}
+	if got := result.Events[0].ParseCategories(); len(got) != 2 ||
+		got[0] != "Foo, Bar" || got[1] != "Baz" {
+		t.Fatalf("imported categories = %v, want [\"Foo, Bar\" \"Baz\"]", got)
+	}
+
+	// Round-trip through export and re-import: the comma-bearing category must
+	// still be a single value.
+	data, err := ExportEvents(result.Events, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	reimported, err := ImportFile(strings.NewReader(string(data)))
+	if err != nil {
+		t.Fatalf("reimport: %v", err)
+	}
+	if len(reimported.Events) != 1 {
+		t.Fatalf("reimported %d events, want 1", len(reimported.Events))
+	}
+	got := reimported.Events[0].ParseCategories()
+	if len(got) != 2 || got[0] != "Foo, Bar" || got[1] != "Baz" {
+		t.Fatalf("round-tripped categories = %v, want [\"Foo, Bar\" \"Baz\"]", got)
+	}
+}
