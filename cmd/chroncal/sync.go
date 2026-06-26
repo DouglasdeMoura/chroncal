@@ -275,8 +275,7 @@ Use "chroncal sync conflicts" first to find the conflict ID.`,
 				return err
 			}
 
-			fmt.Printf("Conflict #%d resolved (picked %s)\n", id, pick)
-			return nil
+			return renderSyncResolve(cmd, id, pick)
 		},
 	}
 	cmd.Flags().StringVar(&pick, "pick", "", "Which version to keep: local or server (required)")
@@ -327,6 +326,7 @@ This does not delete your local calendars or entries.`,
 				targetID = target.ID
 			}
 
+			var outcomes []syncResetOutcome
 			for _, c := range cals {
 				if targetID != 0 && c.ID != targetID {
 					continue
@@ -335,16 +335,19 @@ This does not delete your local calendars or entries.`,
 					continue
 				}
 				connected++
+				outcome := syncResetOutcome{Name: c.Name}
 				if err := svc.ResetCalendar(ctx, c.ID); err != nil {
 					failed++
-					fmt.Fprintf(os.Stderr, "reset %s: %s\n", safeText(c.Name), safeText(err.Error()))
-					continue
+					outcome.Err = err.Error()
 				}
-				fmt.Printf("Reset sync state for %q\n", safeText(c.Name))
+				outcomes = append(outcomes, outcome)
 			}
 
 			if calendarName != "" && connected == 0 {
 				return &cliError{Code: "invalid_input", Msg: fmt.Sprintf("calendar %q is not connected to a remote; no sync state to reset", calendarName)}
+			}
+			if err := renderSyncReset(cmd, outcomes); err != nil {
+				return err
 			}
 			if failed > 0 {
 				return &cliError{Code: "error", Msg: fmt.Sprintf("failed to reset %d calendar(s)", failed)}
@@ -397,5 +400,56 @@ func renderSyncRunResults(cmd *cobra.Command, results []*syncPkg.SyncResult, cal
 		writeSyncResult(w, cmd.ErrOrStderr(), r)
 	}
 	fmt.Fprintf(w, "Synced %d calendar(s).\n", len(results))
+	return nil
+}
+
+// renderSyncResolve confirms a resolved conflict using the active --output
+// format so machine consumers get JSON/YAML instead of the prose line.
+func renderSyncResolve(cmd *cobra.Command, id int64, pick string) error {
+	w := cmd.OutOrStdout()
+	if outputFmt != "text" {
+		return printOutput(w, map[string]any{
+			"id":       id,
+			"picked":   pick,
+			"resolved": true,
+		})
+	}
+	fmt.Fprintf(w, "Conflict #%d resolved (picked %s)\n", id, pick)
+	return nil
+}
+
+// syncResetOutcome records the per-calendar result of a reset so both the
+// text and JSON views render from the same data. Err is empty on success.
+type syncResetOutcome struct {
+	Name string
+	Err  string
+}
+
+// renderSyncReset emits per-calendar reset results using --output. Text mode
+// keeps failures on stderr; JSON/YAML fold them into each item's "error" so a
+// script can read the whole batch from stdout.
+func renderSyncReset(cmd *cobra.Command, outcomes []syncResetOutcome) error {
+	w := cmd.OutOrStdout()
+	if outputFmt != "text" {
+		items := make([]map[string]any, 0, len(outcomes))
+		for _, o := range outcomes {
+			item := map[string]any{
+				"calendar_name": o.Name,
+				"reset":         o.Err == "",
+			}
+			if o.Err != "" {
+				item["error"] = o.Err
+			}
+			items = append(items, item)
+		}
+		return printOutput(w, items)
+	}
+	for _, o := range outcomes {
+		if o.Err != "" {
+			fmt.Fprintf(cmd.ErrOrStderr(), "reset %s: %s\n", safeText(o.Name), safeText(o.Err))
+			continue
+		}
+		fmt.Fprintf(w, "Reset sync state for %q\n", safeText(o.Name))
+	}
 	return nil
 }
