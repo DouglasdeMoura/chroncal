@@ -29,6 +29,17 @@ func IsDateOnly(s string) bool {
 	return err == nil
 }
 
+// LocalDay returns midnight at the start of t's local calendar day, in the
+// local location. Unlike t.Truncate(24*time.Hour) — which floors the absolute
+// instant to a multiple of 24h and therefore always aligns to UTC midnight
+// regardless of any preceding .Local() — this computes the day boundary from
+// the local Year/Month/Day, so two instants on the same local calendar day map
+// to the same value even when they straddle UTC midnight.
+func LocalDay(t time.Time) time.Time {
+	l := t.Local()
+	return time.Date(l.Year(), l.Month(), l.Day(), 0, 0, 0, 0, time.Local)
+}
+
 // ParseDate parses s as either a date-only string (YYYY-MM-DD) or an RFC 3339 datetime.
 // Returns zero time if s is empty.
 func ParseDate(s string) time.Time {
