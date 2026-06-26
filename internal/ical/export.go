@@ -111,7 +111,7 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 
 		// RECURRENCE-ID
 		if e.RecurrenceID != "" {
-			emitRecurrenceID(vevent.Props, e.RecurrenceID, e.AllDay)
+			emitRecurrenceID(vevent.Props, e.RecurrenceID, e.AllDay, e.Timezone == "FLOATING")
 		}
 
 		if e.Geo != "" {
@@ -453,7 +453,7 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 			if anchor == "" {
 				anchor = t.DueDate
 			}
-			emitRecurrenceID(vtodo.Props, t.RecurrenceID, timeutil.IsDateOnly(anchor))
+			emitRecurrenceID(vtodo.Props, t.RecurrenceID, timeutil.IsDateOnly(anchor), t.Timezone == "FLOATING")
 		}
 
 		if t.Geo != "" {
@@ -656,18 +656,25 @@ func emitDateListOnComponent(comp *ical.Component, propName, dates string) {
 }
 
 // emitRecurrenceID writes RECURRENCE-ID onto props. recurrenceID is the stored
-// RFC 3339 string. Per RFC 5545 the RECURRENCE-ID value type must match the
-// master's DTSTART: when the component is all-day it is emitted as VALUE=DATE
-// (YYYYMMDD), otherwise as a UTC DATE-TIME. A type mismatch prevents CalDAV
-// servers from binding the override to its master.
-func emitRecurrenceID(props ical.Props, recurrenceID string, allDay bool) {
+// RFC 3339 string. Per RFC 5545 §3.8.4.4 the RECURRENCE-ID value type must
+// match the master's DTSTART: when the component is all-day it is emitted as
+// VALUE=DATE (YYYYMMDD); when floating (no timezone) it is emitted as a
+// floating DATE-TIME (no Z, no TZID); otherwise as a UTC DATE-TIME. A type
+// mismatch prevents CalDAV servers from binding the override to its master.
+func emitRecurrenceID(props ical.Props, recurrenceID string, allDay, floating bool) {
 	t, err := time.Parse(time.RFC3339, recurrenceID)
 	if err != nil {
 		return
 	}
-	if allDay {
+	switch {
+	case allDay:
 		props.SetDate(ical.PropRecurrenceID, t.UTC())
-	} else {
+	case floating:
+		props.Set(&ical.Prop{
+			Name:  ical.PropRecurrenceID,
+			Value: t.UTC().Format("20060102T150405"),
+		})
+	default:
 		props.SetDateTime(ical.PropRecurrenceID, t.UTC())
 	}
 }
@@ -1084,7 +1091,7 @@ func ExportJournals(journals []journal.Journal, calName string) ([]byte, error) 
 		if j.RecurrenceID != "" {
 			// A VJOURNAL is all-day when its DTSTART is a date-only value;
 			// the RECURRENCE-ID type must match.
-			emitRecurrenceID(vjournal.Props, j.RecurrenceID, timeutil.IsDateOnly(j.StartDate))
+			emitRecurrenceID(vjournal.Props, j.RecurrenceID, timeutil.IsDateOnly(j.StartDate), j.Timezone == "FLOATING")
 		}
 
 		if j.DtStamp != "" {
