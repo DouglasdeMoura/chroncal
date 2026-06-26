@@ -19,7 +19,11 @@ const opportunisticPushTimeout = 30 * time.Second
 // reported to w but do not affect the command's exit status — the dirty
 // flag survives and the periodic `chroncal service run` tick will retry.
 // Local-only calendars (no CalDAV account linked) are silent no-ops.
-func pushCalendarAfterWrite(a *app.App, calendarID int64, w io.Writer) {
+//
+// It is a package var so tests can substitute a recording stub to assert
+// that write paths opportunistically push, without standing up a CalDAV
+// server.
+var pushCalendarAfterWrite = func(a *app.App, calendarID int64, w io.Writer) {
 	ctx, cancel := context.WithTimeout(context.Background(), opportunisticPushTimeout)
 	defer cancel()
 

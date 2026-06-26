@@ -122,6 +122,13 @@ again updates existing items instead of blindly duplicating them.`,
 				}
 			}
 
+			// Opportunistically push whatever landed to a CalDAV-linked
+			// calendar, mirroring the event/todo/journal write paths, so an
+			// import doesn't wait for the next `service run` tick (issue #115).
+			if len(summary.events)+len(summary.todos)+len(summary.journals) > 0 {
+				pushCalendarAfterWrite(a, calID, w)
+			}
+
 			// A non-zero exit signals that the import was partial, but the
 			// summary above still reports exactly what landed so the caller
 			// can retry only the failed components.
