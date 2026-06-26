@@ -250,6 +250,44 @@ func TestImport_AllDayEvent(t *testing.T) {
 	}
 }
 
+// Regression test for issue #219: an all-day VEVENT carrying only
+// DTSTART;VALUE=DATE (no DTEND, no DURATION) has an implicit duration of one
+// day per RFC 5545 §3.6.1. Before the fix the timed +1h default leaked in and
+// the all-day truncation collapsed EndTime back to StartTime, storing a
+// zero-length event.
+func TestImport_AllDayEvent_NoEndDefaultsToOneDay(t *testing.T) {
+	t.Parallel()
+	const ics = "BEGIN:VCALENDAR\r\n" +
+		"VERSION:2.0\r\n" +
+		"PRODID:-//test//EN\r\n" +
+		"BEGIN:VEVENT\r\n" +
+		"UID:no-end-allday@example.com\r\n" +
+		"DTSTART;VALUE=DATE:20260415\r\n" +
+		"SUMMARY:All day, no end\r\n" +
+		"END:VEVENT\r\n" +
+		"END:VCALENDAR\r\n"
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %d, want 1", len(result.Events))
+	}
+	evt := result.Events[0]
+	if !evt.AllDay {
+		t.Error("AllDay = false, want true")
+	}
+	wantStart := time.Date(2026, 4, 15, 0, 0, 0, 0, time.UTC)
+	wantEnd := time.Date(2026, 4, 16, 0, 0, 0, 0, time.UTC)
+	if !evt.StartTime.Equal(wantStart) {
+		t.Errorf("StartTime = %v, want %v", evt.StartTime, wantStart)
+	}
+	if !evt.EndTime.Equal(wantEnd) {
+		t.Errorf("EndTime = %v, want %v (one full day)", evt.EndTime, wantEnd)
+	}
+}
+
 // Regression test for issue #64: all-day (VALUE=DATE) events must be stored
 // at midnight UTC, independent of the importing host's timezone. Before the
 // fix the importer built the date in time.Local and then called .UTC(), so the
