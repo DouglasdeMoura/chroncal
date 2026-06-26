@@ -2061,9 +2061,15 @@ func (f Form) ButtonRowView() string {
 	return f.buttonRow()
 }
 
-// FocusedLine returns the first rendered body line for the focused item.
-// It is used by scrollable dialogs to keep the active field visible.
+// FocusedLine returns the first rendered body line for the focused item,
+// or -1 when focus is on an action button (Submit/Cancel/etc.) rather than
+// a body field. It is used by scrollable dialogs to keep the active field
+// visible; callers must leave the scroll position untouched for buttons,
+// otherwise reaching the button row would yank the body back to line 0.
 func (f Form) FocusedLine() int {
+	if f.focused >= len(f.items) {
+		return -1
+	}
 	parts := f.fieldParts()
 	line := 0
 	for i, part := range parts {
@@ -2072,7 +2078,7 @@ func (f Form) FocusedLine() int {
 		}
 		line += max(lipgloss.Height(part), 1)
 	}
-	return 0
+	return -1
 }
 
 func (f Form) View() string {

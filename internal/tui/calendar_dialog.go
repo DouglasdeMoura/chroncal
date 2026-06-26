@@ -904,6 +904,11 @@ func (m *CalendarDialogModel) keepFocusedFieldVisible() {
 		return
 	}
 	line := m.form.FocusedLine()
+	if line < 0 {
+		// Focus is on the button row, not a body field; leave the
+		// scroll position where the last field left it.
+		return
+	}
 	if line < m.body.YOffset() {
 		m.body.ScrollUp(m.body.YOffset() - line)
 		return
