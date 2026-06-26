@@ -1131,7 +1131,14 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 				}
 				p.EndTime = p.StartTime.Add(dur)
 			case cmd.Flags().Changed("date") || cmd.Flags().Changed("time"):
-				p.EndTime = p.StartTime.Add(existing.EndTime.Sub(existing.StartTime))
+				if existing.AllDay && !p.AllDay {
+					// All-day → timed conversion with no explicit span:
+					// default to 1h like `event add`, not the 24h (or
+					// multi-day) all-day duration.
+					p.EndTime = p.StartTime.Add(time.Hour)
+				} else {
+					p.EndTime = p.StartTime.Add(existing.EndTime.Sub(existing.StartTime))
+				}
 			}
 
 			// Parse EXDATE/RDATE after date/time resolution so date-only

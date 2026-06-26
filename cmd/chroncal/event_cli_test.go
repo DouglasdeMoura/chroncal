@@ -281,6 +281,66 @@ func TestEventSearchInvalidDateBound(t *testing.T) {
 	}
 }
 
+func TestEventUpdateAllDayToTimedDefaultsToOneHour(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Work"); err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+	// All-day event (no --time) spans 24h internally.
+	if _, _, err := runChroncalCommand(t,
+		"event", "add", "Holiday",
+		"--calendar", "Work",
+		"--date", "2026-04-21",
+	); err != nil {
+		t.Fatalf("event add: %v", err)
+	}
+
+	// Convert to a timed event with only --time, no --duration/--end-time.
+	if _, _, err := runChroncalCommand(t,
+		"event", "update", "1",
+		"--time", "09:00",
+	); err != nil {
+		t.Fatalf("event update: %v", err)
+	}
+
+	stdout, _, err := runChroncalCommand(t,
+		"event", "list",
+		"--from", "2026-04-21",
+		"--to", "2026-04-21",
+		"--output", "json",
+	)
+	if err != nil {
+		t.Fatalf("event list --output json: %v", err)
+	}
+
+	var events []struct {
+		StartTime string `json:"start_time"`
+		EndTime   string `json:"end_time"`
+		AllDay    bool   `json:"all_day"`
+	}
+	if jerr := json.Unmarshal([]byte(stdout), &events); jerr != nil {
+		t.Fatalf("decode %q: %v", stdout, jerr)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1", len(events))
+	}
+	e := events[0]
+	if e.AllDay {
+		t.Fatalf("event still all-day after --time conversion; all_day = true")
+	}
+	if e.StartTime != "2026-04-21T09:00:00Z" {
+		t.Fatalf("start_time = %q, want %q", e.StartTime, "2026-04-21T09:00:00Z")
+	}
+	// Converting an all-day event to timed with no explicit span should
+	// default to a 1h duration (like `event add`), not preserve the 24h
+	// all-day span.
+	if e.EndTime != "2026-04-21T10:00:00Z" {
+		t.Fatalf("end_time = %q, want %q (1h default, not 24h all-day span)", e.EndTime, "2026-04-21T10:00:00Z")
+	}
+}
+
 func TestNotFoundErrorJSONHasNoWrapPrefix(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 
