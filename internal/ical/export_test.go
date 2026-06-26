@@ -730,3 +730,144 @@ func TestExportJournals_DateOnly(t *testing.T) {
 		}
 	}
 }
+
+// recurrenceIDLine returns the unfolded RECURRENCE-ID property line from an
+// exported iCalendar payload, or "" if none is present.
+func recurrenceIDLine(ics string) string {
+	for _, line := range strings.Split(ics, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.HasPrefix(line, "RECURRENCE-ID") {
+			return line
+		}
+	}
+	return ""
+}
+
+// recurrenceIDValue returns the value portion (after the colon) of a
+// RECURRENCE-ID property line.
+func recurrenceIDValue(line string) string {
+	parts := strings.SplitN(line, ":", 2)
+	if len(parts) != 2 {
+		return ""
+	}
+	return parts[1]
+}
+
+func TestExport_AllDayOverrideRecurrenceIDIsDate(t *testing.T) {
+	t.Parallel()
+	events := []event.Event{
+		{
+			UID:            "allday-recurring",
+			Title:          "Daily Standup",
+			StartTime:      time.Date(2026, 4, 13, 0, 0, 0, 0, time.UTC),
+			EndTime:        time.Date(2026, 4, 14, 0, 0, 0, 0, time.UTC),
+			AllDay:         true,
+			Status:         "CONFIRMED",
+			RecurrenceRule: "FREQ=DAILY;COUNT=4",
+		},
+		{
+			UID:          "allday-recurring",
+			Title:        "Daily Standup (moved)",
+			StartTime:    time.Date(2026, 4, 15, 0, 0, 0, 0, time.UTC),
+			EndTime:      time.Date(2026, 4, 16, 0, 0, 0, 0, time.UTC),
+			AllDay:       true,
+			Status:       "CONFIRMED",
+			RecurrenceID: "2026-04-15T00:00:00Z",
+		},
+	}
+
+	data, err := ExportEvents(events, "Test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := recurrenceIDLine(string(data))
+	if line == "" {
+		t.Fatal("missing RECURRENCE-ID")
+	}
+	if !strings.Contains(line, "VALUE=DATE") {
+		t.Errorf("all-day override RECURRENCE-ID must carry VALUE=DATE, got %q", line)
+	}
+	if strings.Contains(recurrenceIDValue(line), "T") {
+		t.Errorf("all-day override RECURRENCE-ID must be date-only (no time component), got %q", line)
+	}
+}
+
+func TestExport_TimedOverrideRecurrenceIDIsDateTime(t *testing.T) {
+	t.Parallel()
+	events := []event.Event{
+		{
+			UID:          "timed-recurring",
+			Title:        "Weekly Sync (moved)",
+			StartTime:    time.Date(2026, 4, 13, 14, 0, 0, 0, time.UTC),
+			EndTime:      time.Date(2026, 4, 13, 15, 0, 0, 0, time.UTC),
+			Status:       "CONFIRMED",
+			RecurrenceID: "2026-04-13T09:00:00Z",
+		},
+	}
+	data, err := ExportEvents(events, "Test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := recurrenceIDLine(string(data))
+	if line == "" {
+		t.Fatal("missing RECURRENCE-ID")
+	}
+	if strings.Contains(line, "VALUE=DATE") {
+		t.Errorf("timed override RECURRENCE-ID must not carry VALUE=DATE, got %q", line)
+	}
+	if !strings.Contains(recurrenceIDValue(line), "T") {
+		t.Errorf("timed override RECURRENCE-ID must keep its time component, got %q", line)
+	}
+}
+
+func TestExport_AllDayTodoOverrideRecurrenceIDIsDate(t *testing.T) {
+	t.Parallel()
+	todos := []todo.Todo{
+		{
+			UID:          "allday-todo-recurring",
+			Summary:      "Daily Task (moved)",
+			DueDate:      "2026-04-15",
+			RecurrenceID: "2026-04-15T00:00:00Z",
+		},
+	}
+	data, err := ExportTodos(todos, "Test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := recurrenceIDLine(string(data))
+	if line == "" {
+		t.Fatal("missing RECURRENCE-ID")
+	}
+	if !strings.Contains(line, "VALUE=DATE") {
+		t.Errorf("all-day todo override RECURRENCE-ID must carry VALUE=DATE, got %q", line)
+	}
+	if strings.Contains(recurrenceIDValue(line), "T") {
+		t.Errorf("all-day todo override RECURRENCE-ID must be date-only, got %q", line)
+	}
+}
+
+func TestExport_AllDayJournalOverrideRecurrenceIDIsDate(t *testing.T) {
+	t.Parallel()
+	journals := []journal.Journal{
+		{
+			UID:          "allday-journal-recurring",
+			Summary:      "Daily Note (moved)",
+			StartDate:    "2026-04-15",
+			RecurrenceID: "2026-04-15T00:00:00Z",
+		},
+	}
+	data, err := ExportJournals(journals, "Test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := recurrenceIDLine(string(data))
+	if line == "" {
+		t.Fatal("missing RECURRENCE-ID")
+	}
+	if !strings.Contains(line, "VALUE=DATE") {
+		t.Errorf("all-day journal override RECURRENCE-ID must carry VALUE=DATE, got %q", line)
+	}
+	if strings.Contains(recurrenceIDValue(line), "T") {
+		t.Errorf("all-day journal override RECURRENCE-ID must be date-only, got %q", line)
+	}
+}

@@ -14,6 +14,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/timeutil"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
@@ -110,9 +111,7 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 
 		// RECURRENCE-ID
 		if e.RecurrenceID != "" {
-			if t, err := time.Parse(time.RFC3339, e.RecurrenceID); err == nil {
-				vevent.Props.SetDateTime(ical.PropRecurrenceID, t.UTC())
-			}
+			emitRecurrenceID(vevent.Props, e.RecurrenceID, e.AllDay)
 		}
 
 		if e.Geo != "" {
@@ -448,9 +447,13 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 		emitDateListOnComponent(vtodo, ical.PropRecurrenceDates, t.RDates)
 
 		if t.RecurrenceID != "" {
-			if rid, err := time.Parse(time.RFC3339, t.RecurrenceID); err == nil {
-				vtodo.Props.SetDateTime(ical.PropRecurrenceID, rid.UTC())
+			// A VTODO is all-day when its recurrence anchor (DTSTART, else DUE)
+			// is a date-only value; the RECURRENCE-ID type must match.
+			anchor := t.StartDate
+			if anchor == "" {
+				anchor = t.DueDate
 			}
+			emitRecurrenceID(vtodo.Props, t.RecurrenceID, timeutil.IsDateOnly(anchor))
 		}
 
 		if t.Geo != "" {
@@ -637,6 +640,23 @@ func emitDateListOnComponent(comp *ical.Component, propName, dates string) {
 			prop.SetDateTime(t.UTC())
 			comp.Props.Add(prop)
 		}
+	}
+}
+
+// emitRecurrenceID writes RECURRENCE-ID onto props. recurrenceID is the stored
+// RFC 3339 string. Per RFC 5545 the RECURRENCE-ID value type must match the
+// master's DTSTART: when the component is all-day it is emitted as VALUE=DATE
+// (YYYYMMDD), otherwise as a UTC DATE-TIME. A type mismatch prevents CalDAV
+// servers from binding the override to its master.
+func emitRecurrenceID(props ical.Props, recurrenceID string, allDay bool) {
+	t, err := time.Parse(time.RFC3339, recurrenceID)
+	if err != nil {
+		return
+	}
+	if allDay {
+		props.SetDate(ical.PropRecurrenceID, t.UTC())
+	} else {
+		props.SetDateTime(ical.PropRecurrenceID, t.UTC())
 	}
 }
 
@@ -1013,9 +1033,9 @@ func ExportJournals(journals []journal.Journal, calName string) ([]byte, error) 
 		emitDateListOnComponent(vjournal, ical.PropRecurrenceDates, j.RDates)
 
 		if j.RecurrenceID != "" {
-			if rid, err := time.Parse(time.RFC3339, j.RecurrenceID); err == nil {
-				vjournal.Props.SetDateTime(ical.PropRecurrenceID, rid.UTC())
-			}
+			// A VJOURNAL is all-day when its DTSTART is a date-only value;
+			// the RECURRENCE-ID type must match.
+			emitRecurrenceID(vjournal.Props, j.RecurrenceID, timeutil.IsDateOnly(j.StartDate))
 		}
 
 		if j.DtStamp != "" {
