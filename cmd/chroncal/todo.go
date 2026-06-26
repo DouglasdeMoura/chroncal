@@ -192,6 +192,7 @@ and categories.`,
 	cmd.Flags().StringVar(&status, "status", "", "status filter (NEEDS-ACTION, IN-PROCESS, COMPLETED, CANCELLED)")
 	cmd.Flags().BoolVar(&completed, "completed", false, "show only completed todos")
 	cmd.Flags().BoolVar(&incomplete, "incomplete", false, "show only incomplete todos")
+	mutuallyExclusive(cmd, "completed", "incomplete")
 	return cmd
 }
 
