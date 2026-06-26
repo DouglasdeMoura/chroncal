@@ -25,8 +25,9 @@ WHERE fired_at IS NOT NULL
   AND snoozed_to <= ?
 ORDER BY snoozed_to;
 
--- name: RefireAlarmState :exec
-UPDATE alarm_state SET fired_at = ?, snoozed_to = NULL WHERE id = ?;
+-- name: RefireAlarmState :execrows
+UPDATE alarm_state SET fired_at = ?, snoozed_to = NULL
+WHERE id = ? AND snoozed_to IS NOT NULL;
 
 -- name: ListAlarmStatesByEventID :many
 SELECT * FROM alarm_state WHERE event_id = ? ORDER BY trigger_at;

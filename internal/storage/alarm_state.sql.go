@@ -244,8 +244,9 @@ func (q *Queries) PurgeStaleUnacknowledgedAlarmStates(ctx context.Context, trigg
 	return result.RowsAffected()
 }
 
-const refireAlarmState = `-- name: RefireAlarmState :exec
-UPDATE alarm_state SET fired_at = ?, snoozed_to = NULL WHERE id = ?
+const refireAlarmState = `-- name: RefireAlarmState :execrows
+UPDATE alarm_state SET fired_at = ?, snoozed_to = NULL
+WHERE id = ? AND snoozed_to IS NOT NULL
 `
 
 type RefireAlarmStateParams struct {
@@ -253,9 +254,12 @@ type RefireAlarmStateParams struct {
 	ID      int64
 }
 
-func (q *Queries) RefireAlarmState(ctx context.Context, arg RefireAlarmStateParams) error {
-	_, err := q.db.ExecContext(ctx, refireAlarmState, arg.FiredAt, arg.ID)
-	return err
+func (q *Queries) RefireAlarmState(ctx context.Context, arg RefireAlarmStateParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, refireAlarmState, arg.FiredAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const snoozeAlarmState = `-- name: SnoozeAlarmState :exec

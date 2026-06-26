@@ -404,13 +404,22 @@ func (s *Service) MarkTodoFired(ctx context.Context, tda TodoDueAlarm) (int64, e
 	return todoSvc.MarkTodoAlarmFired(ctx, tda.Alarm.ID, tda.Todo.ID, tda.TriggerAt)
 }
 
-// MarkTodoRefired re-fires a snoozed todo alarm, clearing the snooze.
-func (s *Service) MarkTodoRefired(ctx context.Context, stateID int64) error {
+// MarkTodoRefired re-fires a snoozed todo alarm, clearing the snooze. The
+// UPDATE is gated on snoozed_to IS NOT NULL so it acts as an atomic claim:
+// when two checkers overlap, both observe the expired-snoozed row, but only
+// the one whose UPDATE clears snoozed_to first affects a row. claimed reports
+// whether this caller won the claim; a false claimed means another checker
+// already re-fired the alarm and this caller must not dispatch a duplicate.
+func (s *Service) MarkTodoRefired(ctx context.Context, stateID int64) (claimed bool, err error) {
 	now := time.Now().UTC().Format(time.RFC3339)
-	return s.q.RefireTodoAlarmState(ctx, storage.RefireTodoAlarmStateParams{
+	rows, err := s.q.RefireTodoAlarmState(ctx, storage.RefireTodoAlarmStateParams{
 		FiredAt: &now,
 		ID:      stateID,
 	})
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
 }
 
 // Dismiss acknowledges a fired alarm so it won't show as pending.
@@ -433,13 +442,22 @@ func (s *Service) Dismiss(ctx context.Context, stateID int64) error {
 	})
 }
 
-// MarkRefired updates a snoozed alarm's fired_at and clears snoozed_to.
-func (s *Service) MarkRefired(ctx context.Context, stateID int64) error {
+// MarkRefired updates a snoozed alarm's fired_at and clears snoozed_to. The
+// UPDATE is gated on snoozed_to IS NOT NULL so it acts as an atomic claim:
+// when two checkers overlap, both observe the expired-snoozed row, but only
+// the one whose UPDATE clears snoozed_to first affects a row. claimed reports
+// whether this caller won the claim; a false claimed means another checker
+// already re-fired the alarm and this caller must not dispatch a duplicate.
+func (s *Service) MarkRefired(ctx context.Context, stateID int64) (claimed bool, err error) {
 	now := time.Now().UTC().Format(time.RFC3339)
-	return s.q.RefireAlarmState(ctx, storage.RefireAlarmStateParams{
+	rows, err := s.q.RefireAlarmState(ctx, storage.RefireAlarmStateParams{
 		FiredAt: &now,
 		ID:      stateID,
 	})
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
 }
 
 // SnoozeResult describes what happened when computing a snooze time.

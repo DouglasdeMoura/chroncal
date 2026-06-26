@@ -176,9 +176,12 @@ func TestAlarmLifecycle_Snooze(t *testing.T) {
 	}
 
 	// 9. MarkRefired and dismiss
-	err = svc.MarkRefired(ctx, due[0].StateID)
+	claimed, err := svc.MarkRefired(ctx, due[0].StateID)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !claimed {
+		t.Fatal("step 9: MarkRefired should claim the expired-snoozed alarm")
 	}
 	err = svc.Dismiss(ctx, due[0].StateID)
 	if err != nil {
@@ -192,6 +195,74 @@ func TestAlarmLifecycle_Snooze(t *testing.T) {
 	}
 	if len(pending) != 0 {
 		t.Fatalf("step 10: got %d pending alarms, want 0", len(pending))
+	}
+}
+
+// TestMarkRefired_ConcurrentClaim reproduces issue #88: two overlapping
+// checkers both observe the same expired-snoozed alarm and both call
+// MarkRefired. Only one may win the claim; the other must be told it lost
+// (claimed == false) so the CLI does not dispatch a duplicate notification.
+func TestMarkRefired_ConcurrentClaim(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	evtSvc := event.NewService(db, q)
+	svc := NewService(db, q, evtSvc, nil)
+	ctx := context.Background()
+
+	start := time.Now().Add(10 * time.Minute)
+	e, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "Refire Race",
+		StartTime:  start,
+		EndTime:    start.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT15M", Description: "15 min reminder"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Fire and snooze into the past so the alarm is an expired-snoozed row.
+	due, _, err := svc.Check(ctx, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 1 {
+		t.Fatalf("got %d due alarms, want 1", len(due))
+	}
+	stateID, err := svc.MarkFired(ctx, due[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Snooze(ctx, stateID, time.Now().Add(-1*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two checkers each observe the expired-snoozed row (Check returns it with
+	// the same StateID) and both attempt to claim it.
+	due, _, err = svc.Check(ctx, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 1 || due[0].StateID != stateID {
+		t.Fatalf("expected one expired-snoozed refire for state %d, got %+v", stateID, due)
+	}
+
+	first, err := svc.MarkRefired(ctx, stateID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := svc.MarkRefired(ctx, stateID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first {
+		t.Error("first MarkRefired should win the claim")
+	}
+	if second {
+		t.Error("second MarkRefired must lose the claim, but it double-fired (issue #88)")
 	}
 }
 

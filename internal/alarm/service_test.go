@@ -325,8 +325,10 @@ func TestCheck_RefiresSnoozedAlarm(t *testing.T) {
 	}
 
 	// MarkRefired clears snoozed_to
-	if err := svc.MarkRefired(ctx, due[0].StateID); err != nil {
+	if claimed, err := svc.MarkRefired(ctx, due[0].StateID); err != nil {
 		t.Fatal(err)
+	} else if !claimed {
+		t.Fatal("MarkRefired should claim the expired-snoozed alarm")
 	}
 
 	// Check again: no expired snoozes, no fresh alarms (already has state row)
