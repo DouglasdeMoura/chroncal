@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/douglasdemoura/chroncal/internal/softdelete"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
@@ -59,54 +60,45 @@ func (s *Service) RestoreByID(ctx context.Context, id int64) error {
 	return s.reconcileSyncAfterRestore(ctx, r.CalendarID, r.Uid)
 }
 
-// clearMasterEXDATE removes the EXDATE entry for recurrenceID from the
-// master journal with uid, reversing the exclusion that the instance-delete
-// path added. It only strips EXDATEs that a delete recorded in
-// journal_exdate_deletes; EXDATEs that arrived via import (or a series
-// delete, which never adds one) have no provenance row and survive restore —
-// otherwise RestoreByUID would silently drop a legitimate imported EXDATE
-// whose slot happens to match an override's recurrence_id (issue #86). A
-// malformed recurrence_id is a data-integrity error and is propagated rather
-// than swallowed. Must run inside the same transaction (qtx) that un-hides
-// the override so the row is never visible-but-excluded.
+// clearMasterEXDATE reverses the EXDATE an instance-delete added for
+// recurrenceID on the master journal with uid. The provenance contract lives
+// in softdelete.ClearMasterEXDATE; this wrapper only binds the journal queries
+// to the active transaction so the override is never visible-but-excluded.
 func clearMasterEXDATE(ctx context.Context, qtx *storage.Queries, uid, recurrenceID string) error {
-	log, err := qtx.GetJournalExdateDeleteByUIDRecurrence(ctx, storage.GetJournalExdateDeleteByUIDRecurrenceParams{
-		Uid:          uid,
-		RecurrenceID: recurrenceID,
-	})
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
-		}
-		return fmt.Errorf("get exdate log: %w", err)
-	}
-
-	master, err := qtx.GetJournalByUID(ctx, uid)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			// Master gone; drop the now-orphaned provenance row.
-			return qtx.DeleteJournalExdateDelete(ctx, log.ID)
-		}
-		return fmt.Errorf("get master: %w", err)
-	}
-	target, err := timeutil.ParseRecurrenceID(recurrenceID)
-	if err != nil {
-		return fmt.Errorf("parse recurrence_id %q: %w", recurrenceID, err)
-	}
-	existing := timeutil.ParseTimeList(storage.NullableToString(master.Exdates))
-	filtered := timeutil.RemoveTimeFromList(existing, target)
-	if len(filtered) != len(existing) {
-		if err := qtx.UpdateJournalExdates(ctx, storage.UpdateJournalExdatesParams{
-			Exdates: storage.StringToNullable(timeutil.SerializeTimeList(filtered)),
-			ID:      master.ID,
-		}); err != nil {
-			return fmt.Errorf("update exdates: %w", err)
-		}
-	}
-	if err := qtx.DeleteJournalExdateDelete(ctx, log.ID); err != nil {
-		return fmt.Errorf("delete exdate log: %w", err)
-	}
-	return nil
+	return softdelete.ClearMasterEXDATE(ctx, softdelete.ExdateProvenance{
+		GetDeleteLog: func(ctx context.Context) (int64, bool, error) {
+			log, err := qtx.GetJournalExdateDeleteByUIDRecurrence(ctx, storage.GetJournalExdateDeleteByUIDRecurrenceParams{
+				Uid:          uid,
+				RecurrenceID: recurrenceID,
+			})
+			if errors.Is(err, sql.ErrNoRows) {
+				return 0, false, nil
+			}
+			if err != nil {
+				return 0, false, err
+			}
+			return log.ID, true, nil
+		},
+		GetMaster: func(ctx context.Context) (int64, string, bool, error) {
+			master, err := qtx.GetJournalByUID(ctx, uid)
+			if errors.Is(err, sql.ErrNoRows) {
+				return 0, "", false, nil
+			}
+			if err != nil {
+				return 0, "", false, err
+			}
+			return master.ID, storage.NullableToString(master.Exdates), true, nil
+		},
+		UpdateExdates: func(ctx context.Context, masterID int64, exdates string) error {
+			return qtx.UpdateJournalExdates(ctx, storage.UpdateJournalExdatesParams{
+				Exdates: storage.StringToNullable(exdates),
+				ID:      masterID,
+			})
+		},
+		DeleteDeleteLog: func(ctx context.Context, logID int64) error {
+			return qtx.DeleteJournalExdateDelete(ctx, logID)
+		},
+	}, recurrenceID)
 }
 
 // RestoreByUID un-hides every soft-deleted row sharing uid — master plus

@@ -184,6 +184,10 @@ n, err := svc.PurgeDeleted(ctx, cutoff) // all rows older than cutoff
 
 Restoring a recurring override also clears the matching EXDATE on the
 master in the same transaction, so expansion sees the occurrence again.
+The EXDATE-provenance rule (only strip EXDATEs a delete recorded, never
+imported ones — issue #86) lives in `softdelete.ClearMasterEXDATE`; each
+domain's `clearMasterEXDATE` is a thin wrapper that binds its sqlc queries
+to that shared helper. Fix the contract there, not per-domain.
 
 ### List or purge mixed trash
 The `internal/trash` package aggregates all three domains:
