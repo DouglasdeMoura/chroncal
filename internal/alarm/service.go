@@ -163,6 +163,11 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 			return missed, nil, err
 		}
 
+		// Same override-suppression as CheckTodos: skip master instances for
+		// slots that have an override row so we don't report the master's
+		// trigger as missed when the override fired at a rescheduled time.
+		overrideKeys := buildOverrideSuppressionKeys(rows)
+
 		for _, row := range rows {
 			td := todoFromRow(row)
 			if td.Status == "COMPLETED" || td.Status == "CANCELLED" {
@@ -175,6 +180,17 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 			}
 
 			instances := recurrence.ExpandTodo(td, windowStart, windowEnd)
+			if td.RecurrenceRule != "" && td.RecurrenceID == "" {
+				if suppressed := overrideKeys[td.UID]; len(suppressed) > 0 {
+					kept := instances[:0]
+					for _, inst := range instances {
+						if _, ok := suppressed[inst.InstanceTime.UTC().Format(time.RFC3339)]; !ok {
+							kept = append(kept, inst)
+						}
+					}
+					instances = kept
+				}
+			}
 			for _, inst := range instances {
 				for _, a := range alarms {
 					triggerAt, err := computeTodoTriggerTimeForInstance(inst, a)
