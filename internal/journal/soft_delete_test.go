@@ -5,7 +5,58 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
+
+// TestDeleteSeries_DirtyMarkGatedOnMaster verifies that DeleteSeries on a
+// synced calendar marks the series resource dirty when the master exists,
+// and does NOT touch sync_resources (in particular no spurious calendar_id=0
+// row) when no master row exists for the UID. Regression test for the
+// master-existence guard being defeated by err reuse (issue #119).
+func TestDeleteSeries_DirtyMarkGatedOnMaster(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	svc := NewService(db, q)
+	ctx := context.Background()
+	testutil.LinkCalendarToAccount(t, db)
+
+	// Master exists -> series should be marked dirty.
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "have-master", CalendarID: 1, Summary: "Weekly",
+		StartDate:      time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339),
+		RecurrenceRule: "FREQ=WEEKLY;COUNT=5",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, master.UID); err != nil {
+		t.Fatalf("DeleteSeries (master): %v", err)
+	}
+	var dirty int
+	if err := db.QueryRow(
+		`SELECT dirty FROM sync_resources WHERE calendar_id = 1 AND uid = ?`, master.UID,
+	).Scan(&dirty); err != nil {
+		t.Fatalf("expected sync_resources row for master series: %v", err)
+	}
+	if dirty != 1 {
+		t.Errorf("master series dirty = %d, want 1", dirty)
+	}
+
+	// No master row for this UID -> must not write any sync_resources row,
+	// and in particular nothing keyed on calendar_id 0.
+	if err := svc.DeleteSeries(ctx, "ghost-uid"); err != nil {
+		t.Fatalf("DeleteSeries (ghost): %v", err)
+	}
+	var ghost int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sync_resources WHERE uid = 'ghost-uid' OR calendar_id = 0`,
+	).Scan(&ghost); err != nil {
+		t.Fatalf("count sync_resources: %v", err)
+	}
+	if ghost != 0 {
+		t.Errorf("spurious sync_resources rows for missing master = %d, want 0", ghost)
+	}
+}
 
 // TestSoftDelete_Standalone verifies:
 //   - Delete sets deleted_at, row stays in DB

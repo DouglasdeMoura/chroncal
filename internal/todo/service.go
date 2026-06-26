@@ -519,8 +519,9 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 // the next push sends DELETE to the server; the local rows stay in
 // place until purge so the user can restore them.
 func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
-	master, err := s.q.GetTodoByUID(ctx, uid)
-	if err == nil {
+	master, mErr := s.q.GetTodoByUID(ctx, uid)
+	haveMaster := mErr == nil
+	if haveMaster {
 		_, _ = storage.CreateTombstoneIfSynced(ctx, s.db, master.CalendarID, uid)
 	}
 
@@ -537,7 +538,7 @@ func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit delete series: %w", err)
 	}
-	if err == nil {
+	if haveMaster {
 		_ = storage.MarkResourceDirty(ctx, s.db, master.CalendarID, uid, "todo")
 	}
 	return nil
