@@ -1446,13 +1446,9 @@ func (e *Engine) syncCalendarMetadata(ctx context.Context, client *caldav.Client
 		return fmt.Errorf("get calendar for metadata sync: %w", err)
 	}
 
-	remoteColor, err := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (string, error) {
-		return client.GetCalendarColor(ctx, remoteURL)
-	})
-	if err != nil {
-		return fmt.Errorf("get remote calendar color: %w", err)
-	}
-
+	// A dirty local color wins: push it and clear the flag. Skip the remote
+	// fetch entirely — its value would be discarded, and a failed fetch must
+	// not block the pending push or strand ColorDirty (issue #419).
 	if cal.ColorDirty != 0 {
 		if _, err := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (struct{}, error) {
 			return struct{}{}, client.SetCalendarColor(ctx, remoteURL, cal.Color)
@@ -1463,6 +1459,13 @@ func (e *Engine) syncCalendarMetadata(ctx context.Context, client *caldav.Client
 			return fmt.Errorf("clear calendar color dirty: %w", err)
 		}
 		return nil
+	}
+
+	remoteColor, err := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (string, error) {
+		return client.GetCalendarColor(ctx, remoteURL)
+	})
+	if err != nil {
+		return fmt.Errorf("get remote calendar color: %w", err)
 	}
 
 	if remoteColor != storage.NullableToString(cal.RemoteColor) {
