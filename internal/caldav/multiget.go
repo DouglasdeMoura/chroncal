@@ -54,7 +54,7 @@ func (c *Client) MultiGetTolerant(ctx context.Context, calendarPath string, href
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusMultiStatus && resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("REPORT calendar-multiget: HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("REPORT calendar-multiget: %w", httpError(resp))
 	}
 
 	var ms multiGetMultiStatus

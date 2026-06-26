@@ -9,9 +9,11 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/douglasdemoura/chroncal/internal/retry"
 	"github.com/emersion/go-ical"
 	"github.com/emersion/go-webdav"
 	"github.com/emersion/go-webdav/caldav"
@@ -450,10 +452,55 @@ func httpError(resp *http.Response) error {
 		}
 	}
 
+	var err error
 	if bodyText == "" {
-		return fmt.Errorf("HTTP %s", status)
+		err = fmt.Errorf("HTTP %s", status)
+	} else {
+		err = fmt.Errorf("HTTP %s: %s", status, bodyText)
 	}
-	return fmt.Errorf("HTTP %s: %s", status, bodyText)
+
+	// Servers ask clients to back off via Retry-After (typically on 429 or
+	// 503). Thread that hint out as a typed transient error so the retry
+	// layer can honor it as a floor instead of hammering with fixed backoff.
+	if isRetryableStatus(resp.StatusCode) {
+		if d, ok := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()); ok {
+			return &retry.TransientError{Err: err, RetryAfter: d}
+		}
+	}
+	return err
+}
+
+// isRetryableStatus reports whether an HTTP status is worth retrying and may
+// carry a Retry-After hint.
+func isRetryableStatus(code int) bool {
+	switch code {
+	case http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests:
+		return true
+	}
+	return code >= 500
+}
+
+// parseRetryAfter parses an HTTP Retry-After header value, which is either a
+// non-negative delay in seconds or an HTTP-date. It returns the delay relative
+// to now, clamped to be non-negative, and whether the value was understood.
+func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
+	}
+	if secs, err := strconv.Atoi(value); err == nil {
+		if secs < 0 {
+			return 0, false
+		}
+		return time.Duration(secs) * time.Second, true
+	}
+	if t, err := http.ParseTime(value); err == nil {
+		if d := t.Sub(now); d > 0 {
+			return d, true
+		}
+		return 0, true
+	}
+	return 0, false
 }
 
 func normalizeETag(etag string) string {

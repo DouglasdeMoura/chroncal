@@ -31,6 +31,11 @@ func Retry[T any](ctx context.Context, opts RetryOptions, fn func(context.Contex
 		}
 
 		delay := retryDelay(opts, attempt-1)
+		// Honor a server-requested Retry-After as a floor: never retry
+		// sooner than the server asked, even if it exceeds MaxDelay.
+		if floor := retryAfter(err); floor > delay {
+			delay = floor
+		}
 		select {
 		case <-time.After(delay):
 		case <-ctx.Done():

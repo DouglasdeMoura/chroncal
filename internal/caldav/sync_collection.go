@@ -94,7 +94,7 @@ func (c *Client) SyncCollection(ctx context.Context, calendarPath string, syncTo
 		// should fall back to a full QueryAll.
 		return nil, ErrSyncCollectionUnsupported
 	default:
-		return nil, fmt.Errorf("REPORT sync-collection: HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("REPORT sync-collection: %w", httpError(resp))
 	}
 
 	var ms syncCollectionMultiStatus
