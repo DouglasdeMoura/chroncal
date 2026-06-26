@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	gosync "sync"
 	"testing"
 	"time"
 
@@ -733,6 +734,92 @@ END:VCALENDAR
 	}
 	if tok := storage.NullableToString(calRow.SyncToken); tok != "" {
 		t.Fatalf("sync_token = %q, want empty (held back due to multiget miss)", tok)
+	}
+}
+
+// TestEnginePushSerializesConcurrentNewResourceCreate is the regression test
+// for issue #225: two concurrent push runs for the same calendar (e.g. an
+// opportunistic save-time PushCalendar racing a periodic SyncCalendar) must not
+// both create a server object for the same never-pushed, etag-less resource.
+// Before the per-calendar push lock, each run read the same dirty
+// sync_resource (RemoteUrl=""), minted a distinct random href, and PUT it with
+// no If-Match precondition, leaving the server with two objects for one UID.
+//
+// The two runs use distinct Engine instances over a shared DB, mirroring the
+// TUI, which builds a fresh sync.Service per operation (see newSyncService) —
+// an Engine-scoped lock would not catch this; the lock registry is keyed by DB.
+func TestEnginePushSerializesConcurrentNewResourceCreate(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	// A plain :memory: database hands each pooled connection its own private
+	// DB; pin the pool to one connection so both goroutines share state.
+	db.SetMaxOpenConns(1)
+	ctx := context.Background()
+
+	// A second Engine over the same DB, standing in for the separate
+	// sync.Service the TUI spins up for the racing operation.
+	engine2 := NewEngine(db, q, &mockCredStore{creds: make(map[int64]auth.Credential)},
+		calendar.NewService(db, q), event.NewService(db, q),
+		todo.NewService(db, q), journal.NewService(db, q), nil)
+	engines := [2]*Engine{engine, engine2}
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	insertTestEvent(t, db, calendarID, "new-resource")
+
+	// A brand-new dirty resource: never pushed (RemoteUrl="") and no ETag.
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calendarID,
+		Uid:          "new-resource",
+		OwnerType:    "event",
+		RemoteUrl:    "",
+		Etag:         "",
+		Dirty:        1,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource new-resource: %v", err)
+	}
+
+	var mu gosync.Mutex
+	creates := 0
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodPut {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			return newResponse(http.StatusInternalServerError, nil), nil
+		}
+		if got := r.Header.Get("If-Match"); got != "" {
+			t.Errorf("If-Match = %q, want empty for a first-time create", got)
+		}
+		mu.Lock()
+		creates++
+		mu.Unlock()
+		// Widen the race window so an unserialized second run reads the dirty
+		// row before this run clears it.
+		time.Sleep(50 * time.Millisecond)
+		return newResponse(http.StatusCreated, map[string]string{"ETag": `"etag-new"`}), nil
+	})
+
+	var wg gosync.WaitGroup
+	for i := range engines {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := engines[i].push(ctx, client, calendarID, "/calendar/", ConflictServerWins); err != nil {
+				t.Errorf("push: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if creates != 1 {
+		t.Fatalf("server create PUTs = %d, want 1 (concurrent pushes created duplicate objects)", creates)
 	}
 }
 
