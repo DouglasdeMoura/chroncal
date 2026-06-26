@@ -417,11 +417,11 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 						}
 					}
 				} else {
-					// ConflictPrompt: record conflict for manual resolution
-					localIcal, exportErr := e.exportResource(ctx, res.OwnerType, res.Uid)
-					if exportErr != nil {
-						e.logger.Warn("export local resource for conflict record", "uid", res.Uid, "error", exportErr)
-					}
+					// ConflictPrompt: record conflict for manual resolution.
+					// Reuse icalData exported above — it is the exact body we
+					// just tried to PUT and is unchanged here, so re-exporting
+					// would needlessly repeat ~10 DB queries plus an iCal encode
+					// per conflicting resource. See issue #264.
 					serverRes, fetchErr := client.GetResource(ctx, putPath)
 					if fetchErr == nil {
 						serverIcal, encodeErr := caldav.EncodeCalendar(serverRes.Data)
@@ -434,7 +434,7 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 							OwnerType:  res.OwnerType,
 							OwnerID:    ownerID,
 							Uid:        res.Uid,
-							LocalIcal:  string(localIcal),
+							LocalIcal:  string(icalData),
 							ServerIcal: string(serverIcal),
 							ServerEtag: serverRes.ETag,
 						})
