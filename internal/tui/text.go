@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	lipgloss "charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/douglasdemoura/chroncal/internal/textsafe"
 )
@@ -13,11 +14,8 @@ import (
 // full-width (CJK) runes and emoji count as the columns they actually occupy,
 // rather than as a single rune each. When the cut would land mid-word it backs
 // up to the nearest whitespace within a small look-back window so words aren't
-// sliced; a single long token is cut hard.
-//
-// When s fits, it is returned unchanged (styling intact). When it must be cut,
-// any ANSI styling is stripped and plain text is returned — callers that need
-// the result re-styled must do so themselves.
+// sliced; a single long token is cut hard. ANSI escape sequences are preserved
+// in the returned string regardless of whether truncation was necessary.
 //
 // This is the single truncation helper for the TUI: every column that needs to
 // fit text into a fixed width routes through here so clipping stays consistent
@@ -33,6 +31,9 @@ func truncateTo(s string, w int) string {
 		return "…"
 	}
 
+	// Detect word-boundary break positions using plain text so we don't have
+	// to count invisible ANSI bytes. The actual cut is then delegated to
+	// ansi.Truncate / ansi.Cut so the original escape sequences are preserved.
 	plain := s
 	if strings.ContainsRune(s, '\x1b') {
 		plain = stripANSI(s)
@@ -59,10 +60,11 @@ func truncateTo(s string, w int) string {
 	for i := cut; i > cut-lookback && i > 1; i-- {
 		if r[i-1] == ' ' || r[i-1] == '\t' {
 			trimmed := strings.TrimRight(string(r[:i-1]), " \t")
-			return trimmed + " …"
+			trimmedWidth := lipgloss.Width(trimmed)
+			return ansi.Truncate(s, trimmedWidth, "") + " …"
 		}
 	}
-	return string(r[:cut]) + "…"
+	return ansi.Truncate(s, w, "…")
 }
 
 // stripANSI removes terminal escape sequences from s, leaving plain text. It is
