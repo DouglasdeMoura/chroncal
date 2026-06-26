@@ -14,6 +14,7 @@ import (
 
 	"github.com/emersion/go-ical"
 	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
 
 	authpkg "github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/caldav"
@@ -244,30 +245,63 @@ func (e *Engine) PushCalendar(ctx context.Context, calendarID int64, strategy Co
 	return result, nil
 }
 
-// SyncAll syncs all connected calendars.
+// maxSyncAllConcurrency bounds how many accounts SyncAll syncs at once. Each
+// account hits an independent server, so concurrency cuts wall-clock time
+// toward the slowest single account instead of the sum of all of them; the cap
+// keeps a user with many accounts from opening an unbounded number of
+// simultaneous server connections.
+const maxSyncAllConcurrency = 8
+
+// SyncAll syncs all connected calendars. Calendars are grouped by account:
+// distinct accounts sync concurrently (independent servers and credentials),
+// while calendars sharing an account sync serially within one worker so a
+// single OAuth credential refresh can't race itself. Results are returned in
+// ListCalendars order regardless of completion order, and a per-calendar
+// failure is captured in its own SyncResult without aborting the others.
 func (e *Engine) SyncAll(ctx context.Context, strategy ConflictStrategy) ([]*SyncResult, error) {
 	cals, err := e.q.ListCalendars(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list calendars: %w", err)
 	}
 
-	var results []*SyncResult
+	// Assign each connected calendar a stable output slot (ListCalendars order)
+	// and bucket it under its account so same-account calendars stay serial.
+	type calJob struct {
+		id   int64
+		slot int
+	}
+	byAccount := make(map[int64][]calJob)
+	connected := 0
 	for _, cal := range cals {
 		if cal.AccountID == nil || *cal.AccountID == 0 {
 			continue
 		}
-
-		result, err := e.SyncCalendar(ctx, cal.ID, strategy)
-		if err != nil {
-			e.logger.Error("sync calendar failed", "calendar_id", cal.ID, "error", err)
-			results = append(results, &SyncResult{
-				CalendarID: cal.ID,
-				Errors:     []error{err},
-			})
-			continue
-		}
-		results = append(results, result)
+		acct := *cal.AccountID
+		byAccount[acct] = append(byAccount[acct], calJob{id: cal.ID, slot: connected})
+		connected++
 	}
+
+	// Each worker writes only its own pre-assigned slots, so the shared slice
+	// needs no locking and the output order is independent of who finishes first.
+	results := make([]*SyncResult, connected)
+	var g errgroup.Group
+	g.SetLimit(maxSyncAllConcurrency)
+	for _, jobs := range byAccount {
+		g.Go(func() error {
+			for _, j := range jobs {
+				result, err := e.SyncCalendar(ctx, j.id, strategy)
+				if err != nil {
+					e.logger.Error("sync calendar failed", "calendar_id", j.id, "error", err)
+					result = &SyncResult{CalendarID: j.id, Errors: []error{err}}
+				}
+				results[j.slot] = result
+			}
+			return nil
+		})
+	}
+	// Workers never return an error — per-calendar failures live in results — so
+	// Wait only blocks until every account finishes.
+	_ = g.Wait()
 	return results, nil
 }
 
