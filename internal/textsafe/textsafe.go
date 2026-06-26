@@ -60,9 +60,10 @@ func StripEscapes(s string) string {
 	return b.String()
 }
 
-// Display removes terminal escape sequences and collapses control characters
-// into safe plain text for human-facing terminal, notification, and email
-// rendering.
+// Display removes terminal escape sequences, drops Unicode control characters
+// (Cc) and format/bidi controls (Cf), and collapses whitespace into safe plain
+// text for human-facing terminal, notification, and email rendering.  Stripping
+// Cf prevents Trojan-Source spoofing via directional overrides such as U+202E.
 func Display(s string) string {
 	s = StripEscapes(s)
 
@@ -76,8 +77,12 @@ func Display(s string) string {
 		switch {
 		case r == '\r' || r == '\n' || r == '\t':
 			b.WriteByte(' ')
-		case unicode.IsControl(r):
-			// Drop remaining control characters entirely.
+		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r):
+			// Drop control characters (Cc) and Unicode format/bidi controls (Cf),
+			// which include directional overrides/isolates, zero-width spaces, and
+			// BOM.  Cf characters are not matched by IsControl and would otherwise
+			// pass through unchanged, enabling Trojan-Source spoofing
+			// (CVE-2021-42574).
 		default:
 			b.WriteRune(r)
 		}
