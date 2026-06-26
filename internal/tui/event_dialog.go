@@ -585,6 +585,12 @@ func (m EventDialogModel) handleKey(msg tea.KeyPressMsg) (EventDialogModel, tea.
 			m.focusedRSVP = 0
 			return m.refresh(), rsvp[0].msg
 		}
+	case key.Matches(msg, m.keys.RSVPNo):
+		if len(rsvp) > 1 {
+			m = m.setZone(zoneRSVP)
+			m.focusedRSVP = 1
+			return m.refresh(), rsvp[1].msg
+		}
 	case key.Matches(msg, m.keys.RSVPMaybe):
 		if len(rsvp) > 2 {
 			m = m.setZone(zoneRSVP)
