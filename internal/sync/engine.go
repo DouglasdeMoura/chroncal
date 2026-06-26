@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	gosync "sync"
 	"time"
 
 	"github.com/emersion/go-ical"
@@ -54,6 +55,46 @@ type Engine struct {
 	todos     *todo.Service
 	journals  *journal.Service
 	logger    *slog.Logger
+}
+
+// pushLockKey identifies a per-calendar push lock. It is keyed by the shared
+// database handle (not the Engine) because each sync operation builds a fresh
+// Engine over the app's shared *sql.DB — the TUI's save-time PushCalendar and a
+// periodic SyncCalendar run on different Engine instances but the same DB (see
+// internal/tui/app.go newSyncService). An Engine-scoped lock would not
+// serialize them; a registry keyed by (db, calendar) does. The db pointer keeps
+// independent databases (e.g. parallel tests) from sharing a lock.
+type pushLockKey struct {
+	db         *sql.DB
+	calendarID int64
+}
+
+var (
+	pushLocksMu gosync.Mutex
+	pushLocks   = map[pushLockKey]*gosync.Mutex{}
+)
+
+// pushLock returns the per-calendar mutex that serializes the push phase for
+// calendarID, creating it on first use. Concurrent push runs for the same
+// calendar — e.g. an opportunistic save-time PushCalendar racing a periodic
+// SyncCalendar — must not both read the same dirty, never-pushed sync_resource
+// (RemoteUrl=""): each would mint a distinct random href and PUT it without an
+// If-Match precondition, so the server would end up with two objects for one
+// UID. CalDAV servers key dedup on href, not UID, so an If-None-Match:* guard
+// would not catch this (the two hrefs differ). Serializing the phase lets the
+// first run record the remote_url and clear the dirty flag before the second
+// reads it. This guards only same-process concurrency; two CLI processes
+// pushing the same calendar at once can still race. See issue #225.
+func (e *Engine) pushLock(calendarID int64) *gosync.Mutex {
+	key := pushLockKey{db: e.db, calendarID: calendarID}
+	pushLocksMu.Lock()
+	defer pushLocksMu.Unlock()
+	lock, ok := pushLocks[key]
+	if !ok {
+		lock = &gosync.Mutex{}
+		pushLocks[key] = lock
+	}
+	return lock
 }
 
 var syncRetryOptions = caldav.RetryOptions{
@@ -221,8 +262,10 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 // local mutations are flushed upstream without pulling or rewriting
 // calendar metadata. Dirty resources that fail to push stay dirty, so the
 // next full SyncCalendar will retry them. Safe to call concurrently with
-// a full sync — both funnel through the same dirty/tombstone rows, and
-// the server arbitrates via ETag preconditions.
+// a full sync: the push phase holds a per-calendar lock (see pushLock), so
+// two runs cannot both create a server object for the same never-pushed,
+// etag-less resource. Existing resources are still arbitrated by the server
+// via ETag preconditions.
 func (e *Engine) PushCalendar(ctx context.Context, calendarID int64, strategy ConflictStrategy) (*SyncResult, error) {
 	cal, account, client, remoteURL, err := e.loadCalendarClient(ctx, calendarID)
 	if err != nil {
@@ -316,6 +359,13 @@ type pushResult struct {
 }
 
 func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL, pushIdentity string, strategy ConflictStrategy) (*pushResult, error) {
+	// Serialize the push phase per calendar so a concurrent run cannot read the
+	// same dirty row and create a duplicate server object. See pushLock and
+	// issue #225.
+	lock := e.pushLock(calendarID)
+	lock.Lock()
+	defer lock.Unlock()
+
 	dirty, err := e.q.ListDirtySyncResources(ctx, calendarID)
 	if err != nil {
 		return nil, fmt.Errorf("list dirty: %w", err)
