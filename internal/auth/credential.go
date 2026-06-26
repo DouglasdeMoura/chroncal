@@ -140,6 +140,9 @@ func (s *PlaintextFileStore) Get(accountID int64) (Credential, error) {
 	path := s.path(accountID)
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Credential{}, errCredentialNotFound
+		}
 		return Credential{}, fmt.Errorf("read credential: %w", err)
 	}
 	var cred Credential
