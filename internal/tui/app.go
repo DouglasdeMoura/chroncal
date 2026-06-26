@@ -187,8 +187,12 @@ type eventDeletedMsg struct {
 }
 
 // eventRestoredMsg is emitted after an Undo attempt. On success err is nil.
-// On failure err carries the reason.
+// On failure err carries the reason. meta identifies which undo entry the
+// restore acted on, so the success handler can remove that specific entry
+// rather than blindly popping the top (a concurrent delete may have pushed a
+// new entry while the restore was in flight).
 type eventRestoredMsg struct {
+	meta  event.UndoMeta
 	title string
 	err   error
 }
@@ -1379,7 +1383,7 @@ func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			title := meta.Label
 			cmd := func() tea.Msg {
 				err := m.app.Events.RestoreUndo(context.Background(), meta)
-				return eventRestoredMsg{title: title, err: err}
+				return eventRestoredMsg{meta: meta, title: title, err: err}
 			}
 			return m, cmd, true
 		}
@@ -3006,7 +3010,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// different context (e.g. restoring the calendar first).
 			return m, cmd
 		}
-		m.undoStack.Pop()
+		// Remove the entry that was actually restored by identity, not the
+		// current top: a delete landing while the restore was in flight may
+		// have pushed a newer entry whose undo affordance must survive.
+		m.undoStack.Remove(msg.meta)
 		toastCmd := m.toast.Restored(msg.title)
 		return m, tea.Batch(m.loadEvents(), toastCmd)
 

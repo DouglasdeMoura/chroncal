@@ -63,5 +63,29 @@ func (s *UndoStack) Pop() (UndoEntry, bool) {
 	return last, true
 }
 
+// Remove deletes the most recent entry whose metadata identifies the same
+// soft-delete as meta, returning whether a match was found. It exists because
+// a restore runs asynchronously: a delete landing between the Peek (when the
+// undo key is pressed) and the restore's success message can push a new entry
+// onto the stack, so the success handler must remove the entry it actually
+// restored by identity rather than blindly popping the top.
+func (s *UndoStack) Remove(meta event.UndoMeta) bool {
+	for i := len(s.entries) - 1; i >= 0; i-- {
+		if sameUndoTarget(s.entries[i].Meta, meta) {
+			s.entries = append(s.entries[:i], s.entries[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// sameUndoTarget reports whether two UndoMeta values describe the same
+// soft-delete operation. Kind + UID + RecurrenceID uniquely identifies a
+// reversible delete: a series and a single-instance delete of the same UID
+// differ by Kind, and distinct overrides differ by RecurrenceID.
+func sameUndoTarget(a, b event.UndoMeta) bool {
+	return a.Kind == b.Kind && a.UID == b.UID && a.RecurrenceID == b.RecurrenceID
+}
+
 // Len returns the current depth.
 func (s *UndoStack) Len() int { return len(s.entries) }

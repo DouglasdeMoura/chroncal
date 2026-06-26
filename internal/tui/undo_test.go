@@ -75,3 +75,35 @@ func TestUndoStack_DepthEviction(t *testing.T) {
 func labelFor(i int) string {
 	return string([]byte{byte('A' + i)})
 }
+
+// TestEventRestoredMsg_RemovesRestoredEntryNotTop reproduces issue #144: the
+// undo restore runs in an async tea.Cmd, so a delete that lands between the
+// Peek (when 'u' is pressed) and the eventRestoredMsg success can push a new
+// entry onto the stack. The success handler must remove the entry that was
+// actually restored (matched by identity), not blindly pop the new top.
+func TestEventRestoredMsg_RemovesRestoredEntryNotTop(t *testing.T) {
+	m := Model{undoStack: NewUndoStack()}
+
+	// Delete A, then press 'u' — restore for A is now in flight. Before the
+	// success message lands, delete B pushes a second entry.
+	entryA := entry("A")
+	entryB := entry("B")
+	m.undoStack.Push(entryA)
+	m.undoStack.Push(entryB)
+
+	// The async restore for A completes and reports back.
+	updated, _ := m.Update(eventRestoredMsg{meta: entryA.Meta, title: entryA.Meta.Label})
+	m = updated.(Model)
+
+	if m.undoStack.Len() != 1 {
+		t.Fatalf("Len after restore = %d, want 1", m.undoStack.Len())
+	}
+	top, ok := m.undoStack.Peek()
+	if !ok {
+		t.Fatal("stack unexpectedly empty after restore")
+	}
+	if top.Meta.UID != entryB.Meta.UID {
+		t.Fatalf("restore removed the wrong entry: top UID = %q, want %q (B's undo affordance must survive)",
+			top.Meta.UID, entryB.Meta.UID)
+	}
+}
