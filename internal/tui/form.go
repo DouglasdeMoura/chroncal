@@ -119,8 +119,16 @@ func (f *TextField) Update(msg tea.Msg) tea.Cmd {
 		return nil
 	}
 	if f.filter != nil {
-		if msg, ok := msg.(tea.KeyPressMsg); ok {
-			if k := msg.Key(); k.Text != "" && !f.filter(k) {
+		switch m := msg.(type) {
+		case tea.KeyPressMsg:
+			if k := m.Key(); k.Text != "" && !f.filter(k) {
+				return nil
+			}
+		case tea.PasteMsg:
+			// A bracketed paste bypasses the per-keystroke path, so run its
+			// content through the same filter (issue #411). The filter
+			// inspects only the key's Text, so a synthetic key suffices.
+			if !f.filter(tea.Key{Text: m.Content}) {
 				return nil
 			}
 		}

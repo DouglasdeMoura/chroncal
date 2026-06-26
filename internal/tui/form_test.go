@@ -62,6 +62,44 @@ func TestFilterDigits_MultiRuneText(t *testing.T) {
 	}
 }
 
+func TestTextField_PasteIsFiltered(t *testing.T) {
+	// A bracketed paste arrives as tea.PasteMsg, not tea.KeyPressMsg. The
+	// filter must apply to it too, otherwise pasted text bypasses the filter
+	// entirely (issue #411).
+	tests := []struct {
+		content string
+		wantVal string
+		desc    string
+	}{
+		{"123", "123", "all-digit paste accepted"},
+		{"12ab", "", "paste with letters rejected wholesale"},
+		{"xyz", "", "non-digit paste rejected"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.desc, func(t *testing.T) {
+			f := NewTextField("n")
+			f.SetDigitsOnly()
+			f.Focus()
+			f.Update(tea.PasteMsg{Content: tc.content})
+			assert.Equal(t, tc.wantVal, f.Value(), tc.desc)
+		})
+	}
+}
+
+func TestHexColorField_PasteIsFiltered(t *testing.T) {
+	// The hex-color field must reject pasted non-hex strings, not just
+	// rejected keystrokes (issue #411).
+	f := NewHexColorField("#rrggbb", lipgloss.Color("8"))
+	f.Focus()
+
+	f.Update(tea.PasteMsg{Content: "xyz"})
+	assert.Equal(t, "", f.Value(), "non-hex paste rejected")
+
+	f.Update(tea.PasteMsg{Content: "#aabbcc"})
+	assert.Equal(t, "#aabbcc", f.Value(), "valid hex paste accepted")
+}
+
 func TestTextField_CustomFilter(t *testing.T) {
 	f := NewTextField("hex")
 	f.SetFilter(func(k tea.Key) bool {
