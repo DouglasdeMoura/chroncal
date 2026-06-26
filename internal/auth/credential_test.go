@@ -2,6 +2,7 @@ package auth
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -318,6 +319,54 @@ func TestMigratingCredentialStore_DeleteIgnoresLegacyNotFound(t *testing.T) {
 
 	if err := store.Delete(7); err != nil {
 		t.Fatalf("Delete should ignore a missing legacy credential, got %v", err)
+	}
+}
+
+func TestMigratingCredentialStore_GetIgnoresLegacyCleanupError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root bypasses the directory write permission that forces the cleanup failure")
+	}
+	dir := t.TempDir()
+	legacy := &PlaintextFileStore{dir: dir, warn: io.Discard}
+
+	legacyCred := Credential{
+		AccountID: 42,
+		Username:  "legacy",
+		Password:  "plaintext-secret",
+	}
+	if err := legacy.Set(legacyCred); err != nil {
+		t.Fatalf("legacy Set: %v", err)
+	}
+
+	// Make the legacy directory read-only so the credential file stays
+	// readable but the post-migration cleanup (os.Remove needs write on the
+	// parent dir) fails. Restore write permission afterwards so t.TempDir can
+	// clean up.
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("chmod legacy dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	backing := map[string]string{}
+	overrideKeyringForTest(t, true, backing)
+
+	store := &migratingCredentialStore{
+		primary: &KeyringStore{},
+		legacy:  legacy,
+	}
+
+	// Migration succeeds (primary.Set writes to the keyring) but cleaning up
+	// the legacy copy fails. Get must still return the migrated credential
+	// rather than a spurious cleanup error.
+	got, err := store.Get(42)
+	if err != nil {
+		t.Fatalf("Get should ignore a legacy cleanup failure after a successful migration, got %v", err)
+	}
+	if got.Username != "legacy" || got.Password != "plaintext-secret" {
+		t.Fatalf("Get returned %+v, want the migrated legacy credential", got)
+	}
+	if len(backing) == 0 {
+		t.Fatal("expected the credential to be migrated into the keyring backing store")
 	}
 }
 
