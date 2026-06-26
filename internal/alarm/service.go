@@ -409,48 +409,40 @@ func (s *Service) resolveStateEvent(ctx context.Context, st storage.AlarmState) 
 
 	// Find the alarm definition that fired so we can replay its trigger math.
 	alarms, err := s.events.ListAlarms(ctx, master.ID)
-	if err != nil {
-		return master, nil // best effort: fall back to the master row
-	}
-	var matched model.Alarm
-	for _, a := range alarms {
-		if a.ID == st.AlarmID {
-			matched = a
-			break
+	if err == nil {
+		var matched model.Alarm
+		for _, a := range alarms {
+			if a.ID == st.AlarmID {
+				matched = a
+				break
+			}
 		}
-	}
-	if matched.ID == 0 {
-		return master, nil
-	}
-
-	triggerAt, err := time.Parse(time.RFC3339, st.TriggerAt)
-	if err != nil {
-		return master, nil
-	}
-
-	// Bound the expansion window to comfortably contain the instance: the
-	// trigger sits at most |offset| (+ the event span, for RELATED=END alarms)
-	// away from the occurrence it belongs to.
-	radius := triggerSearchRadius(matched, master.Span(), triggerAt)
-	recurSvc := recurrence.NewService(s.db, s.q)
-	expanded, err := recurSvc.ListExpandedEvents(ctx, triggerAt.Add(-radius), triggerAt.Add(radius), recurrence.SkipCategories())
-	if err != nil {
-		return master, nil
-	}
-	for _, expEvt := range expanded {
-		if expEvt.ID != master.ID {
-			continue
-		}
-		base, err := computeTriggerTimeForInstance(expEvt, matched)
-		if err != nil {
-			continue
-		}
-		for _, t := range buildRepeatTriggers(base, matched.Repeat, matched.Duration) {
-			if t.Equal(triggerAt) {
-				inst := expEvt.Event
-				inst.StartTime = expEvt.InstanceTime
-				inst.EndTime = expEvt.InstanceTime.Add(expEvt.Span())
-				return inst, nil
+		if matched.ID != 0 {
+			if triggerAt, parseErr := time.Parse(time.RFC3339, st.TriggerAt); parseErr == nil {
+				// Bound the expansion window to comfortably contain the instance: the
+				// trigger sits at most |offset| (+ the event span, for RELATED=END alarms)
+				// away from the occurrence it belongs to.
+				radius := triggerSearchRadius(matched, master.Span(), triggerAt)
+				recurSvc := recurrence.NewService(s.db, s.q)
+				if expanded, expandErr := recurSvc.ListExpandedEvents(ctx, triggerAt.Add(-radius), triggerAt.Add(radius), recurrence.SkipCategories()); expandErr == nil {
+					for _, expEvt := range expanded {
+						if expEvt.ID != master.ID {
+							continue
+						}
+						base, err := computeTriggerTimeForInstance(expEvt, matched)
+						if err != nil {
+							continue
+						}
+						for _, t := range buildRepeatTriggers(base, matched.Repeat, matched.Duration) {
+							if t.Equal(triggerAt) {
+								inst := expEvt.Event
+								inst.StartTime = expEvt.InstanceTime
+								inst.EndTime = expEvt.InstanceTime.Add(expEvt.Span())
+								return inst, nil
+							}
+						}
+					}
+				}
 			}
 		}
 	}

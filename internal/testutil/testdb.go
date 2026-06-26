@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 
@@ -24,7 +25,7 @@ func NewTestDB(t *testing.T) (*sql.DB, *storage.Queries) {
 // (and related sync bookkeeping) actually writes sync_resources rows.
 func LinkCalendarToAccount(t *testing.T, db *sql.DB) {
 	t.Helper()
-	res, err := db.Exec(
+	res, err := db.ExecContext(context.Background(),
 		`INSERT INTO accounts (name, server_url) VALUES ('Test', 'https://dav.example')`,
 	)
 	if err != nil {
@@ -34,7 +35,7 @@ func LinkCalendarToAccount(t *testing.T, db *sql.DB) {
 	if err != nil {
 		t.Fatalf("account id: %v", err)
 	}
-	if _, err := db.Exec(`UPDATE calendars SET account_id = ? WHERE id = 1`, accID); err != nil {
+	if _, err := db.ExecContext(context.Background(), `UPDATE calendars SET account_id = ? WHERE id = 1`, accID); err != nil {
 		t.Fatalf("link calendar: %v", err)
 	}
 }

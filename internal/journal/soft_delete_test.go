@@ -33,7 +33,7 @@ func TestDeleteSeries_DirtyMarkGatedOnMaster(t *testing.T) {
 		t.Fatalf("DeleteSeries (master): %v", err)
 	}
 	var dirty int
-	if err := db.QueryRow(
+	if err := db.QueryRowContext(ctx,
 		`SELECT dirty FROM sync_resources WHERE calendar_id = 1 AND uid = ?`, master.UID,
 	).Scan(&dirty); err != nil {
 		t.Fatalf("expected sync_resources row for master series: %v", err)
@@ -48,7 +48,7 @@ func TestDeleteSeries_DirtyMarkGatedOnMaster(t *testing.T) {
 		t.Fatalf("DeleteSeries (ghost): %v", err)
 	}
 	var ghost int
-	if err := db.QueryRow(
+	if err := db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM sync_resources WHERE uid = 'ghost-uid' OR calendar_id = 0`,
 	).Scan(&ghost); err != nil {
 		t.Fatalf("count sync_resources: %v", err)
