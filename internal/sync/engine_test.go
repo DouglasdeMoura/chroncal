@@ -2200,3 +2200,114 @@ END:VCALENDAR
 		t.Fatalf("alarms after server-side removal = %d, want 0 (stale alarm not cleared)", len(alarms))
 	}
 }
+
+// TestEnginePullWithholdsTokenOnPersistFailure covers issue #103: when a
+// fetched resource is successfully multiget'd but fails to persist locally
+// (a transient SQLite busy/lock or a child-replace error), the pull must NOT
+// advance the sync-token. Otherwise the token moves past the failed change
+// and the next REPORT never re-lists it, so the server-side update is lost
+// from the local copy indefinitely. The resource's old etag and the calendar
+// sync-token must both stay put so the next sync re-lists and retries.
+func TestEnginePullWithholdsTokenOnPersistFailure(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	// A locally-tracked event the server has just updated. Its multiget body
+	// carries a VALARM; dropping event_alarms below makes persistImported fail
+	// on ReplaceAlarms after the parent upsert, simulating a transient persist
+	// error mid-pull.
+	insertTestEvent(t, db, calendarID, "victim")
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID: calendarID, Uid: "victim", OwnerType: "event",
+		RemoteUrl: "/calendar/victim.ics", Etag: "old", Dirty: 0, SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource victim: %v", err)
+	}
+
+	const syncBody = `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/calendar/victim.ics</d:href>
+    <d:propstat><d:prop><d:getetag>&quot;new&quot;</d:getetag></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat>
+  </d:response>
+  <d:sync-token>https://example.com/sync/t1</d:sync-token>
+</d:multistatus>`
+
+	const victimICS = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//chroncal//tests//EN
+BEGIN:VEVENT
+UID:victim
+DTSTAMP:20260403T120000Z
+DTSTART:20260403T120000Z
+DTEND:20260403T130000Z
+SUMMARY:Updated meeting
+BEGIN:VALARM
+ACTION:DISPLAY
+TRIGGER:-PT15M
+DESCRIPTION:Reminder
+END:VALARM
+END:VEVENT
+END:VCALENDAR
+`
+
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		raw, _ := io.ReadAll(r.Body)
+		if !strings.Contains(string(raw), "calendar-multiget") {
+			return &http.Response{StatusCode: http.StatusMultiStatus, Status: "207 Multi-Status",
+				Header: http.Header{"Content-Type": []string{"application/xml"}},
+				Body:   io.NopCloser(strings.NewReader(syncBody)), Request: r}, nil
+		}
+		multigetBody := `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/calendar/victim.ics</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>&quot;new&quot;</d:getetag>
+        <cal:calendar-data>` + victimICS + `</cal:calendar-data>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`
+		return &http.Response{StatusCode: http.StatusMultiStatus, Status: "207 Multi-Status",
+			Header: http.Header{"Content-Type": []string{"application/xml"}},
+			Body:   io.NopCloser(strings.NewReader(multigetBody)), Request: r}, nil
+	})
+
+	// Force the persist to fail: drop event_alarms so ReplaceAlarms errors
+	// after the parent event upsert succeeds.
+	if _, err := db.ExecContext(ctx, "DROP TABLE event_alarms"); err != nil {
+		t.Fatalf("drop event_alarms table: %v", err)
+	}
+
+	if _, err := engine.pull(ctx, client, calendarID, "/calendar/"); err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+
+	// Token must be held back so the next sync re-lists the failed change.
+	calRow, err := q.GetCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("GetCalendar: %v", err)
+	}
+	if tok := storage.NullableToString(calRow.SyncToken); tok != "" {
+		t.Fatalf("sync_token = %q, want empty (held back on persist failure)", tok)
+	}
+
+	// The resource's etag must stay old so the next REPORT still sees a diff.
+	res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: "victim"})
+	if err != nil {
+		t.Fatalf("GetSyncResource victim: %v", err)
+	}
+	if res.Etag != "old" {
+		t.Fatalf("victim etag = %q, want old preserved (persist failed)", res.Etag)
+	}
+}

@@ -768,17 +768,21 @@ func (p *pendingDeletions) apply(ctx context.Context, e *Engine, calendarID int6
 
 // absenceWithholdReason describes why an absence sweep was (or wasn't) safe,
 // for the withhold log line.
-func absenceWithholdReason(truncated bool, multigetMisses int) string {
-	switch {
-	case truncated && multigetMisses > 0:
-		return fmt.Sprintf("response truncated and %d multiget miss(es)", multigetMisses)
-	case truncated:
-		return "response truncated (RFC 6578 §3.6)"
-	case multigetMisses > 0:
-		return fmt.Sprintf("%d multiget miss(es)", multigetMisses)
-	default:
+func absenceWithholdReason(truncated bool, multigetMisses, persistFailures int) string {
+	var parts []string
+	if truncated {
+		parts = append(parts, "response truncated (RFC 6578 §3.6)")
+	}
+	if multigetMisses > 0 {
+		parts = append(parts, fmt.Sprintf("%d multiget miss(es)", multigetMisses))
+	}
+	if persistFailures > 0 {
+		parts = append(parts, fmt.Sprintf("%d persist failure(s)", persistFailures))
+	}
+	if len(parts) == 0 {
 		return "complete"
 	}
+	return strings.Join(parts, " and ")
 }
 
 // applySyncCollection consumes the change list from a sync-collection REPORT,
@@ -788,6 +792,7 @@ func absenceWithholdReason(truncated bool, multigetMisses int) string {
 func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL string, cal storage.Calendar, syncResult *caldav.SyncCollectionResult, initialSnapshot bool) (*pullResult, error) {
 	result := &pullResult{}
 	multigetMisses := 0
+	persistFailures := 0
 
 	tombstones, err := e.q.ListTombstonesByCalendar(ctx, calendarID)
 	if err != nil {
@@ -914,6 +919,14 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 			}
 			ownerType := detectOwnerType(importResult)
 			if persistErr := e.persistImported(ctx, calendarID, importResult); persistErr != nil {
+				// A changed body we fetched but couldn't store (transient
+				// SQLite busy/lock, or a malformed component a Replace*
+				// rejects). Leave the sync_resource on its old etag and count
+				// the failure so the inventory is treated as incomplete: the
+				// token is withheld and the next REPORT re-lists this change
+				// for another attempt. Advancing the token here would skip the
+				// change permanently until the server touches it again.
+				persistFailures++
 				e.logger.Error("persist imported resource", "uid", uid, "path", res.Path, "error", persistErr)
 				continue
 			}
@@ -949,9 +962,10 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 
 	// All deletions funnel through one chokepoint (see pendingDeletions).
 	// The inventory is "complete" only when nothing limited our view of the
-	// server's resources: the response wasn't truncated and every changed
-	// body was fetched.
-	inventoryComplete := !syncResult.Truncated && multigetMisses == 0
+	// server's resources: the response wasn't truncated, every changed body
+	// was fetched, and every fetched body persisted. A persist failure leaves
+	// the local copy behind the server, so the token must be withheld too.
+	inventoryComplete := !syncResult.Truncated && multigetMisses == 0 && persistFailures == 0
 	deletions := newPendingDeletions(e.logger)
 
 	// Explicit deletions: the server returned a top-level 404 for these
@@ -977,7 +991,7 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 	// fetched.
 	if initialSnapshot {
 		deletions.inferFromAbsence(calendarID, localResources, seenUIDs,
-			inventoryComplete, absenceWithholdReason(syncResult.Truncated, multigetMisses))
+			inventoryComplete, absenceWithholdReason(syncResult.Truncated, multigetMisses, persistFailures))
 	}
 
 	result.deleted += deletions.apply(ctx, e, calendarID)
@@ -991,15 +1005,17 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 		}); err != nil {
 			e.logger.Warn("update sync token", "calendar_id", calendarID, "error", err)
 		}
-	} else if multigetMisses > 0 {
+	} else if multigetMisses > 0 || persistFailures > 0 {
 		// Pull made partial progress: some hrefs the server reported in
-		// sync-collection 404'd on multiget. We don't know if those are
-		// real deletions or transient errors, so we don't soft-delete
-		// them. We also don't advance the sync-token, so the next sync
-		// re-lists the same change set and gets another shot at fetching
-		// the missing bodies. Slow but safe.
-		e.logger.Warn("not advancing sync-token: multiget had missing paths",
-			"calendar_id", calendarID, "missing", multigetMisses)
+		// sync-collection 404'd on multiget, or a fetched body failed to
+		// persist locally. We don't know if the 404s are real deletions or
+		// transient errors, so we don't soft-delete them; and the persist
+		// failures left those resources behind the server. We don't advance
+		// the sync-token, so the next sync re-lists the same change set and
+		// gets another shot at fetching and storing the bodies. Slow but safe.
+		e.logger.Warn("not advancing sync-token: incomplete pull",
+			"calendar_id", calendarID, "multiget_misses", multigetMisses,
+			"persist_failures", persistFailures)
 	}
 
 	return result, nil
