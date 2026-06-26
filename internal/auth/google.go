@@ -336,16 +336,24 @@ func RefreshGoogleToken(ctx context.Context, clientID, clientSecret, refreshToke
 		}
 
 		var result struct {
-			AccessToken string `json:"access_token"`
-			ExpiresIn   int    `json:"expires_in"`
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
+			ExpiresIn    int    `json:"expires_in"`
 		}
 		if err := json.Unmarshal(body, &result); err != nil {
 			return nil, fmt.Errorf("parse refresh response: %w", err)
 		}
 
+		// RFC 6749 §6: the server MAY rotate the refresh token. Persist the
+		// new one when present; otherwise keep reusing the existing token.
+		newRefreshToken := result.RefreshToken
+		if newRefreshToken == "" {
+			newRefreshToken = refreshToken
+		}
+
 		return &GoogleOAuthResult{
 			AccessToken:  result.AccessToken,
-			RefreshToken: refreshToken, // refresh token stays the same
+			RefreshToken: newRefreshToken,
 			Expiry:       time.Now().Add(time.Duration(result.ExpiresIn) * time.Second),
 		}, nil
 	})

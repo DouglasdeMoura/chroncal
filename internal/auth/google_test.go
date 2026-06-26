@@ -108,6 +108,54 @@ func TestRefreshGoogleToken_SendsClientSecret(t *testing.T) {
 	}
 }
 
+func TestRefreshGoogleToken_PersistsRotatedRefreshToken(t *testing.T) {
+	prevClient := googleHTTPClient
+	googleHTTPClient = &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"access_token":"fresh","expires_in":3600,"refresh_token":"rotated-token"}`)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
+	t.Cleanup(func() {
+		googleHTTPClient = prevClient
+	})
+
+	result, err := RefreshGoogleToken(context.Background(), "client-id", "secret-xyz", "old-token")
+	if err != nil {
+		t.Fatalf("RefreshGoogleToken: %v", err)
+	}
+	if result.RefreshToken != "rotated-token" {
+		t.Fatalf("RefreshToken = %q, want rotated-token (server-rotated token discarded)", result.RefreshToken)
+	}
+}
+
+func TestRefreshGoogleToken_KeepsOldRefreshTokenWhenOmitted(t *testing.T) {
+	prevClient := googleHTTPClient
+	googleHTTPClient = &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"access_token":"fresh","expires_in":3600}`)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
+	t.Cleanup(func() {
+		googleHTTPClient = prevClient
+	})
+
+	result, err := RefreshGoogleToken(context.Background(), "client-id", "secret-xyz", "old-token")
+	if err != nil {
+		t.Fatalf("RefreshGoogleToken: %v", err)
+	}
+	if result.RefreshToken != "old-token" {
+		t.Fatalf("RefreshToken = %q, want old-token (existing token should be retained)", result.RefreshToken)
+	}
+}
+
 func TestExchangeGoogleCode_RetriesTransientError(t *testing.T) {
 	var calls atomic.Int32
 	prevClient := googleHTTPClient
