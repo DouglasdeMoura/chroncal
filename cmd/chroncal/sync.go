@@ -104,17 +104,11 @@ run to a single local calendar.`,
 
 			var results []*syncPkg.SyncResult
 			if calendarName != "" {
-				var calID int64
-				for _, c := range cals {
-					if c.Name == calendarName {
-						calID = c.ID
-						break
-					}
+				target, err := findCalendarByRef(cals, calendarName)
+				if err != nil {
+					return &cliError{Code: "not_found", Msg: err.Error()}
 				}
-				if calID == 0 {
-					return &cliError{Code: "not_found", Msg: fmt.Sprintf("calendar %q not found", calendarName)}
-				}
-				r, err := svc.SyncCalendar(ctx, calID, strategy)
+				r, err := svc.SyncCalendar(ctx, target.ID, strategy)
 				if err != nil {
 					return classifySyncError(err)
 				}
@@ -320,8 +314,19 @@ This does not delete your local calendars or entries.`,
 			}
 
 			var nameFound, connected, failed int
+			// Resolve --calendar the same way every other command does
+			// (by ID or case-insensitive name) so behavior is uniform.
+			var targetID int64
+			if calendarName != "" {
+				target, err := findCalendarByRef(cals, calendarName)
+				if err != nil {
+					return &cliError{Code: "not_found", Msg: err.Error()}
+				}
+				targetID = target.ID
+			}
+
 			for _, c := range cals {
-				if calendarName != "" && c.Name != calendarName {
+				if targetID != 0 && c.ID != targetID {
 					continue
 				}
 				nameFound++
