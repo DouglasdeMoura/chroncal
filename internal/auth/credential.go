@@ -184,26 +184,34 @@ func (s *PlaintextFileStore) path(accountID int64) string {
 	return filepath.Join(s.dir, fmt.Sprintf("account_%d.json", accountID))
 }
 
-func credentialDir() (string, error) {
-	var configDir string
-	if runtime.GOOS == "linux" {
-		if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
-			configDir = dir
-		} else {
-			home, err := os.UserHomeDir()
-			if err != nil {
-				return "", err
-			}
-			configDir = filepath.Join(home, ".config")
-		}
-	} else {
-		dir, err := os.UserConfigDir()
+// appConfigBaseDir returns the OS base config directory, honouring
+// XDG_CONFIG_HOME on every platform (matching the behaviour of the config
+// loader's configDir). goos is a runtime.GOOS value; it is a parameter so
+// tests can call it with a non-current GOOS to verify cross-platform behaviour.
+func appConfigBaseDir(goos string) (string, error) {
+	// XDG_CONFIG_HOME takes precedence on every OS, not just Linux.
+	// Many CLI tools adopt this so users on macOS/Windows can relocate
+	// config with a single env var. Checking it first here matches the
+	// behaviour of the config loader (internal/config.configDir).
+	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
+		return dir, nil
+	}
+	if goos == "linux" {
+		home, err := os.UserHomeDir()
 		if err != nil {
 			return "", err
 		}
-		configDir = dir
+		return filepath.Join(home, ".config"), nil
 	}
-	return filepath.Join(configDir, "chroncal", "credentials"), nil
+	return os.UserConfigDir()
+}
+
+func credentialDir() (string, error) {
+	base, err := appConfigBaseDir(runtime.GOOS)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "chroncal", "credentials"), nil
 }
 
 // StoreDescription returns a user-facing description of the credential backend.

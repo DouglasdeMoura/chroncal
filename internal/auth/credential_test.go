@@ -47,6 +47,52 @@ func overrideKeyringForTest(t *testing.T, available bool, values map[string]stri
 	})
 }
 
+// TestAppConfigBaseDir_HonorsXDGOnNonLinux reproduces issue #372: before the
+// fix, XDG_CONFIG_HOME was only consulted when GOOS == "linux", so macOS/Windows
+// users who set XDG_CONFIG_HOME got credentials written under os.UserConfigDir()
+// while the config loader read from XDG — two different roots.
+func TestAppConfigBaseDir_HonorsXDGOnNonLinux(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	// Simulate Darwin — the platform where the bug manifested.
+	got, err := appConfigBaseDir("darwin")
+	if err != nil {
+		t.Fatalf("appConfigBaseDir: %v", err)
+	}
+	if got != dir {
+		t.Errorf("appConfigBaseDir(darwin) with XDG_CONFIG_HOME=%q returned %q; want XDG_CONFIG_HOME to be honoured on all platforms", dir, got)
+	}
+}
+
+func TestAppConfigBaseDir_HonorsXDGOnLinux(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	got, err := appConfigBaseDir("linux")
+	if err != nil {
+		t.Fatalf("appConfigBaseDir: %v", err)
+	}
+	if got != dir {
+		t.Errorf("appConfigBaseDir(linux) with XDG_CONFIG_HOME=%q returned %q; want %q", dir, got, dir)
+	}
+}
+
+func TestAppConfigBaseDir_LinuxFallsBackToHomeConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", "") // explicitly unset
+	t.Setenv("HOME", home)
+
+	got, err := appConfigBaseDir("linux")
+	if err != nil {
+		t.Fatalf("appConfigBaseDir: %v", err)
+	}
+	want := filepath.Join(home, ".config")
+	if got != want {
+		t.Errorf("appConfigBaseDir(linux) without XDG = %q, want %q", got, want)
+	}
+}
+
 func TestPlaintextFileStore_SetGetDelete(t *testing.T) {
 	dir := t.TempDir()
 	store := &PlaintextFileStore{dir: dir}
@@ -236,13 +282,10 @@ func TestNewCredentialStore_PrefersKeyringWhenAvailable(t *testing.T) {
 
 func TestNewCredentialStore_MigratesLegacyPlaintextCredentials(t *testing.T) {
 	dir := t.TempDir()
-	// Redirect the config dir the way each platform actually resolves it:
-	// credentialDir honors XDG_CONFIG_HOME only on Linux; macOS uses
-	// os.UserConfigDir ($HOME/Library/Application Support). Set both, then
-	// derive the legacy dir from credentialDir itself so the test seeds the
-	// legacy credential exactly where NewCredentialStore's internal plaintext
-	// store looks for it — on any platform. (Hardcoding the Linux XDG layout
-	// is what made this test fail on the macOS CI runner.)
+	// credentialDir honours XDG_CONFIG_HOME on every platform (issue #372).
+	// Setting XDG_CONFIG_HOME is sufficient to pin the credential directory
+	// on all OSes; HOME is also set so the Linux fallback path is stable if
+	// XDG_CONFIG_HOME happens to be cleared elsewhere in the process.
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("HOME", dir)
 
