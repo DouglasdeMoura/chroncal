@@ -465,6 +465,25 @@ func (m RecurrenceEditorModel) HandleEndsDateMouse(msg tea.MouseClickMsg, picker
 
 	rx := msg.X - gridX
 	ry := msg.Y - gridY
+
+	// Button row sits 8 rows below the grid start:
+	// 6 calendar rows + 1 blank line + 1 separator line.
+	const buttonRowRY = 8
+	if ry == buttonRowRY {
+		mmX := msg.X - ox - 2
+		bs := DefaultButtonStyles()
+		cancelW := lipgloss.Width(bs.Normal.Render("Cancel", false))
+		okW := lipgloss.Width(bs.Normal.Render("Ok", false))
+		btnPad := max(innerW-cancelW-1-okW, 0)
+		switch {
+		case mmX >= btnPad && mmX < btnPad+cancelW:
+			m.endsDatePicker = false
+		case mmX >= btnPad+cancelW+1 && mmX < btnPad+cancelW+1+okW:
+			m.endsDatePicker = false
+		}
+		return m
+	}
+
 	if rx < 0 || rx >= gridW || ry < 0 || ry >= 6 {
 		return m
 	}
