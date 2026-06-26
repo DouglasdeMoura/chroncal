@@ -1023,9 +1023,10 @@ func (m Model) startOAuthFlow(clientID, clientSecret string) (Model, tea.Cmd) {
 }
 
 // finishOAuthReauth persists the fresh tokens for a re-authenticated
-// account. A full re-consent returns a new refresh token (unlike
-// RefreshGoogleToken, which preserves the old one); the stored credential's
-// username and client config are kept, the token triple is replaced.
+// account. A full re-consent always returns a new refresh token (unlike
+// RefreshGoogleToken, which only returns a new one if the server rotates it);
+// the stored credential's username and client config are kept, the token
+// triple is replaced.
 func (m Model) finishOAuthReauth(result *auth.GoogleOAuthResult) tea.Cmd {
 	p := m.oauthPurpose
 	return func() tea.Msg {
