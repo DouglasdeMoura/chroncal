@@ -1357,3 +1357,41 @@ func TestListExpandedByDateRange_OverrideEmptyEndTime(t *testing.T) {
 		t.Errorf("Apr 13 title = %q, want %q", found.Title, "Weekly Sync (overridden)")
 	}
 }
+
+// TestExpandedInstancesCarryConferenceURI guards against the recurrence mapper
+// drifting from event.FromStorage: a recurring event with a ConferenceURI must
+// keep that URI on every expanded instance (regression test for #256).
+func TestExpandedInstancesCarryConferenceURI(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	eventsSvc := event.NewService(db, q)
+	recurSvc := NewService(db, q)
+	ctx := context.Background()
+
+	const confURI = "https://meet.example.com/weekly-room"
+	_, err := eventsSvc.Create(ctx, event.CreateParams{
+		CalendarID:     1,
+		Title:          "Weekly Sync",
+		StartTime:      time.Date(2026, 4, 6, 9, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO;COUNT=3",
+		ConferenceURI:  confURI,
+	})
+	if err != nil {
+		t.Fatalf("create recurring: %v", err)
+	}
+
+	from := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	events, err := recurSvc.ListExpandedByDateRange(ctx, from, to)
+	if err != nil {
+		t.Fatalf("ListExpandedByDateRange: %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("got %d events, want 3", len(events))
+	}
+	for i := range events {
+		if events[i].ConferenceURI != confURI {
+			t.Errorf("events[%d].ConferenceURI = %q, want %q", i, events[i].ConferenceURI, confURI)
+		}
+	}
+}

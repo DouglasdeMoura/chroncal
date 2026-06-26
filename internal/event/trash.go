@@ -82,7 +82,7 @@ func (s *Service) ListTrash(ctx context.Context, calendarID int64) ([]TrashEntry
 
 	entries := make([]TrashEntry, 0, len(evts)+len(instLogs)+len(truncLogs))
 	for _, r := range evts {
-		ev := fromStorage(r)
+		ev := FromStorage(r)
 		deletedAt := time.Time{}
 		if ev.DeletedAt != nil {
 			deletedAt = *ev.DeletedAt
@@ -113,7 +113,7 @@ func (s *Service) ListTrash(ctx context.Context, calendarID int64) ([]TrashEntry
 			return m
 		}
 		if r, err := s.q.GetEventByUIDIncludingDeleted(ctx, uid); err == nil {
-			ev := fromStorage(r)
+			ev := FromStorage(r)
 			masters[uid] = &ev
 			return &ev
 		}
