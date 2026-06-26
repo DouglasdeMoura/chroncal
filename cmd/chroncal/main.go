@@ -398,6 +398,33 @@ func parseDateRange(fromStr, toStr string) (time.Time, time.Time, error) {
 	return from, to, nil
 }
 
+// parseExportDateBounds parses the optional --from/--to flags for export
+// commands, treating each bound independently. An omitted bound returns a zero
+// time.Time (open/unbounded), so only --from or only --to is honoured without
+// silently deriving the missing end from today or from+30 days. This corrects
+// issue #358 where the export command shared parseDateRange (designed for the
+// "today..+30d" list default) and silently clipped the window whenever exactly
+// one flag was given.
+func parseExportDateBounds(fromStr, toStr string) (time.Time, time.Time, error) {
+	var from, to time.Time
+	if fromStr != "" {
+		var err error
+		from, err = parseCLIDate("from", fromStr, time.Local)
+		if err != nil {
+			return time.Time{}, time.Time{}, err
+		}
+	}
+	if toStr != "" {
+		var err error
+		to, err = parseCLIDate("to", toStr, time.Local)
+		if err != nil {
+			return time.Time{}, time.Time{}, err
+		}
+		to = to.AddDate(0, 0, 1) // half-open: include the entire end day
+	}
+	return from, to, nil
+}
+
 // parseListDateRange parses the optional --from/--to window for the
 // retrospective `todo list` / `journal list` views. With no flags it returns
 // an open (zero) range so overdue todos and past journal entries stay visible

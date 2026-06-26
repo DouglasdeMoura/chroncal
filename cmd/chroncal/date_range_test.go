@@ -1,8 +1,13 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
+
+	// Embed the timezone database so the re-executed helper subprocess can
+	// resolve a fixed non-UTC zone regardless of the host's tzdata.
+	_ "time/tzdata"
 )
 
 // TestParseDateRangeFromBeyondDefaultWindow guards against issue #111:
@@ -60,5 +65,128 @@ func TestParseListDateRangeWithFlagIsFinite(t *testing.T) {
 	}
 	if !to.After(from) {
 		t.Fatalf("expected to (%s) after from (%s)", to, from)
+	}
+}
+
+// TestParseExportDateBoundsOnlyFrom guards issue #358: supplying only --from
+// must leave the upper bound open (zero), not default it to from+30 days.
+func TestParseExportDateBoundsOnlyFrom(t *testing.T) {
+	from, to, err := parseExportDateBounds("2026-01-01", "")
+	if err != nil {
+		t.Fatalf("parseExportDateBounds: %v", err)
+	}
+	if from.IsZero() {
+		t.Fatal("from must not be zero when --from is given")
+	}
+	if !to.IsZero() {
+		t.Fatalf("to must be zero (unbounded) when --to is omitted, got %s", to)
+	}
+}
+
+// TestParseExportDateBoundsOnlyTo guards issue #358: supplying only --to must
+// leave the lower bound open (zero), not default it to today.
+func TestParseExportDateBoundsOnlyTo(t *testing.T) {
+	from, to, err := parseExportDateBounds("", "2026-12-31")
+	if err != nil {
+		t.Fatalf("parseExportDateBounds: %v", err)
+	}
+	if !from.IsZero() {
+		t.Fatalf("from must be zero (unbounded) when --from is omitted, got %s", from)
+	}
+	if to.IsZero() {
+		t.Fatal("to must not be zero when --to is given")
+	}
+}
+
+// TestParseExportDateBoundsBoth verifies that when both flags are present the
+// returned window is non-zero and to is strictly after from.
+func TestParseExportDateBoundsBoth(t *testing.T) {
+	from, to, err := parseExportDateBounds("2026-04-01", "2026-04-30")
+	if err != nil {
+		t.Fatalf("parseExportDateBounds: %v", err)
+	}
+	if from.IsZero() || to.IsZero() {
+		t.Fatalf("both bounds must be non-zero, got from=%s to=%s", from, to)
+	}
+	if !to.After(from) {
+		t.Fatalf("to (%s) must be after from (%s)", to, from)
+	}
+}
+
+// TestParseExportDateBoundsNeither verifies that with no flags both bounds are
+// zero (unbounded).
+func TestParseExportDateBoundsNeither(t *testing.T) {
+	from, to, err := parseExportDateBounds("", "")
+	if err != nil {
+		t.Fatalf("parseExportDateBounds: %v", err)
+	}
+	if !from.IsZero() || !to.IsZero() {
+		t.Fatalf("both bounds must be zero when no flags given, got from=%s to=%s", from, to)
+	}
+}
+
+// TestICalExportOnlyFromIsUnboundedAbove guards issue #358: when only --from is
+// given the export must include events beyond from+30 days (no silent upper
+// bound). Before the fix, parseDateRange silently set to=from+30.
+func TestICalExportOnlyFromIsUnboundedAbove(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Work"); err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+
+	// This event starts more than 30 days after the --from date below.
+	if _, _, err := runChroncalCommand(t,
+		"event", "add", "Far future event",
+		"--calendar", "Work",
+		"--date", "2026-09-01",
+	); err != nil {
+		t.Fatalf("event add: %v", err)
+	}
+
+	stdout, _, err := runChroncalCommand(t, "ical", "export",
+		"--calendar", "Work",
+		"--from", "2026-06-01")
+	if err != nil {
+		t.Fatalf("ical export: %v", err)
+	}
+
+	if !strings.Contains(stdout, "Far future event") {
+		t.Fatalf("ical export --from 2026-06-01 should include event on 2026-09-01 "+
+			"(beyond the old 30-day default window) but did not\noutput:\n%s", stdout)
+	}
+}
+
+// TestICalExportOnlyToIsUnboundedBelow guards issue #358: when only --to is
+// given the export must include events before today (no silent lower bound at
+// today). Before the fix, parseDateRange silently set from=today.
+func TestICalExportOnlyToIsUnboundedBelow(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Work"); err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+
+	// This event is well in the past.
+	if _, _, err := runChroncalCommand(t,
+		"event", "add", "Past event",
+		"--calendar", "Work",
+		"--date", "2020-01-01",
+	); err != nil {
+		t.Fatalf("event add: %v", err)
+	}
+
+	stdout, _, err := runChroncalCommand(t, "ical", "export",
+		"--calendar", "Work",
+		"--to", "2026-12-31")
+	if err != nil {
+		t.Fatalf("ical export: %v", err)
+	}
+
+	if !strings.Contains(stdout, "Past event") {
+		t.Fatalf("ical export --to 2026-12-31 should include event on 2020-01-01 "+
+			"(before the old today lower bound) but did not\noutput:\n%s", stdout)
 	}
 }

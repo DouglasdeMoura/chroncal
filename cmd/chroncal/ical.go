@@ -317,17 +317,26 @@ to stdout.`,
 				}
 			}
 
-			// Parse date range for event filtering
+			// Parse date bounds for event filtering. Use parseExportDateBounds
+			// (not parseDateRange) so each flag is treated independently:
+			// omitting --from leaves the lower bound open and omitting --to
+			// leaves the upper bound open. parseDateRange derives defaults
+			// (today / from+30d) that are correct for the bounded list view but
+			// silently clip the export window when only one flag is given
+			// (issue #358).
+			fromT, toT, derr := parseExportDateBounds(fromStr, toStr)
+			if derr != nil {
+				return derr
+			}
+			// Normalize to UTC so the RFC3339 bounds compare lexically against
+			// UTC-stored start/end strings (issue #305). Zero time → empty
+			// string → no constraint on that side.
 			var fromTime, toTime string
-			if fromStr != "" || toStr != "" {
-				from, to, derr := parseDateRange(fromStr, toStr)
-				if derr != nil {
-					return derr
-				}
-				// Normalize to UTC so the RFC3339 bounds compare lexically
-				// against UTC-stored start/end strings (issue #305).
-				fromTime = from.UTC().Format(time.RFC3339)
-				toTime = to.UTC().Format(time.RFC3339)
+			if !fromT.IsZero() {
+				fromTime = fromT.UTC().Format(time.RFC3339)
+			}
+			if !toT.IsZero() {
+				toTime = toT.UTC().Format(time.RFC3339)
 			}
 
 			// Load events
@@ -348,13 +357,12 @@ to stdout.`,
 				// start_time predates the window are missed by the SQL
 				// filter.  Include them if any instance falls in range.
 				if fromStr != "" || toStr != "" {
-					from, to, _ := parseDateRange(fromStr, toStr)
 					extra, eerr := a.Recurrences.ExportExpandedByDateRange(ctx, recurrence.ExportFilterParams{
 						CalendarID: calID,
 						Category:   category,
 						Status:     status,
-						From:       from,
-						To:         to,
+						From:       fromT,
+						To:         toT,
 					})
 					if eerr == nil {
 						seen := make(map[int64]bool, len(events))
