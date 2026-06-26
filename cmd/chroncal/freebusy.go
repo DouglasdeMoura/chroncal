@@ -36,11 +36,11 @@ queries the connected remote CalDAV calendar instead.`,
   chroncal freebusy --calendar Work --from 2026-04-01T09:00:00-03:00 --to 2026-04-01T18:00:00-03:00
   chroncal freebusy --calendar Work --remote --from 2026-04-01 --to 2026-04-07 --format ical`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			from, err := parseFreeBusyTime("from", fromStr)
+			from, err := parseFreeBusyTime("from", fromStr, false)
 			if err != nil {
 				return err
 			}
-			to, err := parseFreeBusyTime("to", toStr)
+			to, err := parseFreeBusyTime("to", toStr, true)
 			if err != nil {
 				return err
 			}
@@ -151,8 +151,16 @@ queries the connected remote CalDAV calendar instead.`,
 	return cmd
 }
 
-func parseFreeBusyTime(flag, input string) (time.Time, error) {
+// parseFreeBusyTime parses a free/busy range bound that may be a date-only
+// (YYYY-MM-DD) value or a full RFC3339 timestamp. When inclusiveEnd is true and
+// the input is date-only, the result is advanced by one day so the named day is
+// fully covered by the half-open [from, to) range — matching the inclusive
+// end-of-day semantics of parseDateRange used by `list`/`export` (issue #137).
+func parseFreeBusyTime(flag, input string, inclusiveEnd bool) (time.Time, error) {
 	if t, err := time.ParseInLocation("2006-01-02", input, time.Local); err == nil {
+		if inclusiveEnd {
+			t = t.AddDate(0, 0, 1)
+		}
 		return t, nil
 	}
 	if t, err := time.Parse(time.RFC3339, input); err == nil {
