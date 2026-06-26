@@ -51,6 +51,19 @@ func expandInPlaceholders(ids []int64) (string, []interface{}) {
 	return placeholders, args
 }
 
+// expandStringPlaceholders is the string analogue of expandInPlaceholders,
+// building the "?,?,?" list and matching positional args for a SQL `IN (...)`
+// clause over string values (e.g. UIDs). Callers must ensure len(vals) > 0.
+func expandStringPlaceholders(vals []string) (string, []interface{}) {
+	placeholders := strings.Repeat("?,", len(vals))
+	placeholders = placeholders[:len(placeholders)-1] // trim trailing comma
+	args := make([]interface{}, len(vals))
+	for i, v := range vals {
+		args[i] = v
+	}
+	return placeholders, args
+}
+
 func (q *Queries) queryEvents(ctx context.Context, where string, args []interface{}, orderBy string) ([]Event, error) {
 	query := "SELECT * FROM events " + where + " ORDER BY " + orderBy
 	rows, err := q.db.QueryContext(ctx, query, args...)
