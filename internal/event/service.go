@@ -170,16 +170,44 @@ func applyEventDefaults(status, transp, class *string) {
 	}
 }
 
+// normalizeEventTimes coerces start/end to the storage invariant that all
+// database times are RFC 3339 in UTC (see AGENTS.md). Without it, times built
+// in a non-UTC zone (e.g. the CLI's time.Local or a --timezone value) persist
+// with an offset and sort incorrectly against the UTC bounds used by
+// date-range queries, silently dropping the event from list views (#254).
+//
+// Timed events keep their absolute instant. All-day events are pinned to UTC
+// midnight on their wall-clock date so they occupy exactly one calendar day
+// regardless of the zone they were built in (matching the TUI and iCal import);
+// a plain .UTC() would otherwise shift local midnight onto the previous or next
+// day and make the event surface on two days.
+func normalizeEventTimes(start, end *time.Time, allDay bool) {
+	*start = toStorageTime(*start, allDay)
+	*end = toStorageTime(*end, allDay)
+}
+
+func toStorageTime(t time.Time, allDay bool) time.Time {
+	if allDay {
+		// Take the wall-clock date in t's own location before dropping the
+		// zone, then pin to UTC midnight.
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+	}
+	return t.UTC()
+}
+
 func (p *CreateParams) applyDefaults() {
 	applyEventDefaults(&p.Status, &p.Transp, &p.Class)
+	normalizeEventTimes(&p.StartTime, &p.EndTime, p.AllDay)
 }
 
 func (p *UpsertParams) applyDefaults() {
 	applyEventDefaults(&p.Status, &p.Transp, &p.Class)
+	normalizeEventTimes(&p.StartTime, &p.EndTime, p.AllDay)
 }
 
 func (p *UpdateParams) applyDefaults() {
 	applyEventDefaults(&p.Status, &p.Transp, &p.Class)
+	normalizeEventTimes(&p.StartTime, &p.EndTime, p.AllDay)
 }
 
 func (s *Service) CountByCalendar(ctx context.Context, calendarID int64) (int64, error) {
