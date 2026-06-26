@@ -453,13 +453,14 @@ func (m RecurrenceEditorModel) handleEndsDateKey(msg tea.KeyPressMsg) Recurrence
 
 // HandleEndsDateMouse handles mouse clicks on the ends date picker.
 func (m RecurrenceEditorModel) HandleEndsDateMouse(msg tea.MouseClickMsg, pickerBoxW, pickerBoxH int) RecurrenceEditorModel {
-	innerW := pickerBoxW - 6
 	const gridW = 20
-	gridPad := max((innerW-gridW)/2, 0)
 
 	ox := (m.width - pickerBoxW) / 2
 	oy := (m.height - pickerBoxH) / 2
-	gridX := ox + 3 + gridPad
+	// The mini-calendar is rendered left-aligned (indent=0) inside the box.
+	// Content starts at border(1) + left-pad(1) = ox+2, matching the
+	// reference handler in EventFormModel.handleEndsDatePickerMouse.
+	gridX := ox + 2
 	gridY := oy + 4
 
 	rx := msg.X - gridX
