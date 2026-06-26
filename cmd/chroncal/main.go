@@ -346,12 +346,11 @@ func resolveCalendarID(ctx context.Context, a *app.App, name string) (int64, err
 	if err != nil {
 		return 0, fmt.Errorf("list calendars: %w", err)
 	}
-	for _, c := range cals {
-		if strings.EqualFold(c.Name, name) {
-			return c.ID, nil
-		}
+	cal, err := findCalendarByRef(cals, name)
+	if err != nil {
+		return 0, err
 	}
-	return 0, fmt.Errorf("calendar %q not found", name)
+	return cal.ID, nil
 }
 
 // resolveJournal looks up a journal by numeric ID, string UID, or UID + recurrence-id.
