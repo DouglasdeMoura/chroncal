@@ -37,8 +37,9 @@ func runWriteCommand(t *testing.T, sub *cobra.Command, args ...string) error {
 	root := &cobra.Command{
 		Use: "chroncal-test",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			cfg = config.Load()
-			return nil
+			var err error
+			cfg, err = config.Load()
+			return err
 		},
 	}
 	root.AddCommand(sub)

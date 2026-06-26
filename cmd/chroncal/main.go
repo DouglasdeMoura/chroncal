@@ -197,7 +197,11 @@ Helpful conventions:
   # Get machine-readable output for scripts or LLMs
   chroncal todo list --output json`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		cfg = config.Load()
+		var err error
+		cfg, err = config.Load()
+		if err != nil {
+			return err
+		}
 		if cfg.ProductID != "" {
 			ical.ProductID = cfg.ProductID
 		}

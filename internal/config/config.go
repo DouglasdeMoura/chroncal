@@ -1,6 +1,8 @@
 package config
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -65,17 +67,29 @@ const DefaultSMTPPort = 587
 
 // Load reads configuration with precedence: env > config file > defaults.
 // The caller is responsible for applying flag overrides on top.
-func Load() Config {
+func Load() (Config, error) {
 	v := newViper()
 
 	if dir, err := configDir(); err == nil {
 		v.AddConfigPath(filepath.Join(dir, "chroncal"))
 	}
 
-	v.ReadInConfig() //nolint:errcheck // file is optional
+	// The config file is optional: a missing file is fine and falls back to
+	// env/defaults. A *malformed* file, however, must surface an error rather
+	// than be silently treated like an absent one — otherwise a typo anywhere
+	// in config.toml would revert db/security/SMTP/etc. to defaults and could
+	// open the wrong (default) database without warning.
+	if err := v.ReadInConfig(); err != nil {
+		var notFound viper.ConfigFileNotFoundError
+		if !errors.As(err, &notFound) {
+			return Config{}, fmt.Errorf("read config file: %w", err)
+		}
+	}
 
 	var cfg Config
-	v.Unmarshal(&cfg) //nolint:errcheck // best-effort; zero-value Config is safe
+	if err := v.Unmarshal(&cfg); err != nil {
+		return Config{}, fmt.Errorf("parse config file: %w", err)
+	}
 	if cfg.SMTP.Port == 0 {
 		cfg.SMTP.Port = DefaultSMTPPort
 	}
@@ -86,7 +100,7 @@ func Load() Config {
 	if !v.IsSet("soft_delete.purge_days") {
 		cfg.SoftDelete.PurgeDays = DefaultSoftDeletePurgeDays
 	}
-	return cfg
+	return cfg, nil
 }
 
 // newViper creates a pre-configured Viper instance with CHRONCAL_ env prefix
