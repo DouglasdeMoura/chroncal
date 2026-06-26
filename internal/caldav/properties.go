@@ -50,7 +50,7 @@ func GetCalendarColor(ctx context.Context, httpClient webdav.HTTPClient, calenda
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusMultiStatus {
-		return "", fmt.Errorf("PROPFIND calendar-color: HTTP %d", resp.StatusCode)
+		return "", statusErrorf(resp.StatusCode, "PROPFIND calendar-color: HTTP %d", resp.StatusCode)
 	}
 
 	var ms calendarColorMultiStatus
@@ -67,7 +67,7 @@ func GetCalendarColor(ctx context.Context, httpClient webdav.HTTPClient, calenda
 			case code == http.StatusNotFound:
 				return "", nil
 			case code != 0:
-				return "", fmt.Errorf("PROPFIND calendar-color: HTTP %d", code)
+				return "", statusErrorf(code, "PROPFIND calendar-color: HTTP %d", code)
 			}
 		}
 	}
@@ -149,14 +149,14 @@ func SetCalendarColor(ctx context.Context, httpClient webdav.HTTPClient, calenda
 			for _, propstat := range response.PropStats {
 				code := parseStatusCode(propstat.Status)
 				if code < 200 || code >= 300 {
-					return fmt.Errorf("PROPPATCH calendar-color: HTTP %d", code)
+					return statusErrorf(code, "PROPPATCH calendar-color: HTTP %d", code)
 				}
 			}
 		}
 		return nil
 	default:
 		_, _ = io.Copy(io.Discard, resp.Body)
-		return fmt.Errorf("PROPPATCH calendar-color: HTTP %d", resp.StatusCode)
+		return statusErrorf(resp.StatusCode, "PROPPATCH calendar-color: HTTP %d", resp.StatusCode)
 	}
 }
 

@@ -3,9 +3,35 @@ package retry
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"testing"
 )
+
+// TestTypedStatusNotShadowedByNumericPrefix guards against regressions of
+// issue #134: when a wrapping layer prepends a numeric token (a batch
+// index, a host:port segment), classification must still read the real
+// HTTP status from the typed HTTPError rather than scraping the first
+// 3-digit token out of the message.
+func TestTypedStatusNotShadowedByNumericPrefix(t *testing.T) {
+	t.Parallel()
+
+	serverErr := fmt.Errorf("multiget batch 100: %w", NewHTTPError(503, errors.New("HTTP 503 Service Unavailable")))
+	if !IsTransient(serverErr) {
+		t.Fatalf("IsTransient(%v) = false, want true (wrapped 503 must be retried)", serverErr)
+	}
+	if IsConflict(serverErr) {
+		t.Fatalf("IsConflict(%v) = true, want false (503 is not a conflict)", serverErr)
+	}
+
+	conflictErr := fmt.Errorf("PUT https://dav.example.com:100/cal: %w", NewHTTPError(412, errors.New("HTTP 412 Precondition Failed")))
+	if !IsConflict(conflictErr) {
+		t.Fatalf("IsConflict(%v) = false, want true (wrapped 412 must be detected)", conflictErr)
+	}
+	if IsTransient(conflictErr) {
+		t.Fatalf("IsTransient(%v) = true, want false (412 must not be retried)", conflictErr)
+	}
+}
 
 func TestIsTransient(t *testing.T) {
 	t.Parallel()

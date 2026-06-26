@@ -3,6 +3,7 @@ package retry
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"regexp"
 	"strings"
@@ -42,6 +43,34 @@ func retryAfter(err error) time.Duration {
 	}
 	return 0
 }
+
+// HTTPError carries an HTTP status code as a typed field so that
+// transient/conflict classification can rely on the real status instead
+// of scraping the error string. String scraping is fragile: any wrapping
+// that prepends a numeric token (a batch index, a host:port segment)
+// would shadow the status and mis-route retries.
+type HTTPError struct {
+	Status int
+	// Err holds the underlying error (typically a formatted message with
+	// the status text and a body excerpt). It is preserved for Error and
+	// Unwrap so existing message-based diagnostics keep working.
+	Err error
+}
+
+// NewHTTPError builds an HTTPError for the given status. The message is
+// supplied by the caller so the rich, human-readable form is preserved.
+func NewHTTPError(status int, err error) *HTTPError {
+	return &HTTPError{Status: status, Err: err}
+}
+
+func (e *HTTPError) Error() string {
+	if e.Err != nil {
+		return e.Err.Error()
+	}
+	return fmt.Sprintf("HTTP %d", e.Status)
+}
+
+func (e *HTTPError) Unwrap() error { return e.Err }
 
 // IsTransient reports whether err is worth retrying.
 func IsTransient(err error) bool {
@@ -101,6 +130,14 @@ func statusCode(err error) int {
 		return 0
 	}
 
+	// Prefer the typed status when present: it is authoritative and
+	// immune to numeric tokens injected by wrapping layers.
+	var httpErr *HTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.Status
+	}
+
+	// Fall back to scraping the message for legacy string-only errors.
 	match := httpStatusPattern.FindStringSubmatch(err.Error())
 	if len(match) != 2 {
 		return 0

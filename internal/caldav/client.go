@@ -457,6 +457,13 @@ func EncodeCalendar(cal *ical.Calendar) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// statusErrorf wraps a formatted message in a typed retry.HTTPError so
+// transient/conflict classification reads the real status regardless of
+// any numeric tokens the message (or a future wrapping layer) carries.
+func statusErrorf(status int, format string, args ...any) error {
+	return retry.NewHTTPError(status, fmt.Errorf(format, args...))
+}
+
 func httpError(resp *http.Response) error {
 	if resp == nil {
 		return fmt.Errorf("HTTP 0")
@@ -479,9 +486,9 @@ func httpError(resp *http.Response) error {
 
 	var err error
 	if bodyText == "" {
-		err = fmt.Errorf("HTTP %s", status)
+		err = retry.NewHTTPError(resp.StatusCode, fmt.Errorf("HTTP %s", status))
 	} else {
-		err = fmt.Errorf("HTTP %s: %s", status, bodyText)
+		err = retry.NewHTTPError(resp.StatusCode, fmt.Errorf("HTTP %s: %s", status, bodyText))
 	}
 
 	// Servers ask clients to back off via Retry-After (typically on 429 or

@@ -85,7 +85,7 @@ func (c *Client) SyncCollection(ctx context.Context, calendarPath string, syncTo
 		if bytes.Contains(raw, []byte("valid-sync-token")) {
 			return nil, ErrSyncTokenInvalid
 		}
-		return nil, fmt.Errorf("REPORT sync-collection: HTTP %d", resp.StatusCode)
+		return nil, statusErrorf(resp.StatusCode, "REPORT sync-collection: HTTP %d", resp.StatusCode)
 	case http.StatusBadRequest, http.StatusMethodNotAllowed,
 		http.StatusUnsupportedMediaType, http.StatusUnprocessableEntity,
 		http.StatusNotImplemented:
