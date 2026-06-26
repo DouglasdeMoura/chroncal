@@ -939,7 +939,7 @@ func syncHealthFor(info CalendarInfo) SyncHealth {
 // token-refresh persistence mid-run) doesn't clobber the rendered TUI; users
 // run `chroncal sync run` from a shell if they need verbose output.
 func (m Model) newSyncService() (*syncpkg.Service, error) {
-	credStore, err := auth.NewCredentialStoreWithWarnings(true, io.Discard)
+	credStore, err := auth.NewCredentialStoreWithWarnings(m.app.AllowPlaintext, io.Discard)
 	if err != nil {
 		return nil, fmt.Errorf("credential store: %w", err)
 	}
@@ -1029,7 +1029,7 @@ func (m Model) startOAuthFlow(clientID, clientSecret string) (Model, tea.Cmd) {
 func (m Model) finishOAuthReauth(result *auth.GoogleOAuthResult) tea.Cmd {
 	p := m.oauthPurpose
 	return func() tea.Msg {
-		credStore, err := auth.NewCredentialStoreWithWarnings(true, io.Discard)
+		credStore, err := auth.NewCredentialStoreWithWarnings(m.app.AllowPlaintext, io.Discard)
 		if err != nil {
 			return oauthCredentialStoredMsg{calendarID: p.calendarID, name: p.calendarName, err: err}
 		}
@@ -1059,7 +1059,7 @@ func (m Model) finishOAuthConnect(result *auth.GoogleOAuthResult) tea.Cmd {
 	p := m.oauthPurpose
 	return func() tea.Msg {
 		ctx := context.Background()
-		credStore, err := auth.NewCredentialStoreWithWarnings(true, io.Discard)
+		credStore, err := auth.NewCredentialStoreWithWarnings(m.app.AllowPlaintext, io.Discard)
 		if err != nil {
 			return oauthConnectFinishedMsg{calendarID: p.cal.ID, name: p.cal.Name, err: err}
 		}
@@ -2314,7 +2314,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// mid-frame corrupt the renderer. Plaintext is an explicit
 				// opt-in whose warning the user saw at setup; the keyring
 				// is the default store and emits nothing.
-				credStore, storeErr := auth.NewCredentialStoreWithWarnings(true, io.Discard)
+				credStore, storeErr := auth.NewCredentialStoreWithWarnings(m.app.AllowPlaintext, io.Discard)
 				if storeErr != nil {
 					return calendarMutationDoneMsg{err: storeErr}
 				}
@@ -2376,7 +2376,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if cal.AccountID == 0 {
 				return calendarReauthReadyMsg{err: fmt.Errorf("calendar %q is not linked to an account", cal.Name)}
 			}
-			credStore, err := auth.NewCredentialStoreWithWarnings(true, io.Discard)
+			credStore, err := auth.NewCredentialStoreWithWarnings(m.app.AllowPlaintext, io.Discard)
 			if err != nil {
 				return calendarReauthReadyMsg{err: err}
 			}
@@ -2531,7 +2531,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if err != nil {
 				return calendarMutationDoneMsg{err: err}
 			}
-			credStore, _ := auth.NewCredentialStoreWithWarnings(true, io.Discard)
+			credStore, _ := auth.NewCredentialStoreWithWarnings(m.app.AllowPlaintext, io.Discard)
 			return calendarMutationDoneMsg{err: m.app.Calendars.Disconnect(ctx, cal, credStore)}
 		}
 
@@ -2950,7 +2950,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Delete confirmed: close the edit dialog too.
 			m.calendarDialogOpen = false
 			return m, func() tea.Msg {
-				credStore, _ := auth.NewCredentialStoreWithWarnings(true, io.Discard)
+				credStore, _ := auth.NewCredentialStoreWithWarnings(m.app.AllowPlaintext, io.Discard)
 				err := m.app.Calendars.DeleteWithRemoteCleanup(context.Background(), id, newDefaultID, credStore)
 				return calendarMutationDoneMsg{err: err}
 			}

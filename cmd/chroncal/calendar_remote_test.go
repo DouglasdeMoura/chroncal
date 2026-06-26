@@ -147,6 +147,57 @@ func TestConnectCalendarRemote_RollsBackExistingHiddenAccountUpdateWhenCredentia
 	}
 }
 
+// TestConnectCalendarRemote_GatesPlaintextOnAppFlag is the regression guard
+// for issue #299: the credential store must be constructed with the app's
+// AllowPlaintext value, not a hardcoded true. Before the fix every call site
+// passed true unconditionally, so the --allow-plaintext gate was dead code
+// and secrets were silently written in cleartext when no keyring was present.
+func TestConnectCalendarRemote_GatesPlaintextOnAppFlag(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	defer a.Close()
+
+	ctx := context.Background()
+	cal, err := a.Calendars.Create(ctx, "Work", "#7C3AED", "")
+	if err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+
+	var gotAllowPlaintext bool
+	prevFactory := newCalendarCredentialStore
+	newCalendarCredentialStore = func(allowPlaintext bool) (auth.CredentialStore, error) {
+		gotAllowPlaintext = allowPlaintext
+		// Return an error to short-circuit connectCalendarRemote right after
+		// the store is constructed; we only care about the argument.
+		return nil, errors.New("stop after store construction")
+	}
+	t.Cleanup(func() {
+		newCalendarCredentialStore = prevFactory
+	})
+
+	flags := calendarRemoteFlags{
+		RemoteURL: "https://cal.example.com/dav/calendars/work/",
+		Username:  "alice",
+		AuthType:  "bearer",
+	}
+
+	a.AllowPlaintext = false
+	_ = connectCalendarRemote(ctx, a, cal, flags)
+	if gotAllowPlaintext {
+		t.Fatal("credential store built with allowPlaintext=true while App.AllowPlaintext=false; --allow-plaintext gate not enforced")
+	}
+
+	a.AllowPlaintext = true
+	_ = connectCalendarRemote(ctx, a, cal, flags)
+	if !gotAllowPlaintext {
+		t.Fatal("credential store built with allowPlaintext=false while App.AllowPlaintext=true; flag not threaded")
+	}
+}
+
 func TestDeleteCalendarWithCleanup_RemovesHiddenAccountAndCredential(t *testing.T) {
 	dbPath := setupCalendarCLITestEnv(t)
 

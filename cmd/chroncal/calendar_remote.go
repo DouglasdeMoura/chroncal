@@ -63,7 +63,7 @@ func validateCalendarRemoteFlags(remoteURL, username, authType, oauthClientID st
 }
 
 func connectCalendarRemote(ctx context.Context, a *app.App, cal calendarpkg.Calendar, flags calendarRemoteFlags) error {
-	credStore, err := newCalendarCredentialStore(true)
+	credStore, err := newCalendarCredentialStore(a.AllowPlaintext)
 	if err != nil {
 		return fmt.Errorf("credential store: %w", err)
 	}
@@ -95,12 +95,12 @@ func connectCalendarRemote(ctx context.Context, a *app.App, cal calendarpkg.Cale
 }
 
 func disconnectCalendarRemote(ctx context.Context, a *app.App, cal calendarpkg.Calendar) error {
-	credStore, _ := newCalendarCredentialStore(true)
+	credStore, _ := newCalendarCredentialStore(a.AllowPlaintext)
 	return a.Calendars.Disconnect(ctx, cal, credStore)
 }
 
 func deleteCalendarWithCleanup(ctx context.Context, a *app.App, id, newDefaultID int64) error {
-	credStore, _ := newCalendarCredentialStore(true)
+	credStore, _ := newCalendarCredentialStore(a.AllowPlaintext)
 	return a.Calendars.DeleteWithRemoteCleanup(ctx, id, newDefaultID, credStore)
 }
 

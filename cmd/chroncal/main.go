@@ -87,8 +87,9 @@ func printCLIError(err error) {
 }
 
 var (
-	outputFmt string
-	cfg       config.Config
+	outputFmt      string
+	allowPlaintext bool
+	cfg            config.Config
 )
 
 // groupRunE is RunE for a parent command with subcommands. Pairing it
@@ -239,11 +240,19 @@ func initApp() (*app.App, error) {
 			return nil, fmt.Errorf("default db path: %w", err)
 		}
 	}
-	return app.New(path)
+	a, err := app.New(path)
+	if err != nil {
+		return nil, err
+	}
+	// Permit the plaintext credential-store fallback only on explicit
+	// opt-in, via config or the --allow-plaintext flag. Either one suffices.
+	a.AllowPlaintext = cfg.Security.AllowPlaintext || allowPlaintext
+	return a, nil
 }
 
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&outputFmt, "output", "o", "text", "output format (text, json)")
+	rootCmd.PersistentFlags().BoolVar(&allowPlaintext, "allow-plaintext", false, "permit storing credentials in plaintext when no OS keyring is available")
 
 	rootCmd.AddGroup(
 		&cobra.Group{ID: groupPlanning, Title: "Planning and Scheduling"},

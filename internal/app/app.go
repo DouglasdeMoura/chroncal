@@ -27,6 +27,12 @@ type App struct {
 	Alarms      *alarm.Service
 	Recurrences *recurrence.Service
 	Trash       *trash.Service
+
+	// AllowPlaintext gates the plaintext credential-store fallback. It
+	// defaults to false so that, when no OS keyring is available, credential
+	// writes fail loudly instead of silently persisting secrets in cleartext.
+	// The CLI sets it from config/--allow-plaintext; the TUI inherits it.
+	AllowPlaintext bool
 }
 
 func New(dbPath string) (*App, error) {
