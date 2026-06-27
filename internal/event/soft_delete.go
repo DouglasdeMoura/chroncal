@@ -164,14 +164,21 @@ func (s *Service) RestoreUndo(ctx context.Context, meta UndoMeta) error {
 }
 
 // RestoreByUID un-hides every soft-deleted row with the given UID (master and
-// overrides). Used by the CLI `events restore <uid>` path.
+// overrides). Used by the CLI `events restore <uid>` path. Returns
+// ErrNotDeleted when the UID matches no soft-deleted rows (it is live, or
+// unknown, or already purged) so callers can report "not found" instead of a
+// misleading success.
 func (s *Service) RestoreByUID(ctx context.Context, uid string) error {
 	master, err := s.q.GetEventByUIDIncludingDeleted(ctx, uid)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("get master: %w", err)
 	}
-	if err := s.restoreEventsByUIDClearingExdates(ctx, uid); err != nil {
-		return err
+	n, restoreErr := s.restoreEventsByUIDClearingExdates(ctx, uid)
+	if restoreErr != nil {
+		return restoreErr
+	}
+	if n == 0 {
+		return ErrNotDeleted
 	}
 	if err == nil {
 		return s.reconcileSyncAfterRestore(ctx, master.CalendarID, uid)
@@ -261,7 +268,8 @@ func (s *Service) restoreSingle(ctx context.Context, uid, recurrenceID string) e
 		if errors.Is(err, sql.ErrNoRows) {
 			// Might be an override-only delete where the master UID has no
 			// master row; fall back to UID-wide restore.
-			return s.restoreEventsByUIDClearingExdates(ctx, uid)
+			_, err := s.restoreEventsByUIDClearingExdates(ctx, uid)
+			return err
 		}
 		return err
 	}
@@ -275,7 +283,8 @@ func (s *Service) restoreSingle(ctx context.Context, uid, recurrenceID string) e
 		// Master is live; an override was probably the thing deleted.
 		// Fall back to RestoreByUID which un-hides any deleted overrides
 		// sharing this UID.
-		return s.restoreEventsByUIDClearingExdates(ctx, uid)
+		_, err := s.restoreEventsByUIDClearingExdates(ctx, uid)
+		return err
 	}
 	if err := s.q.RestoreEvent(ctx, r.ID); err != nil {
 		return err
@@ -289,7 +298,7 @@ func (s *Service) restoreSeries(ctx context.Context, uid string) error {
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	if err := s.restoreEventsByUIDClearingExdates(ctx, uid); err != nil {
+	if _, err := s.restoreEventsByUIDClearingExdates(ctx, uid); err != nil {
 		return err
 	}
 	if err == nil {
@@ -342,27 +351,35 @@ func (s *Service) restoreEXDATEOnly(ctx context.Context, uid, recurrenceID strin
 	return s.reconcileSyncAfterRestore(ctx, calendarID, uid)
 }
 
-func (s *Service) restoreEventsByUIDClearingExdates(ctx context.Context, uid string) error {
+// restoreEventsByUIDClearingExdates un-hides every soft-deleted row for uid and
+// clears the master EXDATE for each override that was soft-deleted, all in one
+// transaction. Returns the number of rows un-hidden so callers can distinguish
+// a real restore from a no-op (live/unknown UID).
+func (s *Service) restoreEventsByUIDClearingExdates(ctx context.Context, uid string) (int64, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return 0, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
 	recurrenceIDs, err := qtx.ListDeletedOverrideRecurrenceIDs(ctx, uid)
 	if err != nil {
-		return fmt.Errorf("list deleted override recurrence ids: %w", err)
+		return 0, fmt.Errorf("list deleted override recurrence ids: %w", err)
 	}
-	if err := qtx.RestoreEventsByUID(ctx, uid); err != nil {
-		return fmt.Errorf("restore by uid: %w", err)
+	n, err := qtx.RestoreEventsByUID(ctx, uid)
+	if err != nil {
+		return 0, fmt.Errorf("restore by uid: %w", err)
 	}
 	for _, recurrenceID := range recurrenceIDs {
 		if err := clearMasterEXDATE(ctx, qtx, uid, recurrenceID); err != nil {
-			return err
+			return 0, err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // clearMasterEXDATE reverses the EXDATE an instance-delete added for
@@ -434,7 +451,7 @@ func (s *Service) restoreFromInstance(ctx context.Context, meta UndoMeta) error 
 	// Un-hide every soft-deleted row with this UID (the master was not
 	// soft-deleted by DeleteFromInstance, only overrides were — but this is
 	// idempotent).
-	if err := qtx.RestoreEventsByUID(ctx, meta.UID); err != nil {
+	if _, err := qtx.RestoreEventsByUID(ctx, meta.UID); err != nil {
 		return fmt.Errorf("restore overrides: %w", err)
 	}
 	if err := tx.Commit(); err != nil {

@@ -133,7 +133,7 @@ UPDATE todos SET
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ? AND deleted_at IS NOT NULL;
 
--- name: RestoreTodosByUID :exec
+-- name: RestoreTodosByUID :execrows
 UPDATE todos SET
     deleted_at = NULL,
     sequence = sequence + 1,

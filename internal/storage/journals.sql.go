@@ -757,7 +757,7 @@ func (q *Queries) RestoreJournal(ctx context.Context, id int64) error {
 	return err
 }
 
-const restoreJournalsByUID = `-- name: RestoreJournalsByUID :exec
+const restoreJournalsByUID = `-- name: RestoreJournalsByUID :execrows
 UPDATE journals SET
     deleted_at = NULL,
     sequence = sequence + 1,
@@ -765,9 +765,12 @@ UPDATE journals SET
 WHERE uid = ? AND deleted_at IS NOT NULL
 `
 
-func (q *Queries) RestoreJournalsByUID(ctx context.Context, uid string) error {
-	_, err := q.db.ExecContext(ctx, restoreJournalsByUID, uid)
-	return err
+func (q *Queries) RestoreJournalsByUID(ctx context.Context, uid string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, restoreJournalsByUID, uid)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const softDeleteJournal = `-- name: SoftDeleteJournal :exec

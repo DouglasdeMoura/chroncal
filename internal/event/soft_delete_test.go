@@ -104,6 +104,23 @@ func TestSoftDelete_Series(t *testing.T) {
 	}
 }
 
+// TestSoftDelete_RestoreByUIDNotDeleted verifies RestoreByUID reports
+// ErrNotDeleted when nothing was actually restored — a live UID and an
+// unknown UID both match zero soft-deleted rows. Without this the CLI
+// silently prints "Restored event(s) ..." even though no row changed.
+func TestSoftDelete_RestoreByUIDNotDeleted(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	e := createEvent(t, svc) // live, never deleted
+
+	if err := svc.RestoreByUID(ctx, e.UID); !errors.Is(err, ErrNotDeleted) {
+		t.Fatalf("RestoreByUID(live uid) = %v, want ErrNotDeleted", err)
+	}
+	if err := svc.RestoreByUID(ctx, "no-such-uid"); !errors.Is(err, ErrNotDeleted) {
+		t.Fatalf("RestoreByUID(missing uid) = %v, want ErrNotDeleted", err)
+	}
+}
+
 func TestSoftDelete_RestoreOverrideByIDClearsMasterEXDATE(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()

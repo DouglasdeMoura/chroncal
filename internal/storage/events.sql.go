@@ -730,7 +730,7 @@ func (q *Queries) RestoreEventByUIDAndRecurrenceID(ctx context.Context, arg Rest
 	return err
 }
 
-const restoreEventsByUID = `-- name: RestoreEventsByUID :exec
+const restoreEventsByUID = `-- name: RestoreEventsByUID :execrows
 UPDATE events SET
     deleted_at = NULL,
     sequence = sequence + 1,
@@ -738,9 +738,12 @@ UPDATE events SET
 WHERE uid = ? AND deleted_at IS NOT NULL
 `
 
-func (q *Queries) RestoreEventsByUID(ctx context.Context, uid string) error {
-	_, err := q.db.ExecContext(ctx, restoreEventsByUID, uid)
-	return err
+func (q *Queries) RestoreEventsByUID(ctx context.Context, uid string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, restoreEventsByUID, uid)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const restoreOverridesAtOrAfter = `-- name: RestoreOverridesAtOrAfter :exec

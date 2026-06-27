@@ -127,7 +127,7 @@ UPDATE events SET
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ? AND deleted_at IS NOT NULL;
 
--- name: RestoreEventsByUID :exec
+-- name: RestoreEventsByUID :execrows
 UPDATE events SET
     deleted_at = NULL,
     sequence = sequence + 1,

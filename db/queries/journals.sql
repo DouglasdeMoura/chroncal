@@ -118,7 +118,7 @@ UPDATE journals SET
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ? AND deleted_at IS NOT NULL;
 
--- name: RestoreJournalsByUID :exec
+-- name: RestoreJournalsByUID :execrows
 UPDATE journals SET
     deleted_at = NULL,
     sequence = sequence + 1,
