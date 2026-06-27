@@ -915,6 +915,20 @@ func (q *Queries) UpdateEventExdates(ctx context.Context, arg UpdateEventExdates
 	return err
 }
 
+const updateEventRdates = `-- name: UpdateEventRdates :exec
+UPDATE events SET rdates = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?
+`
+
+type UpdateEventRdatesParams struct {
+	Rdates *string
+	ID     int64
+}
+
+func (q *Queries) UpdateEventRdates(ctx context.Context, arg UpdateEventRdatesParams) error {
+	_, err := q.db.ExecContext(ctx, updateEventRdates, arg.Rdates, arg.ID)
+	return err
+}
+
 const updateEventRecurrenceRule = `-- name: UpdateEventRecurrenceRule :exec
 UPDATE events SET recurrence_rule = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?
 `

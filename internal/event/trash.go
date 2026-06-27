@@ -298,9 +298,9 @@ func (s *Service) restoreInstanceByLogID(ctx context.Context, logID int64) error
 }
 
 // restoreTruncationByLogID rewrites the master's RRULE back to the
-// pre-truncation value and un-hides every override soft-deleted at/after
-// the cutoff, then drops the log row. The master is marked dirty so the
-// next push propagates the restored RRULE.
+// pre-truncation value, re-adds the RDATEs the truncation trimmed, and un-hides
+// every override soft-deleted at/after the cutoff, then drops the log row. The
+// master is marked dirty so the next push propagates the restored series.
 func (s *Service) restoreTruncationByLogID(ctx context.Context, logID int64) error {
 	log, err := s.q.GetEventTruncateDelete(ctx, logID)
 	if err != nil {
@@ -334,6 +334,9 @@ func (s *Service) restoreTruncationByLogID(ctx context.Context, logID int64) err
 	}); err != nil {
 		return fmt.Errorf("restore rrule: %w", err)
 	}
+	if err := restoreTruncatedRDates(ctx, qtx, master, log); err != nil {
+		return fmt.Errorf("restore rdates: %w", err)
+	}
 	if err := restoreTruncatedOverrides(ctx, qtx, log); err != nil {
 		return fmt.Errorf("restore overrides: %w", err)
 	}
@@ -344,6 +347,22 @@ func (s *Service) restoreTruncationByLogID(ctx context.Context, logID int64) err
 		return fmt.Errorf("mark resource dirty: %w", err)
 	}
 	return tx.Commit()
+}
+
+// restoreTruncatedRDates re-adds to the master the RDATEs a truncation trimmed.
+// removed_rdates is non-NULL only for #463-era log rows; pre-#463 rows store
+// NULL (the truncation left RDATEs untouched) and an empty string means the
+// truncation dropped none, so both no-op. The kept RDATEs (already on the
+// master after a concurrent edit) are merged with the recorded removed ones.
+func restoreTruncatedRDates(ctx context.Context, qtx *storage.Queries, master storage.Event, log storage.EventTruncateDelete) error {
+	if log.RemovedRdates == nil || *log.RemovedRdates == "" {
+		return nil
+	}
+	merged := append(ParseTimeList(storage.NullableToString(master.Rdates)), ParseTimeList(*log.RemovedRdates)...)
+	return qtx.UpdateEventRdates(ctx, storage.UpdateEventRdatesParams{
+		Rdates: storage.StringToNullable(SerializeTimeList(merged)),
+		ID:     master.ID,
+	})
 }
 
 // restoreTruncatedOverrides un-hides the overrides a truncation soft-deleted.

@@ -1,10 +1,10 @@
 -- name: RecordEventTruncateDelete :exec
 -- Idempotent: truncating the same cutoff twice keeps one log row. Stores
--- only the FIRST previous_rrule and hidden_overrides seen so re-truncating
--- doesn't overwrite the original pre-truncation state with an already-
--- truncated rule or an empty override set.
-INSERT INTO event_truncate_deletes (calendar_id, uid, cutoff_time, previous_rrule, hidden_overrides)
-VALUES (?, ?, ?, ?, ?)
+-- only the FIRST previous_rrule, hidden_overrides, and removed_rdates seen so
+-- re-truncating doesn't overwrite the original pre-truncation state with an
+-- already-truncated rule or an empty override/rdate set.
+INSERT INTO event_truncate_deletes (calendar_id, uid, cutoff_time, previous_rrule, hidden_overrides, removed_rdates)
+VALUES (?, ?, ?, ?, ?, ?)
 ON CONFLICT(uid, cutoff_time) DO UPDATE SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now');
 

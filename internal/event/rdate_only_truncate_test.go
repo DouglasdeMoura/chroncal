@@ -66,6 +66,119 @@ func TestDeleteFromInstance_RDateOnlyMasterNotCorrupted(t *testing.T) {
 	}
 }
 
+// TestDeleteFromInstance_TrimsRDatesPastCutoff reproduces issue #463: a "this
+// and following" delete must drop the master's RDATEs at/after the cutoff,
+// otherwise the deleted occurrences reappear on the next expansion (rrule-go
+// expands RDATEs independently of the RRULE's UNTIL bound).
+func TestDeleteFromInstance_TrimsRDatesPastCutoff(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	rdate1 := time.Date(2026, 4, 15, 9, 0, 0, 0, time.UTC)
+	rdate2 := time.Date(2026, 4, 22, 9, 0, 0, 0, time.UTC)
+	master := newRDateOnlyMaster(t, svc, "rdate-only-trim", []time.Time{rdate1, rdate2})
+
+	if err := svc.DeleteFromInstance(ctx, master.UID, rdate2); err != nil {
+		t.Fatalf("DeleteFromInstance: %v", err)
+	}
+
+	got, err := svc.GetByUID(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("GetByUID after delete: %v", err)
+	}
+	rdates := got.ParseRDates()
+	for _, rd := range rdates {
+		if !rd.Before(rdate2) {
+			t.Errorf("RDATE %s survived truncation at cutoff %s; deleted occurrence will reappear", rd.Format(time.RFC3339), rdate2.Format(time.RFC3339))
+		}
+	}
+	if len(rdates) != 1 || !rdates[0].Equal(rdate1) {
+		t.Errorf("RDates = %v, want only the pre-cutoff occurrence %s", rdates, rdate1.Format(time.RFC3339))
+	}
+}
+
+// TestUpdateFromInstance_TrimsRDatesPastCutoff mirrors the trim assertion for
+// the split/"edit this and following" path (issue #463). Surviving post-cutoff
+// RDATEs would duplicate the brand-new split series.
+func TestUpdateFromInstance_TrimsRDatesPastCutoff(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	rdate1 := time.Date(2026, 4, 15, 9, 0, 0, 0, time.UTC)
+	rdate2 := time.Date(2026, 4, 22, 9, 0, 0, 0, time.UTC)
+	master := newRDateOnlyMaster(t, svc, "rdate-only-split-trim", []time.Time{rdate1, rdate2})
+
+	if _, err := svc.UpdateFromInstance(ctx, master.UID, rdate2, UpdateParams{
+		CalendarID: master.CalendarID,
+		Title:      "Irregular Meeting (changed)",
+		StartTime:  rdate2,
+		EndTime:    rdate2.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("UpdateFromInstance: %v", err)
+	}
+
+	got, err := svc.GetByUID(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("GetByUID after update: %v", err)
+	}
+	rdates := got.ParseRDates()
+	if len(rdates) != 1 || !rdates[0].Equal(rdate1) {
+		t.Errorf("old master RDates = %v, want only the pre-cutoff occurrence %s", rdates, rdate1.Format(time.RFC3339))
+	}
+}
+
+// TestRestoreTruncation_ReAddsRDates verifies the trim is reversible: restoring
+// a "this and following" delete from the trash must put the dropped RDATEs back
+// on the master (issue #463), mirroring the RRULE/override restore.
+func TestRestoreTruncation_ReAddsRDates(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	rdate1 := time.Date(2026, 4, 15, 9, 0, 0, 0, time.UTC)
+	rdate2 := time.Date(2026, 4, 22, 9, 0, 0, 0, time.UTC)
+	master := newRDateOnlyMaster(t, svc, "rdate-only-restore", []time.Time{rdate1, rdate2})
+
+	if err := svc.DeleteFromInstance(ctx, master.UID, rdate2); err != nil {
+		t.Fatalf("DeleteFromInstance: %v", err)
+	}
+
+	entries, err := svc.ListTrash(ctx, master.CalendarID)
+	if err != nil {
+		t.Fatalf("ListTrash: %v", err)
+	}
+	var trunc *TrashEntry
+	for i := range entries {
+		if entries[i].Kind == TrashKindTruncation {
+			trunc = &entries[i]
+			break
+		}
+	}
+	if trunc == nil {
+		t.Fatal("no truncation trash entry found")
+	}
+	if err := svc.RestoreTrash(ctx, *trunc); err != nil {
+		t.Fatalf("RestoreTrash: %v", err)
+	}
+
+	got, err := svc.GetByUID(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("GetByUID after restore: %v", err)
+	}
+	rdates := got.ParseRDates()
+	if len(rdates) != 2 {
+		t.Fatalf("RDates = %v, want both occurrences restored", rdates)
+	}
+	foundR2 := false
+	for _, rd := range rdates {
+		if rd.Equal(rdate2) {
+			foundR2 = true
+		}
+	}
+	if !foundR2 {
+		t.Errorf("restored RDates = %v, missing dropped occurrence %s", rdates, rdate2.Format(time.RFC3339))
+	}
+}
+
 // TestUpdateFromInstance_RDateOnlyMasterNotCorrupted mirrors the delete case for
 // the split/"edit this and following" path through updateFromInstanceTx.
 func TestUpdateFromInstance_RDateOnlyMasterNotCorrupted(t *testing.T) {
