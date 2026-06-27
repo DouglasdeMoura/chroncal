@@ -247,6 +247,9 @@ the next sync cycle recreates it remotely (with a fresh resource URL).`,
 
 			// UID path: restore every row sharing the UID.
 			if err := a.Events.RestoreByUID(ctx, ref); err != nil {
+				if errors.Is(err, event.ErrNotDeleted) {
+					return fmt.Errorf("event %q not found (may have been purged)", ref)
+				}
 				return fmt.Errorf("restore event: %w", err)
 			}
 			if outputFmt != "text" {

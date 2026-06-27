@@ -730,6 +730,9 @@ the next sync cycle recreates it remotely.`,
 			}
 
 			if err := a.Journals.RestoreByUID(ctx, ref); err != nil {
+				if errors.Is(err, journal.ErrNotDeleted) {
+					return fmt.Errorf("journal %q not found (may have been purged)", ref)
+				}
 				return fmt.Errorf("restore journal: %w", err)
 			}
 			if outputFmt != "text" {

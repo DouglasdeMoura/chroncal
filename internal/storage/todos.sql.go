@@ -921,7 +921,7 @@ func (q *Queries) RestoreTodo(ctx context.Context, id int64) error {
 	return err
 }
 
-const restoreTodosByUID = `-- name: RestoreTodosByUID :exec
+const restoreTodosByUID = `-- name: RestoreTodosByUID :execrows
 UPDATE todos SET
     deleted_at = NULL,
     sequence = sequence + 1,
@@ -929,9 +929,12 @@ UPDATE todos SET
 WHERE uid = ? AND deleted_at IS NOT NULL
 `
 
-func (q *Queries) RestoreTodosByUID(ctx context.Context, uid string) error {
-	_, err := q.db.ExecContext(ctx, restoreTodosByUID, uid)
-	return err
+func (q *Queries) RestoreTodosByUID(ctx context.Context, uid string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, restoreTodosByUID, uid)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const softDeleteTodo = `-- name: SoftDeleteTodo :exec

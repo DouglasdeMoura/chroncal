@@ -1054,6 +1054,9 @@ the next sync cycle recreates it remotely (with a fresh resource URL).`,
 			}
 
 			if err := a.Todos.RestoreByUID(ctx, ref); err != nil {
+				if errors.Is(err, todo.ErrNotDeleted) {
+					return fmt.Errorf("todo %q not found (may have been purged)", ref)
+				}
 				return fmt.Errorf("restore todo: %w", err)
 			}
 			if outputFmt != "text" {
