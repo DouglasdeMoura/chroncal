@@ -115,6 +115,28 @@ Always use `-count=1` to bypass Go's test cache.
 - Integration tests end with `_integration_test.go`
 - Use `context.Background()` for test contexts
 
+### CalDAV integration tests (Radicale)
+
+The CalDAV round-trip tests in `internal/ical/radicale_test.go` exercise a
+real server — covering VEVENT, VTODO, and VJOURNAL. They **skip
+automatically** when no server is reachable, so `make test` stays
+hermetic. To run them, start the bundled [Radicale](https://radicale.org/)
+server (anonymous, wide-open rights, on `localhost:5232`):
+
+```bash
+# Start (requires Docker)
+docker compose -f tools/radicale/docker-compose.yml up -d
+
+# Run the CalDAV round-trip tests against it
+RADICALE_URL=http://localhost:5232 go test ./internal/ical -run Radicale -v -count=1
+
+# Stop (add -v to also wipe the stored collections)
+docker compose -f tools/radicale/docker-compose.yml down
+```
+
+`RADICALE_URL` overrides the default endpoint if you run a server
+elsewhere. See `tools/radicale/README.md` for configuration details.
+
 ## Database changes
 
 ### Adding a migration

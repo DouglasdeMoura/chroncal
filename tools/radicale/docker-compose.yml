@@ -1,0 +1,31 @@
+# Radicale CalDAV server for local testing.
+#
+# Supports VEVENT, VTODO, and VJOURNAL. Listens on http://localhost:5232
+# with NO authentication and wide-open rights, matching what the
+# integration tests in internal/ical/radicale_test.go expect.
+#
+# Usage:
+#   docker compose -f tools/radicale/docker-compose.yml up -d
+#   docker compose -f tools/radicale/docker-compose.yml down
+#
+# Data persists in the named volume `radicale-data`. To wipe state:
+#   docker compose -f tools/radicale/docker-compose.yml down -v
+services:
+  radicale:
+    image: tomsquest/docker-radicale:latest
+    container_name: chroncal-radicale
+    ports:
+      - "5232:5232"
+    volumes:
+      - ./config:/config/config:ro
+      - ./rights:/config/rights:ro
+      - radicale-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5232/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  radicale-data:
