@@ -129,6 +129,13 @@ func (s *Service) ListConflicts(ctx context.Context) ([]Conflict, error) {
 	return out, nil
 }
 
+// resolveConflictAfterRevCapture, when non-nil, runs inside ResolveConflict's
+// accept-server path between reading the post-import rev and the rev-guarded
+// dirty clear. It is nil in production and exists only so tests can simulate a
+// concurrent local edit landing in that window to exercise the guard. See the
+// engine's afterImportRevCapture and issue #466.
+var resolveConflictAfterRevCapture func()
+
 // ResolveConflict resolves a conflict by picking local or server version.
 func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick string) error {
 	if pick != "server" && pick != "local" {
@@ -140,6 +147,10 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 		return fmt.Errorf("get conflict: %w", err)
 	}
 
+	// serverRev captures the sync_resources rev right after the accept-server
+	// import so the dirty clear below can be made conditional on it (see the
+	// "server" case in the transaction). Unused for the "local" pick.
+	var serverRev int64
 	if pick == "server" {
 		// Accept the server version: import the recorded server iCal into the
 		// local row so it reflects the server state. Without the import the
@@ -163,6 +174,23 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 			// branch exists to prevent. Refuse instead of resolving falsely.
 			return fmt.Errorf("server version has no importable data for %q", conflict.Uid)
 		}
+		// Capture the post-import rev so the dirty clear can be rev-guarded like
+		// the auto accept-server paths (engine.clearDirtyAfterImport). importICal
+		// bumps rev and re-sets dirty=1 via MarkResourceDirty; a concurrent local
+		// edit landing after this read bumps rev again, and the conditional clear
+		// below then leaves dirty=1 so the edit is still pushed instead of being
+		// silently dropped — the lost-update race of issues #92/#417/#466.
+		res, err := s.q.GetSyncResource(ctx, storage.GetSyncResourceParams{
+			CalendarID: conflict.CalendarID,
+			Uid:        conflict.Uid,
+		})
+		if err != nil {
+			return fmt.Errorf("get sync resource: %w", err)
+		}
+		serverRev = res.Rev
+		if resolveConflictAfterRevCapture != nil {
+			resolveConflictAfterRevCapture()
+		}
 	}
 
 	// Wrap the dirty/etag mutation and the conflict deletion in one transaction
@@ -178,12 +206,18 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 
 	switch pick {
 	case "server":
-		// Clear the pending local push and adopt the server ETag now that the
-		// local row reflects the server version.
-		if err := qtx.ClearSyncResourceDirty(ctx, storage.ClearSyncResourceDirtyParams{
+		// Adopt the server ETag and clear the pending local push now that the
+		// local row reflects the server version — but only when no local edit
+		// has landed since serverRev was captured. FinalizePushedResource always
+		// advances the ETag yet clears dirty only on rev == serverRev, so a
+		// concurrent edit (which bumped rev) keeps dirty=1 and survives to the
+		// next push. The unconditional ClearSyncResourceDirty used here before
+		// wiped that edit — issues #92/#417/#466.
+		if err := qtx.FinalizePushedResource(ctx, storage.FinalizePushedResourceParams{
 			CalendarID: conflict.CalendarID,
 			Uid:        conflict.Uid,
 			Etag:       conflict.ServerEtag,
+			Rev:        serverRev,
 		}); err != nil {
 			return fmt.Errorf("clear dirty: %w", err)
 		}
