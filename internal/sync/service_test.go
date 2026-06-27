@@ -394,6 +394,114 @@ func TestService_ResolveConflict_ServerPreservesConcurrentEdit(t *testing.T) {
 	}
 }
 
+// TestService_ResolveConflict_ServerPreservesConcurrentEditAfterPersist is the
+// regression test for issue #510 (a reopening of #494 on the manual path): a
+// local edit committing in the persist-commit→read window of an accept-server
+// ResolveConflict must not be silently dropped. The afterImportPersist hook
+// fires inside importICal right after persistImported commits — the exact window
+// the old post-commit GetSyncResource re-read exposed — and bumps rev + re-marks
+// dirty as a real service-layer mutation would. Because the rev is now captured
+// inside persistImported's transaction (and fed back via the revs map) rather
+// than re-read after commit, the rev-guarded clear leaves the resource dirty.
+// With the old after-commit re-read this test fails: the read returns the edit's
+// bumped rev, the guard matches, and dirty is wiped. Serial (no t.Parallel)
+// because it mutates the package-level hook.
+func TestService_ResolveConflict_ServerPreservesConcurrentEditAfterPersist(t *testing.T) {
+	svc, db, q := newTestServiceWithDB(t)
+	ctx := context.Background()
+
+	// Link the calendar to an account so MarkResourceDirty (which no-ops on
+	// local-only calendars) actually writes — the hook below relies on it to
+	// bump rev and simulate the concurrent edit.
+	testutil.LinkCalendarToAccount(t, db)
+
+	cals, _ := q.ListCalendars(ctx)
+	calID := cals[0].ID
+
+	const uid = "resolve-server-persist-race"
+	events := event.NewService(db, q)
+
+	if _, err := events.UpsertByUID(ctx, event.UpsertParams{
+		UID:        uid,
+		CalendarID: calID,
+		Title:      "Local Title",
+		StartTime:  time.Date(2026, 4, 3, 10, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 3, 11, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("seed local event: %v", err)
+	}
+
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calID,
+		Uid:          uid,
+		OwnerType:    "event",
+		RemoteUrl:    "https://example.com/cal/resolve-server-persist-race.ics",
+		Etag:         "etag-before",
+		Dirty:        1,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+
+	serverIcal := "BEGIN:VCALENDAR\r\n" +
+		"VERSION:2.0\r\n" +
+		"PRODID:-//chroncal//test//EN\r\n" +
+		"BEGIN:VEVENT\r\n" +
+		"UID:" + uid + "\r\n" +
+		"DTSTART:20260403T120000Z\r\n" +
+		"DTEND:20260403T130000Z\r\n" +
+		"SUMMARY:Server Title\r\n" +
+		"END:VEVENT\r\n" +
+		"END:VCALENDAR\r\n"
+
+	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+		CalendarID: calID,
+		OwnerType:  "event",
+		OwnerID:    1,
+		Uid:        uid,
+		LocalIcal:  "local",
+		ServerIcal: serverIcal,
+		ServerEtag: "etag-456",
+	}); err != nil {
+		t.Fatalf("CreateSyncConflict: %v", err)
+	}
+
+	// Simulate a concurrent local edit landing right after the accept-server
+	// import's persist transaction commits but before the rev-guarded dirty
+	// clear. persistImported already released its connection, so this
+	// auto-commit write is safe. It bumps rev and re-marks the resource dirty,
+	// exactly as a real service-layer mutation would.
+	var fired int
+	afterImportPersist = func() {
+		fired++
+		if err := storage.MarkResourceDirty(ctx, db, calID, uid, "event"); err != nil {
+			t.Errorf("simulate concurrent edit: %v", err)
+		}
+	}
+	t.Cleanup(func() { afterImportPersist = nil })
+
+	conflicts, _ := q.ListSyncConflicts(ctx)
+	if err := svc.ResolveConflict(ctx, conflicts[0].ID, "server"); err != nil {
+		t.Fatalf("ResolveConflict server: %v", err)
+	}
+	if fired != 1 {
+		t.Fatalf("afterImportPersist fired %d times, want 1", fired)
+	}
+
+	res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calID, Uid: uid})
+	if err != nil {
+		t.Fatalf("GetSyncResource: %v", err)
+	}
+	if res.Dirty != 1 {
+		t.Fatalf("Dirty = %d, want 1 (concurrent edit must not be dropped, #510)", res.Dirty)
+	}
+	// The ETag still advances to the server's version so the next push's If-Match
+	// matches the server, mirroring FinalizePushedResource on the push path.
+	if res.Etag != "etag-456" {
+		t.Fatalf("Etag = %q, want %q", res.Etag, "etag-456")
+	}
+}
+
 // TestService_ResolveConflict_ServerDoesNotResurrectDeleted is the regression
 // test for issue #89 (gap #2): accepting the server version of a conflict must
 // NOT un-delete a row the user has locally soft-deleted and tombstoned for
