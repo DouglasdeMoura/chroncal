@@ -157,36 +157,18 @@ aur_sources:
       install -Dm644 "./LICENSE" "${pkgdir}/usr/share/licenses/chroncal/LICENSE"
 
 release:
+  # Keep release notes about *this* release. Install instructions live in the
+  # README (the single source of truth) rather than being duplicated on every
+  # release page.
   header: |
-    ## Install
-
-    ```bash
-    # Prebuilt binary installer (Linux / macOS / BSD)
-    curl -fsSL https://raw.githubusercontent.com/DouglasdeMoura/chroncal/master/scripts/install.sh | sh
-
-    # macOS / Linux (Homebrew)
-    brew tap douglasdemoura/tap && brew install chroncal
-
-    # Go toolchain
-    go install github.com/douglasdemoura/chroncal/cmd/chroncal@{{ .Tag }}
-
-    # mise
-    mise use -g github:DouglasdeMoura/chroncal@{{ .Version }}
-
-    # Arch Linux (AUR)
-    yay -S chroncal-bin
-
-    # Nix
-    nix run github:DouglasdeMoura/chroncal
-
-    # Windows (Scoop, in PowerShell)
-    scoop bucket add chroncal https://github.com/DouglasdeMoura/scoop-bucket; scoop install chroncal
-    ```
-
-    Download prebuilt archives and `checksums.txt` from the assets below.
+    📦 **Install:** see the [README](https://github.com/DouglasdeMoura/chroncal#installation). Prebuilt binaries and `checksums.txt` are attached below.
+  footer: |
+    **Full Changelog**: https://github.com/DouglasdeMoura/chroncal/compare/{{ .PreviousTag }}...{{ .Tag }}
 
 changelog:
   sort: asc
+  # Drop the commit SHA prefix so each line is just the (grouped) subject.
+  abbrev: -1
   # Drop non-user-facing commits. Patterns are unanchored to the scope so
   # both "docs:" and "docs(cli):" match (the old "^docs:" form silently
   # let every scoped chore/docs commit leak into the changelog).
