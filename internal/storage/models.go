@@ -172,6 +172,7 @@ type EventTruncateDelete struct {
 	PreviousRrule   string
 	DeletedAt       string
 	HiddenOverrides *string
+	RemovedRdates   *string
 }
 
 type EventsFt struct {

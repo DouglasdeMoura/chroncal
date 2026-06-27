@@ -706,12 +706,28 @@ func (s *Service) DeleteFromInstance(ctx context.Context, uid string, instanceTi
 	return err
 }
 
-// softDeleteOverridesAndRecordTruncation hides every live override at/after
-// cutoff and records the truncation so the trash view can restore it. It
-// captures the recurrence_ids it hides BEFORE soft-deleting them, so restore
-// re-shows exactly those overrides and never resurrects one the user deleted
-// independently (issue #287). Pairs with restoreTruncatedOverrides.
-func softDeleteOverridesAndRecordTruncation(ctx context.Context, qtx *storage.Queries, calendarID int64, uid, cutoff, prevRRule string) error {
+// softDeleteOverridesAndRecordTruncation trims the master's post-cutoff RDATEs,
+// hides every live override at/after cutoff, and records the truncation so the
+// trash view can restore it. It captures the recurrence_ids it hides and the
+// RDATEs it drops BEFORE removing them, so restore re-shows exactly those
+// overrides and re-adds exactly those RDATEs — never resurrecting an override
+// the user deleted independently (issue #287) and never leaving a post-cutoff
+// RDATE behind to reappear on the next expansion (issue #463, since rrule-go
+// expands RDATEs independently of the RRULE's UNTIL bound). Pairs with
+// restoreTruncatedOverrides / restoreTruncatedRDates.
+//
+// prevRRule is the master's pre-truncation RRULE; the caller passes it because
+// it has already overwritten the master's recurrence_rule in the DB by the time
+// this runs.
+func softDeleteOverridesAndRecordTruncation(ctx context.Context, qtx *storage.Queries, master storage.Event, instanceTime time.Time, prevRRule string) error {
+	uid := master.Uid
+	cutoff := instanceTime.UTC().Format(time.RFC3339)
+
+	removedRDates, err := trimMasterRDatesAtOrAfter(ctx, qtx, master, instanceTime)
+	if err != nil {
+		return err
+	}
+
 	hidden, err := qtx.ListLiveOverrideRecurrenceIDsAtOrAfter(ctx, storage.ListLiveOverrideRecurrenceIDsAtOrAfterParams{
 		Uid:          uid,
 		RecurrenceID: cutoff,
@@ -729,15 +745,46 @@ func softDeleteOverridesAndRecordTruncation(ctx context.Context, qtx *storage.Qu
 	}
 
 	if err := qtx.RecordEventTruncateDelete(ctx, storage.RecordEventTruncateDeleteParams{
-		CalendarID:      calendarID,
+		CalendarID:      master.CalendarID,
 		Uid:             uid,
 		CutoffTime:      cutoff,
 		PreviousRrule:   prevRRule,
 		HiddenOverrides: &hiddenList,
+		RemovedRdates:   &removedRDates,
 	}); err != nil {
 		return fmt.Errorf("record truncate: %w", err)
 	}
 	return nil
+}
+
+// trimMasterRDatesAtOrAfter rewrites the master's rdates column to keep only the
+// occurrences strictly before instanceTime, and returns the dropped ones
+// serialized for the truncation log. It only issues an UPDATE when something
+// changes, so a master with no post-cutoff RDATEs is left untouched.
+func trimMasterRDatesAtOrAfter(ctx context.Context, qtx *storage.Queries, master storage.Event, instanceTime time.Time) (string, error) {
+	rdates := ParseTimeList(storage.NullableToString(master.Rdates))
+	if len(rdates) == 0 {
+		return "", nil
+	}
+	kept := make([]time.Time, 0, len(rdates))
+	var removed []time.Time
+	for _, rd := range rdates {
+		if rd.Before(instanceTime) {
+			kept = append(kept, rd)
+		} else {
+			removed = append(removed, rd)
+		}
+	}
+	if len(removed) == 0 {
+		return "", nil
+	}
+	if err := qtx.UpdateEventRdates(ctx, storage.UpdateEventRdatesParams{
+		Rdates: storage.StringToNullable(SerializeTimeList(kept)),
+		ID:     master.ID,
+	}); err != nil {
+		return "", fmt.Errorf("trim rdates: %w", err)
+	}
+	return SerializeTimeList(removed), nil
 }
 
 // deleteFromInstance performs the truncation and returns the master's
@@ -779,8 +826,7 @@ func (s *Service) deleteFromInstance(ctx context.Context, uid string, instanceTi
 		}
 	}
 
-	cutoff := instanceTime.UTC().Format(time.RFC3339)
-	if err := softDeleteOverridesAndRecordTruncation(ctx, qtx, master.CalendarID, uid, cutoff, prevRRule); err != nil {
+	if err := softDeleteOverridesAndRecordTruncation(ctx, qtx, master, instanceTime, prevRRule); err != nil {
 		return "", err
 	}
 
@@ -1076,8 +1122,7 @@ func updateFromInstanceTx(ctx context.Context, qtx *storage.Queries, uid string,
 		}
 	}
 
-	cutoff := instanceTime.UTC().Format(time.RFC3339)
-	if err := softDeleteOverridesAndRecordTruncation(ctx, qtx, master.CalendarID, uid, cutoff, prevRRule); err != nil {
+	if err := softDeleteOverridesAndRecordTruncation(ctx, qtx, master, instanceTime, prevRRule); err != nil {
 		return Event{}, 0, err
 	}
 
