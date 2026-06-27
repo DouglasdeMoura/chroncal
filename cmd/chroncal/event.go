@@ -1211,10 +1211,13 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 			}
 
 			if cmd.Flags().Changed("attendee") || cmd.Flags().Changed("organizer") {
-				attendees := parseAttendeeFlags(attendeeFlags)
-				if cmd.Flags().Changed("organizer") && organizer != "" {
-					attendees = append(attendees, parseOrganizerFlag(organizer))
+				existingAtt, err := a.Events.ListAttendees(ctx, e.ID)
+				if err != nil {
+					return fmt.Errorf("load attendees: %w", err)
 				}
+				attendees := mergeAttendeeUpdate(existingAtt,
+					cmd.Flags().Changed("attendee"), parseAttendeeFlags(attendeeFlags),
+					cmd.Flags().Changed("organizer"), organizer)
 				if err := a.Events.ReplaceAttendees(ctx, e.ID, attendees); err != nil {
 					return fmt.Errorf("update attendees: %w", err)
 				}
@@ -1502,6 +1505,39 @@ func parseAttendeeFlags(flags []string) []model.Attendee {
 			Role:       "REQ-PARTICIPANT",
 			RSVPStatus: "NEEDS-ACTION",
 		})
+	}
+	return out
+}
+
+// mergeAttendeeUpdate computes the attendee set to persist on a partial update.
+//
+// Organizer and attendees share one storage table, but ReplaceAttendees is a
+// full replace. Building the slice from only the flags that were passed wipes
+// the other kind of row (issue #461). So each --flag replaces only its own kind
+// of row: when --attendee is absent, the existing non-organizer attendees are
+// preserved; when --organizer is absent, the existing organizer is preserved.
+// Passing both flags is a full replace; passing --organizer "" clears it.
+func mergeAttendeeUpdate(existing []model.Attendee, attendeeChanged bool, newAttendees []model.Attendee, organizerChanged bool, organizer string) []model.Attendee {
+	out := make([]model.Attendee, 0, len(existing)+len(newAttendees)+1)
+	if attendeeChanged {
+		out = append(out, newAttendees...)
+	} else {
+		for _, a := range existing {
+			if !a.Organizer {
+				out = append(out, a)
+			}
+		}
+	}
+	if organizerChanged {
+		if organizer != "" {
+			out = append(out, parseOrganizerFlag(organizer))
+		}
+	} else {
+		for _, a := range existing {
+			if a.Organizer {
+				out = append(out, a)
+			}
+		}
 	}
 	return out
 }
