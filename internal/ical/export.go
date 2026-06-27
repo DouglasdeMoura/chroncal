@@ -1060,7 +1060,16 @@ func ExportJournals(journals []journal.Journal, calName string) ([]byte, error) 
 		vjournal.Props.SetText(ical.PropUID, j.UID)
 		vjournal.Props.SetText(ical.PropSummary, j.Summary)
 
-		if j.Description != "" {
+		// DESCRIPTION. RFC 5545 permits multiple; emit one per element when the
+		// per-property split survived (a fresh import), otherwise fall back to
+		// the single DB-backed Description value.
+		if len(j.Descriptions) > 0 {
+			for _, d := range j.Descriptions {
+				p := &ical.Prop{Name: ical.PropDescription}
+				p.SetText(d)
+				vjournal.Props.Add(p)
+			}
+		} else if j.Description != "" {
 			vjournal.Props.SetText(ical.PropDescription, j.Description)
 		}
 
