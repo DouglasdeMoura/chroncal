@@ -47,12 +47,10 @@ type UndoMeta struct {
 	// UndoKindSingle only, when undoing DeleteInstanceWithUndo.
 	RecurrenceID string
 
-	// UndoKindFromInstance only. MasterRRuleBefore records the pre-truncation
-	// RRULE; CutoffTime is the truncation cutoff, used to find the
-	// event_truncate_deletes log row that Undo reverses (so the RRULE, trimmed
-	// RDATEs, and the exact overrides the truncation hid are all restored).
-	// MasterUpdatedBefore is the stale-master guard baseline.
-	MasterRRuleBefore   string
+	// UndoKindFromInstance only. CutoffTime is the truncation cutoff, used to
+	// find the event_truncate_deletes log row that Undo reverses (so the RRULE,
+	// trimmed RDATEs, and the exact overrides the truncation hid are all
+	// restored). MasterUpdatedBefore is the stale-master guard baseline.
 	CutoffTime          time.Time
 	MasterUpdatedBefore time.Time
 }
@@ -100,14 +98,13 @@ func (s *Service) DeleteInstanceWithUndo(ctx context.Context, uid string, instan
 }
 
 // DeleteFromInstanceWithUndo truncates the series at instanceTime and returns
-// the pre-truncation RRULE + master UpdatedAt so Restore can reverse the
-// truncation exactly.
+// the cutoff + master UpdatedAt so Restore can reverse the truncation exactly
+// via the event_truncate_deletes log row.
 func (s *Service) DeleteFromInstanceWithUndo(ctx context.Context, uid string, instanceTime time.Time) (UndoMeta, error) {
 	master, err := s.q.GetEventByUID(ctx, uid)
 	if err != nil {
 		return UndoMeta{}, fmt.Errorf("get master: %w", err)
 	}
-	prevRRule := storage.NullableToString(master.RecurrenceRule)
 
 	// deleteFromInstance bumps the master's updated_at (UpdateEventRecurrenceRule
 	// sets updated_at=now) and returns that post-truncation value, read back
@@ -128,7 +125,6 @@ func (s *Service) DeleteFromInstanceWithUndo(ctx context.Context, uid string, in
 		UID:                 uid,
 		Label:               master.Title,
 		DeletedAt:           time.Now().UTC(),
-		MasterRRuleBefore:   prevRRule,
 		CutoffTime:          instanceTime.UTC(),
 		MasterUpdatedBefore: parseStorageTime(postUpdated),
 	}, nil
