@@ -297,6 +297,19 @@ type SelectField struct {
 	renderLabel func(SelectOption, bool) string
 	highlight   selectHighlight
 	flashID     int // incremented per flash; stale ticks are ignored
+	// arrowIndex keys the prev/next mouse targets by form-field index when
+	// arrowIndexed is set, so clicking an unfocused select's arrow can resolve
+	// to the owning field (issue #498). Nested selects (e.g. the monthly select
+	// inside RecurrenceOnField) leave it unset and keep the generic targets.
+	arrowIndex   int
+	arrowIndexed bool
+}
+
+// SetArrowIndex keys this select's prev/next arrow mouse targets to a form-field
+// index, so a click on an unfocused arrow resolves to the right field.
+func (f *SelectField) SetArrowIndex(i int) {
+	f.arrowIndex = i
+	f.arrowIndexed = true
 }
 
 func NewSelectField(options []SelectOption) *SelectField {
@@ -413,7 +426,13 @@ func (f *SelectField) View() string {
 		next = flash.Render(next)
 	}
 
-	return label + "  " + mouseMark("select:prev", prev) + " " + mouseMark("select:next", next)
+	prevTarget, nextTarget := "select:prev", "select:next"
+	if f.arrowIndexed {
+		prevTarget = fmt.Sprintf("select:prev:%d", f.arrowIndex)
+		nextTarget = fmt.Sprintf("select:next:%d", f.arrowIndex)
+	}
+
+	return label + "  " + mouseMark(prevTarget, prev) + " " + mouseMark(nextTarget, next)
 }
 
 func (f *SelectField) Focus() tea.Cmd {
@@ -1356,6 +1375,9 @@ func (f *TimeRangeField) SetDisabled(v bool)     { f.disabled = v }
 func (f *TimeRangeField) Value() string { return f.start.Value() }
 
 func (f *TimeRangeField) Update(msg tea.Msg) tea.Cmd {
+	if f.disabled {
+		return nil
+	}
 	active := f.start
 	if f.subFocus != 0 {
 		active = f.end
@@ -1402,6 +1424,9 @@ func (f *TimeRangeField) View() string {
 }
 
 func (f *TimeRangeField) Focus() tea.Cmd {
+	if f.disabled {
+		return nil
+	}
 	f.focused = true
 	f.subFocus = 0
 	f.end.Blur()
@@ -1923,6 +1948,12 @@ func (f Form) fieldParts() []string {
 			continue
 		}
 
+		// Key a top-level select's arrow targets by field index so clicking an
+		// unfocused arrow resolves to the owning field (issue #498).
+		if sf, ok := item.Field.(*SelectField); ok {
+			sf.SetArrowIndex(i)
+		}
+
 		field := mouseMark(fieldTarget(i), item.Field.View())
 		hasError := f.error != "" && i == f.errorField
 
@@ -2370,6 +2401,30 @@ func (f Form) handleClick(target string) (Form, tea.Cmd) {
 		return f, nil
 	}
 
+	// Index-keyed select arrows: "select:prev:i" / "select:next:i" focus the
+	// owning field and apply the keypress in one click, even when the select
+	// was unfocused (issue #498).
+	if strings.HasPrefix(target, "select:prev:") || strings.HasPrefix(target, "select:next:") {
+		key := "right"
+		prefix := "select:next:"
+		if strings.HasPrefix(target, "select:prev:") {
+			key = "left"
+			prefix = "select:prev:"
+		}
+		if idx, err := strconv.Atoi(strings.TrimPrefix(target, prefix)); err == nil &&
+			idx >= 0 && idx < len(f.items) {
+			if sf, ok := f.items[idx].Field.(*SelectField); ok {
+				f, _ = f.focusIndex(idx)
+				cmd := sf.Update(keyMsg(key))
+				if f.onRebuild != nil {
+					f.onRebuild(&f)
+				}
+				return f, cmd
+			}
+		}
+		return f, nil
+	}
+
 	// Palette swatch clicks: "palette:N" selects swatch N and focuses the
 	// field. Works for both standalone PaletteField and the composite
 	// ColorField.
@@ -2432,6 +2487,11 @@ func (f Form) handleClick(target string) (Form, tea.Cmd) {
 
 	for i := range f.items {
 		if target == fieldTarget(i) {
+			// Mirror Tab, which skips non-focusable fields: a click must not
+			// focus or edit a disabled field (issue #497).
+			if !f.items[i].Field.IsFocusable() {
+				return f, nil
+			}
 			if cb, ok := f.items[i].Field.(*CheckboxField); ok {
 				cb.Toggle()
 				if f.onRebuild != nil {
