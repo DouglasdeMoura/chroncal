@@ -373,6 +373,78 @@ func TestEventForm_EnterOnDateOpensDatePicker(t *testing.T) {
 	assert.False(t, m.timezonePickerOpen)
 }
 
+// fieldIndexByLabel returns the form item index for the field with the given
+// inline label, or -1 if none matches.
+func fieldIndexByLabel(m EventFormModel, label string) int {
+	for i, item := range m.form.items {
+		if item.Label == label {
+			return i
+		}
+	}
+	return -1
+}
+
+// mouseZoneByName returns the recorded clickable zone with the given name.
+func mouseZoneByName(mt *mouseTracker, name string) (mouseZone, bool) {
+	for _, z := range mt.zones {
+		if z.name == name {
+			return z, true
+		}
+	}
+	return mouseZone{}, false
+}
+
+// clickFormField renders the form, locates the clickable zone for the form
+// item at idx, and dispatches a left mouse click at its center through the
+// model's Update — exercising the same coordinate-resolution path as a real
+// mouse click.
+func clickFormField(t *testing.T, m EventFormModel, idx int) EventFormModel {
+	t.Helper()
+	// Focus the target field and scroll it into the body viewport so its
+	// clickable zone is rendered.
+	m.form.focused = idx
+	m.syncBodyViewport(true)
+	_ = m.View() // populates defaultMouseTracker.zones via mouseSweep
+
+	zone, ok := mouseZoneByName(defaultMouseTracker, fieldTarget(idx))
+	require.True(t, ok, "form field %d must register a clickable zone", idx)
+
+	bw, bh := m.BoxSize()
+	ox := (m.width - bw) / 2
+	oy := (m.height - bh) / 2
+	clickX := ox + (zone.startX+zone.endX)/2
+	clickY := oy + zone.startY
+
+	m, _ = m.Update(tea.MouseClickMsg(tea.Mouse{X: clickX, Y: clickY, Button: tea.MouseLeft}))
+	return m
+}
+
+// TestEventForm_MouseClickOpensOverlays is a regression test for issue #470:
+// the mouse-click branch only special-cased the Date field, so clicking the
+// Timezone or Alarms rows merely focused them without opening their overlays.
+// All overlay-opener fields must behave identically under mouse and Enter.
+func TestEventForm_MouseClickOpensOverlays(t *testing.T) {
+	t.Run("timezone", func(t *testing.T) {
+		m, _ := NewEventFormModel(time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC), testEventFormCalendars(), Theme{})
+		m = m.SetSize(120, 40)
+		idx := fieldIndexByLabel(m, "Timezone")
+		require.NotEqual(t, -1, idx)
+
+		m = clickFormField(t, m, idx)
+		assert.True(t, m.timezonePickerOpen, "clicking Timezone should open the timezone picker")
+	})
+
+	t.Run("alarms", func(t *testing.T) {
+		m, _ := NewEventFormModel(time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC), testEventFormCalendars(), Theme{})
+		m = m.SetSize(120, 40)
+		idx := fieldIndexByLabel(m, "Alarms")
+		require.NotEqual(t, -1, idx)
+
+		m = clickFormField(t, m, idx)
+		assert.True(t, m.alarmEditorOpen, "clicking Alarms should open the alarm editor")
+	})
+}
+
 func TestEventForm_EnterOnAllDayDoesNotOpenTimezonePicker(t *testing.T) {
 	m, _ := NewEventFormModel(time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC), testEventFormCalendars(), Theme{})
 

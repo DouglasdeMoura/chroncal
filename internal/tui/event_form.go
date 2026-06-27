@@ -981,9 +981,14 @@ func (m EventFormModel) Update(msg tea.Msg) (EventFormModel, tea.Cmd) {
 			target := mouseResolve(mc.X-ox, mc.Y-oy)
 			var cmd tea.Cmd
 			m.form, cmd = m.form.Update(MouseEvent{IsClick: true, Target: target})
-			// Click on DatePickerField opens the date picker overlay.
-			if idx := m.form.Focused(); idx < len(m.fieldKeys) && m.fieldKeys[idx] == efKeyDate {
-				m.openDatePicker()
+			// A click landing on the focused field's row opens its overlay,
+			// mirroring the Enter path (tryOpenOverlay) so mouse and keyboard
+			// behave identically for every opener field (Date, Timezone,
+			// custom Repeat, on-date Ends, Alarms).
+			if target == fieldTarget(m.form.Focused()) {
+				if c := m.tryOpenOverlay(); c != nil {
+					return m, c
+				}
 			}
 			return m, cmd
 		}
