@@ -345,8 +345,8 @@ func (m EventDialogModel) shortHelp() []key.Binding {
 	return []key.Binding{nav, days, sk.Tab, m.keys.Create, m.keys.Delete, sk.Close}
 }
 
-// Focus-zone IDs used by currentZone/setZone. Kept as ints so existing
-// switch-based callers in handleKey stay unchanged.
+// Focus-zone IDs used by currentZone and the tab-order helpers. Kept as
+// ints so existing switch-based callers stay unchanged.
 const (
 	zoneList        = 0
 	zoneRSVP        = 1
@@ -369,21 +369,12 @@ func (m EventDialogModel) currentZone() int {
 	return zoneList
 }
 
-// setZone moves focus to the head of a zone. Used by domain hotkeys (y/m for
-// RSVP, e/d/t for actions) and mouse clicks; Tab uses focusStop below to
-// land on a specific element.
-func (m EventDialogModel) setZone(z int) EventDialogModel {
-	switch z {
-	case zoneList:
-		m.rsvpFocused = false
-		m.shell = m.shell.SetFocusZone(ListZoneList)
-	case zoneRSVP:
-		m.rsvpFocused = true
-		m.shell = m.shell.SetFocusZone(ListZoneCustom)
-	case zoneAction:
-		m.rsvpFocused = false
-		m.shell = m.shell.FocusAction(0)
-	}
+// focusRSVP moves focus to the head of the RSVP button zone. Invoked by the
+// RSVP hotkeys (y/n/m) and by clicking an RSVP button; Tab uses focusStop
+// below to land on a specific element.
+func (m EventDialogModel) focusRSVP() EventDialogModel {
+	m.rsvpFocused = true
+	m.shell = m.shell.SetFocusZone(ListZoneCustom)
 	return m
 }
 
@@ -581,19 +572,19 @@ func (m EventDialogModel) handleKey(msg tea.KeyPressMsg) (EventDialogModel, tea.
 		return m, func() tea.Msg { return EventCreateMsg{Day: day} }
 	case key.Matches(msg, m.keys.RSVPYes):
 		if len(rsvp) > 0 {
-			m = m.setZone(zoneRSVP)
+			m = m.focusRSVP()
 			m.focusedRSVP = 0
 			return m.refresh(), rsvp[0].msg
 		}
 	case key.Matches(msg, m.keys.RSVPNo):
 		if len(rsvp) > 1 {
-			m = m.setZone(zoneRSVP)
+			m = m.focusRSVP()
 			m.focusedRSVP = 1
 			return m.refresh(), rsvp[1].msg
 		}
 	case key.Matches(msg, m.keys.RSVPMaybe):
 		if len(rsvp) > 2 {
-			m = m.setZone(zoneRSVP)
+			m = m.focusRSVP()
 			m.focusedRSVP = 2
 			return m.refresh(), rsvp[2].msg
 		}
@@ -626,7 +617,7 @@ func (m EventDialogModel) handleMouse(msg tea.MouseClickMsg) (EventDialogModel, 
 		return m.refresh(), cmd
 	}
 	if idx, cmd, hit := m.hitRSVPBtn(msg.X, msg.Y); hit {
-		m = m.setZone(zoneRSVP)
+		m = m.focusRSVP()
 		m.focusedRSVP = idx
 		return m.refresh(), cmd
 	}
