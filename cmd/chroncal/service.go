@@ -140,8 +140,9 @@ func serviceInstallCmd() *cobra.Command {
 schedule.
 
 The installed service runs "chroncal service run", which checks alarms every
-minute and also runs sync work when the configured sync interval is due. By
-		default, service install configures sync every 15 minutes.`,
+minute and also runs sync work when the configured sync interval is due.
+Without --sync-interval, the [sync] interval from your config is used, falling
+back to every 15 minutes when it is unset.`,
 		Example: `  chroncal service install
   chroncal service install --sync-interval ""
   chroncal service install --sync-interval 15m`,
@@ -151,7 +152,7 @@ minute and also runs sync work when the configured sync interval is due. By
 			if err != nil {
 				return err
 			}
-			effectiveSyncInterval := syncInterval
+			effectiveSyncInterval := serviceInstallSyncInterval(cmd)
 			// The values below are interpolated into service definitions
 			// (unit file, plist, batch wrapper). Reject anything that
 			// doesn't parse rather than escaping per-format: a config value
@@ -201,16 +202,29 @@ minute and also runs sync work when the configured sync interval is due. By
 			}
 		},
 	}
-	cmd.Flags().StringVar(&syncInterval, "sync-interval", serviceInstallDefaultSyncInterval(), "how often service run should run sync work (for example 15m); empty disables sync")
+	cmd.Flags().StringVar(&syncInterval, "sync-interval", "15m", "how often service run should run sync work (for example 15m); empty disables sync")
 	bindAlarmExecutionPolicyFlags(cmd, &flagPolicy)
 	return cmd
 }
 
-func serviceInstallDefaultSyncInterval() string {
+// serviceInstallSyncInterval resolves the sync interval baked into the
+// installed service definition. An explicit --sync-interval flag always wins
+// (including an explicit empty value, which disables sync). Otherwise the
+// configured [sync] interval is used, falling back to the static flag default
+// ("15m") when config leaves it unset.
+//
+// This must be resolved here, at RunE time, rather than as the flag default:
+// the command tree is built during package init() — before
+// rootCmd.PersistentPreRunE runs config.Load() — so cfg is still the zero
+// value when a computed flag default would be evaluated (issue #462).
+func serviceInstallSyncInterval(cmd *cobra.Command) string {
+	if cmd.Flags().Changed("sync-interval") {
+		return cmd.Flag("sync-interval").Value.String()
+	}
 	if cfg.Sync.Interval != "" {
 		return cfg.Sync.Interval
 	}
-	return "15m"
+	return cmd.Flag("sync-interval").Value.String()
 }
 
 func systemdUserDir() (string, error) {

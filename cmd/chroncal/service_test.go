@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/douglasdemoura/chroncal/internal/config"
 )
 
@@ -79,18 +81,76 @@ func TestServiceInstallDefaultsSyncIntervalTo15Minutes(t *testing.T) {
 	}
 }
 
-func TestServiceInstallUsesConfiguredSyncIntervalDefault(t *testing.T) {
+// registeredServiceInstallCmd returns the install subcommand as it was wired
+// into rootCmd at package init(), i.e. the production code path — not a fresh
+// serviceInstallCmd() built after cfg has been populated.
+func registeredServiceInstallCmd(t *testing.T) *cobra.Command {
+	t.Helper()
+	for _, cmd := range rootCmd.Commands() {
+		if cmd.Name() != "service" {
+			continue
+		}
+		for _, sub := range cmd.Commands() {
+			if sub.Name() == "install" {
+				return sub
+			}
+		}
+	}
+	t.Fatal("service install command not registered on rootCmd")
+	return nil
+}
+
+// TestServiceInstallRespectsConfiguredSyncIntervalAtRunTime exercises the
+// init-time-registered command (as production does) to prove the configured
+// [sync] interval is honored even though the flag tree is built before
+// config.Load() runs. Regression test for issue #462.
+func TestServiceInstallRespectsConfiguredSyncIntervalAtRunTime(t *testing.T) {
+	oldCfg := cfg
+	t.Cleanup(func() { cfg = oldCfg })
+	cfg = config.Config{Sync: config.SyncConfig{Interval: "30m"}}
+
+	install := registeredServiceInstallCmd(t)
+	if got := serviceInstallSyncInterval(install); got != "30m" {
+		t.Fatalf("effective sync interval = %q, want 30m (config must win when --sync-interval unset)", got)
+	}
+}
+
+func TestServiceInstallSyncIntervalFlagOverridesConfig(t *testing.T) {
 	oldCfg := cfg
 	t.Cleanup(func() { cfg = oldCfg })
 	cfg = config.Config{Sync: config.SyncConfig{Interval: "30m"}}
 
 	cmd := serviceInstallCmd()
-	flag := cmd.Flags().Lookup("sync-interval")
-	if flag == nil {
-		t.Fatal("service install missing sync-interval flag")
+	if err := cmd.Flags().Set("sync-interval", "5m"); err != nil {
+		t.Fatalf("set sync-interval: %v", err)
 	}
-	if got := flag.DefValue; got != "30m" {
-		t.Fatalf("sync-interval default = %q, want 30m", got)
+	if got := serviceInstallSyncInterval(cmd); got != "5m" {
+		t.Fatalf("effective sync interval = %q, want 5m (explicit flag must win)", got)
+	}
+}
+
+func TestServiceInstallSyncIntervalFlagCanDisableSync(t *testing.T) {
+	oldCfg := cfg
+	t.Cleanup(func() { cfg = oldCfg })
+	cfg = config.Config{Sync: config.SyncConfig{Interval: "30m"}}
+
+	cmd := serviceInstallCmd()
+	if err := cmd.Flags().Set("sync-interval", ""); err != nil {
+		t.Fatalf("set sync-interval: %v", err)
+	}
+	if got := serviceInstallSyncInterval(cmd); got != "" {
+		t.Fatalf("effective sync interval = %q, want empty (explicit --sync-interval \"\" disables sync)", got)
+	}
+}
+
+func TestServiceInstallSyncIntervalFallsBackToStaticDefault(t *testing.T) {
+	oldCfg := cfg
+	t.Cleanup(func() { cfg = oldCfg })
+	cfg = config.Config{}
+
+	cmd := serviceInstallCmd()
+	if got := serviceInstallSyncInterval(cmd); got != "15m" {
+		t.Fatalf("effective sync interval = %q, want 15m (static default with empty config)", got)
 	}
 }
 
