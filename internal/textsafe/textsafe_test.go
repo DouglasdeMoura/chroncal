@@ -55,33 +55,33 @@ func TestDisplayStripsBidiFormatControls(t *testing.T) {
 		want string
 	}{
 		// U+202E RIGHT-TO-LEFT OVERRIDE — canonical Trojan Source char.
-		{"RLO stripped", "hello‮world", "helloworld"},
+		{"RLO stripped", "hello\u202eworld", "helloworld"},
 		// U+202A LEFT-TO-RIGHT EMBEDDING.
-		{"LRE stripped", "‪hello‬", "hello"},
+		{"LRE stripped", "\u202ahello\u202c", "hello"},
 		// U+202B RIGHT-TO-LEFT EMBEDDING.
-		{"RLE stripped", "‫hello‬", "hello"},
+		{"RLE stripped", "\u202bhello\u202c", "hello"},
 		// U+202D LEFT-TO-RIGHT OVERRIDE.
-		{"LRO stripped", "‭hello", "hello"},
+		{"LRO stripped", "\u202dhello", "hello"},
 		// U+202C POP DIRECTIONAL FORMATTING (closes embeddings/overrides).
-		{"PDF stripped", "ab‬cd", "abcd"},
+		{"PDF stripped", "ab\u202ccd", "abcd"},
 		// U+200E LEFT-TO-RIGHT MARK.
-		{"LRM stripped", "a‎b", "ab"},
+		{"LRM stripped", "a\u200eb", "ab"},
 		// U+200F RIGHT-TO-LEFT MARK.
-		{"RLM stripped", "a‏b", "ab"},
+		{"RLM stripped", "a\u200fb", "ab"},
 		// U+200B ZERO WIDTH SPACE.
-		{"ZWSP stripped", "a​b", "ab"},
+		{"ZWSP stripped", "a\u200bb", "ab"},
 		// U+FEFF BOM / ZERO WIDTH NO-BREAK SPACE.
 		{"BOM stripped", "\uFEFFfoo", "foo"},
 		// U+2066 LEFT-TO-RIGHT ISOLATE / U+2069 POP DIRECTIONAL ISOLATE.
-		{"LRI and PDI stripped", "⁦hello⁩", "hello"},
+		{"LRI and PDI stripped", "\u2066hello\u2069", "hello"},
 		// U+2067 RIGHT-TO-LEFT ISOLATE.
-		{"RLI stripped", "⁧hello⁩", "hello"},
+		{"RLI stripped", "\u2067hello\u2069", "hello"},
 		// U+2068 FIRST STRONG ISOLATE.
-		{"FSI stripped", "⁨hello⁩", "hello"},
+		{"FSI stripped", "\u2068hello\u2069", "hello"},
 		// U+2069 POP DIRECTIONAL ISOLATE standalone.
-		{"PDI stripped", "a⁩b", "ab"},
+		{"PDI stripped", "a\u2069b", "ab"},
 		// Combination that would spoof a filename extension in terminals.
-		{"trojan-source filename spoof", "evil‮⁦gnp.exe", "evilgnp.exe"},
+		{"trojan-source filename spoof", "evil\u202e\u2066gnp.exe", "evilgnp.exe"},
 		// Legitimate accented/non-ASCII text must not be touched.
 		{"plain text preserved", "Meeting with Ángela at café", "Meeting with Ángela at café"},
 	}
