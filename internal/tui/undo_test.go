@@ -138,3 +138,52 @@ func TestEventRestoredMsg_RemovesRestoredEntryNotTop(t *testing.T) {
 			top.Meta.UID, entryB.Meta.UID)
 	}
 }
+
+// truncation builds an UndoKindFromInstance undo entry for series uid truncated
+// at cutoff. Such entries always have RecurrenceID == "", so CutoffTime is the
+// only field that distinguishes two truncations of the same series.
+func truncation(uid string, cutoff time.Time) UndoEntry {
+	return UndoEntry{
+		DeletedAt: time.Now(),
+		Meta: event.UndoMeta{
+			Kind:       event.UndoKindFromInstance,
+			UID:        uid,
+			Label:      "Truncated " + uid,
+			CutoffTime: cutoff,
+		},
+	}
+}
+
+// TestUndoStack_Remove_DistinguishesTruncationsByCutoff reproduces issue #514:
+// two truncations of the same series share Kind + UID and have an empty
+// RecurrenceID, so they are indistinguishable unless Remove also compares
+// CutoffTime. During the delete-during-restore race, Remove(B) must delete B
+// — not the newer truncation C that happens to sit on top of the stack.
+func TestUndoStack_Remove_DistinguishesTruncationsByCutoff(t *testing.T) {
+	s := NewUndoStack()
+
+	cutoffB := time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC)
+	cutoffC := time.Date(2026, 4, 20, 0, 0, 0, 0, time.UTC)
+	entryB := truncation("series-X", cutoffB)
+	entryC := truncation("series-X", cutoffC)
+
+	// B's undo restore is in flight; C (a second truncation of the same
+	// series) lands on top before B's success message arrives.
+	s.Push(entryB)
+	s.Push(entryC)
+
+	if !s.Remove(entryB.Meta) {
+		t.Fatal("Remove(B) reported no match")
+	}
+	if s.Len() != 1 {
+		t.Fatalf("Len after Remove(B) = %d, want 1", s.Len())
+	}
+	top, ok := s.Peek()
+	if !ok {
+		t.Fatal("stack unexpectedly empty after Remove(B)")
+	}
+	if !top.Meta.CutoffTime.Equal(cutoffC) {
+		t.Fatalf("Remove removed the wrong truncation: surviving CutoffTime = %v, want %v (C must survive)",
+			top.Meta.CutoffTime, cutoffC)
+	}
+}
