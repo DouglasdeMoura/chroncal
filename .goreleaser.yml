@@ -167,8 +167,8 @@ release:
 
 changelog:
   sort: asc
-  # Drop the commit SHA prefix so each line is just the (grouped) subject.
-  abbrev: -1
+  # Keep the commit SHA prefix on each entry; GitHub auto-links it to the
+  # commit on the rendered release page.
   # Drop non-user-facing commits. Patterns are unanchored to the scope so
   # both "docs:" and "docs(cli):" match (the old "^docs:" form silently
   # let every scoped chore/docs commit leak into the changelog).
