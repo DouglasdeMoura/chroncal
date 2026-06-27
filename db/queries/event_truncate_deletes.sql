@@ -16,6 +16,12 @@ ORDER BY deleted_at DESC;
 -- name: GetEventTruncateDelete :one
 SELECT * FROM event_truncate_deletes WHERE id = ?;
 
+-- name: GetEventTruncateDeleteByUIDAndCutoff :one
+-- Looks up the truncation log row by its unique (uid, cutoff_time) key so the
+-- TUI undo path can reverse a "this and following" delete through the same
+-- provenance-aware reversal the trash view uses.
+SELECT * FROM event_truncate_deletes WHERE uid = ? AND cutoff_time = ?;
+
 -- name: DeleteEventTruncateDelete :exec
 DELETE FROM event_truncate_deletes WHERE id = ?;
 

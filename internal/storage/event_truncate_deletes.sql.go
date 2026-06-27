@@ -38,6 +38,34 @@ func (q *Queries) GetEventTruncateDelete(ctx context.Context, id int64) (EventTr
 	return i, err
 }
 
+const getEventTruncateDeleteByUIDAndCutoff = `-- name: GetEventTruncateDeleteByUIDAndCutoff :one
+SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates FROM event_truncate_deletes WHERE uid = ? AND cutoff_time = ?
+`
+
+type GetEventTruncateDeleteByUIDAndCutoffParams struct {
+	Uid        string
+	CutoffTime string
+}
+
+// Looks up the truncation log row by its unique (uid, cutoff_time) key so the
+// TUI undo path can reverse a "this and following" delete through the same
+// provenance-aware reversal the trash view uses.
+func (q *Queries) GetEventTruncateDeleteByUIDAndCutoff(ctx context.Context, arg GetEventTruncateDeleteByUIDAndCutoffParams) (EventTruncateDelete, error) {
+	row := q.db.QueryRowContext(ctx, getEventTruncateDeleteByUIDAndCutoff, arg.Uid, arg.CutoffTime)
+	var i EventTruncateDelete
+	err := row.Scan(
+		&i.ID,
+		&i.CalendarID,
+		&i.Uid,
+		&i.CutoffTime,
+		&i.PreviousRrule,
+		&i.DeletedAt,
+		&i.HiddenOverrides,
+		&i.RemovedRdates,
+	)
+	return i, err
+}
+
 const listEventTruncateDeletesByCalendar = `-- name: ListEventTruncateDeletesByCalendar :many
 SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates FROM event_truncate_deletes
 WHERE calendar_id = ?
