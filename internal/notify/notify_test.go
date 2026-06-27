@@ -11,6 +11,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"mime"
 	"net"
 	"os"
 	"path/filepath"
@@ -441,14 +442,69 @@ func TestBuildEmailMessage_MIMEHeaders(t *testing.T) {
 			if !strings.Contains(head, "Content-Type: text/plain; charset=utf-8") {
 				t.Errorf("message headers missing UTF-8 Content-Type:\n%q", head)
 			}
-			if !strings.Contains(head, "Subject: "+tt.subject) {
-				t.Errorf("message headers missing Subject %q:\n%q", tt.subject, head)
+			// The Subject header may be RFC 2047 encoded; decode before comparing.
+			if got := decodeSubjectHeader(t, head); got != tt.subject {
+				t.Errorf("decoded Subject = %q, want %q", got, tt.subject)
 			}
 			if !strings.Contains(rest, tt.body) {
 				t.Errorf("message body = %q, want it to contain %q", rest, tt.body)
 			}
 		})
 	}
+}
+
+// TestBuildEmailMessage_SubjectHeaderEncoding asserts the Subject header is
+// RFC 2047 encoded for non-ASCII titles: the raw header line must stay ASCII so
+// non-SMTPUTF8 servers/clients render it correctly, and decoding it must yield
+// the original subject.
+func TestBuildEmailMessage_SubjectHeaderEncoding(t *testing.T) {
+	subject := "Reunião com café ☕"
+	msg := string(buildEmailMessage("sender@example.com", []string{"user@example.com"}, subject, "body"))
+
+	head, _, found := strings.Cut(msg, "\r\n\r\n")
+	if !found {
+		t.Fatalf("message has no header/body separator:\n%q", msg)
+	}
+
+	var subjectLine string
+	for _, line := range strings.Split(head, "\r\n") {
+		if v, ok := strings.CutPrefix(line, "Subject: "); ok {
+			subjectLine = v
+			break
+		}
+	}
+	if subjectLine == "" {
+		t.Fatalf("no Subject header found:\n%q", head)
+	}
+
+	// The raw Subject header must be pure ASCII (RFC 5322 / 2047).
+	for _, r := range subjectLine {
+		if r > 127 {
+			t.Fatalf("Subject header contains non-ASCII rune %q: %q", r, subjectLine)
+		}
+	}
+
+	// And it must decode back to the original subject.
+	if got := decodeSubjectHeader(t, head); got != subject {
+		t.Errorf("decoded Subject = %q, want %q", got, subject)
+	}
+}
+
+// decodeSubjectHeader extracts the Subject header from a message header block
+// and returns its RFC 2047-decoded value.
+func decodeSubjectHeader(t *testing.T, head string) string {
+	t.Helper()
+	for _, line := range strings.Split(head, "\r\n") {
+		if v, ok := strings.CutPrefix(line, "Subject: "); ok {
+			decoded, err := new(mime.WordDecoder).DecodeHeader(v)
+			if err != nil {
+				t.Fatalf("decoding Subject header %q: %v", v, err)
+			}
+			return decoded
+		}
+	}
+	t.Fatalf("no Subject header found:\n%q", head)
+	return ""
 }
 
 // generateTestCert creates a self-signed ECDSA certificate for 127.0.0.1/localhost.
