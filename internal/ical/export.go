@@ -31,16 +31,13 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 		cal.Props.SetText("X-WR-CALNAME", calName)
 	}
 
-	// Emit VTIMEZONE components for all referenced timezones (RFC 5545 Section 3.6.5).
-	seen := make(map[string]bool)
+	// Emit VTIMEZONE components for all referenced timezones (RFC 5545 Section
+	// 3.6.5), anchored on the years the events actually fall in (issue #515).
+	var spans tzSpans
 	for _, e := range events {
-		if e.Timezone != "" && e.Timezone != "FLOATING" && !seen[e.Timezone] {
-			seen[e.Timezone] = true
-			if vtz, err := buildVTimezone(e.Timezone); err == nil {
-				cal.Children = append(cal.Children, vtz)
-			}
-		}
+		spans.add(e.Timezone, e.StartTime.Year())
 	}
+	spans.emit(cal)
 
 	for _, e := range events {
 		vevent := ical.NewEvent()
@@ -314,16 +311,13 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 		cal.Props.SetText("X-WR-CALNAME", calName)
 	}
 
-	// Emit VTIMEZONE components for all referenced timezones.
-	seen := make(map[string]bool)
+	// Emit VTIMEZONE components for all referenced timezones, anchored on the
+	// years the todos actually fall in (issue #515).
+	var spans tzSpans
 	for _, t := range todos {
-		if t.Timezone != "" && t.Timezone != "FLOATING" && !seen[t.Timezone] {
-			seen[t.Timezone] = true
-			if vtz, err := buildVTimezone(t.Timezone); err == nil {
-				cal.Children = append(cal.Children, vtz)
-			}
-		}
+		spans.add(t.Timezone, todoYear(t))
 	}
+	spans.emit(cal)
 
 	for _, t := range todos {
 		vtodo := ical.NewComponent(ical.CompToDo)
@@ -779,10 +773,83 @@ func buildValarm(alarm model.Alarm) *ical.Component {
 	return valarm
 }
 
-// buildVTimezone generates a VTIMEZONE component for the given IANA timezone ID.
-// It probes the current year for DST transitions and emits STANDARD and DAYLIGHT
-// sub-components as needed, satisfying RFC 5545 Section 3.6.5.
-func buildVTimezone(tzID string) (*ical.Component, error) {
+// tzSpans accumulates, in first-seen order, the timezones referenced by an
+// export together with the inclusive [min, max] year span of the items
+// referencing each. buildVTimezone anchors its DST rules on that span (issue
+// #515) rather than only the current year, so an event dated in a different
+// year — possibly one whose zone observed a different DST rule — still resolves
+// the right offset from the embedded VTIMEZONE.
+type tzSpans struct {
+	order    []string
+	min, max map[string]int
+}
+
+// add records that an item in tzID falls in the given year. Empty and floating
+// timezones carry no VTIMEZONE and are ignored.
+func (s *tzSpans) add(tzID string, year int) {
+	if tzID == "" || tzID == "FLOATING" {
+		return
+	}
+	if s.min == nil {
+		s.min = map[string]int{}
+		s.max = map[string]int{}
+	}
+	if _, ok := s.min[tzID]; !ok {
+		s.order = append(s.order, tzID)
+		s.min[tzID], s.max[tzID] = year, year
+		return
+	}
+	if year < s.min[tzID] {
+		s.min[tzID] = year
+	}
+	if year > s.max[tzID] {
+		s.max[tzID] = year
+	}
+}
+
+// emit appends a VTIMEZONE child to cal for each referenced timezone, in
+// first-seen order. Timezones Go cannot load are silently skipped, matching the
+// prior best-effort behaviour.
+func (s *tzSpans) emit(cal *ical.Calendar) {
+	for _, tzID := range s.order {
+		if vtz, err := buildVTimezone(tzID, s.min[tzID], s.max[tzID]); err == nil {
+			cal.Children = append(cal.Children, vtz)
+		}
+	}
+}
+
+// todoYear returns the calendar year to anchor a todo's VTIMEZONE on, preferring
+// its start date, then its due date, falling back to the current year when the
+// todo carries neither.
+func todoYear(t todo.Todo) int {
+	if d := t.ParseStartDate(); !d.IsZero() {
+		return d.Year()
+	}
+	if d := t.ParseDueDate(); !d.IsZero() {
+		return d.Year()
+	}
+	return time.Now().Year()
+}
+
+// journalYear returns the calendar year to anchor a journal's VTIMEZONE on,
+// preferring its start date and falling back to the current year.
+func journalYear(j journal.Journal) int {
+	if d := j.ParseStartDate(); !d.IsZero() {
+		return d.Year()
+	}
+	return time.Now().Year()
+}
+
+// buildVTimezone generates a VTIMEZONE component for the given IANA timezone ID,
+// covering the inclusive [fromYear, toYear] span of the items that reference it.
+// It walks that span detecting STANDARD/DAYLIGHT offset transitions and emits
+// one observance per distinct DST rule period (RFC 5545 Section 3.6.5). When the
+// zone's rule changed within the span (e.g. the US 2007 DST extension, or a zone
+// that abolished DST), the superseded rule is bounded with UNTIL so a consumer
+// relying solely on the embedded VTIMEZONE resolves the correct offset for every
+// referenced year — not merely an extrapolation of the current year's rule
+// (issue #515). A zero fromYear/toYear falls back to the current year.
+func buildVTimezone(tzID string, fromYear, toYear int) (*ical.Component, error) {
 	loc, err := time.LoadLocation(tzID)
 	if err != nil {
 		return nil, err
@@ -793,30 +860,12 @@ func buildVTimezone(tzID string) (*ical.Component, error) {
 	tzidProp.Value = tzID
 	vtz.Props.Set(tzidProp)
 
-	refYear := time.Now().Year()
-
-	// Probe the start of each month to detect offset transitions.
-	type transition struct {
-		name       string
-		offset     int // seconds east of UTC
-		month      time.Month
-		fromOffset int
+	if fromYear == 0 || toYear == 0 {
+		fromYear = time.Now().Year()
+		toYear = fromYear
 	}
-
-	jan := time.Date(refYear, 1, 1, 12, 0, 0, 0, loc)
-	janName, janOffset := jan.Zone()
-
-	var transitions []transition
-	prevOffset := janOffset
-	for m := time.February; m <= time.December; m++ {
-		t := time.Date(refYear, m, 1, 12, 0, 0, 0, loc)
-		name, offset := t.Zone()
-		if offset != prevOffset {
-			transitions = append(transitions, transition{
-				name: name, offset: offset, month: m, fromOffset: prevOffset,
-			})
-			prevOffset = offset
-		}
+	if toYear < fromYear {
+		fromYear, toYear = toYear, fromYear
 	}
 
 	fmtOffset := func(secs int) string {
@@ -826,6 +875,37 @@ func buildVTimezone(tzID string) (*ical.Component, error) {
 			secs = -secs
 		}
 		return fmt.Sprintf("%s%02d%02d", sign, secs/3600, (secs%3600)/60)
+	}
+
+	// Walk the span month by month (sampling at noon to dodge the DST-hour
+	// ambiguity), recording each offset transition with the exact instant it
+	// takes effect.
+	type transition struct {
+		name       string
+		offset     int       // seconds east of UTC at/after the transition
+		fromOffset int       // seconds east of UTC before it
+		instant    time.Time // exact UTC moment the new offset takes effect
+	}
+
+	start := time.Date(fromYear, 1, 1, 12, 0, 0, 0, loc)
+	firstName, firstOffset := start.Zone()
+	prevOffset := firstOffset
+
+	var transitions []transition
+	end := time.Date(toYear+1, 1, 1, 12, 0, 0, 0, loc)
+	for cursor := start; cursor.Before(end); {
+		next := cursor.AddDate(0, 1, 0)
+		name, offset := next.Zone()
+		if offset != prevOffset {
+			transitions = append(transitions, transition{
+				name:       name,
+				offset:     offset,
+				fromOffset: prevOffset,
+				instant:    findTransitionInstant(cursor, next, prevOffset),
+			})
+			prevOffset = offset
+		}
+		cursor = next
 	}
 
 	addSubComp := func(compName, tzName string, offset, fromOffset int, dtstart time.Time, rrule string) {
@@ -850,10 +930,6 @@ func buildVTimezone(tzID string) (*ical.Component, error) {
 		p.Value = tzName
 		comp.Props.Set(p)
 
-		// A yearly RRULE makes the transition apply to every year rather than
-		// the single export year, so events far in the past/future still
-		// resolve the right offset from the embedded VTIMEZONE (RFC 5545
-		// Section 3.6.5).
 		if rrule != "" {
 			p = &ical.Prop{Name: ical.PropRecurrenceRule}
 			p.Value = rrule
@@ -864,44 +940,93 @@ func buildVTimezone(tzID string) (*ical.Component, error) {
 	}
 
 	if len(transitions) == 0 {
-		// No DST — single STANDARD component
-		addSubComp("STANDARD", janName, janOffset, janOffset,
-			time.Date(refYear, 1, 1, 0, 0, 0, 0, time.UTC), "")
-	} else {
-		for _, tr := range transitions {
-			// The transition was detected between month M-1 and M; find the
-			// exact instant it occurs, then express its wall-clock in
-			// TZOFFSETFROM (RFC 5545 Section 3.6.5). For US Eastern this
-			// yields the canonical 02:00 DTSTART rather than the
-			// post-transition 03:00 wall-clock.
-			instant := findTransitionInstant(loc, refYear, tr.month, tr.fromOffset)
-			fromWall := instant.UTC().Add(time.Duration(tr.fromOffset) * time.Second)
-			compName := "STANDARD"
-			if tr.offset > tr.fromOffset {
-				compName = "DAYLIGHT"
-			}
-			addSubComp(compName, tr.name, tr.offset, tr.fromOffset, fromWall,
-				transitionRRULE(fromWall))
+		// No DST anywhere in the span — a single STANDARD observance.
+		addSubComp("STANDARD", firstName, firstOffset, firstOffset,
+			time.Date(fromYear, 1, 1, 0, 0, 0, 0, time.UTC), "")
+		return vtz, nil
+	}
+
+	// Group transitions into observances, one per distinct DST rule. A yearly
+	// RRULE collapses repeats of the same rule across years; when a
+	// STANDARD/DAYLIGHT rule is later superseded by a different one, bound the
+	// older observance with UNTIL (the UTC instant of its final occurrence) so
+	// both rules don't fire in the years after the change.
+	type observance struct {
+		compName, tzName   string
+		offset, fromOffset int
+		dtstart            time.Time // wall-clock in fromOffset
+		rrule, sig         string
+		lastSeen           time.Time // UTC instant of its most recent occurrence
+		until              time.Time // zero = open-ended
+	}
+
+	var observances []*observance
+	current := map[string]*observance{} // open observance per component kind
+
+	for _, tr := range transitions {
+		compName := "STANDARD"
+		if tr.offset > tr.fromOffset {
+			compName = "DAYLIGHT"
 		}
+		fromWall := tr.instant.UTC().Add(time.Duration(tr.fromOffset) * time.Second)
+		rrule := transitionRRULE(fromWall)
+		sig := compName + "|" + rrule + "|" + fmtOffset(tr.offset) + "|" + fmtOffset(tr.fromOffset)
+
+		if cur := current[compName]; cur != nil && cur.sig == sig {
+			cur.lastSeen = tr.instant // same rule continues; RRULE covers it
+			continue
+		}
+		if cur := current[compName]; cur != nil {
+			cur.until = cur.lastSeen // rule changed; cap the prior one
+		}
+		obs := &observance{
+			compName: compName, tzName: tr.name,
+			offset: tr.offset, fromOffset: tr.fromOffset,
+			dtstart: fromWall, rrule: rrule, sig: sig, lastSeen: tr.instant,
+		}
+		observances = append(observances, obs)
+		current[compName] = obs
+	}
+
+	// If the zone no longer observes DST by the end of the span (it was
+	// abolished, e.g. Brazil in 2019), the final year carries no transitions, so
+	// the trailing rules would otherwise recur forever and resolve a spurious
+	// offset for later occurrences. Cap every still-open observance at its final
+	// occurrence; the latest-onset observance then governs all later times with
+	// the correct standing offset. A zone that still observes DST has two
+	// transitions in its final year, so its trailing rules stay open-ended.
+	finalYearTransitions := 0
+	for _, tr := range transitions {
+		if tr.instant.UTC().Year() == toYear {
+			finalYearTransitions++
+		}
+	}
+	if finalYearTransitions < 2 {
+		for _, obs := range observances {
+			if obs.until.IsZero() {
+				obs.until = obs.lastSeen
+			}
+		}
+	}
+
+	for _, obs := range observances {
+		rrule := obs.rrule
+		if !obs.until.IsZero() {
+			rrule += ";UNTIL=" + obs.until.UTC().Format("20060102T150405Z")
+		}
+		addSubComp(obs.compName, obs.tzName, obs.offset, obs.fromOffset, obs.dtstart, rrule)
 	}
 
 	return vtz, nil
 }
 
-// findTransitionInstant finds the exact instant when the UTC offset changes
-// away from prevOffset, binary-searching to one-second precision. The bounds
-// are noon on the first of the previous and detected months — the same instants
-// buildVTimezone samples to detect the transition, so offset(lo) == prevOffset
-// and offset(hi) != prevOffset are guaranteed and the transition is always
-// bracketed regardless of the local hour at which it occurs. The returned
-// instant is the first second carrying the new offset, i.e. the precise
-// transition moment.
-func findTransitionInstant(loc *time.Location, year int, detectedMonth time.Month, prevOffset int) time.Time {
-	lo := time.Date(year, detectedMonth-1, 1, 12, 0, 0, 0, loc)
-	if detectedMonth == time.January {
-		lo = time.Date(year-1, time.December, 1, 12, 0, 0, 0, loc)
-	}
-	hi := time.Date(year, detectedMonth, 1, 12, 0, 0, 0, loc)
+// findTransitionInstant binary-searches (lo, hi] for the exact instant the UTC
+// offset changes away from prevOffset, to one-second precision. Callers pass
+// bounds known to bracket exactly one transition — offset(lo) == prevOffset and
+// offset(hi) != prevOffset — so the returned instant is the first second
+// carrying the new offset, i.e. the precise transition moment, regardless of the
+// local hour at which it occurs.
+func findTransitionInstant(lo, hi time.Time, prevOffset int) time.Time {
 	for hi.Sub(lo) > time.Second {
 		mid := lo.Add(hi.Sub(lo) / 2)
 		if _, offset := mid.Zone(); offset == prevOffset {
@@ -1043,16 +1168,13 @@ func ExportJournals(journals []journal.Journal, calName string) ([]byte, error) 
 		cal.Props.SetText("X-WR-CALNAME", calName)
 	}
 
-	// Emit VTIMEZONE components for all referenced timezones.
-	seen := make(map[string]bool)
+	// Emit VTIMEZONE components for all referenced timezones, anchored on the
+	// years the journals actually fall in (issue #515).
+	var spans tzSpans
 	for _, j := range journals {
-		if j.Timezone != "" && j.Timezone != "FLOATING" && !seen[j.Timezone] {
-			seen[j.Timezone] = true
-			if vtz, err := buildVTimezone(j.Timezone); err == nil {
-				cal.Children = append(cal.Children, vtz)
-			}
-		}
+		spans.add(j.Timezone, journalYear(j))
 	}
+	spans.emit(cal)
 
 	for _, j := range journals {
 		vjournal := ical.NewComponent(ical.CompJournal)
