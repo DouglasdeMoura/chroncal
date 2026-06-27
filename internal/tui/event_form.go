@@ -334,9 +334,16 @@ func NewEventFormModel(day time.Time, calendars map[int64]CalendarInfo, theme Th
 }
 
 // multiDayEndDate reports whether the event spans more than one calendar
-// day and, if so, returns the last included day (inclusive, local). For
-// all-day events the stored end is exclusive midnight of the day after
-// the last included day; for timed events the actual end instant is used.
+// day and, if so, returns the last included day (inclusive). For all-day
+// events the stored end is exclusive midnight of the day after the last
+// included day; for timed events the actual end instant is used.
+//
+// Timed events are evaluated in the event's display timezone (the same loc
+// NewEventFormModelForEditInstance uses to anchor m.day and render the Time
+// field), not machine-local. Using machine-local here would disagree with
+// the start day on the last calendar day when ev.Timezone != local and the
+// end instant is near midnight, shifting the saved end forward a day on a
+// no-op edit (issue #499).
 func multiDayEndDate(ev event.Event) (time.Time, bool) {
 	if ev.AllDay {
 		s := ev.StartTime.UTC()
@@ -350,8 +357,14 @@ func multiDayEndDate(ev event.Event) (time.Time, bool) {
 		}
 		return time.Time{}, false
 	}
-	s := ev.StartTime.Local()
-	e := ev.EndTime.Local()
+	displayLoc := time.Local
+	if ev.Timezone != "" {
+		if loc, err := time.LoadLocation(ev.Timezone); err == nil {
+			displayLoc = loc
+		}
+	}
+	s := ev.StartTime.In(displayLoc)
+	e := ev.EndTime.In(displayLoc)
 	startDay := time.Date(s.Year(), s.Month(), s.Day(), 0, 0, 0, 0, s.Location())
 	endDay := time.Date(e.Year(), e.Month(), e.Day(), 0, 0, 0, 0, e.Location())
 	// If the end instant is exactly midnight of the next day, the event
@@ -619,9 +632,11 @@ func (m *EventFormModel) buildDialogAndForm() {
 		}
 		return nil
 	})
-	m.form.OnRebuild(func(f *Form) {
-		m.syncFromForm()
-	})
+	// No OnRebuild closure: it would capture the construction-time value
+	// receiver, so its syncFromForm would mutate a stale copy's form rather
+	// than the live one the app holds (issue #496). EventFormModel.Update
+	// calls m.syncFromForm() on the live receiver after every form.Update
+	// instead, mirroring RecurrenceEditorModel.
 	m.body = viewport.New()
 	m.body.MouseWheelEnabled = true
 }
@@ -742,10 +757,25 @@ func (m *EventFormModel) syncFromForm() {
 		m.ends != prevEnds
 
 	if needRebuild {
+		focused := m.form.Focused()
 		items, keys := m.buildFormItems()
 		m.fieldKeys = keys
 		m.form.RemoveItems(0)
 		m.form.AppendItems(items...)
+		// Re-clamp focus: a rebuild can shrink the form (e.g. Repeat→None
+		// drops the Ends field). The OnRebuild closure used to do this on the
+		// live form; now that Update drives syncFromForm we own it here,
+		// mirroring RecurrenceEditorModel.syncFromForm.
+		if focused >= m.form.totalCount() {
+			focused = m.form.totalCount() - 1
+		}
+		if focused < 0 {
+			focused = 0
+		}
+		m.form.focused = focused
+		if m.form.focused < len(m.form.items) && !m.form.items[m.form.focused].Field.IsFocusable() {
+			m.form, _ = m.form.skipToFocusable(1)
+		}
 	}
 }
 
@@ -981,6 +1011,10 @@ func (m EventFormModel) Update(msg tea.Msg) (EventFormModel, tea.Cmd) {
 			target := mouseResolve(mc.X-ox, mc.Y-oy)
 			var cmd tea.Cmd
 			m.form, cmd = m.form.Update(MouseEvent{IsClick: true, Target: target})
+			// Sync dynamic fields against the live receiver (issue #496):
+			// a click that toggles All-day or changes Repeat/Ends must
+			// rebuild the live form, not a stale construction-time copy.
+			m.syncFromForm()
 			// A click landing on the focused field's row opens its overlay,
 			// mirroring the Enter path (tryOpenOverlay) so mouse and keyboard
 			// behave identically for every opener field (Date, Timezone,
@@ -1003,6 +1037,11 @@ func (m EventFormModel) Update(msg tea.Msg) (EventFormModel, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.form, cmd = m.form.Update(msg)
+	// Rebuild dynamic fields against the live receiver (issue #496). The
+	// OnRebuild closure could only mutate a stale construction-time copy, so
+	// the live form never gained the Ends selector / Ends-count field and
+	// the All-day toggle never re-disabled the Time field.
+	m.syncFromForm()
 	m.syncBodyViewport(true)
 	return m, cmd
 }
