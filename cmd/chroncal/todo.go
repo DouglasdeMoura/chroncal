@@ -807,10 +807,13 @@ a --progress value other than 100.`,
 				}
 			}
 			if cmd.Flags().Changed("attendee") || cmd.Flags().Changed("organizer") {
-				attendees := parseAttendeeFlags(attendeeFlags)
-				if organizer != "" {
-					attendees = append(attendees, parseOrganizerFlag(organizer))
+				existingAtt, err := a.Todos.ListAttendees(ctx, t.ID)
+				if err != nil {
+					return fmt.Errorf("load attendees: %w", err)
 				}
+				attendees := mergeAttendeeUpdate(existingAtt,
+					cmd.Flags().Changed("attendee"), parseAttendeeFlags(attendeeFlags),
+					cmd.Flags().Changed("organizer"), organizer)
 				if err := a.Todos.ReplaceAttendees(ctx, t.ID, attendees); err != nil {
 					return fmt.Errorf("update attendees: %w", err)
 				}
