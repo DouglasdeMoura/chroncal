@@ -163,7 +163,7 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 		// the event/todo/journal services, which use their own connection.
 		// UpsertByUID is idempotent, so if the transaction fails to commit the
 		// conflict survives and the whole resolution replays cleanly.
-		imported, err := s.engine.importICal(ctx, conflict.CalendarID, conflict.ServerIcal)
+		imported, _, err := s.engine.importICal(ctx, conflict.CalendarID, conflict.ServerIcal)
 		if err != nil {
 			return fmt.Errorf("import server version: %w", err)
 		}

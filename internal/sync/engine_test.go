@@ -689,7 +689,7 @@ func TestEnginePersistImportedKeepsDirtyOnChildReplaceError(t *testing.T) {
 		}},
 	}
 
-	if err := engine.persistImported(ctx, calendarID, result); err == nil {
+	if _, err := engine.persistImported(ctx, calendarID, result); err == nil {
 		t.Fatal("persistImported returned nil, want child-replace error to propagate")
 	}
 
@@ -3052,7 +3052,7 @@ END:VCALENDAR
 	if err != nil {
 		t.Fatalf("ImportFile (with alarm): %v", err)
 	}
-	if err := engine.persistImported(ctx, calendarID, withAlarmResult); err != nil {
+	if _, err := engine.persistImported(ctx, calendarID, withAlarmResult); err != nil {
 		t.Fatalf("persistImported (with alarm): %v", err)
 	}
 
@@ -3086,7 +3086,7 @@ END:VCALENDAR
 	if err != nil {
 		t.Fatalf("ImportFile (no alarm): %v", err)
 	}
-	if err := engine.persistImported(ctx, calendarID, noAlarmResult); err != nil {
+	if _, err := engine.persistImported(ctx, calendarID, noAlarmResult); err != nil {
 		t.Fatalf("persistImported (no alarm): %v", err)
 	}
 
@@ -3254,7 +3254,7 @@ func TestPersistImportedRollsBackOnReplaceFailure(t *testing.T) {
 		t.Fatalf("drop event_comments: %v", err)
 	}
 
-	if err := engine.persistImported(ctx, calendarID, result); err == nil {
+	if _, err := engine.persistImported(ctx, calendarID, result); err == nil {
 		t.Fatal("expected persistImported to fail when a Replace step errors")
 	}
 
@@ -3464,5 +3464,165 @@ func TestEnginePushServerWinsPreservesConcurrentEdit(t *testing.T) {
 	// matches the server, mirroring FinalizePushedResource on the push path.
 	if res.Etag != "etag-server" {
 		t.Fatalf("etag = %q, want %q", res.Etag, "etag-server")
+	}
+}
+
+// TestEnginePushServerWinsPreservesConcurrentEditAfterPersist reproduces issue
+// #494: a local edit that commits between the accept-server import's persist
+// commit and the dirty clear must not be silently dropped. The afterImportPersist
+// hook fires in that window — after persistImported committed, before
+// clearDirtyAfterImport — and bumps rev + re-marks dirty exactly as a real
+// service-layer mutation would. Because persistImported now captures the
+// post-import rev inside its own transaction (rather than re-reading it after
+// commit, where this edit's bump would be read and matched), the rev-guarded
+// clear leaves the resource dirty. With the old after-commit re-read this test
+// fails: the clear reads the edit's bumped rev and wipes dirty. Serial (no
+// t.Parallel) because it mutates the package-level hook.
+func TestEnginePushServerWinsPreservesConcurrentEditAfterPersist(t *testing.T) {
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+	calendarID := linkCalendarToTestAccount(t, ctx, q)
+
+	insertTestEvent(t, db, calendarID, "srv-wins-persist-race")
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calendarID,
+		Uid:          "srv-wins-persist-race",
+		OwnerType:    "event",
+		RemoteUrl:    "/calendar/srv-wins-persist-race.ics",
+		Etag:         `"etag-before"`,
+		Dirty:        1,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+
+	// Simulate a concurrent local edit landing after the import committed but
+	// before the dirty clear. persistImported already released its connection,
+	// so this auto-commit write is safe under SetMaxOpenConns(1).
+	var fired int
+	afterImportPersist = func() {
+		fired++
+		if err := storage.MarkResourceDirty(ctx, db, calendarID, "srv-wins-persist-race", "event"); err != nil {
+			t.Errorf("simulate concurrent edit: %v", err)
+		}
+	}
+	t.Cleanup(func() { afterImportPersist = nil })
+
+	client := serverWinsConflictClient(t, "srv-wins-persist-race")
+	if _, err := engine.push(ctx, client, calendarID, "", "", ConflictServerWins); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if fired != 1 {
+		t.Fatalf("afterImportPersist fired %d times, want 1", fired)
+	}
+
+	res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: "srv-wins-persist-race"})
+	if err != nil {
+		t.Fatalf("GetSyncResource: %v", err)
+	}
+	if res.Dirty != 1 {
+		t.Fatalf("dirty = %d, want 1 (concurrent edit must not be dropped, #494)", res.Dirty)
+	}
+	// The ETag still advances to the server's version, mirroring
+	// FinalizePushedResource on the push path.
+	if res.Etag != "etag-server" {
+		t.Fatalf("etag = %q, want %q", res.Etag, "etag-server")
+	}
+}
+
+// emptyServerWinsConflictClient is like serverWinsConflictClient but its GET
+// returns a VCALENDAR carrying only a VTIMEZONE — a non-empty body the encoder
+// accepts, yet with no importable VEVENT/VTODO/VJOURNAL, simulating a 412'd
+// resource whose server body has nothing to apply (issue #495).
+func emptyServerWinsConflictClient(t *testing.T, uid string) *caldav.Client {
+	t.Helper()
+	path := "/calendar/" + uid + ".ics"
+	return newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		switch r.Method {
+		case http.MethodPut:
+			return &http.Response{
+				StatusCode: http.StatusPreconditionFailed,
+				Status:     "412 Precondition Failed",
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("precondition failed")),
+				Request:    r,
+			}, nil
+		case http.MethodGet:
+			if r.URL.Path != path {
+				t.Fatalf("GET path = %s, want %s", r.URL.Path, path)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header: http.Header{
+					"Content-Type": []string{"text/calendar; charset=utf-8"},
+					"Etag":         []string{`"etag-server"`},
+				},
+				Body: io.NopCloser(strings.NewReader("BEGIN:VCALENDAR\r\n" +
+					"VERSION:2.0\r\n" +
+					"PRODID:-//chroncal//tests//EN\r\n" +
+					"BEGIN:VTIMEZONE\r\n" +
+					"TZID:UTC\r\n" +
+					"BEGIN:STANDARD\r\n" +
+					"DTSTART:19700101T000000\r\n" +
+					"TZOFFSETFROM:+0000\r\n" +
+					"TZOFFSETTO:+0000\r\n" +
+					"END:STANDARD\r\n" +
+					"END:VTIMEZONE\r\n" +
+					"END:VCALENDAR\r\n")),
+				Request: r,
+			}, nil
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			return nil, nil
+		}
+	})
+}
+
+// TestEnginePushServerWinsKeepsDirtyWhenServerBodyEmpty reproduces issue #495: on
+// a 412 with ConflictServerWins, if the re-fetched server body carries no
+// importable VEVENT/VTODO/VJOURNAL, importICal applies nothing. The auto-resolve
+// must not clear dirty or stamp the server ETag — doing so would drop the local
+// edit behind a server version that was never adopted, the asymmetry the manual
+// ResolveConflict path already guards against (#466). With the previous
+// unconditional clear this test fails because dirty is wiped and the ETag is
+// advanced without anything applied.
+func TestEnginePushServerWinsKeepsDirtyWhenServerBodyEmpty(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+	calendarID := linkCalendarToTestAccount(t, ctx, q)
+
+	insertTestEvent(t, db, calendarID, "srv-wins-empty")
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calendarID,
+		Uid:          "srv-wins-empty",
+		OwnerType:    "event",
+		RemoteUrl:    "/calendar/srv-wins-empty.ics",
+		Etag:         `"etag-before"`,
+		Dirty:        1,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+
+	client := emptyServerWinsConflictClient(t, "srv-wins-empty")
+	if _, err := engine.push(ctx, client, calendarID, "", "", ConflictServerWins); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+
+	res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: "srv-wins-empty"})
+	if err != nil {
+		t.Fatalf("GetSyncResource: %v", err)
+	}
+	if res.Dirty != 1 {
+		t.Fatalf("dirty = %d, want 1 (nothing was applied, local edit must survive, #495)", res.Dirty)
+	}
+	// The ETag must NOT be stamped to the server version: nothing from the server
+	// was adopted, so claiming the local row matches the server would let the next
+	// pull overwrite the still-pending local edit.
+	if res.Etag != `"etag-before"` {
+		t.Fatalf("etag = %q, want %q (server version was never applied, #495)", res.Etag, `"etag-before"`)
 	}
 }
