@@ -248,7 +248,7 @@ func (s *migratingCredentialStore) Get(accountID int64) (Credential, error) {
 	// whole process lifetime. On failure, return the legacy credential and keep
 	// the legacy copy so a later read can retry the migration.
 	if setErr := s.primary.Set(legacyCred); setErr != nil {
-		return legacyCred, nil
+		return legacyCred, nil //nolint:nilerr // best-effort migration: a keyring write failure must not fail a successful legacy read (see comment above)
 	}
 	// Migration succeeded: the caller now has the credential and the primary
 	// store owns it. Cleaning up the legacy copy is best-effort — a failure
