@@ -413,7 +413,9 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		return err
 	}
 
-	if j.RecurrenceRule != "" && j.RecurrenceID == "" {
+	// If this is a recurring master, check for overrides. RDATE-only masters
+	// (no RRULE) are recurring too, so guard on either rule or RDATEs (#471).
+	if (j.RecurrenceRule != "" || j.RDates != "") && j.RecurrenceID == "" {
 		overrides, err := s.q.ListJournalOverridesByUID(ctx, j.UID)
 		if err != nil {
 			return fmt.Errorf("check overrides: %w", err)
