@@ -568,3 +568,91 @@ func TestEventForm_EditTimedMultiDayMidnightEndPreservesEnd(t *testing.T) {
 	assert.Truef(t, end.Equal(msg.EndTime),
 		"no-op edit shifted end: want %s, got %s", end, msg.EndTime)
 }
+
+// TestEventForm_RepeatChangeAddsEndsFieldToLiveForm guards issue #496: changing
+// Repeat from None to a preset on the LIVE form (via Update, as a real key press
+// would) must rebuild the rendered form so the inline "Ends" selector appears.
+// The old OnRebuild closure ran syncFromForm against a stale value-captured copy,
+// so the live form never grew and form-created recurrences were endless.
+func TestEventForm_RepeatChangeAddsEndsFieldToLiveForm(t *testing.T) {
+	m, _ := NewEventFormModel(time.Date(2026, 7, 5, 0, 0, 0, 0, time.Local),
+		map[int64]CalendarInfo{1: {}}, NewTheme(true))
+
+	repeatIdx := -1
+	for i, item := range m.form.items {
+		if item.Label == "Repeat" {
+			repeatIdx = i
+			break
+		}
+	}
+	if repeatIdx < 0 {
+		t.Fatal("Repeat field not found in form")
+	}
+	m.form.focused = repeatIdx
+
+	before := len(m.form.items)
+
+	// Drive a real "→" key press through the live model, advancing Repeat
+	// from None to the first preset.
+	m, _ = m.Update(keyMsg("right"))
+
+	if m.repeatField.Selected() == 0 {
+		t.Fatal("precondition failed: Repeat selection did not advance off None")
+	}
+
+	after := len(m.form.items)
+	if after <= before {
+		t.Errorf("live form item count did not grow after Repeat change: before=%d after=%d (Ends field never reached live form)", before, after)
+	}
+
+	hasEnds := false
+	for _, item := range m.form.items {
+		if item.Label == "Ends" {
+			hasEnds = true
+			break
+		}
+	}
+	if !hasEnds {
+		t.Error("live form is missing the 'Ends' field after enabling recurrence")
+	}
+}
+
+// TestEventFormForEdit_MultiDayEndUsesDisplayTimezone guards issue #499: the
+// pre-filled multi-day end date must be computed in the event's display
+// timezone (the loc used to anchor m.day), not machine-local. Otherwise an
+// event whose tz != machine-local with an end near midnight gets an off-by-one
+// end day, so a no-op edit shifts the event end forward a day on save.
+func TestEventFormForEdit_MultiDayEndUsesDisplayTimezone(t *testing.T) {
+	// Force machine-local to UTC so the scenario is deterministic regardless
+	// of where the test runs.
+	origLocal := time.Local
+	time.Local = time.UTC
+	defer func() { time.Local = origLocal }()
+
+	loc, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+
+	// In New York the event spans two calendar days (Jun 13 20:00 → Jun 14
+	// 01:00). In UTC both instants fall on Jun 14, so a machine-local (UTC)
+	// computation would wrongly see a single day.
+	ev := event.Event{
+		ID:         7,
+		CalendarID: 1,
+		Title:      "Overnight",
+		Timezone:   "America/New_York",
+		StartTime:  time.Date(2026, 6, 13, 20, 0, 0, 0, loc),
+		EndTime:    time.Date(2026, 6, 14, 1, 0, 0, 0, loc),
+	}
+
+	m, _ := NewEventFormModelForEdit(ev, map[int64]CalendarInfo{1: {}}, NewTheme(true))
+
+	if !m.rangeHasEnd {
+		t.Fatal("expected multi-day range to be detected in the display timezone")
+	}
+	want := time.Date(2026, 6, 14, 0, 0, 0, 0, loc)
+	if m.rangeEndDate.Year() != want.Year() ||
+		m.rangeEndDate.Month() != want.Month() ||
+		m.rangeEndDate.Day() != want.Day() {
+		t.Errorf("rangeEndDate = %v, want display-tz day %v", m.rangeEndDate, want)
+	}
+}
