@@ -245,8 +245,8 @@ func (c *Client) DeleteResource(ctx context.Context, path, etag string) error {
 	if err != nil {
 		return fmt.Errorf("new DELETE request: %w", err)
 	}
-	if etag != "" {
-		req.Header.Set("If-Match", formatIfMatch(etag))
+	if ifMatch := formatIfMatch(etag); ifMatch != "" {
+		req.Header.Set("If-Match", ifMatch)
 	}
 
 	resp, err := c.httpClient.Do(req)
