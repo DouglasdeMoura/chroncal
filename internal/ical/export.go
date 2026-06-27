@@ -852,12 +852,15 @@ func todoYear(t todo.Todo) int {
 
 // recurrenceEndYear returns the calendar year of a recurring series' last
 // occurrence, so the VTIMEZONE span (issue #518) covers every DST-rule era the
-// series crosses rather than only its start year. A series bounded by UNTIL ends
-// in that year. An open-ended or COUNT-bounded series is clamped to the current
-// year: DST-rule changes are historical and future rule revisions are
-// unknowable, so covering [start, today] is sufficient, and the clamp keeps the
-// rrule walk bounded. The result is never earlier than the start year; a
-// malformed rule degrades to the start year.
+// series crosses rather than only its start year. The span is capped at the end
+// of the current year: a series bounded by a past UNTIL ends in its UNTIL year,
+// while an open-ended or COUNT-bounded series is clamped to today, since DST-rule
+// changes are historical and future rule revisions are unknowable, so covering
+// [start, today] is sufficient. The cap also keeps the rrule walk bounded —
+// rrule-go reports a ~290-year sentinel UNTIL when a rule supplies none (issue
+// #520), so the cap must come from the walk, not from GetUntil(). The result is
+// never earlier than the start year; a malformed rule degrades to the start
+// year.
 func recurrenceEndYear(rule string, start time.Time) int {
 	startYear := start.Year()
 	r, err := rrule.StrToRRule(rule)
@@ -865,12 +868,10 @@ func recurrenceEndYear(rule string, start time.Time) int {
 		return startYear
 	}
 	r.DTStart(start)
-	if until := r.GetUntil(); !until.IsZero() {
-		return max(startYear, until.Year())
-	}
-	// Open-ended or COUNT-bounded: take the last occurrence on or before the end
-	// of the current year. Before() walks only up to that cap (or the COUNT
-	// limit, whichever comes first), so iteration stays bounded.
+	// Take the last occurrence on or before the end of the current year. Before()
+	// walks only up to that cap (or the rule's UNTIL/COUNT limit, whichever comes
+	// first), so iteration stays bounded for open-ended and COUNT-bounded rules
+	// alike.
 	capDate := time.Date(max(startYear, time.Now().Year())+1, 1, 1, 0, 0, 0, 0, time.UTC)
 	if last := r.Before(capDate, true); !last.IsZero() {
 		return max(startYear, last.Year())

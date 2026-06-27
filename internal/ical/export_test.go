@@ -642,6 +642,64 @@ func TestExport_VTimezoneRecurringSeriesCrossesRuleChange(t *testing.T) {
 	}
 }
 
+func TestRecurrenceEndYearBounded(t *testing.T) {
+	t.Parallel()
+	// Issue #520: rrule-go reports a ~290-year sentinel UNTIL when a rule
+	// supplies none, so detecting "no UNTIL" via GetUntil() mis-clamped every
+	// open-ended or COUNT-bounded series' VTIMEZONE span to startYear+~292. The
+	// span must instead stay bounded to the current year for those rules, while a
+	// real past UNTIL still clamps to its own year.
+	start := time.Date(2020, 7, 1, 14, 0, 0, 0, time.UTC)
+	currentYear := time.Now().Year()
+
+	cases := []struct {
+		name string
+		rule string
+		want int
+	}{
+		{"real past UNTIL clamps to its year", "FREQ=YEARLY;UNTIL=20230701T140000Z", 2023},
+		{"open-ended clamps to current year", "FREQ=YEARLY", currentYear},
+		{"COUNT-bounded ends at its last occurrence", "FREQ=YEARLY;COUNT=3", 2022},
+		{"malformed rule degrades to start year", "FREQ=BOGUS;;;", start.Year()},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := recurrenceEndYear(tc.rule, start)
+			if got != tc.want {
+				t.Errorf("recurrenceEndYear(%q) = %d, want %d (span must not inherit the ~290-year sentinel)", tc.rule, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestExport_VTimezoneOpenEndedSeriesBounded(t *testing.T) {
+	t.Parallel()
+	// Issue #520: an open-ended recurring series (no UNTIL) must clamp the
+	// VTIMEZONE span to the current year rather than rrule-go's ~290-year
+	// sentinel, so the month-by-month walk and emitted observances stay bounded.
+	events := []event.Event{{
+		UID:            "vtz-openended",
+		Title:          "Unbounded Yearly Meeting",
+		StartTime:      time.Date(2020, 7, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2020, 7, 1, 15, 0, 0, 0, time.UTC),
+		Timezone:       "America/New_York",
+		RecurrenceRule: "FREQ=YEARLY",
+		Status:         "CONFIRMED",
+		Transp:         "OPAQUE",
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}}
+
+	data, _ := ExportEvents(events, "")
+	ics := string(data)
+
+	observances := strings.Count(ics, "BEGIN:STANDARD") + strings.Count(ics, "BEGIN:DAYLIGHT")
+	if observances > 12 {
+		t.Errorf("open-ended series bloated VTIMEZONE to %d observances; span not clamped to current year:\n%s", observances, ics)
+	}
+}
+
 func TestExport_VTimezoneDSTAbolishedWithinSpan(t *testing.T) {
 	t.Parallel()
 	// Issue #515: Brazil abolished DST in 2019. Exporting events that straddle
