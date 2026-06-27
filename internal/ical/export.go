@@ -747,8 +747,10 @@ func buildValarm(alarm model.Alarm) *ical.Component {
 		valarm.Props.Add(p)
 	}
 
-	// ATTACH (sound for AUDIO alarms only): inline BASE64 blob or URI.
-	if alarm.Action == "AUDIO" && (len(alarm.AttachBinary) > 0 || alarm.AttachURI != "") {
+	// ATTACH: a sound for AUDIO alarms or a document for EMAIL alarms
+	// (RFC 5545 §3.6.6). Emitted as an inline BASE64 blob or a URI. DISPLAY
+	// alarms carry no ATTACH, so only re-emit for the two actions that do.
+	if (alarm.Action == "AUDIO" || alarm.Action == "EMAIL") && (len(alarm.AttachBinary) > 0 || alarm.AttachURI != "") {
 		p := &ical.Prop{Name: ical.PropAttach, Params: make(ical.Params)}
 		if len(alarm.AttachBinary) > 0 {
 			p.Value = base64.StdEncoding.EncodeToString(alarm.AttachBinary)

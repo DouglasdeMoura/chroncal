@@ -1810,6 +1810,69 @@ func TestRoundtrip_AlarmAttachBinary(t *testing.T) {
 	}
 }
 
+func TestRoundtrip_AlarmAttachEMAIL(t *testing.T) {
+	t.Parallel()
+	// EMAIL alarms may carry one or more ATTACH attachments (RFC 5545 §3.6.6).
+	// An imported EMAIL attachment must not be silently dropped on export
+	// (issue #468).
+	original := event.Event{
+		UID:       "roundtrip-alarm-attach-email",
+		Title:     "Event with Email Alarm Attachment",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		Alarms: []model.Alarm{
+			{
+				Action:        "EMAIL",
+				TriggerValue:  "-PT1H",
+				Summary:       "Heads up",
+				Description:   "Meeting soon",
+				AttachURI:     "http://example.com/files/agenda.pdf",
+				AttachFmtType: "application/pdf",
+				Attendees: []model.AlarmAttendee{
+					{Email: "user@example.com"},
+				},
+			},
+		},
+		CreatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+		UpdatedAt: time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC),
+	}
+
+	data, err := ExportEvents([]event.Event{original}, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	ics := string(data)
+	if !strings.Contains(ics, "ATTACH") {
+		t.Errorf("exported ICS missing ATTACH for EMAIL alarm:\n%s", ics)
+	}
+	if !strings.Contains(ics, "FMTTYPE=application/pdf") {
+		t.Errorf("exported ICS missing FMTTYPE:\n%s", ics)
+	}
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("reimported %d events, want 1", len(result.Events))
+	}
+
+	got := result.Events[0]
+	if len(got.Alarms) != 1 {
+		t.Fatalf("Alarms: got %d, want 1", len(got.Alarms))
+	}
+	alarm := got.Alarms[0]
+	if alarm.AttachURI != "http://example.com/files/agenda.pdf" {
+		t.Errorf("AttachURI: got %q, want %q", alarm.AttachURI, "http://example.com/files/agenda.pdf")
+	}
+	if alarm.AttachFmtType != "application/pdf" {
+		t.Errorf("AttachFmtType: got %q, want %q", alarm.AttachFmtType, "application/pdf")
+	}
+}
+
 func TestRoundtrip_EventDuration(t *testing.T) {
 	t.Parallel()
 	original := event.Event{
