@@ -655,6 +655,15 @@ func emitDateListOnComponent(comp *ical.Component, propName, dates, timezone str
 				// DTSTART. A trailing Z is a value-type mismatch that stops
 				// servers from suppressing the excluded occurrence (#421).
 				prop.Value = t.UTC().Format("20060102T150405")
+			} else if loc, lerr := time.LoadLocation(timezone); timezone != "" && lerr == nil {
+				// Zoned components emit DTSTART in local wall-clock with a
+				// TZID, so EXDATE/RDATE must match: same TZID, same zone-local
+				// wall clock. A bare UTC value drops the TZID and is a
+				// value-type mismatch that stops servers expanding the RRULE
+				// in the DTSTART zone (e.g. Google) from suppressing the
+				// excluded occurrence (#492), mirroring setEventTimes.
+				prop.Params.Set(ical.ParamTimezoneID, timezone)
+				prop.Value = t.In(loc).Format("20060102T150405")
 			} else {
 				prop.SetDateTime(t.UTC())
 			}
