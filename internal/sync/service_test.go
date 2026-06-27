@@ -292,6 +292,108 @@ func TestService_ResolveConflict_Server(t *testing.T) {
 	}
 }
 
+// TestService_ResolveConflict_ServerPreservesConcurrentEdit is the regression
+// test for issue #466 (a reopening of #417 on the manual path): a local edit
+// landing in the window between the accept-server import and the dirty clear
+// must not be silently dropped. The resolveConflictAfterRevCapture hook
+// simulates that edit; the rev-guarded clear must leave the resource dirty so
+// the next push sends it. With the previous unconditional ClearSyncResourceDirty
+// this test fails because the edit's dirty flag is wiped. Serial (no t.Parallel)
+// because it mutates the package-level hook.
+func TestService_ResolveConflict_ServerPreservesConcurrentEdit(t *testing.T) {
+	svc, db, q := newTestServiceWithDB(t)
+	ctx := context.Background()
+
+	// Link the calendar to an account so MarkResourceDirty (which no-ops on
+	// local-only calendars) actually writes — the hook below relies on it to
+	// bump rev and simulate the concurrent edit.
+	testutil.LinkCalendarToAccount(t, db)
+
+	cals, _ := q.ListCalendars(ctx)
+	calID := cals[0].ID
+
+	const uid = "resolve-server-race"
+	events := event.NewService(db, q)
+
+	if _, err := events.UpsertByUID(ctx, event.UpsertParams{
+		UID:        uid,
+		CalendarID: calID,
+		Title:      "Local Title",
+		StartTime:  time.Date(2026, 4, 3, 10, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 3, 11, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("seed local event: %v", err)
+	}
+
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calID,
+		Uid:          uid,
+		OwnerType:    "event",
+		RemoteUrl:    "https://example.com/cal/resolve-server-race.ics",
+		Etag:         "etag-before",
+		Dirty:        1,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+
+	serverIcal := "BEGIN:VCALENDAR\r\n" +
+		"VERSION:2.0\r\n" +
+		"PRODID:-//chroncal//test//EN\r\n" +
+		"BEGIN:VEVENT\r\n" +
+		"UID:" + uid + "\r\n" +
+		"DTSTART:20260403T120000Z\r\n" +
+		"DTEND:20260403T130000Z\r\n" +
+		"SUMMARY:Server Title\r\n" +
+		"END:VEVENT\r\n" +
+		"END:VCALENDAR\r\n"
+
+	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+		CalendarID: calID,
+		OwnerType:  "event",
+		OwnerID:    1,
+		Uid:        uid,
+		LocalIcal:  "local",
+		ServerIcal: serverIcal,
+		ServerEtag: "etag-456",
+	}); err != nil {
+		t.Fatalf("CreateSyncConflict: %v", err)
+	}
+
+	// Simulate a concurrent local edit landing after the import recorded the
+	// server version but before the dirty flag is cleared: it bumps rev and
+	// re-marks the resource dirty, exactly as a real service-layer mutation would.
+	var fired int
+	resolveConflictAfterRevCapture = func() {
+		fired++
+		if err := storage.MarkResourceDirty(ctx, db, calID, uid, "event"); err != nil {
+			t.Errorf("simulate concurrent edit: %v", err)
+		}
+	}
+	t.Cleanup(func() { resolveConflictAfterRevCapture = nil })
+
+	conflicts, _ := q.ListSyncConflicts(ctx)
+	if err := svc.ResolveConflict(ctx, conflicts[0].ID, "server"); err != nil {
+		t.Fatalf("ResolveConflict server: %v", err)
+	}
+	if fired != 1 {
+		t.Fatalf("resolveConflictAfterRevCapture fired %d times, want 1", fired)
+	}
+
+	res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calID, Uid: uid})
+	if err != nil {
+		t.Fatalf("GetSyncResource: %v", err)
+	}
+	if res.Dirty != 1 {
+		t.Fatalf("Dirty = %d, want 1 (concurrent edit must not be dropped, #466)", res.Dirty)
+	}
+	// The ETag still advances to the server's version so the next push's If-Match
+	// matches the server, mirroring FinalizePushedResource on the push path.
+	if res.Etag != "etag-456" {
+		t.Fatalf("Etag = %q, want %q", res.Etag, "etag-456")
+	}
+}
+
 // TestService_ResolveConflict_ServerDoesNotResurrectDeleted is the regression
 // test for issue #89 (gap #2): accepting the server version of a conflict must
 // NOT un-delete a row the user has locally soft-deleted and tombstoned for
