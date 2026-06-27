@@ -80,11 +80,16 @@ func (s *UndoStack) Remove(meta event.UndoMeta) bool {
 }
 
 // sameUndoTarget reports whether two UndoMeta values describe the same
-// soft-delete operation. Kind + UID + RecurrenceID uniquely identifies a
-// reversible delete: a series and a single-instance delete of the same UID
-// differ by Kind, and distinct overrides differ by RecurrenceID.
+// soft-delete operation. Kind + UID + RecurrenceID + CutoffTime uniquely
+// identifies a reversible delete: a series and a single-instance delete of the
+// same UID differ by Kind, and distinct overrides differ by RecurrenceID.
+// CutoffTime disambiguates UndoKindFromInstance truncations, which always have
+// an empty RecurrenceID and so are otherwise identical across two truncations
+// of the same series (issue #514); it is the zero time for every other Kind,
+// so comparing it is always safe.
 func sameUndoTarget(a, b event.UndoMeta) bool {
-	return a.Kind == b.Kind && a.UID == b.UID && a.RecurrenceID == b.RecurrenceID
+	return a.Kind == b.Kind && a.UID == b.UID &&
+		a.RecurrenceID == b.RecurrenceID && a.CutoffTime.Equal(b.CutoffTime)
 }
 
 // Len returns the current depth.
