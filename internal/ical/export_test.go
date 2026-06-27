@@ -484,6 +484,159 @@ func TestExport_VTimezoneTransitionDTSTART(t *testing.T) {
 	}
 }
 
+func TestExport_VTimezoneAnchoredOnEventYear(t *testing.T) {
+	t.Parallel()
+	// Issue #515: the emitted VTIMEZONE transitions must be anchored on the
+	// year(s) the exported events actually fall in, not on time.Now().Year().
+	// A 2018 America/New_York event must yield DTSTARTs dated in 2018 so a
+	// consumer relying on the embedded VTIMEZONE (no local tzdata for the TZID)
+	// resolves the correct offset for that occurrence.
+	events := []event.Event{{
+		UID:       "vtz-2018",
+		Title:     "Past Eastern Event",
+		StartTime: time.Date(2018, 7, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2018, 7, 1, 15, 0, 0, 0, time.UTC),
+		Timezone:  "America/New_York",
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}}
+
+	data, _ := ExportEvents(events, "")
+	ics := string(data)
+
+	start := strings.Index(ics, "BEGIN:VTIMEZONE")
+	end := strings.Index(ics, "END:VTIMEZONE")
+	if start < 0 || end < 0 {
+		t.Fatalf("missing VTIMEZONE block:\n%s", ics)
+	}
+	vtz := ics[start:end]
+
+	// US Eastern 2018: DST begins 2nd Sunday of March (Mar 11), ends 1st Sunday
+	// of November (Nov 4); both transitions occur at 02:00 local.
+	for _, want := range []string{"20180311T020000", "20181104T020000"} {
+		if !strings.Contains(vtz, want) {
+			t.Errorf("VTIMEZONE missing event-year-anchored DTSTART %q:\n%s", want, vtz)
+		}
+	}
+	// The current year's rule must not leak in when no event falls in it.
+	nowYear := time.Now().Format("2006")
+	if strings.Contains(vtz, "DTSTART:"+nowYear) {
+		t.Errorf("VTIMEZONE leaked current-year (%s) DTSTART instead of anchoring on the event year:\n%s", nowYear, vtz)
+	}
+}
+
+func TestExport_VTimezoneRuleChangeAcrossSpan(t *testing.T) {
+	t.Parallel()
+	// Issue #515: when the exported events span years in which the zone's DST
+	// rule changed, the VTIMEZONE must carry both rule periods, with the
+	// superseded (older) rule bounded by UNTIL so RFC 5545 onset resolution
+	// stays unambiguous. America/New_York switched from "1st Sunday of April /
+	// last Sunday of October" to "2nd Sunday of March / 1st Sunday of November"
+	// in 2007 (US Energy Policy Act of 2005).
+	events := []event.Event{
+		{
+			UID:       "vtz-2005",
+			Title:     "Old-rule Event",
+			StartTime: time.Date(2005, 7, 1, 14, 0, 0, 0, time.UTC),
+			EndTime:   time.Date(2005, 7, 1, 15, 0, 0, 0, time.UTC),
+			Timezone:  "America/New_York",
+			Status:    "CONFIRMED",
+			Transp:    "OPAQUE",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		},
+		{
+			UID:       "vtz-2008",
+			Title:     "New-rule Event",
+			StartTime: time.Date(2008, 7, 1, 14, 0, 0, 0, time.UTC),
+			EndTime:   time.Date(2008, 7, 1, 15, 0, 0, 0, time.UTC),
+			Timezone:  "America/New_York",
+			Status:    "CONFIRMED",
+			Transp:    "OPAQUE",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		},
+	}
+
+	data, _ := ExportEvents(events, "")
+	ics := string(data)
+
+	start := strings.Index(ics, "BEGIN:VTIMEZONE")
+	end := strings.Index(ics, "END:VTIMEZONE")
+	if start < 0 || end < 0 {
+		t.Fatalf("missing VTIMEZONE block:\n%s", ics)
+	}
+	vtz := ics[start:end]
+
+	// Both rule periods present.
+	for _, want := range []string{
+		"FREQ=YEARLY;BYMONTH=4;BYDAY=1SU",   // old DAYLIGHT (1st Sunday April)
+		"FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU", // old STANDARD (last Sunday October)
+		"FREQ=YEARLY;BYMONTH=3;BYDAY=2SU",   // new DAYLIGHT (2nd Sunday March)
+		"FREQ=YEARLY;BYMONTH=11;BYDAY=1SU",  // new STANDARD (1st Sunday November)
+	} {
+		if !strings.Contains(vtz, want) {
+			t.Errorf("VTIMEZONE missing rule %q across the exported span:\n%s", want, vtz)
+		}
+	}
+	// Superseded rules must be bounded so they do not pollute later years.
+	if !strings.Contains(vtz, "UNTIL=") {
+		t.Errorf("VTIMEZONE missing UNTIL bound on superseded DST rule:\n%s", vtz)
+	}
+	if got := strings.Count(vtz, "BEGIN:DAYLIGHT"); got != 2 {
+		t.Errorf("expected two DAYLIGHT observances (old + new rule), got %d:\n%s", got, vtz)
+	}
+	if got := strings.Count(vtz, "BEGIN:STANDARD"); got != 2 {
+		t.Errorf("expected two STANDARD observances (old + new rule), got %d:\n%s", got, vtz)
+	}
+}
+
+func TestExport_VTimezoneDSTAbolishedWithinSpan(t *testing.T) {
+	t.Parallel()
+	// Issue #515: Brazil abolished DST in 2019. Exporting events that straddle
+	// the abolition must not leave the pre-abolition DAYLIGHT rule recurring
+	// unbounded — otherwise a post-abolition occurrence resolves a spurious -02
+	// summer offset from the embedded VTIMEZONE instead of standing -03.
+	mk := func(uid string, year int) event.Event {
+		return event.Event{
+			UID:       uid,
+			Title:     "Brazil Event",
+			StartTime: time.Date(year, 1, 15, 14, 0, 0, 0, time.UTC),
+			EndTime:   time.Date(year, 1, 15, 15, 0, 0, 0, time.UTC),
+			Timezone:  "America/Sao_Paulo",
+			Status:    "CONFIRMED",
+			Transp:    "OPAQUE",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+	}
+
+	data, _ := ExportEvents([]event.Event{mk("br-2017", 2017), mk("br-2021", 2021)}, "")
+	ics := string(data)
+
+	// Every DAYLIGHT observance must be bounded once DST no longer applies at
+	// the end of the span.
+	foundDaylight := false
+	for _, p := range strings.Split(ics, "BEGIN:DAYLIGHT")[1:] {
+		blk := p
+		if i := strings.Index(p, "END:DAYLIGHT"); i >= 0 {
+			blk = p[:i]
+		}
+		if !strings.Contains(blk, "RRULE") {
+			continue
+		}
+		foundDaylight = true
+		if !strings.Contains(blk, "UNTIL=") {
+			t.Errorf("unbounded DAYLIGHT rule survives DST abolition:\n%s", blk)
+		}
+	}
+	if !foundDaylight {
+		t.Fatalf("expected pre-abolition DAYLIGHT observances:\n%s", ics)
+	}
+}
+
 func TestExport_VTimezoneNoDST(t *testing.T) {
 	t.Parallel()
 	// Asia/Kolkata does not observe DST
