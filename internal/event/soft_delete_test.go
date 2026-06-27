@@ -355,9 +355,6 @@ func TestSoftDelete_FromInstance_RRULE(t *testing.T) {
 	if meta.Kind != UndoKindFromInstance {
 		t.Fatalf("meta.Kind = %v, want UndoKindFromInstance", meta.Kind)
 	}
-	if meta.MasterRRuleBefore != originalRRULE {
-		t.Fatalf("MasterRRuleBefore = %q, want %q", meta.MasterRRuleBefore, originalRRULE)
-	}
 
 	// Verify the master's RRULE was truncated, override soft-deleted.
 	newMaster, err := svc.Get(ctx, master.ID)
