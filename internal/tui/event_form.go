@@ -1274,8 +1274,12 @@ func (m EventFormModel) handleDatePickerMouse(msg tea.MouseClickMsg) (EventFormM
 		return m, nil
 	}
 
-	// Calendar grid hit-testing.
-	if mmX >= miniMonthHeaderWidth {
+	// Calendar grid hit-testing. Day rows occupy content rows 2..7 (header
+	// row 0, weekday row 1, then miniMonthGridRows day rows). Reject the X
+	// overflow and any row below the grid so clicks in the dead space
+	// (blank/status/separator) do not fall through and commit/pin a date.
+	// Row 0 (chevrons) is intentionally kept so mouse month nav still works.
+	if mmX >= miniMonthHeaderWidth || mmY >= 2+miniMonthGridRows {
 		return m, nil
 	}
 
@@ -1340,8 +1344,12 @@ func (m EventFormModel) handleEndsDatePickerMouse(msg tea.MouseClickMsg) (EventF
 		return m, nil
 	}
 
-	// Calendar grid hit-testing.
-	if mmX >= miniMonthHeaderWidth {
+	// Calendar grid hit-testing. Day rows occupy content rows 2..7 (header
+	// row 0, weekday row 1, then miniMonthGridRows day rows). Reject the X
+	// overflow and any row below the grid so clicks in the dead space
+	// (blank/separator) do not fall through and commit a date.
+	// Row 0 (chevrons) is intentionally kept so mouse month nav still works.
+	if mmX >= miniMonthHeaderWidth || mmY >= 2+miniMonthGridRows {
 		return m, nil
 	}
 
