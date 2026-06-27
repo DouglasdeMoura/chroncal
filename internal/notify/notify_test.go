@@ -2,6 +2,7 @@ package notify
 
 import (
 	"bufio"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -371,7 +372,8 @@ func TestEmail_ImplicitTLS_SMTPSServer(t *testing.T) {
 	// Override dialTLS to skip certificate verification for the self-signed test cert.
 	origDial := dialTLS
 	dialTLS = func(addr, _ string) (net.Conn, error) {
-		return tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true}) //nolint:gosec
+		dialer := tls.Dialer{Config: &tls.Config{InsecureSkipVerify: true}} //nolint:gosec
+		return dialer.DialContext(context.Background(), "tcp", addr)
 	}
 	t.Cleanup(func() { dialTLS = origDial })
 
