@@ -820,8 +820,11 @@ func buildVTimezone(tzID string) (*ical.Component, error) {
 	addSubComp := func(compName, tzName string, offset, fromOffset int, dtstart time.Time, rrule string) {
 		comp := ical.NewComponent(compName)
 
+		// dtstart is the transition wall-clock already expressed in
+		// TZOFFSETFROM (RFC 5545 Section 3.6.5), carried in a UTC-located
+		// time.Time, so format its fields verbatim.
 		p := &ical.Prop{Name: ical.PropDateTimeStart}
-		p.Value = dtstart.In(loc).Format("20060102T150405")
+		p.Value = dtstart.Format("20060102T150405")
 		comp.Props.Set(p)
 
 		p = &ical.Prop{Name: "TZOFFSETFROM"}
@@ -852,41 +855,51 @@ func buildVTimezone(tzID string) (*ical.Component, error) {
 	if len(transitions) == 0 {
 		// No DST — single STANDARD component
 		addSubComp("STANDARD", janName, janOffset, janOffset,
-			time.Date(refYear, 1, 1, 0, 0, 0, 0, loc), "")
+			time.Date(refYear, 1, 1, 0, 0, 0, 0, time.UTC), "")
 	} else {
 		for _, tr := range transitions {
-			// The transition was detected between month M-1 and M, but the
-			// exact day could be anywhere in the prior month. Search backward.
-			dtstart := findTransitionDay(loc, refYear, tr.month, tr.fromOffset)
+			// The transition was detected between month M-1 and M; find the
+			// exact instant it occurs, then express its wall-clock in
+			// TZOFFSETFROM (RFC 5545 Section 3.6.5). For US Eastern this
+			// yields the canonical 02:00 DTSTART rather than the
+			// post-transition 03:00 wall-clock.
+			instant := findTransitionInstant(loc, refYear, tr.month, tr.fromOffset)
+			fromWall := instant.UTC().Add(time.Duration(tr.fromOffset) * time.Second)
 			compName := "STANDARD"
 			if tr.offset > tr.fromOffset {
 				compName = "DAYLIGHT"
 			}
-			addSubComp(compName, tr.name, tr.offset, tr.fromOffset, dtstart,
-				transitionRRULE(dtstart))
+			addSubComp(compName, tr.name, tr.offset, tr.fromOffset, fromWall,
+				transitionRRULE(fromWall))
 		}
 	}
 
 	return vtz, nil
 }
 
-// findTransitionDay finds the exact day when the UTC offset changes to a new
-// value, searching backward from the start of the detected month into the
-// previous month where the transition actually occurs.
-func findTransitionDay(loc *time.Location, year int, detectedMonth time.Month, prevOffset int) time.Time {
-	// Search from the previous month's first day through the detected month
-	searchStart := time.Date(year, detectedMonth-1, 1, 3, 0, 0, 0, loc)
+// findTransitionInstant finds the exact instant when the UTC offset changes
+// away from prevOffset, binary-searching to one-second precision. The bounds
+// are noon on the first of the previous and detected months — the same instants
+// buildVTimezone samples to detect the transition, so offset(lo) == prevOffset
+// and offset(hi) != prevOffset are guaranteed and the transition is always
+// bracketed regardless of the local hour at which it occurs. The returned
+// instant is the first second carrying the new offset, i.e. the precise
+// transition moment.
+func findTransitionInstant(loc *time.Location, year int, detectedMonth time.Month, prevOffset int) time.Time {
+	lo := time.Date(year, detectedMonth-1, 1, 12, 0, 0, 0, loc)
 	if detectedMonth == time.January {
-		searchStart = time.Date(year-1, time.December, 1, 3, 0, 0, 0, loc)
+		lo = time.Date(year-1, time.December, 1, 12, 0, 0, 0, loc)
 	}
-	searchEnd := time.Date(year, detectedMonth, 1, 3, 0, 0, 0, loc)
-	for d := searchStart; !d.After(searchEnd); d = d.AddDate(0, 0, 1) {
-		_, offset := d.Zone()
-		if offset != prevOffset {
-			return d
+	hi := time.Date(year, detectedMonth, 1, 12, 0, 0, 0, loc)
+	for hi.Sub(lo) > time.Second {
+		mid := lo.Add(hi.Sub(lo) / 2)
+		if _, offset := mid.Zone(); offset == prevOffset {
+			lo = mid
+		} else {
+			hi = mid
 		}
 	}
-	return searchEnd
+	return hi
 }
 
 // transitionRRULE builds a yearly RFC 5545 recurrence rule describing when a

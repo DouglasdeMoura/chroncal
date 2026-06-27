@@ -399,6 +399,47 @@ func TestExport_VTimezoneRecurringTransitions(t *testing.T) {
 	}
 }
 
+func TestExport_VTimezoneTransitionDTSTART(t *testing.T) {
+	t.Parallel()
+	// RFC 5545 Section 3.6.5: a sub-component's DTSTART is the transition
+	// wall-clock expressed in TZOFFSETFROM. US Eastern transitions occur at
+	// 02:00 local, so both DAYLIGHT and STANDARD DTSTARTs must read T020000
+	// (matching IANA-published VTIMEZONE), not the post-transition T030000.
+	events := []event.Event{{
+		UID:       "vtz-transition",
+		Title:     "Eastern Event",
+		StartTime: time.Date(2026, 7, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 7, 1, 15, 0, 0, 0, time.UTC),
+		Timezone:  "America/New_York",
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}}
+
+	data, _ := ExportEvents(events, "")
+	ics := string(data)
+
+	start := strings.Index(ics, "BEGIN:VTIMEZONE")
+	end := strings.Index(ics, "END:VTIMEZONE")
+	if start < 0 || end < 0 {
+		t.Fatalf("missing VTIMEZONE block:\n%s", ics)
+	}
+	vtz := ics[start:end]
+
+	// Both US Eastern transitions occur at 02:00 local; IANA-published
+	// VTIMEZONE emits DTSTART:...T020000 for each.
+	if got := strings.Count(vtz, "T020000"); got != 2 {
+		t.Errorf("expected two T020000 transition DTSTARTs, got %d:\n%s", got, vtz)
+	}
+	if want := []string{"20260308T020000", "20261101T020000"}; !strings.Contains(vtz, want[0]) || !strings.Contains(vtz, want[1]) {
+		t.Errorf("VTIMEZONE missing canonical transition DTSTARTs %v:\n%s", want, vtz)
+	}
+	if strings.Contains(vtz, "T030000") {
+		t.Errorf("VTIMEZONE DTSTART must not be the post-transition 03:00 wall-clock (T030000):\n%s", vtz)
+	}
+}
+
 func TestExport_VTimezoneNoDST(t *testing.T) {
 	t.Parallel()
 	// Asia/Kolkata does not observe DST
