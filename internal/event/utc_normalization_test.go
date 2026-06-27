@@ -128,6 +128,41 @@ func TestCreate_AllDayPinsToUTCMidnight(t *testing.T) {
 	}
 }
 
+// TestListByDateRange_NormalizesBoundsToUTC reproduces issue #464 for the
+// read side: when a caller passes window bounds carrying a non-UTC offset,
+// ListByDateRange must normalize them to UTC before the lexical comparison
+// against the UTC-stored ("Z") start/end strings. Otherwise the offset left in
+// the formatted bound skews the comparison near window edges.
+//
+// Event: 01:00-02:00 UTC on Apr 1. Window in UTC-3 is [00:00, +1d) local =
+// [03:00Z, next-day 03:00Z). The event ends at 02:00Z, before the window
+// starts, so it must NOT appear. With the unnormalized bound, end_time > from
+// becomes "2026-04-01T02:00:00Z" > "2026-04-01T00:00:00-03:00", which is
+// lexically true, and the event wrongly surfaces.
+func TestListByDateRange_NormalizesBoundsToUTC(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	svc := NewService(db, q)
+	ctx := context.Background()
+
+	created, err := svc.Create(ctx, CreateParams{
+		CalendarID: 1,
+		Title:      "Early Event",
+		StartTime:  time.Date(2026, 4, 1, 1, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 1, 2, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("create event: %v", err)
+	}
+
+	loc := time.FixedZone("-03", -3*60*60)
+	from := time.Date(2026, 4, 1, 0, 0, 0, 0, loc) // 03:00Z
+	to := time.Date(2026, 4, 2, 0, 0, 0, 0, loc)   // next-day 03:00Z
+
+	if got := occursOn(t, svc, created.ID, from, to); got != 0 {
+		t.Errorf("event ending before the window appears %d times, want 0", got)
+	}
+}
+
 // TestUpdate_NormalizesToUTC confirms the edit path enforces the same
 // invariant: re-saving with offset-bearing times stores them in UTC.
 func TestUpdate_NormalizesToUTC(t *testing.T) {
