@@ -47,8 +47,13 @@ type UndoMeta struct {
 	// UndoKindSingle only, when undoing DeleteInstanceWithUndo.
 	RecurrenceID string
 
-	// UndoKindFromInstance only.
+	// UndoKindFromInstance only. MasterRRuleBefore records the pre-truncation
+	// RRULE; CutoffTime is the truncation cutoff, used to find the
+	// event_truncate_deletes log row that Undo reverses (so the RRULE, trimmed
+	// RDATEs, and the exact overrides the truncation hid are all restored).
+	// MasterUpdatedBefore is the stale-master guard baseline.
 	MasterRRuleBefore   string
+	CutoffTime          time.Time
 	MasterUpdatedBefore time.Time
 }
 
@@ -124,6 +129,7 @@ func (s *Service) DeleteFromInstanceWithUndo(ctx context.Context, uid string, in
 		Label:               master.Title,
 		DeletedAt:           time.Now().UTC(),
 		MasterRRuleBefore:   prevRRule,
+		CutoffTime:          instanceTime.UTC(),
 		MasterUpdatedBefore: parseStorageTime(postUpdated),
 	}, nil
 }
@@ -423,6 +429,14 @@ func clearMasterEXDATE(ctx context.Context, qtx *storage.Queries, uid, recurrenc
 	}, recurrenceID)
 }
 
+// restoreFromInstance reverses a "this and following" truncation for the TUI/CLI
+// undo path. It applies the stale-master guard (rejecting Undo if an external
+// edit advanced the master past the truncation), then routes the actual reversal
+// through restoreTruncationByLogID — the same provenance-aware path the trash
+// view uses. That guarantees the RRULE, the trimmed RDATEs (issue #490), and
+// only the overrides the truncation itself hid (issue #491, the #287 class on
+// undo) are all restored, and the truncate-log row is consumed so no phantom
+// "Series tail" trash entry lingers for the now-live series.
 func (s *Service) restoreFromInstance(ctx context.Context, meta UndoMeta) error {
 	master, err := s.q.GetEventByUIDIncludingDeleted(ctx, meta.UID)
 	if err != nil {
@@ -434,33 +448,17 @@ func (s *Service) restoreFromInstance(ctx context.Context, meta UndoMeta) error 
 			meta.MasterUpdatedBefore.Format(time.RFC3339), prevUpdated.Format(time.RFC3339))
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	log, err := s.q.GetEventTruncateDeleteByUIDAndCutoff(ctx, storage.GetEventTruncateDeleteByUIDAndCutoffParams{
+		Uid:        meta.UID,
+		CutoffTime: meta.CutoffTime.UTC().Format(time.RFC3339),
+	})
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotDeleted
+		}
+		return fmt.Errorf("get truncate log: %w", err)
 	}
-	defer tx.Rollback()
-	qtx := s.q.WithTx(tx)
-
-	// Rewrite RRULE back.
-	if err := qtx.UpdateEventRecurrenceRule(ctx, storage.UpdateEventRecurrenceRuleParams{
-		RecurrenceRule: storage.StringToNullable(meta.MasterRRuleBefore),
-		ID:             master.ID,
-	}); err != nil {
-		return fmt.Errorf("restore rrule: %w", err)
-	}
-	// Un-hide every soft-deleted row with this UID (the master was not
-	// soft-deleted by DeleteFromInstance, only overrides were — but this is
-	// idempotent).
-	if _, err := qtx.RestoreEventsByUID(ctx, meta.UID); err != nil {
-		return fmt.Errorf("restore overrides: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	if err := storage.MarkResourceDirty(ctx, s.db, master.CalendarID, meta.UID, "event"); err != nil {
-		return fmt.Errorf("mark resource dirty after restore: %w", err)
-	}
-	return nil
+	return s.restoreTruncationByLogID(ctx, log.ID)
 }
 
 // reconcileSyncAfterRestore mirrors the 3-case state machine from

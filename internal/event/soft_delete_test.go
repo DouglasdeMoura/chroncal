@@ -816,3 +816,111 @@ func TestSoftDelete_OverrideMasterLookupError(t *testing.T) {
 		t.Fatalf("override should still be live after failed delete: %v", err)
 	}
 }
+
+// TestSoftDelete_FromInstanceUndo_ReAddsRDates reproduces issue #490: the TUI
+// truncation-undo path (RestoreUndo of an UndoKindFromInstance) must re-add the
+// post-cutoff RDATEs the truncation trimmed, mirroring the trash-restore path
+// (issue #463). Before the fix, RestoreUndo rewrote only the RRULE and silently
+// dropped the trimmed RDATEs.
+func TestSoftDelete_FromInstanceUndo_ReAddsRDates(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	rdate1 := time.Date(2026, 4, 15, 9, 0, 0, 0, time.UTC)
+	rdate2 := time.Date(2026, 4, 22, 9, 0, 0, 0, time.UTC)
+	master := newRDateOnlyMaster(t, svc, "rdate-undo-readds", []time.Time{rdate1, rdate2})
+
+	meta, err := svc.DeleteFromInstanceWithUndo(ctx, master.UID, rdate2)
+	if err != nil {
+		t.Fatalf("DeleteFromInstanceWithUndo: %v", err)
+	}
+
+	// The truncation trimmed the post-cutoff RDATE.
+	trimmed, err := svc.GetByUID(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("GetByUID after truncate: %v", err)
+	}
+	if got := trimmed.ParseRDates(); len(got) != 1 || !got[0].Equal(rdate1) {
+		t.Fatalf("RDates after truncate = %v, want only %s", got, rdate1.Format(time.RFC3339))
+	}
+
+	// Undo must put the dropped RDATE back.
+	if err := svc.RestoreUndo(ctx, meta); err != nil {
+		t.Fatalf("RestoreUndo: %v", err)
+	}
+	restored, err := svc.GetByUID(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("GetByUID after undo: %v", err)
+	}
+	rdates := restored.ParseRDates()
+	foundR2 := false
+	for _, rd := range rdates {
+		if rd.Equal(rdate2) {
+			foundR2 = true
+		}
+	}
+	if len(rdates) != 2 || !foundR2 {
+		t.Fatalf("issue #490: RDates after undo = %v, want both restored (incl. %s)",
+			rdates, rdate2.Format(time.RFC3339))
+	}
+}
+
+// TestSoftDelete_FromInstanceUndo_KeepsIndependentlyDeletedOverride reproduces
+// issue #491 (the #287 class on the undo path): deleting a single override, then
+// truncating "this and following" from an earlier cutoff, then Undo must NOT
+// resurrect the independently-deleted override. Before the fix, RestoreUndo
+// called RestoreEventsByUID, which un-hid every soft-deleted row sharing the UID.
+func TestSoftDelete_FromInstanceUndo_KeepsIndependentlyDeletedOverride(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:            "standup-undo",
+		CalendarID:     1,
+		Title:          "Standup",
+		StartTime:      time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 1, 9, 30, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;COUNT=10",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+
+	// User customizes the Apr 22 instance (creates an override).
+	overrideTime := time.Date(2026, 4, 22, 9, 0, 0, 0, time.UTC)
+	override, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:          master.UID,
+		CalendarID:   1,
+		Title:        "Standup (moved)",
+		StartTime:    time.Date(2026, 4, 22, 10, 0, 0, 0, time.UTC),
+		EndTime:      time.Date(2026, 4, 22, 10, 30, 0, 0, time.UTC),
+		RecurrenceID: overrideTime.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	// User deletes that single customized instance on its own.
+	if err := svc.DeleteInstance(ctx, master.UID, overrideTime); err != nil {
+		t.Fatalf("DeleteInstance: %v", err)
+	}
+	if _, err := svc.Get(ctx, override.ID); err == nil {
+		t.Fatalf("override should be soft-deleted after DeleteInstance")
+	}
+
+	// Later, user truncates "this and following" from an earlier cutoff (Apr 8).
+	cutoff := time.Date(2026, 4, 8, 9, 0, 0, 0, time.UTC)
+	meta, err := svc.DeleteFromInstanceWithUndo(ctx, master.UID, cutoff)
+	if err != nil {
+		t.Fatalf("DeleteFromInstanceWithUndo: %v", err)
+	}
+
+	// Undo the truncation. This must NOT resurrect the override the user
+	// independently deleted before the truncation.
+	if err := svc.RestoreUndo(ctx, meta); err != nil {
+		t.Fatalf("RestoreUndo: %v", err)
+	}
+	if _, err := svc.Get(ctx, override.ID); err == nil {
+		t.Fatalf("issue #491: independently-deleted override resurrected by truncation undo")
+	}
+}
