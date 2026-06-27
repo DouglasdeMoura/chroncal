@@ -2,7 +2,9 @@ package journal
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/testutil"
@@ -112,6 +114,54 @@ func TestJournalService_Delete(t *testing.T) {
 	_, err := svc.Get(ctx, created.ID)
 	if err == nil {
 		t.Error("Get after Delete expected error")
+	}
+}
+
+func TestJournalDelete_MasterWithOverridesRefused(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	svc.UpsertByUID(ctx, UpsertParams{
+		UID: "del-master", CalendarID: 1, Summary: "Weekly Notes",
+		StartDate:      time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339),
+		RecurrenceRule: "FREQ=WEEKLY",
+	})
+	svc.UpsertByUID(ctx, UpsertParams{
+		UID: "del-master", CalendarID: 1, Summary: "Weekly Notes (moved)",
+		StartDate:    time.Date(2026, 4, 8, 0, 0, 0, 0, time.UTC).Format(time.RFC3339),
+		RecurrenceID: "2026-04-08T00:00:00Z",
+	})
+
+	master, _ := svc.GetByUID(ctx, "del-master")
+	err := svc.Delete(ctx, master.ID)
+	if !errors.Is(err, ErrHasOverrides) {
+		t.Fatalf("Delete master with overrides: got %v, want ErrHasOverrides", err)
+	}
+}
+
+// TestJournalDelete_RDateMasterWithOverridesRefused covers an RDATE-only
+// recurring master (no RRULE). Its overrides must still block single-row
+// deletion; otherwise the master is soft-deleted and the override rows are
+// orphaned (issue #471, matching the #415 fix for events and todos).
+func TestJournalDelete_RDateMasterWithOverridesRefused(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	svc.UpsertByUID(ctx, UpsertParams{
+		UID: "del-rdate-master", CalendarID: 1, Summary: "RDATE series",
+		StartDate: time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339),
+		RDates:    "2026-04-08T00:00:00Z",
+	})
+	svc.UpsertByUID(ctx, UpsertParams{
+		UID: "del-rdate-master", CalendarID: 1, Summary: "RDATE series (moved)",
+		StartDate:    time.Date(2026, 4, 8, 0, 0, 0, 0, time.UTC).Format(time.RFC3339),
+		RecurrenceID: "2026-04-08T00:00:00Z",
+	})
+
+	master, _ := svc.GetByUID(ctx, "del-rdate-master")
+	err := svc.Delete(ctx, master.ID)
+	if !errors.Is(err, ErrHasOverrides) {
+		t.Fatalf("Delete RDATE master with overrides: got %v, want ErrHasOverrides", err)
 	}
 }
 
