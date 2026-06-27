@@ -411,8 +411,8 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 	}
 	// Non-recurring events in date range.
 	rangeRows, err := s.q.ListEventsByDateRange(ctx, storage.ListEventsByDateRangeParams{
-		StartTime: to.Format(time.RFC3339),   // start_time < to
-		EndTime:   from.Format(time.RFC3339), // end_time > from
+		StartTime: to.UTC().Format(time.RFC3339),   // start_time < to
+		EndTime:   from.UTC().Format(time.RFC3339), // end_time > from
 	})
 	if err != nil {
 		return nil, err
@@ -681,8 +681,8 @@ func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Event,
 // StartTime/EndTime adjusted to the instance time and are sorted by StartTime.
 func (s *Service) ListExpandedByDateRange(ctx context.Context, from, to time.Time) ([]event.Event, error) {
 	rangeRows, err := s.q.ListEventsByDateRange(ctx, storage.ListEventsByDateRangeParams{
-		StartTime: to.Format(time.RFC3339),   // start_time < to
-		EndTime:   from.Format(time.RFC3339), // end_time > from
+		StartTime: to.UTC().Format(time.RFC3339),   // start_time < to
+		EndTime:   from.UTC().Format(time.RFC3339), // end_time > from
 	})
 	if err != nil {
 		return nil, err
