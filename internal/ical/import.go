@@ -997,7 +997,9 @@ func journalFromVJournal(comp *ical.Component) (journal.Journal, error) {
 
 	summary := propText(props, ical.PropSummary)
 
-	// VJOURNAL can have multiple DESCRIPTION properties; join them.
+	// VJOURNAL can have multiple DESCRIPTION properties (RFC 5545). Keep each
+	// one in the Descriptions slice for round-trip fidelity, and join them into
+	// the single DB-backed Description field used for display and search.
 	var descriptions []string
 	for _, prop := range props.Values(ical.PropDescription) {
 		text, err := prop.Text()
@@ -1081,6 +1083,7 @@ func journalFromVJournal(comp *ical.Component) (journal.Journal, error) {
 		UID:            uid,
 		Summary:        summary,
 		Description:    description,
+		Descriptions:   descriptions,
 		StartDate:      startDate,
 		Status:         strings.ToUpper(status),
 		Class:          strings.ToUpper(class),

@@ -29,6 +29,13 @@ type Journal struct {
 	UpdatedAt      time.Time
 	DeletedAt      *time.Time // nil = not soft-deleted; set = soft-deleted at this time
 
+	// Descriptions carries every DESCRIPTION property for iCal round-trip
+	// fidelity. RFC 5545 permits a VJOURNAL to hold multiple DESCRIPTIONs;
+	// the Description field above is the joined, DB-backed value used for
+	// display and search, while this transient slice preserves the original
+	// per-property split on export (mirroring Comments/Contacts).
+	Descriptions []string
+
 	Attendees   []model.Attendee
 	Attachments []model.Attachment
 	Comments    []string

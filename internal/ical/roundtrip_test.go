@@ -2327,6 +2327,47 @@ func TestRoundtrip_Journal(t *testing.T) {
 	}
 }
 
+// TestRoundtrip_JournalMultipleDescriptions guards against collapsing a
+// VJOURNAL's multiple DESCRIPTION properties (permitted by RFC 5545) into a
+// single concatenated value (issue #493). N descriptions must survive import ->
+// export as N distinct DESCRIPTION properties, mirroring COMMENT/CONTACT.
+func TestRoundtrip_JournalMultipleDescriptions(t *testing.T) {
+	t.Parallel()
+	const ics = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//test//EN
+BEGIN:VJOURNAL
+UID:multi-desc-journal
+DTSTAMP:20260401T100000Z
+DTSTART:20260401T090000Z
+SUMMARY:Multiple Descriptions
+DESCRIPTION:First description block
+DESCRIPTION:Second description block
+END:VJOURNAL
+END:VCALENDAR`
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Journals) != 1 {
+		t.Fatalf("imported %d journals, want 1", len(result.Journals))
+	}
+	if got := len(result.Journals[0].Descriptions); got != 2 {
+		t.Errorf("Descriptions: got %d, want 2 (%q)", got, result.Journals[0].Descriptions)
+	}
+
+	data, err := ExportJournals(result.Journals, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	count := strings.Count(string(data), "DESCRIPTION:")
+	if count != 2 {
+		t.Errorf("exported DESCRIPTION properties: got %d, want 2\n%s", count, data)
+	}
+}
+
 // TestRoundtrip_CategoryWithEmbeddedComma guards against fragmenting a single
 // CATEGORIES value that legitimately contains a comma (issue #101). A category
 // like "Foo, Bar" must survive import -> store -> export -> import as one value,
