@@ -235,6 +235,35 @@ func TestClientDeleteResourceSendsIfMatch(t *testing.T) {
 	}
 }
 
+func TestClientDeleteResourceWeakETagOmitsIfMatch(t *testing.T) {
+	t.Parallel()
+
+	// A weak validator cannot be used with the strong If-Match comparison
+	// (RFC 7232 §3.1), so DeleteResource must fall back to an unconditional
+	// DELETE rather than emitting an empty/malformed If-Match header.
+	client, err := NewClient(putTestHTTPClient{do: func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodDelete {
+			t.Fatalf("method = %s, want DELETE", req.Method)
+		}
+		if vals, ok := req.Header["If-Match"]; ok {
+			t.Fatalf("If-Match present for weak ETag: %q, want header absent", vals)
+		}
+		return &http.Response{
+			StatusCode: http.StatusNoContent,
+			Status:     "204 No Content",
+			Body:       io.NopCloser(http.NoBody),
+			Request:    req,
+		}, nil
+	}}, "https://example.com")
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	if err := client.DeleteResource(context.Background(), "/cal/test.ics", `W/"etag-weak"`); err != nil {
+		t.Fatalf("DeleteResource: %v", err)
+	}
+}
+
 func TestClientDeleteResourceConflict(t *testing.T) {
 	t.Parallel()
 
