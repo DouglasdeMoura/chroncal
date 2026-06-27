@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/emersion/go-ical"
+	"github.com/teambition/rrule-go"
 
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/journal"
@@ -33,9 +34,14 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 
 	// Emit VTIMEZONE components for all referenced timezones (RFC 5545 Section
 	// 3.6.5), anchored on the years the events actually fall in (issue #515).
+	// A recurring series widens the span to its last-occurrence year so the
+	// VTIMEZONE covers every DST-rule era the series crosses (issue #518).
 	var spans tzSpans
 	for _, e := range events {
 		spans.add(e.Timezone, e.StartTime.Year())
+		if e.RecurrenceRule != "" {
+			spans.add(e.Timezone, recurrenceEndYear(e.RecurrenceRule, e.StartTime))
+		}
 	}
 	spans.emit(cal)
 
@@ -312,10 +318,16 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 	}
 
 	// Emit VTIMEZONE components for all referenced timezones, anchored on the
-	// years the todos actually fall in (issue #515).
+	// years the todos actually fall in (issue #515), widened across a recurring
+	// todo's horizon so every DST-rule era it crosses is covered (issue #518).
 	var spans tzSpans
 	for _, t := range todos {
 		spans.add(t.Timezone, todoYear(t))
+		if t.RecurrenceRule != "" {
+			if a := todoAnchor(t); !a.IsZero() {
+				spans.add(t.Timezone, recurrenceEndYear(t.RecurrenceRule, a))
+			}
+		}
 	}
 	spans.emit(cal)
 
@@ -818,17 +830,52 @@ func (s *tzSpans) emit(cal *ical.Calendar) {
 	}
 }
 
+// todoAnchor returns a todo's recurrence/VTIMEZONE anchor date, preferring its
+// start date over its due date. Returns the zero time when the todo carries
+// neither.
+func todoAnchor(t todo.Todo) time.Time {
+	if d := t.ParseStartDate(); !d.IsZero() {
+		return d
+	}
+	return t.ParseDueDate()
+}
+
 // todoYear returns the calendar year to anchor a todo's VTIMEZONE on, preferring
 // its start date, then its due date, falling back to the current year when the
 // todo carries neither.
 func todoYear(t todo.Todo) int {
-	if d := t.ParseStartDate(); !d.IsZero() {
-		return d.Year()
-	}
-	if d := t.ParseDueDate(); !d.IsZero() {
-		return d.Year()
+	if a := todoAnchor(t); !a.IsZero() {
+		return a.Year()
 	}
 	return time.Now().Year()
+}
+
+// recurrenceEndYear returns the calendar year of a recurring series' last
+// occurrence, so the VTIMEZONE span (issue #518) covers every DST-rule era the
+// series crosses rather than only its start year. A series bounded by UNTIL ends
+// in that year. An open-ended or COUNT-bounded series is clamped to the current
+// year: DST-rule changes are historical and future rule revisions are
+// unknowable, so covering [start, today] is sufficient, and the clamp keeps the
+// rrule walk bounded. The result is never earlier than the start year; a
+// malformed rule degrades to the start year.
+func recurrenceEndYear(rule string, start time.Time) int {
+	startYear := start.Year()
+	r, err := rrule.StrToRRule(rule)
+	if err != nil {
+		return startYear
+	}
+	r.DTStart(start)
+	if until := r.GetUntil(); !until.IsZero() {
+		return max(startYear, until.Year())
+	}
+	// Open-ended or COUNT-bounded: take the last occurrence on or before the end
+	// of the current year. Before() walks only up to that cap (or the COUNT
+	// limit, whichever comes first), so iteration stays bounded.
+	capDate := time.Date(max(startYear, time.Now().Year())+1, 1, 1, 0, 0, 0, 0, time.UTC)
+	if last := r.Before(capDate, true); !last.IsZero() {
+		return max(startYear, last.Year())
+	}
+	return startYear
 }
 
 // journalYear returns the calendar year to anchor a journal's VTIMEZONE on,
@@ -1169,10 +1216,17 @@ func ExportJournals(journals []journal.Journal, calName string) ([]byte, error) 
 	}
 
 	// Emit VTIMEZONE components for all referenced timezones, anchored on the
-	// years the journals actually fall in (issue #515).
+	// years the journals actually fall in (issue #515), widened across a
+	// recurring journal's horizon to cover every DST-rule era it crosses
+	// (issue #518).
 	var spans tzSpans
 	for _, j := range journals {
 		spans.add(j.Timezone, journalYear(j))
+		if j.RecurrenceRule != "" {
+			if a := j.ParseStartDate(); !a.IsZero() {
+				spans.add(j.Timezone, recurrenceEndYear(j.RecurrenceRule, a))
+			}
+		}
 	}
 	spans.emit(cal)
 
