@@ -514,18 +514,31 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 							result.conflicts++
 							continue
 						}
-						if _, err := e.importICal(ctx, calendarID, buf.String()); err != nil {
+						imported, revs, err := e.importICal(ctx, calendarID, buf.String())
+						if err != nil {
 							e.logger.Error("import server resource failed", "uid", res.Uid, "error", err)
 							result.errors = append(result.errors, fmt.Errorf("import server resource %s: %w", res.Uid, err))
 							result.conflicts++
 							continue
 						}
-						// Clear dirty and update ETag to accept server version.
-						// Guard the clear on the post-import rev so a local edit
-						// landing between the import and here is not silently
-						// dropped (lost update). See issues #92 and #417.
-						if err := e.clearDirtyAfterImport(ctx, calendarID, res.Uid, serverRes.ETag); err != nil {
-							e.logger.Error("clear dirty after conflict", "uid", res.Uid, "error", err)
+						if !imported {
+							// The server's 412 body carried no importable
+							// VEVENT/VTODO/VJOURNAL, so nothing was applied.
+							// Clearing dirty and stamping the server ETag here
+							// would drop the local edit behind a server version we
+							// never adopted. Keep dirty so the next push retries;
+							// the conflict is still counted below. Mirrors the
+							// manual ResolveConflict guard. See issue #495.
+							e.logger.Warn("server resource has no importable data; keeping local dirty", "uid", res.Uid)
+						} else {
+							// Clear dirty and update ETag to accept server version.
+							// Guard the clear on the rev persistImported captured
+							// inside its transaction so a local edit landing after
+							// the import committed is not silently dropped (lost
+							// update). See issues #92, #417 and #494.
+							if err := e.clearDirtyAfterImport(ctx, calendarID, res.Uid, serverRes.ETag, revs[res.Uid]); err != nil {
+								e.logger.Error("clear dirty after conflict", "uid", res.Uid, "error", err)
+							}
 						}
 					}
 				} else {
@@ -629,30 +642,33 @@ func (e *Engine) putAlreadyLanded(ctx context.Context, client *caldav.Client, pa
 	return serverRes.ETag, true
 }
 
-// afterImportRevCapture, when non-nil, runs inside clearDirtyAfterImport between
-// reading the post-import rev and the conditional clear. It is nil in production
-// and exists only so tests can simulate a concurrent local edit landing in that
-// window to exercise the rev guard. See issue #417.
+// afterImportRevCapture, when non-nil, runs inside clearDirtyAfterImport just
+// before the conditional clear. It is nil in production and exists only so tests
+// can simulate a concurrent local edit landing between the import and the clear
+// to exercise the rev guard. See issue #417.
 var afterImportRevCapture func()
+
+// afterImportPersist, when non-nil, runs inside importICal right after
+// persistImported commits and before the caller's clearDirtyAfterImport. It is
+// nil in production and exists only so tests can simulate a concurrent local edit
+// landing in the persist-commit→clear window to exercise the rev guard now that
+// the rev is captured inside the persist transaction. See issue #494.
+var afterImportPersist func()
 
 // clearDirtyAfterImport adopts the server ETag and clears the dirty flag for a
 // resource whose local row we just overwrote with the server's version
 // (accept-server conflict resolution or a pull), but only when no local edit has
 // landed since the import. importICal/persistImported route through the
 // event/todo/journal services, which flip dirty=1 and bump rev via
-// MarkResourceDirty as a side effect; we read that post-import rev and feed it to
-// FinalizePushedResource so the clear becomes a no-op when a concurrent user edit
-// bumped rev again before we got here. An unconditional clear would wipe that
-// edit's dirty flag and silently drop it — the same lost-update race
-// FinalizePushedResource guards on the push path. See issues #92 and #417.
-func (e *Engine) clearDirtyAfterImport(ctx context.Context, calendarID int64, uid, etag string) error {
-	res, err := e.q.GetSyncResource(ctx, storage.GetSyncResourceParams{
-		CalendarID: calendarID,
-		Uid:        uid,
-	})
-	if err != nil {
-		return err
-	}
+// MarkResourceDirty as a side effect; persistImported captures that post-import
+// rev inside the same transaction and the caller feeds it here as rev. Passing it
+// to FinalizePushedResource makes the clear a no-op when a concurrent user edit
+// bumped rev again after the import committed. An unconditional clear would wipe
+// that edit's dirty flag and silently drop it — the same lost-update race
+// FinalizePushedResource guards on the push path. Capturing rev inside the persist
+// transaction (rather than re-reading it after commit) also closes the narrow
+// window between persist-commit and the read. See issues #92, #417 and #494.
+func (e *Engine) clearDirtyAfterImport(ctx context.Context, calendarID int64, uid, etag string, rev int64) error {
 	if afterImportRevCapture != nil {
 		afterImportRevCapture()
 	}
@@ -660,7 +676,7 @@ func (e *Engine) clearDirtyAfterImport(ctx context.Context, calendarID int64, ui
 		CalendarID: calendarID,
 		Uid:        uid,
 		Etag:       etag,
-		Rev:        res.Rev,
+		Rev:        rev,
 	})
 }
 
@@ -841,7 +857,8 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 
 		// Persist imported data to the database
 		ownerType := detectOwnerType(importResult)
-		if persistErr := e.persistImported(ctx, calendarID, importResult); persistErr != nil {
+		revs, persistErr := e.persistImported(ctx, calendarID, importResult)
+		if persistErr != nil {
 			e.logger.Error("persist imported resource", "uid", uid, "path", res.Path, "error", persistErr)
 			continue
 		}
@@ -864,10 +881,11 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 		// persistImported flips dirty=1 via the Replace* services'
 		// MarkResourceDirty side effect, and UpsertSyncResource's MAX
 		// clause preserves it. Clear dirty — the server's version is now
-		// authoritative — but guard the clear on the post-import rev so a
-		// concurrent local edit is not silently dropped (issue #417). See
-		// applySyncCollection for the full note.
-		if err := e.clearDirtyAfterImport(ctx, calendarID, uid, res.ETag); err != nil {
+		// authoritative — but guard the clear on the rev persistImported
+		// captured inside its transaction so a concurrent local edit is not
+		// silently dropped (issues #417 and #494). See applySyncCollection
+		// for the full note.
+		if err := e.clearDirtyAfterImport(ctx, calendarID, uid, res.ETag, revs[uid]); err != nil {
 			e.logger.Warn("clear post-import dirty", "uid", uid, "error", err)
 		}
 
@@ -1133,7 +1151,8 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 				continue
 			}
 			ownerType := detectOwnerType(importResult)
-			if persistErr := e.persistImported(ctx, calendarID, importResult); persistErr != nil {
+			revs, persistErr := e.persistImported(ctx, calendarID, importResult)
+			if persistErr != nil {
 				// A changed body we fetched but couldn't store (transient
 				// SQLite busy/lock, or a malformed component a Replace*
 				// rejects). Leave the sync_resource on its old etag and count
@@ -1164,9 +1183,10 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 			// every pull re-dirties everything it just absorbed and the next
 			// push round-trips it back to the server. Clear dirty since the
 			// server's version is now authoritative locally, but guard the
-			// clear on the post-import rev so a concurrent local edit is not
-			// silently dropped (issue #417).
-			if err := e.clearDirtyAfterImport(ctx, calendarID, uid, res.ETag); err != nil {
+			// clear on the rev persistImported captured inside its transaction
+			// so a concurrent local edit is not silently dropped (issues #417
+			// and #494).
+			if err := e.clearDirtyAfterImport(ctx, calendarID, uid, res.ETag, revs[uid]); err != nil {
 				e.logger.Warn("clear post-import dirty", "uid", uid, "error", err)
 			}
 			result.pulled++
@@ -1555,7 +1575,17 @@ func hydrateJournal(ctx context.Context, e *Engine, j *journal.Journal) {
 
 // persistImported saves parsed iCal data to the local database using the same
 // upsert pattern as the CLI import command.
-func (e *Engine) persistImported(ctx context.Context, calendarID int64, result icalPkg.ImportResult) error {
+//
+// It returns the post-import sync_resources.rev for each persisted UID, read
+// inside the same transaction that bumped it via MarkResourceDirty. Accept-server
+// callers feed that rev to FinalizePushedResource so the dirty clear is guarded
+// on a rev captured atomically with the import, rather than re-read after commit
+// where a concurrent local edit could slip in and have its dirty flag wiped — the
+// lost-update window of issue #494. A UID with no tracking row yet (a first pull)
+// reports rev 0.
+func (e *Engine) persistImported(ctx context.Context, calendarID int64, result icalPkg.ImportResult) (map[string]int64, error) {
+	revs := make(map[string]int64)
+
 	// Store timezones
 	for _, tz := range result.Timezones {
 		if _, err := e.q.UpsertTimezone(ctx, storage.UpsertTimezoneParams{
@@ -1617,9 +1647,14 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 			if err := events.ReplaceXProperties(ctx, saved.ID, ev.XProperties); err != nil {
 				return fmt.Errorf("replace xproperties for event %q: %w", ev.UID, err)
 			}
+			rev, err := captureImportRev(ctx, e.q.WithTx(tx), calendarID, ev.UID)
+			if err != nil {
+				return fmt.Errorf("capture rev for event %q: %w", ev.UID, err)
+			}
+			revs[ev.UID] = rev
 			return nil
 		}); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
@@ -1668,9 +1703,14 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 			if err := todos.ReplaceXProperties(ctx, saved.ID, t.XProperties); err != nil {
 				return fmt.Errorf("replace xproperties for todo %q: %w", t.UID, err)
 			}
+			rev, err := captureImportRev(ctx, e.q.WithTx(tx), calendarID, t.UID)
+			if err != nil {
+				return fmt.Errorf("capture rev for todo %q: %w", t.UID, err)
+			}
+			revs[t.UID] = rev
 			return nil
 		}); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
@@ -1711,13 +1751,36 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 			if err := journals.ReplaceXProperties(ctx, saved.ID, j.XProperties); err != nil {
 				return fmt.Errorf("replace xproperties for journal %q: %w", j.UID, err)
 			}
+			rev, err := captureImportRev(ctx, e.q.WithTx(tx), calendarID, j.UID)
+			if err != nil {
+				return fmt.Errorf("capture rev for journal %q: %w", j.UID, err)
+			}
+			revs[j.UID] = rev
 			return nil
 		}); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
-	return nil
+	return revs, nil
+}
+
+// captureImportRev reads the sync_resources.rev for uid using qtx (a Queries
+// bound to the import's transaction), so the value reflects the rev as bumped by
+// this import and nothing committed after it. A UID with no tracking row yet (a
+// first pull, before UpsertSyncResource creates it) reports rev 0. See #494.
+func captureImportRev(ctx context.Context, qtx *storage.Queries, calendarID int64, uid string) (int64, error) {
+	res, err := qtx.GetSyncResource(ctx, storage.GetSyncResourceParams{
+		CalendarID: calendarID,
+		Uid:        uid,
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return res.Rev, nil
 }
 
 // inTx runs fn inside a single transaction, committing on success and rolling
@@ -1746,10 +1809,10 @@ func (e *Engine) inTx(ctx context.Context, fn func(*sql.Tx) error) error {
 // input, so callers that must not accept the server version without applying it
 // (e.g. clearing the dirty flag) check imported to avoid silently stamping the
 // server ETag onto an unchanged local row.
-func (e *Engine) importICal(ctx context.Context, calendarID int64, data string) (imported bool, err error) {
+func (e *Engine) importICal(ctx context.Context, calendarID int64, data string) (imported bool, revs map[string]int64, err error) {
 	importResult, err := icalPkg.ImportFile(strings.NewReader(data))
 	if err != nil {
-		return false, fmt.Errorf("import ical: %w", err)
+		return false, nil, fmt.Errorf("import ical: %w", err)
 	}
 	// imported reflects whether the SERVER payload carried any component. It is
 	// computed before tombstone filtering so the empty-iCal guard in callers
@@ -1766,12 +1829,16 @@ func (e *Engine) importICal(ctx context.Context, calendarID int64, data string) 
 	// ConflictServerWins — consistent with it. Issue #89 gap #2.
 	importResult, err = e.dropTombstonedFromImport(ctx, calendarID, importResult)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
-	if err := e.persistImported(ctx, calendarID, importResult); err != nil {
-		return false, err
+	revs, err = e.persistImported(ctx, calendarID, importResult)
+	if err != nil {
+		return false, nil, err
 	}
-	return imported, nil
+	if afterImportPersist != nil {
+		afterImportPersist()
+	}
+	return imported, revs, nil
 }
 
 // dropTombstonedFromImport removes events/todos/journals whose UID is
