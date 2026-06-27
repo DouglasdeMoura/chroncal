@@ -250,6 +250,50 @@ func TestExport_FloatingExdatesRdatesNoZ(t *testing.T) {
 	}
 }
 
+// Regression test for issue #492: a zoned recurring component emits DTSTART
+// with a TZID in local wall-clock, so its EXDATE/RDATE must carry the same
+// TZID and wall-clock value. Emitting them as bare UTC (...Z) drops the TZID
+// and creates a value-type mismatch against DTSTART, so servers that expand
+// the RRULE in the DTSTART zone (e.g. Google) fail to suppress the excluded
+// occurrence and a deleted instance reappears.
+func TestExport_ZonedExdatesRdatesCarryTZID(t *testing.T) {
+	t.Parallel()
+	// DTSTART 2026-04-01T09:00 America/New_York == 13:00Z (EDT, UTC-4).
+	events := []event.Event{{
+		UID:            "zoned-exdate",
+		Title:          "Recurring Zoned",
+		StartTime:      time.Date(2026, 4, 1, 13, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		Timezone:       "America/New_York",
+		RecurrenceRule: "FREQ=WEEKLY",
+		Status:         "CONFIRMED",
+		Transp:         "OPAQUE",
+		ExDates:        "2026-04-08T13:00:00Z",
+		RDates:         "2026-05-06T13:00:00Z",
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}}
+
+	data, err := ExportEvents(events, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	ics := string(data)
+
+	if !strings.Contains(ics, "EXDATE;TZID=America/New_York:20260408T090000") {
+		t.Errorf("expected EXDATE;TZID=America/New_York:20260408T090000, got:\n%s", ics)
+	}
+	if !strings.Contains(ics, "RDATE;TZID=America/New_York:20260506T090000") {
+		t.Errorf("expected RDATE;TZID=America/New_York:20260506T090000, got:\n%s", ics)
+	}
+	if strings.Contains(ics, "EXDATE:20260408T130000Z") {
+		t.Errorf("EXDATE must not be emitted as bare UTC for a zoned component:\n%s", ics)
+	}
+	if strings.Contains(ics, "RDATE:20260506T130000Z") {
+		t.Errorf("RDATE must not be emitted as bare UTC for a zoned component:\n%s", ics)
+	}
+}
+
 func TestExport_CategoriesNotEscaped(t *testing.T) {
 	t.Parallel()
 	events := []event.Event{{
