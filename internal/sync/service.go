@@ -130,10 +130,13 @@ func (s *Service) ListConflicts(ctx context.Context) ([]Conflict, error) {
 }
 
 // resolveConflictAfterRevCapture, when non-nil, runs inside ResolveConflict's
-// accept-server path between reading the post-import rev and the rev-guarded
-// dirty clear. It is nil in production and exists only so tests can simulate a
-// concurrent local edit landing in that window to exercise the guard. See the
-// engine's afterImportRevCapture and issue #466.
+// accept-server path between taking the import rev (from importICal's revs map)
+// and the rev-guarded dirty clear. It is nil in production and exists only so
+// tests can simulate a concurrent local edit landing in that window to exercise
+// the guard. The narrower persist-commit window — an edit landing inside
+// importICal right after persistImported commits — is covered by the engine's
+// afterImportPersist hook. See the engine's afterImportRevCapture and issues
+// #466 and #510.
 var resolveConflictAfterRevCapture func()
 
 // ResolveConflict resolves a conflict by picking local or server version.
@@ -163,7 +166,7 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 		// the event/todo/journal services, which use their own connection.
 		// UpsertByUID is idempotent, so if the transaction fails to commit the
 		// conflict survives and the whole resolution replays cleanly.
-		imported, _, err := s.engine.importICal(ctx, conflict.CalendarID, conflict.ServerIcal)
+		imported, revs, err := s.engine.importICal(ctx, conflict.CalendarID, conflict.ServerIcal)
 		if err != nil {
 			return fmt.Errorf("import server version: %w", err)
 		}
@@ -174,20 +177,17 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 			// branch exists to prevent. Refuse instead of resolving falsely.
 			return fmt.Errorf("server version has no importable data for %q", conflict.Uid)
 		}
-		// Capture the post-import rev so the dirty clear can be rev-guarded like
-		// the auto accept-server paths (engine.clearDirtyAfterImport). importICal
-		// bumps rev and re-sets dirty=1 via MarkResourceDirty; a concurrent local
-		// edit landing after this read bumps rev again, and the conditional clear
-		// below then leaves dirty=1 so the edit is still pushed instead of being
-		// silently dropped — the lost-update race of issues #92/#417/#466.
-		res, err := s.q.GetSyncResource(ctx, storage.GetSyncResourceParams{
-			CalendarID: conflict.CalendarID,
-			Uid:        conflict.Uid,
-		})
-		if err != nil {
-			return fmt.Errorf("get sync resource: %w", err)
-		}
-		serverRev = res.Rev
+		// Use the rev importICal captured inside persistImported's transaction so
+		// the dirty clear can be rev-guarded like the auto accept-server paths
+		// (engine.clearDirtyAfterImport). importICal bumps rev and re-sets dirty=1
+		// via MarkResourceDirty; a concurrent local edit committing after that
+		// capture bumps rev again, and the conditional clear below then leaves
+		// dirty=1 so the edit is still pushed instead of being silently dropped —
+		// the lost-update race of issues #92/#417/#466/#494. Re-reading the rev
+		// after commit (as this path did before #510) reopened that window: an
+		// edit landing in the persist-commit→read gap was read back and matched by
+		// the guard, wiping its dirty flag.
+		serverRev = revs[conflict.Uid]
 		if resolveConflictAfterRevCapture != nil {
 			resolveConflictAfterRevCapture()
 		}
