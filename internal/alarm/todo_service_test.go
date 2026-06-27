@@ -57,6 +57,79 @@ func TestComputeTodoTrigger_RelatedEnd_DtStartPlusDue(t *testing.T) {
 	}
 }
 
+// TestComputeTodoTrigger_RelatedEnd_RecurringInstance guards issue #489: a
+// recurring VTODO with a RELATED=END alarm must anchor the trigger at each
+// occurrence's own DUE, not at the master's first-occurrence DUE. ExpandTodo
+// leaves the embedded Todo unshifted (only InstanceTime moves per occurrence),
+// so deriving END from the stored DueDate field would land occurrence N>1 in
+// the past, where it gets dropped as stale.
+func TestComputeTodoTrigger_RelatedEnd_RecurringInstance(t *testing.T) {
+	// Master: START 2026-04-01 09:00, DUE 2026-04-01 17:00 (8h span).
+	masterStart := time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
+	masterDue := time.Date(2026, 4, 1, 17, 0, 0, 0, time.UTC)
+
+	// Occurrence 2 (one week later): InstanceTime is the occurrence's START.
+	occStart := masterStart.AddDate(0, 0, 7)
+
+	inst := recurrence.ExpandedTodo{
+		Todo: todo.Todo{
+			StartDate:      masterStart.Format(time.RFC3339),
+			DueDate:        masterDue.Format(time.RFC3339), // unshifted master DUE
+			RecurrenceRule: "FREQ=WEEKLY;COUNT=3",
+		},
+		InstanceTime: occStart, // anchor = this occurrence's START
+	}
+
+	alarm := model.Alarm{
+		Action:       "DISPLAY",
+		TriggerValue: "-PT30M", // 30 min before END
+		Related:      "END",
+	}
+
+	got, err := computeTodoTriggerTimeForInstance(inst, alarm)
+	if err != nil {
+		t.Fatalf("computeTodoTriggerTimeForInstance: %v", err)
+	}
+
+	// END of occurrence 2 = occStart + 8h = 2026-04-08 17:00; trigger at 16:30.
+	want := occStart.Add(masterDue.Sub(masterStart)).Add(-30 * time.Minute)
+	if !got.Equal(want) {
+		t.Errorf("RELATED=END on recurring occurrence: got %v, want %v (END must anchor at this occurrence's DUE, not the master's)", got, want)
+	}
+}
+
+// TestComputeTodoTrigger_RelatedEnd_RecurringDueOnly is the DUE-only variant of
+// issue #489: with no DTSTART, the occurrence's InstanceTime is already the
+// occurrence's DUE, so END must anchor directly on InstanceTime.
+func TestComputeTodoTrigger_RelatedEnd_RecurringDueOnly(t *testing.T) {
+	masterDue := time.Date(2026, 4, 1, 17, 0, 0, 0, time.UTC)
+	occDue := masterDue.AddDate(0, 0, 7) // occurrence 2 DUE
+
+	inst := recurrence.ExpandedTodo{
+		Todo: todo.Todo{
+			DueDate:        masterDue.Format(time.RFC3339), // unshifted master DUE
+			RecurrenceRule: "FREQ=WEEKLY;COUNT=3",
+		},
+		InstanceTime: occDue, // anchor = this occurrence's DUE
+	}
+
+	alarm := model.Alarm{
+		Action:       "DISPLAY",
+		TriggerValue: "-PT30M",
+		Related:      "END",
+	}
+
+	got, err := computeTodoTriggerTimeForInstance(inst, alarm)
+	if err != nil {
+		t.Fatalf("computeTodoTriggerTimeForInstance: %v", err)
+	}
+
+	want := occDue.Add(-30 * time.Minute)
+	if !got.Equal(want) {
+		t.Errorf("RELATED=END DUE-only recurring occurrence: got %v, want %v", got, want)
+	}
+}
+
 func TestCheckTodoAlarms_DueAlarm(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 

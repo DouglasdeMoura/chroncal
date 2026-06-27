@@ -229,14 +229,26 @@ func computeTodoTriggerTimeForInstance(inst recurrence.ExpandedTodo, alarm model
 		return time.Time{}, fmt.Errorf("todo instance has no anchor time")
 	}
 
-	// For RELATED=END, anchor at the todo's end: DUE if present, else
-	// START+DURATION. A VTODO with DTSTART+DUE but no explicit DURATION has an
-	// empty Duration field, so resolving via DUE first is required — otherwise
-	// the trigger fires (DUE−DTSTART) too early (issue #367).
+	// For RELATED=END, anchor at the occurrence's end. ExpandTodo leaves the
+	// embedded Todo's DueDate/StartDate as the master's (first-occurrence)
+	// values and only advances InstanceTime, so the end must be derived from
+	// InstanceTime — not read from the stored DueDate, which would pin every
+	// occurrence to the master's DUE (issue #489).
+	//
+	// InstanceTime is the occurrence's START when DTSTART is present, else its
+	// DUE. So: with DTSTART+DUE, shift the DUE−START span onto InstanceTime
+	// (issue #367: a VTODO with DTSTART+DUE has an empty Duration field, so the
+	// span must come from the dates); DUE-only occurrences are already anchored
+	// at DUE; otherwise fall back to START+DURATION.
 	if alarm.Related == "END" {
-		if due := inst.ParseDueDate(); !due.IsZero() {
-			base = due
-		} else if inst.Duration != "" {
+		start := inst.ParseStartDate()
+		due := inst.ParseDueDate()
+		switch {
+		case !start.IsZero() && !due.IsZero():
+			base = inst.InstanceTime.Add(due.Sub(start))
+		case !due.IsZero():
+			base = inst.InstanceTime
+		case inst.Duration != "":
 			base = duration.Add(base, inst.Duration)
 		}
 	}
