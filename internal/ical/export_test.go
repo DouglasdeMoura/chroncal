@@ -593,6 +593,55 @@ func TestExport_VTimezoneRuleChangeAcrossSpan(t *testing.T) {
 	}
 }
 
+func TestExport_VTimezoneRecurringSeriesCrossesRuleChange(t *testing.T) {
+	t.Parallel()
+	// Issue #518: a single recurring series contributes only its start year to
+	// the VTIMEZONE span. A series that starts before a historical DST-rule
+	// change but recurs past it (here America/New_York, 2005 -> the 2007 US rule
+	// change) must still carry BOTH rule eras, not merely the start-year rule —
+	// otherwise occurrences after the change resolve the wrong offset for
+	// consumers relying on the embedded VTIMEZONE.
+	events := []event.Event{
+		{
+			UID:            "vtz-recur-2005",
+			Title:          "Long-running Event",
+			StartTime:      time.Date(2005, 7, 1, 14, 0, 0, 0, time.UTC),
+			EndTime:        time.Date(2005, 7, 1, 15, 0, 0, 0, time.UTC),
+			Timezone:       "America/New_York",
+			RecurrenceRule: "FREQ=YEARLY;UNTIL=20100701T140000Z",
+			Status:         "CONFIRMED",
+			Transp:         "OPAQUE",
+			CreatedAt:      time.Now(),
+			UpdatedAt:      time.Now(),
+		},
+	}
+
+	data, _ := ExportEvents(events, "")
+	ics := string(data)
+
+	start := strings.Index(ics, "BEGIN:VTIMEZONE")
+	end := strings.Index(ics, "END:VTIMEZONE")
+	if start < 0 || end < 0 {
+		t.Fatalf("missing VTIMEZONE block:\n%s", ics)
+	}
+	vtz := ics[start:end]
+
+	// Both rule periods present, even though only one (start-year) event exists.
+	for _, want := range []string{
+		"FREQ=YEARLY;BYMONTH=4;BYDAY=1SU",   // old DAYLIGHT (1st Sunday April)
+		"FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU", // old STANDARD (last Sunday October)
+		"FREQ=YEARLY;BYMONTH=3;BYDAY=2SU",   // new DAYLIGHT (2nd Sunday March)
+		"FREQ=YEARLY;BYMONTH=11;BYDAY=1SU",  // new STANDARD (1st Sunday November)
+	} {
+		if !strings.Contains(vtz, want) {
+			t.Errorf("VTIMEZONE missing rule %q across the recurring series horizon:\n%s", want, vtz)
+		}
+	}
+	if !strings.Contains(vtz, "UNTIL=") {
+		t.Errorf("VTIMEZONE missing UNTIL bound on superseded DST rule:\n%s", vtz)
+	}
+}
+
 func TestExport_VTimezoneDSTAbolishedWithinSpan(t *testing.T) {
 	t.Parallel()
 	// Issue #515: Brazil abolished DST in 2019. Exporting events that straddle
