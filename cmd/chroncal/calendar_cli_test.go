@@ -60,6 +60,7 @@ func TestCalendarCreateCanConnectRemoteCalendar(t *testing.T) {
 		"--remote-url", "https://cal.example.com/dav/calendars/work/",
 		"--username", "alice",
 		"--auth", "bearer",
+		"--allow-plaintext",
 	)
 	if err != nil {
 		t.Fatalf("calendar create with remote config: %v", err)
@@ -109,6 +110,7 @@ func TestCalendarUpdateCanConnectRemoteCalendar(t *testing.T) {
 		"--remote-url", "https://cal.example.com/dav/calendars/work/",
 		"--username", "alice",
 		"--auth", "bearer",
+		"--allow-plaintext",
 	)
 	if err != nil {
 		t.Fatalf("calendar update with remote config: %v", err)
@@ -138,6 +140,7 @@ func TestCalendarUpdatePreservesAuthTypeWhenReconnectingWithoutAuthFlag(t *testi
 		"calendar", "update", "Work",
 		"--remote-url", "https://cal.example.com/dav/calendars/renamed/",
 		"--username", "alice",
+		"--allow-plaintext",
 	)
 	if err != nil {
 		t.Fatalf("calendar update with new remote URL: %v", err)
@@ -253,6 +256,10 @@ func setupCalendarCLITestEnv(t *testing.T) string {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "chroncal.db")
 	t.Setenv("CHRONCAL_DB", dbPath)
+	// XDG_CONFIG_HOME points the plaintext credential store at this temp dir.
+	// Connect flows pair this with --allow-plaintext so they store credentials
+	// hermetically and don't depend on the host OS keyring, which is absent on
+	// the Linux CI runner (no org.freedesktop.secrets) — see issue #474.
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "xdg-config"))
 	return dbPath
 }
