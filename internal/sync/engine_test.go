@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	gosync "sync"
 	"testing"
@@ -3624,5 +3625,333 @@ func TestEnginePushServerWinsKeepsDirtyWhenServerBodyEmpty(t *testing.T) {
 	// pull overwrite the still-pending local edit.
 	if res.Etag != `"etag-before"` {
 		t.Fatalf("etag = %q, want %q (server version was never applied, #495)", res.Etag, `"etag-before"`)
+	}
+}
+
+// TestPersistImportedPrunesStaleOverrides verifies that when a CalDAV server
+// deletes a recurring instance, persistImported soft-deletes the stale local
+// override row. A server signals instance deletion by removing the override
+// VEVENT from the resource and adding the slot to the master's EXDATE. Without
+// pruning, the stale override is still CONFIRMED and expansion resurrects it —
+// the orphan checker deliberately ignores EXDATEs so a legitimate override is
+// never mistaken for an orphan.
+func TestPersistImportedPrunesStaleOverrides(t *testing.T) {
+	t.Parallel()
+
+	engine, _, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	const uid = "biweekly-prune-test"
+	const deletedRID = "2026-07-02T17:00:00Z"
+	const keptRID = "2026-08-27T17:00:00Z"
+
+	// First sync: master + two overrides.
+	_, err = engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
+		Events: []event.Event{
+			pruneTestEvent(uid, calendarID, "", "FREQ=WEEKLY;INTERVAL=2;BYDAY=TH"),
+			pruneTestEvent(uid, calendarID, deletedRID, ""),
+			pruneTestEvent(uid, calendarID, keptRID, ""),
+		},
+	})
+	if err != nil {
+		t.Fatalf("first persistImported: %v", err)
+	}
+
+	overrides, err := q.ListOverridesByUID(ctx, uid)
+	if err != nil {
+		t.Fatalf("ListOverridesByUID after first import: %v", err)
+	}
+	if len(overrides) != 2 {
+		t.Fatalf("expected 2 live overrides after first import, got %d", len(overrides))
+	}
+
+	// Second sync: server deleted the 7/2 instance (EXDATE on master, override
+	// VEVENT removed) but kept the 8/27 override.
+	secondMaster := pruneTestEvent(uid, calendarID, "", "FREQ=WEEKLY;INTERVAL=2;BYDAY=TH")
+	secondMaster.ExDates = deletedRID
+	_, err = engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
+		Events: []event.Event{
+			secondMaster,
+			pruneTestEvent(uid, calendarID, keptRID, ""),
+		},
+	})
+	if err != nil {
+		t.Fatalf("second persistImported: %v", err)
+	}
+
+	// Only the kept override should remain live.
+	overrides, err = q.ListOverridesByUID(ctx, uid)
+	if err != nil {
+		t.Fatalf("ListOverridesByUID after second import: %v", err)
+	}
+	if len(overrides) != 1 || overrides[0].RecurrenceID != keptRID {
+		got := make([]string, 0, len(overrides))
+		for _, o := range overrides {
+			got = append(got, o.RecurrenceID)
+		}
+		t.Fatalf("expected 1 live override %q, got %v", keptRID, got)
+	}
+
+	// The stale override should be soft-deleted (not hard-deleted).
+	deletedRIDs, err := q.ListDeletedOverrideRecurrenceIDs(ctx, uid)
+	if err != nil {
+		t.Fatalf("ListDeletedOverrideRecurrenceIDs: %v", err)
+	}
+	if !slices.Contains(deletedRIDs, deletedRID) {
+		t.Fatalf("stale override %q was not soft-deleted; deleted = %v", deletedRID, deletedRIDs)
+	}
+
+	// The master should still exist with the EXDATE.
+	master, err := q.GetEventByUID(ctx, uid)
+	if err != nil {
+		t.Fatalf("GetEventByUID after second import: %v", err)
+	}
+	if master.Exdates == nil || *master.Exdates == "" {
+		t.Fatalf("master EXDATE not set; expected %q", deletedRID)
+	}
+}
+
+// pruneTestEvent builds a minimal imported event for override-prune tests. A
+// non-empty rid must be an RFC 3339 time; it doubles as the instance start.
+func pruneTestEvent(uid string, calendarID int64, rid, rrule string) event.Event {
+	start := time.Date(2026, 6, 18, 17, 0, 0, 0, time.UTC)
+	if rid != "" {
+		parsed, err := time.Parse(time.RFC3339, rid)
+		if err != nil {
+			panic(err)
+		}
+		start = parsed
+	}
+	return event.Event{
+		UID:            uid,
+		CalendarID:     calendarID,
+		Title:          "Prune " + uid,
+		StartTime:      start,
+		EndTime:        start.Add(time.Hour),
+		RecurrenceRule: rrule,
+		RecurrenceID:   rid,
+	}
+}
+
+// seedCleanSyncResource records uid as a synced, clean (dirty=0) resource,
+// the state a completed pull leaves behind.
+func seedCleanSyncResource(t *testing.T, q *storage.Queries, calendarID int64, uid string) {
+	t.Helper()
+	ctx := context.Background()
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID: calendarID, Uid: uid, OwnerType: "event",
+		RemoteUrl: "https://example.com/cal/" + uid + ".ics", Etag: "v1",
+		Dirty: 0, SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+	if err := q.ClearSyncResourceDirty(ctx, storage.ClearSyncResourceDirtyParams{
+		Etag: "v1", CalendarID: calendarID, Uid: uid,
+	}); err != nil {
+		t.Fatalf("ClearSyncResourceDirty: %v", err)
+	}
+}
+
+// A resource that was dirty before the import carries unpushed local changes.
+// A locally created override is absent from the server body because the
+// server has never seen it — pruning it would silently discard the edit, so
+// the prune must skip dirty resources.
+func TestPersistImportedPruneSkipsDirtyResource(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+	testutil.LinkCalendarToAccount(t, db)
+	calendarID := int64(1) // LinkCalendarToAccount links the seeded calendar 1
+
+	const uid = "dirty-prune-test"
+	const localRID = "2026-07-02T17:00:00Z"
+
+	// First pull: master only, then the tracking row settles clean.
+	if _, err := engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
+		Events: []event.Event{pruneTestEvent(uid, calendarID, "", "FREQ=WEEKLY;INTERVAL=2;BYDAY=TH")},
+	}); err != nil {
+		t.Fatalf("first persistImported: %v", err)
+	}
+	seedCleanSyncResource(t, q, calendarID, uid)
+
+	// Local, not-yet-pushed instance edit: a new override row plus dirty=1.
+	if _, err := db.ExecContext(ctx,
+		"INSERT INTO events (uid, calendar_id, title, start_time, end_time, status, transp, class, recurrence_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		uid, calendarID, "Local edit", localRID, "2026-07-02T18:00:00Z",
+		"CONFIRMED", "OPAQUE", "PUBLIC", localRID,
+	); err != nil {
+		t.Fatalf("insert local override: %v", err)
+	}
+	if err := q.MarkSyncResourceDirty(ctx, storage.MarkSyncResourceDirtyParams{
+		CalendarID: calendarID, Uid: uid,
+	}); err != nil {
+		t.Fatalf("MarkSyncResourceDirty: %v", err)
+	}
+
+	// Second pull before the push lands (e.g. the series title changed on the
+	// server). The server body has no override — because it has never seen it.
+	if _, err := engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
+		Events: []event.Event{pruneTestEvent(uid, calendarID, "", "FREQ=WEEKLY;INTERVAL=2;BYDAY=TH")},
+	}); err != nil {
+		t.Fatalf("second persistImported: %v", err)
+	}
+
+	overrides, err := q.ListOverridesByUID(ctx, uid)
+	if err != nil {
+		t.Fatalf("ListOverridesByUID: %v", err)
+	}
+	if len(overrides) != 1 || overrides[0].RecurrenceID != localRID {
+		t.Fatalf("unpushed local override was pruned; live overrides = %d", len(overrides))
+	}
+}
+
+// The dirty gate must not block the normal case: a clean synced resource whose
+// server body dropped an override still prunes the stale row.
+func TestPersistImportedPrunesCleanSyncedResource(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+	testutil.LinkCalendarToAccount(t, db)
+	calendarID := int64(1) // LinkCalendarToAccount links the seeded calendar 1
+
+	const uid = "clean-prune-test"
+	const staleRID = "2026-07-02T17:00:00Z"
+
+	if _, err := engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
+		Events: []event.Event{
+			pruneTestEvent(uid, calendarID, "", "FREQ=WEEKLY;INTERVAL=2;BYDAY=TH"),
+			pruneTestEvent(uid, calendarID, staleRID, ""),
+		},
+	}); err != nil {
+		t.Fatalf("first persistImported: %v", err)
+	}
+	seedCleanSyncResource(t, q, calendarID, uid)
+
+	// Server deleted the instance: EXDATE on the master, override gone.
+	master := pruneTestEvent(uid, calendarID, "", "FREQ=WEEKLY;INTERVAL=2;BYDAY=TH")
+	master.ExDates = staleRID
+	if _, err := engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
+		Events: []event.Event{master},
+	}); err != nil {
+		t.Fatalf("second persistImported: %v", err)
+	}
+
+	overrides, err := q.ListOverridesByUID(ctx, uid)
+	if err != nil {
+		t.Fatalf("ListOverridesByUID: %v", err)
+	}
+	if len(overrides) != 0 {
+		t.Fatalf("stale override not pruned on clean resource; live overrides = %d", len(overrides))
+	}
+}
+
+// A component the parser dropped is absent from ImportResult without being
+// absent from the server, so a non-zero SkippedComponents must disable
+// pruning for the whole result.
+func TestPersistImportedPruneSkipsIncompleteParse(t *testing.T) {
+	t.Parallel()
+
+	engine, _, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	const uid = "partial-parse-test"
+	const rid = "2026-07-02T17:00:00Z"
+
+	if _, err := engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
+		Events: []event.Event{
+			pruneTestEvent(uid, calendarID, "", "FREQ=WEEKLY;INTERVAL=2;BYDAY=TH"),
+			pruneTestEvent(uid, calendarID, rid, ""),
+		},
+	}); err != nil {
+		t.Fatalf("first persistImported: %v", err)
+	}
+
+	// Second pull: the override VEVENT was dropped by the parser, not by the
+	// server. The keep-set is an incomplete inventory — no pruning.
+	if _, err := engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
+		Events:            []event.Event{pruneTestEvent(uid, calendarID, "", "FREQ=WEEKLY;INTERVAL=2;BYDAY=TH")},
+		SkippedComponents: 1,
+	}); err != nil {
+		t.Fatalf("second persistImported: %v", err)
+	}
+
+	overrides, err := q.ListOverridesByUID(ctx, uid)
+	if err != nil {
+		t.Fatalf("ListOverridesByUID: %v", err)
+	}
+	if len(overrides) != 1 {
+		t.Fatalf("override pruned despite incomplete parse; live overrides = %d", len(overrides))
+	}
+}
+
+// A resource holding components of more than one UID must reconcile each UID
+// against its own master: UID A's master says nothing about UID B's override
+// inventory.
+func TestPersistImportedPrunePerUID(t *testing.T) {
+	t.Parallel()
+
+	engine, _, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	const uidA = "multi-uid-a"
+	const uidB = "multi-uid-b"
+	const ridA = "2026-07-02T17:00:00Z"
+	const ridB = "2026-07-03T17:00:00Z"
+
+	for uid, rid := range map[string]string{uidA: ridA, uidB: ridB} {
+		if _, err := engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
+			Events: []event.Event{
+				pruneTestEvent(uid, calendarID, "", "FREQ=WEEKLY;BYDAY=TH"),
+				pruneTestEvent(uid, calendarID, rid, ""),
+			},
+		}); err != nil {
+			t.Fatalf("seed persistImported %q: %v", uid, err)
+		}
+	}
+
+	// One malformed resource: B's override listed before A's master, and B's
+	// master absent. Only A — whose own master is present — may be pruned.
+	if _, err := engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
+		Events: []event.Event{
+			pruneTestEvent(uidB, calendarID, ridB, ""),
+			pruneTestEvent(uidA, calendarID, "", "FREQ=WEEKLY;BYDAY=TH"),
+		},
+	}); err != nil {
+		t.Fatalf("mixed persistImported: %v", err)
+	}
+
+	overridesA, err := q.ListOverridesByUID(ctx, uidA)
+	if err != nil {
+		t.Fatalf("ListOverridesByUID(A): %v", err)
+	}
+	if len(overridesA) != 0 {
+		t.Fatalf("A's stale override not pruned; live overrides = %d", len(overridesA))
+	}
+	overridesB, err := q.ListOverridesByUID(ctx, uidB)
+	if err != nil {
+		t.Fatalf("ListOverridesByUID(B): %v", err)
+	}
+	if len(overridesB) != 1 {
+		t.Fatalf("B's override pruned without B's master present; live overrides = %d", len(overridesB))
 	}
 }

@@ -36,6 +36,11 @@ type ImportResult struct {
 	FreeBusy  []freebusy.Result
 	Timezones []TimezoneData
 	Warnings  []string
+	// SkippedComponents counts VEVENT/VTODO/VJOURNAL components that failed
+	// to parse and were dropped (each also recorded in Warnings). Non-zero
+	// means Events/Todos/Journals is an incomplete inventory of the input, so
+	// absence-based reconciliation (e.g. override pruning) is unsafe.
+	SkippedComponents int
 }
 
 const (
@@ -47,6 +52,15 @@ var errImportLimitExceeded = errors.New("ical import exceeds configured limits")
 
 func ImportFile(r io.Reader) (ImportResult, error) {
 	var result ImportResult
+	// skipComponent is the one place that defines what "the parser dropped a
+	// persistable component" means: the warning for the user plus the count
+	// that disables absence-based reconciliation downstream (see
+	// SkippedComponents). Every VEVENT/VTODO/VJOURNAL failure path must go
+	// through it.
+	skipComponent := func(kind string, err error) {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %v", kind, err))
+		result.SkippedComponents++
+	}
 	data, err := io.ReadAll(io.LimitReader(r, maxImportBytes+1))
 	if err != nil {
 		return result, fmt.Errorf("read ical: %w", err)
@@ -114,7 +128,7 @@ func ImportFile(r io.Reader) (ImportResult, error) {
 					if errors.Is(err, errImportLimitExceeded) {
 						return result, err
 					}
-					result.Warnings = append(result.Warnings, fmt.Sprintf("VEVENT: %v", err))
+					skipComponent("VEVENT", err)
 					continue
 				}
 				result.Warnings = append(result.Warnings, warns...)
@@ -126,7 +140,7 @@ func ImportFile(r io.Reader) (ImportResult, error) {
 					if errors.Is(err, errImportLimitExceeded) {
 						return result, err
 					}
-					result.Warnings = append(result.Warnings, fmt.Sprintf("VTODO: %v", err))
+					skipComponent("VTODO", err)
 					continue
 				}
 				result.Warnings = append(result.Warnings, warns...)
@@ -138,7 +152,7 @@ func ImportFile(r io.Reader) (ImportResult, error) {
 					if errors.Is(err, errImportLimitExceeded) {
 						return result, err
 					}
-					result.Warnings = append(result.Warnings, fmt.Sprintf("VJOURNAL: %v", err))
+					skipComponent("VJOURNAL", err)
 					continue
 				}
 				result.Journals = append(result.Journals, j)
@@ -268,11 +282,9 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, []string, error) {
 		geo = prop.Value
 	}
 
-	var recurrenceID string
-	if prop := props.Get(ical.PropRecurrenceID); prop != nil {
-		if t, err := prop.DateTime(nil); err == nil && !t.IsZero() {
-			recurrenceID = t.UTC().Format(time.RFC3339)
-		}
+	recurrenceID, err := parseRecurrenceID(props)
+	if err != nil {
+		return todo.Todo{}, nil, err
 	}
 
 	var dtstamp string
@@ -466,11 +478,9 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 	exdates := parseDateListFromProps(ve.Props, ical.PropExceptionDates)
 	rdates := parseDateListFromProps(ve.Props, ical.PropRecurrenceDates)
 
-	var recurrenceID string
-	if prop := ve.Props.Get(ical.PropRecurrenceID); prop != nil {
-		if rid, err := ve.Props.DateTime(ical.PropRecurrenceID, nil); err == nil && !rid.IsZero() {
-			recurrenceID = rid.UTC().Format(time.RFC3339)
-		}
+	recurrenceID, err := parseRecurrenceID(ve.Props)
+	if err != nil {
+		return event.Event{}, nil, err
 	}
 
 	var dtstamp string
@@ -738,6 +748,23 @@ func propTextOr(props ical.Props, name, def string) string {
 		return v
 	}
 	return def
+}
+
+// parseRecurrenceID extracts a RECURRENCE-ID as an RFC 3339 UTC string, or ""
+// when the property is absent. A present-but-unparseable value fails the
+// component: letting it degrade to "" would import the override as the series
+// master, clobbering the real master row and corrupting override
+// reconciliation.
+func parseRecurrenceID(props ical.Props) (string, error) {
+	prop := props.Get(ical.PropRecurrenceID)
+	if prop == nil {
+		return "", nil
+	}
+	t, err := prop.DateTime(nil)
+	if err != nil || t.IsZero() {
+		return "", fmt.Errorf("unparseable RECURRENCE-ID %q", prop.Value)
+	}
+	return t.UTC().Format(time.RFC3339), nil
 }
 
 func parseCategoriesFromProps(props ical.Props) string {
@@ -1053,11 +1080,9 @@ func journalFromVJournal(comp *ical.Component) (journal.Journal, error) {
 		rrule = prop.Value
 	}
 
-	var recurrenceID string
-	if prop := props.Get(ical.PropRecurrenceID); prop != nil {
-		if t, err := prop.DateTime(nil); err == nil && !t.IsZero() {
-			recurrenceID = t.UTC().Format(time.RFC3339)
-		}
+	recurrenceID, err := parseRecurrenceID(props)
+	if err != nil {
+		return journal.Journal{}, err
 	}
 
 	var dtstamp string

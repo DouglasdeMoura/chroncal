@@ -2,6 +2,7 @@ package ical
 
 import (
 	"encoding/base64"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -635,6 +636,41 @@ END:VCALENDAR`
 	}
 	if result.Events[0].RecurrenceID == "" {
 		t.Error("RecurrenceID is empty")
+	}
+}
+
+// An unparseable RECURRENCE-ID must drop the component (with a warning and a
+// SkippedComponents count) rather than degrade to "" — otherwise the override
+// imports as the series master and absence-based reconciliation misfires.
+func TestImport_UnparseableRecurrenceID_SkipsComponent(t *testing.T) {
+	t.Parallel()
+	ics := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:recurring-2
+DTSTAMP:20260401T100000Z
+DTSTART:20260408T140000Z
+DTEND:20260408T150000Z
+SUMMARY:Broken Override
+RECURRENCE-ID;TZID=Customized Time Zone:20260408T140000
+END:VEVENT
+END:VCALENDAR`
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile error: %v", err)
+	}
+	if len(result.Events) != 0 {
+		t.Fatalf("events = %d, want 0 (unparseable RECURRENCE-ID should skip the component), got RecurrenceID %q",
+			len(result.Events), result.Events[0].RecurrenceID)
+	}
+	if result.SkippedComponents != 1 {
+		t.Errorf("SkippedComponents = %d, want 1", result.SkippedComponents)
+	}
+	hasWarning := slices.ContainsFunc(result.Warnings, func(w string) bool {
+		return strings.Contains(w, "RECURRENCE-ID")
+	})
+	if !hasWarning {
+		t.Errorf("no RECURRENCE-ID warning recorded; warnings = %v", result.Warnings)
 	}
 }
 

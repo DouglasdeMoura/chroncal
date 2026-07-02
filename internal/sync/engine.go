@@ -922,9 +922,12 @@ const multigetBatchSize = 50
 // incomplete. The two recorders below encode the only safe rule. Explicit
 // deletions carry positive evidence (the server returned 404 for a specific
 // href) and are always sound; absence-inferred deletions require a provably
-// complete inventory and are withheld otherwise. Every deletion the pull
-// performs goes through apply(), so a new "this looks deleted" code path
-// cannot reach the executor without choosing one of these two doors.
+// complete inventory and are withheld otherwise. Every UID-level deletion the
+// pull performs goes through apply(), so a new "this looks deleted" code path
+// cannot reach the executor without choosing one of these two doors. The one
+// sanctioned exception is row-granularity override pruning inside a resource
+// (pruneStaleOverrides), which this type cannot host but which obeys the same
+// completeness rule — see its comment for the gates.
 type pendingDeletions struct {
 	logger *slog.Logger
 	owner  map[string]string // uid -> ownerType, deduped across both sources
@@ -1586,6 +1589,28 @@ func hydrateJournal(ctx context.Context, e *Engine, j *journal.Journal) {
 func (e *Engine) persistImported(ctx context.Context, calendarID int64, result icalPkg.ImportResult) (map[string]int64, error) {
 	revs := make(map[string]int64)
 
+	// Build the prune inputs up front: per-UID keep-sets of the components
+	// the server sent, plus each prunable UID's dirty flag — which must be
+	// read before the upserts below flip it via MarkResourceDirty, because
+	// the override pruning at the end needs the pre-import value to
+	// distinguish "the server dropped this override" from "a local override
+	// the server has never seen" (an unpushed local edit). A component the
+	// parser dropped (SkippedComponents != 0) makes the keep-sets an
+	// incomplete inventory, so pruning is disabled wholesale: the nil maps
+	// below make pruneStaleOverrides a no-op.
+	var eventKeep, todoKeep, journalKeep map[string]map[string]bool
+	var dirtyBefore map[string]bool
+	if result.SkippedComponents == 0 {
+		eventKeep = keepSets(result.Events, func(v event.Event) (string, string) { return v.UID, v.RecurrenceID })
+		todoKeep = keepSets(result.Todos, func(v todo.Todo) (string, string) { return v.UID, v.RecurrenceID })
+		journalKeep = keepSets(result.Journals, func(v journal.Journal) (string, string) { return v.UID, v.RecurrenceID })
+		var err error
+		dirtyBefore, err = e.preImportDirty(ctx, calendarID, eventKeep, todoKeep, journalKeep)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// Store timezones
 	for _, tz := range result.Timezones {
 		if _, err := e.q.UpsertTimezone(ctx, storage.UpsertTimezoneParams{
@@ -1762,7 +1787,165 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 		}
 	}
 
+	// Prune overrides the server dropped (e.g. a deleted instance that became
+	// an EXDATE on the master); see pruneStaleOverrides for the safety gates.
+	if err := pruneStaleOverrides(ctx, e, calendarID, eventKeep, dirtyBefore, revs,
+		e.q.ListOverridesByUID,
+		func(v storage.Event) int64 { return v.ID },
+		func(v storage.Event) string { return v.RecurrenceID },
+		(*storage.Queries).SoftDeleteEvent,
+	); err != nil {
+		return nil, fmt.Errorf("prune stale event overrides: %w", err)
+	}
+	if err := pruneStaleOverrides(ctx, e, calendarID, todoKeep, dirtyBefore, revs,
+		e.q.ListTodoOverridesByUID,
+		func(v storage.Todo) int64 { return v.ID },
+		func(v storage.Todo) string { return v.RecurrenceID },
+		(*storage.Queries).SoftDeleteTodo,
+	); err != nil {
+		return nil, fmt.Errorf("prune stale todo overrides: %w", err)
+	}
+	if err := pruneStaleOverrides(ctx, e, calendarID, journalKeep, dirtyBefore, revs,
+		e.q.ListJournalOverridesByUID,
+		func(v storage.Journal) int64 { return v.ID },
+		func(v storage.Journal) string { return v.RecurrenceID },
+		(*storage.Queries).SoftDeleteJournal,
+	); err != nil {
+		return nil, fmt.Errorf("prune stale journal overrides: %w", err)
+	}
+
 	return revs, nil
+}
+
+// keepSets groups imported components into per-UID keep-sets of their
+// RECURRENCE-IDs, the inventory pruneStaleOverrides reconciles against.
+// Returns nil for an empty slice so empty domains cost nothing.
+func keepSets[C any](items []C, key func(C) (uid, rid string)) map[string]map[string]bool {
+	if len(items) == 0 {
+		return nil
+	}
+	keeps := make(map[string]map[string]bool)
+	for _, item := range items {
+		uid, rid := key(item)
+		keep := keeps[uid]
+		if keep == nil {
+			keep = make(map[string]bool)
+			keeps[uid] = keep
+		}
+		keep[rid] = true
+	}
+	return keeps
+}
+
+// preImportDirty reads the sync dirty flag for every UID that override
+// pruning may reconcile — those whose master (recurrence_id == "") is in
+// their keep-set. It must run before persistImported's upserts, which flip
+// the flag via MarkResourceDirty. An untracked UID (a first pull) reads as
+// clean.
+func (e *Engine) preImportDirty(ctx context.Context, calendarID int64, keeps ...map[string]map[string]bool) (map[string]bool, error) {
+	dirty := make(map[string]bool)
+	for _, keepByUID := range keeps {
+		for uid, keep := range keepByUID {
+			if !keep[""] {
+				continue
+			}
+			if _, seen := dirty[uid]; seen {
+				continue
+			}
+			res, err := e.q.GetSyncResource(ctx, storage.GetSyncResourceParams{
+				CalendarID: calendarID,
+				Uid:        uid,
+			})
+			if errors.Is(err, sql.ErrNoRows) {
+				dirty[uid] = false
+				continue
+			}
+			if err != nil {
+				return nil, fmt.Errorf("read pre-import sync state for %q: %w", uid, err)
+			}
+			dirty[uid] = res.Dirty != 0
+		}
+	}
+	return dirty, nil
+}
+
+// pruneStaleOverrides soft-deletes local override rows whose recurrence_id the
+// server no longer has. When a CalDAV server deletes a recurring instance it
+// drops the override component from the resource and adds the slot to the
+// master's EXDATE. The master upsert carries the EXDATE, but the stale
+// override row must be pruned separately — otherwise expansion resurrects the
+// deleted instance, because the orphan checker deliberately ignores EXDATEs so
+// a legitimate override is never mistaken for an orphan.
+//
+// This is the sanctioned row-granularity counterpart of pendingDeletions'
+// absence-inferred deletions (see that type's comment) and obeys the same
+// rule: absence only counts against a provably complete inventory. The caller
+// passes nil keep-sets when the parser dropped a component (an incomplete
+// inventory), and each UID is reconciled only when:
+//   - its own master (recurrence_id == "") is in its keep-set — an
+//     overrides-only resource is unusual, and another UID's master says
+//     nothing about this UID's inventory;
+//   - its resource was not dirty before this import — a dirty resource has
+//     unpushed local changes, and a locally created override is absent from
+//     the server body because the server has never seen it, not because it
+//     was deleted;
+//   - its rev is unchanged inside the delete transaction — a local edit that
+//     landed after this import bumped rev, and the rows listed here may no
+//     longer reflect it.
+//
+// A skipped prune is safe: the rows stay live, and the dirty bookkeeping that
+// blocked it pushes or reconciles them on a later cycle.
+func pruneStaleOverrides[R any](
+	ctx context.Context,
+	e *Engine,
+	calendarID int64,
+	keepByUID map[string]map[string]bool,
+	dirtyBefore map[string]bool,
+	revs map[string]int64,
+	list func(context.Context, string) ([]R, error),
+	idOf func(R) int64,
+	ridOf func(R) string,
+	del func(*storage.Queries, context.Context, int64) error,
+) error {
+	for uid, keep := range keepByUID {
+		if !keep[""] || dirtyBefore[uid] {
+			continue
+		}
+		existing, err := list(ctx, uid)
+		if err != nil {
+			return fmt.Errorf("list overrides %q: %w", uid, err)
+		}
+		var stale []int64
+		for _, o := range existing {
+			if !keep[ridOf(o)] {
+				stale = append(stale, idOf(o))
+			}
+		}
+		// The common case — a resource with no stale overrides — ends here,
+		// without paying for a transaction.
+		if len(stale) == 0 {
+			continue
+		}
+		if err := e.inTx(ctx, func(tx *sql.Tx) error {
+			qtx := e.q.WithTx(tx)
+			rev, err := captureImportRev(ctx, qtx, calendarID, uid)
+			if err != nil {
+				return err
+			}
+			if rev != revs[uid] {
+				return nil
+			}
+			for _, id := range stale {
+				if err := del(qtx, ctx, id); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			return fmt.Errorf("prune overrides %q: %w", uid, err)
+		}
+	}
+	return nil
 }
 
 // captureImportRev reads the sync_resources.rev for uid using qtx (a Queries
