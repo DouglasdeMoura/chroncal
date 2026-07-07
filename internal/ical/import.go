@@ -270,8 +270,8 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, []string, error) {
 	}
 
 	categories := parseCategoriesFromProps(props)
-	exdates := parseDateListFromProps(props, ical.PropExceptionDates)
-	rdates := parseDateListFromProps(props, ical.PropRecurrenceDates)
+	exdates := parseDateListFromProps(props, ical.PropExceptionDates, dtstartZone(props))
+	rdates := parseDateListFromProps(props, ical.PropRecurrenceDates, dtstartZone(props))
 	var rrule string
 	if prop := props.Get(ical.PropRecurrenceRule); prop != nil {
 		rrule = prop.Value
@@ -475,8 +475,8 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 	}
 
 	categories := parseCategories(ve)
-	exdates := parseDateListFromProps(ve.Props, ical.PropExceptionDates)
-	rdates := parseDateListFromProps(ve.Props, ical.PropRecurrenceDates)
+	exdates := parseDateListFromProps(ve.Props, ical.PropExceptionDates, dtstartZone(ve.Props))
+	rdates := parseDateListFromProps(ve.Props, ical.PropRecurrenceDates, dtstartZone(ve.Props))
 
 	recurrenceID, err := parseRecurrenceID(ve.Props)
 	if err != nil {
@@ -777,14 +777,50 @@ func parseCategoriesFromProps(props ical.Props) string {
 	return timeutil.JoinCategoryList(cats)
 }
 
-func parseDateListFromProps(props ical.Props, propName string) string {
+// dtstartZone resolves the component's anchor zone — the IANA TZID on DTSTART
+// (or DUE for a VTODO with no DTSTART) — for interpreting TZID-less DATE-TIME
+// values elsewhere in the component. Returns nil when the anchor is absent,
+// floating, UTC, or date-only: those components have no zone to inherit and
+// TZID-less values keep their UTC/floating reading.
+func dtstartZone(props ical.Props) *time.Location {
+	for _, name := range []string{ical.PropDateTimeStart, ical.PropDue} {
+		prop := props.Get(name)
+		if prop == nil {
+			continue
+		}
+		if tzid := prop.Params.Get(ical.ParamTimezoneID); tzid != "" {
+			if loc, err := time.LoadLocation(tzid); err == nil {
+				return loc
+			}
+		}
+		return nil
+	}
+	return nil
+}
+
+func parseDateListFromProps(props ical.Props, propName string, fallback *time.Location) string {
 	var dates []string
 	for _, prop := range props.Values(propName) {
 		var loc *time.Location
 		if tzid := prop.Params.Get(ical.ParamTimezoneID); tzid != "" {
 			if loaded, err := time.LoadLocation(tzid); err == nil {
 				loc = loaded
+			} else {
+				// Unresolvable TZID (a private or Windows name that survived
+				// resolveComponentTZIDs): reading the wall clock as UTC skews
+				// the instant by the zone offset, so the EXDATE never matches
+				// the occurrence it excludes and a server-cancelled instance
+				// keeps rendering locally. The component's DTSTART zone is the
+				// best-effort locality.
+				loc = fallback
 			}
+		} else {
+			// No TZID: a floating local time (RFC 5545 §3.3.5). For a
+			// zone-anchored component the wall clock is local to the DTSTART
+			// zone (Google transiently emits EXDATEs in this form), not UTC.
+			// Z-suffixed values never reach the loc branch — ParseInLocation
+			// rejects the trailing Z — and keep their UTC reading below.
+			loc = fallback
 		}
 		parts := strings.Split(prop.Value, ",")
 		for _, p := range parts {
@@ -1073,8 +1109,8 @@ func journalFromVJournal(comp *ical.Component) (journal.Journal, error) {
 	}
 
 	categories := parseCategoriesFromProps(props)
-	exdates := parseDateListFromProps(props, ical.PropExceptionDates)
-	rdates := parseDateListFromProps(props, ical.PropRecurrenceDates)
+	exdates := parseDateListFromProps(props, ical.PropExceptionDates, dtstartZone(props))
+	rdates := parseDateListFromProps(props, ical.PropRecurrenceDates, dtstartZone(props))
 	var rrule string
 	if prop := props.Get(ical.PropRecurrenceRule); prop != nil {
 		rrule = prop.Value

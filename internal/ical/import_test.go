@@ -241,6 +241,77 @@ END:VCALENDAR`
 	}
 }
 
+// A TZID-less (floating) EXDATE on a zone-anchored event carries the DTSTART
+// zone's wall clock, not UTC (RFC 5545 §3.3.5 floating = local time; Google
+// transiently serves this form right after an organizer edit). Reading it as
+// UTC skews the instant by the zone offset, so the EXDATE never matches the
+// occurrence it cancels and the server-deleted instance keeps rendering
+// locally forever — etag-gated sync never re-imports the resource to repair
+// it ("Product Weekly Tactical" bug).
+func TestImport_EventFloatingEXDATEUsesDTSTARTZone(t *testing.T) {
+	t.Parallel()
+	ics := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:floating-exdate-zoned-event
+DTSTAMP:20260707T150000Z
+DTSTART;TZID=America/New_York:20260526T110000
+DTEND;TZID=America/New_York:20260526T114500
+RRULE:FREQ=WEEKLY;BYDAY=TU
+EXDATE:20260707T110000
+RDATE:20260916T110000
+SUMMARY:Product Weekly Tactical
+END:VEVENT
+END:VCALENDAR`
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %d, want 1", len(result.Events))
+	}
+	e := result.Events[0]
+	// 11:00 America/New_York (EDT) = 15:00 UTC — the occurrence instant.
+	if e.ExDates != "2026-07-07T15:00:00Z" {
+		t.Fatalf("ExDates = %q, want 2026-07-07T15:00:00Z", e.ExDates)
+	}
+	if e.RDates != "2026-09-16T15:00:00Z" {
+		t.Fatalf("RDates = %q, want 2026-09-16T15:00:00Z", e.RDates)
+	}
+}
+
+// An EXDATE whose TZID cannot be resolved (a private name with no VTIMEZONE
+// mapping) must fall back to the DTSTART zone rather than silently reading the
+// zone-local wall clock as UTC — same skew, same permanently-resurrected
+// occurrence as the floating case above.
+func TestImport_EventUnresolvableEXDATETZIDFallsBackToDTSTARTZone(t *testing.T) {
+	t.Parallel()
+	ics := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:bogus-tzid-exdate
+DTSTAMP:20260707T150000Z
+DTSTART;TZID=America/New_York:20260526T110000
+DTEND;TZID=America/New_York:20260526T114500
+RRULE:FREQ=WEEKLY;BYDAY=TU
+EXDATE;TZID=Custom/Nowhere:20260707T110000
+SUMMARY:Unresolvable TZID
+END:VEVENT
+END:VCALENDAR`
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %d, want 1", len(result.Events))
+	}
+	if e := result.Events[0]; e.ExDates != "2026-07-07T15:00:00Z" {
+		t.Fatalf("ExDates = %q, want 2026-07-07T15:00:00Z", e.ExDates)
+	}
+}
+
 // Regression test for issue #421: a floating recurring event (DTSTART with
 // no TZID and no Z) whose EXDATE/RDATE are also floating must round-trip back
 // out as floating values. UTC-converting them on export breaks occurrence
