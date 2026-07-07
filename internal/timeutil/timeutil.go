@@ -30,6 +30,13 @@ func AsDateOnly(t time.Time) time.Time {
 // numeric offset, since all stored times are UTC.
 const StorageTimeFormat = "2006-01-02T15:04:05Z"
 
+// IsDateOnlyTime reports whether t carries the all-day (date-only) marker
+// location set by ParseTimeList and AsDateOnly, i.e. it round-trips as a
+// VALUE=DATE rather than a DATE-TIME.
+func IsDateOnlyTime(t time.Time) bool {
+	return t.Location() == dateOnlyLoc
+}
+
 // IsDateOnly returns true if s is a date-only string in YYYY-MM-DD format.
 func IsDateOnly(s string) bool {
 	if len(s) != 10 {

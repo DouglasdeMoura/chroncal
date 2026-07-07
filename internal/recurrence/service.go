@@ -190,6 +190,30 @@ func newRRuleSet(rule, tz string, dtstart time.Time, dur time.Duration, exDates,
 			}
 			set.ExDate(ex)
 		}
+		// Zone-skew safety net: EXDATEs written by older importers (TZID
+		// ignored, pre-v0.5.1) or from transiently TZID-less server bodies
+		// carry the zone-local wall clock mis-tagged as UTC, so they miss the
+		// occurrence they were meant to exclude and a server-cancelled
+		// instance keeps rendering forever — etag-gated sync never re-imports
+		// an unchanged resource to repair them. Also exclude each EXDATE's
+		// UTC wall clock reinterpreted in the expansion zone; for a healthy
+		// EXDATE the reinterpreted instant matches no occurrence and is a
+		// no-op. Date-only (all-day) EXDATEs are exact by construction and
+		// midnight-UTC-tagged, so reinterpreting them would shift the day —
+		// skip them.
+		if loc != nil {
+			for _, ex := range exDates {
+				if timeutil.IsDateOnlyTime(ex) {
+					continue
+				}
+				u := ex.UTC()
+				reinterp := time.Date(u.Year(), u.Month(), u.Day(),
+					u.Hour(), u.Minute(), u.Second(), u.Nanosecond(), loc)
+				if !reinterp.Equal(ex) {
+					set.ExDate(reinterp)
+				}
+			}
+		}
 	}
 	for _, rd := range rDates {
 		if loc != nil {

@@ -181,6 +181,74 @@ func TestExpandWithExdate(t *testing.T) {
 	}
 }
 
+// A wall-clock-as-UTC EXDATE (the DTSTART zone's local time mis-tagged with Z)
+// must still suppress the occurrence it names. Such values were written by
+// pre-v0.5.1 importers that ignored TZID on EXDATE, and can still arrive from
+// transiently TZID-less server bodies; etag-gated sync never re-imports an
+// unchanged resource, so without expansion-side tolerance the server-cancelled
+// instance renders forever ("Product Weekly Tactical" bug).
+func TestExpandWithZoneSkewedExdate(t *testing.T) {
+	// Weekly Tuesday 11:00 America/New_York = 15:00Z in summer.
+	base := time.Date(2026, 5, 26, 15, 0, 0, 0, time.UTC)
+	evt := event.Event{
+		ID:             30,
+		UID:            "test-skewed-exdate",
+		Title:          "Product Weekly Tactical",
+		StartTime:      base,
+		EndTime:        base.Add(45 * time.Minute),
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=TU",
+		Timezone:       "America/New_York",
+		// The cancelled 2026-07-07 occurrence, stored as the New York wall
+		// clock (11:00) mis-tagged as UTC instead of 2026-07-07T15:00:00Z.
+		ExDates: "2026-07-07T11:00:00Z",
+	}
+
+	from := time.Date(2026, 6, 29, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC)
+	instances := ExpandEvent(evt, from, to)
+
+	cancelled := time.Date(2026, 7, 7, 15, 0, 0, 0, time.UTC)
+	for _, inst := range instances {
+		if inst.InstanceTime.Equal(cancelled) {
+			t.Errorf("skewed EXDATE did not suppress the cancelled %v occurrence", cancelled)
+		}
+	}
+	// The neighboring Tuesdays (Jun 30, Jul 14) must survive.
+	if len(instances) != 2 {
+		t.Errorf("ExpandEvent() = %d instances, want 2 (Jun 30 and Jul 14)", len(instances))
+	}
+}
+
+// The zone-skew tolerance must not over-exclude: a healthy UTC-instant EXDATE
+// removes exactly its own occurrence, and its reinterpretation in the event
+// zone (a different instant that matches no occurrence) is a no-op.
+func TestExpandWithZonedExdateExactMatchOnly(t *testing.T) {
+	base := time.Date(2026, 5, 26, 15, 0, 0, 0, time.UTC)
+	evt := event.Event{
+		ID:             31,
+		UID:            "test-healthy-zoned-exdate",
+		Title:          "Weekly",
+		StartTime:      base,
+		EndTime:        base.Add(45 * time.Minute),
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=TU",
+		Timezone:       "America/New_York",
+		ExDates:        "2026-07-07T15:00:00Z",
+	}
+
+	from := time.Date(2026, 6, 29, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC)
+	instances := ExpandEvent(evt, from, to)
+
+	if len(instances) != 2 {
+		t.Errorf("ExpandEvent() = %d instances, want 2 (only Jul 7 excluded)", len(instances))
+	}
+	for _, inst := range instances {
+		if inst.InstanceTime.Equal(time.Date(2026, 7, 7, 15, 0, 0, 0, time.UTC)) {
+			t.Error("EXDATE-excluded occurrence still present")
+		}
+	}
+}
+
 func TestExpandWithRDate(t *testing.T) {
 	base := time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
 	extraDate := base.AddDate(0, 0, 10)
