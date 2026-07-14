@@ -43,6 +43,10 @@ type Calendar struct {
 	OwnerEmail          string
 	IsDefault           int64
 	DisplayOrder        int64
+	RemoteName          string
+	RemoteAccess        string
+	RemoteComponents    string
+	RemoteMissing       int64
 }
 
 type Event struct {

@@ -263,3 +263,75 @@ func TestSyncConflictsRejectInvalidOwnerType(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestCalendarsAllowDuplicateDisplayNames(t *testing.T) {
+	db, _, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	for range 2 {
+		if _, err := db.Exec(
+			`INSERT INTO calendars (name, color) VALUES ('Holidays in Brazil', '#7C3AED')`,
+		); err != nil {
+			t.Fatalf("insert duplicate display name: %v", err)
+		}
+	}
+}
+
+func TestCalendarsScopeRemoteIdentityToAccount(t *testing.T) {
+	db, _, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	for _, name := range []string{"Personal", "Family"} {
+		if _, err := db.ExecContext(ctx,
+			`INSERT INTO accounts (name, server_url) VALUES (?, 'https://cal.example.test/')`,
+			name,
+		); err != nil {
+			t.Fatalf("insert account %q: %v", name, err)
+		}
+	}
+
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO calendars (name, account_id, remote_url)
+		 VALUES ('Work', 1, '/calendars/work/')`,
+	); err != nil {
+		t.Fatalf("insert first remote calendar: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO calendars (name, account_id, remote_url)
+		 VALUES ('Work', 2, '/calendars/work/')`,
+	); err != nil {
+		t.Fatalf("same remote URL on another account should be allowed: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO calendars (name, account_id, remote_url)
+		 VALUES ('Duplicate', 1, '/calendars/work/')`,
+	); err == nil {
+		t.Fatal("duplicate remote URL on one account should fail")
+	}
+}
+
+func TestCalendarsRejectInvalidRemoteMetadata(t *testing.T) {
+	db, _, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.Exec(
+		`INSERT INTO calendars (name, remote_access) VALUES ('Bad access', 'admin')`,
+	); err == nil || !strings.Contains(err.Error(), "CHECK constraint failed") {
+		t.Fatalf("invalid remote access error = %v, want CHECK constraint failure", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO calendars (name, remote_missing) VALUES ('Bad missing flag', 2)`,
+	); err == nil || !strings.Contains(err.Error(), "CHECK constraint failed") {
+		t.Fatalf("invalid remote missing error = %v, want CHECK constraint failure", err)
+	}
+}
