@@ -877,13 +877,14 @@ func (m Model) loadCalendars() tea.Cmd {
 		if err != nil {
 			return calendarsLoadedMsg{err: err}
 		}
-		// Pre-fetch accounts so we can stamp each linked calendar with its
-		// server URL — the event view uses this to detect Google-hosted
-		// calendars and inject an authuser hint into meeting links.
+		// Pre-fetch accounts once so linked rows carry their user-facing group
+		// name and server URL without an account query per calendar.
 		accountServerURLs := map[int64]string{}
-		if accounts, aerr := m.app.Queries.ListAccounts(ctx); aerr == nil {
-			for _, a := range accounts {
-				accountServerURLs[a.ID] = a.ServerUrl
+		accountNames := map[int64]string{}
+		if accounts, accountErr := m.app.Accounts.List(ctx); accountErr == nil {
+			for _, remoteAccount := range accounts {
+				accountServerURLs[remoteAccount.ID] = remoteAccount.ServerURL
+				accountNames[remoteAccount.ID] = remoteAccount.DisplayName
 			}
 		}
 		info := make(map[int64]CalendarInfo, len(cals))
@@ -898,6 +899,10 @@ func (m Model) loadCalendars() tea.Cmd {
 				DisplayOrder:        c.DisplayOrder,
 				Synced:              c.AccountID != 0,
 				AccountServerURL:    accountServerURLs[c.AccountID],
+				AccountID:           c.AccountID,
+				AccountName:         accountNames[c.AccountID],
+				RemoteAccess:        c.RemoteAccess,
+				RemoteMissing:       c.RemoteMissing,
 				LastSyncAt:          c.LastSyncAt,
 				LastSyncAttemptedAt: c.LastSyncAttemptedAt,
 				LastSyncError:       c.LastSyncError,
@@ -916,10 +921,39 @@ func (m Model) loadCalendars() tea.Cmd {
 // the reorder handler so both produce identical row order.
 func sortedCalendarListItems(calendars map[int64]CalendarInfo) []CalendarListItem {
 	items := make([]CalendarListItem, 0, len(calendars))
-	for id, c := range calendars {
-		items = append(items, CalendarListItem{ID: id, Name: c.Name, Color: c.Color, Health: syncHealthFor(c), Order: c.DisplayOrder})
+	for id, calendarInfo := range calendars {
+		accountName := calendarInfo.AccountName
+		if calendarInfo.AccountID == 0 {
+			accountName = "Local"
+		}
+		items = append(items, CalendarListItem{
+			ID:          id,
+			Name:        calendarInfo.Name,
+			Color:       calendarInfo.Color,
+			Health:      syncHealthFor(calendarInfo),
+			Order:       calendarInfo.DisplayOrder,
+			AccountID:   calendarInfo.AccountID,
+			AccountName: accountName,
+			Access:      calendarInfo.RemoteAccess,
+			Missing:     calendarInfo.RemoteMissing,
+		})
 	}
 	slices.SortFunc(items, func(a, b CalendarListItem) int {
+		if a.AccountID == 0 && b.AccountID != 0 {
+			return -1
+		}
+		if a.AccountID != 0 && b.AccountID == 0 {
+			return 1
+		}
+		if accountOrder := strings.Compare(strings.ToLower(a.AccountName), strings.ToLower(b.AccountName)); accountOrder != 0 {
+			return accountOrder
+		}
+		if a.AccountID < b.AccountID {
+			return -1
+		}
+		if a.AccountID > b.AccountID {
+			return 1
+		}
 		return compareCalendarOrder(a.Order, a.Name, b.Order, b.Name)
 	})
 	return items
@@ -2202,6 +2236,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.miniMonthEvents = msg.events
 		m = m.refreshMiniMonthDays()
+		return m, nil
+
+	case CalendarVisibilityBatchToggledMsg:
+		if m.hiddenCalendars == nil {
+			m.hiddenCalendars = map[int64]bool{}
+		}
+		for _, id := range msg.IDs {
+			if msg.Hidden {
+				m.hiddenCalendars[id] = true
+			} else {
+				delete(m.hiddenCalendars, id)
+			}
+		}
+		m.saveUIState()
+		m = m.refreshCalendarViews()
+		m = m.refreshMiniMonthDays()
+		if m.dialogOpen {
+			dayEvents := eventsOn(filterVisibleEvents(m.events, m.hiddenCalendars), m.dialog.day)
+			m.dialog = m.dialog.SetEvents(dayEvents)
+		}
+		if m.calendarListDialogOpen {
+			m.calendarListDialog = m.calendarListDialog.SetCalendars(m.calendars, m.hiddenCalendars)
+		}
 		return m, nil
 
 	case CalendarVisibilityToggledMsg:

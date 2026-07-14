@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
 )
 
@@ -175,5 +176,103 @@ func TestCalendarList_ViewWithoutWidthDoesNotTruncate(t *testing.T) {
 	}
 	if strings.Contains(out, "…") {
 		t.Errorf("did not expect ellipsis when width is unset; got %q", out)
+	}
+}
+
+func groupedListFixture() CalendarListModel {
+	items := []CalendarListItem{
+		{ID: 1, Name: "On device", Color: "#a6e3a1", AccountName: "Local"},
+		{ID: 2, Name: "Personal", Color: "#f5c2e7", AccountID: 7, AccountName: "Google"},
+		{ID: 3, Name: "Holidays in Brazil", Color: "#89b4fa", AccountID: 7, AccountName: "Google", Access: "read"},
+		{ID: 4, Name: "Team", Color: "#fab387", AccountID: 9, AccountName: "Work", Missing: true},
+	}
+	return NewCalendarListModel(items, nil).SetSize(50, 20).Focus()
+}
+
+func TestCalendarList_GroupsCalendarsByAccount(t *testing.T) {
+	m := groupedListFixture()
+	out := m.View()
+	for _, want := range []string{"Local", "Google", "Work", "Holidays in Brazil", "[read-only]", "[missing]"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("grouped view missing %q:\n%s", want, out)
+		}
+	}
+	if m.RowCount() != 7 {
+		t.Fatalf("row count = %d, want three headers plus four calendars", m.RowCount())
+	}
+}
+
+func TestCalendarList_AccountHeaderCollapsesChildren(t *testing.T) {
+	m := groupedListFixture()
+	m.cursor = 2 // Google header
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatal("collapsing a group should not emit a parent command")
+	}
+	if !next.collapsed[7] {
+		t.Fatal("Google group should be collapsed")
+	}
+	if next.RowCount() != 5 {
+		t.Fatalf("collapsed row count = %d, want two Google children hidden", next.RowCount())
+	}
+	out := next.View()
+	if strings.Contains(out, "Holidays in Brazil") || !strings.Contains(out, "Google") {
+		t.Fatalf("collapsed view should keep header and hide children:\n%s", out)
+	}
+}
+
+func TestCalendarList_AccountHeaderTogglesEveryChild(t *testing.T) {
+	m := groupedListFixture()
+	m.cursor = 2 // Google header
+	next, cmd := m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
+	if cmd == nil {
+		t.Fatal("expected batch visibility command")
+	}
+	msg, ok := cmd().(CalendarVisibilityBatchToggledMsg)
+	if !ok {
+		t.Fatalf("message = %T, want CalendarVisibilityBatchToggledMsg", cmd())
+	}
+	if len(msg.IDs) != 2 || msg.IDs[0] != 2 || msg.IDs[1] != 3 || !msg.Hidden {
+		t.Fatalf("batch message = %+v", msg)
+	}
+	if !next.hidden[2] || !next.hidden[3] {
+		t.Fatalf("group children were not hidden: %v", next.hidden)
+	}
+}
+
+func TestCalendarList_ReorderStaysWithinAccount(t *testing.T) {
+	m := groupedListFixture()
+	m.cursor = 3 // Personal
+	if _, cmd := m.moveCurrent(-1); cmd != nil {
+		t.Fatal("calendar must not move across its account header")
+	}
+	next, cmd := m.moveCurrent(1)
+	if cmd == nil {
+		t.Fatal("calendar should move within its account")
+	}
+	msg := cmd().(CalendarReorderedMsg)
+	if got, want := msg.IDs, []int64{1, 3, 2, 4}; len(got) != len(want) ||
+		got[0] != want[0] || got[1] != want[1] || got[2] != want[2] || got[3] != want[3] {
+		t.Fatalf("reordered IDs = %v, want %v", got, want)
+	}
+	if next.cursor != 4 {
+		t.Fatalf("cursor = %d, want moved calendar row 4", next.cursor)
+	}
+}
+
+func TestCalendarList_ViewportKeepsCursorVisible(t *testing.T) {
+	m := groupedListFixture().SetSize(32, 3)
+	for m.cursor < m.RowCount()-1 {
+		m = m.moveCursor(1)
+	}
+	lines := strings.Split(m.View(), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("rendered lines = %d, want viewport height 3:\n%s", len(lines), m.View())
+	}
+	if !strings.Contains(m.View(), "Team") {
+		t.Fatalf("last cursor row must be visible after scrolling:\n%s", m.View())
+	}
+	if m.offset == 0 {
+		t.Fatal("viewport offset should advance for the final row")
 	}
 }
