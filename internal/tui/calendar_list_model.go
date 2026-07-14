@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"image/color"
 	"maps"
 	"slices"
@@ -17,43 +18,45 @@ type CalendarVisibilityToggledMsg struct {
 	Hidden bool
 }
 
+// CalendarVisibilityBatchToggledMsg applies one visibility state to every
+// calendar in an account group.
+type CalendarVisibilityBatchToggledMsg struct {
+	IDs    []int64
+	Hidden bool
+}
+
 // CalendarDialogRequestedMsg is emitted when the user wants to open the
 // calendar dialog. ID == 0 means "create a new calendar".
 type CalendarDialogRequestedMsg struct{ ID int64 }
 
 // SyncHealth describes a calendar's last-known sync state, used to render an
-// ambient health marker in the list. It is derived from the persisted
-// last_sync_error / last_sync_at fields, not computed live, so it reflects the
-// most recent sync attempt — including background `chroncal tick` runs the user
-// never triggered.
+// ambient health marker in the list. It is derived from persisted sync state.
 type SyncHealth int
 
 const (
-	// SyncHealthNone is a calendar not linked to a CalDAV account; it has no
-	// sync state and renders no marker.
 	SyncHealthNone SyncHealth = iota
-	// SyncHealthOK is a linked calendar whose last sync completed cleanly.
 	SyncHealthOK
-	// SyncHealthError is a linked calendar whose last sync attempt recorded an
-	// error. This is the only state that renders a (loud) marker.
 	SyncHealthError
-	// SyncHealthPending is a linked calendar that has never completed a clean
-	// sync but has no recorded error yet.
 	SyncHealthPending
 )
 
-// CalendarListItem is the display data for a single row.
+// CalendarListItem is the display data for a single calendar row. AccountName
+// enables grouped rendering; an empty AccountName retains the legacy flat list
+// used by small embedded callers and tests.
 type CalendarListItem struct {
-	ID     int64
-	Name   string
-	Color  string // hex like "#a6e3a1"
-	Health SyncHealth
-	Order  int64 // persisted sidebar sort position (lower sorts first)
+	ID          int64
+	Name        string
+	Color       string
+	Health      SyncHealth
+	Order       int64
+	AccountID   int64
+	AccountName string
+	Access      string
+	Missing     bool
 }
 
 // CalendarReorderedMsg is emitted when the user moves a calendar in the list.
-// IDs is the full row order, top to bottom, so the parent can persist
-// display_order = index for each.
+// IDs is the full calendar order, excluding account headers.
 type CalendarReorderedMsg struct{ IDs []int64 }
 
 type calendarListKeyMap struct {
@@ -72,18 +75,42 @@ func defaultCalendarListKeys() calendarListKeyMap {
 		MoveUp:   key.NewBinding(key.WithKeys("shift+up", "K"), key.WithHelp("shift+↑/K", "move up")),
 		MoveDown: key.NewBinding(key.WithKeys("shift+down", "J"), key.WithHelp("shift+↓/J", "move down")),
 		Toggle:   key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "toggle visibility")),
-		Open:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
+		Open:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open or collapse")),
 	}
 }
 
-// CalendarListModel renders a list of calendars (color swatch, name, visibility
-// indicator).
+type calendarListRowKind uint8
+
+const (
+	calendarRow calendarListRowKind = iota
+	accountHeaderRow
+)
+
+type calendarListRow struct {
+	kind        calendarListRowKind
+	itemIndex   int
+	accountID   int64
+	accountName string
+}
+
+type calendarRowIdentity struct {
+	kind calendarListRowKind
+	id   int64
+}
+
+// CalendarListModel renders calendar rows grouped under collapsible account
+// headers and keeps a height-aware viewport around the focused row.
 type CalendarListModel struct {
 	items             []CalendarListItem
+	rows              []calendarListRow
 	hidden            map[int64]bool
+	collapsed         map[int64]bool
+	grouped           bool
 	cursor            int
+	offset            int
 	focused           bool
 	width             int
+	height            int
 	keys              calendarListKeyMap
 	accentColor       color.Color
 	mutedColor        color.Color
@@ -93,13 +120,18 @@ type CalendarListModel struct {
 }
 
 func NewCalendarListModel(items []CalendarListItem, hidden map[int64]bool) CalendarListModel {
-	h := make(map[int64]bool, len(hidden))
-	maps.Copy(h, hidden)
-	return CalendarListModel{
-		items:  items,
-		hidden: h,
-		keys:   defaultCalendarListKeys(),
+	m := CalendarListModel{
+		items:     slices.Clone(items),
+		hidden:    maps.Clone(hidden),
+		collapsed: make(map[int64]bool),
+		keys:      defaultCalendarListKeys(),
 	}
+	if m.hidden == nil {
+		m.hidden = make(map[int64]bool)
+	}
+	m.grouped = hasAccountGroups(items)
+	m.rebuildRows()
+	return m
 }
 
 func (m CalendarListModel) SetTheme(accent, muted, text, selectedText, errColor color.Color) CalendarListModel {
@@ -114,66 +146,53 @@ func (m CalendarListModel) SetTheme(accent, muted, text, selectedText, errColor 
 func (m CalendarListModel) Focus() CalendarListModel { m.focused = true; return m }
 func (m CalendarListModel) Blur() CalendarListModel  { m.focused = false; return m }
 
-// SetWidth sets the available render width so long calendar names truncate
-// with an ellipsis instead of wrapping onto the next line.
-func (m CalendarListModel) SetWidth(w int) CalendarListModel { m.width = w; return m }
-func (m CalendarListModel) Focused() bool                    { return m.focused }
-func (m CalendarListModel) Cursor() int                      { return m.cursor }
-func (m CalendarListModel) ItemCount() int                   { return len(m.items) }
+func (m CalendarListModel) SetWidth(w int) CalendarListModel {
+	m.width = w
+	return m.ensureCursorVisible()
+}
 
-// RowCount returns the number of selectable rows in the list.
-func (m CalendarListModel) RowCount() int { return len(m.items) }
+func (m CalendarListModel) SetSize(w, h int) CalendarListModel {
+	m.width = w
+	m.height = max(0, h)
+	return m.ensureCursorVisible()
+}
 
-// SetItems replaces the items. Clamps cursor to the new range and prunes the
-// hidden set of any IDs no longer present.
+func (m CalendarListModel) Focused() bool  { return m.focused }
+func (m CalendarListModel) Cursor() int    { return m.cursor }
+func (m CalendarListModel) ItemCount() int { return len(m.items) }
+func (m CalendarListModel) RowCount() int  { return len(m.rows) }
+
+// SetItems replaces the items, prunes stale hidden IDs, and clamps the cursor.
 func (m CalendarListModel) SetItems(items []CalendarListItem) CalendarListModel {
-	m.items = items
+	m.items = slices.Clone(items)
+	m.grouped = hasAccountGroups(items)
 	valid := make(map[int64]bool, len(items))
-	for _, it := range items {
-		valid[it.ID] = true
+	for _, item := range items {
+		valid[item.ID] = true
 	}
+	m.hidden = maps.Clone(m.hidden)
 	for id := range m.hidden {
 		if !valid[id] {
 			delete(m.hidden, id)
 		}
 	}
-	if m.cursor >= m.RowCount() {
-		m.cursor = m.RowCount() - 1
-	}
-	return m
+	m.rebuildRows()
+	return m.ensureCursorVisible()
 }
 
-// SetItemsPreservingCursor replaces the items but keeps the cursor on whatever
-// calendar it currently points at (by ID) rather than by raw index, so a
-// reorder or reload that shifts rows doesn't leave the highlight on a different
-// calendar — which would make the next keystroke act on the wrong one. Falls
-// back to SetItems' clamp when the current calendar is gone.
+// SetItemsPreservingCursor keeps the cursor on the same calendar or account
+// header when a reload changes ordering.
 func (m CalendarListModel) SetItemsPreservingCursor(items []CalendarListItem) CalendarListModel {
-	var curID int64
-	hasCursor := m.cursor >= 0 && m.cursor < len(m.items)
-	if hasCursor {
-		curID = m.items[m.cursor].ID
-	}
+	identity, ok := m.currentIdentity()
 	m = m.SetItems(items)
-	if hasCursor {
-		for i, it := range items {
-			if it.ID == curID {
-				m.cursor = i
-				break
-			}
-		}
+	if ok {
+		m.selectIdentity(identity)
 	}
-	return m
+	return m.ensureCursorVisible()
 }
 
-// HiddenSet returns a copy of the current hidden set.
-func (m CalendarListModel) HiddenSet() map[int64]bool {
-	out := make(map[int64]bool, len(m.hidden))
-	maps.Copy(out, m.hidden)
-	return out
-}
+func (m CalendarListModel) HiddenSet() map[int64]bool { return maps.Clone(m.hidden) }
 
-// moveCursor shifts the cursor by delta rows, clamped to [0, RowCount()-1].
 func (m CalendarListModel) moveCursor(delta int) CalendarListModel {
 	m.cursor += delta
 	if m.cursor < 0 {
@@ -182,56 +201,97 @@ func (m CalendarListModel) moveCursor(delta int) CalendarListModel {
 	if m.cursor >= m.RowCount() {
 		m.cursor = m.RowCount() - 1
 	}
-	return m
+	return m.ensureCursorVisible()
 }
 
-// moveCurrent swaps the item under the cursor with its neighbour delta rows
-// away (±1), keeping the cursor on the moved item so repeated presses keep
-// dragging the same calendar. Returns a command emitting CalendarReorderedMsg
-// with the new top-to-bottom ID order, or nil if the move would fall off the
-// list's edge.
+// moveCurrent reorders only adjacent calendars within the same account group.
 func (m CalendarListModel) moveCurrent(delta int) (CalendarListModel, tea.Cmd) {
-	j := m.cursor + delta
-	if m.cursor < 0 || m.cursor >= len(m.items) || j < 0 || j >= len(m.items) {
+	if m.cursor < 0 || m.cursor >= len(m.rows) {
 		return m, nil
 	}
-	// Copy the slice before mutating: the value receiver shares the backing
-	// array with whatever the parent stored, so an in-place swap would also
-	// reorder that aliased view before the new model is committed.
+	current := m.rows[m.cursor]
+	targetRow := m.cursor + delta
+	if current.kind != calendarRow || targetRow < 0 || targetRow >= len(m.rows) {
+		return m, nil
+	}
+	target := m.rows[targetRow]
+	if target.kind != calendarRow || target.accountID != current.accountID {
+		return m, nil
+	}
+
+	movedID := m.items[current.itemIndex].ID
 	items := slices.Clone(m.items)
-	items[m.cursor], items[j] = items[j], items[m.cursor]
+	items[current.itemIndex], items[target.itemIndex] = items[target.itemIndex], items[current.itemIndex]
 	m.items = items
-	m.cursor = j
+	m.rebuildRows()
+	m.selectIdentity(calendarRowIdentity{kind: calendarRow, id: movedID})
+	m = m.ensureCursorVisible()
+
 	ids := make([]int64, len(items))
-	for i, it := range items {
-		ids[i] = it.ID
+	for i, item := range items {
+		ids[i] = item.ID
 	}
 	return m, func() tea.Msg { return CalendarReorderedMsg{IDs: ids} }
 }
 
-// toggleCurrent flips the hidden state of the item under the cursor and
-// returns the new model plus a command that emits
-// CalendarVisibilityToggledMsg.
 func (m CalendarListModel) toggleCurrent() (CalendarListModel, tea.Cmd) {
-	if m.cursor < 0 || m.cursor >= len(m.items) {
+	if m.cursor < 0 || m.cursor >= len(m.rows) {
 		return m, nil
 	}
-	id := m.items[m.cursor].ID
+	row := m.rows[m.cursor]
+	m.hidden = maps.Clone(m.hidden)
+	if row.kind == accountHeaderRow {
+		ids := m.accountCalendarIDs(row.accountID)
+		if len(ids) == 0 {
+			return m, nil
+		}
+		allHidden := true
+		for _, id := range ids {
+			allHidden = allHidden && m.hidden[id]
+		}
+		hide := !allHidden
+		for _, id := range ids {
+			if hide {
+				m.hidden[id] = true
+			} else {
+				delete(m.hidden, id)
+			}
+		}
+		return m, func() tea.Msg { return CalendarVisibilityBatchToggledMsg{IDs: ids, Hidden: hide} }
+	}
+
+	id := m.items[row.itemIndex].ID
 	m.hidden[id] = !m.hidden[id]
 	hidden := m.hidden[id]
 	return m, func() tea.Msg { return CalendarVisibilityToggledMsg{ID: id, Hidden: hidden} }
 }
 
-// HandleClick hit-tests a click at (x, y) in the widget's local coordinates
-// (top-left of the first item row is (0, 0)). A click on an item row moves
-// the cursor there and toggles its visibility. y values outside the rendered
-// rows are no-ops. x is currently ignored — any click within the sidebar's
-// x range that lands on a row activates it.
+func (m CalendarListModel) toggleCollapsed() CalendarListModel {
+	if m.cursor < 0 || m.cursor >= len(m.rows) || m.rows[m.cursor].kind != accountHeaderRow {
+		return m
+	}
+	accountID := m.rows[m.cursor].accountID
+	m.collapsed = maps.Clone(m.collapsed)
+	m.collapsed[accountID] = !m.collapsed[accountID]
+	m.rebuildRows()
+	m.selectIdentity(calendarRowIdentity{kind: accountHeaderRow, id: accountID})
+	return m.ensureCursorVisible()
+}
+
+// HandleClick hit-tests a viewport-relative row. Account headers collapse;
+// calendar rows toggle visibility.
 func (m CalendarListModel) HandleClick(_ int, y int) (CalendarListModel, tea.Cmd) {
-	if y < 0 || y >= len(m.items) {
+	if y < 0 || (m.height > 0 && y >= m.height) {
 		return m, nil
 	}
-	m.cursor = y
+	row := m.offset + y
+	if row < 0 || row >= len(m.rows) {
+		return m, nil
+	}
+	m.cursor = row
+	if m.rows[row].kind == accountHeaderRow {
+		return m.toggleCollapsed(), nil
+	}
 	return m.toggleCurrent()
 }
 
@@ -255,75 +315,255 @@ func (m CalendarListModel) Update(msg tea.Msg) (CalendarListModel, tea.Cmd) {
 	case key.Matches(kp, m.keys.Toggle):
 		return m.toggleCurrent()
 	case key.Matches(kp, m.keys.Open):
-		if m.cursor < 0 || m.cursor >= len(m.items) {
+		if m.cursor < 0 || m.cursor >= len(m.rows) {
 			return m, nil
 		}
-		id := m.items[m.cursor].ID
+		row := m.rows[m.cursor]
+		if row.kind == accountHeaderRow {
+			return m.toggleCollapsed(), nil
+		}
+		id := m.items[row.itemIndex].ID
 		return m, func() tea.Msg { return CalendarDialogRequestedMsg{ID: id} }
 	}
 	return m, nil
 }
 
 func (m CalendarListModel) View() string {
+	start, end := m.viewportBounds()
 	var b strings.Builder
-	for i, it := range m.items {
+	for i := start; i < end; i++ {
+		row := m.rows[i]
 		selected := m.focused && i == m.cursor
-		// Filled dot = visible, hollow dot = hidden. A single glyph carries
-		// both the calendar's color identity and its on/off state, avoiding
-		// the previous ● + ✓ doubling.
-		glyph := "●"
-		if m.hidden[it.ID] {
-			glyph = "○"
+		if row.kind == accountHeaderRow {
+			b.WriteString(m.renderAccountHeader(row, selected))
+		} else {
+			b.WriteString(m.renderCalendarRow(row, selected))
 		}
-		// Swatch keeps its calendar-color foreground in every state — its
-		// job is to identify the calendar, not signal selection.
-		swatch := lipgloss.NewStyle().Foreground(lipgloss.Color(it.Color)).Render(glyph)
-
-		// Health marker: a trailing ⚠ on calendars whose last sync failed.
-		// Only SyncHealthError is loud; every other state renders nothing so
-		// the row stays calm. The marker lives in its own reserved trailing
-		// cell *outside* the (possibly Reverse'd) name chip, so the inverted
-		// selection block never paints over it. markerCells accounts for the
-		// glyph plus its one leading separator space.
-		marker := ""
-		markerCells := 0
-		if it.Health == SyncHealthError {
-			marker = lipgloss.NewStyle().Foreground(m.errColor).Render("⚠")
-			markerCells = lipgloss.Width(marker) + 1
-		}
-
-		// Mirror the manage-calendars dialog's selection treatment:
-		// inverted (Reverse) + bold for the focused row, faint for hidden.
-		// Reverse swaps terminal fg/bg so the chip pops regardless of theme,
-		// avoiding the muddy-tint problem of explicit Background()+Width().
-		nameStyle := lipgloss.NewStyle()
-		if m.hidden[it.ID] && !selected {
-			nameStyle = nameStyle.Foreground(m.mutedColor)
-		}
-		if selected {
-			nameStyle = nameStyle.Reverse(true).Bold(true)
-			// Reserve the swatch (1 cell) + separator space (1 cell) + the
-			// health marker cells, and let the chip fill the rest so trailing
-			// pad cells pick up the tint without overrunning the marker.
-			if remaining := m.width - 2 - markerCells; remaining > 0 {
-				nameStyle = nameStyle.Width(remaining)
-			}
-		}
-		// Pad the chip with surrounding spaces so the inverted block has
-		// breathing room on both sides of the label, matching the dialog.
-		nameText := it.Name
-		if avail := m.width - 4 - markerCells; m.width > 4 && avail > 0 {
-			nameText = truncateTo(nameText, avail)
-		}
-		name := nameStyle.Render(" " + nameText + " ")
-
-		b.WriteString(swatch + " " + name)
-		if marker != "" {
-			b.WriteString(" " + marker)
-		}
-		if i < len(m.items)-1 {
-			b.WriteString("\n")
+		if i < end-1 {
+			b.WriteByte('\n')
 		}
 	}
 	return b.String()
+}
+
+func (m CalendarListModel) renderAccountHeader(row calendarListRow, selected bool) string {
+	ids := m.accountCalendarIDs(row.accountID)
+	hiddenCount := 0
+	hasError := false
+	for _, item := range m.items {
+		if item.AccountID != row.accountID {
+			continue
+		}
+		if m.hidden[item.ID] {
+			hiddenCount++
+		}
+		hasError = hasError || item.Health == SyncHealthError || item.Missing
+	}
+	glyph := "●"
+	if hiddenCount == len(ids) && len(ids) > 0 {
+		glyph = "○"
+	} else if hiddenCount > 0 {
+		glyph = "◐"
+	}
+	swatch := lipgloss.NewStyle().Foreground(m.mutedColor).Render(glyph)
+	arrow := "▾"
+	if m.collapsed[row.accountID] {
+		arrow = "▸"
+	}
+	marker := ""
+	markerCells := 0
+	if hasError {
+		marker = lipgloss.NewStyle().Foreground(m.errColor).Render("⚠")
+		markerCells = lipgloss.Width(marker) + 1
+	}
+	label := fmt.Sprintf("%s %s %d", arrow, row.accountName, len(ids))
+	if avail := m.width - 4 - markerCells; m.width > 4 && avail > 0 {
+		label = truncateTo(label, avail)
+	}
+	style := lipgloss.NewStyle().Bold(true)
+	if selected {
+		style = style.Reverse(true)
+		if remaining := m.width - 2 - markerCells; remaining > 0 {
+			style = style.Width(remaining)
+		}
+	}
+	out := swatch + " " + style.Render(" "+label+" ")
+	if marker != "" {
+		out += " " + marker
+	}
+	return out
+}
+
+func (m CalendarListModel) renderCalendarRow(row calendarListRow, selected bool) string {
+	item := m.items[row.itemIndex]
+	glyph := "●"
+	if m.hidden[item.ID] {
+		glyph = "○"
+	}
+	swatch := lipgloss.NewStyle().Foreground(lipgloss.Color(item.Color)).Render(glyph)
+	indent := ""
+	if m.grouped {
+		indent = "  "
+	}
+
+	marker := ""
+	switch {
+	case item.Missing:
+		marker = "[missing]"
+	case item.Access == "read":
+		marker = "[read-only]"
+	case item.Health == SyncHealthError:
+		marker = "⚠"
+	}
+	if marker != "" && (item.Missing || item.Health == SyncHealthError) {
+		marker = lipgloss.NewStyle().Foreground(m.errColor).Render(marker)
+	} else if marker != "" {
+		marker = lipgloss.NewStyle().Foreground(m.mutedColor).Render(marker)
+	}
+	markerCells := 0
+	if marker != "" {
+		markerCells = lipgloss.Width(marker) + 1
+	}
+
+	nameStyle := lipgloss.NewStyle()
+	if m.hidden[item.ID] && !selected {
+		nameStyle = nameStyle.Foreground(m.mutedColor)
+	}
+	prefixCells := lipgloss.Width(indent) + 2
+	if selected {
+		nameStyle = nameStyle.Reverse(true).Bold(true)
+		if remaining := m.width - prefixCells - markerCells; remaining > 0 {
+			nameStyle = nameStyle.Width(remaining)
+		}
+	}
+	nameText := item.Name
+	if avail := m.width - prefixCells - 2 - markerCells; m.width > prefixCells+2 && avail > 0 {
+		nameText = truncateTo(nameText, avail)
+	}
+	out := indent + swatch + " " + nameStyle.Render(" "+nameText+" ")
+	if marker != "" {
+		out += " " + marker
+	}
+	return out
+}
+
+func (m *CalendarListModel) rebuildRows() {
+	rows := make([]calendarListRow, 0, len(m.items)*2)
+	if !m.grouped {
+		for i, item := range m.items {
+			rows = append(rows, calendarListRow{kind: calendarRow, itemIndex: i, accountID: item.AccountID})
+		}
+		m.rows = rows
+		m.clampCursor()
+		return
+	}
+
+	var previousID int64
+	haveGroup := false
+	for i, item := range m.items {
+		if !haveGroup || item.AccountID != previousID {
+			name := item.AccountName
+			if name == "" {
+				if item.AccountID == 0 {
+					name = "Local"
+				} else {
+					name = "Remote"
+				}
+			}
+			rows = append(rows, calendarListRow{kind: accountHeaderRow, accountID: item.AccountID, accountName: name})
+			previousID = item.AccountID
+			haveGroup = true
+		}
+		if !m.collapsed[item.AccountID] {
+			rows = append(rows, calendarListRow{kind: calendarRow, itemIndex: i, accountID: item.AccountID})
+		}
+	}
+	m.rows = rows
+	m.clampCursor()
+}
+
+func (m *CalendarListModel) clampCursor() {
+	if len(m.rows) == 0 {
+		m.cursor = -1
+		m.offset = 0
+		return
+	}
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+	if m.cursor >= len(m.rows) {
+		m.cursor = len(m.rows) - 1
+	}
+}
+
+func (m CalendarListModel) ensureCursorVisible() CalendarListModel {
+	if m.cursor < 0 || m.height <= 0 {
+		m.offset = 0
+		return m
+	}
+	if m.cursor < m.offset {
+		m.offset = m.cursor
+	}
+	if m.cursor >= m.offset+m.height {
+		m.offset = m.cursor - m.height + 1
+	}
+	maxOffset := max(0, len(m.rows)-m.height)
+	if m.offset > maxOffset {
+		m.offset = maxOffset
+	}
+	return m
+}
+
+func (m CalendarListModel) viewportBounds() (int, int) {
+	if len(m.rows) == 0 {
+		return 0, 0
+	}
+	if m.height <= 0 || m.height >= len(m.rows) {
+		return 0, len(m.rows)
+	}
+	start := min(m.offset, len(m.rows)-1)
+	return start, min(len(m.rows), start+m.height)
+}
+
+func (m CalendarListModel) currentIdentity() (calendarRowIdentity, bool) {
+	if m.cursor < 0 || m.cursor >= len(m.rows) {
+		return calendarRowIdentity{}, false
+	}
+	row := m.rows[m.cursor]
+	if row.kind == accountHeaderRow {
+		return calendarRowIdentity{kind: accountHeaderRow, id: row.accountID}, true
+	}
+	return calendarRowIdentity{kind: calendarRow, id: m.items[row.itemIndex].ID}, true
+}
+
+func (m *CalendarListModel) selectIdentity(identity calendarRowIdentity) {
+	for i, row := range m.rows {
+		if identity.kind == accountHeaderRow && row.kind == accountHeaderRow && row.accountID == identity.id {
+			m.cursor = i
+			return
+		}
+		if identity.kind == calendarRow && row.kind == calendarRow && m.items[row.itemIndex].ID == identity.id {
+			m.cursor = i
+			return
+		}
+	}
+}
+
+func (m CalendarListModel) accountCalendarIDs(accountID int64) []int64 {
+	ids := make([]int64, 0)
+	for _, item := range m.items {
+		if item.AccountID == accountID {
+			ids = append(ids, item.ID)
+		}
+	}
+	return ids
+}
+
+func hasAccountGroups(items []CalendarListItem) bool {
+	for _, item := range items {
+		if item.AccountName != "" {
+			return true
+		}
+	}
+	return false
 }

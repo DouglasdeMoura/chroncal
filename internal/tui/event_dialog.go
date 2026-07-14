@@ -91,6 +91,10 @@ type CalendarInfo struct {
 	// the event view to detect Google-hosted calendars so meeting links can
 	// pre-select the right account. Empty for local-only calendars.
 	AccountServerURL    string
+	AccountID           int64
+	AccountName         string
+	RemoteAccess        string
+	RemoteMissing       bool
 	LastSyncAt          string // RFC 3339, empty when never synced
 	LastSyncAttemptedAt string // RFC 3339, empty when never attempted
 	LastSyncError       string

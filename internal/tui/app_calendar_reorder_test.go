@@ -149,12 +149,14 @@ func TestCalendarReorder_DialogReorderKeepsSidebarCursorOnSameCalendar(t *testin
 	if !slices.Equal(order, []int64{3, 1, 2}) {
 		t.Fatalf("sidebar order = %v want [3 1 2]", order)
 	}
-	cur := m.sidebar.List().Cursor()
-	if cur < 0 || cur >= len(order) {
+	list := m.sidebar.List()
+	cur := list.Cursor()
+	if cur < 0 || cur >= list.RowCount() {
 		t.Fatalf("cursor out of range: %d", cur)
 	}
-	if order[cur] != 2 {
-		t.Errorf("sidebar cursor on calendar %d, want 2 (Bravo) — cursor did not follow the calendar", order[cur])
+	row := list.rows[cur]
+	if row.kind != calendarRow || list.items[row.itemIndex].ID != 2 {
+		t.Errorf("sidebar cursor row = %+v, want calendar 2 (Bravo) — cursor did not follow the calendar", row)
 	}
 }
 
