@@ -64,7 +64,7 @@ func (q *Queries) CountDefaultCalendars(ctx context.Context) (int64, error) {
 const createCalendar = `-- name: CreateCalendar :one
 INSERT INTO calendars (name, color, description, display_order)
 VALUES (?, ?, ?, (SELECT COALESCE(MAX(display_order), -1) + 1 FROM calendars))
-RETURNING id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order
+RETURNING id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order, remote_name, remote_access, remote_components, remote_missing
 `
 
 type CreateCalendarParams struct {
@@ -97,6 +97,10 @@ func (q *Queries) CreateCalendar(ctx context.Context, arg CreateCalendarParams) 
 		&i.OwnerEmail,
 		&i.IsDefault,
 		&i.DisplayOrder,
+		&i.RemoteName,
+		&i.RemoteAccess,
+		&i.RemoteComponents,
+		&i.RemoteMissing,
 	)
 	return i, err
 }
@@ -111,7 +115,7 @@ func (q *Queries) DeleteCalendar(ctx context.Context, id int64) error {
 }
 
 const getCalendar = `-- name: GetCalendar :one
-SELECT id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order FROM calendars WHERE id = ?
+SELECT id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order, remote_name, remote_access, remote_components, remote_missing FROM calendars WHERE id = ?
 `
 
 func (q *Queries) GetCalendar(ctx context.Context, id int64) (Calendar, error) {
@@ -136,12 +140,16 @@ func (q *Queries) GetCalendar(ctx context.Context, id int64) (Calendar, error) {
 		&i.OwnerEmail,
 		&i.IsDefault,
 		&i.DisplayOrder,
+		&i.RemoteName,
+		&i.RemoteAccess,
+		&i.RemoteComponents,
+		&i.RemoteMissing,
 	)
 	return i, err
 }
 
 const getDefaultCalendar = `-- name: GetDefaultCalendar :one
-SELECT id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order FROM calendars WHERE is_default = 1 LIMIT 1
+SELECT id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order, remote_name, remote_access, remote_components, remote_missing FROM calendars WHERE is_default = 1 LIMIT 1
 `
 
 func (q *Queries) GetDefaultCalendar(ctx context.Context) (Calendar, error) {
@@ -166,6 +174,10 @@ func (q *Queries) GetDefaultCalendar(ctx context.Context) (Calendar, error) {
 		&i.OwnerEmail,
 		&i.IsDefault,
 		&i.DisplayOrder,
+		&i.RemoteName,
+		&i.RemoteAccess,
+		&i.RemoteComponents,
+		&i.RemoteMissing,
 	)
 	return i, err
 }
@@ -190,7 +202,7 @@ func (q *Queries) LinkCalendarToAccount(ctx context.Context, arg LinkCalendarToA
 }
 
 const listCalendars = `-- name: ListCalendars :many
-SELECT id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order FROM calendars ORDER BY display_order, name
+SELECT id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order, remote_name, remote_access, remote_components, remote_missing FROM calendars ORDER BY display_order, name
 `
 
 func (q *Queries) ListCalendars(ctx context.Context) ([]Calendar, error) {
@@ -221,6 +233,10 @@ func (q *Queries) ListCalendars(ctx context.Context) ([]Calendar, error) {
 			&i.OwnerEmail,
 			&i.IsDefault,
 			&i.DisplayOrder,
+			&i.RemoteName,
+			&i.RemoteAccess,
+			&i.RemoteComponents,
+			&i.RemoteMissing,
 		); err != nil {
 			return nil, err
 		}
@@ -236,7 +252,7 @@ func (q *Queries) ListCalendars(ctx context.Context) ([]Calendar, error) {
 }
 
 const listCalendarsByAccount = `-- name: ListCalendarsByAccount :many
-SELECT id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order FROM calendars WHERE account_id = ? ORDER BY display_order, name
+SELECT id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order, remote_name, remote_access, remote_components, remote_missing FROM calendars WHERE account_id = ? ORDER BY display_order, name
 `
 
 func (q *Queries) ListCalendarsByAccount(ctx context.Context, accountID *int64) ([]Calendar, error) {
@@ -267,6 +283,10 @@ func (q *Queries) ListCalendarsByAccount(ctx context.Context, accountID *int64) 
 			&i.OwnerEmail,
 			&i.IsDefault,
 			&i.DisplayOrder,
+			&i.RemoteName,
+			&i.RemoteAccess,
+			&i.RemoteComponents,
+			&i.RemoteMissing,
 		); err != nil {
 			return nil, err
 		}
@@ -323,7 +343,7 @@ func (q *Queries) SetCalendarDisplayOrder(ctx context.Context, arg SetCalendarDi
 }
 
 const updateCalendar = `-- name: UpdateCalendar :one
-UPDATE calendars SET name = ?, color = ?, description = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ? RETURNING id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order
+UPDATE calendars SET name = ?, color = ?, description = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ? RETURNING id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order, remote_name, remote_access, remote_components, remote_missing
 `
 
 type UpdateCalendarParams struct {
@@ -360,6 +380,10 @@ func (q *Queries) UpdateCalendar(ctx context.Context, arg UpdateCalendarParams) 
 		&i.OwnerEmail,
 		&i.IsDefault,
 		&i.DisplayOrder,
+		&i.RemoteName,
+		&i.RemoteAccess,
+		&i.RemoteComponents,
+		&i.RemoteMissing,
 	)
 	return i, err
 }
