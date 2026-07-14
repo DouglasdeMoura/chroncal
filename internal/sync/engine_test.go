@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	gosync "sync"
@@ -3953,5 +3954,76 @@ func TestPersistImportedPrunePerUID(t *testing.T) {
 	}
 	if len(overridesB) != 1 {
 		t.Fatalf("B's override pruned without B's master present; live overrides = %d", len(overridesB))
+	}
+}
+
+func TestEngineSyncCalendarReadOnlyPullsWithoutRemoteWrites(t *testing.T) {
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+
+	var (
+		mu      gosync.Mutex
+		methods []string
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		methods = append(methods, r.Method)
+		mu.Unlock()
+		if r.Method != "REPORT" {
+			http.Error(w, "read-only collection rejects metadata and writes", http.StatusForbidden)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), "sync-collection") {
+			http.Error(w, "sync-collection unsupported", http.StatusUnprocessableEntity)
+			return
+		}
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusMultiStatus)
+		_, _ = io.WriteString(w, `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav"></d:multistatus>`)
+	}))
+	defer server.Close()
+
+	remoteAccount, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name: "read-only", ServerUrl: server.URL, AuthType: "basic", Username: "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	calendars, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := calendars[0].ID
+	remoteURL := server.URL + "/calendar"
+	if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID: calendarID, AccountID: &remoteAccount.ID, RemoteUrl: &remoteURL,
+	}); err != nil {
+		t.Fatalf("LinkCalendarToAccount: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, "UPDATE calendars SET remote_access = 'read' WHERE id = ?", calendarID); err != nil {
+		t.Fatalf("set remote access: %v", err)
+	}
+	engine.credStore.(*mockCredStore).creds[remoteAccount.ID] = auth.Credential{
+		AccountID: remoteAccount.ID, Username: "user", Password: "secret",
+	}
+
+	result, err := engine.SyncCalendar(ctx, calendarID, ConflictServerWins)
+	if err != nil {
+		t.Fatalf("SyncCalendar: %v", err)
+	}
+	if len(result.Errors) != 0 {
+		t.Fatalf("read-only sync errors = %v", result.Errors)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, method := range methods {
+		if method != "REPORT" {
+			t.Fatalf("read-only sync sent %s; methods = %v", method, methods)
+		}
+	}
+	if len(methods) == 0 {
+		t.Fatal("read-only sync must still pull with REPORT")
 	}
 }

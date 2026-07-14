@@ -178,7 +178,9 @@ func TestServiceRefreshMarksMissingOnlyAfterCompleteDiscovery(t *testing.T) {
 	}
 
 	svc.discover = func(context.Context, Account, auth.Credential, func(auth.Credential) error) ([]caldav.RemoteCalendar, error) {
-		return all[1:], nil
+		refreshed := slices.Clone(all[1:])
+		refreshed[0].Path = "/cal/two" // Equivalent collection URL without a trailing slash.
+		return refreshed, nil
 	}
 	if _, err := svc.Discover(ctx, account.ID, store); err != nil {
 		t.Fatalf("refresh Discover: %v", err)
@@ -246,5 +248,19 @@ func TestServiceDeletePreservesCalendarsAsLocal(t *testing.T) {
 	}
 	if _, err := store.Get(account.ID); err == nil {
 		t.Fatal("credential should be removed with account")
+	}
+}
+
+func TestRemoteIdentityKeyNormalizesEquivalentCollectionURLs(t *testing.T) {
+	t.Parallel()
+
+	want := remoteIdentityKey("https://apidata.googleusercontent.com/caldav/v2/user@example.com/events")
+	for _, raw := range []string{
+		"https://apidata.googleusercontent.com/caldav/v2/user@example.com/events/",
+		"https://apidata.googleusercontent.com/caldav/v2/user%40example.com/events/",
+	} {
+		if got := remoteIdentityKey(raw); got != want {
+			t.Errorf("remoteIdentityKey(%q) = %q, want %q", raw, got, want)
+		}
 	}
 }

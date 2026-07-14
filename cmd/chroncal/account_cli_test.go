@@ -139,6 +139,58 @@ func TestAccountDiscoverSelectsCalendarByName(t *testing.T) {
 	t.Fatal("selected remote calendar was not imported")
 }
 
+func TestAccountRemovePreservesDownloadedCalendarsAsLocal(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	t.Setenv("CHRONCAL_BEARER_TOKEN", "test-token")
+	srv := newAccountDiscoveryServer(t)
+
+	if _, _, err := runChroncalCommand(t,
+		"account", "add", "Test account",
+		"--server", srv.URL+"/",
+		"--username", "me@example.test",
+		"--auth", "bearer",
+		"--allow-insecure",
+		"--allow-plaintext",
+	); err != nil {
+		t.Fatalf("account add: %v", err)
+	}
+	if _, _, err := runChroncalCommand(t,
+		"account", "discover", "Test account", "--all", "--allow-plaintext",
+	); err != nil {
+		t.Fatalf("account discover: %v", err)
+	}
+	if _, _, err := runChroncalCommand(t,
+		"account", "remove", "Test account", "--yes", "--allow-plaintext",
+	); err != nil {
+		t.Fatalf("account remove: %v", err)
+	}
+
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	defer a.Close()
+	accounts, err := a.Accounts.List(context.Background())
+	if err != nil {
+		t.Fatalf("list accounts: %v", err)
+	}
+	if len(accounts) != 0 {
+		t.Fatalf("accounts after remove = %+v", accounts)
+	}
+	calendars, err := a.Calendars.List(context.Background())
+	if err != nil {
+		t.Fatalf("list calendars: %v", err)
+	}
+	if len(calendars) != 3 {
+		t.Fatalf("calendar count after removal = %d, want original local calendar plus 2 downloads", len(calendars))
+	}
+	for _, calendar := range calendars {
+		if calendar.AccountID != 0 || calendar.RemoteURL != "" {
+			t.Fatalf("calendar still linked after account removal: %+v", calendar)
+		}
+	}
+}
+
 func newAccountDiscoveryServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	var srv *httptest.Server
