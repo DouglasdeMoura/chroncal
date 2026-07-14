@@ -98,6 +98,19 @@ func (m ChoiceDialogModel) Update(msg tea.Msg) (ChoiceDialogModel, tea.Cmd) {
 		return m.SetSize(msg.Width, msg.Height), nil
 	}
 
+	if mc, ok := msg.(tea.MouseClickMsg); ok {
+		if mc.Button != tea.MouseLeft {
+			return m, nil
+		}
+		bw, bh := m.BoxSize()
+		ox := (m.dialog.width - bw) / 2
+		oy := (m.dialog.height - bh) / 2
+		target := mouseResolve(mc.X-ox, mc.Y-oy)
+		var cmd tea.Cmd
+		m.form, cmd = m.form.Update(MouseEvent{IsClick: true, Target: target})
+		return m, cmd
+	}
+
 	// Esc / q → cancel. Choice dialogs offer button options, never
 	// text input, so the vim-style `q` close is safe here.
 	if msg, ok := msg.(tea.KeyPressMsg); ok {
@@ -118,5 +131,5 @@ func (m ChoiceDialogModel) View() string {
 		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 	}
 	m.dialog.SetFooter(m.help.ShortHelpView(helpKeys))
-	return m.dialog.Box(m.form.View())
+	return mouseSweep(m.dialog.Box(m.form.View()))
 }
