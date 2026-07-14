@@ -389,12 +389,16 @@ func TestDisconnect_HiddenAccountWithMultipleCalendars_PreservesCredential(t *te
 	}
 
 	// Link both calendars to the same hidden account.
-	for _, calID := range []int64{1, cal2.ID} {
+	for i, calID := range []int64{1, cal2.ID} {
 		id := calID
+		remoteURL := []string{
+			"https://example.com/dav/personal/",
+			"https://example.com/dav/work/",
+		}[i]
 		if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
 			ID:        id,
 			AccountID: &account.ID,
-			RemoteUrl: storage.StringToNullable("https://example.com/dav/"),
+			RemoteUrl: storage.StringToNullable(remoteURL),
 		}); err != nil {
 			t.Fatalf("LinkCalendarToAccount(%d): %v", id, err)
 		}
@@ -453,12 +457,16 @@ func TestDeleteWithRemoteCleanup_HiddenAccountWithMultipleCalendars_PreservesCre
 	}
 
 	// Link both calendars to the same hidden account.
-	for _, calID := range []int64{1, cal2.ID} {
+	for i, calID := range []int64{1, cal2.ID} {
 		id := calID
+		remoteURL := []string{
+			"https://example.com/dav/personal/",
+			"https://example.com/dav/work/",
+		}[i]
 		if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
 			ID:        id,
 			AccountID: &account.ID,
-			RemoteUrl: storage.StringToNullable("https://example.com/dav/"),
+			RemoteUrl: storage.StringToNullable(remoteURL),
 		}); err != nil {
 			t.Fatalf("LinkCalendarToAccount(%d): %v", id, err)
 		}

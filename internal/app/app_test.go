@@ -24,6 +24,9 @@ func TestApp_Services(t *testing.T) {
 	}
 	defer a.Close()
 
+	if a.Accounts == nil {
+		t.Error("Accounts service is nil")
+	}
 	if a.Calendars == nil {
 		t.Error("Calendars service is nil")
 	}

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"github.com/douglasdemoura/chroncal/internal/account"
 	"github.com/douglasdemoura/chroncal/internal/alarm"
 	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/event"
@@ -20,6 +21,7 @@ import (
 type App struct {
 	DB          *sql.DB
 	Queries     *storage.Queries
+	Accounts    *account.Service
 	Calendars   *calendar.Service
 	Events      *event.Service
 	Todos       *todo.Service
@@ -48,6 +50,7 @@ func New(dbPath string) (*App, error) {
 	return &App{
 		DB:          db,
 		Queries:     queries,
+		Accounts:    account.NewService(db, queries),
 		Calendars:   calendar.NewService(db, queries),
 		Events:      eventSvc,
 		Todos:       todoSvc,

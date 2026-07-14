@@ -343,6 +343,10 @@ func fromStorage(r storage.Calendar) Calendar {
 		LastSyncError:       storage.NullableToString(r.LastSyncError),
 		RemoteColor:         storage.NullableToString(r.RemoteColor),
 		ColorDirty:          r.ColorDirty != 0,
+		RemoteName:          r.RemoteName,
+		RemoteAccess:        r.RemoteAccess,
+		RemoteComponents:    r.RemoteComponents,
+		RemoteMissing:       r.RemoteMissing != 0,
 		IsDefault:           r.IsDefault != 0,
 	}
 }

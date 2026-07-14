@@ -25,6 +25,10 @@ type Calendar struct {
 	LastSyncError       string // Concise summary of the last sync failure
 	RemoteColor         string // Last known remote calendar-color value
 	ColorDirty          bool   // Local color changed and needs remote sync
+	RemoteName          string // last display name returned by collection discovery
+	RemoteAccess        string // "unknown", "read", "write", or "owner"
+	RemoteComponents    string // comma-separated VEVENT/VTODO/VJOURNAL capabilities
+	RemoteMissing       bool   // collection absent from the last complete discovery
 
 	IsDefault bool // True when this is the default calendar
 }
