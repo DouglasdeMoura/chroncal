@@ -20,6 +20,10 @@ func TestVerifyCalendarURL_ReturnsDisplayNameAndColor(t *testing.T) {
       <d:prop>
         <d:displayname>Work</d:displayname>
         <d:resourcetype><d:collection/><c:calendar/></d:resourcetype>
+        <d:current-user-privilege-set>
+          <d:privilege><d:read/></d:privilege>
+          <d:privilege><d:write/></d:privilege>
+        </d:current-user-privilege-set>
         <ic:calendar-color>#9FE1E7FF</ic:calendar-color>
       </d:prop>
       <d:status>HTTP/1.1 200 OK</d:status>
@@ -49,8 +53,14 @@ func TestVerifyCalendarURL_ReturnsDisplayNameAndColor(t *testing.T) {
 	if meta.Color != "#9FE1E7" {
 		t.Errorf("Color = %q, want #9FE1E7 (alpha must be stripped so lipgloss renders it)", meta.Color)
 	}
+	if meta.Access != CalendarAccessWrite {
+		t.Errorf("Access = %q, want %q", meta.Access, CalendarAccessWrite)
+	}
 	if !strings.Contains(bodySeen, "<ic:calendar-color/>") {
 		t.Errorf("PROPFIND body must request ic:calendar-color so the UI can adopt the server color at link time, got: %s", bodySeen)
+	}
+	if !strings.Contains(bodySeen, "<d:current-user-privilege-set/>") {
+		t.Errorf("PROPFIND body must request current-user-privilege-set so read-only calendars can be disabled, got: %s", bodySeen)
 	}
 }
 

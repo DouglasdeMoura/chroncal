@@ -24,6 +24,8 @@ type RemoteCalendar struct {
 	Path                  string
 	Name                  string
 	Description           string
+	Color                 string
+	Access                CalendarAccess
 	SupportedComponentSet []string // e.g. ["VEVENT", "VTODO", "VJOURNAL"]
 }
 
@@ -116,14 +118,30 @@ func (c *Client) DiscoverCalendars(ctx context.Context) ([]RemoteCalendar, error
 		return nil, fmt.Errorf("find calendars: %w", err)
 	}
 
-	out := make([]RemoteCalendar, len(found))
-	for i, cal := range found {
-		out[i] = RemoteCalendar{
-			Path:                  cal.Path,
+	out := make([]RemoteCalendar, 0, len(found))
+	for _, cal := range found {
+		path, err := c.CanonicalCollectionRef(cal.Path)
+		if err != nil {
+			return nil, fmt.Errorf("canonicalize discovered calendar %q: %w", cal.Path, err)
+		}
+		remote := RemoteCalendar{
+			Path:                  path,
 			Name:                  cal.Name,
 			Description:           cal.Description,
+			Access:                CalendarAccessUnknown,
 			SupportedComponentSet: cal.SupportedComponentSet,
 		}
+		// Collection listing is the authoritative discovery result. Metadata
+		// enrichment is best-effort because servers may expose display names
+		// while denying a second Depth:0 PROPFIND or omitting ACL properties.
+		if meta, metaErr := fetchCalendarMetadata(ctx, c.ResolveURL(path), c.httpClient, false); metaErr == nil {
+			if meta.DisplayName != "" {
+				remote.Name = meta.DisplayName
+			}
+			remote.Color = meta.Color
+			remote.Access = meta.Access
+		}
+		out = append(out, remote)
 	}
 	return out, nil
 }

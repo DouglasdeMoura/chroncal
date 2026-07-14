@@ -25,14 +25,39 @@ type verifyPropStat struct {
 }
 
 type verifyPropSet struct {
-	DisplayName   string               `xml:"DAV: displayname"`
-	ResourceType  verifyResourceTypeEl `xml:"DAV: resourcetype"`
-	CalendarColor string               `xml:"http://apple.com/ns/ical/ calendar-color"`
+	DisplayName       string                        `xml:"DAV: displayname"`
+	ResourceType      verifyResourceTypeEl          `xml:"DAV: resourcetype"`
+	CalendarColor     string                        `xml:"http://apple.com/ns/ical/ calendar-color"`
+	CurrentPrivileges verifyCurrentUserPrivilegeSet `xml:"DAV: current-user-privilege-set"`
+}
+
+type verifyCurrentUserPrivilegeSet struct {
+	Privileges []verifyPrivilege `xml:"DAV: privilege"`
+}
+
+type verifyPrivilege struct {
+	Names []verifyPrivilegeName `xml:",any"`
+}
+
+type verifyPrivilegeName struct {
+	XMLName xml.Name
 }
 
 type verifyResourceTypeEl struct {
 	Calendar *struct{} `xml:"urn:ietf:params:xml:ns:caldav calendar"`
 }
+
+// CalendarAccess is the effective write capability advertised by a remote
+// calendar. Unknown is distinct from read-only because some servers, notably
+// Google CalDAV, do not implement WebDAV ACL properties.
+type CalendarAccess string
+
+const (
+	CalendarAccessUnknown CalendarAccess = "unknown"
+	CalendarAccessRead    CalendarAccess = "read"
+	CalendarAccessWrite   CalendarAccess = "write"
+	CalendarAccessOwner   CalendarAccess = "owner"
+)
 
 // CalendarMetadata holds the user-visible properties advertised by a CalDAV
 // calendar collection: the server's display name and the Apple-style
@@ -40,6 +65,7 @@ type verifyResourceTypeEl struct {
 type CalendarMetadata struct {
 	DisplayName string
 	Color       string
+	Access      CalendarAccess
 }
 
 // VerifyCalendarURL performs a PROPFIND at the user-supplied calendar URL to
@@ -98,6 +124,7 @@ func fetchCalendarMetadata(ctx context.Context, calendarURL string, httpClient w
   <d:prop>
     <d:resourcetype/>
     <d:displayname/>
+    <d:current-user-privilege-set/>
     <ic:calendar-color/>
   </d:prop>
 </d:propfind>`
@@ -146,13 +173,40 @@ func fetchCalendarMetadata(ctx context.Context, calendarURL string, httpClient w
 			if meta.Color == "" {
 				meta.Color = NormalizeCalendarColor(ps.Prop.CalendarColor)
 			}
+			if meta.Access == "" {
+				meta.Access = calendarAccessFromPrivileges(ps.Prop.CurrentPrivileges)
+			}
 			if ps.Prop.ResourceType.Calendar != nil {
 				isCalendar = true
 			}
 		}
 	}
+	if meta.Access == "" {
+		meta.Access = CalendarAccessUnknown
+	}
 	if requireCalendar && !isCalendar {
 		return meta, fmt.Errorf("URL is reachable but does not point to a CalDAV calendar collection")
 	}
 	return meta, nil
+}
+
+func calendarAccessFromPrivileges(set verifyCurrentUserPrivilegeSet) CalendarAccess {
+	readable := false
+	for _, privilege := range set.Privileges {
+		for _, name := range privilege.Names {
+			if name.XMLName.Space != "DAV:" {
+				continue
+			}
+			switch name.XMLName.Local {
+			case "all", "write", "write-content", "write-properties", "bind", "unbind":
+				return CalendarAccessWrite
+			case "read":
+				readable = true
+			}
+		}
+	}
+	if readable {
+		return CalendarAccessRead
+	}
+	return CalendarAccessUnknown
 }
