@@ -24,7 +24,7 @@ require (
 	github.com/teambition/rrule-go v1.8.2
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/net v0.56.0
-	golang.org/x/sync v0.21.0
+	golang.org/x/sync v0.22.0
 	golang.org/x/term v0.44.0
 	golang.org/x/text v0.38.0
 	modernc.org/sqlite v1.53.0
