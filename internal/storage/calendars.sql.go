@@ -39,6 +39,30 @@ func (q *Queries) ClearDefaultCalendar(ctx context.Context) error {
 	return err
 }
 
+const clearRemoteLinksByAccount = `-- name: ClearRemoteLinksByAccount :exec
+UPDATE calendars SET
+    account_id = NULL,
+    remote_url = '',
+    ctag = '',
+    sync_token = '',
+    last_sync_at = '',
+    last_sync_attempted_at = '',
+    last_sync_error = '',
+    remote_color = '',
+    color_dirty = 0,
+    remote_name = '',
+    remote_access = 'unknown',
+    remote_components = '',
+    remote_missing = 0,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE account_id = ?
+`
+
+func (q *Queries) ClearRemoteLinksByAccount(ctx context.Context, accountID *int64) error {
+	_, err := q.db.ExecContext(ctx, clearRemoteLinksByAccount, accountID)
+	return err
+}
+
 const countCalendars = `-- name: CountCalendars :one
 SELECT COUNT(*) FROM calendars
 `
@@ -77,6 +101,72 @@ type CreateCalendarParams struct {
 // calendars append to the bottom of the sidebar instead of all colliding at 0.
 func (q *Queries) CreateCalendar(ctx context.Context, arg CreateCalendarParams) (Calendar, error) {
 	row := q.db.QueryRowContext(ctx, createCalendar, arg.Name, arg.Color, arg.Description)
+	var i Calendar
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Color,
+		&i.Description,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AccountID,
+		&i.RemoteUrl,
+		&i.Ctag,
+		&i.SyncToken,
+		&i.LastSyncAt,
+		&i.LastSyncAttemptedAt,
+		&i.LastSyncError,
+		&i.RemoteColor,
+		&i.ColorDirty,
+		&i.OwnerEmail,
+		&i.IsDefault,
+		&i.DisplayOrder,
+		&i.RemoteName,
+		&i.RemoteAccess,
+		&i.RemoteComponents,
+		&i.RemoteMissing,
+	)
+	return i, err
+}
+
+const createDiscoveredCalendar = `-- name: CreateDiscoveredCalendar :one
+INSERT INTO calendars (
+    name, color, description, display_order,
+    account_id, remote_url, remote_color,
+    remote_name, remote_access, remote_components
+)
+VALUES (
+    ?, ?, ?, (SELECT COALESCE(MAX(display_order), -1) + 1 FROM calendars),
+    ?, ?, ?,
+    ?, ?, ?
+)
+RETURNING id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order, remote_name, remote_access, remote_components, remote_missing
+`
+
+type CreateDiscoveredCalendarParams struct {
+	Name             string
+	Color            string
+	Description      *string
+	AccountID        *int64
+	RemoteUrl        *string
+	RemoteColor      *string
+	RemoteName       string
+	RemoteAccess     string
+	RemoteComponents string
+}
+
+func (q *Queries) CreateDiscoveredCalendar(ctx context.Context, arg CreateDiscoveredCalendarParams) (Calendar, error) {
+	row := q.db.QueryRowContext(ctx, createDiscoveredCalendar,
+		arg.Name,
+		arg.Color,
+		arg.Description,
+		arg.AccountID,
+		arg.RemoteUrl,
+		arg.RemoteColor,
+		arg.RemoteName,
+		arg.RemoteAccess,
+		arg.RemoteComponents,
+	)
 	var i Calendar
 	err := row.Scan(
 		&i.ID,
@@ -301,6 +391,18 @@ func (q *Queries) ListCalendarsByAccount(ctx context.Context, accountID *int64) 
 	return items, nil
 }
 
+const markAccountCalendarsMissing = `-- name: MarkAccountCalendarsMissing :exec
+UPDATE calendars SET
+    remote_missing = 1,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE account_id = ?
+`
+
+func (q *Queries) MarkAccountCalendarsMissing(ctx context.Context, accountID *int64) error {
+	_, err := q.db.ExecContext(ctx, markAccountCalendarsMissing, accountID)
+	return err
+}
+
 const markCalendarColorDirty = `-- name: MarkCalendarColorDirty :exec
 UPDATE calendars SET
     color_dirty = 1,
@@ -406,6 +508,53 @@ type UpdateCalendarColorFromSyncParams struct {
 func (q *Queries) UpdateCalendarColorFromSync(ctx context.Context, arg UpdateCalendarColorFromSyncParams) error {
 	_, err := q.db.ExecContext(ctx, updateCalendarColorFromSync, arg.Color, arg.RemoteColor, arg.ID)
 	return err
+}
+
+const updateCalendarDiscovery = `-- name: UpdateCalendarDiscovery :one
+UPDATE calendars SET
+    name = CASE
+        WHEN remote_name = '' OR name = remote_name THEN ?1
+        ELSE name
+    END,
+    color = CASE
+        WHEN color_dirty = 0 AND ?2 <> '' THEN ?2
+        ELSE color
+    END,
+    remote_color = CASE
+        WHEN ?2 <> '' THEN ?2
+        ELSE remote_color
+    END,
+    remote_name = ?1,
+    remote_access = ?3,
+    remote_components = ?4,
+    remote_missing = 0,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE account_id = ?5
+  AND remote_url = ?6
+RETURNING id
+`
+
+type UpdateCalendarDiscoveryParams struct {
+	RemoteName       string
+	RemoteColor      interface{}
+	RemoteAccess     string
+	RemoteComponents string
+	AccountID        *int64
+	RemoteUrl        *string
+}
+
+func (q *Queries) UpdateCalendarDiscovery(ctx context.Context, arg UpdateCalendarDiscoveryParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, updateCalendarDiscovery,
+		arg.RemoteName,
+		arg.RemoteColor,
+		arg.RemoteAccess,
+		arg.RemoteComponents,
+		arg.AccountID,
+		arg.RemoteUrl,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const updateCalendarOwnerEmail = `-- name: UpdateCalendarOwnerEmail :exec

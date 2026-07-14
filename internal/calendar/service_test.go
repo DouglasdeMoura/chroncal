@@ -490,3 +490,25 @@ func TestCalendarService_DeleteNonDefaultAllowedWithoutPromotion(t *testing.T) {
 		t.Errorf("default = %q, want Personal", def.Name)
 	}
 }
+
+func TestFromStorageIncludesRemoteDiscoveryMetadata(t *testing.T) {
+	remoteURL := "/calendars/me/work/"
+	row := storage.Calendar{
+		ID:               42,
+		Name:             "Work",
+		Color:            "#123456",
+		CreatedAt:        "2026-07-14T00:00:00Z",
+		UpdatedAt:        "2026-07-14T00:00:00Z",
+		RemoteUrl:        &remoteURL,
+		RemoteName:       "Remote Work",
+		RemoteAccess:     "read",
+		RemoteComponents: "VEVENT,VTODO",
+		RemoteMissing:    1,
+	}
+
+	got := fromStorage(row)
+	if got.RemoteName != "Remote Work" || got.RemoteAccess != "read" ||
+		got.RemoteComponents != "VEVENT,VTODO" || !got.RemoteMissing {
+		t.Fatalf("remote discovery metadata = %+v", got)
+	}
+}
