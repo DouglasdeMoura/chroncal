@@ -19,7 +19,16 @@
         # Single source of truth for the released version; the release
         # workflow refuses to run if VERSION does not match the tag.
         version = pkgs.lib.trim (builtins.readFile ./VERSION);
-        go = pkgs.go_1_26;
+        # nixos-unstable still carries Go 1.26.4, which is affected by
+        # GO-2026-5856. Keep Nix-built binaries on the fixed patch release
+        # until the pinned nixpkgs input catches up.
+        go = pkgs.go_1_26.overrideAttrs (_: {
+          version = "1.26.5";
+          src = pkgs.fetchurl {
+            url = "https://go.dev/dl/go1.26.5.src.tar.gz";
+            hash = "sha256-SVvkvIcXasVnOS5bQRar2YRm0z17SdQedkzMaXay3EI=";
+          };
+        });
         chroncal = pkgs.buildGoModule {
           pname = "chroncal";
           inherit version;
