@@ -5,12 +5,13 @@ import (
 	"testing"
 )
 
-func TestRootCommandDoesNotRegisterAccount(t *testing.T) {
+func TestRootCommandRegistersAccount(t *testing.T) {
 	for _, cmd := range rootCmd.Commands() {
 		if cmd.Name() == "account" {
-			t.Fatal("root command should not register top-level account")
+			return
 		}
 	}
+	t.Fatal("root command should register top-level account")
 }
 
 func TestCalendarCommandDoesNotRegisterLinkOrUnlink(t *testing.T) {
