@@ -209,21 +209,23 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 
 	e.logger.Info("sync started", "calendar_id", calendarID, "remote_url", remoteURL)
 
-	// Phase 0: Sync calendar metadata
-	if err := e.syncCalendarMetadata(ctx, client, calendarID, remoteURL); err != nil {
-		e.logger.Warn("calendar metadata sync failed", "calendar_id", calendarID, "error", err)
-		result.Errors = append(result.Errors, fmt.Errorf("calendar metadata: %w", err))
-	}
+	if !remoteCalendarIsReadOnly(cal) {
+		// Phase 0: Sync writable calendar metadata.
+		if err := e.syncCalendarMetadata(ctx, client, calendarID, remoteURL); err != nil {
+			e.logger.Warn("calendar metadata sync failed", "calendar_id", calendarID, "error", err)
+			result.Errors = append(result.Errors, fmt.Errorf("calendar metadata: %w", err))
+		}
 
-	// Phase 1: Push dirty resources
-	pushResult, err := e.push(ctx, client, calendarID, remoteURL, resolvePushIdentity(cal, account), strategy)
-	if err != nil {
-		e.logger.Error("push failed", "calendar_id", calendarID, "error", err)
-		result.Errors = append(result.Errors, fmt.Errorf("push: %w", err))
-	} else {
-		result.Pushed = pushResult.pushed
-		result.Conflicts = pushResult.conflicts
-		result.Errors = append(result.Errors, pushResult.errors...)
+		// Phase 1: Push dirty resources.
+		pushResult, err := e.push(ctx, client, calendarID, remoteURL, resolvePushIdentity(cal, account), strategy)
+		if err != nil {
+			e.logger.Error("push failed", "calendar_id", calendarID, "error", err)
+			result.Errors = append(result.Errors, fmt.Errorf("push: %w", err))
+		} else {
+			result.Pushed = pushResult.pushed
+			result.Conflicts = pushResult.conflicts
+			result.Errors = append(result.Errors, pushResult.errors...)
+		}
 	}
 
 	// Phase 2: Pull changes from server
@@ -237,15 +239,17 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 		result.Errors = append(result.Errors, pullResult.errors...)
 	}
 
-	// Phase 3: Process tombstones
-	tombstoneResult, err := e.processTombstones(ctx, client, calendarID, remoteURL)
-	if err != nil {
-		e.logger.Warn("tombstone processing failed", "calendar_id", calendarID, "error", err)
-		result.Errors = append(result.Errors, fmt.Errorf("tombstones: %w", err))
-	} else {
-		result.Deleted += tombstoneResult.deleted
-		result.Conflicts += tombstoneResult.conflicts
-		result.Errors = append(result.Errors, tombstoneResult.errors...)
+	if !remoteCalendarIsReadOnly(cal) {
+		// Phase 3: Process tombstones only when the server permits writes.
+		tombstoneResult, err := e.processTombstones(ctx, client, calendarID, remoteURL)
+		if err != nil {
+			e.logger.Warn("tombstone processing failed", "calendar_id", calendarID, "error", err)
+			result.Errors = append(result.Errors, fmt.Errorf("tombstones: %w", err))
+		} else {
+			result.Deleted += tombstoneResult.deleted
+			result.Conflicts += tombstoneResult.conflicts
+			result.Errors = append(result.Errors, tombstoneResult.errors...)
+		}
 	}
 
 	// Cleanup stale tombstones
@@ -280,6 +284,9 @@ func (e *Engine) PushCalendar(ctx context.Context, calendarID int64, strategy Co
 		return nil, err
 	}
 	result := &SyncResult{CalendarID: calendarID}
+	if remoteCalendarIsReadOnly(cal) {
+		return result, nil
+	}
 
 	pushResult, err := e.push(ctx, client, calendarID, remoteURL, resolvePushIdentity(cal, account), strategy)
 	if err != nil {
@@ -298,6 +305,10 @@ func (e *Engine) PushCalendar(ctx context.Context, calendarID int64, strategy Co
 		result.Errors = append(result.Errors, tombstoneResult.errors...)
 	}
 	return result, nil
+}
+
+func remoteCalendarIsReadOnly(cal storage.Calendar) bool {
+	return strings.EqualFold(strings.TrimSpace(cal.RemoteAccess), "read")
 }
 
 // maxSyncAllConcurrency bounds how many accounts SyncAll syncs at once. Each

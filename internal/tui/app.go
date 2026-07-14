@@ -992,6 +992,17 @@ func sortedCalendarListItems(calendars map[int64]CalendarInfo) []CalendarListIte
 	})
 	return items
 }
+func (m *Model) blockReadOnlyCalendarMutation(calendarID int64) (tea.Cmd, bool) {
+	info, ok := m.calendars[calendarID]
+	if !ok || !strings.EqualFold(strings.TrimSpace(info.RemoteAccess), "read") {
+		return nil, false
+	}
+	name := strings.TrimSpace(info.Name)
+	if name == "" {
+		name = "This calendar"
+	}
+	return m.toast.Failed(fmt.Sprintf("%s is read-only", name)), true
+}
 
 // syncHealthFor derives the sidebar health marker state from a calendar's
 // persisted sync fields. Local-only calendars (not Synced) get no marker;
@@ -1992,6 +2003,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case EventEditMsg:
+		if cmd, blocked := m.blockReadOnlyCalendarMutation(msg.Event.CalendarID); blocked {
+			return m, cmd
+		}
 		ev := msg.Event
 		// ev.StartTime carries the clicked occurrence's time for recurring
 		// events (queryEventsRange overwrites it with InstanceTime). The
@@ -2088,6 +2102,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case EventFormSaveMsg:
+		if cmd, blocked := m.blockReadOnlyCalendarMutation(msg.CalendarID); blocked {
+			return m, cmd
+		}
 		// editID is read from the live form model, not the message. The
 		// form's OnSubmit closure is bound before NewEventFormModelForEdit
 		// assigns editID, so EventFormSaveMsg cannot carry that value
@@ -2337,6 +2354,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case EventDeleteMsg:
+		if cmd, blocked := m.blockReadOnlyCalendarMutation(msg.Event.CalendarID); blocked {
+			return m, cmd
+		}
 		m.pendingDelete = msg.Event
 		if msg.Event.RecurrenceRule != "" {
 			m.pendingScopeKind = pendingScopeDelete

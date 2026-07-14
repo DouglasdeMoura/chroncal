@@ -17,6 +17,14 @@ var refreshGoogleTokenFn = auth.RefreshGoogleToken
 
 // NewClientFromCredential creates a CalDAV client using the provided credential.
 func NewClientFromCredential(endpoint string, cred auth.Credential, persist func(auth.Credential) error) (*Client, error) {
+	httpClient, err := httpClientFromCredential(cred, persist)
+	if err != nil {
+		return nil, err
+	}
+	return NewClient(httpClient, endpoint)
+}
+
+func httpClientFromCredential(cred auth.Credential, persist func(auth.Credential) error) (webdav.HTTPClient, error) {
 	switch {
 	case cred.AccessToken != "":
 		httpClient := &oauth2HTTPClient{
@@ -35,7 +43,9 @@ func NewClientFromCredential(endpoint string, cred auth.Credential, persist func
 					return "", time.Time{}, err
 				}
 				cred.AccessToken = refreshed.AccessToken
-				cred.RefreshToken = refreshed.RefreshToken
+				if refreshed.RefreshToken != "" {
+					cred.RefreshToken = refreshed.RefreshToken
+				}
 				cred.TokenExpiry = refreshed.Expiry.Format(time.RFC3339)
 				if persist != nil {
 					if err := persist(cred); err != nil {
@@ -45,10 +55,9 @@ func NewClientFromCredential(endpoint string, cred auth.Credential, persist func
 				return refreshed.AccessToken, refreshed.Expiry, nil
 			}
 		}
-		return NewClient(httpClient, endpoint)
+		return httpClient, nil
 	case cred.Password != "":
-		httpClient := webdav.HTTPClientWithBasicAuth(defaultHTTPClient, cred.Username, cred.Password)
-		return NewClient(httpClient, endpoint)
+		return webdav.HTTPClientWithBasicAuth(defaultHTTPClient, cred.Username, cred.Password), nil
 	default:
 		return nil, fmt.Errorf("credential has no password or access token")
 	}

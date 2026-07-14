@@ -128,7 +128,7 @@ func (s *Service) Discover(ctx context.Context, accountID int64, store auth.Cred
 	}
 	existingByURL := make(map[string]storage.Calendar, len(existingRows))
 	for _, row := range existingRows {
-		existingByURL[storage.NullableToString(row.RemoteUrl)] = row
+		existingByURL[remoteIdentityKey(storage.NullableToString(row.RemoteUrl))] = row
 	}
 	if err := qtx.MarkAccountCalendarsMissing(ctx, &accountID); err != nil {
 		return Discovery{}, fmt.Errorf("mark account calendars missing: %w", err)
@@ -137,15 +137,16 @@ func (s *Service) Discover(ctx context.Context, accountID int64, store auth.Cred
 	calendars := make([]DiscoveredCalendar, 0, len(found))
 	seen := make(map[string]struct{}, len(found))
 	for _, remote := range found {
-		if _, duplicate := seen[remote.Path]; duplicate {
+		key := remoteIdentityKey(remote.Path)
+		if _, duplicate := seen[key]; duplicate {
 			continue
 		}
-		seen[remote.Path] = struct{}{}
+		seen[key] = struct{}{}
 		remote.Name = remoteCalendarName(remote)
 		remote.Access = normalizedAccess(remote.Access)
 		remote.SupportedComponentSet = normalizedComponents(remote.SupportedComponentSet)
 		item := DiscoveredCalendar{RemoteCalendar: remote, Importable: supportsChroncal(remote.SupportedComponentSet)}
-		if local, ok := existingByURL[remote.Path]; ok {
+		if local, ok := existingByURL[key]; ok {
 			item.Imported = true
 			item.CalendarID = local.ID
 			if _, err := qtx.UpdateCalendarDiscovery(ctx, storage.UpdateCalendarDiscoveryParams{
@@ -153,8 +154,7 @@ func (s *Service) Discover(ctx context.Context, accountID int64, store auth.Cred
 				RemoteColor:      remote.Color,
 				RemoteAccess:     string(remote.Access),
 				RemoteComponents: strings.Join(remote.SupportedComponentSet, ","),
-				AccountID:        &accountID,
-				RemoteUrl:        storage.StringToNullable(remote.Path),
+				ID:               local.ID,
 			}); err != nil {
 				return Discovery{}, fmt.Errorf("update discovered calendar %q: %w", remote.Name, err)
 			}
@@ -193,7 +193,7 @@ func (s *Service) Import(ctx context.Context, discovery Discovery, selectedPaths
 	}
 	existingByURL := make(map[string]int64, len(existingRows))
 	for _, row := range existingRows {
-		existingByURL[storage.NullableToString(row.RemoteUrl)] = row.ID
+		existingByURL[remoteIdentityKey(storage.NullableToString(row.RemoteUrl))] = row.ID
 	}
 
 	result := ImportResult{}
@@ -210,7 +210,7 @@ func (s *Service) Import(ctx context.Context, discovery Discovery, selectedPaths
 		if !item.Importable {
 			return ImportResult{}, fmt.Errorf("calendar %q has no supported event, todo, or journal components", item.Name)
 		}
-		if id, ok := existingByURL[path]; ok {
+		if id, ok := existingByURL[remoteIdentityKey(path)]; ok {
 			result.ExistingIDs = append(result.ExistingIDs, id)
 			continue
 		}
@@ -234,7 +234,7 @@ func (s *Service) Import(ctx context.Context, discovery Discovery, selectedPaths
 		if err != nil {
 			return ImportResult{}, fmt.Errorf("import calendar %q: %w", item.Name, err)
 		}
-		existingByURL[path] = row.ID
+		existingByURL[remoteIdentityKey(path)] = row.ID
 		result.CreatedIDs = append(result.CreatedIDs, row.ID)
 	}
 	if err := tx.Commit(); err != nil {
@@ -276,6 +276,9 @@ func (s *Service) Delete(ctx context.Context, accountID int64, store auth.Creden
 }
 
 func discoverRemoteCalendars(ctx context.Context, account Account, cred auth.Credential, persist func(auth.Credential) error) ([]caldav.RemoteCalendar, error) {
+	if caldav.IsGoogleCalendarEndpoint(account.ServerURL) && cred.AccessToken != "" {
+		return caldav.DiscoverGoogleCalendars(ctx, cred, persist)
+	}
 	client, err := caldav.NewClientFromCredential(account.ServerURL, cred, persist)
 	if err != nil {
 		return nil, err
@@ -354,6 +357,17 @@ func remoteCalendarName(remote caldav.RemoteCalendar) string {
 		return "Remote calendar"
 	}
 	return path
+}
+
+func remoteIdentityKey(raw string) string {
+	raw = strings.TrimSpace(raw)
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return strings.TrimRight(raw, "/")
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	parsed.RawPath = ""
+	return parsed.String()
 }
 
 func fromStorage(row storage.Account) Account {

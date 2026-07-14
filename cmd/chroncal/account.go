@@ -23,7 +23,7 @@ account share one stored credential.`,
 		Args: rejectUnknownSubcommand,
 		RunE: groupRunE,
 	}
-	cmd.AddCommand(accountAddCmd(), accountListCmd(), accountDiscoverCmd())
+	cmd.AddCommand(accountAddCmd(), accountListCmd(), accountDiscoverCmd(), accountRemoveCmd())
 	return cmd
 }
 
@@ -185,6 +185,51 @@ func accountDiscoverCmd() *cobra.Command {
 	}
 	cmd.Flags().StringSliceVar(&selectCalendars, "select", nil, "calendar name or remote path to import (repeatable)")
 	cmd.Flags().BoolVar(&importAll, "all", false, "import every usable discovered calendar")
+	return cmd
+}
+
+func accountRemoveCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "remove <name|id>",
+		Short: "Remove an account while keeping downloaded calendars local",
+		Args:  exactOneArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			a, err := initApp()
+			if err != nil {
+				return err
+			}
+			defer a.Close()
+			ctx := context.Background()
+			configured, err := resolveAccount(ctx, a.Accounts, args[0])
+			if err != nil {
+				return err
+			}
+			question := fmt.Sprintf(
+				"Remove CalDAV account %q? Downloaded calendars will be kept locally, but remote links and stored credentials will be removed.",
+				textsafe.Display(configured.DisplayName),
+			)
+			if err := confirmDestructive(cmd, question); err != nil {
+				return err
+			}
+			store, err := newCalendarCredentialStore(a.AllowPlaintext)
+			if err != nil {
+				return fmt.Errorf("credential store: %w", err)
+			}
+			if err := a.Accounts.Delete(ctx, configured.ID, store); err != nil {
+				return err
+			}
+			if outputFmt != "text" {
+				return printOutput(cmd.OutOrStdout(), map[string]any{
+					"account_id": configured.ID,
+					"removed":    true,
+				})
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Removed account %q; downloaded calendars are now local.\n",
+				textsafe.Display(configured.DisplayName))
+			return nil
+		},
+	}
+	addConfirmFlag(cmd)
 	return cmd
 }
 

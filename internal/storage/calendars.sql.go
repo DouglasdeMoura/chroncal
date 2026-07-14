@@ -529,8 +529,7 @@ UPDATE calendars SET
     remote_components = ?4,
     remote_missing = 0,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE account_id = ?5
-  AND remote_url = ?6
+WHERE id = ?5
 RETURNING id
 `
 
@@ -539,8 +538,7 @@ type UpdateCalendarDiscoveryParams struct {
 	RemoteColor      interface{}
 	RemoteAccess     string
 	RemoteComponents string
-	AccountID        *int64
-	RemoteUrl        *string
+	ID               int64
 }
 
 func (q *Queries) UpdateCalendarDiscovery(ctx context.Context, arg UpdateCalendarDiscoveryParams) (int64, error) {
@@ -549,8 +547,7 @@ func (q *Queries) UpdateCalendarDiscovery(ctx context.Context, arg UpdateCalenda
 		arg.RemoteColor,
 		arg.RemoteAccess,
 		arg.RemoteComponents,
-		arg.AccountID,
-		arg.RemoteUrl,
+		arg.ID,
 	)
 	var id int64
 	err := row.Scan(&id)

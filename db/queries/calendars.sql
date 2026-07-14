@@ -134,8 +134,7 @@ UPDATE calendars SET
     remote_components = sqlc.arg(remote_components),
     remote_missing = 0,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE account_id = sqlc.arg(account_id)
-  AND remote_url = sqlc.arg(remote_url)
+WHERE id = sqlc.arg(id)
 RETURNING id;
 
 -- name: ClearRemoteLinksByAccount :exec
