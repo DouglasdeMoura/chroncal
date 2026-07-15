@@ -22,3 +22,28 @@ func TestCalendarDialogEnableSyncSwitchesToConnectionStep(t *testing.T) {
 		}
 	}
 }
+
+func TestCalendarDialogLinkedCalendarOffersAdditionalCalendarDiscovery(t *testing.T) {
+	m := NewCalendarDialogModel(CalendarDialogParams{
+		ID:           11,
+		AccountID:    7,
+		Name:         "Personal",
+		Color:        "#a6e3a1",
+		RemoteLinked: true,
+	}, Theme{}).SetSize(120, 40)
+
+	for _, button := range m.form.actionButtons {
+		if button.Label != "Add calendars" {
+			continue
+		}
+		msg, ok := button.OnPress().(CalendarDiscoverAdditionalRequestedMsg)
+		if !ok {
+			t.Fatalf("Add calendars message = %T", button.OnPress())
+		}
+		if msg.CalendarID != 11 || msg.AccountID != 7 {
+			t.Fatalf("Add calendars message = %+v", msg)
+		}
+		return
+	}
+	t.Fatal("linked calendar dialog does not offer Add calendars")
+}

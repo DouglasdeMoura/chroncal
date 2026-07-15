@@ -19,6 +19,7 @@ import (
 // the calendar is currently connected to a remote CalDAV account.
 type CalendarDialogParams struct {
 	ID           int64
+	AccountID    int64
 	Name         string
 	Color        string // hex like "#a6e3a1"
 	Description  string
@@ -85,6 +86,13 @@ type CalendarDiscoveryRequestedMsg struct {
 	OAuthClientID     string
 	OAuthClientSecret string
 	AllowInsecure     bool
+}
+
+// CalendarDiscoverAdditionalRequestedMsg rediscovers the account backing an
+// edited remote calendar and opens the integrated collection picker.
+type CalendarDiscoverAdditionalRequestedMsg struct {
+	CalendarID int64
+	AccountID  int64
 }
 
 type calendarConnectionBackMsg struct{}
@@ -398,6 +406,17 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		name := params.Name
 		form.SetLeadingActionButton("Set as Default", Button, func() tea.Msg {
 			return CalendarSetDefaultRequestedMsg{ID: id, Name: name}
+		})
+	}
+
+	if params.RemoteLinked && params.AccountID > 0 {
+		calendarID := params.ID
+		accountID := params.AccountID
+		form.SetLeadingActionButton("Add calendars", Button, func() tea.Msg {
+			return CalendarDiscoverAdditionalRequestedMsg{
+				CalendarID: calendarID,
+				AccountID:  accountID,
+			}
 		})
 	}
 
@@ -780,6 +799,11 @@ func (m CalendarDialogModel) ShowDiscovery(discovery account.Discovery) Calendar
 	picker := NewAccountCalendarPickerModel(discovery, m.theme).
 		SetSize(m.dialog.width, m.dialog.height)
 	m.discoveryPicker = &picker
+	return m
+}
+
+func (m CalendarDialogModel) HideDiscovery() CalendarDialogModel {
+	m.discoveryPicker = nil
 	return m
 }
 

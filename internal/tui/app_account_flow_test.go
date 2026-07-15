@@ -90,3 +90,76 @@ func TestExistingCalendarDiscoveryAccountMatchesConnectionIdentity(t *testing.T)
 		t.Fatalf("matched account = %+v, %v; want ID 7", got, ok)
 	}
 }
+
+func TestAppAdditionalCalendarDiscoveryReturnsToUnsavedEditFormOnCancel(t *testing.T) {
+	m := NewModel(nil, "")
+	m.width, m.height = 120, 40
+	m.calendarDialog = NewCalendarDialogModel(CalendarDialogParams{
+		ID:           11,
+		AccountID:    7,
+		Name:         "Personal",
+		Color:        "#a6e3a1",
+		RemoteLinked: true,
+	}, m.theme).SetSize(m.width, m.height)
+	m.calendarDialogOpen = true
+	m.calendarDialog.form.Field(cdIdxName).(*TextField).SetValue("Unsaved rename")
+
+	updated, cmd := m.Update(CalendarDiscoverAdditionalRequestedMsg{CalendarID: 11, AccountID: 7})
+	m = updated.(Model)
+	if cmd == nil || !m.syncing || !m.discoveryReturnToEdit {
+		t.Fatalf("additional discovery start: cmd=%v syncing=%v returnToEdit=%v",
+			cmd, m.syncing, m.discoveryReturnToEdit)
+	}
+
+	updated, _ = m.Update(accountDiscoveryReadyMsg{discovery: pickerDiscovery()})
+	m = updated.(Model)
+	if m.calendarDialog.discoveryPicker == nil {
+		t.Fatal("additional discovery did not open the picker")
+	}
+
+	updated, _ = m.Update(AccountCalendarPickerClosedMsg{})
+	m = updated.(Model)
+	if !m.calendarDialogOpen || m.calendarDialog.discoveryPicker != nil {
+		t.Fatalf("picker cancel: calendarDialog=%v picker=%v",
+			m.calendarDialogOpen, m.calendarDialog.discoveryPicker != nil)
+	}
+	if got := m.calendarDialog.form.Field(cdIdxName).(*TextField).Value(); got != "Unsaved rename" {
+		t.Fatalf("unsaved name after picker cancel = %q", got)
+	}
+}
+
+func TestAppAdditionalCalendarImportReturnsToUnsavedEditForm(t *testing.T) {
+	m := NewModel(nil, "")
+	m.width, m.height = 120, 40
+	m.calendarDialog = NewCalendarDialogModel(CalendarDialogParams{
+		ID:           11,
+		AccountID:    7,
+		Name:         "Personal",
+		Color:        "#a6e3a1",
+		RemoteLinked: true,
+	}, m.theme).SetSize(m.width, m.height)
+	m.calendarDialog.form.Field(cdIdxName).(*TextField).SetValue("Unsaved rename")
+	m.calendarDialog = m.calendarDialog.ShowDiscovery(pickerDiscovery()).SetSize(m.width, m.height)
+	m.calendarDialogOpen = true
+	m.discoveryReturnToEdit = true
+
+	updated, cmd := m.Update(AccountCalendarsImportRequestedMsg{
+		AccountID: 7,
+		Paths:     []string{"/holidays/"},
+	})
+	m = updated.(Model)
+	if cmd == nil || m.calendarDialogOpen || !m.syncing {
+		t.Fatalf("calendar import start: cmd=%v dialog=%v syncing=%v",
+			cmd, m.calendarDialogOpen, m.syncing)
+	}
+
+	updated, _ = m.Update(accountImportFinishedMsg{created: 1, synced: 1})
+	m = updated.(Model)
+	if !m.calendarDialogOpen || m.calendarDialog.discoveryPicker != nil {
+		t.Fatalf("calendar import finish: dialog=%v picker=%v",
+			m.calendarDialogOpen, m.calendarDialog.discoveryPicker != nil)
+	}
+	if got := m.calendarDialog.form.Field(cdIdxName).(*TextField).Value(); got != "Unsaved rename" {
+		t.Fatalf("unsaved name after calendar import = %q", got)
+	}
+}
