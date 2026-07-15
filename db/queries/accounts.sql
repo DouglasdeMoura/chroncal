@@ -3,6 +3,15 @@ INSERT INTO accounts (name, server_url, auth_type, username)
 VALUES (?, ?, ?, ?)
 RETURNING *;
 
+-- name: AdvanceCurrentCredentialAccountWatermark :exec
+UPDATE credential_locations
+SET max_account_id = MAX(max_account_id, ?)
+WHERE location = (
+    SELECT current_location
+    FROM credential_namespace
+    WHERE id = 1
+);
+
 -- name: GetAccount :one
 SELECT * FROM accounts WHERE id = ?;
 

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/caldav"
 )
 
@@ -20,6 +21,10 @@ type Account struct {
 	Username    string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+}
+
+func (a Account) CredentialFingerprint() string {
+	return auth.AccountFingerprint(a.ServerURL, a.AuthType, a.Username)
 }
 
 // UserFacingName hides the old per-calendar implementation name when loading

@@ -66,12 +66,14 @@ func DiscoverGoogleCalendars(ctx context.Context, cred auth.Credential, persist 
 				name = strings.TrimSpace(item.Summary)
 			}
 			calendars = append(calendars, RemoteCalendar{
-				Path:                  googleCalDAVCollectionURL(item.ID),
-				Name:                  name,
-				Description:           strings.TrimSpace(item.Description),
-				Color:                 NormalizeCalendarColor(item.BackgroundColor),
-				Access:                googleCalendarAccess(item.AccessRole),
-				SupportedComponentSet: []string{"VEVENT"},
+				Path:        googleCalDAVCollectionURL(item.ID),
+				Name:        name,
+				Description: strings.TrimSpace(item.Description),
+				Color:       NormalizeCalendarColor(item.BackgroundColor),
+				Access:      googleCalendarAccess(item.AccessRole),
+				// A freeBusyReader can only query availability, never actual
+				// events, so it must not be offered for VEVENT import.
+				SupportedComponentSet: googleSupportedComponents(item.AccessRole),
 			})
 		}
 
@@ -80,7 +82,7 @@ func DiscoverGoogleCalendars(ctx context.Context, cred auth.Credential, persist 
 			return calendars, nil
 		}
 		if _, duplicate := seenTokens[pageToken]; duplicate {
-			return nil, fmt.Errorf("Google CalendarList repeated page token %q", pageToken)
+			return nil, fmt.Errorf("google CalendarList repeated page token %q", pageToken)
 		}
 		seenTokens[pageToken] = struct{}{}
 	}
@@ -110,11 +112,11 @@ func fetchGoogleCalendarListPage(ctx context.Context, client googleHTTPClient, p
 		}
 		resp, err := client.Do(req)
 		if err != nil {
-			return googleCalendarListResponse{}, fmt.Errorf("Google CalendarList request: %w", err)
+			return googleCalendarListResponse{}, fmt.Errorf("google CalendarList request: %w", err)
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode/100 != 2 {
-			return googleCalendarListResponse{}, fmt.Errorf("Google CalendarList: %w", httpError(resp))
+			return googleCalendarListResponse{}, fmt.Errorf("google CalendarList: %w", httpError(resp))
 		}
 
 		limited := &io.LimitedReader{R: resp.Body, N: maxHTTPResponseBytes + 1}
@@ -148,4 +150,15 @@ func googleCalendarAccess(role string) CalendarAccess {
 	default:
 		return CalendarAccessUnknown
 	}
+}
+
+// googleSupportedComponents reports the iCalendar components a Google calendar
+// exposes. VFREEBUSY is explicit rather than an empty set because empty
+// capability metadata means "unknown; allow legacy imports" to account
+// discovery, while freeBusyReader is known not to expose event resources.
+func googleSupportedComponents(role string) []string {
+	if strings.EqualFold(strings.TrimSpace(role), "freeBusyReader") {
+		return []string{"VFREEBUSY"}
+	}
+	return []string{"VEVENT"}
 }

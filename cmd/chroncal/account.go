@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -47,7 +48,7 @@ func accountAddCmd() *cobra.Command {
 			defer a.Close()
 			ctx := context.Background()
 
-			store, err := newCalendarCredentialStore(a.AllowPlaintext)
+			store, err := newCalendarCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
 			if err != nil {
 				return fmt.Errorf("credential store: %w", err)
 			}
@@ -141,7 +142,7 @@ func accountDiscoverCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			store, err := newCalendarCredentialStore(a.AllowPlaintext)
+			store, err := newCalendarCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
 			if err != nil {
 				return fmt.Errorf("credential store: %w", err)
 			}
@@ -211,7 +212,7 @@ func accountRemoveCmd() *cobra.Command {
 			if err := confirmDestructive(cmd, question); err != nil {
 				return err
 			}
-			store, err := newCalendarCredentialStore(a.AllowPlaintext)
+			store, err := newCalendarCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
 			if err != nil {
 				return fmt.Errorf("credential store: %w", err)
 			}
@@ -237,7 +238,7 @@ func resolveAccount(ctx context.Context, service *account.Service, ref string) (
 	if id, err := strconv.ParseInt(ref, 10, 64); err == nil {
 		item, err := service.Get(ctx, id)
 		if err != nil {
-			if err == sql.ErrNoRows {
+			if errors.Is(err, sql.ErrNoRows) {
 				return account.Account{}, notFoundErr(err, "account", ref)
 			}
 			return account.Account{}, err
@@ -248,12 +249,20 @@ func resolveAccount(ctx context.Context, service *account.Service, ref string) (
 	if err != nil {
 		return account.Account{}, err
 	}
+	var matches []account.Account
 	for _, item := range accounts {
-		if item.Name == ref || item.DisplayName == ref {
-			return item, nil
+		if strings.EqualFold(item.Name, ref) || strings.EqualFold(item.DisplayName, ref) {
+			matches = append(matches, item)
 		}
 	}
-	return account.Account{}, &cliError{Code: "not_found", Msg: fmt.Sprintf("account %q not found", ref)}
+	switch len(matches) {
+	case 0:
+		return account.Account{}, &cliError{Code: "not_found", Msg: fmt.Sprintf("account %q not found", ref)}
+	case 1:
+		return matches[0], nil
+	default:
+		return account.Account{}, &cliError{Code: "not_found", Msg: fmt.Sprintf("account name %q is ambiguous; use its numeric ID instead", ref)}
+	}
 }
 
 func resolveDiscoveredSelections(discovery account.Discovery, refs []string) ([]string, error) {

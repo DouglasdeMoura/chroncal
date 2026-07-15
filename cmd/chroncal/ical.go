@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/douglasdemoura/chroncal/internal/app"
+	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/ical"
 	"github.com/douglasdemoura/chroncal/internal/journal"
@@ -75,6 +78,9 @@ again updates existing items instead of blindly duplicating them.`,
 
 			calID, err := resolveCalendarID(ctx, a, calendarName)
 			if err != nil {
+				return err
+			}
+			if err := ensureICalImportAllowed(ctx, a, calID, result); err != nil {
 				return err
 			}
 
@@ -161,6 +167,80 @@ type icalImportSummary struct {
 	// skipped entirely). Child-field failures are recorded as warnings
 	// instead, since the parent component itself did land.
 	failed int
+}
+
+// ensureICalImportAllowed validates every component family and every existing
+// source row before the first write. This prevents both partial mixed imports
+// and UID upserts that would move data out of a read-only remote collection.
+func ensureICalImportAllowed(ctx context.Context, a *app.App, calendarID int64, result ical.ImportResult) error {
+	checkDestination := func(present bool, component string) error {
+		if !present {
+			return nil
+		}
+		if err := calendaraccess.EnsureWritable(ctx, a.Queries, calendarID, component); err != nil {
+			return fmt.Errorf("import %s: %w", component, err)
+		}
+		return nil
+	}
+	for _, check := range []struct {
+		present   bool
+		component string
+	}{
+		{present: len(result.Events) > 0, component: "VEVENT"},
+		{present: len(result.Todos) > 0, component: "VTODO"},
+		{present: len(result.Journals) > 0, component: "VJOURNAL"},
+	} {
+		if err := checkDestination(check.present, check.component); err != nil {
+			return err
+		}
+	}
+
+	checkSource := func(sourceID int64, component, uid string) error {
+		if sourceID == calendarID {
+			return nil
+		}
+		if err := calendaraccess.EnsureWritable(ctx, a.Queries, sourceID, component); err != nil {
+			return fmt.Errorf("import %s UID %q from calendar %d: %w", component, uid, sourceID, err)
+		}
+		return nil
+	}
+	for _, imported := range result.Events {
+		existing, err := a.Queries.GetEventByUIDAndRecurrenceID(ctx, storage.GetEventByUIDAndRecurrenceIDParams{
+			Uid: imported.UID, RecurrenceID: imported.RecurrenceID,
+		})
+		if err == nil {
+			if err := checkSource(existing.CalendarID, "VEVENT", imported.UID); err != nil {
+				return err
+			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("check existing VEVENT UID %q: %w", imported.UID, err)
+		}
+	}
+	for _, imported := range result.Todos {
+		existing, err := a.Queries.GetTodoByUIDAndRecurrenceID(ctx, storage.GetTodoByUIDAndRecurrenceIDParams{
+			Uid: imported.UID, RecurrenceID: imported.RecurrenceID,
+		})
+		if err == nil {
+			if err := checkSource(existing.CalendarID, "VTODO", imported.UID); err != nil {
+				return err
+			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("check existing VTODO UID %q: %w", imported.UID, err)
+		}
+	}
+	for _, imported := range result.Journals {
+		existing, err := a.Queries.GetJournalByUIDAndRecurrenceID(ctx, storage.GetJournalByUIDAndRecurrenceIDParams{
+			Uid: imported.UID, RecurrenceID: imported.RecurrenceID,
+		})
+		if err == nil {
+			if err := checkSource(existing.CalendarID, "VJOURNAL", imported.UID); err != nil {
+				return err
+			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("check existing VJOURNAL UID %q: %w", imported.UID, err)
+		}
+	}
+	return nil
 }
 
 // importComponents upserts the parsed timezones, events, todos, and journals

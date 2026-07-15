@@ -201,6 +201,13 @@ func TestCalendarList_GroupsCalendarsByAccount(t *testing.T) {
 		t.Fatalf("row count = %d, want three headers plus four calendars", m.RowCount())
 	}
 }
+func TestCalendarList_AccountHeadersHaveNoCalendarMarker(t *testing.T) {
+	for line := range strings.SplitSeq(stripANSI(groupedListFixture().View()), "\n") {
+		if strings.Contains(line, "Google") && strings.ContainsAny(line, "●○◐") {
+			t.Fatalf("account header must not render a calendar marker: %q", line)
+		}
+	}
+}
 
 func TestCalendarList_AccountHeaderCollapsesChildren(t *testing.T) {
 	m := groupedListFixture()

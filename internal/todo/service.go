@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
@@ -156,6 +157,7 @@ const (
 	defaultClass  = "PUBLIC"
 	alarmAction   = "DISPLAY"
 	alarmRelated  = "START"
+	todoComponent = "VTODO"
 )
 
 var ErrInvalidTiming = errors.New("invalid todo timing")
@@ -352,7 +354,54 @@ func (s *Service) markDirtyByID(ctx context.Context, todoID int64) {
 	_ = storage.MarkResourceDirty(ctx, s.dirtyExec(), r.CalendarID, r.Uid, "todo")
 }
 
+// todoCalendarIDsByUID returns the distinct calendar IDs of every row sharing
+// uid — live or soft-deleted. A series-wide guard needs this so orphaned
+// overrides and series-tail rows stay protected even after the master has been
+// purged independently (GetTodoByUIDIncludingDeleted returns no row then, so a
+// master-only lookup would skip the guard). This is a read-only guard helper
+// written as raw SQL rather than a sqlc query so it stays local to the todo
+// domain; regenerating storage would churn shared generated files.
+func (s *Service) todoCalendarIDsByUID(ctx context.Context, uid string) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT calendar_id FROM todos WHERE uid = ?`, uid)
+	if err != nil {
+		return nil, fmt.Errorf("list todo calendar ids: %w", err)
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan todo calendar id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("todo calendar ids: %w", err)
+	}
+	return ids, nil
+}
+
+// ensureSeriesWritable guards every calendar a UID spans before a series-wide
+// mutation (DeleteSeries, RestoreByUID). Resolving distinct calendar IDs across
+// all rows sharing the UID — not just the master — covers overrides and
+// series-tail rows when the master row has been purged.
+func (s *Service) ensureSeriesWritable(ctx context.Context, uid string) error {
+	ids, err := s.todoCalendarIDsByUID(ctx, uid)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := calendaraccess.EnsureWritable(ctx, s.q, id, todoComponent); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Service) Create(ctx context.Context, p CreateParams) (Todo, error) {
+	if err := calendaraccess.EnsureWritable(ctx, s.q, p.CalendarID, todoComponent); err != nil {
+		return Todo{}, err
+	}
 	p.applyDefaults()
 	if err := validateTiming(p.DueDate, p.StartDate, p.Duration); err != nil {
 		return Todo{}, err
@@ -415,6 +464,21 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Todo, error) {
 }
 
 func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, error) {
+	existing, err := s.q.GetTodo(ctx, id)
+	if err != nil {
+		return Todo{}, err
+	}
+	// Reject writes the linked remote collection cannot accept before any
+	// side effect: guard the source calendar (where the todo lives) and, on a
+	// move, the destination calendar too.
+	if err := calendaraccess.EnsureWritable(ctx, s.q, existing.CalendarID, todoComponent); err != nil {
+		return Todo{}, err
+	}
+	if p.CalendarID != existing.CalendarID {
+		if err := calendaraccess.EnsureWritable(ctx, s.q, p.CalendarID, todoComponent); err != nil {
+			return Todo{}, err
+		}
+	}
 	p.Status, p.Class = defaults(p.Status, p.Class)
 	p.CompletedAt = completedAtFor(p.Status, p.CompletedAt)
 	p.PercentComplete = percentCompleteFor(p.Status, p.PercentComplete)
@@ -469,6 +533,13 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, e
 }
 
 func (s *Service) Complete(ctx context.Context, id int64) (Todo, error) {
+	existing, err := s.q.GetTodo(ctx, id)
+	if err != nil {
+		return Todo{}, err
+	}
+	if err := calendaraccess.EnsureWritable(ctx, s.q, existing.CalendarID, todoComponent); err != nil {
+		return Todo{}, err
+	}
 	r, err := s.q.CompleteTodo(ctx, id)
 	if err != nil {
 		return Todo{}, err
@@ -547,6 +618,9 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		return err
 	}
 
+	if err := calendaraccess.EnsureWritable(ctx, s.q, td.CalendarID, todoComponent); err != nil {
+		return err
+	}
 	// RDATE-only masters (no RRULE) are recurring too, so guard on either rule
 	// or RDATEs; otherwise their overrides would be orphaned (#415).
 	if (td.RecurrenceRule != "" || td.RDates != "") && td.RecurrenceID == "" {
@@ -651,6 +725,14 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 // the next push sends DELETE to the server; the local rows stay in
 // place until purge so the user can restore them.
 func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
+	// Resolve every calendar the UID spans before opening a transaction so a
+	// read-only or VEVENT-only collection rejects the whole series delete up
+	// front. Distinct calendar IDs across all rows (not just the master)
+	// cover orphaned overrides and series-tail rows even after the master has
+	// been purged independently.
+	if err := s.ensureSeriesWritable(ctx, uid); err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)

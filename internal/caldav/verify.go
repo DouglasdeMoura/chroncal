@@ -16,6 +16,7 @@ type verifyMultiStatus struct {
 }
 
 type verifyResponse struct {
+	Href      string           `xml:"DAV: href"`
 	PropStats []verifyPropStat `xml:"DAV: propstat"`
 }
 
@@ -25,10 +26,12 @@ type verifyPropStat struct {
 }
 
 type verifyPropSet struct {
-	DisplayName       string                        `xml:"DAV: displayname"`
-	ResourceType      verifyResourceTypeEl          `xml:"DAV: resourcetype"`
-	CalendarColor     string                        `xml:"http://apple.com/ns/ical/ calendar-color"`
-	CurrentPrivileges verifyCurrentUserPrivilegeSet `xml:"DAV: current-user-privilege-set"`
+	DisplayName         string                              `xml:"DAV: displayname"`
+	ResourceType        verifyResourceTypeEl                `xml:"DAV: resourcetype"`
+	CalendarDescription string                              `xml:"urn:ietf:params:xml:ns:caldav calendar-description"`
+	CalendarColor       string                              `xml:"http://apple.com/ns/ical/ calendar-color"`
+	SupportedComponents verifySupportedCalendarComponentSet `xml:"urn:ietf:params:xml:ns:caldav supported-calendar-component-set"`
+	CurrentPrivileges   verifyCurrentUserPrivilegeSet       `xml:"DAV: current-user-privilege-set"`
 }
 
 type verifyCurrentUserPrivilegeSet struct {
@@ -47,6 +50,18 @@ type verifyResourceTypeEl struct {
 	Calendar *struct{} `xml:"urn:ietf:params:xml:ns:caldav calendar"`
 }
 
+// verifySupportedCalendarComponentSet mirrors RFC 4791 §5.2.3: the set of
+// iCalendar components (VEVENT, VTODO, VJOURNAL) a calendar collection
+// accepts. It is parsed from the calendar-home-set batch so callers can tell
+// which calendars accept event imports without a per-calendar PROPFIND.
+type verifySupportedCalendarComponentSet struct {
+	Components []verifyComp `xml:"urn:ietf:params:xml:ns:caldav comp"`
+}
+
+type verifyComp struct {
+	Name string `xml:"name,attr"`
+}
+
 // CalendarAccess is the effective write capability advertised by a remote
 // calendar. Unknown is distinct from read-only because some servers, notably
 // Google CalDAV, do not implement WebDAV ACL properties.
@@ -59,13 +74,12 @@ const (
 	CalendarAccessOwner   CalendarAccess = "owner"
 )
 
-// CalendarMetadata holds the user-visible properties advertised by a CalDAV
-// calendar collection: the server's display name and the Apple-style
-// calendar-color extension (used by Google, Apple, Fastmail, and others).
+// CalendarMetadata holds collection metadata needed at direct-link time.
 type CalendarMetadata struct {
-	DisplayName string
-	Color       string
-	Access      CalendarAccess
+	DisplayName         string
+	Color               string
+	Access              CalendarAccess
+	SupportedComponents []string
 }
 
 // VerifyCalendarURL performs a PROPFIND at the user-supplied calendar URL to
@@ -125,6 +139,7 @@ func fetchCalendarMetadata(ctx context.Context, calendarURL string, httpClient w
     <d:resourcetype/>
     <d:displayname/>
     <d:current-user-privilege-set/>
+    <c:supported-calendar-component-set/>
     <ic:calendar-color/>
   </d:prop>
 </d:propfind>`
@@ -176,6 +191,9 @@ func fetchCalendarMetadata(ctx context.Context, calendarURL string, httpClient w
 			if meta.Access == "" {
 				meta.Access = calendarAccessFromPrivileges(ps.Prop.CurrentPrivileges)
 			}
+			if meta.SupportedComponents == nil && len(ps.Prop.SupportedComponents.Components) > 0 {
+				meta.SupportedComponents = componentNames(ps.Prop.SupportedComponents)
+			}
 			if ps.Prop.ResourceType.Calendar != nil {
 				isCalendar = true
 			}
@@ -191,19 +209,46 @@ func fetchCalendarMetadata(ctx context.Context, calendarURL string, httpClient w
 }
 
 func calendarAccessFromPrivileges(set verifyCurrentUserPrivilegeSet) CalendarAccess {
-	readable := false
+	var hasAll, hasWrite, hasOwner bool
+	var hasWriteProperties, hasWriteContent, hasBind, hasUnbind, readable bool
 	for _, privilege := range set.Privileges {
 		for _, name := range privilege.Names {
 			if name.XMLName.Space != "DAV:" {
 				continue
 			}
 			switch name.XMLName.Local {
-			case "all", "write", "write-content", "write-properties", "bind", "unbind":
-				return CalendarAccessWrite
+			case "all":
+				hasAll = true
+			case "write":
+				hasWrite = true
+			case "owner":
+				// Non-standard but emitted by some CalDAV servers as an
+				// aggregate implying full control. Treat it like all/write.
+				hasOwner = true
+			case "write-properties":
+				hasWriteProperties = true
+			case "write-content":
+				hasWriteContent = true
+			case "bind":
+				hasBind = true
+			case "unbind":
+				hasUnbind = true
 			case "read":
 				readable = true
 			}
 		}
+	}
+	// Aggregate privileges imply the full write path chroncal needs.
+	if hasAll || hasWrite || hasOwner {
+		return CalendarAccessWrite
+	}
+	// Granular rights are only enough when every operation chroncal sends is
+	// granted: write-properties (color/name at link time), write-content
+	// (object PUT), and bind/unbind (create/delete objects). A partial set is
+	// treated conservatively as read-only rather than risking an unsupported
+	// write.
+	if hasWriteProperties && hasWriteContent && hasBind && hasUnbind {
+		return CalendarAccessWrite
 	}
 	if readable {
 		return CalendarAccessRead

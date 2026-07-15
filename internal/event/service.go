@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
@@ -324,9 +325,76 @@ func (s *Service) markDirtyByID(ctx context.Context, eventID int64) {
 	_ = storage.MarkResourceDirty(ctx, s.dirtyExec(), r.CalendarID, r.Uid, "event")
 }
 
+// ensureEventWritable resolves an event by ID and enforces remote
+// access/component policy for a user-originated edit. For a cross-calendar
+// move (destCalID set and different from the event's current calendar) the
+// destination calendar is validated too, so a move into a read-only or
+// VEVENT-less collection fails before any row is written.
+func (s *Service) ensureEventWritable(ctx context.Context, eventID, destCalID int64) error {
+	r, err := s.q.GetEvent(ctx, eventID)
+	if err != nil {
+		return err
+	}
+	if err := calendaraccess.EnsureWritable(ctx, s.q, r.CalendarID, "VEVENT"); err != nil {
+		return err
+	}
+	if destCalID != 0 && destCalID != r.CalendarID {
+		if err := calendaraccess.EnsureWritable(ctx, s.q, destCalID, "VEVENT"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// distinctCalendarIDsByUID returns every calendar that any event row — master,
+// overrides, or series-tail leftovers — with the given UID lives on. A
+// recurring series can leave orphaned rows behind after the master is purged
+// independently (the trash view supports series tails), so a UID-keyed
+// mutation must enforce policy on each of these calendars rather than only
+// the master's.
+func (s *Service) distinctCalendarIDsByUID(ctx context.Context, uid string) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT calendar_id FROM events WHERE uid = ?`, uid)
+	if err != nil {
+		return nil, fmt.Errorf("distinct calendar ids: %w", err)
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan calendar id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate calendar ids: %w", err)
+	}
+	return ids, nil
+}
+
+// ensureSeriesWritable enforces remote access/component policy on every
+// calendar the UID touches, so a series delete or restore is blocked even when
+// only orphaned overrides or series-tail rows remain after a master purge.
+func (s *Service) ensureSeriesWritable(ctx context.Context, uid string) error {
+	ids, err := s.distinctCalendarIDsByUID(ctx, uid)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := calendaraccess.EnsureWritable(ctx, s.q, id, "VEVENT"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
 	p.applyDefaults()
 
+	if err := calendaraccess.EnsureWritable(ctx, s.q, p.CalendarID, "VEVENT"); err != nil {
+		return Event{}, err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Event{}, fmt.Errorf("begin tx: %w", err)
@@ -384,6 +452,9 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
 func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, error) {
 	p.applyDefaults()
 
+	if err := s.ensureEventWritable(ctx, id, p.CalendarID); err != nil {
+		return Event{}, err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Event{}, fmt.Errorf("begin tx: %w", err)
@@ -410,6 +481,9 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, 
 func (s *Service) UpdateWithRelations(ctx context.Context, id int64, p UpdateParams, attendees []model.Attendee, alarms []model.Alarm) (Event, error) {
 	p.applyDefaults()
 
+	if err := s.ensureEventWritable(ctx, id, p.CalendarID); err != nil {
+		return Event{}, err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Event{}, fmt.Errorf("begin tx: %w", err)
@@ -528,6 +602,10 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		return err
 	}
 	evt := FromStorage(r)
+
+	if err := calendaraccess.EnsureWritable(ctx, s.q, evt.CalendarID, "VEVENT"); err != nil {
+		return err
+	}
 
 	// If this is a recurring master, check for overrides. RDATE-only masters
 	// (no RRULE) are recurring too, so guard on either rule or RDATEs (#415).
@@ -649,6 +727,9 @@ func (s *Service) DeleteInstance(ctx context.Context, uid string, instanceTime t
 	master, err := qtx.GetEventByUID(ctx, uid)
 	if err != nil {
 		return fmt.Errorf("get master: %w", err)
+	}
+	if err := calendaraccess.EnsureWritable(ctx, qtx, master.CalendarID, "VEVENT"); err != nil {
+		return err
 	}
 
 	existing := ParseTimeList(storage.NullableToString(master.Exdates))
@@ -808,6 +889,9 @@ func (s *Service) deleteFromInstance(ctx context.Context, uid string, instanceTi
 	if err != nil {
 		return "", fmt.Errorf("get master: %w", err)
 	}
+	if err := calendaraccess.EnsureWritable(ctx, qtx, master.CalendarID, "VEVENT"); err != nil {
+		return "", err
+	}
 
 	// An RDATE-only master (no RRULE) has no recurrence rule to truncate.
 	// Synthesizing an "UNTIL=..." here would be an invalid bare RRULE that fails
@@ -912,6 +996,14 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 	master, err := qtx.GetEventByUID(ctx, uid)
 	if err != nil {
 		return Event{}, 0, fmt.Errorf("get master: %w", err)
+	}
+	if err := calendaraccess.EnsureWritable(ctx, qtx, master.CalendarID, "VEVENT"); err != nil {
+		return Event{}, 0, err
+	}
+	if p.CalendarID != 0 && p.CalendarID != master.CalendarID {
+		if err := calendaraccess.EnsureWritable(ctx, qtx, p.CalendarID, "VEVENT"); err != nil {
+			return Event{}, 0, err
+		}
 	}
 	recID := instanceTime.UTC().Format(time.RFC3339)
 
@@ -1106,6 +1198,14 @@ func updateFromInstanceTx(ctx context.Context, qtx *storage.Queries, uid string,
 	if err != nil {
 		return Event{}, 0, fmt.Errorf("get master: %w", err)
 	}
+	if err := calendaraccess.EnsureWritable(ctx, qtx, master.CalendarID, "VEVENT"); err != nil {
+		return Event{}, 0, err
+	}
+	if p.CalendarID != 0 && p.CalendarID != master.CalendarID {
+		if err := calendaraccess.EnsureWritable(ctx, qtx, p.CalendarID, "VEVENT"); err != nil {
+			return Event{}, 0, err
+		}
+	}
 
 	// An RDATE-only master (no RRULE) has no recurrence rule to truncate;
 	// synthesizing an "UNTIL=..." would corrupt it into an unparseable RRULE
@@ -1201,6 +1301,9 @@ func setRRuleUntil(rule string, until time.Time, allDay bool) string {
 
 // DeleteSeries deletes a recurring master event and all its overrides.
 func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
+	if err := s.ensureSeriesWritable(ctx, uid); err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -1590,6 +1693,18 @@ func (s *Service) ListAttendees(ctx context.Context, eventID int64) ([]model.Att
 }
 
 func (s *Service) ReplaceAttendees(ctx context.Context, eventID int64, attendees []model.Attendee) error {
+	if err := s.ensureEventWritable(ctx, eventID, 0); err != nil {
+		return err
+	}
+	return s.ReplaceAttendeesForSync(ctx, eventID, attendees)
+}
+
+// ReplaceAttendeesForSync applies an attendee set without enforcing remote
+// access/component policy. It is reserved for the CalDAV sync engine, which
+// mirrors server-originated VEVENTs into the local cache regardless of the
+// linked collection's advertised write support; user-originated edits (e.g. the
+// TUI RSVP flow) must route through ReplaceAttendees so the policy is enforced.
+func (s *Service) ReplaceAttendeesForSync(ctx context.Context, eventID int64, attendees []model.Attendee) error {
 	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
 		return err

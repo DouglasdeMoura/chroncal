@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
@@ -279,7 +280,57 @@ func (s *Service) markDirtyByID(ctx context.Context, journalID int64) {
 	_ = storage.MarkResourceDirty(ctx, s.dirtyExec(), r.CalendarID, r.Uid, "journal")
 }
 
+// ensureWritable guards a user-originated mutation against a read-only or
+// VJOURNAL-unsupported remote collection. Empty capability metadata keeps
+// legacy and direct-linked calendars writable. It is the single chokepoint for
+// user-facing writes; the sync Upsert/import paths bypass it because they
+// replay server-originated data.
+func (s *Service) ensureWritable(ctx context.Context, calendarID int64) error {
+	return calendaraccess.EnsureWritable(ctx, s.q, calendarID, "VJOURNAL")
+}
+
+// calendarIDsForUID returns the distinct calendar IDs of every journal row
+// sharing uid — live, soft-deleted, master, and override alike. UID-keyed
+// mutations (delete series, restore series) resolve this widest set so the
+// access guard still covers orphaned override/series-tail rows that survive a
+// purged master; the per-UID queries (recurrence_id = ”) would otherwise miss
+// them.
+func (s *Service) calendarIDsForUID(ctx context.Context, uid string) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT DISTINCT calendar_id FROM journals WHERE uid = ?", uid)
+	if err != nil {
+		return nil, fmt.Errorf("resolve calendars for uid: %w", err)
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan calendar id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate calendars for uid: %w", err)
+	}
+	return ids, nil
+}
+
+// ensureAllWritable guards every calendar in ids. Used by UID-keyed mutations
+// whose rows may span calendars and whose master may be absent.
+func (s *Service) ensureAllWritable(ctx context.Context, ids []int64) error {
+	for _, id := range ids {
+		if err := s.ensureWritable(ctx, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Service) Create(ctx context.Context, p CreateParams) (Journal, error) {
+	if err := s.ensureWritable(ctx, p.CalendarID); err != nil {
+		return Journal{}, err
+	}
 	p.applyDefaults()
 
 	qtx, commit, rollback, err := s.txscope(ctx)
@@ -321,6 +372,18 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Journal, error) {
 }
 
 func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Journal, error) {
+	existing, err := s.q.GetJournal(ctx, id)
+	if err != nil {
+		return Journal{}, err
+	}
+	if err := s.ensureWritable(ctx, existing.CalendarID); err != nil {
+		return Journal{}, err
+	}
+	if p.CalendarID != existing.CalendarID {
+		if err := s.ensureWritable(ctx, p.CalendarID); err != nil {
+			return Journal{}, err
+		}
+	}
 	p.Status, p.Class = defaults(p.Status, p.Class)
 
 	qtx, commit, rollback, err := s.txscope(ctx)
@@ -410,6 +473,9 @@ var ErrHasOverrides = fmt.Errorf("journal has overrides: use DeleteSeries to del
 func (s *Service) Delete(ctx context.Context, id int64) error {
 	j, err := s.Get(ctx, id)
 	if err != nil {
+		return err
+	}
+	if err := s.ensureWritable(ctx, j.CalendarID); err != nil {
 		return err
 	}
 
@@ -517,6 +583,18 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 // next push sends DELETE to the server; the local rows stay in place
 // until purge so the user can restore them.
 func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
+	// Resolve every calendar that owns a row sharing this UID — master,
+	// override, or series-tail — so a read-only or VJOURNAL-unsupported
+	// collection is refused even when the master has been purged and only
+	// orphaned overrides remain. The transaction body re-resolves the master
+	// for tombstone bookkeeping.
+	calIDs, err := s.calendarIDsForUID(ctx, uid)
+	if err != nil {
+		return err
+	}
+	if err := s.ensureAllWritable(ctx, calIDs); err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)

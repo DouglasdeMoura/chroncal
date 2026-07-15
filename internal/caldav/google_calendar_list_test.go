@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/douglasdemoura/chroncal/internal/auth"
@@ -70,5 +71,40 @@ func TestIsGoogleCalendarEndpoint(t *testing.T) {
 	}
 	if IsGoogleCalendarEndpoint("https://cal.example.com/dav") {
 		t.Fatal("generic CalDAV server identified as Google")
+	}
+}
+
+// Deleted calendars and those with only a free-busy reader role must still map
+// correctly: deleted entries are dropped entirely, and Google's
+// "freeBusyReader" role is read access (not unknown).
+func TestDiscoverGoogleCalendarsSkipsDeletedAndMapsFreeBusyReader(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer tok" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{
+			{"id": "deleted@example.com", "summary": "Deleted", "accessRole": "owner", "deleted": true},
+			{"id": "freebusy@example.com", "summary": "Availability", "accessRole": "freeBusyReader"},
+		}})
+	}))
+	defer server.Close()
+
+	oldListURL := googleCalendarListURL
+	googleCalendarListURL = server.URL
+	defer func() { googleCalendarListURL = oldListURL }()
+
+	calendars, err := DiscoverGoogleCalendars(context.Background(), auth.Credential{AccessToken: "tok"}, nil)
+	if err != nil {
+		t.Fatalf("DiscoverGoogleCalendars: %v", err)
+	}
+	if len(calendars) != 1 {
+		t.Fatalf("calendar count = %d, want 1 (deleted calendar filtered)", len(calendars))
+	}
+	if got := calendars[0]; got.Name != "Availability" || got.Access != CalendarAccessRead {
+		t.Fatalf("freeBusyReader calendar = %+v, want read access", got)
+	}
+	if got := calendars[0].SupportedComponentSet; !slices.Equal(got, []string{"VFREEBUSY"}) {
+		t.Fatalf("freeBusyReader SupportedComponentSet = %v, want VFREEBUSY-only", got)
 	}
 }

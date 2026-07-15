@@ -10,6 +10,8 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
+
+	"github.com/douglasdemoura/chroncal/internal/account"
 )
 
 // CalendarDialogParams seeds the calendar dialog. All fields are optional;
@@ -70,21 +72,22 @@ type CalendarSavedMsg struct {
 	// promote the just-created calendar to default after the row is saved.
 	// Ignored on edit — defaultness moves via SetDefault, not Save.
 	MakeDefault bool
+}
 
-	// Remote connection — only meaningful when RemoteURL is non-empty and
-	// the calendar is not already linked.
-	RemoteURL     string
-	Username      string
-	AuthType      string // "basic" | "bearer" | "oauth2"
-	Password      string // basic: password; bearer: access token
-	AllowInsecure bool
-
-	// OAuth client config — populated only when AuthType == "oauth2". The
-	// parent launches the browser authorization flow with these before
-	// linking the calendar.
+// CalendarDiscoveryRequestedMsg starts account discovery from the integrated
+// New Calendar flow. Remote collection metadata supplies the names, colors,
+// and descriptions for every selected calendar.
+type CalendarDiscoveryRequestedMsg struct {
+	ServerURL         string
+	Username          string
+	AuthType          string
+	Secret            string
 	OAuthClientID     string
 	OAuthClientSecret string
+	AllowInsecure     bool
 }
+
+type calendarConnectionBackMsg struct{}
 
 // CalendarReauthRequestedMsg is emitted when the user presses Re-authenticate
 // on a linked OAuth calendar. ClientID/ClientSecret are set only by the
@@ -141,11 +144,9 @@ type calendarSavePromotePressedMsg struct{}
 // CalendarDialogClosedMsg is emitted when the user cancels the dialog.
 type CalendarDialogClosedMsg struct{}
 
-// Form field indices. Local fields are always present. Index 4 is an empty
-// spacer row; index 5 is the Sync toggle in unlinked mode or a read-only
-// status line in linked mode. Remote fields (6..11) exist only when Sync
-// is on. The "Same as owner email" mirror lives inside the sync section
-// so it's only visible when a CalDAV connection is being configured.
+// Form field indices for the local calendar form. Index 4 is an empty spacer
+// row; index 5 is the CalDAV toggle in create mode or a read-only connection
+// status line in linked mode.
 const (
 	cdIdxName        = 0
 	cdIdxColor       = 1
@@ -153,25 +154,20 @@ const (
 	cdIdxEmail       = 3
 	// Index 4 is an empty spacer StaticField.
 	cdIdxSync = 5
+)
 
-	// Present only when Sync is on (unlinked mode only). Rows 10+ depend
-	// on the selected auth type; the constants below describe the two
-	// layouts. Form.RemoveItems is tail-truncation only, so switching
-	// layouts rebuilds everything from cdIdxPassword down (see OnRebuild).
-	cdIdxRemoteURL       = 6
-	cdIdxUsername        = 7
-	cdIdxSameAsOwnerMail = 8
-	cdIdxAuth            = 9
+const (
+	calDAVIdxServer = iota
+	calDAVIdxUsername
+	calDAVIdxAuth
+	calDAVIdxSecret
+	calDAVIdxAllowInsecure
+)
 
-	// basic/bearer layout:
-	cdIdxPassword      = 10
-	cdIdxAllowInsecure = 11
-
-	// oauth2 layout (replaces the Password row with two client-config rows,
-	// shifting the HTTP checkbox down one):
-	cdIdxOAuthClientID      = 10
-	cdIdxOAuthClientSecret  = 11
-	cdIdxOAuthAllowInsecure = 12
+const (
+	calDAVIdxOAuthClientID      = calDAVIdxSecret
+	calDAVIdxOAuthClientSecret  = calDAVIdxAllowInsecure
+	calDAVIdxOAuthAllowInsecure = calDAVIdxAllowInsecure + 1
 )
 
 var authOptions = []SelectOption{
@@ -214,6 +210,9 @@ type CalendarDialogModel struct {
 	// the upcoming CalendarSavedMsg without re-implementing form
 	// validation. Cleared automatically after each submit.
 	saveMakeDefault *bool
+	connectionMode  *bool
+	localDraft      *CalendarDialogParams
+	discoveryPicker *AccountCalendarPickerModel
 
 	// contentWidth is shared with the static-line styleFns so long values
 	// (remote URLs, sync errors) truncate to the dialog's content width at
@@ -358,62 +357,15 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		}
 		*saveMakeDefault = false
 
-		if !linked && syncEnabled(f) {
-			urlVal := strings.TrimSpace(f.Field(cdIdxRemoteURL).(*TextField).Value())
-			userVal := strings.TrimSpace(f.Field(cdIdxUsername).(*TextField).Value())
-			authVal := f.Field(cdIdxAuth).(*SelectField).Value()
-
-			if urlVal == "" {
-				f.SetError(cdIdxRemoteURL, "Remote URL is required when Sync is on")
-				return nil
-			}
-			if userVal == "" {
-				f.SetError(cdIdxUsername, "Username is required when Sync is on")
-				return nil
-			}
-
-			// The tail rows depend on the auth type (see the cdIdx*
-			// comment); authVal is the layout's source of truth here
-			// because any auth change fires OnRebuild before Submit.
-			if calendarAuthIsOAuth(authVal) {
-				clientID := strings.TrimSpace(f.Field(cdIdxOAuthClientID).(*TextField).Value())
-				clientSecret := strings.TrimSpace(f.Field(cdIdxOAuthClientSecret).(*TextField).Value())
-				if clientID == "" {
-					f.SetError(cdIdxOAuthClientID, "Client ID is required for Google OAuth")
-					return nil
-				}
-				if clientSecret == "" {
-					f.SetError(cdIdxOAuthClientSecret, "Client secret is required for Google OAuth")
-					return nil
-				}
-				msg.OAuthClientID = clientID
-				msg.OAuthClientSecret = clientSecret
-				msg.AllowInsecure = f.Field(cdIdxOAuthAllowInsecure).(*CheckboxField).Checked()
-			} else {
-				passVal := f.Field(cdIdxPassword).(*TextField).Value()
-				if passVal == "" {
-					if authVal == "bearer" {
-						f.SetError(cdIdxPassword, "Access token is required for bearer auth")
-					} else {
-						f.SetError(cdIdxPassword, "Password is required for basic auth")
-					}
-					return nil
-				}
-				msg.Password = passVal
-				msg.AllowInsecure = f.Field(cdIdxAllowInsecure).(*CheckboxField).Checked()
-			}
-
-			msg.RemoteURL = urlVal
-			msg.Username = userVal
-			msg.AuthType = authVal
-		}
-
 		return func() tea.Msg { return msg }
 	})
 
 	form.OnCancel(func(f *Form) tea.Cmd {
 		return func() tea.Msg { return CalendarDialogClosedMsg{} }
 	})
+
+	connectionMode := new(bool)
+	localDraft := params
 
 	m := CalendarDialogModel{
 		id:              params.ID,
@@ -428,6 +380,8 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		mutedColor:      theme.Muted,
 		textDimColor:    theme.TextDim,
 		saveMakeDefault: saveMakeDefault,
+		connectionMode:  connectionMode,
+		localDraft:      &localDraft,
 		contentWidth:    contentWidth,
 	}
 	m.body.MouseWheelEnabled = true
@@ -486,201 +440,180 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		})
 	}
 
-	syncTheme := theme
-	// Snapshot of the remote section values, preserved across Sync toggles
-	// and auth-layout switches so flipping things back and forth doesn't
-	// wipe what the user has already typed.
-	var snap struct {
-		url, username, auth, password    string
-		oauthClientID, oauthClientSecret string
-		allowInsecure, sameAsOwner       bool
-	}
-	// oauthLayout tracks which tail layout the form currently has (see the
-	// cdIdx* comment): false = Password+HTTP, true = ClientID+Secret+HTTP.
-	// Form.RemoveItems is tail-truncation only, so layout changes rebuild
-	// from cdIdxPassword down rather than swapping a row in place.
-	oauthLayout := new(bool)
-
-	// appendAuthTail appends the rows after the Auth select for the given
-	// auth type and updates the layout tracker.
-	appendAuthTail := func(f *Form, authVal string) {
-		insecure := NewCheckboxField("", snap.allowInsecure)
-		insecure.SetContent("allow plain HTTP")
-		if calendarAuthIsOAuth(authVal) {
-			secret := newOAuthClientSecretField()
-			secret.SetValue(snap.oauthClientSecret)
-			f.AppendItems(
-				FormItem{Label: "Client ID", Field: newOAuthClientIDField(snap.oauthClientID), Required: true},
-				FormItem{Label: "Client secret", Field: secret, Required: true},
-				FormItem{Label: "HTTP", Field: insecure},
-			)
-			*oauthLayout = true
-			return
-		}
-		password := newPasswordField()
-		password.SetValue(snap.password)
-		f.AppendItems(
-			FormItem{Label: "Password", Field: password, Required: true},
-			FormItem{Label: "HTTP", Field: insecure},
-		)
-		*oauthLayout = false
-	}
-
-	// snapshotAuthTail records the current tail values, layout-aware.
-	snapshotAuthTail := func(f *Form) {
-		if *oauthLayout {
-			snap.oauthClientID = f.Field(cdIdxOAuthClientID).(*TextField).Value()
-			snap.oauthClientSecret = f.Field(cdIdxOAuthClientSecret).(*TextField).Value()
-			snap.allowInsecure = f.Field(cdIdxOAuthAllowInsecure).(*CheckboxField).Checked()
-			return
-		}
-		snap.password = f.Field(cdIdxPassword).(*TextField).Value()
-		snap.allowInsecure = f.Field(cdIdxAllowInsecure).(*CheckboxField).Checked()
-	}
-
 	form.OnRebuild(func(f *Form) {
-		if linked {
+		if linked || !syncEnabled(f) {
 			return
 		}
-		syncOn := syncEnabled(f)
-		hasRemote := f.ItemCount() > cdIdxSync+1
-		switch {
-		case syncOn && !hasRemote:
-			f.AppendItems(
-				FormItem{Label: "Remote URL", Field: newRemoteURLField(snap.url), Required: true},
-				FormItem{Label: "Username", Field: newMirroredUsernameField(snap.username, syncTheme), Required: true},
-				FormItem{Label: " ", Field: newSameAsOwnerMailCheckbox(snap.sameAsOwner)},
-				FormItem{Label: "Auth", Field: newAuthField(snap.auth)},
-			)
-			appendAuthTail(f, snap.auth)
-			f.SetActionButton("Test", Button, func() tea.Msg {
-				return testConnectionPressedMsg{}
-			})
-		case !syncOn && hasRemote:
-			snap.url = f.Field(cdIdxRemoteURL).(*TextField).Value()
-			snap.username = f.Field(cdIdxUsername).(*TextField).Value()
-			snap.auth = f.Field(cdIdxAuth).(*SelectField).Value()
-			snap.sameAsOwner = f.Field(cdIdxSameAsOwnerMail).(*CheckboxField).Checked()
-			snapshotAuthTail(f)
-			f.RemoveItems(cdIdxSync + 1)
-			f.ClearError()
-			f.ClearActionButtons()
-		}
-
-		// Rebuild the tail when the selected auth type changes layout
-		// (basic/bearer <-> oauth2).
-		if syncOn && f.ItemCount() > cdIdxAuth {
-			authVal := f.Field(cdIdxAuth).(*SelectField).Value()
-			if calendarAuthIsOAuth(authVal) != *oauthLayout {
-				snapshotAuthTail(f)
-				f.RemoveItems(cdIdxPassword)
-				f.ClearError()
-				appendAuthTail(f, authVal)
-			}
-		}
-
-		// Keep the Password row's label and placeholder in sync with the
-		// selected auth type: basic -> password, bearer -> access token.
-		// (The oauth2 layout has no Password row.)
-		if syncOn && !*oauthLayout && f.ItemCount() > cdIdxPassword {
-			authVal := f.Field(cdIdxAuth).(*SelectField).Value()
-			pw := f.Field(cdIdxPassword).(*TextField)
-			if authVal == "bearer" {
-				f.SetItemLabel(cdIdxPassword, "Token")
-				pw.SetPlaceholder("paste your API token")
-			} else {
-				f.SetItemLabel(cdIdxPassword, "Password")
-				pw.SetPlaceholder("your password")
-			}
-		}
-
-		// Auto-enable HTTP (insecure) for localhost URLs so casual dev use
-		// doesn't require the flag. Shown as a greyed-out confirmation line.
-		// When the URL stops matching localhost the override is cleared so
-		// the user re-opts-in explicitly.
-		insecureIdx := cdIdxAllowInsecure
-		if *oauthLayout {
-			insecureIdx = cdIdxOAuthAllowInsecure
-		}
-		if syncOn && f.ItemCount() > insecureIdx {
-			urlVal := strings.TrimSpace(f.Field(cdIdxRemoteURL).(*TextField).Value())
-			insecure := f.Field(insecureIdx).(*CheckboxField)
-			wasAuto := insecure.AutoChecked()
-			if isLocalhostHTTP(urlVal) {
-				insecure.SetChecked(true)
-				insecure.SetAutoChecked(true)
-				insecure.SetSuffix("")
-				insecure.SetDisabledWhen(func() (bool, string) {
-					return true, lipgloss.NewStyle().Foreground(syncTheme.Muted).Italic(true).
-						Render("auto-enabled for localhost")
-				})
-			} else {
-				if wasAuto {
-					insecure.SetChecked(false)
-					insecure.SetAutoChecked(false)
-				}
-				insecure.SetDisabledWhen(nil)
-				if insecure.Checked() {
-					insecure.SetSuffix(lipgloss.NewStyle().
-						Foreground(syncTheme.Error).
-						Render("(unencrypted)"))
-				} else {
-					insecure.SetSuffix("")
-				}
-			}
-		}
-
-		// Mirror the owner email into the CalDAV username when the
-		// "Same as owner email" checkbox is checked. Runs last so the
-		// username field is guaranteed present when sync just went on.
-		applySameAsOwnerMail(f)
+		localDraft.Name = strings.TrimSpace(f.Field(cdIdxName).(*TextField).Value())
+		localDraft.Color = strings.TrimSpace(f.Field(cdIdxColor).(*ColorField).Value())
+		localDraft.Description = strings.TrimSpace(f.Field(cdIdxDescription).(*TextField).Value())
+		localDraft.OwnerEmail = strings.TrimSpace(f.Field(cdIdxEmail).(*TextField).Value())
+		*connectionMode = true
+		connection := newCalDAVConnectionForm(theme, localDraft.OwnerEmail)
+		connection.SetWidth(dialog.ContentWidth())
+		*f = connection
 	})
 	m.form = form
 
 	return m
 }
 
-// applySameAsOwnerMail drives the "Same as owner email" checkbox: when
-// checked with a non-empty Owner email, the CalDAV Username field is
-// pinned to that value and rendered as disabled. The checkbox itself is
-// always interactive and never has its styling altered by this helper.
-func applySameAsOwnerMail(f *Form) {
-	if f.ItemCount() <= cdIdxSameAsOwnerMail {
-		return
-	}
-	username, ok := f.Field(cdIdxUsername).(*TextField)
-	if !ok {
-		return
-	}
-	email, ok := f.Field(cdIdxEmail).(*TextField)
-	if !ok {
-		return
-	}
-	box, ok := f.Field(cdIdxSameAsOwnerMail).(*CheckboxField)
-	if !ok {
-		return
-	}
+func newCalDAVConnectionForm(theme Theme, usernamePrefill string) Form {
+	styles := DefaultFormStyles()
+	styles.LabelLayout = LabelInline
+	styles.ShowFocusMarker = true
+	styles.ButtonAlign = ButtonAlignRight
+	styles.ButtonRule = true
 
-	emailVal := strings.TrimSpace(email.Value())
-	if box.Checked() && emailVal != "" {
-		username.SetValue(emailVal)
-		username.SetDisabled(true)
-	} else {
-		username.SetDisabled(false)
+	insecure := NewCheckboxField("", false)
+	insecure.SetContent("allow plain HTTP")
+	form := NewForm("Discover calendars", styles,
+		FormItem{Label: "Server URL", Field: newRemoteURLField(""), Required: true},
+		FormItem{Label: "Username", Field: newUsernameField(usernamePrefill), Required: true},
+		FormItem{Label: "Auth", Field: newAuthField("basic"), Required: true},
+		FormItem{Label: "Password", Field: newPasswordField(), Required: true},
+		FormItem{Label: "HTTP", Field: insecure},
+	)
+	form.SetLeadingActionButton("Back", Button, func() tea.Msg {
+		return calendarConnectionBackMsg{}
+	})
+	form.SetActionButton("Test", Button, func() tea.Msg {
+		return testConnectionPressedMsg{}
+	})
+	form.OnCancel(func(*Form) tea.Cmd {
+		return func() tea.Msg { return CalendarDialogClosedMsg{} }
+	})
+
+	var snapshot struct {
+		secret, clientID, clientSecret string
+		allowInsecure                  bool
 	}
+	oauthLayout := new(bool)
+	snapshotTail := func(f *Form) {
+		if *oauthLayout {
+			snapshot.clientID = f.Field(calDAVIdxOAuthClientID).(*TextField).Value()
+			snapshot.clientSecret = f.Field(calDAVIdxOAuthClientSecret).(*TextField).Value()
+			snapshot.allowInsecure = f.Field(calDAVIdxOAuthAllowInsecure).(*CheckboxField).Checked()
+			return
+		}
+		snapshot.secret = f.Field(calDAVIdxSecret).(*TextField).Value()
+		snapshot.allowInsecure = f.Field(calDAVIdxAllowInsecure).(*CheckboxField).Checked()
+	}
+	appendTail := func(f *Form, authType string) {
+		allow := NewCheckboxField("", snapshot.allowInsecure)
+		allow.SetContent("allow plain HTTP")
+		if calendarAuthIsOAuth(authType) {
+			clientSecret := newOAuthClientSecretField()
+			clientSecret.SetValue(snapshot.clientSecret)
+			f.AppendItems(
+				FormItem{Label: "Client ID", Field: newOAuthClientIDField(snapshot.clientID), Required: true},
+				FormItem{Label: "Client secret", Field: clientSecret, Required: true},
+				FormItem{Label: "HTTP", Field: allow},
+			)
+			*oauthLayout = true
+			return
+		}
+		secret := newPasswordField()
+		secret.SetValue(snapshot.secret)
+		f.AppendItems(
+			FormItem{Label: "Password", Field: secret, Required: true},
+			FormItem{Label: "HTTP", Field: allow},
+		)
+		*oauthLayout = false
+	}
+	form.OnRebuild(func(f *Form) {
+		authType := f.Field(calDAVIdxAuth).(*SelectField).Value()
+		if calendarAuthIsOAuth(authType) != *oauthLayout {
+			snapshotTail(f)
+			f.RemoveItems(calDAVIdxSecret)
+			f.ClearError()
+			appendTail(f, authType)
+		}
+		if !*oauthLayout {
+			secret := f.Field(calDAVIdxSecret).(*TextField)
+			if authType == "bearer" {
+				f.SetItemLabel(calDAVIdxSecret, "Token")
+				secret.SetPlaceholder("paste your API token")
+			} else {
+				f.SetItemLabel(calDAVIdxSecret, "Password")
+				secret.SetPlaceholder("your password")
+			}
+		}
+
+		insecureIdx := calDAVIdxAllowInsecure
+		if *oauthLayout {
+			insecureIdx = calDAVIdxOAuthAllowInsecure
+		}
+		allow := f.Field(insecureIdx).(*CheckboxField)
+		wasAuto := allow.AutoChecked()
+		if isLocalhostHTTP(f.Field(calDAVIdxServer).(*TextField).Value()) {
+			allow.SetChecked(true)
+			allow.SetAutoChecked(true)
+			allow.SetSuffix("")
+			allow.SetDisabledWhen(func() (bool, string) {
+				return true, lipgloss.NewStyle().Foreground(theme.Muted).Italic(true).
+					Render("auto-enabled for localhost")
+			})
+		} else {
+			if wasAuto {
+				allow.SetChecked(false)
+				allow.SetAutoChecked(false)
+			}
+			allow.SetDisabledWhen(nil)
+			if allow.Checked() {
+				allow.SetSuffix(lipgloss.NewStyle().Foreground(theme.Error).Render("(unencrypted)"))
+			} else {
+				allow.SetSuffix("")
+			}
+		}
+	})
+	form.OnSubmit(func(f *Form) tea.Cmd {
+		msg := CalendarDiscoveryRequestedMsg{
+			ServerURL: strings.TrimSpace(f.Field(calDAVIdxServer).(*TextField).Value()),
+			Username:  strings.TrimSpace(f.Field(calDAVIdxUsername).(*TextField).Value()),
+			AuthType:  f.Field(calDAVIdxAuth).(*SelectField).Value(),
+		}
+		if msg.ServerURL == "" {
+			f.SetError(calDAVIdxServer, "Server URL is required")
+			return nil
+		}
+		if msg.Username == "" {
+			f.SetError(calDAVIdxUsername, "Username is required")
+			return nil
+		}
+		if calendarAuthIsOAuth(msg.AuthType) {
+			msg.OAuthClientID = strings.TrimSpace(f.Field(calDAVIdxOAuthClientID).(*TextField).Value())
+			msg.OAuthClientSecret = strings.TrimSpace(f.Field(calDAVIdxOAuthClientSecret).(*TextField).Value())
+			msg.AllowInsecure = f.Field(calDAVIdxOAuthAllowInsecure).(*CheckboxField).Checked()
+			if msg.OAuthClientID == "" {
+				f.SetError(calDAVIdxOAuthClientID, "Client ID is required")
+				return nil
+			}
+			if msg.OAuthClientSecret == "" {
+				f.SetError(calDAVIdxOAuthClientSecret, "Client secret is required")
+				return nil
+			}
+		} else {
+			msg.Secret = f.Field(calDAVIdxSecret).(*TextField).Value()
+			msg.AllowInsecure = f.Field(calDAVIdxAllowInsecure).(*CheckboxField).Checked()
+			if strings.TrimSpace(msg.Secret) == "" {
+				f.SetError(calDAVIdxSecret, "Credential is required")
+				return nil
+			}
+		}
+		return func() tea.Msg { return msg }
+	})
+	return form
 }
 
 // syncEnabled reports whether the Sync checkbox is currently on. Returns
-// false in linked mode (where the checkbox doesn't exist).
+// false in linked mode, where the checkbox does not exist.
 func syncEnabled(f *Form) bool {
 	if f.ItemCount() <= cdIdxSync {
 		return false
 	}
 	cb, ok := f.Field(cdIdxSync).(*CheckboxField)
-	if !ok {
-		return false
-	}
-	return cb.Checked()
+	return ok && cb.Checked()
 }
 
 // isLocalhostHTTP reports whether a URL uses http:// against localhost
@@ -843,27 +776,20 @@ func newOAuthClientSecretField() *TextField {
 	return f
 }
 
-// newSameAsOwnerMailCheckbox builds the "Same as owner email" mirror.
-// Focus is quiet (no reverse highlight) because the field is secondary to
-// the Username it drives.
-func newSameAsOwnerMailCheckbox(checked bool) *CheckboxField {
-	f := NewCheckboxField("", checked)
-	f.SetContent("Same as owner email")
-	f.SetQuietFocus(true)
-	return f
-}
-
-// newMirroredUsernameField builds the Username TextField used inside the
-// sync section. Its dim-style is set so the disabled state (driven by the
-// "Same as owner email" checkbox) reads clearly.
-func newMirroredUsernameField(value string, theme Theme) *TextField {
-	f := newUsernameField(value)
-	f.SetDimStyle(lipgloss.NewStyle().Foreground(theme.TextDim).Italic(true))
-	return f
+func (m CalendarDialogModel) ShowDiscovery(discovery account.Discovery) CalendarDialogModel {
+	picker := NewAccountCalendarPickerModel(discovery, m.theme).
+		SetSize(m.dialog.width, m.dialog.height)
+	m.discoveryPicker = &picker
+	return m
 }
 
 func (m CalendarDialogModel) SetSize(w, h int) CalendarDialogModel {
 	m.dialog = m.dialog.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	if m.discoveryPicker != nil {
+		picker := m.discoveryPicker.SetSize(w, h)
+		m.discoveryPicker = &picker
+		return m
+	}
 	m.form.SetWidth(m.dialog.ContentWidth())
 	if m.contentWidth != nil {
 		*m.contentWidth = m.dialog.ContentWidth()
@@ -958,6 +884,21 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 		return m.SetSize(msg.Width, msg.Height), nil
 	}
 
+	if m.discoveryPicker != nil {
+		picker, cmd := m.discoveryPicker.Update(msg)
+		m.discoveryPicker = &picker
+		return m, cmd
+	}
+
+	if _, ok := msg.(calendarConnectionBackMsg); ok {
+		if m.localDraft == nil {
+			return m, nil
+		}
+		restored := NewCalendarDialogModel(*m.localDraft, m.theme).
+			SetSize(m.dialog.width, m.dialog.height)
+		return restored, nil
+	}
+
 	if _, ok := msg.(testConnectionPressedMsg); ok {
 		m, cmd := m.handleTestPressed()
 		m.syncBodyViewport(true)
@@ -1022,6 +963,9 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 }
 
 func (m CalendarDialogModel) View() string {
+	if m.discoveryPicker != nil {
+		return m.discoveryPicker.View()
+	}
 	helpKeys := []key.Binding{
 		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
@@ -1044,21 +988,21 @@ func (m CalendarDialogModel) View() string {
 // populated, emits a CalendarTestRequestedMsg so the parent can run the
 // authenticated ping. Errors show inline without contacting the server.
 func (m CalendarDialogModel) handleTestPressed() (CalendarDialogModel, tea.Cmd) {
-	if m.form.ItemCount() <= cdIdxAllowInsecure {
+	if m.connectionMode == nil || !*m.connectionMode {
 		return m, nil
 	}
 	// The oauth2 layout has no password to ping with — there is no token
-	// until the browser flow runs, which happens on save.
-	if calendarAuthIsOAuth(m.form.Field(cdIdxAuth).(*SelectField).Value()) {
+	// until the browser flow runs, which happens on discovery.
+	if calendarAuthIsOAuth(m.form.Field(calDAVIdxAuth).(*SelectField).Value()) {
 		m.testStatus = lipgloss.NewStyle().Foreground(m.theme.TextDim).Italic(true).
-			Render("Test runs after Google authorization — save to connect")
+			Render("Test runs after Google authorization — discover to connect")
 		return m, nil
 	}
-	url := strings.TrimSpace(m.form.Field(cdIdxRemoteURL).(*TextField).Value())
-	user := strings.TrimSpace(m.form.Field(cdIdxUsername).(*TextField).Value())
-	auth := m.form.Field(cdIdxAuth).(*SelectField).Value()
-	pass := m.form.Field(cdIdxPassword).(*TextField).Value()
-	ins := m.form.Field(cdIdxAllowInsecure).(*CheckboxField).Checked()
+	url := strings.TrimSpace(m.form.Field(calDAVIdxServer).(*TextField).Value())
+	user := strings.TrimSpace(m.form.Field(calDAVIdxUsername).(*TextField).Value())
+	auth := m.form.Field(calDAVIdxAuth).(*SelectField).Value()
+	pass := m.form.Field(calDAVIdxSecret).(*TextField).Value()
+	ins := m.form.Field(calDAVIdxAllowInsecure).(*CheckboxField).Checked()
 
 	if url == "" || user == "" || pass == "" {
 		m.testStatus = lipgloss.NewStyle().Foreground(m.theme.Error).

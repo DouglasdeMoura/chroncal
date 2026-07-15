@@ -15,6 +15,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/caldav"
 	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/freebusy"
+	"github.com/douglasdemoura/chroncal/internal/synclock"
 )
 
 func freebusyCmd() *cobra.Command {
@@ -90,20 +91,36 @@ queries the connected remote CalDAV calendar instead.`,
 					return errInvalidInputf("calendar %q is not connected to a remote calendar", calendarRef.Name)
 				}
 
-				credStore, err := auth.NewCredentialStore(a.AllowPlaintext)
+				credStore, err := auth.NewCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
 				if err != nil {
 					return fmt.Errorf("credential store: %w", err)
 				}
+				release, err := synclock.Account(ctx, a.DB, calendarRef.AccountID)
+				if err != nil {
+					return fmt.Errorf("lock remote freebusy account: %w", err)
+				}
+				defer release()
+				lockedCalendar, err := a.Calendars.Get(ctx, calendarRef.ID)
+				if err != nil {
+					return fmt.Errorf("revalidate remote calendar: %w", err)
+				}
+				if lockedCalendar.AccountID != calendarRef.AccountID || lockedCalendar.RemoteURL == "" {
+					return fmt.Errorf("calendar %q changed while waiting for its account lock", calendarRef.Name)
+				}
+				calendarRef = lockedCalendar
 
 				account, err := a.Queries.GetAccount(ctx, calendarRef.AccountID)
 				if err != nil {
 					return fmt.Errorf("get account: %w", err)
 				}
-				cred, err := credStore.Get(account.ID)
+				fingerprint := auth.AccountFingerprint(account.ServerUrl, account.AuthType, account.Username)
+				cred, err := credStore.Get(account.ID, fingerprint)
 				if err != nil {
 					return fmt.Errorf("get credentials: %w", err)
 				}
 				client, err := caldav.NewClientFromCredential(account.ServerUrl, cred, func(updated auth.Credential) error {
+					updated.AccountID = account.ID
+					updated.AccountFingerprint = fingerprint
 					return credStore.Set(updated)
 				})
 				if err != nil {

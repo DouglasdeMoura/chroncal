@@ -94,6 +94,7 @@ type CalendarInfo struct {
 	AccountID           int64
 	AccountName         string
 	RemoteAccess        string
+	RemoteComponents    string // comma-separated VEVENT/VTODO/VJOURNAL; empty = unknown (all allowed)
 	RemoteMissing       bool
 	LastSyncAt          string // RFC 3339, empty when never synced
 	LastSyncAttemptedAt string // RFC 3339, empty when never attempted

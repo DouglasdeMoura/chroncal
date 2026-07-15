@@ -9,7 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/douglasdemoura/chroncal/internal/account"
 	"github.com/douglasdemoura/chroncal/internal/app"
+	"github.com/douglasdemoura/chroncal/internal/caldav"
+	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
 func TestAccountAddAndList(t *testing.T) {
@@ -193,8 +196,7 @@ func TestAccountRemovePreservesDownloadedCalendarsAsLocal(t *testing.T) {
 
 func newAccountDiscoveryServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	var srv *httptest.Server
-	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
 			t.Errorf("Authorization = %q, want bearer token", got)
 		}
@@ -255,4 +257,79 @@ func accountCalendarMetadata(name, color, privilege string) string {
     <ic:calendar-color>%s</ic:calendar-color>
   </d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
 </d:multistatus>`, name, privilege, color)
+}
+
+// resolveDiscoveredSelections turns user-facing names/paths into collection
+// paths. Ambiguous names, unknown references, and unsupported component types
+// are rejected up front so Import never receives an invalid selection.
+func TestResolveDiscoveredSelectionsRejectsAmbiguousAndUnknown(t *testing.T) {
+	t.Parallel()
+	discovery := account.Discovery{Calendars: []account.DiscoveredCalendar{
+		{RemoteCalendar: caldav.RemoteCalendar{Path: "/cal/a/", Name: "Shared"}, Importable: true},
+		{RemoteCalendar: caldav.RemoteCalendar{Path: "/cal/b/", Name: "Shared"}, Importable: true},
+		{RemoteCalendar: caldav.RemoteCalendar{Path: "/cal/c/", Name: "Availability", SupportedComponentSet: []string{"VFREEBUSY"}}, Importable: false},
+	}}
+
+	if _, err := resolveDiscoveredSelections(discovery, []string{"Shared"}); err == nil {
+		t.Fatal("ambiguous calendar name should be rejected")
+	}
+	if _, err := resolveDiscoveredSelections(discovery, []string{"Missing"}); err == nil {
+		t.Fatal("unknown calendar reference should be rejected")
+	}
+	if _, err := resolveDiscoveredSelections(discovery, []string{"Availability"}); err == nil {
+		t.Fatal("unsupported component calendar should be rejected")
+	}
+
+	paths, err := resolveDiscoveredSelections(discovery, []string{"/cal/a/"})
+	if err != nil {
+		t.Fatalf("select by remote path: %v", err)
+	}
+	if len(paths) != 1 || paths[0] != "/cal/a/" {
+		t.Fatalf("resolved paths = %v, want [/cal/a/]", paths)
+	}
+}
+
+// TestResolveAccountRejectsAmbiguousName proves that two accounts whose
+// case-insensitive names collide are never silently resolved to the first
+// match. The caller must disambiguate with a numeric ID.
+func TestResolveAccountRejectsAmbiguousName(t *testing.T) {
+	db, q, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	svc := account.NewService(db, q)
+
+	// "Work" and "WORK" are distinct under SQLite's BINARY collation so both
+	// inserts succeed, but EqualFold treats them as the same name.
+	accA, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name: "Work", ServerUrl: "https://a.test/", AuthType: "basic", Username: "alice",
+	})
+	if err != nil {
+		t.Fatalf("create account A: %v", err)
+	}
+	_, err = q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name: "WORK", ServerUrl: "https://b.test/", AuthType: "basic", Username: "bob",
+	})
+	if err != nil {
+		t.Fatalf("create account B: %v", err)
+	}
+
+	if _, err := resolveAccount(ctx, svc, "Work"); err == nil {
+		t.Fatal("ambiguous account name should be rejected, not silently resolved to the first match")
+	}
+	if _, err := resolveAccount(ctx, svc, "work"); err == nil {
+		t.Fatal("case-insensitive ambiguous name should be rejected")
+	}
+
+	// Numeric ID disambiguates.
+	got, err := resolveAccount(ctx, svc, fmt.Sprintf("%d", accA.ID))
+	if err != nil {
+		t.Fatalf("resolveAccount by numeric ID: %v", err)
+	}
+	if got.ID != accA.ID {
+		t.Fatalf("resolveAccount by ID = %d, want %d", got.ID, accA.ID)
+	}
 }

@@ -348,24 +348,13 @@ func (m CalendarListModel) View() string {
 
 func (m CalendarListModel) renderAccountHeader(row calendarListRow, selected bool) string {
 	ids := m.accountCalendarIDs(row.accountID)
-	hiddenCount := 0
 	hasError := false
 	for _, item := range m.items {
 		if item.AccountID != row.accountID {
 			continue
 		}
-		if m.hidden[item.ID] {
-			hiddenCount++
-		}
 		hasError = hasError || item.Health == SyncHealthError || item.Missing
 	}
-	glyph := "●"
-	if hiddenCount == len(ids) && len(ids) > 0 {
-		glyph = "○"
-	} else if hiddenCount > 0 {
-		glyph = "◐"
-	}
-	swatch := lipgloss.NewStyle().Foreground(m.mutedColor).Render(glyph)
 	arrow := "▾"
 	if m.collapsed[row.accountID] {
 		arrow = "▸"
@@ -377,17 +366,17 @@ func (m CalendarListModel) renderAccountHeader(row calendarListRow, selected boo
 		markerCells = lipgloss.Width(marker) + 1
 	}
 	label := fmt.Sprintf("%s %s %d", arrow, row.accountName, len(ids))
-	if avail := m.width - 4 - markerCells; m.width > 4 && avail > 0 {
+	if avail := m.width - 2 - markerCells; m.width > 2 && avail > 0 {
 		label = truncateTo(label, avail)
 	}
 	style := lipgloss.NewStyle().Bold(true)
 	if selected {
 		style = style.Reverse(true)
-		if remaining := m.width - 2 - markerCells; remaining > 0 {
+		if remaining := m.width - markerCells; remaining > 0 {
 			style = style.Width(remaining)
 		}
 	}
-	out := swatch + " " + style.Render(" "+label+" ")
+	out := style.Render(" " + label + " ")
 	if marker != "" {
 		out += " " + marker
 	}

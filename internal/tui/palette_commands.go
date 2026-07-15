@@ -68,18 +68,6 @@ func buildPaletteCommands(m Model) []PaletteCommand {
 			Action:   func() tea.Msg { return SwitchViewMsg{Mode: viewAgenda} },
 		},
 		{
-			ID:       "account.add",
-			Title:    "Add CalDAV Account",
-			Category: "Calendar",
-			Action:   func() tea.Msg { return AccountDialogRequestedMsg{} },
-		},
-		{
-			ID:       "account.manage",
-			Title:    "CalDAV Accounts",
-			Category: "Calendar",
-			Action:   func() tea.Msg { return AccountListDialogRequestedMsg{} },
-		},
-		{
 			ID:       "calendar.new",
 			Title:    "Add Calendar",
 			Category: "Calendar",

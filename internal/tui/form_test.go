@@ -1138,9 +1138,9 @@ func TestCalendarDialogRendering_SyncOnHTTPChecked(t *testing.T) {
 	}
 	m.form.Field(cdIdxSync).(*CheckboxField).Toggle()
 	rebuild()
-	m.form.Field(cdIdxRemoteURL).(*TextField).SetValue("https://cal.example.com/dav/")
+	m.form.Field(calDAVIdxServer).(*TextField).SetValue("https://cal.example.com/dav/")
 	rebuild()
-	m.form.Field(cdIdxAllowInsecure).(*CheckboxField).Toggle()
+	m.form.Field(calDAVIdxAllowInsecure).(*CheckboxField).Toggle()
 	rebuild()
 
 	assert.Contains(t, m.form.View(), "unencrypted", "warning appears when checked")

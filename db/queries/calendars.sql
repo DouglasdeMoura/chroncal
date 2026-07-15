@@ -100,12 +100,12 @@ SELECT COUNT(*) FROM calendars WHERE is_default = 1;
 INSERT INTO calendars (
     name, color, description, display_order,
     account_id, remote_url, remote_color,
-    remote_name, remote_access, remote_components
+    remote_name, remote_access, remote_components, owner_email
 )
 VALUES (
     ?, ?, ?, (SELECT COALESCE(MAX(display_order), -1) + 1 FROM calendars),
     ?, ?, ?,
-    ?, ?, ?
+    ?, ?, ?, ?
 )
 RETURNING *;
 
@@ -115,12 +115,20 @@ UPDATE calendars SET
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE account_id = ?;
 
+-- name: AdoptCalendarRemoteName :exec
+UPDATE calendars
+SET name = ?1
+WHERE id = ?2
+  AND name = remote_name
+  AND NOT EXISTS (
+      SELECT 1
+      FROM calendars AS other
+      WHERE other.name = ?1
+        AND other.id <> ?2
+  );
+
 -- name: UpdateCalendarDiscovery :one
 UPDATE calendars SET
-    name = CASE
-        WHEN remote_name = '' OR name = remote_name THEN sqlc.arg(remote_name)
-        ELSE name
-    END,
     color = CASE
         WHEN color_dirty = 0 AND sqlc.arg(remote_color) <> '' THEN sqlc.arg(remote_color)
         ELSE color
@@ -136,6 +144,14 @@ UPDATE calendars SET
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = sqlc.arg(id)
 RETURNING id;
+
+-- name: UpdateCalendarCapabilitiesFromLink :exec
+UPDATE calendars SET
+    remote_access = ?,
+    remote_components = ?,
+    remote_missing = 0,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = ?;
 
 -- name: ClearRemoteLinksByAccount :exec
 UPDATE calendars SET
@@ -154,3 +170,21 @@ UPDATE calendars SET
     remote_missing = 0,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE account_id = ?;
+
+-- name: ClearRemoteLinkByCalendar :exec
+UPDATE calendars SET
+    account_id = NULL,
+    remote_url = '',
+    ctag = '',
+    sync_token = '',
+    last_sync_at = '',
+    last_sync_attempted_at = '',
+    last_sync_error = '',
+    remote_color = '',
+    color_dirty = 0,
+    remote_name = '',
+    remote_access = 'unknown',
+    remote_components = '',
+    remote_missing = 0,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = ?;

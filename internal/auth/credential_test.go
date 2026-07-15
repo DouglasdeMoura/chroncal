@@ -117,7 +117,7 @@ func TestPlaintextFileStore_SetGetDelete(t *testing.T) {
 		t.Errorf("file permissions = %o, want 0600", perm)
 	}
 
-	got, err := store.Get(42)
+	got, err := store.Get(42, "")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -129,15 +129,38 @@ func TestPlaintextFileStore_SetGetDelete(t *testing.T) {
 		t.Fatalf("Delete: %v", err)
 	}
 
-	_, err = store.Get(42)
+	_, err = store.Get(42, "")
 	if err == nil {
 		t.Error("Get after Delete should return error")
 	}
 }
 
+func TestPlaintextFileStores_IsolateEqualAccountIDsByDatabaseNamespace(t *testing.T) {
+	dir := t.TempDir()
+	first := &PlaintextFileStore{dir: dir, namespace: "database-a", warn: io.Discard}
+	second := &PlaintextFileStore{dir: dir, namespace: "database-b", warn: io.Discard}
+	if err := first.Set(Credential{AccountID: 1, Password: "first"}); err != nil {
+		t.Fatalf("set first: %v", err)
+	}
+	if err := second.Set(Credential{AccountID: 1, Password: "second"}); err != nil {
+		t.Fatalf("set second: %v", err)
+	}
+	firstCred, err := first.Get(1, "")
+	if err != nil {
+		t.Fatalf("get first: %v", err)
+	}
+	secondCred, err := second.Get(1, "")
+	if err != nil {
+		t.Fatalf("get second: %v", err)
+	}
+	if firstCred.Password != "first" || secondCred.Password != "second" {
+		t.Fatalf("namespaced plaintext credentials collided: first=%+v second=%+v", firstCred, secondCred)
+	}
+}
+
 func TestPlaintextFileStore_GetMissing(t *testing.T) {
 	store := &PlaintextFileStore{dir: t.TempDir()}
-	_, err := store.Get(999)
+	_, err := store.Get(999, "")
 	if err == nil {
 		t.Error("Get for non-existent account should return error")
 	}
@@ -145,7 +168,7 @@ func TestPlaintextFileStore_GetMissing(t *testing.T) {
 
 func TestPlaintextFileStore_GetMissingReturnsErrNotFound(t *testing.T) {
 	store := &PlaintextFileStore{dir: t.TempDir()}
-	_, err := store.Get(999)
+	_, err := store.Get(999, "")
 	if !errors.Is(err, errCredentialNotFound) {
 		t.Errorf("Get for non-existent account should satisfy errors.Is(err, errCredentialNotFound), got %v", err)
 	}
@@ -175,7 +198,7 @@ func TestPlaintextFileStore_OAuthCredentials(t *testing.T) {
 		t.Fatalf("Set: %v", err)
 	}
 
-	got, err := store.Get(1)
+	got, err := store.Get(1, "")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -204,7 +227,7 @@ func TestPlaintextFileStore_OAuthCredentials(t *testing.T) {
 func TestNewCredentialStore_NoKeyring_NoPlaintext(t *testing.T) {
 	overrideKeyringForTest(t, false, map[string]string{})
 
-	store, err := NewCredentialStore(false)
+	store, err := NewCredentialStore("test", nil, true, false)
 	if err == nil {
 		t.Errorf("expected error when no keyring and plaintext disabled, got store: %v", store)
 	}
@@ -230,7 +253,7 @@ func TestNewCredentialStore_IncludesKeyringProbeError(t *testing.T) {
 		keyringDeleteFn = prevDelete
 	})
 
-	_, err := NewCredentialStore(false)
+	_, err := NewCredentialStore("test", nil, true, false)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -242,7 +265,7 @@ func TestNewCredentialStore_IncludesKeyringProbeError(t *testing.T) {
 func TestNewCredentialStore_AllowPlaintext(t *testing.T) {
 	overrideKeyringForTest(t, false, map[string]string{})
 
-	store, err := NewCredentialStore(true)
+	store, err := NewCredentialStore("test", nil, false, true)
 	if err != nil {
 		t.Fatalf("expected no error with plaintext allowed, got: %v", err)
 	}
@@ -257,7 +280,7 @@ func TestNewCredentialStore_AllowPlaintext(t *testing.T) {
 func TestNewCredentialStore_PrefersKeyringWhenAvailable(t *testing.T) {
 	overrideKeyringForTest(t, true, map[string]string{})
 
-	store, err := NewCredentialStore(false)
+	store, err := NewCredentialStore("test", nil, false, false)
 	if err != nil {
 		t.Fatalf("NewCredentialStore: %v", err)
 	}
@@ -271,12 +294,163 @@ func TestNewCredentialStore_PrefersKeyringWhenAvailable(t *testing.T) {
 		t.Fatalf("Set: %v", err)
 	}
 
-	got, err := store.Get(7)
+	got, err := store.Get(7, "")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
 	if got.Username != "alice" || got.Password != "secret123" {
 		t.Fatalf("Get returned %+v", got)
+	}
+}
+
+func TestCredentialStores_IsolateEqualAccountIDsByDatabaseNamespace(t *testing.T) {
+	backing := map[string]string{}
+	overrideKeyringForTest(t, true, backing)
+
+	first, err := NewCredentialStore("database-a", nil, false, false)
+	if err != nil {
+		t.Fatalf("first store: %v", err)
+	}
+	second, err := NewCredentialStore("database-b", nil, false, false)
+	if err != nil {
+		t.Fatalf("second store: %v", err)
+	}
+	if err := first.Set(Credential{AccountID: 1, Username: "alice", Password: "first"}); err != nil {
+		t.Fatalf("set first: %v", err)
+	}
+	if err := second.Set(Credential{AccountID: 1, Username: "bob", Password: "second"}); err != nil {
+		t.Fatalf("set second: %v", err)
+	}
+
+	firstCred, err := first.Get(1, "")
+	if err != nil {
+		t.Fatalf("get first: %v", err)
+	}
+	secondCred, err := second.Get(1, "")
+	if err != nil {
+		t.Fatalf("get second: %v", err)
+	}
+	if firstCred.Password != "first" || secondCred.Password != "second" {
+		t.Fatalf("namespaced credentials collided: first=%+v second=%+v", firstCred, secondCred)
+	}
+	if _, ok := backing["db_database-a_account_1"]; !ok {
+		t.Fatal("first namespaced key missing")
+	}
+	if _, ok := backing["db_database-b_account_1"]; !ok {
+		t.Fatal("second namespaced key missing")
+	}
+}
+
+func TestCredentialStore_MigratesLegacyKeyringCredential(t *testing.T) {
+	backing := map[string]string{}
+	overrideKeyringForTest(t, true, backing)
+	legacy := &KeyringStore{}
+	if err := legacy.Set(Credential{AccountID: 3, Username: "legacy", Password: "secret"}); err != nil {
+		t.Fatalf("seed legacy key: %v", err)
+	}
+
+	store, err := NewCredentialStore("database-new", nil, true, false)
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	got, err := store.Get(3, "")
+	if err != nil {
+		t.Fatalf("migrating Get: %v", err)
+	}
+	if got.Username != "legacy" || got.Password != "secret" {
+		t.Fatalf("migrated credential = %+v", got)
+	}
+	if _, exists := backing["account_3"]; exists {
+		t.Fatal("legacy unscoped key survived migration")
+	}
+	if _, exists := backing["db_database-new_account_3"]; !exists {
+		t.Fatal("namespaced key missing after migration")
+	}
+}
+
+func TestCredentialStore_CopiesPriorScopeWithoutDeletingSource(t *testing.T) {
+	backing := map[string]string{}
+	overrideKeyringForTest(t, true, backing)
+	source := &KeyringStore{namespace: "database-source"}
+	if err := source.Set(Credential{AccountID: 1, Username: "alice", Password: "source"}); err != nil {
+		t.Fatalf("seed source credential: %v", err)
+	}
+
+	copyStore, err := NewCredentialStore("database-copy", []PreviousCredentialScope{{
+		Namespace: "database-source", MaxAccountID: 1,
+	}}, false, false)
+	if err != nil {
+		t.Fatalf("copy store: %v", err)
+	}
+	got, err := copyStore.Get(1, "")
+	if err != nil {
+		t.Fatalf("copy prior credential: %v", err)
+	}
+	if got.Password != "source" {
+		t.Fatalf("copied credential = %+v", got)
+	}
+	if _, exists := backing["db_database-source_account_1"]; !exists {
+		t.Fatal("reading a copied database deleted the source credential")
+	}
+	if err := copyStore.Set(Credential{AccountID: 1, Username: "alice", Password: "copy"}); err != nil {
+		t.Fatalf("update copied credential: %v", err)
+	}
+	sourceCred, err := source.Get(1, "")
+	if err != nil {
+		t.Fatalf("source credential after copied update: %v", err)
+	}
+	if sourceCred.Password != "source" {
+		t.Fatalf("copied database overwrote source credential: %+v", sourceCred)
+	}
+	if err := source.Set(Credential{AccountID: 2, Username: "source-new", Password: "must-not-leak"}); err != nil {
+		t.Fatalf("seed divergent source account: %v", err)
+	}
+	if _, err := copyStore.Get(2, ""); !errors.Is(err, errCredentialNotFound) {
+		t.Fatalf("copied database read post-copy source account: %v", err)
+	}
+}
+
+func TestCredentialStore_RejectsPriorScopeCredentialAfterSourceRelink(t *testing.T) {
+	backing := map[string]string{}
+	overrideKeyringForTest(t, true, backing)
+	source := &KeyringStore{namespace: "database-source"}
+	oldFingerprint := AccountFingerprint("https://old.example.test/dav", "basic", "alice")
+	newFingerprint := AccountFingerprint("https://new.example.test/dav", "basic", "alice")
+	if err := source.Set(Credential{
+		AccountID: 1, AccountFingerprint: oldFingerprint, Username: "alice", Password: "old",
+	}); err != nil {
+		t.Fatalf("seed source credential: %v", err)
+	}
+
+	copyStore, err := NewCredentialStore("database-copy", []PreviousCredentialScope{{
+		Namespace: "database-source", MaxAccountID: 1,
+	}}, false, false)
+	if err != nil {
+		t.Fatalf("copy store: %v", err)
+	}
+	if err := source.Set(Credential{
+		AccountID: 1, AccountFingerprint: newFingerprint, Username: "alice", Password: "new",
+	}); err != nil {
+		t.Fatalf("relink source credential: %v", err)
+	}
+
+	if _, err := copyStore.Get(1, oldFingerprint); !errors.Is(err, ErrCredentialIdentityMismatch) {
+		t.Fatalf("copied database credential read error = %v, want identity mismatch", err)
+	}
+	if _, exists := backing["db_database-copy_account_1"]; exists {
+		t.Fatal("identity-mismatched prior credential was copied into the current scope")
+	}
+}
+
+func TestPlaintextFileStore_RejectsCredentialIdentityMismatch(t *testing.T) {
+	store := &PlaintextFileStore{dir: t.TempDir(), warn: io.Discard}
+	if err := store.Set(Credential{
+		AccountID: 7, AccountFingerprint: "fingerprint-a", Password: "secret",
+	}); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if _, err := store.Get(7, "fingerprint-b"); !errors.Is(err, ErrCredentialIdentityMismatch) {
+		t.Fatalf("Get error = %v, want identity mismatch", err)
 	}
 }
 
@@ -306,12 +480,12 @@ func TestNewCredentialStore_MigratesLegacyPlaintextCredentials(t *testing.T) {
 	backing := map[string]string{}
 	overrideKeyringForTest(t, true, backing)
 
-	store, err := NewCredentialStore(false)
+	store, err := NewCredentialStore("test", nil, true, false)
 	if err != nil {
 		t.Fatalf("NewCredentialStore: %v", err)
 	}
 
-	got, err := store.Get(99)
+	got, err := store.Get(99, "")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -319,7 +493,7 @@ func TestNewCredentialStore_MigratesLegacyPlaintextCredentials(t *testing.T) {
 		t.Fatalf("Get returned %+v", got)
 	}
 
-	if _, err := legacyStore.Get(99); !errors.Is(err, errCredentialNotFound) {
+	if _, err := legacyStore.Get(99, ""); !errors.Is(err, errCredentialNotFound) {
 		t.Fatalf("legacy credential should be removed after migration, got %v", err)
 	}
 	if len(backing) == 0 {
@@ -345,7 +519,7 @@ func TestMigratingCredentialStore_DeleteSurfacesLegacyError(t *testing.T) {
 
 	store := &migratingCredentialStore{
 		primary: &KeyringStore{},
-		legacy:  legacy,
+		legacy:  []legacyCredentialStore{{store: legacy, cleanup: true}},
 	}
 
 	// The primary (keyring) delete succeeds, but the legacy delete fails.
@@ -365,7 +539,7 @@ func TestMigratingCredentialStore_DeleteIgnoresLegacyNotFound(t *testing.T) {
 
 	store := &migratingCredentialStore{
 		primary: &KeyringStore{},
-		legacy:  legacy,
+		legacy:  []legacyCredentialStore{{store: legacy, cleanup: true}},
 	}
 
 	if err := store.Delete(7); err != nil {
@@ -403,13 +577,13 @@ func TestMigratingCredentialStore_GetIgnoresLegacyCleanupError(t *testing.T) {
 
 	store := &migratingCredentialStore{
 		primary: &KeyringStore{},
-		legacy:  legacy,
+		legacy:  []legacyCredentialStore{{store: legacy, cleanup: true}},
 	}
 
 	// Migration succeeds (primary.Set writes to the keyring) but cleaning up
 	// the legacy copy fails. Get must still return the migrated credential
 	// rather than a spurious cleanup error.
-	got, err := store.Get(42)
+	got, err := store.Get(42, "")
 	if err != nil {
 		t.Fatalf("Get should ignore a legacy cleanup failure after a successful migration, got %v", err)
 	}
@@ -449,10 +623,10 @@ func TestMigratingCredentialStore_GetReturnsLegacyWhenMigrationWriteFails(t *tes
 
 	store := &migratingCredentialStore{
 		primary: &KeyringStore{},
-		legacy:  legacy,
+		legacy:  []legacyCredentialStore{{store: legacy, cleanup: true}},
 	}
 
-	got, err := store.Get(42)
+	got, err := store.Get(42, "")
 	if err != nil {
 		t.Fatalf("Get should return the legacy credential when migration write fails, got %v", err)
 	}
@@ -461,8 +635,60 @@ func TestMigratingCredentialStore_GetReturnsLegacyWhenMigrationWriteFails(t *tes
 	}
 	// The migration write failed, so the legacy copy must survive for a
 	// later retry rather than being deleted.
-	if _, err := legacy.Get(42); err != nil {
+	if _, err := legacy.Get(42, ""); err != nil {
 		t.Fatalf("legacy credential should survive a failed migration write, got %v", err)
+	}
+}
+
+type getStubCredentialStore struct {
+	cred     Credential
+	getErr   error
+	getCalls int
+}
+
+func (s *getStubCredentialStore) Get(int64, string) (Credential, error) {
+	s.getCalls++
+	return s.cred, s.getErr
+}
+
+func (s *getStubCredentialStore) Set(Credential) error { return nil }
+func (s *getStubCredentialStore) Delete(int64) error   { return nil }
+
+func TestMigratingCredentialStore_PrimaryOperationalReadFailureDoesNotFallback(t *testing.T) {
+	primaryErr := errors.New("keyring temporarily unavailable")
+	primary := &getStubCredentialStore{getErr: primaryErr}
+	legacy := &getStubCredentialStore{cred: Credential{AccountID: 1, Password: "stale"}}
+	store := &migratingCredentialStore{
+		primary: primary,
+		legacy:  []legacyCredentialStore{{store: legacy}},
+	}
+
+	if _, err := store.Get(1, "fingerprint"); !errors.Is(err, primaryErr) {
+		t.Fatalf("Get error = %v, want primary backend failure", err)
+	}
+	if legacy.getCalls != 0 {
+		t.Fatalf("legacy Get calls = %d, want 0 after primary operational failure", legacy.getCalls)
+	}
+}
+
+func TestMigratingCredentialStore_LegacyOperationalReadFailureDoesNotTryOlderSource(t *testing.T) {
+	legacyErr := errors.New("prior keyring unavailable")
+	primary := &getStubCredentialStore{getErr: errCredentialNotFound}
+	higherPriority := &getStubCredentialStore{getErr: legacyErr}
+	older := &getStubCredentialStore{cred: Credential{AccountID: 1, Password: "stale"}}
+	store := &migratingCredentialStore{
+		primary: primary,
+		legacy: []legacyCredentialStore{
+			{store: higherPriority},
+			{store: older},
+		},
+	}
+
+	if _, err := store.Get(1, "fingerprint"); !errors.Is(err, legacyErr) {
+		t.Fatalf("Get error = %v, want higher-priority backend failure", err)
+	}
+	if older.getCalls != 0 {
+		t.Fatalf("older source Get calls = %d, want 0 after operational failure", older.getCalls)
 	}
 }
 

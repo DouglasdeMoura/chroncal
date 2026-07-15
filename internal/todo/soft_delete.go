@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
 	"github.com/douglasdemoura/chroncal/internal/softdelete"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
@@ -33,6 +34,9 @@ func (s *Service) RestoreByID(ctx context.Context, id int64) error {
 	}
 	if r.DeletedAt == nil || *r.DeletedAt == "" {
 		return ErrNotDeleted
+	}
+	if err := calendaraccess.EnsureWritable(ctx, s.q, r.CalendarID, todoComponent); err != nil {
+		return err
 	}
 
 	// Standalone or master: just un-hide. No EXDATE to reverse.
@@ -120,6 +124,9 @@ func (s *Service) RestoreByUID(ctx context.Context, uid string) error {
 	master, err := s.q.GetTodoByUIDIncludingDeleted(ctx, uid)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("get master: %w", err)
+	}
+	if err := s.ensureSeriesWritable(ctx, uid); err != nil {
+		return err
 	}
 	n, restoreErr := s.restoreByUIDClearingExdates(ctx, uid)
 	if restoreErr != nil {

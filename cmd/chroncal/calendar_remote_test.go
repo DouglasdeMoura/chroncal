@@ -61,8 +61,8 @@ type failingCredentialStore struct {
 	setErr error
 }
 
-func (s failingCredentialStore) Get(accountID int64) (auth.Credential, error) {
-	return auth.Credential{}, errors.New("unexpected Get")
+func (s failingCredentialStore) Get(accountID int64, _ string) (auth.Credential, error) {
+	return auth.Credential{AccountID: accountID}, nil
 }
 
 func (s failingCredentialStore) Set(cred auth.Credential) error {
@@ -77,7 +77,7 @@ type recordingCredentialStore struct {
 	deleted []int64
 }
 
-func (s *recordingCredentialStore) Get(accountID int64) (auth.Credential, error) {
+func (s *recordingCredentialStore) Get(accountID int64, _ string) (auth.Credential, error) {
 	return auth.Credential{}, errors.New("unexpected Get")
 }
 
@@ -107,7 +107,7 @@ func TestConnectCalendarRemote_RollsBackNewLinkWhenCredentialStoreFails(t *testi
 	}
 
 	prevFactory := newCalendarCredentialStore
-	newCalendarCredentialStore = func(bool) (auth.CredentialStore, error) {
+	newCalendarCredentialStore = func(string, []auth.PreviousCredentialScope, bool, bool) (auth.CredentialStore, error) {
 		return failingCredentialStore{setErr: errors.New("boom")}, nil
 	}
 	t.Cleanup(func() {
@@ -152,7 +152,7 @@ func TestConnectCalendarRemote_RollsBackExistingHiddenAccountUpdateWhenCredentia
 	calendarID, accountID := createLinkedCalendarForTest(t, dbPath)
 
 	prevFactory := newCalendarCredentialStore
-	newCalendarCredentialStore = func(bool) (auth.CredentialStore, error) {
+	newCalendarCredentialStore = func(string, []auth.PreviousCredentialScope, bool, bool) (auth.CredentialStore, error) {
 		return failingCredentialStore{setErr: errors.New("boom")}, nil
 	}
 	t.Cleanup(func() {
@@ -218,7 +218,7 @@ func TestConnectCalendarRemote_GatesPlaintextOnAppFlag(t *testing.T) {
 
 	var gotAllowPlaintext bool
 	prevFactory := newCalendarCredentialStore
-	newCalendarCredentialStore = func(allowPlaintext bool) (auth.CredentialStore, error) {
+	newCalendarCredentialStore = func(_ string, _ []auth.PreviousCredentialScope, _ bool, allowPlaintext bool) (auth.CredentialStore, error) {
 		gotAllowPlaintext = allowPlaintext
 		// Return an error to short-circuit connectCalendarRemote right after
 		// the store is constructed; we only care about the argument.
@@ -261,7 +261,7 @@ func TestDeleteCalendarWithCleanup_RemovesHiddenAccountAndCredential(t *testing.
 
 	store := &recordingCredentialStore{}
 	prevFactory := newCalendarCredentialStore
-	newCalendarCredentialStore = func(bool) (auth.CredentialStore, error) {
+	newCalendarCredentialStore = func(string, []auth.PreviousCredentialScope, bool, bool) (auth.CredentialStore, error) {
 		return store, nil
 	}
 	t.Cleanup(func() {
