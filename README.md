@@ -492,11 +492,11 @@ syncs run unattended.
    chroncal sync status
    ```
 
-You can also add, refresh, or remove an account directly from the TUI. Open
-**CalDAV Accounts** from the calendar palette, complete authentication, and
-select collections in the multi-select picker. The browser authorization runs
-without leaving the app. Opening a linked calendar still offers
-**Re-authenticate** when credentials expire.
+To connect from the TUI, open **Add Calendar**, enable **CalDAV sync**, and
+enter the server and authentication settings. Chroncal discovers every
+collection exposed by that connection and opens a multi-select calendar step
+before importing. Browser authorization runs without leaving the app. Opening
+a linked calendar still offers **Re-authenticate** when credentials expire.
 
 Google limitations:
 
@@ -654,9 +654,9 @@ delete. The sidebar groups calendars under collapsible account headings,
 including a separate **Local** section; hidden state and scrolling operate on
 calendar rows rather than group headings. Read-only imported calendars remain
 browsable but reject event edits and deletes. Calendars are managed from the
-calendar popup, while CalDAV accounts are added, refreshed, and removed from
-**CalDAV Accounts** in the palette. Todo and journal management live in the
-CLI for now.
+calendar popup; **Add Calendar** contains the integrated CalDAV discovery flow.
+Account lifecycle commands remain available in the CLI. Todo and journal
+management live in the CLI for now.
 
 Sync health is visible at a glance: a calendar whose last sync failed shows
 a `⚠` next to it in the sidebar, and opening it explains why (and offers a

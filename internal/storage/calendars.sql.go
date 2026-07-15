@@ -9,6 +9,29 @@ import (
 	"context"
 )
 
+const adoptCalendarRemoteName = `-- name: AdoptCalendarRemoteName :exec
+UPDATE calendars
+SET name = ?1
+WHERE id = ?2
+  AND name = remote_name
+  AND NOT EXISTS (
+      SELECT 1
+      FROM calendars AS other
+      WHERE other.name = ?1
+        AND other.id <> ?2
+  )
+`
+
+type AdoptCalendarRemoteNameParams struct {
+	Name string
+	ID   int64
+}
+
+func (q *Queries) AdoptCalendarRemoteName(ctx context.Context, arg AdoptCalendarRemoteNameParams) error {
+	_, err := q.db.ExecContext(ctx, adoptCalendarRemoteName, arg.Name, arg.ID)
+	return err
+}
+
 const clearCalendarColorDirty = `-- name: ClearCalendarColorDirty :exec
 UPDATE calendars SET
     remote_color = ?,
@@ -36,6 +59,30 @@ WHERE is_default = 1
 
 func (q *Queries) ClearDefaultCalendar(ctx context.Context) error {
 	_, err := q.db.ExecContext(ctx, clearDefaultCalendar)
+	return err
+}
+
+const clearRemoteLinkByCalendar = `-- name: ClearRemoteLinkByCalendar :exec
+UPDATE calendars SET
+    account_id = NULL,
+    remote_url = '',
+    ctag = '',
+    sync_token = '',
+    last_sync_at = '',
+    last_sync_attempted_at = '',
+    last_sync_error = '',
+    remote_color = '',
+    color_dirty = 0,
+    remote_name = '',
+    remote_access = 'unknown',
+    remote_components = '',
+    remote_missing = 0,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = ?
+`
+
+func (q *Queries) ClearRemoteLinkByCalendar(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, clearRemoteLinkByCalendar, id)
 	return err
 }
 
@@ -133,12 +180,12 @@ const createDiscoveredCalendar = `-- name: CreateDiscoveredCalendar :one
 INSERT INTO calendars (
     name, color, description, display_order,
     account_id, remote_url, remote_color,
-    remote_name, remote_access, remote_components
+    remote_name, remote_access, remote_components, owner_email
 )
 VALUES (
     ?, ?, ?, (SELECT COALESCE(MAX(display_order), -1) + 1 FROM calendars),
     ?, ?, ?,
-    ?, ?, ?
+    ?, ?, ?, ?
 )
 RETURNING id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order, remote_name, remote_access, remote_components, remote_missing
 `
@@ -153,6 +200,7 @@ type CreateDiscoveredCalendarParams struct {
 	RemoteName       string
 	RemoteAccess     string
 	RemoteComponents string
+	OwnerEmail       string
 }
 
 func (q *Queries) CreateDiscoveredCalendar(ctx context.Context, arg CreateDiscoveredCalendarParams) (Calendar, error) {
@@ -166,6 +214,7 @@ func (q *Queries) CreateDiscoveredCalendar(ctx context.Context, arg CreateDiscov
 		arg.RemoteName,
 		arg.RemoteAccess,
 		arg.RemoteComponents,
+		arg.OwnerEmail,
 	)
 	var i Calendar
 	err := row.Scan(
@@ -490,6 +539,26 @@ func (q *Queries) UpdateCalendar(ctx context.Context, arg UpdateCalendarParams) 
 	return i, err
 }
 
+const updateCalendarCapabilitiesFromLink = `-- name: UpdateCalendarCapabilitiesFromLink :exec
+UPDATE calendars SET
+    remote_access = ?,
+    remote_components = ?,
+    remote_missing = 0,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = ?
+`
+
+type UpdateCalendarCapabilitiesFromLinkParams struct {
+	RemoteAccess     string
+	RemoteComponents string
+	ID               int64
+}
+
+func (q *Queries) UpdateCalendarCapabilitiesFromLink(ctx context.Context, arg UpdateCalendarCapabilitiesFromLinkParams) error {
+	_, err := q.db.ExecContext(ctx, updateCalendarCapabilitiesFromLink, arg.RemoteAccess, arg.RemoteComponents, arg.ID)
+	return err
+}
+
 const updateCalendarColorFromSync = `-- name: UpdateCalendarColorFromSync :exec
 UPDATE calendars SET
     color = ?,
@@ -512,19 +581,15 @@ func (q *Queries) UpdateCalendarColorFromSync(ctx context.Context, arg UpdateCal
 
 const updateCalendarDiscovery = `-- name: UpdateCalendarDiscovery :one
 UPDATE calendars SET
-    name = CASE
-        WHEN remote_name = '' OR name = remote_name THEN ?1
-        ELSE name
-    END,
     color = CASE
-        WHEN color_dirty = 0 AND ?2 <> '' THEN ?2
+        WHEN color_dirty = 0 AND ?1 <> '' THEN ?1
         ELSE color
     END,
     remote_color = CASE
-        WHEN ?2 <> '' THEN ?2
+        WHEN ?1 <> '' THEN ?1
         ELSE remote_color
     END,
-    remote_name = ?1,
+    remote_name = ?2,
     remote_access = ?3,
     remote_components = ?4,
     remote_missing = 0,
@@ -534,8 +599,8 @@ RETURNING id
 `
 
 type UpdateCalendarDiscoveryParams struct {
-	RemoteName       string
 	RemoteColor      interface{}
+	RemoteName       string
 	RemoteAccess     string
 	RemoteComponents string
 	ID               int64
@@ -543,8 +608,8 @@ type UpdateCalendarDiscoveryParams struct {
 
 func (q *Queries) UpdateCalendarDiscovery(ctx context.Context, arg UpdateCalendarDiscoveryParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, updateCalendarDiscovery,
-		arg.RemoteName,
 		arg.RemoteColor,
+		arg.RemoteName,
 		arg.RemoteAccess,
 		arg.RemoteComponents,
 		arg.ID,

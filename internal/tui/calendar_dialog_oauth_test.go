@@ -21,7 +21,7 @@ func oauthDialogFixture(t *testing.T, authType string) CalendarDialogModel {
 	}
 	m.form.Field(cdIdxSync).(*CheckboxField).Toggle()
 	rebuild()
-	m.form.Field(cdIdxAuth).(*SelectField).SetSelected(authOptionIndex(authType))
+	m.form.Field(calDAVIdxAuth).(*SelectField).SetSelected(authOptionIndex(authType))
 	rebuild()
 	return m
 }
@@ -29,17 +29,17 @@ func oauthDialogFixture(t *testing.T, authType string) CalendarDialogModel {
 func TestCalendarDialog_OAuthLayoutSwapsRows(t *testing.T) {
 	m := oauthDialogFixture(t, "oauth2")
 
-	if got := m.form.ItemCount(); got != cdIdxOAuthAllowInsecure+1 {
-		t.Fatalf("ItemCount = %d, want %d (oauth layout)", got, cdIdxOAuthAllowInsecure+1)
+	if got := m.form.ItemCount(); got != calDAVIdxOAuthAllowInsecure+1 {
+		t.Fatalf("ItemCount = %d, want %d (oauth layout)", got, calDAVIdxOAuthAllowInsecure+1)
 	}
-	if _, ok := m.form.Field(cdIdxOAuthClientID).(*TextField); !ok {
-		t.Errorf("row %d should be the Client ID TextField", cdIdxOAuthClientID)
+	if _, ok := m.form.Field(calDAVIdxOAuthClientID).(*TextField); !ok {
+		t.Errorf("row %d should be the Client ID TextField", calDAVIdxOAuthClientID)
 	}
-	if _, ok := m.form.Field(cdIdxOAuthClientSecret).(*TextField); !ok {
-		t.Errorf("row %d should be the Client secret TextField", cdIdxOAuthClientSecret)
+	if _, ok := m.form.Field(calDAVIdxOAuthClientSecret).(*TextField); !ok {
+		t.Errorf("row %d should be the Client secret TextField", calDAVIdxOAuthClientSecret)
 	}
-	if _, ok := m.form.Field(cdIdxOAuthAllowInsecure).(*CheckboxField); !ok {
-		t.Errorf("row %d should be the HTTP checkbox", cdIdxOAuthAllowInsecure)
+	if _, ok := m.form.Field(calDAVIdxOAuthAllowInsecure).(*CheckboxField); !ok {
+		t.Errorf("row %d should be the HTTP checkbox", calDAVIdxOAuthAllowInsecure)
 	}
 	view := m.form.View()
 	if !strings.Contains(view, "Client ID") || !strings.Contains(view, "Client secret") {
@@ -48,17 +48,17 @@ func TestCalendarDialog_OAuthLayoutSwapsRows(t *testing.T) {
 }
 
 func TestCalendarDialog_OAuthLayoutFitsSmallTerminal(t *testing.T) {
-	m := oauthDialogFixture(t, "oauth2").SetSize(120, 15)
+	m := oauthDialogFixture(t, "oauth2").SetSize(120, 10)
 
 	_, bh := lipgloss.Size(m.View())
-	if bh > 15 {
-		t.Fatalf("rendered calendar dialog height = %d, want <= 15", bh)
+	if bh > 10 {
+		t.Fatalf("rendered calendar dialog height = %d, want <= 10", bh)
 	}
 	if !m.bodyOverflows() {
 		t.Fatal("test precondition: calendar form body should overflow")
 	}
 	out := m.View()
-	if !strings.Contains(out, "New calendar") || !strings.Contains(out, "Save") || !strings.Contains(out, "Cancel") {
+	if !strings.Contains(out, "New calendar") || !strings.Contains(out, "Discover calendars") || !strings.Contains(out, "Cancel") {
 		t.Fatalf("title and actions should stay visible in small terminal, got %q", out)
 	}
 	if !strings.Contains(out, "more") {
@@ -67,7 +67,7 @@ func TestCalendarDialog_OAuthLayoutFitsSmallTerminal(t *testing.T) {
 }
 
 func TestCalendarDialog_MouseWheelScrollSurvivesRender(t *testing.T) {
-	m := oauthDialogFixture(t, "oauth2").SetSize(120, 15)
+	m := oauthDialogFixture(t, "oauth2").SetSize(120, 10)
 	if !m.bodyOverflows() {
 		t.Fatal("test precondition: calendar form body should overflow")
 	}
@@ -84,7 +84,7 @@ func TestCalendarDialog_MouseWheelScrollSurvivesRender(t *testing.T) {
 	}
 
 	out := m.View()
-	if !strings.Contains(out, "Client secret") {
+	if !strings.Contains(out, "allow plain HTTP") {
 		t.Fatalf("rendering must preserve the wheel-scrolled viewport, got %q", out)
 	}
 	if !strings.Contains(out, "↑ more") {
@@ -100,30 +100,30 @@ func TestCalendarDialog_OAuthLayoutSwitchPreservesValues(t *testing.T) {
 		}
 	}
 
-	m.form.Field(cdIdxPassword).(*TextField).SetValue("hunter2")
+	m.form.Field(calDAVIdxSecret).(*TextField).SetValue("hunter2")
 	rebuild()
 
 	// basic -> oauth2: enter client config.
-	m.form.Field(cdIdxAuth).(*SelectField).SetSelected(authOptionIndex("oauth2"))
+	m.form.Field(calDAVIdxAuth).(*SelectField).SetSelected(authOptionIndex("oauth2"))
 	rebuild()
-	m.form.Field(cdIdxOAuthClientID).(*TextField).SetValue("cid.apps")
-	m.form.Field(cdIdxOAuthClientSecret).(*TextField).SetValue("shh")
+	m.form.Field(calDAVIdxOAuthClientID).(*TextField).SetValue("cid.apps")
+	m.form.Field(calDAVIdxOAuthClientSecret).(*TextField).SetValue("shh")
 	rebuild()
 
 	// oauth2 -> basic: the password survives the round trip.
-	m.form.Field(cdIdxAuth).(*SelectField).SetSelected(authOptionIndex("basic"))
+	m.form.Field(calDAVIdxAuth).(*SelectField).SetSelected(authOptionIndex("basic"))
 	rebuild()
-	if got := m.form.Field(cdIdxPassword).(*TextField).Value(); got != "hunter2" {
+	if got := m.form.Field(calDAVIdxSecret).(*TextField).Value(); got != "hunter2" {
 		t.Errorf("password lost across layout switch: %q", got)
 	}
 
 	// basic -> oauth2 again: the client config survives too.
-	m.form.Field(cdIdxAuth).(*SelectField).SetSelected(authOptionIndex("oauth2"))
+	m.form.Field(calDAVIdxAuth).(*SelectField).SetSelected(authOptionIndex("oauth2"))
 	rebuild()
-	if got := m.form.Field(cdIdxOAuthClientID).(*TextField).Value(); got != "cid.apps" {
+	if got := m.form.Field(calDAVIdxOAuthClientID).(*TextField).Value(); got != "cid.apps" {
 		t.Errorf("client ID lost across layout switch: %q", got)
 	}
-	if got := m.form.Field(cdIdxOAuthClientSecret).(*TextField).Value(); got != "shh" {
+	if got := m.form.Field(calDAVIdxOAuthClientSecret).(*TextField).Value(); got != "shh" {
 		t.Errorf("client secret lost across layout switch: %q", got)
 	}
 }
@@ -136,36 +136,36 @@ func TestCalendarDialog_OAuthSubmitCarriesClientConfig(t *testing.T) {
 		}
 	}
 	m.form.Field(cdIdxName).(*TextField).SetValue("gmail")
-	m.form.Field(cdIdxRemoteURL).(*TextField).SetValue("https://apidata.googleusercontent.com/caldav/v2/x/events")
-	m.form.Field(cdIdxUsername).(*TextField).SetValue("x@gmail.com")
-	m.form.Field(cdIdxOAuthClientID).(*TextField).SetValue("cid.apps")
-	m.form.Field(cdIdxOAuthClientSecret).(*TextField).SetValue("shh")
+	m.form.Field(calDAVIdxServer).(*TextField).SetValue("https://apidata.googleusercontent.com/caldav/v2/x/events")
+	m.form.Field(calDAVIdxUsername).(*TextField).SetValue("x@gmail.com")
+	m.form.Field(calDAVIdxOAuthClientID).(*TextField).SetValue("cid.apps")
+	m.form.Field(calDAVIdxOAuthClientSecret).(*TextField).SetValue("shh")
 	rebuild()
 
 	cmd := m.form.onSubmit(&m.form)
 	if cmd == nil {
 		t.Fatal("submit returned nil; validation rejected valid input")
 	}
-	saved, ok := cmd().(CalendarSavedMsg)
+	discovery, ok := cmd().(CalendarDiscoveryRequestedMsg)
 	if !ok {
-		t.Fatalf("expected CalendarSavedMsg, got %T", cmd())
+		t.Fatalf("expected CalendarDiscoveryRequestedMsg, got %T", cmd())
 	}
-	if saved.AuthType != "oauth2" {
-		t.Errorf("AuthType = %q, want oauth2", saved.AuthType)
+	if discovery.AuthType != "oauth2" {
+		t.Errorf("AuthType = %q, want oauth2", discovery.AuthType)
 	}
-	if saved.OAuthClientID != "cid.apps" || saved.OAuthClientSecret != "shh" {
-		t.Errorf("client config not carried: %+v", saved)
+	if discovery.OAuthClientID != "cid.apps" || discovery.OAuthClientSecret != "shh" {
+		t.Errorf("client config not carried: %+v", discovery)
 	}
-	if saved.Password != "" {
-		t.Errorf("oauth2 save should not carry a password; got %q", saved.Password)
+	if discovery.Secret != "" {
+		t.Errorf("oauth2 discovery should not carry a secret; got %q", discovery.Secret)
 	}
 }
 
 func TestCalendarDialog_OAuthSubmitValidatesClientConfig(t *testing.T) {
 	m := oauthDialogFixture(t, "oauth2")
 	m.form.Field(cdIdxName).(*TextField).SetValue("gmail")
-	m.form.Field(cdIdxRemoteURL).(*TextField).SetValue("https://example.com/dav/")
-	m.form.Field(cdIdxUsername).(*TextField).SetValue("x@gmail.com")
+	m.form.Field(calDAVIdxServer).(*TextField).SetValue("https://example.com/dav/")
+	m.form.Field(calDAVIdxUsername).(*TextField).SetValue("x@gmail.com")
 	// Client ID/secret left empty.
 
 	if cmd := m.form.onSubmit(&m.form); cmd != nil {

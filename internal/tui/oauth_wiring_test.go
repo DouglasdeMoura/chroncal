@@ -114,9 +114,6 @@ func TestReauthReadyClearsPendingAndOpensFlow(t *testing.T) {
 	if !m.oauthFlowOpen {
 		t.Error("oauthFlowOpen should be true after the flow starts")
 	}
-	if m.oauthPurpose.isConnect {
-		t.Error("re-auth purpose should not be a connect")
-	}
 	if m.oauthPurpose.calendarID != 12 {
 		t.Errorf("oauthPurpose.calendarID = %d, want 12", m.oauthPurpose.calendarID)
 	}

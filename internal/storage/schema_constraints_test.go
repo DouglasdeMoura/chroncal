@@ -264,19 +264,26 @@ func TestSyncConflictsRejectInvalidOwnerType(t *testing.T) {
 	}
 }
 
-func TestCalendarsAllowDuplicateDisplayNames(t *testing.T) {
+// calendars.name stays UNIQUE after migration 040: collisions between remote
+// collections that share a display name are resolved in code (unique local
+// names with the pristine value in remote_name), so the database must still
+// reject a raw duplicate insert.
+func TestCalendarsRejectDuplicateDisplayNames(t *testing.T) {
 	db, _, err := Open(":memory:")
 	if err != nil {
-		t.Fatalf("open db: %v", err)
+		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
 
-	for range 2 {
-		if _, err := db.Exec(
-			`INSERT INTO calendars (name, color) VALUES ('Holidays in Brazil', '#7C3AED')`,
-		); err != nil {
-			t.Fatalf("insert duplicate display name: %v", err)
-		}
+	if _, err := db.Exec(
+		`INSERT INTO calendars (name, color) VALUES ('Holidays in Brazil', '#7C3AED')`,
+	); err != nil {
+		t.Fatalf("insert first display name: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO calendars (name, color) VALUES ('Holidays in Brazil', '#7C3AED')`,
+	); err == nil {
+		t.Fatal("duplicate display name should be rejected by the UNIQUE constraint")
 	}
 }
 
@@ -296,7 +303,6 @@ func TestCalendarsScopeRemoteIdentityToAccount(t *testing.T) {
 			t.Fatalf("insert account %q: %v", name, err)
 		}
 	}
-
 	if _, err := db.ExecContext(ctx,
 		`INSERT INTO calendars (name, account_id, remote_url)
 		 VALUES ('Work', 1, '/calendars/work/')`,
@@ -305,7 +311,7 @@ func TestCalendarsScopeRemoteIdentityToAccount(t *testing.T) {
 	}
 	if _, err := db.ExecContext(ctx,
 		`INSERT INTO calendars (name, account_id, remote_url)
-		 VALUES ('Work', 2, '/calendars/work/')`,
+		 VALUES ('Work (2)', 2, '/calendars/work/')`,
 	); err != nil {
 		t.Fatalf("same remote URL on another account should be allowed: %v", err)
 	}

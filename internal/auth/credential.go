@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/zalando/go-keyring"
@@ -15,12 +17,13 @@ import (
 
 // Credential holds authentication secrets for an account.
 type Credential struct {
-	AccountID    int64  `json:"account_id"`
-	Username     string `json:"username,omitempty"`
-	Password     string `json:"password,omitempty"`
-	AccessToken  string `json:"access_token,omitempty"`
-	RefreshToken string `json:"refresh_token,omitempty"`
-	TokenExpiry  string `json:"token_expiry,omitempty"` // RFC 3339
+	AccountID          int64  `json:"account_id"`
+	Username           string `json:"username,omitempty"`
+	Password           string `json:"password,omitempty"`
+	AccessToken        string `json:"access_token,omitempty"`
+	RefreshToken       string `json:"refresh_token,omitempty"`
+	TokenExpiry        string `json:"token_expiry,omitempty"` // RFC 3339
+	AccountFingerprint string `json:"account_fingerprint,omitempty"`
 	// OAuth client config (stored with credential, not in DB)
 	OAuthClientID     string `json:"oauth_client_id,omitempty"`
 	OAuthClientSecret string `json:"oauth_client_secret,omitempty"`
@@ -28,14 +31,42 @@ type Credential struct {
 
 // CredentialStore provides read/write access to account credentials.
 type CredentialStore interface {
-	Get(accountID int64) (Credential, error)
+	Get(accountID int64, accountFingerprint string) (Credential, error)
 	Set(cred Credential) error
 	Delete(accountID int64) error
+}
+
+// PreviousCredentialScope is a non-destructive migration source recorded when
+// a database is moved or copied. MaxAccountID is the highest account ID that
+// existed at that location; bounding fallback prevents independently-created
+// post-copy accounts with the same numeric ID from sharing credentials.
+type PreviousCredentialScope struct {
+	Namespace    string
+	MaxAccountID int64
 }
 
 const keyringService = "chroncal"
 
 var errCredentialNotFound = keyring.ErrNotFound
+
+// IsCredentialNotFound reports whether a credential lookup found no entry.
+// Lifecycle code uses it to distinguish an absent credential from a transient
+// backend failure that must abort destructive changes.
+func IsCredentialNotFound(err error) bool {
+	return errors.Is(err, errCredentialNotFound)
+}
+
+// AccountFingerprint binds a credential to the connection identity it was
+// issued for. It intentionally excludes display names and numeric IDs.
+func AccountFingerprint(serverURL, authType, username string) string {
+	identity := strings.TrimSpace(serverURL) + "\x00" +
+		strings.ToLower(strings.TrimSpace(authType)) + "\x00" +
+		strings.TrimSpace(username)
+	sum := sha256.Sum256([]byte(identity))
+	return fmt.Sprintf("%x", sum)
+}
+
+var ErrCredentialIdentityMismatch = errors.New("credential belongs to a different account connection")
 
 var (
 	keyringUnavailableReasonFn = newKeyringAvailabilityProbe()
@@ -44,49 +75,105 @@ var (
 	keyringDeleteFn            = keyring.Delete
 )
 
-// NewCredentialStore returns the best available credential store.
-// It tries strategies in order: OS keyring, encrypted file, plaintext.
-// Plaintext is only used if allowPlaintext is true. Plaintext-storage
-// warnings go to stderr; full-screen UIs that own the terminal use
-// NewCredentialStoreWithWarnings to route them elsewhere.
-func NewCredentialStore(allowPlaintext bool) (CredentialStore, error) {
-	return NewCredentialStoreWithWarnings(allowPlaintext, os.Stderr)
+// NewCredentialStore returns the best available credential store scoped to a
+// database namespace. It tries strategies in order: OS keyring, encrypted
+// file, plaintext. Plaintext is only used if allowPlaintext is true.
+//
+// previousNamespaces are read-only migration sources recorded when the same
+// database was opened under an older file identity. They are copied, never
+// deleted: the older path may be a still-active source database from which this
+// one was cloned. migrateLegacy controls one-way cleanup of the pre-namespace
+// global account_<id> keys and is safe only for the default database.
+func NewCredentialStore(namespace string, previousNamespaces []PreviousCredentialScope, migrateLegacy, allowPlaintext bool) (CredentialStore, error) {
+	return NewCredentialStoreWithWarnings(namespace, previousNamespaces, migrateLegacy, allowPlaintext, os.Stderr)
 }
 
-// NewCredentialStoreWithWarnings is NewCredentialStore with the
-// plaintext-storage warnings routed to warn instead of stderr. The TUI
-// passes a collector and surfaces the warnings in its own chrome — raw
-// stderr writes would corrupt the bubbletea renderer mid-frame.
-func NewCredentialStoreWithWarnings(allowPlaintext bool, warn io.Writer) (CredentialStore, error) {
+// NewCredentialStoreWithWarnings is NewCredentialStore with plaintext-storage
+// warnings routed to warn instead of stderr. The TUI passes a collector and
+// surfaces the warnings in its own chrome — raw stderr writes would corrupt
+// the bubbletea renderer mid-frame.
+func NewCredentialStoreWithWarnings(namespace string, previousNamespaces []PreviousCredentialScope, migrateLegacy, allowPlaintext bool, warn io.Writer) (CredentialStore, error) {
+	if !validCredentialNamespace(namespace) {
+		return nil, fmt.Errorf("invalid credential namespace %q", namespace)
+	}
 	dir, err := credentialDir()
 	if err != nil {
 		return nil, err
 	}
-	plaintext := &PlaintextFileStore{dir: dir, warn: warn}
+	plaintext := &PlaintextFileStore{dir: dir, namespace: namespace, warn: warn}
 
+	var primary CredentialStore
+	var legacy []legacyCredentialStore
 	if probeErr := keyringUnavailableReason(); probeErr == nil {
-		return &migratingCredentialStore{
-			primary: &KeyringStore{},
-			legacy:  plaintext,
-		}, nil
+		primary = &KeyringStore{namespace: namespace}
+		for _, previous := range previousNamespaces {
+			if previous.Namespace == namespace || !validCredentialNamespace(previous.Namespace) {
+				continue
+			}
+			legacy = append(legacy,
+				legacyCredentialStore{store: &KeyringStore{namespace: previous.Namespace}, maxAccountID: previous.MaxAccountID, limited: true},
+				legacyCredentialStore{store: &PlaintextFileStore{dir: dir, namespace: previous.Namespace, warn: warn}, maxAccountID: previous.MaxAccountID, limited: true},
+			)
+		}
+		if migrateLegacy {
+			legacy = append(legacy,
+				legacyCredentialStore{store: &KeyringStore{}, cleanup: true},
+				legacyCredentialStore{store: &PlaintextFileStore{dir: dir, warn: warn}, cleanup: true},
+			)
+		}
+	} else {
+		// Encrypted file store needs a passphrase prompt; skip for now.
+		// TODO: implement EncryptedFileStore with argon2id + AES-256-GCM
+		if !allowPlaintext {
+			return nil, fmt.Errorf("no secure credential store available: %w; use --allow-plaintext to store credentials in plaintext, or install a keyring provider", keyringUnavailableReason())
+		}
+		primary = plaintext
+		for _, previous := range previousNamespaces {
+			if previous.Namespace != namespace && validCredentialNamespace(previous.Namespace) {
+				legacy = append(legacy, legacyCredentialStore{
+					store:        &PlaintextFileStore{dir: dir, namespace: previous.Namespace, warn: warn},
+					maxAccountID: previous.MaxAccountID,
+					limited:      true,
+				})
+			}
+		}
+		if migrateLegacy {
+			legacy = append(legacy, legacyCredentialStore{
+				store: &PlaintextFileStore{dir: dir, warn: warn}, cleanup: true,
+			})
+		}
 	}
-	// Encrypted file store needs a passphrase prompt; skip for now.
-	// TODO: implement EncryptedFileStore with argon2id + AES-256-GCM
-	if allowPlaintext {
-		return plaintext, nil
+	if len(legacy) == 0 {
+		return primary, nil
 	}
-	return nil, fmt.Errorf("no secure credential store available: %w; use --allow-plaintext to store credentials in plaintext, or install a keyring provider", keyringUnavailableReason())
+	return &migratingCredentialStore{primary: primary, legacy: legacy}, nil
 }
 
 func keyringUnavailableReason() error {
 	return keyringUnavailableReasonFn()
 }
 
-// KeyringStore stores credentials in the OS keyring (GNOME Keyring, KWallet, macOS Keychain).
-type KeyringStore struct{}
+func validCredentialNamespace(namespace string) bool {
+	if namespace == "" {
+		return false
+	}
+	for _, r := range namespace {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '-' || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
 
-func (s *KeyringStore) Get(accountID int64) (Credential, error) {
-	secret, err := keyringGetFn(keyringService, keyringAccountName(accountID))
+// KeyringStore stores credentials in the OS keyring (GNOME Keyring, KWallet, macOS Keychain).
+type KeyringStore struct {
+	namespace string
+}
+
+func (s *KeyringStore) Get(accountID int64, accountFingerprint string) (Credential, error) {
+	secret, err := keyringGetFn(keyringService, keyringAccountName(s.namespace, accountID))
 	if err != nil {
 		if errors.Is(err, errCredentialNotFound) {
 			return Credential{}, errCredentialNotFound
@@ -97,6 +184,9 @@ func (s *KeyringStore) Get(accountID int64) (Credential, error) {
 	if err := json.Unmarshal([]byte(secret), &cred); err != nil {
 		return Credential{}, fmt.Errorf("parse credential from keyring: %w", err)
 	}
+	if err := validateCredentialFingerprint(cred, accountFingerprint); err != nil {
+		return Credential{}, err
+	}
 	return cred, nil
 }
 
@@ -105,14 +195,14 @@ func (s *KeyringStore) Set(cred Credential) error {
 	if err != nil {
 		return fmt.Errorf("marshal credential: %w", err)
 	}
-	if err := keyringSetFn(keyringService, keyringAccountName(cred.AccountID), string(data)); err != nil {
+	if err := keyringSetFn(keyringService, keyringAccountName(s.namespace, cred.AccountID), string(data)); err != nil {
 		return fmt.Errorf("write credential to keyring: %w", err)
 	}
 	return nil
 }
 
 func (s *KeyringStore) Delete(accountID int64) error {
-	err := keyringDeleteFn(keyringService, keyringAccountName(accountID))
+	err := keyringDeleteFn(keyringService, keyringAccountName(s.namespace, accountID))
 	if err != nil && !errors.Is(err, errCredentialNotFound) {
 		return fmt.Errorf("delete credential from keyring: %w", err)
 	}
@@ -122,7 +212,8 @@ func (s *KeyringStore) Delete(accountID int64) error {
 // PlaintextFileStore stores credentials as JSON files with 0600 permissions.
 // Requires explicit --allow-plaintext flag.
 type PlaintextFileStore struct {
-	dir string
+	dir       string
+	namespace string
 	// warn receives the plaintext-storage warnings emitted by Set. Nil
 	// falls back to stderr so zero-value construction keeps CLI behavior.
 	warn io.Writer
@@ -136,7 +227,7 @@ func (s *PlaintextFileStore) warnWriter() io.Writer {
 	return os.Stderr
 }
 
-func (s *PlaintextFileStore) Get(accountID int64) (Credential, error) {
+func (s *PlaintextFileStore) Get(accountID int64, accountFingerprint string) (Credential, error) {
 	path := s.path(accountID)
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -149,11 +240,14 @@ func (s *PlaintextFileStore) Get(accountID int64) (Credential, error) {
 	if err := json.Unmarshal(data, &cred); err != nil {
 		return Credential{}, fmt.Errorf("parse credential: %w", err)
 	}
+	if err := validateCredentialFingerprint(cred, accountFingerprint); err != nil {
+		return Credential{}, err
+	}
 	return cred, nil
 }
 
 func (s *PlaintextFileStore) Set(cred Credential) error {
-	if err := os.MkdirAll(s.dir, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.path(cred.AccountID)), 0o700); err != nil {
 		return fmt.Errorf("create credential dir: %w", err)
 	}
 	data, err := json.MarshalIndent(cred, "", "  ")
@@ -181,7 +275,10 @@ func (s *PlaintextFileStore) Delete(accountID int64) error {
 }
 
 func (s *PlaintextFileStore) path(accountID int64) string {
-	return filepath.Join(s.dir, fmt.Sprintf("account_%d.json", accountID))
+	if s.namespace == "" {
+		return filepath.Join(s.dir, fmt.Sprintf("account_%d.json", accountID))
+	}
+	return filepath.Join(s.dir, "db_"+s.namespace, fmt.Sprintf("account_%d.json", accountID))
 }
 
 // appConfigBaseDir returns the OS base config directory, honouring
@@ -216,54 +313,91 @@ func credentialDir() (string, error) {
 
 // StoreDescription returns a user-facing description of the credential backend.
 func StoreDescription(store CredentialStore) string {
-	switch store.(type) {
+	switch typed := store.(type) {
 	case *PlaintextFileStore:
 		return "plaintext files"
+	case *migratingCredentialStore:
+		return StoreDescription(typed.primary)
 	default:
 		return "OS keyring"
 	}
 }
 
-type migratingCredentialStore struct {
-	primary CredentialStore
-	legacy  *PlaintextFileStore
+type legacyCredentialStore struct {
+	store        CredentialStore
+	cleanup      bool
+	maxAccountID int64
+	limited      bool
 }
 
-func (s *migratingCredentialStore) Get(accountID int64) (Credential, error) {
-	cred, err := s.primary.Get(accountID)
+type migratingCredentialStore struct {
+	primary CredentialStore
+	legacy  []legacyCredentialStore
+}
+
+func (s *migratingCredentialStore) Get(accountID int64, accountFingerprint string) (Credential, error) {
+	cred, err := s.primary.Get(accountID, accountFingerprint)
 	if err == nil {
+		if cred.AccountFingerprint == "" {
+			cred.AccountFingerprint = accountFingerprint
+			if setErr := s.primary.Set(cred); setErr != nil {
+				return cred, nil //nolint:nilerr // a successful read remains usable
+			}
+		}
 		return cred, nil
 	}
-	if s.legacy == nil {
+	if errors.Is(err, ErrCredentialIdentityMismatch) {
+		return Credential{}, err
+	}
+	if !IsCredentialNotFound(err) {
 		return Credential{}, err
 	}
 
-	legacyCred, legacyErr := s.legacy.Get(accountID)
-	if legacyErr != nil {
-		return Credential{}, err
+	var identityErr error
+	for _, legacy := range s.legacy {
+		if legacy.limited && accountID > legacy.maxAccountID {
+			continue
+		}
+		legacyCred, legacyErr := legacy.store.Get(accountID, accountFingerprint)
+		if errors.Is(legacyErr, ErrCredentialIdentityMismatch) {
+			identityErr = legacyErr
+			continue
+		}
+		if legacyErr != nil {
+			if IsCredentialNotFound(legacyErr) {
+				continue
+			}
+			return Credential{}, legacyErr
+		}
+		if legacyCred.AccountFingerprint == "" {
+			legacyCred.AccountFingerprint = accountFingerprint
+		}
+		// Migrate into the primary store best-effort. A transient write failure
+		// must not turn a successful legacy read into an error.
+		if setErr := s.primary.Set(legacyCred); setErr != nil {
+			return legacyCred, nil //nolint:nilerr // successful legacy read remains usable
+		}
+		for _, source := range s.legacy {
+			if source.cleanup {
+				_ = source.store.Delete(accountID)
+			}
+		}
+		return legacyCred, nil
 	}
-	// Migrate into the primary store best-effort. A transient write failure
-	// (e.g. the keyring is momentarily unavailable) must not turn a successful
-	// legacy read into an error — that would lock the user out of sync for the
-	// whole process lifetime. On failure, return the legacy credential and keep
-	// the legacy copy so a later read can retry the migration.
-	if setErr := s.primary.Set(legacyCred); setErr != nil {
-		return legacyCred, nil //nolint:nilerr // best-effort migration: a keyring write failure must not fail a successful legacy read (see comment above)
+	if identityErr != nil {
+		return Credential{}, identityErr
 	}
-	// Migration succeeded: the caller now has the credential and the primary
-	// store owns it. Cleaning up the legacy copy is best-effort — a failure
-	// here must not turn a successful read into an error. A surviving legacy
-	// copy is reclaimed on the next Set or Delete.
-	_ = s.legacy.Delete(accountID)
-	return legacyCred, nil
+	return Credential{}, err
 }
 
 func (s *migratingCredentialStore) Set(cred Credential) error {
 	if err := s.primary.Set(cred); err != nil {
 		return err
 	}
-	if s.legacy != nil {
-		_ = s.legacy.Delete(cred.AccountID)
+	for _, legacy := range s.legacy {
+		if legacy.cleanup {
+			_ = legacy.store.Delete(cred.AccountID)
+		}
 	}
 	return nil
 }
@@ -272,20 +406,32 @@ func (s *migratingCredentialStore) Delete(accountID int64) error {
 	if err := s.primary.Delete(accountID); err != nil {
 		return err
 	}
-	if s.legacy != nil {
-		// Surface a real legacy-delete failure: discarding it would
-		// report success while the credential survives in the legacy
-		// store. PlaintextFileStore.Delete already treats a missing
-		// file as success, so only genuine failures reach here.
-		if err := s.legacy.Delete(accountID); err != nil {
+	for _, legacy := range s.legacy {
+		if !legacy.cleanup {
+			continue
+		}
+		// Surface a real legacy-delete failure: discarding it would report
+		// success while the credential survives. Store Delete methods already
+		// treat a missing credential as success.
+		if err := legacy.store.Delete(accountID); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func keyringAccountName(accountID int64) string {
-	return fmt.Sprintf("account_%d", accountID)
+func validateCredentialFingerprint(cred Credential, expected string) error {
+	if expected != "" && cred.AccountFingerprint != "" && cred.AccountFingerprint != expected {
+		return ErrCredentialIdentityMismatch
+	}
+	return nil
+}
+
+func keyringAccountName(namespace string, accountID int64) string {
+	if namespace == "" {
+		return fmt.Sprintf("account_%d", accountID)
+	}
+	return fmt.Sprintf("db_%s_account_%d", namespace, accountID)
 }
 
 func newKeyringAvailabilityProbe() func() error {

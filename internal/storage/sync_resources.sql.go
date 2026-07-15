@@ -106,6 +106,20 @@ func (q *Queries) DeleteTombstonesByCalendarAndUID(ctx context.Context, arg Dele
 	return err
 }
 
+const detachSyncResourcesByCalendar = `-- name: DetachSyncResourcesByCalendar :exec
+UPDATE sync_resources
+SET remote_url = '', etag = '', dirty = 1, rev = rev + 1
+WHERE calendar_id = ?
+`
+
+// Preserve local resources when an account is removed, but erase every
+// server-specific identity so a later link cannot reuse stale hrefs or ETags.
+// Dirty=1 makes the retained local objects first-time creates on a new server.
+func (q *Queries) DetachSyncResourcesByCalendar(ctx context.Context, calendarID int64) error {
+	_, err := q.db.ExecContext(ctx, detachSyncResourcesByCalendar, calendarID)
+	return err
+}
+
 const finalizePushedResource = `-- name: FinalizePushedResource :exec
 UPDATE sync_resources
 SET etag = ?,

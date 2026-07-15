@@ -142,12 +142,76 @@ func TestImportComponentsSurfacesChildFieldFailure(t *testing.T) {
 	}
 }
 
+func TestEnsureICalImportAllowedRejectsCollectionPolicyViolations(t *testing.T) {
+	ctx := context.Background()
+	a := newImportTestApp(t)
+
+	cal, err := a.Calendars.Create(ctx, "Remote", "", "")
+	if err != nil {
+		t.Fatalf("create calendar: %v", err)
+	}
+	accountResult, err := a.DB.ExecContext(ctx, `
+		INSERT INTO accounts (name, server_url, auth_type, username)
+		VALUES ('remote', 'https://cal.example.test/', 'basic', 'alice')`)
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	accountID, err := accountResult.LastInsertId()
+	if err != nil {
+		t.Fatalf("account ID: %v", err)
+	}
+	if _, err := a.DB.ExecContext(ctx, `
+		UPDATE calendars
+		SET account_id = ?, remote_url = '/cal/remote', remote_access = ?, remote_components = ?
+		WHERE id = ?`, accountID, "read", "VEVENT", cal.ID); err != nil {
+		t.Fatalf("link read-only calendar: %v", err)
+	}
+
+	result := ical.ImportResult{Events: []event.Event{{UID: "blocked-event"}}}
+	if err := ensureICalImportAllowed(ctx, a, cal.ID, result); err == nil || !strings.Contains(err.Error(), "read-only") {
+		t.Fatalf("read-only import error = %v, want read-only rejection", err)
+	}
+
+	if _, err := a.DB.ExecContext(ctx, `
+		UPDATE calendars SET remote_access = 'write', remote_components = 'VTODO'
+		WHERE id = ?`, cal.ID); err != nil {
+		t.Fatalf("make calendar VTODO-only: %v", err)
+	}
+	if err := ensureICalImportAllowed(ctx, a, cal.ID, result); err == nil || !strings.Contains(err.Error(), "VEVENT") {
+		t.Fatalf("unsupported-component import error = %v, want VEVENT rejection", err)
+	}
+	if _, err := a.DB.ExecContext(ctx, `
+		UPDATE calendars SET remote_access = 'read', remote_components = 'VEVENT'
+		WHERE id = ?`, cal.ID); err != nil {
+		t.Fatalf("restore read-only VEVENT policy: %v", err)
+	}
+	start := time.Date(2026, 7, 15, 9, 0, 0, 0, time.UTC)
+	sourceEvent := event.Event{
+		UID: "existing-read-only", Title: "Existing", StartTime: start, EndTime: start.Add(time.Hour),
+	}
+	if _, err := a.Events.UpsertByUID(ctx, event.UpsertParams{
+		UID: sourceEvent.UID, CalendarID: cal.ID, Title: sourceEvent.Title,
+		StartTime: sourceEvent.StartTime, EndTime: sourceEvent.EndTime,
+	}); err != nil {
+		t.Fatalf("seed read-only source event: %v", err)
+	}
+	target, err := a.Calendars.Create(ctx, "Writable target", "", "")
+	if err != nil {
+		t.Fatalf("create writable target: %v", err)
+	}
+	sourceResult := ical.ImportResult{Events: []event.Event{sourceEvent}}
+	if err := ensureICalImportAllowed(ctx, a, target.ID, sourceResult); err == nil || !strings.Contains(err.Error(), "read-only") {
+		t.Fatalf("read-only source import error = %v, want source rejection", err)
+	}
+}
+
 // TestImportJSONOutputStaysValidWhenPushNotes is the regression test for
 // issue #255: `ical import --output json` passed the command's stdout writer
 // to the opportunistic push seam unconditionally, so the human-readable
 // "Synced to ..." note was appended after the JSON object, producing invalid
 // JSON on stdout. In JSON mode the note must go to io.Discard (matching the
 // event/todo/journal write paths) so stdout stays parseable.
+
 func TestImportJSONOutputStaysValidWhenPushNotes(t *testing.T) {
 	ctx := context.Background()
 	a := newImportTestApp(t)

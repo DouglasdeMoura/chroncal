@@ -87,7 +87,7 @@ run to a single local calendar.`,
 			ctx, cancel := context.WithTimeout(context.Background(), syncRunTimeout)
 			defer cancel()
 
-			credStore, err := auth.NewCredentialStore(a.AllowPlaintext)
+			credStore, err := auth.NewCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
 			if err != nil {
 				return fmt.Errorf("credential store: %w", err)
 			}
@@ -147,7 +147,7 @@ for each connected calendar.`,
 			}
 			defer a.Close()
 
-			credStore, _ := auth.NewCredentialStore(a.AllowPlaintext)
+			credStore, _ := auth.NewCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
 			svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, nil)
 
 			statuses, err := svc.Status(context.Background())
@@ -206,7 +206,7 @@ func syncConflictsCmd() *cobra.Command {
 			}
 			defer a.Close()
 
-			credStore, _ := auth.NewCredentialStore(a.AllowPlaintext)
+			credStore, _ := auth.NewCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
 			svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, nil)
 
 			conflicts, err := svc.ListConflicts(context.Background())
@@ -272,7 +272,7 @@ Use "chroncal sync conflicts" first to find the conflict ID.`,
 			}
 			defer a.Close()
 
-			credStore, _ := auth.NewCredentialStore(a.AllowPlaintext)
+			credStore, _ := auth.NewCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
 			svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, nil)
 
 			if err := svc.ResolveConflict(context.Background(), id, pick); err != nil {
@@ -308,7 +308,7 @@ This does not delete your local calendars or entries.`,
 			defer a.Close()
 			ctx := context.Background()
 
-			credStore, _ := auth.NewCredentialStore(a.AllowPlaintext)
+			credStore, _ := auth.NewCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
 			svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, nil)
 
 			cals, err := a.Calendars.List(ctx)

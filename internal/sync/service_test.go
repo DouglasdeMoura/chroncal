@@ -22,7 +22,7 @@ type mockCredStore struct {
 	creds map[int64]auth.Credential
 }
 
-func (m *mockCredStore) Get(accountID int64) (auth.Credential, error) {
+func (m *mockCredStore) Get(accountID int64, _ string) (auth.Credential, error) {
 	c, ok := m.creds[accountID]
 	if !ok {
 		return auth.Credential{}, nil
@@ -809,5 +809,120 @@ func TestService_PushCalendarRejectsLocalOnly(t *testing.T) {
 	_, err = svc.PushCalendar(ctx, cals[0].ID, ConflictServerWins)
 	if err == nil {
 		t.Fatal("PushCalendar on local-only calendar: expected error, got nil")
+	}
+}
+
+func TestServiceResolveConflictWaitsForCalendarLifecycle(t *testing.T) {
+	svc, _, q := newTestServiceWithDB(t)
+	ctx := context.Background()
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+		CalendarID: calendarID, OwnerType: "event", OwnerID: 1, Uid: "locked-conflict",
+		LocalIcal: "local", ServerIcal: "server", ServerEtag: `"etag"`,
+	}); err != nil {
+		t.Fatalf("CreateSyncConflict: %v", err)
+	}
+	conflicts, err := q.ListSyncConflictsByCalendar(ctx, calendarID)
+	if err != nil || len(conflicts) != 1 {
+		t.Fatalf("ListSyncConflictsByCalendar = (%+v, %v)", conflicts, err)
+	}
+	release, err := svc.engine.lockCalendarLifecycle(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("lock calendar lifecycle: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- svc.ResolveConflict(ctx, conflicts[0].ID, "local") }()
+	select {
+	case err := <-done:
+		release()
+		t.Fatalf("ResolveConflict completed while lifecycle lock was held: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	release()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("ResolveConflict after release: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ResolveConflict did not resume after lifecycle release")
+	}
+}
+func TestServiceResetCalendarWaitsForLifecycle(t *testing.T) {
+	svc, _, q := newTestServiceWithDB(t)
+	ctx := context.Background()
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID: calendarID, Uid: "reset-resource", OwnerType: "event",
+		RemoteUrl: "/reset.ics", Etag: `"etag"`, SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+	release, err := svc.engine.lockCalendarLifecycle(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("lock calendar lifecycle: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- svc.ResetCalendar(ctx, calendarID) }()
+	select {
+	case err := <-done:
+		release()
+		t.Fatalf("ResetCalendar completed while lifecycle lock was held: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	release()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("ResetCalendar after release: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ResetCalendar did not resume after lifecycle release")
+	}
+	if _, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{
+		CalendarID: calendarID, Uid: "reset-resource",
+	}); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("sync resource survived reset: %v", err)
+	}
+}
+
+func TestServiceResetCalendarRollsBackPartialCleanup(t *testing.T) {
+	svc, db, q := newTestServiceWithDB(t)
+	ctx := context.Background()
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID: calendarID, Uid: "rollback-resource", OwnerType: "event",
+		RemoteUrl: "/rollback.ics", Etag: `"etag"`, SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		CREATE TRIGGER fail_calendar_reset
+		BEFORE UPDATE ON calendars
+		WHEN NEW.id = 1
+		BEGIN
+		    SELECT RAISE(ABORT, 'forced reset failure');
+		END`); err != nil {
+		t.Fatalf("create failure trigger: %v", err)
+	}
+	if err := svc.ResetCalendar(ctx, calendarID); err == nil {
+		t.Fatal("ResetCalendar succeeded despite forced calendar update failure")
+	}
+	if _, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{
+		CalendarID: calendarID, Uid: "rollback-resource",
+	}); err != nil {
+		t.Fatalf("sync resource deletion was not rolled back: %v", err)
 	}
 }

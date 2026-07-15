@@ -49,6 +49,17 @@ type Calendar struct {
 	RemoteMissing       int64
 }
 
+type CredentialLocation struct {
+	Location     string
+	MaxAccountID int64
+}
+
+type CredentialNamespace struct {
+	ID              int64
+	Namespace       string
+	CurrentLocation string
+}
+
 type Event struct {
 	ID             int64
 	Uid            string

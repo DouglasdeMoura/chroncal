@@ -270,24 +270,16 @@ type opportunisticPushFinishedMsg struct {
 // oauthFlowPurpose records why an OAuth flow is running so the
 // oauthFlowDoneMsg handler knows what to do with the tokens.
 type oauthFlowPurpose struct {
-	// isConnect distinguishes linking a new account (true) from
-	// re-authenticating an existing one (false).
-	isConnect    bool
+	// Re-authentication target and stored connection credential.
 	calendarID   int64
 	calendarName string
+	accountID    int64
+	cred         auth.Credential
 
-	// Re-auth: the stored credential (client config + username source).
-	accountID int64
-	cred      auth.Credential
-
-	// Connect: the dialog's save parameters and the already-created row.
-	saved CalendarSavedMsg
-	cal   calendar.Calendar
-
-	// Account connect: the account form values survive while the OAuth modal
-	// obtains tokens, then drive account creation and collection discovery.
-	accountConnect    bool
-	accountConnectMsg AccountConnectRequestedMsg
+	// Calendar discovery: connection form values survive while the OAuth
+	// modal obtains tokens, then drive account creation and collection discovery.
+	calendarDiscovery    bool
+	calendarDiscoveryMsg CalendarDiscoveryRequestedMsg
 }
 
 // calendarReauthReadyMsg carries the loaded credential for a re-auth whose
@@ -308,15 +300,6 @@ type calendarReauthNeedsConfigMsg struct {
 	clientIDPrefill string
 }
 
-// calendarOAuthConnectPendingMsg is emitted after an oauth2 save has written
-// the calendar row (and owner email / default) but before the link exists.
-// The handler closes the dialog and starts the browser flow; Connect runs
-// only after the flow succeeds.
-type calendarOAuthConnectPendingMsg struct {
-	cal   calendar.Calendar
-	saved CalendarSavedMsg
-}
-
 // oauthCredentialStoredMsg reports the post-flow credential write for a
 // re-auth. A Set failure after a successful consent is a distinct state:
 // the consent was spent but nothing is corrupted, and re-authenticating
@@ -327,16 +310,10 @@ type oauthCredentialStoredMsg struct {
 	err        error
 }
 
-// oauthConnectFinishedMsg reports the post-flow Connect for a new link.
-type oauthConnectFinishedMsg struct {
-	calendarID int64
-	name       string
-	err        error
-}
-
 type accountDiscoveryReadyMsg struct {
-	discovery account.Discovery
-	err       error
+	discovery      account.Discovery
+	err            error
+	createdAccount bool
 }
 
 type accountImportFinishedMsg struct {
@@ -346,13 +323,7 @@ type accountImportFinishedMsg struct {
 	err      error
 	syncErr  error
 }
-
-type accountListLoadedMsg struct {
-	accounts []account.Account
-	err      error
-}
-
-type accountMutationDoneMsg struct{ err error }
+type calendarDiscoveryDiscardedMsg struct{ err error }
 
 // syncStatusExpiredMsg clears the footer status line after a delay. The token
 // is compared against the current statusToken so a newer status isn't wiped
@@ -420,27 +391,22 @@ type Model struct {
 	hiddenCalendars  map[int64]bool
 	clickedEventID   int64
 
-	sidebar               SidebarModel
-	calendarDialog        CalendarDialogModel
-	calendarDialogOpen    bool
-	accountDialog         AccountDialogModel
-	accountDialogOpen     bool
-	accountPicker         AccountCalendarPickerModel
-	accountPickerOpen     bool
-	accountListDialog     AccountListDialogModel
-	accountListDialogOpen bool
+	sidebar                   SidebarModel
+	calendarDialog            CalendarDialogModel
+	calendarDialogOpen        bool
+	pendingDiscoveryAccountID int64
+	pendingDiscoveryCreated   bool
 
-	// OAuth pending modal plus what to do with the tokens when it finishes
-	// (re-authenticate an existing account vs link a new one).
+	// OAuth modal plus the operation that consumes its tokens: account
+	// discovery or re-authentication of an existing connection.
 	oauthFlow     OAuthFlowModel
 	oauthFlowOpen bool
 	oauthPurpose  oauthFlowPurpose
-	// oauthPending guards the window between a Re-authenticate / connect
-	// request and the modal actually opening: the request dispatches an
-	// async credential load, so oauthFlowOpen is still false when a second
-	// fast press arrives. This flips synchronously so the second press is
-	// rejected. Cleared on every terminal path (flow opened, load failed,
-	// fallback dialog shown).
+	// oauthPending guards the window between a Re-authenticate request and
+	// the modal opening: the request dispatches an async credential load, so
+	// oauthFlowOpen is still false when a second fast press arrives. This
+	// flips synchronously so the second press is rejected. Cleared on every
+	// terminal path (flow opened, load failed, or fallback dialog shown).
 	oauthPending bool
 	// pendingSyncCalendar holds a calendar whose sync was requested while
 	// another sync was running (e.g. a re-auth completing mid-sync).
@@ -449,8 +415,6 @@ type Model struct {
 	pendingSyncCalendar         syncTarget
 	pendingCalendarDelete       int64
 	pendingCalendarDeleteName   string
-	pendingAccountDelete        int64
-	pendingAccountDeleteName    string
 	pendingCalendarPromote      int64   // new default to promote when deleting the current default
 	pendingCalendarPromoteName  string  // human-readable name of the promotion target
 	pendingCalendarPromoteCands []int64 // candidate calendar IDs by ChoiceDialog button index
@@ -936,6 +900,7 @@ func (m Model) loadCalendars() tea.Cmd {
 				AccountID:           c.AccountID,
 				AccountName:         accountNames[c.AccountID],
 				RemoteAccess:        c.RemoteAccess,
+				RemoteComponents:    c.RemoteComponents,
 				RemoteMissing:       c.RemoteMissing,
 				LastSyncAt:          c.LastSyncAt,
 				LastSyncAttemptedAt: c.LastSyncAttemptedAt,
@@ -992,16 +957,57 @@ func sortedCalendarListItems(calendars map[int64]CalendarInfo) []CalendarListIte
 	})
 	return items
 }
+
+// blockReadOnlyCalendarMutation rejects event mutations on calendars the remote
+// server has declared off-limits for VEVENT writes: read-only collections, and
+// collections whose non-empty supported-component set omits VEVENT. A calendar
+// with no reported components is treated as unconstrained (backward compatible).
+// Service-layer guards are enforced separately.
 func (m *Model) blockReadOnlyCalendarMutation(calendarID int64) (tea.Cmd, bool) {
 	info, ok := m.calendars[calendarID]
-	if !ok || !strings.EqualFold(strings.TrimSpace(info.RemoteAccess), "read") {
+	if !ok {
 		return nil, false
 	}
 	name := strings.TrimSpace(info.Name)
 	if name == "" {
 		name = "This calendar"
 	}
-	return m.toast.Failed(fmt.Sprintf("%s is read-only", name)), true
+	if strings.EqualFold(strings.TrimSpace(info.RemoteAccess), "read") {
+		return m.toast.Failed(fmt.Sprintf("%s is read-only", name)), true
+	}
+	if info.RemoteComponents != "" && !supportsVEVENT(info.RemoteComponents) {
+		return m.toast.Failed(fmt.Sprintf("%s does not support events", name)), true
+	}
+	return nil, false
+}
+
+// supportsVEVENT reports whether the comma-separated component set contains
+// VEVENT. An empty string means "no advertised components" and is handled by
+// the caller, not here.
+func supportsVEVENT(remoteComponents string) bool {
+	for _, part := range strings.Split(remoteComponents, ",") {
+		if strings.EqualFold(strings.TrimSpace(part), "VEVENT") {
+			return true
+		}
+	}
+	return false
+}
+
+// eventFormCalendars omits collections that cannot accept VEVENT writes so
+// create and move pickers never offer a destination that the service must
+// reject on submit. Empty component metadata remains backward compatible.
+func eventFormCalendars(calendars map[int64]CalendarInfo) map[int64]CalendarInfo {
+	filtered := make(map[int64]CalendarInfo, len(calendars))
+	for id, info := range calendars {
+		if strings.EqualFold(strings.TrimSpace(info.RemoteAccess), "read") {
+			continue
+		}
+		if info.RemoteComponents != "" && !supportsVEVENT(info.RemoteComponents) {
+			continue
+		}
+		filtered[id] = info
+	}
+	return filtered
 }
 
 // syncHealthFor derives the sidebar health marker state from a calendar's
@@ -1027,7 +1033,7 @@ func syncHealthFor(info CalendarInfo) SyncHealth {
 // token-refresh persistence mid-run) doesn't clobber the rendered TUI; users
 // run `chroncal sync run` from a shell if they need verbose output.
 func (m Model) newSyncService() (*syncpkg.Service, error) {
-	credStore, err := auth.NewCredentialStoreWithWarnings(m.app.AllowPlaintext, io.Discard)
+	credStore, err := auth.NewCredentialStoreWithWarnings(m.app.CredentialNamespace, m.app.PreviousCredentialNamespaces, m.app.MigrateLegacyCredentials, m.app.AllowPlaintext, io.Discard)
 	if err != nil {
 		return nil, fmt.Errorf("credential store: %w", err)
 	}
@@ -1103,7 +1109,6 @@ func (m Model) runSyncCalendar(id int64, name string) tea.Cmd {
 func (m Model) startOAuthFlow(clientID, clientSecret string) (Model, tea.Cmd) {
 	m.oauthPending = false // the flow is opening now; release the request guard
 	m.calendarDialogOpen = false
-	m.accountDialogOpen = false
 	m.oauthFlowOpen = true
 	m.oauthFlow = m.oauthFlow.SetSize(m.width, m.height)
 	var cmd tea.Cmd
@@ -1119,7 +1124,7 @@ func (m Model) startOAuthFlow(clientID, clientSecret string) (Model, tea.Cmd) {
 func (m Model) finishOAuthReauth(result *auth.GoogleOAuthResult) tea.Cmd {
 	p := m.oauthPurpose
 	return func() tea.Msg {
-		credStore, err := auth.NewCredentialStoreWithWarnings(m.app.AllowPlaintext, io.Discard)
+		credStore, err := auth.NewCredentialStoreWithWarnings(m.app.CredentialNamespace, m.app.PreviousCredentialNamespaces, m.app.MigrateLegacyCredentials, m.app.AllowPlaintext, io.Discard)
 		if err != nil {
 			return oauthCredentialStoredMsg{calendarID: p.calendarID, name: p.calendarName, err: err}
 		}
@@ -1135,60 +1140,63 @@ func (m Model) finishOAuthReauth(result *auth.GoogleOAuthResult) tea.Cmd {
 			cred.RefreshToken = result.RefreshToken
 		}
 		cred.TokenExpiry = result.Expiry.Format(time.RFC3339)
-		if err := credStore.Set(cred); err != nil {
+		if err := m.app.Accounts.StoreCredentialForCalendar(context.Background(), p.calendarID, p.accountID, p.cred.AccountFingerprint, cred, credStore); err != nil {
 			return oauthCredentialStoredMsg{calendarID: p.calendarID, name: p.calendarName, err: err}
 		}
 		return oauthCredentialStoredMsg{calendarID: p.calendarID, name: p.calendarName}
 	}
 }
 
-// finishOAuthConnect links the already-created calendar row to the remote
-// using the fresh tokens, mirroring the basic/bearer connect path (metadata
-// fetch is best-effort, authed with the access token like the CLI does).
-func (m Model) finishOAuthConnect(result *auth.GoogleOAuthResult) tea.Cmd {
-	p := m.oauthPurpose
-	return func() tea.Msg {
-		ctx := context.Background()
-		credStore, err := auth.NewCredentialStoreWithWarnings(m.app.AllowPlaintext, io.Discard)
-		if err != nil {
-			return oauthConnectFinishedMsg{calendarID: p.cal.ID, name: p.cal.Name, err: err}
+func calendarDiscoveryAccountName(accounts []account.Account, username string) string {
+	base := strings.TrimSpace(username)
+	if base == "" {
+		base = "CalDAV"
+	}
+	taken := make(map[string]struct{}, len(accounts))
+	for _, configured := range accounts {
+		taken[configured.Name] = struct{}{}
+	}
+	if _, exists := taken[base]; !exists {
+		return base
+	}
+	for suffix := 2; ; suffix++ {
+		candidate := fmt.Sprintf("%s (%d)", base, suffix)
+		if _, exists := taken[candidate]; !exists {
+			return candidate
 		}
-		cred := auth.Credential{
-			Username:          p.saved.Username,
-			AccessToken:       result.AccessToken,
-			RefreshToken:      result.RefreshToken,
-			TokenExpiry:       result.Expiry.Format(time.RFC3339),
-			OAuthClientID:     p.saved.OAuthClientID,
-			OAuthClientSecret: p.saved.OAuthClientSecret,
-		}
-
-		metaCtx, metaCancel := context.WithTimeout(ctx, 10*time.Second)
-		meta, _ := caldav.FetchCalendarMetadata(metaCtx, p.saved.RemoteURL, p.saved.Username, result.AccessToken, p.saved.AuthType, p.saved.AllowInsecure)
-		metaCancel()
-
-		if cerr := m.app.Calendars.Connect(ctx, p.cal, calendar.RemoteLink{
-			RemoteURL:     p.saved.RemoteURL,
-			Username:      p.saved.Username,
-			AuthType:      p.saved.AuthType,
-			AllowInsecure: p.saved.AllowInsecure,
-			RemoteColor:   meta.Color,
-		}, cred, credStore); cerr != nil {
-			return oauthConnectFinishedMsg{calendarID: p.cal.ID, name: p.cal.Name, err: cerr}
-		}
-		return oauthConnectFinishedMsg{calendarID: p.cal.ID, name: p.cal.Name}
 	}
 }
+func existingCalendarDiscoveryAccount(accounts []account.Account, req CalendarDiscoveryRequestedMsg) (account.Account, bool) {
+	fingerprint := auth.AccountFingerprint(req.ServerURL, req.AuthType, req.Username)
+	for _, configured := range accounts {
+		if configured.CredentialFingerprint() == fingerprint {
+			return configured, true
+		}
+	}
+	return account.Account{}, false
+}
 
-func (m Model) connectAndDiscoverAccount(req AccountConnectRequestedMsg, cred auth.Credential) tea.Cmd {
+func (m Model) connectAndDiscoverCalendar(req CalendarDiscoveryRequestedMsg, cred auth.Credential) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		store, err := auth.NewCredentialStoreWithWarnings(m.app.AllowPlaintext, io.Discard)
+		store, err := auth.NewCredentialStoreWithWarnings(m.app.CredentialNamespace, m.app.PreviousCredentialNamespaces, m.app.MigrateLegacyCredentials, m.app.AllowPlaintext, io.Discard)
 		if err != nil {
 			return accountDiscoveryReadyMsg{err: err}
 		}
+		configured, err := m.app.Accounts.List(ctx)
+		if err != nil {
+			return accountDiscoveryReadyMsg{err: fmt.Errorf("list accounts: %w", err)}
+		}
+		if existing, ok := existingCalendarDiscoveryAccount(configured, req); ok {
+			discovery, err := m.app.Accounts.DiscoverWithCredential(ctx, existing.ID, cred, store)
+			if err != nil {
+				return accountDiscoveryReadyMsg{err: err}
+			}
+			return accountDiscoveryReadyMsg{discovery: discovery}
+		}
 		created, err := m.app.Accounts.Create(ctx, account.CreateParams{
-			Name:          req.Name,
+			Name:          calendarDiscoveryAccountName(configured, req.Username),
 			ServerURL:     req.ServerURL,
 			AuthType:      req.AuthType,
 			Username:      req.Username,
@@ -1198,12 +1206,18 @@ func (m Model) connectAndDiscoverAccount(req AccountConnectRequestedMsg, cred au
 			return accountDiscoveryReadyMsg{err: err}
 		}
 		discovery, err := m.app.Accounts.Discover(ctx, created.ID, store)
-		return accountDiscoveryReadyMsg{discovery: discovery, err: err}
+		if err != nil {
+			if cleanupErr := m.app.Accounts.Delete(ctx, created.ID, store); cleanupErr != nil {
+				err = fmt.Errorf("%w (remove incomplete connection: %w)", err, cleanupErr)
+			}
+			return accountDiscoveryReadyMsg{err: err}
+		}
+		return accountDiscoveryReadyMsg{discovery: discovery, createdAccount: true}
 	}
 }
 
-func (m Model) finishOAuthAccountConnect(result *auth.GoogleOAuthResult) tea.Cmd {
-	req := m.oauthPurpose.accountConnectMsg
+func (m Model) finishOAuthCalendarDiscovery(result *auth.GoogleOAuthResult) tea.Cmd {
+	req := m.oauthPurpose.calendarDiscoveryMsg
 	cred := auth.Credential{
 		Username:          req.Username,
 		AccessToken:       result.AccessToken,
@@ -1212,11 +1226,16 @@ func (m Model) finishOAuthAccountConnect(result *auth.GoogleOAuthResult) tea.Cmd
 		OAuthClientID:     req.OAuthClientID,
 		OAuthClientSecret: req.OAuthClientSecret,
 	}
-	return m.connectAndDiscoverAccount(req, cred)
+	return m.connectAndDiscoverCalendar(req, cred)
 }
 
 func (m Model) importAndSyncAccountCalendars(paths []string) tea.Cmd {
-	discovery := m.accountPicker.discovery
+	if m.calendarDialog.discoveryPicker == nil {
+		return func() tea.Msg {
+			return accountImportFinishedMsg{err: fmt.Errorf("calendar discovery is no longer open")}
+		}
+	}
+	discovery := m.calendarDialog.discoveryPicker.discovery
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
@@ -1246,6 +1265,23 @@ func (m Model) importAndSyncAccountCalendars(paths []string) tea.Cmd {
 			finished.synced++
 		}
 		return finished
+	}
+}
+func (m Model) discardDiscoveryAccount(accountID int64) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		store, err := auth.NewCredentialStoreWithWarnings(
+			m.app.CredentialNamespace,
+			m.app.PreviousCredentialNamespaces,
+			m.app.MigrateLegacyCredentials,
+			m.app.AllowPlaintext,
+			io.Discard,
+		)
+		if err == nil {
+			err = m.app.Accounts.Delete(ctx, accountID, store)
+		}
+		return calendarDiscoveryDiscardedMsg{err: err}
 	}
 }
 
@@ -1639,8 +1675,8 @@ func (m Model) undoIsAllowed() bool {
 func (m Model) anyOverlayOpen() bool {
 	return m.paletteOpen || m.formOpen || m.viewDialogOpen || m.dialogOpen ||
 		m.confirmOpen || m.choiceOpen ||
-		m.calendarDialogOpen || m.calendarListDialogOpen || m.accountDialogOpen ||
-		m.accountPickerOpen || m.accountListDialogOpen || m.helpDialogOpen || m.trashOpen || m.oauthFlowOpen
+		m.calendarDialogOpen || m.calendarListDialogOpen ||
+		m.helpDialogOpen || m.trashOpen || m.oauthFlowOpen
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1705,64 +1741,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.accountDialogOpen && !m.confirmOpen {
-		switch msg.(type) {
-		case AccountConnectRequestedMsg, AccountDialogClosedMsg,
-			accountDiscoveryReadyMsg,
-			tea.BackgroundColorMsg, tea.WindowSizeMsg, spinner.TickMsg:
-			// fall through to main switch
-		default:
-			var cmd tea.Cmd
-			m.accountDialog, cmd = m.accountDialog.Update(msg)
-			return m, cmd
-		}
-	}
-
-	if m.accountPickerOpen && !m.confirmOpen {
-		switch msg.(type) {
-		case AccountCalendarsImportRequestedMsg, AccountCalendarPickerClosedMsg,
-			accountImportFinishedMsg,
-			tea.BackgroundColorMsg, tea.WindowSizeMsg,
-			eventsLoadedMsg, calendarsLoadedMsg, spinner.TickMsg:
-			// fall through to main switch
-		default:
-			var cmd tea.Cmd
-			m.accountPicker, cmd = m.accountPicker.Update(msg)
-			return m, cmd
-		}
-	}
-
-	if m.accountListDialogOpen && !m.confirmOpen {
-		switch msg.(type) {
-		case AccountDialogRequestedMsg, AccountListDialogClosedMsg,
-			AccountRefreshRequestedMsg, AccountRemoveRequestedMsg,
-			accountListLoadedMsg, accountMutationDoneMsg, accountDiscoveryReadyMsg,
-			tea.BackgroundColorMsg, tea.WindowSizeMsg,
-			calendarsLoadedMsg, spinner.TickMsg:
-			// fall through to main switch
-		default:
-			var cmd tea.Cmd
-			m.accountListDialog, cmd = m.accountListDialog.Update(msg)
-			return m, cmd
-		}
-	}
-
 	// When a confirm/choice dialog is stacked on top of the calendar dialog
 	// (e.g. the delete-calendar confirm), it must own input — otherwise Esc
 	// would close the calendar dialog underneath instead of the confirm.
 	if m.calendarDialogOpen && !m.confirmOpen && !m.choiceOpen {
 		switch msg.(type) {
-		case CalendarSavedMsg, CalendarDeleteRequestedMsg, CalendarDialogClosedMsg,
+		case CalendarSavedMsg, CalendarDiscoveryRequestedMsg,
+			CalendarDeleteRequestedMsg, CalendarDialogClosedMsg,
 			CalendarDisconnectRemoteRequestedMsg,
 			CalendarTestRequestedMsg,
 			CalendarSetDefaultRequestedMsg,
 			CalendarReauthRequestedMsg,
+			AccountCalendarsImportRequestedMsg, AccountCalendarPickerClosedMsg,
+			accountDiscoveryReadyMsg, accountImportFinishedMsg,
 			calendarReauthReadyMsg, calendarReauthNeedsConfigMsg,
 			calendarDeleteCountMsg,
 			tea.BackgroundColorMsg, tea.WindowSizeMsg,
 			eventsLoadedMsg, calendarsLoadedMsg,
 			calendarMutationDoneMsg,
-			calendarOAuthConnectPendingMsg,
 			spinner.TickMsg:
 			// fall through to main switch
 		default:
@@ -1849,9 +1845,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.confirmDialog = m.confirmDialog.SetSize(m.width, m.height)
 		m.choiceDialog = m.choiceDialog.SetSize(m.width, m.height)
 		m.calendarDialog = m.calendarDialog.SetSize(m.width, m.height)
-		m.accountDialog = m.accountDialog.SetSize(m.width, m.height)
-		m.accountPicker = m.accountPicker.SetSize(m.width, m.height)
-		m.accountListDialog = m.accountListDialog.SetSize(m.width, m.height)
 		m.form = m.form.SetSize(m.width, m.height)
 		m.palette = m.palette.SetSize(m.width, m.height)
 		m.calendarListDialog = m.calendarListDialog.SetSize(m.width, m.height)
@@ -1997,7 +1990,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case EventCreateMsg:
 		var cmd tea.Cmd
-		m.form, cmd = NewEventFormModel(msg.Day, m.calendars, m.theme)
+		m.form, cmd = NewEventFormModel(msg.Day, eventFormCalendars(m.calendars), m.theme)
 		m.form = m.form.SetSize(m.width, m.height)
 		m.formOpen = true
 		return m, cmd
@@ -2044,7 +2037,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		var cmd tea.Cmd
-		m.form, cmd = NewEventFormModelForEditInstance(msg.event, msg.instanceTime, m.calendars, m.theme)
+		m.form, cmd = NewEventFormModelForEditInstance(msg.event, msg.instanceTime, eventFormCalendars(m.calendars), m.theme)
 		m.form = m.form.SetSize(m.width, m.height)
 		m.formOpen = true
 		m.dialogOpen = false
@@ -2092,7 +2085,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case EventDuplicateMsg:
 		var cmd tea.Cmd
-		m.form, cmd = NewEventFormModelForDuplicate(msg.Event, m.calendars, m.theme)
+		m.form, cmd = NewEventFormModelForDuplicate(msg.Event, eventFormCalendars(m.calendars), m.theme)
 		m.form = m.form.SetSize(m.width, m.height)
 		m.formOpen = true
 		if m.viewDialogOpen {
@@ -2495,86 +2488,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case AccountListDialogRequestedMsg:
-		return m, func() tea.Msg {
-			accounts, err := m.app.Accounts.List(context.Background())
-			return accountListLoadedMsg{accounts: accounts, err: err}
-		}
-
-	case accountListLoadedMsg:
-		if msg.err != nil {
-			return m, m.toast.Failed(msg.err.Error())
-		}
-		m.accountListDialog = NewAccountListDialogModel(msg.accounts, m.calendars, m.theme).SetSize(m.width, m.height)
-		m.accountListDialogOpen = true
-		return m, nil
-
-	case AccountListDialogClosedMsg:
-		m.accountListDialogOpen = false
-		return m, nil
-
-	case AccountRefreshRequestedMsg:
-		if m.syncing {
-			return m, nil
-		}
-		m.accountListDialogOpen = false
-		m.syncing = true
-		m.syncStatus = "Refreshing account calendars…"
-		accountID := msg.AccountID
-		return m, tea.Batch(m.syncSpinner.Tick, func() tea.Msg {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
-			store, err := auth.NewCredentialStoreWithWarnings(m.app.AllowPlaintext, io.Discard)
-			if err != nil {
-				return accountDiscoveryReadyMsg{err: err}
-			}
-			discovery, err := m.app.Accounts.Discover(ctx, accountID, store)
-			return accountDiscoveryReadyMsg{discovery: discovery, err: err}
-		})
-
-	case AccountRemoveRequestedMsg:
-		m.pendingAccountDelete = msg.AccountID
-		m.pendingAccountDeleteName = msg.Name
-		m.confirmDialog = NewConfirmDialogModel(accountRemovalPrompt(msg.Name), "Remove", m.theme).
-			Destructive().
-			SetSize(m.width, m.height)
-		m.confirmOpen = true
-		return m, nil
-
-	case accountMutationDoneMsg:
-		if msg.err != nil {
-			return m, m.toast.Failed(msg.err.Error())
-		}
-		m.statusToken++
-		m.syncStatus = "Account removed; downloaded calendars were kept locally"
-		return m, tea.Batch(
-			m.loadCalendars(),
-			func() tea.Msg {
-				accounts, err := m.app.Accounts.List(context.Background())
-				return accountListLoadedMsg{accounts: accounts, err: err}
-			},
-			m.expireStatusAfter(8*time.Second, m.statusToken),
-		)
-
-	case AccountDialogRequestedMsg:
+	case CalendarDiscoveryRequestedMsg:
 		if m.syncing || m.oauthFlowOpen {
 			return m, nil
 		}
-		m.accountListDialogOpen = false
-		m.accountDialog = NewAccountDialogModel(m.theme).SetSize(m.width, m.height)
-		m.accountDialogOpen = true
-		return m, nil
-
-	case AccountDialogClosedMsg:
-		m.accountDialogOpen = false
-		return m, nil
-
-	case AccountConnectRequestedMsg:
-		m.accountDialogOpen = false
 		if calendarAuthIsOAuth(msg.AuthType) {
 			m.oauthPurpose = oauthFlowPurpose{
-				accountConnect:    true,
-				accountConnectMsg: msg,
+				calendarDiscovery:    true,
+				calendarDiscoveryMsg: msg,
 			}
 			return m.startOAuthFlow(msg.OAuthClientID, msg.OAuthClientSecret)
 		}
@@ -2585,51 +2506,95 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cred.Password = msg.Secret
 		}
 		m.syncing = true
-		m.syncStatus = "Discovering calendars for " + msg.Name + "…"
-		return m, tea.Batch(m.syncSpinner.Tick, m.connectAndDiscoverAccount(msg, cred))
+		m.syncStatus = "Discovering calendars…"
+		return m, tea.Batch(m.syncSpinner.Tick, m.connectAndDiscoverCalendar(msg, cred))
 
 	case accountDiscoveryReadyMsg:
-		m.accountListDialogOpen = false
-		m.accountDialogOpen = false
 		m.syncing = false
 		if msg.err != nil {
+			m.calendarDialogOpen = true
 			m.statusToken++
-			m.syncStatus = "Account discovery failed: " + msg.err.Error()
+			m.syncStatus = "Calendar discovery failed: " + msg.err.Error()
+			m.calendarDialog.testStatus = lipgloss.NewStyle().Foreground(m.theme.Error).
+				Render("✗ " + msg.err.Error())
 			return m, m.expireStatusAfter(10*time.Second, m.statusToken)
 		}
-		m.accountPicker = NewAccountCalendarPickerModel(msg.discovery, m.theme).SetSize(m.width, m.height)
-		m.accountPickerOpen = true
+		m.pendingDiscoveryAccountID = msg.discovery.Account.ID
+		m.pendingDiscoveryCreated = msg.createdAccount
+		m.calendarDialog = m.calendarDialog.ShowDiscovery(msg.discovery).SetSize(m.width, m.height)
+		m.calendarDialogOpen = true
 		m.syncStatus = ""
-		return m, nil
+		return m, m.loadCalendars()
 
 	case AccountCalendarPickerClosedMsg:
-		m.accountPickerOpen = false
+		m.calendarDialogOpen = false
 		m.statusToken++
-		m.syncStatus = "Account saved without importing calendars"
+		if m.pendingDiscoveryCreated && m.pendingDiscoveryAccountID != 0 {
+			accountID := m.pendingDiscoveryAccountID
+			m.pendingDiscoveryAccountID = 0
+			m.pendingDiscoveryCreated = false
+			m.syncing = true
+			m.syncStatus = "Cancelling calendar discovery…"
+			return m, tea.Batch(m.syncSpinner.Tick, m.discardDiscoveryAccount(accountID))
+		}
+		m.pendingDiscoveryAccountID = 0
+		m.pendingDiscoveryCreated = false
+		m.syncStatus = "Calendar discovery cancelled"
 		return m, m.expireStatusAfter(6*time.Second, m.statusToken)
 
 	case AccountCalendarsImportRequestedMsg:
-		if msg.AccountID != m.accountPicker.discovery.Account.ID {
+		if m.calendarDialog.discoveryPicker == nil ||
+			msg.AccountID != m.calendarDialog.discoveryPicker.discovery.Account.ID {
 			return m, m.toast.Failed("calendar selection no longer matches the open account")
 		}
-		m.accountPickerOpen = false
+		m.calendarDialogOpen = false
 		m.syncing = true
 		m.syncStatus = "Importing and syncing selected calendars…"
 		return m, tea.Batch(m.syncSpinner.Tick, m.importAndSyncAccountCalendars(msg.Paths))
+
+	case calendarDiscoveryDiscardedMsg:
+		m.syncing = false
+		m.statusToken++
+		if msg.err != nil {
+			m.syncStatus = "Calendar discovery cancelled; cleanup failed: " + msg.err.Error()
+		} else {
+			m.syncStatus = "Calendar discovery cancelled"
+		}
+		return m, tea.Batch(
+			m.loadCalendars(),
+			m.expireStatusAfter(8*time.Second, m.statusToken),
+		)
 
 	case accountImportFinishedMsg:
 		m.syncing = false
 		m.statusToken++
 		switch {
 		case msg.err != nil:
+			m.calendarDialogOpen = m.calendarDialog.discoveryPicker != nil
 			m.syncStatus = "Calendar import failed: " + msg.err.Error()
 		case msg.created == 0 && msg.existing == 0:
 			m.syncStatus = "No calendars selected"
+			if m.pendingDiscoveryCreated && m.pendingDiscoveryAccountID != 0 {
+				accountID := m.pendingDiscoveryAccountID
+				m.pendingDiscoveryAccountID = 0
+				m.pendingDiscoveryCreated = false
+				m.syncing = true
+				m.syncStatus = "Cancelling calendar discovery…"
+				return m, tea.Batch(m.syncSpinner.Tick, m.discardDiscoveryAccount(accountID))
+			}
+			m.pendingDiscoveryAccountID = 0
+			m.pendingDiscoveryCreated = false
 		case msg.syncErr != nil:
+			m.pendingDiscoveryAccountID = 0
+			m.pendingDiscoveryCreated = false
 			m.syncStatus = fmt.Sprintf("Imported %d calendar(s); first sync failed: %v", msg.created, msg.syncErr)
 		case msg.created == 0:
+			m.pendingDiscoveryAccountID = 0
+			m.pendingDiscoveryCreated = false
 			m.syncStatus = fmt.Sprintf("%d selected calendar(s) already imported", msg.existing)
 		default:
+			m.pendingDiscoveryAccountID = 0
+			m.pendingDiscoveryCreated = false
 			m.syncStatus = fmt.Sprintf("Imported and synced %d calendar(s)", msg.synced)
 		}
 		return m, tea.Batch(
@@ -2700,55 +2665,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return calendarMutationDoneMsg{err: err}
 			}
 
-			// oauth2 saves defer the link until the browser flow completes.
-			// The row, owner email, and default are committed now, so a
-			// cancelled or failed flow leaves a usable local calendar
-			// rather than a half-link.
-			if saved.RemoteURL != "" && calendar.NormalizeAuthType(saved.AuthType) == "oauth2" {
-				if saved.ID == 0 && saved.MakeDefault {
-					if derr := m.app.Calendars.SetDefault(ctx, cal.ID); derr != nil {
-						return calendarMutationDoneMsg{err: derr}
-					}
-				}
-				return calendarOAuthConnectPendingMsg{cal: cal, saved: saved}
-			}
-
-			if saved.RemoteURL != "" {
-				// Discard, don't stderr: plaintext-store warnings written
-				// mid-frame corrupt the renderer. Plaintext is an explicit
-				// opt-in whose warning the user saw at setup; the keyring
-				// is the default store and emits nothing.
-				credStore, storeErr := auth.NewCredentialStoreWithWarnings(m.app.AllowPlaintext, io.Discard)
-				if storeErr != nil {
-					return calendarMutationDoneMsg{err: storeErr}
-				}
-				cred := auth.Credential{Username: saved.Username}
-				switch calendar.NormalizeAuthType(saved.AuthType) {
-				case "basic":
-					cred.Password = saved.Password
-				case "bearer":
-					cred.AccessToken = saved.Password
-				}
-
-				// Best-effort PROPFIND for the remote calendar-color so the
-				// UI shows the server's color immediately, before the first
-				// sync runs. Fetch failures are non-fatal — Connect proceeds
-				// without seeding the color.
-				metaCtx, metaCancel := context.WithTimeout(ctx, 10*time.Second)
-				meta, _ := caldav.FetchCalendarMetadata(metaCtx, saved.RemoteURL, saved.Username, saved.Password, saved.AuthType, saved.AllowInsecure)
-				metaCancel()
-
-				if cerr := m.app.Calendars.Connect(ctx, cal, calendar.RemoteLink{
-					RemoteURL:     saved.RemoteURL,
-					Username:      saved.Username,
-					AuthType:      saved.AuthType,
-					AllowInsecure: saved.AllowInsecure,
-					RemoteColor:   meta.Color,
-				}, cred, credStore); cerr != nil {
-					return calendarMutationDoneMsg{err: cerr}
-				}
-			}
-
 			// MakeDefault only matters on create; edit-mode default moves
 			// through the dedicated CalendarSetDefaultRequestedMsg path so
 			// the rule stays in one place.
@@ -2780,11 +2696,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if cal.AccountID == 0 {
 				return calendarReauthReadyMsg{err: fmt.Errorf("calendar %q is not linked to an account", cal.Name)}
 			}
-			credStore, err := auth.NewCredentialStoreWithWarnings(m.app.AllowPlaintext, io.Discard)
+			credStore, err := auth.NewCredentialStoreWithWarnings(m.app.CredentialNamespace, m.app.PreviousCredentialNamespaces, m.app.MigrateLegacyCredentials, m.app.AllowPlaintext, io.Discard)
 			if err != nil {
 				return calendarReauthReadyMsg{err: err}
 			}
-			cred, err := credStore.Get(cal.AccountID)
+			cred, err := m.app.Accounts.LoadCredentialForCalendar(ctx, req.ID, cal.AccountID, credStore)
 			if err != nil {
 				return calendarReauthReadyMsg{err: fmt.Errorf("load credential: %w", err)}
 			}
@@ -2855,18 +2771,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.calendarDialogOpen = true
 		return m, nil
 
-	case calendarOAuthConnectPendingMsg:
-		m.oauthPurpose = oauthFlowPurpose{
-			isConnect:    true,
-			calendarID:   msg.cal.ID,
-			calendarName: msg.cal.Name,
-			saved:        msg.saved,
-			cal:          msg.cal,
-		}
-		// The row already exists; refresh the sidebar before the (long) flow.
-		newM, cmd := m.startOAuthFlow(msg.saved.OAuthClientID, msg.saved.OAuthClientSecret)
-		return newM, tea.Batch(cmd, newM.loadCalendars())
-
 	case oauthFlowStartedMsg:
 		var cmd tea.Cmd
 		m.oauthFlow, cmd = m.oauthFlow.Update(msg)
@@ -2878,27 +2782,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.oauthFlow.State() {
 		case OAuthFlowDone:
 			m.oauthFlowOpen = false
-			if m.oauthPurpose.accountConnect {
+			if m.oauthPurpose.calendarDiscovery {
 				m.syncing = true
 				m.syncStatus = "Authorized; discovering calendars…"
-				return m, tea.Batch(m.syncSpinner.Tick, m.finishOAuthAccountConnect(msg.result))
-			}
-			if m.oauthPurpose.isConnect {
-				return m, m.finishOAuthConnect(msg.result)
+				return m, tea.Batch(m.syncSpinner.Tick, m.finishOAuthCalendarDiscovery(msg.result))
 			}
 			return m, m.finishOAuthReauth(msg.result)
 		case OAuthFlowCancelled:
 			m.oauthFlowOpen = false
 			m.statusToken++
-			if m.oauthPurpose.accountConnect {
-				m.syncStatus = "Authorization cancelled; account was not saved"
+			if m.oauthPurpose.calendarDiscovery {
+				m.calendarDialogOpen = true
+				m.syncStatus = "Authorization cancelled"
 				return m, m.expireStatusAfter(6*time.Second, m.statusToken)
 			}
-			if m.oauthPurpose.isConnect {
-				m.syncStatus = fmt.Sprintf("Authorization cancelled — %q saved as a local calendar", m.oauthPurpose.calendarName)
-			} else {
-				m.syncStatus = "Authorization cancelled"
-			}
+			m.syncStatus = "Authorization cancelled"
 			return m, m.expireStatusAfter(6*time.Second, m.statusToken)
 		default:
 			// Failed: the modal stays up showing the error; esc closes it.
@@ -2925,17 +2823,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// flips and the sidebar ⚠ clears.
 		return m, func() tea.Msg { return SyncCalendarRequestedMsg{ID: msg.calendarID, Name: msg.name} }
 
-	case oauthConnectFinishedMsg:
-		if msg.err != nil {
-			m.statusToken++
-			m.syncStatus = fmt.Sprintf("Connect failed: %s — %q stays local", msg.err, msg.name)
-			return m, tea.Batch(m.expireStatusAfter(10*time.Second, m.statusToken), m.loadCalendars())
-		}
-		return m, tea.Batch(
-			m.loadCalendars(),
-			func() tea.Msg { return SyncCalendarRequestedMsg{ID: msg.calendarID, Name: msg.name} },
-		)
-
 	case CalendarDisconnectRemoteRequestedMsg:
 		id := msg.ID
 		return m, func() tea.Msg {
@@ -2944,7 +2831,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if err != nil {
 				return calendarMutationDoneMsg{err: err}
 			}
-			credStore, _ := auth.NewCredentialStoreWithWarnings(m.app.AllowPlaintext, io.Discard)
+			credStore, _ := auth.NewCredentialStoreWithWarnings(m.app.CredentialNamespace, m.app.PreviousCredentialNamespaces, m.app.MigrateLegacyCredentials, m.app.AllowPlaintext, io.Discard)
 			return calendarMutationDoneMsg{err: m.app.Calendars.Disconnect(ctx, cal, credStore)}
 		}
 
@@ -3346,8 +3233,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !msg.Confirmed {
 			m.pendingCalendarDelete = 0
 			m.pendingCalendarDeleteName = ""
-			m.pendingAccountDelete = 0
-			m.pendingAccountDeleteName = ""
 			m.pendingCalendarPromote = 0
 			m.pendingCalendarPromoteName = ""
 			m.pendingPurgeEntries = nil
@@ -3368,18 +3253,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return trashActionDoneMsg{action: "purged", title: title, err: nil}
 			}
 		}
-		if m.pendingAccountDelete != 0 {
-			id := m.pendingAccountDelete
-			m.pendingAccountDelete = 0
-			m.pendingAccountDeleteName = ""
-			return m, func() tea.Msg {
-				store, err := auth.NewCredentialStoreWithWarnings(m.app.AllowPlaintext, io.Discard)
-				if err == nil {
-					err = m.app.Accounts.Delete(context.Background(), id, store)
-				}
-				return accountMutationDoneMsg{err: err}
-			}
-		}
 		if m.pendingCalendarDelete != 0 {
 			id := m.pendingCalendarDelete
 			newDefaultID := m.pendingCalendarPromote
@@ -3390,7 +3263,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Delete confirmed: close the edit dialog too.
 			m.calendarDialogOpen = false
 			return m, func() tea.Msg {
-				credStore, _ := auth.NewCredentialStoreWithWarnings(m.app.AllowPlaintext, io.Discard)
+				credStore, _ := auth.NewCredentialStoreWithWarnings(m.app.CredentialNamespace, m.app.PreviousCredentialNamespaces, m.app.MigrateLegacyCredentials, m.app.AllowPlaintext, io.Discard)
 				err := m.app.Calendars.DeleteWithRemoteCleanup(context.Background(), id, newDefaultID, credStore)
 				return calendarMutationDoneMsg{err: err}
 			}
@@ -3790,7 +3663,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cursor = m.calendar.Cursor()
 			}
 			var cmd tea.Cmd
-			m.form, cmd = NewEventFormModel(cursor, m.calendars, m.theme)
+			m.form, cmd = NewEventFormModel(cursor, eventFormCalendars(m.calendars), m.theme)
 			m.form = m.form.SetSize(m.width, m.height)
 			m.formOpen = true
 			return m, cmd
@@ -3980,18 +3853,6 @@ func (m Model) View() tea.View {
 	if m.calendarDialogOpen {
 		bw, bh := m.calendarDialog.BoxSize()
 		v.Content = m.compositeOverlay(v.Content, m.calendarDialog.View(), bw, bh)
-	}
-	if m.accountDialogOpen {
-		bw, bh := m.accountDialog.BoxSize()
-		v.Content = m.compositeOverlay(v.Content, m.accountDialog.View(), bw, bh)
-	}
-	if m.accountPickerOpen {
-		bw, bh := m.accountPicker.BoxSize()
-		v.Content = m.compositeOverlay(v.Content, m.accountPicker.View(), bw, bh)
-	}
-	if m.accountListDialogOpen {
-		bw, bh := m.accountListDialog.BoxSize()
-		v.Content = m.compositeOverlay(v.Content, m.accountListDialog.View(), bw, bh)
 	}
 	if m.oauthFlowOpen {
 		bw, bh := m.oauthFlow.BoxSize()

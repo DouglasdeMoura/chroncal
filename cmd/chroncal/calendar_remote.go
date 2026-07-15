@@ -63,7 +63,7 @@ func validateCalendarRemoteFlags(remoteURL, username, authType, oauthClientID st
 }
 
 func connectCalendarRemote(ctx context.Context, a *app.App, cal calendarpkg.Calendar, flags calendarRemoteFlags) error {
-	credStore, err := newCalendarCredentialStore(a.AllowPlaintext)
+	credStore, err := newCalendarCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
 	if err != nil {
 		return fmt.Errorf("credential store: %w", err)
 	}
@@ -86,21 +86,23 @@ func connectCalendarRemote(ctx context.Context, a *app.App, cal calendarpkg.Cale
 	metaCancel()
 
 	return a.Calendars.Connect(ctx, cal, calendarpkg.RemoteLink{
-		RemoteURL:     flags.RemoteURL,
-		Username:      flags.Username,
-		AuthType:      flags.AuthType,
-		AllowInsecure: flags.AllowInsecure,
-		RemoteColor:   meta.Color,
+		RemoteURL:        flags.RemoteURL,
+		Username:         flags.Username,
+		AuthType:         flags.AuthType,
+		AllowInsecure:    flags.AllowInsecure,
+		RemoteColor:      meta.Color,
+		RemoteAccess:     string(meta.Access),
+		RemoteComponents: meta.SupportedComponents,
 	}, cred, credStore)
 }
 
 func disconnectCalendarRemote(ctx context.Context, a *app.App, cal calendarpkg.Calendar) error {
-	credStore, _ := newCalendarCredentialStore(a.AllowPlaintext)
+	credStore, _ := newCalendarCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
 	return a.Calendars.Disconnect(ctx, cal, credStore)
 }
 
 func deleteCalendarWithCleanup(ctx context.Context, a *app.App, id, newDefaultID int64) error {
-	credStore, _ := newCalendarCredentialStore(a.AllowPlaintext)
+	credStore, _ := newCalendarCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
 	return a.Calendars.DeleteWithRemoteCleanup(ctx, id, newDefaultID, credStore)
 }
 

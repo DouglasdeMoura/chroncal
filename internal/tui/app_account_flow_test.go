@@ -1,52 +1,92 @@
 package tui
 
-import "testing"
+import (
+	"context"
+	"testing"
 
-func TestAppAccountSetupOpensDiscoveryPicker(t *testing.T) {
+	"github.com/douglasdemoura/chroncal/internal/account"
+)
+
+func TestAppCalendarDiscoveryOpensPickerInsideCalendarDialog(t *testing.T) {
 	m := NewModel(nil, "")
 	m.width, m.height = 120, 40
-
-	updated, cmd := m.Update(AccountDialogRequestedMsg{})
-	m = updated.(Model)
-	if cmd != nil || !m.accountDialogOpen {
-		t.Fatalf("account dialog open=%v cmd=%v", m.accountDialogOpen, cmd)
-	}
-
+	m.calendarDialog = NewCalendarDialogModel(CalendarDialogParams{}, m.theme).SetSize(m.width, m.height)
+	m.calendarDialogOpen = true
 	m.syncing = true
-	updated, cmd = m.Update(accountDiscoveryReadyMsg{discovery: pickerDiscovery()})
+
+	updated, _ := m.Update(accountDiscoveryReadyMsg{discovery: pickerDiscovery()})
 	m = updated.(Model)
-	if cmd != nil || m.syncing || !m.accountPickerOpen || m.accountDialogOpen {
-		t.Fatalf("discovery transition: syncing=%v picker=%v form=%v cmd=%v", m.syncing, m.accountPickerOpen, m.accountDialogOpen, cmd)
+	if m.syncing || !m.calendarDialogOpen || m.calendarDialog.discoveryPicker == nil {
+		t.Fatalf("discovery transition: syncing=%v calendarDialog=%v picker=%v",
+			m.syncing, m.calendarDialogOpen, m.calendarDialog.discoveryPicker != nil)
 	}
 }
 
-func TestAppAccountRemoveUsesDestructiveConfirmation(t *testing.T) {
+func TestAppOAuthCalendarDiscoveryRecordsIntegratedPurpose(t *testing.T) {
 	m := NewModel(nil, "")
 	m.width, m.height = 120, 40
-	updated, cmd := m.Update(AccountRemoveRequestedMsg{AccountID: 7, Name: "Google"})
-	m = updated.(Model)
-	if cmd != nil || !m.confirmOpen || m.pendingAccountDelete != 7 {
-		t.Fatalf("remove confirmation: open=%v pending=%d cmd=%v", m.confirmOpen, m.pendingAccountDelete, cmd)
-	}
-	if m.confirmDialog.form.submitVariant != ButtonDanger {
-		t.Fatal("account removal confirmation must use the danger submit variant")
-	}
-}
-
-func TestAppOAuthAccountConnectRecordsAccountPurpose(t *testing.T) {
-	m := NewModel(nil, "")
-	m.width, m.height = 120, 40
-	req := AccountConnectRequestedMsg{
-		Name: "Google", ServerURL: "https://example.com/caldav", Username: "me@example.com",
+	m.calendarDialog = NewCalendarDialogModel(CalendarDialogParams{}, m.theme).SetSize(m.width, m.height)
+	m.calendarDialogOpen = true
+	req := CalendarDiscoveryRequestedMsg{
+		ServerURL: "https://example.com/caldav", Username: "me@example.com",
 		AuthType: "oauth2", OAuthClientID: "client.apps", OAuthClientSecret: "secret",
 	}
 	updated, cmd := m.Update(req)
 	m = updated.(Model)
-	if cmd == nil || !m.oauthFlowOpen || !m.oauthPurpose.accountConnect {
-		t.Fatalf("OAuth account state: flow=%v purpose=%v cmd=%v", m.oauthFlowOpen, m.oauthPurpose.accountConnect, cmd)
+	if cmd == nil || !m.oauthFlowOpen || !m.oauthPurpose.calendarDiscovery {
+		t.Fatalf("OAuth discovery state: flow=%v purpose=%v cmd=%v",
+			m.oauthFlowOpen, m.oauthPurpose.calendarDiscovery, cmd)
 	}
-	if m.oauthPurpose.accountConnectMsg.Name != "Google" {
-		t.Fatalf("OAuth purpose lost account request: %+v", m.oauthPurpose.accountConnectMsg)
+	if m.oauthPurpose.calendarDiscoveryMsg.Username != "me@example.com" {
+		t.Fatalf("OAuth purpose lost discovery request: %+v", m.oauthPurpose.calendarDiscoveryMsg)
 	}
 	m.oauthFlow.Abort()
+}
+
+func TestAppCalendarDiscoveryCancelSchedulesTemporaryAccountCleanup(t *testing.T) {
+	m := NewModel(nil, "")
+	m.calendarDialogOpen = true
+	m.pendingDiscoveryAccountID = 7
+	m.pendingDiscoveryCreated = true
+
+	updated, cmd := m.Update(AccountCalendarPickerClosedMsg{})
+	m = updated.(Model)
+	if cmd == nil || m.calendarDialogOpen || !m.syncing {
+		t.Fatalf("cancel state: cmd=%v calendarDialog=%v syncing=%v", cmd, m.calendarDialogOpen, m.syncing)
+	}
+	if m.pendingDiscoveryAccountID != 0 || m.pendingDiscoveryCreated {
+		t.Fatalf("temporary account state not cleared: id=%d created=%v",
+			m.pendingDiscoveryAccountID, m.pendingDiscoveryCreated)
+	}
+}
+
+func TestAppOAuthCalendarDiscoveryCancelReturnsToConnectionStep(t *testing.T) {
+	m := NewModel(nil, "")
+	m.oauthFlowOpen = true
+	m.oauthFlow.state = OAuthFlowWaiting
+	m.oauthPurpose.calendarDiscovery = true
+
+	updated, _ := m.Update(oauthFlowDoneMsg{err: context.Canceled})
+	m = updated.(Model)
+	if m.oauthFlowOpen || !m.calendarDialogOpen {
+		t.Fatalf("OAuth cancel state: flow=%v calendarDialog=%v", m.oauthFlowOpen, m.calendarDialogOpen)
+	}
+}
+
+func TestExistingCalendarDiscoveryAccountMatchesConnectionIdentity(t *testing.T) {
+	accounts := []account.Account{
+		{ID: 3, DisplayName: "First", ServerURL: "https://example.com/dav", AuthType: "basic", Username: "other"},
+		{ID: 7, DisplayName: "Existing", ServerURL: "https://example.com/dav", AuthType: "basic", Username: "me@example.com"},
+	}
+	got, ok := existingCalendarDiscoveryAccount(
+		accounts,
+		CalendarDiscoveryRequestedMsg{
+			ServerURL: " https://example.com/dav ",
+			AuthType:  "BASIC",
+			Username:  "me@example.com",
+		},
+	)
+	if !ok || got.ID != 7 {
+		t.Fatalf("matched account = %+v, %v; want ID 7", got, ok)
+	}
 }
