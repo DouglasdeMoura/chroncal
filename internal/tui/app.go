@@ -396,6 +396,7 @@ type Model struct {
 	calendarDialogOpen        bool
 	pendingDiscoveryAccountID int64
 	pendingDiscoveryCreated   bool
+	discoveryReturnToEdit     bool
 
 	// OAuth modal plus the operation that consumes its tokens: account
 	// discovery or re-authentication of an existing connection.
@@ -1285,6 +1286,34 @@ func (m Model) discardDiscoveryAccount(accountID int64) tea.Cmd {
 	}
 }
 
+func (m Model) discoverAdditionalCalendars(calendarID, accountID int64) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+
+		cal, err := m.app.Calendars.Get(ctx, calendarID)
+		if err != nil {
+			return accountDiscoveryReadyMsg{err: fmt.Errorf("get calendar: %w", err)}
+		}
+		if cal.AccountID != accountID {
+			return accountDiscoveryReadyMsg{err: fmt.Errorf("calendar is no longer linked to this account")}
+		}
+
+		store, err := auth.NewCredentialStoreWithWarnings(
+			m.app.CredentialNamespace,
+			m.app.PreviousCredentialNamespaces,
+			m.app.MigrateLegacyCredentials,
+			m.app.AllowPlaintext,
+			io.Discard,
+		)
+		if err != nil {
+			return accountDiscoveryReadyMsg{err: fmt.Errorf("open credential store: %w", err)}
+		}
+		discovery, err := m.app.Accounts.Discover(ctx, accountID, store)
+		return accountDiscoveryReadyMsg{discovery: discovery, err: err}
+	}
+}
+
 // syncProgressLabel produces a short calendar label for the per-calendar
 // progress footer. Calendar names can be long (Apple/Google often exceed 40
 // chars) and would push the spinner off the visible status line.
@@ -1752,6 +1781,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			CalendarTestRequestedMsg,
 			CalendarSetDefaultRequestedMsg,
 			CalendarReauthRequestedMsg,
+			CalendarDiscoverAdditionalRequestedMsg,
 			AccountCalendarsImportRequestedMsg, AccountCalendarPickerClosedMsg,
 			accountDiscoveryReadyMsg, accountImportFinishedMsg,
 			calendarReauthReadyMsg, calendarReauthNeedsConfigMsg,
@@ -2488,6 +2518,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case CalendarDiscoverAdditionalRequestedMsg:
+		if m.syncing || m.oauthFlowOpen || m.oauthPending {
+			return m, nil
+		}
+		m.discoveryReturnToEdit = true
+		m.syncing = true
+		m.syncStatus = "Discovering calendars…"
+		return m, tea.Batch(
+			m.syncSpinner.Tick,
+			m.discoverAdditionalCalendars(msg.CalendarID, msg.AccountID),
+		)
+
 	case CalendarDiscoveryRequestedMsg:
 		if m.syncing || m.oauthFlowOpen {
 			return m, nil
@@ -2527,8 +2569,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.loadCalendars()
 
 	case AccountCalendarPickerClosedMsg:
-		m.calendarDialogOpen = false
 		m.statusToken++
+		if m.discoveryReturnToEdit {
+			m.discoveryReturnToEdit = false
+			m.calendarDialog = m.calendarDialog.HideDiscovery()
+			m.calendarDialogOpen = true
+			m.pendingDiscoveryAccountID = 0
+			m.pendingDiscoveryCreated = false
+			m.syncStatus = "Calendar discovery cancelled"
+			return m, m.expireStatusAfter(6*time.Second, m.statusToken)
+		}
+		m.calendarDialogOpen = false
 		if m.pendingDiscoveryCreated && m.pendingDiscoveryAccountID != 0 {
 			accountID := m.pendingDiscoveryAccountID
 			m.pendingDiscoveryAccountID = 0
@@ -2597,6 +2648,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingDiscoveryCreated = false
 			m.syncStatus = fmt.Sprintf("Imported and synced %d calendar(s)", msg.synced)
 		}
+		if m.discoveryReturnToEdit && msg.err == nil {
+			m.discoveryReturnToEdit = false
+			m.calendarDialog = m.calendarDialog.HideDiscovery()
+			m.calendarDialogOpen = true
+		}
 		return m, tea.Batch(
 			m.loadCalendars(),
 			m.loadEvents(),
@@ -2613,6 +2669,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			params = CalendarDialogParams{
+				AccountID:   cal.AccountID,
 				ID:          cal.ID,
 				Name:        cal.Name,
 				Color:       cal.Color,
@@ -2747,6 +2804,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		params := CalendarDialogParams{
+			AccountID:            cal.AccountID,
 			ID:                   cal.ID,
 			Name:                 cal.Name,
 			Color:                cal.Color,
@@ -2922,6 +2980,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case CalendarDialogClosedMsg:
 		m.calendarDialogOpen = false
+		m.discoveryReturnToEdit = false
 		return m, nil
 
 	case CalendarListDialogRequestedMsg:
