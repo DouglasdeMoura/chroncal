@@ -1802,20 +1802,21 @@ type FormActionButton struct {
 // Form manages a list of form fields with focus cycling, validation,
 // and submit/cancel handling.
 type Form struct {
-	items         []FormItem
-	styles        FormStyles
-	submitLabel   string
-	submitVariant ButtonVariant
-	cancelVariant ButtonVariant
-	actionButtons []FormActionButton
-	focused       int
-	width         int
-	errorField    int
-	error         string
-	onSubmit      func(f *Form) tea.Cmd
-	onCancel      func(f *Form) tea.Cmd
-	onRebuild     func(f *Form)
-	onFieldEnter  func(f *Form, field int) tea.Cmd
+	items                  []FormItem
+	styles                 FormStyles
+	submitLabel            string
+	submitVariant          ButtonVariant
+	cancelVariant          ButtonVariant
+	actionButtons          []FormActionButton
+	separateLeadingActions bool
+	focused                int
+	width                  int
+	errorField             int
+	error                  string
+	onSubmit               func(f *Form) tea.Cmd
+	onCancel               func(f *Form) tea.Cmd
+	onRebuild              func(f *Form)
+	onFieldEnter           func(f *Form, field int) tea.Cmd
 }
 
 func NewForm(submitLabel string, styles FormStyles, items ...FormItem) Form {
@@ -2025,13 +2026,10 @@ func (f Form) buttonRow() string {
 	if len(leadParts) > 0 {
 		leadGroup := lipgloss.JoinHorizontal(lipgloss.Top, leadParts...)
 		needed := lipgloss.Width(leadGroup) + lipgloss.Width(rightGroup)
-		if alignWidth > 0 && needed+1 > alignWidth {
-			// The action set doesn't fit beside Submit/Cancel. Degrade to
-			// two rows instead of letting the container wrap the joined
-			// line mid-pill: leading actions spread across their own row
-			// (space-between, so e.g. three actions sit left / centered /
-			// right), a blank line for breathing room, then Submit/Cancel
-			// aligned on their own row.
+		if f.separateLeadingActions || (alignWidth > 0 && needed+1 > alignWidth) {
+			// Keep utility actions in their own tier when the caller requests
+			// stronger hierarchy, or when every action cannot fit beside the
+			// commit controls without wrapping a pill.
 			right := rightGroup
 			if f.styles.ButtonAlign != ButtonAlignLeft {
 				align := lipgloss.Right
@@ -2189,6 +2187,12 @@ func (f *Form) ClearActionButtons() {
 // actions whose placement should not invite misclicks on the primary action.
 func (f *Form) SetLeadingActionButton(label string, variant ButtonVariant, onPress func() tea.Msg) {
 	f.actionButtons = append(f.actionButtons, FormActionButton{Label: label, Variant: variant, OnPress: onPress, Leading: true})
+}
+
+// SetSeparateLeadingActions keeps utility actions on a distinct row above the
+// form's submit and cancel controls, even when all buttons would fit together.
+func (f *Form) SetSeparateLeadingActions(separate bool) {
+	f.separateLeadingActions = separate
 }
 
 func (f *Form) SetCancelVariant(v ButtonVariant) {

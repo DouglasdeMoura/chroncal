@@ -217,10 +217,12 @@ type CalendarDialogModel struct {
 	// the "Save and Set as Default" path can flip the MakeDefault bit on
 	// the upcoming CalendarSavedMsg without re-implementing form
 	// validation. Cleared automatically after each submit.
-	saveMakeDefault *bool
-	connectionMode  *bool
-	localDraft      *CalendarDialogParams
-	discoveryPicker *AccountCalendarPickerModel
+	saveMakeDefault  *bool
+	connectionMode   *bool
+	localDraft       *CalendarDialogParams
+	discoveryPicker  *AccountCalendarPickerModel
+	oauthIDField     *TextField
+	oauthSecretField *TextField
 
 	// contentWidth is shared with the static-line styleFns so long values
 	// (remote URLs, sync errors) truncate to the dialog's content width at
@@ -376,31 +378,31 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 	localDraft := params
 
 	m := CalendarDialogModel{
-		id:              params.ID,
-		name:            params.Name,
-		linked:          params.RemoteLinked,
-		dialog:          dialog,
-		form:            form,
-		body:            viewport.New(),
-		help:            newThemedHelp(theme),
-		theme:           theme,
-		accentColor:     theme.Selected,
-		mutedColor:      theme.Muted,
-		textDimColor:    theme.TextDim,
-		saveMakeDefault: saveMakeDefault,
-		connectionMode:  connectionMode,
-		localDraft:      &localDraft,
-		contentWidth:    contentWidth,
+		id:               params.ID,
+		name:             params.Name,
+		linked:           params.RemoteLinked,
+		dialog:           dialog,
+		form:             form,
+		body:             viewport.New(),
+		help:             newThemedHelp(theme),
+		theme:            theme,
+		accentColor:      theme.Selected,
+		mutedColor:       theme.Muted,
+		textDimColor:     theme.TextDim,
+		saveMakeDefault:  saveMakeDefault,
+		connectionMode:   connectionMode,
+		localDraft:       &localDraft,
+		contentWidth:     contentWidth,
+		oauthIDField:     oauthIDField,
+		oauthSecretField: oauthSecretField,
 	}
 	m.body.MouseWheelEnabled = true
 
 	// Edit mode, not yet default: surface "Set as Default" so the user
 	// can reach the action without backing out into the manage-calendars
 	// list. Hidden when already default — no valid "unset" exists.
-	// Registered before Disconnect so Tab order is benign-then-destructive
-	// (and visually Set as Default sits left of Disconnect on the leading
-	// side) — a reflex Tab from Save should never land on a destructive
-	// action first.
+	// Account maintenance is grouped behind a single disclosure action below,
+	// so Set as Default remains the only standalone utility on local calendars.
 	if params.ID > 0 && !params.IsDefault {
 		id := params.ID
 		name := params.Name
@@ -409,44 +411,11 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		})
 	}
 
-	if params.RemoteLinked && params.AccountID > 0 {
-		calendarID := params.ID
-		accountID := params.AccountID
-		form.SetLeadingActionButton("Add calendars", Button, func() tea.Msg {
-			return CalendarDiscoverAdditionalRequestedMsg{
-				CalendarID: calendarID,
-				AccountID:  accountID,
-			}
-		})
-	}
-
-	// Linked OAuth calendars get Re-authenticate, registered before
-	// Disconnect so Tab order stays benign-then-destructive. When the
-	// dialog is in the missing-config fallback mode, the button reads the
-	// client config fields at press time; otherwise it sends empty config
-	// and the parent uses the stored credential.
-	if params.RemoteLinked && calendarAuthIsOAuth(params.RemoteAuthType) {
-		id := params.ID
-		name := params.Name
-		idField, secretField := oauthIDField, oauthSecretField
-		form.SetLeadingActionButton("Re-authenticate", Button, func() tea.Msg {
-			msg := CalendarReauthRequestedMsg{ID: id, Name: name}
-			if idField != nil {
-				msg.ClientID = strings.TrimSpace(idField.Value())
-			}
-			if secretField != nil {
-				msg.ClientSecret = strings.TrimSpace(secretField.Value())
-			}
-			return msg
-		})
-	}
-
 	if params.RemoteLinked {
-		id := params.ID
-		name := params.Name
-		form.SetLeadingActionButton("Disconnect", ButtonDanger, func() tea.Msg {
-			return CalendarDisconnectRemoteRequestedMsg{ID: id, Name: name}
+		form.SetLeadingActionButton("Account…", Button, func() tea.Msg {
+			return CalendarAccountActionsRequestedMsg{}
 		})
+		form.SetSeparateLeadingActions(true)
 	}
 
 	// Create mode with at least one calendar already on disk: offer to
@@ -805,6 +774,70 @@ func (m CalendarDialogModel) ShowDiscovery(discovery account.Discovery) Calendar
 func (m CalendarDialogModel) HideDiscovery() CalendarDialogModel {
 	m.discoveryPicker = nil
 	return m
+}
+
+// AccountActionsMenu builds the linked account's progressive-disclosure menu
+// from the current edit state. The underlying form remains alive while the
+// menu is open, so cancelling the menu never discards unsaved fields.
+func (m CalendarDialogModel) AccountActionsMenu() CalendarAccountActionsMenuModel {
+	if m.localDraft == nil {
+		return newCalendarAccountActionsMenu(m.theme, []calendarAccountMenuAction{{
+			label: "Cancel",
+			onPress: func() tea.Msg {
+				return CalendarAccountMenuClosedMsg{}
+			},
+		}})
+	}
+
+	params := *m.localDraft
+	name := params.Name
+	if field, ok := m.form.Field(cdIdxName).(*TextField); ok {
+		name = strings.TrimSpace(field.Value())
+	}
+
+	actions := make([]calendarAccountMenuAction, 0, 4)
+	if params.AccountID > 0 {
+		actions = append(actions, calendarAccountMenuAction{
+			label: "Add calendars…",
+			onPress: func() tea.Msg {
+				return CalendarDiscoverAdditionalRequestedMsg{
+					CalendarID: params.ID,
+					AccountID:  params.AccountID,
+				}
+			},
+		})
+	}
+	if calendarAuthIsOAuth(params.RemoteAuthType) {
+		actions = append(actions, calendarAccountMenuAction{
+			label: "Re-authenticate…",
+			onPress: func() tea.Msg {
+				msg := CalendarReauthRequestedMsg{ID: params.ID, Name: name}
+				if m.oauthIDField != nil {
+					msg.ClientID = strings.TrimSpace(m.oauthIDField.Value())
+				}
+				if m.oauthSecretField != nil {
+					msg.ClientSecret = strings.TrimSpace(m.oauthSecretField.Value())
+				}
+				return msg
+			},
+		})
+	}
+	actions = append(actions,
+		calendarAccountMenuAction{
+			label:   "Disconnect…",
+			variant: ButtonDanger,
+			onPress: func() tea.Msg {
+				return CalendarDisconnectRemoteRequestedMsg{ID: params.ID, Name: name}
+			},
+		},
+		calendarAccountMenuAction{
+			label: "Cancel",
+			onPress: func() tea.Msg {
+				return CalendarAccountMenuClosedMsg{}
+			},
+		},
+	)
+	return newCalendarAccountActionsMenu(m.theme, actions)
 }
 
 func (m CalendarDialogModel) SetSize(w, h int) CalendarDialogModel {

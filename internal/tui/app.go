@@ -397,6 +397,8 @@ type Model struct {
 	pendingDiscoveryAccountID int64
 	pendingDiscoveryCreated   bool
 	discoveryReturnToEdit     bool
+	calendarAccountMenu       CalendarAccountActionsMenuModel
+	calendarAccountMenuOpen   bool
 
 	// OAuth modal plus the operation that consumes its tokens: account
 	// discovery or re-authentication of an existing connection.
@@ -1704,8 +1706,9 @@ func (m Model) undoIsAllowed() bool {
 func (m Model) anyOverlayOpen() bool {
 	return m.paletteOpen || m.formOpen || m.viewDialogOpen || m.dialogOpen ||
 		m.confirmOpen || m.choiceOpen ||
-		m.calendarDialogOpen || m.calendarListDialogOpen ||
-		m.helpDialogOpen || m.trashOpen || m.oauthFlowOpen
+		m.calendarDialogOpen || m.calendarAccountMenuOpen ||
+		m.calendarListDialogOpen || m.helpDialogOpen ||
+		m.trashOpen || m.oauthFlowOpen
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1770,6 +1773,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// Account maintenance is a child overlay of the calendar edit dialog.
+	// It owns interaction until the user selects an action or goes back.
+	if m.calendarAccountMenuOpen {
+		switch msg.(type) {
+		case CalendarAccountMenuSelectedMsg, CalendarAccountMenuClosedMsg,
+			tea.BackgroundColorMsg, tea.WindowSizeMsg:
+			// fall through to main switch
+		default:
+			var cmd tea.Cmd
+			m.calendarAccountMenu, cmd = m.calendarAccountMenu.Update(msg)
+			return m, cmd
+		}
+	}
+
 	// When a confirm/choice dialog is stacked on top of the calendar dialog
 	// (e.g. the delete-calendar confirm), it must own input — otherwise Esc
 	// would close the calendar dialog underneath instead of the confirm.
@@ -1782,6 +1799,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			CalendarSetDefaultRequestedMsg,
 			CalendarReauthRequestedMsg,
 			CalendarDiscoverAdditionalRequestedMsg,
+			CalendarAccountActionsRequestedMsg,
+			CalendarAccountMenuSelectedMsg, CalendarAccountMenuClosedMsg,
 			AccountCalendarsImportRequestedMsg, AccountCalendarPickerClosedMsg,
 			accountDiscoveryReadyMsg, accountImportFinishedMsg,
 			calendarReauthReadyMsg, calendarReauthNeedsConfigMsg,
@@ -1875,6 +1894,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.confirmDialog = m.confirmDialog.SetSize(m.width, m.height)
 		m.choiceDialog = m.choiceDialog.SetSize(m.width, m.height)
 		m.calendarDialog = m.calendarDialog.SetSize(m.width, m.height)
+		m.calendarAccountMenu = m.calendarAccountMenu.SetSize(m.width, m.height)
 		m.form = m.form.SetSize(m.width, m.height)
 		m.palette = m.palette.SetSize(m.width, m.height)
 		m.calendarListDialog = m.calendarListDialog.SetSize(m.width, m.height)
@@ -2978,8 +2998,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.confirmOpen = true
 		return m, nil
 
+	case CalendarAccountActionsRequestedMsg:
+		m.calendarAccountMenu = m.calendarDialog.AccountActionsMenu().
+			SetSize(m.width, m.height)
+		m.calendarAccountMenuOpen = true
+		return m, nil
+
+	case CalendarAccountMenuClosedMsg:
+		m.calendarAccountMenuOpen = false
+		return m, nil
+
+	case CalendarAccountMenuSelectedMsg:
+		m.calendarAccountMenuOpen = false
+		return m, func() tea.Msg { return msg.Message }
+
 	case CalendarDialogClosedMsg:
 		m.calendarDialogOpen = false
+		m.calendarAccountMenuOpen = false
 		m.discoveryReturnToEdit = false
 		return m, nil
 
@@ -3912,6 +3947,10 @@ func (m Model) View() tea.View {
 	if m.calendarDialogOpen {
 		bw, bh := m.calendarDialog.BoxSize()
 		v.Content = m.compositeOverlay(v.Content, m.calendarDialog.View(), bw, bh)
+	}
+	if m.calendarAccountMenuOpen {
+		bw, bh := m.calendarAccountMenu.BoxSize()
+		v.Content = m.compositeOverlay(v.Content, m.calendarAccountMenu.View(), bw, bh)
 	}
 	if m.oauthFlowOpen {
 		bw, bh := m.oauthFlow.BoxSize()
