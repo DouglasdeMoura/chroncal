@@ -255,8 +255,8 @@ func TestCalendarList_GroupedRowsUseCompactLeadingSpacing(t *testing.T) {
 	if !strings.HasPrefix(header, "▾ Local") {
 		t.Fatalf("account heading has leading space: %q", header)
 	}
-	if !strings.HasPrefix(calendar, " ●") {
-		t.Fatalf("calendar row should have exactly one space before its marker: %q", calendar)
+	if !strings.HasPrefix(calendar, " ● On device") {
+		t.Fatalf("calendar row should have one space before and after its marker: %q", calendar)
 	}
 }
 
