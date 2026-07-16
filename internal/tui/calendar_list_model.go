@@ -454,14 +454,14 @@ func (m CalendarListModel) renderAccountHeader(row calendarListRow, selected boo
 		markerCells = lipgloss.Width(marker) + 1
 	}
 	label := arrow + " " + row.accountName
-	if avail := m.width - 2 - markerCells; m.width > 2 && avail > 0 {
+	if avail := m.width - 1 - markerCells; m.width > 1 && avail > 0 {
 		label = truncateTo(label, avail)
 	}
 	style := lipgloss.NewStyle().Foreground(m.mutedColor).Bold(true)
 	if selected {
 		style = style.Foreground(m.textColor)
 	}
-	out := style.Render(" " + label + " ")
+	out := style.Render(label + " ")
 	if marker != "" {
 		out += " " + marker
 	}
@@ -476,7 +476,7 @@ func (m CalendarListModel) renderCalendarRow(row calendarListRow, selected bool)
 	}
 	indent := ""
 	if m.grouped {
-		indent = "  "
+		indent = " "
 	}
 	marker := ""
 	if !m.grouped && (item.Health == SyncHealthError || item.Missing) {
