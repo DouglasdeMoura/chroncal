@@ -278,6 +278,14 @@ func TestCalendarList_SelectedCalendarUsesThemeAccentInsteadOfReverseVideo(t *te
 	if !strings.Contains(out, "48;2;17;34;51") {
 		t.Fatalf("selected calendar does not use accent background #112233: %q", out)
 	}
+	selectedName := lipgloss.NewStyle().
+		Background(lipgloss.Color("#112233")).
+		Foreground(lipgloss.Color("#ffffff")).
+		Bold(true).
+		Render(" Personal ")
+	if !strings.Contains(out, selectedName) {
+		t.Fatalf("selected calendar name does not carry the accent background: want %q in %q", selectedName, out)
+	}
 }
 
 func TestCalendarList_AccountHeadersHaveNoCalendarMarker(t *testing.T) {
@@ -315,15 +323,26 @@ func TestCalendarList_AccountHeaderUsesLeftAndRightForDisclosure(t *testing.T) {
 	}
 }
 
-func TestCalendarList_AccountHeaderSpaceDoesNotToggleCalendars(t *testing.T) {
+func TestCalendarList_AccountHeaderSpaceTogglesDisclosureWithoutTogglingCalendars(t *testing.T) {
 	m := groupedListFixture()
 	m.cursor = calendarListRowForAccountID(t, m, 7)
-	next, cmd := m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
+	collapsed, cmd := m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
 	if cmd != nil {
 		t.Fatalf("account heading Space emitted hidden bulk action %T", cmd())
 	}
-	if next.hidden[2] || next.hidden[3] {
-		t.Fatalf("account heading Space changed child visibility: %v", next.hidden)
+	if !collapsed.collapsed[7] {
+		t.Fatal("account heading Space did not collapse its calendar rows")
+	}
+	if collapsed.hidden[2] || collapsed.hidden[3] {
+		t.Fatalf("account heading Space changed child visibility: %v", collapsed.hidden)
+	}
+
+	expanded, cmd := collapsed.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
+	if cmd != nil {
+		t.Fatalf("second account heading Space emitted command %T", cmd())
+	}
+	if expanded.collapsed[7] {
+		t.Fatal("second account heading Space did not expand its calendar rows")
 	}
 }
 
