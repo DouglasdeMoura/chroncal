@@ -500,10 +500,14 @@ access remain visible without mixing technical CalDAV labels into calendar
 names; the **Add** action reports the selection count and stays disabled until
 at least one available calendar is selected. Browser authorization runs
 without leaving the app. Open a linked calendar and choose
-**Account… → Add calendars…** to rediscover and import additional collections
-from the same account; unsaved calendar edits remain intact when the menu or
-picker closes. The same compact **Account…**
-menu contains OAuth re-authentication and the destructive disconnect action.
+**Account… → Manage calendars…** to rediscover the account's complete
+inventory. Calendars already in Chroncal start checked: check new collections
+to add them or uncheck existing collections to remove their local copies.
+Removal requires destructive confirmation, and removing every checked
+calendar also removes the now-empty account and its stored credential. Unsaved
+calendar edits remain intact when the menu or picker closes. The same compact
+**Account…** menu contains OAuth re-authentication and the destructive
+disconnect action.
 
 Google limitations:
 

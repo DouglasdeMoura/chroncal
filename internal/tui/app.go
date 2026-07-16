@@ -25,6 +25,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/config"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	syncpkg "github.com/douglasdemoura/chroncal/internal/sync"
+	"github.com/douglasdemoura/chroncal/internal/textsafe"
 	"github.com/douglasdemoura/chroncal/internal/trash"
 	"github.com/douglasdemoura/chroncal/internal/tui/oklch"
 )
@@ -158,6 +159,7 @@ const (
 	pendingScopeDelete
 	pendingScopeEdit
 	pendingScopeCalendarPromote
+	pendingScopeAccountSelectionPromote
 )
 
 type eventViewLoadedMsg struct {
@@ -311,9 +313,13 @@ type oauthCredentialStoredMsg struct {
 }
 
 type accountDiscoveryReadyMsg struct {
-	discovery      account.Discovery
-	err            error
-	createdAccount bool
+	discovery        account.Discovery
+	err              error
+	createdAccount   bool
+	management       bool
+	dialogGeneration uint64
+	originCalendarID int64
+	originAccountID  int64
 }
 
 type accountImportFinishedMsg struct {
@@ -322,6 +328,30 @@ type accountImportFinishedMsg struct {
 	synced   int
 	err      error
 	syncErr  error
+}
+
+type accountSelectionFinishedMsg struct {
+	created          int
+	removed          int
+	removedIDs       []int64
+	synced           int
+	accountRemoved   bool
+	removedCurrent   bool
+	err              error
+	syncErr          error
+	dialogGeneration uint64
+}
+
+type accountDefaultCandidate struct {
+	id   int64
+	path string
+	name string
+}
+
+type accountCalendarSelection struct {
+	params         account.SelectionParams
+	removed        []account.DiscoveredCalendar
+	removedCurrent bool
 }
 type calendarDiscoveryDiscardedMsg struct{ err error }
 
@@ -394,6 +424,7 @@ type Model struct {
 	sidebar                   SidebarModel
 	calendarDialog            CalendarDialogModel
 	calendarDialogOpen        bool
+	calendarDialogGeneration  uint64
 	pendingDiscoveryAccountID int64
 	pendingDiscoveryCreated   bool
 	discoveryReturnToEdit     bool
@@ -415,12 +446,14 @@ type Model struct {
 	// another sync was running (e.g. a re-auth completing mid-sync).
 	// syncFinishedMsg drains it so the post-reauth sync isn't lost and the
 	// sidebar ⚠ always clears. Zero ID means nothing queued.
-	pendingSyncCalendar         syncTarget
-	pendingCalendarDelete       int64
-	pendingCalendarDeleteName   string
-	pendingCalendarPromote      int64   // new default to promote when deleting the current default
-	pendingCalendarPromoteName  string  // human-readable name of the promotion target
-	pendingCalendarPromoteCands []int64 // candidate calendar IDs by ChoiceDialog button index
+	pendingSyncCalendar             syncTarget
+	pendingCalendarDelete           int64
+	pendingCalendarDeleteName       string
+	pendingCalendarPromote          int64   // new default to promote when deleting the current default
+	pendingCalendarPromoteName      string  // human-readable name of the promotion target
+	pendingCalendarPromoteCands     []int64 // candidate calendar IDs by ChoiceDialog button index
+	pendingAccountSelection         *accountCalendarSelection
+	pendingAccountDefaultCandidates []accountDefaultCandidate
 
 	calendarListDialog     CalendarListDialogModel
 	calendarListDialogOpen bool
@@ -1270,6 +1303,183 @@ func (m Model) importAndSyncAccountCalendars(paths []string) tea.Cmd {
 		return finished
 	}
 }
+
+func (m Model) reconcileAndSyncAccountCalendars(
+	params account.SelectionParams,
+	removedCurrent bool,
+) tea.Cmd {
+	finished := accountSelectionFinishedMsg{
+		removedCurrent:   removedCurrent,
+		dialogGeneration: m.calendarDialogGeneration,
+	}
+	if m.calendarDialog.discoveryPicker == nil {
+		return func() tea.Msg {
+			finished.err = fmt.Errorf("calendar management is no longer open")
+			return finished
+		}
+	}
+	discovery := m.calendarDialog.discoveryPicker.discovery
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		store, err := auth.NewCredentialStoreWithWarnings(
+			m.app.CredentialNamespace,
+			m.app.PreviousCredentialNamespaces,
+			m.app.MigrateLegacyCredentials,
+			m.app.AllowPlaintext,
+			io.Discard,
+		)
+		if err != nil {
+			finished.err = err
+			return finished
+		}
+		result, err := m.app.Accounts.ReconcileSelection(ctx, discovery, params, store)
+		if err != nil {
+			finished.err = err
+			return finished
+		}
+		finished.created = len(result.CreatedIDs)
+		finished.removed = len(result.RemovedIDs)
+		finished.removedIDs = result.RemovedIDs
+		finished.accountRemoved = result.AccountRemoved
+		if len(result.CreatedIDs) == 0 {
+			return finished
+		}
+		syncService, err := m.newSyncService()
+		if err != nil {
+			finished.syncErr = err
+			return finished
+		}
+		for _, calendarID := range result.CreatedIDs {
+			if _, err := syncService.SyncCalendar(ctx, calendarID, syncpkg.ConflictServerWins); err != nil {
+				if finished.syncErr == nil {
+					finished.syncErr = err
+				}
+				continue
+			}
+			finished.synced++
+		}
+		return finished
+	}
+}
+
+func (m Model) prepareAccountCalendarSelection(
+	msg AccountCalendarsReconcileRequestedMsg,
+) (*accountCalendarSelection, []accountDefaultCandidate, error) {
+	picker := m.calendarDialog.discoveryPicker
+	if picker == nil || !picker.manage || msg.AccountID != picker.discovery.Account.ID {
+		return nil, nil, fmt.Errorf("calendar selection no longer matches the open account")
+	}
+
+	discoveredByPath := make(map[string]account.DiscoveredCalendar, len(picker.discovery.Calendars))
+	for _, item := range picker.discovery.Calendars {
+		discoveredByPath[item.Path] = item
+	}
+	selected := make(map[string]struct{}, len(msg.SelectedPaths))
+	selectedPaths := make([]string, 0, len(msg.SelectedPaths))
+	for _, path := range msg.SelectedPaths {
+		if _, ok := discoveredByPath[path]; !ok {
+			return nil, nil, fmt.Errorf("calendar %q was not part of the open discovery", path)
+		}
+		if _, duplicate := selected[path]; duplicate {
+			continue
+		}
+		selected[path] = struct{}{}
+		selectedPaths = append(selectedPaths, path)
+	}
+
+	selection := &accountCalendarSelection{
+		params: account.SelectionParams{SelectedPaths: selectedPaths},
+	}
+	removedIDs := make(map[int64]struct{})
+	var removedDefault bool
+	for _, item := range picker.discovery.Calendars {
+		if !item.Imported {
+			continue
+		}
+		if _, keep := selected[item.Path]; keep {
+			continue
+		}
+		selection.removed = append(selection.removed, item)
+		removedIDs[item.CalendarID] = struct{}{}
+		if m.calendarDialog.localDraft != nil && item.CalendarID == m.calendarDialog.localDraft.ID {
+			selection.removedCurrent = true
+		}
+		if info, ok := m.calendars[item.CalendarID]; ok && info.IsDefault {
+			removedDefault = true
+		}
+	}
+	if !removedDefault {
+		return selection, nil, nil
+	}
+
+	candidates := make([]accountDefaultCandidate, 0, len(m.calendars)+len(picker.discovery.Calendars))
+	for id, info := range m.calendars {
+		if _, removed := removedIDs[id]; removed {
+			continue
+		}
+		candidates = append(candidates, accountDefaultCandidate{id: id, name: info.Name})
+	}
+	for _, item := range picker.discovery.Calendars {
+		if item.Imported {
+			continue
+		}
+		if _, add := selected[item.Path]; add {
+			candidates = append(candidates, accountDefaultCandidate{path: item.Path, name: item.Name})
+		}
+	}
+	slices.SortFunc(candidates, func(a, b accountDefaultCandidate) int {
+		if byName := strings.Compare(strings.ToLower(a.name), strings.ToLower(b.name)); byName != 0 {
+			return byName
+		}
+		if byPath := strings.Compare(a.path, b.path); byPath != 0 {
+			return byPath
+		}
+		switch {
+		case a.id < b.id:
+			return -1
+		case a.id > b.id:
+			return 1
+		default:
+			return 0
+		}
+	})
+	if len(candidates) == 0 {
+		return nil, nil, calendar.ErrLastCalendar
+	}
+	return selection, candidates, nil
+}
+
+func (m Model) showAccountCalendarRemovalConfirmation(selection *accountCalendarSelection) Model {
+	names := make([]string, 0, len(selection.removed))
+	for _, item := range selection.removed {
+		names = append(names, textsafe.Display(item.Name))
+	}
+	var message string
+	if len(names) == 1 {
+		message = fmt.Sprintf("Remove “%s” from Chroncal?", names[0])
+	} else {
+		message = fmt.Sprintf("Remove %d calendars from Chroncal?\n\n• %s",
+			len(names), strings.Join(names, "\n• "))
+	}
+	message += "\n\nNothing will be deleted from the server."
+	message += "\nLocal copies and changes not yet uploaded will be removed."
+	message += "\nYou can add these calendars again later."
+	buttonLabel := "Save Changes"
+	if len(selection.params.SelectedPaths) == 0 {
+		message += "\n\nThis also removes the account and stored sign-in from Chroncal."
+		buttonLabel = "Remove Account"
+	}
+	if selection.removedCurrent {
+		message += "\n\nYour unsaved calendar edits will be discarded."
+	}
+	m.pendingAccountSelection = selection
+	m.confirmDialog = NewConfirmDialogModel(message, buttonLabel, m.theme).
+		Destructive().
+		SetSize(m.width, m.height)
+	m.confirmOpen = true
+	return m
+}
 func (m Model) discardDiscoveryAccount(accountID int64) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -1288,17 +1498,30 @@ func (m Model) discardDiscoveryAccount(accountID int64) tea.Cmd {
 	}
 }
 
-func (m Model) discoverAdditionalCalendars(calendarID, accountID int64) tea.Cmd {
+func (m Model) discoverAdditionalCalendars(
+	calendarID, accountID int64,
+	dialogGeneration uint64,
+) tea.Cmd {
+	result := func(discovery account.Discovery, err error) accountDiscoveryReadyMsg {
+		return accountDiscoveryReadyMsg{
+			discovery:        discovery,
+			err:              err,
+			management:       true,
+			dialogGeneration: dialogGeneration,
+			originCalendarID: calendarID,
+			originAccountID:  accountID,
+		}
+	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 
 		cal, err := m.app.Calendars.Get(ctx, calendarID)
 		if err != nil {
-			return accountDiscoveryReadyMsg{err: fmt.Errorf("get calendar: %w", err)}
+			return result(account.Discovery{}, fmt.Errorf("get calendar: %w", err))
 		}
 		if cal.AccountID != accountID {
-			return accountDiscoveryReadyMsg{err: fmt.Errorf("calendar is no longer linked to this account")}
+			return result(account.Discovery{}, fmt.Errorf("calendar is no longer linked to this account"))
 		}
 
 		store, err := auth.NewCredentialStoreWithWarnings(
@@ -1309,10 +1532,10 @@ func (m Model) discoverAdditionalCalendars(calendarID, accountID int64) tea.Cmd 
 			io.Discard,
 		)
 		if err != nil {
-			return accountDiscoveryReadyMsg{err: fmt.Errorf("open credential store: %w", err)}
+			return result(account.Discovery{}, fmt.Errorf("open credential store: %w", err))
 		}
 		discovery, err := m.app.Accounts.Discover(ctx, accountID, store)
-		return accountDiscoveryReadyMsg{discovery: discovery, err: err}
+		return result(discovery, err)
 	}
 }
 
@@ -1536,10 +1759,9 @@ func (m Model) innerDims() (int, int) {
 	return mw - padding*2, mh - padding*2
 }
 
-// clearConfirmPending drops the pending state owned by a destructive confirm
-// (event delete, trash purge, calendar delete). Used when ctrl+c abandons such
-// a confirm in favor of the quit confirm, so the destructive action can never
-// fire afterward.
+// clearConfirmPending drops pending state owned by a destructive confirm or
+// choice. Used when ctrl+c abandons that operation in favor of the quit
+// confirm, so the superseded action can never fire or reappear afterward.
 func (m Model) clearConfirmPending() Model {
 	m.pendingDelete = event.Event{}
 	m.pendingPurgeEntries = nil
@@ -1548,6 +1770,11 @@ func (m Model) clearConfirmPending() Model {
 	m.pendingCalendarDeleteName = ""
 	m.pendingCalendarPromote = 0
 	m.pendingCalendarPromoteName = ""
+	m.pendingCalendarPromoteCands = nil
+	m.pendingAccountSelection = nil
+	m.pendingAccountDefaultCandidates = nil
+	m.choiceOpen = false
+	m.pendingScopeKind = pendingScopeNone
 	return m
 }
 
@@ -1801,8 +2028,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			CalendarDiscoverAdditionalRequestedMsg,
 			CalendarAccountActionsRequestedMsg,
 			CalendarAccountMenuSelectedMsg, CalendarAccountMenuClosedMsg,
-			AccountCalendarsImportRequestedMsg, AccountCalendarPickerClosedMsg,
-			accountDiscoveryReadyMsg, accountImportFinishedMsg,
+			AccountCalendarsImportRequestedMsg, AccountCalendarsReconcileRequestedMsg,
+			AccountCalendarPickerClosedMsg,
+			accountDiscoveryReadyMsg, accountImportFinishedMsg, accountSelectionFinishedMsg,
 			calendarReauthReadyMsg, calendarReauthNeedsConfigMsg,
 			calendarDeleteCountMsg,
 			tea.BackgroundColorMsg, tea.WindowSizeMsg,
@@ -2547,7 +2775,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncStatus = "Discovering calendars…"
 		return m, tea.Batch(
 			m.syncSpinner.Tick,
-			m.discoverAdditionalCalendars(msg.CalendarID, msg.AccountID),
+			m.discoverAdditionalCalendars(msg.CalendarID, msg.AccountID, m.calendarDialogGeneration),
 		)
 
 	case CalendarDiscoveryRequestedMsg:
@@ -2572,6 +2800,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.syncSpinner.Tick, m.connectAndDiscoverCalendar(msg, cred))
 
 	case accountDiscoveryReadyMsg:
+		if msg.management {
+			draft := m.calendarDialog.localDraft
+			stale := msg.dialogGeneration != m.calendarDialogGeneration ||
+				!m.calendarDialogOpen ||
+				draft == nil ||
+				draft.ID != msg.originCalendarID ||
+				draft.AccountID != msg.originAccountID
+			if stale {
+				m.syncing = false
+				m.discoveryReturnToEdit = false
+				m.syncStatus = ""
+				return m, nil
+			}
+		}
 		m.syncing = false
 		if msg.err != nil {
 			m.calendarDialogOpen = true
@@ -2583,7 +2825,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.pendingDiscoveryAccountID = msg.discovery.Account.ID
 		m.pendingDiscoveryCreated = msg.createdAccount
-		m.calendarDialog = m.calendarDialog.ShowDiscovery(msg.discovery).SetSize(m.width, m.height)
+		if msg.management {
+			m.discoveryReturnToEdit = true
+			m.calendarDialog = m.calendarDialog.ShowCalendarManagement(msg.discovery).SetSize(m.width, m.height)
+		} else {
+			m.calendarDialog = m.calendarDialog.ShowDiscovery(msg.discovery).SetSize(m.width, m.height)
+		}
 		m.calendarDialogOpen = true
 		m.syncStatus = ""
 		return m, m.loadCalendars()
@@ -2622,6 +2869,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncing = true
 		m.syncStatus = "Importing and syncing selected calendars…"
 		return m, tea.Batch(m.syncSpinner.Tick, m.importAndSyncAccountCalendars(msg.Paths))
+
+	case AccountCalendarsReconcileRequestedMsg:
+		selection, candidates, err := m.prepareAccountCalendarSelection(msg)
+		if err != nil {
+			return m, m.toast.Failed(err.Error())
+		}
+		if len(selection.removed) == 0 {
+			m.calendarDialogOpen = false
+			m.syncing = true
+			m.syncStatus = "Adding and syncing selected calendars…"
+			return m, tea.Batch(
+				m.syncSpinner.Tick,
+				m.reconcileAndSyncAccountCalendars(selection.params, false),
+			)
+		}
+		if len(candidates) > 0 {
+			m.pendingAccountSelection = selection
+			m.pendingAccountDefaultCandidates = candidates
+			m.pendingScopeKind = pendingScopeAccountSelectionPromote
+			labels := make([]string, len(candidates))
+			for i, candidate := range candidates {
+				labels[i] = textsafe.Display(candidate.name)
+			}
+			m.choiceDialog = NewChoiceDialogModel(
+				"The default calendar is being removed.\n\nChoose a new default before saving these changes:",
+				m.theme,
+				labels...,
+			).SetSize(m.width, m.height)
+			m.choiceOpen = true
+			return m, nil
+		}
+		m = m.showAccountCalendarRemovalConfirmation(selection)
+		return m, nil
 
 	case calendarDiscoveryDiscardedMsg:
 		m.syncing = false
@@ -2679,6 +2959,48 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.expireStatusAfter(10*time.Second, m.statusToken),
 		)
 
+	case accountSelectionFinishedMsg:
+		m.syncing = false
+		m.statusToken++
+		sameDialog := msg.dialogGeneration == m.calendarDialogGeneration
+		if msg.err != nil {
+			if sameDialog {
+				m.calendarDialogOpen = m.calendarDialog.discoveryPicker != nil
+			}
+			m.syncStatus = "Calendar changes failed: " + msg.err.Error()
+			return m, m.expireStatusAfter(10*time.Second, m.statusToken)
+		}
+
+		m.pendingDiscoveryAccountID = 0
+		m.pendingDiscoveryCreated = false
+		m.discoveryReturnToEdit = false
+		if sameDialog {
+			m.calendarDialog = m.calendarDialog.HideDiscovery()
+			m.calendarDialogOpen = !msg.removedCurrent && !msg.accountRemoved
+		} else if draft := m.calendarDialog.localDraft; draft != nil &&
+			slices.Contains(msg.removedIDs, draft.ID) {
+			m.calendarDialogOpen = false
+		}
+		switch {
+		case msg.accountRemoved:
+			m.syncStatus = fmt.Sprintf("Removed account and %d calendar(s) from Chroncal", msg.removed)
+		case msg.syncErr != nil:
+			m.syncStatus = fmt.Sprintf(
+				"Updated calendars: added %d, removed %d; first sync failed: %v",
+				msg.created, msg.removed, msg.syncErr,
+			)
+		default:
+			m.syncStatus = fmt.Sprintf(
+				"Updated calendars: added %d, removed %d",
+				msg.created, msg.removed,
+			)
+		}
+		return m, tea.Batch(
+			m.loadCalendars(),
+			m.loadEvents(),
+			m.expireStatusAfter(10*time.Second, m.statusToken),
+		)
+
 	case CalendarDialogRequestedMsg:
 		params := CalendarDialogParams{Color: "#a6e3a1"}
 		if msg.ID > 0 {
@@ -2716,6 +3038,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			params.OfferDefault = len(m.calendars) > 0
 		}
 		m.calendarDialog = NewCalendarDialogModel(params, m.theme).SetSize(m.width, m.height)
+		m.calendarDialogGeneration++
 		m.calendarDialogOpen = true
 		return m, nil
 
@@ -2846,6 +3169,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.calendarDialog = NewCalendarDialogModel(params, m.theme).SetSize(m.width, m.height)
+		m.calendarDialogGeneration++
 		m.calendarDialogOpen = true
 		return m, nil
 
@@ -3016,6 +3340,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.calendarDialogOpen = false
 		m.calendarAccountMenuOpen = false
 		m.discoveryReturnToEdit = false
+		m.pendingAccountSelection = nil
+		m.pendingAccountDefaultCandidates = nil
+		if m.pendingScopeKind == pendingScopeAccountSelectionPromote {
+			m.pendingScopeKind = pendingScopeNone
+		}
 		return m, nil
 
 	case CalendarListDialogRequestedMsg:
@@ -3251,6 +3580,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pendingCalendarPromoteName = ""
 				m.pendingCalendarPromoteCands = nil
 			}
+			if kind == pendingScopeAccountSelectionPromote {
+				m.pendingAccountSelection = nil
+				m.pendingAccountDefaultCandidates = nil
+			}
+			return m, nil
+		}
+		if kind == pendingScopeAccountSelectionPromote {
+			if msg.Choice >= len(m.pendingAccountDefaultCandidates) ||
+				m.pendingAccountSelection == nil {
+				m.pendingAccountSelection = nil
+				m.pendingAccountDefaultCandidates = nil
+				return m, nil
+			}
+			candidate := m.pendingAccountDefaultCandidates[msg.Choice]
+			if candidate.id != 0 {
+				m.pendingAccountSelection.params.NewDefaultID = candidate.id
+			} else {
+				m.pendingAccountSelection.params.NewDefaultPath = candidate.path
+			}
+			selection := m.pendingAccountSelection
+			m.pendingAccountDefaultCandidates = nil
+			m = m.showAccountCalendarRemovalConfirmation(selection)
 			return m, nil
 		}
 		if kind == pendingScopeCalendarPromote {
@@ -3331,7 +3682,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingCalendarPromoteName = ""
 			m.pendingPurgeEntries = nil
 			m.pendingPurgeTitle = ""
+			m.pendingAccountSelection = nil
+			m.pendingAccountDefaultCandidates = nil
 			return m, nil
+		}
+		if m.pendingAccountSelection != nil {
+			selection := m.pendingAccountSelection
+			m.pendingAccountSelection = nil
+			m.pendingAccountDefaultCandidates = nil
+			m.calendarDialogOpen = false
+			m.syncing = true
+			m.syncStatus = "Applying calendar changes…"
+			return m, tea.Batch(
+				m.syncSpinner.Tick,
+				m.reconcileAndSyncAccountCalendars(selection.params, selection.removedCurrent),
+			)
 		}
 		if len(m.pendingPurgeEntries) > 0 {
 			entries := m.pendingPurgeEntries

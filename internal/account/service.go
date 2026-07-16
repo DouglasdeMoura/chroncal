@@ -11,12 +11,17 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/caldav"
+	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/synclock"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
 
 const defaultCalendarColor = "#7C3AED"
+
+// ErrSelectionStale means the account's imported calendar set changed after
+// discovery, so applying the old checklist could remove an unseen calendar.
+var ErrSelectionStale = errors.New("calendar selection is stale")
 
 type discoverFunc func(context.Context, Account, auth.Credential, func(auth.Credential) error) ([]caldav.RemoteCalendar, error)
 
@@ -325,6 +330,35 @@ func (s *Service) discoverLocked(ctx context.Context, accountID int64, store aut
 		}
 		calendars = append(calendars, item)
 	}
+	for _, local := range existingRows {
+		path := storage.NullableToString(local.RemoteUrl)
+		if _, found := seen[remoteIdentityKey(path, account.ServerURL)]; found {
+			continue
+		}
+		name := strings.TrimSpace(local.RemoteName)
+		if name == "" {
+			name = local.Name
+		}
+		color := storage.NullableToString(local.RemoteColor)
+		if color == "" {
+			color = local.Color
+		}
+		components := normalizedComponents(strings.Split(local.RemoteComponents, ","))
+		calendars = append(calendars, DiscoveredCalendar{
+			RemoteCalendar: caldav.RemoteCalendar{
+				Path:                  path,
+				Name:                  name,
+				Description:           storage.NullableToString(local.Description),
+				Color:                 color,
+				Access:                normalizedAccess(caldav.CalendarAccess(local.RemoteAccess)),
+				SupportedComponentSet: components,
+			},
+			CalendarID: local.ID,
+			Imported:   true,
+			Importable: supportsChroncal(components),
+			Missing:    true,
+		})
+	}
 	if err := tx.Commit(); err != nil {
 		return Discovery{}, fmt.Errorf("commit discovery reconciliation: %w", err)
 	}
@@ -425,6 +459,250 @@ func (s *Service) Import(ctx context.Context, discovery Discovery, selectedPaths
 	}
 	if err := tx.Commit(); err != nil {
 		return ImportResult{}, fmt.Errorf("commit calendar import: %w", err)
+	}
+	return result, nil
+}
+
+// ReconcileSelection atomically changes one account's local calendar set to
+// match the checked paths from a complete discovery. Remote collections are
+// never deleted. If no paths remain, the now-empty account and credential are
+// removed as part of the same operation.
+func (s *Service) ReconcileSelection(
+	ctx context.Context,
+	discovery Discovery,
+	params SelectionParams,
+	store auth.CredentialStore,
+) (SelectionResult, error) {
+	if discovery.Account.ID == 0 {
+		return SelectionResult{}, fmt.Errorf("discovery account is required")
+	}
+	release, err := synclock.Account(ctx, s.db, discovery.Account.ID)
+	if err != nil {
+		return SelectionResult{}, fmt.Errorf("lock account calendar selection: %w", err)
+	}
+	defer release()
+
+	configured, err := s.Get(ctx, discovery.Account.ID)
+	if err != nil {
+		return SelectionResult{}, fmt.Errorf("get discovery account: %w", err)
+	}
+	if configured.CredentialFingerprint() != discovery.Account.CredentialFingerprint() {
+		return SelectionResult{}, fmt.Errorf("%w: account connection changed", ErrSelectionStale)
+	}
+
+	discoveredByKey := make(map[string]DiscoveredCalendar, len(discovery.Calendars))
+	for _, item := range discovery.Calendars {
+		discoveredByKey[remoteIdentityKey(item.Path, discovery.Account.ServerURL)] = item
+	}
+	selected := make(map[string]struct{}, len(params.SelectedPaths))
+	selectedKeys := make([]string, 0, len(params.SelectedPaths))
+	for _, path := range params.SelectedPaths {
+		key := remoteIdentityKey(path, discovery.Account.ServerURL)
+		if _, duplicate := selected[key]; duplicate {
+			continue
+		}
+		item, ok := discoveredByKey[key]
+		if !ok {
+			return SelectionResult{}, fmt.Errorf("calendar %q was not part of this discovery", path)
+		}
+		if !item.Imported && (!item.Importable || item.Missing) {
+			return SelectionResult{}, fmt.Errorf("calendar %q cannot be added", item.Name)
+		}
+		selected[key] = struct{}{}
+		selectedKeys = append(selectedKeys, key)
+	}
+
+	removeAccount := len(selectedKeys) == 0
+	var (
+		previous    auth.Credential
+		hasPrevious bool
+	)
+	if removeAccount {
+		if store == nil {
+			return SelectionResult{}, fmt.Errorf("credential store is required to remove an empty account")
+		}
+		previous, err = store.Get(
+			discovery.Account.ID,
+			discovery.Account.CredentialFingerprint(),
+		)
+		if err != nil &&
+			!auth.IsCredentialNotFound(err) &&
+			!errors.Is(err, auth.ErrCredentialIdentityMismatch) {
+			return SelectionResult{}, fmt.Errorf("read account credentials before removal: %w", err)
+		}
+		hasPrevious = err == nil
+	}
+	restorePrevious := func(cause error, operation string) error {
+		if !hasPrevious {
+			return fmt.Errorf("%s: %w", operation, cause)
+		}
+		if restoreErr := store.Set(previous); restoreErr != nil {
+			return fmt.Errorf("%s: %w (restore credentials: %w)", operation, cause, restoreErr)
+		}
+		return fmt.Errorf("%s: %w", operation, cause)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return SelectionResult{}, fmt.Errorf("begin account calendar reconciliation: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+
+	existingRows, err := qtx.ListCalendarsByAccount(ctx, &discovery.Account.ID)
+	if err != nil {
+		return SelectionResult{}, fmt.Errorf("list account calendars: %w", err)
+	}
+	existingByKey := make(map[string]storage.Calendar, len(existingRows))
+	for _, row := range existingRows {
+		key := remoteIdentityKey(storage.NullableToString(row.RemoteUrl), discovery.Account.ServerURL)
+		item, ok := discoveredByKey[key]
+		if !ok || !item.Imported || item.CalendarID != row.ID {
+			return SelectionResult{}, fmt.Errorf("%w: imported calendars changed", ErrSelectionStale)
+		}
+		existingByKey[key] = row
+	}
+	for key, item := range discoveredByKey {
+		if !item.Imported {
+			continue
+		}
+		row, ok := existingByKey[key]
+		if !ok || row.ID != item.CalendarID {
+			return SelectionResult{}, fmt.Errorf("%w: imported calendars changed", ErrSelectionStale)
+		}
+	}
+
+	removedRows := make([]storage.Calendar, 0, len(existingRows))
+	removedIDs := make(map[int64]struct{}, len(existingRows))
+	finalByKey := make(map[string]int64, len(selectedKeys))
+	for key, row := range existingByKey {
+		if _, keep := selected[key]; keep {
+			finalByKey[key] = row.ID
+			continue
+		}
+		removedRows = append(removedRows, row)
+		removedIDs[row.ID] = struct{}{}
+	}
+	addedCount := 0
+	for _, key := range selectedKeys {
+		if _, exists := existingByKey[key]; !exists {
+			addedCount++
+		}
+	}
+
+	allCalendars, err := qtx.ListCalendars(ctx)
+	if err != nil {
+		return SelectionResult{}, fmt.Errorf("list existing calendars: %w", err)
+	}
+	if len(allCalendars)-len(removedRows)+addedCount < 1 {
+		return SelectionResult{}, calendar.ErrLastCalendar
+	}
+
+	var removedDefault bool
+	for _, row := range removedRows {
+		if row.IsDefault == 1 {
+			removedDefault = true
+			break
+		}
+	}
+	if removedDefault && params.NewDefaultID == 0 && strings.TrimSpace(params.NewDefaultPath) == "" {
+		return SelectionResult{}, calendar.ErrDefaultCalendarRequiresPromotion
+	}
+	if removedDefault && params.NewDefaultID != 0 && strings.TrimSpace(params.NewDefaultPath) != "" {
+		return SelectionResult{}, calendar.ErrInvalidPromotionTarget
+	}
+
+	replacementID := params.NewDefaultID
+	if removedDefault && replacementID != 0 {
+		if _, removed := removedIDs[replacementID]; removed {
+			return SelectionResult{}, calendar.ErrInvalidPromotionTarget
+		}
+		if _, err := qtx.GetCalendar(ctx, replacementID); err != nil {
+			return SelectionResult{}, calendar.ErrInvalidPromotionTarget
+		}
+	}
+
+	taken := make(map[string]struct{}, len(allCalendars))
+	for _, row := range allCalendars {
+		if _, removed := removedIDs[row.ID]; !removed {
+			taken[row.Name] = struct{}{}
+		}
+	}
+
+	result := SelectionResult{RemovedIDs: make([]int64, 0, len(removedRows))}
+	for _, row := range removedRows {
+		if err := qtx.DeleteCalendar(ctx, row.ID); err != nil {
+			return SelectionResult{}, fmt.Errorf("remove calendar %q: %w", row.Name, err)
+		}
+		result.RemovedIDs = append(result.RemovedIDs, row.ID)
+	}
+
+	for _, key := range selectedKeys {
+		if _, exists := finalByKey[key]; exists {
+			continue
+		}
+		item := discoveredByKey[key]
+		remoteName := remoteCalendarName(item.RemoteCalendar)
+		color := item.Color
+		if color == "" {
+			color = defaultCalendarColor
+		}
+		accountID := discovery.Account.ID
+		row, err := qtx.CreateDiscoveredCalendar(ctx, storage.CreateDiscoveredCalendarParams{
+			Name:             uniqueLocalName(remoteName, taken),
+			Color:            color,
+			Description:      storage.StringToNullable(item.Description),
+			AccountID:        &accountID,
+			RemoteUrl:        storage.StringToNullable(item.Path),
+			RemoteColor:      storage.StringToNullable(item.Color),
+			RemoteName:       remoteName,
+			RemoteAccess:     string(normalizedAccess(item.Access)),
+			RemoteComponents: strings.Join(normalizedComponents(item.SupportedComponentSet), ","),
+			OwnerEmail:       discovery.Account.Username,
+		})
+		if err != nil {
+			return SelectionResult{}, fmt.Errorf("add calendar %q: %w", item.Name, err)
+		}
+		taken[row.Name] = struct{}{}
+		finalByKey[key] = row.ID
+		result.CreatedIDs = append(result.CreatedIDs, row.ID)
+	}
+
+	if removedDefault {
+		if path := strings.TrimSpace(params.NewDefaultPath); path != "" {
+			key := remoteIdentityKey(path, discovery.Account.ServerURL)
+			var ok bool
+			replacementID, ok = finalByKey[key]
+			if !ok {
+				return SelectionResult{}, calendar.ErrInvalidPromotionTarget
+			}
+		}
+		if replacementID == 0 {
+			return SelectionResult{}, calendar.ErrInvalidPromotionTarget
+		}
+		if err := qtx.ClearDefaultCalendar(ctx); err != nil {
+			return SelectionResult{}, fmt.Errorf("clear default calendar: %w", err)
+		}
+		if err := qtx.SetCalendarAsDefault(ctx, replacementID); err != nil {
+			return SelectionResult{}, fmt.Errorf("set replacement default: %w", err)
+		}
+	}
+
+	if removeAccount {
+		if err := qtx.DeleteAccount(ctx, discovery.Account.ID); err != nil {
+			return SelectionResult{}, fmt.Errorf("remove empty account: %w", err)
+		}
+		if err := store.Delete(discovery.Account.ID); err != nil {
+			return SelectionResult{}, restorePrevious(err, "delete empty account credentials")
+		}
+		result.AccountRemoved = true
+	}
+
+	if err := tx.Commit(); err != nil {
+		if removeAccount {
+			return SelectionResult{}, restorePrevious(err, "commit account calendar reconciliation")
+		}
+		return SelectionResult{}, fmt.Errorf("commit account calendar reconciliation: %w", err)
 	}
 	return result, nil
 }

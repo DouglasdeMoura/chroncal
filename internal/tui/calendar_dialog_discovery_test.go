@@ -82,7 +82,7 @@ func TestCalendarAccountActionsMenuSeparatesDestructiveAction(t *testing.T) {
 	for _, action := range menu.actions {
 		labels = append(labels, action.label)
 	}
-	if got, want := strings.Join(labels, ","), "Add calendars…,Re-authenticate…,Disconnect…,Cancel"; got != want {
+	if got, want := strings.Join(labels, ","), "Manage calendars…,Re-authenticate…,Disconnect…,Cancel"; got != want {
 		t.Fatalf("account actions = %q, want %q", got, want)
 	}
 	if menu.actions[2].variant != ButtonDanger {

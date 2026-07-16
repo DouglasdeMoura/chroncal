@@ -12,6 +12,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/caldav"
+	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/synclock"
 )
@@ -265,8 +266,22 @@ func TestServiceRefreshMarksMissingOnlyAfterCompleteDiscovery(t *testing.T) {
 		refreshed[0].Path = "/cal/two" // Equivalent collection URL without a trailing slash.
 		return refreshed, nil
 	}
-	if _, err := svc.Discover(ctx, account.ID, store); err != nil {
+	refreshed, err := svc.Discover(ctx, account.ID, store)
+	if err != nil {
 		t.Fatalf("refresh Discover: %v", err)
+	}
+	if len(refreshed.Calendars) != 2 {
+		t.Fatalf("refreshed discovery count = %d, want found and missing imported calendars", len(refreshed.Calendars))
+	}
+	var missing DiscoveredCalendar
+	for _, item := range refreshed.Calendars {
+		if item.Path == "/cal/one/" {
+			missing = item
+			break
+		}
+	}
+	if !missing.Imported || !missing.Missing || missing.CalendarID == 0 || missing.Name != "One" {
+		t.Fatalf("missing imported calendar = %+v", missing)
 	}
 	calendars, err := q.ListCalendarsByAccount(ctx, &account.ID)
 	if err != nil {
@@ -1168,5 +1183,204 @@ func TestCreateRejectsUnsafeServerURLWithoutPersisting(t *testing.T) {
 				t.Fatalf("rejected Create persisted %d credentials, want 0", len(store.credentials))
 			}
 		})
+	}
+}
+
+type selectionFixture struct {
+	svc       *Service
+	q         *storage.Queries
+	store     *memoryCredentialStore
+	discovery Discovery
+}
+
+func newSelectionFixture(t *testing.T) selectionFixture {
+	t.Helper()
+	db, q, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ctx := context.Background()
+	store := newMemoryCredentialStore()
+	svc := NewService(db, q)
+	configured, err := svc.Create(ctx, CreateParams{
+		Name: "Work", ServerURL: "https://cal.example.test/dav/",
+		Username: "alice", AuthType: "basic",
+	}, auth.Credential{Username: "alice", Password: "secret"}, store)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	svc.discover = func(context.Context, Account, auth.Credential, func(auth.Credential) error) ([]caldav.RemoteCalendar, error) {
+		return []caldav.RemoteCalendar{
+			{Path: "/cal/a/", Name: "A", Color: "#112233", Access: caldav.CalendarAccessOwner, SupportedComponentSet: []string{"VEVENT"}},
+			{Path: "/cal/b/", Name: "B", Color: "#445566", Access: caldav.CalendarAccessWrite, SupportedComponentSet: []string{"VEVENT"}},
+		}, nil
+	}
+	discovery, err := svc.Discover(ctx, configured.ID, store)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	return selectionFixture{svc: svc, q: q, store: store, discovery: discovery}
+}
+
+func (f selectionFixture) importAndRefresh(t *testing.T, paths ...string) (ImportResult, Discovery) {
+	t.Helper()
+	ctx := context.Background()
+	result, err := f.svc.Import(ctx, f.discovery, paths)
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	discovery, err := f.svc.Discover(ctx, f.discovery.Account.ID, f.store)
+	if err != nil {
+		t.Fatalf("refresh Discover: %v", err)
+	}
+	return result, discovery
+}
+
+func TestReconcileSelectionAddsAndRemovesInOneFinalState(t *testing.T) {
+	f := newSelectionFixture(t)
+	imported, discovery := f.importAndRefresh(t, "/cal/a/")
+
+	result, err := f.svc.ReconcileSelection(context.Background(), discovery, SelectionParams{
+		SelectedPaths: []string{"/cal/b/"},
+	}, f.store)
+	if err != nil {
+		t.Fatalf("ReconcileSelection: %v", err)
+	}
+	if len(result.CreatedIDs) != 1 || !slices.Equal(result.RemovedIDs, imported.CreatedIDs) || result.AccountRemoved {
+		t.Fatalf("selection result = %+v", result)
+	}
+	if _, err := f.q.GetCalendar(context.Background(), imported.CreatedIDs[0]); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("removed calendar lookup err = %v, want sql.ErrNoRows", err)
+	}
+	rows, err := f.q.ListCalendarsByAccount(context.Background(), &discovery.Account.ID)
+	if err != nil {
+		t.Fatalf("list account calendars: %v", err)
+	}
+	if len(rows) != 1 || storage.NullableToString(rows[0].RemoteUrl) != "/cal/b/" {
+		t.Fatalf("final account calendars = %+v, want only /cal/b/", rows)
+	}
+	if _, ok := f.store.credentials[discovery.Account.ID]; !ok {
+		t.Fatal("non-empty account credential was removed")
+	}
+}
+
+func TestReconcileSelectionRemovesEmptyAccountAndCredential(t *testing.T) {
+	f := newSelectionFixture(t)
+	imported, discovery := f.importAndRefresh(t, "/cal/a/")
+
+	result, err := f.svc.ReconcileSelection(context.Background(), discovery, SelectionParams{}, f.store)
+	if err != nil {
+		t.Fatalf("ReconcileSelection: %v", err)
+	}
+	if !result.AccountRemoved || !slices.Equal(result.RemovedIDs, imported.CreatedIDs) {
+		t.Fatalf("selection result = %+v", result)
+	}
+	if _, err := f.q.GetAccount(context.Background(), discovery.Account.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("removed account lookup err = %v, want sql.ErrNoRows", err)
+	}
+	if _, ok := f.store.credentials[discovery.Account.ID]; ok {
+		t.Fatal("empty account credential remains stored")
+	}
+}
+
+func TestReconcileSelectionCanPromoteNewlyAddedDefault(t *testing.T) {
+	f := newSelectionFixture(t)
+	imported, discovery := f.importAndRefresh(t, "/cal/a/")
+	ctx := context.Background()
+	if err := f.q.ClearDefaultCalendar(ctx); err != nil {
+		t.Fatalf("clear default: %v", err)
+	}
+	if err := f.q.SetCalendarAsDefault(ctx, imported.CreatedIDs[0]); err != nil {
+		t.Fatalf("set imported default: %v", err)
+	}
+
+	result, err := f.svc.ReconcileSelection(ctx, discovery, SelectionParams{
+		SelectedPaths:  []string{"/cal/b/"},
+		NewDefaultPath: "/cal/b/",
+	}, f.store)
+	if err != nil {
+		t.Fatalf("ReconcileSelection: %v", err)
+	}
+	if len(result.CreatedIDs) != 1 {
+		t.Fatalf("created IDs = %v, want one", result.CreatedIDs)
+	}
+	replacement, err := f.q.GetCalendar(ctx, result.CreatedIDs[0])
+	if err != nil {
+		t.Fatalf("get replacement default: %v", err)
+	}
+	if replacement.IsDefault != 1 {
+		t.Fatalf("replacement IsDefault = %d, want 1", replacement.IsDefault)
+	}
+}
+
+func TestReconcileSelectionRejectsStaleImportedInventory(t *testing.T) {
+	f := newSelectionFixture(t)
+	_, discovery := f.importAndRefresh(t, "/cal/a/")
+	if _, err := f.svc.Import(context.Background(), discovery, []string{"/cal/b/"}); err != nil {
+		t.Fatalf("concurrent Import: %v", err)
+	}
+
+	_, err := f.svc.ReconcileSelection(context.Background(), discovery, SelectionParams{
+		SelectedPaths: []string{"/cal/a/"},
+	}, f.store)
+	if !errors.Is(err, ErrSelectionStale) {
+		t.Fatalf("ReconcileSelection stale err = %v, want ErrSelectionStale", err)
+	}
+	rows, listErr := f.q.ListCalendarsByAccount(context.Background(), &discovery.Account.ID)
+	if listErr != nil {
+		t.Fatalf("list account calendars: %v", listErr)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("stale reconciliation changed account calendars: %+v", rows)
+	}
+}
+
+func TestReconcileSelectionRollsBackWhenCredentialRemovalFails(t *testing.T) {
+	f := newSelectionFixture(t)
+	imported, discovery := f.importAndRefresh(t, "/cal/a/")
+	f.store.deleteErr = errors.New("keyring delete failed")
+
+	_, err := f.svc.ReconcileSelection(context.Background(), discovery, SelectionParams{}, f.store)
+	if !errors.Is(err, f.store.deleteErr) {
+		t.Fatalf("ReconcileSelection err = %v, want credential delete failure", err)
+	}
+	if _, err := f.q.GetAccount(context.Background(), discovery.Account.ID); err != nil {
+		t.Fatalf("account was removed after rollback: %v", err)
+	}
+	if _, err := f.q.GetCalendar(context.Background(), imported.CreatedIDs[0]); err != nil {
+		t.Fatalf("calendar was removed after rollback: %v", err)
+	}
+	if _, ok := f.store.credentials[discovery.Account.ID]; !ok {
+		t.Fatal("credential was not restored after rollback")
+	}
+}
+
+func TestReconcileSelectionRefusesLastApplicationCalendar(t *testing.T) {
+	f := newSelectionFixture(t)
+	imported, discovery := f.importAndRefresh(t, "/cal/a/")
+	ctx := context.Background()
+	all, err := f.q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("list calendars: %v", err)
+	}
+	for _, row := range all {
+		if row.ID != imported.CreatedIDs[0] {
+			if err := f.q.DeleteCalendar(ctx, row.ID); err != nil {
+				t.Fatalf("delete fixture calendar: %v", err)
+			}
+		}
+	}
+	if err := f.q.SetCalendarAsDefault(ctx, imported.CreatedIDs[0]); err != nil {
+		t.Fatalf("set sole default: %v", err)
+	}
+
+	_, err = f.svc.ReconcileSelection(ctx, discovery, SelectionParams{}, f.store)
+	if !errors.Is(err, calendar.ErrLastCalendar) {
+		t.Fatalf("ReconcileSelection err = %v, want calendar.ErrLastCalendar", err)
+	}
+	if _, err := f.q.GetCalendar(ctx, imported.CreatedIDs[0]); err != nil {
+		t.Fatalf("last calendar was removed: %v", err)
 	}
 }

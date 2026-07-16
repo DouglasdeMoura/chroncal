@@ -3,6 +3,7 @@ package tui
 import (
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
+	"slices"
 	"strings"
 	"testing"
 
@@ -16,7 +17,7 @@ func pickerDiscovery() account.Discovery {
 		Calendars: []account.DiscoveredCalendar{
 			{RemoteCalendar: caldav.RemoteCalendar{Path: "/primary/", Name: "Primary", Color: "#4285f4", Access: caldav.CalendarAccessWrite, SupportedComponentSet: []string{"VEVENT"}}, Importable: true},
 			{RemoteCalendar: caldav.RemoteCalendar{Path: "/holidays/", Name: "Holidays in Brazil", Description: "Public holidays in Brazil", Color: "#0f9d58", Access: caldav.CalendarAccessRead, SupportedComponentSet: []string{"VEVENT"}}, Importable: true},
-			{RemoteCalendar: caldav.RemoteCalendar{Path: "/personal/", Name: "Personal", Color: "#a142f4", Access: caldav.CalendarAccessWrite, SupportedComponentSet: []string{"VEVENT"}}, Importable: true, Imported: true},
+			{RemoteCalendar: caldav.RemoteCalendar{Path: "/personal/", Name: "Personal", Color: "#a142f4", Access: caldav.CalendarAccessWrite, SupportedComponentSet: []string{"VEVENT"}}, CalendarID: 42, Importable: true, Imported: true},
 			{RemoteCalendar: caldav.RemoteCalendar{Path: "/tasks/", Name: "Tasks", SupportedComponentSet: []string{"VTODO"}}, Importable: false},
 		},
 	}
@@ -231,4 +232,99 @@ func TestAccountCalendarPickerNarrowLayoutFitsTerminal(t *testing.T) {
 		return
 	}
 	t.Fatalf("narrow picker title row not found:\n%s", plain)
+}
+
+func TestAccountCalendarManagerStartsFromImportedFinalState(t *testing.T) {
+	m := NewAccountCalendarManagerModel(pickerDiscovery(), Theme{}).SetSize(160, 60)
+	plain := stripANSI(m.View())
+
+	if !m.selected["/personal/"] || m.selected["/primary/"] || m.selected["/holidays/"] || m.selected["/tasks/"] {
+		t.Fatalf("initial management selections = %v", m.selected)
+	}
+	for _, want := range []string{"Manage Calendars", "Calendars", "Unavailable", "Personal", "Save Changes"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("manager view missing %q:\n%s", want, plain)
+		}
+	}
+	for _, unwanted := range []string{"Available", "Already Added"} {
+		if strings.Contains(plain, unwanted) {
+			t.Errorf("manager view retained additive section %q:\n%s", unwanted, plain)
+		}
+	}
+	if !m.shell.actions[0].Disabled {
+		t.Fatal("Save Changes is enabled before the final selection changes")
+	}
+}
+
+func TestAccountCalendarManagerStagesAddsAndRemovals(t *testing.T) {
+	m := NewAccountCalendarManagerModel(pickerDiscovery(), Theme{}).SetSize(160, 60)
+	m.shell = m.shell.SetSelected(pickerRowForPath(t, m, "/primary/"))
+	m = m.toggleCurrent()
+	m.shell = m.shell.SetSelected(pickerRowForPath(t, m, "/personal/"))
+	m = m.toggleCurrent()
+
+	if m.shell.actions[0].Disabled {
+		t.Fatal("Save Changes remains disabled after staging changes")
+	}
+	details := stripANSI(strings.Join(m.shell.detailLines, "\n"))
+	if !strings.Contains(details, "Will be removed from Chroncal") ||
+		!strings.Contains(details, "1 to add · 1 to remove") {
+		t.Fatalf("staged-removal details = %q", details)
+	}
+	cmd := m.applySelection()
+	if cmd == nil {
+		t.Fatal("applySelection returned no command for staged changes")
+	}
+	msg, ok := cmd().(AccountCalendarsReconcileRequestedMsg)
+	if !ok {
+		t.Fatalf("apply message = %T, want AccountCalendarsReconcileRequestedMsg", cmd())
+	}
+	if msg.AccountID != 7 || !slices.Equal(msg.SelectedPaths, []string{"/primary/"}) {
+		t.Fatalf("apply message = %+v", msg)
+	}
+}
+
+func TestAccountCalendarManagerCanRemoveImportedUnavailableCalendar(t *testing.T) {
+	discovery := pickerDiscovery()
+	discovery.Calendars = append(discovery.Calendars, account.DiscoveredCalendar{
+		RemoteCalendar: caldav.RemoteCalendar{
+			Path:                  "/missing/",
+			Name:                  "Old Work",
+			SupportedComponentSet: []string{"VEVENT"},
+		},
+		CalendarID: 43,
+		Imported:   true,
+		Importable: true,
+		Missing:    true,
+	})
+	m := NewAccountCalendarManagerModel(discovery, Theme{}).SetSize(160, 60)
+	m.shell = m.shell.SetSelected(pickerRowForPath(t, m, "/missing/"))
+	m = m.toggleCurrent()
+	if m.selected["/missing/"] {
+		t.Fatal("missing imported calendar could not be staged for removal")
+	}
+	if !strings.Contains(stripANSI(strings.Join(m.shell.detailLines, "\n")), "No longer available") {
+		t.Fatalf("missing calendar details = %q", stripANSI(strings.Join(m.shell.detailLines, "\n")))
+	}
+
+	m.shell = m.shell.SetSelected(pickerRowForPath(t, m, "/tasks/"))
+	m = m.toggleCurrent()
+	if m.selected["/tasks/"] {
+		t.Fatal("new unsupported collection became selected")
+	}
+}
+
+func TestAccountCalendarManagerSelectAllNeverStagesBulkRemoval(t *testing.T) {
+	m := NewAccountCalendarManagerModel(pickerDiscovery(), Theme{})
+	m = m.toggleAll()
+	if !m.selected["/personal/"] || !m.selected["/primary/"] || !m.selected["/holidays/"] {
+		t.Fatalf("select all selections = %v", m.selected)
+	}
+	m = m.toggleAll()
+	if !m.selected["/personal/"] || !m.selected["/primary/"] || !m.selected["/holidays/"] {
+		t.Fatalf("repeated select all staged removals: %v", m.selected)
+	}
+	if m.selected["/tasks/"] {
+		t.Fatal("select all selected an unsupported collection")
+	}
 }
