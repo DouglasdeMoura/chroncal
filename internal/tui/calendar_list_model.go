@@ -81,7 +81,7 @@ func defaultCalendarListKeys() calendarListKeyMap {
 		ShiftTab: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev")),
 		MoveUp:   key.NewBinding(key.WithKeys("shift+up", "K"), key.WithHelp("shift+↑/K", "move up")),
 		MoveDown: key.NewBinding(key.WithKeys("shift+down", "J"), key.WithHelp("shift+↓/J", "move down")),
-		Toggle:   key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "toggle visibility")),
+		Toggle:   key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "toggle")),
 		Open:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
 	}
 }
@@ -391,6 +391,9 @@ func (m CalendarListModel) Update(msg tea.Msg) (CalendarListModel, tea.Cmd) {
 	case key.Matches(kp, m.keys.Right):
 		return m.setCollapsed(false), nil
 	case key.Matches(kp, m.keys.Toggle):
+		if m.cursor >= 0 && m.cursor < len(m.rows) && m.rows[m.cursor].kind == accountHeaderRow {
+			return m.toggleCollapsed(), nil
+		}
 		return m.toggleCurrent()
 	case key.Matches(kp, m.keys.Open):
 		if m.cursor < 0 || m.cursor >= len(m.rows) {
@@ -471,44 +474,52 @@ func (m CalendarListModel) renderCalendarRow(row calendarListRow, selected bool)
 	if m.hidden[item.ID] {
 		glyph = "○"
 	}
-	swatch := lipgloss.NewStyle().Foreground(lipgloss.Color(item.Color)).Render(glyph)
 	indent := ""
 	if m.grouped {
 		indent = "  "
 	}
 	marker := ""
 	if !m.grouped && (item.Health == SyncHealthError || item.Missing) {
-		marker = lipgloss.NewStyle().Foreground(m.errColor).Render("⚠")
+		marker = "⚠"
 	}
 	markerCells := 0
 	if marker != "" {
 		markerCells = lipgloss.Width(marker) + 1
 	}
 
+	rowStyle := lipgloss.NewStyle()
+	swatchStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(item.Color))
 	nameStyle := lipgloss.NewStyle()
+	markerStyle := lipgloss.NewStyle().Foreground(m.errColor)
 	if m.hidden[item.ID] && !selected {
 		nameStyle = nameStyle.Foreground(m.mutedColor)
 	}
-	prefixCells := lipgloss.Width(indent) + 2
 	if selected {
-		nameStyle = nameStyle.Foreground(m.selectedTextColor).Bold(true)
+		rowStyle = rowStyle.Background(m.accentColor).Foreground(m.selectedTextColor)
+		swatchStyle = swatchStyle.Background(m.accentColor)
+		nameStyle = nameStyle.
+			Background(m.accentColor).
+			Foreground(m.selectedTextColor).
+			Bold(true)
+		markerStyle = markerStyle.Background(m.accentColor)
 	}
+
+	prefixCells := lipgloss.Width(indent) + 2
 	nameText := item.Name
 	if avail := m.width - prefixCells - 2 - markerCells; m.width > prefixCells+2 && avail > 0 {
 		nameText = truncateTo(nameText, avail)
 	}
-	out := indent + swatch + " " + nameStyle.Render(" "+nameText+" ")
+	out := rowStyle.Render(indent) +
+		swatchStyle.Render(glyph) +
+		rowStyle.Render(" ") +
+		nameStyle.Render(" "+nameText+" ")
 	if marker != "" {
-		out += " " + marker
+		out += rowStyle.Render(" ") + markerStyle.Render(marker)
 	}
-	if selected {
-		selectedStyle := lipgloss.NewStyle().
-			Background(m.accentColor).
-			Foreground(m.selectedTextColor)
-		if m.width > 0 {
-			selectedStyle = selectedStyle.Width(m.width)
+	if selected && m.width > 0 {
+		if remaining := m.width - lipgloss.Width(out); remaining > 0 {
+			out += rowStyle.Render(strings.Repeat(" ", remaining))
 		}
-		out = selectedStyle.Render(out)
 	}
 	return out
 }
