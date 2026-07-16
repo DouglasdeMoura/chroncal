@@ -511,7 +511,6 @@ func (m CalendarListModel) renderCalendarRow(row calendarListRow, selected bool)
 	}
 	out := rowStyle.Render(indent) +
 		swatchStyle.Render(glyph) +
-		rowStyle.Render(" ") +
 		nameStyle.Render(" "+nameText+" ")
 	if marker != "" {
 		out += rowStyle.Render(" ") + markerStyle.Render(marker)
