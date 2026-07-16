@@ -19,15 +19,23 @@ type AccountCalendarsImportRequestedMsg struct {
 	Paths     []string
 }
 
+// AccountCalendarsReconcileRequestedMsg applies an existing account's desired
+// final local calendar selection.
+type AccountCalendarsReconcileRequestedMsg struct {
+	AccountID     int64
+	SelectedPaths []string
+}
+
 // AccountCalendarPickerClosedMsg closes the discovery picker without importing.
 type AccountCalendarPickerClosedMsg struct{}
 
 // AccountCalendarPickerModel presents every discovered collection, including
-// read-only and unsupported rows, while only allowing usable event calendars
-// to be selected for import.
+// read-only and unsupported rows. Add mode selects new imports; management
+// mode edits the account's desired final local calendar set.
 type AccountCalendarPickerModel struct {
 	discovery   account.Discovery
 	selected    map[string]bool
+	manage      bool
 	shell       ListDialogModel
 	rowCalendar []int
 
@@ -35,17 +43,33 @@ type AccountCalendarPickerModel struct {
 }
 
 func NewAccountCalendarPickerModel(discovery account.Discovery, theme Theme) AccountCalendarPickerModel {
+	return newAccountCalendarPickerModel(discovery, theme, false)
+}
+
+func NewAccountCalendarManagerModel(discovery account.Discovery, theme Theme) AccountCalendarPickerModel {
+	return newAccountCalendarPickerModel(discovery, theme, true)
+}
+
+func newAccountCalendarPickerModel(discovery account.Discovery, theme Theme, manage bool) AccountCalendarPickerModel {
 	selected := make(map[string]bool, len(discovery.Calendars))
 	for _, remote := range discovery.Calendars {
-		if remote.Importable && !remote.Imported {
+		switch {
+		case manage && remote.Imported:
+			selected[remote.Path] = true
+		case !manage && remote.Importable && !remote.Imported:
 			selected[remote.Path] = true
 		}
+	}
+	title := "Add Calendars"
+	if manage {
+		title = "Manage Calendars"
 	}
 	m := AccountCalendarPickerModel{
 		discovery: discovery,
 		selected:  selected,
+		manage:    manage,
 		shell: NewListDialogModel(newThemedHelp(theme)).
-			SetTitle("Add Calendars").
+			SetTitle(title).
 			SetTitleContext(accountPickerIdentity(discovery.Account)).
 			SetSelectedColor(theme.Selected),
 		theme: theme,
@@ -62,7 +86,7 @@ func (m AccountCalendarPickerModel) BoxSize() (int, int) { return m.shell.BoxSiz
 
 func (m AccountCalendarPickerModel) toggleCurrent() AccountCalendarPickerModel {
 	remote, ok := m.currentRemote()
-	if !ok || !remote.Importable || remote.Imported {
+	if !ok || !m.canToggle(remote) {
 		return m
 	}
 	m.selected[remote.Path] = !m.selected[remote.Path]
@@ -70,6 +94,15 @@ func (m AccountCalendarPickerModel) toggleCurrent() AccountCalendarPickerModel {
 }
 
 func (m AccountCalendarPickerModel) toggleAll() AccountCalendarPickerModel {
+	if m.manage {
+		for _, remote := range m.discovery.Calendars {
+			if m.canToggle(remote) {
+				m.selected[remote.Path] = true
+			}
+		}
+		return m.refresh()
+	}
+
 	allSelected := true
 	for _, remote := range m.discovery.Calendars {
 		if remote.Importable && !remote.Imported {
@@ -99,6 +132,23 @@ func (m AccountCalendarPickerModel) importSelected() tea.Cmd {
 	return func() tea.Msg { return AccountCalendarsImportRequestedMsg{AccountID: accountID, Paths: paths} }
 }
 
+func (m AccountCalendarPickerModel) applySelection() tea.Cmd {
+	if !m.manage {
+		return m.importSelected()
+	}
+	if !m.hasChanges() {
+		return nil
+	}
+	paths := m.finalSelectedPaths()
+	accountID := m.discovery.Account.ID
+	return func() tea.Msg {
+		return AccountCalendarsReconcileRequestedMsg{
+			AccountID:     accountID,
+			SelectedPaths: paths,
+		}
+	}
+}
+
 func (m AccountCalendarPickerModel) Update(msg tea.Msg) (AccountCalendarPickerModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -115,7 +165,7 @@ func (m AccountCalendarPickerModel) Update(msg tea.Msg) (AccountCalendarPickerMo
 			}
 		case key.Matches(msg, key.NewBinding(key.WithKeys("enter"))):
 			if m.shell.FocusZone() == ListZoneList {
-				return m, m.importSelected()
+				return m, m.applySelection()
 			}
 		}
 		var cmd tea.Cmd
@@ -183,15 +233,20 @@ func (m AccountCalendarPickerModel) refresh() AccountCalendarPickerModel {
 		m.shell = m.shell.SetDetailTitle("").SetDetailLines(nil)
 	}
 
-	count := m.selectedCount()
-	label := "Add Calendars"
-	if count == 1 {
-		label = "Add Calendar"
+	actionLabel := "Add Calendars"
+	actionDisabled := m.selectedCount() == 0
+	enterHelp := "add"
+	if m.manage {
+		actionLabel = "Save Changes"
+		actionDisabled = !m.hasChanges()
+		enterHelp = "save"
+	} else if count := m.selectedCount(); count == 1 {
+		actionLabel = "Add Calendar"
 	} else if count > 1 {
-		label = fmt.Sprintf("Add %d Calendars", count)
+		actionLabel = fmt.Sprintf("Add %d Calendars", count)
 	}
 	m.shell = m.shell.SetActions([]ListDialogAction{
-		{Label: label, Primary: true, Disabled: count == 0, Msg: m.importSelected()},
+		{Label: actionLabel, Primary: true, Disabled: actionDisabled, Msg: m.applySelection()},
 		{Label: "Cancel", Msg: func() tea.Msg { return AccountCalendarPickerClosedMsg{} }},
 	})
 	keys := m.shell.Keys()
@@ -200,7 +255,7 @@ func (m AccountCalendarPickerModel) refresh() AccountCalendarPickerModel {
 		key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "toggle")),
 		key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "select all")),
 		keys.Tab,
-		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "add")),
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterHelp)),
 		keys.Close,
 	})
 	return m
@@ -211,6 +266,14 @@ func (m AccountCalendarPickerModel) buildRows() ([]string, []int, []int) {
 	added := make([]int, 0, len(m.discovery.Calendars))
 	unavailable := make([]int, 0, len(m.discovery.Calendars))
 	for idx, remote := range m.discovery.Calendars {
+		if m.manage {
+			if remote.Missing || !remote.Importable {
+				unavailable = append(unavailable, idx)
+			} else {
+				available = append(available, idx)
+			}
+			continue
+		}
 		switch {
 		case remote.Imported:
 			added = append(added, idx)
@@ -244,8 +307,12 @@ func (m AccountCalendarPickerModel) buildRows() ([]string, []int, []int) {
 			rowCalendar = append(rowCalendar, calendarIndex)
 		}
 	}
-	appendSection("Available", available)
-	appendSection("Already Added", added)
+	if m.manage {
+		appendSection("Calendars", available)
+	} else {
+		appendSection("Available", available)
+		appendSection("Already Added", added)
+	}
 	appendSection("Unavailable", unavailable)
 	return rows, rowCalendar, disabledRows
 }
@@ -273,10 +340,12 @@ func (m AccountCalendarPickerModel) currentRemote() (account.DiscoveredCalendar,
 func (m AccountCalendarPickerModel) calendarRowLabel(remote account.DiscoveredCalendar, current, listFocused bool) string {
 	marker := Glyphs["checkbox.off"]
 	switch {
-	case remote.Imported:
-		marker = Glyphs["status.ok"] + "  "
-	case !remote.Importable:
+	case !m.canToggle(remote):
 		marker = "–  "
+	case m.manage && m.selected[remote.Path]:
+		marker = Glyphs["checkbox.on"]
+	case !m.manage && remote.Imported:
+		marker = Glyphs["status.ok"] + "  "
 	case m.selected[remote.Path]:
 		marker = Glyphs["checkbox.on"]
 	}
@@ -292,12 +361,15 @@ func (m AccountCalendarPickerModel) calendarRowLabel(remote account.DiscoveredCa
 		name = "Unnamed calendar"
 	}
 	nameText := textsafe.Display(name)
-	if remote.Access == caldav.CalendarAccessRead && !remote.Imported {
+	switch {
+	case remote.Missing:
+		nameText += lipgloss.NewStyle().Foreground(m.theme.TextDim).Render("  No longer available")
+	case remote.Access == caldav.CalendarAccessRead:
 		nameText += lipgloss.NewStyle().Foreground(m.theme.TextDim).Render("  Read only")
 	}
 
 	nameStyle := lipgloss.NewStyle()
-	if remote.Imported || !remote.Importable {
+	if remote.Missing || !m.canToggle(remote) || (!m.manage && remote.Imported) {
 		nameStyle = nameStyle.Foreground(m.theme.TextDim)
 	}
 	if current {
@@ -323,7 +395,7 @@ func (m AccountCalendarPickerModel) calendarDetailTitle(remote account.Discovere
 }
 
 func (m AccountCalendarPickerModel) calendarDetailLines(remote account.DiscoveredCalendar) []string {
-	lines := make([]string, 0, 8)
+	lines := make([]string, 0, 12)
 	if description := strings.TrimSpace(remote.Description); description != "" {
 		lines = append(lines, textsafe.Display(description), "")
 	}
@@ -332,6 +404,31 @@ func (m AccountCalendarPickerModel) calendarDetailLines(remote account.Discovere
 		fmt.Sprintf("%-10s%s", "Contents", humanCalendarComponents(remote.SupportedComponentSet)),
 		"",
 	)
+	if m.manage {
+		switch {
+		case remote.Missing && !m.selected[remote.Path]:
+			lines = append(lines, "No longer available from the server.", "Will be removed from Chroncal.")
+		case remote.Missing:
+			lines = append(lines, "No longer available from the server.", "Kept in Chroncal until removed.")
+		case remote.Imported && !m.selected[remote.Path]:
+			lines = append(lines, "Will be removed from Chroncal.")
+		case remote.Imported && !remote.Importable:
+			lines = append(lines, "Already in Chroncal, but the server no longer advertises supported contents.")
+		case remote.Imported:
+			lines = append(lines, "Kept in Chroncal.")
+		case !remote.Importable:
+			lines = append(lines, unsupportedCalendarExplanation(remote.SupportedComponentSet))
+		case m.selected[remote.Path]:
+			lines = append(lines, "Ready to add.")
+		default:
+			lines = append(lines, "Not added to Chroncal.")
+		}
+		if summary := m.changeSummary(); summary != "" {
+			lines = append(lines, "", summary)
+		}
+		return lines
+	}
+
 	switch {
 	case remote.Imported:
 		lines = append(lines, "Already added to Chroncal.")
@@ -355,6 +452,54 @@ func (m AccountCalendarPickerModel) selectedCount() int {
 		}
 	}
 	return count
+}
+
+func (m AccountCalendarPickerModel) canToggle(remote account.DiscoveredCalendar) bool {
+	if m.manage {
+		return remote.Imported || (remote.Importable && !remote.Missing)
+	}
+	return remote.Importable && !remote.Imported
+}
+
+func (m AccountCalendarPickerModel) finalSelectedPaths() []string {
+	paths := make([]string, 0, len(m.selected))
+	for _, remote := range m.discovery.Calendars {
+		if m.selected[remote.Path] && (remote.Imported || remote.Importable) {
+			paths = append(paths, remote.Path)
+		}
+	}
+	return paths
+}
+
+func (m AccountCalendarPickerModel) changeCounts() (added, removed int) {
+	for _, remote := range m.discovery.Calendars {
+		switch {
+		case m.selected[remote.Path] && !remote.Imported:
+			added++
+		case !m.selected[remote.Path] && remote.Imported:
+			removed++
+		}
+	}
+	return added, removed
+}
+
+func (m AccountCalendarPickerModel) hasChanges() bool {
+	added, removed := m.changeCounts()
+	return added > 0 || removed > 0
+}
+
+func (m AccountCalendarPickerModel) changeSummary() string {
+	added, removed := m.changeCounts()
+	switch {
+	case added > 0 && removed > 0:
+		return fmt.Sprintf("%d to add · %d to remove", added, removed)
+	case added > 0:
+		return fmt.Sprintf("%d to add", added)
+	case removed > 0:
+		return fmt.Sprintf("%d to remove", removed)
+	default:
+		return ""
+	}
 }
 
 func accountPickerIdentity(account account.Account) string {

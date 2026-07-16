@@ -771,6 +771,13 @@ func (m CalendarDialogModel) ShowDiscovery(discovery account.Discovery) Calendar
 	return m
 }
 
+func (m CalendarDialogModel) ShowCalendarManagement(discovery account.Discovery) CalendarDialogModel {
+	picker := NewAccountCalendarManagerModel(discovery, m.theme).
+		SetSize(m.dialog.width, m.dialog.height)
+	m.discoveryPicker = &picker
+	return m
+}
+
 func (m CalendarDialogModel) HideDiscovery() CalendarDialogModel {
 	m.discoveryPicker = nil
 	return m
@@ -798,7 +805,7 @@ func (m CalendarDialogModel) AccountActionsMenu() CalendarAccountActionsMenuMode
 	actions := make([]calendarAccountMenuAction, 0, 4)
 	if params.AccountID > 0 {
 		actions = append(actions, calendarAccountMenuAction{
-			label: "Add calendars…",
+			label: "Manage calendars…",
 			onPress: func() tea.Msg {
 				return CalendarDiscoverAdditionalRequestedMsg{
 					CalendarID: params.ID,

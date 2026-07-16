@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/douglasdemoura/chroncal/internal/account"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/trash"
 )
@@ -63,6 +64,31 @@ func TestCtrlCClearsPurgePendingState(t *testing.T) {
 	}
 	if len(next.pendingPurgeEntries) != 0 || next.pendingPurgeTitle != "" {
 		t.Fatalf("abandoned purge pending state not cleared: entries=%d title=%q", len(next.pendingPurgeEntries), next.pendingPurgeTitle)
+	}
+}
+
+func TestCtrlCClearsAccountCalendarSelectionPendingState(t *testing.T) {
+	ctrlC := tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
+	m := Model{
+		choiceOpen:       true,
+		pendingScopeKind: pendingScopeAccountSelectionPromote,
+		pendingAccountSelection: &accountCalendarSelection{
+			params: account.SelectionParams{SelectedPaths: []string{"/keep/"}},
+		},
+		pendingAccountDefaultCandidates: []accountDefaultCandidate{{id: 9, name: "Home"}},
+	}
+
+	next, _, handled := m.interceptGlobalKeys(ctrlC)
+	if !handled || !next.pendingQuit {
+		t.Fatalf("ctrl+c did not replace account removal with quit: handled=%v quit=%v", handled, next.pendingQuit)
+	}
+	if next.pendingAccountSelection != nil || len(next.pendingAccountDefaultCandidates) != 0 {
+		t.Fatalf("abandoned account selection remains armed: selection=%+v candidates=%+v",
+			next.pendingAccountSelection, next.pendingAccountDefaultCandidates)
+	}
+	if next.choiceOpen || next.pendingScopeKind != pendingScopeNone {
+		t.Fatalf("superseded default choice remains open: open=%v kind=%v",
+			next.choiceOpen, next.pendingScopeKind)
 	}
 }
 
