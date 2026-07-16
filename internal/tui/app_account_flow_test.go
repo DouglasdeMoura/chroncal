@@ -163,3 +163,51 @@ func TestAppAdditionalCalendarImportReturnsToUnsavedEditForm(t *testing.T) {
 		t.Fatalf("unsaved name after calendar import = %q", got)
 	}
 }
+
+func TestAppAccountActionsMenuReturnsToUnsavedCalendarEdit(t *testing.T) {
+	m := NewModel(nil, "")
+	m.width, m.height = 120, 40
+	m.calendarDialog = NewCalendarDialogModel(CalendarDialogParams{
+		ID:           11,
+		AccountID:    7,
+		Name:         "Personal",
+		Color:        "#a6e3a1",
+		RemoteLinked: true,
+	}, m.theme).SetSize(m.width, m.height)
+	m.calendarDialogOpen = true
+	m.calendarDialog.form.Field(cdIdxName).(*TextField).SetValue("Unsaved rename")
+
+	updated, _ := m.Update(CalendarAccountActionsRequestedMsg{})
+	m = updated.(Model)
+	if !m.calendarAccountMenuOpen {
+		t.Fatal("Account action did not open its menu")
+	}
+
+	updated, _ = m.Update(CalendarAccountMenuClosedMsg{})
+	m = updated.(Model)
+	if m.calendarAccountMenuOpen || !m.calendarDialogOpen {
+		t.Fatalf("menu close: accountMenu=%v calendarDialog=%v",
+			m.calendarAccountMenuOpen, m.calendarDialogOpen)
+	}
+	if got := m.calendarDialog.form.Field(cdIdxName).(*TextField).Value(); got != "Unsaved rename" {
+		t.Fatalf("unsaved name after Account menu close = %q", got)
+	}
+}
+
+func TestAppAccountMenuSelectionClosesMenuBeforeDispatch(t *testing.T) {
+	m := NewModel(nil, "")
+	m.calendarAccountMenuOpen = true
+	want := CalendarDiscoverAdditionalRequestedMsg{CalendarID: 11, AccountID: 7}
+
+	updated, cmd := m.Update(CalendarAccountMenuSelectedMsg{Message: want})
+	m = updated.(Model)
+	if m.calendarAccountMenuOpen {
+		t.Fatal("Account menu stayed open after selection")
+	}
+	if cmd == nil {
+		t.Fatal("Account menu selection did not dispatch its action")
+	}
+	if got := cmd(); got != want {
+		t.Fatalf("dispatched action = %#v, want %#v", got, want)
+	}
+}

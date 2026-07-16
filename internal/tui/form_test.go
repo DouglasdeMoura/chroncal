@@ -1166,6 +1166,8 @@ func TestCalendarDialogRendering_EditLinked(t *testing.T) {
 	m = m.SetSize(120, 40)
 
 	v := m.View()
-	assert.Contains(t, v, "Disconnect")
+	assert.Contains(t, v, "Account…")
+	assert.NotContains(t, v, "Disconnect…")
+	assert.Contains(t, m.AccountActionsMenu().View(), "Disconnect…")
 	assert.Contains(t, v, "cal.example.com")
 }

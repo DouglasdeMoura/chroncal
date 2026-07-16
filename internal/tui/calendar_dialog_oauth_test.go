@@ -185,30 +185,31 @@ func TestCalendarDialog_ReauthButtonOnLinkedOAuth(t *testing.T) {
 	}, Theme{}).SetSize(120, 40)
 
 	view := m.View()
-	if !strings.Contains(view, "Re-authenticate") {
-		t.Errorf("linked oauth2 dialog should offer Re-authenticate; got %q", view)
+	if !strings.Contains(view, "Account…") {
+		t.Errorf("linked OAuth dialog should offer Account actions; got %q", view)
+	}
+	if strings.Contains(view, "Re-authenticate…") {
+		t.Errorf("Re-authenticate should stay inside the Account menu; got %q", view)
 	}
 
-	// The button must emit the request msg with empty config (use stored).
-	var found bool
-	for _, b := range m.form.actionButtons {
-		if b.Label == "Re-authenticate" {
-			found = true
-			msg, ok := b.OnPress().(CalendarReauthRequestedMsg)
-			if !ok {
-				t.Fatalf("expected CalendarReauthRequestedMsg, got %T", b.OnPress())
-			}
-			if msg.ID != 10 || msg.Name != "gmail" {
-				t.Errorf("msg = %+v, want ID 10 / gmail", msg)
-			}
-			if msg.ClientID != "" || msg.ClientSecret != "" {
-				t.Errorf("non-fallback reauth should carry empty config; got %+v", msg)
-			}
+	// The menu action must emit the request with empty config (use stored).
+	for _, action := range m.AccountActionsMenu().actions {
+		if action.label != "Re-authenticate…" {
+			continue
 		}
+		msg, ok := action.onPress().(CalendarReauthRequestedMsg)
+		if !ok {
+			t.Fatalf("expected CalendarReauthRequestedMsg, got %T", action.onPress())
+		}
+		if msg.ID != 10 || msg.Name != "gmail" {
+			t.Errorf("msg = %+v, want ID 10 / gmail", msg)
+		}
+		if msg.ClientID != "" || msg.ClientSecret != "" {
+			t.Errorf("non-fallback reauth should carry empty config; got %+v", msg)
+		}
+		return
 	}
-	if !found {
-		t.Fatal("Re-authenticate button not registered")
-	}
+	t.Fatal("Re-authenticate action not registered")
 }
 
 func TestCalendarDialog_NoReauthButtonOnBasicLinked(t *testing.T) {
@@ -218,8 +219,12 @@ func TestCalendarDialog_NoReauthButtonOnBasicLinked(t *testing.T) {
 		RemoteLinked:   true,
 		RemoteAuthType: "basic",
 	}, Theme{}).SetSize(120, 40)
-	if strings.Contains(m.View(), "Re-authenticate") {
-		t.Error("basic-auth linked dialog should not offer Re-authenticate")
+
+	menu := m.AccountActionsMenu()
+	for _, action := range menu.actions {
+		if action.label == "Re-authenticate…" {
+			t.Error("basic-auth linked dialog should not offer Re-authenticate")
+		}
 	}
 }
 
@@ -258,16 +263,17 @@ func TestCalendarDialog_NeedOAuthConfigFallback(t *testing.T) {
 	}
 	secretField.SetValue("typed-secret")
 
-	for _, b := range m.form.actionButtons {
-		if b.Label == "Re-authenticate" {
-			msg := b.OnPress().(CalendarReauthRequestedMsg)
-			if msg.ClientID != "stored-cid.apps" || msg.ClientSecret != "typed-secret" {
-				t.Errorf("fallback button should read fields at press time; got %+v", msg)
-			}
-			return
+	for _, action := range m.AccountActionsMenu().actions {
+		if action.label != "Re-authenticate…" {
+			continue
 		}
+		msg := action.onPress().(CalendarReauthRequestedMsg)
+		if msg.ClientID != "stored-cid.apps" || msg.ClientSecret != "typed-secret" {
+			t.Errorf("fallback action should read fields at press time; got %+v", msg)
+		}
+		return
 	}
-	t.Fatal("Re-authenticate button not registered in fallback mode")
+	t.Fatal("Re-authenticate action not registered in fallback mode")
 }
 
 func TestCalendarDialog_ReLinkHintPointsAtButtonForOAuth(t *testing.T) {
@@ -319,11 +325,10 @@ func TestCalendarDialog_LinkedOAuthErrorFitsWidth(t *testing.T) {
 	}
 }
 
-// TestCalendarDialog_OverflowButtonRowLayout pins the two-row button
-// degradation: leading actions spread across their own row (first left,
-// last flush right), one blank line, then Save/Cancel right-aligned to the
-// same edge.
-func TestCalendarDialog_OverflowButtonRowLayout(t *testing.T) {
+// TestCalendarDialog_AccountActionRowLayout pins the intentional two-tier
+// hierarchy: utility actions share their own row, one blank line separates
+// them from Save/Cancel, and both rows align to the same right edge.
+func TestCalendarDialog_AccountActionRowLayout(t *testing.T) {
 	m := NewCalendarDialogModel(CalendarDialogParams{
 		ID:             12,
 		Name:           "douglas.demoura@familywellhealth.com",
@@ -334,26 +339,24 @@ func TestCalendarDialog_OverflowButtonRowLayout(t *testing.T) {
 
 	lines := strings.Split(m.form.View(), "\n")
 	actionRow, saveRow := -1, -1
-	for i, l := range lines {
-		if strings.Contains(l, "Disconnect") {
+	for i, line := range lines {
+		if strings.Contains(line, "Account…") {
 			actionRow = i
 		}
-		if strings.Contains(l, "Save") && strings.Contains(l, "Cancel") {
+		if strings.Contains(line, "Save") && strings.Contains(line, "Cancel") {
 			saveRow = i
 		}
 	}
 	if actionRow < 0 || saveRow < 0 {
 		t.Fatalf("missing rows: actionRow=%d saveRow=%d\n%s", actionRow, saveRow, m.form.View())
 	}
-	if !strings.Contains(lines[actionRow], "Re-authenticate") || !strings.Contains(lines[actionRow], "Set as Default") {
-		t.Errorf("all three actions should share one row; got %q", lines[actionRow])
+	if !strings.Contains(lines[actionRow], "Set as Default") {
+		t.Errorf("utility actions should share one row; got %q", lines[actionRow])
 	}
 	if saveRow != actionRow+2 || strings.TrimSpace(lines[actionRow+1]) != "" {
-		t.Errorf("want one blank line between actions and Save/Cancel; rows %d and %d", actionRow, saveRow)
+		t.Errorf("want one blank line between utilities and Save/Cancel; rows %d and %d", actionRow, saveRow)
 	}
-	// Disconnect's row is justified to the full form width, so its right
-	// edge matches the right-aligned Save/Cancel row.
 	if aw, sw := lipgloss.Width(strings.TrimRight(lines[actionRow], " ")), lipgloss.Width(strings.TrimRight(lines[saveRow], " ")); aw != sw {
-		t.Errorf("Disconnect right edge (%d) should match Save/Cancel right edge (%d)", aw, sw)
+		t.Errorf("Account right edge (%d) should match Save/Cancel right edge (%d)", aw, sw)
 	}
 }

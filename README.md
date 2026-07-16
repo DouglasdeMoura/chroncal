@@ -496,10 +496,10 @@ To connect from the TUI, open **Add Calendar**, enable **CalDAV sync**, and
 enter the server and authentication settings. Chroncal discovers every
 collection exposed by that connection and opens a multi-select calendar step
 before importing. Browser authorization runs without leaving the app. Open a
-linked calendar and choose **Add calendars** to rediscover and import additional
-collections from the same account; unsaved calendar edits remain intact when
-the picker closes. Linked OAuth calendars also offer **Re-authenticate** when
-credentials expire.
+linked calendar and choose **Account… → Add calendars…** to rediscover and
+import additional collections from the same account; unsaved calendar edits
+remain intact when the menu or picker closes. The same compact **Account…**
+menu contains OAuth re-authentication and the destructive disconnect action.
 
 Google limitations:
 
