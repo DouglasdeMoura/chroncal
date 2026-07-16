@@ -969,10 +969,127 @@ func TestImportRejectsUnknownPathAndUnsupportedComponents(t *testing.T) {
 	}
 }
 
-// UserFacingName hides the pre-account-management implementation prefix so
-// accounts migrated from the old per-calendar scheme show the user's identity
-// (or a stable fallback) instead of an internal slug.
-func TestUserFacingNameHidesLegacyImplementationPrefix(t *testing.T) {
+func TestRenameUpdatesOnlyAccountDescription(t *testing.T) {
+	db, q, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	store := newMemoryCredentialStore()
+	svc := NewService(db, q)
+	created, err := svc.Create(ctx, CreateParams{
+		Name: "Google", ServerURL: "https://cal.example.test/dav/", AuthType: "basic", Username: "alice@example.test",
+	}, auth.Credential{Username: "alice@example.test", Password: "secret"}, store)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	fingerprint := created.CredentialFingerprint()
+
+	renamed, err := svc.Rename(ctx, created.ID, "  Personal Google  ")
+	if err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	if renamed.Name != "Personal Google" || renamed.DisplayName != "Personal Google" {
+		t.Fatalf("renamed account = %+v", renamed)
+	}
+	if renamed.CredentialFingerprint() != fingerprint {
+		t.Fatalf("rename changed credential identity: %q != %q", renamed.CredentialFingerprint(), fingerprint)
+	}
+	if _, err := store.Get(created.ID, fingerprint); err != nil {
+		t.Fatalf("rename lost credential: %v", err)
+	}
+}
+
+func TestRenameRejectsEmptyAndDuplicateDescriptions(t *testing.T) {
+	db, q, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	store := newMemoryCredentialStore()
+	svc := NewService(db, q)
+	first, err := svc.Create(ctx, CreateParams{
+		Name: "First", ServerURL: "https://one.example.test/dav/", AuthType: "basic", Username: "first",
+	}, auth.Credential{Username: "first", Password: "secret"}, store)
+	if err != nil {
+		t.Fatalf("Create first: %v", err)
+	}
+	if _, err := svc.Create(ctx, CreateParams{
+		Name: "Second", ServerURL: "https://two.example.test/dav/", AuthType: "basic", Username: "second",
+	}, auth.Credential{Username: "second", Password: "secret"}, store); err != nil {
+		t.Fatalf("Create second: %v", err)
+	}
+
+	if _, err := svc.Rename(ctx, first.ID, " "); err == nil || !strings.Contains(err.Error(), "required") {
+		t.Fatalf("empty Rename error = %v", err)
+	}
+	if _, err := svc.Rename(ctx, first.ID, "Second"); err == nil {
+		t.Fatal("duplicate Rename succeeded")
+	}
+	got, err := svc.Get(ctx, first.ID)
+	if err != nil {
+		t.Fatalf("Get after rejected rename: %v", err)
+	}
+	if got.Name != "First" {
+		t.Fatalf("rejected rename changed account to %q", got.Name)
+	}
+}
+
+func TestSetOrderPersistsAccountSectionOrder(t *testing.T) {
+	db, q, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	store := newMemoryCredentialStore()
+	svc := NewService(db, q)
+	first, err := svc.Create(ctx, CreateParams{
+		Name: "Alpha", ServerURL: "https://one.example.test/dav/", AuthType: "basic", Username: "first",
+	}, auth.Credential{Username: "first", Password: "secret"}, store)
+	if err != nil {
+		t.Fatalf("Create first: %v", err)
+	}
+	second, err := svc.Create(ctx, CreateParams{
+		Name: "Zulu", ServerURL: "https://two.example.test/dav/", AuthType: "basic", Username: "second",
+	}, auth.Credential{Username: "second", Password: "secret"}, store)
+	if err != nil {
+		t.Fatalf("Create second: %v", err)
+	}
+
+	if err := svc.SetOrder(ctx, []int64{second.ID, first.ID}); err != nil {
+		t.Fatalf("SetOrder: %v", err)
+	}
+	got, err := svc.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 2 || got[0].ID != second.ID || got[1].ID != first.ID {
+		t.Fatalf("account order = %+v, want IDs [%d %d]", got, second.ID, first.ID)
+	}
+}
+
+func TestSuggestedNameUsesProviderOrAccountDomain(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		username string
+		want     string
+	}{
+		{"maildodouglas@gmail.com", "Google"},
+		{"douglas.moura@jaya.tech", "Jaya"},
+		{"douglas.ademoura@familywellhealth.com", "Familywellhealth"},
+		{"person@calendar.example.co.uk", "Example"},
+		{"plain-user", "plain-user"},
+	} {
+		if got := SuggestedName(tc.username); got != tc.want {
+			t.Errorf("SuggestedName(%q) = %q, want %q", tc.username, got, tc.want)
+		}
+	}
+}
+
+func TestUserFacingNameHidesCredentialIdentifiers(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name     string
@@ -980,8 +1097,9 @@ func TestUserFacingNameHidesLegacyImplementationPrefix(t *testing.T) {
 		id       int64
 		want     string
 	}{
-		{"__calendar_42", "alice@example.com", 42, "alice@example.com"},
+		{"__calendar_42", "alice@example.com", 42, "Example"},
 		{"__calendar_42", "  ", 42, "Remote account 42"},
+		{"alice@example.com", "alice@example.com", 42, "Example"},
 		{"Google", "alice@example.com", 42, "Google"},
 	} {
 		if got := UserFacingName(tc.name, tc.username, tc.id); got != tc.want {

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -74,6 +75,18 @@ func TestAppOAuthCalendarDiscoveryCancelReturnsToConnectionStep(t *testing.T) {
 	}
 }
 
+func TestCalendarDiscoveryAccountNameUsesFriendlyUniqueSuggestion(t *testing.T) {
+	accounts := []account.Account{
+		{ID: 3, Name: "maildodouglas@gmail.com", DisplayName: "Google", Username: "maildodouglas@gmail.com"},
+	}
+	if got := calendarDiscoveryAccountName(accounts, "other@gmail.com"); got != "Google (2)" {
+		t.Fatalf("second Google account name = %q, want %q", got, "Google (2)")
+	}
+	if got := calendarDiscoveryAccountName(accounts, "douglas.moura@jaya.tech"); got != "Jaya" {
+		t.Fatalf("workspace account name = %q, want %q", got, "Jaya")
+	}
+}
+
 func TestExistingCalendarDiscoveryAccountMatchesConnectionIdentity(t *testing.T) {
 	accounts := []account.Account{
 		{ID: 3, DisplayName: "First", ServerURL: "https://example.com/dav", AuthType: "basic", Username: "other"},
@@ -117,6 +130,7 @@ func TestAppAdditionalCalendarDiscoveryReturnsToUnsavedEditFormOnCancel(t *testi
 		management:       true,
 		originCalendarID: 11,
 		originAccountID:  7,
+		returnToEdit:     true,
 	})
 	m = updated.(Model)
 	if m.calendarDialog.discoveryPicker == nil {
@@ -253,6 +267,29 @@ func TestAppAccountMenuSelectionClosesMenuBeforeDispatch(t *testing.T) {
 	}
 }
 
+func TestAppSidebarAccountManagementStartsWithoutCalendarEdit(t *testing.T) {
+	m := NewModel(nil, "")
+	m.width, m.height = 120, 40
+	m.calendars = map[int64]CalendarInfo{
+		2: {Name: "Personal", Color: "#a6e3a1", AccountID: 7},
+	}
+
+	updated, cmd := m.Update(AccountCalendarManagementRequestedMsg{AccountID: 7, CalendarID: 2})
+	m = updated.(Model)
+	if cmd == nil || !m.syncing {
+		t.Fatalf("sidebar management start: command=%v syncing=%v", cmd, m.syncing)
+	}
+	if !m.calendarDialogOpen || m.calendarDialog.localDraft == nil {
+		t.Fatal("sidebar management did not establish a guarded account dialog")
+	}
+	if draft := m.calendarDialog.localDraft; draft.ID != 2 || draft.AccountID != 7 {
+		t.Fatalf("guarded dialog draft = %+v", draft)
+	}
+	if m.discoveryReturnToEdit {
+		t.Fatal("sidebar management should return to the sidebar, not a calendar edit")
+	}
+}
+
 func accountManagementAppModel(t *testing.T) Model {
 	t.Helper()
 	m := NewModel(nil, "")
@@ -274,6 +311,114 @@ func accountManagementAppModel(t *testing.T) Model {
 		99: {Name: "Local", IsDefault: true},
 	}
 	return m
+}
+func TestAppAccountReorderUpdatesSidebarAndSurvivesRacingReload(t *testing.T) {
+	m := accountManagementAppModel(t)
+	m.calendarDialogOpen = false
+	m.calendars[100] = CalendarInfo{Name: "Work", AccountID: 9, AccountName: "Work"}
+	m.calendars[42] = CalendarInfo{Name: "Personal", AccountID: 7, AccountName: "Personal"}
+	m.sidebar = m.sidebar.SetList(m.sidebar.List().SetItems(sortedCalendarListItems(m.calendars)))
+
+	updated, cmd := m.Update(AccountReorderedMsg{IDs: []int64{9, 7}})
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatal("account reorder did not schedule persistence")
+	}
+	if m.calendars[100].AccountOrder != 0 || m.calendars[42].AccountOrder != 1 {
+		t.Fatalf("optimistic account order = work:%d personal:%d",
+			m.calendars[100].AccountOrder, m.calendars[42].AccountOrder)
+	}
+
+	stale := map[int64]CalendarInfo{
+		42:  {Name: "Personal", AccountID: 7, AccountName: "Personal", AccountOrder: 0},
+		99:  {Name: "Local"},
+		100: {Name: "Work", AccountID: 9, AccountName: "Work", AccountOrder: 1},
+	}
+	updated, _ = m.Update(calendarsLoadedMsg{calendars: stale})
+	m = updated.(Model)
+	if m.calendars[100].AccountOrder != 0 || m.calendars[42].AccountOrder != 1 {
+		t.Fatalf("racing reload reverted account order = %+v", m.calendars)
+	}
+
+	updated, _ = m.Update(accountOrderSavedMsg{ids: []int64{9, 7}})
+	m = updated.(Model)
+	if len(m.pendingAccountOrder) != 0 {
+		t.Fatalf("confirmed account order remains pending: %+v", m.pendingAccountOrder)
+	}
+}
+func TestAppAccountReorderSerializesLatestOrder(t *testing.T) {
+	m := accountManagementAppModel(t)
+	m.calendarDialogOpen = false
+	m.calendars[100] = CalendarInfo{Name: "Work", AccountID: 9, AccountName: "Work"}
+
+	updated, firstSave := m.Update(AccountReorderedMsg{IDs: []int64{9, 7}})
+	m = updated.(Model)
+	if firstSave == nil {
+		t.Fatal("first account reorder did not start a save")
+	}
+	updated, secondSave := m.Update(AccountReorderedMsg{IDs: []int64{7, 9}})
+	m = updated.(Model)
+	if secondSave != nil {
+		t.Fatal("second account reorder started concurrently instead of being coalesced")
+	}
+
+	updated, latestSave := m.Update(accountOrderSavedMsg{ids: []int64{9, 7}})
+	m = updated.(Model)
+	if latestSave == nil || !m.accountOrderSaveInFlight {
+		t.Fatalf("older completion did not start latest save: command=%v inFlight=%v",
+			latestSave, m.accountOrderSaveInFlight)
+	}
+	updated, finalCmd := m.Update(accountOrderSavedMsg{ids: []int64{7, 9}})
+	m = updated.(Model)
+	if finalCmd != nil || m.accountOrderSaveInFlight || len(m.pendingAccountOrder) != 0 {
+		t.Fatalf("latest completion state: command=%v inFlight=%v pending=%+v",
+			finalCmd, m.accountOrderSaveInFlight, m.pendingAccountOrder)
+	}
+}
+
+func TestAppAccountReorderFailureRollsBackOptimisticOrder(t *testing.T) {
+	m := accountManagementAppModel(t)
+	m.calendarDialogOpen = false
+	m.calendars[100] = CalendarInfo{Name: "Work", AccountID: 9, AccountName: "Work"}
+
+	updated, _ := m.Update(AccountReorderedMsg{IDs: []int64{9, 7}})
+	m = updated.(Model)
+	updated, rollback := m.Update(accountOrderSavedMsg{
+		ids: []int64{9, 7},
+		err: errors.New("database busy"),
+	})
+	m = updated.(Model)
+	if rollback == nil {
+		t.Fatal("failed account reorder did not schedule a database reload")
+	}
+	if m.accountOrderSaveInFlight || len(m.pendingAccountOrder) != 0 {
+		t.Fatalf("failed account order remains optimistic: inFlight=%v pending=%+v",
+			m.accountOrderSaveInFlight, m.pendingAccountOrder)
+	}
+}
+
+func TestAppAccountRenameRoutesThroughOpenManager(t *testing.T) {
+	m := accountManagementAppModel(t)
+	updated, cmd := m.Update(AccountRenameRequestedMsg{AccountID: 7, Name: "Personal Google"})
+	m = updated.(Model)
+	if cmd == nil || !m.syncing {
+		t.Fatalf("rename start: command=%v syncing=%v", cmd, m.syncing)
+	}
+
+	updated, cmd = m.Update(accountRenameFinishedMsg{account: account.Account{
+		ID: 7, Name: "Personal Google", DisplayName: "Personal Google", Username: "douglas@example.com",
+	}})
+	m = updated.(Model)
+	if m.syncing {
+		t.Fatal("rename completion left syncing active")
+	}
+	if m.calendarDialog.discoveryPicker == nil ||
+		m.calendarDialog.discoveryPicker.discovery.Account.DisplayName != "Personal Google" {
+		t.Fatalf("rename completion did not refresh open manager: %+v", m.calendarDialog.discoveryPicker)
+	}
+	if cmd == nil {
+		t.Fatal("rename completion should reload calendars")
+	}
 }
 
 func TestAppAccountCalendarAddOnlySelectionStartsWithoutConfirmation(t *testing.T) {

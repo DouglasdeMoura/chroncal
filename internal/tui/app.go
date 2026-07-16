@@ -137,6 +137,10 @@ type calendarOrderSavedMsg struct {
 	ids []int64
 	err error
 }
+type accountOrderSavedMsg struct {
+	ids []int64
+	err error
+}
 
 type calendarDeleteCountMsg struct {
 	id         int64
@@ -320,6 +324,7 @@ type accountDiscoveryReadyMsg struct {
 	dialogGeneration uint64
 	originCalendarID int64
 	originAccountID  int64
+	returnToEdit     bool
 }
 
 type accountImportFinishedMsg struct {
@@ -389,11 +394,16 @@ type Model struct {
 	// onto reloads so an interleaved loadCalendars (e.g. a sync finishing
 	// mid-save) can't snap calendars back to the stale DB order, and cleared
 	// once calendarOrderSavedMsg confirms the write.
-	pendingOrder   map[int64]int64
-	dialog         EventDialogModel
-	dialogOpen     bool
-	viewDialog     EventViewDialogModel
-	viewDialogOpen bool
+	pendingOrder map[int64]int64
+	// Account order saves are serialized and coalesced to the newest complete
+	// ID list so rapid moves cannot commit out of order.
+	pendingAccountOrder      map[int64]int64
+	pendingAccountOrderIDs   []int64
+	accountOrderSaveInFlight bool
+	dialog                   EventDialogModel
+	dialogOpen               bool
+	viewDialog               EventViewDialogModel
+	viewDialogOpen           bool
 	// viewReturnEvent is set when the event form is opened from the
 	// view dialog; after the form closes (save or cancel) the app
 	// reopens the view with this event so the user lands back where
@@ -915,10 +925,12 @@ func (m Model) loadCalendars() tea.Cmd {
 		// name and server URL without an account query per calendar.
 		accountServerURLs := map[int64]string{}
 		accountNames := map[int64]string{}
+		accountOrders := map[int64]int64{}
 		if accounts, accountErr := m.app.Accounts.List(ctx); accountErr == nil {
 			for _, remoteAccount := range accounts {
 				accountServerURLs[remoteAccount.ID] = remoteAccount.ServerURL
 				accountNames[remoteAccount.ID] = remoteAccount.DisplayName
+				accountOrders[remoteAccount.ID] = remoteAccount.DisplayOrder
 			}
 		}
 		info := make(map[int64]CalendarInfo, len(cals))
@@ -935,6 +947,7 @@ func (m Model) loadCalendars() tea.Cmd {
 				AccountServerURL:    accountServerURLs[c.AccountID],
 				AccountID:           c.AccountID,
 				AccountName:         accountNames[c.AccountID],
+				AccountOrder:        accountOrders[c.AccountID],
 				RemoteAccess:        c.RemoteAccess,
 				RemoteComponents:    c.RemoteComponents,
 				RemoteMissing:       c.RemoteMissing,
@@ -962,15 +975,16 @@ func sortedCalendarListItems(calendars map[int64]CalendarInfo) []CalendarListIte
 			accountName = "Local"
 		}
 		items = append(items, CalendarListItem{
-			ID:          id,
-			Name:        calendarInfo.Name,
-			Color:       calendarInfo.Color,
-			Health:      syncHealthFor(calendarInfo),
-			Order:       calendarInfo.DisplayOrder,
-			AccountID:   calendarInfo.AccountID,
-			AccountName: accountName,
-			Access:      calendarInfo.RemoteAccess,
-			Missing:     calendarInfo.RemoteMissing,
+			ID:           id,
+			Name:         calendarInfo.Name,
+			Color:        calendarInfo.Color,
+			Health:       syncHealthFor(calendarInfo),
+			Order:        calendarInfo.DisplayOrder,
+			AccountID:    calendarInfo.AccountID,
+			AccountName:  accountName,
+			AccountOrder: calendarInfo.AccountOrder,
+			Access:       calendarInfo.RemoteAccess,
+			Missing:      calendarInfo.RemoteMissing,
 		})
 	}
 	slices.SortFunc(items, func(a, b CalendarListItem) int {
@@ -980,18 +994,32 @@ func sortedCalendarListItems(calendars map[int64]CalendarInfo) []CalendarListIte
 		if a.AccountID != 0 && b.AccountID == 0 {
 			return 1
 		}
-		if accountOrder := strings.Compare(strings.ToLower(a.AccountName), strings.ToLower(b.AccountName)); accountOrder != 0 {
-			return accountOrder
-		}
-		if a.AccountID < b.AccountID {
-			return -1
-		}
-		if a.AccountID > b.AccountID {
+		if a.AccountID != b.AccountID {
+			if a.AccountOrder < b.AccountOrder {
+				return -1
+			}
+			if a.AccountOrder > b.AccountOrder {
+				return 1
+			}
+			if a.AccountID < b.AccountID {
+				return -1
+			}
 			return 1
 		}
 		return compareCalendarOrder(a.Order, a.Name, b.Order, b.Name)
 	})
 	return items
+}
+
+func (m *Model) beginAccountOrderSave(ids []int64) tea.Cmd {
+	saved := slices.Clone(ids)
+	m.accountOrderSaveInFlight = true
+	return func() tea.Msg {
+		return accountOrderSavedMsg{
+			ids: saved,
+			err: m.app.Accounts.SetOrder(context.Background(), saved),
+		}
+	}
 }
 
 // blockReadOnlyCalendarMutation rejects event mutations on calendars the remote
@@ -1184,20 +1212,24 @@ func (m Model) finishOAuthReauth(result *auth.GoogleOAuthResult) tea.Cmd {
 }
 
 func calendarDiscoveryAccountName(accounts []account.Account, username string) string {
-	base := strings.TrimSpace(username)
+	base := account.SuggestedName(username)
 	if base == "" {
 		base = "CalDAV"
 	}
 	taken := make(map[string]struct{}, len(accounts))
 	for _, configured := range accounts {
-		taken[configured.Name] = struct{}{}
+		name := strings.TrimSpace(configured.DisplayName)
+		if name == "" {
+			name = account.UserFacingName(configured.Name, configured.Username, configured.ID)
+		}
+		taken[strings.ToLower(name)] = struct{}{}
 	}
-	if _, exists := taken[base]; !exists {
+	if _, exists := taken[strings.ToLower(base)]; !exists {
 		return base
 	}
 	for suffix := 2; ; suffix++ {
 		candidate := fmt.Sprintf("%s (%d)", base, suffix)
-		if _, exists := taken[candidate]; !exists {
+		if _, exists := taken[strings.ToLower(candidate)]; !exists {
 			return candidate
 		}
 	}
@@ -1501,6 +1533,7 @@ func (m Model) discardDiscoveryAccount(accountID int64) tea.Cmd {
 func (m Model) discoverAdditionalCalendars(
 	calendarID, accountID int64,
 	dialogGeneration uint64,
+	returnToEdit bool,
 ) tea.Cmd {
 	result := func(discovery account.Discovery, err error) accountDiscoveryReadyMsg {
 		return accountDiscoveryReadyMsg{
@@ -1510,6 +1543,7 @@ func (m Model) discoverAdditionalCalendars(
 			dialogGeneration: dialogGeneration,
 			originCalendarID: calendarID,
 			originAccountID:  accountID,
+			returnToEdit:     returnToEdit,
 		}
 	}
 	return func() tea.Msg {
@@ -2023,6 +2057,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			CalendarDeleteRequestedMsg, CalendarDialogClosedMsg,
 			CalendarDisconnectRemoteRequestedMsg,
 			CalendarTestRequestedMsg,
+			AccountRenameRequestedMsg, accountRenameFinishedMsg,
 			CalendarSetDefaultRequestedMsg,
 			CalendarReauthRequestedMsg,
 			CalendarDiscoverAdditionalRequestedMsg,
@@ -2212,6 +2247,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// entry so the map can't grow without bound across
 					// reorder+delete cycles.
 					delete(m.pendingOrder, id)
+				}
+			}
+			for accountID, pos := range m.pendingAccountOrder {
+				found := false
+				for id, c := range m.calendars {
+					if c.AccountID != accountID {
+						continue
+					}
+					found = true
+					c.AccountOrder = pos
+					m.calendars[id] = c
+				}
+				if !found {
+					delete(m.pendingAccountOrder, accountID)
 				}
 			}
 			m.sidebar = m.sidebar.SetList(m.sidebar.List().SetItems(sortedCalendarListItems(m.calendars)))
@@ -2679,29 +2728,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m = m.refreshMiniMonthDays()
 		return m, nil
 
-	case CalendarVisibilityBatchToggledMsg:
-		if m.hiddenCalendars == nil {
-			m.hiddenCalendars = map[int64]bool{}
-		}
-		for _, id := range msg.IDs {
-			if msg.Hidden {
-				m.hiddenCalendars[id] = true
-			} else {
-				delete(m.hiddenCalendars, id)
-			}
-		}
-		m.saveUIState()
-		m = m.refreshCalendarViews()
-		m = m.refreshMiniMonthDays()
-		if m.dialogOpen {
-			dayEvents := eventsOn(filterVisibleEvents(m.events, m.hiddenCalendars), m.dialog.day)
-			m.dialog = m.dialog.SetEvents(dayEvents)
-		}
-		if m.calendarListDialogOpen {
-			m.calendarListDialog = m.calendarListDialog.SetCalendars(m.calendars, m.hiddenCalendars)
-		}
-		return m, nil
-
 	case CalendarVisibilityToggledMsg:
 		if m.hiddenCalendars == nil {
 			m.hiddenCalendars = map[int64]bool{}
@@ -2752,6 +2778,49 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return calendarOrderSavedMsg{ids: ids, err: m.app.Calendars.SetOrder(context.Background(), ids)}
 		}
 
+	case AccountReorderedMsg:
+		ids := slices.Clone(msg.IDs)
+		m.pendingAccountOrder = make(map[int64]int64, len(ids))
+		m.pendingAccountOrderIDs = ids
+		for i, accountID := range ids {
+			position := int64(i)
+			m.pendingAccountOrder[accountID] = position
+			for calendarID, info := range m.calendars {
+				if info.AccountID == accountID {
+					info.AccountOrder = position
+					m.calendars[calendarID] = info
+				}
+			}
+		}
+		m.sidebar = m.sidebar.SetList(
+			m.sidebar.List().SetItemsPreservingCursor(sortedCalendarListItems(m.calendars)),
+		)
+		if m.accountOrderSaveInFlight {
+			return m, nil
+		}
+		return m, m.beginAccountOrderSave(ids)
+
+	case accountOrderSavedMsg:
+		m.accountOrderSaveInFlight = false
+		latest := m.pendingAccountOrderIDs
+		if len(latest) > 0 && !slices.Equal(msg.ids, latest) {
+			saveLatest := m.beginAccountOrderSave(latest)
+			if msg.err != nil {
+				return m, tea.Batch(m.toast.Failed(msg.err.Error()), saveLatest)
+			}
+			return m, saveLatest
+		}
+		for i, id := range msg.ids {
+			if m.pendingAccountOrder[id] == int64(i) {
+				delete(m.pendingAccountOrder, id)
+			}
+		}
+		m.pendingAccountOrderIDs = nil
+		if msg.err != nil {
+			return m, tea.Batch(m.toast.Failed(msg.err.Error()), m.loadCalendars())
+		}
+		return m, nil
+
 	case calendarOrderSavedMsg:
 		if msg.err != nil {
 			return m, m.toast.Failed(msg.err.Error())
@@ -2766,6 +2835,72 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case AccountRenameRequestedMsg:
+		if m.syncing {
+			return m, nil
+		}
+		m.syncing = true
+		m.syncStatus = "Renaming account…"
+		request := msg
+		return m, func() tea.Msg {
+			renamed, err := m.app.Accounts.Rename(context.Background(), request.AccountID, request.Name)
+			return accountRenameFinishedMsg{account: renamed, err: err}
+		}
+
+	case accountRenameFinishedMsg:
+		m.syncing = false
+		if m.calendarDialog.discoveryPicker != nil {
+			picker, _ := m.calendarDialog.discoveryPicker.Update(msg)
+			m.calendarDialog.discoveryPicker = &picker
+		}
+		m.statusToken++
+		if msg.err != nil {
+			m.syncStatus = "Account rename failed: " + msg.err.Error()
+			return m, tea.Batch(
+				m.toast.Failed(msg.err.Error()),
+				m.expireStatusAfter(8*time.Second, m.statusToken),
+			)
+		}
+		m.syncStatus = fmt.Sprintf("Renamed account to %s", msg.account.DisplayName)
+		return m, tea.Batch(
+			m.loadCalendars(),
+			m.expireStatusAfter(6*time.Second, m.statusToken),
+		)
+
+	case AccountCalendarManagementRequestedMsg:
+		if m.syncing || m.oauthFlowOpen || m.oauthPending {
+			return m, nil
+		}
+		info, ok := m.calendars[msg.CalendarID]
+		if !ok || info.AccountID != msg.AccountID || msg.AccountID == 0 {
+			return m, m.toast.Failed("Calendar is no longer linked to this account")
+		}
+		color := info.Color
+		if color == "" {
+			color = "#a6e3a1"
+		}
+		m.calendarDialog = NewCalendarDialogModel(CalendarDialogParams{
+			ID:           msg.CalendarID,
+			AccountID:    msg.AccountID,
+			Name:         info.Name,
+			Color:        color,
+			RemoteLinked: true,
+		}, m.theme).SetSize(m.width, m.height)
+		m.calendarDialogGeneration++
+		m.calendarDialogOpen = true
+		m.discoveryReturnToEdit = false
+		m.syncing = true
+		m.syncStatus = "Discovering calendars…"
+		return m, tea.Batch(
+			m.syncSpinner.Tick,
+			m.discoverAdditionalCalendars(
+				msg.CalendarID,
+				msg.AccountID,
+				m.calendarDialogGeneration,
+				false,
+			),
+		)
+
 	case CalendarDiscoverAdditionalRequestedMsg:
 		if m.syncing || m.oauthFlowOpen || m.oauthPending {
 			return m, nil
@@ -2775,7 +2910,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncStatus = "Discovering calendars…"
 		return m, tea.Batch(
 			m.syncSpinner.Tick,
-			m.discoverAdditionalCalendars(msg.CalendarID, msg.AccountID, m.calendarDialogGeneration),
+			m.discoverAdditionalCalendars(
+				msg.CalendarID,
+				msg.AccountID,
+				m.calendarDialogGeneration,
+				true,
+			),
 		)
 
 	case CalendarDiscoveryRequestedMsg:
@@ -2815,6 +2955,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.syncing = false
+		if msg.err != nil && msg.management && !msg.returnToEdit {
+			m.calendarDialogOpen = false
+			m.statusToken++
+			m.syncStatus = "Calendar discovery failed: " + msg.err.Error()
+			return m, tea.Batch(
+				m.toast.Failed(msg.err.Error()),
+				m.expireStatusAfter(10*time.Second, m.statusToken),
+			)
+		}
 		if msg.err != nil {
 			m.calendarDialogOpen = true
 			m.statusToken++
@@ -2826,7 +2975,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pendingDiscoveryAccountID = msg.discovery.Account.ID
 		m.pendingDiscoveryCreated = msg.createdAccount
 		if msg.management {
-			m.discoveryReturnToEdit = true
+			m.discoveryReturnToEdit = msg.returnToEdit
 			m.calendarDialog = m.calendarDialog.ShowCalendarManagement(msg.discovery).SetSize(m.width, m.height)
 		} else {
 			m.calendarDialog = m.calendarDialog.ShowDiscovery(msg.discovery).SetSize(m.width, m.height)

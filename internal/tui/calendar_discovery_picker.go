@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
@@ -28,16 +29,91 @@ type AccountCalendarsReconcileRequestedMsg struct {
 
 // AccountCalendarPickerClosedMsg closes the discovery picker without importing.
 type AccountCalendarPickerClosedMsg struct{}
+type accountRenameOpenMsg struct{}
+type accountRenameCancelledMsg struct{}
+
+// AccountRenameRequestedMsg asks the application to persist a new
+// human-facing account description.
+type AccountRenameRequestedMsg struct {
+	AccountID int64
+	Name      string
+}
+
+type accountRenameFinishedMsg struct {
+	account account.Account
+	err     error
+}
+
+type AccountRenameDialogModel struct {
+	dialog Dialog
+	form   Form
+	help   help.Model
+}
+
+func newAccountRenameDialogModel(acct account.Account, theme Theme) AccountRenameDialogModel {
+	field := NewTextField("Account name")
+	field.SetValue(acct.DisplayName)
+	field.SetCharLimit(128)
+	styles := DefaultFormStyles()
+	styles.LabelLayout = LabelTop
+	form := NewForm("Rename", styles, FormItem{Label: "Name", Field: field, Required: true})
+	form.OnSubmit(func(f *Form) tea.Cmd {
+		name := strings.TrimSpace(f.Field(0).(*TextField).Value())
+		return func() tea.Msg { return AccountRenameRequestedMsg{AccountID: acct.ID, Name: name} }
+	})
+	form.OnCancel(func(*Form) tea.Cmd {
+		return func() tea.Msg { return accountRenameCancelledMsg{} }
+	})
+	return AccountRenameDialogModel{
+		dialog: NewDialog("Rename Account", DefaultDialogStyles()),
+		form:   form,
+		help:   newThemedHelp(theme),
+	}
+}
+
+func (m AccountRenameDialogModel) SetSize(w, h int) AccountRenameDialogModel {
+	const maxWidth = 50
+	w = min(w, maxWidth)
+	m.dialog = m.dialog.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	m.dialog.SetWidth(w)
+	m.form.SetWidth(m.dialog.ContentWidth())
+	return m
+}
+
+func (m AccountRenameDialogModel) Update(msg tea.Msg) (AccountRenameDialogModel, tea.Cmd) {
+	if size, ok := msg.(tea.WindowSizeMsg); ok {
+		return m.SetSize(size.Width, size.Height), nil
+	}
+	if keyMsg, ok := msg.(tea.KeyPressMsg); ok &&
+		key.Matches(keyMsg, key.NewBinding(key.WithKeys("esc"))) {
+		return m, func() tea.Msg { return accountRenameCancelledMsg{} }
+	}
+	var cmd tea.Cmd
+	m.form, cmd = m.form.Update(msg)
+	return m, cmd
+}
+
+func (m AccountRenameDialogModel) View() string {
+	m.dialog.SetFooter(m.help.ShortHelpView([]key.Binding{
+		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "switch")),
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select")),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
+	}))
+	return m.dialog.Box(m.form.View())
+}
 
 // AccountCalendarPickerModel presents every discovered collection, including
 // read-only and unsupported rows. Add mode selects new imports; management
 // mode edits the account's desired final local calendar set.
 type AccountCalendarPickerModel struct {
-	discovery   account.Discovery
-	selected    map[string]bool
-	manage      bool
-	shell       ListDialogModel
-	rowCalendar []int
+	discovery    account.Discovery
+	selected     map[string]bool
+	manage       bool
+	shell        ListDialogModel
+	rowCalendar  []int
+	renameDialog *AccountRenameDialogModel
+	width        int
+	height       int
 
 	theme Theme
 }
@@ -78,7 +154,12 @@ func newAccountCalendarPickerModel(discovery account.Discovery, theme Theme, man
 }
 
 func (m AccountCalendarPickerModel) SetSize(w, h int) AccountCalendarPickerModel {
+	m.width, m.height = w, h
 	m.shell = m.shell.SetSize(w, h)
+	if m.renameDialog != nil {
+		rename := m.renameDialog.SetSize(w, h)
+		m.renameDialog = &rename
+	}
 	return m.refresh()
 }
 
@@ -151,6 +232,34 @@ func (m AccountCalendarPickerModel) applySelection() tea.Cmd {
 
 func (m AccountCalendarPickerModel) Update(msg tea.Msg) (AccountCalendarPickerModel, tea.Cmd) {
 	switch msg := msg.(type) {
+	case accountRenameOpenMsg:
+		if !m.manage {
+			return m, nil
+		}
+		rename := newAccountRenameDialogModel(m.discovery.Account, m.theme).SetSize(m.width, m.height)
+		m.renameDialog = &rename
+		return m, nil
+	case accountRenameCancelledMsg:
+		m.renameDialog = nil
+		return m, nil
+	case accountRenameFinishedMsg:
+		if msg.err != nil {
+			if m.renameDialog != nil {
+				m.renameDialog.form.SetError(0, msg.err.Error())
+			}
+			return m, nil
+		}
+		m.discovery.Account = msg.account
+		m.renameDialog = nil
+		return m.refresh(), nil
+	}
+	if m.renameDialog != nil {
+		rename, cmd := m.renameDialog.Update(msg)
+		m.renameDialog = &rename
+		return m, cmd
+	}
+
+	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		return m.SetSize(msg.Width, msg.Height), nil
 	case tea.KeyPressMsg:
@@ -196,9 +305,15 @@ func (m AccountCalendarPickerModel) Update(msg tea.Msg) (AccountCalendarPickerMo
 	return m, nil
 }
 
-func (m AccountCalendarPickerModel) View() string { return m.shell.View() }
+func (m AccountCalendarPickerModel) View() string {
+	if m.renameDialog != nil {
+		return m.renameDialog.View()
+	}
+	return m.shell.View()
+}
 
 func (m AccountCalendarPickerModel) refresh() AccountCalendarPickerModel {
+	m.shell = m.shell.SetTitleContext(accountPickerIdentity(m.discovery.Account))
 	previousPath := m.currentRemotePath()
 	rows, rowCalendar, disabledRows := m.buildRows()
 	m.rowCalendar = rowCalendar
@@ -245,10 +360,19 @@ func (m AccountCalendarPickerModel) refresh() AccountCalendarPickerModel {
 	} else if count > 1 {
 		actionLabel = fmt.Sprintf("Add %d Calendars", count)
 	}
-	m.shell = m.shell.SetActions([]ListDialogAction{
+	actions := []ListDialogAction{
 		{Label: actionLabel, Primary: true, Disabled: actionDisabled, Msg: m.applySelection()},
-		{Label: "Cancel", Msg: func() tea.Msg { return AccountCalendarPickerClosedMsg{} }},
+	}
+	if m.manage {
+		actions = append(actions, ListDialogAction{
+			Label: "Rename Account…",
+			Msg:   func() tea.Msg { return accountRenameOpenMsg{} },
+		})
+	}
+	actions = append(actions, ListDialogAction{
+		Label: "Cancel", Msg: func() tea.Msg { return AccountCalendarPickerClosedMsg{} },
 	})
+	m.shell = m.shell.SetActions(actions)
 	keys := m.shell.Keys()
 	m.shell = m.shell.SetShortHelp([]key.Binding{
 		key.NewBinding(key.WithKeys("up", "down", "k", "j"), key.WithHelp("↑↓", "navigate")),

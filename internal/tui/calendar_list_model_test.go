@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -188,19 +189,97 @@ func groupedListFixture() CalendarListModel {
 	}
 	return NewCalendarListModel(items, nil).SetSize(50, 20).Focus()
 }
+func calendarListRowForCalendarID(t *testing.T, m CalendarListModel, id int64) int {
+	t.Helper()
+	for rowIndex, row := range m.rows {
+		if row.kind == calendarRow && m.items[row.itemIndex].ID == id {
+			return rowIndex
+		}
+	}
+	t.Fatalf("calendar %d has no rendered row", id)
+	return -1
+}
 
-func TestCalendarList_GroupsCalendarsByAccount(t *testing.T) {
+func calendarListRowForAccountID(t *testing.T, m CalendarListModel, id int64) int {
+	t.Helper()
+	for rowIndex, row := range m.rows {
+		if row.kind == accountHeaderRow && row.accountID == id {
+			return rowIndex
+		}
+	}
+	t.Fatalf("account %d has no rendered row", id)
+	return -1
+}
+
+func TestCalendarList_GroupsCalendarsIntoCleanAccountSections(t *testing.T) {
 	m := groupedListFixture()
-	out := m.View()
-	for _, want := range []string{"Local", "Google", "Work", "Holidays in Brazil", "[read-only]", "[missing]"} {
+	out := stripANSI(m.View())
+	for _, want := range []string{"Local", "Google", "Work", "Holidays in Brazil"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("grouped view missing %q:\n%s", want, out)
 		}
 	}
-	if m.RowCount() != 7 {
-		t.Fatalf("row count = %d, want three headers plus four calendars", m.RowCount())
+	for _, unwanted := range []string{"[read-only]", "[missing]", "Local 1", "Google 2", "Work 1"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("grouped view contains sidebar metadata %q:\n%s", unwanted, out)
+		}
+	}
+	lines := strings.Split(out, "\n")
+	blankAfter := func(name string) bool {
+		for i, line := range lines[:len(lines)-1] {
+			if strings.Contains(line, name) && strings.TrimSpace(lines[i+1]) == "" {
+				return true
+			}
+		}
+		return false
+	}
+	if !blankAfter("On device") || !blankAfter("Holidays in Brazil") {
+		t.Fatalf("account sections should be separated by a blank row:\n%q", out)
+	}
+	if m.RowCount() != 9 {
+		t.Fatalf("row count = %d, want three headers, four calendars, and two separators", m.RowCount())
 	}
 }
+
+func TestCalendarList_NarrowGroupedSidebarRemainsScannable(t *testing.T) {
+	m := groupedListFixture().SetSize(22, 20)
+	out := stripANSI(m.View())
+	for _, line := range strings.Split(out, "\n") {
+		if lipgloss.Width(line) > 22 {
+			t.Fatalf("narrow sidebar line width = %d, want <= 22: %q\n%s",
+				lipgloss.Width(line), line, out)
+		}
+	}
+	for _, want := range []string{"Local", "Google", "Work", "Personal"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("narrow sidebar missing %q:\n%s", want, out)
+		}
+	}
+	for _, unwanted := range []string{"read-only", "missing", "Google 2"} {
+		if strings.Contains(out, unwanted) {
+			t.Fatalf("narrow sidebar contains noisy metadata %q:\n%s", unwanted, out)
+		}
+	}
+}
+
+func TestCalendarList_SelectedCalendarUsesThemeAccentInsteadOfReverseVideo(t *testing.T) {
+	m := groupedListFixture().SetTheme(
+		lipgloss.Color("#112233"),
+		lipgloss.Color("#445566"),
+		lipgloss.Color("#ddeeff"),
+		lipgloss.Color("#ffffff"),
+		lipgloss.Color("#ff0000"),
+	)
+	m.cursor = calendarListRowForCalendarID(t, m, 2)
+	out := m.View()
+	if strings.Contains(out, "\x1b[1;7m") {
+		t.Fatalf("selected calendar uses reverse video instead of the theme accent: %q", out)
+	}
+	if !strings.Contains(out, "48;2;17;34;51") {
+		t.Fatalf("selected calendar does not use accent background #112233: %q", out)
+	}
+}
+
 func TestCalendarList_AccountHeadersHaveNoCalendarMarker(t *testing.T) {
 	for line := range strings.SplitSeq(stripANSI(groupedListFixture().View()), "\n") {
 		if strings.Contains(line, "Google") && strings.ContainsAny(line, "●○◐") {
@@ -209,47 +288,92 @@ func TestCalendarList_AccountHeadersHaveNoCalendarMarker(t *testing.T) {
 	}
 }
 
-func TestCalendarList_AccountHeaderCollapsesChildren(t *testing.T) {
+func TestCalendarList_AccountHeaderUsesLeftAndRightForDisclosure(t *testing.T) {
 	m := groupedListFixture()
-	m.cursor = 2 // Google header
-	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m.cursor = calendarListRowForAccountID(t, m, 7)
+
+	collapsed, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
 	if cmd != nil {
 		t.Fatal("collapsing a group should not emit a parent command")
 	}
-	if !next.collapsed[7] {
+	if !collapsed.collapsed[7] {
 		t.Fatal("Google group should be collapsed")
 	}
-	if next.RowCount() != 5 {
-		t.Fatalf("collapsed row count = %d, want two Google children hidden", next.RowCount())
+	if collapsed.RowCount() != 7 {
+		t.Fatalf("collapsed row count = %d, want two Google children hidden", collapsed.RowCount())
 	}
-	out := next.View()
-	if strings.Contains(out, "Holidays in Brazil") || !strings.Contains(out, "Google") {
+	if out := collapsed.View(); strings.Contains(out, "Holidays in Brazil") || !strings.Contains(out, "Google") {
 		t.Fatalf("collapsed view should keep header and hide children:\n%s", out)
+	}
+
+	expanded, cmd := collapsed.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	if cmd != nil {
+		t.Fatal("expanding a group should not emit a parent command")
+	}
+	if expanded.collapsed[7] || expanded.RowCount() != 9 {
+		t.Fatalf("right should restore the expanded account section: collapsed=%v rows=%d", expanded.collapsed[7], expanded.RowCount())
 	}
 }
 
-func TestCalendarList_AccountHeaderTogglesEveryChild(t *testing.T) {
+func TestCalendarList_AccountHeaderSpaceDoesNotToggleCalendars(t *testing.T) {
 	m := groupedListFixture()
-	m.cursor = 2 // Google header
+	m.cursor = calendarListRowForAccountID(t, m, 7)
 	next, cmd := m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
+	if cmd != nil {
+		t.Fatalf("account heading Space emitted hidden bulk action %T", cmd())
+	}
+	if next.hidden[2] || next.hidden[3] {
+		t.Fatalf("account heading Space changed child visibility: %v", next.hidden)
+	}
+}
+
+func TestCalendarList_AccountHeaderEnterRequestsManagement(t *testing.T) {
+	m := groupedListFixture()
+	m.cursor = calendarListRowForAccountID(t, m, 7)
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
-		t.Fatal("expected batch visibility command")
+		t.Fatal("account heading Enter should request account management")
 	}
-	msg, ok := cmd().(CalendarVisibilityBatchToggledMsg)
-	if !ok {
-		t.Fatalf("message = %T, want CalendarVisibilityBatchToggledMsg", cmd())
+	msg, ok := cmd().(AccountCalendarManagementRequestedMsg)
+	if !ok || msg.AccountID != 7 || msg.CalendarID != 2 {
+		t.Fatalf("management request = %#v", cmd())
 	}
-	if len(msg.IDs) != 2 || msg.IDs[0] != 2 || msg.IDs[1] != 3 || !msg.Hidden {
-		t.Fatalf("batch message = %+v", msg)
+}
+
+func TestCalendarList_AccountHeaderMouseTargetsSeparateDisclosureAndManagement(t *testing.T) {
+	m := groupedListFixture()
+	header := calendarListRowForAccountID(t, m, 7)
+
+	collapsed, cmd := m.HandleClick(1, header)
+	if cmd != nil || !collapsed.collapsed[7] {
+		t.Fatalf("disclosure click: command=%v collapsed=%v", cmd, collapsed.collapsed[7])
 	}
-	if !next.hidden[2] || !next.hidden[3] {
-		t.Fatalf("group children were not hidden: %v", next.hidden)
+
+	opened, cmd := m.HandleClick(6, header)
+	if opened.collapsed[7] {
+		t.Fatal("account name click should not collapse the section")
+	}
+	if cmd == nil {
+		t.Fatal("account name click should request management")
+	}
+	msg, ok := cmd().(AccountCalendarManagementRequestedMsg)
+	if !ok || msg.AccountID != 7 || msg.CalendarID != 2 {
+		t.Fatalf("management request = %#v", cmd())
+	}
+}
+
+func TestCalendarList_CursorSkipsAccountSeparators(t *testing.T) {
+	m := groupedListFixture()
+	m.cursor = calendarListRowForCalendarID(t, m, 1)
+	next := m.moveCursor(1)
+	if next.rows[next.cursor].kind != accountHeaderRow || next.rows[next.cursor].accountID != 7 {
+		t.Fatalf("cursor landed on noninteractive separator: row=%+v", next.rows[next.cursor])
 	}
 }
 
 func TestCalendarList_ReorderStaysWithinAccount(t *testing.T) {
 	m := groupedListFixture()
-	m.cursor = 3 // Personal
+	m.cursor = calendarListRowForCalendarID(t, m, 2)
 	if _, cmd := m.moveCurrent(-1); cmd != nil {
 		t.Fatal("calendar must not move across its account header")
 	}
@@ -262,8 +386,31 @@ func TestCalendarList_ReorderStaysWithinAccount(t *testing.T) {
 		got[0] != want[0] || got[1] != want[1] || got[2] != want[2] || got[3] != want[3] {
 		t.Fatalf("reordered IDs = %v, want %v", got, want)
 	}
-	if next.cursor != 4 {
-		t.Fatalf("cursor = %d, want moved calendar row 4", next.cursor)
+	if next.cursor != calendarListRowForCalendarID(t, next, 2) {
+		t.Fatalf("cursor = %d, want moved calendar row %d", next.cursor, calendarListRowForCalendarID(t, next, 2))
+	}
+}
+
+func TestCalendarList_ReordersRemoteAccountSectionsButKeepsLocalFirst(t *testing.T) {
+	m := groupedListFixture()
+	m.cursor = calendarListRowForAccountID(t, m, 7)
+	if _, cmd := m.moveAccount(-1); cmd != nil {
+		t.Fatal("remote account moved above the local section")
+	}
+
+	next, cmd := m.moveAccount(1)
+	if cmd == nil {
+		t.Fatal("remote account did not move below the adjacent remote account")
+	}
+	msg, ok := cmd().(AccountReorderedMsg)
+	if !ok || !slices.Equal(msg.IDs, []int64{9, 7}) {
+		t.Fatalf("account reorder message = %#v", cmd())
+	}
+	if next.items[0].AccountID != 0 || next.items[1].AccountID != 9 || next.items[2].AccountID != 7 {
+		t.Fatalf("reordered account blocks = %+v", next.items)
+	}
+	if next.cursor != calendarListRowForAccountID(t, next, 7) {
+		t.Fatalf("cursor did not follow moved account: %d", next.cursor)
 	}
 }
 
