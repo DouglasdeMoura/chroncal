@@ -182,6 +182,56 @@ func TestListDialog_ViewContainsTitleAndRows(t *testing.T) {
 	}
 }
 
+func TestListDialog_TitleContextSharesTitleRowAndLeavesSubtitleBlank(t *testing.T) {
+	m := makeListDialogFixture().SetTitleContext("Google · me@example.com")
+	lines := strings.Split(stripANSI(m.View()), "\n")
+
+	titleRow := -1
+	for idx, line := range lines {
+		if strings.Contains(line, "Calendars") {
+			titleRow = idx
+			if !strings.Contains(line, "Google · me@example.com") {
+				t.Fatalf("title context is not on the title row:\n%s", stripANSI(m.View()))
+			}
+			if !strings.HasSuffix(line, "Google · me@example.com  │") {
+				t.Errorf("title context is not flush-right inside the dialog: %q", line)
+			}
+			break
+		}
+	}
+	if titleRow < 0 {
+		t.Fatalf("title row not found:\n%s", stripANSI(m.View()))
+	}
+	if titleRow+1 >= len(lines) {
+		t.Fatal("title row has no following line")
+	}
+	if strings.TrimSpace(strings.Trim(lines[titleRow+1], "│")) != "" {
+		t.Errorf("line below the title is not blank: %q", lines[titleRow+1])
+	}
+}
+
+func TestListDialog_TitleContextTruncatesBeforeTitleAction(t *testing.T) {
+	action := ListDialogAction{Label: "New", Msg: func() tea.Msg { return "new" }}
+	m := makeListDialogFixture().
+		SetSize(50, 20).
+		SetTitleContext("An exceptionally long account identity that cannot fit").
+		SetTitleAction(&action)
+	view := m.View()
+	plain := stripANSI(view)
+
+	if !strings.Contains(plain, "Calendars") || !strings.Contains(plain, "New") {
+		t.Fatalf("narrow title lost its title or action:\n%s", plain)
+	}
+	if strings.Contains(plain, "An exceptionally long account identity that cannot fit") {
+		t.Errorf("title context was not truncated:\n%s", plain)
+	}
+	for lineNumber, line := range strings.Split(view, "\n") {
+		if got := lipgloss.Width(line); got > 50 {
+			t.Errorf("rendered line %d is %d columns wide, max 50:\n%s", lineNumber+1, got, plain)
+		}
+	}
+}
+
 func TestListDialog_ViewHandlesEmptyList(t *testing.T) {
 	m := NewListDialogModel(newThemedHelp(NewTheme(false))).
 		SetSize(120, 30).

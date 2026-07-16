@@ -52,6 +52,27 @@ func TestAccountCalendarPickerPresentsSectionedAccountInventory(t *testing.T) {
 			t.Errorf("picker view missing %q:\n%s", want, plain)
 		}
 	}
+	headerRow := -1
+	lines := strings.Split(plain, "\n")
+	for idx, line := range lines {
+		if strings.Contains(line, "Add Calendars") {
+			headerRow = idx
+			if !strings.Contains(line, "Google · douglas@example.com") {
+				t.Errorf("account identity is not on the title row: %q", line)
+			}
+			break
+		}
+	}
+	if headerRow < 0 {
+		t.Fatalf("picker title row not found:\n%s", plain)
+	}
+	if headerRow+1 >= len(lines) {
+		t.Fatal("picker title row has no following line")
+	}
+	if strings.TrimSpace(strings.Trim(lines[headerRow+1], "│")) != "" {
+		t.Errorf("line below picker title is not blank: %q", lines[headerRow+1])
+	}
+
 	if available, added, unavailable := strings.Index(plain, "Available"), strings.Index(plain, "Already Added"), strings.Index(plain, "Unavailable"); available >= added || added >= unavailable {
 		t.Errorf("section order = Available:%d Already Added:%d Unavailable:%d", available, added, unavailable)
 	}
@@ -193,4 +214,21 @@ func TestAccountCalendarPickerNarrowLayoutFitsTerminal(t *testing.T) {
 			t.Errorf("narrow picker missing %q:\n%s", want, plain)
 		}
 	}
+	lines := strings.Split(plain, "\n")
+	for idx, line := range lines {
+		if !strings.Contains(line, "Add Calendars") {
+			continue
+		}
+		if !strings.Contains(line, "Google · douglas@example.com") {
+			t.Errorf("narrow account identity is not on the title row: %q", line)
+		}
+		if idx+1 >= len(lines) {
+			t.Fatal("narrow picker title row has no following line")
+		}
+		if strings.TrimSpace(strings.Trim(lines[idx+1], "│")) != "" {
+			t.Errorf("narrow line below picker title is not blank: %q", lines[idx+1])
+		}
+		return
+	}
+	t.Fatalf("narrow picker title row not found:\n%s", plain)
 }

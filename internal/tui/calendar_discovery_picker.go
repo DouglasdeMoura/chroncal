@@ -46,7 +46,7 @@ func NewAccountCalendarPickerModel(discovery account.Discovery, theme Theme) Acc
 		selected:  selected,
 		shell: NewListDialogModel(newThemedHelp(theme)).
 			SetTitle("Add Calendars").
-			SetSubtitle(accountPickerIdentity(discovery.Account)).
+			SetTitleContext(accountPickerIdentity(discovery.Account)).
 			SetSelectedColor(theme.Selected),
 		theme: theme,
 	}

@@ -82,7 +82,9 @@ const (
 // Everything else (selection tint, scroll, zone cycling, hit-testing) lives
 // here so each dialog collapses to its domain concerns.
 type ListDialogModel struct {
-	title    string
+	title        string
+	titleContext string
+
 	subtitle string
 
 	titleAction *ListDialogAction
@@ -143,6 +145,10 @@ func (m ListDialogModel) SetSize(w, h int) ListDialogModel {
 }
 func (m ListDialogModel) SetTitle(t string) ListDialogModel    { m.title = t; return m }
 func (m ListDialogModel) SetSubtitle(s string) ListDialogModel { m.subtitle = s; return m }
+func (m ListDialogModel) SetTitleContext(s string) ListDialogModel {
+	m.titleContext = s
+	return m
+}
 
 // SetTitleAction installs a right-aligned button on the title line, or clears
 // it when a is nil. Use for creation actions ("New", …) that belong to the
@@ -1062,22 +1068,43 @@ func (m ListDialogModel) renderSubtitle(innerW int) string {
 		Render(truncateTo(m.subtitle, innerW))
 }
 
-// renderTitleRow composes the bold title with the optional right-aligned
-// title-action button, falling back to just the title when no action is set.
+// renderTitleRow composes the bold title with optional quiet context and an
+// optional action at the right edge. Context truncates before either control.
 func (m ListDialogModel) renderTitleRow(innerW int) string {
-	if m.titleAction == nil {
-		return lipgloss.NewStyle().Bold(true).Width(innerW).Render(m.title)
+	var button string
+	if m.titleAction != nil {
+		focused := !m.titleAction.Disabled && m.focusZone == ListZoneTitleAction
+		button = renderTitleActionButton(*m.titleAction, focused)
 	}
-	focused := !m.titleAction.Disabled && m.focusZone == ListZoneTitleAction
-	btn := renderTitleActionButton(*m.titleAction, focused)
 
-	btnW := lipgloss.Width(btn)
-	titleW := max(innerW-btnW, 0)
-	titleStr := lipgloss.NewStyle().
+	buttonW := lipgloss.Width(button)
+	titleNeed := min(lipgloss.Width(m.title), max(innerW-buttonW, 0))
+	contextBudget := max(innerW-buttonW-titleNeed, 0)
+	context := ""
+	if m.titleContext != "" {
+		separatorW := 2
+		if button != "" {
+			separatorW++
+		}
+		if contextBudget > separatorW {
+			context = truncateTo(m.titleContext, contextBudget-separatorW)
+		}
+	}
+
+	right := button
+	if context != "" {
+		renderedContext := lipgloss.NewStyle().Faint(true).Render(context)
+		right = "  " + renderedContext
+		if button != "" {
+			right += " " + button
+		}
+	}
+	titleW := max(innerW-lipgloss.Width(right), 0)
+	title := lipgloss.NewStyle().
 		Bold(true).
 		Width(titleW).
 		Render(truncateTo(m.title, titleW))
-	return lipgloss.JoinHorizontal(lipgloss.Top, titleStr, btn)
+	return lipgloss.JoinHorizontal(lipgloss.Top, title, right)
 }
 
 // renderTitleActionButton renders a title-line button without the trailing
