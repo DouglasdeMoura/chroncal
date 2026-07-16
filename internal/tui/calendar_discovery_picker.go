@@ -26,10 +26,12 @@ type AccountCalendarPickerClosedMsg struct{}
 // read-only and unsupported rows, while only allowing usable event calendars
 // to be selected for import.
 type AccountCalendarPickerModel struct {
-	discovery account.Discovery
-	selected  map[string]bool
-	shell     ListDialogModel
-	theme     Theme
+	discovery   account.Discovery
+	selected    map[string]bool
+	shell       ListDialogModel
+	rowCalendar []int
+
+	theme Theme
 }
 
 func NewAccountCalendarPickerModel(discovery account.Discovery, theme Theme) AccountCalendarPickerModel {
@@ -43,7 +45,8 @@ func NewAccountCalendarPickerModel(discovery account.Discovery, theme Theme) Acc
 		discovery: discovery,
 		selected:  selected,
 		shell: NewListDialogModel(newThemedHelp(theme)).
-			SetTitle("Choose calendars · " + textsafe.Display(discovery.Account.DisplayName)).
+			SetTitle("Add Calendars").
+			SetSubtitle(accountPickerIdentity(discovery.Account)).
 			SetSelectedColor(theme.Selected),
 		theme: theme,
 	}
@@ -58,12 +61,8 @@ func (m AccountCalendarPickerModel) SetSize(w, h int) AccountCalendarPickerModel
 func (m AccountCalendarPickerModel) BoxSize() (int, int) { return m.shell.BoxSize() }
 
 func (m AccountCalendarPickerModel) toggleCurrent() AccountCalendarPickerModel {
-	idx := m.shell.Selected()
-	if idx < 0 || idx >= len(m.discovery.Calendars) {
-		return m
-	}
-	remote := m.discovery.Calendars[idx]
-	if !remote.Importable || remote.Imported {
+	remote, ok := m.currentRemote()
+	if !ok || !remote.Importable || remote.Imported {
 		return m
 	}
 	m.selected[remote.Path] = !m.selected[remote.Path]
@@ -92,6 +91,9 @@ func (m AccountCalendarPickerModel) importSelected() tea.Cmd {
 		if remote.Importable && !remote.Imported && m.selected[remote.Path] {
 			paths = append(paths, remote.Path)
 		}
+	}
+	if len(paths) == 0 {
+		return nil
 	}
 	accountID := m.discovery.Account.ID
 	return func() tea.Msg { return AccountCalendarsImportRequestedMsg{AccountID: accountID, Paths: paths} }
@@ -131,10 +133,11 @@ func (m AccountCalendarPickerModel) Update(msg tea.Msg) (AccountCalendarPickerMo
 			return m.toggleCurrent(), nil
 		}
 		if idx, ok := m.shell.ActionAtPosition(msg.X, msg.Y); ok {
-			m.shell = m.shell.FocusAction(idx)
-			m = m.refresh()
-			return m, m.shell.actions[idx].Msg
+			var cmd tea.Cmd
+			m.shell, cmd = m.shell.ClickAction(idx)
+			return m.refresh(), cmd
 		}
+
 	case tea.MouseWheelMsg:
 		var cmd tea.Cmd
 		m.shell, cmd = m.shell.HandleMouseWheel(msg)
@@ -146,86 +149,277 @@ func (m AccountCalendarPickerModel) Update(msg tea.Msg) (AccountCalendarPickerMo
 func (m AccountCalendarPickerModel) View() string { return m.shell.View() }
 
 func (m AccountCalendarPickerModel) refresh() AccountCalendarPickerModel {
-	rows := make([]string, 0, len(m.discovery.Calendars))
-	for _, remote := range m.discovery.Calendars {
-		checkbox := Glyphs["checkbox.off"]
-		if m.selected[remote.Path] {
-			checkbox = Glyphs["checkbox.on"]
+	previousPath := m.currentRemotePath()
+	rows, rowCalendar, disabledRows := m.buildRows()
+	m.rowCalendar = rowCalendar
+	m.shell = m.shell.SetRows(rows).SetDisabledRows(disabledRows)
+	if previousPath != "" {
+		for row, calendarIndex := range rowCalendar {
+			if calendarIndex >= 0 && m.discovery.Calendars[calendarIndex].Path == previousPath {
+				m.shell = m.shell.SetSelected(row)
+				break
+			}
 		}
-		name := remote.Name
-		if name == "" {
-			name = remote.Path
-		}
-		tags := make([]string, 0, 2)
-		switch {
-		case remote.Imported:
-			tags = append(tags, "imported")
-		case !remote.Importable:
-			tags = append(tags, "unsupported")
-		}
-		if remote.Access == caldav.CalendarAccessRead {
-			tags = append(tags, "read-only")
-		}
-		row := checkbox + " "
-		if len(tags) > 0 {
-			row += lipgloss.NewStyle().Foreground(m.theme.Muted).Render("["+strings.Join(tags, ", ")+"]") + " "
-		}
-		row += textsafe.Display(name)
-		rows = append(rows, row)
 	}
-	m.shell = m.shell.SetRows(rows)
+
+	selectedRow := m.shell.Selected()
+	listFocused := m.shell.FocusZone() == ListZoneList
+	for row, calendarIndex := range rowCalendar {
+		if calendarIndex < 0 {
+			continue
+		}
+		rows[row] = m.calendarRowLabel(m.discovery.Calendars[calendarIndex], row == selectedRow, listFocused)
+	}
+	m.shell = m.shell.SetRows(rows).SetDisabledRows(disabledRows).SetSelected(selectedRow)
 
 	if len(m.discovery.Calendars) == 0 {
-		m.shell = m.shell.SetEmptyList("No calendar collections found.", []string{"The server returned no CalDAV calendar collections."})
+		m.shell = m.shell.SetEmptyList("No calendars found.", []string{"This account did not return any calendar collections."})
 		m.shell = m.shell.SetDetailTitle("").SetDetailLines(nil)
+	} else if remote, ok := m.currentRemote(); ok {
+		m.shell = m.shell.
+			SetDetailTitle(m.calendarDetailTitle(remote)).
+			SetDetailLines(m.calendarDetailLines(remote))
 	} else {
-		idx := m.shell.Selected()
-		remote := m.discovery.Calendars[idx]
-		name := remote.Name
-		if name == "" {
-			name = remote.Path
-		}
-		access := string(remote.Access)
-		if access == "" {
-			access = "unknown"
-		}
-		components := strings.Join(remote.SupportedComponentSet, ", ")
-		if components == "" {
-			components = "not advertised"
-		}
-		details := []string{
-			"URL: " + textsafe.Display(remote.Path),
-			"Access: " + access,
-			"Components: " + components,
-		}
-		if remote.Description != "" {
-			details = append(details, "", textsafe.Display(remote.Description))
-		}
-		m.shell = m.shell.SetDetailTitle(textsafe.Display(name)).SetDetailLines(details)
+		m.shell = m.shell.SetDetailTitle("").SetDetailLines(nil)
 	}
 
-	count := 0
-	for _, remote := range m.discovery.Calendars {
-		if remote.Importable && !remote.Imported && m.selected[remote.Path] {
-			count++
-		}
-	}
-	label := "Import"
-	if count > 0 {
-		label = fmt.Sprintf("Import (%d)", count)
+	count := m.selectedCount()
+	label := "Add Calendars"
+	if count == 1 {
+		label = "Add Calendar"
+	} else if count > 1 {
+		label = fmt.Sprintf("Add %d Calendars", count)
 	}
 	m.shell = m.shell.SetActions([]ListDialogAction{
-		{Label: label, Primary: true, Msg: m.importSelected()},
+		{Label: label, Primary: true, Disabled: count == 0, Msg: m.importSelected()},
 		{Label: "Cancel", Msg: func() tea.Msg { return AccountCalendarPickerClosedMsg{} }},
 	})
 	keys := m.shell.Keys()
 	m.shell = m.shell.SetShortHelp([]key.Binding{
 		key.NewBinding(key.WithKeys("up", "down", "k", "j"), key.WithHelp("↑↓", "navigate")),
 		key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "toggle")),
-		key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "all")),
+		key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "select all")),
 		keys.Tab,
-		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "import")),
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "add")),
 		keys.Close,
 	})
 	return m
+}
+
+func (m AccountCalendarPickerModel) buildRows() ([]string, []int, []int) {
+	available := make([]int, 0, len(m.discovery.Calendars))
+	added := make([]int, 0, len(m.discovery.Calendars))
+	unavailable := make([]int, 0, len(m.discovery.Calendars))
+	for idx, remote := range m.discovery.Calendars {
+		switch {
+		case remote.Imported:
+			added = append(added, idx)
+		case remote.Importable:
+			available = append(available, idx)
+		default:
+			unavailable = append(unavailable, idx)
+		}
+	}
+
+	rows := make([]string, 0, len(m.discovery.Calendars)+6)
+	rowCalendar := make([]int, 0, cap(rows))
+	disabledRows := make([]int, 0, 6)
+	appendSection := func(title string, calendarIndices []int) {
+		if len(calendarIndices) == 0 {
+			return
+		}
+		if len(rows) > 0 {
+			disabledRows = append(disabledRows, len(rows))
+			rows = append(rows, "")
+			rowCalendar = append(rowCalendar, -1)
+		}
+		disabledRows = append(disabledRows, len(rows))
+		rows = append(rows, lipgloss.NewStyle().
+			Foreground(m.theme.TextDim).
+			Bold(true).
+			Render(title))
+		rowCalendar = append(rowCalendar, -1)
+		for _, calendarIndex := range calendarIndices {
+			rows = append(rows, "")
+			rowCalendar = append(rowCalendar, calendarIndex)
+		}
+	}
+	appendSection("Available", available)
+	appendSection("Already Added", added)
+	appendSection("Unavailable", unavailable)
+	return rows, rowCalendar, disabledRows
+}
+
+func (m AccountCalendarPickerModel) currentRemotePath() string {
+	remote, ok := m.currentRemote()
+	if !ok {
+		return ""
+	}
+	return remote.Path
+}
+
+func (m AccountCalendarPickerModel) currentRemote() (account.DiscoveredCalendar, bool) {
+	row := m.shell.Selected()
+	if row < 0 || row >= len(m.rowCalendar) {
+		return account.DiscoveredCalendar{}, false
+	}
+	calendarIndex := m.rowCalendar[row]
+	if calendarIndex < 0 || calendarIndex >= len(m.discovery.Calendars) {
+		return account.DiscoveredCalendar{}, false
+	}
+	return m.discovery.Calendars[calendarIndex], true
+}
+
+func (m AccountCalendarPickerModel) calendarRowLabel(remote account.DiscoveredCalendar, current, listFocused bool) string {
+	marker := Glyphs["checkbox.off"]
+	switch {
+	case remote.Imported:
+		marker = Glyphs["status.ok"] + "  "
+	case !remote.Importable:
+		marker = "–  "
+	case m.selected[remote.Path]:
+		marker = Glyphs["checkbox.on"]
+	}
+
+	dot := Glyphs["dot"]
+	if remote.Color != "" {
+		dot = lipgloss.NewStyle().Foreground(lipgloss.Color(remote.Color)).Render(dot)
+	} else {
+		dot = lipgloss.NewStyle().Foreground(m.theme.Muted).Render(dot)
+	}
+	name := remote.Name
+	if strings.TrimSpace(name) == "" {
+		name = "Unnamed calendar"
+	}
+	nameText := textsafe.Display(name)
+	if remote.Access == caldav.CalendarAccessRead && !remote.Imported {
+		nameText += lipgloss.NewStyle().Foreground(m.theme.TextDim).Render("  Read only")
+	}
+
+	nameStyle := lipgloss.NewStyle()
+	if remote.Imported || !remote.Importable {
+		nameStyle = nameStyle.Foreground(m.theme.TextDim)
+	}
+	if current {
+		if listFocused {
+			nameStyle = nameStyle.Reverse(true)
+		} else {
+			nameStyle = nameStyle.Background(m.theme.Selected).Foreground(m.theme.SelectedText)
+		}
+	}
+	return marker + " " + dot + " " + nameStyle.Render(nameText)
+}
+
+func (m AccountCalendarPickerModel) calendarDetailTitle(remote account.DiscoveredCalendar) string {
+	name := strings.TrimSpace(remote.Name)
+	if name == "" {
+		name = "Unnamed calendar"
+	}
+	dot := Glyphs["dot"]
+	if remote.Color != "" {
+		dot = lipgloss.NewStyle().Foreground(lipgloss.Color(remote.Color)).Render(dot)
+	}
+	return dot + " " + textsafe.Display(name)
+}
+
+func (m AccountCalendarPickerModel) calendarDetailLines(remote account.DiscoveredCalendar) []string {
+	lines := make([]string, 0, 8)
+	if description := strings.TrimSpace(remote.Description); description != "" {
+		lines = append(lines, textsafe.Display(description), "")
+	}
+	lines = append(lines,
+		fmt.Sprintf("%-10s%s", "Access", humanCalendarAccess(remote.Access)),
+		fmt.Sprintf("%-10s%s", "Contents", humanCalendarComponents(remote.SupportedComponentSet)),
+		"",
+	)
+	switch {
+	case remote.Imported:
+		lines = append(lines, "Already added to Chroncal.")
+	case !remote.Importable:
+		lines = append(lines, unsupportedCalendarExplanation(remote.SupportedComponentSet))
+	case remote.Access == caldav.CalendarAccessRead:
+		lines = append(lines, "Changes made in Chroncal will not be uploaded to this calendar.")
+	case m.selected[remote.Path]:
+		lines = append(lines, "Ready to add.")
+	default:
+		lines = append(lines, "Select this calendar to add it.")
+	}
+	return lines
+}
+
+func (m AccountCalendarPickerModel) selectedCount() int {
+	count := 0
+	for _, remote := range m.discovery.Calendars {
+		if remote.Importable && !remote.Imported && m.selected[remote.Path] {
+			count++
+		}
+	}
+	return count
+}
+
+func accountPickerIdentity(account account.Account) string {
+	name := strings.TrimSpace(textsafe.Display(account.DisplayName))
+	username := strings.TrimSpace(textsafe.Display(account.Username))
+	switch {
+	case name == "":
+		return username
+	case username == "" || strings.EqualFold(name, username):
+		return name
+	default:
+		return name + " · " + username
+	}
+}
+
+func humanCalendarAccess(access caldav.CalendarAccess) string {
+	switch access {
+	case caldav.CalendarAccessOwner, caldav.CalendarAccessWrite:
+		return "Can edit"
+	case caldav.CalendarAccessRead:
+		return "Read only"
+	default:
+		return "Not reported"
+	}
+}
+
+func humanCalendarComponents(components []string) string {
+	names := make([]string, 0, len(components))
+	for _, component := range components {
+		var name string
+		switch strings.ToUpper(strings.TrimSpace(component)) {
+		case "VEVENT":
+			name = "Events"
+		case "VTODO":
+			name = "Tasks"
+		case "VJOURNAL":
+			name = "Journals"
+		case "VFREEBUSY":
+			name = "Availability"
+		default:
+			continue
+		}
+		if !slicesContainsFold(names, name) {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return "Not reported"
+	}
+	return strings.Join(names, ", ")
+}
+
+func unsupportedCalendarExplanation(components []string) string {
+	contents := strings.ToLower(humanCalendarComponents(components))
+	if contents == "not reported" {
+		return "Can’t add this collection because the server did not advertise event support."
+	}
+	return "Can’t add this collection because it contains " + contents + ", not calendar events."
+}
+
+func slicesContainsFold(values []string, target string) bool {
+	for _, value := range values {
+		if strings.EqualFold(value, target) {
+			return true
+		}
+	}
+	return false
 }
