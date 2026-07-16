@@ -241,6 +241,25 @@ func TestCalendarList_GroupsCalendarsIntoCleanAccountSections(t *testing.T) {
 	}
 }
 
+func TestCalendarList_GroupedRowsUseCompactLeadingSpacing(t *testing.T) {
+	lines := strings.Split(stripANSI(groupedListFixture().View()), "\n")
+	var header, calendar string
+	for _, line := range lines {
+		switch {
+		case strings.Contains(line, "Local"):
+			header = line
+		case strings.Contains(line, "On device"):
+			calendar = line
+		}
+	}
+	if !strings.HasPrefix(header, "▾ Local") {
+		t.Fatalf("account heading has leading space: %q", header)
+	}
+	if !strings.HasPrefix(calendar, " ●") {
+		t.Fatalf("calendar row should have exactly one space before its marker: %q", calendar)
+	}
+}
+
 func TestCalendarList_NarrowGroupedSidebarRemainsScannable(t *testing.T) {
 	m := groupedListFixture().SetSize(22, 20)
 	out := stripANSI(m.View())
