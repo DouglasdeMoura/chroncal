@@ -93,6 +93,7 @@ type CalendarInfo struct {
 	AccountServerURL    string
 	AccountID           int64
 	AccountName         string
+	AccountOrder        int64
 	RemoteAccess        string
 	RemoteComponents    string // comma-separated VEVENT/VTODO/VJOURNAL; empty = unknown (all allowed)
 	RemoteMissing       bool

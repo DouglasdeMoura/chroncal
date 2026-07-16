@@ -500,14 +500,16 @@ access remain visible without mixing technical CalDAV labels into calendar
 names; the **Add** action reports the selection count and stays disabled until
 at least one available calendar is selected. Browser authorization runs
 without leaving the app. Open a linked calendar and choose
-**Account… → Manage calendars…** to rediscover the account's complete
-inventory. Calendars already in Chroncal start checked: check new collections
-to add them or uncheck existing collections to remove their local copies.
-Removal requires destructive confirmation, and removing every checked
-calendar also removes the now-empty account and its stored credential. Unsaved
-calendar edits remain intact when the menu or picker closes. The same compact
-**Account…** menu contains OAuth re-authentication and the destructive
-disconnect action.
+**Account… → Manage calendars…**—or select its account heading in the sidebar
+and press `Enter`—to rediscover the account's complete inventory. Calendars
+already in Chroncal start checked: check new collections to add them or uncheck
+existing collections to remove their local copies. **Rename** changes the
+friendly account description shown in the sidebar without changing its login
+or credential identity. Removal requires destructive confirmation, and
+removing every checked calendar also removes the now-empty account and its
+stored credential. Unsaved calendar edits remain intact when the menu or picker
+closes. The same compact **Account…** menu contains OAuth re-authentication and
+the destructive disconnect action.
 
 Google limitations:
 
@@ -661,13 +663,17 @@ Run `chroncal` with no arguments to launch the interactive terminal interface.
 
 The TUI supports creating, editing, viewing, and deleting events, with full
 details including alarms, attendees, and attachments. Use `u` to undo a
-delete. The sidebar groups calendars under collapsible account headings,
-including a separate **Local** section; hidden state and scrolling operate on
-calendar rows rather than group headings. Read-only imported calendars remain
-browsable but reject event edits and deletes. Calendars are managed from the
-calendar popup; **Add Calendar** contains the integrated CalDAV discovery flow.
-Account lifecycle commands remain available in the CLI. Todo and journal
-management live in the CLI for now.
+delete. The sidebar uses quiet, collapsible account sections, including a
+separate **Local** section; calendar colors remain on calendar rows rather than
+account headings. On an account heading, `Left`/`Right` collapse or expand,
+`Enter` opens account management, and `Shift+Up`/`Shift+Down` persistently
+reorder complete remote-account sections while keeping **Local** first. The
+same reorder keys move calendars only within their own account. Hidden state
+and scrolling operate on calendar rows rather than group headings. Read-only
+imported calendars remain browsable but reject event edits and deletes.
+Calendars are managed from the calendar popup; **Add Calendar** contains the
+integrated CalDAV discovery flow. Todo and journal management live in the CLI
+for now.
 
 Sync health is visible at a glance: a calendar whose last sync failed shows
 a `⚠` next to it in the sidebar, and opening it explains why (and offers a

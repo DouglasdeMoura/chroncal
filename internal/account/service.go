@@ -56,6 +56,63 @@ func (s *Service) Get(ctx context.Context, id int64) (Account, error) {
 	return fromStorage(row), nil
 }
 
+// Rename updates the account's human-facing description without changing its
+// connection identity or credential lookup key.
+func (s *Service) Rename(ctx context.Context, id int64, name string) (Account, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return Account{}, fmt.Errorf("account name is required")
+	}
+	if strings.HasPrefix(name, legacyHiddenPrefix) {
+		return Account{}, fmt.Errorf("account name uses reserved prefix %q", legacyHiddenPrefix)
+	}
+	release, err := synclock.Account(ctx, s.db, id)
+	if err != nil {
+		return Account{}, fmt.Errorf("lock account rename: %w", err)
+	}
+	defer release()
+	current, err := s.q.GetAccount(ctx, id)
+	if err != nil {
+		return Account{}, fmt.Errorf("get account: %w", err)
+	}
+	if err := s.q.UpdateAccount(ctx, storage.UpdateAccountParams{
+		ID:        id,
+		Name:      name,
+		ServerUrl: current.ServerUrl,
+		AuthType:  current.AuthType,
+		Username:  current.Username,
+	}); err != nil {
+		return Account{}, fmt.Errorf("rename account: %w", err)
+	}
+	updated, err := s.q.GetAccount(ctx, id)
+	if err != nil {
+		return Account{}, fmt.Errorf("get renamed account: %w", err)
+	}
+	return fromStorage(updated), nil
+}
+
+// SetOrder persists the complete remote-account section order atomically.
+func (s *Service) SetOrder(ctx context.Context, ids []int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin account order: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+	for i, id := range ids {
+		if err := qtx.SetAccountDisplayOrder(ctx, storage.SetAccountDisplayOrderParams{
+			DisplayOrder: int64(i),
+			ID:           id,
+		}); err != nil {
+			return fmt.Errorf("set account display order: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit account order: %w", err)
+	}
+	return nil
+}
+
 // Create stores account settings and credentials as one logical operation.
 // If either side fails, the other is rolled back.
 func (s *Service) Create(ctx context.Context, params CreateParams, cred auth.Credential, store auth.CredentialStore) (Account, error) {
@@ -907,13 +964,14 @@ func uniqueLocalName(base string, taken map[string]struct{}) string {
 
 func fromStorage(row storage.Account) Account {
 	return Account{
-		ID:          row.ID,
-		Name:        row.Name,
-		DisplayName: UserFacingName(row.Name, row.Username, row.ID),
-		ServerURL:   row.ServerUrl,
-		AuthType:    row.AuthType,
-		Username:    row.Username,
-		CreatedAt:   timeutil.ParseDateTime(row.CreatedAt),
-		UpdatedAt:   timeutil.ParseDateTime(row.UpdatedAt),
+		ID:           row.ID,
+		Name:         row.Name,
+		DisplayName:  UserFacingName(row.Name, row.Username, row.ID),
+		ServerURL:    row.ServerUrl,
+		AuthType:     row.AuthType,
+		Username:     row.Username,
+		DisplayOrder: row.DisplayOrder,
+		CreatedAt:    timeutil.ParseDateTime(row.CreatedAt),
+		UpdatedAt:    timeutil.ParseDateTime(row.UpdatedAt),
 	}
 }

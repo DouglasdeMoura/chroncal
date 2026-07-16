@@ -5,13 +5,14 @@
 package storage
 
 type Account struct {
-	ID        int64
-	Name      string
-	ServerUrl string
-	AuthType  string
-	Username  string
-	CreatedAt string
-	UpdatedAt string
+	ID           int64
+	Name         string
+	ServerUrl    string
+	AuthType     string
+	Username     string
+	CreatedAt    string
+	UpdatedAt    string
+	DisplayOrder int64
 }
 
 type AlarmState struct {
