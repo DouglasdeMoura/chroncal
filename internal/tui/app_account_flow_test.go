@@ -279,14 +279,27 @@ func TestAppSidebarAccountManagementStartsWithoutCalendarEdit(t *testing.T) {
 	if cmd == nil || !m.syncing {
 		t.Fatalf("sidebar management start: command=%v syncing=%v", cmd, m.syncing)
 	}
-	if !m.calendarDialogOpen || m.calendarDialog.localDraft == nil {
-		t.Fatal("sidebar management did not establish a guarded account dialog")
-	}
-	if draft := m.calendarDialog.localDraft; draft.ID != 2 || draft.AccountID != 7 {
-		t.Fatalf("guarded dialog draft = %+v", draft)
+	if m.calendarDialogOpen {
+		t.Fatal("sidebar management exposed an Edit Calendar dialog while discovery was pending")
 	}
 	if m.discoveryReturnToEdit {
 		t.Fatal("sidebar management should return to the sidebar, not a calendar edit")
+	}
+
+	updated, _ = m.Update(accountDiscoveryReadyMsg{
+		discovery:        pickerDiscovery(),
+		management:       true,
+		originCalendarID: 2,
+		originAccountID:  7,
+		dialogGeneration: m.calendarDialogGeneration,
+	})
+	m = updated.(Model)
+	if m.syncing || !m.calendarDialogOpen || m.calendarDialog.discoveryPicker == nil {
+		t.Fatalf("management completion: syncing=%v open=%v picker=%v",
+			m.syncing, m.calendarDialogOpen, m.calendarDialog.discoveryPicker != nil)
+	}
+	if !m.calendarDialog.discoveryPicker.manage {
+		t.Fatal("sidebar management opened the additive picker")
 	}
 }
 
