@@ -2887,7 +2887,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			RemoteLinked: true,
 		}, m.theme).SetSize(m.width, m.height)
 		m.calendarDialogGeneration++
-		m.calendarDialogOpen = true
+		m.calendarDialogOpen = false
 		m.discoveryReturnToEdit = false
 		m.syncing = true
 		m.syncStatus = "Discovering calendars…"
@@ -2941,12 +2941,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case accountDiscoveryReadyMsg:
 		if msg.management {
-			draft := m.calendarDialog.localDraft
-			stale := msg.dialogGeneration != m.calendarDialogGeneration ||
-				!m.calendarDialogOpen ||
-				draft == nil ||
-				draft.ID != msg.originCalendarID ||
-				draft.AccountID != msg.originAccountID
+			stale := msg.dialogGeneration != m.calendarDialogGeneration
+			if msg.returnToEdit {
+				draft := m.calendarDialog.localDraft
+				stale = stale ||
+					!m.calendarDialogOpen ||
+					draft == nil ||
+					draft.ID != msg.originCalendarID ||
+					draft.AccountID != msg.originAccountID
+			} else {
+				info, ok := m.calendars[msg.originCalendarID]
+				stale = stale || !ok || info.AccountID != msg.originAccountID
+			}
 			if stale {
 				m.syncing = false
 				m.discoveryReturnToEdit = false
