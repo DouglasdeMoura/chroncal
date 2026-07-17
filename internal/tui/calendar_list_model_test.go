@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -365,20 +366,36 @@ func TestCalendarList_AccountHeaderSpaceTogglesDisclosureWithoutTogglingCalendar
 	}
 }
 
-func TestCalendarList_AccountHeaderEnterRequestsManagement(t *testing.T) {
+func TestCalendarList_AccountHeaderEnterRequestsActions(t *testing.T) {
 	m := groupedListFixture()
-	m.cursor = calendarListRowForAccountID(t, m, 7)
-	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	cursor := calendarListRowForAccountID(t, m, 7)
+	m.cursor = cursor
+	collapsedBefore := maps.Clone(m.collapsed)
+	hiddenBefore := maps.Clone(m.hidden)
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
-		t.Fatal("account heading Enter should request account management")
+		t.Fatal("account heading Enter should request account actions")
 	}
-	msg, ok := cmd().(AccountCalendarManagementRequestedMsg)
+	msg, ok := cmd().(SidebarAccountActionsRequestedMsg)
 	if !ok || msg.AccountID != 7 || msg.CalendarID != 2 {
-		t.Fatalf("management request = %#v", cmd())
+		t.Fatalf("account actions request = %#v", cmd())
+	}
+	// Requesting account actions is side-effect free: cursor, collapse, and
+	// visibility must all be untouched. Discovery and the Account menu open
+	// later, in response to the message, not at emit time.
+	if updated.cursor != cursor {
+		t.Errorf("cursor moved: got %d want %d", updated.cursor, cursor)
+	}
+	if !maps.Equal(updated.collapsed, collapsedBefore) {
+		t.Errorf("collapse state changed: got %v want %v", updated.collapsed, collapsedBefore)
+	}
+	if !maps.Equal(updated.hidden, hiddenBefore) {
+		t.Errorf("visibility state changed: got %v want %v", updated.hidden, hiddenBefore)
 	}
 }
 
-func TestCalendarList_AccountHeaderMouseTargetsSeparateDisclosureAndManagement(t *testing.T) {
+func TestCalendarList_AccountHeaderMouseTargetsSeparateDisclosureAndActions(t *testing.T) {
 	m := groupedListFixture()
 	header := calendarListRowForAccountID(t, m, 7)
 
@@ -387,16 +404,31 @@ func TestCalendarList_AccountHeaderMouseTargetsSeparateDisclosureAndManagement(t
 		t.Fatalf("disclosure click: command=%v collapsed=%v", cmd, collapsed.collapsed[7])
 	}
 
+	collapsedBefore := maps.Clone(m.collapsed)
+	hiddenBefore := maps.Clone(m.hidden)
+	cursorBefore := m.cursor
 	opened, cmd := m.HandleClick(6, header)
 	if opened.collapsed[7] {
 		t.Fatal("account name click should not collapse the section")
 	}
 	if cmd == nil {
-		t.Fatal("account name click should request management")
+		t.Fatal("account name click should request account actions")
 	}
-	msg, ok := cmd().(AccountCalendarManagementRequestedMsg)
+	msg, ok := cmd().(SidebarAccountActionsRequestedMsg)
 	if !ok || msg.AccountID != 7 || msg.CalendarID != 2 {
-		t.Fatalf("management request = %#v", cmd())
+		t.Fatalf("account actions request = %#v", cmd())
+	}
+	// The name-area click requests actions without disturbing cursor,
+	// collapse, or visibility. The request is side-effect free; the menu
+	// and discovery open later, in response to the message.
+	if opened.cursor != cursorBefore {
+		t.Errorf("cursor moved: got %d want %d", opened.cursor, cursorBefore)
+	}
+	if !maps.Equal(opened.collapsed, collapsedBefore) {
+		t.Errorf("collapse state changed: got %v want %v", opened.collapsed, collapsedBefore)
+	}
+	if !maps.Equal(opened.hidden, hiddenBefore) {
+		t.Errorf("visibility state changed: got %v want %v", opened.hidden, hiddenBefore)
 	}
 }
 

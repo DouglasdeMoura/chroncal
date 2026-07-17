@@ -922,45 +922,66 @@ func (m Model) loadCalendars() tea.Cmd {
 			return calendarsLoadedMsg{err: err}
 		}
 		// Pre-fetch accounts once so linked rows carry their user-facing group
-		// name and server URL without an account query per calendar.
-		accountServerURLs := map[int64]string{}
-		accountNames := map[int64]string{}
-		accountOrders := map[int64]int64{}
-		if accounts, accountErr := m.app.Accounts.List(ctx); accountErr == nil {
-			for _, remoteAccount := range accounts {
-				accountServerURLs[remoteAccount.ID] = remoteAccount.ServerURL
-				accountNames[remoteAccount.ID] = remoteAccount.DisplayName
-				accountOrders[remoteAccount.ID] = remoteAccount.DisplayOrder
-			}
-		}
-		info := make(map[int64]CalendarInfo, len(cals))
-		for _, c := range cals {
-			count, _ := m.app.Events.CountByCalendar(ctx, c.ID)
-			info[c.ID] = CalendarInfo{
-				Name:                c.Name,
-				Color:               c.Color,
-				OwnerEmail:          c.OwnerEmail,
-				Description:         c.Description,
-				EventCount:          count,
-				DisplayOrder:        c.DisplayOrder,
-				Synced:              c.AccountID != 0,
-				AccountServerURL:    accountServerURLs[c.AccountID],
-				AccountID:           c.AccountID,
-				AccountName:         accountNames[c.AccountID],
-				AccountOrder:        accountOrders[c.AccountID],
-				RemoteAccess:        c.RemoteAccess,
-				RemoteComponents:    c.RemoteComponents,
-				RemoteMissing:       c.RemoteMissing,
-				LastSyncAt:          c.LastSyncAt,
-				LastSyncAttemptedAt: c.LastSyncAttemptedAt,
-				LastSyncError:       c.LastSyncError,
-				CreatedAt:           c.CreatedAt,
-				UpdatedAt:           c.UpdatedAt,
-				IsDefault:           c.IsDefault,
-			}
-		}
+		// name, server URL, normalized auth type, and order without an account
+		// query per calendar.
+		accounts, _ := m.app.Accounts.List(ctx)
+		info := buildCalendarInfoMap(cals, accounts, func(calendarID int64) (int64, error) {
+			return m.app.Events.CountByCalendar(ctx, calendarID)
+		})
 		return calendarsLoadedMsg{calendars: info}
 	}
+}
+
+// buildCalendarInfoMap assembles the sidebar's CalendarInfo cache from the
+// persisted calendars and accounts. Accounts are read once so every linked
+// row carries its account metadata — display name, server URL, normalized
+// auth type, and display order — without a per-calendar query. Local
+// calendars (AccountID == 0) leave the account-linked fields empty,
+// including AccountAuthType. A nil/empty accounts slice yields local-only
+// metadata, which is the same effect as an account-list failure.
+func buildCalendarInfoMap(
+	cals []calendar.Calendar,
+	accounts []account.Account,
+	eventCount func(calendarID int64) (int64, error),
+) map[int64]CalendarInfo {
+	accountServerURLs := map[int64]string{}
+	accountNames := map[int64]string{}
+	accountOrders := map[int64]int64{}
+	accountAuthTypes := map[int64]string{}
+	for _, remoteAccount := range accounts {
+		accountServerURLs[remoteAccount.ID] = remoteAccount.ServerURL
+		accountNames[remoteAccount.ID] = remoteAccount.DisplayName
+		accountOrders[remoteAccount.ID] = remoteAccount.DisplayOrder
+		accountAuthTypes[remoteAccount.ID] = calendar.NormalizeAuthType(remoteAccount.AuthType)
+	}
+	info := make(map[int64]CalendarInfo, len(cals))
+	for _, c := range cals {
+		count, _ := eventCount(c.ID)
+		info[c.ID] = CalendarInfo{
+			Name:                c.Name,
+			Color:               c.Color,
+			OwnerEmail:          c.OwnerEmail,
+			Description:         c.Description,
+			EventCount:          count,
+			DisplayOrder:        c.DisplayOrder,
+			Synced:              c.AccountID != 0,
+			AccountServerURL:    accountServerURLs[c.AccountID],
+			AccountID:           c.AccountID,
+			AccountName:         accountNames[c.AccountID],
+			AccountOrder:        accountOrders[c.AccountID],
+			AccountAuthType:     accountAuthTypes[c.AccountID],
+			RemoteAccess:        c.RemoteAccess,
+			RemoteComponents:    c.RemoteComponents,
+			RemoteMissing:       c.RemoteMissing,
+			LastSyncAt:          c.LastSyncAt,
+			LastSyncAttemptedAt: c.LastSyncAttemptedAt,
+			LastSyncError:       c.LastSyncError,
+			CreatedAt:           c.CreatedAt,
+			UpdatedAt:           c.UpdatedAt,
+			IsDefault:           c.IsDefault,
+		}
+	}
+	return info
 }
 
 // sortedCalendarListItems builds the sidebar's calendar rows from the calendar
@@ -2034,8 +2055,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Account maintenance is a child overlay of the calendar edit dialog.
-	// It owns interaction until the user selects an action or goes back.
+	// The Account menu is an overlay in two contexts: a standalone sidebar
+	// overlay (opened from a sidebar account heading, with no Edit Calendar
+	// underneath) and a child overlay of the calendar edit dialog (opened
+	// from the dialog's Account button). In both, it owns interaction until
+	// the user selects an action or goes back.
 	if m.calendarAccountMenuOpen {
 		switch msg.(type) {
 		case CalendarAccountMenuSelectedMsg, CalendarAccountMenuClosedMsg,
@@ -2867,7 +2891,48 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.expireStatusAfter(6*time.Second, m.statusToken),
 		)
 
+	case SidebarAccountActionsRequestedMsg:
+		// First step of the sidebar Account dialog: open the shared
+		// Account menu only. Discovery, sync, OAuth, and the calendar
+		// edit dialog stay untouched — Manage (the second step) routes
+		// through AccountCalendarManagementRequestedMsg. Guards and
+		// ownership validation run synchronously; a stale or racing
+		// request is silently dropped (no toast — the click is simply
+		// no longer applicable by the time it arrives).
+		if m.syncing || m.oauthFlowOpen || m.oauthPending {
+			return m, nil
+		}
+		info, ok := m.calendars[msg.CalendarID]
+		if !ok || msg.AccountID == 0 || info.AccountID != msg.AccountID {
+			return m, nil
+		}
+		var msgs calendarAccountActionMessages
+		msgs.Manage = AccountCalendarManagementRequestedMsg(msg)
+		if calendarAuthIsOAuth(info.AccountAuthType) {
+			msgs.Reauth = CalendarReauthRequestedMsg{
+				ID:   msg.CalendarID,
+				Name: info.Name,
+			}
+		}
+		// Disconnect is intentionally omitted: the sidebar Account
+		// dialog manages an account section, not a single calendar's
+		// remote link. The shared builder drops nil messages and
+		// always appends Cancel.
+		m.calendarAccountMenu = newCalendarAccountActionsMenu(
+			m.theme, buildCalendarAccountActions(msgs),
+		).SetSize(m.width, m.height)
+		m.calendarAccountMenuOpen = true
+		return m, nil
+
 	case AccountCalendarManagementRequestedMsg:
+		// Second step of the sidebar Account dialog (Manage). The menu
+		// has already closed via CalendarAccountMenuSelectedMsg; this
+		// handler revalidates ownership against the current cache (the
+		// section may have drifted between the menu opening and this
+		// dispatch), then starts discovery with the sidebar-returning
+		// completion path. Edit Calendar stays closed while discovery
+		// is pending — the dialog model is constructed only so the
+		// management picker has a target to attach to on completion.
 		if m.syncing || m.oauthFlowOpen || m.oauthPending {
 			return m, nil
 		}
@@ -2953,6 +3018,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				info, ok := m.calendars[msg.originCalendarID]
 				stale = stale || !ok || info.AccountID != msg.originAccountID
 			}
+			// Drop silently: ownership drifted while discovery was in
+			// flight (the calendar was removed or relinked, or the edit
+			// dialog it would return to closed), so the completion has no
+			// applicable target. A toast would be noise — the section the
+			// user acted on no longer exists — so syncing is cleared and
+			// no picker attaches. Compare to the err != nil branch below,
+			// which surfaces a failure toast because the user's intent is
+			// still live.
 			if stale {
 				m.syncing = false
 				m.discoveryReturnToEdit = false

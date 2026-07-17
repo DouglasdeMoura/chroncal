@@ -787,64 +787,36 @@ func (m CalendarDialogModel) HideDiscovery() CalendarDialogModel {
 // from the current edit state. The underlying form remains alive while the
 // menu is open, so cancelling the menu never discards unsaved fields.
 func (m CalendarDialogModel) AccountActionsMenu() CalendarAccountActionsMenuModel {
-	if m.localDraft == nil {
-		return newCalendarAccountActionsMenu(m.theme, []calendarAccountMenuAction{{
-			label: "Cancel",
-			onPress: func() tea.Msg {
-				return CalendarAccountMenuClosedMsg{}
-			},
-		}})
+	var msgs calendarAccountActionMessages
+	if m.localDraft != nil {
+		params := *m.localDraft
+		name := params.Name
+		if field, ok := m.form.Field(cdIdxName).(*TextField); ok {
+			name = strings.TrimSpace(field.Value())
+		}
+		if params.AccountID > 0 {
+			msgs.Manage = CalendarDiscoverAdditionalRequestedMsg{
+				CalendarID: params.ID,
+				AccountID:  params.AccountID,
+			}
+		}
+		if calendarAuthIsOAuth(params.RemoteAuthType) {
+			reauth := CalendarReauthRequestedMsg{ID: params.ID, Name: name}
+			if m.oauthIDField != nil {
+				reauth.ClientID = strings.TrimSpace(m.oauthIDField.Value())
+			}
+			if m.oauthSecretField != nil {
+				reauth.ClientSecret = strings.TrimSpace(m.oauthSecretField.Value())
+			}
+			msgs.Reauth = reauth
+		}
+		msgs.Disconnect = CalendarDisconnectRemoteRequestedMsg{ID: params.ID, Name: name}
 	}
-
-	params := *m.localDraft
-	name := params.Name
-	if field, ok := m.form.Field(cdIdxName).(*TextField); ok {
-		name = strings.TrimSpace(field.Value())
-	}
-
-	actions := make([]calendarAccountMenuAction, 0, 4)
-	if params.AccountID > 0 {
-		actions = append(actions, calendarAccountMenuAction{
-			label: "Manage calendars…",
-			onPress: func() tea.Msg {
-				return CalendarDiscoverAdditionalRequestedMsg{
-					CalendarID: params.ID,
-					AccountID:  params.AccountID,
-				}
-			},
-		})
-	}
-	if calendarAuthIsOAuth(params.RemoteAuthType) {
-		actions = append(actions, calendarAccountMenuAction{
-			label: "Re-authenticate…",
-			onPress: func() tea.Msg {
-				msg := CalendarReauthRequestedMsg{ID: params.ID, Name: name}
-				if m.oauthIDField != nil {
-					msg.ClientID = strings.TrimSpace(m.oauthIDField.Value())
-				}
-				if m.oauthSecretField != nil {
-					msg.ClientSecret = strings.TrimSpace(m.oauthSecretField.Value())
-				}
-				return msg
-			},
-		})
-	}
-	actions = append(actions,
-		calendarAccountMenuAction{
-			label:   "Disconnect…",
-			variant: ButtonDanger,
-			onPress: func() tea.Msg {
-				return CalendarDisconnectRemoteRequestedMsg{ID: params.ID, Name: name}
-			},
-		},
-		calendarAccountMenuAction{
-			label: "Cancel",
-			onPress: func() tea.Msg {
-				return CalendarAccountMenuClosedMsg{}
-			},
-		},
-	)
-	return newCalendarAccountActionsMenu(m.theme, actions)
+	// buildCalendarAccountActions drops nil messages, fixes the order
+	// (Manage → Re-authenticate → Disconnect → Cancel), keeps Disconnect
+	// destructive, and always appends Cancel — yielding the Cancel-only
+	// fallback when no draft exists.
+	return newCalendarAccountActionsMenu(m.theme, buildCalendarAccountActions(msgs))
 }
 
 func (m CalendarDialogModel) SetSize(w, h int) CalendarDialogModel {

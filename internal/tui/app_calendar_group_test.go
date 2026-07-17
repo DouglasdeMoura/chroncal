@@ -1,6 +1,11 @@
 package tui
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/douglasdemoura/chroncal/internal/account"
+	"github.com/douglasdemoura/chroncal/internal/calendar"
+)
 
 func TestSortedCalendarListItemsGroupsLocalThenAccounts(t *testing.T) {
 	calendars := map[int64]CalendarInfo{
@@ -25,5 +30,35 @@ func TestSortedCalendarListItemsGroupsLocalThenAccounts(t *testing.T) {
 	}
 	if !items[3].Missing || items[1].Access != "read" {
 		t.Fatalf("remote metadata missing from rows: %+v", items)
+	}
+}
+
+// TestBuildCalendarInfoMapCachesNormalizedAccountAuthType proves the
+// calendar-loading path caches each linked account's normalized auth type on
+// CalendarInfo. An OAuth account stored with non-normalized casing and
+// surrounding whitespace must reach AccountAuthType as the canonical "oauth2",
+// and local calendars (no account) must stay empty. The cached value is what
+// later ownership checks and re-auth routing read.
+func TestBuildCalendarInfoMapCachesNormalizedAccountAuthType(t *testing.T) {
+	cals := []calendar.Calendar{
+		{ID: 1, Name: "On device"},
+		{ID: 2, Name: "Personal", AccountID: 7},
+	}
+	accounts := []account.Account{
+		{ID: 7, DisplayName: "Google", AuthType: " OAuth2 "},
+	}
+
+	info := buildCalendarInfoMap(cals, accounts, func(int64) (int64, error) { return 0, nil })
+
+	if info[1].AccountAuthType != "" {
+		t.Errorf("local calendar AccountAuthType = %q, want empty", info[1].AccountAuthType)
+	}
+	if got := info[2].AccountAuthType; got != "oauth2" {
+		t.Errorf("linked calendar AccountAuthType = %q, want oauth2", got)
+	}
+	// The normalized value is the only auth metadata cached on the row; it
+	// must not leak onto local calendars via the shared map lookup.
+	if info[2].AccountID != 7 {
+		t.Errorf("linked calendar AccountID = %d, want 7", info[2].AccountID)
 	}
 }
