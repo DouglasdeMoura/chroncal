@@ -21,10 +21,58 @@ type CalendarAccountMenuSelectedMsg struct {
 	Message tea.Msg
 }
 
+// calendarAccountActionMessages bundles the optional messages an Account
+// menu can dispatch. Every field is optional; a nil field omits the
+// corresponding action. Both the calendar edit dialog's Account menu and
+// the sidebar's Account dialog assemble through buildCalendarAccountActions
+// so ordering and danger styling stay in one place.
+type calendarAccountActionMessages struct {
+	Manage     tea.Msg // CalendarDiscoverAdditionalRequestedMsg, or nil to hide
+	Reauth     tea.Msg // CalendarReauthRequestedMsg, or nil to hide
+	Disconnect tea.Msg // CalendarDisconnectRemoteRequestedMsg, or nil to hide
+}
+
 type calendarAccountMenuAction struct {
 	label   string
 	variant ButtonVariant
 	onPress func() tea.Msg
+}
+
+// buildCalendarAccountActions assembles the Account menu's action list from
+// optional explicit messages. Non-nil messages land in fixed order — Manage,
+// Re-authenticate, Disconnect — and Cancel is always appended last.
+// Disconnect is the only destructive entry (ButtonDanger); the rest stay
+// neutral. An empty message set yields a Cancel-only list, which is the
+// menu's no-draft fallback.
+func buildCalendarAccountActions(msgs calendarAccountActionMessages) []calendarAccountMenuAction {
+	actions := make([]calendarAccountMenuAction, 0, 4)
+	if msgs.Manage != nil {
+		manage := msgs.Manage
+		actions = append(actions, calendarAccountMenuAction{
+			label:   "Manage calendars…",
+			onPress: func() tea.Msg { return manage },
+		})
+	}
+	if msgs.Reauth != nil {
+		reauth := msgs.Reauth
+		actions = append(actions, calendarAccountMenuAction{
+			label:   "Re-authenticate…",
+			onPress: func() tea.Msg { return reauth },
+		})
+	}
+	if msgs.Disconnect != nil {
+		disconnect := msgs.Disconnect
+		actions = append(actions, calendarAccountMenuAction{
+			label:   "Disconnect…",
+			variant: ButtonDanger,
+			onPress: func() tea.Msg { return disconnect },
+		})
+	}
+	actions = append(actions, calendarAccountMenuAction{
+		label:   "Cancel",
+		onPress: func() tea.Msg { return CalendarAccountMenuClosedMsg{} },
+	})
+	return actions
 }
 
 // CalendarAccountActionsMenuModel presents infrequent account maintenance

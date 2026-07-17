@@ -21,9 +21,22 @@ type CalendarVisibilityToggledMsg struct {
 // calendar dialog. ID == 0 means "create a new calendar".
 type CalendarDialogRequestedMsg struct{ ID int64 }
 
-// AccountCalendarManagementRequestedMsg opens management for an account from
-// its sidebar heading. CalendarID is one linked calendar used to validate that
-// the account still owns the section when asynchronous discovery begins.
+// SidebarAccountActionsRequestedMsg requests the sidebar's Account actions
+// menu for an account from its heading. CalendarID is one linked calendar
+// under the account, kept so a later handler can validate the account still
+// owns the section and route re-authentication; emitting the message does
+// not start discovery or open the menu.
+type SidebarAccountActionsRequestedMsg struct {
+	AccountID  int64
+	CalendarID int64
+}
+
+// AccountCalendarManagementRequestedMsg starts sidebar-originated account
+// calendar management: the second step after the sidebar Account dialog's
+// Manage action. CalendarID is one linked calendar under the account, kept
+// so the handler can revalidate that the account still owns the section
+// when asynchronous discovery begins. Emitted by the Account menu's Manage
+// entry, not by the sidebar directly.
 type AccountCalendarManagementRequestedMsg struct {
 	AccountID  int64
 	CalendarID int64
@@ -332,20 +345,25 @@ func (m CalendarListModel) toggleCollapsed() CalendarListModel {
 	return m.setCollapsed(!m.collapsed[m.rows[m.cursor].accountID])
 }
 
-func (m CalendarListModel) accountManagementCmd(row calendarListRow) tea.Cmd {
+// accountActionsCmd emits a SidebarAccountActionsRequestedMsg for an account
+// heading. It is side-effect free: it only captures one representative linked
+// calendar ID (the first under the account) so a later handler can validate
+// ownership and route re-authentication. The menu and discovery open in
+// response to the message, not here.
+func (m CalendarListModel) accountActionsCmd(row calendarListRow) tea.Cmd {
 	if row.kind != accountHeaderRow || row.accountID == 0 {
 		return nil
 	}
-	ids := m.accountCalendarIDs(row.accountID)
-	if len(ids) == 0 {
+	calendarID, ok := m.firstAccountCalendarID(row.accountID)
+	if !ok {
 		return nil
 	}
-	msg := AccountCalendarManagementRequestedMsg{AccountID: row.accountID, CalendarID: ids[0]}
+	msg := SidebarAccountActionsRequestedMsg{AccountID: row.accountID, CalendarID: calendarID}
 	return func() tea.Msg { return msg }
 }
 
 // HandleClick hit-tests a viewport-relative row. The account disclosure
-// control occupies the first three cells; the heading opens account management.
+// control occupies the first three cells; the heading opens Account actions.
 // Calendar rows toggle visibility.
 func (m CalendarListModel) HandleClick(x, y int) (CalendarListModel, tea.Cmd) {
 	if y < 0 || (m.height > 0 && y >= m.height) {
@@ -359,13 +377,19 @@ func (m CalendarListModel) HandleClick(x, y int) (CalendarListModel, tea.Cmd) {
 	if row.kind == accountSpacerRow {
 		return m, nil
 	}
-	m.cursor = rowIndex
 	if row.kind == accountHeaderRow {
-		if x <= 2 || row.accountID == 0 {
-			return m.toggleCollapsed(), nil
+		// The disclosure control collapses the section and positions the
+		// cursor on the header row. The name-area Account actions request is
+		// side-effect free: it returns before the cursor assignment so
+		// emitting it never moves the cursor, collapses the section, or
+		// changes visibility.
+		if x > 2 && row.accountID != 0 {
+			return m, m.accountActionsCmd(row)
 		}
-		return m, m.accountManagementCmd(row)
+		m.cursor = rowIndex
+		return m.toggleCollapsed(), nil
 	}
+	m.cursor = rowIndex
 	return m.toggleCurrent()
 }
 
@@ -407,7 +431,7 @@ func (m CalendarListModel) Update(msg tea.Msg) (CalendarListModel, tea.Cmd) {
 			if row.accountID == 0 {
 				return m.toggleCollapsed(), nil
 			}
-			return m, m.accountManagementCmd(row)
+			return m, m.accountActionsCmd(row)
 		}
 		id := m.items[row.itemIndex].ID
 		return m, func() tea.Msg { return CalendarDialogRequestedMsg{ID: id} }
@@ -645,14 +669,17 @@ func (m *CalendarListModel) selectIdentity(identity calendarRowIdentity) {
 	}
 }
 
-func (m CalendarListModel) accountCalendarIDs(accountID int64) []int64 {
-	ids := make([]int64, 0)
+// firstAccountCalendarID returns the first linked calendar ID under an account
+// and ok=true, or (0, false) when the account has no calendars. Only one
+// representative ID is needed to validate ownership and route re-authentication,
+// so this avoids allocating the full ID list.
+func (m CalendarListModel) firstAccountCalendarID(accountID int64) (int64, bool) {
 	for _, item := range m.items {
 		if item.AccountID == accountID {
-			ids = append(ids, item.ID)
+			return item.ID, true
 		}
 	}
-	return ids
+	return 0, false
 }
 
 func hasAccountGroups(items []CalendarListItem) bool {
