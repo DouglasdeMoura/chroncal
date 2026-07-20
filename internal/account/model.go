@@ -120,6 +120,18 @@ type SelectionResult struct {
 	AccountRemoved bool
 }
 
+// RemoveParams configures destructive local removal of an account and every
+// calendar attached to it. NewDefaultID is required when the removed account
+// owns the current default calendar.
+type RemoveParams struct {
+	NewDefaultID int64
+}
+
+// RemoveResult reports the local calendar rows removed with an account.
+type RemoveResult struct {
+	RemovedIDs []int64
+}
+
 // CreateParams contains non-secret account connection settings.
 type CreateParams struct {
 	Name          string
