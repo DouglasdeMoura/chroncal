@@ -345,20 +345,13 @@ func (m CalendarListModel) toggleCollapsed() CalendarListModel {
 	return m.setCollapsed(!m.collapsed[m.rows[m.cursor].accountID])
 }
 
-// accountActionsCmd emits a SidebarAccountActionsRequestedMsg for an account
-// heading. It is side-effect free: it only captures one representative linked
-// calendar ID (the first under the account) so a later handler can validate
-// ownership and route re-authentication. The menu and discovery open in
-// response to the message, not here.
+// accountActionsCmd requests the account-scoped settings panel. The account ID
+// is sufficient; no representative calendar is selected or allocated.
 func (m CalendarListModel) accountActionsCmd(row calendarListRow) tea.Cmd {
 	if row.kind != accountHeaderRow || row.accountID == 0 {
 		return nil
 	}
-	calendarID, ok := m.firstAccountCalendarID(row.accountID)
-	if !ok {
-		return nil
-	}
-	msg := SidebarAccountActionsRequestedMsg{AccountID: row.accountID, CalendarID: calendarID}
+	msg := AccountSettingsRequestedMsg{AccountID: row.accountID}
 	return func() tea.Msg { return msg }
 }
 
@@ -667,19 +660,6 @@ func (m *CalendarListModel) selectIdentity(identity calendarRowIdentity) {
 			return
 		}
 	}
-}
-
-// firstAccountCalendarID returns the first linked calendar ID under an account
-// and ok=true, or (0, false) when the account has no calendars. Only one
-// representative ID is needed to validate ownership and route re-authentication,
-// so this avoids allocating the full ID list.
-func (m CalendarListModel) firstAccountCalendarID(accountID int64) (int64, bool) {
-	for _, item := range m.items {
-		if item.AccountID == accountID {
-			return item.ID, true
-		}
-	}
-	return 0, false
 }
 
 func hasAccountGroups(items []CalendarListItem) bool {
