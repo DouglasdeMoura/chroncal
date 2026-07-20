@@ -366,7 +366,7 @@ func TestCalendarList_AccountHeaderSpaceTogglesDisclosureWithoutTogglingCalendar
 	}
 }
 
-func TestCalendarList_AccountHeaderEnterRequestsActions(t *testing.T) {
+func TestCalendarList_AccountHeaderEnterRequestsSettings(t *testing.T) {
 	m := groupedListFixture()
 	cursor := calendarListRowForAccountID(t, m, 7)
 	m.cursor = cursor
@@ -375,11 +375,11 @@ func TestCalendarList_AccountHeaderEnterRequestsActions(t *testing.T) {
 
 	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
-		t.Fatal("account heading Enter should request account actions")
+		t.Fatal("account heading Enter should request Account settings")
 	}
-	msg, ok := cmd().(SidebarAccountActionsRequestedMsg)
-	if !ok || msg.AccountID != 7 || msg.CalendarID != 2 {
-		t.Fatalf("account actions request = %#v", cmd())
+	msg, ok := cmd().(AccountSettingsRequestedMsg)
+	if !ok || msg.AccountID != 7 {
+		t.Fatalf("Account settings request = %#v", cmd())
 	}
 	// Requesting account actions is side-effect free: cursor, collapse, and
 	// visibility must all be untouched. Discovery and the Account menu open
@@ -395,7 +395,7 @@ func TestCalendarList_AccountHeaderEnterRequestsActions(t *testing.T) {
 	}
 }
 
-func TestCalendarList_AccountHeaderMouseTargetsSeparateDisclosureAndActions(t *testing.T) {
+func TestCalendarList_AccountHeaderMouseTargetsSeparateDisclosureAndSettings(t *testing.T) {
 	m := groupedListFixture()
 	header := calendarListRowForAccountID(t, m, 7)
 
@@ -412,11 +412,11 @@ func TestCalendarList_AccountHeaderMouseTargetsSeparateDisclosureAndActions(t *t
 		t.Fatal("account name click should not collapse the section")
 	}
 	if cmd == nil {
-		t.Fatal("account name click should request account actions")
+		t.Fatal("account name click should request Account settings")
 	}
-	msg, ok := cmd().(SidebarAccountActionsRequestedMsg)
-	if !ok || msg.AccountID != 7 || msg.CalendarID != 2 {
-		t.Fatalf("account actions request = %#v", cmd())
+	msg, ok := cmd().(AccountSettingsRequestedMsg)
+	if !ok || msg.AccountID != 7 {
+		t.Fatalf("Account settings request = %#v", cmd())
 	}
 	// The name-area click requests actions without disturbing cursor,
 	// collapse, or visibility. The request is side-effect free; the menu

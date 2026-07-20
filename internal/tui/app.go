@@ -114,6 +114,7 @@ type miniMonthEventsLoadedMsg struct {
 
 type calendarsLoadedMsg struct {
 	calendars map[int64]CalendarInfo
+	accounts  map[int64]account.Account
 	err       error
 }
 
@@ -389,6 +390,7 @@ type Model struct {
 	loadedFrom time.Time
 	loadedTo   time.Time
 	calendars  map[int64]CalendarInfo
+	accounts   map[int64]account.Account
 	// pendingOrder holds an optimistic sidebar order (calendar ID → position)
 	// for a reorder whose async SetOrder has not yet confirmed. It is overlaid
 	// onto reloads so an interleaved loadCalendars (e.g. a sync finishing
@@ -440,6 +442,8 @@ type Model struct {
 	discoveryReturnToEdit     bool
 	calendarAccountMenu       CalendarAccountActionsMenuModel
 	calendarAccountMenuOpen   bool
+	accountSettings           AccountSettingsDialogModel
+	accountSettingsOpen       bool
 
 	// OAuth modal plus the operation that consumes its tokens: account
 	// discovery or re-authentication of an existing connection.
@@ -928,7 +932,11 @@ func (m Model) loadCalendars() tea.Cmd {
 		info := buildCalendarInfoMap(cals, accounts, func(calendarID int64) (int64, error) {
 			return m.app.Events.CountByCalendar(ctx, calendarID)
 		})
-		return calendarsLoadedMsg{calendars: info}
+		accountByID := make(map[int64]account.Account, len(accounts))
+		for _, configured := range accounts {
+			accountByID[configured.ID] = configured
+		}
+		return calendarsLoadedMsg{calendars: info, accounts: accountByID}
 	}
 }
 
@@ -982,6 +990,33 @@ func buildCalendarInfoMap(
 		}
 	}
 	return info
+}
+
+func (m Model) accountSettingsParams(accountID int64) (AccountSettingsParams, bool) {
+	configured, ok := m.accounts[accountID]
+	if !ok || accountID == 0 {
+		return AccountSettingsParams{}, false
+	}
+	params := AccountSettingsParams{
+		AccountID:   accountID,
+		DisplayName: configured.DisplayName,
+		Provider:    "CalDAV Account",
+		Username:    configured.Username,
+		AuthType:    calendar.NormalizeAuthType(configured.AuthType),
+	}
+	if caldav.IsGoogleCalendarEndpoint(configured.ServerURL) {
+		params.Provider = "Google Account"
+	}
+	for _, info := range m.calendars {
+		if info.AccountID != accountID {
+			continue
+		}
+		params.CalendarCount++
+		if info.LastSyncError != "" {
+			params.AttentionCount++
+		}
+	}
+	return params, true
 }
 
 // sortedCalendarListItems builds the sidebar's calendar rows from the calendar
@@ -1988,7 +2023,7 @@ func (m Model) undoIsAllowed() bool {
 func (m Model) anyOverlayOpen() bool {
 	return m.paletteOpen || m.formOpen || m.viewDialogOpen || m.dialogOpen ||
 		m.confirmOpen || m.choiceOpen ||
-		m.calendarDialogOpen || m.calendarAccountMenuOpen ||
+		m.calendarDialogOpen || m.calendarAccountMenuOpen || m.accountSettingsOpen ||
 		m.calendarListDialogOpen || m.helpDialogOpen ||
 		m.trashOpen || m.oauthFlowOpen
 }
@@ -2051,6 +2086,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 			var cmd tea.Cmd
 			m.palette, cmd = m.palette.Update(msg)
+			return m, cmd
+		}
+	}
+
+	// Account settings is the canonical account-scoped overlay. Its action
+	// messages fall through so the app can open child flows; all direct input
+	// stays with the panel.
+	if m.accountSettingsOpen {
+		switch msg.(type) {
+		case AccountSettingsManageRequestedMsg, AccountSettingsRenameRequestedMsg,
+			AccountSettingsReauthRequestedMsg, AccountSettingsRemoveRequestedMsg,
+			AccountSettingsClosedMsg, tea.BackgroundColorMsg, tea.WindowSizeMsg:
+			// fall through to main switch
+		default:
+			var cmd tea.Cmd
+			m.accountSettings, cmd = m.accountSettings.Update(msg)
 			return m, cmd
 		}
 	}
@@ -2182,6 +2233,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.choiceDialog = m.choiceDialog.SetSize(m.width, m.height)
 		m.calendarDialog = m.calendarDialog.SetSize(m.width, m.height)
 		m.calendarAccountMenu = m.calendarAccountMenu.SetSize(m.width, m.height)
+		m.accountSettings = m.accountSettings.SetSize(m.width, m.height)
 		m.form = m.form.SetSize(m.width, m.height)
 		m.palette = m.palette.SetSize(m.width, m.height)
 		m.calendarListDialog = m.calendarListDialog.SetSize(m.width, m.height)
@@ -2258,6 +2310,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case calendarsLoadedMsg:
 		if msg.err == nil {
 			m.calendars = msg.calendars
+			m.accounts = msg.accounts
 			// Overlay any unconfirmed reorder so a reload that races an
 			// in-flight SetOrder reflects the user's move instead of the stale
 			// DB order. Applied to m.calendars itself so the sidebar items and
@@ -2890,6 +2943,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loadCalendars(),
 			m.expireStatusAfter(6*time.Second, m.statusToken),
 		)
+
+	case AccountSettingsRequestedMsg:
+		params, ok := m.accountSettingsParams(msg.AccountID)
+		if !ok {
+			return m, nil
+		}
+		m.accountSettings = NewAccountSettingsDialogModel(params, m.theme).
+			SetSize(m.width, m.height)
+		m.accountSettingsOpen = true
+		return m, nil
+
+	case AccountSettingsClosedMsg:
+		m.accountSettingsOpen = false
+		return m, nil
 
 	case SidebarAccountActionsRequestedMsg:
 		// First step of the sidebar Account dialog: open the shared
@@ -4544,6 +4611,10 @@ func (m Model) View() tea.View {
 	if m.calendarAccountMenuOpen {
 		bw, bh := m.calendarAccountMenu.BoxSize()
 		v.Content = m.compositeOverlay(v.Content, m.calendarAccountMenu.View(), bw, bh)
+	}
+	if m.accountSettingsOpen {
+		bw, bh := m.accountSettings.BoxSize()
+		v.Content = m.compositeOverlay(v.Content, m.accountSettings.View(), bw, bh)
 	}
 	if m.oauthFlowOpen {
 		bw, bh := m.oauthFlow.BoxSize()

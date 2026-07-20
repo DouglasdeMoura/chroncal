@@ -279,6 +279,41 @@ func TestAppAccountMenuSelectionClosesMenuBeforeDispatch(t *testing.T) {
 	}
 }
 
+func TestAppAccountSettingsRequestOpensCanonicalPanel(t *testing.T) {
+	m := NewModel(nil, "")
+	m.width, m.height = 120, 40
+	m.accounts = map[int64]account.Account{
+		7: {
+			ID: 7, DisplayName: "Personal Google",
+			ServerURL: "https://apidata.googleusercontent.com/caldav/v2/",
+			AuthType:  "oauth2", Username: "douglas@example.com",
+		},
+	}
+	m.calendars = map[int64]CalendarInfo{
+		2: {Name: "Personal", AccountID: 7},
+		3: {Name: "Família", AccountID: 7, LastSyncError: "token expired"},
+		9: {Name: "Local"},
+	}
+
+	updated, cmd := m.Update(AccountSettingsRequestedMsg{AccountID: 7})
+	m = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("opening Account settings returned command %T", cmd())
+	}
+	if !m.accountSettingsOpen {
+		t.Fatal("Account settings did not open")
+	}
+	if m.calendarDialogOpen || m.calendarAccountMenuOpen || m.syncing || m.oauthPending || m.oauthFlowOpen {
+		t.Fatalf("opening settings changed unrelated state: calendar=%v oldMenu=%v syncing=%v oauthPending=%v oauth=%v",
+			m.calendarDialogOpen, m.calendarAccountMenuOpen, m.syncing, m.oauthPending, m.oauthFlowOpen)
+	}
+	if got := m.accountSettings.params; got.AccountID != 7 || got.DisplayName != "Personal Google" ||
+		got.Username != "douglas@example.com" || got.Provider != "Google Account" ||
+		got.CalendarCount != 2 || got.AttentionCount != 1 || got.AuthType != "oauth2" {
+		t.Fatalf("Account settings params = %+v", got)
+	}
+}
+
 // sidebarAccountActionsModel seeds a Model for the sidebar Account dialog
 // tests. Calendar 2 is a remote OAuth calendar under account 7; calendar 5
 // is a remote basic calendar under account 9; calendar 99 is local-only.
