@@ -43,6 +43,11 @@ func (s *Service) PushCalendar(ctx context.Context, calendarID int64, strategy C
 	return s.engine.PushCalendar(ctx, calendarID, strategy)
 }
 
+// SyncAccount syncs all calendars linked to one account.
+func (s *Service) SyncAccount(ctx context.Context, accountID int64, strategy ConflictStrategy) ([]*SyncResult, error) {
+	return s.engine.SyncAccount(ctx, accountID, strategy)
+}
+
 // SyncAll syncs all calendars linked to accounts.
 func (s *Service) SyncAll(ctx context.Context, strategy ConflictStrategy) ([]*SyncResult, error) {
 	return s.engine.SyncAll(ctx, strategy)
