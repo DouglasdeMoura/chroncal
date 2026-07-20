@@ -1436,6 +1436,132 @@ func (f selectionFixture) importAndRefresh(t *testing.T, paths ...string) (Impor
 	return result, discovery
 }
 
+func TestServiceRemoveWithCalendarsDeletesAccountCalendarsAndCredential(t *testing.T) {
+	f := newSelectionFixture(t)
+	imported, _ := f.importAndRefresh(t, "/cal/a/", "/cal/b/")
+
+	result, err := f.svc.RemoveWithCalendars(
+		context.Background(),
+		f.discovery.Account.ID,
+		RemoveParams{},
+		f.store,
+	)
+	if err != nil {
+		t.Fatalf("RemoveWithCalendars: %v", err)
+	}
+	if !slices.Equal(result.RemovedIDs, imported.CreatedIDs) {
+		t.Fatalf("removed IDs = %v, want %v", result.RemovedIDs, imported.CreatedIDs)
+	}
+	if _, err := f.q.GetAccount(context.Background(), f.discovery.Account.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("removed account lookup err = %v, want sql.ErrNoRows", err)
+	}
+	rows, err := f.q.ListCalendarsByAccount(context.Background(), &f.discovery.Account.ID)
+	if err != nil {
+		t.Fatalf("list removed account calendars: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("account calendars remain: %+v", rows)
+	}
+	if _, ok := f.store.credentials[f.discovery.Account.ID]; ok {
+		t.Fatal("removed account credential remains stored")
+	}
+	all, err := f.q.ListCalendars(context.Background())
+	if err != nil {
+		t.Fatalf("list surviving calendars: %v", err)
+	}
+	if len(all) == 0 {
+		t.Fatal("unrelated local calendar was removed")
+	}
+}
+
+func TestServiceRemoveWithCalendarsRequiresAndPromotesExternalDefault(t *testing.T) {
+	f := newSelectionFixture(t)
+	imported, _ := f.importAndRefresh(t, "/cal/a/")
+	ctx := context.Background()
+	all, err := f.q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("list calendars: %v", err)
+	}
+	var replacementID int64
+	for _, row := range all {
+		if row.ID != imported.CreatedIDs[0] {
+			replacementID = row.ID
+			break
+		}
+	}
+	if replacementID == 0 {
+		t.Fatal("fixture has no external replacement calendar")
+	}
+	if err := f.q.ClearDefaultCalendar(ctx); err != nil {
+		t.Fatalf("clear default: %v", err)
+	}
+	if err := f.q.SetCalendarAsDefault(ctx, imported.CreatedIDs[0]); err != nil {
+		t.Fatalf("set account calendar default: %v", err)
+	}
+
+	if _, err := f.svc.RemoveWithCalendars(ctx, f.discovery.Account.ID, RemoveParams{}, f.store); !errors.Is(err, calendar.ErrDefaultCalendarRequiresPromotion) {
+		t.Fatalf("RemoveWithCalendars without replacement error = %v", err)
+	}
+	if _, err := f.svc.RemoveWithCalendars(ctx, f.discovery.Account.ID, RemoveParams{NewDefaultID: replacementID}, f.store); err != nil {
+		t.Fatalf("RemoveWithCalendars with replacement: %v", err)
+	}
+	replacement, err := f.q.GetCalendar(ctx, replacementID)
+	if err != nil {
+		t.Fatalf("get replacement: %v", err)
+	}
+	if replacement.IsDefault != 1 {
+		t.Fatalf("replacement IsDefault = %d, want 1", replacement.IsDefault)
+	}
+}
+
+func TestServiceRemoveWithCalendarsRollsBackCredentialFailure(t *testing.T) {
+	f := newSelectionFixture(t)
+	imported, _ := f.importAndRefresh(t, "/cal/a/")
+	f.store.deleteErr = errors.New("keyring delete failed")
+
+	_, err := f.svc.RemoveWithCalendars(context.Background(), f.discovery.Account.ID, RemoveParams{}, f.store)
+	if !errors.Is(err, f.store.deleteErr) {
+		t.Fatalf("RemoveWithCalendars error = %v, want credential failure", err)
+	}
+	if _, err := f.q.GetAccount(context.Background(), f.discovery.Account.ID); err != nil {
+		t.Fatalf("account was removed after rollback: %v", err)
+	}
+	if _, err := f.q.GetCalendar(context.Background(), imported.CreatedIDs[0]); err != nil {
+		t.Fatalf("calendar was removed after rollback: %v", err)
+	}
+	if _, ok := f.store.credentials[f.discovery.Account.ID]; !ok {
+		t.Fatal("credential was not restored after rollback")
+	}
+}
+
+func TestServiceRemoveWithCalendarsRefusesLastCalendar(t *testing.T) {
+	f := newSelectionFixture(t)
+	imported, _ := f.importAndRefresh(t, "/cal/a/")
+	ctx := context.Background()
+	all, err := f.q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("list calendars: %v", err)
+	}
+	for _, row := range all {
+		if row.ID != imported.CreatedIDs[0] {
+			if err := f.q.DeleteCalendar(ctx, row.ID); err != nil {
+				t.Fatalf("delete fixture calendar: %v", err)
+			}
+		}
+	}
+	if err := f.q.SetCalendarAsDefault(ctx, imported.CreatedIDs[0]); err != nil {
+		t.Fatalf("set sole default: %v", err)
+	}
+
+	_, err = f.svc.RemoveWithCalendars(ctx, f.discovery.Account.ID, RemoveParams{}, f.store)
+	if !errors.Is(err, calendar.ErrLastCalendar) {
+		t.Fatalf("RemoveWithCalendars error = %v, want calendar.ErrLastCalendar", err)
+	}
+	if _, err := f.q.GetCalendar(ctx, imported.CreatedIDs[0]); err != nil {
+		t.Fatalf("last calendar was removed: %v", err)
+	}
+}
+
 func TestReconcileSelectionAddsAndRemovesInOneFinalState(t *testing.T) {
 	f := newSelectionFixture(t)
 	imported, discovery := f.importAndRefresh(t, "/cal/a/")

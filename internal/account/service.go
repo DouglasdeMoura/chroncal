@@ -787,6 +787,112 @@ func (s *Service) ReconcileSelection(
 	return result, nil
 }
 
+// RemoveWithCalendars deletes an account and every local calendar attached to
+// it. It never contacts the remote server. Delete has a different contract:
+// that method preserves the calendars as disconnected local rows.
+func (s *Service) RemoveWithCalendars(
+	ctx context.Context,
+	accountID int64,
+	params RemoveParams,
+	store auth.CredentialStore,
+) (RemoveResult, error) {
+	if store == nil {
+		return RemoveResult{}, fmt.Errorf("credential store is required")
+	}
+	release, err := synclock.Account(ctx, s.db, accountID)
+	if err != nil {
+		return RemoveResult{}, fmt.Errorf("lock account removal: %w", err)
+	}
+	defer release()
+
+	configured, err := s.Get(ctx, accountID)
+	if err != nil {
+		return RemoveResult{}, fmt.Errorf("get account: %w", err)
+	}
+	previous, previousErr := store.Get(accountID, configured.CredentialFingerprint())
+	if previousErr != nil &&
+		!auth.IsCredentialNotFound(previousErr) &&
+		!errors.Is(previousErr, auth.ErrCredentialIdentityMismatch) {
+		return RemoveResult{}, fmt.Errorf("read account credentials before removal: %w", previousErr)
+	}
+	hasPrevious := previousErr == nil
+	restorePrevious := func(cause error, operation string) error {
+		if !hasPrevious {
+			return fmt.Errorf("%s: %w", operation, cause)
+		}
+		if restoreErr := store.Set(previous); restoreErr != nil {
+			return fmt.Errorf("%s: %w (restore credentials: %w)", operation, cause, restoreErr)
+		}
+		return fmt.Errorf("%s: %w", operation, cause)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return RemoveResult{}, fmt.Errorf("begin account removal: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+
+	linked, err := qtx.ListCalendarsByAccount(ctx, &accountID)
+	if err != nil {
+		return RemoveResult{}, fmt.Errorf("list account calendars: %w", err)
+	}
+	all, err := qtx.ListCalendars(ctx)
+	if err != nil {
+		return RemoveResult{}, fmt.Errorf("list calendars: %w", err)
+	}
+	if len(all)-len(linked) < 1 {
+		return RemoveResult{}, calendar.ErrLastCalendar
+	}
+
+	removedIDs := make(map[int64]struct{}, len(linked))
+	removedDefault := false
+	result := RemoveResult{RemovedIDs: make([]int64, 0, len(linked))}
+	for _, row := range linked {
+		removedIDs[row.ID] = struct{}{}
+		result.RemovedIDs = append(result.RemovedIDs, row.ID)
+		removedDefault = removedDefault || row.IsDefault == 1
+	}
+
+	if removedDefault {
+		if params.NewDefaultID == 0 {
+			return RemoveResult{}, calendar.ErrDefaultCalendarRequiresPromotion
+		}
+		if _, removed := removedIDs[params.NewDefaultID]; removed {
+			return RemoveResult{}, calendar.ErrInvalidPromotionTarget
+		}
+		if _, err := qtx.GetCalendar(ctx, params.NewDefaultID); err != nil {
+			return RemoveResult{}, calendar.ErrInvalidPromotionTarget
+		}
+	} else if params.NewDefaultID != 0 {
+		return RemoveResult{}, calendar.ErrInvalidPromotionTarget
+	}
+
+	for _, row := range linked {
+		if err := qtx.DeleteCalendar(ctx, row.ID); err != nil {
+			return RemoveResult{}, fmt.Errorf("remove calendar %q: %w", row.Name, err)
+		}
+	}
+	if removedDefault {
+		if err := qtx.ClearDefaultCalendar(ctx); err != nil {
+			return RemoveResult{}, fmt.Errorf("clear default calendar: %w", err)
+		}
+		if err := qtx.SetCalendarAsDefault(ctx, params.NewDefaultID); err != nil {
+			return RemoveResult{}, fmt.Errorf("set replacement default: %w", err)
+		}
+	}
+	if err := qtx.DeleteAccount(ctx, accountID); err != nil {
+		return RemoveResult{}, fmt.Errorf("delete account: %w", err)
+	}
+	if err := store.Delete(accountID); err != nil {
+		return RemoveResult{}, restorePrevious(err, "delete account credentials")
+	}
+	if err := tx.Commit(); err != nil {
+		return RemoveResult{}, restorePrevious(err, "commit account removal")
+	}
+	return result, nil
+}
+
 // Delete removes an account and its credential while preserving every local
 // calendar and its downloaded data as a disconnected local calendar.
 func (s *Service) Delete(ctx context.Context, accountID int64, store auth.CredentialStore) error {
