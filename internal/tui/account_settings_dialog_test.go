@@ -121,3 +121,23 @@ func TestAccountSettingsDialogEscapeCloses(t *testing.T) {
 		t.Fatalf("Escape message = %T, want AccountSettingsClosedMsg", cmd())
 	}
 }
+
+func TestAccountOAuthConfigDialogSubmitsAccountScopedConfig(t *testing.T) {
+	m := NewAccountOAuthConfigDialogModel(7, "Personal Google", "stored-client", NewTheme(true)).
+		SetSize(100, 35)
+	if got := stripANSI(m.View()); !strings.Contains(got, "Personal Google") ||
+		!strings.Contains(got, "Client ID") || !strings.Contains(got, "Client secret") {
+		t.Fatalf("OAuth config view missing account context or fields:\n%s", got)
+	}
+	m.form.Field(0).(*TextField).SetValue("new-client")
+	m.form.Field(1).(*TextField).SetValue("new-secret")
+	form, cmd := m.form.Submit()
+	m.form = form
+	if cmd == nil {
+		t.Fatal("OAuth config form did not submit")
+	}
+	msg, ok := cmd().(AccountOAuthConfigSubmittedMsg)
+	if !ok || msg.AccountID != 7 || msg.ClientID != "new-client" || msg.ClientSecret != "new-secret" {
+		t.Fatalf("OAuth config submission = %#v", cmd())
+	}
+}

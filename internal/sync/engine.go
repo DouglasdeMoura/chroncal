@@ -365,6 +365,8 @@ func remoteCalendarIsReadOnly(cal storage.Calendar) bool {
 	return strings.EqualFold(strings.TrimSpace(cal.RemoteAccess), "read")
 }
 
+const accountCalendarSyncTimeout = 5 * time.Minute
+
 // SyncAccount syncs every calendar linked to one account serially. Calendars
 // sharing a credential must not refresh or persist that credential
 // concurrently.
@@ -378,7 +380,9 @@ func (e *Engine) SyncAccount(ctx context.Context, accountID int64, strategy Conf
 		if err := ctx.Err(); err != nil {
 			return results, err
 		}
-		result, err := e.SyncCalendar(ctx, cal.ID, strategy)
+		calendarCtx, cancel := context.WithTimeout(ctx, accountCalendarSyncTimeout)
+		result, err := e.SyncCalendar(calendarCtx, cal.ID, strategy)
+		cancel()
 		if err != nil {
 			e.logger.Error("sync calendar failed", "calendar_id", cal.ID, "error", err)
 			result = &SyncResult{CalendarID: cal.ID, Errors: []error{err}}
