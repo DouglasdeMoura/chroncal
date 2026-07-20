@@ -102,6 +102,10 @@ func (m AccountRenameDialogModel) View() string {
 	return m.dialog.Box(m.form.View())
 }
 
+func (m AccountRenameDialogModel) BoxSize() (int, int) {
+	return lipgloss.Size(m.View())
+}
+
 // AccountCalendarPickerModel presents every discovered collection, including
 // read-only and unsupported rows. Add mode selects new imports; management
 // mode edits the account's desired final local calendar set.
@@ -163,7 +167,7 @@ func (m AccountCalendarPickerModel) SetSize(w, h int) AccountCalendarPickerModel
 	return m.refresh()
 }
 
-func (m AccountCalendarPickerModel) BoxSize() (int, int) { return m.shell.BoxSize() }
+func (m AccountCalendarPickerModel) BoxSize() (int, int) { return lipgloss.Size(m.View()) }
 
 func (m AccountCalendarPickerModel) toggleCurrent() AccountCalendarPickerModel {
 	remote, ok := m.currentRemote()
