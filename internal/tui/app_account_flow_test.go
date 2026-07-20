@@ -314,6 +314,153 @@ func TestAppAccountSettingsRequestOpensCanonicalPanel(t *testing.T) {
 	}
 }
 
+func TestAppAccountSettingsManageUsesAccountOnlyDiscovery(t *testing.T) {
+	m := NewModel(nil, "")
+	m.width, m.height = 120, 40
+	m.accounts = map[int64]account.Account{
+		7: {ID: 7, DisplayName: "Personal Google", AuthType: "oauth2", Username: "douglas@example.com"},
+	}
+	m.calendars = map[int64]CalendarInfo{
+		2: {Name: "Personal", AccountID: 7},
+		3: {Name: "Família", AccountID: 7},
+	}
+	updated, _ := m.Update(AccountSettingsRequestedMsg{AccountID: 7})
+	m = updated.(Model)
+
+	updated, cmd := m.Update(AccountSettingsManageRequestedMsg{AccountID: 7})
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatal("Manage did not start account discovery")
+	}
+	if !m.syncing || m.accountSettingsOpen || m.accountCalendarManagerOpen || m.calendarDialogOpen {
+		t.Fatalf("Manage start: syncing=%v settings=%v manager=%v calendarDialog=%v",
+			m.syncing, m.accountSettingsOpen, m.accountCalendarManagerOpen, m.calendarDialogOpen)
+	}
+	generation := m.accountManagementGeneration
+	if generation == 0 || m.pendingAccountManagementID != 7 {
+		t.Fatalf("management identity: generation=%d account=%d", generation, m.pendingAccountManagementID)
+	}
+
+	// Lifecycle completions must bypass whichever overlay happens to be open.
+	updated, _ = m.Update(AccountSettingsRequestedMsg{AccountID: 7})
+	m = updated.(Model)
+	if !m.accountSettingsOpen {
+		t.Fatal("precondition: Account settings did not reopen during discovery")
+	}
+
+	discovery := pickerDiscovery()
+	discovery.Account.ID = 7
+	updated, _ = m.Update(accountManagementDiscoveryReadyMsg{
+		discovery: discovery, accountID: 7, generation: generation,
+	})
+	m = updated.(Model)
+	if m.syncing || !m.accountCalendarManagerOpen || m.calendarDialogOpen {
+		t.Fatalf("Manage completion: syncing=%v manager=%v calendarDialog=%v",
+			m.syncing, m.accountCalendarManagerOpen, m.calendarDialogOpen)
+	}
+	if !m.accountCalendarManager.manage || m.accountCalendarManager.discovery.Account.ID != 7 {
+		t.Fatalf("management picker = %+v", m.accountCalendarManager)
+	}
+
+	updated, _ = m.Update(calendarsLoadedMsg{
+		calendars: m.calendars,
+		accounts: map[int64]account.Account{
+			7: {ID: 7, DisplayName: "Reloaded Google", AuthType: "oauth2"},
+		},
+	})
+	m = updated.(Model)
+	if got := m.accounts[7].DisplayName; got != "Reloaded Google" {
+		t.Fatalf("manager swallowed calendar reload: account name = %q", got)
+	}
+
+	updated, cmd = m.Update(AccountCalendarsReconcileRequestedMsg{
+		AccountID: 7, SelectedPaths: []string{"/personal/"},
+	})
+	m = updated.(Model)
+	if cmd == nil || !m.syncing || m.accountCalendarManagerOpen || m.calendarDialogOpen {
+		t.Fatalf("Manage save: cmd=%v syncing=%v manager=%v calendarDialog=%v",
+			cmd == nil, m.syncing, m.accountCalendarManagerOpen, m.calendarDialogOpen)
+	}
+	updated, _ = m.Update(accountSelectionFinishedMsg{accountManagement: true})
+	m = updated.(Model)
+	if m.accountCalendarManagerOpen || m.calendarDialogOpen {
+		t.Fatalf("Manage completion reopened unrelated dialog: manager=%v calendarDialog=%v",
+			m.accountCalendarManagerOpen, m.calendarDialogOpen)
+	}
+}
+
+func TestAppAccountSettingsRenameOpensAccountScopedDialog(t *testing.T) {
+	m := NewModel(nil, "")
+	m.width, m.height = 120, 40
+	m.accounts = map[int64]account.Account{
+		7: {ID: 7, DisplayName: "Personal Google", AuthType: "oauth2", Username: "douglas@example.com"},
+	}
+	updated, _ := m.Update(AccountSettingsRequestedMsg{AccountID: 7})
+	m = updated.(Model)
+
+	updated, cmd := m.Update(AccountSettingsRenameRequestedMsg{AccountID: 7})
+	m = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("Rename open returned command %T", cmd())
+	}
+	if !m.accountSettingsOpen || !m.accountRenameOpen {
+		t.Fatalf("Rename open: settings=%v rename=%v", m.accountSettingsOpen, m.accountRenameOpen)
+	}
+
+	updated, _ = m.Update(accountRenameCancelledMsg{})
+	m = updated.(Model)
+	if m.accountRenameOpen || !m.accountSettingsOpen {
+		t.Fatalf("Rename cancel: settings=%v rename=%v", m.accountSettingsOpen, m.accountRenameOpen)
+	}
+
+	updated, _ = m.Update(AccountSettingsRenameRequestedMsg{AccountID: 7})
+	m = updated.(Model)
+	m.accountRename.form.Field(0).(*TextField).SetValue("Attempted Google")
+	updated, cmd = m.Update(AccountRenameRequestedMsg{AccountID: 7, Name: "Attempted Google"})
+	m = updated.(Model)
+	if cmd == nil || !m.syncing || m.accountRenameOpen {
+		t.Fatalf("Rename submit: cmd=%v syncing=%v rename=%v", cmd == nil, m.syncing, m.accountRenameOpen)
+	}
+	updated, _ = m.Update(accountRenameFinishedMsg{err: errors.New("name conflict")})
+	m = updated.(Model)
+	if !m.accountRenameOpen || m.accountRename.form.Field(0).(*TextField).Value() != "Attempted Google" {
+		t.Fatalf("Rename failure lost form: open=%v value=%q",
+			m.accountRenameOpen, m.accountRename.form.Field(0).(*TextField).Value())
+	}
+	if got := m.accountRename.form.Error(); got != "name conflict" {
+		t.Fatalf("Rename field error = %q, want name conflict", got)
+	}
+	m.syncStatus = "Account rename failed"
+	m.statusToken = 9
+	updated, _ = m.Update(syncStatusExpiredMsg{token: 9})
+	m = updated.(Model)
+	if m.syncStatus != "" {
+		t.Fatalf("Rename dialog swallowed status expiry: %q", m.syncStatus)
+	}
+	updated, _ = m.Update(accountRenameCancelledMsg{})
+	m = updated.(Model)
+
+	updated, _ = m.Update(AccountSettingsRenameRequestedMsg{AccountID: 7})
+	m = updated.(Model)
+	updated, cmd = m.Update(AccountRenameRequestedMsg{AccountID: 7, Name: "Renamed Google"})
+	m = updated.(Model)
+	if cmd == nil || !m.syncing || m.accountRenameOpen {
+		t.Fatalf("Rename retry: cmd=%v syncing=%v rename=%v", cmd == nil, m.syncing, m.accountRenameOpen)
+	}
+	updated, _ = m.Update(AccountSettingsClosedMsg{})
+	m = updated.(Model)
+	m.paletteOpen = true
+	renamed := account.Account{
+		ID: 7, DisplayName: "Renamed Google", AuthType: "oauth2", Username: "douglas@example.com",
+	}
+	updated, _ = m.Update(accountRenameFinishedMsg{account: renamed})
+	m = updated.(Model)
+	if got := m.accounts[7].DisplayName; m.syncing || got != "Renamed Google" {
+		t.Fatalf("Rename completion behind palette: syncing=%v name=%q",
+			m.syncing, m.accounts[7].DisplayName)
+	}
+}
+
 // sidebarAccountActionsModel seeds a Model for the sidebar Account dialog
 // tests. Calendar 2 is a remote OAuth calendar under account 7; calendar 5
 // is a remote basic calendar under account 9; calendar 99 is local-only.

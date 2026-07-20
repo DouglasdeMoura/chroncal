@@ -328,6 +328,13 @@ type accountDiscoveryReadyMsg struct {
 	returnToEdit     bool
 }
 
+type accountManagementDiscoveryReadyMsg struct {
+	discovery  account.Discovery
+	accountID  int64
+	generation uint64
+	err        error
+}
+
 type accountImportFinishedMsg struct {
 	created  int
 	existing int
@@ -337,15 +344,16 @@ type accountImportFinishedMsg struct {
 }
 
 type accountSelectionFinishedMsg struct {
-	created          int
-	removed          int
-	removedIDs       []int64
-	synced           int
-	accountRemoved   bool
-	removedCurrent   bool
-	err              error
-	syncErr          error
-	dialogGeneration uint64
+	created           int
+	removed           int
+	removedIDs        []int64
+	synced            int
+	accountRemoved    bool
+	removedCurrent    bool
+	err               error
+	syncErr           error
+	dialogGeneration  uint64
+	accountManagement bool
 }
 
 type accountDefaultCandidate struct {
@@ -355,9 +363,11 @@ type accountDefaultCandidate struct {
 }
 
 type accountCalendarSelection struct {
-	params         account.SelectionParams
-	removed        []account.DiscoveredCalendar
-	removedCurrent bool
+	discovery         account.Discovery
+	params            account.SelectionParams
+	removed           []account.DiscoveredCalendar
+	removedCurrent    bool
+	accountManagement bool
 }
 type calendarDiscoveryDiscardedMsg struct{ err error }
 
@@ -433,17 +443,24 @@ type Model struct {
 	hiddenCalendars  map[int64]bool
 	clickedEventID   int64
 
-	sidebar                   SidebarModel
-	calendarDialog            CalendarDialogModel
-	calendarDialogOpen        bool
-	calendarDialogGeneration  uint64
-	pendingDiscoveryAccountID int64
-	pendingDiscoveryCreated   bool
-	discoveryReturnToEdit     bool
-	calendarAccountMenu       CalendarAccountActionsMenuModel
-	calendarAccountMenuOpen   bool
-	accountSettings           AccountSettingsDialogModel
-	accountSettingsOpen       bool
+	sidebar                     SidebarModel
+	calendarDialog              CalendarDialogModel
+	calendarDialogOpen          bool
+	calendarDialogGeneration    uint64
+	pendingDiscoveryAccountID   int64
+	pendingDiscoveryCreated     bool
+	discoveryReturnToEdit       bool
+	calendarAccountMenu         CalendarAccountActionsMenuModel
+	calendarAccountMenuOpen     bool
+	accountSettings             AccountSettingsDialogModel
+	accountSettingsOpen         bool
+	accountRename               AccountRenameDialogModel
+	accountRenameOpen           bool
+	accountRenameFromSettings   bool
+	accountCalendarManager      AccountCalendarPickerModel
+	accountCalendarManagerOpen  bool
+	accountManagementGeneration uint64
+	pendingAccountManagementID  int64
 
 	// OAuth modal plus the operation that consumes its tokens: account
 	// discovery or re-authentication of an existing connection.
@@ -1019,6 +1036,85 @@ func (m Model) accountSettingsParams(accountID int64) (AccountSettingsParams, bo
 	return params, true
 }
 
+func (m Model) finishAccountRename(msg accountRenameFinishedMsg) (Model, tea.Cmd) {
+	m.syncing = false
+	if m.calendarDialog.discoveryPicker != nil {
+		picker, _ := m.calendarDialog.discoveryPicker.Update(msg)
+		m.calendarDialog.discoveryPicker = &picker
+	}
+	if m.accountCalendarManagerOpen {
+		m.accountCalendarManager, _ = m.accountCalendarManager.Update(msg)
+	}
+	m.statusToken++
+	if msg.err != nil {
+		if m.accountRenameFromSettings {
+			m.accountRename.form.SetError(0, msg.err.Error())
+			m.accountRenameOpen = true
+		}
+		m.syncStatus = "Account rename failed: " + msg.err.Error()
+		return m, tea.Batch(
+			m.toast.Failed(msg.err.Error()),
+			m.expireStatusAfter(8*time.Second, m.statusToken),
+		)
+	}
+	m.accountRenameFromSettings = false
+	if m.accounts == nil {
+		m.accounts = make(map[int64]account.Account)
+	}
+	m.accounts[msg.account.ID] = msg.account
+	if m.accountSettingsOpen && m.accountSettings.params.AccountID == msg.account.ID {
+		if params, ok := m.accountSettingsParams(msg.account.ID); ok {
+			m.accountSettings = NewAccountSettingsDialogModel(params, m.theme).
+				SetSize(m.width, m.height)
+		}
+	}
+	m.syncStatus = fmt.Sprintf("Renamed account to %s", msg.account.DisplayName)
+	return m, tea.Batch(
+		m.loadCalendars(),
+		m.expireStatusAfter(6*time.Second, m.statusToken),
+	)
+}
+
+func (m Model) finishAccountManagementDiscovery(
+	msg accountManagementDiscoveryReadyMsg,
+) (Model, tea.Cmd) {
+	stale := msg.generation != m.accountManagementGeneration ||
+		msg.accountID != m.pendingAccountManagementID
+	if configured, ok := m.accounts[msg.accountID]; !ok || configured.ID == 0 {
+		stale = true
+	}
+	if msg.err == nil && msg.discovery.Account.ID != msg.accountID {
+		stale = true
+	}
+	m.syncing = false
+	if stale {
+		m.pendingAccountManagementID = 0
+		m.syncStatus = ""
+		return m, nil
+	}
+	if msg.err != nil {
+		m.pendingAccountManagementID = 0
+		if params, ok := m.accountSettingsParams(msg.accountID); ok {
+			m.accountSettings = NewAccountSettingsDialogModel(params, m.theme).
+				SetSize(m.width, m.height)
+			m.accountSettingsOpen = true
+		}
+		m.statusToken++
+		m.syncStatus = "Calendar discovery failed: " + msg.err.Error()
+		return m, tea.Batch(
+			m.toast.Failed(msg.err.Error()),
+			m.expireStatusAfter(10*time.Second, m.statusToken),
+		)
+	}
+	m.pendingAccountManagementID = 0
+	m.accountSettingsOpen = false
+	m.accountCalendarManager = NewAccountCalendarManagerModel(msg.discovery, m.theme).
+		SetSize(m.width, m.height)
+	m.accountCalendarManagerOpen = true
+	m.syncStatus = ""
+	return m, m.loadCalendars()
+}
+
 // sortedCalendarListItems builds the sidebar's calendar rows from the calendar
 // map and sorts them by the user's persisted display order (name as a tiebreak,
 // e.g. rows that share a backfilled default). Shared by the reload handler and
@@ -1392,21 +1488,14 @@ func (m Model) importAndSyncAccountCalendars(paths []string) tea.Cmd {
 	}
 }
 
-func (m Model) reconcileAndSyncAccountCalendars(
-	params account.SelectionParams,
-	removedCurrent bool,
-) tea.Cmd {
+func (m Model) reconcileAndSyncAccountCalendars(selection *accountCalendarSelection) tea.Cmd {
 	finished := accountSelectionFinishedMsg{
-		removedCurrent:   removedCurrent,
-		dialogGeneration: m.calendarDialogGeneration,
+		removedCurrent:    selection.removedCurrent,
+		dialogGeneration:  m.calendarDialogGeneration,
+		accountManagement: selection.accountManagement,
 	}
-	if m.calendarDialog.discoveryPicker == nil {
-		return func() tea.Msg {
-			finished.err = fmt.Errorf("calendar management is no longer open")
-			return finished
-		}
-	}
-	discovery := m.calendarDialog.discoveryPicker.discovery
+	discovery := selection.discovery
+	params := selection.params
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
@@ -1454,7 +1543,13 @@ func (m Model) reconcileAndSyncAccountCalendars(
 func (m Model) prepareAccountCalendarSelection(
 	msg AccountCalendarsReconcileRequestedMsg,
 ) (*accountCalendarSelection, []accountDefaultCandidate, error) {
-	picker := m.calendarDialog.discoveryPicker
+	var picker *AccountCalendarPickerModel
+	dedicatedManager := m.accountCalendarManagerOpen
+	if dedicatedManager {
+		picker = &m.accountCalendarManager
+	} else {
+		picker = m.calendarDialog.discoveryPicker
+	}
 	if picker == nil || !picker.manage || msg.AccountID != picker.discovery.Account.ID {
 		return nil, nil, fmt.Errorf("calendar selection no longer matches the open account")
 	}
@@ -1477,7 +1572,9 @@ func (m Model) prepareAccountCalendarSelection(
 	}
 
 	selection := &accountCalendarSelection{
-		params: account.SelectionParams{SelectedPaths: selectedPaths},
+		discovery:         picker.discovery,
+		params:            account.SelectionParams{SelectedPaths: selectedPaths},
+		accountManagement: dedicatedManager,
 	}
 	removedIDs := make(map[int64]struct{})
 	var removedDefault bool
@@ -1490,7 +1587,8 @@ func (m Model) prepareAccountCalendarSelection(
 		}
 		selection.removed = append(selection.removed, item)
 		removedIDs[item.CalendarID] = struct{}{}
-		if m.calendarDialog.localDraft != nil && item.CalendarID == m.calendarDialog.localDraft.ID {
+		if !dedicatedManager && m.calendarDialog.localDraft != nil &&
+			item.CalendarID == m.calendarDialog.localDraft.ID {
 			selection.removedCurrent = true
 		}
 		if info, ok := m.calendars[item.CalendarID]; ok && info.IsDefault {
@@ -1583,6 +1681,30 @@ func (m Model) discardDiscoveryAccount(accountID int64) tea.Cmd {
 			err = m.app.Accounts.Delete(ctx, accountID, store)
 		}
 		return calendarDiscoveryDiscardedMsg{err: err}
+	}
+}
+
+func (m Model) discoverAccountCalendars(accountID int64, generation uint64) tea.Cmd {
+	result := func(discovery account.Discovery, err error) accountManagementDiscoveryReadyMsg {
+		return accountManagementDiscoveryReadyMsg{
+			discovery: discovery, accountID: accountID, generation: generation, err: err,
+		}
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		store, err := auth.NewCredentialStoreWithWarnings(
+			m.app.CredentialNamespace,
+			m.app.PreviousCredentialNamespaces,
+			m.app.MigrateLegacyCredentials,
+			m.app.AllowPlaintext,
+			io.Discard,
+		)
+		if err != nil {
+			return result(account.Discovery{}, fmt.Errorf("open credential store: %w", err))
+		}
+		discovery, err := m.app.Accounts.Discover(ctx, accountID, store)
+		return result(discovery, err)
 	}
 }
 
@@ -2024,8 +2146,8 @@ func (m Model) anyOverlayOpen() bool {
 	return m.paletteOpen || m.formOpen || m.viewDialogOpen || m.dialogOpen ||
 		m.confirmOpen || m.choiceOpen ||
 		m.calendarDialogOpen || m.calendarAccountMenuOpen || m.accountSettingsOpen ||
-		m.calendarListDialogOpen || m.helpDialogOpen ||
-		m.trashOpen || m.oauthFlowOpen
+		m.accountRenameOpen || m.accountCalendarManagerOpen ||
+		m.calendarListDialogOpen || m.helpDialogOpen || m.trashOpen || m.oauthFlowOpen
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -2036,6 +2158,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clockTickScheduled = false
 		m = m.refreshToday(time.Now())
 		return m.scheduleClockTick()
+	}
+
+	switch msg := msg.(type) {
+	case accountManagementDiscoveryReadyMsg:
+		return m.finishAccountManagementDiscovery(msg)
+	case accountRenameFinishedMsg:
+		return m.finishAccountRename(msg)
 	}
 
 	// Global key bindings override any open dialog: ctrl+c / q always route
@@ -2090,14 +2219,45 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	if m.accountRenameOpen {
+		switch msg.(type) {
+		case AccountRenameRequestedMsg, accountRenameCancelledMsg,
+			accountRenameFinishedMsg, syncStatusExpiredMsg, toastTickMsg, spinner.TickMsg,
+			tea.BackgroundColorMsg, tea.WindowSizeMsg:
+			// fall through to main switch
+		default:
+			var cmd tea.Cmd
+			m.accountRename, cmd = m.accountRename.Update(msg)
+			return m, cmd
+		}
+	}
+
+	// Account calendar management is account-scoped and independent of the
+	// Edit Calendar dialog. The picker owns input until it applies or closes.
+	if m.accountCalendarManagerOpen && !m.confirmOpen && !m.choiceOpen {
+		switch msg.(type) {
+		case AccountCalendarsReconcileRequestedMsg, AccountCalendarPickerClosedMsg,
+			AccountRenameRequestedMsg, accountRenameFinishedMsg, calendarsLoadedMsg,
+			syncStatusExpiredMsg, toastTickMsg, spinner.TickMsg,
+			tea.BackgroundColorMsg, tea.WindowSizeMsg:
+			// fall through to main switch
+		default:
+			var cmd tea.Cmd
+			m.accountCalendarManager, cmd = m.accountCalendarManager.Update(msg)
+			return m, cmd
+		}
+	}
+
 	// Account settings is the canonical account-scoped overlay. Its action
 	// messages fall through so the app can open child flows; all direct input
 	// stays with the panel.
-	if m.accountSettingsOpen {
+	if m.accountSettingsOpen && !m.accountRenameOpen {
 		switch msg.(type) {
 		case AccountSettingsManageRequestedMsg, AccountSettingsRenameRequestedMsg,
 			AccountSettingsReauthRequestedMsg, AccountSettingsRemoveRequestedMsg,
-			AccountSettingsClosedMsg, tea.BackgroundColorMsg, tea.WindowSizeMsg:
+			AccountSettingsClosedMsg, accountRenameFinishedMsg, calendarsLoadedMsg,
+			syncStatusExpiredMsg, toastTickMsg, spinner.TickMsg,
+			tea.BackgroundColorMsg, tea.WindowSizeMsg:
 			// fall through to main switch
 		default:
 			var cmd tea.Cmd
@@ -2234,6 +2394,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.calendarDialog = m.calendarDialog.SetSize(m.width, m.height)
 		m.calendarAccountMenu = m.calendarAccountMenu.SetSize(m.width, m.height)
 		m.accountSettings = m.accountSettings.SetSize(m.width, m.height)
+		m.accountRename = m.accountRename.SetSize(m.width, m.height)
+		m.accountCalendarManager = m.accountCalendarManager.SetSize(m.width, m.height)
 		m.form = m.form.SetSize(m.width, m.height)
 		m.palette = m.palette.SetSize(m.width, m.height)
 		m.calendarListDialog = m.calendarListDialog.SetSize(m.width, m.height)
@@ -2911,11 +3073,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
-
 	case AccountRenameRequestedMsg:
 		if m.syncing {
 			return m, nil
 		}
+		m.accountRenameOpen = false
 		m.syncing = true
 		m.syncStatus = "Renaming account…"
 		request := msg
@@ -2924,25 +3086,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return accountRenameFinishedMsg{account: renamed, err: err}
 		}
 
-	case accountRenameFinishedMsg:
-		m.syncing = false
-		if m.calendarDialog.discoveryPicker != nil {
-			picker, _ := m.calendarDialog.discoveryPicker.Update(msg)
-			m.calendarDialog.discoveryPicker = &picker
-		}
-		m.statusToken++
-		if msg.err != nil {
-			m.syncStatus = "Account rename failed: " + msg.err.Error()
-			return m, tea.Batch(
-				m.toast.Failed(msg.err.Error()),
-				m.expireStatusAfter(8*time.Second, m.statusToken),
-			)
-		}
-		m.syncStatus = fmt.Sprintf("Renamed account to %s", msg.account.DisplayName)
-		return m, tea.Batch(
-			m.loadCalendars(),
-			m.expireStatusAfter(6*time.Second, m.statusToken),
-		)
+	case accountRenameCancelledMsg:
+		m.accountRenameOpen = false
+		m.accountRenameFromSettings = false
+		return m, nil
 
 	case AccountSettingsRequestedMsg:
 		params, ok := m.accountSettingsParams(msg.AccountID)
@@ -2952,6 +3099,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.accountSettings = NewAccountSettingsDialogModel(params, m.theme).
 			SetSize(m.width, m.height)
 		m.accountSettingsOpen = true
+		return m, nil
+
+	case AccountSettingsManageRequestedMsg:
+		if m.syncing || m.oauthFlowOpen || m.oauthPending ||
+			!m.accountSettingsOpen || m.accountSettings.params.AccountID != msg.AccountID {
+			return m, nil
+		}
+		if _, ok := m.accounts[msg.AccountID]; !ok {
+			return m, nil
+		}
+		m.accountSettingsOpen = false
+		m.accountCalendarManagerOpen = false
+		m.accountManagementGeneration++
+		m.pendingAccountManagementID = msg.AccountID
+		m.syncing = true
+		m.syncStatus = "Discovering calendars…"
+		return m, tea.Batch(
+			m.syncSpinner.Tick,
+			m.discoverAccountCalendars(msg.AccountID, m.accountManagementGeneration),
+		)
+
+	case AccountSettingsRenameRequestedMsg:
+		if m.syncing || !m.accountSettingsOpen ||
+			m.accountSettings.params.AccountID != msg.AccountID {
+			return m, nil
+		}
+		configured, ok := m.accounts[msg.AccountID]
+		if !ok {
+			return m, nil
+		}
+		m.accountRename = newAccountRenameDialogModel(configured, m.theme).
+			SetSize(m.width, m.height)
+		m.accountRenameFromSettings = true
+		m.accountRenameOpen = true
 		return m, nil
 
 	case AccountSettingsClosedMsg:
@@ -3132,6 +3313,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case AccountCalendarPickerClosedMsg:
 		m.statusToken++
+		if m.accountCalendarManagerOpen {
+			m.accountCalendarManagerOpen = false
+			if params, ok := m.accountSettingsParams(m.accountCalendarManager.discovery.Account.ID); ok {
+				m.accountSettings = NewAccountSettingsDialogModel(params, m.theme).
+					SetSize(m.width, m.height)
+				m.accountSettingsOpen = true
+			}
+			m.syncStatus = "Calendar discovery cancelled"
+			return m, m.expireStatusAfter(6*time.Second, m.statusToken)
+		}
 		if m.discoveryReturnToEdit {
 			m.discoveryReturnToEdit = false
 			m.calendarDialog = m.calendarDialog.HideDiscovery()
@@ -3171,12 +3362,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.toast.Failed(err.Error())
 		}
 		if len(selection.removed) == 0 {
-			m.calendarDialogOpen = false
+			if m.accountCalendarManagerOpen {
+				m.accountCalendarManagerOpen = false
+			} else {
+				m.calendarDialogOpen = false
+			}
 			m.syncing = true
 			m.syncStatus = "Adding and syncing selected calendars…"
 			return m, tea.Batch(
 				m.syncSpinner.Tick,
-				m.reconcileAndSyncAccountCalendars(selection.params, false),
+				m.reconcileAndSyncAccountCalendars(selection),
 			)
 		}
 		if len(candidates) > 0 {
@@ -3259,7 +3454,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusToken++
 		sameDialog := msg.dialogGeneration == m.calendarDialogGeneration
 		if msg.err != nil {
-			if sameDialog {
+			if msg.accountManagement {
+				m.accountCalendarManagerOpen = true
+			} else if sameDialog {
 				m.calendarDialogOpen = m.calendarDialog.discoveryPicker != nil
 			}
 			m.syncStatus = "Calendar changes failed: " + msg.err.Error()
@@ -3269,7 +3466,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pendingDiscoveryAccountID = 0
 		m.pendingDiscoveryCreated = false
 		m.discoveryReturnToEdit = false
-		if sameDialog {
+		if msg.accountManagement {
+			m.accountCalendarManagerOpen = false
+		} else if sameDialog {
 			m.calendarDialog = m.calendarDialog.HideDiscovery()
 			m.calendarDialogOpen = !msg.removedCurrent && !msg.accountRemoved
 		} else if draft := m.calendarDialog.localDraft; draft != nil &&
@@ -3986,11 +4185,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingAccountSelection = nil
 			m.pendingAccountDefaultCandidates = nil
 			m.calendarDialogOpen = false
+			m.accountCalendarManagerOpen = false
 			m.syncing = true
 			m.syncStatus = "Applying calendar changes…"
 			return m, tea.Batch(
 				m.syncSpinner.Tick,
-				m.reconcileAndSyncAccountCalendars(selection.params, selection.removedCurrent),
+				m.reconcileAndSyncAccountCalendars(selection),
 			)
 		}
 		if len(m.pendingPurgeEntries) > 0 {
@@ -4615,6 +4815,14 @@ func (m Model) View() tea.View {
 	if m.accountSettingsOpen {
 		bw, bh := m.accountSettings.BoxSize()
 		v.Content = m.compositeOverlay(v.Content, m.accountSettings.View(), bw, bh)
+	}
+	if m.accountCalendarManagerOpen {
+		bw, bh := m.accountCalendarManager.BoxSize()
+		v.Content = m.compositeOverlay(v.Content, m.accountCalendarManager.View(), bw, bh)
+	}
+	if m.accountRenameOpen {
+		bw, bh := m.accountRename.BoxSize()
+		v.Content = m.compositeOverlay(v.Content, m.accountRename.View(), bw, bh)
 	}
 	if m.oauthFlowOpen {
 		bw, bh := m.oauthFlow.BoxSize()
