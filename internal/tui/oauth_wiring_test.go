@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/douglasdemoura/chroncal/internal/account"
 	"github.com/douglasdemoura/chroncal/internal/auth"
 )
 
@@ -135,6 +136,141 @@ func TestReauthReadyErrorReleasesPending(t *testing.T) {
 	}
 }
 
+func TestAccountSettingsReauthTargetsAccountIdentity(t *testing.T) {
+	m := NewModel(nil, "")
+	m.accounts = map[int64]account.Account{
+		7: {ID: 7, DisplayName: "Personal Google", AuthType: "oauth2"},
+	}
+	m = updateModel(t, m, AccountSettingsRequestedMsg{AccountID: 7})
+
+	next, cmd := m.Update(AccountSettingsReauthRequestedMsg{AccountID: 7})
+	m = next.(Model)
+	if cmd == nil || !m.oauthPending {
+		t.Fatalf("account reauth start: cmd=%v pending=%v", cmd == nil, m.oauthPending)
+	}
+	if m.accountSettingsOpen {
+		t.Fatal("Account settings stayed open while credential load started")
+	}
+}
+
+func TestAccountReauthReadyOpensFlowWithoutCalendar(t *testing.T) {
+	m := Model{
+		oauthPending: true, width: 100, height: 40,
+		accounts: map[int64]account.Account{
+			7: {ID: 7, DisplayName: "Personal Google", AuthType: "oauth2"},
+		},
+	}
+	m = updateModel(t, m, accountReauthReadyMsg{
+		accountID: 7,
+		name:      "Personal Google",
+		cred:      auth.Credential{OAuthClientID: "cid", OAuthClientSecret: "shh"},
+	})
+	if m.oauthPending || !m.oauthFlowOpen {
+		t.Fatalf("account reauth ready: pending=%v open=%v", m.oauthPending, m.oauthFlowOpen)
+	}
+	if m.oauthPurpose.accountID != 7 || m.oauthPurpose.accountName != "Personal Google" {
+		t.Fatalf("OAuth purpose = %+v", m.oauthPurpose)
+	}
+}
+
+func TestStoredAccountOAuthCredentialStartsWholeAccountSync(t *testing.T) {
+	m := Model{oauthPending: true, accountSettingsOpen: true}
+	next, cmd := m.Update(oauthCredentialStoredMsg{
+		accountID: 7, name: "Personal Google", accountReauth: true,
+	})
+	m = next.(Model)
+	if cmd == nil || !m.syncing || m.oauthPending {
+		t.Fatalf("post-auth account sync: cmd=%v syncing=%v pending=%v",
+			cmd == nil, m.syncing, m.oauthPending)
+	}
+	if !strings.Contains(m.syncStatus, "Personal Google") {
+		t.Fatalf("syncStatus = %q, want account name", m.syncStatus)
+	}
+}
+
+func TestStoredCalendarOAuthCredentialKeepsCalendarScopedSync(t *testing.T) {
+	m := Model{oauthPending: true}
+	next, cmd := m.Update(oauthCredentialStoredMsg{
+		calendarID: 12, accountID: 7, name: "Personal",
+	})
+	m = next.(Model)
+	if cmd == nil || m.syncing || m.oauthPending {
+		t.Fatalf("calendar reauth completion: cmd=%v syncing=%v pending=%v",
+			cmd == nil, m.syncing, m.oauthPending)
+	}
+	msg, ok := cmd().(SyncCalendarRequestedMsg)
+	if !ok || msg.ID != 12 {
+		t.Fatalf("calendar reauth command = %#v, want calendar 12 sync", msg)
+	}
+}
+
+func TestAccountReauthMissingClientConfigUsesAccountDialog(t *testing.T) {
+	m := Model{
+		oauthPending: true, width: 100, height: 40,
+		accounts: map[int64]account.Account{
+			7: {ID: 7, DisplayName: "Personal Google", AuthType: "oauth2"},
+		},
+	}
+	m = updateModel(t, m, accountReauthReadyMsg{
+		accountID: 7,
+		name:      "Personal Google",
+		cred:      auth.Credential{OAuthClientID: "stored-client"},
+	})
+	if m.oauthPending || !m.accountOAuthConfigOpen || m.calendarDialogOpen {
+		t.Fatalf("missing config: pending=%v accountConfig=%v calendarDialog=%v",
+			m.oauthPending, m.accountOAuthConfigOpen, m.calendarDialogOpen)
+	}
+	if got := m.accountOAuthConfig.form.Field(0).(*TextField).Value(); got != "stored-client" {
+		t.Fatalf("client ID prefill = %q, want stored-client", got)
+	}
+
+	next, cmd := m.Update(AccountOAuthConfigSubmittedMsg{
+		AccountID: 7, ClientID: "new-client", ClientSecret: "new-secret",
+	})
+	m = next.(Model)
+	if cmd == nil || !m.oauthPending || m.accountOAuthConfigOpen {
+		t.Fatalf("config submit: cmd=%v pending=%v open=%v",
+			cmd == nil, m.oauthPending, m.accountOAuthConfigOpen)
+	}
+}
+
+func TestAccountOAuthConfigCancelReturnsToAccountSettings(t *testing.T) {
+	m := Model{
+		accountOAuthConfigOpen: true,
+		accountOAuthConfig: NewAccountOAuthConfigDialogModel(
+			7, "Personal Google", "", NewTheme(true),
+		),
+		accounts: map[int64]account.Account{
+			7: {ID: 7, DisplayName: "Personal Google", AuthType: "oauth2"},
+		},
+	}
+	m = updateModel(t, m, AccountOAuthConfigClosedMsg{AccountID: 7})
+	if m.accountOAuthConfigOpen || !m.accountSettingsOpen {
+		t.Fatalf("config cancel: config=%v settings=%v",
+			m.accountOAuthConfigOpen, m.accountSettingsOpen)
+	}
+}
+
+func TestStoredAccountCredentialFailureUsesMessageIdentity(t *testing.T) {
+	m := Model{
+		oauthPending:        true,
+		accountSettingsOpen: true,
+		oauthPurpose: oauthFlowPurpose{
+			accountID: 99, accountReauth: true,
+		},
+		accounts: map[int64]account.Account{
+			7: {ID: 7, DisplayName: "Personal Google", AuthType: "oauth2"},
+		},
+	}
+	m = updateModel(t, m, oauthCredentialStoredMsg{
+		accountID: 7, accountReauth: true, err: errTestReauth,
+	})
+	if m.oauthPending || !m.accountSettingsOpen || m.accountSettings.params.AccountID != 7 {
+		t.Fatalf("credential failure: pending=%v settings=%v account=%d",
+			m.oauthPending, m.accountSettingsOpen, m.accountSettings.params.AccountID)
+	}
+}
+
 var errTestReauth = &stringError{"load credential: keyring locked"}
 
 type stringError struct{ s string }
@@ -227,5 +363,20 @@ func TestOAuthModalSuppressesGlobalHelpKey(t *testing.T) {
 	m := Model{keys: defaultAppKeys(), oauthFlowOpen: true}
 	if _, _, handled := m.interceptGlobalKeys(help); handled {
 		t.Error("? should not be intercepted while the OAuth modal is open")
+	}
+
+	config := Model{keys: defaultAppKeys(), accountOAuthConfigOpen: true}
+	if _, _, handled := config.interceptGlobalKeys(help); handled {
+		t.Error("? should not be intercepted while OAuth client configuration is open")
+	}
+}
+
+func TestSyncCompletionIsHandledBehindAccountSettings(t *testing.T) {
+	m := Model{syncing: true, accountSettingsOpen: true}
+	next, cmd := m.Update(syncFinishedMsg{summary: "Synced Personal Google"})
+	m = next.(Model)
+	if m.syncing || m.syncStatus != "Synced Personal Google" || cmd == nil {
+		t.Fatalf("sync completion: syncing=%v status=%q cmd=%v",
+			m.syncing, m.syncStatus, cmd == nil)
 	}
 }

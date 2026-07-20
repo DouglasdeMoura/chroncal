@@ -233,3 +233,94 @@ func (m AccountSettingsDialogModel) View() string {
 func accountSettingsActionTarget(index int) string {
 	return fmt.Sprintf("account-settings-action-%d", index)
 }
+
+type AccountOAuthConfigSubmittedMsg struct {
+	AccountID    int64
+	ClientID     string
+	ClientSecret string
+}
+
+type AccountOAuthConfigClosedMsg struct{ AccountID int64 }
+
+type AccountOAuthConfigDialogModel struct {
+	accountID   int64
+	accountName string
+	dialog      Dialog
+	form        Form
+	help        help.Model
+	muted       color.Color
+}
+
+func NewAccountOAuthConfigDialogModel(
+	accountID int64,
+	accountName, clientIDPrefill string,
+	theme Theme,
+) AccountOAuthConfigDialogModel {
+	clientID := newOAuthClientIDField(clientIDPrefill)
+	clientSecret := newOAuthClientSecretField()
+	styles := DefaultFormStyles()
+	styles.LabelLayout = LabelTop
+	form := NewForm(
+		"Continue",
+		styles,
+		FormItem{Label: "Client ID", Field: clientID, Required: true},
+		FormItem{Label: "Client secret", Field: clientSecret, Required: true},
+	)
+	form.OnSubmit(func(f *Form) tea.Cmd {
+		msg := AccountOAuthConfigSubmittedMsg{
+			AccountID:    accountID,
+			ClientID:     strings.TrimSpace(f.Field(0).(*TextField).Value()),
+			ClientSecret: strings.TrimSpace(f.Field(1).(*TextField).Value()),
+		}
+		return func() tea.Msg { return msg }
+	})
+	form.OnCancel(func(*Form) tea.Cmd {
+		return func() tea.Msg { return AccountOAuthConfigClosedMsg{AccountID: accountID} }
+	})
+	return AccountOAuthConfigDialogModel{
+		accountID:   accountID,
+		accountName: accountName,
+		dialog:      NewDialog("Sign In Again", DefaultDialogStyles()),
+		form:        form,
+		help:        newThemedHelp(theme),
+		muted:       theme.TextDim,
+	}
+}
+
+func (m AccountOAuthConfigDialogModel) SetSize(w, h int) AccountOAuthConfigDialogModel {
+	const maxWidth = 56
+	m.dialog = m.dialog.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	m.dialog.SetWidth(min(w, maxWidth))
+	m.form.SetWidth(m.dialog.ContentWidth())
+	return m
+}
+
+func (m AccountOAuthConfigDialogModel) BoxSize() (int, int) {
+	return lipgloss.Size(m.View())
+}
+
+func (m AccountOAuthConfigDialogModel) Update(
+	msg tea.Msg,
+) (AccountOAuthConfigDialogModel, tea.Cmd) {
+	if size, ok := msg.(tea.WindowSizeMsg); ok {
+		return m.SetSize(size.Width, size.Height), nil
+	}
+	if press, ok := msg.(tea.KeyPressMsg); ok &&
+		key.Matches(press, key.NewBinding(key.WithKeys("esc"))) {
+		return m, func() tea.Msg { return AccountOAuthConfigClosedMsg{AccountID: m.accountID} }
+	}
+	var cmd tea.Cmd
+	m.form, cmd = m.form.Update(msg)
+	return m, cmd
+}
+
+func (m AccountOAuthConfigDialogModel) View() string {
+	m.dialog.SetFooter(m.help.ShortHelpView([]key.Binding{
+		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "switch")),
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select")),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
+	}))
+	contextLine := lipgloss.NewStyle().Foreground(m.muted).
+		Render("OAuth client configuration for " + m.accountName)
+	return m.dialog.Box(contextLine + "\n\n" + m.form.View())
+}
