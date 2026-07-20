@@ -365,6 +365,29 @@ func remoteCalendarIsReadOnly(cal storage.Calendar) bool {
 	return strings.EqualFold(strings.TrimSpace(cal.RemoteAccess), "read")
 }
 
+// SyncAccount syncs every calendar linked to one account serially. Calendars
+// sharing a credential must not refresh or persist that credential
+// concurrently.
+func (e *Engine) SyncAccount(ctx context.Context, accountID int64, strategy ConflictStrategy) ([]*SyncResult, error) {
+	cals, err := e.q.ListCalendarsByAccount(ctx, &accountID)
+	if err != nil {
+		return nil, fmt.Errorf("list account calendars: %w", err)
+	}
+	results := make([]*SyncResult, 0, len(cals))
+	for _, cal := range cals {
+		if err := ctx.Err(); err != nil {
+			return results, err
+		}
+		result, err := e.SyncCalendar(ctx, cal.ID, strategy)
+		if err != nil {
+			e.logger.Error("sync calendar failed", "calendar_id", cal.ID, "error", err)
+			result = &SyncResult{CalendarID: cal.ID, Errors: []error{err}}
+		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
 // maxSyncAllConcurrency bounds how many accounts SyncAll syncs at once. Each
 // account hits an independent server, so concurrency cuts wall-clock time
 // toward the slowest single account instead of the sum of all of them; the cap
