@@ -176,8 +176,20 @@ func (s *Service) Create(ctx context.Context, params CreateParams, cred auth.Cre
 	return fromStorage(row), nil
 }
 
-// LoadCredentialForCalendar reads a credential under the account lifecycle
-// lock and revalidates that the calendar still belongs to that account.
+// LoadCredential reads the single credential shared by every calendar in an
+// account while holding the account lifecycle lock.
+func (s *Service) LoadCredential(ctx context.Context, accountID int64, store auth.CredentialStore) (auth.Credential, error) {
+	release, err := synclock.Account(ctx, s.db, accountID)
+	if err != nil {
+		return auth.Credential{}, fmt.Errorf("lock account credential read: %w", err)
+	}
+	defer release()
+	return s.loadCredential(ctx, accountID, store)
+}
+
+// LoadCredentialForCalendar reads the account credential under the account
+// lifecycle lock and additionally verifies calendar ownership for callers
+// whose operation originates from one calendar.
 func (s *Service) LoadCredentialForCalendar(ctx context.Context, calendarID, accountID int64, store auth.CredentialStore) (auth.Credential, error) {
 	release, err := synclock.Account(ctx, s.db, accountID)
 	if err != nil {
@@ -191,6 +203,13 @@ func (s *Service) LoadCredentialForCalendar(ctx context.Context, calendarID, acc
 	if calendar.AccountID == nil || *calendar.AccountID != accountID {
 		return auth.Credential{}, fmt.Errorf("calendar is no longer linked to account %d", accountID)
 	}
+	return s.loadCredential(ctx, accountID, store)
+}
+
+// loadCredential reads a credential while its caller holds the account
+// lifecycle lock. Keeping lookup here prevents account- and calendar-originated
+// reads from drifting without recursively acquiring the same lock.
+func (s *Service) loadCredential(ctx context.Context, accountID int64, store auth.CredentialStore) (auth.Credential, error) {
 	account, err := s.Get(ctx, accountID)
 	if err != nil {
 		return auth.Credential{}, fmt.Errorf("get account: %w", err)
@@ -199,7 +218,11 @@ func (s *Service) LoadCredentialForCalendar(ctx context.Context, calendarID, acc
 	if err != nil {
 		return auth.Credential{}, fmt.Errorf("get account credentials: %w", err)
 	}
+	cred.AccountID = accountID
 	cred.AccountFingerprint = account.CredentialFingerprint()
+	if cred.Username == "" {
+		cred.Username = account.Username
+	}
 	return cred, nil
 }
 
