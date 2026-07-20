@@ -527,6 +527,86 @@ func TestServiceDeleteTreatsCredentialIdentityMismatchAsNoPreviousCredential(t *
 	}
 }
 
+func TestServiceLoadCredentialUsesAccountIdentity(t *testing.T) {
+	db, q, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	store := newMemoryCredentialStore()
+	svc := NewService(db, q)
+	account, err := svc.Create(ctx, CreateParams{
+		Name: "Work", ServerURL: "https://cal.example.test/", Username: "alice", AuthType: "basic",
+	}, auth.Credential{Username: "alice", Password: "secret"}, store)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	cred, err := svc.LoadCredential(ctx, account.ID, store)
+	if err != nil {
+		t.Fatalf("LoadCredential: %v", err)
+	}
+	if cred.AccountID != account.ID {
+		t.Fatalf("credential account ID = %d, want %d", cred.AccountID, account.ID)
+	}
+	if cred.AccountFingerprint != account.CredentialFingerprint() {
+		t.Fatalf("credential fingerprint = %q, want %q", cred.AccountFingerprint, account.CredentialFingerprint())
+	}
+	if cred.Username != "alice" || cred.Password != "secret" {
+		t.Fatalf("credential = %+v, want stored account credential", cred)
+	}
+}
+
+func TestServiceLoadCredentialWaitsForAccountLifecycle(t *testing.T) {
+	db, q, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	store := newMemoryCredentialStore()
+	svc := NewService(db, q)
+	account, err := svc.Create(ctx, CreateParams{
+		Name: "Work", ServerURL: "https://cal.example.test/", Username: "alice", AuthType: "basic",
+	}, auth.Credential{Username: "alice", Password: "secret"}, store)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	release, err := synclock.Account(ctx, db, account.ID)
+	if err != nil {
+		t.Fatalf("lock account lifecycle: %v", err)
+	}
+	type loadResult struct {
+		cred auth.Credential
+		err  error
+	}
+	done := make(chan loadResult, 1)
+	go func() {
+		cred, err := svc.LoadCredential(ctx, account.ID, store)
+		done <- loadResult{cred: cred, err: err}
+	}()
+	select {
+	case result := <-done:
+		release()
+		t.Fatalf("LoadCredential completed while lifecycle lock was held: %+v", result)
+	case <-time.After(100 * time.Millisecond):
+	}
+	release()
+	select {
+	case result := <-done:
+		if result.err != nil {
+			t.Fatalf("LoadCredential after release: %v", result.err)
+		}
+		if result.cred.AccountID != account.ID || result.cred.Password != "secret" {
+			t.Fatalf("credential after release = %+v", result.cred)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("LoadCredential did not resume after lifecycle release")
+	}
+}
+
 func TestServiceStoreCredentialWaitsForAccountLifecycle(t *testing.T) {
 	db, q, err := storage.Open(":memory:")
 	if err != nil {
