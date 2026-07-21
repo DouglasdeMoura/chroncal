@@ -79,7 +79,7 @@ exposes, import every usable collection, and complete their initial sync.`,
 			}
 			rollback := func(cause error) error {
 				if cleanupErr := a.Accounts.Delete(ctx, created.ID, store); cleanupErr != nil {
-					return fmt.Errorf("%w (remove incomplete account: %v)", cause, cleanupErr)
+					return errors.Join(cause, fmt.Errorf("remove incomplete account: %w", cleanupErr))
 				}
 				return cause
 			}
