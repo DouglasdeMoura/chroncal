@@ -1155,19 +1155,17 @@ func TestCalendarDialogRendering_SyncOnHTTPChecked(t *testing.T) {
 func TestCalendarDialogRendering_EditLinked(t *testing.T) {
 	theme := Theme{}
 	m := NewCalendarDialogModel(CalendarDialogParams{
-		ID:             7,
-		Name:           "Work",
-		Color:          "#a6e3a1",
-		RemoteURL:      "https://cal.example.com/dav/calendars/work/",
-		RemoteLinked:   true,
-		RemoteAuthType: "basic",
-		RemoteUsername: "alice",
-	}, theme)
-	m = m.SetSize(120, 40)
+		ID:           7,
+		AccountID:    3,
+		AccountName:  "Work Account",
+		Name:         "Work",
+		Color:        "#a6e3a1",
+		RemoteLinked: true,
+	}, theme).SetSize(120, 40)
 
 	v := m.View()
-	assert.Contains(t, v, "Account…")
+	assert.Contains(t, v, "Account: Work Account")
+	assert.Contains(t, v, "Manage Account…")
 	assert.NotContains(t, v, "Disconnect…")
-	assert.Contains(t, m.AccountActionsMenu().View(), "Disconnect…")
-	assert.Contains(t, v, "cal.example.com")
+	assert.NotContains(t, v, "cal.example.com")
 }

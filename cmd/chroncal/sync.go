@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"strconv"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	syncPkg "github.com/douglasdemoura/chroncal/internal/sync"
 )
@@ -34,6 +37,34 @@ func classifySyncError(err error) error {
 		return &cliError{Code: "invalid_input", Msg: msg}
 	}
 	return err
+}
+
+func syncNewCalendars(
+	ctx context.Context,
+	a *app.App,
+	store auth.CredentialStore,
+	calendarIDs []int64,
+) error {
+	if len(calendarIDs) == 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, syncRunTimeout)
+	defer cancel()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	svc := syncPkg.NewService(
+		a.DB, a.Queries, store, a.Calendars, a.Events, a.Todos, a.Journals, logger,
+	)
+	var syncErrs []error
+	for _, calendarID := range calendarIDs {
+		result, err := svc.SyncCalendar(ctx, calendarID, syncPkg.ConflictServerWins)
+		if err == nil && len(result.Errors) > 0 {
+			err = errors.Join(result.Errors...)
+		}
+		if err != nil {
+			syncErrs = append(syncErrs, fmt.Errorf("initial sync for calendar %d: %w", calendarID, err))
+		}
+	}
+	return errors.Join(syncErrs...)
 }
 
 const syncRunTimeout = 5 * time.Minute

@@ -93,8 +93,8 @@ func TestSyncHealthDialogLines_InvalidGrant(t *testing.T) {
 	if !strings.Contains(lines[0].text, "Google login expired") {
 		t.Errorf("error line should humanize invalid_grant; got %+v", lines[0])
 	}
-	if !strings.Contains(lines[1].text, "calendar update gmail") || !strings.Contains(lines[1].text, "--auth oauth2") {
-		t.Errorf("hint should name the re-link command with the calendar; got %+v", lines[1])
+	if !strings.Contains(lines[1].text, "Manage Account") || !strings.Contains(lines[1].text, "sign in again") {
+		t.Errorf("hint should point to canonical account settings; got %+v", lines[1])
 	}
 }
 

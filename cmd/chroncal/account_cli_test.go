@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/douglasdemoura/chroncal/internal/account"
@@ -18,18 +21,20 @@ import (
 func TestAccountAddAndList(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 	t.Setenv("CHRONCAL_BEARER_TOKEN", "test-token")
+	srv := newAccountDiscoveryServer(t)
 
 	stdout, _, err := runChroncalCommand(t,
 		"account", "add", "Personal Google",
-		"--server", "https://calendar.example.test/caldav/",
+		"--server", srv.URL+"/",
 		"--username", "me@example.test",
 		"--auth", "bearer",
+		"--allow-insecure",
 		"--allow-plaintext",
 	)
 	if err != nil {
 		t.Fatalf("account add: %v", err)
 	}
-	if !strings.Contains(stdout, `Account "Personal Google" added`) {
+	if !strings.Contains(stdout, `Account "Personal Google" added with 2 calendar(s)`) {
 		t.Fatalf("account add output = %q", stdout)
 	}
 
@@ -46,7 +51,168 @@ func TestAccountAddAndList(t *testing.T) {
 	}
 }
 
-func TestAccountDiscoverImportsAllUsableCollectionsIdempotently(t *testing.T) {
+func TestAccountAddImportsAndSyncsAllUsableCalendars(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	t.Setenv("CHRONCAL_BEARER_TOKEN", "test-token")
+	srv := newAccountDiscoveryServer(t)
+
+	stdout, _, err := runChroncalCommand(t,
+		"account", "add", "Test account",
+		"--server", srv.URL+"/",
+		"--username", "me@example.test",
+		"--auth", "bearer",
+		"--allow-insecure",
+		"--allow-plaintext",
+		"--output", "json",
+	)
+	if err != nil {
+		t.Fatalf("account add: %v", err)
+	}
+	var result jsonDiscovery
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("decode account add: %v\n%s", err, stdout)
+	}
+	if result.Account.ID == 0 || len(result.Calendars) != 3 ||
+		len(result.CreatedIDs) != 2 || len(result.SyncedIDs) != 2 {
+		t.Fatalf("account add result = %+v", result)
+	}
+	for _, remote := range result.Calendars {
+		if remote.Name == "Availability" {
+			if remote.Imported {
+				t.Fatalf("unsupported calendar was imported: %+v", remote)
+			}
+			continue
+		}
+		if !remote.Imported || remote.CalendarID == 0 {
+			t.Fatalf("usable calendar missing post-import state: %+v", remote)
+		}
+	}
+	assertLinkedCalendarNames(t, dbPath, "Holidays in Brazil", "Personal (2)")
+	assertLinkedCalendarsSynced(t, dbPath)
+}
+
+func TestAccountAddAttemptsInitialSyncForEveryImportedCalendar(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	t.Setenv("CHRONCAL_BEARER_TOKEN", "test-token")
+	var holidaySync atomic.Bool
+	srv := newAccountDiscoveryServerWithInterceptor(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method != "REPORT" {
+			return false
+		}
+		switch r.URL.Path {
+		case "/calendars/me/personal/":
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusMultiStatus)
+			_, _ = w.Write([]byte("<malformed"))
+			return true
+		case "/calendars/me/holidays/":
+			holidaySync.Store(true)
+		}
+		return false
+	})
+
+	_, _, err := runChroncalCommand(t,
+		"account", "add", "Test account",
+		"--server", srv.URL+"/",
+		"--username", "me@example.test",
+		"--auth", "bearer",
+		"--allow-insecure",
+		"--allow-plaintext",
+	)
+	if err == nil || !strings.Contains(err.Error(), "initial sync failed") {
+		t.Fatalf("account add sync error = %v", err)
+	}
+	if !holidaySync.Load() {
+		t.Fatal("second imported calendar was not synced after the first failed")
+	}
+	assertLinkedCalendarNames(t, dbPath, "Holidays in Brazil", "Personal (2)")
+}
+
+func TestAccountAddRollsBackWhenDiscoveryHasNoUsableCalendars(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	t.Setenv("CHRONCAL_BEARER_TOKEN", "test-token")
+	srv := newAccountDiscoveryServerWithInterceptor(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != "/calendars/me/" {
+			return false
+		}
+		w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+		w.WriteHeader(http.StatusMultiStatus)
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+  <d:response><d:href>/calendars/me/freebusy/</d:href><d:propstat><d:prop>
+    <d:resourcetype><d:collection/><c:calendar/></d:resourcetype><d:displayname>Availability</d:displayname>
+    <c:supported-calendar-component-set><c:comp name="VFREEBUSY"/></c:supported-calendar-component-set>
+  </d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
+</d:multistatus>`))
+		return true
+	})
+
+	_, _, err := runChroncalCommand(t,
+		"account", "add", "Test account",
+		"--server", srv.URL+"/",
+		"--username", "me@example.test",
+		"--auth", "bearer",
+		"--allow-insecure",
+		"--allow-plaintext",
+	)
+	if err == nil || !strings.Contains(err.Error(), "exposes no usable") {
+		t.Fatalf("account add error = %v", err)
+	}
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	defer a.Close()
+	accounts, err := a.Accounts.List(context.Background())
+	if err != nil {
+		t.Fatalf("list accounts: %v", err)
+	}
+	if len(accounts) != 0 {
+		t.Fatalf("incomplete account was retained: %+v", accounts)
+	}
+	assertLinkedCalendarNames(t, dbPath)
+}
+
+func TestAccountGetReturnsResolvedAccount(t *testing.T) {
+	_, serverURL := setupDiscoveredAccountCLI(t, "Personal Google")
+
+	stdout, _, err := runChroncalCommand(t,
+		"account", "get", "Personal Google", "--output", "json",
+	)
+	if err != nil {
+		t.Fatalf("account get: %v", err)
+	}
+	var got jsonAccount
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("decode account get: %v\n%s", err, stdout)
+	}
+	if got.ID == 0 || got.DisplayName != "Personal Google" ||
+		got.ServerURL != serverURL {
+		t.Fatalf("account get = %+v", got)
+	}
+}
+
+func TestAccountUpdateRenamesDisplayName(t *testing.T) {
+	setupDiscoveredAccountCLI(t, "Personal Google")
+
+	stdout, _, err := runChroncalCommand(t,
+		"account", "update", "Personal Google",
+		"--name", "Home Google",
+		"--output", "json",
+	)
+	if err != nil {
+		t.Fatalf("account update: %v", err)
+	}
+	var got jsonAccount
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("decode account update: %v\n%s", err, stdout)
+	}
+	if got.DisplayName != "Home Google" || got.Name != "Home Google" {
+		t.Fatalf("renamed account = %+v", got)
+	}
+}
+
+func TestAccountCalendarsAddAllUsableCollectionsIdempotently(t *testing.T) {
 	dbPath := setupCalendarCLITestEnv(t)
 	t.Setenv("CHRONCAL_BEARER_TOKEN", "test-token")
 	srv := newAccountDiscoveryServer(t)
@@ -63,20 +229,22 @@ func TestAccountDiscoverImportsAllUsableCollectionsIdempotently(t *testing.T) {
 	}
 
 	stdout, _, err := runChroncalCommand(t,
-		"account", "discover", "Test account", "--all", "--allow-plaintext",
+		"account", "calendars", "add", "Test account", "--all", "--allow-plaintext",
 	)
 	if err != nil {
-		t.Fatalf("account discover --all: %v", err)
+		t.Fatalf("account calendars add --all: %v", err)
 	}
-	if !strings.Contains(stdout, "Imported 2 calendars") || !strings.Contains(stdout, "Availability") {
-		t.Fatalf("discover output = %q", stdout)
+	if !strings.Contains(stdout, "Added and synced 0 calendars") ||
+		!strings.Contains(stdout, "2 were already selected") ||
+		!strings.Contains(stdout, "Availability") {
+		t.Fatalf("calendar add output = %q", stdout)
 	}
 
 	// Repeating the same complete discovery must reuse both linked rows.
 	if _, _, err := runChroncalCommand(t,
-		"account", "discover", "Test account", "--all", "--allow-plaintext",
+		"account", "calendars", "add", "Test account", "--all", "--allow-plaintext",
 	); err != nil {
-		t.Fatalf("repeat account discover --all: %v", err)
+		t.Fatalf("repeat account calendars add --all: %v", err)
 	}
 
 	a, err := app.New(dbPath)
@@ -99,13 +267,234 @@ func TestAccountDiscoverImportsAllUsableCollectionsIdempotently(t *testing.T) {
 	}
 }
 
-func TestAccountDiscoverSelectsCalendarByName(t *testing.T) {
+func TestAccountCalendarsAddSelectsCalendarByName(t *testing.T) {
+	dbPath, _ := setupDiscoveredAccountCLI(t, "Test account")
+	if _, _, err := runChroncalCommand(t,
+		"account", "calendars", "add", "Test account",
+		"--calendar", "Holidays in Brazil",
+		"--allow-plaintext",
+	); err != nil {
+		t.Fatalf("account calendars add --calendar: %v", err)
+	}
+
+	assertLinkedCalendarNames(t, dbPath, "Holidays in Brazil", "Personal (2)")
+}
+
+func TestAccountCalendarsListAndAdd(t *testing.T) {
+	dbPath := setupAccountCalendarSelectionTest(t)
+
+	stdout, _, err := runChroncalCommand(t,
+		"account", "calendars", "list", "Test account",
+		"--allow-plaintext", "--output", "json",
+	)
+	if err != nil {
+		t.Fatalf("account calendars list: %v", err)
+	}
+	var discovery jsonDiscovery
+	if err := json.Unmarshal([]byte(stdout), &discovery); err != nil {
+		t.Fatalf("decode calendar inventory: %v\n%s", err, stdout)
+	}
+	if len(discovery.Calendars) != 3 {
+		t.Fatalf("discovered calendars = %d, want 3", len(discovery.Calendars))
+	}
+
+	stdout, _, err = runChroncalCommand(t,
+		"account", "calendars", "add", "Test account",
+		"--calendar", "Holidays in Brazil",
+		"--allow-plaintext", "--output", "json",
+	)
+	if err != nil {
+		t.Fatalf("account calendars add: %v", err)
+	}
+	if err := json.Unmarshal([]byte(stdout), &discovery); err != nil {
+		t.Fatalf("decode add result: %v\n%s", err, stdout)
+	}
+	if len(discovery.CreatedIDs) != 1 || len(discovery.SyncedIDs) != 1 || len(discovery.ExistingIDs) != 0 {
+		t.Fatalf("add result = %+v", discovery)
+	}
+	var added *jsonDiscoveredCalendar
+	for i := range discovery.Calendars {
+		if discovery.Calendars[i].Name == "Holidays in Brazil" {
+			added = &discovery.Calendars[i]
+		}
+	}
+	if added == nil || !added.Imported || added.CalendarID != discovery.CreatedIDs[0] {
+		t.Fatalf("added calendar state = %+v; result = %+v", added, discovery)
+	}
+	assertLinkedCalendarNames(t, dbPath, "Holidays in Brazil", "Personal (2)")
+	assertLinkedCalendarsSynced(t, dbPath)
+}
+
+func TestAccountCalendarsSetReconcilesExactSelection(t *testing.T) {
+	dbPath := setupAccountCalendarSelectionTest(t)
+	if _, _, err := runChroncalCommand(t,
+		"account", "calendars", "add", "Test account",
+		"--all", "--allow-plaintext",
+	); err != nil {
+		t.Fatalf("account calendars add --all: %v", err)
+	}
+
+	stdout, _, err := runChroncalCommand(t,
+		"account", "calendars", "set", "Test account",
+		"--calendar", "Holidays in Brazil",
+		"--yes", "--allow-plaintext", "--output", "json",
+	)
+	if err != nil {
+		t.Fatalf("account calendars set: %v", err)
+	}
+	var result struct {
+		AccountID      int64    `json:"account_id"`
+		SelectedPaths  []string `json:"selected_paths"`
+		CreatedIDs     []int64  `json:"created_ids"`
+		RemovedIDs     []int64  `json:"removed_ids"`
+		AccountRemoved bool     `json:"account_removed"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("decode set result: %v\n%s", err, stdout)
+	}
+	if result.AccountID == 0 || len(result.SelectedPaths) != 1 ||
+		len(result.CreatedIDs) != 0 || len(result.RemovedIDs) != 1 ||
+		result.AccountRemoved {
+		t.Fatalf("set result = %+v", result)
+	}
+	assertLinkedCalendarNames(t, dbPath, "Holidays in Brazil")
+}
+
+func TestAccountCalendarsSetCanPromoteNewDefault(t *testing.T) {
+	dbPath := setupAccountCalendarSelectionTest(t)
+	addPersonalAndMakeDefault(t, dbPath)
+
+	if _, _, err := runChroncalCommand(t,
+		"account", "calendars", "set", "Test account",
+		"--calendar", "Holidays in Brazil",
+		"--default", "Holidays in Brazil",
+		"--yes", "--allow-plaintext",
+	); err != nil {
+		t.Fatalf("replace selected default: %v", err)
+	}
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New after reconcile: %v", err)
+	}
+	defer a.Close()
+	def, err := a.Calendars.GetDefault(context.Background())
+	if err != nil {
+		t.Fatalf("get default: %v", err)
+	}
+	if def.Name != "Holidays in Brazil" {
+		t.Fatalf("default calendar = %q", def.Name)
+	}
+}
+
+func TestAccountCalendarsSetRequiresDefaultReplacement(t *testing.T) {
+	dbPath := setupAccountCalendarSelectionTest(t)
+	addPersonalAndMakeDefault(t, dbPath)
+
+	_, _, err := runChroncalCommand(t,
+		"account", "calendars", "set", "Test account",
+		"--calendar", "Holidays in Brazil",
+		"--yes", "--allow-plaintext",
+	)
+	if err == nil || !strings.Contains(err.Error(), "--default") {
+		t.Fatalf("set without replacement error = %v, want --default guidance", err)
+	}
+}
+
+func addPersonalAndMakeDefault(t *testing.T, dbPath string) {
+	t.Helper()
+	if _, _, err := runChroncalCommand(t,
+		"account", "calendars", "add", "Test account",
+		"--calendar", "Personal",
+		"--allow-plaintext",
+	); err != nil {
+		t.Fatalf("add Personal: %v", err)
+	}
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	calendars, err := a.Calendars.List(context.Background())
+	if err != nil {
+		a.Close()
+		t.Fatalf("list calendars: %v", err)
+	}
+	var personalID int64
+	for _, item := range calendars {
+		if item.AccountID != 0 {
+			personalID = item.ID
+		}
+	}
+	a.Close()
+	if personalID == 0 {
+		t.Fatal("Personal calendar was not imported")
+	}
+	if _, _, err := runChroncalCommand(t,
+		"calendar", "set-default", strconv.FormatInt(personalID, 10),
+	); err != nil {
+		t.Fatalf("set Personal default: %v", err)
+	}
+}
+
+func TestAccountCalendarsSetNoneRemovesAccount(t *testing.T) {
+	dbPath := setupAccountCalendarSelectionTest(t)
+	if _, _, err := runChroncalCommand(t,
+		"account", "calendars", "add", "Test account",
+		"--calendar", "Personal",
+		"--allow-plaintext",
+	); err != nil {
+		t.Fatalf("add Personal: %v", err)
+	}
+	stdout, _, err := runChroncalCommand(t,
+		"account", "calendars", "set", "Test account",
+		"--none", "--yes", "--allow-plaintext", "--output", "json",
+	)
+	if err != nil {
+		t.Fatalf("remove every selected calendar: %v", err)
+	}
+	var result struct {
+		AccountRemoved bool `json:"account_removed"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("decode empty selection result: %v\n%s", err, stdout)
+	}
+	if !result.AccountRemoved {
+		t.Fatalf("empty selection result = %+v", result)
+	}
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	defer a.Close()
+	accounts, err := a.Accounts.List(context.Background())
+	if err != nil {
+		t.Fatalf("list accounts: %v", err)
+	}
+	if len(accounts) != 0 {
+		t.Fatalf("accounts after empty selection = %+v", accounts)
+	}
+	assertLinkedCalendarNames(t, dbPath)
+}
+
+func setupAccountCalendarSelectionTest(t *testing.T) string {
+	t.Helper()
+	dbPath, _ := setupDiscoveredAccountCLI(t, "Test account")
+	if _, _, err := runChroncalCommand(t,
+		"account", "calendars", "set", "Test account",
+		"--calendar", "Personal",
+		"--yes", "--allow-plaintext",
+	); err != nil {
+		t.Fatalf("reduce initial account selection: %v", err)
+	}
+	return dbPath
+}
+
+func setupDiscoveredAccountCLI(t *testing.T, name string) (string, string) {
+	t.Helper()
 	dbPath := setupCalendarCLITestEnv(t)
 	t.Setenv("CHRONCAL_BEARER_TOKEN", "test-token")
 	srv := newAccountDiscoveryServer(t)
-
 	if _, _, err := runChroncalCommand(t,
-		"account", "add", "Test account",
+		"account", "add", name,
 		"--server", srv.URL+"/",
 		"--username", "me@example.test",
 		"--auth", "bearer",
@@ -114,14 +503,11 @@ func TestAccountDiscoverSelectsCalendarByName(t *testing.T) {
 	); err != nil {
 		t.Fatalf("account add: %v", err)
 	}
-	if _, _, err := runChroncalCommand(t,
-		"account", "discover", "Test account",
-		"--select", "Holidays in Brazil",
-		"--allow-plaintext",
-	); err != nil {
-		t.Fatalf("account discover --select: %v", err)
-	}
+	return dbPath, srv.URL + "/"
+}
 
+func assertLinkedCalendarNames(t *testing.T, dbPath string, want ...string) {
+	t.Helper()
 	a, err := app.New(dbPath)
 	if err != nil {
 		t.Fatalf("app.New: %v", err)
@@ -131,15 +517,35 @@ func TestAccountDiscoverSelectsCalendarByName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list calendars: %v", err)
 	}
-	for _, calendar := range calendars {
-		if calendar.AccountID != 0 {
-			if calendar.Name != "Holidays in Brazil" {
-				t.Fatalf("selected calendar = %q", calendar.Name)
-			}
-			return
+	var got []string
+	for _, item := range calendars {
+		if item.AccountID != 0 {
+			got = append(got, item.Name)
 		}
 	}
-	t.Fatal("selected remote calendar was not imported")
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("linked calendars = %v, want %v", got, want)
+	}
+}
+
+func assertLinkedCalendarsSynced(t *testing.T, dbPath string) {
+	t.Helper()
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	defer a.Close()
+	calendars, err := a.Calendars.List(context.Background())
+	if err != nil {
+		t.Fatalf("list calendars: %v", err)
+	}
+	for _, item := range calendars {
+		if item.AccountID != 0 && item.LastSyncAt == "" {
+			t.Fatalf("linked calendar %q has no successful initial sync", item.Name)
+		}
+	}
 }
 
 func TestAccountRemovePreservesDownloadedCalendarsAsLocal(t *testing.T) {
@@ -158,9 +564,9 @@ func TestAccountRemovePreservesDownloadedCalendarsAsLocal(t *testing.T) {
 		t.Fatalf("account add: %v", err)
 	}
 	if _, _, err := runChroncalCommand(t,
-		"account", "discover", "Test account", "--all", "--allow-plaintext",
+		"account", "calendars", "add", "Test account", "--all", "--allow-plaintext",
 	); err != nil {
-		t.Fatalf("account discover: %v", err)
+		t.Fatalf("account calendars add: %v", err)
 	}
 	if _, _, err := runChroncalCommand(t,
 		"account", "remove", "Test account", "--yes", "--allow-plaintext",
@@ -196,9 +602,22 @@ func TestAccountRemovePreservesDownloadedCalendarsAsLocal(t *testing.T) {
 
 func newAccountDiscoveryServer(t *testing.T) *httptest.Server {
 	t.Helper()
+	return newAccountDiscoveryServerWithInterceptor(t, nil)
+}
+
+type accountDiscoveryInterceptor func(http.ResponseWriter, *http.Request) bool
+
+func newAccountDiscoveryServerWithInterceptor(
+	t *testing.T,
+	intercept accountDiscoveryInterceptor,
+) *httptest.Server {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
 			t.Errorf("Authorization = %q, want bearer token", got)
+		}
+		if intercept != nil && intercept(w, r) {
+			return
 		}
 		w.Header().Set("Content-Type", "application/xml; charset=utf-8")
 		w.WriteHeader(http.StatusMultiStatus)

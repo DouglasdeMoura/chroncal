@@ -11,6 +11,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/douglasdemoura/chroncal/internal/account"
+	"github.com/douglasdemoura/chroncal/internal/app"
+	"github.com/douglasdemoura/chroncal/internal/auth"
+	calendarpkg "github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/textsafe"
 )
 
@@ -24,7 +27,14 @@ account share one stored credential.`,
 		Args: rejectUnknownSubcommand,
 		RunE: groupRunE,
 	}
-	cmd.AddCommand(accountAddCmd(), accountListCmd(), accountDiscoverCmd(), accountRemoveCmd())
+	cmd.AddCommand(
+		accountAddCmd(),
+		accountGetCmd(),
+		accountListCmd(),
+		accountUpdateCmd(),
+		accountCalendarsCmd(),
+		accountRemoveCmd(),
+	)
 	return cmd
 }
 
@@ -38,8 +48,10 @@ func accountAddCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "add <name>",
-		Short: "Add and authenticate a CalDAV account",
-		Args:  exactOneArg,
+		Short: "Add a CalDAV account and sync all calendars",
+		Long: `Authenticate a CalDAV account, discover every calendar collection it
+exposes, import every usable collection, and complete their initial sync.`,
+		Args: exactOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -65,12 +77,41 @@ func accountAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-
-			if outputFmt != "text" {
-				return printOutput(cmd.OutOrStdout(), toJSONAccount(created))
+			rollback := func(cause error) error {
+				if cleanupErr := a.Accounts.Delete(ctx, created.ID, store); cleanupErr != nil {
+					return fmt.Errorf("%w (remove incomplete account: %v)", cause, cleanupErr)
+				}
+				return cause
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Account %q added (ID: %d). Run `chroncal account discover %d` to choose calendars.\n",
-				textsafe.Display(created.DisplayName), created.ID, created.ID)
+			discovery, err := a.Accounts.Discover(ctx, created.ID, store)
+			if err != nil {
+				return rollback(fmt.Errorf("discover account calendars: %w", err))
+			}
+			selected := addableCalendarPaths(discovery)
+			if len(selected) == 0 {
+				return rollback(errInvalidInputf(
+					"account %q exposes no usable event, todo, or journal calendars",
+					created.DisplayName,
+				))
+			}
+			imported, err := a.Accounts.Import(ctx, discovery, selected)
+			if err != nil {
+				return rollback(fmt.Errorf("import account calendars: %w", err))
+			}
+			if err := refreshDiscoveryImportState(ctx, a, &discovery); err != nil {
+				return err
+			}
+			if err := syncNewCalendars(ctx, a, store, imported.CreatedIDs); err != nil {
+				return fmt.Errorf(
+					"account %q and %d calendar(s) were added, but initial sync failed: %w",
+					created.DisplayName, len(imported.CreatedIDs), err,
+				)
+			}
+			if outputFmt != "text" {
+				return printOutput(cmd.OutOrStdout(), toJSONDiscovery(discovery, imported))
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Account %q added with %d calendar(s); initial sync complete.\n",
+				textsafe.Display(created.DisplayName), len(imported.CreatedIDs))
 			return nil
 		},
 	}
@@ -119,19 +160,44 @@ func accountListCmd() *cobra.Command {
 	}
 }
 
-func accountDiscoverCmd() *cobra.Command {
-	var (
-		selectCalendars []string
-		importAll       bool
-	)
-	cmd := &cobra.Command{
-		Use:   "discover <name|id>",
-		Short: "Find and optionally import account calendars",
-		Args:  exactOneArg,
+func accountGetCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "get <name|id>",
+		Short: "Get one CalDAV account",
+		Long:  `Show one account's non-secret connection identity and display name.`,
+		Example: `  chroncal account get 3
+  chroncal account get "Personal Google" --output json`,
+		Args: exactOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if importAll && len(selectCalendars) > 0 {
-				return errInvalidInputf("--all and --select are mutually exclusive")
+			a, err := initApp()
+			if err != nil {
+				return err
 			}
+			defer a.Close()
+			configured, err := resolveAccount(context.Background(), a.Accounts, args[0])
+			if err != nil {
+				return err
+			}
+			if outputFmt != "text" {
+				return printOutput(cmd.OutOrStdout(), toJSONAccount(configured))
+			}
+			printAccount(cmd.OutOrStdout(), configured)
+			return nil
+		},
+	}
+}
+
+func accountUpdateCmd() *cobra.Command {
+	var name string
+	cmd := &cobra.Command{
+		Use:   "update <name|id>",
+		Short: "Update a CalDAV account",
+		Long: `Update account-scoped metadata without changing the server, login,
+authentication type, or stored credential.`,
+		Example: `  chroncal account update 3 --name "Personal Google"
+  chroncal account update Google --name Home --output json`,
+		Args: exactOneArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
 				return err
@@ -142,50 +208,244 @@ func accountDiscoverCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			store, err := newCalendarCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
-			if err != nil {
-				return fmt.Errorf("credential store: %w", err)
-			}
-			discovery, err := a.Accounts.Discover(ctx, configured.ID, store)
+			updated, err := a.Accounts.Rename(ctx, configured.ID, name)
 			if err != nil {
 				return err
 			}
+			if outputFmt != "text" {
+				return printOutput(cmd.OutOrStdout(), toJSONAccount(updated))
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Renamed account %q to %q.\n",
+				textsafe.Display(configured.DisplayName), textsafe.Display(updated.DisplayName))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&name, "name", "", "new account display name (required)")
+	_ = cmd.MarkFlagRequired("name")
+	return cmd
+}
 
-			selected := []string(nil)
-			switch {
-			case importAll:
-				for _, remote := range discovery.Calendars {
-					if remote.Importable {
-						selected = append(selected, remote.Path)
-					}
-				}
-			case len(selectCalendars) > 0:
-				selected, err = resolveDiscoveredSelections(discovery, selectCalendars)
+func accountCalendarsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "calendars",
+		Short: "List or change an account's selected calendars",
+		Long: `Manage the local calendar collections selected from one CalDAV
+account. Removing a collection deletes Chroncal's local copy; it never deletes
+the remote calendar.`,
+		Args: rejectUnknownSubcommand,
+		RunE: groupRunE,
+	}
+	cmd.AddCommand(
+		accountCalendarsListCmd(),
+		accountCalendarsAddCmd(),
+		accountCalendarsSetCmd(),
+	)
+	return cmd
+}
+
+func accountCalendarsListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list <account-name|id>",
+		Short: "List every calendar exposed by an account",
+		Long:  `Discover the complete remote inventory and show which calendars are already selected.`,
+		Example: `  chroncal account calendars list "Personal Google"
+  chroncal account calendars list 3 --output json`,
+		Args: exactOneArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			a, err := initApp()
+			if err != nil {
+				return err
+			}
+			defer a.Close()
+			discovery, _, err := loadAccountDiscovery(context.Background(), a, args[0])
+			if err != nil {
+				return err
+			}
+			if outputFmt != "text" {
+				return printOutput(cmd.OutOrStdout(), toJSONDiscovery(discovery, account.ImportResult{}))
+			}
+			printAccountDiscovery(cmd.OutOrStdout(), discovery)
+			return nil
+		},
+	}
+}
+
+func accountCalendarsAddCmd() *cobra.Command {
+	var (
+		calendarRefs []string
+		addAll       bool
+	)
+	cmd := &cobra.Command{
+		Use:   "add <account-name|id>",
+		Short: "Add calendars to an account's selection",
+		Long: `Add one or more discovered calendars without changing calendars already
+selected for the account. Use --calendar repeatedly, or use --all. Newly added
+calendars are synced before the command returns.`,
+		Example: `  chroncal account calendars add "Personal Google" --calendar Family
+  chroncal account calendars add 3 --calendar Family --calendar "Holidays in Brazil"
+  chroncal account calendars add 3 --all --output json`,
+		Args: exactOneArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if (len(calendarRefs) == 0) == !addAll {
+				return errInvalidInputf("choose exactly one selection mode: --calendar or --all")
+			}
+			a, err := initApp()
+			if err != nil {
+				return err
+			}
+			defer a.Close()
+			ctx := context.Background()
+			discovery, store, err := loadAccountDiscovery(ctx, a, args[0])
+			if err != nil {
+				return err
+			}
+			selected := addableCalendarPaths(discovery)
+			if !addAll {
+				selected, err = resolveDiscoveredSelections(discovery, calendarRefs)
 				if err != nil {
 					return err
 				}
 			}
-
-			var imported account.ImportResult
-			if selected != nil {
-				imported, err = a.Accounts.Import(ctx, discovery, selected)
-				if err != nil {
-					return err
-				}
+			imported, err := a.Accounts.Import(ctx, discovery, selected)
+			if err != nil {
+				return err
+			}
+			if err := refreshDiscoveryImportState(ctx, a, &discovery); err != nil {
+				return err
+			}
+			if err := syncNewCalendars(ctx, a, store, imported.CreatedIDs); err != nil {
+				return err
 			}
 			if outputFmt != "text" {
 				return printOutput(cmd.OutOrStdout(), toJSONDiscovery(discovery, imported))
 			}
 			printAccountDiscovery(cmd.OutOrStdout(), discovery)
-			if selected != nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "Imported %d calendars; %d were already linked.\n",
-					len(imported.CreatedIDs), len(imported.ExistingIDs))
+			fmt.Fprintf(cmd.OutOrStdout(), "Added and synced %d calendars; %d were already selected.\n",
+				len(imported.CreatedIDs), len(imported.ExistingIDs))
+			return nil
+		},
+	}
+	cmd.Flags().StringArrayVar(&calendarRefs, "calendar", nil, "calendar name or remote path to add (repeatable)")
+	cmd.Flags().BoolVar(&addAll, "all", false, "add every usable discovered calendar")
+	return cmd
+}
+
+func accountCalendarsSetCmd() *cobra.Command {
+	var (
+		calendarRefs []string
+		selectAll    bool
+		selectNone   bool
+		defaultRef   string
+	)
+	cmd := &cobra.Command{
+		Use:   "set <account-name|id>",
+		Short: "Replace an account's selected calendar set",
+		Long: `Make the account's Chroncal calendars exactly match the requested set.
+Deselected calendars and their downloaded data are deleted locally. Remote
+calendars are never deleted. If the current default is removed, --default must
+identify a retained local calendar or a newly selected remote calendar. Newly
+selected calendars are synced before the command returns.`,
+		Example: `  chroncal account calendars set "Personal Google" --calendar Family --yes
+  chroncal account calendars set 3 --all
+  chroncal account calendars set 3 --none --default Local --yes
+  chroncal account calendars set 3 --calendar Family --default Family --yes --output json`,
+		Args: exactOneArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			modeCount := 0
+			if len(calendarRefs) > 0 {
+				modeCount++
+			}
+			if selectAll {
+				modeCount++
+			}
+			if selectNone {
+				modeCount++
+			}
+			if modeCount != 1 {
+				return errInvalidInputf("choose exactly one selection mode: --calendar, --all, or --none")
+			}
+			a, err := initApp()
+			if err != nil {
+				return err
+			}
+			defer a.Close()
+			ctx := context.Background()
+			discovery, store, err := loadAccountDiscovery(ctx, a, args[0])
+			if err != nil {
+				return err
+			}
+			selected := make([]string, 0)
+			switch {
+			case selectAll:
+				selected = selectableCalendarPaths(discovery)
+			case len(calendarRefs) > 0:
+				selected, err = resolveDiscoveredSelections(discovery, calendarRefs)
+				if err != nil {
+					return err
+				}
+			}
+			params := account.SelectionParams{SelectedPaths: selected}
+			if strings.TrimSpace(defaultRef) != "" {
+				params.NewDefaultID, params.NewDefaultPath, err =
+					resolveAccountCalendarDefault(ctx, a, discovery, selected, defaultRef)
+				if err != nil {
+					return err
+				}
+			}
+			removedNames := deselectedCalendarNames(discovery, selected)
+			if len(removedNames) > 0 {
+				question := fmt.Sprintf(
+					"Remove %d downloaded calendar(s) from Chroncal (%s)? Remote calendars will not be deleted.",
+					len(removedNames), textsafe.Display(strings.Join(removedNames, ", ")),
+				)
+				if len(selected) == 0 {
+					question += " The empty account and its stored credential will also be removed."
+				}
+				if err := confirmDestructive(cmd, question); err != nil {
+					return err
+				}
+			}
+			result, err := a.Accounts.ReconcileSelection(ctx, discovery, params, store)
+			if err != nil {
+				switch {
+				case errors.Is(err, calendarpkg.ErrDefaultCalendarRequiresPromotion):
+					return errInvalidInputf("%v; choose a replacement with --default", err)
+				case errors.Is(err, calendarpkg.ErrInvalidPromotionTarget),
+					errors.Is(err, calendarpkg.ErrLastCalendar):
+					return errInvalidInputf("%v", err)
+				default:
+					return err
+				}
+			}
+			if err := syncNewCalendars(ctx, a, store, result.CreatedIDs); err != nil {
+				return err
+			}
+			if outputFmt != "text" {
+				return printOutput(cmd.OutOrStdout(), jsonAccountCalendarSelection{
+					AccountID: discovery.Account.ID, SelectedPaths: selected,
+					CreatedIDs:     append([]int64{}, result.CreatedIDs...),
+					RemovedIDs:     append([]int64{}, result.RemovedIDs...),
+					SyncedIDs:      append([]int64{}, result.CreatedIDs...),
+					AccountRemoved: result.AccountRemoved,
+				})
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Updated calendars for %q: added %d, removed %d.\n",
+				textsafe.Display(discovery.Account.DisplayName),
+				len(result.CreatedIDs), len(result.RemovedIDs))
+			if len(result.CreatedIDs) > 0 {
+				fmt.Fprintf(cmd.OutOrStdout(), "Initial sync completed for %d new calendar(s).\n", len(result.CreatedIDs))
+			}
+			if result.AccountRemoved {
+				fmt.Fprintln(cmd.OutOrStdout(), "No calendars remain; the account and stored credential were removed.")
 			}
 			return nil
 		},
 	}
-	cmd.Flags().StringSliceVar(&selectCalendars, "select", nil, "calendar name or remote path to import (repeatable)")
-	cmd.Flags().BoolVar(&importAll, "all", false, "import every usable discovered calendar")
+	cmd.Flags().StringArrayVar(&calendarRefs, "calendar", nil, "calendar name or remote path to keep (repeatable)")
+	cmd.Flags().BoolVar(&selectAll, "all", false, "keep every usable discovered calendar")
+	cmd.Flags().BoolVar(&selectNone, "none", false, "remove every selected calendar")
+	cmd.Flags().StringVar(&defaultRef, "default", "", "replacement default calendar ID, name, or selected remote path")
+	addConfirmFlag(cmd)
 	return cmd
 }
 
@@ -234,6 +494,129 @@ func accountRemoveCmd() *cobra.Command {
 	return cmd
 }
 
+func loadAccountDiscovery(
+	ctx context.Context,
+	a *app.App,
+	accountRef string,
+) (account.Discovery, auth.CredentialStore, error) {
+	configured, err := resolveAccount(ctx, a.Accounts, accountRef)
+	if err != nil {
+		return account.Discovery{}, nil, err
+	}
+	store, err := newCalendarCredentialStore(
+		a.CredentialNamespace,
+		a.PreviousCredentialNamespaces,
+		a.MigrateLegacyCredentials,
+		a.AllowPlaintext,
+	)
+	if err != nil {
+		return account.Discovery{}, nil, fmt.Errorf("credential store: %w", err)
+	}
+	discovery, err := a.Accounts.Discover(ctx, configured.ID, store)
+	if err != nil {
+		return account.Discovery{}, nil, err
+	}
+	return discovery, store, nil
+}
+
+func refreshDiscoveryImportState(
+	ctx context.Context,
+	a *app.App,
+	discovery *account.Discovery,
+) error {
+	calendars, err := a.Calendars.List(ctx)
+	if err != nil {
+		return fmt.Errorf("refresh imported calendars: %w", err)
+	}
+	importedByPath := make(map[string]int64, len(calendars))
+	for _, item := range calendars {
+		if item.AccountID == discovery.Account.ID {
+			importedByPath[item.RemoteURL] = item.ID
+		}
+	}
+	for i := range discovery.Calendars {
+		if id, imported := importedByPath[discovery.Calendars[i].Path]; imported {
+			discovery.Calendars[i].Imported = true
+			discovery.Calendars[i].CalendarID = id
+		}
+	}
+	return nil
+}
+
+func addableCalendarPaths(discovery account.Discovery) []string {
+	selected := make([]string, 0, len(discovery.Calendars))
+	for _, remote := range discovery.Calendars {
+		if remote.Importable && !remote.Missing {
+			selected = append(selected, remote.Path)
+		}
+	}
+	return selected
+}
+
+func selectableCalendarPaths(discovery account.Discovery) []string {
+	selected := make([]string, 0, len(discovery.Calendars))
+	for _, remote := range discovery.Calendars {
+		if remote.Imported || (remote.Importable && !remote.Missing) {
+			selected = append(selected, remote.Path)
+		}
+	}
+	return selected
+}
+
+func deselectedCalendarNames(discovery account.Discovery, selectedPaths []string) []string {
+	selected := make(map[string]struct{}, len(selectedPaths))
+	for _, path := range selectedPaths {
+		selected[path] = struct{}{}
+	}
+	var names []string
+	for _, remote := range discovery.Calendars {
+		if !remote.Imported {
+			continue
+		}
+		if _, keep := selected[remote.Path]; !keep {
+			names = append(names, remote.Name)
+		}
+	}
+	return names
+}
+
+func resolveAccountCalendarDefault(
+	ctx context.Context,
+	a *app.App,
+	discovery account.Discovery,
+	selectedPaths []string,
+	ref string,
+) (int64, string, error) {
+	if _, err := strconv.ParseInt(ref, 10, 64); err == nil {
+		id, err := resolveCalendarID(ctx, a, ref)
+		return id, "", err
+	}
+	selected := make(map[string]struct{}, len(selectedPaths))
+	for _, path := range selectedPaths {
+		selected[path] = struct{}{}
+	}
+	var matches []account.DiscoveredCalendar
+	for _, remote := range discovery.Calendars {
+		if _, ok := selected[remote.Path]; !ok {
+			continue
+		}
+		if remote.Path == ref || strings.EqualFold(remote.Name, ref) {
+			matches = append(matches, remote)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		id, err := resolveCalendarID(ctx, a, ref)
+		return id, "", err
+	case 1:
+		return 0, matches[0].Path, nil
+	default:
+		return 0, "", errInvalidInputf(
+			"selected calendar name %q is ambiguous; use its remote path instead", ref,
+		)
+	}
+}
+
 func resolveAccount(ctx context.Context, service *account.Service, ref string) (account.Account, error) {
 	if id, err := strconv.ParseInt(ref, 10, 64); err == nil {
 		item, err := service.Get(ctx, id)
@@ -267,6 +650,7 @@ func resolveAccount(ctx context.Context, service *account.Service, ref string) (
 
 func resolveDiscoveredSelections(discovery account.Discovery, refs []string) ([]string, error) {
 	selected := make([]string, 0, len(refs))
+	seen := make(map[string]struct{}, len(refs))
 	for _, ref := range refs {
 		var matches []account.DiscoveredCalendar
 		for _, remote := range discovery.Calendars {
@@ -278,9 +662,13 @@ func resolveDiscoveredSelections(discovery account.Discovery, refs []string) ([]
 		case 0:
 			return nil, errInvalidInputf("discovered calendar %q not found", ref)
 		case 1:
-			if !matches[0].Importable {
-				return nil, errInvalidInputf("calendar %q has no event, todo, or journal components", matches[0].Name)
+			if !matches[0].Imported && (!matches[0].Importable || matches[0].Missing) {
+				return nil, errInvalidInputf("calendar %q cannot be added", matches[0].Name)
 			}
+			if _, duplicate := seen[matches[0].Path]; duplicate {
+				continue
+			}
+			seen[matches[0].Path] = struct{}{}
 			selected = append(selected, matches[0].Path)
 		default:
 			return nil, errInvalidInputf("calendar name %q is ambiguous; select its remote path instead", ref)
@@ -305,6 +693,14 @@ func toJSONAccount(item account.Account) jsonAccount {
 	}
 }
 
+func printAccount(w interface{ Write([]byte) (int, error) }, item account.Account) {
+	_, _ = fmt.Fprintf(w, "ID: %d\n", item.ID)
+	_, _ = fmt.Fprintf(w, "Name: %s\n", textsafe.Display(item.DisplayName))
+	_, _ = fmt.Fprintf(w, "Server: %s\n", textsafe.Display(item.ServerURL))
+	_, _ = fmt.Fprintf(w, "Username: %s\n", textsafe.Display(item.Username))
+	_, _ = fmt.Fprintf(w, "Authentication: %s\n", item.AuthType)
+}
+
 type jsonDiscoveredCalendar struct {
 	Path        string   `json:"path"`
 	Name        string   `json:"name"`
@@ -315,6 +711,7 @@ type jsonDiscoveredCalendar struct {
 	Imported    bool     `json:"imported"`
 	Importable  bool     `json:"importable"`
 	CalendarID  int64    `json:"calendar_id,omitempty"`
+	Missing     bool     `json:"missing"`
 }
 
 type jsonDiscovery struct {
@@ -322,6 +719,16 @@ type jsonDiscovery struct {
 	Calendars   []jsonDiscoveredCalendar `json:"calendars"`
 	CreatedIDs  []int64                  `json:"created_ids,omitempty"`
 	ExistingIDs []int64                  `json:"existing_ids,omitempty"`
+	SyncedIDs   []int64                  `json:"synced_ids,omitempty"`
+}
+
+type jsonAccountCalendarSelection struct {
+	AccountID      int64    `json:"account_id"`
+	SelectedPaths  []string `json:"selected_paths"`
+	CreatedIDs     []int64  `json:"created_ids"`
+	RemovedIDs     []int64  `json:"removed_ids"`
+	SyncedIDs      []int64  `json:"synced_ids"`
+	AccountRemoved bool     `json:"account_removed"`
 }
 
 func toJSONDiscovery(discovery account.Discovery, imported account.ImportResult) jsonDiscovery {
@@ -331,10 +738,12 @@ func toJSONDiscovery(discovery account.Discovery, imported account.ImportResult)
 			Path: remote.Path, Name: remote.Name, Description: remote.Description,
 			Color: remote.Color, Access: string(remote.Access), Components: remote.SupportedComponentSet,
 			Imported: remote.Imported, Importable: remote.Importable, CalendarID: remote.CalendarID,
+			Missing: remote.Missing,
 		}
 	}
 	return jsonDiscovery{Account: toJSONAccount(discovery.Account), Calendars: rows,
-		CreatedIDs: imported.CreatedIDs, ExistingIDs: imported.ExistingIDs}
+		CreatedIDs: imported.CreatedIDs, ExistingIDs: imported.ExistingIDs,
+		SyncedIDs: imported.CreatedIDs}
 }
 
 func printAccountDiscovery(w interface{ Write([]byte) (int, error) }, discovery account.Discovery) {

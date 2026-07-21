@@ -254,45 +254,10 @@ func TestAccountCalendarManagerStartsFromImportedFinalState(t *testing.T) {
 	if !m.shell.actions[0].Disabled {
 		t.Fatal("Save Changes is enabled before the final selection changes")
 	}
-}
-func TestAccountCalendarManagerRenamesAccountInline(t *testing.T) {
-	m := NewAccountCalendarManagerModel(pickerDiscovery(), Theme{}).SetSize(160, 60)
-	if len(m.shell.actions) != 3 || m.shell.actions[1].Label != "Rename Account…" {
-		t.Fatalf("management actions = %+v", m.shell.actions)
-	}
-	open := m.shell.actions[1].Msg
-	if open == nil {
-		t.Fatal("Rename Account action has no message")
-	}
-	var cmd tea.Cmd
-	m, cmd = m.Update(open())
-	if cmd != nil || m.renameDialog == nil {
-		t.Fatalf("open rename dialog: command=%v dialog=%v", cmd, m.renameDialog)
-	}
-	field, ok := m.renameDialog.form.Field(0).(*TextField)
-	if !ok || field.Value() != "Google" {
-		t.Fatalf("rename prefill = %q, want Google", field.Value())
-	}
-	field.SetValue("  Personal Google  ")
-	form, cmd := m.renameDialog.form.Submit()
-	m.renameDialog.form = form
-	if cmd == nil {
-		t.Fatal("rename form did not submit")
-	}
-	msg, ok := cmd().(AccountRenameRequestedMsg)
-	if !ok || msg.AccountID != 7 || msg.Name != "Personal Google" {
-		t.Fatalf("rename request = %#v", cmd())
-	}
-
-	m, _ = m.Update(accountRenameFinishedMsg{account: account.Account{
-		ID: 7, Name: "Personal Google", DisplayName: "Personal Google", Username: "douglas@example.com",
-	}})
-	if m.renameDialog != nil {
-		t.Fatal("successful rename left the rename form open")
-	}
-	if m.discovery.Account.DisplayName != "Personal Google" ||
-		m.shell.titleContext != "Personal Google · douglas@example.com" {
-		t.Fatalf("renamed picker identity = %q, account=%+v", m.shell.titleContext, m.discovery.Account)
+	if got := len(m.shell.actions); got != 2 ||
+		m.shell.actions[0].Label != "Save Changes" ||
+		m.shell.actions[1].Label != "Cancel" {
+		t.Fatalf("management actions = %+v, want Save Changes and Cancel", m.shell.actions)
 	}
 }
 

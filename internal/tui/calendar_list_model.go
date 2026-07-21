@@ -21,27 +21,6 @@ type CalendarVisibilityToggledMsg struct {
 // calendar dialog. ID == 0 means "create a new calendar".
 type CalendarDialogRequestedMsg struct{ ID int64 }
 
-// SidebarAccountActionsRequestedMsg requests the sidebar's Account actions
-// menu for an account from its heading. CalendarID is one linked calendar
-// under the account, kept so a later handler can validate the account still
-// owns the section and route re-authentication; emitting the message does
-// not start discovery or open the menu.
-type SidebarAccountActionsRequestedMsg struct {
-	AccountID  int64
-	CalendarID int64
-}
-
-// AccountCalendarManagementRequestedMsg starts sidebar-originated account
-// calendar management: the second step after the sidebar Account dialog's
-// Manage action. CalendarID is one linked calendar under the account, kept
-// so the handler can revalidate that the account still owns the section
-// when asynchronous discovery begins. Emitted by the Account menu's Manage
-// entry, not by the sidebar directly.
-type AccountCalendarManagementRequestedMsg struct {
-	AccountID  int64
-	CalendarID int64
-}
-
 // SyncHealth describes a calendar's last-known sync state, used to render an
 // ambient health marker in the list. It is derived from persisted sync state.
 type SyncHealth int

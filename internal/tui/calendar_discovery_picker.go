@@ -29,7 +29,6 @@ type AccountCalendarsReconcileRequestedMsg struct {
 
 // AccountCalendarPickerClosedMsg closes the discovery picker without importing.
 type AccountCalendarPickerClosedMsg struct{}
-type accountRenameOpenMsg struct{}
 type accountRenameCancelledMsg struct{}
 
 // AccountRenameRequestedMsg asks the application to persist a new
@@ -110,14 +109,13 @@ func (m AccountRenameDialogModel) BoxSize() (int, int) {
 // read-only and unsupported rows. Add mode selects new imports; management
 // mode edits the account's desired final local calendar set.
 type AccountCalendarPickerModel struct {
-	discovery    account.Discovery
-	selected     map[string]bool
-	manage       bool
-	shell        ListDialogModel
-	rowCalendar  []int
-	renameDialog *AccountRenameDialogModel
-	width        int
-	height       int
+	discovery   account.Discovery
+	selected    map[string]bool
+	manage      bool
+	shell       ListDialogModel
+	rowCalendar []int
+	width       int
+	height      int
 
 	theme Theme
 }
@@ -160,10 +158,6 @@ func newAccountCalendarPickerModel(discovery account.Discovery, theme Theme, man
 func (m AccountCalendarPickerModel) SetSize(w, h int) AccountCalendarPickerModel {
 	m.width, m.height = w, h
 	m.shell = m.shell.SetSize(w, h)
-	if m.renameDialog != nil {
-		rename := m.renameDialog.SetSize(w, h)
-		m.renameDialog = &rename
-	}
 	return m.refresh()
 }
 
@@ -235,33 +229,6 @@ func (m AccountCalendarPickerModel) applySelection() tea.Cmd {
 }
 
 func (m AccountCalendarPickerModel) Update(msg tea.Msg) (AccountCalendarPickerModel, tea.Cmd) {
-	switch msg := msg.(type) {
-	case accountRenameOpenMsg:
-		if !m.manage {
-			return m, nil
-		}
-		rename := newAccountRenameDialogModel(m.discovery.Account, m.theme).SetSize(m.width, m.height)
-		m.renameDialog = &rename
-		return m, nil
-	case accountRenameCancelledMsg:
-		m.renameDialog = nil
-		return m, nil
-	case accountRenameFinishedMsg:
-		if msg.err != nil {
-			if m.renameDialog != nil {
-				m.renameDialog.form.SetError(0, msg.err.Error())
-			}
-			return m, nil
-		}
-		m.discovery.Account = msg.account
-		m.renameDialog = nil
-		return m.refresh(), nil
-	}
-	if m.renameDialog != nil {
-		rename, cmd := m.renameDialog.Update(msg)
-		m.renameDialog = &rename
-		return m, cmd
-	}
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -310,9 +277,6 @@ func (m AccountCalendarPickerModel) Update(msg tea.Msg) (AccountCalendarPickerMo
 }
 
 func (m AccountCalendarPickerModel) View() string {
-	if m.renameDialog != nil {
-		return m.renameDialog.View()
-	}
 	return m.shell.View()
 }
 
@@ -366,16 +330,8 @@ func (m AccountCalendarPickerModel) refresh() AccountCalendarPickerModel {
 	}
 	actions := []ListDialogAction{
 		{Label: actionLabel, Primary: true, Disabled: actionDisabled, Msg: m.applySelection()},
+		{Label: "Cancel", Msg: func() tea.Msg { return AccountCalendarPickerClosedMsg{} }},
 	}
-	if m.manage {
-		actions = append(actions, ListDialogAction{
-			Label: "Rename Account…",
-			Msg:   func() tea.Msg { return accountRenameOpenMsg{} },
-		})
-	}
-	actions = append(actions, ListDialogAction{
-		Label: "Cancel", Msg: func() tea.Msg { return AccountCalendarPickerClosedMsg{} },
-	})
 	m.shell = m.shell.SetActions(actions)
 	keys := m.shell.Keys()
 	m.shell = m.shell.SetShortHelp([]key.Binding{

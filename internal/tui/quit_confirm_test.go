@@ -92,6 +92,25 @@ func TestCtrlCClearsAccountCalendarSelectionPendingState(t *testing.T) {
 	}
 }
 
+func TestCtrlCClearsAccountRemovalPendingState(t *testing.T) {
+	ctrlC := tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
+	m := Model{
+		confirmOpen:              true,
+		pendingAccountRemoveID:   7,
+		pendingAccountRemoveName: "Personal Google",
+	}
+
+	next, _, handled := m.interceptGlobalKeys(ctrlC)
+	if !handled || !next.pendingQuit {
+		t.Fatalf("ctrl+c did not replace account removal with quit: handled=%v quit=%v",
+			handled, next.pendingQuit)
+	}
+	if next.pendingAccountRemoveID != 0 || next.pendingAccountRemoveName != "" {
+		t.Fatalf("abandoned account removal remains armed: id=%d name=%q",
+			next.pendingAccountRemoveID, next.pendingAccountRemoveName)
+	}
+}
+
 // TestQuitKeyDeferredToOpenOverlay reproduces issue #406: pressing `q` while a
 // read-only/choice overlay owns input must NOT route to the quit confirm. The
 // global intercept should leave the keystroke unhandled so the overlay's own
