@@ -53,11 +53,13 @@ func defaultCalendarListDialogKeys() calendarListDialogKeyMap {
 // state (sorted IDs, hidden set) and translates shell events into
 // calendar-domain messages.
 type CalendarListDialogModel struct {
-	shell     ListDialogModel
-	calendars map[int64]CalendarInfo
-	order     []int64
-	hidden    map[int64]bool
-	keys      calendarListDialogKeyMap
+	shell       ListDialogModel
+	calendars   map[int64]CalendarInfo
+	order       []int64
+	rowCalendar []int64
+	hidden      map[int64]bool
+	keys        calendarListDialogKeyMap
+	mutedColor  color.Color
 }
 
 // NewCalendarListDialogModel builds a dialog populated from the given calendar
@@ -65,7 +67,7 @@ type CalendarListDialogModel struct {
 // (name as a tiebreak) so this dialog matches the sidebar.
 func NewCalendarListDialogModel(calendars map[int64]CalendarInfo, hidden map[int64]bool, h help.Model) CalendarListDialogModel {
 	newAction := ListDialogAction{
-		Label:   "+ New Calendar",
+		Label:   "+ New Local Calendar",
 		Primary: true,
 		Msg:     func() tea.Msg { return CalendarDialogRequestedMsg{ID: 0} },
 	}
@@ -113,13 +115,11 @@ func compareCalendarOrder(aOrder int64, aName string, bOrder int64, bName string
 }
 
 func sortedCalendarIDs(calendars map[int64]CalendarInfo) []int64 {
-	ids := make([]int64, 0, len(calendars))
-	for id := range calendars {
-		ids = append(ids, id)
+	items := sortedCalendarListItems(calendars)
+	ids := make([]int64, len(items))
+	for i, item := range items {
+		ids[i] = item.ID
 	}
-	slices.SortFunc(ids, func(a, b int64) int {
-		return compareCalendarOrder(calendars[a].DisplayOrder, calendars[a].Name, calendars[b].DisplayOrder, calendars[b].Name)
-	})
 	return ids
 }
 
@@ -133,27 +133,17 @@ func (m CalendarListDialogModel) SetSelectedColor(c color.Color) CalendarListDia
 	return m
 }
 
-func (m CalendarListDialogModel) SetMutedColor(color.Color) CalendarListDialogModel { return m }
+func (m CalendarListDialogModel) SetMutedColor(c color.Color) CalendarListDialogModel {
+	m.mutedColor = c
+	return m
+}
 
 // SetCalendars replaces the calendar map and hidden set, preserving the
 // selected ID when possible so edits don't jump the cursor.
 func (m CalendarListDialogModel) SetCalendars(calendars map[int64]CalendarInfo, hidden map[int64]bool) CalendarListDialogModel {
-	var prevID int64
-	if idx := m.shell.Selected(); idx >= 0 && idx < len(m.order) {
-		prevID = m.order[idx]
-	}
 	m.calendars = calendars
 	m.hidden = hidden
 	m.order = sortedCalendarIDs(calendars)
-
-	newSel := 0
-	for i, id := range m.order {
-		if id == prevID {
-			newSel = i
-			break
-		}
-	}
-	m.shell = m.shell.SetSelected(newSel)
 	return m.refresh()
 }
 
@@ -161,26 +151,46 @@ func (m CalendarListDialogModel) SetCalendars(calendars map[int64]CalendarInfo, 
 func (m CalendarListDialogModel) BoxSize() (int, int) { return m.shell.BoxSize() }
 
 func (m CalendarListDialogModel) selectedID() (int64, bool) {
-	idx := m.shell.Selected()
-	if idx < 0 || idx >= len(m.order) {
+	row := m.shell.Selected()
+	if row < 0 || row >= len(m.rowCalendar) || m.rowCalendar[row] == 0 {
 		return 0, false
 	}
-	return m.order[idx], true
+	return m.rowCalendar[row], true
+}
+
+func (m CalendarListDialogModel) selectCalendar(id int64) CalendarListDialogModel {
+	for row, calendarID := range m.rowCalendar {
+		if calendarID == id {
+			m.shell = m.shell.SetSelected(row)
+			break
+		}
+	}
+	return m
 }
 
 // refresh rebuilds the shell's rows, detail lines, and actions from the
 // current calendar list and selection.
 func (m CalendarListDialogModel) refresh() CalendarListDialogModel {
-	rows := make([]string, len(m.order))
+	selectedID, hadSelection := m.selectedID()
+	rows, rowCalendar, disabledRows := m.buildRows()
+	m.rowCalendar = rowCalendar
+	m.shell = m.shell.SetRows(rows).SetDisabledRows(disabledRows)
+	if hadSelection {
+		m = m.selectCalendar(selectedID)
+	}
+
 	sel := m.shell.Selected()
 	listFocused := m.shell.FocusZone() == ListZoneList
-	rowW := m.listRowWidth()
+	rowW := max(0, m.listRowWidth()-2)
 	selBG := m.shell.SelectedColor()
-	for i, id := range m.order {
+	for row, id := range m.rowCalendar {
+		if id == 0 {
+			continue
+		}
 		info := m.calendars[id]
-		rows[i] = calendarRowLabel(info, m.hidden[id], i == sel, listFocused, selBG, rowW)
+		rows[row] = "  " + calendarRowLabel(info, m.hidden[id], row == sel, listFocused, selBG, rowW)
 	}
-	m.shell = m.shell.SetRows(rows)
+	m.shell = m.shell.SetRows(rows).SetDisabledRows(disabledRows).SetSelected(sel)
 
 	if id, ok := m.selectedID(); ok {
 		info := m.calendars[id]
@@ -195,6 +205,40 @@ func (m CalendarListDialogModel) refresh() CalendarListDialogModel {
 	m.shell = m.shell.SetActions(m.buildActions())
 	m.shell = m.shell.SetShortHelp(m.shortHelp())
 	return m
+}
+
+func (m CalendarListDialogModel) buildRows() ([]string, []int64, []int) {
+	rows := make([]string, 0, len(m.order)*2)
+	rowCalendar := make([]int64, 0, cap(rows))
+	disabledRows := make([]int, 0, len(m.order))
+	headingStyle := lipgloss.NewStyle().Foreground(m.mutedColor).Bold(true)
+
+	var previousAccountID int64
+	haveAccount := false
+	for _, id := range m.order {
+		info := m.calendars[id]
+		if !haveAccount || info.AccountID != previousAccountID {
+			if haveAccount {
+				disabledRows = append(disabledRows, len(rows))
+				rows = append(rows, "")
+				rowCalendar = append(rowCalendar, 0)
+			}
+			accountName := info.AccountName
+			if info.AccountID == 0 {
+				accountName = "Local"
+			} else if strings.TrimSpace(accountName) == "" {
+				accountName = "Remote"
+			}
+			disabledRows = append(disabledRows, len(rows))
+			rows = append(rows, headingStyle.Render(accountName))
+			rowCalendar = append(rowCalendar, 0)
+			previousAccountID = info.AccountID
+			haveAccount = true
+		}
+		rows = append(rows, "")
+		rowCalendar = append(rowCalendar, id)
+	}
+	return rows, rowCalendar, disabledRows
 }
 
 func (m CalendarListDialogModel) buildActions() []ListDialogAction {
@@ -331,15 +375,21 @@ func (m CalendarListDialogModel) handleKey(msg tea.KeyPressMsg) (CalendarListDia
 // it and keeps the sidebar in sync. The local swap mirrors the sidebar list's
 // optimistic behavior so the dialog updates without waiting for the round-trip.
 func (m CalendarListDialogModel) moveSelected(delta int) (CalendarListDialogModel, tea.Cmd) {
-	i := m.shell.Selected()
+	selectedID, ok := m.selectedID()
+	if !ok {
+		return m, nil
+	}
+	i := slices.Index(m.order, selectedID)
 	j := i + delta
-	if i < 0 || i >= len(m.order) || j < 0 || j >= len(m.order) {
+	if i < 0 || j < 0 || j >= len(m.order) {
+		return m, nil
+	}
+	if m.calendars[m.order[i]].AccountID != m.calendars[m.order[j]].AccountID {
 		return m, nil
 	}
 	order := slices.Clone(m.order)
 	order[i], order[j] = order[j], order[i]
 	m.order = order
-	m.shell = m.shell.SetSelected(j)
 	return m.refresh(), func() tea.Msg { return CalendarReorderedMsg{IDs: order} }
 }
 
@@ -428,6 +478,13 @@ func calendarDetailLines(info CalendarInfo, w, labelWidth int) []string {
 		lines = append(lines, detailLine(faint, "Owner", info.OwnerEmail, labelWidth, w))
 	}
 
+	accountName := strings.TrimSpace(info.AccountName)
+	if info.AccountID == 0 {
+		accountName = "Local"
+	} else if accountName == "" {
+		accountName = "Remote"
+	}
+	lines = append(lines, detailLine(faint, "Account", accountName, labelWidth, w))
 	lines = append(lines, detailLine(faint, "Events", formatEventCount(info.EventCount), labelWidth, w))
 
 	lines = append(lines, detailLine(faint, "Source", formatCalendarSource(info.Synced), labelWidth, w))

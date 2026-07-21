@@ -518,7 +518,7 @@ Chroncal discovers, imports, and initially syncs every usable collection
 exposed by that sign-in without a second selection step. Unsupported
 collections are ignored; if discovery finds no usable calendars, Chroncal
 removes the newly created account. Browser authorization runs without leaving
-the app. **New Calendar** creates a local calendar; remote calendars belong to
+the app. **New Local Calendar** creates a local calendar; remote calendars belong to
 an account rather than carrying separate credentials.
 
 Account maintenance has one entry point. Select an account heading in the
@@ -695,7 +695,7 @@ reorder complete remote-account sections while keeping **Local** first. The
 same reorder keys move calendars only within their own account. Hidden state
 and scrolling operate on calendar rows rather than group headings. Read-only
 imported calendars remain browsable but reject event edits and deletes.
-Calendars are edited from the calendar popup. **New Calendar** creates a local
+Calendars are edited from the calendar popup. **New Local Calendar** creates a local
 calendar, while **Add Account…** in the command palette signs in once and adds
 every usable remote calendar. Linked calendars route account maintenance
 through **Manage Account…**. Todo and journal management live in the CLI for now.

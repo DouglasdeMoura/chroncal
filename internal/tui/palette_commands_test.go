@@ -11,8 +11,8 @@ func TestPaletteSeparatesNewCalendarFromAddAccount(t *testing.T) {
 	commands := buildPaletteCommands(Model{})
 
 	newCalendar := paletteCommandByID(t, commands, "calendar.new")
-	if newCalendar.Title != "New Calendar" {
-		t.Fatalf("calendar.new title = %q, want New Calendar", newCalendar.Title)
+	if newCalendar.Title != "New Local Calendar" {
+		t.Fatalf("calendar.new title = %q, want New Local Calendar", newCalendar.Title)
 	}
 	if _, ok := newCalendar.Action().(CalendarDialogRequestedMsg); !ok {
 		t.Fatalf("calendar.new action = %T, want CalendarDialogRequestedMsg", newCalendar.Action())

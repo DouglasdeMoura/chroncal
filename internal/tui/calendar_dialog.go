@@ -184,7 +184,7 @@ type CalendarDialogModel struct {
 
 // NewCalendarDialogModel builds a dialog for create (params.ID==0) or edit.
 func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDialogModel {
-	title := "New calendar"
+	title := "New local calendar"
 	if params.ID > 0 {
 		title = "Edit calendar"
 		// Apple's "Get Info" sheet shows the default badge inline with the
@@ -351,7 +351,7 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 }
 
 // NewAccountDialogModel opens account sign-in directly. Remote collection
-// discovery is an account concern; New Calendar remains a local-calendar flow.
+// discovery is an account concern; New Local Calendar remains a local-only flow.
 func NewAccountDialogModel(theme Theme) CalendarDialogModel {
 	dialog := NewDialog("Add Account", DefaultDialogStyles())
 	dialog.SetWidth(62)

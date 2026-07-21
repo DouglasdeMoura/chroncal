@@ -10,7 +10,7 @@ import (
 func TestNewCalendarAndAddAccountAreSeparateFlows(t *testing.T) {
 	calendarDialog := NewCalendarDialogModel(CalendarDialogParams{Color: "#a6e3a1"}, Theme{}).SetSize(120, 40)
 	calendarView := stripANSI(calendarDialog.View())
-	for _, want := range []string{"New calendar", "Name", "Color", "Save"} {
+	for _, want := range []string{"New local calendar", "Name", "Color", "Save"} {
 		if !strings.Contains(calendarView, want) {
 			t.Errorf("new-calendar view missing %q:\n%s", want, calendarView)
 		}
@@ -28,7 +28,7 @@ func TestNewCalendarAndAddAccountAreSeparateFlows(t *testing.T) {
 			t.Errorf("add-account view missing %q:\n%s", want, accountView)
 		}
 	}
-	for _, unwanted := range []string{"New calendar", "Enable CalDAV sync", "Back"} {
+	for _, unwanted := range []string{"New local calendar", "Enable CalDAV sync", "Back"} {
 		if strings.Contains(accountView, unwanted) {
 			t.Errorf("add-account view contains calendar flow %q:\n%s", unwanted, accountView)
 		}
