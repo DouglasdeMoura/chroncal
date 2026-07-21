@@ -119,12 +119,12 @@ func TestQuitKeyDeferredToOpenOverlay(t *testing.T) {
 	qKey := tea.KeyPressMsg{Code: 'q', Text: "q"}
 
 	setters := map[string]func(*Model){
-		"viewDialogOpen":         func(m *Model) { m.viewDialogOpen = true },
-		"dialogOpen":             func(m *Model) { m.dialogOpen = true },
-		"choiceOpen":             func(m *Model) { m.choiceOpen = true },
-		"calendarListDialogOpen": func(m *Model) { m.calendarListDialogOpen = true },
-		"trashOpen":              func(m *Model) { m.trashOpen = true },
-		"helpDialogOpen":         func(m *Model) { m.helpDialogOpen = true },
+		"viewDialogOpen":      func(m *Model) { m.viewDialogOpen = true },
+		"dialogOpen":          func(m *Model) { m.dialogOpen = true },
+		"choiceOpen":          func(m *Model) { m.choiceOpen = true },
+		"calendarManagerOpen": func(m *Model) { m.calendarManagerOpen = true },
+		"trashOpen":           func(m *Model) { m.trashOpen = true },
+		"helpDialogOpen":      func(m *Model) { m.helpDialogOpen = true },
 	}
 
 	for name, set := range setters {

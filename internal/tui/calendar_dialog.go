@@ -42,6 +42,19 @@ type CalendarDialogParams struct {
 	// exists, since the first calendar is auto-promoted by the service
 	// (the checkbox would be meaningless and noisy in that case).
 	OfferDefault bool
+
+	// Hidden is the calendar's current sidebar visibility. The edit dialog
+	// mirrors it into a Display Calendar checkbox whose toggle emits
+	// CalendarVisibilityToggledMsg with the desired state immediately;
+	// metadata Save/Cancel never auto-persists visibility.
+	Hidden bool
+
+	// ManagerEmbedded marks this detail as hosted inside the CalendarManager
+	// rather than opened directly by the legacy app. It gates manager-only
+	// affordances whose host-side handler does not exist yet (currently
+	// Export), so a legacy-wired dialog never exposes a no-op action. The
+	// manager sets it via OpenCalendar; legacy callers leave it false.
+	ManagerEmbedded bool
 }
 
 // CalendarSavedMsg is emitted when the user saves the dialog. ID == 0 means
@@ -78,6 +91,20 @@ type CalendarDeleteRequestedMsg struct {
 	Name string
 }
 
+// CalendarExportRequestedMsg is a neutral request to export the calendar. The
+// parent owns the file I/O; this message only identifies the target by its
+// immutable ID so the host can resolve fresh data at export time.
+type CalendarExportRequestedMsg struct {
+	ID   int64
+	Name string
+}
+
+// CalendarSetDefaultRequestedMsg asks the app to promote a calendar to default.
+type CalendarSetDefaultRequestedMsg struct {
+	ID   int64
+	Name string
+}
+
 // CalendarTestRequestedMsg is emitted when the user presses Test. The parent
 // runs a CalDAV authenticated ping and replies with CalendarTestResultMsg.
 type CalendarTestRequestedMsg struct {
@@ -108,15 +135,16 @@ type calendarSavePromotePressedMsg struct{}
 // CalendarDialogClosedMsg is emitted when the user cancels the dialog.
 type CalendarDialogClosedMsg struct{}
 
-// Form field indices for the calendar form. Index 4 is an empty spacer;
-// linked calendars add read-only account context at index 5.
+// Form field indices for the calendar metadata fields. Index 4 is an empty
+// spacer; in edit mode index 5 is the Display Calendar checkbox and index 6+
+// holds the Location/Account row and (for remote calendars) sync-health
+// lines. Those later indices are dynamic, so only the metadata fields below
+// get named constants.
 const (
 	cdIdxName        = 0
 	cdIdxColor       = 1
 	cdIdxDescription = 2
 	cdIdxEmail       = 3
-	// Index 4 is an empty spacer StaticField.
-	cdIdxAccount = 5
 )
 
 const (
@@ -180,6 +208,18 @@ type CalendarDialogModel struct {
 	// contentWidth is shared with static sync-health rows so long errors
 	// truncate to the dialog width instead of wrapping inside the box.
 	contentWidth *int
+
+	// hidden is the calendar's current visibility, mirrored into the Display
+	// Calendar checkbox. The checkbox toggle updates this immediately and
+	// emits CalendarVisibilityToggledMsg with the desired state; metadata
+	// Save/Cancel never persists visibility.
+	hidden bool
+	// visibilityCb is the Display Calendar checkbox, nil in create mode.
+	visibilityCb *CheckboxField
+	// accountOpener is the actionable "Account: <name> ›" field for remote
+	// calendars, nil for local calendars and create mode. Enter on it emits
+	// AccountSettingsRequestedMsg so the owning manager/host can drill in.
+	accountOpener *OpenerField
 }
 
 // NewCalendarDialogModel builds a dialog for create (params.ID==0) or edit.
@@ -259,14 +299,36 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		})}
 	}
 
-	if params.RemoteLinked {
-		accountName := strings.TrimSpace(params.AccountName)
-		if accountName == "" {
-			accountName = "Connected account"
-		}
-		items = append(items, labeledLine("Account:", accountName))
-		for _, line := range syncHealthDialogLines(params, theme) {
-			items = append(items, staticLine(line.text, line.style))
+	// Edit mode surfaces the calendar's visibility and owning context as
+	// actionable rows: a Display Calendar checkbox (visibility is immediate
+	// and never auto-saved with metadata) and either "Location: Local" or an
+	// "Account: <name> ›" opener that drills into the owning account. Create
+	// mode has no immutable ID, so neither row applies there.
+	var (
+		visibilityCb  *CheckboxField
+		accountOpener *OpenerField
+		openerIdx     = -1
+	)
+	if params.ID > 0 {
+		visibility := NewCheckboxField("", !params.Hidden)
+		visibility.SetContent("Display calendar")
+		visibilityCb = visibility
+		items = append(items, FormItem{Label: "", Field: visibility})
+
+		if params.RemoteLinked {
+			accountName := strings.TrimSpace(params.AccountName)
+			if accountName == "" {
+				accountName = "Connected account"
+			}
+			openerIdx = len(items)
+			opener := NewOpenerField("Account: " + accountName + " ›")
+			accountOpener = opener
+			items = append(items, FormItem{Label: "", Field: opener})
+			for _, line := range syncHealthDialogLines(params, theme) {
+				items = append(items, staticLine(line.text, line.style))
+			}
+		} else {
+			items = append(items, labeledLine("Location:", "Local"))
 		}
 	}
 
@@ -315,6 +377,9 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		accountConnection: false,
 		localDraft:        &localDraft,
 		contentWidth:      contentWidth,
+		hidden:            params.Hidden,
+		visibilityCb:      visibilityCb,
+		accountOpener:     accountOpener,
 	}
 	m.body.MouseWheelEnabled = true
 
@@ -328,10 +393,38 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		})
 	}
 
-	if params.RemoteLinked && params.AccountID > 0 {
+	// Remote calendars drill into their owning account via the inline
+	// "Account: <name> ›" opener rather than a separate button, so the
+	// opener's Enter emits the canonical AccountSettingsRequestedMsg the
+	// host already routes (and the calendar manager intercepts to push the
+	// account detail without disturbing the in-progress calendar draft).
+	if openerIdx >= 0 {
 		accountID := params.AccountID
-		form.SetLeadingActionButton("Manage Account…", Button, func() tea.Msg {
-			return AccountSettingsRequestedMsg{AccountID: accountID}
+		capturedIdx := openerIdx
+		form.OnFieldEnter(func(f *Form, field int) tea.Cmd {
+			if field != capturedIdx {
+				return nil
+			}
+			return func() tea.Msg { return AccountSettingsRequestedMsg{AccountID: accountID} }
+		})
+	}
+
+	// Edit mode exposes Delete as a leading action targeting the calendar's
+	// immutable ID; it is destructive (ButtonDanger) and only requests
+	// removal — the host owns the safe-confirm flow. Export is a
+	// manager-only affordance (the legacy app has no export handler yet), so
+	// it is gated on ManagerEmbedded to avoid a no-op button in legacy-wired
+	// dialogs.
+	if params.ID > 0 {
+		id := params.ID
+		name := params.Name
+		if params.ManagerEmbedded {
+			form.SetLeadingActionButton("Export Calendar…", Button, func() tea.Msg {
+				return CalendarExportRequestedMsg{ID: id, Name: name}
+			})
+		}
+		form.SetLeadingActionButton("Delete Calendar…", ButtonDanger, func() tea.Msg {
+			return CalendarDeleteRequestedMsg{ID: id, Name: name}
 		})
 		form.SetSeparateLeadingActions(true)
 	}
@@ -664,9 +757,10 @@ func (m CalendarDialogModel) HideDiscovery() CalendarDialogModel {
 }
 
 // SetAccountName refreshes account context without rebuilding the form, so
-// in-progress calendar metadata edits survive an account rename.
+// in-progress calendar metadata edits survive an account rename. It updates
+// the inline "Account: <name> ›" opener in place.
 func (m CalendarDialogModel) SetAccountName(name string) CalendarDialogModel {
-	if !m.linked || m.localDraft == nil || m.form.ItemCount() <= cdIdxAccount {
+	if !m.linked || m.localDraft == nil || m.accountOpener == nil {
 		return m
 	}
 	name = strings.TrimSpace(name)
@@ -674,10 +768,57 @@ func (m CalendarDialogModel) SetAccountName(name string) CalendarDialogModel {
 		name = "Connected account"
 	}
 	m.localDraft.AccountName = name
-	if field, ok := m.form.Field(cdIdxAccount).(*StaticField); ok {
-		field.SetValue(name)
+	m.accountOpener.SetValue("Account: " + name + " ›")
+	return m
+}
+
+// Draft returns the calendar's current editable state as params: the live
+// field values plus the original context (ID, account linkage, sync health)
+// and the current visibility. Hosts use it to preserve an unsaved calendar
+// draft across a drill into the owning account.
+func (m CalendarDialogModel) Draft() CalendarDialogParams {
+	if m.localDraft == nil {
+		return CalendarDialogParams{}
+	}
+	draft := *m.localDraft
+	if m.form.ItemCount() > cdIdxEmail {
+		draft.Name = strings.TrimSpace(m.form.Field(cdIdxName).(*TextField).Value())
+		draft.Color = strings.TrimSpace(m.form.Field(cdIdxColor).(*ColorField).Value())
+		draft.Description = strings.TrimSpace(m.form.Field(cdIdxDescription).(*TextField).Value())
+		draft.OwnerEmail = strings.TrimSpace(m.form.Field(cdIdxEmail).(*TextField).Value())
+	}
+	draft.Hidden = m.hidden
+	return draft
+}
+
+// Hidden reports the calendar detail's current visibility state.
+func (m CalendarDialogModel) Hidden() bool { return m.hidden }
+
+// SetHidden mirrors a visibility state into the detail and its Display
+// Calendar checkbox without emitting a toggle message.
+func (m CalendarDialogModel) SetHidden(h bool) CalendarDialogModel {
+	m.hidden = h
+	if m.visibilityCb != nil {
+		m.visibilityCb.SetChecked(!h)
 	}
 	return m
+}
+
+// leftMovesCursor reports whether the Left arrow would edit the focused field
+// (a text or color input) rather than navigate, so the calendar manager can
+// avoid stealing Left as a Back gesture while the user is editing. Buttons
+// and non-editing fields (checkbox, opener) leave Left free to pop.
+func (m CalendarDialogModel) leftMovesCursor() bool {
+	f := m.form
+	if f.Focused() >= f.ItemCount() {
+		return false
+	}
+	switch f.Field(f.Focused()).(type) {
+	case *TextField, *ColorField:
+		return true
+	default:
+		return false
+	}
 }
 
 func (m CalendarDialogModel) SetSize(w, h int) CalendarDialogModel {
@@ -831,9 +972,14 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 			ox := (m.dialog.width - bw) / 2
 			oy := (m.dialog.height - bh) / 2
 			target := mouseResolve(mc.X-ox, mc.Y-oy)
+			// A click on the Display Calendar checkbox toggles it inside the
+			// form; compare pre/post state so the mouse path emits the same
+			// CalendarVisibilityToggledMsg as the keyboard path.
+			preVisible := m.visibilityChecked()
 			var cmd tea.Cmd
 			m.form, cmd = m.form.Update(MouseEvent{IsClick: true, Target: target})
-			return m, cmd
+			m.syncBodyViewport(true)
+			return m.applyVisibilityToggle(preVisible, cmd)
 		}
 		return m, nil
 	}
@@ -844,10 +990,43 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 		return m, cmd
 	}
 
+	preVisible := m.visibilityChecked()
 	var cmd tea.Cmd
 	m.form, cmd = m.form.Update(msg)
 	m.syncBodyViewport(true)
-	return m, cmd
+	return m.applyVisibilityToggle(preVisible, cmd)
+}
+
+// visibilityChecked reports the Display Calendar checkbox's current state, or
+// true when there is no checkbox (create mode) so a no-op comparison never
+// reports a spurious change.
+func (m CalendarDialogModel) visibilityChecked() bool {
+	if m.visibilityCb == nil {
+		return true
+	}
+	return m.visibilityCb.Checked()
+}
+
+// applyVisibilityToggle compares the checkbox state before and after a form
+// update; a change emits CalendarVisibilityToggledMsg with the DESIRED hidden
+// state, mirrors it into the local model so the dot flips without a reload,
+// and batches with any cmd the form update produced. Metadata Save/Cancel
+// never persists visibility.
+func (m CalendarDialogModel) applyVisibilityToggle(preVisible bool, cmd tea.Cmd) (CalendarDialogModel, tea.Cmd) {
+	if m.visibilityCb == nil {
+		return m, cmd
+	}
+	postVisible := m.visibilityCb.Checked()
+	if postVisible == preVisible {
+		return m, cmd
+	}
+	m.hidden = !postVisible
+	id := m.id
+	toggle := func() tea.Msg { return CalendarVisibilityToggledMsg{ID: id, Hidden: !postVisible} }
+	if cmd == nil {
+		return m, toggle
+	}
+	return m, tea.Batch(cmd, toggle)
 }
 
 func (m CalendarDialogModel) View() string {

@@ -129,6 +129,7 @@ func TestDiscoveryReadyReloadsCalendars(t *testing.T) {
 		width:  80,
 		height: 24,
 	}
+	openCalendarManagerForTest(&m, CalendarDialogParams{})
 	discovery := account.Discovery{Account: account.Account{ID: 1, Name: "Test"}}
 
 	updated, cmd := m.Update(accountDiscoveryReadyMsg{discovery: discovery})
@@ -137,7 +138,7 @@ func TestDiscoveryReadyReloadsCalendars(t *testing.T) {
 	}
 
 	model := updated.(Model)
-	if !model.calendarDialogOpen || model.calendarDialog.discoveryPicker == nil {
+	if !model.calendarManagerOpen || model.calendarManager.DiscoveryPicker() == nil {
 		t.Fatal("integrated picker should be open after discovery ready")
 	}
 }
@@ -151,12 +152,13 @@ func TestDiscoveryReadyErrorDoesNotOpenPicker(t *testing.T) {
 		width:  80,
 		height: 24,
 	}
+	openCalendarManagerForTest(&m, CalendarDialogParams{})
 
 	updated, _ := m.Update(accountDiscoveryReadyMsg{
 		err: errors.New("boom"),
 	})
 	model := updated.(Model)
-	if model.calendarDialog.discoveryPicker != nil {
+	if model.calendarManager.DiscoveryPicker() != nil {
 		t.Fatal("integrated picker should not open on discovery failure")
 	}
 }

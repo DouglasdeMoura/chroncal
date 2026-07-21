@@ -97,10 +97,10 @@ func TestCalendarReorder_DialogOriginatedSyncsSidebarAndDialog(t *testing.T) {
 		3: {Name: "Charlie", DisplayOrder: 2},
 	}
 	m := Model{
-		sidebar:                NewSidebarModel(NewMiniMonthModel(now), NewCalendarListModel(items, nil)),
-		calendars:              cals,
-		calendarListDialogOpen: true,
-		calendarListDialog:     NewCalendarListDialogModel(cals, nil, help.New()),
+		sidebar:             NewSidebarModel(NewMiniMonthModel(now), NewCalendarListModel(items, nil)),
+		calendars:           cals,
+		calendarManagerOpen: true,
+		calendarManager:     NewCalendarManagerModel(cals, nil, help.New()),
 	}
 
 	// Dialog moved Bravo above Alpha; only the dialog swapped locally, so the
@@ -111,7 +111,7 @@ func TestCalendarReorder_DialogOriginatedSyncsSidebarAndDialog(t *testing.T) {
 	if got := sidebarOrderIDs(m); !slices.Equal(got, []int64{2, 1, 3}) {
 		t.Fatalf("sidebar not synced to dialog reorder: got %v want [2 1 3]", got)
 	}
-	if got := m.calendarListDialog.order; !slices.Equal(got, []int64{2, 1, 3}) {
+	if got := m.calendarManager.order; !slices.Equal(got, []int64{2, 1, 3}) {
 		t.Fatalf("open dialog not synced to reorder: got %v want [2 1 3]", got)
 	}
 }
