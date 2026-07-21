@@ -283,8 +283,8 @@ type oauthFlowPurpose struct {
 	accountName string
 	cred        auth.Credential
 
-	// Calendar discovery: connection form values survive while the OAuth
-	// modal obtains tokens, then drive account creation and collection discovery.
+	// Account sign-in: connection form values survive while the OAuth modal
+	// obtains tokens, then drive account creation and collection discovery.
 	calendarDiscovery    bool
 	calendarDiscoveryMsg CalendarDiscoveryRequestedMsg
 }
@@ -1413,8 +1413,8 @@ func (m Model) finishSync(msg syncFinishedMsg) (Model, tea.Cmd) {
 }
 
 // startOAuthFlow opens the pending modal and launches browser authorization
-// with the given client config. Calendar discovery consumes the New Calendar
-// form, while account re-authentication keeps any underlying edit draft.
+// with the given client config. Add Account consumes the sign-in dialog, while
+// account re-authentication keeps any underlying edit draft.
 // The caller has already recorded m.oauthPurpose.
 func (m Model) startOAuthFlow(clientID, clientSecret string) (Model, tea.Cmd) {
 	m.oauthPending = false // the flow is opening now; release the request guard
@@ -3414,7 +3414,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cred.Password = msg.Secret
 		}
 		m.syncing = true
-		m.syncStatus = "Discovering calendars…"
+		m.syncStatus = "Adding account…"
 		return m, tea.Batch(m.syncSpinner.Tick, m.connectAndDiscoverCalendar(msg, cred))
 
 	case accountDiscoveryReadyMsg:
@@ -3422,7 +3422,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.calendarDialogOpen = true
 			m.statusToken++
-			m.syncStatus = "Calendar discovery failed: " + msg.err.Error()
+			m.syncStatus = "Couldn’t add account: " + msg.err.Error()
 			m.calendarDialog.testStatus = lipgloss.NewStyle().Foreground(m.theme.Error).
 				Render("✗ " + msg.err.Error())
 			return m, m.expireStatusAfter(10*time.Second, m.statusToken)
@@ -3622,6 +3622,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loadEvents(),
 			m.expireStatusAfter(10*time.Second, m.statusToken),
 		)
+
+	case AccountAddRequestedMsg:
+		if m.syncing || m.oauthPending || m.oauthFlowOpen {
+			return m, nil
+		}
+		m.calendarDialog = NewAccountDialogModel(m.theme).SetSize(m.width, m.height)
+		m.calendarDialogGeneration++
+		m.calendarDialogOpen = true
+		return m, nil
 
 	case CalendarDialogRequestedMsg:
 		params := CalendarDialogParams{Color: "#a6e3a1"}

@@ -7,20 +7,30 @@ import (
 	lipgloss "charm.land/lipgloss/v2"
 )
 
-func TestCalendarDialogEnableSyncSwitchesToConnectionStep(t *testing.T) {
-	m := NewCalendarDialogModel(CalendarDialogParams{Color: "#a6e3a1"}, Theme{}).SetSize(120, 40)
-	m.form.Field(cdIdxSync).(*CheckboxField).Toggle()
-	m.form.onRebuild(&m.form)
-	body := m.form.View()
-
-	for _, want := range []string{"Server URL", "Username", "Auth"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("connection step missing %q:\n%s", want, body)
+func TestNewCalendarAndAddAccountAreSeparateFlows(t *testing.T) {
+	calendarDialog := NewCalendarDialogModel(CalendarDialogParams{Color: "#a6e3a1"}, Theme{}).SetSize(120, 40)
+	calendarView := stripANSI(calendarDialog.View())
+	for _, want := range []string{"New calendar", "Name", "Color", "Save"} {
+		if !strings.Contains(calendarView, want) {
+			t.Errorf("new-calendar view missing %q:\n%s", want, calendarView)
 		}
 	}
-	for _, unwanted := range []string{"Name", "Color", "Description", "Owner email"} {
-		if strings.Contains(body, unwanted) {
-			t.Errorf("connection step still contains local field %q:\n%s", unwanted, body)
+	for _, unwanted := range []string{"Enable CalDAV sync", "Server URL", "Add Account"} {
+		if strings.Contains(calendarView, unwanted) {
+			t.Errorf("new-calendar view contains account action %q:\n%s", unwanted, calendarView)
+		}
+	}
+
+	accountDialog := NewAccountDialogModel(Theme{}).SetSize(120, 40)
+	accountView := stripANSI(accountDialog.View())
+	for _, want := range []string{"Add Account", "Server URL", "Username", "Auth", "Sign In", "Cancel"} {
+		if !strings.Contains(accountView, want) {
+			t.Errorf("add-account view missing %q:\n%s", want, accountView)
+		}
+	}
+	for _, unwanted := range []string{"New calendar", "Enable CalDAV sync", "Back"} {
+		if strings.Contains(accountView, unwanted) {
+			t.Errorf("add-account view contains calendar flow %q:\n%s", unwanted, accountView)
 		}
 	}
 }

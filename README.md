@@ -512,12 +512,14 @@ syncs run unattended.
    chroncal sync status
    ```
 
-To connect from the TUI, open **Add Calendar**, enable **CalDAV sync**, and
-enter the server and authentication settings. Chroncal discovers, imports, and
-initially syncs every usable collection exposed by that sign-in without a
-second selection step. Unsupported collections are ignored; if discovery finds
-no usable calendars, Chroncal removes the newly created account. Browser
-authorization runs without leaving the app.
+To connect from the TUI, open the command palette (`/` or `Ctrl+K`) and
+choose **Add Account…**, then enter the server and authentication settings.
+Chroncal discovers, imports, and initially syncs every usable collection
+exposed by that sign-in without a second selection step. Unsupported
+collections are ignored; if discovery finds no usable calendars, Chroncal
+removes the newly created account. Browser authorization runs without leaving
+the app. **New Calendar** creates a local calendar; remote calendars belong to
+an account rather than carrying separate credentials.
 
 Account maintenance has one entry point. Select an account heading in the
 sidebar and press `Enter`, or open a linked calendar and choose **Manage
@@ -693,10 +695,11 @@ reorder complete remote-account sections while keeping **Local** first. The
 same reorder keys move calendars only within their own account. Hidden state
 and scrolling operate on calendar rows rather than group headings. Read-only
 imported calendars remain browsable but reject event edits and deletes.
-Calendars are edited from the calendar popup; **Add Calendar** contains the
-integrated CalDAV discovery flow, and linked calendars route account
-maintenance through **Manage Account…**. Todo and journal management live in
-the CLI for now.
+Calendars are edited from the calendar popup. **New Calendar** creates a local
+calendar, while **Add Account…** in the command palette signs in once and adds
+every usable remote calendar. Linked calendars route account maintenance
+through **Manage Account…**; the palette also exposes each configured account
+directly. Todo and journal management live in the CLI for now.
 
 Sync health is visible at a glance: a calendar whose last sync failed shows
 a `⚠` next to it in the sidebar, and opening it explains why (and offers a

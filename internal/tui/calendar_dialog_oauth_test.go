@@ -8,25 +8,16 @@ import (
 	lipgloss "charm.land/lipgloss/v2"
 )
 
-// oauthDialogFixture builds an unlinked dialog with Sync on and auth set to
-// the given type, driving OnRebuild the same way form_test.go does.
+// oauthDialogFixture builds the Add Account dialog with the requested auth type.
 func oauthDialogFixture(t *testing.T, authType string) CalendarDialogModel {
 	t.Helper()
-	m := NewCalendarDialogModel(CalendarDialogParams{Color: "#a6e3a1"}, Theme{})
-	m = m.SetSize(120, 40)
-	rebuild := func() {
-		if m.form.onRebuild != nil {
-			m.form.onRebuild(&m.form)
-		}
-	}
-	m.form.Field(cdIdxSync).(*CheckboxField).Toggle()
-	rebuild()
+	m := NewAccountDialogModel(Theme{}).SetSize(120, 40)
 	m.form.Field(calDAVIdxAuth).(*SelectField).SetSelected(authOptionIndex(authType))
-	rebuild()
+	m.form.onRebuild(&m.form)
 	return m
 }
 
-func TestCalendarDialog_OAuthLayoutSwapsRows(t *testing.T) {
+func TestAccountDialog_OAuthLayoutSwapsRows(t *testing.T) {
 	m := oauthDialogFixture(t, "oauth2")
 
 	if got := m.form.ItemCount(); got != calDAVIdxOAuthAllowInsecure+1 {
@@ -47,18 +38,18 @@ func TestCalendarDialog_OAuthLayoutSwapsRows(t *testing.T) {
 	}
 }
 
-func TestCalendarDialog_OAuthLayoutFitsSmallTerminal(t *testing.T) {
+func TestAccountDialog_OAuthLayoutFitsSmallTerminal(t *testing.T) {
 	m := oauthDialogFixture(t, "oauth2").SetSize(120, 10)
 
 	_, bh := lipgloss.Size(m.View())
 	if bh > 10 {
-		t.Fatalf("rendered calendar dialog height = %d, want <= 10", bh)
+		t.Fatalf("rendered account dialog height = %d, want <= 10", bh)
 	}
 	if !m.bodyOverflows() {
 		t.Fatal("test precondition: calendar form body should overflow")
 	}
 	out := m.View()
-	if !strings.Contains(out, "New calendar") || !strings.Contains(out, "Discover calendars") || !strings.Contains(out, "Cancel") {
+	if !strings.Contains(out, "Add Account") || !strings.Contains(out, "Sign In") || !strings.Contains(out, "Cancel") {
 		t.Fatalf("title and actions should stay visible in small terminal, got %q", out)
 	}
 	if !strings.Contains(out, "more") {
@@ -66,7 +57,7 @@ func TestCalendarDialog_OAuthLayoutFitsSmallTerminal(t *testing.T) {
 	}
 }
 
-func TestCalendarDialog_MouseWheelScrollSurvivesRender(t *testing.T) {
+func TestAccountDialog_MouseWheelScrollSurvivesRender(t *testing.T) {
 	m := oauthDialogFixture(t, "oauth2").SetSize(120, 10)
 	if !m.bodyOverflows() {
 		t.Fatal("test precondition: calendar form body should overflow")
@@ -92,7 +83,7 @@ func TestCalendarDialog_MouseWheelScrollSurvivesRender(t *testing.T) {
 	}
 }
 
-func TestCalendarDialog_OAuthLayoutSwitchPreservesValues(t *testing.T) {
+func TestAccountDialog_OAuthLayoutSwitchPreservesValues(t *testing.T) {
 	m := oauthDialogFixture(t, "basic")
 	rebuild := func() {
 		if m.form.onRebuild != nil {
@@ -128,14 +119,26 @@ func TestCalendarDialog_OAuthLayoutSwitchPreservesValues(t *testing.T) {
 	}
 }
 
-func TestCalendarDialog_OAuthSubmitCarriesClientConfig(t *testing.T) {
+func TestAccountDialog_OAuthTestUsesAccountSignInTerminology(t *testing.T) {
+	m := oauthDialogFixture(t, "oauth2")
+
+	m, cmd := m.handleTestPressed()
+	if cmd != nil {
+		t.Fatalf("OAuth test returned unexpected command %T", cmd)
+	}
+	status := stripANSI(m.testStatus)
+	if !strings.Contains(status, "sign in") || strings.Contains(strings.ToLower(status), "discover") {
+		t.Fatalf("OAuth test status = %q, want account sign-in terminology", status)
+	}
+}
+
+func TestAccountDialog_OAuthSubmitCarriesClientConfig(t *testing.T) {
 	m := oauthDialogFixture(t, "oauth2")
 	rebuild := func() {
 		if m.form.onRebuild != nil {
 			m.form.onRebuild(&m.form)
 		}
 	}
-	m.form.Field(cdIdxName).(*TextField).SetValue("gmail")
 	m.form.Field(calDAVIdxServer).(*TextField).SetValue("https://apidata.googleusercontent.com/caldav/v2/x/events")
 	m.form.Field(calDAVIdxUsername).(*TextField).SetValue("x@gmail.com")
 	m.form.Field(calDAVIdxOAuthClientID).(*TextField).SetValue("cid.apps")
@@ -161,9 +164,8 @@ func TestCalendarDialog_OAuthSubmitCarriesClientConfig(t *testing.T) {
 	}
 }
 
-func TestCalendarDialog_OAuthSubmitValidatesClientConfig(t *testing.T) {
+func TestAccountDialog_OAuthSubmitValidatesClientConfig(t *testing.T) {
 	m := oauthDialogFixture(t, "oauth2")
-	m.form.Field(cdIdxName).(*TextField).SetValue("gmail")
 	m.form.Field(calDAVIdxServer).(*TextField).SetValue("https://example.com/dav/")
 	m.form.Field(calDAVIdxUsername).(*TextField).SetValue("x@gmail.com")
 	// Client ID/secret left empty.

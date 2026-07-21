@@ -1125,19 +1125,16 @@ func TestCalendarDialogRendering(t *testing.T) {
 	}
 }
 
-func TestCalendarDialogRendering_SyncOnHTTPChecked(t *testing.T) {
+func TestAccountDialogRendering_HTTPChecked(t *testing.T) {
 	theme := Theme{}
-	m := NewCalendarDialogModel(CalendarDialogParams{Color: "#a6e3a1"}, theme)
-	m = m.SetSize(120, 40)
+	m := NewAccountDialogModel(theme).SetSize(120, 40)
 
-	// Enable Sync, set a non-localhost URL, check the HTTP box.
+	// Set a non-localhost URL and check the HTTP box.
 	rebuild := func() {
 		if m.form.onRebuild != nil {
 			m.form.onRebuild(&m.form)
 		}
 	}
-	m.form.Field(cdIdxSync).(*CheckboxField).Toggle()
-	rebuild()
 	m.form.Field(calDAVIdxServer).(*TextField).SetValue("https://cal.example.com/dav/")
 	rebuild()
 	m.form.Field(calDAVIdxAllowInsecure).(*CheckboxField).Toggle()
