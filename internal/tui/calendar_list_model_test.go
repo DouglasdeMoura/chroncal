@@ -377,8 +377,8 @@ func TestCalendarList_AccountHeaderEnterRequestsSettings(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("account heading Enter should request Account settings")
 	}
-	msg, ok := cmd().(AccountSettingsRequestedMsg)
-	if !ok || msg.AccountID != 7 {
+	msg, ok := cmd().(CalendarManagerRequestedMsg)
+	if !ok || msg.Target != CalendarManagerTargetAccount || msg.AccountID != 7 {
 		t.Fatalf("Account settings request = %#v", cmd())
 	}
 	// Requesting account actions is side-effect free: cursor, collapse, and
@@ -414,8 +414,8 @@ func TestCalendarList_AccountHeaderMouseTargetsSeparateDisclosureAndSettings(t *
 	if cmd == nil {
 		t.Fatal("account name click should request Account settings")
 	}
-	msg, ok := cmd().(AccountSettingsRequestedMsg)
-	if !ok || msg.AccountID != 7 {
+	msg, ok := cmd().(CalendarManagerRequestedMsg)
+	if !ok || msg.Target != CalendarManagerTargetAccount || msg.AccountID != 7 {
 		t.Fatalf("Account settings request = %#v", cmd())
 	}
 	// The name-area click requests actions without disturbing cursor,

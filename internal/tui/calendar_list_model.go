@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"cmp"
 	"image/color"
 	"maps"
 	"slices"
@@ -17,12 +18,37 @@ type CalendarVisibilityToggledMsg struct {
 	Hidden bool
 }
 
-// CalendarDialogRequestedMsg is emitted when the user wants to open the
-// calendar dialog. ID == 0 means "create a new calendar".
-type CalendarDialogRequestedMsg struct{ ID int64 }
-
 // SyncHealth describes a calendar's last-known sync state, used to render an
 // ambient health marker in the list. It is derived from persisted sync state.
+type calendarPromotionCandidate struct {
+	id   int64
+	name string
+}
+
+func defaultPromotionCandidates(calendars map[int64]CalendarInfo, excludeID int64) []calendarPromotionCandidate {
+	ids := sortedCalendarIDs(calendars)
+	out := make([]calendarPromotionCandidate, 0, len(ids))
+	for _, id := range ids {
+		if id != excludeID {
+			out = append(out, calendarPromotionCandidate{id: id, name: calendars[id].Name})
+		}
+	}
+	return out
+}
+
+func compareCalendarOrder(aOrder int64, aName string, bOrder int64, bName string) int {
+	return cmp.Or(cmp.Compare(aOrder, bOrder), strings.Compare(aName, bName))
+}
+
+func sortedCalendarIDs(calendars map[int64]CalendarInfo) []int64 {
+	items := sortedCalendarListItems(calendars)
+	ids := make([]int64, len(items))
+	for i, item := range items {
+		ids[i] = item.ID
+	}
+	return ids
+}
+
 type SyncHealth int
 
 const (
@@ -330,7 +356,7 @@ func (m CalendarListModel) accountActionsCmd(row calendarListRow) tea.Cmd {
 	if row.kind != accountHeaderRow || row.accountID == 0 {
 		return nil
 	}
-	msg := AccountSettingsRequestedMsg{AccountID: row.accountID}
+	msg := CalendarManagerRequestedMsg{Target: CalendarManagerTargetAccount, AccountID: row.accountID}
 	return func() tea.Msg { return msg }
 }
 
@@ -406,7 +432,9 @@ func (m CalendarListModel) Update(msg tea.Msg) (CalendarListModel, tea.Cmd) {
 			return m, m.accountActionsCmd(row)
 		}
 		id := m.items[row.itemIndex].ID
-		return m, func() tea.Msg { return CalendarDialogRequestedMsg{ID: id} }
+		return m, func() tea.Msg {
+			return CalendarManagerRequestedMsg{Target: CalendarManagerTargetCalendar, CalendarID: id}
+		}
 	}
 	return m, nil
 }

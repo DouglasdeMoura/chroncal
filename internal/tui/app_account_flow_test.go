@@ -9,27 +9,38 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/account"
 )
 
+func openCalendarManagerForTest(m *Model, params CalendarDialogParams) {
+	m.calendarManager = NewCalendarManagerModel(m.calendars, m.hiddenCalendars, newThemedHelp(m.theme))
+	m.calendarManager.theme = m.theme
+	m.calendarManager = m.calendarManager.SetSize(m.width, m.height).OpenCalendar(params)
+	m.calendarManagerOpen = true
+}
+
+func accountManagerOpen(m Model) bool {
+	_, ok := m.calendarManager.AccountSettings()
+	return m.calendarManagerOpen && ok
+}
+
 func TestAppCalendarDiscoveryOpensPickerInsideCalendarDialog(t *testing.T) {
 	m := NewModel(nil, "")
 	m.width, m.height = 120, 40
-	m.calendarDialog = NewCalendarDialogModel(CalendarDialogParams{}, m.theme).SetSize(m.width, m.height)
-	m.calendarDialogOpen = true
+	openCalendarManagerForTest(&m, CalendarDialogParams{})
+	m.calendarManagerOpen = true
 	m.syncing = true
 
 	updated, _ := m.Update(accountDiscoveryReadyMsg{discovery: pickerDiscovery()})
 	m = updated.(Model)
-	if m.syncing || !m.calendarDialogOpen || m.calendarDialog.discoveryPicker == nil {
+	if m.syncing || !m.calendarManagerOpen || m.calendarManager.calendarForm.discoveryPicker == nil {
 		t.Fatalf("discovery transition: syncing=%v calendarDialog=%v picker=%v",
-			m.syncing, m.calendarDialogOpen, m.calendarDialog.discoveryPicker != nil)
+			m.syncing, m.calendarManagerOpen, m.calendarManager.calendarForm.discoveryPicker != nil)
 	}
 }
 
 func TestAppNewAccountDiscoveryImportsAllUsableCalendarsImmediately(t *testing.T) {
 	m := NewModel(nil, "")
 	m.width, m.height = 120, 40
-	m.calendarDialog = NewCalendarDialogModel(CalendarDialogParams{}, m.theme).
-		SetSize(m.width, m.height)
-	m.calendarDialogOpen = true
+	openCalendarManagerForTest(&m, CalendarDialogParams{})
+	m.calendarManagerOpen = true
 	m.syncing = true
 
 	updated, cmd := m.Update(accountDiscoveryReadyMsg{
@@ -37,9 +48,9 @@ func TestAppNewAccountDiscoveryImportsAllUsableCalendarsImmediately(t *testing.T
 		createdAccount: true,
 	})
 	m = updated.(Model)
-	if cmd == nil || !m.syncing || m.calendarDialogOpen {
+	if cmd == nil || !m.syncing || m.calendarManagerOpen {
 		t.Fatalf("automatic import transition: cmd=%v syncing=%v calendarDialog=%v",
-			cmd, m.syncing, m.calendarDialogOpen)
+			cmd, m.syncing, m.calendarManagerOpen)
 	}
 	if !strings.Contains(m.syncStatus, "all calendars") {
 		t.Fatalf("automatic import status = %q", m.syncStatus)
@@ -48,8 +59,8 @@ func TestAppNewAccountDiscoveryImportsAllUsableCalendarsImmediately(t *testing.T
 
 func TestAppNewAccountImportCompletionClearsDiscoveryPicker(t *testing.T) {
 	m := NewModel(nil, "")
-	m.calendarDialog = NewCalendarDialogModel(CalendarDialogParams{}, m.theme).
-		ShowDiscovery(pickerDiscovery())
+	openCalendarManagerForTest(&m, CalendarDialogParams{})
+	m.calendarManager = m.calendarManager.ShowDiscovery(pickerDiscovery())
 	m.pendingDiscoveryAccountID = 7
 	m.pendingDiscoveryCreated = true
 	m.syncing = true
@@ -60,15 +71,15 @@ func TestAppNewAccountImportCompletionClearsDiscoveryPicker(t *testing.T) {
 		t.Fatalf("import completion state: syncing=%v pending=%v/%d",
 			m.syncing, m.pendingDiscoveryCreated, m.pendingDiscoveryAccountID)
 	}
-	if m.calendarDialog.discoveryPicker != nil {
+	if m.calendarManager.calendarForm.discoveryPicker != nil {
 		t.Fatal("successful automatic import retained the discovery picker")
 	}
 }
 
 func TestAppNewAccountWithoutUsableCalendarsSchedulesRollback(t *testing.T) {
 	m := NewModel(nil, "")
-	m.calendarDialog = NewCalendarDialogModel(CalendarDialogParams{}, m.theme).
-		ShowDiscovery(pickerDiscovery())
+	openCalendarManagerForTest(&m, CalendarDialogParams{})
+	m.calendarManager = m.calendarManager.ShowDiscovery(pickerDiscovery())
 	m.pendingDiscoveryAccountID = 7
 	m.pendingDiscoveryCreated = true
 	m.syncing = true
@@ -88,7 +99,7 @@ func TestAppNewAccountWithoutUsableCalendarsSchedulesRollback(t *testing.T) {
 	if m.syncing || m.syncStatus != "Calendar discovery cancelled" {
 		t.Fatalf("rollback completion: syncing=%v status=%q", m.syncing, m.syncStatus)
 	}
-	if m.calendarDialog.discoveryPicker != nil {
+	if m.calendarManager.calendarForm.discoveryPicker != nil {
 		t.Fatal("rolled-back automatic import retained the discovery picker")
 	}
 }
@@ -96,8 +107,8 @@ func TestAppNewAccountWithoutUsableCalendarsSchedulesRollback(t *testing.T) {
 func TestAppOAuthCalendarDiscoveryRecordsIntegratedPurpose(t *testing.T) {
 	m := NewModel(nil, "")
 	m.width, m.height = 120, 40
-	m.calendarDialog = NewCalendarDialogModel(CalendarDialogParams{}, m.theme).SetSize(m.width, m.height)
-	m.calendarDialogOpen = true
+	openCalendarManagerForTest(&m, CalendarDialogParams{})
+	m.calendarManagerOpen = true
 	req := CalendarDiscoveryRequestedMsg{
 		ServerURL: "https://example.com/caldav", Username: "me@example.com",
 		AuthType: "oauth2", OAuthClientID: "client.apps", OAuthClientSecret: "secret",
@@ -116,14 +127,14 @@ func TestAppOAuthCalendarDiscoveryRecordsIntegratedPurpose(t *testing.T) {
 
 func TestAppCalendarDiscoveryCancelSchedulesTemporaryAccountCleanup(t *testing.T) {
 	m := NewModel(nil, "")
-	m.calendarDialogOpen = true
+	m.calendarManagerOpen = true
 	m.pendingDiscoveryAccountID = 7
 	m.pendingDiscoveryCreated = true
 
 	updated, cmd := m.Update(AccountCalendarPickerClosedMsg{})
 	m = updated.(Model)
-	if cmd == nil || m.calendarDialogOpen || !m.syncing {
-		t.Fatalf("cancel state: cmd=%v calendarDialog=%v syncing=%v", cmd, m.calendarDialogOpen, m.syncing)
+	if cmd == nil || m.calendarManagerOpen || !m.syncing {
+		t.Fatalf("cancel state: cmd=%v calendarDialog=%v syncing=%v", cmd, m.calendarManagerOpen, m.syncing)
 	}
 	if m.pendingDiscoveryAccountID != 0 || m.pendingDiscoveryCreated {
 		t.Fatalf("temporary account state not cleared: id=%d created=%v",
@@ -139,8 +150,8 @@ func TestAppOAuthCalendarDiscoveryCancelReturnsToConnectionStep(t *testing.T) {
 
 	updated, _ := m.Update(oauthFlowDoneMsg{err: context.Canceled})
 	m = updated.(Model)
-	if m.oauthFlowOpen || !m.calendarDialogOpen {
-		t.Fatalf("OAuth cancel state: flow=%v calendarDialog=%v", m.oauthFlowOpen, m.calendarDialogOpen)
+	if m.oauthFlowOpen || !m.calendarManagerOpen {
+		t.Fatalf("OAuth cancel state: flow=%v calendarDialog=%v", m.oauthFlowOpen, m.calendarManagerOpen)
 	}
 }
 
@@ -195,14 +206,14 @@ func TestAppAccountSettingsRequestOpensCanonicalPanel(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("opening Account settings returned command %T", cmd())
 	}
-	if !m.accountSettingsOpen {
+	if !accountManagerOpen(m) {
 		t.Fatal("Account settings did not open")
 	}
-	if m.calendarDialogOpen || m.syncing || m.oauthPending || m.oauthFlowOpen {
-		t.Fatalf("opening settings changed unrelated state: calendar=%v syncing=%v oauthPending=%v oauth=%v",
-			m.calendarDialogOpen, m.syncing, m.oauthPending, m.oauthFlowOpen)
+	if !m.calendarManagerOpen || m.syncing || m.oauthPending || m.oauthFlowOpen {
+		t.Fatalf("opening settings state: manager=%v syncing=%v oauthPending=%v oauth=%v",
+			m.calendarManagerOpen, m.syncing, m.oauthPending, m.oauthFlowOpen)
 	}
-	if got := m.accountSettings.params; got.AccountID != 7 || got.DisplayName != "Personal Google" ||
+	if got := m.calendarManager.accountSettings.params; got.AccountID != 7 || got.DisplayName != "Personal Google" ||
 		got.Username != "douglas@example.com" || got.Provider != "Google Account" ||
 		got.ServerURL != "https://apidata.googleusercontent.com/caldav/v2/" ||
 		got.CalendarCount != 2 || got.AttentionCount != 1 || got.AuthType != "oauth2" {
@@ -220,21 +231,21 @@ func TestAppAccountSettingsRemoveConfirmsAccountIdentityAndKeepsCalendarsLocal(t
 		2: {Name: "Personal", AccountID: 7},
 		3: {Name: "Família", AccountID: 7},
 	}
-	m.calendarDialog = NewCalendarDialogModel(CalendarDialogParams{
+	openCalendarManagerForTest(&m, CalendarDialogParams{
 		ID: 2, AccountID: 7, AccountName: "Personal Google",
 		Name: "Personal", Color: "#a6e3a1", RemoteLinked: true,
-	}, m.theme).SetSize(m.width, m.height)
-	m.calendarDialogOpen = true // Edit Calendar remains underneath Account settings.
-	m.calendarDialog.form.Field(cdIdxName).(*TextField).SetValue("Unsaved personal rename")
+	})
+	m.calendarManagerOpen = true // Edit Calendar remains underneath Account settings.
+	m.calendarManager.calendarForm.form.Field(cdIdxName).(*TextField).SetValue("Unsaved personal rename")
 	updated, _ := m.Update(AccountSettingsRequestedMsg{AccountID: 7})
 	m = updated.(Model)
 
 	updated, cmd := m.Update(AccountSettingsRemoveRequestedMsg{AccountID: 7})
 	m = updated.(Model)
-	if cmd != nil || !m.confirmOpen || !m.accountSettingsOpen ||
+	if cmd != nil || !m.confirmOpen || !accountManagerOpen(m) ||
 		m.pendingAccountRemoveID != 7 || m.pendingAccountRemoveName != "Personal Google" {
 		t.Fatalf("remove request: cmd=%v confirm=%v settings=%v pending=%d/%q",
-			cmd, m.confirmOpen, m.accountSettingsOpen,
+			cmd, m.confirmOpen, accountManagerOpen(m),
 			m.pendingAccountRemoveID, m.pendingAccountRemoveName)
 	}
 	plain := m.confirmDialog.form.Field(0).(*StaticField).Value()
@@ -251,10 +262,10 @@ func TestAppAccountSettingsRemoveConfirmsAccountIdentityAndKeepsCalendarsLocal(t
 
 	updated, cmd = m.Update(ConfirmDialogResultMsg{Confirmed: false})
 	m = updated.(Model)
-	if cmd != nil || m.confirmOpen || !m.accountSettingsOpen ||
+	if cmd != nil || m.confirmOpen || !accountManagerOpen(m) ||
 		m.pendingAccountRemoveID != 0 || m.pendingAccountRemoveName != "" {
 		t.Fatalf("cancel removal: cmd=%v confirm=%v settings=%v pending=%d/%q",
-			cmd, m.confirmOpen, m.accountSettingsOpen,
+			cmd, m.confirmOpen, accountManagerOpen(m),
 			m.pendingAccountRemoveID, m.pendingAccountRemoveName)
 	}
 
@@ -262,19 +273,19 @@ func TestAppAccountSettingsRemoveConfirmsAccountIdentityAndKeepsCalendarsLocal(t
 	m = updated.(Model)
 	updated, cmd = m.Update(ConfirmDialogResultMsg{Confirmed: true})
 	m = updated.(Model)
-	if cmd == nil || !m.syncing || m.accountSettingsOpen ||
+	if cmd == nil || !m.syncing || accountManagerOpen(m) ||
 		m.pendingAccountRemoveID != 0 || m.pendingAccountRemoveName != "" {
 		t.Fatalf("confirm removal: cmd=%v syncing=%v settings=%v pending=%d/%q",
-			cmd == nil, m.syncing, m.accountSettingsOpen,
+			cmd == nil, m.syncing, accountManagerOpen(m),
 			m.pendingAccountRemoveID, m.pendingAccountRemoveName)
 	}
 
 	updated, reload := m.Update(accountRemovalFinishedMsg{accountID: 7, name: "Personal Google"})
 	m = updated.(Model)
-	if reload == nil || m.syncing || m.calendarDialogOpen ||
+	if reload == nil || m.syncing || m.calendarManagerOpen ||
 		!strings.Contains(m.syncStatus, "downloaded calendars are now local") {
 		t.Fatalf("remove completion: reload=%v syncing=%v calendar=%v status=%q",
-			reload == nil, m.syncing, m.calendarDialogOpen, m.syncStatus)
+			reload == nil, m.syncing, m.calendarManagerOpen, m.syncStatus)
 	}
 }
 
@@ -282,26 +293,26 @@ func TestAppAccountRemovalCompletionPreservesUnrelatedCalendarEdit(t *testing.T)
 	m := NewModel(nil, "")
 	m.width, m.height = 120, 40
 	m.syncing = true
-	m.calendarDialog = NewCalendarDialogModel(CalendarDialogParams{
+	openCalendarManagerForTest(&m, CalendarDialogParams{
 		ID: 9, AccountID: 8, AccountName: "Work",
 		Name: "Work", Color: "#89b4fa", RemoteLinked: true,
-	}, m.theme).SetSize(m.width, m.height)
-	m.calendarDialog.form.Field(cdIdxName).(*TextField).SetValue("Unsaved work rename")
-	m.calendarDialogOpen = true
-	m.accountSettings = NewAccountSettingsDialogModel(AccountSettingsParams{
+	})
+	m.calendarManager.calendarForm.form.Field(cdIdxName).(*TextField).SetValue("Unsaved work rename")
+	m.calendarManagerOpen = true
+	m.calendarManager = m.calendarManager.OpenAccount(AccountSettingsParams{
 		AccountID: 8, DisplayName: "Work", Username: "work@example.com",
-	}, m.theme).SetSize(m.width, m.height)
-	m.accountSettingsOpen = true
+	})
+	m.calendarManagerOpen = true
 
 	updated, cmd := m.Update(accountRemovalFinishedMsg{
 		accountID: 7, name: "Personal Google",
 	})
 	m = updated.(Model)
-	if cmd == nil || m.syncing || !m.calendarDialogOpen || !m.accountSettingsOpen {
+	if cmd == nil || m.syncing || !m.calendarManagerOpen || !accountManagerOpen(m) {
 		t.Fatalf("unrelated completion: cmd=%v syncing=%v calendar=%v settings=%v",
-			cmd == nil, m.syncing, m.calendarDialogOpen, m.accountSettingsOpen)
+			cmd == nil, m.syncing, m.calendarManagerOpen, accountManagerOpen(m))
 	}
-	if got := m.calendarDialog.form.Field(cdIdxName).(*TextField).Value(); got != "Unsaved work rename" {
+	if got := m.calendarManager.calendarForm.form.Field(cdIdxName).(*TextField).Value(); got != "Unsaved work rename" {
 		t.Fatalf("unrelated edit changed to %q", got)
 	}
 
@@ -310,9 +321,9 @@ func TestAppAccountRemovalCompletionPreservesUnrelatedCalendarEdit(t *testing.T)
 		accountID: 7, name: "Personal Google", err: errors.New("keyring locked"),
 	})
 	m = updated.(Model)
-	if !m.accountSettingsOpen || m.accountSettings.params.AccountID != 8 {
+	if !accountManagerOpen(m) || m.calendarManager.accountSettings.params.AccountID != 8 {
 		t.Fatalf("failed stale removal replaced newer account settings: open=%v account=%d",
-			m.accountSettingsOpen, m.accountSettings.params.AccountID)
+			accountManagerOpen(m), m.calendarManager.accountSettings.params.AccountID)
 	}
 }
 
@@ -334,9 +345,9 @@ func TestAppAccountSettingsManageUsesAccountOnlyDiscovery(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("Manage did not start account discovery")
 	}
-	if !m.syncing || m.accountSettingsOpen || m.accountCalendarManagerOpen || m.calendarDialogOpen {
+	if !m.syncing || accountManagerOpen(m) || m.accountCalendarManagerOpen || m.calendarManagerOpen {
 		t.Fatalf("Manage start: syncing=%v settings=%v manager=%v calendarDialog=%v",
-			m.syncing, m.accountSettingsOpen, m.accountCalendarManagerOpen, m.calendarDialogOpen)
+			m.syncing, accountManagerOpen(m), m.accountCalendarManagerOpen, m.calendarManagerOpen)
 	}
 	generation := m.accountManagementGeneration
 	if generation == 0 || m.pendingAccountManagementID != 7 {
@@ -346,7 +357,7 @@ func TestAppAccountSettingsManageUsesAccountOnlyDiscovery(t *testing.T) {
 	// Lifecycle completions must bypass whichever overlay happens to be open.
 	updated, _ = m.Update(AccountSettingsRequestedMsg{AccountID: 7})
 	m = updated.(Model)
-	if !m.accountSettingsOpen {
+	if !accountManagerOpen(m) {
 		t.Fatal("precondition: Account settings did not reopen during discovery")
 	}
 
@@ -356,9 +367,9 @@ func TestAppAccountSettingsManageUsesAccountOnlyDiscovery(t *testing.T) {
 		discovery: discovery, accountID: 7, generation: generation,
 	})
 	m = updated.(Model)
-	if m.syncing || !m.accountCalendarManagerOpen || m.calendarDialogOpen {
+	if m.syncing || !m.accountCalendarManagerOpen || m.calendarManagerOpen {
 		t.Fatalf("Manage completion: syncing=%v manager=%v calendarDialog=%v",
-			m.syncing, m.accountCalendarManagerOpen, m.calendarDialogOpen)
+			m.syncing, m.accountCalendarManagerOpen, m.calendarManagerOpen)
 	}
 	if !m.accountCalendarManager.manage || m.accountCalendarManager.discovery.Account.ID != 7 {
 		t.Fatalf("management picker = %+v", m.accountCalendarManager)
@@ -379,15 +390,15 @@ func TestAppAccountSettingsManageUsesAccountOnlyDiscovery(t *testing.T) {
 		AccountID: 7, SelectedPaths: []string{"/personal/"},
 	})
 	m = updated.(Model)
-	if cmd == nil || !m.syncing || m.accountCalendarManagerOpen || m.calendarDialogOpen {
+	if cmd == nil || !m.syncing || m.accountCalendarManagerOpen || m.calendarManagerOpen {
 		t.Fatalf("Manage save: cmd=%v syncing=%v manager=%v calendarDialog=%v",
-			cmd == nil, m.syncing, m.accountCalendarManagerOpen, m.calendarDialogOpen)
+			cmd == nil, m.syncing, m.accountCalendarManagerOpen, m.calendarManagerOpen)
 	}
 	updated, _ = m.Update(accountSelectionFinishedMsg{accountManagement: true})
 	m = updated.(Model)
-	if m.accountCalendarManagerOpen || m.calendarDialogOpen {
+	if m.accountCalendarManagerOpen || m.calendarManagerOpen {
 		t.Fatalf("Manage completion reopened unrelated dialog: manager=%v calendarDialog=%v",
-			m.accountCalendarManagerOpen, m.calendarDialogOpen)
+			m.accountCalendarManagerOpen, m.calendarManagerOpen)
 	}
 }
 
@@ -397,12 +408,12 @@ func TestAppAccountSettingsRenameOpensAccountScopedDialog(t *testing.T) {
 	m.accounts = map[int64]account.Account{
 		7: {ID: 7, DisplayName: "Personal Google", AuthType: "oauth2", Username: "douglas@example.com"},
 	}
-	m.calendarDialog = NewCalendarDialogModel(CalendarDialogParams{
+	openCalendarManagerForTest(&m, CalendarDialogParams{
 		ID: 2, AccountID: 7, AccountName: "Personal Google",
 		Name: "Personal", Color: "#a6e3a1", RemoteLinked: true,
-	}, m.theme).SetSize(m.width, m.height)
-	m.calendarDialog.form.Field(cdIdxName).(*TextField).SetValue("Unsaved calendar title")
-	m.calendarDialogOpen = true
+	})
+	m.calendarManager.calendarForm.form.Field(cdIdxName).(*TextField).SetValue("Unsaved calendar title")
+	m.calendarManagerOpen = true
 	updated, _ := m.Update(AccountSettingsRequestedMsg{AccountID: 7})
 	m = updated.(Model)
 
@@ -411,14 +422,14 @@ func TestAppAccountSettingsRenameOpensAccountScopedDialog(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("Rename open returned command %T", cmd())
 	}
-	if !m.accountSettingsOpen || !m.accountRenameOpen {
-		t.Fatalf("Rename open: settings=%v rename=%v", m.accountSettingsOpen, m.accountRenameOpen)
+	if !accountManagerOpen(m) || !m.accountRenameOpen {
+		t.Fatalf("Rename open: settings=%v rename=%v", accountManagerOpen(m), m.accountRenameOpen)
 	}
 
 	updated, _ = m.Update(accountRenameCancelledMsg{})
 	m = updated.(Model)
-	if m.accountRenameOpen || !m.accountSettingsOpen {
-		t.Fatalf("Rename cancel: settings=%v rename=%v", m.accountSettingsOpen, m.accountRenameOpen)
+	if m.accountRenameOpen || !accountManagerOpen(m) {
+		t.Fatalf("Rename cancel: settings=%v rename=%v", accountManagerOpen(m), m.accountRenameOpen)
 	}
 
 	updated, _ = m.Update(AccountSettingsRenameRequestedMsg{AccountID: 7})
@@ -467,10 +478,10 @@ func TestAppAccountSettingsRenameOpensAccountScopedDialog(t *testing.T) {
 		t.Fatalf("Rename completion behind palette: syncing=%v name=%q",
 			m.syncing, m.accounts[7].DisplayName)
 	}
-	if got := m.calendarDialog.form.Field(cdIdxName).(*TextField).Value(); got != "Unsaved calendar title" {
+	if got := m.calendarManager.calendarForm.form.Field(cdIdxName).(*TextField).Value(); got != "Unsaved calendar title" {
 		t.Fatalf("Rename completion changed calendar draft to %q", got)
 	}
-	if view := stripANSI(m.calendarDialog.View()); !strings.Contains(view, "Account: Renamed Google") {
+	if view := stripANSI(m.calendarManager.calendarForm.View()); !strings.Contains(view, "Account: Renamed Google") {
 		t.Fatalf("Rename completion left stale calendar account context:\n%s", view)
 	}
 }
@@ -592,12 +603,12 @@ func TestAppAccountCalendarAddOnlySelectionStartsWithoutConfirmation(t *testing.
 
 func TestAppAccountCalendarRemovalRequiresDestructiveConfirmation(t *testing.T) {
 	m := accountManagementAppModel(t)
-	m.calendarDialog = NewCalendarDialogModel(CalendarDialogParams{
+	openCalendarManagerForTest(&m, CalendarDialogParams{
 		ID: 42, AccountID: 7, AccountName: "Personal Google",
 		Name: "Personal", Color: "#a6e3a1", RemoteLinked: true,
-	}, m.theme).SetSize(m.width, m.height)
-	m.calendarDialog.form.Field(cdIdxName).(*TextField).SetValue("Unsaved rename")
-	m.calendarDialogOpen = true
+	})
+	m.calendarManager.calendarForm.form.Field(cdIdxName).(*TextField).SetValue("Unsaved rename")
+	m.calendarManagerOpen = true
 	updated, cmd := m.Update(AccountCalendarsReconcileRequestedMsg{
 		AccountID:     7,
 		SelectedPaths: []string{"/primary/"},
@@ -623,10 +634,10 @@ func TestAppAccountCalendarRemovalRequiresDestructiveConfirmation(t *testing.T) 
 	updated, cmd = m.Update(ConfirmDialogResultMsg{Confirmed: false})
 	m = updated.(Model)
 	if cmd != nil || m.confirmOpen || m.pendingAccountSelection != nil ||
-		!m.accountCalendarManagerOpen || !m.calendarDialogOpen {
+		!m.accountCalendarManagerOpen || !m.calendarManagerOpen {
 		t.Fatalf("cancel removal: cmd=%v confirm=%v pending=%v manager=%v calendar=%v",
 			cmd, m.confirmOpen, m.pendingAccountSelection,
-			m.accountCalendarManagerOpen, m.calendarDialogOpen)
+			m.accountCalendarManagerOpen, m.calendarManagerOpen)
 	}
 
 	updated, _ = m.Update(AccountCalendarsReconcileRequestedMsg{
@@ -635,9 +646,9 @@ func TestAppAccountCalendarRemovalRequiresDestructiveConfirmation(t *testing.T) 
 	m = updated.(Model)
 	updated, cmd = m.Update(ConfirmDialogResultMsg{Confirmed: true})
 	m = updated.(Model)
-	if cmd == nil || !m.syncing || m.accountCalendarManagerOpen || !m.calendarDialogOpen {
+	if cmd == nil || !m.syncing || m.accountCalendarManagerOpen || !m.calendarManagerOpen {
 		t.Fatalf("confirmed removal: cmd=%v syncing=%v manager=%v calendar=%v",
-			cmd == nil, m.syncing, m.accountCalendarManagerOpen, m.calendarDialogOpen)
+			cmd == nil, m.syncing, m.accountCalendarManagerOpen, m.calendarManagerOpen)
 	}
 	updated, _ = m.Update(accountSelectionFinishedMsg{
 		accountManagement: true,
@@ -645,7 +656,7 @@ func TestAppAccountCalendarRemovalRequiresDestructiveConfirmation(t *testing.T) 
 		removedIDs:        []int64{42},
 	})
 	m = updated.(Model)
-	if m.calendarDialogOpen {
+	if m.calendarManagerOpen {
 		t.Fatal("removing the edited calendar left its stale editor open")
 	}
 }

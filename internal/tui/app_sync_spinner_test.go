@@ -35,9 +35,9 @@ func TestSyncSpinnerTickNotBlockedByOverlays(t *testing.T) {
 			},
 		},
 		{
-			name: "calendarDialogOpen",
+			name: "calendarManagerOpen",
 			setup: func(m *Model) {
-				m.calendarDialogOpen = true
+				m.calendarManagerOpen = true
 			},
 		},
 	}

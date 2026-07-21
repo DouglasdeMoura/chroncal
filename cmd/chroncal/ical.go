@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,13 +9,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/douglasdemoura/chroncal/internal/app"
-	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/ical"
+	"github.com/douglasdemoura/chroncal/internal/icaltransfer"
 	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/recurrence"
-	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
@@ -65,64 +61,59 @@ again updates existing items instead of blindly duplicating them.`,
 			ctx, cancel := context.WithTimeout(context.Background(), icalImportTimeout)
 			defer cancel()
 
-			f, err := os.Open(args[0])
+			preview, err := icaltransfer.ParseFile(args[0])
 			if err != nil {
-				return fmt.Errorf("open file: %w", err)
-			}
-			defer f.Close()
-
-			result, err := ical.ImportFile(f)
-			if err != nil {
-				return fmt.Errorf("import: %w", err)
+				return err
 			}
 
 			calID, err := resolveCalendarID(ctx, a, calendarName)
 			if err != nil {
 				return err
 			}
-			if err := ensureICalImportAllowed(ctx, a, calID, result); err != nil {
+			if err := icaltransfer.ValidateDestination(ctx, a, calID, preview); err != nil {
 				return err
 			}
 
-			summary := importComponents(ctx, a, calID, &result)
+			summary := icaltransfer.Import(ctx, a, calID, &preview.Result)
+			warnings := summary.Warnings
 
-			if len(result.Warnings) > 0 {
-				fmt.Fprintf(os.Stderr, "chroncal: %d warning(s) during import:\n", len(result.Warnings))
-				limit := min(5, len(result.Warnings))
-				for _, w := range result.Warnings[:limit] {
+			if len(warnings) > 0 {
+				fmt.Fprintf(os.Stderr, "chroncal: %d warning(s) during import:\n", len(warnings))
+				limit := min(5, len(warnings))
+				for _, w := range warnings[:limit] {
 					fmt.Fprintf(os.Stderr, "  - %s\n", safeText(w))
 				}
-				if len(result.Warnings) > 5 {
-					fmt.Fprintf(os.Stderr, "  ... and %d more\n", len(result.Warnings)-5)
+				if len(warnings) > 5 {
+					fmt.Fprintf(os.Stderr, "  ... and %d more\n", len(warnings)-5)
 				}
 			}
 
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
 				out := map[string]any{
-					"events":           toJSONEvents(summary.events),
-					"todos":            toJSONTodos(summary.todos),
-					"journals":         toJSONJournals(summary.journals),
-					"freebusy":         result.FreeBusy,
-					"new_events":       summary.newEvents,
-					"updated_events":   summary.updatedEvents,
-					"new_todos":        summary.newTodos,
-					"updated_todos":    summary.updatedTodos,
-					"new_journals":     summary.newJournals,
-					"updated_journals": summary.updatedJournals,
-					"failed":           summary.failed,
-					"warnings":         result.Warnings,
+					"events":           toJSONEvents(summary.Events),
+					"todos":            toJSONTodos(summary.Todos),
+					"journals":         toJSONJournals(summary.Journals),
+					"freebusy":         preview.Result.FreeBusy,
+					"new_events":       summary.NewEvents,
+					"updated_events":   summary.UpdatedEvents,
+					"new_todos":        summary.NewTodos,
+					"updated_todos":    summary.UpdatedTodos,
+					"new_journals":     summary.NewJournals,
+					"updated_journals": summary.UpdatedJournals,
+					"failed":           summary.Failed,
+					"warnings":         warnings,
 				}
 				if err := printOutput(w, out); err != nil {
 					return err
 				}
 			} else {
 				fmt.Fprintf(w, "Imported %d new, updated %d existing (%d events, %d todos, %d journals).\n",
-					summary.newEvents+summary.newTodos+summary.newJournals,
-					summary.updatedEvents+summary.updatedTodos+summary.updatedJournals,
-					len(summary.events), len(summary.todos), len(summary.journals))
-				if len(result.FreeBusy) > 0 {
-					fmt.Fprintf(w, "Parsed %d VFREEBUSY component(s); they were not imported into local storage.\n", len(result.FreeBusy))
+					summary.NewEvents+summary.NewTodos+summary.NewJournals,
+					summary.UpdatedEvents+summary.UpdatedTodos+summary.UpdatedJournals,
+					len(summary.Events), len(summary.Todos), len(summary.Journals))
+				if len(preview.Result.FreeBusy) > 0 {
+					fmt.Fprintf(w, "Parsed %d VFREEBUSY component(s); they were not imported into local storage.\n", len(preview.Result.FreeBusy))
 				}
 			}
 
@@ -132,7 +123,7 @@ again updates existing items instead of blindly duplicating them.`,
 			// In JSON mode the push seam's human-readable sync note must be
 			// discarded so it can't trail the JSON object on stdout and break
 			// downstream parsers (issue #255); text mode still shows it.
-			if len(summary.events)+len(summary.todos)+len(summary.journals) > 0 {
+			if len(summary.Events)+len(summary.Todos)+len(summary.Journals) > 0 {
 				pushWriter := w
 				if outputFmt != "text" {
 					pushWriter = io.Discard
@@ -143,212 +134,14 @@ again updates existing items instead of blindly duplicating them.`,
 			// A non-zero exit signals that the import was partial, but the
 			// summary above still reports exactly what landed so the caller
 			// can retry only the failed components.
-			if summary.failed > 0 {
-				return fmt.Errorf("%d component(s) failed to import; see warnings", summary.failed)
+			if summary.Failed > 0 {
+				return fmt.Errorf("%d component(s) failed to import; see warnings", summary.Failed)
 			}
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "calendar to import into (default: first available)")
 	return cmd
-}
-
-// icalImportSummary records what an import landed and what it dropped.
-type icalImportSummary struct {
-	events   []event.Event
-	todos    []todo.Todo
-	journals []journal.Journal
-
-	newEvents, updatedEvents     int
-	newTodos, updatedTodos       int
-	newJournals, updatedJournals int
-
-	// failed counts components whose own upsert failed (and were therefore
-	// skipped entirely). Child-field failures are recorded as warnings
-	// instead, since the parent component itself did land.
-	failed int
-}
-
-// ensureICalImportAllowed validates every component family and every existing
-// source row before the first write. This prevents both partial mixed imports
-// and UID upserts that would move data out of a read-only remote collection.
-func ensureICalImportAllowed(ctx context.Context, a *app.App, calendarID int64, result ical.ImportResult) error {
-	checkDestination := func(present bool, component string) error {
-		if !present {
-			return nil
-		}
-		if err := calendaraccess.EnsureWritable(ctx, a.Queries, calendarID, component); err != nil {
-			return fmt.Errorf("import %s: %w", component, err)
-		}
-		return nil
-	}
-	for _, check := range []struct {
-		present   bool
-		component string
-	}{
-		{present: len(result.Events) > 0, component: "VEVENT"},
-		{present: len(result.Todos) > 0, component: "VTODO"},
-		{present: len(result.Journals) > 0, component: "VJOURNAL"},
-	} {
-		if err := checkDestination(check.present, check.component); err != nil {
-			return err
-		}
-	}
-
-	checkSource := func(sourceID int64, component, uid string) error {
-		if sourceID == calendarID {
-			return nil
-		}
-		if err := calendaraccess.EnsureWritable(ctx, a.Queries, sourceID, component); err != nil {
-			return fmt.Errorf("import %s UID %q from calendar %d: %w", component, uid, sourceID, err)
-		}
-		return nil
-	}
-	for _, imported := range result.Events {
-		existing, err := a.Queries.GetEventByUIDAndRecurrenceID(ctx, storage.GetEventByUIDAndRecurrenceIDParams{
-			Uid: imported.UID, RecurrenceID: imported.RecurrenceID,
-		})
-		if err == nil {
-			if err := checkSource(existing.CalendarID, "VEVENT", imported.UID); err != nil {
-				return err
-			}
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("check existing VEVENT UID %q: %w", imported.UID, err)
-		}
-	}
-	for _, imported := range result.Todos {
-		existing, err := a.Queries.GetTodoByUIDAndRecurrenceID(ctx, storage.GetTodoByUIDAndRecurrenceIDParams{
-			Uid: imported.UID, RecurrenceID: imported.RecurrenceID,
-		})
-		if err == nil {
-			if err := checkSource(existing.CalendarID, "VTODO", imported.UID); err != nil {
-				return err
-			}
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("check existing VTODO UID %q: %w", imported.UID, err)
-		}
-	}
-	for _, imported := range result.Journals {
-		existing, err := a.Queries.GetJournalByUIDAndRecurrenceID(ctx, storage.GetJournalByUIDAndRecurrenceIDParams{
-			Uid: imported.UID, RecurrenceID: imported.RecurrenceID,
-		})
-		if err == nil {
-			if err := checkSource(existing.CalendarID, "VJOURNAL", imported.UID); err != nil {
-				return err
-			}
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("check existing VJOURNAL UID %q: %w", imported.UID, err)
-		}
-	}
-	return nil
-}
-
-// importComponents upserts the parsed timezones, events, todos, and journals
-// into calID. A failure on any single component is recorded in
-// result.Warnings (and summary.failed) and the loop moves on, so one bad item
-// no longer aborts the run and discards the components that follow it. Child
-// collections (alarms, attendees, ...) that fail to attach are likewise
-// surfaced as warnings rather than silently dropped, so the import never
-// reports a clean success while quietly losing data.
-func importComponents(ctx context.Context, a *app.App, calID int64, result *ical.ImportResult) icalImportSummary {
-	var summary icalImportSummary
-
-	// Store imported VTIMEZONE components.
-	for _, tz := range result.Timezones {
-		if _, err := a.Queries.UpsertTimezone(ctx, storage.UpsertTimezoneParams{
-			Tzid:          tz.TZID,
-			VtimezoneData: tz.Data,
-		}); err != nil {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("store VTIMEZONE %s: %v", tz.TZID, err))
-		}
-	}
-
-	// Import events.
-	for _, e := range result.Events {
-		_, lookupErr := a.Events.GetByUID(ctx, e.UID)
-		saved, err := a.Events.UpsertByUID(ctx, event.UpsertParams{
-			UID: e.UID, CalendarID: calID,
-			Title: e.Title, Description: e.Description, Location: e.Location,
-			StartTime: e.StartTime, EndTime: e.EndTime, AllDay: e.AllDay,
-			RecurrenceRule: e.RecurrenceRule, Timezone: e.Timezone,
-			Status: e.Status, Transp: e.Transp, Sequence: e.Sequence,
-			Priority: e.Priority, Class: e.Class, URL: e.URL,
-			ConferenceURI: e.ConferenceURI,
-			Categories:    e.Categories, ExDates: e.ExDates, RDates: e.RDates,
-			RecurrenceID: e.RecurrenceID, Geo: e.Geo,
-			DurationValue: e.DurationValue, DtStamp: e.DtStamp,
-		})
-		if err != nil {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("import event %q: %v", safeText(e.Title), err))
-			summary.failed++
-			continue
-		}
-		result.Warnings = append(result.Warnings, importEventFields(ctx, a.Events, saved.ID, e)...)
-		summary.events = append(summary.events, saved)
-		if lookupErr != nil {
-			summary.newEvents++
-		} else {
-			summary.updatedEvents++
-		}
-	}
-
-	// Import todos.
-	for _, t := range result.Todos {
-		_, lookupErr := a.Todos.GetByUID(ctx, t.UID)
-		saved, err := a.Todos.UpsertByUID(ctx, todo.UpsertParams{
-			UID: t.UID, CalendarID: calID,
-			Summary: t.Summary, Description: t.Description, Location: t.Location,
-			DueDate: t.DueDate, StartDate: t.StartDate, Duration: t.Duration,
-			CompletedAt: t.CompletedAt, PercentComplete: t.PercentComplete,
-			Status: t.Status, Priority: t.Priority, Class: t.Class,
-			URL: t.URL, Categories: t.Categories,
-			RecurrenceRule: t.RecurrenceRule, Timezone: t.Timezone,
-			Sequence: t.Sequence, ExDates: t.ExDates, RDates: t.RDates,
-			RecurrenceID: t.RecurrenceID, Geo: t.Geo,
-			DtStamp: t.DtStamp,
-		})
-		if err != nil {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("import todo %q: %v", safeText(t.Summary), err))
-			summary.failed++
-			continue
-		}
-		result.Warnings = append(result.Warnings, importTodoFields(ctx, a.Todos, saved.ID, t)...)
-		summary.todos = append(summary.todos, saved)
-		if lookupErr != nil {
-			summary.newTodos++
-		} else {
-			summary.updatedTodos++
-		}
-	}
-
-	// Import journals.
-	for _, j := range result.Journals {
-		_, lookupErr := a.Journals.GetByUID(ctx, j.UID)
-		saved, err := a.Journals.UpsertByUID(ctx, journal.UpsertParams{
-			UID: j.UID, CalendarID: calID,
-			Summary: j.Summary, Description: j.Description,
-			StartDate: j.StartDate, Status: j.Status, Class: j.Class,
-			URL: j.URL, Categories: j.Categories,
-			RecurrenceRule: j.RecurrenceRule, Timezone: j.Timezone,
-			Sequence: j.Sequence, ExDates: j.ExDates, RDates: j.RDates,
-			RecurrenceID: j.RecurrenceID,
-			DtStamp:      j.DtStamp,
-		})
-		if err != nil {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("import journal %q: %v", safeText(j.Summary), err))
-			summary.failed++
-			continue
-		}
-		result.Warnings = append(result.Warnings, importJournalFields(ctx, a.Journals, saved.ID, j)...)
-		summary.journals = append(summary.journals, saved)
-		if lookupErr != nil {
-			summary.newJournals++
-		} else {
-			summary.updatedJournals++
-		}
-	}
-
-	return summary
 }
 
 func icalExportCmd() *cobra.Command {

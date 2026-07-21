@@ -14,16 +14,18 @@ func TestPaletteSeparatesNewCalendarFromAddAccount(t *testing.T) {
 	if newCalendar.Title != "New Local Calendar" {
 		t.Fatalf("calendar.new title = %q, want New Local Calendar", newCalendar.Title)
 	}
-	if _, ok := newCalendar.Action().(CalendarDialogRequestedMsg); !ok {
-		t.Fatalf("calendar.new action = %T, want CalendarDialogRequestedMsg", newCalendar.Action())
+	request, ok := newCalendar.Action().(CalendarManagerRequestedMsg)
+	if !ok || request.Target != CalendarManagerTargetLocalCreate {
+		t.Fatalf("calendar.new action = %#v, want local-create manager request", newCalendar.Action())
 	}
 
 	addAccount := paletteCommandByID(t, commands, "account.add")
 	if addAccount.Title != "Add Account…" || addAccount.Category != "Account" {
 		t.Fatalf("account.add = %+v", addAccount)
 	}
-	if _, ok := addAccount.Action().(AccountAddRequestedMsg); !ok {
-		t.Fatalf("account.add action = %T, want AccountAddRequestedMsg", addAccount.Action())
+	request, ok = addAccount.Action().(CalendarManagerRequestedMsg)
+	if !ok || request.Target != CalendarManagerTargetAccountConnect {
+		t.Fatalf("account.add action = %#v, want account-connect manager request", addAccount.Action())
 	}
 }
 
@@ -49,10 +51,10 @@ func TestAccountAddRequestOpensSignInDialog(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("opening Add Account returned command %T", cmd())
 	}
-	if !m.calendarDialogOpen {
+	if !m.calendarManagerOpen {
 		t.Fatal("Add Account did not open its dialog")
 	}
-	view := stripANSI(m.calendarDialog.View())
+	view := stripANSI(m.calendarManager.View())
 	if !strings.Contains(view, "Add Account") || !strings.Contains(view, "Sign In") {
 		t.Fatalf("Add Account opened the wrong surface:\n%s", view)
 	}

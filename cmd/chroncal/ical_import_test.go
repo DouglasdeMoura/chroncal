@@ -17,6 +17,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/config"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/ical"
+	"github.com/douglasdemoura/chroncal/internal/icaltransfer"
 	"github.com/douglasdemoura/chroncal/internal/model"
 )
 
@@ -69,13 +70,13 @@ func TestImportComponentsContinuesPastItemFailure(t *testing.T) {
 		},
 	}
 
-	summary := importComponents(ctx, a, cal.ID, &result)
+	summary := icaltransfer.Import(ctx, a, cal.ID, &result)
 
-	if summary.failed != 1 {
-		t.Fatalf("summary.failed = %d, want 1", summary.failed)
+	if summary.Failed != 1 {
+		t.Fatalf("summary.Failed = %d, want 1", summary.Failed)
 	}
-	if summary.newEvents != 2 {
-		t.Fatalf("summary.newEvents = %d, want 2", summary.newEvents)
+	if summary.NewEvents != 2 {
+		t.Fatalf("summary.NewEvents = %d, want 2", summary.NewEvents)
 	}
 
 	// The event after the failing one must still be persisted: this is the
@@ -84,15 +85,15 @@ func TestImportComponentsContinuesPastItemFailure(t *testing.T) {
 		t.Fatalf("evt-after not persisted (import aborted early): %v", err)
 	}
 	if _, err := a.Events.GetByUID(ctx, "evt-before"); err != nil {
-		t.Fatalf("evt-before not persisted: %v", err)
+		t.Fatalf("evt-before not persisted (import aborted early): %v", err)
 	}
 	if _, err := a.Events.GetByUID(ctx, "evt-bad"); err == nil {
 		t.Fatalf("evt-bad should not have been persisted")
 	}
 
 	// The failure must be surfaced, not silently swallowed.
-	if !containsSubstring(result.Warnings, "Bad") {
-		t.Fatalf("warnings = %v, want a warning mentioning the failed event", result.Warnings)
+	if !containsSubstring(summary.Warnings, "Bad") {
+		t.Fatalf("warnings = %v, want a warning mentioning the failed event", summary.Warnings)
 	}
 }
 
@@ -126,19 +127,19 @@ func TestImportComponentsSurfacesChildFieldFailure(t *testing.T) {
 
 	result := ical.ImportResult{Events: []event.Event{evt}}
 
-	summary := importComponents(ctx, a, cal.ID, &result)
+	summary := icaltransfer.Import(ctx, a, cal.ID, &result)
 
-	// The event itself lands (failed counts only whole-component failures).
-	if summary.failed != 0 {
-		t.Fatalf("summary.failed = %d, want 0", summary.failed)
+	// The event itself lands (Failed counts only whole-component failures).
+	if summary.Failed != 0 {
+		t.Fatalf("summary.Failed = %d, want 0", summary.Failed)
 	}
 	if _, err := a.Events.GetByUID(ctx, "evt-bad-alarm"); err != nil {
 		t.Fatalf("event with bad alarm should still be imported: %v", err)
 	}
 
 	// But the dropped alarm must be reported instead of only logged.
-	if !containsSubstring(result.Warnings, "alarms") {
-		t.Fatalf("warnings = %v, want a warning about the dropped alarm", result.Warnings)
+	if !containsSubstring(summary.Warnings, "alarms") {
+		t.Fatalf("warnings = %v, want a warning about the dropped alarm", summary.Warnings)
 	}
 }
 
@@ -168,7 +169,9 @@ func TestEnsureICalImportAllowedRejectsCollectionPolicyViolations(t *testing.T) 
 	}
 
 	result := ical.ImportResult{Events: []event.Event{{UID: "blocked-event"}}}
-	if err := ensureICalImportAllowed(ctx, a, cal.ID, result); err == nil || !strings.Contains(err.Error(), "read-only") {
+	preview := icaltransfer.Preview{Result: result}
+	preview.Events = len(result.Events)
+	if err := icaltransfer.ValidateDestination(ctx, a, cal.ID, preview); err == nil || !strings.Contains(err.Error(), "read-only") {
 		t.Fatalf("read-only import error = %v, want read-only rejection", err)
 	}
 
@@ -177,7 +180,7 @@ func TestEnsureICalImportAllowedRejectsCollectionPolicyViolations(t *testing.T) 
 		WHERE id = ?`, cal.ID); err != nil {
 		t.Fatalf("make calendar VTODO-only: %v", err)
 	}
-	if err := ensureICalImportAllowed(ctx, a, cal.ID, result); err == nil || !strings.Contains(err.Error(), "VEVENT") {
+	if err := icaltransfer.ValidateDestination(ctx, a, cal.ID, preview); err == nil || !strings.Contains(err.Error(), "VEVENT") {
 		t.Fatalf("unsupported-component import error = %v, want VEVENT rejection", err)
 	}
 	if _, err := a.DB.ExecContext(ctx, `
@@ -200,7 +203,9 @@ func TestEnsureICalImportAllowedRejectsCollectionPolicyViolations(t *testing.T) 
 		t.Fatalf("create writable target: %v", err)
 	}
 	sourceResult := ical.ImportResult{Events: []event.Event{sourceEvent}}
-	if err := ensureICalImportAllowed(ctx, a, target.ID, sourceResult); err == nil || !strings.Contains(err.Error(), "read-only") {
+	sourcePreview := icaltransfer.Preview{Result: sourceResult}
+	sourcePreview.Events = len(sourceResult.Events)
+	if err := icaltransfer.ValidateDestination(ctx, a, target.ID, sourcePreview); err == nil || !strings.Contains(err.Error(), "read-only") {
 		t.Fatalf("read-only source import error = %v, want source rejection", err)
 	}
 }

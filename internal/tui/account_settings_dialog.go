@@ -58,6 +58,11 @@ type AccountSettingsDialogModel struct {
 	attention color.Color
 }
 
+// Params returns the read-only account context the dialog was built with.
+// Hosts (and the calendar manager's account drill-down) use it to confirm
+// which immutable AccountID the panel targets.
+func (m AccountSettingsDialogModel) Params() AccountSettingsParams { return m.params }
+
 const accountSettingsMaxWidth = 72
 
 func NewAccountSettingsDialogModel(params AccountSettingsParams, theme Theme) AccountSettingsDialogModel {
