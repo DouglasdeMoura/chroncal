@@ -27,29 +27,16 @@ func TestPaletteSeparatesNewCalendarFromAddAccount(t *testing.T) {
 	}
 }
 
-func TestPaletteExposesAccountSettingsByAccountIdentity(t *testing.T) {
+func TestPaletteDoesNotExposeIndividualAccountManagement(t *testing.T) {
 	commands := buildPaletteCommands(Model{accounts: map[int64]account.Account{
 		9: {ID: 9, DisplayName: "Work", DisplayOrder: 1},
 		7: {ID: 7, DisplayName: "Personal Google", DisplayOrder: 0},
 	}})
 
-	personal := paletteCommandByID(t, commands, "account.manage.7")
-	work := paletteCommandByID(t, commands, "account.manage.9")
-	if personal.Title != "Manage Personal Google…" || work.Title != "Manage Work…" {
-		t.Fatalf("account titles = %q, %q", personal.Title, work.Title)
-	}
-	if personal.Category != "Account" || work.Category != "Account" {
-		t.Fatalf("account categories = %q, %q", personal.Category, work.Category)
-	}
-	msg, ok := personal.Action().(AccountSettingsRequestedMsg)
-	if !ok || msg.AccountID != 7 {
-		t.Fatalf("Personal action = %#v, want account 7 settings", personal.Action())
-	}
-
-	personalIndex := paletteCommandIndex(commands, personal.ID)
-	workIndex := paletteCommandIndex(commands, work.ID)
-	if personalIndex >= workIndex {
-		t.Fatalf("account command order = Personal %d, Work %d; want display order", personalIndex, workIndex)
+	for _, command := range commands {
+		if strings.HasPrefix(command.ID, "account.manage.") {
+			t.Fatalf("palette exposes individual account command %q", command.ID)
+		}
 	}
 }
 
@@ -80,13 +67,4 @@ func paletteCommandByID(t *testing.T, commands []PaletteCommand, id string) Pale
 	}
 	t.Fatalf("palette command %q is missing", id)
 	return PaletteCommand{}
-}
-
-func paletteCommandIndex(commands []PaletteCommand, id string) int {
-	for i, command := range commands {
-		if command.ID == id {
-			return i
-		}
-	}
-	return -1
 }
