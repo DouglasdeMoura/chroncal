@@ -65,7 +65,7 @@ type CalendarListDialogModel struct {
 // (name as a tiebreak) so this dialog matches the sidebar.
 func NewCalendarListDialogModel(calendars map[int64]CalendarInfo, hidden map[int64]bool, h help.Model) CalendarListDialogModel {
 	newAction := ListDialogAction{
-		Label:   "+ Add Calendar",
+		Label:   "+ New Calendar",
 		Primary: true,
 		Msg:     func() tea.Msg { return CalendarDialogRequestedMsg{ID: 0} },
 	}

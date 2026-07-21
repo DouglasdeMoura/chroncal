@@ -59,9 +59,8 @@ type CalendarSavedMsg struct {
 	MakeDefault bool
 }
 
-// CalendarDiscoveryRequestedMsg starts account discovery from the integrated
-// New Calendar flow. Remote collection metadata supplies the names, colors,
-// and descriptions for every selected calendar.
+// CalendarDiscoveryRequestedMsg starts discovery from the Add Account flow.
+// Remote collection metadata supplies the local calendars after sign-in.
 type CalendarDiscoveryRequestedMsg struct {
 	ServerURL         string
 	Username          string
@@ -71,8 +70,6 @@ type CalendarDiscoveryRequestedMsg struct {
 	OAuthClientSecret string
 	AllowInsecure     bool
 }
-
-type calendarConnectionBackMsg struct{}
 
 // CalendarDeleteRequestedMsg is emitted when the user presses Delete in the
 // dialog. The parent is responsible for showing the confirm dialog.
@@ -111,16 +108,15 @@ type calendarSavePromotePressedMsg struct{}
 // CalendarDialogClosedMsg is emitted when the user cancels the dialog.
 type CalendarDialogClosedMsg struct{}
 
-// Form field indices for the local calendar form. Index 4 is an empty spacer
-// row; index 5 is the CalDAV toggle in create mode or a read-only connection
-// status line in linked mode.
+// Form field indices for the calendar form. Index 4 is an empty spacer;
+// linked calendars add read-only account context at index 5.
 const (
 	cdIdxName        = 0
 	cdIdxColor       = 1
 	cdIdxDescription = 2
 	cdIdxEmail       = 3
 	// Index 4 is an empty spacer StaticField.
-	cdIdxSync = 5
+	cdIdxAccount = 5
 )
 
 const (
@@ -176,10 +172,10 @@ type CalendarDialogModel struct {
 	// the "Save and Set as Default" path can flip the MakeDefault bit on
 	// the upcoming CalendarSavedMsg without re-implementing form
 	// validation. Cleared automatically after each submit.
-	saveMakeDefault *bool
-	connectionMode  *bool
-	localDraft      *CalendarDialogParams
-	discoveryPicker *AccountCalendarPickerModel
+	saveMakeDefault   *bool
+	accountConnection bool
+	localDraft        *CalendarDialogParams
+	discoveryPicker   *AccountCalendarPickerModel
 
 	// contentWidth is shared with static sync-health rows so long errors
 	// truncate to the dialog width instead of wrapping inside the box.
@@ -272,16 +268,11 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		for _, line := range syncHealthDialogLines(params, theme) {
 			items = append(items, staticLine(line.text, line.style))
 		}
-	} else {
-		sync := NewCheckboxField("", false)
-		sync.SetContent("Enable CalDAV sync")
-		items = append(items, FormItem{Label: "Sync", Field: sync})
 	}
 
 	form := NewForm("Save", formStyles, items...)
 
 	savedID := params.ID
-	linked := params.RemoteLinked
 	saveMakeDefault := new(bool)
 	form.OnSubmit(func(f *Form) tea.Cmd {
 		nameVal := strings.TrimSpace(f.Field(cdIdxName).(*TextField).Value())
@@ -306,25 +297,24 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		return func() tea.Msg { return CalendarDialogClosedMsg{} }
 	})
 
-	connectionMode := new(bool)
 	localDraft := params
 
 	m := CalendarDialogModel{
-		id:              params.ID,
-		name:            params.Name,
-		linked:          params.RemoteLinked,
-		dialog:          dialog,
-		form:            form,
-		body:            viewport.New(),
-		help:            newThemedHelp(theme),
-		theme:           theme,
-		accentColor:     theme.Selected,
-		mutedColor:      theme.Muted,
-		textDimColor:    theme.TextDim,
-		saveMakeDefault: saveMakeDefault,
-		connectionMode:  connectionMode,
-		localDraft:      &localDraft,
-		contentWidth:    contentWidth,
+		id:                params.ID,
+		name:              params.Name,
+		linked:            params.RemoteLinked,
+		dialog:            dialog,
+		form:              form,
+		body:              viewport.New(),
+		help:              newThemedHelp(theme),
+		theme:             theme,
+		accentColor:       theme.Selected,
+		mutedColor:        theme.Muted,
+		textDimColor:      theme.TextDim,
+		saveMakeDefault:   saveMakeDefault,
+		accountConnection: false,
+		localDraft:        &localDraft,
+		contentWidth:      contentWidth,
 	}
 	m.body.MouseWheelEnabled = true
 
@@ -356,21 +346,28 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		})
 	}
 
-	form.OnRebuild(func(f *Form) {
-		if linked || !syncEnabled(f) {
-			return
-		}
-		localDraft.Name = strings.TrimSpace(f.Field(cdIdxName).(*TextField).Value())
-		localDraft.Color = strings.TrimSpace(f.Field(cdIdxColor).(*ColorField).Value())
-		localDraft.Description = strings.TrimSpace(f.Field(cdIdxDescription).(*TextField).Value())
-		localDraft.OwnerEmail = strings.TrimSpace(f.Field(cdIdxEmail).(*TextField).Value())
-		*connectionMode = true
-		connection := newCalDAVConnectionForm(theme, localDraft.OwnerEmail)
-		connection.SetWidth(dialog.ContentWidth())
-		*f = connection
-	})
 	m.form = form
+	return m
+}
 
+// NewAccountDialogModel opens account sign-in directly. Remote collection
+// discovery is an account concern; New Calendar remains a local-calendar flow.
+func NewAccountDialogModel(theme Theme) CalendarDialogModel {
+	dialog := NewDialog("Add Account", DefaultDialogStyles())
+	dialog.SetWidth(62)
+	form := newCalDAVConnectionForm(theme, "")
+	m := CalendarDialogModel{
+		dialog:            dialog,
+		form:              form,
+		body:              viewport.New(),
+		help:              newThemedHelp(theme),
+		theme:             theme,
+		accentColor:       theme.Selected,
+		mutedColor:        theme.Muted,
+		textDimColor:      theme.TextDim,
+		accountConnection: true,
+	}
+	m.body.MouseWheelEnabled = true
 	return m
 }
 
@@ -383,16 +380,13 @@ func newCalDAVConnectionForm(theme Theme, usernamePrefill string) Form {
 
 	insecure := NewCheckboxField("", false)
 	insecure.SetContent("allow plain HTTP")
-	form := NewForm("Discover calendars", styles,
+	form := NewForm("Sign In", styles,
 		FormItem{Label: "Server URL", Field: newRemoteURLField(""), Required: true},
 		FormItem{Label: "Username", Field: newUsernameField(usernamePrefill), Required: true},
 		FormItem{Label: "Auth", Field: newAuthField("basic"), Required: true},
 		FormItem{Label: "Password", Field: newPasswordField(), Required: true},
 		FormItem{Label: "HTTP", Field: insecure},
 	)
-	form.SetLeadingActionButton("Back", Button, func() tea.Msg {
-		return calendarConnectionBackMsg{}
-	})
 	form.SetActionButton("Test", Button, func() tea.Msg {
 		return testConnectionPressedMsg{}
 	})
@@ -520,16 +514,6 @@ func newCalDAVConnectionForm(theme Theme, usernamePrefill string) Form {
 		return func() tea.Msg { return msg }
 	})
 	return form
-}
-
-// syncEnabled reports whether the Sync checkbox is currently on. Returns
-// false in linked mode, where the checkbox does not exist.
-func syncEnabled(f *Form) bool {
-	if f.ItemCount() <= cdIdxSync {
-		return false
-	}
-	cb, ok := f.Field(cdIdxSync).(*CheckboxField)
-	return ok && cb.Checked()
 }
 
 // isLocalhostHTTP reports whether a URL uses http:// against localhost
@@ -682,7 +666,7 @@ func (m CalendarDialogModel) HideDiscovery() CalendarDialogModel {
 // SetAccountName refreshes account context without rebuilding the form, so
 // in-progress calendar metadata edits survive an account rename.
 func (m CalendarDialogModel) SetAccountName(name string) CalendarDialogModel {
-	if !m.linked || m.localDraft == nil || m.form.ItemCount() <= cdIdxSync {
+	if !m.linked || m.localDraft == nil || m.form.ItemCount() <= cdIdxAccount {
 		return m
 	}
 	name = strings.TrimSpace(name)
@@ -690,7 +674,7 @@ func (m CalendarDialogModel) SetAccountName(name string) CalendarDialogModel {
 		name = "Connected account"
 	}
 	m.localDraft.AccountName = name
-	if field, ok := m.form.Field(cdIdxSync).(*StaticField); ok {
+	if field, ok := m.form.Field(cdIdxAccount).(*StaticField); ok {
 		field.SetValue(name)
 	}
 	return m
@@ -803,15 +787,6 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 		return m, cmd
 	}
 
-	if _, ok := msg.(calendarConnectionBackMsg); ok {
-		if m.localDraft == nil {
-			return m, nil
-		}
-		restored := NewCalendarDialogModel(*m.localDraft, m.theme).
-			SetSize(m.dialog.width, m.dialog.height)
-		return restored, nil
-	}
-
 	if _, ok := msg.(testConnectionPressedMsg); ok {
 		m, cmd := m.handleTestPressed()
 		m.syncBodyViewport(true)
@@ -901,14 +876,14 @@ func (m CalendarDialogModel) View() string {
 // populated, emits a CalendarTestRequestedMsg so the parent can run the
 // authenticated ping. Errors show inline without contacting the server.
 func (m CalendarDialogModel) handleTestPressed() (CalendarDialogModel, tea.Cmd) {
-	if m.connectionMode == nil || !*m.connectionMode {
+	if !m.accountConnection {
 		return m, nil
 	}
 	// The oauth2 layout has no password to ping with — there is no token
-	// until the browser flow runs, which happens on discovery.
+	// until the browser flow runs, which happens on sign-in.
 	if calendarAuthIsOAuth(m.form.Field(calDAVIdxAuth).(*SelectField).Value()) {
 		m.testStatus = lipgloss.NewStyle().Foreground(m.theme.TextDim).Italic(true).
-			Render("Test runs after Google authorization — discover to connect")
+			Render("Connection test runs after Google authorization — sign in to continue")
 		return m, nil
 	}
 	url := strings.TrimSpace(m.form.Field(calDAVIdxServer).(*TextField).Value())
