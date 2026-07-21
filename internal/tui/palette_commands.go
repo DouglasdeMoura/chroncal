@@ -1,15 +1,6 @@
 package tui
 
-import (
-	"cmp"
-	"fmt"
-	"slices"
-	"strings"
-
-	tea "charm.land/bubbletea/v2"
-
-	"github.com/douglasdemoura/chroncal/internal/textsafe"
-)
+import tea "charm.land/bubbletea/v2"
 
 // Palette action messages. The palette emits these via a selected command's
 // Action func; the app-level Update handles them like any other tea.Msg.
@@ -30,10 +21,10 @@ type ToggleWeekNumbersMsg struct{}
 type AccountAddRequestedMsg struct{}
 
 // buildPaletteCommands returns the default commands exposed through the
-// palette, with bindings to the current app state (cursor, accounts, etc.).
+// palette, with bindings to the current app state (cursor, etc.).
 func buildPaletteCommands(m Model) []PaletteCommand {
 	cursor, _ := m.viewCursorAndToday()
-	commands := make([]PaletteCommand, 0, 15+len(m.accounts))
+	commands := make([]PaletteCommand, 0, 15)
 	commands = append(commands,
 		PaletteCommand{
 			ID:       "nav.today",
@@ -91,7 +82,6 @@ func buildPaletteCommands(m Model) []PaletteCommand {
 			Action:   func() tea.Msg { return AccountAddRequestedMsg{} },
 		},
 	)
-	commands = append(commands, accountManagementPaletteCommands(m)...)
 	commands = append(commands,
 		PaletteCommand{
 			ID:       "calendar.manage",
@@ -143,42 +133,5 @@ func buildPaletteCommands(m Model) []PaletteCommand {
 			Action:   func() tea.Msg { return tea.QuitMsg{} },
 		},
 	)
-	return commands
-}
-
-func accountManagementPaletteCommands(m Model) []PaletteCommand {
-	ids := make([]int64, 0, len(m.accounts))
-	for id := range m.accounts {
-		ids = append(ids, id)
-	}
-	slices.SortFunc(ids, func(a, b int64) int {
-		left, right := m.accounts[a], m.accounts[b]
-		return cmp.Or(
-			cmp.Compare(left.DisplayOrder, right.DisplayOrder),
-			strings.Compare(strings.ToLower(left.DisplayName), strings.ToLower(right.DisplayName)),
-			cmp.Compare(a, b),
-		)
-	})
-
-	commands := make([]PaletteCommand, 0, len(ids))
-	for _, id := range ids {
-		configured := m.accounts[id]
-		name := strings.TrimSpace(textsafe.Display(configured.DisplayName))
-		if name == "" {
-			name = strings.TrimSpace(textsafe.Display(configured.Username))
-		}
-		if name == "" {
-			name = fmt.Sprintf("Account %d", id)
-		}
-		accountID := id
-		commands = append(commands, PaletteCommand{
-			ID:       fmt.Sprintf("account.manage.%d", accountID),
-			Title:    "Manage " + name + "…",
-			Category: "Account",
-			Action: func() tea.Msg {
-				return AccountSettingsRequestedMsg{AccountID: accountID}
-			},
-		})
-	}
 	return commands
 }

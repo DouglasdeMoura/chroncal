@@ -698,8 +698,7 @@ imported calendars remain browsable but reject event edits and deletes.
 Calendars are edited from the calendar popup. **New Calendar** creates a local
 calendar, while **Add Account…** in the command palette signs in once and adds
 every usable remote calendar. Linked calendars route account maintenance
-through **Manage Account…**; the palette also exposes each configured account
-directly. Todo and journal management live in the CLI for now.
+through **Manage Account…**. Todo and journal management live in the CLI for now.
 
 Sync health is visible at a glance: a calendar whose last sync failed shows
 a `⚠` next to it in the sidebar, and opening it explains why (and offers a
