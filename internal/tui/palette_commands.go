@@ -70,7 +70,7 @@ func buildPaletteCommands(m Model) []PaletteCommand {
 		},
 		PaletteCommand{
 			ID:       "calendar.new",
-			Title:    "New Calendar",
+			Title:    "New Local Calendar",
 			Category: "Calendar",
 			Shortcut: "l",
 			Action:   func() tea.Msg { return CalendarDialogRequestedMsg{ID: 0} },
