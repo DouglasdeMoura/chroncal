@@ -293,10 +293,10 @@ chroncal ical import calendar.ics --calendar Work
 # Export to iCal
 chroncal ical export --calendar Work -f work.ics
 
-# Add one CalDAV account, discover its collections, and import usable calendars
+# Add one CalDAV account; every usable calendar is discovered, imported, and synced
 CHRONCAL_PASSWORD="…" chroncal account add "Work server" \
     --server https://cal.example.com/dav/ --username alice --auth basic
-chroncal account discover "Work server" --all
+chroncal account calendars list "Work server"
 
 # Run sync and inspect status
 chroncal sync run --calendar Work
@@ -360,22 +360,37 @@ Journal flags: `--date`, `--description`, `--calendar`, `--status`, `--class`, `
 ### CalDAV accounts
 
 ```
-chroncal account add       "<name>" --server URL --username USER [--auth {basic,bearer,oauth2}] [--oauth-client-id ID] [--allow-insecure]
+chroncal account add              "<name>" --server URL --username USER [--auth {basic,bearer,oauth2}] [--oauth-client-id ID] [--allow-insecure]
+chroncal account get              <name|id>
 chroncal account list
-chroncal account discover  <name|id> [--all | --select NAME_OR_URL ...]
-chroncal account remove    <name|id> [--yes]
+chroncal account update           <name|id> --name NAME
+chroncal account calendars list   <name|id>
+chroncal account calendars add    <name|id> (--calendar NAME_OR_URL ... | --all)
+chroncal account calendars set    <name|id> (--calendar NAME_OR_URL ... | --all | --none) [--default ID_OR_NAME_OR_URL] [--yes]
+chroncal account remove           <name|id> [--yes]
 ```
 
 An account stores one credential and discovers every CalDAV calendar collection
-available to it. `discover` can be run again safely: existing imports are
-reused, metadata is refreshed, and collections no longer reported by the
-server are marked missing rather than deleted. `remove` deletes the credential
-and remote links but keeps downloaded calendars and data as local copies.
+available to it. `account add` imports every collection that supports `VEVENT`,
+`VTODO`, or `VJOURNAL` and completes an initial sync before returning.
+`account calendars list` refreshes the complete inventory, including already
+selected, read-only, unsupported, and no-longer-available collections.
+`account calendars add` remains additive and idempotent for collections exposed
+later: use `--calendar` repeatedly to add chosen collections, or `--all` to add
+every usable collection. Newly added collections are synced before the command
+returns.
 
-Use `--select` repeatedly to import only chosen collections, or `--all` to
-import every collection that supports `VEVENT`, `VTODO`, or `VJOURNAL`.
-Read-only collections are imported for local browsing and pull-only sync;
-chroncal does not send metadata changes, resources, or tombstones to them.
+`account calendars set` replaces the exact local selection. Deselected
+calendars and their downloaded data are deleted from Chroncal after
+confirmation, but the remote collections are never deleted. If the current
+default calendar is deselected, pass `--default` with a retained local calendar
+or newly selected remote collection. Newly selected collections are synced
+before the command returns. Selecting none also removes the now-empty account
+and credential. By contrast, `account remove` deletes the credential and
+remote links while preserving downloaded calendars as local copies.
+
+Read-only collections are available for local browsing and pull-only sync;
+Chroncal does not send metadata changes, resources, or tombstones to them.
 
 ### Calendars
 
@@ -404,6 +419,11 @@ one credential exposes multiple collections:
 --allow-insecure
 ```
 
+For scripted setup, credentials are read from environment variables instead of
+interactive prompts: `CHRONCAL_PASSWORD` (basic), `CHRONCAL_BEARER_TOKEN`
+(bearer), and `GOOGLE_CLIENT_SECRET` (oauth2). They are intentionally not
+accepted as CLI flags.
+
 Pass `--disconnect-remote` on `update` to remove a calendar's remote link.
 
 ### iCal import/export
@@ -429,7 +449,8 @@ chroncal sync reset     [--calendar NAME]
 
 Sync operates on each connected calendar independently. Calendars sharing an
 account reuse its credential and sync serially; distinct accounts can sync
-concurrently. Use `chroncal account discover` to import remote collections, or
+concurrently. Use `chroncal account calendars list` and
+`chroncal account calendars add` to inspect and import remote collections, or
 the calendar remote flags above when attaching one already-known URL directly.
 
 ### Google Calendar via CalDAV
@@ -476,13 +497,12 @@ syncs run unattended.
      --oauth-client-id "YOUR_CLIENT_ID.apps.googleusercontent.com"
    ```
 
-5. Discover every calendar in the Google CalendarList, then import all usable
-   calendars or select individual names:
+5. The add command imports and initially syncs every usable calendar in the
+   Google CalendarList, including delegated, family, holiday, and subscription
+   calendars. Inspect the resulting inventory:
 
    ```bash
-   chroncal account discover "Google"
-   chroncal account discover "Google" --select "Family" --select "Holidays in Brazil"
-   # or: chroncal account discover "Google" --all
+   chroncal account calendars list "Google"
    ```
 
 6. Run sync and inspect status:
@@ -493,23 +513,25 @@ syncs run unattended.
    ```
 
 To connect from the TUI, open **Add Calendar**, enable **CalDAV sync**, and
-enter the server and authentication settings. Chroncal discovers every
-collection exposed by that connection, then groups the picker into **Available**,
-**Already Added**, and **Unavailable** sections. Remote colors and read-only
-access remain visible without mixing technical CalDAV labels into calendar
-names; the **Add** action reports the selection count and stays disabled until
-at least one available calendar is selected. Browser authorization runs
-without leaving the app. Open a linked calendar and choose
-**Account… → Manage calendars…**—or select its account heading in the sidebar
-and press `Enter`—to rediscover the account's complete inventory. Calendars
-already in Chroncal start checked: check new collections to add them or uncheck
-existing collections to remove their local copies. **Rename** changes the
-friendly account description shown in the sidebar without changing its login
-or credential identity. Removal requires destructive confirmation, and
-removing every checked calendar also removes the now-empty account and its
-stored credential. Unsaved calendar edits remain intact when the menu or picker
-closes. The same compact **Account…** menu contains OAuth re-authentication and
-the destructive disconnect action.
+enter the server and authentication settings. Chroncal discovers, imports, and
+initially syncs every usable collection exposed by that sign-in without a
+second selection step. Unsupported collections are ignored; if discovery finds
+no usable calendars, Chroncal removes the newly created account. Browser
+authorization runs without leaving the app.
+
+Account maintenance has one entry point. Select an account heading in the
+sidebar and press `Enter`, or open a linked calendar and choose **Manage
+Account…**, to open **Account settings**. The panel shows the provider, server
+URL, login identity, calendar count, and sync warnings. From there you can
+manage calendars, rename the account, sign in again for OAuth accounts, or
+remove the account. **Manage Calendars…** opens a separate collection picker:
+calendars already in Chroncal start checked, and unchecking one removes its
+local copy after destructive confirmation. Removing every collection also
+removes the empty account and its stored credential. **Remove Account…**
+instead removes the remote links and stored sign-in while preserving
+downloaded calendars as local calendars. The **Edit calendar** dialog remains
+calendar-scoped: name, color, description, owner email, default status, and
+quiet account/sync context only.
 
 Google limitations:
 
@@ -666,14 +688,15 @@ details including alarms, attendees, and attachments. Use `u` to undo a
 delete. The sidebar uses quiet, collapsible account sections, including a
 separate **Local** section; calendar colors remain on calendar rows rather than
 account headings. On an account heading, `Left`/`Right` collapse or expand,
-`Enter` opens account management, and `Shift+Up`/`Shift+Down` persistently
+`Enter` opens **Account settings**, and `Shift+Up`/`Shift+Down` persistently
 reorder complete remote-account sections while keeping **Local** first. The
 same reorder keys move calendars only within their own account. Hidden state
 and scrolling operate on calendar rows rather than group headings. Read-only
 imported calendars remain browsable but reject event edits and deletes.
-Calendars are managed from the calendar popup; **Add Calendar** contains the
-integrated CalDAV discovery flow. Todo and journal management live in the CLI
-for now.
+Calendars are edited from the calendar popup; **Add Calendar** contains the
+integrated CalDAV discovery flow, and linked calendars route account
+maintenance through **Manage Account…**. Todo and journal management live in
+the CLI for now.
 
 Sync health is visible at a glance: a calendar whose last sync failed shows
 a `⚠` next to it in the sidebar, and opening it explains why (and offers a

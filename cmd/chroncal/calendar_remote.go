@@ -117,13 +117,11 @@ func buildCalendarCredential(ctx context.Context, flags calendarRemoteFlags) (au
 		}
 		return auth.Credential{Username: flags.Username, AccessToken: token}, nil
 	case "basic":
-		fmt.Print("Password: ")
-		passwordBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
-		fmt.Println()
+		password, err := readBasicPassword()
 		if err != nil {
-			return auth.Credential{}, fmt.Errorf("read password: %w", err)
+			return auth.Credential{}, err
 		}
-		return auth.Credential{Username: flags.Username, Password: string(passwordBytes)}, nil
+		return auth.Credential{Username: flags.Username, Password: password}, nil
 	case "oauth2":
 		clientSecret, err := readGoogleClientSecret()
 		if err != nil {
@@ -148,6 +146,32 @@ func buildCalendarCredential(ctx context.Context, flags calendarRemoteFlags) (au
 
 func normalizeAuthType(authType string) string {
 	return calendarpkg.NormalizeAuthType(authType)
+}
+
+// readBasicPassword obtains the password for --auth basic. We never accept it
+// as a CLI flag to avoid exposing secrets in /proc/<pid>/cmdline and shell
+// history. Sources, in order:
+//
+//  1. CHRONCAL_PASSWORD env var (handy for scripted/CI setup).
+//  2. Interactive prompt via terminal (echo disabled).
+func readBasicPassword() (string, error) {
+	if s := os.Getenv("CHRONCAL_PASSWORD"); s != "" {
+		return s, nil
+	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return "", fmt.Errorf("a password is required: set CHRONCAL_PASSWORD or run interactively")
+	}
+	fmt.Print("Password: ")
+	passwordBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Println()
+	if err != nil {
+		return "", fmt.Errorf("read password: %w", err)
+	}
+	password := string(passwordBytes)
+	if password == "" {
+		return "", fmt.Errorf("password is required")
+	}
+	return password, nil
 }
 
 // readBearerToken obtains the bearer token for --auth bearer. We never accept

@@ -18,6 +18,7 @@ type AccountSettingsParams struct {
 	AccountID      int64
 	DisplayName    string
 	Provider       string
+	ServerURL      string
 	Username       string
 	CalendarCount  int
 	AttentionCount int
@@ -30,18 +31,11 @@ type AccountSettingsRequestedMsg struct{ AccountID int64 }
 
 type AccountSettingsManageRequestedMsg struct{ AccountID int64 }
 
-type AccountSettingsRenameRequestedMsg struct {
-	AccountID   int64
-	DisplayName string
-}
+type AccountSettingsRenameRequestedMsg struct{ AccountID int64 }
 
 type AccountSettingsReauthRequestedMsg struct{ AccountID int64 }
 
-type AccountSettingsRemoveRequestedMsg struct {
-	AccountID     int64
-	DisplayName   string
-	CalendarCount int
-}
+type AccountSettingsRemoveRequestedMsg struct{ AccountID int64 }
 
 type AccountSettingsClosedMsg struct{}
 
@@ -64,7 +58,7 @@ type AccountSettingsDialogModel struct {
 	attention color.Color
 }
 
-const accountSettingsMaxWidth = 48
+const accountSettingsMaxWidth = 72
 
 func NewAccountSettingsDialogModel(params AccountSettingsParams, theme Theme) AccountSettingsDialogModel {
 	title := strings.TrimSpace(params.DisplayName)
@@ -81,7 +75,7 @@ func NewAccountSettingsDialogModel(params AccountSettingsParams, theme Theme) Ac
 		{
 			label: "Rename Account…",
 			onPress: func() tea.Msg {
-				return AccountSettingsRenameRequestedMsg{AccountID: params.AccountID, DisplayName: params.DisplayName}
+				return AccountSettingsRenameRequestedMsg{AccountID: params.AccountID}
 			},
 		},
 	}
@@ -98,9 +92,7 @@ func NewAccountSettingsDialogModel(params AccountSettingsParams, theme Theme) Ac
 			label:   "Remove Account…",
 			variant: ButtonDanger,
 			onPress: func() tea.Msg {
-				return AccountSettingsRemoveRequestedMsg{
-					AccountID: params.AccountID, DisplayName: params.DisplayName, CalendarCount: params.CalendarCount,
-				}
+				return AccountSettingsRemoveRequestedMsg{AccountID: params.AccountID}
 			},
 		},
 		accountSettingsAction{
@@ -175,14 +167,17 @@ func (m AccountSettingsDialogModel) Update(msg tea.Msg) (AccountSettingsDialogMo
 }
 
 func (m AccountSettingsDialogModel) identityLines() []string {
-	lines := make([]string, 0, 4)
+	lines := make([]string, 0, 5)
 	if provider := strings.TrimSpace(m.params.Provider); provider != "" {
-		lines = append(lines, provider)
+		lines = append(lines, "Provider: "+provider)
+	}
+	if serverURL := strings.TrimSpace(m.params.ServerURL); serverURL != "" {
+		lines = append(lines, "Server: "+serverURL)
 	}
 	if username := strings.TrimSpace(m.params.Username); username != "" {
-		lines = append(lines, username)
+		lines = append(lines, "Identity: "+username)
 	}
-	lines = append(lines, fmt.Sprintf("%d %s", m.params.CalendarCount, accountSettingsNoun(m.params.CalendarCount)))
+	lines = append(lines, fmt.Sprintf("Calendars: %d", m.params.CalendarCount))
 	if m.params.AttentionCount > 0 {
 		lines = append(lines, fmt.Sprintf("Needs attention · %d %s", m.params.AttentionCount, accountSettingsNoun(m.params.AttentionCount)))
 	}

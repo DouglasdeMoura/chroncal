@@ -12,6 +12,7 @@ func TestAccountSettingsDialogOAuthActionsAreAccountScoped(t *testing.T) {
 		AccountID:      7,
 		DisplayName:    "Personal Google",
 		Provider:       "Google Account",
+		ServerURL:      "https://apidata.googleusercontent.com/caldav/v2/",
 		Username:       "douglas@example.com",
 		CalendarCount:  3,
 		AttentionCount: 1,
@@ -42,7 +43,7 @@ func TestAccountSettingsDialogOAuthActionsAreAccountScoped(t *testing.T) {
 				t.Fatalf("Manage AccountID = %d, want %d", msg.AccountID, wantID)
 			}
 		case AccountSettingsRenameRequestedMsg:
-			if msg.AccountID != wantID || msg.DisplayName != "Personal Google" {
+			if msg.AccountID != wantID {
 				t.Fatalf("Rename = %+v", msg)
 			}
 		case AccountSettingsReauthRequestedMsg:
@@ -50,7 +51,7 @@ func TestAccountSettingsDialogOAuthActionsAreAccountScoped(t *testing.T) {
 				t.Fatalf("Reauth AccountID = %d, want %d", msg.AccountID, wantID)
 			}
 		case AccountSettingsRemoveRequestedMsg:
-			if msg.AccountID != wantID || msg.CalendarCount != 3 {
+			if msg.AccountID != wantID {
 				t.Fatalf("Remove = %+v", msg)
 			}
 		case AccountSettingsClosedMsg:
@@ -71,6 +72,7 @@ func TestAccountSettingsDialogNonOAuthOmitsSignIn(t *testing.T) {
 		AccountID:     9,
 		DisplayName:   "Work",
 		Provider:      "CalDAV Account",
+		ServerURL:     "https://cal.example.com/dav/",
 		Username:      "alice@example.com",
 		CalendarCount: 2,
 		AuthType:      "basic",
@@ -94,6 +96,7 @@ func TestAccountSettingsDialogRendersQuietIdentityAndHealth(t *testing.T) {
 		AccountID:      7,
 		DisplayName:    "Personal Google",
 		Provider:       "Google Account",
+		ServerURL:      "https://apidata.googleusercontent.com/caldav/v2/",
 		Username:       "douglas@example.com",
 		CalendarCount:  3,
 		AttentionCount: 1,
@@ -101,13 +104,10 @@ func TestAccountSettingsDialogRendersQuietIdentityAndHealth(t *testing.T) {
 	}, NewTheme(true)).SetSize(80, 30)
 
 	view := stripANSI(m.View())
-	for _, want := range []string{"Personal Google", "Google Account", "douglas@example.com", "3 calendars", "Needs attention · 1 calendar", "Manage Calendars…", "Remove Account…", "Done"} {
+	for _, want := range []string{"Personal Google", "Provider: Google Account", "Server: https://apidata.googleusercontent.com/caldav/v2/", "Identity: douglas@example.com", "Calendars: 3", "Needs attention · 1 calendar", "Manage Calendars…", "Remove Account…", "Done"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
-	}
-	if strings.Contains(view, "https://") {
-		t.Fatalf("view exposes technical server URL:\n%s", view)
 	}
 }
 

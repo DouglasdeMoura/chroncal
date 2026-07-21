@@ -62,80 +62,6 @@ func updateModel(t *testing.T, m Model, msg interface{}) Model {
 	return out
 }
 
-// TestReauthDoublePressGuarded reproduces the red-team double-press race: the
-// guard must reject a second Re-authenticate before the first flow's modal
-// has opened (oauthFlowOpen still false, oauthPending true).
-func TestReauthDoublePressGuarded(t *testing.T) {
-	m := Model{}
-
-	// First press: passes the guard and arms oauthPending synchronously.
-	m = updateModel(t, m, CalendarReauthRequestedMsg{ID: 12, Name: "gmail"})
-	if !m.oauthPending {
-		t.Fatal("first Re-authenticate should arm oauthPending synchronously")
-	}
-	if m.oauthFlowOpen {
-		t.Fatal("oauthFlowOpen should still be false before the async load lands")
-	}
-
-	// Second fast press: must be rejected (no new flow, guard unchanged).
-	before := m.oauthPending
-	m2, cmd := m.Update(CalendarReauthRequestedMsg{ID: 12, Name: "gmail"})
-	if cmd != nil {
-		t.Error("second Re-authenticate should be a no-op (nil cmd), not launch a second flow")
-	}
-	if got := m2.(Model).oauthPending; got != before {
-		t.Errorf("oauthPending changed on rejected second press: %v", got)
-	}
-}
-
-// TestReauthGuardRejectsWhileSyncing ensures a manual sync in flight blocks
-// re-auth (the credential write would race the sync).
-func TestReauthGuardRejectsWhileSyncing(t *testing.T) {
-	m := Model{syncing: true}
-	next, cmd := m.Update(CalendarReauthRequestedMsg{ID: 12, Name: "gmail"})
-	if cmd != nil {
-		t.Error("Re-authenticate should be rejected while syncing")
-	}
-	if next.(Model).oauthPending {
-		t.Error("oauthPending should not arm while syncing")
-	}
-}
-
-// TestReauthReadyClearsPendingAndOpensFlow verifies the success transition:
-// the modal opens and the request guard releases.
-func TestReauthReadyClearsPendingAndOpensFlow(t *testing.T) {
-	m := Model{oauthPending: true, width: 100, height: 40}
-	m = updateModel(t, m, calendarReauthReadyMsg{
-		calendarID: 12, name: "gmail", accountID: 7,
-		cred: auth.Credential{OAuthClientID: "cid", OAuthClientSecret: "shh"},
-	})
-	if m.oauthPending {
-		t.Error("oauthPending should clear once the flow opens")
-	}
-	if !m.oauthFlowOpen {
-		t.Error("oauthFlowOpen should be true after the flow starts")
-	}
-	if m.oauthPurpose.calendarID != 12 {
-		t.Errorf("oauthPurpose.calendarID = %d, want 12", m.oauthPurpose.calendarID)
-	}
-}
-
-// TestReauthReadyErrorReleasesPending ensures a failed credential load frees
-// the guard so the user can retry.
-func TestReauthReadyErrorReleasesPending(t *testing.T) {
-	m := Model{oauthPending: true}
-	m = updateModel(t, m, calendarReauthReadyMsg{err: errTestReauth})
-	if m.oauthPending {
-		t.Error("oauthPending should clear on a failed credential load")
-	}
-	if m.oauthFlowOpen {
-		t.Error("no flow should open on error")
-	}
-	if !strings.Contains(m.syncStatus, "Re-authentication failed") {
-		t.Errorf("syncStatus = %q, want re-auth failure", m.syncStatus)
-	}
-}
-
 func TestAccountSettingsReauthTargetsAccountIdentity(t *testing.T) {
 	m := NewModel(nil, "")
 	m.accounts = map[int64]account.Account{
@@ -150,6 +76,62 @@ func TestAccountSettingsReauthTargetsAccountIdentity(t *testing.T) {
 	}
 	if m.accountSettingsOpen {
 		t.Fatal("Account settings stayed open while credential load started")
+	}
+}
+
+func TestAccountReauthPreservesUnderlyingCalendarDraft(t *testing.T) {
+	m := NewModel(nil, "")
+	m.width, m.height = 120, 40
+	m.accounts = map[int64]account.Account{
+		7: {ID: 7, DisplayName: "Personal Google", AuthType: "oauth2"},
+	}
+	m.calendarDialog = NewCalendarDialogModel(CalendarDialogParams{
+		ID: 2, AccountID: 7, AccountName: "Personal Google",
+		Name: "Personal", Color: "#a6e3a1", RemoteLinked: true,
+	}, m.theme).SetSize(m.width, m.height)
+	m.calendarDialog.form.Field(cdIdxName).(*TextField).SetValue("Unsaved personal rename")
+	m.calendarDialogOpen = true
+	m = updateModel(t, m, AccountSettingsRequestedMsg{AccountID: 7})
+
+	next, cmd := m.Update(AccountSettingsReauthRequestedMsg{AccountID: 7})
+	m = next.(Model)
+	if cmd == nil || !m.oauthPending || !m.calendarDialogOpen {
+		t.Fatalf("reauth start: cmd=%v pending=%v calendar=%v",
+			cmd == nil, m.oauthPending, m.calendarDialogOpen)
+	}
+	m = updateModel(t, m, accountReauthReadyMsg{
+		accountID: 7,
+		name:      "Personal Google",
+		cred:      auth.Credential{OAuthClientID: "cid", OAuthClientSecret: "secret"},
+	})
+	if !m.oauthFlowOpen || !m.calendarDialogOpen {
+		t.Fatalf("OAuth open: oauth=%v calendar=%v", m.oauthFlowOpen, m.calendarDialogOpen)
+	}
+
+	// Model the successful browser handoff at the credential-store boundary.
+	m.oauthFlowOpen = false
+	next, cmd = m.Update(oauthCredentialStoredMsg{accountID: 7, name: "Personal Google"})
+	m = next.(Model)
+	if cmd == nil || !m.syncing || !m.accountSettingsOpen || !m.calendarDialogOpen {
+		t.Fatalf("post-auth sync: cmd=%v syncing=%v settings=%v calendar=%v",
+			cmd == nil, m.syncing, m.accountSettingsOpen, m.calendarDialogOpen)
+	}
+	if got := m.calendarDialog.form.Field(cdIdxName).(*TextField).Value(); got != "Unsaved personal rename" {
+		t.Fatalf("reauth changed calendar draft to %q", got)
+	}
+
+	m = updateModel(t, m, AccountSettingsClosedMsg{})
+	if !m.accountSettingsOpen {
+		t.Fatal("Account Settings closed while re-authentication sync was active")
+	}
+	m = updateModel(t, m, syncFinishedMsg{summary: "Synced Personal Google"})
+	m = updateModel(t, m, AccountSettingsClosedMsg{})
+	if m.accountSettingsOpen || !m.calendarDialogOpen {
+		t.Fatalf("post-sync return: settings=%v calendar=%v",
+			m.accountSettingsOpen, m.calendarDialogOpen)
+	}
+	if got := m.calendarDialog.form.Field(cdIdxName).(*TextField).Value(); got != "Unsaved personal rename" {
+		t.Fatalf("post-sync return changed calendar draft to %q", got)
 	}
 }
 
@@ -176,7 +158,7 @@ func TestAccountReauthReadyOpensFlowWithoutCalendar(t *testing.T) {
 func TestStoredAccountOAuthCredentialStartsWholeAccountSync(t *testing.T) {
 	m := Model{oauthPending: true, accountSettingsOpen: true}
 	next, cmd := m.Update(oauthCredentialStoredMsg{
-		accountID: 7, name: "Personal Google", accountReauth: true,
+		accountID: 7, name: "Personal Google",
 	})
 	m = next.(Model)
 	if cmd == nil || !m.syncing || m.oauthPending {
@@ -185,22 +167,6 @@ func TestStoredAccountOAuthCredentialStartsWholeAccountSync(t *testing.T) {
 	}
 	if !strings.Contains(m.syncStatus, "Personal Google") {
 		t.Fatalf("syncStatus = %q, want account name", m.syncStatus)
-	}
-}
-
-func TestStoredCalendarOAuthCredentialKeepsCalendarScopedSync(t *testing.T) {
-	m := Model{oauthPending: true}
-	next, cmd := m.Update(oauthCredentialStoredMsg{
-		calendarID: 12, accountID: 7, name: "Personal",
-	})
-	m = next.(Model)
-	if cmd == nil || m.syncing || m.oauthPending {
-		t.Fatalf("calendar reauth completion: cmd=%v syncing=%v pending=%v",
-			cmd == nil, m.syncing, m.oauthPending)
-	}
-	msg, ok := cmd().(SyncCalendarRequestedMsg)
-	if !ok || msg.ID != 12 {
-		t.Fatalf("calendar reauth command = %#v, want calendar 12 sync", msg)
 	}
 }
 
@@ -256,14 +222,14 @@ func TestStoredAccountCredentialFailureUsesMessageIdentity(t *testing.T) {
 		oauthPending:        true,
 		accountSettingsOpen: true,
 		oauthPurpose: oauthFlowPurpose{
-			accountID: 99, accountReauth: true,
+			accountID: 99,
 		},
 		accounts: map[int64]account.Account{
 			7: {ID: 7, DisplayName: "Personal Google", AuthType: "oauth2"},
 		},
 	}
 	m = updateModel(t, m, oauthCredentialStoredMsg{
-		accountID: 7, accountReauth: true, err: errTestReauth,
+		accountID: 7, err: errTestReauth,
 	})
 	if m.oauthPending || !m.accountSettingsOpen || m.accountSettings.params.AccountID != 7 {
 		t.Fatalf("credential failure: pending=%v settings=%v account=%d",

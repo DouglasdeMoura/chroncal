@@ -20,25 +20,17 @@ import (
 type CalendarDialogParams struct {
 	ID           int64
 	AccountID    int64
+	AccountName  string
 	Name         string
 	Color        string // hex like "#a6e3a1"
 	Description  string
 	OwnerEmail   string
-	RemoteURL    string
 	RemoteLinked bool
 
-	// RemoteAuthType and RemoteUsername are display-only; populated when
-	// the calendar is linked so the dialog can show connection details.
-	RemoteAuthType string
-	RemoteUsername string
-
-	// LastSyncAt, LastSyncAttemptedAt, and LastSyncError are display-only sync
-	// health, populated when the calendar is linked. A non-empty LastSyncError
-	// is the "why" behind the sidebar ⚠ marker; the dialog surfaces it here so
-	// the user can read the reason and the fix one keystroke from the list.
-	LastSyncAt          string // RFC 3339, empty when never synced cleanly
-	LastSyncAttemptedAt string // RFC 3339, empty when never attempted
-	LastSyncError       string
+	// LastSyncAt and LastSyncError are compact, display-only account context
+	// for linked calendars. Account maintenance lives in Account Settings.
+	LastSyncAt    string // RFC 3339, empty when never synced cleanly
+	LastSyncError string
 
 	// IsDefault marks the calendar being edited as the current default. It
 	// drives the dialog's "Default calendar" badge and hides the redundant
@@ -50,14 +42,6 @@ type CalendarDialogParams struct {
 	// exists, since the first calendar is auto-promoted by the service
 	// (the checkbox would be meaningless and noisy in that case).
 	OfferDefault bool
-
-	// NeedOAuthConfig opens a linked OAuth calendar's dialog with editable
-	// Client ID / Client secret rows. Used when re-authentication finds the
-	// stored credential incomplete (linked before the client secret was
-	// persisted). OAuthClientIDPrefill seeds the Client ID row when the
-	// stored credential has the ID but not the secret.
-	NeedOAuthConfig      bool
-	OAuthClientIDPrefill string
 }
 
 // CalendarSavedMsg is emitted when the user saves the dialog. ID == 0 means
@@ -88,36 +72,11 @@ type CalendarDiscoveryRequestedMsg struct {
 	AllowInsecure     bool
 }
 
-// CalendarDiscoverAdditionalRequestedMsg rediscovers the account backing an
-// edited remote calendar and opens the integrated collection picker.
-type CalendarDiscoverAdditionalRequestedMsg struct {
-	CalendarID int64
-	AccountID  int64
-}
-
 type calendarConnectionBackMsg struct{}
-
-// CalendarReauthRequestedMsg is emitted when the user presses Re-authenticate
-// on a linked OAuth calendar. ClientID/ClientSecret are set only by the
-// missing-config fallback (credentials stored before the client secret was
-// kept); empty means "use the stored credential's client config".
-type CalendarReauthRequestedMsg struct {
-	ID           int64
-	Name         string
-	ClientID     string
-	ClientSecret string
-}
 
 // CalendarDeleteRequestedMsg is emitted when the user presses Delete in the
 // dialog. The parent is responsible for showing the confirm dialog.
 type CalendarDeleteRequestedMsg struct {
-	ID   int64
-	Name string
-}
-
-// CalendarDisconnectRemoteRequestedMsg is emitted when the user presses the
-// Disconnect button in the dialog. The parent tears down the remote link.
-type CalendarDisconnectRemoteRequestedMsg struct {
 	ID   int64
 	Name string
 }
@@ -217,16 +176,13 @@ type CalendarDialogModel struct {
 	// the "Save and Set as Default" path can flip the MakeDefault bit on
 	// the upcoming CalendarSavedMsg without re-implementing form
 	// validation. Cleared automatically after each submit.
-	saveMakeDefault  *bool
-	connectionMode   *bool
-	localDraft       *CalendarDialogParams
-	discoveryPicker  *AccountCalendarPickerModel
-	oauthIDField     *TextField
-	oauthSecretField *TextField
+	saveMakeDefault *bool
+	connectionMode  *bool
+	localDraft      *CalendarDialogParams
+	discoveryPicker *AccountCalendarPickerModel
 
-	// contentWidth is shared with the static-line styleFns so long values
-	// (remote URLs, sync errors) truncate to the dialog's content width at
-	// render time instead of wrapping inside the box.
+	// contentWidth is shared with static sync-health rows so long errors
+	// truncate to the dialog width instead of wrapping inside the box.
 	contentWidth *int
 }
 
@@ -279,18 +235,8 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		{Label: "", Field: NewStaticField("", nil)},
 	}
 
-	// Fallback config fields for re-auth on a credential that predates
-	// client-secret storage. Built up front so the Re-authenticate button
-	// closure can read them at press time without reaching into the form.
-	var (
-		oauthIDField     *TextField
-		oauthSecretField *TextField
-	)
-
-	// contentWidth is shared with the static-line styleFns (same pattern as
-	// ConfirmDialogModel): the dialog's content width isn't known until
-	// SetSize, and long values (Google CalDAV URLs easily exceed 90 chars)
-	// must truncate to one row instead of wrapping raggedly inside the box.
+	// The dialog width isn't known until SetSize. Truncate compact account
+	// context at render time so long names and errors stay on one row.
 	contentWidth := new(int)
 
 	// staticLine builds a one-row static field: truncate to the content
@@ -318,27 +264,13 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 	}
 
 	if params.RemoteLinked {
-		// One row each, truncated — the URL and account can both exceed the
-		// dialog width on Google calendars.
-		items = append(items, labeledLine("Remote:", params.RemoteURL))
-		if account := remoteAccountSummary(params); account != "" {
-			items = append(items, labeledLine("Account:", account))
+		accountName := strings.TrimSpace(params.AccountName)
+		if accountName == "" {
+			accountName = "Connected account"
 		}
-		// Surface sync health (one static field per line so the form's
-		// height math stays one-line-per-item). Empty when the calendar has
-		// synced cleanly and never been attempted-with-error.
+		items = append(items, labeledLine("Account:", accountName))
 		for _, line := range syncHealthDialogLines(params, theme) {
 			items = append(items, staticLine(line.text, line.style))
-		}
-		if params.NeedOAuthConfig {
-			oauthIDField = newOAuthClientIDField(params.OAuthClientIDPrefill)
-			oauthSecretField = newOAuthClientSecretField()
-			items = append(items,
-				staticLine("Enter the OAuth client config once to re-authenticate.",
-					lipgloss.NewStyle().Foreground(theme.Muted)),
-				FormItem{Label: "Client ID", Field: oauthIDField, Required: true},
-				FormItem{Label: "Client secret", Field: oauthSecretField, Required: true},
-			)
 		}
 	} else {
 		sync := NewCheckboxField("", false)
@@ -378,31 +310,26 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 	localDraft := params
 
 	m := CalendarDialogModel{
-		id:               params.ID,
-		name:             params.Name,
-		linked:           params.RemoteLinked,
-		dialog:           dialog,
-		form:             form,
-		body:             viewport.New(),
-		help:             newThemedHelp(theme),
-		theme:            theme,
-		accentColor:      theme.Selected,
-		mutedColor:       theme.Muted,
-		textDimColor:     theme.TextDim,
-		saveMakeDefault:  saveMakeDefault,
-		connectionMode:   connectionMode,
-		localDraft:       &localDraft,
-		contentWidth:     contentWidth,
-		oauthIDField:     oauthIDField,
-		oauthSecretField: oauthSecretField,
+		id:              params.ID,
+		name:            params.Name,
+		linked:          params.RemoteLinked,
+		dialog:          dialog,
+		form:            form,
+		body:            viewport.New(),
+		help:            newThemedHelp(theme),
+		theme:           theme,
+		accentColor:     theme.Selected,
+		mutedColor:      theme.Muted,
+		textDimColor:    theme.TextDim,
+		saveMakeDefault: saveMakeDefault,
+		connectionMode:  connectionMode,
+		localDraft:      &localDraft,
+		contentWidth:    contentWidth,
 	}
 	m.body.MouseWheelEnabled = true
 
-	// Edit mode, not yet default: surface "Set as Default" so the user
-	// can reach the action without backing out into the manage-calendars
-	// list. Hidden when already default — no valid "unset" exists.
-	// Account maintenance is grouped behind a single disclosure action below,
-	// so Set as Default remains the only standalone utility on local calendars.
+	// Edit mode, not yet default: surface "Set as Default" without forcing a
+	// trip through the manage-calendars list.
 	if params.ID > 0 && !params.IsDefault {
 		id := params.ID
 		name := params.Name
@@ -411,9 +338,10 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		})
 	}
 
-	if params.RemoteLinked {
-		form.SetLeadingActionButton("Account…", Button, func() tea.Msg {
-			return CalendarAccountActionsRequestedMsg{}
+	if params.RemoteLinked && params.AccountID > 0 {
+		accountID := params.AccountID
+		form.SetLeadingActionButton("Manage Account…", Button, func() tea.Msg {
+			return AccountSettingsRequestedMsg{AccountID: accountID}
 		})
 		form.SetSeparateLeadingActions(true)
 	}
@@ -618,20 +546,6 @@ func isLocalhostHTTP(raw string) bool {
 	return host == "localhost" || host == "127.0.0.1"
 }
 
-// remoteAccountSummary compacts username + auth type into one value, e.g.
-// "alice@example.com (oauth2)". Empty when neither is known.
-func remoteAccountSummary(params CalendarDialogParams) string {
-	switch {
-	case params.RemoteUsername != "" && params.RemoteAuthType != "":
-		return params.RemoteUsername + " (" + params.RemoteAuthType + ")"
-	case params.RemoteUsername != "":
-		return params.RemoteUsername
-	case params.RemoteAuthType != "":
-		return params.RemoteAuthType
-	}
-	return ""
-}
-
 // syncHealthLine is one row of the linked dialog's sync summary: raw text
 // plus the style to apply after width truncation. Styling happens at render
 // time (inside the StaticField's styleFn) so the text can be truncated to
@@ -641,10 +555,8 @@ type syncHealthLine struct {
 	style lipgloss.Style
 }
 
-// syncHealthDialogLines renders the calendar's sync health for the dialog: a
-// loud error line plus an actionable re-link hint when the last sync failed, or
-// a quiet "Last synced" line otherwise. Returns nil for unlinked calendars or
-// linked-but-never-attempted ones (nothing useful to say yet).
+// syncHealthDialogLines renders compact account sync health for the calendar:
+// a loud error plus an Account Settings remedy, or a quiet last-sync line.
 func syncHealthDialogLines(params CalendarDialogParams, theme Theme) []syncHealthLine {
 	if !params.RemoteLinked {
 		return nil
@@ -673,9 +585,9 @@ func syncHealthDialogLines(params CalendarDialogParams, theme Theme) []syncHealt
 // translating; everything else falls back to the first line of the raw error.
 func humanizeSyncError(raw string) string {
 	if strings.Contains(raw, "invalid_grant") {
-		// Short on purpose: the hint line right below carries the action
-		// ("Press Re-authenticate below to fix."), and the dialog line
-		// must fit ~56 cols after the "⚠ Sync failed: " prefix.
+		// Short on purpose: the hint line right below carries the action,
+		// and the dialog line must fit ~56 cols after the
+		// "⚠ Sync failed: " prefix.
 		return "Google login expired"
 	}
 	line := raw
@@ -690,19 +602,10 @@ func humanizeSyncError(raw string) string {
 	return line
 }
 
-// reLinkHint returns the fix for errors that need re-authentication, or "" when
-// no specific remedy applies. The Re-authenticate action button re-runs the
-// OAuth flow in-app and stores a fresh refresh token.
+// reLinkHint points credential failures to the account-level repair surface.
 func reLinkHint(params CalendarDialogParams) string {
 	if strings.Contains(params.LastSyncError, "invalid_grant") {
-		if calendarAuthIsOAuth(params.RemoteAuthType) {
-			return "Press Re-authenticate below to fix."
-		}
-		name := params.Name
-		if name == "" {
-			name = "<name>"
-		}
-		return "Re-link: chroncal calendar update " + name + " --auth oauth2"
+		return "Manage Account to sign in again."
 	}
 	return ""
 }
@@ -771,52 +674,26 @@ func (m CalendarDialogModel) ShowDiscovery(discovery account.Discovery) Calendar
 	return m
 }
 
-func (m CalendarDialogModel) ShowCalendarManagement(discovery account.Discovery) CalendarDialogModel {
-	picker := NewAccountCalendarManagerModel(discovery, m.theme).
-		SetSize(m.dialog.width, m.dialog.height)
-	m.discoveryPicker = &picker
-	return m
-}
-
 func (m CalendarDialogModel) HideDiscovery() CalendarDialogModel {
 	m.discoveryPicker = nil
 	return m
 }
 
-// AccountActionsMenu builds the linked account's progressive-disclosure menu
-// from the current edit state. The underlying form remains alive while the
-// menu is open, so cancelling the menu never discards unsaved fields.
-func (m CalendarDialogModel) AccountActionsMenu() CalendarAccountActionsMenuModel {
-	var msgs calendarAccountActionMessages
-	if m.localDraft != nil {
-		params := *m.localDraft
-		name := params.Name
-		if field, ok := m.form.Field(cdIdxName).(*TextField); ok {
-			name = strings.TrimSpace(field.Value())
-		}
-		if params.AccountID > 0 {
-			msgs.Manage = CalendarDiscoverAdditionalRequestedMsg{
-				CalendarID: params.ID,
-				AccountID:  params.AccountID,
-			}
-		}
-		if calendarAuthIsOAuth(params.RemoteAuthType) {
-			reauth := CalendarReauthRequestedMsg{ID: params.ID, Name: name}
-			if m.oauthIDField != nil {
-				reauth.ClientID = strings.TrimSpace(m.oauthIDField.Value())
-			}
-			if m.oauthSecretField != nil {
-				reauth.ClientSecret = strings.TrimSpace(m.oauthSecretField.Value())
-			}
-			msgs.Reauth = reauth
-		}
-		msgs.Disconnect = CalendarDisconnectRemoteRequestedMsg{ID: params.ID, Name: name}
+// SetAccountName refreshes account context without rebuilding the form, so
+// in-progress calendar metadata edits survive an account rename.
+func (m CalendarDialogModel) SetAccountName(name string) CalendarDialogModel {
+	if !m.linked || m.localDraft == nil || m.form.ItemCount() <= cdIdxSync {
+		return m
 	}
-	// buildCalendarAccountActions drops nil messages, fixes the order
-	// (Manage → Re-authenticate → Disconnect → Cancel), keeps Disconnect
-	// destructive, and always appends Cancel — yielding the Cancel-only
-	// fallback when no draft exists.
-	return newCalendarAccountActionsMenu(m.theme, buildCalendarAccountActions(msgs))
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = "Connected account"
+	}
+	m.localDraft.AccountName = name
+	if field, ok := m.form.Field(cdIdxSync).(*StaticField); ok {
+		field.SetValue(name)
+	}
+	return m
 }
 
 func (m CalendarDialogModel) SetSize(w, h int) CalendarDialogModel {

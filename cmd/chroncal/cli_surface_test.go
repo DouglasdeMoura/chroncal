@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 func TestRootCommandRegistersAccount(t *testing.T) {
@@ -12,6 +14,41 @@ func TestRootCommandRegistersAccount(t *testing.T) {
 		}
 	}
 	t.Fatal("root command should register top-level account")
+}
+
+func TestAccountCommandUsesResourceOrientedCalendarSurface(t *testing.T) {
+	for _, cmd := range rootCmd.Commands() {
+		if cmd.Name() != "account" {
+			continue
+		}
+		subcommands := make(map[string]*cobra.Command)
+		for _, sub := range cmd.Commands() {
+			subcommands[sub.Name()] = sub
+		}
+		for _, name := range []string{"add", "get", "list", "update", "calendars", "remove"} {
+			if subcommands[name] == nil {
+				t.Errorf("account command is missing %q", name)
+			}
+		}
+		if subcommands["discover"] != nil {
+			t.Error("account discover should be replaced by account calendars")
+		}
+		calendars := subcommands["calendars"]
+		if calendars == nil {
+			return
+		}
+		calendarCommands := make(map[string]bool)
+		for _, sub := range calendars.Commands() {
+			calendarCommands[sub.Name()] = true
+		}
+		for _, name := range []string{"list", "add", "set"} {
+			if !calendarCommands[name] {
+				t.Errorf("account calendars is missing %q", name)
+			}
+		}
+		return
+	}
+	t.Fatal("root command is missing account")
 }
 
 func TestCalendarCommandDoesNotRegisterLinkOrUnlink(t *testing.T) {
