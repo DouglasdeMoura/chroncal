@@ -1237,7 +1237,7 @@ func TestCalendarManagerInspectorCalendarShowsDotTitleMetadataAndEditAction(t *t
 		}
 	}
 	if strings.Contains(view, "Enter  Edit Calendar") {
-			t.Errorf("legacy underlined Edit pseudo-link still rendered:\n%s", view)
+		t.Errorf("legacy underlined Edit pseudo-link still rendered:\n%s", view)
 	}
 	ax, ay, aw, ok := m.inspectorActionRect()
 	if !ok {
