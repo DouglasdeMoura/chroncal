@@ -689,17 +689,20 @@ Run `chroncal` with no arguments to launch the interactive terminal interface.
 The TUI supports creating, editing, viewing, and deleting events, with full
 details including alarms, attendees, and attachments. Use `u` to undo a
 delete. The sidebar uses quiet, collapsible account sections, including a
-separate **Local** section; calendar colors remain on calendar rows rather than
+separate **Local** section. Active calendars show an item-colored filled `●`
+circle; hidden calendars show an outline `○` circle. Space or clicking the
+circle toggles visibility. Calendar colors remain on calendar rows rather than
 account headings. On an account heading, `Left`/`Right` collapse or expand,
 `Enter` opens **Account settings**, and `Shift+Up`/`Shift+Down` persistently
 reorder complete remote-account sections while keeping **Local** first. The
 same reorder keys move calendars only within their own account. Hidden state
 and scrolling operate on calendar rows rather than group headings. Read-only
 imported calendars remain browsable but reject event edits and deletes.
+
 **Calendars** opens an account-grouped manager with the calendar hierarchy on
 the left and an inspector on the right. Calendar rows keep visibility (a
 checkbox) separate from identity (the calendar-color dot); Space or the
-checkbox toggles the same visibility state shown in the sidebar. Account
+checkbox toggles the same visibility state shown by sidebar circles. Account
 headings collapse with Left/Right and open account settings with Enter. Selecting
 a calendar shows its location and sync state in the inspector; Enter or a row
 body click switches that inspector to metadata, export, default-calendar, and
