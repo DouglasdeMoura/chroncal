@@ -256,8 +256,8 @@ func TestCalendarList_GroupedRowsUseCompactLeadingSpacing(t *testing.T) {
 	if !strings.HasPrefix(header, "▾ Local") {
 		t.Fatalf("account heading has leading space: %q", header)
 	}
-	if !strings.HasPrefix(calendar, " ● On device") {
-		t.Fatalf("calendar row should have one space before and after its marker: %q", calendar)
+	if !strings.HasPrefix(calendar, " "+Glyphs["checkbox.on"]+" ● On device") {
+		t.Fatalf("calendar row should show visibility, color, and name: %q", calendar)
 	}
 }
 
@@ -406,7 +406,6 @@ func TestCalendarList_AccountHeaderMouseTargetsSeparateDisclosureAndSettings(t *
 
 	collapsedBefore := maps.Clone(m.collapsed)
 	hiddenBefore := maps.Clone(m.hidden)
-	cursorBefore := m.cursor
 	opened, cmd := m.HandleClick(6, header)
 	if opened.collapsed[7] {
 		t.Fatal("account name click should not collapse the section")
@@ -418,11 +417,10 @@ func TestCalendarList_AccountHeaderMouseTargetsSeparateDisclosureAndSettings(t *
 	if !ok || msg.Target != CalendarManagerTargetAccount || msg.AccountID != 7 {
 		t.Fatalf("Account settings request = %#v", cmd())
 	}
-	// The name-area click requests actions without disturbing cursor,
-	// collapse, or visibility. The request is side-effect free; the menu
-	// and discovery open later, in response to the message.
-	if opened.cursor != cursorBefore {
-		t.Errorf("cursor moved: got %d want %d", opened.cursor, cursorBefore)
+	// The name-area click selects the account whose inspector opens without
+	// changing collapse or visibility state.
+	if opened.cursor != header {
+		t.Errorf("cursor = %d, want clicked header %d", opened.cursor, header)
 	}
 	if !maps.Equal(opened.collapsed, collapsedBefore) {
 		t.Errorf("collapse state changed: got %v want %v", opened.collapsed, collapsedBefore)
@@ -498,5 +496,39 @@ func TestCalendarList_ViewportKeepsCursorVisible(t *testing.T) {
 	}
 	if m.offset == 0 {
 		t.Fatal("viewport offset should advance for the final row")
+	}
+}
+
+func TestCalendarListCalendarRowsKeepVisibilityAndColorSeparate(t *testing.T) {
+	m := groupedListFixture()
+	line := strings.Split(stripANSI(m.View()), "\n")[calendarListRowForCalendarID(t, m, 1)]
+	if !strings.Contains(line, Glyphs["checkbox.on"]+" ● On device") {
+		t.Fatalf("calendar row must render checkbox, color dot, then name: %q", line)
+	}
+}
+
+func TestCalendarListCalendarMouseSeparatesCheckboxFromDetails(t *testing.T) {
+	m := groupedListFixture()
+	row := calendarListRowForCalendarID(t, m, 2)
+
+	hidden, cmd := m.HandleClick(1, row)
+	if cmd == nil {
+		t.Fatal("checkbox click emitted no visibility command")
+	}
+	toggle, ok := cmd().(CalendarVisibilityToggledMsg)
+	if !ok || toggle.ID != 2 || !toggle.Hidden || !hidden.hidden[2] {
+		t.Fatalf("checkbox click = msg %#v hidden %v", toggle, hidden.hidden)
+	}
+
+	opened, cmd := m.HandleClick(8, row)
+	if cmd == nil {
+		t.Fatal("calendar name click emitted no details command")
+	}
+	request, ok := cmd().(CalendarManagerRequestedMsg)
+	if !ok || request.Target != CalendarManagerTargetCalendar || request.CalendarID != 2 {
+		t.Fatalf("calendar details request = %#v", request)
+	}
+	if opened.hidden[2] {
+		t.Fatal("calendar name click changed visibility")
 	}
 }

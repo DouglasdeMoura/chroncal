@@ -111,7 +111,11 @@ func TestCalendarReorder_DialogOriginatedSyncsSidebarAndDialog(t *testing.T) {
 	if got := sidebarOrderIDs(m); !slices.Equal(got, []int64{2, 1, 3}) {
 		t.Fatalf("sidebar not synced to dialog reorder: got %v want [2 1 3]", got)
 	}
-	if got := m.calendarManager.order; !slices.Equal(got, []int64{2, 1, 3}) {
+	got := make([]int64, len(m.calendarManager.list.items))
+	for i, item := range m.calendarManager.list.items {
+		got[i] = item.ID
+	}
+	if !slices.Equal(got, []int64{2, 1, 3}) {
 		t.Fatalf("open dialog not synced to reorder: got %v want [2 1 3]", got)
 	}
 }

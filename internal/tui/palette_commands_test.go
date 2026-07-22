@@ -7,25 +7,16 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/account"
 )
 
-func TestPaletteSeparatesNewCalendarFromAddAccount(t *testing.T) {
+func TestPaletteExposesOneCalendarsEntry(t *testing.T) {
 	commands := buildPaletteCommands(Model{})
-
-	newCalendar := paletteCommandByID(t, commands, "calendar.new")
-	if newCalendar.Title != "New Local Calendar" {
-		t.Fatalf("calendar.new title = %q, want New Local Calendar", newCalendar.Title)
+	manage := paletteCommandByID(t, commands, "calendar.manage")
+	if manage.Title != "Calendars" || manage.Shortcut != "C" {
+		t.Fatalf("calendar.manage = %+v, want Calendars with C shortcut", manage)
 	}
-	request, ok := newCalendar.Action().(CalendarManagerRequestedMsg)
-	if !ok || request.Target != CalendarManagerTargetLocalCreate {
-		t.Fatalf("calendar.new action = %#v, want local-create manager request", newCalendar.Action())
-	}
-
-	addAccount := paletteCommandByID(t, commands, "account.add")
-	if addAccount.Title != "Add Account…" || addAccount.Category != "Account" {
-		t.Fatalf("account.add = %+v", addAccount)
-	}
-	request, ok = addAccount.Action().(CalendarManagerRequestedMsg)
-	if !ok || request.Target != CalendarManagerTargetAccountConnect {
-		t.Fatalf("account.add action = %#v, want account-connect manager request", addAccount.Action())
+	for _, command := range commands {
+		if command.ID == "calendar.new" || command.ID == "account.add" {
+			t.Fatalf("palette exposes obsolete calendar entry %q", command.ID)
+		}
 	}
 }
 

@@ -19,7 +19,7 @@ func TestAccountSettingsDialogOAuthActionsAreAccountScoped(t *testing.T) {
 		AuthType:       "oauth2",
 	}, NewTheme(true))
 
-	wantLabels := []string{"Manage Calendars…", "Rename Account…", "Sign In Again…", "Remove Account…", "Done"}
+	wantLabels := []string{"Manage Calendars…", "Sync Now", "Rename Account…", "Sign In Again…", "Remove Account…", "Done"}
 	if len(m.actions) != len(wantLabels) {
 		t.Fatalf("action count = %d, want %d", len(m.actions), len(wantLabels))
 	}
@@ -42,6 +42,10 @@ func TestAccountSettingsDialogOAuthActionsAreAccountScoped(t *testing.T) {
 			if msg.AccountID != wantID {
 				t.Fatalf("Manage AccountID = %d, want %d", msg.AccountID, wantID)
 			}
+		case AccountSettingsSyncRequestedMsg:
+			if msg.AccountID != wantID {
+				t.Fatalf("Sync = %+v", msg)
+			}
 		case AccountSettingsRenameRequestedMsg:
 			if msg.AccountID != wantID {
 				t.Fatalf("Rename = %+v", msg)
@@ -55,7 +59,7 @@ func TestAccountSettingsDialogOAuthActionsAreAccountScoped(t *testing.T) {
 				t.Fatalf("Remove = %+v", msg)
 			}
 		case AccountSettingsClosedMsg:
-			if i != 4 {
+			if i != 5 {
 				t.Fatalf("unexpected Done at action %d", i)
 			}
 		default:
@@ -86,7 +90,7 @@ func TestAccountSettingsDialogNonOAuthOmitsSignIn(t *testing.T) {
 	if strings.Contains(got, "Sign In Again") {
 		t.Fatalf("non-OAuth actions contain sign-in: %q", got)
 	}
-	if got != "Manage Calendars…|Rename Account…|Remove Account…|Done" {
+	if got != "Manage Calendars…|Sync Now|Rename Account…|Remove Account…|Done" {
 		t.Fatalf("non-OAuth actions = %q", got)
 	}
 }
@@ -104,7 +108,7 @@ func TestAccountSettingsDialogRendersQuietIdentityAndHealth(t *testing.T) {
 	}, NewTheme(true)).SetSize(80, 30)
 
 	view := stripANSI(m.View())
-	for _, want := range []string{"Personal Google", "Provider: Google Account", "Server: https://apidata.googleusercontent.com/caldav/v2/", "Identity: douglas@example.com", "Calendars: 3", "Needs attention · 1 calendar", "Manage Calendars…", "Remove Account…", "Done"} {
+	for _, want := range []string{"Personal Google", "Provider: Google Account", "Server: https://apidata.googleusercontent.com/caldav/v2/", "Identity: douglas@example.com", "Calendars: 3", "Needs attention · 1 calendar", "Manage Calendars…", "Sync Now", "Remove Account…", "Done"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}

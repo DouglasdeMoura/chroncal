@@ -23,13 +23,13 @@ type CalendarManagerClosedMsg struct{}
 type CalendarManagerAddRequestedMsg struct{}
 
 // CalendarManagerScreen identifies which screen the unified calendar manager
-// is showing: the flat list root, a pushed calendar detail, or a pushed
-// account detail stacked on top of a calendar detail.
+// is showing: the grouped calendar root, a pushed calendar detail, or a
+// pushed account detail stacked on top of a calendar detail.
 type CalendarManagerScreen int
 
 const (
-	// CalendarManagerScreenList is the calendar-first root: one flat column,
-	// one physical row per calendar, no account headings or detail pane.
+	// CalendarManagerScreenList is the grouped calendar hierarchy with an
+	// inspector pane for the selected calendar or account.
 	CalendarManagerScreenList CalendarManagerScreen = iota
 	// CalendarManagerScreenCalendar is the pushed calendar detail
 	// (CalendarDialogModel), reached by opening a row.
@@ -38,34 +38,27 @@ const (
 	// (AccountSettingsDialogModel), reached from a remote calendar's
 	// Account opener. The originating calendar detail stays underneath.
 	CalendarManagerScreenAccount
+	CalendarManagerScreenAccountCalendars
 	CalendarManagerScreenTransfer
 )
 
 type calendarManagerKeyMap struct {
-	Up, Down         key.Binding
-	Open             key.Binding
-	Toggle           key.Binding
-	MoveUp, MoveDown key.Binding
-	Close            key.Binding
-	Add              key.Binding
+	Open  key.Binding
+	Close key.Binding
+	Add   key.Binding
 }
 
 func defaultCalendarManagerKeys() calendarManagerKeyMap {
 	return calendarManagerKeyMap{
-		Up:       key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
-		Down:     key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
-		Open:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
-		Toggle:   key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "hide/show")),
-		MoveUp:   key.NewBinding(key.WithKeys("shift+up", "K"), key.WithHelp("shift+↑/K", "move up")),
-		MoveDown: key.NewBinding(key.WithKeys("shift+down", "J"), key.WithHelp("shift+↓/J", "move down")),
-		Close:    key.NewBinding(key.WithKeys("esc", "q"), key.WithHelp("esc", "close")),
-		Add:      key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add")),
+		Open:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
+		Close: key.NewBinding(key.WithKeys("esc", "q", "C", "shift+c"), key.WithHelp("esc", "close")),
+		Add:   key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add")),
 	}
 }
 
 // CalendarManagerModel is the unified, calendar-first calendar manager root.
-// It renders a single flat column with one row per calendar and routes every
-// action at the selected calendar's immutable ID.
+// It renders the shared grouped calendar hierarchy beside a contextual
+// inspector and routes every action by immutable calendar or account ID.
 type CalendarManagerTarget int
 
 const (
@@ -87,23 +80,15 @@ type CalendarManagerModel struct {
 
 	calendars map[int64]CalendarInfo
 	hidden    map[int64]bool
-	// order is the canonical top-to-bottom calendar ID order, produced by the
-	// shared sortedCalendarIDs helper so this list matches the sidebar and
-	// the legacy dialog exactly (Local first, then account order, then
-	// in-account DisplayOrder with name as tiebreak).
-	order []int64
-	// rows holds the unstyled per-row labels, parallel to order, rebuilt on
-	// any data/order change. The View renderer applies color and selection
-	// styling on top, so cursor moves never need to rebuild these.
-	rows []string
+	// list is the shared grouped calendar hierarchy used by the sidebar. It
+	// keeps account headers, collapse state, visibility controls, and stable
+	// identity selection consistent across both surfaces.
+	list CalendarListModel
 
-	cursor             int
-	scroll             int
 	pendingSelectionID int64
 
 	keys        calendarManagerKeyMap
 	titleAction *ListDialogAction // persistent Add button in the title row
-	help        help.Model
 
 	width, height int
 
@@ -118,27 +103,33 @@ type CalendarManagerModel struct {
 	// an unsaved calendar draft survives a drill-down and Back.
 	calendarForm    *CalendarDialogModel
 	accountSettings *AccountSettingsDialogModel
+	accountPicker   *AccountCalendarPickerModel
 	transfer        *CalendarTransferDialogModel
 }
 
-// NewCalendarManagerModel builds a flat calendar manager populated from the
-// given calendar map and hidden set, in canonical sidebar order.
-func NewCalendarManagerModel(calendars map[int64]CalendarInfo, hidden map[int64]bool, h help.Model) CalendarManagerModel {
+// NewCalendarManagerModel builds a grouped calendar manager populated from
+// the given calendar map and hidden set, in canonical sidebar order.
+func NewCalendarManagerModel(calendars map[int64]CalendarInfo, hidden map[int64]bool, _ help.Model) CalendarManagerModel {
 	m := CalendarManagerModel{
 		screen:    CalendarManagerScreenList,
 		calendars: calendars,
 		hidden:    hidden,
 		theme:     activeTheme,
 		keys:      defaultCalendarManagerKeys(),
-		help:      h,
 		titleAction: &ListDialogAction{
 			Label:   "+ Add",
 			Primary: true,
 			Msg:     func() tea.Msg { return CalendarManagerAddRequestedMsg{} },
 		},
 	}
-	m.order = sortedCalendarIDs(calendars)
-	return m.rebuild().ensureVisible()
+	m.list = NewCalendarListModel(sortedCalendarListItems(calendars), hidden).
+		SetTheme(m.theme.Selected, m.theme.Muted, m.theme.Text, m.theme.SelectedText, m.theme.Error).
+		Focus()
+	m = m.rebuild().sizeList()
+	if len(m.list.items) > 0 {
+		m = m.selectCalendar(m.list.items[0].ID)
+	}
+	return m
 }
 
 // Screen returns the currently active manager screen.
@@ -170,7 +161,14 @@ func (m CalendarManagerModel) LocalDraft() *CalendarDialogParams {
 	return nil
 }
 
+func (m CalendarManagerModel) ManagingAccountCalendars() bool {
+	return m.accountPicker != nil && m.accountPicker.manage
+}
+
 func (m CalendarManagerModel) DiscoveryPicker() *AccountCalendarPickerModel {
+	if m.accountPicker != nil {
+		return m.accountPicker
+	}
 	if m.calendarForm != nil {
 		return m.calendarForm.discoveryPicker
 	}
@@ -182,30 +180,30 @@ func (m CalendarManagerModel) Transfer() (*CalendarTransferDialogModel, bool) {
 }
 
 func (m CalendarManagerModel) OpenImport(generation ...uint64) CalendarManagerModel {
-	transfer := NewCalendarImportDialogModel(m.theme, generation...).SetSize(m.width, m.height)
+	transfer := NewCalendarImportDialogModel(m.theme, generation...)
 	m.transfer = &transfer
 	m.screen = CalendarManagerScreenTransfer
-	return m
+	return m.sizeActiveInspector()
 }
 
 func (m CalendarManagerModel) OpenExport(calendarID int64, name string, generation ...uint64) CalendarManagerModel {
-	transfer := NewCalendarExportDialogModel(calendarID, name, m.theme, generation...).SetSize(m.width, m.height)
+	transfer := NewCalendarExportDialogModel(calendarID, name, m.theme, generation...)
 	m.transfer = &transfer
 	m.screen = CalendarManagerScreenTransfer
-	return m
+	return m.sizeActiveInspector()
 }
 
 func (m CalendarManagerModel) SetTransfer(transfer CalendarTransferDialogModel) CalendarManagerModel {
 	m.transfer = &transfer
 	m.screen = CalendarManagerScreenTransfer
-	return m
+	return m.sizeActiveInspector()
 }
 
 func (m CalendarManagerModel) CompleteTransfer(calendarID int64) CalendarManagerModel {
 	m.transfer = nil
 	m.screen = CalendarManagerScreenList
 	m.pendingSelectionID = calendarID
-	return m.selectCalendar(calendarID).ensureVisible()
+	return m.selectCalendar(calendarID)
 }
 
 func (m CalendarManagerModel) CloseTransfer() CalendarManagerModel {
@@ -224,7 +222,7 @@ func (m CalendarManagerModel) WithTestStatus(status lipgloss.Style, text string)
 		cp.testStatus = status.Render(text)
 		m.calendarForm = &cp
 	}
-	return m
+	return m.sizeActiveInspector()
 }
 
 func (m CalendarManagerModel) ShowDiscovery(d account.Discovery) CalendarManagerModel {
@@ -232,15 +230,23 @@ func (m CalendarManagerModel) ShowDiscovery(d account.Discovery) CalendarManager
 		cp := m.calendarForm.ShowDiscovery(d)
 		m.calendarForm = &cp
 	}
-	return m
+	return m.sizeActiveInspector()
 }
 
 func (m CalendarManagerModel) HideDiscovery() CalendarManagerModel {
+	if m.accountPicker != nil {
+		m.accountPicker = nil
+		if m.accountSettings != nil {
+			m.screen = CalendarManagerScreenAccount
+		} else {
+			m.screen = CalendarManagerScreenList
+		}
+	}
 	if m.calendarForm != nil {
 		cp := m.calendarForm.HideDiscovery()
 		m.calendarForm = &cp
 	}
-	return m
+	return m.sizeActiveInspector()
 }
 
 func (m CalendarManagerModel) SetAccountName(name string) CalendarManagerModel {
@@ -248,7 +254,7 @@ func (m CalendarManagerModel) SetAccountName(name string) CalendarManagerModel {
 		cp := m.calendarForm.SetAccountName(name)
 		m.calendarForm = &cp
 	}
-	return m
+	return m.sizeActiveInspector()
 }
 
 func (m CalendarManagerModel) FormSetError(field int, err string) CalendarManagerModel {
@@ -257,11 +263,12 @@ func (m CalendarManagerModel) FormSetError(field int, err string) CalendarManage
 		cp.form.SetError(field, err)
 		m.calendarForm = &cp
 	}
-	return m
+	return m.sizeActiveInspector()
 }
 
 func (m CalendarManagerModel) CloseAccount() CalendarManagerModel {
 	m.accountSettings = nil
+	m.accountPicker = nil
 	if m.calendarForm != nil {
 		m.screen = CalendarManagerScreenCalendar
 	} else {
@@ -274,6 +281,7 @@ func (m CalendarManagerModel) CloseDetail() CalendarManagerModel {
 	m.screen = CalendarManagerScreenList
 	m.calendarForm = nil
 	m.accountSettings = nil
+	m.accountPicker = nil
 	m.transfer = nil
 	return m
 }
@@ -286,7 +294,7 @@ func (m CalendarManagerModel) Screen() CalendarManagerScreen { return m.screen }
 // screens use the current terminal theme.
 func (m CalendarManagerModel) SetTheme(theme Theme) CalendarManagerModel {
 	m.theme = theme
-	m.help = newThemedHelp(theme)
+	m.list = m.list.SetTheme(theme.Selected, theme.Muted, theme.Text, theme.SelectedText, theme.Error)
 	return m.rebuild()
 }
 
@@ -300,102 +308,74 @@ func (m CalendarManagerModel) SetSize(w, h int) CalendarManagerModel {
 		next := m.accountSettings.SetSize(w, h)
 		m.accountSettings = &next
 	}
+	if m.accountPicker != nil {
+		next := m.accountPicker.SetInspectorSize(w, h)
+		m.accountPicker = &next
+	}
 	if m.transfer != nil {
 		next := m.transfer.SetSize(w, h)
 		m.transfer = &next
 	}
-	return m.ensureVisible()
+	m = m.sizeList()
+	return m.sizeActiveInspector()
 }
 
-// BoxSize returns the rendered dialog's outer dimensions, for host-side
-// overlay placement.
-func (m CalendarManagerModel) BoxSize() (int, int) {
-	switch m.screen {
-	case CalendarManagerScreenList:
-		return m.boxSize()
-	case CalendarManagerScreenCalendar:
-		if m.calendarForm != nil {
-			return m.calendarForm.BoxSize()
-		}
-	case CalendarManagerScreenAccount:
-		if m.accountSettings != nil {
-			return m.accountSettings.BoxSize()
-		}
-	case CalendarManagerScreenTransfer:
-		if m.transfer != nil {
-			return m.transfer.BoxSize()
-		}
-	}
-	return m.boxSize()
-}
+// BoxSize returns the manager shell's arithmetic outer dimensions. Child
+// inspectors never introduce another modal or render as part of sizing.
+func (m CalendarManagerModel) BoxSize() (int, int) { return m.boxSize() }
 
 // SetData replaces the calendar map and hidden set, preserving the selected
 // calendar and the scroll anchor by immutable ID so edits and reloads don't
 // jump the cursor or scroll.
 func (m CalendarManagerModel) SetData(calendars map[int64]CalendarInfo, hidden map[int64]bool) CalendarManagerModel {
-	selID, hadSel := m.selectedID()
-	_, topIdx, haveAnchor := m.scrollAnchor()
+	identity, hadIdentity := m.list.currentIdentity()
+	oldIndex := 0
+	if hadIdentity && identity.kind == calendarRow {
+		oldIndex = slices.IndexFunc(m.list.items, func(item CalendarListItem) bool { return item.ID == identity.id })
+		oldIndex = max(oldIndex, 0)
+	}
 
 	m.calendars = calendars
 	m.hidden = hidden
-	m.order = sortedCalendarIDs(calendars)
 	m = m.rebuild()
 
-	if hadSel {
-		m = m.selectCalendar(selID)
+	switch {
+	case !hadIdentity && len(m.list.items) > 0:
+		m = m.selectCalendar(m.list.items[0].ID)
+	case hadIdentity && identity.kind == calendarRow && !m.hasCalendar(identity.id) && len(m.list.items) > 0:
+		fallback := min(oldIndex, len(m.list.items)-1)
+		m = m.selectCalendar(m.list.items[fallback].ID)
 	}
-	if m.pendingSelectionID != 0 && slices.Contains(m.order, m.pendingSelectionID) {
+	if m.pendingSelectionID != 0 && m.hasCalendar(m.pendingSelectionID) {
 		m = m.selectCalendar(m.pendingSelectionID)
 		m.pendingSelectionID = 0
 	}
-	// If the selected calendar (often the tail) disappeared, selectCalendar
-	// leaves the cursor pointing at a now-out-of-range index; clamp onto a
-	// surviving row so selectedID stays valid.
-	m = m.clampCursor()
-	if haveAnchor {
-		// Try to land the same calendar at the top of the viewport; the
-		// ensureVisible pass below keeps the (possibly restored) cursor in
-		// view without fighting the anchor.
-		if idx := slices.Index(m.order, topIdx); idx >= 0 {
-			m.scroll = idx
-		}
-	}
-	return m.ensureVisible()
+	return m.sizeList()
+}
+
+func (m CalendarManagerModel) hasCalendar(id int64) bool {
+	_, ok := m.calendars[id]
+	return ok
 }
 
 // selectedID returns the immutable calendar ID at the cursor.
 func (m CalendarManagerModel) selectedID() (int64, bool) {
-	if m.cursor < 0 || m.cursor >= len(m.order) {
+	identity, ok := m.list.currentIdentity()
+	if !ok || identity.kind != calendarRow {
 		return 0, false
 	}
-	return m.order[m.cursor], true
+	return identity.id, true
 }
 
-// selectCalendar moves the cursor onto the given calendar ID, if present.
+// selectCalendar moves the grouped hierarchy onto the given calendar ID.
 func (m CalendarManagerModel) selectCalendar(id int64) CalendarManagerModel {
-	if idx := slices.Index(m.order, id); idx >= 0 {
-		m.cursor = idx
-	}
+	m.list.selectIdentity(calendarRowIdentity{kind: calendarRow, id: id})
+	m.list = m.list.ensureCursorVisible()
 	return m
 }
 
 func (m CalendarManagerModel) SelectCalendar(id int64) CalendarManagerModel {
 	return m.selectCalendar(id)
-}
-
-// clampCursor keeps the cursor within the order slice. Used after a SetData
-// refresh that drops the selected calendar (often the tail) so selectedID
-// never reports an out-of-range index.
-func (m CalendarManagerModel) clampCursor() CalendarManagerModel {
-	switch {
-	case len(m.order) == 0:
-		m.cursor = 0
-	case m.cursor < 0:
-		m.cursor = 0
-	case m.cursor >= len(m.order):
-		m.cursor = len(m.order) - 1
-	}
-	return m
 }
 
 // setHidden returns a copy of hidden with id set to val. Copying keeps the
@@ -404,98 +384,81 @@ func (m CalendarManagerModel) clampCursor() CalendarManagerModel {
 func setHidden(hidden map[int64]bool, id int64, val bool) map[int64]bool {
 	out := make(map[int64]bool, len(hidden)+1)
 	for k, v := range hidden {
-		out[k] = v
+		if k != id {
+			out[k] = v
+		}
 	}
-	out[id] = val
+	if val {
+		out[id] = true
+	}
 	return out
 }
 
-// scrollAnchor returns the top-visible calendar ID so SetData can preserve the
-// scroll position by identity rather than by row index.
-func (m CalendarManagerModel) scrollAnchor() (haveSpace bool, id int64, ok bool) {
-	start, end := m.visibleRange()
-	if end <= start {
-		return false, 0, false
-	}
-	if start < 0 || start >= len(m.order) {
-		return false, 0, false
-	}
-	return true, m.order[start], true
-}
-
-// rebuild re-renders the unstyled per-row labels from the current data and
-// order. Selection styling is applied at View time, so this only needs to run
-// when the data, order, or hidden set changes.
 func (m CalendarManagerModel) rebuild() CalendarManagerModel {
-	rows := make([]string, len(m.order))
-	for i, id := range m.order {
-		info := m.calendars[id]
-		rows[i] = flatCalendarRowLabel(info, m.hidden[id])
+	m.list = m.list.SetItemsPreservingCursor(sortedCalendarListItems(m.calendars))
+	for id := range m.calendars {
+		m.list = m.list.SetHidden(id, m.hidden[id])
 	}
-	m.rows = rows
+	return m.sizeList()
+}
+
+func (m CalendarManagerModel) sizeList() CalendarManagerModel {
+	w, h := m.rootPaneSize()
+	m.list = m.list.SetSize(w, h).Focus()
 	return m
 }
 
-// ensureVisible clamps the scroll offset so the cursor stays in the viewport,
-// mirroring ListDialogModel.adjustScroll (which reserves the last visible row
-// for the scroll indicator when the list overflows).
-func (m CalendarManagerModel) ensureVisible() CalendarManagerModel {
-	h := m.viewportHeight()
-	if h <= 0 || len(m.order) == 0 {
-		m.scroll = 0
-		return m
-	}
-	m.scroll = m.clampedScroll(h)
-	return m
-}
-
-// clampedScroll is the non-mutating scroll computation used by both
-// ensureVisible (to persist) and View (to render against the current size).
-func (m CalendarManagerModel) clampedScroll(h int) int {
-	if len(m.order) == 0 || h <= 0 {
-		return 0
-	}
-	contentH := h
-	if len(m.order) > h && contentH > 1 {
-		contentH = h - 1
-	}
-	s := m.scroll
-	if m.cursor < s {
-		s = m.cursor
-	}
-	if m.cursor >= s+contentH {
-		s = m.cursor - contentH + 1
-	}
-	if s < 0 {
-		s = 0
-	}
-	// Use contentH (not h) for the max clamp: when the list overflows the
-	// last visible line holds the scroll indicator, so only contentH rows are
-	// data. Clamping against h let the indicator overwrite the selected last
-	// row; clamping against contentH keeps it rendered and clickable.
-	if maxScroll := len(m.order) - contentH; s > maxScroll {
-		s = maxScroll
-	}
-	if s < 0 {
-		s = 0
-	}
-	return s
-}
-
-// viewportHeight is the number of list rows the current box can show.
-func (m CalendarManagerModel) viewportHeight() int {
-	_, _, _, h := m.listRegion()
-	return h
-}
-
-// visibleRange returns the [start, end) calendar indices currently in view.
-func (m CalendarManagerModel) visibleRange() (int, int) {
-	h := m.viewportHeight()
-	if h <= 0 || len(m.order) == 0 {
+func (m CalendarManagerModel) managerBodySize() (int, int) {
+	if m.width <= 0 || m.height <= 0 {
 		return 0, 0
 	}
-	start := m.clampedScroll(h)
-	return start, min(start+h, len(m.order))
+	boxW, boxH := m.boxSize()
+	innerW := max(boxW-5, 10)
+	innerH := max(boxH-3, 6)
+	return innerW, max(innerH-4, 3)
+}
+
+func (m CalendarManagerModel) onePaneLayout() bool {
+	innerW, _ := m.managerBodySize()
+	if innerW == 0 || m.width < narrowThreshold {
+		return true
+	}
+	listW := max(innerW*2/5, 24)
+	return innerW-listW < 24
+}
+
+func (m CalendarManagerModel) rootPaneSize() (int, int) {
+	innerW, bodyH := m.managerBodySize()
+	if m.onePaneLayout() {
+		return innerW, bodyH
+	}
+	return max(innerW*2/5, 24), bodyH
+}
+
+func (m CalendarManagerModel) inspectorPaneSize() (int, int) {
+	innerW, bodyH := m.managerBodySize()
+	if m.onePaneLayout() {
+		return innerW, bodyH
+	}
+	listW, _ := m.rootPaneSize()
+	return max(innerW-listW-3, 1), bodyH
+}
+
+func (m CalendarManagerModel) sizeActiveInspector() CalendarManagerModel {
+	w, h := m.inspectorPaneSize()
+	if m.calendarForm != nil {
+		next := m.calendarForm.SetInspectorSize(w, h)
+		m.calendarForm = &next
+	}
+	if m.accountPicker != nil {
+		next := m.accountPicker.SetInspectorSize(w, h)
+		m.accountPicker = &next
+	}
+	if m.transfer != nil {
+		next := m.transfer.SetInspectorSize(w, h)
+		m.transfer = &next
+	}
+	return m
 }
 
 func (m CalendarManagerModel) Update(msg tea.Msg) (CalendarManagerModel, tea.Cmd) {
@@ -505,6 +468,12 @@ func (m CalendarManagerModel) Update(msg tea.Msg) (CalendarManagerModel, tea.Cmd
 	// delegation (a Back gesture) — except while a text-editing field holds
 	// focus in the calendar detail, where Left still moves the cursor.
 	if m.screen != CalendarManagerScreenList {
+		if click, ok := msg.(tea.MouseClickMsg); ok && click.Button == tea.MouseLeft {
+			boxW, boxH := m.boxSize()
+			ox := (m.width - boxW) / 2
+			oy := (m.height - boxH) / 2
+			msg = MouseEvent{IsClick: true, Target: mouseResolve(click.X-ox, click.Y-oy)}
+		}
 		if popped, cmd, ok := m.popOnLeft(msg); ok {
 			return popped, cmd
 		}
@@ -514,6 +483,8 @@ func (m CalendarManagerModel) Update(msg tea.Msg) (CalendarManagerModel, tea.Cmd
 		// handled by the root list below
 	case CalendarManagerScreenAccount:
 		return m.updateAccount(msg)
+	case CalendarManagerScreenAccountCalendars:
+		return m.updateAccountCalendars(msg)
 	case CalendarManagerScreenCalendar:
 		return m.updateCalendar(msg)
 	case CalendarManagerScreenTransfer:
@@ -543,14 +514,13 @@ func (m CalendarManagerModel) popOnLeft(msg tea.Msg) (CalendarManagerModel, tea.
 	switch m.screen {
 	case CalendarManagerScreenList, CalendarManagerScreenTransfer:
 		return m, nil, false
+	case CalendarManagerScreenAccountCalendars:
+		return m.HideDiscovery(), nil, true
 	case CalendarManagerScreenAccount:
 		// Account settings opened from a calendar pop back to that unchanged
 		// edit form. Direct account settings close the manager itself; exposing
 		// the root calendar list here would be an unrelated navigation step.
-		if m.calendarForm != nil {
-			return m.CloseAccount(), nil, true
-		}
-		return m, func() tea.Msg { return CalendarManagerClosedMsg{} }, true
+		return m.CloseAccount(), nil, true
 	case CalendarManagerScreenCalendar:
 		if m.calendarForm == nil || m.calendarForm.leftMovesCursor() || m.calendarForm.accountConnection {
 			return m, nil, false
@@ -568,73 +538,22 @@ func (m CalendarManagerModel) handleKey(msg tea.KeyPressMsg) (CalendarManagerMod
 		return m, func() tea.Msg { return CalendarManagerClosedMsg{} }
 	case key.Matches(msg, m.keys.Add):
 		return m, func() tea.Msg { return CalendarManagerAddRequestedMsg{} }
-	case key.Matches(msg, m.keys.Up):
-		return m.moveCursor(-1), nil
-	case key.Matches(msg, m.keys.Down):
-		return m.moveCursor(1), nil
 	case key.Matches(msg, m.keys.Open):
-		if id, ok := m.selectedID(); ok {
-			return m.OpenCalendar(calendarDialogParamsFor(id, m.calendars[id], m.hidden[id])), nil
+		identity, ok := m.list.currentIdentity()
+		if ok && identity.kind == calendarRow {
+			info := m.calendars[identity.id]
+			return m.OpenCalendar(calendarDialogParamsFor(identity.id, info, m.hidden[identity.id])), nil
 		}
-		return m, nil
-	case key.Matches(msg, m.keys.Toggle):
-		if id, ok := m.selectedID(); ok {
-			// Emit the DESIRED state and apply it locally + to the rows so the
-			// checkbox flips immediately and the host has the target state to
-			// persist; relying on the host to round-trip would leave the row
-			// stale until reload.
-			desired := !m.hidden[id]
-			m.hidden = setHidden(m.hidden, id, desired)
-			m = m.rebuild()
-			return m, func() tea.Msg { return CalendarVisibilityToggledMsg{ID: id, Hidden: desired} }
-		}
-		return m, nil
-	case key.Matches(msg, m.keys.MoveUp):
-		return m.moveSelected(-1)
-	case key.Matches(msg, m.keys.MoveDown):
-		return m.moveSelected(1)
 	}
-	return m, nil
+	next, cmd := m.list.Update(msg)
+	m.list = next
+	m = m.syncListProjection()
+	return m, cmd
 }
 
-func (m CalendarManagerModel) moveCursor(delta int) CalendarManagerModel {
-	if len(m.order) == 0 {
-		m.cursor = 0
-		return m
-	}
-	m.cursor += delta
-	if m.cursor < 0 {
-		m.cursor = 0
-	}
-	if m.cursor >= len(m.order) {
-		m.cursor = len(m.order) - 1
-	}
-	return m.ensureVisible()
-}
-
-// moveSelected swaps the selected calendar with its neighbour delta rows away
-// (±1), keeps the selection on the moved calendar, and emits CalendarReorderedMsg
-// with the full new top-to-bottom ID order. It only swaps within the same
-// AccountID; crossing an owner boundary is a no-op so a calendar can never
-// escape its account group.
-func (m CalendarManagerModel) moveSelected(delta int) (CalendarManagerModel, tea.Cmd) {
-	if len(m.order) == 0 {
-		return m, nil
-	}
-	i := m.cursor
-	j := i + delta
-	if i < 0 || j < 0 || j >= len(m.order) {
-		return m, nil
-	}
-	if m.calendars[m.order[i]].AccountID != m.calendars[m.order[j]].AccountID {
-		return m, nil
-	}
-	order := slices.Clone(m.order)
-	order[i], order[j] = order[j], order[i]
-	m.order = order
-	m.cursor = j
-	m = m.rebuild().ensureVisible()
-	return m, func() tea.Msg { return CalendarReorderedMsg{IDs: slices.Clone(order)} }
+func (m CalendarManagerModel) syncListProjection() CalendarManagerModel {
+	m.hidden = m.list.HiddenSet()
+	return m
 }
 
 func (m CalendarManagerModel) handleMouse(msg tea.MouseClickMsg) (CalendarManagerModel, tea.Cmd) {
@@ -644,21 +563,24 @@ func (m CalendarManagerModel) handleMouse(msg tea.MouseClickMsg) (CalendarManage
 	if cmd, ok := m.titleActionAtPosition(msg.X, msg.Y); ok {
 		return m, cmd
 	}
-	idx, ok := m.rowAtPosition(msg.X, msg.Y)
-	if !ok {
+	lx, ly, lw, lh := m.listRegion()
+	if msg.X < lx || msg.X >= lx+lw || msg.Y < ly || msg.Y >= ly+lh {
 		return m, nil
 	}
-	m.cursor = idx
-	m = m.ensureVisible()
-	id := m.order[idx]
-	listX, _, _, _ := m.listRegion()
-	if msg.X < listX+lipgloss.Width(Glyphs["checkbox.off"]) {
-		desired := !m.hidden[id]
-		m.hidden = setHidden(m.hidden, id, desired)
-		m = m.rebuild()
-		return m, func() tea.Msg { return CalendarVisibilityToggledMsg{ID: id, Hidden: desired} }
+	relX := msg.X - lx
+	next, cmd := m.list.HandleClick(relX, msg.Y-ly)
+	m.list = next
+	m = m.syncListProjection()
+	identity, selected := m.list.currentIdentity()
+	checkboxEnd := lipgloss.Width(Glyphs["checkbox.on"])
+	if m.list.grouped {
+		checkboxEnd++
 	}
-	return m.OpenCalendar(calendarDialogParamsFor(id, m.calendars[id], m.hidden[id])), nil
+	if selected && identity.kind == calendarRow && relX >= checkboxEnd {
+		info := m.calendars[identity.id]
+		return m.OpenCalendar(calendarDialogParamsFor(identity.id, info, m.hidden[identity.id])), nil
+	}
+	return m, cmd
 }
 
 // OpenCalendar pushes the calendar detail for the given params onto the
@@ -667,18 +589,18 @@ func (m CalendarManagerModel) handleMouse(msg tea.MouseClickMsg) (CalendarManage
 // them by ID.
 func (m CalendarManagerModel) OpenCalendar(params CalendarDialogParams) CalendarManagerModel {
 	params.ManagerEmbedded = true
-	form := NewCalendarDialogModel(params, m.theme).SetSize(m.width, m.height)
+	form := NewCalendarDialogModel(params, m.theme)
 	m.calendarForm = &form
 	m.screen = CalendarManagerScreenCalendar
-	return m
+	return m.sizeActiveInspector()
 }
 
 func (m CalendarManagerModel) OpenAccountConnection() CalendarManagerModel {
-	form := NewAccountDialogModel(m.theme).SetSize(m.width, m.height)
+	form := NewAccountDialogModel(m.theme)
 	m.calendarForm = &form
 	m.accountSettings = nil
 	m.screen = CalendarManagerScreenCalendar
-	return m
+	return m.sizeActiveInspector()
 }
 
 // OpenAccount pushes the account detail for the given params on top of the
@@ -686,10 +608,30 @@ func (m CalendarManagerModel) OpenAccountConnection() CalendarManagerModel {
 // is the entry point for the calendar detail's Account opener and later app
 // routing.
 func (m CalendarManagerModel) OpenAccount(params AccountSettingsParams) CalendarManagerModel {
-	settings := NewAccountSettingsDialogModel(params, m.theme).SetSize(m.width, m.height)
+	settings := NewAccountSettingsDialogModel(params, m.theme)
 	m.accountSettings = &settings
+	m.accountPicker = nil
 	m.screen = CalendarManagerScreenAccount
-	return m
+	return m.sizeActiveInspector()
+}
+
+func (m CalendarManagerModel) OpenAccountCalendars(discovery account.Discovery) CalendarManagerModel {
+	picker := NewAccountCalendarManagerModel(discovery, m.theme)
+	m.accountPicker = &picker
+	m.screen = CalendarManagerScreenAccountCalendars
+	return m.sizeActiveInspector()
+}
+
+func (m CalendarManagerModel) updateAccountCalendars(msg tea.Msg) (CalendarManagerModel, tea.Cmd) {
+	if _, ok := msg.(AccountCalendarPickerClosedMsg); ok {
+		return m.HideDiscovery(), nil
+	}
+	if m.accountPicker == nil {
+		return m.HideDiscovery(), nil
+	}
+	next, cmd := m.accountPicker.Update(msg)
+	m.accountPicker = &next
+	return m.sizeActiveInspector(), cmd
 }
 
 // updateCalendar delegates input to the pushed calendar detail and intercepts
@@ -709,34 +651,30 @@ func (m CalendarManagerModel) updateCalendar(msg tea.Msg) (CalendarManagerModel,
 		}
 	}
 
-	if m.calendarForm == nil {
-		m.screen = CalendarManagerScreenList
-		return m, nil
-	}
-	accountConnection := m.calendarForm.accountConnection
-	next, cmd := m.calendarForm.Update(msg)
-	m.calendarForm = &next
-	if cmd == nil {
-		return m, nil
-	}
-	out := cmd()
-	switch typed := out.(type) {
+	switch typed := msg.(type) {
 	case CalendarDialogClosedMsg:
-		if accountConnection {
-			return m, func() tea.Msg { return CalendarManagerClosedMsg{} }
-		}
 		m.calendarForm = nil
 		m.screen = CalendarManagerScreenList
 		return m, nil
 	case CalendarVisibilityToggledMsg:
 		// Mirror the detail's optimistic toggle into the root so the row's
-		// checkbox is already correct when the user pops back, then forward the
-		// message so the host persists it.
+		// checkbox is already correct when the user pops back. The host also
+		// persists this message when it receives the child command.
 		m.hidden = setHidden(m.hidden, typed.ID, typed.Hidden)
 		m = m.rebuild()
-		return m, func() tea.Msg { return typed }
+		return m, nil
 	}
-	return m, func() tea.Msg { return out }
+
+	if m.calendarForm == nil {
+		m.screen = CalendarManagerScreenList
+		return m, nil
+	}
+	next, cmd := m.calendarForm.Update(msg)
+	m.calendarForm = &next
+	m = m.sizeActiveInspector()
+	// Commands may contain timers (for example the text cursor blink). Bubble
+	// Tea must execute them asynchronously; invoking them here stalls Update.
+	return m, cmd
 }
 
 // updateAccount delegates input to the pushed account detail. Account close
@@ -744,22 +682,15 @@ func (m CalendarManagerModel) updateCalendar(msg tea.Msg) (CalendarManagerModel,
 // a directly opened account asks the host to close the manager. Other account
 // requests pass through to the host, which owns those canonical actions.
 func (m CalendarManagerModel) updateAccount(msg tea.Msg) (CalendarManagerModel, tea.Cmd) {
+	if _, ok := msg.(AccountSettingsClosedMsg); ok {
+		return m.CloseAccount(), nil
+	}
 	if m.accountSettings == nil {
 		return m.CloseAccount(), nil
 	}
 	next, cmd := m.accountSettings.Update(msg)
 	m.accountSettings = &next
-	if cmd == nil {
-		return m, nil
-	}
-	out := cmd()
-	if _, ok := out.(AccountSettingsClosedMsg); ok {
-		if m.calendarForm != nil {
-			return m.CloseAccount(), nil
-		}
-		return m, func() tea.Msg { return CalendarManagerClosedMsg{} }
-	}
-	return m, func() tea.Msg { return out }
+	return m.sizeActiveInspector(), cmd
 }
 
 // calendarDialogParamsFor builds the calendar detail params for the given
@@ -769,21 +700,16 @@ func (m CalendarManagerModel) updateAccount(msg tea.Msg) (CalendarManagerModel, 
 // manager-only affordances (Export) surface; legacy app-wired dialogs build
 // params without it and expose no no-op actions.
 func (m CalendarManagerModel) updateTransfer(msg tea.Msg) (CalendarManagerModel, tea.Cmd) {
+	if _, ok := msg.(CalendarTransferClosedMsg); ok {
+		return m.CloseTransfer(), nil
+	}
 	if m.transfer == nil {
 		m.screen = CalendarManagerScreenList
 		return m, nil
 	}
 	child, cmd := m.transfer.Update(msg)
 	m.transfer = &child
-	if cmd == nil {
-		return m, nil
-	}
-	out := cmd()
-	if _, ok := out.(CalendarTransferClosedMsg); ok {
-		m = m.CloseTransfer()
-		return m, func() tea.Msg { return out }
-	}
-	return m, func() tea.Msg { return out }
+	return m.sizeActiveInspector(), cmd
 }
 
 func calendarDialogParamsFor(id int64, info CalendarInfo, hidden bool) CalendarDialogParams {
@@ -804,28 +730,9 @@ func calendarDialogParamsFor(id int64, info CalendarInfo, hidden bool) CalendarD
 	}
 }
 
-func (m CalendarManagerModel) View() string {
-	switch m.screen {
-	case CalendarManagerScreenList:
-		return m.rootView()
-	case CalendarManagerScreenAccount:
-		if m.accountSettings != nil {
-			return m.accountSettings.View()
-		}
-	case CalendarManagerScreenCalendar:
-		if m.calendarForm != nil {
-			return m.calendarForm.View()
-		}
-	case CalendarManagerScreenTransfer:
-		if m.transfer != nil {
-			return m.transfer.View()
-		}
-	}
-	return m.rootView()
-}
+func (m CalendarManagerModel) View() string { return m.rootView() }
 
-// rootView renders the flat calendar list. It is the manager's only screen
-// when no detail is pushed.
+// rootView renders the persistent grouped hierarchy and active inspector.
 func (m CalendarManagerModel) rootView() string {
 	if m.width <= 0 || m.height <= 0 {
 		return ""
@@ -836,7 +743,7 @@ func (m CalendarManagerModel) rootView() string {
 	bodyH := max(innerH-4, 3)
 
 	title := m.renderTitleRow(innerW)
-	body := m.renderList(innerW, bodyH)
+	body := m.renderManagerBody(innerW, bodyH)
 	help := m.renderHelp(innerW)
 	blank := strings.Repeat(" ", innerW)
 
@@ -844,7 +751,139 @@ func (m CalendarManagerModel) rootView() string {
 	contentLines = append(contentLines, title, blank)
 	contentLines = append(contentLines, strings.Split(body, "\n")...)
 	contentLines = append(contentLines, blank, help)
-	return framedDialog(boxW, contentLines)
+	return mouseSweep(framedDialog(boxW, contentLines))
+}
+
+func (m CalendarManagerModel) renderManagerBody(w, h int) string {
+	if len(m.calendars) == 0 && m.screen == CalendarManagerScreenList {
+		msg := lipgloss.NewStyle().Faint(true).Render("No calendars yet. Use + Add to create or connect one.")
+		return padLines([]string{truncateTo(msg, w)}, w, h)
+	}
+	listW, _ := m.rootPaneSize()
+	if m.onePaneLayout() {
+		if m.screen == CalendarManagerScreenList {
+			return padLines(strings.Split(m.list.View(), "\n"), w, h)
+		}
+		return padLines(m.activeInspectorLines(w, h), w, h)
+	}
+	dividerW := 3
+	detailW := max(w-listW-dividerW, 1)
+	left := padLines(strings.Split(m.list.View(), "\n"), listW, h)
+	right := padLines(m.activeInspectorLines(detailW, h), detailW, h)
+	divider := lipgloss.NewStyle().Foreground(m.theme.Muted).Render(" │ ")
+	leftLines := strings.Split(left, "\n")
+	rightLines := strings.Split(right, "\n")
+	lines := make([]string, h)
+	for i := range h {
+		lines[i] = leftLines[i] + divider + rightLines[i]
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m CalendarManagerModel) activeInspectorLines(w, h int) []string {
+	switch m.screen {
+	case CalendarManagerScreenList:
+		// The root selection inspector is rendered below.
+	case CalendarManagerScreenCalendar:
+		if m.calendarForm != nil {
+			return strings.Split(m.calendarForm.InspectorView(w, h), "\n")
+		}
+	case CalendarManagerScreenAccount:
+		if m.accountSettings != nil {
+			return strings.Split(m.accountSettings.InspectorView(w, h), "\n")
+		}
+	case CalendarManagerScreenAccountCalendars:
+		if m.accountPicker != nil {
+			return strings.Split(m.accountPicker.InspectorView(w, h), "\n")
+		}
+	case CalendarManagerScreenTransfer:
+		if m.transfer != nil {
+			return strings.Split(m.transfer.InspectorView(w, h), "\n")
+		}
+	}
+	return m.selectionInspectorLines(w)
+}
+
+func (m CalendarManagerModel) selectionInspectorLines(w int) []string {
+	identity, ok := m.list.currentIdentity()
+	if !ok {
+		return []string{lipgloss.NewStyle().Faint(true).Render("Select a calendar or account.")}
+	}
+	faint := lipgloss.NewStyle().Foreground(m.theme.Muted)
+	labelWidth := min(10, max(7, w/4))
+	if identity.kind == accountHeaderRow {
+		name := "Local"
+		count := 0
+		errors := 0
+		for _, info := range m.calendars {
+			if info.AccountID != identity.id {
+				continue
+			}
+			count++
+			if identity.id != 0 && strings.TrimSpace(info.AccountName) != "" {
+				name = strings.TrimSpace(info.AccountName)
+			}
+			if syncHealthFor(info) == SyncHealthError || info.RemoteMissing {
+				errors++
+			}
+		}
+		lines := []string{lipgloss.NewStyle().Bold(true).Render(truncateTo(name, w)), ""}
+		if identity.id == 0 {
+			lines = append(lines,
+				faint.Render("On this device"),
+				detailLine(faint, "Calendars", fmt.Sprintf("%d", count), labelWidth, w),
+				"",
+				lipgloss.NewStyle().Underline(true).Render("a  Add Calendar"),
+			)
+			return lines
+		}
+		status := "Up to date"
+		if errors > 0 {
+			status = lipgloss.NewStyle().Foreground(m.theme.Error).Render(fmt.Sprintf("%d need attention", errors))
+		}
+		return append(lines,
+			detailLine(faint, "Calendars", fmt.Sprintf("%d", count), labelWidth, w),
+			detailLine(faint, "Status", status, labelWidth, w),
+			"",
+			lipgloss.NewStyle().Underline(true).Render("Enter  Account Settings"),
+		)
+	}
+
+	info, exists := m.calendars[identity.id]
+	if !exists {
+		return []string{lipgloss.NewStyle().Faint(true).Render("Calendar unavailable.")}
+	}
+	dot := lipgloss.NewStyle().Foreground(lipgloss.Color(info.Color)).Render("●")
+	visibility := "Shown"
+	if m.hidden[identity.id] {
+		visibility = "Hidden"
+	}
+	location := flatAccountContext(info)
+	lines := []string{
+		lipgloss.NewStyle().Bold(true).Render(truncateTo(dot+" "+info.Name, w)),
+		"",
+		detailLine(faint, "Display", visibility, labelWidth, w),
+		detailLine(faint, "Location", location, labelWidth, w),
+	}
+	if info.IsDefault {
+		lines = append(lines, detailLine(faint, "Default", "Yes", labelWidth, w))
+	}
+	if access := strings.TrimSpace(info.RemoteAccess); access != "" {
+		lines = append(lines, detailLine(faint, "Access", access, labelWidth, w))
+	}
+	if info.Synced {
+		lines = append(lines, detailLine(faint, "Last sync", formatSyncTime(info.LastSyncAt), labelWidth, w))
+	}
+	if info.LastSyncError != "" {
+		errText := lipgloss.NewStyle().Foreground(m.theme.Error).Render(info.LastSyncError)
+		lines = append(lines, detailLine(faint, "Error", errText, labelWidth, w))
+	}
+	if strings.TrimSpace(info.Description) != "" {
+		lines = append(lines, "")
+		lines = append(lines, wrapLine(info.Description, w)...)
+	}
+	lines = append(lines, "", lipgloss.NewStyle().Underline(true).Render("Enter  Edit Calendar"))
+	return lines
 }
 
 func (m CalendarManagerModel) renderTitleRow(w int) string {
@@ -858,100 +897,15 @@ func (m CalendarManagerModel) renderTitleRow(w int) string {
 }
 
 func (m CalendarManagerModel) renderHelp(w int) string {
-	parts := []string{"↑↓ move", "enter open", "space hide/show", "shift+↑↓ reorder", "a add", "esc close"}
+	parts := []string{"↑↓ select", "enter details", "space show/hide", "←→ collapse", "shift+↑↓ reorder", "a add", "esc close"}
+	if m.screen != CalendarManagerScreenList {
+		parts = []string{"tab next", "enter activate", "esc back"}
+	}
 	s := truncateTo(strings.Join(parts, "  "), w)
 	return lipgloss.NewStyle().Faint(true).Width(w).Align(lipgloss.Center).Render(s)
 }
 
-func (m CalendarManagerModel) renderList(w, h int) string {
-	if len(m.rows) == 0 {
-		msg := lipgloss.NewStyle().Faint(true).Render("No calendars yet.")
-		return padLines([]string{msg}, w, h)
-	}
-	scroll := m.clampedScroll(h)
-	total := len(m.rows)
-	end := min(scroll+h, total)
-
-	lines := make([]string, 0, h)
-	for i := scroll; i < end; i++ {
-		lines = append(lines, m.renderRow(m.order[i], i == m.cursor, w))
-	}
-
-	if total > h {
-		var arrows string
-		if scroll > 0 {
-			arrows += "▲"
-		}
-		if end < total {
-			if arrows != "" {
-				arrows += " "
-			}
-			arrows += "▼"
-		}
-		indicator := fmt.Sprintf("%d/%d", m.cursor+1, total)
-		if arrows != "" {
-			indicator += " " + arrows
-		}
-		indicator = truncateTo(indicator, w)
-		faint := lipgloss.NewStyle().Faint(true).Render(indicator)
-		if len(lines) >= h {
-			lines[h-1] = faint
-		} else {
-			lines = append(lines, faint)
-		}
-	}
-
-	return padLines(lines, w, h)
-}
-
-// renderRow paints one calendar row: a colored dot, the bold calendar name,
-// a dim owning context (Local / account name), and compact applicable state
-// tags. The selected row takes reverse video across its full width so the
-// highlight reads as a single bar, matching the legacy list convention.
-func (m CalendarManagerModel) renderRow(id int64, selected bool, w int) string {
-	info := m.calendars[id]
-	hidden := m.hidden[id]
-
-	checkbox := Glyphs["checkbox.on"]
-	if hidden {
-		checkbox = Glyphs["checkbox.off"]
-	}
-	dotFg := lipgloss.Color(info.Color)
-	checkboxStyle := lipgloss.NewStyle()
-	dotStyle := lipgloss.NewStyle().Foreground(dotFg)
-	nameStyle := lipgloss.NewStyle().Bold(true)
-	ctxStyle := lipgloss.NewStyle().Foreground(activeTheme.Muted)
-	tagStyle := lipgloss.NewStyle().Foreground(activeTheme.Muted)
-	editStyle := lipgloss.NewStyle().Underline(true)
-	if hidden {
-		nameStyle = nameStyle.Faint(true)
-	}
-	if selected {
-		checkboxStyle = checkboxStyle.Reverse(true)
-		dotStyle = lipgloss.NewStyle().Foreground(dotFg).Reverse(true)
-		nameStyle = lipgloss.NewStyle().Reverse(true).Bold(true)
-		ctxStyle = lipgloss.NewStyle().Reverse(true)
-		tagStyle = lipgloss.NewStyle().Reverse(true)
-		editStyle = lipgloss.NewStyle().Reverse(true).Underline(true)
-	}
-
-	left := checkboxStyle.Render(checkbox) + " " + dotStyle.Render("●") + " " +
-		nameStyle.Render(info.Name) + " " + ctxStyle.Render(flatAccountContext(info))
-	if tags := flatStateTags(info); len(tags) > 0 {
-		left += " " + tagStyle.Render(strings.Join(tags, " "))
-	}
-	edit := editStyle.Render("Edit ›")
-	left = truncateTo(left, max(w-lipgloss.Width(edit)-1, 0))
-	gap := max(w-lipgloss.Width(left)-lipgloss.Width(edit), 1)
-	gapStyle := lipgloss.NewStyle()
-	if selected {
-		gapStyle = gapStyle.Reverse(true)
-	}
-	out := left + gapStyle.Render(strings.Repeat(" ", gap)) + edit
-	return truncateTo(out, w)
-}
-
-// boxSize mirrors ListDialogModel.boxSize so the flat manager shares the
+// boxSize mirrors ListDialogModel.boxSize so the manager shares the
 // golden-rectangle sizing and narrow fallback with the rest of the dialogs.
 func (m CalendarManagerModel) boxSize() (int, int) {
 	w, h := m.width, m.height
@@ -981,36 +935,12 @@ func (m CalendarManagerModel) listRegion() (int, int, int, int) {
 		return 0, 0, 0, 0
 	}
 	boxW, boxH := m.boxSize()
-	innerW := max(boxW-5, 10)
 	innerH := max(boxH-3, 6)
 	bodyH := max(innerH-4, 3)
+	listW, _ := m.rootPaneSize()
 	dialogX := (m.width - boxW) / 2
 	dialogY := (m.height - boxH) / 2
-	return dialogX + 2, dialogY + 4, innerW, bodyH
-}
-
-func (m CalendarManagerModel) rowAtPosition(x, y int) (int, bool) {
-	lx, ly, lw, lh := m.listRegion()
-	if len(m.order) == 0 || lh <= 0 || lw <= 0 {
-		return 0, false
-	}
-	// Bound the list column on both sides — a click on the right row's Y but
-	// past the list's right edge (or outside the dialog entirely) must not
-	// select.
-	if y < ly || y >= ly+lh || x < lx || x >= lx+lw {
-		return 0, false
-	}
-	row := y - ly
-	// When the list overflows, renderList reserves the last visible line for
-	// the scroll indicator, so it is not a clickable row.
-	if len(m.order) > lh && row == lh-1 {
-		return 0, false
-	}
-	idx := m.clampedScroll(lh) + row
-	if idx < 0 || idx >= len(m.order) {
-		return 0, false
-	}
-	return idx, true
+	return dialogX + 2, dialogY + 4, listW, bodyH
 }
 
 // titleActionRect returns the screen-space rect of the persistent Add button,
@@ -1036,27 +966,9 @@ func (m CalendarManagerModel) titleActionAtPosition(x, y int) (tea.Cmd, bool) {
 	return m.titleAction.Msg, true
 }
 
-// flatCalendarRowLabel builds the unstyled, ANSI-free row label: visibility
-// checkbox, independent color marker, name, owner, state tags, and Edit link.
-// Selection styling and right alignment are layered on at render time.
-func flatCalendarRowLabel(info CalendarInfo, hidden bool) string {
-	checkbox := Glyphs["checkbox.on"]
-	if hidden {
-		checkbox = Glyphs["checkbox.off"]
-	}
-	tags := flatStateTags(info)
-	parts := make([]string, 0, 5+len(tags))
-	parts = append(parts, checkbox, "●", info.Name, flatAccountContext(info))
-	parts = append(parts, tags...)
-	parts = append(parts, "Edit ›")
-	return strings.Join(parts, " ")
-}
-
-// flatAccountContext returns the dim row suffix naming the row's owner:
-// "Local" for on-device calendars, the account name for linked ones, and
-// "Remote" when a linked calendar lacks a recorded account name. This mirrors
-// the legacy dialog's heading text but inlines it per row instead of emitting
-// a structural heading.
+// flatAccountContext returns the inspector's calendar location: "Local" for
+// on-device calendars, the account name for linked ones, and "Remote" when a
+// linked calendar lacks a recorded account name.
 func flatAccountContext(info CalendarInfo) string {
 	if info.AccountID == 0 {
 		return "Local"
@@ -1065,23 +977,4 @@ func flatAccountContext(info CalendarInfo) string {
 		return name
 	}
 	return "Remote"
-}
-
-// flatStateTags returns compact applicable-state tags in stable order.
-// Visibility is represented separately by the row checkbox.
-func flatStateTags(info CalendarInfo) []string {
-	var tags []string
-	if info.IsDefault {
-		tags = append(tags, "default")
-	}
-	if strings.EqualFold(strings.TrimSpace(info.RemoteAccess), "read") {
-		tags = append(tags, "read-only")
-	}
-	if syncHealthFor(info) == SyncHealthError {
-		tags = append(tags, "sync error")
-	}
-	if info.RemoteMissing {
-		tags = append(tags, "missing")
-	}
-	return tags
 }

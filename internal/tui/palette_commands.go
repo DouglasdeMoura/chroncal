@@ -69,23 +69,8 @@ func buildPaletteCommands(m Model) []PaletteCommand {
 			Action:   func() tea.Msg { return SwitchViewMsg{Mode: viewAgenda} },
 		},
 		PaletteCommand{
-			ID:       "calendar.new",
-			Title:    "New Local Calendar",
-			Category: "Calendar",
-			Shortcut: "l",
-			Action:   func() tea.Msg { return CalendarManagerRequestedMsg{Target: CalendarManagerTargetLocalCreate} },
-		},
-		PaletteCommand{
-			ID:       "account.add",
-			Title:    "Add Account…",
-			Category: "Account",
-			Action:   func() tea.Msg { return CalendarManagerRequestedMsg{Target: CalendarManagerTargetAccountConnect} },
-		},
-	)
-	commands = append(commands,
-		PaletteCommand{
 			ID:       "calendar.manage",
-			Title:    "Manage Calendars…",
+			Title:    "Calendars",
 			Category: "Calendar",
 			Shortcut: "C",
 			Action:   func() tea.Msg { return CalendarManagerRequestedMsg{Target: CalendarManagerTargetRoot} },

@@ -31,6 +31,8 @@ type AccountSettingsRequestedMsg struct{ AccountID int64 }
 
 type AccountSettingsManageRequestedMsg struct{ AccountID int64 }
 
+type AccountSettingsSyncRequestedMsg struct{ AccountID int64 }
+
 type AccountSettingsRenameRequestedMsg struct{ AccountID int64 }
 
 type AccountSettingsReauthRequestedMsg struct{ AccountID int64 }
@@ -75,6 +77,12 @@ func NewAccountSettingsDialogModel(params AccountSettingsParams, theme Theme) Ac
 			label: "Manage Calendars…",
 			onPress: func() tea.Msg {
 				return AccountSettingsManageRequestedMsg{AccountID: params.AccountID}
+			},
+		},
+		{
+			label: "Sync Now",
+			onPress: func() tea.Msg {
+				return AccountSettingsSyncRequestedMsg{AccountID: params.AccountID}
 			},
 		},
 		{
@@ -138,6 +146,15 @@ func (m AccountSettingsDialogModel) Update(msg tea.Msg) (AccountSettingsDialogMo
 	if msg, ok := msg.(tea.WindowSizeMsg); ok {
 		return m.SetSize(msg.Width, msg.Height), nil
 	}
+	if mouse, ok := msg.(MouseEvent); ok && mouse.IsClick {
+		for i := range m.actions {
+			if mouse.Target == accountSettingsActionTarget(i) {
+				m.selected = i
+				return m, m.activateSelected()
+			}
+		}
+		return m, nil
+	}
 	if click, ok := msg.(tea.MouseClickMsg); ok {
 		if click.Button != tea.MouseLeft {
 			return m, nil
@@ -194,6 +211,34 @@ func accountSettingsNoun(count int) string {
 		return "calendar"
 	}
 	return "calendars"
+}
+
+// InspectorView renders account context and actions without a nested border.
+func (m AccountSettingsDialogModel) InspectorView(w, h int) string {
+	w = max(w, 1)
+	rows := []string{lipgloss.NewStyle().Bold(true).Render(truncateTo(m.dialog.title, w)), ""}
+	for _, line := range m.identityLines() {
+		style := lipgloss.NewStyle().Foreground(m.muted)
+		if strings.HasPrefix(line, "Needs attention") {
+			style = lipgloss.NewStyle().Foreground(m.attention)
+		}
+		rows = append(rows, style.Render(truncateTo(line, w)))
+	}
+	rows = append(rows, "")
+	for i, action := range m.actions {
+		if action.variant == ButtonDanger {
+			rows = append(rows, lipgloss.NewStyle().Foreground(m.muted).Render(strings.Repeat("─", w)))
+		}
+		if action.label == "Done" {
+			rows = append(rows, "")
+		}
+		style := m.buttons.Get(action.variant).Normal
+		if i == m.selected {
+			style = m.buttons.Get(action.variant).Focused
+		}
+		rows = append(rows, mouseMark(accountSettingsActionTarget(i), style.MarginRight(0).Width(w).Render(action.label)))
+	}
+	return padLines(rows, w, h)
 }
 
 func (m AccountSettingsDialogModel) View() string {

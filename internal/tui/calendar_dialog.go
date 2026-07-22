@@ -883,6 +883,48 @@ func (m *CalendarDialogModel) keepFocusedFieldVisible() {
 	}
 }
 
+// SetInspectorSize prepares the existing form for borderless rendering inside
+// the Calendars manager. Rendering stays pure: body content and viewport
+// dimensions are refreshed here and after Update, never from InspectorView.
+func (m CalendarDialogModel) SetInspectorSize(w, h int) CalendarDialogModel {
+	w = max(w, 1)
+	h = max(h, 1)
+	m.form.SetWidth(w)
+	if m.contentWidth != nil {
+		*m.contentWidth = w
+	}
+	bodyLines := strings.Split(m.form.BodyView(), "\n")
+	statusLines := 0
+	if m.testStatus != "" {
+		statusLines = 1
+	}
+	buttonLines := max(lipgloss.Height(m.form.ButtonRowView()), 1)
+	bodyHeight := max(h-2-statusLines-1-buttonLines, 1)
+	m.body.SetWidth(w)
+	m.body.SetHeight(min(len(bodyLines), bodyHeight))
+	m.body.SetContentLines(bodyLines)
+	m.keepFocusedFieldVisible()
+	if m.discoveryPicker != nil {
+		picker := m.discoveryPicker.SetSize(w, h)
+		m.discoveryPicker = &picker
+	}
+	return m
+}
+
+// InspectorView renders the calendar/add-account form without another dialog
+// border so the manager's grouped hierarchy remains mounted beside it.
+func (m CalendarDialogModel) InspectorView(w, h int) string {
+	if m.discoveryPicker != nil {
+		return padLines(strings.Split(m.discoveryPicker.View(), "\n"), w, h)
+	}
+	parts := []string{lipgloss.NewStyle().Bold(true).Render(truncateTo(m.dialog.title, w)), m.body.View()}
+	if m.testStatus != "" {
+		parts = append(parts, truncateTo(m.testStatus, w))
+	}
+	parts = append(parts, m.actionsSeparator(w), m.form.ButtonRowView())
+	return padLines(strings.Split(strings.Join(parts, "\n"), "\n"), w, h)
+}
+
 func (m CalendarDialogModel) bodyOverflows() bool {
 	return m.body.TotalLineCount() > m.body.VisibleLineCount()
 }
