@@ -31,123 +31,14 @@ func newFlatManager() CalendarManagerModel {
 	return NewCalendarManagerModel(flatManagerCalendars(), nil, help.New()).SetSize(120, 40)
 }
 
-// flatManagerRows returns the pre-rendered row labels, ANSI-stripped and
-// trimmed, in canonical top-to-bottom order. Inspecting the model's own
-// row slice (not the bordered View) keeps assertions independent of the
-// surrounding chrome and matches how the legacy dialog tests read
-// m.shell.rows.
-func flatManagerRows(m CalendarManagerModel) []string {
-	out := make([]string, len(m.rows))
-	for i, r := range m.rows {
-		out[i] = strings.TrimSpace(stripANSI(r))
+func managerCalendarLine(t *testing.T, m CalendarManagerModel, id int64) string {
+	t.Helper()
+	row := calendarListRowForCalendarID(t, m.list, id)
+	start, end := m.list.viewportBounds()
+	if row < start || row >= end {
+		t.Fatalf("calendar %d row %d outside viewport [%d,%d)", id, row, start, end)
 	}
-	return out
-}
-
-func flatRowForID(m CalendarManagerModel, id int64) string {
-	for i, cid := range m.order {
-		if cid == id {
-			return flatManagerRows(m)[i]
-		}
-	}
-	return ""
-}
-
-// TestCalendarManagerRootFlatRowsOnePerCalendar locks in the flat contract:
-// exactly one physical row per calendar, each carrying a visibility checkbox
-// and independent color-dot glyph, with no structural heading or separator.
-func TestCalendarManagerRootFlatRowsOnePerCalendar(t *testing.T) {
-	cals := flatManagerCalendars()
-	m := newFlatManager()
-	rows := flatManagerRows(m)
-	if len(rows) != len(cals) {
-		t.Fatalf("row count = %d, want one per calendar (%d); rows=%q", len(rows), len(cals), rows)
-	}
-	for i, row := range rows {
-		trimmed := strings.TrimSpace(row)
-		if !strings.HasPrefix(trimmed, Glyphs["checkbox.on"]+" ●") {
-			t.Errorf("row %d is not a visible calendar row (checkbox/color marker): %q", i, row)
-		}
-	}
-}
-
-// TestCalendarManagerRootNoStructuralHeadings asserts the rendered View
-// contains no standalone Local/account heading lines and no blank separator
-// rows in the list body — the manager is one column, one row per calendar.
-func TestCalendarManagerRootNoStructuralHeadings(t *testing.T) {
-	m := newFlatManager()
-	body := stripANSI(m.View())
-	for _, heading := range []string{"Local", "Google", "Fastmail", "Remote"} {
-		for _, line := range strings.Split(body, "\n") {
-			if strings.TrimSpace(line) == heading {
-				t.Errorf("found standalone account heading row %q in rendered body", heading)
-			}
-		}
-	}
-	// Every non-empty body line inside the list region must begin with a dot.
-	for _, line := range strings.Split(body, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			continue
-		}
-		// Skip chrome lines (border, title, help). Calendar rows start with a dot.
-		if strings.ContainsAny(trimmed[:1], "●○") {
-			continue
-		}
-		// Allow the title line and help line; anything else that isn't chrome
-		// would be a stray heading. We only fail on lines that are exactly an
-		// account name (covered above), so this loop is belt-and-suspenders.
-	}
-}
-
-// TestCalendarManagerRootLocalAndAccountContextInline verifies each row carries
-// its owning context (dim "Local" or the account name) on the same line as the
-// calendar name, rather than as a group heading.
-func TestCalendarManagerRootLocalAndAccountContextInline(t *testing.T) {
-	m := newFlatManager()
-	localRow := flatRowForID(m, 1)
-	if !strings.Contains(localRow, "On device") || !strings.Contains(localRow, "Local") {
-		t.Fatalf("local row missing name/Local context: %q", localRow)
-	}
-	googleRow := flatRowForID(m, 2)
-	if !strings.Contains(googleRow, "Primary") || !strings.Contains(googleRow, "Google") {
-		t.Fatalf("account row missing name/account context: %q", googleRow)
-	}
-	fastmailRow := flatRowForID(m, 4)
-	if !strings.Contains(fastmailRow, "Work") || !strings.Contains(fastmailRow, "Fastmail") {
-		t.Fatalf("account row missing name/account context: %q", fastmailRow)
-	}
-}
-
-// TestCalendarManagerRootStatusMarkers verifies the compact applicable-state
-// tags render: default, read-only (RemoteAccess read), sync error, remote
-// missing, and hidden (hollow dot).
-func TestCalendarManagerRootStatusMarkers(t *testing.T) {
-	cals := map[int64]CalendarInfo{
-		1: {Name: "Default", Color: "#fff", IsDefault: true},
-		2: {Name: "ReadOnly", Color: "#fff", RemoteAccess: "read"},
-		3: {Name: "Broken", Color: "#fff", Synced: true, LastSyncError: "boom"},
-		4: {Name: "Gone", Color: "#fff", Synced: true, RemoteMissing: true},
-	}
-	m := NewCalendarManagerModel(cals, map[int64]bool{4: true}, help.New()).SetSize(120, 40)
-	rows := flatManagerRows(m)
-	joined := strings.Join(rows, "\n")
-	for _, want := range []string{"default", "read-only", "sync error", "missing"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("status marker %q missing from rows:\n%s", want, joined)
-		}
-	}
-	if hiddenRow := flatRowForID(m, 4); !strings.HasPrefix(hiddenRow, Glyphs["checkbox.off"]+" ●") {
-		t.Errorf("hidden calendar row should use unchecked visibility plus color marker: %q", hiddenRow)
-	}
-	if visibleRow := flatRowForID(m, 1); !strings.HasPrefix(visibleRow, Glyphs["checkbox.on"]+" ●") {
-		t.Errorf("visible calendar row should use checked visibility plus color marker: %q", visibleRow)
-	}
-	for _, id := range []int64{1, 2, 3, 4} {
-		if row := flatRowForID(m, id); !strings.Contains(row, "Edit ›") {
-			t.Errorf("calendar %d row missing Edit link: %q", id, row)
-		}
-	}
+	return strings.TrimSpace(stripANSI(strings.Split(m.list.View(), "\n")[row-start]))
 }
 
 // TestCalendarManagerRootEnterPushesCalendarDetail verifies Enter pushes the
@@ -196,7 +87,8 @@ func TestCalendarManagerRootSpaceTogglesVisibility(t *testing.T) {
 func TestCalendarManagerRootMouseRowOpensEdit(t *testing.T) {
 	m := newFlatManager()
 	listX, listY, _, _ := m.listRegion()
-	clicked, cmd := m.Update(tea.MouseClickMsg{X: listX + 8, Y: listY + 2, Button: tea.MouseLeft})
+	row := calendarListRowForCalendarID(t, m.list, 3) - m.list.offset
+	clicked, cmd := m.Update(tea.MouseClickMsg{X: listX + 8, Y: listY + row, Button: tea.MouseLeft})
 	if cmd != nil {
 		t.Fatalf("row edit click emitted command %T", cmd())
 	}
@@ -211,7 +103,8 @@ func TestCalendarManagerRootMouseRowOpensEdit(t *testing.T) {
 func TestCalendarManagerRootMouseCheckboxTogglesVisibility(t *testing.T) {
 	m := newFlatManager()
 	listX, listY, _, _ := m.listRegion()
-	toggled, cmd := m.Update(tea.MouseClickMsg{X: listX + 1, Y: listY + 1, Button: tea.MouseLeft})
+	row := calendarListRowForCalendarID(t, m.list, 2) - m.list.offset
+	toggled, cmd := m.Update(tea.MouseClickMsg{X: listX + 1, Y: listY + row, Button: tea.MouseLeft})
 	if cmd == nil {
 		t.Fatal("checkbox click emitted no visibility command")
 	}
@@ -306,8 +199,12 @@ func TestCalendarManagerRootReorderEdgesAreNoops(t *testing.T) {
 func TestCalendarManagerRootReorderDoesNotMutateOriginalOrder(t *testing.T) {
 	m := newFlatManager().selectCalendar(2)
 	_, _ = m.Update(tea.KeyPressMsg{Code: 'J', Text: "J"})
-	if want := []int64{1, 2, 3, 4}; !slices.Equal(m.order, want) {
-		t.Errorf("original order mutated by reorder: got %v, want %v", m.order, want)
+	got := make([]int64, len(m.list.items))
+	for i, item := range m.list.items {
+		got[i] = item.ID
+	}
+	if want := []int64{1, 2, 3, 4}; !slices.Equal(got, want) {
+		t.Errorf("original order mutated by reorder: got %v, want %v", got, want)
 	}
 }
 
@@ -324,13 +221,11 @@ func TestCalendarManagerRootSelectionRestoredByID(t *testing.T) {
 	m := NewCalendarManagerModel(cals, nil, help.New()).SetSize(60, 16)
 	// Select calendar 20 and bring it into view.
 	m = m.selectCalendar(20)
-	m = m.ensureVisible()
 	selID, ok := m.selectedID()
 	if !ok || selID != 20 {
 		t.Fatalf("setup selection = %d ok=%v, want 20", selID, ok)
 	}
-	topBefore, _ := m.visibleRange()
-	topIDBefore := m.order[topBefore]
+	topBefore := m.list.offset
 
 	// Refresh data: same calendars, fresh maps, plus one appended calendar.
 	refreshed := map[int64]CalendarInfo{}
@@ -344,10 +239,8 @@ func TestCalendarManagerRootSelectionRestoredByID(t *testing.T) {
 	if !ok || selID != 20 {
 		t.Fatalf("selection after refresh = %d ok=%v, want 20", selID, ok)
 	}
-	topAfter, _ := m.visibleRange()
-	topIDAfter := m.order[topAfter]
-	if topIDAfter != topIDBefore {
-		t.Fatalf("scroll anchor changed: top-visible was %d, now %d", topIDBefore, topIDAfter)
+	if m.list.offset != topBefore {
+		t.Fatalf("scroll anchor changed: offset was %d, now %d", topBefore, m.list.offset)
 	}
 }
 
@@ -363,8 +256,8 @@ func TestCalendarManagerRootSelectionFallsBackWhenIDGone(t *testing.T) {
 	if !ok {
 		t.Fatal("selection lost entirely after refresh")
 	}
-	if idx := slices.Index(m.order, id); idx < 0 {
-		t.Fatalf("fallback selection %d not in order %v", id, m.order)
+	if _, exists := m.calendars[id]; !exists {
+		t.Fatalf("fallback selection %d not in current calendars", id)
 	}
 }
 
@@ -407,17 +300,22 @@ func TestCalendarManagerRootNavigationMovesSelection(t *testing.T) {
 		t.Fatalf("initial selection = %d, want 1", id)
 	}
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	identity, ok := m.list.currentIdentity()
+	if !ok || identity.kind != accountHeaderRow || identity.id != 7 {
+		t.Fatalf("after down = %+v, want Google account heading", identity)
+	}
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	if id, _ := m.selectedID(); id != 2 {
-		t.Fatalf("after down = %d, want 2", id)
+		t.Fatalf("after second down = %d, want 2", id)
+	}
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	identity, ok = m.list.currentIdentity()
+	if !ok || identity.kind != accountHeaderRow || identity.id != 7 {
+		t.Fatalf("after up = %+v, want Google account heading", identity)
 	}
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	if id, _ := m.selectedID(); id != 1 {
-		t.Fatalf("after up = %d, want 1", id)
-	}
-	// Clamp at top.
-	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
-	if id, _ := m.selectedID(); id != 1 {
-		t.Fatalf("up at top moved selection to %d, want 1", id)
+		t.Fatalf("after second up = %d, want 1", id)
 	}
 }
 
@@ -483,7 +381,7 @@ func TestCalendarManagerRootSpaceTogglesBothDirections(t *testing.T) {
 	if !m1.hidden[2] {
 		t.Error("local hidden state not flipped to true")
 	}
-	if row := flatRowForID(m1, 2); !strings.HasPrefix(row, Glyphs["checkbox.off"]+" ●") {
+	if row := managerCalendarLine(t, m1, 2); !strings.HasPrefix(row, Glyphs["checkbox.off"]+" ●") {
 		t.Errorf("row did not flip to unchecked visibility: %q", row)
 	}
 	// Hidden -> visible.
@@ -498,7 +396,7 @@ func TestCalendarManagerRootSpaceTogglesBothDirections(t *testing.T) {
 	if m2.hidden[2] {
 		t.Error("local hidden state not flipped back to false")
 	}
-	if row := flatRowForID(m2, 2); !strings.HasPrefix(row, Glyphs["checkbox.on"]+" ●") {
+	if row := managerCalendarLine(t, m2, 2); !strings.HasPrefix(row, Glyphs["checkbox.on"]+" ●") {
 		t.Errorf("row did not flip back to checked visibility: %q", row)
 	}
 }
@@ -518,11 +416,11 @@ func TestCalendarManagerRootSetDataClampsWhenSelectedTailRemoved(t *testing.T) {
 	if !ok {
 		t.Fatal("selectedID out of range after removing selected tail")
 	}
-	if m.cursor < 0 || m.cursor >= len(m.order) {
-		t.Fatalf("cursor %d out of range [0,%d) after refresh", m.cursor, len(m.order))
+	if m.list.cursor < 0 || m.list.cursor >= len(m.list.rows) {
+		t.Fatalf("cursor %d out of range [0,%d) after refresh", m.list.cursor, len(m.list.rows))
 	}
-	if idx := slices.Index(m.order, id); idx < 0 {
-		t.Fatalf("fallback selection %d not in order %v", id, m.order)
+	if _, exists := m.calendars[id]; !exists {
+		t.Fatalf("fallback selection %d not in current calendars", id)
 	}
 }
 
@@ -557,7 +455,7 @@ func TestCalendarManagerRootOverflowKeepsLastSelectedRowVisible(t *testing.T) {
 	// SetSize(60,16) -> narrow box, bodyH = 7, so 12 calendars overflow and
 	// reserve the last visible line for the scroll indicator.
 	m := NewCalendarManagerModel(cals, nil, help.New()).SetSize(60, 16)
-	m = m.selectCalendar(12).ensureVisible()
+	m = m.selectCalendar(12)
 	if id, _ := m.selectedID(); id != 12 {
 		t.Fatalf("setup: selected %d, want 12", id)
 	}
@@ -569,17 +467,15 @@ func TestCalendarManagerRootOverflowKeepsLastSelectedRowVisible(t *testing.T) {
 		t.Errorf("selected last row Cal12 missing from view (overwritten by indicator?)\n%s", view)
 	}
 
-	// ... and it must remain clickable: its screen row is not the indicator slot.
-	listX, listY, _, lh := m.listRegion()
-	clickable := false
-	for row := 0; row < lh; row++ {
-		if idx, ok := m.rowAtPosition(listX+2, listY+row); ok && m.order[idx] == 12 {
-			clickable = true
-			break
-		}
+	// ... and it must remain clickable in the grouped list viewport.
+	listX, listY, _, listH := m.listRegion()
+	row := calendarListRowForCalendarID(t, m.list, 12) - m.list.offset
+	if row < 0 || row >= listH {
+		t.Fatalf("selected last row viewport position = %d, height %d", row, listH)
 	}
-	if !clickable {
-		t.Error("selected last row Cal12 is not clickable (falls on the indicator slot)")
+	opened, _ := m.Update(tea.MouseClickMsg{X: listX + 8, Y: listY + row, Button: tea.MouseLeft})
+	if opened.calendarForm == nil || opened.calendarForm.Draft().ID != 12 {
+		t.Error("selected last row Cal12 is not mouse-clickable")
 	}
 }
 
@@ -628,10 +524,10 @@ func calendarDetailCheckboxClick(m CalendarManagerModel, cbIdx int) (tea.MouseCl
 	if m.calendarForm == nil {
 		return tea.MouseClickMsg{}, false
 	}
-	_ = m.calendarForm.View() // populate defaultMouseTracker zones
-	bw, bh := m.calendarForm.BoxSize()
-	ox := (m.calendarForm.dialog.width - bw) / 2
-	oy := (m.calendarForm.dialog.height - bh) / 2
+	_ = m.View() // populate manager-shell mouse zones
+	bw, bh := m.BoxSize()
+	ox := (m.width - bw) / 2
+	oy := (m.height - bh) / 2
 	target := fieldTarget(cbIdx)
 	for _, z := range defaultMouseTracker.zones {
 		if z.name != target {
@@ -653,10 +549,11 @@ func TestCalendarManagerDetailBackRestoresRootSelection(t *testing.T) {
 	if pushed.Screen() != CalendarManagerScreenCalendar {
 		t.Fatalf("screen = %v, want Calendar", pushed.Screen())
 	}
-	popped, cmd := pushed.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
-	if cmd != nil {
-		t.Fatalf("Esc should pop internally, got command %T", cmd())
+	closing, cmd := pushed.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if cmd == nil {
+		t.Fatal("Esc emitted no close command")
 	}
+	popped, _ := closing.Update(cmd())
 	if popped.Screen() != CalendarManagerScreenList {
 		t.Fatalf("screen = %v, want List", popped.Screen())
 	}
@@ -679,18 +576,22 @@ func TestCalendarManagerDetailBackRestoresRootScroll(t *testing.T) {
 	m := NewCalendarManagerModel(cals, nil, help.New()).SetSize(50, 16)
 	// Move the cursor well past the first viewport so the list scrolls.
 	for range 18 {
-		m = m.moveCursor(1)
+		m.list = m.list.moveCursor(1)
 	}
-	start, _ := m.visibleRange()
+	start := m.list.offset
 	pushed, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if pushed.Screen() != CalendarManagerScreenCalendar {
 		t.Fatalf("screen = %v, want Calendar", pushed.Screen())
 	}
-	popped, _ := pushed.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	closing, cmd := pushed.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if cmd == nil {
+		t.Fatal("Esc emitted no close command")
+	}
+	popped, _ := closing.Update(cmd())
 	if popped.Screen() != CalendarManagerScreenList {
 		t.Fatalf("screen = %v, want List", popped.Screen())
 	}
-	gotStart, _ := popped.visibleRange()
+	gotStart := popped.list.offset
 	if gotStart != start {
 		t.Fatalf("scroll top = %d after Back, want %d", gotStart, start)
 	}
@@ -785,7 +686,11 @@ func TestCalendarManagerDetailAccountBackPreservesDraft(t *testing.T) {
 	}
 	// Back returns to the originating calendar detail with its unsaved draft
 	// intact — the form is never reconstructed.
-	popped, _ := opened.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	closing, cmd := opened.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if cmd == nil {
+		t.Fatal("Esc emitted no account close command")
+	}
+	popped, _ := closing.Update(cmd())
 	if popped.Screen() != CalendarManagerScreenCalendar {
 		t.Fatalf("screen = %v, want Calendar after Back", popped.Screen())
 	}
@@ -819,6 +724,7 @@ func TestCalendarManagerDetailVisibilityToggleEmitsDesiredState(t *testing.T) {
 	if msg.ID != 1 || !msg.Hidden {
 		t.Fatalf("toggle msg = %+v, want {ID:1 Hidden:true}", msg)
 	}
+	hidden, _ = hidden.Update(msg)
 	if !hidden.hidden[1] {
 		t.Error("root hidden map not mirrored to true")
 	}
@@ -828,6 +734,7 @@ func TestCalendarManagerDetailVisibilityToggleEmitsDesiredState(t *testing.T) {
 	if !ok || msg.ID != 1 || msg.Hidden {
 		t.Fatalf("toggle back msg = %+v, want {ID:1 Hidden:false}", msg)
 	}
+	visible, _ = visible.Update(msg)
 	if visible.hidden[1] {
 		t.Error("root hidden map not mirrored back to false")
 	}
@@ -938,6 +845,7 @@ func TestCalendarManagerDetailVisibilityMouseToggleEmitsDesiredState(t *testing.
 	if msg.ID != 1 || !msg.Hidden {
 		t.Fatalf("mouse toggle msg = %+v, want {ID:1 Hidden:true}", msg)
 	}
+	hidden, _ = hidden.Update(msg)
 	if !hidden.hidden[1] {
 		t.Error("root hidden map not mirrored to true after mouse toggle")
 	}
@@ -957,23 +865,183 @@ func TestCalendarManagerAccountConnectionLeftNeverOpensRoot(t *testing.T) {
 	}
 }
 
-func TestCalendarManagerDirectAccountCloseClosesManager(t *testing.T) {
-	for _, key := range []tea.KeyPressMsg{
+func TestCalendarManagerDirectAccountCloseReturnsToList(t *testing.T) {
+	for _, press := range []tea.KeyPressMsg{
 		{Code: tea.KeyEscape},
 		{Code: tea.KeyLeft},
 	} {
 		m := newFlatManager().OpenAccount(AccountSettingsParams{
 			AccountID: 7, DisplayName: "Personal Google", AuthType: "oauth2",
 		})
-		closing, cmd := m.Update(key)
-		if closing.Screen() != CalendarManagerScreenAccount || closing.accountSettings == nil {
-			t.Fatalf("close key %v exposed manager root before host close", key.Code)
+		closing, cmd := m.Update(press)
+		if press.Code == tea.KeyLeft {
+			if cmd != nil || closing.Screen() != CalendarManagerScreenList {
+				t.Fatalf("Left did not return directly to list: screen=%v cmd=%v", closing.Screen(), cmd)
+			}
+			continue
 		}
 		if cmd == nil {
-			t.Fatalf("close key %v emitted no command", key.Code)
+			t.Fatal("Esc emitted no account close command")
 		}
-		if _, ok := cmd().(CalendarManagerClosedMsg); !ok {
-			t.Fatalf("close key %v emitted %T, want CalendarManagerClosedMsg", key.Code, cmd())
+		closed, _ := closing.Update(cmd())
+		if closed.Screen() != CalendarManagerScreenList || closed.accountSettings != nil {
+			t.Fatalf("Esc did not restore list: screen=%v", closed.Screen())
+		}
+	}
+}
+
+type managerCommandProbeField struct {
+	executed *bool
+}
+
+func (f *managerCommandProbeField) Update(tea.Msg) tea.Cmd {
+	return func() tea.Msg {
+		*f.executed = true
+		return nil
+	}
+}
+func (*managerCommandProbeField) View() string      { return "" }
+func (*managerCommandProbeField) Focus() tea.Cmd    { return nil }
+func (*managerCommandProbeField) Blur()             {}
+func (*managerCommandProbeField) SetWidth(int)      {}
+func (*managerCommandProbeField) IsFocusable() bool { return true }
+
+func TestCalendarManagerDoesNotExecuteChildCommandsSynchronously(t *testing.T) {
+	executed := false
+	m := newFlatManager().OpenCalendar(CalendarDialogParams{ID: 1, Name: "On device"})
+	m.calendarForm.form.items[0].Field = &managerCommandProbeField{executed: &executed}
+	m.calendarForm.form.focused = 0
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	if executed {
+		t.Fatal("manager executed child command inside Update")
+	}
+	if cmd == nil {
+		t.Fatal("manager dropped child command")
+	}
+	if updated.screen != CalendarManagerScreenCalendar {
+		t.Fatalf("screen = %v, want calendar inspector", updated.screen)
+	}
+	_ = cmd()
+	if !executed {
+		t.Fatal("returned child command did not execute when Bubble Tea ran it")
+	}
+}
+
+func TestCalendarManagerRootGroupsAccountsAndShowsInspector(t *testing.T) {
+	m := newFlatManager().selectCalendar(2)
+	view := stripANSI(m.View())
+	for _, want := range []string{
+		"▾ Local", "▾ Google", "▾ Fastmail",
+		Glyphs["checkbox.on"] + " ● Primary",
+		"Location", "Google", "Enter  Edit Calendar",
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("manager view missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "Edit ›") {
+		t.Fatalf("calendar rows must not repeat Edit links beside the inspector:\n%s", view)
+	}
+
+	m.list.selectIdentity(calendarRowIdentity{kind: accountHeaderRow, id: 7})
+	accountView := stripANSI(m.View())
+	for _, want := range []string{"Google", "Calendars", "2", "Enter  Account Settings"} {
+		if !strings.Contains(accountView, want) {
+			t.Errorf("account inspector missing %q:\n%s", want, accountView)
+		}
+	}
+}
+
+func TestCalendarManagerSelectsFirstCalendarWhenInitialDataLoads(t *testing.T) {
+	m := NewCalendarManagerModel(nil, nil, help.New()).SetSize(120, 40)
+	m = m.SetData(flatManagerCalendars(), nil)
+	if id, ok := m.selectedID(); !ok || id != 1 {
+		t.Fatalf("initial loaded selection = %d ok=%v, want first calendar 1", id, ok)
+	}
+	if view := stripANSI(m.View()); !strings.Contains(view, "Enter  Edit Calendar") {
+		t.Fatalf("initial calendar inspector did not render:\n%s", view)
+	}
+}
+
+func TestCalendarManagerWideCalendarEditorKeepsHierarchyMounted(t *testing.T) {
+	m := newFlatManager().selectCalendar(1)
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	view := stripANSI(m.View())
+	if !strings.Contains(view, "Local") || !strings.Contains(view, "Primary") {
+		t.Fatalf("wide calendar editor did not keep hierarchy mounted:\n%s", view)
+	}
+	if !strings.Contains(view, "Name") || !strings.Contains(view, "Save") {
+		t.Fatalf("wide calendar editor missing inline form:\n%s", view)
+	}
+}
+
+func TestCalendarManagerWideAccountInspectorKeepsHierarchyMounted(t *testing.T) {
+	m := newFlatManager().selectCalendar(2).OpenAccount(AccountSettingsParams{
+		AccountID: 7, DisplayName: "Google", Provider: "google", CalendarCount: 2,
+	})
+	view := stripANSI(m.View())
+	if !strings.Contains(view, "Local") || !strings.Contains(view, "Primary") {
+		t.Fatalf("wide account inspector did not keep hierarchy mounted:\n%s", view)
+	}
+	if !strings.Contains(view, "Manage Calendars") || !strings.Contains(view, "Rename Account") {
+		t.Fatalf("wide account inspector missing inline actions:\n%s", view)
+	}
+}
+
+func TestCalendarManagerWideImportKeepsHierarchyMounted(t *testing.T) {
+	m := newFlatManager().OpenImport(41)
+	view := stripANSI(m.View())
+	if !strings.Contains(view, "Local") || !strings.Contains(view, "Primary") {
+		t.Fatalf("wide import did not keep hierarchy mounted:\n%s", view)
+	}
+	if !strings.Contains(view, "Import iCal file") || !strings.Contains(view, "Path") {
+		t.Fatalf("wide import missing inline form:\n%s", view)
+	}
+}
+
+func TestCalendarManagerShallowWideFallbackSizesWholeListPane(t *testing.T) {
+	m := newFlatManager().SetSize(100, 10)
+	boxW, _ := m.BoxSize()
+	wantW := max(boxW-5, 10)
+	listW, _ := m.rootPaneSize()
+	_, _, hitW, _ := m.listRegion()
+	if listW != wantW || hitW != wantW {
+		t.Fatalf("one-pane list widths: size=%d hit=%d want=%d", listW, hitW, wantW)
+	}
+	if got := m.list.width; got != wantW {
+		t.Fatalf("sized list width = %d, want %d", got, wantW)
+	}
+}
+
+func TestCalendarManagerNarrowInspectorUsesOnePaneAndBackRestoresList(t *testing.T) {
+	m := newFlatManager().SetSize(narrowThreshold-1, 30).selectCalendar(1)
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	view := stripANSI(m.View())
+	if strings.Contains(view, "▾ Local") || !strings.Contains(view, "Name") {
+		t.Fatalf("narrow editor should show only inspector pane:\n%s", view)
+	}
+	m, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if cmd == nil {
+		t.Fatal("Esc did not emit inspector close")
+	}
+	m, _ = m.Update(cmd())
+	if m.Screen() != CalendarManagerScreenList || !strings.Contains(stripANSI(m.View()), "Local") {
+		t.Fatalf("Back did not restore narrow hierarchy: screen=%v\n%s", m.Screen(), stripANSI(m.View()))
+	}
+}
+
+func TestCalendarManagerBoxSizeStaysOnManagerShell(t *testing.T) {
+	root := newFlatManager()
+	wantW, wantH := root.BoxSize()
+	states := []CalendarManagerModel{
+		root.OpenCalendar(calendarDialogParamsFor(1, root.calendars[1], false)),
+		root.OpenAccount(AccountSettingsParams{AccountID: 7, DisplayName: "Google"}),
+		root.OpenImport(9),
+	}
+	for _, state := range states {
+		if gotW, gotH := state.BoxSize(); gotW != wantW || gotH != wantH {
+			t.Fatalf("child changed manager shell size: got %dx%d want %dx%d", gotW, gotH, wantW, wantH)
 		}
 	}
 }

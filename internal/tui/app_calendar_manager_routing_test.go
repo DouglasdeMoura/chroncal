@@ -45,8 +45,8 @@ func TestManageCalendarsRequestOpensManagerRoot(t *testing.T) {
 	if m.calendarManager.Screen() != CalendarManagerScreenList {
 		t.Fatalf("manager screen = %v, want root list", m.calendarManager.Screen())
 	}
-	if got := m.calendarManager.order; len(got) != 2 {
-		t.Fatalf("root order = %v, want 2 calendars", got)
+	if got := m.calendarManager.list.items; len(got) != 2 {
+		t.Fatalf("root items = %v, want 2 calendars", got)
 	}
 }
 
@@ -209,7 +209,7 @@ func TestManagerMutationRefreshesDataWithoutClosing(t *testing.T) {
 		2: {Name: "Primary Renamed", AccountID: 7, AccountName: "Personal Google"},
 	}})
 	m = updated.(Model)
-	if got := flatRowForID(m.calendarManager, 2); !strings.Contains(got, "Primary Renamed") {
+	if got := managerCalendarLine(t, m.calendarManager, 2); !strings.Contains(got, "Primary Renamed") {
 		t.Fatalf("root not refreshed after reload: row=%q", got)
 	}
 }
@@ -251,23 +251,21 @@ func TestCalendarManagerClosedMsgTearsDownOverlay(t *testing.T) {
 	}
 }
 
-// TestPaletteRetainsGlobalCalendarCommandsNoPerAccount guards the palette
-// still exposes the global calendar/account commands and no per-account ones.
-func TestPaletteRetainsGlobalCalendarCommandsNoPerAccount(t *testing.T) {
+// TestPaletteRetainsOnlyUnifiedCalendarManagement guards the single
+// Calendars entry point and rejects obsolete direct account/local actions.
+func TestPaletteRetainsOnlyUnifiedCalendarManagement(t *testing.T) {
 	cmds := buildPaletteCommands(managerRoutingModel())
-	ids := make(map[string]bool, len(cmds))
-	for _, c := range cmds {
-		ids[c.ID] = true
-	}
-	for _, want := range []string{"calendar.new", "account.add", "calendar.manage"} {
-		if !ids[want] {
-			t.Errorf("palette missing global command %q", want)
+	count := 0
+	for _, command := range cmds {
+		if command.ID == "calendar.manage" {
+			count++
+		}
+		if command.ID == "calendar.new" || strings.HasPrefix(command.ID, "account.") {
+			t.Errorf("palette exposes obsolete calendar command %q", command.ID)
 		}
 	}
-	for _, c := range cmds {
-		if strings.HasPrefix(c.ID, "account.") && c.ID != "account.add" {
-			t.Errorf("palette exposes per-account command %q", c.ID)
-		}
+	if count != 1 {
+		t.Fatalf("calendar.manage count = %d, want 1", count)
 	}
 }
 
@@ -290,49 +288,37 @@ func keyPress(s string) tea.KeyPressMsg {
 	return tea.KeyPressMsg{Text: s}
 }
 
-func TestDirectAccountCloseDoesNotOpenCalendarList(t *testing.T) {
+func TestDirectAccountCloseReturnsToCalendarList(t *testing.T) {
 	m := managerRoutingModel()
 	updated, _ := m.Update(CalendarManagerRequestedMsg{Target: CalendarManagerTargetAccount, AccountID: 7})
 	m = updated.(Model)
 
 	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = updated.(Model)
-	if m.calendarManager.Screen() != CalendarManagerScreenAccount {
-		t.Fatalf("direct account close exposed manager root before close delivery: %v", m.calendarManager.Screen())
-	}
 	if cmd == nil {
-		t.Fatal("direct account close emitted no manager-close command")
-	}
-	if _, ok := cmd().(CalendarManagerClosedMsg); !ok {
-		t.Fatalf("direct account close emitted %T, want CalendarManagerClosedMsg", cmd())
+		t.Fatal("direct account close emitted no close command")
 	}
 	updated, _ = m.Update(cmd())
 	m = updated.(Model)
-	if m.calendarManagerOpen {
-		t.Fatal("closing direct account settings exposed the calendar list")
+	if !m.calendarManagerOpen || m.calendarManager.Screen() != CalendarManagerScreenList {
+		t.Fatalf("account close did not restore manager list: open=%v screen=%v", m.calendarManagerOpen, m.calendarManager.Screen())
 	}
 }
 
-func TestAddAccountCancelDoesNotOpenCalendarList(t *testing.T) {
+func TestAddAccountCancelReturnsToCalendarList(t *testing.T) {
 	m := managerRoutingModel()
 	updated, _ := m.Update(AccountAddRequestedMsg{})
 	m = updated.(Model)
 
 	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = updated.(Model)
-	if m.calendarManager.Screen() != CalendarManagerScreenCalendar {
-		t.Fatalf("account cancel exposed manager root before close delivery: %v", m.calendarManager.Screen())
-	}
 	if cmd == nil {
-		t.Fatal("account connection cancel emitted no manager-close command")
-	}
-	if _, ok := cmd().(CalendarManagerClosedMsg); !ok {
-		t.Fatalf("account connection cancel emitted %T, want CalendarManagerClosedMsg", cmd())
+		t.Fatal("account connection cancel emitted no close command")
 	}
 	updated, _ = m.Update(cmd())
 	m = updated.(Model)
-	if m.calendarManagerOpen {
-		t.Fatal("canceling Add Account exposed the calendar list")
+	if !m.calendarManagerOpen || m.calendarManager.Screen() != CalendarManagerScreenList {
+		t.Fatalf("account cancel did not restore manager list: open=%v screen=%v", m.calendarManagerOpen, m.calendarManager.Screen())
 	}
 }
 
@@ -341,14 +327,14 @@ func TestCalendarManagerVisibilityUpdatesSidebarState(t *testing.T) {
 	m.sidebar = m.sidebar.SetList(NewCalendarListModel([]CalendarListItem{
 		{ID: 1, Name: "On device"},
 		{ID: 2, Name: "Primary", AccountID: 7, AccountName: "Personal Google"},
-	}, nil))
+	}, nil).SetSize(40, 20))
 
 	updated, _ := m.Update(CalendarVisibilityToggledMsg{ID: 2, Hidden: true})
 	m = updated.(Model)
 	if !m.hiddenCalendars[2] || !m.sidebar.List().HiddenSet()[2] {
 		t.Fatalf("hidden state diverged: app=%v sidebar=%v", m.hiddenCalendars, m.sidebar.List().HiddenSet())
 	}
-	if view := stripANSI(m.sidebar.List().View()); !strings.Contains(view, "○ Primary") {
+	if view := stripANSI(m.sidebar.List().View()); !strings.Contains(view, Glyphs["checkbox.off"]+" ● Primary") {
 		t.Fatalf("sidebar did not render hidden calendar marker:\n%s", view)
 	}
 
@@ -357,7 +343,7 @@ func TestCalendarManagerVisibilityUpdatesSidebarState(t *testing.T) {
 	if m.hiddenCalendars[2] || m.sidebar.List().HiddenSet()[2] {
 		t.Fatalf("visible state diverged: app=%v sidebar=%v", m.hiddenCalendars, m.sidebar.List().HiddenSet())
 	}
-	if view := stripANSI(m.sidebar.List().View()); !strings.Contains(view, "● Primary") {
+	if view := stripANSI(m.sidebar.List().View()); !strings.Contains(view, Glyphs["checkbox.on"]+" ● Primary") {
 		t.Fatalf("sidebar did not render visible calendar marker:\n%s", view)
 	}
 }

@@ -234,6 +234,23 @@ func (m CalendarTransferDialogModel) SetSize(width, height int) CalendarTransfer
 	return m
 }
 
+// SetInspectorSize sizes the transfer form for the manager's detail pane.
+func (m CalendarTransferDialogModel) SetInspectorSize(width, _ int) CalendarTransferDialogModel {
+	m.form.SetWidth(max(width, 1))
+	return m
+}
+
+// InspectorView renders import/export without a second dialog border.
+func (m CalendarTransferDialogModel) InspectorView(w, h int) string {
+	w = max(w, 1)
+	parts := []string{lipgloss.NewStyle().Bold(true).Render(truncateTo(m.dialog.title, w)), "", m.form.BodyView()}
+	if m.errText != "" {
+		parts = append(parts, lipgloss.NewStyle().Foreground(m.theme.Error).Render(truncateTo(m.errText, w)))
+	}
+	parts = append(parts, m.form.ButtonRowView())
+	return padLines(strings.Split(strings.Join(parts, "\n"), "\n"), w, h)
+}
+
 func (m CalendarTransferDialogModel) BoxSize() (int, int) { return lipgloss.Size(m.View()) }
 
 func (m CalendarTransferDialogModel) Update(msg tea.Msg) (CalendarTransferDialogModel, tea.Cmd) {

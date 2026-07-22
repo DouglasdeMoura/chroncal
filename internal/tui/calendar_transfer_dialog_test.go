@@ -77,7 +77,7 @@ func TestCalendarTransferErrorPreservesPreviewAndDestination(t *testing.T) {
 	}
 }
 
-func TestCalendarManagerAddChoiceRoutesImportAndAccounts(t *testing.T) {
+func TestCalendarManagerAddChoiceRoutesImport(t *testing.T) {
 	m := managerRoutingModel()
 	m.calendarManager = NewCalendarManagerModel(m.calendars, m.hiddenCalendars, newThemedHelp(m.theme)).SetSize(120, 40)
 	m.calendarManagerOpen = true
@@ -86,6 +86,9 @@ func TestCalendarManagerAddChoiceRoutesImportAndAccounts(t *testing.T) {
 	m = updated.(Model)
 	if !m.choiceOpen || m.pendingScopeKind != pendingScopeCalendarManagerAdd {
 		t.Fatalf("add choices not open: choice=%v scope=%v", m.choiceOpen, m.pendingScopeKind)
+	}
+	if m.choiceDialog.choices != 3 {
+		t.Fatalf("add menu choices = %d, want local calendar, account, and iCal import", m.choiceDialog.choices)
 	}
 	updated, _ = m.Update(ChoiceDialogResultMsg{Choice: 2})
 	m = updated.(Model)

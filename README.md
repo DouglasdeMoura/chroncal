@@ -512,28 +512,29 @@ syncs run unattended.
    chroncal sync status
    ```
 
-To connect from the TUI, open the command palette (`/` or `Ctrl+K`) and
-choose **Add Account…**, then enter the server and authentication settings.
-Chroncal discovers, imports, and initially syncs every usable collection
-exposed by that sign-in without a second selection step. Unsupported
-collections are ignored; if discovery finds no usable calendars, Chroncal
-removes the newly created account. Browser authorization runs without leaving
-the app. **New Local Calendar** creates a local calendar; remote calendars belong to
-an account rather than carrying separate credentials.
+To connect from the TUI, press `C` (`Shift+C`) or choose **Calendars** in
+the command palette (`/` or `Ctrl+K`), then choose **+ Add** > **Connect
+Account**. Chroncal discovers, imports, and initially syncs every usable
+collection exposed by that sign-in without a second selection step.
+Unsupported collections are ignored; if discovery finds no usable calendars,
+Chroncal removes the newly created account. Browser authorization runs without
+leaving the app. The same **+ Add** menu creates local calendars and imports
+iCal files; remote calendars belong to an account rather than carrying
+separate credentials.
 
-Account maintenance has one entry point. Select an account heading in the
-sidebar and press `Enter`, or open a linked calendar and choose **Manage
-Account…**, to open **Account settings**. The panel shows the provider, server
-URL, login identity, calendar count, and sync warnings. From there you can
-manage calendars, rename the account, sign in again for OAuth accounts, or
-remove the account. **Manage Calendars…** opens a separate collection picker:
-calendars already in Chroncal start checked, and unchecking one removes its
-local copy after destructive confirmation. Removing every collection also
-removes the empty account and its stored credential. **Remove Account…**
-instead removes the remote links and stored sign-in while preserving
-downloaded calendars as local calendars. The **Edit calendar** dialog remains
-calendar-scoped: name, color, description, owner email, default status, and
-quiet account/sync context only.
+Account maintenance has one entry point. In **Calendars**, select a remote
+account heading and press `Enter`; selecting an account heading in the sidebar
+also opens that inspector. It shows the provider, server URL, login identity,
+calendar count, and sync warnings, with actions to sync now, add or remove
+calendars, rename the account, sign in again for OAuth accounts, or remove the
+account. **Manage Calendars…** replaces the inspector with the discovered
+collection list while keeping the calendar hierarchy mounted. Calendars
+already in Chroncal start checked, and unchecking one removes its local copy
+after destructive confirmation. Removing every collection also removes the
+empty account and its stored credential. **Remove Account…** instead removes
+the remote links and stored sign-in while preserving downloaded calendars as
+local calendars. Calendar metadata editing is likewise inline: name, color,
+description, owner email, default status, and quiet account/sync context.
 
 Google limitations:
 
@@ -695,16 +696,18 @@ reorder complete remote-account sections while keeping **Local** first. The
 same reorder keys move calendars only within their own account. Hidden state
 and scrolling operate on calendar rows rather than group headings. Read-only
 imported calendars remain browsable but reject event edits and deletes.
-**Manage Calendars…** opens a flat, calendar-first manager. Each row shows a
-visibility checkbox, independent calendar-color marker, name, owning location
-(`Local` or the account name), and **Edit** link. Space or the checkbox toggles
-the same visibility state shown in the sidebar; Enter, the row body, or **Edit**
-opens calendar details for metadata, export, default-calendar, and delete
-actions. Linked calendar details drill into account settings without losing
-unsaved calendar edits. **Add Calendar…** offers local calendar creation, account connection,
-one-time iCal import with preview and compatible-destination selection, and an
-account-only management list. Account connection signs in once and adds every
-usable remote calendar. Todo and journal management live in the CLI for now.
+**Calendars** opens an account-grouped manager with the calendar hierarchy on
+the left and an inspector on the right. Calendar rows keep visibility (a
+checkbox) separate from identity (the calendar-color dot); Space or the
+checkbox toggles the same visibility state shown in the sidebar. Account
+headings collapse with Left/Right and open account settings with Enter. Selecting
+a calendar shows its location and sync state in the inspector; Enter or a row
+body click switches that inspector to metadata, export, default-calendar, and
+delete controls while the hierarchy remains mounted. Linked calendar details drill into account settings without
+losing unsaved calendar edits. **+ Add** offers local calendar creation, account
+connection, and one-time iCal import with preview and compatible-destination
+selection. Account connection signs in once and adds every usable remote
+calendar. Todo and journal management live in the CLI for now.
 
 Sync health is visible at a glance: a calendar whose last sync failed shows
 a `⚠` next to it in the sidebar, and opening it explains why (and offers a

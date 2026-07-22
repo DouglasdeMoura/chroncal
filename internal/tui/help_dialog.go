@@ -180,8 +180,7 @@ func (m HelpDialogModel) sections() []helpSection {
 		{
 			title: "Calendars",
 			entries: []helpEntry{
-				{"l", "new calendar"},
-				{"C · shift+c", "manage calendars"},
+				{"C · shift+c", "calendars"},
 				{"s", "sync all"},
 				{"enter (sidebar)", "open calendar"},
 				{"space (sidebar)", "toggle visibility"},

@@ -161,6 +161,28 @@ func (m AccountCalendarPickerModel) SetSize(w, h int) AccountCalendarPickerModel
 	return m.refresh()
 }
 
+func (m AccountCalendarPickerModel) SetInspectorSize(w, h int) AccountCalendarPickerModel {
+	m.width, m.height = w, h
+	m.shell = m.shell.SetSize(w, h)
+	return m.refresh()
+}
+
+// InspectorView renders collection enrollment inside the persistent Calendars
+// manager instead of opening another outer dialog.
+func (m AccountCalendarPickerModel) InspectorView(w, h int) string {
+	w, h = max(w, 1), max(h, 1)
+	listH := max(h-4, 1)
+	rows := make([]string, 0, listH+4)
+	rows = append(rows,
+		lipgloss.NewStyle().Bold(true).Render(truncateTo(m.shell.title, w)),
+		lipgloss.NewStyle().Faint(true).Render(truncateTo(m.shell.titleContext, w)),
+		"",
+	)
+	rows = append(rows, strings.Split(m.shell.renderList(w, listH), "\n")...)
+	rows = append(rows, m.shell.renderActions(w))
+	return padLines(rows, w, h)
+}
+
 func (m AccountCalendarPickerModel) BoxSize() (int, int) { return lipgloss.Size(m.View()) }
 
 func (m AccountCalendarPickerModel) toggleCurrent() AccountCalendarPickerModel {

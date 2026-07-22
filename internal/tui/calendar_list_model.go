@@ -392,19 +392,27 @@ func (m CalendarListModel) HandleClick(x, y int) (CalendarListModel, tea.Cmd) {
 		return m, nil
 	}
 	if row.kind == accountHeaderRow {
-		// The disclosure control collapses the section and positions the
-		// cursor on the header row. The name-area Account actions request is
-		// side-effect free: it returns before the cursor assignment so
-		// emitting it never moves the cursor, collapses the section, or
-		// changes visibility.
+		// Both hit targets select the header. The disclosure control also
+		// toggles the section; clicking a remote account name opens its
+		// inspector without changing collapse or visibility state.
+		m.cursor = rowIndex
 		if x > 2 && row.accountID != 0 {
 			return m, m.accountActionsCmd(row)
 		}
-		m.cursor = rowIndex
 		return m.toggleCollapsed(), nil
 	}
 	m.cursor = rowIndex
-	return m.toggleCurrent()
+	indentCells := 0
+	if m.grouped {
+		indentCells = 1
+	}
+	if x < indentCells+lipgloss.Width(Glyphs["checkbox.on"]) {
+		return m.toggleCurrent()
+	}
+	id := m.items[row.itemIndex].ID
+	return m, func() tea.Msg {
+		return CalendarManagerRequestedMsg{Target: CalendarManagerTargetCalendar, CalendarID: id}
+	}
 }
 
 func (m CalendarListModel) Update(msg tea.Msg) (CalendarListModel, tea.Cmd) {
@@ -510,9 +518,9 @@ func (m CalendarListModel) renderAccountHeader(row calendarListRow, selected boo
 
 func (m CalendarListModel) renderCalendarRow(row calendarListRow, selected bool) string {
 	item := m.items[row.itemIndex]
-	glyph := "●"
+	checkbox := Glyphs["checkbox.on"]
 	if m.hidden[item.ID] {
-		glyph = "○"
+		checkbox = Glyphs["checkbox.off"]
 	}
 	indent := ""
 	if m.grouped {
@@ -528,6 +536,7 @@ func (m CalendarListModel) renderCalendarRow(row calendarListRow, selected bool)
 	}
 
 	rowStyle := lipgloss.NewStyle()
+	checkboxStyle := lipgloss.NewStyle()
 	swatchStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(item.Color))
 	nameStyle := lipgloss.NewStyle()
 	markerStyle := lipgloss.NewStyle().Foreground(m.errColor)
@@ -536,29 +545,27 @@ func (m CalendarListModel) renderCalendarRow(row calendarListRow, selected bool)
 	}
 	if selected {
 		rowStyle = rowStyle.Background(m.accentColor).Foreground(m.selectedTextColor)
+		checkboxStyle = checkboxStyle.Background(m.accentColor).Foreground(m.selectedTextColor)
 		swatchStyle = swatchStyle.Background(m.accentColor)
-		nameStyle = nameStyle.
-			Background(m.accentColor).
-			Foreground(m.selectedTextColor).
-			Bold(true)
+		nameStyle = nameStyle.Background(m.accentColor).Foreground(m.selectedTextColor).Bold(true)
 		markerStyle = markerStyle.Background(m.accentColor)
 	}
 
-	prefixCells := lipgloss.Width(indent) + 2
+	prefixCells := lipgloss.Width(indent) + lipgloss.Width(checkbox) + 3
 	nameText := item.Name
-	if avail := m.width - prefixCells - 2 - markerCells; m.width > prefixCells+2 && avail > 0 {
+	if avail := m.width - prefixCells - 1 - markerCells; m.width > prefixCells+1 && avail > 0 {
 		nameText = truncateTo(nameText, avail)
 	}
-	out := rowStyle.Render(indent) +
-		swatchStyle.Render(glyph) +
-		nameStyle.Render(" "+nameText+" ")
+	out := rowStyle.Render(indent) + checkboxStyle.Render(checkbox+" ") +
+		swatchStyle.Render("●") + nameStyle.Render(" "+nameText+" ")
 	if marker != "" {
 		out += rowStyle.Render(" ") + markerStyle.Render(marker)
 	}
-	if selected && m.width > 0 {
+	if m.width > 0 {
 		if remaining := m.width - lipgloss.Width(out); remaining > 0 {
 			out += rowStyle.Render(strings.Repeat(" ", remaining))
 		}
+		out = truncateTo(out, m.width)
 	}
 	return out
 }
