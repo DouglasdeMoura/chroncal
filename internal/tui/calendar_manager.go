@@ -420,13 +420,22 @@ func (m CalendarManagerModel) managerBodySize() (int, int) {
 	return innerW, max(innerH-4, 3)
 }
 
+// sourceColumnWidth is the source-list column width in wide two-pane layout:
+// roughly one third of the manager interior, floored at 24 so grouped rows and
+// the visibility checkbox always fit. Sizing, rendering, and mouse hit-testing
+// all read this single value so the three stay in lockstep.
+func (m CalendarManagerModel) sourceColumnWidth() int {
+	innerW, _ := m.managerBodySize()
+	return max(innerW/3, 24)
+}
+
 func (m CalendarManagerModel) onePaneLayout() bool {
 	innerW, _ := m.managerBodySize()
 	if innerW == 0 || m.width < narrowThreshold {
 		return true
 	}
-	listW := max(innerW*2/5, 24)
-	return innerW-listW < 24
+	listW := m.sourceColumnWidth()
+	return innerW-listW-3 < 24
 }
 
 func (m CalendarManagerModel) rootPaneSize() (int, int) {
@@ -434,7 +443,7 @@ func (m CalendarManagerModel) rootPaneSize() (int, int) {
 	if m.onePaneLayout() {
 		return innerW, bodyH
 	}
-	return max(innerW*2/5, 24), bodyH
+	return m.sourceColumnWidth(), bodyH
 }
 
 func (m CalendarManagerModel) inspectorPaneSize() (int, int) {
@@ -442,8 +451,8 @@ func (m CalendarManagerModel) inspectorPaneSize() (int, int) {
 	if m.onePaneLayout() {
 		return innerW, bodyH
 	}
-	listW, _ := m.rootPaneSize()
-	return max(innerW-listW-3, 1), bodyH
+	listW := m.sourceColumnWidth()
+	return max(innerW-listW-3, 24), bodyH
 }
 
 func (m CalendarManagerModel) sizeActiveInspector() CalendarManagerModel {
@@ -564,6 +573,12 @@ func (m CalendarManagerModel) syncListProjection() CalendarManagerModel {
 func (m CalendarManagerModel) handleMouse(msg tea.MouseClickMsg) (CalendarManagerModel, tea.Cmd) {
 	if msg.Button != tea.MouseLeft {
 		return m, nil
+	}
+	// Selection inspector bottom action (wide root only): route it before the
+	// source-list click so the pill never activates an underlying row.
+	if ax, ay, aw, ok := m.inspectorActionRect(); ok && msg.Y == ay && msg.X >= ax && msg.X < ax+aw {
+		action, _ := m.selectionInspectorAction()
+		return m.applyInspectorAction(action)
 	}
 	if m.sourceAddActionActive() {
 		if ax, ay, aw, ok := m.sourceAddActionRect(); ok && msg.Y == ay && msg.X >= ax && msg.X < ax+aw {
@@ -807,54 +822,71 @@ func (m CalendarManagerModel) activeInspectorLines(w, h int) []string {
 			return strings.Split(m.transfer.InspectorView(w, h), "\n")
 		}
 	}
-	return m.selectionInspectorLines(w)
+	return m.selectionInspectorLines(w, h)
 }
 
-func (m CalendarManagerModel) selectionInspectorLines(w int) []string {
+// selectionInspectorLines composes the root selection inspector to exactly h
+// rows: the title, a blank, the aligned metadata, an optional wrapped
+// description, flexible blank space, and one bottom action pinned to the final
+// row. The description is trimmed before the cap so a long description can
+// never push the action off the bottom row.
+func (m CalendarManagerModel) selectionInspectorLines(w, h int) []string {
 	identity, ok := m.list.currentIdentity()
+	faint := lipgloss.NewStyle().Foreground(m.theme.Muted)
+	labelWidth := min(10, max(7, w/4))
+	action, hasAction := m.selectionInspectorAction()
+
+	// cap is the last content row; the bottom action pins to the row after it
+	// when present, so a long description can never push the action off-screen.
+	cap := h
+	if hasAction {
+		cap = h - 1
+	}
+	if cap < 1 {
+		cap = 1
+	}
+
+	lines := m.selectionInspectorHeader(identity, ok, faint, labelWidth, w)
+
+	// Append the wrapped description (calendars only), trimmed to the cap so
+	// the pinned bottom action always stays on the final row.
+	if ok && identity.kind == calendarRow {
+		info, exists := m.calendars[identity.id]
+		if exists && strings.TrimSpace(info.Description) != "" {
+			for _, dl := range append([]string{""}, wrapLine(info.Description, w)...) {
+				if len(lines) >= cap {
+					break
+				}
+				lines = append(lines, dl)
+			}
+		}
+	}
+
+	for len(lines) < cap {
+		lines = append(lines, "")
+	}
+	if len(lines) > cap {
+		lines = lines[:cap]
+	}
+	if hasAction {
+		lines = append(lines, m.renderInspectorAction(action))
+	}
+	for len(lines) < h {
+		lines = append(lines, "")
+	}
+	return lines
+}
+
+// selectionInspectorHeader builds the non-description header block: the title
+// row, a blank, and the aligned metadata rows. It never appends the wrapped
+// description or the bottom action.
+func (m CalendarManagerModel) selectionInspectorHeader(identity calendarRowIdentity, ok bool, faint lipgloss.Style, labelWidth, w int) []string {
 	if !ok {
 		return []string{lipgloss.NewStyle().Faint(true).Render("Select a calendar or account.")}
 	}
-	faint := lipgloss.NewStyle().Foreground(m.theme.Muted)
-	labelWidth := min(10, max(7, w/4))
 	if identity.kind == accountHeaderRow {
-		name := "Local"
-		count := 0
-		errors := 0
-		for _, info := range m.calendars {
-			if info.AccountID != identity.id {
-				continue
-			}
-			count++
-			if identity.id != 0 && strings.TrimSpace(info.AccountName) != "" {
-				name = strings.TrimSpace(info.AccountName)
-			}
-			if syncHealthFor(info) == SyncHealthError || info.RemoteMissing {
-				errors++
-			}
-		}
-		lines := []string{lipgloss.NewStyle().Bold(true).Render(truncateTo(name, w)), ""}
-		if identity.id == 0 {
-			lines = append(lines,
-				faint.Render("On this device"),
-				detailLine(faint, "Calendars", fmt.Sprintf("%d", count), labelWidth, w),
-				"",
-				lipgloss.NewStyle().Underline(true).Render("a  Add Calendar"),
-			)
-			return lines
-		}
-		status := "Up to date"
-		if errors > 0 {
-			status = lipgloss.NewStyle().Foreground(m.theme.Error).Render(fmt.Sprintf("%d need attention", errors))
-		}
-		return append(lines,
-			detailLine(faint, "Calendars", fmt.Sprintf("%d", count), labelWidth, w),
-			detailLine(faint, "Status", status, labelWidth, w),
-			"",
-			lipgloss.NewStyle().Underline(true).Render("Enter  Account Settings"),
-		)
+		return m.accountInspectorHeader(identity, faint, labelWidth, w)
 	}
-
 	info, exists := m.calendars[identity.id]
 	if !exists {
 		return []string{lipgloss.NewStyle().Faint(true).Render("Calendar unavailable.")}
@@ -864,12 +896,11 @@ func (m CalendarManagerModel) selectionInspectorLines(w int) []string {
 	if m.hidden[identity.id] {
 		visibility = "Hidden"
 	}
-	location := flatAccountContext(info)
 	lines := []string{
 		lipgloss.NewStyle().Bold(true).Render(truncateTo(dot+" "+info.Name, w)),
 		"",
 		detailLine(faint, "Display", visibility, labelWidth, w),
-		detailLine(faint, "Location", location, labelWidth, w),
+		detailLine(faint, "Location", flatAccountContext(info), labelWidth, w),
 	}
 	if info.IsDefault {
 		lines = append(lines, detailLine(faint, "Default", "Yes", labelWidth, w))
@@ -884,12 +915,128 @@ func (m CalendarManagerModel) selectionInspectorLines(w int) []string {
 		errText := lipgloss.NewStyle().Foreground(m.theme.Error).Render(info.LastSyncError)
 		lines = append(lines, detailLine(faint, "Error", errText, labelWidth, w))
 	}
-	if strings.TrimSpace(info.Description) != "" {
-		lines = append(lines, "")
-		lines = append(lines, wrapLine(info.Description, w)...)
-	}
-	lines = append(lines, "", lipgloss.NewStyle().Underline(true).Render("Enter  Edit Calendar"))
 	return lines
+}
+
+// accountInspectorHeader builds the account/Local header: the account name
+// (or "Local"), a blank, and the aligned metadata. Local shows "On this
+// device" and its calendar count; remote accounts add a sync-status line.
+func (m CalendarManagerModel) accountInspectorHeader(identity calendarRowIdentity, faint lipgloss.Style, labelWidth, w int) []string {
+	name := "Local"
+	count := 0
+	errors := 0
+	for _, info := range m.calendars {
+		if info.AccountID != identity.id {
+			continue
+		}
+		count++
+		if identity.id != 0 && strings.TrimSpace(info.AccountName) != "" {
+			name = strings.TrimSpace(info.AccountName)
+		}
+		if syncHealthFor(info) == SyncHealthError || info.RemoteMissing {
+			errors++
+		}
+	}
+	lines := []string{lipgloss.NewStyle().Bold(true).Render(truncateTo(name, w)), ""}
+	if identity.id == 0 {
+		lines = append(lines,
+			faint.Render("On this device"),
+			detailLine(faint, "Calendars", fmt.Sprintf("%d", count), labelWidth, w),
+		)
+		return lines
+	}
+	status := "Up to date"
+	if errors > 0 {
+		status = lipgloss.NewStyle().Foreground(m.theme.Error).Render(fmt.Sprintf("%d need attention", errors))
+	}
+	lines = append(lines,
+		detailLine(faint, "Calendars", fmt.Sprintf("%d", count), labelWidth, w),
+		detailLine(faint, "Status", status, labelWidth, w),
+	)
+	return lines
+}
+
+// calendarManagerInspectorAction describes the selection inspector's single
+// bottom action. Exactly one of calendar (open that calendar's detail) or
+// account (ask the host to open account settings) is set; Local and empty
+// selections have no action.
+type calendarManagerInspectorAction struct {
+	label    string
+	calendar int64
+	account  int64
+}
+
+// selectionInspectorAction resolves the bottom action for the current root
+// selection: Edit… opens the selected calendar's immutable ID internally;
+// Account Settings… (remote accounts only) emits a typed account target;
+// Local and empty selections have no action.
+func (m CalendarManagerModel) selectionInspectorAction() (calendarManagerInspectorAction, bool) {
+	identity, ok := m.list.currentIdentity()
+	if !ok {
+		return calendarManagerInspectorAction{}, false
+	}
+	switch identity.kind {
+	case calendarRow:
+		if _, exists := m.calendars[identity.id]; !exists {
+			return calendarManagerInspectorAction{}, false
+		}
+		return calendarManagerInspectorAction{label: "Edit…", calendar: identity.id}, true
+	case accountHeaderRow:
+		if identity.id == 0 {
+			return calendarManagerInspectorAction{}, false
+		}
+		return calendarManagerInspectorAction{label: "Account Settings…", account: identity.id}, true
+	}
+	return calendarManagerInspectorAction{}, false
+}
+
+// renderInspectorAction renders the bottom action as a neutral pill button
+// (ButtonStyles.Normal), the same style the Form action bar uses at rest.
+func (m CalendarManagerModel) renderInspectorAction(action calendarManagerInspectorAction) string {
+	return DefaultButtonStyles().Normal.Render(action.label, false)
+}
+
+// applyInspectorAction routes a click on the bottom action: a calendar action
+// opens that calendar's detail internally; an account action asks the host to
+// open account settings for the typed account ID.
+func (m CalendarManagerModel) applyInspectorAction(action calendarManagerInspectorAction) (CalendarManagerModel, tea.Cmd) {
+	if action.calendar != 0 {
+		info, ok := m.calendars[action.calendar]
+		if !ok {
+			return m, nil
+		}
+		return m.OpenCalendar(calendarDialogParamsFor(action.calendar, info, m.hidden[action.calendar])), nil
+	}
+	if action.account != 0 {
+		return m, func() tea.Msg {
+			return CalendarManagerRequestedMsg{Target: CalendarManagerTargetAccount, AccountID: action.account}
+		}
+	}
+	return m, nil
+}
+
+// inspectorActionRect returns the screen-space rectangle of the selection
+// inspector's bottom action button, when one is rendered. The action exists
+// only in wide two-pane root mode: narrow root shows the source list alone,
+// and every pushed screen owns its own inspector affordances. Geometry uses
+// the button's actual rendered width so hit-testing matches the pill exactly.
+func (m CalendarManagerModel) inspectorActionRect() (int, int, int, bool) {
+	if m.screen != CalendarManagerScreenList || m.onePaneLayout() || m.width <= 0 || m.height <= 0 {
+		return 0, 0, 0, false
+	}
+	action, ok := m.selectionInspectorAction()
+	if !ok {
+		return 0, 0, 0, false
+	}
+	boxW, boxH := m.boxSize()
+	dialogX := (m.width - boxW) / 2
+	dialogY := (m.height - boxH) / 2
+	listW := m.sourceColumnWidth()
+	// Inspector pane begins after the border, left pad, source column, and the
+	// three-cell divider; the action sits on the final body row.
+	paneX := dialogX + addMenuContentBoxX() + listW + 3
+	actionY := dialogY + 4 + m.managerBodyHeight() - 1
+	return paneX, actionY, lipgloss.Width(m.renderInspectorAction(action)), true
 }
 
 func (m CalendarManagerModel) renderTitleRow(w int) string {
@@ -897,7 +1044,7 @@ func (m CalendarManagerModel) renderTitleRow(w int) string {
 }
 
 func (m CalendarManagerModel) renderHelp(w int) string {
-	parts := []string{"↑↓ select", "enter details", "space show/hide", "←→ collapse", "shift+↑↓ reorder", "a add", "esc close"}
+	parts := []string{"↑↓ select", "enter open", "space show/hide", "a add", "esc close"}
 	if m.screen != CalendarManagerScreenList {
 		parts = []string{"tab next", "enter activate", "esc back"}
 	}
