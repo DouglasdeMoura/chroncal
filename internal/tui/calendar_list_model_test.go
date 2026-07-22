@@ -256,8 +256,11 @@ func TestCalendarList_GroupedRowsUseCompactLeadingSpacing(t *testing.T) {
 	if !strings.HasPrefix(header, "▾ Local") {
 		t.Fatalf("account heading has leading space: %q", header)
 	}
-	if !strings.HasPrefix(calendar, " "+Glyphs["checkbox.on"]+" ● On device") {
-		t.Fatalf("calendar row should show visibility, color, and name: %q", calendar)
+	if !strings.HasPrefix(calendar, " ● On device") {
+		t.Fatalf("grouped sidebar row should show a colored circle then name: %q", calendar)
+	}
+	if strings.Contains(calendar, Glyphs["checkbox.on"]) || strings.Contains(calendar, Glyphs["checkbox.off"]) {
+		t.Fatalf("grouped sidebar row must not render a checkbox: %q", calendar)
 	}
 }
 
@@ -499,36 +502,68 @@ func TestCalendarList_ViewportKeepsCursorVisible(t *testing.T) {
 	}
 }
 
-func TestCalendarListCalendarRowsKeepVisibilityAndColorSeparate(t *testing.T) {
-	m := groupedListFixture()
-	line := strings.Split(stripANSI(m.View()), "\n")[calendarListRowForCalendarID(t, m, 1)]
-	if !strings.Contains(line, Glyphs["checkbox.on"]+" ● On device") {
-		t.Fatalf("calendar row must render checkbox, color dot, then name: %q", line)
+// TestCalendarListCircleRowsRenderFilledOutlineWithoutCheckbox locks the
+// sidebar presentation of the default NewCalendarListModel: a colored filled
+// circle (●) marks a shown calendar, an outline circle (○) marks a hidden one,
+// and no checkbox glyph appears. The unified Calendars manager opts into the
+// checkbox presentation separately.
+func TestCalendarListCircleRowsRenderFilledOutlineWithoutCheckbox(t *testing.T) {
+	m := makeListFixture().SetSize(40, 10) // Default shown, Family hidden
+	raw := m.View()
+	view := stripANSI(raw)
+	// The shown calendar's filled circle must carry the calendar's own color.
+	coloredCircle := lipgloss.NewStyle().Foreground(lipgloss.Color("#a6e3a1")).Render("●")
+	if !strings.Contains(raw, coloredCircle) {
+		t.Errorf("shown calendar circle must use item color #a6e3a1, missing %q", coloredCircle)
+	}
+	if !strings.Contains(view, "● Default") || !strings.Contains(view, "○ Family") {
+		t.Fatalf("circle visibility markers missing:\n%s", view)
+	}
+	if strings.Contains(view, Glyphs["checkbox.on"]) || strings.Contains(view, Glyphs["checkbox.off"]) {
+		t.Fatalf("sidebar-style list rendered checkboxes:\n%s", view)
 	}
 }
 
-func TestCalendarListCalendarMouseSeparatesCheckboxFromDetails(t *testing.T) {
+// TestCalendarListCircleMouseSeparatesCircleFromDetails verifies the sidebar
+// circle hit targets: clicking the visibility circle toggles visibility, while
+// clicking the row body opens the calendar details without toggling. This
+// presentation-independent behavior is shared by the manager's checkbox mode.
+func TestCalendarListCircleMouseSeparatesCircleFromDetails(t *testing.T) {
 	m := groupedListFixture()
-	row := calendarListRowForCalendarID(t, m, 2)
+	row := calendarListRowForCalendarID(t, m, 2) // Personal, visible
 
-	hidden, cmd := m.HandleClick(1, row)
+	hidden, cmd := m.HandleClick(1, row) // the visibility circle
 	if cmd == nil {
-		t.Fatal("checkbox click emitted no visibility command")
+		t.Fatal("circle click emitted no visibility command")
 	}
 	toggle, ok := cmd().(CalendarVisibilityToggledMsg)
 	if !ok || toggle.ID != 2 || !toggle.Hidden || !hidden.hidden[2] {
-		t.Fatalf("checkbox click = msg %#v hidden %v", toggle, hidden.hidden)
+		t.Fatalf("circle click = msg %#v hidden %v, want calendar 2 hidden", toggle, hidden.hidden)
 	}
 
-	opened, cmd := m.HandleClick(8, row)
+	// The grouped indent padding (x=0) is not a toggle target: it must not
+	// change visibility and must still open the calendar details.
+	padded, padCmd := m.HandleClick(0, row)
+	if padded.hidden[2] {
+		t.Fatal("indent padding click changed visibility")
+	}
+	if padCmd == nil {
+		t.Fatal("indent padding click emitted no details command")
+	}
+	padRequest, padOk := padCmd().(CalendarManagerRequestedMsg)
+	if !padOk || padRequest.Target != CalendarManagerTargetCalendar || padRequest.CalendarID != 2 {
+		t.Fatalf("indent padding details request = %#v", padRequest)
+	}
+
+	opened, cmd := m.HandleClick(8, row) // the row body
 	if cmd == nil {
-		t.Fatal("calendar name click emitted no details command")
+		t.Fatal("row body click emitted no details command")
 	}
 	request, ok := cmd().(CalendarManagerRequestedMsg)
 	if !ok || request.Target != CalendarManagerTargetCalendar || request.CalendarID != 2 {
 		t.Fatalf("calendar details request = %#v", request)
 	}
 	if opened.hidden[2] {
-		t.Fatal("calendar name click changed visibility")
+		t.Fatal("row body click changed visibility")
 	}
 }

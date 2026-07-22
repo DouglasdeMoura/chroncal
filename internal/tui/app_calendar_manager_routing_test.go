@@ -334,8 +334,12 @@ func TestCalendarManagerVisibilityUpdatesSidebarState(t *testing.T) {
 	if !m.hiddenCalendars[2] || !m.sidebar.List().HiddenSet()[2] {
 		t.Fatalf("hidden state diverged: app=%v sidebar=%v", m.hiddenCalendars, m.sidebar.List().HiddenSet())
 	}
-	if view := stripANSI(m.sidebar.List().View()); !strings.Contains(view, Glyphs["checkbox.off"]+" ● Primary") {
+	view := stripANSI(m.sidebar.List().View())
+	if !strings.Contains(view, "○ Primary") {
 		t.Fatalf("sidebar did not render hidden calendar marker:\n%s", view)
+	}
+	if strings.Contains(view, Glyphs["checkbox.on"]) || strings.Contains(view, Glyphs["checkbox.off"]) {
+		t.Fatalf("sidebar must not render checkboxes:\n%s", view)
 	}
 
 	updated, _ = m.Update(CalendarVisibilityToggledMsg{ID: 2, Hidden: false})
@@ -343,7 +347,8 @@ func TestCalendarManagerVisibilityUpdatesSidebarState(t *testing.T) {
 	if m.hiddenCalendars[2] || m.sidebar.List().HiddenSet()[2] {
 		t.Fatalf("visible state diverged: app=%v sidebar=%v", m.hiddenCalendars, m.sidebar.List().HiddenSet())
 	}
-	if view := stripANSI(m.sidebar.List().View()); !strings.Contains(view, Glyphs["checkbox.on"]+" ● Primary") {
+	view = stripANSI(m.sidebar.List().View())
+	if !strings.Contains(view, "● Primary") {
 		t.Fatalf("sidebar did not render visible calendar marker:\n%s", view)
 	}
 }

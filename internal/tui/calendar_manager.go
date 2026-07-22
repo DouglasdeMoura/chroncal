@@ -123,6 +123,7 @@ func NewCalendarManagerModel(calendars map[int64]CalendarInfo, hidden map[int64]
 		},
 	}
 	m.list = NewCalendarListModel(sortedCalendarListItems(calendars), hidden).
+		WithCheckboxVisibility().
 		SetTheme(m.theme.Selected, m.theme.Muted, m.theme.Text, m.theme.SelectedText, m.theme.Error).
 		Focus()
 	m = m.rebuild().sizeList()
@@ -572,11 +573,11 @@ func (m CalendarManagerModel) handleMouse(msg tea.MouseClickMsg) (CalendarManage
 	m.list = next
 	m = m.syncListProjection()
 	identity, selected := m.list.currentIdentity()
-	checkboxEnd := lipgloss.Width(Glyphs["checkbox.on"])
+	indicatorEnd := m.list.visibilityIndicatorWidth()
 	if m.list.grouped {
-		checkboxEnd++
+		indicatorEnd++
 	}
-	if selected && identity.kind == calendarRow && relX >= checkboxEnd {
+	if selected && identity.kind == calendarRow && relX >= indicatorEnd {
 		info := m.calendars[identity.id]
 		return m.OpenCalendar(calendarDialogParamsFor(identity.id, info, m.hidden[identity.id])), nil
 	}

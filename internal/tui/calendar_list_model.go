@@ -124,6 +124,21 @@ type calendarRowIdentity struct {
 	id   int64
 }
 
+// calendarVisibilityIndicator selects how a calendar row renders its
+// visibility control. The zero value keeps the sidebar's circle
+// presentation; the unified Calendars manager opts into the checkbox
+// presentation.
+type calendarVisibilityIndicator uint8
+
+const (
+	// circleVisibilityIndicator renders an item-colored filled (●) or outline
+	// (○) circle and no checkbox. It is the sidebar default.
+	circleVisibilityIndicator calendarVisibilityIndicator = iota
+	// checkboxVisibilityIndicator renders the manager's checkbox plus a
+	// separate colored dot.
+	checkboxVisibilityIndicator
+)
+
 // CalendarListModel renders calendar rows grouped under collapsible account
 // headers and keeps a height-aware viewport around the focused row.
 type CalendarListModel struct {
@@ -143,14 +158,17 @@ type CalendarListModel struct {
 	textColor         color.Color
 	selectedTextColor color.Color
 	errColor          color.Color
+
+	visibilityIndicator calendarVisibilityIndicator
 }
 
 func NewCalendarListModel(items []CalendarListItem, hidden map[int64]bool) CalendarListModel {
 	m := CalendarListModel{
-		items:     slices.Clone(items),
-		hidden:    maps.Clone(hidden),
-		collapsed: make(map[int64]bool),
-		keys:      defaultCalendarListKeys(),
+		items:               slices.Clone(items),
+		hidden:              maps.Clone(hidden),
+		collapsed:           make(map[int64]bool),
+		keys:                defaultCalendarListKeys(),
+		visibilityIndicator: circleVisibilityIndicator,
 	}
 	if m.hidden == nil {
 		m.hidden = make(map[int64]bool)
@@ -167,6 +185,23 @@ func (m CalendarListModel) SetTheme(accent, muted, text, selectedText, errColor 
 	m.selectedTextColor = selectedText
 	m.errColor = errColor
 	return m
+}
+
+// WithCheckboxVisibility returns a copy that renders the checkbox-plus-dot
+// presentation used by the unified Calendars manager. The default sidebar
+// list keeps the circle presentation.
+func (m CalendarListModel) WithCheckboxVisibility() CalendarListModel {
+	m.visibilityIndicator = checkboxVisibilityIndicator
+	return m
+}
+
+// visibilityIndicatorWidth returns the cell width of the leading visibility
+// control so mouse hit-testing matches the rendered presentation.
+func (m CalendarListModel) visibilityIndicatorWidth() int {
+	if m.visibilityIndicator == checkboxVisibilityIndicator {
+		return lipgloss.Width(Glyphs["checkbox.on"])
+	}
+	return lipgloss.Width("●")
 }
 
 func (m CalendarListModel) Focus() CalendarListModel { m.focused = true; return m }
@@ -406,7 +441,7 @@ func (m CalendarListModel) HandleClick(x, y int) (CalendarListModel, tea.Cmd) {
 	if m.grouped {
 		indentCells = 1
 	}
-	if x < indentCells+lipgloss.Width(Glyphs["checkbox.on"]) {
+	if x >= indentCells && x < indentCells+m.visibilityIndicatorWidth() {
 		return m.toggleCurrent()
 	}
 	id := m.items[row.itemIndex].ID
@@ -518,10 +553,7 @@ func (m CalendarListModel) renderAccountHeader(row calendarListRow, selected boo
 
 func (m CalendarListModel) renderCalendarRow(row calendarListRow, selected bool) string {
 	item := m.items[row.itemIndex]
-	checkbox := Glyphs["checkbox.on"]
-	if m.hidden[item.ID] {
-		checkbox = Glyphs["checkbox.off"]
-	}
+	hidden := m.hidden[item.ID]
 	indent := ""
 	if m.grouped {
 		indent = " "
@@ -536,28 +568,49 @@ func (m CalendarListModel) renderCalendarRow(row calendarListRow, selected bool)
 	}
 
 	rowStyle := lipgloss.NewStyle()
-	checkboxStyle := lipgloss.NewStyle()
 	swatchStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(item.Color))
 	nameStyle := lipgloss.NewStyle()
 	markerStyle := lipgloss.NewStyle().Foreground(m.errColor)
-	if m.hidden[item.ID] && !selected {
+	if hidden && !selected {
 		nameStyle = nameStyle.Foreground(m.mutedColor)
 	}
 	if selected {
 		rowStyle = rowStyle.Background(m.accentColor).Foreground(m.selectedTextColor)
-		checkboxStyle = checkboxStyle.Background(m.accentColor).Foreground(m.selectedTextColor)
 		swatchStyle = swatchStyle.Background(m.accentColor)
 		nameStyle = nameStyle.Background(m.accentColor).Foreground(m.selectedTextColor).Bold(true)
 		markerStyle = markerStyle.Background(m.accentColor)
 	}
 
-	prefixCells := lipgloss.Width(indent) + lipgloss.Width(checkbox) + 3
+	// The visibility control leads the row. Circle mode (the sidebar default)
+	// shows an item-colored filled (●) or outline (○) circle; checkbox mode
+	// (the unified manager) keeps the checkbox plus a separate colored dot.
+	var leading string
+	prefixCells := lipgloss.Width(indent)
+	if m.visibilityIndicator == checkboxVisibilityIndicator {
+		checkbox := Glyphs["checkbox.on"]
+		if hidden {
+			checkbox = Glyphs["checkbox.off"]
+		}
+		checkboxStyle := lipgloss.NewStyle()
+		if selected {
+			checkboxStyle = checkboxStyle.Background(m.accentColor).Foreground(m.selectedTextColor)
+		}
+		leading = checkboxStyle.Render(checkbox+" ") + swatchStyle.Render("●")
+		prefixCells += lipgloss.Width(checkbox) + 3
+	} else {
+		circle := "●"
+		if hidden {
+			circle = "○"
+		}
+		leading = swatchStyle.Render(circle)
+		prefixCells += 2
+	}
+
 	nameText := item.Name
 	if avail := m.width - prefixCells - 1 - markerCells; m.width > prefixCells+1 && avail > 0 {
 		nameText = truncateTo(nameText, avail)
 	}
-	out := rowStyle.Render(indent) + checkboxStyle.Render(checkbox+" ") +
-		swatchStyle.Render("●") + nameStyle.Render(" "+nameText+" ")
+	out := rowStyle.Render(indent) + leading + nameStyle.Render(" "+nameText+" ")
 	if marker != "" {
 		out += rowStyle.Render(" ") + markerStyle.Render(marker)
 	}
