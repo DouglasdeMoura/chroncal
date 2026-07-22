@@ -828,7 +828,7 @@ func (m CalendarManagerModel) activeInspectorLines(w, h int) []string {
 // selectionInspectorLines composes the root selection inspector to exactly h
 // rows: the title, a blank, the aligned metadata, an optional wrapped
 // description, flexible blank space, and one bottom action pinned to the final
-// row. The description is trimmed before the cap so a long description can
+// row. The description is trimmed before the content limit so a long description can
 // never push the action off the bottom row.
 func (m CalendarManagerModel) selectionInspectorLines(w, h int) []string {
 	identity, ok := m.list.currentIdentity()
@@ -836,25 +836,25 @@ func (m CalendarManagerModel) selectionInspectorLines(w, h int) []string {
 	labelWidth := min(10, max(7, w/4))
 	action, hasAction := m.selectionInspectorAction()
 
-	// cap is the last content row; the bottom action pins to the row after it
-	// when present, so a long description can never push the action off-screen.
-	cap := h
+	// contentLimit is the last content row; the bottom action pins to the row
+	// after it when present, so a long description cannot push the action off-screen.
+	contentLimit := h
 	if hasAction {
-		cap = h - 1
+		contentLimit = h - 1
 	}
-	if cap < 1 {
-		cap = 1
+	if contentLimit < 1 {
+		contentLimit = 1
 	}
 
 	lines := m.selectionInspectorHeader(identity, ok, faint, labelWidth, w)
 
-	// Append the wrapped description (calendars only), trimmed to the cap so
+	// Append the wrapped description (calendars only), trimmed to the content limit so
 	// the pinned bottom action always stays on the final row.
 	if ok && identity.kind == calendarRow {
 		info, exists := m.calendars[identity.id]
 		if exists && strings.TrimSpace(info.Description) != "" {
 			for _, dl := range append([]string{""}, wrapLine(info.Description, w)...) {
-				if len(lines) >= cap {
+				if len(lines) >= contentLimit {
 					break
 				}
 				lines = append(lines, dl)
@@ -862,11 +862,11 @@ func (m CalendarManagerModel) selectionInspectorLines(w, h int) []string {
 		}
 	}
 
-	for len(lines) < cap {
+	for len(lines) < contentLimit {
 		lines = append(lines, "")
 	}
-	if len(lines) > cap {
-		lines = lines[:cap]
+	if len(lines) > contentLimit {
+		lines = lines[:contentLimit]
 	}
 	if hasAction {
 		lines = append(lines, m.renderInspectorAction(action))
@@ -986,6 +986,8 @@ func (m CalendarManagerModel) selectionInspectorAction() (calendarManagerInspect
 			return calendarManagerInspectorAction{}, false
 		}
 		return calendarManagerInspectorAction{label: "Account Settings…", account: identity.id}, true
+	case accountSpacerRow:
+		return calendarManagerInspectorAction{}, false
 	}
 	return calendarManagerInspectorAction{}, false
 }
