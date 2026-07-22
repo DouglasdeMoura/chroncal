@@ -17,9 +17,10 @@ import (
 // (Esc/q) and asks the host to tear the overlay down.
 type CalendarManagerClosedMsg struct{}
 
-// CalendarManagerAddRequestedMsg is emitted by the persistent Add action
-// (the title-line button or the 'a' key) and asks the host to start the
-// add-calendar flow.
+// CalendarManagerAddRequestedMsg is retained temporarily: app.go still routes
+// it through the generic choice dialog, but the manager no longer emits it.
+// The anchored Add menu emits typed CalendarManagerRequestedMsg targets
+// instead. Task 2 removes this type and its app routing.
 type CalendarManagerAddRequestedMsg struct{}
 
 // CalendarManagerScreen identifies which screen the unified calendar manager
@@ -67,6 +68,9 @@ const (
 	CalendarManagerTargetAccount
 	CalendarManagerTargetLocalCreate
 	CalendarManagerTargetAccountConnect
+	// CalendarManagerTargetImport launches the iCal file import flow. Task 2
+	// wires host routing; the manager only emits the typed target.
+	CalendarManagerTargetImport
 )
 
 type CalendarManagerRequestedMsg struct {
@@ -87,8 +91,13 @@ type CalendarManagerModel struct {
 
 	pendingSelectionID int64
 
-	keys        calendarManagerKeyMap
-	titleAction *ListDialogAction // persistent Add button in the title row
+	keys calendarManagerKeyMap
+
+	// addMenuOpen/addMenuCursor hold the transient anchored Add-menu state.
+	// The menu is manager-local: it captures input while open and emits a
+	// typed CalendarManagerRequestedMsg on selection.
+	addMenuOpen   bool
+	addMenuCursor int
 
 	width, height int
 
@@ -116,11 +125,6 @@ func NewCalendarManagerModel(calendars map[int64]CalendarInfo, hidden map[int64]
 		hidden:    hidden,
 		theme:     activeTheme,
 		keys:      defaultCalendarManagerKeys(),
-		titleAction: &ListDialogAction{
-			Label:   "+ Add",
-			Primary: true,
-			Msg:     func() tea.Msg { return CalendarManagerAddRequestedMsg{} },
-		},
 	}
 	m.list = NewCalendarListModel(sortedCalendarListItems(calendars), hidden).
 		WithCheckboxVisibility().
@@ -284,6 +288,7 @@ func (m CalendarManagerModel) CloseDetail() CalendarManagerModel {
 	m.accountSettings = nil
 	m.accountPicker = nil
 	m.transfer = nil
+	m.addMenuOpen = false
 	return m
 }
 
@@ -405,7 +410,9 @@ func (m CalendarManagerModel) rebuild() CalendarManagerModel {
 
 func (m CalendarManagerModel) sizeList() CalendarManagerModel {
 	w, h := m.rootPaneSize()
-	m.list = m.list.SetSize(w, h).Focus()
+	// Reserve two source-pane rows (blank spacer + + Add action) below the
+	// list viewport; the list renders into the remaining height.
+	m.list = m.list.SetSize(w, max(h-2, 1)).Focus()
 	return m
 }
 
@@ -492,6 +499,9 @@ func (m CalendarManagerModel) Update(msg tea.Msg) (CalendarManagerModel, tea.Cmd
 		return m.updateTransfer(msg)
 	}
 	// Root list.
+	if m.addMenuOpen {
+		return m.updateAddMenu(msg)
+	}
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
@@ -538,7 +548,7 @@ func (m CalendarManagerModel) handleKey(msg tea.KeyPressMsg) (CalendarManagerMod
 	case key.Matches(msg, m.keys.Close):
 		return m, func() tea.Msg { return CalendarManagerClosedMsg{} }
 	case key.Matches(msg, m.keys.Add):
-		return m, func() tea.Msg { return CalendarManagerAddRequestedMsg{} }
+		return m.openAddMenu(), nil
 	case key.Matches(msg, m.keys.Open):
 		identity, ok := m.list.currentIdentity()
 		if ok && identity.kind == calendarRow {
@@ -561,8 +571,10 @@ func (m CalendarManagerModel) handleMouse(msg tea.MouseClickMsg) (CalendarManage
 	if msg.Button != tea.MouseLeft {
 		return m, nil
 	}
-	if cmd, ok := m.titleActionAtPosition(msg.X, msg.Y); ok {
-		return m, cmd
+	if m.sourceAddActionActive() {
+		if ax, ay, aw, ok := m.sourceAddActionRect(); ok && msg.Y == ay && msg.X >= ax && msg.X < ax+aw {
+			return m.openAddMenu(), nil
+		}
 	}
 	lx, ly, lw, lh := m.listRegion()
 	if msg.X < lx || msg.X >= lx+lw || msg.Y < ly || msg.Y >= ly+lh {
@@ -752,31 +764,30 @@ func (m CalendarManagerModel) rootView() string {
 	contentLines = append(contentLines, title, blank)
 	contentLines = append(contentLines, strings.Split(body, "\n")...)
 	contentLines = append(contentLines, blank, help)
-	return mouseSweep(framedDialog(boxW, contentLines))
+	base := mouseSweep(framedDialog(boxW, contentLines))
+	if m.addMenuOpen {
+		base = m.composeAddMenu(base)
+	}
+	return base
 }
 
 func (m CalendarManagerModel) renderManagerBody(w, h int) string {
-	if len(m.calendars) == 0 && m.screen == CalendarManagerScreenList {
-		msg := lipgloss.NewStyle().Faint(true).Render("No calendars yet. Use + Add to create or connect one.")
-		return padLines([]string{truncateTo(msg, w)}, w, h)
-	}
-	listW, _ := m.rootPaneSize()
 	if m.onePaneLayout() {
 		if m.screen == CalendarManagerScreenList {
-			return padLines(strings.Split(m.list.View(), "\n"), w, h)
+			return strings.Join(m.renderSourceColumn(w, h), "\n")
 		}
 		return padLines(m.activeInspectorLines(w, h), w, h)
 	}
+	listW, _ := m.rootPaneSize()
 	dividerW := 3
 	detailW := max(w-listW-dividerW, 1)
-	left := padLines(strings.Split(m.list.View(), "\n"), listW, h)
+	leftLines := m.renderSourceColumn(listW, h)
 	right := padLines(m.activeInspectorLines(detailW, h), detailW, h)
 	divider := lipgloss.NewStyle().Foreground(m.theme.Muted).Render(" │ ")
-	leftLines := strings.Split(left, "\n")
-	rightLines := strings.Split(right, "\n")
+	rightRows := strings.Split(right, "\n")
 	lines := make([]string, h)
 	for i := range h {
-		lines[i] = leftLines[i] + divider + rightLines[i]
+		lines[i] = leftLines[i] + divider + rightRows[i]
 	}
 	return strings.Join(lines, "\n")
 }
@@ -888,13 +899,7 @@ func (m CalendarManagerModel) selectionInspectorLines(w int) []string {
 }
 
 func (m CalendarManagerModel) renderTitleRow(w int) string {
-	var button string
-	if m.titleAction != nil {
-		button = renderTitleActionButton(*m.titleAction, false)
-	}
-	titleW := max(w-lipgloss.Width(button), 0)
-	title := lipgloss.NewStyle().Bold(true).Width(titleW).Render("Calendars")
-	return lipgloss.JoinHorizontal(lipgloss.Top, title, button)
+	return lipgloss.NewStyle().Bold(true).Width(w).Render("Calendars")
 }
 
 func (m CalendarManagerModel) renderHelp(w int) string {
@@ -936,35 +941,95 @@ func (m CalendarManagerModel) listRegion() (int, int, int, int) {
 		return 0, 0, 0, 0
 	}
 	boxW, boxH := m.boxSize()
-	innerH := max(boxH-3, 6)
-	bodyH := max(innerH-4, 3)
 	listW, _ := m.rootPaneSize()
 	dialogX := (m.width - boxW) / 2
 	dialogY := (m.height - boxH) / 2
-	return dialogX + 2, dialogY + 4, listW, bodyH
+	return dialogX + addMenuContentBoxX(), dialogY + 4, listW, max(m.managerBodyHeight()-2, 1)
 }
 
-// titleActionRect returns the screen-space rect of the persistent Add button,
-// for mouse hit-testing. Absent when there is no title action.
-func (m CalendarManagerModel) titleActionRect() (int, int, int, bool) {
-	if m.titleAction == nil || m.width <= 0 || m.height <= 0 {
+// managerBodyHeight is the body region height shared by the list viewport and
+// inspector, matching rootView's layout arithmetic.
+func (m CalendarManagerModel) managerBodyHeight() int {
+	_, boxH := m.boxSize()
+	innerH := max(boxH-3, 6)
+	return max(innerH-4, 3)
+}
+
+// addMenuContentBoxX is the box-local x where source-pane content begins
+// (after the border cell and the 1-space left pad).
+func addMenuContentBoxX() int { return 2 }
+
+// addMenuActionBoxY is the box-local y of the + Add action row: the last body
+// row, directly above the trailing blank and help rows.
+func addMenuActionBoxY(m CalendarManagerModel) int { return 4 + m.managerBodyHeight() - 1 }
+
+// sourceAddActionRendered reports whether the compact + Add action is drawn.
+// In wide two-pane mode the source list is always visible; in narrow one-pane
+// mode the action belongs to the list screen only.
+func (m CalendarManagerModel) sourceAddActionRendered() bool {
+	if m.width <= 0 || m.height <= 0 {
+		return false
+	}
+	if !m.onePaneLayout() {
+		return true
+	}
+	return m.screen == CalendarManagerScreenList
+}
+
+// sourceAddActionActive reports whether the + Add action can be activated. It
+// is active only on the root list screen: every pushed screen (calendar
+// detail, account settings, account calendars, import/export transfer) owns
+// its own input, so the action is rendered muted and inert there.
+func (m CalendarManagerModel) sourceAddActionActive() bool {
+	return m.screen == CalendarManagerScreenList
+}
+
+// sourceAddActionRect returns the screen-space rect of the + Add label below
+// the source list, for mouse hit-testing and placement assertions.
+func (m CalendarManagerModel) sourceAddActionRect() (int, int, int, bool) {
+	if !m.sourceAddActionRendered() {
 		return 0, 0, 0, false
 	}
 	boxW, boxH := m.boxSize()
-	innerW := max(boxW-5, 10)
 	dialogX := (m.width - boxW) / 2
 	dialogY := (m.height - boxH) / 2
-	btnW := lipgloss.Width(renderTitleActionButton(*m.titleAction, false))
-	btnX := dialogX + 2 + innerW - btnW
-	return btnX, dialogY + 2, btnW, true
+	return dialogX + addMenuContentBoxX(), dialogY + addMenuActionBoxY(m), lipgloss.Width("+ Add"), true
 }
 
-func (m CalendarManagerModel) titleActionAtPosition(x, y int) (tea.Cmd, bool) {
-	bx, by, bw, ok := m.titleActionRect()
-	if !ok || y != by || x < bx || x >= bx+bw {
-		return nil, false
+// renderSourceColumn renders the source-list column: the (possibly empty)
+// list viewport, a blank spacer, and the + Add action row. It always returns
+// exactly h rows so it composes cleanly into the body grid.
+func (m CalendarManagerModel) renderSourceColumn(w, h int) []string {
+	listH := max(h-2, 1)
+	var listLines []string
+	if len(m.calendars) == 0 {
+		hint := lipgloss.NewStyle().Faint(true).Render("No calendars yet.")
+		listLines = []string{truncateTo(hint, w)}
+	} else {
+		listLines = strings.Split(m.list.View(), "\n")
 	}
-	return m.titleAction.Msg, true
+	padded := strings.Split(padLines(listLines, w, listH), "\n")
+	blank := strings.Repeat(" ", w)
+	out := make([]string, 0, h)
+	out = append(out, padded...)
+	out = append(out, blank, m.renderSourceAddAction(w))
+	for len(out) < h {
+		out = append(out, blank)
+	}
+	return out
+}
+
+// renderSourceAddAction renders the + Add label, bold/accented when active and
+// faint when muted, padded to the full column width.
+func (m CalendarManagerModel) renderSourceAddAction(w int) string {
+	const label = "+ Add"
+	var rendered string
+	if m.sourceAddActionActive() {
+		rendered = lipgloss.NewStyle().Bold(true).Foreground(m.theme.Accent).Render(label)
+	} else {
+		rendered = lipgloss.NewStyle().Faint(true).Render(label)
+	}
+	return rendered + strings.Repeat(" ", max(w-lipgloss.Width(rendered), 0))
 }
 
 // flatAccountContext returns the inspector's calendar location: "Local" for

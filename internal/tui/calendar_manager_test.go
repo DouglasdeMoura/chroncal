@@ -8,6 +8,7 @@ import (
 
 	"charm.land/bubbles/v2/help"
 	tea "charm.land/bubbletea/v2"
+	lipgloss "charm.land/lipgloss/v2"
 )
 
 // flatManagerCalendars is a mixed Local + multi-account fixture whose
@@ -117,20 +118,64 @@ func TestCalendarManagerRootMouseCheckboxTogglesVisibility(t *testing.T) {
 	}
 }
 
-// TestCalendarManagerRootMouseActivatesAddButton verifies the persistent Add
-// action is mouse-clickable and emits CalendarManagerAddRequestedMsg.
-func TestCalendarManagerRootMouseActivatesAddButton(t *testing.T) {
+// TestCalendarManagerAddActionLivesAtBottomOfSourceList verifies the header
+// shows only "Calendars" and the compact + Add action sits one row below the
+// source-list viewport at the source column's left edge.
+func TestCalendarManagerAddActionLivesAtBottomOfSourceList(t *testing.T) {
 	m := newFlatManager()
-	bx, by, bw, ok := m.titleActionRect()
+	for _, line := range strings.Split(stripANSI(m.View()), "\n") {
+		if strings.Contains(line, "Calendars") && strings.Contains(line, "+ Add") {
+			t.Fatalf("header still couples the Add action: %q", line)
+		}
+	}
+	_, ay, aw, ok := m.sourceAddActionRect()
 	if !ok {
-		t.Fatal("persistent Add title action not present")
+		t.Fatal("source + Add action not present")
 	}
-	_, cmd := m.Update(tea.MouseClickMsg{X: bx + bw/2, Y: by, Button: tea.MouseLeft})
-	if cmd == nil {
-		t.Fatal("clicking Add emitted no command")
+	if aw != lipgloss.Width("+ Add") {
+		t.Fatalf("source Add width = %d, want %d", aw, lipgloss.Width("+ Add"))
 	}
-	if _, ok := cmd().(CalendarManagerAddRequestedMsg); !ok {
-		t.Fatalf("expected CalendarManagerAddRequestedMsg, got %T", cmd())
+	_, listY, _, listH := m.listRegion()
+	if ay != listY+listH+1 {
+		t.Fatalf("Add y = %d, want below list viewport %d", ay, listY+listH+1)
+	}
+}
+
+// TestCalendarManagerAddActionMutedWhileDetailOwnsDraft verifies the + Add
+// action remains visible (rendered) but is inactive while a pushed calendar
+// detail owns an unsaved draft, so Add cannot silently discard it.
+func TestCalendarManagerAddActionMutedWhileDetailOwnsDraft(t *testing.T) {
+	m := newFlatManager()
+	if !m.sourceAddActionActive() {
+		t.Fatal("Add action should be active at the root")
+	}
+	m = m.OpenCalendar(calendarDialogParamsFor(1, m.calendars[1], false))
+	if m.sourceAddActionActive() {
+		t.Fatal("Add action should be inactive while a detail owns a draft")
+	}
+	if _, _, _, ok := m.sourceAddActionRect(); !ok {
+		t.Fatal("muted Add action should remain rendered in wide mode")
+	}
+}
+
+// TestCalendarManagerAddActionInactiveOnPushedScreens verifies the + Add
+// action is muted and inert on every pushed screen — not just a calendar
+// detail — because each pushed screen owns its own input. Covers the import
+// transfer screen (which leaves no calendar draft) and the account screen.
+func TestCalendarManagerAddActionInactiveOnPushedScreens(t *testing.T) {
+	if m := newFlatManager(); !m.sourceAddActionActive() {
+		t.Fatal("Add action should be active at the root")
+	}
+	for name, pushed := range map[string]CalendarManagerModel{
+		"import":  newFlatManager().OpenImport(1),
+		"account": newFlatManager().OpenAccount(AccountSettingsParams{AccountID: 7, DisplayName: "Google"}),
+	} {
+		if pushed.sourceAddActionActive() {
+			t.Fatalf("%s screen: Add action should be inactive", name)
+		}
+		if _, _, _, ok := pushed.sourceAddActionRect(); !ok {
+			t.Fatalf("%s screen: muted Add action should remain rendered in wide mode", name)
+		}
 	}
 }
 
@@ -279,16 +324,220 @@ func TestCalendarManagerRootCloseEmitsClosedMsg(t *testing.T) {
 	}
 }
 
-// TestCalendarManagerRootAddKeyEmitsAddRequested verifies the persistent Add
-// keybinding emits CalendarManagerAddRequestedMsg.
-func TestCalendarManagerRootAddKeyEmitsAddRequested(t *testing.T) {
-	m := newFlatManager()
-	_, cmd := m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
-	if cmd == nil {
-		t.Fatal("Add key emitted no command")
+// TestCalendarManagerAddMenuOpensViaKeyAndClick verifies that both the `a` key
+// and a click on the source + Add action open the manager-local menu and emit
+// no app command.
+func TestCalendarManagerAddMenuOpensViaKeyAndClick(t *testing.T) {
+	t.Run("key", func(t *testing.T) {
+		m := newFlatManager()
+		opened, cmd := m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
+		if cmd != nil {
+			t.Fatalf("opening the menu emitted a command %T", cmd())
+		}
+		if !opened.addMenuOpen {
+			t.Fatal("`a` did not open the add menu")
+		}
+	})
+	t.Run("click", func(t *testing.T) {
+		m := newFlatManager()
+		ax, ay, _, ok := m.sourceAddActionRect()
+		if !ok {
+			t.Fatal("source + Add action not present")
+		}
+		opened, cmd := m.Update(tea.MouseClickMsg{X: ax, Y: ay, Button: tea.MouseLeft})
+		if cmd != nil {
+			t.Fatalf("clicking Add emitted a command %T", cmd())
+		}
+		if !opened.addMenuOpen {
+			t.Fatal("clicking + Add did not open the menu")
+		}
+	})
+}
+
+// TestCalendarManagerAddMenuRowsAndNoCancel verifies the open menu renders the
+// exact three rows and no Cancel affordance.
+func TestCalendarManagerAddMenuRowsAndNoCancel(t *testing.T) {
+	m := newFlatManager().openAddMenu()
+	view := stripANSI(m.View())
+	for _, want := range []string{"New Calendar…", "Add Account…", "Import Calendar File…"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("menu missing row %q\n%s", want, view)
+		}
 	}
-	if _, ok := cmd().(CalendarManagerAddRequestedMsg); !ok {
-		t.Fatalf("expected CalendarManagerAddRequestedMsg, got %T", cmd())
+	if strings.Contains(view, "Cancel") {
+		t.Errorf("menu must not render a Cancel row\n%s", view)
+	}
+}
+
+// TestCalendarManagerAddMenuKeyboardClampsAndActivates verifies Up/Down clamp
+// within the three rows and Enter emits the selected typed target and closes
+// the menu.
+func TestCalendarManagerAddMenuKeyboardClampsAndActivates(t *testing.T) {
+	down := tea.KeyPressMsg{Code: tea.KeyDown}
+	up := tea.KeyPressMsg{Code: tea.KeyUp}
+	enter := tea.KeyPressMsg{Code: tea.KeyEnter}
+	for _, tc := range []struct {
+		name   string
+		keys   []tea.KeyPressMsg
+		cursor int
+		target CalendarManagerTarget
+	}{
+		{"default first", nil, 0, CalendarManagerTargetLocalCreate},
+		{"down clamps at last", []tea.KeyPressMsg{down, down, down, down}, 2, CalendarManagerTargetImport},
+		{"up clamps at first", []tea.KeyPressMsg{up, up}, 0, CalendarManagerTargetLocalCreate},
+		{"second row", []tea.KeyPressMsg{down}, 1, CalendarManagerTargetAccountConnect},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newFlatManager().openAddMenu()
+			for _, k := range tc.keys {
+				m, _ = m.Update(k)
+			}
+			if m.addMenuCursor != tc.cursor {
+				t.Fatalf("cursor = %d, want %d", m.addMenuCursor, tc.cursor)
+			}
+			m, cmd := m.Update(enter)
+			if cmd == nil {
+				t.Fatal("Enter emitted no command")
+			}
+			msg, ok := cmd().(CalendarManagerRequestedMsg)
+			if !ok || msg.Target != tc.target {
+				t.Fatalf("Enter target = %v, want %v", cmd(), tc.target)
+			}
+			if m.addMenuOpen {
+				t.Error("menu still open after Enter")
+			}
+		})
+	}
+}
+
+// TestCalendarManagerAddMenuRowClickEmitsTarget verifies clicking each interior
+// menu row emits the correct typed target and closes the menu.
+func TestCalendarManagerAddMenuRowClickEmitsTarget(t *testing.T) {
+	want := []CalendarManagerTarget{
+		CalendarManagerTargetLocalCreate,
+		CalendarManagerTargetAccountConnect,
+		CalendarManagerTargetImport,
+	}
+	for row, target := range want {
+		m := newFlatManager().openAddMenu()
+		mx, my, _, _ := m.addMenuRect()
+		clicked, cmd := m.Update(tea.MouseClickMsg{X: mx + 2, Y: my + 1 + row, Button: tea.MouseLeft})
+		msg, ok := cmd().(CalendarManagerRequestedMsg)
+		if !ok || msg.Target != target {
+			t.Fatalf("row %d click = %v, want %v", row, cmd(), target)
+		}
+		if clicked.addMenuOpen {
+			t.Errorf("row %d: menu still open after click", row)
+		}
+	}
+}
+
+// TestCalendarManagerAddMenuOutsideClickDismissesWithoutClickThrough verifies
+// a click outside the open menu dismisses it without emitting a command or
+// activating the underlying list row.
+func TestCalendarManagerAddMenuOutsideClickDismissesWithoutClickThrough(t *testing.T) {
+	m := newFlatManager().openAddMenu()
+	listX, listY, _, _ := m.listRegion()
+	before, _ := m.selectedID()
+	clicked, cmd := m.Update(tea.MouseClickMsg{X: listX + 8, Y: listY, Button: tea.MouseLeft})
+	if cmd != nil {
+		t.Fatalf("outside click should not emit a command: %T", cmd())
+	}
+	if clicked.addMenuOpen {
+		t.Fatal("outside click did not dismiss the menu")
+	}
+	if clicked.Screen() != CalendarManagerScreenList {
+		t.Fatalf("outside click changed screen: %v", clicked.Screen())
+	}
+	if after, _ := clicked.selectedID(); after != before {
+		t.Fatalf("outside click changed selection: before=%d after=%d", before, after)
+	}
+}
+
+// TestCalendarManagerAddMenuEscDismissesWithoutClosingManager verifies Esc
+// closes the menu without closing the manager or emitting a command.
+func TestCalendarManagerAddMenuEscDismissesWithoutClosingManager(t *testing.T) {
+	m := newFlatManager().openAddMenu()
+	dismissed, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if cmd != nil {
+		t.Fatalf("Esc should emit no command: %T", cmd())
+	}
+	if dismissed.addMenuOpen {
+		t.Fatal("Esc did not dismiss the menu")
+	}
+	if dismissed.Screen() != CalendarManagerScreenList {
+		t.Fatal("Esc dismissed the manager instead of the menu")
+	}
+}
+
+// TestCalendarManagerAddMenuGeometryStaysInsideBox verifies the anchored menu
+// rectangle stays fully inside the manager box at wide, narrow, and shallow
+// terminal sizes.
+func TestCalendarManagerAddMenuGeometryStaysInsideBox(t *testing.T) {
+	for _, size := range []struct{ w, h int }{{120, 40}, {narrowThreshold - 1, 30}, {100, 10}} {
+		m := newFlatManager().SetSize(size.w, size.h).openAddMenu()
+		boxW, boxH := m.boxSize()
+		left := (size.w - boxW) / 2
+		top := (size.h - boxH) / 2
+		mx, my, mw, mh := m.addMenuRect()
+		if mx < left+1 || mx+mw > left+boxW-1 {
+			t.Errorf("size %dx%d: menu x [%d,%d) outside box [%d,%d)", size.w, size.h, mx, mx+mw, left+1, left+boxW-1)
+		}
+		if my < top+1 || my+mh > top+boxH-1 {
+			t.Errorf("size %dx%d: menu y [%d,%d) outside box [%d,%d)", size.w, size.h, my, my+mh, top+1, top+boxH-1)
+		}
+	}
+}
+
+// TestCalendarManagerAddMenuBorderClickConsumedWithoutRouting verifies that a
+// click on a menu border cell (the left/right │ columns or the rounded edges)
+// is consumed: it neither activates a row nor dismisses the menu, and it never
+// routes to the underlying list.
+func TestCalendarManagerAddMenuBorderClickConsumedWithoutRouting(t *testing.T) {
+	m := newFlatManager().openAddMenu()
+	mx, my, mw, mh := m.addMenuRect()
+	// Left/right border columns on an interior row must not activate.
+	for _, x := range []int{mx, mx + mw - 1} {
+		clicked, cmd := m.Update(tea.MouseClickMsg{X: x, Y: my + 1, Button: tea.MouseLeft})
+		if cmd != nil {
+			t.Fatalf("vertical border click at x=%d routed %T", x, cmd())
+		}
+		if !clicked.addMenuOpen {
+			t.Fatalf("vertical border click at x=%d dismissed the menu", x)
+		}
+	}
+	// Top/bottom border rows on an interior column must not activate.
+	for _, y := range []int{my, my + mh - 1} {
+		clicked, cmd := m.Update(tea.MouseClickMsg{X: mx + 2, Y: y, Button: tea.MouseLeft})
+		if cmd != nil {
+			t.Fatalf("horizontal border click at y=%d routed %T", y, cmd())
+		}
+		if !clicked.addMenuOpen {
+			t.Fatalf("horizontal border click at y=%d dismissed the menu", y)
+		}
+	}
+}
+
+// TestCalendarManagerAddMenuNarrowWidthClampsInsideManager verifies that on a
+// very narrow terminal—where the menu's natural width would overflow the
+// box—the menu width is capped to the manager interior so the full rect stays
+// inside the manager.
+func TestCalendarManagerAddMenuNarrowWidthClampsInsideManager(t *testing.T) {
+	m := newFlatManager().SetSize(28, 24).openAddMenu()
+	boxW, boxH := m.boxSize()
+	left := (28 - boxW) / 2
+	top := (24 - boxH) / 2
+	mx, my, mw, mh := m.addMenuRect()
+	// The natural menu (28 cells) is wider than this box interior; the cap
+	// must shrink it so the whole menu fits between the box borders.
+	if mw > boxW-2 {
+		t.Fatalf("menu width %d exceeds box interior %d", mw, boxW-2)
+	}
+	if mx < left+1 || mx+mw > left+boxW-1 {
+		t.Fatalf("menu x [%d,%d) outside box [%d,%d)", mx, mx+mw, left+1, left+boxW-1)
+	}
+	if my < top+1 || my+mh > top+boxH-1 {
+		t.Fatalf("menu y [%d,%d) outside box [%d,%d)", my, my+mh, top+1, top+boxH-1)
 	}
 }
 
@@ -1011,6 +1260,18 @@ func TestCalendarManagerShallowWideFallbackSizesWholeListPane(t *testing.T) {
 	}
 	if got := m.list.width; got != wantW {
 		t.Fatalf("sized list width = %d, want %d", got, wantW)
+	}
+	// Width permits the menu's natural content, so the longest label must not
+	// be needlessly truncated (regression: the cap once bound the box height
+	// instead of its width, truncating labels even on a wide terminal).
+	mm := m.openAddMenu()
+	longest := 0
+	for _, item := range calendarManagerAddItems {
+		longest = max(longest, lipgloss.Width(item.label))
+	}
+	natural := longest + 1 + calendarManagerMenuTrailing
+	if got := mm.addMenuContentWidth(); got != natural {
+		t.Fatalf("menu content width = %d, want natural %d (label truncated at wide box)", got, natural)
 	}
 }
 
