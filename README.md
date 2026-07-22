@@ -695,11 +695,13 @@ reorder complete remote-account sections while keeping **Local** first. The
 same reorder keys move calendars only within their own account. Hidden state
 and scrolling operate on calendar rows rather than group headings. Read-only
 imported calendars remain browsable but reject event edits and deletes.
-**Manage Calendars…** opens a flat, calendar-first manager. Each row keeps its
-owning location visible (`Local` or the account name), and opens calendar details
-for visibility, metadata, export, default-calendar, and delete actions. Linked
-calendar details drill into account settings without losing unsaved calendar
-edits. **Add Calendar…** offers local calendar creation, account connection,
+**Manage Calendars…** opens a flat, calendar-first manager. Each row shows a
+visibility checkbox, independent calendar-color marker, name, owning location
+(`Local` or the account name), and **Edit** link. Space or the checkbox toggles
+the same visibility state shown in the sidebar; Enter, the row body, or **Edit**
+opens calendar details for metadata, export, default-calendar, and delete
+actions. Linked calendar details drill into account settings without losing
+unsaved calendar edits. **Add Calendar…** offers local calendar creation, account connection,
 one-time iCal import with preview and compatible-destination selection, and an
 account-only management list. Account connection signs in once and adds every
 usable remote calendar. Todo and journal management live in the CLI for now.

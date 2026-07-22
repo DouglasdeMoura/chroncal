@@ -505,8 +505,8 @@ func (m CalendarManagerModel) Update(msg tea.Msg) (CalendarManagerModel, tea.Cmd
 	// delegation (a Back gesture) — except while a text-editing field holds
 	// focus in the calendar detail, where Left still moves the cursor.
 	if m.screen != CalendarManagerScreenList {
-		if popped, ok := m.popOnLeft(msg); ok {
-			return popped, nil
+		if popped, cmd, ok := m.popOnLeft(msg); ok {
+			return popped, cmd
 		}
 	}
 	switch m.screen {
@@ -532,30 +532,34 @@ func (m CalendarManagerModel) Update(msg tea.Msg) (CalendarManagerModel, tea.Cmd
 // popOnLeft implements the Back gesture for a pushed detail: the Left arrow
 // pops one child before the message is delegated to it, so the user can drill
 // out with the arrow key. It never fires at the root (root Left is unchanged)
-// and is suppressed while a text-editing field holds focus in the calendar
-// detail, where Left must keep moving the cursor. The bool reports whether
-// the message was consumed as a Back gesture.
-func (m CalendarManagerModel) popOnLeft(msg tea.Msg) (CalendarManagerModel, bool) {
+// and is suppressed while a field owns Left for editing, including every
+// direct account-connection field. The bool reports whether the message was
+// consumed as a Back gesture.
+func (m CalendarManagerModel) popOnLeft(msg tea.Msg) (CalendarManagerModel, tea.Cmd, bool) {
 	press, ok := msg.(tea.KeyPressMsg)
 	if !ok || press.Code != tea.KeyLeft {
-		return m, false
+		return m, nil, false
 	}
 	switch m.screen {
 	case CalendarManagerScreenList, CalendarManagerScreenTransfer:
-		return m, false
+		return m, nil, false
 	case CalendarManagerScreenAccount:
-		// Account details have no text fields, so Left always pops back to
-		// the originating calendar detail or the root account list.
-		return m.CloseAccount(), true
+		// Account settings opened from a calendar pop back to that unchanged
+		// edit form. Direct account settings close the manager itself; exposing
+		// the root calendar list here would be an unrelated navigation step.
+		if m.calendarForm != nil {
+			return m.CloseAccount(), nil, true
+		}
+		return m, func() tea.Msg { return CalendarManagerClosedMsg{} }, true
 	case CalendarManagerScreenCalendar:
-		if m.calendarForm == nil || m.calendarForm.leftMovesCursor() {
-			return m, false
+		if m.calendarForm == nil || m.calendarForm.leftMovesCursor() || m.calendarForm.accountConnection {
+			return m, nil, false
 		}
 		m.calendarForm = nil
 		m.screen = CalendarManagerScreenList
-		return m, true
+		return m, nil, true
 	}
-	return m, false
+	return m, nil, false
 }
 
 func (m CalendarManagerModel) handleKey(msg tea.KeyPressMsg) (CalendarManagerModel, tea.Cmd) {
@@ -576,7 +580,7 @@ func (m CalendarManagerModel) handleKey(msg tea.KeyPressMsg) (CalendarManagerMod
 	case key.Matches(msg, m.keys.Toggle):
 		if id, ok := m.selectedID(); ok {
 			// Emit the DESIRED state and apply it locally + to the rows so the
-			// dot flips immediately and the host has the target state to
+			// checkbox flips immediately and the host has the target state to
 			// persist; relying on the host to round-trip would leave the row
 			// stale until reload.
 			desired := !m.hidden[id]
@@ -640,11 +644,21 @@ func (m CalendarManagerModel) handleMouse(msg tea.MouseClickMsg) (CalendarManage
 	if cmd, ok := m.titleActionAtPosition(msg.X, msg.Y); ok {
 		return m, cmd
 	}
-	if idx, ok := m.rowAtPosition(msg.X, msg.Y); ok {
-		m.cursor = idx
-		return m.ensureVisible(), nil
+	idx, ok := m.rowAtPosition(msg.X, msg.Y)
+	if !ok {
+		return m, nil
 	}
-	return m, nil
+	m.cursor = idx
+	m = m.ensureVisible()
+	id := m.order[idx]
+	listX, _, _, _ := m.listRegion()
+	if msg.X < listX+lipgloss.Width(Glyphs["checkbox.off"]) {
+		desired := !m.hidden[id]
+		m.hidden = setHidden(m.hidden, id, desired)
+		m = m.rebuild()
+		return m, func() tea.Msg { return CalendarVisibilityToggledMsg{ID: id, Hidden: desired} }
+	}
+	return m.OpenCalendar(calendarDialogParamsFor(id, m.calendars[id], m.hidden[id])), nil
 }
 
 // OpenCalendar pushes the calendar detail for the given params onto the
@@ -699,6 +713,7 @@ func (m CalendarManagerModel) updateCalendar(msg tea.Msg) (CalendarManagerModel,
 		m.screen = CalendarManagerScreenList
 		return m, nil
 	}
+	accountConnection := m.calendarForm.accountConnection
 	next, cmd := m.calendarForm.Update(msg)
 	m.calendarForm = &next
 	if cmd == nil {
@@ -707,12 +722,15 @@ func (m CalendarManagerModel) updateCalendar(msg tea.Msg) (CalendarManagerModel,
 	out := cmd()
 	switch typed := out.(type) {
 	case CalendarDialogClosedMsg:
+		if accountConnection {
+			return m, func() tea.Msg { return CalendarManagerClosedMsg{} }
+		}
 		m.calendarForm = nil
 		m.screen = CalendarManagerScreenList
 		return m, nil
 	case CalendarVisibilityToggledMsg:
 		// Mirror the detail's optimistic toggle into the root so the row's
-		// dot is already correct when the user pops back, then forward the
+		// checkbox is already correct when the user pops back, then forward the
 		// message so the host persists it.
 		m.hidden = setHidden(m.hidden, typed.ID, typed.Hidden)
 		m = m.rebuild()
@@ -722,9 +740,9 @@ func (m CalendarManagerModel) updateCalendar(msg tea.Msg) (CalendarManagerModel,
 }
 
 // updateAccount delegates input to the pushed account detail. Account close
-// (Esc or Done) pops back to the originating calendar detail with its fields
-// unchanged; Manage/Rename/Sign In Again/Remove requests pass through to the
-// host, which owns those canonical actions.
+// (Esc or Done) returns to the originating calendar detail when one exists;
+// a directly opened account asks the host to close the manager. Other account
+// requests pass through to the host, which owns those canonical actions.
 func (m CalendarManagerModel) updateAccount(msg tea.Msg) (CalendarManagerModel, tea.Cmd) {
 	if m.accountSettings == nil {
 		return m.CloseAccount(), nil
@@ -736,7 +754,10 @@ func (m CalendarManagerModel) updateAccount(msg tea.Msg) (CalendarManagerModel, 
 	}
 	out := cmd()
 	if _, ok := out.(AccountSettingsClosedMsg); ok {
-		return m.CloseAccount(), nil
+		if m.calendarForm != nil {
+			return m.CloseAccount(), nil
+		}
+		return m, func() tea.Msg { return CalendarManagerClosedMsg{} }
 	}
 	return m, func() tea.Msg { return out }
 }
@@ -891,37 +912,43 @@ func (m CalendarManagerModel) renderRow(id int64, selected bool, w int) string {
 	info := m.calendars[id]
 	hidden := m.hidden[id]
 
-	glyph := "●"
+	checkbox := Glyphs["checkbox.on"]
 	if hidden {
-		glyph = "○"
+		checkbox = Glyphs["checkbox.off"]
 	}
 	dotFg := lipgloss.Color(info.Color)
+	checkboxStyle := lipgloss.NewStyle()
 	dotStyle := lipgloss.NewStyle().Foreground(dotFg)
 	nameStyle := lipgloss.NewStyle().Bold(true)
 	ctxStyle := lipgloss.NewStyle().Foreground(activeTheme.Muted)
 	tagStyle := lipgloss.NewStyle().Foreground(activeTheme.Muted)
+	editStyle := lipgloss.NewStyle().Underline(true)
 	if hidden {
 		nameStyle = nameStyle.Faint(true)
 	}
 	if selected {
+		checkboxStyle = checkboxStyle.Reverse(true)
 		dotStyle = lipgloss.NewStyle().Foreground(dotFg).Reverse(true)
 		nameStyle = lipgloss.NewStyle().Reverse(true).Bold(true)
 		ctxStyle = lipgloss.NewStyle().Reverse(true)
 		tagStyle = lipgloss.NewStyle().Reverse(true)
+		editStyle = lipgloss.NewStyle().Reverse(true).Underline(true)
 	}
 
-	out := dotStyle.Render(glyph) + " " +
-		nameStyle.Render(info.Name) + " " +
-		ctxStyle.Render(flatAccountContext(info))
+	left := checkboxStyle.Render(checkbox) + " " + dotStyle.Render("●") + " " +
+		nameStyle.Render(info.Name) + " " + ctxStyle.Render(flatAccountContext(info))
 	if tags := flatStateTags(info); len(tags) > 0 {
-		out += " " + tagStyle.Render(strings.Join(tags, " "))
+		left += " " + tagStyle.Render(strings.Join(tags, " "))
 	}
+	edit := editStyle.Render("Edit ›")
+	left = truncateTo(left, max(w-lipgloss.Width(edit)-1, 0))
+	gap := max(w-lipgloss.Width(left)-lipgloss.Width(edit), 1)
+	gapStyle := lipgloss.NewStyle()
 	if selected {
-		if rem := w - lipgloss.Width(out); rem > 0 {
-			out += lipgloss.NewStyle().Reverse(true).Render(strings.Repeat(" ", rem))
-		}
+		gapStyle = gapStyle.Reverse(true)
 	}
-	return out
+	out := left + gapStyle.Render(strings.Repeat(" ", gap)) + edit
+	return truncateTo(out, w)
 }
 
 // boxSize mirrors ListDialogModel.boxSize so the flat manager shares the
@@ -1009,18 +1036,19 @@ func (m CalendarManagerModel) titleActionAtPosition(x, y int) (tea.Cmd, bool) {
 	return m.titleAction.Msg, true
 }
 
-// flatCalendarRowLabel builds the unstyled, ANSI-free row label: dot, name,
-// owning context, and applicable state tags. Selection styling is layered on
-// at render time.
+// flatCalendarRowLabel builds the unstyled, ANSI-free row label: visibility
+// checkbox, independent color marker, name, owner, state tags, and Edit link.
+// Selection styling and right alignment are layered on at render time.
 func flatCalendarRowLabel(info CalendarInfo, hidden bool) string {
-	glyph := "●"
+	checkbox := Glyphs["checkbox.on"]
 	if hidden {
-		glyph = "○"
+		checkbox = Glyphs["checkbox.off"]
 	}
 	tags := flatStateTags(info)
-	parts := make([]string, 0, 3+len(tags))
-	parts = append(parts, glyph, info.Name, flatAccountContext(info))
+	parts := make([]string, 0, 5+len(tags))
+	parts = append(parts, checkbox, "●", info.Name, flatAccountContext(info))
 	parts = append(parts, tags...)
+	parts = append(parts, "Edit ›")
 	return strings.Join(parts, " ")
 }
 
@@ -1039,10 +1067,8 @@ func flatAccountContext(info CalendarInfo) string {
 	return "Remote"
 }
 
-// flatStateTags returns the compact applicable-state tags for a calendar, in a
-// stable order: default, read-only, sync error, remote missing. Hidden state
-// is encoded by the hollow dot rather than a word tag, matching the sidebar
-// and legacy dialog convention.
+// flatStateTags returns compact applicable-state tags in stable order.
+// Visibility is represented separately by the row checkbox.
 func flatStateTags(info CalendarInfo) []string {
 	var tags []string
 	if info.IsDefault {
