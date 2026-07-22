@@ -513,14 +513,14 @@ syncs run unattended.
    ```
 
 To connect from the TUI, press `C` (`Shift+C`) or choose **Calendars** in
-the command palette (`/` or `Ctrl+K`), then choose **+ Add** > **Connect
-Account**. Chroncal discovers, imports, and initially syncs every usable
-collection exposed by that sign-in without a second selection step.
-Unsupported collections are ignored; if discovery finds no usable calendars,
-Chroncal removes the newly created account. Browser authorization runs without
-leaving the app. The same **+ Add** menu creates local calendars and imports
-iCal files; remote calendars belong to an account rather than carrying
-separate credentials.
+the command palette (`/` or `Ctrl+K`), activate the bottom **+ Add** action,
+then choose **Add Account…**. Chroncal discovers, imports, and initially syncs
+every usable collection exposed by that sign-in without a second selection
+step. Unsupported collections are ignored; if discovery finds no usable
+calendars, Chroncal removes the newly created account. Browser authorization
+runs without leaving the app. The same anchored **+ Add** menu creates local
+calendars and imports iCal files; remote calendars belong to an account rather
+than carrying separate credentials.
 
 Account maintenance has one entry point. In **Calendars**, select a remote
 account heading and press `Enter`; selecting an account heading in the sidebar
@@ -703,14 +703,18 @@ imported calendars remain browsable but reject event edits and deletes.
 the left and an inspector on the right. Calendar rows keep visibility (a
 checkbox) separate from identity (the calendar-color dot); Space or the
 checkbox toggles the same visibility state shown by sidebar circles. Account
-headings collapse with Left/Right and open account settings with Enter. Selecting
-a calendar shows its location and sync state in the inspector; Enter or a row
-body click switches that inspector to metadata, export, default-calendar, and
-delete controls while the hierarchy remains mounted. Linked calendar details drill into account settings without
-losing unsaved calendar edits. **+ Add** offers local calendar creation, account
-connection, and one-time iCal import with preview and compatible-destination
-selection. Account connection signs in once and adds every usable remote
-calendar. Todo and journal management live in the CLI for now.
+headings collapse with Left/Right and open account settings with Enter. The
+root inspector keeps a calendar's **Edit…** action or an account's **Account
+Settings…** action at the bottom. Enter or a calendar-row body click opens
+metadata, export, default-calendar, and delete controls while the hierarchy
+remains mounted. Linked calendar details drill into account settings without
+losing unsaved calendar edits.
+
+The source list has a bottom **+ Add** action. It opens an anchored menu for
+**New Calendar…**, **Add Account…**, and **Import Calendar File…**. Account
+connection signs in once and adds every usable remote calendar; iCal import
+retains its preview and compatible-destination selection. Todo and journal
+management live in the CLI for now.
 
 Sync health is visible at a glance: a calendar whose last sync failed shows
 a `⚠` next to it in the sidebar, and opening it explains why (and offers a
