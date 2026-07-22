@@ -3140,6 +3140,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			delete(m.hiddenCalendars, msg.ID)
 		}
+		list := m.sidebar.List().SetHidden(msg.ID, msg.Hidden)
+		m.sidebar = m.sidebar.SetList(list)
 		m.saveUIState()
 		m = m.refreshCalendarViews()
 		// Re-filter cached mini-month events against the new visibility set.
@@ -3372,7 +3374,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.syncing || m.oauthPending {
 			return m, nil
 		}
-		m.calendarManager = m.calendarManager.CloseAccount()
+		if m.calendarManager.calendarForm != nil {
+			m.calendarManager = m.calendarManager.CloseAccount()
+		} else {
+			m.calendarManagerOpen = false
+		}
 		return m, nil
 
 	case CalendarDiscoveryRequestedMsg:

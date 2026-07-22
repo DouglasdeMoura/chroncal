@@ -219,6 +219,22 @@ func (m CalendarListModel) SetItemsPreservingCursor(items []CalendarListItem) Ca
 
 func (m CalendarListModel) HiddenSet() map[int64]bool { return maps.Clone(m.hidden) }
 
+// SetHidden applies an explicit visibility state without emitting another
+// toggle message. The app uses it to keep the sidebar projection aligned when
+// visibility changes originate in Manage Calendars.
+func (m CalendarListModel) SetHidden(id int64, hidden bool) CalendarListModel {
+	m.hidden = maps.Clone(m.hidden)
+	if m.hidden == nil {
+		m.hidden = make(map[int64]bool)
+	}
+	if hidden {
+		m.hidden[id] = true
+	} else {
+		delete(m.hidden, id)
+	}
+	return m
+}
+
 func (m CalendarListModel) moveCursor(delta int) CalendarListModel {
 	if len(m.rows) == 0 || delta == 0 {
 		return m.ensureCursorVisible()

@@ -289,3 +289,75 @@ func TestManagerOpenDefersQuitKeyToOverlay(t *testing.T) {
 func keyPress(s string) tea.KeyPressMsg {
 	return tea.KeyPressMsg{Text: s}
 }
+
+func TestDirectAccountCloseDoesNotOpenCalendarList(t *testing.T) {
+	m := managerRoutingModel()
+	updated, _ := m.Update(CalendarManagerRequestedMsg{Target: CalendarManagerTargetAccount, AccountID: 7})
+	m = updated.(Model)
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	m = updated.(Model)
+	if m.calendarManager.Screen() != CalendarManagerScreenAccount {
+		t.Fatalf("direct account close exposed manager root before close delivery: %v", m.calendarManager.Screen())
+	}
+	if cmd == nil {
+		t.Fatal("direct account close emitted no manager-close command")
+	}
+	if _, ok := cmd().(CalendarManagerClosedMsg); !ok {
+		t.Fatalf("direct account close emitted %T, want CalendarManagerClosedMsg", cmd())
+	}
+	updated, _ = m.Update(cmd())
+	m = updated.(Model)
+	if m.calendarManagerOpen {
+		t.Fatal("closing direct account settings exposed the calendar list")
+	}
+}
+
+func TestAddAccountCancelDoesNotOpenCalendarList(t *testing.T) {
+	m := managerRoutingModel()
+	updated, _ := m.Update(AccountAddRequestedMsg{})
+	m = updated.(Model)
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	m = updated.(Model)
+	if m.calendarManager.Screen() != CalendarManagerScreenCalendar {
+		t.Fatalf("account cancel exposed manager root before close delivery: %v", m.calendarManager.Screen())
+	}
+	if cmd == nil {
+		t.Fatal("account connection cancel emitted no manager-close command")
+	}
+	if _, ok := cmd().(CalendarManagerClosedMsg); !ok {
+		t.Fatalf("account connection cancel emitted %T, want CalendarManagerClosedMsg", cmd())
+	}
+	updated, _ = m.Update(cmd())
+	m = updated.(Model)
+	if m.calendarManagerOpen {
+		t.Fatal("canceling Add Account exposed the calendar list")
+	}
+}
+
+func TestCalendarManagerVisibilityUpdatesSidebarState(t *testing.T) {
+	m := managerRoutingModel()
+	m.sidebar = m.sidebar.SetList(NewCalendarListModel([]CalendarListItem{
+		{ID: 1, Name: "On device"},
+		{ID: 2, Name: "Primary", AccountID: 7, AccountName: "Personal Google"},
+	}, nil))
+
+	updated, _ := m.Update(CalendarVisibilityToggledMsg{ID: 2, Hidden: true})
+	m = updated.(Model)
+	if !m.hiddenCalendars[2] || !m.sidebar.List().HiddenSet()[2] {
+		t.Fatalf("hidden state diverged: app=%v sidebar=%v", m.hiddenCalendars, m.sidebar.List().HiddenSet())
+	}
+	if view := stripANSI(m.sidebar.List().View()); !strings.Contains(view, "○ Primary") {
+		t.Fatalf("sidebar did not render hidden calendar marker:\n%s", view)
+	}
+
+	updated, _ = m.Update(CalendarVisibilityToggledMsg{ID: 2, Hidden: false})
+	m = updated.(Model)
+	if m.hiddenCalendars[2] || m.sidebar.List().HiddenSet()[2] {
+		t.Fatalf("visible state diverged: app=%v sidebar=%v", m.hiddenCalendars, m.sidebar.List().HiddenSet())
+	}
+	if view := stripANSI(m.sidebar.List().View()); !strings.Contains(view, "● Primary") {
+		t.Fatalf("sidebar did not render visible calendar marker:\n%s", view)
+	}
+}

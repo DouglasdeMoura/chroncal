@@ -54,8 +54,8 @@ func flatRowForID(m CalendarManagerModel, id int64) string {
 }
 
 // TestCalendarManagerRootFlatRowsOnePerCalendar locks in the flat contract:
-// exactly one physical row per calendar, each carrying a color-dot glyph, and
-// no structural heading or separator rows.
+// exactly one physical row per calendar, each carrying a visibility checkbox
+// and independent color-dot glyph, with no structural heading or separator.
 func TestCalendarManagerRootFlatRowsOnePerCalendar(t *testing.T) {
 	cals := flatManagerCalendars()
 	m := newFlatManager()
@@ -65,8 +65,8 @@ func TestCalendarManagerRootFlatRowsOnePerCalendar(t *testing.T) {
 	}
 	for i, row := range rows {
 		trimmed := strings.TrimSpace(row)
-		if !strings.HasPrefix(trimmed, "●") && !strings.HasPrefix(trimmed, "○") {
-			t.Errorf("row %d is not a calendar row (missing dot glyph): %q", i, row)
+		if !strings.HasPrefix(trimmed, Glyphs["checkbox.on"]+" ●") {
+			t.Errorf("row %d is not a visible calendar row (checkbox/color marker): %q", i, row)
 		}
 	}
 }
@@ -137,11 +137,16 @@ func TestCalendarManagerRootStatusMarkers(t *testing.T) {
 			t.Errorf("status marker %q missing from rows:\n%s", want, joined)
 		}
 	}
-	if hiddenRow := flatRowForID(m, 4); !strings.HasPrefix(hiddenRow, "○") {
-		t.Errorf("hidden calendar row should use hollow dot: %q", hiddenRow)
+	if hiddenRow := flatRowForID(m, 4); !strings.HasPrefix(hiddenRow, Glyphs["checkbox.off"]+" ●") {
+		t.Errorf("hidden calendar row should use unchecked visibility plus color marker: %q", hiddenRow)
 	}
-	if visibleRow := flatRowForID(m, 1); !strings.HasPrefix(visibleRow, "●") {
-		t.Errorf("visible calendar row should use filled dot: %q", visibleRow)
+	if visibleRow := flatRowForID(m, 1); !strings.HasPrefix(visibleRow, Glyphs["checkbox.on"]+" ●") {
+		t.Errorf("visible calendar row should use checked visibility plus color marker: %q", visibleRow)
+	}
+	for _, id := range []int64{1, 2, 3, 4} {
+		if row := flatRowForID(m, id); !strings.Contains(row, "Edit ›") {
+			t.Errorf("calendar %d row missing Edit link: %q", id, row)
+		}
 	}
 }
 
@@ -186,32 +191,36 @@ func TestCalendarManagerRootSpaceTogglesVisibility(t *testing.T) {
 	}
 }
 
-// TestCalendarManagerRootMouseSelectsByPosition verifies mouse selection lands
-// on the same calendar the keyboard would, by row geometry rather than styled
-// text. A plain click selects; it must not emit an activation command.
-func TestCalendarManagerRootMouseSelectsByPosition(t *testing.T) {
+// TestCalendarManagerRootMouseRowOpensEdit verifies clicking the non-checkbox
+// row body follows the visible Edit affordance and opens the clicked calendar.
+func TestCalendarManagerRootMouseRowOpensEdit(t *testing.T) {
 	m := newFlatManager()
 	listX, listY, _, _ := m.listRegion()
-
-	// Keyboard: move down twice -> lands on row index 2 (calendar id 3).
-	kb := m
-	kb, _ = kb.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-	kb, _ = kb.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-	kbID, ok := kb.selectedID()
-	if !ok || kbID != 3 {
-		t.Fatalf("keyboard nav landed on %d, want 3", kbID)
-	}
-
-	// Mouse: click row index 2 directly, inside the list's X range. The
-	// hit-test must use row geometry (Y) and the list column (X), never the
-	// rendered/styled label text.
-	clicked, cmd := m.Update(tea.MouseClickMsg{X: listX + 4, Y: listY + 2, Button: tea.MouseLeft})
+	clicked, cmd := m.Update(tea.MouseClickMsg{X: listX + 8, Y: listY + 2, Button: tea.MouseLeft})
 	if cmd != nil {
-		t.Fatalf("plain row click should not emit a command: got %T", cmd())
+		t.Fatalf("row edit click emitted command %T", cmd())
 	}
-	mouseID, ok := clicked.selectedID()
-	if !ok || mouseID != 3 {
-		t.Fatalf("mouse selection = %d, want 3 (keyboard parity)", mouseID)
+	if clicked.Screen() != CalendarManagerScreenCalendar || clicked.calendarForm == nil {
+		t.Fatalf("row click did not open calendar edit: screen=%v form=%v", clicked.Screen(), clicked.calendarForm)
+	}
+	if got := clicked.calendarForm.Draft().ID; got != 3 {
+		t.Fatalf("row click opened calendar %d, want 3", got)
+	}
+}
+
+func TestCalendarManagerRootMouseCheckboxTogglesVisibility(t *testing.T) {
+	m := newFlatManager()
+	listX, listY, _, _ := m.listRegion()
+	toggled, cmd := m.Update(tea.MouseClickMsg{X: listX + 1, Y: listY + 1, Button: tea.MouseLeft})
+	if cmd == nil {
+		t.Fatal("checkbox click emitted no visibility command")
+	}
+	msg, ok := cmd().(CalendarVisibilityToggledMsg)
+	if !ok || msg.ID != 2 || !msg.Hidden {
+		t.Fatalf("checkbox click message = %#v, want calendar 2 hidden", cmd())
+	}
+	if toggled.Screen() != CalendarManagerScreenList || !toggled.hidden[2] {
+		t.Fatalf("checkbox click opened edit or failed optimistic toggle: screen=%v hidden=%v", toggled.Screen(), toggled.hidden[2])
 	}
 }
 
@@ -474,8 +483,8 @@ func TestCalendarManagerRootSpaceTogglesBothDirections(t *testing.T) {
 	if !m1.hidden[2] {
 		t.Error("local hidden state not flipped to true")
 	}
-	if row := flatRowForID(m1, 2); !strings.HasPrefix(row, "○") {
-		t.Errorf("row did not flip to hidden glyph: %q", row)
+	if row := flatRowForID(m1, 2); !strings.HasPrefix(row, Glyphs["checkbox.off"]+" ●") {
+		t.Errorf("row did not flip to unchecked visibility: %q", row)
 	}
 	// Hidden -> visible.
 	m2, cmd := m1.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
@@ -489,8 +498,8 @@ func TestCalendarManagerRootSpaceTogglesBothDirections(t *testing.T) {
 	if m2.hidden[2] {
 		t.Error("local hidden state not flipped back to false")
 	}
-	if row := flatRowForID(m2, 2); !strings.HasPrefix(row, "●") {
-		t.Errorf("row did not flip back to visible glyph: %q", row)
+	if row := flatRowForID(m2, 2); !strings.HasPrefix(row, Glyphs["checkbox.on"]+" ●") {
+		t.Errorf("row did not flip back to checked visibility: %q", row)
 	}
 }
 
@@ -934,7 +943,21 @@ func TestCalendarManagerDetailVisibilityMouseToggleEmitsDesiredState(t *testing.
 	}
 }
 
-func TestCalendarManagerDirectAccountCloseReturnsToListImmediately(t *testing.T) {
+func TestCalendarManagerAccountConnectionLeftNeverOpensRoot(t *testing.T) {
+	for _, focus := range []int{calDAVIdxAuth, -1} {
+		m := newFlatManager().OpenAccountConnection()
+		if focus < 0 {
+			focus = m.calendarForm.form.cancelIndex()
+		}
+		m.calendarForm.form.focused = focus
+		updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
+		if updated.Screen() != CalendarManagerScreenCalendar || updated.calendarForm == nil {
+			t.Fatalf("Left at focus %d exposed manager root: screen=%v", focus, updated.Screen())
+		}
+	}
+}
+
+func TestCalendarManagerDirectAccountCloseClosesManager(t *testing.T) {
 	for _, key := range []tea.KeyPressMsg{
 		{Code: tea.KeyEscape},
 		{Code: tea.KeyLeft},
@@ -942,20 +965,15 @@ func TestCalendarManagerDirectAccountCloseReturnsToListImmediately(t *testing.T)
 		m := newFlatManager().OpenAccount(AccountSettingsParams{
 			AccountID: 7, DisplayName: "Personal Google", AuthType: "oauth2",
 		})
-		closed, cmd := m.Update(key)
-		if cmd != nil {
-			t.Fatalf("close key %v emitted command %T", key.Code, cmd)
+		closing, cmd := m.Update(key)
+		if closing.Screen() != CalendarManagerScreenAccount || closing.accountSettings == nil {
+			t.Fatalf("close key %v exposed manager root before host close", key.Code)
 		}
-		if closed.Screen() != CalendarManagerScreenList {
-			t.Fatalf("close key %v screen = %v, want List", key.Code, closed.Screen())
+		if cmd == nil {
+			t.Fatalf("close key %v emitted no command", key.Code)
 		}
-		if closed.accountSettings != nil {
-			t.Fatalf("close key %v retained account settings", key.Code)
-		}
-		before := closed.cursor
-		moved, _ := closed.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-		if moved.cursor == before {
-			t.Fatalf("first root key after close %v was swallowed", key.Code)
+		if _, ok := cmd().(CalendarManagerClosedMsg); !ok {
+			t.Fatalf("close key %v emitted %T, want CalendarManagerClosedMsg", key.Code, cmd())
 		}
 	}
 }
