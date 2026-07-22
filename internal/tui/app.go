@@ -165,7 +165,6 @@ const (
 	pendingScopeEdit
 	pendingScopeCalendarPromote
 	pendingScopeAccountSelectionPromote
-	pendingScopeCalendarManagerAdd
 )
 
 type eventViewLoadedMsg struct {
@@ -2422,7 +2421,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		!m.accountOAuthConfigOpen &&
 		!m.confirmOpen && !m.choiceOpen {
 		switch msg.(type) {
-		case CalendarManagerClosedMsg, CalendarManagerRequestedMsg, CalendarManagerAddRequestedMsg, CalendarTransferClosedMsg,
+		case CalendarManagerClosedMsg, CalendarManagerRequestedMsg, CalendarTransferClosedMsg,
 			CalendarSavedMsg, CalendarDiscoveryRequestedMsg,
 			CalendarDeleteRequestedMsg, CalendarTestRequestedMsg,
 			CalendarVisibilityToggledMsg, CalendarReorderedMsg, AccountReorderedMsg,
@@ -3728,15 +3727,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusToken++
 		return m, m.expireStatusAfter(10*time.Second, m.statusToken)
 
-	case CalendarManagerAddRequestedMsg:
-		m.pendingScopeKind = pendingScopeCalendarManagerAdd
-		m.choiceDialog = NewChoiceDialogModel(
-			"Add Calendar", m.theme,
-			"Create Local Calendar", "Connect Account", "Import iCal File",
-		).SetSize(m.width, m.height)
-		m.choiceOpen = true
-		return m, nil
-
 	case AccountAddRequestedMsg:
 		return m.Update(CalendarManagerRequestedMsg{Target: CalendarManagerTargetAccountConnect})
 
@@ -3783,6 +3773,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case CalendarManagerTargetAccountConnect:
 			m.calendarManager = m.calendarManager.CloseDetail()
 			m.calendarManager = m.calendarManager.OpenAccountConnection().SetSize(m.width, m.height)
+		case CalendarManagerTargetImport:
+			m.calendarManager = m.calendarManager.CloseDetail()
+			m.calendarTransferGeneration++
+			m.calendarManager = m.calendarManager.OpenImport(m.calendarTransferGeneration)
 		}
 		return m, nil
 
@@ -4162,20 +4156,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if kind == pendingScopeAccountSelectionPromote {
 				m.pendingAccountSelection = nil
 				m.pendingAccountDefaultCandidates = nil
-			}
-			return m, nil
-		}
-		if kind == pendingScopeCalendarManagerAdd {
-			switch msg.Choice {
-			case 0:
-				return m.Update(CalendarManagerRequestedMsg{Target: CalendarManagerTargetLocalCreate})
-			case 1:
-				return m.Update(CalendarManagerRequestedMsg{Target: CalendarManagerTargetAccountConnect})
-			case 2:
-				m.calendarTransferGeneration++
-				m.calendarManager = m.calendarManager.OpenImport(m.calendarTransferGeneration)
-				m.calendarManagerOpen = true
-				return m, nil
 			}
 			return m, nil
 		}
