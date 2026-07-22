@@ -1183,7 +1183,7 @@ func TestCalendarManagerRootGroupsAccountsAndShowsInspector(t *testing.T) {
 	for _, want := range []string{
 		"▾ Local", "▾ Google", "▾ Fastmail",
 		Glyphs["checkbox.on"] + " ● Primary",
-		"Location", "Google", "Enter  Edit Calendar",
+		"Location", "Google", "Edit…",
 	} {
 		if !strings.Contains(view, want) {
 			t.Errorf("manager view missing %q:\n%s", want, view)
@@ -1195,10 +1195,203 @@ func TestCalendarManagerRootGroupsAccountsAndShowsInspector(t *testing.T) {
 
 	m.list.selectIdentity(calendarRowIdentity{kind: accountHeaderRow, id: 7})
 	accountView := stripANSI(m.View())
-	for _, want := range []string{"Google", "Calendars", "2", "Enter  Account Settings"} {
+	for _, want := range []string{"Google", "Calendars", "2", "Account Settings…"} {
 		if !strings.Contains(accountView, want) {
 			t.Errorf("account inspector missing %q:\n%s", want, accountView)
 		}
+	}
+}
+
+// inspectorActionScreenRow maps the action's screen y into a View() row index
+// so tests can read the rendered button without re-deriving the box geometry.
+func inspectorActionScreenRow(m CalendarManagerModel, ay int) int {
+	_, boxH := m.boxSize()
+	dialogY := (m.height - boxH) / 2
+	return ay - dialogY
+}
+
+// TestCalendarManagerInspectorHeaderIsCalendarsNotAdd verifies the manager
+// header is the plain "Calendars" title and never couples the + Add action.
+func TestCalendarManagerInspectorHeaderIsCalendarsNotAdd(t *testing.T) {
+	m := newFlatManager().selectCalendar(2)
+	for _, line := range strings.Split(stripANSI(m.View()), "\n") {
+		if strings.Contains(line, "Calendars") && strings.Contains(line, "+ Add") {
+			t.Fatalf("header couples Calendars and + Add: %q", line)
+		}
+	}
+	_, _, aw, ok := m.inspectorActionRect()
+	if !ok || aw == 0 {
+		t.Fatalf("calendar inspector action missing: ok=%v aw=%d", ok, aw)
+	}
+}
+
+// TestCalendarManagerInspectorCalendarShowsDotTitleMetadataAndEditAction
+// verifies a calendar inspector opens with a dot+name title, aligned
+// metadata, and a bottom Edit… action — and no legacy "Enter  Edit Calendar".
+func TestCalendarManagerInspectorCalendarShowsDotTitleMetadataAndEditAction(t *testing.T) {
+	m := newFlatManager().selectCalendar(3) // Holidays, Google
+	view := stripANSI(m.View())
+	for _, want := range []string{"● Holidays", "Display", "Location", "Google", "Edit…"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("calendar inspector missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "Enter  Edit Calendar") {
+			t.Errorf("legacy underlined Edit pseudo-link still rendered:\n%s", view)
+	}
+	ax, ay, aw, ok := m.inspectorActionRect()
+	if !ok {
+		t.Fatal("calendar inspector has no action rect")
+	}
+	if ax <= 0 || ay <= 0 || aw <= 0 {
+		t.Fatalf("calendar action rect degenerate: x=%d y=%d w=%d", ax, ay, aw)
+	}
+}
+
+// TestCalendarManagerInspectorAccountShowsAccountSettingsAction verifies a
+// remote account inspector shows the account name, metadata, and a bottom
+// Account Settings… action — and no legacy "Enter  Account Settings".
+func TestCalendarManagerInspectorAccountShowsAccountSettingsAction(t *testing.T) {
+	m := newFlatManager()
+	m.list.selectIdentity(calendarRowIdentity{kind: accountHeaderRow, id: 7})
+	view := stripANSI(m.View())
+	for _, want := range []string{"Google", "Calendars", "2", "Account Settings…"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("account inspector missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "Enter  Account Settings") {
+		t.Errorf("legacy underlined Account Settings pseudo-link still rendered:\n%s", view)
+	}
+	_, ay, _, ok := m.inspectorActionRect()
+	if !ok {
+		t.Fatal("account inspector has no action rect")
+	}
+	row := inspectorActionScreenRow(m, ay)
+	if !strings.Contains(strings.Split(view, "\n")[row], "Account Settings…") {
+		t.Fatalf("Account Settings… not on action row %d:\n%s", row, view)
+	}
+}
+
+// TestCalendarManagerInspectorLocalShowsCountWithoutAction verifies the Local
+// group inspector shows "On this device" with its calendar count but no
+// bottom action (no Add, no Account Settings) and no action rect.
+func TestCalendarManagerInspectorLocalShowsCountWithoutAction(t *testing.T) {
+	m := newFlatManager()
+	m.list.selectIdentity(calendarRowIdentity{kind: accountHeaderRow, id: 0})
+	// The Local inspector pane shows "On this device" and its calendar count;
+	// the unwanted-action check is scoped to the inspector pane because the
+	// source column carries its own (unrelated) + Add action.
+	w, h := m.inspectorPaneSize()
+	inspector := stripANSI(strings.Join(m.selectionInspectorLines(w, h), "\n"))
+	for _, want := range []string{"Local", "On this device", "Calendars", "1"} {
+		if !strings.Contains(inspector, want) {
+			t.Errorf("Local inspector missing %q:\n%s", want, inspector)
+		}
+	}
+	for _, unwanted := range []string{"Account Settings…", "Edit…", "Add Calendar"} {
+		if strings.Contains(inspector, unwanted) {
+			t.Errorf("Local inspector must not show %q:\n%s", unwanted, inspector)
+		}
+	}
+	if _, _, _, ok := m.inspectorActionRect(); ok {
+		t.Fatal("Local inspector must have no action rect")
+	}
+}
+
+// TestCalendarManagerInspectorActionClickOpensCalendar verifies clicking the
+// calendar inspector's Edit… button opens the selected calendar's immutable
+// ID internally, and that a click just past the button's right edge does not.
+func TestCalendarManagerInspectorActionClickOpensCalendar(t *testing.T) {
+	m := newFlatManager().selectCalendar(3)
+	ax, ay, aw, ok := m.inspectorActionRect()
+	if !ok {
+		t.Fatal("calendar inspector has no action rect")
+	}
+	clicked, cmd := m.Update(tea.MouseClickMsg{X: ax, Y: ay, Button: tea.MouseLeft})
+	if cmd != nil {
+		t.Fatalf("Edit… click emitted a command %T", cmd())
+	}
+	if clicked.Screen() != CalendarManagerScreenCalendar || clicked.calendarForm == nil {
+		t.Fatalf("Edit… click did not open calendar detail: screen=%v form=%v", clicked.Screen(), clicked.calendarForm)
+	}
+	if got := clicked.calendarForm.Draft().ID; got != 3 {
+		t.Fatalf("Edit… click opened calendar %d, want immutable ID 3", got)
+	}
+	// A click one cell past the button's right edge must not open the detail.
+	missed, _ := m.Update(tea.MouseClickMsg{X: ax + aw, Y: ay, Button: tea.MouseLeft})
+	if missed.calendarForm != nil {
+		t.Fatal("click past the action's right edge opened the calendar detail")
+	}
+}
+
+// TestCalendarManagerInspectorAccountActionClickEmitsTarget verifies clicking
+// the account inspector's Account Settings… button emits a typed account
+// target for the selected account and leaves the root list mounted.
+func TestCalendarManagerInspectorAccountActionClickEmitsTarget(t *testing.T) {
+	m := newFlatManager()
+	m.list.selectIdentity(calendarRowIdentity{kind: accountHeaderRow, id: 7})
+	ax, ay, _, ok := m.inspectorActionRect()
+	if !ok {
+		t.Fatal("account inspector has no action rect")
+	}
+	clicked, cmd := m.Update(tea.MouseClickMsg{X: ax, Y: ay, Button: tea.MouseLeft})
+	if cmd == nil {
+		t.Fatal("Account Settings… click emitted no command")
+	}
+	msg, ok := cmd().(CalendarManagerRequestedMsg)
+	if !ok {
+		t.Fatalf("expected CalendarManagerRequestedMsg, got %T", cmd())
+	}
+	if msg.Target != CalendarManagerTargetAccount || msg.AccountID != 7 {
+		t.Fatalf("account action msg = %+v, want {Target:Account AccountID:7}", msg)
+	}
+	if clicked.Screen() != CalendarManagerScreenList {
+		t.Fatalf("account action should not push a screen: screen=%v", clicked.Screen())
+	}
+}
+
+// TestCalendarManagerInspectorPadsExactlyHeight verifies the selection
+// inspector composes exactly its height in rows with the action pinned to the
+// last row, so layout never leaves a ragged bottom or pushes the action off.
+func TestCalendarManagerInspectorPadsExactlyHeight(t *testing.T) {
+	m := newFlatManager().selectCalendar(2)
+	w, h := m.inspectorPaneSize()
+	lines := m.selectionInspectorLines(w, h)
+	if len(lines) != h {
+		t.Fatalf("inspector lines = %d, want exactly %d", len(lines), h)
+	}
+	if !strings.Contains(stripANSI(lines[len(lines)-1]), "Edit…") {
+		t.Fatalf("last inspector row is not the Edit… action: %q", lines[len(lines)-1])
+	}
+}
+
+// TestCalendarManagerInspectorLongDescriptionKeepsActionPinned verifies a long
+// description is trimmed before the cap so the Edit… action stays on the final
+// row and remains clickable.
+func TestCalendarManagerInspectorLongDescriptionKeepsActionPinned(t *testing.T) {
+	cals := flatManagerCalendars()
+	base := cals[3]
+	base.Description = strings.Repeat("A long calendar description word. ", 80)
+	cals[3] = base
+	m := NewCalendarManagerModel(cals, nil, help.New()).SetSize(120, 40).selectCalendar(3)
+
+	w, h := m.inspectorPaneSize()
+	lines := m.selectionInspectorLines(w, h)
+	if len(lines) != h {
+		t.Fatalf("inspector lines = %d, want exactly %d (description overflowed)", len(lines), h)
+	}
+	if !strings.Contains(stripANSI(lines[len(lines)-1]), "Edit…") {
+		t.Fatalf("long description pushed Edit… off the last row: %q", lines[len(lines)-1])
+	}
+
+	ax, ay, _, ok := m.inspectorActionRect()
+	if !ok {
+		t.Fatal("long-description calendar lost its action rect")
+	}
+	clicked, _ := m.Update(tea.MouseClickMsg{X: ax, Y: ay, Button: tea.MouseLeft})
+	if clicked.calendarForm == nil || clicked.calendarForm.Draft().ID != 3 {
+		t.Fatal("Edit… action not clickable with a long description present")
 	}
 }
 
@@ -1208,7 +1401,7 @@ func TestCalendarManagerSelectsFirstCalendarWhenInitialDataLoads(t *testing.T) {
 	if id, ok := m.selectedID(); !ok || id != 1 {
 		t.Fatalf("initial loaded selection = %d ok=%v, want first calendar 1", id, ok)
 	}
-	if view := stripANSI(m.View()); !strings.Contains(view, "Enter  Edit Calendar") {
+	if view := stripANSI(m.View()); !strings.Contains(view, "Edit…") {
 		t.Fatalf("initial calendar inspector did not render:\n%s", view)
 	}
 }
