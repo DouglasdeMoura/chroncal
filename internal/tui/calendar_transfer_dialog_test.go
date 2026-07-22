@@ -77,26 +77,6 @@ func TestCalendarTransferErrorPreservesPreviewAndDestination(t *testing.T) {
 	}
 }
 
-func TestCalendarManagerAddChoiceRoutesImport(t *testing.T) {
-	m := managerRoutingModel()
-	m.calendarManager = NewCalendarManagerModel(m.calendars, m.hiddenCalendars, newThemedHelp(m.theme)).SetSize(120, 40)
-	m.calendarManagerOpen = true
-
-	updated, _ := m.Update(CalendarManagerAddRequestedMsg{})
-	m = updated.(Model)
-	if !m.choiceOpen || m.pendingScopeKind != pendingScopeCalendarManagerAdd {
-		t.Fatalf("add choices not open: choice=%v scope=%v", m.choiceOpen, m.pendingScopeKind)
-	}
-	if m.choiceDialog.choices != 3 {
-		t.Fatalf("add menu choices = %d, want local calendar, account, and iCal import", m.choiceDialog.choices)
-	}
-	updated, _ = m.Update(ChoiceDialogResultMsg{Choice: 2})
-	m = updated.(Model)
-	if !m.calendarManagerOpen || m.calendarManager.Screen() != CalendarManagerScreenTransfer {
-		t.Fatalf("import choice did not open transfer screen: open=%v screen=%v", m.calendarManagerOpen, m.calendarManager.Screen())
-	}
-}
-
 func TestCalendarManagerSelectsImportedDestinationAfterReload(t *testing.T) {
 	m := NewCalendarManagerModel(map[int64]CalendarInfo{1: {Name: "Existing"}}, nil, newThemedHelp(NewTheme(true)))
 	m = m.CompleteTransfer(9)

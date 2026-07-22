@@ -179,6 +179,115 @@ func TestNewLocalCalendarRequestOpensCreateFormInsideManager(t *testing.T) {
 	}
 }
 
+// TestCalendarManagerAddMenuRoutes exercises the three anchored Add-menu rows
+// end to end through the host: opening the manager-local menu with `a`,
+// navigating to each row with the keyboard, executing the emitted
+// CalendarManagerRequestedMsg, and feeding it back into Model.Update. Every
+// row must route directly to its target without touching the obsolete generic
+// choice dialog.
+func TestCalendarManagerAddMenuRoutes(t *testing.T) {
+	addKey := tea.KeyPressMsg{Code: 'a', Text: "a"}
+	down := tea.KeyPressMsg{Code: tea.KeyDown}
+	enter := tea.KeyPressMsg{Code: tea.KeyEnter}
+
+	cases := []struct {
+		name       string
+		downs      int
+		wantTarget CalendarManagerTarget
+		verify     func(*testing.T, Model, uint64)
+	}{
+		{
+			name:       "local opens new calendar form",
+			downs:      0,
+			wantTarget: CalendarManagerTargetLocalCreate,
+			verify: func(t *testing.T, m Model, _ uint64) {
+				if m.calendarManager.Screen() != CalendarManagerScreenCalendar {
+					t.Fatalf("screen = %v, want Calendar (create form)", m.calendarManager.Screen())
+				}
+				form, ok := m.calendarManager.CalendarForm()
+				if !ok || form.id != 0 {
+					t.Fatalf("create form not active: ok=%v id=%d", ok, form.id)
+				}
+			},
+		},
+		{
+			name:       "account opens add account form",
+			downs:      1,
+			wantTarget: CalendarManagerTargetAccountConnect,
+			verify: func(t *testing.T, m Model, _ uint64) {
+				if m.calendarManager.Screen() != CalendarManagerScreenCalendar {
+					t.Fatalf("screen = %v, want Calendar (connection form)", m.calendarManager.Screen())
+				}
+				form, ok := m.calendarManager.CalendarForm()
+				if !ok || !form.accountConnection {
+					t.Fatalf("connection form not active: ok=%v accountConnection=%v", ok, form.accountConnection)
+				}
+			},
+		},
+		{
+			name:       "import opens transfer",
+			downs:      2,
+			wantTarget: CalendarManagerTargetImport,
+			verify: func(t *testing.T, m Model, genBefore uint64) {
+				if m.calendarTransferGeneration != genBefore+1 {
+					t.Fatalf("calendarTransferGeneration = %d, want %d", m.calendarTransferGeneration, genBefore+1)
+				}
+				if m.calendarManager.Screen() != CalendarManagerScreenTransfer {
+					t.Fatalf("screen = %v, want Transfer", m.calendarManager.Screen())
+				}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := managerRoutingModel()
+			m.calendarManager = NewCalendarManagerModel(m.calendars, m.hiddenCalendars, newThemedHelp(m.theme)).SetSize(m.width, m.height)
+			m.calendarManagerOpen = true
+
+			// Open the anchored Add menu from the root list.
+			updated, _ := m.Update(addKey)
+			m = updated.(Model)
+			if !m.calendarManager.addMenuOpen {
+				t.Fatal("`a` did not open the manager-local add menu")
+			}
+
+			// Walk the cursor to the target row.
+			for range tc.downs {
+				updated, _ = m.Update(down)
+				m = updated.(Model)
+			}
+
+			// Enter emits the typed request; execute and route it through the host.
+			updated, cmd := m.Update(enter)
+			m = updated.(Model)
+			if cmd == nil {
+				t.Fatal("Enter emitted no request command")
+			}
+			request, ok := cmd().(CalendarManagerRequestedMsg)
+			if !ok {
+				t.Fatalf("Enter command = %T, want CalendarManagerRequestedMsg", cmd())
+			}
+			if request.Target != tc.wantTarget {
+				t.Fatalf("request target = %v, want %v", request.Target, tc.wantTarget)
+			}
+
+			genBefore := m.calendarTransferGeneration
+			updated, _ = m.Update(request)
+			m = updated.(Model)
+
+			// The obsolete generic choice dialog must never be involved.
+			if m.choiceOpen || m.pendingScopeKind != pendingScopeNone {
+				t.Fatalf("choice dialog leaked into add routing: choice=%v scope=%v", m.choiceOpen, m.pendingScopeKind)
+			}
+			if !m.calendarManagerOpen {
+				t.Fatal("manager closed after add-menu selection")
+			}
+			tc.verify(t, m, genBefore)
+		})
+	}
+}
+
 // TestManagerMutationRefreshesDataWithoutClosing verifies a successful
 // calendar mutation pops the detail back to the root and the manager stays
 // open, with the root list refreshed from the reloaded calendars.

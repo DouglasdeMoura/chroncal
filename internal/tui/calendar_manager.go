@@ -17,12 +17,6 @@ import (
 // (Esc/q) and asks the host to tear the overlay down.
 type CalendarManagerClosedMsg struct{}
 
-// CalendarManagerAddRequestedMsg is retained temporarily: app.go still routes
-// it through the generic choice dialog, but the manager no longer emits it.
-// The anchored Add menu emits typed CalendarManagerRequestedMsg targets
-// instead. Task 2 removes this type and its app routing.
-type CalendarManagerAddRequestedMsg struct{}
-
 // CalendarManagerScreen identifies which screen the unified calendar manager
 // is showing: the grouped calendar root, a pushed calendar detail, or a
 // pushed account detail stacked on top of a calendar detail.
@@ -68,8 +62,8 @@ const (
 	CalendarManagerTargetAccount
 	CalendarManagerTargetLocalCreate
 	CalendarManagerTargetAccountConnect
-	// CalendarManagerTargetImport launches the iCal file import flow. Task 2
-	// wires host routing; the manager only emits the typed target.
+	// CalendarManagerTargetImport launches the iCal file import flow. The host
+	// routes it to the transfer screen (OpenImport) inside the manager.
 	CalendarManagerTargetImport
 )
 
