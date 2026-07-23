@@ -445,10 +445,8 @@ func setHidden(hidden map[int64]bool, id int64, val bool) map[int64]bool {
 }
 
 func (m CalendarManagerModel) rebuild() CalendarManagerModel {
-	m.list = m.list.SetItemsPreservingCursor(sortedCalendarListItems(m.calendars))
-	for id := range m.calendars {
-		m.list = m.list.SetHidden(id, m.hidden[id])
-	}
+	m.list = m.list.SetItemsPreservingCursor(sortedCalendarListItems(m.calendars)).
+		SetHiddenSet(m.hidden)
 	return m.sizeList()
 }
 

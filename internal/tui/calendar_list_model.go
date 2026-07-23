@@ -267,6 +267,19 @@ func (m CalendarListModel) SetItemsPreservingCursor(items []CalendarListItem) Ca
 
 func (m CalendarListModel) HiddenSet() map[int64]bool { return maps.Clone(m.hidden) }
 
+// SetHiddenSet replaces the whole visibility set in one clone, for hosts
+// that mirror an external hidden map (the manager's rebuild); the per-ID
+// SetHidden would clone the map once per calendar.
+func (m CalendarListModel) SetHiddenSet(hidden map[int64]bool) CalendarListModel {
+	m.hidden = make(map[int64]bool, len(hidden))
+	for id, h := range hidden {
+		if h {
+			m.hidden[id] = true
+		}
+	}
+	return m
+}
+
 // SetHidden applies an explicit visibility state without emitting another
 // toggle message. The app uses it to keep the sidebar projection aligned when
 // visibility changes originate in Manage Calendars.
