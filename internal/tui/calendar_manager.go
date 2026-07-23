@@ -118,6 +118,9 @@ type CalendarManagerModel struct {
 	pendingSelectionID int64
 
 	keys calendarManagerKeyMap
+	// help renders the footer hint line with the shared themed styles
+	// (key/desc colors and " · " separators) used by every other dialog.
+	help help.Model
 
 	// addMenuOpen/addMenuCursor hold the transient anchored Add-menu state.
 	// The menu is manager-local: it captures input while open and emits a
@@ -144,13 +147,14 @@ type CalendarManagerModel struct {
 
 // NewCalendarManagerModel builds a grouped calendar manager populated from
 // the given calendar map and hidden set, in canonical sidebar order.
-func NewCalendarManagerModel(calendars map[int64]CalendarInfo, hidden map[int64]bool, _ help.Model) CalendarManagerModel {
+func NewCalendarManagerModel(calendars map[int64]CalendarInfo, hidden map[int64]bool, h help.Model) CalendarManagerModel {
 	m := CalendarManagerModel{
 		screen:    CalendarManagerScreenList,
 		calendars: calendars,
 		hidden:    hidden,
 		theme:     activeTheme,
 		keys:      defaultCalendarManagerKeys(),
+		help:      h,
 	}
 	m.list = NewCalendarListModel(sortedCalendarListItems(calendars), hidden).
 		WithCheckboxVisibility().
@@ -327,6 +331,7 @@ func (m CalendarManagerModel) Screen() CalendarManagerScreen { return m.screen }
 // screens use the current terminal theme.
 func (m CalendarManagerModel) SetTheme(theme Theme) CalendarManagerModel {
 	m.theme = theme
+	m.help = newThemedHelp(theme)
 	m.list = m.list.SetTheme(theme.Selected, theme.Muted, theme.Text, theme.SelectedText, theme.Error).
 		WithInactiveSelection(theme.ButtonBg, oklch.ContrastingFg(theme.ButtonBg))
 	return m.rebuild()
@@ -643,8 +648,8 @@ func (m CalendarManagerModel) popOnLeft(msg tea.Msg) (CalendarManagerModel, tea.
 		return m.HideDiscovery(), nil, true
 	case CalendarManagerScreenAccount:
 		// Account settings opened from a calendar pop back to that unchanged
-		// edit form. Direct account settings close the manager itself; exposing
-		// the root calendar list here would be an unrelated navigation step.
+		// edit form; directly opened account settings pop back to the root
+		// calendar list (CloseAccount routes both, same as Esc).
 		return m.CloseAccount(), nil, true
 	case CalendarManagerScreenCalendar:
 		if m.calendarForm == nil || m.calendarForm.leftMovesCursor() || m.calendarForm.accountConnection {
@@ -1188,22 +1193,61 @@ func (m CalendarManagerModel) renderTitleRow(w int) string {
 	return lipgloss.NewStyle().Bold(true).Width(w).Render("Calendars")
 }
 
+// renderHelp renders the centered footer hint line through the shared themed
+// help model so keybinding hints match every other dialog (key in Text, desc
+// in TextDim, " · " separators).
 func (m CalendarManagerModel) renderHelp(w int) string {
-	var parts []string
-	if m.screen != CalendarManagerScreenList {
-		parts = []string{"tab next", "enter activate", "esc back"}
-	} else {
-		switch m.rootFocus {
-		case rootFocusAdd:
-			parts = []string{"tab next", "enter add", "esc close"}
-		case rootFocusInspector:
-			parts = []string{"tab next", "enter activate", "esc close"}
-		default:
-			parts = []string{"↑↓ select", "tab next", "enter open", "space show/hide", "a add", "esc close"}
-		}
+	m.help.SetWidth(w)
+	bindings := m.helpBindings()
+	view := m.help.ShortHelpView(bindings)
+	// bubbles' short-help truncation keeps an overflowing item when the
+	// ellipsis lands exactly on the width boundary; a too-wide line would wrap
+	// and shear the dialog frame, so drop trailing hints until the line fits.
+	for lipgloss.Width(view) > w && len(bindings) > 1 {
+		bindings = bindings[:len(bindings)-1]
+		view = m.help.ShortHelpView(bindings)
 	}
-	s := truncateTo(strings.Join(parts, "  "), w)
-	return lipgloss.NewStyle().Faint(true).Width(w).Align(lipgloss.Center).Render(s)
+	return lipgloss.NewStyle().Width(w).Align(lipgloss.Center).Render(view)
+}
+
+// helpBindings resolves the footer bindings for the current manager state:
+// each pushed screen advertises its child's actual keys, the open Add menu
+// its menu keys, and the root its ring keys plus whatever the focused control
+// activates. Keys listed here are display-only; input routing is unchanged.
+func (m CalendarManagerModel) helpBindings() []key.Binding {
+	bind := func(k, desc string) key.Binding {
+		return key.NewBinding(key.WithKeys(k), key.WithHelp(k, desc))
+	}
+	// The arrow-navigation hint is omitted so the picker set fits the
+	// manager's minimum interior with the esc hint intact.
+	pickerBindings := []key.Binding{bind("space", "toggle"), bind("tab", "switch"), bind("enter", "confirm"), bind("esc", "back")}
+	switch m.screen {
+	case CalendarManagerScreenCalendar, CalendarManagerScreenTransfer:
+		if m.calendarForm != nil && m.calendarForm.discoveryPicker != nil {
+			return pickerBindings
+		}
+		return []key.Binding{bind("tab", "next field"), bind("enter", "confirm"), bind("esc", "back")}
+	case CalendarManagerScreenAccount:
+		return []key.Binding{bind("↑/↓", "select"), bind("enter", "open"), bind("esc", "back")}
+	case CalendarManagerScreenAccountCalendars:
+		return pickerBindings
+	case CalendarManagerScreenList:
+		// Resolved below by root focus.
+	}
+	if m.addMenuOpen {
+		return []key.Binding{bind("↑↓", "select"), bind("enter", "choose"), bind("esc", "dismiss")}
+	}
+	switch m.rootFocus {
+	case rootFocusAdd:
+		return []key.Binding{bind("tab", "next"), bind("enter", "add"), bind("esc", "close")}
+	case rootFocusInspector:
+		return []key.Binding{bind("tab", "next"), bind("enter", "activate"), bind("esc", "close")}
+	default:
+		// "a add" is omitted: + Add is a visible tab stop in the root ring and
+		// the accelerator keeps working; the compact set keeps esc visible at
+		// the manager's minimum widths.
+		return []key.Binding{bind("↑↓", "select"), bind("space", "toggle"), bind("enter", "open"), bind("tab", "next"), bind("esc", "close")}
+	}
 }
 
 // boxSize mirrors ListDialogModel.boxSize so the manager shares the
