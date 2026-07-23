@@ -2529,14 +2529,24 @@ func (f Form) focusPrev() (Form, tea.Cmd) {
 	return f.skipToFocusable(-1)
 }
 
+// Blur removes keyboard focus from every field and button so the form renders
+// as an inert preview while input is owned elsewhere (e.g. the Calendars
+// manager's root selection preview). The next focus cycle re-enters at the
+// first focusable item.
+func (f Form) Blur() Form {
+	f.blurCurrent()
+	f.focused = -1
+	return f
+}
+
 func (f Form) blurCurrent() {
-	if f.focused < len(f.items) {
+	if f.focused >= 0 && f.focused < len(f.items) {
 		f.items[f.focused].Field.Blur()
 	}
 }
 
 func (f Form) focusCurrent() tea.Cmd {
-	if f.focused < len(f.items) {
+	if f.focused >= 0 && f.focused < len(f.items) {
 		return f.items[f.focused].Field.Focus()
 	}
 	return nil

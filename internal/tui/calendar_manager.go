@@ -471,16 +471,35 @@ func (m CalendarManagerModel) setRootFocus(f calendarManagerRootFocus) CalendarM
 
 // rootFocusTargets is the ordered ring of focusable root controls for the
 // current state: always the list and the + Add action, plus the inspector
-// action only in a wide two-pane root whose selection has one.
+// pane in a wide two-pane root whose selection has an action pill or an
+// edit-form preview to enter.
 func (m CalendarManagerModel) rootFocusTargets() []calendarManagerRootFocus {
 	targets := []calendarManagerRootFocus{rootFocusList}
 	if m.sourceAddActionRendered() {
 		targets = append(targets, rootFocusAdd)
 	}
-	if _, _, _, ok := m.inspectorActionRect(); ok {
+	if m.inspectorFocusAvailable() {
 		targets = append(targets, rootFocusInspector)
 	}
 	return targets
+}
+
+// inspectorFocusAvailable reports whether the inspector pane is a root focus
+// target: a wide two-pane root whose selection is an existing calendar (Tab
+// enters its previewed edit form) or a remote account with a pinned action.
+func (m CalendarManagerModel) inspectorFocusAvailable() bool {
+	if m.screen != CalendarManagerScreenList || m.onePaneLayout() || m.width <= 0 || m.height <= 0 {
+		return false
+	}
+	if _, ok := m.selectionInspectorAction(); ok {
+		return true
+	}
+	identity, ok := m.list.currentIdentity()
+	if !ok || identity.kind != calendarRow {
+		return false
+	}
+	_, exists := m.calendars[identity.id]
+	return exists
 }
 
 // cycleRootFocus moves root focus one step around the available ring. Forward
@@ -507,6 +526,28 @@ func (m CalendarManagerModel) cycleRootFocus(forward bool) CalendarManagerModel 
 	return m.applyRootFocus()
 }
 
+// advanceRootFocus cycles the root ring one step. Landing on the inspector
+// while a calendar is selected opens its edit form directly — the previewed
+// pane IS the form, so Tab flows into it like any other control — with list
+// focus restored first so Back returns to a focused source list. Account
+// selections keep the pill focus state (Enter/Space then activates it).
+func (m CalendarManagerModel) advanceRootFocus(forward bool) (CalendarManagerModel, tea.Cmd) {
+	m = m.cycleRootFocus(forward)
+	if m.rootFocus != rootFocusInspector {
+		return m, nil
+	}
+	identity, ok := m.list.currentIdentity()
+	if !ok || identity.kind != calendarRow {
+		return m, nil
+	}
+	info, exists := m.calendars[identity.id]
+	if !exists {
+		return m, nil
+	}
+	m = m.setRootFocus(rootFocusList)
+	return m.OpenCalendar(calendarDialogParamsFor(identity.id, info, m.hidden[identity.id])), nil
+}
+
 // normalizeRootFocus drops root focus back to the list when its target is no
 // longer available (the selection lost its inspector action), so an
 // unavailable control can never hold or enter the focus ring.
@@ -515,7 +556,7 @@ func (m CalendarManagerModel) normalizeRootFocus() CalendarManagerModel {
 	case rootFocusList:
 		// The list is always available at the manager root.
 	case rootFocusInspector:
-		if _, _, _, ok := m.inspectorActionRect(); !ok {
+		if !m.inspectorFocusAvailable() {
 			m.rootFocus = rootFocusList
 		}
 	case rootFocusAdd:
@@ -666,10 +707,10 @@ func (m CalendarManagerModel) handleKey(msg tea.KeyPressMsg) (CalendarManagerMod
 	// Tab/Shift-Tab cycle root focus before any list child sees the key, so the
 	// ring never leaks navigation into list cursor movement.
 	if key.Matches(msg, m.keys.Next) {
-		return m.cycleRootFocus(true), nil
+		return m.advanceRootFocus(true)
 	}
 	if key.Matches(msg, m.keys.Prev) {
-		return m.cycleRootFocus(false), nil
+		return m.advanceRootFocus(false)
 	}
 	switch {
 	case key.Matches(msg, m.keys.Close):
@@ -729,6 +770,16 @@ func (m CalendarManagerModel) handleMouse(msg tea.MouseClickMsg) (CalendarManage
 		if ax, ay, aw, ok := m.sourceAddActionRect(); ok && msg.Y == ay && msg.X >= ax && msg.X < ax+aw {
 			return m.setRootFocus(rootFocusAdd).openAddMenu(), nil
 		}
+	}
+	// A click anywhere in the root inspector pane focuses the previewed edit
+	// form (calendar selections in wide roots; account selections use the
+	// pinned action above).
+	if px, py, pw, ph, ok := m.previewPaneRect(); ok &&
+		msg.X >= px && msg.X < px+pw && msg.Y >= py && msg.Y < py+ph {
+		identity, _ := m.list.currentIdentity()
+		info := m.calendars[identity.id]
+		m = m.setRootFocus(rootFocusList)
+		return m.OpenCalendar(calendarDialogParamsFor(identity.id, info, m.hidden[identity.id])), nil
 	}
 	lx, ly, lw, lh := m.listRegion()
 	if msg.X < lx || msg.X >= lx+lw || msg.Y < ly || msg.Y >= ly+lh {
@@ -972,19 +1023,27 @@ func (m CalendarManagerModel) activeInspectorLines(w, h int) []string {
 	return m.selectionInspectorLines(w, h)
 }
 
-// selectionInspectorLines composes the root selection inspector to exactly h
-// rows: the title, a blank, the aligned metadata, an optional wrapped
-// description, flexible blank space, and one bottom action pinned to the final
-// row. The description is trimmed before the content limit so a long description can
-// never push the action off the bottom row.
+// selectionInspectorLines composes the root inspector for the current
+// selection to exactly h rows. A selected calendar shows a live, unfocused
+// preview of its edit form — the same surface Enter, Tab, or a pane click
+// focuses — so the editable fields appear immediately on selection
+// (macOS Settings-style master–detail). Account and empty selections keep
+// the summary header plus one bottom action pinned to the final row.
 func (m CalendarManagerModel) selectionInspectorLines(w, h int) []string {
 	identity, ok := m.list.currentIdentity()
+	if ok && identity.kind == calendarRow {
+		if info, exists := m.calendars[identity.id]; exists {
+			params := calendarDialogParamsFor(identity.id, info, m.hidden[identity.id])
+			preview := NewCalendarDialogModel(params, m.theme).Blur().SetInspectorSize(w, h)
+			return strings.Split(preview.InspectorView(w, h), "\n")
+		}
+	}
 	faint := lipgloss.NewStyle().Foreground(m.theme.Muted)
 	labelWidth := min(10, max(7, w/4))
 	action, hasAction := m.selectionInspectorAction()
 
 	// contentLimit is the last content row; the bottom action pins to the row
-	// after it when present, so a long description cannot push the action off-screen.
+	// after it when present, so long content cannot push the action off-screen.
 	contentLimit := h
 	if hasAction {
 		contentLimit = h - 1
@@ -994,20 +1053,6 @@ func (m CalendarManagerModel) selectionInspectorLines(w, h int) []string {
 	}
 
 	lines := m.selectionInspectorHeader(identity, ok, faint, labelWidth, w)
-
-	// Append the wrapped description (calendars only), trimmed to the content limit so
-	// the pinned bottom action always stays on the final row.
-	if ok && identity.kind == calendarRow {
-		info, exists := m.calendars[identity.id]
-		if exists && strings.TrimSpace(info.Description) != "" {
-			for _, dl := range append([]string{""}, wrapLine(info.Description, w)...) {
-				if len(lines) >= contentLimit {
-					break
-				}
-				lines = append(lines, dl)
-			}
-		}
-	}
 
 	for len(lines) < contentLimit {
 		lines = append(lines, "")
@@ -1024,9 +1069,10 @@ func (m CalendarManagerModel) selectionInspectorLines(w, h int) []string {
 	return lines
 }
 
-// selectionInspectorHeader builds the non-description header block: the title
-// row, a blank, and the aligned metadata rows. It never appends the wrapped
-// description or the bottom action.
+// selectionInspectorHeader builds the summary header block for account and
+// empty selections: the title row, a blank, and the aligned metadata rows.
+// Calendar selections render the edit-form preview instead and only fall
+// through here when the selected calendar no longer exists.
 func (m CalendarManagerModel) selectionInspectorHeader(identity calendarRowIdentity, ok bool, faint lipgloss.Style, labelWidth, w int) []string {
 	if !ok {
 		return []string{lipgloss.NewStyle().Faint(true).Render("Select a calendar or account.")}
@@ -1034,35 +1080,7 @@ func (m CalendarManagerModel) selectionInspectorHeader(identity calendarRowIdent
 	if identity.kind == accountHeaderRow {
 		return m.accountInspectorHeader(identity, faint, labelWidth, w)
 	}
-	info, exists := m.calendars[identity.id]
-	if !exists {
-		return []string{lipgloss.NewStyle().Faint(true).Render("Calendar unavailable.")}
-	}
-	dot := lipgloss.NewStyle().Foreground(lipgloss.Color(info.Color)).Render("●")
-	visibility := "Shown"
-	if m.hidden[identity.id] {
-		visibility = "Hidden"
-	}
-	lines := []string{
-		lipgloss.NewStyle().Bold(true).Render(truncateTo(dot+" "+info.Name, w)),
-		"",
-		detailLine(faint, "Display", visibility, labelWidth, w),
-		detailLine(faint, "Location", flatAccountContext(info), labelWidth, w),
-	}
-	if info.IsDefault {
-		lines = append(lines, detailLine(faint, "Default", "Yes", labelWidth, w))
-	}
-	if access := strings.TrimSpace(info.RemoteAccess); access != "" {
-		lines = append(lines, detailLine(faint, "Access", access, labelWidth, w))
-	}
-	if info.Synced {
-		lines = append(lines, detailLine(faint, "Last sync", formatSyncTime(info.LastSyncAt), labelWidth, w))
-	}
-	if info.LastSyncError != "" {
-		errText := lipgloss.NewStyle().Foreground(m.theme.Error).Render(info.LastSyncError)
-		lines = append(lines, detailLine(faint, "Error", errText, labelWidth, w))
-	}
-	return lines
+	return []string{lipgloss.NewStyle().Faint(true).Render("Calendar unavailable.")}
 }
 
 // accountInspectorHeader builds the account/Local header: the account name
@@ -1104,39 +1122,23 @@ func (m CalendarManagerModel) accountInspectorHeader(identity calendarRowIdentit
 }
 
 // calendarManagerInspectorAction describes the selection inspector's single
-// bottom action. Exactly one of calendar (open that calendar's detail) or
-// account (ask the host to open account settings) is set; Local and empty
-// selections have no action.
+// bottom action: Account Settings… for a remote account heading. Calendar
+// selections render the edit-form preview instead of a pinned action, and
+// Local and empty selections have none.
 type calendarManagerInspectorAction struct {
-	label    string
-	calendar int64
-	account  int64
+	label   string
+	account int64
 }
 
 // selectionInspectorAction resolves the bottom action for the current root
-// selection: Edit… opens the selected calendar's immutable ID internally;
-// Account Settings… (remote accounts only) emits a typed account target;
-// Local and empty selections have no action.
+// selection: Account Settings… (remote accounts only) emits a typed account
+// target. Calendar, Local, and empty selections have no pinned action.
 func (m CalendarManagerModel) selectionInspectorAction() (calendarManagerInspectorAction, bool) {
 	identity, ok := m.list.currentIdentity()
-	if !ok {
+	if !ok || identity.kind != accountHeaderRow || identity.id == 0 {
 		return calendarManagerInspectorAction{}, false
 	}
-	switch identity.kind {
-	case calendarRow:
-		if _, exists := m.calendars[identity.id]; !exists {
-			return calendarManagerInspectorAction{}, false
-		}
-		return calendarManagerInspectorAction{label: "Edit…", calendar: identity.id}, true
-	case accountHeaderRow:
-		if identity.id == 0 {
-			return calendarManagerInspectorAction{}, false
-		}
-		return calendarManagerInspectorAction{label: "Account Settings…", account: identity.id}, true
-	case accountSpacerRow:
-		return calendarManagerInspectorAction{}, false
-	}
-	return calendarManagerInspectorAction{}, false
+	return calendarManagerInspectorAction{label: "Account Settings…", account: identity.id}, true
 }
 
 // renderInspectorAction renders the bottom action as a neutral pill button
@@ -1146,17 +1148,9 @@ func (m CalendarManagerModel) renderInspectorAction(action calendarManagerInspec
 	return DefaultButtonStyles().Normal.Render(action.label, m.rootFocus == rootFocusInspector)
 }
 
-// applyInspectorAction routes a click on the bottom action: a calendar action
-// opens that calendar's detail internally; an account action asks the host to
-// open account settings for the typed account ID.
+// applyInspectorAction routes a click on the bottom action: an account action
+// asks the host to open account settings for the typed account ID.
 func (m CalendarManagerModel) applyInspectorAction(action calendarManagerInspectorAction) (CalendarManagerModel, tea.Cmd) {
-	if action.calendar != 0 {
-		info, ok := m.calendars[action.calendar]
-		if !ok {
-			return m, nil
-		}
-		return m.OpenCalendar(calendarDialogParamsFor(action.calendar, info, m.hidden[action.calendar])), nil
-	}
 	if action.account != 0 {
 		return m, func() tea.Msg {
 			return CalendarManagerRequestedMsg{Target: CalendarManagerTargetAccount, AccountID: action.account}
@@ -1187,6 +1181,28 @@ func (m CalendarManagerModel) inspectorActionRect() (int, int, int, bool) {
 	paneX := dialogX + addMenuContentBoxX() + listW + 3
 	actionY := dialogY + 4 + m.managerBodyHeight() - 1
 	return paneX, actionY, lipgloss.Width(m.renderInspectorAction(action)), true
+}
+
+// previewPaneRect returns the screen-space rectangle of the root inspector
+// pane while it shows a calendar edit-form preview, for mouse hit-testing.
+// It exists only in wide two-pane roots with an existing calendar selected.
+func (m CalendarManagerModel) previewPaneRect() (int, int, int, int, bool) {
+	if m.screen != CalendarManagerScreenList || m.onePaneLayout() || m.width <= 0 || m.height <= 0 {
+		return 0, 0, 0, 0, false
+	}
+	identity, ok := m.list.currentIdentity()
+	if !ok || identity.kind != calendarRow {
+		return 0, 0, 0, 0, false
+	}
+	if _, exists := m.calendars[identity.id]; !exists {
+		return 0, 0, 0, 0, false
+	}
+	boxW, boxH := m.boxSize()
+	dialogX := (m.width - boxW) / 2
+	dialogY := (m.height - boxH) / 2
+	paneX := dialogX + addMenuContentBoxX() + m.sourceColumnWidth() + 3
+	paneW, _ := m.inspectorPaneSize()
+	return paneX, dialogY + 4, paneW, m.managerBodyHeight(), true
 }
 
 func (m CalendarManagerModel) renderTitleRow(w int) string {

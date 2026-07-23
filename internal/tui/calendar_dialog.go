@@ -886,6 +886,13 @@ func (m *CalendarDialogModel) keepFocusedFieldVisible() {
 // SetInspectorSize prepares the existing form for borderless rendering inside
 // the Calendars manager. Rendering stays pure: body content and viewport
 // dimensions are refreshed here and after Update, never from InspectorView.
+// Blur returns a copy whose form holds no keyboard focus, so the manager can
+// render it as the root selection preview while the source list owns input.
+func (m CalendarDialogModel) Blur() CalendarDialogModel {
+	m.form = m.form.Blur()
+	return m
+}
+
 func (m CalendarDialogModel) SetInspectorSize(w, h int) CalendarDialogModel {
 	w = max(w, 1)
 	h = max(h, 1)
