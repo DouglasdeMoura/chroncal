@@ -808,6 +808,21 @@ func (m CalendarDialogModel) SetHidden(h bool) CalendarDialogModel {
 // (a text or color input) rather than navigate, so the calendar manager can
 // avoid stealing Left as a Back gesture while the user is editing. Buttons
 // and non-editing fields (checkbox, opener) leave Left free to pop.
+// dirtyMetadata reports whether any editable metadata field differs from the
+// values the detail opened with, i.e. whether an unsaved draft exists. The
+// Display checkbox is excluded: visibility commits immediately and is never
+// part of the draft. Hosts use this to keep navigation gestures from
+// silently discarding typed edits.
+func (m CalendarDialogModel) dirtyMetadata() bool {
+	if m.localDraft == nil || m.form.ItemCount() <= cdIdxEmail {
+		return false
+	}
+	return strings.TrimSpace(m.form.Field(cdIdxName).(*TextField).Value()) != strings.TrimSpace(m.localDraft.Name) ||
+		strings.TrimSpace(m.form.Field(cdIdxColor).(*ColorField).Value()) != strings.TrimSpace(m.localDraft.Color) ||
+		strings.TrimSpace(m.form.Field(cdIdxDescription).(*TextField).Value()) != strings.TrimSpace(m.localDraft.Description) ||
+		strings.TrimSpace(m.form.Field(cdIdxEmail).(*TextField).Value()) != strings.TrimSpace(m.localDraft.OwnerEmail)
+}
+
 func (m CalendarDialogModel) leftMovesCursor() bool {
 	f := m.form
 	if f.Focused() >= f.ItemCount() {

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 
 	"charm.land/bubbles/v2/help"
@@ -109,8 +110,12 @@ func (m AccountRenameDialogModel) BoxSize() (int, int) {
 // read-only and unsupported rows. Add mode selects new imports; management
 // mode edits the account's desired final local calendar set.
 type AccountCalendarPickerModel struct {
-	discovery   account.Discovery
-	selected    map[string]bool
+	discovery account.Discovery
+	selected  map[string]bool
+	// initial snapshots the selection the picker opened with, so hosts can
+	// tell staged-but-unapplied changes from an untouched picker and keep
+	// navigation gestures from silently discarding them.
+	initial     map[string]bool
 	manage      bool
 	shell       ListDialogModel
 	rowCalendar []int
@@ -118,6 +123,22 @@ type AccountCalendarPickerModel struct {
 	height      int
 
 	theme Theme
+}
+
+// dirtySelection reports whether the staged selection differs from the one
+// the picker opened with.
+func (m AccountCalendarPickerModel) dirtySelection() bool {
+	for path, sel := range m.selected {
+		if sel != m.initial[path] {
+			return true
+		}
+	}
+	for path, sel := range m.initial {
+		if sel != m.selected[path] {
+			return true
+		}
+	}
+	return false
 }
 
 func NewAccountCalendarPickerModel(discovery account.Discovery, theme Theme) AccountCalendarPickerModel {
@@ -145,6 +166,7 @@ func newAccountCalendarPickerModel(discovery account.Discovery, theme Theme, man
 	m := AccountCalendarPickerModel{
 		discovery: discovery,
 		selected:  selected,
+		initial:   maps.Clone(selected),
 		manage:    manage,
 		shell: NewListDialogModel(newThemedHelp(theme)).
 			SetTitle(title).
