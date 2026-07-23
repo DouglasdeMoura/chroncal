@@ -1499,3 +1499,317 @@ func TestCalendarManagerBoxSizeStaysOnManagerShell(t *testing.T) {
 		}
 	}
 }
+
+// managerTabKey builds the manager root's Tab/Shift-Tab navigation key press.
+func managerTabKey(shift bool) tea.KeyPressMsg {
+	k := tea.KeyPressMsg{Code: tea.KeyTab}
+	if shift {
+		k.Mod = tea.ModShift
+	}
+	return k
+}
+
+// TestCalendarManagerRootFocusCyclesWideCalendar verifies the wide two-pane
+// root Tab cycle visits every focusable control in order — list → + Add →
+// inspector action → list — and Shift-Tab reverses it. Root focus never moves
+// the list cursor, and the list only renders focused while it holds root focus.
+func TestCalendarManagerRootFocusCyclesWideCalendar(t *testing.T) {
+	m := newFlatManager().selectCalendar(3) // Holidays: calendar row with an Edit… action
+	if _, _, _, ok := m.inspectorActionRect(); !ok {
+		t.Fatal("precondition: wide calendar root must have a focusable inspector action")
+	}
+
+	// Forward cycle: list → add → inspector → list.
+	for i, want := range []calendarManagerRootFocus{rootFocusAdd, rootFocusInspector, rootFocusList} {
+		next, _ := m.Update(managerTabKey(false))
+		m = next
+		if m.rootFocus != want {
+			t.Fatalf("forward tab step %d: focus=%v want %v", i, m.rootFocus, want)
+		}
+	}
+
+	// Reverse cycle: list → inspector → add → list.
+	for i, want := range []calendarManagerRootFocus{rootFocusInspector, rootFocusAdd, rootFocusList} {
+		next, _ := m.Update(managerTabKey(true))
+		m = next
+		if m.rootFocus != want {
+			t.Fatalf("reverse tab step %d: focus=%v want %v", i, m.rootFocus, want)
+		}
+	}
+
+	// The selection cursor is independent of root focus and survives a cycle.
+	if id, ok := m.selectedID(); !ok || id != 3 {
+		t.Fatalf("root focus cycling moved the selection: got %d ok=%v", id, ok)
+	}
+	// Returning to the list re-focuses it; tabbing away blurs it.
+	if !m.list.Focused() {
+		t.Fatal("list not focused after cycling back to list root focus")
+	}
+	away, _ := m.Update(managerTabKey(false))
+	if away.list.Focused() {
+		t.Fatal("list should not render focused while + Add holds root focus")
+	}
+}
+
+// TestCalendarManagerRootFocusCycleOmitsUnavailableInspector verifies that a
+// narrow one-pane root and a wide root whose selection has no inspector action
+// both omit the inspector from the cycle, so Tab bounces list ↔ + Add only.
+func TestCalendarManagerRootFocusCycleOmitsUnavailableInspector(t *testing.T) {
+	cases := []struct {
+		name string
+		m    CalendarManagerModel
+	}{
+		{"narrow one-pane", newFlatManager().SetSize(narrowThreshold-1, 30).selectCalendar(3)},
+		{"wide local header", func() CalendarManagerModel {
+			m := newFlatManager()
+			m.list.selectIdentity(calendarRowIdentity{kind: accountHeaderRow, id: 0})
+			return m
+		}()},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, _, _, ok := tc.m.inspectorActionRect(); ok {
+				t.Fatal("precondition: inspector action must be unavailable")
+			}
+			m := tc.m
+			// Forward: list → add → list (no inspector step).
+			m, _ = m.Update(managerTabKey(false))
+			if m.rootFocus != rootFocusAdd {
+				t.Fatalf("tab list→add: focus=%v", m.rootFocus)
+			}
+			m, _ = m.Update(managerTabKey(false))
+			if m.rootFocus != rootFocusList {
+				t.Fatalf("tab add→list (inspector omitted): focus=%v", m.rootFocus)
+			}
+			// Reverse: list → add → list.
+			m, _ = m.Update(managerTabKey(true))
+			if m.rootFocus != rootFocusAdd {
+				t.Fatalf("shift+tab list→add: focus=%v", m.rootFocus)
+			}
+		})
+	}
+}
+
+// TestCalendarManagerRootFocusAddActivateOpensMenu verifies Enter and Space
+// both activate the focused + Add action (open the menu) and emit no command.
+func TestCalendarManagerRootFocusAddActivateOpensMenu(t *testing.T) {
+	for _, key := range []tea.KeyPressMsg{
+		{Code: tea.KeyEnter},
+		{Code: ' ', Text: " "},
+	} {
+		m := newFlatManager()
+		m, _ = m.Update(managerTabKey(false)) // list → add
+		if m.rootFocus != rootFocusAdd {
+			t.Fatalf("precondition: focus=%v want add", m.rootFocus)
+		}
+		activated, cmd := m.Update(key)
+		if cmd != nil {
+			t.Fatalf("key %s: activation emitted command %T", key.String(), cmd())
+		}
+		if !activated.addMenuOpen {
+			t.Fatalf("key %s did not open the add menu while + Add is focused", key.String())
+		}
+	}
+}
+
+// TestCalendarManagerRootFocusInspectorActivateOpensCalendar verifies Enter
+// and Space both activate the focused inspector action, opening the selected
+// calendar's detail by immutable ID (unchanged routing).
+func TestCalendarManagerRootFocusInspectorActivateOpensCalendar(t *testing.T) {
+	for _, key := range []tea.KeyPressMsg{
+		{Code: tea.KeyEnter},
+		{Code: ' ', Text: " "},
+	} {
+		m := newFlatManager().selectCalendar(3)
+		m, _ = m.Update(managerTabKey(false)) // list → add
+		m, _ = m.Update(managerTabKey(false)) // add → inspector
+		if m.rootFocus != rootFocusInspector {
+			t.Fatalf("precondition: focus=%v want inspector", m.rootFocus)
+		}
+		activated, cmd := m.Update(key)
+		if cmd != nil {
+			t.Fatalf("key %s: inspector activation emitted command %T", key.String(), cmd())
+		}
+		if activated.Screen() != CalendarManagerScreenCalendar || activated.calendarForm == nil {
+			t.Fatalf("key %s did not open calendar detail: screen=%v", key.String(), activated.Screen())
+		}
+		if got := activated.calendarForm.Draft().ID; got != 3 {
+			t.Fatalf("key %s opened calendar %d, want 3", key.String(), got)
+		}
+	}
+}
+
+// TestCalendarManagerRootFocusListRetainsArrowsSpace verifies that while the
+// list holds root focus, arrows navigate, Space toggles visibility, and Enter
+// opens the selected calendar — and that arrows no longer move the cursor once
+// another control holds root focus.
+func TestCalendarManagerRootFocusListRetainsArrowsSpace(t *testing.T) {
+	m := newFlatManager().selectCalendar(2) // Primary, visible
+	// Down moves the selection to the next calendar (3).
+	moved, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if id, _ := moved.selectedID(); id != 3 {
+		t.Fatalf("down arrow did not move selection: got %d want 3", id)
+	}
+	// Space toggles visibility of the selected calendar.
+	_, cmd := moved.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
+	if cmd == nil {
+		t.Fatal("space did not emit a visibility toggle while list-focused")
+	}
+	if _, ok := cmd().(CalendarVisibilityToggledMsg); !ok {
+		t.Fatalf("space emitted %T, want CalendarVisibilityToggledMsg", cmd())
+	}
+	// Enter opens the selected calendar's detail internally.
+	opened, cmd := moved.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd != nil || opened.Screen() != CalendarManagerScreenCalendar {
+		t.Fatalf("enter did not open calendar detail while list-focused: cmd=%v screen=%v", cmd, opened.Screen())
+	}
+
+	// Once + Add holds root focus, arrows must not move the list cursor.
+	m = newFlatManager().selectCalendar(2)
+	m, _ = m.Update(managerTabKey(false)) // → add
+	before, _ := m.selectedID()
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	after, _ := m.selectedID()
+	if before != after {
+		t.Fatalf("down arrow moved selection while + Add focused: %d → %d", before, after)
+	}
+}
+
+// TestCalendarManagerRootFocusMouseRestoresFocus verifies that mouse clicks on
+// the source list, + Add action, and inspector action each restore the matching
+// root focus before routing.
+func TestCalendarManagerRootFocusMouseRestoresFocus(t *testing.T) {
+	t.Run("list row click focuses list", func(t *testing.T) {
+		m := newFlatManager().selectCalendar(2)
+		m, _ = m.Update(managerTabKey(false)) // move focus away → add
+		listX, listY, _, _ := m.listRegion()
+		row := calendarListRowForCalendarID(t, m.list, 3) - m.list.offset
+		clicked, _ := m.Update(tea.MouseClickMsg{X: listX + 8, Y: listY + row, Button: tea.MouseLeft})
+		if clicked.rootFocus != rootFocusList {
+			t.Fatalf("list click focus=%v want list", clicked.rootFocus)
+		}
+		if !clicked.list.Focused() {
+			t.Fatal("list not focused after list click")
+		}
+	})
+
+	t.Run("add action click focuses add", func(t *testing.T) {
+		m := newFlatManager()
+		ax, ay, _, ok := m.sourceAddActionRect()
+		if !ok {
+			t.Fatal("no + Add action rect")
+		}
+		clicked, _ := m.Update(tea.MouseClickMsg{X: ax, Y: ay, Button: tea.MouseLeft})
+		if clicked.rootFocus != rootFocusAdd {
+			t.Fatalf("add click focus=%v want add", clicked.rootFocus)
+		}
+		if !clicked.addMenuOpen {
+			t.Fatal("add click did not open the menu")
+		}
+	})
+
+	t.Run("inspector action click focuses inspector", func(t *testing.T) {
+		m := newFlatManager()
+		m.list.selectIdentity(calendarRowIdentity{kind: accountHeaderRow, id: 7}) // Google account action
+		ax, ay, _, ok := m.inspectorActionRect()
+		if !ok {
+			t.Fatal("no inspector action rect")
+		}
+		clicked, cmd := m.Update(tea.MouseClickMsg{X: ax, Y: ay, Button: tea.MouseLeft})
+		if cmd == nil {
+			t.Fatal("inspector click emitted no command")
+		}
+		if clicked.rootFocus != rootFocusInspector {
+			t.Fatalf("inspector click focus=%v want inspector", clicked.rootFocus)
+		}
+		if clicked.Screen() != CalendarManagerScreenList {
+			t.Fatalf("account action should stay on root: screen=%v", clicked.Screen())
+		}
+	})
+}
+
+// TestCalendarManagerRootFocusNormalizesAfterResizeToOnePane verifies that a
+// resize which drops the inspector out of the layout (wide two-pane → narrow
+// one-pane) also drops inspector root focus back to the list. Otherwise Enter
+// or Space would still invoke the now-hidden inspector action — an invisible
+// control driving input. After normalization Space toggles the selected
+// calendar's visibility (the list behavior) instead of opening the detail.
+func TestCalendarManagerRootFocusNormalizesAfterResizeToOnePane(t *testing.T) {
+	m := newFlatManager().selectCalendar(3) // Holidays: calendar row with an Edit… action
+	// Wide two-pane: tab onto the inspector action.
+	m, _ = m.Update(managerTabKey(false)) // list → add
+	m, _ = m.Update(managerTabKey(false)) // add → inspector
+	if m.rootFocus != rootFocusInspector {
+		t.Fatalf("precondition: focus=%v want inspector", m.rootFocus)
+	}
+
+	// Resize into one-pane layout: the inspector action is no longer rendered.
+	m = m.SetSize(narrowThreshold-1, 30)
+	if m.rootFocus != rootFocusList {
+		t.Fatalf("resize to one-pane left focus=%v, want list", m.rootFocus)
+	}
+	if !m.list.Focused() {
+		t.Fatal("list not focused after resize normalized root focus to list")
+	}
+
+	// Space must toggle the selected calendar (list behavior), not invoke the
+	// hidden inspector action (which would push the calendar detail).
+	toggled, cmd := m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
+	if toggled.Screen() != CalendarManagerScreenList {
+		t.Fatalf("space invoked the hidden inspector action: screen=%v", toggled.Screen())
+	}
+	msg, ok := cmd().(CalendarVisibilityToggledMsg)
+	if !ok || msg.ID != 3 {
+		t.Fatalf("space after resize = %T/%+v, want CalendarVisibilityToggledMsg{ID:3}", cmd(), msg)
+	}
+
+	// Enter must take the list route too (root focus stays list), never the
+	// inspector route (which would leave root focus on the hidden action).
+	m = newFlatManager().selectCalendar(3)
+	m, _ = m.Update(managerTabKey(false))
+	m, _ = m.Update(managerTabKey(false))
+	m = m.SetSize(narrowThreshold-1, 30)
+	opened, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if opened.Screen() != CalendarManagerScreenCalendar || opened.calendarForm == nil {
+		t.Fatalf("enter did not open calendar detail via the list route: screen=%v", opened.Screen())
+	}
+	if opened.rootFocus != rootFocusList {
+		t.Fatalf("enter took the inspector route (root focus=%v); the hidden action must not drive input", opened.rootFocus)
+	}
+}
+
+// TestCalendarManagerRootFocusAddNotFocusedOnPushedScreen verifies that when
+// root focus is on + Add and a pushed screen opens (where the + Add action is
+// muted and inert), the action never renders as a focused pill: a disabled
+// control must not carry the focus ring. Focus persists for the return-to-root
+// case, but the focused styling is gated on the action being active.
+func TestCalendarManagerRootFocusAddNotFocusedOnPushedScreen(t *testing.T) {
+	m := newFlatManager()
+	m, _ = m.Update(managerTabKey(false)) // list → add
+	if m.rootFocus != rootFocusAdd {
+		t.Fatalf("precondition: focus=%v want add", m.rootFocus)
+	}
+	// A pushed screen opens; the + Add action is muted/inert there.
+	m = m.OpenCalendar(calendarDialogParamsFor(1, m.calendars[1], false))
+	if m.sourceAddActionActive() {
+		t.Fatal("precondition: + Add must be inactive on a pushed screen")
+	}
+	if m.rootFocus != rootFocusAdd {
+		t.Fatalf("precondition: root focus should persist across the push, got %v", m.rootFocus)
+	}
+	// The persisted focus must not render a focused pill on the inert action.
+	want := lipgloss.NewStyle().Faint(true).Render("+ Add")
+	if got := m.renderSourceAddActionCore(); got != want {
+		t.Fatalf("inactive + Add rendered as focused/active while rootFocus=Add on a pushed screen:\n got=%q\nwant=%q", stripANSI(got), stripANSI(want))
+	}
+	// Back at the root the action is active again, so focus re-asserts.
+	back := m.CloseDetail()
+	if back.sourceAddActionActive() && back.rootFocus == rootFocusAdd {
+		focused := DefaultButtonStyles().Normal.Render("+ Add", true)
+		if got := back.renderSourceAddActionCore(); got != focused {
+			t.Fatalf("active + Add did not render focused at root after returning from pushed screen:\n got=%q\nwant=%q", stripANSI(got), stripANSI(focused))
+		}
+	} else {
+		t.Fatalf("return-to-root state: active=%v focus=%v", back.sourceAddActionActive(), back.rootFocus)
+	}
+}
