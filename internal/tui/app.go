@@ -128,7 +128,13 @@ type eventCreatedMsg struct {
 	err        error
 }
 
-type calendarMutationDoneMsg struct{ err error }
+// calendarMutationDoneMsg reports a calendar mutation's outcome. keepEditor
+// marks mutations that happen beside an open edit form (Set as Default) so
+// the manager keeps the form — and any unsaved draft — mounted on success.
+type calendarMutationDoneMsg struct {
+	err        error
+	keepEditor bool
+}
 
 // calendarOrderSavedMsg reports the result of persisting a sidebar reorder.
 // Success is silent (the list already shows the new order); failure surfaces
@@ -463,6 +469,7 @@ type Model struct {
 	pendingSyncCalendar             syncTarget
 	pendingCalendarDelete           int64
 	pendingCalendarDeleteName       string
+	pendingCalendarKeepLocal        int64 // account calendar to unlink while keeping local events
 	pendingCalendarPromote          int64   // new default to promote when deleting the current default
 	pendingCalendarPromoteName      string  // human-readable name of the promotion target
 	pendingCalendarPromoteCands     []int64 // candidate calendar IDs by ChoiceDialog button index
@@ -2423,7 +2430,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.(type) {
 		case CalendarManagerClosedMsg, CalendarManagerRequestedMsg, CalendarTransferClosedMsg,
 			CalendarSavedMsg, CalendarDiscoveryRequestedMsg,
-			CalendarDeleteRequestedMsg, CalendarTestRequestedMsg,
+			CalendarDeleteRequestedMsg, CalendarKeepLocalRequestedMsg, CalendarTestRequestedMsg,
 			CalendarVisibilityToggledMsg, CalendarReorderedMsg, AccountReorderedMsg,
 			calendarOrderSavedMsg, accountOrderSavedMsg,
 			CalendarExportRequestedMsg, CalendarImportPreviewRequestedMsg,
@@ -3106,6 +3113,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case CalendarVisibilityToggledMsg:
+		// Mirror the toggle into the open calendar manager so its root list
+		// and reopened detail params never go stale; the manager's own
+		// updateCalendar mirror is only reachable through this forward.
+		if m.calendarManagerOpen {
+			m.calendarManager, _ = m.calendarManager.Update(msg)
+		}
 		if m.hiddenCalendars == nil {
 			m.hiddenCalendars = map[int64]bool{}
 		}
@@ -3781,8 +3794,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case CalendarSavedMsg:
+		// Metadata saves stay blocked while a sync or OAuth completion is
+		// writing to the calendars table — but never silently: surface the
+		// block as a form error so the editor and draft stay intact and the
+		// user knows to retry.
 		if m.syncing || m.oauthPending {
-			return m, nil
+			return m, func() tea.Msg {
+				return calendarMutationDoneMsg{err: errors.New("sync in progress — try again in a moment")}
+			}
 		}
 		// Keep the dialog open until the mutation succeeds so we can
 		// show validation errors (e.g. duplicate name) on the form.
@@ -3865,10 +3884,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case CalendarKeepLocalRequestedMsg:
+		// Keep the edit dialog open behind the confirm, mirroring the delete
+		// flow: cancelling returns to the editor with the draft intact.
+		m.pendingCalendarKeepLocal = msg.ID
+		message := fmt.Sprintf(
+			"Keep %q as a local calendar?\n\nSyncing with its account stops; every downloaded event stays on this device.\nRe-adding it later from Manage Calendars creates a separate copy.",
+			msg.Name,
+		)
+		m.confirmDialog = NewConfirmDialogModel(message, "Keep as Local", m.theme).
+			SetSize(m.width, m.height)
+		m.confirmOpen = true
+		return m, nil
+
 	case CalendarSetDefaultRequestedMsg:
 		id := msg.ID
 		return m, func() tea.Msg {
-			return calendarMutationDoneMsg{err: m.app.Calendars.SetDefault(context.Background(), id)}
+			// keepEditor: the Set as Default button lives on the edit form;
+			// success must not pop the form and discard an unsaved draft.
+			return calendarMutationDoneMsg{err: m.app.Calendars.SetDefault(context.Background(), id), keepEditor: true}
 		}
 
 	case CalendarTestRequestedMsg:
@@ -4251,6 +4285,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !msg.Confirmed {
 			m.pendingCalendarDelete = 0
 			m.pendingCalendarDeleteName = ""
+			m.pendingCalendarKeepLocal = 0
 			m.pendingCalendarPromote = 0
 			m.pendingCalendarPromoteName = ""
 			m.pendingPurgeEntries = nil
@@ -4294,6 +4329,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 				return trashActionDoneMsg{action: "purged", title: title, err: nil}
+			}
+		}
+		if m.pendingCalendarKeepLocal != 0 {
+			id := m.pendingCalendarKeepLocal
+			m.pendingCalendarKeepLocal = 0
+			return m, func() tea.Msg {
+				ctx := context.Background()
+				cal, err := m.app.Calendars.Get(ctx, id)
+				if err != nil {
+					return calendarMutationDoneMsg{err: err}
+				}
+				credStore, _ := auth.NewCredentialStoreWithWarnings(m.app.CredentialNamespace, m.app.PreviousCredentialNamespaces, m.app.MigrateLegacyCredentials, m.app.AllowPlaintext, io.Discard)
+				return calendarMutationDoneMsg{err: m.app.Calendars.Disconnect(ctx, cal, credStore)}
 			}
 		}
 		if m.pendingCalendarDelete != 0 {

@@ -206,6 +206,44 @@ func (m AccountCalendarPickerModel) InspectorView(w, h int) string {
 
 func (m AccountCalendarPickerModel) BoxSize() (int, int) { return lipgloss.Size(m.View()) }
 
+// HandleInspectorClick routes a pane-relative click on the embedded
+// InspectorView layout: list rows select and toggle, the trailing action row
+// clicks its buttons. It mirrors the standalone MouseClickMsg handling, which
+// cannot apply when the manager hosts the picker because the manager owns the
+// screen-space geometry.
+func (m AccountCalendarPickerModel) HandleInspectorClick(x, y, w, h int) (AccountCalendarPickerModel, tea.Cmd) {
+	const headerRows = 3 // bold title, faint account context, blank spacer
+	listH := max(h-4, 1)
+	switch {
+	case y >= headerRows && y < headerRows+listH:
+		idx := m.shell.scroll + (y - headerRows)
+		if idx < 0 || idx >= len(m.shell.rows) {
+			return m, nil
+		}
+		// toggleCurrent no-ops on structural/untoggleable rows via
+		// currentRemote/canToggle, matching the standalone click path.
+		m.shell = m.shell.SetFocusZone(ListZoneList).SetSelected(idx)
+		return m.toggleCurrent(), nil
+	case y == headerRows+listH:
+		bs := DefaultButtonStyles()
+		cx := 0
+		for i, action := range m.shell.actions {
+			style := bs.Normal
+			if action.Danger {
+				style = bs.Danger
+			}
+			bw := lipgloss.Width(style.Render(action.Label, false))
+			if x >= cx && x < cx+bw {
+				var cmd tea.Cmd
+				m.shell, cmd = m.shell.ClickAction(i)
+				return m.refresh(), cmd
+			}
+			cx += bw + 1 // +1 for the strings.Join(" ") separator in renderActions
+		}
+	}
+	return m, nil
+}
+
 func (m AccountCalendarPickerModel) toggleCurrent() AccountCalendarPickerModel {
 	remote, ok := m.currentRemote()
 	if !ok || !m.canToggle(remote) {

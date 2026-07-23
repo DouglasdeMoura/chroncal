@@ -684,7 +684,7 @@ func TestCalendarManagerDetailActionsTargetImmutableID(t *testing.T) {
 	for _, b := range buttons {
 		labels = append(labels, b.Label)
 	}
-	if got, want := strings.Join(labels, ","), "Set as Default,Export Calendar…"; got != want {
+	if got, want := strings.Join(labels, ","), "Set as Default,Export Calendar…,Keep as Local Calendar…"; got != want {
 		t.Fatalf("remote detail actions = %q, want %q", got, want)
 	}
 	if view := stripANSI(mm.calendarForm.View()); !strings.Contains(view, "lives in your Google account") {
