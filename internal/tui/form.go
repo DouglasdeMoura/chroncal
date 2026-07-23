@@ -2028,14 +2028,23 @@ func (f Form) fieldParts() []string {
 
 func (f Form) buttonRow() string {
 	bs := f.styles.Buttons
+	// A blurred form (focused == -1: a host-rendered preview, e.g. the
+	// Calendars manager root) renders its buttons as quiet faint labels
+	// without pills — the macOS inactive-window treatment — so an entered
+	// editor is visibly distinct from its inert preview. The pill's 2-cell
+	// padding is kept so entering never shifts the layout.
+	renderBtn := func(target, label string, style ButtonStyle, focused bool) string {
+		if f.focused < 0 {
+			return mouseMark(target, lipgloss.NewStyle().Faint(true).Render("  "+label+"  "))
+		}
+		return mouseMark(target, style.Render(label, focused))
+	}
 	utilParts := make([]string, 0, len(f.actionButtons))
 	leadParts := make([]string, 0, len(f.actionButtons))
 	rightParts := make([]string, 0, len(f.actionButtons)+2)
-	submitStyle := bs.Get(f.submitVariant)
-	rightParts = append(rightParts, mouseMark("submit", submitStyle.Render(f.submitLabel, f.focused == f.submitIndex())))
+	rightParts = append(rightParts, renderBtn("submit", f.submitLabel, bs.Get(f.submitVariant), f.focused == f.submitIndex()))
 	for i, ab := range f.actionButtons {
-		style := bs.Get(ab.Variant)
-		btn := mouseMark(actionTarget(i), style.Render(ab.Label, f.focused == f.actionIndex(i)))
+		btn := renderBtn(actionTarget(i), ab.Label, bs.Get(ab.Variant), f.focused == f.actionIndex(i))
 		switch {
 		case ab.Utility || (ab.Leading && f.separateLeadingActions):
 			utilParts = append(utilParts, btn)
@@ -2045,8 +2054,7 @@ func (f Form) buttonRow() string {
 			rightParts = append(rightParts, btn)
 		}
 	}
-	cancelStyle := bs.Get(f.cancelVariant)
-	rightParts = append(rightParts, mouseMark("cancel", cancelStyle.Render("Cancel", f.focused == f.cancelIndex())))
+	rightParts = append(rightParts, renderBtn("cancel", "Cancel", bs.Get(f.cancelVariant), f.focused == f.cancelIndex()))
 
 	rightGroup := lipgloss.JoinHorizontal(lipgloss.Top, rightParts...)
 
