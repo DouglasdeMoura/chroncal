@@ -159,6 +159,17 @@ type CalendarListModel struct {
 	selectedTextColor color.Color
 	errColor          color.Color
 
+	// inactiveSelection opts the list into painting its blurred cursor row with
+	// a neutral background plus contrasting foreground, so a host that keeps
+	// the list mounted while keyboard focus lives elsewhere (the unified
+	// Calendars manager) still shows which row is selected. The default
+	// sidebar never opts in and keeps its current "drop the selection when
+	// blurred" appearance. The inactive colors track Theme.ButtonBg, so a
+	// host must re-apply this when the theme changes.
+	inactiveSelection bool
+	inactiveBg        color.Color
+	inactiveFg        color.Color
+
 	visibilityIndicator calendarVisibilityIndicator
 }
 
@@ -192,6 +203,20 @@ func (m CalendarListModel) SetTheme(accent, muted, text, selectedText, errColor 
 // list keeps the circle presentation.
 func (m CalendarListModel) WithCheckboxVisibility() CalendarListModel {
 	m.visibilityIndicator = checkboxVisibilityIndicator
+	return m
+}
+
+// WithInactiveSelection opts the list into painting its blurred cursor row
+// with a neutral inactive style — quieter than the active accent but still
+// visible — so a host that keeps the list mounted while keyboard focus is
+// elsewhere (the unified Calendars manager) preserves a visible selection.
+// The default sidebar list never opts in and keeps its current behavior of
+// dropping the selection entirely when blurred. The inactive colors track
+// Theme.ButtonBg, so callers must re-apply this whenever the theme changes.
+func (m CalendarListModel) WithInactiveSelection(bg, fg color.Color) CalendarListModel {
+	m.inactiveSelection = true
+	m.inactiveBg = bg
+	m.inactiveFg = fg
 	return m
 }
 
@@ -504,11 +529,12 @@ func (m CalendarListModel) View() string {
 	for i := start; i < end; i++ {
 		row := m.rows[i]
 		selected := m.focused && i == m.cursor
+		inactive := !m.focused && m.inactiveSelection && i == m.cursor
 		switch row.kind {
 		case accountHeaderRow:
-			b.WriteString(m.renderAccountHeader(row, selected))
+			b.WriteString(m.renderAccountHeader(row, selected, inactive))
 		case calendarRow:
-			b.WriteString(m.renderCalendarRow(row, selected))
+			b.WriteString(m.renderCalendarRow(row, selected, inactive))
 		case accountSpacerRow:
 		}
 		if i < end-1 {
@@ -518,7 +544,7 @@ func (m CalendarListModel) View() string {
 	return b.String()
 }
 
-func (m CalendarListModel) renderAccountHeader(row calendarListRow, selected bool) string {
+func (m CalendarListModel) renderAccountHeader(row calendarListRow, selected, inactive bool) string {
 	hasError := false
 	for _, item := range m.items {
 		if item.AccountID != row.accountID {
@@ -530,28 +556,50 @@ func (m CalendarListModel) renderAccountHeader(row calendarListRow, selected boo
 	if m.collapsed[row.accountID] {
 		arrow = "▸"
 	}
+	label := arrow + " " + row.accountName
+	style := lipgloss.NewStyle().Foreground(m.mutedColor).Bold(true)
+	markerStyle := lipgloss.NewStyle()
+	switch {
+	case selected:
+		style = style.Foreground(m.textColor)
+	case inactive:
+		style = style.Background(m.inactiveBg).Foreground(m.inactiveFg)
+		// The marker sits on the inactive background so the highlight is one
+		// continuous bar; it keeps the error foreground below for legibility.
+		markerStyle = markerStyle.Background(m.inactiveBg)
+	}
+	if hasError {
+		markerStyle = markerStyle.Foreground(m.errColor)
+	}
 	marker := ""
 	markerCells := 0
 	if hasError {
-		marker = lipgloss.NewStyle().Foreground(m.errColor).Render("⚠")
+		marker = markerStyle.Render("⚠")
 		markerCells = lipgloss.Width(marker) + 1
 	}
-	label := arrow + " " + row.accountName
 	if avail := m.width - 1 - markerCells; m.width > 1 && avail > 0 {
 		label = truncateTo(label, avail)
 	}
-	style := lipgloss.NewStyle().Foreground(m.mutedColor).Bold(true)
-	if selected {
-		style = style.Foreground(m.textColor)
-	}
 	out := style.Render(label + " ")
 	if marker != "" {
-		out += " " + marker
+		if inactive {
+			// Keep the spacer on the inactive background so the highlight never
+			// splits between the label and the warning glyph.
+			out += style.Render(" ") + marker
+		} else {
+			out += " " + marker
+		}
+	}
+	if inactive && m.width > 0 {
+		if remaining := m.width - lipgloss.Width(out); remaining > 0 {
+			out += style.Render(strings.Repeat(" ", remaining))
+		}
+		out = truncateTo(out, m.width)
 	}
 	return out
 }
 
-func (m CalendarListModel) renderCalendarRow(row calendarListRow, selected bool) string {
+func (m CalendarListModel) renderCalendarRow(row calendarListRow, selected, inactive bool) string {
 	item := m.items[row.itemIndex]
 	hidden := m.hidden[item.ID]
 	indent := ""
@@ -571,7 +619,7 @@ func (m CalendarListModel) renderCalendarRow(row calendarListRow, selected bool)
 	swatchStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(item.Color))
 	nameStyle := lipgloss.NewStyle()
 	markerStyle := lipgloss.NewStyle().Foreground(m.errColor)
-	if hidden && !selected {
+	if hidden && !selected && !inactive {
 		nameStyle = nameStyle.Foreground(m.mutedColor)
 	}
 	if selected {
@@ -579,6 +627,11 @@ func (m CalendarListModel) renderCalendarRow(row calendarListRow, selected bool)
 		swatchStyle = swatchStyle.Background(m.accentColor)
 		nameStyle = nameStyle.Background(m.accentColor).Foreground(m.selectedTextColor).Bold(true)
 		markerStyle = markerStyle.Background(m.accentColor)
+	} else if inactive {
+		rowStyle = rowStyle.Background(m.inactiveBg).Foreground(m.inactiveFg)
+		swatchStyle = swatchStyle.Background(m.inactiveBg)
+		nameStyle = nameStyle.Background(m.inactiveBg).Foreground(m.inactiveFg)
+		markerStyle = markerStyle.Background(m.inactiveBg)
 	}
 
 	// The visibility control leads the row. Circle mode (the sidebar default)
@@ -594,6 +647,8 @@ func (m CalendarListModel) renderCalendarRow(row calendarListRow, selected bool)
 		checkboxStyle := lipgloss.NewStyle()
 		if selected {
 			checkboxStyle = checkboxStyle.Background(m.accentColor).Foreground(m.selectedTextColor)
+		} else if inactive {
+			checkboxStyle = checkboxStyle.Background(m.inactiveBg).Foreground(m.inactiveFg)
 		}
 		leading = checkboxStyle.Render(checkbox+" ") + swatchStyle.Render("●")
 		prefixCells += lipgloss.Width(checkbox) + 3

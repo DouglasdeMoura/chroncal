@@ -11,6 +11,7 @@ import (
 	lipgloss "charm.land/lipgloss/v2"
 
 	"github.com/douglasdemoura/chroncal/internal/account"
+	"github.com/douglasdemoura/chroncal/internal/tui/oklch"
 )
 
 // CalendarManagerClosedMsg is emitted when the user closes the manager
@@ -153,6 +154,7 @@ func NewCalendarManagerModel(calendars map[int64]CalendarInfo, hidden map[int64]
 	}
 	m.list = NewCalendarListModel(sortedCalendarListItems(calendars), hidden).
 		WithCheckboxVisibility().
+		WithInactiveSelection(m.theme.ButtonBg, oklch.ContrastingFg(m.theme.ButtonBg)).
 		SetTheme(m.theme.Selected, m.theme.Muted, m.theme.Text, m.theme.SelectedText, m.theme.Error).
 		Focus()
 	m = m.rebuild().sizeList()
@@ -325,7 +327,8 @@ func (m CalendarManagerModel) Screen() CalendarManagerScreen { return m.screen }
 // screens use the current terminal theme.
 func (m CalendarManagerModel) SetTheme(theme Theme) CalendarManagerModel {
 	m.theme = theme
-	m.list = m.list.SetTheme(theme.Selected, theme.Muted, theme.Text, theme.SelectedText, theme.Error)
+	m.list = m.list.SetTheme(theme.Selected, theme.Muted, theme.Text, theme.SelectedText, theme.Error).
+		WithInactiveSelection(theme.ButtonBg, oklch.ContrastingFg(theme.ButtonBg))
 	return m.rebuild()
 }
 
