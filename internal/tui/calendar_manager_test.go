@@ -1148,6 +1148,78 @@ func TestCalendarManagerDetailLeftKeepsDirtyDraft(t *testing.T) {
 	}
 }
 
+// TestCalendarManagerTabTraversalRoundTripsThroughEditor verifies Tab
+// traversal is continuous across the whole dialog: from the source list,
+// repeated Tab enters the previewed editor, walks its fields and buttons,
+// and exits past the last control back to the focused source list; Shift-Tab
+// from the editor's first field exits back to + Add.
+func TestCalendarManagerTabTraversalRoundTripsThroughEditor(t *testing.T) {
+	tab := managerTabKey(false)
+	m := newFlatManager().selectCalendar(1)
+
+	// list → + Add → editor (first field focused).
+	m, _ = m.Update(tab)
+	m, _ = m.Update(tab)
+	if m.Screen() != CalendarManagerScreenCalendar || m.calendarForm == nil {
+		t.Fatalf("tab did not enter the editor: screen=%v", m.Screen())
+	}
+	if got, want := m.calendarForm.form.Focused(), m.calendarForm.form.FirstFocusable(); got != want {
+		t.Fatalf("editor entry focus = %d, want first focusable %d", got, want)
+	}
+
+	// Walk the whole form: Tab from every slot until the last focusable.
+	for guard := 0; m.calendarForm.form.Focused() != m.calendarForm.form.LastFocusable(); guard++ {
+		if guard > 32 {
+			t.Fatal("tab never reached the form's last focusable slot")
+		}
+		m, _ = m.Update(tab)
+		if m.calendarForm == nil {
+			t.Fatal("tab exited the editor before its last control")
+		}
+	}
+
+	// Tab past the last control exits to the focused source list.
+	m, _ = m.Update(tab)
+	if m.Screen() != CalendarManagerScreenList || m.calendarForm != nil {
+		t.Fatalf("tab past the last control did not return to the list: screen=%v", m.Screen())
+	}
+	if m.rootFocus != rootFocusList || !m.list.Focused() {
+		t.Fatalf("root focus = %v after exiting the editor, want focused list", m.rootFocus)
+	}
+
+	// Shift-Tab from the editor's first field exits back to + Add.
+	m, _ = m.Update(tab)
+	m, _ = m.Update(tab) // re-enter the editor
+	if m.calendarForm == nil {
+		t.Fatal("tab did not re-enter the editor")
+	}
+	m, _ = m.Update(managerTabKey(true))
+	if m.Screen() != CalendarManagerScreenList || m.rootFocus != rootFocusAdd {
+		t.Fatalf("shift-tab from first field: screen=%v focus=%v, want list screen with + Add focus", m.Screen(), m.rootFocus)
+	}
+}
+
+// TestCalendarManagerTabStaysInsideDirtyEditor verifies Tab keeps wrapping
+// inside the form once the draft is dirty, so traversal can never discard
+// typed edits.
+func TestCalendarManagerTabStaysInsideDirtyEditor(t *testing.T) {
+	tab := managerTabKey(false)
+	m := newFlatManager().selectCalendar(1)
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"}) // dirty the Name field
+
+	// Tab far past the form's slot count: the editor must stay mounted.
+	for range 40 {
+		m, _ = m.Update(tab)
+		if m.calendarForm == nil {
+			t.Fatal("tab exited a dirty editor")
+		}
+	}
+	if m.Screen() != CalendarManagerScreenCalendar {
+		t.Fatalf("screen = %v, want Calendar while draft is dirty", m.Screen())
+	}
+}
+
 // TestCalendarManagerEscOnDirtyDraftAsksBeforeDiscarding verifies the
 // Apple-style save-changes flow: Esc on a dirty calendar draft opens a
 // destructive Discard prompt instead of closing; declining keeps the draft

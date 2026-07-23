@@ -922,12 +922,50 @@ func (m CalendarManagerModel) updateCalendar(msg tea.Msg) (CalendarManagerModel,
 		m.screen = CalendarManagerScreenList
 		return m, nil
 	}
+	// Tab traversal is continuous across the whole dialog: on a clean form,
+	// Tab past the last control returns to the source list and Shift-Tab
+	// from the first field returns to + Add, completing the root ring
+	// (list → + Add → form → list). A dirty form keeps wrapping internally
+	// so traversal can never discard typed edits.
+	if popped, ok := m.tabOutOfCalendarForm(msg); ok {
+		return popped, nil
+	}
 	next, cmd := m.calendarForm.Update(msg)
 	m.calendarForm = &next
 	m = m.sizeActiveInspector()
 	// Commands may contain timers (for example the text cursor blink). Bubble
 	// Tea must execute them asynchronously; invoking them here stalls Update.
 	return m, cmd
+}
+
+// tabOutOfCalendarForm implements the Tab boundary hand-off for the pushed
+// calendar editor. The bool reports whether the key was consumed as a
+// traversal exit. It never fires for the account-connection layout, while an
+// embedded discovery picker is open, or while the draft is dirty.
+func (m CalendarManagerModel) tabOutOfCalendarForm(msg tea.Msg) (CalendarManagerModel, bool) {
+	press, ok := msg.(tea.KeyPressMsg)
+	if !ok || m.calendarForm == nil || m.calendarForm.accountConnection ||
+		m.calendarForm.discoveryPicker != nil {
+		return m, false
+	}
+	if !key.Matches(press, m.keys.Next) && !key.Matches(press, m.keys.Prev) {
+		return m, false
+	}
+	if m.calendarForm.dirtyMetadata() {
+		return m, false
+	}
+	form := m.calendarForm.form
+	switch {
+	case key.Matches(press, m.keys.Next) && form.Focused() == form.LastFocusable():
+		m.calendarForm = nil
+		m.screen = CalendarManagerScreenList
+		return m.setRootFocus(rootFocusList), true
+	case key.Matches(press, m.keys.Prev) && form.Focused() == form.FirstFocusable():
+		m.calendarForm = nil
+		m.screen = CalendarManagerScreenList
+		return m.setRootFocus(rootFocusAdd).normalizeRootFocus(), true
+	}
+	return m, false
 }
 
 // confirmOverlayWidth is the width budget for the discard prompt: it must fit

@@ -809,10 +809,17 @@ func (m CalendarDialogModel) dirtyMetadata() bool {
 	if m.accountConnection || m.localDraft == nil || m.form.ItemCount() <= cdIdxEmail {
 		return false
 	}
-	return strings.TrimSpace(m.form.Field(cdIdxName).(*TextField).Value()) != strings.TrimSpace(m.localDraft.Name) ||
-		strings.TrimSpace(m.form.Field(cdIdxColor).(*ColorField).Value()) != strings.TrimSpace(m.localDraft.Color) ||
-		strings.TrimSpace(m.form.Field(cdIdxDescription).(*TextField).Value()) != strings.TrimSpace(m.localDraft.Description) ||
-		strings.TrimSpace(m.form.Field(cdIdxEmail).(*TextField).Value()) != strings.TrimSpace(m.localDraft.OwnerEmail)
+	name, okName := m.form.Field(cdIdxName).(*TextField)
+	colorField, okColor := m.form.Field(cdIdxColor).(*ColorField)
+	desc, okDesc := m.form.Field(cdIdxDescription).(*TextField)
+	email, okEmail := m.form.Field(cdIdxEmail).(*TextField)
+	if !okName || !okColor || !okDesc || !okEmail {
+		return false
+	}
+	return strings.TrimSpace(name.Value()) != strings.TrimSpace(m.localDraft.Name) ||
+		strings.TrimSpace(colorField.Value()) != strings.TrimSpace(m.localDraft.Color) ||
+		strings.TrimSpace(desc.Value()) != strings.TrimSpace(m.localDraft.Description) ||
+		strings.TrimSpace(email.Value()) != strings.TrimSpace(m.localDraft.OwnerEmail)
 }
 
 func (m CalendarDialogModel) leftMovesCursor() bool {
