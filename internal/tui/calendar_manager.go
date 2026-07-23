@@ -507,6 +507,8 @@ func (m CalendarManagerModel) cycleRootFocus(forward bool) CalendarManagerModel 
 // unavailable control can never hold or enter the focus ring.
 func (m CalendarManagerModel) normalizeRootFocus() CalendarManagerModel {
 	switch m.rootFocus {
+	case rootFocusList:
+		// The list is always available at the manager root.
 	case rootFocusInspector:
 		if _, _, _, ok := m.inspectorActionRect(); !ok {
 			m.rootFocus = rootFocusList
@@ -673,6 +675,8 @@ func (m CalendarManagerModel) handleKey(msg tea.KeyPressMsg) (CalendarManagerMod
 	// Enter/Space activate the focused source or inspector action.
 	if key.Matches(msg, m.keys.Activate) {
 		switch m.rootFocus {
+		case rootFocusList:
+			// Continue to the list-specific Enter/Space handling below.
 		case rootFocusAdd:
 			return m.openAddMenu(), nil
 		case rootFocusInspector:
