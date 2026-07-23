@@ -1161,7 +1161,8 @@ func TestCalendarDialogRendering_EditLinked(t *testing.T) {
 	}, theme).SetSize(120, 40)
 
 	v := m.View()
-	assert.Contains(t, v, "Account: Work Account ›")
+	assert.Contains(t, v, "Account")
+	assert.Contains(t, v, "Work Account ›")
 	assert.Contains(t, v, "Delete Calendar…")
 	assert.NotContains(t, v, "Export Calendar…") // manager-only affordance
 	assert.NotContains(t, v, "Manage Account…")

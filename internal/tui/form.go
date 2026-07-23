@@ -1950,6 +1950,23 @@ func (f Form) fieldParts() []string {
 
 	for i, item := range f.items {
 		if _, isStatic := item.Field.(*StaticField); isStatic {
+			// A labeled static joins the shared inline label column like any
+			// other row (e.g. the calendar detail's "Location  Local");
+			// unlabeled statics stay full-width status/footnote lines.
+			layout := f.styles.LabelLayout
+			if item.LabelLayout != nil {
+				layout = *item.LabelLayout
+			}
+			if item.Label != "" && (layout == LabelInline || layout == LabelInlineRight) {
+				showMarker := f.styles.ShowFocusMarker
+				if item.ShowFocusMarker != nil {
+					showMarker = *item.ShowFocusMarker
+				}
+				label := f.renderInlineLabel(item, maxLabelLen, requiredPad, layout == LabelInlineRight)
+				marker := f.focusMarkerFor(false, showMarker)
+				parts = append(parts, lipgloss.JoinHorizontal(lipgloss.Top, label+" "+marker, item.Field.View()))
+				continue
+			}
 			parts = append(parts, item.Field.View())
 			continue
 		}

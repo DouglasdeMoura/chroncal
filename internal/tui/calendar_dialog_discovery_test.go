@@ -80,7 +80,7 @@ func TestCalendarDialogRoutesLinkedMaintenanceToAccountSettings(t *testing.T) {
 	}
 
 	plain := stripANSI(m.View())
-	for _, want := range []string{"Account: Personal Google ›", "Last synced:"} {
+	for _, want := range []string{"Account", "Personal Google ›", "Last synced:"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("linked calendar context missing %q:\n%s", want, plain)
 		}
