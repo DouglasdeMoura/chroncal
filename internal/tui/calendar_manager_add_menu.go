@@ -4,6 +4,7 @@ import (
 	"image"
 	"strings"
 
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
 	uv "github.com/charmbracelet/ultraviolet"
@@ -30,29 +31,35 @@ var calendarManagerAddItems = [...]calendarManagerAddItem{
 // label so the menu reads as a balanced pill rather than a tight fit.
 const calendarManagerMenuTrailing = 3
 
-// openAddMenu opens the anchored Add menu with the cursor on the first row. It
-// emits no command: the host only acts once a row is chosen.
+// openAddMenu opens the anchored Add menu with the cursor on the first row and
+// root focus on the + Add action, so a dismissed menu (or one whose row pushed
+// a screen) always returns there. It emits no command: the host only acts once
+// a row is chosen.
 func (m CalendarManagerModel) openAddMenu() CalendarManagerModel {
 	if !m.sourceAddActionActive() {
 		return m
 	}
 	m.addMenuOpen = true
 	m.addMenuCursor = 0
-	return m
+	m.rootFocus = rootFocusAdd
+	return m.applyRootFocus()
 }
 
-// closeAddMenu dismisses the anchored Add menu without touching the rest of
-// the manager state.
+// closeAddMenu dismisses the anchored Add menu and re-establishes root focus
+// on the + Add action without touching the rest of the manager state, so Esc,
+// outside clicks, and row activations all return there.
 func (m CalendarManagerModel) closeAddMenu() CalendarManagerModel {
 	m.addMenuOpen = false
-	return m
+	m.rootFocus = rootFocusAdd
+	return m.applyRootFocus()
 }
 
-// updateAddMenu owns all input while the menu is open. Up/Down clamp within
-// the three rows, Enter emits the selected typed target and dismisses, Esc
-// dismisses without closing the manager, and mouse hits are routed to
-// handleAddMenuMouse. Unrecognized keys are swallowed so they never reach the
-// root list underneath.
+// updateAddMenu owns all input while the menu is open. Up/Down and j/k clamp
+// within the three rows; Tab/Shift-Tab wrap the cursor one row around using the
+// same focus bindings as the root ring; Enter/Space activate the selected row
+// through the shared activation binding and dismiss; Esc dismisses without
+// closing the manager; mouse hits are routed to handleAddMenuMouse.
+// Unrecognized keys are swallowed so they never reach the root list underneath.
 func (m CalendarManagerModel) updateAddMenu(msg tea.Msg) (CalendarManagerModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
@@ -65,7 +72,20 @@ func (m CalendarManagerModel) updateAddMenu(msg tea.Msg) (CalendarManagerModel, 
 		case tea.KeyDown, 'j':
 			m.addMenuCursor = min(m.addMenuCursor+1, len(calendarManagerAddItems)-1)
 			return m, nil
-		case tea.KeyEnter:
+		}
+		n := len(calendarManagerAddItems)
+		// Tab/Shift-Tab wrap the cursor one row around, reusing the root
+		// focus ring bindings so the keys stay consistent across the manager.
+		if key.Matches(msg, m.keys.Next) {
+			m.addMenuCursor = (m.addMenuCursor + 1) % n
+			return m, nil
+		}
+		if key.Matches(msg, m.keys.Prev) {
+			m.addMenuCursor = (m.addMenuCursor - 1 + n) % n
+			return m, nil
+		}
+		// Enter/Space activate the selected row and emit its typed target.
+		if key.Matches(msg, m.keys.Activate) {
 			return m.closeAddMenu(), m.requestTarget(calendarManagerAddItems[m.addMenuCursor].target)
 		}
 		return m, nil
