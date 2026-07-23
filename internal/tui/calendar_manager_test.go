@@ -673,6 +673,7 @@ func TestCalendarManagerRootNavigationMovesSelection(t *testing.T) {
 // that all carry the selected calendar's immutable ID, with Delete styled as
 // the destructive variant.
 func TestCalendarManagerDetailActionsTargetImmutableID(t *testing.T) {
+	// Account calendar: no Delete (footnote explains ownership instead).
 	m := newFlatManager().selectCalendar(3) // Holidays, account 7, not default
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if mm.calendarForm == nil {
@@ -683,23 +684,41 @@ func TestCalendarManagerDetailActionsTargetImmutableID(t *testing.T) {
 	for _, b := range buttons {
 		labels = append(labels, b.Label)
 	}
+	if got, want := strings.Join(labels, ","), "Set as Default,Export Calendar…"; got != want {
+		t.Fatalf("remote detail actions = %q, want %q", got, want)
+	}
+	if view := stripANSI(mm.calendarForm.View()); !strings.Contains(view, "lives in your Google account") {
+		t.Errorf("remote detail missing account-ownership footnote:\n%s", view)
+	}
+
+	// Local calendar: Delete remains, targeting the immutable ID.
+	m = newFlatManager().selectCalendar(1) // On device, local
+	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if mm.calendarForm == nil {
+		t.Fatal("Enter did not push a local calendar form")
+	}
+	buttons = mm.calendarForm.form.actionButtons
+	labels = labels[:0]
+	for _, b := range buttons {
+		labels = append(labels, b.Label)
+	}
 	if got, want := strings.Join(labels, ","), "Set as Default,Export Calendar…,Delete Calendar…"; got != want {
-		t.Fatalf("detail actions = %q, want %q", got, want)
+		t.Fatalf("local detail actions = %q, want %q", got, want)
 	}
 	for _, b := range buttons {
 		msg := b.OnPress()
 		switch msg := msg.(type) {
 		case CalendarSetDefaultRequestedMsg:
-			if msg.ID != 3 || msg.Name != "Holidays" {
-				t.Errorf("Set Default = %+v, want ID 3", msg)
+			if msg.ID != 1 || msg.Name != "On device" {
+				t.Errorf("Set Default = %+v, want ID 1", msg)
 			}
 		case CalendarExportRequestedMsg:
-			if msg.ID != 3 || msg.Name != "Holidays" {
-				t.Errorf("Export = %+v, want ID 3", msg)
+			if msg.ID != 1 || msg.Name != "On device" {
+				t.Errorf("Export = %+v, want ID 1", msg)
 			}
 		case CalendarDeleteRequestedMsg:
-			if msg.ID != 3 || msg.Name != "Holidays" {
-				t.Errorf("Delete = %+v, want ID 3", msg)
+			if msg.ID != 1 || msg.Name != "On device" {
+				t.Errorf("Delete = %+v, want ID 1", msg)
 			}
 		default:
 			t.Errorf("unexpected action message %T from %q", msg, b.Label)

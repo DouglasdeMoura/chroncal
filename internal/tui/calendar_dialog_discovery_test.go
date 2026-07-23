@@ -48,17 +48,21 @@ func TestCalendarDialogRoutesLinkedMaintenanceToAccountSettings(t *testing.T) {
 	}, Theme{}).SetSize(65, 26)
 
 	// This is a legacy app-wired dialog (not manager-embedded), so Export —
-	// whose host handler does not exist yet — is gated out; only Set as
-	// Default and Delete remain. The "Manage Account…" button is gone;
-	// drilling into the owning account is an inline "Account: <name> ›"
+	// whose host handler does not exist yet — is gated out, and an account
+	// calendar carries no Delete (the footnote explains ownership instead);
+	// only Set as Default remains. The "Manage Account…" button is gone;
+	// drilling into the owning account is an inline "Account  <name> ›"
 	// opener that emits the same canonical AccountSettingsRequestedMsg the
 	// host already routes.
 	labels := make([]string, 0, len(m.form.actionButtons))
 	for _, button := range m.form.actionButtons {
 		labels = append(labels, button.Label)
 	}
-	if got, want := strings.Join(labels, ","), "Set as Default,Delete Calendar…"; got != want {
+	if got, want := strings.Join(labels, ","), "Set as Default"; got != want {
 		t.Fatalf("edit actions = %q, want %q", got, want)
+	}
+	if view := stripANSI(m.View()); !strings.Contains(view, "lives in your Personal Google account") {
+		t.Fatalf("linked edit missing account-ownership footnote:\n%s", view)
 	}
 
 	openerIdx := -1

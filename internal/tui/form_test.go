@@ -1163,7 +1163,11 @@ func TestCalendarDialogRendering_EditLinked(t *testing.T) {
 	v := m.View()
 	assert.Contains(t, v, "Account")
 	assert.Contains(t, v, "Work Account ›")
-	assert.Contains(t, v, "Delete Calendar…")
+	// Account calendars have no Delete: the footnote explains ownership and
+	// points at the local alternative instead.
+	assert.NotContains(t, v, "Delete Calendar…")
+	assert.Contains(t, v, "lives in your Work Account account")
+	assert.Contains(t, v, "Turn off Display calendar")
 	assert.NotContains(t, v, "Export Calendar…") // manager-only affordance
 	assert.NotContains(t, v, "Manage Account…")
 	assert.NotContains(t, v, "Disconnect…")
