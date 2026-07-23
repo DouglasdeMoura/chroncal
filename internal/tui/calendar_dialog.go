@@ -329,6 +329,7 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 				FormItem{Label: "", Field: NewStaticField("", nil)},
 				staticLine(ownership, note),
 				staticLine("Turn off Display calendar to hide it on this device.", note),
+				staticLine("To stop syncing it, open Account › Manage Calendars.", note),
 			)
 		} else {
 			items = append(items, FormItem{Label: "Location", Field: NewStaticField("Local", nil)})

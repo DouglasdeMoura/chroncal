@@ -1168,6 +1168,7 @@ func TestCalendarDialogRendering_EditLinked(t *testing.T) {
 	assert.NotContains(t, v, "Delete Calendar…")
 	assert.Contains(t, v, "lives in your Work Account account")
 	assert.Contains(t, v, "Turn off Display calendar")
+	assert.Contains(t, v, "Account › Manage Calendars")
 	assert.NotContains(t, v, "Export Calendar…") // manager-only affordance
 	assert.NotContains(t, v, "Manage Account…")
 	assert.NotContains(t, v, "Disconnect…")
