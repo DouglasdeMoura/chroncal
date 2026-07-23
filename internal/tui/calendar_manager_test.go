@@ -1276,13 +1276,18 @@ func TestCalendarManagerRootGroupsAccountsAndShowsInspector(t *testing.T) {
 	m := newFlatManager().selectCalendar(2)
 	view := stripANSI(m.View())
 	for _, want := range []string{
-		"▾ Local", "▾ Google", "▾ Fastmail",
+		"Local", "Google", "Fastmail",
 		Glyphs["checkbox.on"] + " ● Primary",
 		"Location", "Google", "Edit…",
 	} {
 		if !strings.Contains(view, want) {
 			t.Errorf("manager view missing %q:\n%s", want, view)
 		}
+	}
+	// The manager renders account headings as plain section titles: no
+	// disclosure chevron in front of the account name.
+	if strings.Contains(view, "▾") || strings.Contains(view, "▸") {
+		t.Errorf("manager account headings must not show disclosure chevrons:\n%s", view)
 	}
 	if strings.Contains(view, "Edit ›") {
 		t.Fatalf("calendar rows must not repeat Edit links beside the inspector:\n%s", view)
@@ -1567,7 +1572,7 @@ func TestCalendarManagerNarrowInspectorUsesOnePaneAndBackRestoresList(t *testing
 	m := newFlatManager().SetSize(narrowThreshold-1, 30).selectCalendar(1)
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	view := stripANSI(m.View())
-	if strings.Contains(view, "▾ Local") || !strings.Contains(view, "Name") {
+	if strings.Contains(view, "+ Add") || !strings.Contains(view, "Name") {
 		t.Fatalf("narrow editor should show only inspector pane:\n%s", view)
 	}
 	m, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
