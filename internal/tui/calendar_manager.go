@@ -660,6 +660,18 @@ func (m CalendarManagerModel) Update(msg tea.Msg) (CalendarManagerModel, tea.Cmd
 	// focus in the calendar detail, where Left still moves the cursor.
 	if m.screen != CalendarManagerScreenList {
 		if click, ok := msg.(tea.MouseClickMsg); ok && click.Button == tea.MouseLeft {
+			// The discovery picker renders no mouse marks, so translated
+			// MouseEvents cannot reach it; route its pane clicks through the
+			// geometry-based inspector handler instead.
+			if m.screen == CalendarManagerScreenAccountCalendars && m.accountPicker != nil {
+				px, py, pw, ph := m.inspectorPaneRect()
+				if click.X >= px && click.X < px+pw && click.Y >= py && click.Y < py+ph {
+					next, cmd := m.accountPicker.HandleInspectorClick(click.X-px, click.Y-py, pw, ph)
+					m.accountPicker = &next
+					return m.sizeActiveInspector(), cmd
+				}
+				return m, nil
+			}
 			ox, oy, _, _ := m.dialogOrigin()
 			msg = MouseEvent{IsClick: true, Target: mouseResolve(click.X-ox, click.Y-oy)}
 		}
@@ -892,7 +904,12 @@ func (m CalendarManagerModel) updateAccountCalendars(msg tea.Msg) (CalendarManag
 // Default, Export, Delete, …) likewise passes through unchanged.
 func (m CalendarManagerModel) updateCalendar(msg tea.Msg) (CalendarManagerModel, tea.Cmd) {
 	if done, ok := msg.(calendarMutationDoneMsg); ok {
+		// A successful Save pops back to the root list; keepEditor mutations
+		// (Set as Default) leave the form — and any unsaved draft — mounted.
 		if done.err == nil {
+			if done.keepEditor {
+				return m, nil
+			}
 			m.calendarForm = nil
 			m.screen = CalendarManagerScreenList
 			return m, nil
@@ -1278,6 +1295,19 @@ func (m CalendarManagerModel) inspectorActionRect() (int, int, int, bool) {
 	return paneX, actionY, lipgloss.Width(m.renderInspectorAction(action)), true
 }
 
+// inspectorPaneRect returns the screen-space rectangle of the inspector pane:
+// beside the source column in wide two-pane layouts, the full interior in
+// one-pane layouts.
+func (m CalendarManagerModel) inspectorPaneRect() (int, int, int, int) {
+	dialogX, dialogY, _, _ := m.dialogOrigin()
+	paneX := dialogX + addMenuContentBoxX()
+	if !m.onePaneLayout() {
+		paneX += m.sourceColumnWidth() + 3
+	}
+	paneW, _ := m.inspectorPaneSize()
+	return paneX, dialogY + 4, paneW, m.managerBodyHeight()
+}
+
 // previewPaneRect returns the screen-space rectangle of the root inspector
 // pane while it shows a calendar edit-form preview, for mouse hit-testing.
 // It exists only in wide two-pane roots with an existing calendar selected.
@@ -1285,17 +1315,11 @@ func (m CalendarManagerModel) previewPaneRect() (int, int, int, int, bool) {
 	if m.screen != CalendarManagerScreenList || m.onePaneLayout() || m.width <= 0 || m.height <= 0 {
 		return 0, 0, 0, 0, false
 	}
-	identity, ok := m.list.currentIdentity()
-	if !ok || identity.kind != calendarRow {
+	if _, _, ok := m.selectedCalendar(); !ok {
 		return 0, 0, 0, 0, false
 	}
-	if _, exists := m.calendars[identity.id]; !exists {
-		return 0, 0, 0, 0, false
-	}
-	dialogX, dialogY, _, _ := m.dialogOrigin()
-	paneX := dialogX + addMenuContentBoxX() + m.sourceColumnWidth() + 3
-	paneW, _ := m.inspectorPaneSize()
-	return paneX, dialogY + 4, paneW, m.managerBodyHeight(), true
+	px, py, pw, ph := m.inspectorPaneRect()
+	return px, py, pw, ph, true
 }
 
 func (m CalendarManagerModel) renderTitleRow(w int) string {

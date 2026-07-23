@@ -105,6 +105,15 @@ type CalendarSetDefaultRequestedMsg struct {
 	Name string
 }
 
+// CalendarKeepLocalRequestedMsg asks the app to unlink an account calendar
+// while keeping every downloaded event as a local calendar (the keep-local
+// counterpart to removing it in Manage Calendars). The parent owns the
+// confirm flow and the Disconnect call.
+type CalendarKeepLocalRequestedMsg struct {
+	ID   int64
+	Name string
+}
+
 // CalendarTestRequestedMsg is emitted when the user presses Test. The parent
 // runs a CalDAV authenticated ping and replies with CalendarTestResultMsg.
 type CalendarTestRequestedMsg struct {
@@ -329,7 +338,7 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 				FormItem{Label: "", Field: NewStaticField("", nil)},
 				staticLine(ownership, note),
 				staticLine("Turn off Display calendar to hide it on this device.", note),
-				staticLine("To stop syncing it, open Account › Manage Calendars.", note),
+				staticLine("To remove it, open Account › Manage Calendars.", note),
 			)
 		} else {
 			items = append(items, FormItem{Label: "Location", Field: NewStaticField("Local", nil)})
@@ -435,7 +444,13 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 				return CalendarExportRequestedMsg{ID: id, Name: name}
 			})
 		}
-		if !params.RemoteLinked {
+		if params.RemoteLinked {
+			// The keep-local counterpart to Delete: unlink from the account
+			// but keep every downloaded event as a local calendar.
+			form.SetUtilityActionButton("Keep as Local Calendar…", Button, func() tea.Msg {
+				return CalendarKeepLocalRequestedMsg{ID: id, Name: name}
+			})
+		} else {
 			form.SetLeadingActionButton("Delete Calendar…", ButtonDanger, func() tea.Msg {
 				return CalendarDeleteRequestedMsg{ID: id, Name: name}
 			})

@@ -181,7 +181,7 @@ func (m AccountSettingsDialogModel) Update(msg tea.Msg) (AccountSettingsDialogMo
 		case key.Matches(press, key.NewBinding(key.WithKeys("down", "j", "tab"))):
 			m.selected = (m.selected + 1) % len(m.actions)
 			return m, nil
-		case key.Matches(press, key.NewBinding(key.WithKeys("enter", " "))):
+		case key.Matches(press, key.NewBinding(key.WithKeys("enter", "space"))):
 			return m, m.activateSelected()
 		}
 	}

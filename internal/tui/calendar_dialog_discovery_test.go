@@ -58,7 +58,7 @@ func TestCalendarDialogRoutesLinkedMaintenanceToAccountSettings(t *testing.T) {
 	for _, button := range m.form.actionButtons {
 		labels = append(labels, button.Label)
 	}
-	if got, want := strings.Join(labels, ","), "Set as Default"; got != want {
+	if got, want := strings.Join(labels, ","), "Set as Default,Keep as Local Calendar…"; got != want {
 		t.Fatalf("edit actions = %q, want %q", got, want)
 	}
 	if view := stripANSI(m.View()); !strings.Contains(view, "lives in your Personal Google account") {
