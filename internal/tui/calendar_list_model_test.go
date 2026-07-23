@@ -567,3 +567,125 @@ func TestCalendarListCircleMouseSeparatesCircleFromDetails(t *testing.T) {
 		t.Fatal("row body click changed visibility")
 	}
 }
+
+// TestCalendarList_FocusedOptInSelectionUsesActiveAccent verifies that opting
+// into inactive selection never changes the focused appearance: while focused
+// the cursor row still uses the active accent and never leaks the inactive
+// background.
+func TestCalendarList_FocusedOptInSelectionUsesActiveAccent(t *testing.T) {
+	m := groupedListFixture().
+		WithInactiveSelection(lipgloss.Color("#6c5ce7"), lipgloss.Color("#ffffff")).
+		SetTheme(
+			lipgloss.Color("#112233"),
+			lipgloss.Color("#445566"),
+			lipgloss.Color("#ddeeff"),
+			lipgloss.Color("#ffffff"),
+			lipgloss.Color("#ff0000"),
+		)
+	m.cursor = calendarListRowForCalendarID(t, m, 2) // Personal
+	out := m.View()
+	if !strings.Contains(out, "48;2;17;34;51") {
+		t.Fatalf("focused opt-in selection must use active accent #112233: %q", out)
+	}
+	if strings.Contains(out, "48;2;108;92;231") {
+		t.Fatalf("focused opt-in selection leaked the inactive background #6c5ce7: %q", out)
+	}
+}
+
+// TestCalendarList_BlurredOptInSelectionUsesNeutralInactive verifies that an
+// opted-in list paints its blurred cursor row with the neutral inactive
+// background (Theme.ButtonBg-derived) instead of the active accent, so the
+// selection stays visible but quieter when focus is elsewhere.
+func TestCalendarList_BlurredOptInSelectionUsesNeutralInactive(t *testing.T) {
+	m := groupedListFixture().
+		WithInactiveSelection(lipgloss.Color("#6c5ce7"), lipgloss.Color("#ffffff")).
+		SetTheme(
+			lipgloss.Color("#112233"),
+			lipgloss.Color("#445566"),
+			lipgloss.Color("#ddeeff"),
+			lipgloss.Color("#ffffff"),
+			lipgloss.Color("#ff0000"),
+		).
+		Blur()
+	m.cursor = calendarListRowForCalendarID(t, m, 2) // Personal
+	out := m.View()
+	if strings.Contains(out, "48;2;17;34;51") {
+		t.Fatalf("blurred opt-in selection must not use the active accent #112233: %q", out)
+	}
+	if !strings.Contains(out, "48;2;108;92;231") {
+		t.Fatalf("blurred opt-in selection must use the neutral inactive bg #6c5ce7: %q", out)
+	}
+}
+
+// TestCalendarList_DefaultBlurredHasNoSelectedStyling guards the default
+// sidebar behavior: a list that never opts in keeps its current look of
+// dropping selection styling entirely while blurred (no accent, no inactive
+// background).
+func TestCalendarList_DefaultBlurredHasNoSelectedStyling(t *testing.T) {
+	m := groupedListFixture().
+		SetTheme(
+			lipgloss.Color("#112233"),
+			lipgloss.Color("#445566"),
+			lipgloss.Color("#ddeeff"),
+			lipgloss.Color("#ffffff"),
+			lipgloss.Color("#ff0000"),
+		).
+		Blur()
+	m.cursor = calendarListRowForCalendarID(t, m, 2) // Personal
+	out := m.View()
+	if strings.Contains(out, "48;2;17;34;51") {
+		t.Fatalf("default blurred list must not paint a selected background: %q", out)
+	}
+}
+
+// TestCalendarList_InactiveAccountHeaderFillsRowAroundWarning verifies that an
+// inactive (blurred, opted-in) account header carrying a sync/missing warning
+// paints the ENTIRE row — label, warning glyph, spacer, and trailing padding
+// — with the neutral inactive background, while the warning keeps its error
+// foreground. The highlight must read as one continuous bar with no split gap
+// and must fill the terminal width.
+func TestCalendarList_InactiveAccountHeaderFillsRowAroundWarning(t *testing.T) {
+	items := []CalendarListItem{
+		{ID: 4, Name: "Team", Color: "#fab387", AccountID: 9, AccountName: "Work", Missing: true},
+	}
+	m := NewCalendarListModel(items, nil).
+		WithInactiveSelection(lipgloss.Color("#6c5ce7"), lipgloss.Color("#ffffff")).
+		SetTheme(
+			lipgloss.Color("#112233"),
+			lipgloss.Color("#445566"),
+			lipgloss.Color("#ddeeff"),
+			lipgloss.Color("#ffffff"),
+			lipgloss.Color("#ff0000"),
+		).
+		SetSize(40, 10).
+		Blur()
+	m.cursor = calendarListRowForAccountID(t, m, 9) // Work header carries the Missing warning
+	out := m.View()
+
+	var line string
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(stripANSI(l), "Work") {
+			line = l
+			break
+		}
+	}
+	if line == "" {
+		t.Fatalf("no Work header line in view:\n%s", out)
+	}
+
+	// The warning glyph must carry the inactive background AND keep the error
+	// foreground so the sync/missing signal stays legible on the highlight.
+	wantMarker := lipgloss.NewStyle().
+		Background(lipgloss.Color("#6c5ce7")).
+		Foreground(lipgloss.Color("#ff0000")).
+		Render("⚠")
+	if !strings.Contains(line, wantMarker) {
+		t.Fatalf("warning marker must carry inactive bg + error fg:\n want %q\n  in %q", wantMarker, line)
+	}
+
+	// The inactive highlight must span the full terminal width with no split:
+	// the row is padded so its visible width equals the list width.
+	if w := lipgloss.Width(line); w != 40 {
+		t.Fatalf("inactive header row width = %d, want full width 40: %q", w, line)
+	}
+}

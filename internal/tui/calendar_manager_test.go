@@ -1813,3 +1813,73 @@ func TestCalendarManagerRootFocusAddNotFocusedOnPushedScreen(t *testing.T) {
 		t.Fatalf("return-to-root state: active=%v focus=%v", back.sourceAddActionActive(), back.rootFocus)
 	}
 }
+
+// TestCalendarManagerRootFocusKeepsSelectionVisibleInactive verifies that
+// moving root focus off the list (to + Add) keeps the selected row visibly
+// highlighted with the neutral inactive style, restores the active accent when
+// focus returns, and never moves the selection cursor. It covers both a
+// calendar row and a selectable account header, since the two render through
+// separate paths (renderCalendarRow vs renderAccountHeader).
+func TestCalendarManagerRootFocusKeepsSelectionVisibleInactive(t *testing.T) {
+	// Pin a theme with distinct accent (#112233) and button (#6c5ce7) colors
+	// so the active and inactive highlights are independently detectable.
+	theme := NewTheme(true)
+	theme.Selected = lipgloss.Color("#112233")
+	theme.SelectedText = lipgloss.Color("#ffffff")
+	theme.ButtonBg = lipgloss.Color("#6c5ce7")
+
+	m := newFlatManager().SetTheme(theme).selectCalendar(3) // Holidays: wide root has an inspector action
+	if _, _, _, ok := m.inspectorActionRect(); !ok {
+		t.Fatal("precondition: wide calendar root must have a focusable inspector action")
+	}
+
+	// While the list holds root focus the selected calendar row uses the active accent.
+	if out := m.list.View(); !strings.Contains(out, "48;2;17;34;51") {
+		t.Fatalf("focused selection must use active accent #112233: %q", out)
+	}
+
+	// Tab away to + Add: the list blurs but the selected row stays visible
+	// with the neutral inactive background, and the selection is untouched.
+	away, _ := m.Update(managerTabKey(false))
+	if away.rootFocus != rootFocusAdd {
+		t.Fatalf("precondition: focus=%v want add", away.rootFocus)
+	}
+	if away.list.Focused() {
+		t.Fatal("list must be blurred once root focus moves to + Add")
+	}
+	if out := away.list.View(); strings.Contains(out, "48;2;17;34;51") {
+		t.Fatalf("blurred selection must not use the active accent: %q", out)
+	}
+	if out := away.list.View(); !strings.Contains(out, "48;2;108;92;231") {
+		t.Fatalf("blurred selection must use neutral inactive bg #6c5ce7: %q", out)
+	}
+	if id, ok := away.selectedID(); !ok || id != 3 {
+		t.Fatalf("moving root focus changed the selection: got %d ok=%v", id, ok)
+	}
+
+	// Returning root focus to the list restores the active accent.
+	back, _ := away.Update(managerTabKey(true)) // add → list (reverse ring)
+	if back.rootFocus != rootFocusList {
+		t.Fatalf("focus=%v want list", back.rootFocus)
+	}
+	if out := back.list.View(); !strings.Contains(out, "48;2;17;34;51") {
+		t.Fatalf("restored focus must use the active accent: %q", out)
+	}
+
+	// Account headers render through a separate path; cover them too. A
+	// focused account header carries no background, so the only visible signal
+	// while blurred is the neutral inactive highlight.
+	header := newFlatManager().SetTheme(theme)
+	header.list.selectIdentity(calendarRowIdentity{kind: accountHeaderRow, id: 7}) // Google
+	header = header.applyRootFocus()                                              // list focused, cursor on header
+	if out := header.list.View(); strings.Contains(out, "48;2;108;92;231") {
+		t.Fatalf("focused account header must not paint the inactive background: %q", out)
+	}
+	headerAway, _ := header.Update(managerTabKey(false)) // list → add
+	if headerAway.rootFocus != rootFocusAdd {
+		t.Fatalf("header precondition: focus=%v want add", headerAway.rootFocus)
+	}
+	if out := headerAway.list.View(); !strings.Contains(out, "48;2;108;92;231") {
+		t.Fatalf("blurred account header must paint the neutral inactive bg #6c5ce7: %q", out)
+	}
+}
