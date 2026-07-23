@@ -317,6 +317,19 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 			for _, line := range syncHealthDialogLines(params, theme) {
 				items = append(items, staticLine(line.text, line.style))
 			}
+			// Account calendars carry no Delete button (deleting here would
+			// only remove the local copy, not the account's calendar); this
+			// footnote explains why and points at the local alternative.
+			note := lipgloss.NewStyle().Foreground(theme.TextDim)
+			ownership := "This calendar lives in your " + accountName + " account."
+			if strings.TrimSpace(params.AccountName) == "" {
+				ownership = "This calendar lives in your connected account."
+			}
+			items = append(items,
+				FormItem{Label: "", Field: NewStaticField("", nil)},
+				staticLine(ownership, note),
+				staticLine("Turn off Display calendar to hide it on this device.", note),
+			)
 		} else {
 			items = append(items, FormItem{Label: "Location", Field: NewStaticField("Local", nil)})
 		}
@@ -401,10 +414,13 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 
 	// Edit mode exposes Delete as a leading action targeting the calendar's
 	// immutable ID; it is destructive (ButtonDanger) and only requests
-	// removal — the host owns the safe-confirm flow. Export is a
-	// manager-only affordance (the legacy app has no export handler yet), so
-	// it is gated on ManagerEmbedded to avoid a no-op button in legacy-wired
-	// dialogs.
+	// removal — the host owns the safe-confirm flow. Account calendars get
+	// no Delete: the button could only drop the local copy while the
+	// account still owns the calendar, so the form explains that in a
+	// footnote instead (hide locally via Display calendar; manage
+	// membership in Account ▸ Manage Calendars). Export is a manager-only
+	// affordance (the legacy app has no export handler yet), so it is gated
+	// on ManagerEmbedded to avoid a no-op button in legacy-wired dialogs.
 	if params.ID > 0 {
 		id := params.ID
 		name := params.Name
@@ -413,9 +429,11 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 				return CalendarExportRequestedMsg{ID: id, Name: name}
 			})
 		}
-		form.SetLeadingActionButton("Delete Calendar…", ButtonDanger, func() tea.Msg {
-			return CalendarDeleteRequestedMsg{ID: id, Name: name}
-		})
+		if !params.RemoteLinked {
+			form.SetLeadingActionButton("Delete Calendar…", ButtonDanger, func() tea.Msg {
+				return CalendarDeleteRequestedMsg{ID: id, Name: name}
+			})
+		}
 		form.SetSeparateLeadingActions(true)
 	}
 
