@@ -686,6 +686,11 @@ func (m CalendarManagerModel) popOnLeft(msg tea.Msg) (CalendarManagerModel, tea.
 	case CalendarManagerScreenList, CalendarManagerScreenTransfer:
 		return m, nil, false
 	case CalendarManagerScreenAccountCalendars:
+		// Staged-but-unapplied subscription changes must not be discarded by
+		// a navigation gesture; Esc/Cancel stays the explicit discard.
+		if m.accountPicker != nil && m.accountPicker.dirtySelection() {
+			return m, nil, false
+		}
 		return m.HideDiscovery(), nil, true
 	case CalendarManagerScreenAccount:
 		// Account settings opened from a calendar pop back to that unchanged
@@ -694,6 +699,12 @@ func (m CalendarManagerModel) popOnLeft(msg tea.Msg) (CalendarManagerModel, tea.
 		return m.CloseAccount(), nil, true
 	case CalendarManagerScreenCalendar:
 		if m.calendarForm == nil || m.calendarForm.leftMovesCursor() || m.calendarForm.accountConnection {
+			return m, nil, false
+		}
+		// An unsaved draft must never be discarded by a navigation gesture:
+		// with dirty metadata, Left falls through to the form (moving focus
+		// backward); Esc/Cancel stays the explicit discard.
+		if m.calendarForm.dirtyMetadata() {
 			return m, nil, false
 		}
 		m.calendarForm = nil

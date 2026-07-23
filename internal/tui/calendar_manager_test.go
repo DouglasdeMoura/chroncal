@@ -1120,6 +1120,59 @@ func TestCalendarManagerDetailLeftPopsToRoot(t *testing.T) {
 	}
 }
 
+// TestCalendarManagerDetailLeftKeepsDirtyDraft verifies the Back gesture
+// never discards an unsaved draft: with edited metadata and focus on a
+// non-editing field, Left leaves the editor mounted with the edit intact.
+// Esc (Cancel) remains the explicit discard.
+func TestCalendarManagerDetailLeftKeepsDirtyDraft(t *testing.T) {
+	m := newFlatManager().selectCalendar(2) // Primary, Google
+	pushed, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	// Type into the focused Name field to dirty the draft.
+	pushed, _ = pushed.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	if pushed.calendarForm == nil || !pushed.calendarForm.dirtyMetadata() {
+		t.Fatal("typing into Name did not dirty the draft")
+	}
+	dirtyName := pushed.calendarForm.Draft().Name
+	// Move focus to the Account opener so Left is not a cursor move.
+	focused, ok := focusCalendarDetailField(pushed, "opener")
+	if !ok {
+		t.Fatal("remote detail has no focusable Account opener")
+	}
+	kept, _ := focused.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
+	if kept.Screen() != CalendarManagerScreenCalendar || kept.calendarForm == nil {
+		t.Fatalf("Left discarded a dirty draft: screen=%v", kept.Screen())
+	}
+	if got := kept.calendarForm.Draft().Name; got != dirtyName {
+		t.Fatalf("draft name = %q, want %q preserved", got, dirtyName)
+	}
+}
+
+// TestCalendarManagerPickerLeftKeepsStagedSelection verifies Left pops an
+// untouched account-calendars picker but never one holding staged,
+// unapplied subscription changes.
+func TestCalendarManagerPickerLeftKeepsStagedSelection(t *testing.T) {
+	// Untouched picker: Left pops back to the root list.
+	m := newFlatManager().OpenAccountCalendars(pickerDiscovery())
+	popped, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
+	if popped.Screen() != CalendarManagerScreenList {
+		t.Fatalf("Left did not pop a clean picker: screen=%v", popped.Screen())
+	}
+
+	// Staged change: Left must keep the picker and its selection mounted.
+	m = newFlatManager().OpenAccountCalendars(pickerDiscovery())
+	m.accountPicker.selected["/primary/"] = true
+	if !m.accountPicker.dirtySelection() {
+		t.Fatal("staged toggle did not mark the picker dirty")
+	}
+	kept, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
+	if kept.Screen() != CalendarManagerScreenAccountCalendars || kept.accountPicker == nil {
+		t.Fatalf("Left discarded staged picker changes: screen=%v", kept.Screen())
+	}
+	if !kept.accountPicker.selected["/primary/"] {
+		t.Fatal("staged selection lost after Left")
+	}
+}
+
 // TestCalendarManagerDetailLeftDoesNotStealCursor verifies Left keeps moving
 // the cursor while a text field is focused, so the Back gesture never
 // interrupts editing.
