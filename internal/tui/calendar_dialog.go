@@ -365,12 +365,14 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 
 	localDraft := params
 
+	// form is intentionally NOT set here: the button/handler wiring below
+	// mutates the local form, and m.form captures the final state just
+	// before return.
 	m := CalendarDialogModel{
 		id:                params.ID,
 		name:              params.Name,
 		linked:            params.RemoteLinked,
 		dialog:            dialog,
-		form:              form,
 		body:              viewport.New(),
 		help:              newThemedHelp(theme),
 		theme:             theme,
