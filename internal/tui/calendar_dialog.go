@@ -313,7 +313,7 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		visibility := NewCheckboxField("", !params.Hidden)
 		visibility.SetContent("Display calendar")
 		visibilityCb = visibility
-		items = append(items, FormItem{Label: "", Field: visibility})
+		items = append(items, FormItem{Label: "", Field: visibility, AlignToFieldColumn: true})
 
 		if params.RemoteLinked {
 			accountName := strings.TrimSpace(params.AccountName)
