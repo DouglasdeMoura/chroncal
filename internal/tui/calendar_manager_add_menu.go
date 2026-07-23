@@ -219,6 +219,23 @@ func (m CalendarManagerModel) handleAddMenuMouse(msg tea.MouseClickMsg) (Calenda
 	return m.closeAddMenu(), m.requestTarget(calendarManagerAddItems[row].target)
 }
 
+// composeCenteredOverlay draws overlay centered over the rendered manager
+// shell using an Ultraviolet buffer, the same technique as composeAddMenu.
+// Used for the discard-changes prompt.
+func composeCenteredOverlay(base, overlay string, boxW int) string {
+	if base == "" || overlay == "" || boxW <= 0 {
+		return base
+	}
+	height := strings.Count(base, "\n") + 1
+	buf := uv.NewScreenBuffer(boxW, height)
+	uv.NewStyledString(base).Draw(buf, buf.Bounds())
+	ow, oh := lipgloss.Size(overlay)
+	x := max((boxW-ow)/2, 0)
+	y := max((height-oh)/2, 0)
+	uv.NewStyledString(overlay).Draw(buf, image.Rect(x, y, x+ow, y+oh))
+	return buf.Render()
+}
+
 // composeAddMenu draws the menu over the already-rendered manager shell using
 // an Ultraviolet screen buffer local to this component. The buffer is sized to
 // the shell's actual rendered height (which can exceed the nominal box height

@@ -814,7 +814,9 @@ func (m CalendarDialogModel) SetHidden(h bool) CalendarDialogModel {
 // part of the draft. Hosts use this to keep navigation gestures from
 // silently discarding typed edits.
 func (m CalendarDialogModel) dirtyMetadata() bool {
-	if m.localDraft == nil || m.form.ItemCount() <= cdIdxEmail {
+	// The account-connection layout has different fields at these indices;
+	// its cancel flow never prompts.
+	if m.accountConnection || m.localDraft == nil || m.form.ItemCount() <= cdIdxEmail {
 		return false
 	}
 	return strings.TrimSpace(m.form.Field(cdIdxName).(*TextField).Value()) != strings.TrimSpace(m.localDraft.Name) ||
