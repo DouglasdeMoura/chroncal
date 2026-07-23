@@ -286,19 +286,6 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 			return style.Render(s)
 		})}
 	}
-	// labeledLine keeps the muted "Label:" prefix two-tone while the value
-	// truncates to whatever width remains beside it.
-	labeledLine := func(label, value string) FormItem {
-		lbl := lipgloss.NewStyle().Foreground(theme.Muted).Render(label) + " "
-		lblW := lipgloss.Width(lbl)
-		return FormItem{Label: "", Field: NewStaticField(value, func(s string) string {
-			if avail := *contentWidth - lblW; *contentWidth > 0 && avail > 0 {
-				s = truncateTo(s, avail)
-			}
-			return lbl + s
-		})}
-	}
-
 	// Edit mode surfaces the calendar's visibility and owning context as
 	// actionable rows: a Display Calendar checkbox (visibility is immediate
 	// and never auto-saved with metadata) and either "Location: Local" or an
@@ -315,20 +302,23 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		visibilityCb = visibility
 		items = append(items, FormItem{Label: "", Field: visibility, AlignToFieldColumn: true})
 
+		// Account and Location sit in the shared label column like every
+		// other row (Apple Settings detail-row layout); the opener's value
+		// carries the drill-in chevron.
 		if params.RemoteLinked {
 			accountName := strings.TrimSpace(params.AccountName)
 			if accountName == "" {
 				accountName = "Connected account"
 			}
 			openerIdx = len(items)
-			opener := NewOpenerField("Account: " + accountName + " ›")
+			opener := NewOpenerField(accountName + " ›")
 			accountOpener = opener
-			items = append(items, FormItem{Label: "", Field: opener})
+			items = append(items, FormItem{Label: "Account", Field: opener})
 			for _, line := range syncHealthDialogLines(params, theme) {
 				items = append(items, staticLine(line.text, line.style))
 			}
 		} else {
-			items = append(items, labeledLine("Location:", "Local"))
+			items = append(items, FormItem{Label: "Location", Field: NewStaticField("Local", nil)})
 		}
 	}
 
@@ -768,7 +758,7 @@ func (m CalendarDialogModel) SetAccountName(name string) CalendarDialogModel {
 		name = "Connected account"
 	}
 	m.localDraft.AccountName = name
-	m.accountOpener.SetValue("Account: " + name + " ›")
+	m.accountOpener.SetValue(name + " ›")
 	return m
 }
 

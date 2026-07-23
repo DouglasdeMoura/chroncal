@@ -947,8 +947,8 @@ func TestCalendarManagerDetailBackRestoresRootScroll(t *testing.T) {
 }
 
 // TestCalendarManagerDetailLocalHasLocationOnly verifies a local calendar's
-// detail renders "Location: Local" and has no Account opener (local
-// calendars have no owning account to drill into).
+// detail renders a labeled Location row valued Local and has no Account
+// opener (local calendars have no owning account to drill into).
 func TestCalendarManagerDetailLocalHasLocationOnly(t *testing.T) {
 	m := newFlatManager().selectCalendar(1) // On device, local
 	pushed, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -956,8 +956,8 @@ func TestCalendarManagerDetailLocalHasLocationOnly(t *testing.T) {
 		t.Fatal("Enter did not push a calendar form")
 	}
 	view := stripANSI(pushed.calendarForm.View())
-	if !strings.Contains(view, "Location: Local") {
-		t.Errorf("local detail missing Location: Local:\n%s", view)
+	if !strings.Contains(view, "Location") || !strings.Contains(view, "Local") {
+		t.Errorf("local detail missing labeled Location row:\n%s", view)
 	}
 	if calendarDetailFieldIndex(pushed, "opener") >= 0 {
 		t.Errorf("local detail should not expose an Account opener:\n%s", view)
@@ -965,8 +965,9 @@ func TestCalendarManagerDetailLocalHasLocationOnly(t *testing.T) {
 }
 
 // TestCalendarManagerDetailRemoteHasAccountOpener verifies a remote calendar's
-// detail renders an actionable "Account: <name> ›" opener that, when
-// activated, pushes the owning account's settings onto the stack.
+// detail renders an actionable Account row — the account name plus drill-in
+// chevron in the shared label column — that, when activated, pushes the
+// owning account's settings onto the stack.
 func TestCalendarManagerDetailRemoteHasAccountOpener(t *testing.T) {
 	m := newFlatManager().selectCalendar(2) // Primary, Google, account 7
 	pushed, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -974,8 +975,8 @@ func TestCalendarManagerDetailRemoteHasAccountOpener(t *testing.T) {
 		t.Fatal("Enter did not push a calendar form")
 	}
 	view := stripANSI(pushed.calendarForm.View())
-	if !strings.Contains(view, "Account: Google ›") {
-		t.Errorf("remote detail missing actionable Account line:\n%s", view)
+	if !strings.Contains(view, "Account") || !strings.Contains(view, "Google ›") {
+		t.Errorf("remote detail missing actionable Account row:\n%s", view)
 	}
 	focused, ok := focusCalendarDetailField(pushed, "opener")
 	if !ok {

@@ -579,7 +579,7 @@ func TestAppAccountSettingsRenameOpensAccountScopedDialog(t *testing.T) {
 	if got := m.calendarManager.calendarForm.form.Field(cdIdxName).(*TextField).Value(); got != "Unsaved calendar title" {
 		t.Fatalf("Rename completion changed calendar draft to %q", got)
 	}
-	if view := stripANSI(m.calendarManager.calendarForm.View()); !strings.Contains(view, "Account: Renamed Google") {
+	if view := stripANSI(m.calendarManager.calendarForm.View()); !strings.Contains(view, "Renamed Google ›") {
 		t.Fatalf("Rename completion left stale calendar account context:\n%s", view)
 	}
 }
