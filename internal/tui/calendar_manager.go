@@ -41,13 +41,22 @@ type calendarManagerKeyMap struct {
 	Open  key.Binding
 	Close key.Binding
 	Add   key.Binding
+	// Next/Prev cycle the Apple-style root focus ring (Tab/Shift-Tab) before
+	// any list child sees the key. Activate fires Enter/Space on the focused
+	// source or inspector action.
+	Next     key.Binding
+	Prev     key.Binding
+	Activate key.Binding
 }
 
 func defaultCalendarManagerKeys() calendarManagerKeyMap {
 	return calendarManagerKeyMap{
-		Open:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
-		Close: key.NewBinding(key.WithKeys("esc", "q", "C", "shift+c"), key.WithHelp("esc", "close")),
-		Add:   key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add")),
+		Open:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
+		Close:    key.NewBinding(key.WithKeys("esc", "q", "C", "shift+c"), key.WithHelp("esc", "close")),
+		Add:      key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add")),
+		Next:     key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next")),
+		Prev:     key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev")),
+		Activate: key.NewBinding(key.WithKeys("enter", "space"), key.WithHelp("enter/space", "activate")),
 	}
 }
 
@@ -73,8 +82,30 @@ type CalendarManagerRequestedMsg struct {
 	AccountID  int64
 }
 
+// calendarManagerRootFocus is the Apple-style keyboard focus target at the
+// manager root. It is independent from the list's selection cursor: cycling it
+// moves the active control (and the visual focus ring) without moving the
+// selected calendar. The list owns arrow/space/enter input only while it holds
+// root focus; the + Add and inspector actions activate on Enter/Space.
+type calendarManagerRootFocus int
+
+const (
+	// rootFocusList is the grouped calendar hierarchy. The zero value so a
+	// freshly built manager starts with the list active.
+	rootFocusList calendarManagerRootFocus = iota
+	// rootFocusAdd is the compact + Add source-list action.
+	rootFocusAdd
+	// rootFocusInspector is the selection inspector's bottom action, which
+	// exists only in wide two-pane roots whose selection has an action.
+	rootFocusInspector
+)
+
 type CalendarManagerModel struct {
 	screen CalendarManagerScreen
+	// rootFocus is the active root keyboard focus target. It is synced to the
+	// list's focused flag via applyRootFocus so the list renders and receives
+	// arrow/space/enter input only while it holds root focus.
+	rootFocus calendarManagerRootFocus
 
 	calendars map[int64]CalendarInfo
 	hidden    map[int64]bool
@@ -317,7 +348,7 @@ func (m CalendarManagerModel) SetSize(w, h int) CalendarManagerModel {
 		m.transfer = &next
 	}
 	m = m.sizeList()
-	return m.sizeActiveInspector()
+	return m.sizeActiveInspector().normalizeRootFocus()
 }
 
 // BoxSize returns the manager shell's arithmetic outer dimensions. Child
@@ -350,7 +381,7 @@ func (m CalendarManagerModel) SetData(calendars map[int64]CalendarInfo, hidden m
 		m = m.selectCalendar(m.pendingSelectionID)
 		m.pendingSelectionID = 0
 	}
-	return m.sizeList()
+	return m.sizeList().normalizeRootFocus()
 }
 
 func (m CalendarManagerModel) hasCalendar(id int64) bool {
@@ -406,8 +437,83 @@ func (m CalendarManagerModel) sizeList() CalendarManagerModel {
 	w, h := m.rootPaneSize()
 	// Reserve two source-pane rows (blank spacer + + Add action) below the
 	// list viewport; the list renders into the remaining height.
-	m.list = m.list.SetSize(w, max(h-2, 1)).Focus()
+	m.list = m.list.SetSize(w, max(h-2, 1))
+	return m.applyRootFocus()
+}
+
+// applyRootFocus mirrors rootFocus onto the shared list's focused flag, so the
+// list renders its selection and receives arrow/space/enter input only while it
+// holds root focus. The selection cursor itself is untouched: cycling focus
+// never moves the selected calendar.
+func (m CalendarManagerModel) applyRootFocus() CalendarManagerModel {
+	if m.rootFocus == rootFocusList {
+		m.list = m.list.Focus()
+	} else {
+		m.list = m.list.Blur()
+	}
 	return m
+}
+
+// setRootFocus applies a single focus target (used by mouse routing) and keeps
+// the list's focused flag in sync.
+func (m CalendarManagerModel) setRootFocus(f calendarManagerRootFocus) CalendarManagerModel {
+	m.rootFocus = f
+	return m.applyRootFocus()
+}
+
+// rootFocusTargets is the ordered ring of focusable root controls for the
+// current state: always the list and the + Add action, plus the inspector
+// action only in a wide two-pane root whose selection has one.
+func (m CalendarManagerModel) rootFocusTargets() []calendarManagerRootFocus {
+	targets := []calendarManagerRootFocus{rootFocusList}
+	if m.sourceAddActionRendered() {
+		targets = append(targets, rootFocusAdd)
+	}
+	if _, _, _, ok := m.inspectorActionRect(); ok {
+		targets = append(targets, rootFocusInspector)
+	}
+	return targets
+}
+
+// cycleRootFocus moves root focus one step around the available ring. Forward
+// (Tab) visits list → + Add → inspector → list; Shift-Tab reverses it.
+func (m CalendarManagerModel) cycleRootFocus(forward bool) CalendarManagerModel {
+	targets := m.rootFocusTargets()
+	if len(targets) == 0 {
+		m.rootFocus = rootFocusList
+		return m.applyRootFocus()
+	}
+	idx := 0
+	for i, t := range targets {
+		if t == m.rootFocus {
+			idx = i
+			break
+		}
+	}
+	if forward {
+		idx = (idx + 1) % len(targets)
+	} else {
+		idx = (idx - 1 + len(targets)) % len(targets)
+	}
+	m.rootFocus = targets[idx]
+	return m.applyRootFocus()
+}
+
+// normalizeRootFocus drops root focus back to the list when its target is no
+// longer available (the selection lost its inspector action), so an
+// unavailable control can never hold or enter the focus ring.
+func (m CalendarManagerModel) normalizeRootFocus() CalendarManagerModel {
+	switch m.rootFocus {
+	case rootFocusInspector:
+		if _, _, _, ok := m.inspectorActionRect(); !ok {
+			m.rootFocus = rootFocusList
+		}
+	case rootFocusAdd:
+		if !m.sourceAddActionRendered() {
+			m.rootFocus = rootFocusList
+		}
+	}
+	return m.applyRootFocus()
 }
 
 func (m CalendarManagerModel) managerBodySize() (int, int) {
@@ -547,22 +653,47 @@ func (m CalendarManagerModel) popOnLeft(msg tea.Msg) (CalendarManagerModel, tea.
 }
 
 func (m CalendarManagerModel) handleKey(msg tea.KeyPressMsg) (CalendarManagerModel, tea.Cmd) {
+	// Tab/Shift-Tab cycle root focus before any list child sees the key, so the
+	// ring never leaks navigation into list cursor movement.
+	if key.Matches(msg, m.keys.Next) {
+		return m.cycleRootFocus(true), nil
+	}
+	if key.Matches(msg, m.keys.Prev) {
+		return m.cycleRootFocus(false), nil
+	}
 	switch {
 	case key.Matches(msg, m.keys.Close):
 		return m, func() tea.Msg { return CalendarManagerClosedMsg{} }
 	case key.Matches(msg, m.keys.Add):
 		return m.openAddMenu(), nil
-	case key.Matches(msg, m.keys.Open):
+	}
+	// Enter/Space activate the focused source or inspector action.
+	if key.Matches(msg, m.keys.Activate) {
+		switch m.rootFocus {
+		case rootFocusAdd:
+			return m.openAddMenu(), nil
+		case rootFocusInspector:
+			action, _ := m.selectionInspectorAction()
+			return m.applyInspectorAction(action)
+		}
+	}
+	// While the list holds root focus, Enter opens the selected calendar
+	// internally (unchanged routing); non-calendar rows fall through to the
+	// list's own Open handling.
+	if m.rootFocus == rootFocusList && key.Matches(msg, m.keys.Open) {
 		identity, ok := m.list.currentIdentity()
 		if ok && identity.kind == calendarRow {
 			info := m.calendars[identity.id]
 			return m.OpenCalendar(calendarDialogParamsFor(identity.id, info, m.hidden[identity.id])), nil
 		}
 	}
+	// Everything else (arrows, space, collapse/expand) belongs to the list,
+	// which only acts while focused. Keep the focus ring consistent in case the
+	// selection changed and dropped an inspector action out of the ring.
+	m = m.applyRootFocus()
 	next, cmd := m.list.Update(msg)
 	m.list = next
-	m = m.syncListProjection()
-	return m, cmd
+	return m.syncListProjection().normalizeRootFocus(), cmd
 }
 
 func (m CalendarManagerModel) syncListProjection() CalendarManagerModel {
@@ -574,25 +705,29 @@ func (m CalendarManagerModel) handleMouse(msg tea.MouseClickMsg) (CalendarManage
 	if msg.Button != tea.MouseLeft {
 		return m, nil
 	}
-	// Selection inspector bottom action (wide root only): route it before the
-	// source-list click so the pill never activates an underlying row.
+	// Selection inspector bottom action (wide root only): restore its focus, then
+	// route before the source-list click so the pill never activates an
+	// underlying row.
 	if ax, ay, aw, ok := m.inspectorActionRect(); ok && msg.Y == ay && msg.X >= ax && msg.X < ax+aw {
+		m = m.setRootFocus(rootFocusInspector)
 		action, _ := m.selectionInspectorAction()
 		return m.applyInspectorAction(action)
 	}
 	if m.sourceAddActionActive() {
 		if ax, ay, aw, ok := m.sourceAddActionRect(); ok && msg.Y == ay && msg.X >= ax && msg.X < ax+aw {
-			return m.openAddMenu(), nil
+			return m.setRootFocus(rootFocusAdd).openAddMenu(), nil
 		}
 	}
 	lx, ly, lw, lh := m.listRegion()
 	if msg.X < lx || msg.X >= lx+lw || msg.Y < ly || msg.Y >= ly+lh {
 		return m, nil
 	}
+	// A source-list click always restores list focus before routing.
+	m = m.setRootFocus(rootFocusList)
 	relX := msg.X - lx
 	next, cmd := m.list.HandleClick(relX, msg.Y-ly)
 	m.list = next
-	m = m.syncListProjection()
+	m = m.syncListProjection().normalizeRootFocus()
 	identity, selected := m.list.currentIdentity()
 	indicatorEnd := m.list.visibilityIndicatorWidth()
 	if m.list.grouped {
@@ -993,9 +1128,10 @@ func (m CalendarManagerModel) selectionInspectorAction() (calendarManagerInspect
 }
 
 // renderInspectorAction renders the bottom action as a neutral pill button
-// (ButtonStyles.Normal), the same style the Form action bar uses at rest.
+// (ButtonStyles.Normal), the same style the Form action bar uses. It uses the
+// focused variant while the action holds root focus.
 func (m CalendarManagerModel) renderInspectorAction(action calendarManagerInspectorAction) string {
-	return DefaultButtonStyles().Normal.Render(action.label, false)
+	return DefaultButtonStyles().Normal.Render(action.label, m.rootFocus == rootFocusInspector)
 }
 
 // applyInspectorAction routes a click on the bottom action: a calendar action
@@ -1046,9 +1182,18 @@ func (m CalendarManagerModel) renderTitleRow(w int) string {
 }
 
 func (m CalendarManagerModel) renderHelp(w int) string {
-	parts := []string{"↑↓ select", "enter open", "space show/hide", "a add", "esc close"}
+	var parts []string
 	if m.screen != CalendarManagerScreenList {
 		parts = []string{"tab next", "enter activate", "esc back"}
+	} else {
+		switch m.rootFocus {
+		case rootFocusAdd:
+			parts = []string{"tab next", "enter add", "esc close"}
+		case rootFocusInspector:
+			parts = []string{"tab next", "enter activate", "esc close"}
+		default:
+			parts = []string{"↑↓ select", "tab next", "enter open", "space show/hide", "a add", "esc close"}
+		}
 	}
 	s := truncateTo(strings.Join(parts, "  "), w)
 	return lipgloss.NewStyle().Faint(true).Width(w).Align(lipgloss.Center).Render(s)
@@ -1136,7 +1281,7 @@ func (m CalendarManagerModel) sourceAddActionRect() (int, int, int, bool) {
 	boxW, boxH := m.boxSize()
 	dialogX := (m.width - boxW) / 2
 	dialogY := (m.height - boxH) / 2
-	return dialogX + addMenuContentBoxX(), dialogY + addMenuActionBoxY(m), lipgloss.Width("+ Add"), true
+	return dialogX + addMenuContentBoxX(), dialogY + addMenuActionBoxY(m), lipgloss.Width(m.renderSourceAddActionCore()), true
 }
 
 // renderSourceColumn renders the source-list column: the (possibly empty)
@@ -1163,16 +1308,25 @@ func (m CalendarManagerModel) renderSourceColumn(w, h int) []string {
 }
 
 // renderSourceAddAction renders the + Add label, bold/accented when active and
-// faint when muted, padded to the full column width.
+// faint when muted, padded to the full column width. While it holds root focus
+// the label uses the neutral button focus pill so the focus ring is visible.
 func (m CalendarManagerModel) renderSourceAddAction(w int) string {
-	const label = "+ Add"
-	var rendered string
-	if m.sourceAddActionActive() {
-		rendered = lipgloss.NewStyle().Bold(true).Foreground(m.theme.Accent).Render(label)
-	} else {
-		rendered = lipgloss.NewStyle().Faint(true).Render(label)
-	}
+	rendered := m.renderSourceAddActionCore()
 	return rendered + strings.Repeat(" ", max(w-lipgloss.Width(rendered), 0))
+}
+
+// renderSourceAddActionCore renders the bare + Add label (unpadded) so both the
+// column row and the mouse hit rectangle share one rendered width.
+func (m CalendarManagerModel) renderSourceAddActionCore() string {
+	const label = "+ Add"
+	active := m.sourceAddActionActive()
+	if m.rootFocus == rootFocusAdd && active {
+		return DefaultButtonStyles().Normal.Render(label, true)
+	}
+	if active {
+		return lipgloss.NewStyle().Bold(true).Foreground(m.theme.Accent).Render(label)
+	}
+	return lipgloss.NewStyle().Faint(true).Render(label)
 }
 
 // flatAccountContext returns the inspector's calendar location: "Local" for
