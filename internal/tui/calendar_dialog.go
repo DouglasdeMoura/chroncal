@@ -10,6 +10,8 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
+
+	"github.com/douglasdemoura/chroncal/internal/account"
 )
 
 // CalendarDialogParams seeds the calendar dialog. All fields are optional;
@@ -17,25 +19,18 @@ import (
 // the calendar is currently connected to a remote CalDAV account.
 type CalendarDialogParams struct {
 	ID           int64
+	AccountID    int64
+	AccountName  string
 	Name         string
 	Color        string // hex like "#a6e3a1"
 	Description  string
 	OwnerEmail   string
-	RemoteURL    string
 	RemoteLinked bool
 
-	// RemoteAuthType and RemoteUsername are display-only; populated when
-	// the calendar is linked so the dialog can show connection details.
-	RemoteAuthType string
-	RemoteUsername string
-
-	// LastSyncAt, LastSyncAttemptedAt, and LastSyncError are display-only sync
-	// health, populated when the calendar is linked. A non-empty LastSyncError
-	// is the "why" behind the sidebar ⚠ marker; the dialog surfaces it here so
-	// the user can read the reason and the fix one keystroke from the list.
-	LastSyncAt          string // RFC 3339, empty when never synced cleanly
-	LastSyncAttemptedAt string // RFC 3339, empty when never attempted
-	LastSyncError       string
+	// LastSyncAt and LastSyncError are compact, display-only account context
+	// for linked calendars. Account maintenance lives in Account Settings.
+	LastSyncAt    string // RFC 3339, empty when never synced cleanly
+	LastSyncError string
 
 	// IsDefault marks the calendar being edited as the current default. It
 	// drives the dialog's "Default calendar" badge and hides the redundant
@@ -48,13 +43,18 @@ type CalendarDialogParams struct {
 	// (the checkbox would be meaningless and noisy in that case).
 	OfferDefault bool
 
-	// NeedOAuthConfig opens a linked OAuth calendar's dialog with editable
-	// Client ID / Client secret rows. Used when re-authentication finds the
-	// stored credential incomplete (linked before the client secret was
-	// persisted). OAuthClientIDPrefill seeds the Client ID row when the
-	// stored credential has the ID but not the secret.
-	NeedOAuthConfig      bool
-	OAuthClientIDPrefill string
+	// Hidden is the calendar's current sidebar visibility. The edit dialog
+	// mirrors it into a Display Calendar checkbox whose toggle emits
+	// CalendarVisibilityToggledMsg with the desired state immediately;
+	// metadata Save/Cancel never auto-persists visibility.
+	Hidden bool
+
+	// ManagerEmbedded marks this detail as hosted inside the CalendarManager
+	// rather than opened directly by the legacy app. It gates manager-only
+	// affordances whose host-side handler does not exist yet (currently
+	// Export), so a legacy-wired dialog never exposes a no-op action. The
+	// manager sets it via OpenCalendar; legacy callers leave it false.
+	ManagerEmbedded bool
 }
 
 // CalendarSavedMsg is emitted when the user saves the dialog. ID == 0 means
@@ -70,31 +70,18 @@ type CalendarSavedMsg struct {
 	// promote the just-created calendar to default after the row is saved.
 	// Ignored on edit — defaultness moves via SetDefault, not Save.
 	MakeDefault bool
-
-	// Remote connection — only meaningful when RemoteURL is non-empty and
-	// the calendar is not already linked.
-	RemoteURL     string
-	Username      string
-	AuthType      string // "basic" | "bearer" | "oauth2"
-	Password      string // basic: password; bearer: access token
-	AllowInsecure bool
-
-	// OAuth client config — populated only when AuthType == "oauth2". The
-	// parent launches the browser authorization flow with these before
-	// linking the calendar.
-	OAuthClientID     string
-	OAuthClientSecret string
 }
 
-// CalendarReauthRequestedMsg is emitted when the user presses Re-authenticate
-// on a linked OAuth calendar. ClientID/ClientSecret are set only by the
-// missing-config fallback (credentials stored before the client secret was
-// kept); empty means "use the stored credential's client config".
-type CalendarReauthRequestedMsg struct {
-	ID           int64
-	Name         string
-	ClientID     string
-	ClientSecret string
+// CalendarDiscoveryRequestedMsg starts discovery from the Add Account flow.
+// Remote collection metadata supplies the local calendars after sign-in.
+type CalendarDiscoveryRequestedMsg struct {
+	ServerURL         string
+	Username          string
+	AuthType          string
+	Secret            string
+	OAuthClientID     string
+	OAuthClientSecret string
+	AllowInsecure     bool
 }
 
 // CalendarDeleteRequestedMsg is emitted when the user presses Delete in the
@@ -104,9 +91,25 @@ type CalendarDeleteRequestedMsg struct {
 	Name string
 }
 
-// CalendarDisconnectRemoteRequestedMsg is emitted when the user presses the
-// Disconnect button in the dialog. The parent tears down the remote link.
-type CalendarDisconnectRemoteRequestedMsg struct {
+// CalendarExportRequestedMsg is a neutral request to export the calendar. The
+// parent owns the file I/O; this message only identifies the target by its
+// immutable ID so the host can resolve fresh data at export time.
+type CalendarExportRequestedMsg struct {
+	ID   int64
+	Name string
+}
+
+// CalendarSetDefaultRequestedMsg asks the app to promote a calendar to default.
+type CalendarSetDefaultRequestedMsg struct {
+	ID   int64
+	Name string
+}
+
+// CalendarKeepLocalRequestedMsg asks the app to unlink an account calendar
+// while keeping every downloaded event as a local calendar (the keep-local
+// counterpart to removing it in Manage Calendars). The parent owns the
+// confirm flow and the Disconnect call.
+type CalendarKeepLocalRequestedMsg struct {
 	ID   int64
 	Name string
 }
@@ -141,37 +144,30 @@ type calendarSavePromotePressedMsg struct{}
 // CalendarDialogClosedMsg is emitted when the user cancels the dialog.
 type CalendarDialogClosedMsg struct{}
 
-// Form field indices. Local fields are always present. Index 4 is an empty
-// spacer row; index 5 is the Sync toggle in unlinked mode or a read-only
-// status line in linked mode. Remote fields (6..11) exist only when Sync
-// is on. The "Same as owner email" mirror lives inside the sync section
-// so it's only visible when a CalDAV connection is being configured.
+// Form field indices for the calendar metadata fields. Index 4 is an empty
+// spacer; in edit mode index 5 is the Display Calendar checkbox and index 6+
+// holds the Location/Account row and (for remote calendars) sync-health
+// lines. Those later indices are dynamic, so only the metadata fields below
+// get named constants.
 const (
 	cdIdxName        = 0
 	cdIdxColor       = 1
 	cdIdxDescription = 2
 	cdIdxEmail       = 3
-	// Index 4 is an empty spacer StaticField.
-	cdIdxSync = 5
+)
 
-	// Present only when Sync is on (unlinked mode only). Rows 10+ depend
-	// on the selected auth type; the constants below describe the two
-	// layouts. Form.RemoveItems is tail-truncation only, so switching
-	// layouts rebuilds everything from cdIdxPassword down (see OnRebuild).
-	cdIdxRemoteURL       = 6
-	cdIdxUsername        = 7
-	cdIdxSameAsOwnerMail = 8
-	cdIdxAuth            = 9
+const (
+	calDAVIdxServer = iota
+	calDAVIdxUsername
+	calDAVIdxAuth
+	calDAVIdxSecret
+	calDAVIdxAllowInsecure
+)
 
-	// basic/bearer layout:
-	cdIdxPassword      = 10
-	cdIdxAllowInsecure = 11
-
-	// oauth2 layout (replaces the Password row with two client-config rows,
-	// shifting the HTTP checkbox down one):
-	cdIdxOAuthClientID      = 10
-	cdIdxOAuthClientSecret  = 11
-	cdIdxOAuthAllowInsecure = 12
+const (
+	calDAVIdxOAuthClientID      = calDAVIdxSecret
+	calDAVIdxOAuthClientSecret  = calDAVIdxAllowInsecure
+	calDAVIdxOAuthAllowInsecure = calDAVIdxAllowInsecure + 1
 )
 
 var authOptions = []SelectOption{
@@ -213,17 +209,31 @@ type CalendarDialogModel struct {
 	// the "Save and Set as Default" path can flip the MakeDefault bit on
 	// the upcoming CalendarSavedMsg without re-implementing form
 	// validation. Cleared automatically after each submit.
-	saveMakeDefault *bool
+	saveMakeDefault   *bool
+	accountConnection bool
+	localDraft        *CalendarDialogParams
+	discoveryPicker   *AccountCalendarPickerModel
 
-	// contentWidth is shared with the static-line styleFns so long values
-	// (remote URLs, sync errors) truncate to the dialog's content width at
-	// render time instead of wrapping inside the box.
+	// contentWidth is shared with static sync-health rows so long errors
+	// truncate to the dialog width instead of wrapping inside the box.
 	contentWidth *int
+
+	// hidden is the calendar's current visibility, mirrored into the Display
+	// Calendar checkbox. The checkbox toggle updates this immediately and
+	// emits CalendarVisibilityToggledMsg with the desired state; metadata
+	// Save/Cancel never persists visibility.
+	hidden bool
+	// visibilityCb is the Display Calendar checkbox, nil in create mode.
+	visibilityCb *CheckboxField
+	// accountOpener is the actionable "Account: <name> ›" field for remote
+	// calendars, nil for local calendars and create mode. Enter on it emits
+	// AccountSettingsRequestedMsg so the owning manager/host can drill in.
+	accountOpener *OpenerField
 }
 
 // NewCalendarDialogModel builds a dialog for create (params.ID==0) or edit.
 func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDialogModel {
-	title := "New calendar"
+	title := "New local calendar"
 	if params.ID > 0 {
 		title = "Edit calendar"
 		// Apple's "Get Info" sheet shows the default badge inline with the
@@ -270,18 +280,8 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		{Label: "", Field: NewStaticField("", nil)},
 	}
 
-	// Fallback config fields for re-auth on a credential that predates
-	// client-secret storage. Built up front so the Re-authenticate button
-	// closure can read them at press time without reaching into the form.
-	var (
-		oauthIDField     *TextField
-		oauthSecretField *TextField
-	)
-
-	// contentWidth is shared with the static-line styleFns (same pattern as
-	// ConfirmDialogModel): the dialog's content width isn't known until
-	// SetSize, and long values (Google CalDAV URLs easily exceed 90 chars)
-	// must truncate to one row instead of wrapping raggedly inside the box.
+	// The dialog width isn't known until SetSize. Truncate compact account
+	// context at render time so long names and errors stay on one row.
 	contentWidth := new(int)
 
 	// staticLine builds a one-row static field: truncate to the content
@@ -295,52 +295,59 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 			return style.Render(s)
 		})}
 	}
-	// labeledLine keeps the muted "Label:" prefix two-tone while the value
-	// truncates to whatever width remains beside it.
-	labeledLine := func(label, value string) FormItem {
-		lbl := lipgloss.NewStyle().Foreground(theme.Muted).Render(label) + " "
-		lblW := lipgloss.Width(lbl)
-		return FormItem{Label: "", Field: NewStaticField(value, func(s string) string {
-			if avail := *contentWidth - lblW; *contentWidth > 0 && avail > 0 {
-				s = truncateTo(s, avail)
-			}
-			return lbl + s
-		})}
-	}
+	// Edit mode surfaces the calendar's visibility and owning context as
+	// actionable rows: a Display Calendar checkbox (visibility is immediate
+	// and never auto-saved with metadata) and either "Location: Local" or an
+	// "Account: <name> ›" opener that drills into the owning account. Create
+	// mode has no immutable ID, so neither row applies there.
+	var (
+		visibilityCb  *CheckboxField
+		accountOpener *OpenerField
+		openerIdx     = -1
+	)
+	if params.ID > 0 {
+		visibility := NewCheckboxField("", !params.Hidden)
+		visibility.SetContent("Display calendar")
+		visibilityCb = visibility
+		items = append(items, FormItem{Label: "", Field: visibility, AlignToFieldColumn: true})
 
-	if params.RemoteLinked {
-		// One row each, truncated — the URL and account can both exceed the
-		// dialog width on Google calendars.
-		items = append(items, labeledLine("Remote:", params.RemoteURL))
-		if account := remoteAccountSummary(params); account != "" {
-			items = append(items, labeledLine("Account:", account))
-		}
-		// Surface sync health (one static field per line so the form's
-		// height math stays one-line-per-item). Empty when the calendar has
-		// synced cleanly and never been attempted-with-error.
-		for _, line := range syncHealthDialogLines(params, theme) {
-			items = append(items, staticLine(line.text, line.style))
-		}
-		if params.NeedOAuthConfig {
-			oauthIDField = newOAuthClientIDField(params.OAuthClientIDPrefill)
-			oauthSecretField = newOAuthClientSecretField()
+		// Account and Location sit in the shared label column like every
+		// other row (Apple Settings detail-row layout); the opener's value
+		// carries the drill-in chevron.
+		if params.RemoteLinked {
+			accountName := strings.TrimSpace(params.AccountName)
+			if accountName == "" {
+				accountName = "Connected account"
+			}
+			openerIdx = len(items)
+			opener := NewOpenerField(accountName + " ›")
+			accountOpener = opener
+			items = append(items, FormItem{Label: "Account", Field: opener})
+			for _, line := range syncHealthDialogLines(params, theme) {
+				items = append(items, staticLine(line.text, line.style))
+			}
+			// Account calendars carry no Delete button (deleting here would
+			// only remove the local copy, not the account's calendar); this
+			// footnote explains why and points at the local alternative.
+			note := lipgloss.NewStyle().Foreground(theme.TextDim)
+			ownership := "This calendar lives in your " + accountName + " account."
+			if strings.TrimSpace(params.AccountName) == "" {
+				ownership = "This calendar lives in your connected account."
+			}
 			items = append(items,
-				staticLine("Enter the OAuth client config once to re-authenticate.",
-					lipgloss.NewStyle().Foreground(theme.Muted)),
-				FormItem{Label: "Client ID", Field: oauthIDField, Required: true},
-				FormItem{Label: "Client secret", Field: oauthSecretField, Required: true},
+				FormItem{Label: "", Field: NewStaticField("", nil)},
+				staticLine(ownership, note),
+				staticLine("Turn off Display calendar to hide it on this device.", note),
+				staticLine("To remove it, open Account › Manage Calendars.", note),
 			)
+		} else {
+			items = append(items, FormItem{Label: "Location", Field: NewStaticField("Local", nil)})
 		}
-	} else {
-		sync := NewCheckboxField("", false)
-		sync.SetContent("Enable CalDAV sync")
-		items = append(items, FormItem{Label: "Sync", Field: sync})
 	}
 
 	form := NewForm("Save", formStyles, items...)
 
 	savedID := params.ID
-	linked := params.RemoteLinked
 	saveMakeDefault := new(bool)
 	form.OnSubmit(func(f *Form) tea.Cmd {
 		nameVal := strings.TrimSpace(f.Field(cdIdxName).(*TextField).Value())
@@ -358,56 +365,6 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		}
 		*saveMakeDefault = false
 
-		if !linked && syncEnabled(f) {
-			urlVal := strings.TrimSpace(f.Field(cdIdxRemoteURL).(*TextField).Value())
-			userVal := strings.TrimSpace(f.Field(cdIdxUsername).(*TextField).Value())
-			authVal := f.Field(cdIdxAuth).(*SelectField).Value()
-
-			if urlVal == "" {
-				f.SetError(cdIdxRemoteURL, "Remote URL is required when Sync is on")
-				return nil
-			}
-			if userVal == "" {
-				f.SetError(cdIdxUsername, "Username is required when Sync is on")
-				return nil
-			}
-
-			// The tail rows depend on the auth type (see the cdIdx*
-			// comment); authVal is the layout's source of truth here
-			// because any auth change fires OnRebuild before Submit.
-			if calendarAuthIsOAuth(authVal) {
-				clientID := strings.TrimSpace(f.Field(cdIdxOAuthClientID).(*TextField).Value())
-				clientSecret := strings.TrimSpace(f.Field(cdIdxOAuthClientSecret).(*TextField).Value())
-				if clientID == "" {
-					f.SetError(cdIdxOAuthClientID, "Client ID is required for Google OAuth")
-					return nil
-				}
-				if clientSecret == "" {
-					f.SetError(cdIdxOAuthClientSecret, "Client secret is required for Google OAuth")
-					return nil
-				}
-				msg.OAuthClientID = clientID
-				msg.OAuthClientSecret = clientSecret
-				msg.AllowInsecure = f.Field(cdIdxOAuthAllowInsecure).(*CheckboxField).Checked()
-			} else {
-				passVal := f.Field(cdIdxPassword).(*TextField).Value()
-				if passVal == "" {
-					if authVal == "bearer" {
-						f.SetError(cdIdxPassword, "Access token is required for bearer auth")
-					} else {
-						f.SetError(cdIdxPassword, "Password is required for basic auth")
-					}
-					return nil
-				}
-				msg.Password = passVal
-				msg.AllowInsecure = f.Field(cdIdxAllowInsecure).(*CheckboxField).Checked()
-			}
-
-			msg.RemoteURL = urlVal
-			msg.Username = userVal
-			msg.AuthType = authVal
-		}
-
 		return func() tea.Msg { return msg }
 	})
 
@@ -415,65 +372,89 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		return func() tea.Msg { return CalendarDialogClosedMsg{} }
 	})
 
+	localDraft := params
+
+	// form is intentionally NOT set here: the button/handler wiring below
+	// mutates the local form, and m.form captures the final state just
+	// before return.
 	m := CalendarDialogModel{
-		id:              params.ID,
-		name:            params.Name,
-		linked:          params.RemoteLinked,
-		dialog:          dialog,
-		form:            form,
-		body:            viewport.New(),
-		help:            newThemedHelp(theme),
-		theme:           theme,
-		accentColor:     theme.Selected,
-		mutedColor:      theme.Muted,
-		textDimColor:    theme.TextDim,
-		saveMakeDefault: saveMakeDefault,
-		contentWidth:    contentWidth,
+		id:                params.ID,
+		name:              params.Name,
+		linked:            params.RemoteLinked,
+		dialog:            dialog,
+		body:              viewport.New(),
+		help:              newThemedHelp(theme),
+		theme:             theme,
+		accentColor:       theme.Selected,
+		mutedColor:        theme.Muted,
+		textDimColor:      theme.TextDim,
+		saveMakeDefault:   saveMakeDefault,
+		accountConnection: false,
+		localDraft:        &localDraft,
+		contentWidth:      contentWidth,
+		hidden:            params.Hidden,
+		visibilityCb:      visibilityCb,
+		accountOpener:     accountOpener,
 	}
 	m.body.MouseWheelEnabled = true
 
-	// Edit mode, not yet default: surface "Set as Default" so the user
-	// can reach the action without backing out into the manage-calendars
-	// list. Hidden when already default — no valid "unset" exists.
-	// Registered before Disconnect so Tab order is benign-then-destructive
-	// (and visually Set as Default sits left of Disconnect on the leading
-	// side) — a reflex Tab from Save should never land on a destructive
-	// action first.
+	// Edit mode, not yet default: surface "Set as Default" without forcing a
+	// trip through the manage-calendars list.
 	if params.ID > 0 && !params.IsDefault {
 		id := params.ID
 		name := params.Name
-		form.SetLeadingActionButton("Set as Default", Button, func() tea.Msg {
+		form.SetUtilityActionButton("Set as Default", Button, func() tea.Msg {
 			return CalendarSetDefaultRequestedMsg{ID: id, Name: name}
 		})
 	}
 
-	// Linked OAuth calendars get Re-authenticate, registered before
-	// Disconnect so Tab order stays benign-then-destructive. When the
-	// dialog is in the missing-config fallback mode, the button reads the
-	// client config fields at press time; otherwise it sends empty config
-	// and the parent uses the stored credential.
-	if params.RemoteLinked && calendarAuthIsOAuth(params.RemoteAuthType) {
-		id := params.ID
-		name := params.Name
-		idField, secretField := oauthIDField, oauthSecretField
-		form.SetLeadingActionButton("Re-authenticate", Button, func() tea.Msg {
-			msg := CalendarReauthRequestedMsg{ID: id, Name: name}
-			if idField != nil {
-				msg.ClientID = strings.TrimSpace(idField.Value())
+	// Remote calendars drill into their owning account via the inline
+	// "Account: <name> ›" opener rather than a separate button, so the
+	// opener's Enter emits the canonical AccountSettingsRequestedMsg the
+	// host already routes (and the calendar manager intercepts to push the
+	// account detail without disturbing the in-progress calendar draft).
+	if openerIdx >= 0 {
+		accountID := params.AccountID
+		capturedIdx := openerIdx
+		form.OnFieldEnter(func(f *Form, field int) tea.Cmd {
+			if field != capturedIdx {
+				return nil
 			}
-			if secretField != nil {
-				msg.ClientSecret = strings.TrimSpace(secretField.Value())
-			}
-			return msg
+			return func() tea.Msg { return AccountSettingsRequestedMsg{AccountID: accountID} }
 		})
 	}
 
-	if params.RemoteLinked {
+	// Edit mode exposes Delete as a leading action targeting the calendar's
+	// immutable ID; it is destructive (ButtonDanger) and only requests
+	// removal — the host owns the safe-confirm flow. Account calendars get
+	// no Delete: the button could only drop the local copy while the
+	// account still owns the calendar, so the form explains that in a
+	// footnote instead (hide locally via Display calendar; manage
+	// membership in Account ▸ Manage Calendars). Export is a manager-only
+	// affordance (the legacy app has no export handler yet), so it is gated
+	// on ManagerEmbedded to avoid a no-op button in legacy-wired dialogs.
+	// Apple sheet disposition: Set as Default and Export live on the quiet
+	// utility tier above the commit row; Delete — destructive — sits in the
+	// commit row's bottom-left corner, as far as possible from Save.
+	if params.ID > 0 {
 		id := params.ID
 		name := params.Name
-		form.SetLeadingActionButton("Disconnect", ButtonDanger, func() tea.Msg {
-			return CalendarDisconnectRemoteRequestedMsg{ID: id, Name: name}
-		})
+		if params.ManagerEmbedded {
+			form.SetUtilityActionButton("Export Calendar…", Button, func() tea.Msg {
+				return CalendarExportRequestedMsg{ID: id, Name: name}
+			})
+		}
+		if params.RemoteLinked {
+			// The keep-local counterpart to Delete: unlink from the account
+			// but keep every downloaded event as a local calendar.
+			form.SetUtilityActionButton("Keep as Local Calendar…", Button, func() tea.Msg {
+				return CalendarKeepLocalRequestedMsg{ID: id, Name: name}
+			})
+		} else {
+			form.SetLeadingActionButton("Delete Calendar…", ButtonDanger, func() tea.Msg {
+				return CalendarDeleteRequestedMsg{ID: id, Name: name}
+			})
+		}
 	}
 
 	// Create mode with at least one calendar already on disk: offer to
@@ -486,201 +467,174 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		})
 	}
 
-	syncTheme := theme
-	// Snapshot of the remote section values, preserved across Sync toggles
-	// and auth-layout switches so flipping things back and forth doesn't
-	// wipe what the user has already typed.
-	var snap struct {
-		url, username, auth, password    string
-		oauthClientID, oauthClientSecret string
-		allowInsecure, sameAsOwner       bool
-	}
-	// oauthLayout tracks which tail layout the form currently has (see the
-	// cdIdx* comment): false = Password+HTTP, true = ClientID+Secret+HTTP.
-	// Form.RemoveItems is tail-truncation only, so layout changes rebuild
-	// from cdIdxPassword down rather than swapping a row in place.
-	oauthLayout := new(bool)
+	m.form = form
+	return m
+}
 
-	// appendAuthTail appends the rows after the Auth select for the given
-	// auth type and updates the layout tracker.
-	appendAuthTail := func(f *Form, authVal string) {
-		insecure := NewCheckboxField("", snap.allowInsecure)
-		insecure.SetContent("allow plain HTTP")
-		if calendarAuthIsOAuth(authVal) {
-			secret := newOAuthClientSecretField()
-			secret.SetValue(snap.oauthClientSecret)
+// NewAccountDialogModel opens account sign-in directly. Remote collection
+// discovery is an account concern; New Local Calendar remains a local-only flow.
+func NewAccountDialogModel(theme Theme) CalendarDialogModel {
+	dialog := NewDialog("Add Account", DefaultDialogStyles())
+	dialog.SetWidth(62)
+	form := newCalDAVConnectionForm(theme, "")
+	m := CalendarDialogModel{
+		dialog:            dialog,
+		form:              form,
+		body:              viewport.New(),
+		help:              newThemedHelp(theme),
+		theme:             theme,
+		accentColor:       theme.Selected,
+		mutedColor:        theme.Muted,
+		textDimColor:      theme.TextDim,
+		accountConnection: true,
+	}
+	m.body.MouseWheelEnabled = true
+	return m
+}
+
+func newCalDAVConnectionForm(theme Theme, usernamePrefill string) Form {
+	styles := DefaultFormStyles()
+	styles.LabelLayout = LabelInline
+	styles.ShowFocusMarker = true
+	styles.ButtonAlign = ButtonAlignRight
+	styles.ButtonRule = true
+
+	insecure := NewCheckboxField("", false)
+	insecure.SetContent("allow plain HTTP")
+	form := NewForm("Sign In", styles,
+		FormItem{Label: "Server URL", Field: newRemoteURLField(""), Required: true},
+		FormItem{Label: "Username", Field: newUsernameField(usernamePrefill), Required: true},
+		FormItem{Label: "Auth", Field: newAuthField("basic"), Required: true},
+		FormItem{Label: "Password", Field: newPasswordField(), Required: true},
+		FormItem{Label: "HTTP", Field: insecure},
+	)
+	form.SetActionButton("Test", Button, func() tea.Msg {
+		return testConnectionPressedMsg{}
+	})
+	form.OnCancel(func(*Form) tea.Cmd {
+		return func() tea.Msg { return CalendarDialogClosedMsg{} }
+	})
+
+	var snapshot struct {
+		secret, clientID, clientSecret string
+		allowInsecure                  bool
+	}
+	oauthLayout := new(bool)
+	snapshotTail := func(f *Form) {
+		if *oauthLayout {
+			snapshot.clientID = f.Field(calDAVIdxOAuthClientID).(*TextField).Value()
+			snapshot.clientSecret = f.Field(calDAVIdxOAuthClientSecret).(*TextField).Value()
+			snapshot.allowInsecure = f.Field(calDAVIdxOAuthAllowInsecure).(*CheckboxField).Checked()
+			return
+		}
+		snapshot.secret = f.Field(calDAVIdxSecret).(*TextField).Value()
+		snapshot.allowInsecure = f.Field(calDAVIdxAllowInsecure).(*CheckboxField).Checked()
+	}
+	appendTail := func(f *Form, authType string) {
+		allow := NewCheckboxField("", snapshot.allowInsecure)
+		allow.SetContent("allow plain HTTP")
+		if calendarAuthIsOAuth(authType) {
+			clientSecret := newOAuthClientSecretField()
+			clientSecret.SetValue(snapshot.clientSecret)
 			f.AppendItems(
-				FormItem{Label: "Client ID", Field: newOAuthClientIDField(snap.oauthClientID), Required: true},
-				FormItem{Label: "Client secret", Field: secret, Required: true},
-				FormItem{Label: "HTTP", Field: insecure},
+				FormItem{Label: "Client ID", Field: newOAuthClientIDField(snapshot.clientID), Required: true},
+				FormItem{Label: "Client secret", Field: clientSecret, Required: true},
+				FormItem{Label: "HTTP", Field: allow},
 			)
 			*oauthLayout = true
 			return
 		}
-		password := newPasswordField()
-		password.SetValue(snap.password)
+		secret := newPasswordField()
+		secret.SetValue(snapshot.secret)
 		f.AppendItems(
-			FormItem{Label: "Password", Field: password, Required: true},
-			FormItem{Label: "HTTP", Field: insecure},
+			FormItem{Label: "Password", Field: secret, Required: true},
+			FormItem{Label: "HTTP", Field: allow},
 		)
 		*oauthLayout = false
 	}
-
-	// snapshotAuthTail records the current tail values, layout-aware.
-	snapshotAuthTail := func(f *Form) {
-		if *oauthLayout {
-			snap.oauthClientID = f.Field(cdIdxOAuthClientID).(*TextField).Value()
-			snap.oauthClientSecret = f.Field(cdIdxOAuthClientSecret).(*TextField).Value()
-			snap.allowInsecure = f.Field(cdIdxOAuthAllowInsecure).(*CheckboxField).Checked()
-			return
-		}
-		snap.password = f.Field(cdIdxPassword).(*TextField).Value()
-		snap.allowInsecure = f.Field(cdIdxAllowInsecure).(*CheckboxField).Checked()
-	}
-
 	form.OnRebuild(func(f *Form) {
-		if linked {
-			return
-		}
-		syncOn := syncEnabled(f)
-		hasRemote := f.ItemCount() > cdIdxSync+1
-		switch {
-		case syncOn && !hasRemote:
-			f.AppendItems(
-				FormItem{Label: "Remote URL", Field: newRemoteURLField(snap.url), Required: true},
-				FormItem{Label: "Username", Field: newMirroredUsernameField(snap.username, syncTheme), Required: true},
-				FormItem{Label: " ", Field: newSameAsOwnerMailCheckbox(snap.sameAsOwner)},
-				FormItem{Label: "Auth", Field: newAuthField(snap.auth)},
-			)
-			appendAuthTail(f, snap.auth)
-			f.SetActionButton("Test", Button, func() tea.Msg {
-				return testConnectionPressedMsg{}
-			})
-		case !syncOn && hasRemote:
-			snap.url = f.Field(cdIdxRemoteURL).(*TextField).Value()
-			snap.username = f.Field(cdIdxUsername).(*TextField).Value()
-			snap.auth = f.Field(cdIdxAuth).(*SelectField).Value()
-			snap.sameAsOwner = f.Field(cdIdxSameAsOwnerMail).(*CheckboxField).Checked()
-			snapshotAuthTail(f)
-			f.RemoveItems(cdIdxSync + 1)
+		authType := f.Field(calDAVIdxAuth).(*SelectField).Value()
+		if calendarAuthIsOAuth(authType) != *oauthLayout {
+			snapshotTail(f)
+			f.RemoveItems(calDAVIdxSecret)
 			f.ClearError()
-			f.ClearActionButtons()
+			appendTail(f, authType)
 		}
-
-		// Rebuild the tail when the selected auth type changes layout
-		// (basic/bearer <-> oauth2).
-		if syncOn && f.ItemCount() > cdIdxAuth {
-			authVal := f.Field(cdIdxAuth).(*SelectField).Value()
-			if calendarAuthIsOAuth(authVal) != *oauthLayout {
-				snapshotAuthTail(f)
-				f.RemoveItems(cdIdxPassword)
-				f.ClearError()
-				appendAuthTail(f, authVal)
-			}
-		}
-
-		// Keep the Password row's label and placeholder in sync with the
-		// selected auth type: basic -> password, bearer -> access token.
-		// (The oauth2 layout has no Password row.)
-		if syncOn && !*oauthLayout && f.ItemCount() > cdIdxPassword {
-			authVal := f.Field(cdIdxAuth).(*SelectField).Value()
-			pw := f.Field(cdIdxPassword).(*TextField)
-			if authVal == "bearer" {
-				f.SetItemLabel(cdIdxPassword, "Token")
-				pw.SetPlaceholder("paste your API token")
+		if !*oauthLayout {
+			secret := f.Field(calDAVIdxSecret).(*TextField)
+			if authType == "bearer" {
+				f.SetItemLabel(calDAVIdxSecret, "Token")
+				secret.SetPlaceholder("paste your API token")
 			} else {
-				f.SetItemLabel(cdIdxPassword, "Password")
-				pw.SetPlaceholder("your password")
+				f.SetItemLabel(calDAVIdxSecret, "Password")
+				secret.SetPlaceholder("your password")
 			}
 		}
 
-		// Auto-enable HTTP (insecure) for localhost URLs so casual dev use
-		// doesn't require the flag. Shown as a greyed-out confirmation line.
-		// When the URL stops matching localhost the override is cleared so
-		// the user re-opts-in explicitly.
-		insecureIdx := cdIdxAllowInsecure
+		insecureIdx := calDAVIdxAllowInsecure
 		if *oauthLayout {
-			insecureIdx = cdIdxOAuthAllowInsecure
+			insecureIdx = calDAVIdxOAuthAllowInsecure
 		}
-		if syncOn && f.ItemCount() > insecureIdx {
-			urlVal := strings.TrimSpace(f.Field(cdIdxRemoteURL).(*TextField).Value())
-			insecure := f.Field(insecureIdx).(*CheckboxField)
-			wasAuto := insecure.AutoChecked()
-			if isLocalhostHTTP(urlVal) {
-				insecure.SetChecked(true)
-				insecure.SetAutoChecked(true)
-				insecure.SetSuffix("")
-				insecure.SetDisabledWhen(func() (bool, string) {
-					return true, lipgloss.NewStyle().Foreground(syncTheme.Muted).Italic(true).
-						Render("auto-enabled for localhost")
-				})
+		allow := f.Field(insecureIdx).(*CheckboxField)
+		wasAuto := allow.AutoChecked()
+		if isLocalhostHTTP(f.Field(calDAVIdxServer).(*TextField).Value()) {
+			allow.SetChecked(true)
+			allow.SetAutoChecked(true)
+			allow.SetSuffix("")
+			allow.SetDisabledWhen(func() (bool, string) {
+				return true, lipgloss.NewStyle().Foreground(theme.Muted).Italic(true).
+					Render("auto-enabled for localhost")
+			})
+		} else {
+			if wasAuto {
+				allow.SetChecked(false)
+				allow.SetAutoChecked(false)
+			}
+			allow.SetDisabledWhen(nil)
+			if allow.Checked() {
+				allow.SetSuffix(lipgloss.NewStyle().Foreground(theme.Error).Render("(unencrypted)"))
 			} else {
-				if wasAuto {
-					insecure.SetChecked(false)
-					insecure.SetAutoChecked(false)
-				}
-				insecure.SetDisabledWhen(nil)
-				if insecure.Checked() {
-					insecure.SetSuffix(lipgloss.NewStyle().
-						Foreground(syncTheme.Error).
-						Render("(unencrypted)"))
-				} else {
-					insecure.SetSuffix("")
-				}
+				allow.SetSuffix("")
 			}
 		}
-
-		// Mirror the owner email into the CalDAV username when the
-		// "Same as owner email" checkbox is checked. Runs last so the
-		// username field is guaranteed present when sync just went on.
-		applySameAsOwnerMail(f)
 	})
-	m.form = form
-
-	return m
-}
-
-// applySameAsOwnerMail drives the "Same as owner email" checkbox: when
-// checked with a non-empty Owner email, the CalDAV Username field is
-// pinned to that value and rendered as disabled. The checkbox itself is
-// always interactive and never has its styling altered by this helper.
-func applySameAsOwnerMail(f *Form) {
-	if f.ItemCount() <= cdIdxSameAsOwnerMail {
-		return
-	}
-	username, ok := f.Field(cdIdxUsername).(*TextField)
-	if !ok {
-		return
-	}
-	email, ok := f.Field(cdIdxEmail).(*TextField)
-	if !ok {
-		return
-	}
-	box, ok := f.Field(cdIdxSameAsOwnerMail).(*CheckboxField)
-	if !ok {
-		return
-	}
-
-	emailVal := strings.TrimSpace(email.Value())
-	if box.Checked() && emailVal != "" {
-		username.SetValue(emailVal)
-		username.SetDisabled(true)
-	} else {
-		username.SetDisabled(false)
-	}
-}
-
-// syncEnabled reports whether the Sync checkbox is currently on. Returns
-// false in linked mode (where the checkbox doesn't exist).
-func syncEnabled(f *Form) bool {
-	if f.ItemCount() <= cdIdxSync {
-		return false
-	}
-	cb, ok := f.Field(cdIdxSync).(*CheckboxField)
-	if !ok {
-		return false
-	}
-	return cb.Checked()
+	form.OnSubmit(func(f *Form) tea.Cmd {
+		msg := CalendarDiscoveryRequestedMsg{
+			ServerURL: strings.TrimSpace(f.Field(calDAVIdxServer).(*TextField).Value()),
+			Username:  strings.TrimSpace(f.Field(calDAVIdxUsername).(*TextField).Value()),
+			AuthType:  f.Field(calDAVIdxAuth).(*SelectField).Value(),
+		}
+		if msg.ServerURL == "" {
+			f.SetError(calDAVIdxServer, "Server URL is required")
+			return nil
+		}
+		if msg.Username == "" {
+			f.SetError(calDAVIdxUsername, "Username is required")
+			return nil
+		}
+		if calendarAuthIsOAuth(msg.AuthType) {
+			msg.OAuthClientID = strings.TrimSpace(f.Field(calDAVIdxOAuthClientID).(*TextField).Value())
+			msg.OAuthClientSecret = strings.TrimSpace(f.Field(calDAVIdxOAuthClientSecret).(*TextField).Value())
+			msg.AllowInsecure = f.Field(calDAVIdxOAuthAllowInsecure).(*CheckboxField).Checked()
+			if msg.OAuthClientID == "" {
+				f.SetError(calDAVIdxOAuthClientID, "Client ID is required")
+				return nil
+			}
+			if msg.OAuthClientSecret == "" {
+				f.SetError(calDAVIdxOAuthClientSecret, "Client secret is required")
+				return nil
+			}
+		} else {
+			msg.Secret = f.Field(calDAVIdxSecret).(*TextField).Value()
+			msg.AllowInsecure = f.Field(calDAVIdxAllowInsecure).(*CheckboxField).Checked()
+			if strings.TrimSpace(msg.Secret) == "" {
+				f.SetError(calDAVIdxSecret, "Credential is required")
+				return nil
+			}
+		}
+		return func() tea.Msg { return msg }
+	})
+	return form
 }
 
 // isLocalhostHTTP reports whether a URL uses http:// against localhost
@@ -697,20 +651,6 @@ func isLocalhostHTTP(raw string) bool {
 	return host == "localhost" || host == "127.0.0.1"
 }
 
-// remoteAccountSummary compacts username + auth type into one value, e.g.
-// "alice@example.com (oauth2)". Empty when neither is known.
-func remoteAccountSummary(params CalendarDialogParams) string {
-	switch {
-	case params.RemoteUsername != "" && params.RemoteAuthType != "":
-		return params.RemoteUsername + " (" + params.RemoteAuthType + ")"
-	case params.RemoteUsername != "":
-		return params.RemoteUsername
-	case params.RemoteAuthType != "":
-		return params.RemoteAuthType
-	}
-	return ""
-}
-
 // syncHealthLine is one row of the linked dialog's sync summary: raw text
 // plus the style to apply after width truncation. Styling happens at render
 // time (inside the StaticField's styleFn) so the text can be truncated to
@@ -720,10 +660,8 @@ type syncHealthLine struct {
 	style lipgloss.Style
 }
 
-// syncHealthDialogLines renders the calendar's sync health for the dialog: a
-// loud error line plus an actionable re-link hint when the last sync failed, or
-// a quiet "Last synced" line otherwise. Returns nil for unlinked calendars or
-// linked-but-never-attempted ones (nothing useful to say yet).
+// syncHealthDialogLines renders compact account sync health for the calendar:
+// a loud error plus an Account Settings remedy, or a quiet last-sync line.
 func syncHealthDialogLines(params CalendarDialogParams, theme Theme) []syncHealthLine {
 	if !params.RemoteLinked {
 		return nil
@@ -752,9 +690,9 @@ func syncHealthDialogLines(params CalendarDialogParams, theme Theme) []syncHealt
 // translating; everything else falls back to the first line of the raw error.
 func humanizeSyncError(raw string) string {
 	if strings.Contains(raw, "invalid_grant") {
-		// Short on purpose: the hint line right below carries the action
-		// ("Press Re-authenticate below to fix."), and the dialog line
-		// must fit ~56 cols after the "⚠ Sync failed: " prefix.
+		// Short on purpose: the hint line right below carries the action,
+		// and the dialog line must fit ~56 cols after the
+		// "⚠ Sync failed: " prefix.
 		return "Google login expired"
 	}
 	line := raw
@@ -769,19 +707,10 @@ func humanizeSyncError(raw string) string {
 	return line
 }
 
-// reLinkHint returns the fix for errors that need re-authentication, or "" when
-// no specific remedy applies. The Re-authenticate action button re-runs the
-// OAuth flow in-app and stores a fresh refresh token.
+// reLinkHint points credential failures to the account-level repair surface.
 func reLinkHint(params CalendarDialogParams) string {
 	if strings.Contains(params.LastSyncError, "invalid_grant") {
-		if calendarAuthIsOAuth(params.RemoteAuthType) {
-			return "Press Re-authenticate below to fix."
-		}
-		name := params.Name
-		if name == "" {
-			name = "<name>"
-		}
-		return "Re-link: chroncal calendar update " + name + " --auth oauth2"
+		return "Manage Account to sign in again."
 	}
 	return ""
 }
@@ -843,27 +772,131 @@ func newOAuthClientSecretField() *TextField {
 	return f
 }
 
-// newSameAsOwnerMailCheckbox builds the "Same as owner email" mirror.
-// Focus is quiet (no reverse highlight) because the field is secondary to
-// the Username it drives.
-func newSameAsOwnerMailCheckbox(checked bool) *CheckboxField {
-	f := NewCheckboxField("", checked)
-	f.SetContent("Same as owner email")
-	f.SetQuietFocus(true)
-	return f
+func (m CalendarDialogModel) ShowDiscovery(discovery account.Discovery) CalendarDialogModel {
+	picker := NewAccountCalendarPickerModel(discovery, m.theme).
+		SetSize(m.dialog.width, m.dialog.height)
+	m.discoveryPicker = &picker
+	return m
 }
 
-// newMirroredUsernameField builds the Username TextField used inside the
-// sync section. Its dim-style is set so the disabled state (driven by the
-// "Same as owner email" checkbox) reads clearly.
-func newMirroredUsernameField(value string, theme Theme) *TextField {
-	f := newUsernameField(value)
-	f.SetDimStyle(lipgloss.NewStyle().Foreground(theme.TextDim).Italic(true))
-	return f
+func (m CalendarDialogModel) HideDiscovery() CalendarDialogModel {
+	m.discoveryPicker = nil
+	return m
+}
+
+// SetAccountName refreshes account context without rebuilding the form, so
+// in-progress calendar metadata edits survive an account rename. It updates
+// the inline "Account: <name> ›" opener in place.
+func (m CalendarDialogModel) SetAccountName(name string) CalendarDialogModel {
+	if !m.linked || m.localDraft == nil || m.accountOpener == nil {
+		return m
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = "Connected account"
+	}
+	m.localDraft.AccountName = name
+	m.accountOpener.SetValue(name + " ›")
+	return m
+}
+
+// Draft returns the calendar's current editable state as params: the live
+// field values plus the original context (ID, account linkage, sync health)
+// and the current visibility. Hosts use it to preserve an unsaved calendar
+// draft across a drill into the owning account.
+func (m CalendarDialogModel) Draft() CalendarDialogParams {
+	if m.localDraft == nil {
+		return CalendarDialogParams{}
+	}
+	draft := *m.localDraft
+	if m.form.ItemCount() > cdIdxEmail {
+		draft.Name = strings.TrimSpace(m.form.Field(cdIdxName).(*TextField).Value())
+		draft.Color = strings.TrimSpace(m.form.Field(cdIdxColor).(*ColorField).Value())
+		draft.Description = strings.TrimSpace(m.form.Field(cdIdxDescription).(*TextField).Value())
+		draft.OwnerEmail = strings.TrimSpace(m.form.Field(cdIdxEmail).(*TextField).Value())
+	}
+	draft.Hidden = m.hidden
+	return draft
+}
+
+// Hidden reports the calendar detail's current visibility state.
+func (m CalendarDialogModel) Hidden() bool { return m.hidden }
+
+// SetHidden mirrors a visibility state into the detail and its Display
+// Calendar checkbox without emitting a toggle message.
+func (m CalendarDialogModel) SetHidden(h bool) CalendarDialogModel {
+	m.hidden = h
+	if m.visibilityCb != nil {
+		m.visibilityCb.SetChecked(!h)
+	}
+	return m
+}
+
+// leftMovesCursor reports whether the Left arrow would edit the focused field
+// (a text or color input) rather than navigate, so the calendar manager can
+// avoid stealing Left as a Back gesture while the user is editing. Buttons
+// and non-editing fields (checkbox, opener) leave Left free to pop.
+// dirtyMetadata reports whether any editable metadata field differs from the
+// values the detail opened with, i.e. whether an unsaved draft exists. The
+// Display checkbox is excluded: visibility commits immediately and is never
+// part of the draft. Hosts use this to keep navigation gestures from
+// silently discarding typed edits.
+func (m CalendarDialogModel) dirtyMetadata() bool {
+	// The account-connection layout has different fields at these indices;
+	// its cancel flow never prompts.
+	if m.accountConnection || m.localDraft == nil || m.form.ItemCount() <= cdIdxEmail {
+		return false
+	}
+	name, okName := m.form.Field(cdIdxName).(*TextField)
+	colorField, okColor := m.form.Field(cdIdxColor).(*ColorField)
+	desc, okDesc := m.form.Field(cdIdxDescription).(*TextField)
+	email, okEmail := m.form.Field(cdIdxEmail).(*TextField)
+	if !okName || !okColor || !okDesc || !okEmail {
+		return false
+	}
+	return strings.TrimSpace(name.Value()) != strings.TrimSpace(m.localDraft.Name) ||
+		strings.TrimSpace(colorField.Value()) != strings.TrimSpace(m.localDraft.Color) ||
+		strings.TrimSpace(desc.Value()) != strings.TrimSpace(m.localDraft.Description) ||
+		strings.TrimSpace(email.Value()) != strings.TrimSpace(m.localDraft.OwnerEmail)
+}
+
+// absorbsBack reports whether the pushed detail owns the Left key entirely:
+// while a text/color field moves its cursor, while the account-connection
+// layout is active (its fields own Left), or while unsaved edits exist — a
+// navigation gesture must never discard a draft. The host's Back gesture
+// pops only when this is false.
+func (m CalendarDialogModel) absorbsBack() bool {
+	return m.leftMovesCursor() || m.accountConnection || m.dirtyMetadata()
+}
+
+// absorbsTab reports whether Tab traversal stays inside the detail: the
+// account-connection layout and an open discovery picker own Tab outright,
+// and a dirty draft keeps wrapping internally so traversal can never discard
+// typed edits. The host's boundary hand-off fires only when this is false.
+func (m CalendarDialogModel) absorbsTab() bool {
+	return m.accountConnection || m.discoveryPicker != nil || m.dirtyMetadata()
+}
+
+func (m CalendarDialogModel) leftMovesCursor() bool {
+	f := m.form
+	if f.Focused() >= f.ItemCount() {
+		return false
+	}
+	switch f.Field(f.Focused()).(type) {
+	case *TextField, *ColorField:
+		return true
+	default:
+		return false
+	}
 }
 
 func (m CalendarDialogModel) SetSize(w, h int) CalendarDialogModel {
 	m.dialog = m.dialog.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	if m.discoveryPicker != nil {
+		picker := m.discoveryPicker.SetSize(w, h)
+		m.discoveryPicker = &picker
+		return m
+	}
 	m.form.SetWidth(m.dialog.ContentWidth())
 	if m.contentWidth != nil {
 		*m.contentWidth = m.dialog.ContentWidth()
@@ -919,6 +952,55 @@ func (m *CalendarDialogModel) keepFocusedFieldVisible() {
 	}
 }
 
+// SetInspectorSize prepares the existing form for borderless rendering inside
+// the Calendars manager. Rendering stays pure: body content and viewport
+// dimensions are refreshed here and after Update, never from InspectorView.
+// Blur returns a copy whose form holds no keyboard focus, so the manager can
+// render it as the root selection preview while the source list owns input.
+func (m CalendarDialogModel) Blur() CalendarDialogModel {
+	m.form = m.form.Blur()
+	return m
+}
+
+func (m CalendarDialogModel) SetInspectorSize(w, h int) CalendarDialogModel {
+	w = max(w, 1)
+	h = max(h, 1)
+	m.form.SetWidth(w)
+	if m.contentWidth != nil {
+		*m.contentWidth = w
+	}
+	bodyLines := strings.Split(m.form.BodyView(), "\n")
+	statusLines := 0
+	if m.testStatus != "" {
+		statusLines = 1
+	}
+	buttonLines := max(lipgloss.Height(m.form.ButtonRowView()), 1)
+	bodyHeight := max(h-2-statusLines-1-buttonLines, 1)
+	m.body.SetWidth(w)
+	m.body.SetHeight(min(len(bodyLines), bodyHeight))
+	m.body.SetContentLines(bodyLines)
+	m.keepFocusedFieldVisible()
+	if m.discoveryPicker != nil {
+		picker := m.discoveryPicker.SetSize(w, h)
+		m.discoveryPicker = &picker
+	}
+	return m
+}
+
+// InspectorView renders the calendar/add-account form without another dialog
+// border so the manager's grouped hierarchy remains mounted beside it.
+func (m CalendarDialogModel) InspectorView(w, h int) string {
+	if m.discoveryPicker != nil {
+		return padLines(strings.Split(m.discoveryPicker.View(), "\n"), w, h)
+	}
+	parts := []string{lipgloss.NewStyle().Bold(true).Render(truncateTo(m.dialog.title, w)), m.body.View()}
+	if m.testStatus != "" {
+		parts = append(parts, truncateTo(m.testStatus, w))
+	}
+	parts = append(parts, m.actionsSeparator(w), m.form.ButtonRowView())
+	return padLines(strings.Split(strings.Join(parts, "\n"), "\n"), w, h)
+}
+
 func (m CalendarDialogModel) bodyOverflows() bool {
 	return m.body.TotalLineCount() > m.body.VisibleLineCount()
 }
@@ -956,6 +1038,12 @@ func (m CalendarDialogModel) BoxSize() (int, int) {
 func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) {
 	if msg, ok := msg.(tea.WindowSizeMsg); ok {
 		return m.SetSize(msg.Width, msg.Height), nil
+	}
+
+	if m.discoveryPicker != nil {
+		picker, cmd := m.discoveryPicker.Update(msg)
+		m.discoveryPicker = &picker
+		return m, cmd
 	}
 
 	if _, ok := msg.(testConnectionPressedMsg); ok {
@@ -1002,9 +1090,14 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 			ox := (m.dialog.width - bw) / 2
 			oy := (m.dialog.height - bh) / 2
 			target := mouseResolve(mc.X-ox, mc.Y-oy)
+			// A click on the Display Calendar checkbox toggles it inside the
+			// form; compare pre/post state so the mouse path emits the same
+			// CalendarVisibilityToggledMsg as the keyboard path.
+			preVisible := m.visibilityChecked()
 			var cmd tea.Cmd
 			m.form, cmd = m.form.Update(MouseEvent{IsClick: true, Target: target})
-			return m, cmd
+			m.syncBodyViewport(true)
+			return m.applyVisibilityToggle(preVisible, cmd)
 		}
 		return m, nil
 	}
@@ -1015,13 +1108,49 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 		return m, cmd
 	}
 
+	preVisible := m.visibilityChecked()
 	var cmd tea.Cmd
 	m.form, cmd = m.form.Update(msg)
 	m.syncBodyViewport(true)
-	return m, cmd
+	return m.applyVisibilityToggle(preVisible, cmd)
+}
+
+// visibilityChecked reports the Display Calendar checkbox's current state, or
+// true when there is no checkbox (create mode) so a no-op comparison never
+// reports a spurious change.
+func (m CalendarDialogModel) visibilityChecked() bool {
+	if m.visibilityCb == nil {
+		return true
+	}
+	return m.visibilityCb.Checked()
+}
+
+// applyVisibilityToggle compares the checkbox state before and after a form
+// update; a change emits CalendarVisibilityToggledMsg with the DESIRED hidden
+// state, mirrors it into the local model so the dot flips without a reload,
+// and batches with any cmd the form update produced. Metadata Save/Cancel
+// never persists visibility.
+func (m CalendarDialogModel) applyVisibilityToggle(preVisible bool, cmd tea.Cmd) (CalendarDialogModel, tea.Cmd) {
+	if m.visibilityCb == nil {
+		return m, cmd
+	}
+	postVisible := m.visibilityCb.Checked()
+	if postVisible == preVisible {
+		return m, cmd
+	}
+	m.hidden = !postVisible
+	id := m.id
+	toggle := func() tea.Msg { return CalendarVisibilityToggledMsg{ID: id, Hidden: !postVisible} }
+	if cmd == nil {
+		return m, toggle
+	}
+	return m, tea.Batch(cmd, toggle)
 }
 
 func (m CalendarDialogModel) View() string {
+	if m.discoveryPicker != nil {
+		return m.discoveryPicker.View()
+	}
 	helpKeys := []key.Binding{
 		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
@@ -1044,21 +1173,21 @@ func (m CalendarDialogModel) View() string {
 // populated, emits a CalendarTestRequestedMsg so the parent can run the
 // authenticated ping. Errors show inline without contacting the server.
 func (m CalendarDialogModel) handleTestPressed() (CalendarDialogModel, tea.Cmd) {
-	if m.form.ItemCount() <= cdIdxAllowInsecure {
+	if !m.accountConnection {
 		return m, nil
 	}
 	// The oauth2 layout has no password to ping with — there is no token
-	// until the browser flow runs, which happens on save.
-	if calendarAuthIsOAuth(m.form.Field(cdIdxAuth).(*SelectField).Value()) {
+	// until the browser flow runs, which happens on sign-in.
+	if calendarAuthIsOAuth(m.form.Field(calDAVIdxAuth).(*SelectField).Value()) {
 		m.testStatus = lipgloss.NewStyle().Foreground(m.theme.TextDim).Italic(true).
-			Render("Test runs after Google authorization — save to connect")
+			Render("Connection test runs after Google authorization — sign in to continue")
 		return m, nil
 	}
-	url := strings.TrimSpace(m.form.Field(cdIdxRemoteURL).(*TextField).Value())
-	user := strings.TrimSpace(m.form.Field(cdIdxUsername).(*TextField).Value())
-	auth := m.form.Field(cdIdxAuth).(*SelectField).Value()
-	pass := m.form.Field(cdIdxPassword).(*TextField).Value()
-	ins := m.form.Field(cdIdxAllowInsecure).(*CheckboxField).Checked()
+	url := strings.TrimSpace(m.form.Field(calDAVIdxServer).(*TextField).Value())
+	user := strings.TrimSpace(m.form.Field(calDAVIdxUsername).(*TextField).Value())
+	auth := m.form.Field(calDAVIdxAuth).(*SelectField).Value()
+	pass := m.form.Field(calDAVIdxSecret).(*TextField).Value()
+	ins := m.form.Field(calDAVIdxAllowInsecure).(*CheckboxField).Checked()
 
 	if url == "" || user == "" || pass == "" {
 		m.testStatus = lipgloss.NewStyle().Foreground(m.theme.Error).

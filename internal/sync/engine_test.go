@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	gosync "sync"
@@ -3953,5 +3954,244 @@ func TestPersistImportedPrunePerUID(t *testing.T) {
 	}
 	if len(overridesB) != 1 {
 		t.Fatalf("B's override pruned without B's master present; live overrides = %d", len(overridesB))
+	}
+}
+
+func TestEngineSyncCalendarReadOnlyPullsWithoutRemoteWrites(t *testing.T) {
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+
+	var (
+		mu      gosync.Mutex
+		methods []string
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		methods = append(methods, r.Method)
+		mu.Unlock()
+		if r.Method != "REPORT" {
+			http.Error(w, "read-only collection rejects metadata and writes", http.StatusForbidden)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), "sync-collection") {
+			http.Error(w, "sync-collection unsupported", http.StatusUnprocessableEntity)
+			return
+		}
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusMultiStatus)
+		_, _ = io.WriteString(w, `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav"></d:multistatus>`)
+	}))
+	defer server.Close()
+
+	remoteAccount, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name: "read-only", ServerUrl: server.URL, AuthType: "basic", Username: "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	calendars, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := calendars[0].ID
+	remoteURL := server.URL + "/calendar"
+	if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID: calendarID, AccountID: &remoteAccount.ID, RemoteUrl: &remoteURL,
+	}); err != nil {
+		t.Fatalf("LinkCalendarToAccount: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, "UPDATE calendars SET remote_access = 'read' WHERE id = ?", calendarID); err != nil {
+		t.Fatalf("set remote access: %v", err)
+	}
+	engine.credStore.(*mockCredStore).creds[remoteAccount.ID] = auth.Credential{
+		AccountID: remoteAccount.ID, Username: "user", Password: "secret",
+	}
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID: calendarID, Uid: "pending-event", OwnerType: "event",
+		RemoteUrl: "/calendar/pending-event.ics", Etag: `"old"`, Dirty: 1, SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+	if err := q.CreateTombstone(ctx, storage.CreateTombstoneParams{
+		CalendarID: calendarID, Uid: "pending-delete", RemoteUrl: "/calendar/pending-delete.ics",
+	}); err != nil {
+		t.Fatalf("CreateTombstone: %v", err)
+	}
+
+	result, err := engine.SyncCalendar(ctx, calendarID, ConflictServerWins)
+	if err != nil {
+		t.Fatalf("SyncCalendar: %v", err)
+	}
+	if len(result.Errors) != 0 {
+		t.Fatalf("read-only sync errors = %v", result.Errors)
+	}
+	tombstones, err := q.ListTombstonesByCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("ListTombstonesByCalendar: %v", err)
+	}
+	if len(tombstones) != 1 || tombstones[0].Uid != "pending-delete" {
+		t.Fatalf("tombstones = %+v, want pending delete unchanged", tombstones)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, method := range methods {
+		if method != "REPORT" {
+			t.Fatalf("read-only sync sent %s; methods = %v", method, methods)
+		}
+	}
+	if len(methods) == 0 {
+		t.Fatal("read-only sync must still pull with REPORT")
+	}
+}
+
+// PushCalendar is the opportunistic save-time fast path. A read-only calendar
+// must short-circuit before any write phase, so a save against a subscribed
+// calendar never reaches the server — mirroring the SyncCalendar gate above.
+func TestEnginePushCalendarReadOnlyIsNoOpWithoutServerContact(t *testing.T) {
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("read-only PushCalendar must not contact the server: %s %s", r.Method, r.URL.Path)
+		http.Error(w, "read-only push must be a no-op", http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	remoteAccount, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name: "read-only", ServerUrl: server.URL, AuthType: "basic", Username: "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	calendars, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := calendars[0].ID
+	remoteURL := server.URL + "/calendar"
+	if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID: calendarID, AccountID: &remoteAccount.ID, RemoteUrl: &remoteURL,
+	}); err != nil {
+		t.Fatalf("LinkCalendarToAccount: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, "UPDATE calendars SET remote_access = 'read' WHERE id = ?", calendarID); err != nil {
+		t.Fatalf("set remote access: %v", err)
+	}
+	engine.credStore.(*mockCredStore).creds[remoteAccount.ID] = auth.Credential{
+		AccountID: remoteAccount.ID, Username: "user", Password: "secret",
+	}
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID: calendarID, Uid: "pending-event", OwnerType: "event",
+		RemoteUrl: "/calendar/pending-event.ics", Etag: `"old"`, Dirty: 1, SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+	if err := q.CreateTombstone(ctx, storage.CreateTombstoneParams{
+		CalendarID: calendarID, Uid: "pending-delete", RemoteUrl: "/calendar/pending-delete.ics",
+	}); err != nil {
+		t.Fatalf("CreateTombstone: %v", err)
+	}
+
+	result, err := engine.PushCalendar(ctx, calendarID, ConflictServerWins)
+	if err != nil {
+		t.Fatalf("PushCalendar: %v", err)
+	}
+	if result.Pushed != 0 || result.Deleted != 0 || len(result.Errors) != 0 {
+		t.Fatalf("read-only push result = %+v, want an empty no-op", result)
+	}
+	resources, err := q.ListDirtySyncResources(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("ListDirtySyncResources: %v", err)
+	}
+	if len(resources) != 1 || resources[0].Uid != "pending-event" {
+		t.Fatalf("dirty resources = %+v, want pending event unchanged", resources)
+	}
+	tombstones, err := q.ListTombstonesByCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("ListTombstonesByCalendar: %v", err)
+	}
+	if len(tombstones) != 1 || tombstones[0].Uid != "pending-delete" {
+		t.Fatalf("tombstones = %+v, want pending delete unchanged", tombstones)
+	}
+}
+
+func TestEngineSyncCalendarSerializesWholeCycle(t *testing.T) {
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+
+	firstEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	overlap := make(chan struct{}, 1)
+	var requestsMu gosync.Mutex
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestsMu.Lock()
+		requests++
+		requestNumber := requests
+		requestsMu.Unlock()
+		if requestNumber == 1 {
+			close(firstEntered)
+			<-releaseFirst
+		} else {
+			select {
+			case overlap <- struct{}{}:
+			default:
+			}
+		}
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusMultiStatus)
+		_, _ = io.WriteString(w, `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav"></d:multistatus>`)
+	}))
+	defer server.Close()
+
+	remoteAccount, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name: "serialized", ServerUrl: server.URL, AuthType: "basic", Username: "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	calendars, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := calendars[0].ID
+	remoteURL := server.URL + "/calendar"
+	if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID: calendarID, AccountID: &remoteAccount.ID, RemoteUrl: &remoteURL,
+	}); err != nil {
+		t.Fatalf("LinkCalendarToAccount: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, "UPDATE calendars SET remote_access = 'read' WHERE id = ?", calendarID); err != nil {
+		t.Fatalf("set remote access: %v", err)
+	}
+	engine.credStore.(*mockCredStore).creds[remoteAccount.ID] = auth.Credential{
+		AccountID: remoteAccount.ID, Username: "user", Password: "secret",
+	}
+
+	results := make(chan error, 2)
+	go func() {
+		_, err := engine.SyncCalendar(ctx, calendarID, ConflictServerWins)
+		results <- err
+	}()
+	<-firstEntered
+	go func() {
+		_, err := engine.SyncCalendar(ctx, calendarID, ConflictServerWins)
+		results <- err
+	}()
+
+	select {
+	case <-overlap:
+		close(releaseFirst)
+		t.Fatal("second sync reached the server before the first cycle completed")
+	case <-time.After(100 * time.Millisecond):
+		close(releaseFirst)
+	}
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatalf("SyncCalendar: %v", err)
+		}
 	}
 }

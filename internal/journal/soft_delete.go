@@ -32,6 +32,9 @@ func (s *Service) RestoreByID(ctx context.Context, id int64) error {
 	if r.DeletedAt == nil || *r.DeletedAt == "" {
 		return ErrNotDeleted
 	}
+	if err := s.ensureWritable(ctx, r.CalendarID); err != nil {
+		return err
+	}
 
 	if r.RecurrenceID == "" {
 		if err := s.q.RestoreJournal(ctx, id); err != nil {
@@ -111,6 +114,17 @@ func clearMasterEXDATE(ctx context.Context, qtx *storage.Queries, uid, recurrenc
 // ErrNotDeleted when the UID matches no soft-deleted rows so callers can
 // report "not found" instead of a misleading success.
 func (s *Service) RestoreByUID(ctx context.Context, uid string) error {
+	// Resolve every calendar owning a row with this UID before restoring. The
+	// master may have been purged, leaving only orphaned override/series-tail
+	// rows; the per-UID master lookup (recurrence_id = '') would miss them.
+	calIDs, gErr := s.calendarIDsForUID(ctx, uid)
+	if gErr != nil {
+		return gErr
+	}
+	if err := s.ensureAllWritable(ctx, calIDs); err != nil {
+		return err
+	}
+
 	master, err := s.q.GetJournalByUIDIncludingDeleted(ctx, uid)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("get master: %w", err)

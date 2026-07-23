@@ -90,7 +90,18 @@ type CalendarInfo struct {
 	// AccountServerURL is the linked CalDAV account's principal URL, used by
 	// the event view to detect Google-hosted calendars so meeting links can
 	// pre-select the right account. Empty for local-only calendars.
-	AccountServerURL    string
+	AccountServerURL string
+	AccountID        int64
+	AccountName      string
+	AccountOrder     int64
+	// AccountAuthType is the linked account's normalized auth type
+	// (e.g. "oauth2", "basic"), cached at calendar-load time so later
+	// ownership validation and re-auth routing can read it without
+	// re-querying accounts. Empty for local-only calendars.
+	AccountAuthType     string
+	RemoteAccess        string
+	RemoteComponents    string // comma-separated VEVENT/VTODO/VJOURNAL; empty = unknown (all allowed)
+	RemoteMissing       bool
 	LastSyncAt          string // RFC 3339, empty when never synced
 	LastSyncAttemptedAt string // RFC 3339, empty when never attempted
 	LastSyncError       string

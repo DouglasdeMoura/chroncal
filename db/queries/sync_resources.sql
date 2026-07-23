@@ -44,6 +44,14 @@ DELETE FROM sync_resources WHERE calendar_id = ? AND uid = ?;
 -- name: DeleteSyncResourcesByCalendar :exec
 DELETE FROM sync_resources WHERE calendar_id = ?;
 
+-- name: DetachSyncResourcesByCalendar :exec
+-- Preserve local resources when an account is removed, but erase every
+-- server-specific identity so a later link cannot reuse stale hrefs or ETags.
+-- Dirty=1 makes the retained local objects first-time creates on a new server.
+UPDATE sync_resources
+SET remote_url = '', etag = '', dirty = 1, rev = rev + 1
+WHERE calendar_id = ?;
+
 -- name: CreateTombstone :exec
 INSERT INTO tombstones (calendar_id, uid, remote_url) VALUES (?, ?, ?)
 ON CONFLICT(calendar_id, uid) DO UPDATE SET

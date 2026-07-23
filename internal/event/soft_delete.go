@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
 	"github.com/douglasdemoura/chroncal/internal/softdelete"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
@@ -153,6 +154,9 @@ func (s *Service) DeleteSeriesWithUndo(ctx context.Context, uid string) (UndoMet
 // by Kind. For FromInstance kinds, also rewrites the master's RRULE back to
 // the pre-truncation value in the same transaction.
 func (s *Service) RestoreUndo(ctx context.Context, meta UndoMeta) error {
+	if err := s.ensureSeriesWritable(ctx, meta.UID); err != nil {
+		return err
+	}
 	switch meta.Kind {
 	case UndoKindSingle:
 		return s.restoreSingle(ctx, meta.UID, meta.RecurrenceID)
@@ -174,6 +178,9 @@ func (s *Service) RestoreByUID(ctx context.Context, uid string) error {
 	master, err := s.q.GetEventByUIDIncludingDeleted(ctx, uid)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("get master: %w", err)
+	}
+	if err := s.ensureSeriesWritable(ctx, uid); err != nil {
+		return err
 	}
 	n, restoreErr := s.restoreEventsByUIDClearingExdates(ctx, uid)
 	if restoreErr != nil {
@@ -201,6 +208,9 @@ func (s *Service) RestoreByID(ctx context.Context, id int64) error {
 	}
 	if r.DeletedAt == nil || *r.DeletedAt == "" {
 		return ErrNotDeleted
+	}
+	if err := calendaraccess.EnsureWritable(ctx, s.q, r.CalendarID, "VEVENT"); err != nil {
+		return err
 	}
 	if r.RecurrenceID != "" {
 		if err := s.restoreOverrideByID(ctx, r); err != nil {

@@ -589,10 +589,18 @@ func findCalendarByRef(cals []calendarpkg.Calendar, ref string) (calendarpkg.Cal
 		return calendarpkg.Calendar{}, fmt.Errorf("calendar %q not found", ref)
 	}
 
+	var matches []calendarpkg.Calendar
 	for _, cal := range cals {
 		if strings.EqualFold(cal.Name, ref) {
-			return cal, nil
+			matches = append(matches, cal)
 		}
 	}
-	return calendarpkg.Calendar{}, fmt.Errorf("calendar %q not found", ref)
+	switch len(matches) {
+	case 0:
+		return calendarpkg.Calendar{}, fmt.Errorf("calendar %q not found", ref)
+	case 1:
+		return matches[0], nil
+	default:
+		return calendarpkg.Calendar{}, fmt.Errorf("calendar name %q is ambiguous; use its numeric ID instead", ref)
+	}
 }

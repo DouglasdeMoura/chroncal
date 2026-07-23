@@ -97,10 +97,10 @@ func TestCalendarReorder_DialogOriginatedSyncsSidebarAndDialog(t *testing.T) {
 		3: {Name: "Charlie", DisplayOrder: 2},
 	}
 	m := Model{
-		sidebar:                NewSidebarModel(NewMiniMonthModel(now), NewCalendarListModel(items, nil)),
-		calendars:              cals,
-		calendarListDialogOpen: true,
-		calendarListDialog:     NewCalendarListDialogModel(cals, nil, help.New()),
+		sidebar:             NewSidebarModel(NewMiniMonthModel(now), NewCalendarListModel(items, nil)),
+		calendars:           cals,
+		calendarManagerOpen: true,
+		calendarManager:     NewCalendarManagerModel(cals, nil, help.New()),
 	}
 
 	// Dialog moved Bravo above Alpha; only the dialog swapped locally, so the
@@ -111,7 +111,11 @@ func TestCalendarReorder_DialogOriginatedSyncsSidebarAndDialog(t *testing.T) {
 	if got := sidebarOrderIDs(m); !slices.Equal(got, []int64{2, 1, 3}) {
 		t.Fatalf("sidebar not synced to dialog reorder: got %v want [2 1 3]", got)
 	}
-	if got := m.calendarListDialog.order; !slices.Equal(got, []int64{2, 1, 3}) {
+	got := make([]int64, len(m.calendarManager.list.items))
+	for i, item := range m.calendarManager.list.items {
+		got[i] = item.ID
+	}
+	if !slices.Equal(got, []int64{2, 1, 3}) {
 		t.Fatalf("open dialog not synced to reorder: got %v want [2 1 3]", got)
 	}
 }
@@ -149,12 +153,14 @@ func TestCalendarReorder_DialogReorderKeepsSidebarCursorOnSameCalendar(t *testin
 	if !slices.Equal(order, []int64{3, 1, 2}) {
 		t.Fatalf("sidebar order = %v want [3 1 2]", order)
 	}
-	cur := m.sidebar.List().Cursor()
-	if cur < 0 || cur >= len(order) {
+	list := m.sidebar.List()
+	cur := list.Cursor()
+	if cur < 0 || cur >= list.RowCount() {
 		t.Fatalf("cursor out of range: %d", cur)
 	}
-	if order[cur] != 2 {
-		t.Errorf("sidebar cursor on calendar %d, want 2 (Bravo) — cursor did not follow the calendar", order[cur])
+	row := list.rows[cur]
+	if row.kind != calendarRow || list.items[row.itemIndex].ID != 2 {
+		t.Errorf("sidebar cursor row = %+v, want calendar 2 (Bravo) — cursor did not follow the calendar", row)
 	}
 }
 

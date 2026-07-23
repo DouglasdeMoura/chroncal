@@ -161,6 +161,43 @@ func accountIDForCalendar(t *testing.T, q *storage.Queries, calendarID int64) in
 	return *cal.AccountID
 }
 
+func TestSyncAccountSyncsOnlyTargetAccountCalendars(t *testing.T) {
+	t.Parallel()
+
+	credStore := &mockCredStore{creds: make(map[int64]auth.Credential)}
+	engine, db, q := newFileTestEngine(t, credStore)
+
+	srvA := newFakeCalDAVServer(t)
+	srvB := newFakeCalDAVServer(t)
+	calA1 := seedSyncedCalendar(t, db, q, credStore, "aaa", srvA)
+	accountA := accountIDForCalendar(t, q, calA1)
+	calA2 := linkDirtyCalendar(t, db, q, "aab", accountA, srvA)
+	_ = seedSyncedCalendar(t, db, q, credStore, "bbb", srvB)
+
+	results, err := engine.SyncAccount(context.Background(), accountA, ConflictServerWins)
+	if err != nil {
+		t.Fatalf("SyncAccount: %v", err)
+	}
+	want := []int64{calA1, calA2}
+	if len(results) != len(want) {
+		t.Fatalf("results = %d, want %d", len(results), len(want))
+	}
+	for i, calendarID := range want {
+		if results[i] == nil || results[i].CalendarID != calendarID {
+			t.Fatalf("results[%d] = %+v, want calendar %d", i, results[i], calendarID)
+		}
+		if len(results[i].Errors) != 0 || results[i].Pushed != 1 {
+			t.Fatalf("results[%d] = %+v, want clean push", i, results[i])
+		}
+	}
+	if got := srvA.put.Load(); got != 2 {
+		t.Fatalf("target account PUTs = %d, want 2", got)
+	}
+	if got := srvB.put.Load(); got != 0 {
+		t.Fatalf("other account PUTs = %d, want 0", got)
+	}
+}
+
 // TestSyncAllSyncsEveryConnectedCalendar drives SyncAll across multiple
 // accounts (each its own server) plus a second calendar sharing one account and
 // an unlinked calendar that must be skipped. It asserts every connected

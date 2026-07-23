@@ -24,6 +24,7 @@ import (
 	icalPkg "github.com/douglasdemoura/chroncal/internal/ical"
 	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/synclock"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
@@ -57,13 +58,6 @@ type Engine struct {
 	logger    *slog.Logger
 }
 
-// pushLockKey identifies a per-calendar push lock. It is keyed by the shared
-// database handle (not the Engine) because each sync operation builds a fresh
-// Engine over the app's shared *sql.DB — the TUI's save-time PushCalendar and a
-// periodic SyncCalendar run on different Engine instances but the same DB (see
-// internal/tui/app.go newSyncService). An Engine-scoped lock would not
-// serialize them; a registry keyed by (db, calendar) does. The db pointer keeps
-// independent databases (e.g. parallel tests) from sharing a lock.
 type pushLockKey struct {
 	db         *sql.DB
 	calendarID int64
@@ -167,11 +161,14 @@ func (e *Engine) loadCalendarClient(ctx context.Context, calendarID int64) (stor
 	if err != nil {
 		return cal, storage.Account{}, nil, "", fmt.Errorf("get account: %w", err)
 	}
-	cred, err := e.credStore.Get(account.ID)
+	fingerprint := authpkg.AccountFingerprint(account.ServerUrl, account.AuthType, account.Username)
+	cred, err := e.credStore.Get(account.ID, fingerprint)
 	if err != nil {
 		return cal, account, nil, "", fmt.Errorf("get credentials: %w", err)
 	}
 	client, err := caldav.NewClientFromCredential(account.ServerUrl, cred, func(updated authpkg.Credential) error {
+		updated.AccountID = account.ID
+		updated.AccountFingerprint = fingerprint
 		return e.credStore.Set(updated)
 	})
 	if err != nil {
@@ -184,8 +181,62 @@ func (e *Engine) loadCalendarClient(ctx context.Context, calendarID int64) (stor
 	return cal, account, client, remoteURL, nil
 }
 
+// lockCalendarLifecycle acquires locks in account-then-calendar order and
+// revalidates the association after waiting. A concurrent relink can change
+// the account between the initial lookup and lock acquisition; retrying makes
+// sure the returned lock always covers the account loadCalendarClient uses.
+func (e *Engine) lockCalendarLifecycle(ctx context.Context, calendarID int64) (func(), error) {
+	for {
+		before, err := e.q.GetCalendar(ctx, calendarID)
+		if err != nil {
+			return nil, fmt.Errorf("get calendar for lifecycle lock: %w", err)
+		}
+		lockID := nullableID(before.AccountID)
+		if lockID == 0 {
+			lockID = -calendarID
+		}
+		releaseAccount, err := synclock.Account(ctx, e.db, lockID)
+		if err != nil {
+			return nil, fmt.Errorf("lock sync account: %w", err)
+		}
+
+		calendarLock := synclock.Calendar(e.db, calendarID)
+		calendarLock.Lock()
+		after, err := e.q.GetCalendar(ctx, calendarID)
+		if err != nil {
+			calendarLock.Unlock()
+			releaseAccount()
+			return nil, fmt.Errorf("revalidate calendar lifecycle lock: %w", err)
+		}
+		afterLockID := nullableID(after.AccountID)
+		if afterLockID == 0 {
+			afterLockID = -calendarID
+		}
+		if afterLockID != lockID {
+			calendarLock.Unlock()
+			releaseAccount()
+			continue
+		}
+		return func() {
+			calendarLock.Unlock()
+			releaseAccount()
+		}, nil
+	}
+}
+func nullableID(id *int64) int64 {
+	if id == nil {
+		return 0
+	}
+	return *id
+}
+
 // SyncCalendar runs a full sync cycle for one calendar.
 func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy ConflictStrategy) (result *SyncResult, err error) {
+	release, err := e.lockCalendarLifecycle(ctx, calendarID)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	// Register the health-update defer before loading the client so that an
 	// early return from loadCalendarClient (missing credentials, no linked
 	// account, empty RemoteUrl) still records the failed attempt — otherwise
@@ -209,21 +260,23 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 
 	e.logger.Info("sync started", "calendar_id", calendarID, "remote_url", remoteURL)
 
-	// Phase 0: Sync calendar metadata
-	if err := e.syncCalendarMetadata(ctx, client, calendarID, remoteURL); err != nil {
-		e.logger.Warn("calendar metadata sync failed", "calendar_id", calendarID, "error", err)
-		result.Errors = append(result.Errors, fmt.Errorf("calendar metadata: %w", err))
-	}
+	if !remoteCalendarIsReadOnly(cal) {
+		// Phase 0: Sync writable calendar metadata.
+		if err := e.syncCalendarMetadata(ctx, client, calendarID, remoteURL); err != nil {
+			e.logger.Warn("calendar metadata sync failed", "calendar_id", calendarID, "error", err)
+			result.Errors = append(result.Errors, fmt.Errorf("calendar metadata: %w", err))
+		}
 
-	// Phase 1: Push dirty resources
-	pushResult, err := e.push(ctx, client, calendarID, remoteURL, resolvePushIdentity(cal, account), strategy)
-	if err != nil {
-		e.logger.Error("push failed", "calendar_id", calendarID, "error", err)
-		result.Errors = append(result.Errors, fmt.Errorf("push: %w", err))
-	} else {
-		result.Pushed = pushResult.pushed
-		result.Conflicts = pushResult.conflicts
-		result.Errors = append(result.Errors, pushResult.errors...)
+		// Phase 1: Push dirty resources.
+		pushResult, err := e.push(ctx, client, calendarID, remoteURL, resolvePushIdentity(cal, account), strategy)
+		if err != nil {
+			e.logger.Error("push failed", "calendar_id", calendarID, "error", err)
+			result.Errors = append(result.Errors, fmt.Errorf("push: %w", err))
+		} else {
+			result.Pushed = pushResult.pushed
+			result.Conflicts = pushResult.conflicts
+			result.Errors = append(result.Errors, pushResult.errors...)
+		}
 	}
 
 	// Phase 2: Pull changes from server
@@ -237,15 +290,17 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 		result.Errors = append(result.Errors, pullResult.errors...)
 	}
 
-	// Phase 3: Process tombstones
-	tombstoneResult, err := e.processTombstones(ctx, client, calendarID, remoteURL)
-	if err != nil {
-		e.logger.Warn("tombstone processing failed", "calendar_id", calendarID, "error", err)
-		result.Errors = append(result.Errors, fmt.Errorf("tombstones: %w", err))
-	} else {
-		result.Deleted += tombstoneResult.deleted
-		result.Conflicts += tombstoneResult.conflicts
-		result.Errors = append(result.Errors, tombstoneResult.errors...)
+	if !remoteCalendarIsReadOnly(cal) {
+		// Phase 3: Process tombstones only when the server permits writes.
+		tombstoneResult, err := e.processTombstones(ctx, client, calendarID, remoteURL)
+		if err != nil {
+			e.logger.Warn("tombstone processing failed", "calendar_id", calendarID, "error", err)
+			result.Errors = append(result.Errors, fmt.Errorf("tombstones: %w", err))
+		} else {
+			result.Deleted += tombstoneResult.deleted
+			result.Conflicts += tombstoneResult.conflicts
+			result.Errors = append(result.Errors, tombstoneResult.errors...)
+		}
 	}
 
 	// Cleanup stale tombstones
@@ -269,17 +324,23 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 // It is the write-only fast path used for opportunistic save-time sync:
 // local mutations are flushed upstream without pulling or rewriting
 // calendar metadata. Dirty resources that fail to push stay dirty, so the
-// next full SyncCalendar will retry them. Safe to call concurrently with
-// a full sync: the push phase holds a per-calendar lock (see pushLock), so
-// two runs cannot both create a server object for the same never-pushed,
-// etag-less resource. Existing resources are still arbitrated by the server
-// via ETag preconditions.
+// next full SyncCalendar will retry them. It shares a per-calendar lifecycle
+// lock with SyncCalendar, while the inner push lock continues to protect direct
+// push calls used by focused engine tests.
 func (e *Engine) PushCalendar(ctx context.Context, calendarID int64, strategy ConflictStrategy) (*SyncResult, error) {
+	release, err := e.lockCalendarLifecycle(ctx, calendarID)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	cal, account, client, remoteURL, err := e.loadCalendarClient(ctx, calendarID)
 	if err != nil {
 		return nil, err
 	}
 	result := &SyncResult{CalendarID: calendarID}
+	if remoteCalendarIsReadOnly(cal) {
+		return result, nil
+	}
 
 	pushResult, err := e.push(ctx, client, calendarID, remoteURL, resolvePushIdentity(cal, account), strategy)
 	if err != nil {
@@ -298,6 +359,37 @@ func (e *Engine) PushCalendar(ctx context.Context, calendarID int64, strategy Co
 		result.Errors = append(result.Errors, tombstoneResult.errors...)
 	}
 	return result, nil
+}
+
+func remoteCalendarIsReadOnly(cal storage.Calendar) bool {
+	return strings.EqualFold(strings.TrimSpace(cal.RemoteAccess), "read")
+}
+
+const accountCalendarSyncTimeout = 5 * time.Minute
+
+// SyncAccount syncs every calendar linked to one account serially. Calendars
+// sharing a credential must not refresh or persist that credential
+// concurrently.
+func (e *Engine) SyncAccount(ctx context.Context, accountID int64, strategy ConflictStrategy) ([]*SyncResult, error) {
+	cals, err := e.q.ListCalendarsByAccount(ctx, &accountID)
+	if err != nil {
+		return nil, fmt.Errorf("list account calendars: %w", err)
+	}
+	results := make([]*SyncResult, 0, len(cals))
+	for _, cal := range cals {
+		if err := ctx.Err(); err != nil {
+			return results, err
+		}
+		calendarCtx, cancel := context.WithTimeout(ctx, accountCalendarSyncTimeout)
+		result, err := e.SyncCalendar(calendarCtx, cal.ID, strategy)
+		cancel()
+		if err != nil {
+			e.logger.Error("sync calendar failed", "calendar_id", cal.ID, "error", err)
+			result = &SyncResult{CalendarID: cal.ID, Errors: []error{err}}
+		}
+		results = append(results, result)
+	}
+	return results, nil
 }
 
 // maxSyncAllConcurrency bounds how many accounts SyncAll syncs at once. Each
@@ -1651,7 +1743,7 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 			if err := events.ReplaceAlarms(ctx, saved.ID, ev.Alarms); err != nil {
 				return fmt.Errorf("replace alarms for event %q: %w", ev.UID, err)
 			}
-			if err := events.ReplaceAttendees(ctx, saved.ID, ev.Attendees); err != nil {
+			if err := events.ReplaceAttendeesForSync(ctx, saved.ID, ev.Attendees); err != nil {
 				return fmt.Errorf("replace attendees for event %q: %w", ev.UID, err)
 			}
 			if err := events.ReplaceAttachments(ctx, saved.ID, ev.Attachments); err != nil {

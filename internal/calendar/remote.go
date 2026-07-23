@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"net/url"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/synclock"
 )
 
 const hiddenAccountPrefix = "__calendar_"
@@ -27,19 +29,71 @@ type RemoteLink struct {
 	// remote collection (e.g. fetched via PROPFIND at link time). When
 	// non-empty, Connect adopts it as the calendar's color so the UI shows
 	// the same color the remote uses without waiting for the first sync.
-	RemoteColor string
+	RemoteColor      string
+	RemoteAccess     string
+	RemoteComponents []string
+}
+
+func (s *Service) lockRemoteLifecycle(ctx context.Context, calendarID int64) (Calendar, func(), error) {
+	for {
+		before, err := s.Get(ctx, calendarID)
+		if err != nil {
+			return Calendar{}, nil, err
+		}
+		lockID := before.AccountID
+		if lockID == 0 {
+			// An unlinked calendar has no account key yet. Its negative calendar
+			// ID gives concurrent processes a stable lock while Connect creates
+			// and attaches the new hidden account.
+			lockID = -calendarID
+		}
+		releaseAccount, err := synclock.Account(ctx, s.db, lockID)
+		if err != nil {
+			return Calendar{}, nil, fmt.Errorf("lock calendar account: %w", err)
+		}
+
+		calendarLock := synclock.Calendar(s.db, calendarID)
+		calendarLock.Lock()
+		after, err := s.Get(ctx, calendarID)
+		if err != nil {
+			calendarLock.Unlock()
+			releaseAccount()
+			return Calendar{}, nil, err
+		}
+		afterLockID := after.AccountID
+		if afterLockID == 0 {
+			afterLockID = -calendarID
+		}
+		if afterLockID != lockID {
+			calendarLock.Unlock()
+			releaseAccount()
+			continue
+		}
+		return after, func() {
+			calendarLock.Unlock()
+			releaseAccount()
+		}, nil
+	}
 }
 
 // Connect links a calendar to a remote CalDAV URL and stores the credential.
 // When the calendar is already linked to a hidden account, Connect updates
 // that account in place; otherwise it creates a new hidden account.
 func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cred auth.Credential, credStore auth.CredentialStore) error {
+	lockedCal, release, err := s.lockRemoteLifecycle(ctx, cal.ID)
+	if err != nil {
+		return err
+	}
+	defer release()
+	cal = lockedCal
+
 	link.AuthType = NormalizeAuthType(link.AuthType)
 
 	serverURL, err := DeriveServerURL(link.RemoteURL, link.AllowInsecure)
 	if err != nil {
 		return err
 	}
+	remoteChanged := cal.RemoteURL != "" && !sameRemoteCollection(cal.RemoteURL, link.RemoteURL)
 
 	if cal.AccountID != 0 {
 		existing, err := s.q.GetAccount(ctx, cal.AccountID)
@@ -51,7 +105,23 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 			return fmt.Errorf("get account: %w", err)
 		}
 		if err == nil && strings.HasPrefix(existing.Name, hiddenAccountPrefix) {
+			linked, listErr := s.q.ListCalendarsByAccount(ctx, &existing.ID)
+			if listErr != nil {
+				return fmt.Errorf("list hidden account calendars: %w", listErr)
+			}
+			if len(linked) != 1 {
+				goto createAccount
+			}
 			cred.AccountID = existing.ID
+			oldFingerprint := auth.AccountFingerprint(existing.ServerUrl, existing.AuthType, existing.Username)
+			prevCred, prevErr := credStore.Get(existing.ID, oldFingerprint)
+			if prevErr != nil &&
+				!auth.IsCredentialNotFound(prevErr) &&
+				!errors.Is(prevErr, auth.ErrCredentialIdentityMismatch) {
+				return fmt.Errorf("read credentials before relink: %w", prevErr)
+			}
+			hasPrevCred := prevErr == nil
+			cred.AccountFingerprint = auth.AccountFingerprint(serverURL, link.AuthType, link.Username)
 
 			tx, err := s.db.BeginTx(ctx, nil)
 			if err != nil {
@@ -61,12 +131,17 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 			qtx := s.q.WithTx(tx)
 			if err := qtx.UpdateAccount(ctx, storage.UpdateAccountParams{
 				ID:        existing.ID,
-				Name:      hiddenAccountName(cal.ID),
+				Name:      existing.Name,
 				ServerUrl: serverURL,
 				AuthType:  link.AuthType,
 				Username:  link.Username,
 			}); err != nil {
 				return fmt.Errorf("update hidden account: %w", err)
+			}
+			if remoteChanged {
+				if err := clearCalendarRemoteState(ctx, qtx, cal.ID, cal.ColorDirty); err != nil {
+					return err
+				}
 			}
 			if err := qtx.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
 				ID:        cal.ID,
@@ -75,26 +150,28 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 			}); err != nil {
 				return fmt.Errorf("link calendar: %w", err)
 			}
+			if err := updateCalendarCapabilities(ctx, qtx, cal.ID, link); err != nil {
+				return err
+			}
 			// Intentionally skip seeding RemoteColor on re-link: the calendar
 			// is already linked, the user may have just edited Color in the
 			// same save (Update set color_dirty=1), and the next sync's
 			// syncCalendarMetadata reconciles colors with proper dirty-flag
 			// handling. Seeding here would clobber the local edit.
 			//
-			// Capture the prior credential so a failed commit can roll the
-			// keyring back to it; otherwise the account row keeps its old
-			// settings while the keyring holds the new secret -- a mismatch
-			// that breaks the next sync. Write the new credential only after
-			// the DB writes succeed, mirroring the new-account path below.
-			prevCred, prevErr := credStore.Get(existing.ID)
+			// Write the new credential only after the DB writes succeed. The
+			// fingerprint keeps a failed compensation from exposing it to the
+			// old account identity.
 			if err := credStore.Set(cred); err != nil {
 				return fmt.Errorf("store credentials: %w", err)
 			}
 			if err := tx.Commit(); err != nil {
-				if prevErr == nil {
-					_ = credStore.Set(prevCred)
-				} else {
-					_ = credStore.Delete(existing.ID)
+				if hasPrevCred {
+					if restoreErr := credStore.Set(prevCred); restoreErr != nil {
+						return fmt.Errorf("commit remote calendar link: %w (restore credentials: %w)", err, restoreErr)
+					}
+				} else if deleteErr := credStore.Delete(existing.ID); deleteErr != nil {
+					return fmt.Errorf("commit remote calendar link: %w (delete replacement credentials: %w)", err, deleteErr)
 				}
 				return fmt.Errorf("commit remote calendar link: %w", err)
 			}
@@ -102,14 +179,24 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 		}
 	}
 
+createAccount:
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
+	accountName := hiddenAccountName(cal.ID)
+	for suffix := 2; ; suffix++ {
+		if _, lookupErr := qtx.GetAccountByName(ctx, accountName); errors.Is(lookupErr, sql.ErrNoRows) {
+			break
+		} else if lookupErr != nil {
+			return fmt.Errorf("check hidden account name: %w", lookupErr)
+		}
+		accountName = fmt.Sprintf("%s_%d", hiddenAccountName(cal.ID), suffix)
+	}
 	account, err := qtx.CreateAccount(ctx, storage.CreateAccountParams{
-		Name:      hiddenAccountName(cal.ID),
+		Name:      accountName,
 		ServerUrl: serverURL,
 		AuthType:  link.AuthType,
 		Username:  link.Username,
@@ -117,12 +204,23 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 	if err != nil {
 		return fmt.Errorf("create hidden account: %w", err)
 	}
+	if err := qtx.AdvanceCurrentCredentialAccountWatermark(ctx, account.ID); err != nil {
+		return fmt.Errorf("advance credential account watermark: %w", err)
+	}
+	if remoteChanged {
+		if err := clearCalendarRemoteState(ctx, qtx, cal.ID, cal.ColorDirty); err != nil {
+			return err
+		}
+	}
 	if err := qtx.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
 		ID:        cal.ID,
 		AccountID: &account.ID,
 		RemoteUrl: storage.StringToNullable(link.RemoteURL),
 	}); err != nil {
 		return fmt.Errorf("link calendar: %w", err)
+	}
+	if err := updateCalendarCapabilities(ctx, qtx, cal.ID, link); err != nil {
+		return err
 	}
 	if link.RemoteColor != "" {
 		if err := qtx.UpdateCalendarColorFromSync(ctx, storage.UpdateCalendarColorFromSyncParams{
@@ -135,20 +233,91 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 	}
 
 	cred.AccountID = account.ID
+	cred.AccountFingerprint = auth.AccountFingerprint(serverURL, link.AuthType, link.Username)
 	if err := credStore.Set(cred); err != nil {
 		return fmt.Errorf("store credentials: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		_ = credStore.Delete(account.ID)
+		if deleteErr := credStore.Delete(account.ID); deleteErr != nil {
+			return fmt.Errorf("commit remote calendar link: %w (delete credentials: %w)", err, deleteErr)
+		}
 		return fmt.Errorf("commit remote calendar link: %w", err)
 	}
 	return nil
+}
+
+func updateCalendarCapabilities(ctx context.Context, q *storage.Queries, calendarID int64, link RemoteLink) error {
+	if strings.TrimSpace(link.RemoteAccess) == "" {
+		return nil
+	}
+	components := make([]string, 0, len(link.RemoteComponents))
+	seen := make(map[string]struct{}, len(link.RemoteComponents))
+	for _, component := range link.RemoteComponents {
+		component = strings.ToUpper(strings.TrimSpace(component))
+		if component == "" {
+			continue
+		}
+		if _, duplicate := seen[component]; duplicate {
+			continue
+		}
+		seen[component] = struct{}{}
+		components = append(components, component)
+	}
+	slices.Sort(components)
+	if err := q.UpdateCalendarCapabilitiesFromLink(ctx, storage.UpdateCalendarCapabilitiesFromLinkParams{
+		RemoteAccess:     strings.ToLower(strings.TrimSpace(link.RemoteAccess)),
+		RemoteComponents: strings.Join(components, ","),
+		ID:               calendarID,
+	}); err != nil {
+		return fmt.Errorf("seed remote calendar capabilities: %w", err)
+	}
+	return nil
+}
+
+func clearCalendarRemoteState(ctx context.Context, q *storage.Queries, calendarID int64, preserveColorDirty bool) error {
+	if err := q.DetachSyncResourcesByCalendar(ctx, calendarID); err != nil {
+		return fmt.Errorf("detach calendar sync resources: %w", err)
+	}
+	if err := q.DeleteTombstonesByCalendar(ctx, calendarID); err != nil {
+		return fmt.Errorf("delete calendar tombstones: %w", err)
+	}
+	if err := q.DeleteSyncConflictsByCalendar(ctx, calendarID); err != nil {
+		return fmt.Errorf("delete calendar conflicts: %w", err)
+	}
+	if err := q.ClearRemoteLinkByCalendar(ctx, calendarID); err != nil {
+		return fmt.Errorf("clear calendar remote link: %w", err)
+	}
+	if preserveColorDirty {
+		if err := q.MarkCalendarColorDirty(ctx, calendarID); err != nil {
+			return fmt.Errorf("preserve calendar color edit: %w", err)
+		}
+	}
+	return nil
+}
+
+func sameRemoteCollection(left, right string) bool {
+	normalize := func(raw string) (scheme, host, collectionPath string, ok bool) {
+		parsed, err := url.Parse(strings.TrimSpace(raw))
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return "", "", "", false
+		}
+		return strings.ToLower(parsed.Scheme), strings.ToLower(parsed.Host), strings.TrimRight(parsed.Path, "/"), true
+	}
+	leftScheme, leftHost, leftPath, leftOK := normalize(left)
+	rightScheme, rightHost, rightPath, rightOK := normalize(right)
+	return leftOK && rightOK && leftScheme == rightScheme && leftHost == rightHost && leftPath == rightPath
 }
 
 // Disconnect removes the remote link from a calendar and, when the account
 // was a private hidden account with no other calendars attached, deletes the
 // account and its stored credential.
 func (s *Service) Disconnect(ctx context.Context, cal Calendar, credStore auth.CredentialStore) error {
+	lockedCal, release, err := s.lockRemoteLifecycle(ctx, cal.ID)
+	if err != nil {
+		return err
+	}
+	defer release()
+	cal = lockedCal
 	if cal.AccountID == 0 {
 		return nil
 	}
@@ -163,9 +332,9 @@ func (s *Service) Disconnect(ctx context.Context, cal Calendar, credStore auth.C
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	qtx := s.q.WithTx(tx)
-	if err := qtx.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{ID: cal.ID}); err != nil {
+	if err := clearCalendarRemoteState(ctx, qtx, cal.ID, false); err != nil {
 		_ = tx.Rollback()
-		return fmt.Errorf("unlink calendar: %w", err)
+		return err
 	}
 
 	var deleteCredential bool
@@ -202,10 +371,11 @@ func (s *Service) Disconnect(ctx context.Context, cal Calendar, credStore auth.C
 // so the database never observes a missing default. Pass newDefaultID = 0
 // when the target is not the default.
 func (s *Service) DeleteWithRemoteCleanup(ctx context.Context, id, newDefaultID int64, credStore auth.CredentialStore) error {
-	cal, err := s.Get(ctx, id)
+	cal, release, err := s.lockRemoteLifecycle(ctx, id)
 	if err != nil {
 		return err
 	}
+	defer release()
 
 	count, err := s.q.CountCalendars(ctx)
 	if err != nil {

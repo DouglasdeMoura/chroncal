@@ -100,7 +100,7 @@ func (m SidebarModel) SetMiniMonth(mm MiniMonthModel) SidebarModel {
 func (m SidebarModel) SetSize(w, h int) SidebarModel {
 	m.width = w
 	m.height = h
-	m.list = m.list.SetWidth(w)
+	m.list = m.list.SetSize(w, max(0, h-10))
 	return m
 }
 

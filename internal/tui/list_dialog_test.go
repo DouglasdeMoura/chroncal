@@ -49,6 +49,30 @@ func TestListDialog_MoveDownClampsAtBottom(t *testing.T) {
 	}
 }
 
+func TestListDialog_DisabledRowsAreNotSelectable(t *testing.T) {
+	m := makeListDialogFixture().
+		SetRows([]string{"Available", "Work", "Already Added", "Personal", "Unavailable"}).
+		SetDisabledRows([]int{0, 2, 4})
+
+	if got := m.Selected(); got != 1 {
+		t.Fatalf("initial selection = %d, want first selectable row 1", got)
+	}
+	m = m.MoveDown()
+	if got := m.Selected(); got != 3 {
+		t.Errorf("MoveDown selection = %d, want 3 after skipping disabled row", got)
+	}
+	m = m.MoveUp()
+	if got := m.Selected(); got != 1 {
+		t.Errorf("MoveUp selection = %d, want 1 after skipping disabled row", got)
+	}
+
+	before := m.Selected()
+	m = m.ClickRow(2)
+	if got := m.Selected(); got != before {
+		t.Errorf("ClickRow(disabled) selection = %d, want unchanged %d", got, before)
+	}
+}
+
 func TestListDialog_TabCyclesThroughEveryAction(t *testing.T) {
 	m := makeListDialogFixture()
 	if got := m.FocusZone(); got != ListZoneList {
@@ -110,12 +134,100 @@ func TestListDialog_ActivateFocusedReturnsActionMsg(t *testing.T) {
 	}
 }
 
+func TestListDialog_DisabledActionsCannotReceiveFocusOrActivate(t *testing.T) {
+	m := makeListDialogFixture().SetActions([]ListDialogAction{
+		{Label: "Add", Disabled: true, Msg: func() tea.Msg { return "add" }},
+		{Label: "Cancel", Msg: func() tea.Msg { return "cancel" }},
+	})
+
+	m = m.CycleZone(true)
+	if got := m.FocusedAction(); got != 1 {
+		t.Fatalf("Tab focused action %d, want enabled action 1", got)
+	}
+	cmd := m.ActivateFocused()
+	if cmd == nil || cmd() != "cancel" {
+		t.Fatal("enabled Cancel action did not activate")
+	}
+
+	m = m.FocusAction(0)
+	if got := m.FocusedAction(); got != 1 {
+		t.Errorf("FocusAction(disabled) focused action = %d, want unchanged 1", got)
+	}
+
+	m, cmd = m.ClickAction(0)
+	if cmd != nil {
+		t.Fatal("ClickAction(disabled) returned a command")
+	}
+	if got := m.FocusedAction(); got != 1 {
+		t.Errorf("ClickAction(disabled) focused action = %d, want unchanged 1", got)
+	}
+
+	m = m.SetActions([]ListDialogAction{{Label: "Unavailable", Disabled: true}})
+	if got := m.FocusedAction(); got != -1 {
+		t.Fatalf("all-disabled focused action = %d, want -1", got)
+	}
+	m = m.SetActions([]ListDialogAction{{Label: "Done", Msg: func() tea.Msg { return "done" }}})
+	if got := m.FocusedAction(); got != 0 {
+		t.Errorf("re-enabled focused action = %d, want 0", got)
+	}
+}
+
 func TestListDialog_ViewContainsTitleAndRows(t *testing.T) {
 	m := makeListDialogFixture()
 	out := m.View()
 	for _, want := range []string{"Calendars", "Work", "Personal", "Family", "New", "Edit", "Delete"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("View() missing %q\n---\n%s\n---", want, out)
+		}
+	}
+}
+
+func TestListDialog_TitleContextSharesTitleRowAndLeavesSubtitleBlank(t *testing.T) {
+	m := makeListDialogFixture().SetTitleContext("Google · me@example.com")
+	lines := strings.Split(stripANSI(m.View()), "\n")
+
+	titleRow := -1
+	for idx, line := range lines {
+		if strings.Contains(line, "Calendars") {
+			titleRow = idx
+			if !strings.Contains(line, "Google · me@example.com") {
+				t.Fatalf("title context is not on the title row:\n%s", stripANSI(m.View()))
+			}
+			if !strings.HasSuffix(line, "Google · me@example.com  │") {
+				t.Errorf("title context is not flush-right inside the dialog: %q", line)
+			}
+			break
+		}
+	}
+	if titleRow < 0 {
+		t.Fatalf("title row not found:\n%s", stripANSI(m.View()))
+	}
+	if titleRow+1 >= len(lines) {
+		t.Fatal("title row has no following line")
+	}
+	if strings.TrimSpace(strings.Trim(lines[titleRow+1], "│")) != "" {
+		t.Errorf("line below the title is not blank: %q", lines[titleRow+1])
+	}
+}
+
+func TestListDialog_TitleContextTruncatesBeforeTitleAction(t *testing.T) {
+	action := ListDialogAction{Label: "New", Msg: func() tea.Msg { return "new" }}
+	m := makeListDialogFixture().
+		SetSize(50, 20).
+		SetTitleContext("An exceptionally long account identity that cannot fit").
+		SetTitleAction(&action)
+	view := m.View()
+	plain := stripANSI(view)
+
+	if !strings.Contains(plain, "Calendars") || !strings.Contains(plain, "New") {
+		t.Fatalf("narrow title lost its title or action:\n%s", plain)
+	}
+	if strings.Contains(plain, "An exceptionally long account identity that cannot fit") {
+		t.Errorf("title context was not truncated:\n%s", plain)
+	}
+	for lineNumber, line := range strings.Split(view, "\n") {
+		if got := lipgloss.Width(line); got > 50 {
+			t.Errorf("rendered line %d is %d columns wide, max 50:\n%s", lineNumber+1, got, plain)
 		}
 	}
 }

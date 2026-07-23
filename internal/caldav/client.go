@@ -3,6 +3,7 @@ package caldav
 import (
 	"bytes"
 	"context"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -24,6 +25,8 @@ type RemoteCalendar struct {
 	Path                  string
 	Name                  string
 	Description           string
+	Color                 string
+	Access                CalendarAccess
 	SupportedComponentSet []string // e.g. ["VEVENT", "VTODO", "VJOURNAL"]
 }
 
@@ -100,6 +103,14 @@ func NewBearerAuthClient(endpoint, token string) (*Client, error) {
 }
 
 // DiscoverCalendars finds the user's calendars on the server.
+//
+// Calendar inventory and all per-calendar metadata (display name, color,
+// access privileges, supported components) are fetched in a single Depth:1
+// PROPFIND on the calendar-home-set. This avoids an N+1 round trip where each
+// discovered calendar would otherwise need its own Depth:0 PROPFIND to pick up
+// calendar-color and current-user-privilege-set, which the go-webdav
+// collection listing does not request. Properties absent from a server's
+// response fall back to best-effort zero values (empty color, Unknown access).
 func (c *Client) DiscoverCalendars(ctx context.Context) ([]RemoteCalendar, error) {
 	principal, err := c.inner.FindCurrentUserPrincipal(ctx)
 	if err != nil {
@@ -111,21 +122,129 @@ func (c *Client) DiscoverCalendars(ctx context.Context) ([]RemoteCalendar, error
 		return nil, fmt.Errorf("find calendar home set: %w", err)
 	}
 
-	found, err := c.inner.FindCalendars(ctx, homeSet)
+	found, err := propfindCalendarCollections(ctx, c.httpClient, c.ResolveURL(homeSet))
 	if err != nil {
 		return nil, fmt.Errorf("find calendars: %w", err)
 	}
 
-	out := make([]RemoteCalendar, len(found))
-	for i, cal := range found {
-		out[i] = RemoteCalendar{
-			Path:                  cal.Path,
+	out := make([]RemoteCalendar, 0, len(found))
+	for _, cal := range found {
+		path, err := c.CanonicalCollectionRef(cal.Path)
+		if err != nil {
+			return nil, fmt.Errorf("canonicalize discovered calendar %q: %w", cal.Path, err)
+		}
+		out = append(out, RemoteCalendar{
+			Path:                  path,
 			Name:                  cal.Name,
 			Description:           cal.Description,
+			Color:                 cal.Color,
+			Access:                cal.Access,
 			SupportedComponentSet: cal.SupportedComponentSet,
-		}
+		})
 	}
 	return out, nil
+}
+
+// propfindCalendarCollections issues a single Depth:1 PROPFIND on the calendar
+// home set, requesting display name, description, color, ACL, and supported
+// components for every descendant calendar collection in one round trip.
+// Servers that omit calendar-color or current-user-privilege-set leave those
+// fields as zero values, so discovery degrades gracefully.
+func propfindCalendarCollections(ctx context.Context, httpClient webdav.HTTPClient, homeSetURL string) ([]RemoteCalendar, error) {
+	const body = `<?xml version="1.0" encoding="utf-8"?>
+<d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:ic="http://apple.com/ns/ical/">
+  <d:prop>
+    <d:resourcetype/>
+    <d:displayname/>
+    <c:calendar-description/>
+    <c:supported-calendar-component-set/>
+    <ic:calendar-color/>
+    <d:current-user-privilege-set/>
+  </d:prop>
+</d:propfind>`
+
+	req, err := http.NewRequestWithContext(ctx, "PROPFIND", homeSetURL, strings.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("new discovery PROPFIND request: %w", err)
+	}
+	req.Header.Set("Depth", "1")
+	req.Header.Set("Content-Type", "application/xml; charset=utf-8")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("discover calendars: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusMultiStatus {
+		return nil, httpError(resp)
+	}
+
+	var ms verifyMultiStatus
+	if err := xml.NewDecoder(resp.Body).Decode(&ms); err != nil {
+		return nil, fmt.Errorf("decode discovery PROPFIND response: %w", err)
+	}
+
+	out := make([]RemoteCalendar, 0, len(ms.Responses))
+	for _, r := range ms.Responses {
+		if len(r.PropStats) == 0 {
+			continue
+		}
+		isCalendar := false
+		remote := RemoteCalendar{}
+		for _, ps := range r.PropStats {
+			if code := parseStatusCode(ps.Status); code < 200 || code >= 300 {
+				continue
+			}
+			if remote.Name == "" {
+				remote.Name = strings.TrimSpace(ps.Prop.DisplayName)
+			}
+			if remote.Description == "" {
+				remote.Description = strings.TrimSpace(ps.Prop.CalendarDescription)
+			}
+			if remote.Color == "" {
+				remote.Color = NormalizeCalendarColor(ps.Prop.CalendarColor)
+			}
+			if len(remote.SupportedComponentSet) == 0 {
+				remote.SupportedComponentSet = componentNames(ps.Prop.SupportedComponents)
+			}
+			// calendarAccessFromPrivileges never returns "", so the first
+			// successful propstat wins — matching the verify path.
+			if remote.Access == "" {
+				remote.Access = calendarAccessFromPrivileges(ps.Prop.CurrentPrivileges)
+			}
+			if ps.Prop.ResourceType.Calendar != nil {
+				isCalendar = true
+			}
+		}
+		if !isCalendar {
+			continue
+		}
+		if remote.Access == "" {
+			remote.Access = CalendarAccessUnknown
+		}
+		remote.Path = r.Href
+		out = append(out, remote)
+	}
+	return out, nil
+}
+
+// componentNames flattens a supported-calendar-component-set into the component
+// names a calendar accepts (e.g. VEVENT, VTODO). Returns nil when none are
+// advertised so the caller can distinguish "no components" from "VEVENT only".
+func componentNames(set verifySupportedCalendarComponentSet) []string {
+	if len(set.Components) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(set.Components))
+	for _, comp := range set.Components {
+		if name := strings.TrimSpace(comp.Name); name != "" {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	return names
 }
 
 // GetResources fetches full iCal data for a set of hrefs via calendar-multiget.

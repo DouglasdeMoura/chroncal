@@ -9,10 +9,25 @@ import (
 	"context"
 )
 
+const advanceCurrentCredentialAccountWatermark = `-- name: AdvanceCurrentCredentialAccountWatermark :exec
+UPDATE credential_locations
+SET max_account_id = MAX(max_account_id, ?)
+WHERE location = (
+    SELECT current_location
+    FROM credential_namespace
+    WHERE id = 1
+)
+`
+
+func (q *Queries) AdvanceCurrentCredentialAccountWatermark(ctx context.Context, max interface{}) error {
+	_, err := q.db.ExecContext(ctx, advanceCurrentCredentialAccountWatermark, max)
+	return err
+}
+
 const createAccount = `-- name: CreateAccount :one
-INSERT INTO accounts (name, server_url, auth_type, username)
-VALUES (?, ?, ?, ?)
-RETURNING id, name, server_url, auth_type, username, created_at, updated_at
+INSERT INTO accounts (name, server_url, auth_type, username, display_order)
+VALUES (?, ?, ?, ?, COALESCE((SELECT MAX(display_order) + 1 FROM accounts), 0))
+RETURNING id, name, server_url, auth_type, username, created_at, updated_at, display_order
 `
 
 type CreateAccountParams struct {
@@ -38,6 +53,7 @@ func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) (A
 		&i.Username,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DisplayOrder,
 	)
 	return i, err
 }
@@ -52,7 +68,7 @@ func (q *Queries) DeleteAccount(ctx context.Context, id int64) error {
 }
 
 const getAccount = `-- name: GetAccount :one
-SELECT id, name, server_url, auth_type, username, created_at, updated_at FROM accounts WHERE id = ?
+SELECT id, name, server_url, auth_type, username, created_at, updated_at, display_order FROM accounts WHERE id = ?
 `
 
 func (q *Queries) GetAccount(ctx context.Context, id int64) (Account, error) {
@@ -66,12 +82,13 @@ func (q *Queries) GetAccount(ctx context.Context, id int64) (Account, error) {
 		&i.Username,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DisplayOrder,
 	)
 	return i, err
 }
 
 const getAccountByName = `-- name: GetAccountByName :one
-SELECT id, name, server_url, auth_type, username, created_at, updated_at FROM accounts WHERE name = ? LIMIT 1
+SELECT id, name, server_url, auth_type, username, created_at, updated_at, display_order FROM accounts WHERE name = ? LIMIT 1
 `
 
 func (q *Queries) GetAccountByName(ctx context.Context, name string) (Account, error) {
@@ -85,12 +102,13 @@ func (q *Queries) GetAccountByName(ctx context.Context, name string) (Account, e
 		&i.Username,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DisplayOrder,
 	)
 	return i, err
 }
 
 const listAccounts = `-- name: ListAccounts :many
-SELECT id, name, server_url, auth_type, username, created_at, updated_at FROM accounts ORDER BY name
+SELECT id, name, server_url, auth_type, username, created_at, updated_at, display_order FROM accounts ORDER BY display_order, id
 `
 
 func (q *Queries) ListAccounts(ctx context.Context) ([]Account, error) {
@@ -110,6 +128,7 @@ func (q *Queries) ListAccounts(ctx context.Context) ([]Account, error) {
 			&i.Username,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.DisplayOrder,
 		); err != nil {
 			return nil, err
 		}
@@ -122,6 +141,20 @@ func (q *Queries) ListAccounts(ctx context.Context) ([]Account, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const setAccountDisplayOrder = `-- name: SetAccountDisplayOrder :exec
+UPDATE accounts SET display_order = ? WHERE id = ?
+`
+
+type SetAccountDisplayOrderParams struct {
+	DisplayOrder int64
+	ID           int64
+}
+
+func (q *Queries) SetAccountDisplayOrder(ctx context.Context, arg SetAccountDisplayOrderParams) error {
+	_, err := q.db.ExecContext(ctx, setAccountDisplayOrder, arg.DisplayOrder, arg.ID)
+	return err
 }
 
 const updateAccount = `-- name: UpdateAccount :exec

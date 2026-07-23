@@ -1125,22 +1125,19 @@ func TestCalendarDialogRendering(t *testing.T) {
 	}
 }
 
-func TestCalendarDialogRendering_SyncOnHTTPChecked(t *testing.T) {
+func TestAccountDialogRendering_HTTPChecked(t *testing.T) {
 	theme := Theme{}
-	m := NewCalendarDialogModel(CalendarDialogParams{Color: "#a6e3a1"}, theme)
-	m = m.SetSize(120, 40)
+	m := NewAccountDialogModel(theme).SetSize(120, 40)
 
-	// Enable Sync, set a non-localhost URL, check the HTTP box.
+	// Set a non-localhost URL and check the HTTP box.
 	rebuild := func() {
 		if m.form.onRebuild != nil {
 			m.form.onRebuild(&m.form)
 		}
 	}
-	m.form.Field(cdIdxSync).(*CheckboxField).Toggle()
+	m.form.Field(calDAVIdxServer).(*TextField).SetValue("https://cal.example.com/dav/")
 	rebuild()
-	m.form.Field(cdIdxRemoteURL).(*TextField).SetValue("https://cal.example.com/dav/")
-	rebuild()
-	m.form.Field(cdIdxAllowInsecure).(*CheckboxField).Toggle()
+	m.form.Field(calDAVIdxAllowInsecure).(*CheckboxField).Toggle()
 	rebuild()
 
 	assert.Contains(t, m.form.View(), "unencrypted", "warning appears when checked")
@@ -1155,17 +1152,25 @@ func TestCalendarDialogRendering_SyncOnHTTPChecked(t *testing.T) {
 func TestCalendarDialogRendering_EditLinked(t *testing.T) {
 	theme := Theme{}
 	m := NewCalendarDialogModel(CalendarDialogParams{
-		ID:             7,
-		Name:           "Work",
-		Color:          "#a6e3a1",
-		RemoteURL:      "https://cal.example.com/dav/calendars/work/",
-		RemoteLinked:   true,
-		RemoteAuthType: "basic",
-		RemoteUsername: "alice",
-	}, theme)
-	m = m.SetSize(120, 40)
+		ID:           7,
+		AccountID:    3,
+		AccountName:  "Work Account",
+		Name:         "Work",
+		Color:        "#a6e3a1",
+		RemoteLinked: true,
+	}, theme).SetSize(120, 40)
 
 	v := m.View()
-	assert.Contains(t, v, "Disconnect")
-	assert.Contains(t, v, "cal.example.com")
+	assert.Contains(t, v, "Account")
+	assert.Contains(t, v, "Work Account ›")
+	// Account calendars have no Delete: the footnote explains ownership and
+	// points at the local alternative instead.
+	assert.NotContains(t, v, "Delete Calendar…")
+	assert.Contains(t, v, "lives in your Work Account account")
+	assert.Contains(t, v, "Turn off Display calendar")
+	assert.Contains(t, v, "Account › Manage Calendars")
+	assert.NotContains(t, v, "Export Calendar…") // manager-only affordance
+	assert.NotContains(t, v, "Manage Account…")
+	assert.NotContains(t, v, "Disconnect…")
+	assert.NotContains(t, v, "cal.example.com")
 }

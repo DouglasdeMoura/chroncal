@@ -1686,6 +1686,11 @@ type FormItem struct {
 	Required        bool
 	LabelLayout     *LabelLayout // nil = use the form-level default
 	ShowFocusMarker *bool        // nil = use the form-level default
+	// AlignToFieldColumn indents an empty-label inline row to the shared
+	// field column, so a control without its own label (e.g. a checkbox)
+	// lines up under the neighbouring fields instead of hugging the left
+	// edge. Ignored when the row has a label or the layout is LabelTop.
+	AlignToFieldColumn bool
 }
 
 // ButtonVariant selects which style pair a button uses.
@@ -1791,12 +1796,15 @@ func DefaultFormStyles() FormStyles {
 // FormActionButton is an optional third button between Submit and Cancel.
 // When Leading is true, the button renders flush-left in the button row
 // (typically used for destructive actions that need visual distance
-// from the primary action).
+// from the primary action). Utility lifts the button onto a quieter tier
+// above the commit row instead, for secondary actions that are neither
+// destructive nor part of committing the form.
 type FormActionButton struct {
 	Label   string
 	Variant ButtonVariant
 	OnPress func() tea.Msg
 	Leading bool
+	Utility bool
 }
 
 // Form manages a list of form fields with focus cycling, validation,
@@ -1944,6 +1952,23 @@ func (f Form) fieldParts() []string {
 
 	for i, item := range f.items {
 		if _, isStatic := item.Field.(*StaticField); isStatic {
+			// A labeled static joins the shared inline label column like any
+			// other row (e.g. the calendar detail's "Location  Local");
+			// unlabeled statics stay full-width status/footnote lines.
+			layout := f.styles.LabelLayout
+			if item.LabelLayout != nil {
+				layout = *item.LabelLayout
+			}
+			if item.Label != "" && (layout == LabelInline || layout == LabelInlineRight) {
+				showMarker := f.styles.ShowFocusMarker
+				if item.ShowFocusMarker != nil {
+					showMarker = *item.ShowFocusMarker
+				}
+				label := f.renderInlineLabel(item, maxLabelLen, requiredPad, layout == LabelInlineRight)
+				marker := f.focusMarkerFor(false, showMarker)
+				parts = append(parts, lipgloss.JoinHorizontal(lipgloss.Top, label+" "+marker, item.Field.View()))
+				continue
+			}
 			parts = append(parts, item.Field.View())
 			continue
 		}
@@ -1974,7 +1999,11 @@ func (f Form) fieldParts() []string {
 		var row string
 		switch {
 		case (layout == LabelInline || layout == LabelInlineRight) && item.Label == "":
-			row = lipgloss.JoinHorizontal(lipgloss.Top, marker, field)
+			indent := ""
+			if item.AlignToFieldColumn && maxLabelLen > 0 {
+				indent = strings.Repeat(" ", maxLabelLen+requiredPad+1)
+			}
+			row = lipgloss.JoinHorizontal(lipgloss.Top, indent+marker, field)
 		case layout == LabelInline:
 			label := mouseMark(target, f.renderInlineLabel(item, maxLabelLen, requiredPad, false))
 			row = lipgloss.JoinHorizontal(lipgloss.Top, label+" "+marker, field)
@@ -1998,6 +2027,7 @@ func (f Form) fieldParts() []string {
 
 func (f Form) buttonRow() string {
 	bs := f.styles.Buttons
+	utilParts := make([]string, 0, len(f.actionButtons))
 	leadParts := make([]string, 0, len(f.actionButtons))
 	rightParts := make([]string, 0, len(f.actionButtons)+2)
 	submitStyle := bs.Get(f.submitVariant)
@@ -2005,9 +2035,12 @@ func (f Form) buttonRow() string {
 	for i, ab := range f.actionButtons {
 		style := bs.Get(ab.Variant)
 		btn := mouseMark(actionTarget(i), style.Render(ab.Label, f.focused == f.actionIndex(i)))
-		if ab.Leading {
+		switch {
+		case ab.Utility:
+			utilParts = append(utilParts, btn)
+		case ab.Leading:
 			leadParts = append(leadParts, btn)
-		} else {
+		default:
 			rightParts = append(rightParts, btn)
 		}
 	}
@@ -2020,44 +2053,44 @@ func (f Form) buttonRow() string {
 	// buttons align relative to the container, not the field rows. Fall
 	// back to the natural content width when no explicit width is set.
 	alignWidth := f.buttonAlignWidth()
-
-	var buttons string
-	if len(leadParts) > 0 {
-		leadGroup := lipgloss.JoinHorizontal(lipgloss.Top, leadParts...)
-		needed := lipgloss.Width(leadGroup) + lipgloss.Width(rightGroup)
-		if alignWidth > 0 && needed+1 > alignWidth {
-			// The action set doesn't fit beside Submit/Cancel. Degrade to
-			// two rows instead of letting the container wrap the joined
-			// line mid-pill: leading actions spread across their own row
-			// (space-between, so e.g. three actions sit left / centered /
-			// right), a blank line for breathing room, then Submit/Cancel
-			// aligned on their own row.
-			right := rightGroup
-			if f.styles.ButtonAlign != ButtonAlignLeft {
-				align := lipgloss.Right
-				if f.styles.ButtonAlign == ButtonAlignCenter {
-					align = lipgloss.Center
-				}
-				right = lipgloss.NewStyle().Width(alignWidth).Align(align).Render(rightGroup)
-			}
-			buttons = spreadRow(leadParts, alignWidth) + "\n\n" + right
-		} else {
-			spacerW := max(alignWidth-lipgloss.Width(leadGroup)-lipgloss.Width(rightGroup), 1)
-			spacer := lipgloss.NewStyle().Width(spacerW).Render("")
-			buttons = leadGroup + spacer + rightGroup
-		}
-	} else {
-		buttons = rightGroup
+	rightAligned := func(s string) string {
 		if alignWidth > 0 && f.styles.ButtonAlign != ButtonAlignLeft {
 			align := lipgloss.Right
 			if f.styles.ButtonAlign == ButtonAlignCenter {
 				align = lipgloss.Center
 			}
-			buttons = lipgloss.NewStyle().Width(alignWidth).Align(align).Render(buttons)
+			return lipgloss.NewStyle().Width(alignWidth).Align(align).Render(s)
 		}
+		return s
 	}
 
-	return buttons
+	// Commit row: leading (non-utility) actions sit flush-left beside the
+	// right-aligned commit controls — the sheet's bottom-left corner, the
+	// canonical spot for a destructive action. When the row cannot fit them
+	// without wrapping a pill, they degrade into the utility tier instead.
+	commit := rightAligned(rightGroup)
+	if len(leadParts) > 0 {
+		leadGroup := lipgloss.JoinHorizontal(lipgloss.Top, leadParts...)
+		needed := lipgloss.Width(leadGroup) + lipgloss.Width(rightGroup)
+		if alignWidth > 0 && needed+1 > alignWidth {
+			utilParts = append(utilParts, leadParts...)
+		} else {
+			spacerW := max(alignWidth-lipgloss.Width(leadGroup)-lipgloss.Width(rightGroup), 1)
+			commit = leadGroup + lipgloss.NewStyle().Width(spacerW).Render("") + rightGroup
+		}
+	}
+	if len(utilParts) == 0 {
+		return commit
+	}
+
+	// Utility tier: secondary actions on their own quieter row above the
+	// commit controls, side by side when they fit and stacked one per line
+	// otherwise, so a rich set never overflows the dialog width.
+	tier := lipgloss.JoinHorizontal(lipgloss.Top, utilParts...)
+	if alignWidth > 0 && lipgloss.Width(tier) > alignWidth {
+		tier = strings.Join(utilParts, "\n")
+	}
+	return tier + "\n\n" + commit
 }
 
 func (f Form) buttonAlignWidth() int {
@@ -2137,40 +2170,6 @@ func (f Form) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
-// spreadRow lays parts out across width with space-between justification:
-// the first part flush left, the last flush right, the rest spaced evenly
-// in between (three parts read as left / center / right). Falls back to
-// single-space gaps when the parts don't fit.
-func spreadRow(parts []string, width int) string {
-	if len(parts) == 1 {
-		return parts[0]
-	}
-	total := 0
-	for _, p := range parts {
-		total += lipgloss.Width(p)
-	}
-	gaps := len(parts) - 1
-	space := width - total
-	if space < gaps {
-		// Too tight to justify; keep the pills readable with minimal gaps.
-		return strings.Join(parts, " ")
-	}
-	base := space / gaps
-	extra := space % gaps
-	var b strings.Builder
-	for i, p := range parts {
-		if i > 0 {
-			gap := base
-			if i <= extra {
-				gap++
-			}
-			b.WriteString(strings.Repeat(" ", gap))
-		}
-		b.WriteString(p)
-	}
-	return b.String()
-}
-
 // SetActionButton adds an action button. Can be called multiple times to
 // add several buttons between Submit and Cancel.
 func (f *Form) SetActionButton(label string, variant ButtonVariant, onPress func() tea.Msg) {
@@ -2189,6 +2188,14 @@ func (f *Form) ClearActionButtons() {
 // actions whose placement should not invite misclicks on the primary action.
 func (f *Form) SetLeadingActionButton(label string, variant ButtonVariant, onPress func() tea.Msg) {
 	f.actionButtons = append(f.actionButtons, FormActionButton{Label: label, Variant: variant, OnPress: onPress, Leading: true})
+}
+
+// SetUtilityActionButton adds a secondary action to the quiet utility tier
+// above the commit row: utilities render side by side when they fit the form
+// width and stack vertically otherwise. Utility buttons take Leading focus
+// order, so Tab visits them before the commit controls.
+func (f *Form) SetUtilityActionButton(label string, variant ButtonVariant, onPress func() tea.Msg) {
+	f.actionButtons = append(f.actionButtons, FormActionButton{Label: label, Variant: variant, OnPress: onPress, Leading: true, Utility: true})
 }
 
 func (f *Form) SetCancelVariant(v ButtonVariant) {
@@ -2547,14 +2554,24 @@ func (f Form) focusPrev() (Form, tea.Cmd) {
 	return f.skipToFocusable(-1)
 }
 
+// Blur removes keyboard focus from every field and button so the form renders
+// as an inert preview while input is owned elsewhere (e.g. the Calendars
+// manager's root selection preview). The next focus cycle re-enters at the
+// first focusable item.
+func (f Form) Blur() Form {
+	f.blurCurrent()
+	f.focused = -1
+	return f
+}
+
 func (f Form) blurCurrent() {
-	if f.focused < len(f.items) {
+	if f.focused >= 0 && f.focused < len(f.items) {
 		f.items[f.focused].Field.Blur()
 	}
 }
 
 func (f Form) focusCurrent() tea.Cmd {
-	if f.focused < len(f.items) {
+	if f.focused >= 0 && f.focused < len(f.items) {
 		return f.items[f.focused].Field.Focus()
 	}
 	return nil
@@ -2724,6 +2741,23 @@ func (f Form) actionIndex(i int) int {
 func (f Form) cancelIndex() int { return len(f.items) + 1 + len(f.actionButtons) }
 
 func (f Form) totalCount() int { return f.cancelIndex() + 1 }
+
+// FirstFocusable returns the first focus slot Tab visits: the first focusable
+// field, or the first button slot when no field is focusable. Hosts use the
+// boundary slots to hand Tab traversal back to surrounding controls instead
+// of wrapping inside the form.
+func (f Form) FirstFocusable() int {
+	for i, item := range f.items {
+		if item.Field.IsFocusable() {
+			return i
+		}
+	}
+	return len(f.items)
+}
+
+// LastFocusable returns the final focus slot in the Tab order: the Cancel
+// button, which every form places last.
+func (f Form) LastFocusable() int { return f.cancelIndex() }
 
 // Helpers
 

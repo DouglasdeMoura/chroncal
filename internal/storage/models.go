@@ -5,13 +5,14 @@
 package storage
 
 type Account struct {
-	ID        int64
-	Name      string
-	ServerUrl string
-	AuthType  string
-	Username  string
-	CreatedAt string
-	UpdatedAt string
+	ID           int64
+	Name         string
+	ServerUrl    string
+	AuthType     string
+	Username     string
+	CreatedAt    string
+	UpdatedAt    string
+	DisplayOrder int64
 }
 
 type AlarmState struct {
@@ -43,6 +44,21 @@ type Calendar struct {
 	OwnerEmail          string
 	IsDefault           int64
 	DisplayOrder        int64
+	RemoteName          string
+	RemoteAccess        string
+	RemoteComponents    string
+	RemoteMissing       int64
+}
+
+type CredentialLocation struct {
+	Location     string
+	MaxAccountID int64
+}
+
+type CredentialNamespace struct {
+	ID              int64
+	Namespace       string
+	CurrentLocation string
 }
 
 type Event struct {

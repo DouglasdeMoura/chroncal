@@ -16,10 +16,11 @@ import (
 
 // ListDialogAction is a button rendered in the detail-pane action bar.
 type ListDialogAction struct {
-	Label   string
-	Msg     func() tea.Msg
-	Danger  bool
-	Primary bool
+	Label    string
+	Msg      func() tea.Msg
+	Danger   bool
+	Primary  bool
+	Disabled bool
 }
 
 // ListDialogKeys is the minimal key map the shell understands. Callers embed
@@ -81,9 +82,15 @@ const (
 // Everything else (selection tint, scroll, zone cycling, hit-testing) lives
 // here so each dialog collapses to its domain concerns.
 type ListDialogModel struct {
-	title         string
-	titleAction   *ListDialogAction
-	rows          []string
+	title        string
+	titleContext string
+
+	subtitle string
+
+	titleAction *ListDialogAction
+	rows        []string
+	rowDisabled []bool
+
 	detailTitle   string
 	detailLines   []string
 	emptyList     string
@@ -136,18 +143,24 @@ func (m ListDialogModel) SetSize(w, h int) ListDialogModel {
 	m.syncBody()
 	return m
 }
-func (m ListDialogModel) SetTitle(t string) ListDialogModel { m.title = t; return m }
+func (m ListDialogModel) SetTitle(t string) ListDialogModel    { m.title = t; return m }
+func (m ListDialogModel) SetSubtitle(s string) ListDialogModel { m.subtitle = s; return m }
+func (m ListDialogModel) SetTitleContext(s string) ListDialogModel {
+	m.titleContext = s
+	return m
+}
 
 // SetTitleAction installs a right-aligned button on the title line, or clears
 // it when a is nil. Use for creation actions ("New", …) that belong to the
 // dialog as a whole rather than the currently selected row.
 func (m ListDialogModel) SetTitleAction(a *ListDialogAction) ListDialogModel {
 	m.titleAction = a
-	if a == nil && m.focusZone == ListZoneTitleAction {
+	if (a == nil || a.Disabled) && m.focusZone == ListZoneTitleAction {
 		m.focusZone = ListZoneList
 	}
 	return m
 }
+
 func (m ListDialogModel) SetSelectedColor(c color.Color) ListDialogModel {
 	m.selectedColor = c
 	return m
@@ -155,27 +168,75 @@ func (m ListDialogModel) SetSelectedColor(c color.Color) ListDialogModel {
 
 // SetRows replaces the list rows. The caller is responsible for pre-rendering
 // each row (swatch, time prefix, …). Scroll and selection are clamped.
+// Disabled-row state is cleared because it belongs to the row set.
 // Doesn't touch the body viewport: rows live in the left column only,
 // while the body shows the right-column details. Other setters
 // (SetDetailLines, SetActions, SetDetailTitle, SetEmptyList, SetSize)
 // trigger syncBody when they actually need it.
 func (m ListDialogModel) SetRows(rows []string) ListDialogModel {
 	m.rows = rows
+	m.rowDisabled = nil
 	if m.selected >= len(rows) {
 		m.selected = max(len(rows)-1, 0)
 	}
 	return m
 }
 
-// SetSelected moves the selection to idx (clamped). The detail viewport
-// scrolls back to the top when the selection actually changes so a freshly
-// selected row's content starts from line one.
+// SetDisabledRows marks structural or unavailable rows as non-selectable.
+// Keyboard and mouse navigation skip them while the labels remain visible.
+func (m ListDialogModel) SetDisabledRows(indices []int) ListDialogModel {
+	m.rowDisabled = make([]bool, len(m.rows))
+	for _, idx := range indices {
+		if idx >= 0 && idx < len(m.rowDisabled) {
+			m.rowDisabled[idx] = true
+		}
+	}
+	if m.rowIsDisabled(m.selected) {
+		m.selected = m.firstSelectableRow()
+		m.body.GotoTop()
+	}
+	return m
+}
+
+func (m ListDialogModel) rowIsDisabled(idx int) bool {
+	return idx >= 0 && idx < len(m.rowDisabled) && m.rowDisabled[idx]
+}
+
+func (m ListDialogModel) firstSelectableRow() int {
+	for idx := range m.rows {
+		if !m.rowIsDisabled(idx) {
+			return idx
+		}
+	}
+	return 0
+}
+
+// SetSelected moves the selection to idx (clamped). Disabled rows resolve to
+// the next selectable row, then the previous one when there is none below.
+// The detail viewport scrolls back to the top when the selection changes.
 func (m ListDialogModel) SetSelected(idx int) ListDialogModel {
 	if idx < 0 {
 		idx = 0
 	}
 	if idx >= len(m.rows) {
 		idx = max(len(m.rows)-1, 0)
+	}
+	if m.rowIsDisabled(idx) {
+		next := idx + 1
+		for next < len(m.rows) && m.rowIsDisabled(next) {
+			next++
+		}
+		if next < len(m.rows) {
+			idx = next
+		} else {
+			previous := idx - 1
+			for previous >= 0 && m.rowIsDisabled(previous) {
+				previous--
+			}
+			if previous >= 0 {
+				idx = previous
+			}
+		}
 	}
 	if idx != m.selected {
 		m.body.GotoTop()
@@ -242,14 +303,24 @@ func (m ListDialogModel) SetEmptyList(listMsg string, details []string) ListDial
 // SetActions replaces the action-bar buttons and clamps the focused index.
 func (m ListDialogModel) SetActions(actions []ListDialogAction) ListDialogModel {
 	m.actions = actions
-	if m.focusedAction >= len(actions) {
-		m.focusedAction = max(len(actions)-1, 0)
+	if m.focusedAction < 0 || m.focusedAction >= len(actions) || actions[m.focusedAction].Disabled {
+		m.focusedAction = m.firstEnabledAction()
 	}
-	if m.focusZone == ListZoneActions && len(actions) == 0 {
+
+	if m.focusZone == ListZoneActions && m.firstEnabledAction() < 0 {
 		m.focusZone = ListZoneList
 	}
 	m.syncBody()
 	return m
+}
+
+func (m ListDialogModel) firstEnabledAction() int {
+	for idx, action := range m.actions {
+		if !action.Disabled {
+			return idx
+		}
+	}
+	return -1
 }
 
 // syncBody pushes the current detail dimensions and content into the body
@@ -337,71 +408,80 @@ func (m ListDialogModel) boxSize() (int, int) {
 
 func (m ListDialogModel) isNarrow() bool { return m.width < narrowThreshold }
 
-// MoveUp/MoveDown advance the selection inside the list zone. No-ops when the
-// list is empty or the focus is elsewhere. Selection-change resets the detail
-// viewport scroll so the new row's content starts from the top.
+// MoveUp/MoveDown advance to the next selectable row inside the list zone.
+// They no-op when the list is empty or focus is elsewhere. Selection changes
+// reset the detail viewport so the new row starts from the top.
 func (m ListDialogModel) MoveUp() ListDialogModel {
-	if m.focusZone == ListZoneList && m.selected > 0 {
-		m.selected--
-		m.body.GotoTop()
+	if m.focusZone != ListZoneList {
+		return m
+	}
+	for idx := m.selected - 1; idx >= 0; idx-- {
+		if !m.rowIsDisabled(idx) {
+			m.selected = idx
+			m.body.GotoTop()
+			break
+		}
 	}
 	return m
 }
 
 func (m ListDialogModel) MoveDown() ListDialogModel {
-	if m.focusZone == ListZoneList && m.selected < len(m.rows)-1 {
-		m.selected++
-		m.body.GotoTop()
+	if m.focusZone != ListZoneList {
+		return m
+	}
+	for idx := m.selected + 1; idx < len(m.rows); idx++ {
+		if !m.rowIsDisabled(idx) {
+			m.selected = idx
+			m.body.GotoTop()
+			break
+		}
 	}
 	return m
 }
 
-// CycleZone advances focus to the next (or previous) focusable element in
-// the dialog — the list, each individual action button, and the title
-// action button — so Tab walks every control the way a webpage would. The
-// cycle order is: list → actions[0] → … → actions[n-1] → title action (if
-// present) → list.
+// CycleZone advances focus to the next (or previous) enabled control. Disabled
+// action buttons remain visible but do not participate in the Tab order.
 func (m ListDialogModel) CycleZone(forward bool) ListDialogModel {
-	total := 1 + len(m.actions)
-	if m.titleAction != nil {
-		total++
+	type focusStop struct {
+		zone   ListDialogZone
+		action int
 	}
-	if total == 1 {
+	stops := []focusStop{{zone: ListZoneList}}
+	for idx, action := range m.actions {
+		if !action.Disabled {
+			stops = append(stops, focusStop{zone: ListZoneActions, action: idx})
+		}
+	}
+	if m.titleAction != nil && !m.titleAction.Disabled {
+		stops = append(stops, focusStop{zone: ListZoneTitleAction})
+	}
+	if len(stops) == 1 {
 		m.focusZone = ListZoneList
 		return m
 	}
 
-	cur := 0
-	switch m.focusZone {
-	case ListZoneActions:
-		cur = 1 + m.focusedAction
-	case ListZoneTitleAction:
-		cur = 1 + len(m.actions)
-	case ListZoneList, ListZoneCustom:
-		cur = 0
+	current := 0
+	for idx, stop := range stops {
+		if stop.zone == m.focusZone && (stop.zone != ListZoneActions || stop.action == m.focusedAction) {
+			current = idx
+			break
+		}
 	}
-
 	delta := 1
 	if !forward {
 		delta = -1
 	}
-	next := (cur + delta + total) % total
-
-	switch {
-	case next == 0:
-		m.focusZone = ListZoneList
-	case next <= len(m.actions):
-		m.focusZone = ListZoneActions
-		m.focusedAction = next - 1
-	default:
-		m.focusZone = ListZoneTitleAction
+	next := stops[(current+delta+len(stops))%len(stops)]
+	m.focusZone = next.zone
+	if next.zone == ListZoneActions {
+		m.focusedAction = next.action
 	}
 	return m
 }
 
-// FocusAction focuses the action bar and sets the focused button index.
+// FocusAction focuses an enabled action-bar button.
 func (m ListDialogModel) FocusAction(idx int) ListDialogModel {
-	if idx < 0 || idx >= len(m.actions) {
+	if idx < 0 || idx >= len(m.actions) || m.actions[idx].Disabled {
 		return m
 	}
 	m.focusZone = ListZoneActions
@@ -414,11 +494,12 @@ func (m ListDialogModel) FocusAction(idx int) ListDialogModel {
 func (m ListDialogModel) ActivateFocused() tea.Cmd {
 	switch m.focusZone {
 	case ListZoneActions:
-		if m.focusedAction >= 0 && m.focusedAction < len(m.actions) {
+		if m.focusedAction >= 0 && m.focusedAction < len(m.actions) &&
+			!m.actions[m.focusedAction].Disabled {
 			return m.actions[m.focusedAction].Msg
 		}
 	case ListZoneTitleAction:
-		if m.titleAction != nil {
+		if m.titleAction != nil && !m.titleAction.Disabled {
 			return m.titleAction.Msg
 		}
 	case ListZoneList, ListZoneCustom:
@@ -461,10 +542,11 @@ func (m ListDialogModel) RowAtPosition(x, y int) (int, bool) {
 	}
 
 	idx := m.scroll + row
-	if idx < 0 || idx >= len(m.rows) {
+	if idx < 0 || idx >= len(m.rows) || m.rowIsDisabled(idx) {
 		return 0, false
 	}
 	return idx, true
+
 }
 
 // ActionAtPosition hit-tests the action bar. Returns the clicked button index.
@@ -499,7 +581,7 @@ func (m ListDialogModel) ActionAtPosition(x, y int) (int, bool) {
 // scroll on selection change so the freshly clicked row's content starts at
 // the top.
 func (m ListDialogModel) ClickRow(idx int) ListDialogModel {
-	if idx < 0 || idx >= len(m.rows) {
+	if idx < 0 || idx >= len(m.rows) || m.rowIsDisabled(idx) {
 		return m
 	}
 	if idx != m.selected {
@@ -510,9 +592,9 @@ func (m ListDialogModel) ClickRow(idx int) ListDialogModel {
 	return m
 }
 
-// ClickAction focuses the action bar at idx and returns its command.
+// ClickAction focuses an enabled action and returns its command.
 func (m ListDialogModel) ClickAction(idx int) (ListDialogModel, tea.Cmd) {
-	if idx < 0 || idx >= len(m.actions) {
+	if idx < 0 || idx >= len(m.actions) || m.actions[idx].Disabled {
 		return m, nil
 	}
 	m.focusZone = ListZoneActions
@@ -604,8 +686,9 @@ func (m ListDialogModel) View() string {
 	// strings and skip the global measurement pass entirely.
 	blank := strings.Repeat(" ", innerW)
 	contentLines := make([]string, 0, innerH)
-	contentLines = append(contentLines, title, blank)
+	contentLines = append(contentLines, title, m.renderSubtitle(innerW))
 	contentLines = append(contentLines, strings.Split(body, "\n")...)
+
 	contentLines = append(contentLines, blank, helpText)
 	return framedDialog(boxW, contentLines)
 }
@@ -803,16 +886,18 @@ func (m ListDialogModel) renderActions(w int) string {
 	bs := DefaultButtonStyles()
 	parts := make([]string, len(m.actions))
 	for i, a := range m.actions {
-		focused := m.focusZone == ListZoneActions && i == m.focusedAction
+		focused := !a.Disabled && m.focusZone == ListZoneActions && i == m.focusedAction
 		switch {
 		case a.Danger:
 			parts[i] = bs.Danger.Render(a.Label, focused)
-		case a.Primary:
-			parts[i] = bs.Normal.Render(a.Label, focused)
 		default:
 			parts[i] = bs.Normal.Render(a.Label, focused)
 		}
+		if a.Disabled {
+			parts[i] = lipgloss.NewStyle().Faint(true).Render(parts[i])
+		}
 	}
+
 	out := truncateTo(strings.Join(parts, " "), w)
 	if m.cache != nil {
 		m.cache.actionsKey = key
@@ -890,6 +975,10 @@ func (m ListDialogModel) actionsCacheKey(w int) uint64 {
 		if a.Primary {
 			flags |= 2
 		}
+		if a.Disabled {
+			flags |= 4
+		}
+
 		h.Write([]byte{flags, 0})
 	}
 	return h.Sum64()
@@ -972,21 +1061,50 @@ func (m ListDialogModel) bodyOverflows() bool {
 	return m.body.TotalLineCount() > m.body.VisibleLineCount()
 }
 
-// renderTitleRow composes the bold title with the optional right-aligned
-// title-action button, falling back to just the title when no action is set.
+func (m ListDialogModel) renderSubtitle(innerW int) string {
+	return lipgloss.NewStyle().
+		Faint(true).
+		Width(innerW).
+		Render(truncateTo(m.subtitle, innerW))
+}
+
+// renderTitleRow composes the bold title with optional quiet context and an
+// optional action at the right edge. Context truncates before either control.
 func (m ListDialogModel) renderTitleRow(innerW int) string {
-	if m.titleAction == nil {
-		return lipgloss.NewStyle().Bold(true).Width(innerW).Render(m.title)
+	var button string
+	if m.titleAction != nil {
+		focused := !m.titleAction.Disabled && m.focusZone == ListZoneTitleAction
+		button = renderTitleActionButton(*m.titleAction, focused)
 	}
-	focused := m.focusZone == ListZoneTitleAction
-	btn := renderTitleActionButton(*m.titleAction, focused)
-	btnW := lipgloss.Width(btn)
-	titleW := max(innerW-btnW, 0)
-	titleStr := lipgloss.NewStyle().
+
+	buttonW := lipgloss.Width(button)
+	titleNeed := min(lipgloss.Width(m.title), max(innerW-buttonW, 0))
+	contextBudget := max(innerW-buttonW-titleNeed, 0)
+	context := ""
+	if m.titleContext != "" {
+		separatorW := 2
+		if button != "" {
+			separatorW++
+		}
+		if contextBudget > separatorW {
+			context = truncateTo(m.titleContext, contextBudget-separatorW)
+		}
+	}
+
+	right := button
+	if context != "" {
+		renderedContext := lipgloss.NewStyle().Faint(true).Render(context)
+		right = "  " + renderedContext
+		if button != "" {
+			right += " " + button
+		}
+	}
+	titleW := max(innerW-lipgloss.Width(right), 0)
+	title := lipgloss.NewStyle().
 		Bold(true).
 		Width(titleW).
 		Render(truncateTo(m.title, titleW))
-	return lipgloss.JoinHorizontal(lipgloss.Top, titleStr, btn)
+	return lipgloss.JoinHorizontal(lipgloss.Top, title, right)
 }
 
 // renderTitleActionButton renders a title-line button without the trailing
@@ -995,16 +1113,20 @@ func (m ListDialogModel) renderTitleRow(innerW int) string {
 func renderTitleActionButton(a ListDialogAction, focused bool) string {
 	bs := DefaultButtonStyles().Normal
 	style := bs.Normal
-	if focused {
+	if focused && !a.Disabled {
 		style = bs.Focused
 	}
-	return style.UnsetMarginRight().Render(a.Label)
+	out := style.UnsetMarginRight().Render(a.Label)
+	if a.Disabled {
+		out = lipgloss.NewStyle().Faint(true).Render(out)
+	}
+	return out
 }
 
 // TitleActionAtPosition reports whether (x, y) lies within the title-line
 // action button and, if so, returns its command.
 func (m ListDialogModel) TitleActionAtPosition(x, y int) (tea.Cmd, bool) {
-	if m.titleAction == nil || m.width <= 0 || m.height <= 0 {
+	if m.titleAction == nil || m.titleAction.Disabled || m.width <= 0 || m.height <= 0 {
 		return nil, false
 	}
 	boxW, boxH := m.boxSize()

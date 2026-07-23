@@ -43,6 +43,11 @@ func (s *Service) PushCalendar(ctx context.Context, calendarID int64, strategy C
 	return s.engine.PushCalendar(ctx, calendarID, strategy)
 }
 
+// SyncAccount syncs all calendars linked to one account.
+func (s *Service) SyncAccount(ctx context.Context, accountID int64, strategy ConflictStrategy) ([]*SyncResult, error) {
+	return s.engine.SyncAccount(ctx, accountID, strategy)
+}
+
 // SyncAll syncs all calendars linked to accounts.
 func (s *Service) SyncAll(ctx context.Context, strategy ConflictStrategy) ([]*SyncResult, error) {
 	return s.engine.SyncAll(ctx, strategy)
@@ -149,6 +154,15 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 	if err != nil {
 		return fmt.Errorf("get conflict: %w", err)
 	}
+	release, err := s.engine.lockCalendarLifecycle(ctx, conflict.CalendarID)
+	if err != nil {
+		return fmt.Errorf("lock conflict calendar lifecycle: %w", err)
+	}
+	defer release()
+	conflict, err = s.q.GetSyncConflict(ctx, conflictID)
+	if err != nil {
+		return fmt.Errorf("revalidate conflict: %w", err)
+	}
 
 	// serverRev captures the sync_resources rev right after the accept-server
 	// import so the dirty clear below can be made conditional on it (see the
@@ -249,21 +263,32 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 // ResetCalendar clears all sync state for a calendar without deleting local data.
 // The next sync will perform a full initial sync.
 func (s *Service) ResetCalendar(ctx context.Context, calendarID int64) error {
-	if err := s.q.DeleteSyncResourcesByCalendar(ctx, calendarID); err != nil {
+	release, err := s.engine.lockCalendarLifecycle(ctx, calendarID)
+	if err != nil {
+		return fmt.Errorf("lock calendar reset lifecycle: %w", err)
+	}
+	defer release()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin calendar reset: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+	if err := qtx.DeleteSyncResourcesByCalendar(ctx, calendarID); err != nil {
 		return fmt.Errorf("delete sync resources: %w", err)
 	}
-	if err := s.q.DeleteTombstonesByCalendar(ctx, calendarID); err != nil {
+	if err := qtx.DeleteTombstonesByCalendar(ctx, calendarID); err != nil {
 		return fmt.Errorf("delete tombstones: %w", err)
 	}
-	if err := s.q.DeleteSyncConflictsByCalendar(ctx, calendarID); err != nil {
+	if err := qtx.DeleteSyncConflictsByCalendar(ctx, calendarID); err != nil {
 		return fmt.Errorf("delete conflicts: %w", err)
 	}
-	if err := s.q.UpdateCalendarSyncState(ctx, storage.UpdateCalendarSyncStateParams{
+	if err := qtx.UpdateCalendarSyncState(ctx, storage.UpdateCalendarSyncStateParams{
 		ID: calendarID,
 	}); err != nil {
 		return fmt.Errorf("clear sync state: %w", err)
 	}
-	return nil
+	return tx.Commit()
 }
 
 func parseTime(s string) time.Time {

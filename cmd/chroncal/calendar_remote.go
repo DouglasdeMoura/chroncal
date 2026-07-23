@@ -63,7 +63,7 @@ func validateCalendarRemoteFlags(remoteURL, username, authType, oauthClientID st
 }
 
 func connectCalendarRemote(ctx context.Context, a *app.App, cal calendarpkg.Calendar, flags calendarRemoteFlags) error {
-	credStore, err := newCalendarCredentialStore(a.AllowPlaintext)
+	credStore, err := newCalendarCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
 	if err != nil {
 		return fmt.Errorf("credential store: %w", err)
 	}
@@ -86,21 +86,23 @@ func connectCalendarRemote(ctx context.Context, a *app.App, cal calendarpkg.Cale
 	metaCancel()
 
 	return a.Calendars.Connect(ctx, cal, calendarpkg.RemoteLink{
-		RemoteURL:     flags.RemoteURL,
-		Username:      flags.Username,
-		AuthType:      flags.AuthType,
-		AllowInsecure: flags.AllowInsecure,
-		RemoteColor:   meta.Color,
+		RemoteURL:        flags.RemoteURL,
+		Username:         flags.Username,
+		AuthType:         flags.AuthType,
+		AllowInsecure:    flags.AllowInsecure,
+		RemoteColor:      meta.Color,
+		RemoteAccess:     string(meta.Access),
+		RemoteComponents: meta.SupportedComponents,
 	}, cred, credStore)
 }
 
 func disconnectCalendarRemote(ctx context.Context, a *app.App, cal calendarpkg.Calendar) error {
-	credStore, _ := newCalendarCredentialStore(a.AllowPlaintext)
+	credStore, _ := newCalendarCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
 	return a.Calendars.Disconnect(ctx, cal, credStore)
 }
 
 func deleteCalendarWithCleanup(ctx context.Context, a *app.App, id, newDefaultID int64) error {
-	credStore, _ := newCalendarCredentialStore(a.AllowPlaintext)
+	credStore, _ := newCalendarCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
 	return a.Calendars.DeleteWithRemoteCleanup(ctx, id, newDefaultID, credStore)
 }
 
@@ -115,13 +117,11 @@ func buildCalendarCredential(ctx context.Context, flags calendarRemoteFlags) (au
 		}
 		return auth.Credential{Username: flags.Username, AccessToken: token}, nil
 	case "basic":
-		fmt.Print("Password: ")
-		passwordBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
-		fmt.Println()
+		password, err := readBasicPassword()
 		if err != nil {
-			return auth.Credential{}, fmt.Errorf("read password: %w", err)
+			return auth.Credential{}, err
 		}
-		return auth.Credential{Username: flags.Username, Password: string(passwordBytes)}, nil
+		return auth.Credential{Username: flags.Username, Password: password}, nil
 	case "oauth2":
 		clientSecret, err := readGoogleClientSecret()
 		if err != nil {
@@ -146,6 +146,32 @@ func buildCalendarCredential(ctx context.Context, flags calendarRemoteFlags) (au
 
 func normalizeAuthType(authType string) string {
 	return calendarpkg.NormalizeAuthType(authType)
+}
+
+// readBasicPassword obtains the password for --auth basic. We never accept it
+// as a CLI flag to avoid exposing secrets in /proc/<pid>/cmdline and shell
+// history. Sources, in order:
+//
+//  1. CHRONCAL_PASSWORD env var (handy for scripted/CI setup).
+//  2. Interactive prompt via terminal (echo disabled).
+func readBasicPassword() (string, error) {
+	if s := os.Getenv("CHRONCAL_PASSWORD"); s != "" {
+		return s, nil
+	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return "", fmt.Errorf("a password is required: set CHRONCAL_PASSWORD or run interactively")
+	}
+	fmt.Print("Password: ")
+	passwordBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Println()
+	if err != nil {
+		return "", fmt.Errorf("read password: %w", err)
+	}
+	password := string(passwordBytes)
+	if password == "" {
+		return "", fmt.Errorf("password is required")
+	}
+	return password, nil
 }
 
 // readBearerToken obtains the bearer token for --auth bearer. We never accept
