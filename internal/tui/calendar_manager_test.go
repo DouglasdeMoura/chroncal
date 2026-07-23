@@ -725,8 +725,8 @@ func TestCalendarManagerRootSpaceTogglesBothDirections(t *testing.T) {
 	if !m1.hidden[2] {
 		t.Error("local hidden state not flipped to true")
 	}
-	if row := managerCalendarLine(t, m1, 2); !strings.HasPrefix(row, Glyphs["checkbox.off"]+" ●") {
-		t.Errorf("row did not flip to unchecked visibility: %q", row)
+	if row := managerCalendarLine(t, m1, 2); !strings.HasPrefix(row, "○") {
+		t.Errorf("row did not flip to the hidden outline circle: %q", row)
 	}
 	// Hidden -> visible.
 	m2, cmd := m1.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
@@ -740,8 +740,8 @@ func TestCalendarManagerRootSpaceTogglesBothDirections(t *testing.T) {
 	if m2.hidden[2] {
 		t.Error("local hidden state not flipped back to false")
 	}
-	if row := managerCalendarLine(t, m2, 2); !strings.HasPrefix(row, Glyphs["checkbox.on"]+" ●") {
-		t.Errorf("row did not flip back to checked visibility: %q", row)
+	if row := managerCalendarLine(t, m2, 2); !strings.HasPrefix(row, "●") {
+		t.Errorf("row did not flip back to the filled visibility circle: %q", row)
 	}
 }
 
@@ -1277,7 +1277,7 @@ func TestCalendarManagerRootGroupsAccountsAndShowsInspector(t *testing.T) {
 	view := stripANSI(m.View())
 	for _, want := range []string{
 		"Local", "Google", "Fastmail",
-		Glyphs["checkbox.on"] + " ● Primary",
+		"● Primary",
 		"Location", "Google", "Edit…",
 	} {
 		if !strings.Contains(view, want) {

@@ -157,7 +157,6 @@ func NewCalendarManagerModel(calendars map[int64]CalendarInfo, hidden map[int64]
 		help:      h,
 	}
 	m.list = NewCalendarListModel(sortedCalendarListItems(calendars), hidden).
-		WithCheckboxVisibility().
 		WithoutDisclosure().
 		WithInactiveSelection(m.theme.ButtonBg, oklch.ContrastingFg(m.theme.ButtonBg)).
 		SetTheme(m.theme.Selected, m.theme.Muted, m.theme.Text, m.theme.SelectedText, m.theme.Error).

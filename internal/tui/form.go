@@ -1686,6 +1686,11 @@ type FormItem struct {
 	Required        bool
 	LabelLayout     *LabelLayout // nil = use the form-level default
 	ShowFocusMarker *bool        // nil = use the form-level default
+	// AlignToFieldColumn indents an empty-label inline row to the shared
+	// field column, so a control without its own label (e.g. a checkbox)
+	// lines up under the neighbouring fields instead of hugging the left
+	// edge. Ignored when the row has a label or the layout is LabelTop.
+	AlignToFieldColumn bool
 }
 
 // ButtonVariant selects which style pair a button uses.
@@ -1975,7 +1980,11 @@ func (f Form) fieldParts() []string {
 		var row string
 		switch {
 		case (layout == LabelInline || layout == LabelInlineRight) && item.Label == "":
-			row = lipgloss.JoinHorizontal(lipgloss.Top, marker, field)
+			indent := ""
+			if item.AlignToFieldColumn && maxLabelLen > 0 {
+				indent = strings.Repeat(" ", maxLabelLen+requiredPad+1)
+			}
+			row = lipgloss.JoinHorizontal(lipgloss.Top, indent+marker, field)
 		case layout == LabelInline:
 			label := mouseMark(target, f.renderInlineLabel(item, maxLabelLen, requiredPad, false))
 			row = lipgloss.JoinHorizontal(lipgloss.Top, label+" "+marker, field)
