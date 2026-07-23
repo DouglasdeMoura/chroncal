@@ -1966,7 +1966,7 @@ func TestCalendarManagerRootFocusKeepsSelectionVisibleInactive(t *testing.T) {
 	// while blurred is the neutral inactive highlight.
 	header := newFlatManager().SetTheme(theme)
 	header.list.selectIdentity(calendarRowIdentity{kind: accountHeaderRow, id: 7}) // Google
-	header = header.applyRootFocus()                                              // list focused, cursor on header
+	header = header.applyRootFocus()                                               // list focused, cursor on header
 	if out := header.list.View(); strings.Contains(out, "48;2;108;92;231") {
 		t.Fatalf("focused account header must not paint the inactive background: %q", out)
 	}
