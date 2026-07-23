@@ -325,8 +325,8 @@ func TestCalendarManagerRootCloseEmitsClosedMsg(t *testing.T) {
 }
 
 // TestCalendarManagerAddMenuOpensViaKeyAndClick verifies that both the `a` key
-// and a click on the source + Add action open the manager-local menu and emit
-// no app command.
+// and a click on the source + Add action open the manager-local menu, emit no
+// app command, and put root focus on the + Add action.
 func TestCalendarManagerAddMenuOpensViaKeyAndClick(t *testing.T) {
 	t.Run("key", func(t *testing.T) {
 		m := newFlatManager()
@@ -336,6 +336,9 @@ func TestCalendarManagerAddMenuOpensViaKeyAndClick(t *testing.T) {
 		}
 		if !opened.addMenuOpen {
 			t.Fatal("`a` did not open the add menu")
+		}
+		if opened.rootFocus != rootFocusAdd {
+			t.Fatalf("opening via `a` left root focus %v, want add", opened.rootFocus)
 		}
 	})
 	t.Run("click", func(t *testing.T) {
@@ -350,6 +353,9 @@ func TestCalendarManagerAddMenuOpensViaKeyAndClick(t *testing.T) {
 		}
 		if !opened.addMenuOpen {
 			t.Fatal("clicking + Add did not open the menu")
+		}
+		if opened.rootFocus != rootFocusAdd {
+			t.Fatalf("opening via click left root focus %v, want add", opened.rootFocus)
 		}
 	})
 }
@@ -410,8 +416,88 @@ func TestCalendarManagerAddMenuKeyboardClampsAndActivates(t *testing.T) {
 	}
 }
 
+// TestCalendarManagerAddMenuTabShiftTabWrapCursor verifies Tab advances the
+// menu cursor one row and wraps last→first, Shift-Tab reverses and wraps
+// first→last, and neither key leaks into the root focus ring or the list
+// selection underneath.
+func TestCalendarManagerAddMenuTabShiftTabWrapCursor(t *testing.T) {
+	m := newFlatManager()
+	before, _ := m.selectedID()
+	m = m.openAddMenu()
+	if m.addMenuCursor != 0 {
+		t.Fatalf("precondition: cursor=%d want 0", m.addMenuCursor)
+	}
+
+	// Forward: 0 → 1 → 2 → 0 (wraps last→first).
+	for i, want := range []int{1, 2, 0} {
+		next, _ := m.Update(managerTabKey(false))
+		m = next
+		if m.addMenuCursor != want {
+			t.Fatalf("forward tab step %d: cursor=%d want %d", i, m.addMenuCursor, want)
+		}
+		if !m.addMenuOpen {
+			t.Fatalf("forward tab step %d closed the menu", i)
+		}
+	}
+
+	// Reverse: 0 → 2 → 1 → 0 (wraps first→last).
+	for i, want := range []int{2, 1, 0} {
+		next, _ := m.Update(managerTabKey(true))
+		m = next
+		if m.addMenuCursor != want {
+			t.Fatalf("reverse shift+tab step %d: cursor=%d want %d", i, m.addMenuCursor, want)
+		}
+		if !m.addMenuOpen {
+			t.Fatalf("reverse shift+tab step %d closed the menu", i)
+		}
+	}
+
+	// Tab/Shift-Tab must stay inside the menu: no root focus cycle and no
+	// selection change in the underlying list.
+	if m.rootFocus != rootFocusAdd {
+		t.Fatalf("menu tab moved root focus: got %v want add", m.rootFocus)
+	}
+	if after, _ := m.selectedID(); after != before {
+		t.Fatalf("menu tab changed the list selection: before=%d after=%d", before, after)
+	}
+}
+
+// TestCalendarManagerAddMenuSpaceActivatesTarget verifies Space activates the
+// selected menu row, emits the same typed target as Enter, and closes the
+// menu — routing through the shared activation binding rather than a
+// menu-specific key code, so Space and Enter stay in lockstep.
+func TestCalendarManagerAddMenuSpaceActivatesTarget(t *testing.T) {
+	space := tea.KeyPressMsg{Code: ' ', Text: " "}
+	want := []CalendarManagerTarget{
+		CalendarManagerTargetLocalCreate,
+		CalendarManagerTargetAccountConnect,
+		CalendarManagerTargetImport,
+	}
+	for row, target := range want {
+		m := newFlatManager().openAddMenu()
+		// Walk to the target row with Down so the assertion is independent
+		// of the default cursor position.
+		for range row {
+			m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		}
+		activated, cmd := m.Update(space)
+		if cmd == nil {
+			t.Fatalf("row %d: Space emitted no command", row)
+		}
+		msg, ok := cmd().(CalendarManagerRequestedMsg)
+		if !ok || msg.Target != target {
+			t.Fatalf("row %d Space target = %v, want %v", row, cmd(), target)
+		}
+		if activated.addMenuOpen {
+			t.Errorf("row %d: menu still open after Space", row)
+		}
+	}
+}
+
 // TestCalendarManagerAddMenuRowClickEmitsTarget verifies clicking each interior
-// menu row emits the correct typed target and closes the menu.
+// menu row emits the correct typed target, closes the menu, and leaves root
+// focus on + Add so the return-to-root (after the host pushes a screen) lands
+// back on the action.
 func TestCalendarManagerAddMenuRowClickEmitsTarget(t *testing.T) {
 	want := []CalendarManagerTarget{
 		CalendarManagerTargetLocalCreate,
@@ -428,6 +514,9 @@ func TestCalendarManagerAddMenuRowClickEmitsTarget(t *testing.T) {
 		}
 		if clicked.addMenuOpen {
 			t.Errorf("row %d: menu still open after click", row)
+		}
+		if clicked.rootFocus != rootFocusAdd {
+			t.Errorf("row %d: click left root focus %v, want add", row, clicked.rootFocus)
 		}
 	}
 }
@@ -452,6 +541,9 @@ func TestCalendarManagerAddMenuOutsideClickDismissesWithoutClickThrough(t *testi
 	if after, _ := clicked.selectedID(); after != before {
 		t.Fatalf("outside click changed selection: before=%d after=%d", before, after)
 	}
+	if clicked.rootFocus != rootFocusAdd {
+		t.Fatalf("outside click left root focus %v, want add", clicked.rootFocus)
+	}
 }
 
 // TestCalendarManagerAddMenuEscDismissesWithoutClosingManager verifies Esc
@@ -467,6 +559,9 @@ func TestCalendarManagerAddMenuEscDismissesWithoutClosingManager(t *testing.T) {
 	}
 	if dismissed.Screen() != CalendarManagerScreenList {
 		t.Fatal("Esc dismissed the manager instead of the menu")
+	}
+	if dismissed.rootFocus != rootFocusAdd {
+		t.Fatalf("Esc left root focus %v, want add", dismissed.rootFocus)
 	}
 }
 
