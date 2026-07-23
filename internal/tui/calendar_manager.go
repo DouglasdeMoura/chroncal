@@ -166,7 +166,7 @@ func NewCalendarManagerModel(calendars map[int64]CalendarInfo, hidden map[int64]
 		WithInactiveSelection(m.theme.ButtonBg, oklch.ContrastingFg(m.theme.ButtonBg)).
 		SetTheme(m.theme.Selected, m.theme.Muted, m.theme.Text, m.theme.SelectedText, m.theme.Error).
 		Focus()
-	m = m.rebuild().sizeList()
+	m = m.rebuild()
 	if len(m.list.items) > 0 {
 		m = m.selectCalendar(m.list.items[0].ID)
 	}
@@ -400,7 +400,9 @@ func (m CalendarManagerModel) SetData(calendars map[int64]CalendarInfo, hidden m
 		m = m.selectCalendar(m.pendingSelectionID)
 		m.pendingSelectionID = 0
 	}
-	return m.sizeList().normalizeRootFocus()
+	// rebuild already re-sized the list; selection moves don't change pane
+	// geometry, so only the focus ring needs normalizing here.
+	return m.normalizeRootFocus()
 }
 
 func (m CalendarManagerModel) hasCalendar(id int64) bool {
@@ -503,12 +505,25 @@ func (m CalendarManagerModel) inspectorFocusAvailable() bool {
 	if _, ok := m.selectionInspectorAction(); ok {
 		return true
 	}
+	_, _, ok := m.selectedCalendar()
+	return ok
+}
+
+// selectedCalendar resolves the root selection to an existing calendar: its
+// immutable ID and info, with ok false for account/spacer/missing selections.
+func (m CalendarManagerModel) selectedCalendar() (int64, CalendarInfo, bool) {
 	identity, ok := m.list.currentIdentity()
 	if !ok || identity.kind != calendarRow {
-		return false
+		return 0, CalendarInfo{}, false
 	}
-	_, exists := m.calendars[identity.id]
-	return exists
+	info, exists := m.calendars[identity.id]
+	return identity.id, info, exists
+}
+
+// openSelectedCalendar pushes the edit form for an existing calendar row,
+// wiring its current visibility into the params.
+func (m CalendarManagerModel) openSelectedCalendar(id int64, info CalendarInfo) CalendarManagerModel {
+	return m.OpenCalendar(calendarDialogParamsFor(id, info, m.hidden[id]))
 }
 
 // cycleRootFocus moves root focus one step around the available ring. Forward
@@ -545,16 +560,11 @@ func (m CalendarManagerModel) advanceRootFocus(forward bool) (CalendarManagerMod
 	if m.rootFocus != rootFocusInspector {
 		return m, nil
 	}
-	identity, ok := m.list.currentIdentity()
-	if !ok || identity.kind != calendarRow {
+	id, info, ok := m.selectedCalendar()
+	if !ok {
 		return m, nil
 	}
-	info, exists := m.calendars[identity.id]
-	if !exists {
-		return m, nil
-	}
-	m = m.setRootFocus(rootFocusList)
-	return m.OpenCalendar(calendarDialogParamsFor(identity.id, info, m.hidden[identity.id])), nil
+	return m.setRootFocus(rootFocusList).openSelectedCalendar(id, info), nil
 }
 
 // normalizeRootFocus drops root focus back to the list when its target is no
@@ -754,10 +764,8 @@ func (m CalendarManagerModel) handleKey(msg tea.KeyPressMsg) (CalendarManagerMod
 	// internally (unchanged routing); non-calendar rows fall through to the
 	// list's own Open handling.
 	if m.rootFocus == rootFocusList && key.Matches(msg, m.keys.Open) {
-		identity, ok := m.list.currentIdentity()
-		if ok && identity.kind == calendarRow {
-			info := m.calendars[identity.id]
-			return m.OpenCalendar(calendarDialogParamsFor(identity.id, info, m.hidden[identity.id])), nil
+		if id, info, ok := m.selectedCalendar(); ok {
+			return m.openSelectedCalendar(id, info), nil
 		}
 	}
 	// Everything else (arrows, space, collapse/expand) belongs to the list,
@@ -796,10 +804,9 @@ func (m CalendarManagerModel) handleMouse(msg tea.MouseClickMsg) (CalendarManage
 	// pinned action above).
 	if px, py, pw, ph, ok := m.previewPaneRect(); ok &&
 		msg.X >= px && msg.X < px+pw && msg.Y >= py && msg.Y < py+ph {
-		identity, _ := m.list.currentIdentity()
-		info := m.calendars[identity.id]
-		m = m.setRootFocus(rootFocusList)
-		return m.OpenCalendar(calendarDialogParamsFor(identity.id, info, m.hidden[identity.id])), nil
+		if id, info, selOK := m.selectedCalendar(); selOK {
+			return m.setRootFocus(rootFocusList).openSelectedCalendar(id, info), nil
+		}
 	}
 	lx, ly, lw, lh := m.listRegion()
 	if msg.X < lx || msg.X >= lx+lw || msg.Y < ly || msg.Y >= ly+lh {
@@ -817,8 +824,9 @@ func (m CalendarManagerModel) handleMouse(msg tea.MouseClickMsg) (CalendarManage
 		indicatorEnd++
 	}
 	if selected && identity.kind == calendarRow && relX >= indicatorEnd {
-		info := m.calendars[identity.id]
-		return m.OpenCalendar(calendarDialogParamsFor(identity.id, info, m.hidden[identity.id])), nil
+		if id, info, ok := m.selectedCalendar(); ok {
+			return m.openSelectedCalendar(id, info), nil
+		}
 	}
 	return m, cmd
 }
@@ -1121,14 +1129,12 @@ func (m CalendarManagerModel) activeInspectorLines(w, h int) []string {
 // (macOS Settings-style master–detail). Account and empty selections keep
 // the summary header plus one bottom action pinned to the final row.
 func (m CalendarManagerModel) selectionInspectorLines(w, h int) []string {
-	identity, ok := m.list.currentIdentity()
-	if ok && identity.kind == calendarRow {
-		if info, exists := m.calendars[identity.id]; exists {
-			params := calendarDialogParamsFor(identity.id, info, m.hidden[identity.id])
-			preview := NewCalendarDialogModel(params, m.theme).Blur().SetInspectorSize(w, h)
-			return strings.Split(preview.InspectorView(w, h), "\n")
-		}
+	if id, info, ok := m.selectedCalendar(); ok {
+		params := calendarDialogParamsFor(id, info, m.hidden[id])
+		preview := NewCalendarDialogModel(params, m.theme).Blur().SetInspectorSize(w, h)
+		return strings.Split(preview.InspectorView(w, h), "\n")
 	}
+	identity, ok := m.list.currentIdentity()
 	faint := lipgloss.NewStyle().Foreground(m.theme.Muted)
 	labelWidth := min(10, max(7, w/4))
 	action, hasAction := m.selectionInspectorAction()
