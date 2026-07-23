@@ -2734,6 +2734,23 @@ func (f Form) cancelIndex() int { return len(f.items) + 1 + len(f.actionButtons)
 
 func (f Form) totalCount() int { return f.cancelIndex() + 1 }
 
+// FirstFocusable returns the first focus slot Tab visits: the first focusable
+// field, or the first button slot when no field is focusable. Hosts use the
+// boundary slots to hand Tab traversal back to surrounding controls instead
+// of wrapping inside the form.
+func (f Form) FirstFocusable() int {
+	for i, item := range f.items {
+		if item.Field.IsFocusable() {
+			return i
+		}
+	}
+	return len(f.items)
+}
+
+// LastFocusable returns the final focus slot in the Tab order: the Cancel
+// button, which every form places last.
+func (f Form) LastFocusable() int { return f.cancelIndex() }
+
 // Helpers
 
 // focusMarkerFor returns the focus indicator string for a field.
