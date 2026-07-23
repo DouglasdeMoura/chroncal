@@ -363,7 +363,12 @@ func TestCalendarManagerAddMenuOpensViaKeyAndClick(t *testing.T) {
 // TestCalendarManagerAddMenuRowsAndNoCancel verifies the open menu renders the
 // exact three rows and no Cancel affordance.
 func TestCalendarManagerAddMenuRowsAndNoCancel(t *testing.T) {
-	m := newFlatManager().openAddMenu()
+	// Select the Local header so the inspector shows the summary rather than a
+	// calendar edit-form preview, whose own Cancel button would trip the
+	// menu-scoped Cancel assertion below.
+	m := newFlatManager()
+	m.list.selectIdentity(calendarRowIdentity{kind: accountHeaderRow, id: 0})
+	m = m.openAddMenu()
 	view := stripANSI(m.View())
 	for _, want := range []string{"New Calendar…", "Add Account…", "Import Calendar File…"} {
 		if !strings.Contains(view, want) {
@@ -1278,7 +1283,7 @@ func TestCalendarManagerRootGroupsAccountsAndShowsInspector(t *testing.T) {
 	for _, want := range []string{
 		"Local", "Google", "Fastmail",
 		"● Primary",
-		"Location", "Google", "Edit…",
+		"Edit calendar", "Name", "Save",
 	} {
 		if !strings.Contains(view, want) {
 			t.Errorf("manager view missing %q:\n%s", want, view)
@@ -1319,32 +1324,31 @@ func TestCalendarManagerInspectorHeaderIsCalendarsNotAdd(t *testing.T) {
 			t.Fatalf("header couples Calendars and + Add: %q", line)
 		}
 	}
-	_, _, aw, ok := m.inspectorActionRect()
-	if !ok || aw == 0 {
-		t.Fatalf("calendar inspector action missing: ok=%v aw=%d", ok, aw)
+	if _, _, pw, ph, ok := m.previewPaneRect(); !ok || pw == 0 || ph == 0 {
+		t.Fatalf("calendar selection has no preview pane: ok=%v w=%d h=%d", ok, pw, ph)
 	}
 }
 
-// TestCalendarManagerInspectorCalendarShowsDotTitleMetadataAndEditAction
-// verifies a calendar inspector opens with a dot+name title, aligned
-// metadata, and a bottom Edit… action — and no legacy "Enter  Edit Calendar".
-func TestCalendarManagerInspectorCalendarShowsDotTitleMetadataAndEditAction(t *testing.T) {
+// TestCalendarManagerInspectorCalendarShowsEditFormPreview verifies selecting
+// a calendar renders its edit form immediately in the inspector (macOS
+// Settings-style master–detail): fields, Display checkbox, and buttons appear
+// with no Edit… pill and no pinned-action rect in between.
+func TestCalendarManagerInspectorCalendarShowsEditFormPreview(t *testing.T) {
 	m := newFlatManager().selectCalendar(3) // Holidays, Google
 	view := stripANSI(m.View())
-	for _, want := range []string{"● Holidays", "Display", "Location", "Google", "Edit…"} {
+	for _, want := range []string{"Edit calendar", "Name", "Holidays", "Display calendar", "Save"} {
 		if !strings.Contains(view, want) {
-			t.Errorf("calendar inspector missing %q:\n%s", want, view)
+			t.Errorf("calendar preview missing %q:\n%s", want, view)
 		}
 	}
-	if strings.Contains(view, "Enter  Edit Calendar") {
-		t.Errorf("legacy underlined Edit pseudo-link still rendered:\n%s", view)
+	if strings.Contains(view, "Edit…") {
+		t.Errorf("calendar selection must render the form preview, not an Edit… pill:\n%s", view)
 	}
-	ax, ay, aw, ok := m.inspectorActionRect()
-	if !ok {
-		t.Fatal("calendar inspector has no action rect")
+	if _, _, _, ok := m.inspectorActionRect(); ok {
+		t.Fatal("calendar selection must not expose a pinned-action rect")
 	}
-	if ax <= 0 || ay <= 0 || aw <= 0 {
-		t.Fatalf("calendar action rect degenerate: x=%d y=%d w=%d", ax, ay, aw)
+	if _, _, _, _, ok := m.previewPaneRect(); !ok {
+		t.Fatal("calendar selection must expose the preview pane rect")
 	}
 }
 
@@ -1399,29 +1403,30 @@ func TestCalendarManagerInspectorLocalShowsCountWithoutAction(t *testing.T) {
 	}
 }
 
-// TestCalendarManagerInspectorActionClickOpensCalendar verifies clicking the
-// calendar inspector's Edit… button opens the selected calendar's immutable
-// ID internally, and that a click just past the button's right edge does not.
-func TestCalendarManagerInspectorActionClickOpensCalendar(t *testing.T) {
+// TestCalendarManagerPreviewPaneClickOpensCalendar verifies clicking anywhere
+// inside the previewed edit form focuses it — the detail opens for the
+// selected calendar's immutable ID — while a click past the pane's right edge
+// does nothing.
+func TestCalendarManagerPreviewPaneClickOpensCalendar(t *testing.T) {
 	m := newFlatManager().selectCalendar(3)
-	ax, ay, aw, ok := m.inspectorActionRect()
+	px, py, pw, ph, ok := m.previewPaneRect()
 	if !ok {
-		t.Fatal("calendar inspector has no action rect")
+		t.Fatal("calendar selection has no preview pane rect")
 	}
-	clicked, cmd := m.Update(tea.MouseClickMsg{X: ax, Y: ay, Button: tea.MouseLeft})
+	clicked, cmd := m.Update(tea.MouseClickMsg{X: px + pw/2, Y: py + ph/2, Button: tea.MouseLeft})
 	if cmd != nil {
-		t.Fatalf("Edit… click emitted a command %T", cmd())
+		t.Fatalf("preview click emitted a command %T", cmd())
 	}
 	if clicked.Screen() != CalendarManagerScreenCalendar || clicked.calendarForm == nil {
-		t.Fatalf("Edit… click did not open calendar detail: screen=%v form=%v", clicked.Screen(), clicked.calendarForm)
+		t.Fatalf("preview click did not open calendar detail: screen=%v form=%v", clicked.Screen(), clicked.calendarForm)
 	}
 	if got := clicked.calendarForm.Draft().ID; got != 3 {
-		t.Fatalf("Edit… click opened calendar %d, want immutable ID 3", got)
+		t.Fatalf("preview click opened calendar %d, want immutable ID 3", got)
 	}
-	// A click one cell past the button's right edge must not open the detail.
-	missed, _ := m.Update(tea.MouseClickMsg{X: ax + aw, Y: ay, Button: tea.MouseLeft})
+	// A click one cell past the pane's right edge must not open the detail.
+	missed, _ := m.Update(tea.MouseClickMsg{X: px + pw, Y: py, Button: tea.MouseLeft})
 	if missed.calendarForm != nil {
-		t.Fatal("click past the action's right edge opened the calendar detail")
+		t.Fatal("click past the preview pane's right edge opened the calendar detail")
 	}
 }
 
@@ -1452,24 +1457,35 @@ func TestCalendarManagerInspectorAccountActionClickEmitsTarget(t *testing.T) {
 }
 
 // TestCalendarManagerInspectorPadsExactlyHeight verifies the selection
-// inspector composes exactly its height in rows with the action pinned to the
-// last row, so layout never leaves a ragged bottom or pushes the action off.
+// inspector composes exactly its height in rows for both the calendar
+// edit-form preview and the account summary with its pinned action, so layout
+// never leaves a ragged bottom or pushes content off.
 func TestCalendarManagerInspectorPadsExactlyHeight(t *testing.T) {
 	m := newFlatManager().selectCalendar(2)
 	w, h := m.inspectorPaneSize()
 	lines := m.selectionInspectorLines(w, h)
 	if len(lines) != h {
-		t.Fatalf("inspector lines = %d, want exactly %d", len(lines), h)
+		t.Fatalf("calendar preview lines = %d, want exactly %d", len(lines), h)
 	}
-	if !strings.Contains(stripANSI(lines[len(lines)-1]), "Edit…") {
-		t.Fatalf("last inspector row is not the Edit… action: %q", lines[len(lines)-1])
+	if !strings.Contains(stripANSI(strings.Join(lines, "\n")), "Save") {
+		t.Fatal("calendar preview did not render the form's button row")
+	}
+
+	m.list.selectIdentity(calendarRowIdentity{kind: accountHeaderRow, id: 7})
+	lines = m.selectionInspectorLines(w, h)
+	if len(lines) != h {
+		t.Fatalf("account inspector lines = %d, want exactly %d", len(lines), h)
+	}
+	if !strings.Contains(stripANSI(lines[len(lines)-1]), "Account Settings…") {
+		t.Fatalf("last account inspector row is not the pinned action: %q", lines[len(lines)-1])
 	}
 }
 
-// TestCalendarManagerInspectorLongDescriptionKeepsActionPinned verifies a long
-// description is trimmed before the cap so the Edit… action stays on the final
-// row and remains clickable.
-func TestCalendarManagerInspectorLongDescriptionKeepsActionPinned(t *testing.T) {
+// TestCalendarManagerInspectorLongDescriptionKeepsPreviewHeight verifies a
+// long description cannot distort the preview: the form's Description field
+// truncates it, the pane still composes exactly its height, and entering the
+// editor keeps working.
+func TestCalendarManagerInspectorLongDescriptionKeepsPreviewHeight(t *testing.T) {
 	cals := flatManagerCalendars()
 	base := cals[3]
 	base.Description = strings.Repeat("A long calendar description word. ", 80)
@@ -1481,17 +1497,10 @@ func TestCalendarManagerInspectorLongDescriptionKeepsActionPinned(t *testing.T) 
 	if len(lines) != h {
 		t.Fatalf("inspector lines = %d, want exactly %d (description overflowed)", len(lines), h)
 	}
-	if !strings.Contains(stripANSI(lines[len(lines)-1]), "Edit…") {
-		t.Fatalf("long description pushed Edit… off the last row: %q", lines[len(lines)-1])
-	}
 
-	ax, ay, _, ok := m.inspectorActionRect()
-	if !ok {
-		t.Fatal("long-description calendar lost its action rect")
-	}
-	clicked, _ := m.Update(tea.MouseClickMsg{X: ax, Y: ay, Button: tea.MouseLeft})
-	if clicked.calendarForm == nil || clicked.calendarForm.Draft().ID != 3 {
-		t.Fatal("Edit… action not clickable with a long description present")
+	opened, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if opened.calendarForm == nil || opened.calendarForm.Draft().ID != 3 {
+		t.Fatal("editor not reachable with a long description present")
 	}
 }
 
@@ -1501,8 +1510,8 @@ func TestCalendarManagerSelectsFirstCalendarWhenInitialDataLoads(t *testing.T) {
 	if id, ok := m.selectedID(); !ok || id != 1 {
 		t.Fatalf("initial loaded selection = %d ok=%v, want first calendar 1", id, ok)
 	}
-	if view := stripANSI(m.View()); !strings.Contains(view, "Edit…") {
-		t.Fatalf("initial calendar inspector did not render:\n%s", view)
+	if view := stripANSI(m.View()); !strings.Contains(view, "Edit calendar") {
+		t.Fatalf("initial calendar edit-form preview did not render:\n%s", view)
 	}
 }
 
@@ -1613,10 +1622,14 @@ func managerTabKey(shift bool) tea.KeyPressMsg {
 // root Tab cycle visits every focusable control in order — list → + Add →
 // inspector action → list — and Shift-Tab reverses it. Root focus never moves
 // the list cursor, and the list only renders focused while it holds root focus.
-func TestCalendarManagerRootFocusCyclesWideCalendar(t *testing.T) {
-	m := newFlatManager().selectCalendar(3) // Holidays: calendar row with an Edit… action
+// TestCalendarManagerRootFocusCyclesWideAccount verifies the full root ring
+// with a remote account selected: list → + Add → inspector pill → list, both
+// directions, without moving the selection.
+func TestCalendarManagerRootFocusCyclesWideAccount(t *testing.T) {
+	m := newFlatManager()
+	m.list.selectIdentity(calendarRowIdentity{kind: accountHeaderRow, id: 7}) // Google
 	if _, _, _, ok := m.inspectorActionRect(); !ok {
-		t.Fatal("precondition: wide calendar root must have a focusable inspector action")
+		t.Fatal("precondition: wide account root must have a focusable inspector action")
 	}
 
 	// Forward cycle: list → add → inspector → list.
@@ -1638,8 +1651,8 @@ func TestCalendarManagerRootFocusCyclesWideCalendar(t *testing.T) {
 	}
 
 	// The selection cursor is independent of root focus and survives a cycle.
-	if id, ok := m.selectedID(); !ok || id != 3 {
-		t.Fatalf("root focus cycling moved the selection: got %d ok=%v", id, ok)
+	if identity, ok := m.list.currentIdentity(); !ok || identity.id != 7 {
+		t.Fatalf("root focus cycling moved the selection: got %+v ok=%v", identity, ok)
 	}
 	// Returning to the list re-focuses it; tabbing away blurs it.
 	if !m.list.Focused() {
@@ -1648,6 +1661,39 @@ func TestCalendarManagerRootFocusCyclesWideCalendar(t *testing.T) {
 	away, _ := m.Update(managerTabKey(false))
 	if away.list.Focused() {
 		t.Fatal("list should not render focused while + Add holds root focus")
+	}
+}
+
+// TestCalendarManagerRootFocusTabEntersCalendarEditor verifies that with a
+// calendar selected, Tab flows into the previewed edit form like any other
+// control: forward Tab reaches it after + Add, reverse Shift-Tab reaches it
+// directly, and both open the editor with list focus restored for Back.
+func TestCalendarManagerRootFocusTabEntersCalendarEditor(t *testing.T) {
+	// Forward: list → add → editor.
+	m := newFlatManager().selectCalendar(3)
+	m, _ = m.Update(managerTabKey(false))
+	if m.rootFocus != rootFocusAdd || m.Screen() != CalendarManagerScreenList {
+		t.Fatalf("first tab: focus=%v screen=%v, want add at root", m.rootFocus, m.Screen())
+	}
+	m, cmd := m.Update(managerTabKey(false))
+	if cmd != nil {
+		t.Fatalf("entering the editor emitted a command %T", cmd())
+	}
+	if m.Screen() != CalendarManagerScreenCalendar || m.calendarForm == nil {
+		t.Fatalf("second tab did not enter the previewed editor: screen=%v", m.Screen())
+	}
+	if got := m.calendarForm.Draft().ID; got != 3 {
+		t.Fatalf("tab entered calendar %d, want immutable ID 3", got)
+	}
+	if m.rootFocus != rootFocusList {
+		t.Fatalf("root focus = %v after entering editor, want list for Back", m.rootFocus)
+	}
+
+	// Reverse: Shift-Tab from the list wraps straight into the editor.
+	m = newFlatManager().selectCalendar(3)
+	m, _ = m.Update(managerTabKey(true))
+	if m.Screen() != CalendarManagerScreenCalendar || m.calendarForm == nil || m.calendarForm.Draft().ID != 3 {
+		t.Fatalf("shift-tab did not enter the previewed editor: screen=%v", m.Screen())
 	}
 }
 
@@ -1715,26 +1761,31 @@ func TestCalendarManagerRootFocusAddActivateOpensMenu(t *testing.T) {
 // TestCalendarManagerRootFocusInspectorActivateOpensCalendar verifies Enter
 // and Space both activate the focused inspector action, opening the selected
 // calendar's detail by immutable ID (unchanged routing).
-func TestCalendarManagerRootFocusInspectorActivateOpensCalendar(t *testing.T) {
+// TestCalendarManagerRootFocusInspectorActivateEmitsAccountTarget verifies
+// Enter and Space on the focused account pill emit the typed account target,
+// mirroring the mouse path.
+func TestCalendarManagerRootFocusInspectorActivateEmitsAccountTarget(t *testing.T) {
 	for _, key := range []tea.KeyPressMsg{
 		{Code: tea.KeyEnter},
 		{Code: ' ', Text: " "},
 	} {
-		m := newFlatManager().selectCalendar(3)
+		m := newFlatManager()
+		m.list.selectIdentity(calendarRowIdentity{kind: accountHeaderRow, id: 7})
 		m, _ = m.Update(managerTabKey(false)) // list → add
 		m, _ = m.Update(managerTabKey(false)) // add → inspector
 		if m.rootFocus != rootFocusInspector {
 			t.Fatalf("precondition: focus=%v want inspector", m.rootFocus)
 		}
 		activated, cmd := m.Update(key)
-		if cmd != nil {
-			t.Fatalf("key %s: inspector activation emitted command %T", key.String(), cmd())
+		if cmd == nil {
+			t.Fatalf("key %s: pill activation emitted no command", key.String())
 		}
-		if activated.Screen() != CalendarManagerScreenCalendar || activated.calendarForm == nil {
-			t.Fatalf("key %s did not open calendar detail: screen=%v", key.String(), activated.Screen())
+		msg, ok := cmd().(CalendarManagerRequestedMsg)
+		if !ok || msg.Target != CalendarManagerTargetAccount || msg.AccountID != 7 {
+			t.Fatalf("key %s emitted %T/%+v, want account target 7", key.String(), cmd(), msg)
 		}
-		if got := activated.calendarForm.Draft().ID; got != 3 {
-			t.Fatalf("key %s opened calendar %d, want 3", key.String(), got)
+		if activated.Screen() != CalendarManagerScreenList {
+			t.Fatalf("key %s pushed a screen: %v", key.String(), activated.Screen())
 		}
 	}
 }
@@ -1835,15 +1886,16 @@ func TestCalendarManagerRootFocusMouseRestoresFocus(t *testing.T) {
 // control driving input. After normalization Space toggles the selected
 // calendar's visibility (the list behavior) instead of opening the detail.
 func TestCalendarManagerRootFocusNormalizesAfterResizeToOnePane(t *testing.T) {
-	m := newFlatManager().selectCalendar(3) // Holidays: calendar row with an Edit… action
-	// Wide two-pane: tab onto the inspector action.
+	m := newFlatManager()
+	m.list.selectIdentity(calendarRowIdentity{kind: accountHeaderRow, id: 7}) // Google pill
+	// Wide two-pane: tab onto the inspector pill.
 	m, _ = m.Update(managerTabKey(false)) // list → add
 	m, _ = m.Update(managerTabKey(false)) // add → inspector
 	if m.rootFocus != rootFocusInspector {
 		t.Fatalf("precondition: focus=%v want inspector", m.rootFocus)
 	}
 
-	// Resize into one-pane layout: the inspector action is no longer rendered.
+	// Resize into one-pane layout: the inspector pane is no longer rendered.
 	m = m.SetSize(narrowThreshold-1, 30)
 	if m.rootFocus != rootFocusList {
 		t.Fatalf("resize to one-pane left focus=%v, want list", m.rootFocus)
@@ -1852,29 +1904,21 @@ func TestCalendarManagerRootFocusNormalizesAfterResizeToOnePane(t *testing.T) {
 		t.Fatal("list not focused after resize normalized root focus to list")
 	}
 
-	// Space must toggle the selected calendar (list behavior), not invoke the
-	// hidden inspector action (which would push the calendar detail).
+	// Space must act on the list (toggle the selected calendar), never invoke
+	// the hidden inspector target. Stale inspector focus on a calendar
+	// selection must normalize away on resize too.
+	m = newFlatManager().selectCalendar(3).setRootFocus(rootFocusInspector)
+	m = m.SetSize(narrowThreshold-1, 30)
+	if m.rootFocus != rootFocusList {
+		t.Fatalf("resize with calendar preview focus left focus=%v, want list", m.rootFocus)
+	}
 	toggled, cmd := m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
 	if toggled.Screen() != CalendarManagerScreenList {
-		t.Fatalf("space invoked the hidden inspector action: screen=%v", toggled.Screen())
+		t.Fatalf("space invoked a hidden inspector target: screen=%v", toggled.Screen())
 	}
 	msg, ok := cmd().(CalendarVisibilityToggledMsg)
 	if !ok || msg.ID != 3 {
 		t.Fatalf("space after resize = %T/%+v, want CalendarVisibilityToggledMsg{ID:3}", cmd(), msg)
-	}
-
-	// Enter must take the list route too (root focus stays list), never the
-	// inspector route (which would leave root focus on the hidden action).
-	m = newFlatManager().selectCalendar(3)
-	m, _ = m.Update(managerTabKey(false))
-	m, _ = m.Update(managerTabKey(false))
-	m = m.SetSize(narrowThreshold-1, 30)
-	opened, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if opened.Screen() != CalendarManagerScreenCalendar || opened.calendarForm == nil {
-		t.Fatalf("enter did not open calendar detail via the list route: screen=%v", opened.Screen())
-	}
-	if opened.rootFocus != rootFocusList {
-		t.Fatalf("enter took the inspector route (root focus=%v); the hidden action must not drive input", opened.rootFocus)
 	}
 }
 
@@ -1928,9 +1972,9 @@ func TestCalendarManagerRootFocusKeepsSelectionVisibleInactive(t *testing.T) {
 	theme.SelectedText = lipgloss.Color("#ffffff")
 	theme.ButtonBg = lipgloss.Color("#6c5ce7")
 
-	m := newFlatManager().SetTheme(theme).selectCalendar(3) // Holidays: wide root has an inspector action
-	if _, _, _, ok := m.inspectorActionRect(); !ok {
-		t.Fatal("precondition: wide calendar root must have a focusable inspector action")
+	m := newFlatManager().SetTheme(theme).selectCalendar(3) // Holidays: wide root previews its edit form
+	if !m.inspectorFocusAvailable() {
+		t.Fatal("precondition: wide calendar root must have a focusable inspector pane")
 	}
 
 	// While the list holds root focus the selected calendar row uses the active accent.
