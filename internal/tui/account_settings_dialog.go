@@ -214,41 +214,10 @@ func accountSettingsNoun(count int) string {
 }
 
 // InspectorView renders account context and actions without a nested border.
-func (m AccountSettingsDialogModel) InspectorView(w, h int) string {
-	w = max(w, 1)
-	rows := []string{lipgloss.NewStyle().Bold(true).Render(truncateTo(m.dialog.title, w)), ""}
-	for _, line := range m.identityLines() {
-		style := lipgloss.NewStyle().Foreground(m.muted)
-		if strings.HasPrefix(line, "Needs attention") {
-			style = lipgloss.NewStyle().Foreground(m.attention)
-		}
-		rows = append(rows, style.Render(truncateTo(line, w)))
-	}
-	rows = append(rows, "")
-	for i, action := range m.actions {
-		if action.variant == ButtonDanger {
-			rows = append(rows, lipgloss.NewStyle().Foreground(m.muted).Render(strings.Repeat("─", w)))
-		}
-		if action.label == "Done" {
-			rows = append(rows, "")
-		}
-		style := m.buttons.Get(action.variant).Normal
-		if i == m.selected {
-			style = m.buttons.Get(action.variant).Focused
-		}
-		rows = append(rows, mouseMark(accountSettingsActionTarget(i), style.MarginRight(0).Width(w).Render(action.label)))
-	}
-	return padLines(rows, w, h)
-}
-
-func (m AccountSettingsDialogModel) View() string {
-	helpKeys := []key.Binding{
-		key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", "select")),
-		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
-		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "done")),
-	}
-	m.dialog.SetFooter(m.help.ShortHelpView(helpKeys))
-	width := max(m.dialog.ContentWidth()-1, 1)
+// bodyRows renders the shared dialog body — identity lines then the action
+// list — at the given width. InspectorView and View differ only in width
+// source and outer wrapper.
+func (m AccountSettingsDialogModel) bodyRows(width int) []string {
 	rows := make([]string, 0, len(m.actions)+7)
 	for _, line := range m.identityLines() {
 		style := lipgloss.NewStyle().Foreground(m.muted)
@@ -269,10 +238,27 @@ func (m AccountSettingsDialogModel) View() string {
 		if i == m.selected {
 			style = m.buttons.Get(action.variant).Focused
 		}
-		style = style.MarginRight(0).Width(width)
-		rows = append(rows, mouseMark(accountSettingsActionTarget(i), style.Render(action.label)))
+		rows = append(rows, mouseMark(accountSettingsActionTarget(i), style.MarginRight(0).Width(width).Render(action.label)))
 	}
-	return mouseSweep(m.dialog.Box(strings.Join(rows, "\n")))
+	return rows
+}
+
+func (m AccountSettingsDialogModel) InspectorView(w, h int) string {
+	w = max(w, 1)
+	rows := []string{lipgloss.NewStyle().Bold(true).Render(truncateTo(m.dialog.title, w)), ""}
+	rows = append(rows, m.bodyRows(w)...)
+	return padLines(rows, w, h)
+}
+
+func (m AccountSettingsDialogModel) View() string {
+	helpKeys := []key.Binding{
+		key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", "select")),
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "done")),
+	}
+	m.dialog.SetFooter(m.help.ShortHelpView(helpKeys))
+	width := max(m.dialog.ContentWidth()-1, 1)
+	return mouseSweep(m.dialog.Box(strings.Join(m.bodyRows(width), "\n")))
 }
 
 func accountSettingsActionTarget(index int) string {

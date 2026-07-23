@@ -1810,21 +1810,20 @@ type FormActionButton struct {
 // Form manages a list of form fields with focus cycling, validation,
 // and submit/cancel handling.
 type Form struct {
-	items                  []FormItem
-	styles                 FormStyles
-	submitLabel            string
-	submitVariant          ButtonVariant
-	cancelVariant          ButtonVariant
-	actionButtons          []FormActionButton
-	separateLeadingActions bool
-	focused                int
-	width                  int
-	errorField             int
-	error                  string
-	onSubmit               func(f *Form) tea.Cmd
-	onCancel               func(f *Form) tea.Cmd
-	onRebuild              func(f *Form)
-	onFieldEnter           func(f *Form, field int) tea.Cmd
+	items         []FormItem
+	styles        FormStyles
+	submitLabel   string
+	submitVariant ButtonVariant
+	cancelVariant ButtonVariant
+	actionButtons []FormActionButton
+	focused       int
+	width         int
+	errorField    int
+	error         string
+	onSubmit      func(f *Form) tea.Cmd
+	onCancel      func(f *Form) tea.Cmd
+	onRebuild     func(f *Form)
+	onFieldEnter  func(f *Form, field int) tea.Cmd
 }
 
 func NewForm(submitLabel string, styles FormStyles, items ...FormItem) Form {
@@ -2037,7 +2036,7 @@ func (f Form) buttonRow() string {
 		style := bs.Get(ab.Variant)
 		btn := mouseMark(actionTarget(i), style.Render(ab.Label, f.focused == f.actionIndex(i)))
 		switch {
-		case ab.Utility || (ab.Leading && f.separateLeadingActions):
+		case ab.Utility:
 			utilParts = append(utilParts, btn)
 		case ab.Leading:
 			leadParts = append(leadParts, btn)
@@ -2197,12 +2196,6 @@ func (f *Form) SetLeadingActionButton(label string, variant ButtonVariant, onPre
 // order, so Tab visits them before the commit controls.
 func (f *Form) SetUtilityActionButton(label string, variant ButtonVariant, onPress func() tea.Msg) {
 	f.actionButtons = append(f.actionButtons, FormActionButton{Label: label, Variant: variant, OnPress: onPress, Leading: true, Utility: true})
-}
-
-// SetSeparateLeadingActions keeps utility actions on a distinct row above the
-// form's submit and cancel controls, even when all buttons would fit together.
-func (f *Form) SetSeparateLeadingActions(separate bool) {
-	f.separateLeadingActions = separate
 }
 
 func (f *Form) SetCancelVariant(v ButtonVariant) {

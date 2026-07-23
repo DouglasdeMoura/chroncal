@@ -219,40 +219,35 @@ func (m CalendarManagerModel) handleAddMenuMouse(msg tea.MouseClickMsg) (Calenda
 	return m.closeAddMenu(), m.requestTarget(calendarManagerAddItems[row].target)
 }
 
-// composeCenteredOverlay draws overlay centered over the rendered manager
-// shell using an Ultraviolet buffer, the same technique as composeAddMenu.
-// Used for the discard-changes prompt.
-func composeCenteredOverlay(base, overlay string, boxW int) string {
+// drawOverlay draws overlay into rect over the already-rendered manager shell
+// using an Ultraviolet screen buffer local to this component. The buffer is
+// sized to the shell's actual rendered height (which can exceed the nominal
+// box height on very shallow terminals) so neither the shell nor the overlay
+// is clipped.
+func drawOverlay(base, overlay string, boxW int, rect image.Rectangle) string {
 	if base == "" || overlay == "" || boxW <= 0 {
 		return base
 	}
 	height := strings.Count(base, "\n") + 1
 	buf := uv.NewScreenBuffer(boxW, height)
 	uv.NewStyledString(base).Draw(buf, buf.Bounds())
-	ow, oh := lipgloss.Size(overlay)
-	x := max((boxW-ow)/2, 0)
-	y := max((height-oh)/2, 0)
-	uv.NewStyledString(overlay).Draw(buf, image.Rect(x, y, x+ow, y+oh))
+	uv.NewStyledString(overlay).Draw(buf, rect)
 	return buf.Render()
 }
 
-// composeAddMenu draws the menu over the already-rendered manager shell using
-// an Ultraviolet screen buffer local to this component. The buffer is sized to
-// the shell's actual rendered height (which can exceed the nominal box height
-// on very shallow terminals) so neither the shell nor the menu is clipped.
+// composeCenteredOverlay centers overlay over the shell; used for the
+// discard-changes prompt.
+func composeCenteredOverlay(base, overlay string, boxW int) string {
+	height := strings.Count(base, "\n") + 1
+	ow, oh := lipgloss.Size(overlay)
+	x := max((boxW-ow)/2, 0)
+	y := max((height-oh)/2, 0)
+	return drawOverlay(base, overlay, boxW, image.Rect(x, y, x+ow, y+oh))
+}
+
+// composeAddMenu anchors the Add menu over its source-list action.
 func (m CalendarManagerModel) composeAddMenu(base string) string {
 	boxW, _ := m.boxSize()
-	if boxW <= 0 || base == "" {
-		return base
-	}
-	height := strings.Count(base, "\n") + 1
-	if height <= 0 {
-		return base
-	}
-	buf := uv.NewScreenBuffer(boxW, height)
-	uv.NewStyledString(base).Draw(buf, buf.Bounds())
 	mx, my, mw, mh := m.addMenuBoxRect()
-	rect := image.Rect(mx, my, mx+mw, my+mh)
-	uv.NewStyledString(m.renderAddMenu()).Draw(buf, rect)
-	return buf.Render()
+	return drawOverlay(base, m.renderAddMenu(), boxW, image.Rect(mx, my, mx+mw, my+mh))
 }

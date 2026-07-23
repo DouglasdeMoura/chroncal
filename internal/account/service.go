@@ -218,12 +218,19 @@ func (s *Service) loadCredential(ctx context.Context, accountID int64, store aut
 	if err != nil {
 		return auth.Credential{}, fmt.Errorf("get account credentials: %w", err)
 	}
-	cred.AccountID = accountID
+	seedCredentialIdentity(&cred, account)
+	return cred, nil
+}
+
+// seedCredentialIdentity stamps a credential with the account's connection
+// identity: owner ID, fingerprint, and the account username when the
+// credential carries none.
+func seedCredentialIdentity(cred *auth.Credential, account Account) {
+	cred.AccountID = account.ID
 	cred.AccountFingerprint = account.CredentialFingerprint()
 	if cred.Username == "" {
 		cred.Username = account.Username
 	}
-	return cred, nil
 }
 
 // StoreCredentialForCalendar replaces a credential only if the calendar and
@@ -241,23 +248,7 @@ func (s *Service) StoreCredentialForCalendar(ctx context.Context, calendarID, ac
 	if calendar.AccountID == nil || *calendar.AccountID != accountID {
 		return fmt.Errorf("calendar is no longer linked to account %d", accountID)
 	}
-	account, err := s.Get(ctx, accountID)
-	if err != nil {
-		return fmt.Errorf("get account: %w", err)
-	}
-	fingerprint := account.CredentialFingerprint()
-	if expectedFingerprint != "" && fingerprint != expectedFingerprint {
-		return auth.ErrCredentialIdentityMismatch
-	}
-	cred.AccountID = accountID
-	cred.AccountFingerprint = fingerprint
-	if cred.Username == "" {
-		cred.Username = account.Username
-	}
-	if err := store.Set(cred); err != nil {
-		return fmt.Errorf("store account credentials: %w", err)
-	}
-	return nil
+	return s.storeCredentialLocked(ctx, accountID, expectedFingerprint, cred, store)
 }
 
 // StoreCredential replaces an account credential only while the account still
@@ -268,19 +259,21 @@ func (s *Service) StoreCredential(ctx context.Context, accountID int64, expected
 		return fmt.Errorf("lock account credential update: %w", err)
 	}
 	defer release()
+	return s.storeCredentialLocked(ctx, accountID, expectedFingerprint, cred, store)
+}
+
+// storeCredentialLocked is the fingerprint-checked credential replacement
+// shared by the account- and calendar-scoped stores; the caller must hold the
+// account lifecycle lock.
+func (s *Service) storeCredentialLocked(ctx context.Context, accountID int64, expectedFingerprint string, cred auth.Credential, store auth.CredentialStore) error {
 	account, err := s.Get(ctx, accountID)
 	if err != nil {
 		return fmt.Errorf("get account: %w", err)
 	}
-	fingerprint := account.CredentialFingerprint()
-	if expectedFingerprint != "" && fingerprint != expectedFingerprint {
+	if expectedFingerprint != "" && account.CredentialFingerprint() != expectedFingerprint {
 		return auth.ErrCredentialIdentityMismatch
 	}
-	cred.AccountID = accountID
-	cred.AccountFingerprint = fingerprint
-	if cred.Username == "" {
-		cred.Username = account.Username
-	}
+	seedCredentialIdentity(&cred, account)
 	if err := store.Set(cred); err != nil {
 		return fmt.Errorf("store account credentials: %w", err)
 	}
@@ -318,11 +311,7 @@ func (s *Service) DiscoverWithCredential(ctx context.Context, accountID int64, r
 	if err != nil {
 		return Discovery{}, fmt.Errorf("get previous account credentials: %w", err)
 	}
-	replacement.AccountID = accountID
-	replacement.AccountFingerprint = fingerprint
-	if replacement.Username == "" {
-		replacement.Username = configured.Username
-	}
+	seedCredentialIdentity(&replacement, configured)
 	if replacement.RefreshToken == "" {
 		replacement.RefreshToken = previous.RefreshToken
 	}
