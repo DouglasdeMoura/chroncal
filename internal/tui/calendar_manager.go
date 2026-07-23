@@ -173,7 +173,8 @@ func NewCalendarManagerModel(calendars map[int64]CalendarInfo, hidden map[int64]
 	return m
 }
 
-// Screen returns the currently active manager screen.
+// CalendarForm returns the pushed calendar detail while it is the active
+// screen.
 func (m CalendarManagerModel) CalendarForm() (*CalendarDialogModel, bool) {
 	if m.screen == CalendarManagerScreenCalendar && m.calendarForm != nil {
 		return m.calendarForm, true
@@ -331,8 +332,6 @@ func (m CalendarManagerModel) CloseDetail() CalendarManagerModel {
 
 func (m CalendarManagerModel) Screen() CalendarManagerScreen { return m.screen }
 
-// SetSize records the host terminal dimensions so the manager can size its
-// box and viewport and keep the cursor in view.
 // SetTheme updates manager-owned chrome and ensures subsequently opened child
 // screens use the current terminal theme.
 func (m CalendarManagerModel) SetTheme(theme Theme) CalendarManagerModel {
@@ -343,6 +342,8 @@ func (m CalendarManagerModel) SetTheme(theme Theme) CalendarManagerModel {
 	return m.rebuild()
 }
 
+// SetSize records the host terminal dimensions so the manager can size its
+// box and viewport and keep the cursor in view.
 func (m CalendarManagerModel) SetSize(w, h int) CalendarManagerModel {
 	m.width, m.height = w, h
 	if m.calendarForm != nil {
@@ -651,9 +652,7 @@ func (m CalendarManagerModel) Update(msg tea.Msg) (CalendarManagerModel, tea.Cmd
 	// focus in the calendar detail, where Left still moves the cursor.
 	if m.screen != CalendarManagerScreenList {
 		if click, ok := msg.(tea.MouseClickMsg); ok && click.Button == tea.MouseLeft {
-			boxW, boxH := m.boxSize()
-			ox := (m.width - boxW) / 2
-			oy := (m.height - boxH) / 2
+			ox, oy, _, _ := m.dialogOrigin()
 			msg = MouseEvent{IsClick: true, Target: mouseResolve(click.X-ox, click.Y-oy)}
 		}
 		if popped, cmd, ok := m.popOnLeft(msg); ok {
@@ -1012,12 +1011,6 @@ func (m CalendarManagerModel) updateAccount(msg tea.Msg) (CalendarManagerModel, 
 	return m.sizeActiveInspector(), cmd
 }
 
-// calendarDialogParamsFor builds the calendar detail params for the given
-// calendar from its sidebar info and current visibility. RemoteLinked is
-// derived from AccountID so the detail mirrors the linked-sync context.
-// ManagerEmbedded marks the detail as hosted by the manager so its
-// manager-only affordances (Export) surface; legacy app-wired dialogs build
-// params without it and expose no no-op actions.
 func (m CalendarManagerModel) updateTransfer(msg tea.Msg) (CalendarManagerModel, tea.Cmd) {
 	if _, ok := msg.(CalendarTransferClosedMsg); ok {
 		return m.CloseTransfer(), nil
@@ -1056,17 +1049,15 @@ func (m CalendarManagerModel) rootView() string {
 	if m.width <= 0 || m.height <= 0 {
 		return ""
 	}
-	boxW, boxH := m.boxSize()
-	innerW := max(boxW-5, 10)
-	innerH := max(boxH-3, 6)
-	bodyH := max(innerH-4, 3)
+	boxW, _ := m.boxSize()
+	innerW, bodyH := m.managerBodySize()
 
 	title := m.renderTitleRow(innerW)
 	body := m.renderManagerBody(innerW, bodyH)
 	help := m.renderHelp(innerW)
 	blank := strings.Repeat(" ", innerW)
 
-	contentLines := make([]string, 0, innerH)
+	contentLines := make([]string, 0, bodyH+4)
 	contentLines = append(contentLines, title, blank)
 	contentLines = append(contentLines, strings.Split(body, "\n")...)
 	contentLines = append(contentLines, blank, help)
@@ -1274,9 +1265,7 @@ func (m CalendarManagerModel) inspectorActionRect() (int, int, int, bool) {
 	if !ok {
 		return 0, 0, 0, false
 	}
-	boxW, boxH := m.boxSize()
-	dialogX := (m.width - boxW) / 2
-	dialogY := (m.height - boxH) / 2
+	dialogX, dialogY, _, _ := m.dialogOrigin()
 	listW := m.sourceColumnWidth()
 	// Inspector pane begins after the border, left pad, source column, and the
 	// three-cell divider; the action sits on the final body row.
@@ -1299,9 +1288,7 @@ func (m CalendarManagerModel) previewPaneRect() (int, int, int, int, bool) {
 	if _, exists := m.calendars[identity.id]; !exists {
 		return 0, 0, 0, 0, false
 	}
-	boxW, boxH := m.boxSize()
-	dialogX := (m.width - boxW) / 2
-	dialogY := (m.height - boxH) / 2
+	dialogX, dialogY, _, _ := m.dialogOrigin()
 	paneX := dialogX + addMenuContentBoxX() + m.sourceColumnWidth() + 3
 	paneW, _ := m.inspectorPaneSize()
 	return paneX, dialogY + 4, paneW, m.managerBodyHeight(), true
@@ -1400,19 +1387,23 @@ func (m CalendarManagerModel) listRegion() (int, int, int, int) {
 	if m.width <= 0 || m.height <= 0 {
 		return 0, 0, 0, 0
 	}
-	boxW, boxH := m.boxSize()
 	listW, _ := m.rootPaneSize()
-	dialogX := (m.width - boxW) / 2
-	dialogY := (m.height - boxH) / 2
+	dialogX, dialogY, _, _ := m.dialogOrigin()
 	return dialogX + addMenuContentBoxX(), dialogY + 4, listW, max(m.managerBodyHeight()-2, 1)
 }
 
 // managerBodyHeight is the body region height shared by the list viewport and
 // inspector, matching rootView's layout arithmetic.
 func (m CalendarManagerModel) managerBodyHeight() int {
-	_, boxH := m.boxSize()
-	innerH := max(boxH-3, 6)
-	return max(innerH-4, 3)
+	_, h := m.managerBodySize()
+	return h
+}
+
+// dialogOrigin returns the centered box's screen-space top-left corner plus
+// its dimensions — the shared base for every mouse hit-test rectangle.
+func (m CalendarManagerModel) dialogOrigin() (x, y, boxW, boxH int) {
+	boxW, boxH = m.boxSize()
+	return (m.width - boxW) / 2, (m.height - boxH) / 2, boxW, boxH
 }
 
 // addMenuContentBoxX is the box-local x where source-pane content begins
@@ -1450,9 +1441,7 @@ func (m CalendarManagerModel) sourceAddActionRect() (int, int, int, bool) {
 	if !m.sourceAddActionRendered() {
 		return 0, 0, 0, false
 	}
-	boxW, boxH := m.boxSize()
-	dialogX := (m.width - boxW) / 2
-	dialogY := (m.height - boxH) / 2
+	dialogX, dialogY, _, _ := m.dialogOrigin()
 	return dialogX + addMenuContentBoxX(), dialogY + addMenuActionBoxY(m), lipgloss.Width(m.renderSourceAddActionCore()), true
 }
 
@@ -1499,17 +1488,4 @@ func (m CalendarManagerModel) renderSourceAddActionCore() string {
 		return lipgloss.NewStyle().Bold(true).Foreground(m.theme.Accent).Render(label)
 	}
 	return lipgloss.NewStyle().Faint(true).Render(label)
-}
-
-// flatAccountContext returns the inspector's calendar location: "Local" for
-// on-device calendars, the account name for linked ones, and "Remote" when a
-// linked calendar lacks a recorded account name.
-func flatAccountContext(info CalendarInfo) string {
-	if info.AccountID == 0 {
-		return "Local"
-	}
-	if name := strings.TrimSpace(info.AccountName); name != "" {
-		return name
-	}
-	return "Remote"
 }
