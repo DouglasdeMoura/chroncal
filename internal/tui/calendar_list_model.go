@@ -170,6 +170,12 @@ type CalendarListModel struct {
 	inactiveBg        color.Color
 	inactiveFg        color.Color
 
+	// hideDisclosure drops the ▾/▸ chevron in front of account headings and
+	// the header's dedicated disclosure click zone. The unified Calendars
+	// manager opts in so headings read as plain section titles (collapse
+	// stays reachable via ←/→/space); the sidebar keeps its chevrons.
+	hideDisclosure bool
+
 	visibilityIndicator calendarVisibilityIndicator
 }
 
@@ -217,6 +223,13 @@ func (m CalendarListModel) WithInactiveSelection(bg, fg color.Color) CalendarLis
 	m.inactiveSelection = true
 	m.inactiveBg = bg
 	m.inactiveFg = fg
+	return m
+}
+
+// WithoutDisclosure hides the account disclosure chevron and its header click
+// zone; see the hideDisclosure field for the rationale.
+func (m CalendarListModel) WithoutDisclosure() CalendarListModel {
+	m.hideDisclosure = true
 	return m
 }
 
@@ -454,10 +467,15 @@ func (m CalendarListModel) HandleClick(x, y int) (CalendarListModel, tea.Cmd) {
 	if row.kind == accountHeaderRow {
 		// Both hit targets select the header. The disclosure control also
 		// toggles the section; clicking a remote account name opens its
-		// inspector without changing collapse or visibility state.
+		// inspector without changing collapse or visibility state. Without a
+		// rendered chevron there is no disclosure zone: the whole header is
+		// one target and Local headers just select.
 		m.cursor = rowIndex
-		if x > 2 && row.accountID != 0 {
+		if row.accountID != 0 && (m.hideDisclosure || x > 2) {
 			return m, m.accountActionsCmd(row)
+		}
+		if m.hideDisclosure {
+			return m, nil
 		}
 		return m.toggleCollapsed(), nil
 	}
@@ -552,11 +570,14 @@ func (m CalendarListModel) renderAccountHeader(row calendarListRow, selected, in
 		}
 		hasError = hasError || item.Health == SyncHealthError || item.Missing
 	}
-	arrow := "▾"
-	if m.collapsed[row.accountID] {
-		arrow = "▸"
+	label := row.accountName
+	if !m.hideDisclosure {
+		arrow := "▾"
+		if m.collapsed[row.accountID] {
+			arrow = "▸"
+		}
+		label = arrow + " " + row.accountName
 	}
-	label := arrow + " " + row.accountName
 	style := lipgloss.NewStyle().Foreground(m.mutedColor).Bold(true)
 	markerStyle := lipgloss.NewStyle()
 	switch {
