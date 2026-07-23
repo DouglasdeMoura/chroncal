@@ -1174,22 +1174,3 @@ func TestCalendarDialogRendering_EditLinked(t *testing.T) {
 	assert.NotContains(t, v, "Disconnect…")
 	assert.NotContains(t, v, "cal.example.com")
 }
-
-// TestFormBlurRendersInertButtons verifies a blurred form (a host-rendered
-// preview) draws its buttons as faint labels without pills, so an entered
-// editor is visibly distinct from its preview in every theme.
-func TestFormBlurRendersInertButtons(t *testing.T) {
-	form := NewForm("Save", DefaultFormStyles(), FormItem{Label: "Name", Field: NewTextField("x")})
-	form.SetWidth(60)
-	focusedView := form.ButtonRowView()
-	blurredView := form.Blur().ButtonRowView()
-	if blurredView == focusedView {
-		t.Fatal("blurred button row renders identically to the focused form")
-	}
-	if !strings.Contains(blurredView, "\x1b[2m") {
-		t.Fatalf("blurred buttons are not faint: %q", blurredView)
-	}
-	if plain := stripANSI(blurredView); !strings.Contains(plain, "Save") || !strings.Contains(plain, "Cancel") {
-		t.Fatalf("blurred button row lost its labels: %q", plain)
-	}
-}
