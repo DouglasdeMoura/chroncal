@@ -143,6 +143,11 @@ type CalendarManagerModel struct {
 	accountSettings *AccountSettingsDialogModel
 	accountPicker   *AccountCalendarPickerModel
 	transfer        *CalendarTransferDialogModel
+
+	// discardConfirm is the centered "discard unsaved changes?" prompt shown
+	// when Esc/Cancel would drop a dirty calendar draft. Non-nil only while
+	// the prompt is open; it owns all input until answered.
+	discardConfirm *ConfirmDialogModel
 }
 
 // NewCalendarManagerModel builds a grouped calendar manager populated from
@@ -320,6 +325,7 @@ func (m CalendarManagerModel) CloseDetail() CalendarManagerModel {
 	m.accountPicker = nil
 	m.transfer = nil
 	m.addMenuOpen = false
+	m.discardConfirm = nil
 	return m
 }
 
@@ -354,6 +360,10 @@ func (m CalendarManagerModel) SetSize(w, h int) CalendarManagerModel {
 	if m.transfer != nil {
 		next := m.transfer.SetSize(w, h)
 		m.transfer = &next
+	}
+	if m.discardConfirm != nil {
+		next := m.discardConfirm.SetSize(m.confirmOverlayWidth(), h)
+		m.discardConfirm = &next
 	}
 	m = m.sizeList()
 	return m.sizeActiveInspector().normalizeRootFocus()
@@ -630,6 +640,10 @@ func (m CalendarManagerModel) sizeActiveInspector() CalendarManagerModel {
 }
 
 func (m CalendarManagerModel) Update(msg tea.Msg) (CalendarManagerModel, tea.Cmd) {
+	// The discard-changes prompt owns all input while open.
+	if m.discardConfirm != nil {
+		return m.updateDiscardConfirm(msg)
+	}
 	// A pushed detail owns input until it closes. Each child handles its own
 	// field editing; the manager intercepts only navigation: Esc/close pops
 	// via the child's close message, and Left pops one child before
@@ -884,6 +898,14 @@ func (m CalendarManagerModel) updateCalendar(msg tea.Msg) (CalendarManagerModel,
 
 	switch typed := msg.(type) {
 	case CalendarDialogClosedMsg:
+		// Esc/Cancel on a dirty draft asks before discarding (Apple's
+		// save-changes prompt); a clean form closes immediately.
+		if m.calendarForm != nil && m.calendarForm.dirtyMetadata() {
+			confirm := NewConfirmDialogModel("Discard unsaved changes?", "Discard", m.theme).
+				Destructive().SetSize(m.confirmOverlayWidth(), m.height)
+			m.discardConfirm = &confirm
+			return m, nil
+		}
 		m.calendarForm = nil
 		m.screen = CalendarManagerScreenList
 		return m, nil
@@ -905,6 +927,37 @@ func (m CalendarManagerModel) updateCalendar(msg tea.Msg) (CalendarManagerModel,
 	m = m.sizeActiveInspector()
 	// Commands may contain timers (for example the text cursor blink). Bubble
 	// Tea must execute them asynchronously; invoking them here stalls Update.
+	return m, cmd
+}
+
+// confirmOverlayWidth is the width budget for the discard prompt: it must fit
+// inside the manager box interior on every layout.
+func (m CalendarManagerModel) confirmOverlayWidth() int {
+	boxW, _ := m.boxSize()
+	return max(boxW-4, 20)
+}
+
+// updateDiscardConfirm owns input while the discard-changes prompt is open.
+// Confirmed drops the dirty draft and pops to the root list; anything else
+// keeps editing. Mouse clicks are swallowed: the overlay is keyboard-driven
+// and a click must never reach the covered form's controls.
+func (m CalendarManagerModel) updateDiscardConfirm(msg tea.Msg) (CalendarManagerModel, tea.Cmd) {
+	switch typed := msg.(type) {
+	case ConfirmDialogResultMsg:
+		m.discardConfirm = nil
+		if typed.Confirmed {
+			m.calendarForm = nil
+			m.screen = CalendarManagerScreenList
+		}
+		return m, nil
+	case tea.MouseClickMsg:
+		return m, nil
+	}
+	if m.discardConfirm == nil {
+		return m, nil
+	}
+	next, cmd := m.discardConfirm.Update(msg)
+	m.discardConfirm = &next
 	return m, cmd
 }
 
@@ -985,6 +1038,9 @@ func (m CalendarManagerModel) rootView() string {
 	base := mouseSweep(framedDialog(boxW, contentLines))
 	if m.addMenuOpen {
 		base = m.composeAddMenu(base)
+	}
+	if m.discardConfirm != nil {
+		base = composeCenteredOverlay(base, m.discardConfirm.View(), boxW)
 	}
 	return base
 }
@@ -1244,6 +1300,9 @@ func (m CalendarManagerModel) renderHelp(w int) string {
 func (m CalendarManagerModel) helpBindings() []key.Binding {
 	bind := func(k, desc string) key.Binding {
 		return key.NewBinding(key.WithKeys(k), key.WithHelp(k, desc))
+	}
+	if m.discardConfirm != nil {
+		return []key.Binding{bind("tab", "switch"), bind("enter", "select"), bind("esc", "keep editing")}
 	}
 	// The arrow-navigation hint is omitted so the picker set fits the
 	// manager's minimum interior with the esc hint intact.

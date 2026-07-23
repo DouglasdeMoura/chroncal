@@ -1147,6 +1147,65 @@ func TestCalendarManagerDetailLeftKeepsDirtyDraft(t *testing.T) {
 	}
 }
 
+// TestCalendarManagerEscOnDirtyDraftAsksBeforeDiscarding verifies the
+// Apple-style save-changes flow: Esc on a dirty calendar draft opens a
+// destructive Discard prompt instead of closing; declining keeps the draft
+// intact and confirming pops to the root list.
+func TestCalendarManagerEscOnDirtyDraftAsksBeforeDiscarding(t *testing.T) {
+	m := newFlatManager().selectCalendar(2)
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"}) // dirty the Name field
+	dirtyName := m.calendarForm.Draft().Name
+
+	m, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if cmd == nil {
+		t.Fatal("esc emitted no close command")
+	}
+	m, _ = m.Update(cmd())
+	if m.discardConfirm == nil {
+		t.Fatal("esc on a dirty draft did not open the discard prompt")
+	}
+	if m.Screen() != CalendarManagerScreenCalendar || m.calendarForm == nil {
+		t.Fatalf("prompt must keep the editor mounted: screen=%v", m.Screen())
+	}
+	if view := stripANSI(m.View()); !strings.Contains(view, "Discard unsaved changes?") || !strings.Contains(view, "Discard") {
+		t.Fatalf("discard prompt not rendered:\n%s", view)
+	}
+
+	// Keep Editing: the prompt closes, the draft survives.
+	kept, _ := m.Update(ConfirmDialogResultMsg{Confirmed: false})
+	if kept.discardConfirm != nil || kept.calendarForm == nil {
+		t.Fatal("declining the prompt must return to the editor")
+	}
+	if got := kept.calendarForm.Draft().Name; got != dirtyName {
+		t.Fatalf("draft name = %q, want %q preserved", got, dirtyName)
+	}
+
+	// Discard: the prompt closes and the editor pops to the root list.
+	discarded, _ := m.Update(ConfirmDialogResultMsg{Confirmed: true})
+	if discarded.discardConfirm != nil || discarded.calendarForm != nil || discarded.Screen() != CalendarManagerScreenList {
+		t.Fatalf("confirming discard did not pop to the list: screen=%v", discarded.Screen())
+	}
+}
+
+// TestCalendarManagerEscOnCleanDraftClosesWithoutPrompt verifies an unedited
+// form still closes on Esc with no intervening prompt.
+func TestCalendarManagerEscOnCleanDraftClosesWithoutPrompt(t *testing.T) {
+	m := newFlatManager().selectCalendar(2)
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if cmd == nil {
+		t.Fatal("esc emitted no close command")
+	}
+	m, _ = m.Update(cmd())
+	if m.discardConfirm != nil {
+		t.Fatal("clean draft must not prompt on close")
+	}
+	if m.Screen() != CalendarManagerScreenList || m.calendarForm != nil {
+		t.Fatalf("clean esc did not close the editor: screen=%v", m.Screen())
+	}
+}
+
 // TestCalendarManagerPickerLeftKeepsStagedSelection verifies Left pops an
 // untouched account-calendars picker but never one holding staged,
 // unapplied subscription changes.
