@@ -117,6 +117,10 @@ type calendarListRow struct {
 	itemIndex   int
 	accountID   int64
 	accountName string
+	// hasError is the account header's health rollup — true when any member
+	// calendar needs attention. Precomputed in rebuildRows so rendering a
+	// header never rescans the full item list per frame.
+	hasError bool
 }
 
 type calendarRowIdentity struct {
@@ -534,13 +538,7 @@ func (m CalendarListModel) View() string {
 }
 
 func (m CalendarListModel) renderAccountHeader(row calendarListRow, selected, inactive bool) string {
-	hasError := false
-	for _, item := range m.items {
-		if item.AccountID != row.accountID {
-			continue
-		}
-		hasError = hasError || item.Health == SyncHealthError || item.Missing
-	}
+	hasError := row.hasError
 	label := row.accountName
 	if !m.hideDisclosure {
 		arrow := "▾"
@@ -668,6 +666,7 @@ func (m *CalendarListModel) rebuildRows() {
 
 	var previousID int64
 	haveGroup := false
+	headerIdx := -1
 	for i, item := range m.items {
 		if !haveGroup || item.AccountID != previousID {
 			if haveGroup {
@@ -682,8 +681,12 @@ func (m *CalendarListModel) rebuildRows() {
 				}
 			}
 			rows = append(rows, calendarListRow{kind: accountHeaderRow, accountID: item.AccountID, accountName: name})
+			headerIdx = len(rows) - 1
 			previousID = item.AccountID
 			haveGroup = true
+		}
+		if item.Health == SyncHealthError || item.Missing {
+			rows[headerIdx].hasError = true
 		}
 		if !m.collapsed[item.AccountID] {
 			rows = append(rows, calendarListRow{kind: calendarRow, itemIndex: i, accountID: item.AccountID})

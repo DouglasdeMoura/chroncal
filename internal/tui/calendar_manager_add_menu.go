@@ -159,9 +159,9 @@ func (m CalendarManagerModel) addMenuBoxRect() (int, int, int, int) {
 // addMenuRect returns the menu rectangle in screen-space coordinates, for mouse
 // hit-testing and geometry assertions.
 func (m CalendarManagerModel) addMenuRect() (int, int, int, int) {
-	boxW, boxH := m.boxSize()
 	mx, my, mw, mh := m.addMenuBoxRect()
-	return mx + (m.width-boxW)/2, my + (m.height-boxH)/2, mw, mh
+	ox, oy, _, _ := m.dialogOrigin()
+	return mx + ox, my + oy, mw, mh
 }
 
 // renderAddMenu renders the rounded, single-border menu with three full-width
