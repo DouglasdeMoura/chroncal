@@ -392,7 +392,7 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 	if params.ID > 0 && !params.IsDefault {
 		id := params.ID
 		name := params.Name
-		form.SetLeadingActionButton("Set as Default", Button, func() tea.Msg {
+		form.SetUtilityActionButton("Set as Default", Button, func() tea.Msg {
 			return CalendarSetDefaultRequestedMsg{ID: id, Name: name}
 		})
 	}
@@ -422,11 +422,14 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 	// membership in Account ▸ Manage Calendars). Export is a manager-only
 	// affordance (the legacy app has no export handler yet), so it is gated
 	// on ManagerEmbedded to avoid a no-op button in legacy-wired dialogs.
+	// Apple sheet disposition: Set as Default and Export live on the quiet
+	// utility tier above the commit row; Delete — destructive — sits in the
+	// commit row's bottom-left corner, as far as possible from Save.
 	if params.ID > 0 {
 		id := params.ID
 		name := params.Name
 		if params.ManagerEmbedded {
-			form.SetLeadingActionButton("Export Calendar…", Button, func() tea.Msg {
+			form.SetUtilityActionButton("Export Calendar…", Button, func() tea.Msg {
 				return CalendarExportRequestedMsg{ID: id, Name: name}
 			})
 		}
@@ -435,7 +438,6 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 				return CalendarDeleteRequestedMsg{ID: id, Name: name}
 			})
 		}
-		form.SetSeparateLeadingActions(true)
 	}
 
 	// Create mode with at least one calendar already on disk: offer to

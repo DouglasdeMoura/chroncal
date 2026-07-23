@@ -1167,6 +1167,35 @@ func TestCalendarManagerDetailLeftKeepsDirtyDraft(t *testing.T) {
 	}
 }
 
+// TestCalendarManagerDetailButtonDisposition pins the Apple-sheet action
+// layout in a wide editor: Set as Default and Export share the utility tier
+// on one row, while Delete sits flush-left on the same line as the
+// right-aligned Save and Cancel commit controls.
+func TestCalendarManagerDetailButtonDisposition(t *testing.T) {
+	m := newFlatManager().selectCalendar(1) // local: all three actions
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.calendarForm == nil {
+		t.Fatal("Enter did not push a calendar form")
+	}
+	rows := strings.Split(stripANSI(m.calendarForm.form.ButtonRowView()), "\n")
+	if len(rows) != 3 {
+		t.Fatalf("button block = %d rows, want tier, blank, commit:\n%s", len(rows), strings.Join(rows, "\n"))
+	}
+	if !strings.Contains(rows[0], "Set as Default") || !strings.Contains(rows[0], "Export Calendar…") {
+		t.Fatalf("utility tier row = %q, want Set as Default beside Export", rows[0])
+	}
+	if strings.TrimSpace(rows[1]) != "" {
+		t.Fatalf("row between tiers = %q, want blank", rows[1])
+	}
+	commit := rows[2]
+	if !strings.Contains(commit, "Delete Calendar…") || !strings.Contains(commit, "Save") || !strings.Contains(commit, "Cancel") {
+		t.Fatalf("commit row = %q, want Delete flush-left beside Save/Cancel", commit)
+	}
+	if strings.Index(commit, "Delete Calendar…") > strings.Index(commit, "Save") {
+		t.Fatalf("Delete must render left of Save: %q", commit)
+	}
+}
+
 // TestCalendarManagerTabTraversalRoundTripsThroughEditor verifies Tab
 // traversal is continuous across the whole dialog: from the source list,
 // repeated Tab enters the previewed editor, walks its fields and buttons,
