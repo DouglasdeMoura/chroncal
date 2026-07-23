@@ -1796,12 +1796,15 @@ func DefaultFormStyles() FormStyles {
 // FormActionButton is an optional third button between Submit and Cancel.
 // When Leading is true, the button renders flush-left in the button row
 // (typically used for destructive actions that need visual distance
-// from the primary action).
+// from the primary action). Utility lifts the button onto a quieter tier
+// above the commit row instead, for secondary actions that are neither
+// destructive nor part of committing the form.
 type FormActionButton struct {
 	Label   string
 	Variant ButtonVariant
 	OnPress func() tea.Msg
 	Leading bool
+	Utility bool
 }
 
 // Form manages a list of form fields with focus cycling, validation,
@@ -2025,6 +2028,7 @@ func (f Form) fieldParts() []string {
 
 func (f Form) buttonRow() string {
 	bs := f.styles.Buttons
+	utilParts := make([]string, 0, len(f.actionButtons))
 	leadParts := make([]string, 0, len(f.actionButtons))
 	rightParts := make([]string, 0, len(f.actionButtons)+2)
 	submitStyle := bs.Get(f.submitVariant)
@@ -2032,9 +2036,12 @@ func (f Form) buttonRow() string {
 	for i, ab := range f.actionButtons {
 		style := bs.Get(ab.Variant)
 		btn := mouseMark(actionTarget(i), style.Render(ab.Label, f.focused == f.actionIndex(i)))
-		if ab.Leading {
+		switch {
+		case ab.Utility || (ab.Leading && f.separateLeadingActions):
+			utilParts = append(utilParts, btn)
+		case ab.Leading:
 			leadParts = append(leadParts, btn)
-		} else {
+		default:
 			rightParts = append(rightParts, btn)
 		}
 	}
@@ -2047,44 +2054,44 @@ func (f Form) buttonRow() string {
 	// buttons align relative to the container, not the field rows. Fall
 	// back to the natural content width when no explicit width is set.
 	alignWidth := f.buttonAlignWidth()
-
-	var buttons string
-	if len(leadParts) > 0 {
-		leadGroup := lipgloss.JoinHorizontal(lipgloss.Top, leadParts...)
-		needed := lipgloss.Width(leadGroup) + lipgloss.Width(rightGroup)
-		if f.separateLeadingActions || (alignWidth > 0 && needed+1 > alignWidth) {
-			// Keep utility actions in their own tier when the caller requests
-			// stronger hierarchy, or when every action cannot fit beside the
-			// commit controls without wrapping a pill. Stack multiple leading
-			// actions vertically (one per line) so a rich utility set — e.g.
-			// Set as Default, Export, Delete — never overflows the dialog
-			// width; a single leading action still renders as one line.
-			right := rightGroup
-			if f.styles.ButtonAlign != ButtonAlignLeft {
-				align := lipgloss.Right
-				if f.styles.ButtonAlign == ButtonAlignCenter {
-					align = lipgloss.Center
-				}
-				right = lipgloss.NewStyle().Width(alignWidth).Align(align).Render(rightGroup)
-			}
-			buttons = strings.Join(leadParts, "\n") + "\n\n" + right
-		} else {
-			spacerW := max(alignWidth-lipgloss.Width(leadGroup)-lipgloss.Width(rightGroup), 1)
-			spacer := lipgloss.NewStyle().Width(spacerW).Render("")
-			buttons = leadGroup + spacer + rightGroup
-		}
-	} else {
-		buttons = rightGroup
+	rightAligned := func(s string) string {
 		if alignWidth > 0 && f.styles.ButtonAlign != ButtonAlignLeft {
 			align := lipgloss.Right
 			if f.styles.ButtonAlign == ButtonAlignCenter {
 				align = lipgloss.Center
 			}
-			buttons = lipgloss.NewStyle().Width(alignWidth).Align(align).Render(buttons)
+			return lipgloss.NewStyle().Width(alignWidth).Align(align).Render(s)
 		}
+		return s
 	}
 
-	return buttons
+	// Commit row: leading (non-utility) actions sit flush-left beside the
+	// right-aligned commit controls — the sheet's bottom-left corner, the
+	// canonical spot for a destructive action. When the row cannot fit them
+	// without wrapping a pill, they degrade into the utility tier instead.
+	commit := rightAligned(rightGroup)
+	if len(leadParts) > 0 {
+		leadGroup := lipgloss.JoinHorizontal(lipgloss.Top, leadParts...)
+		needed := lipgloss.Width(leadGroup) + lipgloss.Width(rightGroup)
+		if alignWidth > 0 && needed+1 > alignWidth {
+			utilParts = append(utilParts, leadParts...)
+		} else {
+			spacerW := max(alignWidth-lipgloss.Width(leadGroup)-lipgloss.Width(rightGroup), 1)
+			commit = leadGroup + lipgloss.NewStyle().Width(spacerW).Render("") + rightGroup
+		}
+	}
+	if len(utilParts) == 0 {
+		return commit
+	}
+
+	// Utility tier: secondary actions on their own quieter row above the
+	// commit controls, side by side when they fit and stacked one per line
+	// otherwise, so a rich set never overflows the dialog width.
+	tier := lipgloss.JoinHorizontal(lipgloss.Top, utilParts...)
+	if alignWidth > 0 && lipgloss.Width(tier) > alignWidth {
+		tier = strings.Join(utilParts, "\n")
+	}
+	return tier + "\n\n" + commit
 }
 
 func (f Form) buttonAlignWidth() int {
@@ -2182,6 +2189,14 @@ func (f *Form) ClearActionButtons() {
 // actions whose placement should not invite misclicks on the primary action.
 func (f *Form) SetLeadingActionButton(label string, variant ButtonVariant, onPress func() tea.Msg) {
 	f.actionButtons = append(f.actionButtons, FormActionButton{Label: label, Variant: variant, OnPress: onPress, Leading: true})
+}
+
+// SetUtilityActionButton adds a secondary action to the quiet utility tier
+// above the commit row: utilities render side by side when they fit the form
+// width and stack vertically otherwise. Utility buttons take Leading focus
+// order, so Tab visits them before the commit controls.
+func (f *Form) SetUtilityActionButton(label string, variant ButtonVariant, onPress func() tea.Msg) {
+	f.actionButtons = append(f.actionButtons, FormActionButton{Label: label, Variant: variant, OnPress: onPress, Leading: true, Utility: true})
 }
 
 // SetSeparateLeadingActions keeps utility actions on a distinct row above the
