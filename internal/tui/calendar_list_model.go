@@ -18,8 +18,6 @@ type CalendarVisibilityToggledMsg struct {
 	Hidden bool
 }
 
-// SyncHealth describes a calendar's last-known sync state, used to render an
-// ambient health marker in the list. It is derived from persisted sync state.
 type calendarPromotionCandidate struct {
 	id   int64
 	name string
@@ -49,6 +47,8 @@ func sortedCalendarIDs(calendars map[int64]CalendarInfo) []int64 {
 	return ids
 }
 
+// SyncHealth describes a calendar's last-known sync state, used to render an
+// ambient health marker in the list. It is derived from persisted sync state.
 type SyncHealth int
 
 const (

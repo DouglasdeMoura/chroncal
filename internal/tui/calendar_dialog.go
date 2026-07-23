@@ -843,6 +843,23 @@ func (m CalendarDialogModel) dirtyMetadata() bool {
 		strings.TrimSpace(email.Value()) != strings.TrimSpace(m.localDraft.OwnerEmail)
 }
 
+// absorbsBack reports whether the pushed detail owns the Left key entirely:
+// while a text/color field moves its cursor, while the account-connection
+// layout is active (its fields own Left), or while unsaved edits exist — a
+// navigation gesture must never discard a draft. The host's Back gesture
+// pops only when this is false.
+func (m CalendarDialogModel) absorbsBack() bool {
+	return m.leftMovesCursor() || m.accountConnection || m.dirtyMetadata()
+}
+
+// absorbsTab reports whether Tab traversal stays inside the detail: the
+// account-connection layout and an open discovery picker own Tab outright,
+// and a dirty draft keeps wrapping internally so traversal can never discard
+// typed edits. The host's boundary hand-off fires only when this is false.
+func (m CalendarDialogModel) absorbsTab() bool {
+	return m.accountConnection || m.discoveryPicker != nil || m.dirtyMetadata()
+}
+
 func (m CalendarDialogModel) leftMovesCursor() bool {
 	f := m.form
 	if f.Focused() >= f.ItemCount() {

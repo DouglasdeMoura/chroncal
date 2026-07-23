@@ -712,13 +712,11 @@ func (m CalendarManagerModel) popOnLeft(msg tea.Msg) (CalendarManagerModel, tea.
 		// calendar list (CloseAccount routes both, same as Esc).
 		return m.CloseAccount(), nil, true
 	case CalendarManagerScreenCalendar:
-		if m.calendarForm == nil || m.calendarForm.leftMovesCursor() || m.calendarForm.accountConnection {
-			return m, nil, false
-		}
-		// An unsaved draft must never be discarded by a navigation gesture:
-		// with dirty metadata, Left falls through to the form (moving focus
-		// backward); Esc/Cancel stays the explicit discard.
-		if m.calendarForm.dirtyMetadata() {
+		// The child owns the Left key while editing text, in the
+		// account-connection layout, or with unsaved edits (a navigation
+		// gesture must never discard a draft; Esc/Cancel stays the
+		// explicit discard).
+		if m.calendarForm == nil || m.calendarForm.absorbsBack() {
 			return m, nil, false
 		}
 		m.calendarForm = nil
@@ -944,14 +942,13 @@ func (m CalendarManagerModel) updateCalendar(msg tea.Msg) (CalendarManagerModel,
 // embedded discovery picker is open, or while the draft is dirty.
 func (m CalendarManagerModel) tabOutOfCalendarForm(msg tea.Msg) (CalendarManagerModel, bool) {
 	press, ok := msg.(tea.KeyPressMsg)
-	if !ok || m.calendarForm == nil || m.calendarForm.accountConnection ||
-		m.calendarForm.discoveryPicker != nil {
+	if !ok || m.calendarForm == nil {
 		return m, false
 	}
 	if !key.Matches(press, m.keys.Next) && !key.Matches(press, m.keys.Prev) {
 		return m, false
 	}
-	if m.calendarForm.dirtyMetadata() {
+	if m.calendarForm.absorbsTab() {
 		return m, false
 	}
 	form := m.calendarForm.form

@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 
 	"charm.land/bubbles/v2/help"
@@ -184,9 +185,7 @@ func (m AccountCalendarPickerModel) SetSize(w, h int) AccountCalendarPickerModel
 }
 
 func (m AccountCalendarPickerModel) SetInspectorSize(w, h int) AccountCalendarPickerModel {
-	m.width, m.height = w, h
-	m.shell = m.shell.SetSize(w, h)
-	return m.refresh()
+	return m.SetSize(w, h)
 }
 
 // InspectorView renders collection enrollment inside the persistent Calendars
@@ -670,7 +669,7 @@ func humanCalendarComponents(components []string) string {
 		default:
 			continue
 		}
-		if !slicesContainsFold(names, name) {
+		if !slices.ContainsFunc(names, func(v string) bool { return strings.EqualFold(v, name) }) {
 			names = append(names, name)
 		}
 	}
@@ -686,13 +685,4 @@ func unsupportedCalendarExplanation(components []string) string {
 		return "Can’t add this collection because the server did not advertise event support."
 	}
 	return "Can’t add this collection because it contains " + contents + ", not calendar events."
-}
-
-func slicesContainsFold(values []string, target string) bool {
-	for _, value := range values {
-		if strings.EqualFold(value, target) {
-			return true
-		}
-	}
-	return false
 }
