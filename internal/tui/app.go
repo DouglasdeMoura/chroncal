@@ -469,7 +469,7 @@ type Model struct {
 	pendingSyncCalendar             syncTarget
 	pendingCalendarDelete           int64
 	pendingCalendarDeleteName       string
-	pendingCalendarKeepLocal        int64 // account calendar to unlink while keeping local events
+	pendingCalendarKeepLocal        int64   // account calendar to unlink while keeping local events
 	pendingCalendarPromote          int64   // new default to promote when deleting the current default
 	pendingCalendarPromoteName      string  // human-readable name of the promotion target
 	pendingCalendarPromoteCands     []int64 // candidate calendar IDs by ChoiceDialog button index
