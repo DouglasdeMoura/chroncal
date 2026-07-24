@@ -142,11 +142,12 @@ func TestSidebarAccountRequestOpensManagerAccountDetail(t *testing.T) {
 }
 
 // TestAddAccountOpensAccountConnectInsideManager locks the Add Account route:
-// AccountAddRequestedMsg opens the manager with the CalDAV connection form as
-// its calendar-detail screen.
+// the canonical CalendarManagerRequestedMsg with the AccountConnect target
+// opens the manager with the CalDAV connection form as its calendar-detail
+// screen. This is the same message the palette's "Add Account…" entry emits.
 func TestAddAccountOpensAccountConnectInsideManager(t *testing.T) {
 	m := managerRoutingModel()
-	updated, cmd := m.Update(AccountAddRequestedMsg{})
+	updated, cmd := m.Update(CalendarManagerRequestedMsg{Target: CalendarManagerTargetAccountConnect})
 	m = updated.(Model)
 	if cmd != nil {
 		t.Fatalf("add account returned command %T", cmd())
@@ -416,7 +417,7 @@ func TestDirectAccountCloseReturnsToCalendarList(t *testing.T) {
 
 func TestAddAccountCancelReturnsToCalendarList(t *testing.T) {
 	m := managerRoutingModel()
-	updated, _ := m.Update(AccountAddRequestedMsg{})
+	updated, _ := m.Update(CalendarManagerRequestedMsg{Target: CalendarManagerTargetAccountConnect})
 	m = updated.(Model)
 
 	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})

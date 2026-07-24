@@ -17,14 +17,11 @@ type ToggleSidebarMsg struct{}
 // ToggleWeekNumbersMsg toggles the ISO week-number gutter in month/week views.
 type ToggleWeekNumbersMsg struct{}
 
-// AccountAddRequestedMsg opens the account sign-in flow.
-type AccountAddRequestedMsg struct{}
-
 // buildPaletteCommands returns the default commands exposed through the
 // palette, with bindings to the current app state (cursor, etc.).
 func buildPaletteCommands(m Model) []PaletteCommand {
 	cursor, _ := m.viewCursorAndToday()
-	commands := make([]PaletteCommand, 0, 15)
+	commands := make([]PaletteCommand, 0, 17)
 	commands = append(commands,
 		PaletteCommand{
 			ID:       "nav.today",
@@ -74,6 +71,18 @@ func buildPaletteCommands(m Model) []PaletteCommand {
 			Category: "Calendar",
 			Shortcut: "C",
 			Action:   func() tea.Msg { return CalendarManagerRequestedMsg{Target: CalendarManagerTargetRoot} },
+		},
+		PaletteCommand{
+			ID:       "calendar.create",
+			Title:    "New Calendar…",
+			Category: "Calendar",
+			Action:   func() tea.Msg { return CalendarManagerRequestedMsg{Target: CalendarManagerTargetLocalCreate} },
+		},
+		PaletteCommand{
+			ID:       "calendar.add_account",
+			Title:    "Add Account…",
+			Category: "Calendar",
+			Action:   func() tea.Msg { return CalendarManagerRequestedMsg{Target: CalendarManagerTargetAccountConnect} },
 		},
 		PaletteCommand{
 			ID:       "calendar.sync",
