@@ -372,18 +372,6 @@ func (s *Service) DeleteWithRemoteCleanup(ctx context.Context, id, newDefaultID 
 		return ErrLastCalendar
 	}
 
-	if cal.IsDefault {
-		if newDefaultID == 0 {
-			return ErrDefaultCalendarRequiresPromotion
-		}
-		if newDefaultID == id {
-			return ErrInvalidPromotionTarget
-		}
-		if _, err := s.q.GetCalendar(ctx, newDefaultID); err != nil {
-			return ErrInvalidPromotionTarget
-		}
-	}
-
 	var (
 		account       storage.Account
 		hasAccount    bool
@@ -410,11 +398,8 @@ func (s *Service) DeleteWithRemoteCleanup(ctx context.Context, id, newDefaultID 
 	}
 
 	if cal.IsDefault {
-		if err := qtx.ClearDefaultCalendar(ctx); err != nil {
-			return fmt.Errorf("clear default: %w", err)
-		}
-		if err := qtx.SetCalendarAsDefault(ctx, newDefaultID); err != nil {
-			return fmt.Errorf("promote default: %w", err)
+		if err := PromoteDefault(ctx, qtx, map[int64]struct{}{id: {}}, newDefaultID); err != nil {
+			return err
 		}
 	}
 

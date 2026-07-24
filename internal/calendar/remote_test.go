@@ -770,3 +770,47 @@ func TestDeleteWithRemoteCleanup_HiddenAccountWithMultipleCalendars_PreservesCre
 		t.Errorf("DeleteWithRemoteCleanup: credential wrongly deleted when account survived; password = %q, want %q", got.Password, "secret")
 	}
 }
+
+// TestDeleteWithRemoteCleanup_PromotesDefault exercises the default-promotion
+// path: deleting the current default must refuse without a replacement (and
+// roll back), then succeed by promoting a surviving calendar atomically.
+func TestDeleteWithRemoteCleanup_PromotesDefault(t *testing.T) {
+	svc, q, _ := newTestServiceWithDB(t)
+	ctx := context.Background()
+
+	personal, _ := svc.GetDefault(ctx) // the seeded default calendar
+	work, err := q.CreateCalendar(ctx, storage.CreateCalendarParams{
+		Name:  "Work",
+		Color: "#0000ff",
+	})
+	if err != nil {
+		t.Fatalf("CreateCalendar Work: %v", err)
+	}
+
+	// Deleting the default without a replacement must refuse, leaving the
+	// default intact (the delete is rolled back inside the same transaction).
+	if err := svc.DeleteWithRemoteCleanup(ctx, personal.ID, 0, &memCredStore{}); !errors.Is(err, ErrDefaultCalendarRequiresPromotion) {
+		t.Fatalf("delete default without replacement: err = %v, want ErrDefaultCalendarRequiresPromotion", err)
+	}
+	if def, err := svc.GetDefault(ctx); err != nil || def.ID != personal.ID {
+		t.Fatalf("default = (%+v, %v) after refused delete, want id=%d", def, err, personal.ID)
+	}
+	if _, err := svc.Get(ctx, personal.ID); err != nil {
+		t.Fatalf("personal calendar should still exist after refused delete: %v", err)
+	}
+
+	// Promoting a surviving calendar moves the default atomically.
+	if err := svc.DeleteWithRemoteCleanup(ctx, personal.ID, work.ID, &memCredStore{}); err != nil {
+		t.Fatalf("DeleteWithRemoteCleanup with promotion: %v", err)
+	}
+	if _, err := svc.Get(ctx, personal.ID); err == nil {
+		t.Fatal("personal calendar should be deleted after promotion")
+	}
+	def, err := svc.GetDefault(ctx)
+	if err != nil {
+		t.Fatalf("GetDefault after promotion: %v", err)
+	}
+	if def.ID != work.ID || !def.IsDefault {
+		t.Fatalf("default = %+v, want id=%d IsDefault=true", def, work.ID)
+	}
+}

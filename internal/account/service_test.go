@@ -1800,3 +1800,61 @@ func TestReconcileSelectionRestoresCredentialOnCommitFailure(t *testing.T) {
 		t.Fatalf("credential was not restored after commit failure: %v", err)
 	}
 }
+
+// TestReconcileSelectionRejectsIDAndPathPromotionTarget locks the intentional
+// difference that a replacement default may be specified by ID OR path, not
+// both: supplying both is ambiguous and must be rejected before any work.
+func TestReconcileSelectionRejectsIDAndPathPromotionTarget(t *testing.T) {
+	f := newSelectionFixture(t)
+	imported, discovery := f.importAndRefresh(t, "/cal/a/")
+	ctx := context.Background()
+	if err := f.q.ClearDefaultCalendar(ctx); err != nil {
+		t.Fatalf("clear default: %v", err)
+	}
+	if err := f.q.SetCalendarAsDefault(ctx, imported.CreatedIDs[0]); err != nil {
+		t.Fatalf("set imported default: %v", err)
+	}
+
+	// /cal/a/ (the default) is deselected, so a promotion is required;
+	// specifying the replacement by both ID and path is rejected.
+	_, err := f.svc.ReconcileSelection(ctx, discovery, SelectionParams{
+		SelectedPaths:  []string{"/cal/b/"},
+		NewDefaultID:   imported.CreatedIDs[0],
+		NewDefaultPath: "/cal/b/",
+	}, f.store)
+	if !errors.Is(err, calendar.ErrInvalidPromotionTarget) {
+		t.Fatalf("err = %v, want calendar.ErrInvalidPromotionTarget", err)
+	}
+}
+
+// TestServiceRemoveWithCalendarsRejectsReplacementWhenDefaultNotRemoved locks
+// the intentional difference that RemoveWithCalendars rejects a replacement
+// default when the removed account does not own the current default (no
+// promotion is required in that case).
+func TestServiceRemoveWithCalendarsRejectsReplacementWhenDefaultNotRemoved(t *testing.T) {
+	f := newSelectionFixture(t)
+	f.importAndRefresh(t, "/cal/a/")
+	ctx := context.Background()
+
+	// The application default is the seeded calendar, not the account's
+	// imported /cal/a/, so removing the account needs no promotion.
+	all, err := f.q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("list calendars: %v", err)
+	}
+	var defaultID int64
+	for _, row := range all {
+		if row.IsDefault == 1 {
+			defaultID = row.ID
+			break
+		}
+	}
+	if defaultID == 0 {
+		t.Fatal("fixture has no default calendar")
+	}
+
+	_, err = f.svc.RemoveWithCalendars(ctx, f.discovery.Account.ID, RemoveParams{NewDefaultID: defaultID}, f.store)
+	if !errors.Is(err, calendar.ErrInvalidPromotionTarget) {
+		t.Fatalf("err = %v, want calendar.ErrInvalidPromotionTarget", err)
+	}
+}
