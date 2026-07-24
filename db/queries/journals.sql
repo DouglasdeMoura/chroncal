@@ -135,3 +135,24 @@ DELETE FROM journals WHERE id = ? AND deleted_at IS NOT NULL;
 SELECT * FROM journals
 WHERE calendar_id = ? AND deleted_at IS NOT NULL
 ORDER BY deleted_at DESC;
+
+-- name: ReassignJournalsCalendar :execrows
+-- Bulk-move every journal (live or soft-deleted) from one calendar to another
+-- during calendar migration. See ReassignEventsCalendar.
+UPDATE journals SET
+    calendar_id = ?,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE calendar_id = ?;
+
+-- name: CountJournalIdentitiesByCalendar :one
+-- See CountEventIdentitiesByCalendar.
+SELECT COUNT(DISTINCT uid) FROM journals WHERE calendar_id = ? AND uid != '' AND deleted_at IS NULL;
+
+-- name: MarkJournalIdentitiesDirtyForMigration :exec
+-- See MarkEventIdentitiesDirtyForMigration.
+INSERT INTO sync_resources (calendar_id, uid, owner_type, dirty, sync_strategy)
+SELECT ?, uid, 'journal', 1, 'sync-token'
+FROM journals AS src
+WHERE src.calendar_id = ? AND src.deleted_at IS NULL AND src.uid != ''
+GROUP BY uid
+ON CONFLICT(calendar_id, uid) DO UPDATE SET dirty = 1, rev = rev + 1;

@@ -167,3 +167,34 @@ SELECT * FROM events WHERE (recurrence_rule IS NOT NULL OR (rdates IS NOT NULL A
 
 -- name: CountEventsByCalendar :one
 SELECT COUNT(*) FROM events WHERE calendar_id = ? AND deleted_at IS NULL;
+
+-- name: ReassignEventsCalendar :execrows
+-- Bulk-move every event (live or soft-deleted) from one calendar to another.
+-- Used by calendar migration ("Move to Account"): the destination calendar is
+-- created/linked inside the same transaction before this runs, so the
+-- calendar_id FK always resolves. No deleted_at filter - soft-deleted rows
+-- move too so the trash view and purge keep working after migration.
+UPDATE events SET
+    calendar_id = ?,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE calendar_id = ?;
+
+-- name: CountEventIdentitiesByCalendar :one
+-- Distinct live event identities on a calendar. A recurring master and its
+-- overrides share a uid, so a series counts once - the number a
+-- "Moved N events" summary should report.
+SELECT COUNT(DISTINCT uid) FROM events WHERE calendar_id = ? AND uid != '' AND deleted_at IS NULL;
+
+-- name: MarkEventIdentitiesDirtyForMigration :exec
+-- Flags every distinct live event identity on the source calendar dirty on
+-- the destination so the first sync after a migration uploads it. Runs before
+-- reassignment, while the source rows still identify exactly what moves, as
+-- one set-based statement instead of a per-UID loop. The destination is
+-- always account-linked (migration targets a discovered collection), so the
+-- account gate in MarkResourceDirty is not needed here.
+INSERT INTO sync_resources (calendar_id, uid, owner_type, dirty, sync_strategy)
+SELECT ?, uid, 'event', 1, 'sync-token'
+FROM events AS src
+WHERE src.calendar_id = ? AND src.deleted_at IS NULL AND src.uid != ''
+GROUP BY uid
+ON CONFLICT(calendar_id, uid) DO UPDATE SET dirty = 1, rev = rev + 1;

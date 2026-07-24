@@ -464,6 +464,26 @@ func (q *Queries) MarkCalendarColorDirty(ctx context.Context, id int64) error {
 	return err
 }
 
+const renameCalendar = `-- name: RenameCalendar :exec
+UPDATE calendars SET
+    name = ?,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = ?
+`
+
+type RenameCalendarParams struct {
+	Name string
+	ID   int64
+}
+
+// Changes only the name (and updated_at). Calendar migration uses this to
+// give the destination calendar a non-colliding name during the transaction
+// (the source still holds the chosen name until it is deleted in the same tx).
+func (q *Queries) RenameCalendar(ctx context.Context, arg RenameCalendarParams) error {
+	_, err := q.db.ExecContext(ctx, renameCalendar, arg.Name, arg.ID)
+	return err
+}
+
 const setCalendarAsDefault = `-- name: SetCalendarAsDefault :exec
 UPDATE calendars SET
     is_default = 1,

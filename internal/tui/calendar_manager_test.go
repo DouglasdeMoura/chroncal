@@ -702,7 +702,7 @@ func TestCalendarManagerDetailActionsTargetImmutableID(t *testing.T) {
 	for _, b := range buttons {
 		labels = append(labels, b.Label)
 	}
-	if got, want := strings.Join(labels, ","), "Set as Default,Export Calendar…,Delete Calendar…"; got != want {
+	if got, want := strings.Join(labels, ","), "Set as Default,Export Calendar…,Move to Account…,Delete Calendar…"; got != want {
 		t.Fatalf("local detail actions = %q, want %q", got, want)
 	}
 	for _, b := range buttons {
@@ -715,6 +715,10 @@ func TestCalendarManagerDetailActionsTargetImmutableID(t *testing.T) {
 		case CalendarExportRequestedMsg:
 			if msg.ID != 1 || msg.Name != "On device" {
 				t.Errorf("Export = %+v, want ID 1", msg)
+			}
+		case CalendarMoveToAccountRequestedMsg:
+			if msg.ID != 1 || msg.Name != "On device" {
+				t.Errorf("Move = %+v, want ID 1", msg)
 			}
 		case CalendarDeleteRequestedMsg:
 			if msg.ID != 1 || msg.Name != "On device" {
@@ -1221,16 +1225,19 @@ func TestCalendarManagerDetailButtonDisposition(t *testing.T) {
 		t.Fatal("Enter did not push a calendar form")
 	}
 	rows := strings.Split(stripANSI(m.calendarForm.form.ButtonRowView()), "\n")
-	if len(rows) != 3 {
-		t.Fatalf("button block = %d rows, want tier, blank, commit:\n%s", len(rows), strings.Join(rows, "\n"))
+	if len(rows) < 3 {
+		t.Fatalf("button block = %d rows, want utility tier, blank, commit:\n%s", len(rows), strings.Join(rows, "\n"))
 	}
-	if !strings.Contains(rows[0], "Set as Default") || !strings.Contains(rows[0], "Export Calendar…") {
-		t.Fatalf("utility tier row = %q, want Set as Default beside Export", rows[0])
+	utility := strings.Join(rows[:len(rows)-2], "\n")
+	for _, label := range []string{"Set as Default", "Export Calendar…", "Move to Account…"} {
+		if !strings.Contains(utility, label) {
+			t.Fatalf("utility tier missing %q:\n%s", label, utility)
+		}
 	}
-	if strings.TrimSpace(rows[1]) != "" {
-		t.Fatalf("row between tiers = %q, want blank", rows[1])
+	if strings.TrimSpace(rows[len(rows)-2]) != "" {
+		t.Fatalf("row between tiers = %q, want blank", rows[len(rows)-2])
 	}
-	commit := rows[2]
+	commit := rows[len(rows)-1]
 	if !strings.Contains(commit, "Delete Calendar…") || !strings.Contains(commit, "Save") || !strings.Contains(commit, "Cancel") {
 		t.Fatalf("commit row = %q, want Delete flush-left beside Save/Cancel", commit)
 	}

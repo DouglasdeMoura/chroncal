@@ -501,24 +501,7 @@ func (s *Service) Import(ctx context.Context, discovery Discovery, selectedPaths
 			continue
 		}
 
-		remoteName := remoteCalendarName(item.RemoteCalendar)
-		color := item.Color
-		if color == "" {
-			color = defaultCalendarColor
-		}
-		accountID := discovery.Account.ID
-		row, err := qtx.CreateDiscoveredCalendar(ctx, storage.CreateDiscoveredCalendarParams{
-			Name:             uniqueLocalName(remoteName, taken),
-			Color:            color,
-			Description:      storage.StringToNullable(item.Description),
-			AccountID:        &accountID,
-			RemoteUrl:        storage.StringToNullable(path),
-			RemoteColor:      storage.StringToNullable(item.Color),
-			RemoteName:       remoteName,
-			RemoteAccess:     string(normalizedAccess(item.Access)),
-			RemoteComponents: strings.Join(normalizedComponents(item.SupportedComponentSet), ","),
-			OwnerEmail:       discovery.Account.Username,
-		})
+		row, err := createDiscoveredCalendarRow(ctx, qtx, discovery.Account, item, taken)
 		if err != nil {
 			return ImportResult{}, fmt.Errorf("import calendar %q: %w", item.Name, err)
 		}
@@ -685,24 +668,7 @@ func (s *Service) ReconcileSelection(
 			continue
 		}
 		item := discoveredByKey[key]
-		remoteName := remoteCalendarName(item.RemoteCalendar)
-		color := item.Color
-		if color == "" {
-			color = defaultCalendarColor
-		}
-		accountID := discovery.Account.ID
-		row, err := qtx.CreateDiscoveredCalendar(ctx, storage.CreateDiscoveredCalendarParams{
-			Name:             uniqueLocalName(remoteName, taken),
-			Color:            color,
-			Description:      storage.StringToNullable(item.Description),
-			AccountID:        &accountID,
-			RemoteUrl:        storage.StringToNullable(item.Path),
-			RemoteColor:      storage.StringToNullable(item.Color),
-			RemoteName:       remoteName,
-			RemoteAccess:     string(normalizedAccess(item.Access)),
-			RemoteComponents: strings.Join(normalizedComponents(item.SupportedComponentSet), ","),
-			OwnerEmail:       discovery.Account.Username,
-		})
+		row, err := createDiscoveredCalendarRow(ctx, qtx, discovery.Account, item, taken)
 		if err != nil {
 			return SelectionResult{}, fmt.Errorf("add calendar %q: %w", item.Name, err)
 		}
@@ -944,6 +910,39 @@ func normalizedComponents(components []string) []string {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// createDiscoveredCalendarRow creates the local calendar row for a discovered
+// remote collection, reserving a non-colliding local name from taken (the
+// caller adds the returned row's name to taken when creating in a loop). It is
+// the single DiscoveredCalendar-to-row mapping shared by Import,
+// ReconcileSelection, and calendar migration, so remote-metadata columns stay
+// in lockstep no matter which flow creates the row.
+func createDiscoveredCalendarRow(
+	ctx context.Context,
+	qtx *storage.Queries,
+	acct Account,
+	item DiscoveredCalendar,
+	taken map[string]struct{},
+) (storage.Calendar, error) {
+	remoteName := remoteCalendarName(item.RemoteCalendar)
+	color := item.Color
+	if color == "" {
+		color = defaultCalendarColor
+	}
+	accountID := acct.ID
+	return qtx.CreateDiscoveredCalendar(ctx, storage.CreateDiscoveredCalendarParams{
+		Name:             uniqueLocalName(remoteName, taken),
+		Color:            color,
+		Description:      storage.StringToNullable(item.Description),
+		AccountID:        &accountID,
+		RemoteUrl:        storage.StringToNullable(item.Path),
+		RemoteColor:      storage.StringToNullable(item.Color),
+		RemoteName:       remoteName,
+		RemoteAccess:     string(normalizedAccess(item.Access)),
+		RemoteComponents: strings.Join(normalizedComponents(item.SupportedComponentSet), ","),
+		OwnerEmail:       acct.Username,
+	})
 }
 
 func supportsChroncal(components []string) bool {

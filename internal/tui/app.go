@@ -171,6 +171,8 @@ const (
 	pendingScopeEdit
 	pendingScopeCalendarPromote
 	pendingScopeAccountSelectionPromote
+	pendingScopeCalendarMoveAccount
+	pendingScopeCalendarMoveCollection
 )
 
 type eventViewLoadedMsg struct {
@@ -488,6 +490,7 @@ type Model struct {
 	pendingAccountDefaultCandidates []accountDefaultCandidate
 	pendingAccountRemoveID          int64
 	pendingAccountRemoveName        string
+	pendingCalendarMove             *calendarMoveState
 
 	// pendingQuit is true while the confirm dialog is asking the user to
 	// confirm a 'q' quit. Distinguishes the quit flow from event/calendar
@@ -2218,6 +2221,9 @@ func (m Model) clearConfirmPending() Model {
 	m.pendingAccountDefaultCandidates = nil
 	m.pendingAccountRemoveID = 0
 	m.pendingAccountRemoveName = ""
+	if m.choiceOpen {
+		m.pendingCalendarMove = nil
+	}
 	m.choiceOpen = false
 	m.pendingScopeKind = pendingScopeNone
 	return m
@@ -2429,6 +2435,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.startOAuthFlow(msg.cred.OAuthClientID, msg.cred.OAuthClientSecret)
 	case accountManagementDiscoveryReadyMsg:
 		return m.finishAccountManagementDiscovery(msg)
+	case calendarMoveDiscoveryReadyMsg:
+		return m.finishCalendarMoveDiscovery(msg)
+	case calendarMoveFinishedMsg:
+		return m.finishCalendarMove(msg)
 	case accountRenameFinishedMsg:
 		return m.finishAccountRename(msg)
 	case accountRemovalFinishedMsg:
@@ -2534,7 +2544,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.(type) {
 		case CalendarManagerClosedMsg, CalendarManagerRequestedMsg, CalendarTransferClosedMsg,
 			CalendarSavedMsg, CalendarDiscoveryRequestedMsg,
-			CalendarDeleteRequestedMsg, CalendarKeepLocalRequestedMsg, CalendarTestRequestedMsg,
+			CalendarDeleteRequestedMsg, CalendarKeepLocalRequestedMsg, CalendarMoveToAccountRequestedMsg, CalendarTestRequestedMsg,
 			CalendarVisibilityToggledMsg, CalendarReorderedMsg, AccountReorderedMsg,
 			calendarOrderSavedMsg, accountOrderSavedMsg,
 			CalendarExportRequestedMsg, CalendarImportPreviewRequestedMsg,
@@ -4030,6 +4040,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case CalendarMoveToAccountRequestedMsg:
+		return m.beginCalendarMove(msg)
+
 	case CalendarKeepLocalRequestedMsg:
 		// Keep the edit dialog open behind the confirm, mirroring the delete
 		// flow: cancelling returns to the editor with the draft intact.
@@ -4337,7 +4350,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pendingAccountSelection = nil
 				m.pendingAccountDefaultCandidates = nil
 			}
+			if kind == pendingScopeCalendarMoveAccount || kind == pendingScopeCalendarMoveCollection {
+				m.pendingCalendarMove = nil
+			}
 			return m, nil
+		}
+		if next, cmd, handled := m.handleCalendarMoveChoice(kind, msg.Choice); handled {
+			return next, cmd
 		}
 		if kind == pendingScopeAccountSelectionPromote {
 			if msg.Choice >= len(m.pendingAccountDefaultCandidates) ||

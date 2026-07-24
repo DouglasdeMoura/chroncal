@@ -9,6 +9,20 @@ import (
 	"context"
 )
 
+const countEventIdentitiesByCalendar = `-- name: CountEventIdentitiesByCalendar :one
+SELECT COUNT(DISTINCT uid) FROM events WHERE calendar_id = ? AND uid != '' AND deleted_at IS NULL
+`
+
+// Distinct live event identities on a calendar. A recurring master and its
+// overrides share a uid, so a series counts once - the number a
+// "Moved N events" summary should report.
+func (q *Queries) CountEventIdentitiesByCalendar(ctx context.Context, calendarID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countEventIdentitiesByCalendar, calendarID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countEventsByCalendar = `-- name: CountEventsByCalendar :one
 SELECT COUNT(*) FROM events WHERE calendar_id = ? AND deleted_at IS NULL
 `
@@ -675,6 +689,31 @@ func (q *Queries) ListRecurringEvents(ctx context.Context) ([]Event, error) {
 	return items, nil
 }
 
+const markEventIdentitiesDirtyForMigration = `-- name: MarkEventIdentitiesDirtyForMigration :exec
+INSERT INTO sync_resources (calendar_id, uid, owner_type, dirty, sync_strategy)
+SELECT ?, uid, 'event', 1, 'sync-token'
+FROM events AS src
+WHERE src.calendar_id = ? AND src.deleted_at IS NULL AND src.uid != ''
+GROUP BY uid
+ON CONFLICT(calendar_id, uid) DO UPDATE SET dirty = 1, rev = rev + 1
+`
+
+type MarkEventIdentitiesDirtyForMigrationParams struct {
+	CalendarID   int64
+	CalendarID_2 int64
+}
+
+// Flags every distinct live event identity on the source calendar dirty on
+// the destination so the first sync after a migration uploads it. Runs before
+// reassignment, while the source rows still identify exactly what moves, as
+// one set-based statement instead of a per-UID loop. The destination is
+// always account-linked (migration targets a discovered collection), so the
+// account gate in MarkResourceDirty is not needed here.
+func (q *Queries) MarkEventIdentitiesDirtyForMigration(ctx context.Context, arg MarkEventIdentitiesDirtyForMigrationParams) error {
+	_, err := q.db.ExecContext(ctx, markEventIdentitiesDirtyForMigration, arg.CalendarID, arg.CalendarID_2)
+	return err
+}
+
 const purgeEventByID = `-- name: PurgeEventByID :execrows
 DELETE FROM events WHERE id = ? AND deleted_at IS NOT NULL
 `
@@ -693,6 +732,31 @@ DELETE FROM events WHERE deleted_at IS NOT NULL AND deleted_at < ?
 
 func (q *Queries) PurgeSoftDeletedEvents(ctx context.Context, deletedAt *string) (int64, error) {
 	result, err := q.db.ExecContext(ctx, purgeSoftDeletedEvents, deletedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const reassignEventsCalendar = `-- name: ReassignEventsCalendar :execrows
+UPDATE events SET
+    calendar_id = ?,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE calendar_id = ?
+`
+
+type ReassignEventsCalendarParams struct {
+	CalendarID   int64
+	CalendarID_2 int64
+}
+
+// Bulk-move every event (live or soft-deleted) from one calendar to another.
+// Used by calendar migration ("Move to Account"): the destination calendar is
+// created/linked inside the same transaction before this runs, so the
+// calendar_id FK always resolves. No deleted_at filter - soft-deleted rows
+// move too so the trash view and purge keep working after migration.
+func (q *Queries) ReassignEventsCalendar(ctx context.Context, arg ReassignEventsCalendarParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, reassignEventsCalendar, arg.CalendarID, arg.CalendarID_2)
 	if err != nil {
 		return 0, err
 	}

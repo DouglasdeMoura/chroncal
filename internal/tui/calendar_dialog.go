@@ -99,6 +99,13 @@ type CalendarExportRequestedMsg struct {
 	Name string
 }
 
+// CalendarMoveToAccountRequestedMsg starts migration of a local calendar into
+// an existing collection owned by a configured account.
+type CalendarMoveToAccountRequestedMsg struct {
+	ID   int64
+	Name string
+}
+
 // CalendarSetDefaultRequestedMsg asks the app to promote a calendar to default.
 type CalendarSetDefaultRequestedMsg struct {
 	ID   int64
@@ -443,6 +450,11 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 			form.SetUtilityActionButton("Export Calendar…", Button, func() tea.Msg {
 				return CalendarExportRequestedMsg{ID: id, Name: name}
 			})
+			if !params.RemoteLinked {
+				form.SetUtilityActionButton("Move to Account…", Button, func() tea.Msg {
+					return CalendarMoveToAccountRequestedMsg{ID: id, Name: name}
+				})
+			}
 		}
 		if params.RemoteLinked {
 			// The keep-local counterpart to Delete: unlink from the account

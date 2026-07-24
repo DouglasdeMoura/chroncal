@@ -188,3 +188,12 @@ UPDATE calendars SET
     remote_missing = 0,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ?;
+
+-- name: RenameCalendar :exec
+-- Changes only the name (and updated_at). Calendar migration uses this to
+-- give the destination calendar a non-colliding name during the transaction
+-- (the source still holds the chosen name until it is deleted in the same tx).
+UPDATE calendars SET
+    name = ?,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = ?;
