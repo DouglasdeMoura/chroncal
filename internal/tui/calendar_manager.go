@@ -1139,6 +1139,8 @@ type managerChild interface {
 // screen is added.
 func (m CalendarManagerModel) activeChild() managerChild {
 	switch m.screen {
+	case CalendarManagerScreenList:
+		return nil
 	case CalendarManagerScreenCalendar:
 		if m.calendarForm != nil {
 			return m.calendarForm
