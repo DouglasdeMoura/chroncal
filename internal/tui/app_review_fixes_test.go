@@ -78,8 +78,8 @@ func TestVisibilityToggleReachesOpenManager(t *testing.T) {
 
 	updated, _ := m.Update(CalendarVisibilityToggledMsg{ID: 1, Hidden: true})
 	m = updated.(Model)
-	if !m.calendarManager.hidden[1] {
-		t.Fatal("visibility toggle did not reach the open manager's hidden map")
+	if !m.calendarManager.list.IsHidden(1) {
+		t.Fatal("visibility toggle did not reach the open manager's list-owned hidden set")
 	}
 }
 

@@ -238,16 +238,20 @@ func (m CalendarListModel) RowCount() int  { return len(m.rows) }
 
 // SetItems replaces the items, prunes stale hidden IDs, and clamps the cursor.
 func (m CalendarListModel) SetItems(items []CalendarListItem) CalendarListModel {
+	return m.setItemsAndHidden(items, m.hidden)
+}
+
+func (m CalendarListModel) setItemsAndHidden(items []CalendarListItem, hidden map[int64]bool) CalendarListModel {
 	m.items = slices.Clone(items)
 	m.grouped = hasAccountGroups(items)
 	valid := make(map[int64]bool, len(items))
 	for _, item := range items {
 		valid[item.ID] = true
 	}
-	m.hidden = maps.Clone(m.hidden)
-	for id := range m.hidden {
-		if !valid[id] {
-			delete(m.hidden, id)
+	m.hidden = make(map[int64]bool, len(hidden))
+	for id, h := range hidden {
+		if h && valid[id] {
+			m.hidden[id] = true
 		}
 	}
 	m.rebuildRows()
@@ -265,20 +269,24 @@ func (m CalendarListModel) SetItemsPreservingCursor(items []CalendarListItem) Ca
 	return m.ensureCursorVisible()
 }
 
+// SetItemsAndHiddenPreservingCursor replaces list data and visibility in one
+// pass, cloning the caller-owned hidden map while pruning IDs absent from items.
+func (m CalendarListModel) SetItemsAndHiddenPreservingCursor(items []CalendarListItem, hidden map[int64]bool) CalendarListModel {
+	identity, ok := m.currentIdentity()
+	m = m.setItemsAndHidden(items, hidden)
+	if ok {
+		m.selectIdentity(identity)
+	}
+	return m.ensureCursorVisible()
+}
+
 func (m CalendarListModel) HiddenSet() map[int64]bool { return maps.Clone(m.hidden) }
 
-// SetHiddenSet replaces the whole visibility set in one clone, for hosts
-// that mirror an external hidden map (the manager's rebuild); the per-ID
-// SetHidden would clone the map once per calendar.
-func (m CalendarListModel) SetHiddenSet(hidden map[int64]bool) CalendarListModel {
-	m.hidden = make(map[int64]bool, len(hidden))
-	for id, h := range hidden {
-		if h {
-			m.hidden[id] = true
-		}
-	}
-	return m
-}
+// IsHidden reports whether the given calendar is currently hidden. It is the
+// read-only view of the owned visibility set: callers that share the list
+// (the unified Calendars manager) read visibility through here instead of
+// keeping a second mirrored map, so there is a single source of truth.
+func (m CalendarListModel) IsHidden(id int64) bool { return m.hidden[id] }
 
 // SetHidden applies an explicit visibility state without emitting another
 // toggle message. The app uses it to keep the sidebar projection aligned when

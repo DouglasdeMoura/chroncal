@@ -113,8 +113,8 @@ func TestCalendarManagerRootMouseCheckboxTogglesVisibility(t *testing.T) {
 	if !ok || msg.ID != 2 || !msg.Hidden {
 		t.Fatalf("checkbox click message = %#v, want calendar 2 hidden", cmd())
 	}
-	if toggled.Screen() != CalendarManagerScreenList || !toggled.hidden[2] {
-		t.Fatalf("checkbox click opened edit or failed optimistic toggle: screen=%v hidden=%v", toggled.Screen(), toggled.hidden[2])
+	if toggled.Screen() != CalendarManagerScreenList || !toggled.list.IsHidden(2) {
+		t.Fatalf("checkbox click opened edit or failed optimistic toggle: screen=%v hidden=%v", toggled.Screen(), toggled.list.IsHidden(2))
 	}
 }
 
@@ -734,7 +734,7 @@ func TestCalendarManagerDetailActionsTargetImmutableID(t *testing.T) {
 
 func TestCalendarManagerRootSpaceTogglesBothDirections(t *testing.T) {
 	m := newFlatManager().selectCalendar(2)
-	if m.hidden[2] {
+	if m.list.IsHidden(2) {
 		t.Fatal("calendar 2 should start visible")
 	}
 	// Visible -> hidden.
@@ -746,7 +746,7 @@ func TestCalendarManagerRootSpaceTogglesBothDirections(t *testing.T) {
 	if msg.ID != 2 || !msg.Hidden {
 		t.Fatalf("visible->hidden: msg = %+v, want {ID:2 Hidden:true}", msg)
 	}
-	if !m1.hidden[2] {
+	if !m1.list.IsHidden(2) {
 		t.Error("local hidden state not flipped to true")
 	}
 	if row := managerCalendarLine(t, m1, 2); !strings.HasPrefix(row, "○") {
@@ -761,11 +761,54 @@ func TestCalendarManagerRootSpaceTogglesBothDirections(t *testing.T) {
 	if msg.ID != 2 || msg.Hidden {
 		t.Fatalf("hidden->visible: msg = %+v, want {ID:2 Hidden:false}", msg)
 	}
-	if m2.hidden[2] {
+	if m2.list.IsHidden(2) {
 		t.Error("local hidden state not flipped back to false")
 	}
 	if row := managerCalendarLine(t, m2, 2); !strings.HasPrefix(row, "●") {
 		t.Errorf("row did not flip back to the filled visibility circle: %q", row)
+	}
+}
+
+// TestCalendarManagerListOwnsHiddenSet is the regression guard for issue #543:
+// the calendar manager keeps a single source of truth for visibility — the
+// embedded list — instead of a second mirrored map. After every toggle path
+// the list-owned set, the reopened detail form, and a reload all agree, and a
+// reload replaces (never merges) the set so no stale or cleared ID can linger.
+func TestCalendarManagerListOwnsHiddenSet(t *testing.T) {
+	cals := flatManagerCalendars()
+	initialHidden := map[int64]bool{3: true}
+	m := NewCalendarManagerModel(cals, initialHidden, help.New()).
+		SetSize(120, 40).selectCalendar(1)
+	initialHidden[1] = true
+	delete(initialHidden, 3)
+	if hidden := m.list.HiddenSet(); hidden[1] || !hidden[3] {
+		t.Fatalf("constructor retained caller hidden-map alias: %v", hidden)
+	}
+
+	// Open the detail so a forwarded CalendarVisibilityToggledMsg mirrors into
+	// the list owner via updateCalendar (the path the app uses).
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.Screen() != CalendarManagerScreenCalendar {
+		t.Fatalf("setup: detail form not open, screen=%v", m.Screen())
+	}
+	m, _ = m.Update(CalendarVisibilityToggledMsg{ID: 1, Hidden: true})
+	if !m.list.IsHidden(1) {
+		t.Fatal("forwarded detail toggle did not update the list-owned hidden set")
+	}
+	// The detail reopen path (inspector preview / openSelectedCalendar) reads
+	// the same single owner, so it can never diverge from the row dot.
+	if got := calendarDialogParamsFor(1, cals[1], m.list.IsHidden(1)).Hidden; !got {
+		t.Fatalf("detail reopen reads hidden=%v while the list owns hidden=true", got)
+	}
+
+	// A reload replaces the whole set from the host map: no stale ID survives
+	// and no previously-cleared ID lingers (the old two-map merge bug class).
+	reloadedHidden := map[int64]bool{2: true}
+	m = m.SetData(cals, reloadedHidden)
+	reloadedHidden[1] = true
+	delete(reloadedHidden, 2)
+	if hidden := m.list.HiddenSet(); !hidden[2] || hidden[1] || hidden[3] {
+		t.Fatalf("SetData did not clone and replace the owned hidden set: %v", hidden)
 	}
 }
 
@@ -1070,12 +1113,12 @@ func TestCalendarManagerDetailAccountBackPreservesDraft(t *testing.T) {
 
 // TestCalendarManagerDetailVisibilityToggleEmitsDesiredState verifies the
 // detail's Display Calendar toggle emits CalendarVisibilityToggledMsg with the
-// desired Hidden state immediately, and mirrors the change into the root's
-// hidden map so the dot stays consistent on Back.
+// desired Hidden state immediately, and mirrors the change into the list-owned
+// hidden set so the dot stays consistent on Back.
 func TestCalendarManagerDetailVisibilityToggleEmitsDesiredState(t *testing.T) {
 	m := newFlatManager().selectCalendar(1) // On device, visible
 	pushed, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if pushed.hidden[1] {
+	if pushed.list.IsHidden(1) {
 		t.Fatal("calendar 1 should start visible")
 	}
 	focused, ok := focusCalendarDetailField(pushed, "checkbox")
@@ -1094,8 +1137,8 @@ func TestCalendarManagerDetailVisibilityToggleEmitsDesiredState(t *testing.T) {
 		t.Fatalf("toggle msg = %+v, want {ID:1 Hidden:true}", msg)
 	}
 	hidden, _ = hidden.Update(msg)
-	if !hidden.hidden[1] {
-		t.Error("root hidden map not mirrored to true")
+	if !hidden.list.IsHidden(1) {
+		t.Error("list-owned hidden set not mirrored to true")
 	}
 	// Toggling back emits the opposite desired state.
 	visible, cmd := hidden.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
@@ -1104,8 +1147,8 @@ func TestCalendarManagerDetailVisibilityToggleEmitsDesiredState(t *testing.T) {
 		t.Fatalf("toggle back msg = %+v, want {ID:1 Hidden:false}", msg)
 	}
 	visible, _ = visible.Update(msg)
-	if visible.hidden[1] {
-		t.Error("root hidden map not mirrored back to false")
+	if visible.list.IsHidden(1) {
+		t.Error("list-owned hidden set not mirrored back to false")
 	}
 }
 
@@ -1405,7 +1448,7 @@ func TestCalendarManagerDetailLeftPopsAccountToCalendar(t *testing.T) {
 func TestCalendarManagerDetailVisibilityMouseToggleEmitsDesiredState(t *testing.T) {
 	m := newFlatManager().selectCalendar(1).SetSize(120, 40)
 	pushed, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if pushed.calendarForm == nil || pushed.hidden[1] {
+	if pushed.calendarForm == nil || pushed.list.IsHidden(1) {
 		t.Fatal("precondition: calendar 1 detail open and visible")
 	}
 	cbIdx := calendarDetailFieldIndex(pushed, "checkbox")
@@ -1428,8 +1471,8 @@ func TestCalendarManagerDetailVisibilityMouseToggleEmitsDesiredState(t *testing.
 		t.Fatalf("mouse toggle msg = %+v, want {ID:1 Hidden:true}", msg)
 	}
 	hidden, _ = hidden.Update(msg)
-	if !hidden.hidden[1] {
-		t.Error("root hidden map not mirrored to true after mouse toggle")
+	if !hidden.list.IsHidden(1) {
+		t.Error("list-owned hidden set not mirrored to true after mouse toggle")
 	}
 }
 
