@@ -1717,7 +1717,7 @@ func TestReconcileSelectionRefusesLastApplicationCalendar(t *testing.T) {
 // Connect tests.
 func installAccountDeleteCommitFailure(t *testing.T, db *sql.DB) {
 	t.Helper()
-	if _, err := db.Exec(`
+	if _, err := db.ExecContext(context.Background(), `
 		CREATE TABLE deferred_account_delete_failure (
 			parent_id INTEGER REFERENCES accounts(id) DEFERRABLE INITIALLY DEFERRED
 		);
