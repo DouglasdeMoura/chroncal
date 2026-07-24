@@ -37,7 +37,7 @@ func TestRsvpButtonWidthMatchesRendered(t *testing.T) {
 // unit; the "min."/"sec." abbreviations were only correct by accident.
 func TestFormatAlarm(t *testing.T) {
 	cases := []struct {
-		name string
+		name  string
 		alarm model.Alarm
 		want  string
 	}{
@@ -104,5 +104,3 @@ func TestPluralize(t *testing.T) {
 		})
 	}
 }
-
-
