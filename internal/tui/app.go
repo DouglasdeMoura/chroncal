@@ -3740,9 +3740,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusToken++
 		return m, m.expireStatusAfter(10*time.Second, m.statusToken)
 
-	case AccountAddRequestedMsg:
-		return m.Update(CalendarManagerRequestedMsg{Target: CalendarManagerTargetAccountConnect})
-
 	case CalendarManagerRequestedMsg:
 		m.calendarManager = m.calendarManager.SetData(m.calendars, m.hiddenCalendars)
 		m.calendarManagerOpen = true
