@@ -109,10 +109,11 @@ type CalendarManagerModel struct {
 	rootFocus calendarManagerRootFocus
 
 	calendars map[int64]CalendarInfo
-	hidden    map[int64]bool
 	// list is the shared grouped calendar hierarchy used by the sidebar. It
-	// keeps account headers, collapse state, visibility controls, and stable
-	// identity selection consistent across both surfaces.
+	// is the single owner of the calendar visibility (hidden) set within the
+	// manager: account headers, collapse state, visibility dots, and stable
+	// identity selection all read through it, so there is no second mirrored
+	// hidden map to drift out of sync.
 	list CalendarListModel
 
 	pendingSelectionID int64
@@ -156,7 +157,6 @@ func NewCalendarManagerModel(calendars map[int64]CalendarInfo, hidden map[int64]
 	m := CalendarManagerModel{
 		screen:    CalendarManagerScreenList,
 		calendars: calendars,
-		hidden:    hidden,
 		theme:     activeTheme,
 		keys:      defaultCalendarManagerKeys(),
 		help:      h,
@@ -386,8 +386,10 @@ func (m CalendarManagerModel) SetData(calendars map[int64]CalendarInfo, hidden m
 	}
 
 	m.calendars = calendars
-	m.hidden = hidden
-	m = m.rebuild()
+	// Replace items and visibility together so the list clones the host map and
+	// prunes stale IDs in one pass without a transient second projection.
+	m.list = m.list.SetItemsAndHiddenPreservingCursor(sortedCalendarListItems(m.calendars), hidden)
+	m = m.sizeList()
 
 	switch {
 	case !hadIdentity && len(m.list.items) > 0:
@@ -430,25 +432,8 @@ func (m CalendarManagerModel) SelectCalendar(id int64) CalendarManagerModel {
 	return m.selectCalendar(id)
 }
 
-// setHidden returns a copy of hidden with id set to val. Copying keeps the
-// optimistic toggle off the host's (possibly shared) hidden map and is safe
-// when hidden is nil.
-func setHidden(hidden map[int64]bool, id int64, val bool) map[int64]bool {
-	out := make(map[int64]bool, len(hidden)+1)
-	for k, v := range hidden {
-		if k != id {
-			out[k] = v
-		}
-	}
-	if val {
-		out[id] = true
-	}
-	return out
-}
-
 func (m CalendarManagerModel) rebuild() CalendarManagerModel {
-	m.list = m.list.SetItemsPreservingCursor(sortedCalendarListItems(m.calendars)).
-		SetHiddenSet(m.hidden)
+	m.list = m.list.SetItemsPreservingCursor(sortedCalendarListItems(m.calendars))
 	return m.sizeList()
 }
 
@@ -523,7 +508,7 @@ func (m CalendarManagerModel) selectedCalendar() (int64, CalendarInfo, bool) {
 // openSelectedCalendar pushes the edit form for an existing calendar row,
 // wiring its current visibility into the params.
 func (m CalendarManagerModel) openSelectedCalendar(id int64, info CalendarInfo) CalendarManagerModel {
-	return m.OpenCalendar(calendarDialogParamsFor(id, info, m.hidden[id]))
+	return m.OpenCalendar(calendarDialogParamsFor(id, info, m.list.IsHidden(id)))
 }
 
 // cycleRootFocus moves root focus one step around the available ring. Forward
@@ -786,12 +771,7 @@ func (m CalendarManagerModel) handleKey(msg tea.KeyPressMsg) (CalendarManagerMod
 	m = m.applyRootFocus()
 	next, cmd := m.list.Update(msg)
 	m.list = next
-	return m.syncListProjection().normalizeRootFocus(), cmd
-}
-
-func (m CalendarManagerModel) syncListProjection() CalendarManagerModel {
-	m.hidden = m.list.HiddenSet()
-	return m
+	return m.normalizeRootFocus(), cmd
 }
 
 func (m CalendarManagerModel) handleMouse(msg tea.MouseClickMsg) (CalendarManagerModel, tea.Cmd) {
@@ -824,12 +804,14 @@ func (m CalendarManagerModel) handleMouse(msg tea.MouseClickMsg) (CalendarManage
 	if msg.X < lx || msg.X >= lx+lw || msg.Y < ly || msg.Y >= ly+lh {
 		return m, nil
 	}
-	// A source-list click always restores list focus before routing.
+	// A source-list click always restores list focus before routing. The list
+	// owns the visibility set, so a click that toggles a dot updates the single
+	// source directly — no projection to mirror back.
 	m = m.setRootFocus(rootFocusList)
 	relX := msg.X - lx
 	next, cmd := m.list.HandleClick(relX, msg.Y-ly)
 	m.list = next
-	m = m.syncListProjection().normalizeRootFocus()
+	m = m.normalizeRootFocus()
 	identity, selected := m.list.currentIdentity()
 	indicatorEnd := m.list.visibilityIndicatorWidth()
 	if m.list.grouped {
@@ -896,8 +878,8 @@ func (m CalendarManagerModel) updateAccountCalendars(msg tea.Msg) (CalendarManag
 
 // updateCalendar delegates input to the pushed calendar detail and intercepts
 // only navigation messages. CalendarDialogClosedMsg pops back to the root
-// list; CalendarVisibilityToggledMsg is mirrored into the root hidden map so
-// the dot stays consistent on Back. The Account opener's
+// list; CalendarVisibilityToggledMsg is mirrored into the list-owned hidden
+// set so the dot stays consistent on Back. The Account opener's
 // AccountSettingsRequestedMsg is NOT intercepted here — it passes through to
 // the host, which owns the canonical account record and later calls
 // OpenAccount with full params. Every other domain/action message (Save, Set
@@ -930,11 +912,11 @@ func (m CalendarManagerModel) updateCalendar(msg tea.Msg) (CalendarManagerModel,
 		m.screen = CalendarManagerScreenList
 		return m, nil
 	case CalendarVisibilityToggledMsg:
-		// Mirror the detail's optimistic toggle into the root so the row's
-		// checkbox is already correct when the user pops back. The host also
+		// Mirror the detail's optimistic toggle into the list-owned set so
+		// the row's dot is already correct when the user pops back. The list
+		// is the single source of truth within the manager; the host also
 		// persists this message when it receives the child command.
-		m.hidden = setHidden(m.hidden, typed.ID, typed.Hidden)
-		m = m.rebuild()
+		m.list = m.list.SetHidden(typed.ID, typed.Hidden)
 		return m, nil
 	}
 
@@ -1176,7 +1158,7 @@ func (m CalendarManagerModel) activeInspectorLines(w, h int) []string {
 // the summary header plus one bottom action pinned to the final row.
 func (m CalendarManagerModel) selectionInspectorLines(w, h int) []string {
 	if id, info, ok := m.selectedCalendar(); ok {
-		params := calendarDialogParamsFor(id, info, m.hidden[id])
+		params := calendarDialogParamsFor(id, info, m.list.IsHidden(id))
 		preview := NewCalendarDialogModel(params, m.theme).Blur().SetInspectorSize(w, h)
 		return strings.Split(preview.InspectorView(w, h), "\n")
 	}
