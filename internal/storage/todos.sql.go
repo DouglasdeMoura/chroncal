@@ -53,6 +53,18 @@ func (q *Queries) CompleteTodo(ctx context.Context, id int64) (Todo, error) {
 	return i, err
 }
 
+const countTodoIdentitiesByCalendar = `-- name: CountTodoIdentitiesByCalendar :one
+SELECT COUNT(DISTINCT uid) FROM todos WHERE calendar_id = ? AND uid != '' AND deleted_at IS NULL
+`
+
+// See CountEventIdentitiesByCalendar.
+func (q *Queries) CountTodoIdentitiesByCalendar(ctx context.Context, calendarID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countTodoIdentitiesByCalendar, calendarID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createTodo = `-- name: CreateTodo :one
 INSERT INTO todos (
     uid, calendar_id, summary, description, location,
@@ -884,6 +896,26 @@ func (q *Queries) ListTodosByStatus(ctx context.Context, status string) ([]Todo,
 	return items, nil
 }
 
+const markTodoIdentitiesDirtyForMigration = `-- name: MarkTodoIdentitiesDirtyForMigration :exec
+INSERT INTO sync_resources (calendar_id, uid, owner_type, dirty, sync_strategy)
+SELECT ?, uid, 'todo', 1, 'sync-token'
+FROM todos AS src
+WHERE src.calendar_id = ? AND src.deleted_at IS NULL AND src.uid != ''
+GROUP BY uid
+ON CONFLICT(calendar_id, uid) DO UPDATE SET dirty = 1, rev = rev + 1
+`
+
+type MarkTodoIdentitiesDirtyForMigrationParams struct {
+	CalendarID   int64
+	CalendarID_2 int64
+}
+
+// See MarkEventIdentitiesDirtyForMigration.
+func (q *Queries) MarkTodoIdentitiesDirtyForMigration(ctx context.Context, arg MarkTodoIdentitiesDirtyForMigrationParams) error {
+	_, err := q.db.ExecContext(ctx, markTodoIdentitiesDirtyForMigration, arg.CalendarID, arg.CalendarID_2)
+	return err
+}
+
 const purgeSoftDeletedTodos = `-- name: PurgeSoftDeletedTodos :execrows
 DELETE FROM todos WHERE deleted_at IS NOT NULL AND deleted_at < ?
 `
@@ -902,6 +934,28 @@ DELETE FROM todos WHERE id = ? AND deleted_at IS NOT NULL
 
 func (q *Queries) PurgeTodoByID(ctx context.Context, id int64) (int64, error) {
 	result, err := q.db.ExecContext(ctx, purgeTodoByID, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const reassignTodosCalendar = `-- name: ReassignTodosCalendar :execrows
+UPDATE todos SET
+    calendar_id = ?,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE calendar_id = ?
+`
+
+type ReassignTodosCalendarParams struct {
+	CalendarID   int64
+	CalendarID_2 int64
+}
+
+// Bulk-move every todo (live or soft-deleted) from one calendar to another
+// during calendar migration. See ReassignEventsCalendar.
+func (q *Queries) ReassignTodosCalendar(ctx context.Context, arg ReassignTodosCalendarParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, reassignTodosCalendar, arg.CalendarID, arg.CalendarID_2)
 	if err != nil {
 		return 0, err
 	}

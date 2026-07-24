@@ -9,6 +9,18 @@ import (
 	"context"
 )
 
+const countJournalIdentitiesByCalendar = `-- name: CountJournalIdentitiesByCalendar :one
+SELECT COUNT(DISTINCT uid) FROM journals WHERE calendar_id = ? AND uid != '' AND deleted_at IS NULL
+`
+
+// See CountEventIdentitiesByCalendar.
+func (q *Queries) CountJournalIdentitiesByCalendar(ctx context.Context, calendarID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countJournalIdentitiesByCalendar, calendarID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createJournal = `-- name: CreateJournal :one
 INSERT INTO journals (
     uid, calendar_id, summary, description,
@@ -720,6 +732,26 @@ func (q *Queries) ListRecurringJournalsByCalendar(ctx context.Context, calendarI
 	return items, nil
 }
 
+const markJournalIdentitiesDirtyForMigration = `-- name: MarkJournalIdentitiesDirtyForMigration :exec
+INSERT INTO sync_resources (calendar_id, uid, owner_type, dirty, sync_strategy)
+SELECT ?, uid, 'journal', 1, 'sync-token'
+FROM journals AS src
+WHERE src.calendar_id = ? AND src.deleted_at IS NULL AND src.uid != ''
+GROUP BY uid
+ON CONFLICT(calendar_id, uid) DO UPDATE SET dirty = 1, rev = rev + 1
+`
+
+type MarkJournalIdentitiesDirtyForMigrationParams struct {
+	CalendarID   int64
+	CalendarID_2 int64
+}
+
+// See MarkEventIdentitiesDirtyForMigration.
+func (q *Queries) MarkJournalIdentitiesDirtyForMigration(ctx context.Context, arg MarkJournalIdentitiesDirtyForMigrationParams) error {
+	_, err := q.db.ExecContext(ctx, markJournalIdentitiesDirtyForMigration, arg.CalendarID, arg.CalendarID_2)
+	return err
+}
+
 const purgeJournalByID = `-- name: PurgeJournalByID :execrows
 DELETE FROM journals WHERE id = ? AND deleted_at IS NOT NULL
 `
@@ -738,6 +770,28 @@ DELETE FROM journals WHERE deleted_at IS NOT NULL AND deleted_at < ?
 
 func (q *Queries) PurgeSoftDeletedJournals(ctx context.Context, deletedAt *string) (int64, error) {
 	result, err := q.db.ExecContext(ctx, purgeSoftDeletedJournals, deletedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const reassignJournalsCalendar = `-- name: ReassignJournalsCalendar :execrows
+UPDATE journals SET
+    calendar_id = ?,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE calendar_id = ?
+`
+
+type ReassignJournalsCalendarParams struct {
+	CalendarID   int64
+	CalendarID_2 int64
+}
+
+// Bulk-move every journal (live or soft-deleted) from one calendar to another
+// during calendar migration. See ReassignEventsCalendar.
+func (q *Queries) ReassignJournalsCalendar(ctx context.Context, arg ReassignJournalsCalendarParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, reassignJournalsCalendar, arg.CalendarID, arg.CalendarID_2)
 	if err != nil {
 		return 0, err
 	}
