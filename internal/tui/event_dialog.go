@@ -982,24 +982,24 @@ func formatAlarm(a model.Alarm) string {
 
 	var parts []string
 	if n, rest, ok := parseLeadingInt(raw, 'W'); ok {
-		parts = append(parts, pluralize(n, "week"))
+		parts = append(parts, fmt.Sprintf("%d %s", n, pluralize(n, "week", "weeks")))
 		raw = rest
 	}
 	if n, rest, ok := parseLeadingInt(raw, 'D'); ok {
-		parts = append(parts, pluralize(n, "day"))
+		parts = append(parts, fmt.Sprintf("%d %s", n, pluralize(n, "day", "days")))
 		raw = rest
 	}
 	raw = strings.TrimPrefix(raw, "T")
 	if n, rest, ok := parseLeadingInt(raw, 'H'); ok {
-		parts = append(parts, pluralize(n, "hour"))
+		parts = append(parts, fmt.Sprintf("%d %s", n, pluralize(n, "hour", "hours")))
 		raw = rest
 	}
 	if n, rest, ok := parseLeadingInt(raw, 'M'); ok {
-		parts = append(parts, pluralize(n, "min."))
+		parts = append(parts, fmt.Sprintf("%d %s", n, pluralize(n, "min.", "min.")))
 		raw = rest
 	}
 	if n, _, ok := parseLeadingInt(raw, 'S'); ok {
-		parts = append(parts, pluralize(n, "sec."))
+		parts = append(parts, fmt.Sprintf("%d %s", n, pluralize(n, "sec.", "sec.")))
 	}
 
 	if len(parts) == 0 {
@@ -1027,11 +1027,18 @@ func parseLeadingInt(s string, suffix byte) (int, string, bool) {
 	return n, s[i+1:], true
 }
 
-func pluralize(n int, unit string) string {
+// pluralize returns the singular form of a noun when n is one, and the plural
+// form otherwise (including zero). Both forms are supplied explicitly so
+// irregular nouns — abbreviations such as "min." that don't take an "-s"
+// suffix — are handled truthfully rather than via a fake general-purpose
+// inflector. Callers own the count, so the bare form composes into both plain
+// "%d %s" counts and adjective-bearing copy like "%d downloaded %s".
+// See issue #548.
+func pluralize(n int, singular, plural string) string {
 	if n == 1 {
-		return "1 " + unit
+		return singular
 	}
-	return fmt.Sprintf("%d %s", n, unit)
+	return plural
 }
 
 // wrapWordByWidth hard-breaks word into display-width chunks each at most w

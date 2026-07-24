@@ -201,16 +201,9 @@ func (m AccountSettingsDialogModel) identityLines() []string {
 	}
 	lines = append(lines, fmt.Sprintf("Calendars: %d", m.params.CalendarCount))
 	if m.params.AttentionCount > 0 {
-		lines = append(lines, fmt.Sprintf("Needs attention · %d %s", m.params.AttentionCount, accountSettingsNoun(m.params.AttentionCount)))
+		lines = append(lines, fmt.Sprintf("Needs attention · %d %s", m.params.AttentionCount, pluralize(m.params.AttentionCount, "calendar", "calendars")))
 	}
 	return lines
-}
-
-func accountSettingsNoun(count int) string {
-	if count == 1 {
-		return "calendar"
-	}
-	return "calendars"
 }
 
 // bodyRows renders the shared dialog body — identity lines then the action
