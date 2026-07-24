@@ -38,6 +38,7 @@ type AccountSettingsRenameRequestedMsg struct{ AccountID int64 }
 type AccountSettingsReauthRequestedMsg struct{ AccountID int64 }
 
 type AccountSettingsRemoveRequestedMsg struct{ AccountID int64 }
+type AccountSettingsUpdateCredentialsRequestedMsg struct{ AccountID int64 }
 
 type AccountSettingsClosedMsg struct{}
 
@@ -97,6 +98,13 @@ func NewAccountSettingsDialogModel(params AccountSettingsParams, theme Theme) Ac
 			label: "Sign In Again…",
 			onPress: func() tea.Msg {
 				return AccountSettingsReauthRequestedMsg{AccountID: params.AccountID}
+			},
+		})
+	} else if accountAuthIsBasicOrBearer(params.AuthType) {
+		actions = append(actions, accountSettingsAction{
+			label: "Update Credentials…",
+			onPress: func() tea.Msg {
+				return AccountSettingsUpdateCredentialsRequestedMsg{AccountID: params.AccountID}
 			},
 		})
 	}
@@ -358,4 +366,122 @@ func (m AccountOAuthConfigDialogModel) View() string {
 	contextLine := lipgloss.NewStyle().Foreground(m.muted).
 		Render("OAuth client configuration for " + m.accountName)
 	return m.dialog.Box(contextLine + "\n\n" + m.form.View())
+}
+
+// AccountCredentialsUpdateSubmittedMsg carries the freshly entered secret for
+// an in-place basic/bearer credential rotation. AuthType selects which field
+// StoreCredential writes; the account identity (server URL, username) is
+// preserved untouched.
+type AccountCredentialsUpdateSubmittedMsg struct {
+	AccountID int64
+	Secret    string
+}
+
+// AccountCredentialsUpdateClosedMsg reports a cancel from the credential
+// update dialog; no credential was changed.
+type AccountCredentialsUpdateClosedMsg struct{ AccountID int64 }
+
+// AccountCredentialsDialogModel collects the single secret needed to rotate a
+// basic (password) or bearer (token) account credential in place. It is the
+// non-OAuth counterpart of AccountOAuthConfigDialogModel: the account and its
+// calendars stay linked, only the stored secret is replaced.
+type AccountCredentialsDialogModel struct {
+	accountID   int64
+	accountName string
+	authType    string
+	username    string
+	dialog      Dialog
+	form        Form
+	help        help.Model
+	muted       color.Color
+}
+
+// NewAccountCredentialsDialogModel builds the credential-rotation form for one
+// account. Bearer auth collects a token; every other basic-or-bearer type
+// collects a password — matching the field the calendar connect flow uses.
+func NewAccountCredentialsDialogModel(
+	accountID int64,
+	accountName, authType, username string,
+	theme Theme,
+) AccountCredentialsDialogModel {
+	var fieldLabel string
+	secret := newPasswordField()
+	if accountAuthIsBearer(authType) {
+		fieldLabel = "Token"
+		secret.SetPlaceholder("paste your API token")
+	} else {
+		fieldLabel = "Password"
+	}
+	styles := DefaultFormStyles()
+	styles.LabelLayout = LabelTop
+	form := NewForm(
+		"Update",
+		styles,
+		FormItem{Label: fieldLabel, Field: secret, Required: true},
+	)
+	form.OnSubmit(func(f *Form) tea.Cmd {
+		msg := AccountCredentialsUpdateSubmittedMsg{
+			AccountID: accountID,
+			Secret:    strings.TrimSpace(f.Field(0).(*TextField).Value()),
+		}
+		return func() tea.Msg { return msg }
+	})
+	form.OnCancel(func(*Form) tea.Cmd {
+		return func() tea.Msg { return AccountCredentialsUpdateClosedMsg{AccountID: accountID} }
+	})
+	return AccountCredentialsDialogModel{
+		accountID:   accountID,
+		accountName: accountName,
+		authType:    authType,
+		username:    username,
+		dialog:      NewDialog("Update Credentials", DefaultDialogStyles()),
+		form:        form,
+		help:        newThemedHelp(theme),
+		muted:       theme.TextDim,
+	}
+}
+
+func (m AccountCredentialsDialogModel) SetSize(w, h int) AccountCredentialsDialogModel {
+	const maxWidth = 56
+	m.dialog = m.dialog.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	m.dialog.SetWidth(min(w, maxWidth))
+	m.form.SetWidth(m.dialog.ContentWidth())
+	return m
+}
+
+func (m AccountCredentialsDialogModel) BoxSize() (int, int) {
+	return lipgloss.Size(m.View())
+}
+
+func (m AccountCredentialsDialogModel) Update(
+	msg tea.Msg,
+) (AccountCredentialsDialogModel, tea.Cmd) {
+	if size, ok := msg.(tea.WindowSizeMsg); ok {
+		return m.SetSize(size.Width, size.Height), nil
+	}
+	if press, ok := msg.(tea.KeyPressMsg); ok &&
+		key.Matches(press, key.NewBinding(key.WithKeys("esc"))) {
+		return m, func() tea.Msg { return AccountCredentialsUpdateClosedMsg{AccountID: m.accountID} }
+	}
+	var cmd tea.Cmd
+	m.form, cmd = m.form.Update(msg)
+	return m, cmd
+}
+
+func (m AccountCredentialsDialogModel) View() string {
+	m.dialog.SetFooter(m.help.ShortHelpView([]key.Binding{
+		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "switch")),
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "update")),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
+	}))
+	noun := "password"
+	if accountAuthIsBearer(m.authType) {
+		noun = "token"
+	}
+	muted := lipgloss.NewStyle().Foreground(m.muted)
+	context := []string{"New " + noun + " for " + m.accountName}
+	if identity := strings.TrimSpace(m.username); identity != "" {
+		context = append(context, "Identity: "+identity)
+	}
+	return m.dialog.Box(muted.Render(strings.Join(context, "\n")) + "\n\n" + m.form.View())
 }

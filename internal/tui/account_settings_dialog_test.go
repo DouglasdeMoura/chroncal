@@ -88,11 +88,22 @@ func TestAccountSettingsDialogNonOAuthOmitsSignIn(t *testing.T) {
 	}
 	got := strings.Join(labels, "|")
 	if strings.Contains(got, "Sign In Again") {
-		t.Fatalf("non-OAuth actions contain sign-in: %q", got)
+		t.Fatalf("basic-auth actions contain sign-in: %q", got)
 	}
-	if got != "Manage Calendars…|Sync Now|Rename Account…|Remove Account…|Done" {
-		t.Fatalf("non-OAuth actions = %q", got)
+	want := "Manage Calendars…|Sync Now|Rename Account…|Update Credentials…|Remove Account…|Done"
+	if got != want {
+		t.Fatalf("basic-auth actions = %q, want %q", got, want)
 	}
+	// The new action must be account-scoped so it cannot mutate a sibling.
+	for _, a := range m.actions {
+		if a.label == "Update Credentials…" {
+			if msg, ok := a.onPress().(AccountSettingsUpdateCredentialsRequestedMsg); !ok || msg.AccountID != 9 {
+				t.Fatalf("Update Credentials action = %#v, want AccountSettingsUpdateCredentialsRequestedMsg{9}", a.onPress())
+			}
+			return
+		}
+	}
+	t.Fatalf("basic-auth actions missing Update Credentials: %q", got)
 }
 
 func TestAccountSettingsDialogRendersQuietIdentityAndHealth(t *testing.T) {
@@ -143,5 +154,96 @@ func TestAccountOAuthConfigDialogSubmitsAccountScopedConfig(t *testing.T) {
 	msg, ok := cmd().(AccountOAuthConfigSubmittedMsg)
 	if !ok || msg.AccountID != 7 || msg.ClientID != "new-client" || msg.ClientSecret != "new-secret" {
 		t.Fatalf("OAuth config submission = %#v", cmd())
+	}
+}
+
+func TestAccountSettingsDialogBearerOffersUpdateCredentials(t *testing.T) {
+	m := NewAccountSettingsDialogModel(AccountSettingsParams{
+		AccountID:   11,
+		DisplayName: "API Token Account",
+		AuthType:    "bearer",
+	}, NewTheme(true))
+
+	labels := make([]string, len(m.actions))
+	for i := range m.actions {
+		labels[i] = m.actions[i].label
+	}
+	got := strings.Join(labels, "|")
+	want := "Manage Calendars…|Sync Now|Rename Account…|Update Credentials…|Remove Account…|Done"
+	if got != want {
+		t.Fatalf("bearer actions = %q, want %q", got, want)
+	}
+	for _, a := range m.actions {
+		if a.label == "Update Credentials…" {
+			if msg, ok := a.onPress().(AccountSettingsUpdateCredentialsRequestedMsg); !ok || msg.AccountID != 11 {
+				t.Fatalf("Update Credentials action = %#v, want AccountSettingsUpdateCredentialsRequestedMsg{11}", a.onPress())
+			}
+			return
+		}
+	}
+	t.Fatalf("bearer actions missing Update Credentials: %q", got)
+}
+
+func TestAccountSettingsDialogOAuthOmitsUpdateCredentials(t *testing.T) {
+	m := NewAccountSettingsDialogModel(AccountSettingsParams{
+		AccountID: 7, DisplayName: "Personal Google", AuthType: "oauth2",
+	}, NewTheme(true))
+	for _, a := range m.actions {
+		if a.label == "Update Credentials…" {
+			t.Fatalf("OAuth account must keep Sign In Again, not Update Credentials")
+		}
+		if a.label == "Sign In Again…" {
+			return
+		}
+	}
+	t.Fatalf("OAuth actions missing Sign In Again")
+}
+
+func TestAccountCredentialsDialogBasicCollectsPassword(t *testing.T) {
+	m := NewAccountCredentialsDialogModel(7, "Work", "basic", "alice@example.com", NewTheme(true)).
+		SetSize(80, 30)
+	view := stripANSI(m.View())
+	if !strings.Contains(view, "Password") || !strings.Contains(view, "New password for Work") {
+		t.Fatalf("basic dialog missing Password field/context:\n%s", view)
+	}
+	m.form.Field(0).(*TextField).SetValue("hunter2")
+	form, cmd := m.form.Submit()
+	m.form = form
+	if cmd == nil {
+		t.Fatal("basic credential form did not submit")
+	}
+	msg, ok := cmd().(AccountCredentialsUpdateSubmittedMsg)
+	if !ok || msg.AccountID != 7 || msg.Secret != "hunter2" {
+		t.Fatalf("basic submission = %#v, want account 7 secret hunter2", cmd())
+	}
+}
+
+func TestAccountCredentialsDialogBearerCollectsToken(t *testing.T) {
+	m := NewAccountCredentialsDialogModel(11, "API Token Account", "bearer", "svc", NewTheme(true)).
+		SetSize(80, 30)
+	view := stripANSI(m.View())
+	if !strings.Contains(view, "Token") || !strings.Contains(view, "New token for API Token Account") {
+		t.Fatalf("bearer dialog missing Token field/context:\n%s", view)
+	}
+	m.form.Field(0).(*TextField).SetValue("abc123")
+	form, cmd := m.form.Submit()
+	m.form = form
+	if cmd == nil {
+		t.Fatal("bearer credential form did not submit")
+	}
+	msg, ok := cmd().(AccountCredentialsUpdateSubmittedMsg)
+	if !ok || msg.AccountID != 11 || msg.Secret != "abc123" {
+		t.Fatalf("bearer submission = %#v, want account 11 secret abc123", cmd())
+	}
+}
+
+func TestAccountCredentialsDialogEscapeCancels(t *testing.T) {
+	m := NewAccountCredentialsDialogModel(7, "Work", "basic", "alice@example.com", NewTheme(true))
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if cmd == nil {
+		t.Fatal("Escape returned nil command")
+	}
+	if _, ok := cmd().(AccountCredentialsUpdateClosedMsg); !ok {
+		t.Fatalf("Escape message = %T, want AccountCredentialsUpdateClosedMsg", cmd())
 	}
 }
