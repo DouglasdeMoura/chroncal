@@ -1001,6 +1001,22 @@ func (m CalendarDialogModel) InspectorView(w, h int) string {
 	return padLines(strings.Split(strings.Join(parts, "\n"), "\n"), w, h)
 }
 
+// HelpBindings returns the footer help this pushed detail owns while it is
+// the manager's active screen: an embedded discovery picker advertises its
+// own compact set, otherwise the form's field keys. The manager footer
+// defers here so a rebound key no longer drifts between the child and the
+// footer. These are display-only; input routing is unchanged.
+func (m CalendarDialogModel) HelpBindings() []key.Binding {
+	if m.discoveryPicker != nil {
+		return m.discoveryPicker.HelpBindings()
+	}
+	return []key.Binding{
+		footerBinding("tab", "next field"),
+		footerBinding("enter", "confirm"),
+		footerBinding("esc", "back"),
+	}
+}
+
 func (m CalendarDialogModel) bodyOverflows() bool {
 	return m.body.TotalLineCount() > m.body.VisibleLineCount()
 }

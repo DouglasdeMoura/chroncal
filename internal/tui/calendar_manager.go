@@ -1115,26 +1115,53 @@ func (m CalendarManagerModel) renderManagerBody(w, h int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m CalendarManagerModel) activeInspectorLines(w, h int) []string {
+// footerBinding builds a display-only footer key binding whose hint label
+// doubles as the key, matching the themed help model's "key · desc" format
+// shared by every dialog footer.
+func footerBinding(k, desc string) key.Binding {
+	return key.NewBinding(key.WithKeys(k), key.WithHelp(k, desc))
+}
+
+// managerChild is the pushed-screen contract: the screen that currently owns
+// the manager's input renders its own inspector view and advertises its own
+// footer help bindings. Centralizing screen→child resolution in activeChild
+// keeps the footer and the inspector from drifting independently when a new
+// screen is added — both read the one mapping.
+type managerChild interface {
+	HelpBindings() []key.Binding
+	InspectorView(w, h int) string
+}
+
+// activeChild returns the pushed screen that currently owns input and the
+// inspector pane, or nil at the root list. It is the single source of truth
+// for the screen→child mapping shared by the footer (helpBindings) and the
+// inspector (activeInspectorLines), so the two cannot drift apart when a
+// screen is added.
+func (m CalendarManagerModel) activeChild() managerChild {
 	switch m.screen {
-	case CalendarManagerScreenList:
-		// The root selection inspector is rendered below.
 	case CalendarManagerScreenCalendar:
 		if m.calendarForm != nil {
-			return strings.Split(m.calendarForm.InspectorView(w, h), "\n")
+			return m.calendarForm
 		}
 	case CalendarManagerScreenAccount:
 		if m.accountSettings != nil {
-			return strings.Split(m.accountSettings.InspectorView(w, h), "\n")
+			return m.accountSettings
 		}
 	case CalendarManagerScreenAccountCalendars:
 		if m.accountPicker != nil {
-			return strings.Split(m.accountPicker.InspectorView(w, h), "\n")
+			return m.accountPicker
 		}
 	case CalendarManagerScreenTransfer:
 		if m.transfer != nil {
-			return strings.Split(m.transfer.InspectorView(w, h), "\n")
+			return m.transfer
 		}
+	}
+	return nil
+}
+
+func (m CalendarManagerModel) activeInspectorLines(w, h int) []string {
+	if child := m.activeChild(); child != nil {
+		return strings.Split(child.InspectorView(w, h), "\n")
 	}
 	return m.selectionInspectorLines(w, h)
 }
@@ -1344,45 +1371,30 @@ func (m CalendarManagerModel) renderHelp(w int) string {
 }
 
 // helpBindings resolves the footer bindings for the current manager state:
-// each pushed screen advertises its child's actual keys, the open Add menu
-// its menu keys, and the root its ring keys plus whatever the focused control
-// activates. Keys listed here are display-only; input routing is unchanged.
+// the discard prompt and Add menu own their own keys, each pushed screen
+// advertises its child's actual keys (HelpBindings), and the root shows its
+// ring keys plus whatever the focused control activates. Keys listed here
+// are display-only; input routing is unchanged.
 func (m CalendarManagerModel) helpBindings() []key.Binding {
-	bind := func(k, desc string) key.Binding {
-		return key.NewBinding(key.WithKeys(k), key.WithHelp(k, desc))
-	}
 	if m.discardConfirm != nil {
-		return []key.Binding{bind("tab", "switch"), bind("enter", "select"), bind("esc", "keep editing")}
+		return []key.Binding{footerBinding("tab", "switch"), footerBinding("enter", "select"), footerBinding("esc", "keep editing")}
 	}
-	// The arrow-navigation hint is omitted so the picker set fits the
-	// manager's minimum interior with the esc hint intact.
-	pickerBindings := []key.Binding{bind("space", "toggle"), bind("tab", "switch"), bind("enter", "confirm"), bind("esc", "back")}
-	switch m.screen {
-	case CalendarManagerScreenCalendar, CalendarManagerScreenTransfer:
-		if m.calendarForm != nil && m.calendarForm.discoveryPicker != nil {
-			return pickerBindings
-		}
-		return []key.Binding{bind("tab", "next field"), bind("enter", "confirm"), bind("esc", "back")}
-	case CalendarManagerScreenAccount:
-		return []key.Binding{bind("↑/↓", "select"), bind("enter", "open"), bind("esc", "back")}
-	case CalendarManagerScreenAccountCalendars:
-		return pickerBindings
-	case CalendarManagerScreenList:
-		// Resolved below by root focus.
+	if child := m.activeChild(); child != nil {
+		return child.HelpBindings()
 	}
 	if m.addMenuOpen {
-		return []key.Binding{bind("↑↓", "select"), bind("enter", "choose"), bind("esc", "dismiss")}
+		return []key.Binding{footerBinding("↑↓", "select"), footerBinding("enter", "choose"), footerBinding("esc", "dismiss")}
 	}
 	switch m.rootFocus {
 	case rootFocusAdd:
-		return []key.Binding{bind("tab", "next"), bind("enter", "add"), bind("esc", "close")}
+		return []key.Binding{footerBinding("tab", "next"), footerBinding("enter", "add"), footerBinding("esc", "close")}
 	case rootFocusInspector:
-		return []key.Binding{bind("tab", "next"), bind("enter", "activate"), bind("esc", "close")}
+		return []key.Binding{footerBinding("tab", "next"), footerBinding("enter", "activate"), footerBinding("esc", "close")}
 	default:
 		// "a add" is omitted: + Add is a visible tab stop in the root ring and
 		// the accelerator keeps working; the compact set keeps esc visible at
 		// the manager's minimum widths.
-		return []key.Binding{bind("↑↓", "select"), bind("space", "toggle"), bind("enter", "open"), bind("tab", "next"), bind("esc", "close")}
+		return []key.Binding{footerBinding("↑↓", "select"), footerBinding("space", "toggle"), footerBinding("enter", "open"), footerBinding("tab", "next"), footerBinding("esc", "close")}
 	}
 }
 

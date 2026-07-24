@@ -251,6 +251,18 @@ func (m CalendarTransferDialogModel) InspectorView(w, h int) string {
 	return padLines(strings.Split(strings.Join(parts, "\n"), "\n"), w, h)
 }
 
+// HelpBindings returns the footer help this pushed transfer screen owns
+// while it is the manager's active screen. The manager footer defers here
+// so a rebound key no longer drifts between the child and the footer.
+// Display-only.
+func (m CalendarTransferDialogModel) HelpBindings() []key.Binding {
+	return []key.Binding{
+		footerBinding("tab", "next field"),
+		footerBinding("enter", "confirm"),
+		footerBinding("esc", "back"),
+	}
+}
+
 func (m CalendarTransferDialogModel) BoxSize() (int, int) { return lipgloss.Size(m.View()) }
 
 func (m CalendarTransferDialogModel) Update(msg tea.Msg) (CalendarTransferDialogModel, tea.Cmd) {
