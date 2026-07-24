@@ -243,6 +243,17 @@ func (m AccountSettingsDialogModel) InspectorView(w, h int) string {
 	return padLines(rows, w, h)
 }
 
+// HelpBindings returns the footer help this pushed detail owns while it is
+// the manager's active screen. The manager footer defers here so a rebound
+// key no longer drifts between the child and the footer. Display-only.
+func (m AccountSettingsDialogModel) HelpBindings() []key.Binding {
+	return []key.Binding{
+		footerBinding("↑/↓", "select"),
+		footerBinding("enter", "open"),
+		footerBinding("esc", "back"),
+	}
+}
+
 func (m AccountSettingsDialogModel) View() string {
 	helpKeys := []key.Binding{
 		key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", "select")),

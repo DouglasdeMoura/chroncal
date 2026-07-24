@@ -204,6 +204,20 @@ func (m AccountCalendarPickerModel) InspectorView(w, h int) string {
 	return padLines(rows, w, h)
 }
 
+// HelpBindings returns the compact footer help the manager shows while this
+// picker is the active screen — or embedded in a calendar detail. The
+// arrow-navigation and select-all hints from the standalone picker are
+// omitted so the set fits the manager's minimum interior with the esc hint
+// intact. The manager footer defers here so rebindings no longer drift.
+func (m AccountCalendarPickerModel) HelpBindings() []key.Binding {
+	return []key.Binding{
+		footerBinding("space", "toggle"),
+		footerBinding("tab", "switch"),
+		footerBinding("enter", "confirm"),
+		footerBinding("esc", "back"),
+	}
+}
+
 func (m AccountCalendarPickerModel) BoxSize() (int, int) { return lipgloss.Size(m.View()) }
 
 // HandleInspectorClick routes a pane-relative click on the embedded
