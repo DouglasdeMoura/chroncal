@@ -3355,7 +3355,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			"Remove account “%s” from Chroncal?\n\n%d downloaded %s will be kept as local calendars.\nRemote links and stored sign-in will be removed.",
 			name,
 			params.CalendarCount,
-			accountSettingsNoun(params.CalendarCount),
+			pluralize(params.CalendarCount, "calendar", "calendars"),
 		)
 		if draft := m.calendarManager.LocalDraft(); m.calendarManagerOpen &&
 			draft != nil && draft.AccountID == msg.AccountID {
