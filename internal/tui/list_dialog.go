@@ -45,7 +45,7 @@ func defaultListDialogKeys() ListDialogKeys {
 		Down:     key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
 		Tab:      key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "sections")),
 		ShiftTab: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev section")),
-		Enter:    key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter", "select")),
+		Enter:    key.NewBinding(key.WithKeys("enter", "space"), key.WithHelp("enter", "select")),
 		Close:    key.NewBinding(key.WithKeys("esc", "q"), key.WithHelp("esc", "close")),
 		PageUp:   key.NewBinding(key.WithKeys("pgup", "ctrl+b")),
 		PageDown: key.NewBinding(key.WithKeys("pgdown", "ctrl+f")),

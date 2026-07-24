@@ -77,7 +77,7 @@ func defaultAgendaKeys() agendaKeyMap {
 		PrevMonth:   key.NewBinding(key.WithKeys("[", "pgup"), key.WithHelp("[", "prev month")),
 		NextMonth:   key.NewBinding(key.WithKeys("]", "pgdown"), key.WithHelp("]", "next month")),
 		Today:       key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "today")),
-		Select:      key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter", "view")),
+		Select:      key.NewBinding(key.WithKeys("enter", "space"), key.WithHelp("enter", "view")),
 		Create:      key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "new")),
 		Edit:        key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
 		Duplicate:   key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("ctrl+d", "duplicate")),

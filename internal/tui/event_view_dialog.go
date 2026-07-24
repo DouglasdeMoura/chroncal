@@ -51,7 +51,7 @@ func defaultEventViewKeys() eventViewKeyMap {
 		ShiftTab:   key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev")),
 		Left:       key.NewBinding(key.WithKeys("left", "h")),
 		Right:      key.NewBinding(key.WithKeys("right", "l")),
-		Enter:      key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter", "select")),
+		Enter:      key.NewBinding(key.WithKeys("enter", "space"), key.WithHelp("enter", "select")),
 		RSVPYes:    key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "RSVP yes")),
 		RSVPNo:     key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "RSVP no")),
 		RSVPMaybe:  key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "RSVP maybe")),
