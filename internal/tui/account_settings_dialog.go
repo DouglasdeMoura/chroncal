@@ -213,7 +213,6 @@ func accountSettingsNoun(count int) string {
 	return "calendars"
 }
 
-// InspectorView renders account context and actions without a nested border.
 // bodyRows renders the shared dialog body — identity lines then the action
 // list — at the given width. InspectorView and View differ only in width
 // source and outer wrapper.
@@ -245,7 +244,8 @@ func (m AccountSettingsDialogModel) bodyRows(width int) []string {
 
 func (m AccountSettingsDialogModel) InspectorView(w, h int) string {
 	w = max(w, 1)
-	rows := []string{lipgloss.NewStyle().Bold(true).Render(truncateTo(m.dialog.title, w)), ""}
+	rows := make([]string, 0, len(m.actions)+9)
+	rows = append(rows, lipgloss.NewStyle().Bold(true).Render(truncateTo(m.dialog.title, w)), "")
 	rows = append(rows, m.bodyRows(w)...)
 	return padLines(rows, w, h)
 }

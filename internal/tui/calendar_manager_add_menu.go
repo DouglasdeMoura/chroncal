@@ -160,7 +160,7 @@ func (m CalendarManagerModel) addMenuBoxRect() (int, int, int, int) {
 // hit-testing and geometry assertions.
 func (m CalendarManagerModel) addMenuRect() (int, int, int, int) {
 	mx, my, mw, mh := m.addMenuBoxRect()
-	ox, oy, _, _ := m.dialogOrigin()
+	ox, oy := m.dialogOrigin()
 	return mx + ox, my + oy, mw, mh
 }
 
