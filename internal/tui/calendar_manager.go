@@ -672,7 +672,7 @@ func (m CalendarManagerModel) Update(msg tea.Msg) (CalendarManagerModel, tea.Cmd
 				}
 				return m, nil
 			}
-			ox, oy, _, _ := m.dialogOrigin()
+			ox, oy := m.dialogOrigin()
 			msg = MouseEvent{IsClick: true, Target: mouseResolve(click.X-ox, click.Y-oy)}
 		}
 		if popped, cmd, ok := m.popOnLeft(msg); ok {
@@ -1286,7 +1286,7 @@ func (m CalendarManagerModel) inspectorActionRect() (int, int, int, bool) {
 	if !ok {
 		return 0, 0, 0, false
 	}
-	dialogX, dialogY, _, _ := m.dialogOrigin()
+	dialogX, dialogY := m.dialogOrigin()
 	listW := m.sourceColumnWidth()
 	// Inspector pane begins after the border, left pad, source column, and the
 	// three-cell divider; the action sits on the final body row.
@@ -1299,7 +1299,7 @@ func (m CalendarManagerModel) inspectorActionRect() (int, int, int, bool) {
 // beside the source column in wide two-pane layouts, the full interior in
 // one-pane layouts.
 func (m CalendarManagerModel) inspectorPaneRect() (int, int, int, int) {
-	dialogX, dialogY, _, _ := m.dialogOrigin()
+	dialogX, dialogY := m.dialogOrigin()
 	paneX := dialogX + addMenuContentBoxX()
 	if !m.onePaneLayout() {
 		paneX += m.sourceColumnWidth() + 3
@@ -1416,7 +1416,7 @@ func (m CalendarManagerModel) listRegion() (int, int, int, int) {
 		return 0, 0, 0, 0
 	}
 	listW, _ := m.rootPaneSize()
-	dialogX, dialogY, _, _ := m.dialogOrigin()
+	dialogX, dialogY := m.dialogOrigin()
 	return dialogX + addMenuContentBoxX(), dialogY + 4, listW, max(m.managerBodyHeight()-2, 1)
 }
 
@@ -1427,11 +1427,11 @@ func (m CalendarManagerModel) managerBodyHeight() int {
 	return h
 }
 
-// dialogOrigin returns the centered box's screen-space top-left corner plus
-// its dimensions — the shared base for every mouse hit-test rectangle.
-func (m CalendarManagerModel) dialogOrigin() (x, y, boxW, boxH int) {
-	boxW, boxH = m.boxSize()
-	return (m.width - boxW) / 2, (m.height - boxH) / 2, boxW, boxH
+// dialogOrigin returns the centered box's screen-space top-left corner — the
+// shared base for every mouse hit-test rectangle.
+func (m CalendarManagerModel) dialogOrigin() (x, y int) {
+	boxW, boxH := m.boxSize()
+	return (m.width - boxW) / 2, (m.height - boxH) / 2
 }
 
 // addMenuContentBoxX is the box-local x where source-pane content begins
@@ -1469,7 +1469,7 @@ func (m CalendarManagerModel) sourceAddActionRect() (int, int, int, bool) {
 	if !m.sourceAddActionRendered() {
 		return 0, 0, 0, false
 	}
-	dialogX, dialogY, _, _ := m.dialogOrigin()
+	dialogX, dialogY := m.dialogOrigin()
 	return dialogX + addMenuContentBoxX(), dialogY + addMenuActionBoxY(m), lipgloss.Width(m.renderSourceAddActionCore()), true
 }
 
