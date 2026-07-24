@@ -17,14 +17,17 @@ var ErrLastCalendar = errors.New("cannot delete the last calendar")
 // ErrDuplicateName is returned when a calendar name already exists.
 var ErrDuplicateName = errors.New("a calendar with this name already exists")
 
-// ErrDefaultCalendarRequiresPromotion is returned by Delete when the target
-// row is the current default. Callers must pick a replacement and call
-// DeleteAndPromote instead, so the default is never silently moved.
+// ErrDefaultCalendarRequiresPromotion is returned when the current default
+// calendar is among those being deleted but no surviving replacement was
+// supplied. Delete surfaces it directly; the other delete/reconcile paths
+// surface it through the shared PromoteDefault helper.
 var ErrDefaultCalendarRequiresPromotion = errors.New("cannot delete the default calendar without promoting a replacement")
 
-// ErrInvalidPromotionTarget is returned by DeleteAndPromote when the
-// replacement default ID is the same as the calendar being deleted, or
-// does not exist.
+// ErrInvalidPromotionTarget is returned when a default-calendar promotion
+// target does not survive the operation: it is the calendar being removed, is
+// among the calendars being removed, or does not exist. DeleteAndPromote,
+// DeleteWithRemoteCleanup, and the account selection/removal paths surface it
+// through the shared PromoteDefault helper.
 var ErrInvalidPromotionTarget = errors.New("invalid promotion target for default calendar")
 
 type Service struct {
@@ -206,28 +209,17 @@ func (s *Service) deleteWithOptionalPromotion(ctx context.Context, id, newDefaul
 		return ErrLastCalendar
 	}
 
-	if target.IsDefault == 1 {
-		if newDefaultID == 0 {
-			return ErrDefaultCalendarRequiresPromotion
-		}
-		if newDefaultID == id {
-			return ErrInvalidPromotionTarget
-		}
-		if _, err := qtx.GetCalendar(ctx, newDefaultID); err != nil {
-			return ErrInvalidPromotionTarget
-		}
-	}
-
 	if err := qtx.DeleteCalendar(ctx, id); err != nil {
 		return fmt.Errorf("delete calendar: %w", err)
 	}
 
+	// When the target held the default, PromoteDefault validates that the
+	// replacement survives the deletion (it is not id and still exists in this
+	// transaction) and clears+sets the default atomically, so the database is
+	// never observed without a default.
 	if target.IsDefault == 1 {
-		if err := qtx.ClearDefaultCalendar(ctx); err != nil {
-			return fmt.Errorf("clear default: %w", err)
-		}
-		if err := qtx.SetCalendarAsDefault(ctx, newDefaultID); err != nil {
-			return fmt.Errorf("promote default: %w", err)
+		if err := PromoteDefault(ctx, qtx, map[int64]struct{}{id: {}}, newDefaultID); err != nil {
+			return err
 		}
 	}
 

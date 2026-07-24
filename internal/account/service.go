@@ -664,14 +664,6 @@ func (s *Service) ReconcileSelection(
 	}
 
 	replacementID := params.NewDefaultID
-	if removedDefault && replacementID != 0 {
-		if _, removed := removedIDs[replacementID]; removed {
-			return SelectionResult{}, calendar.ErrInvalidPromotionTarget
-		}
-		if _, err := qtx.GetCalendar(ctx, replacementID); err != nil {
-			return SelectionResult{}, calendar.ErrInvalidPromotionTarget
-		}
-	}
 
 	taken := make(map[string]struct{}, len(allCalendars))
 	for _, row := range allCalendars {
@@ -728,14 +720,8 @@ func (s *Service) ReconcileSelection(
 				return SelectionResult{}, calendar.ErrInvalidPromotionTarget
 			}
 		}
-		if replacementID == 0 {
-			return SelectionResult{}, calendar.ErrInvalidPromotionTarget
-		}
-		if err := qtx.ClearDefaultCalendar(ctx); err != nil {
-			return SelectionResult{}, fmt.Errorf("clear default calendar: %w", err)
-		}
-		if err := qtx.SetCalendarAsDefault(ctx, replacementID); err != nil {
-			return SelectionResult{}, fmt.Errorf("set replacement default: %w", err)
+		if err := calendar.PromoteDefault(ctx, qtx, removedIDs, replacementID); err != nil {
+			return SelectionResult{}, err
 		}
 	}
 
@@ -814,12 +800,6 @@ func (s *Service) RemoveWithCalendars(
 		if params.NewDefaultID == 0 {
 			return RemoveResult{}, calendar.ErrDefaultCalendarRequiresPromotion
 		}
-		if _, removed := removedIDs[params.NewDefaultID]; removed {
-			return RemoveResult{}, calendar.ErrInvalidPromotionTarget
-		}
-		if _, err := qtx.GetCalendar(ctx, params.NewDefaultID); err != nil {
-			return RemoveResult{}, calendar.ErrInvalidPromotionTarget
-		}
 	} else if params.NewDefaultID != 0 {
 		return RemoveResult{}, calendar.ErrInvalidPromotionTarget
 	}
@@ -830,11 +810,8 @@ func (s *Service) RemoveWithCalendars(
 		}
 	}
 	if removedDefault {
-		if err := qtx.ClearDefaultCalendar(ctx); err != nil {
-			return RemoveResult{}, fmt.Errorf("clear default calendar: %w", err)
-		}
-		if err := qtx.SetCalendarAsDefault(ctx, params.NewDefaultID); err != nil {
-			return RemoveResult{}, fmt.Errorf("set replacement default: %w", err)
+		if err := calendar.PromoteDefault(ctx, qtx, removedIDs, params.NewDefaultID); err != nil {
+			return RemoveResult{}, err
 		}
 	}
 	if err := qtx.DeleteAccount(ctx, accountID); err != nil {
