@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"image/color"
 	"slices"
 	"strings"
 
@@ -149,6 +150,19 @@ type CalendarManagerModel struct {
 	// when Esc/Cancel would drop a dirty calendar draft. Non-nil only while
 	// the prompt is open; it owns all input until answered.
 	discardConfirm *ConfirmDialogModel
+	// inspector memoizes the rendered calendar-selection preview so the
+	// edit-form preview is not rebuilt on every root render (held-arrow
+	// idle, clock ticks, mouse motion, focus cycling) until one of its
+	// inputs changes. It is a pointer so a value-receiver render writes
+	// through to the model the runtime keeps: the manager is passed by
+	// value between Update and View, so a value field would be discarded
+	// with each copy while a shared pointer survives.
+	inspector *inspectorPreviewCache
+	// themeFP is a fingerprint of theme (see fingerprintTheme), recomputed
+	// only when the theme is assigned. It enters the preview cache key so a
+	// theme or style change invalidates the memo without re-scanning every
+	// color on each render.
+	themeFP string
 }
 
 // NewCalendarManagerModel builds a grouped calendar manager populated from
@@ -158,6 +172,8 @@ func NewCalendarManagerModel(calendars map[int64]CalendarInfo, hidden map[int64]
 		screen:    CalendarManagerScreenList,
 		calendars: calendars,
 		theme:     activeTheme,
+		themeFP:   fingerprintTheme(activeTheme),
+		inspector: &inspectorPreviewCache{},
 		keys:      defaultCalendarManagerKeys(),
 		help:      h,
 	}
@@ -336,6 +352,7 @@ func (m CalendarManagerModel) Screen() CalendarManagerScreen { return m.screen }
 // screens use the current terminal theme.
 func (m CalendarManagerModel) SetTheme(theme Theme) CalendarManagerModel {
 	m.theme = theme
+	m.themeFP = fingerprintTheme(theme)
 	m.help = newThemedHelp(theme)
 	m.list = m.list.SetTheme(theme.Selected, theme.Muted, theme.Text, theme.SelectedText, theme.Error).
 		WithInactiveSelection(theme.ButtonBg, oklch.ContrastingFg(theme.ButtonBg))
@@ -1150,6 +1167,81 @@ func (m CalendarManagerModel) activeInspectorLines(w, h int) []string {
 	return m.selectionInspectorLines(w, h)
 }
 
+// inspectorPreviewCache memoizes the calendar-selection inspector so the
+// edit-form preview is not rebuilt on every root render. Held-arrow idle,
+// clock ticks, mouse motion, and focus cycling all re-render the identical
+// preview until one of its inputs changes; the memo skips that rebuild. It
+// lives behind a pointer on CalendarManagerModel so a value-receiver render
+// (the manager is copied between Update and View) still writes through to
+// the model the runtime keeps.
+type inspectorPreviewCache struct {
+	key   inspectorPreviewKey
+	lines []string
+}
+
+// inspectorPreviewKey captures every input to the calendar-selection
+// preview. CalendarDialogParams folds in the selected calendar's immutable
+// ID, its display metadata, its default flag, and its sidebar visibility;
+// it is a comparable value type, so equality is exact and any field added
+// to calendarDialogParamsFor automatically participates in invalidation.
+// themeFP covers the theme/style; w and h are the inspector pane size.
+// Everything else the preview depends on is read live when the key is
+// built, so a changed selection, resize, data reload, or visibility toggle
+// produces a different key and forces a rebuild — no separate invalidation
+// hooks are needed.
+type inspectorPreviewKey struct {
+	params  CalendarDialogParams
+	themeFP string
+	w, h    int
+}
+
+// fingerprintTheme reduces a Theme to a comparable string covering every
+// color token and the calendar swatch list. color.Color is an interface, so
+// RGBA() is the canonical way to tell whether two themes render identically.
+// It is computed only when the manager's theme is assigned (construction and
+// SetTheme); the per-render cost is a single string compare against the
+// cached key, never a re-scan of the palette.
+func fingerprintTheme(t Theme) string {
+	var b strings.Builder
+	fp := func(name string, c color.Color) {
+		b.WriteString(name)
+		if c == nil {
+			b.WriteString("|n;")
+			return
+		}
+		r, g, bl, a := c.RGBA()
+		fmt.Fprintf(&b, "|%d,%d,%d,%d;", r, g, bl, a)
+	}
+	fp("primary", t.Primary)
+	fp("secondary", t.Secondary)
+	fp("accent", t.Accent)
+	fp("muted", t.Muted)
+	fp("text", t.Text)
+	fp("textdim", t.TextDim)
+	fp("border", t.Border)
+	fp("today", t.Today)
+	fp("selected", t.Selected)
+	fp("selectedtext", t.SelectedText)
+	fp("surface", t.Surface)
+	fp("error", t.Error)
+	fp("badgeok", t.BadgeOK)
+	fp("badgewarn", t.BadgeWarn)
+	fp("badgedanger", t.BadgeDanger)
+	fp("badgeinfo", t.BadgeInfo)
+	fp("badgeneutral", t.BadgeNeutral)
+	fp("formlabel", t.FormLabel)
+	fp("formrequired", t.FormRequired)
+	fp("formerror", t.FormError)
+	fp("formhighlight", t.FormHighlight)
+	fp("buttonbg", t.ButtonBg)
+	b.WriteString("sw:")
+	for _, s := range t.CalendarSwatches {
+		b.WriteString(s)
+		b.WriteByte(',')
+	}
+	return b.String()
+}
+
 // selectionInspectorLines composes the root inspector for the current
 // selection to exactly h rows. A selected calendar shows a live, unfocused
 // preview of its edit form — the same surface Enter, Tab, or a pane click
@@ -1159,8 +1251,16 @@ func (m CalendarManagerModel) activeInspectorLines(w, h int) []string {
 func (m CalendarManagerModel) selectionInspectorLines(w, h int) []string {
 	if id, info, ok := m.selectedCalendar(); ok {
 		params := calendarDialogParamsFor(id, info, m.list.IsHidden(id))
+		key := inspectorPreviewKey{params: params, themeFP: m.themeFP, w: w, h: h}
+		if m.inspector != nil && m.inspector.key == key && len(m.inspector.lines) > 0 {
+			return m.inspector.lines
+		}
 		preview := NewCalendarDialogModel(params, m.theme).Blur().SetInspectorSize(w, h)
-		return strings.Split(preview.InspectorView(w, h), "\n")
+		lines := strings.Split(preview.InspectorView(w, h), "\n")
+		if m.inspector != nil {
+			*m.inspector = inspectorPreviewCache{key: key, lines: lines}
+		}
+		return lines
 	}
 	identity, ok := m.list.currentIdentity()
 	faint := lipgloss.NewStyle().Foreground(m.theme.Muted)
