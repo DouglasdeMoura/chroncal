@@ -1387,6 +1387,7 @@ func TestCreateRejectsUnsafeServerURLWithoutPersisting(t *testing.T) {
 type selectionFixture struct {
 	svc       *Service
 	q         *storage.Queries
+	db        *sql.DB
 	store     *memoryCredentialStore
 	discovery Discovery
 }
@@ -1419,7 +1420,7 @@ func newSelectionFixture(t *testing.T) selectionFixture {
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
-	return selectionFixture{svc: svc, q: q, store: store, discovery: discovery}
+	return selectionFixture{svc: svc, q: q, db: db, store: store, discovery: discovery}
 }
 
 func (f selectionFixture) importAndRefresh(t *testing.T, paths ...string) (ImportResult, Discovery) {
@@ -1706,5 +1707,96 @@ func TestReconcileSelectionRefusesLastApplicationCalendar(t *testing.T) {
 	}
 	if _, err := f.q.GetCalendar(ctx, imported.CreatedIDs[0]); err != nil {
 		t.Fatalf("last calendar was removed: %v", err)
+	}
+}
+
+// installAccountDeleteCommitFailure installs a deferred foreign-key trigger
+// that makes the transaction's COMMIT (not DeleteAccount itself) fail, so the
+// commit-failure compensation leg runs end to end against a real credential
+// store. It mirrors the deferred-trigger technique used by the calendar
+// Connect tests.
+func installAccountDeleteCommitFailure(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if _, err := db.Exec(`
+		CREATE TABLE deferred_account_delete_failure (
+			parent_id INTEGER REFERENCES accounts(id) DEFERRABLE INITIALLY DEFERRED
+		);
+		CREATE TRIGGER fail_account_delete
+		AFTER DELETE ON accounts
+		BEGIN
+			INSERT INTO deferred_account_delete_failure(parent_id) VALUES (-1);
+		END;
+	`); err != nil {
+		t.Fatalf("install deferred account delete failure: %v", err)
+	}
+}
+
+func TestServiceDeleteRestoresCredentialOnCommitFailure(t *testing.T) {
+	db, q, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	store := newMemoryCredentialStore()
+	svc := NewService(db, q)
+	account, err := svc.Create(ctx, CreateParams{
+		Name: "Work", ServerURL: "https://cal.example.test/", Username: "alice", AuthType: "basic",
+	}, auth.Credential{Username: "alice", Password: "secret"}, store)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	installAccountDeleteCommitFailure(t, db)
+
+	if err := svc.Delete(ctx, account.ID, store); err == nil {
+		t.Fatal("Delete: expected deferred commit error, got nil")
+	}
+	// The account row rolls back because the transaction never committed.
+	if _, err := q.GetAccount(ctx, account.ID); err != nil {
+		t.Fatalf("account was not rolled back after commit failure: %v", err)
+	}
+	// The credential was deleted inside the transaction; the commit then failed,
+	// so compensation must restore the prior credential the keyring held.
+	if _, err := store.Get(account.ID, ""); err != nil {
+		t.Fatalf("credential was not restored after commit failure: %v", err)
+	}
+}
+
+func TestServiceRemoveWithCalendarsRestoresCredentialOnCommitFailure(t *testing.T) {
+	f := newSelectionFixture(t)
+	imported, discovery := f.importAndRefresh(t, "/cal/a/")
+	installAccountDeleteCommitFailure(t, f.db)
+
+	_, err := f.svc.RemoveWithCalendars(context.Background(), discovery.Account.ID, RemoveParams{}, f.store)
+	if err == nil {
+		t.Fatal("RemoveWithCalendars: expected deferred commit error, got nil")
+	}
+	if _, err := f.q.GetAccount(context.Background(), discovery.Account.ID); err != nil {
+		t.Fatalf("account was not rolled back after commit failure: %v", err)
+	}
+	if _, err := f.q.GetCalendar(context.Background(), imported.CreatedIDs[0]); err != nil {
+		t.Fatalf("calendar was not rolled back after commit failure: %v", err)
+	}
+	if _, err := f.store.Get(discovery.Account.ID, ""); err != nil {
+		t.Fatalf("credential was not restored after commit failure: %v", err)
+	}
+}
+
+func TestReconcileSelectionRestoresCredentialOnCommitFailure(t *testing.T) {
+	f := newSelectionFixture(t)
+	_, discovery := f.importAndRefresh(t, "/cal/a/")
+	installAccountDeleteCommitFailure(t, f.db)
+
+	// Selecting nothing removes the now-empty account, so the credential is
+	// deleted inside the transaction and must be restored when commit fails.
+	_, err := f.svc.ReconcileSelection(context.Background(), discovery, SelectionParams{}, f.store)
+	if err == nil {
+		t.Fatal("ReconcileSelection: expected deferred commit error, got nil")
+	}
+	if _, err := f.q.GetAccount(context.Background(), discovery.Account.ID); err != nil {
+		t.Fatalf("account was not rolled back after commit failure: %v", err)
+	}
+	if _, err := f.store.Get(discovery.Account.ID, ""); err != nil {
+		t.Fatalf("credential was not restored after commit failure: %v", err)
 	}
 }
