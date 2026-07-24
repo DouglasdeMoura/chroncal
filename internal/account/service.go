@@ -582,33 +582,15 @@ func (s *Service) ReconcileSelection(
 	}
 
 	removeAccount := len(selectedKeys) == 0
-	var (
-		previous    auth.Credential
-		hasPrevious bool
-	)
+	var prior auth.PriorCredential
 	if removeAccount {
 		if store == nil {
 			return SelectionResult{}, fmt.Errorf("credential store is required to remove an empty account")
 		}
-		previous, err = store.Get(
-			discovery.Account.ID,
-			discovery.Account.CredentialFingerprint(),
-		)
-		if err != nil &&
-			!auth.IsCredentialNotFound(err) &&
-			!errors.Is(err, auth.ErrCredentialIdentityMismatch) {
+		prior, err = auth.CapturePriorCredential(store, discovery.Account.ID, discovery.Account.CredentialFingerprint())
+		if err != nil {
 			return SelectionResult{}, fmt.Errorf("read account credentials before removal: %w", err)
 		}
-		hasPrevious = err == nil
-	}
-	restorePrevious := func(cause error, operation string) error {
-		if !hasPrevious {
-			return fmt.Errorf("%s: %w", operation, cause)
-		}
-		if restoreErr := store.Set(previous); restoreErr != nil {
-			return fmt.Errorf("%s: %w (restore credentials: %w)", operation, cause, restoreErr)
-		}
-		return fmt.Errorf("%s: %w", operation, cause)
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -762,16 +744,13 @@ func (s *Service) ReconcileSelection(
 			return SelectionResult{}, fmt.Errorf("remove empty account: %w", err)
 		}
 		if err := store.Delete(discovery.Account.ID); err != nil {
-			return SelectionResult{}, restorePrevious(err, "delete empty account credentials")
+			return SelectionResult{}, prior.Restore(store, discovery.Account.ID, false, "delete empty account credentials", err)
 		}
 		result.AccountRemoved = true
 	}
 
-	if err := tx.Commit(); err != nil {
-		if removeAccount {
-			return SelectionResult{}, restorePrevious(err, "commit account calendar reconciliation")
-		}
-		return SelectionResult{}, fmt.Errorf("commit account calendar reconciliation: %w", err)
+	if err := auth.CommitWithCredentialCompensation(tx, store, discovery.Account.ID, prior, false, "commit account calendar reconciliation"); err != nil {
+		return SelectionResult{}, err
 	}
 	return result, nil
 }
@@ -798,21 +777,9 @@ func (s *Service) RemoveWithCalendars(
 	if err != nil {
 		return RemoveResult{}, fmt.Errorf("get account: %w", err)
 	}
-	previous, previousErr := store.Get(accountID, configured.CredentialFingerprint())
-	if previousErr != nil &&
-		!auth.IsCredentialNotFound(previousErr) &&
-		!errors.Is(previousErr, auth.ErrCredentialIdentityMismatch) {
-		return RemoveResult{}, fmt.Errorf("read account credentials before removal: %w", previousErr)
-	}
-	hasPrevious := previousErr == nil
-	restorePrevious := func(cause error, operation string) error {
-		if !hasPrevious {
-			return fmt.Errorf("%s: %w", operation, cause)
-		}
-		if restoreErr := store.Set(previous); restoreErr != nil {
-			return fmt.Errorf("%s: %w (restore credentials: %w)", operation, cause, restoreErr)
-		}
-		return fmt.Errorf("%s: %w", operation, cause)
+	prior, err := auth.CapturePriorCredential(store, accountID, configured.CredentialFingerprint())
+	if err != nil {
+		return RemoveResult{}, fmt.Errorf("read account credentials before removal: %w", err)
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -874,10 +841,10 @@ func (s *Service) RemoveWithCalendars(
 		return RemoveResult{}, fmt.Errorf("delete account: %w", err)
 	}
 	if err := store.Delete(accountID); err != nil {
-		return RemoveResult{}, restorePrevious(err, "delete account credentials")
+		return RemoveResult{}, prior.Restore(store, accountID, false, "delete account credentials", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return RemoveResult{}, restorePrevious(err, "commit account removal")
+	if err := auth.CommitWithCredentialCompensation(tx, store, accountID, prior, false, "commit account removal"); err != nil {
+		return RemoveResult{}, err
 	}
 	return result, nil
 }
@@ -903,23 +870,11 @@ func (s *Service) Delete(ctx context.Context, accountID int64, store auth.Creden
 	if err != nil {
 		return fmt.Errorf("get account: %w", err)
 	}
-	previous, previousErr := store.Get(accountID, auth.AccountFingerprint(
+	prior, err := auth.CapturePriorCredential(store, accountID, auth.AccountFingerprint(
 		account.ServerUrl, account.AuthType, account.Username,
 	))
-	if previousErr != nil &&
-		!auth.IsCredentialNotFound(previousErr) &&
-		!errors.Is(previousErr, auth.ErrCredentialIdentityMismatch) {
-		return fmt.Errorf("read account credentials before delete: %w", previousErr)
-	}
-	hasPrevious := previousErr == nil
-	restorePrevious := func(cause error, operation string) error {
-		if !hasPrevious {
-			return fmt.Errorf("%s: %w", operation, cause)
-		}
-		if restoreErr := store.Set(previous); restoreErr != nil {
-			return fmt.Errorf("%s: %w (restore credentials: %w)", operation, cause, restoreErr)
-		}
-		return fmt.Errorf("%s: %w", operation, cause)
+	if err != nil {
+		return fmt.Errorf("read account credentials before delete: %w", err)
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -946,10 +901,10 @@ func (s *Service) Delete(ctx context.Context, accountID int64, store auth.Creden
 		return fmt.Errorf("delete account: %w", err)
 	}
 	if err := store.Delete(accountID); err != nil {
-		return restorePrevious(err, "delete account credentials")
+		return prior.Restore(store, accountID, false, "delete account credentials", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return restorePrevious(err, "commit account delete")
+	if err := auth.CommitWithCredentialCompensation(tx, store, accountID, prior, false, "commit account delete"); err != nil {
+		return err
 	}
 	return nil
 }

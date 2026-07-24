@@ -114,13 +114,10 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 			}
 			cred.AccountID = existing.ID
 			oldFingerprint := auth.AccountFingerprint(existing.ServerUrl, existing.AuthType, existing.Username)
-			prevCred, prevErr := credStore.Get(existing.ID, oldFingerprint)
-			if prevErr != nil &&
-				!auth.IsCredentialNotFound(prevErr) &&
-				!errors.Is(prevErr, auth.ErrCredentialIdentityMismatch) {
+			prior, prevErr := auth.CapturePriorCredential(credStore, existing.ID, oldFingerprint)
+			if prevErr != nil {
 				return fmt.Errorf("read credentials before relink: %w", prevErr)
 			}
-			hasPrevCred := prevErr == nil
 			cred.AccountFingerprint = auth.AccountFingerprint(serverURL, link.AuthType, link.Username)
 
 			tx, err := s.db.BeginTx(ctx, nil)
@@ -165,15 +162,8 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 			if err := credStore.Set(cred); err != nil {
 				return fmt.Errorf("store credentials: %w", err)
 			}
-			if err := tx.Commit(); err != nil {
-				if hasPrevCred {
-					if restoreErr := credStore.Set(prevCred); restoreErr != nil {
-						return fmt.Errorf("commit remote calendar link: %w (restore credentials: %w)", err, restoreErr)
-					}
-				} else if deleteErr := credStore.Delete(existing.ID); deleteErr != nil {
-					return fmt.Errorf("commit remote calendar link: %w (delete replacement credentials: %w)", err, deleteErr)
-				}
-				return fmt.Errorf("commit remote calendar link: %w", err)
+			if err := auth.CommitWithCredentialCompensation(tx, credStore, existing.ID, prior, true, "commit remote calendar link"); err != nil {
+				return err
 			}
 			return nil
 		}
@@ -237,11 +227,8 @@ createAccount:
 	if err := credStore.Set(cred); err != nil {
 		return fmt.Errorf("store credentials: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
-		if deleteErr := credStore.Delete(account.ID); deleteErr != nil {
-			return fmt.Errorf("commit remote calendar link: %w (delete credentials: %w)", err, deleteErr)
-		}
-		return fmt.Errorf("commit remote calendar link: %w", err)
+	if err := auth.CommitWithCredentialCompensation(tx, credStore, account.ID, auth.PriorCredential{}, true, "commit remote calendar link"); err != nil {
+		return err
 	}
 	return nil
 }
