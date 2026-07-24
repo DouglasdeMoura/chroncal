@@ -758,6 +758,22 @@ func calendarAuthIsOAuth(authType string) bool {
 	return strings.EqualFold(strings.TrimSpace(authType), "oauth2")
 }
 
+// accountAuthIsBasicOrBearer reports whether an auth-type string selects an
+// in-place credential update: the non-OAuth flows whose secret (password or
+// bearer token) can be rotated without re-running discovery or re-consent.
+func accountAuthIsBasicOrBearer(authType string) bool {
+	t := strings.ToLower(strings.TrimSpace(authType))
+	return t == "basic" || t == "bearer"
+}
+
+// accountAuthIsBearer reports whether the rotated secret is a bearer token
+// (stored in AccessToken) rather than a password. The dialog's field label
+// and the credential write must agree on this split, so both use this
+// single predicate.
+func accountAuthIsBearer(authType string) bool {
+	return strings.EqualFold(strings.TrimSpace(authType), "bearer")
+}
+
 func newOAuthClientIDField(value string) *TextField {
 	f := NewTextField("xxxx.apps.googleusercontent.com")
 	f.SetValue(value)

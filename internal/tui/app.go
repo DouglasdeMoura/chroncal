@@ -311,6 +311,15 @@ type oauthCredentialStoredMsg struct {
 	err       error
 }
 
+// accountCredentialStoredMsg reports the in-place basic/bearer credential
+// rotation. A failure leaves the previous credential untouched (StoreCredential
+// only replaces it on success), so retrying is safe and nothing is torn down.
+type accountCredentialStoredMsg struct {
+	accountID int64
+	name      string
+	err       error
+}
+
 type accountDiscoveryReadyMsg struct {
 	discovery      account.Discovery
 	err            error
@@ -446,6 +455,8 @@ type Model struct {
 	accountRenameFromSettings   bool
 	accountOAuthConfig          AccountOAuthConfigDialogModel
 	accountOAuthConfigOpen      bool
+	accountCredentials          AccountCredentialsDialogModel
+	accountCredentialsOpen      bool
 	accountManagementGeneration uint64
 	pendingAccountManagementID  int64
 	pendingDiscoveryAccountID   int64
@@ -1529,6 +1540,84 @@ func (m Model) finishOAuthCredentialStore(msg oauthCredentialStoredMsg) (Model, 
 	)
 }
 
+// updateAccountCredentials rotates one account's secret in place. The existing
+// credential is loaded so its non-secret identity (username, client config) is
+// preserved; only the password (basic) or access token (bearer) is replaced.
+// StoreCredential re-checks the account fingerprint under the lifecycle lock,
+// so a concurrent rename or removal aborts the write instead of corrupting it.
+func (m Model) updateAccountCredentials(configured account.Account, secret string) tea.Cmd {
+	storedMsg := func(err error) accountCredentialStoredMsg {
+		return accountCredentialStoredMsg{
+			accountID: configured.ID,
+			name:      configured.DisplayName,
+			err:       err,
+		}
+	}
+	return func() tea.Msg {
+		ctx := context.Background()
+		credStore, err := auth.NewCredentialStoreWithWarnings(
+			m.app.CredentialNamespace,
+			m.app.PreviousCredentialNamespaces,
+			m.app.MigrateLegacyCredentials,
+			m.app.AllowPlaintext,
+			io.Discard,
+		)
+		if err != nil {
+			return storedMsg(err)
+		}
+		fingerprint := configured.CredentialFingerprint()
+		cred, err := credentialForRotation(credStore.Get(configured.ID, fingerprint))
+		if err != nil {
+			return storedMsg(err)
+		}
+		if accountAuthIsBearer(configured.AuthType) {
+			cred.AccessToken = secret
+		} else {
+			cred.Password = secret
+		}
+		err = m.app.Accounts.StoreCredential(ctx, configured.ID, fingerprint, cred, credStore)
+		return storedMsg(err)
+	}
+}
+
+// credentialForRotation maps the pre-rotation Get outcome to the credential
+// the new secret is written into. A missing or identity-mismatched keyring
+// entry is one of the broken states rotation exists to repair, so those
+// start from an empty credential instead of refusing (StoreCredential
+// re-seeds the account identity); any other error aborts the rotation.
+func credentialForRotation(cred auth.Credential, err error) (auth.Credential, error) {
+	if err == nil {
+		return cred, nil
+	}
+	if auth.IsCredentialNotFound(err) || errors.Is(err, auth.ErrCredentialIdentityMismatch) {
+		return auth.Credential{}, nil
+	}
+	return auth.Credential{}, fmt.Errorf("load current credentials: %w", err)
+}
+
+// finishAccountCredentialStore lands the in-place rotation. Success reopens
+// Account Settings and syncs to confirm the new secret works; failure reopens
+// Settings with the error and leaves the previous credential intact.
+func (m Model) finishAccountCredentialStore(msg accountCredentialStoredMsg) (Model, tea.Cmd) {
+	if msg.err != nil {
+		m.syncing = false
+		m.statusToken++
+		m.syncStatus = fmt.Sprintf(
+			"Couldn't update credentials: %s — the previous sign-in is unchanged",
+			msg.err,
+		)
+		m = m.reopenAccountSettings(msg.accountID)
+		return m, m.expireStatusAfter(10*time.Second, m.statusToken)
+	}
+	m = m.reopenAccountSettings(msg.accountID)
+	m.syncing = true
+	m.syncStatus = fmt.Sprintf("Syncing %s…", syncProgressLabel(msg.name))
+	return m, tea.Batch(
+		m.syncSpinner.Tick,
+		m.runSyncAccount(msg.accountID, msg.name),
+	)
+}
+
 func calendarDiscoveryAccountName(accounts []account.Account, username string) string {
 	base := account.SuggestedName(username)
 	if base == "" {
@@ -2169,7 +2258,7 @@ func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		return m.openQuitConfirm(), nil, true
 	}
 	textEntryActive := m.paletteOpen || m.formOpen || m.calendarManagerOpen ||
-		m.oauthFlowOpen || m.accountOAuthConfigOpen
+		m.oauthFlowOpen || m.accountOAuthConfigOpen || m.accountCredentialsOpen
 	// q opens the quit confirm only from the bare grid. Any open overlay —
 	// text-entry (palette, form) or read-only/choice (event view, list,
 	// choice, calendar list, trash, help) — owns q so its own `q`-to-close
@@ -2290,7 +2379,7 @@ func (m Model) undoIsAllowed() bool {
 func (m Model) anyOverlayOpen() bool {
 	return m.paletteOpen || m.formOpen || m.viewDialogOpen || m.dialogOpen ||
 		m.confirmOpen || m.choiceOpen || m.calendarManagerOpen ||
-		m.accountRenameOpen || m.accountOAuthConfigOpen ||
+		m.accountRenameOpen || m.accountOAuthConfigOpen || m.accountCredentialsOpen ||
 		m.helpDialogOpen || m.trashOpen || m.oauthFlowOpen
 }
 
@@ -2309,6 +2398,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.finishSync(msg)
 	case oauthCredentialStoredMsg:
 		return m.finishOAuthCredentialStore(msg)
+	case accountCredentialStoredMsg:
+		return m.finishAccountCredentialStore(msg)
 	case accountReauthReadyMsg:
 		m.oauthPending = false
 		configured, ok := m.accounts[msg.accountID]
@@ -2409,6 +2500,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	if m.accountCredentialsOpen {
+		switch msg.(type) {
+		case AccountCredentialsUpdateSubmittedMsg, AccountCredentialsUpdateClosedMsg,
+			syncStatusExpiredMsg, toastTickMsg, spinner.TickMsg,
+			tea.BackgroundColorMsg, tea.WindowSizeMsg:
+			// fall through to main switch
+		default:
+			var cmd tea.Cmd
+			m.accountCredentials, cmd = m.accountCredentials.Update(msg)
+			return m, cmd
+		}
+	}
+
 	if m.accountRenameOpen {
 		switch msg.(type) {
 		case AccountRenameRequestedMsg, accountRenameCancelledMsg,
@@ -2425,7 +2529,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Calendar manager is the canonical calendar management overlay.
 	// It hosts calendar detail, account detail, and discovery flows.
 	if m.calendarManagerOpen && !m.accountRenameOpen &&
-		!m.accountOAuthConfigOpen &&
+		!m.accountOAuthConfigOpen && !m.accountCredentialsOpen &&
 		!m.confirmOpen && !m.choiceOpen {
 		switch msg.(type) {
 		case CalendarManagerClosedMsg, CalendarManagerRequestedMsg, CalendarTransferClosedMsg,
@@ -2438,6 +2542,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			calendarImportPreviewReadyMsg, calendarImportFinishedMsg, calendarExportFinishedMsg,
 			AccountSettingsRequestedMsg, AccountSettingsClosedMsg, AccountSettingsManageRequestedMsg, AccountSettingsSyncRequestedMsg,
 			AccountSettingsRenameRequestedMsg, AccountSettingsReauthRequestedMsg,
+			AccountSettingsUpdateCredentialsRequestedMsg,
 			AccountSettingsRemoveRequestedMsg, AccountRenameRequestedMsg,
 			CalendarSetDefaultRequestedMsg,
 			AccountCalendarsImportRequestedMsg, AccountCalendarsReconcileRequestedMsg,
@@ -2537,6 +2642,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.calendarManager = m.calendarManager.SetSize(m.width, m.height)
 		m.accountRename = m.accountRename.SetSize(m.width, m.height)
 		m.accountOAuthConfig = m.accountOAuthConfig.SetSize(m.width, m.height)
+		m.accountCredentials = m.accountCredentials.SetSize(m.width, m.height)
 		m.form = m.form.SetSize(m.width, m.height)
 		m.palette = m.palette.SetSize(m.width, m.height)
 		m.helpDialog = m.helpDialog.SetSize(m.width, m.height)
@@ -3340,6 +3446,49 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.oauthPending = true
 		m.syncStatus = "Preparing sign-in…"
 		return m, m.prepareAccountReauth(configured, "", "")
+
+	case AccountSettingsUpdateCredentialsRequestedMsg:
+		if m.syncing || m.oauthFlowOpen || m.oauthPending ||
+			!m.calendarManagerOpen || m.calendarManager.ActiveAccountID() != msg.AccountID {
+			return m, nil
+		}
+		configured, ok := m.accounts[msg.AccountID]
+		if !ok || !accountAuthIsBasicOrBearer(configured.AuthType) {
+			return m, nil
+		}
+		m.calendarManagerOpen = false
+		m.accountCredentials = NewAccountCredentialsDialogModel(
+			configured.ID, configured.DisplayName, configured.AuthType, configured.Username, m.theme,
+		).SetSize(m.width, m.height)
+		m.accountCredentialsOpen = true
+		return m, nil
+
+	case AccountCredentialsUpdateSubmittedMsg:
+		if m.syncing || m.oauthFlowOpen || m.oauthPending || !m.accountCredentialsOpen ||
+			m.accountCredentials.accountID != msg.AccountID {
+			return m, nil
+		}
+		configured, ok := m.accounts[msg.AccountID]
+		if !ok || !accountAuthIsBasicOrBearer(configured.AuthType) {
+			return m, nil
+		}
+		m.accountCredentialsOpen = false
+		m.syncing = true
+		m.syncStatus = "Updating credentials…"
+		return m, tea.Batch(
+			m.syncSpinner.Tick,
+			m.updateAccountCredentials(configured, msg.Secret),
+		)
+
+	case AccountCredentialsUpdateClosedMsg:
+		if !m.accountCredentialsOpen || m.accountCredentials.accountID != msg.AccountID {
+			return m, nil
+		}
+		m.accountCredentialsOpen = false
+		m.statusToken++
+		m.syncStatus = "Credential update cancelled"
+		m = m.reopenAccountSettings(msg.AccountID)
+		return m, m.expireStatusAfter(6*time.Second, m.statusToken)
 
 	case AccountSettingsRemoveRequestedMsg:
 		if m.syncing || !m.calendarManagerOpen ||
@@ -4943,6 +5092,10 @@ func (m Model) View() tea.View {
 	if m.accountOAuthConfigOpen {
 		bw, bh := m.accountOAuthConfig.BoxSize()
 		v.Content = m.compositeOverlay(v.Content, m.accountOAuthConfig.View(), bw, bh)
+	}
+	if m.accountCredentialsOpen {
+		bw, bh := m.accountCredentials.BoxSize()
+		v.Content = m.compositeOverlay(v.Content, m.accountCredentials.View(), bw, bh)
 	}
 	if m.oauthFlowOpen {
 		bw, bh := m.oauthFlow.BoxSize()
