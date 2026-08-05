@@ -9,13 +9,13 @@ run: build
 	./chroncal
 
 test:
-	go test ./internal/... -count=1
+	go test ./... -count=1
 
 test-race:
 	go test -race -count=1 ./...
 
 coverage:
-	go test ./internal/... -count=1 -coverprofile=coverage.out
+	go test ./... -count=1 -coverprofile=coverage.out
 	go tool cover -func=coverage.out
 
 generate:
@@ -24,10 +24,10 @@ generate:
 # --- Code quality --------------------------------------------------------
 
 fmt:
-	gofmt -w .
+	@gofmt -w $$(find . -type f -name '*.go' -not -path './.worktrees/*' -not -path './.git/*')
 
 fmt-check:
-	@diff=$$(gofmt -l .); \
+	@diff=$$(gofmt -l $$(find . -type f -name '*.go' -not -path './.worktrees/*' -not -path './.git/*')); \
 	if [ -n "$$diff" ]; then \
 		echo "gofmt diffs in:"; echo "$$diff"; \
 		echo "run 'make fmt' to fix"; exit 1; \
@@ -72,4 +72,5 @@ tools:
 # --- Housekeeping --------------------------------------------------------
 
 clean:
-	rm -f chroncal coverage.out
+	rm -f chroncal chroncal.db coverage.out
+	rm -f chroncal.db-wal chroncal.db-shm
