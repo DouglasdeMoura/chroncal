@@ -388,9 +388,23 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 
 	var endTime time.Time
 	var durationValue string
+	var dtendWarnings []string
 	explicitEnd := false
 	if prop := ve.Props.Get(ical.PropDateTimeEnd); prop != nil {
-		endTime, _ = ve.Props.DateTime(ical.PropDateTimeEnd, nil)
+		var err error
+		endTime, err = prop.DateTime(nil)
+		if err != nil {
+			// Malformed DTEND (go-ical stores the raw value without
+			// validating). Mirror the malformed-DURATION fallback below (a 1h
+			// span) and warn, so an unparseable end time never silently
+			// collapses the event to zero duration and re-exports it that way.
+			// Props.Get above guarantees the property exists, so the only
+			// error DateTime can return here is a parse failure.
+			endTime = startTime.Add(time.Hour)
+			explicitEnd = true
+			dtendWarnings = append(dtendWarnings, fmt.Sprintf(
+				"event %q: unparseable DTEND %q; assuming 1h duration", uid, prop.Value))
+		}
 	}
 	if endTime.IsZero() {
 		if prop := ve.Props.Get(ical.PropDuration); prop != nil && duration.Validate(prop.Value) == nil {
@@ -551,7 +565,7 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 		Resources:      resources,
 		Relations:      relations,
 		XProperties:    extractXPropertiesWithSet(ve.Props, handledEventProps),
-	}, alarmWarnings, nil
+	}, append(alarmWarnings, dtendWarnings...), nil
 }
 
 func textOrDefault(ve ical.Event, prop, def string) string {

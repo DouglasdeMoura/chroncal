@@ -857,6 +857,47 @@ END:VCALENDAR`
 	}
 }
 
+// A malformed DTEND (go-ical stores the raw value without validating) must not
+// silently collapse the event to zero duration the way the old code did
+// (endTime, _ = Props.DateTime). Mirror the malformed-DURATION treatment
+// (TestImport_MalformedDuration): fall back to a 1h span and record a warning
+// so the user learns the end was dropped instead of reading back a bogus
+// instantaneous event on re-export.
+func TestImport_MalformedDTEND_WarnsAndFallsBack(t *testing.T) {
+	t.Parallel()
+	ics := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:bad-dtend-test
+DTSTAMP:20260401T100000Z
+DTSTART:20260401T140000Z
+DTEND:not-a-time
+SUMMARY:Bad DTEND Event
+END:VEVENT
+END:VCALENDAR`
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile error: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %d, want 1", len(result.Events))
+	}
+	e := result.Events[0]
+	if !e.EndTime.After(e.StartTime) {
+		t.Errorf("EndTime = %s is not after StartTime = %s; want sane fallback",
+			e.EndTime.Format(time.RFC3339), e.StartTime.Format(time.RFC3339))
+	}
+	if want := e.StartTime.Add(time.Hour); !e.EndTime.Equal(want) {
+		t.Errorf("EndTime = %s, want fallback %s", e.EndTime.Format(time.RFC3339), want.Format(time.RFC3339))
+	}
+	hasWarning := slices.ContainsFunc(result.Warnings, func(w string) bool {
+		return strings.Contains(strings.ToLower(w), "dtend")
+	})
+	if !hasWarning {
+		t.Errorf("no DTEND warning recorded; warnings = %v", result.Warnings)
+	}
+}
+
 func TestImport_Attach(t *testing.T) {
 	t.Parallel()
 	ics := `BEGIN:VCALENDAR
