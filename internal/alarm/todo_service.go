@@ -254,7 +254,11 @@ func computeTodoTriggerTimeForInstance(inst recurrence.ExpandedTodo, alarm model
 	}
 
 	if alarm.TriggerValue == "" {
-		return base.Add(-15 * time.Minute), nil
+		// Empty trigger is always a data defect (CLI validates non-empty,
+		// import gates on it, the TUI builders always attach one). The event
+		// path skips empties; defaulting to -15m here would fire a fabricated
+		// alarm, so refuse and let the caller skip it instead.
+		return time.Time{}, fmt.Errorf("empty trigger value")
 	}
 
 	// Duration trigger (relative)

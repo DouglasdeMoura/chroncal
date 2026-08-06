@@ -653,6 +653,58 @@ func TestCheckTodos_OverrideAwareness(t *testing.T) {
 	}
 }
 
+// TestComputeTodoTrigger_EmptyTrigger_Errors guards the todo-path footgun
+// where an empty trigger defaulted to -15m and fired a real alarm. Every
+// legitimate alarm writer supplies a trigger (CLI validates, import gates),
+// so an empty one must be a silent skip like the event path, never fire.
+func TestComputeTodoTrigger_EmptyTrigger_Errors(t *testing.T) {
+	inst := recurrence.ExpandedTodo{
+		Todo:         todo.Todo{DueDate: "2026-04-01T17:00:00Z"},
+		InstanceTime: time.Date(2026, 4, 1, 17, 0, 0, 0, time.UTC),
+	}
+	alarm := model.Alarm{Action: "DISPLAY", TriggerValue: "", Related: "START"}
+
+	got, err := computeTodoTriggerTimeForInstance(inst, alarm)
+	if err == nil {
+		t.Fatalf("computeTodoTriggerTimeForInstance with empty trigger = (trigger %v, nil), want error (must not default-fire)", got)
+	}
+}
+
+// TestCheckTodos_EmptyTrigger_NeverFires pins the loop behavior end-to-end:
+// a todo alarm whose stored trigger is empty must be skipped silently, never
+// fired at the old made-up -15m default.
+func TestCheckTodos_EmptyTrigger_NeverFires(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	todoSvc := todo.NewService(db, q)
+	ctx := context.Background()
+
+	due := time.Date(2026, 4, 1, 17, 0, 0, 0, time.UTC)
+	td, err := todoSvc.Create(ctx, todo.CreateParams{
+		CalendarID: 1,
+		Summary:    "Empty Trigger Todo",
+		DueDate:    due.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("create todo: %v", err)
+	}
+	if err := todoSvc.ReplaceAlarms(ctx, td.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "", Description: "malformed / bad row"},
+	}); err != nil {
+		t.Fatalf("replace alarms: %v", err)
+	}
+
+	// 16:46 is just past the old made-up -15m default (16:45), so the old
+	// code fires here; an empty trigger must instead produce nothing.
+	todoAlarmSvc := NewTodoService(db, q, todoSvc)
+	got, err := todoAlarmSvc.CheckTodos(ctx, time.Date(2026, 4, 1, 16, 46, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("check todos: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %d due todo alarms with empty trigger, want 0", len(got))
+	}
+}
+
 // TestCheckTodos_FiresLongLeadTimeAlarm guards issue #98 on the todo path: a
 // todo due 7 days out with a "1 week before" alarm must fire now even though
 // the todo instance is far past the base forward window. Uses the real todo
