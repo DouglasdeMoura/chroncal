@@ -106,6 +106,58 @@ func TestCheck_FiresDueAlarm(t *testing.T) {
 	}
 }
 
+func TestCheck_GarbageTrigger_NeverFires(t *testing.T) {
+	svc, evtSvc, todoSvc := newTestServicesWithTodos(t)
+	ctx := context.Background()
+
+	// Import preserves unparseable VALARM TRIGGERs as opaque, non-fireable
+	// alarms (round-trip lossless). These must neither fire nor error when the
+	// check loop runs, on either the event or the todo path.
+	start := time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)
+	e, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "Garbage event alarm",
+		StartTime:  start,
+		EndTime:    start.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "not-a-time", Description: "broken event alarm"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	td, err := todoSvc.Create(ctx, todo.CreateParams{
+		CalendarID: 1,
+		Summary:    "Garbage todo alarm",
+		DueDate:    start.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := todoSvc.ReplaceAlarms(ctx, td.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "soon", Description: "broken todo alarm"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Well past any interpretable trigger time: a garbage trigger must be
+	// skipped, not fired (and certainly not defaulted, as the todo path would
+	// for an empty value).
+	events, todos, err := svc.Check(ctx, start.Add(2*time.Hour))
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if len(events) != 0 {
+		t.Errorf("event alarms = %d, want 0 (garbage trigger must not fire)", len(events))
+	}
+	if len(todos) != 0 {
+		t.Errorf("todo alarms = %d, want 0 (garbage trigger must not fire)", len(todos))
+	}
+}
+
 func TestCheck_SkipsAlreadyFired(t *testing.T) {
 	svc, evtSvc := newTestServices(t)
 	ctx := context.Background()
