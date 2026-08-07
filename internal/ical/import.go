@@ -390,20 +390,25 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 	var durationValue string
 	var dtendWarnings []string
 	explicitEnd := false
+	badDTEND := false
 	if prop := ve.Props.Get(ical.PropDateTimeEnd); prop != nil {
 		var err error
 		endTime, err = prop.DateTime(nil)
 		if err != nil {
 			// Malformed DTEND (go-ical stores the raw value without
-			// validating). Mirror the malformed-DURATION fallback below (a 1h
-			// span) and warn, so an unparseable end time never silently
-			// collapses the event to zero duration and re-exports it that way.
-			// Props.Get above guarantees the property exists, so the only
-			// error DateTime can return here is a parse failure.
-			endTime = startTime.Add(time.Hour)
-			explicitEnd = true
+			// validating). Props.Get above guarantees the property exists, so
+			// the only error DateTime can return here is a parse failure.
+			//
+			// Discard it and fall through as if DTEND were absent: a valid
+			// DURATION on the same component is still the better answer, and
+			// leaving explicitEnd false keeps the all-day branch below free to
+			// apply the RFC 5545 implicit one-day span. Forcing an explicit end
+			// here instead would collapse an all-day event to zero duration —
+			// the exact outcome this fallback exists to prevent.
+			endTime = time.Time{}
+			badDTEND = true
 			dtendWarnings = append(dtendWarnings, fmt.Sprintf(
-				"event %q: unparseable DTEND %q; assuming 1h duration", uid, prop.Value))
+				"event %q: unparseable DTEND %q; ignored, falling back to DURATION or the default span", uid, prop.Value))
 		}
 	}
 	if endTime.IsZero() {
@@ -415,6 +420,13 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 			// Malformed DURATION (go-ical stores the raw value without validating).
 			// Fall back to a 1h span and drop the bad value so it is neither
 			// persisted nor re-exported.
+			endTime = startTime.Add(time.Hour)
+		} else if badDTEND {
+			// DTEND was present but unusable and there is no DURATION to fall
+			// back on. A timed event gets the same 1h default as a malformed
+			// DURATION rather than collapsing to zero duration; an all-day one
+			// falls through to the implicit one-day span below, since
+			// explicitEnd is still false.
 			endTime = startTime.Add(time.Hour)
 		} else {
 			// RFC 5545 §3.6.1: a VEVENT with DTSTART as DATE-TIME and no
