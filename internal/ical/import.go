@@ -190,26 +190,14 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, []string, error) {
 	description := propText(props, ical.PropDescription)
 	location := propText(props, ical.PropLocation)
 
-	var dueDate string
-	if prop := props.Get(ical.PropDue); prop != nil {
-		if t, err := prop.DateTime(nil); err == nil && !t.IsZero() {
-			if len(prop.Value) == 8 {
-				dueDate = t.Format("2006-01-02")
-			} else {
-				dueDate = t.UTC().Format(time.RFC3339)
-			}
-		}
+	var todoWarnings []string
+	dueDate, w := parseTodoDateProp(props, ical.PropDue, uid)
+	if w != "" {
+		todoWarnings = append(todoWarnings, w)
 	}
-
-	var startDate string
-	if prop := props.Get(ical.PropDateTimeStart); prop != nil {
-		if t, err := prop.DateTime(nil); err == nil && !t.IsZero() {
-			if len(prop.Value) == 8 {
-				startDate = t.Format("2006-01-02")
-			} else {
-				startDate = t.UTC().Format(time.RFC3339)
-			}
-		}
+	startDate, w := parseTodoDateProp(props, ical.PropDateTimeStart, uid)
+	if w != "" {
+		todoWarnings = append(todoWarnings, w)
 	}
 
 	var duration string
@@ -354,7 +342,29 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, []string, error) {
 		Resources:       resources,
 		Relations:       relations,
 		XProperties:     extractXPropertiesWithSet(props, handledTodoProps),
-	}, alarmWarnings, nil
+	}, append(alarmWarnings, todoWarnings...), nil
+}
+
+// parseTodoDateProp formats a VTODO date/date-time property for storage,
+// returning a warning rather than silently discarding an unparseable value.
+// A dropped DUE or DTSTART is invisible data loss: the todo disappears from
+// due-date views, its alarms lose their anchor, and the next export re-emits
+// the VTODO with the property missing. An empty first return means the
+// property was absent (no warning) or unusable (warning set).
+func parseTodoDateProp(props ical.Props, name, uid string) (string, string) {
+	prop := props.Get(name)
+	if prop == nil {
+		return "", ""
+	}
+	t, err := prop.DateTime(nil)
+	if err != nil || t.IsZero() {
+		return "", fmt.Sprintf("todo %q: unparseable %s %q; dropped", uid, name, prop.Value)
+	}
+	// A bare date (VALUE=DATE, "YYYYMMDD") is a calendar date, not an instant.
+	if len(prop.Value) == 8 {
+		return t.Format("2006-01-02"), ""
+	}
+	return t.UTC().Format(time.RFC3339), ""
 }
 
 func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
@@ -604,10 +614,12 @@ func parseCategories(ve ical.Event) string {
 }
 
 // parseAlarm extracts a model.Alarm from a VALARM component.
-// The second return value is a warning string (empty if no issues).
+// The second return value is a warning string (empty if no issues); a VALARM
+// with several problems reports all of them, since each one silently changes
+// what the alarm does and the user needs to see every reason.
 func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 	alarm := model.Alarm{Action: "DISPLAY", Related: "START"}
-	var warn string
+	var warns []string
 
 	if prop := comp.Props.Get(ical.PropAction); prop != nil {
 		alarm.Action = strings.ToUpper(prop.Value)
@@ -629,7 +641,7 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 						t.Hour(), t.Minute(), t.Second(), 0, loc)
 					tv = t.UTC().Format("20060102T150405Z")
 				} else {
-					warn = fmt.Sprintf("VALARM TRIGGER TZID=%s: unknown timezone, treating as floating", tzid)
+					warns = append(warns, fmt.Sprintf("VALARM TRIGGER TZID=%s: unknown timezone, treating as floating", tzid))
 				}
 				// Valid as floating even if TZID resolution failed.
 				valid = true
@@ -652,7 +664,7 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 			// row and stripping the VALARM from the server on the next push
 			// (round-trip data loss).
 			alarm.TriggerValue = tv
-			warn = fmt.Sprintf("VALARM TRIGGER: unparseable value %q; alarm preserved but will not fire", tv)
+			warns = append(warns, fmt.Sprintf("VALARM TRIGGER: unparseable value %q; alarm preserved but will not fire", tv))
 		}
 		if rel := prop.Params.Get("RELATED"); rel != "" {
 			alarm.Related = strings.ToUpper(rel)
@@ -695,7 +707,7 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 	if prop := comp.Props.Get(ical.PropAttach); prop != nil {
 		if prop.Params.Get("ENCODING") == "BASE64" {
 			if data, err := decodeInlineAttachment(prop.Value); err != nil {
-				warn = fmt.Sprintf("VALARM ATTACH: %v", err)
+				warns = append(warns, fmt.Sprintf("VALARM ATTACH: %v", err))
 			} else {
 				alarm.AttachBinary = data
 				alarm.AttachFmtType = prop.Params.Get("FMTTYPE")
@@ -723,7 +735,7 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 		alarm.XProperties = []model.XProperty{}
 	}
 
-	return alarm, warn
+	return alarm, strings.Join(warns, "; ")
 }
 
 func parseAttendees(ve ical.Event) []model.Attendee {
