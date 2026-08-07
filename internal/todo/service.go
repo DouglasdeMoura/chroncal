@@ -1563,30 +1563,86 @@ func fromStorageSlice(rows []storage.Todo) []Todo {
 // for the contract: single definition of a fully populated record, fail-fast so
 // no caller pushes an amputated one.
 func (s *Service) Hydrate(ctx context.Context, t *Todo) error {
-	var err error
-	if t.Alarms, err = s.ListAlarms(ctx, t.ID); err != nil {
-		return fmt.Errorf("todo %d alarms: %w", t.ID, err)
+	return s.hydrate(ctx, t, true)
+}
+
+// HydrateBestEffort populates every relation it can and returns the joined
+// errors for the ones it could not, instead of stopping at the first failure.
+//
+// This is for read-only display paths, where one unreadable relation should
+// degrade that field alone: stopping early would leave every relation after it
+// nil, which a caller rendering JSON cannot tell apart from "there are none".
+// Anything that writes iCal must use Hydrate — a partial record pushed to a
+// server overwrites the complete copy there.
+func (s *Service) HydrateBestEffort(ctx context.Context, t *Todo) error {
+	return s.hydrate(ctx, t, false)
+}
+
+func (s *Service) hydrate(ctx context.Context, t *Todo, failFast bool) error {
+	var errs []error
+	if v, err := s.ListAlarms(ctx, t.ID); err != nil {
+		errs = append(errs, fmt.Errorf("todo %d alarms: %w", t.ID, err))
+		if failFast {
+			return errors.Join(errs...)
+		}
+	} else {
+		t.Alarms = v
 	}
-	if t.Attendees, err = s.ListAttendees(ctx, t.ID); err != nil {
-		return fmt.Errorf("todo %d attendees: %w", t.ID, err)
+	if v, err := s.ListAttendees(ctx, t.ID); err != nil {
+		errs = append(errs, fmt.Errorf("todo %d attendees: %w", t.ID, err))
+		if failFast {
+			return errors.Join(errs...)
+		}
+	} else {
+		t.Attendees = v
 	}
-	if t.Attachments, err = s.ListAttachments(ctx, t.ID); err != nil {
-		return fmt.Errorf("todo %d attachments: %w", t.ID, err)
+	if v, err := s.ListAttachments(ctx, t.ID); err != nil {
+		errs = append(errs, fmt.Errorf("todo %d attachments: %w", t.ID, err))
+		if failFast {
+			return errors.Join(errs...)
+		}
+	} else {
+		t.Attachments = v
 	}
-	if t.Comments, err = s.ListComments(ctx, t.ID); err != nil {
-		return fmt.Errorf("todo %d comments: %w", t.ID, err)
+	if v, err := s.ListComments(ctx, t.ID); err != nil {
+		errs = append(errs, fmt.Errorf("todo %d comments: %w", t.ID, err))
+		if failFast {
+			return errors.Join(errs...)
+		}
+	} else {
+		t.Comments = v
 	}
-	if t.Contacts, err = s.ListContacts(ctx, t.ID); err != nil {
-		return fmt.Errorf("todo %d contacts: %w", t.ID, err)
+	if v, err := s.ListContacts(ctx, t.ID); err != nil {
+		errs = append(errs, fmt.Errorf("todo %d contacts: %w", t.ID, err))
+		if failFast {
+			return errors.Join(errs...)
+		}
+	} else {
+		t.Contacts = v
 	}
-	if t.Resources, err = s.ListResources(ctx, t.ID); err != nil {
-		return fmt.Errorf("todo %d resources: %w", t.ID, err)
+	if v, err := s.ListResources(ctx, t.ID); err != nil {
+		errs = append(errs, fmt.Errorf("todo %d resources: %w", t.ID, err))
+		if failFast {
+			return errors.Join(errs...)
+		}
+	} else {
+		t.Resources = v
 	}
-	if t.Relations, err = s.ListRelations(ctx, t.ID); err != nil {
-		return fmt.Errorf("todo %d relations: %w", t.ID, err)
+	if v, err := s.ListRelations(ctx, t.ID); err != nil {
+		errs = append(errs, fmt.Errorf("todo %d relations: %w", t.ID, err))
+		if failFast {
+			return errors.Join(errs...)
+		}
+	} else {
+		t.Relations = v
 	}
-	if t.XProperties, err = s.ListXProperties(ctx, t.ID); err != nil {
-		return fmt.Errorf("todo %d x-properties: %w", t.ID, err)
+	if v, err := s.ListXProperties(ctx, t.ID); err != nil {
+		errs = append(errs, fmt.Errorf("todo %d x-properties: %w", t.ID, err))
+		if failFast {
+			return errors.Join(errs...)
+		}
+	} else {
+		t.XProperties = v
 	}
-	return nil
+	return errors.Join(errs...)
 }

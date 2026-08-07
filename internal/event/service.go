@@ -2177,30 +2177,86 @@ func fromStorageAttendee(r storage.EventAttendee) model.Attendee {
 // instead of returning a partial value — a caller that pushes an amputated
 // record overwrites the server copy with it.
 func (s *Service) Hydrate(ctx context.Context, e *Event) error {
-	var err error
-	if e.Alarms, err = s.ListAlarms(ctx, e.ID); err != nil {
-		return fmt.Errorf("event %d alarms: %w", e.ID, err)
+	return s.hydrate(ctx, e, true)
+}
+
+// HydrateBestEffort populates every relation it can and returns the joined
+// errors for the ones it could not, instead of stopping at the first failure.
+//
+// This is for read-only display paths, where one unreadable relation should
+// degrade that field alone: stopping early would leave every relation after it
+// nil, which a caller rendering JSON cannot tell apart from "there are none".
+// Anything that writes iCal must use Hydrate — a partial record pushed to a
+// server overwrites the complete copy there.
+func (s *Service) HydrateBestEffort(ctx context.Context, e *Event) error {
+	return s.hydrate(ctx, e, false)
+}
+
+func (s *Service) hydrate(ctx context.Context, e *Event, failFast bool) error {
+	var errs []error
+	if v, err := s.ListAlarms(ctx, e.ID); err != nil {
+		errs = append(errs, fmt.Errorf("event %d alarms: %w", e.ID, err))
+		if failFast {
+			return errors.Join(errs...)
+		}
+	} else {
+		e.Alarms = v
 	}
-	if e.Attendees, err = s.ListAttendees(ctx, e.ID); err != nil {
-		return fmt.Errorf("event %d attendees: %w", e.ID, err)
+	if v, err := s.ListAttendees(ctx, e.ID); err != nil {
+		errs = append(errs, fmt.Errorf("event %d attendees: %w", e.ID, err))
+		if failFast {
+			return errors.Join(errs...)
+		}
+	} else {
+		e.Attendees = v
 	}
-	if e.Attachments, err = s.ListAttachments(ctx, e.ID); err != nil {
-		return fmt.Errorf("event %d attachments: %w", e.ID, err)
+	if v, err := s.ListAttachments(ctx, e.ID); err != nil {
+		errs = append(errs, fmt.Errorf("event %d attachments: %w", e.ID, err))
+		if failFast {
+			return errors.Join(errs...)
+		}
+	} else {
+		e.Attachments = v
 	}
-	if e.Comments, err = s.ListComments(ctx, e.ID); err != nil {
-		return fmt.Errorf("event %d comments: %w", e.ID, err)
+	if v, err := s.ListComments(ctx, e.ID); err != nil {
+		errs = append(errs, fmt.Errorf("event %d comments: %w", e.ID, err))
+		if failFast {
+			return errors.Join(errs...)
+		}
+	} else {
+		e.Comments = v
 	}
-	if e.Contacts, err = s.ListContacts(ctx, e.ID); err != nil {
-		return fmt.Errorf("event %d contacts: %w", e.ID, err)
+	if v, err := s.ListContacts(ctx, e.ID); err != nil {
+		errs = append(errs, fmt.Errorf("event %d contacts: %w", e.ID, err))
+		if failFast {
+			return errors.Join(errs...)
+		}
+	} else {
+		e.Contacts = v
 	}
-	if e.Resources, err = s.ListResources(ctx, e.ID); err != nil {
-		return fmt.Errorf("event %d resources: %w", e.ID, err)
+	if v, err := s.ListResources(ctx, e.ID); err != nil {
+		errs = append(errs, fmt.Errorf("event %d resources: %w", e.ID, err))
+		if failFast {
+			return errors.Join(errs...)
+		}
+	} else {
+		e.Resources = v
 	}
-	if e.Relations, err = s.ListRelations(ctx, e.ID); err != nil {
-		return fmt.Errorf("event %d relations: %w", e.ID, err)
+	if v, err := s.ListRelations(ctx, e.ID); err != nil {
+		errs = append(errs, fmt.Errorf("event %d relations: %w", e.ID, err))
+		if failFast {
+			return errors.Join(errs...)
+		}
+	} else {
+		e.Relations = v
 	}
-	if e.XProperties, err = s.ListXProperties(ctx, e.ID); err != nil {
-		return fmt.Errorf("event %d x-properties: %w", e.ID, err)
+	if v, err := s.ListXProperties(ctx, e.ID); err != nil {
+		errs = append(errs, fmt.Errorf("event %d x-properties: %w", e.ID, err))
+		if failFast {
+			return errors.Join(errs...)
+		}
+	} else {
+		e.XProperties = v
 	}
-	return nil
+	return errors.Join(errs...)
 }

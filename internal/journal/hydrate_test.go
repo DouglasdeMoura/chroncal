@@ -48,3 +48,26 @@ func hideTable(t *testing.T, svc *Service, table string) {
 		}
 	})
 }
+
+// See event.TestEventService_HydrateBestEffort_PopulatesPastAFailure.
+func TestJournalService_HydrateBestEffort_PopulatesPastAFailure(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	j := createJournal(t, svc)
+
+	if err := svc.ReplaceComments(ctx, j.ID, []string{"a note"}); err != nil {
+		t.Fatalf("replace comments: %v", err)
+	}
+	hideTable(t, svc, "journal_attendees") // read before comments
+
+	fetched, err := svc.Get(ctx, j.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if err := svc.HydrateBestEffort(ctx, &fetched); err == nil {
+		t.Fatal("HydrateBestEffort must report the unreadable relation")
+	}
+	if len(fetched.Comments) != 1 {
+		t.Errorf("Comments = %d, want 1", len(fetched.Comments))
+	}
+}

@@ -1038,24 +1038,70 @@ func fromStorageSlice(rows []storage.Journal) []Journal {
 // for the contract. VJOURNAL has no alarms or resources, so the set is smaller
 // than the event and todo ones.
 func (s *Service) Hydrate(ctx context.Context, j *Journal) error {
-	var err error
-	if j.Attendees, err = s.ListAttendees(ctx, j.ID); err != nil {
-		return fmt.Errorf("journal %d attendees: %w", j.ID, err)
+	return s.hydrate(ctx, j, true)
+}
+
+// HydrateBestEffort populates every relation it can and returns the joined
+// errors for the ones it could not, instead of stopping at the first failure.
+//
+// This is for read-only display paths, where one unreadable relation should
+// degrade that field alone: stopping early would leave every relation after it
+// nil, which a caller rendering JSON cannot tell apart from "there are none".
+// Anything that writes iCal must use Hydrate — a partial record pushed to a
+// server overwrites the complete copy there.
+func (s *Service) HydrateBestEffort(ctx context.Context, j *Journal) error {
+	return s.hydrate(ctx, j, false)
+}
+
+func (s *Service) hydrate(ctx context.Context, j *Journal, failFast bool) error {
+	var errs []error
+	if v, err := s.ListAttendees(ctx, j.ID); err != nil {
+		errs = append(errs, fmt.Errorf("journal %d attendees: %w", j.ID, err))
+		if failFast {
+			return errors.Join(errs...)
+		}
+	} else {
+		j.Attendees = v
 	}
-	if j.Attachments, err = s.ListAttachments(ctx, j.ID); err != nil {
-		return fmt.Errorf("journal %d attachments: %w", j.ID, err)
+	if v, err := s.ListAttachments(ctx, j.ID); err != nil {
+		errs = append(errs, fmt.Errorf("journal %d attachments: %w", j.ID, err))
+		if failFast {
+			return errors.Join(errs...)
+		}
+	} else {
+		j.Attachments = v
 	}
-	if j.Comments, err = s.ListComments(ctx, j.ID); err != nil {
-		return fmt.Errorf("journal %d comments: %w", j.ID, err)
+	if v, err := s.ListComments(ctx, j.ID); err != nil {
+		errs = append(errs, fmt.Errorf("journal %d comments: %w", j.ID, err))
+		if failFast {
+			return errors.Join(errs...)
+		}
+	} else {
+		j.Comments = v
 	}
-	if j.Contacts, err = s.ListContacts(ctx, j.ID); err != nil {
-		return fmt.Errorf("journal %d contacts: %w", j.ID, err)
+	if v, err := s.ListContacts(ctx, j.ID); err != nil {
+		errs = append(errs, fmt.Errorf("journal %d contacts: %w", j.ID, err))
+		if failFast {
+			return errors.Join(errs...)
+		}
+	} else {
+		j.Contacts = v
 	}
-	if j.Relations, err = s.ListRelations(ctx, j.ID); err != nil {
-		return fmt.Errorf("journal %d relations: %w", j.ID, err)
+	if v, err := s.ListRelations(ctx, j.ID); err != nil {
+		errs = append(errs, fmt.Errorf("journal %d relations: %w", j.ID, err))
+		if failFast {
+			return errors.Join(errs...)
+		}
+	} else {
+		j.Relations = v
 	}
-	if j.XProperties, err = s.ListXProperties(ctx, j.ID); err != nil {
-		return fmt.Errorf("journal %d x-properties: %w", j.ID, err)
+	if v, err := s.ListXProperties(ctx, j.ID); err != nil {
+		errs = append(errs, fmt.Errorf("journal %d x-properties: %w", j.ID, err))
+		if failFast {
+			return errors.Join(errs...)
+		}
+	} else {
+		j.XProperties = v
 	}
-	return nil
+	return errors.Join(errs...)
 }
