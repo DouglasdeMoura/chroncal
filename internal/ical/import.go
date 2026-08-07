@@ -147,7 +147,7 @@ func ImportFile(r io.Reader) (ImportResult, error) {
 				result.Todos = append(result.Todos, t)
 			case ical.CompJournal:
 				resolveComponentTZIDs(child, tzMap)
-				j, err := journalFromVJournal(child)
+				j, warns, err := journalFromVJournal(child)
 				if err != nil {
 					if errors.Is(err, errImportLimitExceeded) {
 						return result, err
@@ -155,6 +155,7 @@ func ImportFile(r io.Reader) (ImportResult, error) {
 					skipComponent("VJOURNAL", err)
 					continue
 				}
+				result.Warnings = append(result.Warnings, warns...)
 				result.Journals = append(result.Journals, j)
 			case ical.CompFreeBusy:
 				resolveComponentTZIDs(child, tzMap)
@@ -191,11 +192,11 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, []string, error) {
 	location := propText(props, ical.PropLocation)
 
 	var todoWarnings []string
-	dueDate, w := parseTodoDateProp(props, ical.PropDue, uid)
+	dueDate, w := parseDateProp(props, "todo", ical.PropDue, uid)
 	if w != "" {
 		todoWarnings = append(todoWarnings, w)
 	}
-	startDate, w := parseTodoDateProp(props, ical.PropDateTimeStart, uid)
+	startDate, w := parseDateProp(props, "todo", ical.PropDateTimeStart, uid)
 	if w != "" {
 		todoWarnings = append(todoWarnings, w)
 	}
@@ -345,20 +346,20 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, []string, error) {
 	}, append(alarmWarnings, todoWarnings...), nil
 }
 
-// parseTodoDateProp formats a VTODO date/date-time property for storage,
+// parseDateProp formats a component's date/date-time property for storage,
 // returning a warning rather than silently discarding an unparseable value.
-// A dropped DUE or DTSTART is invisible data loss: the todo disappears from
-// due-date views, its alarms lose their anchor, and the next export re-emits
-// the VTODO with the property missing. An empty first return means the
+// A dropped DUE or DTSTART is invisible data loss: the record disappears from
+// date views, any alarms lose their anchor, and the next export re-emits the
+// component with the property missing. An empty first return means the
 // property was absent (no warning) or unusable (warning set).
-func parseTodoDateProp(props ical.Props, name, uid string) (string, string) {
+func parseDateProp(props ical.Props, kind, name, uid string) (string, string) {
 	prop := props.Get(name)
 	if prop == nil {
 		return "", ""
 	}
 	t, err := prop.DateTime(nil)
 	if err != nil || t.IsZero() {
-		return "", fmt.Sprintf("todo %q: unparseable %s %q; dropped", uid, name, prop.Value)
+		return "", fmt.Sprintf("%s %q: unparseable %s %q; dropped", kind, uid, name, prop.Value)
 	}
 	// A bare date (VALUE=DATE, "YYYYMMDD") is a calendar date, not an instant.
 	if len(prop.Value) == 8 {
@@ -1103,12 +1104,12 @@ func parseRelationsFromProps(props ical.Props) []model.Relation {
 	return out
 }
 
-func journalFromVJournal(comp *ical.Component) (journal.Journal, error) {
+func journalFromVJournal(comp *ical.Component) (journal.Journal, []string, error) {
 	props := comp.Props
 
 	uid := propText(props, ical.PropUID)
 	if uid == "" {
-		return journal.Journal{}, fmt.Errorf("missing UID")
+		return journal.Journal{}, nil, fmt.Errorf("missing UID")
 	}
 
 	summary := propText(props, ical.PropSummary)
@@ -1128,15 +1129,10 @@ func journalFromVJournal(comp *ical.Component) (journal.Journal, error) {
 	}
 	description := strings.Join(descriptions, "\n\n")
 
-	var startDate string
-	if prop := props.Get(ical.PropDateTimeStart); prop != nil {
-		if t, err := prop.DateTime(nil); err == nil && !t.IsZero() {
-			if len(prop.Value) == 8 {
-				startDate = t.Format("2006-01-02")
-			} else {
-				startDate = t.UTC().Format(time.RFC3339)
-			}
-		}
+	startDate, startWarn := parseDateProp(props, "journal", ical.PropDateTimeStart, uid)
+	var journalWarnings []string
+	if startWarn != "" {
+		journalWarnings = append(journalWarnings, startWarn)
 	}
 
 	status := propTextOr(props, ical.PropStatus, "FINAL")
@@ -1171,7 +1167,7 @@ func journalFromVJournal(comp *ical.Component) (journal.Journal, error) {
 
 	recurrenceID, err := parseRecurrenceID(props)
 	if err != nil {
-		return journal.Journal{}, err
+		return journal.Journal{}, nil, err
 	}
 
 	var dtstamp string
@@ -1187,7 +1183,7 @@ func journalFromVJournal(comp *ical.Component) (journal.Journal, error) {
 	// ATTACH, COMMENT, CONTACT, RELATED-TO
 	attachments, err := parseAttachmentsFromProps(props)
 	if err != nil {
-		return journal.Journal{}, err
+		return journal.Journal{}, nil, err
 	}
 	comments := parseCommentsFromProps(props)
 	contacts := parseContactsFromProps(props)
@@ -1216,7 +1212,7 @@ func journalFromVJournal(comp *ical.Component) (journal.Journal, error) {
 		Contacts:       contacts,
 		XProperties:    extractXPropertiesWithSet(props, handledJournalProps),
 		Relations:      relations,
-	}, nil
+	}, journalWarnings, nil
 }
 
 // handledEventProps is the set of property names explicitly parsed by eventFromVEvent.
