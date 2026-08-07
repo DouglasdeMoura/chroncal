@@ -2165,3 +2165,42 @@ func fromStorageAttendee(r storage.EventAttendee) model.Attendee {
 		Language:      storage.NullableToString(r.Language),
 	}
 }
+
+// Hydrate loads the transient relation slices — alarms, attendees, attachments,
+// comments, contacts, resources, relations, x-properties — onto e. They live in
+// side tables rather than the events row, so a value straight out of Get/List
+// carries none of them and any iCal built from it would silently omit them.
+//
+// This is the single definition of "what a fully populated event is": export
+// (CLI and file), CalDAV push, and the display paths all call it, so a relation
+// added later reaches every consumer at once. It fails on the first error
+// instead of returning a partial value — a caller that pushes an amputated
+// record overwrites the server copy with it.
+func (s *Service) Hydrate(ctx context.Context, e *Event) error {
+	var err error
+	if e.Alarms, err = s.ListAlarms(ctx, e.ID); err != nil {
+		return fmt.Errorf("event %d alarms: %w", e.ID, err)
+	}
+	if e.Attendees, err = s.ListAttendees(ctx, e.ID); err != nil {
+		return fmt.Errorf("event %d attendees: %w", e.ID, err)
+	}
+	if e.Attachments, err = s.ListAttachments(ctx, e.ID); err != nil {
+		return fmt.Errorf("event %d attachments: %w", e.ID, err)
+	}
+	if e.Comments, err = s.ListComments(ctx, e.ID); err != nil {
+		return fmt.Errorf("event %d comments: %w", e.ID, err)
+	}
+	if e.Contacts, err = s.ListContacts(ctx, e.ID); err != nil {
+		return fmt.Errorf("event %d contacts: %w", e.ID, err)
+	}
+	if e.Resources, err = s.ListResources(ctx, e.ID); err != nil {
+		return fmt.Errorf("event %d resources: %w", e.ID, err)
+	}
+	if e.Relations, err = s.ListRelations(ctx, e.ID); err != nil {
+		return fmt.Errorf("event %d relations: %w", e.ID, err)
+	}
+	if e.XProperties, err = s.ListXProperties(ctx, e.ID); err != nil {
+		return fmt.Errorf("event %d x-properties: %w", e.ID, err)
+	}
+	return nil
+}

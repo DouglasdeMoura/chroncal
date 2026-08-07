@@ -1558,3 +1558,35 @@ func fromStorageSlice(rows []storage.Todo) []Todo {
 	}
 	return todos
 }
+
+// Hydrate loads the transient relation slices onto t. See event.Service.Hydrate
+// for the contract: single definition of a fully populated record, fail-fast so
+// no caller pushes an amputated one.
+func (s *Service) Hydrate(ctx context.Context, t *Todo) error {
+	var err error
+	if t.Alarms, err = s.ListAlarms(ctx, t.ID); err != nil {
+		return fmt.Errorf("todo %d alarms: %w", t.ID, err)
+	}
+	if t.Attendees, err = s.ListAttendees(ctx, t.ID); err != nil {
+		return fmt.Errorf("todo %d attendees: %w", t.ID, err)
+	}
+	if t.Attachments, err = s.ListAttachments(ctx, t.ID); err != nil {
+		return fmt.Errorf("todo %d attachments: %w", t.ID, err)
+	}
+	if t.Comments, err = s.ListComments(ctx, t.ID); err != nil {
+		return fmt.Errorf("todo %d comments: %w", t.ID, err)
+	}
+	if t.Contacts, err = s.ListContacts(ctx, t.ID); err != nil {
+		return fmt.Errorf("todo %d contacts: %w", t.ID, err)
+	}
+	if t.Resources, err = s.ListResources(ctx, t.ID); err != nil {
+		return fmt.Errorf("todo %d resources: %w", t.ID, err)
+	}
+	if t.Relations, err = s.ListRelations(ctx, t.ID); err != nil {
+		return fmt.Errorf("todo %d relations: %w", t.ID, err)
+	}
+	if t.XProperties, err = s.ListXProperties(ctx, t.ID); err != nil {
+		return fmt.Errorf("todo %d x-properties: %w", t.ID, err)
+	}
+	return nil
+}

@@ -403,7 +403,7 @@ func ExportCalendar(ctx context.Context, a *app.App, calendarID int64, calendarN
 		return summary, fmt.Errorf("list events: %w", err)
 	}
 	for i := range events {
-		if err := populateExportEvent(ctx, a.Events, &events[i]); err != nil {
+		if err := a.Events.Hydrate(ctx, &events[i]); err != nil {
 			return summary, err
 		}
 	}
@@ -412,7 +412,7 @@ func ExportCalendar(ctx context.Context, a *app.App, calendarID int64, calendarN
 		return summary, fmt.Errorf("list todos: %w", err)
 	}
 	for i := range todos {
-		if err := populateExportTodo(ctx, a.Todos, &todos[i]); err != nil {
+		if err := a.Todos.Hydrate(ctx, &todos[i]); err != nil {
 			return summary, err
 		}
 	}
@@ -421,7 +421,7 @@ func ExportCalendar(ctx context.Context, a *app.App, calendarID int64, calendarN
 		return summary, fmt.Errorf("list journals: %w", err)
 	}
 	for i := range journals {
-		if err := populateExportJournal(ctx, a.Journals, &journals[i]); err != nil {
+		if err := a.Journals.Hydrate(ctx, &journals[i]); err != nil {
 			return summary, err
 		}
 	}
@@ -472,85 +472,4 @@ func ExportCalendarFile(ctx context.Context, a *app.App, calendarID int64, calen
 		return summary, fmt.Errorf("write file: %w", err)
 	}
 	return summary, nil
-}
-
-func populateExportEvent(ctx context.Context, svc *event.Service, item *event.Event) error {
-	var err error
-	if item.Alarms, err = svc.ListAlarms(ctx, item.ID); err != nil {
-		return fmt.Errorf("event %d alarms: %w", item.ID, err)
-	}
-	if item.Attendees, err = svc.ListAttendees(ctx, item.ID); err != nil {
-		return fmt.Errorf("event %d attendees: %w", item.ID, err)
-	}
-	if item.Attachments, err = svc.ListAttachments(ctx, item.ID); err != nil {
-		return fmt.Errorf("event %d attachments: %w", item.ID, err)
-	}
-	if item.Comments, err = svc.ListComments(ctx, item.ID); err != nil {
-		return fmt.Errorf("event %d comments: %w", item.ID, err)
-	}
-	if item.Contacts, err = svc.ListContacts(ctx, item.ID); err != nil {
-		return fmt.Errorf("event %d contacts: %w", item.ID, err)
-	}
-	if item.Resources, err = svc.ListResources(ctx, item.ID); err != nil {
-		return fmt.Errorf("event %d resources: %w", item.ID, err)
-	}
-	if item.Relations, err = svc.ListRelations(ctx, item.ID); err != nil {
-		return fmt.Errorf("event %d relations: %w", item.ID, err)
-	}
-	if item.XProperties, err = svc.ListXProperties(ctx, item.ID); err != nil {
-		return fmt.Errorf("event %d x-properties: %w", item.ID, err)
-	}
-	return nil
-}
-
-func populateExportTodo(ctx context.Context, svc *todo.Service, item *todo.Todo) error {
-	var err error
-	if item.Alarms, err = svc.ListAlarms(ctx, item.ID); err != nil {
-		return fmt.Errorf("todo %d alarms: %w", item.ID, err)
-	}
-	if item.Attendees, err = svc.ListAttendees(ctx, item.ID); err != nil {
-		return fmt.Errorf("todo %d attendees: %w", item.ID, err)
-	}
-	if item.Attachments, err = svc.ListAttachments(ctx, item.ID); err != nil {
-		return fmt.Errorf("todo %d attachments: %w", item.ID, err)
-	}
-	if item.Comments, err = svc.ListComments(ctx, item.ID); err != nil {
-		return fmt.Errorf("todo %d comments: %w", item.ID, err)
-	}
-	if item.Contacts, err = svc.ListContacts(ctx, item.ID); err != nil {
-		return fmt.Errorf("todo %d contacts: %w", item.ID, err)
-	}
-	if item.Resources, err = svc.ListResources(ctx, item.ID); err != nil {
-		return fmt.Errorf("todo %d resources: %w", item.ID, err)
-	}
-	if item.Relations, err = svc.ListRelations(ctx, item.ID); err != nil {
-		return fmt.Errorf("todo %d relations: %w", item.ID, err)
-	}
-	if item.XProperties, err = svc.ListXProperties(ctx, item.ID); err != nil {
-		return fmt.Errorf("todo %d x-properties: %w", item.ID, err)
-	}
-	return nil
-}
-
-func populateExportJournal(ctx context.Context, svc *journal.Service, item *journal.Journal) error {
-	var err error
-	if item.Attendees, err = svc.ListAttendees(ctx, item.ID); err != nil {
-		return fmt.Errorf("journal %d attendees: %w", item.ID, err)
-	}
-	if item.Attachments, err = svc.ListAttachments(ctx, item.ID); err != nil {
-		return fmt.Errorf("journal %d attachments: %w", item.ID, err)
-	}
-	if item.Comments, err = svc.ListComments(ctx, item.ID); err != nil {
-		return fmt.Errorf("journal %d comments: %w", item.ID, err)
-	}
-	if item.Contacts, err = svc.ListContacts(ctx, item.ID); err != nil {
-		return fmt.Errorf("journal %d contacts: %w", item.ID, err)
-	}
-	if item.Relations, err = svc.ListRelations(ctx, item.ID); err != nil {
-		return fmt.Errorf("journal %d relations: %w", item.ID, err)
-	}
-	if item.XProperties, err = svc.ListXProperties(ctx, item.ID); err != nil {
-		return fmt.Errorf("journal %d x-properties: %w", item.ID, err)
-	}
-	return nil
 }

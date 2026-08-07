@@ -266,7 +266,12 @@ to stdout.`,
 				}
 
 				for i := range events {
-					populateEventFields(ctx, a.Events, &events[i])
+					// Export writes a file the user will treat as authoritative, so a
+					// failed relation read must abort rather than quietly produce an
+					// .ics missing alarms and attendees.
+					if err := a.Events.Hydrate(ctx, &events[i]); err != nil {
+						return err
+					}
 				}
 			}
 
@@ -284,7 +289,9 @@ to stdout.`,
 					return fmt.Errorf("list todos: %w", err)
 				}
 				for i := range todos {
-					populateTodoFields(ctx, a.Todos, &todos[i])
+					if err := a.Todos.Hydrate(ctx, &todos[i]); err != nil {
+						return err
+					}
 				}
 			}
 
@@ -302,7 +309,9 @@ to stdout.`,
 					return fmt.Errorf("list journals: %w", err)
 				}
 				for i := range journals {
-					populateJournalFields(ctx, a.Journals, &journals[i])
+					if err := a.Journals.Hydrate(ctx, &journals[i]); err != nil {
+						return err
+					}
 				}
 			}
 

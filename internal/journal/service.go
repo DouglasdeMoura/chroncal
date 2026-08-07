@@ -1033,3 +1033,29 @@ func fromStorageSlice(rows []storage.Journal) []Journal {
 	}
 	return journals
 }
+
+// Hydrate loads the transient relation slices onto j. See event.Service.Hydrate
+// for the contract. VJOURNAL has no alarms or resources, so the set is smaller
+// than the event and todo ones.
+func (s *Service) Hydrate(ctx context.Context, j *Journal) error {
+	var err error
+	if j.Attendees, err = s.ListAttendees(ctx, j.ID); err != nil {
+		return fmt.Errorf("journal %d attendees: %w", j.ID, err)
+	}
+	if j.Attachments, err = s.ListAttachments(ctx, j.ID); err != nil {
+		return fmt.Errorf("journal %d attachments: %w", j.ID, err)
+	}
+	if j.Comments, err = s.ListComments(ctx, j.ID); err != nil {
+		return fmt.Errorf("journal %d comments: %w", j.ID, err)
+	}
+	if j.Contacts, err = s.ListContacts(ctx, j.ID); err != nil {
+		return fmt.Errorf("journal %d contacts: %w", j.ID, err)
+	}
+	if j.Relations, err = s.ListRelations(ctx, j.ID); err != nil {
+		return fmt.Errorf("journal %d relations: %w", j.ID, err)
+	}
+	if j.XProperties, err = s.ListXProperties(ctx, j.ID); err != nil {
+		return fmt.Errorf("journal %d x-properties: %w", j.ID, err)
+	}
+	return nil
+}
