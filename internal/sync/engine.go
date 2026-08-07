@@ -1457,8 +1457,16 @@ func exportResourceFor[T any](
 	export func([]T, string) ([]byte, error),
 ) ([]byte, error) {
 	var rows []T
-	if row, err := get(ctx, uid); err == nil {
+	switch row, err := get(ctx, uid); {
+	case err == nil:
 		rows = append(rows, row)
+	case !errors.Is(err, sql.ErrNoRows):
+		// Only "no master row" is an expected outcome here (the orphan-instance
+		// case described above). Treating a transient failure — SQLITE_BUSY, an
+		// I/O error — the same way would export the overrides alone, PUT a
+		// resource with the master VEVENT and its recurrence rule amputated,
+		// then clear the dirty flag so nothing ever retries.
+		return nil, fmt.Errorf("get %s master uid %s: %w", kind, uid, err)
 	}
 	overrides, err := listOverrides(ctx, uid)
 	if err != nil {

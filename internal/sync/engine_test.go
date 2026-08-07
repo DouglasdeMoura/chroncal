@@ -4227,3 +4227,64 @@ func TestExportResourceFor_HydrateErrorAbortsExport(t *testing.T) {
 		t.Error("export must not run when hydration fails: an amputated payload would overwrite the server resource")
 	}
 }
+
+// A missing master row is expected — Google serves orphan instances under their
+// own UID — but a transient read failure is not. Treating the two alike exported
+// the override rows alone, PUT a resource with the master VEVENT and its
+// recurrence rule amputated, and then cleared the dirty flag so nothing retried.
+func TestExportResourceFor_MasterReadErrorAbortsExport(t *testing.T) {
+	t.Parallel()
+
+	marker := errors.New("database is locked")
+	get := func(context.Context, string) (event.Event, error) {
+		return event.Event{}, marker
+	}
+	listOverrides := func(context.Context, string) ([]event.Event, error) {
+		return []event.Event{{UID: "uid-1", ID: 2, RecurrenceID: "20260401T100000Z"}}, nil
+	}
+	hydrate := func(context.Context, *Engine, *event.Event) error { return nil }
+	exportCalled := false
+	export := func([]event.Event, string) ([]byte, error) {
+		exportCalled = true
+		return []byte("BEGIN:VCALENDAR"), nil
+	}
+
+	_, err := exportResourceFor(context.Background(), nil, "uid-1", "event",
+		get, listOverrides, hydrate, export)
+	if err == nil {
+		t.Fatal("expected the master read error to propagate, got nil")
+	}
+	if !errors.Is(err, marker) {
+		t.Errorf("error = %v, want %v", err, marker)
+	}
+	if exportCalled {
+		t.Error("export must not run: a PUT built from overrides alone deletes the master from the server")
+	}
+}
+
+// The orphan-instance path must keep working: sql.ErrNoRows on the master is a
+// legitimate shape, not a failure.
+func TestExportResourceFor_MissingMasterExportsOverrides(t *testing.T) {
+	t.Parallel()
+
+	get := func(context.Context, string) (event.Event, error) {
+		return event.Event{}, sql.ErrNoRows
+	}
+	listOverrides := func(context.Context, string) ([]event.Event, error) {
+		return []event.Event{{UID: "uid-1", ID: 2, RecurrenceID: "20260401T100000Z"}}, nil
+	}
+	hydrate := func(context.Context, *Engine, *event.Event) error { return nil }
+	var exported int
+	export := func(rows []event.Event, _ string) ([]byte, error) {
+		exported = len(rows)
+		return []byte("BEGIN:VCALENDAR"), nil
+	}
+
+	if _, err := exportResourceFor(context.Background(), nil, "uid-1", "event",
+		get, listOverrides, hydrate, export); err != nil {
+		t.Fatalf("orphan instance must still export: %v", err)
+	}
+	if exported != 1 {
+		t.Errorf("exported %d rows, want 1", exported)
+	}
+}
