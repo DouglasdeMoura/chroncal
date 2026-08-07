@@ -23,18 +23,31 @@ generate:
 
 # --- Code quality --------------------------------------------------------
 
-# Scope gofmt to this module's own packages. A bare `find .` also sweeps
-# gitignored third-party checkouts that carry their own go.mod (.crush/crush is
-# ~480 files): `make fmt` would rewrite code this repo does not own, and
-# `make check` would fail on upstream formatting nobody here can fix. `go list
-# ./...` already skips those, along with dot-prefixed dirs like .worktrees.
-GO_PKG_DIRS = go list -f '{{.Dir}}' ./...
+# Scope gofmt to the Go files this repo actually tracks.
+#
+# A bare `find .` also sweeps gitignored third-party checkouts carrying their
+# own go.mod (.crush/crush is ~480 files): `make fmt` would rewrite code this
+# repo does not own and `make check` would fail on upstream formatting nobody
+# here can fix. `go list ./...` fixes that but overshoots the other way — it
+# reports package dirs, so a root-level or build-tag-excluded file is silently
+# never formatted or checked. `git ls-files` is exactly the set we mean:
+# tracked, so gitignored vendor trees are out, and complete, so nothing tracked
+# escapes.
+#
+# Both targets refuse an empty list. gofmt with no file arguments reads stdin,
+# which in CI is /dev/null — that would make fmt-check, and therefore check,
+# pass green without inspecting a single file.
+GO_FILES = git ls-files '*.go'
 
 fmt:
-	@gofmt -w $$($(GO_PKG_DIRS))
+	@files=$$($(GO_FILES)); \
+	if [ -z "$$files" ]; then echo "no tracked Go files found — run from a git checkout"; exit 1; fi; \
+	gofmt -w $$files
 
 fmt-check:
-	@diff=$$(gofmt -l $$($(GO_PKG_DIRS))); \
+	@files=$$($(GO_FILES)); \
+	if [ -z "$$files" ]; then echo "no tracked Go files found — run from a git checkout"; exit 1; fi; \
+	diff=$$(gofmt -l $$files); \
 	if [ -n "$$diff" ]; then \
 		echo "gofmt diffs in:"; echo "$$diff"; \
 		echo "run 'make fmt' to fix"; exit 1; \
