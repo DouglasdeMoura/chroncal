@@ -268,9 +268,11 @@ to stdout.`,
 				for i := range events {
 					// Export writes a file the user will treat as authoritative, so a
 					// failed relation read must abort rather than quietly produce an
-					// .ics missing alarms and attendees.
+					// .ics missing alarms and attendees. Name the offending record
+					// and say no file was written, so the message is actionable
+					// rather than a bare "event 4211 attachments: ...".
 					if err := a.Events.Hydrate(ctx, &events[i]); err != nil {
-						return err
+						return fmt.Errorf("export aborted, no file written: %w (event uid %s)", err, events[i].UID)
 					}
 				}
 			}
@@ -290,7 +292,7 @@ to stdout.`,
 				}
 				for i := range todos {
 					if err := a.Todos.Hydrate(ctx, &todos[i]); err != nil {
-						return err
+						return fmt.Errorf("export aborted, no file written: %w (todo uid %s)", err, todos[i].UID)
 					}
 				}
 			}
@@ -310,7 +312,7 @@ to stdout.`,
 				}
 				for i := range journals {
 					if err := a.Journals.Hydrate(ctx, &journals[i]); err != nil {
-						return err
+						return fmt.Errorf("export aborted, no file written: %w (journal uid %s)", err, journals[i].UID)
 					}
 				}
 			}
