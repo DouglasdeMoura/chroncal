@@ -710,13 +710,16 @@ func emitRecurrenceID(props ical.Props, recurrenceID string, allDay, floating bo
 // exportableTrigger reports whether a stored TRIGGER value can be emitted as
 // RFC 5545-valid iCal — that is, whether it is a duration or a date-time.
 //
-// Import deliberately preserves an unparseable TRIGGER verbatim so the local
-// alarm row survives the ReplaceAlarms merge (see parseAlarm). That value must
-// not reach the wire: buildValarm would label it VALUE=DATE-TIME, and strict
-// CalDAV servers reject the malformed VALARM with HTTP 400, which fails the PUT
-// for the whole resource and leaves it permanently dirty. Dropping one
-// non-fireable alarm from the payload costs far less than wedging every future
-// sync of the event it belongs to.
+// Import now rejects such a value outright (see parseAlarm), so this is a
+// backstop rather than the primary defense: it catches rows written by the
+// window in which import preserved the raw value, and anything a future caller
+// writes directly. Without it buildValarm would label the value VALUE=DATE-TIME
+// and strict CalDAV servers would reject the malformed VALARM with HTTP 400,
+// failing the PUT for the whole resource and leaving it permanently dirty.
+//
+// Skipping the VALARM is itself lossy — the PUT deletes that alarm from the
+// server copy — which is exactly why import drops the value up front, where the
+// user gets a warning, instead of letting it reach this point silently.
 func exportableTrigger(v string) bool {
 	if v == "" {
 		return false
@@ -730,6 +733,25 @@ func exportableTrigger(v string) bool {
 		}
 	}
 	return false
+}
+
+// normalizeTriggerToUTC renders a stored date-time trigger in the only form
+// RFC 5545 §3.8.6.3 allows for TRIGGER;VALUE=DATE-TIME: UTC.
+//
+// Stored values reach here in three shapes — already-UTC iCal, legacy RFC 3339,
+// and floating iCal, which parseAlarm produces when a VALARM carries a TZID it
+// cannot resolve (Exchange's "Customized Time Zone" and friends). Emitting the
+// floating form verbatim yields a VALARM strict servers reject with 400,
+// wedging the resource. A floating value has no zone by definition, so reading
+// it as UTC is a choice, not a recovery; it matches what the resolvable-TZID
+// path already stores and is the only reading that produces valid iCal.
+func normalizeTriggerToUTC(v string) string {
+	for _, layout := range []string{time.RFC3339, "20060102T150405"} {
+		if t, err := time.Parse(layout, v); err == nil {
+			return t.UTC().Format("20060102T150405Z")
+		}
+	}
+	return v
 }
 
 // buildValarm renders an alarm as a VALARM component, or nil when the alarm
@@ -753,10 +775,7 @@ func buildValarm(alarm model.Alarm) *ical.Component {
 		trigger.Params.Set("VALUE", "DURATION")
 	} else {
 		trigger.Params.Set("VALUE", "DATE-TIME")
-		// Normalize any legacy RFC 3339 values to iCal format.
-		if t, err := time.Parse(time.RFC3339, alarm.TriggerValue); err == nil {
-			trigger.Value = t.UTC().Format("20060102T150405Z")
-		}
+		trigger.Value = normalizeTriggerToUTC(alarm.TriggerValue)
 	}
 	if alarm.Related == "END" {
 		trigger.Params.Set("RELATED", "END")

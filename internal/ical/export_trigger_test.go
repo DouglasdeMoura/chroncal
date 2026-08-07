@@ -83,3 +83,38 @@ func TestExportableTrigger(t *testing.T) {
 		}
 	}
 }
+
+// RFC 5545 §3.8.6.3: a TRIGGER given as a DATE-TIME MUST be UTC. parseAlarm
+// stores a floating value when it cannot resolve a TZID (Exchange's
+// "Customized Time Zone" and friends), so export has to normalize it. Emitting
+// the floating form verbatim produces a VALARM strict servers reject with 400,
+// wedging the whole resource — the failure exportableTrigger exists to stop.
+func TestExport_FloatingDateTimeTrigger_NormalizedToUTC(t *testing.T) {
+	t.Parallel()
+	events := []event.Event{{
+		UID:       "floating-trigger@example.com",
+		Title:     "Event",
+		StartTime: time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC),
+		Alarms: []model.Alarm{{
+			Action: "DISPLAY", TriggerValue: "20260401T100000", Description: "Floating", Related: "START",
+		}},
+	}}
+	data, err := ExportEvents(events, "Work")
+	if err != nil {
+		t.Fatalf("ExportEvents: %v", err)
+	}
+	out := string(data)
+	if !strings.Contains(out, "BEGIN:VALARM") {
+		t.Fatalf("the alarm was dropped; a floating trigger is representable:\n%s", out)
+	}
+	if !strings.Contains(out, "20260401T100000Z") {
+		t.Errorf("floating trigger not normalized to UTC:\n%s", out)
+	}
+	for _, line := range strings.Split(out, "\r\n") {
+		if strings.HasPrefix(line, "TRIGGER") && strings.Contains(line, "DATE-TIME") &&
+			!strings.HasSuffix(line, "Z") {
+			t.Errorf("emitted a non-UTC DATE-TIME trigger, which RFC 5545 forbids: %q", line)
+		}
+	}
+}
