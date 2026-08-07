@@ -12,6 +12,7 @@ import (
 	"github.com/emersion/go-ical"
 	"github.com/teambition/rrule-go"
 
+	"github.com/douglasdemoura/chroncal/internal/duration"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/model"
@@ -179,7 +180,9 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 			if alarm.Summary == "" && alarm.Action == "EMAIL" {
 				alarm.Summary = e.Title
 			}
-			vevent.Children = append(vevent.Children, buildValarm(alarm))
+			if v := buildValarm(alarm); v != nil {
+				vevent.Children = append(vevent.Children, v)
+			}
 		}
 
 		// ATTENDEE / ORGANIZER
@@ -524,7 +527,9 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 			if alarm.Summary == "" && alarm.Action == "EMAIL" {
 				alarm.Summary = t.Summary
 			}
-			vtodo.Children = append(vtodo.Children, buildValarm(alarm))
+			if v := buildValarm(alarm); v != nil {
+				vtodo.Children = append(vtodo.Children, v)
+			}
 		}
 
 		// ATTENDEE / ORGANIZER
@@ -702,18 +707,51 @@ func emitRecurrenceID(props ical.Props, recurrenceID string, allDay, floating bo
 	}
 }
 
+// exportableTrigger reports whether a stored TRIGGER value can be emitted as
+// RFC 5545-valid iCal — that is, whether it is a duration or a date-time.
+//
+// Import deliberately preserves an unparseable TRIGGER verbatim so the local
+// alarm row survives the ReplaceAlarms merge (see parseAlarm). That value must
+// not reach the wire: buildValarm would label it VALUE=DATE-TIME, and strict
+// CalDAV servers reject the malformed VALARM with HTTP 400, which fails the PUT
+// for the whole resource and leaves it permanently dirty. Dropping one
+// non-fireable alarm from the payload costs far less than wedging every future
+// sync of the event it belongs to.
+func exportableTrigger(v string) bool {
+	if v == "" {
+		return false
+	}
+	if v[0] == '-' || v[0] == '+' || v[0] == 'P' {
+		return duration.Validate(v) == nil
+	}
+	for _, layout := range []string{"20060102T150405Z", "20060102T150405", time.RFC3339} {
+		if _, err := time.Parse(layout, v); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// buildValarm renders an alarm as a VALARM component, or nil when the alarm
+// carries a TRIGGER that cannot be expressed as valid iCal. Callers must skip
+// a nil result.
 func buildValarm(alarm model.Alarm) *ical.Component {
+	if !exportableTrigger(alarm.TriggerValue) {
+		return nil
+	}
 	valarm := ical.NewComponent(ical.CompAlarm)
 	if alarm.UID != "" {
 		valarm.Props.SetText(ical.PropUID, alarm.UID)
 	}
 	valarm.Props.SetText(ical.PropAction, alarm.Action)
 
+	// exportableTrigger above guarantees a non-empty value that is either a
+	// duration or a date-time, so the VALUE parameter is never a guess.
 	trigger := &ical.Prop{Name: ical.PropTrigger, Params: make(ical.Params)}
 	trigger.Value = alarm.TriggerValue
-	if alarm.TriggerValue != "" && (alarm.TriggerValue[0] == '-' || alarm.TriggerValue[0] == '+' || alarm.TriggerValue[0] == 'P') {
+	if alarm.TriggerValue[0] == '-' || alarm.TriggerValue[0] == '+' || alarm.TriggerValue[0] == 'P' {
 		trigger.Params.Set("VALUE", "DURATION")
-	} else if alarm.TriggerValue != "" {
+	} else {
 		trigger.Params.Set("VALUE", "DATE-TIME")
 		// Normalize any legacy RFC 3339 values to iCal format.
 		if t, err := time.Parse(time.RFC3339, alarm.TriggerValue); err == nil {
