@@ -1,6 +1,6 @@
 .PHONY: build run test test-race coverage generate \
         fmt fmt-check vet lint staticcheck vulncheck tidy-check \
-        check tools clean
+        check tools clean clean-db
 
 build:
 	go build -o chroncal ./cmd/chroncal
@@ -23,11 +23,18 @@ generate:
 
 # --- Code quality --------------------------------------------------------
 
+# Scope gofmt to this module's own packages. A bare `find .` also sweeps
+# gitignored third-party checkouts that carry their own go.mod (.crush/crush is
+# ~480 files): `make fmt` would rewrite code this repo does not own, and
+# `make check` would fail on upstream formatting nobody here can fix. `go list
+# ./...` already skips those, along with dot-prefixed dirs like .worktrees.
+GO_PKG_DIRS = go list -f '{{.Dir}}' ./...
+
 fmt:
-	@gofmt -w $$(find . -type f -name '*.go' -not -path './.worktrees/*' -not -path './.git/*')
+	@gofmt -w $$($(GO_PKG_DIRS))
 
 fmt-check:
-	@diff=$$(gofmt -l $$(find . -type f -name '*.go' -not -path './.worktrees/*' -not -path './.git/*')); \
+	@diff=$$(gofmt -l $$($(GO_PKG_DIRS))); \
 	if [ -n "$$diff" ]; then \
 		echo "gofmt diffs in:"; echo "$$diff"; \
 		echo "run 'make fmt' to fix"; exit 1; \
@@ -71,6 +78,13 @@ tools:
 
 # --- Housekeeping --------------------------------------------------------
 
+# `clean` removes build outputs only. The repo-local chroncal.db is real user
+# data for anyone dogfooding with CHRONCAL_DB=./chroncal.db, and there is no
+# trash or backup to recover it from — deleting it as a side effect of a
+# routine build clean is not a trade a Makefile gets to make. `clean-db` exists
+# for when that is actually what you want.
 clean:
-	rm -f chroncal chroncal.db coverage.out
-	rm -f chroncal.db-wal chroncal.db-shm
+	rm -f chroncal coverage.out
+
+clean-db:
+	rm -f chroncal.db chroncal.db-wal chroncal.db-shm

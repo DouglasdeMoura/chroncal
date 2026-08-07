@@ -75,6 +75,7 @@ make tidy-check   # Fail if go.mod/go.sum would change under `go mod tidy`
 make check        # fmt-check + vet + lint + vulncheck + test-race
 make tools        # Install govulncheck and staticcheck
 make clean        # Remove the binary and coverage output
+make clean-db     # Delete the repo-local chroncal.db and its WAL/SHM sidecars
 ```
 
 ## Git hooks
