@@ -934,6 +934,7 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 			e.logger.Warn("import fetched resource failed", "path", res.Path, "error", err)
 			continue
 		}
+		logImportWarnings(e.logger, res.Path, importResult)
 
 		// Extract UID from imported data
 		uid := extractUID(importResult)
@@ -1236,6 +1237,7 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 				e.logger.Warn("import fetched resource failed", "path", res.Path, "error", err)
 				continue
 			}
+			logImportWarnings(e.logger, res.Path, importResult)
 			uid := extractUID(importResult)
 			if uid == "" {
 				e.logger.Warn("no UID in fetched resource", "path", res.Path)
@@ -2088,6 +2090,7 @@ func (e *Engine) importICal(ctx context.Context, calendarID int64, data string) 
 	if err != nil {
 		return false, nil, fmt.Errorf("import ical: %w", err)
 	}
+	logImportWarnings(e.logger, "", importResult)
 	// imported reflects whether the SERVER payload carried any component. It is
 	// computed before tombstone filtering so the empty-iCal guard in callers
 	// still fires for a genuinely empty server version, and never falsely fires
@@ -2159,6 +2162,22 @@ func filterTombstoned[T any](logger *slog.Logger, items []T, tombstoned map[stri
 func parseICalData(data []byte) (*ical.Calendar, error) {
 	dec := ical.NewDecoder(bytes.NewReader(data))
 	return dec.Decode()
+}
+
+// logImportWarnings surfaces what ImportFile could not represent faithfully —
+// a malformed DTEND replaced by a fabricated span, an alarm dropped for an
+// unusable trigger. Sync used to discard these, which mattered because the
+// substitute value does not stay local: the next local edit marks the resource
+// dirty and pushes our fabrication back over the value the server still holds
+// correctly. The log is the user's only signal that happened, so write it.
+func logImportWarnings(logger *slog.Logger, path string, result icalPkg.ImportResult) {
+	if len(result.Warnings) == 0 {
+		return
+	}
+	uid := extractUID(result)
+	for _, w := range result.Warnings {
+		logger.Warn("import warning", "path", path, "uid", uid, "warning", w)
+	}
 }
 
 func extractUID(result icalPkg.ImportResult) string {
