@@ -403,83 +403,8 @@ func TestImport_AllDayEvent(t *testing.T) {
 // day per RFC 5545 §3.6.1. Before the fix the timed +1h default leaked in and
 // the all-day truncation collapsed EndTime back to StartTime, storing a
 // zero-length event.
-// An unparseable VALARM TRIGGER must not drop the alarm (which would delete it
-// locally via the ReplaceAlarms merge and strip it from the server on the next
-// push). Keep the raw trigger as an opaque, non-fireable alarm and warn, so
-// the round-trip is lossless instead of silently destructive.
-func TestImport_UnparseableTrigger_PreservedWithWarning(t *testing.T) {
-	t.Parallel()
-	ics := `BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//test//test//EN
-BEGIN:VEVENT
-UID:bad-trigger-test
-DTSTAMP:20260401T100000Z
-DTSTART:20260401T140000Z
-DTEND:20260401T150000Z
-SUMMARY:Event with bad trigger
-BEGIN:VALARM
-ACTION:DISPLAY
-TRIGGER:not-a-time
-DESCRIPTION:Broken trigger alarm
-END:VALARM
-END:VEVENT
-END:VCALENDAR`
-	result, err := ImportFile(strings.NewReader(ics))
-	if err != nil {
-		t.Fatalf("ImportFile error: %v", err)
-	}
-	if len(result.Events) != 1 {
-		t.Fatalf("events = %d, want 1", len(result.Events))
-	}
-	if len(result.Events[0].Alarms) != 1 {
-		t.Fatalf("alarms = %d, want 1 (unparseable trigger must be preserved, not dropped)", len(result.Events[0].Alarms))
-	}
-	if got := result.Events[0].Alarms[0].TriggerValue; got != "not-a-time" {
-		t.Errorf("TriggerValue = %q, want %q (raw value preserved for round-trip)", got, "not-a-time")
-	}
-	foundWarning := false
-	for _, w := range result.Warnings {
-		if strings.Contains(w, "TRIGGER") && strings.Contains(w, "not-a-time") {
-			foundWarning = true
-		}
-	}
-	if !foundWarning {
-		t.Errorf("missing TRIGGER warning; warnings = %v", result.Warnings)
-	}
-}
-
-func TestImport_UnparseableTrigger_TodoPreserved(t *testing.T) {
-	t.Parallel()
-	ics := `BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//test//test//EN
-BEGIN:VTODO
-UID:todo-bad-trigger-test
-DTSTAMP:20260401T100000Z
-SUMMARY:Todo with bad trigger
-BEGIN:VALARM
-ACTION:DISPLAY
-TRIGGER:soon
-DESCRIPTION:Broken trigger alarm
-END:VALARM
-END:VTODO
-END:VCALENDAR`
-	result, err := ImportFile(strings.NewReader(ics))
-	if err != nil {
-		t.Fatalf("ImportFile error: %v", err)
-	}
-	if len(result.Todos) != 1 {
-		t.Fatalf("todos = %d, want 1", len(result.Todos))
-	}
-	if len(result.Todos[0].Alarms) != 1 {
-		t.Fatalf("alarms = %d, want 1 (unparseable trigger must be preserved, not dropped)", len(result.Todos[0].Alarms))
-	}
-	if got := result.Todos[0].Alarms[0].TriggerValue; got != "soon" {
-		t.Errorf("TriggerValue = %q, want %q (raw value preserved for round-trip)", got, "soon")
-	}
-}
-
+// The unparseable-TRIGGER contract (dropped at import, with a warning) lives in
+// trigger_contract_test.go alongside the export-side guard it pairs with.
 func TestImport_AllDayEvent_NoEndDefaultsToOneDay(t *testing.T) {
 	t.Parallel()
 	const ics = "BEGIN:VCALENDAR\r\n" +

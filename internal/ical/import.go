@@ -654,17 +654,20 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 		if valid {
 			alarm.TriggerValue = tv
 		} else if tv != "" {
-			// Unparseable TRIGGER: preserve the raw value as an opaque,
-			// non-fireable alarm instead of dropping it. All alarm-check paths
-			// skip triggers that fail duration/date parsing (the trigger-time
-			// helpers return an error that callers handle with continue), so a
-			// garbage trigger never fires. Keeping the alarm — rather than
-			// letting the caller's `TriggerValue != ""` gate drop it — stops
-			// the ReplaceAlarms merge on import/sync from deleting the local
-			// row and stripping the VALARM from the server on the next push
-			// (round-trip data loss).
-			alarm.TriggerValue = tv
-			warns = append(warns, fmt.Sprintf("VALARM TRIGGER: unparseable value %q; alarm preserved but will not fire", tv))
+			// Unparseable TRIGGER: leave TriggerValue empty so the caller's
+			// `TriggerValue != ""` gate drops the alarm, and warn.
+			//
+			// Preserving the raw value here looks like it protects round-trip
+			// fidelity, but it cannot. The value is not expressible as valid
+			// iCal, so the next push either emits a VALARM strict servers
+			// reject with 400 — wedging the whole resource — or omits it and
+			// deletes the alarm from the server anyway. Preserving only moves
+			// that loss from "announced at import" to "silent at the next
+			// push", and in the meantime stores an alarm every trigger-time
+			// helper refuses while the CLI and TUI display it as an armed
+			// reminder the alarm editor will not even open. Losing it loudly
+			// is the honest trade.
+			warns = append(warns, fmt.Sprintf("VALARM TRIGGER: unparseable value %q; alarm dropped (it could never fire)", tv))
 		}
 		if rel := prop.Params.Get("RELATED"); rel != "" {
 			alarm.Related = strings.ToUpper(rel)
