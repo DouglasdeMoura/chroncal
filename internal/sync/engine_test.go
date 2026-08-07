@@ -4195,3 +4195,35 @@ func TestEngineSyncCalendarSerializesWholeCycle(t *testing.T) {
 		}
 	}
 }
+
+func TestExportResourceFor_HydrateErrorAbortsExport(t *testing.T) {
+	t.Parallel()
+
+	get := func(context.Context, string) (event.Event, error) {
+		return event.Event{UID: "uid-1", ID: 1}, nil
+	}
+	listOverrides := func(context.Context, string) ([]event.Event, error) {
+		return nil, nil
+	}
+	marker := errors.New("db busy")
+	hydrate := func(context.Context, *Engine, *event.Event) error {
+		return marker
+	}
+	exportCalled := false
+	hydrated := func([]event.Event, string) ([]byte, error) {
+		exportCalled = true
+		return []byte("BEGIN:VCALENDAR"), nil
+	}
+
+	_, err := exportResourceFor(context.Background(), nil, "uid-1", "event",
+		get, listOverrides, hydrate, hydrated)
+	if err == nil {
+		t.Fatal("expected hydration error to propagate, got nil")
+	}
+	if !errors.Is(err, marker) {
+		t.Errorf("error = %v, want %v", err, marker)
+	}
+	if exportCalled {
+		t.Error("export must not run when hydration fails: an amputated payload would overwrite the server resource")
+	}
+}

@@ -1453,7 +1453,7 @@ func exportResourceFor[T any](
 	uid, kind string,
 	get func(context.Context, string) (T, error),
 	listOverrides func(context.Context, string) ([]T, error),
-	hydrate func(context.Context, *Engine, *T),
+	hydrate func(context.Context, *Engine, *T) error,
 	export func([]T, string) ([]byte, error),
 ) ([]byte, error) {
 	var rows []T
@@ -1469,7 +1469,13 @@ func exportResourceFor[T any](
 		return nil, fmt.Errorf("%w: %s uid %s", errResourceMissing, kind, uid)
 	}
 	for i := range rows {
-		hydrate(ctx, e, &rows[i])
+		if err := hydrate(ctx, e, &rows[i]); err != nil {
+			// A hydration failure means the exported iCal would silently omit
+			// alarms/attendees/attachments/... and the PUT would strip them
+			// from the server copy. Abort instead: the dirty flag stays set, so
+			// the resource is retried whole on the next sync.
+			return nil, fmt.Errorf("hydrate %s uid %s: %w", kind, uid, err)
+		}
 	}
 	return export(rows, "")
 }
@@ -1637,35 +1643,129 @@ func (e *Engine) exportResource(ctx context.Context, ownerType string, uid strin
 	return ops.export(ctx, e, uid)
 }
 
-func hydrateEvent(ctx context.Context, e *Engine, evt *event.Event) {
-	evt.Alarms, _ = e.events.ListAlarms(ctx, evt.ID)
-	evt.Attendees, _ = e.events.ListAttendees(ctx, evt.ID)
-	evt.Attachments, _ = e.events.ListAttachments(ctx, evt.ID)
-	evt.Comments, _ = e.events.ListComments(ctx, evt.ID)
-	evt.Contacts, _ = e.events.ListContacts(ctx, evt.ID)
-	evt.Resources, _ = e.events.ListResources(ctx, evt.ID)
-	evt.Relations, _ = e.events.ListRelations(ctx, evt.ID)
-	evt.XProperties, _ = e.events.ListXProperties(ctx, evt.ID)
+func hydrateEvent(ctx context.Context, e *Engine, evt *event.Event) error {
+	var errs []error
+	if v, err := e.events.ListAlarms(ctx, evt.ID); err != nil {
+		errs = append(errs, err)
+	} else {
+		evt.Alarms = v
+	}
+	if v, err := e.events.ListAttendees(ctx, evt.ID); err != nil {
+		errs = append(errs, err)
+	} else {
+		evt.Attendees = v
+	}
+	if v, err := e.events.ListAttachments(ctx, evt.ID); err != nil {
+		errs = append(errs, err)
+	} else {
+		evt.Attachments = v
+	}
+	if v, err := e.events.ListComments(ctx, evt.ID); err != nil {
+		errs = append(errs, err)
+	} else {
+		evt.Comments = v
+	}
+	if v, err := e.events.ListContacts(ctx, evt.ID); err != nil {
+		errs = append(errs, err)
+	} else {
+		evt.Contacts = v
+	}
+	if v, err := e.events.ListResources(ctx, evt.ID); err != nil {
+		errs = append(errs, err)
+	} else {
+		evt.Resources = v
+	}
+	if v, err := e.events.ListRelations(ctx, evt.ID); err != nil {
+		errs = append(errs, err)
+	} else {
+		evt.Relations = v
+	}
+	if v, err := e.events.ListXProperties(ctx, evt.ID); err != nil {
+		errs = append(errs, err)
+	} else {
+		evt.XProperties = v
+	}
+	return errors.Join(errs...)
 }
 
-func hydrateTodo(ctx context.Context, e *Engine, t *todo.Todo) {
-	t.Alarms, _ = e.todos.ListAlarms(ctx, t.ID)
-	t.Attendees, _ = e.todos.ListAttendees(ctx, t.ID)
-	t.Attachments, _ = e.todos.ListAttachments(ctx, t.ID)
-	t.Comments, _ = e.todos.ListComments(ctx, t.ID)
-	t.Contacts, _ = e.todos.ListContacts(ctx, t.ID)
-	t.Resources, _ = e.todos.ListResources(ctx, t.ID)
-	t.Relations, _ = e.todos.ListRelations(ctx, t.ID)
-	t.XProperties, _ = e.todos.ListXProperties(ctx, t.ID)
+func hydrateTodo(ctx context.Context, e *Engine, t *todo.Todo) error {
+	var errs []error
+	if v, err := e.todos.ListAlarms(ctx, t.ID); err != nil {
+		errs = append(errs, err)
+	} else {
+		t.Alarms = v
+	}
+	if v, err := e.todos.ListAttendees(ctx, t.ID); err != nil {
+		errs = append(errs, err)
+	} else {
+		t.Attendees = v
+	}
+	if v, err := e.todos.ListAttachments(ctx, t.ID); err != nil {
+		errs = append(errs, err)
+	} else {
+		t.Attachments = v
+	}
+	if v, err := e.todos.ListComments(ctx, t.ID); err != nil {
+		errs = append(errs, err)
+	} else {
+		t.Comments = v
+	}
+	if v, err := e.todos.ListContacts(ctx, t.ID); err != nil {
+		errs = append(errs, err)
+	} else {
+		t.Contacts = v
+	}
+	if v, err := e.todos.ListResources(ctx, t.ID); err != nil {
+		errs = append(errs, err)
+	} else {
+		t.Resources = v
+	}
+	if v, err := e.todos.ListRelations(ctx, t.ID); err != nil {
+		errs = append(errs, err)
+	} else {
+		t.Relations = v
+	}
+	if v, err := e.todos.ListXProperties(ctx, t.ID); err != nil {
+		errs = append(errs, err)
+	} else {
+		t.XProperties = v
+	}
+	return errors.Join(errs...)
 }
 
-func hydrateJournal(ctx context.Context, e *Engine, j *journal.Journal) {
-	j.Attendees, _ = e.journals.ListAttendees(ctx, j.ID)
-	j.Attachments, _ = e.journals.ListAttachments(ctx, j.ID)
-	j.Comments, _ = e.journals.ListComments(ctx, j.ID)
-	j.Contacts, _ = e.journals.ListContacts(ctx, j.ID)
-	j.Relations, _ = e.journals.ListRelations(ctx, j.ID)
-	j.XProperties, _ = e.journals.ListXProperties(ctx, j.ID)
+func hydrateJournal(ctx context.Context, e *Engine, j *journal.Journal) error {
+	var errs []error
+	if v, err := e.journals.ListAttendees(ctx, j.ID); err != nil {
+		errs = append(errs, err)
+	} else {
+		j.Attendees = v
+	}
+	if v, err := e.journals.ListAttachments(ctx, j.ID); err != nil {
+		errs = append(errs, err)
+	} else {
+		j.Attachments = v
+	}
+	if v, err := e.journals.ListComments(ctx, j.ID); err != nil {
+		errs = append(errs, err)
+	} else {
+		j.Comments = v
+	}
+	if v, err := e.journals.ListContacts(ctx, j.ID); err != nil {
+		errs = append(errs, err)
+	} else {
+		j.Contacts = v
+	}
+	if v, err := e.journals.ListRelations(ctx, j.ID); err != nil {
+		errs = append(errs, err)
+	} else {
+		j.Relations = v
+	}
+	if v, err := e.journals.ListXProperties(ctx, j.ID); err != nil {
+		errs = append(errs, err)
+	} else {
+		j.XProperties = v
+	}
+	return errors.Join(errs...)
 }
 
 // persistImported saves parsed iCal data to the local database using the same
