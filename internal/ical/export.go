@@ -720,6 +720,12 @@ func emitRecurrenceID(props ical.Props, recurrenceID string, allDay, floating bo
 // Skipping the VALARM is itself lossy — the PUT deletes that alarm from the
 // server copy — which is exactly why import drops the value up front, where the
 // user gets a warning, instead of letting it reach this point silently.
+//
+// NOTE: a floating date-time trigger passes here and is emitted verbatim, which
+// is not valid iCal — see issue #572. The UTC normalization that used to sit in
+// buildValarm was reverted because it read floating values as UTC while the
+// alarm engine reads them in the record's timezone, silently moving reminders
+// by the zone offset. Do not reinstate it without the record's timezone.
 func exportableTrigger(v string) bool {
 	if v == "" {
 		return false
@@ -733,25 +739,6 @@ func exportableTrigger(v string) bool {
 		}
 	}
 	return false
-}
-
-// normalizeTriggerToUTC renders a stored date-time trigger in the only form
-// RFC 5545 §3.8.6.3 allows for TRIGGER;VALUE=DATE-TIME: UTC.
-//
-// Stored values reach here in three shapes — already-UTC iCal, legacy RFC 3339,
-// and floating iCal, which parseAlarm produces when a VALARM carries a TZID it
-// cannot resolve (Exchange's "Customized Time Zone" and friends). Emitting the
-// floating form verbatim yields a VALARM strict servers reject with 400,
-// wedging the resource. A floating value has no zone by definition, so reading
-// it as UTC is a choice, not a recovery; it matches what the resolvable-TZID
-// path already stores and is the only reading that produces valid iCal.
-func normalizeTriggerToUTC(v string) string {
-	for _, layout := range []string{time.RFC3339, "20060102T150405"} {
-		if t, err := time.Parse(layout, v); err == nil {
-			return t.UTC().Format("20060102T150405Z")
-		}
-	}
-	return v
 }
 
 // buildValarm renders an alarm as a VALARM component, or nil when the alarm
@@ -775,7 +762,10 @@ func buildValarm(alarm model.Alarm) *ical.Component {
 		trigger.Params.Set("VALUE", "DURATION")
 	} else {
 		trigger.Params.Set("VALUE", "DATE-TIME")
-		trigger.Value = normalizeTriggerToUTC(alarm.TriggerValue)
+		// Normalize any legacy RFC 3339 values to iCal format.
+		if t, err := time.Parse(time.RFC3339, alarm.TriggerValue); err == nil {
+			trigger.Value = t.UTC().Format("20060102T150405Z")
+		}
 	}
 	if alarm.Related == "END" {
 		trigger.Params.Set("RELATED", "END")
