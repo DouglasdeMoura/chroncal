@@ -74,8 +74,10 @@ By default completed and cancelled todos are hidden unless you pass
 					fmt.Fprintln(w, "No todos found.")
 					return nil
 				}
+				useColor := compactTableColorEnabled(w)
+				fmt.Fprintln(w, formatCompactTodoHeader(useColor))
 				for _, t := range todos {
-					fmt.Fprintln(w, formatCompactTodo(t))
+					fmt.Fprintln(w, formatCompactTodo(t, useColor))
 				}
 				return nil
 			}
@@ -88,16 +90,43 @@ By default completed and cancelled todos are hidden unless you pass
 	cmd.Flags().BoolVar(&all, "all", false, "include completed and cancelled")
 	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD); with no date flags, overdue todos are included")
 	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 30 days after --from)")
-	cmd.Flags().BoolVar(&compact, "compact", false, "one line per todo ([STATUS] DUE  TITLE)")
+	cmd.Flags().BoolVar(&compact, "compact", false, "table with one line per todo (ID  STATE  DUE  CATEGORIES  SUMMARY)")
 	cmd.Flags().BoolVar(&includeDeleted, "include-deleted", false, "include soft-deleted todos (see `todo restore`)")
 	return cmd
 }
 
-// formatCompactTodo renders one todo as a single line for scripts:
-// "[x] 2026-05-25  Write report". The checkbox uses [x] when completed,
-// [ ] otherwise. The date column is YYYY-MM-DD or "-" (no due date)
-// padded to 12 chars so titles line up.
-func formatCompactTodo(t todo.Todo) string {
-	const dueColWidth = 12
-	return fmt.Sprintf("%s %-*s%s", todoCheckbox(t), dueColWidth, compactDateColumn(t.DueDate), textsafe.Display(t.Summary))
+const (
+	compactTodoIDWidth         = 6
+	compactTodoStateWidth      = 7
+	compactTodoDueWidth        = 12 // YYYY-MM-DD + 2 trailing spaces
+	compactTodoCategoriesWidth = 20
+)
+
+func formatCompactTodoHeader(useColor bool) string {
+	header := fmt.Sprintf("%-*s%-*s%-*s%-*s%s",
+		compactTodoIDWidth, "ID",
+		compactTodoStateWidth, "STATE",
+		compactTodoDueWidth, "DUE",
+		compactTodoCategoriesWidth, "CATEGORIES",
+		"SUMMARY")
+	return compactTableColor(useColor, "1;36", header)
+}
+
+// formatCompactTodo renders one todo as a table row. The state uses [x] when
+// completed and [ ] otherwise; missing due dates and categories show "-".
+// Summary remains last so arbitrary text does not disturb earlier columns.
+func formatCompactTodo(t todo.Todo, useColor bool) string {
+	categories := textsafe.Display(t.Categories)
+	if categories == "" {
+		categories = "-"
+	}
+	stateColor := "2"
+	if t.IsCompleted() {
+		stateColor = "32"
+	}
+	return compactTableColor(useColor, "1;36", fmt.Sprintf("%-*d", compactTodoIDWidth, t.ID)) +
+		compactTableColor(useColor, stateColor, fmt.Sprintf("%-*s", compactTodoStateWidth, todoCheckbox(t))) +
+		compactTableColor(useColor, "2", fmt.Sprintf("%-*s", compactTodoDueWidth, compactDateColumn(t.DueDate))) +
+		compactTableColor(useColor, "33", fmt.Sprintf("%-*s", compactTodoCategoriesWidth, categories)) +
+		textsafe.Display(t.Summary)
 }
