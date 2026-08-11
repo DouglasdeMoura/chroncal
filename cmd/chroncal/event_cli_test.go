@@ -4,7 +4,87 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/douglasdemoura/chroncal/internal/event"
 )
+
+func TestFormatCompactEventUsesSharedTableLayout(t *testing.T) {
+	t.Parallel()
+
+	start := time.Date(2026, 4, 21, 9, 0, 0, 0, time.Local)
+	e := event.Event{
+		ID:         42,
+		CalendarID: 7,
+		Title:      "Team Standup",
+		StartTime:  start,
+		EndTime:    start.Add(30 * time.Minute),
+		Categories: "work,meeting",
+	}
+	header := formatCompactEventHeader(true, false)
+	if got, want := strings.Fields(header), []string{"ID", "DATE", "TIME", "CATEGORIES", "CALENDAR", "SUMMARY"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("event compact header fields = %v, want %v", got, want)
+	}
+	got := formatCompactEvent(e, map[int64]string{7: "Work"}, true, false)
+	want := "42    2026-04-21             09:00-09:30  work,meeting        Work              Team Standup"
+	if got != want {
+		t.Fatalf("formatCompactEvent() = %q, want %q", got, want)
+	}
+	colored := formatCompactEvent(e, map[int64]string{7: "Work"}, true, true)
+	for _, code := range []string{"\x1b[1;36m", "\x1b[2m", "\x1b[33m", "\x1b[35m"} {
+		if !strings.Contains(colored, code) {
+			t.Fatalf("colored event row = %q, want ANSI code %q", colored, code)
+		}
+	}
+}
+
+func TestEventListCompactIDCanBePassedToGet(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Work"); err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+	if _, _, err := runChroncalCommand(t,
+		"event", "add", "Team Standup",
+		"--calendar", "Work",
+		"--date", "2026-04-21",
+		"--time", "09:00",
+		"--duration", "30m",
+		"--categories", "work,meeting",
+	); err != nil {
+		t.Fatalf("event add: %v", err)
+	}
+
+	stdout, _, err := runChroncalCommand(t,
+		"event", "list", "--compact", "--show-calendar",
+		"--calendar", "Work",
+		"--from", "2026-04-21",
+		"--to", "2026-04-22",
+	)
+	if err != nil {
+		t.Fatalf("event list --compact: %v", err)
+	}
+	if strings.Contains(stdout, "\x1b[") {
+		t.Fatalf("piped compact output contains ANSI styling: %q", stdout)
+	}
+	lines := strings.Split(strings.TrimSpace(stdout), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("compact output contains no data row: %q", stdout)
+	}
+	if !strings.Contains(lines[0], "ID") || !strings.Contains(lines[0], "CALENDAR") ||
+		!strings.Contains(lines[1], "meeting,work") || !strings.Contains(lines[1], "Work") {
+		t.Fatalf("compact event table missing expected columns: %q", stdout)
+	}
+	id := strings.Fields(lines[1])[0]
+	getOut, _, err := runChroncalCommand(t, "event", "get", id)
+	if err != nil {
+		t.Fatalf("event get %q: %v", id, err)
+	}
+	if !strings.Contains(getOut, "Team Standup") {
+		t.Fatalf("event get output = %q, want summary", getOut)
+	}
+}
 
 func TestEventListVerboseUsesTimeRailView(t *testing.T) {
 	setupCalendarCLITestEnv(t)

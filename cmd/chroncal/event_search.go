@@ -93,8 +93,10 @@ roughly when the event occurred.`,
 				return nil
 			}
 			if compact {
+				useColor := compactTableColorEnabled(w)
+				fmt.Fprintln(w, formatCompactEventHeader(false, useColor))
 				for _, e := range events {
-					fmt.Fprintln(w, formatCompactEvent(e, nil, false, false))
+					fmt.Fprintln(w, formatCompactEvent(e, nil, false, useColor))
 				}
 				return nil
 			}
@@ -110,6 +112,6 @@ roughly when the event occurred.`,
 	cmd.Flags().StringVar(&fromStr, "from", "", "start date filter (YYYY-MM-DD)")
 	cmd.Flags().StringVar(&toStr, "to", "", "end date filter (YYYY-MM-DD, inclusive)")
 	cmd.Flags().StringVar(&status, "status", "", "status filter (TENTATIVE, CONFIRMED, CANCELLED)")
-	cmd.Flags().BoolVar(&compact, "compact", false, "one line per event (DATE  TIME  TITLE); same shape as event list --compact")
+	cmd.Flags().BoolVar(&compact, "compact", false, "table with one line per event; same shape as event list --compact")
 	return cmd
 }
