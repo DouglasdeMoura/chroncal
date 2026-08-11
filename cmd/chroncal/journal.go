@@ -61,7 +61,7 @@ CANCELLED entries.`,
 		Example: `  chroncal journal list
   chroncal journal list --calendar Work --from 2026-04-01 --to 2026-04-30
   chroncal journal list --status DRAFT --output json
-  chroncal journal list --compact   # one line per entry (script-friendly)`,
+  chroncal journal list --compact   # table with ID, date, categories, and summary`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -104,8 +104,10 @@ CANCELLED entries.`,
 					fmt.Fprintln(w, "No journal entries found.")
 					return nil
 				}
+				useColor := compactTableColorEnabled(w)
+				fmt.Fprintln(w, formatCompactJournalHeader(useColor))
 				for _, j := range journals {
-					fmt.Fprintln(w, formatCompactJournal(j))
+					fmt.Fprintln(w, formatCompactJournal(j, useColor))
 				}
 				return nil
 			}
@@ -118,17 +120,42 @@ CANCELLED entries.`,
 	cmd.Flags().BoolVar(&all, "all", false, "include cancelled entries (hidden by default)")
 	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD); with no date flags, past entries are included")
 	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 30 days after --from)")
-	cmd.Flags().BoolVar(&compact, "compact", false, "one line per entry (DATE  SUMMARY)")
+	cmd.Flags().BoolVar(&compact, "compact", false, "table with one line per entry (ID  DATE  CATEGORIES  SUMMARY)")
 	cmd.Flags().BoolVar(&includeDeleted, "include-deleted", false, "include soft-deleted journals (see `journal restore`)")
 	return cmd
 }
 
-// formatCompactJournal renders one journal entry as a single line:
-// "2026-05-15  Notes". Entries without a start date show "-" in the
-// date column (12-char width).
-func formatCompactJournal(j journal.Journal) string {
-	const dateColWidth = 12
-	return fmt.Sprintf("%-*s%s", dateColWidth, compactDateColumn(j.StartDate), textsafe.Display(j.Summary))
+const (
+	compactJournalIDWidth         = 6
+	compactJournalDateWidth       = 12 // YYYY-MM-DD + 2 trailing spaces
+	compactJournalCategoriesWidth = 20
+)
+
+func formatCompactJournalHeader(useColor bool) string {
+	header := fmt.Sprintf("%-*s%-*s%-*s%s",
+		compactJournalIDWidth, "ID",
+		compactJournalDateWidth, "DATE",
+		compactJournalCategoriesWidth, "CATEGORIES",
+		"SUMMARY")
+	return compactTableColor(useColor, "1;36", header)
+}
+
+// formatCompactJournal renders one journal entry as a table row:
+// "19    2026-05-15  work                Notes". ID, date, and categories are
+// minimum-width columns; missing dates and categories show "-". Summary is
+// last so arbitrary text does not disturb the preceding columns.
+func formatCompactJournal(j journal.Journal, useColor bool) string {
+	categories := textsafe.Display(j.Categories)
+	if categories == "" {
+		categories = "-"
+	}
+	idCell := fmt.Sprintf("%-*d", compactJournalIDWidth, j.ID)
+	dateCell := fmt.Sprintf("%-*s", compactJournalDateWidth, compactDateColumn(j.StartDate))
+	categoriesCell := fmt.Sprintf("%-*s", compactJournalCategoriesWidth, categories)
+	return compactTableColor(useColor, "1;36", idCell) +
+		compactTableColor(useColor, "2", dateCell) +
+		compactTableColor(useColor, "33", categoriesCell) +
+		textsafe.Display(j.Summary)
 }
 
 func journalGetCmd() *cobra.Command {
