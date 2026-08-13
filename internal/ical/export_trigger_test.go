@@ -10,11 +10,17 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
-// Import preserves an unparseable TRIGGER so the local alarm row survives the
-// ReplaceAlarms merge, but that raw value must never reach the wire. Labelling
-// it VALUE=DATE-TIME produces a VALARM strict CalDAV servers reject with 400,
-// which fails the PUT for the whole resource and leaves it permanently dirty —
-// far worse than omitting one alarm that could never fire anyway.
+// Import DROPS a VALARM whose TRIGGER cannot be parsed, with a warning (see
+// trigger_contract_test.go and the decision record in issue #570), so an
+// unparseable value should normally never reach export. The exportableTrigger
+// gate exercised here is a backstop, not the primary defense: it catches alarm
+// rows written during the window in which import preserved the raw value
+// verbatim, and anything a future caller stores directly. Without it,
+// buildValarm would label the value VALUE=DATE-TIME, producing a VALARM strict
+// CalDAV servers reject with 400, which fails the PUT for the whole resource
+// and leaves it permanently dirty — far worse than omitting one alarm that
+// could never fire anyway. Do not "fix" parseAlarm to preserve raw trigger
+// values again; that contract was deliberately removed.
 func TestExport_UnparseableTrigger_OmitsValarm(t *testing.T) {
 	t.Parallel()
 	events := []event.Event{{
