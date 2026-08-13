@@ -3,6 +3,9 @@ package ical
 import (
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/douglasdemoura/chroncal/internal/model"
 )
 
 // An unparseable TRIGGER is dropped at import, with a warning.
@@ -77,6 +80,59 @@ func TestImport_UnparseableTodoTrigger_DroppedWithWarning(t *testing.T) {
 	}
 	if !warningMentions(result.Warnings, "TRIGGER", "soon") {
 		t.Errorf("no warning naming the dropped trigger; warnings = %v", result.Warnings)
+	}
+}
+
+// A TRIGGER whose value is RFC 3339 (non-conforming exporters emit these) is
+// accepted by parseAlarm's RFC 3339 fallback when it has no TZID param. Adding
+// a TZID param must not turn the same value into a dropped alarm: the TZID
+// branch of the validation ladder only tried the compact iCal layout, and a
+// parse failure there declared the trigger invalid without ever reaching the
+// RFC 3339 fallback. Under the drop policy (issue #570) that destroys the
+// alarm on both sides of the next sync. An RFC 3339 value carries its own
+// offset, so the TZID is redundant for interpretation; it is normalized to
+// UTC compact form the way the compact+TZID path is.
+func TestImport_RFC3339TriggerWithTZID_Kept(t *testing.T) {
+	t.Parallel()
+	const ics = "BEGIN:VCALENDAR\r\n" +
+		"VERSION:2.0\r\n" +
+		"PRODID:-//test//EN\r\n" +
+		"BEGIN:VEVENT\r\n" +
+		"UID:rfc3339-tzid-trigger@example.com\r\n" +
+		"DTSTAMP:20260401T100000Z\r\n" +
+		"DTSTART:20260401T140000Z\r\n" +
+		"DTEND:20260401T150000Z\r\n" +
+		"SUMMARY:Event with RFC 3339 trigger under TZID\r\n" +
+		"BEGIN:VALARM\r\n" +
+		"ACTION:DISPLAY\r\n" +
+		"TRIGGER;TZID=Europe/Berlin:2026-04-01T10:00:00+02:00\r\n" +
+		"DESCRIPTION:Reminder\r\n" +
+		"END:VALARM\r\n" +
+		"END:VEVENT\r\n" +
+		"END:VCALENDAR\r\n"
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %d, want 1", len(result.Events))
+	}
+	alarms := result.Events[0].Alarms
+	if len(alarms) != 1 {
+		t.Fatalf("alarms = %d, want 1 (RFC 3339 trigger under TZID must be kept); warnings = %v",
+			len(alarms), result.Warnings)
+	}
+	// The stored form must resolve to the instant the original denoted:
+	// 2026-04-01T10:00:00+02:00 == 2026-04-01T08:00:00Z. ParseAbsoluteTime is
+	// the single source of truth for what a stored trigger string means.
+	got, err := model.ParseAbsoluteTime(alarms[0].TriggerValue, "")
+	if err != nil {
+		t.Fatalf("stored trigger %q does not resolve: %v", alarms[0].TriggerValue, err)
+	}
+	want := time.Date(2026, 4, 1, 8, 0, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Errorf("stored trigger %q resolves to %v, want %v", alarms[0].TriggerValue, got, want)
 	}
 }
 

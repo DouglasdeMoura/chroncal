@@ -648,6 +648,13 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 				}
 				// Valid as floating even if TZID resolution failed.
 				valid = true
+			} else if t, err := time.Parse(time.RFC3339, tv); err == nil {
+				// Non-conforming exporters emit RFC 3339 values under a TZID
+				// param. The value carries its own offset, so the TZID is
+				// redundant for interpretation; normalize to UTC compact form
+				// like the compact+TZID path so the stored value is unambiguous.
+				tv = t.UTC().Format("20060102T150405Z")
+				valid = true
 			}
 		} else if _, err := time.Parse("20060102T150405", tv); err == nil {
 			valid = true
