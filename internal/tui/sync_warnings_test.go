@@ -25,6 +25,41 @@ func TestSyncSummaryCountsImportWarnings(t *testing.T) {
 	}
 }
 
+// The account-linking pulls (first import after discovery, and the manage-
+// calendars reconcile) run the same first sync as every other TUI path, so
+// import warnings collected on their SyncResults must reach the status line
+// count like syncSummary does — not be silently dropped.
+func TestAccountImportFinishedStatusCountsImportWarnings(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(nil, "")
+	updated, _ := m.Update(accountImportFinishedMsg{created: 2, synced: 2, warnings: 3})
+	m = updated.(Model)
+	if !strings.Contains(m.syncStatus, "3 import warnings") {
+		t.Errorf("account import status = %q, want the 3 import warnings counted", m.syncStatus)
+	}
+
+	// A partial first sync still surfaces the warnings the successful pulls
+	// collected.
+	m = NewModel(nil, "")
+	updated, _ = m.Update(accountImportFinishedMsg{created: 2, synced: 1, syncErr: os.ErrDeadlineExceeded, warnings: 1})
+	m = updated.(Model)
+	if !strings.Contains(m.syncStatus, "1 import warning") || strings.Contains(m.syncStatus, "warnings") {
+		t.Errorf("partial account import status = %q, want the single warning counted", m.syncStatus)
+	}
+}
+
+func TestAccountSelectionFinishedStatusCountsImportWarnings(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(nil, "")
+	updated, _ := m.Update(accountSelectionFinishedMsg{created: 1, synced: 1, warnings: 2})
+	m = updated.(Model)
+	if !strings.Contains(m.syncStatus, "2 import warnings") {
+		t.Errorf("account selection status = %q, want the 2 import warnings counted", m.syncStatus)
+	}
+}
+
 // The TUI sync engine's logger must never write to stderr (Bubble Tea owns
 // the terminal), but discarding it loses logImportWarnings' detail. Per the
 // repo's logging contract the durable copy goes to the state-dir log file,

@@ -339,15 +339,22 @@ type accountImportFinishedMsg struct {
 	created  int
 	existing int
 	synced   int
+	// warnings counts the import warnings collected across the first syncs
+	// (values the importer had to fabricate); surfaced in the status line
+	// like every other TUI sync path, full text in the state-dir log.
+	warnings int
 	err      error
 	syncErr  error
 }
 
 type accountSelectionFinishedMsg struct {
-	created           int
-	removed           int
-	removedIDs        []int64
-	synced            int
+	created    int
+	removed    int
+	removedIDs []int64
+	synced     int
+	// warnings counts the import warnings collected across the first syncs
+	// of newly added calendars; see accountImportFinishedMsg.warnings.
+	warnings          int
 	accountRemoved    bool
 	removedCurrent    bool
 	err               error
@@ -1737,6 +1744,9 @@ func (m Model) importAndSyncAccountCalendars(paths []string) tea.Cmd {
 		}
 		for _, calendarID := range result.CreatedIDs {
 			syncResult, err := syncService.SyncCalendar(ctx, calendarID, syncpkg.ConflictServerWins)
+			if syncResult != nil {
+				finished.warnings += len(syncResult.Warnings)
+			}
 			if err == nil && len(syncResult.Errors) > 0 {
 				err = errors.Join(syncResult.Errors...)
 			}
@@ -1792,6 +1802,9 @@ func (m Model) reconcileAndSyncAccountCalendars(selection *accountCalendarSelect
 		}
 		for _, calendarID := range result.CreatedIDs {
 			syncResult, err := syncService.SyncCalendar(ctx, calendarID, syncpkg.ConflictServerWins)
+			if syncResult != nil {
+				finished.warnings += len(syncResult.Warnings)
+			}
 			if err == nil && len(syncResult.Errors) > 0 {
 				err = errors.Join(syncResult.Errors...)
 			}
@@ -2064,16 +2077,32 @@ func syncSummary(label string, pushed, pulled, deleted, conflicts, warnings int)
 		parts = append(parts, fmt.Sprintf("%d %s", conflicts, noun))
 	}
 	if warnings > 0 {
-		noun := "import warning"
-		if warnings > 1 {
-			noun = "import warnings"
-		}
-		parts = append(parts, fmt.Sprintf("%d %s", warnings, noun))
+		parts = append(parts, importWarningsSegment(warnings))
 	}
 	if len(parts) == 0 {
 		return fmt.Sprintf("Synced %s · up to date", label)
 	}
 	return fmt.Sprintf("Synced %s · %s", label, strings.Join(parts, " · "))
+}
+
+// importWarningsSegment renders the "N import warning(s)" counter shared by
+// syncSummary and the account-linking status lines.
+func importWarningsSegment(warnings int) string {
+	noun := "import warning"
+	if warnings > 1 {
+		noun = "import warnings"
+	}
+	return fmt.Sprintf("%d %s", warnings, noun)
+}
+
+// appendImportWarnings suffixes a status line with the import-warning count
+// when there is one, so account-linking pulls surface fabricated values the
+// same way syncSummary does for every other TUI sync path.
+func appendImportWarnings(status string, warnings int) string {
+	if warnings <= 0 {
+		return status
+	}
+	return status + " · " + importWarningsSegment(warnings)
 }
 
 func (m Model) expireStatusAfter(d time.Duration, token int) tea.Cmd {
@@ -3713,6 +3742,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.err == nil {
 			m.calendarManager = m.calendarManager.HideDiscovery()
+			m.syncStatus = appendImportWarnings(m.syncStatus, msg.warnings)
 		}
 		return m, tea.Batch(
 			m.loadCalendars(),
@@ -3760,6 +3790,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				msg.created, msg.removed,
 			)
 		}
+		m.syncStatus = appendImportWarnings(m.syncStatus, msg.warnings)
 		return m, tea.Batch(
 			m.loadCalendars(),
 			m.loadEvents(),
