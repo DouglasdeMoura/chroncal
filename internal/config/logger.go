@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 // StateDirLogger returns a logger appending to the state-dir log file
@@ -28,3 +29,11 @@ func StateDirLogger() *slog.Logger {
 	}
 	return slog.New(slog.NewTextHandler(f, nil))
 }
+
+// SharedStateDirLogger is the memoized, process-wide StateDirLogger. Every
+// long-lived background consumer (the purge loop, the TUI's sync engines)
+// must use this one so the process holds a single append fd on the log file
+// instead of one per constructor call. StateDirLogger stays exported
+// unmemoized for tests, which point XDG_STATE_HOME at a fresh temp dir per
+// case and need a fresh handle each time.
+var SharedStateDirLogger = sync.OnceValue(StateDirLogger)

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -62,8 +61,7 @@ func runTick(ctx context.Context, w, errW io.Writer, now time.Time, policy alarm
 	// `sync run` does, instead of the silent nil-logger default. This is the
 	// primary background sync path: without it, import warnings
 	// (logImportWarnings) and engine diagnostics vanish entirely.
-	logger := slog.New(slog.NewTextHandler(errW, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, logger)
+	svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, stderrSyncLogger(errW))
 
 	return runSyncPass(ctx, svc, now, interval, syncStrategy())
 }

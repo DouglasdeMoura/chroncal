@@ -140,8 +140,7 @@ run to a single local calendar.`,
 				return fmt.Errorf("credential store: %w", err)
 			}
 
-			logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-			svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, logger)
+			svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, stderrSyncLogger(os.Stderr))
 
 			// Look up names for every calendar up front so both the JSON and
 			// text views can label results without re-querying per result.
@@ -524,4 +523,12 @@ func renderSyncReset(cmd *cobra.Command, outcomes []syncResetOutcome) error {
 		fmt.Fprintf(w, "Reset sync state for %q\n", safeText(o.Name))
 	}
 	return nil
+}
+
+// stderrSyncLogger builds the terminal logger shared by the two subcommands
+// that run sync engines in the foreground (`sync run` and `service run`).
+// One constructor so a level or format change reaches both — the service
+// tick is the copy nobody watches, so it is the one that would drift.
+func stderrSyncLogger(w io.Writer) *slog.Logger {
+	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.LevelInfo}))
 }

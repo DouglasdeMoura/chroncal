@@ -8,7 +8,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -227,20 +226,12 @@ Helpful conventions:
 		// up front then every 24h. Detached goroutine — ctx is bound to process
 		// lifetime via the signal handler in the TUI loop below.
 		if purgeDays := cfg.SoftDelete.PurgeDays; purgeDays > 0 {
-			purger := maintenance.NewPurger(a.Trash, a.Queries, purgeDays, purgeLogger())
+			purger := maintenance.NewPurger(a.Trash, a.Queries, purgeDays, config.SharedStateDirLogger())
 			go purger.RunDaily(context.Background())
 		}
 
 		return tui.Run(a, cfg.UI.Theme)
 	},
-}
-
-// purgeLogger returns the logger for the background purge loop: the shared
-// state-dir file logger (config.StateDirLogger), because the TUI owns the
-// terminal and purge failures must stay inspectable without printing over
-// the display.
-func purgeLogger() *slog.Logger {
-	return config.StateDirLogger()
 }
 
 func initApp() (*app.App, error) {

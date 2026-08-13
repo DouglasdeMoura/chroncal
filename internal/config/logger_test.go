@@ -1,4 +1,4 @@
-package main
+package config_test
 
 import (
 	"log/slog"
@@ -10,14 +10,14 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/config"
 )
 
-// The background purger must log to the state-dir file, not the
+// Background jobs must log to the state-dir file, not the
 // terminal: the TUI owns the display, and silent discard would hide
 // purge failures forever.
-func TestPurgeLogger_WritesToStateDirFile(t *testing.T) {
+func TestStateDirLogger_WritesToStateDirFile(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", dir)
 
-	logger := purgeLogger()
+	logger := config.StateDirLogger()
 	logger.Warn("soft-delete purge failed", "error", "boom")
 
 	path, err := config.LogFilePath()
@@ -38,7 +38,7 @@ func TestPurgeLogger_WritesToStateDirFile(t *testing.T) {
 
 // When the log file cannot be created, the logger must degrade to
 // silence rather than stderr, which would print over the TUI.
-func TestPurgeLogger_UnwritableStateDirFallsBackToSilence(t *testing.T) {
+func TestStateDirLogger_UnwritableStateDirFallsBackToSilence(t *testing.T) {
 	dir := t.TempDir()
 	// Occupy the chroncal state-dir path with a file so MkdirAll fails.
 	if err := os.WriteFile(filepath.Join(dir, "chroncal"), []byte("x"), 0o644); err != nil {
@@ -46,7 +46,7 @@ func TestPurgeLogger_UnwritableStateDirFallsBackToSilence(t *testing.T) {
 	}
 	t.Setenv("XDG_STATE_HOME", dir)
 
-	logger := purgeLogger()
+	logger := config.StateDirLogger()
 	logger.Warn("soft-delete purge failed", "error", "boom")
 
 	if _, err := os.Stat(filepath.Join(dir, "chroncal", "chroncal.log")); err == nil {
