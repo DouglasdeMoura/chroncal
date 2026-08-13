@@ -46,6 +46,51 @@ func TestImport_UnparseableTodoDates_Warn(t *testing.T) {
 	}
 }
 
+// A dropped-alarm warning must name the record that lost the alarm. Since the
+// unparseable TRIGGER is dropped rather than stored, the warning is the only
+// trace — in a large import, "alarm dropped" with no owner is unactionable.
+// Follows the parseDateProp precedent: `<kind> "<uid>": ...`.
+func TestImport_DroppedAlarmWarning_NamesOwningRecord(t *testing.T) {
+	t.Parallel()
+	const ics = "BEGIN:VCALENDAR\r\n" +
+		"VERSION:2.0\r\n" +
+		"PRODID:-//test//EN\r\n" +
+		"BEGIN:VEVENT\r\n" +
+		"UID:alarm-owner-event@example.com\r\n" +
+		"DTSTAMP:20260401T100000Z\r\n" +
+		"DTSTART:20260401T140000Z\r\n" +
+		"DTEND:20260401T150000Z\r\n" +
+		"SUMMARY:Event with bad trigger\r\n" +
+		"BEGIN:VALARM\r\n" +
+		"ACTION:DISPLAY\r\n" +
+		"TRIGGER:P\r\n" +
+		"DESCRIPTION:Broken\r\n" +
+		"END:VALARM\r\n" +
+		"END:VEVENT\r\n" +
+		"BEGIN:VTODO\r\n" +
+		"UID:alarm-owner-todo@example.com\r\n" +
+		"DTSTAMP:20260401T100000Z\r\n" +
+		"SUMMARY:Todo with bad trigger\r\n" +
+		"BEGIN:VALARM\r\n" +
+		"ACTION:DISPLAY\r\n" +
+		"TRIGGER:soon\r\n" +
+		"DESCRIPTION:Broken\r\n" +
+		"END:VALARM\r\n" +
+		"END:VTODO\r\n" +
+		"END:VCALENDAR\r\n"
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile: %v", err)
+	}
+	if !warningMentions(result.Warnings, `event "alarm-owner-event@example.com"`, "TRIGGER", `"P"`) {
+		t.Errorf("event alarm warning does not name its owner; warnings = %v", result.Warnings)
+	}
+	if !warningMentions(result.Warnings, `todo "alarm-owner-todo@example.com"`, "TRIGGER", `"soon"`) {
+		t.Errorf("todo alarm warning does not name its owner; warnings = %v", result.Warnings)
+	}
+}
+
 // parseAlarm reports every problem it finds. A single warning slot meant the
 // ATTACH message overwrote the "will not fire" one, so the user saw a broken
 // sound file and never learned the alarm was dead.

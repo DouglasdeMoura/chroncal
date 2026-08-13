@@ -292,7 +292,8 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, []string, error) {
 		}
 		alarm, w := parseAlarm(child)
 		if w != "" {
-			alarmWarnings = append(alarmWarnings, w)
+			// Name the owning record: the dropped alarm leaves no other trace.
+			alarmWarnings = append(alarmWarnings, fmt.Sprintf("todo %q: %s", uid, w))
 		}
 		if alarm.TriggerValue != "" {
 			alarms = append(alarms, alarm)
@@ -536,7 +537,8 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 		}
 		alarm, w := parseAlarm(child)
 		if w != "" {
-			alarmWarnings = append(alarmWarnings, w)
+			// Name the owning record: the dropped alarm leaves no other trace.
+			alarmWarnings = append(alarmWarnings, fmt.Sprintf("event %q: %s", uid, w))
 		}
 		if alarm.TriggerValue != "" {
 			alarms = append(alarms, alarm)
