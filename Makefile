@@ -48,17 +48,16 @@ generate:
 # while gofmt inspected nothing. gofmt -l exits 0 even when it lists
 # unformatted files, so any nonzero exit (123 via xargs) is a real error.
 GO_FILES = git ls-files -z '*.go'
+# Refuse an empty list (gofmt with no args reads stdin — a vacuous green in
+# CI). One definition so the two targets can't drift.
+GO_FILES_GUARD = $(GO_FILES) | grep -qz . || { echo "no tracked Go files found — run from a git checkout"; exit 1; }
 
 fmt:
-	@if [ -z "$$($(GO_FILES) | tr -d '\0')" ]; then \
-		echo "no tracked Go files found — run from a git checkout"; exit 1; \
-	fi; \
+	@$(GO_FILES_GUARD); \
 	$(GO_FILES) | xargs -0 gofmt -w
 
 fmt-check:
-	@if [ -z "$$($(GO_FILES) | tr -d '\0')" ]; then \
-		echo "no tracked Go files found — run from a git checkout"; exit 1; \
-	fi; \
+	@$(GO_FILES_GUARD); \
 	diff=$$($(GO_FILES) | xargs -0 gofmt -l); status=$$?; \
 	if [ "$$status" -ne 0 ]; then \
 		echo "gofmt failed (exit $$status)"; exit 1; \
