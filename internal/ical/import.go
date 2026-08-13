@@ -679,7 +679,14 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 			// is the honest trade.
 			warns = append(warns, fmt.Sprintf("VALARM TRIGGER: unparseable value %q; alarm dropped (it could never fire)", tv))
 		}
-		if rel := prop.Params.Get("RELATED"); rel != "" {
+		// RELATED only means something on a duration trigger (it picks the
+		// anchor the offset applies to). RFC 5545 §3.8.6.3's trigabs
+		// production forbids RELATED on an absolute trigger, so export can
+		// never emit it — a stored one would be junk that never round-trips
+		// (push+pull resets it to START) and that silently resurfaces if the
+		// user later switches the trigger to a duration. Keep the default
+		// "START" for absolute triggers.
+		if rel := prop.Params.Get("RELATED"); rel != "" && duration.Validate(alarm.TriggerValue) == nil {
 			alarm.Related = strings.ToUpper(rel)
 		}
 	}
