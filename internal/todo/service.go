@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
+	"github.com/douglasdemoura/chroncal/internal/hydrate"
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
@@ -1579,70 +1580,14 @@ func (s *Service) HydrateBestEffort(ctx context.Context, t *Todo) error {
 }
 
 func (s *Service) hydrate(ctx context.Context, t *Todo, failFast bool) error {
-	var errs []error
-	if v, err := s.ListAlarms(ctx, t.ID); err != nil {
-		errs = append(errs, fmt.Errorf("todo %d alarms: %w", t.ID, err))
-		if failFast {
-			return errors.Join(errs...)
-		}
-	} else {
-		t.Alarms = v
-	}
-	if v, err := s.ListAttendees(ctx, t.ID); err != nil {
-		errs = append(errs, fmt.Errorf("todo %d attendees: %w", t.ID, err))
-		if failFast {
-			return errors.Join(errs...)
-		}
-	} else {
-		t.Attendees = v
-	}
-	if v, err := s.ListAttachments(ctx, t.ID); err != nil {
-		errs = append(errs, fmt.Errorf("todo %d attachments: %w", t.ID, err))
-		if failFast {
-			return errors.Join(errs...)
-		}
-	} else {
-		t.Attachments = v
-	}
-	if v, err := s.ListComments(ctx, t.ID); err != nil {
-		errs = append(errs, fmt.Errorf("todo %d comments: %w", t.ID, err))
-		if failFast {
-			return errors.Join(errs...)
-		}
-	} else {
-		t.Comments = v
-	}
-	if v, err := s.ListContacts(ctx, t.ID); err != nil {
-		errs = append(errs, fmt.Errorf("todo %d contacts: %w", t.ID, err))
-		if failFast {
-			return errors.Join(errs...)
-		}
-	} else {
-		t.Contacts = v
-	}
-	if v, err := s.ListResources(ctx, t.ID); err != nil {
-		errs = append(errs, fmt.Errorf("todo %d resources: %w", t.ID, err))
-		if failFast {
-			return errors.Join(errs...)
-		}
-	} else {
-		t.Resources = v
-	}
-	if v, err := s.ListRelations(ctx, t.ID); err != nil {
-		errs = append(errs, fmt.Errorf("todo %d relations: %w", t.ID, err))
-		if failFast {
-			return errors.Join(errs...)
-		}
-	} else {
-		t.Relations = v
-	}
-	if v, err := s.ListXProperties(ctx, t.ID); err != nil {
-		errs = append(errs, fmt.Errorf("todo %d x-properties: %w", t.ID, err))
-		if failFast {
-			return errors.Join(errs...)
-		}
-	} else {
-		t.XProperties = v
-	}
-	return errors.Join(errs...)
+	c := &hydrate.Collector{Kind: "todo", ID: t.ID, FailFast: failFast}
+	hydrate.Rel(ctx, c, &t.Alarms, "alarms", s.ListAlarms)
+	hydrate.Rel(ctx, c, &t.Attendees, "attendees", s.ListAttendees)
+	hydrate.Rel(ctx, c, &t.Attachments, "attachments", s.ListAttachments)
+	hydrate.Rel(ctx, c, &t.Comments, "comments", s.ListComments)
+	hydrate.Rel(ctx, c, &t.Contacts, "contacts", s.ListContacts)
+	hydrate.Rel(ctx, c, &t.Resources, "resources", s.ListResources)
+	hydrate.Rel(ctx, c, &t.Relations, "relations", s.ListRelations)
+	hydrate.Rel(ctx, c, &t.XProperties, "x-properties", s.ListXProperties)
+	return c.Err()
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
+	"github.com/douglasdemoura/chroncal/internal/hydrate"
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
@@ -1054,54 +1055,12 @@ func (s *Service) HydrateBestEffort(ctx context.Context, j *Journal) error {
 }
 
 func (s *Service) hydrate(ctx context.Context, j *Journal, failFast bool) error {
-	var errs []error
-	if v, err := s.ListAttendees(ctx, j.ID); err != nil {
-		errs = append(errs, fmt.Errorf("journal %d attendees: %w", j.ID, err))
-		if failFast {
-			return errors.Join(errs...)
-		}
-	} else {
-		j.Attendees = v
-	}
-	if v, err := s.ListAttachments(ctx, j.ID); err != nil {
-		errs = append(errs, fmt.Errorf("journal %d attachments: %w", j.ID, err))
-		if failFast {
-			return errors.Join(errs...)
-		}
-	} else {
-		j.Attachments = v
-	}
-	if v, err := s.ListComments(ctx, j.ID); err != nil {
-		errs = append(errs, fmt.Errorf("journal %d comments: %w", j.ID, err))
-		if failFast {
-			return errors.Join(errs...)
-		}
-	} else {
-		j.Comments = v
-	}
-	if v, err := s.ListContacts(ctx, j.ID); err != nil {
-		errs = append(errs, fmt.Errorf("journal %d contacts: %w", j.ID, err))
-		if failFast {
-			return errors.Join(errs...)
-		}
-	} else {
-		j.Contacts = v
-	}
-	if v, err := s.ListRelations(ctx, j.ID); err != nil {
-		errs = append(errs, fmt.Errorf("journal %d relations: %w", j.ID, err))
-		if failFast {
-			return errors.Join(errs...)
-		}
-	} else {
-		j.Relations = v
-	}
-	if v, err := s.ListXProperties(ctx, j.ID); err != nil {
-		errs = append(errs, fmt.Errorf("journal %d x-properties: %w", j.ID, err))
-		if failFast {
-			return errors.Join(errs...)
-		}
-	} else {
-		j.XProperties = v
-	}
-	return errors.Join(errs...)
+	c := &hydrate.Collector{Kind: "journal", ID: j.ID, FailFast: failFast}
+	hydrate.Rel(ctx, c, &j.Attendees, "attendees", s.ListAttendees)
+	hydrate.Rel(ctx, c, &j.Attachments, "attachments", s.ListAttachments)
+	hydrate.Rel(ctx, c, &j.Comments, "comments", s.ListComments)
+	hydrate.Rel(ctx, c, &j.Contacts, "contacts", s.ListContacts)
+	hydrate.Rel(ctx, c, &j.Relations, "relations", s.ListRelations)
+	hydrate.Rel(ctx, c, &j.XProperties, "x-properties", s.ListXProperties)
+	return c.Err()
 }
