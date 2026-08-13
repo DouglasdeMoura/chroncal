@@ -136,6 +136,59 @@ func TestImport_RFC3339TriggerWithTZID_Kept(t *testing.T) {
 	}
 }
 
+// An RFC 3339 TRIGGER without a TZID param takes parseAlarm's sibling RFC 3339
+// fallback, which used to store the raw string while the TZID-tagged path
+// normalized to compact UTC — the same instant in two stored encodings,
+// selected by a parameter that is redundant for interpretation (RFC 3339
+// always carries its own offset). Both fallbacks must store compact UTC so
+// export's legacy-normalization branch only ever serves pre-normalization DB
+// rows, not a live input path. Normalizing here is safe precisely because the
+// offset is explicit; it is NOT the forbidden floating normalization (#572).
+func TestImport_RFC3339TriggerNoTZID_NormalizedToCompactUTC(t *testing.T) {
+	t.Parallel()
+	const ics = "BEGIN:VCALENDAR\r\n" +
+		"VERSION:2.0\r\n" +
+		"PRODID:-//test//EN\r\n" +
+		"BEGIN:VEVENT\r\n" +
+		"UID:rfc3339-no-tzid-trigger@example.com\r\n" +
+		"DTSTAMP:20260401T100000Z\r\n" +
+		"DTSTART:20260401T140000Z\r\n" +
+		"DTEND:20260401T150000Z\r\n" +
+		"SUMMARY:Event with bare RFC 3339 trigger\r\n" +
+		"BEGIN:VALARM\r\n" +
+		"ACTION:DISPLAY\r\n" +
+		"TRIGGER;VALUE=DATE-TIME:2026-04-01T10:00:00+02:00\r\n" +
+		"DESCRIPTION:Reminder\r\n" +
+		"END:VALARM\r\n" +
+		"END:VEVENT\r\n" +
+		"END:VCALENDAR\r\n"
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %d, want 1", len(result.Events))
+	}
+	alarms := result.Events[0].Alarms
+	if len(alarms) != 1 {
+		t.Fatalf("alarms = %d, want 1; warnings = %v", len(alarms), result.Warnings)
+	}
+	// Same encoding as the TZID-tagged RFC 3339 path: compact UTC.
+	if got, want := alarms[0].TriggerValue, "20260401T080000Z"; got != want {
+		t.Errorf("TriggerValue = %q, want %q (compact UTC, matching the TZID-tagged RFC 3339 path)", got, want)
+	}
+	// And the stored form must resolve to the instant the original denoted.
+	got, err := model.ParseAbsoluteTime(alarms[0].TriggerValue, "")
+	if err != nil {
+		t.Fatalf("stored trigger %q does not resolve: %v", alarms[0].TriggerValue, err)
+	}
+	want := time.Date(2026, 4, 1, 8, 0, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Errorf("stored trigger %q resolves to %v, want %v", alarms[0].TriggerValue, got, want)
+	}
+}
+
 // RFC 5545 §3.8.6.3: an absolute (date-time) TRIGGER has no relation to the
 // event's start or end — the trigabs production forbids the RELATED parameter
 // entirely. A RELATED=END smuggled in alongside an absolute trigger is

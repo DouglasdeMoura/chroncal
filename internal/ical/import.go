@@ -658,7 +658,14 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 			}
 		} else if _, err := time.Parse("20060102T150405", tv); err == nil {
 			valid = true
-		} else if _, err := time.Parse(time.RFC3339, tv); err == nil {
+		} else if t, err := time.Parse(time.RFC3339, tv); err == nil {
+			// RFC 3339 without a TZID param: normalize to UTC compact form,
+			// same as the TZID-tagged RFC 3339 path above, so a stored
+			// absolute trigger has one encoding regardless of a redundant
+			// parameter. Safe because RFC 3339 always carries an explicit
+			// offset — this is NOT the floating-value normalization that was
+			// reverted (issue #572).
+			tv = t.UTC().Format("20060102T150405Z")
 			valid = true
 		}
 		if valid {

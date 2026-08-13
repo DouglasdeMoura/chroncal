@@ -771,7 +771,10 @@ func buildValarm(alarm model.Alarm) *ical.Component {
 		// trigger; emitting it gets the VALARM rejected with HTTP 400 by
 		// strict CalDAV servers, failing the PUT for the whole resource.
 		trigger.Params.Set("VALUE", "DATE-TIME")
-		// Normalize any legacy RFC 3339 values to iCal format.
+		// Normalize legacy RFC 3339 values to iCal format. Import now
+		// normalizes every RFC 3339 trigger to compact UTC on the way in,
+		// so this branch exists only for pre-normalization DB rows that
+		// still hold the raw RFC 3339 string.
 		if t, err := time.Parse(time.RFC3339, alarm.TriggerValue); err == nil {
 			trigger.Value = t.UTC().Format("20060102T150405Z")
 		}
