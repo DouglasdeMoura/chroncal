@@ -31,8 +31,9 @@ func TestSyncSummaryCountsImportWarnings(t *testing.T) {
 // import warnings collected on their SyncResults must reach the status line
 // count like syncSummary does — not be silently dropped.
 func TestAccountImportFinishedStatusCountsImportWarnings(t *testing.T) {
-	t.Parallel()
-
+	// NOT t.Parallel(): NewModel writes the package-global theme via
+	// SetActiveTheme, so tests that construct a Model must not run
+	// concurrently — same convention as every other NewModel test here.
 	m := NewModel(nil, "")
 	updated, _ := m.Update(accountImportFinishedMsg{created: 2, synced: 2, warnings: 3})
 	m = updated.(Model)
@@ -51,8 +52,9 @@ func TestAccountImportFinishedStatusCountsImportWarnings(t *testing.T) {
 }
 
 func TestAccountSelectionFinishedStatusCountsImportWarnings(t *testing.T) {
-	t.Parallel()
-
+	// NOT t.Parallel(): NewModel writes the package-global theme via
+	// SetActiveTheme, so tests that construct a Model must not run
+	// concurrently — same convention as every other NewModel test here.
 	m := NewModel(nil, "")
 	updated, _ := m.Update(accountSelectionFinishedMsg{created: 1, synced: 1, warnings: 2})
 	m = updated.(Model)
