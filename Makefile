@@ -37,17 +37,32 @@ generate:
 # Both targets refuse an empty list. gofmt with no file arguments reads stdin,
 # which in CI is /dev/null — that would make fmt-check, and therefore check,
 # pass green without inspecting a single file.
-GO_FILES = git ls-files '*.go'
+#
+# Paths flow through `ls-files -z | xargs -0`: an unquoted `$$files` expansion
+# word-splits any path with a space, and git's core.quotePath mangling of
+# non-ASCII names never reaches gofmt as a real path.
+#
+# fmt-check must also check gofmt's exit status, not just its stdout. On a
+# parse error or a tracked-but-deleted file, gofmt -l prints to stderr, exits
+# nonzero, and lists nothing — so the "any diffs?" test alone would pass green
+# while gofmt inspected nothing. gofmt -l exits 0 even when it lists
+# unformatted files, so any nonzero exit (123 via xargs) is a real error.
+GO_FILES = git ls-files -z '*.go'
 
 fmt:
-	@files=$$($(GO_FILES)); \
-	if [ -z "$$files" ]; then echo "no tracked Go files found — run from a git checkout"; exit 1; fi; \
-	gofmt -w $$files
+	@if [ -z "$$($(GO_FILES) | tr -d '\0')" ]; then \
+		echo "no tracked Go files found — run from a git checkout"; exit 1; \
+	fi; \
+	$(GO_FILES) | xargs -0 gofmt -w
 
 fmt-check:
-	@files=$$($(GO_FILES)); \
-	if [ -z "$$files" ]; then echo "no tracked Go files found — run from a git checkout"; exit 1; fi; \
-	diff=$$(gofmt -l $$files); \
+	@if [ -z "$$($(GO_FILES) | tr -d '\0')" ]; then \
+		echo "no tracked Go files found — run from a git checkout"; exit 1; \
+	fi; \
+	diff=$$($(GO_FILES) | xargs -0 gofmt -l); status=$$?; \
+	if [ "$$status" -ne 0 ]; then \
+		echo "gofmt failed (exit $$status)"; exit 1; \
+	fi; \
 	if [ -n "$$diff" ]; then \
 		echo "gofmt diffs in:"; echo "$$diff"; \
 		echo "run 'make fmt' to fix"; exit 1; \
