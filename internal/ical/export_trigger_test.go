@@ -67,6 +67,52 @@ func TestExport_UnparseableTodoTrigger_OmitsValarm(t *testing.T) {
 	}
 }
 
+// RFC 5545 §3.8.6.3: the trigabs production permits only VALUE=DATE-TIME as a
+// parameter on an absolute TRIGGER. Emitting RELATED=END alongside it produces
+// a VALARM strict CalDAV servers (Google, Fastmail) reject with HTTP 400,
+// failing the PUT for the whole resource. Reachable because parseAlarm stores
+// RELATED unconditionally and the TUI alarm editor preserves Related across
+// edits, so an absolute trigger can carry Related == "END" locally. The stored
+// model keeps the field (inert locally); only the wire format suppresses it.
+func TestExport_AbsoluteTriggerWithRelatedEnd_OmitsRelated(t *testing.T) {
+	t.Parallel()
+	events := []event.Event{{
+		UID:       "abs-trigger-related@example.com",
+		Title:     "Event",
+		StartTime: time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC),
+		Alarms: []model.Alarm{
+			{Action: "DISPLAY", TriggerValue: "20260401T094500Z", Description: "Absolute", Related: "END"},
+			{Action: "DISPLAY", TriggerValue: "-PT15M", Description: "Duration", Related: "END"},
+		},
+	}}
+	data, err := ExportEvents(events, "Work")
+	if err != nil {
+		t.Fatalf("ExportEvents: %v", err)
+	}
+	var absolute, durational string
+	for _, line := range strings.Split(string(data), "\r\n") {
+		if !strings.HasPrefix(line, "TRIGGER") {
+			continue
+		}
+		switch {
+		case strings.HasSuffix(line, "20260401T094500Z"):
+			absolute = line
+		case strings.HasSuffix(line, "-PT15M"):
+			durational = line
+		}
+	}
+	if absolute == "" || durational == "" {
+		t.Fatalf("missing TRIGGER lines in export:\n%s", data)
+	}
+	if strings.Contains(absolute, "RELATED") {
+		t.Errorf("absolute trigger carries a RELATED param (invalid per trigabs): %s", absolute)
+	}
+	if !strings.Contains(durational, "RELATED=END") {
+		t.Errorf("duration trigger lost its RELATED=END param: %s", durational)
+	}
+}
+
 func TestExportableTrigger(t *testing.T) {
 	t.Parallel()
 	cases := map[string]bool{

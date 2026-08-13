@@ -760,15 +760,21 @@ func buildValarm(alarm model.Alarm) *ical.Component {
 	trigger.Value = alarm.TriggerValue
 	if alarm.TriggerValue[0] == '-' || alarm.TriggerValue[0] == '+' || alarm.TriggerValue[0] == 'P' {
 		trigger.Params.Set("VALUE", "DURATION")
+		if alarm.Related == "END" {
+			trigger.Params.Set("RELATED", "END")
+		}
 	} else {
+		// RFC 5545 §3.8.6.3: the trigabs production permits only
+		// VALUE=DATE-TIME on an absolute trigger — never RELATED. A stored
+		// Related == "END" (parseAlarm keeps RELATED unconditionally, and the
+		// alarm editor preserves it across edits) is inert for an absolute
+		// trigger; emitting it gets the VALARM rejected with HTTP 400 by
+		// strict CalDAV servers, failing the PUT for the whole resource.
 		trigger.Params.Set("VALUE", "DATE-TIME")
 		// Normalize any legacy RFC 3339 values to iCal format.
 		if t, err := time.Parse(time.RFC3339, alarm.TriggerValue); err == nil {
 			trigger.Value = t.UTC().Format("20060102T150405Z")
 		}
-	}
-	if alarm.Related == "END" {
-		trigger.Params.Set("RELATED", "END")
 	}
 	valarm.Props.Set(trigger)
 
