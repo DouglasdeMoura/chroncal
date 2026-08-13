@@ -1,7 +1,9 @@
 package maintenance
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -97,6 +99,20 @@ func TestPurger_RunOnce_PurgesOnlyAckedOldAlarmStates(t *testing.T) {
 	}
 	if _, err := q.GetAlarmStateByID(ctx, unackedVeryOld); err == nil {
 		t.Errorf("unacked state older than %dx retention must be purged", staleUnackedMultiplier)
+	}
+}
+
+func TestNewPurger_NilLoggerIsSilent(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+
+	p := NewPurger(nil, nil, 30, nil)
+	p.logger.Info("soft-delete purge")
+
+	if buf.Len() > 0 {
+		t.Fatalf("nil-logger purger wrote to slog.Default (stderr in production, which corrupts the TUI): %q", buf.String())
 	}
 }
 

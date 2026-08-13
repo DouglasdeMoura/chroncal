@@ -5,6 +5,7 @@ package maintenance
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"time"
 
@@ -28,10 +29,13 @@ type Purger struct {
 
 // NewPurger returns a Purger bound to the trash aggregator. A days value
 // of 0 disables automatic purging; callers should guard the call to
-// RunOnce. q may be nil, which skips alarm-state cleanup.
+// RunOnce. q may be nil, which skips alarm-state cleanup. A nil logger
+// disables logging entirely: the primary caller is the TUI, which owns
+// the terminal, so falling back to slog's stderr handler would print
+// over the display.
 func NewPurger(trashSvc *trash.Service, q *storage.Queries, days int, logger *slog.Logger) *Purger {
 	if logger == nil {
-		logger = slog.Default()
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	return &Purger{trash: trashSvc, q: q, days: days, logger: logger}
 }
