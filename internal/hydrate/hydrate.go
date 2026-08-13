@@ -22,8 +22,7 @@ type Collector struct {
 	ID       int64  // record row ID, passed to every loader
 	FailFast bool   // stop at the first error instead of loading the rest
 
-	errs    []error
-	stopped bool
+	errs []error
 }
 
 // Rel loads one relation via load(ctx, c.ID) and assigns the result to *dst.
@@ -34,13 +33,12 @@ type Collector struct {
 //
 // It is a free function because Go methods cannot have type parameters.
 func Rel[T any](ctx context.Context, c *Collector, dst *[]T, rel string, load func(context.Context, int64) ([]T, error)) {
-	if c.stopped {
+	if c.FailFast && len(c.errs) > 0 {
 		return
 	}
 	v, err := load(ctx, c.ID)
 	if err != nil {
 		c.errs = append(c.errs, fmt.Errorf("%s %d %s: %w", c.Kind, c.ID, rel, err))
-		c.stopped = c.FailFast
 		return
 	}
 	*dst = v
