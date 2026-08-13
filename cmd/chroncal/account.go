@@ -101,7 +101,7 @@ exposes, import every usable collection, and complete their initial sync.`,
 			if err := refreshDiscoveryImportState(ctx, a, &discovery); err != nil {
 				return err
 			}
-			if err := syncNewCalendars(ctx, a, store, imported.CreatedIDs); err != nil {
+			if err := syncNewCalendars(ctx, a, store, imported.CreatedIDs, cmd.ErrOrStderr()); err != nil {
 				return fmt.Errorf(
 					"account %q and %d calendar(s) were added, but initial sync failed: %w",
 					created.DisplayName, len(imported.CreatedIDs), err,
@@ -313,7 +313,7 @@ calendars are synced before the command returns.`,
 			if err := refreshDiscoveryImportState(ctx, a, &discovery); err != nil {
 				return err
 			}
-			if err := syncNewCalendars(ctx, a, store, imported.CreatedIDs); err != nil {
+			if err := syncNewCalendars(ctx, a, store, imported.CreatedIDs, cmd.ErrOrStderr()); err != nil {
 				return err
 			}
 			if outputFmt != "text" {
@@ -417,7 +417,7 @@ selected calendars are synced before the command returns.`,
 					return err
 				}
 			}
-			if err := syncNewCalendars(ctx, a, store, result.CreatedIDs); err != nil {
+			if err := syncNewCalendars(ctx, a, store, result.CreatedIDs, cmd.ErrOrStderr()); err != nil {
 				return err
 			}
 			if outputFmt != "text" {

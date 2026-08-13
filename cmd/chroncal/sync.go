@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"strconv"
@@ -38,11 +39,24 @@ func classifySyncError(err error) error {
 	return err
 }
 
+// fprintImportWarnings prints one compact line per import warning collected
+// on a SyncResult, prefixed so users know sync produced it. Import warnings
+// mark values the importer had to fabricate (a made-up DTEND span, a dropped
+// alarm) that the next push writes back over the server's correct value, so
+// the silent sync entry points print them to stderr. No output when there
+// are none — the opportunistic push runs after every write.
+func fprintImportWarnings(w io.Writer, warnings []syncPkg.ImportWarning) {
+	for _, iw := range warnings {
+		fmt.Fprintf(w, "import warning: %s\n", iw)
+	}
+}
+
 func syncNewCalendars(
 	ctx context.Context,
 	a *app.App,
 	store auth.CredentialStore,
 	calendarIDs []int64,
+	warnW io.Writer,
 ) error {
 	if len(calendarIDs) == 0 {
 		return nil
@@ -55,6 +69,11 @@ func syncNewCalendars(
 	var syncErrs []error
 	for _, calendarID := range calendarIDs {
 		result, err := svc.SyncCalendar(ctx, calendarID, syncPkg.ConflictServerWins)
+		if result != nil {
+			// The engine here runs with a discarded logger, so the result is
+			// the only place the first pull's import warnings surface.
+			fprintImportWarnings(warnW, result.Warnings)
+		}
 		if err == nil && len(result.Errors) > 0 {
 			err = errors.Join(result.Errors...)
 		}

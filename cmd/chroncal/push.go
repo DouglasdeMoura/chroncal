@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/app"
@@ -44,6 +45,11 @@ var pushCalendarAfterWrite = func(a *app.App, calendarID int64, w io.Writer) {
 		fmt.Fprintf(w, "note: auto-sync failed (%v); change will upload on next sync\n", err)
 		return
 	}
+	// The engine here runs with a discarded logger, so the result is the only
+	// place import warnings from a server-wins conflict import surface. They
+	// go to stderr — not w — so JSON callers (which pass io.Discard to keep
+	// stdout clean) still see them, and so they never mix into stdout.
+	fprintImportWarnings(os.Stderr, result.Warnings)
 	if result.Pushed == 0 && result.Deleted == 0 && len(result.Errors) == 0 {
 		return
 	}

@@ -36,6 +36,42 @@ type SyncResult struct {
 	Deleted    int
 	Conflicts  int
 	Errors     []error
+	// Warnings lists what ImportFile could not represent faithfully while
+	// absorbing server resources during this cycle. It rides on the result —
+	// not just the engine logger — because most entry points run the engine
+	// with a discarded logger (opportunistic pushes, TUI syncs, the first
+	// pull after linking), and the fabricated substitute does not stay
+	// local: the next local edit marks the resource dirty and pushes it back
+	// over the value the server still holds correctly.
+	Warnings []ImportWarning
+}
+
+// ImportWarning is one thing ImportFile could not represent faithfully while
+// importing a server resource — e.g. a malformed DTEND replaced by a
+// fabricated span, or an alarm dropped for an unusable trigger.
+type ImportWarning struct {
+	// Path is the remote resource path the payload came from; empty when the
+	// payload was not fetched by path (conflict-resolution bodies).
+	Path string
+	// UID names the component only when the payload holds exactly one
+	// component. Multi-component payloads leave it empty rather than blame
+	// the first component for a warning that may belong to another.
+	UID string
+	// Message is the ImportFile warning text.
+	Message string
+}
+
+// String renders the warning as "<location>: <message>" for one-line display.
+func (w ImportWarning) String() string {
+	switch {
+	case w.Path != "" && w.UID != "":
+		return w.Path + " (uid " + w.UID + "): " + w.Message
+	case w.Path != "":
+		return w.Path + ": " + w.Message
+	case w.UID != "":
+		return "uid " + w.UID + ": " + w.Message
+	}
+	return w.Message
 }
 
 // ConflictStrategy determines how to handle conflicts.
@@ -279,6 +315,7 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 			result.Pushed = pushResult.pushed
 			result.Conflicts = pushResult.conflicts
 			result.Errors = append(result.Errors, pushResult.errors...)
+			result.Warnings = append(result.Warnings, pushResult.warnings...)
 		}
 	}
 
@@ -291,6 +328,7 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 		result.Pulled = pullResult.pulled
 		result.Deleted = pullResult.deleted
 		result.Errors = append(result.Errors, pullResult.errors...)
+		result.Warnings = append(result.Warnings, pullResult.warnings...)
 	}
 
 	if !remoteCalendarIsReadOnly(cal) {
@@ -352,6 +390,7 @@ func (e *Engine) PushCalendar(ctx context.Context, calendarID int64, strategy Co
 	result.Pushed = pushResult.pushed
 	result.Conflicts = pushResult.conflicts
 	result.Errors = append(result.Errors, pushResult.errors...)
+	result.Warnings = append(result.Warnings, pushResult.warnings...)
 
 	tombstoneResult, err := e.processTombstones(ctx, client, calendarID, remoteURL)
 	if err != nil {
@@ -459,6 +498,7 @@ type pushResult struct {
 	pushed    int
 	conflicts int
 	errors    []error
+	warnings  []ImportWarning
 }
 
 func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL, pushIdentity string, strategy ConflictStrategy) (*pushResult, error) {
@@ -609,13 +649,14 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 							result.conflicts++
 							continue
 						}
-						imported, revs, err := e.importICal(ctx, calendarID, buf.String())
+						imported, revs, importWarnings, err := e.importICal(ctx, calendarID, buf.String())
 						if err != nil {
 							e.logger.Error("import server resource failed", "uid", res.Uid, "error", err)
 							result.errors = append(result.errors, fmt.Errorf("import server resource %s: %w", res.Uid, err))
 							result.conflicts++
 							continue
 						}
+						result.warnings = append(result.warnings, importWarnings...)
 						if !imported {
 							// The server's 412 body carried no importable
 							// VEVENT/VTODO/VJOURNAL, so nothing was applied.
@@ -776,9 +817,10 @@ func (e *Engine) clearDirtyAfterImport(ctx context.Context, calendarID int64, ui
 }
 
 type pullResult struct {
-	pulled  int
-	deleted int
-	errors  []error
+	pulled   int
+	deleted  int
+	errors   []error
+	warnings []ImportWarning
 }
 
 func (e *Engine) pull(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL string) (*pullResult, error) {
@@ -937,7 +979,9 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 			e.logger.Warn("import fetched resource failed", "path", res.Path, "error", err)
 			continue
 		}
-		logImportWarnings(e.logger, res.Path, importResult)
+		importWarnings := collectImportWarnings(res.Path, importResult)
+		logImportWarnings(e.logger, importWarnings)
+		result.warnings = append(result.warnings, importWarnings...)
 
 		// Extract UID from imported data
 		uid := extractUID(importResult)
@@ -1240,7 +1284,9 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 				e.logger.Warn("import fetched resource failed", "path", res.Path, "error", err)
 				continue
 			}
-			logImportWarnings(e.logger, res.Path, importResult)
+			importWarnings := collectImportWarnings(res.Path, importResult)
+			logImportWarnings(e.logger, importWarnings)
+			result.warnings = append(result.warnings, importWarnings...)
 			uid := extractUID(importResult)
 			if uid == "" {
 				e.logger.Warn("no UID in fetched resource", "path", res.Path)
@@ -2088,12 +2134,15 @@ func (e *Engine) inTx(ctx context.Context, fn func(*sql.Tx) error) error {
 // input, so callers that must not accept the server version without applying it
 // (e.g. clearing the dirty flag) check imported to avoid silently stamping the
 // server ETag onto an unchanged local row.
-func (e *Engine) importICal(ctx context.Context, calendarID int64, data string) (imported bool, revs map[string]int64, err error) {
+func (e *Engine) importICal(ctx context.Context, calendarID int64, data string) (imported bool, revs map[string]int64, warnings []ImportWarning, err error) {
 	importResult, err := icalPkg.ImportFile(strings.NewReader(data))
 	if err != nil {
-		return false, nil, fmt.Errorf("import ical: %w", err)
+		return false, nil, nil, fmt.Errorf("import ical: %w", err)
 	}
-	logImportWarnings(e.logger, "", importResult)
+	// Collect warnings before the tombstone filter below: dropping a
+	// component must not change which component a warning is attributed to.
+	warnings = collectImportWarnings("", importResult)
+	logImportWarnings(e.logger, warnings)
 	// imported reflects whether the SERVER payload carried any component. It is
 	// computed before tombstone filtering so the empty-iCal guard in callers
 	// still fires for a genuinely empty server version, and never falsely fires
@@ -2109,16 +2158,16 @@ func (e *Engine) importICal(ctx context.Context, calendarID int64, data string) 
 	// ConflictServerWins — consistent with it. Issue #89 gap #2.
 	importResult, err = e.dropTombstonedFromImport(ctx, calendarID, importResult)
 	if err != nil {
-		return false, nil, err
+		return false, nil, nil, err
 	}
 	revs, err = e.persistImported(ctx, calendarID, importResult)
 	if err != nil {
-		return false, nil, err
+		return false, nil, nil, err
 	}
 	if afterImportPersist != nil {
 		afterImportPersist()
 	}
-	return imported, revs, nil
+	return imported, revs, warnings, nil
 }
 
 // dropTombstonedFromImport removes events/todos/journals whose UID is
@@ -2167,19 +2216,41 @@ func parseICalData(data []byte) (*ical.Calendar, error) {
 	return dec.Decode()
 }
 
+// collectImportWarnings converts ImportFile's warning strings into
+// ImportWarnings labeled with the resource path. A UID label is attached only
+// when the payload holds exactly one component: a multi-component payload
+// (412 server-wins bodies, manual conflict resolution) may carry a warning
+// from ANY of its components, and blaming the first component's UID sends the
+// user to an event with nothing wrong in it.
+func collectImportWarnings(path string, result icalPkg.ImportResult) []ImportWarning {
+	if len(result.Warnings) == 0 {
+		return nil
+	}
+	uid := ""
+	if len(result.Events)+len(result.Todos)+len(result.Journals) == 1 {
+		uid = extractUID(result)
+	}
+	warnings := make([]ImportWarning, 0, len(result.Warnings))
+	for _, msg := range result.Warnings {
+		warnings = append(warnings, ImportWarning{Path: path, UID: uid, Message: msg})
+	}
+	return warnings
+}
+
 // logImportWarnings surfaces what ImportFile could not represent faithfully —
 // a malformed DTEND replaced by a fabricated span, an alarm dropped for an
 // unusable trigger. Sync used to discard these, which mattered because the
 // substitute value does not stay local: the next local edit marks the resource
 // dirty and pushes our fabrication back over the value the server still holds
-// correctly. The log is the user's only signal that happened, so write it.
-func logImportWarnings(logger *slog.Logger, path string, result icalPkg.ImportResult) {
-	if len(result.Warnings) == 0 {
-		return
-	}
-	uid := extractUID(result)
-	for _, w := range result.Warnings {
-		logger.Warn("import warning", "path", path, "uid", uid, "warning", w)
+// correctly. The log serves `sync run`; entry points that discard the logger
+// read the same warnings off SyncResult.Warnings instead.
+func logImportWarnings(logger *slog.Logger, warnings []ImportWarning) {
+	for _, w := range warnings {
+		if w.UID != "" {
+			logger.Warn("import warning", "path", w.Path, "uid", w.UID, "warning", w.Message)
+			continue
+		}
+		logger.Warn("import warning", "path", w.Path, "warning", w.Message)
 	}
 }
 
