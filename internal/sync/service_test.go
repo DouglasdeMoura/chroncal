@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -186,7 +187,7 @@ func TestService_ResolveConflict_InvalidPick(t *testing.T) {
 	}
 
 	// Resolve with invalid pick
-	err = svc.ResolveConflict(ctx, conflicts[0].ID, "invalid")
+	_, err = svc.ResolveConflict(ctx, conflicts[0].ID, "invalid")
 	if err == nil {
 		t.Error("expected error for invalid pick value")
 	}
@@ -257,7 +258,7 @@ func TestService_ResolveConflict_Server(t *testing.T) {
 	}
 
 	conflicts, _ := q.ListSyncConflicts(ctx)
-	err = svc.ResolveConflict(ctx, conflicts[0].ID, "server")
+	_, err = svc.ResolveConflict(ctx, conflicts[0].ID, "server")
 	if err != nil {
 		t.Fatalf("ResolveConflict server: %v", err)
 	}
@@ -373,7 +374,7 @@ func TestService_ResolveConflict_ServerPreservesConcurrentEdit(t *testing.T) {
 	t.Cleanup(func() { resolveConflictAfterRevCapture = nil })
 
 	conflicts, _ := q.ListSyncConflicts(ctx)
-	if err := svc.ResolveConflict(ctx, conflicts[0].ID, "server"); err != nil {
+	if _, err := svc.ResolveConflict(ctx, conflicts[0].ID, "server"); err != nil {
 		t.Fatalf("ResolveConflict server: %v", err)
 	}
 	if fired != 1 {
@@ -481,7 +482,7 @@ func TestService_ResolveConflict_ServerPreservesConcurrentEditAfterPersist(t *te
 	t.Cleanup(func() { afterImportPersist = nil })
 
 	conflicts, _ := q.ListSyncConflicts(ctx)
-	if err := svc.ResolveConflict(ctx, conflicts[0].ID, "server"); err != nil {
+	if _, err := svc.ResolveConflict(ctx, conflicts[0].ID, "server"); err != nil {
 		t.Fatalf("ResolveConflict server: %v", err)
 	}
 	if fired != 1 {
@@ -565,7 +566,7 @@ func TestService_ResolveConflict_ServerDoesNotResurrectDeleted(t *testing.T) {
 	}
 
 	conflicts, _ := q.ListSyncConflicts(ctx)
-	if err := svc.ResolveConflict(ctx, conflicts[0].ID, "server"); err != nil {
+	if _, err := svc.ResolveConflict(ctx, conflicts[0].ID, "server"); err != nil {
 		t.Fatalf("ResolveConflict server: %v", err)
 	}
 
@@ -623,7 +624,7 @@ func TestService_ResolveConflict_Local(t *testing.T) {
 	}
 
 	conflicts, _ := q.ListSyncConflicts(ctx)
-	err = svc.ResolveConflict(ctx, conflicts[0].ID, "local")
+	_, err = svc.ResolveConflict(ctx, conflicts[0].ID, "local")
 	if err != nil {
 		t.Fatalf("ResolveConflict local: %v", err)
 	}
@@ -694,7 +695,7 @@ func TestService_ResolveConflict_ServerEmptyIcal(t *testing.T) {
 	}
 
 	conflicts, _ := q.ListSyncConflicts(ctx)
-	if err := svc.ResolveConflict(ctx, conflicts[0].ID, "server"); err == nil {
+	if _, err := svc.ResolveConflict(ctx, conflicts[0].ID, "server"); err == nil {
 		t.Fatal("ResolveConflict server with empty ServerIcal: expected error, got nil")
 	}
 
@@ -835,7 +836,10 @@ func TestServiceResolveConflictWaitsForCalendarLifecycle(t *testing.T) {
 		t.Fatalf("lock calendar lifecycle: %v", err)
 	}
 	done := make(chan error, 1)
-	go func() { done <- svc.ResolveConflict(ctx, conflicts[0].ID, "local") }()
+	go func() {
+		_, err := svc.ResolveConflict(ctx, conflicts[0].ID, "local")
+		done <- err
+	}()
 	select {
 	case err := <-done:
 		release()
@@ -924,5 +928,90 @@ func TestServiceResetCalendarRollsBackPartialCleanup(t *testing.T) {
 		CalendarID: calendarID, Uid: "rollback-resource",
 	}); err != nil {
 		t.Fatalf("sync resource deletion was not rolled back: %v", err)
+	}
+}
+
+// TestService_ResolveConflict_ServerReturnsImportWarnings: the accept-server
+// path of a manual resolve runs the same importICal as the auto server-wins
+// paths, so a server body the importer could not represent faithfully (here a
+// malformed DTEND replaced by a fabricated span) produces import warnings.
+// ResolveConflict must hand them back to the caller — the CLI builds this
+// service with a nil (silent) logger, so the return value is the only place
+// the warning can surface before the fabricated value is pushed back over the
+// server's correct one.
+func TestService_ResolveConflict_ServerReturnsImportWarnings(t *testing.T) {
+	svc, q := newTestService(t)
+	ctx := context.Background()
+
+	cals, _ := q.ListCalendars(ctx)
+	calID := cals[0].ID
+
+	const uid = "resolve-warned-uid"
+	serverIcal := "BEGIN:VCALENDAR\r\n" +
+		"VERSION:2.0\r\n" +
+		"PRODID:-//chroncal//test//EN\r\n" +
+		"BEGIN:VEVENT\r\n" +
+		"UID:" + uid + "\r\n" +
+		"DTSTAMP:20260403T120000Z\r\n" +
+		"DTSTART:20260403T120000Z\r\n" +
+		"DTEND:garbage\r\n" +
+		"SUMMARY:Server event with unparseable DTEND\r\n" +
+		"END:VEVENT\r\n" +
+		"END:VCALENDAR\r\n"
+
+	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+		CalendarID: calID,
+		OwnerType:  "event",
+		OwnerID:    1,
+		Uid:        uid,
+		LocalIcal:  "local",
+		ServerIcal: serverIcal,
+		ServerEtag: "etag-456",
+	}); err != nil {
+		t.Fatalf("CreateSyncConflict: %v", err)
+	}
+
+	conflicts, _ := q.ListSyncConflicts(ctx)
+	warnings, err := svc.ResolveConflict(ctx, conflicts[0].ID, "server")
+	if err != nil {
+		t.Fatalf("ResolveConflict server: %v", err)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("ResolveConflict warnings = %d, want 1 (the malformed DTEND)", len(warnings))
+	}
+	if !strings.Contains(warnings[0].Message, "DTEND") {
+		t.Errorf("warning message = %q, want it to name the malformed DTEND", warnings[0].Message)
+	}
+	if warnings[0].UID != uid {
+		t.Errorf("warning uid = %q, want %q (single-component server body)", warnings[0].UID, uid)
+	}
+}
+
+// A local pick never imports anything, so it must report no warnings.
+func TestService_ResolveConflict_LocalReturnsNoImportWarnings(t *testing.T) {
+	svc, db, q := newTestServiceWithDB(t)
+	ctx := context.Background()
+	testutil.LinkCalendarToAccount(t, db)
+
+	cals, _ := q.ListCalendars(ctx)
+	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+		CalendarID: cals[0].ID,
+		OwnerType:  "event",
+		OwnerID:    1,
+		Uid:        "resolve-local-uid",
+		LocalIcal:  "local",
+		ServerIcal: "server",
+		ServerEtag: "etag-1",
+	}); err != nil {
+		t.Fatalf("CreateSyncConflict: %v", err)
+	}
+
+	conflicts, _ := q.ListSyncConflicts(ctx)
+	warnings, err := svc.ResolveConflict(ctx, conflicts[0].ID, "local")
+	if err != nil {
+		t.Fatalf("ResolveConflict local: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("ResolveConflict local warnings = %d, want 0", len(warnings))
 	}
 }

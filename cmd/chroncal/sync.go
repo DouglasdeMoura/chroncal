@@ -323,9 +323,14 @@ Use "chroncal sync conflicts" first to find the conflict ID.`,
 			credStore, _ := auth.NewCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
 			svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, nil)
 
-			if err := svc.ResolveConflict(context.Background(), id, pick); err != nil {
+			warnings, err := svc.ResolveConflict(context.Background(), id, pick)
+			if err != nil {
 				return err
 			}
+			// The service above runs with a nil (silent) engine logger, so the
+			// returned warnings are the only place an accept-server import's
+			// fabricated values surface. Stderr keeps them out of --output json.
+			fprintImportWarnings(cmd.ErrOrStderr(), warnings)
 
 			return renderSyncResolve(cmd, id, pick)
 		},

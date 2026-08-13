@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -26,14 +27,14 @@ when the configured sync interval says a sync is due.`,
 		Example: `  chroncal service run
   CHRONCAL_SYNC_INTERVAL=15m chroncal service run`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runTick(cmd.Context(), cmd.OutOrStdout(), time.Now(), effectiveAlarmExecutionPolicy(cmd, flagPolicy))
+			return runTick(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), time.Now(), effectiveAlarmExecutionPolicy(cmd, flagPolicy))
 		},
 	}
 	bindAlarmExecutionPolicyFlags(cmd, &flagPolicy)
 	return cmd
 }
 
-func runTick(ctx context.Context, w io.Writer, now time.Time, policy alarmExecutionPolicy) error {
+func runTick(ctx context.Context, w, errW io.Writer, now time.Time, policy alarmExecutionPolicy) error {
 	a, err := initApp()
 	if err != nil {
 		return err
@@ -56,20 +57,44 @@ func runTick(ctx context.Context, w io.Writer, now time.Time, policy alarmExecut
 	if err != nil {
 		return fmt.Errorf("credential store: %w", err)
 	}
-	svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, nil)
+	// service run is a foreground process under systemd/launchd, so its
+	// stderr goes to the journal — give the engine a real stderr logger like
+	// `sync run` does, instead of the silent nil-logger default. This is the
+	// primary background sync path: without it, import warnings
+	// (logImportWarnings) and engine diagnostics vanish entirely.
+	logger := slog.New(slog.NewTextHandler(errW, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, logger)
 
+	return runSyncPass(ctx, svc, now, interval, syncStrategy())
+}
+
+// tickSyncer is the slice of the sync service runSyncPass drives; an
+// interface so tests can exercise the loop without a CalDAV server.
+type tickSyncer interface {
+	Status(ctx context.Context) ([]syncPkg.SyncStatus, error)
+	SyncCalendar(ctx context.Context, calendarID int64, strategy syncPkg.ConflictStrategy) (*syncPkg.SyncResult, error)
+}
+
+// runSyncPass syncs every due calendar once. Per-phase errors recorded on a
+// SyncResult count as failures even when SyncCalendar itself returned nil —
+// discarding the result here used to leave a half-broken calendar reporting
+// success (exit 0) on every tick.
+func runSyncPass(ctx context.Context, svc tickSyncer, now time.Time, interval time.Duration, strategy syncPkg.ConflictStrategy) error {
 	statuses, err := svc.Status(ctx)
 	if err != nil {
 		return fmt.Errorf("sync status: %w", err)
 	}
 
 	var syncErrs []error
-	strategy := syncStrategy()
 	for _, status := range statuses {
 		if !syncDue(now, status.LastSyncAttemptedAt, interval) {
 			continue
 		}
-		if _, err := svc.SyncCalendar(ctx, status.CalendarID, strategy); err != nil {
+		result, err := svc.SyncCalendar(ctx, status.CalendarID, strategy)
+		if err == nil && result != nil && len(result.Errors) > 0 {
+			err = errors.Join(result.Errors...)
+		}
+		if err != nil {
 			syncErrs = append(syncErrs, fmt.Errorf("%s: %w", status.CalendarName, err))
 		}
 	}

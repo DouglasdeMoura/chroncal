@@ -145,29 +145,34 @@ func (s *Service) ListConflicts(ctx context.Context) ([]Conflict, error) {
 var resolveConflictAfterRevCapture func()
 
 // ResolveConflict resolves a conflict by picking local or server version.
-func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick string) error {
+// The returned warnings list what importing the server body could not
+// represent faithfully (accept-server pick only; a local pick imports
+// nothing). The CLI builds this service with a nil (silent) engine logger,
+// so the return value is the only channel those warnings have.
+func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick string) ([]ImportWarning, error) {
 	if pick != "server" && pick != "local" {
-		return fmt.Errorf("invalid pick: %q (use 'local' or 'server')", pick)
+		return nil, fmt.Errorf("invalid pick: %q (use 'local' or 'server')", pick)
 	}
 
 	conflict, err := s.q.GetSyncConflict(ctx, conflictID)
 	if err != nil {
-		return fmt.Errorf("get conflict: %w", err)
+		return nil, fmt.Errorf("get conflict: %w", err)
 	}
 	release, err := s.engine.lockCalendarLifecycle(ctx, conflict.CalendarID)
 	if err != nil {
-		return fmt.Errorf("lock conflict calendar lifecycle: %w", err)
+		return nil, fmt.Errorf("lock conflict calendar lifecycle: %w", err)
 	}
 	defer release()
 	conflict, err = s.q.GetSyncConflict(ctx, conflictID)
 	if err != nil {
-		return fmt.Errorf("revalidate conflict: %w", err)
+		return nil, fmt.Errorf("revalidate conflict: %w", err)
 	}
 
 	// serverRev captures the sync_resources rev right after the accept-server
 	// import so the dirty clear below can be made conditional on it (see the
 	// "server" case in the transaction). Unused for the "local" pick.
 	var serverRev int64
+	var warnings []ImportWarning
 	if pick == "server" {
 		// Accept the server version: import the recorded server iCal into the
 		// local row so it reflects the server state. Without the import the
@@ -180,17 +185,18 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 		// the event/todo/journal services, which use their own connection.
 		// UpsertByUID is idempotent, so if the transaction fails to commit the
 		// conflict survives and the whole resolution replays cleanly.
-		imported, revs, _, err := s.engine.importICal(ctx, conflict.CalendarID, conflict.ServerIcal)
+		imported, revs, importWarnings, err := s.engine.importICal(ctx, conflict.CalendarID, conflict.ServerIcal)
 		if err != nil {
-			return fmt.Errorf("import server version: %w", err)
+			return nil, fmt.Errorf("import server version: %w", err)
 		}
 		if !imported {
 			// ImportFile returns no error for empty or component-less iCal, so a
 			// blank ServerIcal would otherwise clear dirty and stamp the server
 			// ETag onto the unchanged local row — the silent-overwrite bug this
 			// branch exists to prevent. Refuse instead of resolving falsely.
-			return fmt.Errorf("server version has no importable data for %q", conflict.Uid)
+			return nil, fmt.Errorf("server version has no importable data for %q", conflict.Uid)
 		}
+		warnings = importWarnings
 		// Use the rev importICal captured inside persistImported's transaction so
 		// the dirty clear can be rev-guarded like the auto accept-server paths
 		// (engine.clearDirtyAfterImport). importICal bumps rev and re-sets dirty=1
@@ -213,7 +219,7 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 	// 412 loop on the next push. Issue #89 gap #3.
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return nil, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
@@ -233,7 +239,7 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 			Etag:       conflict.ServerEtag,
 			Rev:        serverRev,
 		}); err != nil {
-			return fmt.Errorf("clear dirty: %w", err)
+			return nil, fmt.Errorf("clear dirty: %w", err)
 		}
 	case "local":
 		// Mark the resource as dirty so the next sync pushes the local
@@ -250,14 +256,17 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 			Uid:        conflict.Uid,
 			Etag:       conflict.ServerEtag,
 		}); err != nil {
-			return fmt.Errorf("mark dirty: %w", err)
+			return nil, fmt.Errorf("mark dirty: %w", err)
 		}
 	}
 
 	if err := qtx.DeleteSyncConflict(ctx, conflictID); err != nil {
-		return fmt.Errorf("delete conflict: %w", err)
+		return nil, fmt.Errorf("delete conflict: %w", err)
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return warnings, nil
 }
 
 // ResetCalendar clears all sync state for a calendar without deleting local data.
