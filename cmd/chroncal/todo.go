@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -497,11 +496,11 @@ and percent-complete to 100.`,
 				if err := printOutput(w, toJSONTodo(t)); err != nil {
 					return err
 				}
-				pushCalendarAfterWrite(a, t.CalendarID, io.Discard, cmd.ErrOrStderr())
+				opportunisticPush(a, t.CalendarID, cmd)
 				return nil
 			}
 			printTodo(w, t)
-			pushCalendarAfterWrite(a, t.CalendarID, w, cmd.ErrOrStderr())
+			opportunisticPush(a, t.CalendarID, cmd)
 			return nil
 		},
 	}
@@ -847,11 +846,11 @@ a --progress value other than 100.`,
 				if err := printOutput(w, toJSONTodo(t)); err != nil {
 					return err
 				}
-				pushCalendarAfterWrite(a, t.CalendarID, io.Discard, cmd.ErrOrStderr())
+				opportunisticPush(a, t.CalendarID, cmd)
 				return nil
 			}
 			printTodo(w, t)
-			pushCalendarAfterWrite(a, t.CalendarID, w, cmd.ErrOrStderr())
+			opportunisticPush(a, t.CalendarID, cmd)
 			return nil
 		},
 	}
@@ -924,11 +923,11 @@ its progress to 100%.`,
 				if err := printOutput(w, toJSONTodo(t)); err != nil {
 					return err
 				}
-				pushCalendarAfterWrite(a, t.CalendarID, io.Discard, cmd.ErrOrStderr())
+				opportunisticPush(a, t.CalendarID, cmd)
 				return nil
 			}
 			fmt.Fprintf(w, "Completed: %s\n", safeText(t.Summary))
-			pushCalendarAfterWrite(a, t.CalendarID, w, cmd.ErrOrStderr())
+			opportunisticPush(a, t.CalendarID, cmd)
 			return nil
 		},
 	}
@@ -986,11 +985,11 @@ recurring series.`,
 					if err := printOutput(w, map[string]any{"deleted": true, "uid": t.UID, "series": true}); err != nil {
 						return err
 					}
-					pushCalendarAfterWrite(a, t.CalendarID, io.Discard, cmd.ErrOrStderr())
+					opportunisticPush(a, t.CalendarID, cmd)
 					return nil
 				}
 				fmt.Fprintf(w, "Deleted todo series %q.\n", safeText(t.UID))
-				pushCalendarAfterWrite(a, t.CalendarID, w, cmd.ErrOrStderr())
+				opportunisticPush(a, t.CalendarID, cmd)
 				return nil
 			}
 
@@ -1003,11 +1002,11 @@ recurring series.`,
 				if err := printOutput(w, map[string]any{"deleted": true, "id": t.ID}); err != nil {
 					return err
 				}
-				pushCalendarAfterWrite(a, t.CalendarID, io.Discard, cmd.ErrOrStderr())
+				opportunisticPush(a, t.CalendarID, cmd)
 				return nil
 			}
 			fmt.Fprintf(w, "Deleted todo %d.\n", t.ID)
-			pushCalendarAfterWrite(a, t.CalendarID, w, cmd.ErrOrStderr())
+			opportunisticPush(a, t.CalendarID, cmd)
 			return nil
 		},
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -342,11 +341,11 @@ Defaults: status=FINAL, class=PUBLIC, calendar=Personal.`,
 				if err := printOutput(w, toJSONJournal(j)); err != nil {
 					return err
 				}
-				pushCalendarAfterWrite(a, j.CalendarID, io.Discard, cmd.ErrOrStderr())
+				opportunisticPush(a, j.CalendarID, cmd)
 				return nil
 			}
 			printJournal(w, j)
-			pushCalendarAfterWrite(a, j.CalendarID, w, cmd.ErrOrStderr())
+			opportunisticPush(a, j.CalendarID, cmd)
 			return nil
 		},
 	}
@@ -578,11 +577,11 @@ Repeatable flags (--attendee, --comment, --contact, --attach,
 				if err := printOutput(w, toJSONJournal(j)); err != nil {
 					return err
 				}
-				pushCalendarAfterWrite(a, j.CalendarID, io.Discard, cmd.ErrOrStderr())
+				opportunisticPush(a, j.CalendarID, cmd)
 				return nil
 			}
 			printJournal(w, j)
-			pushCalendarAfterWrite(a, j.CalendarID, w, cmd.ErrOrStderr())
+			opportunisticPush(a, j.CalendarID, cmd)
 			return nil
 		},
 	}
@@ -664,11 +663,11 @@ entire recurring series.`,
 					if err := printOutput(w, map[string]any{"deleted": true, "uid": j.UID, "series": true}); err != nil {
 						return err
 					}
-					pushCalendarAfterWrite(a, j.CalendarID, io.Discard, cmd.ErrOrStderr())
+					opportunisticPush(a, j.CalendarID, cmd)
 					return nil
 				}
 				fmt.Fprintf(w, "Deleted journal series %q.\n", safeText(j.UID))
-				pushCalendarAfterWrite(a, j.CalendarID, w, cmd.ErrOrStderr())
+				opportunisticPush(a, j.CalendarID, cmd)
 				return nil
 			}
 
@@ -681,11 +680,11 @@ entire recurring series.`,
 				if err := printOutput(w, map[string]any{"deleted": true, "id": j.ID}); err != nil {
 					return err
 				}
-				pushCalendarAfterWrite(a, j.CalendarID, io.Discard, cmd.ErrOrStderr())
+				opportunisticPush(a, j.CalendarID, cmd)
 				return nil
 			}
 			fmt.Fprintf(w, "Deleted journal %d.\n", j.ID)
-			pushCalendarAfterWrite(a, j.CalendarID, w, cmd.ErrOrStderr())
+			opportunisticPush(a, j.CalendarID, cmd)
 			return nil
 		},
 	}

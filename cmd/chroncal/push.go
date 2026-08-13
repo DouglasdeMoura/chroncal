@@ -6,12 +6,28 @@ import (
 	"io"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	syncPkg "github.com/douglasdemoura/chroncal/internal/sync"
 )
 
 const opportunisticPushTimeout = 30 * time.Second
+
+// opportunisticPush is what every write path calls: it derives the two
+// streams once — stdout for the human sync note (discarded in JSON mode so
+// nothing trails the JSON object, issue #255), stderr for import warnings —
+// instead of each of the ~27 call sites repeating that wiring. The
+// pushCalendarAfterWrite seam below stays a package var so tests can stub
+// the push while this derivation remains real code under test.
+func opportunisticPush(a *app.App, calendarID int64, cmd *cobra.Command) {
+	outW := cmd.OutOrStdout()
+	if outputFmt != "text" {
+		outW = io.Discard
+	}
+	pushCalendarAfterWrite(a, calendarID, outW, cmd.ErrOrStderr())
+}
 
 // pushCalendarAfterWrite opportunistically pushes pending changes for one
 // calendar upstream after a CLI write. It is best-effort: failures are
