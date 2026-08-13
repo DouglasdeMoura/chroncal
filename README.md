@@ -806,6 +806,13 @@ Override with `CHRONCAL_DB` or the `db` config key.
 
 Migrations run automatically on startup. WAL mode is enabled for better concurrency.
 
+Background jobs that run while the TUI owns the terminal log to a file
+instead of the screen. The soft-delete purge writes its outcomes and
+failures to `$XDG_STATE_HOME/chroncal/chroncal.log` (Linux default
+`~/.local/state/chroncal/chroncal.log`; on macOS the state directory
+falls back to `~/Library/Application Support`). The file grows by at
+most a few lines per day, so it is never rotated.
+
 ## iCal compatibility
 
 chroncal aims for complete RFC 5545 compliance. Current coverage:

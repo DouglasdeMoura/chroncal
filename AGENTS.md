@@ -80,6 +80,23 @@ CLI commands live in `cmd/chroncal/`, one file per resource group. Each exports 
 - Go code uses `time.Time` with `time.UTC`.
 - All-day events have time component 00:00:00.
 
+### Logging
+- Code that can run while the TUI owns the terminal must never write to
+  stderr — Bubble Tea runs in the alternate screen and any stderr write
+  prints over the display. This includes `slog.Default()`.
+- A nil `*slog.Logger` passed to `maintenance.NewPurger` or
+  `sync.NewEngine` means *silent* (they fall back to
+  `slog.New(slog.DiscardHandler)`), not `slog.Default()`. Keep that
+  contract when adding constructors; regression tests in
+  `internal/maintenance/purge_test.go` and `internal/sync/engine_test.go`
+  guard it.
+- The TUI's background purge loop logs to the state-dir file
+  `$XDG_STATE_HOME/chroncal/chroncal.log` via `purgeLogger()` in
+  `cmd/chroncal/main.go` (path from `config.LogFilePath()`). Route other
+  TUI-context background jobs that need durable logs there too; CLI
+  commands that want visible logs pass an explicit stderr logger
+  (see `sync run`).
+
 ### TUI Buttons
 - Exactly two variants: `Button` (neutral default) and `ButtonDanger`
   (destructive). No Primary, no Secondary, no Ghost.
