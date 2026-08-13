@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/douglasdemoura/chroncal/internal/config"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,13 +15,13 @@ import (
 func TestSyncSummaryCountsImportWarnings(t *testing.T) {
 	t.Parallel()
 
-	if got := syncSummary("Work", 0, 3, 0, 0, 2); !strings.Contains(got, "2 import warnings") {
+	if got := syncSummary("Work", syncTotals{pulled: 3, warnings: 2}); !strings.Contains(got, "2 import warnings") {
 		t.Errorf("syncSummary with 2 warnings = %q, want it to count them", got)
 	}
-	if got := syncSummary("Work", 0, 3, 0, 0, 1); !strings.Contains(got, "1 import warning") || strings.Contains(got, "warnings") {
+	if got := syncSummary("Work", syncTotals{pulled: 3, warnings: 1}); !strings.Contains(got, "1 import warning") || strings.Contains(got, "warnings") {
 		t.Errorf("syncSummary with 1 warning = %q, want singular count", got)
 	}
-	if got := syncSummary("Work", 0, 3, 0, 0, 0); strings.Contains(got, "import warning") {
+	if got := syncSummary("Work", syncTotals{pulled: 3}); strings.Contains(got, "import warning") {
 		t.Errorf("syncSummary with no warnings = %q, want no warning segment", got)
 	}
 }
@@ -63,12 +64,14 @@ func TestAccountSelectionFinishedStatusCountsImportWarnings(t *testing.T) {
 // The TUI sync engine's logger must never write to stderr (Bubble Tea owns
 // the terminal), but discarding it loses logImportWarnings' detail. Per the
 // repo's logging contract the durable copy goes to the state-dir log file,
-// same as the purge loop.
-func TestNewStateDirSyncLoggerWritesToLogFile(t *testing.T) {
+// same as the purge loop. The engine uses the memoized
+// config.SharedStateDirLogger; the unmemoized constructor is asserted here
+// so the fresh XDG_STATE_HOME takes effect.
+func TestStateDirSyncLoggerWritesToLogFile(t *testing.T) {
 	stateHome := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", stateHome)
 
-	logger := newStateDirSyncLogger()
+	logger := config.StateDirLogger()
 	logger.Warn("import warning", "path", "/cal/warned.ics", "warning", "malformed DTEND")
 
 	data, err := os.ReadFile(filepath.Join(stateHome, "chroncal", "chroncal.log"))

@@ -1299,7 +1299,7 @@ func (m Model) newSyncService() (*syncpkg.Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("credential store: %w", err)
 	}
-	return syncpkg.NewService(m.app.DB, m.app.Queries, credStore, m.app.Calendars, m.app.Events, m.app.Todos, m.app.Journals, stateDirSyncLogger()), nil
+	return syncpkg.NewService(m.app.DB, m.app.Queries, credStore, m.app.Calendars, m.app.Events, m.app.Todos, m.app.Journals, config.SharedStateDirLogger()), nil
 }
 
 // runSyncAllPlan lists the connected calendars and emits a syncAllPlannedMsg
@@ -1355,7 +1355,13 @@ func (m Model) runSyncCalendar(id int64, name string) tea.Cmd {
 		if label == "" {
 			label = "calendar"
 		}
-		summary := syncSummary(label, result.Pushed, result.Pulled, result.Deleted, result.Conflicts, len(result.Warnings))
+		summary := syncSummary(label, syncTotals{
+			pushed:    result.Pushed,
+			pulled:    result.Pulled,
+			deleted:   result.Deleted,
+			conflicts: result.Conflicts,
+			warnings:  len(result.Warnings),
+		})
 		var firstErr error
 		if len(result.Errors) > 0 {
 			firstErr = result.Errors[0]
@@ -1395,7 +1401,7 @@ func (m Model) runSyncAccount(accountID int64, name string) tea.Cmd {
 			label = "account"
 		}
 		return syncFinishedMsg{
-			summary: syncSummary(label, totals.pushed, totals.pulled, totals.deleted, totals.conflicts, totals.warnings),
+			summary: syncSummary(label, totals),
 			err:     totals.firstErr,
 			reload:  true,
 		}
@@ -1742,22 +1748,7 @@ func (m Model) importAndSyncAccountCalendars(paths []string) tea.Cmd {
 			finished.syncErr = err
 			return finished
 		}
-		for _, calendarID := range result.CreatedIDs {
-			syncResult, err := syncService.SyncCalendar(ctx, calendarID, syncpkg.ConflictServerWins)
-			if syncResult != nil {
-				finished.warnings += len(syncResult.Warnings)
-			}
-			if err == nil && len(syncResult.Errors) > 0 {
-				err = errors.Join(syncResult.Errors...)
-			}
-			if err != nil {
-				if finished.syncErr == nil {
-					finished.syncErr = err
-				}
-				continue
-			}
-			finished.synced++
-		}
+		finished.synced, finished.warnings, finished.syncErr = syncNewlyLinkedCalendars(ctx, syncService, result.CreatedIDs)
 		return finished
 	}
 }
@@ -1800,22 +1791,7 @@ func (m Model) reconcileAndSyncAccountCalendars(selection *accountCalendarSelect
 			finished.syncErr = err
 			return finished
 		}
-		for _, calendarID := range result.CreatedIDs {
-			syncResult, err := syncService.SyncCalendar(ctx, calendarID, syncpkg.ConflictServerWins)
-			if syncResult != nil {
-				finished.warnings += len(syncResult.Warnings)
-			}
-			if err == nil && len(syncResult.Errors) > 0 {
-				err = errors.Join(syncResult.Errors...)
-			}
-			if err != nil {
-				if finished.syncErr == nil {
-					finished.syncErr = err
-				}
-				continue
-			}
-			finished.synced++
-		}
+		finished.synced, finished.warnings, finished.syncErr = syncNewlyLinkedCalendars(ctx, syncService, result.CreatedIDs)
 		return finished
 	}
 }
@@ -2044,7 +2020,11 @@ func (m Model) runOpportunisticPush(calendarID int64) tea.Cmd {
 		if label == "" {
 			label = "calendar"
 		}
-		summary := syncSummary(label, result.Pushed, 0, result.Deleted, 0, len(result.Warnings))
+		summary := syncSummary(label, syncTotals{
+			pushed:   result.Pushed,
+			deleted:  result.Deleted,
+			warnings: len(result.Warnings),
+		})
 		var firstErr error
 		if len(result.Errors) > 0 {
 			firstErr = result.Errors[0]
@@ -2055,29 +2035,27 @@ func (m Model) runOpportunisticPush(calendarID int64) tea.Cmd {
 
 // syncSummary builds the footer confirmation for a completed sync, listing
 // only the non-zero counters. A no-op sync reads "Synced Work · up to date"
-// instead of dragging five "· 0" segments behind it. warnings counts the
+// instead of dragging five "· 0" segments behind it. t.warnings counts the
 // import warnings on the SyncResult — values the importer had to fabricate;
 // the count is the in-UI signal, and the full text is in the state-dir log.
-func syncSummary(label string, pushed, pulled, deleted, conflicts, warnings int) string {
+// Taking syncTotals rather than five positional ints keeps a transposed
+// counter from compiling silently.
+func syncSummary(label string, t syncTotals) string {
 	var parts []string
-	if pushed > 0 {
-		parts = append(parts, fmt.Sprintf("pushed %d", pushed))
+	if t.pushed > 0 {
+		parts = append(parts, fmt.Sprintf("pushed %d", t.pushed))
 	}
-	if pulled > 0 {
-		parts = append(parts, fmt.Sprintf("pulled %d", pulled))
+	if t.pulled > 0 {
+		parts = append(parts, fmt.Sprintf("pulled %d", t.pulled))
 	}
-	if deleted > 0 {
-		parts = append(parts, fmt.Sprintf("deleted %d", deleted))
+	if t.deleted > 0 {
+		parts = append(parts, fmt.Sprintf("deleted %d", t.deleted))
 	}
-	if conflicts > 0 {
-		noun := "conflict"
-		if conflicts > 1 {
-			noun = "conflicts"
-		}
-		parts = append(parts, fmt.Sprintf("%d %s", conflicts, noun))
+	if t.conflicts > 0 {
+		parts = append(parts, fmt.Sprintf("%d %s", t.conflicts, pluralize(t.conflicts, "conflict", "conflicts")))
 	}
-	if warnings > 0 {
-		parts = append(parts, importWarningsSegment(warnings))
+	if t.warnings > 0 {
+		parts = append(parts, importWarningsSegment(t.warnings))
 	}
 	if len(parts) == 0 {
 		return fmt.Sprintf("Synced %s · up to date", label)
@@ -2085,14 +2063,35 @@ func syncSummary(label string, pushed, pulled, deleted, conflicts, warnings int)
 	return fmt.Sprintf("Synced %s · %s", label, strings.Join(parts, " · "))
 }
 
+// syncNewlyLinkedCalendars runs the first pull for each calendar an account
+// link just created. It returns how many synced cleanly, the total import-
+// warning count (fabricated values the status line must mention), and the
+// first error — later calendars still sync so one failure doesn't strand the
+// rest unsynced.
+func syncNewlyLinkedCalendars(ctx context.Context, svc *syncpkg.Service, ids []int64) (synced, warnings int, syncErr error) {
+	for _, calendarID := range ids {
+		syncResult, err := svc.SyncCalendar(ctx, calendarID, syncpkg.ConflictServerWins)
+		if syncResult != nil {
+			warnings += len(syncResult.Warnings)
+		}
+		if err == nil && len(syncResult.Errors) > 0 {
+			err = errors.Join(syncResult.Errors...)
+		}
+		if err != nil {
+			if syncErr == nil {
+				syncErr = err
+			}
+			continue
+		}
+		synced++
+	}
+	return synced, warnings, syncErr
+}
+
 // importWarningsSegment renders the "N import warning(s)" counter shared by
 // syncSummary and the account-linking status lines.
 func importWarningsSegment(warnings int) string {
-	noun := "import warning"
-	if warnings > 1 {
-		noun = "import warnings"
-	}
-	return fmt.Sprintf("%d %s", warnings, noun)
+	return fmt.Sprintf("%d %s", warnings, pluralize(warnings, "import warning", "import warnings"))
 }
 
 // appendImportWarnings suffixes a status line with the import-warning count
@@ -4265,7 +4264,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		next := msg.index + 1
 		if next >= msg.total {
 			label := fmt.Sprintf("%d calendar(s)", msg.total)
-			summary := syncSummary(label, m.syncTotals.pushed, m.syncTotals.pulled, m.syncTotals.deleted, m.syncTotals.conflicts, m.syncTotals.warnings)
+			summary := syncSummary(label, m.syncTotals)
 			finishErr := m.syncTotals.firstErr
 			m.syncTargets = nil
 			m.syncTotals = syncTotals{}
