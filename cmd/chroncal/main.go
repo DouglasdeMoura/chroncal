@@ -8,7 +8,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -226,12 +228,34 @@ Helpful conventions:
 		// up front then every 24h. Detached goroutine — ctx is bound to process
 		// lifetime via the signal handler in the TUI loop below.
 		if purgeDays := cfg.SoftDelete.PurgeDays; purgeDays > 0 {
-			purger := maintenance.NewPurger(a.Trash, a.Queries, purgeDays, nil)
+			purger := maintenance.NewPurger(a.Trash, a.Queries, purgeDays, purgeLogger())
 			go purger.RunDaily(context.Background())
 		}
 
 		return tui.Run(a, cfg.UI.Theme)
 	},
+}
+
+// purgeLogger returns the logger for the background purge loop. The TUI
+// owns the terminal, so logs go to the state-dir log file where purge
+// failures stay inspectable; the purger writes at most a few lines per
+// day, so the file needs no rotation. If the file cannot be opened, fall
+// back to silence — never stderr, which would print over the display.
+// The file handle intentionally stays open for the process lifetime: the
+// purge goroutine outlives this call and the OS reclaims the fd on exit.
+func purgeLogger() *slog.Logger {
+	path, err := config.LogFilePath()
+	if err != nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return slog.New(slog.NewTextHandler(f, nil))
 }
 
 func initApp() (*app.App, error) {

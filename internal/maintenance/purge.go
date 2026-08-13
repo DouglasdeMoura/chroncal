@@ -5,7 +5,6 @@ package maintenance
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"time"
 
@@ -35,7 +34,7 @@ type Purger struct {
 // over the display.
 func NewPurger(trashSvc *trash.Service, q *storage.Queries, days int, logger *slog.Logger) *Purger {
 	if logger == nil {
-		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+		logger = slog.New(slog.DiscardHandler)
 	}
 	return &Purger{trash: trashSvc, q: q, days: days, logger: logger}
 }

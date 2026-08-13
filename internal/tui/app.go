@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"image"
 	"io"
-	"log/slog"
 	"os"
 	"slices"
 	"strings"
@@ -1290,8 +1289,7 @@ func (m Model) newSyncService() (*syncpkg.Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("credential store: %w", err)
 	}
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return syncpkg.NewService(m.app.DB, m.app.Queries, credStore, m.app.Calendars, m.app.Events, m.app.Todos, m.app.Journals, logger), nil
+	return syncpkg.NewService(m.app.DB, m.app.Queries, credStore, m.app.Calendars, m.app.Events, m.app.Todos, m.app.Journals, nil), nil
 }
 
 // runSyncAllPlan lists the connected calendars and emits a syncAllPlannedMsg

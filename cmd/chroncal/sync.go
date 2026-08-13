@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"strconv"
@@ -50,9 +49,8 @@ func syncNewCalendars(
 	}
 	ctx, cancel := context.WithTimeout(ctx, syncRunTimeout)
 	defer cancel()
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	svc := syncPkg.NewService(
-		a.DB, a.Queries, store, a.Calendars, a.Events, a.Todos, a.Journals, logger,
+		a.DB, a.Queries, store, a.Calendars, a.Events, a.Todos, a.Journals, nil,
 	)
 	var syncErrs []error
 	for _, calendarID := range calendarIDs {

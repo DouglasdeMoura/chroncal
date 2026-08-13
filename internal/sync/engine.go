@@ -138,10 +138,13 @@ func buildRemoteResourcePath(calendarRef, _ string) string {
 	return normalizeRemoteRef(parsed.String())
 }
 
-// NewEngine creates a new sync engine.
+// NewEngine creates a new sync engine. A nil logger disables logging:
+// several callers run while the TUI owns the terminal, so falling back
+// to slog's stderr handler would print over the display. Callers that
+// want sync logs must pass a logger explicitly.
 func NewEngine(db *sql.DB, q *storage.Queries, credStore authpkg.CredentialStore, calendars *calendar.Service, events *event.Service, todos *todo.Service, journals *journal.Service, logger *slog.Logger) *Engine {
 	if logger == nil {
-		logger = slog.Default()
+		logger = slog.New(slog.DiscardHandler)
 	}
 	return &Engine{db: db, q: q, credStore: credStore, calendars: calendars, events: events, todos: todos, journals: journals, logger: logger}
 }

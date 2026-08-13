@@ -59,6 +59,18 @@ func SaveUIState(s UIState) error {
 	return os.Rename(tmp, path)
 }
 
+// LogFilePath returns the path of the background-job log file. Jobs that
+// run while the TUI owns the terminal (the soft-delete purger) log here
+// instead of stderr so failures stay inspectable without printing over
+// the display.
+func LogFilePath() (string, error) {
+	dir, err := stateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "chroncal", "chroncal.log"), nil
+}
+
 func stateFile() (string, error) {
 	dir, err := stateDir()
 	if err != nil {

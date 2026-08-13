@@ -4288,3 +4288,20 @@ func TestExportResourceFor_MissingMasterExportsOverrides(t *testing.T) {
 		t.Errorf("exported %d rows, want 1", exported)
 	}
 }
+
+// NewEngine with a nil logger must not fall back to slog.Default: TUI
+// callers pass nil while Bubble Tea owns the terminal, so any write to
+// the default (stderr) handler would print over the display.
+func TestNewEngine_NilLoggerIsSilent(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+
+	e := NewEngine(nil, nil, nil, nil, nil, nil, nil, nil)
+	e.logger.Info("sync started")
+
+	if buf.Len() > 0 {
+		t.Fatalf("nil-logger engine wrote to slog.Default (stderr in production, which corrupts the TUI): %q", buf.String())
+	}
+}

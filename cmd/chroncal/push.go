@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log/slog"
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/app"
@@ -38,8 +37,7 @@ var pushCalendarAfterWrite = func(a *app.App, calendarID int64, w io.Writer) {
 		return
 	}
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, logger)
+	svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, nil)
 
 	result, err := svc.PushCalendar(ctx, calendarID, syncPkg.ConflictServerWins)
 	if err != nil {
