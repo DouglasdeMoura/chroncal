@@ -128,7 +128,7 @@ again updates existing items instead of blindly duplicating them.`,
 				if outputFmt != "text" {
 					pushWriter = io.Discard
 				}
-				pushCalendarAfterWrite(a, calID, pushWriter)
+				pushCalendarAfterWrite(a, calID, pushWriter, cmd.ErrOrStderr())
 			}
 
 			// A non-zero exit signals that the import was partial, but the

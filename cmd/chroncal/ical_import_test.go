@@ -238,7 +238,7 @@ func TestImportJSONOutputStaysValidWhenPushNotes(t *testing.T) {
 	// mode it must be handed io.Discard, so this note must never reach stdout.
 	const syncNote = "Synced to Work · pushed 1 · deleted 0\n"
 	prev := pushCalendarAfterWrite
-	pushCalendarAfterWrite = func(_ *app.App, _ int64, w io.Writer) {
+	pushCalendarAfterWrite = func(_ *app.App, _ int64, w, _ io.Writer) {
 		io.WriteString(w, syncNote)
 	}
 	t.Cleanup(func() { pushCalendarAfterWrite = prev })

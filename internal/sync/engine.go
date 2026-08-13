@@ -53,9 +53,11 @@ type ImportWarning struct {
 	// Path is the remote resource path the payload came from; empty when the
 	// payload was not fetched by path (conflict-resolution bodies).
 	Path string
-	// UID names the component only when the payload holds exactly one
-	// component. Multi-component payloads leave it empty rather than blame
-	// the first component for a warning that may belong to another.
+	// UID names the component only when every component in the payload
+	// shares one nonempty UID (a single component, or a recurring master
+	// plus its overrides). Payloads spanning several UIDs leave it empty
+	// rather than blame the first component for a warning that may belong
+	// to another.
 	UID string
 	// Message is the ImportFile warning text.
 	Message string
@@ -979,9 +981,7 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 			e.logger.Warn("import fetched resource failed", "path", res.Path, "error", err)
 			continue
 		}
-		importWarnings := collectImportWarnings(res.Path, importResult)
-		logImportWarnings(e.logger, importWarnings)
-		result.warnings = append(result.warnings, importWarnings...)
+		result.warnings = append(result.warnings, e.noteImportWarnings(res.Path, importResult)...)
 
 		// Extract UID from imported data
 		uid := extractUID(importResult)
@@ -1284,9 +1284,7 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 				e.logger.Warn("import fetched resource failed", "path", res.Path, "error", err)
 				continue
 			}
-			importWarnings := collectImportWarnings(res.Path, importResult)
-			logImportWarnings(e.logger, importWarnings)
-			result.warnings = append(result.warnings, importWarnings...)
+			result.warnings = append(result.warnings, e.noteImportWarnings(res.Path, importResult)...)
 			uid := extractUID(importResult)
 			if uid == "" {
 				e.logger.Warn("no UID in fetched resource", "path", res.Path)
@@ -2141,8 +2139,7 @@ func (e *Engine) importICal(ctx context.Context, calendarID int64, data string) 
 	}
 	// Collect warnings before the tombstone filter below: dropping a
 	// component must not change which component a warning is attributed to.
-	warnings = collectImportWarnings("", importResult)
-	logImportWarnings(e.logger, warnings)
+	warnings = e.noteImportWarnings("", importResult)
 	// imported reflects whether the SERVER payload carried any component. It is
 	// computed before tombstone filtering so the empty-iCal guard in callers
 	// still fires for a genuinely empty server version, and never falsely fires
@@ -2218,22 +2215,62 @@ func parseICalData(data []byte) (*ical.Calendar, error) {
 
 // collectImportWarnings converts ImportFile's warning strings into
 // ImportWarnings labeled with the resource path. A UID label is attached only
-// when the payload holds exactly one component: a multi-component payload
-// (412 server-wins bodies, manual conflict resolution) may carry a warning
-// from ANY of its components, and blaming the first component's UID sends the
-// user to an event with nothing wrong in it.
+// when every component in the payload shares one nonempty UID — which covers
+// the common recurring case, where a resource imports as master + overrides
+// under a single UID. A payload spanning several UIDs (412 server-wins
+// bodies, manual conflict resolution) may carry a warning from ANY of its
+// components, and blaming the first component's UID sends the user to an
+// event with nothing wrong in it.
 func collectImportWarnings(path string, result icalPkg.ImportResult) []ImportWarning {
 	if len(result.Warnings) == 0 {
 		return nil
 	}
-	uid := ""
-	if len(result.Events)+len(result.Todos)+len(result.Journals) == 1 {
-		uid = extractUID(result)
-	}
+	uid := soleUID(result)
 	warnings := make([]ImportWarning, 0, len(result.Warnings))
 	for _, msg := range result.Warnings {
 		warnings = append(warnings, ImportWarning{Path: path, UID: uid, Message: msg})
 	}
+	return warnings
+}
+
+// soleUID returns the one UID shared by every component of the payload, or
+// "" when the payload is empty, mixes UIDs, or any component lacks one.
+func soleUID(result icalPkg.ImportResult) string {
+	uid := ""
+	sole := func(u string) bool {
+		if u == "" {
+			return false
+		}
+		if uid == "" {
+			uid = u
+			return true
+		}
+		return u == uid
+	}
+	for _, ev := range result.Events {
+		if !sole(ev.UID) {
+			return ""
+		}
+	}
+	for _, td := range result.Todos {
+		if !sole(td.UID) {
+			return ""
+		}
+	}
+	for _, jr := range result.Journals {
+		if !sole(jr.UID) {
+			return ""
+		}
+	}
+	return uid
+}
+
+// noteImportWarnings collects the import warnings for one imported payload
+// and logs them; callers append the returned slice to their result so the
+// warnings also travel as data for entry points that discard the logger.
+func (e *Engine) noteImportWarnings(path string, result icalPkg.ImportResult) []ImportWarning {
+	warnings := collectImportWarnings(path, result)
+	logImportWarnings(e.logger, warnings)
 	return warnings
 }
 

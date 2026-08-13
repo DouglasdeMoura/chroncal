@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"io"
 	"strconv"
 	"strings"
 	"testing"
@@ -37,6 +38,48 @@ func TestFprintImportWarnings(t *testing.T) {
 	fprintImportWarnings(&buf, nil)
 	if buf.Len() != 0 {
 		t.Errorf("no warnings must print nothing (this runs after every write); got %q", buf.String())
+	}
+}
+
+// The opportunistic post-write push must emit import warnings through the
+// injected warning writer — not a hard-wired os.Stderr — and must keep them
+// off the stdout writer: JSON callers pass io.Discard for stdout to keep it
+// clean, and the warnings still belong on the ERROR stream.
+func TestReportOpportunisticPushEmitsWarningsThroughInjectedWriter(t *testing.T) {
+	t.Parallel()
+
+	var out, warn bytes.Buffer
+	reportOpportunisticPush(&out, &warn, "Work", &syncPkg.SyncResult{
+		Pushed: 1,
+		Warnings: []syncPkg.ImportWarning{
+			{Path: "/cal/warned.ics", UID: "warned-uid", Message: "malformed DTEND, fabricated a 1h span"},
+		},
+	})
+	if !strings.Contains(warn.String(), "import warning:") || !strings.Contains(warn.String(), "DTEND") {
+		t.Errorf("warning writer got %q, want the DTEND import warning", warn.String())
+	}
+	if strings.Contains(out.String(), "import warning") {
+		t.Errorf("stdout writer got %q; warnings must stay on the warning writer", out.String())
+	}
+	if !strings.Contains(out.String(), "Synced to Work") {
+		t.Errorf("stdout writer got %q, want the push confirmation", out.String())
+	}
+
+	// A JSON caller discards stdout; the warning must still reach warnW.
+	warn.Reset()
+	reportOpportunisticPush(io.Discard, &warn, "Work", &syncPkg.SyncResult{
+		Warnings: []syncPkg.ImportWarning{{Message: "dropped alarm with unusable trigger"}},
+	})
+	if !strings.Contains(warn.String(), "dropped alarm") {
+		t.Errorf("warning writer got %q, want the warning despite discarded stdout", warn.String())
+	}
+
+	// And a clean push after every write must stay silent on both writers.
+	out.Reset()
+	warn.Reset()
+	reportOpportunisticPush(&out, &warn, "Work", &syncPkg.SyncResult{})
+	if out.Len() != 0 || warn.Len() != 0 {
+		t.Errorf("clean no-op push wrote out=%q warn=%q, want silence", out.String(), warn.String())
 	}
 }
 

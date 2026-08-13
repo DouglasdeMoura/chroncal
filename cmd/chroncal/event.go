@@ -852,11 +852,11 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 				if err := printOutput(w, toJSONEvent(e)); err != nil {
 					return err
 				}
-				pushCalendarAfterWrite(a, e.CalendarID, io.Discard)
+				pushCalendarAfterWrite(a, e.CalendarID, io.Discard, cmd.ErrOrStderr())
 				return nil
 			}
 			printEvent(w, e)
-			pushCalendarAfterWrite(a, e.CalendarID, w)
+			pushCalendarAfterWrite(a, e.CalendarID, w, cmd.ErrOrStderr())
 			return nil
 		},
 	}
@@ -1255,11 +1255,11 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 				if err := printOutput(w, toJSONEvent(e)); err != nil {
 					return err
 				}
-				pushCalendarAfterWrite(a, e.CalendarID, io.Discard)
+				pushCalendarAfterWrite(a, e.CalendarID, io.Discard, cmd.ErrOrStderr())
 				return nil
 			}
 			printEvent(w, e)
-			pushCalendarAfterWrite(a, e.CalendarID, w)
+			pushCalendarAfterWrite(a, e.CalendarID, w, cmd.ErrOrStderr())
 			return nil
 		},
 	}
@@ -1351,11 +1351,11 @@ recurring series.`,
 					if err := printOutput(w, map[string]any{"deleted": true, "uid": e.UID, "series": true}); err != nil {
 						return err
 					}
-					pushCalendarAfterWrite(a, e.CalendarID, io.Discard)
+					pushCalendarAfterWrite(a, e.CalendarID, io.Discard, cmd.ErrOrStderr())
 					return nil
 				}
 				fmt.Fprintf(w, "Deleted event series %q.\n", safeText(e.UID))
-				pushCalendarAfterWrite(a, e.CalendarID, w)
+				pushCalendarAfterWrite(a, e.CalendarID, w, cmd.ErrOrStderr())
 				return nil
 			}
 
@@ -1368,11 +1368,11 @@ recurring series.`,
 				if err := printOutput(w, map[string]any{"deleted": true, "id": e.ID}); err != nil {
 					return err
 				}
-				pushCalendarAfterWrite(a, e.CalendarID, io.Discard)
+				pushCalendarAfterWrite(a, e.CalendarID, io.Discard, cmd.ErrOrStderr())
 				return nil
 			}
 			fmt.Fprintf(w, "Deleted event %d.\n", e.ID)
-			pushCalendarAfterWrite(a, e.CalendarID, w)
+			pushCalendarAfterWrite(a, e.CalendarID, w, cmd.ErrOrStderr())
 			return nil
 		},
 	}

@@ -154,6 +154,33 @@ func TestLogImportWarningsUIDLabeling(t *testing.T) {
 			t.Errorf("single-component payload lost its uid label; log:\n%s", out)
 		}
 	})
+
+	// A recurring event's resource imports as master + overrides sharing ONE
+	// UID — the common case. Whatever component the warning belongs to, the
+	// UID is unambiguous, so counting components (instead of distinct UIDs)
+	// dropped the label exactly where users need it most.
+	t.Run("master plus override sharing one uid keep the label", func(t *testing.T) {
+		t.Parallel()
+		var logBuf bytes.Buffer
+		logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+
+		// The message deliberately omits the UID: only the structured uid
+		// attribute proves the label was attached.
+		result := icalImportResult(
+			[]string{"series-uid", "series-uid"},
+			"WARNING: malformed DTEND on a recurrence override",
+		)
+		warnings := collectImportWarnings("/calendar/series.ics", result)
+		if len(warnings) != 1 || warnings[0].UID != "series-uid" {
+			t.Fatalf("collectImportWarnings = %+v, want one warning labeled series-uid", warnings)
+		}
+		logImportWarnings(logger, warnings)
+
+		out := logBuf.String()
+		if !strings.Contains(out, "series-uid") {
+			t.Errorf("master+override payload sharing one UID lost its uid label; log:\n%s", out)
+		}
+	})
 }
 
 // icalImportResult builds an ImportResult with one event per uid and a single

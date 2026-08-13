@@ -21,7 +21,7 @@ func stubPushSeam(t *testing.T) *[]int64 {
 	t.Helper()
 	pushed := &[]int64{}
 	prev := pushCalendarAfterWrite
-	pushCalendarAfterWrite = func(a *app.App, calendarID int64, w io.Writer) {
+	pushCalendarAfterWrite = func(a *app.App, calendarID int64, w, _ io.Writer) {
 		*pushed = append(*pushed, calendarID)
 	}
 	t.Cleanup(func() { pushCalendarAfterWrite = prev })
