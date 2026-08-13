@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -236,26 +235,12 @@ Helpful conventions:
 	},
 }
 
-// purgeLogger returns the logger for the background purge loop. The TUI
-// owns the terminal, so logs go to the state-dir log file where purge
-// failures stay inspectable; the purger writes at most a few lines per
-// day, so the file needs no rotation. If the file cannot be opened, fall
-// back to silence — never stderr, which would print over the display.
-// The file handle intentionally stays open for the process lifetime: the
-// purge goroutine outlives this call and the OS reclaims the fd on exit.
+// purgeLogger returns the logger for the background purge loop: the shared
+// state-dir file logger (config.StateDirLogger), because the TUI owns the
+// terminal and purge failures must stay inspectable without printing over
+// the display.
 func purgeLogger() *slog.Logger {
-	path, err := config.LogFilePath()
-	if err != nil {
-		return slog.New(slog.DiscardHandler)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return slog.New(slog.DiscardHandler)
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return slog.New(slog.DiscardHandler)
-	}
-	return slog.New(slog.NewTextHandler(f, nil))
+	return config.StateDirLogger()
 }
 
 func initApp() (*app.App, error) {
