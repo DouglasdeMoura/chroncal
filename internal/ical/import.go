@@ -630,43 +630,41 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 	if prop := comp.Props.Get(ical.PropTrigger); prop != nil {
 		tv := prop.Value
 		tzid := prop.Params.Get(ical.ParamTimezoneID)
-		// Validate trigger: must be a parseable duration or datetime.
-		valid := false
-		if duration.Validate(tv) == nil {
-			valid = true
-		} else if _, err := time.Parse("20060102T150405Z", tv); err == nil {
-			valid = true
-		} else if tzid != "" {
-			// TRIGGER;TZID=X:YYYYMMDDTHHMMSS — resolve to UTC.
-			if t, err := time.Parse("20060102T150405", tv); err == nil {
-				if loc, err := time.LoadLocation(tzid); err == nil {
-					t = time.Date(t.Year(), t.Month(), t.Day(),
-						t.Hour(), t.Minute(), t.Second(), 0, loc)
-					tv = t.UTC().Format("20060102T150405Z")
-				} else {
-					warns = append(warns, fmt.Sprintf("VALARM TRIGGER TZID=%s: unknown timezone, treating as floating", tzid))
-				}
-				// Valid as floating even if TZID resolution failed.
+		// Validate the trigger: one arm per value SHAPE, each format parsed
+		// exactly once, with TZID consulted only where it matters (the
+		// compact-floating form). Keep the accepted set in lockstep with
+		// model.ParseAbsoluteTime — that function defines what a stored
+		// absolute trigger MEANS, so a form accepted here but not there
+		// would store alarms the fire path cannot read.
+		isDuration := duration.Validate(tv) == nil
+		valid := isDuration
+		if !valid {
+			if _, err := time.Parse("20060102T150405Z", tv); err == nil {
+				// Already compact UTC — the canonical stored form.
 				valid = true
 			} else if t, err := time.Parse(time.RFC3339, tv); err == nil {
-				// Non-conforming exporters emit RFC 3339 values under a TZID
-				// param. The value carries its own offset, so the TZID is
-				// redundant for interpretation; normalize to UTC compact form
-				// like the compact+TZID path so the stored value is unambiguous.
+				// RFC 3339 carries its own offset (a TZID param, if present,
+				// is redundant): normalize to compact UTC so a stored
+				// absolute trigger has one encoding. Safe because the offset
+				// is explicit — this is NOT the floating-value normalization
+				// that was reverted (issue #572).
 				tv = t.UTC().Format("20060102T150405Z")
 				valid = true
+			} else if t, err := time.Parse("20060102T150405", tv); err == nil {
+				// Compact floating: resolve through the TZID when it loads;
+				// otherwise keep the raw floating value, to be resolved
+				// against the record's timezone at fire time.
+				if tzid != "" {
+					if loc, lerr := time.LoadLocation(tzid); lerr == nil {
+						t = time.Date(t.Year(), t.Month(), t.Day(),
+							t.Hour(), t.Minute(), t.Second(), 0, loc)
+						tv = t.UTC().Format("20060102T150405Z")
+					} else {
+						warns = append(warns, fmt.Sprintf("VALARM TRIGGER TZID=%s: unknown timezone, treating as floating", tzid))
+					}
+				}
+				valid = true
 			}
-		} else if _, err := time.Parse("20060102T150405", tv); err == nil {
-			valid = true
-		} else if t, err := time.Parse(time.RFC3339, tv); err == nil {
-			// RFC 3339 without a TZID param: normalize to UTC compact form,
-			// same as the TZID-tagged RFC 3339 path above, so a stored
-			// absolute trigger has one encoding regardless of a redundant
-			// parameter. Safe because RFC 3339 always carries an explicit
-			// offset — this is NOT the floating-value normalization that was
-			// reverted (issue #572).
-			tv = t.UTC().Format("20060102T150405Z")
-			valid = true
 		}
 		if valid {
 			alarm.TriggerValue = tv
@@ -693,7 +691,7 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 		// (push+pull resets it to START) and that silently resurfaces if the
 		// user later switches the trigger to a duration. Keep the default
 		// "START" for absolute triggers.
-		if rel := prop.Params.Get("RELATED"); rel != "" && duration.Validate(alarm.TriggerValue) == nil {
+		if rel := prop.Params.Get("RELATED"); rel != "" && isDuration {
 			alarm.Related = strings.ToUpper(rel)
 		}
 	}
