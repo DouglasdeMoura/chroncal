@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/douglasdemoura/chroncal/internal/duration"
 )
 
 // MaxAlarmRepeat caps RFC 5545 REPEAT counts. The spec sets no bound, but
@@ -45,7 +47,14 @@ func (a Alarm) ContentEqual(b Alarm) bool {
 	if !triggerValuesEqual(a.TriggerValue, b.TriggerValue) {
 		return false
 	}
-	if !strings.EqualFold(a.Related, b.Related) {
+	// Related picks the anchor a duration offset applies to, so it changes
+	// when a duration alarm fires — but it means nothing on an absolute
+	// trigger: RFC 5545 forbids the param there, export omits it, and import
+	// round-trips it as the default START. Comparing it for absolute triggers
+	// would let a stored pre-normalization "END" break this match on the next
+	// pull and re-fire an already-acknowledged reminder. The triggers already
+	// compared equal above, so checking one side's kind covers both.
+	if duration.Validate(a.TriggerValue) == nil && !strings.EqualFold(a.Related, b.Related) {
 		return false
 	}
 	if a.Description != b.Description || a.Summary != b.Summary {
