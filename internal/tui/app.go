@@ -250,6 +250,7 @@ type syncTotals struct {
 	pulled    int
 	deleted   int
 	conflicts int
+	warnings  int
 	errCount  int
 	firstErr  error
 }
@@ -1281,15 +1282,17 @@ func syncHealthFor(info CalendarInfo) SyncHealth {
 }
 
 // newSyncService builds a sync.Service using the app's shared SQLite handle.
-// Logs and credential-store warnings are discarded so sync work (including
-// token-refresh persistence mid-run) doesn't clobber the rendered TUI; users
-// run `chroncal sync run` from a shell if they need verbose output.
+// Credential-store warnings are discarded so sync work (including
+// token-refresh persistence mid-run) doesn't clobber the rendered TUI. The
+// engine logs to the state-dir log file (never stderr — Bubble Tea owns the
+// terminal), so sync detail like import warnings stays inspectable; users
+// run `chroncal sync run` from a shell if they need verbose output live.
 func (m Model) newSyncService() (*syncpkg.Service, error) {
 	credStore, err := auth.NewCredentialStoreWithWarnings(m.app.CredentialNamespace, m.app.PreviousCredentialNamespaces, m.app.MigrateLegacyCredentials, m.app.AllowPlaintext, io.Discard)
 	if err != nil {
 		return nil, fmt.Errorf("credential store: %w", err)
 	}
-	return syncpkg.NewService(m.app.DB, m.app.Queries, credStore, m.app.Calendars, m.app.Events, m.app.Todos, m.app.Journals, nil), nil
+	return syncpkg.NewService(m.app.DB, m.app.Queries, credStore, m.app.Calendars, m.app.Events, m.app.Todos, m.app.Journals, stateDirSyncLogger()), nil
 }
 
 // runSyncAllPlan lists the connected calendars and emits a syncAllPlannedMsg
@@ -1345,7 +1348,7 @@ func (m Model) runSyncCalendar(id int64, name string) tea.Cmd {
 		if label == "" {
 			label = "calendar"
 		}
-		summary := syncSummary(label, result.Pushed, result.Pulled, result.Deleted, result.Conflicts)
+		summary := syncSummary(label, result.Pushed, result.Pulled, result.Deleted, result.Conflicts, len(result.Warnings))
 		var firstErr error
 		if len(result.Errors) > 0 {
 			firstErr = result.Errors[0]
@@ -1375,6 +1378,7 @@ func (m Model) runSyncAccount(accountID int64, name string) tea.Cmd {
 			totals.pulled += result.Pulled
 			totals.deleted += result.Deleted
 			totals.conflicts += result.Conflicts
+			totals.warnings += len(result.Warnings)
 			if totals.firstErr == nil && len(result.Errors) > 0 {
 				totals.firstErr = result.Errors[0]
 			}
@@ -1384,7 +1388,7 @@ func (m Model) runSyncAccount(accountID int64, name string) tea.Cmd {
 			label = "account"
 		}
 		return syncFinishedMsg{
-			summary: syncSummary(label, totals.pushed, totals.pulled, totals.deleted, totals.conflicts),
+			summary: syncSummary(label, totals.pushed, totals.pulled, totals.deleted, totals.conflicts, totals.warnings),
 			err:     totals.firstErr,
 			reload:  true,
 		}
@@ -2020,14 +2024,14 @@ func (m Model) runOpportunisticPush(calendarID int64) tea.Cmd {
 		if err != nil {
 			return opportunisticPushFinishedMsg{err: err}
 		}
-		if result.Pushed == 0 && result.Deleted == 0 && len(result.Errors) == 0 {
+		if result.Pushed == 0 && result.Deleted == 0 && len(result.Errors) == 0 && len(result.Warnings) == 0 {
 			return opportunisticPushFinishedMsg{}
 		}
 		label := name
 		if label == "" {
 			label = "calendar"
 		}
-		summary := syncSummary(label, result.Pushed, 0, result.Deleted, 0)
+		summary := syncSummary(label, result.Pushed, 0, result.Deleted, 0, len(result.Warnings))
 		var firstErr error
 		if len(result.Errors) > 0 {
 			firstErr = result.Errors[0]
@@ -2038,8 +2042,10 @@ func (m Model) runOpportunisticPush(calendarID int64) tea.Cmd {
 
 // syncSummary builds the footer confirmation for a completed sync, listing
 // only the non-zero counters. A no-op sync reads "Synced Work · up to date"
-// instead of dragging four "· 0" segments behind it.
-func syncSummary(label string, pushed, pulled, deleted, conflicts int) string {
+// instead of dragging five "· 0" segments behind it. warnings counts the
+// import warnings on the SyncResult — values the importer had to fabricate;
+// the count is the in-UI signal, and the full text is in the state-dir log.
+func syncSummary(label string, pushed, pulled, deleted, conflicts, warnings int) string {
 	var parts []string
 	if pushed > 0 {
 		parts = append(parts, fmt.Sprintf("pushed %d", pushed))
@@ -2056,6 +2062,13 @@ func syncSummary(label string, pushed, pulled, deleted, conflicts int) string {
 			noun = "conflicts"
 		}
 		parts = append(parts, fmt.Sprintf("%d %s", conflicts, noun))
+	}
+	if warnings > 0 {
+		noun := "import warning"
+		if warnings > 1 {
+			noun = "import warnings"
+		}
+		parts = append(parts, fmt.Sprintf("%d %s", warnings, noun))
 	}
 	if len(parts) == 0 {
 		return fmt.Sprintf("Synced %s · up to date", label)
@@ -4206,6 +4219,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncTotals.pulled += msg.result.Pulled
 			m.syncTotals.deleted += msg.result.Deleted
 			m.syncTotals.conflicts += msg.result.Conflicts
+			m.syncTotals.warnings += len(msg.result.Warnings)
 			m.syncTotals.errCount += len(msg.result.Errors)
 			if m.syncTotals.firstErr == nil && len(msg.result.Errors) > 0 {
 				m.syncTotals.firstErr = msg.result.Errors[0]
@@ -4220,7 +4234,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		next := msg.index + 1
 		if next >= msg.total {
 			label := fmt.Sprintf("%d calendar(s)", msg.total)
-			summary := syncSummary(label, m.syncTotals.pushed, m.syncTotals.pulled, m.syncTotals.deleted, m.syncTotals.conflicts)
+			summary := syncSummary(label, m.syncTotals.pushed, m.syncTotals.pulled, m.syncTotals.deleted, m.syncTotals.conflicts, m.syncTotals.warnings)
 			finishErr := m.syncTotals.firstErr
 			m.syncTargets = nil
 			m.syncTotals = syncTotals{}
