@@ -351,7 +351,7 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, []string, error) {
 // It returns a warning rather than a silent discard of an unparseable value.
 // A dropped DUE or DTSTART is invisible data loss. The record disappears from
 // date views. Any alarms lose their anchor. The next export re-emits the
-// component with the property missing. An empty first return means the
+// component with no property. An empty first return means the
 // property was absent (no warning) or unusable (warning set).
 func parseDateProp(props ical.Props, kind, name, uid string) (string, string) {
 	prop := props.Get(name)
@@ -856,7 +856,7 @@ func parseCategoriesFromProps(props ical.Props) string {
 // (or DUE for a VTODO with no DTSTART) — for TZID-less DATE-TIME values
 // elsewhere in the component. Returns nil when the anchor is absent,
 // floating, UTC, or date-only. Those components have no zone to inherit.
-// TZID-less values then keep their UTC/floating reading.
+// TZID-less values then keep their UTC/floating read.
 func dtstartZone(props ical.Props) *time.Location {
 	for _, name := range []string{ical.PropDateTimeStart, ical.PropDue} {
 		prop := props.Get(name)
@@ -992,7 +992,7 @@ func attendeeFromProp(prop *ical.Prop) model.Attendee {
 }
 
 // joinMailtoParams joins multiple mailto URI param values into a comma-separated
-// string. It strips the "mailto:" prefix and surrounding quotes from each.
+// string. It strips the "mailto:" prefix and quotes around each value.
 func joinMailtoParams(values []string) string {
 	if len(values) == 0 {
 		return ""
