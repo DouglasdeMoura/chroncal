@@ -13,9 +13,10 @@ import (
 var httpStatusPattern = regexp.MustCompile(`\b([1-5][0-9][0-9])\b`)
 
 // TransientError marks an error as retryable. It optionally carries a
-// server-requested minimum delay before the next attempt, such as the value
-// of an HTTP Retry-After header on a 429 or 503 response. A zero RetryAfter
-// means the server gave no hint. Normal exponential backoff then applies.
+// server-requested minimum delay before the next attempt. One example is the
+// value of an HTTP Retry-After header on a 429 or 503 response. A zero
+// RetryAfter means the server gave no hint. Normal exponential backoff then
+// applies.
 type TransientError struct {
 	Err        error
 	RetryAfter time.Duration
@@ -44,11 +45,11 @@ func retryAfter(err error) time.Duration {
 	return 0
 }
 
-// HTTPError carries an HTTP status code as a typed field so that
-// transient/conflict classification can rely on the real status instead
-// of a scrape of the error string. String scrape is fragile. Any wrap
-// that prepends a numeric token (a batch index, a host:port segment)
-// would shadow the status and mis-route retries.
+// HTTPError carries an HTTP status code as a typed field. Transient and
+// conflict classification can then rely on the real status instead of a
+// scrape of the error string. String scrape is fragile. Any wrap that
+// prepends a numeric token (a batch index, a host:port segment) would
+// shadow the status and mis-route retries.
 type HTTPError struct {
 	Status int
 	// Err holds the underlying error (typically a formatted message with
