@@ -9,7 +9,7 @@ import (
 
 // Regression: custom weekly recurrence (Mon-Thu, never ends) was lost when
 // the user navigated to the field with arrow keys and then submitted via
-// Ctrl+S, because the form's OnSubmit closure captured a stale receiver.
+// Ctrl+S. The form's OnSubmit closure captured a stale receiver.
 func TestEventForm_CustomRecurrencePersistsThroughSubmit(t *testing.T) {
 	day := time.Date(2026, 5, 22, 0, 0, 0, 0, time.UTC) // Friday
 	m, _ := NewEventFormModel(day, testEventFormCalendars(), Theme{})
@@ -69,7 +69,7 @@ func TestEventForm_CustomRecurrencePersistsThroughSubmit(t *testing.T) {
 }
 
 // Regression: multi-day range selection via the date picker was lost on
-// submit for the same reason the recurrence rule was — value-typed range
+// submit for the same reason the recurrence rule was. Value-typed range
 // fields (rangeHasEnd, rangeEndDate) live on the caller's m, not on the
 // OnSubmit closure's captured receiver.
 func TestEventForm_MultiDayRangePersistsThroughSubmit(t *testing.T) {
