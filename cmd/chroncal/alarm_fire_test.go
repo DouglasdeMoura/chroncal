@@ -16,7 +16,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
-// stubFireAlarm installs a counting stub over fireAlarmFn for the duration of
+// stubFireAlarm installs a count stub over fireAlarmFn for the duration of
 // the test and returns a pointer to the invocation count.
 func stubFireAlarm(t *testing.T) *int {
 	t.Helper()
@@ -37,7 +37,7 @@ func newAlarmTestApp(t *testing.T) *app.App {
 }
 
 // newAlarmTestAppWithPath builds a fresh app on a temp DB and returns both the
-// app and the DB path, so a test can open a second connection on the same DB
+// app and the DB path. A test can then open a second connection on the same DB
 // to model two concurrent checkers.
 func newAlarmTestAppWithPath(t *testing.T) (*app.App, string) {
 	t.Helper()
@@ -54,10 +54,10 @@ func newAlarmTestAppWithPath(t *testing.T) (*app.App, string) {
 }
 
 // TestMarkAndFireEventAlarmSkipsFireOnDuplicateClaim is the regression test for
-// issue #70: when two checkers overlap, both observe "no state" and both call
-// MarkFired with the same (alarm_id, trigger_at). The first INSERT wins; the
-// second hits the UNIQUE constraint. fireAlarm must NOT run for the loser, so
-// the alarm fires exactly once.
+// issue #70. When two checkers overlap, both observe "no state" and both call
+// MarkFired with the same (alarm_id, trigger_at). The first INSERT wins. The
+// second hits the UNIQUE constraint. fireAlarm must NOT run for the loser. The
+// alarm then fires exactly once.
 func TestMarkAndFireEventAlarmSkipsFireOnDuplicateClaim(t *testing.T) {
 	ctx := context.Background()
 	a := newAlarmTestApp(t)
@@ -125,15 +125,15 @@ func TestMarkAndFireEventAlarmSkipsFireOnDuplicateClaim(t *testing.T) {
 }
 
 // TestRunAlarmCheckEmitsNoFiredRecordOnLostClaim is the end-to-end regression
-// for issue #70's review follow-up: a checker that loses the claim race must
-// not emit a "fired" JSON record (which would carry state_id:0 and break
-// scripts consuming -o json).
+// for issue #70's review follow-up. A checker that loses the claim race must
+// not emit a "fired" JSON record. That record would carry state_id:0 and break
+// scripts that read -o json.
 //
-// It reproduces the Check-then-claim TOCTOU window deterministically: checker B
-// runs runAlarmCheck and captures the due alarm in Check; the afterCheckForTest
-// seam then lets a competing checker A claim and fire the same alarm before B
-// reaches MarkFired. B therefore loses the UNIQUE (alarm_id, trigger_at) race
-// at claim time and must emit no record.
+// It reproduces the Check-then-claim TOCTOU window in a deterministic way.
+// Checker B runs runAlarmCheck and captures the due alarm in Check. The
+// afterCheckForTest seam then lets a competing checker A claim and fire the
+// same alarm before B reaches MarkFired. B therefore loses the UNIQUE
+// (alarm_id, trigger_at) race at claim time and must emit no record.
 func TestRunAlarmCheckEmitsNoFiredRecordOnLostClaim(t *testing.T) {
 	ctx := context.Background()
 	a, dbPath := newAlarmTestAppWithPath(t)
