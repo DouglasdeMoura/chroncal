@@ -10,9 +10,9 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/account"
 )
 
-// managerRoutingModel is the shared fixture for calendar-manager routing
-// tests: one local default calendar plus one remote calendar under a Google
-// account with a recorded sync error (so attention count is non-zero).
+// managerRoutingModel is the shared fixture for calendar-manager route
+// tests. It has one local default calendar plus one remote calendar under a
+// Google account with a recorded sync error. Attention count is then non-zero.
 func managerRoutingModel() Model {
 	m := NewModel(nil, "")
 	m.width, m.height = 120, 40
@@ -29,8 +29,8 @@ func managerRoutingModel() Model {
 	return m
 }
 
-// TestManageCalendarsRequestOpensManagerRoot locks in the primary cutover:
-// the unified CalendarManagerRequestedMsg with the Root target opens the flat
+// TestManageCalendarsRequestOpensManagerRoot locks in the primary cutover.
+// The unified CalendarManagerRequestedMsg with the Root target opens the flat
 // manager as the sole top-level management overlay at its root list screen.
 func TestManageCalendarsRequestOpensManagerRoot(t *testing.T) {
 	m := managerRoutingModel()
@@ -82,8 +82,9 @@ func TestManageCalendarsShortcutAndPaletteEmitRootRequest(t *testing.T) {
 }
 
 // TestSidebarCalendarRequestOpensManagerCalendarDetail verifies a calendar
-// target opens the manager's calendar detail with the full canonical params
-// (name, color, account linkage, sync health) sourced from the app cache.
+// target opens the manager's calendar detail with the full canonical params.
+// Those params are name, color, account linkage, and sync health. They come
+// from the app cache.
 func TestSidebarCalendarRequestOpensManagerCalendarDetail(t *testing.T) {
 	m := managerRoutingModel()
 	updated, cmd := m.Update(CalendarManagerRequestedMsg{
@@ -113,8 +114,8 @@ func TestSidebarCalendarRequestOpensManagerCalendarDetail(t *testing.T) {
 }
 
 // TestSidebarAccountRequestOpensManagerAccountDetail verifies an account
-// target opens the manager's account detail carrying the canonical provider,
-// server, username, calendar count, and attention count.
+// target opens the manager's account detail. The detail carries the canonical
+// provider, server, username, calendar count, and attention count.
 func TestSidebarAccountRequestOpensManagerAccountDetail(t *testing.T) {
 	m := managerRoutingModel()
 	updated, cmd := m.Update(CalendarManagerRequestedMsg{
@@ -141,8 +142,8 @@ func TestSidebarAccountRequestOpensManagerAccountDetail(t *testing.T) {
 	}
 }
 
-// TestAddAccountOpensAccountConnectInsideManager locks the Add Account route:
-// the canonical CalendarManagerRequestedMsg with the AccountConnect target
+// TestAddAccountOpensAccountConnectInsideManager locks the Add Account route.
+// The canonical CalendarManagerRequestedMsg with the AccountConnect target
 // opens the manager with the CalDAV connection form as its calendar-detail
 // screen. This is the same message the palette's "Add Account…" entry emits.
 func TestAddAccountOpensAccountConnectInsideManager(t *testing.T) {
@@ -181,11 +182,11 @@ func TestNewLocalCalendarRequestOpensCreateFormInsideManager(t *testing.T) {
 }
 
 // TestCalendarManagerAddMenuRoutes exercises the three anchored Add-menu rows
-// end to end through the host: opening the manager-local menu with `a`,
-// navigating to each row with the keyboard, executing the emitted
-// CalendarManagerRequestedMsg, and feeding it back into Model.Update. Every
-// row must route directly to its target without touching the obsolete generic
-// choice dialog.
+// end to end through the host. It opens the manager-local menu with `a`.
+// It navigates to each row with the keyboard. It runs the emitted
+// CalendarManagerRequestedMsg. It feeds that message back into Model.Update.
+// Every row must route directly to its target. It must not touch the obsolete
+// generic choice dialog.
 func TestCalendarManagerAddMenuRoutes(t *testing.T) {
 	addKey := tea.KeyPressMsg{Code: 'a', Text: "a"}
 	down := tea.KeyPressMsg{Code: tea.KeyDown}
@@ -290,8 +291,8 @@ func TestCalendarManagerAddMenuRoutes(t *testing.T) {
 }
 
 // TestManagerMutationRefreshesDataWithoutClosing verifies a successful
-// calendar mutation pops the detail back to the root and the manager stays
-// open, with the root list refreshed from the reloaded calendars.
+// calendar mutation pops the detail back to the root. The manager stays
+// open. The root list refreshes from the reloaded calendars.
 func TestManagerMutationRefreshesDataWithoutClosing(t *testing.T) {
 	m := managerRoutingModel()
 	// Open the manager at calendar detail.
@@ -325,7 +326,7 @@ func TestManagerMutationRefreshesDataWithoutClosing(t *testing.T) {
 }
 
 // TestManagerMutationErrorKeepsChildOpen verifies a failed mutation leaves the
-// originating calendar detail open and surfaces the error on its Name field.
+// calendar detail it came from open. It surfaces the error on its Name field.
 func TestManagerMutationErrorKeepsChildOpen(t *testing.T) {
 	m := managerRoutingModel()
 	updated, _ := m.Update(CalendarManagerRequestedMsg{
@@ -380,7 +381,7 @@ func TestPaletteRetainsOnlyUnifiedCalendarManagement(t *testing.T) {
 }
 
 // TestManagerOpenDefersQuitKeyToOverlay verifies that while the manager is
-// open, the global q does not open the quit confirm — the manager owns q to
+// open, the global q does not open the quit confirm. The manager owns q to
 // close itself (issue #406 parity with the other read-only overlays).
 func TestManagerOpenDefersQuitKeyToOverlay(t *testing.T) {
 	m := managerRoutingModel()
@@ -392,7 +393,7 @@ func TestManagerOpenDefersQuitKeyToOverlay(t *testing.T) {
 	}
 }
 
-// keyPress builds a KeyPressMsg for a literal key string, mirroring how the
+// keyPress builds a KeyPressMsg for a literal key string. That matches how the
 // app's key bindings are matched.
 func keyPress(s string) tea.KeyPressMsg {
 	return tea.KeyPressMsg{Text: s}
