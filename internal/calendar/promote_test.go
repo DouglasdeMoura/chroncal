@@ -10,8 +10,8 @@ import (
 )
 
 // newPromoteTx starts a transaction and returns a qtx bound to it plus a commit
-// helper, mirroring how the delete/reconcile paths invoke PromoteDefault inside
-// their own transactions.
+// helper. That matches how the delete/reconcile paths invoke PromoteDefault
+// inside their own transactions.
 func newPromoteTx(t *testing.T, q *storage.Queries, db *sql.DB) (*storage.Queries, func(), func()) {
 	t.Helper()
 	ctx := context.Background()
@@ -97,8 +97,8 @@ func TestPromoteDefault_NonexistentTargetIsInvalid(t *testing.T) {
 }
 
 // TestPromoteDefault_FailureLeavesDefaultIntact locks the rollback half of the
-// invariant: when the target does not survive, the helper refuses before the
-// caller commits, so the committed default is never observed missing.
+// invariant. When the target does not survive, the helper refuses before the
+// caller commits. The committed default is then never observed as gone.
 func TestPromoteDefault_FailureLeavesDefaultIntact(t *testing.T) {
 	svc, q, db := newTestServiceWithDB(t)
 	ctx := context.Background()
@@ -120,8 +120,8 @@ func TestPromoteDefault_FailureLeavesDefaultIntact(t *testing.T) {
 }
 
 // TestPromoteDefault_AcceptsTargetCreatedInSameTransaction documents why the
-// survival check runs through qtx: ReconcileSelection promotes a calendar it
-// just created in the same transaction, which is invisible outside it.
+// survival check runs through qtx. ReconcileSelection promotes a calendar it
+// just created in the same transaction. That calendar is invisible outside it.
 func TestPromoteDefault_AcceptsTargetCreatedInSameTransaction(t *testing.T) {
 	svc, q, db := newTestServiceWithDB(t)
 	ctx := context.Background()
