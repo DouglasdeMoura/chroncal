@@ -10,7 +10,7 @@ import (
 )
 
 // defaultWindowDays derives the number of days parseDateRange spans when no
-// --from/--to are supplied, so the help text can be asserted against the real
+// --from/--to are supplied. The help text can then be asserted against the real
 // default rather than a hard-coded literal.
 func defaultWindowDays(t *testing.T) int {
 	t.Helper()
@@ -27,7 +27,7 @@ func defaultWindowDays(t *testing.T) int {
 // drifting from the actual default window in parseDateRange. The todo and
 // journal list commands previously advertised "14 days" while the code
 // defaulted to 30 (issue #139). Those retrospective lists now use an open
-// default window (issue #304); only `event list` keeps the forward
+// default window (issue #304). Only `event list` keeps the forward
 // parseDateRange window this guard covers.
 func TestListToFlagHelpMatchesDefaultWindow(t *testing.T) {
 	want := fmt.Sprintf("%d days from now", defaultWindowDays(t))
