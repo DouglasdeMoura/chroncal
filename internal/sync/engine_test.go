@@ -859,9 +859,9 @@ END:VCALENDAR
 }
 
 // TestEnginePullIncompletePullMarksCalendarUnhealthy reproduces issue #293. A
-// pull that can never converge (here, an href the server keeps as
-// changed but that 404s on every multiget) used to only log and return no
-// error. SyncResult.Errors stayed empty. updateSyncHealth recorded the
+// pull that can never converge used to only log and return no error. Here the
+// server keeps an href as changed. That href 404s on every multiget.
+// SyncResult.Errors stayed empty. updateSyncHealth recorded the
 // calendar as healthy. The ambient ⚠ glyph never lit up despite a stuck
 // sync. The incomplete pull must surface an error. The calendar is then
 // recorded unhealthy.
@@ -3102,9 +3102,9 @@ END:VCALENDAR
 	}
 }
 
-// TestEnginePullWithholdsTokenOnPersistFailure covers issue #103. When a
-// fetched resource is successfully multiget'd but fails to persist locally
-// (a transient SQLite busy/lock or a child-replace error), the pull must NOT
+// TestEnginePullWithholdsTokenOnPersistFailure covers issue #103. A fetched
+// resource is successfully multiget'd. It then fails to persist locally (a
+// transient SQLite busy/lock or a child-replace error). The pull must NOT
 // advance the sync-token. Otherwise the token moves past the failed change.
 // The next REPORT never re-lists it. The server-side update is then lost
 // from the local copy indefinitely. The resource's old etag and the calendar
