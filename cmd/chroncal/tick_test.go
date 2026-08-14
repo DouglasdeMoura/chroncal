@@ -27,12 +27,14 @@ func (f *fakeTickSyncer) SyncCalendar(ctx context.Context, calendarID int64, str
 	return f.results[calendarID], f.errs[calendarID]
 }
 
-// `chroncal service run` is the primary background sync path, so a sync
-// cycle that "succeeded" per its error return but recorded per-phase errors
-// on the SyncResult must still fail the tick — otherwise a calendar can be
-// half-broken forever with exit 0 and an empty journal. Before the fix the
-// loop discarded the result entirely.
-func TestRunSyncPassFoldsResultErrors(t *testing.T) {
+// A per-item sync error recorded on SyncResult.Errors (SyncCalendar itself
+// returned nil) must NOT fail the tick. The engine already logs each such
+// error to the stderr logger — which reaches the journal on `service run` —
+// so it stays visible; but a single permanently-stuck remote item should not
+// flip `service run`'s exit code to non-zero on every cycle forever, which
+// would drown any exit-code monitor in noise it cannot act on. Only hard
+// failures (below) fail the tick.
+func TestRunSyncPassPartialErrorsDoNotFailTheTick(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 4, 3, 12, 0, 0, 0, time.UTC)
@@ -48,14 +50,39 @@ func TestRunSyncPassFoldsResultErrors(t *testing.T) {
 	}
 
 	err := runSyncPass(context.Background(), fake, now, 15*time.Minute, syncPkg.ConflictServerWins)
-	if err == nil {
-		t.Fatal("runSyncPass returned nil despite per-phase errors on the result")
-	}
-	if !strings.Contains(err.Error(), "Broken") || !strings.Contains(err.Error(), "HTTP 507") {
-		t.Errorf("error = %q, want it to name the calendar and the per-phase failure", err)
+	if err != nil {
+		t.Errorf("runSyncPass = %q, want nil: a per-item result error is logged by the engine, not a tick failure", err)
 	}
 	if len(fake.synced) != 2 {
-		t.Errorf("synced calendars = %v, want both despite calendar 2 failing", fake.synced)
+		t.Errorf("synced calendars = %v, want both attempted", fake.synced)
+	}
+}
+
+// A hard SyncCalendar error (auth, network, DB — the whole calendar failed to
+// sync) fails the tick, naming the calendar, while every other due calendar is
+// still attempted.
+func TestRunSyncPassHardErrorFailsTheTick(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 4, 3, 12, 0, 0, 0, time.UTC)
+	fake := &fakeTickSyncer{
+		statuses: []syncPkg.SyncStatus{
+			{CalendarID: 1, CalendarName: "Clean"},
+			{CalendarID: 2, CalendarName: "Broken"},
+		},
+		results: map[int64]*syncPkg.SyncResult{1: {CalendarID: 1, Pushed: 1}},
+		errs:    map[int64]error{2: errors.New("credential store: keyring locked")},
+	}
+
+	err := runSyncPass(context.Background(), fake, now, 15*time.Minute, syncPkg.ConflictServerWins)
+	if err == nil {
+		t.Fatal("runSyncPass returned nil despite a hard SyncCalendar failure")
+	}
+	if !strings.Contains(err.Error(), "Broken") || !strings.Contains(err.Error(), "keyring locked") {
+		t.Errorf("error = %q, want it to name the calendar and the hard failure", err)
+	}
+	if len(fake.synced) != 2 {
+		t.Errorf("synced calendars = %v, want both attempted despite calendar 2 failing", fake.synced)
 	}
 }
 

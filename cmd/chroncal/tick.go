@@ -73,10 +73,13 @@ type tickSyncer interface {
 	SyncCalendar(ctx context.Context, calendarID int64, strategy syncPkg.ConflictStrategy) (*syncPkg.SyncResult, error)
 }
 
-// runSyncPass syncs every due calendar once. Per-phase errors recorded on a
-// SyncResult count as failures even when SyncCalendar itself returned nil —
-// discarding the result here used to leave a half-broken calendar reporting
-// success (exit 0) on every tick.
+// runSyncPass syncs every due calendar once. The tick fails only on a hard
+// SyncCalendar error — the whole calendar failed to sync (auth, network, DB).
+// Per-item errors recorded on SyncResult.Errors do NOT fail the tick: the
+// engine already logs each one to the stderr logger (which reaches the journal
+// on `service run`), so they stay visible, and failing the exit code on a
+// single permanently-stuck remote item would leave every scheduled cycle
+// reporting failure forever with nothing the operator can do about it.
 func runSyncPass(ctx context.Context, svc tickSyncer, now time.Time, interval time.Duration, strategy syncPkg.ConflictStrategy) error {
 	statuses, err := svc.Status(ctx)
 	if err != nil {
@@ -88,11 +91,7 @@ func runSyncPass(ctx context.Context, svc tickSyncer, now time.Time, interval ti
 		if !syncDue(now, status.LastSyncAttemptedAt, interval) {
 			continue
 		}
-		result, err := svc.SyncCalendar(ctx, status.CalendarID, strategy)
-		if err == nil && result != nil && len(result.Errors) > 0 {
-			err = errors.Join(result.Errors...)
-		}
-		if err != nil {
+		if _, err := svc.SyncCalendar(ctx, status.CalendarID, strategy); err != nil {
 			syncErrs = append(syncErrs, fmt.Errorf("%s: %w", status.CalendarName, err))
 		}
 	}
