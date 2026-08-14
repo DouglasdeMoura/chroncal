@@ -294,7 +294,7 @@ func (s *Service) Discover(ctx context.Context, accountID int64, store auth.Cred
 
 // DiscoverWithCredential replaces an account's credential and runs a
 // complete discovery under the same lifecycle lock. A failed discovery restores
-// the previous credential. A reconnect with a typo then cannot break working sync.
+// the previous credential. A reconnect with a typo then cannot break live sync.
 func (s *Service) DiscoverWithCredential(ctx context.Context, accountID int64, replacement auth.Credential, store auth.CredentialStore) (Discovery, error) {
 	release, err := synclock.Account(ctx, s.db, accountID)
 	if err != nil {
@@ -977,7 +977,7 @@ func remoteCalendarName(remote caldav.RemoteCalendar) string {
 // server-relative path discovery returns ("/cal/work/") then reconcile to the
 // same row instead of a duplicate. Relative references resolve against the
 // account server URL. Absolute references are kept as-is. Both are normalized
-// to a trailing-slash-free form.
+// to a form with no slash at the end.
 func remoteIdentityKey(raw, serverURL string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
