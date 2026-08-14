@@ -21,8 +21,8 @@ func defaultUIState() UIState {
 	return UIState{ShowSidebar: true}
 }
 
-// LoadUIState reads persisted UI state. Missing or malformed files
-// yield defaults; callers don't need to distinguish first-run from error.
+// LoadUIState reads persisted UI state. Files that are gone or malformed
+// yield defaults. Callers do not need to distinguish first-run from error.
 func LoadUIState() UIState {
 	path, err := stateFile()
 	if err != nil {
@@ -61,7 +61,7 @@ func SaveUIState(s UIState) error {
 
 // LogFilePath returns the path of the background-job log file. Jobs that
 // run while the TUI owns the terminal (the soft-delete purger) log here
-// instead of stderr so failures stay inspectable without printing over
+// instead of stderr. Failures then stay inspectable. They do not print over
 // the display.
 func LogFilePath() (string, error) {
 	dir, err := stateDir()
@@ -79,7 +79,7 @@ func stateFile() (string, error) {
 	return filepath.Join(dir, "chroncal", "state.json"), nil
 }
 
-// stateDir resolves XDG_STATE_HOME, falling back to ~/.local/state on
+// stateDir resolves XDG_STATE_HOME. It falls back to ~/.local/state on
 // Linux and os.UserConfigDir() on platforms without a state convention.
 func stateDir() (string, error) {
 	if dir := os.Getenv("XDG_STATE_HOME"); dir != "" {
