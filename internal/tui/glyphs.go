@@ -1,7 +1,7 @@
 package tui
 
 // Glyphs maps semantic names to display characters used across the TUI.
-// Centralising them here makes it easy to swap icon sets (e.g. Nerd Font
+// Keep them here so it is easy to swap icon sets (e.g. Nerd Font
 // vs plain Unicode) from a single place.
 var Glyphs = map[string]string{
 	// Focus / navigation
