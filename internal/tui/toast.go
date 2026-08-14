@@ -41,8 +41,8 @@ const ToastRestoredDismissDelay = 3 * time.Second
 type toastTickMsg struct{ token int }
 
 // ToastModel is a single-slot UI surface for the undo affordance. "Single
-// slot, last wins" is the whole mental model: a second delete within the 6s
-// window replaces the first toast, and the undo stack (independent of the
+// slot, last wins" is the whole mental model. A second delete within the 6s
+// window replaces the first toast. The undo stack (independent of the
 // toast) still remembers both.
 type ToastModel struct {
 	state    ToastState
@@ -62,8 +62,8 @@ func NewToastModel(theme Theme) ToastModel {
 func (t *ToastModel) SetTheme(theme Theme) { t.theme = theme }
 
 // Deleted announces a just-completed delete. When synced is true, the copy
-// signals the server has already received the DELETE; when false, the local
-// delete is still pending upload. Returns a command that fires the
+// signals the server has already received the DELETE. When false, the local
+// delete is still unpushed. Returns a command that fires the
 // auto-dismiss tick.
 func (t *ToastModel) Deleted(title string, synced bool) tea.Cmd {
 	t.token++
@@ -79,7 +79,7 @@ func (t *ToastModel) Deleted(title string, synced bool) tea.Cmd {
 }
 
 // Restoring replaces the current toast copy with an in-flight indicator. It
-// does not reset the dismiss timer — the caller will transition to Empty or
+// does not reset the dismiss timer. The caller will transition to Empty or
 // Failed once the restore completes.
 func (t *ToastModel) Restoring() {
 	t.state = ToastRestoring
@@ -95,7 +95,7 @@ func (t *ToastModel) Failed(reason string) tea.Cmd {
 }
 
 // Restored confirms a successful undo. It replaces Restoring in-place (via
-// token bump) and auto-dismisses after a short 3s window — by the time it
+// token bump) and auto-dismisses after a short 3s window. By the time it
 // shows, the user has already seen the row reappear in the grid.
 func (t *ToastModel) Restored(title string) tea.Cmd {
 	t.token++
@@ -118,7 +118,7 @@ func (t *ToastModel) Purged(title string) tea.Cmd {
 	return t.scheduleDismiss(ToastRestoredDismissDelay)
 }
 
-// Clear hides the toast immediately and invalidates any pending tick.
+// Clear hides the toast immediately and invalidates any tick that is still armed.
 func (t *ToastModel) Clear() {
 	t.token++
 	t.state = ToastEmpty
@@ -127,7 +127,7 @@ func (t *ToastModel) Clear() {
 }
 
 // Update handles tick messages. Returns true when the message was consumed
-// so the host can skip further handling.
+// so the host can skip further work on it.
 func (t *ToastModel) Update(msg tea.Msg) bool {
 	tick, ok := msg.(toastTickMsg)
 	if !ok {
@@ -153,7 +153,7 @@ func (t *ToastModel) Update(msg tea.Msg) bool {
 // State exposes the current state (mainly for tests).
 func (t ToastModel) State() ToastState { return t.state }
 
-// IsVisible reports whether the toast has anything to render.
+// IsVisible reports whether the toast has content to render.
 func (t ToastModel) IsVisible() bool { return t.state != ToastEmpty }
 
 // View renders the toast. The caller composites the result into the footer.
