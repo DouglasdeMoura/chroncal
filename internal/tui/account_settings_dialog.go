@@ -397,8 +397,8 @@ type AccountCredentialsDialogModel struct {
 }
 
 // NewAccountCredentialsDialogModel builds the credential-rotation form for one
-// account. Bearer auth collects a token; every other basic-or-bearer type
-// collects a password — matching the field the calendar connect flow uses.
+// account. Bearer auth collects a token. Every other basic-or-bearer type
+// collects a password. That matches the field the calendar connect flow uses.
 func NewAccountCredentialsDialogModel(
 	accountID int64,
 	accountName, authType, username string,
