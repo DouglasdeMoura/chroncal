@@ -33,13 +33,13 @@ type SyncChange struct {
 // SyncCollectionResult holds the parsed multistatus from a sync-collection
 // REPORT. SyncToken is the new token to store for the next incremental sync.
 //
-// Truncated reports the RFC 6578 §3.6 marker: the server limited the result
+// Truncated reports the RFC 6578 §3.6 marker. The server limited the result
 // set (Google pages large initial snapshots) and flagged it with a
-// <response> for the collection itself carrying 507 Insufficient Storage.
-// SyncToken then represents only the PARTIAL state — callers must repeat
-// the REPORT with it to fetch the rest, and must never treat a truncated
-// change list as a complete inventory (diffing local state against a
-// partial page is how events get wrongly deleted).
+// <response> for the collection itself that carries 507 Insufficient Storage.
+// SyncToken then represents only the PARTIAL state. Callers must repeat
+// the REPORT with it to fetch the rest. Never treat a truncated
+// change list as a complete inventory. A diff of local state against a
+// partial page is how events get wrongly deleted.
 type SyncCollectionResult struct {
 	SyncToken string
 	Changes   []SyncChange
@@ -48,7 +48,7 @@ type SyncCollectionResult struct {
 
 // SyncCollection runs an RFC 6578 sync-collection REPORT against the calendar
 // at calendarPath. Pass an empty syncToken on the very first call to receive
-// a full snapshot of hrefs+etags plus a fresh token; subsequent calls return
+// a full snapshot of hrefs+etags plus a fresh token. Later calls return
 // only resources changed since the supplied token.
 //
 // The body returned only contains hrefs + etags. Use GetResources for the
