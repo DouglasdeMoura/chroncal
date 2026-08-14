@@ -124,10 +124,10 @@ func priv(names ...string) verifyCurrentUserPrivilegeSet {
 	return set
 }
 
-// Calendar access must be classified conservatively: aggregate privileges
-// (all/write/owner) imply full write, granular rights require every operation
-// chroncal sends, and anything short of that is read-only when readable so we
-// never attempt an unsupported write.
+// Calendar access must be classified conservatively. Aggregate privileges
+// (all/write/owner) imply full write. Granular rights require every operation
+// chroncal sends. Any shortfall of that is read-only when readable. We
+// then never attempt an unsupported write.
 func TestCalendarAccessFromPrivileges(t *testing.T) {
 	t.Parallel()
 
