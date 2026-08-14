@@ -49,7 +49,7 @@ func buildTZMap(cal *goical.Calendar) map[string]*time.Location {
 }
 
 // locationFromVTZ extracts a fixed-offset *time.Location from a VTIMEZONE
-// component by reading the TZOFFSETTO of the most recent STANDARD
+// component. It reads the TZOFFSETTO of the most recent STANDARD
 // sub-component (or DAYLIGHT if no STANDARD exists).
 func locationFromVTZ(vtz *goical.Component, tzid string) *time.Location {
 	var offset string
@@ -89,7 +89,7 @@ func compPropText(c *goical.Component, name string) string {
 }
 
 // parseUTCOffset parses an RFC 5545 UTC-OFFSET value like "+0530", "-0800",
-// or "+005258" (the optional trailing seconds component) and returns the
+// or "+005258" (the optional seconds component at the end) and returns the
 // offset in seconds.
 func parseUTCOffset(s string) (int, error) {
 	s = strings.TrimSpace(s)
@@ -201,7 +201,7 @@ func resolveComponentTZIDs(comp *goical.Component, tzMap map[string]*time.Locati
 }
 
 // windowsToIANA maps common Windows timezone names to IANA identifiers.
-// Source: Unicode CLDR windowsZones.xml (subset covering major zones).
+// Source: Unicode CLDR windowsZones.xml (subset of major zones).
 var windowsToIANA = map[string]string{
 	"AUS Central Standard Time":       "Australia/Darwin",
 	"AUS Eastern Standard Time":       "Australia/Sydney",
