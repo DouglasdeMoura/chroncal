@@ -59,18 +59,18 @@ func trimURLTail(u string) string {
 	return u
 }
 
-// hyperlink wraps text in an OSC 8 escape sequence so terminals that honor
-// it can open the URL on click, even when the TUI captures mouse events.
+// hyperlink wraps text in an OSC 8 escape sequence. Terminals that honor
+// it can then open the URL on click, even when the TUI captures mouse events.
 // Falls back to a plain text render on terminals that ignore OSC 8.
 func hyperlink(url, text string) string {
 	return "\x1b]8;;" + url + "\x1b\\" + text + "\x1b]8;;\x1b\\"
 }
 
-// linkifyText finds URLs in a single line of plain text and wraps each one
+// linkifyText finds URLs in a single line of plain text. It wraps each one
 // with an OSC 8 hyperlink and a mouseMark zone tagged with linkZonePrefix.
 // Input must not contain newlines. Call it on each wrapped line. The
 // optional rewriter transforms the click target (for example to inject
-// Google's authuser hint) with no change of the visible URL text.
+// Google's authuser hint). The visible URL text does not change.
 func linkifyText(s string, rw urlRewriter) string {
 	return linkifyTextZoned(s, rw, true)
 }
