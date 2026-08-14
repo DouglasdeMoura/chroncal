@@ -242,11 +242,11 @@ END:VCALENDAR`
 }
 
 // A TZID-less (floating) EXDATE on a zone-anchored event carries the DTSTART
-// zone's wall clock, not UTC (RFC 5545 §3.3.5 floating = local time; Google
-// transiently serves this form right after an organizer edit). Reading it as
-// UTC skews the instant by the zone offset, so the EXDATE never matches the
-// occurrence it cancels and the server-deleted instance keeps rendering
-// locally forever — etag-gated sync never re-imports the resource to repair
+// zone's wall clock, not UTC. RFC 5545 §3.3.5 floating = local time. Google
+// transiently serves this form right after an organizer edit. A read of it as
+// UTC skews the instant by the zone offset. The EXDATE then never matches the
+// occurrence it cancels. The server-deleted instance keeps a local render
+// forever. etag-gated sync never re-imports the resource to repair
 // it ("Product Weekly Tactical" bug).
 func TestImport_EventFloatingEXDATEUsesDTSTARTZone(t *testing.T) {
 	t.Parallel()
@@ -282,9 +282,9 @@ END:VCALENDAR`
 }
 
 // An EXDATE whose TZID cannot be resolved (a private name with no VTIMEZONE
-// mapping) must fall back to the DTSTART zone rather than silently reading the
-// zone-local wall clock as UTC — same skew, same permanently-resurrected
-// occurrence as the floating case above.
+// mapping) must fall back to the DTSTART zone. It must not read the
+// zone-local wall clock as UTC in silence. Same skew. Same permanently
+// resurrected occurrence as the floating case above.
 func TestImport_EventUnresolvableEXDATETZIDFallsBackToDTSTARTZone(t *testing.T) {
 	t.Parallel()
 	ics := `BEGIN:VCALENDAR
@@ -312,9 +312,9 @@ END:VCALENDAR`
 	}
 }
 
-// Regression test for issue #421: a floating recurring event (DTSTART with
+// Regression test for issue #421. A floating recurring event (DTSTART with
 // no TZID and no Z) whose EXDATE/RDATE are also floating must round-trip back
-// out as floating values. UTC-converting them on export breaks occurrence
+// out as floating values. A UTC convert of them on export breaks occurrence
 // exclusion on servers that match EXDATE against RRULE occurrences by string.
 func TestImport_EventFloatingEXDATERoundTrip(t *testing.T) {
 	t.Parallel()
@@ -398,10 +398,10 @@ func TestImport_AllDayEvent(t *testing.T) {
 	}
 }
 
-// Regression test for issue #219: an all-day VEVENT carrying only
+// Regression test for issue #219. An all-day VEVENT that carries only
 // DTSTART;VALUE=DATE (no DTEND, no DURATION) has an implicit duration of one
-// day per RFC 5545 §3.6.1. Before the fix the timed +1h default leaked in and
-// the all-day truncation collapsed EndTime back to StartTime, storing a
+// day per RFC 5545 §3.6.1. Before the fix the timed +1h default leaked in.
+// The all-day truncation collapsed EndTime back to StartTime. That stored a
 // zero-length event.
 // The unparseable-TRIGGER contract (dropped at import, with a warning) lives in
 // trigger_contract_test.go alongside the export-side guard it pairs with.
@@ -438,12 +438,12 @@ func TestImport_AllDayEvent_NoEndDefaultsToOneDay(t *testing.T) {
 	}
 }
 
-// Regression test for issue #64: all-day (VALUE=DATE) events must be stored
-// at midnight UTC, independent of the importing host's timezone. Before the
-// fix the importer built the date in time.Local and then called .UTC(), so the
-// stored instant shifted by the host offset (e.g. under UTC+12 midnight local
-// became 12:00Z the previous day), corrupting the calendar date and recurrence
-// occurrences.
+// Regression test for issue #64. All-day (VALUE=DATE) events must be stored
+// at midnight UTC, independent of the host timezone that imports them. Before
+// the fix the importer built the date in time.Local and then called .UTC().
+// The stored instant then shifted by the host offset (e.g. under UTC+12
+// midnight local became 12:00Z the previous day). That corrupts the calendar
+// date and recurrence occurrences.
 func TestImport_AllDayEvent_StoresMidnightUTC_RegardlessOfHostTZ(t *testing.T) {
 	// Mutates time.Local, so this test cannot run in parallel.
 	prevLocal := time.Local
@@ -505,10 +505,10 @@ END:VCALENDAR`
 	}
 }
 
-// Regression test for issue #64 (Codex review follow-up): date-only
+// Regression test for issue #64 (Codex review follow-up). Date-only
 // EXDATE/RDATE values for all-day events must normalize to midnight UTC, the
 // same as DTSTART. Otherwise, on a non-UTC host an EXDATE;VALUE=DATE would land
-// on the wrong UTC day and fail to suppress the occurrence, and an
+// on the wrong UTC day and fail to suppress the occurrence. An
 // RDATE;VALUE=DATE would be added at a host-shifted instant.
 func TestImport_AllDayEXDATERDATE_NormalizeToUTC(t *testing.T) {
 	// Mutates time.Local, so this test cannot run in parallel.
@@ -713,8 +713,8 @@ END:VCALENDAR`
 }
 
 // An unparseable RECURRENCE-ID must drop the component (with a warning and a
-// SkippedComponents count) rather than degrade to "" — otherwise the override
-// imports as the series master and absence-based reconciliation misfires.
+// SkippedComponents count). It must not degrade to "". Otherwise the override
+// imports as the series master. Absence-based reconciliation then misfires.
 func TestImport_UnparseableRecurrenceID_SkipsComponent(t *testing.T) {
 	t.Parallel()
 	ics := `BEGIN:VCALENDAR
@@ -792,9 +792,9 @@ END:VCALENDAR`
 	}
 }
 
-// Regression test for issue #364: a timed (DATE-TIME) VEVENT with DTSTART but
-// no DTEND and no DURATION property must be imported as a zero-duration
-// (instantaneous) event, not a fabricated 1-hour block.
+// Regression test for issue #364. A timed (DATE-TIME) VEVENT with DTSTART but
+// no DTEND and no DURATION property must import as a zero-duration
+// (instantaneous) event. It must not import as a fabricated 1-hour block.
 // RFC 5545 §3.6.1: "If neither the 'dtend' nor the 'duration' property is not
 // present, then the event has a zero duration."
 func TestImport_TimedEvent_NoDTEND_NoDuration_ZeroLength(t *testing.T) {
@@ -859,11 +859,11 @@ END:VCALENDAR`
 	}
 }
 
-// A malformed DTEND (go-ical stores the raw value without validating) must not
-// silently collapse the event to zero duration the way the old code did
+// A malformed DTEND (go-ical stores the raw value with no validate) must not
+// collapse the event to zero duration in silence. The old code did that
 // (endTime, _ = Props.DateTime). Mirror the malformed-DURATION treatment
-// (TestImport_MalformedDuration): fall back to a 1h span and record a warning
-// so the user learns the end was dropped instead of reading back a bogus
+// (TestImport_MalformedDuration). Fall back to a 1h span and record a warning.
+// The user then learns the end was dropped. They do not read back a bogus
 // instantaneous event on re-export.
 func TestImport_MalformedDTEND_WarnsAndFallsBack(t *testing.T) {
 	t.Parallel()
@@ -1318,11 +1318,11 @@ func TestImport_VJournal_OptionalDTSTART(t *testing.T) {
 	}
 }
 
-// TestImport_CustomVTimezone_PreservesZoneLabel covers issue #131: a TZID that
+// TestImport_CustomVTimezone_PreservesZoneLabel covers issue #131. A TZID that
 // is neither IANA nor a Windows alias (a private VTIMEZONE) must keep its zone
 // identity on import. Previously resolveComponentTZIDs converted the value to
-// UTC and dropped the TZID param, so the event was stored with an empty
-// Timezone (silently becoming a plain UTC event). The instant must stay
+// UTC and dropped the TZID param. The event was then stored with an empty
+// Timezone (a plain UTC event, in silence). The instant must stay
 // correct AND the original TZID label must be preserved.
 func TestImport_CustomVTimezone_PreservesZoneLabel(t *testing.T) {
 	t.Parallel()
