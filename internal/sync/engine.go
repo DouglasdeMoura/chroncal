@@ -47,7 +47,7 @@ type SyncResult struct {
 }
 
 // ImportWarning is one thing ImportFile could not represent faithfully while
-// importing a server resource — e.g. a malformed DTEND replaced by a
+// it imports a server resource. Examples: a malformed DTEND replaced by a
 // fabricated span, or an alarm dropped for an unusable trigger.
 type ImportWarning struct {
 	// Path is the remote resource path the payload came from; empty when the
@@ -107,16 +107,21 @@ var (
 )
 
 // pushLock returns the per-calendar mutex that serializes the push phase for
-// calendarID, creating it on first use. Concurrent push runs for the same
-// calendar — e.g. an opportunistic save-time PushCalendar racing a periodic
-// SyncCalendar — must not both read the same dirty, never-pushed sync_resource
-// (RemoteUrl=""): each would mint a distinct random href and PUT it without an
-// If-Match precondition, so the server would end up with two objects for one
-// UID. CalDAV servers key dedup on href, not UID, so an If-None-Match:* guard
-// would not catch this (the two hrefs differ). Serializing the phase lets the
-// first run record the remote_url and clear the dirty flag before the second
-// reads it. This guards only same-process concurrency; two CLI processes
-// pushing the same calendar at once can still race. See issue #225.
+// calendarID. It creates the mutex on first use.
+//
+// Concurrent push runs for the same calendar must not both read the same
+// dirty, never-pushed sync_resource (RemoteUrl=""). One example is a
+// save-time PushCalendar that races a periodic SyncCalendar. Each run would
+// mint a distinct random href and PUT it without an If-Match precondition.
+// The server would then hold two objects for one UID.
+//
+// CalDAV servers key dedup on href, not UID. An If-None-Match:* guard would
+// not catch this: the two hrefs differ. Serialize the phase. The first run
+// then records the remote_url and clears the dirty flag before the second
+// reads it.
+//
+// This guards only same-process concurrency. Two CLI processes that push the
+// same calendar at once can still race. See issue #225.
 func (e *Engine) pushLock(calendarID int64) *gosync.Mutex {
 	key := pushLockKey{db: e.db, calendarID: calendarID}
 	pushLocksMu.Lock()
@@ -176,9 +181,9 @@ func buildRemoteResourcePath(calendarRef, _ string) string {
 	return normalizeRemoteRef(parsed.String())
 }
 
-// NewEngine creates a new sync engine. A nil logger disables logging:
-// several callers run while the TUI owns the terminal, so falling back
-// to slog's stderr handler would print over the display. Callers that
+// NewEngine creates a new sync engine. A nil logger disables logs.
+// Several callers run while the TUI owns the terminal. A fall back to
+// slog's stderr handler would print over the display. Callers that
 // want sync logs must pass a logger explicitly.
 func NewEngine(db *sql.DB, q *storage.Queries, credStore authpkg.CredentialStore, calendars *calendar.Service, events *event.Service, todos *todo.Service, journals *journal.Service, logger *slog.Logger) *Engine {
 	if logger == nil {
@@ -188,8 +193,8 @@ func NewEngine(db *sql.DB, q *storage.Queries, credStore authpkg.CredentialStore
 }
 
 // loadCalendarClient loads the calendar, its account, and a ready CalDAV client.
-// Returns the calendar row, its account, and the remote calendar URL alongside
-// the client so callers can reuse them without re-querying.
+// It returns the calendar row, its account, and the remote calendar URL with
+// the client so callers can reuse them without a second query.
 func (e *Engine) loadCalendarClient(ctx context.Context, calendarID int64) (storage.Calendar, storage.Account, *caldav.Client, string, error) {
 	cal, err := e.q.GetCalendar(ctx, calendarID)
 	if err != nil {
@@ -223,8 +228,8 @@ func (e *Engine) loadCalendarClient(ctx context.Context, calendarID int64) (stor
 }
 
 // lockCalendarLifecycle acquires locks in account-then-calendar order and
-// revalidates the association after waiting. A concurrent relink can change
-// the account between the initial lookup and lock acquisition; retrying makes
+// revalidates the association after the wait. A concurrent relink can change
+// the account between the initial lookup and lock acquisition. A retry makes
 // sure the returned lock always covers the account loadCalendarClient uses.
 func (e *Engine) lockCalendarLifecycle(ctx context.Context, calendarID int64) (func(), error) {
 	for {
@@ -363,12 +368,12 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 	return result, nil
 }
 
-// PushCalendar runs only the push + tombstone phases for one calendar.
-// It is the write-only fast path used for opportunistic save-time sync:
-// local mutations are flushed upstream without pulling or rewriting
-// calendar metadata. Dirty resources that fail to push stay dirty, so the
+// PushCalendar runs only the push and tombstone phases for one calendar.
+// It is the write-only fast path used for opportunistic save-time sync.
+// Local mutations are flushed upstream. There is no pull and no rewrite of
+// calendar metadata. Dirty resources that fail to push stay dirty. The
 // next full SyncCalendar will retry them. It shares a per-calendar lifecycle
-// lock with SyncCalendar, while the inner push lock continues to protect direct
+// lock with SyncCalendar. The inner push lock continues to protect direct
 // push calls used by focused engine tests.
 func (e *Engine) PushCalendar(ctx context.Context, calendarID int64, strategy ConflictStrategy) (*SyncResult, error) {
 	release, err := e.lockCalendarLifecycle(ctx, calendarID)
@@ -412,7 +417,7 @@ func remoteCalendarIsReadOnly(cal storage.Calendar) bool {
 const accountCalendarSyncTimeout = 5 * time.Minute
 
 // SyncAccount syncs every calendar linked to one account serially. Calendars
-// sharing a credential must not refresh or persist that credential
+// that share a credential must not refresh or persist that credential
 // concurrently.
 func (e *Engine) SyncAccount(ctx context.Context, accountID int64, strategy ConflictStrategy) ([]*SyncResult, error) {
 	cals, err := e.q.ListCalendarsByAccount(ctx, &accountID)
@@ -437,18 +442,19 @@ func (e *Engine) SyncAccount(ctx context.Context, accountID int64, strategy Conf
 }
 
 // maxSyncAllConcurrency bounds how many accounts SyncAll syncs at once. Each
-// account hits an independent server, so concurrency cuts wall-clock time
-// toward the slowest single account instead of the sum of all of them; the cap
-// keeps a user with many accounts from opening an unbounded number of
+// account talks to an independent server. Concurrency then cuts wall-clock
+// time toward the slowest single account instead of the sum of all of them.
+// The cap keeps a user with many accounts from an unbounded number of
 // simultaneous server connections.
 const maxSyncAllConcurrency = 8
 
-// SyncAll syncs all connected calendars. Calendars are grouped by account:
-// distinct accounts sync concurrently (independent servers and credentials),
-// while calendars sharing an account sync serially within one worker so a
-// single OAuth credential refresh can't race itself. Results are returned in
-// ListCalendars order regardless of completion order, and a per-calendar
-// failure is captured in its own SyncResult without aborting the others.
+// SyncAll syncs all connected calendars. Calendars are grouped by account.
+// Distinct accounts sync concurrently (independent servers and credentials).
+// Calendars that share an account sync serially within one worker. A
+// single OAuth credential refresh then cannot race itself. Results are
+// returned in ListCalendars order regardless of completion order. A
+// per-calendar failure is captured in its own SyncResult. The other
+// calendars still run.
 func (e *Engine) SyncAll(ctx context.Context, strategy ConflictStrategy) ([]*SyncResult, error) {
 	cals, err := e.q.ListCalendars(ctx)
 	if err != nil {
@@ -753,12 +759,13 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 }
 
 // putAlreadyLanded reports whether the server's current body for path equals
-// the calendar we just PUT, returning the server's ETag when it matches. It
-// distinguishes a genuine 412 conflict from one caused by a retried PUT whose
-// predecessor actually landed before its response was lost: if the server now
-// holds exactly our payload, that earlier write won, so we adopt its ETag
-// instead of surfacing a false conflict. A mismatch (a real concurrent edit)
-// or any fetch/encode failure conservatively falls back to the 412. See #294.
+// the calendar we just PUT. It returns the server's ETag when it matches.
+//
+// It distinguishes a genuine 412 conflict from a retried PUT whose
+// predecessor landed before its response was lost. If the server now
+// holds exactly our payload, that earlier write won. We then adopt its ETag
+// instead of a false conflict. A mismatch (a real concurrent edit)
+// or any fetch/encode failure falls back to the 412. See #294.
 func (e *Engine) putAlreadyLanded(ctx context.Context, client *caldav.Client, path string, sent *ical.Calendar) (string, bool) {
 	serverRes, err := client.GetResource(ctx, path)
 	if err != nil {
@@ -781,31 +788,37 @@ func (e *Engine) putAlreadyLanded(ctx context.Context, client *caldav.Client, pa
 }
 
 // afterImportRevCapture, when non-nil, runs inside clearDirtyAfterImport just
-// before the conditional clear. It is nil in production and exists only so tests
-// can simulate a concurrent local edit landing between the import and the clear
-// to exercise the rev guard. See issue #417.
+// before the conditional clear. It is nil in production. Tests use it to
+// simulate a concurrent local edit that lands between the import and the
+// clear, to exercise the rev guard. See issue #417.
 var afterImportRevCapture func()
 
 // afterImportPersist, when non-nil, runs inside importICal right after
 // persistImported commits and before the caller's clearDirtyAfterImport. It is
-// nil in production and exists only so tests can simulate a concurrent local edit
-// landing in the persist-commit→clear window to exercise the rev guard now that
-// the rev is captured inside the persist transaction. See issue #494.
+// nil in production. Tests use it to simulate a concurrent local edit that
+// lands in the persist-commit to clear window. That exercises the rev guard
+// now that the persist transaction captures the rev. See issue #494.
 var afterImportPersist func()
 
-// clearDirtyAfterImport adopts the server ETag and clears the dirty flag for a
-// resource whose local row we just overwrote with the server's version
-// (accept-server conflict resolution or a pull), but only when no local edit has
-// landed since the import. importICal/persistImported route through the
-// event/todo/journal services, which flip dirty=1 and bump rev via
-// MarkResourceDirty as a side effect; persistImported captures that post-import
-// rev inside the same transaction and the caller feeds it here as rev. Passing it
-// to FinalizePushedResource makes the clear a no-op when a concurrent user edit
-// bumped rev again after the import committed. An unconditional clear would wipe
-// that edit's dirty flag and silently drop it — the same lost-update race
-// FinalizePushedResource guards on the push path. Capturing rev inside the persist
-// transaction (rather than re-reading it after commit) also closes the narrow
-// window between persist-commit and the read. See issues #92, #417 and #494.
+// clearDirtyAfterImport adopts the server ETag and clears the dirty flag.
+// The resource's local row was overwritten with the server's version
+// (accept-server conflict resolution or a pull). It does so only when no
+// local edit landed after the import.
+//
+// importICal and persistImported route through the event, todo, and journal
+// services. Those services flip dirty=1 and bump rev via MarkResourceDirty as
+// a side effect. persistImported captures that post-import rev inside the
+// same transaction. The caller feeds it here as rev.
+//
+// Pass it to FinalizePushedResource. The clear then becomes a no-op when a
+// concurrent user edit bumped rev again after the import committed. An
+// unconditional clear would wipe that edit's dirty flag and drop it in
+// silence. That is the same lost-update race FinalizePushedResource guards
+// on the push path.
+//
+// Capture rev inside the persist transaction. Do not re-read it after
+// commit. That also closes the narrow window between persist-commit and the
+// read. See issues #92, #417 and #494.
 func (e *Engine) clearDirtyAfterImport(ctx context.Context, calendarID int64, uid, etag string, rev int64) error {
 	if afterImportRevCapture != nil {
 		afterImportRevCapture()
@@ -1054,20 +1067,28 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 // number used by other clients and keeps response sizes manageable.
 const multigetBatchSize = 50
 
-// pendingDeletions is the single chokepoint for the sync engine's most
-// dangerous operation: removing local rows because the server no longer has
-// them. Three production data-loss incidents — multiget 404s, href rewrites,
-// and RFC 6578 §3.6 truncation — all share one root cause: a local row was
-// deleted because it was ABSENT from a remote view that turned out to be
-// incomplete. The two recorders below encode the only safe rule. Explicit
-// deletions carry positive evidence (the server returned 404 for a specific
-// href) and are always sound; absence-inferred deletions require a provably
-// complete inventory and are withheld otherwise. Every UID-level deletion the
-// pull performs goes through apply(), so a new "this looks deleted" code path
-// cannot reach the executor without choosing one of these two doors. The one
-// sanctioned exception is row-granularity override pruning inside a resource
-// (pruneStaleOverrides), which this type cannot host but which obeys the same
-// completeness rule — see its comment for the gates.
+// pendingDeletions is the single gate for the sync engine's most
+// dangerous operation: a remove of local rows because the server no longer
+// has them.
+//
+// Three production data-loss incidents share one root cause:
+//   - multiget 404s
+//   - href rewrites
+//   - RFC 6578 §3.6 truncation
+// A local row was deleted because it was ABSENT from a remote view that
+// turned out to be incomplete.
+//
+// The two recorders below encode the only safe rule. Explicit deletions
+// carry positive evidence (the server returned 404 for a specific href) and
+// are always sound. Absence-inferred deletions require a provably complete
+// inventory. They are withheld otherwise.
+//
+// Every UID-level deletion the pull performs goes through apply(). A new
+// "this looks deleted" code path cannot reach the executor unless it picks
+// one of these two doors. The one sanctioned exception is override prune at
+// row granularity inside a resource (pruneStaleOverrides). This type cannot
+// host that prune. It still obeys the same completeness rule. See its
+// comment for the gates.
 type pendingDeletions struct {
 	logger *slog.Logger
 	owner  map[string]string // uid -> ownerType, deduped across both sources
@@ -1086,13 +1107,13 @@ func (p *pendingDeletions) markExplicit(r storage.SyncResource) {
 	}
 }
 
-// inferFromAbsence records a deletion for every local resource missing from
-// the remote inventory (`seen`) — but ONLY when complete is true. When the
-// inventory is partial it withholds the entire sweep (logging the count and
-// reason) so a partial view can never drive deletions; the rows are
+// inferFromAbsence records a deletion for every local resource the remote
+// inventory (`seen`) does not contain, but ONLY when complete is true. When
+// the inventory is partial it withholds the entire sweep. It logs the count
+// and reason. A partial view can then never drive deletions. The rows are
 // re-evaluated on the next clean sync. complete MUST be computed by the
 // caller as "every resource the server has was observed this pull." Local
-// rows with no remote_url are skipped — they were never pushed.
+// rows with no remote_url are skipped. They were never pushed.
 func (p *pendingDeletions) inferFromAbsence(calendarID int64, locals []storage.SyncResource, seen map[string]bool, complete bool, reason string) {
 	var candidates []storage.SyncResource
 	for _, local := range locals {
@@ -1117,13 +1138,14 @@ func (p *pendingDeletions) inferFromAbsence(calendarID int64, locals []storage.S
 	}
 }
 
-// apply executes the accumulated deletions: soft-delete each local owner row
-// and drop its sync_resource. Returns the count actually deleted and the count
-// that failed. A failed soft-delete (e.g. a transient SQLITE_BUSY) leaves the
-// local row orphaned: the server has dropped it but we haven't. The caller
-// must treat failed > 0 as an incomplete pull and withhold the sync-token, or
-// the server — now past the old token — never re-reports the deletion and the
-// orphan survives forever with no retry.
+// apply executes the accumulated deletions. It soft-deletes each local owner
+// row and drops its sync_resource. It returns the count actually deleted and
+// the count that failed. A failed soft-delete (for example a transient
+// SQLITE_BUSY) leaves the local row orphaned. The server dropped it, but we
+// did not. The caller must treat failed > 0 as an incomplete pull and
+// withhold the sync-token. Otherwise the server, now past the old token,
+// never re-reports the deletion. The orphan then survives forever with no
+// retry.
 func (p *pendingDeletions) apply(ctx context.Context, e *Engine, calendarID int64) (deleted, failed int) {
 	for uid, ownerType := range p.owner {
 		if err := e.deleteLocalResourceByUID(ctx, ownerType, uid); err != nil {
@@ -1161,10 +1183,10 @@ func absenceWithholdReason(truncated bool, multigetMisses, persistFailures int) 
 	return strings.Join(parts, " and ")
 }
 
-// applySyncCollection consumes the change list from a sync-collection REPORT,
-// fetches bodies for changed resources via calendar-multiget, persists them,
-// applies deletions, and stores the new sync-token. This is the fast path
-// for steady-state syncs against RFC 6578-capable servers.
+// applySyncCollection consumes the change list from a sync-collection REPORT.
+// It fetches bodies for changed resources via calendar-multiget. It persists
+// them, applies deletions, and stores the new sync-token. This is the fast
+// path for steady-state syncs against RFC 6578-capable servers.
 func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL string, cal storage.Calendar, syncResult *caldav.SyncCollectionResult, initialSnapshot bool) (*pullResult, error) {
 	result := &pullResult{}
 	multigetMisses := 0
@@ -1418,17 +1440,17 @@ const (
 	ownerTypeJournal = "journal"
 )
 
-// errUnknownOwnerType reports a sync_resource OwnerType the engine doesn't
-// recognize. Every owner-type dispatch surfaces it instead of guessing, so a
-// new (or misspelled) component type fails loudly rather than silently
-// mis-resolving — notably, lookupOwnerID no longer reports ID 0 without error.
+// errUnknownOwnerType reports a sync_resource OwnerType the engine does not
+// recognize. Every owner-type dispatch surfaces it instead of a guess. A
+// new (or misspelled) component type then fails loudly rather than a silent
+// mis-resolve. Notably, lookupOwnerID no longer reports ID 0 without error.
 var errUnknownOwnerType = errors.New("unknown owner type")
 
 // ownerOps bundles the per-component-type operations the sync engine
 // dispatches on a sync_resource's OwnerType. Each component type is enumerated
-// exactly once in ownerOpsByType, so adding a fourth type is a single map
-// entry rather than synchronized edits to parallel switches — and a missed
-// type can't compile cleanly into a silent mis-dispatch.
+// exactly once in ownerOpsByType. A fourth type is then a single map
+// entry rather than synchronized edits to parallel switches. A missed
+// type cannot compile cleanly into a silent mis-dispatch.
 type ownerOps struct {
 	softDeleteByUID func(ctx context.Context, e *Engine, uid string) error
 	lookupID        func(ctx context.Context, e *Engine, uid string) (int64, error)
@@ -1487,14 +1509,15 @@ var ownerOpsByType = map[string]ownerOps{
 }
 
 // exportResourceFor bundles a UID's master row plus its override rows into an
-// iCal payload. CalDAV tracks one resource per UID; recurring resources are
-// stored as a master row plus override rows sharing the UID, and we normally
-// bundle master + overrides so instance edits round-trip to the server. Google
-// sometimes serves a single orphan instance under a UID like
+// iCal payload. CalDAV tracks one resource per UID. Recurring resources are
+// stored as a master row plus override rows that share the UID. We normally
+// bundle master plus overrides so instance edits round-trip to the server.
+//
+// Google sometimes serves a single orphan instance under a UID like
 // `<master>_R<recurrence-id>@google.com` with a RECURRENCE-ID property and no
-// master in the same iCal stream — we import those as override rows with no
-// master sibling, so the master lookup fails. We therefore append every live
-// row under the UID and export the non-empty result, returning
+// master in the same iCal stream. We import those as override rows with no
+// master sibling. The master lookup then fails. We therefore append every
+// live row under the UID and export the non-empty result. We return
 // errResourceMissing only when nothing remains.
 func exportResourceFor[T any](
 	ctx context.Context,
@@ -1537,8 +1560,8 @@ func exportResourceFor[T any](
 	return export(rows, "")
 }
 
-// ownerOpsFor resolves the dispatch table for an owner type, returning
-// errUnknownOwnerType for anything not registered above.
+// ownerOpsFor resolves the dispatch table for an owner type. It returns
+// errUnknownOwnerType for any type not registered above.
 func ownerOpsFor(ownerType string) (ownerOps, error) {
 	ops, ok := ownerOpsByType[ownerType]
 	if !ok {
@@ -1559,9 +1582,9 @@ func (e *Engine) deleteLocalResourceByUID(ctx context.Context, ownerType, uid st
 	return ops.softDeleteByUID(ctx, e, uid)
 }
 
-// lookupOwnerID resolves the local row ID backing a UID for the given owner
+// lookupOwnerID resolves the local row ID that backs a UID for the given owner
 // type. It returns errUnknownOwnerType for an unrecognized type and the
-// underlying lookup error when no live row exists, so callers never silently
+// lookup error when no live row exists. Callers then never silently
 // attribute a record to ID 0.
 func (e *Engine) lookupOwnerID(ctx context.Context, ownerType, uid string) (int64, error) {
 	ops, err := ownerOpsFor(ownerType)
@@ -1686,12 +1709,13 @@ func (e *Engine) syncCalendarMetadata(ctx context.Context, client *caldav.Client
 }
 
 // errResourceMissing reports that no live local row exists for a UID we were
-// asked to export. Push uses errors.Is on this to distinguish a missing local
-// row (clear the dirty flag, stop retrying) from a real export failure.
+// asked to export. Push uses errors.Is on this to distinguish a local row
+// that is gone (clear the dirty flag, stop the retry) from a real export
+// failure.
 var errResourceMissing = errors.New("local resource missing for uid")
 
-// exportResource exports a local resource to iCal bytes, dispatching on owner
-// type. See exportResourceFor for the master/override bundling behavior.
+// exportResource exports a local resource to iCal bytes. It dispatches on
+// owner type. See exportResourceFor for the master/override bundle behavior.
 func (e *Engine) exportResource(ctx context.Context, ownerType string, uid string) ([]byte, error) {
 	ops, err := ownerOpsFor(ownerType)
 	if err != nil {
@@ -1719,13 +1743,14 @@ func hydrateJournal(ctx context.Context, e *Engine, j *journal.Journal) error {
 // persistImported saves parsed iCal data to the local database using the same
 // upsert pattern as the CLI import command.
 //
-// It returns the post-import sync_resources.rev for each persisted UID, read
-// inside the same transaction that bumped it via MarkResourceDirty. Accept-server
-// callers feed that rev to FinalizePushedResource so the dirty clear is guarded
-// on a rev captured atomically with the import, rather than re-read after commit
-// where a concurrent local edit could slip in and have its dirty flag wiped — the
-// lost-update window of issue #494. A UID with no tracking row yet (a first pull)
-// reports rev 0.
+// It returns the post-import sync_resources.rev for each persisted UID. The
+// value is read inside the same transaction that bumped it via
+// MarkResourceDirty. Accept-server callers feed that rev to
+// FinalizePushedResource. The dirty clear is then guarded on a rev captured
+// atomically with the import. It is not re-read after commit. A concurrent
+// local edit could then slip in and have its dirty flag wiped. That is the
+// lost-update window of issue #494. A UID with no sync_resources row yet (a
+// first pull) reports rev 0.
 func (e *Engine) persistImported(ctx context.Context, calendarID int64, result icalPkg.ImportResult) (map[string]int64, error) {
 	revs := make(map[string]int64)
 
@@ -1978,10 +2003,10 @@ func keepSets[C any](items []C, key func(C) (uid, rid string)) map[string]map[st
 }
 
 // preImportDirty reads the sync dirty flag for every UID that override
-// pruning may reconcile — those whose master (recurrence_id == "") is in
-// their keep-set. It must run before persistImported's upserts, which flip
-// the flag via MarkResourceDirty. An untracked UID (a first pull) reads as
-// clean.
+// prune may reconcile. Those are UIDs whose master (recurrence_id == "") is
+// in their keep-set. It must run before persistImported's upserts, which flip
+// the flag via MarkResourceDirty. A UID with no sync_resources row (a first
+// pull) reads as clean.
 func (e *Engine) preImportDirty(ctx context.Context, calendarID int64, keeps ...map[string]map[string]bool) (map[string]bool, error) {
 	dirty := make(map[string]bool)
 	for _, keepByUID := range keeps {
@@ -2012,29 +2037,29 @@ func (e *Engine) preImportDirty(ctx context.Context, calendarID int64, keeps ...
 // pruneStaleOverrides soft-deletes local override rows whose recurrence_id the
 // server no longer has. When a CalDAV server deletes a recurring instance it
 // drops the override component from the resource and adds the slot to the
-// master's EXDATE. The master upsert carries the EXDATE, but the stale
-// override row must be pruned separately — otherwise expansion resurrects the
-// deleted instance, because the orphan checker deliberately ignores EXDATEs so
-// a legitimate override is never mistaken for an orphan.
+// master's EXDATE. The master upsert carries the EXDATE. The stale
+// override row must be pruned separately. Otherwise expansion restores the
+// deleted instance. The orphan checker ignores EXDATEs so a legitimate
+// override is never mistaken for an orphan.
 //
 // This is the sanctioned row-granularity counterpart of pendingDeletions'
-// absence-inferred deletions (see that type's comment) and obeys the same
+// absence-inferred deletions (see that type's comment). It obeys the same
 // rule: absence only counts against a provably complete inventory. The caller
 // passes nil keep-sets when the parser dropped a component (an incomplete
-// inventory), and each UID is reconciled only when:
-//   - its own master (recurrence_id == "") is in its keep-set — an
-//     overrides-only resource is unusual, and another UID's master says
-//     nothing about this UID's inventory;
-//   - its resource was not dirty before this import — a dirty resource has
-//     unpushed local changes, and a locally created override is absent from
-//     the server body because the server has never seen it, not because it
-//     was deleted;
-//   - its rev is unchanged inside the delete transaction — a local edit that
-//     landed after this import bumped rev, and the rows listed here may no
+// inventory). Each UID is reconciled only when:
+//   - its own master (recurrence_id == "") is in its keep-set. An
+//     overrides-only resource is unusual. Another UID's master says
+//     nothing about this UID's inventory.
+//   - its resource was not dirty before this import. A dirty resource has
+//     unpushed local changes. A locally created override is absent from
+//     the server body because the server did not see it, not because it
+//     was deleted.
+//   - its rev is unchanged inside the delete transaction. A local edit that
+//     landed after this import bumped rev. The rows listed here may no
 //     longer reflect it.
 //
-// A skipped prune is safe: the rows stay live, and the dirty bookkeeping that
-// blocked it pushes or reconciles them on a later cycle.
+// A skipped prune is safe. The rows stay live. The dirty records that
+// blocked it push or reconcile them on a later cycle.
 func pruneStaleOverrides[R any](
 	ctx context.Context,
 	e *Engine,
@@ -2089,9 +2114,10 @@ func pruneStaleOverrides[R any](
 }
 
 // captureImportRev reads the sync_resources.rev for uid using qtx (a Queries
-// bound to the import's transaction), so the value reflects the rev as bumped by
-// this import and nothing committed after it. A UID with no tracking row yet (a
-// first pull, before UpsertSyncResource creates it) reports rev 0. See #494.
+// bound to the import's transaction). The value then reflects the rev as
+// bumped by this import and nothing committed after it. A UID with no
+// sync_resources row yet (a first pull, before UpsertSyncResource creates it)
+// reports rev 0. See #494.
 func captureImportRev(ctx context.Context, qtx *storage.Queries, calendarID int64, uid string) (int64, error) {
 	res, err := qtx.GetSyncResource(ctx, storage.GetSyncResourceParams{
 		CalendarID: calendarID,
@@ -2106,10 +2132,10 @@ func captureImportRev(ctx context.Context, qtx *storage.Queries, calendarID int6
 	return res.Rev, nil
 }
 
-// inTx runs fn inside a single transaction, committing on success and rolling
-// back on any error. It is the atomicity boundary for persistImported: a failed
-// Replace* part-way through a resource unwinds the whole resource so the local
-// row never reflects a partial server component.
+// inTx runs fn inside a single transaction. It commits on success and rolls
+// back on any error. It is the atomicity boundary for persistImported. A
+// failed Replace* part-way through a resource unwinds the whole resource.
+// The local row then never reflects a partial server component.
 func (e *Engine) inTx(ctx context.Context, fn func(*sql.Tx) error) error {
 	tx, err := e.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -2124,14 +2150,15 @@ func (e *Engine) inTx(ctx context.Context, fn func(*sql.Tx) error) error {
 
 // importICal parses raw iCal data and persists it to the local database via
 // persistImported. It is the shared accept-the-server-version path used both by
-// auto-resolve (ConflictServerWins) and manual conflict resolution, so the local
-// row actually reflects the server data instead of the divergent local copy.
+// auto-resolve (ConflictServerWins) and manual conflict resolution. The local
+// row then reflects the server data instead of the divergent local copy.
 //
-// imported reports whether the payload carried at least one VEVENT/VTODO/
-// VJOURNAL component. ImportFile returns no error for empty or component-less
-// input, so callers that must not accept the server version without applying it
-// (e.g. clearing the dirty flag) check imported to avoid silently stamping the
-// server ETag onto an unchanged local row.
+// imported reports whether the payload carried at least one VEVENT, VTODO,
+// or VJOURNAL component. ImportFile returns no error for empty or
+// component-less input. Callers that must not accept the server version
+// without an apply (for example a clear of the dirty flag) check imported.
+// They then do not stamp the server ETag onto an unchanged local row in
+// silence.
 func (e *Engine) importICal(ctx context.Context, calendarID int64, data string) (imported bool, revs map[string]int64, warnings []ImportWarning, err error) {
 	importResult, err := icalPkg.ImportFile(strings.NewReader(data))
 	if err != nil {
@@ -2193,8 +2220,8 @@ func (e *Engine) dropTombstonedFromImport(ctx context.Context, calendarID int64,
 	return result, nil
 }
 
-// filterTombstoned returns items whose UID (via uidOf) is not tombstoned,
-// logging each one it drops. The result reuses a zero-capacity head of the
+// filterTombstoned returns items whose UID (via uidOf) is not tombstoned.
+// It logs each one it drops. The result reuses a zero-capacity head of the
 // input so append always allocates fresh and never clobbers the caller's slice.
 func filterTombstoned[T any](logger *slog.Logger, items []T, tombstoned map[string]bool, ownerType string, uidOf func(T) string) []T {
 	kept := items[:0:0]
@@ -2215,11 +2242,11 @@ func parseICalData(data []byte) (*ical.Calendar, error) {
 
 // collectImportWarnings converts ImportFile's warning strings into
 // ImportWarnings labeled with the resource path. A UID label is attached only
-// when every component in the payload shares one nonempty UID — which covers
-// the common recurring case, where a resource imports as master + overrides
-// under a single UID. A payload spanning several UIDs (412 server-wins
+// when every component in the payload shares one nonempty UID. That covers
+// the common recurring case, where a resource imports as master plus overrides
+// under a single UID. A payload that spans several UIDs (412 server-wins
 // bodies, manual conflict resolution) may carry a warning from ANY of its
-// components, and blaming the first component's UID sends the user to an
+// components. If we blame the first component's UID, the user goes to an
 // event with nothing wrong in it.
 func collectImportWarnings(path string, result icalPkg.ImportResult) []ImportWarning {
 	if len(result.Warnings) == 0 {
@@ -2266,7 +2293,7 @@ func soleUID(result icalPkg.ImportResult) string {
 }
 
 // noteImportWarnings collects the import warnings for one imported payload
-// and logs them; callers append the returned slice to their result so the
+// and logs them. Callers append the returned slice to their result so the
 // warnings also travel as data for entry points that discard the logger.
 func (e *Engine) noteImportWarnings(path string, result icalPkg.ImportResult) []ImportWarning {
 	warnings := collectImportWarnings(path, result)
@@ -2274,13 +2301,13 @@ func (e *Engine) noteImportWarnings(path string, result icalPkg.ImportResult) []
 	return warnings
 }
 
-// logImportWarnings surfaces what ImportFile could not represent faithfully —
-// a malformed DTEND replaced by a fabricated span, an alarm dropped for an
-// unusable trigger. Sync used to discard these, which mattered because the
-// substitute value does not stay local: the next local edit marks the resource
-// dirty and pushes our fabrication back over the value the server still holds
-// correctly. The log serves `sync run`; entry points that discard the logger
-// read the same warnings off SyncResult.Warnings instead.
+// logImportWarnings surfaces what ImportFile could not represent faithfully.
+// Examples: a malformed DTEND replaced by a fabricated span, or an alarm
+// dropped for an unusable trigger. Sync used to discard these. That mattered
+// because the substitute value does not stay local. The next local edit marks
+// the resource dirty and pushes our fabrication back over the value the
+// server still holds correctly. The log serves `sync run`. Entry points that
+// discard the logger read the same warnings off SyncResult.Warnings instead.
 func logImportWarnings(logger *slog.Logger, warnings []ImportWarning) {
 	for _, w := range warnings {
 		if w.UID != "" {
@@ -2334,12 +2361,12 @@ func (e *Engine) updateSyncHealth(ctx context.Context, calendarID int64, attempt
 }
 
 // resolvePushIdentity returns the email address the calendar owner uses to
-// PUT meeting resources. Prefers the calendar's stored owner_email and
-// falls back to the linked account's username (which is the user's email
-// for both basic-auth and OAuth providers we support). Returns empty when
-// neither is known — the caller should then skip the organizer gate
-// rather than guess. The cal and account rows are passed in by the caller
-// (already loaded by loadCalendarClient), so this performs no queries.
+// PUT meeting resources. It prefers the calendar's stored owner_email and
+// falls back to the linked account's username. That username is the user's
+// email for both basic-auth and OAuth providers we support. It returns empty
+// when neither is known. The caller should then skip the organizer gate
+// rather than guess. The caller passes the cal and account rows (already
+// loaded by loadCalendarClient), so this performs no queries.
 func resolvePushIdentity(cal storage.Calendar, account storage.Account) string {
 	if email := strings.TrimSpace(cal.OwnerEmail); email != "" {
 		return email
