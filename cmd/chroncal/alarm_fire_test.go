@@ -131,9 +131,9 @@ func TestMarkAndFireEventAlarmSkipsFireOnDuplicateClaim(t *testing.T) {
 //
 // It reproduces the Check-then-claim TOCTOU window in a deterministic way.
 // Checker B runs runAlarmCheck and captures the due alarm in Check. The
-// afterCheckForTest seam then lets a competing checker A claim and fire the
+// afterCheckForTest seam then lets a rival checker A claim and fire the
 // same alarm before B reaches MarkFired. B therefore loses the UNIQUE
-// (alarm_id, trigger_at) race at claim time and must emit no record.
+// (alarm_id, trigger_at) race at claim time. It must emit no record.
 func TestRunAlarmCheckEmitsNoFiredRecordOnLostClaim(t *testing.T) {
 	ctx := context.Background()
 	a, dbPath := newAlarmTestAppWithPath(t)
