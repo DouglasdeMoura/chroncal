@@ -183,10 +183,10 @@ func TestExpandWithExdate(t *testing.T) {
 
 // A wall-clock-as-UTC EXDATE (the DTSTART zone's local time mis-tagged with Z)
 // must still suppress the occurrence it names. Such values were written by
-// pre-v0.5.1 importers that ignored TZID on EXDATE, and can still arrive from
-// transiently TZID-less server bodies; etag-gated sync never re-imports an
-// unchanged resource, so without expansion-side tolerance the server-cancelled
-// instance renders forever ("Product Weekly Tactical" bug).
+// pre-v0.5.1 importers that ignored TZID on EXDATE. They can still arrive from
+// transiently TZID-less server bodies. etag-gated sync never re-imports an
+// unchanged resource. Without expansion-side tolerance the server-cancelled
+// instance then renders forever ("Product Weekly Tactical" bug).
 func TestExpandWithZoneSkewedExdate(t *testing.T) {
 	// Weekly Tuesday 11:00 America/New_York = 15:00Z in summer.
 	base := time.Date(2026, 5, 26, 15, 0, 0, 0, time.UTC)
@@ -219,8 +219,8 @@ func TestExpandWithZoneSkewedExdate(t *testing.T) {
 	}
 }
 
-// The zone-skew tolerance must not over-exclude: a healthy UTC-instant EXDATE
-// removes exactly its own occurrence, and its reinterpretation in the event
+// The zone-skew tolerance must not over-exclude. A healthy UTC-instant EXDATE
+// removes exactly its own occurrence. Its reinterpretation in the event
 // zone (a different instant that matches no occurrence) is a no-op.
 func TestExpandWithZonedExdateExactMatchOnly(t *testing.T) {
 	base := time.Date(2026, 5, 26, 15, 0, 0, 0, time.UTC)
@@ -437,8 +437,8 @@ func TestExpandEvent_FloatingTime(t *testing.T) {
 }
 
 // The following tests lock in recurring-expansion behavior for the todo and
-// journal paths (events are exercised above), so a shared expansion core can
-// be proven behavior-preserving for all three entity kinds.
+// journal paths (events are exercised above). A shared expansion core can then
+// be proven to preserve behavior for all three entity kinds.
 
 func TestExpandTodo_DailyRecurring(t *testing.T) {
 	td := todo.Todo{
@@ -543,11 +543,11 @@ func TestExpandJournal_WithExDateAndRDate(t *testing.T) {
 	}
 }
 
-// TestExpandEvent_RDateOnlyNoRRule locks in RFC 5545 §3.8.5.2: an event with
+// TestExpandEvent_RDateOnlyNoRRule locks in RFC 5545 §3.8.5.2. An event with
 // RDATEs but no RRULE must expand to its DTSTART occurrence and all
 // explicitly-listed RDATE occurrences (issue #362). Previously newRRuleSet
-// returned ok=false whenever rule == "", causing the rdateSet to be silently
-// ignored and only the DTSTART occurrence to appear.
+// returned ok=false whenever rule == "". That caused the rdateSet to be
+// ignored in silence. Only the DTSTART occurrence then appeared.
 func TestExpandEvent_RDateOnlyNoRRule(t *testing.T) {
 	base := time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
 	rdate1 := time.Date(2026, 4, 15, 9, 0, 0, 0, time.UTC)
@@ -593,7 +593,7 @@ func TestExpandEvent_RDateOnlyNoRRule(t *testing.T) {
 }
 
 // TestExpandEvent_RDateOnlyWithExDate verifies that an EXDATE on the DTSTART
-// of an RDATE-only event suppresses that occurrence while leaving the RDATEs.
+// of an RDATE-only event suppresses that occurrence. The RDATEs stay.
 func TestExpandEvent_RDateOnlyWithExDate(t *testing.T) {
 	base := time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
 	rdate1 := time.Date(2026, 4, 15, 9, 0, 0, 0, time.UTC)
@@ -679,7 +679,7 @@ func TestExpandJournal_RDateOnlyNoRRule(t *testing.T) {
 }
 
 // TestExpandJournal_HalfOpenWindow locks in that journal expansion honors the
-// half-open [from, to) window: an occurrence exactly at from is kept, one
+// half-open [from, to) window. An occurrence exactly at from is kept. One
 // exactly at to is excluded.
 func TestExpandJournal_HalfOpenWindow(t *testing.T) {
 	j := journal.Journal{
