@@ -5,12 +5,12 @@ import (
 	"testing"
 )
 
-// TestListCategoriesByEventIDs_OverParameterCap reproduces issue #303: the
+// TestListCategoriesByEventIDs_OverParameterCap reproduces issue #303. The
 // category batch loader built a single unbounded `IN (?,?,…)` clause. When the
 // recurrence expander feeds one id per expanded instance, the slice can exceed
-// SQLite's 32766 host-parameter cap, tripping "too many SQL variables". The
-// loader must chunk the IN clause (as the override loader already does) so a
-// wide id slice still succeeds.
+// SQLite's 32766 host-parameter cap. That trips "too many SQL variables". The
+// loader must chunk the IN clause (as the override loader already does). A
+// wide id slice then still succeeds.
 func TestListCategoriesByEventIDs_OverParameterCap(t *testing.T) {
 	db, q, err := Open(":memory:")
 	if err != nil {
