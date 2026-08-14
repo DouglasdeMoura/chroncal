@@ -14,7 +14,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/model"
 )
 
-// EventViewRequestedMsg requests opening the read-only event view dialog.
+// EventViewRequestedMsg requests the read-only event view dialog.
 type EventViewRequestedMsg struct{ Event event.Event }
 
 // EventViewClosedMsg is emitted when the view dialog is dismissed.
@@ -73,7 +73,7 @@ const (
 // edit form does. Matches the form's inline-label layout.
 const eventViewLabelWidth = 10
 
-// EventViewDialogModel is a read-only dialog presenting a single event.
+// EventViewDialogModel is a read-only dialog that presents a single event.
 // It mirrors the Edit Event layout (label: value lines) and exposes
 // action buttons to edit, duplicate, delete, or RSVP.
 type EventViewDialogModel struct {
@@ -136,9 +136,9 @@ func (m EventViewDialogModel) SetSize(w, h int) EventViewDialogModel {
 }
 
 // viewportHeight returns the height available for the scrollable body,
-// after subtracting the dialog's chrome (border, top padding), the
+// after a subtract of the dialog's chrome (border, top padding), the
 // pinned title row + rule, the action separator + button row, and the
-// help footer with its leading blank line. Clamped to a minimum of 1
+// help footer with its blank line at the start. Clamped to a minimum of 1
 // so a too-small terminal still renders something.
 func (m EventViewDialogModel) viewportHeight() int {
 	const chromeLines = 2 + // top + bottom border
@@ -189,17 +189,17 @@ type eventViewAction struct {
 }
 
 // isDeleted reports whether the viewed event is soft-deleted. Opened from
-// the trash view for a post-mortem look — editing or re-deleting makes no
-// sense in that state.
+// the trash view for a post-mortem look. An edit or a second delete makes
+// no sense in that state.
 func (m EventViewDialogModel) isDeleted() bool {
 	return m.event.DeletedAt != nil
 }
 
 // actions returns the buttons rendered in the bottom action bar.
-// Edit and Duplicate sit on the left (primary → secondary), Delete
+// Edit and Duplicate sit on the left (primary → secondary). Delete
 // is last and rendered with spatial separation so destructive intent
 // reads from position, not only color. Returns nil for soft-deleted
-// rows — restore must happen from the trash dialog first.
+// rows. Restore must happen from the trash dialog first.
 func (m EventViewDialogModel) actions() []eventViewAction {
 	if m.isDeleted() {
 		return nil
@@ -395,20 +395,20 @@ func (m EventViewDialogModel) handleMouse(msg tea.MouseClickMsg) (EventViewDialo
 
 // detailURLField is detailLine for a known URL-valued field (ev.URL,
 // ev.ConferenceURI) whose entire value is a single URI. renderLinkValue
-// wraps the whole value as the click target — exact and scheme-agnostic, so
-// trailing sub-delimiters survive and non-http schemes (mailto:, zoommtg:)
-// still link. Use detailLinkifiedLine instead for free-text fields that merely
-// *contain* a URL. zones controls whether clickable mouse-zone markers are
-// emitted (only safe on surfaces that MouseSweep their output).
+// wraps the whole value as the click target. Exact and scheme-agnostic, so
+// extra sub-delimiters at the end survive and non-http schemes (mailto:,
+// zoommtg:) still link. Use detailLinkifiedLine instead for free-text fields
+// that merely *contain* a URL. zones controls whether clickable mouse-zone
+// markers are emitted (only safe on surfaces that MouseSweep their output).
 func detailURLField(labelStyle lipgloss.Style, label, value string, lw, w int, rw urlRewriter, zones bool) string {
 	prefix, available := detailLabelPrefix(labelStyle, label, lw, w)
 	return prefix + renderLinkValue(value, available, rw, zones)
 }
 
 // detailLinkifiedLine is detailLine for a free-text value that may contain a
-// URL somewhere inside it (e.g., "Room 4 — join at https://…") or be a bare
-// URL. renderLinkifiedValue makes each embedded URL clickable while keeping its
-// full address as the click target, so the rendering is correct whether the
+// URL somewhere inside it (for example, "Room 4 — join at https://…") or be a
+// bare URL. renderLinkifiedValue makes each embedded URL clickable and keeps
+// its full address as the click target. The render is then correct whether the
 // value is plain text, a bare URL, or text with an embedded link. zones
 // controls whether clickable mouse-zone markers are emitted (only safe on
 // surfaces that MouseSweep their output).
@@ -452,7 +452,7 @@ func (m EventViewDialogModel) renderRSVPRow(w int) string {
 // renderActions lays out the action bar: Edit and Duplicate packed on
 // the left (primary → ghost), with Delete right-aligned and a gap that
 // spatially signals the destructive category. Falls back to simple
-// concatenation if the row can't fit within `w`.
+// concatenation if the row cannot fit within `w`.
 func (m EventViewDialogModel) renderActions(w int) string {
 	bs := DefaultButtonStyles()
 	actions := m.actions()
@@ -470,8 +470,8 @@ func (m EventViewDialogModel) renderActions(w int) string {
 	return left + strings.Repeat(" ", gap) + right
 }
 
-// titleRow renders the bold event title above a faint dividing rule.
-// Destructive actions are deliberately absent here — they live in the
+// titleRow renders the bold event title above a faint divider rule.
+// Destructive actions are deliberately absent here. They live in the
 // bottom action bar, away from the dialog's visual anchor.
 func (m EventViewDialogModel) titleRow(w int) []string {
 	faint := lipgloss.NewStyle().Faint(true)
@@ -483,7 +483,7 @@ func (m EventViewDialogModel) titleRow(w int) []string {
 // actionsSeparator renders the faint rule that sits between the body
 // and the action bar. When the body has scrolled-away content above or
 // below, a small "↑↓ more" glyph is centered on the rule to advertise
-// the scroll affordance — placed here (not on the title rule) so it
+// the scroll affordance. It is placed here (not on the title rule) so it
 // sits next to the help footer where users look for controls.
 func (m EventViewDialogModel) actionsSeparator(w int) string {
 	faint := lipgloss.NewStyle().Faint(true)
@@ -497,8 +497,8 @@ func (m EventViewDialogModel) actionsSeparator(w int) string {
 	return faint.Render(strings.Repeat("─", left)) + " " + faint.Render(hint) + " " + faint.Render(strings.Repeat("─", right))
 }
 
-// scrollHint returns " ↑↓" / " ↑" / " ↓" depending on what the user can
-// still scroll to. Empty when the body fits without scrolling.
+// scrollHint returns " ↑↓" / " ↑" / " ↓" based on what the user can
+// still scroll to. Empty when the body fits with no scroll.
 func (m EventViewDialogModel) scrollHint() string {
 	if !m.bodyOverflows() {
 		return ""
@@ -513,10 +513,10 @@ func (m EventViewDialogModel) scrollHint() string {
 	}
 }
 
-// buildBodyLines returns every line below the title row — the part that
-// scrolls inside the viewport when content exceeds available height.
-// A leading blank line preserves the visual gap between the title rule
-// and the first detail row that the un-scrolled rendering relied on.
+// buildBodyLines returns every line below the title row. That is the part
+// that scrolls inside the viewport when content exceeds available height.
+// A blank line at the start keeps the visual gap between the title rule
+// and the first detail row that the un-scrolled render used.
 func (m EventViewDialogModel) buildBodyLines(w int) []string {
 	faint := lipgloss.NewStyle().Faint(true)
 	ev := m.event
