@@ -271,13 +271,13 @@ func Email(da alarm.DueAlarm, smtpCfg config.SMTPConfig, policy ExecutionPolicy)
 	return smtp.SendMail(addr, auth, smtpCfg.From, to, msg)
 }
 
-// buildEmailMessage assembles an RFC 5322 message with MIME headers declaring a
-// UTF-8 text/plain body. The Content-Type/charset header is required so strict
-// mail clients render the non-ASCII body as UTF-8 rather than defaulting to
-// US-ASCII (which produces mojibake). That body charset declaration does not
-// cover header fields, though: RFC 5322 restricts header field bodies to ASCII,
-// so a non-ASCII Subject must be wrapped in an RFC 2047 encoded-word
-// (mime.QEncoding.Encode is a no-op for plain-ASCII subjects).
+// buildEmailMessage assembles an RFC 5322 message with MIME headers that
+// declare a UTF-8 text/plain body. The Content-Type/charset header is required.
+// Strict mail clients then render the non-ASCII body as UTF-8 rather than a
+// default of US-ASCII (which produces mojibake). That body charset declaration
+// does not cover header fields. RFC 5322 restricts header field bodies to ASCII.
+// A non-ASCII Subject must then be wrapped in an RFC 2047 encoded-word.
+// mime.QEncoding.Encode is a no-op for plain-ASCII subjects.
 func buildEmailMessage(from string, to []string, subject, body string) []byte {
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\n"+
 		"MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n%s\r\n",
