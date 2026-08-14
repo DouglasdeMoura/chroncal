@@ -10,7 +10,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
 
-// countRows returns the number of rows matching the given query.
+// countRows returns the number of rows that match the given query.
 func countRows(t *testing.T, db *sql.DB, query string, args ...any) int {
 	t.Helper()
 	var n int
@@ -21,7 +21,7 @@ func countRows(t *testing.T, db *sql.DB, query string, args ...any) int {
 }
 
 // dropCategoriesTable removes the event_categories table so the category
-// child-write fails inside Create/Update, simulating a partial failure.
+// child-write fails inside Create/Update. That simulates a partial failure.
 func dropCategoriesTable(t *testing.T, db *sql.DB) {
 	t.Helper()
 	if _, err := db.ExecContext(context.Background(), `DROP TABLE event_categories`); err != nil {
@@ -31,8 +31,8 @@ func dropCategoriesTable(t *testing.T, db *sql.DB) {
 
 // TestCreate_AtomicOnCategoryFailure asserts that when the category child-write
 // fails, Create returns an error AND leaves no event row behind. Before the fix
-// the event row was committed in autocommit before categories ran, so a failure
-// left an orphan row (the duplicate-on-retry bug from issue #73).
+// the event row was committed in autocommit before categories ran. A failure
+// then left an orphan row (the duplicate-on-retry bug from issue #73).
 func TestCreate_AtomicOnCategoryFailure(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	svc := NewService(db, q)
@@ -110,18 +110,18 @@ func TestUpdate_AtomicOnCategoryFailure(t *testing.T) {
 
 // TestUpsertByUID_AtomicOnCategoryFailure asserts that when the category
 // child-write fails, UpsertByUID returns an error AND leaves no event row
-// behind. Before the fix the upsert committed the row in autocommit and only
-// then ran ReplaceCategories in a separate transaction, so a failure left an
-// orphan row (the sibling of issue #73, filed as issue #87).
+// behind. Before the fix the upsert committed the row in autocommit. Only
+// then did it run ReplaceCategories in a separate transaction. A failure then
+// left an orphan row (the pair of issue #73, filed as issue #87).
 //
-// The failure is injected via duplicate categories: event_categories has a
-// PRIMARY KEY (event_id, category) and ParseCategoryList does not dedupe, so
-// inserting "dup,dup" fails on the second row. That isolates the failure to the
-// category child-write while the parent upsert row write succeeds — exactly the
-// partial-failure window the fix must close. (Dropping event_categories instead
-// would break the upsert statement itself: SQLite compiles the upsert's
-// ON CONFLICT UPDATE-branch trigger, which reads event_categories, at prepare
-// time.)
+// The failure is injected via duplicate categories. event_categories has a
+// PRIMARY KEY (event_id, category). ParseCategoryList does not dedupe. An
+// insert of "dup,dup" then fails on the second row. That isolates the failure
+// to the category child-write while the parent upsert row write succeeds. That
+// is exactly the partial-failure window the fix must close. A drop of
+// event_categories instead would break the upsert statement itself. SQLite
+// compiles the upsert's ON CONFLICT UPDATE-branch trigger, which reads
+// event_categories, at prepare time.
 func TestUpsertByUID_AtomicOnCategoryFailure(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	svc := NewService(db, q)
@@ -147,12 +147,12 @@ func TestUpsertByUID_AtomicOnCategoryFailure(t *testing.T) {
 // TestUpdateWithRelations_AtomicOnAttendeeFailure asserts that when the
 // attendee child-write fails, UpdateWithRelations returns an error AND leaves
 // the original event row unchanged. The TUI edit path previously called Update
-// and then ReplaceAttendees/ReplaceAlarms in separate transactions, so a
-// failure after the row update left a half-updated row (issue #87).
+// and then ReplaceAttendees/ReplaceAlarms in separate transactions. A
+// failure after the row update then left a half-updated row (issue #87).
 //
-// Dropping event_attendees isolates the failure to the attendee write: no
-// trigger on events references that table, so the event row UPDATE still runs;
-// only the in-tx attendee replacement fails, which must roll the row back.
+// A drop of event_attendees isolates the failure to the attendee write. No
+// trigger on events references that table. The event row UPDATE still runs.
+// Only the in-tx attendee replacement fails. That must roll the row back.
 func TestUpdateWithRelations_AtomicOnAttendeeFailure(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	svc := NewService(db, q)
