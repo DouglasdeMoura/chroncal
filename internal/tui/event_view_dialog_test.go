@@ -365,7 +365,7 @@ func TestEventViewDialog_MouseWheelScrollsBody(t *testing.T) {
 
 // Regression for #311: after a successful RSVP, the open view dialog must
 // repaint with the new status. Previously the handler only called
-// loadEvents() (the grid behind the dialog), so the dialog kept showing the
+// loadEvents() (the grid behind the dialog). The dialog then kept the
 // stale status until the user closed and reopened it.
 func TestEventRSVPUpdated_RefreshesOpenViewDialog(t *testing.T) {
 	ev := testViewEvent()
