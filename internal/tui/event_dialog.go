@@ -390,9 +390,9 @@ func (m EventDialogModel) focusRSVP() EventDialogModel {
 }
 
 // tabStop identifies one focusable control in the dialog. Tab/Shift+Tab
-// walk every stop in order so keyboard navigation reaches each element the
-// way a web page's tab order would: list → each RSVP button → each action
-// button → title action.
+// walk every stop in order. Keyboard navigation then reaches each element
+// the way a web page's tab order would. That is list → each RSVP button
+// → each action button → title action.
 type tabStop struct {
 	kind int // 0=list, 1=rsvp button, 2=action button, 3=title action
 	idx  int
@@ -739,8 +739,8 @@ type eventMetaDetailLinesOptions struct {
 	// interactive enables mouse-zone markers on the linkified URL rows. Only
 	// set it on surfaces that MouseSweep their own output (the full event
 	// view). The list-pane and trash detail panes composite plain shell.View()
-	// output after the app's single MouseSweep, so their markers would never
-	// be stripped — they leave it false and emit OSC 8 links only.
+	// output after the app's single MouseSweep. Their markers would then never
+	// be stripped. They leave it false and emit OSC 8 links only.
 	interactive bool
 
 	calendar   CalendarInfo
@@ -1029,8 +1029,8 @@ func parseLeadingInt(s string, suffix byte) (int, string, bool) {
 
 // pluralize returns the singular form of a noun when n is one, and the plural
 // form otherwise (zero included). Both forms are supplied explicitly. Then
-// irregular nouns — abbreviations such as "min." that do not take an "-s"
-// suffix — are handled truthfully rather than via a fake general-purpose
+// irregular nouns are handled truthfully. Abbreviations such as "min." that
+// do not take an "-s" suffix are one case. Do not use a fake general-purpose
 // inflector. Callers own the count. The bare form then composes into both
 // plain "%d %s" counts and copy with an adjective like "%d downloaded %s".
 // See issue #548.
