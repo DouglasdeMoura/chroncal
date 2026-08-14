@@ -11,8 +11,8 @@ import (
 )
 
 // Verifies migration 031 rolls back and re-applies cleanly (table rebuild +
-// trigger recreation in both directions) with live rows: non-alarm-owned
-// X-properties must survive both rebuilds id-intact, alarm-owned rows are
+// trigger recreation in both directions) with live rows. Non-alarm-owned
+// X-properties must survive both rebuilds id-intact. Alarm-owned rows are
 // intentionally dropped on Down.
 func TestMigration031UpDown(t *testing.T) {
 	conn, _, err := Open(t.TempDir() + "/mig.db")
@@ -90,10 +90,10 @@ func TestMigration031UpDown(t *testing.T) {
 }
 
 // Verifies migration 040 (transactional ALTER TABLE ADD COLUMN) round-trips
-// cleanly with live data: the four remote_* mirror columns and the partial
-// uniqueness index appear on Up and disappear on Down, the calendars.name
-// UNIQUE constraint survives both directions, the CHECK constraints enforce
-// after Up, and — critically — dependent event/todo/journal rows keep their
+// cleanly with live data. The four remote_* mirror columns and the partial
+// uniqueness index appear on Up and disappear on Down. The calendars.name
+// UNIQUE constraint survives both directions. The CHECK constraints enforce
+// after Up. Critically, dependent event/todo/journal rows keep their
 // foreign keys and ids through the column drop (which internally rebuilds the
 // table). This replaces the old NO TRANSACTION table rebuild.
 func TestMigration040UpDown(t *testing.T) {
