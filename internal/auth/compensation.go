@@ -8,8 +8,8 @@ import (
 
 // PriorCredential captures the credential-store entry that existed before a
 // lifecycle operation mutated it. A failed transaction uses it to roll the
-// keyring back to a state consistent with the rolled-back database row so the
-// two never silently diverge (issue #300 family).
+// keyring back to a state consistent with the rolled-back database row. The
+// two then never diverge in silence (issue #300 family).
 //
 // The zero value means "no prior credential": either the lookup found no entry
 // or the operation stores a brand-new credential with nothing to restore. It is
@@ -19,11 +19,11 @@ type PriorCredential struct {
 	hasPrevious bool
 }
 
-// CapturePriorCredential reads the current credential for accountID, tolerating
-// only the established not-found and identity-mismatch outcomes a destructive
-// lifecycle operation must proceed past. Any other (typically transient
-// backend) error is returned so the caller aborts instead of orphaning the
-// credential or clobbering it with a mismatched replacement.
+// CapturePriorCredential reads the current credential for accountID. It
+// accepts only the established not-found and identity-mismatch outcomes a
+// destructive lifecycle operation must proceed past. Any other (typically
+// transient backend) error is returned. The caller then aborts instead of an
+// orphan credential or a clobber with a mismatched replacement.
 func CapturePriorCredential(store CredentialStore, accountID int64, fingerprint string) (PriorCredential, error) {
 	prev, err := store.Get(accountID, fingerprint)
 	if err != nil && !IsCredentialNotFound(err) && !errors.Is(err, ErrCredentialIdentityMismatch) {
@@ -33,8 +33,8 @@ func CapturePriorCredential(store CredentialStore, accountID int64, fingerprint 
 }
 
 // Restore rolls the credential store back to the captured prior state after a
-// failure, returning an error that surfaces both the original cause and any
-// compensation failure rather than hiding either.
+// failure. It returns an error that surfaces both the original cause and any
+// compensation failure rather than a hide of either.
 //
 // wroteNew reports whether the failed operation stored a brand-new credential
 // for accountID (a Set on an account whose prior lookup found no entry). Such
@@ -66,9 +66,9 @@ func (p PriorCredential) Restore(store CredentialStore, accountID int64, wroteNe
 // the account lifecycle methods and calendar Connect share one implementation.
 //
 // Pass wroteNew true when the transaction stored a brand-new credential for
-// accountID on an account whose prior lookup found no entry: the rollback must
-// delete it. Pass false for destructive operations that deleted the credential
-// (a missing prior then has nothing to undo).
+// accountID on an account whose prior lookup found no entry. The rollback must
+// delete it. Pass false for destructive operations that deleted the credential.
+// A gone prior then has nothing to undo.
 //
 // On a successful commit no credential store is touched.
 func CommitWithCredentialCompensation(tx *sql.Tx, store CredentialStore, accountID int64, prior PriorCredential, wroteNew bool, operation string) error {
