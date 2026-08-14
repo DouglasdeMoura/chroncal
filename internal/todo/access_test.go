@@ -176,7 +176,7 @@ func TestTodoMutations_UnsupportedComponentRejected(t *testing.T) {
 	}
 }
 
-// A read-only collection rejects restore paths, leaving rows soft-deleted.
+// A read-only collection rejects restore paths. Rows stay soft-deleted.
 func TestTodoRestore_ReadOnlyRejectedNoMutation(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	svc := NewService(db, q)
@@ -255,8 +255,8 @@ func TestTodoUpdate_MoveGuardsSourceAndDestination(t *testing.T) {
 }
 
 // upsertTodoWithUID inserts a todo with an explicit UID (and optional
-// recurrence id) via the unguarded sync upsert path, so a test can build a
-// series sharing one UID — Create cannot, since it always mints a fresh UID.
+// recurrence id) via the unguarded sync upsert path. A test can then build a
+// series that shares one UID. Create cannot, since it always mints a fresh UID.
 func upsertTodoWithUID(t *testing.T, svc *Service, uid, recurrenceID string) Todo {
 	t.Helper()
 	td, err := svc.UpsertByUID(context.Background(), UpsertParams{
@@ -271,8 +271,8 @@ func upsertTodoWithUID(t *testing.T, svc *Service, uid, recurrenceID string) Tod
 	return td
 }
 
-// purgeMasterRow hard-deletes the master row (recurrence_id = ”) for uid,
-// simulating an independent purge that leaves orphaned override / series-tail
+// purgeMasterRow hard-deletes the master row (recurrence_id = ”) for uid.
+// That simulates an independent purge that leaves orphaned override / series-tail
 // rows behind.
 func purgeMasterRow(t *testing.T, db *sql.DB, uid string) {
 	t.Helper()
@@ -337,7 +337,7 @@ func TestTodoRestoreByUID_ReadOnlyRejectedWithPurgedMaster(t *testing.T) {
 }
 
 // Sanity: with the master purged, an unsupported-component calendar (VEVENT-only)
-// also rejects the series delete via the same UID-spanning resolution.
+// also rejects the series delete via the same UID-span resolution.
 func TestTodoDeleteSeries_UnsupportedComponentWithPurgedMaster(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	svc := NewService(db, q)
