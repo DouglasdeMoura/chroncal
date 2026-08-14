@@ -20,7 +20,7 @@ import (
 const defaultCalendarColor = "#7C3AED"
 
 // ErrSelectionStale means the account's imported calendar set changed after
-// discovery, so applying the old checklist could remove an unseen calendar.
+// discovery. Apply of the old checklist could then remove an unseen calendar.
 var ErrSelectionStale = errors.New("calendar selection is stale")
 
 type discoverFunc func(context.Context, Account, auth.Credential, func(auth.Credential) error) ([]caldav.RemoteCalendar, error)
@@ -56,7 +56,7 @@ func (s *Service) Get(ctx context.Context, id int64) (Account, error) {
 	return fromStorage(row), nil
 }
 
-// Rename updates the account's human-facing description without changing its
+// Rename updates the account's human-facing description. It does not change its
 // connection identity or credential lookup key.
 func (s *Service) Rename(ctx context.Context, id int64, name string) (Account, error) {
 	name = strings.TrimSpace(name)
@@ -177,7 +177,7 @@ func (s *Service) Create(ctx context.Context, params CreateParams, cred auth.Cre
 }
 
 // LoadCredential reads the single credential shared by every calendar in an
-// account while holding the account lifecycle lock.
+// account while it holds the account lifecycle lock.
 func (s *Service) LoadCredential(ctx context.Context, accountID int64, store auth.CredentialStore) (auth.Credential, error) {
 	release, err := synclock.Account(ctx, s.db, accountID)
 	if err != nil {
@@ -207,8 +207,8 @@ func (s *Service) LoadCredentialForCalendar(ctx context.Context, calendarID, acc
 }
 
 // loadCredential reads a credential while its caller holds the account
-// lifecycle lock. Keeping lookup here prevents account- and calendar-originated
-// reads from drifting without recursively acquiring the same lock.
+// lifecycle lock. Lookup stays here so account- and calendar-originated
+// reads cannot drift without a recursive acquire of the same lock.
 func (s *Service) loadCredential(ctx context.Context, accountID int64, store auth.CredentialStore) (auth.Credential, error) {
 	account, err := s.Get(ctx, accountID)
 	if err != nil {
@@ -282,7 +282,7 @@ func (s *Service) storeCredentialLocked(ctx context.Context, accountID int64, ex
 
 // Discover retrieves a complete remote inventory and reconciles metadata for
 // already-imported calendars. Missing flags change only after the remote
-// discovery succeeds, so transient and partial failures preserve local state.
+// discovery succeeds. Transient and partial failures then preserve local state.
 func (s *Service) Discover(ctx context.Context, accountID int64, store auth.CredentialStore) (Discovery, error) {
 	release, err := synclock.Account(ctx, s.db, accountID)
 	if err != nil {
@@ -292,9 +292,9 @@ func (s *Service) Discover(ctx context.Context, accountID int64, store auth.Cred
 	return s.discoverLocked(ctx, accountID, store)
 }
 
-// DiscoverWithCredential replaces an existing account's credential and runs a
+// DiscoverWithCredential replaces an account's credential and runs a
 // complete discovery under the same lifecycle lock. A failed discovery restores
-// the previous credential so reconnecting with a typo cannot break working sync.
+// the previous credential. A reconnect with a typo then cannot break working sync.
 func (s *Service) DiscoverWithCredential(ctx context.Context, accountID int64, replacement auth.Credential, store auth.CredentialStore) (Discovery, error) {
 	release, err := synclock.Account(ctx, s.db, accountID)
 	if err != nil {
@@ -434,8 +434,8 @@ func (s *Service) discoverLocked(ctx context.Context, accountID int64, store aut
 	return Discovery{Account: account, Calendars: calendars}, nil
 }
 
-// Import creates local calendars for the selected paths. Repeating an import
-// is idempotent and returns the already-linked IDs instead of duplicating rows.
+// Import creates local calendars for the selected paths. A repeat of an import
+// is idempotent. It returns the already-linked IDs instead of duplicate rows.
 func (s *Service) Import(ctx context.Context, discovery Discovery, selectedPaths []string) (ImportResult, error) {
 	if discovery.Account.ID == 0 {
 		return ImportResult{}, fmt.Errorf("discovery account is required")
@@ -792,8 +792,8 @@ func (s *Service) RemoveWithCalendars(
 	return result, nil
 }
 
-// Delete removes an account and its credential while preserving every local
-// calendar and its downloaded data as a disconnected local calendar.
+// Delete removes an account and its credential. Every local calendar and its
+// downloaded data stay as a disconnected local calendar.
 func (s *Service) Delete(ctx context.Context, accountID int64, store auth.CredentialStore) error {
 	release, err := synclock.Account(ctx, s.db, accountID)
 	if err != nil {
@@ -913,10 +913,10 @@ func normalizedComponents(components []string) []string {
 }
 
 // createDiscoveredCalendarRow creates the local calendar row for a discovered
-// remote collection, reserving a non-colliding local name from taken (the
-// caller adds the returned row's name to taken when creating in a loop). It is
-// the single DiscoveredCalendar-to-row mapping shared by Import,
-// ReconcileSelection, and calendar migration, so remote-metadata columns stay
+// remote collection. It reserves a local name from taken that does not collide.
+// The caller adds the returned row's name to taken when it creates in a loop.
+// It is the single DiscoveredCalendar-to-row mapping shared by Import,
+// ReconcileSelection, and calendar migration. Remote-metadata columns then stay
 // in lockstep no matter which flow creates the row.
 func createDiscoveredCalendarRow(
 	ctx context.Context,
@@ -973,10 +973,10 @@ func remoteCalendarName(remote caldav.RemoteCalendar) string {
 }
 
 // remoteIdentityKey collapses equivalent remote collection identities into one
-// key so a legacy absolute link (e.g. "https://host/cal/work") and the
-// server-relative path discovery returns ("/cal/work/") reconcile to the same
-// row instead of duplicating it. Relative references resolve against the
-// account server URL; absolute references are kept as-is. Both are normalized
+// key. A legacy absolute link (for example "https://host/cal/work") and the
+// server-relative path discovery returns ("/cal/work/") then reconcile to the
+// same row instead of a duplicate. Relative references resolve against the
+// account server URL. Absolute references are kept as-is. Both are normalized
 // to a trailing-slash-free form.
 func remoteIdentityKey(raw, serverURL string) string {
 	raw = strings.TrimSpace(raw)
