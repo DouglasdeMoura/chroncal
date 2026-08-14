@@ -208,11 +208,11 @@ func TestExport_MultipleExdatesRdates(t *testing.T) {
 	}
 }
 
-// Regression test for issue #421: a floating recurring component (no TZID,
-// no Z on DTSTART) must emit EXDATE/RDATE as floating values too. Emitting
-// them with a trailing Z creates a value-type mismatch against DTSTART, so
+// Regression test for issue #421. A floating recurring component (no TZID,
+// no Z on DTSTART) must emit EXDATE/RDATE as floating values too. A emit
+// of them with a trail Z creates a value-type mismatch against DTSTART.
 // CalDAV servers that match EXDATE against RRULE occurrences by exact string
-// fail to suppress the excluded occurrence and a deleted instance reappears.
+// then fail to suppress the excluded occurrence. A deleted instance reappears.
 func TestExport_FloatingExdatesRdatesNoZ(t *testing.T) {
 	t.Parallel()
 	events := []event.Event{{
@@ -250,12 +250,12 @@ func TestExport_FloatingExdatesRdatesNoZ(t *testing.T) {
 	}
 }
 
-// Regression test for issue #492: a zoned recurring component emits DTSTART
-// with a TZID in local wall-clock, so its EXDATE/RDATE must carry the same
-// TZID and wall-clock value. Emitting them as bare UTC (...Z) drops the TZID
-// and creates a value-type mismatch against DTSTART, so servers that expand
-// the RRULE in the DTSTART zone (e.g. Google) fail to suppress the excluded
-// occurrence and a deleted instance reappears.
+// Regression test for issue #492. A zoned recurring component emits DTSTART
+// with a TZID in local wall-clock. Its EXDATE/RDATE must then carry the same
+// TZID and wall-clock value. Emit them as bare UTC (...Z) drops the TZID
+// and creates a value-type mismatch against DTSTART. Servers that expand
+// the RRULE in the DTSTART zone (e.g. Google) then fail to suppress the
+// excluded occurrence. A deleted instance reappears.
 func TestExport_ZonedExdatesRdatesCarryTZID(t *testing.T) {
 	t.Parallel()
 	// DTSTART 2026-04-01T09:00 America/New_York == 13:00Z (EDT, UTC-4).
@@ -879,11 +879,11 @@ func TestExport_AlarmRepeatWithDuration(t *testing.T) {
 	}
 }
 
-// TestExport_AlarmDurationWithoutRepeat guards RFC 5545 §3.8.6.3: DURATION
+// TestExport_AlarmDurationWithoutRepeat guards RFC 5545 §3.8.6.3. DURATION
 // MUST be paired with REPEAT. An alarm with Duration set but Repeat == 0 must
-// not emit a bare DURATION, which strict CalDAV servers (e.g. Google) reject
-// with HTTP 400, blocking the whole resource. This is the inverse of the bug
-// fixed for bare REPEAT (issue #363).
+// not emit a bare DURATION. Strict CalDAV servers (e.g. Google) reject
+// that with HTTP 400. That blocks the whole resource. This is the inverse of
+// the bug fixed for bare REPEAT (issue #363).
 func TestExport_AlarmDurationWithoutRepeat(t *testing.T) {
 	t.Parallel()
 	events := []event.Event{{
@@ -995,9 +995,9 @@ func TestExport_TodoAllFields(t *testing.T) {
 	}
 }
 
-// TestExport_TodoDurationWithoutStart guards issue #102: a stored VTODO with
+// TestExport_TodoDurationWithoutStart guards issue #102. A stored VTODO with
 // DURATION but no DTSTART (which go-ical's encoder rejects) must not abort the
-// whole export batch and drop every todo.
+// whole export batch. It must not drop every todo.
 func TestExport_TodoDurationWithoutStart(t *testing.T) {
 	t.Parallel()
 	todos := []todo.Todo{
@@ -1132,8 +1132,8 @@ func TestExport_MergeCalendars_PreservesNewVTIMEZONE(t *testing.T) {
 
 // TestMergeCalendars_MixedSecondStream_EventBeforeTodo exercises the case where
 // the second stream contains a VEVENT that precedes a VTODO. The if/else if
-// search order (VTODO first) used to cause all content before the first VTODO
-// to be silently dropped, including the leading VEVENT. See issue #365.
+// search order (VTODO first) used to drop all content before the first VTODO
+// in silence. The lead VEVENT was included. See issue #365.
 func TestMergeCalendars_MixedSecondStream_EventBeforeTodo(t *testing.T) {
 	t.Parallel()
 	a := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:e1\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
@@ -1162,7 +1162,7 @@ func TestMergeCalendars_MixedSecondStream_EventBeforeTodo(t *testing.T) {
 }
 
 // TestMergeCalendars_MixedSecondStream_JournalBeforeTodo mirrors the event
-// case but with a VJOURNAL leading the second stream before a VTODO.
+// case but with a VJOURNAL at the start of the second stream before a VTODO.
 func TestMergeCalendars_MixedSecondStream_JournalBeforeTodo(t *testing.T) {
 	t.Parallel()
 	a := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:e1\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
@@ -1183,10 +1183,11 @@ func TestMergeCalendars_MixedSecondStream_JournalBeforeTodo(t *testing.T) {
 	}
 }
 
-// TestMergeCalendars_FreeBusyOnlySecondStream covers issue #422: when the
+// TestMergeCalendars_FreeBusyOnlySecondStream covers issue #422. When the
 // second stream carries a VFREEBUSY component but no VEVENT/VTODO/VJOURNAL, the
-// component-marker search must still find it so b's BEGIN:VCALENDAR header is
-// stripped. Otherwise b is appended verbatim, nesting a second VCALENDAR.
+// component-marker search must still find it. b's BEGIN:VCALENDAR header is
+// then stripped. Otherwise b is appended verbatim. That nests a second
+// VCALENDAR.
 func TestMergeCalendars_FreeBusyOnlySecondStream(t *testing.T) {
 	t.Parallel()
 	a := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:e1\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
