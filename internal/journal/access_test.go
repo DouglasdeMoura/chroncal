@@ -78,8 +78,8 @@ func TestJournalUpdate_ReadOnlySourceRejected(t *testing.T) {
 }
 
 // TestJournalUpdate_MoveToReadOnlyRejected covers the destination-calendar
-// check: the source stays writable while the target calendar is read-only, so
-// only the move leg is refused and the journal stays put.
+// check. The source stays writable while the target calendar is read-only.
+// Only the move leg is then refused. The journal stays put.
 func TestJournalUpdate_MoveToReadOnlyRejected(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -196,8 +196,9 @@ func TestJournalRestoreByUID_ReadOnlyRejected(t *testing.T) {
 }
 
 // insertOrphanOverride inserts a journal row with a non-empty recurrence_id
-// and the given UID but no matching master (recurrence_id = ”) row,
-// reproducing an orphaned override/series-tail left behind by a purged master.
+// and the given UID but no master (recurrence_id = ”) row that matches.
+// That reproduces an orphaned override/series-tail left behind by a purged
+// master.
 func insertOrphanOverride(t *testing.T, db *sql.DB, uid, recurrenceID string, softDeleted bool) {
 	t.Helper()
 	if _, err := db.ExecContext(context.Background(),
@@ -216,10 +217,10 @@ func insertOrphanOverride(t *testing.T, db *sql.DB, uid, recurrenceID string, so
 	}
 }
 
-// TestJournalDeleteSeries_OrphanTailReadOnlyRejected reproduces the bypass:
-// the master (recurrence_id = ”) is absent, so the master-only lookup would
+// TestJournalDeleteSeries_OrphanTailReadOnlyRejected reproduces the bypass.
+// The master (recurrence_id = ”) is absent. The master-only lookup would then
 // miss the orphaned override. The UID-wide guard must still resolve its
-// calendar and refuse a read-only delete without mutating it.
+// calendar. It must refuse a read-only delete. It must not mutate it.
 func TestJournalDeleteSeries_OrphanTailReadOnlyRejected(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -239,8 +240,8 @@ func TestJournalDeleteSeries_OrphanTailReadOnlyRejected(t *testing.T) {
 }
 
 // TestJournalRestoreByUID_OrphanTailReadOnlyRejected mirrors the delete case
-// for the restore path: a soft-deleted override with no master must still be
-// refused by the UID-wide guard and stay soft-deleted.
+// for the restore path. A soft-deleted override with no master must still be
+// refused by the UID-wide guard. It must stay soft-deleted.
 func TestJournalRestoreByUID_OrphanTailReadOnlyRejected(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
