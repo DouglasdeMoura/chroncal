@@ -10,8 +10,8 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/duration"
 )
 
-// MaxAlarmRepeat caps RFC 5545 REPEAT counts. The spec sets no bound, but
-// every repeat becomes a tracked trigger time in the alarm check loop, so an
+// MaxAlarmRepeat caps RFC 5545 REPEAT counts. The spec sets no bound. Every
+// repeat becomes a tracked trigger time in the alarm check loop. An
 // absurd value (imported or typed) would hang or OOM every check.
 const MaxAlarmRepeat = 100
 
@@ -36,9 +36,9 @@ type Alarm struct {
 
 // ContentEqual returns true if two alarms have identical content (all fields
 // except ID, EventID, UID, Acknowledged, and XProperties). Used by
-// ReplaceAlarms to match incoming alarms against existing ones for
+// ReplaceAlarms to match new alarms against stored ones for
 // merge-based updates. XProperties are excluded so a remote X-prop tweak
-// doesn't break the match and lose alarm state; matched alarms get their
+// does not break the match and lose alarm state. Matched alarms get their
 // X-properties rewritten unconditionally instead.
 func (a Alarm) ContentEqual(b Alarm) bool {
 	if !strings.EqualFold(a.Action, b.Action) {
@@ -72,10 +72,10 @@ func (a Alarm) ContentEqual(b Alarm) bool {
 	return attendeesEqual(a.Attendees, b.Attendees)
 }
 
-// triggerValuesEqual compares two alarm trigger values, normalizing absolute
+// triggerValuesEqual compares two alarm trigger values. It normalizes absolute
 // time formats. iCal UTC (20060102T150405Z), RFC 3339, and iCal floating
-// (20060102T150405) are all recognized so that the same instant written in
-// different formats is treated as equal.
+// (20060102T150405) are all recognized. The same instant written in
+// different formats is then treated as equal.
 func triggerValuesEqual(a, b string) bool {
 	if strings.EqualFold(a, b) {
 		return true
@@ -136,7 +136,7 @@ func sortedEmails(atts []AlarmAttendee) []string {
 }
 
 // ValidateAcknowledged returns true if v is a valid RFC 9074 ACKNOWLEDGED
-// value: empty string (clearing), iCal UTC datetime, or RFC 3339.
+// value: empty string (clear), iCal UTC datetime, or RFC 3339.
 func ValidateAcknowledged(v string) bool {
 	if v == "" {
 		return true
