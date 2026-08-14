@@ -89,7 +89,7 @@ func compPropText(c *goical.Component, name string) string {
 }
 
 // parseUTCOffset parses an RFC 5545 UTC-OFFSET value like "+0530", "-0800",
-// or "+005258" (the optional seconds component at the end) and returns the
+// or "+005258" (the optional seconds component at the end). It returns the
 // offset in seconds.
 func parseUTCOffset(s string) (int, error) {
 	s = strings.TrimSpace(s)
