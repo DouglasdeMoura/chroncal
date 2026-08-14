@@ -92,8 +92,8 @@ func TestParseFile_MixedComponentsAndWarnings(t *testing.T) {
 	}
 }
 
-// TestParseFile_OpenErrorIsWrapped guards the open-file error path: a missing
-// file must surface as an "open file" error and must not leak an open handle.
+// TestParseFile_OpenErrorIsWrapped guards the open-file error path. A file that
+// is gone must surface as an "open file" error. It must not leak an open handle.
 func TestParseFile_OpenErrorIsWrapped(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "does-not-exist.ics")
 	_, err := icaltransfer.ParseFile(missing)
@@ -106,8 +106,8 @@ func TestParseFile_OpenErrorIsWrapped(t *testing.T) {
 }
 
 // TestValidateDestination_ReadOnlyAndUnsupported exercises the destination
-// capability guard: a read-only linked calendar rejects any present family,
-// and a writable calendar with a narrow component list rejects families it
+// capability guard. A read-only linked calendar rejects any present family.
+// A writable calendar with a narrow component list rejects families it
 // does not advertise.
 func TestValidateDestination_ReadOnlyAndUnsupported(t *testing.T) {
 	ctx := context.Background()
@@ -149,10 +149,10 @@ func TestValidateDestination_ReadOnlyAndUnsupported(t *testing.T) {
 	}
 }
 
-// TestImport_UIDUpsertNewUpdatedFailed covers the UID upsert contract: rows
-// new to the database are reported as new, rows matched by UID are updated
-// in place, and rows that fail their own upsert are counted as failed and
-// skipped without aborting the rest of the import.
+// TestImport_UIDUpsertNewUpdatedFailed covers the UID upsert contract. Rows
+// new to the database are reported as new. Rows matched by UID are updated
+// in place. Rows that fail their own upsert are counted as failed. They are
+// skipped. The rest of the import is not aborted.
 func TestImport_UIDUpsertNewUpdatedFailed(t *testing.T) {
 	ctx := context.Background()
 	a := newTestApp(t)
@@ -215,8 +215,8 @@ func TestImport_UIDUpsertNewUpdatedFailed(t *testing.T) {
 }
 
 // TestImport_ChildFieldFailureIsWarningNotFailed locks in the child-field
-// warning semantics: a bad alarm must not count the parent event as failed,
-// but the dropped alarm must surface as a warning.
+// warning semantics. A bad alarm must not count the parent event as failed.
+// The dropped alarm must surface as a warning.
 func TestImport_ChildFieldFailureIsWarningNotFailed(t *testing.T) {
 	ctx := context.Background()
 	a := newTestApp(t)
@@ -248,9 +248,9 @@ func TestImport_ChildFieldFailureIsWarningNotFailed(t *testing.T) {
 }
 
 // TestValidateDestination_CrossCalendarReadOnlyUIDRejectedBeforeWrite locks
-// in the cross-calendar UID guard: importing a UID that already lives in a
+// in the cross-calendar UID guard. An import of a UID that already lives in a
 // read-only remote collection into a different calendar must be rejected
-// before any write occurs, so the upsert cannot move data out of the
+// before any write occurs. The upsert then cannot move data out of the
 // read-only source.
 func TestValidateDestination_CrossCalendarReadOnlyUIDRejectedBeforeWrite(t *testing.T) {
 	ctx := context.Background()
