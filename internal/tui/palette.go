@@ -479,11 +479,12 @@ func renderPaletteRow(c PaletteCommand, width int, selected bool, theme Theme) s
 	right := c.Shortcut
 	rightW := lipgloss.Width(right)
 
-	// Budget the shortcut: guarantee the title zone has at least minTitleZone
+	// Budget the shortcut. Guarantee the title zone has at least minTitleZone
 	// cells (room for a 3-cell clipped title plus a 1-cell gap). Without this
 	// cap a wide date label (e.g. "[Event] Jan 2 15:04-18:30" = 25 cells) fills
-	// the row at minimum palette width (listW=26), leaving the title truncated
-	// but the shortcut still appended at full width — overflowing the column.
+	// the row at minimum palette width (listW=26). The title is then truncated
+	// but the shortcut is still appended at full width. That overflows the
+	// column.
 	const minTitleZone = 4
 	if maxRightW := width - prefixW - minTitleZone; rightW > maxRightW {
 		if maxRightW <= 0 {
@@ -535,9 +536,9 @@ func renderPaletteRow(c PaletteCommand, width int, selected bool, theme Theme) s
 	return out.String()
 }
 
-// renderSearching fills the list area with a centered spinner + label so
-// the dialog does not flash "No matches" between the keystroke and the
-// first result. Height matches m.list.Height() to keep the dialog stable.
+// renderSearching fills the list area with a centered spinner + label.
+// The dialog then does not flash "No matches" between the keystroke and
+// the first result. Height matches m.list.Height() to keep the dialog stable.
 func (m PaletteModel) renderSearching(width int) string {
 	label := m.spinner.View() + " " + lipgloss.NewStyle().Foreground(m.theme.TextDim).Render("Searching…")
 	height := m.list.Height()
