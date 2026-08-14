@@ -1,12 +1,12 @@
 # Code of Conduct
 
-This document provides community guidelines for a safe, respectful, productive, and collaborative place for any person who is willing to contribute to the Chroncal project. It applies to all “collaborative space”, which is defined as community communications channels (such as mailing lists, submitted patches, commit comments, etc.).
+This document gives community rules for the Chroncal project. The rules support a safe, respectful, and productive space. They apply to every person who wants to contribute. They apply to all "collaborative space". Collaborative space means community communication channels (mailing lists, submitted patches, commit comments, and similar).
 
-- Participants will be tolerant of opposing views.
-- Participants must ensure that their language and actions are free of personal attacks and disparaging personal remarks.
-- When interpreting the words and actions of others, participants should always assume good intentions.
-- Behaviour which can be reasonably considered harassment will not be tolerated.
+- Participants will tolerate other views.
+- Participants must keep their language and actions free of personal attacks and personal remarks that insult a person.
+- When you interpret the words and actions of others, always assume good intent.
+- Do not tolerate behaviour that a reasonable person can consider harassment.
 
 ## Attribution
 
-This Code of Conduct is adapted from the [The Ruby Community Conduct Guideline](https://www.ruby-lang.org/en/conduct/).
+This Code of Conduct comes from the [The Ruby Community Conduct Guideline](https://www.ruby-lang.org/en/conduct/).
