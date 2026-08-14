@@ -49,7 +49,7 @@ type GoogleOAuthResult struct {
 // exchange the code, or Close to abandon the flow and release the listener.
 //
 // The split exists so UIs (the TUI's wait modal) can render AuthURL and a
-// wait state between the two phases with no print from the flow.
+// wait state between the two phases. The flow then prints nothing.
 // GoogleOAuthFlow composes Start+Wait and keeps the CLI's printed output.
 type PendingOAuthFlow struct {
 	// AuthURL is the Google consent URL. UIs show it when the browser
