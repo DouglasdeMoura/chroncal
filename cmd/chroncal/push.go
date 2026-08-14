@@ -15,11 +15,11 @@ import (
 
 const opportunisticPushTimeout = 30 * time.Second
 
-// opportunisticPush is what every write path calls: it derives the two
-// streams once — stdout for the human sync note (discarded in JSON mode so
-// nothing trails the JSON object, issue #255), stderr for import warnings —
-// instead of each of the ~27 call sites repeating that wiring. The
-// pushCalendarAfterWrite seam below stays a package var so tests can stub
+// opportunisticPush is what every write path calls. It derives the two
+// streams once. stdout is the human sync note (discarded in JSON mode so
+// nothing trails the JSON object, issue #255). stderr is import warnings.
+// The ~27 call sites then do not repeat that wiring. The
+// pushCalendarAfterWrite seam below stays a package var. Tests can stub
 // the push while this derivation remains real code under test.
 func opportunisticPush(a *app.App, calendarID int64, cmd *cobra.Command) {
 	outW := cmd.OutOrStdout()
@@ -29,16 +29,16 @@ func opportunisticPush(a *app.App, calendarID int64, cmd *cobra.Command) {
 	pushCalendarAfterWrite(a, calendarID, outW, cmd.ErrOrStderr())
 }
 
-// pushCalendarAfterWrite opportunistically pushes pending changes for one
-// calendar upstream after a CLI write. It is best-effort: failures are
-// reported to outW but do not affect the command's exit status — the dirty
-// flag survives and the periodic `chroncal service run` tick will retry.
+// pushCalendarAfterWrite opportunistically pushes unpushed changes for one
+// calendar upstream after a CLI write. It is best-effort. Failures are
+// reported to outW but do not affect the command's exit status. The dirty
+// flag survives. The periodic `chroncal service run` tick will retry.
 // Local-only calendars (no CalDAV account linked) are silent no-ops.
-// warnW receives import warnings (see reportOpportunisticPush); call sites
-// pass cmd.ErrOrStderr() so JSON callers that discard outW still see them.
+// warnW receives import warnings (see reportOpportunisticPush). Call sites
+// pass cmd.ErrOrStderr(). JSON callers that discard outW still see them.
 //
-// It is a package var so tests can substitute a recording stub to assert
-// that write paths opportunistically push, without standing up a CalDAV
+// It is a package var so tests can substitute a record stub. Tests then
+// assert that write paths opportunistically push, with no CalDAV
 // server.
 var pushCalendarAfterWrite = func(a *app.App, calendarID int64, outW, warnW io.Writer) {
 	ctx, cancel := context.WithTimeout(context.Background(), opportunisticPushTimeout)
@@ -66,10 +66,10 @@ var pushCalendarAfterWrite = func(a *app.App, calendarID int64, outW, warnW io.W
 }
 
 // reportOpportunisticPush renders the outcome of an opportunistic push. The
-// engine runs with a discarded logger, so the result is the only place import
-// warnings from a server-wins conflict import surface. They go to warnW — not
-// outW — so JSON callers (which pass io.Discard to keep stdout clean) still
-// see them on the ERROR stream, and so they never mix into stdout.
+// engine runs with a discarded logger. The result is then the only place import
+// warnings from a server-wins conflict import surface. They go to warnW, not
+// outW. JSON callers (which pass io.Discard to keep stdout clean) still
+// see them on the ERROR stream. They never mix into stdout.
 func reportOpportunisticPush(outW, warnW io.Writer, calName string, result *syncPkg.SyncResult) {
 	fprintImportWarnings(warnW, result.Warnings)
 	if result.Pushed == 0 && result.Deleted == 0 && len(result.Errors) == 0 {
