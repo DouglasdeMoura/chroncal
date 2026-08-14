@@ -8,7 +8,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
 
-// countRows returns the number of rows matching the given query.
+// countRows returns the number of rows that match the given query.
 func countRows(t *testing.T, db *sql.DB, query string, args ...any) int {
 	t.Helper()
 	var n int
@@ -18,14 +18,14 @@ func countRows(t *testing.T, db *sql.DB, query string, args ...any) int {
 	return n
 }
 
-// The category child-write is forced to fail by passing duplicate categories:
-// journal_categories has PRIMARY KEY (journal_id, category) and
-// ParseCategoryList does not dedupe, so inserting "dup,dup" fails on the second
-// row. That isolates the failure to the category child-write while the parent
-// journal row write succeeds — exactly the partial-failure window the fix must
-// close. (Dropping journal_categories would instead break the UpdateJournal
-// statement itself: SQLite compiles the journals_fts_au trigger, which reads
-// journal_categories, at prepare time.)
+// The category child-write is forced to fail by duplicate categories.
+// journal_categories has PRIMARY KEY (journal_id, category).
+// ParseCategoryList does not dedupe. An insert of "dup,dup" then fails on the
+// second row. That isolates the failure to the category child-write while the
+// parent journal row write succeeds. That is exactly the partial-failure window
+// the fix must close. A drop of journal_categories would instead break the
+// UpdateJournal statement itself. SQLite compiles the journals_fts_au trigger,
+// which reads journal_categories, at prepare time.
 
 // TestCreate_AtomicOnCategoryFailure asserts that when the category child-write
 // fails, Create returns an error AND leaves no journal row behind. Before the
@@ -103,9 +103,9 @@ func TestUpdate_AtomicOnCategoryFailure(t *testing.T) {
 
 // TestUpsertByUID_AtomicOnCategoryFailure asserts that when the category
 // child-write fails, UpsertByUID returns an error AND leaves no journal row
-// behind. Before the fix the upsert committed the row in autocommit and only
-// then ran ReplaceCategories in a separate transaction, so a failure left an
-// orphan row.
+// behind. Before the fix the upsert committed the row in autocommit. Only
+// then did it run ReplaceCategories in a separate transaction. A failure then
+// left an orphan row.
 func TestUpsertByUID_AtomicOnCategoryFailure(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	svc := NewService(db, q)
