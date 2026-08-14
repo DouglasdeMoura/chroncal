@@ -406,8 +406,8 @@ func detailURLField(labelStyle lipgloss.Style, label, value string, lw, w int, r
 	return prefix + renderLinkValue(value, available, rw, zones)
 }
 
-// detailLinkifiedLine is detailLine for a free-text value that may contain a
-// URL (for example, "Room 4 — join at https://…") or be a bare URL.
+// detailLinkifiedLine is detailLine for a free-text value. The value may
+// contain a URL (for example, "Room 4 — join at https://…") or be a bare URL.
 // renderLinkifiedValue makes each embedded URL clickable and keeps its
 // full address as the click target. The render is then correct for plain
 // text, a bare URL, or text with an embedded link. zones controls whether
