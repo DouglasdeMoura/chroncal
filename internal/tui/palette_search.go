@@ -15,7 +15,7 @@ import (
 const paletteSearchLimit = 15
 
 // makePaletteSearchFunc returns a palette search callback that queries
-// events by text and formats them as palette entries. Selecting a result
+// events by text and formats them as palette entries. A select of a result
 // opens the event view dialog via EventViewRequestedMsg.
 func makePaletteSearchFunc(m Model) PaletteSearchFunc {
 	return func(query string) tea.Cmd {
