@@ -347,10 +347,10 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, []string, error) {
 	}, append(alarmWarnings, todoWarnings...), nil
 }
 
-// parseDateProp formats a component's date/date-time property for storage,
-// returning a warning rather than silently discarding an unparseable value.
-// A dropped DUE or DTSTART is invisible data loss: the record disappears from
-// date views, any alarms lose their anchor, and the next export re-emits the
+// parseDateProp formats a component's date/date-time property for storage.
+// It returns a warning rather than a silent discard of an unparseable value.
+// A dropped DUE or DTSTART is invisible data loss. The record disappears from
+// date views. Any alarms lose their anchor. The next export re-emits the
 // component with the property missing. An empty first return means the
 // property was absent (no warning) or unusable (warning set).
 func parseDateProp(props ical.Props, kind, name, uid string) (string, string) {
@@ -617,9 +617,9 @@ func parseCategories(ve ical.Event) string {
 }
 
 // parseAlarm extracts a model.Alarm from a VALARM component.
-// The second return value is a warning string (empty if no issues); a VALARM
-// with several problems reports all of them, since each one silently changes
-// what the alarm does and the user needs to see every reason.
+// The second return value is a warning string (empty if no issues). A VALARM
+// with several problems reports all of them. Each one changes what the alarm
+// does in silence. The user needs to see every reason.
 func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 	alarm := model.Alarm{Action: "DISPLAY", Related: "START"}
 	var warns []string
@@ -827,8 +827,8 @@ func propTextOr(props ical.Props, name, def string) string {
 
 // parseRecurrenceID extracts a RECURRENCE-ID as an RFC 3339 UTC string, or ""
 // when the property is absent. A present-but-unparseable value fails the
-// component: letting it degrade to "" would import the override as the series
-// master, clobbering the real master row and corrupting override
+// component. A degrade to "" would import the override as the series
+// master. That would clobber the real master row and corrupt override
 // reconciliation.
 func parseRecurrenceID(props ical.Props) (string, error) {
 	prop := props.Get(ical.PropRecurrenceID)
@@ -853,10 +853,10 @@ func parseCategoriesFromProps(props ical.Props) string {
 }
 
 // dtstartZone resolves the component's anchor zone — the IANA TZID on DTSTART
-// (or DUE for a VTODO with no DTSTART) — for interpreting TZID-less DATE-TIME
-// values elsewhere in the component. Returns nil when the anchor is absent,
-// floating, UTC, or date-only: those components have no zone to inherit and
-// TZID-less values keep their UTC/floating reading.
+// (or DUE for a VTODO with no DTSTART) — for TZID-less DATE-TIME values
+// elsewhere in the component. Returns nil when the anchor is absent,
+// floating, UTC, or date-only. Those components have no zone to inherit.
+// TZID-less values then keep their UTC/floating reading.
 func dtstartZone(props ical.Props) *time.Location {
 	for _, name := range []string{ical.PropDateTimeStart, ical.PropDue} {
 		prop := props.Get(name)
@@ -972,8 +972,8 @@ func parseAttendeesFromProps(props ical.Props) []model.Attendee {
 	return attendees
 }
 
-// attendeeFromProp extracts a model.Attendee from an iCal ATTENDEE property,
-// including all RFC 5545 parameters.
+// attendeeFromProp extracts a model.Attendee from an iCal ATTENDEE property.
+// All RFC 5545 parameters are included.
 func attendeeFromProp(prop *ical.Prop) model.Attendee {
 	return model.Attendee{
 		Email:         stripMailto(prop.Value),
@@ -992,7 +992,7 @@ func attendeeFromProp(prop *ical.Prop) model.Attendee {
 }
 
 // joinMailtoParams joins multiple mailto URI param values into a comma-separated
-// string, stripping the "mailto:" prefix and surrounding quotes from each.
+// string. It strips the "mailto:" prefix and surrounding quotes from each.
 func joinMailtoParams(values []string) string {
 	if len(values) == 0 {
 		return ""
@@ -1023,9 +1023,9 @@ func addDuration(t time.Time, dur string) time.Time {
 	return duration.Add(t, dur)
 }
 
-// decodeInlineAttachment decodes a BASE64 ATTACH value, enforcing the inline
-// size limit. The length is checked before decoding so a deliberately oversized
-// payload is rejected without allocating a large buffer.
+// decodeInlineAttachment decodes a BASE64 ATTACH value and enforces the inline
+// size limit. The length is checked before decode so a deliberately oversized
+// payload is rejected without a large buffer allocation.
 func decodeInlineAttachment(value string) ([]byte, error) {
 	if base64.StdEncoding.DecodedLen(len(value)) > maxInlineAttachmentBytes {
 		return nil, fmt.Errorf("%w: inline attachment exceeds %d bytes", errImportLimitExceeded, maxInlineAttachmentBytes)
@@ -1320,9 +1320,9 @@ func extractXPropertiesWithSet(props ical.Props, handled map[string]bool) []mode
 // isLibicalDiagnosticProp reports whether an X-property name is a libical
 // internal diagnostic marker. libical writes X-LIC-ERROR / X-LIC-ERRORTYPE
 // directly into the parsed property bag whenever it gives up on a malformed
-// property, so they look like X-properties to consumers but are really
+// property. They look like X-properties to consumers but are really
 // parser-state. They round-trip into our DB on import and back onto the
-// wire on export, where strict CalDAV servers (Google) reject the resource
+// wire on export. Strict CalDAV servers (Google) then reject the resource
 // with HTTP 400. Drop them at both ends so they never reach the server.
 func isLibicalDiagnosticProp(name string) bool {
 	return strings.HasPrefix(name, "X-LIC-")
