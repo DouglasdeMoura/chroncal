@@ -950,7 +950,7 @@ func TestForm_NoFocusIndicatorByDefault(t *testing.T) {
 		"no focus marker when ShowFocusMarker is false")
 }
 
-// labelAndFieldOnSeparateLines returns true when the line containing the
+// labelAndFieldOnSeparateLines returns true when the line that holds the
 // label text does NOT also contain field content. Field content carries
 // either the textinput reverse-video cursor (\x1b[7;37m) or the
 // italic+faint placeholder combo (\x1b[3;2m). Labels now render in 240
