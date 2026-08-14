@@ -36,7 +36,7 @@ func (s *Service) SyncCalendar(ctx context.Context, calendarID int64, strategy C
 	return s.engine.SyncCalendar(ctx, calendarID, strategy)
 }
 
-// PushCalendar pushes pending local changes for one calendar without pulling.
+// PushCalendar pushes unpushed local changes for one calendar with no pull.
 // Intended for opportunistic save-time sync from CLI/TUI mutations. Failures
 // leave the dirty flag intact so the periodic tick can retry.
 func (s *Service) PushCalendar(ctx context.Context, calendarID int64, strategy ConflictStrategy) (*SyncResult, error) {
@@ -136,19 +136,19 @@ func (s *Service) ListConflicts(ctx context.Context) ([]Conflict, error) {
 
 // resolveConflictAfterRevCapture, when non-nil, runs inside ResolveConflict's
 // accept-server path between taking the import rev (from importICal's revs map)
-// and the rev-guarded dirty clear. It is nil in production and exists only so
-// tests can simulate a concurrent local edit landing in that window to exercise
-// the guard. The narrower persist-commit window — an edit landing inside
-// importICal right after persistImported commits — is covered by the engine's
-// afterImportPersist hook. See the engine's afterImportRevCapture and issues
-// #466 and #510.
+// and the rev-guarded dirty clear. It is nil in production. Tests use it to
+// simulate a concurrent local edit that lands in that window, to exercise
+// the guard. The narrower persist-commit window is an edit that lands inside
+// importICal right after persistImported commits. The engine's
+// afterImportPersist hook covers that window. See the engine's
+// afterImportRevCapture and issues #466 and #510.
 var resolveConflictAfterRevCapture func()
 
-// ResolveConflict resolves a conflict by picking local or server version.
-// The returned warnings list what importing the server body could not
+// ResolveConflict resolves a conflict by a pick of the local or server version.
+// The returned warnings list what an import of the server body could not
 // represent faithfully (accept-server pick only; a local pick imports
-// nothing). The CLI builds this service with a nil (silent) engine logger,
-// so the return value is the only channel those warnings have.
+// nothing). The CLI builds this service with a nil (silent) engine logger.
+// The return value is then the only channel those warnings have.
 func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick string) ([]ImportWarning, error) {
 	if pick != "server" && pick != "local" {
 		return nil, fmt.Errorf("invalid pick: %q (use 'local' or 'server')", pick)
@@ -269,7 +269,7 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 	return warnings, nil
 }
 
-// ResetCalendar clears all sync state for a calendar without deleting local data.
+// ResetCalendar clears all sync state for a calendar. Local data stays.
 // The next sync will perform a full initial sync.
 func (s *Service) ResetCalendar(ctx context.Context, calendarID int64) error {
 	release, err := s.engine.lockCalendarLifecycle(ctx, calendarID)
