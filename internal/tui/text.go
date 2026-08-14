@@ -9,17 +9,18 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/textsafe"
 )
 
-// truncateTo shortens s so its terminal display width is at most w cells,
-// appending "…" when truncation occurs. Width is measured with lipgloss so
-// full-width (CJK) runes and emoji count as the columns they actually occupy,
-// rather than as a single rune each. When the cut would land mid-word it backs
-// up to the nearest whitespace within a small look-back window so words aren't
-// sliced; a single long token is cut hard. ANSI escape sequences are preserved
-// in the returned string regardless of whether truncation was necessary.
+// truncateTo shortens s so its terminal display width is at most w cells.
+// It appends "…" when a truncation occurs. Width is measured with lipgloss
+// so full-width (CJK) runes and emoji count as the columns they occupy.
+// They do not count as a single rune each. When the cut would land mid-word
+// it backs up to the nearest whitespace within a small look-back window.
+// Words are then not sliced. A single long token is cut hard. ANSI escape
+// sequences stay in the returned string whether a truncation was needed
+// or not.
 //
-// This is the single truncation helper for the TUI: every column that needs to
-// fit text into a fixed width routes through here so clipping stays consistent
-// and never overflows on wide glyphs.
+// This is the single truncation helper for the TUI. Every column that must
+// fit text into a fixed width routes through here. The clip then stays
+// consistent. Wide glyphs never overflow.
 func truncateTo(s string, w int) string {
 	if w <= 0 {
 		return ""
@@ -67,10 +68,10 @@ func truncateTo(s string, w int) string {
 	return ansi.Truncate(s, w, "…")
 }
 
-// stripANSI removes terminal escape sequences from s, leaving plain text. It is
-// used to measure and slice the visible content of already-styled strings. It
-// delegates to textsafe.StripEscapes so OSC sequences (e.g. OSC 8 hyperlinks)
-// are handled the same way as in the rest of the codebase.
+// stripANSI removes terminal escape sequences from s. The result is plain text.
+// It is used to measure and slice the visible content of already-styled strings.
+// It delegates to textsafe.StripEscapes so OSC sequences (for example OSC 8
+// hyperlinks) are handled the same way as in the rest of the codebase.
 func stripANSI(s string) string {
 	return textsafe.StripEscapes(s)
 }
