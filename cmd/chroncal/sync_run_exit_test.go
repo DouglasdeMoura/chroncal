@@ -10,9 +10,9 @@ import (
 	syncPkg "github.com/douglasdemoura/chroncal/internal/sync"
 )
 
-// TestRenderSyncRunResultsExitsNonZeroOnPerPhaseErrors guards issue #359:
+// TestRenderSyncRunResultsExitsNonZeroOnPerPhaseErrors guards issue #359.
 // renderSyncRunResults must return a non-nil error when any SyncResult
-// carries per-phase errors so that `sync run` exits non-zero and scripts
+// carries per-phase errors. `sync run` then exits non-zero. Scripts
 // can detect a partial sync failure via exit code.
 //
 // Consistent with `ical import` (non-zero when failed > 0) and
