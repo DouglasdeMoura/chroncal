@@ -45,8 +45,8 @@ func TestEventForm_RecurringInstanceSavePopulatesInstanceTime(t *testing.T) {
 		"save msg must carry the clicked instance time")
 }
 
-// Sanity check: opening the form via the non-instance constructor leaves
-// InstanceTime zero, so non-recurring edits keep their existing path.
+// Sanity check: an open of the form via the non-instance constructor leaves
+// InstanceTime zero. Non-recurring edits then keep their stored path.
 func TestEventForm_NonInstanceSaveLeavesInstanceTimeZero(t *testing.T) {
 	day := time.Date(2026, 5, 20, 9, 0, 0, 0, time.UTC)
 	m, _ := NewEventFormModelForEdit(stubRecurringEvent(day), testEventFormCalendars(), Theme{})
@@ -67,10 +67,10 @@ func TestEventForm_NonInstanceSaveLeavesInstanceTimeZero(t *testing.T) {
 		"non-instance form must not synthesise an InstanceTime")
 }
 
-// Regression: the form used to drop Categories on save. Loading an event with
-// "work,sync" categories, then submitting unchanged, must round-trip the same
-// string through EventFormSaveMsg — otherwise Events.Update silently wipes
-// every category via ReplaceCategories(empty list).
+// Regression: the form used to drop Categories on save. A load of an event with
+// "work,sync" categories, then a submit with no change, must round-trip the
+// same string through EventFormSaveMsg. Otherwise Events.Update wipes every
+// category in silence via ReplaceCategories(empty list).
 func TestEventForm_SavePreservesCategories(t *testing.T) {
 	day := time.Date(2026, 5, 20, 9, 0, 0, 0, time.UTC)
 	ev := stubRecurringEvent(day)
