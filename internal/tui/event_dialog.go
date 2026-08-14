@@ -114,7 +114,7 @@ const narrowThreshold = 90
 
 // EventDialogModel shows a day's events in a two-column dialog. It is a thin
 // wrapper around ListDialogModel that owns the event-specific state
-// (selected day, sorted events) and the RSVP row, which is composed into
+// (selected day, sorted events) and the RSVP row. That row is composed into
 // the detail lines rather than handled by the shell.
 type EventDialogModel struct {
 	shell ListDialogModel
@@ -357,7 +357,7 @@ func (m EventDialogModel) shortHelp() []key.Binding {
 }
 
 // Focus-zone IDs used by currentZone and the tab-order helpers. Kept as
-// ints so existing switch-based callers stay unchanged.
+// ints so switch-based callers that already exist stay unchanged.
 const (
 	zoneList        = 0
 	zoneRSVP        = 1
@@ -381,7 +381,7 @@ func (m EventDialogModel) currentZone() int {
 }
 
 // focusRSVP moves focus to the head of the RSVP button zone. Invoked by the
-// RSVP hotkeys (y/n/m) and by clicking an RSVP button; Tab uses focusStop
+// RSVP hotkeys (y/n/m) and by a click of an RSVP button. Tab uses focusStop
 // below to land on a specific element.
 func (m EventDialogModel) focusRSVP() EventDialogModel {
 	m.rsvpFocused = true
@@ -391,7 +391,7 @@ func (m EventDialogModel) focusRSVP() EventDialogModel {
 
 // tabStop identifies one focusable control in the dialog. Tab/Shift+Tab
 // walk every stop in order so keyboard navigation reaches each element the
-// way a web page's tab order would — list → each RSVP button → each action
+// way a web page's tab order would: list → each RSVP button → each action
 // button → title action.
 type tabStop struct {
 	kind int // 0=list, 1=rsvp button, 2=action button, 3=title action
@@ -699,7 +699,7 @@ func (m EventDialogModel) renderRSVPLine(att model.Attendee, rsvp []dialogAction
 	return truncateTo(faint.Render(padded)+value, w)
 }
 
-// --- Domain-formatting helpers (used here and by event_view_dialog.go) ---
+// --- Domain-format helpers (used here and by event_view_dialog.go) ---
 
 var rsvpIndicators = map[string]string{
 	"ACCEPTED":  "Yes ✓",
@@ -894,7 +894,7 @@ func detailLine(labelStyle lipgloss.Style, label, value string, lw, w int) strin
 }
 
 // labelColWidth returns the on-screen cell width consumed by the label column
-// plus its two-space gap, accounting for labels that exceed the nominal lw.
+// plus its two-space gap. It accounts for labels that exceed the nominal lw.
 func labelColWidth(label string, lw int) int {
 	return max(lw, len(label)) + 2
 }
@@ -1028,11 +1028,11 @@ func parseLeadingInt(s string, suffix byte) (int, string, bool) {
 }
 
 // pluralize returns the singular form of a noun when n is one, and the plural
-// form otherwise (including zero). Both forms are supplied explicitly so
-// irregular nouns — abbreviations such as "min." that don't take an "-s"
+// form otherwise (zero included). Both forms are supplied explicitly. Then
+// irregular nouns — abbreviations such as "min." that do not take an "-s"
 // suffix — are handled truthfully rather than via a fake general-purpose
-// inflector. Callers own the count, so the bare form composes into both plain
-// "%d %s" counts and adjective-bearing copy like "%d downloaded %s".
+// inflector. Callers own the count. The bare form then composes into both
+// plain "%d %s" counts and copy with an adjective like "%d downloaded %s".
 // See issue #548.
 func pluralize(n int, singular, plural string) string {
 	if n == 1 {
@@ -1042,8 +1042,8 @@ func pluralize(n int, singular, plural string) string {
 }
 
 // wrapWordByWidth hard-breaks word into display-width chunks each at most w
-// cells wide. All chunks except the last are returned in out; the last is
-// returned as remainder so the caller can try appending subsequent words to it.
+// cells wide. All chunks except the last are returned in out. The last is
+// returned as remainder so the caller can try to append later words to it.
 func wrapWordByWidth(word string, w int) (out []string, last string) {
 	r := []rune(word)
 	for len(r) > 0 {
