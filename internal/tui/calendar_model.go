@@ -169,14 +169,14 @@ func (m CalendarModel) hitCell(x, y int) (cellHit, bool) {
 }
 
 // DayAtPosition maps a position relative to the calendar widget's top-left
-// corner to the corresponding day in the grid.
+// corner to the day in the grid that matches.
 func (m CalendarModel) DayAtPosition(x, y int) (time.Time, bool) {
 	hit, ok := m.hitCell(x, y)
 	return hit.Day, ok
 }
 
 // EventAtPosition returns the ID of the visible month-view event pill at the
-// given position, or 0 when the click doesn't land on a rendered event.
+// given position. It returns 0 when the click does not land on a rendered event.
 func (m CalendarModel) EventAtPosition(x, y int) int64 {
 	hit, ok := m.hitCell(x, y)
 	if !ok || hit.Line < 1 {
