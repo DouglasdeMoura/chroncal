@@ -18,9 +18,10 @@ import (
 )
 
 // fakeCalDAVServer is a minimal CalDAV endpoint that answers the handful of
-// requests one no-conflict SyncCalendar cycle makes: PROPFIND (calendar
-// colour), REPORT (sync-collection), and PUT (push). It records per-method
-// hit counts so a test can prove a calendar was actually contacted.
+// requests one no-conflict SyncCalendar cycle makes. Those are PROPFIND
+// (calendar colour), REPORT (sync-collection), and PUT (push). It records
+// per-method hit counts. A test can then prove a calendar was actually
+// contacted.
 type fakeCalDAVServer struct {
 	srv      *httptest.Server
 	propfind atomic.Int64
@@ -69,10 +70,10 @@ func newFakeCalDAVServer(t *testing.T) *fakeCalDAVServer {
 	return f
 }
 
-// newFileTestEngine builds an Engine backed by a temp-file SQLite database so
-// every pooled connection shares state — concurrent SyncAll workers really do
-// hit the same database, which is what -race needs to be meaningful. The
-// in-memory test DB gives each connection its own private database, so it
+// newFileTestEngine builds an Engine backed by a temp-file SQLite database.
+// Every pooled connection then shares state. Concurrent SyncAll workers really
+// do hit the same database. That is what -race needs to be meaningful. The
+// in-memory test DB gives each connection its own private database. It
 // cannot exercise the concurrent path.
 func newFileTestEngine(t *testing.T, credStore auth.CredentialStore) (*Engine, *sql.DB, *storage.Queries) {
 	t.Helper()
@@ -91,9 +92,9 @@ func newFileTestEngine(t *testing.T, credStore auth.CredentialStore) (*Engine, *
 	), db, q
 }
 
-// seedSyncedCalendar creates an account+credential pointing at srv, then links
-// a calendar to it. See linkDirtyCalendar for the per-calendar setup. Returns
-// the new calendar ID.
+// seedSyncedCalendar creates an account+credential that points at srv. It then
+// links a calendar to it. See linkDirtyCalendar for the per-calendar setup.
+// Returns the new calendar ID.
 func seedSyncedCalendar(t *testing.T, db *sql.DB, q *storage.Queries, credStore *mockCredStore, name string, srv *fakeCalDAVServer) int64 {
 	t.Helper()
 	account, err := q.CreateAccount(context.Background(), storage.CreateAccountParams{
@@ -109,10 +110,10 @@ func seedSyncedCalendar(t *testing.T, db *sql.DB, q *storage.Queries, credStore 
 	return linkDirtyCalendar(t, db, q, name, account.ID, srv)
 }
 
-// linkDirtyCalendar attaches a calendar to an existing account with one dirty
-// event ready to push and a stored sync-token (so pull runs incrementally and
-// does not infer absence deletions). Reused to add a second calendar to an
-// account, covering the same-account-serial branch.
+// linkDirtyCalendar attaches a calendar to a stored account with one dirty
+// event ready to push and a stored sync-token. Pull then runs incrementally
+// and does not infer absence deletions. Reused to add a second calendar to an
+// account. That covers the same-account-serial branch.
 func linkDirtyCalendar(t *testing.T, db *sql.DB, q *storage.Queries, name string, accountID int64, srv *fakeCalDAVServer) int64 {
 	t.Helper()
 	ctx := context.Background()
@@ -199,12 +200,12 @@ func TestSyncAccountSyncsOnlyTargetAccountCalendars(t *testing.T) {
 }
 
 // TestSyncAllSyncsEveryConnectedCalendar drives SyncAll across multiple
-// accounts (each its own server) plus a second calendar sharing one account and
-// an unlinked calendar that must be skipped. It asserts every connected
-// calendar is synced exactly once, results come back in ListCalendars order
-// regardless of which worker finishes first, and each server was contacted.
-// Run under -race this also guards the concurrent path against data races on
-// the shared database and engine.
+// accounts (each its own server). It also has a second calendar that shares
+// one account, and an unlinked calendar that must be skipped. It asserts every
+// connected calendar is synced exactly once. Results come back in
+// ListCalendars order regardless of which worker finishes first. Each server
+// was contacted. Run under -race this also guards the concurrent path against
+// data races on the shared database and engine.
 func TestSyncAllSyncsEveryConnectedCalendar(t *testing.T) {
 	t.Parallel()
 
@@ -271,8 +272,8 @@ func TestSyncAllSyncsEveryConnectedCalendar(t *testing.T) {
 	}
 }
 
-// TestSyncAllAggregatesPerCalendarErrors verifies a single failing calendar is
-// captured in its own SyncResult without aborting the others, and that ordering
+// TestSyncAllAggregatesPerCalendarErrors verifies a single failed calendar is
+// captured in its own SyncResult. It does not abort the others. Order
 // is preserved.
 func TestSyncAllAggregatesPerCalendarErrors(t *testing.T) {
 	t.Parallel()
