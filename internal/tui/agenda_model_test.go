@@ -199,7 +199,7 @@ func TestAgendaSelectCurrentOrNext_SurvivesEmptyFirstLoad(t *testing.T) {
 
 // TestAgendaHandleClick_EmptyStateButtonBounds verifies that the click hit-test
 // for the "+ Create event" pill in the empty state matches the rendered pill
-// bounds exactly. The pill is rendered at x=0 with width btnW, so:
+// bounds exactly. The pill is rendered at x=0 with width btnW:
 //   - x=0        (left edge)        must trigger EventCreateMsg
 //   - x=btnW-1   (right edge)       must trigger EventCreateMsg
 //   - x=btnW     (one past right)   must be a noop
