@@ -10,10 +10,10 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/event"
 )
 
-// scrollAgendaToTop expands the agenda window repeatedly by driving the
-// top-edge preload trigger, flushing each AgendaReloadMsg by replaying
-// the same event set through SetEvents. Used by tests to simulate rapid
-// backward scrolling up to the max window.
+// scrollAgendaToTop expands the agenda window repeatedly. It drives the
+// top-edge preload trigger. It flushes each AgendaReloadMsg by a replay of
+// the same event set through SetEvents. Tests use this to simulate rapid
+// backward scroll up to the max window.
 func scrollAgendaToTop(t *testing.T, m AgendaModel, events []event.Event, maxPresses int) AgendaModel {
 	t.Helper()
 	for i := 0; i < maxPresses; i++ {
@@ -29,9 +29,9 @@ func scrollAgendaToTop(t *testing.T, m AgendaModel, events []event.Event, maxPre
 }
 
 // TestMaybeExpandBackward_DoesNotSlideWindowEnd verifies the window grows
-// to AgendaMaxWindow against a fixed far edge instead of sliding windowEnd
-// backward. Sliding would drop events the user is actively looking at —
-// the bug that made the agenda appear empty after several UP presses.
+// to AgendaMaxWindow against a fixed far edge. It does not slide windowEnd
+// backward. A slide would drop events the user looks at. That bug made the
+// agenda appear empty after several UP presses.
 func TestMaybeExpandBackward_DoesNotSlideWindowEnd(t *testing.T) {
 	today := time.Date(2026, 4, 23, 0, 0, 0, 0, time.Local)
 	ev := event.Event{
@@ -59,8 +59,8 @@ func TestMaybeExpandBackward_DoesNotSlideWindowEnd(t *testing.T) {
 }
 
 // TestMaybeExpandBackward_GrowsIndefinitely verifies the infinite-scroll
-// contract: the backward expander keeps growing windowStart on repeated
-// top-edge triggers so the user can navigate arbitrarily far back. The
+// contract. The backward expander keeps a grow of windowStart on repeated
+// top-edge triggers. The user can then navigate arbitrarily far back. The
 // old cap at AgendaMaxWindow left users stuck after ~3 months.
 func TestMaybeExpandBackward_GrowsIndefinitely(t *testing.T) {
 	today := time.Date(2026, 4, 23, 0, 0, 0, 0, time.Local)
@@ -117,9 +117,9 @@ func TestMaybeExpandForward_DoesNotSlideWindowStart(t *testing.T) {
 }
 
 // TestView_StickyTitleUsesFirstVisibleRowWhenNoMonthHeaderAbove verifies
-// the bug from the screen recording: the user expanded the window back
-// past today's real data, landing with windowStart in Dec 2025 but all
-// events still in Apr 2026. The old code showed "December 2025" in the
+// the bug from the screen record. The user expanded the window back
+// past today's real data. windowStart then landed in Dec 2025, but all
+// events still sat in Apr 2026. The old code showed "December 2025" in the
 // sticky title above April events. After the fix, the sticky should read
 // the month of the first visible row.
 func TestView_StickyTitleUsesFirstVisibleRowWhenNoMonthHeaderAbove(t *testing.T) {
@@ -161,9 +161,9 @@ func TestView_StickyTitleUsesFirstVisibleRowWhenNoMonthHeaderAbove(t *testing.T)
 }
 
 // TestView_StickyTitleSkipsDuplicateInlineMonthHeader verifies that when
-// the sticky title labels a month, the leading separator/monthHeader/
-// separator run for that same month is skipped inline so the user
-// doesn't see "April 2026" twice back-to-back.
+// the sticky title labels a month, the lead separator/monthHeader/
+// separator run for that same month is skipped inline. The user
+// then does not see "April 2026" twice back-to-back.
 func TestView_StickyTitleSkipsDuplicateInlineMonthHeader(t *testing.T) {
 	today := time.Date(2026, 4, 23, 0, 0, 0, 0, time.Local)
 	ev := event.Event{
@@ -186,8 +186,8 @@ func TestView_StickyTitleSkipsDuplicateInlineMonthHeader(t *testing.T) {
 
 // TestMaybeFillViewport_TriggersForwardExpansionWhenUnderfilled verifies
 // that after a `[`/`]` jump lands on a sparse month, the agenda
-// auto-expands the window forward so the next month flows in instead of
-// leaving blank rows below.
+// auto-expands the window forward. The next month then flows in. Blank
+// rows do not remain below.
 func TestMaybeFillViewport_TriggersForwardExpansionWhenUnderfilled(t *testing.T) {
 	jumpDay := time.Date(2026, 4, 1, 0, 0, 0, 0, time.Local)
 	// Just one event in the 30-day window — rows will be far below the
@@ -216,10 +216,10 @@ func TestMaybeFillViewport_TriggersForwardExpansionWhenUnderfilled(t *testing.T)
 	}
 }
 
-// TestMaybeFillViewport_StopsExpandingWhenNoNewRows reproduces issue #93:
-// on a sparse calendar whose few rows never fill a tall viewport, the host
-// re-queries the same event set after each forward expansion, so the
-// auto-fill must settle instead of growing windowEnd forward without bound.
+// TestMaybeFillViewport_StopsExpandingWhenNoNewRows reproduces issue #93.
+// On a sparse calendar whose few rows never fill a tall viewport, the host
+// re-queries the same event set after each forward expansion. The
+// auto-fill must then settle. It must not grow windowEnd forward without bound.
 func TestMaybeFillViewport_StopsExpandingWhenNoNewRows(t *testing.T) {
 	jumpDay := time.Date(2026, 4, 1, 0, 0, 0, 0, time.Local)
 	// A handful of events, all inside the initial window — more than zero
