@@ -79,13 +79,13 @@ func GetCalendarColor(ctx context.Context, httpClient webdav.HTTPClient, calenda
 // 6-digit `#RRGGBB` form that downstream renderers (lipgloss, browsers,
 // most ANSI 24-bit consumers) accept. Apple's calendar-color extension —
 // which Google, Apple, and Fastmail all serve — uses `#RRGGBBAA` with an
-// alpha byte; lipgloss silently drops 8-digit hex back to NoColor, so the
-// raw value renders as the default foreground.
+// alpha byte. lipgloss drops 8-digit hex back to NoColor in silence. The
+// raw value then renders as the default foreground.
 //
 // Behaviour:
 //   - "  #9FE1E7FF " → "#9FE1E7"
 //   - "#9FE1E7"      → "#9FE1E7"
-//   - "9FE1E7FF"     → "#9FE1E7" (Apple sometimes omits the leading '#')
+//   - "9FE1E7FF"     → "#9FE1E7" (Apple sometimes omits the '#' prefix)
 //   - ""             → ""
 //   - any other shape is returned trimmed and lower-cased prefix only;
 //     callers should not assume a valid hex.
