@@ -58,7 +58,7 @@ func NewTextField(placeholder string) *TextField {
 }
 
 // applyPlaceholderDefaults styles the placeholder in both focus states
-// so hints read as hints: italicized and faint, distinct from entered
+// so hints read as hints. Italicized and faint, distinct from entered
 // values which use the upright text style. It drops the bubbles default
 // colour so the terminal's own faint attribute drives the dimness.
 func applyPlaceholderDefaults(input *textinput.Model) {
@@ -298,9 +298,10 @@ type SelectField struct {
 	highlight   selectHighlight
 	flashID     int // incremented per flash; stale ticks are ignored
 	// arrowIndex keys the prev/next mouse targets by form-field index when
-	// arrowIndexed is set, so clicking an unfocused select's arrow can resolve
-	// to the owning field (issue #498). Nested selects (e.g. the monthly select
-	// inside RecurrenceOnField) leave it unset and keep the generic targets.
+	// arrowIndexed is set. A click on an unfocused select's arrow can then
+	// resolve to the owner field (issue #498). Nested selects (e.g. the
+	// monthly select inside RecurrenceOnField) leave it unset and keep the
+	// generic targets.
 	arrowIndex   int
 	arrowIndexed bool
 }
@@ -1182,9 +1183,9 @@ func (f *ColorField) syncFromHex() {
 }
 
 func (f *ColorField) View() string {
-	// Keep the row compact by skipping the hex field's "(custom)" trailer:
-	// inside the composite the palette always neighbors the hex, so the
-	// preview dot is sufficient and the label would push the row to wrap.
+	// Keep the row compact. Skip the hex field's "(custom)" trailer.
+	// Inside the composite the palette always neighbors the hex. The
+	// preview dot is then sufficient. The label would push the row to wrap.
 	base := f.hex.input.View()
 	hexVal := strings.TrimSpace(f.hex.Value())
 	hexRendered := base
@@ -1738,14 +1739,15 @@ func (bs ButtonStyles) Get(v ButtonVariant) ButtonStyle {
 //
 // On focus, the two variants diverge deliberately. Normal flips to
 // FormHighlight (the theme's selection accent). Danger inverts to a
-// red-on-contrasting-fg pill. That divergence costs "single focus
+// red pill with a contrast fg. That divergence costs "single focus
 // signal" uniformity. It is the only way to keep destructive intent
-// readable across themes whose FormHighlight lands in the warm/red end
-// of the spectrum (Dracula's pink, Osaka's orange, Flexoki's coral).
-// Red text on a warm highlight is unreadable. Put the red on the
-// background. Compute a contrast label via oklch.ContrastingFg. That
-// guarantees legibility on every theme. It emphasizes the destructive
-// signal exactly when the user is about to commit it.
+// readable across themes whose FormHighlight lands in the warm/red
+// end of the spectrum. That includes Dracula's pink, Osaka's orange,
+// and Flexoki's coral. Red text on a warm highlight is unreadable.
+// Put the red on the background. Compute a contrast label via
+// oklch.ContrastingFg. That guarantees legibility on every theme. It
+// emphasizes the destructive signal exactly when the user is about to
+// commit it.
 func DefaultButtonStyles() ButtonStyles {
 	base := lipgloss.NewStyle().Padding(0, 2).MarginRight(1)
 	t := activeTheme
@@ -1884,7 +1886,7 @@ func (f Form) Update(msg tea.Msg) (Form, tea.Cmd) {
 			return f.focusNext()
 		case key.Matches(msg, formKeys.ArrowBwd):
 			// Arrow keys act as alternate Tab/Shift-Tab, but only when the
-			// focus is on a button slot — fields (text inputs, selects,
+			// focus is on a button slot. Fields (text inputs, selects,
 			// date pickers) still consume their own arrows for cursor or
 			// option movement.
 			if f.focused >= len(f.items) {
@@ -2084,8 +2086,8 @@ func (f Form) buttonRow() string {
 	}
 
 	// Utility tier: secondary actions on their own quieter row above the
-	// commit controls, side by side when they fit and stacked one per line
-	// otherwise, so a rich set never overflows the dialog width.
+	// commit controls. Side by side when they fit. Stacked one per line
+	// otherwise. A rich set then never overflows the dialog width.
 	tier := lipgloss.JoinHorizontal(lipgloss.Top, utilParts...)
 	if alignWidth > 0 && lipgloss.Width(tier) > alignWidth {
 		tier = strings.Join(utilParts, "\n")
@@ -2133,11 +2135,12 @@ func (f Form) ButtonRowView() string {
 	return f.buttonRow()
 }
 
-// FocusedLine returns the first rendered body line for the focused item,
-// or -1 when focus is on an action button (Submit/Cancel/etc.) rather than
-// a body field. Scrollable dialogs use it to keep the active field
-// visible. Callers must leave the scroll position untouched for buttons.
-// Otherwise a move to the button row would yank the body back to line 0.
+// FocusedLine returns the first rendered body line for the focused item.
+// It returns -1 when focus is on an action button (Submit/Cancel/etc.)
+// rather than a body field. Scrollable dialogs use it to keep the active
+// field visible. Callers must leave the scroll position untouched for
+// buttons. Otherwise a move to the button row would yank the body back
+// to line 0.
 func (f Form) FocusedLine() int {
 	if f.focused >= len(f.items) {
 		return -1
@@ -2362,9 +2365,9 @@ func (f Form) FormStaticField(i int) *StaticField {
 // Private
 
 // focusedSelect returns the SelectField behind a generic "select:prev/next"
-// arrow click for the given field, or nil if the field does not currently own
-// a focused select. It unwraps the RecurrenceOnField composite, whose nested
-// monthly select renders those same generic targets.
+// arrow click for the given field. It returns nil if the field does not
+// currently own a focused select. It unwraps the RecurrenceOnField composite.
+// That nested monthly select renders those same generic targets.
 func focusedSelect(field FormField) *SelectField {
 	switch fld := field.(type) {
 	case *SelectField:
@@ -2393,8 +2396,8 @@ func (f Form) handleClick(target string) (Form, tea.Cmd) {
 		}
 		for i := range f.items {
 			// A focused RecurrenceOnField in monthly mode renders its nested
-			// monthly select's arrows with these same generic targets, so
-			// resolve against it too — not only top-level SelectFields.
+			// monthly select's arrows with these same generic targets.
+			// Resolve against it too, not only top-level SelectFields.
 			sf := focusedSelect(f.items[i].Field)
 			if sf == nil {
 				continue
@@ -2704,11 +2707,11 @@ func (f Form) focusIndex(i int) (Form, tea.Cmd) {
 //	fields → leading actions → submit → trailing actions → cancel
 //
 // Leading buttons render on the left of the button row (Disconnect, Set
-// as Default, …), so they are tabbed through before Submit. Trailing
-// buttons (Test, …) render on the right of Submit and are tabbed after
-// it, before Cancel. Cancel is always last. The Esc shortcut still wins
-// for the safe exit. This mirrors AppKit's "Full Keyboard Access" order
-// where Tab follows visual position rather than registration order.
+// as Default, …). Tab walks them before Submit. Trailing buttons (Test,
+// …) render on the right of Submit. Tab walks them after it, before
+// Cancel. Cancel is always last. The Esc shortcut still wins for the
+// safe exit. This mirrors AppKit's "Full Keyboard Access" order. Tab
+// follows visual position rather than registration order.
 func (f Form) leadingCount() int {
 	n := 0
 	for _, ab := range f.actionButtons {
@@ -2722,8 +2725,8 @@ func (f Form) leadingCount() int {
 func (f Form) submitIndex() int { return len(f.items) + f.leadingCount() }
 
 // actionIndex maps a position in f.actionButtons to its focus index.
-// It takes the leading/trailing split into account so each button's tab
-// position matches where it renders on screen.
+// It takes the leading/trailing split into account. Each button's tab
+// position then matches where it renders on screen.
 func (f Form) actionIndex(i int) int {
 	leading := f.actionButtons[i].Leading
 	pos := 0
