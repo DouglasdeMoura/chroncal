@@ -17,13 +17,13 @@ import (
 )
 
 // EventFormSaveMsg is emitted when the user saves the event form. The parent
-// decides whether this is an update or a create by reading the live form's
-// editID (m.form.editID) — the message cannot carry that value reliably
-// because the save closure is bound at form build time, before editID is set
+// decides whether this is an update or a create from the live form's
+// editID (m.form.editID). The message cannot carry that value reliably.
+// The save closure is bound at form build time, before editID is set
 // in NewEventFormModelForEdit.
 //
 // InstanceTime is the original (un-edited) occurrence time when the form was
-// opened on a recurring instance — used by the parent to dispatch a scope
+// opened on a recurring instance. The parent uses it to dispatch a scope
 // prompt (this event / this and following / all events). Zero means the form
 // was opened on a non-recurring event or a fresh create.
 type EventFormSaveMsg struct {
@@ -49,7 +49,7 @@ type EventFormSaveMsg struct {
 type EventFormClosedMsg struct{}
 
 // eventFormSubmitNowMsg is emitted by the form's OnSubmit closure after
-// validation passes. It is intercepted by EventFormModel.Update so the
+// validation passes. EventFormModel.Update intercepts it so the
 // save runs against the up-to-date model rather than the stale captured
 // receiver inside the OnSubmit closure (see EventFormSaveMsg note).
 type eventFormSubmitNowMsg struct{}
@@ -334,16 +334,16 @@ func NewEventFormModel(day time.Time, calendars map[int64]CalendarInfo, theme Th
 }
 
 // multiDayEndDate reports whether the event spans more than one calendar
-// day and, if so, returns the last included day (inclusive). For all-day
+// day. If so, it returns the last included day (inclusive). For all-day
 // events the stored end is exclusive midnight of the day after the last
-// included day; for timed events the actual end instant is used.
+// included day. For timed events the actual end instant is used.
 //
-// Timed events are evaluated in the event's display timezone (the same loc
-// NewEventFormModelForEditInstance uses to anchor m.day and render the Time
-// field), not machine-local. Using machine-local here would disagree with
+// Timed events are evaluated in the event's display timezone. That is the
+// same loc NewEventFormModelForEditInstance uses to anchor m.day and render
+// the Time field, not machine-local. Machine-local here would disagree with
 // the start day on the last calendar day when ev.Timezone != local and the
-// end instant is near midnight, shifting the saved end forward a day on a
-// no-op edit (issue #499).
+// end instant is near midnight. The saved end would then shift forward a
+// day on a no-op edit (issue #499).
 func multiDayEndDate(ev event.Event) (time.Time, bool) {
 	if ev.AllDay {
 		s := ev.StartTime.UTC()
@@ -378,7 +378,7 @@ func multiDayEndDate(ev event.Event) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// NewEventFormModelForEdit creates a form pre-filled with an existing event's data.
+// NewEventFormModelForEdit creates a form pre-filled with an event's stored data.
 func NewEventFormModelForEdit(ev event.Event, calendars map[int64]CalendarInfo, theme Theme) (EventFormModel, tea.Cmd) {
 	return NewEventFormModelForEditInstance(ev, time.Time{}, calendars, theme)
 }
@@ -498,7 +498,7 @@ func NewEventFormModelForEditInstance(ev event.Event, instanceTime time.Time, ca
 	return m, cmd
 }
 
-// NewEventFormModelForDuplicate creates a form pre-filled with an existing
+// NewEventFormModelForDuplicate creates a form pre-filled with a stored
 // event's data but in create mode (editID = 0).
 func NewEventFormModelForDuplicate(ev event.Event, calendars map[int64]CalendarInfo, theme Theme) (EventFormModel, tea.Cmd) {
 	m, cmd := NewEventFormModelForEdit(ev, calendars, theme)
@@ -544,10 +544,10 @@ func parseRecurrenceRule(rule string, fallbackDate time.Time) (int, string, ends
 }
 
 // parseRRuleUntil parses an RRULE UNTIL value as either a UTC datetime
-// (20060102T150405Z) or a date-only value (20060102), returning ok=false when
-// neither layout matches. The result is expressed in the local zone so the
-// end-of-day anchor written by formatRRuleUntil maps back to the calendar day
-// the user picked (see issue #146).
+// (20060102T150405Z) or a date-only value (20060102). It returns ok=false when
+// neither layout matches. The result is expressed in the local zone. The
+// end-of-day anchor written by formatRRuleUntil then maps back to the calendar
+// day the user picked (see issue #146).
 func parseRRuleUntil(val string) (time.Time, bool) {
 	if t, err := time.Parse("20060102T150405Z", val); err == nil {
 		return t.Local(), true
@@ -564,11 +564,11 @@ func parseRRuleUntil(val string) (time.Time, bool) {
 // formatRRuleUntil renders a time as an RRULE UNTIL value in iCal UTC form.
 //
 // The ends-date arrives from the date picker as local midnight, i.e. the start
-// of the chosen end day. UNTIL is inclusive, so anchoring there would exclude
-// every same-day occurrence (they fire at the event's start time, later than
-// midnight) and, for a positive UTC offset, would even roll the UTC value back
+// of the chosen end day. UNTIL is inclusive. An anchor there would exclude
+// every same-day occurrence. They fire at the event's start time, later than
+// midnight. For a positive UTC offset, the UTC value would even roll back
 // to the previous calendar day. Anchor to the final second of that local day
-// before converting to UTC so the chosen end day is always covered.
+// before a convert to UTC. The chosen end day is then always covered.
 func formatRRuleUntil(t time.Time) string {
 	y, mo, d := t.Date()
 	endOfDay := time.Date(y, mo, d, 23, 59, 59, 0, t.Location())
@@ -785,7 +785,7 @@ func noopCmd() tea.Msg { return nil }
 
 // tryOpenOverlay checks whether the currently focused form field should open
 // an overlay on Enter and, if so, opens it. Returns a non-nil cmd (noopCmd)
-// when an overlay was opened so the caller can skip forwarding to the form.
+// when an overlay was opened. The caller can then skip a forward to the form.
 func (m *EventFormModel) tryOpenOverlay() tea.Cmd {
 	idx := m.form.Focused()
 	if idx >= len(m.fieldKeys) {
@@ -822,8 +822,8 @@ func (m *EventFormModel) tryOpenOverlay() tea.Cmd {
 }
 
 // openDatePicker initialises the MiniMonthModel and opens the overlay.
-// Restores any previously committed range so re-opening shows the user's
-// last selection rather than a blank state.
+// It restores any previously committed range so a second open shows the
+// user's last selection rather than a blank state.
 func (m *EventFormModel) openDatePicker() {
 	m.datePicker = NewMiniMonthModel(m.day).Focus().FocusGrid().
 		SetTheme(m.theme.Selected, m.theme.Today, m.theme.Text, m.theme.Muted).
@@ -850,9 +850,9 @@ func (m *EventFormModel) openEndsDatePicker() {
 	m.dpBtnFocus = -1
 }
 
-// handleFieldEnter is the Form.OnFieldEnter callback. Overlay opening is
-// handled in EventFormModel.Update to avoid the value-receiver closure bug;
-// this callback exists for non-overlay field-enter behavior.
+// handleFieldEnter is the Form.OnFieldEnter callback. Overlay open is
+// handled in EventFormModel.Update to avoid the value-receiver closure bug.
+// This callback exists for non-overlay field-enter behavior.
 func (m *EventFormModel) handleFieldEnter(fieldKey string) tea.Cmd {
 	return nil // nil = proceed with default focus-next
 }
@@ -1131,9 +1131,9 @@ func (m EventFormModel) updateDatePicker(msg tea.Msg) (EventFormModel, tea.Cmd) 
 	return m, nil
 }
 
-// toggleRangeMode flips range-mode on/off inside the date picker. Turning
-// it on auto-pins the current cursor as the range start so the user sees
-// immediate feedback; turning it off clears the end pin and keeps start as
+// toggleRangeMode flips range-mode on/off inside the date picker. On
+// auto-pins the current cursor as the range start so the user sees
+// immediate feedback. Off clears the end pin and keeps start as
 // the plain single-date selection.
 func (m *EventFormModel) toggleRangeMode() {
 	m.rangeMode = !m.rangeMode
@@ -1150,8 +1150,8 @@ func (m *EventFormModel) toggleRangeMode() {
 }
 
 // pinRangeEndpoint commits the current cursor position as either the start
-// or the end of the range, depending on which endpoint is being picked.
-// After pinning end, the next Enter on a day re-pins start (reset cycle).
+// or the end of the range, based on which endpoint is picked.
+// After a pin of end, the next Enter on a day re-pins start (reset cycle).
 func (m *EventFormModel) pinRangeEndpoint(d time.Time) {
 	if m.rangePickEnd {
 		m.rangeEnd = d
@@ -1164,9 +1164,9 @@ func (m *EventFormModel) pinRangeEndpoint(d time.Time) {
 	m.datePicker = m.datePicker.SetRange(true, m.rangeStart, m.rangeEnd)
 }
 
-// commitDatePickerSelection closes the overlay, writing the current cursor
+// commitDatePickerSelection closes the overlay. It writes the current cursor
 // (or range) back to the form. In range mode with both endpoints pinned,
-// the earlier endpoint becomes the event date and the later endpoint is
+// the earlier endpoint becomes the event date. The later endpoint is
 // stored as rangeEndDate for the save path.
 func (m *EventFormModel) commitDatePickerSelection() {
 	if m.rangeMode && !m.rangeStart.IsZero() && !m.rangeEnd.IsZero() {
@@ -1234,8 +1234,8 @@ func (m EventFormModel) updateEndsDatePicker(msg tea.Msg) (EventFormModel, tea.C
 
 // dpAdvanceFocus moves focus forward through the event-date picker's tab
 // stops: ‹ → › → grid → [range checkbox] → Cancel → Ok → ‹.
-// The range checkbox stop is skipped when mm is the ends-date picker —
-// detected via the caller distinguishing event-date vs ends-date.
+// The range checkbox stop is skipped when mm is the ends-date picker.
+// The caller tells event-date from ends-date.
 func (m EventFormModel) dpAdvanceFocus(mm MiniMonthModel) (EventFormModel, MiniMonthModel) {
 	// Only the event-date picker exposes the range checkbox stop.
 	hasRange := m.datePickerOpen
@@ -1471,7 +1471,7 @@ func (m EventFormModel) TimezonePickerView() string {
 
 // DatePickerBoxSize returns the outer dimensions of the date picker dialog.
 // The event-date picker is taller to accommodate the Date-range checkbox
-// row and Start/End status line; the ends-date picker keeps the compact
+// row and Start/End status line. The ends-date picker keeps the compact
 // size since it never shows range UI.
 func (m EventFormModel) DatePickerBoxSize() (int, int) {
 	if m.datePickerOpen {
@@ -1567,8 +1567,8 @@ func (m EventFormModel) datePickerOverlayView(mm MiniMonthModel, supportRange bo
 		Render(content)
 }
 
-// renderRangeCheckbox returns a single line: "[x] Multi-day" (or "[ ]"),
-// reversed when the checkbox is the focused tab stop so the user sees
+// renderRangeCheckbox returns a single line: "[x] Multi-day" (or "[ ]").
+// It is reversed when the checkbox is the focused tab stop so the user sees
 // where input will land.
 func (m EventFormModel) renderRangeCheckbox() string {
 	mark := "[ ]"
@@ -1583,8 +1583,8 @@ func (m EventFormModel) renderRangeCheckbox() string {
 }
 
 // renderRangeStatus returns a faint-labelled "Start: Apr 16   End: Apr 24"
-// line summarising what the user has pinned so far. The endpoint currently
-// being picked is emphasised; the other is shown as "—" when unpinned.
+// line that summarises what the user has pinned so far. The endpoint currently
+// picked is emphasised. The other is shown as "—" when unpinned.
 func (m EventFormModel) renderRangeStatus() string {
 	labelStyle := lipgloss.NewStyle().Foreground(m.theme.TextDim)
 	valueStyle := lipgloss.NewStyle().Bold(true)
