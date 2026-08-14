@@ -8,18 +8,19 @@ import (
 )
 
 // DefaultThemeName is the built-in theme loaded when nothing overrides it.
-// "system" inherits the terminal's ANSI palette for chrome and the live
-// terminal background for the selection highlight, so the TUI follows
-// themed terminal setups (Omarchy, Catppuccin, Gruvbox, …) out of the box.
-// The fixed-palette designer theme is still available as "default".
+// "system" inherits the terminal's ANSI palette for chrome. It also
+// inherits the live terminal background for the selection highlight. The
+// TUI then follows themed terminal setups (Omarchy, Catppuccin, Gruvbox,
+// …) out of the box. The fixed-palette designer theme is still available
+// as "default".
 const DefaultThemeName = "system"
 
 // Theme holds resolved colors for the current terminal background.
 //
 // Tokens are semantic, not presentational. Structural chrome (Primary,
 // Border, Surface, …) lives alongside dedicated groups for badges, forms,
-// and buttons so that every on-screen element can be recolored by swapping
-// one theme instead of hunting down hardcoded values.
+// and buttons. Recolor every on-screen element by a swap of one theme.
+// Do not hunt hardcoded values.
 type Theme struct {
 	// Structural chrome
 	Primary   color.Color
@@ -63,19 +64,19 @@ type Theme struct {
 	CalendarSwatches []string
 }
 
-// activeTheme is the package-level theme consulted by helpers that can't
-// easily receive a Theme through their call chain (badges, default form
-// styles, per-field flash colors). The app installs the real theme via
-// SetActiveTheme at boot and on background-change; tests inherit a sensible
-// default from the init() below.
+// activeTheme is the package-level theme consulted by helpers that cannot
+// easily receive a Theme through their call chain. Examples: badges, default
+// form styles, per-field flash colors. The app installs the real theme via
+// SetActiveTheme at boot and on a background change. Tests inherit a
+// sensible default from the init() below.
 var activeTheme Theme
 
 // activePalette is the terminal's 16-color ANSI palette as reported via
 // OSC 4 at boot. The theme loader consults it to resolve ANSI index
-// references (e.g. primary = "4") to the terminal's actual rendered RGB
-// — so themes can lean on terminal-supplied accents while still letting
-// OKLCh contrast computations work against real hex values. Nil when no
-// OSC 4 responses arrived (older terminals, tmux without passthrough).
+// references (for example primary = "4") to the terminal's actual rendered
+// RGB. Themes can then lean on terminal-supplied accents. OKLCh contrast
+// computations still work against real hex values. Nil when no OSC 4
+// responses arrived (older terminals, tmux without passthrough).
 var activePalette *Palette
 
 func init() {
@@ -90,7 +91,7 @@ func SetActiveTheme(t Theme) { activeTheme = t }
 func ActiveTheme() Theme { return activeTheme }
 
 // SetActivePalette installs the terminal's queried ANSI palette. Pass
-// nil to revert to lipgloss's default ANSI rendering.
+// nil to revert to lipgloss's default ANSI render.
 func SetActivePalette(p *Palette) { activePalette = p }
 
 // ActivePalette returns the currently installed terminal palette, or nil
@@ -113,9 +114,8 @@ func newThemedHelp(theme Theme) help.Model {
 }
 
 // NewTheme returns a Theme with colors resolved for light or dark
-// backgrounds. Delegates to the embedded built-in theme named by
-// DefaultThemeName; any failure is a programming error because the file
-// ships inside the binary.
+// backgrounds. It delegates to the embedded built-in theme named by
+// DefaultThemeName. Any failure is a bug: the file ships inside the binary.
 func NewTheme(hasDarkBG bool) Theme {
 	t, err := LoadBuiltinTheme(DefaultThemeName, hasDarkBG)
 	if err != nil {
