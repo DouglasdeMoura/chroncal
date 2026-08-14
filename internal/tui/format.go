@@ -54,9 +54,9 @@ func formatTimeColumnMulti(ev event.Event, dayIndex, totalDays int) string {
 }
 
 // effectiveStartOnDay returns the event's start time as experienced on a
-// given day: the original start for its first day, midnight of that day
-// for any continuation day. Used to sort multi-day events (which stay
-// live from 00:00 on continuation days) above single-day events.
+// given day. That is the original start for its first day. It is midnight
+// of that day for any continuation day. Used to sort multi-day events
+// (which stay live from 00:00 on continuation days) above single-day events.
 func effectiveStartOnDay(ev event.Event, day time.Time, dayIndex int) time.Time {
 	if dayIndex == 1 {
 		return ev.StartTime
