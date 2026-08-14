@@ -11,7 +11,7 @@ import (
 
 // TestRsvpButtonWidthMatchesRendered is a regression test for issue #346.
 //
-// rsvpButtonWidth() was returning rsvpMaxLabelWidth()+2, which only accounted
+// rsvpButtonWidth() returned rsvpMaxLabelWidth()+2, which only accounted
 // for one side of the button padding.  DefaultButtonStyles uses
 // Padding(0,2).MarginRight(1), so the real rendered cell-width of a button
 // whose label has been padded to rsvpMaxLabelWidth() is label_w+2+2+1 = label_w+5.
@@ -30,7 +30,7 @@ func TestRsvpButtonWidthMatchesRendered(t *testing.T) {
 	}
 }
 
-// TestFormatAlarm verifies the human-readable rendering of RFC 5545 alarm
+// TestFormatAlarm verifies the human-readable render of RFC 5545 alarm
 // triggers, with emphasis on the singular/plural agreement that pluralize()
 // now handles (issue #548). Before the fix, n>1 produced ungrammatical
 // "2 week"/"2 day"/"2 hour" strings because pluralize() never inflected the
@@ -78,9 +78,9 @@ func TestFormatAlarm(t *testing.T) {
 	}
 }
 
-// TestPluralize locks the noun-form contract of pluralize() (issue #548): one
-// yields the singular form, everything else (including zero) the plural form,
-// and irregular nouns such as the "min." abbreviation are passed through
+// TestPluralize locks the noun-form contract of pluralize() (issue #548). One
+// yields the singular form. Everything else (zero included) yields the plural
+// form. Irregular nouns such as the "min." abbreviation are passed through
 // explicitly rather than mangled by a "+s" rule.
 func TestPluralize(t *testing.T) {
 	cases := []struct {
