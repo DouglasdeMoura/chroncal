@@ -55,8 +55,8 @@ func formatTimeColumnMulti(ev event.Event, dayIndex, totalDays int) string {
 
 // effectiveStartOnDay returns the event's start time as experienced on a
 // given day: the original start for its first day, midnight of that day
-// for any continuation day. Used to sort multi-day events (which are
-// ongoing from 00:00 on continuation days) above single-day events.
+// for any continuation day. Used to sort multi-day events (which stay
+// live from 00:00 on continuation days) above single-day events.
 func effectiveStartOnDay(ev event.Event, day time.Time, dayIndex int) time.Time {
 	if dayIndex == 1 {
 		return ev.StartTime
@@ -65,11 +65,11 @@ func effectiveStartOnDay(ev event.Event, day time.Time, dayIndex int) time.Time 
 }
 
 // spanDays returns the local calendar days an event touches. The end time
-// is treated as exclusive, so an event ending exactly at midnight does not
-// count the following day. All-day events are stored as midnight-UTC
-// datestamps, so their span is derived from the UTC date — anchored at local
+// is treated as exclusive. An event that ends exactly at midnight then does
+// not count the following day. All-day events are stored as midnight-UTC
+// datestamps. Their span is derived from the UTC date, anchored at local
 // midnight to match the timed-event convention used by callers' window and
-// boundary comparisons — so they land on the correct day regardless of the
+// boundary comparisons. They then land on the correct day regardless of the
 // local timezone offset (mirrors eventCalendarDays).
 func spanDays(ev event.Event) []time.Time {
 	if ev.AllDay {
@@ -358,8 +358,8 @@ func verboseMetadataLine(ev event.Event, opts FormatEventListOptions) string {
 	return ""
 }
 
-// CalendarEvent is the rendering-only view of an event inside the month grid.
-// Callers resolve colors and other domain data before passing these in.
+// CalendarEvent is the render-only view of an event inside the month grid.
+// Callers resolve colors and other domain data before they pass these in.
 type CalendarEvent struct {
 	ID        int64
 	Title     string
@@ -404,8 +404,8 @@ func calendarGridAnchor(month time.Time, weekStart time.Weekday) time.Time {
 	return first.AddDate(0, 0, -offset)
 }
 
-// distributeCells splits avail into n cell sizes each >= minSize, spreading
-// the remainder across leading cells so the row/column sums to avail.
+// distributeCells splits avail into n cell sizes each >= minSize. It spreads
+// the remainder across cells at the start so the row/column sums to avail.
 func distributeCells(avail, n, minSize int) []int {
 	base := max(avail/n, minSize)
 	rem := max(avail-base*n, 0)
@@ -518,8 +518,8 @@ func Calendar(opts CalendarOptions) string {
 
 // renderWeekdayRow returns a single-line row of centered, faint weekday
 // labels whose columns align with the calendar table below. The row pads
-// with a leading/trailing/inner space where the table's vertical borders
-// would sit so widths match exactly.
+// with a space at the start, end, and inner where the table's vertical
+// borders would sit so widths match exactly.
 func renderWeekdayRow(anchor time.Time, cellWs []int) string {
 	var b strings.Builder
 	b.WriteString(" ")
@@ -635,7 +635,7 @@ func blankCellWithWeekLabel(w, h int, weekLabel string) string {
 
 // renderWeekLabelLine composes the first line of a calendar cell: the
 // faint "Wnn" label on the left, and the day-number block (already styled)
-// right-aligned, padded so the whole line is exactly cellW wide.
+// right-aligned. It is padded so the whole line is exactly cellW wide.
 func renderWeekLabelLine(weekLabel, dayRendered string, cellW int) string {
 	faintLabel := lipgloss.NewStyle().Faint(true).Render(weekLabel)
 	labelW := lipgloss.Width(faintLabel)
