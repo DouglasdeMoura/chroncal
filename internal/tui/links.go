@@ -28,14 +28,14 @@ func (rw urlRewriter) rewrite(raw string) string {
 }
 
 // urlPattern matches http/https URLs in plain text. The character class
-// excludes whitespace and common trailing-punctuation/bracket pairs so the
-// match stops at sentence boundaries instead of swallowing them.
+// excludes whitespace and common extra punctuation/bracket pairs at the end.
+// The match then stops at sentence boundaries instead of a swallow of them.
 var urlPattern = regexp.MustCompile(`https?://[^\s<>"'\x60\{\}]+`)
 
 // trimURLTail trims punctuation a regex match commonly over-captures, e.g.
-// "(see https://example.com.)" — the trailing period and paren are not part
-// of the URL. We strip greedy trailing characters but keep a closing paren
-// when one was opened inside the URL (Wikipedia-style links).
+// "(see https://example.com.)". The extra period and paren at the end are
+// not part of the URL. We strip greedy extra characters at the end but keep
+// a close paren when one was opened inside the URL (Wikipedia-style links).
 func trimURLTail(u string) string {
 	for len(u) > 0 {
 		last := u[len(u)-1]
@@ -60,17 +60,17 @@ func trimURLTail(u string) string {
 }
 
 // hyperlink wraps text in an OSC 8 escape sequence so terminals that honor
-// it can open the URL on click — even when the TUI captures mouse events.
-// Falls back to plain text rendering on terminals that ignore OSC 8.
+// it can open the URL on click, even when the TUI captures mouse events.
+// Falls back to a plain text render on terminals that ignore OSC 8.
 func hyperlink(url, text string) string {
 	return "\x1b]8;;" + url + "\x1b\\" + text + "\x1b]8;;\x1b\\"
 }
 
 // linkifyText finds URLs in a single line of plain text and wraps each one
 // with an OSC 8 hyperlink and a mouseMark zone tagged with linkZonePrefix.
-// Input must not contain newlines — call it on each wrapped line. The
-// optional rewriter transforms the click target (e.g., to inject Google's
-// authuser hint) without changing the visible URL text.
+// Input must not contain newlines. Call it on each wrapped line. The
+// optional rewriter transforms the click target (for example to inject
+// Google's authuser hint) with no change of the visible URL text.
 func linkifyText(s string, rw urlRewriter) string {
 	return linkifyTextZoned(s, rw, true)
 }
@@ -122,23 +122,24 @@ func linkifySegment(visible, full string, rw urlRewriter, zones bool) string {
 }
 
 // linkifyTextZoned is linkifyText with control over mouse zones. When zones is
-// false it emits OSC 8 hyperlinks only — clickable in terminals that honor
-// OSC 8 — without the mouseMark markers, which would leak on surfaces that
-// don't sweep them (the day and trash dialogs).
+// false it emits OSC 8 hyperlinks only. Those are clickable in terminals that
+// honor OSC 8. It emits no mouseMark markers, which would leak on surfaces
+// that do not sweep them (the day and trash dialogs).
 func linkifyTextZoned(s string, rw urlRewriter, zones bool) string {
 	return linkifySegment(s, s, rw, zones)
 }
 
-// renderLinkValue wraps a known URL value (e.g., ev.URL or ev.ConferenceURI)
-// as a clickable link. The whole value is the click target — it is NOT run
-// through the prose linkifier, so the exact stored URI survives verbatim:
-// trailing sub-delimiters (a "...&x=1!" query, a Wikipedia "(disambiguation)"
-// link) are kept rather than trimmed, and non-http schemes (mailto:,
-// zoommtg:) still get wrapped. The visible text is truncated to fit the
-// available width while the click/OSC 8 target stays the full URL. The
-// optional rewriter rewrites the click target only — what the user sees
-// stays the original. When zones is false the OSC 8 hyperlink is emitted
-// without the mouseMark zone marker, for surfaces that don't MouseSweep.
+// renderLinkValue wraps a known URL value (for example ev.URL or
+// ev.ConferenceURI) as a clickable link. The whole value is the click
+// target. It is NOT run through the prose linkifier. The exact stored URI
+// then survives verbatim. Extra sub-delimiters at the end (a "...&x=1!"
+// query, a Wikipedia "(disambiguation)" link) are kept rather than trimmed.
+// Non-http schemes (mailto:, zoommtg:) still get wrapped. The visible text
+// is truncated to fit the available width. The click/OSC 8 target stays the
+// full URL. The optional rewriter rewrites the click target only. What the
+// user sees stays the original. When zones is false the OSC 8 hyperlink is
+// emitted without the mouseMark zone marker, for surfaces that do not
+// MouseSweep.
 func renderLinkValue(raw string, available int, rw urlRewriter, zones bool) string {
 	if raw == "" {
 		return ""
@@ -153,16 +154,16 @@ func renderLinkValue(raw string, available int, rw urlRewriter, zones bool) stri
 }
 
 // renderLinkifiedValue renders a free-text value that may contain URLs, sized
-// to `available` cells. The value is truncated to width first, so the OSC 8 /
-// mouse-zone escapes it emits are always complete (truncateTo cuts the plain
-// text and stripANSI does not understand OSC 8, so linkifying before
-// truncating could leave a hyperlink unterminated). Each URL keeps its FULL
+// to `available` cells. The value is truncated to width first. The OSC 8 /
+// mouse-zone escapes it emits are then always complete. truncateTo cuts the
+// plain text and stripANSI does not understand OSC 8. A linkify before a
+// truncate could leave a hyperlink unterminated. Each URL keeps its FULL
 // address as the click target even when its visible text is ellipsized by the
-// truncation — so an overflowing embedded link still opens the right place,
-// the same full-target guarantee renderLinkValue gives bare-URL fields. The
-// optional rewriter transforms the click target only. When zones is false the
-// OSC 8 hyperlinks are emitted without mouseMark zone markers, for surfaces
-// that don't MouseSweep.
+// truncate. An overflow embedded link then still opens the right place.
+// That is the same full-target guarantee renderLinkValue gives bare-URL
+// fields. The optional rewriter transforms the click target only. When zones
+// is false the OSC 8 hyperlinks are emitted without mouseMark zone markers,
+// for surfaces that do not MouseSweep.
 func renderLinkifiedValue(value string, available int, rw urlRewriter, zones bool) string {
 	if available <= 0 {
 		return ""
@@ -235,8 +236,8 @@ func isGoogleAccountServer(serverURL string) bool {
 }
 
 // openURLCmd returns a Bubble Tea command that opens the URL with the
-// platform's default handler. Only http/https URLs are accepted; anything
-// else is dropped silently so a malformed zone name can't be turned into
+// platform's default handler. Only http/https URLs are accepted. Any other
+// value is dropped in silence so a malformed zone name cannot be turned into
 // arbitrary command execution.
 func openURLCmd(url string) tea.Cmd {
 	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
