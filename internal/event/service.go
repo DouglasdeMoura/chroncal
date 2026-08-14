@@ -49,7 +49,7 @@ func NewService(db *sql.DB, q *storage.Queries) *Service {
 }
 
 // WithTx returns a copy of the service whose writes run inside tx. The caller
-// owns tx (commit/rollback). The returned service's mutating methods neither
+// owns tx (commit/rollback). The returned service's write methods neither
 // begin nor commit their own transaction. Several calls can then compose into
 // a single atomic unit.
 func (s *Service) WithTx(tx *sql.Tx) *Service {
@@ -180,10 +180,10 @@ func applyEventDefaults(status, transp, class *string) {
 // used by date-range queries. The event drops from list views (#254).
 //
 // Timed events keep their absolute instant. All-day events are pinned to UTC
-// midnight on their wall-clock date so they occupy exactly one calendar day
-// regardless of the zone they were built in. This matches the TUI and iCal
-// import. A plain .UTC() would shift local midnight onto the previous or next
-// day and make the event surface on two days.
+// midnight on their wall-clock date. They then occupy exactly one calendar
+// day regardless of the zone they were built in. This matches the TUI and
+// iCal import. A plain .UTC() would shift local midnight onto the previous
+// or next day and make the event surface on two days.
 func normalizeEventTimes(start, end *time.Time, allDay bool) {
 	*start = toStorageTime(*start, allDay)
 	*end = toStorageTime(*end, allDay)
@@ -787,11 +787,11 @@ func (s *Service) DeleteFromInstance(ctx context.Context, uid string, instanceTi
 	return err
 }
 
-// softDeleteOverridesAndRecordTruncation trims the master's post-cutoff RDATEs,
-// hides every live override at or after cutoff, and records the truncation so
-// the trash view can restore it. It captures the recurrence_ids it hides and
-// the RDATEs it drops BEFORE it removes them. Restore then re-shows exactly
-// those overrides and re-adds exactly those RDATEs.
+// softDeleteOverridesAndRecordTruncation trims the master's post-cutoff RDATEs.
+// It hides every live override at or after cutoff. It records the truncation
+// so the trash view can restore it. It captures the recurrence_ids it hides
+// and the RDATEs it drops BEFORE it removes them. Restore then re-shows
+// exactly those overrides and re-adds exactly those RDATEs.
 //
 // It does not restore an override the user deleted on its own (issue #287).
 // It does not leave a post-cutoff RDATE to reappear on the next expansion
@@ -799,8 +799,7 @@ func (s *Service) DeleteFromInstance(ctx context.Context, uid string, instanceTi
 // bound). Pairs with restoreTruncatedOverrides / restoreTruncatedRDates.
 //
 // prevRRule is the master's pre-truncation RRULE. The caller passes it because
-// it has already overwritten the master's recurrence_rule in the DB by the time
-// this runs.
+// it overwrote the master's recurrence_rule in the DB before this runs.
 func softDeleteOverridesAndRecordTruncation(ctx context.Context, qtx *storage.Queries, master storage.Event, instanceTime time.Time, prevRRule string) error {
 	uid := master.Uid
 	cutoff := instanceTime.UTC().Format(time.RFC3339)
@@ -933,9 +932,9 @@ func (s *Service) deleteFromInstance(ctx context.Context, uid string, instanceTi
 
 // UpdateInstance creates or updates a per-occurrence override of a recurring
 // event. The override is stored as a separate row with the same UID as the
-// master and a RecurrenceID that matches the original (un-edited) instance
-// start in UTC. The master row is not modified. The recurrence rule and every
-// other instance then keep their previous behavior.
+// master. RecurrenceID matches the original (un-edited) instance start in UTC.
+// The master row is not modified. The recurrence rule and every other
+// instance then keep their previous behavior.
 //
 // instanceTime is the original occurrence time used as the override key (its
 // RECURRENCE-ID). The new StartTime/EndTime in p reflect the user's edits and
@@ -1053,7 +1052,7 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 	return e, master.CalendarID, nil
 }
 
-// overrideUpdateParams builds the storage params for an update of an existing
+// overrideUpdateParams builds the storage params for an update of a stored
 // override row. Recurrence-related fields are pinned to empty because an
 // override never owns its own rule.
 func overrideUpdateParams(id int64, p UpdateParams) storage.UpdateEventParams {
@@ -1189,11 +1188,11 @@ func (s *Service) UpdateFromInstanceWithRelations(ctx context.Context, uid strin
 	return e, nil
 }
 
-// updateFromInstanceTx truncates the master series, soft-deletes future
-// overrides, records the pre-truncation state, and creates the new split-series
-// master with its categories, all using a tx-bound Queries. It returns the new
-// event and the master's calendar ID. It opens no transaction, so callers can
-// compose it with attendee/alarm writes.
+// updateFromInstanceTx truncates the master series. It soft-deletes future
+// overrides. It records the pre-truncation state. It creates the new
+// split-series master with its categories. All of that uses a tx-bound
+// Queries. It returns the new event and the master's calendar ID. It opens
+// no transaction. Callers can then compose it with attendee/alarm writes.
 func updateFromInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, instanceTime time.Time, p UpdateParams) (Event, int64, error) {
 	master, err := qtx.GetEventByUID(ctx, uid)
 	if err != nil {
@@ -1415,7 +1414,7 @@ func applyAlarmDefaults(a *model.Alarm) {
 	}
 }
 
-// matchAlarm tries to match an incoming alarm with existing ones by content.
+// matchAlarm tries to match a new alarm with stored ones by content.
 // Returns true and the index if matched, false otherwise. Rows whose
 // non-empty RFC 9074 UIDs differ are never paired. The UID identifies the
 // alarm. A content coincidence across different UIDs would attach
@@ -1442,7 +1441,7 @@ func alarmUID(a model.Alarm) string {
 	return uuid.New().String()
 }
 
-// matchAlarmByUID tries to match an incoming alarm with existing ones by
+// matchAlarmByUID tries to match a new alarm with stored ones by
 // RFC 9074 UID. Use this as a fallback when content match fails. An edited
 // alarm (for example a changed trigger) then updates its row in place instead
 // of a delete and re-create. A delete would cascade away its alarm_state and
@@ -1462,7 +1461,7 @@ func matchAlarmByUID(existing []model.Alarm, matched []bool, a model.Alarm) (int
 	return 0, false
 }
 
-// updateAlarmInPlace rewrites a UID-matched alarm's content on its existing
+// updateAlarmInPlace rewrites a UID-matched alarm's content on its stored
 // row. The row ID stays so alarm_state entries keyed to it survive.
 func updateAlarmInPlace(ctx context.Context, qtx *storage.Queries, eventID int64, a model.Alarm, ex model.Alarm) error {
 	// Same ACKNOWLEDGED policy as syncMatchedAlarm: a malformed incoming
@@ -2188,7 +2187,7 @@ func (s *Service) Hydrate(ctx context.Context, e *Event) error {
 // This is for read-only display paths. One unreadable relation should degrade
 // that field alone. An early stop would leave every relation after it nil.
 // A caller that renders JSON cannot tell that apart from "there are none".
-// Anything that writes iCal must use Hydrate. A partial record pushed to a
+// Any path that writes iCal must use Hydrate. A partial record pushed to a
 // server overwrites the complete copy there.
 func (s *Service) HydrateBestEffort(ctx context.Context, e *Event) error {
 	return s.hydrate(ctx, e, false)
