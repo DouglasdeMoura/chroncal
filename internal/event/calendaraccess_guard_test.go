@@ -12,9 +12,9 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
 
-// insertGuardedCalendar inserts a calendar advertising the given remote
+// insertGuardedCalendar inserts a calendar that advertises the given remote
 // access/component metadata and returns its id. The default test calendar
-// (id 1) keeps empty metadata so it stays writable; these dedicated rows carry
+// (id 1) keeps empty metadata so it stays writable. These dedicated rows carry
 // the read-only / component restrictions under test.
 func insertGuardedCalendar(t *testing.T, db *sql.DB, name, access, components string) int64 {
 	t.Helper()
@@ -100,8 +100,8 @@ func TestEventAccessGuard_CreateRejected(t *testing.T) {
 }
 
 // TestEventAccessGuard_UpdateRejected proves an Update on a read-only calendar
-// fails with ErrReadOnly and leaves the row unchanged, including the
-// destination-calendar guard for a cross-calendar move.
+// fails with ErrReadOnly and leaves the row unchanged. The
+// destination-calendar guard for a cross-calendar move is included.
 func TestEventAccessGuard_UpdateRejected(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	svc := NewService(db, q)
@@ -201,8 +201,8 @@ func TestEventAccessGuard_DeleteRejected(t *testing.T) {
 }
 
 // TestEventAccessGuard_RecurrenceRejected covers the UID-keyed series mutation
-// paths (DeleteInstance, UpdateInstance, DeleteSeries) on a read-only calendar,
-// asserting the master is untouched and no override row is created.
+// paths (DeleteInstance, UpdateInstance, DeleteSeries) on a read-only calendar.
+// It asserts the master is untouched and no override row is created.
 func TestEventAccessGuard_RecurrenceRejected(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	svc := NewService(db, q)
@@ -305,9 +305,9 @@ func countAttendees(t *testing.T, db *sql.DB, eventID int64) int {
 	return n
 }
 
-// seedOrphanOverride inserts an override row with no master, modeling the state
-// left behind when a recurring master is purged independently while an override
-// (or series tail) survives — the trash view supports these orphans.
+// seedOrphanOverride inserts an override row with no master. That models the
+// state left behind when a recurring master is purged independently while an
+// override (or series tail) survives. The trash view supports these orphans.
 func seedOrphanOverride(t *testing.T, svc *Service, calendarID int64, uid string) Event {
 	t.Helper()
 	override, err := svc.UpsertByUID(context.Background(), UpsertParams{
@@ -326,7 +326,7 @@ func seedOrphanOverride(t *testing.T, svc *Service, calendarID int64, uid string
 
 // TestEventAccessGuard_DeleteSeriesOrphanTailRejected proves DeleteSeries is
 // blocked on a read-only calendar even when only an orphaned override (master
-// purged) remains, so the orphan is not silently soft-deleted.
+// purged) remains. The orphan is then not soft-deleted in silence.
 func TestEventAccessGuard_DeleteSeriesOrphanTailRejected(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	svc := NewService(db, q)
@@ -377,8 +377,8 @@ func TestEventAccessGuard_RestoreByUIDOrphanTailRejected(t *testing.T) {
 }
 
 // TestEventAccessGuard_ReplaceAttendeesRSVPRejected proves the TUI RSVP path
-// (ReplaceAttendees called without a preceding Update) is blocked on a
-// read-only calendar and persists no attendee row, while the sync-only entry
+// (ReplaceAttendees called with no Update before it) is blocked on a
+// read-only calendar and persists no attendee row. The sync-only entry
 // point still mirrors server-originated attendees through.
 func TestEventAccessGuard_ReplaceAttendeesRSVPRejected(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
