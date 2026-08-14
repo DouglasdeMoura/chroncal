@@ -586,9 +586,9 @@ func EncodeCalendar(cal *ical.Calendar) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// statusErrorf wraps a formatted message in a typed retry.HTTPError so
-// transient/conflict classification reads the real status regardless of
-// any numeric tokens the message (or a future wrap layer) carries.
+// statusErrorf wraps a formatted message in a typed retry.HTTPError.
+// Transient and conflict classification then read the real status. Numeric
+// tokens in the message (or a future wrap layer) do not hide it.
 func statusErrorf(status int, format string, args ...any) error {
 	return retry.NewHTTPError(status, fmt.Errorf(format, args...))
 }
@@ -657,9 +657,10 @@ func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
 // ETag. It keeps the weak "W/" marker (RFC 7232 §2.3). Callers can then tell a
 // weak validator apart from a strong one. Weak tags stay quoted as
 // `W/"<opaque>"`. Strong tags are bare `<opaque>`. Keep the quotes on weak
-// tags. The representation then stays unambiguous. A strong validator whose
-// opaque value happens to start with "W/" (for example `"W/abc"` normalized
-// to `W/abc`) would otherwise look the same as a weak `W/"abc"`. The weak
+// tags. The representation then stays unambiguous. A strong validator may
+// have an opaque value that starts with "W/" (for example `"W/abc"`
+// normalized to `W/abc`). That would otherwise look the same as a weak
+// `W/"abc"`. The weak
 // marker is the literal "W/" *before* the open quote. Detect it before
 // the quotes are stripped. Comparisons elsewhere are opaque equality. Both
 // sides flow through this function, so that stays consistent. The
