@@ -12,10 +12,10 @@ import (
 
 var httpStatusPattern = regexp.MustCompile(`\b([1-5][0-9][0-9])\b`)
 
-// TransientError marks an error as retryable and optionally carries a
+// TransientError marks an error as retryable. It optionally carries a
 // server-requested minimum delay before the next attempt, such as the value
 // of an HTTP Retry-After header on a 429 or 503 response. A zero RetryAfter
-// means the server gave no hint and normal exponential backoff applies.
+// means the server gave no hint. Normal exponential backoff then applies.
 type TransientError struct {
 	Err        error
 	RetryAfter time.Duration
@@ -46,7 +46,7 @@ func retryAfter(err error) time.Duration {
 
 // HTTPError carries an HTTP status code as a typed field so that
 // transient/conflict classification can rely on the real status instead
-// of scraping the error string. String scraping is fragile: any wrapping
+// of a scrape of the error string. String scrape is fragile. Any wrap
 // that prepends a numeric token (a batch index, a host:port segment)
 // would shadow the status and mis-route retries.
 type HTTPError struct {
@@ -72,7 +72,7 @@ func (e *HTTPError) Error() string {
 
 func (e *HTTPError) Unwrap() error { return e.Err }
 
-// IsTransient reports whether err is worth retrying.
+// IsTransient reports whether err is worth a retry.
 func IsTransient(err error) bool {
 	if err == nil {
 		return false
@@ -111,7 +111,7 @@ func IsTransient(err error) bool {
 		strings.Contains(msg, "timeout")
 }
 
-// IsRetryableStatus reports whether an HTTP status code is worth retrying:
+// IsRetryableStatus reports whether an HTTP status code is worth a retry:
 // 408 (request timeout), 425 (too early), 429 (too many requests), or any 5xx.
 // It is the single source of truth shared by IsTransient and the CalDAV client.
 func IsRetryableStatus(code int) bool {
