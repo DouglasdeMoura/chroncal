@@ -39,8 +39,8 @@ type Service struct {
 	q  *storage.Queries
 	// tx is non-nil when the service runs inside a caller-managed
 	// transaction (see WithTx). When set, q is already bound to tx and the
-	// per-method write helpers join the outer transaction instead of opening
-	// their own, so a multi-step sequence commits or rolls back atomically.
+	// per-method write helpers join the outer transaction. They do not open
+	// their own. A multi-step sequence then commits or rolls back atomically.
 	tx *sql.Tx
 }
 
@@ -49,16 +49,16 @@ func NewService(db *sql.DB, q *storage.Queries) *Service {
 }
 
 // WithTx returns a copy of the service whose writes run inside tx. The caller
-// owns tx (commit/rollback); the returned service's mutating methods neither
-// begin nor commit their own transaction, letting several calls compose into a
-// single atomic unit.
+// owns tx (commit/rollback). The returned service's mutating methods neither
+// begin nor commit their own transaction. Several calls can then compose into
+// a single atomic unit.
 func (s *Service) WithTx(tx *sql.Tx) *Service {
 	return &Service{db: s.db, q: s.q.WithTx(tx), tx: tx}
 }
 
 // txscope returns a transaction-scoped Queries plus commit and rollback
 // helpers. When the service already runs inside a caller-managed transaction
-// (see WithTx), the work joins that transaction: commit is a no-op and rollback
+// (see WithTx), the work joins that transaction. Commit is a no-op. Rollback
 // is left to the outer owner. Otherwise it opens and owns a fresh transaction.
 func (s *Service) txscope(ctx context.Context) (qtx *storage.Queries, commit func() error, rollback func(), err error) {
 	if s.tx != nil {
@@ -71,9 +71,9 @@ func (s *Service) txscope(ctx context.Context) (qtx *storage.Queries, commit fun
 	return s.q.WithTx(tx), tx.Commit, func() { _ = tx.Rollback() }, nil
 }
 
-// dirtyExec returns the DBTX the dirty-marking side effect must use: the outer
-// transaction when one is active (so the write joins it and cannot deadlock
-// against the held write lock), otherwise the pooled *sql.DB.
+// dirtyExec returns the DBTX the dirty-mark side effect must use. That is the
+// outer transaction when one is active, so the write joins it and cannot
+// deadlock against the held write lock. Otherwise it is the pooled *sql.DB.
 func (s *Service) dirtyExec() storage.DBTX {
 	if s.tx != nil {
 		return s.tx
@@ -175,14 +175,14 @@ func applyEventDefaults(status, transp, class *string) {
 
 // normalizeEventTimes coerces start/end to the storage invariant that all
 // database times are RFC 3339 in UTC (see AGENTS.md). Without it, times built
-// in a non-UTC zone (e.g. the CLI's time.Local or a --timezone value) persist
-// with an offset and sort incorrectly against the UTC bounds used by
-// date-range queries, silently dropping the event from list views (#254).
+// in a non-UTC zone (for example the CLI time.Local or a --timezone value)
+// persist with an offset. They then sort incorrectly against the UTC bounds
+// used by date-range queries. The event drops from list views (#254).
 //
 // Timed events keep their absolute instant. All-day events are pinned to UTC
 // midnight on their wall-clock date so they occupy exactly one calendar day
-// regardless of the zone they were built in (matching the TUI and iCal import);
-// a plain .UTC() would otherwise shift local midnight onto the previous or next
+// regardless of the zone they were built in. This matches the TUI and iCal
+// import. A plain .UTC() would shift local midnight onto the previous or next
 // day and make the event surface on two days.
 func normalizeEventTimes(start, end *time.Time, allDay bool) {
 	*start = toStorageTime(*start, allDay)
@@ -191,8 +191,8 @@ func normalizeEventTimes(start, end *time.Time, allDay bool) {
 
 func toStorageTime(t time.Time, allDay bool) time.Time {
 	if allDay {
-		// Take the wall-clock date in t's own location before dropping the
-		// zone, then pin to UTC midnight.
+		// Take the wall-clock date in t's own location before the zone is
+		// dropped. Then pin to UTC midnight.
 		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 	}
 	return t.UTC()
@@ -329,8 +329,8 @@ func (s *Service) markDirtyByID(ctx context.Context, eventID int64) {
 // ensureEventWritable resolves an event by ID and enforces remote
 // access/component policy for a user-originated edit. For a cross-calendar
 // move (destCalID set and different from the event's current calendar) the
-// destination calendar is validated too, so a move into a read-only or
-// VEVENT-less collection fails before any row is written.
+// destination calendar is validated too. A move into a read-only or
+// VEVENT-less collection then fails before any row is written.
 func (s *Service) ensureEventWritable(ctx context.Context, eventID, destCalID int64) error {
 	r, err := s.q.GetEvent(ctx, eventID)
 	if err != nil {
@@ -347,12 +347,11 @@ func (s *Service) ensureEventWritable(ctx context.Context, eventID, destCalID in
 	return nil
 }
 
-// distinctCalendarIDsByUID returns every calendar that any event row — master,
-// overrides, or series-tail leftovers — with the given UID lives on. A
-// recurring series can leave orphaned rows behind after the master is purged
-// independently (the trash view supports series tails), so a UID-keyed
-// mutation must enforce policy on each of these calendars rather than only
-// the master's.
+// distinctCalendarIDsByUID returns every calendar that any event row with the
+// given UID lives on: master, overrides, or series-tail leftovers. A recurring
+// series can leave orphaned rows behind after the master is purged on its own
+// (the trash view supports series tails). A UID-keyed mutation must then
+// enforce policy on each of these calendars, not only the master's.
 func (s *Service) distinctCalendarIDsByUID(ctx context.Context, uid string) ([]int64, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT DISTINCT calendar_id FROM events WHERE uid = ?`, uid)
@@ -375,8 +374,8 @@ func (s *Service) distinctCalendarIDsByUID(ctx context.Context, uid string) ([]i
 }
 
 // ensureSeriesWritable enforces remote access/component policy on every
-// calendar the UID touches, so a series delete or restore is blocked even when
-// only orphaned overrides or series-tail rows remain after a master purge.
+// calendar the UID touches. A series delete or restore is then blocked even
+// when only orphaned overrides or series-tail rows remain after a master purge.
 func (s *Service) ensureSeriesWritable(ctx context.Context, uid string) error {
 	ids, err := s.distinctCalendarIDsByUID(ctx, uid)
 	if err != nil {
@@ -475,10 +474,10 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, 
 }
 
 // UpdateWithRelations updates an event row together with its attendees and
-// alarms in a single transaction, so a failure in any child write rolls the
-// whole edit back (issue #87). The TUI edit path uses this instead of calling
-// Update and then ReplaceAttendees/ReplaceAlarms in separate transactions,
-// which could leave a half-updated row when a later child write failed.
+// alarms in a single transaction. A failure in any child write then rolls the
+// whole edit back (issue #87). The TUI edit path uses this instead of Update
+// plus ReplaceAttendees/ReplaceAlarms in separate transactions. Those separate
+// writes could leave a half-updated row when a later child write failed.
 func (s *Service) UpdateWithRelations(ctx context.Context, id int64, p UpdateParams, attendees []model.Attendee, alarms []model.Alarm) (Event, error) {
 	p.applyDefaults()
 
@@ -593,7 +592,7 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error
 	return e, nil
 }
 
-// ErrHasOverrides is returned when attempting to delete a recurring master
+// ErrHasOverrides is returned when a delete targets a recurring master
 // event that has override instances. Use DeleteSeries instead.
 var ErrHasOverrides = fmt.Errorf("event has overrides: use DeleteSeries to delete the entire series")
 
@@ -780,8 +779,8 @@ func (s *Service) DeleteInstance(ctx context.Context, uid string, instanceTime t
 }
 
 // DeleteFromInstance truncates a recurring series so that instances at or
-// after instanceTime are removed. It sets UNTIL on the RRULE, soft-deletes
-// any overrides at or after the cutoff, and records the pre-truncation
+// after instanceTime are removed. It sets UNTIL on the RRULE. It soft-deletes
+// any overrides at or after the cutoff. It records the pre-truncation
 // RRULE in event_truncate_deletes so the trash view can restore it atomically.
 func (s *Service) DeleteFromInstance(ctx context.Context, uid string, instanceTime time.Time) error {
 	_, err := s.deleteFromInstance(ctx, uid, instanceTime)
@@ -789,16 +788,17 @@ func (s *Service) DeleteFromInstance(ctx context.Context, uid string, instanceTi
 }
 
 // softDeleteOverridesAndRecordTruncation trims the master's post-cutoff RDATEs,
-// hides every live override at/after cutoff, and records the truncation so the
-// trash view can restore it. It captures the recurrence_ids it hides and the
-// RDATEs it drops BEFORE removing them, so restore re-shows exactly those
-// overrides and re-adds exactly those RDATEs — never resurrecting an override
-// the user deleted independently (issue #287) and never leaving a post-cutoff
-// RDATE behind to reappear on the next expansion (issue #463, since rrule-go
-// expands RDATEs independently of the RRULE's UNTIL bound). Pairs with
-// restoreTruncatedOverrides / restoreTruncatedRDates.
+// hides every live override at or after cutoff, and records the truncation so
+// the trash view can restore it. It captures the recurrence_ids it hides and
+// the RDATEs it drops BEFORE it removes them. Restore then re-shows exactly
+// those overrides and re-adds exactly those RDATEs.
 //
-// prevRRule is the master's pre-truncation RRULE; the caller passes it because
+// It does not restore an override the user deleted on its own (issue #287).
+// It does not leave a post-cutoff RDATE to reappear on the next expansion
+// (issue #463, since rrule-go expands RDATEs independently of the RRULE UNTIL
+// bound). Pairs with restoreTruncatedOverrides / restoreTruncatedRDates.
+//
+// prevRRule is the master's pre-truncation RRULE. The caller passes it because
 // it has already overwritten the master's recurrence_rule in the DB by the time
 // this runs.
 func softDeleteOverridesAndRecordTruncation(ctx context.Context, qtx *storage.Queries, master storage.Event, instanceTime time.Time, prevRRule string) error {
@@ -871,10 +871,10 @@ func trimMasterRDatesAtOrAfter(ctx context.Context, qtx *storage.Queries, master
 
 // deleteFromInstance performs the truncation and returns the master's
 // updated_at as written by this operation, read back inside the same
-// transaction. Returning the in-tx value (rather than a post-commit read)
-// closes a TOCTOU window: a concurrent writer editing the master after our
-// commit but before a separate read would otherwise have its updated_at
-// captured as the undo baseline, letting RestoreUndo clobber that edit.
+// transaction. The in-tx value (rather than a post-commit read) closes a
+// TOCTOU window. A concurrent writer that edits the master after our commit
+// but before a separate read would otherwise have its updated_at captured as
+// the undo baseline. RestoreUndo would then clobber that edit.
 func (s *Service) deleteFromInstance(ctx context.Context, uid string, instanceTime time.Time) (string, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -933,14 +933,14 @@ func (s *Service) deleteFromInstance(ctx context.Context, uid string, instanceTi
 
 // UpdateInstance creates or updates a per-occurrence override of a recurring
 // event. The override is stored as a separate row with the same UID as the
-// master and a RecurrenceID matching the original (un-edited) instance start
-// in UTC. The master row is not modified, so the recurrence rule and every
-// other instance keep working unchanged.
+// master and a RecurrenceID that matches the original (un-edited) instance
+// start in UTC. The master row is not modified. The recurrence rule and every
+// other instance then keep their previous behavior.
 //
 // instanceTime is the original occurrence time used as the override key (its
 // RECURRENCE-ID). The new StartTime/EndTime in p reflect the user's edits and
-// may differ — e.g. moving Wednesday's standup from 9:00 to 9:30 sets
-// RecurrenceID=2026-05-20T09:00:00Z but StartTime=2026-05-20T09:30:00Z.
+// may differ. For example, a move of Wednesday's standup from 9:00 to 9:30
+// sets RecurrenceID=2026-05-20T09:00:00Z but StartTime=2026-05-20T09:30:00Z.
 func (s *Service) UpdateInstance(ctx context.Context, uid string, instanceTime time.Time, p UpdateParams) (Event, error) {
 	p.applyDefaults()
 
@@ -990,9 +990,9 @@ func (s *Service) UpdateInstanceWithRelations(ctx context.Context, uid string, i
 }
 
 // updateInstanceTx creates or updates a per-occurrence override row and its
-// categories using a tx-bound Queries, returning the resulting event and the
-// master's calendar ID (for marking the resource dirty after commit). It opens
-// no transaction so callers can compose it with attendee/alarm writes.
+// categories using a tx-bound Queries. It returns the event and the master's
+// calendar ID (for a dirty mark after commit). It opens no transaction, so
+// callers can compose it with attendee/alarm writes.
 func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, instanceTime time.Time, p UpdateParams) (Event, int64, error) {
 	master, err := qtx.GetEventByUID(ctx, uid)
 	if err != nil {
@@ -1053,7 +1053,7 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 	return e, master.CalendarID, nil
 }
 
-// overrideUpdateParams builds the storage params for updating an existing
+// overrideUpdateParams builds the storage params for an update of an existing
 // override row. Recurrence-related fields are pinned to empty because an
 // override never owns its own rule.
 func overrideUpdateParams(id int64, p UpdateParams) storage.UpdateEventParams {
@@ -1082,9 +1082,9 @@ func overrideUpdateParams(id int64, p UpdateParams) storage.UpdateEventParams {
 	}
 }
 
-// overrideCreateParams builds the storage params for inserting a fresh
-// override row. seq should be the master's sequence + 1 so this override
-// shows up as a later revision in iCal SEQUENCE terms.
+// overrideCreateParams builds the storage params for a fresh override row.
+// seq should be the master's sequence + 1 so this override shows up as a
+// later revision in iCal SEQUENCE terms.
 func overrideCreateParams(uid, recID string, seq int64, p UpdateParams) storage.CreateEventParams {
 	return storage.CreateEventParams{
 		Uid:            uid,
@@ -1125,16 +1125,16 @@ func isUniqueViolationOnRecurrenceID(err error) bool {
 		strings.Contains(msg, "recurrence_id")
 }
 
-// UpdateFromInstance splits a recurring series at instanceTime, leaving the
-// past intact and applying the user's edits to a new series that starts at
-// instanceTime. Internally it:
+// UpdateFromInstance splits a recurring series at instanceTime. The past stays
+// intact. The user's edits apply to a new series that starts at instanceTime.
+// Internally it:
 //
 //  1. Truncates the master's RRULE with UNTIL=instanceTime-1s.
-//  2. Soft-deletes any overrides at or after the cutoff (those instances will
-//     never expand again, so an override there would be unreachable).
-//  3. Creates a brand-new event (fresh UID) carrying p's field values plus the
-//     RecurrenceRule the caller passes in — typically the same rule the user
-//     had, possibly edited.
+//  2. Soft-deletes any overrides at or after the cutoff. Those instances will
+//     never expand again, so an override there would be unreachable.
+//  3. Creates a brand-new event (fresh UID) with p's field values plus the
+//     RecurrenceRule the caller passes in. That is typically the same rule
+//     the user had, possibly edited.
 //
 // Both rows are marked dirty so CalDAV sync ships the truncation and the new
 // series together. Pre-truncation state is recorded in event_truncate_deletes
@@ -1162,8 +1162,8 @@ func (s *Service) UpdateFromInstance(ctx context.Context, uid string, instanceTi
 }
 
 // UpdateFromInstanceWithRelations is UpdateFromInstance plus an attendee/alarm
-// write on the new split series in the same transaction, so the truncation, the
-// new master, and its children commit atomically (issue #87).
+// write on the new split series in the same transaction. The truncation, the
+// new master, and its children then commit atomically (issue #87).
 func (s *Service) UpdateFromInstanceWithRelations(ctx context.Context, uid string, instanceTime time.Time, p UpdateParams, attendees []model.Attendee, alarms []model.Alarm) (Event, error) {
 	p.applyDefaults()
 
@@ -1192,7 +1192,7 @@ func (s *Service) UpdateFromInstanceWithRelations(ctx context.Context, uid strin
 // updateFromInstanceTx truncates the master series, soft-deletes future
 // overrides, records the pre-truncation state, and creates the new split-series
 // master with its categories, all using a tx-bound Queries. It returns the new
-// event and the master's calendar ID, opening no transaction so callers can
+// event and the master's calendar ID. It opens no transaction, so callers can
 // compose it with attendee/alarm writes.
 func updateFromInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, instanceTime time.Time, p UpdateParams) (Event, int64, error) {
 	master, err := qtx.GetEventByUID(ctx, uid)
@@ -1272,9 +1272,9 @@ func updateFromInstanceTx(ctx context.Context, qtx *storage.Queries, uid string,
 
 // setRRuleUntil adds or replaces the UNTIL parameter in an RRULE string.
 //
-// RFC 5545 requires UNTIL's value type to match DTSTART: a DATE-valued
-// (all-day) series must use a DATE UNTIL (YYYYMMDD), while a DATE-TIME series
-// uses a UTC DATE-TIME (YYYYMMDDTHHMMSSZ). Emitting a DATE-TIME UNTIL on an
+// RFC 5545 requires UNTIL's value type to match DTSTART. A DATE-valued
+// (all-day) series must use a DATE UNTIL (YYYYMMDD). A DATE-TIME series
+// uses a UTC DATE-TIME (YYYYMMDDTHHMMSSZ). A DATE-TIME UNTIL on an
 // all-day series produces a type-mismatched RRULE that strict CalDAV servers
 // reject.
 func setRRuleUntil(rule string, until time.Time, allDay bool) string {
@@ -1396,7 +1396,7 @@ func (s *Service) ListAlarmsByEventIDs(ctx context.Context, eventIDs []int64) (m
 	return alarmMap, nil
 }
 
-// loadExistingAlarms loads existing alarms with their attendees for the given event.
+// loadExistingAlarms loads alarms that already exist, with their attendees, for the given event.
 func loadExistingAlarms(ctx context.Context, qtx *storage.Queries, eventID int64) ([]model.Alarm, error) {
 	rows, err := qtx.ListAlarmsByEventID(ctx, eventID)
 	if err != nil {
@@ -1417,8 +1417,8 @@ func applyAlarmDefaults(a *model.Alarm) {
 
 // matchAlarm tries to match an incoming alarm with existing ones by content.
 // Returns true and the index if matched, false otherwise. Rows whose
-// non-empty RFC 9074 UIDs differ are never paired: the UID identifies the
-// alarm, and a content coincidence across different UIDs would attach
+// non-empty RFC 9074 UIDs differ are never paired. The UID identifies the
+// alarm. A content coincidence across different UIDs would attach
 // alarm_state to the wrong definition and churn UIDs on the server.
 func matchAlarm(existing []model.Alarm, matched []bool, a model.Alarm) (int, bool) {
 	for j, ex := range existing {
@@ -1443,10 +1443,10 @@ func alarmUID(a model.Alarm) string {
 }
 
 // matchAlarmByUID tries to match an incoming alarm with existing ones by
-// RFC 9074 UID. Used as a fallback when content matching fails so an edited
-// alarm (e.g. a changed trigger) updates its row in place instead of being
-// deleted and re-created, which would cascade away its alarm_state and
-// resurrect dismissed firings.
+// RFC 9074 UID. Use this as a fallback when content match fails. An edited
+// alarm (for example a changed trigger) then updates its row in place instead
+// of a delete and re-create. A delete would cascade away its alarm_state and
+// restore dismissed firings.
 func matchAlarmByUID(existing []model.Alarm, matched []bool, a model.Alarm) (int, bool) {
 	if a.UID == "" {
 		return 0, false
@@ -1463,7 +1463,7 @@ func matchAlarmByUID(existing []model.Alarm, matched []bool, a model.Alarm) (int
 }
 
 // updateAlarmInPlace rewrites a UID-matched alarm's content on its existing
-// row, preserving the row ID so alarm_state entries keyed to it survive.
+// row. The row ID stays so alarm_state entries keyed to it survive.
 func updateAlarmInPlace(ctx context.Context, qtx *storage.Queries, eventID int64, a model.Alarm, ex model.Alarm) error {
 	// Same ACKNOWLEDGED policy as syncMatchedAlarm: a malformed incoming
 	// value must not clobber valid stored state.
@@ -1549,8 +1549,8 @@ func isUniqueUIDViolation(err error) bool {
 }
 
 // createNewAlarm creates a new alarm and its attendees. Alarm UIDs are
-// globally unique; servers sometimes duplicate an event (same VALARM UIDs on
-// both copies), which would otherwise fail this event's sync forever — on
+// globally unique. Servers sometimes duplicate an event (same VALARM UIDs on
+// both copies), which would otherwise fail this event's sync forever. On
 // collision, mint a fresh local UID instead.
 func createNewAlarm(ctx context.Context, qtx *storage.Queries, eventID int64, a model.Alarm) error {
 	params := storage.CreateAlarmParams{
@@ -1592,7 +1592,7 @@ func createNewAlarm(ctx context.Context, qtx *storage.Queries, eventID int64, a 
 	return storage.ReplaceAlarmXProperties(ctx, qtx, storage.OwnerTypeEventAlarm, row.ID, a.XProperties)
 }
 
-// deleteUnmatchedAlarms deletes existing alarms that were not matched.
+// deleteUnmatchedAlarms deletes alarms that were not matched.
 func deleteUnmatchedAlarms(ctx context.Context, qtx *storage.Queries, existing []model.Alarm, matched []bool) error {
 	for j, ex := range existing {
 		if !matched[j] {
@@ -1621,7 +1621,7 @@ func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []mod
 	return nil
 }
 
-// replaceAlarmsTx reconciles an event's alarms (content/UID matching, in-place
+// replaceAlarmsTx reconciles an event's alarms (content/UID match, in-place
 // edits, creates, deletes) using a tx-bound Queries. It opens no transaction so
 // callers can compose it with the event row write inside one transaction.
 func replaceAlarmsTx(ctx context.Context, qtx *storage.Queries, eventID int64, alarms []model.Alarm) error {
@@ -1670,7 +1670,7 @@ func replaceAlarmsTx(ctx context.Context, qtx *storage.Queries, eventID int64, a
 }
 
 // replaceRelationsTx replaces an event's attendees and alarms using a tx-bound
-// Queries, so the *WithRelations methods can write both child collections
+// Queries. The *WithRelations methods can then write both child collections
 // inside the same transaction as the event row.
 func replaceRelationsTx(ctx context.Context, qtx *storage.Queries, eventID int64, attendees []model.Attendee, alarms []model.Alarm) error {
 	if err := replaceAttendeesTx(ctx, qtx, eventID, attendees); err != nil {
@@ -1700,11 +1700,12 @@ func (s *Service) ReplaceAttendees(ctx context.Context, eventID int64, attendees
 	return s.ReplaceAttendeesForSync(ctx, eventID, attendees)
 }
 
-// ReplaceAttendeesForSync applies an attendee set without enforcing remote
+// ReplaceAttendeesForSync applies an attendee set without remote
 // access/component policy. It is reserved for the CalDAV sync engine, which
 // mirrors server-originated VEVENTs into the local cache regardless of the
-// linked collection's advertised write support; user-originated edits (e.g. the
-// TUI RSVP flow) must route through ReplaceAttendees so the policy is enforced.
+// linked collection's advertised write support. User-originated edits (for
+// example the TUI RSVP flow) must route through ReplaceAttendees so the
+// policy is enforced.
 func (s *Service) ReplaceAttendeesForSync(ctx context.Context, eventID int64, attendees []model.Attendee) error {
 	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
@@ -2003,8 +2004,8 @@ func (s *Service) ReplaceRelations(ctx context.Context, eventID int64, relations
 // Converters
 
 // FromStorage maps a storage.Event row to a domain Event. It is exported so
-// recurrence expansion shares one mapper with the event service, preventing the
-// two from drifting (every new storage.Event column lands here once).
+// recurrence expansion shares one mapper with the event service. The two then
+// cannot drift. Every new storage.Event column lands here once.
 func FromStorage(r storage.Event) Event {
 	var deletedAt *time.Time
 	if r.DeletedAt != nil && *r.DeletedAt != "" {
@@ -2169,25 +2170,25 @@ func fromStorageAttendee(r storage.EventAttendee) model.Attendee {
 
 // Hydrate loads the transient relation slices — alarms, attendees, attachments,
 // comments, contacts, resources, relations, x-properties — onto e. They live in
-// side tables rather than the events row, so a value straight out of Get/List
-// carries none of them and any iCal built from it would silently omit them.
+// side tables rather than the events row. A value straight out of Get/List
+// carries none of them. Any iCal built from it would omit them in silence.
 //
-// This is the single definition of "what a fully populated event is": export
-// (CLI and file), CalDAV push, and the display paths all call it, so a relation
-// added later reaches every consumer at once. It fails on the first error
-// instead of returning a partial value — a caller that pushes an amputated
-// record overwrites the server copy with it.
+// This is the single definition of "what a fully populated event is". Export
+// (CLI and file), CalDAV push, and the display paths all call it. A relation
+// added later then reaches every consumer at once. It fails on the first error
+// instead of a partial value. A caller that pushes an amputated record
+// overwrites the server copy with it.
 func (s *Service) Hydrate(ctx context.Context, e *Event) error {
 	return s.hydrate(ctx, e, true)
 }
 
 // HydrateBestEffort populates every relation it can and returns the joined
-// errors for the ones it could not, instead of stopping at the first failure.
+// errors for the ones it could not. It does not stop at the first failure.
 //
-// This is for read-only display paths, where one unreadable relation should
-// degrade that field alone: stopping early would leave every relation after it
-// nil, which a caller rendering JSON cannot tell apart from "there are none".
-// Anything that writes iCal must use Hydrate — a partial record pushed to a
+// This is for read-only display paths. One unreadable relation should degrade
+// that field alone. An early stop would leave every relation after it nil.
+// A caller that renders JSON cannot tell that apart from "there are none".
+// Anything that writes iCal must use Hydrate. A partial record pushed to a
 // server overwrites the complete copy there.
 func (s *Service) HydrateBestEffort(ctx context.Context, e *Event) error {
 	return s.hydrate(ctx, e, false)
