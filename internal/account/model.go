@@ -66,7 +66,7 @@ func SuggestedName(username string) string {
 	return string(unicode.ToUpper(first)) + label[size:]
 }
 
-// UserFacingName hides the old per-calendar implementation name when loading
+// UserFacingName hides the old per-calendar implementation name when it loads
 // accounts created before account management became user-visible.
 func UserFacingName(name, username string, id int64) string {
 	name = strings.TrimSpace(name)
@@ -105,7 +105,7 @@ type ImportResult struct {
 }
 
 // SelectionParams describes the desired final set of local calendars for one
-// discovered account. A replacement default may identify an existing local
+// discovered account. A replacement default may identify a stored local
 // calendar by ID or a newly selected collection by path.
 type SelectionParams struct {
 	SelectedPaths  []string
