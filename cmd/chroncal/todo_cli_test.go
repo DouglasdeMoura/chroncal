@@ -6,9 +6,9 @@ import (
 )
 
 // TestTodoSearchCompletedAndIncompleteAreMutuallyExclusive reproduces issue
-// #361: passing both --completed and --incomplete to `todo search` was
-// silently accepted. The second flag was ignored rather than an error being
-// returned, leaving the user with misleading results.
+// #361. Both --completed and --incomplete on `todo search` were
+// accepted in silence. The second flag was ignored rather than an error
+// being returned. The user then saw misleading results.
 func TestTodoSearchCompletedAndIncompleteAreMutuallyExclusive(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 
