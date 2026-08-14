@@ -28,9 +28,9 @@ func FromRGB(r, g, b uint8) (L, C, H float64) {
 }
 
 // ToRGB converts OKLCh to sRGB 8-bit channels. If (L, C, H) lies outside the
-// sRGB gamut, chroma is reduced while L and H stay. This is the hue-preserving
-// approach that CSS Color 4 recommends. If chroma reduction still does not
-// fit, the function returns the achromatic L color.
+// sRGB gamut, chroma is reduced while L and H stay. That keeps hue, as CSS
+// Color 4 recommends. If chroma reduction still does not fit, the function
+// returns the achromatic L color.
 func ToRGB(L, C, H float64) (r, g, b uint8) {
 	for range 16 {
 		A := C * math.Cos(H)
