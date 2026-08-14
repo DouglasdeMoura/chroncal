@@ -11,24 +11,24 @@ import (
 )
 
 // MultiGetResult holds the outcome of a tolerant calendar-multiget REPORT.
-// Resources that returned 200 with calendar-data land in Resources; paths the
+// Resources that returned 200 with calendar-data land in Resources. Paths the
 // server reported as 404 (deleted between sync-collection and multiget) land
-// in Missing so the caller can treat them as deletions instead of aborting
-// the whole pull.
+// in Missing. The caller can then treat them as deletions instead of an abort
+// of the whole pull.
 type MultiGetResult struct {
 	Resources []Resource
 	Missing   []string
 }
 
-// MultiGetTolerant fetches resources via the calendar-multiget REPORT and
-// silently drops per-resource 404s instead of failing the whole batch.
+// MultiGetTolerant fetches resources via the calendar-multiget REPORT. It
+// drops per-resource 404s in silence instead of a fail of the whole batch.
 //
-// We can't use go-webdav's MultiGetCalendar for this because its
+// We cannot use go-webdav's MultiGetCalendar for this. Its
 // decodeCalendarObjectList aborts the entire response when any single
-// resource is missing the calendar-data property — which is exactly what a
+// resource lacks the calendar-data property. That is exactly what a
 // 404'd row looks like. Real servers (Google in particular) routinely hand
-// us hrefs in sync-collection that are no longer there a few hundred
-// milliseconds later by multiget time, so the intolerance was killing every
+// us hrefs in sync-collection that are gone a few hundred
+// milliseconds later by multiget time. The intolerance then killed every
 // pull on calendars with concurrent activity.
 func (c *Client) MultiGetTolerant(ctx context.Context, calendarPath string, hrefs []string) (*MultiGetResult, error) {
 	canonicalPath, err := c.CanonicalCollectionRef(calendarPath)
