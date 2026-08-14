@@ -59,7 +59,7 @@ const (
 )
 
 // CalendarListItem is the display data for a single calendar row. AccountName
-// enables grouped rendering; an empty AccountName retains the legacy flat list
+// enables grouped render. An empty AccountName retains the legacy flat list
 // used by small embedded callers and tests.
 type CalendarListItem struct {
 	ID           int64
@@ -75,7 +75,7 @@ type CalendarListItem struct {
 }
 
 // CalendarReorderedMsg is emitted when the user moves a calendar in the list.
-// IDs is the full calendar order, excluding account headers.
+// IDs is the full calendar order. Account headers are excluded.
 type CalendarReorderedMsg struct{ IDs []int64 }
 
 // AccountReorderedMsg is emitted when the user moves a complete remote-account
@@ -190,13 +190,13 @@ func (m CalendarListModel) SetTheme(accent, muted, text, selectedText, errColor 
 	return m
 }
 
-// WithInactiveSelection opts the list into painting its blurred cursor row
-// with a neutral inactive style — quieter than the active accent but still
-// visible — so a host that keeps the list mounted while keyboard focus is
-// elsewhere (the unified Calendars manager) preserves a visible selection.
-// The default sidebar list never opts in and keeps its current behavior of
-// dropping the selection entirely when blurred. The inactive colors track
-// Theme.ButtonBg, so callers must re-apply this whenever the theme changes.
+// WithInactiveSelection opts the list into a paint of its blurred cursor row
+// with a neutral inactive style. Quieter than the active accent but still
+// visible. A host that keeps the list mounted while keyboard focus is
+// elsewhere (the unified Calendars manager) then keeps a visible selection.
+// The default sidebar list never opts in. It keeps its current behavior of
+// a drop of the selection entirely when blurred. The inactive colors track
+// Theme.ButtonBg. Callers must re-apply this whenever the theme changes.
 func (m CalendarListModel) WithInactiveSelection(bg, fg color.Color) CalendarListModel {
 	m.inactiveSelection = true
 	m.inactiveBg = bg
@@ -211,8 +211,8 @@ func (m CalendarListModel) WithoutDisclosure() CalendarListModel {
 	return m
 }
 
-// visibilityIndicatorWidth returns the cell width of the leading visibility
-// circle so mouse hit-testing matches the rendered presentation.
+// visibilityIndicatorWidth returns the cell width of the visibility
+// circle at the start so mouse hit-test matches the rendered presentation.
 func (m CalendarListModel) visibilityIndicatorWidth() int {
 	return lipgloss.Width("●")
 }
@@ -259,7 +259,7 @@ func (m CalendarListModel) setItemsAndHidden(items []CalendarListItem, hidden ma
 }
 
 // SetItemsPreservingCursor keeps the cursor on the same calendar or account
-// header when a reload changes ordering.
+// header when a reload changes order.
 func (m CalendarListModel) SetItemsPreservingCursor(items []CalendarListItem) CalendarListModel {
 	identity, ok := m.currentIdentity()
 	m = m.SetItems(items)
@@ -270,7 +270,7 @@ func (m CalendarListModel) SetItemsPreservingCursor(items []CalendarListItem) Ca
 }
 
 // SetItemsAndHiddenPreservingCursor replaces list data and visibility in one
-// pass, cloning the caller-owned hidden map while pruning IDs absent from items.
+// pass. It clones the caller-owned hidden map and prunes IDs absent from items.
 func (m CalendarListModel) SetItemsAndHiddenPreservingCursor(items []CalendarListItem, hidden map[int64]bool) CalendarListModel {
 	identity, ok := m.currentIdentity()
 	m = m.setItemsAndHidden(items, hidden)
@@ -283,12 +283,12 @@ func (m CalendarListModel) SetItemsAndHiddenPreservingCursor(items []CalendarLis
 func (m CalendarListModel) HiddenSet() map[int64]bool { return maps.Clone(m.hidden) }
 
 // IsHidden reports whether the given calendar is currently hidden. It is the
-// read-only view of the owned visibility set: callers that share the list
+// read-only view of the owned visibility set. Callers that share the list
 // (the unified Calendars manager) read visibility through here instead of
-// keeping a second mirrored map, so there is a single source of truth.
+// a second mirrored map. There is then a single source of truth.
 func (m CalendarListModel) IsHidden(id int64) bool { return m.hidden[id] }
 
-// SetHidden applies an explicit visibility state without emitting another
+// SetHidden applies an explicit visibility state. It does not emit another
 // toggle message. The app uses it to keep the sidebar projection aligned when
 // visibility changes originate in Manage Calendars.
 func (m CalendarListModel) SetHidden(id int64, hidden bool) CalendarListModel {
