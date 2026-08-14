@@ -150,10 +150,10 @@ func TestAccountCredentialStoreFailureReopensSettingsAndKeepsOldCredential(t *te
 	}
 }
 
-// TestCredentialForRotationToleratesBrokenKeyring locks the repair contract:
-// a rotation must proceed from an empty credential when the keyring entry is
-// missing or belongs to a different connection — those are exactly the broken
-// states the user is trying to fix — and abort only on other (transient
+// TestCredentialForRotationToleratesBrokenKeyring locks the repair contract.
+// A rotation must proceed from an empty credential when the keyring entry is
+// gone or belongs to a different connection. Those are exactly the broken
+// states the user is trying to fix. Abort only on other (transient
 // backend) errors.
 func TestCredentialForRotationToleratesBrokenKeyring(t *testing.T) {
 	existing := auth.Credential{AccountID: 7, Username: "alice", Password: "old"}
