@@ -11,13 +11,13 @@ import (
 )
 
 // TestDeleteInstance_ConcurrentNoLostUpdate is a regression test for issue
-// #116: DeleteInstance read the master's EXDATE list outside the writing
-// transaction, so two concurrent instance-deletes both computed their new
-// list from the same pre-transaction snapshot and the second write silently
-// clobbered the first — an excluded occurrence reappeared on next expansion.
+// #116. DeleteInstance read the master's EXDATE list outside the write
+// transaction. Two concurrent instance-deletes then both computed their new
+// list from the same pre-transaction snapshot. The second write clobbered the
+// first in silence. An excluded occurrence reappeared on next expansion.
 //
-// The test fires N concurrent DeleteInstance calls, each excluding a distinct
-// occurrence of the same recurring master, and asserts that every EXDATE
+// The test fires N concurrent DeleteInstance calls. Each excludes a distinct
+// occurrence of the same recurring master. It asserts that every EXDATE
 // survives. Under the buggy read-modify-write the final list is short.
 func TestDeleteInstance_ConcurrentNoLostUpdate(t *testing.T) {
 	// A file-backed DB is required: ":memory:" gives every pooled connection
