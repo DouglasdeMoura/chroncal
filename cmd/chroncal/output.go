@@ -258,7 +258,7 @@ func fmtModelRelations(relations []model.Relation) string {
 }
 
 // parseListDate normalizes a stored date string (YYYY-MM-DD or RFC 3339)
-// to YYYY-MM-DD for list-style output, returning "" when stored is empty
+// to YYYY-MM-DD for list-style output. It returns "" when stored is empty
 // or unparseable. Compact callers wrap the empty case with a "-"
 // placeholder so the column still aligns under fixed-width padding.
 func parseListDate(stored string) string {
@@ -275,7 +275,7 @@ func parseListDate(stored string) string {
 }
 
 // compactDateColumn is parseListDate with a "-" placeholder so the
-// column has a printable cell even when the underlying value is empty.
+// column has a printable cell even when the stored value is empty.
 func compactDateColumn(stored string) string {
 	if d := parseListDate(stored); d != "" {
 		return d
