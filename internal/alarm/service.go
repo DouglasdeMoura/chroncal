@@ -19,20 +19,21 @@ import (
 const StaleThreshold = 24 * time.Hour
 
 // baseForwardWindow is the minimum distance past `now` that the expansion
-// window reaches, before accounting for configured alarm lead times. It covers
-// the common short reminders (-PT15M, -P1D, …) without a DB scan and provides
-// a safety margin for DST/day-arithmetic drift in the lead-time estimate.
+// window reaches, before configured alarm lead times are added. It covers
+// the common short reminders (-PT15M, -P1D, …) without a DB scan. It also
+// provides a safety margin for DST/day-arithmetic drift in the lead-time
+// estimate.
 const baseForwardWindow = StaleThreshold + 24*time.Hour
 
 // maxLeadTime returns how far in the future an event/todo instance may sit and
-// still have an alarm due now, derived from the configured trigger durations.
-// triggerAt = instanceTime + offset, so an alarm is due now (triggerAt ~= now)
-// when instanceTime = now - offset; only negative offsets ("N before") push the
-// instance into the future, and the largest such magnitude bounds the window.
-// Absolute (RFC 3339) and zero/positive triggers contribute nothing. RELATED=END
-// is ignored because it only ever needs a *smaller* forward window than START
-// (the event end is later than its start), so treating every trigger as START
-// is a safe over-estimate.
+// still have an alarm due now. It is derived from the configured trigger
+// durations. triggerAt = instanceTime + offset. An alarm is due now
+// (triggerAt ~= now) when instanceTime = now - offset. Only negative offsets
+// ("N before") push the instance into the future. The largest such magnitude
+// bounds the window. Absolute (RFC 3339) and zero/positive triggers contribute
+// nothing. RELATED=END is ignored. It only ever needs a *smaller* forward
+// window than START (the event end is later than its start). Treat every
+// trigger as START. That is a safe over-estimate.
 func maxLeadTime(triggers []string) time.Duration {
 	ref := time.Now()
 	var longest time.Duration
@@ -214,9 +215,9 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 }
 
 // collectMissedTriggers walks every repeat trigger of an alarm whose initial
-// firing is triggerAt, and calls record(t) for each one that is stale (past
-// StaleThreshold) and has no state row according to stateExists. stateExists
-// reports whether a state row exists for the (alarm, triggerKey) pair; a real
+// firing is triggerAt. It calls record(t) for each one that is stale (past
+// StaleThreshold) and has no state row per stateExists. stateExists
+// reports whether a state row exists for the (alarm, triggerKey) pair. A real
 // DB error there is treated as "skip" rather than a false-positive miss.
 func (s *Service) collectMissedTriggers(
 	ctx context.Context,
@@ -410,8 +411,8 @@ func computeTriggerTimeForInstance(expEvt recurrence.ExpandedEvent, alarm model.
 //
 // alarm_state stores the master row's event_id (whose StartTime/EndTime are the
 // first occurrence) plus the instance's trigger_at. For a recurring series the
-// master times are wrong for any occurrence past the first, so we re-expand the
-// series and pick the instance whose computed trigger (including repeats) equals
+// master times are wrong for any occurrence past the first. We re-expand the
+// series and pick the instance whose computed trigger (repeats included) equals
 // the stored trigger_at. Non-recurring events, and any case where no instance
 // matches, fall back to the stored master event.
 func (s *Service) resolveStateEvent(ctx context.Context, st storage.AlarmState) (event.Event, error) {
@@ -547,12 +548,12 @@ func (s *Service) MarkTodoFired(ctx context.Context, tda TodoDueAlarm) (int64, e
 	return todoSvc.MarkTodoAlarmFired(ctx, tda.Alarm.ID, tda.Todo.ID, tda.TriggerAt)
 }
 
-// MarkTodoRefired re-fires a snoozed todo alarm, clearing the snooze. The
-// UPDATE is gated on snoozed_to IS NOT NULL so it acts as an atomic claim:
-// when two checkers overlap, both observe the expired-snoozed row, but only
-// the one whose UPDATE clears snoozed_to first affects a row. claimed reports
-// whether this caller won the claim; a false claimed means another checker
-// already re-fired the alarm and this caller must not dispatch a duplicate.
+// MarkTodoRefired re-fires a snoozed todo alarm. It clears the snooze. The
+// UPDATE is gated on snoozed_to IS NOT NULL so it acts as an atomic claim.
+// When two checkers overlap, both observe the expired-snoozed row. Only
+// the UPDATE that clears snoozed_to first affects a row. claimed reports
+// whether this caller won the claim. A false claimed means another checker
+// already re-fired the alarm. This caller must not dispatch a duplicate.
 func (s *Service) MarkTodoRefired(ctx context.Context, stateID int64) (claimed bool, err error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	rows, err := s.q.RefireTodoAlarmState(ctx, storage.RefireTodoAlarmStateParams{
@@ -565,7 +566,7 @@ func (s *Service) MarkTodoRefired(ctx context.Context, stateID int64) (claimed b
 	return rows > 0, nil
 }
 
-// Dismiss acknowledges a fired alarm so it won't show as pending.
+// Dismiss acknowledges a fired alarm so it will not show as pending.
 // Returns an error if the state ID does not exist or is already dismissed.
 func (s *Service) Dismiss(ctx context.Context, stateID int64) error {
 	st, err := s.q.GetAlarmStateByID(ctx, stateID)
@@ -586,11 +587,11 @@ func (s *Service) Dismiss(ctx context.Context, stateID int64) error {
 }
 
 // MarkRefired updates a snoozed alarm's fired_at and clears snoozed_to. The
-// UPDATE is gated on snoozed_to IS NOT NULL so it acts as an atomic claim:
-// when two checkers overlap, both observe the expired-snoozed row, but only
-// the one whose UPDATE clears snoozed_to first affects a row. claimed reports
-// whether this caller won the claim; a false claimed means another checker
-// already re-fired the alarm and this caller must not dispatch a duplicate.
+// UPDATE is gated on snoozed_to IS NOT NULL so it acts as an atomic claim.
+// When two checkers overlap, both observe the expired-snoozed row. Only
+// the UPDATE that clears snoozed_to first affects a row. claimed reports
+// whether this caller won the claim. A false claimed means another checker
+// already re-fired the alarm. This caller must not dispatch a duplicate.
 func (s *Service) MarkRefired(ctx context.Context, stateID int64) (claimed bool, err error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	rows, err := s.q.RefireAlarmState(ctx, storage.RefireAlarmStateParams{
@@ -603,7 +604,7 @@ func (s *Service) MarkRefired(ctx context.Context, stateID int64) (claimed bool,
 	return rows > 0, nil
 }
 
-// SnoozeResult describes what happened when computing a snooze time.
+// SnoozeResult describes what happened when a snooze time was computed.
 type SnoozeResult struct {
 	Until      time.Time
 	Capped     bool // true if the snooze was capped at event end
@@ -702,7 +703,7 @@ func (s *Service) Snooze(ctx context.Context, stateID int64, until time.Time) er
 	})
 }
 
-// ListPending returns all fired-but-not-acknowledged alarms.
+// ListPending returns all fired alarms that are not acknowledged.
 func (s *Service) ListPending(ctx context.Context) ([]storage.AlarmState, error) {
 	return s.q.ListPendingAlarmStates(ctx)
 }
@@ -712,7 +713,7 @@ func (s *Service) ListPendingTodoAlarms(ctx context.Context) ([]storage.TodoAlar
 	return s.q.ListPendingTodoAlarmStates(ctx)
 }
 
-// DismissTodoAlarm acknowledges a fired todo alarm so it won't show as pending.
+// DismissTodoAlarm acknowledges a fired todo alarm so it will not show as pending.
 func (s *Service) DismissTodoAlarm(ctx context.Context, stateID int64) error {
 	st, err := s.q.GetTodoAlarmStateByID(ctx, stateID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -753,10 +754,10 @@ func computeTriggerTime(evt event.Event, a model.Alarm) (time.Time, error) {
 	}, a)
 }
 
-// buildRepeatTriggers returns a list of trigger times for a repeating alarm.
+// buildRepeatTriggers returns a list of trigger times for a repeat alarm.
 // The result includes the initial trigger time plus additional firings
 // at the specified duration interval, up to the repeat count. The count is
-// clamped to model.MaxAlarmRepeat as defense in depth — rows written before
+// clamped to model.MaxAlarmRepeat as defense in depth. Rows written before
 // the cap existed (or by other tools) must not blow up the check loop.
 func buildRepeatTriggers(triggerAt time.Time, repeat int, durStr string) []time.Time {
 	triggers := []time.Time{triggerAt}
