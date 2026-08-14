@@ -205,11 +205,11 @@ func TestEventForm_EditHydratesShowAsAndVisibility(t *testing.T) {
 	assert.Equal(t, "PRIVATE", m.visibilityField.Value())
 }
 
-// TestEventForm_EditModeRetainsEditID is a regression test: after building
+// TestEventForm_EditModeRetainsEditID is a regression test. After a build of
 // the form via NewEventFormModelForEdit, the live form model must carry the
-// edited event's ID so the app handler can dispatch an Update. Previously
+// edited event's ID. The app handler can then dispatch an Update. Previously
 // the OnSubmit closure captured editID=0 (from the create-mode constructor)
-// and sent it through EventFormSaveMsg; the parent then fell into the Create
+// and sent it through EventFormSaveMsg. The parent then fell into the Create
 // branch and created a duplicate event with a fresh UID.
 func TestEventForm_EditModeRetainsEditID(t *testing.T) {
 	m, _ := NewEventFormModelForEdit(event.Event{
@@ -394,9 +394,9 @@ func mouseZoneByName(mt *mouseTracker, name string) (mouseZone, bool) {
 	return mouseZone{}, false
 }
 
-// clickFormField renders the form, locates the clickable zone for the form
-// item at idx, and dispatches a left mouse click at its center through the
-// model's Update — exercising the same coordinate-resolution path as a real
+// clickFormField renders the form. It locates the clickable zone for the form
+// item at idx. It dispatches a left mouse click at its center through the
+// model's Update. That exercises the same coordinate-resolution path as a real
 // mouse click.
 func clickFormField(t *testing.T, m EventFormModel, idx int) EventFormModel {
 	t.Helper()
@@ -419,10 +419,10 @@ func clickFormField(t *testing.T, m EventFormModel, idx int) EventFormModel {
 	return m
 }
 
-// TestEventForm_MouseClickOpensOverlays is a regression test for issue #470:
-// the mouse-click branch only special-cased the Date field, so clicking the
-// Timezone or Alarms rows merely focused them without opening their overlays.
-// All overlay-opener fields must behave identically under mouse and Enter.
+// TestEventForm_MouseClickOpensOverlays is a regression test for issue #470.
+// The mouse-click branch only special-cased the Date field. A click on the
+// Timezone or Alarms rows merely focused them and did not open their overlays.
+// All overlay-opener fields must behave the same under mouse and Enter.
 func TestEventForm_MouseClickOpensOverlays(t *testing.T) {
 	t.Run("timezone", func(t *testing.T) {
 		m, _ := NewEventFormModel(time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC), testEventFormCalendars(), Theme{})
@@ -484,10 +484,11 @@ func TestEventForm_EnterOnAllDayDisablesTimeImmediately(t *testing.T) {
 	assert.False(t, m.timeField.IsFocusable())
 }
 
-// TestEventForm_EditPreservesAttendeeMetadata guards against issue #109:
-// editing an event must not flatten attendee Role/RSVPStatus/CUType/CN back to
-// defaults. A CHAIR who has ACCEPTED must remain a CHAIR who has ACCEPTED after
-// an unrelated title edit, and unchanged attendees must keep their display name.
+// TestEventForm_EditPreservesAttendeeMetadata guards against issue #109.
+// An edit of an event must not flatten attendee Role/RSVPStatus/CUType/CN back
+// to defaults. A CHAIR who has ACCEPTED must remain a CHAIR who has ACCEPTED
+// after an unrelated title edit. Unchanged attendees must keep their display
+// name.
 func TestEventForm_EditPreservesAttendeeMetadata(t *testing.T) {
 	m, _ := NewEventFormModelForEdit(event.Event{
 		ID:         7,
@@ -537,11 +538,12 @@ func TestEventForm_EditPreservesAttendeeMetadata(t *testing.T) {
 }
 
 // TestEventForm_EditTimedMultiDayMidnightEndPreservesEnd guards against issue
-// #208: editing a timed multi-day event whose end instant is exactly midnight
-// (e.g. Apr 1 09:00 -> Apr 3 00:00, occupying Apr 1 and Apr 2) and saving with
-// no changes must not shift the end back a full day. multiDayEndDate stores the
-// last *included* day (Apr 2); the save path must re-add the exclusive midnight
-// day so the saved end is still Apr 3 00:00, not Apr 2 00:00.
+// #208. An edit of a timed multi-day event whose end instant is exactly
+// midnight (e.g. Apr 1 09:00 -> Apr 3 00:00, which occupies Apr 1 and Apr 2).
+// A save with no changes must not shift the end back a full day.
+// multiDayEndDate stores the last *included* day (Apr 2). The save path must
+// re-add the exclusive midnight day. The saved end is then still Apr 3 00:00,
+// not Apr 2 00:00.
 func TestEventForm_EditTimedMultiDayMidnightEndPreservesEnd(t *testing.T) {
 	origLocal := time.Local
 	time.Local = time.UTC
@@ -569,11 +571,12 @@ func TestEventForm_EditTimedMultiDayMidnightEndPreservesEnd(t *testing.T) {
 		"no-op edit shifted end: want %s, got %s", end, msg.EndTime)
 }
 
-// TestEventForm_RepeatChangeAddsEndsFieldToLiveForm guards issue #496: changing
-// Repeat from None to a preset on the LIVE form (via Update, as a real key press
-// would) must rebuild the rendered form so the inline "Ends" selector appears.
-// The old OnRebuild closure ran syncFromForm against a stale value-captured copy,
-// so the live form never grew and form-created recurrences were endless.
+// TestEventForm_RepeatChangeAddsEndsFieldToLiveForm guards issue #496. A change
+// of Repeat from None to a preset on the LIVE form must rebuild the rendered
+// form. That path uses Update, as a real key press would. The inline "Ends"
+// selector then appears. The old OnRebuild closure ran syncFromForm against a stale
+// value-captured copy. The live form never grew. Form-created recurrences were
+// endless.
 func TestEventForm_RepeatChangeAddsEndsFieldToLiveForm(t *testing.T) {
 	m, _ := NewEventFormModel(time.Date(2026, 7, 5, 0, 0, 0, 0, time.Local),
 		map[int64]CalendarInfo{1: {}}, NewTheme(true))
@@ -617,11 +620,11 @@ func TestEventForm_RepeatChangeAddsEndsFieldToLiveForm(t *testing.T) {
 	}
 }
 
-// TestEventFormForEdit_MultiDayEndUsesDisplayTimezone guards issue #499: the
+// TestEventFormForEdit_MultiDayEndUsesDisplayTimezone guards issue #499. The
 // pre-filled multi-day end date must be computed in the event's display
 // timezone (the loc used to anchor m.day), not machine-local. Otherwise an
 // event whose tz != machine-local with an end near midnight gets an off-by-one
-// end day, so a no-op edit shifts the event end forward a day on save.
+// end day. A no-op edit then shifts the event end forward a day on save.
 func TestEventFormForEdit_MultiDayEndUsesDisplayTimezone(t *testing.T) {
 	// Force machine-local to UTC so the scenario is deterministic regardless
 	// of where the test runs.
