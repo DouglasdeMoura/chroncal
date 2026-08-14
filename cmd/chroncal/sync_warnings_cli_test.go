@@ -84,8 +84,8 @@ func TestReportOpportunisticPushEmitsWarningsThroughInjectedWriter(t *testing.T)
 }
 
 // `sync resolve <id> --pick server` imports the recorded server body through
-// the same importICal as the auto server-wins paths, with a nil (silent)
-// engine logger. The warnings ResolveConflict returns are then the only place
+// the same importICal as the auto server-wins paths. The engine logger is nil
+// (silent). The warnings ResolveConflict returns are then the only place
 // a fabricated value (here a made-up DTEND span) can surface. They must land
 // on stderr, one line each, like the other silent sync entry points.
 func TestSyncResolveServerPrintsImportWarnings(t *testing.T) {
