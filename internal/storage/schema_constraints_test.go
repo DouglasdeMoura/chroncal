@@ -264,9 +264,9 @@ func TestSyncConflictsRejectInvalidOwnerType(t *testing.T) {
 	}
 }
 
-// calendars.name stays UNIQUE after migration 040: collisions between remote
+// calendars.name stays UNIQUE after migration 040. Collisions between remote
 // collections that share a display name are resolved in code (unique local
-// names with the pristine value in remote_name), so the database must still
+// names with the pristine value in remote_name). The database must still
 // reject a raw duplicate insert.
 func TestCalendarsRejectDuplicateDisplayNames(t *testing.T) {
 	db, _, err := Open(":memory:")
