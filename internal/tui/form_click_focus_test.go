@@ -20,8 +20,8 @@ func zoneCenterByName(name string) (x, y int, ok bool) {
 }
 
 // TestForm_ClickDisabledTimeRangeDoesNotFocusOrEdit is a regression test for
-// issue #497: a mouse click on a disabled field must behave like Tab, which
-// skips non-focusable fields. Clicking a disabled (all-day) time-range field
+// issue #497. A mouse click on a disabled field must behave like Tab, which
+// skips non-focusable fields. A click on a disabled (all-day) time-range field
 // previously focused its inner text input and let keystrokes mutate the locked
 // start/end.
 func TestForm_ClickDisabledTimeRangeDoesNotFocusOrEdit(t *testing.T) {
@@ -48,8 +48,8 @@ func TestForm_ClickDisabledTimeRangeDoesNotFocusOrEdit(t *testing.T) {
 }
 
 // TestForm_ClickUnfocusedSelectArrowFocusesAndAdvances is a regression test for
-// issue #498: clicking the prev/next arrow of an unfocused SelectField was a
-// mouse dead zone. The arrow targets are now keyed by field index, so a single
+// issue #498. A click of the prev/next arrow of an unfocused SelectField was a
+// mouse dead zone. The arrow targets are now keyed by field index. A single
 // click both focuses the field and applies the keypress.
 func TestForm_ClickUnfocusedSelectArrowFocusesAndAdvances(t *testing.T) {
 	sel := NewSelectField([]SelectOption{
