@@ -9,9 +9,9 @@ import (
 	"golang.org/x/net/html/atom"
 )
 
-// htmlTagPattern detects HTML markup worth handing to the parser. CalDAV
-// servers (Google, Outlook) routinely store event descriptions as HTML;
-// plain-text descriptions should skip the parser and keep their literal
+// htmlTagPattern detects HTML markup worth a hand-off to the parser. CalDAV
+// servers (Google, Outlook) routinely store event descriptions as HTML.
+// Plain-text descriptions should skip the parser and keep their literal
 // newlines.
 var htmlTagPattern = regexp.MustCompile(`(?i)<(/?)(a|b|i|u|p|br|hr|div|span|strong|em|ul|ol|li|h[1-6]|table|tr|td|th|tbody|thead|blockquote|pre|code|img|font|sub|sup|small|big|s|strike|del|ins)(\s|/?>)`)
 
@@ -22,14 +22,14 @@ func looksLikeHTML(s string) bool {
 
 // descriptionLines renders a possibly-HTML description into terminal lines
 // wrapped to width w. HTML is converted to styled terminal text (bold,
-// italic, underline, bullets, links); plain text keeps its newlines.
+// italic, underline, bullets, links). Plain text keeps its newlines.
 //
-// interactive enables URL handling for read-only surfaces that sweep their
-// own mouse zones (the event view dialog): plain-text URLs are linkified and
+// interactive enables URL handle for read-only surfaces that sweep their
+// own mouse zones (the event view dialog). Plain-text URLs are linkified and
 // HTML links become clickable mouseMark zones. Non-interactive callers
-// (event day dialog, trash) still get OSC 8 hyperlinks for HTML anchors —
-// clickable in terminals that honor OSC 8 — but no mouseMark zones, which
-// would leak markers on surfaces that don't sweep them.
+// (event day dialog, trash) still get OSC 8 hyperlinks for HTML anchors.
+// Those are clickable in terminals that honor OSC 8. They get no mouseMark
+// zones, which would leak markers on surfaces that do not sweep them.
 func descriptionLines(desc string, w int, rw urlRewriter, interactive bool) []string {
 	if looksLikeHTML(desc) {
 		if lines := renderHTMLDescription(desc, w, rw, interactive); lines != nil {
@@ -50,7 +50,7 @@ func descriptionLines(desc string, w int, rw urlRewriter, interactive bool) []st
 	return out
 }
 
-// htmlInline carries the active inline styling as the renderer walks the DOM.
+// htmlInline carries the active inline style as the renderer walks the DOM.
 type htmlInline struct {
 	bold      bool
 	italic    bool
@@ -76,8 +76,8 @@ type htmlRenderer struct {
 }
 
 // renderHTMLDescription parses s as an HTML fragment and renders it to styled
-// terminal lines wrapped to width w. Returns nil when the input can't be
-// parsed or w is non-positive, so callers can fall back to plain rendering.
+// terminal lines wrapped to width w. Returns nil when the input cannot be
+// parsed or w is non-positive. Callers can then fall back to a plain render.
 func renderHTMLDescription(s string, w int, rw urlRewriter, zones bool) []string {
 	if w <= 0 {
 		return nil
@@ -198,8 +198,8 @@ func (r *htmlRenderer) text(s string, st htmlInline) {
 	}
 }
 
-// lineBreak ends the current line. An empty pending line (e.g. consecutive
-// <br>) becomes a blank output line so paragraph spacing survives.
+// lineBreak ends the current line. An empty pending line (for example
+// consecutive <br>) becomes a blank output line so paragraph spacing survives.
 func (r *htmlRenderer) lineBreak() {
 	if len(r.cur) == 0 {
 		r.out = append(r.out, "")
@@ -209,7 +209,7 @@ func (r *htmlRenderer) lineBreak() {
 }
 
 // flushCur greedily word-wraps the pending words to width and appends the
-// resulting styled lines to the output.
+// result styled lines to the output.
 func (r *htmlRenderer) flushCur() {
 	if len(r.cur) == 0 {
 		return
@@ -264,7 +264,7 @@ func (r *htmlRenderer) splitWord(wd htmlWord) []htmlWord {
 	return out
 }
 
-// styleWord renders one token with its inline styling and, for anchors, wraps
+// styleWord renders one token with its inline style. For anchors, it wraps
 // it as an OSC 8 hyperlink (plus a clickable mouseMark zone when zones are on).
 func (r *htmlRenderer) styleWord(wd htmlWord) string {
 	st := lipgloss.NewStyle()
@@ -311,9 +311,9 @@ func (r *htmlRenderer) styleWord(wd htmlWord) string {
 }
 
 // isSafeHTTPURL reports whether s is an http(s) URL free of control bytes.
-// HTML hrefs are attacker-controlled — descriptions sync from shared
-// calendars — and a raw ESC or BEL inside the URL would terminate the OSC 8
-// escape early, letting a description inject arbitrary terminal sequences.
+// HTML hrefs are attacker-controlled. Descriptions sync from shared
+// calendars. A raw ESC or BEL inside the URL would terminate the OSC 8
+// escape early. A description could then inject arbitrary terminal sequences.
 func isSafeHTTPURL(s string) bool {
 	if !strings.HasPrefix(s, "http://") && !strings.HasPrefix(s, "https://") {
 		return false
@@ -337,7 +337,7 @@ func htmlAttr(n *html.Node, key string) string {
 }
 
 // htmlBlock reports whether a tag forces a line break before and after its
-// content (block-level), as opposed to flowing inline.
+// content (block-level), as opposed to an inline flow.
 func htmlBlock(name string) bool {
 	switch name {
 	case "p", "div", "li", "ul", "ol", "table", "tr", "thead", "tbody",
