@@ -6,10 +6,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// TestWindowSizeResizesCalendarDialog reproduces issue #310: a WindowSizeMsg
+// TestWindowSizeResizesCalendarDialog reproduces issue #310. A WindowSizeMsg
 // resizes every overlay except the calendar create/edit dialog. With the
-// calendar dialog open, resizing the terminal must propagate the new
-// dimensions to the manager calendar form so it stops rendering at the old size.
+// calendar dialog open, a resize of the terminal must propagate the new
+// dimensions to the manager calendar form. It then stops a render at the old
+// size.
 func TestWindowSizeResizesCalendarDialog(t *testing.T) {
 	m := Model{width: 80, height: 24}
 	openCalendarManagerForTest(&m, CalendarDialogParams{})
