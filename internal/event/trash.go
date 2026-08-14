@@ -18,9 +18,9 @@ import (
 //   - a full soft-deleted events row
 //   - a recurring-instance delete captured in the event_exdate_deletes log
 //     (no row was deleted; an EXDATE was added)
-//   - an RRULE truncation captured in event_truncate_deletes (the master's
-//     recurrence was shortened and any overrides past the cutoff were
-//     soft-deleted)
+//   - an RRULE truncation captured in event_truncate_deletes. The master's
+//     recurrence was shortened. Any overrides past the cutoff were
+//     soft-deleted.
 type TrashKind int
 
 const (
