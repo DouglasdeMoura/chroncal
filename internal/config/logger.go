@@ -9,8 +9,8 @@ import (
 
 // StateDirLogger returns a logger that appends to the state-dir log file
 // (LogFilePath). It is the one constructor behind every background job that
-// can run while the TUI owns the terminal: the soft-delete purge loop and
-// the TUI's sync engines. A write to stderr would print over the
+// can run while the TUI owns the terminal. Those jobs are the soft-delete
+// purge loop and the TUI's sync engines. A write to stderr would print over the
 // display. If the file cannot be opened it degrades to silence (never
 // stderr). The file handle intentionally stays open for the process
 // lifetime. The background goroutines outlive this call. The OS reclaims
