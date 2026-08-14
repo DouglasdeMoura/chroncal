@@ -1,4 +1,3 @@
-[AGENTS.md#E706]
 # Agent Guide for chroncal
 
 ## Service Layer Pattern
