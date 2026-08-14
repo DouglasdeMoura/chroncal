@@ -26,9 +26,10 @@ func metaOptsWithURLs(interactive bool) eventMetaDetailLinesOptions {
 	}
 }
 
-// The list-pane and trash detail panes render plain shell.View() output that is
-// composited AFTER the app's single MouseSweep, so any mouse-zone markers would
-// leak as raw escapes. Non-interactive rows must emit OSC 8 links only.
+// The list-pane and trash detail panes render plain shell.View() output. That
+// output is composited AFTER the app's single MouseSweep. Any mouse-zone
+// markers would then leak as raw escapes. Non-interactive rows must emit OSC 8
+// links only.
 func TestEventMetaDetailLines_NonInteractiveEmitsNoMouseZones(t *testing.T) {
 	defaultMouseTracker = &mouseTracker{}
 	out := strings.Join(eventMetaDetailLines(metaOptsWithURLs(false)), "\n")
@@ -45,8 +46,8 @@ func TestEventMetaDetailLines_InteractiveEmitsMouseZones(t *testing.T) {
 	assert.Regexp(t, mouseZoneMarker, out, "interactive rows should emit mouse-zone markers")
 }
 
-// The Conference field holds a whole URI (here a non-http scheme): it must be
-// wrapped as an OSC 8 link verbatim rather than regressing to plain text.
+// The Conference field holds a whole URI (here a non-http scheme). It must be
+// wrapped as an OSC 8 link verbatim rather than a regress to plain text.
 func TestEventMetaDetailLines_ConferenceNonHTTPStaysLinked(t *testing.T) {
 	defaultMouseTracker = &mouseTracker{}
 	out := strings.Join(eventMetaDetailLines(metaOptsWithURLs(false)), "\n")
