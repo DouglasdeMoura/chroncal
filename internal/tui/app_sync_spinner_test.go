@@ -8,8 +8,8 @@ import (
 
 // TestSyncSpinnerTickNotBlockedByOverlays verifies that spinner.TickMsg always
 // reaches m.syncSpinner.Update even when a palette, event-form, or
-// calendar-dialog overlay is open. These overlays capture input, but a
-// spinner.TickMsg is a background animation tick — blocking it kills the
+// calendar-dialog overlay is open. These overlays capture input. A
+// spinner.TickMsg is a background animation tick. A block of it kills the
 // footer sync-spinner for the rest of that sync operation.
 //
 // Regression test for issue #348.
