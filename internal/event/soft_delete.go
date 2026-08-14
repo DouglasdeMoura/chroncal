@@ -13,9 +13,9 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
 
-// ErrNotDeleted is returned by Restore when the target row is not soft-deleted
-// (either it never was, or it has already been restored, or it was purged
-// from the database). The CLI collapses this with ErrNotFound.
+// ErrNotDeleted is returned by Restore when the target row is not soft-deleted.
+// The row was never deleted, or it has already been restored, or it was purged
+// from the database. The CLI collapses this with ErrNotFound.
 var ErrNotDeleted = errors.New("event: row not soft-deleted (may have been purged)")
 
 // UndoKind discriminates the three reversible delete shapes.
@@ -37,29 +37,28 @@ const (
 
 // UndoMeta carries the data a TUI or CLI Restore caller needs to reverse a
 // previously-soft-deleted operation. It is intentionally small (no blobs, no
-// transient children); the heavy lifting is done by the per-Kind Restore
-// method which finds the actual rows by UID.
+// transient children). The per-Kind Restore method does the hard work. That
+// method finds the actual rows by UID.
 type UndoMeta struct {
 	Kind      UndoKind
 	UID       string
 	Label     string
 	DeletedAt time.Time
 
-	// UndoKindSingle only, when undoing DeleteInstanceWithUndo.
+	// UndoKindSingle only, when Undo reverses DeleteInstanceWithUndo.
 	RecurrenceID string
 
-	// UndoKindFromInstance only. CutoffTime is the truncation cutoff, used to
-	// find the event_truncate_deletes log row that Undo reverses (so the RRULE,
+	// UndoKindFromInstance only. CutoffTime is the truncation cutoff. It finds
+	// the event_truncate_deletes log row that Undo reverses. Then the RRULE,
 	// trimmed RDATEs, and the exact overrides the truncation hid are all
-	// restored). MasterUpdatedBefore is the stale-master guard baseline.
+	// restored. MasterUpdatedBefore is the stale-master guard baseline.
 	CutoffTime          time.Time
 	MasterUpdatedBefore time.Time
 }
 
 // DeleteWithUndo soft-deletes an event by ID and returns the metadata needed
-// to reverse it. For an override, EXDATE mutation on the master is performed
-// as part of the existing Delete flow. The returned UndoMeta covers the
-// single-row un-hide.
+// to reverse it. For an override, EXDATE mutation on the master is part of
+// the Delete flow. The returned UndoMeta covers the single-row un-hide.
 func (s *Service) DeleteWithUndo(ctx context.Context, id int64) (UndoMeta, error) {
 	r, err := s.q.GetEvent(ctx, id)
 	if err != nil {
@@ -99,8 +98,8 @@ func (s *Service) DeleteInstanceWithUndo(ctx context.Context, uid string, instan
 }
 
 // DeleteFromInstanceWithUndo truncates the series at instanceTime and returns
-// the cutoff + master UpdatedAt so Restore can reverse the truncation exactly
-// via the event_truncate_deletes log row.
+// the cutoff plus master UpdatedAt. Restore can then reverse the truncation
+// exactly via the event_truncate_deletes log row.
 func (s *Service) DeleteFromInstanceWithUndo(ctx context.Context, uid string, instanceTime time.Time) (UndoMeta, error) {
 	master, err := s.q.GetEventByUID(ctx, uid)
 	if err != nil {
@@ -110,12 +109,14 @@ func (s *Service) DeleteFromInstanceWithUndo(ctx context.Context, uid string, in
 	// deleteFromInstance bumps the master's updated_at (UpdateEventRecurrenceRule
 	// sets updated_at=now) and returns that post-truncation value, read back
 	// inside the truncation transaction. The stale-master guard in
-	// restoreFromInstance must expect this value, not the pre-truncation one —
-	// otherwise the truncation's own write looks like a concurrent external edit
-	// and Undo always fails. Capturing it in-tx (rather than via a separate read
-	// after commit) also prevents a concurrent external edit landing between
-	// commit and read from being mistaken for the baseline. Only edits that
-	// advance updated_at *past* this point trip the guard.
+	// restoreFromInstance must expect this value, not the pre-truncation one.
+	// Otherwise the truncation's own write looks like a concurrent external edit
+	// and Undo always fails.
+	//
+	// Capture it in-tx rather than via a separate read after commit. Then a
+	// concurrent external edit that lands between commit and read is not
+	// mistaken for the baseline. Only edits that advance updated_at *past*
+	// this point trip the guard.
 	postUpdated, err := s.deleteFromInstance(ctx, uid, instanceTime)
 	if err != nil {
 		return UndoMeta{}, err
@@ -150,9 +151,9 @@ func (s *Service) DeleteSeriesWithUndo(ctx context.Context, uid string) (UndoMet
 	}, nil
 }
 
-// RestoreUndo reverses a soft-delete operation recorded in UndoMeta. Dispatches
-// by Kind. For FromInstance kinds, also rewrites the master's RRULE back to
-// the pre-truncation value in the same transaction.
+// RestoreUndo reverses a soft-delete operation recorded in UndoMeta. It
+// dispatches by Kind. For FromInstance kinds, it also rewrites the master's
+// RRULE back to the pre-truncation value in the same transaction.
 func (s *Service) RestoreUndo(ctx context.Context, meta UndoMeta) error {
 	if err := s.ensureSeriesWritable(ctx, meta.UID); err != nil {
 		return err
@@ -172,8 +173,8 @@ func (s *Service) RestoreUndo(ctx context.Context, meta UndoMeta) error {
 // RestoreByUID un-hides every soft-deleted row with the given UID (master and
 // overrides). Used by the CLI `events restore <uid>` path. Returns
 // ErrNotDeleted when the UID matches no soft-deleted rows (it is live, or
-// unknown, or already purged) so callers can report "not found" instead of a
-// misleading success.
+// unknown, or already purged). Callers can then report "not found" instead of
+// a false success.
 func (s *Service) RestoreByUID(ctx context.Context, uid string) error {
 	master, err := s.q.GetEventByUIDIncludingDeleted(ctx, uid)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -233,9 +234,9 @@ func (s *Service) ListDeleted(ctx context.Context, calendarID int64) ([]Event, e
 	return fromStorageSlice(rows), nil
 }
 
-// GetIncludingDeleted returns a row by ID even if it's been soft-deleted.
+// GetIncludingDeleted returns a row by ID even if it has been soft-deleted.
 // Used by the trash view's detail popup where the user wants to inspect
-// what was deleted before restoring.
+// what was deleted before restore.
 func (s *Service) GetIncludingDeleted(ctx context.Context, id int64) (Event, error) {
 	r, err := s.q.GetEventIncludingDeleted(ctx, id)
 	if err != nil {
@@ -245,7 +246,7 @@ func (s *Service) GetIncludingDeleted(ctx context.Context, id int64) (Event, err
 }
 
 // PurgeDeleted hard-deletes rows soft-deleted before olderThan. Returns the
-// number of rows purged. Children cascade via existing FK ON DELETE CASCADE.
+// number of rows purged. Children cascade via the FK ON DELETE CASCADE.
 func (s *Service) PurgeDeleted(ctx context.Context, olderThan time.Time) (int, error) {
 	cutoff := olderThan.UTC().Format(timeutil.StorageTimeFormat)
 	n, err := s.q.PurgeSoftDeletedEvents(ctx, &cutoff)
@@ -256,8 +257,8 @@ func (s *Service) PurgeDeleted(ctx context.Context, olderThan time.Time) (int, e
 }
 
 // PurgeByID hard-deletes a single soft-deleted row. Returns ErrNotDeleted if
-// the row is live (or absent) so callers can't accidentally purge a live event
-// by passing the wrong ID.
+// the row is live (or absent). Callers then cannot purge a live event with
+// the wrong ID.
 func (s *Service) PurgeByID(ctx context.Context, id int64) error {
 	n, err := s.q.PurgeEventByID(ctx, id)
 	if err != nil {
@@ -269,9 +270,9 @@ func (s *Service) PurgeByID(ctx context.Context, id int64) error {
 	return nil
 }
 
-// restoreSingle un-hides one row by (uid, recurrence_id=”); used for
-// DeleteWithUndo and DeleteInstanceWithUndo single-row resurrection. For an
-// override, callers should fall back to RestoreByUID since we don't know the
+// restoreSingle un-hides one row by (uid, recurrence_id = ""). Use it for
+// DeleteWithUndo and DeleteInstanceWithUndo single-row restore. For an
+// override, callers should fall back to RestoreByUID since we do not know the
 // recurrence_id. UndoKindSingle always targets the master UID, so this
 // finds the master.
 func (s *Service) restoreSingle(ctx context.Context, uid, recurrenceID string) error {
@@ -279,7 +280,7 @@ func (s *Service) restoreSingle(ctx context.Context, uid, recurrenceID string) e
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			// Might be an override-only delete where the master UID has no
-			// master row; fall back to UID-wide restore.
+			// master row. Fall back to UID-wide restore.
 			_, err := s.restoreEventsByUIDClearingExdates(ctx, uid)
 			return err
 		}
@@ -294,7 +295,7 @@ func (s *Service) restoreSingle(ctx context.Context, uid, recurrenceID string) e
 		}
 		// Master is live; an override was probably the thing deleted.
 		// Fall back to RestoreByUID which un-hides any deleted overrides
-		// sharing this UID.
+		// with this UID.
 		_, err := s.restoreEventsByUIDClearingExdates(ctx, uid)
 		return err
 	}
@@ -305,7 +306,7 @@ func (s *Service) restoreSingle(ctx context.Context, uid, recurrenceID string) e
 }
 
 func (s *Service) restoreSeries(ctx context.Context, uid string) error {
-	// Find the master (including deleted) for sync reconciliation context.
+	// Find the master (deleted rows included) for sync reconciliation context.
 	master, err := s.q.GetEventByUIDIncludingDeleted(ctx, uid)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
@@ -345,7 +346,7 @@ func (s *Service) restoreEXDATEOnly(ctx context.Context, uid, recurrenceID strin
 	qtx := s.q.WithTx(tx)
 
 	// DeleteInstance soft-deletes the override at this recurrence_id (if one
-	// existed) alongside adding the EXDATE; un-hide it so undo restores the
+	// existed) and adds the EXDATE. Un-hide it so undo restores the
 	// customized occurrence, not just the base instance. No-ops when the
 	// deleted instance had no override.
 	if err := qtx.RestoreEventByUIDAndRecurrenceID(ctx, storage.RestoreEventByUIDAndRecurrenceIDParams{
@@ -436,13 +437,15 @@ func clearMasterEXDATE(ctx context.Context, qtx *storage.Queries, uid, recurrenc
 }
 
 // restoreFromInstance reverses a "this and following" truncation for the TUI/CLI
-// undo path. It applies the stale-master guard (rejecting Undo if an external
-// edit advanced the master past the truncation), then routes the actual reversal
-// through restoreTruncationByLogID — the same provenance-aware path the trash
-// view uses. That guarantees the RRULE, the trimmed RDATEs (issue #490), and
-// only the overrides the truncation itself hid (issue #491, the #287 class on
-// undo) are all restored, and the truncate-log row is consumed so no phantom
-// "Series tail" trash entry lingers for the now-live series.
+// undo path. It applies the stale-master guard. Undo is rejected if an external
+// edit advanced the master past the truncation. It then routes the reversal
+// through restoreTruncationByLogID, the same provenance-aware path the trash
+// view uses.
+//
+// That restores the RRULE, the trimmed RDATEs (issue #490), and only the
+// overrides the truncation itself hid (issue #491, the #287 class on undo).
+// The truncate-log row is consumed. No phantom "Series tail" trash entry
+// then lingers for the now-live series.
 func (s *Service) restoreFromInstance(ctx context.Context, meta UndoMeta) error {
 	master, err := s.q.GetEventByUIDIncludingDeleted(ctx, meta.UID)
 	if err != nil {
