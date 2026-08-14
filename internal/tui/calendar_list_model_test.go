@@ -503,9 +503,9 @@ func TestCalendarList_ViewportKeepsCursorVisible(t *testing.T) {
 }
 
 // TestCalendarListCircleRowsRenderFilledOutlineWithoutCheckbox locks the
-// sidebar presentation of the default NewCalendarListModel: a colored filled
-// circle (●) marks a shown calendar, an outline circle (○) marks a hidden one,
-// and no checkbox glyph appears. The unified Calendars manager opts into the
+// sidebar presentation of the default NewCalendarListModel. A colored filled
+// circle (●) marks a shown calendar. An outline circle (○) marks a hidden one.
+// No checkbox glyph appears. The unified Calendars manager opts into the
 // checkbox presentation separately.
 func TestCalendarListCircleRowsRenderFilledOutlineWithoutCheckbox(t *testing.T) {
 	m := makeListFixture().SetSize(40, 10) // Default shown, Family hidden
@@ -525,8 +525,8 @@ func TestCalendarListCircleRowsRenderFilledOutlineWithoutCheckbox(t *testing.T) 
 }
 
 // TestCalendarListCircleMouseSeparatesCircleFromDetails verifies the sidebar
-// circle hit targets: clicking the visibility circle toggles visibility, while
-// clicking the row body opens the calendar details without toggling. This
+// circle hit targets. A click on the visibility circle toggles visibility. A
+// click on the row body opens the calendar details. It does not toggle. This
 // presentation-independent behavior is shared by the manager's checkbox mode.
 func TestCalendarListCircleMouseSeparatesCircleFromDetails(t *testing.T) {
 	m := groupedListFixture()
@@ -568,9 +568,9 @@ func TestCalendarListCircleMouseSeparatesCircleFromDetails(t *testing.T) {
 	}
 }
 
-// TestCalendarList_FocusedOptInSelectionUsesActiveAccent verifies that opting
-// into inactive selection never changes the focused appearance: while focused
-// the cursor row still uses the active accent and never leaks the inactive
+// TestCalendarList_FocusedOptInSelectionUsesActiveAccent verifies that an opt
+// into inactive selection never changes the focused appearance. While focused
+// the cursor row still uses the active accent. It never leaks the inactive
 // background.
 func TestCalendarList_FocusedOptInSelectionUsesActiveAccent(t *testing.T) {
 	m := groupedListFixture().
@@ -594,8 +594,8 @@ func TestCalendarList_FocusedOptInSelectionUsesActiveAccent(t *testing.T) {
 
 // TestCalendarList_BlurredOptInSelectionUsesNeutralInactive verifies that an
 // opted-in list paints its blurred cursor row with the neutral inactive
-// background (Theme.ButtonBg-derived) instead of the active accent, so the
-// selection stays visible but quieter when focus is elsewhere.
+// background (Theme.ButtonBg-derived) instead of the active accent. The
+// selection then stays visible but quieter when focus is elsewhere.
 func TestCalendarList_BlurredOptInSelectionUsesNeutralInactive(t *testing.T) {
 	m := groupedListFixture().
 		WithInactiveSelection(lipgloss.Color("#6c5ce7"), lipgloss.Color("#ffffff")).
@@ -618,8 +618,8 @@ func TestCalendarList_BlurredOptInSelectionUsesNeutralInactive(t *testing.T) {
 }
 
 // TestCalendarList_DefaultBlurredHasNoSelectedStyling guards the default
-// sidebar behavior: a list that never opts in keeps its current look of
-// dropping selection styling entirely while blurred (no accent, no inactive
+// sidebar behavior. A list that never opts in keeps its current look. It
+// drops selection style entirely while blurred (no accent, no inactive
 // background).
 func TestCalendarList_DefaultBlurredHasNoSelectedStyling(t *testing.T) {
 	m := groupedListFixture().
@@ -639,11 +639,11 @@ func TestCalendarList_DefaultBlurredHasNoSelectedStyling(t *testing.T) {
 }
 
 // TestCalendarList_InactiveAccountHeaderFillsRowAroundWarning verifies that an
-// inactive (blurred, opted-in) account header carrying a sync/missing warning
-// paints the ENTIRE row — label, warning glyph, spacer, and trailing padding
-// — with the neutral inactive background, while the warning keeps its error
-// foreground. The highlight must read as one continuous bar with no split gap
-// and must fill the terminal width.
+// inactive (blurred, opted-in) account header that carries a sync/missing
+// warning paints the ENTIRE row. That includes label, warning glyph, spacer,
+// and trail padding. It uses the neutral inactive background. The warning
+// keeps its error foreground. The highlight must read as one continuous bar
+// with no split gap. It must fill the terminal width.
 func TestCalendarList_InactiveAccountHeaderFillsRowAroundWarning(t *testing.T) {
 	items := []CalendarListItem{
 		{ID: 4, Name: "Team", Color: "#fab387", AccountID: 9, AccountName: "Work", Missing: true},
