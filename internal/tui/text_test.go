@@ -7,10 +7,10 @@ import (
 	lipgloss "charm.land/lipgloss/v2"
 )
 
-// TestTruncateToPreservesANSIStyling reproduces issue #350: truncateTo used to
+// TestTruncateToPreservesANSIStyling reproduces issue #350. truncateTo used to
 // strip all ANSI escapes from lines it actually truncated. Both the hard-cut
 // path (no whitespace in content) and the word-boundary path must preserve the
-// original ANSI styling in the returned string.
+// original ANSI style in the returned string.
 func TestTruncateToPreservesANSIStyling(t *testing.T) {
 	t.Run("hard_cut_preserves_styling", func(t *testing.T) {
 		// "\x1b[31m...\x1b[0m" wraps "helloworldfoobar" (16 cells) in red.
