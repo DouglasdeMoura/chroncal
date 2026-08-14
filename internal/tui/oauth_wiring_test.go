@@ -11,10 +11,10 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/auth"
 )
 
-// batchEmits executes a tea.Cmd (recursing into tea.BatchMsg) and reports
+// batchEmits executes a tea.Cmd (recurse into tea.BatchMsg) and reports
 // whether any produced message satisfies pred. Commands that touch app
-// services (loadCalendars etc.) panic on a bare Model — those are recovered
-// and treated as non-matching, so the helper can assert on the pure
+// services (loadCalendars etc.) panic on a bare Model. Those are recovered
+// and treated as a non-match. The helper can then assert on the pure
 // message-constructor commands in the same batch.
 func batchEmits(cmd tea.Cmd, pred func(tea.Msg) bool) (found bool) {
 	if cmd == nil {
@@ -243,9 +243,9 @@ type stringError struct{ s string }
 
 func (e *stringError) Error() string { return e.s }
 
-// TestPostReauthSyncQueuedWhileSyncing reproduces the dropped-sync gap: a sync
-// request arriving mid-sync is queued, then drained when the running sync
-// finishes — so the post-reauth sync (and the ⚠ clear) is never lost.
+// TestPostReauthSyncQueuedWhileSyncing reproduces the dropped-sync gap. A sync
+// request that arrives mid-sync is queued. It is then drained when the live
+// sync finishes. The post-reauth sync (and the ⚠ clear) is then never lost.
 func TestPostReauthSyncQueuedWhileSyncing(t *testing.T) {
 	m := Model{syncing: true}
 
@@ -291,7 +291,7 @@ func TestNoPendingSyncNoRedispatch(t *testing.T) {
 }
 
 // TestOAuthModalBlocksWheelScroll verifies that a tea.MouseWheelMsg delivered
-// while the OAuth pending modal is open does NOT scroll the background
+// while the OAuth wait modal is open does NOT scroll the background
 // week/day grid (issue #355).
 func TestOAuthModalBlocksWheelScroll(t *testing.T) {
 	// Build a minimal week-view model with a known non-zero scrollOffset.
@@ -311,10 +311,10 @@ func TestOAuthModalBlocksWheelScroll(t *testing.T) {
 	}
 }
 
-// TestOAuthModalSuppressesGlobalHelpKey ensures the OAuth pending modal owns
-// input: pressing "?" while it's open must NOT open the Help dialog over it
-// (interceptGlobalKeys gates Help/quit behind text-entry surfaces, which now
-// includes oauthFlowOpen).
+// TestOAuthModalSuppressesGlobalHelpKey ensures the OAuth wait modal owns
+// input. A press of "?" while it is open must NOT open the Help dialog over it.
+// interceptGlobalKeys gates Help/quit behind text-entry surfaces, which now
+// includes oauthFlowOpen.
 func TestOAuthModalSuppressesGlobalHelpKey(t *testing.T) {
 	help := tea.KeyPressMsg{Code: '?', Text: "?"}
 
