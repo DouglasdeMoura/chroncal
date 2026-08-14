@@ -11,11 +11,11 @@ import (
 // TestHandleEndsDateMouse_HitTestOrigin is a regression test for issue #343.
 //
 // The mini-calendar inside the Ends-date picker is rendered left-aligned at
-// content column 0 inside the bordered box, so the grid's first column sits
+// content column 0 inside the bordered box. The grid's first column then sits
 // at screen column ox+2 (border 1 + left-pad 1). The buggy code used
-// gridX = ox+3+gridPad = ox+10 (eight columns too far right), causing clicks
-// on the visible left columns to be rejected (rx < 0) and clicks on the
-// right to select the wrong day.
+// gridX = ox+3+gridPad = ox+10 (eight columns too far right). Clicks
+// on the visible left columns were rejected (rx < 0). Clicks on the
+// right selected the wrong day.
 func TestHandleEndsDateMouse_HitTestOrigin(t *testing.T) {
 	const screenW, screenH = 120, 40
 
@@ -57,7 +57,7 @@ func TestHandleEndsDateMouse_HitTestOrigin(t *testing.T) {
 }
 
 // TestHandleEndsDateMouse_OutOfBoundsIgnored verifies that clicks clearly
-// outside the grid are silently discarded without changing the selected date.
+// outside the grid are discarded in silence. The selected date does not change.
 func TestHandleEndsDateMouse_OutOfBoundsIgnored(t *testing.T) {
 	const screenW, screenH = 120, 40
 	start := time.Date(2026, 4, 24, 0, 0, 0, 0, time.UTC)
