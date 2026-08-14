@@ -15,7 +15,7 @@ type XProperty struct {
 }
 
 // XPropsContentEqual reports whether two X-property sets carry the same
-// content (name, value, params) in the same order, ignoring IDs and owners.
+// content (name, value, params) in the same order. IDs and owners are ignored.
 func XPropsContentEqual(a, b []XProperty) bool {
 	if len(a) != len(b) {
 		return false
