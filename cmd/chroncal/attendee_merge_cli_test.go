@@ -28,9 +28,9 @@ func organizerEmail(atts []model.Attendee) string {
 	return ""
 }
 
-// TestEventUpdateOrganizerPreservesAttendees verifies that updating only the
-// organizer does not wipe existing (non-organizer) attendee rows, and that
-// updating only attendees does not drop the existing organizer (issue #461).
+// TestEventUpdateOrganizerPreservesAttendees verifies that an update of only
+// the organizer does not wipe stored (non-organizer) attendee rows. An
+// update of only attendees does not drop the stored organizer (issue #461).
 func TestEventUpdateOrganizerPreservesAttendees(t *testing.T) {
 	dbPath := setupCalendarCLITestEnv(t)
 
