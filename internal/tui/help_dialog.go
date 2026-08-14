@@ -8,7 +8,7 @@ import (
 	lipgloss "charm.land/lipgloss/v2"
 )
 
-// HelpDialogRequestedMsg requests opening the help dialog.
+// HelpDialogRequestedMsg requests the help dialog.
 type HelpDialogRequestedMsg struct{}
 
 // HelpDialogClosedMsg is emitted when the help dialog is dismissed.
@@ -29,8 +29,8 @@ type HelpDialogModel struct {
 const helpTwoColThreshold = 80
 
 // helpDialogChrome counts the fixed rows the Dialog wraps around body
-// content: border top/bottom (2), padding top (1), title + blank (2),
-// blank + footer (2) = 7.
+// content. That is border top/bottom (2), padding top (1), title + blank
+// (2), blank + footer (2) = 7.
 const helpDialogChrome = 7
 
 func NewHelpDialogModel(theme Theme) HelpDialogModel {
@@ -132,9 +132,9 @@ type helpSection struct {
 }
 
 // sections groups shortcuts by task — "what is the user trying to do?" —
-// rather than by which widget owns the binding. This mirrors the
-// macOS Keyboard Shortcuts panel: a shortcut appears exactly once,
-// near its sibling actions, and context tags in parens disambiguate
+// rather than by which widget owns the key binding. This mirrors the
+// macOS Keyboard Shortcuts panel. A shortcut appears exactly once,
+// near its sibling actions. Context tags in parens disambiguate
 // the few keys whose meaning depends on focus (e.g. "enter (sidebar)").
 func (m HelpDialogModel) sections() []helpSection {
 	return []helpSection{
