@@ -7,10 +7,10 @@ import (
 )
 
 // A malformed DTEND must not cost an all-day event its RFC 5545 implicit
-// one-day span. Treating the bad value as an explicit end collapsed EndTime
-// back to StartTime, and every range query is half-open
-// (start_time < ? AND end_time > ?), so a zero-length event matches no window:
-// the import silently vanishes from every day/week/month view.
+// one-day span. Treat the bad value as an explicit end and EndTime collapsed
+// back to StartTime. Every range query is half-open
+// (start_time < ? AND end_time > ?). A zero-length event then matches no window.
+// The import vanishes from every day/week/month view in silence.
 func TestImport_MalformedDTEND_AllDayKeepsOneDaySpan(t *testing.T) {
 	t.Parallel()
 	const ics = "BEGIN:VCALENDAR\r\n" +
@@ -50,8 +50,8 @@ func TestImport_MalformedDTEND_AllDayKeepsOneDaySpan(t *testing.T) {
 }
 
 // A malformed DTEND must not shadow a perfectly good DURATION on the same
-// component. Forcing the 1h fallback before the DURATION branch ran silently
-// shortened the event and dropped the value from the round-trip.
+// component. Force the 1h fallback before the DURATION branch ran. That
+// shortened the event in silence. It dropped the value from the round-trip.
 func TestImport_MalformedDTEND_FallsBackToDuration(t *testing.T) {
 	t.Parallel()
 	const ics = "BEGIN:VCALENDAR\r\n" +
@@ -85,7 +85,7 @@ func TestImport_MalformedDTEND_FallsBackToDuration(t *testing.T) {
 }
 
 // With neither a usable DTEND nor a DURATION, a timed event still gets the 1h
-// default rather than collapsing to zero duration.
+// default. It does not collapse to zero duration.
 func TestImport_MalformedDTEND_TimedFallsBackToOneHour(t *testing.T) {
 	t.Parallel()
 	const ics = "BEGIN:VCALENDAR\r\n" +
