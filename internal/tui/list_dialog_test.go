@@ -340,8 +340,8 @@ func TestListDialog_SelectionChangeResetsScroll(t *testing.T) {
 // Padding+Margin) rather than len(label)+2.
 //
 // The bug: ActionAtPosition modelled each button as w=len(label)+2 and
-// advanced cx by w+1.  DefaultButtonStyles uses Padding(0,2) (+4 cells)
-// and MarginRight(1) (+1 cell), so the real per-button width is len+5.
+// advanced cx by w+1. DefaultButtonStyles uses Padding(0,2) (+4 cells)
+// and MarginRight(1) (+1 cell). The real per-button width is then len+5.
 // The undercount accumulates left-to-right. A click inside a safe button's
 // pill then routes into the next (possibly destructive) button.
 //
