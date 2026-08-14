@@ -6,7 +6,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/retry"
 )
 
-// RetryOptions is an alias for retry.RetryOptions so existing callers compile unchanged.
+// RetryOptions is an alias for retry.RetryOptions so callers compile unchanged.
 type RetryOptions = retry.RetryOptions
 
 // Retry delegates to retry.Retry.
