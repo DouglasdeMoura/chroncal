@@ -151,8 +151,8 @@ func calendarListCmd() *cobra.Command {
 }
 
 // formatCompactCalendar renders one calendar as a single line:
-// "Personal  #7C3AED". A leading "* " marks the default so a glance at
-// the list is enough to see which calendar new events land in. Name is
+// "Personal  #7C3AED". A "* " prefix marks the default. A glance at
+// the list is then enough to see which calendar new events land in. Name is
 // padded to a fixed column width so the color column lines up across rows.
 func formatCompactCalendar(c calendarpkg.Calendar) string {
 	const nameColWidth = 20
@@ -500,10 +500,10 @@ to stderr.`,
 }
 
 // resolveNewDefault picks the calendar that will take over as default after
-// deleting cal. It honors --promote when given, falls back to interactive
-// prompt on a TTY, and uses the alphabetically-first remaining calendar
-// when running with --yes / CHRONCAL_ASSUME_YES (auditing the choice to
-// stderr so scripted callers always see what changed).
+// a delete of cal. It honors --promote when given. It falls back to an
+// interactive prompt on a TTY. With --yes / CHRONCAL_ASSUME_YES it uses
+// the alphabetically-first calendar that remains. It writes the choice to
+// stderr so scripted callers always see what changed.
 func resolveNewDefault(cmd *cobra.Command, a *app.App, ctx context.Context, cal calendarpkg.Calendar, promote string) (calendarpkg.Calendar, error) {
 	cals, err := a.Calendars.List(ctx)
 	if err != nil {
