@@ -9,12 +9,11 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
 
-// TestListFilteredEvents_NonUTCBoundsLexicalComparison guards issue #305: CLI
+// TestListFilteredEvents_NonUTCBoundsLexicalComparison guards issue #305. CLI
 // date-range bounds arrive as time.Time values in a non-UTC location (the CLI
-// builds them in time.Local). They must be normalized to UTC before being
-// formatted and compared lexically against the UTC-stored start/end strings,
-// otherwise the local offset in the RFC3339 string breaks the comparison near
-// window edges.
+// builds them in time.Local). They must be normalized to UTC before a format
+// and lexical compare against the UTC-stored start/end strings. Otherwise the
+// local offset in the RFC3339 string breaks the comparison near window edges.
 //
 // The bound is built in a fixed -03:00 zone so the test is deterministic
 // regardless of the host timezone (CI runs in UTC).
@@ -56,7 +55,7 @@ func TestListFilteredEvents_NonUTCBoundsLexicalComparison(t *testing.T) {
 }
 
 // TestExportExpandedByDateRange_NonUTCBoundsLexicalComparison is the export-path
-// (ical export) sibling of the test above: the same local-offset bound must be
+// (ical export) pair of the test above. The same local-offset bound must be
 // normalized to UTC before the SQL string comparison.
 func TestExportExpandedByDateRange_NonUTCBoundsLexicalComparison(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
