@@ -7,14 +7,14 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/model"
 )
 
-// Hydrate is the single definition of a fully populated event, and every
-// consumer that writes iCal relies on it failing loudly: a swallowed relation
-// error yields a record with alarms or attendees silently missing, which
-// CalDAV push then writes over the server copy.
+// Hydrate is the single definition of a fully populated event. Every
+// consumer that writes iCal relies on it to fail loudly. A swallowed relation
+// error yields a record with alarms or attendees gone in silence. CalDAV push
+// then writes that over the server copy.
 //
-// Hiding one relation table at a time proves each branch checks its own error
-// rather than riding on a neighbor's. Renaming rather than dropping keeps this
-// to a single database — the migrations are the expensive part under -race.
+// A hide of one relation table at a time proves each branch checks its own
+// error rather than a ride on a neighbor's. A rename rather than a drop keeps
+// this to a single database. The migrations are the expensive part under -race.
 func TestEventService_Hydrate_PropagatesRelationErrors(t *testing.T) {
 	ctx := context.Background()
 	svc := newTestService(t)
@@ -46,8 +46,8 @@ func TestEventService_Hydrate_PropagatesRelationErrors(t *testing.T) {
 	}
 }
 
-// hideTable renames a table out of the way for the duration of the test, so the
-// queries that read it fail the way a real I/O error would.
+// hideTable renames a table out of the way for the duration of the test. The
+// queries that read it then fail the way a real I/O error would.
 func hideTable(t *testing.T, svc *Service, table string) {
 	t.Helper()
 	ctx := context.Background()
