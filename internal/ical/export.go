@@ -765,11 +765,14 @@ func buildValarm(alarm model.Alarm) *ical.Component {
 		}
 	} else {
 		// RFC 5545 §3.8.6.3: the trigabs production permits only
-		// VALUE=DATE-TIME on an absolute trigger — never RELATED. A stored
-		// Related == "END" (parseAlarm keeps RELATED unconditionally, and the
-		// alarm editor preserves it across edits) is inert for an absolute
-		// trigger; emitting it gets the VALARM rejected with HTTP 400 by
-		// strict CalDAV servers, failing the PUT for the whole resource.
+		// VALUE=DATE-TIME on an absolute trigger — never RELATED. parseAlarm
+		// now drops RELATED on absolute triggers at import, but a stored
+		// Related == "END" can still reach here from a pre-normalization DB
+		// row or from the alarm editor (which preserves Related across edits),
+		// and it is inert for an absolute trigger; emitting it gets the VALARM
+		// rejected with HTTP 400 by strict CalDAV servers, failing the PUT for
+		// the whole resource. So this guard stays even though import no longer
+		// produces the case.
 		trigger.Params.Set("VALUE", "DATE-TIME")
 		// Normalize legacy RFC 3339 values to iCal format. Import now
 		// normalizes every RFC 3339 trigger to compact UTC on the way in,
