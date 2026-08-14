@@ -6,7 +6,7 @@ import (
 )
 
 // A typo'd / non-existent calendar name must fail loudly rather than
-// silently exiting 0, so the user knows nothing was reset.
+// exit 0 in silence. The user then knows nothing was reset.
 func TestSyncResetUnknownCalendarFails(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 
@@ -24,7 +24,7 @@ func TestSyncResetUnknownCalendarFails(t *testing.T) {
 }
 
 // A calendar that exists but is local-only (not connected to a remote)
-// has no sync state to reset; the command must say so instead of a
+// has no sync state to reset. The command must say so instead of a
 // silent no-op.
 func TestSyncResetLocalOnlyCalendarReportsNotConnected(t *testing.T) {
 	setupCalendarCLITestEnv(t)
