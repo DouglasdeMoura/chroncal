@@ -17,10 +17,11 @@ type ExpandedEventSource interface {
 // Compute derives local busy time from expanded VEVENT instances.
 //
 // ownerEmails maps a calendar ID to the email address of that calendar's
-// owner (calendar.OwnerEmail). When an instance lists a matching attendee
-// whose PARTSTAT is DECLINED, the instance is excluded from busy time:
-// declining a meeting frees the slot. A nil or empty map disables the
-// PARTSTAT gate, preserving the prior STATUS/TRANSP-only behavior.
+// owner (calendar.OwnerEmail). When an instance lists an attendee that
+// matches, and that attendee's PARTSTAT is DECLINED, the instance is
+// excluded from busy time. A decline of a meeting frees the slot. A nil
+// or empty map disables the PARTSTAT gate. The prior STATUS/TRANSP-only
+// behavior is then kept.
 func Compute(ctx context.Context, source ExpandedEventSource, from, to time.Time, calendarIDs []int64, ownerEmails map[int64]string) (Result, error) {
 	expanded, err := source.ListExpandedEvents(ctx, from, to)
 	if err != nil {
@@ -88,9 +89,10 @@ func eventWindow(evt recurrence.ExpandedEvent) (time.Time, time.Time) {
 
 // ownerDeclined reports whether the calendar owner has DECLINED this
 // instance. It matches ownerEmail against the instance's attendees
-// (case-insensitive, mailto: prefix tolerated) and returns true only when
-// that attendee's PARTSTAT is DECLINED. An empty ownerEmail or a missing
-// owner attendee yields false, so unknown identity never frees a slot.
+// (case-insensitive, mailto: prefix tolerated). It returns true only when
+// that attendee's PARTSTAT is DECLINED. An empty ownerEmail or an owner
+// attendee that is gone yields false. Unknown identity then never frees a
+// slot.
 func ownerDeclined(evt recurrence.ExpandedEvent, ownerEmail string) bool {
 	ownerEmail = stripMailtoPrefix(ownerEmail)
 	if ownerEmail == "" {
@@ -104,7 +106,7 @@ func ownerDeclined(evt recurrence.ExpandedEvent, ownerEmail string) bool {
 	return false
 }
 
-// stripMailtoPrefix trims surrounding space and a leading "mailto:" so
+// stripMailtoPrefix trims space around the value and a "mailto:" prefix so
 // attendee values and configured owner emails compare on bare addresses.
 func stripMailtoPrefix(s string) string {
 	s = strings.TrimSpace(s)
