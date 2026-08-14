@@ -24,7 +24,7 @@ func defaultWindowDays(t *testing.T) int {
 }
 
 // TestListToFlagHelpMatchesDefaultWindow guards against the --to flag help text
-// drifting from the actual default window in parseDateRange. The todo and
+// that drifts from the actual default window in parseDateRange. The todo and
 // journal list commands previously advertised "14 days" while the code
 // defaulted to 30 (issue #139). Those retrospective lists now use an open
 // default window (issue #304). Only `event list` keeps the forward
