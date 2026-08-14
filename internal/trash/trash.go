@@ -19,9 +19,9 @@ import (
 )
 
 // Kind discriminates the source domain of a trash entry. The numeric
-// values intentionally do not overlap with event.TrashKind — callers
-// should use the Kind methods (IsEvent, IsTodo, IsJournal) rather than
-// comparing raw values.
+// values intentionally do not overlap with event.TrashKind. Callers
+// should use the Kind methods (IsEvent, IsTodo, IsJournal). Do not
+// compare raw values.
 type Kind int
 
 const (
@@ -40,8 +40,8 @@ const (
 )
 
 // Entry is a unified row for the mixed trash dialog. Domain-specific
-// fields are populated only for the matching Kind; readers should branch
-// on Kind before inspecting them. Title and DeletedAt are always valid.
+// fields have values only for the Kind that matches. Readers should branch
+// on Kind before they read those fields. Title and DeletedAt are always valid.
 type Entry struct {
 	Kind       Kind
 	ID         int64
@@ -69,7 +69,7 @@ type Entry struct {
 	Categories  string
 }
 
-// Service aggregates soft-delete state across event, todo, and journal
+// Service joins soft-delete state across event, todo, and journal
 // into one List/Restore/Purge surface.
 type Service struct {
 	events   *event.Service
@@ -136,7 +136,7 @@ func (s *Service) List(ctx context.Context, calendarID int64) ([]Entry, error) {
 	return entries, nil
 }
 
-// Restore reverses the delete recorded in e. Dispatches by Kind.
+// Restore reverses the delete recorded in e. It dispatches by Kind.
 func (s *Service) Restore(ctx context.Context, e Entry) error {
 	switch e.Kind {
 	case KindEvent, KindEventInstance, KindEventSeriesTail:
@@ -184,8 +184,8 @@ func (s *Service) Purge(ctx context.Context, e Entry) error {
 
 // PurgeOld walks each domain's retention purge and returns per-domain
 // counts. The log-row purges (event_exdate_deletes, event_truncate_deletes)
-// also run so the "This event" / "This and following" history doesn't
-// pile up indefinitely.
+// also run so the "This event" / "This and following" history does not
+// pile up without bound.
 func (s *Service) PurgeOld(ctx context.Context, olderThan time.Time) (PurgeCounts, error) {
 	var counts PurgeCounts
 	if s.events != nil {
@@ -233,8 +233,8 @@ func (s *Service) PurgeOld(ctx context.Context, olderThan time.Time) (PurgeCount
 }
 
 // fromEventTrash converts an event.TrashEntry into the unified Entry
-// shape. Preserves every field so the trash dialog can render the same
-// detail content it did before the aggregator was introduced.
+// shape. It keeps every field so the trash dialog can show the same
+// detail content it did before the aggregator.
 func fromEventTrash(e event.TrashEntry) Entry {
 	return Entry{
 		Kind:          mapEventKind(e.Kind),

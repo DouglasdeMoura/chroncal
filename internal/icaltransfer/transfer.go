@@ -24,8 +24,8 @@ import (
 )
 
 // Stable iCal component-family names. These are the labels used in error
-// messages and capability checks; callers should reuse them when reporting
-// problems instead of string literals.
+// messages and capability checks. Callers should reuse them when they
+// report problems. Do not use string literals.
 const (
 	FamilyEvent   = "VEVENT"
 	FamilyTodo    = "VTODO"
@@ -33,9 +33,9 @@ const (
 )
 
 // Preview is the parsed view of an .ics file before any row is written. It
-// wraps the underlying ical.ImportResult with convenient per-family counts
-// and a copy of the warnings emitted at parse time. The warnings are copied
-// so the preview stands on its own even after Import mutates the result.
+// wraps the ical.ImportResult with per-family counts and a copy of the
+// warnings from parse time. The warnings are copied so the preview stands
+// on its own even after Import mutates the result.
 type Preview struct {
 	Result ical.ImportResult
 
@@ -49,8 +49,8 @@ type Preview struct {
 }
 
 // Summary records what an Import landed and what it dropped. It carries
-// enough of the imported rows for the CLI to render them in JSON or text
-// form without re-reading the database.
+// enough of the imported rows for the CLI to show them in JSON or text
+// form without a second database read.
 type Summary struct {
 	Events   []event.Event
 	Todos    []todo.Todo
@@ -71,8 +71,8 @@ type Summary struct {
 }
 
 // ParseFile opens path, parses it with ical.ImportFile, and closes the file.
-// Open and parse errors are wrapped so callers can surface them uniformly
-// (matching the CLI's prior "open file" / "import" wrapping).
+// Open and parse errors are wrapped so callers can show them in one form
+// (same as the prior CLI "open file" / "import" wraps).
 func ParseFile(path string) (Preview, error) {
 	var preview Preview
 
@@ -97,11 +97,11 @@ func ParseFile(path string) (Preview, error) {
 }
 
 // ValidateDestination validates every present component family and every
-// cross-calendar UID source row before the first write. This prevents both
+// cross-calendar UID source row before the first write. This blocks both
 // partial mixed imports and UID upserts that would move data out of a
 // read-only remote collection. Each present family must be writable at the
-// destination, and any pre-existing row matched by UID must already live in
-// a calendar the caller can write to.
+// destination. Any row already matched by UID must live in a calendar the
+// caller can write to.
 func ValidateDestination(ctx context.Context, a *app.App, calendarID int64, preview Preview) error {
 	result := preview.Result
 
@@ -176,13 +176,14 @@ func ValidateDestination(ctx context.Context, a *app.App, calendarID int64, prev
 }
 
 // Import upserts the parsed timezones, events, todos, and journals into
-// calendarID. A failure on any single component is recorded in result's
-// warnings (and Summary.Failed) and the loop moves on, so one bad item no
-// longer aborts the run and discards the components that follow it. Child
-// collections (alarms, attendees, ...) that fail to attach are likewise
-// surfaced as warnings rather than silently dropped, so the import never
-// reports a clean success while quietly losing data. The passed result is
-// mutated to accumulate warnings, mirroring the legacy CLI behavior.
+// calendarID. A failure on any single component is recorded in result
+// warnings (and Summary.Failed). The loop then continues. One bad item
+// does not abort the run or discard later components.
+//
+// Child collections (alarms, attendees, and others) that fail to attach
+// become warnings. They are not dropped in silence. The import then never
+// reports a clean success while it loses data. The passed result is mutated
+// to collect warnings. This matches the legacy CLI behavior.
 func Import(ctx context.Context, a *app.App, calendarID int64, result *ical.ImportResult) Summary {
 	var summary Summary
 
@@ -286,9 +287,10 @@ func Import(ctx context.Context, a *app.App, calendarID int64, result *ical.Impo
 }
 
 // importEventFields attaches the transient child collections (alarms,
-// attendees, ...) to a freshly imported event. Each failure is returned as a
-// warning rather than only logged, so callers can surface partially-dropped
-// child data in the import summary instead of silently reporting success.
+// attendees, and others) to a freshly imported event. Each failure is
+// returned as a warning rather than only logged. Callers can then show
+// partial child-data loss in the import summary. The function does not
+// report success in silence.
 func importEventFields(ctx context.Context, svc *event.Service, id int64, e event.Event) []string {
 	var warns []string
 	add := func(field string, err error) {
@@ -323,7 +325,7 @@ func importEventFields(ctx context.Context, svc *event.Service, id int64, e even
 	return warns
 }
 
-// importTodoFields mirrors importEventFields for todos.
+// importTodoFields does the same work as importEventFields for todos.
 func importTodoFields(ctx context.Context, svc *todo.Service, id int64, t todo.Todo) []string {
 	var warns []string
 	add := func(field string, err error) {
@@ -358,7 +360,7 @@ func importTodoFields(ctx context.Context, svc *todo.Service, id int64, t todo.T
 	return warns
 }
 
-// importJournalFields mirrors importEventFields for journals.
+// importJournalFields does the same work as importEventFields for journals.
 func importJournalFields(ctx context.Context, svc *journal.Service, id int64, j journal.Journal) []string {
 	var warns []string
 	add := func(field string, err error) {
@@ -395,8 +397,8 @@ type ExportSummary struct {
 	Data     []byte
 }
 
-// ExportCalendar serializes every supported component in one calendar,
-// including its related alarms, attendees, attachments, and extension fields.
+// ExportCalendar serializes every supported component in one calendar.
+// Related alarms, attendees, attachments, and extension fields are included.
 func ExportCalendar(ctx context.Context, a *app.App, calendarID int64, calendarName string) (ExportSummary, error) {
 	var summary ExportSummary
 	events, err := a.Events.ExportFiltered(ctx, event.ExportParams{CalendarID: calendarID})

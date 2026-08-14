@@ -31,7 +31,7 @@ var (
 )
 
 // Calendar returns the process-local lock that serializes complete sync cycles
-// for one calendar. Account lifecycle operations use Account instead: every
+// for one calendar. Account lifecycle operations use Account instead. Every
 // sync and account mutation must acquire that broader lock first.
 func Calendar(db *sql.DB, calendarID int64) *sync.Mutex {
 	key := calendarKey{db: db, calendarID: calendarID}
@@ -46,9 +46,9 @@ func Calendar(db *sql.DB, calendarID int64) *sync.Mutex {
 }
 
 // Account acquires the lifecycle lock for an account and returns its release
-// function. A process-local semaphore coordinates callers sharing one *sql.DB;
-// a file lock beside the SQLite database coordinates independent chroncal
-// processes. In-memory databases need only the process-local half.
+// function. A process-local semaphore coordinates callers that share one
+// *sql.DB. A file lock beside the SQLite database coordinates independent
+// chroncal processes. In-memory databases need only the process-local half.
 func Account(ctx context.Context, db *sql.DB, accountID int64) (func(), error) {
 	local := processAccountLock(db, accountID)
 	select {

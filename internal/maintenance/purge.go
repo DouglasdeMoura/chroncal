@@ -16,9 +16,10 @@ import (
 // across every trash-eligible domain (events, todos, journals) plus the
 // event-specific instance and truncation logs. It delegates to the
 // trash aggregator so new domains only need to be added once there.
-// It also trims acknowledged alarm-state rows past the same window —
-// rescheduled events leave state rows whose trigger time never recurs,
-// and acked history serves no purpose once it is weeks old.
+//
+// It also trims acknowledged alarm-state rows past the same window.
+// Rescheduled events leave state rows whose trigger time never recurs.
+// Acked history serves no purpose once it is weeks old.
 type Purger struct {
 	trash  *trash.Service
 	q      *storage.Queries
@@ -27,11 +28,11 @@ type Purger struct {
 }
 
 // NewPurger returns a Purger bound to the trash aggregator. A days value
-// of 0 disables automatic purging; callers should guard the call to
-// RunOnce. q may be nil, which skips alarm-state cleanup. A nil logger
-// disables logging entirely: the primary caller is the TUI, which owns
-// the terminal, so falling back to slog's stderr handler would print
-// over the display.
+// of 0 disables automatic purge. Callers should guard the call to RunOnce.
+//
+// q may be nil, which skips alarm-state cleanup. A nil logger disables logs.
+// The primary caller is the TUI, which owns the terminal. A fallback to
+// slog's stderr handler would print over the display.
 func NewPurger(trashSvc *trash.Service, q *storage.Queries, days int, logger *slog.Logger) *Purger {
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
@@ -69,7 +70,7 @@ func (p *Purger) RunOnce(ctx context.Context) (int, error) {
 	if p.q != nil {
 		states, err := p.purgeAlarmStates(ctx, cutoff)
 		if err != nil {
-			// Alarm-state cleanup is housekeeping; don't fail the purge run.
+			// Alarm-state cleanup is housekeeping. Do not fail the purge run.
 			p.logger.Warn("alarm-state purge failed", "error", err)
 		} else if states > 0 {
 			p.logger.Info("alarm-state purge", "states_purged", states, "older_than_days", p.days)
@@ -80,15 +81,16 @@ func (p *Purger) RunOnce(ctx context.Context) (int, error) {
 }
 
 // staleUnackedMultiplier sets the secondary retention for fired-but-never-
-// acknowledged alarm-state rows: they back "alarm list", so they live much
-// longer than acked history, but rescheduled events leave rows whose trigger
-// never recurs and unbounded growth helps nobody.
+// acknowledged alarm-state rows. They back "alarm list", so they live much
+// longer than acked history. Rescheduled events leave rows whose trigger
+// never recurs. Unbounded growth helps nobody.
 const staleUnackedMultiplier = 4
 
 // purgeAlarmStates deletes acknowledged alarm-state rows whose trigger time
-// is older than the cutoff, plus unacknowledged rows older than four times
-// the retention window (excluding rows snoozed into the future). Recently
-// fired pending rows are kept — they back "alarm list" and snooze re-firing.
+// is older than the cutoff. It also deletes unacknowledged rows older than
+// four times the retention window. It does not delete rows snoozed into
+// the future. Recently fired pending rows are kept. They back "alarm list"
+// and snooze re-fire.
 func (p *Purger) purgeAlarmStates(ctx context.Context, cutoff time.Time) (int, error) {
 	cutoffStr := cutoff.UTC().Format(time.RFC3339)
 	total := 0
@@ -119,8 +121,8 @@ func (p *Purger) purgeAlarmStates(ctx context.Context, cutoff time.Time) (int, e
 }
 
 // RunDaily fires RunOnce once on start, then every 24h until ctx is done.
-// Intended for the long-running TUI/daemon. CLI one-shot callers should use
-// RunOnce directly.
+// Use this for the long-running TUI or daemon. CLI one-shot callers should
+// use RunOnce directly.
 func (p *Purger) RunDaily(ctx context.Context) {
 	if p.days <= 0 {
 		return

@@ -28,9 +28,9 @@ func FromRGB(r, g, b uint8) (L, C, H float64) {
 }
 
 // ToRGB converts OKLCh to sRGB 8-bit channels. If (L, C, H) lies outside the
-// sRGB gamut, chroma is reduced while preserving L and H until the color
-// fits — the hue-preserving approach recommended by CSS Color 4. If chroma
-// reduction still doesn't fit, the achromatic L color is returned.
+// sRGB gamut, chroma is reduced while L and H stay. This is the hue-preserving
+// approach that CSS Color 4 recommends. If chroma reduction still does not
+// fit, the function returns the achromatic L color.
 func ToRGB(L, C, H float64) (r, g, b uint8) {
 	for range 16 {
 		A := C * math.Cos(H)
@@ -47,7 +47,7 @@ func ToRGB(L, C, H float64) (r, g, b uint8) {
 	return s, s, s
 }
 
-// FromColor resolves any color.Color (including lipgloss hex, ANSI 256, and
+// FromColor resolves any color.Color (lipgloss hex, ANSI 256, and
 // named colors) to OKLCh. Returns ok=false for fully-transparent colors.
 func FromColor(c color.Color) (L, C, H float64, ok bool) {
 	r, g, b, a := c.RGBA()
@@ -58,16 +58,16 @@ func FromColor(c color.Color) (L, C, H float64, ok bool) {
 	return L, C, H, true
 }
 
-// ToColor builds a lipgloss hex color from OKLCh, gamut-mapping as in ToRGB.
+// ToColor builds a lipgloss hex color from OKLCh. It maps gamut as in ToRGB.
 func ToColor(L, C, H float64) color.Color {
 	r, g, b := ToRGB(L, C, H)
 	return lipgloss.Color(fmt.Sprintf("#%02x%02x%02x", r, g, b))
 }
 
 // ShiftLightness returns c with its OKLCh L shifted by delta, clamped to
-// [0, 1]. Hue and chroma are preserved. Positive delta makes the color
-// lighter, negative makes it darker. Useful for deriving a "just
-// noticeable" highlight from a background without guessing at the theme.
+// [0, 1]. Hue and chroma stay. Positive delta makes the color lighter.
+// Negative delta makes it darker. Use this to derive a "just noticeable"
+// highlight from a background. Do not guess at the theme.
 func ShiftLightness(c color.Color, delta float64) color.Color {
 	L, C, H, ok := FromColor(c)
 	if !ok {
@@ -83,14 +83,14 @@ func ShiftLightness(c color.Color, delta float64) color.Color {
 	return ToColor(L, C, H)
 }
 
-// Mix linearly interpolates between two colors in OKLab space.
-// t ∈ [0,1]: 0 returns a, 1 returns b. Interpolation happens on the (L, a, b)
-// axes (not (L, C, H)), so it stays perceptually uniform without the hue
-// discontinuity you'd get from interpolating a polar coordinate.
+// Mix interpolates linearly between two colors in OKLab space.
+// t ∈ [0,1]: 0 returns a, 1 returns b. Interpolation uses the (L, a, b)
+// axes (not (L, C, H)). It stays perceptually uniform. Polar interpolation
+// would add a hue discontinuity.
 //
-// Useful for deriving readable mid-tones from foreground+background pairs:
-// Mix(Text, Surface, 0.4) gives a "dim text" that tracks the actual palette
-// instead of guessing at a single hex that works on every theme.
+// Use this to derive readable mid-tones from foreground+background pairs.
+// Mix(Text, Surface, 0.4) gives a "dim text" that tracks the actual palette.
+// It does not guess at a single hex that works on every theme.
 func Mix(a, b color.Color, t float64) color.Color {
 	aL, aC, aH, ok1 := FromColor(a)
 	bL, bC, bH, ok2 := FromColor(b)
@@ -107,8 +107,8 @@ func Mix(a, b color.Color, t float64) color.Color {
 	return ToColor(L, C, H)
 }
 
-// Dim desaturates c and pulls its lightness toward mid (L=0.55) in OKLCh,
-// keeping hue stable. factor ∈ [0,1]: 0 = unchanged, 1 = fully neutral gray.
+// Dim desaturates c and pulls its lightness toward mid (L=0.55) in OKLCh.
+// Hue stays stable. factor ∈ [0,1]: 0 = unchanged, 1 = fully neutral gray.
 func Dim(c color.Color, factor float64) color.Color {
 	L, C, H, ok := FromColor(c)
 	if !ok {
@@ -120,13 +120,14 @@ func Dim(c color.Color, factor float64) color.Color {
 	return ToColor(L, C, H)
 }
 
-// ContrastingFg returns a foreground color with strong L contrast against bg
-// while keeping bg's hue. Dark bg (L<0.55) → L=0.92; light bg → L=0.18, so
-// the worst-case ΔL is ~0.37 — comfortably readable across all hues, since
-// in OKLCh perceived contrast tracks ΔL independent of hue. Chroma is kept
-// at 35% so the text reads as a tinted member of the calendar's color
-// family rather than plain white/black. Falls back to white on a
-// transparent bg.
+// ContrastingFg returns a foreground color with strong L contrast against bg.
+// The function keeps bg's hue. Dark bg (L<0.55) uses L=0.92. Light bg uses
+// L=0.18. The worst-case ΔL is about 0.37. That is readable across all hues.
+// In OKLCh, perceived contrast tracks ΔL independent of hue.
+//
+// Chroma stays at 35% so the text reads as a tinted member of the calendar
+// color family rather than plain white or black. The function falls back to
+// white on a transparent bg.
 func ContrastingFg(bg color.Color) color.Color {
 	L, C, H, ok := FromColor(bg)
 	if !ok {

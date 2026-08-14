@@ -11,14 +11,14 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
 
-// ExdateProvenance adapts a single domain's generated queries (bound to the
-// active transaction, and to the uid/recurrenceID under restore) to the
-// operations ClearMasterEXDATE needs. Each domain wires its sqlc methods into
-// these closures.
+// ExdateProvenance adapts one domain's generated queries to the operations
+// ClearMasterEXDATE needs. The queries bind to the active transaction and
+// to the uid/recurrenceID under restore. Each domain wires its sqlc methods
+// into these closures.
 type ExdateProvenance struct {
 	// GetDeleteLog returns the provenance row id recorded when a delete added
 	// the EXDATE for the override under restore. found is false (with a nil
-	// error) when no provenance row exists — meaning the EXDATE arrived via
+	// error) when no provenance row exists. That means the EXDATE arrived via
 	// import (or a series delete) and must survive restore.
 	GetDeleteLog func(ctx context.Context) (logID int64, found bool, err error)
 	// GetMaster returns the master row's id and its serialized EXDATE list.
@@ -32,15 +32,16 @@ type ExdateProvenance struct {
 }
 
 // ClearMasterEXDATE removes the EXDATE entry for recurrenceID from the master
-// identified by uid, reversing the exclusion an instance-delete added. It only
-// strips EXDATEs that a delete recorded in the *_exdate_deletes provenance
-// table; EXDATEs that arrived via import (or a series delete, which never adds
-// one) have no provenance row and survive restore — otherwise a UID-wide
-// restore would silently drop a legitimate imported EXDATE whose slot happens
-// to match an override's recurrence_id (issue #86). A malformed recurrence_id
-// is a data-integrity error and is propagated rather than swallowed. Callers
-// must wire p to the same transaction that un-hides the override so the row is
-// never visible-but-excluded.
+// identified by uid. This reverses the exclusion that an instance-delete added.
+// It only strips EXDATEs that a delete recorded in the *_exdate_deletes
+// provenance table. EXDATEs that arrived via import (or a series delete, which
+// never adds one) have no provenance row and survive restore.
+//
+// Otherwise a UID-wide restore would drop a legitimate imported EXDATE whose
+// slot matches an override's recurrence_id (issue #86). A malformed
+// recurrence_id is a data-integrity error. The function returns that error.
+// Callers must wire p to the same transaction that un-hides the override so
+// the row is never visible-but-excluded.
 func ClearMasterEXDATE(ctx context.Context, p ExdateProvenance, recurrenceID string) error {
 	logID, found, err := p.GetDeleteLog(ctx)
 	if err != nil {

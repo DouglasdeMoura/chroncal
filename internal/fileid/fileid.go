@@ -9,9 +9,8 @@ import (
 )
 
 // Identity returns a stable identity for path. On supported filesystems it is
-// based on the underlying file ID, so moves and hard links retain one identity
-// while copies get a different one. Other platforms fall back to a canonical
-// absolute path hash.
+// based on the file ID. Moves and hard links retain one identity. Copies get
+// a different one. Other platforms fall back to a canonical absolute path hash.
 func Identity(path string) (string, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {

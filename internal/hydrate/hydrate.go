@@ -26,9 +26,8 @@ type Collector struct {
 
 // Rel loads one relation via load(ctx, c.ID) and assigns the result to *dst.
 // On failure it records "<kind> <id> <relation>: <cause>" and leaves *dst
-// untouched; in fail-fast mode every later Rel call becomes a no-op, so a
-// record that failed to hydrate is never silently completed by the
-// remaining loaders.
+// unchanged. In fail-fast mode every later Rel call is a no-op. A record
+// that failed to hydrate is then not completed by later loaders.
 //
 // It is a free function because Go methods cannot have type parameters.
 func Rel[T any](ctx context.Context, c *Collector, dst *[]T, rel string, load func(context.Context, int64) ([]T, error)) {
