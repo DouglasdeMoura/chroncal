@@ -96,8 +96,8 @@ func TestEventListCompactCanShowEventIDAndCalendar(t *testing.T) {
 }
 
 // TestEventAddAndUpdateShareDetailBlock locks in that event add and event
-// update emit the same detail-block shape used by event get, so the
-// CLI doesn't have one prose summary on create and a structured block
+// update emit the same detail-block shape used by event get. The
+// CLI then does not have one prose summary on create and a structured block
 // on update.
 func TestEventAddAndUpdateShareDetailBlock(t *testing.T) {
 	setupCalendarCLITestEnv(t)
@@ -214,12 +214,12 @@ func TestEventJSONTimestampsAreUTC(t *testing.T) {
 	}
 }
 
-// TestEventSearchDateBoundsIncludeEndDay locks in the fix for issue #428:
+// TestEventSearchDateBoundsIncludeEndDay locks in the fix for issue #428.
 // `event search --from/--to` accept the same YYYY-MM-DD bounds as event
-// list and the half-open --to bound includes the entire end day. Before
+// list. The half-open --to bound includes the entire end day. Before
 // the fix the raw "2026-04-30" string was compared lexicographically
-// against the RFC3339-stored start time ("2026-04-30T09:00:00Z"), so the
-// 'T' > '0' ordering silently excluded every event on the final day.
+// against the RFC3339-stored start time ("2026-04-30T09:00:00Z"). The
+// 'T' > '0' order then excluded every event on the final day in silence.
 func TestEventSearchDateBoundsIncludeEndDay(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 	t.Setenv("TZ", "UTC")
@@ -262,7 +262,7 @@ func TestEventSearchDateBoundsIncludeEndDay(t *testing.T) {
 }
 
 // TestEventSearchInvalidDateBound locks in that unparseable --from/--to
-// values are rejected with a clean error instead of being passed through
+// values are rejected with a clean error. They are not passed through
 // verbatim into the lexicographic comparison (issue #428).
 func TestEventSearchInvalidDateBound(t *testing.T) {
 	setupCalendarCLITestEnv(t)
