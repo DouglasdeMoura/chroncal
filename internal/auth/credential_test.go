@@ -47,10 +47,10 @@ func overrideKeyringForTest(t *testing.T, available bool, values map[string]stri
 	})
 }
 
-// TestAppConfigBaseDir_HonorsXDGOnNonLinux reproduces issue #372: before the
-// fix, XDG_CONFIG_HOME was only consulted when GOOS == "linux", so macOS/Windows
+// TestAppConfigBaseDir_HonorsXDGOnNonLinux reproduces issue #372. Before the
+// fix, XDG_CONFIG_HOME was only consulted when GOOS == "linux". macOS/Windows
 // users who set XDG_CONFIG_HOME got credentials written under os.UserConfigDir()
-// while the config loader read from XDG — two different roots.
+// while the config loader read from XDG. Two different roots.
 func TestAppConfigBaseDir_HonorsXDGOnNonLinux(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
@@ -596,10 +596,10 @@ func TestMigratingCredentialStore_GetIgnoresLegacyCleanupError(t *testing.T) {
 }
 
 // TestMigratingCredentialStore_GetReturnsLegacyWhenMigrationWriteFails
-// reproduces issue #423: when the primary keyring is transiently
+// reproduces issue #423. When the primary keyring is transiently
 // unavailable for writes, the migration's primary.Set fails. Get must
-// still return the legacy credential (a successful read) rather than
-// turning the read into an error and locking the user out of sync for
+// still return the legacy credential (a successful read). It must not
+// turn the read into an error. It must not lock the user out of sync for
 // the whole process lifetime.
 func TestMigratingCredentialStore_GetReturnsLegacyWhenMigrationWriteFails(t *testing.T) {
 	legacy := &PlaintextFileStore{dir: t.TempDir(), warn: io.Discard}
