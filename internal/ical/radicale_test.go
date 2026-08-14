@@ -34,8 +34,8 @@ func radicaleAvailable(t *testing.T) {
 }
 
 // radicaleCalendar creates (or reuses) a shared calendar on Radicale and
-// returns the collection URL. All tests share one calendar to avoid
-// creating too many collections.
+// returns the collection URL. All tests share one calendar. That avoids
+// too many collections.
 func radicaleCalendar(t *testing.T) string {
 	t.Helper()
 	base := radicaleURL()
