@@ -821,9 +821,9 @@ func TestRemoteIdentityKeyNormalizesEquivalentCollectionURLs(t *testing.T) {
 	}
 }
 
-// validateServerURL guards the safety of the stored server URL: HTTPS by
-// default, HTTP only behind an explicit opt-in, and no query/fragment so a
-// misconfigured endpoint can't smuggle parameters into discovery requests.
+// validateServerURL guards the safety of the stored server URL. HTTPS by
+// default. HTTP only behind an explicit opt-in. No query/fragment. A
+// misconfigured endpoint then cannot smuggle parameters into discovery requests.
 func TestValidateServerURL(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -853,8 +853,8 @@ func TestValidateServerURL(t *testing.T) {
 	}
 }
 
-// Create validates connection params before touching the database so a bad
-// request leaves no row behind.
+// Create validates connection params before a touch of the database. A bad
+// request then leaves no row behind.
 func TestCreateRejectsInvalidConnectionParams(t *testing.T) {
 	db, q, err := storage.Open(":memory:")
 	if err != nil {
@@ -891,10 +891,10 @@ func TestCreateRejectsInvalidConnectionParams(t *testing.T) {
 	}
 }
 
-// Discovery reconciliation must not clobber local edits: a user's rename and
+// Discovery reconciliation must not clobber local edits. A user's rename and
 // color change (with the dirty flag set) survive a refresh that reports the
-// original remote metadata, while the remote_* mirror columns still update and
-// a reappearing collection clears its missing flag.
+// original remote metadata. The remote_* mirror columns still update. A
+// collection that reappears then clears its gone flag.
 func TestDiscoverReconciliationPreservesLocalColorAndNameEdits(t *testing.T) {
 	db, q, err := storage.Open(":memory:")
 	if err != nil {
@@ -1009,9 +1009,9 @@ func TestDiscoverRemoteRenameCollisionPreservesLocalName(t *testing.T) {
 	}
 }
 
-// Import defends its contract for callers that did not pre-filter: a path that
+// Import defends its contract for callers that did not pre-filter. A path that
 // was never discovered and a collection without a usable component type both
-// fail without persisting anything.
+// fail. They persist no row.
 func TestImportRejectsUnknownPathAndUnsupportedComponents(t *testing.T) {
 	db, q, err := storage.Open(":memory:")
 	if err != nil {
@@ -1189,9 +1189,9 @@ func TestUserFacingNameHidesCredentialIdentifiers(t *testing.T) {
 }
 
 // Import must keep calendars.name UNIQUE even when two discovered collections
-// share a remote display name: the second gets a suffixed local name while both
-// rows preserve the pristine remote name (and the owner email comes from the
-// account username).
+// share a remote display name. The second gets a suffixed local name. Both
+// rows preserve the pristine remote name. The owner email comes from the
+// account username.
 func TestImportGeneratesUniqueLocalNamesForCollisions(t *testing.T) {
 	db, q, err := storage.Open(":memory:")
 	if err != nil {
@@ -1250,8 +1250,8 @@ func calendarNames(rows []storage.Calendar) []string {
 
 // A calendar linked to an account before discovery (legacy direct link) stores
 // an absolute remote_url. Discovery returns a server-relative path for the same
-// collection; they must reconcile to one row instead of duplicating, the
-// user-customized local name survives the first refresh, and the remote_name
+// collection. They must reconcile to one row instead of a duplicate. The
+// user-customized local name survives the first refresh. The remote_name
 // mirror is seeded from discovery.
 func TestDiscoverReconcilesLegacyDirectLinkAndPreservesLocalName(t *testing.T) {
 	db, q, err := storage.Open(":memory:")
@@ -1344,9 +1344,9 @@ func TestCreateRejectsNonGoogleOAuth2WithoutPersisting(t *testing.T) {
 	}
 }
 
-// Create guards the server-URL boundary: plain HTTP without the insecure
-// opt-in, query/fragment, and embedded userinfo are all rejected before any
-// account or credential is written.
+// Create guards the server-URL boundary. Plain HTTP without the insecure
+// opt-in, query/fragment, and embedded userinfo are all rejected. That happens
+// before any account or credential is written.
 func TestCreateRejectsUnsafeServerURLWithoutPersisting(t *testing.T) {
 	db, q, err := storage.Open(":memory:")
 	if err != nil {
@@ -1711,10 +1711,10 @@ func TestReconcileSelectionRefusesLastApplicationCalendar(t *testing.T) {
 }
 
 // installAccountDeleteCommitFailure installs a deferred foreign-key trigger
-// that makes the transaction's COMMIT (not DeleteAccount itself) fail, so the
-// commit-failure compensation leg runs end to end against a real credential
-// store. It mirrors the deferred-trigger technique used by the calendar
-// Connect tests.
+// that makes the transaction's COMMIT (not DeleteAccount itself) fail. The
+// commit-failure compensation leg then runs end to end against a real
+// credential store. It mirrors the deferred-trigger technique used by the
+// calendar Connect tests.
 func installAccountDeleteCommitFailure(t *testing.T, db *sql.DB) {
 	t.Helper()
 	if _, err := db.ExecContext(context.Background(), `
@@ -1803,7 +1803,7 @@ func TestReconcileSelectionRestoresCredentialOnCommitFailure(t *testing.T) {
 
 // TestReconcileSelectionRejectsIDAndPathPromotionTarget locks the intentional
 // difference that a replacement default may be specified by ID OR path, not
-// both: supplying both is ambiguous and must be rejected before any work.
+// both. A supply of both is ambiguous. It must be rejected before any work.
 func TestReconcileSelectionRejectsIDAndPathPromotionTarget(t *testing.T) {
 	f := newSelectionFixture(t)
 	imported, discovery := f.importAndRefresh(t, "/cal/a/")
@@ -1828,9 +1828,9 @@ func TestReconcileSelectionRejectsIDAndPathPromotionTarget(t *testing.T) {
 }
 
 // TestServiceRemoveWithCalendarsRejectsReplacementWhenDefaultNotRemoved locks
-// the intentional difference that RemoveWithCalendars rejects a replacement
-// default when the removed account does not own the current default (no
-// promotion is required in that case).
+// the intentional difference. RemoveWithCalendars rejects a replacement
+// default when the removed account does not own the current default. No
+// promotion is required in that case.
 func TestServiceRemoveWithCalendarsRejectsReplacementWhenDefaultNotRemoved(t *testing.T) {
 	f := newSelectionFixture(t)
 	f.importAndRefresh(t, "/cal/a/")
