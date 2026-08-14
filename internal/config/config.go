@@ -48,7 +48,7 @@ type SecurityConfig struct {
 
 // SoftDeleteConfig tunes the soft-delete retention window. Rows soft-deleted
 // more than PurgeDays days ago are purged (hard-deleted, children cascaded)
-// by the background purge job. Zero disables automatic purging; `chroncal
+// by the background purge job. Zero disables automatic purge. `chroncal
 // event purge-deleted` remains available for manual cleanup.
 type SoftDeleteConfig struct {
 	PurgeDays int `mapstructure:"purge_days"`
@@ -77,12 +77,12 @@ type Config struct {
 // the SoftDeleteConfig contract.
 const DefaultSoftDeletePurgeDays = 30
 
-// DefaultSMTPPort is applied when SMTP.Port is unset, matching the
+// DefaultSMTPPort is applied when SMTP.Port is unset. It matches the
 // documented default (587, submission with STARTTLS).
 const DefaultSMTPPort = 587
 
 // Load reads configuration with precedence: env > config file > defaults.
-// The caller is responsible for applying flag overrides on top.
+// The caller is responsible for flag overrides on top.
 func Load() (Config, error) {
 	v := newViper()
 
