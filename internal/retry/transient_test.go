@@ -9,9 +9,9 @@ import (
 )
 
 // TestTypedStatusNotShadowedByNumericPrefix guards against regressions of
-// issue #134: when a wrapping layer prepends a numeric token (a batch
-// index, a host:port segment), classification must still read the real
-// HTTP status from the typed HTTPError rather than scraping the first
+// issue #134. When a wrap layer prepends a numeric token, classification must
+// still read the real HTTP status from the typed HTTPError. The token may be a
+// batch index or a host:port segment. It must not scrape the first
 // 3-digit token out of the message.
 func TestTypedStatusNotShadowedByNumericPrefix(t *testing.T) {
 	t.Parallel()
