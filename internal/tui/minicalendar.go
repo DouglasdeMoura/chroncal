@@ -16,10 +16,10 @@ import (
 type MiniMonthDateSelectedMsg struct{ Date time.Time }
 
 // MiniMonthMonthChangedMsg is emitted whenever the displayed month changes
-// (via cursor crossing a boundary, chevron / [ / ] shifts, or snap-to-today).
+// (via a cursor that crosses a boundary, chevron / [ / ] shifts, or snap-to-today).
 // The parent uses this to (re)load the per-day event-density map for the new
-// month. Month changes are preview-only and do NOT carry into the main view;
-// only an explicit day selection (MiniMonthDateSelectedMsg) drives the main
+// month. Month changes are preview-only and do NOT carry into the main view.
+// Only an explicit day selection (MiniMonthDateSelectedMsg) drives the main
 // view's cursor.
 type MiniMonthMonthChangedMsg struct{ Month time.Time }
 
@@ -43,8 +43,8 @@ func defaultMiniMonthKeys() miniMonthKeyMap {
 }
 
 // miniInnerFocus tracks which sub-element of the mini-month has focus for
-// keyboard input. Tab order is: prev chevron → next chevron → day grid,
-// matching a reading-order traversal of the widget's visual layout. After
+// keyboard input. Tab order is: prev chevron → next chevron → day grid.
+// That matches a read-order traversal of the widget's visual layout. After
 // the grid the sidebar hands off focus to the calendar list.
 type miniInnerFocus int
 
@@ -106,7 +106,7 @@ func (m MiniMonthModel) SetRangeColor(c color.Color) MiniMonthModel {
 
 // SetRange toggles range-highlight mode and specifies the current endpoints.
 // Pass the zero time for end if only start has been pinned. Sidebar callers
-// never invoke this, so their rendering is unaffected.
+// never invoke this, so their render is unaffected.
 func (m MiniMonthModel) SetRange(active bool, start, end time.Time) MiniMonthModel {
 	m.rangeActive = active
 	m.rangeStart = start
@@ -124,7 +124,7 @@ func (m MiniMonthModel) RangeStart() time.Time { return m.rangeStart }
 func (m MiniMonthModel) RangeEnd() time.Time { return m.rangeEnd }
 
 // SetEventDays replaces the set of days (keyed "YYYY-MM-DD") that should be
-// marked as having at least one visible event. Passing nil clears the set.
+// marked as having at least one visible event. Pass nil to clear the set.
 func (m MiniMonthModel) SetEventDays(days map[string]bool) MiniMonthModel {
 	m.eventDays = days
 	return m
@@ -139,7 +139,7 @@ func (m MiniMonthModel) DisplayMonth() time.Time { return m.displayMonth }
 
 // Tab-stop traversal API used by SidebarModel to integrate the mini-month's
 // internal sub-widgets (prev chevron, day grid, next chevron) into the
-// sidebar's forward/backward Tab routing.
+// sidebar's forward/backward Tab route.
 
 // AtStart reports whether inner focus is on the first tab stop (prev chevron).
 func (m MiniMonthModel) AtStart() bool { return m.innerFocus == innerFocusPrev }
@@ -159,15 +159,16 @@ func (m MiniMonthModel) FocusLast() MiniMonthModel {
 	return m
 }
 
-// FocusGrid resets inner focus to the day grid (e.g. after a click on a day
-// or when entering the sidebar via the `s` toggle rather than via Tab).
+// FocusGrid resets inner focus to the day grid (for example after a click on
+// a day, or when the user enters the sidebar via the `s` toggle rather than
+// via Tab).
 func (m MiniMonthModel) FocusGrid() MiniMonthModel {
 	m.innerFocus = innerFocusGrid
 	return m
 }
 
 // AdvanceFocus moves inner focus one tab stop forward (prev → next → grid).
-// Caller is responsible for checking AtEnd() first.
+// The caller is responsible for a check of AtEnd() first.
 func (m MiniMonthModel) AdvanceFocus() MiniMonthModel {
 	if m.innerFocus < innerFocusGrid {
 		m.innerFocus++
@@ -262,14 +263,14 @@ func (m MiniMonthModel) Update(msg tea.Msg) (MiniMonthModel, tea.Cmd) {
 }
 
 // miniMonthHeaderWidth is the header row width in display columns. It matches
-// the weekday row ("Su Mo Tu We Th Fr Sa") and the seven day cells below it so
-// the chevrons align with the right edge of the grid.
+// the weekday row ("Su Mo Tu We Th Fr Sa") and the seven day cells below it.
+// The chevrons then align with the right edge of the grid.
 const miniMonthHeaderWidth = 20
 
 // miniMonthGridRows is the fixed number of day-grid rows rendered. A Gregorian
-// month spans at most 6 weeks, so padding every month to 6 rows keeps the
-// widget height constant and prevents the sidebar's calendar list from
-// shifting when the displayed month changes.
+// month spans at most 6 weeks. Pad of every month to 6 rows then keeps the
+// widget height constant. The sidebar's calendar list does not then
+// shift when the displayed month changes.
 const miniMonthGridRows = 6
 
 // chevronPositions returns the 0-indexed columns (relative to the widget's
@@ -288,8 +289,8 @@ func (m MiniMonthModel) chevronPositions() (leftX, rightX int) {
 }
 
 // HandleClick hit-tests the click at (x, y) in the widget's local coordinates
-// (top-left of the rendered view is (0, 0)) and, if it lands on a chevron,
-// shifts the month. Clicks on a day cell move the cursor and select it.
+// (top-left of the rendered view is (0, 0)). If it lands on a chevron,
+// it shifts the month. Clicks on a day cell move the cursor and select it.
 func (m MiniMonthModel) HandleClick(x, y int) (MiniMonthModel, tea.Cmd) {
 	if y == 0 {
 		// Header row: chevrons sit together on the right. Each hit zone is
@@ -332,11 +333,11 @@ func (m MiniMonthModel) HandleClick(x, y int) (MiniMonthModel, tea.Cmd) {
 
 // eventDotSuffix is the Unicode combining dot-below character. Appended to a
 // day number it renders as the same number with a small dot directly beneath
-// it, giving an event-density cue without changing cell width.
+// it. That gives an event-density cue with no change of cell width.
 const eventDotSuffix = "\u0323"
 
-// View renders a 7-column day grid with a header row showing the month.
-// Cursor is highlighted; today is bolded; days with events get a subtle dot
+// View renders a 7-column day grid with a header row that shows the month.
+// Cursor is highlighted. Today is bolded. Days with events get a subtle dot
 // below the digit.
 func (m MiniMonthModel) View() string {
 	var b strings.Builder
@@ -488,7 +489,7 @@ func (m MiniMonthModel) View() string {
 	return b.String()
 }
 
-// inRangeInclusive reports whether d is inside the current range, counting
+// inRangeInclusive reports whether d is inside the current range. It counts
 // both endpoints and middle days. Returns false when range mode is off or
 // when no start is pinned.
 func (m MiniMonthModel) inRangeInclusive(d time.Time) bool {
@@ -525,7 +526,7 @@ func (m MiniMonthModel) rangePosition(d time.Time) (isEndpoint, isInRange bool) 
 // Shared calendar helpers
 // ---------------------------------------------------------------------------
 
-// addMonthClamped shifts t by months, clamping the day so it stays valid.
+// addMonthClamped shifts t by months. It clamps the day so it stays valid.
 func addMonthClamped(t time.Time, months int) time.Time {
 	y, m, d := t.Date()
 	newMonth := time.Month(int(m) + months)
