@@ -58,7 +58,7 @@ func inWindow(t, from, to time.Time) bool {
 // override that spans into the window is then not dropped just because its
 // start precedes it. Regular RRULE instances are filtered by this same overlap
 // in ExpandEvent/ExpandTodo. Generation starts from from-duration so a
-// straddling occurrence is produced before it is kept.
+// occurrence that spans the window edge is produced before it is kept.
 //
 // A zero end (for example an override persisted with a blank end_time) is
 // treated as instantaneous and matched by its start alone. The occurrence is
@@ -299,17 +299,17 @@ func (s *Service) journalOverridesByUID(ctx context.Context, masters []storage.J
 }
 
 // cancelledRecurringMaster reports whether the row is a recurring master that
-// has been cancelled. A cancel of a recurring series cancels the whole series.
+// is cancelled. A cancel of a recurring series cancels the whole series.
 // Such a master expands to no occurrences.
 //
 // Display, alarms, and free/busy all flow through the Expand* functions. All
 // three intentionally see nothing for a cancelled series. Any still-CONFIRMED
-// override is dropped with the series (matching Google/iCloud whole-series-cancel
-// semantics). Non-recurring cancelled events are left untouched for the caller
-// to show or hide. ICS export bypasses this via a status-stripped probe so a
-// CANCELLED master still round-trips (see ExportExpandedByDateRange).
-// RecurrenceRule and Status are exported strings on event.Event, todo.Todo, and
-// journal.Journal alike.
+// override is dropped with the series. That matches Google/iCloud
+// whole-series-cancel semantics. Non-recurring cancelled events are left
+// untouched for the caller to show or hide. ICS export bypasses this via a
+// status-stripped probe so a CANCELLED master still round-trips (see
+// ExportExpandedByDateRange). RecurrenceRule and Status are exported strings
+// on event.Event, todo.Todo, and journal.Journal alike.
 func cancelledRecurringMaster(recurrenceRule, status string) bool {
 	return recurrenceRule != "" && strings.EqualFold(status, "CANCELLED")
 }
@@ -521,9 +521,9 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 	return results, nil
 }
 
-// sortExpandedEvents orders instances by their local calendar day, placing
-// all-day events before timed events on the same day, then timed events by
-// start time. SQL-level ordering is not sufficient because recurring instances
+// sortExpandedEvents orders instances by their local calendar day. It places
+// all-day events before timed events on the same day. Timed events then sort
+// by start time. SQL-level order is not sufficient. Recurring instances
 // are generated in Go.
 func sortExpandedEvents(results []ExpandedEvent) {
 	sort.SliceStable(results, func(i, j int) bool {
@@ -585,7 +585,7 @@ type recurringKind[Row any, Model any, Inst any] struct {
 
 // expandRecurringRowsBy expands recurring master rows into per-occurrence
 // Models and applies overrides. For each master, an override (a row with a
-// matching RECURRENCE-ID) suppresses the original RRULE instance and is emitted
+// RECURRENCE-ID that matches) suppresses the original RRULE instance and is emitted
 // separately at its own occurrence time. CANCELLED and orphan overrides are
 // dropped. This is the shared engine behind the event/todo/journal variants.
 //
@@ -677,7 +677,7 @@ func expandedEventKind(s *Service) recurringKind[storage.Event, ExpandedEvent, E
 
 // expandRecurringRows expands recurring event rows into Event instances with
 // StartTime/EndTime adjusted to each occurrence. For each master, overrides
-// (rows with a matching RECURRENCE-ID) replace the original RRULE instance.
+// (rows whose RECURRENCE-ID matches) replace the original RRULE instance.
 func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Event, from, to time.Time) ([]event.Event, error) {
 	k := recurringKind[storage.Event, event.Event, ExpandedEvent]{
 		fromRow:  event.FromStorage,
@@ -762,11 +762,10 @@ func rangeBoundUTC(t time.Time) string {
 }
 
 // ExportExpandedByDateRange returns recurring event masters (not expanded
-// instances) that have at least one occurrence in [from,to), merged with
-// non-recurring events whose start_time is in range. This is for ICS export
-// where the master VEVENT with RRULE should be emitted, not individual
-// instances. All filters (calendar, category, status) are applied at the
-// SQL level.
+// instances) that have at least one occurrence in [from,to). It merges them
+// with non-recurring events whose start_time is in range. This is for ICS
+// export. Emit the master VEVENT with RRULE, not individual instances. All
+// filters (calendar, category, status) are applied at the SQL level.
 func (s *Service) ExportExpandedByDateRange(ctx context.Context, p ExportFilterParams) ([]event.Event, error) {
 	fromStr := rangeBoundUTC(p.From)
 	toStr := rangeBoundUTC(p.To)
@@ -854,7 +853,7 @@ func todoFromRow(row storage.Todo) todo.Todo {
 // category string to each via setCats. idOf yields an item's primary key.
 // fetch loads the join rows for a set of ids. rowCat splits a join row into
 // its (id, category) pair. A fetch error is swallowed. Categories augment a
-// listing rather than gate it. This matches the per-domain behavior this unifies.
+// list rather than gate it. This matches the per-domain behavior this unifies.
 func populateCategories[T any, R any](
 	ctx context.Context,
 	items []T,
@@ -913,7 +912,7 @@ func todoAnchor(td todo.Todo) time.Time {
 	return anchor
 }
 
-// todoDuration is the START->DUE span used to keep a straddling occurrence. A
+// todoDuration is the START->DUE span used to keep an occurrence that spans the window. A
 // due-only (point) todo has none.
 func todoDuration(td todo.Todo) time.Duration {
 	if start := td.ParseStartDate(); !start.IsZero() {
@@ -982,7 +981,7 @@ func ExpandTodo(td todo.Todo, from, to time.Time) []ExpandedTodo {
 
 // expandRecurringTodoRows expands recurring todo rows into Todo instances with
 // DueDate/StartDate adjusted to each occurrence. For each master, overrides
-// (rows with a matching RECURRENCE-ID) replace the original RRULE instance.
+// (rows with a match of RECURRENCE-ID) replace the original RRULE instance.
 func (s *Service) expandRecurringTodoRows(ctx context.Context, rows []storage.Todo, from, to time.Time) ([]todo.Todo, error) {
 	k := recurringKind[storage.Todo, todo.Todo, ExpandedTodo]{
 		fromRow:  todoFromRow,
