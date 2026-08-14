@@ -34,8 +34,8 @@ func footerStates(m CalendarManagerModel) map[string]CalendarManagerModel {
 	}
 }
 
-// The manager footer must render through the shared themed help model: keys
-// and descriptions joined by the themed " · " separator, matching every other
+// The manager footer must render through the shared themed help model. Keys
+// and descriptions join by the themed " · " separator. That matches every other
 // dialog's footer, in every screen and root-focus state.
 func TestCalendarManagerFooterUsesThemedHelp(t *testing.T) {
 	for name, state := range footerStates(footerTestManager().SetSize(110, 32)) {
@@ -52,9 +52,9 @@ func TestCalendarManagerFooterUsesThemedHelp(t *testing.T) {
 }
 
 // The footer must stay a single line no wider than the dialog interior at
-// every size the manager can be given; an overflowing help line wraps and
-// shears the dialog frame (bubbles' short-help keeps an overflowing item when
-// the ellipsis lands exactly on the width boundary).
+// every size the manager can be given. A help line that overflows wraps and
+// shears the dialog frame. bubbles' short-help keeps an overflow item when
+// the ellipsis lands exactly on the width boundary.
 func TestCalendarManagerFooterNeverWraps(t *testing.T) {
 	base := footerTestManager()
 	for w := 40; w <= 140; w += 5 {
@@ -75,8 +75,9 @@ func TestCalendarManagerFooterNeverWraps(t *testing.T) {
 }
 
 // footerBindingsEqual compares two footer binding slices by the rendered help
-// hint (key label + description) — the only attributes the footer displays —
-// so the contract tests assert the user-visible contract, not binding identity.
+// hint (key label + description). Those are the only attributes the footer
+// displays. The contract tests then assert the user-visible contract, not
+// binding identity.
 func footerBindingsEqual(a, b []key.Binding) bool {
 	if len(a) != len(b) {
 		return false
@@ -90,7 +91,7 @@ func footerBindingsEqual(a, b []key.Binding) bool {
 	return true
 }
 
-// For #547 the pushed-screen footer is owned by the active child: the manager
+// For #547 the pushed-screen footer is owned by the active child. The manager
 // defers to each child's HelpBindings instead of a hardcoded copy that drifts
 // when a key is rebound. Every pushed screen must defer to its own child.
 func TestManagerFooterDefersToActiveChildHelp(t *testing.T) {
@@ -118,8 +119,8 @@ func TestManagerFooterDefersToActiveChildHelp(t *testing.T) {
 }
 
 // A calendar detail with an embedded discovery picker advertises the picker's
-// compact help (via the calendar child), so connecting an account never shows
-// the form's field hints.
+// compact help (via the calendar child). A connect of an account then never
+// shows the form's field hints.
 func TestCalendarDetailHelpDelegatesToEmbeddedPicker(t *testing.T) {
 	m := footerTestManager().OpenCalendar(CalendarDialogParams{ID: 1, Name: "Personal", ManagerEmbedded: true})
 	m = m.ShowDiscovery(pickerDiscovery())
@@ -133,7 +134,7 @@ func TestCalendarDetailHelpDelegatesToEmbeddedPicker(t *testing.T) {
 }
 
 // The child-owned footer must keep the exact hint text the manager showed
-// before #547, so centralizing the dispatch is a no-op for users.
+// before #547. A move of the dispatch to one place is then a no-op for users.
 func TestManagerFooterHintsPreserved(t *testing.T) {
 	wide := footerTestManager().SetSize(140, 40)
 	cases := []struct {
@@ -209,9 +210,9 @@ func TestActiveChildDrivesFooterAndInspector(t *testing.T) {
 	}
 }
 
-// Direct screen-switch smoke: opening and closing each pushed screen flips the
-// active child and footer, and the embedded discovery picker hands the footer
-// off and back without leaving the calendar screen.
+// Direct screen-switch smoke: open and close of each pushed screen flips the
+// active child and footer. The embedded discovery picker hands the footer
+// off and back. It does not leave the calendar screen.
 func TestManagerScreenSwitchSmoke(t *testing.T) {
 	m := footerTestManager().SetSize(140, 40)
 	if m.activeChild() != nil {
