@@ -119,26 +119,26 @@ type AgendaModel struct {
 	height      int
 	// selectedColor highlights the focused event row. Set to theme.Selected.
 	selectedColor color.Color
-	// anchorDay, when non-zero, is the day the agenda wants to scroll back
-	// to after the next SetEvents — used to keep the viewport stable across
+	// anchorDay, when non-zero, is the day the agenda must scroll back
+	// to after the next SetEvents. That keeps the viewport stable across
 	// infinite-scroll window expansions.
 	anchorDay time.Time
 	// reloadPending prevents firing a second AgendaReloadMsg while the
 	// previous one is still in-flight; it's cleared by SetEvents.
 	reloadPending bool
-	// fillExpandRows bounds the underfill-driven auto-fill (see
-	// MaybeFillViewport). It records len(rows) at the last auto-fill
-	// expansion so the next one is suppressed unless the row count actually
-	// grew — otherwise a sparse calendar in a tall terminal would extend
-	// windowEnd forward without bound. -1 means "no auto-fill yet"; reset
-	// to -1 on a jump (ResetWindow) or once the viewport fills.
+	// fillExpandRows bounds the underfill auto-fill (see MaybeFillViewport).
+	// It records len(rows) at the last auto-fill expansion. The next
+	// expansion is then suppressed unless the row count grew. Otherwise a
+	// sparse calendar in a tall terminal would extend windowEnd with no
+	// bound. -1 means "no auto-fill yet". Reset to -1 on a jump
+	// (ResetWindow) or once the viewport fills.
 	fillExpandRows int
 	// showEmptyDays, when true, renders a placeholder row for each day
 	// in the window that has no events. Toggled by the "o" key.
 	showEmptyDays bool
 	// pendingSelectNow, when non-zero, asks the next SetEvents to select
-	// the first event on the cursor day that's current (ends after now)
-	// or upcoming, instead of falling back to the day's first event.
+	// the first event on the cursor day that is current (ends after now)
+	// or upcoming. It does not use the day's first event as a fallback.
 	// One-shot — consumed and cleared on the next SetEvents.
 	pendingSelectNow time.Time
 }
@@ -223,10 +223,10 @@ func (m AgendaModel) SetShowEmptyDays(v bool) AgendaModel {
 }
 
 // SelectCurrentOrNext marks the next SetEvents to pick the first event
-// on the cursor day whose end time is after now (or any all-day event),
-// instead of the day's first event. One-shot. Used when the user lands
-// on the agenda view on today. The cursor then sits on what happens
-// now or next, not on a meeting that already ended.
+// on the cursor day whose end time is after now (or any all-day event).
+// It does not pick the day's first event. One-shot. Used when the user
+// lands on the agenda view on today. The cursor then sits on what
+// happens now or next. It does not sit on a meeting that already ended.
 func (m AgendaModel) SelectCurrentOrNext(now time.Time) AgendaModel {
 	m.pendingSelectNow = now
 	return m
@@ -300,9 +300,9 @@ func (m AgendaModel) SetEvents(events []event.Event, calendars map[int64]Calenda
 			m.selected = idx
 			m.pendingSelectNow = time.Time{}
 		} else if hasEventOn(m.rows, m.cursor) {
-			// Cursor day has events but none are current/upcoming — accept
-			// the regular fallback (first event of today) and clear the
-			// flag so subsequent loads don't second-guess the user.
+			// Cursor day has events but none are current/upcoming. Accept
+			// the regular fallback (first event of today). Clear the
+			// flag so later loads do not second-guess the user.
 			m.pendingSelectNow = time.Time{}
 		}
 		// else: no events on the cursor day yet (e.g., calendarsLoadedMsg
@@ -315,11 +315,11 @@ func (m AgendaModel) SetEvents(events []event.Event, calendars map[int64]Calenda
 			m.scroll = idx
 		}
 	} else {
-		// Full refresh after a jump (`[`/`]`/`t`/sidebar click) — scroll
-		// so the newly-landed selection is at the top of the viewport.
-		// Without this the scroll keeps its stale value and the user can
-		// land on (for example) today's first event while the viewport
-		// still shows rows well below today.
+		// Full refresh after a jump (`[`/`]`/`t`/sidebar click). Scroll
+		// so the new selection is at the top of the viewport.
+		// Without this the scroll keeps its stale value. The user can
+		// then land on today's first event while the viewport still
+		// shows rows well below today.
 		if m.selected >= 0 {
 			target := m.selected
 			for target > 0 && !isSelectableRow(m.rows[target-1]) {
@@ -393,9 +393,9 @@ func (m AgendaModel) Update(msg tea.Msg) (AgendaModel, tea.Cmd) {
 	case key.Matches(kp, m.keys.NextMonth):
 		return m.moveCursor(firstOfMonth(m.cursor).AddDate(0, 1, 0))
 	case key.Matches(kp, m.keys.Today):
-		// Unconditional: the cursor stays at today during scrolling, so
-		// gating on sameDay(cursor, today) would make `t` a no-op even
-		// when the user has scrolled far away from today. Always reset
+		// Unconditional: the cursor stays at today during scroll. A
+		// gate on sameDay(cursor, today) would make `t` a no-op even
+		// when the user has scrolled far from today. Always reset
 		// the window so the viewport snaps back to today's events.
 		m.cursor = m.today
 		cursor := m.cursor
@@ -474,12 +474,12 @@ func (m AgendaModel) View() string {
 	start := min(max(m.scroll, 0), m.maxScroll(viewportH))
 	end := min(start+viewportH, len(m.rows))
 
-	// Sticky title uses position:sticky semantics — it reflects the most
+	// Sticky title uses position:sticky semantics. It reflects the most
 	// recent monthHeader at or above the viewport top. When none has
-	// scrolled past yet, use the day of the first visible row instead of
-	// windowStart: events can start in a later month than windowStart if
-	// earlier months are empty (common after a backward expansion), and
-	// falling back to windowStart would advertise a month the user can't
+	// scrolled past yet, use the day of the first visible row. Do not
+	// use windowStart. Events can start in a later month than windowStart
+	// if earlier months are empty (common after a backward expansion).
+	// A fallback to windowStart would advertise a month the user cannot
 	// see any events from.
 	headerDay := m.windowStart
 	foundAbove := false
@@ -498,7 +498,7 @@ func (m AgendaModel) View() string {
 	out.WriteString("\n\n")
 
 	// Skip any leading separator/monthHeader rows that label the sticky's
-	// month — otherwise the user sees the month name twice back-to-back
+	// month. Otherwise the user sees the month name twice back-to-back
 	// (once in the sticky, once inline). Extend the render range so the
 	// viewport stays filled.
 	renderStart := start
@@ -984,10 +984,10 @@ func hasEventOn(rows []agendaRow, day time.Time) bool {
 }
 
 // firstCurrentOrNextOn returns the first selectable event row on day
-// whose event is current (ends after now, or all-day) or next (starts
-// at or after now). Returns -1 when no event row qualifies. Used to land
-// the cursor on what happens now or next, not on a meeting that
-// already ended.
+// whose event is current or next. Current means the event ends after now,
+// or is all-day. Next means the event starts at or after now. Returns -1
+// when no event row qualifies. Used to land the cursor on what happens
+// now or next. Not on a meeting that already ended.
 func firstCurrentOrNextOn(rows []agendaRow, day, now time.Time) int {
 	for i, r := range rows {
 		if !hasEvent(r) || !sameDay(r.day, day) {
