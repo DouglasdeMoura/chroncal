@@ -243,15 +243,15 @@ func TestListExpandedByDateRange_NoDuplication(t *testing.T) {
 }
 
 // TestExportExpandedByDateRange_IncludesCancelledMaster guards that the
-// display-time cancelled-master suppression does NOT leak into ICS export: a
-// CANCELLED recurring master starting before the export window must still be
-// emitted, since STATUS:CANCELLED is how a downstream client is told to drop
+// display-time cancelled-master suppression does NOT leak into ICS export. A
+// CANCELLED recurring master that starts before the export window must still
+// be emitted. STATUS:CANCELLED is how a downstream client is told to drop
 // the series.
 // TestCancelledMaster_DropsLiveOverride locks in Google/iCloud whole-series
-// cancel parity: when a recurring master is CANCELLED, even a still-CONFIRMED
+// cancel parity. When a recurring master is CANCELLED, even a still-CONFIRMED
 // override instance is suppressed from display/alarms/free-busy (all of which
-// flow through expansion). This is a deliberate behavior, not an accident — a
-// surviving instance of a cancelled series must not linger.
+// flow through expansion). This is a deliberate behavior, not an accident. An
+// instance of a cancelled series that remains must not linger.
 func TestCancelledMaster_DropsLiveOverride(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	eventsSvc := event.NewService(db, q)
@@ -829,7 +829,7 @@ func TestDeleteOverrideThenReexpand(t *testing.T) {
 
 // movedOverrideFixture creates a weekly-Monday master and moves its Apr 6
 // (Monday) occurrence to Apr 8 (Wednesday) at 14:00. The override's RECURRENCE-ID
-// slot (Apr 6) and its new start (Apr 8) fall on different days, which is the
+// slot (Apr 6) and its new start (Apr 8) fall on different days. That is the
 // shape that previously made a moved occurrence surface on the wrong day.
 func movedOverrideFixture(t *testing.T) (*event.Service, *Service) {
 	t.Helper()
@@ -863,8 +863,8 @@ func movedOverrideFixture(t *testing.T) (*event.Service, *Service) {
 }
 
 // TestMovedOverride_OutOfSlotWindow verifies that a moved occurrence appears on
-// its new day and is absent from the day of the slot it replaced, across every
-// event expansion path (ListExpandedByDateRange, ListExpandedEvents,
+// its new day. It is absent from the day of the slot it replaced. That holds
+// across every event expansion path (ListExpandedByDateRange, ListExpandedEvents,
 // ListFilteredEvents). Regression test for the moved-override-day bug.
 func TestMovedOverride_OutOfSlotWindow(t *testing.T) {
 	ctx := context.Background()
@@ -945,10 +945,10 @@ func TestMovedOverride_OutOfSlotWindow(t *testing.T) {
 	})
 }
 
-// TestMovedOverride_WiderWindowNoDuplication verifies that a window spanning both
-// the original slot and the moved day yields the moved occurrence once (not the
-// suppressed Apr 6 slot, and not a duplicate), alongside the series' other
-// untouched occurrences.
+// TestMovedOverride_WiderWindowNoDuplication verifies a window that spans both
+// the original slot and the moved day. It yields the moved occurrence once (not
+// the suppressed Apr 6 slot, and not a duplicate). The series' other
+// untouched occurrences sit alongside it.
 func TestMovedOverride_WiderWindowNoDuplication(t *testing.T) {
 	ctx := context.Background()
 	_, recurSvc := movedOverrideFixture(t)
@@ -984,11 +984,11 @@ func TestMovedOverride_WiderWindowNoDuplication(t *testing.T) {
 }
 
 // TestMovedOverride_ExDatedSlot verifies that an override whose RECURRENCE-ID
-// slot is also EXDATE'd on the master is still emitted, not dropped as an
+// slot is also EXDATE'd on the master is still emitted. It is not dropped as an
 // orphan. RFC 5545 lets a master carry an EXDATE and a separate RECURRENCE-ID
-// override for the same slot; the override replaces (wins over) the slot, so
-// orphan detection must ignore EXDATEs when checking whether the slot is a
-// genuine master occurrence.
+// override for the same slot. The override replaces (wins over) the slot.
+// Orphan detection must then ignore EXDATEs when it checks whether the slot is
+// a genuine master occurrence.
 func TestMovedOverride_ExDatedSlot(t *testing.T) {
 	ctx := context.Background()
 	db, q := testutil.NewTestDB(t)
@@ -1035,10 +1035,11 @@ func TestMovedOverride_ExDatedSlot(t *testing.T) {
 }
 
 // TestMovedOverride_MultiDaySpansWindow verifies that a moved override which is
-// a multi-day event appears in a queried window it overlaps even when its start
-// precedes the window. Override emission must use [start, end) overlap, matching
-// the non-recurring range path, not start-in-window — otherwise a multi-day
-// override is dropped from every day after its start.
+// a multi-day event appears in a queried window it overlaps. That holds even
+// when its start precedes the window. Override emission must use [start, end)
+// overlap. That
+// matches the non-recurring range path, not start-in-window. Otherwise a
+// multi-day override is dropped from every day after its start.
 func TestMovedOverride_MultiDaySpansWindow(t *testing.T) {
 	ctx := context.Background()
 	db, q := testutil.NewTestDB(t)
@@ -1183,14 +1184,14 @@ func TestMovedOverride_OrphanDropped(t *testing.T) {
 }
 
 // TestAllDayDateOnlyOverride_Consistent guards the suppression/occursAt
-// agreement: an all-day master with an override carrying a date-only
-// RECURRENCE-ID must expand to exactly one occurrence per day — never a
-// duplicate (slot shown plus override) nor a vanished day (slot suppressed and
-// override dropped). Both checks normalize the recurrence_id the same way
-// (canonicalRecurrenceID), so they always agree on count. Which row wins for a
+// agreement. An all-day master with an override that carries a date-only
+// RECURRENCE-ID must expand to exactly one occurrence per day. Never a
+// duplicate (slot shown plus override). Never a vanished day (slot suppressed
+// and override dropped). Both checks normalize the recurrence_id the same way
+// (canonicalRecurrenceID). They always agree on count. Which row wins for a
 // date-only id is host-timezone dependent (all-day rows are stored at
-// local-midnight), but it does not matter here: sync and import always emit
-// full UTC RFC 3339 recurrence_ids, so the date-only form is a defensive edge.
+// local-midnight). It does not matter here. Sync and import always emit
+// full UTC RFC 3339 recurrence_ids. The date-only form is then a defensive edge.
 func TestAllDayDateOnlyOverride_Consistent(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	eventsSvc := event.NewService(db, q)
@@ -1309,9 +1310,10 @@ func TestMovedOverride_Todo(t *testing.T) {
 // TestMovedOverride_TodoMultiDaySpansWindow verifies that a multi-day todo
 // override whose START precedes the query window but whose DUE falls inside it
 // is kept. The override window check must use [START, DUE) interval overlap
-// (honoring todoDuration), matching the master-occurrence path and the event
-// override path -- not a point test on the anchor alone, which would drop the
-// override from every window after its start. Regression test for issue #288.
+// (it honors todoDuration). That matches the master-occurrence path and the
+// event override path. It is not a point test on the anchor alone. That would
+// drop the override from every window after its start. Regression test for
+// issue #288.
 func TestMovedOverride_TodoMultiDaySpansWindow(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	todoSvc := todo.NewService(db, q)
@@ -1361,9 +1363,9 @@ func TestMovedOverride_TodoMultiDaySpansWindow(t *testing.T) {
 // TestListExpandedByDateRange_OverrideEmptyEndTime locks in that an override
 // persisted with a blank/zero end_time (e.g. a point-in-time or improperly
 // migrated override) still appears. Previously overlapsWindow required
-// end.After(from), so a zero EndTime parsed from an empty string was treated as
-// not overlapping and the override was silently dropped -- and because the
-// master slot it replaces is suppressed, the occurrence vanished entirely.
+// end.After(from). A zero EndTime parsed from an empty string was then treated
+// as no overlap. The override was dropped in silence. The master slot it
+// replaces is suppressed. The occurrence then vanished entirely.
 // Regression test for issue #127.
 func TestListExpandedByDateRange_OverrideEmptyEndTime(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
@@ -1435,9 +1437,9 @@ func TestListExpandedByDateRange_OverrideEmptyEndTime(t *testing.T) {
 	}
 }
 
-// TestMovedOverride_Journal is the journal analogue of TestMovedOverride_Todo:
-// it exercises the recurring-journal merge path (overridden-slot suppression
-// and override emission at the moved occurrence) end to end.
+// TestMovedOverride_Journal is the journal analogue of TestMovedOverride_Todo.
+// It exercises the recurring-journal merge path end to end. That is
+// overridden-slot suppression and override emission at the moved occurrence.
 func TestMovedOverride_Journal(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	journalSvc := journal.NewService(db, q)
@@ -1539,9 +1541,9 @@ func TestListFilteredJournals_RecurringExpansion(t *testing.T) {
 }
 
 // faultyDBTX wraps a storage.DBTX and forces any query whose text contains
-// failOn to fail, simulating a transient SQLite error mid-expansion. sqlc keeps
-// the `-- name: <QueryName>` comment in the query string, so matching on the
-// query name targets exactly one statement.
+// failOn to fail. That simulates a transient SQLite error mid-expansion. sqlc
+// keeps the `-- name: <QueryName>` comment in the query string. A match on the
+// query name then targets exactly one statement.
 type faultyDBTX struct {
 	storage.DBTX
 	failOn string
@@ -1554,10 +1556,10 @@ func (f faultyDBTX) QueryContext(ctx context.Context, query string, args ...inte
 	return f.DBTX.QueryContext(ctx, query, args...)
 }
 
-// TestExpand_OverrideFetchErrorPropagates locks in that a failure fetching a
-// recurring master's overrides surfaces as an error instead of silently
-// degrading to "no overrides" — which would suppress nothing and emit the stale
-// master RRULE instance at its original time while the real override vanishes.
+// TestExpand_OverrideFetchErrorPropagates locks in that a failure on a fetch of
+// a recurring master's overrides surfaces as an error. It does not degrade to
+// "no overrides" in silence. That would suppress nothing. It would emit the
+// stale master RRULE instance at its original time. The real override vanishes.
 // Regression test for issue #251.
 func TestExpand_OverrideFetchErrorPropagates(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
@@ -1623,8 +1625,8 @@ func TestExpand_OverrideFetchErrorPropagates(t *testing.T) {
 }
 
 // TestExpandedInstancesCarryConferenceURI guards against the recurrence mapper
-// drifting from event.FromStorage: a recurring event with a ConferenceURI must
-// keep that URI on every expanded instance (regression test for #256).
+// that drifts from event.FromStorage. A recurring event with a ConferenceURI
+// must keep that URI on every expanded instance (regression test for #256).
 func TestExpandedInstancesCarryConferenceURI(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	eventsSvc := event.NewService(db, q)
@@ -1662,9 +1664,9 @@ func TestExpandedInstancesCarryConferenceURI(t *testing.T) {
 
 // TestListExpandedByDateRange_RDateOnly verifies the full DB-level path for
 // RDATE-only recurrence (no RRULE). Previously the ListRecurringEvents SQL
-// query excluded such rows (recurrence_rule IS NOT NULL), so they were
-// silently emitted as non-recurring singletons with only their DTSTART
-// occurrence visible (issue #362).
+// query excluded such rows (recurrence_rule IS NOT NULL). They were then
+// emitted as non-recurring singletons in silence. Only their DTSTART
+// occurrence was visible (issue #362).
 func TestListExpandedByDateRange_RDateOnly(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	eventsSvc := event.NewService(db, q)
