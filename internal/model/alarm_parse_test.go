@@ -63,12 +63,12 @@ func TestParseAbsoluteTime(t *testing.T) {
 	})
 }
 
-// Related only means anything on a duration trigger — RFC 5545 forbids it on
-// absolute triggers and export omits it there, so import round-trips an
+// Related only means a value on a duration trigger. RFC 5545 forbids it on
+// absolute triggers. Export omits it there. Import then round-trips an
 // absolute alarm's Related as the default START. If ContentEqual compared
 // Related for absolute triggers, a stored pre-normalization "END" would break
-// the ReplaceAlarms match on the next pull and re-fire an already-acknowledged
-// reminder (reachable when the alarm UID does not round-trip).
+// the ReplaceAlarms match on the next pull. It would re-fire an already
+// acknowledged reminder (reachable when the alarm UID does not round-trip).
 func TestContentEqual_RelatedIgnoredOnAbsoluteTriggers(t *testing.T) {
 	a := Alarm{Action: "DISPLAY", TriggerValue: "20260401T100000Z", Related: "END"}
 	b := Alarm{Action: "DISPLAY", TriggerValue: "20260401T100000Z", Related: "START"}
