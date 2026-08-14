@@ -20,11 +20,11 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
-// ImportFile reports what it could not represent — a malformed DTEND replaced
-// by a fabricated span, an alarm dropped for an unusable trigger. The pull path
-// threw those away, so a value the server still holds correctly could be
-// replaced by our fabrication on the next push with nothing anywhere saying so.
-// The user's only signal is the log, so the pull has to write it.
+// ImportFile reports what it could not represent. A malformed DTEND is replaced
+// by a fabricated span. An alarm is dropped for an unusable trigger. The pull
+// path threw those away. A value the server still holds correctly could then be
+// replaced by our fabrication on the next push. Nothing anywhere said so.
+// The user's only signal is the log. The pull has to write it.
 func TestEnginePullSurfacesImportWarnings(t *testing.T) {
 	t.Parallel()
 
@@ -114,8 +114,8 @@ END:VCALENDAR
 
 // A multi-component payload (412 server-wins resolution, manual conflict
 // resolution) can carry a warning produced by ANY of its components.
-// Labeling every warning with the first component's UID sends the user to
-// an event that has nothing wrong with it, so the label must be omitted
+// A label of every warning with the first component's UID sends the user to
+// an event that has nothing wrong with it. The label must then be omitted
 // unless the payload holds exactly one component.
 func TestLogImportWarningsUIDLabeling(t *testing.T) {
 	t.Parallel()
@@ -193,10 +193,10 @@ func icalImportResult(uids []string, warning string) icalPkg.ImportResult {
 	return icalPkg.ImportResult{Events: events, Warnings: []string{warning}}
 }
 
-// The shipped entry points that matter most — the first pull after linking,
-// opportunistic save-time pushes, every TUI sync — construct the engine with
-// a DISCARDED logger, so a warning that only reaches the logger reaches
-// /dev/null. The warning has to travel as data on the pull result.
+// The shipped entry points that matter most construct the engine with
+// a DISCARDED logger. Those are the first pull after a link, opportunistic
+// save-time pushes, and every TUI sync. A warning that only reaches the logger
+// then reaches /dev/null. The warning has to travel as data on the pull result.
 func TestEnginePullCollectsImportWarningsWithoutLogger(t *testing.T) {
 	t.Parallel()
 
