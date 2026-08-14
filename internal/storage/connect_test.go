@@ -138,9 +138,9 @@ func TestOpen_SeedData(t *testing.T) {
 	}
 }
 
-// TestBackfillAlarmUIDs_TodoOnly guards issue #95: when there are no event
-// alarms needing a UID but todo alarms do, the backfill must still assign
-// UUIDs to those todo alarms instead of early-returning on the empty event
+// TestBackfillAlarmUIDs_TodoOnly guards issue #95. When there are no event
+// alarms that need a UID but todo alarms do, the backfill must still assign
+// UUIDs to those todo alarms. It must not return early on the empty event
 // alarm list.
 func TestBackfillAlarmUIDs_TodoOnly(t *testing.T) {
 	db, q, err := Open(":memory:")
@@ -183,11 +183,11 @@ func TestBackfillAlarmUIDs_TodoOnly(t *testing.T) {
 	}
 }
 
-// TestOpen_InMemorySchemaVisibleAcrossConnections guards issue #214: a plain
+// TestOpen_InMemorySchemaVisibleAcrossConnections guards issue #214. A plain
 // ":memory:" DSN is a private per-connection database with modernc.org/sqlite.
-// Migrations run on whichever connection the pool hands out first; without
-// pinning the pool to a single connection, a second concurrent connection sees
-// a brand-new, schema-less database and reads fail with "no such table".
+// Migrations run on whichever connection the pool hands out first. Without a
+// pin of the pool to a single connection, a second concurrent connection sees
+// a brand-new, schema-less database. Reads then fail with "no such table".
 func TestOpen_InMemorySchemaVisibleAcrossConnections(t *testing.T) {
 	db, _, err := Open(":memory:")
 	if err != nil {
