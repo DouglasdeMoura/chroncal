@@ -94,8 +94,8 @@ func (d Dialog) ContentWidth() int {
 	return w
 }
 
-// Box returns the bordered box without centering. Use this when
-// composing multiple dialogs before centering them together.
+// Box returns the bordered box with no center. Use this when
+// you compose multiple dialogs before you center them together.
 func (d Dialog) Box(content string) string {
 	var sections []string
 
