@@ -38,8 +38,8 @@ func badgeBackground(v badgeVariant) color.Color {
 // badge renders a small pill with padded text and a colored background.
 // Used for status labels, response indicators, and other short metadata
 // that should read as a distinct token. The foreground is computed from
-// the resolved background via OKLCh contrast — so the pill stays
-// readable on every terminal palette without hand-tuned per-theme text
+// the resolved background via OKLCh contrast. The pill then stays
+// readable on every terminal palette with no hand-tuned per-theme text
 // colors.
 func badge(text string, v badgeVariant) string {
 	bg := badgeBackground(v)
