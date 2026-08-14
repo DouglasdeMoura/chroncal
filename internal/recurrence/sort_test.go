@@ -7,10 +7,10 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/event"
 )
 
-// TestSortExpandedEvents_LocalDayBucket guards against issue #126: the day
-// bucket used for ordering must reflect the host's LOCAL calendar day, not
+// TestSortExpandedEvents_LocalDayBucket guards against issue #126. The day
+// bucket used for order must reflect the host's LOCAL calendar day, not
 // UTC midnight. Two instances on the same local day that straddle UTC midnight
-// must group together, with the all-day event ordered before the timed one.
+// must group together. The all-day event is ordered before the timed one.
 func TestSortExpandedEvents_LocalDayBucket(t *testing.T) {
 	// Pin the local zone to UTC-5 for the duration of the test so the bug is
 	// observable regardless of the host's real timezone.
