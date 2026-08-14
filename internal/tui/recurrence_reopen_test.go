@@ -9,11 +9,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Regression: when re-opening the recurrence editor on an event that already
+// Regression: when the recurrence editor reopens on an event that already
 // has a custom weekly rule (e.g. Mon-Thu), the editor must restore the
-// existing weekday selections. Otherwise confirming with Enter/Ctrl+S
-// silently overwrites the saved rule with just the start day, which is what
-// the user reported as "only saved the event on Wed and Thu".
+// stored weekday selections. Otherwise a confirm with Enter/Ctrl+S
+// overwrites the saved rule with just the start day, in silence. That is
+// what the user reported as "only saved the event on Wed and Thu".
 func TestRecurrenceEditor_ReopenRestoresExistingWeeklyRule(t *testing.T) {
 	day := time.Date(2026, 5, 20, 9, 0, 0, 0, time.UTC) // Wednesday
 	ev := event.Event{
