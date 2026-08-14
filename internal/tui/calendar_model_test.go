@@ -6,8 +6,8 @@ import (
 )
 
 // TestCalendarMonthNavClampsDay verifies that prev/next-month navigation from a
-// day that does not exist in the target month clamps to the last valid day
-// rather than rolling forward (Go's AddDate normalizes 2026-02-31 -> 2026-03-03).
+// day that does not exist in the target month clamps to the last valid day.
+// It does not roll forward (Go's AddDate normalizes 2026-02-31 -> 2026-03-03).
 func TestCalendarMonthNavClampsDay(t *testing.T) {
 	tests := []struct {
 		name      string
