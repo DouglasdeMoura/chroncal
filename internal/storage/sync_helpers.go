@@ -6,7 +6,7 @@ import (
 	"errors"
 )
 
-// MarkResourceDirty marks a resource as needing sync. If the calendar is
+// MarkResourceDirty marks a resource as dirty for sync. If the calendar is
 // linked to an account (synced), this upserts a sync_resources row with
 // dirty=1. For local-only calendars this is a no-op.
 // Called by service-layer mutations (Create, Update, ReplaceAlarms, etc.).
@@ -44,9 +44,9 @@ func MarkResourceDirty(ctx context.Context, db DBTX, calendarID int64, uid, owne
 // previously synced (has a sync_resources row with a non-empty remote_url).
 // Returns true if a tombstone was created.
 //
-// db is a DBTX so callers can pass their own *sql.Tx, letting the tombstone
-// write commit (or roll back) atomically with the soft-delete it accompanies.
-// Pass *sql.DB only when there is no surrounding transaction.
+// db is a DBTX so callers can pass their own *sql.Tx. The tombstone
+// write then commits (or rolls back) atomically with the soft-delete it
+// accompanies. Pass *sql.DB only when there is no transaction around it.
 func CreateTombstoneIfSynced(ctx context.Context, db DBTX, calendarID int64, uid string) (bool, error) {
 	if calendarID == 0 || uid == "" {
 		return false, nil
