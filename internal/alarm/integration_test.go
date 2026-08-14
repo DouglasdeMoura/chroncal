@@ -198,10 +198,10 @@ func TestAlarmLifecycle_Snooze(t *testing.T) {
 	}
 }
 
-// TestMarkRefired_ConcurrentClaim reproduces issue #88: two overlapping
-// checkers both observe the same expired-snoozed alarm and both call
-// MarkRefired. Only one may win the claim; the other must be told it lost
-// (claimed == false) so the CLI does not dispatch a duplicate notification.
+// TestMarkRefired_ConcurrentClaim reproduces issue #88. Two overlap
+// checkers both observe the same expired-snoozed alarm. Both call
+// MarkRefired. Only one may win the claim. The other must be told it lost
+// (claimed == false). The CLI then does not dispatch a duplicate notification.
 func TestMarkRefired_ConcurrentClaim(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	evtSvc := event.NewService(db, q)
