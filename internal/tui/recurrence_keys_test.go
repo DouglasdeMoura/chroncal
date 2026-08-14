@@ -7,8 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// User flow: create event on Wed 2026-05-20, open recurrence editor, navigate
-// to "On" picker, toggle Mo, Tu, We, Th via arrow keys + space, then submit.
+// User flow: create event on Wed 2026-05-20. Open the recurrence editor.
+// Navigate to the "On" picker. Toggle Mo, Tu, We, Th via arrow keys + space.
+// Then submit.
 func TestRecurrenceEditor_UserKeysProduceMonThuRule(t *testing.T) {
 	day := time.Date(2026, 5, 20, 0, 0, 0, 0, time.UTC) // Wednesday
 	m := NewRecurrenceEditorModel(day, 120, 40, Theme{})
