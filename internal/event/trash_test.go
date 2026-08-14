@@ -100,7 +100,7 @@ func TestTrash_SoftDeletedEventAppearsAsEventKind(t *testing.T) {
 	}
 }
 
-// TestTrash_InstanceDeleteIsIdempotent verifies deleting the same instance
+// TestTrash_InstanceDeleteIsIdempotent verifies a delete of the same instance
 // twice keeps a single log row (ON CONFLICT upserts deleted_at).
 func TestTrash_InstanceDeleteIsIdempotent(t *testing.T) {
 	svc := newTestService(t)
@@ -234,9 +234,9 @@ func TestTrash_TruncationLoggedAndRestorable(t *testing.T) {
 	}
 }
 
-// TestTrash_PurgeTruncationKeepsRRuleTruncated verifies that purging a
-// truncation entry drops the log row only — the master's RRULE stays
-// truncated and soft-deleted overrides stay deleted.
+// TestTrash_PurgeTruncationKeepsRRuleTruncated verifies that a purge of a
+// truncation entry drops the log row only. The master's RRULE stays
+// truncated. Soft-deleted overrides stay deleted.
 func TestTrash_PurgeTruncationKeepsRRuleTruncated(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -289,9 +289,9 @@ func TestTrash_PurgeTruncationKeepsRRuleTruncated(t *testing.T) {
 }
 
 // TestTrash_TruncationRestoreKeepsIndependentlyDeletedOverride reproduces
-// issue #287: an override deleted independently (before the truncation) must
+// issue #287. An override deleted independently (before the truncation) must
 // stay deleted when the truncation is restored. The truncation only hides
-// overrides that were live at truncation time, so restoring it must not
+// overrides that were live at truncation time. A restore of it must not
 // resurrect an override the user had already deleted on its own.
 func TestTrash_TruncationRestoreKeepsIndependentlyDeletedOverride(t *testing.T) {
 	svc := newTestService(t)
@@ -364,8 +364,8 @@ func TestTrash_TruncationRestoreKeepsIndependentlyDeletedOverride(t *testing.T) 
 	}
 }
 
-// TestTrash_PurgeInstanceKeepsExdate verifies that purging an instance-kind
-// entry drops the log row but leaves the EXDATE on the master — the
+// TestTrash_PurgeInstanceKeepsExdate verifies that a purge of an instance-kind
+// entry drops the log row but leaves the EXDATE on the master. That is the
 // "forever delete" semantics for per-instance deletes.
 func TestTrash_PurgeInstanceKeepsExdate(t *testing.T) {
 	svc := newTestService(t)
