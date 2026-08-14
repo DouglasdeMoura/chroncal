@@ -39,8 +39,8 @@ type CalendarDialogParams struct {
 
 	// OfferDefault enables the "Set as default after saving" checkbox in
 	// create mode. Callers set it when at least one calendar already
-	// exists, since the first calendar is auto-promoted by the service
-	// (the checkbox would be meaningless and noisy in that case).
+	// exists. The service auto-promotes the first calendar. The checkbox
+	// would be meaningless and noisy in that case.
 	OfferDefault bool
 
 	// Hidden is the calendar's current sidebar visibility. The edit dialog
@@ -212,10 +212,10 @@ type CalendarDialogModel struct {
 	mutedColor   color.Color
 	textDimColor color.Color
 
-	// saveMakeDefault is shared by reference with the OnSubmit closure so
-	// the "Save and Set as Default" path can flip the MakeDefault bit on
-	// the upcoming CalendarSavedMsg without re-implementing form
-	// validation. Cleared automatically after each submit.
+	// saveMakeDefault is shared by reference with the OnSubmit closure.
+	// The "Save and Set as Default" path can then flip the MakeDefault
+	// bit on the upcoming CalendarSavedMsg. It does not re-implement
+	// form validation. Cleared automatically after each submit.
 	saveMakeDefault   *bool
 	accountConnection bool
 	localDraft        *CalendarDialogParams
@@ -302,11 +302,12 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 			return style.Render(s)
 		})}
 	}
-	// Edit mode surfaces the calendar's visibility and owning context as
-	// actionable rows: a Display Calendar checkbox (visibility is immediate
-	// and never auto-saved with metadata) and either "Location: Local" or an
-	// "Account: <name> ›" opener that drills into the owning account. Create
-	// mode has no immutable ID, so neither row applies there.
+	// Edit mode surfaces the calendar's visibility and owner context as
+	// actionable rows. That is a Display Calendar checkbox (visibility is
+	// immediate and never auto-saved with metadata). And either
+	// "Location: Local" or an "Account: <name> ›" opener that drills into
+	// the owner account. Create mode has no immutable ID, so neither row
+	// applies there.
 	var (
 		visibilityCb  *CheckboxField
 		accountOpener *OpenerField
@@ -333,8 +334,8 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 			for _, line := range syncHealthDialogLines(params, theme) {
 				items = append(items, staticLine(line.text, line.style))
 			}
-			// Account calendars carry no Delete button (deleting here would
-			// only remove the local copy, not the account's calendar); this
+			// Account calendars carry no Delete button. A delete here would
+			// only remove the local copy, not the account's calendar. This
 			// footnote explains why and points at the local alternative.
 			note := lipgloss.NewStyle().Foreground(theme.TextDim)
 			ownership := "This calendar lives in your " + accountName + " account."
@@ -415,11 +416,12 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		})
 	}
 
-	// Remote calendars drill into their owning account via the inline
-	// "Account: <name> ›" opener rather than a separate button, so the
-	// opener's Enter emits the canonical AccountSettingsRequestedMsg the
-	// host already routes (and the calendar manager intercepts to push the
-	// account detail without disturbing the in-progress calendar draft).
+	// Remote calendars drill into their owner account via the inline
+	// "Account: <name> ›" opener, not a separate button. The opener's
+	// Enter then emits the canonical AccountSettingsRequestedMsg the
+	// host already routes. The calendar manager intercepts that to push
+	// the account detail. It does not disturb the in-progress calendar
+	// draft.
 	if openerIdx >= 0 {
 		accountID := params.AccountID
 		capturedIdx := openerIdx
@@ -431,18 +433,18 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 		})
 	}
 
-	// Edit mode exposes Delete as a leading action targeting the calendar's
-	// immutable ID; it is destructive (ButtonDanger) and only requests
-	// removal — the host owns the safe-confirm flow. Account calendars get
-	// no Delete: the button could only drop the local copy while the
-	// account still owns the calendar, so the form explains that in a
-	// footnote instead (hide locally via Display calendar; manage
+	// Edit mode exposes Delete as a leading action that targets the
+	// calendar's immutable ID. It is destructive (ButtonDanger) and only
+	// requests removal. The host owns the safe-confirm flow. Account
+	// calendars get no Delete. The button could only drop the local copy
+	// while the account still owns the calendar. The form explains that
+	// in a footnote instead (hide locally via Display calendar; manage
 	// membership in Account ▸ Manage Calendars). Export is a manager-only
-	// affordance (the legacy app has no export handler yet), so it is gated
+	// affordance (the legacy app has no export handler yet). It is gated
 	// on ManagerEmbedded to avoid a no-op button in legacy-wired dialogs.
 	// Apple sheet disposition: Set as Default and Export live on the quiet
-	// utility tier above the commit row; Delete — destructive — sits in the
-	// commit row's bottom-left corner, as far as possible from Save.
+	// utility tier above the commit row. Delete — destructive — sits in
+	// the commit row's bottom-left corner, as far as possible from Save.
 	if params.ID > 0 {
 		id := params.ID
 		name := params.Name
@@ -470,9 +472,9 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 	}
 
 	// Create mode with at least one calendar already on disk: offer to
-	// promote the new row to default in one save, instead of forcing a
+	// promote the new row to default in one save. Do not force a
 	// follow-up trip through the list dialog. Suppressed for the very
-	// first calendar since the service auto-promotes that row silently.
+	// first calendar. The service auto-promotes that row in silence.
 	if params.ID == 0 && params.OfferDefault {
 		form.SetLeadingActionButton("Save and Set as Default", Button, func() tea.Msg {
 			return calendarSavePromotePressedMsg{}
@@ -702,8 +704,8 @@ func syncHealthDialogLines(params CalendarDialogParams, theme Theme) []syncHealt
 // a rewrite. Everything else falls back to the first line of the raw error.
 func humanizeSyncError(raw string) string {
 	if strings.Contains(raw, "invalid_grant") {
-		// Short on purpose: the hint line right below carries the action,
-		// and the dialog line must fit ~56 cols after the
+		// Short on purpose. The hint line right below carries the action.
+		// The dialog line must fit ~56 cols after the
 		// "⚠ Sync failed: " prefix.
 		return "Google login expired"
 	}
@@ -829,10 +831,10 @@ func (m CalendarDialogModel) SetAccountName(name string) CalendarDialogModel {
 	return m
 }
 
-// Draft returns the calendar's current editable state as params: the live
-// field values plus the original context (ID, account linkage, sync health)
-// and the current visibility. Hosts use it to keep an unsaved calendar
-// draft across a drill into the owning account.
+// Draft returns the calendar's current editable state as params. That is
+// the live field values plus the original context (ID, account linkage,
+// sync health) and the current visibility. Hosts use it to keep an unsaved
+// calendar draft across a drill into the owning account.
 func (m CalendarDialogModel) Draft() CalendarDialogParams {
 	if m.localDraft == nil {
 		return CalendarDialogParams{}
@@ -1137,8 +1139,8 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 			oy := (m.dialog.height - bh) / 2
 			target := mouseResolve(mc.X-ox, mc.Y-oy)
 			// A click on the Display Calendar checkbox toggles it inside the
-			// form; compare pre/post state so the mouse path emits the same
-			// CalendarVisibilityToggledMsg as the keyboard path.
+			// form. Compare pre/post state. The mouse path then emits the
+			// same CalendarVisibilityToggledMsg as the keyboard path.
 			preVisible := m.visibilityChecked()
 			var cmd tea.Cmd
 			m.form, cmd = m.form.Update(MouseEvent{IsClick: true, Target: target})
