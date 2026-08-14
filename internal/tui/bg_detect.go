@@ -16,9 +16,9 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/tui/oklch"
 )
 
-// detectTimeout caps the total time spent waiting for terminal color
-// query responses. Terminals that answer respond in microseconds; this
-// is just a ceiling for the unresponsive case.
+// detectTimeout caps the total wait for terminal color query responses.
+// Terminals that answer respond in microseconds. This is just a ceiling
+// for the unresponsive case.
 const detectTimeout = 750 * time.Millisecond
 
 // Palette is the 16-entry ANSI color palette as actually rendered by the
@@ -39,25 +39,25 @@ func (p *Palette) Lookup(idx int) color.Color {
 // its 16-color ANSI palette. Returns a concrete bg color plus a fallback
 // hint (cream for light, near-black for dark) when only the foreground
 // is reported. The palette is non-nil when at least one OSC 4 response
-// arrived; individual entries are nil when that specific index wasn't
+// arrived. Individual entries are nil when that specific index was not
 // reported.
 //
 // Strategy:
 //
 //  1. Send OSC 11 (bg) + OSC 10 (fg) + OSC 4 (palette 0..15) + DA1
 //     (Primary Device Attributes) together in a single raw-mode session.
-//     DA1 is the cutoff — every mainstream terminal answers it, which
+//     DA1 is the cutoff. Every mainstream terminal answers it. That
 //     bounds the query even when individual OSC sequences are ignored.
 //
 //  2. If OSC 11 answered, use that RGB directly.
 //
 //  3. Otherwise, if OSC 10 answered, derive the theme mode from the
 //     foreground's OKLCh lightness (dark fg → light theme, light fg →
-//     dark theme) and return a neutral bg stand-in so downstream
-//     OKLCh-based adjustments still have something to work against.
+//     dark theme). Return a neutral bg stand-in. Downstream OKLCh-based
+//     adjustments then still have something to work against.
 //
 //  4. If neither answers, the returned bg is nil. The palette may still
-//     have entries — they're independent queries.
+//     have entries. They are independent queries.
 func detectTerminalState(in term.File, out term.File) (color.Color, *Palette) {
 	bg, fg, pal := queryTerminalColors(in, out, detectTimeout)
 	resolvedBG := bg
@@ -89,7 +89,7 @@ func paletteEmpty(p *Palette) bool {
 }
 
 // queryTerminalColors sends OSC 11 + OSC 10 + OSC 4 (×16) + DA1 in a
-// single raw-mode session and returns whichever of bg / fg / palette
+// single raw-mode session. It returns whichever of bg / fg / palette
 // entries the terminal reported. Any output may be nil / empty. The
 // MakeRaw/Restore cost is paid once for the whole batch.
 func queryTerminalColors(in term.File, out term.File, timeout time.Duration) (bg, fg color.Color, pal *Palette) {
