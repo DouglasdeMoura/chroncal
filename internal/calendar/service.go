@@ -11,23 +11,23 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
 
-// ErrLastCalendar is returned when attempting to delete the only remaining calendar.
+// ErrLastCalendar is returned when a delete targets the only calendar that remains.
 var ErrLastCalendar = errors.New("cannot delete the last calendar")
 
 // ErrDuplicateName is returned when a calendar name already exists.
 var ErrDuplicateName = errors.New("a calendar with this name already exists")
 
 // ErrDefaultCalendarRequiresPromotion is returned when the current default
-// calendar is among those being deleted but no surviving replacement was
-// supplied. Delete surfaces it directly; the other delete/reconcile paths
+// calendar is among those being deleted but no replacement that survives was
+// supplied. Delete surfaces it directly. The other delete/reconcile paths
 // surface it through the shared PromoteDefault helper.
 var ErrDefaultCalendarRequiresPromotion = errors.New("cannot delete the default calendar without promoting a replacement")
 
 // ErrInvalidPromotionTarget is returned when a default-calendar promotion
-// target does not survive the operation: it is the calendar being removed, is
-// among the calendars being removed, or does not exist. DeleteAndPromote,
-// DeleteWithRemoteCleanup, and the account selection/removal paths surface it
-// through the shared PromoteDefault helper.
+// target does not survive the operation. It is the calendar being removed, or
+// it is among the calendars being removed, or it does not exist.
+// DeleteAndPromote, DeleteWithRemoteCleanup, and the account selection/removal
+// paths surface it through the shared PromoteDefault helper.
 var ErrInvalidPromotionTarget = errors.New("invalid promotion target for default calendar")
 
 type Service struct {
@@ -52,11 +52,10 @@ func (s *Service) List(ctx context.Context) ([]Calendar, error) {
 }
 
 // SetOrder persists the given calendar IDs as display order 0..n-1 in a single
-// transaction, so the sidebar (and manage-calendars dialog) render in this
-// order. The caller passes the full ordered ID list — typically the sidebar's
-// current row order after a move — making the operation idempotent and
-// self-healing against any drift. IDs not present in the slice are left
-// untouched.
+// transaction. The sidebar and manage-calendars dialog then show this order.
+// The caller passes the full ordered ID list, typically the sidebar's current
+// row order after a move. The operation is idempotent. It also heals drift.
+// IDs not present in the slice are left untouched.
 func (s *Service) SetOrder(ctx context.Context, ids []int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -178,9 +177,9 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 }
 
 // DeleteAndPromote deletes a calendar and, when it is the current default,
-// promotes newDefaultID in the same transaction so the database is never
+// promotes newDefaultID in the same transaction. The database is then never
 // observed without a default. Pass newDefaultID = 0 when the target is not
-// the default; the call then behaves exactly like Delete.
+// the default. The call then behaves exactly like Delete.
 func (s *Service) DeleteAndPromote(ctx context.Context, id, newDefaultID int64) error {
 	return s.deleteWithOptionalPromotion(ctx, id, newDefaultID)
 }
@@ -215,8 +214,8 @@ func (s *Service) deleteWithOptionalPromotion(ctx context.Context, id, newDefaul
 
 	// When the target held the default, PromoteDefault validates that the
 	// replacement survives the deletion (it is not id and still exists in this
-	// transaction) and clears+sets the default atomically, so the database is
-	// never observed without a default.
+	// transaction). It then clears and sets the default atomically. The
+	// database is never observed without a default.
 	if target.IsDefault == 1 {
 		if err := PromoteDefault(ctx, qtx, map[int64]struct{}{id: {}}, newDefaultID); err != nil {
 			return err
@@ -253,8 +252,8 @@ func (s *Service) SetDefault(ctx context.Context, id int64) error {
 
 // GetDefault returns the current default calendar, or sql.ErrNoRows if no
 // default exists. A live database should always have exactly one default
-// because Create promotes the first calendar automatically; callers that
-// hit ErrNoRows are looking at a database in an inconsistent state.
+// because Create promotes the first calendar automatically. Callers that
+// hit ErrNoRows have a database in an inconsistent state.
 func (s *Service) GetDefault(ctx context.Context) (Calendar, error) {
 	r, err := s.q.GetDefaultCalendar(ctx)
 	if err != nil {
