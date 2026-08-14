@@ -17,7 +17,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
-// Service handles recurrence expansion and caching
+// Service handles recurrence expansion and the cache.
 type Service struct {
 	db *sql.DB
 	q  *storage.Queries
@@ -39,7 +39,7 @@ func tzForExpansion(tz string) *time.Location {
 	if err != nil {
 		return nil
 	}
-	// Don't bother converting for fixed-offset zones (no DST to handle).
+	// Do not convert for fixed-offset zones (no DST to handle).
 	if loc == time.UTC {
 		return nil
 	}
@@ -54,15 +54,15 @@ func inWindow(t, from, to time.Time) bool {
 
 // overlapsWindow reports whether the half-open interval [start, end) intersects
 // [from, to). This matches the SQL range predicate (start_time < to AND
-// end_time > from) used for non-recurring events, so a multi-day instance or
-// override that spans into the window is not dropped just because its start
-// precedes it. Regular RRULE instances are filtered by this same overlap in
-// ExpandEvent/ExpandTodo, generating from from-duration so a straddling
-// occurrence is produced before being kept.
+// end_time > from) used for non-recurring events. A multi-day instance or
+// override that spans into the window is then not dropped just because its
+// start precedes it. Regular RRULE instances are filtered by this same overlap
+// in ExpandEvent/ExpandTodo. Generation starts from from-duration so a
+// straddling occurrence is produced before it is kept.
 //
-// A zero end (e.g. an override persisted with a blank end_time) is treated as
-// instantaneous and matched by its start alone, so the occurrence is not
-// silently dropped together with the master slot it replaces.
+// A zero end (for example an override persisted with a blank end_time) is
+// treated as instantaneous and matched by its start alone. The occurrence is
+// then not dropped in silence together with the master slot it replaces.
 func overlapsWindow(start, end, from, to time.Time) bool {
 	if end.IsZero() {
 		return inWindow(start, from, to)
@@ -71,18 +71,18 @@ func overlapsWindow(start, end, from, to time.Time) bool {
 }
 
 // keepOccurrence reports whether an expanded occurrence at occ with instance
-// duration dur belongs in the half-open window [from, to): its [occ, occ+dur)
-// interval overlaps the window, or (for a zero-duration occurrence whose open
-// end boundary overlapsWindow would reject) occ itself falls inside it.
+// duration dur belongs in the half-open window [from, to). Its [occ, occ+dur)
+// interval overlaps the window. For a zero-duration occurrence whose open
+// end boundary overlapsWindow would reject, occ itself falls inside it.
 func keepOccurrence(occ time.Time, dur time.Duration, from, to time.Time) bool {
 	return overlapsWindow(occ, occ.Add(dur), from, to) || inWindow(occ, from, to)
 }
 
 // canonicalRecurrenceID normalizes a stored recurrence_id to the same UTC
-// RFC 3339 form used for expanded instance keys, so a date-only or zoned id
+// RFC 3339 form used for expanded instance keys. A date-only or zoned id then
 // compares equal to the occurrence it identifies. Suppression and orphan
-// detection must use the same normalization (or neither) to stay in agreement;
-// falls back to the raw string when it cannot be parsed.
+// detection must use the same normalization (or neither) to stay in agreement.
+// It falls back to the raw string when it cannot be parsed.
 func canonicalRecurrenceID(rid string) string {
 	if t, err := timeutil.ParseRecurrenceID(rid); err == nil {
 		return t.UTC().Format(time.RFC3339)
@@ -92,14 +92,16 @@ func canonicalRecurrenceID(rid string) string {
 
 // occursAt reports whether the recurring set produces an occurrence whose
 // instance key equals recurrenceID. An override whose RECURRENCE-ID is not a
-// genuine occurrence of its master is an orphan — left behind when a series is
-// truncated or split — and is not part of the recurrence set, so it must not be
-// expanded. The comparison uses the same instance key the suppression map keys
-// on (InstanceTime.UTC() formatted as RFC 3339 vs the raw recurrence_id string),
-// so suppression and orphan-detection can never disagree about a given slot.
+// genuine occurrence of its master is an orphan. It is left behind when a
+// series is truncated or split. It is not part of the recurrence set. It
+// must not be expanded.
 //
-// The set must be built with includeExDates=false: a RECURRENCE-ID override wins
-// over its slot, so an EXDATE for the same slot must not make a legitimate
+// The comparison uses the same instance key the suppression map keys on
+// (InstanceTime.UTC() formatted as RFC 3339 vs the raw recurrence_id string).
+// Suppression and orphan-detection then cannot disagree about a given slot.
+//
+// The set must be built with includeExDates=false. A RECURRENCE-ID override
+// wins over its slot. An EXDATE for the same slot must not make a legitimate
 // override look like an orphan.
 func (rs rruleSet) occursAt(recurrenceID string) bool {
 	t, err := timeutil.ParseRecurrenceID(recurrenceID)
@@ -121,8 +123,8 @@ func (rs rruleSet) occursAt(recurrenceID string) bool {
 
 // occChecker tests whether an override's RECURRENCE-ID names a genuine
 // occurrence of its master. The master's RRULE is parsed once (EXDATEs ignored)
-// and reused across all of the master's overrides, avoiding a re-parse per
-// override. anchor is the master's own occurrence instant, used as the sole
+// and reused across all of the master's overrides. There is no re-parse per
+// override. anchor is the master's own occurrence instant. It is the sole
 // occurrence when the master is non-recurring or its RRULE fails to parse.
 type occChecker struct {
 	rs     rruleSet
@@ -143,7 +145,7 @@ func (c occChecker) occursAt(recurrenceID string) bool {
 
 // rruleSet is a master's parsed RRULE plus the context needed to expand it or
 // test individual occurrences. The RRULE is parsed once so the set can be reused
-// for every occurrence and override of a master instead of re-parsing per call.
+// for every occurrence and override of a master. There is no re-parse per call.
 type rruleSet struct {
 	set      *rrule.Set
 	loc      *time.Location
@@ -152,15 +154,15 @@ type rruleSet struct {
 }
 
 // newRRuleSet parses an "RRULE:"-prefixed rule anchored at dtstart in timezone
-// tz, applying exDates/rDates. includeExDates controls whether the EXDATEs are
-// applied: occurrence expansion needs them, but orphan detection must not (see
+// tz, and applies exDates/rDates. includeExDates controls whether the EXDATEs
+// are applied. Occurrence expansion needs them. Orphan detection must not (see
 // occursAt). ok is false only when there is truly nothing to expand (rule is
-// empty AND no rDates); callers fall back to a single instance in that case.
+// empty AND no rDates). Callers fall back to a single instance in that case.
 //
 // RFC 5545 §3.8.5.2 permits RDATE-only recurrence with no RRULE. When rule is
 // empty but rDates is non-empty, an empty rrule.Set is built and DTSTART is
-// added as an implicit occurrence (RFC 5545 makes DTSTART an occurrence of the
-// recurrence set even without an RRULE). DTSTART is intentionally excluded from
+// added as an implicit occurrence. RFC 5545 makes DTSTART an occurrence of the
+// recurrence set even without an RRULE. DTSTART is intentionally excluded from
 // rdateSet so it is not mislabelled IsOverride.
 func newRRuleSet(rule, tz string, dtstart time.Time, dur time.Duration, exDates, rDates []time.Time, includeExDates bool) (rruleSet, bool) {
 	// Nothing to expand: no RRULE and no explicit RDATEs.
@@ -234,9 +236,9 @@ func newRRuleSet(rule, tz string, dtstart time.Time, dur time.Duration, exDates,
 }
 
 // eventOverridesByUID fetches every override for the given recurring masters in
-// a single query and groups them by master UID, avoiding one SELECT per master.
-// A failed fetch is propagated, not swallowed: rendering a master as if it had
-// no overrides would silently show a stale, un-overridden series.
+// a single query and groups them by master UID. There is no SELECT per master.
+// A failed fetch is propagated, not swallowed. A render of a master as if it
+// had no overrides would show a stale, un-overridden series in silence.
 func (s *Service) eventOverridesByUID(ctx context.Context, masters []storage.Event) (map[string][]storage.Event, error) {
 	if len(masters) == 0 {
 		return nil, nil
@@ -297,14 +299,15 @@ func (s *Service) journalOverridesByUID(ctx context.Context, masters []storage.J
 }
 
 // cancelledRecurringMaster reports whether the row is a recurring master that
-// has been cancelled. Cancelling a recurring series cancels the whole series, so
-// such a master expands to no occurrences. Because display, alarms, and
-// free/busy all flow through the Expand* functions, all three intentionally see
-// nothing for a cancelled series — including any still-CONFIRMED override, which
-// is dropped with the series (matching Google/iCloud whole-series-cancel
+// has been cancelled. A cancel of a recurring series cancels the whole series.
+// Such a master expands to no occurrences.
+//
+// Display, alarms, and free/busy all flow through the Expand* functions. All
+// three intentionally see nothing for a cancelled series. Any still-CONFIRMED
+// override is dropped with the series (matching Google/iCloud whole-series-cancel
 // semantics). Non-recurring cancelled events are left untouched for the caller
-// to show or hide. ICS export deliberately bypasses this via a status-stripped
-// probe so a CANCELLED master still round-trips (see ExportExpandedByDateRange).
+// to show or hide. ICS export bypasses this via a status-stripped probe so a
+// CANCELLED master still round-trips (see ExportExpandedByDateRange).
 // RecurrenceRule and Status are exported strings on event.Event, todo.Todo, and
 // journal.Journal alike.
 func cancelledRecurringMaster(recurrenceRule, status string) bool {
@@ -314,17 +317,17 @@ func cancelledRecurringMaster(recurrenceRule, status string) bool {
 // isRDateOnlyMaster reports whether a storage row's rdates field marks it as an
 // RDATE-only recurring master: no RRULE but at least one RDATE stored. Such
 // rows must follow the recurring-expansion path even though recurrence_rule IS
-// NULL, so Go-level filters that would otherwise include them as non-recurring
+// NULL. Go-level filters that would otherwise include them as non-recurring
 // singletons must skip them.
 func isRDateOnlyMaster(rdates *string) bool {
 	return rdates != nil && *rdates != ""
 }
 
 // rdateKey canonicalizes an RDATE/occurrence instant for membership lookups.
-// The rrule iterator yields RDATE values truncated to whole seconds, so keying
-// on a second-granularity UTC RFC 3339 string avoids sub-second precision or
-// representation drift causing a missed match (which would mislabel an
-// explicitly-added occurrence as a plain RRULE instance). See issue #128.
+// The rrule iterator yields RDATE values truncated to whole seconds. A key
+// on a second-granularity UTC RFC 3339 string then avoids sub-second precision
+// or representation drift. A missed match would mislabel an explicitly-added
+// occurrence as a plain RRULE instance. See issue #128.
 func rdateKey(t time.Time) string {
 	return t.UTC().Truncate(time.Second).Format(time.RFC3339)
 }
@@ -342,10 +345,10 @@ func buildRDateSet(rdates []time.Time) map[string]struct{} {
 
 // between returns the occurrences in [from, to) whose [occ, occ+dur) interval
 // overlaps the window, expanded once in the set's timezone. A multi-day instance
-// whose start precedes 'from' can still overlap the window via its duration, so
-// generation begins one instance-duration early and occurrences are kept by
+// whose start precedes 'from' can still overlap the window via its duration.
+// Generation then begins one instance-duration early. Occurrences are kept by
 // [start, end) overlap rather than start alone. Returned times are in the set's
-// expansion zone; callers normalize to UTC.
+// expansion zone. Callers normalize to UTC.
 func (rs rruleSet) between(from, to time.Time) []time.Time {
 	localFrom, localTo := from, to
 	if rs.loc != nil {
@@ -421,13 +424,13 @@ type expandOptions struct {
 }
 
 // SkipCategories omits the batch category load. Use this when the caller
-// does not need Event.Categories (e.g. alarm checking).
+// does not need Event.Categories (for example alarm checks).
 func SkipCategories() ExpandOption {
 	return func(o *expandOptions) { o.skipCategories = true }
 }
 
 // ListExpandedEvents returns events with their instances in a date range.
-// Uses filtered queries instead of loading the entire table.
+// It uses filtered queries instead of a load of the entire table.
 func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, opts ...ExpandOption) ([]ExpandedEvent, error) {
 	var o expandOptions
 	for _, fn := range opts {
@@ -581,12 +584,12 @@ type recurringKind[Row any, Model any, Inst any] struct {
 }
 
 // expandRecurringRowsBy expands recurring master rows into per-occurrence
-// Models, applying overrides. For each master, an override (a row with a
+// Models and applies overrides. For each master, an override (a row with a
 // matching RECURRENCE-ID) suppresses the original RRULE instance and is emitted
 // separately at its own occurrence time. CANCELLED and orphan overrides are
 // dropped. This is the shared engine behind the event/todo/journal variants.
 //
-// Every master's overrides are fetched in a single batched query up front; a
+// Every master's overrides are fetched in a single batched query up front. A
 // failed fetch is propagated so callers never render masters as if they had no
 // overrides.
 func expandRecurringRowsBy[Row any, Model any, Inst any](ctx context.Context, k recurringKind[Row, Model, Inst], rows []Row, from, to time.Time) ([]Model, error) {
@@ -646,8 +649,8 @@ func expandRecurringRowsBy[Row any, Model any, Inst any](ctx context.Context, k 
 }
 
 // expandedEventKind drives expandRecurringRowsBy for ListExpandedEvents, which
-// needs each occurrence's InstanceTime preserved. ExpandedEvent serves as both
-// the master Model and the emitted output, so applyInstance is identity: the
+// needs each occurrence's InstanceTime kept. ExpandedEvent serves as both
+// the master Model and the emitted output, so applyInstance is identity. The
 // per-occurrence InstanceTime that expandRecurringRows discards (it collapses
 // the occurrence into Event.Start/End) is kept here.
 func expandedEventKind(s *Service) recurringKind[storage.Event, ExpandedEvent, ExpandedEvent] {
@@ -748,10 +751,9 @@ type ExportFilterParams struct {
 }
 
 // rangeBoundUTC formats a date-range query bound as an RFC3339 string in UTC,
-// or "" for the zero time. Normalizing to UTC is required because these bounds
-// are compared lexically against the UTC-stored start/end strings (issue #305):
-// a non-UTC offset left in the formatted string breaks that comparison near
-// window edges.
+// or "" for the zero time. Normalize to UTC because these bounds are compared
+// lexically against the UTC-stored start/end strings (issue #305). A non-UTC
+// offset left in the formatted string breaks that comparison near window edges.
 func rangeBoundUTC(t time.Time) string {
 	if t.IsZero() {
 		return ""
@@ -849,10 +851,10 @@ func todoFromRow(row storage.Todo) todo.Todo {
 }
 
 // populateCategories batch-loads categories for items and assigns the joined
-// category string to each via setCats. idOf yields an item's primary key,
-// fetch loads the join rows for a set of ids, and rowCat splits a join row into
-// its (id, category) pair. A fetch error is swallowed: categories augment a
-// listing rather than gate it, matching the per-domain behavior this unifies.
+// category string to each via setCats. idOf yields an item's primary key.
+// fetch loads the join rows for a set of ids. rowCat splits a join row into
+// its (id, category) pair. A fetch error is swallowed. Categories augment a
+// listing rather than gate it. This matches the per-domain behavior this unifies.
 func populateCategories[T any, R any](
 	ctx context.Context,
 	items []T,
@@ -911,7 +913,7 @@ func todoAnchor(td todo.Todo) time.Time {
 	return anchor
 }
 
-// todoDuration is the START->DUE span used to keep a straddling occurrence; a
+// todoDuration is the START->DUE span used to keep a straddling occurrence. A
 // due-only (point) todo has none.
 func todoDuration(td todo.Todo) time.Duration {
 	if start := td.ParseStartDate(); !start.IsZero() {
@@ -1027,9 +1029,9 @@ func (s *Service) expandRecurringTodoRows(ctx context.Context, rows []storage.To
 	return expandRecurringRowsBy(ctx, k, rows, from, to)
 }
 
-// shiftDateString returns value advanced by offset, preserving its date-only or
+// shiftDateString returns value advanced by offset. It keeps its date-only or
 // RFC 3339 representation. It returns value unchanged when it is empty or its
-// parsed form (parsed) is zero, so a blank or unparseable field is left intact.
+// parsed form (parsed) is zero. A blank or unparseable field is then left intact.
 func shiftDateString(value string, parsed time.Time, offset time.Duration) string {
 	if value == "" || parsed.IsZero() {
 		return value
@@ -1086,7 +1088,7 @@ func (s *Service) ListExpandedTodosByDueDateRange(ctx context.Context, from, to 
 	return result, nil
 }
 
-// EventListParams holds composable filters for listing events.
+// EventListParams holds composable filters for event lists.
 type EventListParams struct {
 	CalendarID     int64
 	Status         string
@@ -1096,10 +1098,10 @@ type EventListParams struct {
 	IncludeDeleted bool
 }
 
-// ListFilteredEvents returns events matching all supplied filters. Calendar,
+// ListFilteredEvents returns events that match all supplied filters. Calendar,
 // status, and date-range filters compose freely. When a date range is
-// provided, recurring events are expanded within it, with overrides applied;
-// otherwise recurring masters are returned as-is, matching the
+// provided, recurring events are expanded within it, with overrides applied.
+// Otherwise recurring masters are returned as-is. This matches the
 // todo/journal contract.
 func (s *Service) ListFilteredEvents(ctx context.Context, p EventListParams) ([]event.Event, error) {
 	fromStr := rangeBoundUTC(p.From)
@@ -1151,7 +1153,7 @@ func (s *Service) ListFilteredEvents(ctx context.Context, p EventListParams) ([]
 	return result, nil
 }
 
-// TodoListParams holds composable filters for listing todos.
+// TodoListParams holds composable filters for todo lists.
 type TodoListParams struct {
 	CalendarID    int64
 	Status        string
@@ -1164,8 +1166,8 @@ type TodoListParams struct {
 	IncludeDeleted bool
 }
 
-// ListFilteredTodos returns todos matching all supplied filters. When a date
-// range is provided, recurring todos are expanded; otherwise master entries
+// ListFilteredTodos returns todos that match all supplied filters. When a date
+// range is provided, recurring todos are expanded. Otherwise master entries
 // are returned as-is.
 func (s *Service) ListFilteredTodos(ctx context.Context, p TodoListParams) ([]todo.Todo, error) {
 	hideCompleted := int64(0)
@@ -1245,7 +1247,7 @@ type ExpandedJournal struct {
 	IsOverride   bool
 }
 
-// JournalListParams holds composable filters for listing journals.
+// JournalListParams holds composable filters for journal lists.
 type JournalListParams struct {
 	CalendarID int64
 	Status     string
@@ -1377,8 +1379,8 @@ func (s *Service) expandRecurringJournalRows(ctx context.Context, rows []storage
 	return expandRecurringRowsBy(ctx, k, rows, from, to)
 }
 
-// ListFilteredJournals returns journals matching all supplied filters. When a
-// date range is provided, recurring journals are expanded; otherwise master
+// ListFilteredJournals returns journals that match all supplied filters. When a
+// date range is provided, recurring journals are expanded. Otherwise master
 // entries are returned as-is.
 func (s *Service) ListFilteredJournals(ctx context.Context, p JournalListParams) ([]journal.Journal, error) {
 	hideCancelled := int64(0)
