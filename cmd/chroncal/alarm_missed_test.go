@@ -15,10 +15,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// TestAlarmMissed_RejectsNonPositiveDays guards against issue #140: a
+// TestAlarmMissed_RejectsNonPositiveDays guards against issue #140. A
 // zero or negative --days value produced an empty/undefined lookback
 // window instead of an invalid_input error. Validation runs before
-// initApp, so the command must fail without ever touching the database.
+// initApp. The command must then fail with no touch of the database.
 func TestAlarmMissed_RejectsNonPositiveDays(t *testing.T) {
 	for _, days := range []string{"0", "-1", "-5"} {
 		t.Run("days="+days, func(t *testing.T) {
@@ -42,11 +42,12 @@ func TestAlarmMissed_RejectsNonPositiveDays(t *testing.T) {
 	}
 }
 
-// TestAlarmMissed_JSONIsFlatArray is the regression test for issue #433:
-// "alarm missed -o json" emitted a map {"events":[...],"todos":[...]} while
-// the sibling "alarm list"/"alarm check" commands emit a flat array. Scripts
+// TestAlarmMissed_JSONIsFlatArray is the regression test for issue #433.
+// "alarm missed -o json" emitted a map {"events":[...],"todos":[...]}. The
+// sibling "alarm list"/"alarm check" commands emit a flat array. Scripts
 // using the `... -o json | jq '.[]'` idiom broke on the inconsistent shape.
-// The output must be a flat array of items, each carrying a "type" discriminator.
+// The output must be a flat array of items. Each item carries a "type"
+// discriminator.
 func TestAlarmMissed_JSONIsFlatArray(t *testing.T) {
 	a := newAlarmTestApp(t)
 	ctx := t.Context()
