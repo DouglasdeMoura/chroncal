@@ -174,10 +174,10 @@ func TestEnginePushContinuesAfterResourceFailure(t *testing.T) {
 }
 
 // TestEnginePushPreservesConcurrentEditDuringPut is the regression test for
-// issue #92: a concurrent local edit that arrives while the PUT is in flight
-// must not be silently dropped. Push exports the pre-edit body, PUTs it, and
+// issue #92. A concurrent local edit that arrives while the PUT is in flight
+// must not be dropped in silence. Push exports the pre-edit body, PUTs it, and
 // then clears the dirty flag. If the clear is unconditional it wipes the
-// dirty=1 the concurrent edit set, so the edit is never pushed (lost update).
+// dirty=1 the concurrent edit set. The edit is then never pushed (lost update).
 // The clear must be gated on the resource revision captured before the PUT.
 func TestEnginePushPreservesConcurrentEditDuringPut(t *testing.T) {
 	t.Parallel()
@@ -252,11 +252,11 @@ func TestEnginePushPreservesConcurrentEditDuringPut(t *testing.T) {
 }
 
 // TestResolvePushIdentity locks in the precedence rules for the push
-// identity now that it is resolved from the already-loaded calendar and
-// account rows instead of re-querying the database: a non-empty (trimmed)
-// owner_email wins, otherwise the linked account's username is used, and
-// an unlinked calendar with no owner_email yields the empty string so the
-// caller skips the organizer gate.
+// identity. It is now resolved from the already-loaded calendar and
+// account rows instead of a re-query of the database. A non-empty (trimmed)
+// owner_email wins. Otherwise the linked account's username is used. An
+// unlinked calendar with no owner_email yields the empty string. The
+// caller then skips the organizer gate.
 func TestResolvePushIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -305,8 +305,8 @@ func TestResolvePushIdentity(t *testing.T) {
 
 // TestEnginePushSkipsForeignOrganizedEvents confirms that push refuses to
 // PUT meetings the calendar owner did not organize. CalDAV servers reject
-// attendee PUTs (Google returns HTTP 400 with a vague <D:error/>) so
-// retrying every sync is just dead weight — we clear the dirty flag and
+// attendee PUTs (Google returns HTTP 400 with a vague <D:error/>). A
+// retry of every sync is just dead weight. We clear the dirty flag and
 // leave the local row alone.
 func TestEnginePushSkipsForeignOrganizedEvents(t *testing.T) {
 	t.Parallel()
@@ -394,10 +394,10 @@ func TestEnginePushSkipsForeignOrganizedEvents(t *testing.T) {
 }
 
 // TestEnginePushClearsDirtyWhenLocalRowMissing verifies that a dirty
-// sync_resource pointing at a UID with no live event row stops retrying.
+// sync_resource that points at a UID with no live event row stops the retry.
 // This unblocks zombie rows left over from inconsistent state (e.g. user
-// purged the local event but the sync_resource survived) instead of
-// emitting "get event by uid" errors on every sync run.
+// purged the local event but the sync_resource survived). It does not
+// emit "get event by uid" errors on every sync run.
 func TestEnginePushClearsDirtyWhenLocalRowMissing(t *testing.T) {
 	t.Parallel()
 
@@ -440,10 +440,10 @@ func TestEnginePushClearsDirtyWhenLocalRowMissing(t *testing.T) {
 }
 
 // TestEngineExportResourceFallsBackToOrphanOverride covers Google's
-// `<master>_R<rid>@google.com` orphan-instance pattern: the iCal stream
+// `<master>_R<rid>@google.com` orphan-instance pattern. The iCal stream
 // gives an isolated occurrence with a synthetic suffixed UID and a
-// RECURRENCE-ID, so we import an override row but never receive a master.
-// The exporter must still emit something pushable instead of erroring.
+// RECURRENCE-ID. We import an override row but never receive a master.
+// The exporter must still emit something pushable instead of an error.
 func TestEngineExportResourceFallsBackToOrphanOverride(t *testing.T) {
 	t.Parallel()
 
@@ -472,16 +472,16 @@ func TestEngineExportResourceFallsBackToOrphanOverride(t *testing.T) {
 	}
 }
 
-// TestEngineExportResourcePropagatesOverrideListError guards a data-loss bug:
+// TestEngineExportResourcePropagatesOverrideListError guards a data-loss bug.
 // exportResource used to discard the ListOverridesByUID error. For a recurring
-// resource (master row + override rows sharing the UID) a transient read error
-// (e.g. SQLite busy/locked) on the override list would then be silently dropped
-// — GetByUID still supplied the master, the non-empty guard passed, and the
-// exporter produced a master-ONLY iCal. PUTting that payload to the server
-// overwrites and deletes every overridden occurrence. The export must fail
-// instead of emitting a partial body. We force the override read to fail by
-// seeding a corrupt override row (non-numeric value in the INTEGER sequence
-// column) that the master lookup never reads but the override scan does.
+// resource (master row + override rows that share the UID) a transient read
+// error (e.g. SQLite busy/locked) on the override list would then be dropped
+// in silence. GetByUID still supplied the master. The non-empty guard passed.
+// The exporter produced a master-ONLY iCal. A PUT of that payload to the
+// server overwrites and deletes every overridden occurrence. The export must
+// fail instead of a partial body. We force the override read to fail. We seed
+// a corrupt override row (non-numeric value in the INTEGER sequence
+// column). The master lookup never reads that row. The override scan does.
 func TestEngineExportResourcePropagatesOverrideListError(t *testing.T) {
 	t.Parallel()
 
@@ -538,12 +538,12 @@ func TestEngineExportResourcePropagatesOverrideListError(t *testing.T) {
 }
 
 // TestEnginePullClearsDirtyAfterImport prevents the regression where pull's
-// persistImported call flipped dirty=1 (via the event service's Replace*
-// methods which mark the sync_resource dirty as a side effect for user
-// edits) and UpsertSyncResource's `dirty = MAX(...)` clause preserved that
-// 1, so every sync re-dirtied resources it had just imported and the next
+// persistImported call flipped dirty=1. The event service's Replace*
+// methods mark the sync_resource dirty as a side effect for user
+// edits. UpsertSyncResource's `dirty = MAX(...)` clause preserved that
+// 1. Every sync then re-dirtied resources it had just imported. The next
 // push round-tripped them back to the server. The engine must explicitly
-// clear dirty after a sync-driven import so the resource lands clean.
+// clear dirty after a sync-driven import. The resource then lands clean.
 func TestEnginePullClearsDirtyAfterImport(t *testing.T) {
 	t.Parallel()
 
@@ -631,13 +631,13 @@ END:VCALENDAR
 	}
 }
 
-// TestEnginePersistImportedKeepsDirtyOnChildReplaceError pins issue #69: a
-// transient failure while replacing an imported resource's child collections
-// (alarms/attendees/...) must propagate out of persistImported. Previously the
-// Replace* errors were discarded with `_ =`, so the caller cleared the dirty
-// flag and the stale children were never retried. Here we let the parent
-// UpsertByUID succeed but force ReplaceAlarms to fail (by dropping the
-// event_alarms table), then assert persistImported returns an error and the
+// TestEnginePersistImportedKeepsDirtyOnChildReplaceError pins issue #69. A
+// transient failure during a replace of an imported resource's child
+// collections (alarms/attendees/...) must propagate out of persistImported.
+// Previously the Replace* errors were discarded with `_ =`. The caller then
+// cleared the dirty flag. The stale children were never retried. Here we let
+// the parent UpsertByUID succeed but force ReplaceAlarms to fail (by a drop of
+// the event_alarms table). Then assert persistImported returns an error. The
 // sync_resource stays dirty so the next sync retries it.
 func TestEnginePersistImportedKeepsDirtyOnChildReplaceError(t *testing.T) {
 	t.Parallel()
@@ -713,11 +713,11 @@ func TestEnginePersistImportedKeepsDirtyOnChildReplaceError(t *testing.T) {
 
 // TestEnginePullToleratesMultigetMissingPath verifies that a per-resource
 // 404 returned by calendar-multiget after sync-collection nominated the path
-// no longer aborts the whole pull. Surviving resources still import; missing
-// paths are NOT soft-deleted (a 404 here can be a transient server quirk,
-// not a real deletion — we lost real user data the one time we tried that);
-// and the sync-token is held back so the next sync re-lists the same change
-// set and gets another chance to fetch the missing bodies.
+// no longer aborts the whole pull. Resources that remain still import. Paths
+// that 404 are NOT soft-deleted. A 404 here can be a transient server quirk,
+// not a real deletion. We lost real user data the one time we tried that.
+// The sync-token is held back. The next sync then re-lists the same change
+// set and gets another chance to fetch the bodies that 404'd.
 func TestEnginePullToleratesMultigetMissingPath(t *testing.T) {
 	t.Parallel()
 
@@ -858,13 +858,13 @@ END:VCALENDAR
 	}
 }
 
-// TestEnginePullIncompletePullMarksCalendarUnhealthy reproduces issue #293: a
-// pull that can never converge (here, an href the server keeps reporting as
+// TestEnginePullIncompletePullMarksCalendarUnhealthy reproduces issue #293. A
+// pull that can never converge (here, an href the server keeps as
 // changed but that 404s on every multiget) used to only log and return no
-// error, so SyncResult.Errors stayed empty and updateSyncHealth recorded the
-// calendar as healthy — the ambient ⚠ glyph never lit up despite sync being
-// permanently stuck. The incomplete pull must surface an error so the calendar
-// is recorded unhealthy.
+// error. SyncResult.Errors stayed empty. updateSyncHealth recorded the
+// calendar as healthy. The ambient ⚠ glyph never lit up despite a stuck
+// sync. The incomplete pull must surface an error. The calendar is then
+// recorded unhealthy.
 func TestEnginePullIncompletePullMarksCalendarUnhealthy(t *testing.T) {
 	t.Parallel()
 
@@ -971,12 +971,12 @@ func TestEnginePullIncompletePullMarksCalendarUnhealthy(t *testing.T) {
 }
 
 // TestEngineSyncCalendarRecordsHealthOnEarlyClientFailure is the regression
-// test for issue #416: when loadCalendarClient returns early (missing
-// credentials, no linked account, empty RemoteUrl) the updateSyncHealth defer
-// used to be registered after that call, so it never ran. LastSyncAttemptedAt /
-// LastSyncError stayed stale and the ambient ⚠ sidebar glyph (which keys on a
+// test for issue #416. When loadCalendarClient returns early (credentials
+// gone, no linked account, empty RemoteUrl) the updateSyncHealth defer
+// used to be registered after that call. It then never ran. LastSyncAttemptedAt
+// / LastSyncError stayed stale. The ambient ⚠ sidebar glyph (which keys on a
 // non-empty LastSyncError) stayed dark while the calendar was permanently
-// failing — notably OAuth calendars with revoked credentials.
+// failed. Notably OAuth calendars with revoked credentials.
 func TestEngineSyncCalendarRecordsHealthOnEarlyClientFailure(t *testing.T) {
 	t.Parallel()
 
@@ -1008,16 +1008,16 @@ func TestEngineSyncCalendarRecordsHealthOnEarlyClientFailure(t *testing.T) {
 }
 
 // TestEnginePushSerializesConcurrentNewResourceCreate is the regression test
-// for issue #225: two concurrent push runs for the same calendar (e.g. an
+// for issue #225. Two concurrent push runs for the same calendar (e.g. an
 // opportunistic save-time PushCalendar racing a periodic SyncCalendar) must not
 // both create a server object for the same never-pushed, etag-less resource.
 // Before the per-calendar push lock, each run read the same dirty
-// sync_resource (RemoteUrl=""), minted a distinct random href, and PUT it with
-// no If-Match precondition, leaving the server with two objects for one UID.
+// sync_resource (RemoteUrl=""). Each minted a distinct random href. Each PUT
+// it with no If-Match precondition. The server then had two objects for one UID.
 //
-// The two runs use distinct Engine instances over a shared DB, mirroring the
-// TUI, which builds a fresh sync.Service per operation (see newSyncService) —
-// an Engine-scoped lock would not catch this; the lock registry is keyed by DB.
+// The two runs use distinct Engine instances over a shared DB. That matches the
+// TUI, which builds a fresh sync.Service per operation (see newSyncService).
+// An Engine-scoped lock would not catch this. The lock registry is keyed by DB.
 func TestEnginePushSerializesConcurrentNewResourceCreate(t *testing.T) {
 	t.Parallel()
 
@@ -1337,10 +1337,10 @@ func TestEnginePushLostPutResponseIsNotFalseConflict(t *testing.T) {
 }
 
 // TestEnginePushSkipsUIDWithOpenConflict verifies that once a prompt-mode
-// conflict has been recorded for a UID, subsequent syncs do not re-PUT the
-// still-dirty resource and do not insert duplicate sync_conflicts rows. See
-// issue #104: the original code left the resource dirty with its stale ETag,
-// so every tick issued a wasted failing PUT and appended another conflict row.
+// conflict has been recorded for a UID, later syncs do not re-PUT the
+// still-dirty resource. They do not insert duplicate sync_conflicts rows. See
+// issue #104. The original code left the resource dirty with its stale ETag.
+// Every tick then issued a wasted failed PUT and appended another conflict row.
 func TestEnginePushSkipsUIDWithOpenConflict(t *testing.T) {
 	t.Parallel()
 
@@ -2161,11 +2161,12 @@ func TestEnginePullDeletesLocalResourceWhenServerRemovesIt(t *testing.T) {
 }
 
 // A server-reported deletion (a top-level 404 in the sync-collection report)
-// whose local apply() fails — e.g. a transient SQLITE_BUSY, simulated here by
-// dropping the events table — must NOT advance the sync-token. Otherwise the
-// orphaned local row survives forever: the server is now behind the new token
-// and never re-reports the deletion, so there is no retry. The token must be
-// withheld so the next sync re-lists the same 404 and apply gets another shot.
+// whose local apply() fails must NOT advance the sync-token. One example is a
+// transient SQLITE_BUSY, simulated here by a drop of the events table.
+// Otherwise the orphaned local row survives forever. The server is then behind
+// the new token and never re-reports the deletion. There is no retry. The
+// token must be withheld. The next sync then re-lists the same 404. apply
+// gets another shot.
 func TestEnginePullHoldsTokenWhenDeletionApplyFails(t *testing.T) {
 	t.Parallel()
 
@@ -2235,9 +2236,9 @@ func TestEnginePullHoldsTokenWhenDeletionApplyFails(t *testing.T) {
 }
 
 // GMX (and other Cosmo-derived CalDAV servers) rewrite object hrefs on the
-// server side — a resource PUT at /cal/<user>/... is later reported under
+// server side. A resource PUT at /cal/<user>/... is later reported under
 // /cal/<uuid>/... in REPORT responses. Pull must recognise the resource by
-// UID and avoid treating the path change as a remote deletion.
+// UID. It must not treat the path change as a remote deletion.
 func TestEnginePullPreservesLocalWhenServerRewritesHref(t *testing.T) {
 	t.Parallel()
 
@@ -2417,11 +2418,11 @@ func TestEngineSyncCalendarMetadataPushesLocalColor(t *testing.T) {
 	}
 }
 
-// TestEngineSyncCalendarMetadataSkipsFetchWhenDirty reproduces issue #419: when
+// TestEngineSyncCalendarMetadataSkipsFetchWhenDirty reproduces issue #419. When
 // the local color is dirty, syncCalendarMetadata must not waste a PROPFIND to
-// fetch the remote color (whose value would be discarded anyway), and a failure
-// of that fetch must not block the pending color push. The mock server fails any
-// PROPFIND with 503; the push must still happen and ColorDirty must clear.
+// fetch the remote color (whose value would be discarded anyway). A failure
+// of that fetch must not block the wait color push. The mock server fails any
+// PROPFIND with 503. The push must still happen. ColorDirty must clear.
 func TestEngineSyncCalendarMetadataSkipsFetchWhenDirty(t *testing.T) {
 	t.Parallel()
 
@@ -2570,9 +2571,9 @@ func TestEngineSyncCalendarMetadataAdoptsRemoteColor(t *testing.T) {
 }
 
 // TestEnginePullPaginatesTruncatedSyncCollection reproduces the Google
-// initial-snapshot data loss: the server truncates the sync-collection
+// initial-snapshot data loss. The server truncates the sync-collection
 // response (RFC 6578 §3.6 — a 507 marker on the collection plus a
-// continuation token). The engine must page until complete and diff local
+// continuation token). The engine must page until complete. It diffs local
 // state against the UNION of pages. Before the fix, every local UID beyond
 // page one was soft-deleted (73 real events on one production calendar).
 func TestEnginePullPaginatesTruncatedSyncCollection(t *testing.T) {
@@ -2825,7 +2826,7 @@ func TestPendingDeletions_ExplicitAlwaysDeletes(t *testing.T) {
 
 // TestPendingDeletions_DedupExplicitAndAbsence exercises the dedup branch
 // (owner already set) when a UID is both explicitly deleted and absent from a
-// COMPLETE inventory — it must appear exactly once, not double-counted.
+// COMPLETE inventory. It must appear exactly once, not double-counted.
 func TestPendingDeletions_DedupExplicitAndAbsence(t *testing.T) {
 	t.Parallel()
 	p := newPendingDeletions(discardLogger())
@@ -2839,9 +2840,9 @@ func TestPendingDeletions_DedupExplicitAndAbsence(t *testing.T) {
 }
 
 // TestEnginePullMultigetMissWithholdsAbsenceDeletions pins the stricter
-// behavior the chokepoint enforces: if even one body 404s on multiget during
-// an initial snapshot, the inventory is incomplete, so NO absence-inferred
-// deletion runs that round — not just the missed path. A locally-tracked row
+// behavior the chokepoint enforces. If even one body 404s on multiget during
+// an initial snapshot, the inventory is incomplete. NO absence-inferred
+// deletion runs that round, not just the missed path. A locally-tracked row
 // absent from the snapshot must survive until a clean sync confirms it.
 func TestEnginePullMultigetMissWithholdsAbsenceDeletions(t *testing.T) {
 	t.Parallel()
@@ -2922,10 +2923,10 @@ func TestEnginePullMultigetMissWithholdsAbsenceDeletions(t *testing.T) {
 }
 
 // TestEnginePullFullSnapshotDeletesAbsent covers the legacy QueryAll fallback
-// (servers without RFC 6578 sync-collection, e.g. GMX) now that its deletions
+// (servers without RFC 6578 sync-collection, e.g. GMX). Its deletions now
 // route through the pendingDeletions chokepoint. A sync-collection REPORT that
-// returns "unsupported" makes pull() fall back to pullFullSnapshot; a local
-// pushed row absent from the QueryAll result must be deleted, while a
+// returns "unsupported" makes pull() fall back to pullFullSnapshot. A local
+// pushed row absent from the QueryAll result must be deleted. A
 // never-pushed row (empty remote_url) must survive.
 func TestEnginePullFullSnapshotDeletesAbsent(t *testing.T) {
 	t.Parallel()
@@ -3015,11 +3016,11 @@ END:VCALENDAR
 	}
 }
 
-// TestPersistImportedClearsRemovedAlarms is a regression test for issue #65:
-// a CalDAV pull that re-imports an existing UID whose server component no
+// TestPersistImportedClearsRemovedAlarms is a regression test for issue #65.
+// A CalDAV pull that re-imports a stored UID whose server component no
 // longer carries an alarm must clear the locally stored alarm. Before the
 // fix, persistImported only replaced child collections when the server sent a
-// non-empty list, so server-side removals were silently dropped and stale
+// non-empty list. Server-side removals were then dropped in silence. Stale
 // alarms lingered.
 func TestPersistImportedClearsRemovedAlarms(t *testing.T) {
 	t.Parallel()
@@ -3101,13 +3102,13 @@ END:VCALENDAR
 	}
 }
 
-// TestEnginePullWithholdsTokenOnPersistFailure covers issue #103: when a
+// TestEnginePullWithholdsTokenOnPersistFailure covers issue #103. When a
 // fetched resource is successfully multiget'd but fails to persist locally
 // (a transient SQLite busy/lock or a child-replace error), the pull must NOT
-// advance the sync-token. Otherwise the token moves past the failed change
-// and the next REPORT never re-lists it, so the server-side update is lost
+// advance the sync-token. Otherwise the token moves past the failed change.
+// The next REPORT never re-lists it. The server-side update is then lost
 // from the local copy indefinitely. The resource's old etag and the calendar
-// sync-token must both stay put so the next sync re-lists and retries.
+// sync-token must both stay put. The next sync then re-lists and retries.
 func TestEnginePullWithholdsTokenOnPersistFailure(t *testing.T) {
 	t.Parallel()
 
@@ -3213,9 +3214,9 @@ END:VCALENDAR
 }
 
 // TestPersistImportedRollsBackOnReplaceFailure verifies that persistImported is
-// atomic per resource: if any Replace* step fails after the event row and some
+// atomic per resource. If any Replace* step fails after the event row and some
 // of its child collections have already been written, the entire resource is
-// rolled back rather than left in a partial state.
+// rolled back. It is not left in a partial state.
 func TestPersistImportedRollsBackOnReplaceFailure(t *testing.T) {
 	t.Parallel()
 
@@ -3266,9 +3267,9 @@ func TestPersistImportedRollsBackOnReplaceFailure(t *testing.T) {
 	}
 }
 
-// TestLookupOwnerIDUnknownTypeErrors guards the owner-type dispatch: an
-// unrecognized owner-type string must fail loudly rather than silently
-// resolving to ID 0, which would mis-attribute a sync conflict record.
+// TestLookupOwnerIDUnknownTypeErrors guards the owner-type dispatch. An
+// unrecognized owner-type string must fail loudly. It must not resolve to
+// ID 0 in silence. That would mis-attribute a sync conflict record.
 func TestLookupOwnerIDUnknownTypeErrors(t *testing.T) {
 	t.Parallel()
 
@@ -3285,7 +3286,7 @@ func TestLookupOwnerIDUnknownTypeErrors(t *testing.T) {
 }
 
 // TestLookupOwnerIDResolvesByType confirms a known owner type resolves its row
-// ID, and that a missing UID surfaces the lookup error instead of 0.
+// ID. A UID that is gone surfaces the lookup error instead of 0.
 func TestLookupOwnerIDResolvesByType(t *testing.T) {
 	t.Parallel()
 
@@ -3314,8 +3315,8 @@ func TestLookupOwnerIDResolvesByType(t *testing.T) {
 }
 
 // TestOwnerDispatchRejectsUnknownTypeUniformly confirms every owner-type
-// dispatch entry point reports an unknown type through the same error, so a
-// new component type can't be silently skipped by one site.
+// dispatch entry point reports an unknown type through the same error. A
+// new component type then cannot be skipped by one site in silence.
 func TestOwnerDispatchRejectsUnknownTypeUniformly(t *testing.T) {
 	t.Parallel()
 
@@ -3333,9 +3334,9 @@ func TestOwnerDispatchRejectsUnknownTypeUniformly(t *testing.T) {
 	}
 }
 
-// linkCalendarToTestAccount links the first seeded calendar to a fresh account
-// so service-layer mutations (and the simulated concurrent edit below) flip the
-// dirty flag via MarkResourceDirty. Returns the calendar ID.
+// linkCalendarToTestAccount links the first seeded calendar to a fresh account.
+// Service-layer mutations (and the simulated concurrent edit below) then flip
+// the dirty flag via MarkResourceDirty. Returns the calendar ID.
 func linkCalendarToTestAccount(t *testing.T, ctx context.Context, q *storage.Queries) int64 {
 	t.Helper()
 	account, err := q.CreateAccount(ctx, storage.CreateAccountParams{
@@ -3365,7 +3366,7 @@ func linkCalendarToTestAccount(t *testing.T, ctx context.Context, q *storage.Que
 
 // serverWinsConflictClient returns a CalDAV client whose PUT 412s and whose GET
 // returns the server's version of uid (SUMMARY "Server version", ETag
-// "etag-server"), driving the ConflictServerWins accept-server path.
+// "etag-server"). That drives the ConflictServerWins accept-server path.
 func serverWinsConflictClient(t *testing.T, uid string) *caldav.Client {
 	t.Helper()
 	path := "/calendar/" + uid + ".ics"
@@ -3410,13 +3411,13 @@ func serverWinsConflictClient(t *testing.T, uid string) *caldav.Client {
 	})
 }
 
-// TestEnginePushServerWinsPreservesConcurrentEdit reproduces issue #417: a local
-// edit landing in the window between the accept-server import and the dirty
-// clear must not be silently dropped. The afterImportRevCapture hook simulates
-// that edit; the rev-guarded clear must leave the resource dirty so the next
-// push sends it. With the previous unconditional clear this test fails because
-// the edit's dirty flag is wiped. Serial (no t.Parallel) because it mutates the
-// package-level hook.
+// TestEnginePushServerWinsPreservesConcurrentEdit reproduces issue #417. A local
+// edit that lands in the window between the accept-server import and the dirty
+// clear must not be dropped in silence. The afterImportRevCapture hook simulates
+// that edit. The rev-guarded clear must leave the resource dirty. The next
+// push then sends it. With the previous unconditional clear this test fails
+// because the edit's dirty flag is wiped. Serial (no t.Parallel) because it
+// mutates the package-level hook.
 func TestEnginePushServerWinsPreservesConcurrentEdit(t *testing.T) {
 	engine, db, q := newTestEngine(t)
 	ctx := context.Background()
@@ -3470,16 +3471,16 @@ func TestEnginePushServerWinsPreservesConcurrentEdit(t *testing.T) {
 }
 
 // TestEnginePushServerWinsPreservesConcurrentEditAfterPersist reproduces issue
-// #494: a local edit that commits between the accept-server import's persist
-// commit and the dirty clear must not be silently dropped. The afterImportPersist
-// hook fires in that window — after persistImported committed, before
-// clearDirtyAfterImport — and bumps rev + re-marks dirty exactly as a real
-// service-layer mutation would. Because persistImported now captures the
-// post-import rev inside its own transaction (rather than re-reading it after
-// commit, where this edit's bump would be read and matched), the rev-guarded
-// clear leaves the resource dirty. With the old after-commit re-read this test
-// fails: the clear reads the edit's bumped rev and wipes dirty. Serial (no
-// t.Parallel) because it mutates the package-level hook.
+// #494. A local edit that commits between the accept-server import's persist
+// commit and the dirty clear must not be dropped in silence. The
+// afterImportPersist hook fires in that window, after persistImported committed
+// and before clearDirtyAfterImport. It bumps rev and re-marks dirty exactly as
+// a real service-layer mutation would. persistImported now captures the
+// post-import rev inside its own transaction. It does not re-read it after
+// commit, where this edit's bump would be read and matched. The rev-guarded
+// clear then leaves the resource dirty. With the old after-commit re-read this
+// test fails. The clear reads the edit's bumped rev and wipes dirty. Serial
+// (no t.Parallel) because it mutates the package-level hook.
 func TestEnginePushServerWinsPreservesConcurrentEditAfterPersist(t *testing.T) {
 	engine, db, q := newTestEngine(t)
 	ctx := context.Background()
@@ -3533,9 +3534,10 @@ func TestEnginePushServerWinsPreservesConcurrentEditAfterPersist(t *testing.T) {
 }
 
 // emptyServerWinsConflictClient is like serverWinsConflictClient but its GET
-// returns a VCALENDAR carrying only a VTIMEZONE — a non-empty body the encoder
-// accepts, yet with no importable VEVENT/VTODO/VJOURNAL, simulating a 412'd
-// resource whose server body has nothing to apply (issue #495).
+// returns a VCALENDAR that carries only a VTIMEZONE. That is a non-empty body
+// the encoder accepts, yet with no importable VEVENT/VTODO/VJOURNAL. It
+// simulates a 412'd resource whose server body has nothing to apply
+// (issue #495).
 func emptyServerWinsConflictClient(t *testing.T, uid string) *caldav.Client {
 	t.Helper()
 	path := "/calendar/" + uid + ".ics"
@@ -3581,14 +3583,14 @@ func emptyServerWinsConflictClient(t *testing.T, uid string) *caldav.Client {
 	})
 }
 
-// TestEnginePushServerWinsKeepsDirtyWhenServerBodyEmpty reproduces issue #495: on
-// a 412 with ConflictServerWins, if the re-fetched server body carries no
+// TestEnginePushServerWinsKeepsDirtyWhenServerBodyEmpty reproduces issue #495.
+// On a 412 with ConflictServerWins, if the re-fetched server body carries no
 // importable VEVENT/VTODO/VJOURNAL, importICal applies nothing. The auto-resolve
-// must not clear dirty or stamp the server ETag — doing so would drop the local
-// edit behind a server version that was never adopted, the asymmetry the manual
-// ResolveConflict path already guards against (#466). With the previous
-// unconditional clear this test fails because dirty is wiped and the ETag is
-// advanced without anything applied.
+// must not clear dirty or stamp the server ETag. That would drop the local
+// edit behind a server version that was never adopted. The manual
+// ResolveConflict path already guards against that asymmetry (#466). With the
+// previous unconditional clear this test fails. Dirty is wiped. The ETag is
+// advanced with nothing applied.
 func TestEnginePushServerWinsKeepsDirtyWhenServerBodyEmpty(t *testing.T) {
 	t.Parallel()
 
@@ -3631,11 +3633,11 @@ func TestEnginePushServerWinsKeepsDirtyWhenServerBodyEmpty(t *testing.T) {
 
 // TestPersistImportedPrunesStaleOverrides verifies that when a CalDAV server
 // deletes a recurring instance, persistImported soft-deletes the stale local
-// override row. A server signals instance deletion by removing the override
-// VEVENT from the resource and adding the slot to the master's EXDATE. Without
-// pruning, the stale override is still CONFIRMED and expansion resurrects it —
-// the orphan checker deliberately ignores EXDATEs so a legitimate override is
-// never mistaken for an orphan.
+// override row. A server signals instance deletion by a remove of the override
+// VEVENT from the resource and an add of the slot to the master's EXDATE.
+// Without a prune, the stale override is still CONFIRMED. Expansion then
+// resurrects it. The orphan checker deliberately ignores EXDATEs so a
+// legitimate override is never mistaken for an orphan.
 func TestPersistImportedPrunesStaleOverrides(t *testing.T) {
 	t.Parallel()
 
@@ -3761,8 +3763,8 @@ func seedCleanSyncResource(t *testing.T, q *storage.Queries, calendarID int64, u
 
 // A resource that was dirty before the import carries unpushed local changes.
 // A locally created override is absent from the server body because the
-// server has never seen it — pruning it would silently discard the edit, so
-// the prune must skip dirty resources.
+// server has never seen it. A prune of it would discard the edit in silence.
+// The prune must then skip dirty resources.
 func TestPersistImportedPruneSkipsDirtyResource(t *testing.T) {
 	t.Parallel()
 
@@ -3855,8 +3857,8 @@ func TestPersistImportedPrunesCleanSyncedResource(t *testing.T) {
 }
 
 // A component the parser dropped is absent from ImportResult without being
-// absent from the server, so a non-zero SkippedComponents must disable
-// pruning for the whole result.
+// absent from the server. A non-zero SkippedComponents must then disable
+// prune for the whole result.
 func TestPersistImportedPruneSkipsIncompleteParse(t *testing.T) {
 	t.Parallel()
 
@@ -3899,9 +3901,9 @@ func TestPersistImportedPruneSkipsIncompleteParse(t *testing.T) {
 	}
 }
 
-// A resource holding components of more than one UID must reconcile each UID
-// against its own master: UID A's master says nothing about UID B's override
-// inventory.
+// A resource that holds components of more than one UID must reconcile each
+// UID against its own master. UID A's master says nothing about UID B's
+// override inventory.
 func TestPersistImportedPrunePerUID(t *testing.T) {
 	t.Parallel()
 
@@ -4047,8 +4049,9 @@ func TestEngineSyncCalendarReadOnlyPullsWithoutRemoteWrites(t *testing.T) {
 }
 
 // PushCalendar is the opportunistic save-time fast path. A read-only calendar
-// must short-circuit before any write phase, so a save against a subscribed
-// calendar never reaches the server — mirroring the SyncCalendar gate above.
+// must short-circuit before any write phase. A save against a subscribed
+// calendar then never reaches the server. That matches the SyncCalendar gate
+// above.
 func TestEnginePushCalendarReadOnlyIsNoOpWithoutServerContact(t *testing.T) {
 	engine, db, q := newTestEngine(t)
 	ctx := context.Background()
@@ -4228,10 +4231,11 @@ func TestExportResourceFor_HydrateErrorAbortsExport(t *testing.T) {
 	}
 }
 
-// A missing master row is expected — Google serves orphan instances under their
-// own UID — but a transient read failure is not. Treating the two alike exported
-// the override rows alone, PUT a resource with the master VEVENT and its
-// recurrence rule amputated, and then cleared the dirty flag so nothing retried.
+// A gone master row is expected. Google serves orphan instances under their
+// own UID. A transient read failure is not. Treat the two alike and the
+// exporter emitted the override rows alone. It PUT a resource with the master
+// VEVENT and its recurrence rule amputated. It then cleared the dirty flag.
+// Nothing retried.
 func TestExportResourceFor_MasterReadErrorAbortsExport(t *testing.T) {
 	t.Parallel()
 
@@ -4262,7 +4266,7 @@ func TestExportResourceFor_MasterReadErrorAbortsExport(t *testing.T) {
 	}
 }
 
-// The orphan-instance path must keep working: sql.ErrNoRows on the master is a
+// The orphan-instance path must still succeed. sql.ErrNoRows on the master is a
 // legitimate shape, not a failure.
 func TestExportResourceFor_MissingMasterExportsOverrides(t *testing.T) {
 	t.Parallel()
@@ -4289,9 +4293,9 @@ func TestExportResourceFor_MissingMasterExportsOverrides(t *testing.T) {
 	}
 }
 
-// NewEngine with a nil logger must not fall back to slog.Default: TUI
-// callers pass nil while Bubble Tea owns the terminal, so any write to
-// the default (stderr) handler would print over the display.
+// NewEngine with a nil logger must not fall back to slog.Default. TUI
+// callers pass nil while Bubble Tea owns the terminal. Any write to
+// the default (stderr) handler would then print over the display.
 func TestNewEngine_NilLoggerIsSilent(t *testing.T) {
 	var buf bytes.Buffer
 	prev := slog.Default()
