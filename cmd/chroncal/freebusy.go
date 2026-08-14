@@ -207,9 +207,10 @@ func freebusyOwnerEmails(ctx context.Context, a *app.App, calendarRef calendar.C
 
 // parseFreeBusyTime parses a free/busy range bound that may be a date-only
 // (YYYY-MM-DD) value or a full RFC3339 timestamp. When inclusiveEnd is true and
-// the input is date-only, the result is advanced by one day so the named day is
-// fully covered by the half-open [from, to) range — matching the inclusive
-// end-of-day semantics of parseDateRange used by `list`/`export` (issue #137).
+// the input is date-only, the result is advanced by one day. The named day is
+// then fully covered by the half-open [from, to) range. That matches the
+// inclusive end-of-day semantics of parseDateRange used by `list`/`export`
+// (issue #137).
 func parseFreeBusyTime(flag, input string, inclusiveEnd bool) (time.Time, error) {
 	if t, err := time.ParseInLocation("2006-01-02", input, time.Local); err == nil {
 		if inclusiveEnd {
