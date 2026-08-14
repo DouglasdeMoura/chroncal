@@ -442,7 +442,7 @@ func parseListDateRange(fromStr, toStr string) (time.Time, time.Time, error) {
 }
 
 // parseCLIDate parses a YYYY-MM-DD flag value. It replaces time.Parse's
-// verbose "parsing time ... cannot parse / out of range" surface with a
+// verbose "cannot parse / out of range" surface with a
 // clean "--<flag>: invalid date ..." message.
 func parseCLIDate(flag, value string, loc *time.Location) (time.Time, error) {
 	t, err := time.ParseInLocation("2006-01-02", value, loc)
