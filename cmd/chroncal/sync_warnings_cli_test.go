@@ -16,7 +16,7 @@ import (
 // Import warnings surfaced on SyncResult are printed by the silent CLI entry
 // points (initial sync after account add, opportunistic push after a write).
 // One compact line per warning, prefixed so the user knows where it came
-// from — and strictly nothing when there are none, because the opportunistic
+// from. Strictly nothing when there are none. The opportunistic
 // push runs after every single write.
 func TestFprintImportWarnings(t *testing.T) {
 	t.Parallel()
@@ -42,9 +42,9 @@ func TestFprintImportWarnings(t *testing.T) {
 }
 
 // The opportunistic post-write push must emit import warnings through the
-// injected warning writer — not a hard-wired os.Stderr — and must keep them
-// off the stdout writer: JSON callers pass io.Discard for stdout to keep it
-// clean, and the warnings still belong on the ERROR stream.
+// injected warning writer, not a hard-wired os.Stderr. It must keep them
+// off the stdout writer. JSON callers pass io.Discard for stdout to keep it
+// clean. The warnings still belong on the ERROR stream.
 func TestReportOpportunisticPushEmitsWarningsThroughInjectedWriter(t *testing.T) {
 	t.Parallel()
 
@@ -85,7 +85,7 @@ func TestReportOpportunisticPushEmitsWarningsThroughInjectedWriter(t *testing.T)
 
 // `sync resolve <id> --pick server` imports the recorded server body through
 // the same importICal as the auto server-wins paths, with a nil (silent)
-// engine logger — so the warnings ResolveConflict returns are the only place
+// engine logger. The warnings ResolveConflict returns are then the only place
 // a fabricated value (here a made-up DTEND span) can surface. They must land
 // on stderr, one line each, like the other silent sync entry points.
 func TestSyncResolveServerPrintsImportWarnings(t *testing.T) {
