@@ -1,6 +1,6 @@
-# Contributing to chroncal
+# Contribute to chroncal
 
-Thanks for your interest in contributing. This guide covers development setup, testing, code generation, and conventions.
+Thanks for your interest in this project. This guide covers development setup, tests, code generation, and conventions.
 
 ## Prerequisites
 
@@ -16,7 +16,7 @@ make build
 make test
 ```
 
-That's it. The database is SQLite (pure Go driver, no CGO), so there are no system dependencies.
+The database is SQLite (pure Go driver, no CGO). There are no system dependencies.
 
 ## Project structure
 
@@ -24,13 +24,13 @@ That's it. The database is SQLite (pure Go driver, no CGO), so there are no syst
 chroncal/
 ├── cmd/chroncal/     # CLI commands (cobra)
 ├── internal/
-│   ├── alarm/        # Alarm checking, firing, state
-│   ├── app/          # Application initialization
+│   ├── alarm/        # Alarm check, fire, and state
+│   ├── app/          # Application setup
 │   ├── auth/         # CalDAV auth (basic, bearer, OAuth2 PKCE, keyring)
 │   ├── caldav/       # CalDAV client (discovery, REPORT, free/busy)
 │   ├── calendar/     # Calendar service
-│   ├── config/       # Configuration loading
-│   ├── duration/     # RFC 5545 duration parsing
+│   ├── config/       # Configuration load
+│   ├── duration/     # RFC 5545 duration parser
 │   ├── event/        # Event service and models
 │   ├── freebusy/     # Local free/busy computation + remote query
 │   ├── ical/         # iCal import/export
@@ -41,9 +41,9 @@ chroncal/
 │   ├── recurrence/   # RRULE expansion
 │   ├── retry/        # HTTP retry/backoff helpers
 │   ├── storage/      # Database layer (sqlc-generated + hand-written)
-│   ├── sync/         # CalDAV sync engine, conflict handling
+│   ├── sync/         # CalDAV sync engine, conflict resolution
 │   ├── testutil/     # Test helpers
-│   ├── textsafe/     # Safe rendering of untrusted strings
+│   ├── textsafe/     # Safe display of untrusted strings
 │   ├── timeutil/     # Time helpers (ranges, timezones)
 │   ├── todo/         # Todo service and models
 │   ├── trash/        # Mixed soft-delete / restore across domains
@@ -61,9 +61,9 @@ chroncal/
 ```bash
 make build        # Build the chroncal binary
 make run          # Build and run chroncal
-make test         # Run all tests (disables caching)
+make test         # Run all tests (no cache)
 make test-race    # Run tests with the race detector (matches CI)
-make coverage     # Run tests and emit coverage.out + textual summary
+make coverage     # Run tests and emit coverage.out + a text summary
 make generate     # Regenerate Go code from SQL queries
 make fmt          # gofmt -w .
 make fmt-check    # Fail if any file needs gofmt
@@ -75,14 +75,12 @@ make tidy-check   # Fail if go.mod/go.sum would change under `go mod tidy`
 make check        # fmt-check + vet + lint + vulncheck + test-race
 make tools        # Install govulncheck and staticcheck
 make clean        # Remove the binary and coverage output
-make clean-db     # Delete the repo-local chroncal.db and its WAL/SHM sidecars
+make clean-db     # Delete the repo-local chroncal.db and its WAL/SHM files
 ```
 
 ## Git hooks
 
-This repo ships a [lefthook](https://lefthook.dev) config that runs the
-fast quality checks on every commit and the race-enabled test suite on
-every push.
+This repo includes a [lefthook](https://lefthook.dev) config. The config runs the fast quality checks on every commit. It also runs the race-enabled test suite on every push.
 
 ```bash
 # one-time install per clone
@@ -92,9 +90,9 @@ lefthook install
 
 Skip a single run with `LEFTHOOK=0 git commit ...` when you need to.
 
-## Testing
+## Tests
 
-Tests use in-memory SQLite databases via `testutil.NewTestDB(t)`, so no external setup is needed.
+Tests use in-memory SQLite databases via `testutil.NewTestDB(t)`. You do not need extra setup.
 
 ```bash
 # Run all tests
@@ -107,7 +105,7 @@ go test ./internal/event -v -count=1
 go test ./internal/event -run TestEventService_Create -v -count=1
 ```
 
-Always use `-count=1` to bypass Go's test cache.
+Always use `-count=1` to skip the Go test cache.
 
 ### Test conventions
 
@@ -118,27 +116,27 @@ Always use `-count=1` to bypass Go's test cache.
 
 ## Database changes
 
-### Adding a migration
+### Add a migration
 
-1. Create `db/migrations/{next_number}_description.sql`
-2. Include both `-- +goose Up` and `-- +goose Down` sections
-3. Update affected queries in `db/queries/*.sql`
-4. Run `make generate`
-5. Update service code to handle the new schema
+1. Create `db/migrations/{next_number}_description.sql`.
+2. Include both `-- +goose Up` and `-- +goose Down` sections.
+3. Update the related queries in `db/queries/*.sql`.
+4. Run `make generate`.
+5. Update the service code so it supports the new schema.
 
-Migrations use [goose](https://github.com/pressly/goose) format and run automatically on startup.
+Migrations use [goose](https://github.com/pressly/goose) format. The program runs them on startup.
 
-### Adding or modifying queries
+### Add or change queries
 
-1. Edit the relevant file in `db/queries/*.sql` using [sqlc syntax](https://docs.sqlc.dev/)
-2. Run `make generate`
-3. Never edit `internal/storage/*.sql.go` directly, those files are generated
+1. Edit the related file in `db/queries/*.sql` with [sqlc syntax](https://docs.sqlc.dev/).
+2. Run `make generate`.
+3. Do not edit `internal/storage/*.sql.go`. Those files are generated.
 
 ## Code conventions
 
 ### Architecture
 
-Each domain (event, todo, calendar, alarm, recurrence) follows the same pattern:
+Each domain (event, todo, calendar, alarm, recurrence) uses the same pattern:
 
 ```go
 type Service struct {
@@ -151,9 +149,9 @@ func NewService(db *sql.DB, q *storage.Queries) *Service {
 }
 ```
 
-CLI commands live in `cmd/chroncal/`, one file per resource group. Each exports a `Command()` function returning a `*cobra.Command`.
+CLI commands live in `cmd/chroncal/`. There is one file per resource group. Each file exports a `Command()` function. The function returns a `*cobra.Command`.
 
-### Naming
+### Names
 
 - **Go**: `PascalCase` exports, `camelCase` internals
 - **SQL tables/columns**: `snake_case`
@@ -173,15 +171,13 @@ chore: maintenance tasks
 
 ### iCal compliance
 
-When touching import/export code, follow RFC 5545. Round-trip fidelity matters: importing and re-exporting a `.ics` file should preserve all properties.
+When you change import or export code, follow RFC 5545. Round-trip fidelity matters. Import a `.ics` file and export it again. The export must keep all properties.
 
 ## Releases (maintainers)
 
-Releases are fully automated: bump the `VERSION` file, push a matching `v*`
-tag, and GoReleaser publishes the GitHub Release, Homebrew cask, Scoop
-manifest, and both AUR packages. The step-by-step checklist, required
-secrets, and failure-recovery procedure live in the
-[Maintainer checklist](README.md#maintainer-checklist) section of the README.
+Releases run with no manual package steps. Bump the `VERSION` file. Push a `v*` tag that matches the VERSION file. GoReleaser then publishes the GitHub Release, the Homebrew cask, the Scoop manifest, and both AUR packages.
+
+The checklist, the required secrets, and the recovery steps live in the [Maintainer checklist](README.md#maintainer-checklist) section of the README.
 
 ## Need help?
 
