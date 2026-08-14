@@ -57,12 +57,12 @@ func TestComputeTodoTrigger_RelatedEnd_DtStartPlusDue(t *testing.T) {
 	}
 }
 
-// TestComputeTodoTrigger_RelatedEnd_RecurringInstance guards issue #489: a
+// TestComputeTodoTrigger_RelatedEnd_RecurringInstance guards issue #489. A
 // recurring VTODO with a RELATED=END alarm must anchor the trigger at each
-// occurrence's own DUE, not at the master's first-occurrence DUE. ExpandTodo
-// leaves the embedded Todo unshifted (only InstanceTime moves per occurrence),
-// so deriving END from the stored DueDate field would land occurrence N>1 in
-// the past, where it gets dropped as stale.
+// occurrence's own DUE. It must not use the master's first-occurrence DUE.
+// ExpandTodo leaves the embedded Todo unshifted (only InstanceTime moves per
+// occurrence). A derive of END from the stored DueDate field would then land
+// occurrence N>1 in the past. It gets dropped as stale.
 func TestComputeTodoTrigger_RelatedEnd_RecurringInstance(t *testing.T) {
 	// Master: START 2026-04-01 09:00, DUE 2026-04-01 17:00 (8h span).
 	masterStart := time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
@@ -99,8 +99,8 @@ func TestComputeTodoTrigger_RelatedEnd_RecurringInstance(t *testing.T) {
 }
 
 // TestComputeTodoTrigger_RelatedEnd_RecurringDueOnly is the DUE-only variant of
-// issue #489: with no DTSTART, the occurrence's InstanceTime is already the
-// occurrence's DUE, so END must anchor directly on InstanceTime.
+// issue #489. With no DTSTART, the occurrence's InstanceTime is already the
+// occurrence's DUE. END must then anchor directly on InstanceTime.
 func TestComputeTodoTrigger_RelatedEnd_RecurringDueOnly(t *testing.T) {
 	masterDue := time.Date(2026, 4, 1, 17, 0, 0, 0, time.UTC)
 	occDue := masterDue.AddDate(0, 0, 7) // occurrence 2 DUE
@@ -523,13 +523,13 @@ func TestListExpiredTodoSnoozed(t *testing.T) {
 	}
 }
 
-// TestListExpiredTodoSnoozed_SkipsDismissed guards issue #295: a fired todo
+// TestListExpiredTodoSnoozed_SkipsDismissed guards issue #295. A fired todo
 // alarm that is snoozed and then dismissed must NOT re-fire once the snooze
-// expires. DismissTodoAlarm sets acked_at but leaves snoozed_to intact, so
-// without an acked_at guard the expired-snooze scan returns the dismissed row
-// and a phantom notification fires for an alarm the user explicitly dismissed.
+// expires. DismissTodoAlarm sets acked_at but leaves snoozed_to intact.
+// Without an acked_at guard the expired-snooze scan returns the dismissed row.
+// A phantom notification then fires for an alarm the user explicitly dismissed.
 // The event path is immune because ListExpiredSnoozedAlarmStates carries
-// acked_at IS NULL; this asserts the todo query matches that contract.
+// acked_at IS NULL. This asserts the todo query matches that contract.
 func TestListExpiredTodoSnoozed_SkipsDismissed(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 
@@ -576,16 +576,16 @@ func TestListExpiredTodoSnoozed_SkipsDismissed(t *testing.T) {
 	}
 }
 
-// TestCheckTodos_OverrideAwareness is the regression test for issue #366:
-// when a recurring todo has an override (a row with the same UID but a
-// non-empty recurrence_id), CheckTodos must not fire the master's alarm for
-// the overridden slot in addition to the override's own alarm.
+// TestCheckTodos_OverrideAwareness is the regression test for issue #366.
+// When a recurring todo has an override, CheckTodos must not fire the master's
+// alarm for the overridden slot as well as the override's own alarm. An override
+// is a row with the same UID but a non-empty recurrence_id.
 //
 // Without the fix, ExpandTodo on the master still produces the overridden
-// occurrence (no EXDATE is set when a CalDAV override arrives), while
-// ExpandTodo on the override row emits a single instance at the same time.
-// Because the master and override have distinct alarm_ids, the unique
-// (alarm_id, trigger_at) state index does not prevent the double firing.
+// occurrence (no EXDATE is set when a CalDAV override arrives). ExpandTodo
+// on the override row emits a single instance at the same time. The master
+// and override have distinct alarm_ids. The unique (alarm_id, trigger_at)
+// state index then does not prevent the double fire.
 func TestCheckTodos_OverrideAwareness(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	ctx := context.Background()
@@ -655,8 +655,9 @@ func TestCheckTodos_OverrideAwareness(t *testing.T) {
 
 // TestComputeTodoTrigger_EmptyTrigger_Errors guards the todo-path footgun
 // where an empty trigger defaulted to -15m and fired a real alarm. Every
-// legitimate alarm writer supplies a trigger (CLI validates, import gates),
-// so an empty one must be a silent skip like the event path, never fire.
+// legitimate alarm writer supplies a trigger (CLI validates, import gates).
+// An empty one must then be a silent skip like the event path. It must never
+// fire.
 func TestComputeTodoTrigger_EmptyTrigger_Errors(t *testing.T) {
 	inst := recurrence.ExpandedTodo{
 		Todo:         todo.Todo{DueDate: "2026-04-01T17:00:00Z"},
@@ -670,9 +671,9 @@ func TestComputeTodoTrigger_EmptyTrigger_Errors(t *testing.T) {
 	}
 }
 
-// TestCheckTodos_EmptyTrigger_NeverFires pins the loop behavior end-to-end:
-// a todo alarm whose stored trigger is empty must be skipped silently, never
-// fired at the old made-up -15m default.
+// TestCheckTodos_EmptyTrigger_NeverFires pins the loop behavior end-to-end.
+// A todo alarm whose stored trigger is empty must be skipped in silence. It
+// must never fire at the old made-up -15m default.
 func TestCheckTodos_EmptyTrigger_NeverFires(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	todoSvc := todo.NewService(db, q)
@@ -705,10 +706,10 @@ func TestCheckTodos_EmptyTrigger_NeverFires(t *testing.T) {
 	}
 }
 
-// TestCheckTodos_FiresLongLeadTimeAlarm guards issue #98 on the todo path: a
-// todo due 7 days out with a "1 week before" alarm must fire now even though
-// the todo instance is far past the base forward window. Uses the real todo
-// service so the DB-backed trigger scan that sizes the window is exercised.
+// TestCheckTodos_FiresLongLeadTimeAlarm guards issue #98 on the todo path. A
+// todo due 7 days out with a "1 week before" alarm must fire now. That holds
+// even though the todo instance is far past the base forward window. Uses the real todo
+// service. The DB-backed trigger scan that sizes the window is then exercised.
 func TestCheckTodos_FiresLongLeadTimeAlarm(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	todoSvc := todo.NewService(db, q)
