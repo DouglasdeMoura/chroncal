@@ -7,9 +7,9 @@ import (
 )
 
 // StripEscapes removes terminal escape sequences (CSI `ESC [ … final` and OSC
-// `ESC ] … BEL|ST`) and lone ESC bytes, leaving every other byte untouched. It
-// preserves whitespace and other runes, so callers that measure or wrap text
-// can rely on byte/rune positions matching the visible output.
+// `ESC ] … BEL|ST`) and lone ESC bytes. Every other byte stays untouched. It
+// keeps whitespace and other runes. Callers that measure or wrap text
+// can then rely on byte/rune positions that match the visible output.
 func StripEscapes(s string) string {
 	if strings.IndexByte(s, 0x1b) < 0 {
 		// No ESC byte: nothing to strip, avoid allocating a copy.
@@ -60,10 +60,11 @@ func StripEscapes(s string) string {
 	return b.String()
 }
 
-// Display removes terminal escape sequences, drops Unicode control characters
-// (Cc) and format/bidi controls (Cf), and collapses whitespace into safe plain
-// text for human-facing terminal, notification, and email rendering.  Stripping
-// Cf prevents Trojan-Source spoofing via directional overrides such as U+202E.
+// Display removes terminal escape sequences. It drops Unicode control
+// characters (Cc) and format/bidi controls (Cf). It collapses whitespace into
+// safe plain text for human-facing terminal, notification, and email render.
+// A drop of Cf prevents Trojan-Source spoof via directional overrides such as
+// U+202E.
 func Display(s string) string {
 	s = StripEscapes(s)
 
