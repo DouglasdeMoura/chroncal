@@ -1,23 +1,23 @@
 # Security Policy
 
-## Reporting a Vulnerability
+## Report a vulnerability
 
-If you discover a security vulnerability in chroncal, please report it responsibly.
+If you find a security vulnerability in chroncal, report it in private.
 
 **Do not open a public issue.**
 
-Instead, use [GitHub's private vulnerability reporting](https://github.com/douglasdemoura/chroncal/security/advisories/new) to submit your report. You can also email [security@douglasmoura.dev](mailto:security@douglasmoura.dev).
+Use [GitHub's private vulnerability reporting](https://github.com/douglasdemoura/chroncal/security/advisories/new) to send your report. You can also email [security@douglasmoura.dev](mailto:security@douglasmoura.dev).
 
-Please include:
+Include:
 
 - A description of the vulnerability
-- Steps to reproduce
-- Affected versions
-- Any potential impact
+- Steps that reproduce the issue
+- Versions that have the issue
+- The possible impact
 
-You should receive an acknowledgment within 48 hours. We will work with you to understand the issue and coordinate a fix before any public disclosure.
+You should receive an acknowledgment within 48 hours. We will work with you to understand the issue. We will coordinate a fix before any public disclosure.
 
-## Supported Versions
+## Supported versions
 
 | Version | Supported |
 |---------|-----------|
@@ -25,11 +25,11 @@ You should receive an acknowledgment within 48 hours. We will work with you to u
 
 ## Scope
 
-chroncal stores data locally in a SQLite database. The main areas of security concern are:
+chroncal stores data in a local SQLite database. The main security areas are:
 
-- **iCal import** -- parsing untrusted `.ics` files; chroncal enforces payload and inline attachment size limits during import
-- **Account credentials** -- stored in the OS keyring by default; plaintext storage is opt-in only for environments without a usable keyring
-- **OAuth tokens** -- Google CalDAV uses PKCE and persists refreshed access tokens through the configured credential store
-- **SMTP credentials** -- stored in config files
-- **Remote CalDAV servers** -- sync, discovery, and free/busy requests run with bounded HTTP clients and command deadlines
-- **Desktop notifications** -- D-Bus interaction on Linux
+- **iCal import** -- The import path parses untrusted `.ics` files. chroncal enforces payload and inline attachment size limits on import.
+- **Account credentials** -- The OS keyring stores credentials by default. Plaintext storage is opt-in only for environments without a usable keyring.
+- **OAuth tokens** -- Google CalDAV uses PKCE. The configured credential store keeps access tokens after a refresh.
+- **SMTP credentials** -- Config files store SMTP credentials.
+- **Remote CalDAV servers** -- Sync, discovery, and free/busy requests use bounded HTTP clients and command deadlines.
+- **Desktop notifications** -- D-Bus on Linux.
