@@ -10,12 +10,12 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/event"
 )
 
-// These tests guard the issue #551 regression: bubbletea v2 delivers the
+// These tests guard the issue #551 regression. bubbletea v2 delivers the
 // space bar as the keystroke "space" (a KeyPressMsg whose String() returns
 // "space", never " "). A key binding that lists a bare " " alternative can
-// therefore never match a real space press, so only Enter activates the
-// control. The three bindings this covers — agenda Select, list-dialog
-// Enter, and event-view Enter — were the stragglers left after the
+// therefore never match a real space press. Only Enter then activates the
+// control. The three bindings this covers are agenda Select, list-dialog
+// Enter, and event-view Enter. They were the stragglers left after the
 // account-settings fix in PR #540 (72dd0a7).
 
 // spacePress and enterPress build the exact tea.KeyPressMsg bubbletea v2
@@ -30,7 +30,7 @@ func enterPress() tea.KeyPressMsg {
 
 // assertBindingAccepts fails when b does not match the given press. It
 // exercises the real match path the dispatch code uses (key.Matches over
-// the binding's keys), so it fails loudly the moment a binding's space
+// the binding's keys). It then fails loudly the moment a binding's space
 // alternative drifts back to the dead bare " ".
 func assertBindingAccepts(t *testing.T, b key.Binding, msg tea.KeyPressMsg, label string) {
 	t.Helper()
@@ -126,7 +126,7 @@ func TestEventViewEnterKey_SpaceAndEnterActivateFocusedAction(t *testing.T) {
 }
 
 // TestKeyMaps_HaveNoBareSpaceAlternative is the smallest guard against the
-// regression recurring: it walks every binding in the three affected key
+// regression. It walks every binding in the three affected key
 // maps and rejects the dead bare-space alternative outright.
 func TestKeyMaps_HaveNoBareSpaceAlternative(t *testing.T) {
 	ag := defaultAgendaKeys()
