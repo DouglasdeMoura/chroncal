@@ -1,10 +1,10 @@
 ## Summary
 
-<!-- What does this PR do and why? -->
+<!-- What does this PR change, and why? -->
 
 ## Checklist
 
 - [ ] Tests pass (`make test`)
-- [ ] Linter is clean (`make lint`)
-- [ ] New tests added for new functionality
-- [ ] Documentation updated (if applicable)
+- [ ] Lint reports no issues (`make lint`)
+- [ ] Add new tests for new functions
+- [ ] Update the documentation when the change needs it
