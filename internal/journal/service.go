@@ -46,9 +46,9 @@ func NewService(db *sql.DB, q *storage.Queries) *Service {
 }
 
 // WithTx returns a copy of the service whose writes run inside tx. The caller
-// owns tx (commit/rollback). The returned service's mutating methods neither
-// begin nor commit their own transaction. Several calls can then compose into
-// a single atomic unit.
+// owns tx (commit/rollback). The returned service's methods that mutate
+// neither begin nor commit their own transaction. Several calls can then
+// compose into a single atomic unit.
 func (s *Service) WithTx(tx *sql.Tx) *Service {
 	return &Service{db: s.db, q: s.q.WithTx(tx), tx: tx}
 }
@@ -284,18 +284,18 @@ func (s *Service) markDirtyByID(ctx context.Context, journalID int64) {
 // ensureWritable guards a user-originated mutation against a read-only or
 // VJOURNAL-unsupported remote collection. Empty capability metadata keeps
 // legacy and direct-linked calendars writable. It is the single chokepoint for
-// user-facing writes; the sync Upsert/import paths bypass it because they
+// user-facing writes. The sync Upsert/import paths bypass it because they
 // replay server-originated data.
 func (s *Service) ensureWritable(ctx context.Context, calendarID int64) error {
 	return calendaraccess.EnsureWritable(ctx, s.q, calendarID, "VJOURNAL")
 }
 
 // calendarIDsForUID returns the distinct calendar IDs of every journal row
-// sharing uid — live, soft-deleted, master, and override alike. UID-keyed
-// mutations (delete series, restore series) resolve this widest set so the
-// access guard still covers orphaned override/series-tail rows that survive a
-// purged master; the per-UID queries (recurrence_id = ”) would otherwise miss
-// them.
+// with uid: live, soft-deleted, master, and override alike. UID-keyed
+// mutations (delete series, restore series) resolve this widest set. The
+// access guard then still covers orphaned override and series-tail rows that
+// survive a purged master. The per-UID queries (recurrence_id = "") would
+// otherwise miss them.
 func (s *Service) calendarIDsForUID(ctx context.Context, uid string) ([]int64, error) {
 	rows, err := s.db.QueryContext(ctx,
 		"SELECT DISTINCT calendar_id FROM journals WHERE uid = ?", uid)
@@ -463,14 +463,14 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Journal, err
 	return j, nil
 }
 
-// ErrHasOverrides is returned when attempting to delete a recurring master
+// ErrHasOverrides is returned when a delete targets a recurring master
 // journal that has override instances. Use DeleteSeries instead.
 var ErrHasOverrides = fmt.Errorf("journal has overrides: use DeleteSeries to delete the entire series")
 
 // Delete soft-deletes a journal by ID. For a standalone journal it flips
-// deleted_at; for an override it adds EXDATE to the master and soft-
-// deletes the override in the same transaction. A recurring master with
-// live overrides is rejected — callers must use DeleteSeries.
+// deleted_at. For an override it adds EXDATE to the master and
+// soft-deletes the override in the same transaction. A recurring master with
+// live overrides is rejected. Callers must use DeleteSeries.
 func (s *Service) Delete(ctx context.Context, id int64) error {
 	j, err := s.Get(ctx, id)
 	if err != nil {
@@ -493,8 +493,8 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 	}
 
 	if j.RecurrenceID == "" {
-		// Tombstone + soft-delete commit together so a failed tombstone write
-		// can't leave a soft-deleted row whose next sync DELETEs a still-live
+		// Tombstone and soft-delete commit together. A failed tombstone write
+		// cannot leave a soft-deleted row whose next sync DELETEs a still-live
 		// server resource (issue #107).
 		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
@@ -523,11 +523,11 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		qtx := s.q.WithTx(tx)
 
 		master, err := qtx.GetJournalByUID(ctx, j.UID)
-		// A genuine lookup error (e.g. SQLITE_BUSY) must not collapse into the
-		// "no master" path: that would soft-delete the override while skipping
-		// its EXDATE/provenance bookkeeping, resurrecting the occurrence via
-		// series expansion (issue #290). Only a missing master (ErrNoRows)
-		// legitimately skips the bookkeeping.
+		// A genuine lookup error (for example SQLITE_BUSY) must not collapse
+		// into the "no master" path. That path would soft-delete the override
+		// and skip its EXDATE/provenance records. Series expansion would then
+		// restore the occurrence (issue #290). Only a missing master (ErrNoRows)
+		// may skip those records.
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("get master: %w", err)
 		}
@@ -535,10 +535,10 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 			existing := timeutil.ParseTimeList(storage.NullableToString(master.Exdates))
 			recIDTime, parseErr := timeutil.ParseRecurrenceID(j.RecurrenceID)
 			if parseErr != nil {
-				// A malformed recurrence_id can't be excluded from the
-				// master, so soft-deleting the override would resurrect the
-				// occurrence via series expansion. Fail loudly instead — the
-				// restore path treats the same parse failure as fatal.
+				// A malformed recurrence_id cannot be excluded from the
+				// master. A soft-delete of the override would then restore the
+				// occurrence via series expansion. Return an error. The restore
+				// path treats the same parse failure as fatal.
 				return fmt.Errorf("parse recurrence_id %q: %w", j.RecurrenceID, parseErr)
 			}
 			existing = append(existing, recIDTime)
@@ -563,8 +563,8 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 			return fmt.Errorf("soft-delete journal: %w", err)
 		}
 		// Mark the master dirty — its EXDATE was modified — inside the same
-		// transaction so a failed mark rolls the EXDATE change back rather than
-		// committing a change that is never pushed (issue #107).
+		// transaction. A failed mark then rolls the EXDATE change back. The
+		// path does not commit a change that is never pushed (issue #107).
 		if err := storage.MarkResourceDirty(ctx, tx, j.CalendarID, j.UID, "journal"); err != nil {
 			return fmt.Errorf("mark resource dirty: %w", err)
 		}
@@ -580,15 +580,15 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 }
 
 // DeleteSeries soft-deletes a recurring master journal and every override
-// sharing its UID. A tombstone is queued when the master is synced so the
-// next push sends DELETE to the server; the local rows stay in place
+// with its UID. A tombstone is queued when the master is synced so the
+// next push sends DELETE to the server. The local rows stay in place
 // until purge so the user can restore them.
 func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
-	// Resolve every calendar that owns a row sharing this UID — master,
-	// override, or series-tail — so a read-only or VJOURNAL-unsupported
-	// collection is refused even when the master has been purged and only
-	// orphaned overrides remain. The transaction body re-resolves the master
-	// for tombstone bookkeeping.
+	// Resolve every calendar that owns a row with this UID: master,
+	// override, or series-tail. A read-only or VJOURNAL-unsupported
+	// collection is then refused even when the master has been purged and
+	// only orphaned overrides remain. The transaction body re-resolves the
+	// master for tombstone records.
 	calIDs, err := s.calendarIDsForUID(ctx, uid)
 	if err != nil {
 		return err
@@ -603,14 +603,14 @@ func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
-	// Tombstone, dirty-mark, and soft-delete commit together so a failed
-	// sync-tracking write can't leave a tombstone for a still-live series
-	// whose next sync would DELETE it from the server (issue #107). A missing
+	// Tombstone, dirty-mark, and soft-delete commit together. A failed
+	// sync-track write cannot leave a tombstone for a still-live series
+	// whose next sync would DELETE it from the server (issue #107). No
 	// master means there is nothing to track.
 	master, mErr := qtx.GetJournalByUID(ctx, uid)
-	// Only ErrNoRows means "no master to track"; a genuine lookup error must
-	// abort so the series isn't soft-deleted locally without a tombstone or
-	// dirty mark, which would let it resurface on the next pull (issue #290).
+	// Only ErrNoRows means "no master to track". A genuine lookup error must
+	// abort. Otherwise the series is soft-deleted locally without a tombstone
+	// or dirty mark. It would then resurface on the next pull (issue #290).
 	if mErr != nil && !errors.Is(mErr, sql.ErrNoRows) {
 		return fmt.Errorf("get master: %w", mErr)
 	}
@@ -1043,12 +1043,12 @@ func (s *Service) Hydrate(ctx context.Context, j *Journal) error {
 }
 
 // HydrateBestEffort populates every relation it can and returns the joined
-// errors for the ones it could not, instead of stopping at the first failure.
+// errors for the ones it could not. It does not stop at the first failure.
 //
-// This is for read-only display paths, where one unreadable relation should
-// degrade that field alone: stopping early would leave every relation after it
-// nil, which a caller rendering JSON cannot tell apart from "there are none".
-// Anything that writes iCal must use Hydrate — a partial record pushed to a
+// This is for read-only display paths. One unreadable relation should degrade
+// that field alone. An early stop would leave every relation after it nil.
+// A caller that renders JSON cannot tell that apart from "there are none".
+// Anything that writes iCal must use Hydrate. A partial record pushed to a
 // server overwrites the complete copy there.
 func (s *Service) HydrateBestEffort(ctx context.Context, j *Journal) error {
 	return s.hydrate(ctx, j, false)
