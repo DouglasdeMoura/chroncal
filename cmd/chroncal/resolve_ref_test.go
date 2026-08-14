@@ -6,9 +6,9 @@ import (
 	"testing"
 )
 
-// When a reference is a numeric ID, the master row is resolved directly and a
-// non-empty --recurrence-id cannot be honored (IDs are unique per row, so the
-// override would have to be addressed by its own ID). Silently dropping the
+// When a reference is a numeric ID, the master row is resolved directly. A
+// non-empty --recurrence-id cannot be honored. IDs are unique per row, so the
+// override would have to be addressed by its own ID. A silent drop of the
 // recurrence-id let `event delete 42 --recurrence-id ...` render an
 // override-specific confirm prompt and then soft-delete the master. Reject the
 // combination instead. See issue #114.
