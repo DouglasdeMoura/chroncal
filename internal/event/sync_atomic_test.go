@@ -8,7 +8,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
-// makeSyncedCalendar links calendar 1 to an account so the sync-tracking
+// makeSyncedCalendar links calendar 1 to an account so the sync-record
 // writes (MarkResourceDirty / CreateTombstoneIfSynced) actually fire.
 func makeSyncedCalendar(t *testing.T, s *Service) {
 	t.Helper()
@@ -32,11 +32,11 @@ func makeSyncedCalendar(t *testing.T, s *Service) {
 	}
 }
 
-// TestCreate_SyncMarkIsAtomic exercises issue #107: the sync-tracking write
-// must participate in the mutation's transaction and its error must not be
-// discarded. We force the sync_resources INSERT to fail (by dropping the
-// table) and assert that Create reports the failure and rolls the event back
-// rather than silently committing a row that will never be pushed.
+// TestCreate_SyncMarkIsAtomic exercises issue #107. The sync-record write
+// must participate in the mutation's transaction. Its error must not be
+// discarded. We force the sync_resources INSERT to fail (by a drop of the
+// table). We assert that Create reports the failure and rolls the event back.
+// It must not commit a row that will never be pushed, in silence.
 func TestCreate_SyncMarkIsAtomic(t *testing.T) {
 	svc := newTestService(t)
 	makeSyncedCalendar(t, svc)
@@ -115,11 +115,11 @@ func TestDelete_TombstoneIsAtomic(t *testing.T) {
 }
 
 // TestDeleteSeries_TombstoneIsAtomic is the DeleteSeries analogue of
-// TestDelete_TombstoneIsAtomic: a recurring master's series-delete must write
-// its tombstone inside the soft-delete transaction so a failed tombstone write
-// can't leave a tombstone for a still-live series (which the next sync would
-// DELETE from the server). Regression test for the issue #107 gap that the
-// original fix left in DeleteSeries.
+// TestDelete_TombstoneIsAtomic. A recurring master's series-delete must write
+// its tombstone inside the soft-delete transaction. A failed tombstone write
+// then cannot leave a tombstone for a still-live series. The next sync would
+// DELETE that series from the server. Regression test for the issue #107 gap
+// that the original fix left in DeleteSeries.
 func TestDeleteSeries_TombstoneIsAtomic(t *testing.T) {
 	svc := newTestService(t)
 	makeSyncedCalendar(t, svc)
