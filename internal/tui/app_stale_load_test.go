@@ -8,8 +8,8 @@ import (
 )
 
 // TestEventsLoadedMsg_StaleDropPreservesAgendaWindow reproduces the agenda
-// "data does not load" bug: rapid month navigation fires several in-flight
-// queries, and a late reply for an older window must not overwrite rows for
+// "data does not load" bug. Rapid month navigation fires several in-flight
+// queries. A late reply for an older window must not overwrite rows for
 // the current window with an empty set.
 func TestEventsLoadedMsg_StaleDropPreservesAgendaWindow(t *testing.T) {
 	today := time.Date(2026, 4, 23, 0, 0, 0, 0, time.Local)
@@ -67,9 +67,9 @@ func TestEventsLoadedMsg_StaleDropPreservesAgendaWindow(t *testing.T) {
 }
 
 // TestEventsLoadedMsg_IncrementalMergeAppendsToExisting verifies that a
-// merge=true response for a slice abutting the currently-loaded range
-// extends m.events and the loaded range, instead of replacing them.
-// This is the core contract of the differential-loading path.
+// merge=true response for a slice that abuts the currently-loaded range
+// extends m.events and the loaded range. It does not replace them.
+// This is the core contract of the differential-load path.
 func TestEventsLoadedMsg_IncrementalMergeAppendsToExisting(t *testing.T) {
 	today := time.Date(2026, 4, 23, 0, 0, 0, 0, time.Local)
 	// Initial window: [April 23, May 23). One event already loaded.
@@ -122,8 +122,8 @@ func TestEventsLoadedMsg_IncrementalMergeAppendsToExisting(t *testing.T) {
 }
 
 // TestEventsLoadedMsg_IncrementalStaleDropped verifies that a merge=true
-// response whose slice no longer abuts the loaded range is dropped — the
-// user has jumped elsewhere and the delta is no longer meaningful.
+// response whose slice no longer abuts the loaded range is dropped. The
+// user has jumped elsewhere. The delta is no longer meaningful.
 func TestEventsLoadedMsg_IncrementalStaleDropped(t *testing.T) {
 	today := time.Date(2026, 4, 23, 0, 0, 0, 0, time.Local)
 	apr23 := time.Date(2026, 4, 23, 0, 0, 0, 0, time.UTC)
@@ -166,7 +166,7 @@ func TestEventsLoadedMsg_IncrementalStaleDropped(t *testing.T) {
 }
 
 // TestMergeEvents_DedupsByIDAndStartTime verifies the merge helper's
-// dedup contract: a multi-day event returned by both the old slice and
+// dedup contract. A multi-day event returned by both the old slice and
 // the new incremental slice must not appear twice in the merged list.
 func TestMergeEvents_DedupsByIDAndStartTime(t *testing.T) {
 	shared := event.Event{
@@ -200,8 +200,8 @@ func TestMergeEvents_DedupsByIDAndStartTime(t *testing.T) {
 }
 
 // TestExpectedEventRange_AgendaTracksWindow verifies the helper reports the
-// current agenda window exactly, so the stale-drop guard compares equal
-// times (not dates shifted by timezone rounding).
+// current agenda window exactly. The stale-drop guard then compares equal
+// times (not dates shifted by timezone round).
 func TestExpectedEventRange_AgendaTracksWindow(t *testing.T) {
 	today := time.Date(2026, 4, 23, 0, 0, 0, 0, time.Local)
 	agenda := NewAgendaModel(today).ResetWindow(
