@@ -30,8 +30,8 @@ func stubPushSeam(t *testing.T) *[]int64 {
 
 // runWriteCommand executes one CLI command tree in-process against the test
 // DB. It wraps the resource command in a fresh parent so cfg is reloaded
-// from CHRONCAL_DB (mirroring rootCmd's PersistentPreRunE) and so each call
-// gets fresh flag closures.
+// from CHRONCAL_DB. That mirrors rootCmd's PersistentPreRunE. Each call
+// then gets fresh flag closures.
 func runWriteCommand(t *testing.T, sub *cobra.Command, args ...string) error {
 	t.Helper()
 	root := &cobra.Command{
@@ -51,8 +51,8 @@ func runWriteCommand(t *testing.T, sub *cobra.Command, args ...string) error {
 }
 
 // TestWritePathsOpportunisticallyPush asserts that todo, journal, and import
-// write paths invoke the opportunistic CalDAV push seam, matching event write
-// paths. Regression guard for issue #115.
+// write paths invoke the opportunistic CalDAV push seam. That matches event
+// write paths. Regression guard for issue #115.
 func TestWritePathsOpportunisticallyPush(t *testing.T) {
 	dbPath := setupCalendarCLITestEnv(t)
 	t.Setenv("CHRONCAL_ASSUME_YES", "1")
