@@ -7,10 +7,10 @@ import (
 	lipgloss "charm.land/lipgloss/v2"
 )
 
-// Wide glyphs (CJK/emoji) measure two display cells each, so a title whose rune
+// Wide glyphs (CJK/emoji) measure two display cells each. A title whose rune
 // count fits the cell-width budget can still overflow it. The pill renderers
-// must clip by display width, not rune count, or the styled cell soft-wraps onto
-// a second line and corrupts the surrounding grid row (#312).
+// must clip by display width, not rune count. Otherwise the styled cell
+// soft-wraps onto a second line and corrupts the grid row around it (#312).
 func TestRenderEventPill_WideGlyphsDoNotWrap(t *testing.T) {
 	const cellW = 10
 	ev := CalendarEvent{Title: "会議会議会議会議"} // 8 CJK runes = 16 display cells
