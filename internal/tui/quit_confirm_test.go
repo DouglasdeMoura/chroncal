@@ -10,11 +10,11 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/trash"
 )
 
-// TestCtrlCConvertsNonQuitConfirmToQuit reproduces issue #143: ctrl+c is
-// documented as "truly global", but when a destructive (non-quit) confirm is
+// TestCtrlCConvertsNonQuitConfirmToQuit reproduces issue #143. ctrl+c is
+// documented as "truly global". When a destructive (non-quit) confirm is
 // open it used to fall through and be swallowed. ctrl+c must instead replace
-// the open confirm with the quit confirm, and clear the abandoned destructive
-// pending state so it can't fire later.
+// the open confirm with the quit confirm. It must clear the abandoned
+// destructive wait state so it cannot fire later.
 func TestCtrlCConvertsNonQuitConfirmToQuit(t *testing.T) {
 	ctrlC := tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
 
@@ -44,8 +44,8 @@ func TestCtrlCConvertsNonQuitConfirmToQuit(t *testing.T) {
 }
 
 // TestCtrlCClearsPurgePendingState guards the trash-purge variant of the same
-// bug: the bulk-purge confirm must also be convertible to a quit without
-// leaving its pending entries armed.
+// bug. The bulk-purge confirm must also be convertible to a quit. Its wait
+// entries must not stay armed.
 func TestCtrlCClearsPurgePendingState(t *testing.T) {
 	ctrlC := tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
 
@@ -111,10 +111,10 @@ func TestCtrlCClearsAccountRemovalPendingState(t *testing.T) {
 	}
 }
 
-// TestQuitKeyDeferredToOpenOverlay reproduces issue #406: pressing `q` while a
+// TestQuitKeyDeferredToOpenOverlay reproduces issue #406. A press of `q` while a
 // read-only/choice overlay owns input must NOT route to the quit confirm. The
-// global intercept should leave the keystroke unhandled so the overlay's own
-// `q`-to-close binding runs.
+// global intercept should leave the keystroke unhandled. The overlay's own
+// `q`-to-close binding then runs.
 func TestQuitKeyDeferredToOpenOverlay(t *testing.T) {
 	qKey := tea.KeyPressMsg{Code: 'q', Text: "q"}
 
