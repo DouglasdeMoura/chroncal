@@ -6,9 +6,9 @@ import (
 	lipgloss "charm.land/lipgloss/v2"
 )
 
-// FooterContext names the high-level focus the app is showing so the footer
+// FooterContext names the high-level focus the app shows so the footer
 // can pick an appropriate key set. Callers map their focus/view state to
-// one of these; the footer does not inspect app state on its own.
+// one of these. The footer does not inspect app state on its own.
 type FooterContext int
 
 const (
@@ -27,8 +27,8 @@ const (
 const footerMinCols = 40
 
 // footerEllipsisCols is the width below which multi-hint lines lose their
-// trailing items to an ellipsis. Above this and below the full width, a
-// truncation is applied instead of collapsing.
+// extra items at the end to an ellipsis. Above this and below the full
+// width, a truncate is applied instead of a collapse.
 const footerEllipsisCols = 60
 
 // footerHint is a single key/description pair rendered in the footer.
@@ -53,13 +53,13 @@ func NewFooterModel(theme Theme) FooterModel {
 func (f *FooterModel) SetTheme(theme Theme) { f.theme = theme }
 
 // Render composes one footer line for the given context and width. When
-// toast is non-empty, it replaces the right-side hint half; syncStatus is
+// toast is non-empty, it replaces the right-side hint half. syncStatus is
 // rendered on the left. hasRSVP controls the optional RSVP keys on event
-// popups, and showTodayHint controls whether the footer should advertise
+// popups. showTodayHint controls whether the footer should advertise
 // the `t today` shortcut when it is actionable in the active view.
 //
 // Below footerMinCols, the line collapses to "? help" + the single highest
-// value local action (so the user always has a path forward).
+// value local action. The user then always has a path forward.
 // Between footerMinCols and footerEllipsisCols, the full hint list is
 // truncated with an ellipsis.
 // Above footerEllipsisCols, the full line renders.
@@ -125,9 +125,9 @@ func (f FooterModel) composeHints(hints []footerHint) string {
 	return strings.Join(parts, sep)
 }
 
-// renderCollapsed keeps the line useful below footerMinCols by showing only
+// renderCollapsed keeps the line useful below footerMinCols. It shows only
 // a single high-value hint plus "?" as an escape hatch. The hint chosen is
-// the first destructive-or-primary action for the context, with "? help"
+// the first destructive-or-primary action for the context. "? help" is
 // always rendered as a fallback.
 func (f FooterModel) renderCollapsed(ctx FooterContext, width int) string {
 	keyStyle := lipgloss.NewStyle().Foreground(f.theme.Text)
@@ -143,7 +143,7 @@ func (f FooterModel) renderCollapsed(ctx FooterContext, width int) string {
 	return truncateTo(line, width)
 }
 
-// joinFooter splits left/right into a single line, applying ellipsis
+// joinFooter splits left/right into a single line. It applies ellipsis
 // truncation when width is between footerMinCols and footerEllipsisCols.
 func (f FooterModel) joinFooter(left, right string, width int) string {
 	if width < footerEllipsisCols {
@@ -162,10 +162,10 @@ func (f FooterModel) joinFooter(left, right string, width int) string {
 }
 
 // RenderMinimal produces the reduced footer used while a dialog or palette
-// is open: the dialog owns its own hint row, so the app footer degrades to
+// is open. The dialog owns its own hint row. The app footer then degrades to
 // sync status on the left and a toast (or the "? help" escape hatch) on
-// the right. Pass showHelpHint=false when the help dialog itself is open
-// (displaying "? help" while help is up is misleading).
+// the right. Pass showHelpHint=false when the help dialog itself is open.
+// A show of "? help" while help is up misleads.
 func (f FooterModel) RenderMinimal(width int, syncStatus, toast string, showHelpHint bool) string {
 	if width <= 0 {
 		return ""
