@@ -86,16 +86,16 @@ func defaultAppKeys() appKeyMap {
 }
 
 type eventsLoadedMsg struct {
-	// from and to identify the query range so the handler can drop stale
-	// responses when the active view's range has moved on (e.g., rapid
-	// month navigation in the agenda fires multiple loads and the last to
-	// arrive must not overwrite the current window's rows with empty data).
+	// from and to identify the query range. The handler can then drop stale
+	// responses when the active view's range has moved on. Rapid month
+	// navigation in the agenda fires multiple loads. The last to arrive
+	// must not overwrite the current window's rows with empty data.
 	from time.Time
 	to   time.Time
 	// merge=true means this is an incremental slice to append to the
-	// existing m.events (agenda infinite-scroll path); merge=false means
-	// replace m.events entirely (full refresh — initial load, cursor
-	// jump, view change, post-mutation reload).
+	// current m.events (agenda infinite-scroll path). merge=false means
+	// replace m.events entirely. That is a full refresh: initial load,
+	// cursor jump, view change, or post-mutation reload.
 	merge  bool
 	events []event.Event
 	err    error
@@ -276,9 +276,9 @@ type syncCalendarFinishedMsg struct {
 }
 
 // opportunisticPushFinishedMsg is emitted after a save-time per-calendar push.
-// It doesn't drive the manual-sync state machine (m.syncing), so a push that
-// completes while a manual sync is mid-flight leaves the manual-sync status
-// line intact.
+// It does not drive the manual-sync state machine (m.syncing). A push that
+// completes while a manual sync is mid-flight then leaves the manual-sync
+// status line intact.
 type opportunisticPushFinishedMsg struct {
 	summary string
 	err     error
@@ -343,8 +343,8 @@ type accountImportFinishedMsg struct {
 	existing int
 	synced   int
 	// warnings counts the import warnings collected across the first syncs
-	// (values the importer had to fabricate); surfaced in the status line
-	// like every other TUI sync path, full text in the state-dir log.
+	// (values the importer had to fabricate). The status line shows them
+	// like every other TUI sync path. Full text is in the state-dir log.
 	warnings int
 	err      error
 	syncErr  error
@@ -409,8 +409,8 @@ type Model struct {
 	agenda    AgendaModel
 	events    []event.Event
 	// loadedFrom/loadedTo track the [from, to) UTC range currently covered
-	// by m.events so agenda expansion can query only the newly-added
-	// slice instead of re-querying the whole window each time. Zero values
+	// by m.events. Agenda expansion can then query only the new slice.
+	// It does not re-query the whole window each time. Zero values
 	// mean "no prior load" and force a full refresh.
 	loadedFrom time.Time
 	loadedTo   time.Time
@@ -431,10 +431,10 @@ type Model struct {
 	dialogOpen               bool
 	viewDialog               EventViewDialogModel
 	viewDialogOpen           bool
-	// viewReturnEvent is set when the event form is opened from the
-	// view dialog; after the form closes (save or cancel) the app
-	// reopens the view with this event so the user lands back where
-	// they started. Zero-valued ID means "don't return to view."
+	// viewReturnEvent is set when the event form opens from the
+	// view dialog. After the form closes (save or cancel) the app
+	// reopens the view with this event. The user then lands back where
+	// they started. Zero-valued ID means "do not return to view."
 	viewReturnEvent event.Event
 	confirmDialog   ConfirmDialogModel
 	confirmOpen     bool
@@ -480,7 +480,7 @@ type Model struct {
 	oauthFlowOpen bool
 	oauthPurpose  oauthFlowPurpose
 	// oauthPending guards the window between a Re-authenticate request and
-	// the modal opening: the request dispatches an async credential load, so
+	// the modal open. The request dispatches an async credential load, so
 	// oauthFlowOpen is still false when a second fast press arrives. This
 	// flips synchronously so the second press is rejected. Cleared on every
 	// terminal path (flow opened, load failed, or fallback dialog shown).
@@ -521,9 +521,9 @@ type Model struct {
 	statusToken int
 	syncing     bool
 	syncSpinner spinner.Model
-	// syncTargets and syncTotals drive a per-calendar SyncAll run so the
-	// footer can show progress as each calendar finishes instead of one
-	// opaque "Syncing all calendars…" line.
+	// syncTargets and syncTotals drive a per-calendar SyncAll run. The
+	// footer can then show progress as each calendar finishes. It does
+	// not use one opaque "Syncing all calendars…" line.
 	syncTargets []syncTarget
 	syncTotals  syncTotals
 
@@ -542,12 +542,12 @@ type Model struct {
 	// (pushDeferralToken bumped) and skip pushing.
 	pushDeferralToken int
 
-	// undoRestoreInFlight is true between dispatching an undo restore and the
+	// undoRestoreInFlight is true between dispatch of an undo restore and the
 	// eventRestoredMsg landing. The restore runs in an async tea.Cmd while
-	// Peek leaves the entry on the stack, so without this guard a reflexive
-	// second press of the undo key would Peek the same entry and dispatch a
-	// second RestoreUndo (issue #309) — a spurious "Undo failed" toast plus two
-	// overlapping restore transactions. Cleared when the message arrives.
+	// Peek leaves the entry on the stack. Without this guard a second press
+	// of the undo key would Peek the same entry and dispatch a second
+	// RestoreUndo (issue #309). That is a spurious "Undo failed" toast plus
+	// two overlapping restore transactions. Cleared when the message arrives.
 	undoRestoreInFlight bool
 
 	// trash is the "Recently deleted" overlay. While trashOpen is true
@@ -671,8 +671,8 @@ func (m Model) dispatchEditScope(editID int64, choice int, save EventFormSaveMsg
 	}
 
 	// Each branch writes the event row together with its attendees and alarms
-	// in a single transaction, so a failed child write rolls the whole edit
-	// back instead of leaving a half-updated row (issue #87).
+	// in a single transaction. A failed child write then rolls the whole edit
+	// back. It does not leave a half-updated row (issue #87).
 	switch choice {
 	case 0: // This event only
 		_, err = m.app.Events.UpdateInstanceWithRelations(ctx, master.UID, save.InstanceTime, params, save.Attendees, save.Alarms)
@@ -1442,7 +1442,7 @@ func (m Model) finishSync(msg syncFinishedMsg) (Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// startOAuthFlow opens the pending modal and launches browser authorization
+// startOAuthFlow opens the wait modal and launches browser authorization
 // with the given client config. Add Account consumes the sign-in dialog.
 // Account re-authentication keeps any edit draft under the flow.
 // The caller has already recorded m.oauthPurpose.
@@ -1526,9 +1526,9 @@ func (m Model) finishOAuthReauth(result *auth.GoogleOAuthResult) tea.Cmd {
 		cred := p.cred
 		cred.AccountID = p.accountID
 		cred.AccessToken = result.AccessToken
-		// Preserve the existing refresh token if Google didn't return a new
+		// Keep the current refresh token if Google did not return a new
 		// one. access_type=offline&prompt=consent normally forces a fresh
-		// refresh token, but if it ever comes back empty, overwriting would
+		// refresh token. If it comes back empty, an overwrite would
 		// strip the account's ability to refresh and brick sync once the
 		// access token expires (~1h). Keep the old one in that case.
 		if result.RefreshToken != "" {
@@ -2250,9 +2250,9 @@ func (m Model) innerDims() (int, int) {
 	return mw - padding*2, mh - padding*2
 }
 
-// clearConfirmPending drops pending state owned by a destructive confirm or
+// clearConfirmPending drops wait state owned by a destructive confirm or
 // choice. Used when ctrl+c abandons that operation in favor of the quit
-// confirm, so the superseded action can never fire or reappear afterward.
+// confirm. The superseded action can then never fire or reappear afterward.
 func (m Model) clearConfirmPending() Model {
 	m.pendingDelete = event.Event{}
 	m.pendingPurgeEntries = nil
@@ -2299,21 +2299,22 @@ func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.oauthFlow.Abort() // release any in-flight OAuth listener
 			return m, tea.Quit, true
 		}
-		// ctrl+c is truly global: even when a destructive (non-quit)
+		// ctrl+c is truly global. Even when a destructive (non-quit)
 		// confirm — event delete, trash purge, calendar delete — owns
-		// input, replace it with the quit confirm rather than letting the
+		// input, replace it with the quit confirm. Do not let the
 		// keystroke fall through to confirmDialog.Update (which ignores
-		// it). Clearing the abandoned confirm's pending state keeps the
-		// destructive action from firing later.
+		// it). Clear the abandoned confirm's pending state. That keeps the
+		// destructive action from a later fire.
 		m = m.clearConfirmPending()
 		return m.openQuitConfirm(), nil, true
 	}
 	textEntryActive := m.paletteOpen || m.formOpen || m.calendarManagerOpen ||
 		m.oauthFlowOpen || m.accountOAuthConfigOpen || m.accountCredentialsOpen
-	// q opens the quit confirm only from the bare grid. Any open overlay —
-	// text-entry (palette, form) or read-only/choice (event view, list,
-	// choice, calendar list, trash, help) — owns q so its own `q`-to-close
-	// binding runs instead of the global quit guard (issue #406).
+	// q opens the quit confirm only from the bare grid. Any open overlay
+	// owns q. That includes text-entry (palette, form) and read-only/choice
+	// (event view, list, choice, calendar list, trash, help). Its own
+	// `q`-to-close key binding then runs, not the global quit guard
+	// (issue #406).
 	if key.Matches(msg, m.keys.Quit) && !m.anyOverlayOpen() {
 		return m.openQuitConfirm(), nil, true
 	}
@@ -2396,9 +2397,9 @@ func (m Model) currentFooterShowsTodayHint() bool {
 		cursor, today := m.viewCursorAndToday()
 		return !sameDay(cursor, today)
 	case FooterAgenda:
-		// Agenda navigation moves the selected row, not m.cursor — so we
-		// look at the selected day (falls back to cursor when nothing is
-		// selected) and compare against today.
+		// Agenda navigation moves the selected row, not m.cursor. Look
+		// at the selected day. If nothing is selected, use the cursor.
+		// Then compare against today.
 		_, today := m.viewCursorAndToday()
 		return !sameDay(m.agenda.SelectedDay(), today)
 	default:
@@ -2637,12 +2638,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.BackgroundColorMsg:
 		m.theme = LoadTheme(m.themeName, msg.IsDark())
-		// System theme opts into a terminal-adaptive Selected color:
-		// derive it from the actual terminal background reported over
-		// OSC 11 by shifting OKLCh lightness ±8 %. That guarantees a
-		// visible-but-subtle highlight on any terminal theme — the
+		// System theme opts into a terminal-adaptive Selected color.
+		// Derive it from the actual terminal background reported over
+		// OSC 11 by a shift of OKLCh lightness ±8 %. That guarantees a
+		// visible-but-subtle highlight on any terminal theme. The
 		// static Dracula Selection hexes in system.toml are the
-		// fallback when OSC 11 doesn't answer (e.g. tmux without
+		// fallback when OSC 11 does not answer (e.g. tmux without
 		// passthrough).
 		if m.themeName == "system" && msg.Color != nil {
 			delta := 0.08
@@ -2706,16 +2707,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case eventsLoadedMsg:
-		// Guard against a stale load: rapid navigation (e.g. repeated [/] in
-		// the agenda) fires multiple in-flight queries; drop any whose range
-		// no longer matches the active view so a late stale response can't
+		// Guard against a stale load. Rapid navigation (e.g. repeated [/] in
+		// the agenda) fires multiple in-flight queries. Drop any whose range
+		// no longer matches the active view. A late stale response then cannot
 		// overwrite correct rows with an empty set.
 		//
 		// For full (merge=false) responses the query range must equal the
 		// current expected range exactly. For incremental (merge=true)
 		// responses the queried slice must lie inside the expected range
-		// and abut the currently-loaded range so the append is meaningful;
-		// otherwise the user has since jumped elsewhere.
+		// and abut the currently-loaded range. The append is then meaningful.
+		// Otherwise the user has since jumped elsewhere.
 		expectedFrom, expectedTo := m.expectedEventRange()
 		if msg.merge {
 			if msg.from.Before(expectedFrom) || msg.to.After(expectedTo) {
@@ -2748,10 +2749,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case viewWeek:
 			m.week = m.week.SetEvents(calEvents)
 		case viewAgenda:
-			// Pass m.events (the merged cache) rather than msg.events (which
-			// is only the delta for incremental responses) — otherwise a
-			// merge would rebuild the agenda rows with only the newly-
-			// fetched slice and the previously-shown events would vanish.
+			// Pass m.events (the merged cache), not msg.events. msg.events
+			// is only the delta for incremental responses. Otherwise a
+			// merge would rebuild the agenda rows with only the new
+			// slice. The events shown before would vanish.
 			m.agenda = m.agenda.SetEvents(filterVisibleEvents(m.events, m.hiddenCalendars), m.calendars)
 		default:
 			m.calendar = m.calendar.SetEvents(calEvents)
@@ -2761,8 +2762,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.dialog = m.dialog.SetEvents(dayEvents)
 		}
 		// After an agenda load lands, pull in the next month if the loaded
-		// rows don't fill the viewport — prevents the user from staring at
-		// blank space below a sparse month until they navigate.
+		// rows do not fill the viewport. That prevents a stare at blank
+		// space below a sparse month until the user navigates.
 		if m.viewMode == viewAgenda {
 			if cmd := m.agenda.MaybeFillViewport(); cmd != nil {
 				return m, cmd
@@ -2875,8 +2876,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// ev.StartTime carries the clicked occurrence's time for recurring
 		// events (queryEventsRange overwrites it with InstanceTime). The
 		// fresh Get below returns the master row, which has the original
-		// DTSTART — so we capture the clicked instance time first and pass
-		// it alongside so the form can prompt for scope on save.
+		// DTSTART. Capture the clicked instance time first. Pass it
+		// alongside so the form can prompt for scope on save.
 		instanceTime := ev.StartTime
 		instanceEnd := ev.EndTime
 		return m, func() tea.Msg {
@@ -2891,8 +2892,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			fresh.Attendees = attendees
 			// For a recurring instance, overwrite the master's DTSTART with
-			// the clicked occurrence so the form's date/time fields reflect
-			// what the user actually clicked, not the original series start.
+			// the clicked occurrence. The form's date/time fields then
+			// reflect what the user actually clicked, not the original
+			// series start.
 			if fresh.RecurrenceRule != "" && !instanceTime.IsZero() {
 				fresh.StartTime = instanceTime
 				if !instanceEnd.IsZero() {
@@ -3274,8 +3276,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case CalendarVisibilityToggledMsg:
-		// Mirror the toggle into the open calendar manager so its root list
-		// and reopened detail params never go stale; the manager's own
+		// Mirror the toggle into the open calendar manager. Its root list
+		// and reopened detail params then never go stale. The manager's own
 		// updateCalendar mirror is only reachable through this forward.
 		if m.calendarManagerOpen {
 			m.calendarManager, _ = m.calendarManager.Update(msg)
@@ -3301,11 +3303,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case CalendarReorderedMsg:
-		// A reorder can originate from either the sidebar list or the manage
-		// dialog; mirror it into m.calendars so both views (and any later
-		// reload-from-cache) stay coherent, and record it as pending so a
-		// reload racing the async SetOrder below doesn't revert to the stale DB
-		// order.
+		// A reorder can originate from the sidebar list or the manage
+		// dialog. Mirror it into m.calendars so both views (and any later
+		// reload-from-cache) stay coherent. Record it as pending. A
+		// reload that races the async SetOrder below then does not revert
+		// to the stale DB order.
 		ids := msg.IDs
 		if m.pendingOrder == nil {
 			m.pendingOrder = make(map[int64]int64, len(ids))
@@ -3317,12 +3319,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.calendars[id] = info
 			}
 		}
-		// Re-sort the sidebar from the updated order. This is what makes a
-		// dialog-originated reorder show up behind the dialog; for a
-		// sidebar-originated one it just re-applies the order the list already
-		// swapped to. Preserve the cursor by calendar identity so a reorder
-		// (from either surface) never leaves the sidebar highlight on a
-		// different calendar than before.
+		// Re-sort the sidebar from the updated order. A dialog-originated
+		// reorder then shows up behind the dialog. For a sidebar-originated
+		// one it re-applies the order the list already swapped to. Keep
+		// the cursor by calendar identity. A reorder from either surface
+		// then never leaves the sidebar highlight on a different calendar.
 		m.sidebar = m.sidebar.SetList(m.sidebar.List().SetItemsPreservingCursor(sortedCalendarListItems(m.calendars)))
 		if m.calendarManagerOpen {
 			m.calendarManager = m.calendarManager.SetData(m.calendars, m.hiddenCalendars)
@@ -3378,8 +3379,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			return m, m.toast.Failed(msg.err.Error())
 		}
-		// Clear only the positions this save confirmed: a newer reorder may
-		// have updated m.pendingOrder while this write was in flight, and that
+		// Clear only the positions this save confirmed. A newer reorder may
+		// have updated m.pendingOrder while this write was in flight. That
 		// one stays pending until its own save lands.
 		for i, id := range msg.ids {
 			if m.pendingOrder[id] == int64(i) {
@@ -3998,9 +3999,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case CalendarSavedMsg:
 		// Metadata saves stay blocked while a sync or OAuth completion is
-		// writing to the calendars table — but never silently: surface the
-		// block as a form error so the editor and draft stay intact and the
-		// user knows to retry.
+		// writing to the calendars table. Never do this in silence. Surface
+		// the block as a form error. The editor and draft then stay intact
+		// and the user knows to retry.
 		if m.syncing || m.oauthPending {
 			return m, func() tea.Msg {
 				return calendarMutationDoneMsg{err: errors.New("sync in progress — try again in a moment")}
@@ -4129,11 +4130,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case CalendarDeleteRequestedMsg:
-		// Fetch the event count before showing the confirm dialog so the
-		// user knows how many events will be deleted alongside the calendar.
+		// Fetch the event count before the confirm dialog. The user then
+		// knows how many events will be deleted alongside the calendar.
 		// When the target is the current default, slot in a picker dialog
-		// before the destructive confirm so the user explicitly chooses
-		// the replacement default — never silently promoted.
+		// before the destructive confirm. The user then chooses the
+		// replacement default. Never promote in silence.
 		id, name := msg.ID, msg.Name
 		info, known := m.calendars[id]
 		if known && info.IsDefault {
@@ -4167,10 +4168,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case calendarDeleteCountMsg:
-		// Keep the edit dialog open behind the confirm — if the user
-		// cancels the confirm, they return to the edit dialog instead of
-		// losing their in-progress changes. The confirm dialog takes input
-		// priority, so the edit dialog is visible but inert.
+		// Keep the edit dialog open behind the confirm. If the user
+		// cancels the confirm, they return to the edit dialog. They do
+		// not lose their in-progress changes. The confirm dialog takes
+		// input priority, so the edit dialog is visible but inert.
 		m.pendingCalendarDelete = msg.id
 		m.pendingCalendarDeleteName = msg.name
 		message := fmt.Sprintf("Delete calendar %q?", msg.name)
@@ -4630,9 +4631,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// different context (e.g. restoring the calendar first).
 			return m, cmd
 		}
-		// Remove the entry that was actually restored by identity, not the
-		// current top: a delete landing while the restore was in flight may
-		// have pushed a newer entry whose undo affordance must survive.
+		// Remove the entry that was actually restored, by identity, not the
+		// current top. A delete that lands while the restore is in flight may
+		// have pushed a newer entry. That entry's undo affordance must survive.
 		m.undoStack.Remove(msg.meta)
 		toastCmd := m.toast.Restored(msg.title)
 		return m, tea.Batch(m.loadEvents(), toastCmd)
@@ -4834,9 +4835,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 		}
-		// Click landed outside the sidebar — pull focus back to the main
-		// view so subsequent keystrokes target the calendar rather than
-		// the sidebar that was last clicked.
+		// Click landed outside the sidebar. Pull focus back to the main
+		// view. Later keystrokes then target the calendar, not the
+		// sidebar that was last clicked.
 		if m.focus == focusSidebar {
 			m.sidebar = m.sidebar.Blur()
 			m.focus = focusCalendar
@@ -4934,12 +4935,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Sync):
 			return m, func() tea.Msg { return SyncAllRequestedMsg{} }
 		case key.Matches(msg, m.keys.SwitchFocus):
-			// Only handle Tab/Shift+Tab at the app level when entering the
-			// sidebar from the main view. Forward Tab lands on the first
-			// sidebar tab stop (the prev-month chevron); backward Shift+Tab
-			// lands on the last (the bottom calendar list row). Once focus
-			// is inside the sidebar, the key falls through to
-			// m.sidebar.Update which cycles between its internal stops and
+			// Only handle Tab/Shift+Tab at the app level when the user
+			// enters the sidebar from the main view. Forward Tab lands on
+			// the first sidebar tab stop (the prev-month chevron). Backward
+			// Shift+Tab lands on the last (the bottom calendar list row).
+			// Once focus is inside the sidebar, the key falls through to
+			// m.sidebar.Update. That cycles between its internal stops and
 			// emits SidebarFocusEscapedMsg to hand focus back to the main
 			// view.
 			if m.showSidebar && m.focus != focusSidebar {
@@ -5040,10 +5041,10 @@ func (m Model) View() tea.View {
 
 	var body string
 	if m.showSidebar {
-		// Render content and border as two siblings joined horizontally
-		// so Faint (used to match the calendar grid chrome when
-		// unfocused) applies to the border glyphs only and never
-		// dims the sidebar's inner text.
+		// Render content and border as two siblings joined horizontally.
+		// Faint (used to match the calendar grid chrome when unfocused)
+		// then applies to the border glyphs only. It never dims the
+		// sidebar's inner text.
 		sb := m.sidebar.SetSize(sidebarWidth-padding*2, contentHeight-padding*2)
 		inner := lipgloss.NewStyle().
 			Width(sidebarWidth).
@@ -5102,11 +5103,11 @@ func (m Model) View() tea.View {
 		PaddingRight(padding).
 		Render(footerLine)
 	v.Content = lipgloss.JoinVertical(lipgloss.Left, body, footer)
-	// Strip mouse-tracking markers embedded by the footer label so they don't
-	// leak into terminal output, and populate the tracker's zones so clicks
+	// Strip mouse-track markers embedded by the footer label so they do not
+	// leak into terminal output. Populate the tracker's zones so clicks
 	// on the label can be resolved. Overlays, if any, will overwrite zones
-	// during their own View() sweeps below — that's fine, since the footer
-	// label isn't clickable while an overlay owns input.
+	// during their own View() sweeps below. That is fine. The footer
+	// label is not clickable while an overlay owns input.
 	v.Content = MouseSweep(v.Content)
 
 	if m.dialogOpen {
@@ -5172,8 +5173,8 @@ func (m Model) View() tea.View {
 		bw, bh := m.choiceDialog.BoxSize()
 		v.Content = m.compositeOverlay(v.Content, m.choiceDialog.View(), bw, bh)
 	}
-	// Regular confirms belong in the normal stack, but the quit guard must
-	// sit above palette and help (which otherwise render on top) because it
+	// Regular confirms belong in the normal stack. The quit guard must
+	// sit above palette and help (which otherwise render on top). It
 	// owns input whenever pendingQuit is set.
 	if m.confirmOpen && !m.pendingQuit {
 		bw, bh := m.confirmDialog.BoxSize()
@@ -5414,26 +5415,26 @@ func Run(a *app.App, themeName string) error {
 	// sends OSC 11 (bg) + OSC 10 (fg) + OSC 4 (palette 0..15) + DA1 in
 	// one raw-mode session:
 	//
-	//   - bg: if reported, used as-is; otherwise inferred from fg
+	//   - bg: if reported, used as-is. Otherwise inferred from fg
 	//     luminance with a neutral stand-in. Nil when nothing answers.
 	//   - palette: the terminal's actual 16-color ANSI rendering. Used
 	//     by the theme loader to resolve ANSI index references to real
-	//     hex values, so OKLCh contrast computations are exact.
+	//     hex values. OKLCh contrast computations are then exact.
 	//
-	// We install the palette globally before NewModel so the initial
-	// theme load (and every subsequent reload) can consult it. The bg
-	// arrives as a synthetic BackgroundColorMsg that the existing
-	// handler turns into a re-theme.
+	// Install the palette globally before NewModel. The initial theme
+	// load (and every later reload) can then consult it. The bg
+	// arrives as a synthetic BackgroundColorMsg. The current handler
+	// turns that into a re-theme.
 	bg, palette := detectTerminalState(os.Stdin, os.Stdout)
 	SetActivePalette(palette)
 
 	model := NewModel(a, themeName)
 	// Bubbletea renders on a frame-rate ticker (default 60 FPS). At 60
-	// FPS only ~16 ms is spent per visible frame, so when the user
-	// holds a navigation key the highlight steps once per ~16 ms even
-	// though our Update+View takes <1 ms. Bumping to the max (120 FPS)
-	// halves the perceived step latency under key repeat without
-	// changing app code paths.
+	// FPS only ~16 ms is spent per visible frame. When the user holds
+	// a navigation key the highlight steps once per ~16 ms even though
+	// our Update+View takes <1 ms. A bump to the max (120 FPS) halves
+	// the perceived step latency under key repeat. It does not change
+	// app code paths.
 	p := tea.NewProgram(model, tea.WithFPS(120))
 
 	if bg != nil {
