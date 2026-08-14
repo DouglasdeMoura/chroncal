@@ -6,9 +6,10 @@ import (
 )
 
 // TestJournalListHidesCancelledByDefault verifies that `journal list` hides
-// CANCELLED entries by default and that `--all` brings them back, mirroring
-// how `todo list` hides COMPLETED/CANCELLED. Regression test for issue #136,
-// where `--all` was a dead flag and CANCELLED journals were always shown.
+// CANCELLED entries by default and that `--all` brings them back. That
+// matches how `todo list` hides COMPLETED/CANCELLED. Regression test for
+// issue #136, where `--all` was a dead flag and CANCELLED journals were
+// always shown.
 func TestJournalListHidesCancelledByDefault(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 	t.Setenv("TZ", "UTC")
