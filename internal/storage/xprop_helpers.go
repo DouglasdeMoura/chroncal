@@ -14,10 +14,10 @@ const (
 )
 
 // AttachAlarmXProperties batch-loads X-properties for the given alarms and
-// attaches them by alarm ID. A load failure is returned, not swallowed: the
-// result feeds export and sync pushes, and silently-nil XProperties would
-// rewrite the server copy without them — turning a transient local read
-// error into permanent remote data loss.
+// attaches them by alarm ID. A load failure is returned, not swallowed. The
+// result feeds export and sync pushes. Silently-nil XProperties would
+// rewrite the server copy without them. A transient local read error would
+// then become permanent remote data loss.
 func AttachAlarmXProperties(ctx context.Context, q *Queries, ownerType string, alarms []model.Alarm) error {
 	if len(alarms) == 0 {
 		return nil
@@ -50,7 +50,7 @@ func AttachAlarmXProperties(ctx context.Context, q *Queries, ownerType string, a
 }
 
 // ReplaceAlarmXProperties rewrites an alarm's X-properties. Call inside the
-// caller's transaction by passing the transactional Queries.
+// caller's transaction. Pass the transactional Queries.
 func ReplaceAlarmXProperties(ctx context.Context, qtx *Queries, ownerType string, alarmID int64, xprops []model.XProperty) error {
 	if err := qtx.DeleteXPropertiesByOwner(ctx, DeleteXPropertiesByOwnerParams{
 		OwnerType: ownerType, OwnerID: alarmID,
