@@ -7,9 +7,9 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/event"
 )
 
-// TestDialogDayChanged_HonorsHiddenCalendars guards against a regression where
-// the day-events popup, when navigating to another day within the already
-// loaded period, rebuilt its list from the unfiltered event cache. That made
+// TestDialogDayChanged_HonorsHiddenCalendars guards against a regression. The
+// day-events popup, on a move to another day within the already loaded
+// period, rebuilt its list from the unfiltered event cache. That made
 // events from calendars hidden in the sidebar reappear in the popup.
 //
 // See issue #108.
