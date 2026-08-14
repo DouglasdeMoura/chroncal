@@ -23,8 +23,8 @@ import (
 // ---------------------------------------------------------------------------
 
 // FormField is the interface that all form field types must implement.
-// It provides the minimal surface needed for a Form to manage focus cycling,
-// rendering, and message dispatch across heterogeneous field types.
+// It provides the minimal surface a Form needs to manage focus cycle,
+// render, and message dispatch across heterogeneous field types.
 type FormField interface {
 	Update(tea.Msg) tea.Cmd
 	View() string
@@ -38,7 +38,7 @@ type FormField interface {
 // TextField
 // ---------------------------------------------------------------------------
 
-// TextField wraps a bubbles textinput with optional keystroke filtering.
+// TextField wraps a bubbles textinput with an optional keystroke filter.
 type TextField struct {
 	input    textinput.Model
 	filter   func(tea.Key) bool
@@ -58,8 +58,8 @@ func NewTextField(placeholder string) *TextField {
 }
 
 // applyPlaceholderDefaults styles the placeholder in both focus states
-// so hints read as hints — italicized and faint, distinct from entered
-// values which use the upright text style. Drops the bubbles default
+// so hints read as hints: italicized and faint, distinct from entered
+// values which use the upright text style. It drops the bubbles default
 // colour so the terminal's own faint attribute drives the dimness.
 func applyPlaceholderDefaults(input *textinput.Model) {
 	hint := lipgloss.NewStyle().Italic(true).Faint(true)
@@ -85,7 +85,7 @@ func (f *TextField) SetSuffix(s string)      { f.suffix = s }
 func (f *TextField) SetValidate(fn func(string) string) { f.validate = fn }
 
 // Validate implements the validator interface. It delegates to the hook
-// installed via SetValidate, returning "" (valid) when none is set.
+// installed via SetValidate. It returns "" (valid) when none is set.
 func (f *TextField) Validate() string {
 	if f.validate == nil {
 		return ""
@@ -94,7 +94,7 @@ func (f *TextField) Validate() string {
 }
 
 // SetFilter sets a function that gates printable keystrokes. When set, a key
-// with non-empty Text is forwarded to the underlying input only if fn returns
+// with non-empty Text is forwarded to the wrapped input only if fn returns
 // true. Special keys (tab, enter, backspace, …) are never filtered.
 func (f *TextField) SetFilter(fn func(tea.Key) bool) {
 	f.filter = fn
@@ -105,7 +105,7 @@ func (f *TextField) SetDigitsOnly() {
 	f.filter = FilterDigits
 }
 
-// SetEchoPassword toggles password masking for the underlying input.
+// SetEchoPassword toggles password mask for the wrapped input.
 func (f *TextField) SetEchoPassword(on bool) {
 	if on {
 		f.input.EchoMode = textinput.EchoPassword
@@ -190,7 +190,7 @@ func (f *TextField) SetDisabled(v bool) {
 }
 
 // SetDimStyle sets the style used to render the value when disabled.
-// Defaults to the zero style (no visual change beyond skipping the cursor).
+// Defaults to the zero style (no visual change beyond a skip of the cursor).
 func (f *TextField) SetDimStyle(s lipgloss.Style) { f.dimStyle = s }
 
 // FilterDigits allows only digit characters (0-9).
@@ -447,8 +447,8 @@ func (f *SelectField) Blur() {
 
 func (f *SelectField) SetWidth(int) {}
 
-// IsFocusable reports false for an empty option set: a select with nothing
-// to choose has no useful interaction and must not capture focus or input.
+// IsFocusable reports false for an empty option set. A select with nothing
+// to choose has no useful interaction. It must not capture focus or input.
 func (f *SelectField) IsFocusable() bool { return len(f.options) > 0 }
 
 // ---------------------------------------------------------------------------
@@ -457,7 +457,7 @@ func (f *SelectField) IsFocusable() bool { return len(f.options) > 0 }
 
 // QuantitySelectField is a composite FormField that renders a positive integer
 // input followed by a select on the same row, e.g. "1 Week". It implements
-// subFocuser so Tab/Enter cycle between the amount and unit before leaving.
+// subFocuser so Tab/Enter cycle between the amount and unit before they leave.
 type QuantitySelectField struct {
 	amount   *TextField
 	unit     *SelectField
@@ -521,7 +521,7 @@ func (f *QuantitySelectField) amountText() string {
 
 // amountIsOne reports whether the entered amount is exactly 1, which
 // governs singular/plural agreement of the unit label. An empty input
-// falls back to the placeholder ("1"), matching what amountText shows.
+// falls back to the placeholder ("1"), which matches what amountText shows.
 func (f *QuantitySelectField) amountIsOne() bool {
 	v := strings.TrimSpace(f.amount.Value())
 	if v == "" {
@@ -632,8 +632,8 @@ func (f *QuantitySelectField) Validate() string {
 
 // validatePositiveInt reports an error message when raw is not a whole
 // number greater than zero, or "" when it is. Shared by the quantity
-// field and the recurrence "Ends: After N times" count fields so an
-// empty or zero count can never persist an unbounded or invalid RRULE.
+// field and the recurrence "Ends: After N times" count fields. An
+// empty or zero count can then never persist an unbounded or invalid RRULE.
 func validatePositiveInt(raw string) string {
 	n, err := strconv.Atoi(raw)
 	if err != nil {
@@ -822,13 +822,13 @@ func (f *CheckboxField) SetChecked(v bool) { f.checked = v }
 func (f *CheckboxField) SetContent(v string) { f.content = v }
 
 // SetSuffix sets text rendered after the content, outside the focus
-// highlight. Useful for warnings or hints that shouldn't invert when
-// the row is focused. Caller is responsible for any styling.
+// highlight. Useful for warnings or hints that should not invert when
+// the row is focused. The caller is responsible for any style.
 func (f *CheckboxField) SetSuffix(v string) { f.suffix = v }
 
 // AutoChecked reports whether the current checked state was set
-// programmatically by the form rather than by the user, which lets the
-// form revert the state when the upstream condition changes.
+// programmatically by the form rather than by the user. The form can
+// then revert the state when the upstream condition changes.
 func (f *CheckboxField) AutoChecked() bool     { return f.autoChecked }
 func (f *CheckboxField) SetAutoChecked(v bool) { f.autoChecked = v }
 
@@ -935,9 +935,9 @@ func (f *StaticField) IsFocusable() bool      { return false }
 // OpenerField
 // ---------------------------------------------------------------------------
 
-// OpenerField is a focusable, display-only field whose Enter handling is
+// OpenerField is a focusable, display-only field whose Enter handle is
 // owned by the parent (typically to open an overlay). Looks like a
-// StaticField but participates in focus cycling.
+// StaticField but participates in the focus cycle.
 type OpenerField struct {
 	value   string
 	focused bool
@@ -1118,7 +1118,7 @@ func (f *HexColorField) View() string {
 // ---------------------------------------------------------------------------
 
 // ColorField composes a PaletteField and a HexColorField on a single row.
-// Tab cycles from palette to hex before leaving the field. Changes to
+// Tab cycles from palette to hex before it leaves the field. Changes to
 // either sub-field are mirrored to the other so the preview stays in sync.
 type ColorField struct {
 	palette  *PaletteField
@@ -1291,7 +1291,7 @@ func (f *DatePickerField) RangeEnd() (time.Time, bool) { return f.endValue, f.ha
 // date inclusive of the last day.
 func (f *DatePickerField) SetRangeEnd(t time.Time) { f.endValue = t; f.hasEnd = true }
 
-// ClearRangeEnd removes any range end, reverting to single-date display.
+// ClearRangeEnd removes any range end. The field then reverts to single-date display.
 func (f *DatePickerField) ClearRangeEnd() { f.endValue = time.Time{}; f.hasEnd = false }
 
 func (f *DatePickerField) Value() string { return f.formatted() }
@@ -1370,7 +1370,7 @@ func (f *TimeRangeField) SetStartValue(v string) { f.start.SetValue(v) }
 func (f *TimeRangeField) SetEndValue(v string)   { f.end.SetValue(v) }
 func (f *TimeRangeField) SetDisabled(v bool)     { f.disabled = v }
 
-// Value returns the start value, satisfying the valuer interface for
+// Value returns the start value. It satisfies the valuer interface for
 // Required field checks.
 func (f *TimeRangeField) Value() string { return f.start.Value() }
 
@@ -1578,7 +1578,7 @@ type TimezoneField struct {
 	focused bool
 }
 
-// NewTimezoneField creates a field displaying the given timezone name.
+// NewTimezoneField creates a field that shows the given timezone name.
 func NewTimezoneField(tz string) *TimezoneField {
 	return &TimezoneField{value: tz}
 }
@@ -1623,8 +1623,8 @@ func (f *TimezoneField) IsFocusable() bool { return true }
 // ---------------------------------------------------------------------------
 
 // MouseEvent is a pre-resolved mouse click. The parent is responsible for
-// calling mouse.Sweep on the rendered output and mouse.Resolve on clicks,
-// then forwarding this message to Form.Update.
+// a call of mouse.Sweep on the rendered output and mouse.Resolve on clicks,
+// then a forward of this message to Form.Update.
 type MouseEvent struct {
 	IsClick bool
 	Target  string
@@ -1662,8 +1662,8 @@ type validator interface {
 }
 
 // subFocuser is optionally implemented by composite fields with internal
-// focus positions. Form checks this before cycling focus on Tab, Shift+Tab,
-// and Enter, allowing the field to navigate between its sub-fields first.
+// focus positions. Form checks this before a focus cycle on Tab, Shift+Tab,
+// and Enter. The field can then navigate between its sub-fields first.
 type subFocuser interface {
 	SubFocusNext() (consumed bool, cmd tea.Cmd)
 	SubFocusPrev() (consumed bool, cmd tea.Cmd)
@@ -1734,17 +1734,17 @@ func (bs ButtonStyles) Get(v ButtonVariant) ButtonStyle {
 // At rest, Danger is a quiet variant of Normal: same pill shape and
 // background, only the label is bold red (Theme.Error). This matches
 // Apple's iOS pattern of red text on a neutral pill rather than a
-// flashing red button.
+// flash of a red button.
 //
 // On focus, the two variants diverge deliberately. Normal flips to
-// FormHighlight (the theme's selection accent), but Danger inverts to a
-// red-on-contrasting-fg pill. That divergence costs us "single focus
-// signal" uniformity, but it's the only way to keep destructive intent
+// FormHighlight (the theme's selection accent). Danger inverts to a
+// red-on-contrasting-fg pill. That divergence costs "single focus
+// signal" uniformity. It is the only way to keep destructive intent
 // readable across themes whose FormHighlight lands in the warm/red end
-// of the spectrum (Dracula's pink, Osaka's orange, Flexoki's coral) —
-// red text on a warm highlight is unreadable. Putting the red on the
-// background and computing a contrasting label via oklch.ContrastingFg
-// guarantees legibility on every theme and emphasizes the destructive
+// of the spectrum (Dracula's pink, Osaka's orange, Flexoki's coral).
+// Red text on a warm highlight is unreadable. Put the red on the
+// background. Compute a contrast label via oklch.ContrastingFg. That
+// guarantees legibility on every theme. It emphasizes the destructive
 // signal exactly when the user is about to commit it.
 func DefaultButtonStyles() ButtonStyles {
 	base := lipgloss.NewStyle().Padding(0, 2).MarginRight(1)
@@ -1794,11 +1794,11 @@ func DefaultFormStyles() FormStyles {
 }
 
 // FormActionButton is an optional third button between Submit and Cancel.
-// When Leading is true, the button renders flush-left in the button row
-// (typically used for destructive actions that need visual distance
-// from the primary action). Utility lifts the button onto a quieter tier
-// above the commit row instead, for secondary actions that are neither
-// destructive nor part of committing the form.
+// When Leading is true, the button renders flush-left in the button row.
+// That is typically used for destructive actions that need visual distance
+// from the primary action. Utility lifts the button onto a quieter tier
+// above the commit row instead. Use it for secondary actions that are
+// neither destructive nor part of a commit of the form.
 type FormActionButton struct {
 	Label   string
 	Variant ButtonVariant
@@ -1807,8 +1807,8 @@ type FormActionButton struct {
 	Utility bool
 }
 
-// Form manages a list of form fields with focus cycling, validation,
-// and submit/cancel handling.
+// Form manages a list of form fields with focus cycle, validation,
+// and submit/cancel handle.
 type Form struct {
 	items         []FormItem
 	styles        FormStyles
@@ -2114,15 +2114,15 @@ func (f Form) buttonParts() []string {
 	return []string{buttons}
 }
 
-// BodyView renders only the form fields, excluding the bottom action row.
-// Dialogs with constrained height can put this body in a viewport while
-// keeping Save/Cancel pinned below it.
+// BodyView renders only the form fields. It excludes the bottom action row.
+// Dialogs with constrained height can put this body in a viewport. Save/Cancel
+// then stay pinned below it.
 func (f Form) BodyView() string {
 	return lipgloss.JoinVertical(lipgloss.Left, f.fieldParts()...)
 }
 
 // ActionsView renders the form action separator and buttons without the
-// leading blank line used by the full form view.
+// blank line at the start used by the full form view.
 func (f Form) ActionsView() string {
 	return lipgloss.JoinVertical(lipgloss.Left, f.buttonParts()...)
 }
@@ -2135,9 +2135,9 @@ func (f Form) ButtonRowView() string {
 
 // FocusedLine returns the first rendered body line for the focused item,
 // or -1 when focus is on an action button (Submit/Cancel/etc.) rather than
-// a body field. It is used by scrollable dialogs to keep the active field
-// visible; callers must leave the scroll position untouched for buttons,
-// otherwise reaching the button row would yank the body back to line 0.
+// a body field. Scrollable dialogs use it to keep the active field
+// visible. Callers must leave the scroll position untouched for buttons.
+// Otherwise a move to the button row would yank the body back to line 0.
 func (f Form) FocusedLine() int {
 	if f.focused >= len(f.items) {
 		return -1
@@ -2177,7 +2177,7 @@ func (f *Form) SetActionButton(label string, variant ButtonVariant, onPress func
 }
 
 // ClearActionButtons removes every registered action button. Typically used
-// when the set of buttons must track dynamic form state (e.g. showing a Test
+// when the set of buttons must track dynamic form state (for example a Test
 // button only while a sync section is visible).
 func (f *Form) ClearActionButtons() {
 	f.actionButtons = nil
@@ -2191,9 +2191,9 @@ func (f *Form) SetLeadingActionButton(label string, variant ButtonVariant, onPre
 }
 
 // SetUtilityActionButton adds a secondary action to the quiet utility tier
-// above the commit row: utilities render side by side when they fit the form
-// width and stack vertically otherwise. Utility buttons take Leading focus
-// order, so Tab visits them before the commit controls.
+// above the commit row. Utilities render side by side when they fit the form
+// width. They stack vertically otherwise. Utility buttons take Leading focus
+// order. Tab then visits them before the commit controls.
 func (f *Form) SetUtilityActionButton(label string, variant ButtonVariant, onPress func() tea.Msg) {
 	f.actionButtons = append(f.actionButtons, FormActionButton{Label: label, Variant: variant, OnPress: onPress, Leading: true, Utility: true})
 }
@@ -2256,7 +2256,7 @@ func (f Form) HasError() bool { return f.error != "" }
 func (f Form) Error() string  { return f.error }
 
 // SetWidth explicitly sets the form's content width. Use this instead of
-// relying on WindowSizeMsg when the form is embedded inside a Dialog or
+// WindowSizeMsg when the form is embedded inside a Dialog or
 // other container whose width differs from the terminal width.
 func (f *Form) SetWidth(w int) {
 	if w <= 0 {
@@ -2266,8 +2266,8 @@ func (f *Form) SetWidth(w int) {
 	f.applyFieldWidths()
 }
 
-// applyFieldWidths sets each field's width based on the form width,
-// accounting for inline label columns and focus markers.
+// applyFieldWidths sets each field's width based on the form width.
+// It accounts for inline label columns and focus markers.
 func (f *Form) applyFieldWidths() {
 	if f.width <= 0 {
 		return
@@ -2362,7 +2362,7 @@ func (f Form) FormStaticField(i int) *StaticField {
 // Private
 
 // focusedSelect returns the SelectField behind a generic "select:prev/next"
-// arrow click for the given field, or nil if the field doesn't currently own
+// arrow click for the given field, or nil if the field does not currently own
 // a focused select. It unwraps the RecurrenceOnField composite, whose nested
 // monthly select renders those same generic targets.
 func focusedSelect(field FormField) *SelectField {
@@ -2699,15 +2699,15 @@ func (f Form) focusIndex(i int) (Form, tea.Cmd) {
 	return f, f.focusCurrent()
 }
 
-// Focus / Tab order is visual reading order, left-to-right:
+// Focus / Tab order is visual read order, left-to-right:
 //
 //	fields → leading actions → submit → trailing actions → cancel
 //
 // Leading buttons render on the left of the button row (Disconnect, Set
 // as Default, …), so they are tabbed through before Submit. Trailing
 // buttons (Test, …) render on the right of Submit and are tabbed after
-// it, before Cancel. Cancel is always last — Esc shortcut still wins for
-// the safe exit. This mirrors AppKit's "Full Keyboard Access" order
+// it, before Cancel. Cancel is always last. The Esc shortcut still wins
+// for the safe exit. This mirrors AppKit's "Full Keyboard Access" order
 // where Tab follows visual position rather than registration order.
 func (f Form) leadingCount() int {
 	n := 0
@@ -2721,8 +2721,8 @@ func (f Form) leadingCount() int {
 
 func (f Form) submitIndex() int { return len(f.items) + f.leadingCount() }
 
-// actionIndex maps a position in f.actionButtons to its focus index,
-// taking the leading/trailing split into account so each button's tab
+// actionIndex maps a position in f.actionButtons to its focus index.
+// It takes the leading/trailing split into account so each button's tab
 // position matches where it renders on screen.
 func (f Form) actionIndex(i int) int {
 	leading := f.actionButtons[i].Leading
@@ -2744,8 +2744,8 @@ func (f Form) totalCount() int { return f.cancelIndex() + 1 }
 
 // FirstFocusable returns the first focus slot Tab visits: the first focusable
 // field, or the first button slot when no field is focusable. Hosts use the
-// boundary slots to hand Tab traversal back to surrounding controls instead
-// of wrapping inside the form.
+// boundary slots to hand Tab traversal back to controls around the form.
+// Tab does not wrap inside the form.
 func (f Form) FirstFocusable() int {
 	for i, item := range f.items {
 		if item.Field.IsFocusable() {
@@ -2773,8 +2773,8 @@ func (f Form) focusMarkerFor(focused, showMarker bool) string {
 }
 
 // renderInlineLabel returns the label text for an inline row, padded to
-// maxLabelLen+requiredPad so all rows share a column, with the required
-// "*" marker rendered in its own style on required rows.
+// maxLabelLen+requiredPad so all rows share a column. The required
+// "*" marker is rendered in its own style on required rows.
 func (f Form) renderInlineLabel(item FormItem, maxLabelLen, requiredPad int, rightAlign bool) string {
 	labelText := f.styles.Label.Render(item.Label)
 	suffix := strings.Repeat(" ", requiredPad)
