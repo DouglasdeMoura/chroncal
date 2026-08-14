@@ -4,12 +4,11 @@ import (
 	"testing"
 )
 
-// TestTimezonePicker_ApplyFilterClampsOffset is a regression test for the bug
-// where applyFilter clamped cursor but left offset unbounded. If the picker was
-// scrolled to the bottom and then the filter was narrowed to a few top results,
-// ensureVisible would snap offset to the clamped cursor position. It would not
-// snap to the maximum valid scroll position. That hid all results above that
-// cursor.
+// TestTimezonePicker_ApplyFilterClampsOffset is a regression test. applyFilter
+// clamped cursor but left offset unbounded. Scroll the picker to the bottom.
+// Then narrow the filter to a few top results. ensureVisible would snap offset
+// to the clamped cursor position. It would not snap to the maximum valid
+// scroll position. That hid all results above that cursor.
 //
 // Repro: scroll to bottom (offset = total-visibleRows, cursor = total-1). Then
 // filter to "Africa/" (11 results, all near the top of the master list).
