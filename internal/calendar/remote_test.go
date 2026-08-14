@@ -23,8 +23,8 @@ func (panicCredStore) Set(auth.Credential) error                  { panic("simul
 func (panicCredStore) Delete(int64) error                         { return nil }
 
 // failGetAccountDB wraps a DBTX and turns the GetAccount read into a
-// non-ErrNoRows failure (a "no such column" scan error), simulating a
-// transient DB error while leaving every other query untouched.
+// non-ErrNoRows failure (a "no such column" scan error). That simulates a
+// transient DB error. Every other query stays untouched.
 type failGetAccountDB struct {
 	storage.DBTX
 }
@@ -525,9 +525,9 @@ func TestConnect_RelinkPropagatesTransientGetAccountError(t *testing.T) {
 // TestConnect_PanicDoesNotLeakTransaction verifies that a panic raised between
 // BeginTx and Commit in Connect does not leak the transaction. The in-memory
 // test pool is pinned to a single connection (storage.Open sets
-// SetMaxOpenConns(1) for ":memory:"), so a leaked transaction never returns its
-// connection to the pool and the next query blocks until its context expires.
-// A deferred rollback releases the connection, so the follow-up read returns
+// SetMaxOpenConns(1) for ":memory:"). A leaked transaction then never returns
+// its connection to the pool. The next query blocks until its context expires.
+// A deferred rollback releases the connection. The follow-up read then returns
 // promptly.
 func TestConnect_PanicDoesNotLeakTransaction(t *testing.T) {
 	svc := newTestService(t)
@@ -595,8 +595,9 @@ func TestConnect_NoRemoteColor_LeavesLocalColor(t *testing.T) {
 }
 
 // TestDisconnect_HiddenAccountWithMultipleCalendars_PreservesCredential verifies
-// that disconnecting one calendar from a shared hidden account does not delete
-// the stored credential when the account still has other calendars linked.
+// that a disconnect of one calendar from a shared hidden account does not
+// delete the stored credential. That holds when the account still has other
+// calendars linked.
 func TestDisconnect_HiddenAccountWithMultipleCalendars_PreservesCredential(t *testing.T) {
 	svc, q, db := newTestServiceWithDB(t)
 	ctx := context.Background()
@@ -708,7 +709,7 @@ func TestDisconnect_HiddenAccountWithMultipleCalendars_PreservesCredential(t *te
 }
 
 // TestDeleteWithRemoteCleanup_HiddenAccountWithMultipleCalendars_PreservesCredential
-// verifies that deleting a calendar whose hidden account still serves another
+// verifies that a delete of a calendar whose hidden account still serves another
 // calendar does not delete the stored credential.
 func TestDeleteWithRemoteCleanup_HiddenAccountWithMultipleCalendars_PreservesCredential(t *testing.T) {
 	svc, q, _ := newTestServiceWithDB(t)
@@ -772,8 +773,8 @@ func TestDeleteWithRemoteCleanup_HiddenAccountWithMultipleCalendars_PreservesCre
 }
 
 // TestDeleteWithRemoteCleanup_PromotesDefault exercises the default-promotion
-// path: deleting the current default must refuse without a replacement (and
-// roll back), then succeed by promoting a surviving calendar atomically.
+// path. A delete of the current default must refuse without a replacement (and
+// roll back). It then succeeds by a promote of a calendar that remains, atomically.
 func TestDeleteWithRemoteCleanup_PromotesDefault(t *testing.T) {
 	svc, q, _ := newTestServiceWithDB(t)
 	ctx := context.Background()
