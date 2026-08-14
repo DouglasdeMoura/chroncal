@@ -688,7 +688,7 @@ func emitDateListOnComponent(comp *ical.Component, propName, dates, timezone str
 // match the master's DTSTART. When the component is all-day it is emitted as
 // VALUE=DATE (YYYYMMDD). When floating (no timezone) it is emitted as a
 // floating DATE-TIME (no Z, no TZID). Otherwise it is a UTC DATE-TIME. A type
-// mismatch prevents CalDAV servers from binding the override to its master.
+// mismatch prevents CalDAV servers from a bind of the override to its master.
 func emitRecurrenceID(props ical.Props, recurrenceID string, allDay, floating bool) {
 	t, err := time.Parse(time.RFC3339, recurrenceID)
 	if err != nil {
@@ -847,10 +847,10 @@ func buildValarm(alarm model.Alarm) *ical.Component {
 
 // tzSpans accumulates, in first-seen order, the timezones an export references
 // together with the inclusive [min, max] year span of the items that reference
-// each. buildVTimezone anchors its DST rules on that span (issue #515) rather
-// than only the current year. An event dated in a different year — possibly
-// one whose zone observed a different DST rule — then still resolves the
-// right offset from the embedded VTIMEZONE.
+// each. buildVTimezone anchors its DST rules on that span (issue #515). It
+// does not use only the current year. An event dated in a different year —
+// possibly one whose zone observed a different DST rule — then still
+// resolves the right offset from the embedded VTIMEZONE.
 type tzSpans struct {
 	order    []string
 	min, max map[string]int
