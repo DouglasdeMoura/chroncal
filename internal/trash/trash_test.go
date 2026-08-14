@@ -13,9 +13,9 @@ import (
 )
 
 // TestService_ListMergesAllThreeDomains wires the aggregator to real
-// event/todo/journal services backed by a fresh in-memory DB, soft-
-// deletes one row in each domain, and verifies List returns three
-// entries with the right Kind values and newest-first ordering.
+// event/todo/journal services backed by a fresh in-memory DB. It soft-
+// deletes one row in each domain. It verifies List returns three
+// entries with the right Kind values and newest-first order.
 func TestService_ListMergesAllThreeDomains(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	events := event.NewService(db, q)
@@ -80,7 +80,7 @@ func TestService_ListMergesAllThreeDomains(t *testing.T) {
 }
 
 // TestFromJournalCopiesCategories guards that fromJournal carries the
-// journal's Categories into the unified Entry, mirroring fromTodo and
+// journal's Categories into the unified Entry. That matches fromTodo and
 // fromEventTrash. Without it the trash detail "Tags" row can never render
 // for journals even after categories are populated upstream (issue #291).
 func TestFromJournalCopiesCategories(t *testing.T) {
@@ -99,7 +99,7 @@ func TestFromJournalCopiesCategories(t *testing.T) {
 }
 
 // TestService_RestoreDispatchesByKind exercises the Restore path for
-// each domain: the underlying service un-hides its own row and List no
+// each domain. The service underneath un-hides its own row. List no
 // longer returns it.
 func TestService_RestoreDispatchesByKind(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
@@ -194,19 +194,19 @@ func TestService_PurgeDispatchesByKind(t *testing.T) {
 
 // TestEventTrashRoundTripPreservesAllFields guards the symmetry of
 // fromEventTrash/toEventTrash. Both are manual field-by-field copies
-// between event.TrashEntry and trash.Entry; because Go struct literals
-// don't require every field, adding a field to event.TrashEntry would
-// compile cleanly even if one converter forgot it — silently zeroing the
-// field on the round-trip. Since RestoreTrash/PurgeTrashEntry target rows
-// by InstanceTime/CutoffTime, a dropped discriminator could act on the
+// between event.TrashEntry and trash.Entry. Go struct literals
+// do not require every field. An add of a field to event.TrashEntry would
+// compile cleanly even if one converter forgot it. The field then zeros on
+// the round-trip, in silence. RestoreTrash/PurgeTrashEntry target rows
+// by InstanceTime/CutoffTime. A dropped discriminator could then act on the
 // wrong instance.
 //
 // The test fills every event.TrashEntry field with a distinct non-zero
-// value via reflection, round-trips through fromEventTrash∘toEventTrash,
-// and demands an exact match. A future field that one converter drops
+// value via reflection. It round-trips through fromEventTrash∘toEventTrash.
+// It demands an exact match. A future field that one converter drops
 // reverts to its zero value and fails the comparison. fillNonZero fails
-// the test on any field it doesn't know how to populate, forcing whoever
-// adds such a field to extend this guard rather than slip past it.
+// the test on any field it does not know how to populate. Whoever
+// adds such a field must then extend this guard rather than slip past it.
 func TestEventTrashRoundTripPreservesAllFields(t *testing.T) {
 	// The non-Kind fields are seeded once; only Kind varies per case so the
 	// map/unmapEventKind round-trip is exercised for every defined value.
