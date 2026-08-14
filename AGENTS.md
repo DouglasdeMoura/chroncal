@@ -243,6 +243,43 @@ AI-assisted commit in this repo.
 - Use `git commit-tree` (or amend with a message file) when the environment
   would otherwise inject `Co-authored-by: Cursor <cursoragent@cursor.com>`.
 
+## Documentation style
+
+Write all documentation in [ASD-STE100 Simplified Technical
+English](https://www.asd-ste100.org/). This rule applies to the Markdown files
+(`AGENTS.md`, each `README`, and `docs/`), to the code comments, and to the
+JSDoc. These are the core rules:
+
+- **One word, one meaning.** Use the same term for the same thing each time. Do
+  not use a synonym for variety. A "client" stays a "client". It is not a
+  "patient" and not a "member".
+- **Use the active voice.** Write "the job writes the row". Do not write "the
+  row is written".
+- **Use the simple tenses.** Use the simple present, the simple past, or the
+  simple future. Do not use the perfect tenses.
+- **Give one instruction in one sentence.** Divide a compound step into
+  separate steps.
+- **Write short sentences.** Use a maximum of 20 words for an instruction and a
+  maximum of 25 words for a description. Use a maximum of six sentences in a
+  paragraph.
+- **Keep the articles.** Write "the migration file". Do not write "migration
+  file".
+- **Do not use an `-ing` form**, unless the word is part of a technical name.
+- **Use a maximum of three nouns together.** Divide "provider availability
+  tally job" with a preposition or a hyphen.
+- **Do not use jargon, an idiom, or slang.** Do not write "hit the endpoint" or
+  "under the hood".
+- **Start a warning with the instruction.** Give the command first, then give
+  the reason.
+- **Use a vertical list** for a set of conditions and for a sequence of steps.
+
+A technical name keeps its usual form and is an exception to these rules. A
+technical name includes an identifier, a table name, a column name, a product
+name, and a domain term.
+
+A plan is also an exception. For plan mode, the concision rule above has
+priority.
+
 ## Skill routing
 
 When the user's request matches an available skill, ALWAYS invoke it using the Skill
