@@ -29,11 +29,11 @@ func (f *fakeTickSyncer) SyncCalendar(ctx context.Context, calendarID int64, str
 
 // A per-item sync error recorded on SyncResult.Errors (SyncCalendar itself
 // returned nil) must NOT fail the tick. The engine already logs each such
-// error to the stderr logger — which reaches the journal on `service run` —
-// so it stays visible; but a single permanently-stuck remote item should not
-// flip `service run`'s exit code to non-zero on every cycle forever, which
-// would drown any exit-code monitor in noise it cannot act on. Only hard
-// failures (below) fail the tick.
+// error to the stderr logger. That logger reaches the journal on `service
+// run`. The error stays visible. A single permanently-stuck remote item
+// should not flip `service run`'s exit code to non-zero on every cycle
+// forever. That would drown any exit-code monitor in noise it cannot act on.
+// Only hard failures (below) fail the tick.
 func TestRunSyncPassPartialErrorsDoNotFailTheTick(t *testing.T) {
 	t.Parallel()
 
@@ -59,7 +59,7 @@ func TestRunSyncPassPartialErrorsDoNotFailTheTick(t *testing.T) {
 }
 
 // A hard SyncCalendar error (auth, network, DB — the whole calendar failed to
-// sync) fails the tick, naming the calendar, while every other due calendar is
+// sync) fails the tick, naming the calendar. Every other due calendar is
 // still attempted.
 func TestRunSyncPassHardErrorFailsTheTick(t *testing.T) {
 	t.Parallel()
