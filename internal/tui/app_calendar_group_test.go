@@ -34,11 +34,11 @@ func TestSortedCalendarListItemsGroupsLocalThenAccounts(t *testing.T) {
 }
 
 // TestBuildCalendarInfoMapCachesNormalizedAccountAuthType proves the
-// calendar-loading path caches each linked account's normalized auth type on
+// calendar-load path caches each linked account's normalized auth type on
 // CalendarInfo. An OAuth account stored with non-normalized casing and
-// surrounding whitespace must reach AccountAuthType as the canonical "oauth2",
-// and local calendars (no account) must stay empty. The cached value is what
-// later ownership checks and re-auth routing read.
+// whitespace around it must reach AccountAuthType as the canonical "oauth2".
+// Local calendars (no account) must stay empty. The cached value is what
+// later ownership checks and re-auth routes read.
 func TestBuildCalendarInfoMapCachesNormalizedAccountAuthType(t *testing.T) {
 	cals := []calendar.Calendar{
 		{ID: 1, Name: "On device"},
