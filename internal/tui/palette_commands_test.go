@@ -21,10 +21,10 @@ func TestPaletteExposesOneCalendarsEntry(t *testing.T) {
 }
 
 // TestPaletteExposesNewCalendarAndAddAccount locks issue #552's
-// discoverability: the manager's + Add actions (New Calendar, Add Account)
+// discoverability. The manager's + Add actions (New Calendar, Add Account)
 // are reachable from the command palette. Each entry emits the single
-// canonical CalendarManagerRequestedMsg with the corresponding manager
-// target — there is no bespoke message per entry point.
+// canonical CalendarManagerRequestedMsg with the same manager
+// target. There is no bespoke message per entry point.
 func TestPaletteExposesNewCalendarAndAddAccount(t *testing.T) {
 	commands := buildPaletteCommands(Model{})
 
@@ -59,10 +59,10 @@ func TestPaletteDoesNotExposeIndividualAccountManagement(t *testing.T) {
 }
 
 // TestPaletteAddAccountOpensConnectionForm is the direct message-flow smoke
-// for the Add Account palette entry: the canonical CalendarManagerRequestedMsg
-// it emits opens the manager's account-connection form rendering the Sign In
-// surface. (AccountAddRequestedMsg was removed; every Add Account entry point
-// now emits the single canonical request.)
+// for the Add Account palette entry. The canonical CalendarManagerRequestedMsg
+// it emits opens the manager's account-connection form. That form renders the
+// Sign In surface. AccountAddRequestedMsg was removed. Every Add Account
+// entry point now emits the single canonical request.
 func TestPaletteAddAccountOpensConnectionForm(t *testing.T) {
 	m := NewModel(nil, "")
 	m.width, m.height = 120, 40
