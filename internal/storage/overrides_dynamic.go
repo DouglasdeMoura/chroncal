@@ -3,9 +3,9 @@ package storage
 import "context"
 
 // overrideUIDBatch bounds how many UIDs go into a single `uid IN (...)` override
-// query. SQLite (modernc) caps host parameters at 32766; staying well under that
-// keeps the batched fetch from failing on accounts with very many recurring
-// masters, at the cost of a few extra queries instead of one.
+// query. SQLite (modernc) caps host parameters at 32766. Stay well under that.
+// The batched fetch then does not fail on accounts with very many recurring
+// masters. The cost is a few extra queries instead of one.
 const overrideUIDBatch = 500
 
 // ListOverridesByUIDs returns all recurrence overrides (rows with a non-empty
