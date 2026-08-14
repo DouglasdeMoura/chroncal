@@ -193,11 +193,11 @@ func TestService_ResolveConflict_InvalidPick(t *testing.T) {
 	}
 }
 
-// TestService_ResolveConflict_Server is the regression test for issue #67:
-// resolving a conflict to "server" must import the recorded server iCal into
-// the local row (so the local view reflects the server), then clear the dirty
-// flag with the server ETag. Before the fix the local row kept its divergent
-// local copy while the ETag claimed it matched the server.
+// TestService_ResolveConflict_Server is the regression test for issue #67.
+// A resolve of a conflict to "server" must import the recorded server iCal into
+// the local row. The local view then reflects the server. It then clears the
+// dirty flag with the server ETag. Before the fix the local row kept its
+// divergent local copy while the ETag claimed it matched the server.
 func TestService_ResolveConflict_Server(t *testing.T) {
 	svc, db, q := newTestServiceWithDB(t)
 	ctx := context.Background()
@@ -294,11 +294,11 @@ func TestService_ResolveConflict_Server(t *testing.T) {
 }
 
 // TestService_ResolveConflict_ServerPreservesConcurrentEdit is the regression
-// test for issue #466 (a reopening of #417 on the manual path): a local edit
-// landing in the window between the accept-server import and the dirty clear
-// must not be silently dropped. The resolveConflictAfterRevCapture hook
-// simulates that edit; the rev-guarded clear must leave the resource dirty so
-// the next push sends it. With the previous unconditional ClearSyncResourceDirty
+// test for issue #466 (a reopen of #417 on the manual path). A local edit
+// that lands in the window between the accept-server import and the dirty clear
+// must not be dropped in silence. The resolveConflictAfterRevCapture hook
+// simulates that edit. The rev-guarded clear must leave the resource dirty. The
+// next push then sends it. With the previous unconditional ClearSyncResourceDirty
 // this test fails because the edit's dirty flag is wiped. Serial (no t.Parallel)
 // because it mutates the package-level hook.
 func TestService_ResolveConflict_ServerPreservesConcurrentEdit(t *testing.T) {
@@ -396,17 +396,17 @@ func TestService_ResolveConflict_ServerPreservesConcurrentEdit(t *testing.T) {
 }
 
 // TestService_ResolveConflict_ServerPreservesConcurrentEditAfterPersist is the
-// regression test for issue #510 (a reopening of #494 on the manual path): a
-// local edit committing in the persist-commit→read window of an accept-server
-// ResolveConflict must not be silently dropped. The afterImportPersist hook
-// fires inside importICal right after persistImported commits — the exact window
-// the old post-commit GetSyncResource re-read exposed — and bumps rev + re-marks
-// dirty as a real service-layer mutation would. Because the rev is now captured
-// inside persistImported's transaction (and fed back via the revs map) rather
-// than re-read after commit, the rev-guarded clear leaves the resource dirty.
-// With the old after-commit re-read this test fails: the read returns the edit's
-// bumped rev, the guard matches, and dirty is wiped. Serial (no t.Parallel)
-// because it mutates the package-level hook.
+// regression test for issue #510 (a reopen of #494 on the manual path). A
+// local edit that commits in the persist-commit→read window of an accept-server
+// ResolveConflict must not be dropped in silence. The afterImportPersist hook
+// fires inside importICal right after persistImported commits. That is the
+// exact window the old post-commit GetSyncResource re-read exposed. It bumps
+// rev and re-marks dirty as a real service-layer mutation would. The rev is
+// now captured inside persistImported's transaction and fed back via the revs
+// map. It is not re-read after commit. The rev-guarded clear then leaves the
+// resource dirty. With the old after-commit re-read this test fails. The read
+// returns the edit's bumped rev. The guard matches. Dirty is wiped. Serial
+// (no t.Parallel) because it mutates the package-level hook.
 func TestService_ResolveConflict_ServerPreservesConcurrentEditAfterPersist(t *testing.T) {
 	svc, db, q := newTestServiceWithDB(t)
 	ctx := context.Background()
@@ -504,11 +504,12 @@ func TestService_ResolveConflict_ServerPreservesConcurrentEditAfterPersist(t *te
 }
 
 // TestService_ResolveConflict_ServerDoesNotResurrectDeleted is the regression
-// test for issue #89 (gap #2): accepting the server version of a conflict must
-// NOT un-delete a row the user has locally soft-deleted and tombstoned for
-// propagation. UpsertByUID clears deleted_at, so without tombstone-aware import
-// the resolve resurrects the local row and contradicts the pending delete. The
-// tombstone-safe pull path skips tombstoned UIDs; the resolve path must match.
+// test for issue #89 (gap #2). An accept of the server version of a conflict
+// must NOT un-delete a row the user has locally soft-deleted and tombstoned
+// for propagation. UpsertByUID clears deleted_at. Without tombstone-aware
+// import the resolve resurrects the local row and contradicts the wait delete.
+// The tombstone-safe pull path skips tombstoned UIDs. The resolve path must
+// match.
 func TestService_ResolveConflict_ServerDoesNotResurrectDeleted(t *testing.T) {
 	svc, db, q := newTestServiceWithDB(t)
 	ctx := context.Background()
@@ -657,11 +658,12 @@ func TestService_ResolveConflict_Local(t *testing.T) {
 }
 
 // TestService_ResolveConflict_ServerEmptyIcal guards against the silent
-// no-op: a conflict whose ServerIcal carries no importable component (empty or
-// component-less) must NOT clear dirty or stamp the server ETag, because doing
-// so would leave the divergent local row in place while claiming it matches the
-// server — the exact data-loss the "server" branch exists to prevent. The
-// resolve should fail and leave the dirty flag and conflict intact for a retry.
+// no-op. A conflict whose ServerIcal carries no importable component (empty or
+// component-less) must NOT clear dirty or stamp the server ETag. That would
+// leave the divergent local row in place. It would claim that the row matches
+// the server. That is the exact data-loss the "server" branch exists to prevent.
+// The resolve should fail. It should leave the dirty flag and conflict intact
+// for a retry.
 func TestService_ResolveConflict_ServerEmptyIcal(t *testing.T) {
 	svc, q := newTestService(t)
 	ctx := context.Background()
@@ -794,7 +796,7 @@ func TestParseTime(t *testing.T) {
 
 // TestService_PushCalendarRejectsLocalOnly guards the contract that
 // opportunistic save-time push will fail fast for calendars without a
-// linked account, so CLI/TUI callers can safely treat it as a no-op.
+// linked account. CLI/TUI callers can then safely treat it as a no-op.
 func TestService_PushCalendarRejectsLocalOnly(t *testing.T) {
 	svc, q := newTestService(t)
 	ctx := context.Background()
@@ -933,10 +935,10 @@ func TestServiceResetCalendarRollsBackPartialCleanup(t *testing.T) {
 
 // TestService_ResolveConflict_ServerReturnsImportWarnings: the accept-server
 // path of a manual resolve runs the same importICal as the auto server-wins
-// paths, so a server body the importer could not represent faithfully (here a
+// paths. A server body the importer could not represent faithfully (here a
 // malformed DTEND replaced by a fabricated span) produces import warnings.
-// ResolveConflict must hand them back to the caller — the CLI builds this
-// service with a nil (silent) logger, so the return value is the only place
+// ResolveConflict must hand them back to the caller. The CLI builds this
+// service with a nil (silent) logger. The return value is then the only place
 // the warning can surface before the fabricated value is pushed back over the
 // server's correct one.
 func TestService_ResolveConflict_ServerReturnsImportWarnings(t *testing.T) {
@@ -987,7 +989,7 @@ func TestService_ResolveConflict_ServerReturnsImportWarnings(t *testing.T) {
 	}
 }
 
-// A local pick never imports anything, so it must report no warnings.
+// A local pick never imports a body, so it must report no warnings.
 func TestService_ResolveConflict_LocalReturnsNoImportWarnings(t *testing.T) {
 	svc, db, q := newTestServiceWithDB(t)
 	ctx := context.Background()
