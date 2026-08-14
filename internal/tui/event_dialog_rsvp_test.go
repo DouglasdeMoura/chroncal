@@ -14,8 +14,8 @@ import (
 )
 
 // rsvpDialogModel returns an EventDialogModel with a single event that
-// includes the calendar owner as a non-organizer attendee, so rsvpActions()
-// returns the full [Yes, No, Maybe] slice.
+// includes the calendar owner as a non-organizer attendee. rsvpActions()
+// then returns the full [Yes, No, Maybe] slice.
 func rsvpDialogModel() EventDialogModel {
 	day := time.Date(2026, 4, 20, 0, 0, 0, 0, time.UTC)
 	ev := event.Event{
