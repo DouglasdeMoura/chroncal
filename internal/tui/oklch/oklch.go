@@ -1,10 +1,10 @@
-// Package oklch converts between sRGB and OKLCh and provides hue-stable
-// color adjustments (dim, contrast) suitable for TUI styling.
+// Package oklch converts between sRGB and OKLCh. It also provides hue-stable
+// color adjustments (dim, contrast) for TUI style work.
 //
-// OKLCh is OKLab in polar form (L = lightness, C = chroma, H = hue). Because
-// the space is perceptually uniform, scaling C or shifting L produces the
-// visual change a user expects — unlike naive HSL/RGB math where identical
-// numeric shifts look wildly different depending on hue.
+// OKLCh is OKLab in polar form (L = lightness, C = chroma, H = hue). The
+// space is perceptually uniform. A scale of C or a shift of L produces the
+// visual change a user expects. Naive HSL/RGB math does not. Identical
+// numeric shifts look different by hue.
 //
 // Background: https://evilmartians.com/chronicles/oklch-in-css-why-quit-rgb-hsl
 // OKLab math: https://bottosson.github.io/posts/oklab/

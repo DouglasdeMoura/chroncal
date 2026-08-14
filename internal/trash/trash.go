@@ -1,10 +1,10 @@
-// Package trash aggregates soft-deleted rows from event, todo, and journal
-// services into a single "Recently deleted" view. The TUI and CLI call
-// Service.List to render a mixed list newest-first, then Service.Restore
-// or Service.Purge to act on a single entry regardless of its kind.
+// Package trash joins soft-deleted rows from the event, todo, and journal
+// services into one "Recently deleted" view. The TUI and CLI call
+// Service.List to show a mixed list newest-first. They then call
+// Service.Restore or Service.Purge on one entry of any kind.
 //
-// Each service still owns its own soft-delete + restore + purge plumbing.
-// This package is an aggregator — it doesn't carry new storage state.
+// Each service still owns its own soft-delete, restore, and purge paths.
+// This package is an aggregator. It does not hold new storage state.
 package trash
 
 import (

@@ -1,4 +1,4 @@
-// Package synclock serializes synchronization and account lifecycle changes.
+// Package synclock serializes sync and account lifecycle changes.
 package synclock
 
 import (

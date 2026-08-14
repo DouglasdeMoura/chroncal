@@ -1,4 +1,4 @@
-// Package fileid identifies a file independently of the path used to open it.
+// Package fileid identifies a file independently of the open path.
 package fileid
 
 import (

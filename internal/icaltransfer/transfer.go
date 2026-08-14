@@ -1,8 +1,9 @@
-// Package icaltransfer implements the parse / validate / import pipeline
-// behind the `chroncal ical import` CLI. The CLI used to inline this
-// behavior; centralizing it here lets the TUI and other internal callers
-// drive the same flow without re-implementing the UID-upsert, capability,
-// and warning semantics.
+// Package icaltransfer implements the parse, validate, and import pipeline
+// behind the `chroncal ical import` CLI.
+//
+// The CLI used to keep this behavior inline. This package holds it in one place.
+// The TUI and other internal callers can then use the same flow. They do not
+// re-implement the UID-upsert, capability, and warning semantics.
 package icaltransfer
 
 import (

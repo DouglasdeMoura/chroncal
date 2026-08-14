@@ -1,7 +1,7 @@
-// Package softdelete holds reversible-delete logic shared by the event, todo,
-// and journal services. Centralizing it keeps the subtle EXDATE-provenance
-// restore contract (issue #86) encoded in exactly one place, so a correctness
-// fix can no longer drift between the three domains.
+// Package softdelete holds reversible-delete logic that the event, todo,
+// and journal services share. The package keeps the EXDATE-provenance
+// restore contract (issue #86) in one place. A correctness fix then cannot
+// drift across the three domains.
 package softdelete
 
 import (

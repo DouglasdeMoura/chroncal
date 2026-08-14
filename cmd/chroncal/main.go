@@ -1,6 +1,6 @@
-// Command chroncal is a terminal-first calendar, todo, and journal manager
-// with full RFC 5545 (iCalendar) support and CalDAV sync. It offers both a
-// scriptable CLI and an interactive TUI, storing data locally in SQLite.
+// Command chroncal is a terminal calendar, todo, and journal manager.
+// It supports RFC 5545 (iCalendar) and CalDAV sync. It offers a CLI for
+// scripts and an interactive TUI. SQLite stores the data locally.
 package main
 
 import (

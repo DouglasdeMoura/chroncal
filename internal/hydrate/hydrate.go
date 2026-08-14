@@ -1,13 +1,12 @@
 // Package hydrate collapses the per-relation "load, assign, record error"
-// blocks shared by the event, todo, and journal services' Hydrate /
-// HydrateBestEffort methods.
+// blocks that the event, todo, and journal Hydrate and HydrateBestEffort
+// methods share.
 //
-// Every relation loader has the same shape — func(ctx, id) ([]T, error) —
-// and before this package existed each service repeated a 6-line if/else
-// per relation, so a copy-pasted block could silently assign the wrong
-// field or drop the fail-fast return while every test stayed green. Rel
-// makes each relation a single line and keeps the three services provably
-// parallel.
+// Every relation loader has the same shape: func(ctx, id) ([]T, error).
+// Before this package, each service repeated a 6-line if/else per relation.
+// A copied block could assign the wrong field or drop the fail-fast return.
+// Tests could still pass. Rel makes each relation a single line. It keeps
+// the three services in parallel form.
 package hydrate
 
 import (

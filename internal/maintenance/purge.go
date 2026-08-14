@@ -1,5 +1,5 @@
-// Package maintenance holds background maintenance jobs — primarily the
-// soft-delete purge job that trims rows past the retention window.
+// Package maintenance holds background jobs. The main job is the
+// soft-delete purge. That job trims rows past the retention window.
 package maintenance
 
 import (
