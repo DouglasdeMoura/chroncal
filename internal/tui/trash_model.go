@@ -13,7 +13,7 @@ import (
 )
 
 // TrashViewRequestedMsg asks the host to open the trash overlay. Emitted by
-// the command palette so its handling matches the shift+D keybinding.
+// the command palette so its handle matches the shift+D key binding.
 type TrashViewRequestedMsg struct{}
 
 // TrashDialogClosedMsg is emitted when the dialog requests to close.
@@ -103,9 +103,9 @@ func (m TrashModel) SetSelectedColor(c color.Color) TrashModel {
 	return m
 }
 
-// SetEntries replaces the row list, preserving selection by kind+ID and
-// pruning marks for entries no longer in the list (e.g. rows that were
-// just restored or purged by an earlier bulk action).
+// SetEntries replaces the row list. It keeps selection by kind+ID. It
+// drops marks for entries no longer in the list. Examples: rows that were
+// just restored or purged by an earlier bulk action.
 func (m TrashModel) SetEntries(entries []trash.Entry, calendars map[int64]CalendarInfo) TrashModel {
 	prev, hadSel := m.selectedEntry()
 	m.entries = entries
@@ -324,10 +324,10 @@ func (m TrashModel) buildActions() []ListDialogAction {
 }
 
 // purgeAllTitleAction returns the "Purge All (N)" button installed in
-// the title bar — visually separated from per-row Restore / Purge at
-// the bottom, matching Photos.app / Notes.app placement of "Delete All"
-// in the trash window header. Returns nil when the trash is empty so
-// the slot disappears entirely.
+// the title bar. It is visually separate from per-row Restore / Purge at
+// the bottom. That matches Photos.app / Notes.app placement of "Delete All"
+// in the trash window header. Returns nil when the trash is empty. The
+// slot then disappears entirely.
 func (m TrashModel) purgeAllTitleAction() *ListDialogAction {
 	if len(m.entries) == 0 {
 		return nil
@@ -436,8 +436,8 @@ func trashBulkTitle(entries []trash.Entry) string {
 }
 
 // formatTrashRowLabel renders the list row as just the title. The detail
-// pane on the right carries every timestamp the user might need, so the
-// left column stays compact and the selection highlight paints a clean
+// pane on the right carries every timestamp the user might need. The
+// left column stays compact. The selection highlight then paints a clean
 // unbroken bar across the row.
 func formatTrashRowLabel(e trash.Entry) string {
 	if e.Title == "" {
@@ -447,12 +447,12 @@ func formatTrashRowLabel(e trash.Entry) string {
 }
 
 // trashDetailLines renders the right-pane fields for a trash entry. The
-// dialog is the ONLY place this data shows, so callers should not offer a
-// secondary "open view" action — everything the user needs to decide
-// whether to restore or purge lives here. Detail content branches on
-// Kind so todos show due-date/status/progress and journals show a start
-// date where events would show a time range. The entry title is pinned
-// by the shell via SetDetailTitle and must not be prepended here.
+// dialog is the ONLY place this data shows. Do not offer a secondary
+// "open view" action. Everything the user needs to restore or purge lives
+// here. Detail content branches on Kind. Todos show due-date, status, and
+// progress. Journals show a start date where events would show a time
+// range. The shell pins the entry title via SetDetailTitle. Do not
+// prepend it here.
 func trashDetailLines(e trash.Entry, cal CalendarInfo, w, labelWidth int, rw urlRewriter) []string {
 	faint := lipgloss.NewStyle().Faint(true)
 
