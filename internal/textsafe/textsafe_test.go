@@ -45,9 +45,9 @@ func TestDisplayStripsEscapesAndCollapsesWhitespace(t *testing.T) {
 }
 
 // TestDisplayStripsBidiFormatControls verifies that Display removes Unicode
-// category Cf characters (bidi overrides/isolates, zero-width spaces, BOM) to
-// prevent Trojan-Source spoofing (CVE-2021-42574).  unicode.IsControl only
-// covers category Cc; Cf characters were previously written through unchanged.
+// category Cf characters (bidi overrides/isolates, zero-width spaces, BOM).
+// That prevents Trojan-Source spoof (CVE-2021-42574). unicode.IsControl only
+// covers category Cc. Cf characters were previously written through unchanged.
 func TestDisplayStripsBidiFormatControls(t *testing.T) {
 	cases := []struct {
 		name string
