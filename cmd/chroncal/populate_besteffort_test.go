@@ -12,10 +12,10 @@ import (
 )
 
 // The CLI's read-only display paths print whatever they can and warn about the
-// rest. Routing them through the fail-fast Hydrate meant one unreadable
-// relation blanked every relation read after it, so `event show --output json`
-// emitted "attendees": null for attendees that exist — and a script consuming
-// that JSON to mirror attendees elsewhere would delete them all.
+// rest. A route through the fail-fast Hydrate meant one unreadable
+// relation blanked every relation read after it. `event show --output json`
+// then emitted "attendees": null for attendees that exist. A script that
+// reads that JSON to mirror attendees elsewhere would delete them all.
 func TestPopulateEventFields_KeepsLaterRelationsAfterAFailure(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "chroncal.db")
