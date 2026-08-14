@@ -44,8 +44,8 @@ func stubTokenExchange(t *testing.T) {
 }
 
 // TestFlowBanner pins the CLI wrapper's printed output byte-for-byte. The
-// TUI depends on GoogleOAuthFlow being the only printing variant; the CLI
-// depends on these exact strings not drifting.
+// TUI depends on GoogleOAuthFlow being the only print variant. The CLI
+// depends on these exact strings not to drift.
 func TestFlowBanner(t *testing.T) {
 	if got, want := flowBanner("https://x", true), "Browser opened for Google authorization. Waiting for redirect...\n"; got != want {
 		t.Errorf("opened banner = %q, want %q", got, want)
@@ -106,9 +106,9 @@ func TestStartGoogleOAuthFlow_WaitExchangesCode(t *testing.T) {
 }
 
 // TestStartGoogleOAuthFlow_BadStateDoesNotAbort verifies that an unrelated
-// localhost request with a wrong/missing state (a browser prefetch, favicon
-// probe, or port scan) is rejected with 403 and does NOT abort the flow —
-// the legitimate redirect that follows still completes Wait.
+// localhost request with a wrong or gone state is rejected with 403. Examples
+// are a browser prefetch, favicon probe, or port scan. It does NOT abort the flow.
+// The legitimate redirect that follows still completes Wait.
 func TestStartGoogleOAuthFlow_BadStateDoesNotAbort(t *testing.T) {
 	stubBrowser(t, errors.New("no browser"))
 	stubTokenExchange(t)
