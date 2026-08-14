@@ -153,9 +153,9 @@ func googleCalendarAccess(role string) CalendarAccess {
 }
 
 // googleSupportedComponents reports the iCalendar components a Google calendar
-// exposes. VFREEBUSY is explicit rather than an empty set because empty
+// exposes. VFREEBUSY is explicit rather than an empty set. Empty
 // capability metadata means "unknown; allow legacy imports" to account
-// discovery, while freeBusyReader is known not to expose event resources.
+// discovery. freeBusyReader is known not to expose event resources.
 func googleSupportedComponents(role string) []string {
 	if strings.EqualFold(strings.TrimSpace(role), "freeBusyReader") {
 		return []string{"VFREEBUSY"}
