@@ -50,8 +50,8 @@ func NewSidebarModel(mm MiniMonthModel, list CalendarListModel) SidebarModel {
 func (m SidebarModel) Focus() SidebarModel { m.focused = true; return m.refocusChildren() }
 
 // FocusAtStart focuses the sidebar and places focus on the first tab stop:
-// the mini-month's previous-month chevron. Use this when entering the sidebar
-// via a forward Tab from the main view so tabbing cycles in reading order.
+// the mini-month's previous-month chevron. Use this when the user enters the
+// sidebar via a forward Tab from the main view. Tab then cycles in read order.
 func (m SidebarModel) FocusAtStart() SidebarModel {
 	m.focused = true
 	m.focus = sidebarFocusMiniMonth
@@ -60,8 +60,8 @@ func (m SidebarModel) FocusAtStart() SidebarModel {
 }
 
 // FocusAtEnd focuses the sidebar and places focus on the last tab stop:
-// the bottom row of the calendar list. Use this when entering the sidebar
-// via a backward Shift+Tab from the main view.
+// the bottom row of the calendar list. Use this when the user enters the
+// sidebar via a backward Shift+Tab from the main view.
 func (m SidebarModel) FocusAtEnd() SidebarModel {
 	m.focused = true
 	m.focus = sidebarFocusList
@@ -71,8 +71,8 @@ func (m SidebarModel) FocusAtEnd() SidebarModel {
 	return m.refocusChildren()
 }
 
-// Blur releases focus. Inner focus of the mini-month is preserved so that
-// direct focus via the `s` toggle retains the user's last position; forward
+// Blur releases focus. Inner focus of the mini-month is kept so that
+// direct focus via the `s` toggle retains the user's last position. Forward
 // and backward Tab entry override this via FocusAtStart / FocusAtEnd.
 func (m SidebarModel) Blur() SidebarModel {
 	m.focused = false
@@ -90,8 +90,8 @@ func (m SidebarModel) SetList(l CalendarListModel) SidebarModel {
 	return m.refocusChildren()
 }
 
-// SetMiniMonth replaces the mini-month child (e.g. after refreshing the
-// per-day event-density set). Focus state is preserved.
+// SetMiniMonth replaces the mini-month child (for example after a refresh of
+// the per-day event-density set). Focus state is kept.
 func (m SidebarModel) SetMiniMonth(mm MiniMonthModel) SidebarModel {
 	m.miniMonth = mm
 	return m.refocusChildren()
@@ -199,9 +199,9 @@ func (m SidebarModel) HandleClick(x, y int) (SidebarModel, tea.Cmd) {
 		m.miniMonth = mm
 		return m, cmd
 	}
-	// View() separates the two children with "\n\n", which — on top of the
-	// mini-month's trailing newline — renders as two blank rows before the
-	// calendar list begins.
+	// View() separates the two children with "\n\n". On top of the
+	// mini-month's trailing newline that renders as two blank rows before
+	// the calendar list begins.
 	const listStartY = miniMonthMaxY + 2
 	listY := y - listStartY
 	if listY < 0 {
