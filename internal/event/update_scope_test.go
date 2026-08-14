@@ -202,8 +202,8 @@ func TestUpdateFromInstance_SoftDeletesFutureOverrides(t *testing.T) {
 	}
 }
 
-// Truncating an all-day recurring series must emit a DATE-valued UNTIL
-// (YYYYMMDD) so the RRULE's UNTIL value type matches its DATE-valued DTSTART,
+// A truncate of an all-day recurring series must emit a DATE-valued UNTIL
+// (YYYYMMDD). The RRULE's UNTIL value type then matches its DATE-valued DTSTART,
 // as RFC 5545 requires. A DATE-TIME UNTIL on an all-day series is rejected or
 // mis-handled by strict CalDAV servers.
 func TestDeleteFromInstance_AllDayEmitsDateOnlyUntil(t *testing.T) {
@@ -257,8 +257,8 @@ func rruleParamValue(rule, name string) string {
 }
 
 // Caller is the source of truth for categories. Empty Categories on update
-// means "no categories" — UpdateInstance/UpdateFromInstance no longer inherit
-// from master, so users can clear tags via the form and have it persist.
+// means "no categories". UpdateInstance/UpdateFromInstance no longer inherit
+// from master. Users can then clear tags via the form and have it persist.
 func TestUpdateInstance_EmptyCategoriesClearsOverrideTags(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
