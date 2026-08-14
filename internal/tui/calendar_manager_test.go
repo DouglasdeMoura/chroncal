@@ -11,9 +11,9 @@ import (
 	lipgloss "charm.land/lipgloss/v2"
 )
 
-// flatManagerCalendars is a mixed Local + multi-account fixture whose
-// canonical order (Local first, then accounts by AccountOrder, then
-// in-account DisplayOrder) is [1, 2, 3, 4]:
+// flatManagerCalendars is a mixed Local + multi-account fixture. Its
+// canonical order is Local first, then accounts by AccountOrder, then
+// in-account DisplayOrder. That order is [1, 2, 3, 4]:
 //
 //	1 On device  Local
 //	2 Primary    Google   (account 7, order 0, display 0)
@@ -43,8 +43,8 @@ func managerCalendarLine(t *testing.T, m CalendarManagerModel, id int64) string 
 }
 
 // TestCalendarManagerRootEnterPushesCalendarDetail verifies Enter pushes the
-// selected calendar's detail onto the manager stack (OpenCalendar), targeting
-// the immutable ID and switching the screen without disturbing root selection.
+// selected calendar's detail onto the manager stack (OpenCalendar). It
+// targets the immutable ID. It switches the screen. Root selection stays.
 func TestCalendarManagerRootEnterPushesCalendarDetail(t *testing.T) {
 	m := newFlatManager().selectCalendar(3)
 	mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -83,7 +83,7 @@ func TestCalendarManagerRootSpaceTogglesVisibility(t *testing.T) {
 	}
 }
 
-// TestCalendarManagerRootMouseRowOpensEdit verifies clicking the non-checkbox
+// TestCalendarManagerRootMouseRowOpensEdit verifies a click on the non-checkbox
 // row body follows the visible Edit affordance and opens the clicked calendar.
 func TestCalendarManagerRootMouseRowOpensEdit(t *testing.T) {
 	m := newFlatManager()
@@ -119,7 +119,7 @@ func TestCalendarManagerRootMouseCheckboxTogglesVisibility(t *testing.T) {
 }
 
 // TestCalendarManagerAddActionLivesAtBottomOfSourceList verifies the header
-// shows only "Calendars" and the compact + Add action sits one row below the
+// shows only "Calendars". The compact + Add action sits one row below the
 // source-list viewport at the source column's left edge.
 func TestCalendarManagerAddActionLivesAtBottomOfSourceList(t *testing.T) {
 	m := newFlatManager()
@@ -143,7 +143,7 @@ func TestCalendarManagerAddActionLivesAtBottomOfSourceList(t *testing.T) {
 
 // TestCalendarManagerAddActionMutedWhileDetailOwnsDraft verifies the + Add
 // action remains visible (rendered) but is inactive while a pushed calendar
-// detail owns an unsaved draft, so Add cannot silently discard it.
+// detail owns an unsaved draft. Add then cannot discard it in silence.
 func TestCalendarManagerAddActionMutedWhileDetailOwnsDraft(t *testing.T) {
 	m := newFlatManager()
 	if !m.sourceAddActionActive() {
@@ -159,8 +159,8 @@ func TestCalendarManagerAddActionMutedWhileDetailOwnsDraft(t *testing.T) {
 }
 
 // TestCalendarManagerAddActionInactiveOnPushedScreens verifies the + Add
-// action is muted and inert on every pushed screen — not just a calendar
-// detail — because each pushed screen owns its own input. Covers the import
+// action is muted and inert on every pushed screen, not just a calendar
+// detail. Each pushed screen owns its own input. Covers the import
 // transfer screen (which leaves no calendar draft) and the account screen.
 func TestCalendarManagerAddActionInactiveOnPushedScreens(t *testing.T) {
 	if m := newFlatManager(); !m.sourceAddActionActive() {
@@ -180,8 +180,8 @@ func TestCalendarManagerAddActionInactiveOnPushedScreens(t *testing.T) {
 }
 
 // TestCalendarManagerRootReorderWithinSameOwnerOnly verifies Shift+Up/Down
-// emits CalendarReorderedMsg with the full canonical ID order, swaps only
-// within the same AccountID, and is a no-op across an owner boundary.
+// emits CalendarReorderedMsg with the full canonical ID order. It swaps only
+// within the same AccountID. It is a no-op across an owner boundary.
 func TestCalendarManagerRootReorderWithinSameOwnerOnly(t *testing.T) {
 	// Canonical order: [1 Local, 2 Google, 3 Google, 4 Fastmail].
 
@@ -240,7 +240,7 @@ func TestCalendarManagerRootReorderEdgesAreNoops(t *testing.T) {
 }
 
 // TestCalendarManagerRootReorderDoesNotMutateOriginalOrder guards against the
-// value receiver aliasing the parent's order slice via an in-place swap.
+// value receiver as an alias of the parent's order slice via an in-place swap.
 func TestCalendarManagerRootReorderDoesNotMutateOriginalOrder(t *testing.T) {
 	m := newFlatManager().selectCalendar(2)
 	_, _ = m.Update(tea.KeyPressMsg{Code: 'J', Text: "J"})
@@ -255,7 +255,7 @@ func TestCalendarManagerRootReorderDoesNotMutateOriginalOrder(t *testing.T) {
 
 // TestCalendarManagerRootSelectionRestoredByID verifies SetData preserves the
 // selected calendar (by immutable ID) and the scroll anchor (by the top-visible
-// calendar ID) across a data refresh, so edits and reloads don't jump the
+// calendar ID) across a data refresh. Edits and reloads then do not jump the
 // cursor or scroll.
 func TestCalendarManagerRootSelectionRestoredByID(t *testing.T) {
 	// Build a tall list so scrolling is meaningful.
@@ -307,7 +307,7 @@ func TestCalendarManagerRootSelectionFallsBackWhenIDGone(t *testing.T) {
 }
 
 // TestCalendarManagerRootCloseEmitsClosedMsg verifies Esc and q both close the
-// manager by emitting CalendarManagerClosedMsg.
+// manager. They emit CalendarManagerClosedMsg.
 func TestCalendarManagerRootCloseEmitsClosedMsg(t *testing.T) {
 	m := newFlatManager()
 	for name, key := range map[string]tea.KeyPressMsg{
@@ -325,8 +325,8 @@ func TestCalendarManagerRootCloseEmitsClosedMsg(t *testing.T) {
 }
 
 // TestCalendarManagerAddMenuOpensViaKeyAndClick verifies that both the `a` key
-// and a click on the source + Add action open the manager-local menu, emit no
-// app command, and put root focus on the + Add action.
+// and a click on the source + Add action open the manager-local menu. They emit
+// no app command. They put root focus on the + Add action.
 func TestCalendarManagerAddMenuOpensViaKeyAndClick(t *testing.T) {
 	t.Run("key", func(t *testing.T) {
 		m := newFlatManager()
@@ -422,8 +422,8 @@ func TestCalendarManagerAddMenuKeyboardClampsAndActivates(t *testing.T) {
 }
 
 // TestCalendarManagerAddMenuTabShiftTabWrapCursor verifies Tab advances the
-// menu cursor one row and wraps last→first, Shift-Tab reverses and wraps
-// first→last, and neither key leaks into the root focus ring or the list
+// menu cursor one row and wraps last→first. Shift-Tab reverses and wraps
+// first→last. Neither key leaks into the root focus ring or the list
 // selection underneath.
 func TestCalendarManagerAddMenuTabShiftTabWrapCursor(t *testing.T) {
 	m := newFlatManager()
@@ -468,9 +468,9 @@ func TestCalendarManagerAddMenuTabShiftTabWrapCursor(t *testing.T) {
 }
 
 // TestCalendarManagerAddMenuSpaceActivatesTarget verifies Space activates the
-// selected menu row, emits the same typed target as Enter, and closes the
-// menu — routing through the shared activation binding rather than a
-// menu-specific key code, so Space and Enter stay in lockstep.
+// selected menu row. It emits the same typed target as Enter. It closes the
+// menu. It uses the shared activation binding rather than a
+// menu-specific key code. Space and Enter then stay in lockstep.
 func TestCalendarManagerAddMenuSpaceActivatesTarget(t *testing.T) {
 	space := tea.KeyPressMsg{Code: ' ', Text: " "}
 	want := []CalendarManagerTarget{
@@ -499,9 +499,9 @@ func TestCalendarManagerAddMenuSpaceActivatesTarget(t *testing.T) {
 	}
 }
 
-// TestCalendarManagerAddMenuRowClickEmitsTarget verifies clicking each interior
-// menu row emits the correct typed target, closes the menu, and leaves root
-// focus on + Add so the return-to-root (after the host pushes a screen) lands
+// TestCalendarManagerAddMenuRowClickEmitsTarget verifies a click on each interior
+// menu row emits the correct typed target. It closes the menu. It leaves root
+// focus on + Add. After the host pushes a screen, return-to-root then lands
 // back on the action.
 func TestCalendarManagerAddMenuRowClickEmitsTarget(t *testing.T) {
 	want := []CalendarManagerTarget{
@@ -527,8 +527,8 @@ func TestCalendarManagerAddMenuRowClickEmitsTarget(t *testing.T) {
 }
 
 // TestCalendarManagerAddMenuOutsideClickDismissesWithoutClickThrough verifies
-// a click outside the open menu dismisses it without emitting a command or
-// activating the underlying list row.
+// a click outside the open menu dismisses it. It does not emit a command. It
+// does not activate the list row underneath.
 func TestCalendarManagerAddMenuOutsideClickDismissesWithoutClickThrough(t *testing.T) {
 	m := newFlatManager().openAddMenu()
 	listX, listY, _, _ := m.listRegion()
@@ -552,7 +552,7 @@ func TestCalendarManagerAddMenuOutsideClickDismissesWithoutClickThrough(t *testi
 }
 
 // TestCalendarManagerAddMenuEscDismissesWithoutClosingManager verifies Esc
-// closes the menu without closing the manager or emitting a command.
+// closes the menu. It does not close the manager. It does not emit a command.
 func TestCalendarManagerAddMenuEscDismissesWithoutClosingManager(t *testing.T) {
 	m := newFlatManager().openAddMenu()
 	dismissed, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
@@ -591,8 +591,8 @@ func TestCalendarManagerAddMenuGeometryStaysInsideBox(t *testing.T) {
 
 // TestCalendarManagerAddMenuBorderClickConsumedWithoutRouting verifies that a
 // click on a menu border cell (the left/right │ columns or the rounded edges)
-// is consumed: it neither activates a row nor dismisses the menu, and it never
-// routes to the underlying list.
+// is consumed. It neither activates a row nor dismisses the menu. It never
+// routes to the list underneath.
 func TestCalendarManagerAddMenuBorderClickConsumedWithoutRouting(t *testing.T) {
 	m := newFlatManager().openAddMenu()
 	mx, my, mw, mh := m.addMenuRect()
@@ -619,8 +619,8 @@ func TestCalendarManagerAddMenuBorderClickConsumedWithoutRouting(t *testing.T) {
 }
 
 // TestCalendarManagerAddMenuNarrowWidthClampsInsideManager verifies that on a
-// very narrow terminal—where the menu's natural width would overflow the
-// box—the menu width is capped to the manager interior so the full rect stays
+// very narrow terminal the menu width is capped to the manager interior. The
+// menu's natural width would overflow the box. The full rect then stays
 // inside the manager.
 func TestCalendarManagerAddMenuNarrowWidthClampsInsideManager(t *testing.T) {
 	m := newFlatManager().SetSize(28, 24).openAddMenu()
@@ -669,8 +669,8 @@ func TestCalendarManagerRootNavigationMovesSelection(t *testing.T) {
 }
 
 // TestCalendarManagerDetailActionsTargetImmutableID verifies the pushed
-// calendar detail exposes Export, Set Default, and Delete as leading actions
-// that all carry the selected calendar's immutable ID, with Delete styled as
+// calendar detail exposes Export, Set Default, and Delete as lead actions.
+// All of them carry the selected calendar's immutable ID. Delete is styled as
 // the destructive variant.
 func TestCalendarManagerDetailActionsTargetImmutableID(t *testing.T) {
 	// Account calendar: no Delete (footnote explains ownership instead).
@@ -773,11 +773,11 @@ func TestCalendarManagerRootSpaceTogglesBothDirections(t *testing.T) {
 	}
 }
 
-// TestCalendarManagerListOwnsHiddenSet is the regression guard for issue #543:
-// the calendar manager keeps a single source of truth for visibility — the
-// embedded list — instead of a second mirrored map. After every toggle path
-// the list-owned set, the reopened detail form, and a reload all agree, and a
-// reload replaces (never merges) the set so no stale or cleared ID can linger.
+// TestCalendarManagerListOwnsHiddenSet is the regression guard for issue #543.
+// The calendar manager keeps a single source of truth for visibility: the
+// embedded list. It does not keep a second mirrored map. After every toggle
+// path the list-owned set, the reopened detail form, and a reload all agree.
+// A reload replaces (never merges) the set. No stale or cleared ID can linger.
 func TestCalendarManagerListOwnsHiddenSet(t *testing.T) {
 	cals := flatManagerCalendars()
 	initialHidden := map[int64]bool{3: true}
@@ -817,8 +817,8 @@ func TestCalendarManagerListOwnsHiddenSet(t *testing.T) {
 }
 
 // TestCalendarManagerRootSetDataClampsWhenSelectedTailRemoved verifies that
-// removing the selected tail calendar leaves the cursor on a valid surviving
-// row instead of out of range.
+// a remove of the selected tail calendar leaves the cursor on a valid
+// row that remains, instead of out of range.
 func TestCalendarManagerRootSetDataClampsWhenSelectedTailRemoved(t *testing.T) {
 	cals := flatManagerCalendars() // canonical order [1, 2, 3, 4]
 	m := newFlatManager().selectCalendar(4)
@@ -840,7 +840,7 @@ func TestCalendarManagerRootSetDataClampsWhenSelectedTailRemoved(t *testing.T) {
 }
 
 // TestCalendarManagerRootMouseRejectsClicksOutsideListWidth verifies a click
-// on the right row's Y but past the list's right edge does not select — the
+// on the right row's Y but past the list's right edge does not select. The
 // hit-test bounds the list column on both sides, not just the left.
 func TestCalendarManagerRootMouseRejectsClicksOutsideListWidth(t *testing.T) {
 	m := newFlatManager()
@@ -857,11 +857,11 @@ func TestCalendarManagerRootMouseRejectsClicksOutsideListWidth(t *testing.T) {
 }
 
 // TestCalendarManagerRootOverflowKeepsLastSelectedRowVisible is the regression
-// for the clampedScroll max-clamp bug: when the list overflows, the indicator
-// reserves one row (contentH = h-1), but the max-scroll clamp used the full
+// for the clampedScroll max-clamp bug. When the list overflows, the indicator
+// reserves one row (contentH = h-1). The max-scroll clamp used the full
 // viewport height h. That off-by-one let the indicator overwrite the selected
-// last row, hiding it and making it unclickable. The clamp must use contentH
-// so the last data row stays rendered and reachable above the indicator.
+// last row. It hid the row and made it unclickable. The clamp must use contentH.
+// The last data row then stays rendered and reachable above the indicator.
 func TestCalendarManagerRootOverflowKeepsLastSelectedRowVisible(t *testing.T) {
 	cals := map[int64]CalendarInfo{}
 	for i := int64(1); i <= 12; i++ {
@@ -896,7 +896,7 @@ func TestCalendarManagerRootOverflowKeepsLastSelectedRowVisible(t *testing.T) {
 
 // calendarDetailFieldIndex returns the form item index of the first field of
 // the given kind ("opener" or "checkbox") in the manager's active calendar
-// detail, or -1 when no detail is open or no such field exists.
+// detail. It returns -1 when no detail is open or no such field exists.
 func calendarDetailFieldIndex(m CalendarManagerModel, kind string) int {
 	if m.calendarForm == nil {
 		return -1
@@ -918,8 +918,8 @@ func calendarDetailFieldIndex(m CalendarManagerModel, kind string) int {
 }
 
 // focusCalendarDetailField moves the calendar detail's form focus onto the
-// first field of the given kind. Tests use this instead of driving Tab so the
-// assertion is independent of how many fields precede the target.
+// first field of the given kind. Tests use this instead of Tab. The
+// assertion is then independent of how many fields precede the target.
 func focusCalendarDetailField(m CalendarManagerModel, kind string) (CalendarManagerModel, bool) {
 	idx := calendarDetailFieldIndex(m, kind)
 	if idx < 0 {
@@ -932,9 +932,9 @@ func focusCalendarDetailField(m CalendarManagerModel, kind string) (CalendarMana
 }
 
 // calendarDetailCheckboxClick renders the active calendar detail to populate
-// the shared mouse tracker, then resolves the Display Calendar checkbox zone
+// the shared mouse tracker. It then resolves the Display Calendar checkbox zone
 // into a terminal-space MouseClickMsg that hits it. Tests use it to exercise
-// the mouse path of the visibility toggle without hard-coding geometry.
+// the mouse path of the visibility toggle with no hard-coded geometry.
 func calendarDetailCheckboxClick(m CalendarManagerModel, cbIdx int) (tea.MouseClickMsg, bool) {
 	if m.calendarForm == nil {
 		return tea.MouseClickMsg{}, false
@@ -955,9 +955,9 @@ func calendarDetailCheckboxClick(m CalendarManagerModel, cbIdx int) (tea.MouseCl
 	return tea.MouseClickMsg{}, false
 }
 
-// TestCalendarManagerDetailBackRestoresRootSelection verifies pushing a
-// calendar detail and pressing Back (Esc) returns to the root list with the
-// same calendar selected by immutable ID.
+// TestCalendarManagerDetailBackRestoresRootSelection verifies a push of a
+// calendar detail and a press of Back (Esc) returns to the root list. The
+// same calendar stays selected by immutable ID.
 func TestCalendarManagerDetailBackRestoresRootSelection(t *testing.T) {
 	m := newFlatManager().selectCalendar(3)
 	pushed, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -981,7 +981,7 @@ func TestCalendarManagerDetailBackRestoresRootSelection(t *testing.T) {
 }
 
 // TestCalendarManagerDetailBackRestoresRootScroll verifies the scroll offset
-// survives a push/pop cycle by ID, so opening and closing a detail does not
+// survives a push/pop cycle by ID. Open and close of a detail then does not
 // jump the list back to the top.
 func TestCalendarManagerDetailBackRestoresRootScroll(t *testing.T) {
 	cals := map[int64]CalendarInfo{}
@@ -1013,8 +1013,8 @@ func TestCalendarManagerDetailBackRestoresRootScroll(t *testing.T) {
 }
 
 // TestCalendarManagerDetailLocalHasLocationOnly verifies a local calendar's
-// detail renders a labeled Location row valued Local and has no Account
-// opener (local calendars have no owning account to drill into).
+// detail renders a labeled Location row valued Local. It has no Account
+// opener. Local calendars have no owning account to drill into.
 func TestCalendarManagerDetailLocalHasLocationOnly(t *testing.T) {
 	m := newFlatManager().selectCalendar(1) // On device, local
 	pushed, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -1031,8 +1031,8 @@ func TestCalendarManagerDetailLocalHasLocationOnly(t *testing.T) {
 }
 
 // TestCalendarManagerDetailRemoteHasAccountOpener verifies a remote calendar's
-// detail renders an actionable Account row — the account name plus drill-in
-// chevron in the shared label column — that, when activated, pushes the
+// detail renders an actionable Account row. That is the account name plus
+// drill-in chevron in the shared label column. When activated, it pushes the
 // owning account's settings onto the stack.
 func TestCalendarManagerDetailRemoteHasAccountOpener(t *testing.T) {
 	m := newFlatManager().selectCalendar(2) // Primary, Google, account 7
@@ -1117,8 +1117,8 @@ func TestCalendarManagerDetailAccountBackPreservesDraft(t *testing.T) {
 
 // TestCalendarManagerDetailVisibilityToggleEmitsDesiredState verifies the
 // detail's Display Calendar toggle emits CalendarVisibilityToggledMsg with the
-// desired Hidden state immediately, and mirrors the change into the list-owned
-// hidden set so the dot stays consistent on Back.
+// desired Hidden state immediately. It mirrors the change into the list-owned
+// hidden set. The dot then stays consistent on Back.
 func TestCalendarManagerDetailVisibilityToggleEmitsDesiredState(t *testing.T) {
 	m := newFlatManager().selectCalendar(1) // On device, visible
 	pushed, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -1157,8 +1157,8 @@ func TestCalendarManagerDetailVisibilityToggleEmitsDesiredState(t *testing.T) {
 }
 
 // TestCalendarManagerDetailLeftPopsToRoot verifies the Left arrow pops a
-// pushed calendar detail back to the root list (a Back gesture) when the
-// focus is not on a text-editing field. Root Left is unchanged (a no-op).
+// pushed calendar detail back to the root list (a Back gesture). That happens
+// when the focus is not on a text-edit field. Root Left is unchanged (a no-op).
 func TestCalendarManagerDetailLeftPopsToRoot(t *testing.T) {
 	m := newFlatManager().selectCalendar(2) // Primary, Google
 	pushed, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -1188,8 +1188,8 @@ func TestCalendarManagerDetailLeftPopsToRoot(t *testing.T) {
 }
 
 // TestCalendarManagerDetailLeftKeepsDirtyDraft verifies the Back gesture
-// never discards an unsaved draft: with edited metadata and focus on a
-// non-editing field, Left leaves the editor mounted with the edit intact.
+// never discards an unsaved draft. With edited metadata and focus on a
+// non-edit field, Left leaves the editor mounted with the edit intact.
 // Esc (Cancel) remains the explicit discard.
 func TestCalendarManagerDetailLeftKeepsDirtyDraft(t *testing.T) {
 	m := newFlatManager().selectCalendar(2) // Primary, Google
@@ -1215,8 +1215,8 @@ func TestCalendarManagerDetailLeftKeepsDirtyDraft(t *testing.T) {
 }
 
 // TestCalendarManagerDetailButtonDisposition pins the Apple-sheet action
-// layout in a wide editor: Set as Default and Export share the utility tier
-// on one row, while Delete sits flush-left on the same line as the
+// layout in a wide editor. Set as Default and Export share the utility tier
+// on one row. Delete sits flush-left on the same line as the
 // right-aligned Save and Cancel commit controls.
 func TestCalendarManagerDetailButtonDisposition(t *testing.T) {
 	m := newFlatManager().selectCalendar(1) // local: all three actions
@@ -1247,9 +1247,9 @@ func TestCalendarManagerDetailButtonDisposition(t *testing.T) {
 }
 
 // TestCalendarManagerTabTraversalRoundTripsThroughEditor verifies Tab
-// traversal is continuous across the whole dialog: from the source list,
-// repeated Tab enters the previewed editor, walks its fields and buttons,
-// and exits past the last control back to the focused source list; Shift-Tab
+// traversal is continuous across the whole dialog. From the source list,
+// repeated Tab enters the previewed editor. It walks its fields and buttons.
+// It exits past the last control back to the focused source list. Shift-Tab
 // from the editor's first field exits back to + Add.
 func TestCalendarManagerTabTraversalRoundTripsThroughEditor(t *testing.T) {
 	tab := managerTabKey(false)
@@ -1297,8 +1297,8 @@ func TestCalendarManagerTabTraversalRoundTripsThroughEditor(t *testing.T) {
 	}
 }
 
-// TestCalendarManagerTabStaysInsideDirtyEditor verifies Tab keeps wrapping
-// inside the form once the draft is dirty, so traversal can never discard
+// TestCalendarManagerTabStaysInsideDirtyEditor verifies Tab keeps a wrap
+// inside the form once the draft is dirty. Traversal can then never discard
 // typed edits.
 func TestCalendarManagerTabStaysInsideDirtyEditor(t *testing.T) {
 	tab := managerTabKey(false)
@@ -1319,9 +1319,9 @@ func TestCalendarManagerTabStaysInsideDirtyEditor(t *testing.T) {
 }
 
 // TestCalendarManagerEscOnDirtyDraftAsksBeforeDiscarding verifies the
-// Apple-style save-changes flow: Esc on a dirty calendar draft opens a
-// destructive Discard prompt instead of closing; declining keeps the draft
-// intact and confirming pops to the root list.
+// Apple-style save-changes flow. Esc on a dirty calendar draft opens a
+// destructive Discard prompt instead of a close. A decline keeps the draft
+// intact. A confirm pops to the root list.
 func TestCalendarManagerEscOnDirtyDraftAsksBeforeDiscarding(t *testing.T) {
 	m := newFlatManager().selectCalendar(2)
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -1360,7 +1360,7 @@ func TestCalendarManagerEscOnDirtyDraftAsksBeforeDiscarding(t *testing.T) {
 }
 
 // TestCalendarManagerEscOnCleanDraftClosesWithoutPrompt verifies an unedited
-// form still closes on Esc with no intervening prompt.
+// form still closes on Esc with no prompt in between.
 func TestCalendarManagerEscOnCleanDraftClosesWithoutPrompt(t *testing.T) {
 	m := newFlatManager().selectCalendar(2)
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -1378,7 +1378,7 @@ func TestCalendarManagerEscOnCleanDraftClosesWithoutPrompt(t *testing.T) {
 }
 
 // TestCalendarManagerPickerLeftKeepsStagedSelection verifies Left pops an
-// untouched account-calendars picker but never one holding staged,
+// untouched account-calendars picker. It never pops one that holds staged,
 // unapplied subscription changes.
 func TestCalendarManagerPickerLeftKeepsStagedSelection(t *testing.T) {
 	// Untouched picker: Left pops back to the root list.
@@ -1403,9 +1403,9 @@ func TestCalendarManagerPickerLeftKeepsStagedSelection(t *testing.T) {
 	}
 }
 
-// TestCalendarManagerDetailLeftDoesNotStealCursor verifies Left keeps moving
-// the cursor while a text field is focused, so the Back gesture never
-// interrupts editing.
+// TestCalendarManagerDetailLeftDoesNotStealCursor verifies Left keeps a move
+// of the cursor while a text field is focused. The Back gesture then never
+// interrupts the edit.
 func TestCalendarManagerDetailLeftDoesNotStealCursor(t *testing.T) {
 	m := newFlatManager().selectCalendar(1) // On device, local
 	pushed, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -1423,7 +1423,7 @@ func TestCalendarManagerDetailLeftDoesNotStealCursor(t *testing.T) {
 }
 
 // TestCalendarManagerDetailLeftPopsAccountToCalendar verifies Left pops the
-// pushed account detail back to the originating calendar detail.
+// pushed account detail back to the calendar detail it came from.
 func TestCalendarManagerDetailLeftPopsAccountToCalendar(t *testing.T) {
 	m := newFlatManager().selectCalendar(2)
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -1450,8 +1450,8 @@ func TestCalendarManagerDetailLeftPopsAccountToCalendar(t *testing.T) {
 
 // TestCalendarManagerDetailVisibilityMouseToggleEmitsDesiredState verifies a
 // mouse click on the Display Calendar checkbox emits the same
-// CalendarVisibilityToggledMsg as the keyboard path (regression: the mouse
-// branch used to return before the pre/post visibility comparison).
+// CalendarVisibilityToggledMsg as the keyboard path. Regression: the mouse
+// branch used to return before the pre/post visibility comparison.
 func TestCalendarManagerDetailVisibilityMouseToggleEmitsDesiredState(t *testing.T) {
 	m := newFlatManager().selectCalendar(1).SetSize(120, 40)
 	pushed, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -1590,8 +1590,9 @@ func TestCalendarManagerRootGroupsAccountsAndShowsInspector(t *testing.T) {
 	}
 }
 
-// inspectorActionScreenRow maps the action's screen y into a View() row index
-// so tests can read the rendered button without re-deriving the box geometry.
+// inspectorActionScreenRow maps the action's screen y into a View() row index.
+// Tests can then read the rendered button without a re-derive of the box
+// geometry.
 func inspectorActionScreenRow(m CalendarManagerModel, ay int) int {
 	_, boxH := m.boxSize()
 	dialogY := (m.height - boxH) / 2
@@ -1612,9 +1613,9 @@ func TestCalendarManagerInspectorHeaderIsCalendarsNotAdd(t *testing.T) {
 	}
 }
 
-// TestCalendarManagerInspectorCalendarShowsEditFormPreview verifies selecting
-// a calendar renders its edit form immediately in the inspector (macOS
-// Settings-style master–detail): fields, Display checkbox, and buttons appear
+// TestCalendarManagerInspectorCalendarShowsEditFormPreview verifies a select
+// of a calendar renders its edit form immediately in the inspector (macOS
+// Settings-style master–detail). Fields, Display checkbox, and buttons appear
 // with no Edit… pill and no pinned-action rect in between.
 func TestCalendarManagerInspectorCalendarShowsEditFormPreview(t *testing.T) {
 	m := newFlatManager().selectCalendar(3) // Holidays, Google
@@ -1661,7 +1662,7 @@ func TestCalendarManagerInspectorAccountShowsAccountSettingsAction(t *testing.T)
 }
 
 // TestCalendarManagerInspectorLocalShowsCountWithoutAction verifies the Local
-// group inspector shows "On this device" with its calendar count but no
+// group inspector shows "On this device" with its calendar count. It has no
 // bottom action (no Add, no Account Settings) and no action rect.
 func TestCalendarManagerInspectorLocalShowsCountWithoutAction(t *testing.T) {
 	m := newFlatManager()
@@ -1686,9 +1687,9 @@ func TestCalendarManagerInspectorLocalShowsCountWithoutAction(t *testing.T) {
 	}
 }
 
-// TestCalendarManagerPreviewPaneClickOpensCalendar verifies clicking anywhere
-// inside the previewed edit form focuses it — the detail opens for the
-// selected calendar's immutable ID — while a click past the pane's right edge
+// TestCalendarManagerPreviewPaneClickOpensCalendar verifies a click anywhere
+// inside the previewed edit form focuses it. The detail opens for the
+// selected calendar's immutable ID. A click past the pane's right edge
 // does nothing.
 func TestCalendarManagerPreviewPaneClickOpensCalendar(t *testing.T) {
 	m := newFlatManager().selectCalendar(3)
@@ -1713,9 +1714,9 @@ func TestCalendarManagerPreviewPaneClickOpensCalendar(t *testing.T) {
 	}
 }
 
-// TestCalendarManagerInspectorAccountActionClickEmitsTarget verifies clicking
-// the account inspector's Account Settings… button emits a typed account
-// target for the selected account and leaves the root list mounted.
+// TestCalendarManagerInspectorAccountActionClickEmitsTarget verifies a click
+// of the account inspector's Account Settings… button emits a typed account
+// target for the selected account. It leaves the root list mounted.
 func TestCalendarManagerInspectorAccountActionClickEmitsTarget(t *testing.T) {
 	m := newFlatManager()
 	m.list.selectIdentity(calendarRowIdentity{kind: accountHeaderRow, id: 7})
@@ -1740,9 +1741,9 @@ func TestCalendarManagerInspectorAccountActionClickEmitsTarget(t *testing.T) {
 }
 
 // TestCalendarManagerInspectorPadsExactlyHeight verifies the selection
-// inspector composes exactly its height in rows for both the calendar
-// edit-form preview and the account summary with its pinned action, so layout
-// never leaves a ragged bottom or pushes content off.
+// inspector composes exactly its height in rows. That holds for the calendar
+// edit-form preview and for the account summary with its pinned action. Layout
+// then never leaves a ragged bottom or pushes content off.
 func TestCalendarManagerInspectorPadsExactlyHeight(t *testing.T) {
 	m := newFlatManager().selectCalendar(2)
 	w, h := m.inspectorPaneSize()
@@ -1765,9 +1766,9 @@ func TestCalendarManagerInspectorPadsExactlyHeight(t *testing.T) {
 }
 
 // TestCalendarManagerInspectorLongDescriptionKeepsPreviewHeight verifies a
-// long description cannot distort the preview: the form's Description field
-// truncates it, the pane still composes exactly its height, and entering the
-// editor keeps working.
+// long description cannot distort the preview. The form's Description field
+// truncates it. The pane still composes exactly its height. An enter of the
+// editor still works.
 func TestCalendarManagerInspectorLongDescriptionKeepsPreviewHeight(t *testing.T) {
 	cals := flatManagerCalendars()
 	base := cals[3]
@@ -1902,12 +1903,12 @@ func managerTabKey(shift bool) tea.KeyPressMsg {
 }
 
 // TestCalendarManagerRootFocusCyclesWideCalendar verifies the wide two-pane
-// root Tab cycle visits every focusable control in order — list → + Add →
-// inspector action → list — and Shift-Tab reverses it. Root focus never moves
-// the list cursor, and the list only renders focused while it holds root focus.
+// root Tab cycle visits every focusable control in order: list → + Add →
+// inspector action → list. Shift-Tab reverses it. Root focus never moves
+// the list cursor. The list only renders focused while it holds root focus.
 // TestCalendarManagerRootFocusCyclesWideAccount verifies the full root ring
-// with a remote account selected: list → + Add → inspector pill → list, both
-// directions, without moving the selection.
+// with a remote account selected: list → + Add → inspector pill → list.
+// Both directions. The selection does not move.
 func TestCalendarManagerRootFocusCyclesWideAccount(t *testing.T) {
 	m := newFlatManager()
 	m.list.selectIdentity(calendarRowIdentity{kind: accountHeaderRow, id: 7}) // Google
@@ -1949,8 +1950,8 @@ func TestCalendarManagerRootFocusCyclesWideAccount(t *testing.T) {
 
 // TestCalendarManagerRootFocusTabEntersCalendarEditor verifies that with a
 // calendar selected, Tab flows into the previewed edit form like any other
-// control: forward Tab reaches it after + Add, reverse Shift-Tab reaches it
-// directly, and both open the editor with list focus restored for Back.
+// control. Forward Tab reaches it after + Add. Reverse Shift-Tab reaches it
+// directly. Both open the editor with list focus restored for Back.
 func TestCalendarManagerRootFocusTabEntersCalendarEditor(t *testing.T) {
 	// Forward: list → add → editor.
 	m := newFlatManager().selectCalendar(3)
@@ -1982,7 +1983,7 @@ func TestCalendarManagerRootFocusTabEntersCalendarEditor(t *testing.T) {
 
 // TestCalendarManagerRootFocusCycleOmitsUnavailableInspector verifies that a
 // narrow one-pane root and a wide root whose selection has no inspector action
-// both omit the inspector from the cycle, so Tab bounces list ↔ + Add only.
+// both omit the inspector from the cycle. Tab then bounces list ↔ + Add only.
 func TestCalendarManagerRootFocusCycleOmitsUnavailableInspector(t *testing.T) {
 	cases := []struct {
 		name string
@@ -2042,11 +2043,11 @@ func TestCalendarManagerRootFocusAddActivateOpensMenu(t *testing.T) {
 }
 
 // TestCalendarManagerRootFocusInspectorActivateOpensCalendar verifies Enter
-// and Space both activate the focused inspector action, opening the selected
+// and Space both activate the focused inspector action. They open the selected
 // calendar's detail by immutable ID (unchanged routing).
 // TestCalendarManagerRootFocusInspectorActivateEmitsAccountTarget verifies
-// Enter and Space on the focused account pill emit the typed account target,
-// mirroring the mouse path.
+// Enter and Space on the focused account pill emit the typed account target.
+// That matches the mouse path.
 func TestCalendarManagerRootFocusInspectorActivateEmitsAccountTarget(t *testing.T) {
 	for _, key := range []tea.KeyPressMsg{
 		{Code: tea.KeyEnter},
@@ -2075,7 +2076,7 @@ func TestCalendarManagerRootFocusInspectorActivateEmitsAccountTarget(t *testing.
 
 // TestCalendarManagerRootFocusListRetainsArrowsSpace verifies that while the
 // list holds root focus, arrows navigate, Space toggles visibility, and Enter
-// opens the selected calendar — and that arrows no longer move the cursor once
+// opens the selected calendar. Arrows no longer move the cursor once
 // another control holds root focus.
 func TestCalendarManagerRootFocusListRetainsArrowsSpace(t *testing.T) {
 	m := newFlatManager().selectCalendar(2) // Primary, visible
@@ -2110,8 +2111,8 @@ func TestCalendarManagerRootFocusListRetainsArrowsSpace(t *testing.T) {
 }
 
 // TestCalendarManagerRootFocusMouseRestoresFocus verifies that mouse clicks on
-// the source list, + Add action, and inspector action each restore the matching
-// root focus before routing.
+// the source list, + Add action, and inspector action each restore the right
+// root focus before they route.
 func TestCalendarManagerRootFocusMouseRestoresFocus(t *testing.T) {
 	t.Run("list row click focuses list", func(t *testing.T) {
 		m := newFlatManager().selectCalendar(2)
@@ -2162,12 +2163,13 @@ func TestCalendarManagerRootFocusMouseRestoresFocus(t *testing.T) {
 	})
 }
 
-// TestCalendarManagerRootFocusNormalizesAfterResizeToOnePane verifies that a
-// resize which drops the inspector out of the layout (wide two-pane → narrow
-// one-pane) also drops inspector root focus back to the list. Otherwise Enter
-// or Space would still invoke the now-hidden inspector action — an invisible
-// control driving input. After normalization Space toggles the selected
-// calendar's visibility (the list behavior) instead of opening the detail.
+// TestCalendarManagerRootFocusNormalizesAfterResizeToOnePane verifies a resize
+// that drops the inspector out of the layout. Wide two-pane becomes narrow
+// one-pane. Inspector root focus then drops back to the list. Otherwise Enter
+// or Space would still invoke the now-hidden inspector action. An invisible
+// control would then drive input. After normalization Space toggles the
+// selected calendar's visibility (the list behavior). It does not open the
+// detail.
 func TestCalendarManagerRootFocusNormalizesAfterResizeToOnePane(t *testing.T) {
 	m := newFlatManager()
 	m.list.selectIdentity(calendarRowIdentity{kind: accountHeaderRow, id: 7}) // Google pill
@@ -2205,11 +2207,11 @@ func TestCalendarManagerRootFocusNormalizesAfterResizeToOnePane(t *testing.T) {
 	}
 }
 
-// TestCalendarManagerRootFocusAddNotFocusedOnPushedScreen verifies that when
-// root focus is on + Add and a pushed screen opens (where the + Add action is
-// muted and inert), the action never renders as a focused pill: a disabled
+// TestCalendarManagerRootFocusAddNotFocusedOnPushedScreen verifies a pushed
+// screen while root focus is on + Add. The + Add action is muted and inert
+// there. The action never renders as a focused pill. A disabled
 // control must not carry the focus ring. Focus persists for the return-to-root
-// case, but the focused styling is gated on the action being active.
+// case. The focused style is gated on the action being active.
 func TestCalendarManagerRootFocusAddNotFocusedOnPushedScreen(t *testing.T) {
 	m := newFlatManager()
 	m, _ = m.Update(managerTabKey(false)) // list → add
@@ -2241,12 +2243,12 @@ func TestCalendarManagerRootFocusAddNotFocusedOnPushedScreen(t *testing.T) {
 	}
 }
 
-// TestCalendarManagerRootFocusKeepsSelectionVisibleInactive verifies that
-// moving root focus off the list (to + Add) keeps the selected row visibly
-// highlighted with the neutral inactive style, restores the active accent when
-// focus returns, and never moves the selection cursor. It covers both a
-// calendar row and a selectable account header, since the two render through
-// separate paths (renderCalendarRow vs renderAccountHeader).
+// TestCalendarManagerRootFocusKeepsSelectionVisibleInactive verifies a move of
+// root focus off the list (to + Add). The selected row stays highlighted with
+// the neutral inactive style. It restores the active accent when focus returns.
+// It never moves the selection cursor. It covers a calendar row and a
+// selectable account header. The two render through separate paths
+// (renderCalendarRow vs renderAccountHeader).
 func TestCalendarManagerRootFocusKeepsSelectionVisibleInactive(t *testing.T) {
 	// Pin a theme with distinct accent (#112233) and button (#6c5ce7) colors
 	// so the active and inactive highlights are independently detectable.
