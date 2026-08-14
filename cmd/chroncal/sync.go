@@ -19,11 +19,11 @@ import (
 )
 
 // classifySyncError re-tags configuration-style sync failures (no remote
-// link, no remote URL, missing credentials) as "invalid_input" so JSON
-// consumers can distinguish "you haven't set this up yet" from a genuine
-// runtime sync failure. Matching is by message substring because the
-// internal/sync package returns plain fmt.Errorf chains; the alternative
-// would be exporting sentinel errors from that package.
+// link, no remote URL, credentials gone) as "invalid_input". JSON
+// consumers can then distinguish "you have not set this up yet" from a genuine
+// runtime sync failure. Match is by message substring. The
+// internal/sync package returns plain fmt.Errorf chains. The alternative
+// would be to export sentinel errors from that package.
 func classifySyncError(err error) error {
 	if err == nil {
 		return nil
@@ -40,11 +40,12 @@ func classifySyncError(err error) error {
 }
 
 // fprintImportWarnings prints one compact line per import warning collected
-// on a SyncResult, prefixed so users know sync produced it. Import warnings
-// mark values the importer had to fabricate (a made-up DTEND span, a dropped
-// alarm) that the next push writes back over the server's correct value, so
-// the silent sync entry points print them to stderr. No output when there
-// are none — the opportunistic push runs after every write.
+// on a SyncResult. The prefix tells users that sync produced it. Import
+// warnings mark values the importer had to fabricate (a made-up DTEND span,
+// a dropped alarm). The next push writes those back over the server's
+// correct value. The silent sync entry points then print them to stderr.
+// No output when there are none. The opportunistic push runs after every
+// write.
 func fprintImportWarnings(w io.Writer, warnings []syncPkg.ImportWarning) {
 	for _, iw := range warnings {
 		fmt.Fprintf(w, "import warning: %s\n", iw)
@@ -208,8 +209,8 @@ for each connected calendar.`,
 }
 
 // renderSyncStatuses emits sync status using --output. For text mode an
-// empty list returns the setup hint; JSON/YAML return [] so a script can
-// branch on length rather than parsing prose.
+// empty list returns the setup hint. JSON/YAML return [] so a script can
+// branch on length rather than parse prose.
 func renderSyncStatuses(cmd *cobra.Command, statuses []syncPkg.SyncStatus) error {
 	w := cmd.OutOrStdout()
 
@@ -417,11 +418,11 @@ This does not delete your local calendars or entries.`,
 
 // renderSyncRunResults emits per-calendar results plus a top-level summary,
 // using the active --output format. A run with no connected calendars
-// reports synced=0 rather than producing empty stdout so an agent can
+// reports synced=0 rather than empty stdout. An agent can then
 // distinguish "nothing to do" from "command crashed."
 //
-// Returns a non-nil error when any calendar reported per-phase sync errors
-// so that `sync run` exits non-zero, consistent with `ical import` and
+// Returns a non-nil error when any calendar reported per-phase sync errors.
+// `sync run` then exits non-zero, consistent with `ical import` and
 // `sync reset` (issue #359).
 func renderSyncRunResults(cmd *cobra.Command, results []*syncPkg.SyncResult, calNames map[int64]string) error {
 	w := cmd.OutOrStdout()
@@ -527,8 +528,8 @@ func renderSyncReset(cmd *cobra.Command, outcomes []syncResetOutcome) error {
 
 // stderrSyncLogger builds the terminal logger shared by the two subcommands
 // that run sync engines in the foreground (`sync run` and `service run`).
-// One constructor so a level or format change reaches both — the service
-// tick is the copy nobody watches, so it is the one that would drift.
+// One constructor so a level or format change reaches both. The service
+// tick is the copy nobody watches. It is the one that would drift.
 func stderrSyncLogger(w io.Writer) *slog.Logger {
 	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.LevelInfo}))
 }
