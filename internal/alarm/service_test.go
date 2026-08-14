@@ -48,8 +48,8 @@ func newFileTestDB(t *testing.T) (*sql.DB, *storage.Queries) {
 
 // insertPoisonAlarmState inserts a malformed *_alarm_state row used to force a
 // non-ErrNoRows error out of GetAlarmState / GetTodoAlarmState. It pins a
-// single connection and disables foreign keys on it so the malformed row (a
-// TEXT value in an integer FK column) can be written.
+// single connection. It disables foreign keys on it. The malformed row (a
+// TEXT value in an integer FK column) can then be written.
 func insertPoisonAlarmState(ctx context.Context, t *testing.T, db *sql.DB, query string, args ...any) {
 	t.Helper()
 	conn, err := db.Conn(ctx)
@@ -204,17 +204,17 @@ func TestCheck_SkipsAlreadyFired(t *testing.T) {
 	}
 }
 
-// TestCheck_TransientStateErrorDoesNotFire guards against re-firing an alarm
+// TestCheck_TransientStateErrorDoesNotFire guards against a re-fire of an alarm
 // when GetAlarmState returns a transient (non-ErrNoRows) error. A SQLITE_BUSY
-// or similar error must abort the per-alarm evaluation and propagate, never be
-// treated as "not fired".
+// or similar error must abort the per-alarm evaluation and propagate. It must
+// never be treated as "not fired".
 //
-// We simulate the transient error precisely: a poison alarm_state row whose
+// We simulate the transient error precisely. A poison alarm_state row whose
 // event_id holds a TEXT value fails the int64 Scan in GetAlarmState (a
-// non-ErrNoRows error) while leaving snoozed_to NULL so the later
+// non-ErrNoRows error). snoozed_to stays NULL. The later
 // ListExpiredSnoozedAlarmStates query — which filters on snoozed_to IS NOT
 // NULL — still succeeds. That isolates the failure to the in-loop
-// GetAlarmState lookup, which is the code path under test.
+// GetAlarmState lookup. That is the code path under test.
 func TestCheck_TransientStateErrorDoesNotFire(t *testing.T) {
 	db, q := newFileTestDB(t)
 	evtSvc := event.NewService(db, q)
