@@ -175,11 +175,11 @@ func TestSoftDelete_RestoreOverrideByIDClearsMasterEXDATE(t *testing.T) {
 }
 
 // TestSoftDelete_MalformedRecurrenceID is the regression test for
-// issue #120: deleting an override whose recurrence_id cannot be parsed
-// must fail loudly rather than soft-delete the row while silently
-// skipping the EXDATE addition. Otherwise the override is hidden but the
-// master keeps expanding the occurrence, resurrecting the "deleted" slot.
-// The restore path already propagates this parse error; delete must too.
+// issue #120. A delete of an override whose recurrence_id cannot be parsed
+// must fail loudly. It must not soft-delete the row while it skips the
+// EXDATE addition in silence. Otherwise the override is hidden. The
+// master keeps an expand of the occurrence. That resurrects the "deleted"
+// slot. The restore path already propagates this parse error. Delete must too.
 func TestSoftDelete_MalformedRecurrenceID(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -386,12 +386,12 @@ func TestSoftDelete_FromInstance_RRULE(t *testing.T) {
 	}
 }
 
-// TestSoftDelete_FromInstance_UndoAfterGap reproduces issue #66: when the
+// TestSoftDelete_FromInstance_UndoAfterGap reproduces issue #66. When the
 // master's last real edit predates the truncation by more than one second,
 // the stale-master guard used to mistake the truncation's own updated_at bump
 // for a concurrent external edit and reject the Undo. The guard must compare
-// against the master's POST-truncation updated_at, so Undo succeeds here while
-// still detecting genuine later edits.
+// against the master's POST-truncation updated_at. Undo then succeeds here.
+// It still detects genuine later edits.
 func TestSoftDelete_FromInstance_UndoAfterGap(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -537,8 +537,8 @@ func TestSoftDelete_ListFilteredExcludesDeleted(t *testing.T) {
 }
 
 // TestSoftDelete_PurgeByID_RefusesLiveRow verifies PurgeByID only drops
-// soft-deleted rows and returns ErrNotDeleted otherwise, so a caller can't
-// hard-delete a live event by passing the wrong ID.
+// soft-deleted rows and returns ErrNotDeleted otherwise. A caller then cannot
+// hard-delete a live event by the wrong ID.
 func TestSoftDelete_PurgeByID_RefusesLiveRow(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -594,11 +594,11 @@ func TestSoftDelete_SequenceBumpedOnRestore(t *testing.T) {
 }
 
 // TestSoftDelete_UndoInstanceDeletePreservesPreexistingEXDATE verifies that
-// undoing a single-instance delete removes only the EXDATE that delete added,
-// leaving a pre-existing exclusion for the same slot intact. The "EXDATE +
-// live override at the same slot" shape arrives via import/sync; without
-// remove-one semantics the undo would strip both EXDATEs and the base
-// occurrence could resurface once the override is later removed.
+// an undo of a single-instance delete removes only the EXDATE that delete added.
+// A stored exclusion for the same slot stays intact. The "EXDATE +
+// live override at the same slot" shape arrives via import/sync. Without
+// remove-one semantics the undo would strip both EXDATEs. The base
+// occurrence could then resurface once the override is later removed.
 func TestSoftDelete_UndoInstanceDeletePreservesPreexistingEXDATE(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -646,11 +646,11 @@ func TestSoftDelete_UndoInstanceDeletePreservesPreexistingEXDATE(t *testing.T) {
 }
 
 // TestSoftDelete_RestoreByUIDPreservesImportedEXDATE is the regression test for
-// issue #86: an EXDATE that arrived via import (no delete added it) must
+// issue #86. An EXDATE that arrived via import (no delete added it) must
 // survive a DeleteSeries + RestoreByUID round-trip, even when an override
 // shares the same recurrence slot. RestoreByUID previously cleared the master
-// EXDATE for every soft-deleted override's recurrence_id unconditionally,
-// silently stripping the imported EXDATE.
+// EXDATE for every soft-deleted override's recurrence_id unconditionally.
+// That stripped the imported EXDATE in silence.
 func TestSoftDelete_RestoreByUIDPreservesImportedEXDATE(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -697,7 +697,7 @@ func TestSoftDelete_RestoreByUIDPreservesImportedEXDATE(t *testing.T) {
 
 // TestSoftDelete_RestoreFromInstanceSurfacesMarkDirtyError verifies that a
 // failure to mark the master resource dirty during a from-instance undo is
-// propagated to the caller instead of being silently swallowed. Without it the
+// propagated to the caller. It is not swallowed in silence. Without it the
 // restored occurrences reappear locally but are never re-synced to the server.
 // Regression test for #252.
 func TestSoftDelete_RestoreFromInstanceSurfacesMarkDirtyError(t *testing.T) {
@@ -756,11 +756,11 @@ func TestSoftDelete_RestoreSurfacesTombstoneClearError(t *testing.T) {
 }
 
 // TestSoftDelete_OverrideMasterLookupError is the regression test for issue
-// #412: deleting an override must not collapse a genuine DB error from the
+// #412. A delete of an override must not collapse a genuine DB error from the
 // master lookup into the "no master" path. On a non-ErrNoRows error the old
-// code soft-deleted the override while silently skipping the EXDATE and
-// provenance bookkeeping, resurrecting the occurrence via series expansion and
-// leaving it unrestorable via trash. Same failure mode as #290, fixed there in
+// code soft-deleted the override. It skipped the EXDATE and provenance
+// records in silence. Series expansion then resurrected the occurrence. Trash
+// could not restore it. Same failure mode as #290. That was fixed there in
 // the todo and journal services but never in the event service.
 func TestSoftDelete_OverrideMasterLookupError(t *testing.T) {
 	svc := newTestService(t)
@@ -814,11 +814,11 @@ func TestSoftDelete_OverrideMasterLookupError(t *testing.T) {
 	}
 }
 
-// TestSoftDelete_FromInstanceUndo_ReAddsRDates reproduces issue #490: the TUI
+// TestSoftDelete_FromInstanceUndo_ReAddsRDates reproduces issue #490. The TUI
 // truncation-undo path (RestoreUndo of an UndoKindFromInstance) must re-add the
-// post-cutoff RDATEs the truncation trimmed, mirroring the trash-restore path
-// (issue #463). Before the fix, RestoreUndo rewrote only the RRULE and silently
-// dropped the trimmed RDATEs.
+// post-cutoff RDATEs the truncation trimmed. That matches the trash-restore
+// path (issue #463). Before the fix, RestoreUndo rewrote only the RRULE. It
+// dropped the trimmed RDATEs in silence.
 func TestSoftDelete_FromInstanceUndo_ReAddsRDates(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -863,10 +863,11 @@ func TestSoftDelete_FromInstanceUndo_ReAddsRDates(t *testing.T) {
 }
 
 // TestSoftDelete_FromInstanceUndo_KeepsIndependentlyDeletedOverride reproduces
-// issue #491 (the #287 class on the undo path): deleting a single override, then
-// truncating "this and following" from an earlier cutoff, then Undo must NOT
+// issue #491 (the #287 class on the undo path). Delete a single override. Then
+// truncate "this and following" from an earlier cutoff. Then Undo must NOT
 // resurrect the independently-deleted override. Before the fix, RestoreUndo
-// called RestoreEventsByUID, which un-hid every soft-deleted row sharing the UID.
+// called RestoreEventsByUID. That un-hid every soft-deleted row that shares
+// the UID.
 func TestSoftDelete_FromInstanceUndo_KeepsIndependentlyDeletedOverride(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
