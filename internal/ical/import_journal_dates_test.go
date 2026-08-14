@@ -6,9 +6,9 @@ import (
 )
 
 // The VTODO fix left VJOURNAL's DTSTART on the old silent-discard path. A
-// journal with an unparseable DTSTART imports with no start date, drops out of
-// every date view, and re-exports without the property — with nothing in
-// Warnings to explain it.
+// journal with an unparseable DTSTART imports with no start date. It drops out
+// of every date view. It re-exports without the property. Nothing in
+// Warnings explains it.
 func TestImport_UnparseableJournalDTSTART_Warns(t *testing.T) {
 	t.Parallel()
 	const ics = "BEGIN:VCALENDAR\r\n" +
