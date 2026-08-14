@@ -5,11 +5,11 @@ import (
 	"testing"
 )
 
-// TestSyncResetMatchesCalendarCaseInsensitively guards against issue #112:
+// TestSyncResetMatchesCalendarCaseInsensitively guards against issue #112.
 // `sync reset --calendar work` must match a calendar named "Work" the same
 // way every other command's --calendar flag does (case-insensitive,
-// strings.EqualFold). Before the fix the reset loop compared names with ==,
-// so a case-mismatched name silently matched nothing.
+// strings.EqualFold). Before the fix the reset loop compared names with ==.
+// A case-mismatched name then matched nothing in silence.
 func TestSyncResetMatchesCalendarCaseInsensitively(t *testing.T) {
 	dbPath := setupCalendarCLITestEnv(t)
 	createLinkedCalendarForTest(t, dbPath)
@@ -23,10 +23,10 @@ func TestSyncResetMatchesCalendarCaseInsensitively(t *testing.T) {
 	}
 }
 
-// TestSyncRunRejectsInvalidConflictStrategy guards against issue #215:
-// `sync run --conflict <bad>` must be rejected up front rather than
-// silently falling back to server-wins (which would discard local edits
-// for a user who meant "prompt" but mistyped, e.g. "Prompt").
+// TestSyncRunRejectsInvalidConflictStrategy guards against issue #215.
+// `sync run --conflict <bad>` must be rejected up front. It must not
+// fall back to server-wins in silence. That would discard local edits
+// for a user who meant "prompt" but mistyped, e.g. "Prompt".
 func TestSyncRunRejectsInvalidConflictStrategy(t *testing.T) {
 	dbPath := setupCalendarCLITestEnv(t)
 	createLinkedCalendarForTest(t, dbPath)
