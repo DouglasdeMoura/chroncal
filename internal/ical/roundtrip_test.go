@@ -1950,9 +1950,9 @@ func TestRoundtrip_EventDurationFloating(t *testing.T) {
 
 // TestRoundtrip_FloatingClockHostIndependent verifies that floating-time
 // values export the stored wall clock unchanged, regardless of the host's
-// local timezone. Import interprets a floating DTSTART as UTC (storing the
-// wall clock as e.g. 09:00:00Z), so export must format the UTC wall clock —
-// not e.Local() — otherwise the displayed clock shifts on non-UTC hosts.
+// local timezone. Import interprets a floating DTSTART as UTC. That stores the
+// wall clock as e.g. 09:00:00Z. Export must then format the UTC wall clock,
+// not e.Local(). Otherwise the displayed clock shifts on non-UTC hosts.
 func TestRoundtrip_FloatingClockHostIndependent(t *testing.T) {
 	// Force a non-UTC host timezone so .Local() would visibly shift the clock.
 	loc, err := time.LoadLocation("America/New_York")
@@ -2327,10 +2327,10 @@ func TestRoundtrip_Journal(t *testing.T) {
 	}
 }
 
-// TestRoundtrip_JournalMultipleDescriptions guards against collapsing a
+// TestRoundtrip_JournalMultipleDescriptions guards against a collapse of a
 // VJOURNAL's multiple DESCRIPTION properties (permitted by RFC 5545) into a
 // single concatenated value (issue #493). N descriptions must survive import ->
-// export as N distinct DESCRIPTION properties, mirroring COMMENT/CONTACT.
+// export as N distinct DESCRIPTION properties. That matches COMMENT/CONTACT.
 func TestRoundtrip_JournalMultipleDescriptions(t *testing.T) {
 	t.Parallel()
 	const ics = `BEGIN:VCALENDAR
@@ -2368,10 +2368,10 @@ END:VCALENDAR`
 	}
 }
 
-// TestRoundtrip_CategoryWithEmbeddedComma guards against fragmenting a single
+// TestRoundtrip_CategoryWithEmbeddedComma guards against a split of a single
 // CATEGORIES value that legitimately contains a comma (issue #101). A category
-// like "Foo, Bar" must survive import -> store -> export -> import as one value,
-// not be split into two categories on every round-trip.
+// like "Foo, Bar" must survive import -> store -> export -> import as one value.
+// It must not split into two categories on every round-trip.
 func TestRoundtrip_CategoryWithEmbeddedComma(t *testing.T) {
 	t.Parallel()
 	const ics = `BEGIN:VCALENDAR
