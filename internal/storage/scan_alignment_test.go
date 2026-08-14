@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// TestScanColumnAlignment opens a DB with all migrations applied, inserts
-// minimal rows into events, todos, and journals, then calls the dynamic query
+// TestScanColumnAlignment opens a DB with all migrations applied. It inserts
+// minimal rows into events, todos, and journals. It then calls the dynamic query
 // functions to verify scan succeeds without column-count panics. This catches
 // the case where a migration adds a column but scan_helpers.go is not updated.
 func TestScanColumnAlignment(t *testing.T) {
