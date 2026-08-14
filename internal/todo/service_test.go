@@ -129,12 +129,12 @@ func TestTodoService_Complete_MarksResourceDirty(t *testing.T) {
 }
 
 // TestTodoService_Complete_MarksResourceDirtyUnderTx asserts that when Complete
-// runs on a WithTx-bound service, the dirty mark joins the outer transaction and
-// survives the commit. Before the fix Complete marked dirty on s.db rather than
-// s.dirtyExec(): a second connection (or the single :memory: pool connection,
-// already held by the outer tx) could never take the write lock the outer tx
-// holds, so MarkResourceDirty's discarded error meant the completion silently
-// never synced.
+// runs on a WithTx-bound service, the dirty mark joins the outer transaction.
+// It survives the commit. Before the fix Complete marked dirty on s.db rather
+// than s.dirtyExec(). A second connection (or the single :memory: pool
+// connection, already held by the outer tx) could never take the write lock the
+// outer tx holds. MarkResourceDirty's discarded error then meant the completion
+// never synced, in silence.
 func TestTodoService_Complete_MarksResourceDirtyUnderTx(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
