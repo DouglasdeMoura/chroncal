@@ -14,19 +14,19 @@ import (
 // confirmDestructive prompts the user to confirm a destructive operation.
 //
 // Returns nil when the operation should proceed. Returns a *cliError with
-// code "aborted" otherwise. The caller propagates the error; main() prints
-// the user-facing message (text or JSON, depending on --output).
+// code "aborted" otherwise. The caller propagates the error. main() prints
+// the user-facing message (text or JSON, based on --output).
 //
 // The prompt is skipped (auto-confirmed) in these cases:
 //   - --yes / -y was passed
 //   - CHRONCAL_ASSUME_YES is set to 1/true/yes
 //
-// In every other case — including --output json — the function
-// requires either an interactive TTY confirm or --yes. Auto-confirming
-// just because output is machine-readable would make scripted callers
-// strictly more dangerous than interactive ones, which is the wrong
+// In every other case — --output json included — the function
+// requires either an interactive TTY confirm or --yes. Do not auto-confirm
+// just because output is machine-readable. That would make scripted callers
+// strictly more dangerous than interactive ones. That is the wrong
 // shape for a destructive verb. Refusal is rendered as a structured
-// payload by main()'s error printer, so JSON consumers see a parseable
+// payload by main()'s error printer. JSON consumers then see a parseable
 // "code": "aborted" response.
 //
 // question is the full prompt (e.g. `Delete event "Standup"?`). The
@@ -64,7 +64,7 @@ func confirmDestructive(cmd *cobra.Command, question string) error {
 }
 
 // addConfirmFlag attaches the standard --yes / -y flag to a command. Keep
-// the flag docstring uniform so help output reads consistently across every
+// the flag docstring uniform so help output reads the same across every
 // destructive verb.
 func addConfirmFlag(cmd *cobra.Command) {
 	cmd.Flags().BoolP("yes", "y", false, "assume yes on confirmation prompts")
