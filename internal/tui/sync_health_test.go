@@ -28,7 +28,7 @@ func TestSyncHealthFor(t *testing.T) {
 }
 
 // themedHealthList builds a list with an error color set, so the ⚠ marker
-// renders, mirroring how SidebarModel.SetTheme wires Theme.Error in.
+// renders. That matches how SidebarModel.SetTheme wires Theme.Error in.
 func themedHealthList(items []CalendarListItem, width int) CalendarListModel {
 	red := lipgloss.Color("#ff0000")
 	m := NewCalendarListModel(items, nil).
