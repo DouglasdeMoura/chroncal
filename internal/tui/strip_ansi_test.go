@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// stripANSI must remove OSC sequences (ESC ]) just like CSI sequences,
-// matching textsafe.Display. A raw OSC byte left in the output counts as a
+// stripANSI must remove OSC sequences (ESC ]) just like CSI sequences.
+// That matches textsafe.Display. A raw OSC byte left in the output counts as a
 // visible rune and leaks an escape to the terminal. See issue #262.
 func TestStripANSI_RemovesOSCSequences(t *testing.T) {
 	cases := []struct {
