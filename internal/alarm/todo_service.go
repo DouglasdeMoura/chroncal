@@ -24,7 +24,7 @@ type TodoDueAlarm struct {
 	StateID   int64
 }
 
-// TodoAlarmLister defines the interface for listing todo alarms.
+// TodoAlarmLister defines the interface for a list of todo alarms.
 // ListAlarmsLean omits X-properties (round-trip-only metadata) — the check
 // loop calls it per todo every tick and never reads them.
 type TodoAlarmLister interface {
@@ -169,11 +169,11 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 
 // buildOverrideSuppressionKeys returns a per-UID set of canonical instance-time
 // keys (UTC RFC 3339) derived from override rows in the full todo list. When
-// expanding a recurring master, any instance whose time is in the set for its
-// UID must be skipped: the slot has been overridden and the override row itself
-// carries the alarm definition to fire at its own (possibly rescheduled) time.
-// A malformed recurrence_id is silently skipped — the master will fire for
-// that slot, which is preferable to silently dropping a legitimate alarm.
+// a recurring master expands, skip any instance whose time is in the set for
+// its UID. The slot is overridden. The override row itself carries the alarm
+// definition to fire at its own (possibly rescheduled) time.
+// A malformed recurrence_id is skipped in silence. The master will fire for
+// that slot. That is better than a silent drop of a legitimate alarm.
 func buildOverrideSuppressionKeys(rows []storage.Todo) map[string]map[string]struct{} {
 	m := make(map[string]map[string]struct{})
 	for _, row := range rows {
