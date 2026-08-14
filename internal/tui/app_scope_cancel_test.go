@@ -9,11 +9,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Regression: cancelling the recurring-edit scope dialog must clear
-// m.viewReturnEvent. Without the fix, viewReturnEvent stays non-zero and the
+// Regression: a cancel of the recurring-edit scope dialog must clear
+// m.viewReturnEvent. Without the fix, viewReturnEvent stays non-zero. The
 // next unrelated eventUpdatedMsg / eventCreatedMsg (guarded on
-// viewReturnEvent.ID != 0) dispatch an EventViewRequestedMsg, spuriously
-// reopening the old event's view.
+// viewReturnEvent.ID != 0) dispatch an EventViewRequestedMsg. That spuriously
+// reopens the old event's view.
 func TestChoiceDialogCancel_ClearsViewReturnEvent(t *testing.T) {
 	ev := event.Event{
 		ID:        42,
