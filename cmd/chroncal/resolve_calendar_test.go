@@ -9,10 +9,10 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/app"
 )
 
-// resolveCalendarID must accept a numeric calendar ID, matching the
+// resolveCalendarID must accept a numeric calendar ID. That matches the
 // reference grammar of sibling commands (sync run/reset, calendar
 // update/delete/set-default) which route through findCalendarByRef. Before
-// the fix it only matched by name, so `--calendar 2` failed with
+// the fix it only matched by name. `--calendar 2` then failed with
 // `calendar "2" not found` even when calendar ID 2 existed. See issue #308.
 func TestResolveCalendarIDAcceptsNumericID(t *testing.T) {
 	dir := t.TempDir()
