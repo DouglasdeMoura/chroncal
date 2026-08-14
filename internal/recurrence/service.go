@@ -584,10 +584,11 @@ type recurringKind[Row any, Model any, Inst any] struct {
 }
 
 // expandRecurringRowsBy expands recurring master rows into per-occurrence
-// Models and applies overrides. For each master, an override (a row with a
-// RECURRENCE-ID that matches) suppresses the original RRULE instance and is emitted
-// separately at its own occurrence time. CANCELLED and orphan overrides are
-// dropped. This is the shared engine behind the event/todo/journal variants.
+// Models and applies overrides. For each master, an override is a row with a
+// RECURRENCE-ID that matches. It suppresses the original RRULE instance. It
+// is emitted separately at its own occurrence time. CANCELLED and orphan
+// overrides are dropped. This is the shared engine behind the event, todo,
+// and journal variants.
 //
 // Every master's overrides are fetched in a single batched query up front. A
 // failed fetch is propagated so callers never render masters as if they had no
