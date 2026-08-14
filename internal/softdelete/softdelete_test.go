@@ -60,7 +60,7 @@ func TestClearMasterEXDATE_NoProvenanceRowIsNoOp(t *testing.T) {
 	}
 }
 
-// Provenance row present: strip the matching EXDATE and drop the log row.
+// Provenance row present: strip the EXDATE that matches and drop the log row.
 func TestClearMasterEXDATE_StripsMatchingEXDATE(t *testing.T) {
 	f := &fakeStore{logFound: true, logID: 7, masterFound: true, masterID: 3, exdates: testSlot}
 	if err := ClearMasterEXDATE(context.Background(), f.provenance(), testSlot); err != nil {
