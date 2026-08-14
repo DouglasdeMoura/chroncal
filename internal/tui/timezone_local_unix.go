@@ -8,7 +8,7 @@ import (
 )
 
 // LocalIANATimezone returns the system's IANA timezone name (e.g.
-// "America/Sao_Paulo"). It checks TZ, then /etc/localtime, falling back
+// "America/Sao_Paulo"). It checks TZ, then /etc/localtime. It falls back
 // to "UTC".
 func LocalIANATimezone() string {
 	if tz := os.Getenv("TZ"); tz != "" && tz != "Local" {
