@@ -43,13 +43,13 @@ type GoogleOAuthResult struct {
 	Expiry       time.Time
 }
 
-// PendingOAuthFlow is a started, not-yet-authorized Google OAuth flow: the
-// loopback listener is bound, the redirect handler is serving, and the
+// PendingOAuthFlow is a started, not-yet-authorized Google OAuth flow. The
+// loopback listener is bound. The redirect handler serves. The
 // browser may already be open. Call Wait to block for the redirect and
 // exchange the code, or Close to abandon the flow and release the listener.
 //
-// The split exists so UIs (the TUI's pending modal) can render AuthURL and a
-// waiting state between the two phases without the flow printing anything;
+// The split exists so UIs (the TUI's wait modal) can render AuthURL and a
+// wait state between the two phases with no print from the flow.
 // GoogleOAuthFlow composes Start+Wait and keeps the CLI's printed output.
 type PendingOAuthFlow struct {
 	// AuthURL is the Google consent URL. UIs show it when the browser
@@ -78,12 +78,12 @@ var openBrowserFn = openBrowser
 
 // StartGoogleOAuthFlow binds the loopback listener, builds the consent URL,
 // starts the redirect handler, and tries to open the user's browser. It
-// never prints; callers own all user-facing output.
+// never prints. Callers own all user-facing output.
 //
 // Pass an empty clientSecret to omit it from the token request. Google's
-// Desktop OAuth clients require a non-empty client secret even with PKCE;
-// the caller is responsible for sourcing it and rejecting empty values when
-// targeting Google.
+// Desktop OAuth clients require a non-empty client secret even with PKCE.
+// The caller is responsible for the source. Reject empty values when
+// the target is Google.
 func StartGoogleOAuthFlow(ctx context.Context, clientID, clientSecret string) (*PendingOAuthFlow, error) {
 	// Start a temporary listener on a random port
 	var lc net.ListenConfig
@@ -182,8 +182,8 @@ func StartGoogleOAuthFlow(ctx context.Context, clientID, clientSecret string) (*
 	return p, nil
 }
 
-// sendErr delivers an error without blocking; only the first error matters
-// and Wait may have already returned.
+// sendErr delivers an error with no block. Only the first error matters.
+// Wait may have already returned.
 func (p *PendingOAuthFlow) sendErr(err error) {
 	select {
 	case p.errCh <- err:
@@ -232,7 +232,7 @@ func (p *PendingOAuthFlow) Close() {
 }
 
 // flowBanner returns the exact lines GoogleOAuthFlow has always printed
-// after starting the flow. Kept as a pure function so the CLI output stays
+// after the flow starts. Kept as a pure function so the CLI output stays
 // byte-for-byte stable under test.
 func flowBanner(authURL string, browserOpened bool) string {
 	if browserOpened {
@@ -244,8 +244,8 @@ func flowBanner(authURL string, browserOpened bool) string {
 // GoogleOAuthFlow performs the installed-app loopback redirect flow for Google OAuth 2.0.
 // It starts a temporary HTTP server, opens the user's browser, and waits for the redirect.
 //
-// This is the printing CLI wrapper around StartGoogleOAuthFlow + Wait; UIs
-// that own their rendering call those two directly.
+// This is the print CLI wrapper around StartGoogleOAuthFlow + Wait. UIs
+// that own their render call those two directly.
 func GoogleOAuthFlow(ctx context.Context, clientID, clientSecret string) (*GoogleOAuthResult, error) {
 	flow, err := StartGoogleOAuthFlow(ctx, clientID, clientSecret)
 	if err != nil {
@@ -305,8 +305,8 @@ func exchangeGoogleCode(ctx context.Context, clientID, clientSecret, code, redir
 // RefreshGoogleToken refreshes an expired access token.
 //
 // Pass an empty clientSecret to omit it from the refresh request. Google's
-// Desktop OAuth clients require a non-empty client secret; the caller is
-// responsible for surfacing a clear error when the secret is missing.
+// Desktop OAuth clients require a non-empty client secret. The caller is
+// responsible for a clear error when the secret is gone.
 func RefreshGoogleToken(ctx context.Context, clientID, clientSecret, refreshToken string) (*GoogleOAuthResult, error) {
 	return retry.Retry(ctx, tokenRetryOptions, func(ctx context.Context) (*GoogleOAuthResult, error) {
 		data := url.Values{
