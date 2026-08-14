@@ -77,12 +77,12 @@ func labelFor(i int) string {
 	return string([]byte{byte('A' + i)})
 }
 
-// TestUndoDoublePress_DoesNotReDispatch reproduces issue #309: a reflexive
+// TestUndoDoublePress_DoesNotReDispatch reproduces issue #309. A reflexive
 // double-press of the undo key must not dispatch a second restore for the same
-// entry. Peek() does not pop, and the entry is only removed in the async
-// eventRestoredMsg success handler, so without an in-flight guard a second 'u'
-// before that message lands Peeks the same entry and fires a second
-// RestoreUndo (spurious "Undo failed" toast + two overlapping transactions).
+// entry. Peek() does not pop. The entry is only removed in the async
+// eventRestoredMsg success handler. Without an in-flight guard a second 'u'
+// can land first. That Peeks the same entry and fires a second RestoreUndo
+// (spurious "Undo failed" toast + two overlap transactions).
 func TestUndoDoublePress_DoesNotReDispatch(t *testing.T) {
 	m := Model{
 		keys:      defaultAppKeys(),
@@ -107,11 +107,12 @@ func TestUndoDoublePress_DoesNotReDispatch(t *testing.T) {
 	}
 }
 
-// TestEventRestoredMsg_RemovesRestoredEntryNotTop reproduces issue #144: the
-// undo restore runs in an async tea.Cmd, so a delete that lands between the
+// TestEventRestoredMsg_RemovesRestoredEntryNotTop reproduces issue #144. The
+// undo restore runs in an async tea.Cmd. A delete that lands between the
 // Peek (when 'u' is pressed) and the eventRestoredMsg success can push a new
 // entry onto the stack. The success handler must remove the entry that was
-// actually restored (matched by identity), not blindly pop the new top.
+// actually restored (matched by identity). It must not pop the new top in
+// silence.
 func TestEventRestoredMsg_RemovesRestoredEntryNotTop(t *testing.T) {
 	m := Model{undoStack: NewUndoStack()}
 
@@ -154,11 +155,12 @@ func truncation(uid string, cutoff time.Time) UndoEntry {
 	}
 }
 
-// TestUndoStack_Remove_DistinguishesTruncationsByCutoff reproduces issue #514:
-// two truncations of the same series share Kind + UID and have an empty
-// RecurrenceID, so they are indistinguishable unless Remove also compares
-// CutoffTime. During the delete-during-restore race, Remove(B) must delete B
-// — not the newer truncation C that happens to sit on top of the stack.
+// TestUndoStack_Remove_DistinguishesTruncationsByCutoff reproduces issue #514.
+// Two truncations of the same series share Kind + UID and have an empty
+// RecurrenceID. They are then indistinguishable unless Remove also compares
+// CutoffTime. During the delete-during-restore race, Remove(B) must delete B.
+// It must not delete the newer truncation C that happens to sit on top of the
+// stack.
 func TestUndoStack_Remove_DistinguishesTruncationsByCutoff(t *testing.T) {
 	s := NewUndoStack()
 
