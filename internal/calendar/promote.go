@@ -8,22 +8,22 @@ import (
 )
 
 // PromoteDefault is the single implementation of the default-calendar
-// promotion invariant: whenever the current default calendar is among
-// removedIDs, target must identify a surviving calendar — one that exists and
-// is not itself being removed — and becomes the new default atomically within
-// qtx's transaction.
+// promotion invariant. When the current default calendar is among
+// removedIDs, target must identify a calendar that survives. That calendar
+// exists and is not itself removed. It becomes the new default atomically
+// within qtx's transaction.
 //
-// Clearing the old default and setting the new one run in the caller's
-// already-open transaction (qtx), so the database never observes a missing
-// default. Because the survival check reads through that same transaction, a
+// Clear of the old default and set of the new one run in the caller's
+// already-open transaction (qtx). The database then never observes a gone
+// default. The survival check reads through that same transaction. A
 // target removed inside this operation — or one that never existed in it —
-// fails before any default is cleared; the caller then rolls back.
+// fails before any default is cleared. The caller then rolls back.
 //
-// Each caller decides whether a promotion is required (i.e. whether the
-// current default is among the calendars being deleted) and resolves target to
-// a concrete calendar ID — including path-based resolution for discovered
-// collections in the account service — before calling. removedIDs is the set of
-// calendar IDs being deleted in this transaction, so target must not be among
+// Each caller decides whether a promotion is required (whether the
+// current default is among the calendars deleted). It resolves target to
+// a concrete calendar ID before the call. Path-based resolve for discovered
+// collections in the account service is included. removedIDs is the set of
+// calendar IDs deleted in this transaction. target must not be among
 // them.
 func PromoteDefault(ctx context.Context, qtx *storage.Queries, removedIDs map[int64]struct{}, target int64) error {
 	if target == 0 {
