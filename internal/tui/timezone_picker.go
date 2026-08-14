@@ -257,7 +257,7 @@ func (m TimezonePickerModel) Cancelled() bool { return m.cancelled }
 // Selected returns the IANA timezone name that was selected.
 func (m TimezonePickerModel) Selected() string { return m.selected }
 
-// BtnFocus returns the current button focus for rendering in the parent.
+// BtnFocus returns the current button focus for a render in the parent.
 func (m TimezonePickerModel) BtnFocus() tzFocusZone { return m.focus }
 
 // Update handles keyboard input for the timezone picker.
