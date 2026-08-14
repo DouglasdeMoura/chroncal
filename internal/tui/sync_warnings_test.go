@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-// The TUI's sync completion line is the only sync surface the user sees, so
-// a pull that fabricated values (import warnings on the SyncResult) must be
-// counted there — silence would leave the fabrication invisible until it is
+// The TUI's sync completion line is the only sync surface the user sees. A
+// pull that fabricated values (import warnings on the SyncResult) must be
+// counted there. Silence would leave the fabrication invisible until it is
 // pushed back over the server's correct value.
 func TestSyncSummaryCountsImportWarnings(t *testing.T) {
 	t.Parallel()
@@ -26,10 +26,10 @@ func TestSyncSummaryCountsImportWarnings(t *testing.T) {
 	}
 }
 
-// The account-linking pulls (first import after discovery, and the manage-
-// calendars reconcile) run the same first sync as every other TUI path, so
-// import warnings collected on their SyncResults must reach the status line
-// count like syncSummary does — not be silently dropped.
+// The account-link pulls (first import after discovery, and the manage-
+// calendars reconcile) run the same first sync as every other TUI path.
+// Import warnings collected on their SyncResults must reach the status line
+// count like syncSummary does. They must not be dropped in silence.
 func TestAccountImportFinishedStatusCountsImportWarnings(t *testing.T) {
 	// NOT t.Parallel(): NewModel writes the package-global theme via
 	// SetActiveTheme, so tests that construct a Model must not run
@@ -64,10 +64,10 @@ func TestAccountSelectionFinishedStatusCountsImportWarnings(t *testing.T) {
 }
 
 // The TUI sync engine's logger must never write to stderr (Bubble Tea owns
-// the terminal), but discarding it loses logImportWarnings' detail. Per the
-// repo's logging contract the durable copy goes to the state-dir log file,
+// the terminal). A discard of it loses logImportWarnings' detail. Per the
+// repo's log contract the durable copy goes to the state-dir log file,
 // same as the purge loop. The engine uses the memoized
-// config.SharedStateDirLogger; the unmemoized constructor is asserted here
+// config.SharedStateDirLogger. The unmemoized constructor is asserted here
 // so the fresh XDG_STATE_HOME takes effect.
 func TestStateDirSyncLoggerWritesToLogFile(t *testing.T) {
 	stateHome := t.TempDir()
