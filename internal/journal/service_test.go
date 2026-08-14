@@ -141,8 +141,8 @@ func TestJournalDelete_MasterWithOverridesRefused(t *testing.T) {
 
 // TestJournalDelete_RDateMasterWithOverridesRefused covers an RDATE-only
 // recurring master (no RRULE). Its overrides must still block single-row
-// deletion; otherwise the master is soft-deleted and the override rows are
-// orphaned (issue #471, matching the #415 fix for events and todos).
+// deletion. Otherwise the master is soft-deleted. The override rows are then
+// orphaned (issue #471, which matches the #415 fix for events and todos).
 func TestJournalDelete_RDateMasterWithOverridesRefused(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
