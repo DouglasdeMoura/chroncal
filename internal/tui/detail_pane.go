@@ -9,8 +9,8 @@ import (
 // paneTitle renders the detail pane heading: bold title on the first line,
 // a faint horizontal rule on the second. Shared so both dialogs anchor the
 // detail pane with the same visual weight. Both lines are padded to w
-// cells so the result can be spliced into a row-zipped column without a
-// trailing measurement pass.
+// cells. The result can then be spliced into a row-zipped column with no
+// extra measurement pass at the end.
 func paneTitle(text string, w int) string {
 	title := lipgloss.NewStyle().Bold(true).Render(truncateTo(text, w))
 	title = padTrailing(title, w)
@@ -20,8 +20,8 @@ func paneTitle(text string, w int) string {
 
 // padTrailing extends s with plain spaces so it is exactly w cells wide.
 // If s is already w-wide (or wider) it is returned unchanged. Lipgloss
-// styled strings with trailing SGR resets keep their resets before the
-// spaces, so the padding is unstyled and matches the rendering lipgloss
+// styled strings with SGR resets at the end keep their resets before the
+// spaces. The padding is then unstyled and matches the render lipgloss
 // would have produced.
 func padTrailing(s string, w int) string {
 	cw := lipgloss.Width(s)
@@ -36,16 +36,16 @@ func padTrailing(s string, w int) string {
 const dialogDividerWidth = 3
 
 // listColumnWidth returns the width of the list column for a two-column
-// dialog. The list/detail split mirrors the dialog's golden-rectangle shape:
-// details take the φ share (~61.8%) of the space left after the divider,
-// the list takes the 1/φ share (~38.2%).
+// dialog. The list/detail split mirrors the dialog's golden-rectangle shape.
+// Details take the φ share (~61.8%) of the space left after the divider.
+// The list takes the 1/φ share (~38.2%).
 func listColumnWidth(innerW int) int {
 	avail := max(innerW-dialogDividerWidth, 0)
 	return max(min(avail*382/1000, innerW-24), 18)
 }
 
-// detailColumnWidth returns the width of the detail column given innerW,
-// leaving space for the list column and divider.
+// detailColumnWidth returns the width of the detail column given innerW.
+// It leaves space for the list column and divider.
 func detailColumnWidth(innerW int) int {
 	return max(innerW-listColumnWidth(innerW)-dialogDividerWidth, 10)
 }
