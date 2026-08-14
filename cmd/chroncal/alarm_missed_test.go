@@ -44,7 +44,7 @@ func TestAlarmMissed_RejectsNonPositiveDays(t *testing.T) {
 
 // TestAlarmMissed_JSONIsFlatArray is the regression test for issue #433.
 // "alarm missed -o json" emitted a map {"events":[...],"todos":[...]}. The
-// sibling "alarm list"/"alarm check" commands emit a flat array. Scripts
+// pair "alarm list"/"alarm check" commands emit a flat array. Scripts
 // using the `... -o json | jq '.[]'` idiom broke on the inconsistent shape.
 // The output must be a flat array of items. Each item carries a "type"
 // discriminator.
