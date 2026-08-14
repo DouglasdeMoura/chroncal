@@ -38,8 +38,9 @@ type CredentialStore interface {
 
 // PreviousCredentialScope is a non-destructive migration source recorded when
 // a database is moved or copied. MaxAccountID is the highest account ID that
-// existed at that location; bounding fallback prevents independently-created
-// post-copy accounts with the same numeric ID from sharing credentials.
+// existed at that location. The bound on fallback prevents independently
+// created post-copy accounts with the same numeric ID from a shared
+// credential.
 type PreviousCredentialScope struct {
 	Namespace    string
 	MaxAccountID int64
@@ -219,7 +220,7 @@ type PlaintextFileStore struct {
 	warn io.Writer
 }
 
-// warnWriter returns the configured warning sink, defaulting to stderr.
+// warnWriter returns the configured warning sink. It defaults to stderr.
 func (s *PlaintextFileStore) warnWriter() io.Writer {
 	if s.warn != nil {
 		return s.warn
@@ -281,9 +282,9 @@ func (s *PlaintextFileStore) path(accountID int64) string {
 	return filepath.Join(s.dir, "db_"+s.namespace, fmt.Sprintf("account_%d.json", accountID))
 }
 
-// appConfigBaseDir returns the OS base config directory, honouring
-// XDG_CONFIG_HOME on every platform (matching the behaviour of the config
-// loader's configDir). goos is a runtime.GOOS value; it is a parameter so
+// appConfigBaseDir returns the OS base config directory. It honours
+// XDG_CONFIG_HOME on every platform. That matches the behaviour of the config
+// loader's configDir. goos is a runtime.GOOS value. It is a parameter so
 // tests can call it with a non-current GOOS to verify cross-platform behaviour.
 func appConfigBaseDir(goos string) (string, error) {
 	// XDG_CONFIG_HOME takes precedence on every OS, not just Linux.
