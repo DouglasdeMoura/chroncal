@@ -9,9 +9,9 @@ import (
 
 // Hydrate fails fast because a caller that PUTs a partially populated record
 // overwrites the server copy with it. The CLI's read-only display paths want
-// the opposite: one unreadable relation should degrade that field, not blank
-// every field after it. HydrateBestEffort serves those, populating everything
-// it can and reporting what it could not.
+// the opposite. One unreadable relation should degrade that field, not blank
+// every field after it. HydrateBestEffort serves those. It populates everything
+// it can and reports what it could not.
 func TestEventService_HydrateBestEffort_PopulatesPastAFailure(t *testing.T) {
 	ctx := context.Background()
 	svc := newTestService(t)
