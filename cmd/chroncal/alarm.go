@@ -39,8 +39,8 @@ func parseStateID(s string) (int64, bool, error) {
 
 // fireAlarmFn is the notification dispatcher used by the mark-and-fire
 // helpers. It is a package var so tests can observe whether a notification
-// was actually dispatched (the duplicate-claim regression hinges on it NOT
-// being called when a competing checker already claimed the alarm).
+// was actually dispatched. The duplicate-claim regression hinges on no
+// call when a competing checker already claimed the alarm.
 var fireAlarmFn = fireAlarm
 
 // fireAlarm dispatches the notification for a due alarm.
@@ -68,25 +68,25 @@ func fireAlarm(da alarm.DueAlarm, policy alarmExecutionPolicy) error {
 
 // isAlarmAlreadyClaimed reports whether err is the SQLite UNIQUE-constraint
 // violation on the (alarm_id, trigger_at) index. That index lets MarkFired
-// act as an atomic claim: when two checkers overlap, both observe "no state"
-// and both try to insert, but only one INSERT wins — the loser gets this
-// error. It is a benign race, not a database fault, so callers skip firing
-// without counting it against the daemon's failure breaker.
+// act as an atomic claim. When two checkers overlap, both observe "no state"
+// and both try to insert. Only one INSERT wins. The loser gets this
+// error. It is a benign race, not a database fault. Callers skip the fire.
+// They do not count it against the daemon's failure breaker.
 func isAlarmAlreadyClaimed(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
 }
 
 // fireResult reports the outcome of a mark-and-fire attempt. The three
-// outcomes are mutually distinguishable so callers never record a false
+// outcomes are mutually distinguishable. Callers then never record a false
 // "fired" entry:
 //
 //   - Fired == true: the alarm was claimed and the notification dispatched
 //     (FireErr may still report a delivery failure). StateID is the claimed row.
 //   - Fired == false, MarkErr == nil: the claim was lost to a concurrent
-//     checker (benign UNIQUE-constraint race) — nothing was dispatched, and
-//     callers must emit no record for it.
-//   - MarkErr != nil: a genuine marking failure — the daemon's failure breaker
-//     counts it, and the alarm re-fires next tick.
+//     checker (benign UNIQUE-constraint race). Nothing was dispatched.
+//     Callers must emit no record for it.
+//   - MarkErr != nil: a genuine mark failure. The daemon's failure breaker
+//     counts it. The alarm re-fires next tick.
 type fireResult struct {
 	StateID int64
 	Fired   bool
@@ -94,18 +94,19 @@ type fireResult struct {
 	FireErr error
 }
 
-// markAndFireEventAlarm claims a due event alarm and, only on a successful
-// claim, dispatches its notification. For a fresh fire (StateID == 0) the claim
-// is the INSERT performed by MarkFired, guarded by the (alarm_id, trigger_at)
-// UNIQUE index: when two checkers overlap, both observe "no state" and both try
-// to insert, but only one wins. The loser's UNIQUE-constraint error is reported
-// as a non-fired, non-error result so callers suppress output for it.
+// markAndFireEventAlarm claims a due event alarm. Only on a successful
+// claim does it dispatch its notification. For a fresh fire (StateID == 0)
+// the claim is the INSERT performed by MarkFired. The (alarm_id, trigger_at)
+// UNIQUE index guards it. When two checkers overlap, both observe "no state"
+// and both try to insert. Only one wins. The loser's UNIQUE-constraint error
+// is reported as a non-fired, non-error result. Callers then suppress output
+// for it.
 //
-// The refire path (StateID != 0, an expired-snoozed alarm) uses MarkRefired,
-// whose UPDATE is gated on snoozed_to IS NOT NULL: when two checkers overlap,
-// both observe the expired-snoozed row, but only the one whose UPDATE clears
-// snoozed_to first affects a row and wins the claim. The loser sees claimed ==
-// false and is likewise reported as a non-fired, non-error result.
+// The refire path (StateID != 0, an expired-snoozed alarm) uses MarkRefired.
+// Its UPDATE is gated on snoozed_to IS NOT NULL. When two checkers overlap,
+// both observe the expired-snoozed row. Only the UPDATE that clears
+// snoozed_to first affects a row and wins the claim. The loser sees claimed
+// == false. That is likewise a non-fired, non-error result.
 func markAndFireEventAlarm(ctx context.Context, a *app.App, da alarm.DueAlarm, policy alarmExecutionPolicy) fireResult {
 	stateID := da.StateID
 	var markErr error
@@ -257,9 +258,10 @@ and exits 0.`,
 }
 
 // afterCheckForTest, when non-nil, runs once after Check returns the due set
-// but before any alarm is claimed. It is a test seam for deterministically
-// interleaving a second checker into the Check-then-claim window so the
-// lost-claim suppression path can be exercised end-to-end. nil in production.
+// but before any alarm is claimed. It is a test seam. Tests use it to
+// interleave a second checker into the Check-then-claim window in a
+// deterministic way. That exercises the lost-claim suppression path
+// end-to-end. nil in production.
 var afterCheckForTest func()
 
 func runAlarmCheck(ctx context.Context, a *app.App, w io.Writer, now time.Time, policy alarmExecutionPolicy) error {
@@ -847,7 +849,7 @@ See "chroncal alarm check --help" for notification types and SMTP configuration.
 
 // todoDueAlarmToDueAlarm converts a TodoDueAlarm into a DueAlarm with a
 // synthetic event populated from the todo's summary, location, and due/start
-// date so that FormatNotification produces meaningful output.
+// date. FormatNotification then produces meaningful output.
 func todoDueAlarmToDueAlarm(tda alarm.TodoDueAlarm) alarm.DueAlarm {
 	evt := event.Event{
 		Title:    tda.Todo.Summary,
