@@ -10,12 +10,12 @@ import (
 
 // An unparseable TRIGGER is dropped at import, with a warning.
 //
-// Preserving the raw value looked like it protected round-trip fidelity, but it
-// never did: the value cannot be expressed as valid iCal, so the next push
+// A preserve of the raw value looked like it protected round-trip fidelity.
+// It never did. The value cannot be expressed as valid iCal. The next push
 // either wedges the resource (if emitted) or drops the VALARM server-side (if
-// skipped). Preserving only moved that loss from "announced at import" to
-// "silent at the next push", and left an alarm the UI presents as armed while
-// every trigger-time helper refuses it. Losing it loudly is the honest trade.
+// skipped). A preserve only moved that loss from "announced at import" to
+// "silent at the next push". It left an alarm the UI presents as armed while
+// every trigger-time helper refuses it. A loud loss is the honest trade.
 func TestImport_UnparseableTrigger_DroppedWithWarning(t *testing.T) {
 	t.Parallel()
 	const ics = "BEGIN:VCALENDAR\r\n" +
@@ -83,14 +83,15 @@ func TestImport_UnparseableTodoTrigger_DroppedWithWarning(t *testing.T) {
 	}
 }
 
-// A TRIGGER whose value is RFC 3339 (non-conforming exporters emit these) is
-// accepted by parseAlarm's RFC 3339 fallback when it has no TZID param. Adding
-// a TZID param must not turn the same value into a dropped alarm: the TZID
-// branch of the validation ladder only tried the compact iCal layout, and a
-// parse failure there declared the trigger invalid without ever reaching the
+// A TRIGGER whose value is RFC 3339 is accepted by parseAlarm's RFC 3339
+// fallback when it has no TZID param. Exporters that do not conform emit these.
+// An add of a TZID param must not turn the same value into a dropped alarm.
+// The TZID
+// branch of the validation ladder only tried the compact iCal layout. A
+// parse failure there declared the trigger invalid. It never reached the
 // RFC 3339 fallback. Under the drop policy (issue #570) that destroys the
 // alarm on both sides of the next sync. An RFC 3339 value carries its own
-// offset, so the TZID is redundant for interpretation; it is normalized to
+// offset. The TZID is then redundant for interpretation. It is normalized to
 // UTC compact form the way the compact+TZID path is.
 func TestImport_RFC3339TriggerWithTZID_Kept(t *testing.T) {
 	t.Parallel()
@@ -136,14 +137,14 @@ func TestImport_RFC3339TriggerWithTZID_Kept(t *testing.T) {
 	}
 }
 
-// An RFC 3339 TRIGGER without a TZID param takes parseAlarm's sibling RFC 3339
-// fallback, which used to store the raw string while the TZID-tagged path
-// normalized to compact UTC — the same instant in two stored encodings,
-// selected by a parameter that is redundant for interpretation (RFC 3339
-// always carries its own offset). Both fallbacks must store compact UTC so
-// export's legacy-normalization branch only ever serves pre-normalization DB
-// rows, not a live input path. Normalizing here is safe precisely because the
-// offset is explicit; it is NOT the forbidden floating normalization (#572).
+// An RFC 3339 TRIGGER without a TZID param takes parseAlarm's pair RFC 3339
+// fallback. That used to store the raw string while the TZID-tagged path
+// normalized to compact UTC. Same instant in two stored encodings.
+// Selected by a parameter that is redundant for interpretation (RFC 3339
+// always carries its own offset). Both fallbacks must store compact UTC.
+// export's legacy-normalization branch then only ever serves pre-normalization
+// DB rows, not a live input path. A normalize here is safe because the
+// offset is explicit. It is NOT the forbidden floating normalization (#572).
 func TestImport_RFC3339TriggerNoTZID_NormalizedToCompactUTC(t *testing.T) {
 	t.Parallel()
 	const ics = "BEGIN:VCALENDAR\r\n" +
@@ -190,13 +191,13 @@ func TestImport_RFC3339TriggerNoTZID_NormalizedToCompactUTC(t *testing.T) {
 }
 
 // RFC 5545 §3.8.6.3: an absolute (date-time) TRIGGER has no relation to the
-// event's start or end — the trigabs production forbids the RELATED parameter
+// event's start or end. The trigabs production forbids the RELATED parameter
 // entirely. A RELATED=END smuggled in alongside an absolute trigger is
-// therefore unexpressible junk: export can never emit it (strict servers 400
-// the PUT), so a push+pull cycle silently resets it to START, and if the user
-// later switches the trigger to a duration the stale END resurfaces and moves
-// when the alarm fires. Import must not store it: the parsed alarm keeps the
-// default Related "START".
+// therefore unexpressible junk. Export can never emit it (strict servers 400
+// the PUT). A push+pull cycle then resets it to START in silence. If the user
+// later switches the trigger to a duration, the stale END resurfaces. It
+// moves when the alarm fires. Import must not store it. The parsed alarm keeps
+// the default Related "START".
 func TestImport_AbsoluteTriggerWithRelatedEnd_RelatedNotStored(t *testing.T) {
 	t.Parallel()
 	const ics = "BEGIN:VCALENDAR\r\n" +
@@ -237,9 +238,9 @@ func TestImport_AbsoluteTriggerWithRelatedEnd_RelatedNotStored(t *testing.T) {
 	}
 }
 
-// Pin the existing behavior the previous test must not regress: RELATED=END on
-// a duration trigger is meaningful (it anchors the offset to the event's end)
-// and must survive import.
+// Pin the stored behavior the previous test must not regress. RELATED=END on
+// a duration trigger is meaningful (it anchors the offset to the event's end).
+// It must survive import.
 func TestImport_DurationTriggerWithRelatedEnd_RelatedPreserved(t *testing.T) {
 	t.Parallel()
 	const ics = "BEGIN:VCALENDAR\r\n" +
