@@ -11,8 +11,8 @@ import (
 )
 
 // storedTimes reads the raw start_time / end_time strings persisted for an
-// event, so tests can assert the on-disk representation rather than the parsed
-// time.Time (which would hide a stored offset).
+// event. Tests can then assert the on-disk representation rather than the
+// parsed time.Time (which would hide a stored offset).
 func storedTimes(t *testing.T, db *sql.DB, id int64) (string, string) {
 	t.Helper()
 	var start, end string
@@ -41,12 +41,12 @@ func occursOn(t *testing.T, svc *Service, id int64, from, to time.Time) int {
 	return n
 }
 
-// TestCreate_NormalizesTimedToUTC reproduces issue #254 for timed events: when
-// the caller supplies start/end times carrying a non-UTC offset, the row must
+// TestCreate_NormalizesTimedToUTC reproduces issue #254 for timed events. When
+// the caller supplies start/end times that carry a non-UTC offset, the row must
 // be stored as RFC 3339 in UTC. Otherwise the persisted string sorts
-// incorrectly against the UTC "Z" bounds used by date-range queries (SQLite
-// compares TEXT lexicographically) and the event silently disappears from list
-// views.
+// incorrectly against the UTC "Z" bounds used by date-range queries. SQLite
+// compares TEXT lexicographically. The event then disappears from list
+// views in silence.
 func TestCreate_NormalizesTimedToUTC(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	svc := NewService(db, q)
@@ -85,10 +85,10 @@ func TestCreate_NormalizesTimedToUTC(t *testing.T) {
 }
 
 // TestCreate_AllDayPinsToUTCMidnight guards against a naive .UTC() coercion of
-// all-day events. The CLI builds all-day events at local midnight; a plain
+// all-day events. The CLI builds all-day events at local midnight. A plain
 // .UTC() in a positive-offset zone would shift them onto the previous UTC day
 // and make them surface on two calendar days. All-day events must be stored at
-// UTC midnight on their wall-clock date and occupy exactly one day.
+// UTC midnight on their wall-clock date. They occupy exactly one day.
 func TestCreate_AllDayPinsToUTCMidnight(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	svc := NewService(db, q)
@@ -129,7 +129,7 @@ func TestCreate_AllDayPinsToUTCMidnight(t *testing.T) {
 }
 
 // TestListByDateRange_NormalizesBoundsToUTC reproduces issue #464 for the
-// read side: when a caller passes window bounds carrying a non-UTC offset,
+// read side. When a caller passes window bounds that carry a non-UTC offset,
 // ListByDateRange must normalize them to UTC before the lexical comparison
 // against the UTC-stored ("Z") start/end strings. Otherwise the offset left in
 // the formatted bound skews the comparison near window edges.
@@ -164,7 +164,7 @@ func TestListByDateRange_NormalizesBoundsToUTC(t *testing.T) {
 }
 
 // TestUpdate_NormalizesToUTC confirms the edit path enforces the same
-// invariant: re-saving with offset-bearing times stores them in UTC.
+// invariant. A re-save with times that bear an offset stores them in UTC.
 func TestUpdate_NormalizesToUTC(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	svc := NewService(db, q)
