@@ -852,9 +852,9 @@ func parseCategoriesFromProps(props ical.Props) string {
 	return timeutil.JoinCategoryList(cats)
 }
 
-// dtstartZone resolves the component's anchor zone — the IANA TZID on DTSTART
-// (or DUE for a VTODO with no DTSTART) — for TZID-less DATE-TIME values
-// elsewhere in the component. Returns nil when the anchor is absent,
+// dtstartZone resolves the component's anchor zone for TZID-less DATE-TIME
+// values elsewhere in the component. The anchor is the IANA TZID on DTSTART
+// (or DUE for a VTODO with no DTSTART). Returns nil when the anchor is absent,
 // floating, UTC, or date-only. Those components have no zone to inherit.
 // TZID-less values then keep their UTC/floating read.
 func dtstartZone(props ical.Props) *time.Location {
