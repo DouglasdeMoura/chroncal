@@ -22,14 +22,14 @@ type AccountCalendarsImportRequestedMsg struct {
 	Paths     []string
 }
 
-// AccountCalendarsReconcileRequestedMsg applies an existing account's desired
+// AccountCalendarsReconcileRequestedMsg applies an account's desired
 // final local calendar selection.
 type AccountCalendarsReconcileRequestedMsg struct {
 	AccountID     int64
 	SelectedPaths []string
 }
 
-// AccountCalendarPickerClosedMsg closes the discovery picker without importing.
+// AccountCalendarPickerClosedMsg closes the discovery picker with no import.
 type AccountCalendarPickerClosedMsg struct{}
 type accountRenameCancelledMsg struct{}
 
@@ -107,15 +107,15 @@ func (m AccountRenameDialogModel) BoxSize() (int, int) {
 	return lipgloss.Size(m.View())
 }
 
-// AccountCalendarPickerModel presents every discovered collection, including
-// read-only and unsupported rows. Add mode selects new imports; management
-// mode edits the account's desired final local calendar set.
+// AccountCalendarPickerModel presents every discovered collection. Read-only
+// and unsupported rows are included. Add mode selects new imports.
+// Management mode edits the account's desired final local calendar set.
 type AccountCalendarPickerModel struct {
 	discovery account.Discovery
 	selected  map[string]bool
-	// initial snapshots the selection the picker opened with, so hosts can
-	// tell staged-but-unapplied changes from an untouched picker and keep
-	// navigation gestures from silently discarding them.
+	// initial snapshots the selection the picker opened with. Hosts can
+	// then tell staged-but-unapplied changes from an untouched picker.
+	// Navigation gestures then do not discard them in silence.
 	initial     map[string]bool
 	manage      bool
 	shell       ListDialogModel
@@ -189,7 +189,7 @@ func (m AccountCalendarPickerModel) SetInspectorSize(w, h int) AccountCalendarPi
 }
 
 // InspectorView renders collection enrollment inside the persistent Calendars
-// manager instead of opening another outer dialog.
+// manager. It does not open another outer dialog.
 func (m AccountCalendarPickerModel) InspectorView(w, h int) string {
 	w, h = max(w, 1), max(h, 1)
 	listH := max(h-4, 1)
@@ -221,9 +221,9 @@ func (m AccountCalendarPickerModel) HelpBindings() []key.Binding {
 func (m AccountCalendarPickerModel) BoxSize() (int, int) { return lipgloss.Size(m.View()) }
 
 // HandleInspectorClick routes a pane-relative click on the embedded
-// InspectorView layout: list rows select and toggle, the trailing action row
-// clicks its buttons. It mirrors the standalone MouseClickMsg handling, which
-// cannot apply when the manager hosts the picker because the manager owns the
+// InspectorView layout. List rows select and toggle. The action row at the
+// end clicks its buttons. It mirrors the standalone MouseClickMsg handle.
+// That cannot apply when the manager hosts the picker. The manager owns the
 // screen-space geometry.
 func (m AccountCalendarPickerModel) HandleInspectorClick(x, y, w, h int) (AccountCalendarPickerModel, tea.Cmd) {
 	const headerRows = 3 // bold title, faint account context, blank spacer
