@@ -130,9 +130,9 @@ func TestCreate_AllDayPinsToUTCMidnight(t *testing.T) {
 
 // TestListByDateRange_NormalizesBoundsToUTC reproduces issue #464 for the
 // read side. When a caller passes window bounds that carry a non-UTC offset,
-// ListByDateRange must normalize them to UTC before the lexical comparison
-// against the UTC-stored ("Z") start/end strings. Otherwise the offset left in
-// the formatted bound skews the comparison near window edges.
+// ListByDateRange must normalize them to UTC. That happens before the lexical
+// comparison against the UTC-stored ("Z") start/end strings. Otherwise the
+// offset left in the formatted bound skews the comparison near window edges.
 //
 // Event: 01:00-02:00 UTC on Apr 1. Window in UTC-3 is [00:00, +1d) local =
 // [03:00Z, next-day 03:00Z). The event ends at 02:00Z, before the window
