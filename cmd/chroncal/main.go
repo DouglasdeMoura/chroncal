@@ -25,9 +25,9 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/tui"
 )
 
-// cliError carries a machine-readable code alongside a human message, so
-// JSON/YAML output mode can emit `{"error": ..., "code": ...}` for the
-// common failure categories. Code is one of: "not_found", "invalid_input",
+// cliError carries a machine-readable code alongside a human message. JSON
+// and YAML output can emit `{"error": ..., "code": ...}` for the common
+// failure categories. Code is one of: "not_found", "invalid_input",
 // "aborted", "error" (default).
 type cliError struct {
 	Code string
@@ -45,24 +45,24 @@ func notFoundErr(err error, resource string, id any) error {
 	return err
 }
 
-// errInvalidInputf is the validation-error counterpart to notFoundErr: it
-// produces a *cliError tagged with code "invalid_input" so JSON/YAML
-// consumers can dispatch on bad-flag / bad-format failures separately
-// from genuine internal errors. Use it for date/duration parse failures,
-// empty required values, mutually-exclusive flags, and similar.
+// errInvalidInputf is the validation-error counterpart to notFoundErr. It
+// produces a *cliError tagged with code "invalid_input". JSON and YAML
+// consumers can then dispatch on bad-flag or bad-format failures separately
+// from genuine internal errors. Use it for date or duration parse failures,
+// empty required values, mutually exclusive flags, and similar cases.
 func errInvalidInputf(format string, args ...any) error {
 	return &cliError{Code: "invalid_input", Msg: fmt.Sprintf(format, args...)}
 }
 
 // printCLIError writes err to stderr in the format that matches --output.
-// Text mode keeps "Error: <msg>"; JSON emits a structured payload.
-// Aborted errors drop the "Error: " prefix in text mode — they
-// originate from a deliberate refusal, not a system failure.
+// Text mode keeps "Error: <msg>". JSON emits a structured payload.
+// Aborted errors drop the "Error: " prefix in text mode. They come from
+// a deliberate refusal, not a system failure.
 //
-// When the chain contains a *cliError we surface its Msg directly,
-// stripping any fmt.Errorf wrap prefixes that would otherwise leak
-// internal call sites (e.g. "get event: event 999 not found") into the
-// user-facing message.
+// When the chain contains a *cliError we surface its Msg directly. The
+// function strips fmt.Errorf wrap prefixes that would leak internal call
+// sites (for example "get event: event 999 not found") into the user-facing
+// message.
 func printCLIError(err error) {
 	code := "error"
 	msg := err.Error()
@@ -77,7 +77,7 @@ func printCLIError(err error) {
 		if perr := printOutput(os.Stderr, payload); perr == nil {
 			return
 		}
-		// Fall through to text if the encoder somehow failed.
+		// Fall through to text if the encoder failed.
 	}
 	if code == "aborted" {
 		fmt.Fprintln(os.Stderr, msg)
@@ -92,11 +92,10 @@ var (
 	cfg            config.Config
 )
 
-// groupRunE is RunE for a parent command with subcommands. Pairing it
-// with Args: rejectUnknownSubcommand makes cobra validate args before
-// RunE runs, which turns `chroncal alarm tick` (no such subcommand)
-// into a clean "unknown command" error with exit 1 instead of silently
-// printing help with exit 0.
+// groupRunE is RunE for a parent command with subcommands. Pair it with
+// Args: rejectUnknownSubcommand so cobra validates args before RunE runs.
+// Then `chroncal alarm tick` (no such subcommand) becomes a clean
+// "unknown command" error with exit 1. Cobra does not print help with exit 0.
 func groupRunE(cmd *cobra.Command, _ []string) error {
 	return cmd.Help()
 }
@@ -111,10 +110,10 @@ func rejectUnknownSubcommand(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// exactOneArg is cobra.ExactArgs(1) but re-tags the resulting error as
-// "invalid_input" so --output json consumers see a uniform code field
-// for arg-count failures instead of the catch-all "error". Every command
-// with positional args takes exactly one today; generalize if that changes.
+// exactOneArg is cobra.ExactArgs(1) but re-tags the error as "invalid_input".
+// Then --output json consumers see a uniform code field for arg-count
+// failures instead of the catch-all "error". Every command with positional
+// args takes exactly one today. Generalize if that changes.
 func exactOneArg(cmd *cobra.Command, args []string) error {
 	if err := cobra.ExactArgs(1)(cmd, args); err != nil {
 		return &cliError{Code: "invalid_input", Msg: err.Error()}
@@ -122,8 +121,8 @@ func exactOneArg(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// mutuallyExclusive enforces that at most one of the named flags is set,
-// returning a *cliError tagged "invalid_input" on conflict. We use this
+// mutuallyExclusive enforces that at most one of the named flags is set.
+// On conflict it returns a *cliError tagged "invalid_input". We use this
 // instead of cobra.MarkFlagsMutuallyExclusive so the error lands in the
 // same taxonomy as every other validation error.
 func mutuallyExclusive(cmd *cobra.Command, flags ...string) {
@@ -153,16 +152,16 @@ const (
 
 var rootCmd = &cobra.Command{
 	Use: "chroncal",
-	// SilenceUsage stops cobra from dumping the full Examples/Flags block on
-	// every RunE error. SilenceErrors hands error printing to main() so we
-	// can suppress the duplicate message for errAborted (which already
-	// printed its own user-facing line to stderr).
+	// SilenceUsage stops cobra from emitting the full Examples/Flags block on
+	// every RunE error. SilenceErrors hands error print to main() so we can
+	// suppress the duplicate message for errAborted. That error already
+	// printed its own user-facing line to stderr.
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	// rejectUnknownSubcommand replaces cobra's default legacyArgs so that
 	// `chroncal foobar` returns a *cliError tagged "invalid_input" instead
-	// of a plain string error — keeping --output json error shape uniform
-	// at the root just like it is on every subcommand group.
+	// of a plain string error. The --output json error shape then stays
+	// uniform at the root, as it is on every subcommand group.
 	Args:  rejectUnknownSubcommand,
 	Short: "Terminal calendar with a TUI, scripting, and sync support",
 	Long: `chroncal is a local-first terminal calendar backed by SQLite.
@@ -220,10 +219,10 @@ Helpful conventions:
 		}
 		defer a.Close()
 
-		// Kick off the soft-delete purge loop for long-running TUI sessions.
-		// config.Load already resolved the default; PurgeDays=0 (or negative)
-		// means the user disabled purging, so leave it off. Otherwise run once
-		// up front then every 24h. Detached goroutine — ctx is bound to process
+		// Start the soft-delete purge loop for long-running TUI sessions.
+		// config.Load already resolved the default. PurgeDays=0 (or negative)
+		// means the user disabled purge, so leave it off. Otherwise run once
+		// up front, then every 24h. Detached goroutine. ctx is bound to process
 		// lifetime via the signal handler in the TUI loop below.
 		if purgeDays := cfg.SoftDelete.PurgeDays; purgeDays > 0 {
 			purger := maintenance.NewPurger(a.Trash, a.Queries, purgeDays, config.SharedStateDirLogger())
@@ -304,11 +303,11 @@ func resolveRef[T any](
 	var err error
 	if id, parseErr := strconv.ParseInt(ref, 10, 64); parseErr == nil {
 		// A numeric ref addresses a single row by its unique ID. A
-		// recurrence-id can only narrow a UID to one instance, so pairing it
-		// with an ID is contradictory: honoring the ID would silently drop the
-		// recurrence-id (and, for delete/update, act on the master while the
-		// prompt claims to touch one occurrence). Reject instead of guessing.
-		// To target an override by recurrence-id, pass the series UID. See #114.
+		// recurrence-id can only narrow a UID to one instance. A pair of
+		// recurrence-id and ID is contradictory. If the command honors the ID,
+		// it drops the recurrence-id. For delete or update, that acts on the
+		// master while the prompt claims to touch one occurrence. Reject.
+		// Do not guess. To target an override by recurrence-id, pass the series UID. See #114.
 		if recurrenceID != "" {
 			return v, errInvalidInputf("--recurrence-id cannot be combined with a numeric %s ID %q; use the series UID to address an override instance", kind, ref)
 		}
@@ -338,10 +337,10 @@ func resolveTodo(ctx context.Context, a *app.App, ref, recurrenceID string) (tod
 
 func resolveCalendarID(ctx context.Context, a *app.App, name string) (int64, error) {
 	if name == "" {
-		// No calendar specified: use the database's default. Falls back to
-		// the first calendar if the default row was somehow deleted out of
-		// band — never silently picks "no calendar" because every write
-		// needs a parent calendar.
+		// No calendar specified: use the database default. Fall back to
+		// the first calendar if the default row was deleted out of band.
+		// Never pick "no calendar" in silence. Every write needs a parent
+		// calendar.
 		def, err := a.Calendars.GetDefault(ctx)
 		if err == nil {
 			return def.ID, nil
@@ -383,7 +382,7 @@ func parseDateRange(fromStr, toStr string) (time.Time, time.Time, error) {
 			return time.Time{}, time.Time{}, err
 		}
 	}
-	// Default the window end to 30 days after `from` (not after today), so a
+	// Default the window end to 30 days after `from` (not after today). Then a
 	// `--from` far in the future without `--to` still yields a forward,
 	// non-empty range instead of an inverted one (issue #111).
 	to := from.AddDate(0, 0, 30)
@@ -399,12 +398,13 @@ func parseDateRange(fromStr, toStr string) (time.Time, time.Time, error) {
 }
 
 // parseExportDateBounds parses the optional --from/--to flags for export
-// commands, treating each bound independently. An omitted bound returns a zero
-// time.Time (open/unbounded), so only --from or only --to is honoured without
-// silently deriving the missing end from today or from+30 days. This corrects
-// issue #358 where the export command shared parseDateRange (designed for the
-// "today..+30d" list default) and silently clipped the window whenever exactly
-// one flag was given.
+// commands. It treats each bound independently. An omitted bound returns a
+// zero time.Time (open/unbounded). Then only --from or only --to is honoured
+// without a silent derived end from today or from+30 days.
+//
+// This corrects issue #358. The export command shared parseDateRange, which
+// is for the "today..+30d" list default. That path clipped the window when
+// exactly one flag was given.
 func parseExportDateBounds(fromStr, toStr string) (time.Time, time.Time, error) {
 	var from, to time.Time
 	if fromStr != "" {
@@ -427,12 +427,13 @@ func parseExportDateBounds(fromStr, toStr string) (time.Time, time.Time, error) 
 
 // parseListDateRange parses the optional --from/--to window for the
 // retrospective `todo list` / `journal list` views. With no flags it returns
-// an open (zero) range so overdue todos and past journal entries stay visible
-// by default (issue #304): the non-recurring rows are then listed unfiltered
-// and recurring masters are returned as-is. When either flag is set it
-// delegates to parseDateRange, preserving the finite forward window those
-// explicit queries expect (and which recurrence expansion requires, since a
-// half-open zero bound would expand to nothing — issue #111).
+// an open (zero) range. Overdue todos and past journal entries then stay
+// visible by default (issue #304). Non-recurring rows are listed unfiltered.
+// Recurring masters are returned as-is.
+//
+// When either flag is set it delegates to parseDateRange. That keeps the
+// finite forward window those explicit queries expect. Recurrence expansion
+// needs that window. A half-open zero bound would expand to nothing (issue #111).
 func parseListDateRange(fromStr, toStr string) (time.Time, time.Time, error) {
 	if fromStr == "" && toStr == "" {
 		return time.Time{}, time.Time{}, nil
@@ -440,7 +441,7 @@ func parseListDateRange(fromStr, toStr string) (time.Time, time.Time, error) {
 	return parseDateRange(fromStr, toStr)
 }
 
-// parseCLIDate parses a YYYY-MM-DD flag value, replacing time.Parse's
+// parseCLIDate parses a YYYY-MM-DD flag value. It replaces time.Parse's
 // verbose "parsing time ... cannot parse / out of range" surface with a
 // clean "--<flag>: invalid date ..." message.
 func parseCLIDate(flag, value string, loc *time.Location) (time.Time, error) {
