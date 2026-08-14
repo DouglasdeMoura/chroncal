@@ -14,9 +14,9 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/auth"
 )
 
-// OAuthFlowState tracks the pending-authorization modal's lifecycle. There
-// is no separate "exchanging" state: with the Start/Wait split the code
-// exchange happens inside Wait, invisible to the UI, and the waiting copy
+// OAuthFlowState tracks the wait-authorization modal's lifecycle. There
+// is no separate exchange state. With the Start/Wait split the code
+// exchange happens inside Wait, invisible to the UI. The wait copy
 // covers it.
 type OAuthFlowState int
 
@@ -38,8 +38,8 @@ const (
 )
 
 // oauthFlowStartedMsg reports StartGoogleOAuthFlow's outcome. A start error
-// (loopback port bind, bad client config) lands the modal in Failed without
-// ever reaching Waiting.
+// (loopback port bind, bad client config) lands the modal in Failed. It
+// never reaches Waiting.
 type oauthFlowStartedMsg struct {
 	flow *auth.PendingOAuthFlow
 	err  error
@@ -65,10 +65,10 @@ var (
 	}
 )
 
-// OAuthFlowModel is the pending modal shown while a Google OAuth
-// authorization is in flight. It owns the flow lifecycle: starting the
-// loopback flow, surfacing the consent URL, cancellation, and the terminal
-// done/failed/cancelled states. What to do with the resulting tokens is the
+// OAuthFlowModel is the wait modal shown while a Google OAuth
+// authorization is in flight. It owns the flow lifecycle: start of the
+// loopback flow, the consent URL, cancellation, and the terminal
+// done/failed/cancelled states. What to do with the result tokens is the
 // parent's business (re-auth vs connect-new).
 type OAuthFlowModel struct {
 	state         OAuthFlowState
@@ -76,9 +76,9 @@ type OAuthFlowModel struct {
 	browserOpened bool
 	errText       string
 
-	// cancel aborts the in-flight flow. Stored on the model — not captured
-	// only in the start cmd's closure — because three parties need it: the
-	// Start cmd, the Wait cmd, and the Esc handler.
+	// cancel aborts the in-flight flow. Stored on the model, not captured
+	// only in the start cmd's closure. Three parties need it: the Start
+	// cmd, the Wait cmd, and the Esc handler.
 	cancel context.CancelFunc
 	// flow is kept so Close() can release the listener in the
 	// Esc-between-Start-and-Wait window and on program teardown.
@@ -106,14 +106,14 @@ func NewOAuthFlowModel(theme Theme) OAuthFlowModel {
 }
 
 // Start launches the OAuth flow with the given client config and moves the
-// modal to Starting. The returned cmd performs the (blocking) listener bind
-// and browser launch off the update loop.
+// modal to Starting. The returned cmd performs the listener bind
+// and browser launch off the update loop. That bind blocks.
 func (m OAuthFlowModel) Start(clientID, clientSecret string) (OAuthFlowModel, tea.Cmd) {
 	// Defense-in-depth: never strand a prior flow's Wait goroutine or its
 	// bound loopback listener. If Start is somehow called while one is live
 	// (re-entrancy the app-level guard should already prevent), abort it
-	// first — the dropped cancel func + *PendingOAuthFlow would otherwise be
-	// unreachable.
+	// first. The dropped cancel func + *PendingOAuthFlow would otherwise
+	// be unreachable.
 	m.Abort()
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
@@ -277,7 +277,7 @@ func (m OAuthFlowModel) View() string {
 			body += dim.Render("Browser opened — finish signing in there.")
 		} else {
 			// Plain selectable text first (SSH / no-mouse terminals copy it
-			// straight from the screen), wrapped to the dialog width; the
+			// straight from the screen), wrapped to the dialog width. The
 			// same URL is also a clickable link zone.
 			wrapped := lipgloss.NewStyle().Width(m.dialog.ContentWidth()).Render(m.authURL)
 			body += dim.Render("Couldn't open a browser. Open this URL to authorize:") +
