@@ -8,8 +8,8 @@ import (
 )
 
 // TestSaveWhileSyncingSurfacesFormError verifies a Save issued during a sync
-// is refused with a visible form error instead of being silently dropped
-// (code-review finding: app.go CalendarSavedMsg guard).
+// is refused with a visible form error. It is not dropped in silence
+// (code-review note: app.go CalendarSavedMsg guard).
 func TestSaveWhileSyncingSurfacesFormError(t *testing.T) {
 	m := NewModel(nil, "")
 	m.width, m.height = 120, 40
@@ -41,7 +41,7 @@ func TestSaveWhileSyncingSurfacesFormError(t *testing.T) {
 }
 
 // TestSetDefaultKeepsDirtyEditorMounted verifies the Set as Default success
-// message no longer pops the edit form (code-review finding: unconditional
+// message no longer pops the edit form (code-review note: unconditional
 // pop on calendarMutationDoneMsg discarded dirty drafts).
 func TestSetDefaultKeepsDirtyEditorMounted(t *testing.T) {
 	m := newFlatManager().selectCalendar(2)
@@ -65,8 +65,8 @@ func TestSetDefaultKeepsDirtyEditorMounted(t *testing.T) {
 }
 
 // TestVisibilityToggleReachesOpenManager verifies the app forwards
-// CalendarVisibilityToggledMsg into the open manager so its root state never
-// goes stale (code-review finding: message returned before the forward).
+// CalendarVisibilityToggledMsg into the open manager. Its root state then never
+// goes stale (code-review note: message returned before the forward).
 func TestVisibilityToggleReachesOpenManager(t *testing.T) {
 	m := NewModel(nil, "")
 	m.width, m.height = 120, 40
@@ -84,7 +84,7 @@ func TestVisibilityToggleReachesOpenManager(t *testing.T) {
 }
 
 // TestEmbeddedPickerRowClickToggles verifies mouse clicks work in the
-// manager-embedded discovery picker (code-review finding: translated
+// manager-embedded discovery picker (code-review note: translated
 // MouseEvents made the pane inert).
 func TestEmbeddedPickerRowClickToggles(t *testing.T) {
 	m := newFlatManager().OpenAccountCalendars(pickerDiscovery())
@@ -100,7 +100,7 @@ func TestEmbeddedPickerRowClickToggles(t *testing.T) {
 }
 
 // TestAccountSettingsSpaceActivates verifies Space activates the focused
-// account-settings action (code-review finding: bound as " " which bubbletea
+// account-settings action (code-review note: bound as " " which bubbletea
 // v2 never emits).
 func TestAccountSettingsSpaceActivates(t *testing.T) {
 	d := NewAccountSettingsDialogModel(AccountSettingsParams{AccountID: 7, DisplayName: "Google"}, activeTheme)
