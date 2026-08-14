@@ -110,7 +110,7 @@ func clearMasterEXDATE(ctx context.Context, qtx *storage.Queries, uid, recurrenc
 //
 // Without the EXDATE cleanup the master would still exclude those slots
 // while it also holds the now-live overrides. That round-trips to iCal as a
-// self-contradicting series (EXDATE plus override for the same occurrence).
+// contradictory series (EXDATE plus override for the same occurrence).
 // Used by the CLI `journals restore <uid>` path. Mirrors event.RestoreByUID.
 // Returns ErrNotDeleted when the UID matches no soft-deleted rows. Callers
 // can then report "not found" instead of a false success.
