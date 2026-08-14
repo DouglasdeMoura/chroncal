@@ -14,16 +14,16 @@ import (
 )
 
 // ErrNotDeleted is returned by Restore / Purge when the target row is not
-// soft-deleted (either it never was, or it has already been restored, or
-// it was purged). The CLI collapses this with ErrNotFound.
+// soft-deleted. The row was never deleted, or it has already been restored,
+// or it was purged. The CLI collapses this with ErrNotFound.
 var ErrNotDeleted = errors.New("todo: row not soft-deleted (may have been purged)")
 
 // RestoreByID un-hides a single soft-deleted todo. For an override it
-// also strips the matching EXDATE from the master in the same
-// transaction — otherwise the restored occurrence reappears as a row in
-// the DB but stays hidden from expansion because the series still
-// excludes that slot. Reconciles sync state so the next push re-CREATEs
-// the resource server-side if the row was tombstoned.
+// also strips the EXDATE that matches from the master in the same
+// transaction. Otherwise the restored occurrence reappears as a row in
+// the DB but stays hidden from expansion. The series still excludes that
+// slot. The function reconciles sync state so the next push re-CREATEs
+// the resource on the server if the row was tombstoned.
 func (s *Service) RestoreByID(ctx context.Context, id int64) error {
 	r, err := s.q.GetTodoIncludingDeleted(ctx, id)
 	if err != nil {
@@ -49,7 +49,7 @@ func (s *Service) RestoreByID(ctx context.Context, id int64) error {
 
 	// Override: restore the row AND drop its EXDATE entry from the master
 	// so expansion surfaces the occurrence again. Both changes must land
-	// together or the row is visible-but-excluded.
+	// together. Otherwise the row is visible-but-excluded.
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -111,15 +111,16 @@ func clearMasterEXDATE(ctx context.Context, qtx *storage.Queries, uid, recurrenc
 	}, recurrenceID)
 }
 
-// RestoreByUID un-hides every soft-deleted row with the given UID —
-// master + overrides — and strips the matching EXDATE from the master for
-// each restored override in the same transaction. Without the EXDATE
-// cleanup the master would keep excluding those slots while also carrying
-// the now-live overrides, which round-trips to iCal as a self-contradicting
-// series (EXDATE + override for the same occurrence). Used by the CLI
-// `todos restore <uid>` path. Mirrors event.RestoreByUID. Returns
-// ErrNotDeleted when the UID matches no soft-deleted rows so callers can
-// report "not found" instead of a misleading success.
+// RestoreByUID un-hides every soft-deleted row with the given UID:
+// master plus overrides. It strips the EXDATE that matches from the master
+// for each restored override in the same transaction.
+//
+// Without the EXDATE cleanup the master would still exclude those slots
+// while it also holds the now-live overrides. That round-trips to iCal as a
+// self-contradicting series (EXDATE plus override for the same occurrence).
+// Used by the CLI `todos restore <uid>` path. Mirrors event.RestoreByUID.
+// Returns ErrNotDeleted when the UID matches no soft-deleted rows. Callers
+// can then report "not found" instead of a false success.
 func (s *Service) RestoreByUID(ctx context.Context, uid string) error {
 	master, err := s.q.GetTodoByUIDIncludingDeleted(ctx, uid)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -143,10 +144,10 @@ func (s *Service) RestoreByUID(ctx context.Context, uid string) error {
 
 // restoreByUIDClearingExdates un-hides every soft-deleted row for uid and
 // clears the master EXDATE for each override that was soft-deleted, all in
-// one transaction. Returns the number of rows un-hidden so callers can
-// distinguish a real restore from a no-op (live/unknown UID). The recurrence
-// IDs are read before the restore because afterwards the rows are live and no
-// longer match the deleted-overrides query.
+// one transaction. It returns the number of rows un-hidden so callers can
+// tell a real restore from a no-op (live or unknown UID). The recurrence
+// IDs are read before the restore. After the restore the rows are live and
+// no longer match the deleted-overrides query.
 func (s *Service) restoreByUIDClearingExdates(ctx context.Context, uid string) (int64, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -207,8 +208,8 @@ func (s *Service) PurgeDeleted(ctx context.Context, olderThan time.Time) (int, e
 }
 
 // PurgeOldInstanceDeletes drops todo_exdate_deletes provenance rows older
-// than olderThan. Returns the number of rows purged. The corresponding
-// EXDATEs on the master stay in place — the user intended those instances to
+// than olderThan. Returns the number of rows purged. The related
+// EXDATEs on the master stay in place. The user intended those instances to
 // be gone. Mirrors event.PurgeOldInstanceDeletes.
 func (s *Service) PurgeOldInstanceDeletes(ctx context.Context, olderThan time.Time) (int, error) {
 	cutoff := olderThan.UTC().Format(timeutil.StorageTimeFormat)
@@ -220,8 +221,8 @@ func (s *Service) PurgeOldInstanceDeletes(ctx context.Context, olderThan time.Ti
 }
 
 // PurgeByID hard-deletes a single soft-deleted todo. Returns ErrNotDeleted
-// when the row is live or absent so callers cannot accidentally purge a
-// live todo by passing the wrong ID.
+// when the row is live or absent. Callers then cannot purge a live todo
+// with the wrong ID.
 func (s *Service) PurgeByID(ctx context.Context, id int64) error {
 	n, err := s.q.PurgeTodoByID(ctx, id)
 	if err != nil {
@@ -234,8 +235,8 @@ func (s *Service) PurgeByID(ctx context.Context, id int64) error {
 }
 
 // reconcileSyncAfterRestore clears any tombstone queued for this UID and
-// marks the resource dirty so the next push re-CREATEs it server-side if
-// the sync_resource was already swept out.
+// marks the resource dirty. The next push then re-CREATEs it on the server
+// if the sync_resource was already swept out.
 func (s *Service) reconcileSyncAfterRestore(ctx context.Context, calendarID int64, uid string) error {
 	if err := s.q.DeleteTombstonesByCalendarAndUID(ctx, storage.DeleteTombstonesByCalendarAndUIDParams{
 		CalendarID: calendarID,
