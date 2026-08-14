@@ -17,14 +17,14 @@ type Instance struct {
 	CreatedAt  time.Time
 }
 
-// ExpandedEvent wraps an event with its occurrence time for alarm checking
+// ExpandedEvent wraps an event with its occurrence time for alarm checks
 type ExpandedEvent struct {
 	event.Event
 	InstanceTime time.Time
 	IsOverride   bool
 }
 
-// ExpandedTodo wraps a todo with its occurrence time for alarm checking
+// ExpandedTodo wraps a todo with its occurrence time for alarm checks
 type ExpandedTodo struct {
 	todo.Todo
 	InstanceTime time.Time
