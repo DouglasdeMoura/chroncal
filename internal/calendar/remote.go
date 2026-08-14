@@ -349,7 +349,7 @@ func (s *Service) Disconnect(ctx context.Context, cal Calendar, credStore auth.C
 	return nil
 }
 
-// DeleteWithRemoteCleanup deletes a calendar. When its backing account is
+// DeleteWithRemoteCleanup deletes a calendar. When the account behind it is
 // a hidden per-calendar account with no other calendars attached, it also
 // deletes that account and its stored credential.
 //
