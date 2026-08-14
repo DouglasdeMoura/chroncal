@@ -47,3 +47,5 @@ go.work.sum
 .context/
 
 .gstack
+
+tmp
