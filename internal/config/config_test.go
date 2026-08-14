@@ -7,7 +7,7 @@ import (
 )
 
 // mustLoad calls Load and fails the test on error. Use it in tests that
-// exercise valid/absent config; tests asserting a parse error call Load
+// exercise valid/absent config. Tests that assert a parse error call Load
 // directly.
 func mustLoad(t *testing.T) Config {
 	t.Helper()
@@ -232,10 +232,10 @@ func TestLoad_SMTPPortDefaultsWhenUnset(t *testing.T) {
 	}
 }
 
-// TestLoad_MalformedFileReturnsError guards against silently swallowing a
-// syntax error in config.toml. A broken file must surface an error rather than
-// be treated like an absent file, which would revert db/security/etc. to
-// defaults and risk opening the wrong (default) database.
+// TestLoad_MalformedFileReturnsError guards against a swallow of a
+// syntax error in config.toml, in silence. A broken file must surface an error
+// rather than be treated like an absent file. That would revert db/security/etc.
+// to defaults. It would risk an open of the wrong (default) database.
 func TestLoad_MalformedFileReturnsError(t *testing.T) {
 	dir := t.TempDir()
 	configDir := filepath.Join(dir, "chroncal")
@@ -253,7 +253,7 @@ func TestLoad_MalformedFileReturnsError(t *testing.T) {
 }
 
 // TestLoad_NoFileNoError confirms an absent config file is still treated as
-// optional (no error), distinguishing "no file" from "broken file".
+// optional (no error). That distinguishes "no file" from "broken file".
 func TestLoad_NoFileNoError(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir()) // no config file present
 	if _, err := Load(); err != nil {
