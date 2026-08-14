@@ -342,14 +342,14 @@ func TestListDialog_SelectionChangeResetsScroll(t *testing.T) {
 // The bug: ActionAtPosition modelled each button as w=len(label)+2 and
 // advanced cx by w+1.  DefaultButtonStyles uses Padding(0,2) (+4 cells)
 // and MarginRight(1) (+1 cell), so the real per-button width is len+5.
-// The undercount accumulates left-to-right, eventually routing a click
-// inside a safe button's pill into the next (possibly destructive) button.
+// The undercount accumulates left-to-right. A click inside a safe button's
+// pill then routes into the next (possibly destructive) button.
 //
 // Concrete failure (trash dialog, [Restore, Purge]):
 //   - len("Restore")+2 = 9; buggy "Restore" range: [ox, ox+9)
 //   - After buggy advance: "Purge" starts at ox+10
 //   - Actual rendered "Restore" width = len+5 = 12; real range [ox, ox+12)
-//   - Clicking at ox+10 is inside "Restore"'s pill, but the bug routes it
+//   - A click at ox+10 is inside "Restore"'s pill, but the bug routes it
 //     to "Purge" (the destructive button).
 func TestListDialog_ActionAtPositionWidthMatchesRender(t *testing.T) {
 	m := NewListDialogModel(newThemedHelp(NewTheme(false))).
