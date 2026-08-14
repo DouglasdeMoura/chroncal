@@ -456,8 +456,8 @@ func TestBuildEmailMessage_MIMEHeaders(t *testing.T) {
 }
 
 // TestBuildEmailMessage_SubjectHeaderEncoding asserts the Subject header is
-// RFC 2047 encoded for non-ASCII titles: the raw header line must stay ASCII so
-// non-SMTPUTF8 servers/clients render it correctly, and decoding it must yield
+// RFC 2047 encoded for non-ASCII titles. The raw header line must stay ASCII so
+// non-SMTPUTF8 servers/clients render it correctly. A decode of it must yield
 // the original subject.
 func TestBuildEmailMessage_SubjectHeaderEncoding(t *testing.T) {
 	subject := "Reunião com café ☕"
@@ -568,7 +568,7 @@ func startMinimalSMTPSServer(t *testing.T, cert tls.Certificate) (port int, done
 	return ln.Addr().(*net.TCPAddr).Port, ch
 }
 
-// runMinimalSMTPDialog handles one SMTP session: greeting → EHLO → MAIL FROM →
+// runMinimalSMTPDialog handles one SMTP session: greet → EHLO → MAIL FROM →
 // RCPT TO(s) → DATA → body → QUIT. No AUTH is required.
 func runMinimalSMTPDialog(conn net.Conn) error {
 	rdr := bufio.NewReader(conn)
