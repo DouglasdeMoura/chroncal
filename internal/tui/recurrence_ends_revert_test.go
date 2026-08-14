@@ -10,9 +10,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// openRecurrenceEndsPicker drives the real open flow so the picker is opened
+// openRecurrenceEndsPicker drives the real open flow. The picker then opens
 // the same way a user does: select "On <date>", focus the Ends field, press
-// enter. This ensures any staging/revert state is initialised exactly as in
+// enter. Any stage/revert state is then initialised exactly as in
 // production.
 func openRecurrenceEndsPicker(t *testing.T, start time.Time) RecurrenceEditorModel {
 	t.Helper()
@@ -36,9 +36,9 @@ func openRecurrenceEndsPicker(t *testing.T, start time.Time) RecurrenceEditorMod
 }
 
 // TestRecurrenceEditor_EscRevertsNavigatedEndsDate is the TDD regression test
-// for issue #410: arrow-key navigation in the ends-date picker mutated the
-// committed date with no staging, so pressing Esc committed the navigated date
-// instead of reverting to the original.
+// for issue #410. Arrow-key navigation in the ends-date picker mutated the
+// committed date with no stage. A press of Esc then committed the navigated
+// date instead of a revert to the original.
 func TestRecurrenceEditor_EscRevertsNavigatedEndsDate(t *testing.T) {
 	start := time.Date(2026, 4, 24, 0, 0, 0, 0, time.UTC)
 	m := openRecurrenceEndsPicker(t, start)
@@ -58,7 +58,7 @@ func TestRecurrenceEditor_EscRevertsNavigatedEndsDate(t *testing.T) {
 }
 
 // TestRecurrenceEditor_MouseCancelRevertsNavigatedEndsDate verifies that
-// clicking Cancel after navigating discards the navigation.
+// a click of Cancel after navigation discards the navigation.
 func TestRecurrenceEditor_MouseCancelRevertsNavigatedEndsDate(t *testing.T) {
 	const screenW, screenH = 120, 40
 	start := time.Date(2026, 4, 24, 0, 0, 0, 0, time.UTC)
@@ -87,8 +87,8 @@ func TestRecurrenceEditor_MouseCancelRevertsNavigatedEndsDate(t *testing.T) {
 	assert.Equal(t, original, m.endsDate, "clicking Cancel must revert the navigated date")
 }
 
-// TestRecurrenceEditor_OkCommitsNavigatedEndsDate verifies the positive path:
-// tabbing to Ok and confirming commits the navigated date.
+// TestRecurrenceEditor_OkCommitsNavigatedEndsDate verifies the positive path.
+// Tab to Ok and confirm. That commits the navigated date.
 func TestRecurrenceEditor_OkCommitsNavigatedEndsDate(t *testing.T) {
 	start := time.Date(2026, 4, 24, 0, 0, 0, 0, time.UTC)
 	m := openRecurrenceEndsPicker(t, start)
