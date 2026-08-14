@@ -10,10 +10,10 @@ import (
 )
 
 // TestDeleteSeries_DirtyMarkGatedOnMaster verifies that DeleteSeries on a
-// synced calendar marks the series resource dirty when the master exists,
-// and does NOT touch sync_resources (in particular no spurious calendar_id=0
+// synced calendar marks the series resource dirty when the master exists.
+// It does NOT touch sync_resources (in particular no spurious calendar_id=0
 // row) when no master row exists for the UID. Regression test for the
-// master-existence guard being defeated by err reuse (issue #119).
+// master-existence guard that err reuse defeated (issue #119).
 func TestDeleteSeries_DirtyMarkGatedOnMaster(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	svc := NewService(db, q)
@@ -205,7 +205,8 @@ func TestSoftDelete_PurgeDeleted(t *testing.T) {
 }
 
 // TestSoftDelete_PurgeByID_RefusesLiveRow verifies PurgeByID only drops
-// soft-deleted rows and returns ErrNotDeleted for live or missing rows.
+// soft-deleted rows and returns ErrNotDeleted for live rows or rows that are
+// gone.
 func TestSoftDelete_PurgeByID_RefusesLiveRow(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -236,8 +237,8 @@ func TestSoftDelete_PurgeByID_RefusesLiveRow(t *testing.T) {
 	}
 }
 
-// TestSoftDelete_RestoreOverrideClearsExdate verifies that restoring a
-// recurring override also strips the matching EXDATE from the master.
+// TestSoftDelete_RestoreOverrideClearsExdate verifies that a restore of a
+// recurring override also strips the EXDATE that matches from the master.
 func TestSoftDelete_RestoreOverrideClearsExdate(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -285,11 +286,11 @@ func TestSoftDelete_RestoreOverrideClearsExdate(t *testing.T) {
 }
 
 // TestSoftDelete_MalformedRecurrenceID is the regression test for
-// issue #120: deleting an override whose recurrence_id cannot be parsed
-// must fail loudly rather than soft-delete the row while silently
-// skipping the EXDATE addition. Otherwise the override is hidden but the
-// master keeps expanding the occurrence, resurrecting the "deleted" slot.
-// The restore path already propagates this parse error; delete must too.
+// issue #120. A delete of an override whose recurrence_id cannot be parsed
+// must fail loudly. It must not soft-delete the row while it skips the
+// EXDATE addition in silence. Otherwise the override is hidden. The
+// master keeps an expand of the occurrence. That resurrects the "deleted" slot.
+// The restore path already propagates this parse error. Delete must too.
 func TestSoftDelete_MalformedRecurrenceID(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -330,11 +331,11 @@ func TestSoftDelete_MalformedRecurrenceID(t *testing.T) {
 }
 
 // TestSoftDelete_RestoreByUIDClearsExdate is the regression test for
-// issue #72: restoring a recurring series by UID must strip the EXDATEs
-// the instance-delete path added to the master, just like RestoreByID
-// does for a single override. Otherwise the master keeps excluding the
-// slot while also carrying the now-live override, which exports to iCal
-// as a self-contradicting series.
+// issue #72. A restore of a recurring series by UID must strip the EXDATEs
+// the instance-delete path added to the master. That is just like RestoreByID
+// for a single override. Otherwise the master keeps an exclude of the
+// slot. It also carries the now-live override. That exports to iCal
+// as a self-contradictory series.
 func TestSoftDelete_RestoreByUIDClearsExdate(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -391,11 +392,11 @@ func TestSoftDelete_RestoreByUIDClearsExdate(t *testing.T) {
 }
 
 // TestSoftDelete_RestoreByUIDPreservesImportedExdate is the regression test
-// for issue #86: an EXDATE that arrived via import (no delete added it) must
-// survive a DeleteSeries + RestoreByUID round-trip, even when an override
-// shares the same recurrence slot. RestoreByUID previously cleared the master
-// EXDATE for every soft-deleted override's recurrence_id unconditionally,
-// silently stripping the imported EXDATE.
+// for issue #86. An EXDATE that arrived via import (no delete added it) must
+// survive a DeleteSeries + RestoreByUID round-trip. That holds even when an
+// override shares the same recurrence slot. RestoreByUID previously cleared
+// the master EXDATE for every soft-deleted override's recurrence_id
+// unconditionally. That stripped the imported EXDATE in silence.
 func TestSoftDelete_RestoreByUIDPreservesImportedExdate(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -515,10 +516,10 @@ func TestSoftDelete_RestoreSurfacesTombstoneClearError(t *testing.T) {
 }
 
 // TestSoftDelete_OverrideMasterLookupError is a regression test for issue
-// #290: deleting an override must not collapse a genuine DB error from the
+// #290. A delete of an override must not collapse a genuine DB error from the
 // master lookup into the "no master" path. On a non-ErrNoRows error the old
-// code soft-deleted the override while silently skipping the EXDATE and
-// provenance bookkeeping, resurrecting the occurrence via series expansion.
+// code soft-deleted the override. It skipped the EXDATE and provenance
+// records in silence. Series expansion then resurrected the occurrence.
 func TestSoftDelete_OverrideMasterLookupError(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -563,11 +564,11 @@ func TestSoftDelete_OverrideMasterLookupError(t *testing.T) {
 	}
 }
 
-// TestDeleteSeries_MasterLookupError is a regression test for issue #290:
+// TestDeleteSeries_MasterLookupError is a regression test for issue #290.
 // DeleteSeries must not treat a genuine DB error from the master lookup as
 // "no master". On a non-ErrNoRows error the old code soft-deleted the series
-// locally with no tombstone and no dirty mark, so the next push never DELETEd
-// the server copy and the series resurfaced on the next pull.
+// locally with no tombstone and no dirty mark. The next push then never DELETEd
+// the server copy. The series resurfaced on the next pull.
 func TestDeleteSeries_MasterLookupError(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
