@@ -13,12 +13,14 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
 
-// TrashKind discriminates the three shapes a trash row can have: a full
-// soft-deleted events row, a recurring-instance delete captured in the
-// event_exdate_deletes log (no row was deleted, an EXDATE was added), or
-// an RRULE truncation captured in event_truncate_deletes (the master's
-// recurrence was shortened and any overrides past the cutoff were
-// soft-deleted).
+// TrashKind discriminates the three shapes a trash row can have:
+//
+//   - a full soft-deleted events row
+//   - a recurring-instance delete captured in the event_exdate_deletes log
+//     (no row was deleted; an EXDATE was added)
+//   - an RRULE truncation captured in event_truncate_deletes (the master's
+//     recurrence was shortened and any overrides past the cutoff were
+//     soft-deleted)
 type TrashKind int
 
 const (
@@ -36,13 +38,13 @@ const (
 // TrashEntry is a unified row for the "Recently deleted" view. For
 // TrashKindEvent, ID is the events row ID. For TrashKindInstance, ID is
 // the event_exdate_deletes row ID. For TrashKindTruncation, ID is the
-// event_truncate_deletes row ID and CutoffTime/PreviousRRule are populated.
+// event_truncate_deletes row ID and CutoffTime/PreviousRRule have values.
 //
 // Display-ready event fields (StartTime/EndTime/AllDay/Location/Description/
-// Status/Categories) are populated so the trash dialog can render full
-// details inline without opening a second view. For TrashKindInstance and
-// TrashKindTruncation these come from the master (the series shape), with
-// StartTime/EndTime shifted to the instance or cutoff window when relevant.
+// Status/Categories) have values so the trash dialog can show full
+// details inline. A second view is not needed. For TrashKindInstance and
+// TrashKindTruncation these come from the master (the series shape).
+// StartTime/EndTime shift to the instance or cutoff window when relevant.
 type TrashEntry struct {
 	Kind          TrashKind
 	ID            int64
@@ -65,7 +67,7 @@ type TrashEntry struct {
 
 // ListTrash merges soft-deleted events, EXDATE-based instance deletes,
 // and RRULE truncation deletes for a calendar, newest first. The caller
-// is responsible for visibility filtering (hidden calendars, etc.).
+// is responsible for visibility filters (hidden calendars, and others).
 func (s *Service) ListTrash(ctx context.Context, calendarID int64) ([]TrashEntry, error) {
 	evts, err := s.q.ListDeletedEventsByCalendar(ctx, calendarID)
 	if err != nil {
@@ -109,9 +111,9 @@ func (s *Service) ListTrash(ctx context.Context, calendarID int64) ([]TrashEntry
 		})
 	}
 
-	// For log rows, look up the master (including soft-deleted) once per
-	// UID so the trash dialog can render full context — title, location,
-	// description, status — without the user having to open a second view.
+	// For log rows, look up the master (soft-deleted included) once per
+	// UID so the trash dialog can show full context: title, location,
+	// description, status. The user does not need a second view.
 	// Fetch each distinct master once, then batch category population into a
 	// single query rather than one per master.
 	masters := make(map[string]*Event, len(instLogs)+len(truncLogs))
@@ -209,8 +211,8 @@ func (s *Service) RestoreTrash(ctx context.Context, entry TrashEntry) error {
 }
 
 // PurgeOldInstanceDeletes drops event_exdate_deletes rows older than olderThan.
-// Returns the number of rows purged. The corresponding EXDATEs on the master
-// stay in place — the user intended those instances to be gone.
+// Returns the number of rows purged. The related EXDATEs on the master
+// stay in place. The user intended those instances to be gone.
 func (s *Service) PurgeOldInstanceDeletes(ctx context.Context, olderThan time.Time) (int, error) {
 	cutoff := olderThan.UTC().Format(timeutil.StorageTimeFormat)
 	n, err := s.q.PurgeOldEventExdateDeletes(ctx, cutoff)
@@ -233,10 +235,10 @@ func (s *Service) PurgeOldTruncationDeletes(ctx context.Context, olderThan time.
 }
 
 // PurgeTrashEntry hard-removes entry from the trash. For TrashKindEvent it
-// drops the events row; for TrashKindInstance and TrashKindTruncation it
-// drops the log row only — the EXDATE (or truncated RRULE + deleted
-// overrides) stays on the master, matching the "deleted forever" semantic
-// the user expressed at delete time.
+// drops the events row. For TrashKindInstance and TrashKindTruncation it
+// drops the log row only. The EXDATE (or truncated RRULE plus deleted
+// overrides) stays on the master. That matches the "deleted forever"
+// semantic the user expressed at delete time.
 func (s *Service) PurgeTrashEntry(ctx context.Context, entry TrashEntry) error {
 	switch entry.Kind {
 	case TrashKindEvent:
@@ -298,9 +300,10 @@ func (s *Service) restoreInstanceByLogID(ctx context.Context, logID int64) error
 }
 
 // restoreTruncationByLogID rewrites the master's RRULE back to the
-// pre-truncation value, re-adds the RDATEs the truncation trimmed, and un-hides
-// every override soft-deleted at/after the cutoff, then drops the log row. The
-// master is marked dirty so the next push propagates the restored series.
+// pre-truncation value. It re-adds the RDATEs the truncation trimmed. It
+// un-hides every override soft-deleted at or after the cutoff. It then
+// drops the log row. The master is marked dirty so the next push
+// propagates the restored series.
 func (s *Service) restoreTruncationByLogID(ctx context.Context, logID int64) error {
 	log, err := s.q.GetEventTruncateDelete(ctx, logID)
 	if err != nil {
@@ -316,10 +319,11 @@ func (s *Service) restoreTruncationByLogID(ctx context.Context, logID int64) err
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
-	// Read the master inside the transaction so a concurrent purge/soft-delete
-	// between the read and the in-tx UPDATE can't make UpdateEventRecurrenceRule
-	// match 0 rows while we still consume the log row, silently dropping the
-	// RRULE restore (issue #413, mirrors restoreInstanceByLogID / #116).
+	// Read the master inside the transaction. Then a concurrent purge or
+	// soft-delete between the read and the in-tx UPDATE cannot make
+	// UpdateEventRecurrenceRule match 0 rows while we still consume the log
+	// row. That would drop the RRULE restore in silence (issue #413, mirrors
+	// restoreInstanceByLogID / #116).
 	master, err := qtx.GetEventByUID(ctx, log.Uid)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -350,9 +354,9 @@ func (s *Service) restoreTruncationByLogID(ctx context.Context, logID int64) err
 }
 
 // restoreTruncatedRDates re-adds to the master the RDATEs a truncation trimmed.
-// removed_rdates is non-NULL only for #463-era log rows; pre-#463 rows store
-// NULL (the truncation left RDATEs untouched) and an empty string means the
-// truncation dropped none, so both no-op. The kept RDATEs (already on the
+// removed_rdates is non-NULL only for #463-era log rows. Pre-#463 rows store
+// NULL (the truncation left RDATEs untouched). An empty string means the
+// truncation dropped none. Both no-op. The kept RDATEs (already on the
 // master after a concurrent edit) are merged with the recorded removed ones.
 func restoreTruncatedRDates(ctx context.Context, qtx *storage.Queries, master storage.Event, log storage.EventTruncateDelete) error {
 	if log.RemovedRdates == nil || *log.RemovedRdates == "" {
@@ -367,10 +371,10 @@ func restoreTruncatedRDates(ctx context.Context, qtx *storage.Queries, master st
 
 // restoreTruncatedOverrides un-hides the overrides a truncation soft-deleted.
 // When the log recorded provenance (hidden_overrides is non-NULL), it restores
-// only those specific overrides, so an override the user deleted independently
-// before the truncation stays deleted (issue #287). Pre-#287 log rows store
-// NULL provenance; for those it falls back to un-hiding every soft-deleted
-// override at/after the cutoff.
+// only those specific overrides. An override the user deleted on its own
+// before the truncation then stays deleted (issue #287). Pre-#287 log rows
+// store NULL provenance. For those it falls back to un-hiding every
+// soft-deleted override at or after the cutoff.
 func restoreTruncatedOverrides(ctx context.Context, qtx *storage.Queries, log storage.EventTruncateDelete) error {
 	if log.HiddenOverrides == nil {
 		return qtx.RestoreOverridesAtOrAfter(ctx, storage.RestoreOverridesAtOrAfterParams{
