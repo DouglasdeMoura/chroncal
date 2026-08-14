@@ -20,7 +20,7 @@ import (
 type CalendarManagerClosedMsg struct{}
 
 // CalendarManagerScreen identifies which screen the unified calendar manager
-// shows: the grouped calendar root, a pushed calendar detail, or a
+// shows. That is the grouped calendar root, a pushed calendar detail, or a
 // pushed account detail stacked on top of a calendar detail.
 type CalendarManagerScreen int
 
@@ -112,9 +112,9 @@ type CalendarManagerModel struct {
 	calendars map[int64]CalendarInfo
 	// list is the shared grouped calendar hierarchy used by the sidebar. It
 	// is the single owner of the calendar visibility (hidden) set within the
-	// manager: account headers, collapse state, visibility dots, and stable
-	// identity selection all read through it, so there is no second mirrored
-	// hidden map to drift out of sync.
+	// manager. Account headers, collapse state, visibility dots, and stable
+	// identity selection all read through it. There is then no second
+	// mirrored hidden map to drift out of sync.
 	list CalendarListModel
 
 	pendingSelectionID int64
@@ -150,13 +150,13 @@ type CalendarManagerModel struct {
 	// when Esc/Cancel would drop a dirty calendar draft. Non-nil only while
 	// the prompt is open; it owns all input until answered.
 	discardConfirm *ConfirmDialogModel
-	// inspector memoizes the rendered calendar-selection preview so the
-	// edit-form preview is not rebuilt on every root render (held-arrow
-	// idle, clock ticks, mouse motion, focus cycling) until one of its
+	// inspector memoizes the rendered calendar-selection preview. The
+	// edit-form preview is then not rebuilt on every root render (held-arrow
+	// idle, clock ticks, mouse motion, focus cycle) until one of its
 	// inputs changes. It is a pointer so a value-receiver render writes
-	// through to the model the runtime keeps: the manager is passed by
-	// value between Update and View, so a value field would be discarded
-	// with each copy while a shared pointer survives.
+	// through to the model the runtime keeps. The manager is passed by
+	// value between Update and View. A value field would then be discarded
+	// with each copy. A shared pointer survives.
 	inspector *inspectorPreviewCache
 	// themeFP is a fingerprint of theme (see fingerprintTheme), recomputed
 	// only when the theme is assigned. It enters the preview cache key so a
@@ -499,7 +499,7 @@ func (m CalendarManagerModel) rootFocusTargets() []calendarManagerRootFocus {
 
 // inspectorFocusAvailable reports whether the inspector pane is a root focus
 // target. That is a wide two-pane root whose selection is a calendar that
-// already exists (Tab enters its previewed edit form) or a remote account
+// already exists (Tab enters its previewed edit form). Or a remote account
 // with a pinned action.
 func (m CalendarManagerModel) inspectorFocusAvailable() bool {
 	if m.screen != CalendarManagerScreenList || m.onePaneLayout() || m.width <= 0 || m.height <= 0 {
@@ -658,10 +658,10 @@ func (m CalendarManagerModel) Update(msg tea.Msg) (CalendarManagerModel, tea.Cmd
 		return m.updateDiscardConfirm(msg)
 	}
 	// A pushed detail owns input until it closes. Each child handles its own
-	// field editing; the manager intercepts only navigation: Esc/close pops
-	// via the child's close message, and Left pops one child before
-	// delegation (a Back gesture) — except while a text-editing field holds
-	// focus in the calendar detail, where Left still moves the cursor.
+	// field edits. The manager intercepts only navigation. Esc/close pops
+	// via the child's close message. Left pops one child before
+	// delegation (a Back gesture). Exception: while a text-edit field holds
+	// focus in the calendar detail, Left still moves the cursor.
 	if m.screen != CalendarManagerScreenList {
 		if click, ok := msg.(tea.MouseClickMsg); ok && click.Button == tea.MouseLeft {
 			// The discovery picker renders no mouse marks, so translated
@@ -731,14 +731,14 @@ func (m CalendarManagerModel) popOnLeft(msg tea.Msg) (CalendarManagerModel, tea.
 		return m.HideDiscovery(), nil, true
 	case CalendarManagerScreenAccount:
 		// Account settings opened from a calendar pop back to that unchanged
-		// edit form; directly opened account settings pop back to the root
+		// edit form. Directly opened account settings pop back to the root
 		// calendar list (CloseAccount routes both, same as Esc).
 		return m.CloseAccount(), nil, true
 	case CalendarManagerScreenCalendar:
-		// The child owns the Left key while editing text, in the
-		// account-connection layout, or with unsaved edits (a navigation
-		// gesture must never discard a draft; Esc/Cancel stays the
-		// explicit discard).
+		// The child owns the Left key while a text field is in edit, in the
+		// account-connection layout, or with unsaved edits. A navigation
+		// gesture must never discard a draft. Esc/Cancel stays the
+		// explicit discard.
 		if m.calendarForm == nil || m.calendarForm.absorbsBack() {
 			return m, nil, false
 		}
@@ -943,11 +943,11 @@ func (m CalendarManagerModel) updateCalendar(msg tea.Msg) (CalendarManagerModel,
 		m.screen = CalendarManagerScreenList
 		return m, nil
 	}
-	// Tab traversal is continuous across the whole dialog: on a clean form,
-	// Tab past the last control returns to the source list and Shift-Tab
-	// from the first field returns to + Add, completing the root ring
-	// (list → + Add → form → list). A dirty form keeps wrapping internally
-	// so traversal can never discard typed edits.
+	// Tab traversal is continuous across the whole dialog. On a clean form,
+	// Tab past the last control returns to the source list. Shift-Tab
+	// from the first field returns to + Add. That completes the root ring
+	// (list → + Add → form → list). A dirty form keeps wrapping internally.
+	// Traversal can then never discard typed edits.
 	if popped, ok := m.tabOutOfCalendarForm(msg); ok {
 		return popped, nil
 	}
@@ -1173,7 +1173,7 @@ func (m CalendarManagerModel) activeInspectorLines(w, h int) []string {
 // edit-form preview is not rebuilt on every root render. Held-arrow idle,
 // clock ticks, mouse motion, and a focus cycle all re-render the identical
 // preview until one of its inputs changes. The memo skips that rebuild. It
-// lives behind a pointer on CalendarManagerModel so a value-receiver render
+// lives behind a pointer on CalendarManagerModel. A value-receiver render
 // (the manager is copied between Update and View) still writes through to
 // the model the runtime keeps.
 type inspectorPreviewCache struct {
@@ -1440,15 +1440,15 @@ func (m CalendarManagerModel) renderTitleRow(w int) string {
 }
 
 // renderHelp renders the centered footer hint line through the shared themed
-// help model so key-binding hints match every other dialog (key in Text, desc
-// in TextDim, " · " separators).
+// help model. Key-binding hints then match every other dialog (key in Text,
+// desc in TextDim, " · " separators).
 func (m CalendarManagerModel) renderHelp(w int) string {
 	m.help.SetWidth(w)
 	bindings := m.helpBindings()
 	view := m.help.ShortHelpView(bindings)
 	// bubbles' short-help truncation keeps an overflowing item when the
-	// ellipsis lands exactly on the width boundary; a too-wide line would wrap
-	// and shear the dialog frame, so drop trailing hints until the line fits.
+	// ellipsis lands exactly on the width boundary. A too-wide line would wrap
+	// and shear the dialog frame. Drop trailing hints until the line fits.
 	for lipgloss.Width(view) > w && len(bindings) > 1 {
 		bindings = bindings[:len(bindings)-1]
 		view = m.help.ShortHelpView(bindings)
@@ -1477,8 +1477,8 @@ func (m CalendarManagerModel) helpBindings() []key.Binding {
 	case rootFocusInspector:
 		return []key.Binding{footerBinding("tab", "next"), footerBinding("enter", "activate"), footerBinding("esc", "close")}
 	default:
-		// "a add" is omitted: + Add is a visible tab stop in the root ring and
-		// the accelerator keeps working; the compact set keeps esc visible at
+		// "a add" is omitted. + Add is a visible tab stop in the root ring and
+		// the accelerator keeps working. The compact set keeps esc visible at
 		// the manager's minimum widths.
 		return []key.Binding{footerBinding("↑↓", "select"), footerBinding("space", "toggle"), footerBinding("enter", "open"), footerBinding("tab", "next"), footerBinding("esc", "close")}
 	}
@@ -1536,8 +1536,8 @@ func (m CalendarManagerModel) dialogOrigin() (x, y int) {
 // (after the border cell and the 1-space left pad).
 func addMenuContentBoxX() int { return 2 }
 
-// addMenuActionBoxY is the box-local y of the + Add action row: the last body
-// row, directly above the blank and help rows at the end.
+// addMenuActionBoxY is the box-local y of the + Add action row. That is the
+// last body row, directly above the blank and help rows at the end.
 func addMenuActionBoxY(m CalendarManagerModel) int { return 4 + m.managerBodyHeight() - 1 }
 
 // sourceAddActionRendered reports whether the compact + Add action is drawn.
