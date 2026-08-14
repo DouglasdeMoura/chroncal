@@ -10,21 +10,21 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/douglasdemoura/chroncal)](https://goreportcard.com/report/github.com/douglasdemoura/chroncal)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A terminal calendar backed by SQLite with full iCal import/export and CalDAV sync. Launch the TUI for an interactive calendar, or use the CLI for scriptable access to events, todos, journals, alarms, free/busy queries, and calendars.
+chroncal is a terminal calendar. SQLite stores the data. The program supports full iCal import and export, and CalDAV sync. Launch the TUI for an interactive calendar. Use the CLI to script access to events, todos, journals, alarms, free/busy queries, and calendars.
 
-Built for people who live in the terminal and want their calendar data local, portable, and standards-compliant.
+chroncal keeps your calendar data local and portable. The data follows the calendar standards.
 
 ## Features
 
 - **Interactive TUI** with month, week, day, and agenda views
-- **Full CLI** for scripting and automation
+- **Full CLI** for scripts and automation
 - **iCal import/export** with broad RFC 5545 coverage (VEVENT, VTODO, VJOURNAL, VALARM, VTIMEZONE)
-- **CalDAV sync** with account-level collection discovery, selective calendar imports, per-calendar access metadata, conflict handling, at-a-glance sync health, and in-app Google re-authentication
+- **CalDAV sync** with collection discovery, selective imports, access metadata, conflict resolution, sync health, and Google re-auth
 - **Free/busy queries** from local data or remote CalDAV `VFREEBUSY` reports
 - **Recurring events and todos** via RRULE, RDATE, and EXDATE
 - **Recurring journals** via RRULE, RDATE, and EXDATE
 - **Alarm notifications** with desktop alerts, sound, and email
-- **Multiple calendars** with color coding
+- **Multiple calendars** with color codes
 - **Full-text search** across events, todos, and journals
 - **Attendees, attachments, comments, contacts, resources, and relations**
 - **SQLite storage** with automatic migrations
@@ -46,10 +46,7 @@ Built for people who live in the terminal and want their calendar data local, po
 
 ### Install script (Linux / macOS / BSD)
 
-No Go toolchain required. The installer detects your OS and architecture,
-downloads the latest release archive, verifies it against `checksums.txt`, and
-installs `chroncal` to `/usr/local/bin` when possible. If `sudo` is unavailable,
-it falls back to `~/.local/bin`.
+You do not need a Go toolchain. The installer detects your OS and architecture. It downloads the latest release archive. It verifies the archive against `checksums.txt`. It installs `chroncal` to `/usr/local/bin` when possible. If `sudo` is not available, it uses `~/.local/bin`.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/DouglasdeMoura/chroncal/master/scripts/install.sh | sh
@@ -67,8 +64,7 @@ Install somewhere else:
 curl -fsSL https://raw.githubusercontent.com/DouglasdeMoura/chroncal/master/scripts/install.sh | env INSTALL_DIR="$HOME/.local/bin" sh
 ```
 
-If your environment cannot run checksum tools, you can opt out with
-`VERIFY_CHECKSUM=0`, but checksum verification is recommended.
+Do not set `VERIFY_CHECKSUM=0` unless your environment cannot run checksum tools. Checksum verification is the recommended path.
 
 ### Homebrew (macOS / Linux)
 
@@ -88,17 +84,13 @@ Uninstall:
 brew uninstall chroncal
 ```
 
-chroncal ships as a Homebrew cask (prebuilt binary). On Linux this needs
-Homebrew 4.5+ (April 2025), which added cask support. GoReleaser pushes the
-cask to `DouglasdeMoura/homebrew-tap` automatically on each release (when the
-`HOMEBREW_TAP_TOKEN` repository secret is configured); installs from the old
-formula migrate to the cask on `brew upgrade`. If Homebrew is temporarily
-unavailable for a new release, use the install script, mise, Nix, or
-`go install`.
+chroncal ships as a Homebrew cask (prebuilt binary). On Linux this needs Homebrew 4.5+ (April 2025). That version added cask support. GoReleaser pushes the cask to `DouglasdeMoura/homebrew-tap` on each release when the `HOMEBREW_TAP_TOKEN` repository secret is set. Installs from the old formula move to the cask on `brew upgrade`.
+
+If Homebrew is not available for a new release, use the install script, mise, Nix, or `go install`.
 
 ### Go install
 
-Requires [Go](https://go.dev/) 1.25+.
+You need [Go](https://go.dev/) 1.25+.
 
 ```bash
 go install github.com/douglasdemoura/chroncal/cmd/chroncal@latest
@@ -110,8 +102,7 @@ Pin an exact release:
 go install github.com/douglasdemoura/chroncal/cmd/chroncal@v0.2.3
 ```
 
-The binary is usually installed to `$(go env GOPATH)/bin/chroncal`. Make sure
-that directory is on your `PATH`.
+`go install` puts the binary in `$(go env GOPATH)/bin/chroncal`. Put that directory on your `PATH`.
 
 ### mise
 
@@ -127,8 +118,7 @@ Pin an exact release globally:
 mise use -g github:DouglasdeMoura/chroncal@0.2.3
 ```
 
-If a just-published release does not appear yet, clear mise's GitHub release
-cache first:
+If a new release does not appear yet, clear the mise GitHub release cache first:
 
 ```bash
 mise cache clear
@@ -137,7 +127,7 @@ mise ls-remote github:DouglasdeMoura/chroncal
 
 ### Nix
 
-Run without installing:
+Run without an install:
 
 ```bash
 nix run github:DouglasdeMoura/chroncal
@@ -155,8 +145,7 @@ Build the package from a clone:
 nix build .#chroncal
 ```
 
-The flake exposes `packages.default`, `packages.chroncal`, `apps.default`, and a
-developer shell with Go, GoReleaser, golangci-lint, govulncheck, and sqlc.
+The flake exposes `packages.default`, `packages.chroncal`, `apps.default`, and a developer shell with Go, GoReleaser, golangci-lint, govulncheck, and sqlc.
 
 ### Scoop (Windows)
 
@@ -173,22 +162,18 @@ Upgrade:
 scoop update chroncal
 ```
 
-The manifest is generated by GoReleaser and pushed to
-`DouglasdeMoura/scoop-bucket` on each release.
+GoReleaser generates the manifest. It pushes the manifest to `DouglasdeMoura/scoop-bucket` on each release.
 
 ### Arch Linux AUR
 
-Two AUR packages are published:
+The project publishes two AUR packages:
 
 ```bash
 yay -S chroncal-bin  # prebuilt Linux binary from GitHub Releases
 yay -S chroncal      # builds from source with your local Go toolchain
 ```
 
-`chroncal-bin` is fastest for x86_64 and aarch64 users. `chroncal` is the right
-choice when you want to build locally or use another Arch-supported CPU target.
-Both packages are generated by GoReleaser (`aurs` and `aur_sources` in
-`.goreleaser.yml`) and pushed to the AUR automatically on each release.
+`chroncal-bin` is fastest for x86_64 and aarch64 users. Use `chroncal` when you want to build locally or use another Arch-supported CPU target. GoReleaser generates both packages (`aurs` and `aur_sources` in `.goreleaser.yml`). It pushes them to the AUR on each release.
 
 ### Build from source
 
@@ -199,7 +184,7 @@ make build
 ./chroncal version
 ```
 
-Run the test suite before sending changes:
+Run the test suite before you send changes:
 
 ```bash
 go test ./...
@@ -207,27 +192,23 @@ go test ./...
 
 ### Maintainer checklist
 
-Before cutting a release:
+Before you create a release:
 
-1. Make sure CI is green on `master`.
-2. Bump the `VERSION` file to the new version (no leading `v`) — the release
-   workflow refuses to run if it does not match the tag.
+1. Make sure CI passes on `master`.
+2. Bump the `VERSION` file to the new version (no `v` prefix). The release workflow does not run if the file does not match the tag.
 3. Run `goreleaser check` locally if GoReleaser is installed.
-4. Create a `v*` tag and push it.
+4. Create a `v*` tag. Push the tag.
 5. Confirm the GitHub Release includes archives, `checksums.txt`, and install snippets.
 6. Confirm the install script works for the new tag.
 7. Confirm `brew tap douglasdemoura/tap && brew install chroncal` works after the Homebrew tap update.
 8. Confirm `scoop update chroncal` sees the new Scoop manifest.
-9. Confirm the AUR packages were pushed: <https://aur.archlinux.org/packages/chroncal> and <https://aur.archlinux.org/packages/chroncal-bin>.
+9. Confirm the AUR packages exist at <https://aur.archlinux.org/packages/chroncal> and <https://aur.archlinux.org/packages/chroncal-bin>.
 10. Confirm `go install github.com/douglasdemoura/chroncal/cmd/chroncal@<tag>` works.
 11. Confirm `mise use -g github:DouglasdeMoura/chroncal@<version>` resolves the release.
 
-If a release run fails after some assets were already uploaded, do not just
-rerun it: GoReleaser refuses to overwrite existing release assets and the
-rerun dies with `already_exists` before reaching the package publishers.
-Delete the assets first, then rerun the failed job — the release object and
-its notes are kept, and all channels get hashes consistent with the fresh
-assets:
+Do not rerun a failed release job while old assets still exist. GoReleaser does not overwrite release assets that already exist. The rerun fails with `already_exists` before it reaches the package publishers.
+
+Delete the assets first. Then rerun the failed job. The release object and its notes stay. All channels then get hashes that match the new assets:
 
 ```bash
 for a in $(gh release view vX.Y.Z --json assets --jq '.assets[].name'); do
@@ -240,25 +221,18 @@ Required repository secrets:
 
 | Secret | Purpose | Required |
 | --- | --- | --- |
-| `GITHUB_TOKEN` | Created automatically by GitHub Actions; publishes release assets | Yes |
-| `HOMEBREW_TAP_TOKEN` | Personal access token with write access to `DouglasdeMoura/homebrew-tap` | No, but Homebrew updates are skipped without it |
-| `SCOOP_BUCKET_TOKEN` | Personal access token with write access to `DouglasdeMoura/scoop-bucket` | No, but Scoop updates fall back to `HOMEBREW_TAP_TOKEN` if it has access |
-| `AUR_KEY` | Unencrypted SSH private key registered to the AUR maintainer account | No, but AUR publishing is skipped without it |
+| `GITHUB_TOKEN` | GitHub Actions token. Publishes release assets. | Yes |
+| `HOMEBREW_TAP_TOKEN` | Personal access token with write access to `DouglasdeMoura/homebrew-tap` | No. Homebrew updates need this token. |
+| `SCOOP_BUCKET_TOKEN` | Personal access token with write access to `DouglasdeMoura/scoop-bucket` | No. If it is absent, Scoop updates use `HOMEBREW_TAP_TOKEN` when that token has access. |
+| `AUR_KEY` | Unencrypted SSH private key for the AUR maintainer account | No. Without it, the workflow skips AUR publish. |
 
-The flake reads its version from the `VERSION` file, so Nix needs no
-per-release edits. When `go.mod` or `go.sum` changes, the flake's `vendorHash`
-must change with it — the Nix CI workflow builds the flake on any PR touching
-those files and fails on a mismatch. To fix one, run `nix build .#chroncal`,
-copy the `got:` hash into `flake.nix`, and rerun the build. The
-`update-flake-lock` workflow opens a PR refreshing the flake inputs monthly,
-manually, and after a successful release workflow.
+The flake reads its version from the `VERSION` file. Nix needs no per-release edits. When `go.mod` or `go.sum` changes, the flake `vendorHash` must change with it. The Nix CI workflow builds the flake on any PR that changes those files. The build fails on a mismatch.
 
-GoReleaser publishes everything in one run — release assets, Homebrew
-cask, Scoop manifest, and both AUR packages; no manual packaging steps
-remain.
+To fix a mismatch, run `nix build .#chroncal`. Copy the `got:` hash into `flake.nix`. Then run the build again. The `update-flake-lock` workflow opens a PR that refreshes the flake inputs each month, on demand, and after a successful release workflow.
 
-Future package channel: `.deb` and `.rpm` assets can be added later with
-GoReleaser nFPM once the primary package manager channels are stable.
+GoReleaser publishes all of these in one run: release assets, the Homebrew cask, the Scoop manifest, and both AUR packages. There are no manual package steps.
+
+A later release can add `.deb` and `.rpm` assets with GoReleaser nFPM. Do this after the primary package manager channels are stable.
 
 ## Quick start
 
@@ -370,27 +344,15 @@ chroncal account calendars set    <name|id> (--calendar NAME_OR_URL ... | --all 
 chroncal account remove           <name|id> [--yes]
 ```
 
-An account stores one credential and discovers every CalDAV calendar collection
-available to it. `account add` imports every collection that supports `VEVENT`,
-`VTODO`, or `VJOURNAL` and completes an initial sync before returning.
-`account calendars list` refreshes the complete inventory, including already
-selected, read-only, unsupported, and no-longer-available collections.
-`account calendars add` remains additive and idempotent for collections exposed
-later: use `--calendar` repeatedly to add chosen collections, or `--all` to add
-every usable collection. Newly added collections are synced before the command
-returns.
+An account stores one credential. It discovers every CalDAV calendar collection that the credential can reach. `account add` imports every collection that supports `VEVENT`, `VTODO`, or `VJOURNAL`. It completes an initial sync before it returns.
 
-`account calendars set` replaces the exact local selection. Deselected
-calendars and their downloaded data are deleted from Chroncal after
-confirmation, but the remote collections are never deleted. If the current
-default calendar is deselected, pass `--default` with a retained local calendar
-or newly selected remote collection. Newly selected collections are synced
-before the command returns. Selecting none also removes the now-empty account
-and credential. By contrast, `account remove` deletes the credential and
-remote links while preserving downloaded calendars as local copies.
+`account calendars list` refreshes the complete inventory. The list includes selected, read-only, unsupported, and no-longer-available collections. `account calendars add` is additive and idempotent for collections that appear later. Use `--calendar` more than once to add chosen collections. Use `--all` to add every usable collection. The command syncs new collections before it returns.
 
-Read-only collections are available for local browsing and pull-only sync;
-Chroncal does not send metadata changes, resources, or tombstones to them.
+`account calendars set` replaces the exact local selection. After confirmation, Chroncal deletes deselected calendars and their downloaded data. It never deletes the remote collections. If you deselect the current default calendar, pass `--default` with a retained local calendar or a new remote collection. The command syncs new collections before it returns.
+
+If you select none, the command also removes the empty account and credential. `account remove` deletes the credential and remote links. It keeps downloaded calendars as local copies.
+
+You can open read-only collections locally and sync them pull-only. Chroncal does not send metadata changes, resources, or tombstones to them.
 
 ### Calendars
 
@@ -403,13 +365,9 @@ chroncal calendar delete  <id>
 chroncal calendar set-default <id|name>
 ```
 
-`set-default` promotes a calendar to the default; new events, todos, and
-journals without an explicit `--calendar` land there. Exactly one calendar
-is default at any time.
+`set-default` makes a calendar the default. New events, todos, and journals without an explicit `--calendar` go there. Exactly one calendar is the default at any time.
 
-Remote flags can still be used with `create` or `update` to attach one local
-calendar directly to a known CalDAV collection. Prefer `chroncal account` when
-one credential exposes multiple collections:
+You can still use remote flags with `create` or `update` to attach one local calendar to a known CalDAV collection. Prefer `chroncal account` when one credential exposes multiple collections:
 
 ```
 --remote-url <href>
@@ -419,12 +377,9 @@ one credential exposes multiple collections:
 --allow-insecure
 ```
 
-For scripted setup, credentials are read from environment variables instead of
-interactive prompts: `CHRONCAL_PASSWORD` (basic), `CHRONCAL_BEARER_TOKEN`
-(bearer), and `GOOGLE_CLIENT_SECRET` (oauth2). They are intentionally not
-accepted as CLI flags.
+For script setup, the commands read credentials from environment variables, not from prompts: `CHRONCAL_PASSWORD` (basic), `CHRONCAL_BEARER_TOKEN` (bearer), and `GOOGLE_CLIENT_SECRET` (oauth2). The commands do not accept these values as CLI flags.
 
-Pass `--disconnect-remote` on `update` to remove a calendar's remote link.
+Pass `--disconnect-remote` on `update` to remove the remote link of a calendar.
 
 ### iCal import/export
 
@@ -433,9 +388,7 @@ chroncal ical import  <file.ics> [--calendar NAME]
 chroncal ical export  [--calendar NAME] [--from DATE] [--to DATE] [--category TEXT] [--status TEXT] [-f FILE] [--events] [--todos] [--journals]
 ```
 
-Imports are bounded to reduce resource exhaustion from untrusted calendar
-data. `chroncal ical import` rejects `.ics` payloads larger than 8 MiB and
-inline base64 attachments larger than 1 MiB decoded.
+Imports have size limits to reduce resource exhaustion from untrusted calendar data. `chroncal ical import` rejects `.ics` payloads larger than 8 MiB. It also rejects inline base64 attachments larger than 1 MiB decoded.
 
 ### Sync
 
@@ -447,47 +400,28 @@ chroncal sync resolve   <id> --pick {local,server}
 chroncal sync reset     [--calendar NAME]
 ```
 
-Sync operates on each connected calendar independently. Calendars sharing an
-account reuse its credential and sync serially; distinct accounts can sync
-concurrently. Use `chroncal account calendars list` and
-`chroncal account calendars add` to inspect and import remote collections, or
-the calendar remote flags above when attaching one already-known URL directly.
+Sync runs on each connected calendar on its own. Calendars that share an account reuse its credential and sync one after another. Distinct accounts can sync at the same time. Use `chroncal account calendars list` and `chroncal account calendars add` to inspect and import remote collections. Use the calendar remote flags above when you attach one known URL.
 
 ### Google Calendar via CalDAV
 
-Google Calendar requires OAuth 2.0 and only exposes `VEVENT` over CalDAV.
+Google Calendar requires OAuth 2.0. It only exposes `VEVENT` over CalDAV.
 
-Credentials are stored in the OS keyring by default. chroncal uses OAuth PKCE
-for installed-app flows, but Google's token endpoint also requires the Desktop
-client's `client_secret` even with PKCE — so both the client ID *and* the
-client secret are needed at setup time. Refresh tokens (and the client secret)
-are persisted to the keyring after the first authorization, so subsequent
-syncs run unattended.
+The OS keyring stores credentials by default. chroncal uses OAuth PKCE for installed-app flows. The Google token endpoint also requires the Desktop client `client_secret` even with PKCE. You need both the client ID and the client secret at setup time. After the first authorization, the keyring stores refresh tokens and the client secret. Later syncs then run with no prompt.
 
-> **Plaintext fallback caveat.** On systems without an OS keyring, the
-> `--allow-plaintext` fallback writes credentials (including the Google
-> `client_secret`) to a 0600-mode file under `~/.config/chroncal/`. The mode
-> protects against casual `cat`, but not against backups, filesystem
-> snapshots, or sync tools (Dropbox, iCloud, rsync) that ignore Unix
-> permissions. Install a keyring provider (e.g. `libsecret` + `gnome-keyring`
-> on Linux) before using OAuth on shared or backed-up hosts.
+> **Plaintext fallback warning.** Install a keyring provider (for example `libsecret` + `gnome-keyring` on Linux) before you use OAuth on a shared host or a host with backups. On a system with no OS keyring, `--allow-plaintext` writes credentials (and the Google `client_secret`) to a 0600-mode file under `~/.config/chroncal/`. The mode blocks a casual `cat`. It does not block backups, filesystem snapshots, or sync tools (Dropbox, iCloud, rsync) that ignore Unix permissions.
 
-1. Create a **Desktop app** OAuth client in the [Google Cloud Console](https://console.cloud.google.com/apis/credentials). Note both the client ID and the client secret.
-2. Add `https://www.googleapis.com/auth/calendar` to the OAuth consent screen, and add yourself as a Test user while it's in Testing mode.
-3. Enable **both** APIs on the project — they are separate services:
+1. Create a **Desktop app** OAuth client in the [Google Cloud Console](https://console.cloud.google.com/apis/credentials). Record the client ID and the client secret.
+2. Add `https://www.googleapis.com/auth/calendar` to the OAuth consent screen. Add yourself as a Test user while the app is in Testing mode.
+3. Enable **both** APIs on the project. They are separate services:
 
    ```bash
    gcloud services enable calendar-json.googleapis.com --project=YOUR_PROJECT
    gcloud services enable caldav.googleapis.com         --project=YOUR_PROJECT
    ```
 
-   The Calendar JSON API alone is not enough; the CalDAV endpoint will return
-   `403 accessNotConfigured` until `caldav.googleapis.com` is enabled.
+   The Calendar JSON API alone is not enough. The CalDAV endpoint returns `403 accessNotConfigured` until you enable `caldav.googleapis.com`.
 
-4. Add the Google account. Provide the client secret via the
-   `GOOGLE_CLIENT_SECRET` environment variable, or let chroncal prompt for it
-   interactively (echo disabled). The secret is intentionally **not** accepted
-   as a CLI flag — flags leak via process listings and shell history.
+4. Add the Google account. Provide the client secret with the `GOOGLE_CLIENT_SECRET` environment variable, or let chroncal prompt for it (echo disabled). The command does **not** accept the secret as a CLI flag. Flags leak through process listings and shell history.
 
    ```bash
    GOOGLE_CLIENT_SECRET="GOCSPX-…" chroncal account add "Google" \
@@ -497,52 +431,33 @@ syncs run unattended.
      --oauth-client-id "YOUR_CLIENT_ID.apps.googleusercontent.com"
    ```
 
-5. The add command imports and initially syncs every usable calendar in the
-   Google CalendarList, including delegated, family, holiday, and subscription
-   calendars. Inspect the resulting inventory:
+5. The add command imports every usable calendar in the Google CalendarList. It then runs the first sync. This includes delegated, family, holiday, and subscription calendars. Inspect the inventory:
 
    ```bash
    chroncal account calendars list "Google"
    ```
 
-6. Run sync and inspect status:
+6. Run sync and inspect the status:
 
    ```bash
    chroncal sync run
    chroncal sync status
    ```
 
-To connect from the TUI, press `C` (`Shift+C`) or choose **Calendars** in
-the command palette (`/` or `Ctrl+K`), activate the bottom **+ Add** action,
-then choose **Add Account…**. Chroncal discovers, imports, and initially syncs
-every usable collection exposed by that sign-in without a second selection
-step. Unsupported collections are ignored; if discovery finds no usable
-calendars, Chroncal removes the newly created account. Browser authorization
-runs without leaving the app. The same anchored **+ Add** menu creates local
-calendars and imports iCal files; remote calendars belong to an account rather
-than carrying separate credentials.
+To connect from the TUI, press `C` (`Shift+C`) or choose **Calendars** in the command palette (`/` or `Ctrl+K`). Activate the bottom **+ Add** action. Then choose **Add Account…**. Chroncal discovers, imports, and syncs every usable collection for that sign-in. There is no second selection step. Chroncal ignores unsupported collections.
 
-Account maintenance has one entry point. In **Calendars**, select a remote
-account heading and press `Enter`; selecting an account heading in the sidebar
-also opens that inspector. It shows the provider, server URL, login identity,
-calendar count, and sync warnings, with actions to sync now, add or remove
-calendars, rename the account, sign in again for OAuth accounts, or remove the
-account. **Manage Calendars…** replaces the inspector with the discovered
-collection list while keeping the calendar hierarchy mounted. Calendars
-already in Chroncal start checked, and unchecking one removes its local copy
-after destructive confirmation. Removing every collection also removes the
-empty account and its stored credential. **Remove Account…** instead removes
-the remote links and stored sign-in while preserving downloaded calendars as
-local calendars. Calendar metadata editing is likewise inline: name, color,
-description, owner email, default status, and quiet account/sync context.
+If discovery finds no usable calendars, Chroncal removes the new account. Browser authorization runs inside the app. The same **+ Add** menu creates local calendars and imports iCal files. Remote calendars belong to an account. They do not carry separate credentials.
+
+Account maintenance has one entry point. In **Calendars**, select a remote account heading and press `Enter`. Select an account heading in the sidebar to open the same inspector. The inspector shows the provider, server URL, login identity, calendar count, and sync warnings. Actions let you sync now, add or remove calendars, rename the account, sign in again for OAuth accounts, or remove the account.
+
+**Manage Calendars…** replaces the inspector with the discovered collection list. The calendar hierarchy stays mounted. Calendars already in Chroncal start checked. If you uncheck one, Chroncal removes the local copy after destructive confirmation. If you remove every collection, Chroncal also removes the empty account and its stored credential.
+
+**Remove Account…** removes the remote links and stored sign-in. It keeps downloaded calendars as local calendars. Calendar metadata edits are inline: name, color, description, owner email, default status, and quiet account/sync context.
 
 Google limitations:
 
 - Google CalDAV only supports `VEVENT`. Use Nextcloud, Radicale, or Fastmail for `VTODO` and `VJOURNAL`.
-- Google paginates large `sync-collection` REPORT responses (RFC 6578 §3.6),
-  returning a `507` marker plus a continuation token; chroncal follows the
-  pages and applies the union, so the initial sync of a big calendar pulls
-  every event.
+- Google paginates large `sync-collection` REPORT responses (RFC 6578 §3.6). It returns a `507` marker plus a continuation token. chroncal follows the pages and applies the union. The first sync of a large calendar then pulls every event.
 
 ### Free/busy
 
@@ -563,36 +478,23 @@ chroncal alarm daemon   [--interval DURATION] # Run alarm checks in a loop (defa
 chroncal alarm missed   [--days N]            # Show missed alarms (default lookback: 7 days)
 ```
 
-Attach alarms when creating or updating events and todos with `--alarm`
-(repeatable). The format is `[ACTION:]TRIGGER[:DESC:REPEAT:DURATION:RELATED:ATTENDEES]`,
-where ACTION is `DISPLAY` (default), `EMAIL`, or `AUDIO`, and TRIGGER is an
-RFC 5545 duration relative to the start (`-PT15M` = 15 minutes before) or an
-RFC 3339 absolute time. Only the trigger is required:
+Attach alarms with `--alarm` when you create or update events and todos (repeatable). The format is `[ACTION:]TRIGGER[:DESC:REPEAT:DURATION:RELATED:ATTENDEES]`. ACTION is `DISPLAY` (default), `EMAIL`, or `AUDIO`. TRIGGER is an RFC 5545 duration relative to the start (`-PT15M` = 15 minutes before) or an RFC 3339 absolute time. Only the trigger is required:
 
 ```bash
 chroncal event add "Standup" --date 2026-06-15 --time 09:00 --alarm "-PT15M"
 chroncal event add "Release" --date 2026-06-15 --time 14:00 --alarm "DISPLAY:-PT30M::3:PT5M"  # repeat 3x every 5 min
 ```
 
-See `chroncal event add --help` for the extended fields.
+See `chroncal event add --help` for the extra fields.
 
-#### Getting notified
+#### Receive notifications
 
-Storing an alarm is not enough by itself — something has to run
-`chroncal alarm check` periodically to fire it. Two options:
+A stored alarm does not fire on its own. Something must run `chroncal alarm check` on a schedule. Two options:
 
-1. **Background service (recommended):** `chroncal service install` sets up a
-   user-level systemd timer (Linux), launchd agent (macOS), or Scheduled Task
-   (Windows) that ticks every minute. No terminal needs to stay open.
-2. **Foreground loop:** `chroncal alarm daemon` checks every 30 seconds until
-   interrupted. Useful for testing or tmux-resident setups.
+1. **Background service (recommended):** `chroncal service install` sets up a user-level systemd timer (Linux), launchd agent (macOS), or Scheduled Task (Windows). The unit ticks every minute. No terminal needs to stay open.
+2. **Foreground loop:** `chroncal alarm daemon` checks every 30 seconds until you interrupt it. Use this for tests or a tmux session.
 
-With either in place, a `DISPLAY` alarm pops a desktop notification at trigger
-time (15 minutes before the event in the example above). `AUDIO` alarms also
-play a sound, and `EMAIL` alarms send mail — see
-[SMTP (for email alarms)](#smtp-for-email-alarms) and the
-`security.allow_unsafe_alarm_*` config options. If nothing appears, check
-[Desktop notification backends](#desktop-notification-backends).
+With either option in place, a `DISPLAY` alarm shows a desktop notification at trigger time (15 minutes before the event in the example above). `AUDIO` alarms also play a sound. `EMAIL` alarms send mail. See [SMTP (for email alarms)](#smtp-for-email-alarms) and the `security.allow_unsafe_alarm_*` config options. If nothing appears, check [Desktop notification backends](#desktop-notification-backends).
 
 ### Service (alarm background service)
 
@@ -603,66 +505,55 @@ chroncal service uninstall
 chroncal service status
 ```
 
-The installed unit runs `chroncal service run` every minute, which fires due
-alarms and also runs CalDAV sync when the configured sync interval is due.
-`chroncal service install` defaults that interval to 15 minutes; pass a
-different interval to tune it:
+The installed unit runs `chroncal service run` every minute. That command fires due alarms. It also runs CalDAV sync when the configured sync interval is due. `chroncal service install` defaults that interval to 15 minutes. Pass a different interval to change it:
 
 ```bash
 chroncal service install --sync-interval 5m
 ```
 
-Set `sync.interval` in `config.toml` to change the default used by future
-installs, or pass `--sync-interval ""` when installing to disable background
-sync while keeping alarm checks.
+Set `sync.interval` in `config.toml` to change the default for later installs. Pass `--sync-interval ""` at install time to disable background sync and keep alarm checks.
 
 ### Global flags
 
 All commands accept `-o, --output {text,json}` (default: text).
 
-### Scripting and LLM use
+### Scripts and LLM use
 
-The CLI is meant to be driven from shells and language models, not just typed by hand. The agent-friendly path:
+The CLI is for shells and language models, not only for hand input. The agent-friendly path:
 
-- Pass `-o json` (or `--output json`) on every read/write command. The shape is stable, omits empty optional fields, and write commands return the new row so a script can capture the `id` / `uid`. This applies to read commands too — `sync status`, `sync conflicts`, `freebusy`, and `alarm list` all emit JSON arrays/objects under `-o json`; an empty result is `[]`, not prose.
-- Timestamps in JSON are RFC 3339 UTC with a `Z` suffix (`2026-04-21T13:00:00Z`). Text mode prints in your local timezone; only JSON normalizes to UTC so cross-machine comparisons stay honest.
-- Check the exit code. `0` on success, non-zero on any failure. Errors go to **stderr**, never stdout, so `cmd -o json | jq …` is safe — on failure stdout is empty.
+- Pass `-o json` (or `--output json`) on every read or write command. The shape is stable. It omits empty optional fields. Write commands return the new row so a script can capture the `id` / `uid`. This also applies to read commands. `sync status`, `sync conflicts`, `freebusy`, and `alarm list` all emit JSON arrays or objects under `-o json`. An empty result is `[]`, not prose.
+- Timestamps in JSON are RFC 3339 UTC with a `Z` suffix (`2026-04-21T13:00:00Z`). Text mode prints in your local timezone. Only JSON uses UTC so cross-machine comparisons stay honest.
+- Check the exit code. `0` means success. A non-zero code means failure. Errors go to **stderr**, never stdout. `cmd -o json | jq …` is safe. On failure, stdout is empty.
 - Errors honor `-o json`. They emit one JSON object on stderr with a `code` field:
 
   ```json
   {"code": "not_found", "error": "event 999 not found"}
   ```
 
-  Codes are `not_found`, `invalid_input`, `aborted`, or `error` (catch-all). The `error` field is the user-facing message; internal call-chain prefixes (e.g. `get event:`) are stripped, so dispatch on `code` and surface `error` directly.
-- References accept either the numeric `id` or the string `uid`. Recurring overrides additionally take `--recurrence-id <RFC3339>` to target a single instance.
-- Dates are `YYYY-MM-DD`. Times are `HH:MM` local unless a command accepts `--timezone`. Durations are Go-style (`30m`, `1h30m`) and some flags also accept RFC 5545 (`PT1H30M`).
-- If you want plain text (no JSON), pass `--compact` for one line per row, suitable for `grep`, `awk`, and friends. Available on `event list`, `event search`, `todo list`, `journal list`, and `calendar list`.
+  Codes are `not_found`, `invalid_input`, `aborted`, or `error` (catch-all). The `error` field is the user-facing message. The output strips internal call-chain prefixes (for example `get event:`). Dispatch on `code` and show `error` directly.
+- References accept either the numeric `id` or the string `uid`. Recurring overrides also take `--recurrence-id <RFC3339>` to target a single instance.
+- Dates are `YYYY-MM-DD`. Times are `HH:MM` local unless a command accepts `--timezone`. Durations are Go-style (`30m`, `1h30m`). Some flags also accept RFC 5545 (`PT1H30M`).
+- If you want plain text (no JSON), pass `--compact` for one line per row. That form works with `grep` and `awk`. It is available on `event list`, `event search`, `todo list`, `journal list`, and `calendar list`.
 
 ```bash
-# Round-trip: create then read back the new event
+# Round-trip: create the event, then read it back
 uid=$(chroncal event add "Demo" --date 2026-06-01 --time 09:00 --output json | jq -r .uid)
 chroncal event get "$uid" --output json
 ```
 
 ### Destructive operations
 
-`event delete`, `todo delete`, `journal delete`, and `calendar delete` prompt
-for confirmation before destroying data. The prompt is bypassed when any of
-the following is true, so scripted use keeps working:
+`event delete`, `todo delete`, `journal delete`, and `calendar delete` prompt for confirmation before they destroy data. The prompt is skipped when any of these is true, so scripts can still run:
 
 - `--yes` / `-y` is passed
 - `CHRONCAL_ASSUME_YES=1` is set in the environment
-- `--output` is `json` (machine-readable implies scripted)
+- `--output` is `json` (machine-readable means scripted)
 
-In a non-interactive shell without any of the above, the command refuses
-rather than silently auto-confirming.
+In a non-interactive shell without any of the above, the command refuses. It does not auto-confirm in silence.
 
 ### Soft-delete + restore
 
-Events, todos, and journals are soft-deleted by default. The row stays in
-the database with a `deleted_at` timestamp so you can restore it later.
-After a retention window (default 30 days) a background purge hard-deletes
-rows older than the cutoff.
+Events, todos, and journals use soft-delete by default. The row stays in the database with a `deleted_at` timestamp so you can restore it later. After a retention window (default 30 days), a background purge hard-deletes rows older than the cutoff.
 
 ```
 chroncal event   restore <id|uid>
@@ -674,56 +565,33 @@ chroncal todo    purge-deleted [--older-than DURATION] [--yes]
 chroncal journal purge-deleted [--older-than DURATION] [--yes]
 ```
 
-List soft-deleted candidates with `--include-deleted` on the matching
-`list` command. In the TUI, press `D` to open the mixed "Recently deleted"
-dialog which spans all three resource types; `r` restores the cursor row,
-`x` purges it, and space toggles multi-select so you can bulk restore or
-bulk purge.
+List soft-deleted candidates with `--include-deleted` on the related `list` command. In the TUI, press `D` to open the mixed "Recently deleted" dialog. The dialog covers all three resource types. `r` restores the cursor row. `x` purges it. Space toggles multi-select so you can restore or purge many rows.
 
 ## TUI
 
-Run `chroncal` with no arguments to launch the interactive terminal interface.
+Run `chroncal` with no arguments to launch the interactive terminal UI.
 
 **Views**: month, week, day, agenda. Switch with `m`, `w`, `d`, `a`.
 
-The TUI supports creating, editing, viewing, and deleting events, with full
-details including alarms, attendees, and attachments. Use `u` to undo a
-delete. The sidebar uses quiet, collapsible account sections, including a
-separate **Local** section. Active calendars show an item-colored filled `●`
-circle; hidden calendars show an outline `○` circle. Space or clicking the
-circle toggles visibility. Calendar colors remain on calendar rows rather than
-account headings. On an account heading, `Left`/`Right` collapse or expand,
-`Enter` opens **Account settings**, and `Shift+Up`/`Shift+Down` persistently
-reorder complete remote-account sections while keeping **Local** first. The
-same reorder keys move calendars only within their own account. Hidden state
-and scrolling operate on calendar rows rather than group headings. Read-only
-imported calendars remain browsable but reject event edits and deletes.
+The TUI can create, edit, view, and delete events. Event details include alarms, attendees, and attachments. Use `u` to undo a delete.
 
-**Calendars** opens an account-grouped manager with the calendar hierarchy on
-the left and an inspector on the right. Calendar rows keep visibility (a
-checkbox) separate from identity (the calendar-color dot); Space or the
-checkbox toggles the same visibility state shown by sidebar circles. Account
-headings collapse with Left/Right and open account settings with Enter. The
-root inspector keeps a calendar's **Edit…** action or an account's **Account
-Settings…** action at the bottom. Enter or a calendar-row body click opens
-metadata, export, default-calendar, and delete controls while the hierarchy
-remains mounted. Linked calendar details drill into account settings without
-losing unsaved calendar edits.
+The sidebar uses quiet, collapsible account sections. There is a separate **Local** section. Active calendars show an item-colored filled `●` circle. Hidden calendars show an outline `○` circle. Space or a click on the circle toggles visibility. Calendar colors stay on calendar rows, not on account headings.
 
-The source list has a bottom **+ Add** action. It opens an anchored menu for
-**New Calendar…**, **Add Account…**, and **Import Calendar File…**. Account
-connection signs in once and adds every usable remote calendar; iCal import
-retains its preview and compatible-destination selection. Todo and journal
-management live in the CLI for now.
+On an account heading, `Left`/`Right` collapse or expand the section. `Enter` opens **Account settings**. `Shift+Up`/`Shift+Down` reorder complete remote-account sections. **Local** stays first. The same reorder keys move calendars only within their own account.
 
-Sync health is visible at a glance: a calendar whose last sync failed shows
-a `⚠` next to it in the sidebar, and opening it explains why (and offers a
-fix). See [Google Calendar via CalDAV](#google-calendar-via-caldav) for the
-OAuth flow.
+Hidden state and scroll apply to calendar rows, not to group headings. Read-only imported calendars stay browsable. They reject event edits and deletes.
+
+**Calendars** opens an account-grouped manager. The calendar hierarchy is on the left. An inspector is on the right. Calendar rows keep visibility (a checkbox) separate from identity (the calendar-color dot). Space or the checkbox toggles the same visibility state as the sidebar circles.
+
+Account headings collapse with Left/Right. Enter opens account settings. The root inspector keeps a calendar **Edit…** action or an account **Account Settings…** action at the bottom. Enter or a click on a calendar-row body opens metadata, export, default-calendar, and delete controls. The hierarchy stays mounted. Linked calendar details open account settings without a loss of unsaved calendar edits.
+
+The source list has a bottom **+ Add** action. It opens an anchored menu for **New Calendar…**, **Add Account…**, and **Import Calendar File…**. Account connection signs in once and adds every usable remote calendar. iCal import keeps its preview and the selection of a compatible destination. Todo and journal management live in the CLI for now.
+
+A calendar whose last sync failed shows a `⚠` next to it in the sidebar. Open it to see why and to get a fix. See [Google Calendar via CalDAV](#google-calendar-via-caldav) for the OAuth flow.
 
 ## Configuration
 
-Configuration is loaded in order of precedence:
+Configuration loads in this order of precedence:
 
 1. **Environment variables** (prefix `CHRONCAL_`, e.g., `CHRONCAL_DB`)
 2. **Config file** at `$XDG_CONFIG_HOME/chroncal/config.toml` (or `~/.config/chroncal/config.toml`)
@@ -736,40 +604,27 @@ Configuration is loaded in order of precedence:
 | `db` | Path to SQLite database | `$XDG_DATA_HOME/chroncal/chroncal.db` |
 | `product_id` | iCal PRODID for export | `-//chroncal//chroncal//EN` |
 | `ui.theme` | Built-in TUI theme name under `internal/tui/themes/` (`system` or `default`; see [TUI themes](#tui-themes)) | `system` |
-| `soft_delete.purge_days` | Days to retain soft-deleted rows before the background purge. `0` disables automatic purging. | `30` |
-| `sync.interval` | Minimum interval between background CalDAV syncs performed by `chroncal service run`; `service install` defaults to `15m` when this is unset | (unset — no sync unless the installed service sets `CHRONCAL_SYNC_INTERVAL`) |
-| `sync.conflict_strategy` | Default conflict-resolution mode when `sync run --conflict` is not passed | (unset) |
+| `soft_delete.purge_days` | Days to keep soft-deleted rows before the background purge. `0` disables automatic purge. | `30` |
+| `sync.interval` | Minimum interval between background CalDAV syncs that `chroncal service run` performs. `service install` defaults to `15m` when this is unset. | (unset — no sync unless the installed service sets `CHRONCAL_SYNC_INTERVAL`) |
+| `sync.conflict_strategy` | Default conflict-resolution mode when you do not pass `sync run --conflict` | (unset) |
 | `security.allow_unsafe_alarm_audio_attach` | Allow AUDIO alarms to attach arbitrary URIs. Off by default. | `false` |
 | `security.allow_unsafe_alarm_email_attendees` | Allow EMAIL alarms to send to unverified attendee addresses. Off by default. | `false` |
 
-Every key is also available as an environment variable (`CHRONCAL_` prefix,
-dots become underscores): for example `CHRONCAL_UI_THEME`,
-`CHRONCAL_SOFT_DELETE_PURGE_DAYS`, `CHRONCAL_SYNC_INTERVAL`.
+Every key is also available as an environment variable (`CHRONCAL_` prefix, dots become underscores). Examples: `CHRONCAL_UI_THEME`, `CHRONCAL_SOFT_DELETE_PURGE_DAYS`, `CHRONCAL_SYNC_INTERVAL`.
 
 ### TUI themes
 
 The TUI ships two built-in themes:
 
-- **`system`** (default) — chrome (text, borders, surfaces, dim text)
-  inherits the terminal's ANSI palette (`color0..15`), so the TUI follows
-  themed terminal setups like
-  [Omarchy](https://learn.omacom.io/2/the-omarchy-manual/52/themes),
-  Catppuccin, Gruvbox, Tokyo Night, or anything that paints the standard
-  16 colors in your terminal config. The row-selection highlight adapts to
-  the live terminal background via OSC 11. Accent colors (buttons,
-  badges, "today", errors) sit on a fixed Dracula palette so the
-  text-on-accent contrast stays guaranteed across themes.
-- **`default`** — fixed designer palette (violet primary, sky secondary,
-  emerald accent) with light/dark variants. Ignores the terminal palette.
-  Pick this if you don't theme your terminal or want the same look on
-  every machine.
+- **`system`** (default) — Chrome (text, borders, surfaces, dim text) inherits the terminal ANSI palette (`color0..15`). The TUI then follows themed terminal setups such as [Omarchy](https://learn.omacom.io/2/the-omarchy-manual/52/themes), Catppuccin, Gruvbox, Tokyo Night, or any setup that paints the standard 16 colors. The row-selection highlight adapts to the live terminal background via OSC 11. Accent colors (buttons, badges, "today", errors) sit on a fixed Dracula palette. Text-on-accent contrast then stays guaranteed across themes.
+- **`default`** — Fixed designer palette (violet primary, sky secondary, emerald accent) with light and dark variants. This theme ignores the terminal palette. Pick this if you do not theme your terminal, or if you want the same look on every machine.
 
 Override with `ui.theme = "default"` in `config.toml` or
 `CHRONCAL_UI_THEME=default`.
 
 ### SMTP (for email alarms)
 
-Configure via environment variables or `config.toml`:
+Configure with environment variables or `config.toml`:
 
 ```toml
 [smtp]
@@ -784,16 +639,9 @@ Or via environment: `CHRONCAL_SMTP_HOST`, `CHRONCAL_SMTP_PORT`, `CHRONCAL_SMTP_U
 
 ### Desktop notification backends
 
-`chroncal alarm check` records fired alarms even in headless environments, but
-`DISPLAY` and `AUDIO` notifications still need an OS notification backend. On
-Linux that means a D-Bus notification daemon — the one built into GNOME or KDE,
-or a standalone daemon such as `mako` or `dunst` on lighter setups. On macOS
-and Windows (toast notifications), they work out of the box. On minimal
-containers or SSH sessions without desktop tooling, notification delivery can
-fail even though the alarm is detected and listed by `chroncal alarm list`.
-Sound playback on Linux uses `paplay` (with `aplay` as fallback) and macOS uses
-`afplay`; Windows has no sound-file playback, so `AUDIO` alarms show the toast
-with a system beep instead.
+`chroncal alarm check` records fired alarms even in headless environments. `DISPLAY` and `AUDIO` notifications still need an OS notification backend. On Linux that backend is a D-Bus notification daemon. GNOME and KDE include one. Lighter setups can use a standalone daemon such as `mako` or `dunst`.
+
+On macOS and Windows (toast notifications), they work with no extra setup. On a minimal container or an SSH session with no desktop tools, notification delivery can fail. The alarm is still detected and listed by `chroncal alarm list`. Sound playback on Linux uses `paplay` (with `aplay` as fallback). macOS uses `afplay`. Windows has no sound-file playback, so `AUDIO` alarms show the toast with a system beep.
 
 ## Data storage
 
@@ -804,14 +652,9 @@ The database is a single SQLite file:
 
 Override with `CHRONCAL_DB` or the `db` config key.
 
-Migrations run automatically on startup. WAL mode is enabled for better concurrency.
+Migrations run on startup. WAL mode is on for better concurrency.
 
-Background jobs that run while the TUI owns the terminal log to a file
-instead of the screen. The soft-delete purge writes its outcomes and
-failures to `$XDG_STATE_HOME/chroncal/chroncal.log` (Linux default
-`~/.local/state/chroncal/chroncal.log`; on macOS the state directory
-falls back to `~/Library/Application Support`). The file grows by at
-most a few lines per day, so it is never rotated.
+Background jobs that run while the TUI owns the terminal write logs to a file, not to the screen. The soft-delete purge writes outcomes and failures to `$XDG_STATE_HOME/chroncal/chroncal.log`. The Linux default is `~/.local/state/chroncal/chroncal.log`. On macOS the state directory is `~/Library/Application Support`. The file grows by at most a few lines per day. The program does not rotate it.
 
 ## iCal compatibility
 
@@ -822,58 +665,42 @@ chroncal aims for complete RFC 5545 compliance. Current coverage:
 - **VJOURNAL**: core component import/export and CalDAV sync support
 - **VALARM**: 7/7 properties, plus RFC 9074 UID support
 - **ATTENDEE/ORGANIZER**: all 11 parameters
-- **VTIMEZONE**: round-trip preservation
-- **VFREEBUSY**: local compute/export plus remote CalDAV query support
+- **VTIMEZONE**: round-trip fidelity
+- **VFREEBUSY**: local compute and export, plus remote CalDAV query support
 
 Import from Google Calendar, Apple Calendar, Thunderbird, or any RFC 5545-compliant source. Export produces standards-compliant `.ics` files.
 
-For safety, chroncal applies size limits to untrusted imports and inline
-attachments before storing them locally or sending them to linked CalDAV
-servers.
+For safety, chroncal applies size limits to untrusted imports and inline attachments. It applies the limits before it stores the data locally or sends the data to linked CalDAV servers.
 
 ## CalDAV interoperability
 
-Live interoperability QA has been run against Nextcloud CalDAV with:
+Live interoperability QA ran against Nextcloud CalDAV with:
 
-- `VEVENT`: create, update, delete, recurrence, timezone, conflict handling
-- `VTODO`: create, update, delete, recurrence, duration/start semantics, conflict handling
-- `VJOURNAL`: create, update, delete, recurrence, conflict handling
-- `VALARM`: round-trip sync on `VEVENT` and `VTODO`, including repeated alarms
+- `VEVENT`: create, update, delete, recurrence, timezone, conflict resolution
+- `VTODO`: create, update, delete, recurrence, duration/start semantics, conflict resolution
+- `VJOURNAL`: create, update, delete, recurrence, conflict resolution
+- `VALARM`: round-trip sync on `VEVENT` and `VTODO`, with repeated alarms
 
-Nextcloud does not expose a `VJOURNAL` collection by default, but chroncal
-interoperates cleanly with a dedicated CalDAV calendar created with
-`supported-calendar-component-set = VJOURNAL`.
+Nextcloud does not expose a `VJOURNAL` collection by default. chroncal works with a dedicated CalDAV calendar created with `supported-calendar-component-set = VJOURNAL`.
 
 ## Desktop icon
 
-chroncal ships an application icon under [`assets/`](assets/): a vector master
-(`chroncal.svg`) plus rasterized PNGs from 16px to 512px. Being a terminal app,
-chroncal is normally launched by typing `chroncal` (or a shell alias), exactly
-like `lazygit` or `lazydocker` — the icon is there for when you'd rather give it
-a graphical launcher tile.
+chroncal ships an application icon under [`assets/`](assets/). The set is a vector master (`chroncal.svg`) plus raster PNGs from 16px to 512px. chroncal is a terminal app. You normally launch it by typing `chroncal` (or a shell alias), like `lazygit` or `lazydocker`. Use the icon when you want a graphical launcher tile.
 
 ### Omarchy
 
-[Omarchy](https://omarchy.org/) has a built-in command for turning a terminal
-app into a launcher tile, so you don't have to write a `.desktop` file by hand.
-Point it at chroncal's icon and you're done — find it afterwards with
-**SUPER + SPACE**:
+[Omarchy](https://omarchy.org/) has a built-in command that turns a terminal app into a launcher tile. You do not have to write a `.desktop` file by hand. Point it at the chroncal icon. Then find the tile with **SUPER + SPACE**:
 
 ```bash
 omarchy tui install chroncal chroncal float \
   https://raw.githubusercontent.com/DouglasdeMoura/chroncal/master/assets/chroncal-512.png
 ```
 
-The four arguments are `name command window-style icon-url`. `float` opens
-chroncal in a centered floating window (Omarchy's `TUI.float` window rule); pass
-`tile` instead to have it tile like a normal window. The launcher runs chroncal
-through `xdg-terminal-exec`, so it opens in whatever terminal you've configured —
-nothing is hardcoded. The icon is downloaded into
-`~/.local/share/applications/icons/`, so it keeps working after the command
-finishes.
+The four arguments are `name command window-style icon-url`. `float` opens chroncal in a centered floating window (Omarchy's `TUI.float` window rule). Pass `tile` instead to tile it like a normal window. The launcher runs chroncal through `xdg-terminal-exec`. It opens in the terminal that you configured. Nothing is hardcoded.
 
-If you have the repo cloned, point at the local vector master instead for a
-crisp icon at any size (it's referenced in place, so keep the file around):
+The icon is downloaded into `~/.local/share/applications/icons/`. It still works after the command finishes.
+
+If you cloned the repo, point at the local vector master instead for a crisp icon at any size. The launcher references the file in place, so keep the file:
 
 ```bash
 omarchy tui install chroncal chroncal float "$PWD/assets/chroncal.svg"
@@ -883,8 +710,7 @@ Remove the launcher later with `omarchy tui remove chroncal`.
 
 ### Other launchers (walker, rofi, GNOME, KDE)
 
-On any other freedesktop setup, register the icon with a `.desktop` entry by
-hand:
+On any other freedesktop setup, register the icon with a `.desktop` entry by hand:
 
 ```bash
 # Install the icon into your user icon theme
@@ -905,13 +731,11 @@ EOF
 ```
 
 Swap `alacritty` for your terminal of choice (`ghostty`, `kitty`, `foot`, …).
-The icon's deep petrol tile is tuned to keep its silhouette against dark
-wallpapers like the ones Omarchy ships with, so it stays legible in the
-launcher rather than melting into the background.
+The icon uses a deep petrol tile. That color keeps the silhouette visible against dark wallpapers such as the ones Omarchy ships. The icon stays readable in the launcher. It does not fade into the background.
 
-## Contributing
+## Contribute
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and code conventions.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, tests, and code conventions.
 
 ## Links
 
@@ -919,7 +743,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and code 
 - [Go Package Reference](https://pkg.go.dev/github.com/douglasdemoura/chroncal)
 - [Issue Tracker](https://github.com/DouglasdeMoura/chroncal/issues)
 - [Releases](https://github.com/DouglasdeMoura/chroncal/releases)
-- [Contributing Guide](CONTRIBUTING.md)
+- [Contributor guide](CONTRIBUTING.md)
 - [Security Policy](SECURITY.md)
 
 ## License
