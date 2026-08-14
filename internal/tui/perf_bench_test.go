@@ -29,7 +29,7 @@ func benchEvents(n int) []event.Event {
 }
 
 // TestEventDialogFramedDimensions guards against the manual frame
-// drifting out of sync with BoxSize, which would let the dialog over-
+// that drifts out of sync with BoxSize. That would let the dialog over-
 // or under-paint by a row/column.
 func TestEventDialogFramedDimensions(t *testing.T) {
 	evs := benchEvents(96)
