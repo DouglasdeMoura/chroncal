@@ -15,11 +15,11 @@ import (
 )
 
 // Agenda window sizing constants. The window grows as the user scrolls
-// near either edge (infinite scroll); there is no hard cap — the opposite
-// edge is never slid, because doing so would drop content the user is
-// still looking at. Memory is bounded by the user's scrolling: each
-// expansion adds AgendaExpandStep days, so a typical session stays well
-// under any meaningful limit. Initial loads use AgendaWindowDays.
+// near either edge (infinite scroll). There is no hard cap. The opposite
+// edge is never slid. That would drop content the user still looks at.
+// Memory is bounded by the user's scroll. Each expansion adds
+// AgendaExpandStep days. A typical session then stays well under any
+// meaningful limit. Initial loads use AgendaWindowDays.
 const (
 	AgendaWindowDays  = 30
 	AgendaExpandStep  = 30
@@ -87,11 +87,11 @@ func defaultAgendaKeys() agendaKeyMap {
 }
 
 // agendaRow is one rendered line in the agenda. Event rows are selectable
-// and show the dot/time/title/calendar layout; separator rows are blank
-// spacers drawn between day groups; monthHeader rows repeat the top-of-
-// view title at each month boundary; emptyDay rows surface days with no
-// events (shown only when the toggle is on), rendered with the day
-// column and a faint "no events" label.
+// and show the dot/time/title/calendar layout. Separator rows are blank
+// spacers drawn between day groups. monthHeader rows repeat the top-of-
+// view title at each month boundary. emptyDay rows surface days with no
+// events (shown only when the toggle is on). They are rendered with the
+// day column and a faint "no events" label.
 type agendaRow struct {
 	day         time.Time
 	event       event.Event
@@ -166,9 +166,9 @@ func (m AgendaModel) WindowEnd() time.Time { return m.windowEnd }
 
 // ResetWindow re-centers the window around day with the default initial
 // size. Use this after a "jump" navigation (today, sidebar click,
-// h/l/[/] keys) so the next load reads a tight range around the target.
-// Clears the prior selection so the next SetEvents lands the cursor day
-// (or first event on/after it) at the top of the viewport — the prior
+// h/l/[/] keys). The next load then reads a tight range around the target.
+// It clears the prior selection so the next SetEvents lands the cursor day
+// (or first event on/after it) at the top of the viewport. The prior
 // selection's identity no longer applies after an explicit jump.
 func (m AgendaModel) ResetWindow(day time.Time) AgendaModel {
 	d := dayAligned(day)
@@ -215,7 +215,7 @@ func (m AgendaModel) SetSelectedColor(c color.Color) AgendaModel {
 func (m AgendaModel) ShowEmptyDays() bool { return m.showEmptyDays }
 
 // SetShowEmptyDays sets the visibility of empty-day placeholder rows
-// without rebuilding — callers should follow with SetEvents when the
+// with no rebuild. Callers should follow with SetEvents when the
 // change is user-facing.
 func (m AgendaModel) SetShowEmptyDays(v bool) AgendaModel {
 	m.showEmptyDays = v
@@ -224,21 +224,21 @@ func (m AgendaModel) SetShowEmptyDays(v bool) AgendaModel {
 
 // SelectCurrentOrNext marks the next SetEvents to pick the first event
 // on the cursor day whose end time is after now (or any all-day event),
-// instead of the day's first event. One-shot — used when the user lands
-// on the agenda view on today so the cursor sits on what's happening
+// instead of the day's first event. One-shot. Used when the user lands
+// on the agenda view on today. The cursor then sits on what happens
 // now or next, not on a meeting that already ended.
 func (m AgendaModel) SelectCurrentOrNext(now time.Time) AgendaModel {
 	m.pendingSelectNow = now
 	return m
 }
 
-// SetEvents updates the cached event slice, the calendar info used for color
-// and name lookups, and rebuilds the rendered rows. The previously-selected
-// event is re-located by identity so background reloads and infinite-scroll
-// expansions don't yank the user's selection away; when an anchor day was
-// set (by an edge expansion), scroll also restores to that day so the
-// viewport stays visually stable. Falls back to the cursor day when there
-// was no prior selection.
+// SetEvents updates the cached event slice and the calendar info used for
+// color and name lookups. It rebuilds the rendered rows. The previously-
+// selected event is re-located by identity. Background reloads and
+// infinite-scroll expansions then do not yank the user's selection away.
+// When an anchor day was set (by an edge expansion), scroll also restores
+// to that day so the viewport stays visually stable. It falls back to the
+// cursor day when there was no prior selection.
 func (m AgendaModel) SetEvents(events []event.Event, calendars map[int64]CalendarInfo) AgendaModel {
 	m.events = events
 	m.calendars = calendars
@@ -334,8 +334,8 @@ func (m AgendaModel) SetEvents(events []event.Event, calendars map[int64]Calenda
 	return m
 }
 
-// SelectedDay returns the day associated with the current selection, falling
-// back to the cursor when no row is selected.
+// SelectedDay returns the day associated with the current selection. It
+// falls back to the cursor when no row is selected.
 func (m AgendaModel) SelectedDay() time.Time {
 	if m.selected >= 0 && m.selected < len(m.rows) {
 		return m.rows[m.selected].day
@@ -568,8 +568,8 @@ func (m AgendaModel) renderEmptyDayRow(r agendaRow, selected bool) string {
 }
 
 // renderEventRow composes a single agenda line. When selected, the
-// highlight starts at the time column and paints to the end of the line;
-// the day column is intentionally left unpainted so the date badge
+// highlight starts at the time column and paints to the end of the line.
+// The day column is intentionally left unpainted so the date badge
 // remains visually anchored.
 func (m AgendaModel) renderEventRow(r agendaRow, selected bool) string {
 	ev := r.event
@@ -627,7 +627,7 @@ func (m AgendaModel) renderEventRow(r agendaRow, selected bool) string {
 // of the first event row of a calendar day. Continuation rows get a blank
 // column. Today's day number is rendered in a filled pill using the theme
 // "today" color. The day column is never painted by the selection
-// highlight — callers pass an empty base so the date badge stays visually
+// highlight. Callers pass an empty base so the date badge stays visually
 // anchored regardless of row state.
 func (m AgendaModel) renderDayColumn(r agendaRow, base lipgloss.Style, _ bool) string {
 	if !r.firstOfDay {
@@ -721,16 +721,16 @@ func (m AgendaModel) maxScroll(viewportH int) int {
 }
 
 // MaybeFillViewport returns a forward-expansion command when the loaded
-// rows don't fill the visible area — used by the host after a fresh
-// SetEvents (e.g. after `[`/`]` jumps) so sparse months automatically
-// pull in the next month's events instead of leaving blank rows below.
+// rows do not fill the visible area. The host uses it after a fresh
+// SetEvents (for example after `[`/`]` jumps). Sparse months then
+// pull in the next month's events instead of blank rows below.
 //
-// The host calls this after every load, including the load it triggers,
-// so it must self-terminate. Unlike scroll-driven expansion there's no
-// scroll position to bound it; instead it stops once an expansion fails
-// to add rows. Without that guard a calendar with a few events in a tall
+// The host calls this after every load, the load it triggers included.
+// It must self-terminate. Unlike scroll-driven expansion there is no
+// scroll position to bound it. It stops once an expansion fails to add
+// rows. Without that guard a calendar with a few events in a tall
 // terminal — underfilled but non-empty — would grow windowEnd forward
-// without bound, re-querying an ever-larger range on every step.
+// without bound. It would re-query an ever-larger range on every step.
 func (m *AgendaModel) MaybeFillViewport() tea.Cmd {
 	if m.reloadPending || len(m.rows) == 0 {
 		return nil
@@ -754,8 +754,8 @@ func (m *AgendaModel) MaybeFillViewport() tea.Cmd {
 
 // requestReload stamps the scroll anchor, marks a reload in flight, and
 // returns the command that asks the host to re-query the current window.
-// All three window-growth paths funnel through here so the reloadPending
-// handshake (cleared by SetEvents) is asserted in exactly one place.
+// All three window-growth paths funnel through here. The reloadPending
+// handshake (cleared by SetEvents) is then asserted in exactly one place.
 func (m *AgendaModel) requestReload() tea.Cmd {
 	m.stampAnchor()
 	m.reloadPending = true
@@ -763,8 +763,8 @@ func (m *AgendaModel) requestReload() tea.Cmd {
 }
 
 // ScrollBy advances the viewport by delta rows (positive scrolls down,
-// negative scrolls up) without moving the selection. Used by the mouse
-// wheel so scrolling feels decoupled from keyboard-driven selection.
+// negative scrolls up) with no move of the selection. Used by the mouse
+// wheel so scroll feels decoupled from keyboard-driven selection.
 // Returns a reload command only when the scroll direction matched an
 // edge the window can still grow toward.
 func (m *AgendaModel) ScrollBy(delta int) tea.Cmd {
@@ -781,11 +781,11 @@ func (m *AgendaModel) ScrollBy(delta int) tea.Cmd {
 
 // maybeExpandBackward grows the window toward older dates when the
 // scroll or selection is within AgendaPreloadRows of the top. The far
-// edge (windowEnd) is held fixed — sliding it backward would drop
-// content the user is still looking at, and when the newly-included
-// earlier range is empty in the DB the agenda would appear to "lose"
-// all its data. The window has no hard cap so infinite scroll keeps
-// working; memory stays bounded by the user's scrolling.
+// edge (windowEnd) is held fixed. A slide of it backward would drop
+// content the user still looks at. When the newly-included earlier
+// range is empty in the DB the agenda would appear to "lose" all its
+// data. The window has no hard cap so infinite scroll still works.
+// Memory stays bounded by the user's scroll.
 func (m *AgendaModel) maybeExpandBackward() tea.Cmd {
 	if m.reloadPending || len(m.rows) == 0 {
 		return nil
@@ -800,12 +800,12 @@ func (m *AgendaModel) maybeExpandBackward() tea.Cmd {
 }
 
 // maybeExpandForward is the mirror of maybeExpandBackward for the
-// bottom edge — the near edge (windowStart) is held fixed for the same
+// bottom edge. The near edge (windowStart) is held fixed for the same
 // reason. It fires when the scroll or selection is within
-// AgendaPreloadRows of the last row, so infinite scroll keeps feeding the
-// next month in as the user moves down. (The underfill case — a sparse
-// month that never fills the viewport — is handled by MaybeFillViewport,
-// which bounds itself so it can't loop forever.)
+// AgendaPreloadRows of the last row. Infinite scroll then keeps a feed of
+// the next month as the user moves down. The underfill case — a sparse
+// month that never fills the viewport — is handled by MaybeFillViewport.
+// That bounds itself so it cannot loop forever.
 func (m *AgendaModel) maybeExpandForward() tea.Cmd {
 	if m.reloadPending || len(m.rows) == 0 {
 		return nil
@@ -837,8 +837,8 @@ func (m AgendaModel) viewportH() int {
 // HandleClick routes a mouse click at (x, y) — in agenda-local
 // coordinates — to the event row under the cursor. When the click lands
 // on an event row, selection moves to that row and an
-// EventViewRequestedMsg is returned so the host opens the view dialog,
-// mirroring the Enter key binding. In the empty state, clicks on the
+// EventViewRequestedMsg is returned so the host opens the view dialog.
+// That mirrors the Enter key binding. In the empty state, clicks on the
 // "+ Create event" button emit EventCreateMsg instead.
 func (m AgendaModel) HandleClick(x, y int) (AgendaModel, tea.Cmd) {
 	headerLines := 2
@@ -879,7 +879,7 @@ func (m AgendaModel) emptyButtonBounds() (int, int) {
 	return lipgloss.Width(btn), 4
 }
 
-// buildAgendaRows expands events into per-day rows covering the window
+// buildAgendaRows expands events into per-day rows that cover the window
 // [start, start+days). Events that span multiple days produce one row per
 // day they touch. The first event of each day is tagged firstOfDay so the
 // renderer can show the day-column label above it. When showEmpty is true,
@@ -984,9 +984,9 @@ func hasEventOn(rows []agendaRow, day time.Time) bool {
 }
 
 // firstCurrentOrNextOn returns the first selectable event row on day
-// whose event is current (ends after now, or all-day) or upcoming (starts
+// whose event is current (ends after now, or all-day) or next (starts
 // at or after now). Returns -1 when no event row qualifies. Used to land
-// the cursor on what's happening now or next, not on a meeting that
+// the cursor on what happens now or next, not on a meeting that
 // already ended.
 func firstCurrentOrNextOn(rows []agendaRow, day, now time.Time) int {
 	for i, r := range rows {
