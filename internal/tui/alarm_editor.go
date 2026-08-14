@@ -46,7 +46,7 @@ var alarmActionOpts = []SelectOption{
 	{Label: "Audio", Value: "AUDIO"},
 }
 
-// alarmTimingOpts is the before/after toggle controlling the sign of a
+// alarmTimingOpts is the before/after toggle that controls the sign of a
 // relative trigger. Index 0 ("before") maps to a negative offset, index 1
 // ("after") to a positive one.
 var alarmTimingOpts = []SelectOption{
