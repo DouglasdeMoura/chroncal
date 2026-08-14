@@ -203,13 +203,13 @@ func TestSyncCollectionEscapesTokenInRequestBody(t *testing.T) {
 	}
 }
 
-// TestSyncCollectionDetectsTruncation pins RFC 6578 §3.6 handling using the
+// TestSyncCollectionDetectsTruncation pins RFC 6578 §3.6 using the
 // exact response shape Google CalDAV returns when the initial snapshot
-// exceeds its page size: a <response> for the collection itself carrying
+// exceeds its page size. A <response> for the collection itself carries
 // HTTP/1.1 507 Insufficient Storage plus a continuation sync-token. The
-// marker must set Truncated and must NOT appear in Changes — treating it as
-// a change once polluted multiget, and treating the page as a complete
-// snapshot soft-deleted every event beyond page one.
+// marker must set Truncated. It must NOT appear in Changes. Treat it as
+// a change and it once polluted multiget. Treat the page as a complete
+// snapshot and every event beyond page one was soft-deleted.
 func TestSyncCollectionDetectsTruncation(t *testing.T) {
 	t.Parallel()
 
