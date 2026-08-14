@@ -6,10 +6,10 @@ import (
 )
 
 // TestTodoListDefaultWindowShowsOverdue verifies that `todo list` with no date
-// flags surfaces overdue (past-due) todos. Regression test for issue #304: the
-// default window anchored its lower bound to today, silently hiding every
-// incomplete todo whose due date was in the past — exactly the items the user
-// most needs to see.
+// flags surfaces overdue (past-due) todos. Regression test for issue #304. The
+// default window anchored its lower bound to today. It hid every incomplete
+// todo whose due date was in the past, in silence. Those are the items the
+// user most needs to see.
 func TestTodoListDefaultWindowShowsOverdue(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 	t.Setenv("TZ", "UTC")
