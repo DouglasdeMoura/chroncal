@@ -20,9 +20,9 @@ func sidebarOrderIDs(m Model) []int64 {
 }
 
 // TestCalendarReorder_PendingOrderSurvivesStaleReload locks in the fix for the
-// optimistic-reorder race: a calendar reload that lands while the async
-// SetOrder is still in flight (e.g. a sync finishing mid-save) returns the
-// stale DB order, and must NOT snap the just-moved calendar back. The pending
+// optimistic-reorder race. A calendar reload that lands while the async
+// SetOrder is still in flight (e.g. a sync that finishes mid-save) returns the
+// stale DB order. It must NOT snap the just-moved calendar back. The wait
 // order is overlaid until the save confirms, then released.
 func TestCalendarReorder_PendingOrderSurvivesStaleReload(t *testing.T) {
 	// Redirect the UI-state write the reload handler performs to a temp dir.
@@ -79,9 +79,10 @@ func TestCalendarReorder_PendingOrderSurvivesStaleReload(t *testing.T) {
 }
 
 // TestCalendarReorder_DialogOriginatedSyncsSidebarAndDialog verifies a reorder
-// emitted by the manage dialog (where the sidebar list was NOT pre-swapped)
-// re-sorts the background sidebar from m.calendars and keeps the open dialog in
-// sync — the two branches the dialog feature added to the handler.
+// emitted by the manage dialog (where the sidebar list was NOT pre-swapped).
+// It re-sorts the background sidebar from m.calendars. It keeps the open
+// dialog in sync. Those are the two branches the dialog feature added to the
+// handler.
 func TestCalendarReorder_DialogOriginatedSyncsSidebarAndDialog(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
@@ -122,8 +123,8 @@ func TestCalendarReorder_DialogOriginatedSyncsSidebarAndDialog(t *testing.T) {
 
 // TestCalendarReorder_DialogReorderKeepsSidebarCursorOnSameCalendar verifies a
 // dialog-originated reorder that shifts rows keeps the sidebar cursor on the
-// same calendar (by identity), so the next sidebar keystroke doesn't act on the
-// wrong one.
+// same calendar (by identity). The next sidebar keystroke then does not act on
+// the wrong one.
 func TestCalendarReorder_DialogReorderKeepsSidebarCursorOnSameCalendar(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
@@ -164,9 +165,9 @@ func TestCalendarReorder_DialogReorderKeepsSidebarCursorOnSameCalendar(t *testin
 	}
 }
 
-// TestCalendarReorder_StaleSaveDoesNotClearNewerReorder verifies that when a
-// second reorder happens while the first save is still in flight, the late
-// confirmation of the first save does not drop the newer pending order.
+// TestCalendarReorder_StaleSaveDoesNotClearNewerReorder verifies a second
+// reorder while the first save is still in flight. The late confirmation of
+// the first save does not drop the newer wait order.
 func TestCalendarReorder_StaleSaveDoesNotClearNewerReorder(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
