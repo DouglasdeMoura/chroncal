@@ -6,20 +6,20 @@ import (
 )
 
 // dateOnlyLoc tags date-only (all-day) values parsed by ParseTimeList and
-// ParseRecurrenceID. It has a zero offset, so the resulting instant is exactly
-// midnight UTC — consistent with how all-day events are stored (issue #64) and
-// with EXDATE/RDATE matching, which is purely instant-based. Its distinct
+// ParseRecurrenceID. It has a zero offset. The result instant is then exactly
+// midnight UTC. That is consistent with how all-day events are stored
+// (issue #64). EXDATE/RDATE match is purely instant-based. Its distinct
 // identity (it is not time.UTC) lets SerializeTimeList re-emit these values as
-// date-only "YYYY-MM-DD" strings — and therefore as iCal VALUE=DATE — without
-// misclassifying a timed occurrence that merely happens to fall on midnight
-// UTC, which must round-trip as a full RFC 3339 DATE-TIME.
+// date-only "YYYY-MM-DD" strings, and therefore as iCal VALUE=DATE. A timed
+// occurrence that merely happens to fall on midnight UTC is not mis-classed.
+// That occurrence must round-trip as a full RFC 3339 DATE-TIME.
 var dateOnlyLoc = time.FixedZone("DATE", 0)
 
 // AsDateOnly returns t's calendar date re-tagged with the all-day marker
-// location (dateOnlyLoc), so SerializeTimeList emits it as a date-only
-// "YYYY-MM-DD" value — i.e. an iCal VALUE=DATE matching DTSTART;VALUE=DATE for
-// all-day events (RFC 5545 §3.8.5.1). It uses t's UTC calendar day, matching
-// how all-day occurrences are stored (midnight UTC).
+// location (dateOnlyLoc). SerializeTimeList then emits it as a date-only
+// "YYYY-MM-DD" value. That is an iCal VALUE=DATE that matches
+// DTSTART;VALUE=DATE for all-day events (RFC 5545 §3.8.5.1). It uses t's UTC
+// calendar day. That matches how all-day occurrences are stored (midnight UTC).
 func AsDateOnly(t time.Time) time.Time {
 	u := t.UTC()
 	return time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, dateOnlyLoc)
@@ -47,11 +47,11 @@ func IsDateOnly(s string) bool {
 }
 
 // LocalDay returns midnight at the start of t's local calendar day, in the
-// local location. Unlike t.Truncate(24*time.Hour) — which floors the absolute
-// instant to a multiple of 24h and therefore always aligns to UTC midnight
-// regardless of any preceding .Local() — this computes the day boundary from
-// the local Year/Month/Day, so two instants on the same local calendar day map
-// to the same value even when they straddle UTC midnight.
+// local location. t.Truncate(24*time.Hour) floors the absolute instant to a
+// multiple of 24h. That always aligns to UTC midnight, regardless of any
+// .Local() before it. This computes the day boundary from the local
+// Year/Month/Day. Two instants on the same local calendar day then map to
+// the same value even when they straddle UTC midnight.
 func LocalDay(t time.Time) time.Time {
 	l := t.Local()
 	return time.Date(l.Year(), l.Month(), l.Day(), 0, 0, 0, 0, time.Local)
@@ -72,10 +72,10 @@ func ParseDate(s string) time.Time {
 
 // ParseRecurrenceID parses a recurrence ID string in RFC 3339 or date-only
 // (2006-01-02) format for all-day events. Date-only IDs resolve to midnight
-// UTC (via dateOnlyLoc), matching how all-day occurrences are stored (import
-// records VALUE=DATE as midnight UTC) so the ID compares equal to the
-// occurrence it identifies. In practice sync and import always normalise
-// recurrence IDs to full UTC RFC 3339, so the date-only branch is a defensive
+// UTC (via dateOnlyLoc). That matches how all-day occurrences are stored
+// (import records VALUE=DATE as midnight UTC). The ID then compares equal to
+// the occurrence it identifies. In practice sync and import always normalise
+// recurrence IDs to full UTC RFC 3339. The date-only branch is a defensive
 // fallback.
 func ParseRecurrenceID(id string) (time.Time, error) {
 	if t, err := time.Parse(time.RFC3339, id); err == nil {
@@ -126,9 +126,9 @@ func ParseTimeList(s string) []time.Time {
 
 // SerializeTimeList is the inverse of ParseTimeList. It formats a value as
 // date-only ("2006-01-02") only when it carries the all-day marker
-// (dateOnlyLoc, set by ParseTimeList for VALUE=DATE values); every other value
-// — including a timed occurrence that happens to fall on midnight UTC — is
-// formatted as full RFC 3339 so it round-trips as an iCal DATE-TIME.
+// (dateOnlyLoc, set by ParseTimeList for VALUE=DATE values). Every other value
+// is formatted as full RFC 3339 so it round-trips as an iCal DATE-TIME. A
+// timed occurrence that happens to fall on midnight UTC is included.
 func SerializeTimeList(times []time.Time) string {
 	if len(times) == 0 {
 		return ""
@@ -146,10 +146,10 @@ func SerializeTimeList(times []time.Time) string {
 
 // RemoveTimeFromList returns list with the first element equal to target
 // (after UTC normalization) removed. Used to reverse a single EXDATE
-// insertion: soft-delete appends exactly one EXDATE per delete, so undo must
-// drop exactly one — removing every match would discard a pre-existing
-// exclusion for the same slot (e.g. an imported EXDATE alongside a detached
-// override). Shared by the event, todo, and journal restore paths.
+// insertion. Soft-delete appends exactly one EXDATE per delete, so undo must
+// drop exactly one. A drop of every match would discard a stored
+// exclusion for the same slot (for example an imported EXDATE beside a
+// detached override). Shared by the event, todo, and journal restore paths.
 func RemoveTimeFromList(list []time.Time, target time.Time) []time.Time {
 	out := make([]time.Time, 0, len(list))
 	targetKey := target.UTC().Format(time.RFC3339)
@@ -164,12 +164,12 @@ func RemoveTimeFromList(list []time.Time, target time.Time) []time.Time {
 	return out
 }
 
-// JoinCategoryList joins category values into a single comma-separated string,
-// backslash-escaping any backslash or comma inside an individual value so the
-// result is an exact inverse of ParseCategoryList. This keeps a category that
-// legitimately contains a comma (e.g. "Foo, Bar") as one value across the
-// in-memory comma-joined representation. Empty/whitespace-only values are
-// dropped.
+// JoinCategoryList joins category values into a single comma-separated string.
+// It backslash-escapes any backslash or comma inside an individual value. The
+// result is then an exact inverse of ParseCategoryList. This keeps a category
+// that legitimately contains a comma (for example "Foo, Bar") as one value
+// across the in-memory comma-joined representation. Empty/whitespace-only
+// values are dropped.
 func JoinCategoryList(cats []string) string {
 	parts := make([]string, 0, len(cats))
 	for _, c := range cats {
