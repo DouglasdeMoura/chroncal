@@ -32,9 +32,9 @@ var calendarManagerAddItems = [...]calendarManagerAddItem{
 const calendarManagerMenuTrailing = 3
 
 // openAddMenu opens the anchored Add menu with the cursor on the first row and
-// root focus on the + Add action, so a dismissed menu (or one whose row pushed
-// a screen) always returns there. It emits no command: the host only acts once
-// a row is chosen.
+// root focus on the + Add action. A dismissed menu (or one whose row pushed
+// a screen) then always returns there. It emits no command. The host only
+// acts once a row is chosen.
 func (m CalendarManagerModel) openAddMenu() CalendarManagerModel {
 	if !m.sourceAddActionActive() {
 		return m
@@ -46,8 +46,8 @@ func (m CalendarManagerModel) openAddMenu() CalendarManagerModel {
 }
 
 // closeAddMenu dismisses the anchored Add menu and re-establishes root focus
-// on the + Add action without touching the rest of the manager state, so Esc,
-// outside clicks, and row activations all return there.
+// on the + Add action. It does not touch the rest of the manager state. Esc,
+// outside clicks, and row activations then all return there.
 func (m CalendarManagerModel) closeAddMenu() CalendarManagerModel {
 	m.addMenuOpen = false
 	m.rootFocus = rootFocusAdd
@@ -55,10 +55,10 @@ func (m CalendarManagerModel) closeAddMenu() CalendarManagerModel {
 }
 
 // updateAddMenu owns all input while the menu is open. Up/Down and j/k clamp
-// within the three rows; Tab/Shift-Tab wrap the cursor one row around using the
-// same focus bindings as the root ring; Enter/Space activate the selected row
-// through the shared activation binding and dismiss; Esc dismisses without
-// closing the manager; mouse hits are routed to handleAddMenuMouse.
+// within the three rows. Tab/Shift-Tab wrap the cursor one row around using the
+// same focus bindings as the root ring. Enter/Space activate the selected row
+// through the shared activation binding and dismiss. Esc dismisses with no
+// close of the manager. Mouse hits are routed to handleAddMenuMouse.
 // Unrecognized keys are swallowed so they never reach the root list underneath.
 func (m CalendarManagerModel) updateAddMenu(msg tea.Msg) (CalendarManagerModel, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -102,10 +102,10 @@ func (m CalendarManagerModel) requestTarget(target CalendarManagerTarget) tea.Cm
 }
 
 // addMenuContentWidth returns the menu's inner width (between its own borders)
-// in terminal cells: the longest label plus a leading space and trailing
-// padding, capped to the manager's interior so the whole menu always fits
-// inside the box even on very narrow terminals. ANSI styling never affects the
-// measurement because lipgloss.Width ignores escapes.
+// in terminal cells. That is the longest label plus a space at the start and
+// padding at the end, capped to the manager's interior. The whole menu then
+// always fits inside the box even on very narrow terminals. ANSI style never
+// affects the measurement because lipgloss.Width ignores escapes.
 func (m CalendarManagerModel) addMenuContentWidth() int {
 	longest := 0
 	for _, item := range calendarManagerAddItems {
@@ -194,11 +194,11 @@ func (m CalendarManagerModel) renderAddMenuRow(label string, selected bool, cont
 	return "│" + style.Render(text) + "│"
 }
 
-// handleAddMenuMouse maps a click to a menu row, consumes border-cell clicks
-// without routing, and dismisses on any click outside the menu. Outside and
-// border clicks are consumed: they never fall through to activate an
-// underlying list row. A click on a border cell (the rounded edges or the
-// left/right │ columns) keeps the menu open without activating a row.
+// handleAddMenuMouse maps a click to a menu row. It consumes border-cell
+// clicks with no route, and dismisses on any click outside the menu. Outside
+// and border clicks are consumed. They never fall through to activate a
+// list row under the menu. A click on a border cell (the rounded edges or
+// the left/right │ columns) keeps the menu open with no row activation.
 func (m CalendarManagerModel) handleAddMenuMouse(msg tea.MouseClickMsg) (CalendarManagerModel, tea.Cmd) {
 	if msg.Button != tea.MouseLeft {
 		return m, nil
@@ -221,9 +221,9 @@ func (m CalendarManagerModel) handleAddMenuMouse(msg tea.MouseClickMsg) (Calenda
 
 // drawOverlay draws overlay into rect over the already-rendered manager shell
 // using an Ultraviolet screen buffer local to this component. The buffer is
-// sized to the shell's actual rendered height (which can exceed the nominal
-// box height on very shallow terminals) so neither the shell nor the overlay
-// is clipped.
+// sized to the shell's actual rendered height. That can exceed the nominal
+// box height on very shallow terminals. Neither the shell nor the overlay
+// is then clipped.
 func drawOverlay(base, overlay string, boxW int, rect image.Rectangle) string {
 	if base == "" || overlay == "" || boxW <= 0 {
 		return base
