@@ -121,9 +121,9 @@ By default completed and cancelled todos are hidden unless you pass
 	return cmd
 }
 
-// formatCompactTodo renders one todo as a single line for scripting:
+// formatCompactTodo renders one todo as a single line for scripts:
 // "[x] 2026-05-25  Write report". The checkbox uses [x] when completed,
-// [ ] otherwise; the date column is YYYY-MM-DD or "-" (no due date)
+// [ ] otherwise. The date column is YYYY-MM-DD or "-" (no due date)
 // padded to 12 chars so titles line up.
 func formatCompactTodo(t todo.Todo) string {
 	const dueColWidth = 12
