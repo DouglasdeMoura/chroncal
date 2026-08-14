@@ -89,8 +89,8 @@ const staleUnackedMultiplier = 4
 // purgeAlarmStates deletes acknowledged alarm-state rows whose trigger time
 // is older than the cutoff. It also deletes unacknowledged rows older than
 // four times the retention window. It does not delete rows snoozed into
-// the future. Recently fired pending rows are kept. They back "alarm list"
-// and snooze re-fire.
+// the future. Recently fired rows that wait for ack are kept. They back
+// "alarm list" and snooze re-fire.
 func (p *Purger) purgeAlarmStates(ctx context.Context, cutoff time.Time) (int, error) {
 	cutoffStr := cutoff.UTC().Format(time.RFC3339)
 	total := 0
@@ -121,7 +121,7 @@ func (p *Purger) purgeAlarmStates(ctx context.Context, cutoff time.Time) (int, e
 }
 
 // RunDaily fires RunOnce once on start, then every 24h until ctx is done.
-// Use this for the long-running TUI or daemon. CLI one-shot callers should
+// Use this for the long-lived TUI or daemon. CLI one-shot callers should
 // use RunOnce directly.
 func (p *Purger) RunDaily(ctx context.Context) {
 	if p.days <= 0 {
