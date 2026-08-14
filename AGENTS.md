@@ -1,8 +1,9 @@
+[AGENTS.md#E706]
 # Agent Guide for chroncal
 
 ## Service Layer Pattern
 
-Each domain has a service in `internal/{domain}/` following the same shape:
+Each domain has a service in `internal/{domain}/`. The service uses this shape:
 
 ```go
 type Service struct {
@@ -16,120 +17,123 @@ func NewService(db *sql.DB, q *storage.Queries) *Service {
 ```
 
 Core data services:
-- **event** - CRUD, search, export, recurrence-aware queries, soft-delete/restore/purge
-- **todo** - CRUD, search, completion, soft-delete/restore/purge
-- **journal** - CRUD, search, soft-delete/restore/purge
-- **calendar** - CRUD, color management, remote-link metadata
-- **alarm** - Check due alarms, fire, dismiss, snooze
-- **recurrence** - Expand recurring events/todos/journals, handle overrides
-- **trash** - Mixed soft-delete view across event/todo/journal (list, restore, purge)
 
-Integration / infrastructure packages (these do NOT follow the `NewService`
-shape above — constructors and wiring vary per package):
-- **sync** - CalDAV sync engine, conflict detection and resolution (`NewService` with extra dependencies)
-- **caldav** - Low-level CalDAV client (discovery, REPORT, PROPFIND, VFREEBUSY) — `NewClient`
-- **freebusy** - Local free/busy computation plus remote CalDAV query — plain functions (`Compute`)
-- **auth** - Credential storage (OS keyring, optional plaintext), OAuth2 PKCE — plain functions
-- **maintenance** - Background purge loop for soft-deleted rows — `NewPurger`
-- **notify** - Desktop notifications plus SMTP email for EMAIL alarms — plain functions (`Display`, `Audio`, `Email`)
-- **retry** - HTTP retry/backoff helpers shared by sync and caldav — plain functions
+- **event** - CRUD, search, export, recurrence queries, soft-delete, restore, purge
+- **todo** - CRUD, search, completion, soft-delete, restore, purge
+- **journal** - CRUD, search, soft-delete, restore, purge
+- **calendar** - CRUD, color control, remote-link metadata
+- **alarm** - Check due alarms. Fire, dismiss, and snooze alarms
+- **recurrence** - Expand recurring events, todos, and journals. Apply overrides
+- **trash** - Mixed soft-delete view of events, todos, and journals (list, restore, purge)
 
-Models live in `internal/{domain}/model.go` (e.g., `event.Event`) and shared models in `internal/model/` (e.g., `model.Alarm`, `model.Attendee`).
+Integration packages and infrastructure packages do not use the `NewService` shape above. Each package has its own constructor:
 
-CLI commands live in `cmd/chroncal/`, one file per resource group. Each exports a `Command()` function returning a `*cobra.Command`. Commands use `resolveEvent()` / `resolveTodo()` / `resolveJournal()` helpers to resolve references by ID, UID, or UID+recurrenceID.
+- **sync** - CalDAV sync engine. Detect and resolve conflicts (`NewService` with extra dependencies)
+- **caldav** - Low-level CalDAV client (discovery, REPORT, PROPFIND, VFREEBUSY). Constructor: `NewClient`
+- **freebusy** - Local free/busy results plus a remote CalDAV query. Plain functions (`Compute`)
+- **auth** - Credential store (OS keyring, optional plaintext). OAuth2 PKCE. Plain functions
+- **maintenance** - Background purge loop for soft-deleted rows. Constructor: `NewPurger`
+- **notify** - Desktop notifications plus SMTP email for EMAIL alarms. Plain functions (`Display`, `Audio`, `Email`)
+- **retry** - HTTP retry and backoff helpers for sync and caldav. Plain functions
+
+Models live in `internal/{domain}/model.go` (for example, `event.Event`). Shared models live in `internal/model/` (for example, `model.Alarm`, `model.Attendee`).
+
+CLI commands live in `cmd/chroncal/`. There is one file per resource group. Each file exports a `Command()` function. The function returns a `*cobra.Command`. Commands use `resolveEvent()`, `resolveTodo()`, and `resolveJournal()` to resolve a reference by ID, UID, or UID plus recurrenceID.
 
 ## Storage Layer
 
-- Hand-written files in `internal/storage/`: `connect.go` (DB setup), `nullable.go` (helpers), `query_builder.go` (dynamic WHERE construction), `scan_helpers.go` (row scanners), `events_dynamic.go` and `todos_dynamic.go` (filtered query methods), `xprop_helpers.go` (alarm X-property attach/replace shared by event and todo services). Everything else is sqlc-generated and will be overwritten by `make generate`.
-- The dynamic query files replace sqlc's `arg = '' OR column = arg` pattern with runtime WHERE clause construction so SQLite can use indexes. Queries use `SELECT *`, so if a migration adds columns to `events` or `todos`, only update the scan functions in `scan_helpers.go` to match.
-- **Never edit `*.sql.go` files or `db.go` or `models.go` directly.**
-- Add new queries to `db/queries/*.sql`, then run `make generate`.
-- After schema changes: add a migration to `db/migrations/`, update queries, then regenerate.
-- Transaction pattern: `q.WithTx(tx)` inside a transaction.
+Hand-written files in `internal/storage/`:
 
-## Gotchas
+- `connect.go` (database setup)
+- `nullable.go` (helpers)
+- `query_builder.go` (dynamic WHERE clauses)
+- `scan_helpers.go` (row scanners)
+- `events_dynamic.go` and `todos_dynamic.go` (filtered query methods)
+- `xprop_helpers.go` (alarm X-property attach and replace for event and todo services)
+
+sqlc generates every other file in that directory. `make generate` overwrites those files.
+
+The dynamic query files replace the sqlc pattern `arg = '' OR column = arg`. They build the WHERE clause at run time so SQLite can use indexes. Queries use `SELECT *`. When a migration adds columns to `events` or `todos`, update the scan functions in `scan_helpers.go` so they match.
+
+- Do not edit `*.sql.go` files, `db.go`, or `models.go`.
+- Add new queries to `db/queries/*.sql`.
+- Then run `make generate`.
+
+After a schema change:
+
+1. Add a migration to `db/migrations/`.
+2. Update the queries.
+3. Then regenerate.
+
+Use `q.WithTx(tx)` inside a transaction.
+
+## Special cases
 
 ### Database
-- Case-insensitive Unicode search goes through FTS5 (`unicode61 remove_diacritics 2` tokenizer); see the `*_fts` virtual tables in `db/migrations/`. There is no custom `lower_unicode` SQLite function — a stale registration that no query referenced was removed. Do not reintroduce `strings.ToLower`-backed folding: it is simple case folding only and would not match the FTS tokenizer's diacritic-insensitive behavior.
-- `backfillAlarmUIDs` in `connect.go` assigns UUIDs to alarms from the pre-UID schema. Runs on every startup, no-ops when all alarms have UIDs.
-- SQLite pragmas set in `connect.go:Open()`: WAL mode, foreign keys ON, 5s busy timeout, synchronous=NORMAL.
+
+Case-insensitive Unicode search uses FTS5 (`unicode61 remove_diacritics 2` tokenizer). See the `*_fts` virtual tables in `db/migrations/`. The code does not register a custom `lower_unicode` SQLite function. An unused registration was removed. Do not add `strings.ToLower` case folding. That fold is simple case folding only. It does not match the diacritic-insensitive FTS tokenizer.
+
+`backfillAlarmUIDs` in `connect.go` assigns UUIDs to alarms from the pre-UID schema. The function runs on every startup. It does nothing when all alarms have UIDs.
+
+SQLite pragmas in `connect.go:Open()`:
+
+- WAL mode
+- foreign keys ON
+- 5s busy timeout
+- synchronous=NORMAL
 
 ### Recurrence
-- Recurring events are stored as a single row with `recurrence_rule`.
-- Overrides are separate rows with the same `uid` but a non-empty `recurrence_id`.
-- EXDATEs and RDATEs are comma-separated RFC 3339 strings.
-- Expansion happens at query time via `recurrence.ListExpandedEvents()`.
-- Half-open time ranges everywhere: `[start, end)`.
+
+The database stores a recurring event as one row with `recurrence_rule`. Each override is a separate row with the same `uid` and a non-empty `recurrence_id`. EXDATEs and RDATEs are comma-separated RFC 3339 strings. The service expands recurrences at query time with `recurrence.ListExpandedEvents()`. Time ranges are half-open everywhere: `[start, end)`.
 
 ### Alarms
-- Triggers are RFC 5545 duration strings (`-PT15M` = 15 minutes before).
-- Absolute triggers use RFC 3339.
-- State is tracked in `alarm_state` / `todo_alarm_state` tables (fired_at, acknowledged_at, snooze_until).
-- Alarms older than 24h are skipped (`alarm.StaleThreshold`).
-- Repeat logic: additional firings at `Duration` intervals up to `Repeat` count.
+
+Triggers are RFC 5545 duration strings (`-PT15M` = 15 minutes before). Absolute triggers use RFC 3339. The `alarm_state` and `todo_alarm_state` tables store the state (`fired_at`, `acknowledged_at`, `snooze_until`). The service skips alarms older than 24 hours (`alarm.StaleThreshold`). The service fires extra alarms at `Duration` intervals, up to the `Repeat` count.
 
 ### iCal Round-Trip
-- UID is required for round-trip fidelity.
-- `recurrence_id` distinguishes overridden instances.
-- Transient fields (Alarms, Attendees, etc.) are populated for export but not stored in the main event/todo tables.
-- Duration can be expressed as either DTEND or DURATION (RFC 5545).
-- Timezones are preserved via the `timezone` column and the `timezones` table.
 
-### Time Handling
-- All database times are RFC 3339 strings in UTC.
-- Go code uses `time.Time` with `time.UTC`.
-- All-day events have time component 00:00:00.
+UID is required for round-trip fidelity. `recurrence_id` marks an overridden instance. Export fills transient fields (Alarms, Attendees, and others). The main event and todo tables do not store those fields. You can express duration as DTEND or as DURATION (RFC 5545). The `timezone` column and the `timezones` table preserve timezones.
 
-### Logging
-- Code that can run while the TUI owns the terminal must never write to
-  stderr — Bubble Tea runs in the alternate screen and any stderr write
-  prints over the display. This includes `slog.Default()`.
-- A nil `*slog.Logger` passed to `maintenance.NewPurger` or
-  `sync.NewEngine` means *silent* (they fall back to
-  `slog.New(slog.DiscardHandler)`), not `slog.Default()`. Keep that
-  contract when adding constructors; regression tests in
-  `internal/maintenance/purge_test.go` and `internal/sync/engine_test.go`
-  guard it.
-- The TUI's background purge loop logs to the state-dir file
-  `$XDG_STATE_HOME/chroncal/chroncal.log` via `purgeLogger()` in
-  `cmd/chroncal/main.go` (path from `config.LogFilePath()`). Route other
-  TUI-context background jobs that need durable logs there too; CLI
-  commands that want visible logs pass an explicit stderr logger
-  (see `sync run`).
+### Time
+
+All database times are RFC 3339 strings in UTC. Go code uses `time.Time` with `time.UTC`. An all-day event has the time component 00:00:00.
+
+### Logs
+
+Code that can run while the TUI owns the terminal must never write to stderr. Bubble Tea runs in the alternate screen. A write to stderr prints over the display. This includes `slog.Default()`.
+
+If you pass a nil `*slog.Logger` to `maintenance.NewPurger` or `sync.NewEngine`, those constructors stay silent. The constructors use `slog.New(slog.DiscardHandler)`. They do not use `slog.Default()`. Keep that contract when you add constructors. Regression tests in `internal/maintenance/purge_test.go` and `internal/sync/engine_test.go` guard it.
+
+The TUI background purge loop writes logs to the state-dir file `$XDG_STATE_HOME/chroncal/chroncal.log`. The call is `purgeLogger()` in `cmd/chroncal/main.go`. The path comes from `config.LogFilePath()`. Send other TUI background jobs that need durable logs to that file. CLI commands that need visible logs pass an explicit stderr logger (see `sync run`).
 
 ### TUI Buttons
-- Exactly two variants: `Button` (neutral default) and `ButtonDanger`
-  (destructive). No Primary, no Secondary, no Ghost.
-- `ButtonDanger` at rest shares the same pill and background as
-  `Button`; only the *label* is bold red (`Theme.Error`). On focus
-  Danger inverts (red bg, contrasting fg) instead of using
-  `FormHighlight` — needed because some themes have a warm/red focus
-  highlight that makes red text on it unreadable. Putting the red on
-  the background and computing a contrasting label via
-  `oklch.ContrastingFg` guarantees legibility on every theme and
-  emphasizes the destructive signal exactly when the user is about to
-  commit.
-- Color carries one signal: destructive or not. Focus highlight carries
-  the other: which button Enter triggers. Do not conflate them.
-- `Form.SetSubmitVariant` defaults to `Button`; only destructive prompts
-  need to opt in via `ConfirmDialogModel.Destructive()`.
-- For hand-rolled buttons that bypass `Form`, render via
-  `ButtonStyles.Normal` (or `.Danger` for destructive). Don't reach for a
-  "more prominent" style — there isn't one, by design.
-- Confirm dialogs focus Cancel by default (`form.FocusCancel()`), so a
-  reflex Enter cancels rather than confirms. Keep that behavior when
-  building new destructive prompts.
+
+There are exactly two variants: `Button` (neutral default) and `ButtonDanger` (destructive). There is no Primary, no Secondary, and no Ghost.
+
+`ButtonDanger` at rest shares the same pill and background as `Button`. Only the label is bold red (`Theme.Error`). On focus, Danger inverts (red background, contrast foreground). It does not use `FormHighlight`. Some themes have a warm or red focus highlight. Red text on that highlight is not readable.
+
+Put the red on the background. Compute a contrast label with `oklch.ContrastingFg`. That pair stays readable on every theme. It also shows the destructive signal when the user is about to commit.
+
+Color carries one signal: destructive or not. Focus highlight carries the other signal: which button Enter triggers. Do not mix those two signals.
+
+`Form.SetSubmitVariant` defaults to `Button`. Only a destructive prompt needs to opt in with `ConfirmDialogModel.Destructive()`.
+
+For a custom button that does not use `Form`, render with `ButtonStyles.Normal` (or `.Danger` for a destructive button). Do not use a more prominent style. There is no such style.
+
+Confirm dialogs focus Cancel by default (`form.FocusCancel()`). A quick Enter cancels. It does not confirm. Keep that behavior when you build a new destructive prompt.
 
 ## Common Tasks
 
 ### Find an event by ID or UID
+
 ```go
 evt, err := svc.Get(ctx, id)                                        // numeric ID
 evt, err := svc.GetByUID(ctx, uid)                                  // string UID
 evt, err := svc.GetByUIDAndRecurrenceID(ctx, uid, recurrenceID)     // override instance
 ```
 
-### Query events in date range
+### Query events in a date range
+
 ```go
 from := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
 to := time.Date(2026, 4, 30, 0, 0, 0, 0, time.UTC)
@@ -137,6 +141,7 @@ events, err := svc.ListByDateRange(ctx, from, to)
 ```
 
 ### Handle recurring events
+
 ```go
 recurSvc := recurrence.NewService(db, q)
 expanded, err := recurSvc.ListExpandedEvents(ctx, from, to)
@@ -144,6 +149,7 @@ expanded, err := recurSvc.ListExpandedEvents(ctx, from, to)
 ```
 
 ### Create an alarm
+
 ```go
 alarm := model.Alarm{
     Action:       "DISPLAY",
@@ -155,13 +161,15 @@ err := evtSvc.ReplaceAlarms(ctx, eventID, []model.Alarm{alarm})
 ```
 
 ### Check due alarms
+
 ```go
 alarmSvc := alarm.NewService(db, q, eventSvc, todoSvc)
 dueEvents, dueTodos, err := alarmSvc.Check(ctx, time.Now())
 // Each DueAlarm has: Event, Alarm, TriggerAt, StateID
 ```
 
-### Import/Export iCal
+### Import and export iCal
+
 ```go
 result, err := ical.ImportFile(r) // r is io.Reader
 // result.Events, result.Todos, result.Timezones, result.Warnings
@@ -172,17 +180,17 @@ ics, err := ical.ExportEvents(events, "Work")
 ics, err := ical.ExportTodos(todos, "Work")
 ```
 
-### Parse RFC 5545 duration
+### Parse an RFC 5545 duration
+
 ```go
 err := duration.Validate("-PT15M")
 newTime := duration.Add(time.Now(), "-PT15M")
 durStr := duration.FromGo(15 * time.Minute)  // "PT15M"
 ```
 
-### Soft-delete + restore + purge
-Events, todos, and journals share the same reversible-delete contract.
-`Delete` / `DeleteSeries` flip `deleted_at`; live reads gate on
-`deleted_at IS NULL`. Each domain service owns its own restore / purge:
+### Soft-delete, restore, and purge
+
+Events, todos, and journals share the same reversible-delete contract. `Delete` and `DeleteSeries` set `deleted_at`. Live reads use `deleted_at IS NULL`. Each domain service owns its own restore and purge:
 
 ```go
 // Soft-delete: the Delete methods already do this.
@@ -199,15 +207,13 @@ err := svc.PurgeByID(ctx, id)         // one row, refuses live rows
 n, err := svc.PurgeDeleted(ctx, cutoff) // all rows older than cutoff
 ```
 
-Restoring a recurring override also clears the matching EXDATE on the
-master in the same transaction, so expansion sees the occurrence again.
-The EXDATE-provenance rule (only strip EXDATEs a delete recorded, never
-imported ones — issue #86) lives in `softdelete.ClearMasterEXDATE`; each
-domain's `clearMasterEXDATE` is a thin wrapper that binds its sqlc queries
-to that shared helper. Fix the contract there, not per-domain.
+When you restore a recurring override, the same transaction also clears the related EXDATE on the master. Expansion then shows the occurrence again.
+
+The EXDATE-provenance rule lives in `softdelete.ClearMasterEXDATE`. Strip only EXDATEs that a delete recorded. Do not strip imported EXDATEs (issue #86). Each domain `clearMasterEXDATE` is a thin wrapper that binds the sqlc queries of that domain to the shared helper. Fix the contract in the shared helper. Do not fix it per domain.
 
 ### List or purge mixed trash
-The `internal/trash` package aggregates all three domains:
+
+The `internal/trash` package joins all three domains:
 
 ```go
 trashSvc := trash.NewService(a.Events, a.Todos, a.Journals)
@@ -217,76 +223,50 @@ err = trashSvc.Purge(ctx, entries[0])
 counts, err := trashSvc.PurgeOld(ctx, time.Now().Add(-30*24*time.Hour))
 ```
 
-`Entry.Kind` (KindEvent, KindEventInstance, KindEventSeriesTail,
-KindTodo, KindJournal) tells the caller which fields are populated.
+`Entry.Kind` (KindEvent, KindEventInstance, KindEventSeriesTail, KindTodo, KindJournal) tells the caller which fields have values.
 
 ## AI-assisted contributions
 
-Follow the [Linux kernel AI coding assistant
-guidelines](https://docs.kernel.org/process/coding-assistants.html) for any
-AI-assisted commit in this repo.
+Follow the [Linux kernel AI coding assistant guidelines](https://docs.kernel.org/process/coding-assistants.html) for any AI-assisted commit in this repo.
 
-- The human contributor is the sole git author. AI tools are not authors and
-  must not appear in `Co-authored-by` trailers.
+- The human contributor is the sole git author. AI tools are not authors. Do not put AI tools in `Co-authored-by` trailers.
 - AI agents must **not** add `Signed-off-by` tags.
-- When AI assistance materially shaped a commit, add an `Assisted-by` trailer
-  to the commit message body (not the author field):
+- When AI assistance has a material effect on a commit, add an `Assisted-by` trailer to the commit message body (not the author field):
 
   ```
   Assisted-by: AGENT_NAME:MODEL_VERSION [TOOL1] [TOOL2]
   ```
 
-  Use the actual agent framework and model version (e.g.
-  `Assisted-by: Cursor:gpt-5.3-codex`). List only specialized analysis tools
-  in brackets — not git, editors, gcc, or make.
+  Use the real agent framework and model version (for example, `Assisted-by: Cursor:gpt-5.3-codex`). List only specialized analysis tools in brackets. Do not list git, editors, gcc, or make.
 - Do not use `Co-developed-by` or `Co-authored-by` for AI attribution.
-- Use `git commit-tree` (or amend with a message file) when the environment
-  would otherwise inject `Co-authored-by: Cursor <cursoragent@cursor.com>`.
+- Use `git commit-tree` or amend with a message file. Use this when the environment would add `Co-authored-by: Cursor <cursoragent@cursor.com>`.
 
 ## Documentation style
 
-Write all documentation in [ASD-STE100 Simplified Technical
-English](https://www.asd-ste100.org/). This rule applies to the Markdown files
-(`AGENTS.md`, each `README`, and `docs/`), to the code comments, and to the
-JSDoc. These are the core rules:
+Write all documentation in [ASD-STE100 Simplified Technical English](https://www.asd-ste100.org/). This rule applies to the Markdown files (`AGENTS.md`, each `README`, and `docs/`), to the code comments, and to the JSDoc. These are the core rules:
 
-- **One word, one meaning.** Use the same term for the same thing each time. Do
-  not use a synonym for variety. A "client" stays a "client". It is not a
-  "patient" and not a "member".
-- **Use the active voice.** Write "the job writes the row". Do not write "the
-  row is written".
-- **Use the simple tenses.** Use the simple present, the simple past, or the
-  simple future. Do not use the perfect tenses.
-- **Give one instruction in one sentence.** Divide a compound step into
-  separate steps.
-- **Write short sentences.** Use a maximum of 20 words for an instruction and a
-  maximum of 25 words for a description. Use a maximum of six sentences in a
-  paragraph.
-- **Keep the articles.** Write "the migration file". Do not write "migration
-  file".
+- **One word, one meaning.** Use the same term for the same thing each time. Do not use a synonym for variety. A "client" stays a "client". It is not a "patient" and not a "member".
+- **Use the active voice.** Write "the job writes the row". Do not write "the row is written".
+- **Use the simple tenses.** Use the simple present, the simple past, or the simple future. Do not use the perfect tenses.
+- **Give one instruction in one sentence.** Divide a compound step into separate steps.
+- **Write short sentences.** Use a maximum of 20 words for an instruction and a maximum of 25 words for a description. Use a maximum of six sentences in a paragraph.
+- **Keep the articles.** Write "the migration file". Do not write "migration file".
 - **Do not use an `-ing` form**, unless the word is part of a technical name.
-- **Use a maximum of three nouns together.** Divide "provider availability
-  tally job" with a preposition or a hyphen.
-- **Do not use jargon, an idiom, or slang.** Do not write "hit the endpoint" or
-  "under the hood".
-- **Start a warning with the instruction.** Give the command first, then give
-  the reason.
+- **Use a maximum of three nouns together.** Divide "provider availability tally job" with a preposition or a hyphen.
+- **Do not use jargon, an idiom, or slang.** Do not write "hit the endpoint" or "under the hood".
+- **Start a warning with the instruction.** Give the command first, then give the reason.
 - **Use a vertical list** for a set of conditions and for a sequence of steps.
 
-A technical name keeps its usual form and is an exception to these rules. A
-technical name includes an identifier, a table name, a column name, a product
-name, and a domain term.
+A technical name keeps its usual form and is an exception to these rules. A technical name includes an identifier, a table name, a column name, a product name, and a domain term.
 
-A plan is also an exception. For plan mode, the concision rule above has
-priority.
+A plan is also an exception. For plan mode, the concision rule above has priority.
 
-## Skill routing
+## Skill routes
 
-When the user's request matches an available skill, ALWAYS invoke it using the Skill
-tool as your FIRST action. Do NOT answer directly, do NOT use other tools first.
-The skill has specialized workflows that produce better results than ad-hoc answers.
+When the request of the user matches an available skill, invoke that skill with the Skill tool as the first action. Do not answer directly. Do not use other tools first. The skill has a special workflow. That workflow gives a better result than a free-form answer.
 
-Key routing rules:
+Key rules:
+
 - Product ideas, "is this worth building", brainstorming → invoke office-hours
 - Bugs, errors, "why is this broken", 500 errors → invoke investigate
 - Ship, deploy, push, create PR → invoke ship
