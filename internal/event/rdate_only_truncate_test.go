@@ -9,7 +9,7 @@ import (
 
 // newRDateOnlyMaster creates a recurring master that has no RRULE and relies
 // purely on RDATEs (RFC 5545 §3.8.5.2). Its StartTime is the DTSTART
-// occurrence; rdates lists the remaining occurrences.
+// occurrence. rdates lists the other occurrences.
 func newRDateOnlyMaster(t *testing.T, svc *Service, uid string, rdates []time.Time) Event {
 	t.Helper()
 	parts := make([]string, len(rdates))
@@ -33,7 +33,7 @@ func newRDateOnlyMaster(t *testing.T, svc *Service, uid string, rdates []time.Ti
 
 // TestSetRRuleUntil_EmptyRule guards against the malformed ";UNTIL=..." token
 // produced when an empty rule is passed through the part filter (issue #414).
-// An empty input must never grow a leading ";" separator.
+// An empty input must never grow a ";" separator at the start.
 func TestSetRRuleUntil_EmptyRule(t *testing.T) {
 	got := setRRuleUntil("", time.Date(2026, 1, 1, 23, 59, 59, 0, time.UTC), false)
 	if strings.HasPrefix(got, ";") {
@@ -41,10 +41,10 @@ func TestSetRRuleUntil_EmptyRule(t *testing.T) {
 	}
 }
 
-// TestDeleteFromInstance_RDateOnlyMasterNotCorrupted reproduces issue #414: a
+// TestDeleteFromInstance_RDateOnlyMasterNotCorrupted reproduces issue #414. A
 // "this and following" delete on an RDATE-only master used to write a synthetic
-// ";UNTIL=..." RRULE that fails to parse, collapsing the whole series. The
-// master's recurrence_rule must stay empty so expansion keeps working.
+// ";UNTIL=..." RRULE that fails to parse. That collapsed the whole series. The
+// master's recurrence_rule must stay empty so expansion still works.
 func TestDeleteFromInstance_RDateOnlyMasterNotCorrupted(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -66,10 +66,10 @@ func TestDeleteFromInstance_RDateOnlyMasterNotCorrupted(t *testing.T) {
 	}
 }
 
-// TestDeleteFromInstance_TrimsRDatesPastCutoff reproduces issue #463: a "this
-// and following" delete must drop the master's RDATEs at/after the cutoff,
-// otherwise the deleted occurrences reappear on the next expansion (rrule-go
-// expands RDATEs independently of the RRULE's UNTIL bound).
+// TestDeleteFromInstance_TrimsRDatesPastCutoff reproduces issue #463. A "this
+// and following" delete must drop the master's RDATEs at/after the cutoff.
+// Otherwise the deleted occurrences reappear on the next expansion. rrule-go
+// expands RDATEs independently of the RRULE's UNTIL bound.
 func TestDeleteFromInstance_TrimsRDatesPastCutoff(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -98,8 +98,8 @@ func TestDeleteFromInstance_TrimsRDatesPastCutoff(t *testing.T) {
 }
 
 // TestUpdateFromInstance_TrimsRDatesPastCutoff mirrors the trim assertion for
-// the split/"edit this and following" path (issue #463). Surviving post-cutoff
-// RDATEs would duplicate the brand-new split series.
+// the split/"edit this and following" path (issue #463). Post-cutoff RDATEs
+// that remain would duplicate the brand-new split series.
 func TestUpdateFromInstance_TrimsRDatesPastCutoff(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -127,9 +127,9 @@ func TestUpdateFromInstance_TrimsRDatesPastCutoff(t *testing.T) {
 	}
 }
 
-// TestRestoreTruncation_ReAddsRDates verifies the trim is reversible: restoring
-// a "this and following" delete from the trash must put the dropped RDATEs back
-// on the master (issue #463), mirroring the RRULE/override restore.
+// TestRestoreTruncation_ReAddsRDates verifies the trim is reversible. A restore
+// of a "this and following" delete from the trash must put the dropped RDATEs
+// back on the master (issue #463). That matches the RRULE/override restore.
 func TestRestoreTruncation_ReAddsRDates(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
