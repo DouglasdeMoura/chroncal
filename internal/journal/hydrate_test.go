@@ -34,8 +34,8 @@ func TestJournalService_Hydrate_PropagatesRelationErrors(t *testing.T) {
 	}
 }
 
-// hideTable renames a table out of the way for the duration of the test, so the
-// queries that read it fail the way a real I/O error would.
+// hideTable renames a table out of the way for the duration of the test. The
+// queries that read it then fail the way a real I/O error would.
 func hideTable(t *testing.T, svc *Service, table string) {
 	t.Helper()
 	ctx := context.Background()
