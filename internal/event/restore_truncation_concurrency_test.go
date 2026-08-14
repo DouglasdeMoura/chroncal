@@ -12,17 +12,17 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
-// purgeOnMasterReadDBTX wraps a DBTX and, the first time it observes the
-// GetEventByUID SELECT, fires a hook *after* the row has been buffered. The
-// hook purges the master from a separate connection, simulating a concurrent
-// purge/soft-delete landing in the window between reading the master and the
+// purgeOnMasterReadDBTX wraps a DBTX. The first time it observes the
+// GetEventByUID SELECT, it fires a hook *after* the row has been buffered. The
+// hook purges the master from a separate connection. That simulates a concurrent
+// purge/soft-delete that lands in the window between the master read and the
 // in-transaction UPDATE that depends on it.
 //
-// Because restoreTruncationByLogID reads its master inside the writing
-// transaction (qtx.GetEventByUID on the *sql.Tx, not this wrapper), this hook
-// is only reachable when the read happens on the non-transactional q — i.e.
-// the pre-fix code path. The fixed code never routes the master read through
-// the wrapper, so the injection cannot fire and no data is lost.
+// restoreTruncationByLogID reads its master inside the write
+// transaction (qtx.GetEventByUID on the *sql.Tx, not this wrapper). This hook
+// is then only reachable when the read happens on the non-transactional q.
+// That is the pre-fix code path. The fixed code never routes the master read
+// through the wrapper. The injection cannot fire. No data is lost.
 type purgeOnMasterReadDBTX struct {
 	storage.DBTX
 	once sync.Once
@@ -41,17 +41,17 @@ func (d *purgeOnMasterReadDBTX) QueryRowContext(ctx context.Context, query strin
 }
 
 // TestRestoreTruncation_ConcurrentPurgeNoSilentLoss is a regression test for
-// issue #413: restoreTruncationByLogID read the master outside its
-// transaction, then used master.ID in an in-tx UPDATE. If the master was
+// issue #413. restoreTruncationByLogID read the master outside its
+// transaction. It then used master.ID in an in-tx UPDATE. If the master was
 // concurrently purged between the read and the UPDATE, the UPDATE matched 0
-// rows (no error in SQLite), the truncation log row was still consumed, and
-// the transaction committed — the RRULE was never restored and the log that
-// would let the user retry was gone. Silent, unrecoverable data loss.
+// rows (no error in SQLite). The truncation log row was still consumed. The
+// transaction committed. The RRULE was never restored. The log that would
+// let the user retry was gone. Silent, unrecoverable data loss.
 //
-// The test sets up a truncated recurring series, then restores it through a
+// The test sets up a truncated recurring series. It then restores it through a
 // service whose non-transactional queries are wrapped so that a concurrent
 // purge fires immediately after the master read. The forbidden end state is
-// "master gone AND truncation log gone": the truncation became unrecoverable
+// "master gone AND truncation log gone". The truncation became unrecoverable
 // without the RRULE ever being restored.
 func TestRestoreTruncation_ConcurrentPurgeNoSilentLoss(t *testing.T) {
 	// A file-backed DB is required so a second connection sees the same data.
