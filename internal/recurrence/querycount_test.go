@@ -21,7 +21,7 @@ import (
 
 // overrideQueryMarker is the SQL fragment shared by every override-fetch query
 // (both the per-master ListOverridesByUID and the batched ListOverridesByUIDs).
-// Counting queries that contain it measures the N+1 the fix eliminates.
+// A count of queries that contain it measures the N+1 the fix eliminates.
 const overrideQueryMarker = "recurrence_id != ''"
 
 // countingDriver wraps another database/sql driver and counts executed override
@@ -57,8 +57,8 @@ func (c countingConn) ExecContext(ctx context.Context, query string, args []driv
 
 var countingDriverSeq atomic.Int64
 
-// newCountingDB opens an in-memory database through the counting driver, runs
-// the schema migrations, and returns the override-query counter.
+// newCountingDB opens an in-memory database through the count driver. It runs
+// the schema migrations. It returns the override-query counter.
 func newCountingDB(t *testing.T) (*sql.DB, *storage.Queries, *int64) {
 	t.Helper()
 	var n int64
@@ -89,7 +89,7 @@ func newCountingDB(t *testing.T) (*sql.DB, *storage.Queries, *int64) {
 }
 
 // TestListExpandedByDateRange_BatchesOverrideFetch is the regression guard for
-// issue #257: expanding many recurring masters must fetch all overrides in a
+// issue #257. An expand of many recurring masters must fetch all overrides in a
 // single query rather than one per master.
 func TestListExpandedByDateRange_BatchesOverrideFetch(t *testing.T) {
 	conn, q, counter := newCountingDB(t)
