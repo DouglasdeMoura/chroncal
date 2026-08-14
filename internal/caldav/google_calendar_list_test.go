@@ -75,7 +75,7 @@ func TestIsGoogleCalendarEndpoint(t *testing.T) {
 }
 
 // Deleted calendars and those with only a free-busy reader role must still map
-// correctly: deleted entries are dropped entirely, and Google's
+// correctly. Deleted entries are dropped entirely. Google's
 // "freeBusyReader" role is read access (not unknown).
 func TestDiscoverGoogleCalendarsSkipsDeletedAndMapsFreeBusyReader(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
