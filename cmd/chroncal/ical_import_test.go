@@ -36,10 +36,10 @@ func newImportTestApp(t *testing.T) *app.App {
 }
 
 // TestImportComponentsContinuesPastItemFailure is the regression test for
-// issue #141: a mid-file upsert failure used to `return` out of the import
-// loop, so components after the bad one were silently dropped while the rows
-// before it stayed committed. Importing must now skip only the failing
-// component, persist the rest, and report the failure instead of aborting.
+// issue #141. A mid-file upsert failure used to `return` out of the import
+// loop. Components after the bad one were then dropped in silence while the
+// rows before it stayed committed. Import must now skip only the failed
+// component, persist the rest, and report the failure instead of an abort.
 func TestImportComponentsContinuesPastItemFailure(t *testing.T) {
 	ctx := context.Background()
 	a := newImportTestApp(t)
@@ -98,9 +98,9 @@ func TestImportComponentsContinuesPastItemFailure(t *testing.T) {
 }
 
 // TestImportComponentsSurfacesChildFieldFailure covers the second half of
-// issue #141: child-field imports (alarms, attendees, ...) only logged on
-// failure, so partial child data was dropped while the command reported a
-// clean success. A failing child import must now appear in the warnings.
+// issue #141. Child-field imports (alarms, attendees, ...) only logged on
+// failure. Partial child data was then dropped while the command reported a
+// clean success. A failed child import must now appear in the warnings.
 func TestImportComponentsSurfacesChildFieldFailure(t *testing.T) {
 	ctx := context.Background()
 	a := newImportTestApp(t)
@@ -211,11 +211,11 @@ func TestEnsureICalImportAllowedRejectsCollectionPolicyViolations(t *testing.T) 
 }
 
 // TestImportJSONOutputStaysValidWhenPushNotes is the regression test for
-// issue #255: `ical import --output json` passed the command's stdout writer
-// to the opportunistic push seam unconditionally, so the human-readable
-// "Synced to ..." note was appended after the JSON object, producing invalid
-// JSON on stdout. In JSON mode the note must go to io.Discard (matching the
-// event/todo/journal write paths) so stdout stays parseable.
+// issue #255. `ical import --output json` passed the command's stdout writer
+// to the opportunistic push seam unconditionally. The human-readable
+// "Synced to ..." note was then appended after the JSON object. That produced
+// invalid JSON on stdout. In JSON mode the note must go to io.Discard. That
+// matches the event/todo/journal write paths. stdout then stays parseable.
 
 func TestImportJSONOutputStaysValidWhenPushNotes(t *testing.T) {
 	ctx := context.Background()
