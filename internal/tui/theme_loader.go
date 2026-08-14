@@ -146,10 +146,10 @@ func readBuiltinRaw(name string) (*rawTheme, error) {
 //	{ light = "...", dark = "..." }     // variant table
 //
 // ANSI indices 0..15 are translated to the terminal's actually-rendered
-// RGB via activePalette when an OSC 4 response is available — so themes
-// can lean on ANSI references (primary = "4") and still benefit from
-// exact OKLCh contrast computations against real hex values. Indices
-// 16..255 and unrecognized strings fall through to lipgloss.Color.
+// RGB via activePalette when an OSC 4 response is available. Themes can
+// then lean on ANSI references (primary = "4"). Exact OKLCh contrast
+// computations still work against real hex values. Indices 16..255 and
+// unrecognized strings fall through to lipgloss.Color.
 func resolveColor(v any, hasDarkBG bool, field string) (color.Color, error) {
 	switch x := v.(type) {
 	case string:
@@ -172,8 +172,8 @@ func resolveColor(v any, hasDarkBG bool, field string) (color.Color, error) {
 }
 
 // resolveString turns a single TOML color string into a color.Color. If
-// it's an ANSI index 0..15 and the queried terminal palette has a value
-// for that slot, the palette's hex wins; otherwise lipgloss handles it.
+// it is an ANSI index 0..15 and the queried terminal palette has a value
+// for that slot, the palette's hex wins. Otherwise lipgloss handles it.
 func resolveString(s string) color.Color {
 	if idx, ok := ansi16Index(s); ok {
 		if c := activePalette.Lookup(idx); c != nil {
