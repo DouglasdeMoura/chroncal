@@ -11,16 +11,17 @@ import (
 )
 
 // Import DROPS a VALARM whose TRIGGER cannot be parsed, with a warning (see
-// trigger_contract_test.go and the decision record in issue #570), so an
-// unparseable value should normally never reach export. The exportableTrigger
-// gate exercised here is a backstop, not the primary defense: it catches alarm
-// rows written during the window in which import preserved the raw value
-// verbatim, and anything a future caller stores directly. Without it,
-// buildValarm would label the value VALUE=DATE-TIME, producing a VALARM strict
-// CalDAV servers reject with 400, which fails the PUT for the whole resource
-// and leaves it permanently dirty — far worse than omitting one alarm that
-// could never fire anyway. Do not "fix" parseAlarm to preserve raw trigger
-// values again; that contract was deliberately removed.
+// trigger_contract_test.go and the decision record in issue #570). An
+// unparseable value should then normally never reach export. The
+// exportableTrigger gate exercised here is a backstop, not the primary defense.
+// It catches alarm rows written during the window in which import preserved
+// the raw value verbatim. It also catches a value a future caller stores
+// directly. Without it, buildValarm would label the value VALUE=DATE-TIME.
+// That produces a VALARM strict CalDAV servers reject with 400. The PUT for
+// the whole resource then fails. The resource stays permanently dirty. That is
+// far worse than a skip of one alarm that could never fire anyway. Do not
+// "fix" parseAlarm to preserve raw trigger values again. That contract was
+// deliberately removed.
 func TestExport_UnparseableTrigger_OmitsValarm(t *testing.T) {
 	t.Parallel()
 	events := []event.Event{{
@@ -68,12 +69,12 @@ func TestExport_UnparseableTodoTrigger_OmitsValarm(t *testing.T) {
 }
 
 // RFC 5545 §3.8.6.3: the trigabs production permits only VALUE=DATE-TIME as a
-// parameter on an absolute TRIGGER. Emitting RELATED=END alongside it produces
-// a VALARM strict CalDAV servers (Google, Fastmail) reject with HTTP 400,
-// failing the PUT for the whole resource. Reachable because parseAlarm stores
-// RELATED unconditionally and the TUI alarm editor preserves Related across
-// edits, so an absolute trigger can carry Related == "END" locally. The stored
-// model keeps the field (inert locally); only the wire format suppresses it.
+// parameter on an absolute TRIGGER. Emit RELATED=END alongside it produces
+// a VALARM strict CalDAV servers (Google, Fastmail) reject with HTTP 400.
+// The PUT for the whole resource then fails. Reachable because parseAlarm stores
+// RELATED unconditionally. The TUI alarm editor preserves Related across
+// edits. An absolute trigger can then carry Related == "END" locally. The stored
+// model keeps the field (inert locally). Only the wire format suppresses it.
 func TestExport_AbsoluteTriggerWithRelatedEnd_OmitsRelated(t *testing.T) {
 	t.Parallel()
 	events := []event.Event{{
