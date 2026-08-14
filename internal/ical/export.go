@@ -848,9 +848,9 @@ func buildValarm(alarm model.Alarm) *ical.Component {
 // tzSpans accumulates, in first-seen order, the timezones an export references
 // together with the inclusive [min, max] year span of the items that reference
 // each. buildVTimezone anchors its DST rules on that span (issue #515). It
-// does not use only the current year. An event dated in a different year —
-// possibly one whose zone observed a different DST rule — then still
-// resolves the right offset from the embedded VTIMEZONE.
+// does not use only the current year. An event dated in a different year
+// then still resolves the right offset from the embedded VTIMEZONE. That
+// year may be one whose zone observed a different DST rule.
 type tzSpans struct {
 	order    []string
 	min, max map[string]int
@@ -955,12 +955,12 @@ func journalYear(j journal.Journal) int {
 // it. It walks that span and finds STANDARD/DAYLIGHT offset transitions. It
 // emits one observance per distinct DST rule period (RFC 5545 Section 3.6.5).
 //
-// When the zone's rule changed within the span (for example the US 2007 DST
-// extension, or a zone that abolished DST), the superseded rule is bounded
-// with UNTIL. A consumer that uses only the embedded VTIMEZONE then resolves
-// the correct offset for every referenced year. It does not extrapolate the
-// current year's rule (issue #515). A zero fromYear/toYear falls back to the
-// current year.
+// When the zone's rule changed within the span, the superseded rule is
+// bounded with UNTIL. Examples: the US 2007 DST extension, or a zone that
+// abolished DST. A consumer that uses only the embedded VTIMEZONE then
+// resolves the correct offset for every referenced year. It does not
+// extrapolate the current year's rule (issue #515). A zero fromYear/toYear
+// falls back to the current year.
 func buildVTimezone(tzID string, fromYear, toYear int) (*ical.Component, error) {
 	loc, err := time.LoadLocation(tzID)
 	if err != nil {
