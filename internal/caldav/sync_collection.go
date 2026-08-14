@@ -34,7 +34,7 @@ type SyncChange struct {
 // REPORT. SyncToken is the new token to store for the next incremental sync.
 //
 // Truncated reports the RFC 6578 §3.6 marker. The server limited the result
-// set (Google pages large initial snapshots) and flagged it with a
+// set (Google pages large initial snapshots). It flagged that with a
 // <response> for the collection itself that carries 507 Insufficient Storage.
 // SyncToken then represents only the PARTIAL state. Callers must repeat
 // the REPORT with it to fetch the rest. Never treat a truncated
