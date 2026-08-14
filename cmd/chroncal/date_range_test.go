@@ -10,10 +10,10 @@ import (
 	_ "time/tzdata"
 )
 
-// TestParseDateRangeFromBeyondDefaultWindow guards against issue #111:
-// when --to is omitted and --from is more than 30 days in the future, the
-// default `to` must follow `from` (from+30), not stay anchored to today+30,
-// which would produce an inverted, silently-empty range.
+// TestParseDateRangeFromBeyondDefaultWindow guards against issue #111.
+// When --to is omitted and --from is more than 30 days in the future, the
+// default `to` must follow `from` (from+30). It must not stay anchored to
+// today+30. That would produce an inverted, empty range in silence.
 func TestParseDateRangeFromBeyondDefaultWindow(t *testing.T) {
 	now := time.Now()
 	fromStr := now.AddDate(0, 0, 60).Format("2006-01-02")
@@ -38,9 +38,9 @@ func TestParseDateRangeDefaultToFollowsFrom(t *testing.T) {
 	}
 }
 
-// TestParseListDateRangeNoFlagsIsOpen guards issue #304: with neither --from
-// nor --to, the retrospective todo/journal lists must use an open (zero) range
-// so overdue todos and past journal entries are not filtered out.
+// TestParseListDateRangeNoFlagsIsOpen guards issue #304. With neither --from
+// nor --to, the retrospective todo/journal lists must use an open (zero) range.
+// Overdue todos and past journal entries are then not filtered out.
 func TestParseListDateRangeNoFlagsIsOpen(t *testing.T) {
 	from, to, err := parseListDateRange("", "")
 	if err != nil {
@@ -52,9 +52,9 @@ func TestParseListDateRangeNoFlagsIsOpen(t *testing.T) {
 }
 
 // TestParseListDateRangeWithFlagIsFinite guards against an open upper bound
-// once any flag is set: a half-open zero `to` would make recurrence expansion
+// once any flag is set. A half-open zero `to` would make recurrence expansion
 // (which appends only expanded instances, never masters) drop recurring
-// todos/journals entirely. Setting --from must yield a finite forward window.
+// todos/journals entirely. A set of --from must yield a finite forward window.
 func TestParseListDateRangeWithFlagIsFinite(t *testing.T) {
 	from, to, err := parseListDateRange("2026-09-01", "")
 	if err != nil {
@@ -68,8 +68,8 @@ func TestParseListDateRangeWithFlagIsFinite(t *testing.T) {
 	}
 }
 
-// TestParseExportDateBoundsOnlyFrom guards issue #358: supplying only --from
-// must leave the upper bound open (zero), not default it to from+30 days.
+// TestParseExportDateBoundsOnlyFrom guards issue #358. Only --from
+// must leave the upper bound open (zero). It must not default it to from+30 days.
 func TestParseExportDateBoundsOnlyFrom(t *testing.T) {
 	from, to, err := parseExportDateBounds("2026-01-01", "")
 	if err != nil {
@@ -83,8 +83,8 @@ func TestParseExportDateBoundsOnlyFrom(t *testing.T) {
 	}
 }
 
-// TestParseExportDateBoundsOnlyTo guards issue #358: supplying only --to must
-// leave the lower bound open (zero), not default it to today.
+// TestParseExportDateBoundsOnlyTo guards issue #358. Only --to must
+// leave the lower bound open (zero). It must not default it to today.
 func TestParseExportDateBoundsOnlyTo(t *testing.T) {
 	from, to, err := parseExportDateBounds("", "2026-12-31")
 	if err != nil {
