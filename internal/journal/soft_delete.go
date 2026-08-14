@@ -17,10 +17,10 @@ import (
 var ErrNotDeleted = errors.New("journal: row not soft-deleted (may have been purged)")
 
 // RestoreByID un-hides a single soft-deleted journal. For an override it
-// also strips the matching EXDATE from the master in the same
-// transaction — otherwise the restored occurrence reappears as a row in
-// the DB but stays hidden from expansion because the series still
-// excludes that slot.
+// also strips the EXDATE that matches from the master in the same
+// transaction. Otherwise the restored occurrence reappears as a row in
+// the DB but stays hidden from expansion. The series still excludes that
+// slot.
 func (s *Service) RestoreByID(ctx context.Context, id int64) error {
 	r, err := s.q.GetJournalIncludingDeleted(ctx, id)
 	if err != nil {
@@ -104,19 +104,21 @@ func clearMasterEXDATE(ctx context.Context, qtx *storage.Queries, uid, recurrenc
 	}, recurrenceID)
 }
 
-// RestoreByUID un-hides every soft-deleted row sharing uid — master plus
-// overrides — and strips the matching EXDATE from the master for each
-// restored override in the same transaction. Without the EXDATE cleanup the
-// master would keep excluding those slots while also carrying the now-live
-// overrides, which round-trips to iCal as a self-contradicting series
-// (EXDATE + override for the same occurrence). Used by the CLI
-// `journals restore <uid>` path. Mirrors event.RestoreByUID. Returns
-// ErrNotDeleted when the UID matches no soft-deleted rows so callers can
-// report "not found" instead of a misleading success.
+// RestoreByUID un-hides every soft-deleted row with uid: master plus
+// overrides. It strips the EXDATE that matches from the master for each
+// restored override in the same transaction.
+//
+// Without the EXDATE cleanup the master would still exclude those slots
+// while it also holds the now-live overrides. That round-trips to iCal as a
+// self-contradicting series (EXDATE plus override for the same occurrence).
+// Used by the CLI `journals restore <uid>` path. Mirrors event.RestoreByUID.
+// Returns ErrNotDeleted when the UID matches no soft-deleted rows. Callers
+// can then report "not found" instead of a false success.
 func (s *Service) RestoreByUID(ctx context.Context, uid string) error {
-	// Resolve every calendar owning a row with this UID before restoring. The
-	// master may have been purged, leaving only orphaned override/series-tail
-	// rows; the per-UID master lookup (recurrence_id = '') would miss them.
+	// Resolve every calendar that owns a row with this UID before restore.
+	// The master may have been purged, and only orphaned override or
+	// series-tail rows remain. The per-UID master lookup (recurrence_id = "")
+	// would miss them.
 	calIDs, gErr := s.calendarIDsForUID(ctx, uid)
 	if gErr != nil {
 		return gErr
@@ -144,10 +146,10 @@ func (s *Service) RestoreByUID(ctx context.Context, uid string) error {
 
 // restoreByUIDClearingExdates un-hides every soft-deleted row for uid and
 // clears the master EXDATE for each override that was soft-deleted, all in
-// one transaction. Returns the number of rows un-hidden so callers can
-// distinguish a real restore from a no-op (live/unknown UID). The recurrence
-// IDs are read before the restore because afterwards the rows are live and no
-// longer match the deleted-overrides query.
+// one transaction. It returns the number of rows un-hidden so callers can
+// tell a real restore from a no-op (live or unknown UID). The recurrence
+// IDs are read before the restore. After the restore the rows are live and
+// no longer match the deleted-overrides query.
 func (s *Service) restoreByUIDClearingExdates(ctx context.Context, uid string) (int64, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -208,8 +210,8 @@ func (s *Service) PurgeDeleted(ctx context.Context, olderThan time.Time) (int, e
 }
 
 // PurgeOldInstanceDeletes drops journal_exdate_deletes provenance rows older
-// than olderThan. Returns the number of rows purged. The corresponding
-// EXDATEs on the master stay in place — the user intended those instances to
+// than olderThan. Returns the number of rows purged. The related
+// EXDATEs on the master stay in place. The user intended those instances to
 // be gone. Mirrors event.PurgeOldInstanceDeletes.
 func (s *Service) PurgeOldInstanceDeletes(ctx context.Context, olderThan time.Time) (int, error) {
 	cutoff := olderThan.UTC().Format(timeutil.StorageTimeFormat)
@@ -235,8 +237,8 @@ func (s *Service) PurgeByID(ctx context.Context, id int64) error {
 }
 
 // reconcileSyncAfterRestore clears any tombstone queued for this UID and
-// marks the resource dirty so the next push re-CREATEs it server-side if
-// the sync_resource was already swept out.
+// marks the resource dirty. The next push then re-CREATEs it on the server
+// if the sync_resource was already swept out.
 func (s *Service) reconcileSyncAfterRestore(ctx context.Context, calendarID int64, uid string) error {
 	if err := s.q.DeleteTombstonesByCalendarAndUID(ctx, storage.DeleteTombstonesByCalendarAndUIDParams{
 		CalendarID: calendarID,
