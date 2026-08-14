@@ -386,12 +386,12 @@ func TestSoftDelete_FromInstance_RRULE(t *testing.T) {
 	}
 }
 
-// TestSoftDelete_FromInstance_UndoAfterGap reproduces issue #66. When the
-// master's last real edit predates the truncation by more than one second,
-// the stale-master guard used to mistake the truncation's own updated_at bump
-// for a concurrent external edit and reject the Undo. The guard must compare
-// against the master's POST-truncation updated_at. Undo then succeeds here.
-// It still detects genuine later edits.
+// TestSoftDelete_FromInstance_UndoAfterGap reproduces issue #66. The master's
+// last real edit predates the truncation by more than one second. The
+// stale-master guard used to mistake the truncation's own updated_at bump
+// for a concurrent external edit. It then rejected the Undo. The guard must
+// compare against the master's POST-truncation updated_at. Undo then succeeds
+// here. It still detects genuine later edits.
 func TestSoftDelete_FromInstance_UndoAfterGap(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -647,10 +647,10 @@ func TestSoftDelete_UndoInstanceDeletePreservesPreexistingEXDATE(t *testing.T) {
 
 // TestSoftDelete_RestoreByUIDPreservesImportedEXDATE is the regression test for
 // issue #86. An EXDATE that arrived via import (no delete added it) must
-// survive a DeleteSeries + RestoreByUID round-trip, even when an override
-// shares the same recurrence slot. RestoreByUID previously cleared the master
-// EXDATE for every soft-deleted override's recurrence_id unconditionally.
-// That stripped the imported EXDATE in silence.
+// survive a DeleteSeries + RestoreByUID round-trip. That holds even when an
+// override shares the same recurrence slot. RestoreByUID previously cleared
+// the master EXDATE for every soft-deleted override's recurrence_id
+// unconditionally. That stripped the imported EXDATE in silence.
 func TestSoftDelete_RestoreByUIDPreservesImportedEXDATE(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
