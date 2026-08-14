@@ -16,9 +16,9 @@ type parsed struct {
 	seconds int
 }
 
-// consumeComponent extracts the unsigned integer preceding letter in s.
+// consumeComponent extracts the unsigned integer before letter in s.
 // If letter is absent, returns (s, 0, nil). Per RFC 5545 a component
-// value is one or more DIGITs with no embedded sign; the whole-duration
+// value is one or more DIGITs with no embedded sign. The whole-duration
 // sign is handled once in parse, so "PT-1H" and "PT+1H" are rejected.
 func consumeComponent(s string, letter byte, orig string) (string, int, error) {
 	i := strings.IndexByte(s, letter)
@@ -123,15 +123,15 @@ func parse(s string) (parsed, error) {
 // e.g. 1h30m → "PT1H30M", 90s → "PT1M30S", -15m → "-PT15M",
 // 48h → "P2D", 168h → "P1W".
 //
-// Whole days are emitted as the date form (P#D) and exact whole weeks as
-// the mutually-exclusive week form (P#W) so that nominal multi-day spans
-// round-trip through Add, which uses calendar-aware AddDate for days and
+// Whole days are emitted as the date form (P#D). Exact whole weeks use
+// the mutually-exclusive week form (P#W). Nominal multi-day spans then
+// round-trip through Add. Add uses calendar-aware AddDate for days and
 // weeks. An absolute "PT48H" would otherwise drift by an hour across a
 // DST boundary.
 //
-// Sub-second precision is truncated toward zero: a Go duration carries
-// nanoseconds but RFC 5545 durations have whole-second granularity, so
-// 1500ms becomes "PT1S" and 500ms becomes "PT0S".
+// Sub-second precision is truncated toward zero. A Go duration carries
+// nanoseconds. RFC 5545 durations have whole-second granularity.
+// 1500ms becomes "PT1S". 500ms becomes "PT0S".
 func FromGo(d time.Duration) string {
 	total := int64(d / time.Second)
 	if total == 0 {
@@ -182,7 +182,7 @@ func FromGo(d time.Duration) string {
 
 // Validate checks that s is a well-formed RFC 5545 duration string.
 // Format: [+/-]P[nW] or [+/-]P[nD][T[nH][nM][nS]]
-// Returns an error if the string is empty, malformed, or has trailing garbage.
+// Returns an error if the string is empty, malformed, or has leftover garbage.
 func Validate(s string) error {
 	_, err := parse(s)
 	return err
@@ -191,7 +191,7 @@ func Validate(s string) error {
 // Add parses an RFC 5545 duration string and adds it to a time.
 // Format: [+/-]P[nW] or [+/-]P[nD][T[nH][nM][nS]]
 // Returns zero time for empty or unparseable input. Callers should
-// validate with Validate() before calling Add().
+// validate with Validate() before they call Add().
 func Add(t time.Time, dur string) time.Time {
 	p, err := parse(dur)
 	if err != nil {
