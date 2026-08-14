@@ -149,7 +149,7 @@ func normalizeAuthType(authType string) string {
 }
 
 // readBasicPassword obtains the password for --auth basic. We never accept it
-// as a CLI flag to avoid exposing secrets in /proc/<pid>/cmdline and shell
+// as a CLI flag. That keeps secrets out of /proc/<pid>/cmdline and shell
 // history. Sources, in order:
 //
 //  1. CHRONCAL_PASSWORD env var (handy for scripted/CI setup).
@@ -175,11 +175,11 @@ func readBasicPassword() (string, error) {
 }
 
 // readBearerToken obtains the bearer token for --auth bearer. We never accept
-// it as a CLI flag to avoid exposing secrets in /proc/<pid>/cmdline and shell
+// it as a CLI flag. That keeps secrets out of /proc/<pid>/cmdline and shell
 // history. Sources, in order:
 //
 //  1. CHRONCAL_BEARER_TOKEN env var (handy for scripted/CI setup).
-//  2. Interactive prompt via terminal (echo disabled), matching basic-auth UX.
+//  2. Interactive prompt via terminal (echo disabled). Same UX as basic-auth.
 func readBearerToken() (string, error) {
 	if s := strings.TrimSpace(os.Getenv("CHRONCAL_BEARER_TOKEN")); s != "" {
 		return s, nil
@@ -202,11 +202,11 @@ func readBearerToken() (string, error) {
 
 // readGoogleClientSecret obtains the Desktop OAuth client secret. Google's
 // token endpoint requires it for Desktop clients even with PKCE, so it is
-// mandatory for the oauth2 auth type. We never accept it as a CLI flag — that
+// mandatory for the oauth2 auth type. We never accept it as a CLI flag. That
 // would expose it in /proc/<pid>/cmdline and shell history. Sources, in order:
 //
 //  1. GOOGLE_CLIENT_SECRET env var (handy for scripted setup).
-//  2. Interactive prompt via terminal (echo disabled), matching basic-auth UX.
+//  2. Interactive prompt via terminal (echo disabled). Same UX as basic-auth.
 func readGoogleClientSecret() (string, error) {
 	if s := strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_SECRET")); s != "" {
 		return s, nil
