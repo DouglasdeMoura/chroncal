@@ -48,9 +48,9 @@ func NewService(db *sql.DB, q *storage.Queries) *Service {
 }
 
 // WithTx returns a copy of the service whose writes run inside tx. The caller
-// owns tx (commit/rollback). The returned service's mutating methods neither
-// begin nor commit their own transaction. Several calls can then compose into
-// a single atomic unit.
+// owns tx (commit/rollback). The returned service's methods that mutate
+// neither begin nor commit their own transaction. Several calls can then
+// compose into a single atomic unit.
 func (s *Service) WithTx(tx *sql.Tx) *Service {
 	return &Service{db: s.db, q: s.q.WithTx(tx), tx: tx}
 }
@@ -173,9 +173,10 @@ func defaults(status, class string) (string, string) {
 	return status, class
 }
 
-// completedAtFor reconciles the completed_at timestamp with the status: a
-// COMPLETED todo gets a timestamp (preserving any existing one, else now),
-// and any other status clears it so reopened todos don't keep a stale value.
+// completedAtFor reconciles the completed_at timestamp with the status.
+// A COMPLETED todo gets a timestamp. The function keeps a timestamp that
+// already exists, or uses now. Any other status clears it. A reopened todo
+// then does not keep a stale value.
 func completedAtFor(status, completedAt string) string {
 	if status != "COMPLETED" {
 		return ""
@@ -212,8 +213,8 @@ func (p *UpsertParams) applyDefaults() {
 	p.PercentComplete = percentCompleteFor(p.Status, p.PercentComplete)
 }
 
-// percentCompleteFor reconciles percent-complete with the status: a COMPLETED
-// todo is forced to 100, and a stale 100 left over from completion is reset to
+// percentCompleteFor reconciles percent-complete with the status. A COMPLETED
+// todo is forced to 100. A stale 100 left over from completion is reset to
 // 0 when the todo is reopened to a non-completed status.
 func percentCompleteFor(status string, percent int64) int64 {
 	if status == "COMPLETED" {
@@ -355,13 +356,15 @@ func (s *Service) markDirtyByID(ctx context.Context, todoID int64) {
 	_ = storage.MarkResourceDirty(ctx, s.dirtyExec(), r.CalendarID, r.Uid, "todo")
 }
 
-// todoCalendarIDsByUID returns the distinct calendar IDs of every row sharing
-// uid — live or soft-deleted. A series-wide guard needs this so orphaned
-// overrides and series-tail rows stay protected even after the master has been
-// purged independently (GetTodoByUIDIncludingDeleted returns no row then, so a
-// master-only lookup would skip the guard). This is a read-only guard helper
-// written as raw SQL rather than a sqlc query so it stays local to the todo
-// domain; regenerating storage would churn shared generated files.
+// todoCalendarIDsByUID returns the distinct calendar IDs of every row with
+// uid, live or soft-deleted. A series-wide guard needs this so orphaned
+// overrides and series-tail rows stay protected after the master is purged
+// on its own. GetTodoByUIDIncludingDeleted returns no row then. A
+// master-only lookup would skip the guard.
+//
+// This is a read-only guard helper written as raw SQL rather than a sqlc
+// query. It stays local to the todo domain. A storage regenerate would
+// churn shared generated files.
 func (s *Service) todoCalendarIDsByUID(ctx context.Context, uid string) ([]int64, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT calendar_id FROM todos WHERE uid = ?`, uid)
 	if err != nil {
@@ -383,9 +386,9 @@ func (s *Service) todoCalendarIDsByUID(ctx context.Context, uid string) ([]int64
 }
 
 // ensureSeriesWritable guards every calendar a UID spans before a series-wide
-// mutation (DeleteSeries, RestoreByUID). Resolving distinct calendar IDs across
-// all rows sharing the UID — not just the master — covers overrides and
-// series-tail rows when the master row has been purged.
+// mutation (DeleteSeries, RestoreByUID). Distinct calendar IDs across all
+// rows with the UID, not just the master, cover overrides and series-tail
+// rows when the master row has been purged.
 func (s *Service) ensureSeriesWritable(ctx context.Context, uid string) error {
 	ids, err := s.todoCalendarIDsByUID(ctx, uid)
 	if err != nil {
@@ -412,9 +415,9 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Todo, error) {
 		completedAt = time.Now().UTC().Format(time.RFC3339)
 	}
 
-	// One transaction wraps the todo row and its categories so a failing
-	// category write rolls the row back instead of committing an orphan whose
-	// MarkResourceDirty never ran (issue #222, mirror of event issue #73).
+	// One transaction wraps the todo row and its categories. A category write
+	// that fails then rolls the row back. The path does not commit an orphan
+	// whose MarkResourceDirty never ran (issue #222, mirror of event issue #73).
 	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
 		return Todo{}, err
@@ -470,8 +473,8 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, e
 		return Todo{}, err
 	}
 	// Reject writes the linked remote collection cannot accept before any
-	// side effect: guard the source calendar (where the todo lives) and, on a
-	// move, the destination calendar too.
+	// side effect. Guard the source calendar (where the todo lives). On a
+	// move, guard the destination calendar too.
 	if err := calendaraccess.EnsureWritable(ctx, s.q, existing.CalendarID, todoComponent); err != nil {
 		return Todo{}, err
 	}
@@ -487,8 +490,8 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, e
 		return Todo{}, err
 	}
 
-	// One transaction wraps the todo row and its categories so a failing
-	// category write rolls the row update back instead of committing a
+	// One transaction wraps the todo row and its categories. A category write
+	// that fails then rolls the row update back. The path does not commit a
 	// half-updated row whose MarkResourceDirty never ran (issue #222).
 	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
@@ -556,9 +559,9 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Todo, error)
 		return Todo{}, err
 	}
 
-	// One transaction wraps the todo row and its categories so a failing
-	// category write rolls the upsert back instead of leaving an orphan row
-	// (issue #222). txscope joins the sync engine's outer transaction when
+	// One transaction wraps the todo row and its categories. A category write
+	// that fails then rolls the upsert back. The path does not leave an orphan
+	// row (issue #222). txscope joins the sync engine's outer transaction when
 	// UpsertByUID is called via WithTx.
 	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
@@ -604,15 +607,15 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Todo, error)
 	return t, nil
 }
 
-// ErrHasOverrides is returned when attempting to delete a recurring master
+// ErrHasOverrides is returned when a delete targets a recurring master
 // todo that has override instances. Use DeleteSeries instead.
 var ErrHasOverrides = fmt.Errorf("todo has overrides: use DeleteSeries to delete the entire series")
 
 // Delete soft-deletes a todo by ID. For a standalone todo it flips
-// deleted_at; for an override it adds EXDATE to the master and soft-
-// deletes the override in the same transaction so undo can reverse both
-// sides. A recurring master with live overrides is rejected — callers
-// must use DeleteSeries.
+// deleted_at. For an override it adds EXDATE to the master and
+// soft-deletes the override in the same transaction so undo can reverse
+// both sides. A recurring master with live overrides is rejected.
+// Callers must use DeleteSeries.
 func (s *Service) Delete(ctx context.Context, id int64) error {
 	td, err := s.Get(ctx, id)
 	if err != nil {
@@ -635,8 +638,8 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 	}
 
 	if td.RecurrenceID == "" {
-		// Tombstone + soft-delete commit together so a failed tombstone write
-		// can't leave a soft-deleted row whose next sync DELETEs a still-live
+		// Tombstone and soft-delete commit together. A failed tombstone write
+		// cannot leave a soft-deleted row whose next sync DELETEs a still-live
 		// server resource (issue #107).
 		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
@@ -665,11 +668,11 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		qtx := s.q.WithTx(tx)
 
 		master, err := qtx.GetTodoByUID(ctx, td.UID)
-		// A genuine lookup error (e.g. SQLITE_BUSY) must not collapse into the
-		// "no master" path: that would soft-delete the override while skipping
-		// its EXDATE/provenance bookkeeping, resurrecting the occurrence via
-		// series expansion (issue #290). Only a missing master (ErrNoRows)
-		// legitimately skips the bookkeeping.
+		// A genuine lookup error (for example SQLITE_BUSY) must not collapse
+		// into the "no master" path. That path would soft-delete the override
+		// and skip its EXDATE/provenance records. Series expansion would then
+		// restore the occurrence (issue #290). Only a missing master (ErrNoRows)
+		// may skip those records.
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("get master: %w", err)
 		}
@@ -677,10 +680,10 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 			existing := timeutil.ParseTimeList(storage.NullableToString(master.Exdates))
 			recIDTime, parseErr := timeutil.ParseRecurrenceID(td.RecurrenceID)
 			if parseErr != nil {
-				// A malformed recurrence_id can't be excluded from the
-				// master, so soft-deleting the override would resurrect the
-				// occurrence via series expansion. Fail loudly instead — the
-				// restore path treats the same parse failure as fatal.
+				// A malformed recurrence_id cannot be excluded from the
+				// master. A soft-delete of the override would then restore the
+				// occurrence via series expansion. Return an error. The restore
+				// path treats the same parse failure as fatal.
 				return fmt.Errorf("parse recurrence_id %q: %w", td.RecurrenceID, parseErr)
 			}
 			existing = append(existing, recIDTime)
@@ -705,8 +708,8 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 			return fmt.Errorf("soft-delete todo: %w", err)
 		}
 		// Mark the master dirty — its EXDATE was modified — inside the same
-		// transaction so a failed mark rolls the EXDATE change back rather than
-		// committing a change that is never pushed (issue #107).
+		// transaction. A failed mark then rolls the EXDATE change back. The
+		// path does not commit a change that is never pushed (issue #107).
 		if err := storage.MarkResourceDirty(ctx, tx, td.CalendarID, td.UID, "todo"); err != nil {
 			return fmt.Errorf("mark resource dirty: %w", err)
 		}
@@ -722,15 +725,15 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 }
 
 // DeleteSeries soft-deletes a recurring master todo and every override
-// sharing its UID. A tombstone is created when the master is synced so
-// the next push sends DELETE to the server; the local rows stay in
+// with its UID. A tombstone is created when the master is synced so
+// the next push sends DELETE to the server. The local rows stay in
 // place until purge so the user can restore them.
 func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
-	// Resolve every calendar the UID spans before opening a transaction so a
-	// read-only or VEVENT-only collection rejects the whole series delete up
-	// front. Distinct calendar IDs across all rows (not just the master)
-	// cover orphaned overrides and series-tail rows even after the master has
-	// been purged independently.
+	// Resolve every calendar the UID spans before a transaction opens. A
+	// read-only or VEVENT-only collection then rejects the whole series
+	// delete up front. Distinct calendar IDs across all rows (not just the
+	// master) cover orphaned overrides and series-tail rows even after the
+	// master has been purged on its own.
 	if err := s.ensureSeriesWritable(ctx, uid); err != nil {
 		return err
 	}
@@ -741,14 +744,14 @@ func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
-	// Tombstone, dirty-mark, and soft-delete commit together so a failed
-	// sync-tracking write can't leave a tombstone for a still-live series
-	// whose next sync would DELETE it from the server (issue #107). A missing
+	// Tombstone, dirty-mark, and soft-delete commit together. A failed
+	// sync-track write cannot leave a tombstone for a still-live series
+	// whose next sync would DELETE it from the server (issue #107). No
 	// master means there is nothing to track.
 	master, mErr := qtx.GetTodoByUID(ctx, uid)
-	// Only ErrNoRows means "no master to track"; a genuine lookup error must
-	// abort so the series isn't soft-deleted locally without a tombstone or
-	// dirty mark, which would let it resurface on the next pull (issue #290).
+	// Only ErrNoRows means "no master to track". A genuine lookup error must
+	// abort. Otherwise the series is soft-deleted locally without a tombstone
+	// or dirty mark. It would then resurface on the next pull (issue #290).
 	if mErr != nil && !errors.Is(mErr, sql.ErrNoRows) {
 		return fmt.Errorf("get master: %w", mErr)
 	}
@@ -805,9 +808,9 @@ func (s *Service) listAlarms(ctx context.Context, todoID int64, withXProps bool)
 	for i, r := range rows {
 		alarmIDs[i] = r.ID
 	}
-	// Load failures propagate: attendees feed content matching in
-	// ReplaceAlarms and X-properties feed export/sync pushes, so a silently
-	// degraded alarm set would corrupt merges or rewrite the server copy.
+	// Load failures propagate. Attendees feed content match in ReplaceAlarms.
+	// X-properties feed export and sync pushes. A silent degraded alarm set
+	// would corrupt merges or rewrite the server copy.
 	attRows, err := s.q.ListTodoAlarmAttendeesByAlarmIDs(ctx, alarmIDs)
 	if err != nil {
 		return nil, fmt.Errorf("load alarm attendees: %w", err)
@@ -857,15 +860,15 @@ func (s *Service) ReplaceAlarms(ctx context.Context, todoID int64, alarms []mode
 	}
 	defer rollback()
 
-	// Merge instead of wipe-and-recreate: deleting a todo alarm row cascades
-	// away its todo_alarm_state, which would resurrect dismissed firings on
+	// Merge. Do not wipe and recreate. A delete of a todo alarm row cascades
+	// away its todo_alarm_state. That would restore dismissed firings on
 	// every sync rewrite. Mirrors event.Service.ReplaceAlarms.
 	existing, err := loadExistingTodoAlarms(ctx, qtx, todoID)
 	if err != nil {
 		return err
 	}
 
-	// Copy before applying defaults — the caller's slice must not be mutated.
+	// Copy before defaults apply. The caller's slice must not be mutated.
 	alarms = append([]model.Alarm(nil), alarms...)
 	for i := range alarms {
 		if alarms[i].Action == "" {
@@ -920,7 +923,7 @@ func (s *Service) ReplaceAlarms(ctx context.Context, todoID int64, alarms []mode
 }
 
 // loadExistingTodoAlarms loads a todo's alarms with attendees and
-// X-properties inside the transaction for merge matching.
+// X-properties inside the transaction for merge match.
 func loadExistingTodoAlarms(ctx context.Context, qtx *storage.Queries, todoID int64) ([]model.Alarm, error) {
 	rows, err := qtx.ListTodoAlarmsByTodoID(ctx, todoID)
 	if err != nil {
@@ -954,9 +957,9 @@ func loadExistingTodoAlarms(ctx context.Context, qtx *storage.Queries, todoID in
 	return alarms, nil
 }
 
-// matchTodoAlarm tries to match an incoming alarm with existing ones by
-// content. Rows whose non-empty RFC 9074 UIDs differ are never paired —
-// see event.matchAlarm for the rationale.
+// matchTodoAlarm tries to match an alarm that arrives with stored ones by
+// content. Rows whose non-empty RFC 9074 UIDs differ are never paired.
+// See event.matchAlarm for the rationale.
 func matchTodoAlarm(existing []model.Alarm, matched []bool, a model.Alarm) (int, bool) {
 	for j, ex := range existing {
 		if matched[j] {
@@ -972,7 +975,7 @@ func matchTodoAlarm(existing []model.Alarm, matched []bool, a model.Alarm) (int,
 	return 0, false
 }
 
-// matchTodoAlarmByUID matches an incoming alarm against unmatched existing
+// matchTodoAlarmByUID matches an alarm that arrives against unmatched stored
 // ones by RFC 9074 UID.
 func matchTodoAlarmByUID(existing []model.Alarm, matched []bool, a model.Alarm) (int, bool) {
 	if a.UID == "" {
@@ -1011,9 +1014,9 @@ func syncMatchedTodoAlarm(ctx context.Context, qtx *storage.Queries, a model.Ala
 			return fmt.Errorf("update alarm acknowledged: %w", err)
 		}
 	}
-	// X-properties are excluded from content matching; refresh them so a
+	// X-properties are excluded from content match. Refresh them so a
 	// remote X-prop change still lands. nil means the caller has no X-prop
-	// knowledge — keep the stored rows; only a non-nil slice is authoritative.
+	// knowledge. Keep the stored rows. Only a non-nil slice is authoritative.
 	if a.XProperties == nil || model.XPropsContentEqual(a.XProperties, ex.XProperties) {
 		return nil
 	}
@@ -1021,10 +1024,10 @@ func syncMatchedTodoAlarm(ctx context.Context, qtx *storage.Queries, a model.Ala
 }
 
 // updateTodoAlarmInPlace rewrites a UID-matched alarm's content on its
-// existing row, preserving the row ID so todo_alarm_state entries survive.
+// stored row. The row ID stays so todo_alarm_state entries survive.
 func updateTodoAlarmInPlace(ctx context.Context, qtx *storage.Queries, todoID int64, a model.Alarm, ex model.Alarm) error {
-	// Same ACKNOWLEDGED policy as syncMatchedTodoAlarm: a malformed
-	// incoming value must not clobber valid stored state.
+	// Same ACKNOWLEDGED policy as syncMatchedTodoAlarm. A malformed
+	// value that arrives must not clobber valid stored state.
 	ack := a.Acknowledged
 	if !model.ValidateAcknowledged(ack) {
 		ack = ex.Acknowledged
@@ -1076,8 +1079,8 @@ func isUniqueUIDViolation(err error) bool {
 }
 
 // createNewTodoAlarm creates a new todo alarm and its attendees. On a global
-// UID collision (e.g. a server duplicating a todo with its VALARM UIDs),
-// mint a fresh local UID instead of failing the sync forever.
+// UID collision (for example a server that duplicates a todo with its VALARM
+// UIDs), mint a fresh local UID. Do not fail the sync forever.
 func createNewTodoAlarm(ctx context.Context, qtx *storage.Queries, todoID int64, a model.Alarm) error {
 	uid := a.UID
 	if uid == "" {
@@ -1561,19 +1564,19 @@ func fromStorageSlice(rows []storage.Todo) []Todo {
 }
 
 // Hydrate loads the transient relation slices onto t. See event.Service.Hydrate
-// for the contract: single definition of a fully populated record, fail-fast so
-// no caller pushes an amputated one.
+// for the contract. That is the single definition of a fully populated record.
+// It fails fast so no caller pushes an amputated one.
 func (s *Service) Hydrate(ctx context.Context, t *Todo) error {
 	return s.hydrate(ctx, t, true)
 }
 
 // HydrateBestEffort populates every relation it can and returns the joined
-// errors for the ones it could not, instead of stopping at the first failure.
+// errors for the ones it could not. It does not stop at the first failure.
 //
-// This is for read-only display paths, where one unreadable relation should
-// degrade that field alone: stopping early would leave every relation after it
-// nil, which a caller rendering JSON cannot tell apart from "there are none".
-// Anything that writes iCal must use Hydrate — a partial record pushed to a
+// This is for read-only display paths. One unreadable relation should degrade
+// that field alone. An early stop would leave every relation after it nil.
+// A caller that renders JSON cannot tell that apart from "there are none".
+// Anything that writes iCal must use Hydrate. A partial record pushed to a
 // server overwrites the complete copy there.
 func (s *Service) HydrateBestEffort(ctx context.Context, t *Todo) error {
 	return s.hydrate(ctx, t, false)
