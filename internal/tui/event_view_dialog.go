@@ -135,11 +135,12 @@ func (m EventViewDialogModel) SetSize(w, h int) EventViewDialogModel {
 	return m
 }
 
-// viewportHeight returns the height available for the scrollable body,
-// after a subtract of the dialog's chrome (border, top padding), the
-// pinned title row + rule, the action separator + button row, and the
-// help footer with its blank line at the start. Clamped to a minimum of 1
-// so a too-small terminal still renders something.
+// viewportHeight returns the height available for the scrollable body.
+// It subtracts the dialog's chrome (border, top padding). It also
+// subtracts the pinned title row + rule and the action separator +
+// button row. It also subtracts the help footer with its blank line at
+// the start. Clamped to a minimum of 1 so a too-small terminal still
+// renders something.
 func (m EventViewDialogModel) viewportHeight() int {
 	const chromeLines = 2 + // top + bottom border
 		1 + // top padding (PaddingY)
@@ -406,12 +407,12 @@ func detailURLField(labelStyle lipgloss.Style, label, value string, lw, w int, r
 }
 
 // detailLinkifiedLine is detailLine for a free-text value that may contain a
-// URL somewhere inside it (for example, "Room 4 — join at https://…") or be a
-// bare URL. renderLinkifiedValue makes each embedded URL clickable and keeps
-// its full address as the click target. The render is then correct whether the
-// value is plain text, a bare URL, or text with an embedded link. zones
-// controls whether clickable mouse-zone markers are emitted (only safe on
-// surfaces that MouseSweep their output).
+// URL (for example, "Room 4 — join at https://…") or be a bare URL.
+// renderLinkifiedValue makes each embedded URL clickable and keeps its
+// full address as the click target. The render is then correct for plain
+// text, a bare URL, or text with an embedded link. zones controls whether
+// clickable mouse-zone markers are emitted. Use this only on surfaces that
+// MouseSweep their output.
 func detailLinkifiedLine(labelStyle lipgloss.Style, label, value string, lw, w int, rw urlRewriter, zones bool) string {
 	prefix, available := detailLabelPrefix(labelStyle, label, lw, w)
 	return prefix + renderLinkifiedValue(value, available, rw, zones)
@@ -449,10 +450,10 @@ func (m EventViewDialogModel) renderRSVPRow(w int) string {
 	return truncateTo(faint.Render(padded)+value, w)
 }
 
-// renderActions lays out the action bar: Edit and Duplicate packed on
-// the left (primary → ghost), with Delete right-aligned and a gap that
-// spatially signals the destructive category. Falls back to simple
-// concatenation if the row cannot fit within `w`.
+// renderActions lays out the action bar. Edit and Duplicate pack on
+// the left (primary → ghost). Delete is right-aligned. A gap spatially
+// signals the destructive category. Falls back to simple concatenation
+// if the row cannot fit within `w`.
 func (m EventViewDialogModel) renderActions(w int) string {
 	bs := DefaultButtonStyles()
 	actions := m.actions()
