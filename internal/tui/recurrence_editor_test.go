@@ -109,8 +109,8 @@ func TestRecurrenceEditor_EachFieldIntervalAndUnitUpdateRule(t *testing.T) {
 }
 
 // TestRecurrenceEditor_EndsDatePickerButtonRowMouseClickable is the TDD
-// regression test for issue #344: clicking Cancel or Ok in the ends-date
-// picker overlay had no effect because HandleEndsDateMouse returned early
+// regression test for issue #344. A click of Cancel or Ok in the ends-date
+// picker overlay had no effect. HandleEndsDateMouse returned early
 // for any click with ry >= 6 (the button row is at ry == 8).
 func TestRecurrenceEditor_EndsDatePickerButtonRowMouseClickable(t *testing.T) {
 	startDate := time.Date(2026, 4, 24, 0, 0, 0, 0, time.UTC)
