@@ -36,8 +36,8 @@ type Service struct {
 	q  *storage.Queries
 	// tx is non-nil when the service runs inside a caller-managed
 	// transaction (see WithTx). When set, q is already bound to tx and the
-	// per-method write helpers join the outer transaction instead of opening
-	// their own, so a multi-step sequence commits or rolls back atomically.
+	// per-method write helpers join the outer transaction. They do not open
+	// their own. A multi-step sequence then commits or rolls back atomically.
 	tx *sql.Tx
 }
 
@@ -46,16 +46,16 @@ func NewService(db *sql.DB, q *storage.Queries) *Service {
 }
 
 // WithTx returns a copy of the service whose writes run inside tx. The caller
-// owns tx (commit/rollback); the returned service's mutating methods neither
-// begin nor commit their own transaction, letting several calls compose into a
-// single atomic unit.
+// owns tx (commit/rollback). The returned service's mutating methods neither
+// begin nor commit their own transaction. Several calls can then compose into
+// a single atomic unit.
 func (s *Service) WithTx(tx *sql.Tx) *Service {
 	return &Service{db: s.db, q: s.q.WithTx(tx), tx: tx}
 }
 
 // txscope returns a transaction-scoped Queries plus commit and rollback
 // helpers. When the service already runs inside a caller-managed transaction
-// (see WithTx), the work joins that transaction: commit is a no-op and rollback
+// (see WithTx), the work joins that transaction. Commit is a no-op. Rollback
 // is left to the outer owner. Otherwise it opens and owns a fresh transaction.
 func (s *Service) txscope(ctx context.Context) (qtx *storage.Queries, commit func() error, rollback func(), err error) {
 	if s.tx != nil {
@@ -68,9 +68,9 @@ func (s *Service) txscope(ctx context.Context) (qtx *storage.Queries, commit fun
 	return s.q.WithTx(tx), tx.Commit, func() { _ = tx.Rollback() }, nil
 }
 
-// dirtyExec returns the DBTX the dirty-marking side effect must use: the outer
-// transaction when one is active (so the write joins it and cannot deadlock
-// against the held write lock), otherwise the pooled *sql.DB.
+// dirtyExec returns the DBTX the dirty-mark side effect must use. That is the
+// outer transaction when one is active, so the write joins it and cannot
+// deadlock against the held write lock. Otherwise it is the pooled *sql.DB.
 func (s *Service) dirtyExec() storage.DBTX {
 	if s.tx != nil {
 		return s.tx
