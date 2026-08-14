@@ -163,11 +163,11 @@ Without flags, the window defaults to today through the next 30 days.`,
 }
 
 // formatCompactEvent renders one event as three whitespace-separated columns
-// suitable for line-per-event scripting: date(-range), time(-range or all-day),
+// for line-per-event scripts: date(-range), time(-range or all-day),
 // and title. The columns are padded to fixed widths so an awk/cut user can
-// extract them by position, but the title still contains arbitrary text and
-// must be read as "rest of line". Date ranges use ISO 8601 interval syntax
-// (start/end). --show-id prefixes "[id]" and --show-calendar suffixes "(name)".
+// extract them by position. The title still contains arbitrary text. Read it
+// as "rest of line". Date ranges use ISO 8601 interval syntax
+// (start/end). --show-id prefixes "[id]". --show-calendar suffixes "(name)".
 func formatCompactEvent(e event.Event, calendarNames map[int64]string, showID, showCalendar bool) string {
 	const (
 		dateColWidth = 23 // "YYYY-MM-DD/YYYY-MM-DD" + 2 trailing spaces
@@ -1383,7 +1383,7 @@ recurring series.`,
 
 // startTime is the event's start time. When a date-only value (YYYY-MM-DD) is
 // provided for a timed event, the start time's hour and minute are overlaid onto
-// the parsed date so that EXDATE/RDATE values match the recurrence instance time
+// the parsed date. EXDATE/RDATE values then match the recurrence instance time
 // per RFC 5545 Section 3.8.5.1.
 func parseDateFlags(flags []string, tz string, startTime time.Time) (string, error) {
 	loc := time.Local
@@ -1511,11 +1511,11 @@ func parseAttendeeFlags(flags []string) []model.Attendee {
 // mergeAttendeeUpdate computes the attendee set to persist on a partial update.
 //
 // Organizer and attendees share one storage table, but ReplaceAttendees is a
-// full replace. Building the slice from only the flags that were passed wipes
-// the other kind of row (issue #461). So each --flag replaces only its own kind
-// of row: when --attendee is absent, the existing non-organizer attendees are
-// preserved; when --organizer is absent, the existing organizer is preserved.
-// Passing both flags is a full replace; passing --organizer "" clears it.
+// full replace. A slice from only the flags that were passed wipes the other
+// kind of row (issue #461). So each --flag replaces only its own kind of row.
+// When --attendee is absent, the stored non-organizer attendees are kept.
+// When --organizer is absent, the stored organizer is kept.
+// Both flags together are a full replace. --organizer "" clears it.
 func mergeAttendeeUpdate(existing []model.Attendee, attendeeChanged bool, newAttendees []model.Attendee, organizerChanged bool, organizer string) []model.Attendee {
 	out := make([]model.Attendee, 0, len(existing)+len(newAttendees)+1)
 	if attendeeChanged {
@@ -1554,7 +1554,7 @@ func mergeAttendeeUpdate(existing []model.Attendee, attendeeChanged bool, newAtt
 //	"DISPLAY:-PT30M::3:PT5M:END"                          → repeat 3x every 5min, relative to END
 //	"EMAIL:-PT1H:::::alice@example.com,bob@example.com"    → EMAIL with attendees
 //
-// Extended format is only available for duration triggers (starting with -, +, or P).
+// Extended format is only available for duration triggers (prefix -, +, or P).
 // Absolute RFC 3339 triggers do not support additional fields.
 func parseAlarmFlags(flags []string) ([]model.Alarm, error) {
 	var out []model.Alarm
@@ -1679,7 +1679,7 @@ func parseOneAlarm(val string) (model.Alarm, error) {
 // Each value can be:
 //   - A file path (read as blob, MIME inferred from extension)
 //   - "mime/type:path" (blob with explicit MIME)
-//   - A URL containing "://" (URI attachment)
+//   - A URL that contains "://" (URI attachment)
 //   - "mime/type:url" (URI with explicit MIME)
 func parseAttachFlags(flags []string) ([]model.Attachment, error) {
 	var out []model.Attachment
