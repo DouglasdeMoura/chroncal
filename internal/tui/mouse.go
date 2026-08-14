@@ -151,8 +151,8 @@ func (z mouseZone) contains(x, y int) bool {
 }
 
 // mouseTracker tracks clickable regions in rendered content using zero-width
-// ANSI markers. mouseMark wraps content with marker pairs during View,
-// mouseSweep strips them and builds a coordinate map, and mouseResolve
+// ANSI markers. mouseMark wraps content with marker pairs during View.
+// mouseSweep strips them and builds a coordinate map. mouseResolve
 // matches mouse clicks to the innermost marked region.
 type mouseTracker struct {
 	nextID int
@@ -162,7 +162,7 @@ type mouseTracker struct {
 
 var defaultMouseTracker = &mouseTracker{}
 
-// mouseMark wraps content with mouse-tracking markers using the default tracker.
+// mouseMark wraps content with mouse-track markers using the default tracker.
 func mouseMark(name, content string) string {
 	return defaultMouseTracker.mark(name, content)
 }
@@ -196,9 +196,9 @@ func (mt *mouseTracker) mark(name, content string) string {
 	return marker + content + marker
 }
 
-// sweep scans rendered content, strips mouse-tracking markers, and records
+// sweep scans rendered content, strips mouse-track markers, and records
 // the screen coordinates of each marked region. Returns cleaned content
-// suitable for screen rendering.
+// suitable for a screen render.
 func (mt *mouseTracker) sweep(content string) string {
 	mt.zones = mt.zones[:0]
 
@@ -269,10 +269,10 @@ func (mt *mouseTracker) sweep(content string) string {
 	}
 }
 
-// resolve returns the name of the innermost zone containing (x, y), or ""
-// if no zone matches. Inner zones appear before outer zones in the list
-// (their end markers are encountered first during sweep), so the first
-// match is the most deeply nested.
+// resolve returns the name of the innermost zone that contains (x, y), or ""
+// if no zone matches. Inner zones appear before outer zones in the list.
+// Their end markers are encountered first during sweep. The first
+// match is then the most deeply nested.
 func (mt *mouseTracker) resolve(x, y int) string {
 	for _, z := range mt.zones {
 		if z.contains(x, y) {
