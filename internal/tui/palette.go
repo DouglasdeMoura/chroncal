@@ -16,14 +16,14 @@ import (
 	lipgloss "charm.land/lipgloss/v2"
 )
 
-// paletteSearchDebounce is the trailing-edge delay between the user's
-// last keystroke and the async search firing. Below typing cadence,
+// paletteSearchDebounce is the delay after the user's last keystroke
+// before the async search fires. Below typing cadence,
 // above the perceptible-lag threshold.
 const paletteSearchDebounce = 150 * time.Millisecond
 
 // paletteDebounceMsg fires after paletteSearchDebounce. The palette runs
-// the search only if gen still matches its current generation counter —
-// any keystroke since this tick was scheduled bumped the counter and
+// the search only if gen still matches its current generation counter.
+// Any keystroke since this tick was scheduled bumped the counter and
 // invalidated this message.
 type paletteDebounceMsg struct {
 	gen   int
@@ -33,11 +33,11 @@ type paletteDebounceMsg struct {
 // PaletteCommand is a single entry shown in the command palette.
 //
 // Action is invoked (and its returned tea.Msg dispatched) when the user
-// selects the command. Returning nil is allowed for commands that have
+// selects the command. A return of nil is allowed for commands that have
 // no follow-up message.
 //
-// PrefixChar is an optional 1-cell leading marker (e.g. "●" for events).
-// It's rendered in PrefixColor — kept separate from the Title so the
+// PrefixChar is an optional 1-cell marker at the start (e.g. "●" for events).
+// It is rendered in PrefixColor. It is kept separate from the Title so the
 // fuzzy matcher and the selected-row highlight both work cleanly.
 type PaletteCommand struct {
 	ID          string
@@ -93,7 +93,7 @@ func defaultPaletteKeys() paletteKeyMap {
 
 // Maximum number of rows visible in the list area. The dialog reserves
 // space for this many rows so the prompt stays anchored as the filter
-// changes; the underlying list handles paging when matches exceed this.
+// changes. The wrapped list handles paging when matches exceed this.
 const palettelistMaxRows = 10
 
 // paletteListItem wraps PaletteCommand so it satisfies list.Item.
@@ -127,7 +127,7 @@ type PaletteModel struct {
 
 // NewPaletteModel builds a palette seeded with the given commands.
 // searchFn, if non-nil, is invoked on every query change to fetch
-// additional entries asynchronously (e.g., matching events).
+// additional entries asynchronously (for example events that match).
 func NewPaletteModel(commands []PaletteCommand, theme Theme, searchFn PaletteSearchFunc) (PaletteModel, tea.Cmd) {
 	in := textinput.New()
 	in.Placeholder = "Type to search…"
@@ -166,7 +166,7 @@ func NewPaletteModel(commands []PaletteCommand, theme Theme, searchFn PaletteSea
 	return m, cmd
 }
 
-// isSearching reports whether the palette is awaiting async results for
+// isSearching reports whether the palette awaits async results for
 // the current query (debounce in flight or response not yet returned).
 // Used to swap "no matches" for a spinner so the empty state never
 // flashes between keystroke and first results.
@@ -179,10 +179,10 @@ func (m PaletteModel) isSearching() bool {
 }
 
 // SetSize stores the available screen dimensions. The palette sizes itself
-// against this when rendering.
+// against this at render time.
 //
-// A zero-value PaletteModel is a valid target (the app calls SetSize on
-// every resize whether or not the palette is open); ready guards the
+// A zero-value PaletteModel is a valid target. The app calls SetSize on
+// every resize whether or not the palette is open. ready guards the
 // embedded list.Model, whose SetSize panics without a delegate.
 func (m PaletteModel) SetSize(w, h int) PaletteModel {
 	m.width = w
@@ -313,10 +313,10 @@ func (m PaletteModel) Update(msg tea.Msg) (PaletteModel, tea.Cmd) {
 // refilter recomputes the merged, sorted list of commands and dynamic
 // search results against the current query.
 //
-// With an empty query we show the static command list only (dumping every
-// event on open would be noise). For a non-empty query, static commands
-// and dynamic items are scored together so a well-matching event can beat
-// a weakly-matching command.
+// With an empty query we show the static command list only. A dump of every
+// event on open would be noise. For a non-empty query, static commands
+// and dynamic items are scored together. A well-matched event can then beat
+// a weakly-matched command.
 func (m *PaletteModel) refilter() {
 	query := strings.TrimSpace(m.input.Value())
 	type scored struct {
@@ -447,8 +447,8 @@ func (m PaletteModel) View() string {
 }
 
 // paletteDelegate renders one row per item. Each visual segment carries
-// the selected background so the highlight covers colored prefixes too —
-// rendering the row as a single style would let the prefix's ANSI reset
+// the selected background so the highlight covers colored prefixes too.
+// A render of the row as a single style would let the prefix's ANSI reset
 // terminate the background mid-row.
 type paletteDelegate struct {
 	theme Theme
@@ -536,7 +536,7 @@ func renderPaletteRow(c PaletteCommand, width int, selected bool, theme Theme) s
 }
 
 // renderSearching fills the list area with a centered spinner + label so
-// the dialog doesn't flash "No matches" between the keystroke and the
+// the dialog does not flash "No matches" between the keystroke and the
 // first result. Height matches m.list.Height() to keep the dialog stable.
 func (m PaletteModel) renderSearching(width int) string {
 	label := m.spinner.View() + " " + lipgloss.NewStyle().Foreground(m.theme.TextDim).Render("Searching…")
