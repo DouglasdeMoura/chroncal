@@ -36,9 +36,9 @@ func TestFindCalendarByRef(t *testing.T) {
 	}
 }
 
-// TestFindCalendarByRefRejectsAmbiguousName proves that two calendars sharing
-// the same case-insensitive name are never silently resolved to the first
-// match. The caller must disambiguate with a numeric ID.
+// TestFindCalendarByRefRejectsAmbiguousName proves that two calendars that
+// share the same case-insensitive name are never resolved to the first
+// match in silence. The caller must disambiguate with a numeric ID.
 func TestFindCalendarByRefRejectsAmbiguousName(t *testing.T) {
 	t.Parallel()
 	cals := []calendar.Calendar{
