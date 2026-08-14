@@ -355,7 +355,7 @@ func (s *Service) Disconnect(ctx context.Context, cal Calendar, credStore auth.C
 //
 // When the target is the current default, newDefaultID must point to a
 // different calendar that still exists. The promotion happens in the same
-// transaction so the database never observes a missing default. Pass
+// transaction. The database then never observes a gone default. Pass
 // newDefaultID = 0 when the target is not the default.
 func (s *Service) DeleteWithRemoteCleanup(ctx context.Context, id, newDefaultID int64, credStore auth.CredentialStore) error {
 	cal, release, err := s.lockRemoteLifecycle(ctx, id)
