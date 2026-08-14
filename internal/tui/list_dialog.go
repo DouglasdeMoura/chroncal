@@ -72,14 +72,14 @@ const (
 
 // ListDialogModel is the shared two-column (list + details) dialog chrome
 // reused by the calendar-management and day-events dialogs. It owns the
-// outer border, title, list rendering, divider, action bar, help row, and
+// outer border, title, list render, divider, action bar, help row, and
 // the narrow/stacked fallback. Callers supply:
 //
 //   - pre-rendered row labels (swatch + name, time + title, …)
 //   - pre-rendered detail lines for the selected row
 //   - action buttons
 //
-// Everything else (selection tint, scroll, zone cycling, hit-testing) lives
+// Everything else (selection tint, scroll, zone cycle, hit-test) lives
 // here so each dialog collapses to its domain concerns.
 type ListDialogModel struct {
 	title        string
@@ -116,8 +116,8 @@ type ListDialogModel struct {
 
 // viewRenderCache memoizes the action bar and help line. Each entry
 // stores both the rendered string and a fingerprint computed from the
-// inputs that affect it; the cache is invalidated lazily by comparing
-// fingerprints on read, not eagerly on Set*.
+// inputs that affect it. The cache is invalidated lazily by a compare
+// of fingerprints on read, not eagerly on Set*.
 type viewRenderCache struct {
 	actionsKey uint64
 	actions    string
@@ -126,7 +126,7 @@ type viewRenderCache struct {
 }
 
 // NewListDialogModel builds an empty shell. Callers call the Setters on the
-// returned value before rendering.
+// returned value before the render.
 func NewListDialogModel(h help.Model) ListDialogModel {
 	vp := viewport.New()
 	vp.MouseWheelEnabled = true
@@ -166,11 +166,11 @@ func (m ListDialogModel) SetSelectedColor(c color.Color) ListDialogModel {
 	return m
 }
 
-// SetRows replaces the list rows. The caller is responsible for pre-rendering
-// each row (swatch, time prefix, …). Scroll and selection are clamped.
+// SetRows replaces the list rows. The caller is responsible for a pre-render
+// of each row (swatch, time prefix, …). Scroll and selection are clamped.
 // Disabled-row state is cleared because it belongs to the row set.
-// Doesn't touch the body viewport: rows live in the left column only,
-// while the body shows the right-column details. Other setters
+// It does not touch the body viewport. Rows live in the left column only.
+// The body shows the right-column details. Other setters
 // (SetDetailLines, SetActions, SetDetailTitle, SetEmptyList, SetSize)
 // trigger syncBody when they actually need it.
 func (m ListDialogModel) SetRows(rows []string) ListDialogModel {
@@ -268,9 +268,9 @@ func (m ListDialogModel) HasTitleAction() bool { return m.titleAction != nil }
 func (m ListDialogModel) FocusedAction() int { return m.focusedAction }
 
 // SelectedColor returns the theme color used to tint the selected row
-// when the list does not own focus. Callers apply it themselves so the
-// tint composes with their own row-level styling (calendar swatch, RSVP
-// indicators, etc.) without the shell needing to know about those.
+// when the list does not own focus. Callers apply it themselves. The
+// tint then composes with their own row-level style (calendar swatch, RSVP
+// indicators, and others). The shell does not need to know about those.
 func (m ListDialogModel) SelectedColor() color.Color { return m.selectedColor }
 
 // SetDetailLines replaces the detail-pane body lines for the currently
@@ -283,8 +283,8 @@ func (m ListDialogModel) SetDetailLines(lines []string) ListDialogModel {
 
 // SetDetailTitle pins a title row above the scrollable body. The shell
 // renders it as a bold line plus a faint horizontal rule that stay in
-// place while the body scrolls — same anchor users see in the single-event
-// dialog. Empty string clears the pinned title.
+// place while the body scrolls. That is the same anchor users see in the
+// single-event dialog. Empty string clears the pinned title.
 func (m ListDialogModel) SetDetailTitle(t string) ListDialogModel {
 	m.detailTitle = t
 	m.syncBody()
@@ -324,7 +324,7 @@ func (m ListDialogModel) firstEnabledAction() int {
 }
 
 // syncBody pushes the current detail dimensions and content into the body
-// viewport so HandleKey/HandleMouseWheel can scroll without waiting for the
+// viewport. HandleKey/HandleMouseWheel can then scroll with no wait for the
 // next View() call to learn about layout. Width/height/content match the
 // values renderDetails would compute for the same model state.
 func (m *ListDialogModel) syncBody() {
@@ -365,7 +365,7 @@ func (m *ListDialogModel) syncBody() {
 // hasPinnedTitle reports whether the shell should reserve two lines at the
 // top of the detail pane for a pinned title row. The empty-state pane
 // (no rows) intentionally skips the title since emptyDetails carries its
-// own messaging.
+// own message.
 func (m ListDialogModel) hasPinnedTitle() bool {
 	return m.detailTitle != "" && len(m.rows) > 0
 }
@@ -550,9 +550,9 @@ func (m ListDialogModel) RowAtPosition(x, y int) (int, bool) {
 }
 
 // ActionAtPosition hit-tests the action bar. Returns the clicked button index.
-// Each button's width is measured from its actual rendered output (matching
-// DefaultButtonStyles: Padding(0,2) + MarginRight(1)) so the hit regions
-// agree exactly with what the user sees. The join space added by
+// Each button's width is measured from its actual rendered output. That
+// matches DefaultButtonStyles: Padding(0,2) + MarginRight(1). The hit regions
+// then agree exactly with what the user sees. The join space added by
 // strings.Join(parts, " ") in renderActions accounts for the +1 advance
 // between consecutive buttons.
 func (m ListDialogModel) ActionAtPosition(x, y int) (int, bool) {
@@ -603,8 +603,8 @@ func (m ListDialogModel) ClickAction(idx int) (ListDialogModel, tea.Cmd) {
 }
 
 // DetailsOrigin returns the screen-space (x, y) of the first line of the
-// detail pane, so callers can hit-test buttons they composed into the
-// detail lines (e.g. RSVP buttons in the event dialog).
+// detail pane. Callers can then hit-test buttons they composed into the
+// detail lines (for example RSVP buttons in the event dialog).
 func (m ListDialogModel) DetailsOrigin() (int, int) {
 	boxW, boxH := m.boxSize()
 	dialogX := (m.width - boxW) / 2
@@ -624,7 +624,7 @@ func (m ListDialogModel) DetailsOrigin() (int, int) {
 }
 
 // BodyRowScreenY translates a content-row index inside the scrollable
-// detail body to its screen-space Y, factoring in the pinned title row
+// detail body to its screen-space Y. It includes the pinned title row
 // (+2 lines when present) and the current scroll offset. Returns false
 // when the row is scrolled out of view.
 func (m ListDialogModel) BodyRowScreenY(idx int) (int, bool) {
@@ -695,10 +695,10 @@ func (m ListDialogModel) View() string {
 
 // framedDialog wraps innerLines with the rounded border + (1,2,0,1)
 // padding the dialog has always used. innerLines MUST already be at the
-// inner content width (boxW - 5): the title row, helpText, and the
-// row-zipped body are all width-padded by their producers, so skipping
-// the per-line measurement here is safe — and saves ~25% of View on a
-// dense dialog because lipgloss.Width is the single biggest cost.
+// inner content width (boxW - 5). The title row, helpText, and the
+// row-zipped body are all width-padded by their producers. A skip of
+// the per-line measurement here is then safe. It also saves ~25% of View
+// on a dense dialog because lipgloss.Width is the single biggest cost.
 func framedDialog(boxW int, innerLines []string) string {
 	const (
 		padLeft  = 1
@@ -760,9 +760,9 @@ func (m *ListDialogModel) viewColumns(innerW, bodyH int) string {
 }
 
 // trustedSplit splits s by newlines and returns exactly h rows. Callers
-// must guarantee every emitted line is already w cells wide; missing
-// rows are filled with blanks. Skips lipgloss.Width entirely — that's
-// the whole point of the "trusted" name, and the fast path is ~60%
+// must guarantee every emitted line is already w cells wide. Rows that
+// are gone are filled with blanks. It skips lipgloss.Width entirely.
+// That is the whole point of the "trusted" name. The fast path is ~60%
 // faster than splitAndPad on width-correct input.
 func trustedSplit(s string, w, h int) []string {
 	out := make([]string, h)
@@ -907,9 +907,9 @@ func (m ListDialogModel) renderActions(w int) string {
 }
 
 // renderHelpLine produces the centered short-help line at the bottom
-// of the dialog. The result is memoized: shortHelp only changes when
+// of the dialog. The result is memoized. shortHelp only changes when
 // the caller swaps focus zones or transitions between empty/non-empty
-// states, so caching it skips a full lipgloss render (and the bubbles
+// states. The cache then skips a full lipgloss render (and the bubbles
 // help layout it wraps) on every key press while the user scrolls.
 func (m ListDialogModel) renderHelpLine(innerW int) string {
 	key := m.helpCacheKey(innerW)
@@ -931,7 +931,7 @@ func (m ListDialogModel) renderHelpLine(innerW int) string {
 // helpCacheKey fingerprints the inputs that affect renderHelpLine: the
 // inner width and every binding's key + help text. shortHelp is
 // rebuilt by the caller on each refresh so identity comparison would
-// always miss; content-based fingerprinting hits whenever the rendered
+// always miss. A content-based fingerprint hits whenever the rendered
 // output would be identical.
 func (m ListDialogModel) helpCacheKey(innerW int) uint64 {
 	h := fnv.New64a()
@@ -955,8 +955,8 @@ func (m ListDialogModel) helpCacheKey(innerW int) uint64 {
 
 // actionsCacheKey returns a 64-bit fingerprint of every input that
 // affects renderActions' output. Each Set* on the model that touches
-// one of those inputs naturally changes the fingerprint, so the cache
-// invalidates lazily without needing eager bookkeeping.
+// one of those inputs naturally changes the fingerprint. The cache
+// then invalidates lazily with no eager records.
 func (m ListDialogModel) actionsCacheKey(w int) uint64 {
 	h := fnv.New64a()
 	var buf [8]byte
@@ -1026,7 +1026,8 @@ func (m *ListDialogModel) renderDetails(w, h int) string {
 // actionsSeparator renders the faint rule that sits between the detail
 // body and the action bar. When the body has scrolled-away content above
 // or below, a centered "↑↓ more" hint is embedded in the rule to advertise
-// the scroll affordance — same treatment used in the single-event dialog.
+// the scroll affordance. That is the same treatment used in the
+// single-event dialog.
 func (m ListDialogModel) actionsSeparator(w int) string {
 	faint := lipgloss.NewStyle().Faint(true)
 	hint := m.scrollHint()
@@ -1039,8 +1040,8 @@ func (m ListDialogModel) actionsSeparator(w int) string {
 	return faint.Render(strings.Repeat("─", left)) + " " + faint.Render(hint) + " " + faint.Render(strings.Repeat("─", right))
 }
 
-// scrollHint returns "↓ more" / "↑ more" / "↑↓ more" depending on what
-// the user can still scroll to. Empty when the body fits without scrolling.
+// scrollHint returns "↓ more" / "↑ more" / "↑↓ more" based on what
+// the user can still scroll to. Empty when the body fits with no scroll.
 func (m ListDialogModel) scrollHint() string {
 	if !m.bodyOverflows() {
 		return ""
@@ -1107,8 +1108,8 @@ func (m ListDialogModel) renderTitleRow(innerW int) string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, title, right)
 }
 
-// renderTitleActionButton renders a title-line button without the trailing
-// margin-right cell used by action-bar buttons so it sits flush with the
+// renderTitleActionButton renders a title-line button without the extra
+// margin-right cell used by action-bar buttons. It then sits flush with the
 // dialog's right edge.
 func renderTitleActionButton(a ListDialogAction, focused bool) string {
 	bs := DefaultButtonStyles().Normal
@@ -1147,8 +1148,8 @@ func (m ListDialogModel) TitleActionAtPosition(x, y int) (tea.Cmd, bool) {
 
 // HandleKey is the shell's handler for keys it cares about (navigation, tab,
 // enter-on-actions, close). Returns the (maybe-updated) model and the
-// resulting command. Callers dispatch their domain keys (New/Edit/Delete/…)
-// themselves before falling through to this.
+// result command. Callers dispatch their domain keys (New/Edit/Delete/…)
+// themselves before they fall through to this.
 func (m ListDialogModel) HandleKey(msg tea.KeyPressMsg, onClose func() tea.Msg) (ListDialogModel, tea.Cmd, bool) {
 	switch {
 	case key.Matches(msg, m.keys.Close):
@@ -1179,9 +1180,9 @@ func (m ListDialogModel) HandleKey(msg tea.KeyPressMsg, onClose func() tea.Msg) 
 	return m, nil, false
 }
 
-// HandleMouseWheel forwards mouse wheel events to the detail body so the
-// user can scroll long event content with the wheel — same affordance the
-// single-event dialog provides.
+// HandleMouseWheel forwards mouse wheel events to the detail body. The
+// user can then scroll long event content with the wheel. That is the same
+// affordance the single-event dialog provides.
 func (m ListDialogModel) HandleMouseWheel(msg tea.MouseWheelMsg) (ListDialogModel, tea.Cmd) {
 	var cmd tea.Cmd
 	m.body, cmd = m.body.Update(msg)
