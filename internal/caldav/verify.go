@@ -82,11 +82,11 @@ type CalendarMetadata struct {
 	SupportedComponents []string
 }
 
-// VerifyCalendarURL performs a PROPFIND at the user-supplied calendar URL to
-// confirm that authentication succeeds and the resource is a CalDAV calendar
-// collection. Unlike principal discovery, it tests the exact URL the caller
-// provided — the right behaviour for a "Test connection" button where the
-// user has already entered a calendar URL.
+// VerifyCalendarURL performs a PROPFIND at the user-supplied calendar URL.
+// It confirms that authentication succeeds and the resource is a CalDAV
+// calendar collection. Unlike principal discovery, it tests the exact URL
+// the caller provided. That is the right behaviour for a "Test connection"
+// button where the user has already entered a calendar URL.
 //
 // Returns the calendar's displayname and calendar-color when advertised by
 // the server.
@@ -99,7 +99,7 @@ func VerifyCalendarURL(ctx context.Context, calendarURL, username, password, aut
 }
 
 // FetchCalendarMetadata performs the same PROPFIND as VerifyCalendarURL but
-// using a credential — handy for picking up the remote display name and
+// using a credential. Handy to pick up the remote display name and
 // calendar-color at calendar-link time, before the first sync runs.
 func FetchCalendarMetadata(ctx context.Context, calendarURL, username, password, authType string, allowInsecure bool) (CalendarMetadata, error) {
 	parsed, httpClient, err := buildVerifyClient(calendarURL, username, password, authType, allowInsecure)
