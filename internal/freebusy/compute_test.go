@@ -218,9 +218,9 @@ func TestCompute_PreservesAllDayIntervals(t *testing.T) {
 	}
 }
 
-// TestCompute_SkipsOwnerDeclinedInstances reproduces issue #302: an event
+// TestCompute_SkipsOwnerDeclinedInstances reproduces issue #302. An event
 // the calendar owner has DECLINED (attendee PARTSTAT=DECLINED) must not
-// count as busy, while a still-accepted event on the same range does.
+// count as busy. A still-accepted event on the same range does.
 func TestCompute_SkipsOwnerDeclinedInstances(t *testing.T) {
 	t.Parallel()
 
