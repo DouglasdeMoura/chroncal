@@ -128,17 +128,19 @@ type eventCreatedMsg struct {
 }
 
 // calendarMutationDoneMsg reports a calendar mutation's outcome. keepEditor
-// marks mutations that happen beside an open edit form (Set as Default) so
-// the manager keeps the form — and any unsaved draft — mounted on success.
+// marks mutations that happen beside an open edit form (Set as Default).
+// The manager then keeps the form — and any unsaved draft — mounted on
+// success.
 type calendarMutationDoneMsg struct {
 	err        error
 	keepEditor bool
 }
 
-// calendarOrderSavedMsg reports the result of persisting a sidebar reorder.
-// Success is silent (the list already shows the new order); failure surfaces
-// as a toast. ids carries the order that was written so the handler can clear
-// the matching pendingOrder entries without discarding a newer reorder.
+// calendarOrderSavedMsg reports the result of a persist of a sidebar reorder.
+// Success is silent (the list already shows the new order). Failure surfaces
+// as a toast. ids carries the order that was written. The handler can then
+// clear the pendingOrder entries that match without a discard of a newer
+// reorder.
 type calendarOrderSavedMsg struct {
 	ids []int64
 	err error
@@ -161,7 +163,7 @@ type eventEditLoadedMsg struct {
 }
 
 // pendingScopeKind tags which kind of recurring-scope action a ChoiceDialog
-// is currently driving. Zero means no scope dialog is open.
+// currently drives. Zero means no scope dialog is open.
 type pendingScopeKind int
 
 const (
@@ -186,10 +188,10 @@ type eventUpdatedMsg struct {
 
 // eventUpdateAfterScopeMsg is fired by dispatchEditScope after a scope-routed
 // edit (UpdateInstance / UpdateFromInstance / Update) completes. It exists so
-// the agenda reloads without us re-using eventUpdatedMsg, which currently
-// drives the "return to view dialog" behaviour that doesn't apply when the
-// underlying row may have been replaced (e.g. "this and following" splits to
-// a new UID).
+// the agenda reloads without a reuse of eventUpdatedMsg. That message currently
+// drives the "return to view dialog" behaviour. That behaviour does not apply
+// when the row under the edit may have been replaced. One example is "this
+// and following", which splits to a new UID.
 type eventUpdateAfterScopeMsg struct {
 	calendarID int64
 	err        error
@@ -204,18 +206,18 @@ type eventDeletedMsg struct {
 
 // eventRestoredMsg is emitted after an Undo attempt. On success err is nil.
 // On failure err carries the reason. meta identifies which undo entry the
-// restore acted on, so the success handler can remove that specific entry
-// rather than blindly popping the top (a concurrent delete may have pushed a
-// new entry while the restore was in flight).
+// restore acted on. The success handler can then remove that specific entry
+// rather than a blind pop of the top. A concurrent delete may have pushed a
+// new entry while the restore was in flight.
 type eventRestoredMsg struct {
 	meta  event.UndoMeta
 	title string
 	err   error
 }
 
-// deferredPushMsg fires after the undo window elapses, signalling that any
+// deferredPushMsg fires after the undo window elapses. It signals that any
 // deferred opportunistic delete push for a given (calendar, token) should
-// now run. The token is compared against m.pushDeferralToken; a mismatch
+// now run. The token is compared against m.pushDeferralToken. A mismatch
 // means a restore has since cancelled the push.
 type deferredPushMsg struct {
 	calendarID int64
@@ -255,9 +257,9 @@ type syncTotals struct {
 	firstErr  error
 }
 
-// syncAllPlannedMsg is emitted by runSyncAllPlan after listing the connected
+// syncAllPlannedMsg is emitted by runSyncAllPlan after a list of the connected
 // calendars. The Update handler uses it to seed the per-calendar progress
-// loop so the footer can show "Syncing X (i/N)…" instead of one static line.
+// loop. The footer can then show "Syncing X (i/N)…" instead of one static line.
 type syncAllPlannedMsg struct {
 	targets []syncTarget
 }
@@ -282,7 +284,7 @@ type opportunisticPushFinishedMsg struct {
 	err     error
 }
 
-// oauthFlowPurpose records why an OAuth flow is running so the
+// oauthFlowPurpose records why an OAuth flow is in progress so the
 // oauthFlowDoneMsg handler knows what to do with the tokens.
 type oauthFlowPurpose struct {
 	// Re-authentication target and stored account credential.
@@ -304,9 +306,9 @@ type accountReauthReadyMsg struct {
 }
 
 // oauthCredentialStoredMsg reports the post-flow credential write for a
-// re-auth. A Set failure after a successful consent is a distinct state:
-// the consent was spent but nothing is corrupted, and re-authenticating
-// again is safe.
+// re-auth. A Set failure after a successful consent is a distinct state.
+// The consent was spent but nothing is corrupted. A second re-auth is
+// safe.
 type oauthCredentialStoredMsg struct {
 	accountID int64
 	name      string
@@ -314,8 +316,9 @@ type oauthCredentialStoredMsg struct {
 }
 
 // accountCredentialStoredMsg reports the in-place basic/bearer credential
-// rotation. A failure leaves the previous credential untouched (StoreCredential
-// only replaces it on success), so retrying is safe and nothing is torn down.
+// rotation. A failure leaves the previous credential untouched.
+// StoreCredential only replaces it on success. A retry is then safe and
+// nothing is torn down.
 type accountCredentialStoredMsg struct {
 	accountID int64
 	name      string
@@ -604,9 +607,9 @@ func NewModel(a *app.App, themeName string) Model {
 }
 
 // newAgendaForStartup builds the agenda model used by NewModel. When the
-// saved view mode is agenda, the cursor starts on today, so prime the
-// next SetEvents to land on the current/upcoming event — mirroring the
-// switch-to-agenda behavior so cold start matches mid-session switching.
+// saved view mode is agenda, the cursor starts on today. Prime the
+// next SetEvents to land on the current or next event. That mirrors the
+// switch-to-agenda behavior. Cold start then matches a mid-session switch.
 func newAgendaForStartup(now time.Time, vm viewMode, showEmptyDays bool) AgendaModel {
 	a := NewAgendaModel(now).SetShowEmptyDays(showEmptyDays)
 	if vm == viewAgenda {
@@ -616,8 +619,8 @@ func newAgendaForStartup(now time.Time, vm viewMode, showEmptyDays bool) AgendaM
 }
 
 // expectedEventRange returns the [from, to) UTC range the active view
-// currently expects from loadEvents. It's used to seed each query and
-// to validate incoming eventsLoadedMsg against stale async responses.
+// currently expects from loadEvents. It seeds each query. It also
+// validates eventsLoadedMsg that arrive against stale async responses.
 func (m Model) expectedEventRange() (time.Time, time.Time) {
 	switch m.viewMode {
 	case viewDay:
@@ -699,9 +702,9 @@ func (m Model) loadEvents() tea.Cmd {
 
 // loadEventsIncremental queries only the newly-added slice of an agenda
 // expansion when the loaded range shares an edge with the new expected
-// range — infinite-scroll stays O(1 step) in query cost even after the
-// user has scrolled years back. Falls back to a full refresh when the
-// ranges don't share an edge (e.g. after a cursor jump).
+// range. Infinite-scroll then stays O(1 step) in query cost even after the
+// user has scrolled years back. It falls back to a full refresh when the
+// ranges do not share an edge (for example after a cursor jump).
 func (m Model) loadEventsIncremental() tea.Cmd {
 	wantFrom, wantTo := m.expectedEventRange()
 	if m.loadedFrom.IsZero() || m.loadedTo.IsZero() {
@@ -719,9 +722,10 @@ func (m Model) loadEventsIncremental() tea.Cmd {
 	return m.queryEventsRange(wantFrom, wantTo, false)
 }
 
-// queryEventsRange runs the recurrence-expanded query for [from, to) and
-// returns an eventsLoadedMsg tagged with the queried range and whether
-// the result is a merge (incremental) or a replacement (full refresh).
+// queryEventsRange runs the recurrence-expanded query for [from, to).
+// It returns an eventsLoadedMsg tagged with the queried range. The tag
+// also says whether the result is a merge (incremental) or a replacement
+// (full refresh).
 func (m Model) queryEventsRange(from, to time.Time, merge bool) tea.Cmd {
 	mainCmd := func() tea.Msg {
 		expanded, err := m.app.Recurrences.ListExpandedEvents(context.Background(), from, to)
@@ -741,10 +745,10 @@ func (m Model) queryEventsRange(from, to time.Time, merge bool) tea.Cmd {
 	return tea.Batch(mainCmd, m.loadMiniMonthEvents())
 }
 
-// mergeEvents dedup-appends new events into existing. The dedup key is
-// (ID, StartTime.UTC()) — unique for both non-recurring events and
+// mergeEvents dedup-appends new events into the stored list. The dedup key is
+// (ID, StartTime.UTC()). That key is unique for both non-recurring events and
 // recurrence instances. Needed when a multi-day event straddles the
-// incremental slice boundary and gets returned by both queries.
+// incremental slice boundary and is returned by both queries.
 func mergeEvents(existing, incoming []event.Event) []event.Event {
 	seen := make(map[string]struct{}, len(existing)+len(incoming))
 	out := make([]event.Event, 0, len(existing)+len(incoming))
@@ -826,8 +830,8 @@ func (m Model) loadTrash() tea.Cmd {
 }
 
 // refreshMiniMonthDays recomputes the per-day event-density set from the
-// cached mini-month events (honoring the current hiddenCalendars filter) and
-// pushes it into the sidebar.
+// cached mini-month events. It honors the current hiddenCalendars filter.
+// It then pushes the set into the sidebar.
 func (m Model) refreshMiniMonthDays() Model {
 	days := make(map[string]bool, len(m.miniMonthEvents))
 	for _, e := range m.miniMonthEvents {
@@ -859,8 +863,8 @@ func eventsOn(events []event.Event, day time.Time) []event.Event {
 }
 
 // eventDay returns the display date for an event. All-day events use their
-// UTC date (a datestamp, not a point in time) so they appear on the correct
-// day regardless of the local timezone offset.
+// UTC date (a datestamp, not a point in time). They then appear on the
+// correct day regardless of the local timezone offset.
 func eventDay(e event.Event) time.Time {
 	if e.AllDay {
 		return e.StartTime.UTC()
@@ -926,9 +930,9 @@ func eventCalendarDays(e event.Event) []time.Time {
 
 // clipEventToDay returns the event's start and end times clipped to the
 // given calendar day. For all-day events the times are the event's original
-// values (views ignore them). For timed events spanning midnight, the end
-// of day 1 is pushed one second before midnight so the time-grid renderer
-// sees an in-day hour/minute (placeEvents reads only hour/minute).
+// values (views ignore them). For timed events that span midnight, the end
+// of day 1 is pushed one second before midnight. The time-grid renderer
+// then sees an in-day hour/minute (placeEvents reads only hour/minute).
 func clipEventToDay(e event.Event, day time.Time) (time.Time, time.Time) {
 	if e.AllDay {
 		return e.StartTime, e.EndTime
@@ -970,11 +974,11 @@ func (m Model) loadCalendars() tea.Cmd {
 
 // buildCalendarInfoMap assembles the sidebar's CalendarInfo cache from the
 // persisted calendars and accounts. Accounts are read once so every linked
-// row carries its account metadata — display name, server URL, normalized
-// auth type, and display order — without a per-calendar query. Local
+// row carries its account metadata: display name, server URL, normalized
+// auth type, and display order. There is no per-calendar query. Local
 // calendars (AccountID == 0) leave the account-linked fields empty,
-// including AccountAuthType. A nil/empty accounts slice yields local-only
-// metadata, which is the same effect as an account-list failure.
+// AccountAuthType included. A nil or empty accounts slice yields local-only
+// metadata. That is the same effect as an account-list failure.
 func buildCalendarInfoMap(
 	cals []calendar.Calendar,
 	accounts []account.Account,
@@ -1219,10 +1223,10 @@ func (m *Model) beginAccountOrderSave(ids []int64) tea.Cmd {
 }
 
 // blockReadOnlyCalendarMutation rejects event mutations on calendars the remote
-// server has declared off-limits for VEVENT writes: read-only collections, and
-// collections whose non-empty supported-component set omits VEVENT. A calendar
-// with no reported components is treated as unconstrained (backward compatible).
-// Service-layer guards are enforced separately.
+// server has declared off-limits for VEVENT writes. Those are read-only
+// collections, and collections whose non-empty supported-component set omits
+// VEVENT. A calendar with no reported components is treated as unconstrained
+// (backward compatible). Service-layer guards are enforced separately.
 func (m *Model) blockReadOnlyCalendarMutation(calendarID int64) (tea.Cmd, bool) {
 	info, ok := m.calendars[calendarID]
 	if !ok {
@@ -1271,10 +1275,11 @@ func eventFormCalendars(calendars map[int64]CalendarInfo) map[int64]CalendarInfo
 }
 
 // syncHealthFor derives the sidebar health marker state from a calendar's
-// persisted sync fields. Local-only calendars (not Synced) get no marker;
-// a recorded last_sync_error is the only loud (SyncHealthError) state. Because
-// these fields are written by every sync attempt — manual, and the background
-// `chroncal tick` cron — the marker surfaces failures the user never triggered.
+// persisted sync fields. Local-only calendars (not Synced) get no marker.
+// A recorded last_sync_error is the only loud (SyncHealthError) state.
+// Every sync attempt writes these fields: manual, and the background
+// `chroncal tick` cron. The marker then surfaces failures the user never
+// triggered.
 func syncHealthFor(info CalendarInfo) SyncHealth {
 	switch {
 	case !info.Synced:
@@ -1289,11 +1294,11 @@ func syncHealthFor(info CalendarInfo) SyncHealth {
 }
 
 // newSyncService builds a sync.Service using the app's shared SQLite handle.
-// Credential-store warnings are discarded so sync work (including
-// token-refresh persistence mid-run) doesn't clobber the rendered TUI. The
-// engine logs to the state-dir log file (never stderr — Bubble Tea owns the
-// terminal), so sync detail like import warnings stays inspectable; users
-// run `chroncal sync run` from a shell if they need verbose output live.
+// Credential-store warnings are discarded so sync work does not clobber the
+// rendered TUI. Token-refresh persist mid-run is included. The engine logs
+// to the state-dir log file (never stderr — Bubble Tea owns the terminal).
+// Sync detail like import warnings then stays inspectable. Users run
+// `chroncal sync run` from a shell if they need verbose output live.
 func (m Model) newSyncService() (*syncpkg.Service, error) {
 	credStore, err := auth.NewCredentialStoreWithWarnings(m.app.CredentialNamespace, m.app.PreviousCredentialNamespaces, m.app.MigrateLegacyCredentials, m.app.AllowPlaintext, io.Discard)
 	if err != nil {
@@ -1323,7 +1328,7 @@ func (m Model) runSyncAllPlan() tea.Cmd {
 	}
 }
 
-// runSyncOne syncs a single calendar inside a SyncAll run and emits
+// runSyncOne syncs a single calendar inside a SyncAll run. It emits
 // syncCalendarFinishedMsg so the Update loop can advance to the next target
 // (or finalize) and refresh the footer.
 func (m Model) runSyncOne(target syncTarget, index, total int) tea.Cmd {
@@ -1438,8 +1443,8 @@ func (m Model) finishSync(msg syncFinishedMsg) (Model, tea.Cmd) {
 }
 
 // startOAuthFlow opens the pending modal and launches browser authorization
-// with the given client config. Add Account consumes the sign-in dialog, while
-// account re-authentication keeps any underlying edit draft.
+// with the given client config. Add Account consumes the sign-in dialog.
+// Account re-authentication keeps any edit draft under the flow.
 // The caller has already recorded m.oauthPurpose.
 func (m Model) startOAuthFlow(clientID, clientSecret string) (Model, tea.Cmd) {
 	m.oauthPending = false // the flow is opening now; release the request guard
@@ -1494,10 +1499,10 @@ func (m Model) prepareAccountReauth(
 }
 
 // finishOAuthReauth persists the fresh tokens for a re-authenticated
-// account. A full re-consent always returns a new refresh token (unlike
-// RefreshGoogleToken, which only returns a new one if the server rotates it);
-// the stored credential's username and client config are kept, the token
-// triple is replaced.
+// account. A full re-consent always returns a new refresh token. That
+// differs from RefreshGoogleToken, which only returns a new one if the
+// server rotates it. The stored credential's username and client config
+// are kept. The token triple is replaced.
 func (m Model) finishOAuthReauth(result *auth.GoogleOAuthResult) tea.Cmd {
 	p := m.oauthPurpose
 	storedMsg := func(err error) oauthCredentialStoredMsg {
@@ -1558,11 +1563,12 @@ func (m Model) finishOAuthCredentialStore(msg oauthCredentialStoredMsg) (Model, 
 	)
 }
 
-// updateAccountCredentials rotates one account's secret in place. The existing
+// updateAccountCredentials rotates one account's secret in place. The stored
 // credential is loaded so its non-secret identity (username, client config) is
-// preserved; only the password (basic) or access token (bearer) is replaced.
-// StoreCredential re-checks the account fingerprint under the lifecycle lock,
-// so a concurrent rename or removal aborts the write instead of corrupting it.
+// kept. Only the password (basic) or access token (bearer) is replaced.
+// StoreCredential re-checks the account fingerprint under the lifecycle lock.
+// A concurrent rename or removal then aborts the write instead of a corrupt
+// write.
 func (m Model) updateAccountCredentials(configured account.Account, secret string) tea.Cmd {
 	storedMsg := func(err error) accountCredentialStoredMsg {
 		return accountCredentialStoredMsg{
@@ -1599,10 +1605,10 @@ func (m Model) updateAccountCredentials(configured account.Account, secret strin
 }
 
 // credentialForRotation maps the pre-rotation Get outcome to the credential
-// the new secret is written into. A missing or identity-mismatched keyring
-// entry is one of the broken states rotation exists to repair, so those
-// start from an empty credential instead of refusing (StoreCredential
-// re-seeds the account identity); any other error aborts the rotation.
+// the new secret is written into. A keyring entry that is gone or identity-
+// mismatched is one of the broken states rotation exists to repair. Those
+// start from an empty credential instead of a refusal. StoreCredential
+// re-seeds the account identity. Any other error aborts the rotation.
 func credentialForRotation(cred auth.Credential, err error) (auth.Credential, error) {
 	if err == nil {
 		return cred, nil
@@ -1991,11 +1997,11 @@ func syncProgressLabel(name string) string {
 	return string(runes[:maxLen-1]) + "…"
 }
 
-// runOpportunisticPush pushes pending changes for a single calendar without
-// pulling. Best-effort: failures don't surface as errors — the dirty flag
+// runOpportunisticPush pushes unpushed changes for a single calendar with no
+// pull. Best-effort: failures do not surface as errors. The dirty flag
 // survives and the background tick will retry. Returns nil for local-only
-// calendars (Synced=false) so callers can unconditionally batch it into the
-// post-save command without polluting the UI for offline calendars.
+// calendars (Synced=false). Callers can then batch it into the post-save
+// command with no UI noise for offline calendars.
 func (m Model) runOpportunisticPush(calendarID int64) tea.Cmd {
 	info, ok := m.calendars[calendarID]
 	if !ok || !info.Synced {
@@ -2033,13 +2039,13 @@ func (m Model) runOpportunisticPush(calendarID int64) tea.Cmd {
 	}
 }
 
-// syncSummary builds the footer confirmation for a completed sync, listing
+// syncSummary builds the footer confirmation for a completed sync. It lists
 // only the non-zero counters. A no-op sync reads "Synced Work · up to date"
-// instead of dragging five "· 0" segments behind it. t.warnings counts the
-// import warnings on the SyncResult — values the importer had to fabricate;
-// the count is the in-UI signal, and the full text is in the state-dir log.
-// Taking syncTotals rather than five positional ints keeps a transposed
-// counter from compiling silently.
+// instead of five "· 0" segments behind it. t.warnings counts the
+// import warnings on the SyncResult: values the importer had to fabricate.
+// The count is the in-UI signal. The full text is in the state-dir log.
+// Take syncTotals rather than five positional ints. A transposed
+// counter then cannot compile in silence.
 func syncSummary(label string, t syncTotals) string {
 	var parts []string
 	if t.pushed > 0 {
@@ -2066,8 +2072,8 @@ func syncSummary(label string, t syncTotals) string {
 // syncNewlyLinkedCalendars runs the first pull for each calendar an account
 // link just created. It returns how many synced cleanly, the total import-
 // warning count (fabricated values the status line must mention), and the
-// first error — later calendars still sync so one failure doesn't strand the
-// rest unsynced.
+// first error. Later calendars still sync. One failure then does not strand
+// the rest unsynced.
 func syncNewlyLinkedCalendars(ctx context.Context, svc *syncpkg.Service, ids []int64) (synced, warnings int, syncErr error) {
 	for _, calendarID := range ids {
 		syncResult, err := svc.SyncCalendar(ctx, calendarID, syncpkg.ConflictServerWins)
@@ -2089,13 +2095,13 @@ func syncNewlyLinkedCalendars(ctx context.Context, svc *syncpkg.Service, ids []i
 }
 
 // importWarningsSegment renders the "N import warning(s)" counter shared by
-// syncSummary and the account-linking status lines.
+// syncSummary and the account-link status lines.
 func importWarningsSegment(warnings int) string {
 	return fmt.Sprintf("%d %s", warnings, pluralize(warnings, "import warning", "import warnings"))
 }
 
 // appendImportWarnings suffixes a status line with the import-warning count
-// when there is one, so account-linking pulls surface fabricated values the
+// when there is one. Account-link pulls then surface fabricated values the
 // same way syncSummary does for every other TUI sync path.
 func appendImportWarnings(status string, warnings int) string {
 	if warnings <= 0 {
@@ -2125,8 +2131,8 @@ func nextClockTick(token int) tea.Cmd {
 	})
 }
 
-// scheduleClockTick arms the once-a-minute tick if one isn't already pending.
-// Every view runs it: day/week need it to advance the now-line, and all views
+// scheduleClockTick arms the once-a-minute tick if one is not already armed.
+// Every view runs it. Day and week need it to advance the now-line. All views
 // need it so the "today" cell highlight follows the midnight day rollover.
 func (m Model) scheduleClockTick() (Model, tea.Cmd) {
 	if m.clockTickScheduled {
@@ -2139,11 +2145,11 @@ func (m Model) scheduleClockTick() (Model, tea.Cmd) {
 
 // refreshToday recomputes the local "today" date and propagates it into every
 // view model. The views render their "today" highlight from these stored
-// fields, so without this they freeze on the date captured at startup once the
+// fields. Without this they freeze on the date captured at startup once the
 // app is left open across midnight. Day view's grid and the sidebar mini-month
-// recompute today at render time and are already immune; refreshing the stored
-// fields keeps week, month, and agenda current and ensures a later view switch
-// carries the right date.
+// recompute today at render time and are already immune. A refresh of the
+// stored fields keeps week, month, and agenda current. A later view switch
+// then carries the right date.
 func (m Model) refreshToday(now time.Time) Model {
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	m.day.today = today
@@ -2184,9 +2190,9 @@ func (m Model) refreshCalendarViews() Model {
 	return m
 }
 
-// filterVisibleEvents drops events whose calendar is currently hidden so the
-// agenda row list stays in sync with the toggle set without mutating the
-// original slice.
+// filterVisibleEvents drops events whose calendar is currently hidden. The
+// agenda row list then stays in sync with the toggle set. The original slice
+// is not mutated.
 func filterVisibleEvents(events []event.Event, hidden map[int64]bool) []event.Event {
 	if len(hidden) == 0 {
 		return events
@@ -2269,7 +2275,7 @@ func (m Model) clearConfirmPending() Model {
 }
 
 // openQuitConfirm builds and opens the quit-confirm dialog. Shared by the
-// q and ctrl+c entry points so the two keystrokes can't drift in styling.
+// q and ctrl+c entry points so the two keystrokes cannot drift in style.
 func (m Model) openQuitConfirm() Model {
 	m.pendingQuit = true
 	m.confirmDialog = NewConfirmDialogModel("Quit chroncal?", "Quit", m.theme).
@@ -2280,12 +2286,12 @@ func (m Model) openQuitConfirm() Model {
 
 // interceptGlobalKeys routes the quit guard (q / ctrl+c) and help (?) ahead
 // of any open dialog so they work from anywhere. A second ctrl+c while the
-// quit confirm is showing forces the exit. ctrl+c is truly global (it isn't
-// a character anyone types into a field); ? is suppressed while a text-entry
-// surface owns input (palette search, event form, calendar form) so users can
-// type it normally, and q is suppressed while any overlay is open so the
-// overlay's own close binding runs instead. The quit confirm additionally
-// blocks ?, and the help dialog handles its own close keys.
+// quit confirm is on screen forces the exit. ctrl+c is truly global. It is
+// not a character anyone types into a field. ? is suppressed while a
+// text-entry surface owns input (palette search, event form, calendar form)
+// so users can type it normally. q is suppressed while any overlay is open
+// so the overlay's own close binding runs instead. The quit confirm also
+// blocks ?. The help dialog handles its own close keys.
 func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	inQuitConfirm := m.confirmOpen && m.pendingQuit
 	if msg.String() == "ctrl+c" {
@@ -2401,9 +2407,9 @@ func (m Model) currentFooterShowsTodayHint() bool {
 }
 
 // undoIsAllowed reports whether the `u` key should trigger an undo. The guard
-// is intentionally strict: any overlay, editor, or palette that might consume
-// character input takes priority, otherwise a stray `u` in a title field
-// would silently trigger a restore.
+// is intentionally strict. Any overlay, editor, or palette that might consume
+// character input takes priority. Otherwise a stray `u` in a title field
+// would trigger a restore in silence.
 func (m Model) undoIsAllowed() bool {
 	if m.focus != focusCalendar {
 		return false
@@ -2418,9 +2424,9 @@ func (m Model) undoIsAllowed() bool {
 }
 
 // anyOverlayOpen reports whether any dialog, form, or palette is currently
-// on screen. While one is up it owns input and renders its own help row, so
-// the app footer should degrade to status + toast rather than duplicate the
-// dialog's hints.
+// on screen. While one is up it owns input and renders its own help row.
+// The app footer should then degrade to status plus toast rather than a
+// duplicate of the dialog's hints.
 func (m Model) anyOverlayOpen() bool {
 	return m.paletteOpen || m.formOpen || m.viewDialogOpen || m.dialogOpen ||
 		m.confirmOpen || m.choiceOpen || m.calendarManagerOpen ||
@@ -5289,7 +5295,7 @@ func (m Model) switchToView(mode viewMode) (tea.Model, tea.Cmd) {
 }
 
 // cycleView advances to the next view mode in the order month → week → day
-// → agenda → month, preserving cursor/today across the switch.
+// → agenda → month. It keeps cursor/today across the switch.
 func (m Model) cycleView() (tea.Model, tea.Cmd) {
 	var next viewMode
 	switch m.viewMode {
