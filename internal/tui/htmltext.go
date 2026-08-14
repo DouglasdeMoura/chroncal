@@ -199,7 +199,7 @@ func (r *htmlRenderer) text(s string, st htmlInline) {
 }
 
 // lineBreak ends the current line. An empty pending line (for example
-// consecutive <br>) becomes a blank output line so paragraph spacing survives.
+// consecutive <br>) becomes a blank output line. Paragraph space then survives.
 func (r *htmlRenderer) lineBreak() {
 	if len(r.cur) == 0 {
 		r.out = append(r.out, "")
@@ -208,7 +208,7 @@ func (r *htmlRenderer) lineBreak() {
 	r.flushCur()
 }
 
-// flushCur greedily word-wraps the pending words to width and appends the
+// flushCur greedily word-wraps the pending words to width. It appends the
 // result styled lines to the output.
 func (r *htmlRenderer) flushCur() {
 	if len(r.cur) == 0 {
