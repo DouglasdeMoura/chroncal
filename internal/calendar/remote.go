@@ -18,8 +18,8 @@ import (
 const hiddenAccountPrefix = "__calendar_"
 
 // RemoteLink describes the CalDAV connection settings for a calendar.
-// Callers are responsible for collecting any password or OAuth tokens into
-// the accompanying auth.Credential before calling Connect.
+// Callers must collect any password or OAuth tokens into the
+// auth.Credential that accompanies this link before they call Connect.
 type RemoteLink struct {
 	RemoteURL     string
 	Username      string
@@ -295,9 +295,9 @@ func sameRemoteCollection(left, right string) bool {
 	return leftOK && rightOK && leftScheme == rightScheme && leftHost == rightHost && leftPath == rightPath
 }
 
-// Disconnect removes the remote link from a calendar and, when the account
-// was a private hidden account with no other calendars attached, deletes the
-// account and its stored credential.
+// Disconnect removes the remote link from a calendar. When the account
+// was a private hidden account with no other calendars attached, it also
+// deletes the account and its stored credential.
 func (s *Service) Disconnect(ctx context.Context, cal Calendar, credStore auth.CredentialStore) error {
 	lockedCal, release, err := s.lockRemoteLifecycle(ctx, cal.ID)
 	if err != nil {
@@ -349,14 +349,14 @@ func (s *Service) Disconnect(ctx context.Context, cal Calendar, credStore auth.C
 	return nil
 }
 
-// DeleteWithRemoteCleanup deletes a calendar, and when its backing account is
-// a hidden per-calendar account with no other calendars attached, also deletes
-// that account and its stored credential.
+// DeleteWithRemoteCleanup deletes a calendar. When its backing account is
+// a hidden per-calendar account with no other calendars attached, it also
+// deletes that account and its stored credential.
 //
 // When the target is the current default, newDefaultID must point to a
-// different existing calendar; the promotion happens in the same transaction
-// so the database never observes a missing default. Pass newDefaultID = 0
-// when the target is not the default.
+// different calendar that still exists. The promotion happens in the same
+// transaction so the database never observes a missing default. Pass
+// newDefaultID = 0 when the target is not the default.
 func (s *Service) DeleteWithRemoteCleanup(ctx context.Context, id, newDefaultID int64, credStore auth.CredentialStore) error {
 	cal, release, err := s.lockRemoteLifecycle(ctx, id)
 	if err != nil {
