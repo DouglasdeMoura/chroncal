@@ -123,9 +123,9 @@ func dirtyCount(t *testing.T, db *sql.DB, calendarID int64) int {
 }
 
 // TestMigrateCalendarToAccount_MovesContentsAndRetiresSource is the direct
-// end-to-end smoke scenario: a local calendar's events and todos move onto a
-// newly linked destination calendar, get flagged dirty for upload, and the
-// source calendar is retired — all atomically.
+// end-to-end smoke scenario. A local calendar's events and todos move onto a
+// newly linked destination calendar. They get flagged dirty for upload. The
+// source calendar is retired. All of that is atomic.
 func TestMigrateCalendarToAccount_MovesContentsAndRetiresSource(t *testing.T) {
 	svc, q, db, acct := newMigrationFixture(t)
 	ctx := context.Background()
@@ -202,7 +202,7 @@ func TestMigrateCalendarToAccount_MovesContentsAndRetiresSource(t *testing.T) {
 }
 
 // TestMigrateCalendarToAccount_ReusesExistingDestinationRow merges the source
-// into a collection that is already linked locally instead of creating a
+// into a collection that is already linked locally. It does not create a
 // duplicate row that would sync the same remote URL twice.
 func TestMigrateCalendarToAccount_ReusesExistingDestinationRow(t *testing.T) {
 	svc, q, db, acct := newMigrationFixture(t)
@@ -240,7 +240,7 @@ func TestMigrateCalendarToAccount_ReusesExistingDestinationRow(t *testing.T) {
 }
 
 // TestMigrateCalendarToAccount_PromotesDefault transfers defaultness to the
-// destination so the app never observes a missing default.
+// destination. The app then never observes a default that is gone.
 func TestMigrateCalendarToAccount_PromotesDefault(t *testing.T) {
 	svc, q, db, acct := newMigrationFixture(t)
 	ctx := context.Background()
@@ -345,9 +345,9 @@ func TestMigrateCalendarToAccount_RollbackOnFailure(t *testing.T) {
 }
 
 // TestMigrateCalendarToAccount_SettlesCollidingDestinationName covers the
-// common same-name move: the destination is created while the source still
-// holds the name, so it gets a collision suffix mid-transaction — but once the
-// source is deleted the plain name is free and must be settled on before
+// common same-name move. The destination is created while the source still
+// holds the name. It then gets a collision suffix mid-transaction. Once the
+// source is deleted the plain name is free. It must be settled on before
 // commit.
 func TestMigrateCalendarToAccount_SettlesCollidingDestinationName(t *testing.T) {
 	svc, q, _, acct := newMigrationFixture(t)
@@ -373,8 +373,8 @@ func TestMigrateCalendarToAccount_SettlesCollidingDestinationName(t *testing.T) 
 }
 
 // TestMigrateCalendarToAccount_CountsSeriesOnce locks the MigrateResult
-// contract: a recurring master and its overrides share one UID, so the series
-// counts once and yields a single dirty sync resource — not one per row.
+// contract. A recurring master and its overrides share one UID. The series
+// then counts once and yields a single dirty sync resource, not one per row.
 func TestMigrateCalendarToAccount_CountsSeriesOnce(t *testing.T) {
 	svc, q, db, acct := newMigrationFixture(t)
 	ctx := context.Background()
