@@ -7,9 +7,9 @@ import (
 	lipgloss "charm.land/lipgloss/v2"
 )
 
-// TestWrapLineDisplayWidth reproduces issue #356: wrapLine measured line width
-// in rune count rather than display columns, so CJK characters and emoji
-// (whose display width is 2 cells per rune) overflowed the requested width w.
+// TestWrapLineDisplayWidth reproduces issue #356. wrapLine measured line width
+// in rune count rather than display columns. CJK characters and emoji
+// (whose display width is 2 cells per rune) then overflowed the requested width w.
 func TestWrapLineDisplayWidth(t *testing.T) {
 	cases := []struct {
 		name string
@@ -49,9 +49,9 @@ func TestWrapLineDisplayWidth(t *testing.T) {
 	}
 }
 
-// TestWrapLineASCIIUnchanged verifies that fixing display-width measuring does
-// not regress plain-ASCII word-wrap behaviour (rune width == display width for
-// ASCII, so results should be identical to the original code).
+// TestWrapLineASCIIUnchanged verifies that a fix of display-width measure does
+// not regress plain-ASCII word-wrap behaviour. Rune width == display width for
+// ASCII. Results should then be identical to the original code.
 func TestWrapLineASCIIUnchanged(t *testing.T) {
 	cases := []struct {
 		name string
