@@ -13,10 +13,10 @@ type ConfirmDialogResultMsg struct {
 }
 
 // ConfirmDialogModel shows a centered confirmation prompt with Cancel and
-// a caller-defined confirm button. Cancel is focused by default; call
+// a caller-defined confirm button. Cancel is focused by default. Call
 // Destructive() to opt the confirm button into the Danger (red) variant
 // for delete / discard / purge prompts. Non-destructive confirms (e.g.
-// Quit) keep the default neutral styling.
+// Quit) keep the default neutral style.
 type ConfirmDialogModel struct {
 	dialog       Dialog
 	form         Form
