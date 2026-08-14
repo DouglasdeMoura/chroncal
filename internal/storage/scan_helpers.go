@@ -2,7 +2,8 @@ package storage
 
 import "database/sql"
 
-// scanEvents reads rows into []Event. Column order must match the events table:
+// scanEvents reads rows into []Event. Column order must match the events table.
+// Columns:
 // id, uid, calendar_id, title, description, location, start_time, end_time,
 // all_day, recurrence_rule, timezone, status, transp, sequence, priority,
 // class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at,
@@ -28,7 +29,8 @@ func scanEvents(rows *sql.Rows) ([]Event, error) {
 	return items, rows.Err()
 }
 
-// scanTodos reads rows into []Todo. Column order must match the todos table:
+// scanTodos reads rows into []Todo. Column order must match the todos table.
+// Columns:
 // id, uid, calendar_id, summary, description, location, due_date, start_date,
 // duration, completed_at, percent_complete, status, priority, class, url,
 // recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, geo,
@@ -54,7 +56,8 @@ func scanTodos(rows *sql.Rows) ([]Todo, error) {
 	return items, rows.Err()
 }
 
-// scanJournals reads rows into []Journal. Column order must match the journals table:
+// scanJournals reads rows into []Journal. Column order must match the journals table.
+// Columns:
 // id, uid, calendar_id, summary, description, start_date, status, class, url,
 // recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp,
 // created_at, updated_at, deleted_at.
