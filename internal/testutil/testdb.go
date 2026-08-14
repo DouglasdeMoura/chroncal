@@ -20,9 +20,9 @@ func NewTestDB(t *testing.T) (*sql.DB, *storage.Queries) {
 	return db, q
 }
 
-// LinkCalendarToAccount creates an account and links calendar id 1 to it,
-// turning calendar 1 into a synced calendar so storage.MarkResourceDirty
-// (and related sync bookkeeping) actually writes sync_resources rows.
+// LinkCalendarToAccount creates an account and links calendar id 1 to it.
+// Calendar 1 then becomes a synced calendar. storage.MarkResourceDirty
+// (and related sync records) actually writes sync_resources rows.
 func LinkCalendarToAccount(t *testing.T, db *sql.DB) {
 	t.Helper()
 	res, err := db.ExecContext(context.Background(),
