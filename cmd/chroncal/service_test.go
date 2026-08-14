@@ -101,7 +101,7 @@ func registeredServiceInstallCmd(t *testing.T) *cobra.Command {
 }
 
 // TestServiceInstallRespectsConfiguredSyncIntervalAtRunTime exercises the
-// init-time-registered command (as production does) to prove the configured
+// init-time-registered command (as production does). It proves the configured
 // [sync] interval is honored even though the flag tree is built before
 // config.Load() runs. Regression test for issue #462.
 func TestServiceInstallRespectsConfiguredSyncIntervalAtRunTime(t *testing.T) {
