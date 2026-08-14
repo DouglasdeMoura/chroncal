@@ -46,9 +46,9 @@ type SyncResult struct {
 	Warnings []ImportWarning
 }
 
-// ImportWarning is one thing ImportFile could not represent faithfully while
-// it imports a server resource. Examples: a malformed DTEND replaced by a
-// fabricated span, or an alarm dropped for an unusable trigger.
+// ImportWarning is one thing ImportFile could not represent faithfully
+// during import of a server resource. Examples: a malformed DTEND replaced
+// by a fabricated span, or an alarm dropped for an unusable trigger.
 type ImportWarning struct {
 	// Path is the remote resource path the payload came from; empty when the
 	// payload was not fetched by path (conflict-resolution bodies).
@@ -899,7 +899,7 @@ func (e *Engine) pull(ctx context.Context, client *caldav.Client, calendarID int
 }
 
 // maxSyncCollectionPages bounds the truncation-pagination loop. Google's
-// pages carry ~90 changes; 200 pages is far beyond any real calendar and
+// pages carry ~90 changes. 200 pages is far beyond any real calendar. It
 // turns a server paging bug into an error instead of an infinite loop.
 const maxSyncCollectionPages = 200
 
@@ -1079,9 +1079,9 @@ const multigetBatchSize = 50
 // turned out to be incomplete.
 //
 // The two recorders below encode the only safe rule. Explicit deletions
-// carry positive evidence (the server returned 404 for a specific href) and
-// are always sound. Absence-inferred deletions require a provably complete
-// inventory. They are withheld otherwise.
+// carry positive evidence (the server returned 404 for a specific href).
+// Those are always sound. Absence-inferred deletions require a provably
+// complete inventory. They are withheld otherwise.
 //
 // Every UID-level deletion the pull performs goes through apply(). A new
 // "this looks deleted" code path cannot reach the executor unless it picks
@@ -1726,8 +1726,8 @@ func (e *Engine) exportResource(ctx context.Context, ownerType string, uid strin
 
 // hydrateEvent/hydrateTodo/hydrateJournal adapt the domain services' Hydrate
 // methods to the ownerOps export signature. The relation list itself lives in
-// the services (event.Service.Hydrate and friends) so sync, file export, and
-// the CLI can never drift apart on what a complete record contains.
+// the services (event.Service.Hydrate and friends). Sync, file export, and
+// the CLI then cannot drift apart on what a complete record contains.
 func hydrateEvent(ctx context.Context, e *Engine, evt *event.Event) error {
 	return e.events.Hydrate(ctx, evt)
 }
@@ -2260,8 +2260,9 @@ func collectImportWarnings(path string, result icalPkg.ImportResult) []ImportWar
 	return warnings
 }
 
-// soleUID returns the one UID shared by every component of the payload, or
-// "" when the payload is empty, mixes UIDs, or any component lacks one.
+// soleUID returns the one UID shared by every component of the payload.
+// It returns "" when the payload is empty, mixes UIDs, or any component
+// lacks one.
 func soleUID(result icalPkg.ImportResult) string {
 	uid := ""
 	sole := func(u string) bool {
