@@ -9,7 +9,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
 
-// countRows returns the number of rows matching the given query.
+// countRows returns the number of rows that match the given query.
 func countRows(t *testing.T, db *sql.DB, query string, args ...any) int {
 	t.Helper()
 	var n int
@@ -19,19 +19,19 @@ func countRows(t *testing.T, db *sql.DB, query string, args ...any) int {
 	return n
 }
 
-// A duplicate category isolates the failure to the category child-write:
-// todo_categories has PRIMARY KEY (todo_id, category) and ParseCategoryList
-// does not dedupe, so inserting "dup,dup" fails on the second row while the
-// parent todo row write succeeds — exactly the partial-failure window the fix
-// must close. Dropping todo_categories instead would break CreateTodo /
-// UpdateTodo themselves: the todos FTS triggers read todo_categories at
-// statement time.
+// A duplicate category isolates the failure to the category child-write.
+// todo_categories has PRIMARY KEY (todo_id, category). ParseCategoryList
+// does not dedupe. An insert of "dup,dup" then fails on the second row while
+// the parent todo row write succeeds. That is exactly the partial-failure
+// window the fix must close. A drop of todo_categories instead would break
+// CreateTodo / UpdateTodo themselves. The todos FTS triggers read
+// todo_categories at statement time.
 const dupCategories = "dup,dup"
 
 // TestCreate_AtomicOnCategoryFailure asserts that when the category child-write
 // fails, Create returns an error AND leaves no todo row behind. Before the fix
 // the todo row was committed in autocommit before categories ran in a separate
-// transaction, so a failure left an orphan row (mirror of event issue #73).
+// transaction. A failure then left an orphan row (mirror of event issue #73).
 func TestCreate_AtomicOnCategoryFailure(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	svc := NewService(db, q)
@@ -54,10 +54,10 @@ func TestCreate_AtomicOnCategoryFailure(t *testing.T) {
 
 // TestUpdate_AtomicOnCategoryFailure asserts that when the category child-write
 // fails during Update, the original todo row and its categories are left
-// unchanged AND the resource is not marked dirty. Before the fix the todo row
-// was updated in autocommit before categories ran, so a failure produced a
-// half-updated row while MarkResourceDirty never fired — a CalDAV-linked todo
-// silently lost the edit.
+// unchanged. The resource is not marked dirty. Before the fix the todo row
+// was updated in autocommit before categories ran. A failure then produced a
+// half-updated row while MarkResourceDirty never fired. A CalDAV-linked todo
+// then lost the edit in silence.
 func TestUpdate_AtomicOnCategoryFailure(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	svc := NewService(db, q)
@@ -105,9 +105,9 @@ func TestUpdate_AtomicOnCategoryFailure(t *testing.T) {
 
 // TestUpsertByUID_AtomicOnCategoryFailure asserts that when the category
 // child-write fails, UpsertByUID returns an error AND leaves no todo row
-// behind. Before the fix the upsert committed the row in autocommit and only
-// then ran ReplaceCategories in a separate transaction, so a failure left an
-// orphan row.
+// behind. Before the fix the upsert committed the row in autocommit. Only
+// then did it run ReplaceCategories in a separate transaction. A failure then
+// left an orphan row.
 func TestUpsertByUID_AtomicOnCategoryFailure(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	svc := NewService(db, q)
