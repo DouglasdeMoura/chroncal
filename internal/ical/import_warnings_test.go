@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-// An unparseable DUE or DTSTART on a VTODO is dropped — it cannot be stored —
-// but dropping it silently is data loss the user never sees: the todo leaves
-// every due-date view and the next export re-emits the VTODO without it.
+// An unparseable DUE or DTSTART on a VTODO is dropped. It cannot be stored.
+// A drop of it in silence is data loss the user never sees. The todo leaves
+// every due-date view. The next export re-emits the VTODO without it.
 func TestImport_UnparseableTodoDates_Warn(t *testing.T) {
 	t.Parallel()
 	const ics = "BEGIN:VCALENDAR\r\n" +
@@ -46,9 +46,9 @@ func TestImport_UnparseableTodoDates_Warn(t *testing.T) {
 	}
 }
 
-// A dropped-alarm warning must name the record that lost the alarm. Since the
-// unparseable TRIGGER is dropped rather than stored, the warning is the only
-// trace — in a large import, "alarm dropped" with no owner is unactionable.
+// A dropped-alarm warning must name the record that lost the alarm. The
+// unparseable TRIGGER is dropped rather than stored. The warning is then the
+// only trace. In a large import, "alarm dropped" with no owner is unactionable.
 // Follows the parseDateProp precedent: `<kind> "<uid>": ...`.
 func TestImport_DroppedAlarmWarning_NamesOwningRecord(t *testing.T) {
 	t.Parallel()
@@ -92,7 +92,7 @@ func TestImport_DroppedAlarmWarning_NamesOwningRecord(t *testing.T) {
 }
 
 // parseAlarm reports every problem it finds. A single warning slot meant the
-// ATTACH message overwrote the "will not fire" one, so the user saw a broken
+// ATTACH message overwrote the "will not fire" one. The user then saw a broken
 // sound file and never learned the alarm was dead.
 func TestImport_AlarmWithTwoProblems_ReportsBoth(t *testing.T) {
 	t.Parallel()
