@@ -37,7 +37,7 @@ func (w *whereBuilder) addSoftDeleteFilter(includeDeleted, deletedOnly bool) {
 	}
 }
 
-// expandInPlaceholders builds the "?,?,?" placeholder list and the matching
+// expandInPlaceholders builds the "?,?,?" placeholder list and the corresponding
 // positional args slice for a SQL `IN (...)` clause over the given int64 ids.
 // database/sql has no native slice-parameter support, so every hand-written
 // IN query needs this. Callers must ensure len(ids) > 0.
@@ -53,14 +53,14 @@ func expandInPlaceholders(ids []int64) (string, []interface{}) {
 
 // loaderIDBatch bounds how many ids go into a single `id IN (...)` batch loader
 // query (categories, attendees). Like overrideUIDBatch it stays well under
-// SQLite's 32766 host-parameter cap so the IN clause never overflows on wide
-// recurrence expansions, at the cost of a few extra queries instead of one.
+// SQLite's 32766 host-parameter cap. The IN clause then never overflows on wide
+// recurrence expansions. The cost is a few extra queries instead of one.
 const loaderIDBatch = 500
 
-// dedupeInt64s returns ids with duplicates removed, preserving first-seen
+// dedupeInt64s returns ids with duplicates removed. It keeps first-seen
 // order. Recurrence expansion feeds one id per expanded instance, so the same
-// master row id repeats once per occurrence; collapsing the duplicates shrinks
-// the IN-clause loaders from O(instances) back to O(distinct rows).
+// master row id repeats once per occurrence. Collapse of the duplicates
+// shrinks the IN-clause loaders from O(instances) back to O(distinct rows).
 func dedupeInt64s(ids []int64) []int64 {
 	if len(ids) < 2 {
 		return ids
@@ -78,7 +78,7 @@ func dedupeInt64s(ids []int64) []int64 {
 }
 
 // loadByIDChunks de-duplicates ids and runs load once per chunk that fits under
-// SQLite's host-parameter cap, concatenating the results. Each chunk passed to
+// SQLite's host-parameter cap. It concatenates the results. Each chunk passed to
 // load is small enough for a single `IN (...)` query.
 func loadByIDChunks[T any](ctx context.Context, ids []int64, load func(context.Context, []int64) ([]T, error)) ([]T, error) {
 	var out []T
@@ -92,9 +92,9 @@ func loadByIDChunks[T any](ctx context.Context, ids []int64, load func(context.C
 	return out, nil
 }
 
-// expandStringPlaceholders is the string analogue of expandInPlaceholders,
-// building the "?,?,?" list and matching positional args for a SQL `IN (...)`
-// clause over string values (e.g. UIDs). Callers must ensure len(vals) > 0.
+// expandStringPlaceholders is the string analogue of expandInPlaceholders.
+// It builds the "?,?,?" list and the corresponding positional args for a SQL `IN (...)`
+// clause over string values (for example UIDs). Callers must ensure len(vals) > 0.
 func expandStringPlaceholders(vals []string) (string, []interface{}) {
 	placeholders := strings.Repeat("?,", len(vals))
 	placeholders = placeholders[:len(placeholders)-1] // trim trailing comma
