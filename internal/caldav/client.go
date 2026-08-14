@@ -69,7 +69,7 @@ func sameRedirectHost(a, b *url.URL) bool {
 	return strings.EqualFold(a.Host, b.Host)
 }
 
-// Client wraps the go-webdav CalDAV client with error handling and auth.
+// Client wraps the go-webdav CalDAV client with errors and auth.
 type Client struct {
 	httpClient webdav.HTTPClient
 	inner      *caldav.Client
@@ -106,10 +106,10 @@ func NewBearerAuthClient(endpoint, token string) (*Client, error) {
 //
 // Calendar inventory and all per-calendar metadata (display name, color,
 // access privileges, supported components) are fetched in a single Depth:1
-// PROPFIND on the calendar-home-set. This avoids an N+1 round trip where each
+// PROPFIND on the calendar-home-set. This avoids an N+1 round trip. Each
 // discovered calendar would otherwise need its own Depth:0 PROPFIND to pick up
-// calendar-color and current-user-privilege-set, which the go-webdav
-// collection listing does not request. Properties absent from a server's
+// calendar-color and current-user-privilege-set. The go-webdav collection
+// list does not request those. Properties absent from a server's
 // response fall back to best-effort zero values (empty color, Unknown access).
 func (c *Client) DiscoverCalendars(ctx context.Context) ([]RemoteCalendar, error) {
 	principal, err := c.inner.FindCurrentUserPrincipal(ctx)
@@ -146,10 +146,10 @@ func (c *Client) DiscoverCalendars(ctx context.Context) ([]RemoteCalendar, error
 }
 
 // propfindCalendarCollections issues a single Depth:1 PROPFIND on the calendar
-// home set, requesting display name, description, color, ACL, and supported
+// home set. It requests display name, description, color, ACL, and supported
 // components for every descendant calendar collection in one round trip.
 // Servers that omit calendar-color or current-user-privilege-set leave those
-// fields as zero values, so discovery degrades gracefully.
+// fields as zero values. Discovery then degrades gracefully.
 func propfindCalendarCollections(ctx context.Context, httpClient webdav.HTTPClient, homeSetURL string) ([]RemoteCalendar, error) {
 	const body = `<?xml version="1.0" encoding="utf-8"?>
 <d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:ic="http://apple.com/ns/ical/">
@@ -345,20 +345,20 @@ func (c *Client) PutResource(ctx context.Context, path string, data *ical.Calend
 }
 
 // ErrResourceGone reports that a DELETE targeted a resource the server no
-// longer has (404 Not Found or 410 Gone). For tombstone processing this is the
-// desired end state, not a failure: the resource is already absent server-side,
-// so callers can clear their local sync bookkeeping instead of retrying.
+// longer has (404 Not Found or 410 Gone). For tombstone process this is the
+// desired end state, not a failure. The resource is already absent server-side.
+// Callers can then clear their local sync records instead of a retry.
 var ErrResourceGone = errors.New("caldav: resource already gone")
 
 // DeleteResource removes a resource by path. A 404/410 response is reported as
 // ErrResourceGone so callers can treat an already-absent resource as success.
 //
 // If etag is non-empty, the DELETE is made conditional via an If-Match
-// precondition so the server rejects it (412 Precondition Failed) when the
-// resource was modified since we last saw it. This prevents a local
-// tombstone push from silently destroying a concurrent remote edit. A 412 is
-// returned as a typed conflict error (see IsConflict) so callers can preserve
-// the remote change instead of forcing the delete.
+// precondition. The server then rejects it (412 Precondition Failed) when the
+// resource was modified since we last saw it. A local tombstone push then
+// cannot destroy a concurrent remote edit in silence. A 412 is
+// returned as a typed conflict error (see IsConflict). Callers can then keep
+// the remote change instead of a forced delete.
 func (c *Client) DeleteResource(ctx context.Context, path, etag string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.ResolveURL(path), nil)
 	if err != nil {
@@ -460,14 +460,14 @@ func (c *Client) CanonicalCollectionRef(ref string) (string, error) {
 }
 
 // CanonicalObjectRef resolves a calendar object href against the linked
-// calendar collection, validates it stays on the configured CalDAV origin,
-// and returns a normalized server-relative path.
+// calendar collection. It validates that the href stays on the configured
+// CalDAV origin. It returns a normalized server-relative path.
 //
 // We intentionally do not require the object path to stay within the
-// calendar collection's URL prefix: several CalDAV servers (GMX/Cosmo, for
-// example) rewrite object hrefs at the server — a resource PUT at
-// /cal/<user>/event.ics is reported back as /cal/<uuid>/event.ics. Enforcing
-// a collection prefix would reject those same-origin hrefs and corrupt sync.
+// calendar collection's URL prefix. Several CalDAV servers (GMX/Cosmo, for
+// example) rewrite object hrefs at the server. A resource PUT at
+// /cal/<user>/event.ics is reported back as /cal/<uuid>/event.ics. A forced
+// collection prefix would reject those same-origin hrefs and corrupt sync.
 // Same-origin remains the security boundary.
 func (c *Client) CanonicalObjectRef(calendarRef, objectRef string) (string, error) {
 	collectionPath, err := c.CanonicalCollectionRef(calendarRef)
@@ -588,7 +588,7 @@ func EncodeCalendar(cal *ical.Calendar) ([]byte, error) {
 
 // statusErrorf wraps a formatted message in a typed retry.HTTPError so
 // transient/conflict classification reads the real status regardless of
-// any numeric tokens the message (or a future wrapping layer) carries.
+// any numeric tokens the message (or a future wrap layer) carries.
 func statusErrorf(status int, format string, args ...any) error {
 	return retry.NewHTTPError(status, fmt.Errorf(format, args...))
 }
@@ -653,17 +653,17 @@ func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
 	return 0, false
 }
 
-// normalizeETag strips surrounding whitespace and the outer quotes from an
-// ETag, preserving the weak "W/" marker (RFC 7232 §2.3) so callers can tell a
-// weak validator apart from a strong one. Weak tags are kept quoted as
-// `W/"<opaque>"`, strong tags as bare `<opaque>`. Retaining the quotes on weak
-// tags keeps the representation unambiguous: a strong validator whose opaque
-// value happens to start with "W/" (e.g. `"W/abc"` normalizing to `W/abc`)
-// would otherwise be indistinguishable from a weak `W/"abc"`. Because the weak
-// marker is the literal "W/" *before* the opening quote, it is detected before
-// the quotes are stripped. Comparisons elsewhere are opaque equality, which
-// stays consistent because both sides flow through this function, and the
-// function is idempotent so a stored normalized value re-normalizes to itself.
+// normalizeETag strips whitespace around the tag and the outer quotes from an
+// ETag. It keeps the weak "W/" marker (RFC 7232 §2.3). Callers can then tell a
+// weak validator apart from a strong one. Weak tags stay quoted as
+// `W/"<opaque>"`. Strong tags are bare `<opaque>`. Keep the quotes on weak
+// tags. The representation then stays unambiguous. A strong validator whose
+// opaque value happens to start with "W/" (for example `"W/abc"` normalized
+// to `W/abc`) would otherwise look the same as a weak `W/"abc"`. The weak
+// marker is the literal "W/" *before* the open quote. Detect it before
+// the quotes are stripped. Comparisons elsewhere are opaque equality. Both
+// sides flow through this function, so that stays consistent. The
+// function is idempotent. A stored normalized value re-normalizes to itself.
 func normalizeETag(etag string) string {
 	etag = strings.TrimSpace(etag)
 	weak := false
@@ -684,10 +684,10 @@ func normalizeETag(etag string) string {
 
 // formatIfMatch renders an ETag for the If-Match request header, or returns ""
 // when no precondition should be sent. RFC 7232 §3.1 mandates the strong
-// comparison function for If-Match, under which a weak validator never matches
-// (not even itself). Asserting a weak tag as strong would 412 on every push, so
-// weak validators yield no precondition and conflict detection falls back to
-// the sync-token/ctag pull comparison instead.
+// comparison function for If-Match. A weak validator then never matches
+// (not even itself). Assert a weak tag as strong and every push would 412.
+// Weak validators therefore yield no precondition. Conflict detection then
+// falls back to the sync-token/ctag pull comparison instead.
 func formatIfMatch(etag string) string {
 	etag = normalizeETag(etag)
 	// A weak validator normalizes to `W/"<opaque>"`; the `W/"` prefix (marker
