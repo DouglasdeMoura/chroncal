@@ -97,8 +97,8 @@ var windowsToIANA = map[string]string{
 }
 
 // LocalIANATimezone returns the system's IANA timezone name (e.g.
-// "America/New_York"). It checks TZ, then queries the Windows registry,
-// falling back to "UTC".
+// "America/New_York"). It checks TZ, then queries the Windows registry.
+// It falls back to "UTC".
 func LocalIANATimezone() string {
 	if tz := os.Getenv("TZ"); tz != "" && tz != "Local" {
 		return tz
