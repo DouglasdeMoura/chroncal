@@ -79,8 +79,8 @@ const (
 //   - pre-rendered detail lines for the selected row
 //   - action buttons
 //
-// Everything else (selection tint, scroll, zone cycle, hit-test) lives
-// here so each dialog collapses to its domain concerns.
+// Everything else lives here: selection tint, scroll, zone cycle, and
+// hit-test. Each dialog then collapses to its domain concerns.
 type ListDialogModel struct {
 	title        string
 	titleContext string
