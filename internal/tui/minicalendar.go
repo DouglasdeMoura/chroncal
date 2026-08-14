@@ -159,9 +159,9 @@ func (m MiniMonthModel) FocusLast() MiniMonthModel {
 	return m
 }
 
-// FocusGrid resets inner focus to the day grid (for example after a click on
-// a day, or when the user enters the sidebar via the `s` toggle rather than
-// via Tab).
+// FocusGrid resets inner focus to the day grid. One example is after a
+// click on a day. Another is when the user enters the sidebar via the `s`
+// toggle rather than via Tab.
 func (m MiniMonthModel) FocusGrid() MiniMonthModel {
 	m.innerFocus = innerFocusGrid
 	return m
