@@ -38,33 +38,33 @@ type MigrateResult struct {
 	Journals int
 }
 
-// MigrateCalendarToAccount moves a local calendar's contents into an existing
-// remote collection on the destination account, then retires the local
-// calendar — chroncal's "Move to Account…" flow.
+// MigrateCalendarToAccount moves a local calendar's contents into a stored
+// remote collection on the destination account. It then retires the local
+// calendar. That is chroncal's "Move to Account…" flow.
 //
-// The destination account and collection are described by discovery, which the
-// caller obtains from [Service.Discover]; selectedPath must identify one of its
-// collections. Migration never contacts the server: discovery already proved
-// the account is reachable, and the first sync (the caller initiates it with
-// the returned DestinationID) performs the upload.
+// The destination account and collection are described by discovery. The
+// caller obtains that from [Service.Discover]. selectedPath must identify one
+// of its collections. Migration never contacts the server. Discovery already
+// proved the account is reachable. The first sync performs the upload. The
+// caller starts that sync with the returned DestinationID.
 //
 // Within a single transaction the method:
-//  1. resolves or creates the destination calendar row linked to the chosen
-//     collection (idempotent — reusing an existing row when the collection is
-//     already linked locally, mirroring [Service.Import]);
-//  2. flags every live identity on the source dirty on the destination (one
-//     set-based statement per table) so the next sync uploads it;
-//  3. reassigns every event, todo, and journal — live and soft-deleted — from
-//     the source to the destination;
-//  4. promotes the destination to default when the source was the default;
-//  5. deletes the source calendar; and
-//  6. settles a freshly created destination on its preferred name, which the
+//  1. Resolves or creates the destination calendar row linked to the chosen
+//     collection. Idempotent: reuse a stored row when the collection is
+//     already linked locally. That mirrors [Service.Import].
+//  2. Flags every live identity on the source dirty on the destination (one
+//     set-based statement per table) so the next sync uploads it.
+//  3. Reassigns every event, todo, and journal — live and soft-deleted — from
+//     the source to the destination.
+//  4. Promotes the destination to default when the source was the default.
+//  5. Deletes the source calendar.
+//  6. Settles a freshly created destination on its preferred name, which the
 //     source may have held until it was deleted.
 //
-// Every failure rolls the transaction back, leaving the source calendar and
-// its data untouched. A successful commit followed by a failed first sync is
-// still non-destructive: the moved data lives on the destination calendar,
-// dirty, and retries on the next sync.
+// Every failure rolls the transaction back. The source calendar and
+// its data stay untouched. A successful commit followed by a failed first
+// sync is still non-destructive. The moved data lives on the destination
+// calendar, dirty, and retries on the next sync.
 func (s *Service) MigrateCalendarToAccount(
 	ctx context.Context,
 	sourceID int64,
@@ -196,9 +196,9 @@ func (s *Service) MigrateCalendarToAccount(
 
 // settleDestinationName renames a freshly created destination calendar to the
 // best available local name once the source row is gone. The destination was
-// named while the source still held its own name, so a same-name move gets a
-// collision suffix ("Personal (2)") that would otherwise persist after the
-// only calendar holding the plain name was deleted.
+// named while the source still held its own name. A same-name move then gets a
+// collision suffix ("Personal (2)"). That suffix would otherwise persist after
+// the only calendar that held the plain name was deleted.
 func settleDestinationName(ctx context.Context, qtx *storage.Queries, destinationID int64, preferred string) error {
 	all, err := qtx.ListCalendars(ctx)
 	if err != nil {
@@ -227,7 +227,7 @@ func settleDestinationName(ctx context.Context, qtx *storage.Queries, destinatio
 }
 
 // resolveDestinationCalendar returns the local calendar row linked to the
-// chosen collection, creating one (mirroring Import) when no such row exists
+// chosen collection. It creates one (mirrors Import) when no such row exists
 // yet. The returned created flag distinguishes the two cases for the result.
 func (s *Service) resolveDestinationCalendar(
 	ctx context.Context,
