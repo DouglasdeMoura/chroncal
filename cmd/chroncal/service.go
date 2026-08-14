@@ -208,14 +208,14 @@ back to every 15 minutes when it is unset.`,
 }
 
 // serviceInstallSyncInterval resolves the sync interval baked into the
-// installed service definition. An explicit --sync-interval flag always wins
-// (including an explicit empty value, which disables sync). Otherwise the
-// configured [sync] interval is used, falling back to the static flag default
+// installed service definition. An explicit --sync-interval flag always wins.
+// An explicit empty value disables sync. Otherwise the configured [sync]
+// interval is used. It falls back to the static flag default
 // ("15m") when config leaves it unset.
 //
-// This must be resolved here, at RunE time, rather than as the flag default:
-// the command tree is built during package init() — before
-// rootCmd.PersistentPreRunE runs config.Load() — so cfg is still the zero
+// Resolve this here, at RunE time, rather than as the flag default.
+// The command tree is built during package init(), before
+// rootCmd.PersistentPreRunE runs config.Load(). cfg is then still the zero
 // value when a computed flag default would be evaluated (issue #462).
 func serviceInstallSyncInterval(cmd *cobra.Command) string {
 	if cmd.Flags().Changed("sync-interval") {
@@ -363,8 +363,8 @@ func uninstallLinuxService(ctx context.Context, w interface{ Write([]byte) (int,
 const windowsTaskName = "chroncal-alarm"
 
 // windowsWrapperPath returns the path to the .bat wrapper the Scheduled Task
-// executes. We can't pass env vars directly to schtasks, so the wrapper sets
-// them before invoking chroncal.
+// executes. We cannot pass env vars directly to schtasks. The wrapper sets
+// them before it invokes chroncal.
 func windowsWrapperPath() (string, error) {
 	dir := os.Getenv("LOCALAPPDATA")
 	if dir == "" {
