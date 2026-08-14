@@ -21,7 +21,7 @@ import (
 )
 
 // ProductID is the PRODID value written into exported VCALENDAR objects.
-// Override before calling ExportEvents or ExportTodos to customise.
+// Override it before ExportEvents or ExportTodos to customise.
 var ProductID = "-//chroncal//chroncal//EN"
 
 func ExportEvents(events []event.Event, calName string) ([]byte, error) {
@@ -685,9 +685,9 @@ func emitDateListOnComponent(comp *ical.Component, propName, dates, timezone str
 
 // emitRecurrenceID writes RECURRENCE-ID onto props. recurrenceID is the stored
 // RFC 3339 string. Per RFC 5545 §3.8.4.4 the RECURRENCE-ID value type must
-// match the master's DTSTART: when the component is all-day it is emitted as
-// VALUE=DATE (YYYYMMDD); when floating (no timezone) it is emitted as a
-// floating DATE-TIME (no Z, no TZID); otherwise as a UTC DATE-TIME. A type
+// match the master's DTSTART. When the component is all-day it is emitted as
+// VALUE=DATE (YYYYMMDD). When floating (no timezone) it is emitted as a
+// floating DATE-TIME (no Z, no TZID). Otherwise it is a UTC DATE-TIME. A type
 // mismatch prevents CalDAV servers from binding the override to its master.
 func emitRecurrenceID(props ical.Props, recurrenceID string, allDay, floating bool) {
 	t, err := time.Parse(time.RFC3339, recurrenceID)
@@ -708,24 +708,25 @@ func emitRecurrenceID(props ical.Props, recurrenceID string, allDay, floating bo
 }
 
 // exportableTrigger reports whether a stored TRIGGER value can be emitted as
-// RFC 5545-valid iCal — that is, whether it is a duration or a date-time.
+// RFC 5545-valid iCal. That is, whether it is a duration or a date-time.
 //
 // Import now rejects such a value outright (see parseAlarm), so this is a
-// backstop rather than the primary defense: it catches rows written by the
-// window in which import preserved the raw value, and anything a future caller
-// writes directly. Without it buildValarm would label the value VALUE=DATE-TIME
-// and strict CalDAV servers would reject the malformed VALARM with HTTP 400,
-// failing the PUT for the whole resource and leaving it permanently dirty.
+// backstop rather than the primary defense. It catches rows written by the
+// window in which import preserved the raw value. It also catches a value a
+// future caller writes directly. Without it, buildValarm would label the
+// value VALUE=DATE-TIME. Strict CalDAV servers would reject the malformed
+// VALARM with HTTP 400. The PUT for the whole resource would then fail. The
+// resource would stay permanently dirty.
 //
-// Skipping the VALARM is itself lossy — the PUT deletes that alarm from the
-// server copy — which is exactly why import drops the value up front, where the
-// user gets a warning, instead of letting it reach this point silently.
+// A skip of the VALARM is itself lossy. The PUT deletes that alarm from the
+// server copy. That is why import drops the value up front, where the user
+// gets a warning. Do not let it reach this point in silence.
 //
-// NOTE: a floating date-time trigger passes here and is emitted verbatim, which
-// is not valid iCal — see issue #572. The UTC normalization that used to sit in
-// buildValarm was reverted because it read floating values as UTC while the
-// alarm engine reads them in the record's timezone, silently moving reminders
-// by the zone offset. Do not reinstate it without the record's timezone.
+// Do not reinstate UTC normalization without the record's timezone. A floating
+// date-time trigger passes here and is emitted verbatim, which is not valid
+// iCal (issue #572). The UTC normalization that used to sit in buildValarm
+// was reverted. It read floating values as UTC while the alarm engine reads
+// them in the record's timezone. That moved reminders by the zone offset.
 func exportableTrigger(v string) bool {
 	if v == "" {
 		return false
@@ -844,12 +845,12 @@ func buildValarm(alarm model.Alarm) *ical.Component {
 	return valarm
 }
 
-// tzSpans accumulates, in first-seen order, the timezones referenced by an
-// export together with the inclusive [min, max] year span of the items
-// referencing each. buildVTimezone anchors its DST rules on that span (issue
-// #515) rather than only the current year, so an event dated in a different
-// year — possibly one whose zone observed a different DST rule — still resolves
-// the right offset from the embedded VTIMEZONE.
+// tzSpans accumulates, in first-seen order, the timezones an export references
+// together with the inclusive [min, max] year span of the items that reference
+// each. buildVTimezone anchors its DST rules on that span (issue #515) rather
+// than only the current year. An event dated in a different year — possibly
+// one whose zone observed a different DST rule — then still resolves the
+// right offset from the embedded VTIMEZONE.
 type tzSpans struct {
 	order    []string
 	min, max map[string]int
@@ -879,8 +880,8 @@ func (s *tzSpans) add(tzID string, year int) {
 }
 
 // emit appends a VTIMEZONE child to cal for each referenced timezone, in
-// first-seen order. Timezones Go cannot load are silently skipped, matching the
-// prior best-effort behaviour.
+// first-seen order. Timezones Go cannot load are skipped in silence. This
+// matches the prior best-effort behaviour.
 func (s *tzSpans) emit(cal *ical.Calendar) {
 	for _, tzID := range s.order {
 		if vtz, err := buildVTimezone(tzID, s.min[tzID], s.max[tzID]); err == nil {
@@ -889,7 +890,7 @@ func (s *tzSpans) emit(cal *ical.Calendar) {
 	}
 }
 
-// todoAnchor returns a todo's recurrence/VTIMEZONE anchor date, preferring its
+// todoAnchor returns a todo's recurrence/VTIMEZONE anchor date. It prefers its
 // start date over its due date. Returns the zero time when the todo carries
 // neither.
 func todoAnchor(t todo.Todo) time.Time {
@@ -899,9 +900,9 @@ func todoAnchor(t todo.Todo) time.Time {
 	return t.ParseDueDate()
 }
 
-// todoYear returns the calendar year to anchor a todo's VTIMEZONE on, preferring
-// its start date, then its due date, falling back to the current year when the
-// todo carries neither.
+// todoYear returns the calendar year to anchor a todo's VTIMEZONE on. It
+// prefers its start date, then its due date. It falls back to the current
+// year when the todo carries neither.
 func todoYear(t todo.Todo) int {
 	if a := todoAnchor(t); !a.IsZero() {
 		return a.Year()
@@ -910,16 +911,18 @@ func todoYear(t todo.Todo) int {
 }
 
 // recurrenceEndYear returns the calendar year of a recurring series' last
-// occurrence, so the VTIMEZONE span (issue #518) covers every DST-rule era the
-// series crosses rather than only its start year. The span is capped at the end
-// of the current year: a series bounded by a past UNTIL ends in its UNTIL year,
-// while an open-ended or COUNT-bounded series is clamped to today, since DST-rule
-// changes are historical and future rule revisions are unknowable, so covering
-// [start, today] is sufficient. The cap also keeps the rrule walk bounded —
-// rrule-go reports a ~290-year sentinel UNTIL when a rule supplies none (issue
-// #520), so the cap must come from the walk, not from GetUntil(). The result is
-// never earlier than the start year; a malformed rule degrades to the start
-// year.
+// occurrence. The VTIMEZONE span (issue #518) then covers every DST-rule era
+// the series crosses, not only its start year.
+//
+// The span is capped at the end of the current year. A series bounded by a
+// past UNTIL ends in its UNTIL year. An open-ended or COUNT-bounded series is
+// clamped to today. DST-rule changes are historical. Future rule revisions
+// are unknowable. Coverage of [start, today] is sufficient.
+//
+// The cap also keeps the rrule walk bounded. rrule-go reports a ~290-year
+// sentinel UNTIL when a rule supplies none (issue #520). The cap must come
+// from the walk, not from GetUntil(). The result is never earlier than the
+// start year. A malformed rule degrades to the start year.
 func recurrenceEndYear(rule string, start time.Time) int {
 	startYear := start.Year()
 	r, err := rrule.StrToRRule(rule)
@@ -938,8 +941,8 @@ func recurrenceEndYear(rule string, start time.Time) int {
 	return startYear
 }
 
-// journalYear returns the calendar year to anchor a journal's VTIMEZONE on,
-// preferring its start date and falling back to the current year.
+// journalYear returns the calendar year to anchor a journal's VTIMEZONE on.
+// It prefers its start date and falls back to the current year.
 func journalYear(j journal.Journal) int {
 	if d := j.ParseStartDate(); !d.IsZero() {
 		return d.Year()
@@ -947,15 +950,17 @@ func journalYear(j journal.Journal) int {
 	return time.Now().Year()
 }
 
-// buildVTimezone generates a VTIMEZONE component for the given IANA timezone ID,
-// covering the inclusive [fromYear, toYear] span of the items that reference it.
-// It walks that span detecting STANDARD/DAYLIGHT offset transitions and emits
-// one observance per distinct DST rule period (RFC 5545 Section 3.6.5). When the
-// zone's rule changed within the span (e.g. the US 2007 DST extension, or a zone
-// that abolished DST), the superseded rule is bounded with UNTIL so a consumer
-// relying solely on the embedded VTIMEZONE resolves the correct offset for every
-// referenced year — not merely an extrapolation of the current year's rule
-// (issue #515). A zero fromYear/toYear falls back to the current year.
+// buildVTimezone generates a VTIMEZONE component for the given IANA timezone ID.
+// It covers the inclusive [fromYear, toYear] span of the items that reference
+// it. It walks that span and finds STANDARD/DAYLIGHT offset transitions. It
+// emits one observance per distinct DST rule period (RFC 5545 Section 3.6.5).
+//
+// When the zone's rule changed within the span (for example the US 2007 DST
+// extension, or a zone that abolished DST), the superseded rule is bounded
+// with UNTIL. A consumer that uses only the embedded VTIMEZONE then resolves
+// the correct offset for every referenced year. It does not extrapolate the
+// current year's rule (issue #515). A zero fromYear/toYear falls back to the
+// current year.
 func buildVTimezone(tzID string, fromYear, toYear int) (*ical.Component, error) {
 	loc, err := time.LoadLocation(tzID)
 	if err != nil {
@@ -1129,10 +1134,10 @@ func buildVTimezone(tzID string, fromYear, toYear int) (*ical.Component, error) 
 
 // findTransitionInstant binary-searches (lo, hi] for the exact instant the UTC
 // offset changes away from prevOffset, to one-second precision. Callers pass
-// bounds known to bracket exactly one transition — offset(lo) == prevOffset and
-// offset(hi) != prevOffset — so the returned instant is the first second
-// carrying the new offset, i.e. the precise transition moment, regardless of the
-// local hour at which it occurs.
+// bounds known to bracket exactly one transition: offset(lo) == prevOffset and
+// offset(hi) != prevOffset. The returned instant is the first second that
+// carries the new offset. That is the precise transition moment, regardless of
+// the local hour at which it occurs.
 func findTransitionInstant(lo, hi time.Time, prevOffset int) time.Time {
 	for hi.Sub(lo) > time.Second {
 		mid := lo.Add(hi.Sub(lo) / 2)
@@ -1145,12 +1150,12 @@ func findTransitionInstant(lo, hi time.Time, prevOffset int) time.Time {
 	return hi
 }
 
-// transitionRRULE builds a yearly RFC 5545 recurrence rule describing when a
-// DST transition repeats, derived from the weekday-of-month of dtstart. Most
-// IANA zones transition on a fixed ordinal weekday (e.g. "2nd Sunday of March"
-// -> FREQ=YEARLY;BYMONTH=3;BYDAY=2SU). When the weekday is the last such
-// weekday of the month, BYDAY uses -1 (e.g. last Sunday -> BYDAY=-1SU), which
-// also matches the common European rule.
+// transitionRRULE builds a yearly RFC 5545 recurrence rule for when a
+// DST transition repeats. It is derived from the weekday-of-month of dtstart.
+// Most IANA zones transition on a fixed ordinal weekday (for example
+// "2nd Sunday of March" -> FREQ=YEARLY;BYMONTH=3;BYDAY=2SU). When the weekday
+// is the last such weekday of the month, BYDAY uses -1 (for example last
+// Sunday -> BYDAY=-1SU). That also matches the common European rule.
 func transitionRRULE(dtstart time.Time) string {
 	weekdays := [...]string{"SU", "MO", "TU", "WE", "TH", "FR", "SA"}
 	wd := weekdays[dtstart.Weekday()]
@@ -1222,10 +1227,10 @@ func splitNonEmpty(s string) []string {
 
 // emitXProperties writes X-properties (and other unhandled properties) onto an
 // iCal component for round-trip preservation. libical-internal annotations
-// (X-LIC-ERROR / X-LIC-ERRORTYPE) are skipped: those are diagnostic markers
-// emitted by libical when it encountered a parse error in the original
-// payload, not real properties. Echoing them back to a CalDAV server (Google
-// in particular) gets the whole resource rejected with HTTP 400.
+// (X-LIC-ERROR / X-LIC-ERRORTYPE) are skipped. Those are diagnostic markers
+// that libical emitted when it encountered a parse error in the original
+// payload. They are not real properties. An echo of them back to a CalDAV
+// server (Google in particular) gets the whole resource rejected with HTTP 400.
 func emitXProperties(comp *ical.Component, xprops []model.XProperty) {
 	for _, xp := range xprops {
 		if isLibicalDiagnosticProp(xp.Name) {
