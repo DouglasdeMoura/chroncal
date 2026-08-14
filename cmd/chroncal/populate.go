@@ -10,14 +10,14 @@ import (
 )
 
 // The populate*Fields helpers wrap HydrateBestEffort for the CLI's read-only
-// display paths: one unreadable relation degrades that field and warns, while
-// every other relation is still populated. Stopping at the first failure would
-// print "attendees": null for attendees that exist, which a script consuming
-// the JSON cannot tell apart from "this event has none".
+// display paths. One unreadable relation degrades that field and warns. Every
+// other relation is still populated. A stop at the first failure would
+// print "attendees": null for attendees that exist. A script that reads
+// the JSON cannot tell that apart from "this event has none".
 //
 // Anything that writes iCal — the export commands, CalDAV push — must call
-// Hydrate instead and propagate the error: an amputated payload silently drops
-// alarms and attendees from the file or from the server copy.
+// Hydrate instead and propagate the error. An amputated payload drops
+// alarms and attendees from the file or from the server copy in silence.
 
 func populateEventFields(ctx context.Context, svc *event.Service, e *event.Event) {
 	if err := svc.HydrateBestEffort(ctx, e); err != nil {
