@@ -119,10 +119,10 @@ func (m RecurrenceEditorModel) SetSize(w, h int) RecurrenceEditorModel {
 	return m
 }
 
-// LoadRule reconstructs the editor's fields from an RRULE string so that
-// reopening a custom recurrence preserves the user's prior choices. Without
-// this, opening the editor on an existing event resets every field to the
-// defaults and confirming overwrites the saved rule.
+// LoadRule reconstructs the editor's fields from an RRULE string. A second
+// open of a custom recurrence then keeps the user's prior choices. Without
+// this, an open of the editor on a stored event resets every field to the
+// defaults. A confirm then overwrites the saved rule.
 func (m *RecurrenceEditorModel) LoadRule(rule string) {
 	if rule == "" {
 		return
@@ -366,16 +366,17 @@ func (m *RecurrenceEditorModel) tryOpenOverlay() tea.Cmd {
 	return nil
 }
 
-// openEndsDatePicker opens the ends-date picker, staging the current ends date
-// so Cancel/Esc can revert any in-picker navigation, and focusing the grid.
+// openEndsDatePicker opens the ends-date picker. It stages the current ends
+// date so Cancel/Esc can revert any in-picker navigation. It then focuses
+// the grid.
 func (m *RecurrenceEditorModel) openEndsDatePicker() {
 	m.endsDateRevert = m.endsDate
 	m.endsDateBtnFocus = -1
 	m.endsDatePicker = true
 }
 
-// cancelEndsDatePicker discards in-picker navigation, restoring the ends date
-// captured when the picker opened, and closes the overlay.
+// cancelEndsDatePicker discards in-picker navigation. It restores the ends
+// date captured when the picker opened. It then closes the overlay.
 func (m RecurrenceEditorModel) cancelEndsDatePicker() RecurrenceEditorModel {
 	m.endsDate = m.endsDateRevert
 	m.endsDatePicker = false
