@@ -74,12 +74,13 @@ type tickSyncer interface {
 }
 
 // runSyncPass syncs every due calendar once. The tick fails only on a hard
-// SyncCalendar error — the whole calendar failed to sync (auth, network, DB).
-// Per-item errors recorded on SyncResult.Errors do NOT fail the tick: the
-// engine already logs each one to the stderr logger (which reaches the journal
-// on `service run`), so they stay visible, and failing the exit code on a
-// single permanently-stuck remote item would leave every scheduled cycle
-// reporting failure forever with nothing the operator can do about it.
+// SyncCalendar error. That is when the whole calendar failed to sync (auth,
+// network, DB). Per-item errors recorded on SyncResult.Errors do NOT fail
+// the tick. The engine already logs each one to the stderr logger. That
+// logger reaches the journal on `service run`. They stay visible. A fail
+// of the exit code on a single permanently-stuck remote item would leave
+// every scheduled cycle as a failure forever. The operator could do nothing
+// about it.
 func runSyncPass(ctx context.Context, svc tickSyncer, now time.Time, interval time.Duration, strategy syncPkg.ConflictStrategy) error {
 	statuses, err := svc.Status(ctx)
 	if err != nil {
