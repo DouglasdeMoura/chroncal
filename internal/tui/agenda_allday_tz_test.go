@@ -8,10 +8,10 @@ import (
 )
 
 // TestBuildAgendaRows_AllDayNegativeOffset guards against the agenda view
-// placing all-day events on the wrong day for negative-UTC-offset timezones.
-// All-day events are stored as midnight-UTC datestamps; converting them with
+// that puts all-day events on the wrong day for negative-UTC-offset timezones.
+// All-day events are stored as midnight-UTC datestamps. A convert with
 // .Local() in a UTC-7 zone rolls them back to the previous day. The agenda
-// must use the UTC date, matching the month/week/day grids.
+// must use the UTC date. That matches the month/week/day grids.
 func TestBuildAgendaRows_AllDayNegativeOffset(t *testing.T) {
 	orig := time.Local
 	time.Local = time.FixedZone("US/Pacific", -7*60*60)
