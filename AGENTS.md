@@ -70,7 +70,9 @@ Use `q.WithTx(tx)` inside a transaction.
 
 ### Database
 
-Case-insensitive Unicode search uses FTS5 (`unicode61 remove_diacritics 2` tokenizer). See the `*_fts` virtual tables in `db/migrations/`. The code does not register a custom `lower_unicode` SQLite function. An unused registration was removed. Do not add `strings.ToLower` case folding. That fold is simple case folding only. It does not match the diacritic-insensitive FTS tokenizer.
+Case-insensitive Unicode search uses FTS5 (`unicode61 remove_diacritics 2` tokenizer). See the `*_fts` virtual tables in `db/migrations/`. The code does not register a custom `lower_unicode` SQLite function. The project removed an unused registration.
+
+Do not add `strings.ToLower` case folding. That fold is simple case folding only. It does not match the diacritic-insensitive FTS tokenizer.
 
 `backfillAlarmUIDs` in `connect.go` assigns UUIDs to alarms from the pre-UID schema. The function runs on every startup. It does nothing when all alarms have UIDs.
 
