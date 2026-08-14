@@ -31,7 +31,7 @@ func TestModelClockTickReschedules(t *testing.T) {
 }
 
 // Every view (not just day/week) needs the clock tick so the "today" cell
-// highlight follows the day rollover; otherwise month/agenda freeze on the
+// highlight follows the day rollover. Otherwise month/agenda freeze on the
 // startup date until the user navigates.
 func TestModelClockTickReschedulesInEveryView(t *testing.T) {
 	for _, mode := range []viewMode{viewMonth, viewWeek, viewDay, viewAgenda} {
@@ -42,9 +42,9 @@ func TestModelClockTickReschedulesInEveryView(t *testing.T) {
 	}
 }
 
-// Leaving the app open across midnight must roll the stored "today" forward in
-// every view model, not just the active one, so a later view switch carries the
-// current date.
+// Leave the app open across midnight. That must roll the stored "today"
+// forward in every view model, not just the active one. A later view switch
+// then carries the current date.
 func TestModelClockTickRefreshesTodayAcrossMidnight(t *testing.T) {
 	now := time.Now()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
@@ -80,8 +80,8 @@ func TestSwitchToClockViewSchedulesClockTick(t *testing.T) {
 	}
 }
 
-// The clock tick now runs in every view, so switching between views must keep
-// the existing tick alive rather than tearing it down.
+// The clock tick now runs in every view. A switch between views must keep
+// the stored tick alive rather than a tear-down.
 func TestSwitchBetweenViewsKeepsClockTick(t *testing.T) {
 	next, _ := Model{
 		viewMode:           viewDay,
