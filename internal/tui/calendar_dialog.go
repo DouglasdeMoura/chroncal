@@ -14,8 +14,8 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/account"
 )
 
-// CalendarDialogParams seeds the calendar dialog. All fields are optional;
-// ID == 0 means "create a new calendar", and RemoteLinked reflects whether
+// CalendarDialogParams seeds the calendar dialog. All fields are optional.
+// ID == 0 means "create a new calendar". RemoteLinked reflects whether
 // the calendar is currently connected to a remote CalDAV account.
 type CalendarDialogParams struct {
 	ID           int64
@@ -85,14 +85,14 @@ type CalendarDiscoveryRequestedMsg struct {
 }
 
 // CalendarDeleteRequestedMsg is emitted when the user presses Delete in the
-// dialog. The parent is responsible for showing the confirm dialog.
+// dialog. The parent is responsible for the confirm dialog.
 type CalendarDeleteRequestedMsg struct {
 	ID   int64
 	Name string
 }
 
 // CalendarExportRequestedMsg is a neutral request to export the calendar. The
-// parent owns the file I/O; this message only identifies the target by its
+// parent owns the file I/O. This message only identifies the target by its
 // immutable ID so the host can resolve fresh data at export time.
 type CalendarExportRequestedMsg struct {
 	ID   int64
@@ -100,7 +100,7 @@ type CalendarExportRequestedMsg struct {
 }
 
 // CalendarMoveToAccountRequestedMsg starts migration of a local calendar into
-// an existing collection owned by a configured account.
+// a collection that already exists, owned by a configured account.
 type CalendarMoveToAccountRequestedMsg struct {
 	ID   int64
 	Name string
@@ -113,9 +113,9 @@ type CalendarSetDefaultRequestedMsg struct {
 }
 
 // CalendarKeepLocalRequestedMsg asks the app to unlink an account calendar
-// while keeping every downloaded event as a local calendar (the keep-local
-// counterpart to removing it in Manage Calendars). The parent owns the
-// confirm flow and the Disconnect call.
+// while every downloaded event stays as a local calendar. That is the
+// keep-local counterpart to a remove in Manage Calendars. The parent owns
+// the confirm flow and the Disconnect call.
 type CalendarKeepLocalRequestedMsg struct {
 	ID   int64
 	Name string
@@ -138,7 +138,7 @@ type CalendarTestResultMsg struct {
 }
 
 // testConnectionPressedMsg is an internal sentinel emitted by the Test
-// button so the dialog can read the current field values before asking
+// button. The dialog can then read the current field values before it asks
 // the parent to perform the actual connection check.
 type testConnectionPressedMsg struct{}
 
@@ -152,9 +152,9 @@ type calendarSavePromotePressedMsg struct{}
 type CalendarDialogClosedMsg struct{}
 
 // Form field indices for the calendar metadata fields. Index 4 is an empty
-// spacer; in edit mode index 5 is the Display Calendar checkbox and index 6+
+// spacer. In edit mode index 5 is the Display Calendar checkbox. Index 6+
 // holds the Location/Account row and (for remote calendars) sync-health
-// lines. Those later indices are dynamic, so only the metadata fields below
+// lines. Those later indices are dynamic. Only the metadata fields below
 // get named constants.
 const (
 	cdIdxName        = 0
@@ -197,7 +197,7 @@ func authOptionIndex(authType string) int {
 // CalendarDialogModel
 // ---------------------------------------------------------------------------
 
-// CalendarDialogModel is a modal dialog for creating/editing a calendar.
+// CalendarDialogModel is a modal dialog to create or edit a calendar.
 type CalendarDialogModel struct {
 	id           int64
 	name         string
@@ -664,9 +664,9 @@ func isLocalhostHTTP(raw string) bool {
 }
 
 // syncHealthLine is one row of the linked dialog's sync summary: raw text
-// plus the style to apply after width truncation. Styling happens at render
-// time (inside the StaticField's styleFn) so the text can be truncated to
-// the dialog's content width without slicing through ANSI escapes.
+// plus the style to apply after width truncation. Style happens at render
+// time (inside the StaticField's styleFn). The text can then be truncated
+// to the dialog's content width without a cut through ANSI escapes.
 type syncHealthLine struct {
 	text  string
 	style lipgloss.Style
@@ -699,7 +699,7 @@ func syncHealthDialogLines(params CalendarDialogParams, theme Theme) []syncHealt
 
 // humanizeSyncError condenses a raw sync error into one readable line. Google's
 // invalid_grant (expired/revoked OAuth refresh token) is the common case worth
-// translating; everything else falls back to the first line of the raw error.
+// a rewrite. Everything else falls back to the first line of the raw error.
 func humanizeSyncError(raw string) string {
 	if strings.Contains(raw, "invalid_grant") {
 		// Short on purpose: the hint line right below carries the action,
@@ -771,8 +771,9 @@ func calendarAuthIsOAuth(authType string) bool {
 }
 
 // accountAuthIsBasicOrBearer reports whether an auth-type string selects an
-// in-place credential update: the non-OAuth flows whose secret (password or
-// bearer token) can be rotated without re-running discovery or re-consent.
+// in-place credential update. Those are the non-OAuth flows whose secret
+// (password or bearer token) can be rotated with no second discovery or
+// re-consent.
 func accountAuthIsBasicOrBearer(authType string) bool {
 	t := strings.ToLower(strings.TrimSpace(authType))
 	return t == "basic" || t == "bearer"
@@ -812,8 +813,8 @@ func (m CalendarDialogModel) HideDiscovery() CalendarDialogModel {
 	return m
 }
 
-// SetAccountName refreshes account context without rebuilding the form, so
-// in-progress calendar metadata edits survive an account rename. It updates
+// SetAccountName refreshes account context with no form rebuild. In-progress
+// calendar metadata edits then survive an account rename. It updates
 // the inline "Account: <name> ›" opener in place.
 func (m CalendarDialogModel) SetAccountName(name string) CalendarDialogModel {
 	if !m.linked || m.localDraft == nil || m.accountOpener == nil {
@@ -830,7 +831,7 @@ func (m CalendarDialogModel) SetAccountName(name string) CalendarDialogModel {
 
 // Draft returns the calendar's current editable state as params: the live
 // field values plus the original context (ID, account linkage, sync health)
-// and the current visibility. Hosts use it to preserve an unsaved calendar
+// and the current visibility. Hosts use it to keep an unsaved calendar
 // draft across a drill into the owning account.
 func (m CalendarDialogModel) Draft() CalendarDialogParams {
 	if m.localDraft == nil {
@@ -851,7 +852,7 @@ func (m CalendarDialogModel) Draft() CalendarDialogParams {
 func (m CalendarDialogModel) Hidden() bool { return m.hidden }
 
 // SetHidden mirrors a visibility state into the detail and its Display
-// Calendar checkbox without emitting a toggle message.
+// Calendar checkbox. It does not emit a toggle message.
 func (m CalendarDialogModel) SetHidden(h bool) CalendarDialogModel {
 	m.hidden = h
 	if m.visibilityCb != nil {
@@ -861,14 +862,14 @@ func (m CalendarDialogModel) SetHidden(h bool) CalendarDialogModel {
 }
 
 // leftMovesCursor reports whether the Left arrow would edit the focused field
-// (a text or color input) rather than navigate, so the calendar manager can
-// avoid stealing Left as a Back gesture while the user is editing. Buttons
-// and non-editing fields (checkbox, opener) leave Left free to pop.
+// (a text or color input) rather than navigate. The calendar manager can
+// then leave Left for the field while the user edits. Buttons
+// and non-edit fields (checkbox, opener) leave Left free to pop.
 // dirtyMetadata reports whether any editable metadata field differs from the
 // values the detail opened with, i.e. whether an unsaved draft exists. The
-// Display checkbox is excluded: visibility commits immediately and is never
-// part of the draft. Hosts use this to keep navigation gestures from
-// silently discarding typed edits.
+// Display checkbox is excluded. Visibility commits immediately and is never
+// part of the draft. Hosts use this so navigation gestures do not
+// discard typed edits in silence.
 func (m CalendarDialogModel) dirtyMetadata() bool {
 	// The account-connection layout has different fields at these indices;
 	// its cancel flow never prompts.
@@ -888,18 +889,18 @@ func (m CalendarDialogModel) dirtyMetadata() bool {
 		strings.TrimSpace(email.Value()) != strings.TrimSpace(m.localDraft.OwnerEmail)
 }
 
-// absorbsBack reports whether the pushed detail owns the Left key entirely:
-// while a text/color field moves its cursor, while the account-connection
-// layout is active (its fields own Left), or while unsaved edits exist — a
-// navigation gesture must never discard a draft. The host's Back gesture
-// pops only when this is false.
+// absorbsBack reports whether the pushed detail owns the Left key entirely.
+// That is true while a text/color field moves its cursor, while the
+// account-connection layout is active (its fields own Left), or while
+// unsaved edits exist. A navigation gesture must never discard a draft.
+// The host's Back gesture pops only when this is false.
 func (m CalendarDialogModel) absorbsBack() bool {
 	return m.leftMovesCursor() || m.accountConnection || m.dirtyMetadata()
 }
 
-// absorbsTab reports whether Tab traversal stays inside the detail: the
-// account-connection layout and an open discovery picker own Tab outright,
-// and a dirty draft keeps wrapping internally so traversal can never discard
+// absorbsTab reports whether Tab traversal stays inside the detail. The
+// account-connection layout and an open discovery picker own Tab outright.
+// A dirty draft keeps wrap internally so traversal can never discard
 // typed edits. The host's boundary hand-off fires only when this is false.
 func (m CalendarDialogModel) absorbsTab() bool {
 	return m.accountConnection || m.discoveryPicker != nil || m.dirtyMetadata()
@@ -980,11 +981,12 @@ func (m *CalendarDialogModel) keepFocusedFieldVisible() {
 	}
 }
 
-// SetInspectorSize prepares the existing form for borderless rendering inside
-// the Calendars manager. Rendering stays pure: body content and viewport
+// SetInspectorSize prepares the stored form for a borderless render inside
+// the Calendars manager. Render stays pure. Body content and viewport
 // dimensions are refreshed here and after Update, never from InspectorView.
-// Blur returns a copy whose form holds no keyboard focus, so the manager can
-// render it as the root selection preview while the source list owns input.
+// Blur returns a copy whose form holds no keyboard focus. The manager can
+// then render it as the root selection preview while the source list owns
+// input.
 func (m CalendarDialogModel) Blur() CalendarDialogModel {
 	m.form = m.form.Blur()
 	return m
@@ -1030,10 +1032,10 @@ func (m CalendarDialogModel) InspectorView(w, h int) string {
 }
 
 // HelpBindings returns the footer help this pushed detail owns while it is
-// the manager's active screen: an embedded discovery picker advertises its
+// the manager's active screen. An embedded discovery picker advertises its
 // own compact set, otherwise the form's field keys. The manager footer
 // defers here so a rebound key no longer drifts between the child and the
-// footer. These are display-only; input routing is unchanged.
+// footer. These are display-only. Input route is unchanged.
 func (m CalendarDialogModel) HelpBindings() []key.Binding {
 	if m.discoveryPicker != nil {
 		return m.discoveryPicker.HelpBindings()
@@ -1160,7 +1162,7 @@ func (m CalendarDialogModel) Update(msg tea.Msg) (CalendarDialogModel, tea.Cmd) 
 }
 
 // visibilityChecked reports the Display Calendar checkbox's current state, or
-// true when there is no checkbox (create mode) so a no-op comparison never
+// true when there is no checkbox (create mode). A no-op comparison then never
 // reports a spurious change.
 func (m CalendarDialogModel) visibilityChecked() bool {
 	if m.visibilityCb == nil {
@@ -1170,9 +1172,9 @@ func (m CalendarDialogModel) visibilityChecked() bool {
 }
 
 // applyVisibilityToggle compares the checkbox state before and after a form
-// update; a change emits CalendarVisibilityToggledMsg with the DESIRED hidden
-// state, mirrors it into the local model so the dot flips without a reload,
-// and batches with any cmd the form update produced. Metadata Save/Cancel
+// update. A change emits CalendarVisibilityToggledMsg with the DESIRED hidden
+// state. It mirrors it into the local model so the dot flips with no reload.
+// It batches with any cmd the form update produced. Metadata Save/Cancel
 // never persists visibility.
 func (m CalendarDialogModel) applyVisibilityToggle(preVisible bool, cmd tea.Cmd) (CalendarDialogModel, tea.Cmd) {
 	if m.visibilityCb == nil {
@@ -1213,9 +1215,9 @@ func (m CalendarDialogModel) View() string {
 	return content
 }
 
-// handleTestPressed validates the remote fields and, when they're
-// populated, emits a CalendarTestRequestedMsg so the parent can run the
-// authenticated ping. Errors show inline without contacting the server.
+// handleTestPressed validates the remote fields. When they have values,
+// it emits a CalendarTestRequestedMsg so the parent can run the
+// authenticated ping. Errors show inline. The server is not contacted.
 func (m CalendarDialogModel) handleTestPressed() (CalendarDialogModel, tea.Cmd) {
 	if !m.accountConnection {
 		return m, nil
