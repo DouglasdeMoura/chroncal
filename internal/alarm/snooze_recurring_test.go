@@ -10,9 +10,9 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
 
-// firedInstanceAlarm fires every event alarm due at `now`, marks the one
-// matching wantTrigger as fired, and returns its state ID. It fails the test
-// if no such alarm is due.
+// firedInstanceAlarm fires every event alarm due at `now`. It marks the one
+// that matches wantTrigger as fired. It returns its state ID. It fails the
+// test if no such alarm is due.
 func firedInstanceAlarm(t *testing.T, svc *Service, eventID int64, now, wantTrigger time.Time) int64 {
 	t.Helper()
 	due, _, err := svc.Check(context.Background(), now)
@@ -32,9 +32,10 @@ func firedInstanceAlarm(t *testing.T, svc *Service, eventID int64, now, wantTrig
 	return 0
 }
 
-// TestComputeSnooze_RecurringInstanceTimes guards against issue #97: snoozing
-// an alarm that fired for a later occurrence of a recurring event must use that
-// occurrence's start/end, not the master row's first-occurrence times.
+// TestComputeSnooze_RecurringInstanceTimes guards against issue #97. A snooze
+// of an alarm that fired for a later occurrence of a recurring event must use
+// that occurrence's start/end. It must not use the master row's first-occurrence
+// times.
 func TestComputeSnooze_RecurringInstanceTimes(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	ctx := context.Background()
