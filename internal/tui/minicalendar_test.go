@@ -49,13 +49,13 @@ func TestMiniMonth_TodayKeySnapsBoth(t *testing.T) {
 }
 
 // TestMiniMonth_RangeColorAppliedToMiddleDays verifies that SetRangeColor is
-// honoured by View: in-range (non-endpoint) days must render with the
+// honoured by View. In-range (non-endpoint) days must render with the
 // configured rangeColor background, not with the same cursor/endpoint style.
 //
 // Before the fix, View collapsed the isEndpoint and isInRange cases into one
-// identical Background(activeTheme.Text) block and never consulted
-// m.rangeColor, so the rangeColor ANSI escape code never appeared in the
-// output. After the fix the two cases are separate and middle days use
+// identical Background(activeTheme.Text) block. It never consulted
+// m.rangeColor. The rangeColor ANSI escape code then never appeared in the
+// output. After the fix the two cases are separate. Middle days use
 // m.rangeColor.
 func TestMiniMonth_RangeColorAppliedToMiddleDays(t *testing.T) {
 	// April 2026, cursor at Apr 10 (outside the range so it does not
