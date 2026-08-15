@@ -625,22 +625,38 @@ func (m Model) expectedEventRange() (time.Time, time.Time) {
 	switch m.viewMode {
 	case viewDay:
 		d := m.day.Cursor()
-		from := time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC)
-		return from, from.AddDate(0, 0, 1)
+		return localSpanQueryRange(d, d.AddDate(0, 0, 1))
 	case viewWeek:
 		start := m.week.WeekStartDate()
-		from := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.UTC)
-		return from, from.AddDate(0, 0, 7)
+		return localSpanQueryRange(start, start.AddDate(0, 0, 7))
 	case viewAgenda:
-		ws := m.agenda.WindowStart()
-		we := m.agenda.WindowEnd()
-		return time.Date(ws.Year(), ws.Month(), ws.Day(), 0, 0, 0, 0, time.UTC),
-			time.Date(we.Year(), we.Month(), we.Day(), 0, 0, 0, 0, time.UTC)
+		return localSpanQueryRange(m.agenda.WindowStart(), m.agenda.WindowEnd())
 	default:
 		anchor := calendarGridAnchor(m.calendar.Month(), m.calendar.WeekStart())
-		from := time.Date(anchor.Year(), anchor.Month(), anchor.Day(), 0, 0, 0, 0, time.UTC)
-		return from, from.AddDate(0, 0, 42)
+		return localSpanQueryRange(anchor, anchor.AddDate(0, 0, 42))
 	}
+}
+
+// localSpanQueryRange returns the [from, to) UTC query range that covers
+// the local calendar days [fromDay, toDay). The range is the union of two
+// spans. The UTC-midnight span covers the all-day events. The database
+// stores those as 00:00 UTC datestamps. The local-midnight span, converted
+// to UTC, covers the timed events. The database stores those as UTC
+// instants, so an evening event in a UTC-negative zone lands on the next
+// UTC date. The UTC-midnight span alone misses that event (the day view
+// then hides it while the wider views show it).
+func localSpanQueryRange(fromDay, toDay time.Time) (time.Time, time.Time) {
+	from := time.Date(fromDay.Year(), fromDay.Month(), fromDay.Day(), 0, 0, 0, 0, time.UTC)
+	to := time.Date(toDay.Year(), toDay.Month(), toDay.Day(), 0, 0, 0, 0, time.UTC)
+	localFrom := time.Date(fromDay.Year(), fromDay.Month(), fromDay.Day(), 0, 0, 0, 0, time.Local).UTC()
+	localTo := time.Date(toDay.Year(), toDay.Month(), toDay.Day(), 0, 0, 0, 0, time.Local).UTC()
+	if localFrom.Before(from) {
+		from = localFrom
+	}
+	if localTo.After(to) {
+		to = localTo
+	}
+	return from, to
 }
 
 // dispatchEditScope routes a deferred EventFormSaveMsg to the right service
@@ -777,8 +793,8 @@ func eventDedupKey(e event.Event) string {
 // mini-month so we can paint event-density dots under day numbers.
 func (m Model) loadMiniMonthEvents() tea.Cmd {
 	mm := m.sidebar.MiniMonth().DisplayMonth()
-	from := time.Date(mm.Year(), mm.Month(), 1, 0, 0, 0, 0, time.UTC)
-	to := from.AddDate(0, 1, 0)
+	monthStart := time.Date(mm.Year(), mm.Month(), 1, 0, 0, 0, 0, time.UTC)
+	from, to := localSpanQueryRange(monthStart, monthStart.AddDate(0, 1, 0))
 	return func() tea.Msg {
 		expanded, err := m.app.Recurrences.ListExpandedEvents(context.Background(), from, to)
 		events := make([]event.Event, len(expanded))
@@ -790,7 +806,7 @@ func (m Model) loadMiniMonthEvents() tea.Cmd {
 			evt.StartTime = e.InstanceTime
 			events[i] = evt
 		}
-		return miniMonthEventsLoadedMsg{month: from, events: events, err: err}
+		return miniMonthEventsLoadedMsg{month: monthStart, events: events, err: err}
 	}
 }
 

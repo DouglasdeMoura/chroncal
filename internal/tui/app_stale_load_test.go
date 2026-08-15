@@ -22,8 +22,9 @@ func TestEventsLoadedMsg_StaleDropPreservesAgendaWindow(t *testing.T) {
 
 	m := Model{viewMode: viewAgenda, agenda: agenda}
 
-	march1UTC := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
-	march31UTC := march1UTC.AddDate(0, 0, AgendaWindowDays)
+	// A real load seeds its range from expectedEventRange, so the fresh
+	// response must carry that exact range to pass the stale-drop guard.
+	march1UTC, march31UTC := m.expectedEventRange()
 
 	marchEvent := event.Event{
 		ID:        1,
@@ -201,8 +202,14 @@ func TestMergeEvents_DedupsByIDAndStartTime(t *testing.T) {
 
 // TestExpectedEventRange_AgendaTracksWindow verifies the helper reports the
 // current agenda window exactly. The stale-drop guard then compares equal
-// times (not dates shifted by timezone round).
+// times (not dates shifted by timezone round). The range is the union of
+// the UTC-midnight span and the local-midnight span (see
+// localSpanQueryRange), so pin the zone to make the expectation exact.
 func TestExpectedEventRange_AgendaTracksWindow(t *testing.T) {
+	orig := time.Local
+	time.Local = time.FixedZone("US/Pacific", -7*60*60)
+	defer func() { time.Local = orig }()
+
 	today := time.Date(2026, 4, 23, 0, 0, 0, 0, time.Local)
 	agenda := NewAgendaModel(today).ResetWindow(
 		time.Date(2026, 3, 1, 0, 0, 0, 0, time.Local),
@@ -210,8 +217,12 @@ func TestExpectedEventRange_AgendaTracksWindow(t *testing.T) {
 	m := Model{viewMode: viewAgenda, agenda: agenda}
 
 	from, to := m.expectedEventRange()
+	// The near edge stays at the UTC midnight: the local midnight converts
+	// to a later instant in a UTC-negative zone, and the union keeps the
+	// earlier one for the all-day datestamps.
 	wantFrom := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
-	wantTo := wantFrom.AddDate(0, 0, AgendaWindowDays)
+	// The far edge extends to the local midnight converted to UTC.
+	wantTo := wantFrom.AddDate(0, 0, AgendaWindowDays).Add(7 * time.Hour)
 	if !from.Equal(wantFrom) {
 		t.Fatalf("from = %v, want %v", from, wantFrom)
 	}
