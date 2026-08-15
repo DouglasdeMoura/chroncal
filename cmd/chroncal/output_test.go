@@ -32,6 +32,17 @@ func assertASCII(t *testing.T, s string) {
 	}
 }
 
+
+func TestToJSONEvent_ExposesConferenceURI(t *testing.T) {
+	t.Parallel()
+
+	const conferenceURI = "https://meet.example.test/room"
+	got := toJSONEvent(event.Event{ConferenceURI: conferenceURI})
+	if got.ConferenceURI != conferenceURI {
+		t.Fatalf("ConferenceURI = %q, want %q", got.ConferenceURI, conferenceURI)
+	}
+}
+
 func TestPrintEvent_SanitizesControlSequences(t *testing.T) {
 	t.Parallel()
 

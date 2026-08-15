@@ -34,6 +34,7 @@ type jsonEvent struct {
 	Priority       int64            `json:"priority,omitempty"`
 	Class          string           `json:"class"`
 	URL            string           `json:"url,omitempty"`
+	ConferenceURI  string           `json:"conference_uri,omitempty"`
 	Categories     string           `json:"categories,omitempty"`
 	ExDates        string           `json:"exdates,omitempty"`
 	RDates         string           `json:"rdates,omitempty"`
@@ -127,6 +128,7 @@ func toJSONEvent(e event.Event) jsonEvent {
 		Priority:       e.Priority,
 		Class:          e.Class,
 		URL:            e.URL,
+		ConferenceURI:  e.ConferenceURI,
 		Categories:     e.Categories,
 		ExDates:        e.ExDates,
 		RDates:         e.RDates,
