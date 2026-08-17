@@ -362,3 +362,129 @@ func TestNotFoundErrorJSONHasNoWrapPrefix(t *testing.T) {
 		t.Fatalf("error = %q, want %q (no wrap prefix)", payload.Error, "event 999 not found")
 	}
 }
+
+// TestEventListJSONIncludesAttendees locks in that `event list --output json`
+// hydrates attendees the same way `event get` does. Chroncal Bar RSVP, the
+// participant filter, and participant search all read the list payload. They
+// cannot see invitations if list omits the guest list.
+func TestEventListJSONIncludesAttendees(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Work", "--email", "me@example.com"); err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+	addOut, _, err := runChroncalCommand(t,
+		"event", "add", "Sync",
+		"--calendar", "Work",
+		"--date", "2026-04-21",
+		"--time", "09:00",
+		"--duration", "30m",
+		"--attendee", "Me <me@example.com>",
+		"--attendee", "Alice <alice@example.com>",
+		"--output", "json",
+	)
+	if err != nil {
+		t.Fatalf("event add: %v", err)
+	}
+	created := mustJSONEvent(t, addOut)
+
+	listOut, _, err := runChroncalCommand(t,
+		"event", "list",
+		"--from", "2026-04-21",
+		"--to", "2026-04-21",
+		"--output", "json",
+	)
+	if err != nil {
+		t.Fatalf("event list --output json: %v", err)
+	}
+	var listed []jsonEvent
+	if jerr := json.Unmarshal([]byte(listOut), &listed); jerr != nil {
+		t.Fatalf("decode event list json: %v\n%s", jerr, listOut)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("got %d events, want 1\n%s", len(listed), listOut)
+	}
+	got := listed[0]
+	if got.ID != created.ID {
+		t.Fatalf("listed id = %d, want %d", got.ID, created.ID)
+	}
+	me, alice := attendeeByEmail(got.Attendees, "me@example.com"), attendeeByEmail(got.Attendees, "alice@example.com")
+	if me == nil {
+		t.Fatalf("list omitted owner attendee: %s", listOut)
+	}
+	if alice == nil {
+		t.Fatalf("list omitted alice attendee: %s", listOut)
+	}
+	if me.Organizer {
+		t.Fatalf("owner listed as organizer: %#v", me)
+	}
+	if me.RSVPStatus != "NEEDS-ACTION" {
+		t.Fatalf("owner rsvp_status = %q, want NEEDS-ACTION", me.RSVPStatus)
+	}
+
+	getOut, _, err := runChroncalCommand(t, "event", "get", created.UID, "--output", "json")
+	if err != nil {
+		t.Fatalf("event get: %v", err)
+	}
+	fetched := mustJSONEvent(t, getOut)
+	if len(got.Attendees) != len(fetched.Attendees) {
+		t.Fatalf("list attendees = %#v, get attendees = %#v", got.Attendees, fetched.Attendees)
+	}
+}
+
+// TestEventListJSONIncludesAttendeesOnGeneratedOccurrence locks in that a
+// generated RRULE instance in `event list` still carries the master's guests.
+// The bar opens those rows for RSVP; they keep the master id, not a get of a
+// distinct occurrence row.
+func TestEventListJSONIncludesAttendeesOnGeneratedOccurrence(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Work", "--email", "me@example.com"); err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+	if _, _, err := runChroncalCommand(t,
+		"event", "add", "Weekly Sync",
+		"--calendar", "Work",
+		"--date", "2026-04-21",
+		"--time", "09:00",
+		"--duration", "30m",
+		"--recurrence-rule", "FREQ=WEEKLY",
+		"--attendee", "Me <me@example.com>",
+		"--attendee", "Alice <alice@example.com>",
+		"--output", "json",
+	); err != nil {
+		t.Fatalf("event add: %v", err)
+	}
+
+	listOut, _, err := runChroncalCommand(t,
+		"event", "list",
+		"--from", "2026-04-28",
+		"--to", "2026-04-28",
+		"--output", "json",
+	)
+	if err != nil {
+		t.Fatalf("event list --output json: %v", err)
+	}
+	var listed []jsonEvent
+	if jerr := json.Unmarshal([]byte(listOut), &listed); jerr != nil {
+		t.Fatalf("decode event list json: %v\n%s", jerr, listOut)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("got %d events, want 1 generated occurrence\n%s", len(listed), listOut)
+	}
+	got := listed[0]
+	if got.Title != "Weekly Sync" {
+		t.Fatalf("title = %q, want Weekly Sync", got.Title)
+	}
+	if got.StartTime != "2026-04-28T09:00:00Z" {
+		t.Fatalf("start_time = %q, want generated occurrence 2026-04-28T09:00:00Z", got.StartTime)
+	}
+	if attendeeByEmail(got.Attendees, "me@example.com") == nil {
+		t.Fatalf("generated occurrence omitted owner attendee: %s", listOut)
+	}
+	if attendeeByEmail(got.Attendees, "alice@example.com") == nil {
+		t.Fatalf("generated occurrence omitted alice attendee: %s", listOut)
+	}
+}

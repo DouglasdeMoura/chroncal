@@ -886,6 +886,34 @@ func populateCategories[T any, R any](
 	}
 }
 
+// populateEventAttendees attaches guests in one batched query. event list JSON
+// is the Chroncal Bar agenda payload; without this it omits invitations that
+// event get already hydrates. Generated occurrences keep the master ID, so they
+// receive the master's attendee rows. A load error leaves Attendees unset,
+// matching populateEventCategories.
+func (s *Service) populateEventAttendees(ctx context.Context, events []event.Event) {
+	if len(events) == 0 {
+		return
+	}
+	ids := make([]int64, len(events))
+	for i := range events {
+		ids[i] = events[i].ID
+	}
+	atts, err := s.q.ListAttendeesByEventIDs(ctx, ids)
+	if err != nil {
+		return
+	}
+	attMap := make(map[int64][]model.Attendee, len(events))
+	for _, a := range atts {
+		attMap[a.EventID] = append(attMap[a.EventID], attendeeFromStorage(a))
+	}
+	for i := range events {
+		if a, ok := attMap[events[i].ID]; ok {
+			events[i].Attendees = a
+		}
+	}
+}
+
 func (s *Service) populateEventCategories(ctx context.Context, events []event.Event) {
 	populateCategories(ctx, events,
 		func(e event.Event) int64 { return e.ID },
@@ -1147,6 +1175,7 @@ func (s *Service) ListFilteredEvents(ctx context.Context, p EventListParams) ([]
 	}
 
 	s.populateEventCategories(ctx, result)
+	s.populateEventAttendees(ctx, result)
 	sort.Slice(result, func(i, j int) bool {
 		return result[i].StartTime.Before(result[j].StartTime)
 	})

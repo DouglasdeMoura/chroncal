@@ -11,6 +11,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/journal"
+	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/testutil"
 	"github.com/douglasdemoura/chroncal/internal/todo"
@@ -599,6 +600,87 @@ func TestListFilteredEvents_DefaultIncludesRecurring(t *testing.T) {
 	}
 	if !found["One-off Meeting"] {
 		t.Error("missing one-off event 'One-off Meeting'")
+	}
+}
+
+func TestListFilteredEvents_AttachesAttendees(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	eventsSvc := event.NewService(db, q)
+	recurSvc := NewService(db, q)
+	ctx := context.Background()
+
+	oneOff, err := eventsSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "One-off Sync",
+		StartTime:  time.Date(2026, 4, 21, 9, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 21, 10, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("create one-off: %v", err)
+	}
+	if err := eventsSvc.ReplaceAttendees(ctx, oneOff.ID, []model.Attendee{
+		{Email: "me@example.com", Name: "Me", RSVPStatus: "NEEDS-ACTION", Role: "REQ-PARTICIPANT"},
+		{Email: "alice@example.com", Name: "Alice", RSVPStatus: "ACCEPTED", Role: "REQ-PARTICIPANT"},
+	}); err != nil {
+		t.Fatalf("replace one-off attendees: %v", err)
+	}
+
+	master, err := eventsSvc.Create(ctx, event.CreateParams{
+		CalendarID:     1,
+		Title:          "Weekly Sync",
+		StartTime:      time.Date(2026, 4, 21, 11, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 21, 12, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY",
+	})
+	if err != nil {
+		t.Fatalf("create recurring: %v", err)
+	}
+	if err := eventsSvc.ReplaceAttendees(ctx, master.ID, []model.Attendee{
+		{Email: "me@example.com", Name: "Me", RSVPStatus: "TENTATIVE", Role: "REQ-PARTICIPANT"},
+	}); err != nil {
+		t.Fatalf("replace master attendees: %v", err)
+	}
+
+	events, err := recurSvc.ListFilteredEvents(ctx, EventListParams{
+		From: time.Date(2026, 4, 28, 0, 0, 0, 0, time.UTC),
+		To:   time.Date(2026, 4, 29, 0, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("ListFilteredEvents: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1 generated occurrence", len(events))
+	}
+	got := events[0]
+	if got.Title != "Weekly Sync" {
+		t.Fatalf("title = %q, want Weekly Sync", got.Title)
+	}
+	if !got.StartTime.Equal(time.Date(2026, 4, 28, 11, 0, 0, 0, time.UTC)) {
+		t.Fatalf("start = %s, want generated 2026-04-28 11:00", got.StartTime)
+	}
+	if len(got.Attendees) != 1 || got.Attendees[0].Email != "me@example.com" || got.Attendees[0].RSVPStatus != "TENTATIVE" {
+		t.Fatalf("generated attendees = %#v, want me@example.com TENTATIVE", got.Attendees)
+	}
+
+	listed, err := recurSvc.ListFilteredEvents(ctx, EventListParams{
+		From: time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC),
+		To:   time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("ListFilteredEvents DTSTART window: %v", err)
+	}
+	var foundOneOff bool
+	for _, e := range listed {
+		if e.ID != oneOff.ID {
+			continue
+		}
+		foundOneOff = true
+		if len(e.Attendees) != 2 {
+			t.Fatalf("one-off attendees = %#v, want 2", e.Attendees)
+		}
+	}
+	if !foundOneOff {
+		t.Fatal("missing one-off in DTSTART window")
 	}
 }
 
