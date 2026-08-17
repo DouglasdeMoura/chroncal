@@ -37,7 +37,7 @@ Integration packages and infrastructure packages do not use the `NewService` sha
 
 Models live in `internal/{domain}/model.go` (for example, `event.Event`). Shared models live in `internal/model/` (for example, `model.Alarm`, `model.Attendee`).
 
-CLI commands live in `cmd/chroncal/`. There is one file per resource group. Each file exports a `Command()` function. The function returns a `*cobra.Command`. Commands use `resolveEvent()`, `resolveTodo()`, and `resolveJournal()` to resolve a reference by ID, UID, or UID plus recurrenceID.
+CLI commands live in `cmd/chroncal/`. Each resource group has one file that exports a `Command()` function. The function returns a `*cobra.Command`. `event_rsvp.go` is the one exception. It holds the RSVP subcommand, and `event.go` wires it into the event command. Commands use `resolveEvent()`, `resolveTodo()`, and `resolveJournal()` to resolve a reference by ID, UID, or UID plus recurrenceID.
 
 ## Storage Layer
 
@@ -197,6 +197,10 @@ Events, todos, and journals share the same reversible-delete contract. `Delete` 
 // Soft-delete: the Delete methods already do this.
 err := svc.Delete(ctx, id)        // sets deleted_at, keeps row
 err := svc.DeleteSeries(ctx, uid) // soft-deletes master + overrides
+
+// Recurring delete scopes (event service only):
+err := svc.DeleteInstance(ctx, uid, at)     // one occurrence: EXDATE on the master + override soft-delete
+err := svc.DeleteFromInstance(ctx, uid, at) // truncates the series (RRULE UNTIL) at that time
 
 // Restore:
 err := svc.RestoreByID(ctx, id)    // un-hides one row

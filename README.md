@@ -296,13 +296,29 @@ chroncal event search         <query> [--calendar NAME] [--from DATE] [--to DATE
 chroncal event add            "<title>" [flags]
 chroncal event update         <id|uid> [flags] [--recurrence-id ID]
 chroncal event rsvp           <id|uid> --status ACCEPTED|DECLINED|TENTATIVE
-chroncal event delete         <id|uid> [--recurrence-id ID] [--yes]
+chroncal event delete         <id|uid> [--recurrence-id RFC3339] [--following RFC3339] [--series] [--yes]
 chroncal event restore        <id|uid>
 chroncal event purge          <id> [--yes]
 chroncal event purge-deleted  [--older-than DURATION] [--yes]
 ```
 
 Event flags: `--date`, `--time`, `--end-time`, `--duration`, `--timezone`, `--location`, `--description`, `--calendar`, `--status`, `--class`, `--transparency`, `--priority`, `--url`, `--categories`, `--geo`, `--rrule`, `--exdate`, `--rdate`, `--attach`, `--alarm`, `--attendee`, `--organizer`, `--contact`, `--resource`, `--comment`, `--related-to`
+
+`event delete` supports three scopes for a recurring series. Pass the series by ID or UID:
+
+- `--recurrence-id <RFC3339>` deletes one occurrence. chroncal writes an EXDATE on the master and deletes any override at that time.
+- `--following <RFC3339>` deletes that occurrence and every following one. chroncal truncates the series at that date.
+- `--series` deletes the master and all overrides.
+
+The three flags are mutually exclusive.
+
+`event rsvp` sets your RSVP status on an event:
+
+```bash
+chroncal event rsvp 42 --status ACCEPTED   # aliases: yes/y, no/n, maybe/m
+```
+
+The calendar needs an owner email (`calendar update --email`). You must be an invited attendee, not the organizer. The command writes the local attendee row. It does not send an iTIP reply.
 
 ### Todos
 
@@ -313,7 +329,7 @@ chroncal todo search         <query> [--calendar NAME] [--status STATUS] [--comp
 chroncal todo add            "<summary>" [flags]
 chroncal todo update         <id|uid> [flags] [--recurrence-id ID]
 chroncal todo complete       <id|uid> [--recurrence-id ID]
-chroncal todo delete         <id|uid> [--recurrence-id ID] [--yes]
+chroncal todo delete         <id|uid> [--recurrence-id ID] [--series] [--yes]
 chroncal todo restore        <id|uid>
 chroncal todo purge          <id> [--yes]
 chroncal todo purge-deleted  [--older-than DURATION] [--yes]
@@ -329,7 +345,7 @@ chroncal journal get            <id|uid> [--recurrence-id ID]
 chroncal journal search         <query> [--calendar NAME] [--from DATE] [--to DATE] [--status STATUS]
 chroncal journal add            "<summary>" [flags]
 chroncal journal update         <id|uid> [flags] [--recurrence-id ID]
-chroncal journal delete         <id|uid> [--recurrence-id ID] [--yes]
+chroncal journal delete         <id|uid> [--recurrence-id ID] [--series] [--yes]
 chroncal journal restore        <id|uid>
 chroncal journal purge          <id> [--yes]
 chroncal journal purge-deleted  [--older-than DURATION] [--yes]
@@ -529,6 +545,7 @@ The CLI is for shells and language models, not only for hand input. The agent-fr
 
 - Pass `-o json` (or `--output json`) on every read or write command. The shape is stable. It omits empty optional fields. Write commands return the new row so a script can capture the `id` / `uid`. This also applies to read commands. `sync status`, `sync conflicts`, `freebusy`, and `alarm list` all emit JSON arrays or objects under `-o json`. An empty result is `[]`, not prose.
 - Timestamps in JSON are RFC 3339 UTC with a `Z` suffix (`2026-04-21T13:00:00Z`). Text mode prints in your local timezone. Only JSON uses UTC so cross-machine comparisons stay honest.
+- `event list` and `event get` include attendees in JSON output. A generated occurrence of a recurring series keeps the attendee list of the master event.
 - Check the exit code. `0` means success. A non-zero code means failure. Errors go to **stderr**, never stdout. `cmd -o json | jq …` is safe. On failure, stdout is empty.
 - Errors honor `-o json`. They emit one JSON object on stderr with a `code` field:
 
@@ -537,7 +554,7 @@ The CLI is for shells and language models, not only for hand input. The agent-fr
   ```
 
   Codes are `not_found`, `invalid_input`, `aborted`, or `error` (catch-all). The `error` field is the user-facing message. The output strips internal call-chain prefixes (for example `get event:`). Dispatch on `code` and show `error` directly.
-- References accept either the numeric `id` or the string `uid`. Recurring overrides also take `--recurrence-id <RFC3339>` to target a single instance.
+- References accept either the numeric `id` or the string `uid`. Commands take `--recurrence-id <RFC3339>` to address one instance of a recurring series. On `event delete`, the flag deletes that occurrence.
 - Dates are `YYYY-MM-DD`. Times are `HH:MM` local unless a command accepts `--timezone`. Durations are Go-style (`30m`, `1h30m`). Some flags also accept RFC 5545 (`PT1H30M`).
 - If you want plain text (no JSON), pass `--compact` for one line per row. That form works with `grep` and `awk`. It is available on `event list`, `event search`, `todo list`, `journal list`, and `calendar list`.
 
