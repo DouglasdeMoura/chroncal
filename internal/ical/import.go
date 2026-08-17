@@ -627,6 +627,20 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 	if prop := comp.Props.Get(ical.PropAction); prop != nil {
 		alarm.Action = strings.ToUpper(prop.Value)
 	}
+	// The alarm tables accept only these three actions (the CHECK constraint
+	// in db/migrations/003 and 006). An unsupported action must not reach
+	// storage: the failed insert rolls back the whole resource transaction,
+	// and sync then retries the resource forever (issue #575). Google
+	// Calendar emits ACTION:NONE as a "no reminder" sentinel. Drop the alarm
+	// and warn. The alarm does nothing, so the other VALARM properties do
+	// not matter and this returns early. The next push omits the VALARM, so
+	// Google can re-apply its default reminders. That loss is smaller than a
+	// wedged sync.
+	switch alarm.Action {
+	case "AUDIO", "DISPLAY", "EMAIL":
+	default:
+		return model.Alarm{}, fmt.Sprintf("VALARM ACTION %q: unsupported action; alarm dropped", alarm.Action)
+	}
 	if prop := comp.Props.Get(ical.PropTrigger); prop != nil {
 		tv := prop.Value
 		tzid := prop.Params.Get(ical.ParamTimezoneID)
