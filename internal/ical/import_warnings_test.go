@@ -3,6 +3,8 @@ package ical
 import (
 	"strings"
 	"testing"
+
+	"github.com/douglasdemoura/chroncal/internal/model"
 )
 
 // An unparseable DUE or DTSTART on a VTODO is dropped. It cannot be stored.
@@ -178,37 +180,53 @@ func TestImport_UnsupportedAlarmRelatedAndDuration_DegradeWithWarning(t *testing
 	}
 }
 
-// Three recoverable VALARM defects must not lose the reminder. The parser
-// keeps the DISPLAY default for an empty ACTION. It clears a REPEAT that
-// has no DURATION (RFC 5545 pairs them). It drops a negative DURATION so
-// the repeat triggers cannot walk backwards in time.
+// Recoverable VALARM defects must not lose the reminder. The parser keeps
+// the DISPLAY default for an empty ACTION. It clears a REPEAT that has no
+// DURATION (RFC 5545 pairs them). It drops a negative DURATION together
+// with its REPEAT, in one warning. It drops the DURATION of an explicit
+// REPEAT:0 with an accurate message. It clamps an absurd REPEAT and warns.
 func TestImport_RecoverableAlarmDefects_KeepAlarm(t *testing.T) {
 	t.Parallel()
 	ics := eventICS("recoverable-alarm-event@example.com", "Event with recoverable alarm defects",
 		"ACTION:\r\nTRIGGER:-PT15M\r\nREPEAT:3\r\n",
 		"ACTION:DISPLAY\r\nTRIGGER:-PT30M\r\nREPEAT:2\r\nDURATION:-PT5M\r\n",
+		"ACTION:DISPLAY\r\nTRIGGER:-PT45M\r\nREPEAT:0\r\nDURATION:PT5M\r\n",
+		"ACTION:DISPLAY\r\nTRIGGER:-PT1H\r\nREPEAT:5000\r\nDURATION:PT5M\r\n",
 	)
 
 	result, err := ImportFile(strings.NewReader(ics))
 	if err != nil {
 		t.Fatalf("ImportFile: %v", err)
 	}
-	if len(result.Events) != 1 || len(result.Events[0].Alarms) != 2 {
-		t.Fatalf("events/alarms = %d/%+v, want 1 event with 2 alarms", len(result.Events), result.Events)
+	if len(result.Events) != 1 || len(result.Events[0].Alarms) != 4 {
+		t.Fatalf("events/alarms = %d/%+v, want 1 event with 4 alarms", len(result.Events), result.Events)
 	}
-	for i, alarm := range result.Events[0].Alarms {
+	alarms := result.Events[0].Alarms
+	for i, alarm := range alarms {
 		if alarm.Action != "DISPLAY" {
 			t.Errorf("alarm %d: Action = %q, want DISPLAY", i, alarm.Action)
 		}
+	}
+	for i, alarm := range alarms[:3] {
 		if alarm.Repeat != 0 || alarm.Duration != "" {
 			t.Errorf("alarm %d: Repeat/Duration = %d/%q, want the cleared pair", i, alarm.Repeat, alarm.Duration)
 		}
 	}
-	if !warningMentions(result.Warnings, "REPEAT and DURATION") {
+	if alarms[3].Repeat != model.MaxAlarmRepeat || alarms[3].Duration != "PT5M" {
+		t.Errorf("alarm 3: Repeat/Duration = %d/%q, want the clamp %d with the kept interval",
+			alarms[3].Repeat, alarms[3].Duration, model.MaxAlarmRepeat)
+	}
+	if !warningMentions(result.Warnings, "REPEAT and DURATION", "REPEAT dropped") {
 		t.Errorf("no unpaired REPEAT warning; warnings = %v", result.Warnings)
 	}
-	if !warningMentions(result.Warnings, "DURATION", `"-PT5M"`) {
-		t.Errorf("no negative DURATION warning; warnings = %v", result.Warnings)
+	if !warningMentions(result.Warnings, `"-PT5M"`, "dropped with its REPEAT") {
+		t.Errorf("no combined negative-DURATION warning; warnings = %v", result.Warnings)
+	}
+	if !warningMentions(result.Warnings, "REPEAT:0", "DURATION dropped") {
+		t.Errorf("no REPEAT:0 warning; warnings = %v", result.Warnings)
+	}
+	if !warningMentions(result.Warnings, "clamped") {
+		t.Errorf("no clamp warning; warnings = %v", result.Warnings)
 	}
 }
 

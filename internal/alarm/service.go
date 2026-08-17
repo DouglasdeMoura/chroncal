@@ -759,9 +759,11 @@ func computeTriggerTime(evt event.Event, a model.Alarm) (time.Time, error) {
 // at the specified duration interval, up to the repeat count. The count is
 // clamped to model.MaxAlarmRepeat as defense in depth. Rows written before
 // the cap existed (or by other tools) must not blow up the check loop.
+// The ValidAlarmDuration guard covers legacy rows with a negative or zero
+// interval: those must not walk the repeat firings backwards or stall.
 func buildRepeatTriggers(triggerAt time.Time, repeat int, durStr string) []time.Time {
 	triggers := []time.Time{triggerAt}
-	if repeat <= 0 || durStr == "" {
+	if repeat <= 0 || !model.ValidAlarmDuration(durStr) {
 		return triggers
 	}
 	repeat = min(repeat, model.MaxAlarmRepeat)

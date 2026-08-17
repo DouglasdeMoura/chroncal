@@ -709,7 +709,7 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 		// (push+pull resets it to START) and that silently resurfaces if the
 		// user later switches the trigger to a duration. Keep the default
 		// "START" for absolute triggers.
-		if rel := prop.Params.Get("RELATED"); rel != "" && isDuration {
+		if rel := strings.TrimSpace(prop.Params.Get("RELATED")); rel != "" && isDuration {
 			// Same failure class as an unsupported ACTION (issue #575,
 			// see model.ValidAlarmRelated).
 			if up := strings.ToUpper(rel); model.ValidAlarmRelated(up) {
@@ -729,24 +729,37 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 	if prop := comp.Props.Get(ical.PropSummary); prop != nil {
 		alarm.Summary = prop.Value
 	}
+	repeatZero := false
 	if prop := comp.Props.Get("REPEAT"); prop != nil {
 		// Clamp: REPEAT expands into per-trigger state in the check loop,
 		// so an absurd imported value must not hang or OOM every check.
-		// An unreadable value must warn: the pairing rule below drops the
-		// DURATION over it, and the report must name the cause.
+		// Every arm that changes the value warns: the report must name
+		// the cause, and the clamp changes what a later push sends back.
 		v, err := strconv.Atoi(strings.TrimSpace(prop.Value))
-		if err != nil || v < 0 {
+		switch {
+		case err != nil || v < 0:
 			warns = append(warns, fmt.Sprintf("VALARM REPEAT: invalid value %q; ignored", prop.Value))
-		} else if v > 0 { // zero is a valid "no repeats", not a defect
-			alarm.Repeat = min(v, model.MaxAlarmRepeat)
+		case v > model.MaxAlarmRepeat:
+			alarm.Repeat = model.MaxAlarmRepeat
+			warns = append(warns, fmt.Sprintf("VALARM REPEAT: value %d clamped to %d", v, model.MaxAlarmRepeat))
+		case v > 0:
+			alarm.Repeat = v
+		default:
+			repeatZero = true // a valid "no repeats", not a defect
 		}
 	}
 	if prop := comp.Props.Get(ical.PropDuration); prop != nil {
 		// A malformed DURATION pushes verbatim, and a strict CalDAV
 		// server rejects the whole resource with 400. See
 		// model.ValidAlarmDuration for the value rule.
-		if model.ValidAlarmDuration(prop.Value) {
-			alarm.Duration = prop.Value
+		if v := strings.TrimSpace(prop.Value); model.ValidAlarmDuration(v) {
+			alarm.Duration = v
+		} else if alarm.Repeat > 0 {
+			// One defect, one warning: the REPEAT is unusable without
+			// its interval, so name both drops here and keep the
+			// pairing check below quiet.
+			alarm.Repeat = 0
+			warns = append(warns, fmt.Sprintf("VALARM DURATION: invalid value %q; dropped with its REPEAT", prop.Value))
 		} else {
 			warns = append(warns, fmt.Sprintf("VALARM DURATION: invalid value %q; dropped", prop.Value))
 		}
@@ -754,8 +767,15 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 	// RFC 5545 §3.8.6.3 requires REPEAT and DURATION together. An unpaired
 	// value cannot round-trip: buildValarm omits it, and the next pull then
 	// deletes and recreates the alarm row, which loses the alarm state.
-	// Clear the incomplete pair and name the dropped side.
-	if !alarm.RepeatPaired() {
+	// Clear the incomplete pair and name the dropped side. An explicit
+	// REPEAT:0 with a DURATION is legal iCal, but the row cannot store
+	// "repeats disabled" apart from "REPEAT absent", so that pair cannot
+	// round-trip either; it gets its own accurate message.
+	switch {
+	case repeatZero && alarm.Duration != "":
+		alarm.Duration = ""
+		warns = append(warns, "VALARM REPEAT:0: repeats disabled; DURATION dropped")
+	case !alarm.RepeatPaired():
 		dropped := "REPEAT"
 		if alarm.Duration != "" {
 			dropped = "DURATION"
