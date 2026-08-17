@@ -349,3 +349,15 @@ func TestAlarmEditor_EditModeMouseClickOnCancelReturnsToList(t *testing.T) {
 	assert.Equal(t, alarmModeList, m.mode, "after clicking cancel, editor must return to list mode")
 	assert.Empty(t, m.Alarms(), "clicking cancel must not save the alarm")
 }
+
+// Every action the dropdown offers must pass model.ValidAlarmAction. The
+// predicate mirrors the storage CHECK constraints, so a drifted option
+// would let the user pick an action the insert rejects — the issue #575
+// rollback class through the TUI.
+func TestAlarmActionOptsMatchModelValidator(t *testing.T) {
+	require.NotEmpty(t, alarmActionOpts)
+	for _, opt := range alarmActionOpts {
+		assert.True(t, model.ValidAlarmAction(opt.Value),
+			"dropdown option %q (%s) fails model.ValidAlarmAction", opt.Value, opt.Label)
+	}
+}

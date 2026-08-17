@@ -5,6 +5,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/douglasdemoura/chroncal/internal/model"
 )
 
 func TestOpen_InMemory(t *testing.T) {
@@ -249,5 +251,72 @@ func TestOpen_ForeignKeys(t *testing.T) {
 	}
 	if fk != 1 {
 		t.Errorf("foreign_keys = %d, want 1", fk)
+	}
+}
+
+// normalizeAlarmRepeatPairs must heal rows written before the parsers
+// validated REPEAT and DURATION: clamp the count, clear a bad interval,
+// clear an unpaired value, and leave normal rows alone (issue #580).
+func TestNormalizeAlarmRepeatPairs(t *testing.T) {
+	db, q, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("list calendars: %v", err)
+	}
+	calID := cals[0].ID
+	res, err := db.Exec(`INSERT INTO events (uid, calendar_id, title, start_time, end_time, all_day, status, transp, sequence, priority)
+		 VALUES ('heal-event', ?, 'Test', '2026-04-01T00:00:00Z', '2026-04-01T01:00:00Z', 0, 'CONFIRMED', 'OPAQUE', 0, 0)`, calID)
+	if err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+	eventID, _ := res.LastInsertId()
+
+	// Legacy shapes the old importer and CLI could store.
+	rows := []struct {
+		repeat       int
+		duration     string
+		wantRepeat   int
+		wantDuration string
+	}{
+		{3, "-PT5M", 0, ""},                          // negative interval
+		{2, "5 minutes", 0, ""},                      // malformed interval
+		{4, "", 0, ""},                               // unpaired REPEAT
+		{0, "PT5M", 0, ""},                           // unpaired DURATION
+		{5000, "PT5M", model.MaxAlarmRepeat, "PT5M"}, // pre-clamp count
+		{2, "PT10M", 2, "PT10M"},                     // normal row stays
+	}
+	ids := make([]int64, len(rows))
+	for i, r := range rows {
+		res, err := db.Exec(
+			`INSERT INTO event_alarms (event_id, action, trigger_value, repeat, duration) VALUES (?, 'DISPLAY', '-PT15M', ?, NULLIF(?, ''))`,
+			eventID, r.repeat, r.duration)
+		if err != nil {
+			t.Fatalf("insert alarm %d: %v", i, err)
+		}
+		ids[i], _ = res.LastInsertId()
+	}
+
+	if err := normalizeAlarmRepeatPairs(db); err != nil {
+		t.Fatalf("normalizeAlarmRepeatPairs: %v", err)
+	}
+
+	for i, r := range rows {
+		var repeat int
+		var duration string
+		err := db.QueryRow(`SELECT repeat, COALESCE(duration, '') FROM event_alarms WHERE id = ?`, ids[i]).
+			Scan(&repeat, &duration)
+		if err != nil {
+			t.Fatalf("read alarm %d: %v", i, err)
+		}
+		if repeat != r.wantRepeat || duration != r.wantDuration {
+			t.Errorf("row %d (%d/%q): healed to %d/%q, want %d/%q",
+				i, r.repeat, r.duration, repeat, duration, r.wantRepeat, r.wantDuration)
+		}
 	}
 }
