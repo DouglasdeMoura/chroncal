@@ -1654,7 +1654,7 @@ func parseOneAlarm(val string) (model.Alarm, error) {
 	// Check for ACTION: prefix
 	if idx := strings.Index(val, ":"); idx > 0 {
 		prefix := strings.ToUpper(val[:idx])
-		if prefix == "DISPLAY" || prefix == "EMAIL" || prefix == "AUDIO" {
+		if model.ValidAlarmAction(prefix) {
 			action = prefix
 			rest = val[idx+1:]
 		}

@@ -135,6 +135,19 @@ func sortedEmails(atts []AlarmAttendee) []string {
 	return emails
 }
 
+// ValidAlarmAction returns true if action is a value the alarm tables
+// accept. The set mirrors the CHECK constraints in db/migrations/003 and
+// 006. Keep this function and the two constraints in lockstep: a value
+// that passes here but fails the constraint rolls back the whole resource
+// transaction during sync (issue #575).
+func ValidAlarmAction(action string) bool {
+	switch action {
+	case "AUDIO", "DISPLAY", "EMAIL":
+		return true
+	}
+	return false
+}
+
 // ValidateAcknowledged returns true if v is a valid RFC 9074 ACKNOWLEDGED
 // value: empty string (clear), iCal UTC datetime, or RFC 3339.
 func ValidateAcknowledged(v string) bool {

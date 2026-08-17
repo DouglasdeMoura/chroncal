@@ -156,6 +156,52 @@ func TestImport_UnsupportedAlarmAction_DropsAlarmKeepsRecord(t *testing.T) {
 	}
 }
 
+// An unsupported TRIGGER RELATED value and a malformed DURATION share the
+// failure class of issue #575: RELATED hits the CHECK constraint and rolls
+// back the resource, DURATION round-trips into a push a strict server
+// rejects. Both must degrade with a warning instead of being stored.
+func TestImport_UnsupportedAlarmRelatedAndDuration_DegradeWithWarning(t *testing.T) {
+	t.Parallel()
+	const ics = "BEGIN:VCALENDAR\r\n" +
+		"VERSION:2.0\r\n" +
+		"PRODID:-//test//EN\r\n" +
+		"BEGIN:VEVENT\r\n" +
+		"UID:bad-related-event@example.com\r\n" +
+		"DTSTAMP:20260401T100000Z\r\n" +
+		"DTSTART:20260401T140000Z\r\n" +
+		"DTEND:20260401T150000Z\r\n" +
+		"SUMMARY:Event with a bad RELATED and DURATION\r\n" +
+		"BEGIN:VALARM\r\n" +
+		"ACTION:DISPLAY\r\n" +
+		"TRIGGER;RELATED=STARTS:-PT15M\r\n" +
+		"REPEAT:2\r\n" +
+		"DURATION:5 minutes\r\n" +
+		"END:VALARM\r\n" +
+		"END:VEVENT\r\n" +
+		"END:VCALENDAR\r\n"
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile: %v", err)
+	}
+	if len(result.Events) != 1 || len(result.Events[0].Alarms) != 1 {
+		t.Fatalf("events/alarms = %d/%v, want 1 event with 1 alarm", len(result.Events), result.Events)
+	}
+	alarm := result.Events[0].Alarms[0]
+	if alarm.Related != "START" {
+		t.Errorf("Related = %q, want the START default", alarm.Related)
+	}
+	if alarm.Duration != "" {
+		t.Errorf("Duration = %q, want empty", alarm.Duration)
+	}
+	if !warningMentions(result.Warnings, `event "bad-related-event@example.com"`, "RELATED", "STARTS") {
+		t.Errorf("no RELATED warning that names the event; warnings = %v", result.Warnings)
+	}
+	if !warningMentions(result.Warnings, `event "bad-related-event@example.com"`, "DURATION", `"5 minutes"`) {
+		t.Errorf("no DURATION warning that names the event; warnings = %v", result.Warnings)
+	}
+}
+
 // parseAlarm reports every problem it finds. A single warning slot meant the
 // ATTACH message overwrote the "will not fire" one. The user then saw a broken
 // sound file and never learned the alarm was dead.
