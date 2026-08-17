@@ -794,10 +794,10 @@ func buildValarm(alarm model.Alarm) *ical.Component {
 	// RFC 5545 §3.8.6.3: DURATION and REPEAT MUST appear together; emitting
 	// either one without the other yields an invalid VALARM that strict CalDAV
 	// servers (e.g. Google) reject with HTTP 400, blocking the whole resource.
-	// The duration.Validate guard exists for DB rows written before import
-	// validated DURATION (the same reason as the RFC 3339 branch above): a
-	// stored malformed value must not push verbatim and wedge the resource.
-	if alarm.Repeat > 0 && alarm.Duration != "" && duration.Validate(alarm.Duration) == nil {
+	// The ValidAlarmDuration guard exists for DB rows written before the
+	// parsers validated DURATION (the same reason as the RFC 3339 branch
+	// above). A stored bad value must not reach the server verbatim.
+	if alarm.Repeat > 0 && model.ValidAlarmDuration(alarm.Duration) {
 		p := &ical.Prop{Name: ical.PropDuration}
 		p.Value = alarm.Duration
 		valarm.Props.Set(p)
