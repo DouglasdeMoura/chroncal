@@ -1709,8 +1709,8 @@ func parseOneAlarm(val string) (model.Alarm, error) {
 		a.Repeat = r
 	}
 	if len(parts) > 3 && parts[3] != "" {
-		if err := duration.Validate(parts[3]); err != nil {
-			return model.Alarm{}, fmt.Errorf("alarm %q: invalid repeat duration %q", val, parts[3])
+		if !model.ValidAlarmDuration(parts[3]) {
+			return model.Alarm{}, fmt.Errorf("alarm %q: repeat duration %q must be a positive RFC 5545 duration", val, parts[3])
 		}
 		a.Duration = parts[3]
 	}

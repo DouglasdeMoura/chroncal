@@ -344,12 +344,12 @@ func TestCalendarsRejectInvalidRemoteMetadata(t *testing.T) {
 	}
 }
 
-// The alarm CHECK constraints and the model predicates must stay in
-// lockstep (issue #575: a value that passes the Go side but fails the
-// constraint rolls back the whole resource transaction during sync). This
-// test probes both alarm tables with candidate values and requires that
-// the schema and model.ValidAlarmAction / model.ValidAlarmRelated agree
-// on each one.
+// The alarm CHECK constraints and the model predicates must agree. A
+// value that passes the Go side but fails the constraint rolls back the
+// whole resource transaction during sync (issue #575). This test probes
+// both alarm tables with candidate values. The schema and
+// model.ValidAlarmAction / model.ValidAlarmRelated must give the same
+// verdict on each one.
 func TestAlarmConstraintsMatchModelValidators(t *testing.T) {
 	db, q, err := Open(":memory:")
 	if err != nil {

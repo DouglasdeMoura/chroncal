@@ -620,8 +620,8 @@ func parseCategories(ve ical.Event) string {
 // The second return value is a warning string (empty if no issues). A VALARM
 // with several problems reports all of them. Each one changes what the alarm
 // does in silence. The user needs to see every reason. An unsupported ACTION
-// is the one early exit: it drops the whole alarm and stops the parse, and
-// the warnings found before it stay in the report.
+// is the one early exit. It drops the whole alarm and stops the parse.
+// Warnings found before it stay in the report.
 func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 	alarm := model.Alarm{Action: "DISPLAY", Related: "START"}
 	var warns []string
@@ -683,9 +683,10 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 		}
 		if valid {
 			alarm.TriggerValue = tv
-		} else if tv != "" {
-			// Unparseable TRIGGER: leave TriggerValue empty so the caller's
-			// `TriggerValue != ""` gate drops the alarm, and warn.
+		} else {
+			// Unparseable (or empty) TRIGGER: leave TriggerValue empty so
+			// the caller's `TriggerValue != ""` gate drops the alarm, and
+			// warn.
 			//
 			// Preserving the raw value here looks like it protects round-trip
 			// fidelity, but it cannot. The value is not expressible as valid
@@ -716,6 +717,10 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 				warns = append(warns, fmt.Sprintf("VALARM TRIGGER RELATED=%q: unsupported value, using START", rel))
 			}
 		}
+	} else {
+		// RFC 5545 requires TRIGGER. Without it the caller's gate drops
+		// the alarm, and the drop must not be silent.
+		warns = append(warns, "VALARM TRIGGER: missing; alarm dropped (it could never fire)")
 	}
 	if prop := comp.Props.Get(ical.PropDescription); prop != nil {
 		alarm.Description = prop.Value
@@ -726,17 +731,22 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 	if prop := comp.Props.Get("REPEAT"); prop != nil {
 		// Clamp: REPEAT expands into per-trigger state in the check loop,
 		// so an absurd imported value must not hang or OOM every check.
-		if v, err := strconv.Atoi(prop.Value); err == nil && v > 0 {
+		// An unreadable value must warn: the pairing rule below drops the
+		// DURATION over it, and the report must name the cause.
+		v, err := strconv.Atoi(strings.TrimSpace(prop.Value))
+		switch {
+		case err != nil || v < 0:
+			warns = append(warns, fmt.Sprintf("VALARM REPEAT: invalid value %q; ignored", prop.Value))
+		case v > 0:
 			alarm.Repeat = min(v, model.MaxAlarmRepeat)
 		}
 	}
 	if prop := comp.Props.Get(ical.PropDuration); prop != nil {
-		// A malformed DURATION stores without error, but the next push
-		// re-emits it verbatim and a strict CalDAV server rejects the
-		// whole resource with 400. A negative value passes
-		// duration.Validate, and the repeat triggers then walk backwards
-		// from the first trigger. Drop the bad value and warn.
-		if duration.Validate(prop.Value) == nil && !strings.HasPrefix(prop.Value, "-") {
+		// A malformed DURATION pushes verbatim, and a strict CalDAV
+		// server rejects the whole resource with 400. A negative or zero
+		// value breaks the repeat triggers (see model.ValidAlarmDuration).
+		// Drop the bad value and warn.
+		if model.ValidAlarmDuration(prop.Value) {
 			alarm.Duration = prop.Value
 		} else {
 			warns = append(warns, fmt.Sprintf("VALARM DURATION: invalid value %q; dropped", prop.Value))
@@ -745,11 +755,15 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 	// RFC 5545 §3.8.6.3 requires REPEAT and DURATION together. An unpaired
 	// value cannot round-trip: buildValarm omits it, and the next pull then
 	// deletes and recreates the alarm row, which loses the alarm state.
-	// Clear the incomplete pair and warn.
+	// Clear the incomplete pair and name the dropped side.
 	if (alarm.Repeat > 0) != (alarm.Duration != "") {
+		dropped := "REPEAT"
+		if alarm.Duration != "" {
+			dropped = "DURATION"
+		}
 		alarm.Repeat = 0
 		alarm.Duration = ""
-		warns = append(warns, "VALARM: REPEAT and DURATION must appear together; repeat dropped")
+		warns = append(warns, fmt.Sprintf("VALARM: REPEAT and DURATION must appear together; %s dropped", dropped))
 	}
 
 	// UID (RFC 9074)

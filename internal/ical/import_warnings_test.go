@@ -147,9 +147,9 @@ func TestImport_UnsupportedAlarmAction_DropsAlarmKeepsRecord(t *testing.T) {
 }
 
 // An unsupported RELATED value and a malformed DURATION share the failure
-// class of issue #575. RELATED hits the CHECK constraint and rolls back the
-// resource. DURATION round-trips into a push that a strict server rejects.
-// The parser must degrade both with a warning and must not store them.
+// class of issue #575. RELATED fails the CHECK constraint and rolls back
+// the resource. DURATION round-trips into a push that a strict server
+// rejects. The parser must warn about both values and must not store them.
 func TestImport_UnsupportedAlarmRelatedAndDuration_DegradeWithWarning(t *testing.T) {
 	t.Parallel()
 	const ics = "BEGIN:VCALENDAR\r\n" +
@@ -195,10 +195,10 @@ func TestImport_UnsupportedAlarmRelatedAndDuration_DegradeWithWarning(t *testing
 	}
 }
 
-// Three recoverable VALARM defects must degrade without a lost reminder:
-// an empty ACTION keeps the DISPLAY default, a REPEAT with no DURATION is
-// cleared (RFC 5545 pairs them), and a negative DURATION is dropped so the
-// repeat triggers cannot walk backwards in time.
+// Three recoverable VALARM defects must not lose the reminder. The parser
+// keeps the DISPLAY default for an empty ACTION. It clears a REPEAT that
+// has no DURATION (RFC 5545 pairs them). It drops a negative DURATION so
+// the repeat triggers cannot walk backwards in time.
 func TestImport_RecoverableAlarmDefects_KeepAlarm(t *testing.T) {
 	t.Parallel()
 	const ics = "BEGIN:VCALENDAR\r\n" +
