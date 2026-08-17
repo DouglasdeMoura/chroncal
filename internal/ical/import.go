@@ -619,22 +619,27 @@ func parseCategories(ve ical.Event) string {
 // parseAlarm extracts a model.Alarm from a VALARM component.
 // The second return value is a warning string (empty if no issues). A VALARM
 // with several problems reports all of them. Each one changes what the alarm
-// does in silence. The user needs to see every reason. The one exception is
-// an unsupported ACTION: it drops the whole alarm at once, so the function
-// reports only that problem.
+// does in silence. The user needs to see every reason. An unsupported ACTION
+// is the one early exit: it drops the whole alarm and stops the parse, and
+// the warnings found before it stay in the report.
 func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 	alarm := model.Alarm{Action: "DISPLAY", Related: "START"}
 	var warns []string
 
 	if prop := comp.Props.Get(ical.PropAction); prop != nil {
-		alarm.Action = strings.ToUpper(prop.Value)
 		// Google Calendar emits ACTION:NONE as a "no reminder" sentinel.
 		// An unsupported action must not reach the alarm tables (issue
-		// #575, see model.ValidAlarmAction). The next push then omits the
+		// #575, see model.ValidAlarmAction). Every later push omits the
 		// VALARM, so Google can re-apply its default reminders. That loss
-		// is smaller than a sync that never converges.
-		if !model.ValidAlarmAction(alarm.Action) {
-			return model.Alarm{}, fmt.Sprintf("VALARM ACTION %q: unsupported action; alarm dropped", alarm.Action)
+		// is smaller than a sync that never converges. An empty value
+		// keeps the DISPLAY default: applyAlarmDefaults rescued it before
+		// this check existed, and a reminder must not vanish over it.
+		if action := strings.ToUpper(strings.TrimSpace(prop.Value)); action != "" {
+			if !model.ValidAlarmAction(action) {
+				warns = append(warns, fmt.Sprintf("VALARM ACTION %q: unsupported action; alarm dropped", action))
+				return model.Alarm{}, strings.Join(warns, "; ")
+			}
+			alarm.Action = action
 		}
 	}
 	if prop := comp.Props.Get(ical.PropTrigger); prop != nil {
@@ -705,11 +710,10 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 			// Same failure class as an unsupported ACTION (issue #575,
 			// see model.ValidAlarmRelated). Keep the default START and
 			// warn.
-			rel = strings.ToUpper(rel)
-			if model.ValidAlarmRelated(rel) {
-				alarm.Related = rel
+			if up := strings.ToUpper(rel); model.ValidAlarmRelated(up) {
+				alarm.Related = up
 			} else {
-				warns = append(warns, fmt.Sprintf("VALARM TRIGGER RELATED=%s: unsupported value, using START", rel))
+				warns = append(warns, fmt.Sprintf("VALARM TRIGGER RELATED=%q: unsupported value, using START", rel))
 			}
 		}
 	}
@@ -729,14 +733,23 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 	if prop := comp.Props.Get(ical.PropDuration); prop != nil {
 		// A malformed DURATION stores without error, but the next push
 		// re-emits it verbatim and a strict CalDAV server rejects the
-		// whole resource with 400. Drop it and warn. Also clear REPEAT:
-		// RFC 5545 §3.8.6.3 requires the pair together.
-		if duration.Validate(prop.Value) == nil {
+		// whole resource with 400. A negative value passes
+		// duration.Validate, and the repeat triggers then walk backwards
+		// from the first trigger. Drop the bad value and warn.
+		if duration.Validate(prop.Value) == nil && !strings.HasPrefix(prop.Value, "-") {
 			alarm.Duration = prop.Value
 		} else {
-			alarm.Repeat = 0
-			warns = append(warns, fmt.Sprintf("VALARM DURATION: unparseable value %q; repeat dropped", prop.Value))
+			warns = append(warns, fmt.Sprintf("VALARM DURATION: invalid value %q; dropped", prop.Value))
 		}
+	}
+	// RFC 5545 §3.8.6.3 requires REPEAT and DURATION together. An unpaired
+	// value cannot round-trip: buildValarm omits it, and the next pull then
+	// deletes and recreates the alarm row, which loses the alarm state.
+	// Clear the incomplete pair and warn.
+	if (alarm.Repeat > 0) != (alarm.Duration != "") {
+		alarm.Repeat = 0
+		alarm.Duration = ""
+		warns = append(warns, "VALARM: REPEAT and DURATION must appear together; repeat dropped")
 	}
 
 	// UID (RFC 9074)

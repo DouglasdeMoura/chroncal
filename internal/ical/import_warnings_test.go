@@ -146,10 +146,10 @@ func TestImport_UnsupportedAlarmAction_DropsAlarmKeepsRecord(t *testing.T) {
 	}
 }
 
-// An unsupported TRIGGER RELATED value and a malformed DURATION share the
-// failure class of issue #575: RELATED hits the CHECK constraint and rolls
-// back the resource, DURATION round-trips into a push a strict server
-// rejects. Both must degrade with a warning instead of being stored.
+// An unsupported RELATED value and a malformed DURATION share the failure
+// class of issue #575. RELATED hits the CHECK constraint and rolls back the
+// resource. DURATION round-trips into a push that a strict server rejects.
+// The parser must degrade both with a warning and must not store them.
 func TestImport_UnsupportedAlarmRelatedAndDuration_DegradeWithWarning(t *testing.T) {
 	t.Parallel()
 	const ics = "BEGIN:VCALENDAR\r\n" +
@@ -192,6 +192,58 @@ func TestImport_UnsupportedAlarmRelatedAndDuration_DegradeWithWarning(t *testing
 	}
 	if !warningMentions(result.Warnings, `event "bad-related-event@example.com"`, "DURATION", `"5 minutes"`) {
 		t.Errorf("no DURATION warning that names the event; warnings = %v", result.Warnings)
+	}
+}
+
+// Three recoverable VALARM defects must degrade without a lost reminder:
+// an empty ACTION keeps the DISPLAY default, a REPEAT with no DURATION is
+// cleared (RFC 5545 pairs them), and a negative DURATION is dropped so the
+// repeat triggers cannot walk backwards in time.
+func TestImport_RecoverableAlarmDefects_KeepAlarm(t *testing.T) {
+	t.Parallel()
+	const ics = "BEGIN:VCALENDAR\r\n" +
+		"VERSION:2.0\r\n" +
+		"PRODID:-//test//EN\r\n" +
+		"BEGIN:VEVENT\r\n" +
+		"UID:recoverable-alarm-event@example.com\r\n" +
+		"DTSTAMP:20260401T100000Z\r\n" +
+		"DTSTART:20260401T140000Z\r\n" +
+		"DTEND:20260401T150000Z\r\n" +
+		"SUMMARY:Event with recoverable alarm defects\r\n" +
+		"BEGIN:VALARM\r\n" +
+		"ACTION:\r\n" +
+		"TRIGGER:-PT15M\r\n" +
+		"REPEAT:3\r\n" +
+		"END:VALARM\r\n" +
+		"BEGIN:VALARM\r\n" +
+		"ACTION:DISPLAY\r\n" +
+		"TRIGGER:-PT30M\r\n" +
+		"REPEAT:2\r\n" +
+		"DURATION:-PT5M\r\n" +
+		"END:VALARM\r\n" +
+		"END:VEVENT\r\n" +
+		"END:VCALENDAR\r\n"
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile: %v", err)
+	}
+	if len(result.Events) != 1 || len(result.Events[0].Alarms) != 2 {
+		t.Fatalf("events/alarms = %d/%+v, want 1 event with 2 alarms", len(result.Events), result.Events)
+	}
+	for i, alarm := range result.Events[0].Alarms {
+		if alarm.Action != "DISPLAY" {
+			t.Errorf("alarm %d: Action = %q, want DISPLAY", i, alarm.Action)
+		}
+		if alarm.Repeat != 0 || alarm.Duration != "" {
+			t.Errorf("alarm %d: Repeat/Duration = %d/%q, want the cleared pair", i, alarm.Repeat, alarm.Duration)
+		}
+	}
+	if !warningMentions(result.Warnings, "REPEAT and DURATION") {
+		t.Errorf("no unpaired REPEAT warning; warnings = %v", result.Warnings)
+	}
+	if !warningMentions(result.Warnings, "DURATION", `"-PT5M"`) {
+		t.Errorf("no negative DURATION warning; warnings = %v", result.Warnings)
 	}
 }
 

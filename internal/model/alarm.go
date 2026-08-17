@@ -137,7 +137,7 @@ func sortedEmails(atts []AlarmAttendee) []string {
 
 // ValidAlarmAction returns true if action is a value the alarm tables
 // accept. The set mirrors the CHECK constraints in db/migrations/003 and
-// 006. Keep this function and the two constraints in lockstep: a value
+// 006. Keep this function and the two constraints in lockstep. A value
 // that passes here but fails the constraint rolls back the whole resource
 // transaction during sync (issue #575).
 func ValidAlarmAction(action string) bool {
