@@ -91,6 +91,71 @@ func TestImport_DroppedAlarmWarning_NamesOwningRecord(t *testing.T) {
 	}
 }
 
+// Regression test for issue #575. Google CalDAV emits VALARM ACTION:NONE as
+// a "no reminder" sentinel. The alarm tables reject that action with a CHECK
+// constraint. The failed insert rolled back the whole resource transaction,
+// so the event never persisted and sync never converged. The parser must
+// drop the unsupported alarm with a warning and keep the parent record and
+// its supported alarms.
+func TestImport_UnsupportedAlarmAction_DropsAlarmKeepsRecord(t *testing.T) {
+	t.Parallel()
+	const ics = "BEGIN:VCALENDAR\r\n" +
+		"VERSION:2.0\r\n" +
+		"PRODID:-//test//EN\r\n" +
+		"BEGIN:VEVENT\r\n" +
+		"UID:action-none-event@example.com\r\n" +
+		"DTSTAMP:20260401T100000Z\r\n" +
+		"DTSTART:20260401T140000Z\r\n" +
+		"DTEND:20260401T150000Z\r\n" +
+		"SUMMARY:Event with a no-op alarm\r\n" +
+		"BEGIN:VALARM\r\n" +
+		"ACTION:NONE\r\n" +
+		"TRIGGER:-PT15M\r\n" +
+		"END:VALARM\r\n" +
+		"BEGIN:VALARM\r\n" +
+		"ACTION:DISPLAY\r\n" +
+		"TRIGGER:-PT30M\r\n" +
+		"DESCRIPTION:Real reminder\r\n" +
+		"END:VALARM\r\n" +
+		"END:VEVENT\r\n" +
+		"BEGIN:VTODO\r\n" +
+		"UID:action-proc-todo@example.com\r\n" +
+		"DTSTAMP:20260401T100000Z\r\n" +
+		"SUMMARY:Todo with a legacy alarm\r\n" +
+		"BEGIN:VALARM\r\n" +
+		"ACTION:PROCEDURE\r\n" +
+		"TRIGGER:-PT5M\r\n" +
+		"END:VALARM\r\n" +
+		"END:VTODO\r\n" +
+		"END:VCALENDAR\r\n"
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %d, want 1", len(result.Events))
+	}
+	if len(result.Events[0].Alarms) != 1 {
+		t.Fatalf("event alarms = %d, want 1; alarms = %+v", len(result.Events[0].Alarms), result.Events[0].Alarms)
+	}
+	if got := result.Events[0].Alarms[0].Action; got != "DISPLAY" {
+		t.Errorf("surviving alarm action = %q, want DISPLAY", got)
+	}
+	if len(result.Todos) != 1 {
+		t.Fatalf("todos = %d, want 1", len(result.Todos))
+	}
+	if len(result.Todos[0].Alarms) != 0 {
+		t.Errorf("todo alarms = %d, want 0", len(result.Todos[0].Alarms))
+	}
+	if !warningMentions(result.Warnings, `event "action-none-event@example.com"`, "ACTION", `"NONE"`) {
+		t.Errorf("no ACTION NONE warning that names the event; warnings = %v", result.Warnings)
+	}
+	if !warningMentions(result.Warnings, `todo "action-proc-todo@example.com"`, "ACTION", `"PROCEDURE"`) {
+		t.Errorf("no ACTION PROCEDURE warning that names the todo; warnings = %v", result.Warnings)
+	}
+}
+
 // parseAlarm reports every problem it finds. A single warning slot meant the
 // ATTACH message overwrote the "will not fire" one. The user then saw a broken
 // sound file and never learned the alarm was dead.
