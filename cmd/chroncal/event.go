@@ -1735,7 +1735,7 @@ func parseOneAlarm(val string) (model.Alarm, error) {
 	}
 
 	// Cross-field validation per RFC 5545.
-	if (a.Repeat > 0) != (a.Duration != "") {
+	if !a.RepeatPaired() {
 		return model.Alarm{}, fmt.Errorf("alarm %q: REPEAT and DURATION must be specified together", val)
 	}
 

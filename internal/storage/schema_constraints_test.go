@@ -385,34 +385,29 @@ func TestAlarmConstraintsMatchModelValidators(t *testing.T) {
 		{"event_alarms", "event_id", eventID},
 		{"todo_alarms", "todo_id", todoID},
 	}
-	actions := []string{"AUDIO", "DISPLAY", "EMAIL", "NONE", "PROCEDURE", "display", ""}
-	relateds := []string{"START", "END", "STARTS", "end", ""}
+	checks := []struct {
+		col    string
+		values []string
+		valid  func(string) bool
+	}{
+		{"action", []string{"AUDIO", "DISPLAY", "EMAIL", "NONE", "PROCEDURE", "display", ""}, model.ValidAlarmAction},
+		{"related", []string{"START", "END", "STARTS", "end", ""}, model.ValidAlarmRelated},
+	}
 
 	for _, ins := range inserts {
-		for _, action := range actions {
-			_, err := db.Exec(
-				`INSERT INTO `+ins.table+` (`+ins.fk+`, action, trigger_value) VALUES (?, ?, '-PT15M')`,
-				ins.id, action,
-			)
-			if got, want := err == nil, model.ValidAlarmAction(action); got != want {
-				t.Errorf("%s action %q: insert ok = %v, ValidAlarmAction = %v (err: %v)",
-					ins.table, action, got, want, err)
-			}
-			if err != nil && !strings.Contains(err.Error(), "CHECK constraint failed") {
-				t.Errorf("%s action %q: rejected by %v, not by the CHECK constraint", ins.table, action, err)
-			}
-		}
-		for _, related := range relateds {
-			_, err := db.Exec(
-				`INSERT INTO `+ins.table+` (`+ins.fk+`, action, trigger_value, related) VALUES (?, 'DISPLAY', '-PT15M', ?)`,
-				ins.id, related,
-			)
-			if got, want := err == nil, model.ValidAlarmRelated(related); got != want {
-				t.Errorf("%s related %q: insert ok = %v, ValidAlarmRelated = %v (err: %v)",
-					ins.table, related, got, want, err)
-			}
-			if err != nil && !strings.Contains(err.Error(), "CHECK constraint failed") {
-				t.Errorf("%s related %q: rejected by %v, not by the CHECK constraint", ins.table, related, err)
+		for _, c := range checks {
+			for _, v := range c.values {
+				_, err := db.Exec(
+					`INSERT INTO `+ins.table+` (`+ins.fk+`, `+c.col+`, trigger_value) VALUES (?, ?, '-PT15M')`,
+					ins.id, v,
+				)
+				if got, want := err == nil, c.valid(v); got != want {
+					t.Errorf("%s %s %q: insert ok = %v, model predicate = %v (err: %v)",
+						ins.table, c.col, v, got, want, err)
+				}
+				if err != nil && !strings.Contains(err.Error(), "CHECK constraint failed") {
+					t.Errorf("%s %s %q: rejected by %v, not by the CHECK constraint", ins.table, c.col, v, err)
+				}
 			}
 		}
 	}

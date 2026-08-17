@@ -156,16 +156,22 @@ func ValidAlarmRelated(related string) bool {
 }
 
 // ValidAlarmDuration returns true if d is a repeat interval the alarm
-// engine can fire: a well-formed, positive RFC 5545 duration. A negative
-// interval walks the repeat triggers backwards in time. A zero interval
-// never advances them. The import parser, the CLI parser, and the
-// exporter share this rule.
+// engine can fire: a well-formed RFC 5545 duration that advances time.
+// A negative interval walks the repeat triggers backwards. A zero
+// interval never advances them. The import parser, the CLI parser, and
+// the exporter share this rule.
 func ValidAlarmDuration(d string) bool {
-	if duration.Validate(d) != nil || strings.HasPrefix(d, "-") {
+	if duration.Validate(d) != nil {
 		return false
 	}
 	var t time.Time
-	return !duration.Add(t, d).Equal(t)
+	return duration.Add(t, d).After(t)
+}
+
+// RepeatPaired reports whether REPEAT and DURATION are both set or both
+// absent. RFC 5545 §3.8.6.3 forbids one without the other.
+func (a Alarm) RepeatPaired() bool {
+	return (a.Repeat > 0) == (a.Duration != "")
 }
 
 // ValidateAcknowledged returns true if v is a valid RFC 9074 ACKNOWLEDGED

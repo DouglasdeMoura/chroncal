@@ -91,6 +91,25 @@ func TestImport_DroppedAlarmWarning_NamesOwningRecord(t *testing.T) {
 	}
 }
 
+// eventICS builds a VCALENDAR with one VEVENT and the given VALARM bodies.
+// Each valarm string holds the property lines of one VALARM, with CRLF
+// line ends.
+func eventICS(uid, summary string, valarms ...string) string {
+	s := "BEGIN:VCALENDAR\r\n" +
+		"VERSION:2.0\r\n" +
+		"PRODID:-//test//EN\r\n" +
+		"BEGIN:VEVENT\r\n" +
+		"UID:" + uid + "\r\n" +
+		"DTSTAMP:20260401T100000Z\r\n" +
+		"DTSTART:20260401T140000Z\r\n" +
+		"DTEND:20260401T150000Z\r\n" +
+		"SUMMARY:" + summary + "\r\n"
+	for _, v := range valarms {
+		s += "BEGIN:VALARM\r\n" + v + "END:VALARM\r\n"
+	}
+	return s + "END:VEVENT\r\nEND:VCALENDAR\r\n"
+}
+
 // Regression test for issue #575. Google CalDAV emits VALARM ACTION:NONE as
 // a "no reminder" sentinel. The alarm tables reject that action with a CHECK
 // constraint. The failed insert rolled back the whole resource transaction,
@@ -100,40 +119,18 @@ func TestImport_DroppedAlarmWarning_NamesOwningRecord(t *testing.T) {
 // TestImport_DroppedAlarmWarning_NamesOwningRecord.)
 func TestImport_UnsupportedAlarmAction_DropsAlarmKeepsRecord(t *testing.T) {
 	t.Parallel()
-	const ics = "BEGIN:VCALENDAR\r\n" +
-		"VERSION:2.0\r\n" +
-		"PRODID:-//test//EN\r\n" +
-		"BEGIN:VEVENT\r\n" +
-		"UID:action-none-event@example.com\r\n" +
-		"DTSTAMP:20260401T100000Z\r\n" +
-		"DTSTART:20260401T140000Z\r\n" +
-		"DTEND:20260401T150000Z\r\n" +
-		"SUMMARY:Event with a no-op alarm\r\n" +
-		"BEGIN:VALARM\r\n" +
-		"ACTION:NONE\r\n" +
-		"TRIGGER:-PT15M\r\n" +
-		"END:VALARM\r\n" +
-		"BEGIN:VALARM\r\n" +
-		"ACTION:PROCEDURE\r\n" +
-		"TRIGGER:-PT5M\r\n" +
-		"END:VALARM\r\n" +
-		"BEGIN:VALARM\r\n" +
-		"ACTION:DISPLAY\r\n" +
-		"TRIGGER:-PT30M\r\n" +
-		"DESCRIPTION:Real reminder\r\n" +
-		"END:VALARM\r\n" +
-		"END:VEVENT\r\n" +
-		"END:VCALENDAR\r\n"
+	ics := eventICS("action-none-event@example.com", "Event with a no-op alarm",
+		"ACTION:NONE\r\nTRIGGER:-PT15M\r\n",
+		"ACTION:PROCEDURE\r\nTRIGGER:-PT5M\r\n",
+		"ACTION:DISPLAY\r\nTRIGGER:-PT30M\r\nDESCRIPTION:Real reminder\r\n",
+	)
 
 	result, err := ImportFile(strings.NewReader(ics))
 	if err != nil {
 		t.Fatalf("ImportFile: %v", err)
 	}
-	if len(result.Events) != 1 {
-		t.Fatalf("events = %d, want 1", len(result.Events))
-	}
-	if len(result.Events[0].Alarms) != 1 {
-		t.Fatalf("event alarms = %d, want 1; alarms = %+v", len(result.Events[0].Alarms), result.Events[0].Alarms)
+	if len(result.Events) != 1 || len(result.Events[0].Alarms) != 1 {
+		t.Fatalf("events/alarms = %d/%+v, want 1 event with 1 alarm", len(result.Events), result.Events)
 	}
 	if got := result.Events[0].Alarms[0].Action; got != "DISPLAY" {
 		t.Errorf("surviving alarm action = %q, want DISPLAY", got)
@@ -152,23 +149,9 @@ func TestImport_UnsupportedAlarmAction_DropsAlarmKeepsRecord(t *testing.T) {
 // rejects. The parser must warn about both values and must not store them.
 func TestImport_UnsupportedAlarmRelatedAndDuration_DegradeWithWarning(t *testing.T) {
 	t.Parallel()
-	const ics = "BEGIN:VCALENDAR\r\n" +
-		"VERSION:2.0\r\n" +
-		"PRODID:-//test//EN\r\n" +
-		"BEGIN:VEVENT\r\n" +
-		"UID:bad-related-event@example.com\r\n" +
-		"DTSTAMP:20260401T100000Z\r\n" +
-		"DTSTART:20260401T140000Z\r\n" +
-		"DTEND:20260401T150000Z\r\n" +
-		"SUMMARY:Event with a bad RELATED and DURATION\r\n" +
-		"BEGIN:VALARM\r\n" +
-		"ACTION:DISPLAY\r\n" +
-		"TRIGGER;RELATED=STARTS:-PT15M\r\n" +
-		"REPEAT:2\r\n" +
-		"DURATION:5 minutes\r\n" +
-		"END:VALARM\r\n" +
-		"END:VEVENT\r\n" +
-		"END:VCALENDAR\r\n"
+	ics := eventICS("bad-related-event@example.com", "Event with a bad RELATED and DURATION",
+		"ACTION:DISPLAY\r\nTRIGGER;RELATED=STARTS:-PT15M\r\nREPEAT:2\r\nDURATION:5 minutes\r\n",
+	)
 
 	result, err := ImportFile(strings.NewReader(ics))
 	if err != nil {
@@ -201,28 +184,10 @@ func TestImport_UnsupportedAlarmRelatedAndDuration_DegradeWithWarning(t *testing
 // the repeat triggers cannot walk backwards in time.
 func TestImport_RecoverableAlarmDefects_KeepAlarm(t *testing.T) {
 	t.Parallel()
-	const ics = "BEGIN:VCALENDAR\r\n" +
-		"VERSION:2.0\r\n" +
-		"PRODID:-//test//EN\r\n" +
-		"BEGIN:VEVENT\r\n" +
-		"UID:recoverable-alarm-event@example.com\r\n" +
-		"DTSTAMP:20260401T100000Z\r\n" +
-		"DTSTART:20260401T140000Z\r\n" +
-		"DTEND:20260401T150000Z\r\n" +
-		"SUMMARY:Event with recoverable alarm defects\r\n" +
-		"BEGIN:VALARM\r\n" +
-		"ACTION:\r\n" +
-		"TRIGGER:-PT15M\r\n" +
-		"REPEAT:3\r\n" +
-		"END:VALARM\r\n" +
-		"BEGIN:VALARM\r\n" +
-		"ACTION:DISPLAY\r\n" +
-		"TRIGGER:-PT30M\r\n" +
-		"REPEAT:2\r\n" +
-		"DURATION:-PT5M\r\n" +
-		"END:VALARM\r\n" +
-		"END:VEVENT\r\n" +
-		"END:VCALENDAR\r\n"
+	ics := eventICS("recoverable-alarm-event@example.com", "Event with recoverable alarm defects",
+		"ACTION:\r\nTRIGGER:-PT15M\r\nREPEAT:3\r\n",
+		"ACTION:DISPLAY\r\nTRIGGER:-PT30M\r\nREPEAT:2\r\nDURATION:-PT5M\r\n",
+	)
 
 	result, err := ImportFile(strings.NewReader(ics))
 	if err != nil {
