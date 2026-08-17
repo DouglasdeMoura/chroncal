@@ -802,7 +802,9 @@ func buildValarm(alarm model.Alarm) *ical.Component {
 		p.Value = alarm.Duration
 		valarm.Props.Set(p)
 		p2 := &ical.Prop{Name: "REPEAT"}
-		p2.Value = strconv.Itoa(alarm.Repeat)
+		// Clamp like import does. A pre-clamp DB row must not push a
+		// count the next pull would rewrite.
+		p2.Value = strconv.Itoa(min(alarm.Repeat, model.MaxAlarmRepeat))
 		valarm.Props.Set(p2)
 	}
 	// ACKNOWLEDGED (RFC 9074) — round-trip only.

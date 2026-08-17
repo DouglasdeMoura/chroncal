@@ -13,6 +13,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/db"
 	"github.com/douglasdemoura/chroncal/internal/fileid"
+	"github.com/douglasdemoura/chroncal/internal/model"
 )
 
 func Open(dbPath string) (*sql.DB, *Queries, error) {
@@ -65,6 +66,10 @@ func Open(dbPath string) (*sql.DB, *Queries, error) {
 	if err := purgeLibicalDiagnosticXProps(conn); err != nil {
 		conn.Close()
 		return nil, nil, fmt.Errorf("purge libical diagnostic x-props: %w", err)
+	}
+	if err := normalizeAlarmRepeatPairs(conn); err != nil {
+		conn.Close()
+		return nil, nil, fmt.Errorf("normalize alarm repeat pairs: %w", err)
 	}
 
 	return conn, q, nil
@@ -198,6 +203,64 @@ func purgeLibicalDiagnosticXProps(conn *sql.DB) error {
 	_, err := conn.ExecContext(context.Background(),
 		`DELETE FROM x_properties WHERE name LIKE 'X-LIC-%'`)
 	return err
+}
+
+// normalizeAlarmRepeatPairs heals alarm rows written before the parsers
+// validated REPEAT and DURATION (issue #580). It clamps the repeat count.
+// It clears an interval that fails model.ValidAlarmDuration. It clears an
+// unpaired REPEAT or DURATION. Without this repair, export and the next
+// pull disagree with the stored row: the mismatch deletes and recreates
+// the alarm row, and the cascade discards the alarm state. The function
+// runs on every startup. It changes nothing when all rows are normal.
+func normalizeAlarmRepeatPairs(conn *sql.DB) error {
+	ctx := context.Background()
+	for _, table := range []string{"event_alarms", "todo_alarms"} {
+		type fix struct {
+			id       int64
+			repeat   int
+			duration string
+		}
+		var fixes []fix
+		err := func() error {
+			rows, err := conn.QueryContext(ctx,
+				`SELECT id, repeat, COALESCE(duration, '') FROM `+table+
+					` WHERE repeat > 0 OR COALESCE(duration, '') != ''`)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var id int64
+				var a model.Alarm
+				if err := rows.Scan(&id, &a.Repeat, &a.Duration); err != nil {
+					return err
+				}
+				healed := a
+				healed.Repeat = min(healed.Repeat, model.MaxAlarmRepeat)
+				if !model.ValidAlarmDuration(healed.Duration) {
+					healed.Duration = ""
+				}
+				if !healed.RepeatPaired() {
+					healed.Repeat, healed.Duration = 0, ""
+				}
+				if healed.Repeat != a.Repeat || healed.Duration != a.Duration {
+					fixes = append(fixes, fix{id, healed.Repeat, healed.Duration})
+				}
+			}
+			return rows.Err()
+		}()
+		if err != nil {
+			return fmt.Errorf("scan %s: %w", table, err)
+		}
+		for _, f := range fixes {
+			if _, err := conn.ExecContext(ctx,
+				`UPDATE `+table+` SET repeat = ?, duration = NULLIF(?, '') WHERE id = ?`,
+				f.repeat, f.duration, f.id); err != nil {
+				return fmt.Errorf("heal %s row %d: %w", table, f.id, err)
+			}
+		}
+	}
+	return nil
 }
 
 // backfillAlarmUIDs assigns random UUIDs to alarms that have empty UIDs.
