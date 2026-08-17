@@ -631,14 +631,16 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 		// An unsupported action must not reach the alarm tables (issue
 		// #575, see model.ValidAlarmAction). Every later push omits the
 		// VALARM, so Google can re-apply its default reminders. That loss
-		// is smaller than a sync that never converges. An empty value
-		// keeps the DISPLAY default: applyAlarmDefaults rescued it before
-		// this check existed, and a reminder must not vanish over it.
-		if action := strings.ToUpper(strings.TrimSpace(prop.Value)); action != "" {
-			if !model.ValidAlarmAction(action) {
-				warns = append(warns, fmt.Sprintf("VALARM ACTION %q: unsupported action; alarm dropped", action))
-				return model.Alarm{}, strings.Join(warns, "; ")
-			}
+		// is smaller than a sync that never converges.
+		switch action := strings.ToUpper(strings.TrimSpace(prop.Value)); {
+		case action == "":
+			// Keep the DISPLAY default: applyAlarmDefaults rescued the
+			// empty value before this check existed, and a reminder
+			// must not vanish over it.
+		case !model.ValidAlarmAction(action):
+			warns = append(warns, fmt.Sprintf("VALARM ACTION %q: unsupported action; alarm dropped", action))
+			return model.Alarm{}, strings.Join(warns, "; ")
+		default:
 			alarm.Action = action
 		}
 	}
@@ -709,8 +711,7 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 		// "START" for absolute triggers.
 		if rel := prop.Params.Get("RELATED"); rel != "" && isDuration {
 			// Same failure class as an unsupported ACTION (issue #575,
-			// see model.ValidAlarmRelated). Keep the default START and
-			// warn.
+			// see model.ValidAlarmRelated).
 			if up := strings.ToUpper(rel); model.ValidAlarmRelated(up) {
 				alarm.Related = up
 			} else {
@@ -734,18 +735,16 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 		// An unreadable value must warn: the pairing rule below drops the
 		// DURATION over it, and the report must name the cause.
 		v, err := strconv.Atoi(strings.TrimSpace(prop.Value))
-		switch {
-		case err != nil || v < 0:
+		if err != nil || v < 0 {
 			warns = append(warns, fmt.Sprintf("VALARM REPEAT: invalid value %q; ignored", prop.Value))
-		case v > 0:
+		} else if v > 0 { // zero is a valid "no repeats", not a defect
 			alarm.Repeat = min(v, model.MaxAlarmRepeat)
 		}
 	}
 	if prop := comp.Props.Get(ical.PropDuration); prop != nil {
 		// A malformed DURATION pushes verbatim, and a strict CalDAV
-		// server rejects the whole resource with 400. A negative or zero
-		// value breaks the repeat triggers (see model.ValidAlarmDuration).
-		// Drop the bad value and warn.
+		// server rejects the whole resource with 400. See
+		// model.ValidAlarmDuration for the value rule.
 		if model.ValidAlarmDuration(prop.Value) {
 			alarm.Duration = prop.Value
 		} else {
@@ -756,7 +755,7 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 	// value cannot round-trip: buildValarm omits it, and the next pull then
 	// deletes and recreates the alarm row, which loses the alarm state.
 	// Clear the incomplete pair and name the dropped side.
-	if (alarm.Repeat > 0) != (alarm.Duration != "") {
+	if !alarm.RepeatPaired() {
 		dropped := "REPEAT"
 		if alarm.Duration != "" {
 			dropped = "DURATION"
