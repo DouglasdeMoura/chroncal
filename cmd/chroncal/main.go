@@ -87,9 +87,12 @@ func printCLIError(err error) {
 }
 
 var (
-	outputFmt      string
-	allowPlaintext bool
-	cfg            config.Config
+	outputFmt       string
+	allowPlaintext  bool
+	tuiEventRef     string
+	tuiRecurrenceID string
+	tuiAt           string
+	cfg             config.Config
 )
 
 // groupRunE is RunE for a parent command with subcommands. Pair it with
@@ -181,6 +184,10 @@ Helpful conventions:
 	Example: `  # Open the interactive terminal UI
   chroncal
 
+  # Open the TUI on a specific event
+  chroncal --event 42
+  chroncal --event 42 --at 2026-04-17T14:00:00Z
+
   # See the next week of events
   chroncal event list --from 2026-04-01 --to 2026-04-07
 
@@ -229,7 +236,16 @@ Helpful conventions:
 			go purger.RunDaily(context.Background())
 		}
 
-		return tui.Run(a, cfg.UI.Theme)
+		var openEvent event.Event
+		if tuiEventRef != "" || tuiRecurrenceID != "" || tuiAt != "" {
+			var openErr error
+			openEvent, openErr = resolveTUIOpenEvent(context.Background(), a, tuiEventRef, tuiRecurrenceID, tuiAt)
+			if openErr != nil {
+				return openErr
+			}
+		}
+
+		return tui.Run(a, cfg.UI.Theme, tui.RunOptions{Event: openEvent})
 	},
 }
 
@@ -256,6 +272,9 @@ func initApp() (*app.App, error) {
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&outputFmt, "output", "o", "text", "output format (text, json)")
 	rootCmd.PersistentFlags().BoolVar(&allowPlaintext, "allow-plaintext", false, "permit storing credentials in plaintext when no OS keyring is available")
+	rootCmd.Flags().StringVar(&tuiEventRef, "event", "", "open the TUI on this event (ID or UID)")
+	rootCmd.Flags().StringVar(&tuiRecurrenceID, "recurrence-id", "", "open a recurrence override (use with a series UID)")
+	rootCmd.Flags().StringVar(&tuiAt, "at", "", "open a generated occurrence at this time (RFC 3339 or YYYY-MM-DD)")
 
 	rootCmd.AddGroup(
 		&cobra.Group{ID: groupPlanning, Title: "Planning and Scheduling"},

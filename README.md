@@ -241,6 +241,10 @@ A later release can add `.deb` and `.rpm` assets with GoReleaser nFPM. Do this a
 # Launch the interactive TUI
 chroncal
 
+# Open the TUI on a specific event (optional occurrence time)
+chroncal --event 42
+chroncal --event 42 --at 2026-04-17T14:00:00Z
+
 # Create a calendar
 chroncal calendar create "Work" --color "#3B82F6"
 
@@ -571,7 +575,7 @@ List soft-deleted candidates with `--include-deleted` on the related `list` comm
 
 ## TUI
 
-Run `chroncal` with no arguments to launch the interactive terminal UI.
+Run `chroncal` with no arguments to launch the interactive terminal UI. Pass `--event <id|uid>` to jump to that event and open its details. Generated occurrences also take `--at <RFC3339 or YYYY-MM-DD>`. Stored overrides take `--recurrence-id`.
 
 **Views**: month, week, day, agenda. Switch with `m`, `w`, `d`, `a`.
 

@@ -431,6 +431,9 @@ type Model struct {
 	dialogOpen               bool
 	viewDialog               EventViewDialogModel
 	viewDialogOpen           bool
+	// pendingOpenEvent is set by WithOpenEvent so the first events load
+	// can select that occurrence and open the view dialog.
+	pendingOpenEvent event.Event
 	// viewReturnEvent is set when the event form opens from the
 	// view dialog. After the form closes (save or cancel) the app
 	// reopens the view with this event. The user then lands back where
@@ -2780,12 +2783,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// After an agenda load lands, pull in the next month if the loaded
 		// rows do not fill the viewport. That prevents a stare at blank
 		// space below a sparse month until the user navigates.
+		var cmds []tea.Cmd
 		if m.viewMode == viewAgenda {
 			if cmd := m.agenda.MaybeFillViewport(); cmd != nil {
-				return m, cmd
+				cmds = append(cmds, cmd)
 			}
 		}
-		return m, nil
+		if m.pendingOpenEvent.ID != 0 {
+			matched := matchOpenEvent(m.events, m.pendingOpenEvent)
+			m.agenda = m.agenda.SelectEvent(matched.ID, matched.StartTime)
+			openEv := matched
+			m.pendingOpenEvent = event.Event{}
+			cmds = append(cmds, func() tea.Msg { return EventViewRequestedMsg{Event: openEv} })
+		}
+		return m, tea.Batch(cmds...)
 
 	case calendarsLoadedMsg:
 		if msg.err == nil {
@@ -2955,6 +2966,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return eventViewLoadedMsg{err: err}
 			}
 			fresh.Alarms = alarms
+			fresh = applyOccurrenceTimes(fresh, ev)
 			return eventViewLoadedMsg{event: fresh}
 		}
 
@@ -5426,7 +5438,13 @@ func (m Model) saveUIState() {
 	})
 }
 
-func Run(a *app.App, themeName string) error {
+// RunOptions configures a TUI session. A non-zero Event jumps to that
+// occurrence and opens its view dialog after the first load.
+type RunOptions struct {
+	Event event.Event
+}
+
+func Run(a *app.App, themeName string, opts RunOptions) error {
 	// Query the terminal before Bubble Tea takes over stdin. The helper
 	// sends OSC 11 (bg) + OSC 10 (fg) + OSC 4 (palette 0..15) + DA1 in
 	// one raw-mode session:
@@ -5445,6 +5463,9 @@ func Run(a *app.App, themeName string) error {
 	SetActivePalette(palette)
 
 	model := NewModel(a, themeName)
+	if opts.Event.ID != 0 {
+		model = model.WithOpenEvent(opts.Event)
+	}
 	// Bubbletea renders on a frame-rate ticker (default 60 FPS). At 60
 	// FPS only ~16 ms is spent per visible frame. When the user holds
 	// a navigation key the highlight steps once per ~16 ms even though

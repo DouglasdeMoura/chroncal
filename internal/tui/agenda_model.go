@@ -356,6 +356,43 @@ func (m AgendaModel) SelectedEvent() (event.Event, bool) {
 	return r.event, true
 }
 
+// SelectEvent moves the cursor to the row for id at start. Exact StartTime
+// wins, then the same local day, then the first row with that ID.
+func (m AgendaModel) SelectEvent(id int64, start time.Time) AgendaModel {
+	if id == 0 {
+		return m
+	}
+	exact, dayMatch, anyMatch := -1, -1, -1
+	for i, r := range m.rows {
+		if !hasEvent(r) || r.event.ID != id {
+			continue
+		}
+		if anyMatch < 0 {
+			anyMatch = i
+		}
+		if !start.IsZero() && r.event.StartTime.Equal(start) {
+			exact = i
+			break
+		}
+		if !start.IsZero() && sameDay(r.event.StartTime, start) && dayMatch < 0 {
+			dayMatch = i
+		}
+	}
+	idx := exact
+	if idx < 0 {
+		idx = dayMatch
+	}
+	if idx < 0 {
+		idx = anyMatch
+	}
+	if idx < 0 {
+		return m
+	}
+	m.selected = idx
+	m.ensureVisible()
+	return m
+}
+
 // isSelectableRow reports whether r can be the current selection — event
 // rows and empty-day placeholders both qualify; separators and month
 // headers don't.
