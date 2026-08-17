@@ -149,7 +149,7 @@ func NewService(db *sql.DB, q *storage.Queries) *Service {
 }
 ```
 
-CLI commands live in `cmd/chroncal/`. Each resource group has one file that exports a `Command()` function. The function returns a `*cobra.Command`. `event_rsvp.go` holds the RSVP subcommand for the event group.
+CLI commands live in `cmd/chroncal/`. Each resource group has one file that exports a `Command()` function. The function returns a `*cobra.Command`. `event_rsvp.go` holds the RSVP subcommand for the event group. `tui_open.go` resolves the root TUI launch flags.
 
 ### Names
 

@@ -37,7 +37,7 @@ Integration packages and infrastructure packages do not use the `NewService` sha
 
 Models live in `internal/{domain}/model.go` (for example, `event.Event`). Shared models live in `internal/model/` (for example, `model.Alarm`, `model.Attendee`).
 
-CLI commands live in `cmd/chroncal/`. Each resource group has one file that exports a `Command()` function. The function returns a `*cobra.Command`. `event_rsvp.go` is the one exception. It holds the RSVP subcommand, and `event.go` wires it into the event command. Commands use `resolveEvent()`, `resolveTodo()`, and `resolveJournal()` to resolve a reference by ID, UID, or UID plus recurrenceID.
+CLI commands live in `cmd/chroncal/`. Each resource group has one file that exports a `Command()` function. The function returns a `*cobra.Command`. `event_rsvp.go` is the one exception. It holds the RSVP subcommand, and `event.go` wires it into the event command. `tui_open.go` is not a resource group file. It resolves the root `--event`, `--at`, and `--recurrence-id` flags for a TUI launch. Commands use `resolveEvent()`, `resolveTodo()`, and `resolveJournal()` to resolve a reference by ID, UID, or UID plus recurrenceID.
 
 ## Storage Layer
 

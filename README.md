@@ -16,7 +16,7 @@ chroncal keeps your calendar data local and portable. The data follows the calen
 
 ## Features
 
-- **Interactive TUI** with month, week, day, and agenda views
+- **Interactive TUI** with month, week, day, and agenda views. Launch it on a given event with `chroncal --event`.
 - **Omarchy menu bar** through [Chroncal Bar](https://github.com/DouglasdeMoura/chroncal-bar)
 - **Full CLI** for scripts and automation
 - **iCal import/export** with broad RFC 5545 coverage (VEVENT, VTODO, VJOURNAL, VALARM, VTIMEZONE)
@@ -539,6 +539,8 @@ Set `sync.interval` in `config.toml` to change the default for later installs. P
 
 All commands accept `-o, --output {text,json}` (default: text).
 
+The bare `chroncal` launch command also accepts `--event <id|uid>`, `--at <RFC3339 or YYYY-MM-DD>`, and `--recurrence-id <RFC3339>`. These flags open the TUI on an event. See [TUI](#tui).
+
 ### Scripts and LLM use
 
 The CLI is for shells and language models, not only for hand input. The agent-friendly path:
@@ -592,7 +594,16 @@ List soft-deleted candidates with `--include-deleted` on the related `list` comm
 
 ## TUI
 
-Run `chroncal` with no arguments to launch the interactive terminal UI. Pass `--event <id|uid>` to jump to that event and open its details. Generated occurrences also take `--at <RFC3339 or YYYY-MM-DD>`. Stored overrides take `--recurrence-id`.
+Run `chroncal` with no arguments to launch the interactive terminal UI.
+
+Pass `--event <id|uid>` to jump to the event's day and open its details. Every view starts on that day:
+
+```bash
+chroncal --event 42
+chroncal --event standup-uid --at 2026-04-17T14:00:00Z
+```
+
+`--at` accepts an RFC 3339 timestamp or `YYYY-MM-DD`. It selects a generated occurrence of a recurring series. The details show the times of that occurrence, not the series start. Stored overrides take `--recurrence-id` with the series UID. `--at` requires `--event` and excludes `--recurrence-id`.
 
 **Views**: month, week, day, agenda. Switch with `m`, `w`, `d`, `a`.
 
