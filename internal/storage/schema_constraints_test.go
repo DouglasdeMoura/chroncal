@@ -398,6 +398,9 @@ func TestAlarmConstraintsMatchModelValidators(t *testing.T) {
 				t.Errorf("%s action %q: insert ok = %v, ValidAlarmAction = %v (err: %v)",
 					ins.table, action, got, want, err)
 			}
+			if err != nil && !strings.Contains(err.Error(), "CHECK constraint failed") {
+				t.Errorf("%s action %q: rejected by %v, not by the CHECK constraint", ins.table, action, err)
+			}
 		}
 		for _, related := range relateds {
 			_, err := db.Exec(
@@ -407,6 +410,9 @@ func TestAlarmConstraintsMatchModelValidators(t *testing.T) {
 			if got, want := err == nil, model.ValidAlarmRelated(related); got != want {
 				t.Errorf("%s related %q: insert ok = %v, ValidAlarmRelated = %v (err: %v)",
 					ins.table, related, got, want, err)
+			}
+			if err != nil && !strings.Contains(err.Error(), "CHECK constraint failed") {
+				t.Errorf("%s related %q: rejected by %v, not by the CHECK constraint", ins.table, related, err)
 			}
 		}
 	}
