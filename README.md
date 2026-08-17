@@ -291,6 +291,7 @@ chroncal event get            <id|uid> [--recurrence-id ID]
 chroncal event search         <query> [--calendar NAME] [--from DATE] [--to DATE] [--status STATUS]
 chroncal event add            "<title>" [flags]
 chroncal event update         <id|uid> [flags] [--recurrence-id ID]
+chroncal event rsvp           <id|uid> --status ACCEPTED|DECLINED|TENTATIVE
 chroncal event delete         <id|uid> [--recurrence-id ID] [--yes]
 chroncal event restore        <id|uid>
 chroncal event purge          <id> [--yes]

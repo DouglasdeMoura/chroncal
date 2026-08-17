@@ -38,7 +38,7 @@ alarms, attendees, attachments, and other iCalendar metadata.`,
 	}
 	cmd.AddCommand(
 		eventListCmd(), eventGetCmd(), eventAddCmd(), eventUpdateCmd(),
-		eventDeleteCmd(), eventSearchCmd(),
+		eventRsvpCmd(), eventDeleteCmd(), eventSearchCmd(),
 		eventRestoreCmd(), eventPurgeCmd(), eventPurgeDeletedCmd(),
 	)
 	return cmd
