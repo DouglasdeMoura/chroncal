@@ -1716,7 +1716,7 @@ func parseOneAlarm(val string) (model.Alarm, error) {
 	}
 	if len(parts) > 4 && parts[4] != "" {
 		rel := strings.ToUpper(parts[4])
-		if rel != "START" && rel != "END" {
+		if !model.ValidAlarmRelated(rel) {
 			return model.Alarm{}, fmt.Errorf("alarm %q: related must be START or END, got %q", val, parts[4])
 		}
 		a.Related = rel

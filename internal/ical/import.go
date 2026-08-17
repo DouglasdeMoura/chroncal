@@ -628,17 +628,14 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 
 	if prop := comp.Props.Get(ical.PropAction); prop != nil {
 		alarm.Action = strings.ToUpper(prop.Value)
-	}
-	// The alarm tables accept only the actions in model.ValidAlarmAction.
-	// An unsupported action must not reach storage: the failed insert rolls
-	// back the whole resource transaction, and sync then retries the
-	// resource forever (issue #575). Google Calendar emits ACTION:NONE as a
-	// "no reminder" sentinel. Drop the alarm, warn, and return: a dropped
-	// alarm makes the other VALARM properties irrelevant. The next push
-	// omits the VALARM, so Google can re-apply its default reminders. That
-	// loss is smaller than a sync that never converges.
-	if !model.ValidAlarmAction(alarm.Action) {
-		return model.Alarm{}, fmt.Sprintf("VALARM ACTION %q: unsupported action; alarm dropped", alarm.Action)
+		// Google Calendar emits ACTION:NONE as a "no reminder" sentinel.
+		// An unsupported action must not reach the alarm tables (issue
+		// #575, see model.ValidAlarmAction). The next push then omits the
+		// VALARM, so Google can re-apply its default reminders. That loss
+		// is smaller than a sync that never converges.
+		if !model.ValidAlarmAction(alarm.Action) {
+			return model.Alarm{}, fmt.Sprintf("VALARM ACTION %q: unsupported action; alarm dropped", alarm.Action)
+		}
 	}
 	if prop := comp.Props.Get(ical.PropTrigger); prop != nil {
 		tv := prop.Value
@@ -704,13 +701,12 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 		// (push+pull resets it to START) and that silently resurfaces if the
 		// user later switches the trigger to a duration. Keep the default
 		// "START" for absolute triggers.
-		if rel := strings.ToUpper(prop.Params.Get("RELATED")); rel != "" && isDuration {
-			// The alarm tables accept only START and END (the CHECK
-			// constraint in db/migrations/003 and 006). Any other value
-			// would roll back the whole resource, the same failure class
-			// as an unsupported ACTION (issue #575). Keep the default
-			// START and warn.
-			if rel == "START" || rel == "END" {
+		if rel := prop.Params.Get("RELATED"); rel != "" && isDuration {
+			// Same failure class as an unsupported ACTION (issue #575,
+			// see model.ValidAlarmRelated). Keep the default START and
+			// warn.
+			rel = strings.ToUpper(rel)
+			if model.ValidAlarmRelated(rel) {
 				alarm.Related = rel
 			} else {
 				warns = append(warns, fmt.Sprintf("VALARM TRIGGER RELATED=%s: unsupported value, using START", rel))
@@ -733,12 +729,13 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 	if prop := comp.Props.Get(ical.PropDuration); prop != nil {
 		// A malformed DURATION stores without error, but the next push
 		// re-emits it verbatim and a strict CalDAV server rejects the
-		// whole resource with 400. Drop it and warn. Export pairs
-		// DURATION with REPEAT, so the repeat count alone emits nothing.
+		// whole resource with 400. Drop it and warn. Also clear REPEAT:
+		// RFC 5545 §3.8.6.3 requires the pair together.
 		if duration.Validate(prop.Value) == nil {
 			alarm.Duration = prop.Value
 		} else {
-			warns = append(warns, fmt.Sprintf("VALARM DURATION: unparseable value %q; repeat interval dropped", prop.Value))
+			alarm.Repeat = 0
+			warns = append(warns, fmt.Sprintf("VALARM DURATION: unparseable value %q; repeat dropped", prop.Value))
 		}
 	}
 
