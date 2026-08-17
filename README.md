@@ -17,6 +17,7 @@ chroncal keeps your calendar data local and portable. The data follows the calen
 ## Features
 
 - **Interactive TUI** with month, week, day, and agenda views
+- **Omarchy menu bar** through [Chroncal Bar](https://github.com/DouglasdeMoura/chroncal-bar)
 - **Full CLI** for scripts and automation
 - **iCal import/export** with broad RFC 5545 coverage (VEVENT, VTODO, VJOURNAL, VALARM, VTIMEZONE)
 - **CalDAV sync** with collection discovery, selective imports, access metadata, conflict resolution, sync health, and Google re-auth
@@ -683,13 +684,40 @@ Live interoperability QA ran against Nextcloud CalDAV with:
 
 Nextcloud does not expose a `VJOURNAL` collection by default. chroncal works with a dedicated CalDAV calendar created with `supported-calendar-component-set = VJOURNAL`.
 
-## Desktop icon
+## Omarchy
 
-chroncal ships an application icon under [`assets/`](assets/). The set is a vector master (`chroncal.svg`) plus raster PNGs from 16px to 512px. chroncal is a terminal app. You normally launch it by typing `chroncal` (or a shell alias), like `lazygit` or `lazydocker`. Use the icon when you want a graphical launcher tile.
+If you use [Omarchy](https://omarchy.org/), Chroncal can live on the menu bar and in the launcher.
 
-### Omarchy
+### Menu bar
 
-[Omarchy](https://omarchy.org/) has a built-in command that turns a terminal app into a launcher tile. You do not have to write a `.desktop` file by hand. Point it at the chroncal icon. Then find the tile with **SUPER + SPACE**:
+[Chroncal Bar](https://github.com/DouglasdeMoura/chroncal-bar) is an Omarchy plugin. It shows the current or next event on the bar. Left click opens the agenda. Middle click opens the next event URL. Right click refreshes.
+
+<p align="center">
+  <img src="assets/chroncal-bar.png" alt="Chroncal Bar showing the current event on the Omarchy menu bar">
+</p>
+
+<p align="center">
+  <img src="assets/chroncal-bar-agenda.png" alt="Chroncal Bar agenda grouped by day">
+</p>
+
+<p align="center">
+  <img src="assets/chroncal-bar-event.png" alt="Event details in Chroncal Bar">
+</p>
+
+Install Chroncal first. Then add the plugin:
+
+```sh
+omarchy plugin add https://github.com/DouglasdeMoura/chroncal-bar.git --enable
+omarchy bar move douglasdemoura.chroncal-bar --section right --after omarchy.tray
+```
+
+The second command is optional. It places the widget beside the tray.
+
+Chroncal Bar talks to the Chroncal CLI. Recurrence authoring, CalDAV accounts, alarms, and the rest of Chroncal stay in the TUI.
+
+### Launcher tile
+
+Omarchy has a built-in command that turns a terminal app into a launcher tile. You do not have to write a `.desktop` file by hand. Point it at the chroncal icon. Then find the tile with **SUPER + SPACE**:
 
 ```bash
 omarchy tui install chroncal chroncal float \
@@ -707,6 +735,10 @@ omarchy tui install chroncal chroncal float "$PWD/assets/chroncal.svg"
 ```
 
 Remove the launcher later with `omarchy tui remove chroncal`.
+
+## Desktop icon
+
+chroncal ships an application icon under [`assets/`](assets/). The set is a vector master (`chroncal.svg`) plus raster PNGs from 16px to 512px. chroncal is a terminal app. You normally launch it by typing `chroncal` (or a shell alias), like `lazygit` or `lazydocker`. Use the icon when you want a graphical launcher tile.
 
 ### Other launchers (walker, rofi, GNOME, KDE)
 
@@ -740,6 +772,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, tests, and code co
 ## Links
 
 - [GitHub Repository](https://github.com/DouglasdeMoura/chroncal)
+- [Chroncal Bar (Omarchy menu bar)](https://github.com/DouglasdeMoura/chroncal-bar)
 - [Go Package Reference](https://pkg.go.dev/github.com/douglasdemoura/chroncal)
 - [Issue Tracker](https://github.com/DouglasdeMoura/chroncal/issues)
 - [Releases](https://github.com/DouglasdeMoura/chroncal/releases)
