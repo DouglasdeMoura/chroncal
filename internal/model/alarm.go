@@ -148,6 +148,13 @@ func ValidAlarmAction(action string) bool {
 	return false
 }
 
+// ValidAlarmRelated returns true if related is a value the alarm tables
+// accept for the TRIGGER anchor. The set mirrors the same CHECK
+// constraints as ValidAlarmAction, with the same lockstep rule.
+func ValidAlarmRelated(related string) bool {
+	return related == "START" || related == "END"
+}
+
 // ValidateAcknowledged returns true if v is a valid RFC 9074 ACKNOWLEDGED
 // value: empty string (clear), iCal UTC datetime, or RFC 3339.
 func ValidateAcknowledged(v string) bool {

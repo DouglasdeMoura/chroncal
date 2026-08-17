@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/douglasdemoura/chroncal/internal/model"
 )
 
 func TestTodosSchemaRejectsDueDateAndDuration(t *testing.T) {
@@ -339,5 +341,73 @@ func TestCalendarsRejectInvalidRemoteMetadata(t *testing.T) {
 		`INSERT INTO calendars (name, remote_missing) VALUES ('Bad missing flag', 2)`,
 	); err == nil || !strings.Contains(err.Error(), "CHECK constraint failed") {
 		t.Fatalf("invalid remote missing error = %v, want CHECK constraint failure", err)
+	}
+}
+
+// The alarm CHECK constraints and the model predicates must stay in
+// lockstep (issue #575: a value that passes the Go side but fails the
+// constraint rolls back the whole resource transaction during sync). This
+// test probes both alarm tables with candidate values and requires that
+// the schema and model.ValidAlarmAction / model.ValidAlarmRelated agree
+// on each one.
+func TestAlarmConstraintsMatchModelValidators(t *testing.T) {
+	db, q, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("list calendars: %v", err)
+	}
+	calID := cals[0].ID
+
+	res, err := db.Exec(`INSERT INTO events (uid, calendar_id, title, start_time, end_time, all_day, status, transp, sequence, priority)
+		 VALUES ('lockstep-event', ?, 'Test', '2026-04-01T00:00:00Z', '2026-04-01T01:00:00Z', 0, 'CONFIRMED', 'OPAQUE', 0, 0)`, calID)
+	if err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+	eventID, _ := res.LastInsertId()
+	res, err = db.Exec(`INSERT INTO todos (uid, calendar_id, summary, status, priority, sequence)
+		 VALUES ('lockstep-todo', ?, 'Test', 'NEEDS-ACTION', 0, 0)`, calID)
+	if err != nil {
+		t.Fatalf("insert todo: %v", err)
+	}
+	todoID, _ := res.LastInsertId()
+
+	inserts := []struct {
+		table string
+		fk    string
+		id    int64
+	}{
+		{"event_alarms", "event_id", eventID},
+		{"todo_alarms", "todo_id", todoID},
+	}
+	actions := []string{"AUDIO", "DISPLAY", "EMAIL", "NONE", "PROCEDURE", "display", ""}
+	relateds := []string{"START", "END", "STARTS", "end", ""}
+
+	for _, ins := range inserts {
+		for _, action := range actions {
+			_, err := db.Exec(
+				`INSERT INTO `+ins.table+` (`+ins.fk+`, action, trigger_value) VALUES (?, ?, '-PT15M')`,
+				ins.id, action,
+			)
+			if got, want := err == nil, model.ValidAlarmAction(action); got != want {
+				t.Errorf("%s action %q: insert ok = %v, ValidAlarmAction = %v (err: %v)",
+					ins.table, action, got, want, err)
+			}
+		}
+		for _, related := range relateds {
+			_, err := db.Exec(
+				`INSERT INTO `+ins.table+` (`+ins.fk+`, action, trigger_value, related) VALUES (?, 'DISPLAY', '-PT15M', ?)`,
+				ins.id, related,
+			)
+			if got, want := err == nil, model.ValidAlarmRelated(related); got != want {
+				t.Errorf("%s related %q: insert ok = %v, ValidAlarmRelated = %v (err: %v)",
+					ins.table, related, got, want, err)
+			}
+		}
 	}
 }
