@@ -764,7 +764,15 @@ func buildValarm(alarm model.Alarm) *ical.Component {
 	if alarm.UID != "" {
 		valarm.Props.SetText(ical.PropUID, alarm.UID)
 	}
-	valarm.Props.SetText(ical.PropAction, alarm.Action)
+	// Normalize the action once. An empty action means DISPLAY everywhere
+	// else, and a bare "ACTION:" line is invalid iCal that a strict server
+	// rejects. The write paths default the empty value, so this arm covers
+	// an in-memory alarm that skipped them.
+	action := alarm.Action
+	if action == "" {
+		action = "DISPLAY"
+	}
+	valarm.Props.SetText(ical.PropAction, action)
 
 	// exportableTrigger above guarantees a non-empty value that is either a
 	// duration or a date-time, so the VALUE parameter is never a guess.
@@ -840,15 +848,14 @@ func buildValarm(alarm model.Alarm) *ical.Component {
 
 	// ATTACH: a sound for AUDIO alarms or a document for EMAIL alarms
 	// (RFC 5545 §3.6.6). Emitted as an inline BASE64 blob or a URI.
-	// DISPLAY alarms carry no ATTACH, so drop it for that one action. An
-	// empty action means DISPLAY everywhere else, so drop it there too:
-	// an "ACTION:" line plus ATTACH is invalid iCal that a strict server
-	// rejects.
+	// DISPLAY alarms carry no ATTACH, so drop it for that one action.
+	// The fold covers a legacy lowercase "display" row: the wide CHECK
+	// stores it, and it is semantically a DISPLAY alarm.
 	//
 	// A preserved sync-only action (issue #579) keeps its ATTACH. The
 	// RFC leaves the property set of an x-name or iana-token action
 	// open. The VALARM of another client must round-trip verbatim.
-	if alarm.Action != "DISPLAY" && alarm.Action != "" && (len(alarm.AttachBinary) > 0 || alarm.AttachURI != "") {
+	if !strings.EqualFold(action, "DISPLAY") && (len(alarm.AttachBinary) > 0 || alarm.AttachURI != "") {
 		p := &ical.Prop{Name: ical.PropAttach, Params: make(ical.Params)}
 		if len(alarm.AttachBinary) > 0 {
 			p.Value = base64.StdEncoding.EncodeToString(alarm.AttachBinary)

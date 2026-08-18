@@ -43,7 +43,12 @@ type Alarm struct {
 // does not break the match and lose alarm state. Matched alarms get their
 // X-properties rewritten unconditionally instead.
 func (a Alarm) ContentEqual(b Alarm) bool {
-	if !strings.EqualFold(a.Action, b.Action) {
+	// Exact case: the parser canonicalizes fireable actions to uppercase,
+	// so a case fold gains nothing there. A preserved foreign action
+	// keeps its original case (issue #579), and a case-only remote change
+	// must land locally — a fold would skip the update and the next push
+	// would write the stale case back over the other client's VALARM.
+	if a.Action != b.Action {
 		return false
 	}
 	if !triggerValuesEqual(a.TriggerValue, b.TriggerValue) {

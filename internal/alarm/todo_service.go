@@ -83,10 +83,7 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 		}
 
 		alarms, err := s.todos.ListFireableAlarmsLean(ctx, t.ID)
-		if err != nil {
-			continue
-		}
-		if len(alarms) == 0 {
+		if err != nil || len(alarms) == 0 {
 			continue
 		}
 
@@ -370,15 +367,11 @@ func (s *TodoService) ListExpiredTodoSnoozed(ctx context.Context, now time.Time)
 		}
 		// A sync pull can rewrite a snoozed alarm to a sync-only action
 		// in place (same row ID, matched by UID). The re-fire must not
-		// happen. Acknowledge the state row: an unconsumed snooze would
+		// happen. Dismiss the state row: an unconsumed snooze would
 		// stay pending in `alarm list` forever, and every check tick
-		// would resolve it again for nothing.
+		// would resolve it again with no effect.
 		if !model.FireableAlarmAction(matched.Action) {
-			ackAt := now.UTC().Format(time.RFC3339)
-			_ = s.q.AcknowledgeTodoAlarmState(ctx, storage.AcknowledgeTodoAlarmStateParams{
-				AckedAt: &ackAt,
-				ID:      st.ID,
-			})
+			_ = s.DismissTodoAlarm(ctx, st.ID)
 			continue
 		}
 

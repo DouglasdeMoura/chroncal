@@ -63,7 +63,7 @@ func fireAlarm(da alarm.DueAlarm, policy alarmExecutionPolicy) error {
 		}
 		return nil
 	}
-	// DISPLAY, and the safety net: a fireable action with no dispatch arm
+	// DISPLAY, and the fallback: a fireable action with no dispatch arm
 	// still shows a notification. A sync-only action cannot reach this
 	// function — the mark helpers refuse it before the claim.
 	return notify.Display(da)

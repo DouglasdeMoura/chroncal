@@ -144,8 +144,8 @@ func alarmSummary(alarms []model.Alarm) string {
 
 // formatAlarmWithAction renders an alarm for a read surface outside the
 // alarm editor. A preserved sync-only action (issue #579) never fires.
-// The bare trigger text would read as an armed reminder, so append the
-// action label to break that misreading.
+// The bare trigger text would read as an armed reminder. The appended
+// action label shows that the alarm does not fire.
 func formatAlarmWithAction(a model.Alarm) string {
 	if model.FireableAlarmAction(a.Action) {
 		return formatAlarm(a)
@@ -234,6 +234,12 @@ func (m AlarmListEditorModel) BoxSize() (int, int) {
 func (m *AlarmListEditorModel) enterEditMode(idx int) {
 	var a model.Alarm
 	if idx >= 0 && idx < len(m.alarms) {
+		// Self-guard: the form cannot represent a view-only alarm, and
+		// a save through it would rewrite the action as DISPLAY. Every
+		// present and future caller inherits this gate.
+		if !alarmEditable(m.alarms[idx]) {
+			return
+		}
 		a = m.alarms[idx]
 	} else {
 		a = model.Alarm{
@@ -482,18 +488,14 @@ func (m AlarmListEditorModel) updateListMode(msg tea.Msg) (AlarmListEditorModel,
 			m.done = true
 		default:
 			if kp.String() == "enter" && m.cursor >= 0 && m.cursor <= last {
-				if alarmEditable(m.alarms[m.cursor]) {
-					m.enterEditMode(m.cursor)
-				}
+				m.enterEditMode(m.cursor)
 			}
 		}
 	case "n":
 		m.enterEditMode(-1)
 	case "e":
 		if m.cursor >= 0 && m.cursor <= last {
-			if alarmEditable(m.alarms[m.cursor]) {
-				m.enterEditMode(m.cursor)
-			}
+			m.enterEditMode(m.cursor)
 		}
 	case "d":
 		if m.btnFocus == -1 && m.cursor >= 0 && m.cursor <= last {
