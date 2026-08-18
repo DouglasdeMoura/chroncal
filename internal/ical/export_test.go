@@ -1552,3 +1552,29 @@ func TestExport_AllDayJournalOverrideRecurrenceIDIsDate(t *testing.T) {
 		t.Errorf("all-day journal override RECURRENCE-ID must be date-only, got %q", line)
 	}
 }
+
+// A stored row an older build wrote can hold a malformed action, because
+// the constraint refuses an empty value alone. Export must not write it:
+// a bare or malformed ACTION line is invalid iCal, and a strict server
+// rejects the whole resource for it (issue #595).
+func TestExport_MalformedStoredActionFallsBackToDisplay(t *testing.T) {
+	start := time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC)
+	for _, action := range []string{" ", "\t", "NO NE", ""} {
+		evt := event.Event{
+			UID: "malformed-action@example.com", Title: "Test",
+			StartTime: start, EndTime: start.Add(time.Hour),
+			Alarms: []model.Alarm{{Action: action, TriggerValue: "-PT15M", Related: "START"}},
+		}
+		raw, err := ExportEvents([]event.Event{evt}, "Work")
+		if err != nil {
+			t.Fatalf("ExportEvents(action %q): %v", action, err)
+		}
+		out := string(raw)
+		if strings.Contains(out, "ACTION:"+action) && action != "" {
+			t.Errorf("action %q: export emitted it verbatim:\n%s", action, out)
+		}
+		if !strings.Contains(out, "ACTION:DISPLAY") {
+			t.Errorf("action %q: export did not fall back to DISPLAY:\n%s", action, out)
+		}
+	}
+}

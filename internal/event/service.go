@@ -1498,11 +1498,10 @@ func matchAlarm(existing []model.Alarm, matched []bool, a model.Alarm) (int, boo
 	return 0, false
 }
 
+// alarmUID returns the UID this service stores for a. See
+// model.AlarmUIDForWrite for the rule, which the todo service shares.
 func alarmUID(a model.Alarm) string {
-	if a.UID != "" {
-		return a.UID
-	}
-	return uuid.New().String()
+	return model.AlarmUIDForWrite(a)
 }
 
 // matchAlarmByUID tries to match a new alarm with stored ones by
@@ -1574,10 +1573,12 @@ func updateAlarmInPlace(ctx context.Context, qtx *storage.Queries, eventID int64
 
 // syncMatchedAlarm syncs a matched alarm's UID and ACKNOWLEDGED state.
 func syncMatchedAlarm(ctx context.Context, qtx *storage.Queries, eventID int64, a model.Alarm, ex model.Alarm) error {
-	// If existing alarm has no UID, backfill it now.
-	if ex.UID == "" {
+	// Backfill the UID of a stored row that carries none. A preserved
+	// foreign alarm keeps its empty UID, so the backfill writes nothing
+	// for it (issue #586).
+	if uid := alarmUID(a); ex.UID == "" && uid != "" {
 		if err := qtx.UpdateAlarmUID(ctx, storage.UpdateAlarmUIDParams{
-			Uid: storage.StringToNullable(alarmUID(a)),
+			Uid: storage.StringToNullable(uid),
 			ID:  ex.ID,
 		}); err != nil {
 			return fmt.Errorf("backfill alarm uid: %w", err)
@@ -1827,7 +1828,8 @@ func replaceAlarmsTx(ctx context.Context, qtx *storage.Queries, eventID int64, a
 // Queries. The *WithRelations methods can then write both child collections
 // inside the same transaction as the event row.
 func replaceRelationsTx(ctx context.Context, qtx *storage.Queries, eventID int64, attendees []model.Attendee, alarms []model.Alarm) error {
-	// The *WithRelations methods prepare the alarms at method entry.
+	// The *WithRelations methods prepare the attendees and the alarms at
+	// method entry.
 	if err := replaceAttendeesTx(ctx, qtx, eventID, attendees); err != nil {
 		return err
 	}

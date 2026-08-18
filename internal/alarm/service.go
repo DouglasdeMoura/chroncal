@@ -178,11 +178,10 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 		// does (issue #586).
 		openIDs := make([]int64, 0, len(rows))
 		for _, row := range rows {
-			td := todoFromRow(row)
-			if td.Status == "COMPLETED" || td.Status == "CANCELLED" {
+			if !todoIsOpen(row) {
 				continue
 			}
-			openIDs = append(openIDs, td.ID)
+			openIDs = append(openIDs, row.ID)
 		}
 		todoAlarmMap, err := s.todos.ListFireableAlarmsByTodoIDs(ctx, openIDs)
 		if err != nil {
@@ -190,10 +189,10 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 		}
 
 		for _, row := range rows {
-			td := todoFromRow(row)
-			if td.Status == "COMPLETED" || td.Status == "CANCELLED" {
+			if !todoIsOpen(row) {
 				continue
 			}
+			td := todoFromRow(row)
 
 			alarms := todoAlarmMap[td.ID]
 			if len(alarms) == 0 {

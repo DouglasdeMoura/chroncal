@@ -401,12 +401,17 @@ func TestAlarmConstraintsMatchModelValidators(t *testing.T) {
 		// sets it to false, and the test then checks only that every
 		// value the Go rule accepts also reaches the table.
 		exact bool
+		// mustReject lists the values the constraint itself has to
+		// refuse, whatever the model rule says. Without it a one-way
+		// column would pass even if a later migration recreated the
+		// table without the constraint.
+		mustReject []string
 	}{
 		// The valid candidates come from the model sets. The test then
 		// probes a value added to the model but not to a migration
 		// against the CHECK constraint, and the value fails here.
-		{"action", append(model.AlarmActions(), "NONE", "PROCEDURE", "X-APPLE-SOUND", "display", " ", "\t", "NO NE", ""), model.StorableAlarmAction, false},
-		{"related", append(model.AlarmRelatedValues(), "STARTS", "end", ""), model.ValidAlarmRelated, true},
+		{"action", append(model.AlarmActions(), "NONE", "PROCEDURE", "X-APPLE-SOUND", "display", " ", "\t", "NO NE", ""), model.StorableAlarmAction, false, []string{""}},
+		{"related", append(model.AlarmRelatedValues(), "STARTS", "end", ""), model.ValidAlarmRelated, true, nil},
 	}
 
 	for _, ins := range inserts {
@@ -426,6 +431,18 @@ func TestAlarmConstraintsMatchModelValidators(t *testing.T) {
 				}
 				if err != nil && !strings.Contains(err.Error(), "CHECK constraint failed") {
 					t.Errorf("%s %s %q: rejected by %v, not by the CHECK constraint", ins.table, c.col, v, err)
+				}
+			}
+			// The constraint must still refuse these, whatever the model
+			// rule says, so a one-way column cannot pass vacuously.
+			for _, v := range c.mustReject {
+				_, err := db.Exec(
+					`INSERT INTO `+ins.table+` (`+ins.fk+`, `+c.col+`, trigger_value) VALUES (?, ?, '-PT15M')`,
+					ins.id, v,
+				)
+				if err == nil {
+					t.Errorf("%s %s %q: the constraint accepted it, want a CHECK failure",
+						ins.table, c.col, v)
 				}
 			}
 		}
@@ -533,18 +550,18 @@ func TestFireableAlarmQueriesMatchModelPredicate(t *testing.T) {
 	}
 	check("ListFireableAlarmsByEventIDs", evGot)
 
-	tdRows, err := q.ListFireableTodoAlarmsByTodoID(ctx, todoID)
+	tdRows, err := q.ListFireableTodoAlarmsByTodoIDs(ctx, []int64{todoID})
 	if err != nil {
-		t.Fatalf("ListFireableTodoAlarmsByTodoID: %v", err)
+		t.Fatalf("ListFireableTodoAlarmsByTodoIDs: %v", err)
 	}
 	tdGot := make([]string, len(tdRows))
 	for i, r := range tdRows {
 		if !model.FireableAlarmAction(r.Action) {
-			t.Errorf("ListFireableTodoAlarmsByTodoID returned non-fireable action %q", r.Action)
+			t.Errorf("ListFireableTodoAlarmsByTodoIDs returned non-fireable action %q", r.Action)
 		}
 		tdGot[i] = r.TriggerValue
 	}
-	check("ListFireableTodoAlarmsByTodoID", tdGot)
+	check("ListFireableTodoAlarmsByTodoIDs", tdGot)
 
 	// The state queries filter on the same action list. Give every alarm a
 	// fired state row, then check that only the fireable actions surface.
@@ -628,7 +645,10 @@ func TestAttendeeConstraintsMatchModelValidators(t *testing.T) {
 	// The extra candidates cover the shapes RFC 5545 allows and the
 	// constraints refuse: an x-name, the two task-only values, a
 	// lowercase near-miss, and an unknown token.
-	extra := []string{"X-FOO", "COMPLETED", "IN-PROCESS", "accepted", "BOGUS"}
+	// The empty string probes the one value where the model rule and the
+	// constraint could disagree: the columns hold NULL for an unset value,
+	// so a literal empty string must fail on both sides.
+	extra := []string{"X-FOO", "COMPLETED", "IN-PROCESS", "accepted", "BOGUS", ""}
 
 	tables := []struct {
 		table string

@@ -593,7 +593,7 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 
 	// VALARM children
 	var alarms []model.Alarm
-	var alarmWarnings []string
+	var childWarnings []string
 	for _, child := range ve.Children {
 		if child.Name != ical.CompAlarm {
 			continue
@@ -601,7 +601,7 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 		alarm, w := parseAlarm(child)
 		if w != "" {
 			// Name the owning record: the dropped alarm leaves no other trace.
-			alarmWarnings = append(alarmWarnings, fmt.Sprintf("event %q: %s", uid, w))
+			childWarnings = append(childWarnings, fmt.Sprintf("event %q: %s", uid, w))
 		}
 		if alarm.TriggerValue != "" {
 			alarms = append(alarms, alarm)
@@ -612,7 +612,7 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 	attendees, attendeeWarnings := parseAttendees(ve)
 	for _, w := range attendeeWarnings {
 		// Name the owning record: the clamp leaves no other trace.
-		alarmWarnings = append(alarmWarnings, fmt.Sprintf("event %q: %s", uid, w))
+		childWarnings = append(childWarnings, fmt.Sprintf("event %q: %s", uid, w))
 	}
 
 	// ATTACH, COMMENT, RELATED-TO
@@ -657,7 +657,7 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 		Resources:      resources,
 		Relations:      relations,
 		XProperties:    extractXPropertiesWithSet(ve.Props, handledEventProps),
-	}, append(alarmWarnings, dtendWarnings...), nil
+	}, append(childWarnings, dtendWarnings...), nil
 }
 
 func textOrDefault(ve ical.Event, prop, def string) string {
@@ -1150,10 +1150,9 @@ func parseAttendeesFromProps(props ical.Props, kind model.AttendeeKind) ([]model
 	return attendees, warns
 }
 
-// attendeeFromProp extracts a model.Attendee from an iCal ATTENDEE property.
-// All RFC 5545 parameters are included.
-// attendeeFromProp builds one attendee and clamps the three parameters
-// the attendee tables constrain. RFC 5545 permits an x-name or an
+// attendeeFromProp extracts a model.Attendee from an iCal ATTENDEE
+// property. It keeps every RFC 5545 parameter. It clamps the three
+// parameters the attendee tables constrain. RFC 5545 permits an x-name or an
 // iana-token for PARTSTAT (§3.2.12), ROLE (§3.2.16), and CUTYPE
 // (§3.2.3), but each column carries a CHECK constraint. A stored
 // out-of-set value would fail the insert inside the sync transaction and

@@ -764,13 +764,16 @@ func buildValarm(alarm model.Alarm) *ical.Component {
 	if alarm.UID != "" {
 		valarm.Props.SetText(ical.PropUID, alarm.UID)
 	}
-	// Normalize the action once. An empty action means DISPLAY everywhere
-	// else, and a bare "ACTION:" line is invalid iCal that a strict server
-	// rejects. The write paths default the empty value, so this arm covers
-	// an in-memory alarm that skipped them.
+	// Normalize the action once. A value that is not an RFC 5545
+	// iana-token or x-name cannot be written: a bare or malformed
+	// "ACTION:" line is invalid iCal, and a strict server rejects the
+	// whole resource for it. The write rule refuses such a value now
+	// (issue #595), so this guard covers a row an older build stored and
+	// an in-memory alarm that skipped the write paths. DISPLAY is the
+	// same fallback the parser and the write rule use for an empty value.
 	action := alarm.Action
-	if action == "" {
-		action = "DISPLAY"
+	if !model.ValidAlarmActionToken(action) {
+		action = model.DefaultAlarmAction
 	}
 	valarm.Props.SetText(ical.PropAction, action)
 

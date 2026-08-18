@@ -133,10 +133,12 @@ func ValidAttendeeRole(role string) bool {
 }
 
 // ValidAttendeeCUType returns true if cutype is a CUTYPE value the
-// attendee tables accept. The column holds NULL, so an empty value
-// passes.
+// attendee tables accept as a stored value. The constraint reads
+// "cutype IS NULL OR cutype IN (...)", so it refuses an empty string.
+// A write maps an unset CUTYPE to NULL instead, and
+// prepareAttendeeForWrite skips this test for that case.
 func ValidAttendeeCUType(cutype string) bool {
-	return cutype == "" || slices.Contains(attendeeCUTypes, cutype)
+	return slices.Contains(attendeeCUTypes, cutype)
 }
 
 // ErrInvalidAttendee marks an attendee field value the attendee tables
@@ -178,10 +180,12 @@ func prepareAttendeeForWrite(kind AttendeeKind, a *Attendee) error {
 		return fmt.Errorf("%w: partstat %q is not one of %s", ErrInvalidAttendee, a.RSVPStatus, RSVPStatusesList(kind))
 	}
 	if !ValidAttendeeRole(a.Role) {
-		return fmt.Errorf("%w: role %q is not one of %s", ErrInvalidAttendee, a.Role, attendeeRolesList)
+		return fmt.Errorf("%w: role %q is not one of %s", ErrInvalidAttendee, a.Role, AttendeeRolesList())
 	}
-	if !ValidAttendeeCUType(a.CUType) {
-		return fmt.Errorf("%w: cutype %q is not one of %s", ErrInvalidAttendee, a.CUType, attendeeCUTypesList)
+	// An unset CUTYPE stays unset. The write maps it to NULL, which the
+	// column accepts.
+	if a.CUType != "" && !ValidAttendeeCUType(a.CUType) {
+		return fmt.Errorf("%w: cutype %q is not one of %s", ErrInvalidAttendee, a.CUType, AttendeeCUTypesList())
 	}
 	return nil
 }

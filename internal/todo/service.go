@@ -798,29 +798,21 @@ func (s *Service) ListOverridesByUID(ctx context.Context, uid string) ([]Todo, e
 // Alarm CRUD
 
 func (s *Service) ListAlarms(ctx context.Context, todoID int64) ([]model.Alarm, error) {
-	return s.listAlarms(ctx, todoID, true, false)
+	return s.listAlarms(ctx, todoID, true)
 }
 
 // ListAlarmsLean returns a todo's alarms with attendees (needed to fire
 // EMAIL alarms) but without X-properties, which are round-trip-only and
 // never read at fire time.
 func (s *Service) ListAlarmsLean(ctx context.Context, todoID int64) ([]model.Alarm, error) {
-	return s.listAlarms(ctx, todoID, false, false)
-}
-
-// ListFireableAlarmsLean is ListAlarmsLean restricted to fireable actions.
-// The query excludes preserved sync-only actions (issue #579): the alarm
-// check loop calls this per todo every tick, and a sync-only alarm must
-// not reach it.
-func (s *Service) ListFireableAlarmsLean(ctx context.Context, todoID int64) ([]model.Alarm, error) {
-	return s.listAlarms(ctx, todoID, false, true)
+	return s.listAlarms(ctx, todoID, false)
 }
 
 // ListFireableAlarmsByTodoIDs fetches the fireable alarms for many todo
 // IDs in one query. It returns a map of the todo ID to its alarms. The
 // alarm check loop reads every todo on each tick, so a call per todo
 // costs one query per todo (issue #586). The query excludes a preserved
-// sync-only action, like ListFireableAlarmsLean.
+// sync-only action.
 func (s *Service) ListFireableAlarmsByTodoIDs(ctx context.Context, todoIDs []int64) (map[int64][]model.Alarm, error) {
 	if len(todoIDs) == 0 {
 		return nil, nil
@@ -845,14 +837,8 @@ func (s *Service) ListFireableAlarmsByTodoIDs(ctx context.Context, todoIDs []int
 	return alarmMap, nil
 }
 
-func (s *Service) listAlarms(ctx context.Context, todoID int64, withXProps, fireableOnly bool) ([]model.Alarm, error) {
-	var rows []storage.TodoAlarm
-	var err error
-	if fireableOnly {
-		rows, err = s.q.ListFireableTodoAlarmsByTodoID(ctx, todoID)
-	} else {
-		rows, err = s.q.ListTodoAlarmsByTodoID(ctx, todoID)
-	}
+func (s *Service) listAlarms(ctx context.Context, todoID int64, withXProps bool) ([]model.Alarm, error) {
+	rows, err := s.q.ListTodoAlarmsByTodoID(ctx, todoID)
 	if err != nil {
 		return nil, err
 	}
@@ -1130,11 +1116,10 @@ func matchTodoAlarmByUID(existing []model.Alarm, matched []bool, a model.Alarm) 
 
 // syncMatchedTodoAlarm syncs a content-matched alarm's UID and ACKNOWLEDGED state.
 func syncMatchedTodoAlarm(ctx context.Context, qtx *storage.Queries, a model.Alarm, ex model.Alarm) error {
-	if ex.UID == "" {
-		uid := a.UID
-		if uid == "" {
-			uid = uuid.New().String()
-		}
+	// Backfill the UID of a stored row that carries none. A preserved
+	// foreign alarm keeps its empty UID, so the backfill writes nothing
+	// for it (issue #586).
+	if uid := model.AlarmUIDForWrite(a); ex.UID == "" && uid != "" {
 		if err := qtx.UpdateTodoAlarmUID(ctx, storage.UpdateTodoAlarmUIDParams{
 			Uid: storage.StringToNullable(uid),
 			ID:  ex.ID,
@@ -1223,10 +1208,7 @@ func createNewTodoAlarm(ctx context.Context, qtx *storage.Queries, todoID int64,
 	if err := model.CheckStorableAlarmAction(a.Action); err != nil {
 		return fmt.Errorf("create alarm: %w", err)
 	}
-	uid := a.UID
-	if uid == "" {
-		uid = uuid.New().String()
-	}
+	uid := model.AlarmUIDForWrite(a)
 	params := storage.CreateTodoAlarmParams{
 		TodoID:        todoID,
 		Uid:           storage.StringToNullable(uid),

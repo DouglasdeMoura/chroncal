@@ -77,11 +77,10 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 	// costs one query per todo on each tick (issue #586).
 	openIDs := make([]int64, 0, len(rows))
 	for _, row := range rows {
-		t := todoFromRow(row)
-		if t.Status == "COMPLETED" || t.Status == "CANCELLED" {
+		if !todoIsOpen(row) {
 			continue
 		}
-		openIDs = append(openIDs, t.ID)
+		openIDs = append(openIDs, row.ID)
 	}
 	alarmMap, err := s.todos.ListFireableAlarmsByTodoIDs(ctx, openIDs)
 	if err != nil {
@@ -93,8 +92,8 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 	for _, row := range rows {
 		t := todoFromRow(row)
 
-		// Skip completed/cancelled todos
-		if t.Status == "COMPLETED" || t.Status == "CANCELLED" {
+		// Skip a completed or a cancelled todo.
+		if !todoIsOpen(row) {
 			continue
 		}
 
@@ -221,6 +220,14 @@ func buildOverrideSuppressionKeys(rows []storage.Todo) map[string]map[string]str
 }
 
 // todoFromRow converts a storage view row to a todo.Todo
+// todoIsOpen reports whether a todo can still fire an alarm. A completed
+// or a cancelled todo cannot. The batch alarm read and the loops that
+// process the rows share this test, so a new terminal status cannot reach
+// one of them alone and silently stop an alarm.
+func todoIsOpen(row storage.Todo) bool {
+	return row.Status != "COMPLETED" && row.Status != "CANCELLED"
+}
+
 func todoFromRow(row storage.Todo) todo.Todo {
 	return todo.Todo{
 		ID:              row.ID,

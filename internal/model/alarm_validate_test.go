@@ -148,6 +148,45 @@ func TestPrepareAlarmsForWrite_RejectsMalformedAction(t *testing.T) {
 		_, err := PrepareAlarmsForWrite([]Alarm{{Action: action, TriggerValue: "-PT15M"}})
 		if !errors.Is(err, ErrInvalidAlarm) {
 			t.Errorf("PrepareAlarmsForWrite(action %q) error = %v, want ErrInvalidAlarm", action, err)
+			continue
 		}
+		// The defaults replace an empty action before this check, so the
+		// message must name the real cause. A user reads this text, and
+		// the sync engine repeats it through InvalidAlarm.Err.
+		if strings.Contains(err.Error(), "is empty") {
+			t.Errorf("PrepareAlarmsForWrite(action %q) error = %v, want it to name the token shape, not emptiness", action, err)
+		}
+		if !strings.Contains(err.Error(), "iana-token") {
+			t.Errorf("PrepareAlarmsForWrite(action %q) error = %v, want it to name the accepted shape", action, err)
+		}
+	}
+}
+
+// A stored row an older build wrote can hold a malformed action. The
+// carry-over must leave it behind: feeding it back through the write rule
+// would fail every --alarm update on it (issue #595).
+func TestKeepSyncOnlyAlarms_DropsAnUnwritableStoredRow(t *testing.T) {
+	stored := []Alarm{
+		{Action: "X-APPLE-SOUND", TriggerValue: "-PT5M"},
+		{Action: " ", TriggerValue: "-PT10M"},
+	}
+	kept := KeepSyncOnlyAlarms(stored, []Alarm{{Action: "DISPLAY", TriggerValue: "-PT15M"}})
+
+	if _, err := PrepareAlarmsForWrite(kept); err != nil {
+		t.Fatalf("the carry-over must stay writable: %v", err)
+	}
+	for _, a := range kept {
+		if a.Action == " " {
+			t.Error("the carry-over kept a row the write rule refuses")
+		}
+	}
+	var foundForeign bool
+	for _, a := range kept {
+		if a.Action == "X-APPLE-SOUND" {
+			foundForeign = true
+		}
+	}
+	if !foundForeign {
+		t.Error("the carry-over dropped a valid preserved alarm")
 	}
 }

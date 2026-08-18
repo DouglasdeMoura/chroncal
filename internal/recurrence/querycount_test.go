@@ -5,16 +5,13 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
-	"io/fs"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/pressly/goose/v3"
 	sqlitedrv "modernc.org/sqlite"
 
-	dbembed "github.com/douglasdemoura/chroncal/db"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 )
@@ -74,11 +71,9 @@ func newCountingDB(t *testing.T) (*sql.DB, *storage.Queries, *int64) {
 	conn.SetMaxOpenConns(1)
 	t.Cleanup(func() { conn.Close() })
 
-	migrationsFS, err := fs.Sub(dbembed.Migrations, "migrations")
-	if err != nil {
-		t.Fatalf("sub migrations: %v", err)
-	}
-	provider, err := goose.NewProvider(goose.DialectSQLite3, conn, migrationsFS)
+	// Build through the production constructor, so the test database runs
+	// every Go migration too and cannot drift from the real schema.
+	provider, err := storage.NewMigrationProvider(conn)
 	if err != nil {
 		t.Fatalf("goose provider: %v", err)
 	}
