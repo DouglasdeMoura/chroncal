@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -31,6 +32,8 @@ Calendars can stay local-only, or they can be linked to a remote CalDAV
 calendar for sync.`,
 		Example: `  chroncal calendar list
   chroncal calendar create "Work"
+  chroncal calendar hide Work
+  chroncal calendar show Work
   chroncal calendar create "Work" --remote-url https://cal.example.com/dav/calendars/work/ --username alice --auth bearer
   chroncal calendar update Work --remote-url https://cal.example.com/dav/calendars/work/ --username alice --auth bearer`,
 		Args: rejectUnknownSubcommand,
@@ -43,6 +46,8 @@ calendar for sync.`,
 		calendarUpdateCmd(),
 		calendarDeleteCmd(),
 		calendarSetDefaultCmd(),
+		calendarHideCmd(),
+		calendarShowCmd(),
 	)
 	return cmd
 }
@@ -106,6 +111,74 @@ Exactly one calendar is default at any time.`,
 				return printOutput(w, item)
 			}
 			fmt.Fprintf(w, "Default calendar set to %q.\n", updated.Name)
+			return nil
+		},
+	}
+	return cmd
+}
+
+func calendarHideCmd() *cobra.Command {
+	return calendarVisibilityCmd("hide", true)
+}
+
+func calendarShowCmd() *cobra.Command {
+	return calendarVisibilityCmd("show", false)
+}
+
+func calendarVisibilityCmd(use string, hide bool) *cobra.Command {
+	short := "Show a calendar in the TUI sidebar"
+	long := `Show a calendar that was hidden from the TUI sidebar.
+
+Hidden calendars stay in the database. Events still sync. Only the
+sidebar (and consumers that honor hidden_calendars) omit them.`
+	example := `  chroncal calendar show Work
+  chroncal calendar show 2`
+	textLine := "Showing calendar %q.\n"
+	if hide {
+		short = "Hide a calendar from the TUI sidebar"
+		long = `Hide a calendar from the TUI sidebar without deleting it.
+
+Events stay in the database and still sync. The bar and TUI treat
+hidden calendars as opted out of the sidebar.`
+		example = `  chroncal calendar hide Work
+  chroncal calendar hide 2`
+		textLine = "Hidden calendar %q.\n"
+	}
+	cmd := &cobra.Command{
+		Use:     use + " <id|name>",
+		Short:   short,
+		Long:    long,
+		Example: example,
+		Args:    exactOneArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			a, err := initApp()
+			if err != nil {
+				return err
+			}
+			defer a.Close()
+			ctx := context.Background()
+
+			cals, err := a.Calendars.List(ctx)
+			if err != nil {
+				return fmt.Errorf("list calendars: %w", err)
+			}
+			target, err := findCalendarByRef(cals, args[0])
+			if err != nil {
+				return errInvalidInputf("%v", err)
+			}
+			if err := setCalendarHidden(target.ID, hide); err != nil {
+				return err
+			}
+
+			w := cmd.OutOrStdout()
+			if outputFmt != "text" {
+				item, err := jsonCalendarDecorated(ctx, a, target)
+				if err != nil {
+					return err
+				}
+				return printOutput(w, item)
+			}
+			fmt.Fprintf(w, textLine, target.Name)
 			return nil
 		},
 	}
@@ -675,4 +748,29 @@ func accountDisplayNames(ctx context.Context, a *app.App) (map[int64]string, err
 		names[item.ID] = item.DisplayName
 	}
 	return names, nil
+}
+
+func setCalendarHidden(id int64, hide bool) error {
+	state := config.LoadUIState()
+	next := make([]int64, 0, len(state.HiddenCalendars)+1)
+	found := false
+	for _, existing := range state.HiddenCalendars {
+		if existing == id {
+			found = true
+			if !hide {
+				continue
+			}
+		}
+		next = append(next, existing)
+	}
+	if hide && !found {
+		next = append(next, id)
+	}
+	slices.Sort(next)
+	if len(next) == 0 {
+		state.HiddenCalendars = nil
+	} else {
+		state.HiddenCalendars = next
+	}
+	return config.SaveUIState(state)
 }
