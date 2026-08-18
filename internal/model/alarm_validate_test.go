@@ -176,7 +176,7 @@ func TestKeepSyncOnlyAlarms_KeepsEveryNonFireableRow(t *testing.T) {
 	}
 	kept := KeepSyncOnlyAlarms(stored, []Alarm{{Action: "DISPLAY", TriggerValue: "-PT15M"}})
 
-	var actions []string
+	actions := make([]string, 0, len(kept))
 	for _, a := range kept {
 		actions = append(actions, a.Action)
 	}
