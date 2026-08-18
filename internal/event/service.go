@@ -484,7 +484,7 @@ func (s *Service) UpdateWithRelations(ctx context.Context, id int64, p UpdatePar
 	if err := s.ensureEventWritable(ctx, id, p.CalendarID); err != nil {
 		return Event{}, err
 	}
-	// Reject a bad alarm before the transaction opens; see
+	// Reject a bad alarm before the transaction opens. See
 	// model.PrepareAlarmsForWrite.
 	alarms, err := model.PrepareAlarmsForWrite(alarms)
 	if err != nil {
@@ -973,7 +973,7 @@ func (s *Service) UpdateInstance(ctx context.Context, uid string, instanceTime t
 func (s *Service) UpdateInstanceWithRelations(ctx context.Context, uid string, instanceTime time.Time, p UpdateParams, attendees []model.Attendee, alarms []model.Alarm) (Event, error) {
 	p.applyDefaults()
 
-	// Reject a bad alarm before the transaction opens; see
+	// Reject a bad alarm before the transaction opens. See
 	// model.PrepareAlarmsForWrite.
 	alarms, err := model.PrepareAlarmsForWrite(alarms)
 	if err != nil {
@@ -1178,7 +1178,7 @@ func (s *Service) UpdateFromInstance(ctx context.Context, uid string, instanceTi
 func (s *Service) UpdateFromInstanceWithRelations(ctx context.Context, uid string, instanceTime time.Time, p UpdateParams, attendees []model.Attendee, alarms []model.Alarm) (Event, error) {
 	p.applyDefaults()
 
-	// Reject a bad alarm before the transaction opens; see
+	// Reject a bad alarm before the transaction opens. See
 	// model.PrepareAlarmsForWrite.
 	alarms, err := model.PrepareAlarmsForWrite(alarms)
 	if err != nil {
@@ -1614,7 +1614,7 @@ func deleteUnmatchedAlarms(ctx context.Context, qtx *storage.Queries, existing [
 func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []model.Alarm) error {
 	// Prepare before the transaction opens. A standalone call then
 	// rejects a bad alarm without a write lock. A sync caller already
-	// holds its own transaction; see model.PrepareAlarmsForWrite.
+	// holds its own transaction. See model.PrepareAlarmsForWrite.
 	alarms, err := model.PrepareAlarmsForWrite(alarms)
 	if err != nil {
 		return err
@@ -1639,13 +1639,8 @@ func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []mod
 // edits, creates, deletes) using a tx-bound Queries. It opens no transaction so
 // callers can compose it with the event row write inside one transaction.
 func replaceAlarmsTx(ctx context.Context, qtx *storage.Queries, eventID int64, alarms []model.Alarm) error {
-	// The exported callers prepare at method entry, so this call is a
-	// no-op for them. It is cheap idempotent insurance: a future direct
-	// caller cannot skip the defaults and hit the CHECK constraint.
-	alarms, err := model.PrepareAlarmsForWrite(alarms)
-	if err != nil {
-		return err
-	}
+	// Precondition: the caller prepares alarms with
+	// model.PrepareAlarmsForWrite. Both callers in this file do.
 	// Load existing alarms with attendees for content matching.
 	existing, err := loadExistingAlarms(ctx, qtx, eventID)
 	if err != nil {
@@ -1691,8 +1686,7 @@ func replaceAlarmsTx(ctx context.Context, qtx *storage.Queries, eventID int64, a
 // Queries. The *WithRelations methods can then write both child collections
 // inside the same transaction as the event row.
 func replaceRelationsTx(ctx context.Context, qtx *storage.Queries, eventID int64, attendees []model.Attendee, alarms []model.Alarm) error {
-	// The *WithRelations methods prepare the alarms at method entry,
-	// and replaceAlarmsTx prepares again as insurance.
+	// The *WithRelations methods prepare the alarms at method entry.
 	if err := replaceAttendeesTx(ctx, qtx, eventID, attendees); err != nil {
 		return err
 	}

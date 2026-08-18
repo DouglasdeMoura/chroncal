@@ -390,11 +390,11 @@ func TestAlarmConstraintsMatchModelValidators(t *testing.T) {
 		values []string
 		valid  func(string) bool
 	}{
-		// The model sets join the hardcoded candidates. The test then
+		// The valid candidates come from the model sets. The test then
 		// probes a value added to the model but not to a migration
 		// against the CHECK constraint, and the value fails here.
-		{"action", append([]string{"AUDIO", "DISPLAY", "EMAIL", "NONE", "PROCEDURE", "display", ""}, model.AlarmActions()...), model.ValidAlarmAction},
-		{"related", append([]string{"START", "END", "STARTS", "end", ""}, model.AlarmRelatedValues()...), model.ValidAlarmRelated},
+		{"action", append(model.AlarmActions(), "NONE", "PROCEDURE", "display", ""), model.ValidAlarmAction},
+		{"related", append(model.AlarmRelatedValues(), "STARTS", "end", ""), model.ValidAlarmRelated},
 	}
 
 	for _, ins := range inserts {

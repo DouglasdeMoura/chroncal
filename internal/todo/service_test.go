@@ -642,10 +642,6 @@ func TestTodoService_ReplaceAlarms_RejectsInvalidAlarm(t *testing.T) {
 	}
 }
 
-// The defaults contract lives in the model tests. The event-side
-// defaults test proves the service wiring once; the todo rejection
-// test below proves the todo wiring.
-
 func TestTodoService_ReplaceAlarms_UIDMatchPreservesRow(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
