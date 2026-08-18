@@ -61,7 +61,7 @@ func TestPrepareAlarmsForWrite_KeepsValidValues(t *testing.T) {
 	}
 }
 
-// Migration 043 widened the action constraint, so the write boundary
+// Migration 044 widened the action constraint, so the write boundary
 // accepts a preserved foreign action (issue #579). Only an empty action
 // fails, and prepareAlarmForWrite fills that with the default first, so
 // the reject path needs a caller that clears the field after the fill.

@@ -179,6 +179,18 @@ func ImportFile(r io.Reader) (ImportResult, error) {
 	return result, nil
 }
 
+// todoSpanStorable reports whether the DTSTART plus the DURATION lands on
+// a time the database can hold. See timeutil.Storable for that rule. An
+// unparseable start gives no end to test, so the function accepts it. The
+// todo service applies the same rule in validateTiming.
+func todoSpanStorable(startDate, dur string) bool {
+	start := timeutil.ParseDate(startDate)
+	if start.IsZero() {
+		return true
+	}
+	return timeutil.Storable(duration.Add(start, dur))
+}
+
 func todoFromVTodo(comp *ical.Component) (todo.Todo, []string, error) {
 	props := comp.Props
 
@@ -201,10 +213,11 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, []string, error) {
 		todoWarnings = append(todoWarnings, w)
 	}
 
-	// Screen the DURATION on the same three rules the todo service
+	// Screen the DURATION on the same four rules the todo service
 	// applies. The value must be a positive span (RFC 5545 §3.8.2.5).
 	// DUE and DURATION are mutually exclusive, and a DURATION needs a
-	// DTSTART (§3.6.2).
+	// DTSTART (§3.6.2). The end must also land on a time the database
+	// can hold.
 	//
 	// Drop the DURATION and warn when a rule fails. A stored bad value
 	// would re-export verbatim and would poison a RELATED=END alarm
@@ -223,6 +236,9 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, []string, error) {
 		case startDate == "":
 			todoWarnings = append(todoWarnings, fmt.Sprintf(
 				"todo %q: DURATION %q needs a DTSTART; dropped", uid, prop.Value))
+		case !todoSpanStorable(startDate, prop.Value):
+			todoWarnings = append(todoWarnings, fmt.Sprintf(
+				"todo %q: DURATION %q ends past year %d; dropped", uid, prop.Value, timeutil.MaxStorableYear))
 		default:
 			durationValue = prop.Value
 		}
