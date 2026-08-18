@@ -106,6 +106,7 @@ conflicts for calendars connected to remote CalDAV calendars.`,
 func syncRunCmd() *cobra.Command {
 	var (
 		calendarName string
+		accountName  string
 		conflict     string
 	)
 	cmd := &cobra.Command{
@@ -114,9 +115,11 @@ func syncRunCmd() *cobra.Command {
 		Long: `Push local changes and pull remote changes for connected calendars.
 
 By default every connected calendar is synced. Use --calendar to limit the
-run to a single local calendar.`,
+run to a single local calendar, or --account to limit it to every calendar
+linked to one CalDAV account. The two flags are mutually exclusive.`,
 		Example: `  chroncal sync run
   chroncal sync run --calendar Work
+  chroncal sync run --account Work
   chroncal sync run --conflict prompt`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Validate the flag up front so a typo (e.g. "Prompt", "ask")
@@ -165,6 +168,18 @@ run to a single local calendar.`,
 					return classifySyncError(err)
 				}
 				results = []*syncPkg.SyncResult{r}
+			} else if accountName != "" {
+				acct, err := resolveAccount(ctx, a.Accounts, accountName)
+				if err != nil {
+					return err
+				}
+				// SyncAccount runs the account's calendars in series: they
+				// share one credential, so a refresh must not race itself.
+				// An account with no linked calendars is a clean no-op.
+				results, err = svc.SyncAccount(ctx, acct.ID, strategy)
+				if err != nil {
+					return classifySyncError(err)
+				}
 			} else {
 				results, err = svc.SyncAll(ctx, strategy)
 				if err != nil {
@@ -176,7 +191,9 @@ run to a single local calendar.`,
 		},
 	}
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "Sync only this calendar")
+	cmd.Flags().StringVar(&accountName, "account", "", "Sync only calendars linked to this account")
 	cmd.Flags().StringVar(&conflict, "conflict", "server-wins", "Conflict strategy: server-wins or prompt")
+	mutuallyExclusive(cmd, "calendar", "account")
 	return cmd
 }
 

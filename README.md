@@ -364,6 +364,8 @@ chroncal account add              "<name>" --server URL --username USER [--auth 
 chroncal account get              <name|id>
 chroncal account list
 chroncal account update           <name|id> --name NAME
+chroncal account credentials      <name|id>
+chroncal account reauth           <name|id> [--oauth-client-id ID]
 chroncal account calendars list   <name|id>
 chroncal account calendars add    <name|id> (--calendar NAME_OR_URL ... | --all)
 chroncal account calendars set    <name|id> (--calendar NAME_OR_URL ... | --all | --none) [--default ID_OR_NAME_OR_URL] [--yes]
@@ -378,6 +380,8 @@ An account stores one credential. It discovers every CalDAV calendar collection 
 
 If you select none, the command also removes the empty account and credential. `account remove` deletes the credential and remote links. It keeps downloaded calendars as local copies.
 
+`account credentials` rotates the stored secret of a basic or bearer account. It reads the new value from `CHRONCAL_PASSWORD` (basic) or `CHRONCAL_BEARER_TOKEN` (bearer). `account reauth` repeats the Google OAuth consent flow for an oauth2 account; the client secret comes from `GOOGLE_CLIENT_SECRET` or the stored value, and `--oauth-client-id` replaces the stored client ID. Neither command accepts a secret as a CLI flag.
+
 You can open read-only collections locally and sync them pull-only. Chroncal does not send metadata changes, resources, or tombstones to them.
 
 ### Calendars
@@ -389,9 +393,13 @@ chroncal calendar create  "<name>" [--color HEX] [--description TEXT] [--email A
 chroncal calendar update  <id|name> [--name NAME] [--color HEX] [--description TEXT] [--email ADDR] [remote flags] [--disconnect-remote]
 chroncal calendar delete  <id>
 chroncal calendar set-default <id|name>
+chroncal calendar hide     <id|name>
+chroncal calendar show     <id|name>
 ```
 
 `set-default` makes a calendar the default. New events, todos, and journals without an explicit `--calendar` go there. Exactly one calendar is the default at any time.
+
+`calendar hide` opts a calendar out of the TUI sidebar without deleting it: events stay in the database and still sync. `calendar show` reverses it. Calendar JSON (`--output json`) carries the link and sync state per calendar: `account_id`, `account_name`, `remote_url`, `remote_access`, `last_sync_at`, `last_sync_error`, and `hidden`.
 
 You can still use remote flags with `create` or `update` to attach one local calendar to a known CalDAV collection. Prefer `chroncal account` when one credential exposes multiple collections:
 
@@ -419,7 +427,7 @@ Imports have size limits to reduce resource exhaustion from untrusted calendar d
 ### Sync
 
 ```
-chroncal sync run       [--calendar NAME] [--conflict MODE]
+chroncal sync run       [--calendar NAME] [--account NAME] [--conflict MODE]
 chroncal sync status
 chroncal sync conflicts
 chroncal sync resolve   <id> --pick {local,server}
@@ -427,6 +435,8 @@ chroncal sync reset     [--calendar NAME]
 ```
 
 Sync runs on each connected calendar on its own. Calendars that share an account reuse its credential and sync one after another. Distinct accounts can sync at the same time. Use `chroncal account calendars list` and `chroncal account calendars add` to inspect and import remote collections. Use the calendar remote flags above when you attach one known URL.
+
+Narrow a run with `--calendar NAME` (one local calendar) or `--account NAME` (every calendar linked to one CalDAV account). The two flags are mutually exclusive. An account with no linked calendars is a clean no-op.
 
 ### Google Calendar via CalDAV
 
