@@ -622,7 +622,7 @@ func parseCategories(ve ical.Event) string {
 // does in silence. The user needs to see every reason. An unsupported ACTION
 // is the one early exit. It drops the whole alarm and stops the parse.
 func parseAlarm(comp *ical.Component) (model.Alarm, string) {
-	alarm := model.Alarm{Action: "DISPLAY", Related: "START"}
+	alarm := model.Alarm{Action: model.DefaultAlarmAction, Related: model.DefaultAlarmRelated}
 	var warns []string
 
 	if prop := comp.Props.Get(ical.PropAction); prop != nil {
@@ -633,9 +633,9 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 		// is smaller than a sync that never converges.
 		switch action := strings.ToUpper(strings.TrimSpace(prop.Value)); {
 		case action == "":
-			// Keep the DISPLAY default: applyAlarmDefaults rescued the
-			// empty value before this check existed, and a reminder
-			// must not vanish over it.
+			// Keep the DISPLAY default. The service write boundary
+			// (model.PrepareAlarmForWrite) fills the same default, and
+			// a reminder must not vanish over an empty value.
 		case !model.ValidAlarmAction(action):
 			warns = append(warns, fmt.Sprintf("VALARM ACTION %q: unsupported action; alarm dropped", action))
 			return model.Alarm{}, strings.Join(warns, "; ")

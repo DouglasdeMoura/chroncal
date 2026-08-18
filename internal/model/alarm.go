@@ -137,24 +137,41 @@ func sortedEmails(atts []AlarmAttendee) []string {
 	return emails
 }
 
-// AlarmActions lists the ACTION values the alarm tables accept, in a
+// alarmActions lists the ACTION values the alarm tables accept, in a
 // fixed order. The set mirrors the CHECK constraints in db/migrations/003
-// and 006. Keep this slice and the two constraints in lockstep. A value
+// and 006. Keep this array and the two constraints in lockstep. A value
 // outside this set fails the constraint and rolls back the whole resource
 // transaction during sync (issue #575). The match is case-sensitive, the
-// same as the constraints.
-var AlarmActions = []string{"AUDIO", "DISPLAY", "EMAIL"}
+// same as the constraints. The array is unexported so no other package
+// can change the accepted set at run time.
+var alarmActions = [...]string{"AUDIO", "DISPLAY", "EMAIL"}
 
-// ValidAlarmAction returns true if action is a value in AlarmActions.
-func ValidAlarmAction(action string) bool {
-	return slices.Contains(AlarmActions, action)
+// alarmRelatedValues lists the RELATED values the alarm tables accept
+// for the TRIGGER anchor, with the same lockstep rule as alarmActions.
+var alarmRelatedValues = [...]string{"START", "END"}
+
+// AlarmActions returns the accepted ACTION values as a fresh slice.
+// A caller can keep or change the returned slice. The accepted set
+// does not change.
+func AlarmActions() []string {
+	return slices.Clone(alarmActions[:])
 }
 
-// ValidAlarmRelated returns true if related is a value the alarm tables
-// accept for the TRIGGER anchor. The set mirrors the same CHECK
-// constraints as AlarmActions, with the same lockstep rule.
+// AlarmRelatedValues returns the accepted RELATED values as a fresh
+// slice, like AlarmActions.
+func AlarmRelatedValues() []string {
+	return slices.Clone(alarmRelatedValues[:])
+}
+
+// ValidAlarmAction returns true if action is an accepted ACTION value.
+func ValidAlarmAction(action string) bool {
+	return slices.Contains(alarmActions[:], action)
+}
+
+// ValidAlarmRelated returns true if related is an accepted RELATED
+// value.
 func ValidAlarmRelated(related string) bool {
-	return related == "START" || related == "END"
+	return slices.Contains(alarmRelatedValues[:], related)
 }
 
 // Default values for the alarm fields that PrepareAlarmForWrite fills
@@ -170,28 +187,49 @@ var ErrInvalidAlarm = errors.New("invalid alarm")
 
 // PrepareAlarmForWrite prepares an alarm for an insert or an update. It
 // fills an empty Action with DefaultAlarmAction and an empty Related
-// with DefaultAlarmRelated. It then validates both fields against the
-// sets the alarm tables accept. For a bad value it returns an error
-// that wraps ErrInvalidAlarm and names the field and the value.
+// with DefaultAlarmRelated. It then validates the two fields against
+// the sets the alarm tables accept. For a bad value it returns an
+// error that wraps ErrInvalidAlarm and names the field and the value.
+// On an error the alarm is unchanged. The function covers Action and
+// Related only. Those are the two alarm columns with a CHECK
+// constraint.
 //
 // The event and todo services call this function before every alarm
-// write. The service boundary then rejects a bad value with a typed
-// error. A raw value would instead fail the CHECK constraint and roll
-// back the whole resource transaction during sync (issues #575, #578).
+// write, as defense in depth. The iCal import parser and the CLI
+// parser stay the load-bearing guards: the sync engine retries a
+// resource on any ReplaceAlarms error, so a bad value that reaches
+// sync still blocks that resource. The typed error names the cause
+// instead of a raw CHECK failure (issues #575, #578).
 func PrepareAlarmForWrite(a *Alarm) error {
-	if a.Action == "" {
-		a.Action = DefaultAlarmAction
+	action, related := a.Action, a.Related
+	if action == "" {
+		action = DefaultAlarmAction
 	}
-	if a.Related == "" {
-		a.Related = DefaultAlarmRelated
+	if related == "" {
+		related = DefaultAlarmRelated
 	}
-	if !ValidAlarmAction(a.Action) {
-		return fmt.Errorf("%w: action %q is not one of %s", ErrInvalidAlarm, a.Action, strings.Join(AlarmActions, ", "))
+	if !ValidAlarmAction(action) {
+		return fmt.Errorf("%w: action %q is not one of %s", ErrInvalidAlarm, action, strings.Join(alarmActions[:], ", "))
 	}
-	if !ValidAlarmRelated(a.Related) {
-		return fmt.Errorf("%w: related %q is not START or END", ErrInvalidAlarm, a.Related)
+	if !ValidAlarmRelated(related) {
+		return fmt.Errorf("%w: related %q is not one of %s", ErrInvalidAlarm, related, strings.Join(alarmRelatedValues[:], ", "))
 	}
+	a.Action, a.Related = action, related
 	return nil
+}
+
+// PrepareAlarmsForWrite copies alarms and prepares each element with
+// PrepareAlarmForWrite. It returns the prepared copy. The caller's
+// slice does not change, on success or on error. The error names the
+// index of the bad alarm.
+func PrepareAlarmsForWrite(alarms []Alarm) ([]Alarm, error) {
+	prepared := slices.Clone(alarms)
+	for i := range prepared {
+		if err := PrepareAlarmForWrite(&prepared[i]); err != nil {
+			return nil, fmt.Errorf("alarm %d: %w", i, err)
+		}
+	}
+	return prepared, nil
 }
 
 // ValidAlarmDuration returns true if d is a repeat interval the alarm

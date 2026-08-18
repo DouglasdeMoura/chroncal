@@ -609,10 +609,10 @@ func TestTodoService_Attendees(t *testing.T) {
 	}
 }
 
-// TestTodoService_ReplaceAlarms_RejectsInvalidAlarm locks the service
+// TestTodoService_ReplaceAlarms_RejectsInvalidAlarm guards the service
 // boundary contract from issue #578. A bad Action or Related must fail
 // with model.ErrInvalidAlarm before the write, not with the CHECK
-// constraint. No partial alarm row may land.
+// constraint. The service must store no partial alarm row.
 func TestTodoService_ReplaceAlarms_RejectsInvalidAlarm(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -638,7 +638,7 @@ func TestTodoService_ReplaceAlarms_RejectsInvalidAlarm(t *testing.T) {
 		t.Fatalf("ListAlarms: %v", err)
 	}
 	if len(alarms) != 0 {
-		t.Errorf("alarms = %d, want 0 (a rejected write must not land)", len(alarms))
+		t.Errorf("alarms = %d, want 0 (a rejected write must store no row)", len(alarms))
 	}
 }
 

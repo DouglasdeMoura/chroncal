@@ -6,18 +6,30 @@ import (
 	"testing"
 )
 
-// TestAlarmActionsMatchPredicate locks AlarmActions and ValidAlarmAction
-// together. The predicate must accept every listed value and only those.
+// TestAlarmActionsMatchPredicate guards AlarmActions and
+// ValidAlarmAction together. The predicate must accept every listed
+// value and only those. AlarmActions must also return a fresh slice:
+// a caller-side change must not widen the accepted set.
 func TestAlarmActionsMatchPredicate(t *testing.T) {
-	for _, a := range AlarmActions {
+	for _, a := range AlarmActions() {
 		if !ValidAlarmAction(a) {
 			t.Errorf("ValidAlarmAction(%q) = false, want true", a)
+		}
+	}
+	for _, a := range AlarmRelatedValues() {
+		if !ValidAlarmRelated(a) {
+			t.Errorf("ValidAlarmRelated(%q) = false, want true", a)
 		}
 	}
 	for _, a := range []string{"", "NONE", "PROCEDURE", "display", "audio"} {
 		if ValidAlarmAction(a) {
 			t.Errorf("ValidAlarmAction(%q) = true, want false", a)
 		}
+	}
+	leaked := AlarmActions()
+	leaked[0] = "PROCEDURE"
+	if ValidAlarmAction("PROCEDURE") {
+		t.Error("a change to the returned slice widened the accepted set")
 	}
 }
 
