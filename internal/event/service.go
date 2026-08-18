@@ -507,9 +507,13 @@ func (s *Service) UpdateWithRelations(ctx context.Context, id int64, p UpdatePar
 	if err := s.ensureEventWritable(ctx, id, p.CalendarID); err != nil {
 		return Event{}, err
 	}
-	// Reject a bad alarm before the transaction opens. See
-	// model.PrepareAlarmsForWrite.
-	alarms, err := model.PrepareAlarmsForWrite(alarms)
+	// Reject a bad attendee or alarm before the transaction opens. See
+	// model.PrepareAttendeesForWrite and model.PrepareAlarmsForWrite.
+	attendees, err := model.PrepareAttendeesForWrite(model.EventAttendee, attendees)
+	if err != nil {
+		return Event{}, err
+	}
+	alarms, err = model.PrepareAlarmsForWrite(alarms)
 	if err != nil {
 		return Event{}, err
 	}
@@ -1004,9 +1008,13 @@ func (s *Service) UpdateInstance(ctx context.Context, uid string, instanceTime t
 func (s *Service) UpdateInstanceWithRelations(ctx context.Context, uid string, instanceTime time.Time, p UpdateParams, attendees []model.Attendee, alarms []model.Alarm) (Event, error) {
 	p.applyDefaults()
 
-	// Reject a bad alarm before the transaction opens. See
-	// model.PrepareAlarmsForWrite.
-	alarms, err := model.PrepareAlarmsForWrite(alarms)
+	// Reject a bad attendee or alarm before the transaction opens. See
+	// model.PrepareAttendeesForWrite and model.PrepareAlarmsForWrite.
+	attendees, err := model.PrepareAttendeesForWrite(model.EventAttendee, attendees)
+	if err != nil {
+		return Event{}, err
+	}
+	alarms, err = model.PrepareAlarmsForWrite(alarms)
 	if err != nil {
 		return Event{}, err
 	}
@@ -1214,9 +1222,13 @@ func (s *Service) UpdateFromInstance(ctx context.Context, uid string, instanceTi
 func (s *Service) UpdateFromInstanceWithRelations(ctx context.Context, uid string, instanceTime time.Time, p UpdateParams, attendees []model.Attendee, alarms []model.Alarm) (Event, error) {
 	p.applyDefaults()
 
-	// Reject a bad alarm before the transaction opens. See
-	// model.PrepareAlarmsForWrite.
-	alarms, err := model.PrepareAlarmsForWrite(alarms)
+	// Reject a bad attendee or alarm before the transaction opens. See
+	// model.PrepareAttendeesForWrite and model.PrepareAlarmsForWrite.
+	attendees, err := model.PrepareAttendeesForWrite(model.EventAttendee, attendees)
+	if err != nil {
+		return Event{}, err
+	}
+	alarms, err = model.PrepareAlarmsForWrite(alarms)
 	if err != nil {
 		return Event{}, err
 	}
@@ -1817,6 +1829,13 @@ func (s *Service) ReplaceAttendees(ctx context.Context, eventID int64, attendees
 // example the TUI RSVP flow) must route through ReplaceAttendees so the
 // policy is enforced.
 func (s *Service) ReplaceAttendeesForSync(ctx context.Context, eventID int64, attendees []model.Attendee) error {
+	// Prepare before the transaction opens. A standalone call then
+	// rejects a bad attendee without a write lock. See
+	// model.PrepareAttendeesForWrite.
+	attendees, err := model.PrepareAttendeesForWrite(model.EventAttendee, attendees)
+	if err != nil {
+		return err
+	}
 	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
 		return err
