@@ -14,6 +14,10 @@ chroncal is a terminal calendar. SQLite stores the data. The program supports fu
 
 chroncal keeps your calendar data local and portable. The data follows the calendar standards.
 
+<p align="center">
+  <img src="assets/chroncal-tui.gif" alt="chroncal TUI demo">
+</p>
+
 ## Features
 
 - **Interactive TUI** with month, week, day, and agenda views. Launch it on a given event with `chroncal --event`.
@@ -595,6 +599,10 @@ List soft-deleted candidates with `--include-deleted` on the related `list` comm
 ## TUI
 
 Run `chroncal` with no arguments to launch the interactive terminal UI.
+
+<p align="center">
+  <img src="assets/chroncal-tui.png" alt="The chroncal TUI">
+</p>
 
 Pass `--event <id|uid>` to jump to the event's day and open its details. Every view starts on that day:
 
