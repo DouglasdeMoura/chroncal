@@ -2,8 +2,41 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 )
+
+// migHelpers returns exec and count helpers bound to conn. The migration
+// UpDown tests share them.
+func migHelpers(t *testing.T, ctx context.Context, conn *sql.DB) (func(string, ...any), func(string, ...any) int) {
+	mustExec := func(query string, args ...any) {
+		t.Helper()
+		if _, err := conn.ExecContext(ctx, query, args...); err != nil {
+			t.Fatalf("exec %q: %v", query, err)
+		}
+	}
+	count := func(query string, args ...any) int {
+		t.Helper()
+		var n int
+		if err := conn.QueryRowContext(ctx, query, args...).Scan(&n); err != nil {
+			t.Fatalf("count %q: %v", query, err)
+		}
+		return n
+	}
+	return mustExec, count
+}
+
+// migProvider opens the embedded migrations as a goose provider.
+func migProvider(t *testing.T, conn *sql.DB) *goose.Provider {
+	t.Helper()
+	// Build through the production constructor, so a test provider and
+	// the one Open uses cannot register different migration sets.
+	provider, err := NewMigrationProvider(conn)
+	if err != nil {
+		t.Fatalf("provider: %v", err)
+	}
+	return provider
+}
 
 // Verifies migration 031 rolls back and re-applies cleanly (table rebuild +
 // trigger recreation in both directions) with live rows. Non-alarm-owned
@@ -17,12 +50,7 @@ func TestMigration031UpDown(t *testing.T) {
 	defer conn.Close()
 
 	ctx := context.Background()
-	mustExec := func(query string, args ...any) {
-		t.Helper()
-		if _, err := conn.ExecContext(ctx, query, args...); err != nil {
-			t.Fatalf("exec %q: %v", query, err)
-		}
-	}
+	mustExec, _ := migHelpers(t, ctx, conn)
 
 	// Seed an event, an alarm on it, and X-properties for both owner kinds.
 	mustExec(`INSERT INTO events (uid, calendar_id, title, start_time, end_time)
@@ -39,10 +67,7 @@ func TestMigration031UpDown(t *testing.T) {
 		t.Fatalf("query seeded prop: %v", err)
 	}
 
-	provider, err := NewMigrationProvider(conn)
-	if err != nil {
-		t.Fatalf("provider: %v", err)
-	}
+	provider := migProvider(t, conn)
 	if _, err := provider.DownTo(ctx, 30); err != nil {
 		t.Fatalf("down to 30: %v", err)
 	}
@@ -80,40 +105,27 @@ func TestMigration031UpDown(t *testing.T) {
 		VALUES ('event_alarm', 1, 'X-ALARM-PROP', 'works-again')`)
 }
 
-// Verifies migration 043 (the wide alarm action CHECK) rolls back and
+// Verifies migration 044 (the wide alarm action CHECK) rolls back and
 // re-applies cleanly with live rows. The rebuild runs with foreign keys ON,
 // so DROP TABLE performs an implicit DELETE that cascades into alarm_state
 // and event_alarm_attendees; the migration must restore those rows
 // id-intact. The alarm-owned x_properties rows must survive in place. On
-// Down, an alarm with a sync-only action is intentionally deleted together
-// with its dependent rows.
-func TestMigration043UpDown(t *testing.T) {
-	conn, _, err := Open(t.TempDir() + "/mig043.db")
+// Down, the migration intentionally deletes an alarm with a sync-only
+// action together with its dependent rows.
+func TestMigration044UpDown(t *testing.T) {
+	conn, _, err := Open(t.TempDir() + "/mig044.db")
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer conn.Close()
 
 	ctx := context.Background()
-	mustExec := func(query string, args ...any) {
-		t.Helper()
-		if _, err := conn.ExecContext(ctx, query, args...); err != nil {
-			t.Fatalf("exec %q: %v", query, err)
-		}
-	}
-	count := func(query string, args ...any) int {
-		t.Helper()
-		var n int
-		if err := conn.QueryRowContext(ctx, query, args...).Scan(&n); err != nil {
-			t.Fatalf("count %q: %v", query, err)
-		}
-		return n
-	}
+	mustExec, count := migHelpers(t, ctx, conn)
 
 	// Seed: one event with a fireable alarm (state + attendee + x-prop) and
 	// one sync-only NONE alarm (x-prop only).
 	mustExec(`INSERT INTO events (uid, calendar_id, title, start_time, end_time)
-		VALUES ('mig043-evt', 1, 'Mig', '2026-01-01T10:00:00Z', '2026-01-01T11:00:00Z')`)
+		VALUES ('mig044-evt', 1, 'Mig', '2026-01-01T10:00:00Z', '2026-01-01T11:00:00Z')`)
 	mustExec(`INSERT INTO event_alarms (id, event_id, action, trigger_value) VALUES (1, 1, 'EMAIL', '-PT15M')`)
 	mustExec(`INSERT INTO event_alarms (id, event_id, action, trigger_value) VALUES (2, 1, 'NONE', '-PT5M')`)
 	mustExec(`INSERT INTO alarm_state (id, alarm_id, event_id, trigger_at, fired_at)
@@ -123,15 +135,16 @@ func TestMigration043UpDown(t *testing.T) {
 		VALUES ('event_alarm', 1, 'X-KEEP', 'yes')`)
 	mustExec(`INSERT INTO x_properties (owner_type, owner_id, name, value)
 		VALUES ('event_alarm', 2, 'X-GONE-ON-DOWN', 'yes')`)
+	// Seed the todo half with the same shape, so the todo rebuild and the
+	// todo child-table backup blocks run against live rows too.
+	mustExec(`INSERT INTO todos (uid, calendar_id, summary) VALUES ('mig044-todo', 1, 'Mig')`)
+	mustExec(`INSERT INTO todo_alarms (id, todo_id, action, trigger_value) VALUES (1, 1, 'DISPLAY', '-PT15M')`)
+	mustExec(`INSERT INTO todo_alarms (id, todo_id, action, trigger_value) VALUES (2, 1, 'NONE', '-PT5M')`)
+	mustExec(`INSERT INTO todo_alarm_state (id, alarm_id, todo_id, trigger_at, fired_at)
+		VALUES (8, 1, 1, '2026-01-01T09:45:00Z', '2026-01-01T09:45:01Z')`)
+	mustExec(`INSERT INTO todo_alarm_attendees (alarm_id, email) VALUES (1, 'b@example.com')`)
 
-	migrationsFS, err := fs.Sub(dbembed.Migrations, "migrations")
-	if err != nil {
-		t.Fatalf("sub fs: %v", err)
-	}
-	provider, err := goose.NewProvider(goose.DialectSQLite3, conn, migrationsFS)
-	if err != nil {
-		t.Fatalf("provider: %v", err)
-	}
+	provider := migProvider(t, conn)
 	if _, err := provider.DownTo(ctx, 42); err != nil {
 		t.Fatalf("down to 42: %v", err)
 	}
@@ -155,9 +168,27 @@ func TestMigration043UpDown(t *testing.T) {
 	); err == nil {
 		t.Errorf("narrow CHECK accepted action NONE after Down")
 	}
+	if n := count(`SELECT COUNT(*) FROM todo_alarms`); n != 1 {
+		t.Errorf("todo alarms after Down = %d, want 1 (the NONE alarm is dropped)", n)
+	}
+	if n := count(`SELECT COUNT(*) FROM todo_alarm_state WHERE id = 8 AND alarm_id = 1
+		AND trigger_at = '2026-01-01T09:45:00Z'`); n != 1 {
+		t.Errorf("todo_alarm_state row after Down = %d, want 1 (id-intact restore)", n)
+	}
+	if n := count(`SELECT COUNT(*) FROM todo_alarm_attendees WHERE alarm_id = 1
+		AND email = 'b@example.com'`); n != 1 {
+		t.Errorf("todo attendee row after Down = %d, want 1", n)
+	}
 
 	if _, err := provider.Up(ctx); err != nil {
 		t.Fatalf("re-up: %v", err)
+	}
+
+	if n := count(`SELECT COUNT(*) FROM todo_alarm_state WHERE id = 8 AND alarm_id = 1`); n != 1 {
+		t.Errorf("todo_alarm_state row after re-Up = %d, want 1 (id-intact restore)", n)
+	}
+	if n := count(`SELECT COUNT(*) FROM todo_alarm_attendees WHERE alarm_id = 1`); n != 1 {
+		t.Errorf("todo attendee row after re-Up = %d, want 1", n)
 	}
 
 	if n := count(`SELECT COUNT(*) FROM alarm_state WHERE id = 7 AND alarm_id = 1`); n != 1 {
@@ -201,12 +232,7 @@ func TestMigration040UpDown(t *testing.T) {
 	defer conn.Close()
 
 	ctx := context.Background()
-	mustExec := func(query string, args ...any) {
-		t.Helper()
-		if _, err := conn.ExecContext(ctx, query, args...); err != nil {
-			t.Fatalf("exec %q: %v", query, err)
-		}
-	}
+	mustExec, _ := migHelpers(t, ctx, conn)
 
 	// Calendar id 1 ('Personal') is seeded by migration 001. Hang dependent
 	// rows off it so we can prove foreign keys survive the column rebuild.
@@ -274,10 +300,7 @@ func TestMigration040UpDown(t *testing.T) {
 		t.Error("calendars.name UNIQUE constraint not enforced after Up")
 	}
 
-	provider, err := NewMigrationProvider(conn)
-	if err != nil {
-		t.Fatalf("provider: %v", err)
-	}
+	provider := migProvider(t, conn)
 
 	if _, err := provider.DownTo(ctx, 39); err != nil {
 		t.Fatalf("down to 39: %v", err)

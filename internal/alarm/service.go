@@ -48,6 +48,21 @@ func maxLeadTime(triggers []string) time.Duration {
 	return longest
 }
 
+// fireable returns only the alarms the engine can dispatch. A preserved
+// sync-only action (issue #579) never fires. The row is healthy, not a
+// defect, so the filter is silent. Apply this filter to every alarm fetch
+// on the check paths. A new loop over a filtered fetch then cannot fire a
+// sync-only alarm.
+func fireable(alarms []model.Alarm) []model.Alarm {
+	kept := make([]model.Alarm, 0, len(alarms))
+	for _, a := range alarms {
+		if model.FireableAlarmAction(a.Action) {
+			kept = append(kept, a)
+		}
+	}
+	return kept
+}
+
 // DueAlarm represents an alarm that should fire now.
 type DueAlarm struct {
 	Event     event.Event
@@ -137,14 +152,13 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 	if err != nil {
 		return nil, nil, err
 	}
+	for id, as := range alarmMap {
+		alarmMap[id] = fireable(as)
+	}
 
 	var missed []MissedAlarm
 	for _, expEvt := range expanded {
 		for _, a := range alarmMap[expEvt.ID] {
-			// A sync-only action never fires, so it is never missed.
-			if !model.FireableAlarmAction(a.Action) {
-				continue
-			}
 			triggerAt, err := computeTriggerTimeForInstance(expEvt, a)
 			if err != nil {
 				continue
@@ -180,7 +194,11 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 			}
 
 			alarms, err := s.todos.ListAlarmsLean(ctx, td.ID)
-			if err != nil || len(alarms) == 0 {
+			if err != nil {
+				continue
+			}
+			alarms = fireable(alarms)
+			if len(alarms) == 0 {
 				continue
 			}
 
@@ -198,10 +216,6 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 			}
 			for _, inst := range instances {
 				for _, a := range alarms {
-					// A sync-only action never fires, so it is never missed.
-					if !model.FireableAlarmAction(a.Action) {
-						continue
-					}
 					triggerAt, err := computeTodoTriggerTimeForInstance(inst, a)
 					if err != nil {
 						continue
@@ -312,6 +326,9 @@ func (s *Service) checkEventAlarms(ctx context.Context, now time.Time) ([]DueAla
 	if err != nil {
 		return nil, fmt.Errorf("fetch alarms: %w", err)
 	}
+	for id, as := range alarmMap {
+		alarmMap[id] = fireable(as)
+	}
 
 	var due []DueAlarm
 
@@ -319,11 +336,6 @@ func (s *Service) checkEventAlarms(ctx context.Context, now time.Time) ([]DueAla
 		alarms := alarmMap[expEvt.ID] // nil if no alarms for this event
 
 		for _, a := range alarms {
-			// A preserved sync-only action (issue #579) never fires.
-			// Skip it in silence: the row is healthy, not a defect.
-			if !model.FireableAlarmAction(a.Action) {
-				continue
-			}
 			triggerAt, err := computeTriggerTimeForInstance(expEvt, a)
 			if err != nil {
 				continue
@@ -526,6 +538,12 @@ func (s *Service) ListExpiredSnoozed(ctx context.Context, now time.Time) ([]DueA
 		}
 		if matched.ID == 0 {
 			continue // alarm definition was removed
+		}
+		// A sync pull can rewrite a snoozed alarm to a sync-only action
+		// in place (same row ID, matched by UID). The re-fire must not
+		// happen and the snooze state must stay unconsumed.
+		if !model.FireableAlarmAction(matched.Action) {
+			continue
 		}
 
 		triggerAt, _ := time.Parse(time.RFC3339, storage.NullableToString(st.SnoozedTo))

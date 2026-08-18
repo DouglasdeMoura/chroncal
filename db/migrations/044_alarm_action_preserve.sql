@@ -19,10 +19,10 @@
 --    The implicit DELETE fires no SQL triggers, so the alarm-owned
 --    x_properties rows survive in place.
 -- 2. The x_properties owner-exists triggers reference the alarm tables by
---    name. The rename reparses the schema and would choke on a trigger
---    that points at a missing table. Drop those triggers first. Recreate
---    them after. The AFTER DELETE cleanup triggers live on the alarm
---    tables and die with the DROP; recreate them too.
+--    name. The rename reparses the schema and fails on a trigger that
+--    points at a missing table. Drop those triggers first. Recreate
+--    them after. The DROP also removes the AFTER DELETE cleanup triggers
+--    on the alarm tables; recreate them too.
 DROP TRIGGER IF EXISTS x_properties_event_alarm_owner_exists;
 DROP TRIGGER IF EXISTS x_properties_todo_alarm_owner_exists;
 
@@ -152,7 +152,10 @@ END;
 -- Intentional, unrecoverable data loss: the narrow CHECK cannot hold an
 -- alarm with an action outside AUDIO, DISPLAY, and EMAIL. Delete those
 -- alarms first. The DELETE cascades their state and attendee rows and the
--- AFTER DELETE trigger removes their x_properties rows.
+-- AFTER DELETE trigger removes their x_properties rows. The loss is not
+-- local only. The next push omits the deleted VALARMs, so the server copy
+-- loses them too, and Google re-applies the default reminders that its
+-- ACTION:NONE sentinel turned off.
 DELETE FROM event_alarms WHERE action NOT IN ('AUDIO','DISPLAY','EMAIL');
 DELETE FROM todo_alarms WHERE action NOT IN ('AUDIO','DISPLAY','EMAIL');
 

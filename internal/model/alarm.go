@@ -173,7 +173,7 @@ func sortedEmails(atts []AlarmAttendee) []string {
 // against those queries. The match is case-sensitive. The slice is
 // unexported so no other package can change the set at run time.
 //
-// The storage rule is wider: see StorableAlarmAction. Migration 043
+// The storage rule is wider: see StorableAlarmAction. Migration 044
 // widened the CHECK constraints, so the tables also hold a preserved
 // foreign action (issue #579).
 var alarmActions = []string{"AUDIO", "DISPLAY", "EMAIL"}
@@ -215,15 +215,15 @@ func AlarmRelatedValuesList() string {
 //
 // The storage rule is wider: see StorableAlarmAction. Import preserves an
 // RFC 5545 x-name or iana-token action (for example X-APPLE-SOUND) and
-// the Google ACTION:NONE sentinel, so a push does not delete the alarm of
-// another client (issue #579).
+// the Google ACTION:NONE sentinel (issue #579). A push then does not
+// delete the alarm of another client.
 func FireableAlarmAction(action string) bool {
 	return slices.Contains(alarmActions, action)
 }
 
 // StorableAlarmAction returns true if action is a value the alarm tables
 // accept: any non-empty string. The rule mirrors the CHECK constraints in
-// db/migrations/043. Keep this function and the two constraints in
+// db/migrations/044. Keep this function and the two constraints in
 // lockstep. A value that passes here but fails the constraint rolls back
 // the whole resource transaction during sync (issue #575).
 func StorableAlarmAction(action string) bool {
@@ -305,7 +305,7 @@ func PrepareAlarmsForWrite(alarms []Alarm) ([]Alarm, error) {
 // prepareAlarmForWrite fills the defaults and validates one alarm.
 //
 // The action rule is StorableAlarmAction, not the fireable set. Migration
-// 043 widened the CHECK constraint, because import preserves the action
+// 044 widened the CHECK constraint, because import preserves the action
 // of another client (issue #579). A check against the fireable set here
 // would reject every preserved alarm at the write boundary.
 func prepareAlarmForWrite(a *Alarm) error {

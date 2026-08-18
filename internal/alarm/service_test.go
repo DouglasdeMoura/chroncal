@@ -213,33 +213,96 @@ func TestCheck_SkipsSyncOnlyAction(t *testing.T) {
 		t.Errorf("todo alarms = %d, want 0 (a sync-only action never fires)", len(dueTodos))
 	}
 
-	// CheckMissed must not report a sync-only action either: it never
-	// fires, so it is never missed.
+	// CheckMissed must not report a sync-only action: it never fires, so
+	// it is never missed. The exact counts also fail on an over-broad
+	// skip that drops the DISPLAY alarm.
 	missed, missedTodos, err := svc.CheckMissed(ctx, time.Now().Add(48*time.Hour), 72*time.Hour)
 	if err != nil {
 		t.Fatalf("check missed: %v", err)
 	}
-	for _, m := range missed {
-		alarms, err := evtSvc.ListAlarms(ctx, e.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, a := range alarms {
-			if a.ID == m.AlarmID && !model.FireableAlarmAction(a.Action) {
-				t.Errorf("missed report includes sync-only alarm %d (%s)", a.ID, a.Action)
-			}
+	alarms, err := evtSvc.ListAlarms(ctx, e.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	syncOnlyIDs := make(map[int64]bool)
+	for _, a := range alarms {
+		if !model.FireableAlarmAction(a.Action) {
+			syncOnlyIDs[a.ID] = true
 		}
 	}
-	for _, m := range missedTodos {
-		alarms, err := todoSvc.ListAlarms(ctx, td.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, a := range alarms {
-			if a.ID == m.AlarmID && !model.FireableAlarmAction(a.Action) {
-				t.Errorf("missed report includes sync-only todo alarm %d (%s)", a.ID, a.Action)
-			}
-		}
+	if len(missed) != 1 {
+		t.Fatalf("missed = %d, want exactly 1 (the DISPLAY alarm)", len(missed))
+	}
+	if syncOnlyIDs[missed[0].AlarmID] {
+		t.Errorf("missed report includes a sync-only alarm (id %d)", missed[0].AlarmID)
+	}
+	if len(missedTodos) != 0 {
+		t.Errorf("missed todos = %d, want 0 (the only todo alarm is sync-only)", len(missedTodos))
+	}
+}
+
+// A sync pull can rewrite a snoozed alarm to a sync-only action in place
+// (same row ID, matched by UID). The expired snooze must not re-fire, and
+// the snooze state must stay unconsumed.
+func TestCheck_SnoozedAlarmRewrittenSyncOnly_DoesNotRefire(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	evtSvc := event.NewService(db, q)
+	svc := NewService(db, q, evtSvc, nil)
+	ctx := context.Background()
+
+	start := time.Now().Add(10 * time.Minute)
+	e, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "Snoozed then disabled",
+		StartTime:  start,
+		EndTime:    start.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT15M"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	due, _, err := svc.Check(ctx, time.Now())
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if len(due) != 1 {
+		t.Fatalf("due = %d, want 1", len(due))
+	}
+	stateID, err := svc.MarkFired(ctx, due[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Snooze(ctx, stateID, time.Now().Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Rewrite the alarm row in place, like updateAlarmInPlace does on a
+	// sync pull. ReplaceAlarms would delete and recreate the row, and the
+	// cascade would remove the snooze state this test must observe.
+	if _, err := db.ExecContext(ctx,
+		`UPDATE event_alarms SET action = 'NONE' WHERE id = ?`, due[0].Alarm.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	due, _, err = svc.Check(ctx, time.Now())
+	if err != nil {
+		t.Fatalf("check after rewrite: %v", err)
+	}
+	if len(due) != 0 {
+		t.Errorf("due after rewrite = %d, want 0 (a sync-only action must not re-fire)", len(due))
+	}
+	var snoozedTo sql.NullString
+	if err := db.QueryRowContext(ctx,
+		`SELECT snoozed_to FROM alarm_state WHERE id = ?`, stateID).Scan(&snoozedTo); err != nil {
+		t.Fatal(err)
+	}
+	if !snoozedTo.Valid || snoozedTo.String == "" {
+		t.Errorf("snoozed_to was cleared; the snooze state must stay unconsumed")
 	}
 }
 

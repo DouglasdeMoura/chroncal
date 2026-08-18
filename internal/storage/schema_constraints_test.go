@@ -395,7 +395,7 @@ func TestAlarmConstraintsMatchModelValidators(t *testing.T) {
 		// The valid candidates come from the model sets. The test then
 		// probes a value added to the model but not to a migration
 		// against the CHECK constraint, and the value fails here.
-		// Migration 043 widened the action constraint, so the action rule
+		// Migration 044 widened the action constraint, so the action rule
 		// is StorableAlarmAction and a preserved foreign action passes.
 		{"action", append(model.AlarmActions(), "NONE", "PROCEDURE", "X-APPLE-SOUND", "display", ""), model.StorableAlarmAction},
 		{"related", append(model.AlarmRelatedValues(), "STARTS", "end", ""), model.ValidAlarmRelated},

@@ -114,10 +114,10 @@ func eventICS(uid, summary string, valarms ...string) string {
 
 // Regression test for issue #579 (follow-up to issue #575). PR #577
 // dropped a VALARM with an action outside the fireable set. Every later
-// push then deleted the VALARM of another client from the server copy —
-// or let Google re-apply the default reminders that its ACTION:NONE
-// sentinel had disabled. The parser must now keep such an alarm verbatim.
-// The preserved alarm round-trips faithfully, so no warning applies.
+// push then deleted the VALARM of another client from the server copy.
+// For ACTION:NONE, the drop let Google re-apply the reminders the user
+// turned off. The parser must now keep such an alarm verbatim, and the
+// warning must tell the user the alarm never fires locally.
 func TestImport_UnsupportedAlarmAction_PreservesAlarm(t *testing.T) {
 	t.Parallel()
 	ics := eventICS("action-none-event@example.com", "Event with a sync-only alarm",
@@ -139,8 +139,11 @@ func TestImport_UnsupportedAlarmAction_PreservesAlarm(t *testing.T) {
 			t.Errorf("alarm %d action = %q, want %q (preserved verbatim)", i, got, want)
 		}
 	}
-	if warningMentions(result.Warnings, "ACTION") {
-		t.Errorf("preserved actions must not warn (they round-trip faithfully); warnings = %v", result.Warnings)
+	if !warningMentions(result.Warnings, `event "action-none-event@example.com"`, "ACTION", `"NONE"`, "never fires locally") {
+		t.Errorf("no preserved-action warning for NONE; warnings = %v", result.Warnings)
+	}
+	if !warningMentions(result.Warnings, `"X-APPLE-SOUND"`, "never fires locally") {
+		t.Errorf("no preserved-action warning for X-APPLE-SOUND; warnings = %v", result.Warnings)
 	}
 }
 

@@ -86,8 +86,12 @@ func (q *Queries) DeleteTodoAlarmsByTodoID(ctx context.Context, todoID int64) er
 
 const listDistinctTodoAlarmTriggers = `-- name: ListDistinctTodoAlarmTriggers :many
 SELECT DISTINCT trigger_value FROM todo_alarms
+WHERE action IN ('AUDIO', 'DISPLAY', 'EMAIL')
 `
 
+// The action list mirrors model.FireableAlarmAction. Keep the two in
+// lockstep. A preserved sync-only action never fires, so its trigger
+// must not size the alarm check window.
 func (q *Queries) ListDistinctTodoAlarmTriggers(ctx context.Context) ([]string, error) {
 	rows, err := q.db.QueryContext(ctx, listDistinctTodoAlarmTriggers)
 	if err != nil {

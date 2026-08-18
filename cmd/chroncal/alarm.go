@@ -51,14 +51,6 @@ var fireAlarmFn = fireAlarm
 // post-trigger notifications. The alarm check loop generates separate
 // trigger times for each repeat, each tracked independently via alarm state.
 func fireAlarm(da alarm.DueAlarm, policy alarmExecutionPolicy) error {
-	// Defense in depth for a preserved sync-only action (issue #579):
-	// Check already skips it, so this arm is normally dead. Dispatch
-	// nothing and report no error. A DISPLAY fallback here would show a
-	// reminder the user disabled (ACTION:NONE) or one that belongs to
-	// another client.
-	if !model.FireableAlarmAction(da.Alarm.Action) {
-		return nil
-	}
 	switch da.Alarm.Action {
 	case "AUDIO":
 		if err := notify.Audio(da, policy.notifyPolicy()); err != nil {
@@ -70,9 +62,12 @@ func fireAlarm(da alarm.DueAlarm, policy alarmExecutionPolicy) error {
 			return notify.Display(da)
 		}
 		return nil
-	default: // DISPLAY and unknown
+	case "DISPLAY":
 		return notify.Display(da)
 	}
+	// A preserved sync-only action (issue #579): dispatch nothing. The
+	// callers refuse the claim first, so this arm is defense in depth.
+	return nil
 }
 
 // isAlarmAlreadyClaimed reports whether err is the SQLite UNIQUE-constraint
@@ -117,6 +112,12 @@ type fireResult struct {
 // snoozed_to first affects a row and wins the claim. The loser sees claimed
 // == false. That is likewise a non-fired, non-error result.
 func markAndFireEventAlarm(ctx context.Context, a *app.App, da alarm.DueAlarm, policy alarmExecutionPolicy) fireResult {
+	// Refuse a preserved sync-only action (issue #579) before the claim.
+	// A claim would consume the state and record a false "fired" entry
+	// for a notification that never appears.
+	if !model.FireableAlarmAction(da.Alarm.Action) {
+		return fireResult{}
+	}
 	stateID := da.StateID
 	var markErr error
 	op := "mark-fired"
@@ -150,6 +151,12 @@ func markAndFireEventAlarm(ctx context.Context, a *app.App, da alarm.DueAlarm, p
 
 // markAndFireTodoAlarm is the todo counterpart of markAndFireEventAlarm.
 func markAndFireTodoAlarm(ctx context.Context, a *app.App, tda alarm.TodoDueAlarm, policy alarmExecutionPolicy) fireResult {
+	// Refuse a preserved sync-only action (issue #579) before the claim.
+	// A claim would consume the state and record a false "fired" entry
+	// for a notification that never appears.
+	if !model.FireableAlarmAction(tda.Alarm.Action) {
+		return fireResult{}
+	}
 	stateID := tda.StateID
 	var markErr error
 	op := "mark-fired"

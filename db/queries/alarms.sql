@@ -6,7 +6,11 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *;
 SELECT * FROM event_alarms WHERE event_id = ? ORDER BY id;
 
 -- name: ListDistinctAlarmTriggers :many
-SELECT DISTINCT trigger_value FROM event_alarms;
+-- The action list mirrors model.FireableAlarmAction. Keep the two in
+-- lockstep. A preserved sync-only action never fires, so its trigger
+-- must not size the alarm check window.
+SELECT DISTINCT trigger_value FROM event_alarms
+WHERE action IN ('AUDIO', 'DISPLAY', 'EMAIL');
 
 -- name: ListAlarmsByEventIDs :many
 SELECT * FROM event_alarms WHERE event_id IN (sqlc.slice(event_ids)) ORDER BY event_id, id;
