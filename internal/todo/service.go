@@ -912,6 +912,35 @@ func (s *Service) replaceFireableAlarms(ctx context.Context, todoID int64, alarm
 	return s.ReplaceAlarms(ctx, todoID, model.KeepSyncOnlyAlarms(stored, alarms))
 }
 
+// ClearSyncOnlyAlarms deletes every stored alarm the engine cannot fire and
+// keeps the rest, like the event method of the same name (issue #593). The
+// read of the stored rows and the write share one transaction.
+func (s *Service) ClearSyncOnlyAlarms(ctx context.Context, todoID int64) error {
+	if s.tx != nil {
+		return s.clearSyncOnlyAlarms(ctx, todoID)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if err := s.WithTx(tx).clearSyncOnlyAlarms(ctx, todoID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// clearSyncOnlyAlarms keeps the fireable stored rows. The caller supplies
+// the transaction.
+func (s *Service) clearSyncOnlyAlarms(ctx context.Context, todoID int64) error {
+	stored, err := s.ListAlarms(ctx, todoID)
+	if err != nil {
+		return fmt.Errorf("list stored alarms: %w", err)
+	}
+	return s.ReplaceAlarms(ctx, todoID, model.FireableAlarmsOnly(stored))
+}
+
 func (s *Service) ReplaceAlarms(ctx context.Context, todoID int64, alarms []model.Alarm) error {
 	td, err := s.Get(ctx, todoID)
 	if err != nil {

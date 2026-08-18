@@ -1695,6 +1695,39 @@ func (s *Service) replaceFireableAlarms(ctx context.Context, eventID int64, alar
 	return s.ReplaceAlarms(ctx, eventID, model.KeepSyncOnlyAlarms(stored, alarms))
 }
 
+// ClearSyncOnlyAlarms deletes every stored alarm the engine cannot fire and
+// keeps the rest. ReplaceFireableAlarms carries those rows forward, so a
+// --alarm edit alone can never remove one. This method gives the user a way
+// out on a local calendar (issue #593).
+//
+// The read of the stored rows and the write share one transaction, like
+// ReplaceFireableAlarms.
+func (s *Service) ClearSyncOnlyAlarms(ctx context.Context, eventID int64) error {
+	if s.tx != nil {
+		return s.clearSyncOnlyAlarms(ctx, eventID)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if err := s.WithTx(tx).clearSyncOnlyAlarms(ctx, eventID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// clearSyncOnlyAlarms keeps the fireable stored rows. The caller supplies
+// the transaction.
+func (s *Service) clearSyncOnlyAlarms(ctx context.Context, eventID int64) error {
+	stored, err := s.ListAlarms(ctx, eventID)
+	if err != nil {
+		return fmt.Errorf("list stored alarms: %w", err)
+	}
+	return s.ReplaceAlarms(ctx, eventID, model.FireableAlarmsOnly(stored))
+}
+
 func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []model.Alarm) error {
 	if err := s.ensureEventWritable(ctx, eventID, 0); err != nil {
 		return err

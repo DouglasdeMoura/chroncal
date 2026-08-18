@@ -578,6 +578,7 @@ func todoUpdateCmd() *cobra.Command {
 		relationFlags []string
 		organizer     string
 		recurrenceID  string
+		clearForeign  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "update <id|uid>",
@@ -814,9 +815,22 @@ a --progress value other than 100.`,
 					return fmt.Errorf("update attachments: %w", err)
 				}
 			}
-			if cmd.Flags().Changed("alarm") {
+			switch {
+			case cmd.Flags().Changed("alarm") && clearForeign:
+				// The flag makes the replacement set the whole set, so a
+				// preserved alarm goes with the rows the flags replace.
+				if err := a.Todos.ReplaceAlarms(ctx, t.ID, alarms); err != nil {
+					return fmt.Errorf("update alarms: %w", err)
+				}
+			case cmd.Flags().Changed("alarm"):
 				if err := a.Todos.ReplaceFireableAlarms(ctx, t.ID, alarms); err != nil {
 					return fmt.Errorf("update alarms: %w", err)
+				}
+			case clearForeign:
+				// The flag on its own removes the preserved rows and keeps
+				// the alarms the user can state.
+				if err := a.Todos.ClearSyncOnlyAlarms(ctx, t.ID); err != nil {
+					return fmt.Errorf("clear foreign alarms: %w", err)
 				}
 			}
 			if cmd.Flags().Changed("attendee") || cmd.Flags().Changed("organizer") {
@@ -887,6 +901,7 @@ a --progress value other than 100.`,
 	cmd.Flags().StringArrayVar(&rdates, "recurrence-date-times", nil, "add extra recurrence date (YYYY-MM-DD, repeatable)")
 	cmd.Flags().StringArrayVar(&attachFlags, "attach", nil, "attachment (file path or URL, repeatable)")
 	cmd.Flags().StringArrayVar(&alarmFlags, "alarm", nil, alarmFlagHelp)
+	cmd.Flags().BoolVar(&clearForeign, "clear-foreign-alarms", false, clearForeignAlarmsHelp)
 	cmd.Flags().StringArrayVar(&attendeeFlags, "attendee", nil, "attendee (email or \"Name <email>\"; repeatable)")
 	cmd.Flags().StringVar(&organizer, "organizer", "", "organizer (email or \"Name <email>\")")
 	cmd.Flags().StringArrayVar(&commentFlags, "comment", nil, "comment annotation (free-form text, repeatable)")
