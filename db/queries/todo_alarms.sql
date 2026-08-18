@@ -6,7 +6,11 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *;
 SELECT * FROM todo_alarms WHERE todo_id = ? ORDER BY id;
 
 -- name: ListDistinctTodoAlarmTriggers :many
-SELECT DISTINCT trigger_value FROM todo_alarms;
+-- The action list mirrors model.FireableAlarmAction. Keep the two in
+-- lockstep. A preserved sync-only action never fires, so its trigger
+-- must not size the alarm check window.
+SELECT DISTINCT trigger_value FROM todo_alarms
+WHERE action IN ('AUDIO', 'DISPLAY', 'EMAIL');
 
 -- name: DeleteTodoAlarmsByTodoID :exec
 DELETE FROM todo_alarms WHERE todo_id = ?;

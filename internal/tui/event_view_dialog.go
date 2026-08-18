@@ -588,7 +588,7 @@ func (m EventViewDialogModel) buildBodyLines(w int) []string {
 		lines = append(lines, "")
 		lines = append(lines, faint.Render("Alarms"))
 		for _, a := range ev.Alarms {
-			lines = append(lines, truncateTo("  "+formatAlarm(a), w))
+			lines = append(lines, truncateTo("  "+formatAlarmWithAction(a), w))
 		}
 	}
 

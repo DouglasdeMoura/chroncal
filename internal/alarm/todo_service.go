@@ -79,7 +79,11 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 		}
 
 		alarms, err := s.todos.ListAlarmsLean(ctx, t.ID)
-		if err != nil || len(alarms) == 0 {
+		if err != nil {
+			continue
+		}
+		alarms = fireable(alarms)
+		if len(alarms) == 0 {
 			continue
 		}
 
@@ -103,11 +107,6 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 
 		for _, inst := range instances {
 			for _, a := range alarms {
-				// A preserved sync-only action (issue #579) never fires.
-				// Skip it in silence: the row is healthy, not a defect.
-				if !model.FireableAlarmAction(a.Action) {
-					continue
-				}
 				triggerAt, err := computeTodoTriggerTimeForInstance(inst, a)
 				if err != nil {
 					// A refused anchor drops a reminder. Log it like
@@ -364,6 +363,12 @@ func (s *TodoService) ListExpiredTodoSnoozed(ctx context.Context, now time.Time)
 			}
 		}
 		if matched.ID == 0 {
+			continue
+		}
+		// A sync pull can rewrite a snoozed alarm to a sync-only action
+		// in place (same row ID, matched by UID). The re-fire must not
+		// happen and the snooze state must stay unconsumed.
+		if !model.FireableAlarmAction(matched.Action) {
 			continue
 		}
 

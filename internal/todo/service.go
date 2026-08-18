@@ -1035,6 +1035,12 @@ func syncMatchedTodoAlarm(ctx context.Context, qtx *storage.Queries, a model.Ala
 // updateTodoAlarmInPlace rewrites a UID-matched alarm's content on its
 // stored row. The row ID stays so todo_alarm_state entries survive.
 func updateTodoAlarmInPlace(ctx context.Context, qtx *storage.Queries, todoID int64, a model.Alarm, ex model.Alarm) error {
+	// Reject an unstorable action in Go, with a named error. The raw
+	// CHECK constraint would roll back the whole resource transaction
+	// during sync (issue #575).
+	if !model.StorableAlarmAction(a.Action) {
+		return fmt.Errorf("update alarm: action %q is not storable", a.Action)
+	}
 	// Same ACKNOWLEDGED policy as syncMatchedTodoAlarm. A malformed
 	// value that arrives must not clobber valid stored state.
 	ack := a.Acknowledged
@@ -1091,6 +1097,12 @@ func isUniqueUIDViolation(err error) bool {
 // UID collision (for example a server that duplicates a todo with its VALARM
 // UIDs), mint a fresh local UID. Do not fail the sync forever.
 func createNewTodoAlarm(ctx context.Context, qtx *storage.Queries, todoID int64, a model.Alarm) error {
+	// Reject an unstorable action in Go, with a named error. The raw
+	// CHECK constraint would roll back the whole resource transaction
+	// during sync (issue #575).
+	if !model.StorableAlarmAction(a.Action) {
+		return fmt.Errorf("create alarm: action %q is not storable", a.Action)
+	}
 	uid := a.UID
 	if uid == "" {
 		uid = uuid.New().String()

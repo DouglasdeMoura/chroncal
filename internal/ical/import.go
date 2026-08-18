@@ -673,13 +673,19 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 		// (for example X-APPLE-SOUND), and Google Calendar emits
 		// ACTION:NONE as a "reminder disabled" sentinel. A drop here
 		// makes every later push delete the VALARM of the other client.
-		// It also lets Google re-apply the default reminders the user
-		// turned off. The alarm tables accept any non-empty action (see
-		// model.StorableAlarmAction), export re-emits it verbatim, and
-		// the alarm check loop skips it. The alarm round-trips and never
-		// fires locally, so this path needs no warning.
+		// For ACTION:NONE, a drop lets Google re-apply the reminders the
+		// user turned off. The alarm tables accept any non-empty action
+		// (see model.StorableAlarmAction). Export re-emits it verbatim.
+		// The alarm check loop skips it, so it never fires locally. The
+		// warning tells the user that: a legacy ACTION:PROCEDURE or a
+		// typo would otherwise look like an armed reminder with no
+		// diagnostic anywhere. Sync re-imports a resource only when it
+		// changes, so the warning does not repeat on every pull.
 		if action := strings.ToUpper(strings.TrimSpace(prop.Value)); action != "" {
 			alarm.Action = action
+			if !model.FireableAlarmAction(action) {
+				warns = append(warns, fmt.Sprintf("VALARM ACTION %q: preserved for sync; it never fires locally", action))
+			}
 		}
 		// An empty value keeps the default action. The service write
 		// boundary (model.PrepareAlarmsForWrite) fills the same default,

@@ -136,10 +136,21 @@ func alarmSummary(alarms []model.Alarm) string {
 	case 0:
 		return "None"
 	case 1:
-		return formatAlarm(alarms[0])
+		return formatAlarmWithAction(alarms[0])
 	default:
 		return strconv.Itoa(len(alarms)) + " alarms"
 	}
+}
+
+// formatAlarmWithAction renders an alarm for a read surface outside the
+// alarm editor. A preserved sync-only action (issue #579) never fires.
+// The bare trigger text would read as an armed reminder, so append the
+// action label to break that misreading.
+func formatAlarmWithAction(a model.Alarm) string {
+	if a.Action == "" || model.FireableAlarmAction(a.Action) {
+		return formatAlarm(a)
+	}
+	return formatAlarm(a) + " (" + actionDisplayLabel(a.Action) + ", never fires)"
 }
 
 // AlarmListEditorModel manages the list of alarms attached to an event.
@@ -426,12 +437,15 @@ func actionDisplayLabel(action string) string {
 // alarmEditable reports whether the edit form can represent the alarm
 // without loss. The form only offers single-unit relative triggers and the
 // fireable actions. A preserved sync-only action (issue #579) stays
-// view-only: a save through the form would rewrite it as DISPLAY, which
-// resurrects a reminder the user disabled (ACTION:NONE) or converts the
-// alarm of another client. The list still shows and deletes the row.
+// view-only. A save through the form would rewrite it as DISPLAY. That
+// rewrite resurrects a reminder the user disabled (ACTION:NONE) or
+// converts the alarm of another client. The list still shows and deletes
+// the row. The action compares raw, exactly like the fire path: a stored
+// non-canonical value (for example "display") never fires, so the form
+// must not rewrite it either.
 func alarmEditable(a model.Alarm) bool {
 	// An empty action means the DISPLAY default, so it stays editable.
-	if act := strings.ToUpper(strings.TrimSpace(a.Action)); act != "" && !model.FireableAlarmAction(act) {
+	if a.Action != "" && !model.FireableAlarmAction(a.Action) {
 		return false
 	}
 	_, _, _, ok := parseOffsetTrigger(a.TriggerValue)
@@ -615,6 +629,11 @@ func (m AlarmListEditorModel) renderList() string {
 		for i, a := range m.alarms {
 			label := "  " + formatAlarm(a)
 			label += faint.Render("  (" + actionDisplayLabel(a.Action) + ")")
+			// Mark a row the edit form cannot open. Without the mark,
+			// "e" and "enter" read as dead keys on this row.
+			if !alarmEditable(a) {
+				label += faint.Render("  view-only")
+			}
 			if m.btnFocus == -1 && i == m.cursor {
 				label = reverse.Render(label)
 			}
