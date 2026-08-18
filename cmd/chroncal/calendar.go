@@ -16,6 +16,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/app"
 	calendarpkg "github.com/douglasdemoura/chroncal/internal/calendar"
+	"github.com/douglasdemoura/chroncal/internal/config"
 	"github.com/douglasdemoura/chroncal/internal/textsafe"
 )
 
@@ -77,7 +78,11 @@ Exactly one calendar is default at any time.`,
 			if target.IsDefault {
 				w := cmd.OutOrStdout()
 				if outputFmt != "text" {
-					return printOutput(w, toJSONCalendar(target))
+					item, err := jsonCalendarDecorated(ctx, a, target)
+					if err != nil {
+						return err
+					}
+					return printOutput(w, item)
 				}
 				fmt.Fprintf(w, "Calendar %q is already the default.\n", target.Name)
 				return nil
@@ -94,7 +99,11 @@ Exactly one calendar is default at any time.`,
 
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
-				return printOutput(w, toJSONCalendar(updated))
+				item, err := jsonCalendarDecorated(ctx, a, updated)
+				if err != nil {
+					return err
+				}
+				return printOutput(w, item)
 			}
 			fmt.Fprintf(w, "Default calendar set to %q.\n", updated.Name)
 			return nil
@@ -126,9 +135,9 @@ func calendarListCmd() *cobra.Command {
 
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
-				items := make([]jsonCalendar, len(cals))
-				for i, c := range cals {
-					items[i] = toJSONCalendar(c)
+				items, err := jsonCalendars(context.Background(), a, cals)
+				if err != nil {
+					return err
 				}
 				return printOutput(w, items)
 			}
@@ -190,7 +199,11 @@ func calendarGetCmd() *cobra.Command {
 
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
-				return printOutput(w, toJSONCalendar(c))
+				item, err := jsonCalendarDecorated(context.Background(), a, c)
+				if err != nil {
+					return err
+				}
+				return printOutput(w, item)
 			}
 			printCalendar(w, c)
 			return nil
@@ -265,7 +278,11 @@ behavior.`,
 
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
-				return printOutput(w, toJSONCalendar(c))
+				item, err := jsonCalendarDecorated(context.Background(), a, c)
+				if err != nil {
+					return err
+				}
+				return printOutput(w, item)
 			}
 			fmt.Fprintf(w, "Created calendar %d: %s\n", c.ID, c.Name)
 			return nil
@@ -392,7 +409,11 @@ Only the flags you pass are changed.`,
 
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
-				return printOutput(w, toJSONCalendar(c))
+				item, err := jsonCalendarDecorated(ctx, a, c)
+				if err != nil {
+					return err
+				}
+				return printOutput(w, item)
 			}
 			fmt.Fprintf(w, "Updated calendar %d: %s\n", c.ID, c.Name)
 			return nil
@@ -603,4 +624,55 @@ func findCalendarByRef(cals []calendarpkg.Calendar, ref string) (calendarpkg.Cal
 	default:
 		return calendarpkg.Calendar{}, fmt.Errorf("calendar name %q is ambiguous; use its numeric ID instead", ref)
 	}
+}
+
+func jsonCalendars(ctx context.Context, a *app.App, cals []calendarpkg.Calendar) ([]jsonCalendar, error) {
+	hidden := hiddenCalendarSet()
+	names, err := accountDisplayNames(ctx, a)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]jsonCalendar, len(cals))
+	for i, c := range cals {
+		items[i] = decorateJSONCalendar(c, names, hidden)
+	}
+	return items, nil
+}
+
+func jsonCalendarDecorated(ctx context.Context, a *app.App, c calendarpkg.Calendar) (jsonCalendar, error) {
+	items, err := jsonCalendars(ctx, a, []calendarpkg.Calendar{c})
+	if err != nil {
+		return jsonCalendar{}, err
+	}
+	return items[0], nil
+}
+
+func decorateJSONCalendar(c calendarpkg.Calendar, names map[int64]string, hidden map[int64]struct{}) jsonCalendar {
+	item := toJSONCalendar(c)
+	if c.AccountID != 0 {
+		item.AccountName = names[c.AccountID]
+	}
+	_, item.Hidden = hidden[c.ID]
+	return item
+}
+
+func hiddenCalendarSet() map[int64]struct{} {
+	ids := config.LoadUIState().HiddenCalendars
+	out := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		out[id] = struct{}{}
+	}
+	return out
+}
+
+func accountDisplayNames(ctx context.Context, a *app.App) (map[int64]string, error) {
+	accounts, err := a.Accounts.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list accounts: %w", err)
+	}
+	names := make(map[int64]string, len(accounts))
+	for _, item := range accounts {
+		names[item.ID] = item.DisplayName
+	}
+	return names, nil
 }
