@@ -62,3 +62,23 @@ func TestHelpDialog_EventsSectionDocumentsCopy(t *testing.T) {
 		t.Fatalf("copy key = %q, want %q", got, "p")
 	}
 }
+
+// A server can send any PARTSTAT value. formatRSVPCopy must split the
+// first character on a rune, so a multi-byte value keeps its characters.
+func TestFormatRSVPCopy_MultiByteValue(t *testing.T) {
+	tests := []struct {
+		name   string
+		status string
+		want   string
+	}{
+		{"multi-byte first rune", "ÉBAUCHE", "Ébauche"},
+		{"known value", "accepted", "Accepted"},
+		{"single byte fallback", "X-CUSTOM", "X-custom"},
+		{"empty", "", "No response"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, formatRSVPCopy(tc.status))
+		})
+	}
+}

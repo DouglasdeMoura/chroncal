@@ -883,7 +883,28 @@ func fromStorageTodoAlarm(r storage.TodoAlarm) model.Alarm {
 // carries the stored sync-only rows forward, like the event method of the
 // same name (issue #579). A caller that must delete such a row calls
 // ReplaceAlarms instead.
+// The read of the stored rows and the write share one transaction, like
+// the event method of the same name. A read on its own connection could
+// return a row a concurrent pull has already deleted.
 func (s *Service) ReplaceFireableAlarms(ctx context.Context, todoID int64, alarms []model.Alarm) error {
+	if s.tx != nil {
+		return s.replaceFireableAlarms(ctx, todoID, alarms)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if err := s.WithTx(tx).replaceFireableAlarms(ctx, todoID, alarms); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// replaceFireableAlarms carries the stored sync-only rows forward. The
+// caller supplies the transaction.
+func (s *Service) replaceFireableAlarms(ctx context.Context, todoID int64, alarms []model.Alarm) error {
 	stored, err := s.ListAlarms(ctx, todoID)
 	if err != nil {
 		return fmt.Errorf("list stored alarms: %w", err)

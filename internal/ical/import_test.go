@@ -1511,3 +1511,35 @@ END:VCALENDAR`
 		t.Errorf("no DURATION-without-DTSTART warning; warnings = %v", result.Warnings)
 	}
 }
+
+// A DURATION whose end passes the storable year is dropped at import. The
+// todo service rejects such a span in validateTiming, and the sync engine
+// stops at the first resource error, so a stored value would fail the
+// whole calendar pull on every run (issue #585).
+func TestImport_TodoUnstorableDuration_DroppedWithWarning(t *testing.T) {
+	t.Parallel()
+	ics := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VTODO
+UID:unstorable-duration
+DTSTAMP:20260401T100000Z
+DTSTART:20260401T140000Z
+DURATION:P3000000D
+SUMMARY:Unstorable Span
+END:VTODO
+END:VCALENDAR`
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile error: %v", err)
+	}
+	if len(result.Todos) != 1 {
+		t.Fatalf("todos = %d, want 1", len(result.Todos))
+	}
+	if result.Todos[0].Duration != "" {
+		t.Errorf("Duration = %q, want it dropped", result.Todos[0].Duration)
+	}
+	joined := strings.Join(result.Warnings, " | ")
+	if !strings.Contains(joined, "ends past year") {
+		t.Errorf("no unstorable-DURATION warning; warnings = %v", result.Warnings)
+	}
+}

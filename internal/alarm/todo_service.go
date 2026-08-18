@@ -28,8 +28,8 @@ type TodoDueAlarm struct {
 // Lean variants omit X-properties (round-trip-only metadata) — the check
 // loop calls them per todo every tick and never reads them. The Fireable
 // variant also excludes preserved sync-only actions in SQL. The snooze
-// lister uses the unfiltered list: the write point retires the state of
-// a rewritten alarm, so every snoozed state it matches is fireable.
+// lister uses the unfiltered list, because its own state query already
+// filters on the current action.
 type TodoAlarmLister interface {
 	ListAlarms(ctx context.Context, todoID int64) ([]model.Alarm, error)
 	ListAlarmsLean(ctx context.Context, todoID int64) ([]model.Alarm, error)
@@ -371,9 +371,10 @@ func (s *TodoService) ListExpiredTodoSnoozed(ctx context.Context, now time.Time)
 		if matched.ID == 0 {
 			continue
 		}
-		// A rewrite to a sync-only action retires the state row at the
-		// write point (updateTodoAlarmInPlace), so this list never
-		// returns such a row.
+		// ListExpiredSnoozedTodoAlarmStates joins todo_alarms and
+		// filters on the current action, so a snoozed alarm a pull
+		// rewrote to a sync-only action never reaches here. Keep that
+		// filter: this loop does not test the action itself.
 
 		triggerAt, _ := time.Parse(time.RFC3339, storage.NullableToString(st.SnoozedTo))
 

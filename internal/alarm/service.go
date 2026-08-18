@@ -519,9 +519,10 @@ func (s *Service) ListExpiredSnoozed(ctx context.Context, now time.Time) ([]DueA
 		if matched.ID == 0 {
 			continue // alarm definition was removed
 		}
-		// A rewrite to a sync-only action retires the state row at the
-		// write point (updateAlarmInPlace), so this list never returns
-		// such a row.
+		// ListExpiredSnoozedAlarmStates joins event_alarms and filters
+		// on the current action, so a snoozed alarm a pull rewrote to a
+		// sync-only action never reaches here. Keep that filter: this
+		// loop does not test the action itself.
 
 		triggerAt, _ := time.Parse(time.RFC3339, storage.NullableToString(st.SnoozedTo))
 
@@ -717,15 +718,18 @@ func (s *Service) Snooze(ctx context.Context, stateID int64, until time.Time) er
 	})
 }
 
-// ListPending returns all fired alarms that are not acknowledged. A
-// rewrite to a sync-only action retires the alarm's state at the write
-// point (updateAlarmInPlace), so this list never returns such a row.
+// ListPending returns all fired alarms that are not acknowledged.
+// ListPendingAlarmStates joins event_alarms and filters on the current
+// action, so an alarm a pull rewrote to a sync-only action drops out.
+// The state row itself stays, so the entry returns when a later pull
+// restores a fireable action. Keep the filter in the query.
 func (s *Service) ListPending(ctx context.Context) ([]storage.AlarmState, error) {
 	return s.q.ListPendingAlarmStates(ctx)
 }
 
 // ListPendingTodoAlarms returns all fired todo alarms that are not
-// acknowledged, with the same write-point retirement as ListPending.
+// acknowledged. ListPendingTodoAlarmStates carries the same action
+// filter as ListPending.
 func (s *Service) ListPendingTodoAlarms(ctx context.Context) ([]storage.TodoAlarmState, error) {
 	return s.q.ListPendingTodoAlarmStates(ctx)
 }

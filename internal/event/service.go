@@ -1665,7 +1665,29 @@ func deleteUnmatchedAlarms(ctx context.Context, qtx *storage.Queries, existing [
 // preserved action — the CLI --alarm flag — uses this method, so a
 // routine edit does not delete the VALARM of another client (issue #579).
 // A caller that must delete such a row calls ReplaceAlarms instead.
+// The read of the stored rows and the write share one transaction. A read
+// on its own connection could return a row a concurrent pull has already
+// deleted. The carry-over would then write that row again, and the next
+// push would restore the deleted VALARM on the server.
 func (s *Service) ReplaceFireableAlarms(ctx context.Context, eventID int64, alarms []model.Alarm) error {
+	if s.tx != nil {
+		return s.replaceFireableAlarms(ctx, eventID, alarms)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if err := s.WithTx(tx).replaceFireableAlarms(ctx, eventID, alarms); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// replaceFireableAlarms carries the stored sync-only rows forward. The
+// caller supplies the transaction.
+func (s *Service) replaceFireableAlarms(ctx context.Context, eventID int64, alarms []model.Alarm) error {
 	stored, err := s.ListAlarms(ctx, eventID)
 	if err != nil {
 		return fmt.Errorf("list stored alarms: %w", err)

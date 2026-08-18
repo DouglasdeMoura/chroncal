@@ -633,12 +633,57 @@ func TestTodoService_ReplaceAlarms_RejectsInvalidAlarm(t *testing.T) {
 		t.Errorf("alarms = %d, want 0 (a rejected write must store no row)", len(alarms))
 	}
 
-	// A preserved foreign action passes. Migration 043 widened the action
+	// A preserved foreign action passes. Migration 044 widened the action
 	// constraint, so the boundary accepts it (issue #579).
 	if err := svc.ReplaceAlarms(ctx, td.ID, []model.Alarm{
 		{Action: "NONE", TriggerValue: "-PT5M"},
 	}); err != nil {
 		t.Fatalf("preserved action: err = %v, want nil", err)
+	}
+}
+
+// ReplaceFireableAlarms reads the stored rows and writes them back in one
+// transaction, like the event method. The carry-over must keep a preserved
+// sync-only row that the caller cannot state (issue #579).
+func TestTodoService_ReplaceFireableAlarms_CarriesSyncOnlyRows(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	td := createTodo(t, svc)
+
+	if err := svc.ReplaceAlarms(ctx, td.ID, []model.Alarm{
+		{Action: "NONE", TriggerValue: "-PT5M"},
+		{Action: "DISPLAY", TriggerValue: "-PT15M"},
+	}); err != nil {
+		t.Fatalf("seed alarms: %v", err)
+	}
+
+	if err := svc.ReplaceFireableAlarms(ctx, td.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT30M"},
+	}); err != nil {
+		t.Fatalf("ReplaceFireableAlarms: %v", err)
+	}
+
+	alarms, err := svc.ListAlarms(ctx, td.ID)
+	if err != nil {
+		t.Fatalf("ListAlarms: %v", err)
+	}
+	if len(alarms) != 2 {
+		t.Fatalf("alarms = %d, want 2 (the new fireable one and the carried row); got %+v", len(alarms), alarms)
+	}
+	var foundSyncOnly, foundNew bool
+	for _, a := range alarms {
+		if a.Action == "NONE" && a.TriggerValue == "-PT5M" {
+			foundSyncOnly = true
+		}
+		if a.Action == "DISPLAY" && a.TriggerValue == "-PT30M" {
+			foundNew = true
+		}
+	}
+	if !foundSyncOnly {
+		t.Errorf("the preserved sync-only row is gone; alarms = %+v", alarms)
+	}
+	if !foundNew {
+		t.Errorf("the stated fireable alarm is missing; alarms = %+v", alarms)
 	}
 }
 

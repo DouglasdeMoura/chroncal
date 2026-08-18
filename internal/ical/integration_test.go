@@ -560,3 +560,43 @@ END:VCALENDAR
 func readerFromBytes(data []byte) *bytes.Reader {
 	return bytes.NewReader(data)
 }
+
+// A VTODO whose DURATION ends past the storable year must persist. The
+// importer drops the value, so UpsertByUID accepts the todo. Before the
+// drop, validateTiming rejected it, and the sync engine failed the whole
+// calendar pull on every run (issue #585).
+func TestIntegration_TodoUnstorableDurationPersists(t *testing.T) {
+	const ics = `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VTODO
+UID:unstorable-span-todo
+DTSTAMP:20260401T100000Z
+DTSTART:20260401T140000Z
+DURATION:P3000000D
+SUMMARY:Unstorable Span
+END:VTODO
+END:VCALENDAR`
+
+	result, err := ImportFile(bytes.NewReader([]byte(ics)))
+	if err != nil {
+		t.Fatalf("ImportFile: %v", err)
+	}
+	if len(result.Todos) != 1 {
+		t.Fatalf("todos = %d, want 1", len(result.Todos))
+	}
+
+	db, q := testutil.NewTestDB(t)
+	ctx := context.Background()
+	calSvc := calendar.NewService(db, q)
+	todoSvc := todo.NewService(db, q)
+	cals, _ := calSvc.List(ctx)
+
+	td := result.Todos[0]
+	if _, err := todoSvc.UpsertByUID(ctx, todo.UpsertParams{
+		UID: td.UID, CalendarID: cals[0].ID,
+		Summary: td.Summary, StartDate: td.StartDate, Duration: td.Duration,
+		Status: td.Status, Priority: td.Priority, Sequence: td.Sequence,
+	}); err != nil {
+		t.Fatalf("the todo must persist after the importer drops the span: %v", err)
+	}
+}

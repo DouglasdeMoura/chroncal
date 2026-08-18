@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/atotto/clipboard"
@@ -87,7 +88,15 @@ func formatRSVPCopy(status string) string {
 	case "NEEDS-ACTION", "":
 		return "No response"
 	default:
+		// A server can send any PARTSTAT value, so the first character
+		// can take more than one byte. Split on the first rune. A byte
+		// split would cut a multi-byte character in half and render a
+		// replacement character.
 		s := strings.ToLower(strings.TrimSpace(status))
-		return strings.ToUpper(s[:1]) + s[1:]
+		first, size := utf8.DecodeRuneInString(s)
+		if size == 0 {
+			return s
+		}
+		return strings.ToUpper(string(first)) + s[size:]
 	}
 }
