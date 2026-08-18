@@ -607,7 +607,7 @@ chroncal --event standup-uid --at 2026-04-17T14:00:00Z
 
 **Views**: month, week, day, agenda. Switch with `m`, `w`, `d`, `a`.
 
-The TUI can create, edit, view, and delete events. Event details include alarms, attendees, and attachments. Use `u` to undo a delete.
+The TUI can create, edit, view, and delete events. Event details include alarms, attendees, and attachments. Use `p` to copy event details. Use `u` to undo a delete.
 
 The sidebar uses quiet, collapsible account sections. There is a separate **Local** section. Active calendars show an item-colored filled `●` circle. Hidden calendars show an outline `○` circle. Space or a click on the circle toggles visibility. Calendar colors stay on calendar rows, not on account headings.
 

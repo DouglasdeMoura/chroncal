@@ -33,6 +33,7 @@ type eventViewKeyMap struct {
 	RSVPYes    key.Binding
 	RSVPNo     key.Binding
 	RSVPMaybe  key.Binding
+	Copy       key.Binding
 	ScrollUp   key.Binding
 	ScrollDown key.Binding
 	PageUp     key.Binding
@@ -55,6 +56,7 @@ func defaultEventViewKeys() eventViewKeyMap {
 		RSVPYes:    key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "RSVP yes")),
 		RSVPNo:     key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "RSVP no")),
 		RSVPMaybe:  key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "RSVP maybe")),
+		Copy:       key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "copy")),
 		ScrollUp:   key.NewBinding(key.WithKeys("up", "k")),
 		ScrollDown: key.NewBinding(key.WithKeys("down", "j")),
 		PageUp:     key.NewBinding(key.WithKeys("pgup", "ctrl+b")),
@@ -271,6 +273,9 @@ func (m EventViewDialogModel) handleKey(msg tea.KeyPressMsg) (EventViewDialogMod
 		if len(actions) > eventViewActionDeleteIdx {
 			return m, actions[eventViewActionDeleteIdx].msg
 		}
+
+	case key.Matches(msg, m.keys.Copy):
+		return m, copyEventDetailsCmd(formatEventDetailsText(m.event, m.calendar.Name))
 
 	case key.Matches(msg, m.keys.RSVPYes):
 		if len(rsvp) > 0 {

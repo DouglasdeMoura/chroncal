@@ -157,7 +157,7 @@ func TestKeyMaps_HaveNoBareSpaceAlternative(t *testing.T) {
 		{"event.Left", ev.Left}, {"event.Right", ev.Right},
 		{"event.Enter", ev.Enter},
 		{"event.RSVPYes", ev.RSVPYes}, {"event.RSVPNo", ev.RSVPNo},
-		{"event.RSVPMaybe", ev.RSVPMaybe},
+		{"event.RSVPMaybe", ev.RSVPMaybe}, {"event.Copy", ev.Copy},
 		{"event.ScrollUp", ev.ScrollUp}, {"event.ScrollDown", ev.ScrollDown},
 		{"event.PageUp", ev.PageUp}, {"event.PageDown", ev.PageDown},
 		{"event.Home", ev.Home}, {"event.End", ev.End},

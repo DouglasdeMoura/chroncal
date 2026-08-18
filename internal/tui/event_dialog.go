@@ -52,6 +52,7 @@ type eventDialogKeyMap struct {
 	RSVPYes   key.Binding
 	RSVPNo    key.Binding
 	RSVPMaybe key.Binding
+	Copy      key.Binding
 }
 
 func defaultEventDialogKeys() eventDialogKeyMap {
@@ -65,6 +66,7 @@ func defaultEventDialogKeys() eventDialogKeyMap {
 		RSVPYes:   key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "RSVP yes")),
 		RSVPNo:    key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "RSVP no")),
 		RSVPMaybe: key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "RSVP maybe")),
+		Copy:      key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "copy")),
 	}
 }
 
@@ -581,6 +583,11 @@ func (m EventDialogModel) handleKey(msg tea.KeyPressMsg) (EventDialogModel, tea.
 	case key.Matches(msg, m.keys.Create):
 		day := m.day
 		return m, func() tea.Msg { return EventCreateMsg{Day: day} }
+	case key.Matches(msg, m.keys.Copy):
+		if ev, ok := m.selectedEvent(); ok {
+			cal := m.calendars[ev.CalendarID]
+			return m, copyEventDetailsCmd(formatEventDetailsText(ev, cal.Name))
+		}
 	case key.Matches(msg, m.keys.RSVPYes):
 		if len(rsvp) > 0 {
 			m = m.focusRSVP()

@@ -160,6 +160,7 @@ func (m HelpDialogModel) sections() []helpSection {
 				{"u", "undo last delete"},
 				{"o", "toggle empty days (agenda)"},
 				{"←→ · hl", "previous / next event (popup)"},
+				{"p", "copy event details"},
 				{"y · n · m", "RSVP yes / no / maybe"},
 			},
 		},
