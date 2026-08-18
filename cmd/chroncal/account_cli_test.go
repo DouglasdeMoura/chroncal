@@ -14,6 +14,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/account"
 	"github.com/douglasdemoura/chroncal/internal/app"
+	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/caldav"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 )
@@ -486,6 +487,235 @@ func setupAccountCalendarSelectionTest(t *testing.T) string {
 		t.Fatalf("reduce initial account selection: %v", err)
 	}
 	return dbPath
+}
+
+func TestAccountCredentialsRotatesBearerAndBasic(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	ctx := context.Background()
+	a := openPlaintextApp(t, dbPath)
+	store := openPlaintextStore(t, a)
+
+	bearer, err := a.Accounts.Create(ctx, account.CreateParams{
+		Name: "API Token", ServerURL: "https://cal.example.test/dav/",
+		Username: "alice", AuthType: "bearer",
+	}, auth.Credential{AccessToken: "old-token"}, store)
+	if err != nil {
+		t.Fatalf("create bearer account: %v", err)
+	}
+	basic, err := a.Accounts.Create(ctx, account.CreateParams{
+		Name: "Work", ServerURL: "https://cal.example.test/dav/",
+		Username: "bob", AuthType: "basic",
+	}, auth.Credential{Password: "old-password"}, store)
+	if err != nil {
+		t.Fatalf("create basic account: %v", err)
+	}
+	a.Close()
+
+	t.Setenv("CHRONCAL_BEARER_TOKEN", "new-token")
+	stdout, _, err := runChroncalCommand(t,
+		"account", "credentials", "API Token",
+		"--output", "json", "--allow-plaintext",
+	)
+	if err != nil {
+		t.Fatalf("account credentials bearer: %v", err)
+	}
+	assertAccountJSONWithoutSecrets(t, stdout, "API Token", "bearer")
+	if strings.Contains(stdout, "new-token") || strings.Contains(stdout, "old-token") {
+		t.Fatalf("json leaked a bearer token: %s", stdout)
+	}
+
+	t.Setenv("CHRONCAL_PASSWORD", "new-password")
+	stdout, _, err = runChroncalCommand(t,
+		"account", "credentials", "Work",
+		"--output", "json", "--allow-plaintext",
+	)
+	if err != nil {
+		t.Fatalf("account credentials basic: %v", err)
+	}
+	assertAccountJSONWithoutSecrets(t, stdout, "Work", "basic")
+	if strings.Contains(stdout, "new-password") || strings.Contains(stdout, "old-password") {
+		t.Fatalf("json leaked a password: %s", stdout)
+	}
+
+	a = openPlaintextApp(t, dbPath)
+	defer a.Close()
+	store = openPlaintextStore(t, a)
+	gotBearer, err := a.Accounts.LoadCredential(ctx, bearer.ID, store)
+	if err != nil {
+		t.Fatalf("load bearer credential: %v", err)
+	}
+	if gotBearer.AccessToken != "new-token" || gotBearer.Password != "" {
+		t.Fatalf("bearer credential = %+v, want access_token new-token", gotBearer)
+	}
+	gotBasic, err := a.Accounts.LoadCredential(ctx, basic.ID, store)
+	if err != nil {
+		t.Fatalf("load basic credential: %v", err)
+	}
+	if gotBasic.Password != "new-password" || gotBasic.AccessToken != "" {
+		t.Fatalf("basic credential = %+v, want password new-password", gotBasic)
+	}
+	if gotBearer.Username != "alice" || gotBasic.Username != "bob" {
+		t.Fatalf("usernames changed: bearer=%q basic=%q", gotBearer.Username, gotBasic.Username)
+	}
+}
+
+func TestAccountCredentialsRefusesOAuth(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	ctx := context.Background()
+	a := openPlaintextApp(t, dbPath)
+	store := openPlaintextStore(t, a)
+	created, err := a.Accounts.Create(ctx, account.CreateParams{
+		Name: "Personal Google", ServerURL: "https://apidata.googleusercontent.com/caldav",
+		Username: "me@gmail.com", AuthType: "oauth2",
+	}, auth.Credential{AccessToken: "access", RefreshToken: "refresh"}, store)
+	if err != nil {
+		t.Fatalf("create oauth account: %v", err)
+	}
+	a.Close()
+
+	t.Setenv("CHRONCAL_PASSWORD", "should-not-apply")
+	_, stderr, err := runChroncalCommand(t,
+		"account", "credentials", "Personal Google",
+		"--output", "json", "--allow-plaintext",
+	)
+	if err == nil {
+		t.Fatal("account credentials should refuse oauth2")
+	}
+	var payload struct {
+		Code  string `json:"code"`
+		Error string `json:"error"`
+	}
+	if jerr := json.Unmarshal([]byte(stderr), &payload); jerr != nil {
+		t.Fatalf("decode error %q: %v", stderr, jerr)
+	}
+	if payload.Code != "invalid_input" {
+		t.Fatalf("code = %q, want invalid_input", payload.Code)
+	}
+	lower := strings.ToLower(payload.Error)
+	oauthHint := strings.Contains(lower, "oauth")
+	reauthHint := strings.Contains(lower, "reauth")
+	if !oauthHint && !reauthHint {
+		t.Fatalf("error = %q, want oauth/reauth guidance", payload.Error)
+	}
+
+	a = openPlaintextApp(t, dbPath)
+	defer a.Close()
+	got, err := a.Accounts.LoadCredential(ctx, created.ID, openPlaintextStore(t, a))
+	if err != nil {
+		t.Fatalf("load oauth credential: %v", err)
+	}
+	if got.AccessToken != "access" || got.RefreshToken != "refresh" {
+		t.Fatalf("oauth credential mutated: %+v", got)
+	}
+}
+
+func TestAccountCredentialsMissingEnvLeavesPreviousSecret(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	ctx := context.Background()
+	a := openPlaintextApp(t, dbPath)
+	store := openPlaintextStore(t, a)
+	created, err := a.Accounts.Create(ctx, account.CreateParams{
+		Name: "Work", ServerURL: "https://cal.example.test/dav/",
+		Username: "alice", AuthType: "basic",
+	}, auth.Credential{Password: "old-password"}, store)
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	a.Close()
+
+	t.Setenv("CHRONCAL_PASSWORD", "")
+	_, stderr, err := runChroncalCommand(t,
+		"account", "credentials", "Work",
+		"--output", "json", "--allow-plaintext",
+	)
+	if err == nil {
+		t.Fatal("credentials without CHRONCAL_PASSWORD should fail")
+	}
+	if !strings.Contains(stderr, "CHRONCAL_PASSWORD") {
+		t.Fatalf("missing-env error = %q, want CHRONCAL_PASSWORD guidance", stderr)
+	}
+
+	a = openPlaintextApp(t, dbPath)
+	defer a.Close()
+	got, err := a.Accounts.LoadCredential(ctx, created.ID, openPlaintextStore(t, a))
+	if err != nil {
+		t.Fatalf("load credential: %v", err)
+	}
+	if got.Password != "old-password" {
+		t.Fatalf("password = %q, want old-password left unchanged", got.Password)
+	}
+}
+
+func TestAccountCredentialsRepairsBrokenKeyring(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	ctx := context.Background()
+	a := openPlaintextApp(t, dbPath)
+	store := openPlaintextStore(t, a)
+	created, err := a.Accounts.Create(ctx, account.CreateParams{
+		Name: "Work", ServerURL: "https://cal.example.test/dav/",
+		Username: "alice", AuthType: "bearer",
+	}, auth.Credential{AccessToken: "old-token"}, store)
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	if err := store.Delete(created.ID); err != nil {
+		t.Fatalf("delete credential: %v", err)
+	}
+	a.Close()
+
+	t.Setenv("CHRONCAL_BEARER_TOKEN", "repaired-token")
+	if _, _, err := runChroncalCommand(t,
+		"account", "credentials", "Work",
+		"--output", "json", "--allow-plaintext",
+	); err != nil {
+		t.Fatalf("credentials with missing keyring entry: %v", err)
+	}
+
+	a = openPlaintextApp(t, dbPath)
+	defer a.Close()
+	got, err := a.Accounts.LoadCredential(ctx, created.ID, openPlaintextStore(t, a))
+	if err != nil {
+		t.Fatalf("load repaired credential: %v", err)
+	}
+	if got.AccessToken != "repaired-token" {
+		t.Fatalf("access token = %q, want repaired-token", got.AccessToken)
+	}
+}
+
+func openPlaintextApp(t *testing.T, dbPath string) *app.App {
+	t.Helper()
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	a.AllowPlaintext = true
+	return a
+}
+
+func openPlaintextStore(t *testing.T, a *app.App) auth.CredentialStore {
+	t.Helper()
+	store, err := auth.NewCredentialStore(
+		a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, true,
+	)
+	if err != nil {
+		t.Fatalf("credential store: %v", err)
+	}
+	return store
+}
+
+func assertAccountJSONWithoutSecrets(t *testing.T, stdout, displayName, authType string) {
+	t.Helper()
+	var got jsonAccount
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("decode account json: %v\n%s", err, stdout)
+	}
+	if got.DisplayName != displayName || got.AuthType != authType || got.ID == 0 {
+		t.Fatalf("account json = %+v, want %s %s", got, displayName, authType)
+	}
+	if strings.Contains(stdout, `"password"`) || strings.Contains(stdout, `"access_token"`) ||
+		strings.Contains(stdout, `"refresh_token"`) {
+		t.Fatalf("account json includes secret keys: %s", stdout)
+	}
 }
 
 func setupDiscoveredAccountCLI(t *testing.T, name string) (string, string) {
