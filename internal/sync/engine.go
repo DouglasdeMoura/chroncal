@@ -1754,12 +1754,12 @@ func hydrateJournal(ctx context.Context, e *Engine, j *journal.Journal) error {
 // local edit could then slip in and have its dirty flag wiped. That is the
 // lost-update window of issue #494. A UID with no sync_resources row yet (a
 // first pull) reports rev 0.
-// persistImported writes an imported payload and returns the per-UID revs.
-// The second return value lists the alarms it dropped. An alarm the write
-// rule rejects must not fail its whole resource: the event and its valid
-// alarms still persist, and the caller reports the drop as a warning
-// (issue #585). Every other error still fails the resource, so the caller
-// keeps it dirty and retries.
+//
+// The second return value lists the alarms this function dropped. An alarm
+// the write rule rejects must not fail its whole resource: the record and
+// its valid alarms still persist, and the caller reports each drop as a
+// warning (issue #585). Every other error still fails the resource, so the
+// caller keeps it dirty and retries.
 func (e *Engine) persistImported(ctx context.Context, calendarID int64, result icalPkg.ImportResult) (map[string]int64, []string, error) {
 	revs := make(map[string]int64)
 	var alarmWarnings []string
@@ -1823,6 +1823,8 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 			// via UpsertByUID. A full CalDAV pull sends the complete component, so
 			// the absence of a property means "cleared", not "unknown". Propagate
 			// any replace error so the caller keeps the resource dirty and retries.
+			// An alarm the write rule rejects is the one exception. The partition
+			// drops it, and the record still persists (issue #585).
 			okAlarms, badAlarms := model.PartitionAlarmsForWrite(ev.Alarms)
 			for _, bad := range badAlarms {
 				alarmWarnings = append(alarmWarnings,
