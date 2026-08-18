@@ -20,11 +20,11 @@ const maxSeconds = math.MaxInt64 / int64(time.Second)
 
 type parsed struct {
 	neg     bool
-	weeks   int
-	days    int
-	hours   int
-	minutes int
-	seconds int
+	weeks   int64
+	days    int64
+	hours   int64
+	minutes int64
+	seconds int64
 }
 
 // checkRange rejects a duration whose total is more than maxSeconds.
@@ -34,7 +34,7 @@ type parsed struct {
 func (p parsed) checkRange(orig string) error {
 	var total int64
 	for _, c := range []struct {
-		value   int
+		value   int64
 		seconds int64
 	}{
 		{p.weeks, 7 * 86400},
@@ -43,7 +43,7 @@ func (p parsed) checkRange(orig string) error {
 		{p.minutes, 60},
 		{p.seconds, 1},
 	} {
-		v := int64(c.value)
+		v := c.value
 		if v > maxSeconds/c.seconds {
 			return fmt.Errorf("invalid duration %q: too large, the total is more than %d seconds", orig, maxSeconds)
 		}
@@ -59,7 +59,7 @@ func (p parsed) checkRange(orig string) error {
 // If letter is absent, returns (s, 0, nil). Per RFC 5545 a component
 // value is one or more DIGITs with no embedded sign. The whole-duration
 // sign is handled once in parse, so "PT-1H" and "PT+1H" are rejected.
-func consumeComponent(s string, letter byte, orig string) (string, int, error) {
+func consumeComponent(s string, letter byte, orig string) (string, int64, error) {
 	i := strings.IndexByte(s, letter)
 	if i < 0 {
 		return s, 0, nil
@@ -68,13 +68,17 @@ func consumeComponent(s string, letter byte, orig string) (string, int, error) {
 		return "", 0, fmt.Errorf("invalid duration %q: %c requires a number", orig, letter)
 	}
 	num := s[:i]
-	// strconv.Atoi rejects every non-digit except a leading sign, so a
-	// first-byte sign check is all that's needed to forbid per-component
-	// signs (num is non-empty here because i > 0).
+	// strconv.ParseInt rejects every non-digit except a leading sign, so
+	// a first-byte sign check is all that's needed to forbid
+	// per-component signs (num is non-empty here because i > 0).
+	// The 64-bit width keeps the maxSeconds ceiling the same on a 32-bit
+	// build: strconv.Atoi is int-sized there, and a value at the ceiling
+	// would fail the parse instead of the range check (issue #582
+	// review).
 	if num[0] == '+' || num[0] == '-' {
 		return "", 0, fmt.Errorf("invalid duration %q: bad %c value %q", orig, letter, num)
 	}
-	v, err := strconv.Atoi(num)
+	v, err := strconv.ParseInt(num, 10, 64)
 	if err != nil {
 		return "", 0, fmt.Errorf("invalid duration %q: bad %c value %q", orig, letter, num)
 	}
@@ -238,7 +242,9 @@ func Add(t time.Time, dur string) time.Time {
 		return time.Time{}
 	}
 
-	days := p.days + p.weeks*7
+	// checkRange bounds the components, so the day total fits an int32
+	// and the AddDate conversion is safe on a 32-bit build.
+	days := int(p.days + p.weeks*7)
 	d := time.Duration(p.hours)*time.Hour +
 		time.Duration(p.minutes)*time.Minute +
 		time.Duration(p.seconds)*time.Second

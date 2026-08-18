@@ -12,6 +12,7 @@ import (
 	_ "modernc.org/sqlite" // registers the "sqlite" database/sql driver
 
 	"github.com/douglasdemoura/chroncal/db"
+	"github.com/douglasdemoura/chroncal/internal/duration"
 	"github.com/douglasdemoura/chroncal/internal/fileid"
 	"github.com/douglasdemoura/chroncal/internal/model"
 )
@@ -70,6 +71,10 @@ func Open(dbPath string) (*sql.DB, *Queries, error) {
 	if err := normalizeAlarmRepeatPairs(conn); err != nil {
 		conn.Close()
 		return nil, nil, fmt.Errorf("normalize alarm repeat pairs: %w", err)
+	}
+	if err := purgeInvalidAlarmTriggers(conn); err != nil {
+		conn.Close()
+		return nil, nil, fmt.Errorf("purge invalid alarm triggers: %w", err)
 	}
 
 	return conn, q, nil
@@ -257,6 +262,52 @@ func normalizeAlarmRepeatPairs(conn *sql.DB) error {
 				`UPDATE `+table+` SET repeat = ?, duration = NULLIF(?, '') WHERE id = ?`,
 				f.repeat, f.duration, f.id); err != nil {
 				return fmt.Errorf("heal %s row %d: %w", table, f.id, err)
+			}
+		}
+	}
+	return nil
+}
+
+// purgeInvalidAlarmTriggers deletes alarm rows with a duration-shaped
+// trigger_value that fails duration.Validate (issue #581). Validate
+// accepted an out-of-range duration before it had a range check, so old
+// rows can hold one. The alarm engine cannot fire such a row, and
+// buildValarm refuses to export it. The dead row would make the push
+// and the local store disagree in silence. An absolute trigger does not
+// start with '-', '+', or 'P', so this pass never touches it. The
+// function runs on every startup. It changes nothing when all rows are
+// valid.
+func purgeInvalidAlarmTriggers(conn *sql.DB) error {
+	ctx := context.Background()
+	for _, table := range []string{"event_alarms", "todo_alarms"} {
+		var dead []int64
+		err := func() error {
+			rows, err := conn.QueryContext(ctx,
+				`SELECT id, trigger_value FROM `+table+
+					` WHERE substr(trigger_value, 1, 1) IN ('-', '+', 'P')`)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var id int64
+				var trigger string
+				if err := rows.Scan(&id, &trigger); err != nil {
+					return err
+				}
+				if duration.Validate(trigger) != nil {
+					dead = append(dead, id)
+				}
+			}
+			return rows.Err()
+		}()
+		if err != nil {
+			return fmt.Errorf("scan %s: %w", table, err)
+		}
+		for _, id := range dead {
+			if _, err := conn.ExecContext(ctx,
+				`DELETE FROM `+table+` WHERE id = ?`, id); err != nil {
+				return fmt.Errorf("purge %s row %d: %w", table, id, err)
 			}
 		}
 	}
