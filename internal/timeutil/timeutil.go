@@ -30,6 +30,19 @@ func AsDateOnly(t time.Time) time.Time {
 // numeric offset, since all stored times are UTC.
 const StorageTimeFormat = "2006-01-02T15:04:05Z"
 
+// MaxStorableYear is the largest year StorageTimeFormat can hold. The
+// layout writes exactly four year digits.
+const MaxStorableYear = 9999
+
+// Storable reports whether the database can hold t. The check uses the
+// UTC calendar year, because every stored time is UTC. A year outside
+// the range breaks two contracts. time.Parse rejects the string on
+// read. The value also misorders the lexicographic range queries.
+func Storable(t time.Time) bool {
+	y := t.UTC().Year()
+	return y >= 1 && y <= MaxStorableYear
+}
+
 // IsDateOnlyTime reports whether t carries the all-day (date-only) marker
 // location set by ParseTimeList and AsDateOnly, i.e. it round-trips as a
 // VALUE=DATE rather than a DATE-TIME.

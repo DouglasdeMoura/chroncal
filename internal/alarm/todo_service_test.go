@@ -757,18 +757,58 @@ func TestComputeTodoTrigger_RelatedEnd_NegativeDurationRefused(t *testing.T) {
 	}
 }
 
-// A RELATED=END alarm with no due and no duration has no end to bind
-// to. The function must refuse, not fall back to a silent START anchor.
-func TestComputeTodoTrigger_RelatedEnd_NoAnchorRefused(t *testing.T) {
+// A VTODO with DTSTART, no DUE, and no DURATION has no end. RFC 5545
+// gives such a todo no end time, so a RELATED=END alarm keeps the START
+// anchor. A refusal here would stop a reminder that fires correctly
+// (issue #582 round 5).
+func TestComputeTodoTrigger_RelatedEnd_StartOnlyKeepsStartAnchor(t *testing.T) {
 	start := time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
+
 	inst := recurrence.ExpandedTodo{
 		Todo: todo.Todo{
 			StartDate: start.Format(time.RFC3339),
+			// No DueDate and no Duration: the todo has no end.
 		},
 		InstanceTime: start,
 	}
-	alarm := model.Alarm{Action: "DISPLAY", TriggerValue: "-PT15M", Related: "END"}
+
+	alarm := model.Alarm{
+		Action:       "DISPLAY",
+		TriggerValue: "-PT15M",
+		Related:      "END",
+	}
+
+	got, err := computeTodoTriggerTimeForInstance(inst, alarm)
+	if err != nil {
+		t.Fatalf("computeTodoTriggerTimeForInstance: %v", err)
+	}
+	want := start.Add(-15 * time.Minute)
+	if !got.Equal(want) {
+		t.Errorf("RELATED=END with a start-only todo: got %v, want %v (the START anchor must stand)", got, want)
+	}
+}
+
+// A present but invalid Duration is a different case. The parser must
+// refuse it, because a backward anchor fires the alarm at the wrong
+// time.
+func TestComputeTodoTrigger_RelatedEnd_InvalidDurationRefused(t *testing.T) {
+	start := time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
+
+	inst := recurrence.ExpandedTodo{
+		Todo: todo.Todo{
+			StartDate: start.Format(time.RFC3339),
+			Duration:  "-PT2H", // legacy negative span
+		},
+		InstanceTime: start,
+	}
+
+	alarm := model.Alarm{
+		Action:       "DISPLAY",
+		TriggerValue: "-PT15M",
+		Related:      "END",
+	}
+
 	if _, err := computeTodoTriggerTimeForInstance(inst, alarm); err == nil {
-		t.Fatal("END anchor with no due and no duration: got nil error, want a refusal")
+		t.Error("a negative stored Duration must refuse the END anchor, not anchor backwards")
 	}
 }

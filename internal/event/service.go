@@ -390,22 +390,31 @@ func (s *Service) ensureSeriesWritable(ctx context.Context, uid string) error {
 	return nil
 }
 
-// validateDurationValue mirrors the todo-side span rule (validateTiming
-// in the todo service). The import path drops a bad value with a
-// warning instead, so sync never reaches this error.
-func validateDurationValue(v string) error {
-	if v == "" {
+// validateDurationValue applies the span rule that the todo service
+// applies in validateTiming. The import path drops a bad value with a
+// warning instead, so sync never reaches this error. The start time
+// anchors the storability check. A span that carries the end past the
+// storable range would write a time the database cannot read back
+// (see timeutil.Storable).
+func validateDurationValue(start time.Time, v string) error {
+	if err := duration.ValidateOptionalSpan(v); err != nil {
+		return err
+	}
+	if v == "" || start.IsZero() {
 		return nil
 	}
-	return duration.ValidateSpan(v)
+	if end := duration.Add(start, v); !timeutil.Storable(end) {
+		return fmt.Errorf("invalid duration %q: the end time is past year %d", v, timeutil.MaxStorableYear)
+	}
+	return nil
 }
 
 func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
-	p.applyDefaults()
-
-	if err := validateDurationValue(p.DurationValue); err != nil {
+	if err := validateDurationValue(p.StartTime, p.DurationValue); err != nil {
 		return Event{}, err
 	}
+	p.applyDefaults()
+
 	if err := calendaraccess.EnsureWritable(ctx, s.q, p.CalendarID, "VEVENT"); err != nil {
 		return Event{}, err
 	}
@@ -493,9 +502,6 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, 
 // plus ReplaceAttendees/ReplaceAlarms in separate transactions. Those separate
 // writes could leave a half-updated row when a later child write failed.
 func (s *Service) UpdateWithRelations(ctx context.Context, id int64, p UpdateParams, attendees []model.Attendee, alarms []model.Alarm) (Event, error) {
-	if err := validateDurationValue(p.DurationValue); err != nil {
-		return Event{}, err
-	}
 	p.applyDefaults()
 
 	if err := s.ensureEventWritable(ctx, id, p.CalendarID); err != nil {
@@ -533,6 +539,11 @@ func (s *Service) UpdateWithRelations(ctx context.Context, id int64, p UpdatePar
 // dirty, so callers can compose it with attendee/alarm writes inside one
 // transaction.
 func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p UpdateParams) (Event, error) {
+	// Every update entry point reaches this function, so the span rule
+	// lives here rather than at each caller.
+	if err := validateDurationValue(p.StartTime, p.DurationValue); err != nil {
+		return Event{}, err
+	}
 	r, err := qtx.UpdateEvent(ctx, storage.UpdateEventParams{
 		ID:             id,
 		Title:          p.Title,
@@ -568,7 +579,7 @@ func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p Update
 }
 
 func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error) {
-	if err := validateDurationValue(p.DurationValue); err != nil {
+	if err := validateDurationValue(p.StartTime, p.DurationValue); err != nil {
 		return Event{}, err
 	}
 	p.applyDefaults()
@@ -991,9 +1002,6 @@ func (s *Service) UpdateInstance(ctx context.Context, uid string, instanceTime t
 // the same transaction, so the override row and its children commit atomically
 // (issue #87).
 func (s *Service) UpdateInstanceWithRelations(ctx context.Context, uid string, instanceTime time.Time, p UpdateParams, attendees []model.Attendee, alarms []model.Alarm) (Event, error) {
-	if err := validateDurationValue(p.DurationValue); err != nil {
-		return Event{}, err
-	}
 	p.applyDefaults()
 
 	// Reject a bad alarm before the transaction opens. See
@@ -1028,6 +1036,11 @@ func (s *Service) UpdateInstanceWithRelations(ctx context.Context, uid string, i
 // calendar ID (for a dirty mark after commit). It opens no transaction, so
 // callers can compose it with attendee/alarm writes.
 func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, instanceTime time.Time, p UpdateParams) (Event, int64, error) {
+	// Every update entry point reaches this function, so the span rule
+	// lives here rather than at each caller.
+	if err := validateDurationValue(p.StartTime, p.DurationValue); err != nil {
+		return Event{}, 0, err
+	}
 	master, err := qtx.GetEventByUID(ctx, uid)
 	if err != nil {
 		return Event{}, 0, fmt.Errorf("get master: %w", err)
@@ -1199,9 +1212,6 @@ func (s *Service) UpdateFromInstance(ctx context.Context, uid string, instanceTi
 // write on the new split series in the same transaction. The truncation, the
 // new master, and its children then commit atomically (issue #87).
 func (s *Service) UpdateFromInstanceWithRelations(ctx context.Context, uid string, instanceTime time.Time, p UpdateParams, attendees []model.Attendee, alarms []model.Alarm) (Event, error) {
-	if err := validateDurationValue(p.DurationValue); err != nil {
-		return Event{}, err
-	}
 	p.applyDefaults()
 
 	// Reject a bad alarm before the transaction opens. See
@@ -1238,6 +1248,11 @@ func (s *Service) UpdateFromInstanceWithRelations(ctx context.Context, uid strin
 // Queries. It returns the new event and the master's calendar ID. It opens
 // no transaction. Callers can then compose it with attendee/alarm writes.
 func updateFromInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, instanceTime time.Time, p UpdateParams) (Event, int64, error) {
+	// Every update entry point reaches this function, so the span rule
+	// lives here rather than at each caller.
+	if err := validateDurationValue(p.StartTime, p.DurationValue); err != nil {
+		return Event{}, 0, err
+	}
 	master, err := qtx.GetEventByUID(ctx, uid)
 	if err != nil {
 		return Event{}, 0, fmt.Errorf("get master: %w", err)

@@ -374,7 +374,11 @@ and percent-complete to 100.`,
 				if d, err := time.ParseDuration(durationStr); err == nil {
 					durationVal = duration.FromGo(d)
 				} else if strings.HasPrefix(strings.ToUpper(durationStr), "P") {
-					durationVal = durationStr
+					// Store the canonical upper case. The parser is
+					// case-sensitive, so a lowercase value would fail
+					// the span rule with a message that contradicts
+					// what the user typed.
+					durationVal = strings.ToUpper(durationStr)
 				} else {
 					return errInvalidInputf("parse duration: %q (use Go format like 1h30m or RFC 5545 like PT1H30M)", durationStr)
 				}
@@ -676,7 +680,9 @@ a --progress value other than 100.`,
 				} else if d, err := time.ParseDuration(durationStr); err == nil {
 					p.Duration = duration.FromGo(d)
 				} else if strings.HasPrefix(strings.ToUpper(durationStr), "P") {
-					p.Duration = durationStr
+					// Store the canonical upper case; see the create
+					// command for the reason.
+					p.Duration = strings.ToUpper(durationStr)
 				} else {
 					return errInvalidInputf("parse duration: %q (use Go format like 1h30m or RFC 5545 like PT1H30M)", durationStr)
 				}

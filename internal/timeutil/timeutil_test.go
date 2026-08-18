@@ -137,3 +137,39 @@ func TestRemoveTimeFromList(t *testing.T) {
 		})
 	}
 }
+
+// The storage layout writes four year digits. Storable must reject a
+// time the database cannot read back (issue #582 round 5).
+func TestStorable(t *testing.T) {
+	tests := []struct {
+		name string
+		in   time.Time
+		want bool
+	}{
+		{"a normal time", time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC), true},
+		{"the last storable year", time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC), true},
+		{"the first year past the range", time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC), false},
+		{"a year before the range", time.Date(0, 1, 1, 0, 0, 0, 0, time.UTC), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := Storable(tt.in); got != tt.want {
+				t.Errorf("Storable(%s) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// The check must use the UTC year, because every stored time is UTC. A
+// zone west of UTC can hold a 4-digit local year whose UTC form rolls
+// into the next year.
+func TestStorable_UsesTheUTCYear(t *testing.T) {
+	loc := time.FixedZone("west", -12*3600)
+	local := time.Date(9999, 12, 31, 20, 0, 0, 0, loc) // 10000-01-01T08:00Z
+	if local.UTC().Year() != 10000 {
+		t.Fatalf("fixture UTC year = %d, want 10000", local.UTC().Year())
+	}
+	if Storable(local) {
+		t.Error("a local 4-digit year whose UTC form is 5-digit must not be storable")
+	}
+}

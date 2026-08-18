@@ -2,12 +2,7 @@ package storage
 
 import (
 	"context"
-	"io/fs"
 	"testing"
-
-	"github.com/pressly/goose/v3"
-
-	dbembed "github.com/douglasdemoura/chroncal/db"
 )
 
 // Verifies migration 031 rolls back and re-applies cleanly (table rebuild +
@@ -44,11 +39,7 @@ func TestMigration031UpDown(t *testing.T) {
 		t.Fatalf("query seeded prop: %v", err)
 	}
 
-	migrationsFS, err := fs.Sub(dbembed.Migrations, "migrations")
-	if err != nil {
-		t.Fatalf("sub fs: %v", err)
-	}
-	provider, err := goose.NewProvider(goose.DialectSQLite3, conn, migrationsFS)
+	provider, err := NewMigrationProvider(conn)
 	if err != nil {
 		t.Fatalf("provider: %v", err)
 	}
@@ -177,11 +168,7 @@ func TestMigration040UpDown(t *testing.T) {
 		t.Error("calendars.name UNIQUE constraint not enforced after Up")
 	}
 
-	migrationsFS, err := fs.Sub(dbembed.Migrations, "migrations")
-	if err != nil {
-		t.Fatalf("sub fs: %v", err)
-	}
-	provider, err := goose.NewProvider(goose.DialectSQLite3, conn, migrationsFS)
+	provider, err := NewMigrationProvider(conn)
 	if err != nil {
 		t.Fatalf("provider: %v", err)
 	}
@@ -239,5 +226,54 @@ func TestMigration040UpDown(t *testing.T) {
 	}
 	if gotEventID != eventID {
 		t.Errorf("event id drifted after re-Up = %d, want %d", gotEventID, eventID)
+	}
+}
+
+// The span-column heal is a Go migration, so goose runs it once per
+// database and no startup pays for the two table scans. The test pins
+// the once-per-database contract: the version is recorded after Open,
+// and a legacy row written afterwards stays untouched by a second Up
+// (issue #582 round 5).
+func TestMigration043RunsOncePerDatabase(t *testing.T) {
+	conn, _, err := Open(t.TempDir() + "/mig043.db")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer conn.Close()
+	ctx := context.Background()
+
+	var applied int
+	if err := conn.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM goose_db_version WHERE version_id = ?`,
+		migration043Version).Scan(&applied); err != nil {
+		t.Fatalf("read goose version: %v", err)
+	}
+	if applied != 1 {
+		t.Fatalf("migration %d applied %d times, want 1", migration043Version, applied)
+	}
+
+	// A bad span written after the migration (an older binary could do
+	// this) must survive a second Up, which is a no-op.
+	if _, err := conn.ExecContext(ctx,
+		`INSERT INTO events (uid, calendar_id, title, start_time, end_time, duration)
+		 VALUES ('post-migration', 1, 'Later', '2026-01-01T10:00:00Z', '2026-01-01T09:00:00Z', '-PT1H')`); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	provider, err := NewMigrationProvider(conn)
+	if err != nil {
+		t.Fatalf("provider: %v", err)
+	}
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatalf("second up: %v", err)
+	}
+
+	var span string
+	if err := conn.QueryRowContext(ctx,
+		`SELECT COALESCE(duration, '') FROM events WHERE uid = 'post-migration'`).Scan(&span); err != nil {
+		t.Fatalf("read span: %v", err)
+	}
+	if span != "-PT1H" {
+		t.Errorf("duration = %q, want the row untouched by a second Up", span)
 	}
 }

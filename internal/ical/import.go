@@ -201,17 +201,30 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, []string, error) {
 		todoWarnings = append(todoWarnings, w)
 	}
 
-	// Validate like the VEVENT path, with the span rule: a DURATION
-	// must be positive (RFC 5545 §3.8.2.5). A malformed or negative
-	// value would persist, re-export verbatim, and poison a
-	// RELATED=END alarm anchor.
+	// Screen the DURATION on the same three rules the todo service
+	// applies. The value must be a positive span (RFC 5545 §3.8.2.5).
+	// DUE and DURATION are mutually exclusive, and a DURATION needs a
+	// DTSTART (§3.6.2).
+	//
+	// Drop the DURATION and warn when a rule fails. A stored bad value
+	// would re-export verbatim and would poison a RELATED=END alarm
+	// anchor. A rejected shape would fail the whole calendar pull on
+	// every run, because the sync engine stops at the first resource
+	// error.
 	var durationValue string
 	if prop := props.Get(ical.PropDuration); prop != nil {
-		if duration.ValidateSpan(prop.Value) == nil {
-			durationValue = prop.Value
-		} else {
+		switch {
+		case duration.ValidateSpan(prop.Value) != nil:
 			todoWarnings = append(todoWarnings, fmt.Sprintf(
 				"todo %q: unusable DURATION %q; dropped", uid, prop.Value))
+		case dueDate != "":
+			todoWarnings = append(todoWarnings, fmt.Sprintf(
+				"todo %q: DUE and DURATION are mutually exclusive; DURATION %q dropped", uid, prop.Value))
+		case startDate == "":
+			todoWarnings = append(todoWarnings, fmt.Sprintf(
+				"todo %q: DURATION %q needs a DTSTART; dropped", uid, prop.Value))
+		default:
+			durationValue = prop.Value
 		}
 	}
 
@@ -436,11 +449,9 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 		prop := ve.Props.Get(ical.PropDuration)
 		spanOK := false
 		if prop != nil && duration.ValidateSpan(prop.Value) == nil {
-			// The end must stay a 4-digit year in the stored UTC form.
-			// The RFC 3339 storage format cannot represent year 10000,
-			// and a 5-digit-year string misorders the lexicographic
-			// range queries.
-			if end := addDuration(startTime, prop.Value); end.UTC().Year() <= 9999 {
+			// The end must land on a time the database can hold. See
+			// timeutil.Storable for that rule.
+			if end := addDuration(startTime, prop.Value); timeutil.Storable(end) {
 				durationValue = prop.Value
 				endTime = end
 				explicitEnd = true
@@ -459,9 +470,9 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 			explicitEnd = true
 		} else if prop != nil {
 			// Malformed, negative, or unstorable DURATION (go-ical
-			// stores the raw value with no validation). Fall back to a 1h
-			// span, warn, and drop the bad value so it does not persist
-			// and does not re-export.
+			// stores the raw value with no validation). Fall back to a
+			// 1h span. Warn the user. Drop the bad value, so it does
+			// not persist and does not re-export.
 			endTime = startTime.Add(time.Hour)
 			dtendWarnings = append(dtendWarnings, fmt.Sprintf(
 				"event %q: unusable DURATION %q; dropped, the event gets a 1h span", uid, prop.Value))

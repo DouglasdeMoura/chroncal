@@ -733,3 +733,16 @@ func TestTodoService_ReplaceAlarms_XPropertiesRoundTrip(t *testing.T) {
 		t.Fatalf("empty XProperties must clear stored rows; got %+v", alarms[0].XProperties)
 	}
 }
+
+// A span that carries the end past the storable range must fail at the
+// service boundary. The database cannot read such a time back, and the
+// value misorders the range queries (issue #582 round 5).
+func TestValidateTiming_RejectsAnUnstorableEnd(t *testing.T) {
+	if err := validateTiming("", "9999-12-01T00:00:00Z", "P365D"); err == nil {
+		t.Error("a span whose end passes the storable range must fail")
+	}
+	// The same span on a normal start stays valid.
+	if err := validateTiming("", "2026-04-01T00:00:00Z", "P365D"); err != nil {
+		t.Errorf("a storable span must pass: %v", err)
+	}
+}

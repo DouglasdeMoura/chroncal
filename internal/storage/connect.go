@@ -12,7 +12,6 @@ import (
 	_ "modernc.org/sqlite" // registers the "sqlite" database/sql driver
 
 	"github.com/douglasdemoura/chroncal/db"
-	"github.com/douglasdemoura/chroncal/internal/duration"
 	"github.com/douglasdemoura/chroncal/internal/fileid"
 	"github.com/douglasdemoura/chroncal/internal/model"
 )
@@ -72,11 +71,6 @@ func Open(dbPath string) (*sql.DB, *Queries, error) {
 		conn.Close()
 		return nil, nil, fmt.Errorf("normalize alarm repeat pairs: %w", err)
 	}
-	if err := clearInvalidSpanColumns(conn); err != nil {
-		conn.Close()
-		return nil, nil, fmt.Errorf("clear invalid span columns: %w", err)
-	}
-
 	return conn, q, nil
 }
 
@@ -255,7 +249,7 @@ func normalizeAlarmRepeatPairs(conn *sql.DB) error {
 				}
 				healed := a
 				healed.Repeat = min(healed.Repeat, model.MaxAlarmRepeat)
-				if healed.Duration != "" && !model.ValidAlarmDuration(healed.Duration) {
+				if !model.ValidAlarmDuration(healed.Duration) {
 					healed.Duration = ""
 				}
 				if !healed.RepeatPaired() {
@@ -287,70 +281,6 @@ func normalizeAlarmRepeatPairs(conn *sql.DB) error {
 		}
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("heal %s: %w", table, err)
-		}
-	}
-	return nil
-}
-
-// clearInvalidSpanColumns heals span columns written before the parsers
-// validated them with duration.ValidateSpan (issue #581). It clears an
-// events.duration or a todos.duration that fails the span rule.
-// The clear is safe: end_time and due stay authoritative, and an
-// invalid span never had a usable meaning. Without this repair, a
-// legacy negative or malformed value blocks every later edit at the
-// service boundary and can reach the server on a push. The function
-// runs on every startup. It changes nothing when all rows are healthy.
-func clearInvalidSpanColumns(conn *sql.DB) error {
-	ctx := context.Background()
-	specs := []struct {
-		table  string
-		column string
-	}{
-		{"events", "duration"},
-		{"todos", "duration"},
-	}
-	for _, spec := range specs {
-		var ids []int64
-		err := func() error {
-			rows, err := conn.QueryContext(ctx,
-				`SELECT id, `+spec.column+` FROM `+spec.table+
-					` WHERE COALESCE(`+spec.column+`, '') != ''`)
-			if err != nil {
-				return err
-			}
-			defer rows.Close()
-			for rows.Next() {
-				var id int64
-				var span string
-				if err := rows.Scan(&id, &span); err != nil {
-					return err
-				}
-				if duration.ValidateSpan(span) != nil {
-					ids = append(ids, id)
-				}
-			}
-			return rows.Err()
-		}()
-		if err != nil {
-			return fmt.Errorf("scan %s: %w", spec.table, err)
-		}
-		if len(ids) == 0 {
-			continue
-		}
-		tx, err := conn.BeginTx(ctx, nil)
-		if err != nil {
-			return fmt.Errorf("heal %s: %w", spec.table, err)
-		}
-		for _, id := range ids {
-			if _, err := tx.ExecContext(ctx,
-				`UPDATE `+spec.table+` SET `+spec.column+` = NULL WHERE id = ?`,
-				id); err != nil {
-				tx.Rollback()
-				return fmt.Errorf("heal %s row %d: %w", spec.table, id, err)
-			}
-		}
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("heal %s: %w", spec.table, err)
 		}
 	}
 	return nil
@@ -403,17 +333,29 @@ func backfillAlarmUIDs(conn *sql.DB, q *Queries) error {
 	return nil
 }
 
-func runMigrations(conn *sql.DB) error {
+// NewMigrationProvider builds the goose provider over the embedded SQL
+// migrations plus every Go migration. Production and the tests share it,
+// so a provider cannot miss a Go migration and then report an applied
+// version it does not know.
+func NewMigrationProvider(conn *sql.DB) (*goose.Provider, error) {
 	migrationsFS, err := fs.Sub(db.Migrations, "migrations")
 	if err != nil {
-		return fmt.Errorf("sub migrations fs: %w", err)
+		return nil, fmt.Errorf("sub migrations fs: %w", err)
 	}
-	provider, err := goose.NewProvider(goose.DialectSQLite3, conn, migrationsFS)
+	provider, err := goose.NewProvider(goose.DialectSQLite3, conn, migrationsFS,
+		goose.WithGoMigrations(newSpanColumnMigration()))
 	if err != nil {
-		return fmt.Errorf("create goose provider: %w", err)
+		return nil, fmt.Errorf("create goose provider: %w", err)
 	}
-	_, err = provider.Up(context.Background())
+	return provider, nil
+}
+
+func runMigrations(conn *sql.DB) error {
+	provider, err := NewMigrationProvider(conn)
 	if err != nil {
+		return err
+	}
+	if _, err := provider.Up(context.Background()); err != nil {
 		return fmt.Errorf("apply migrations: %w", err)
 	}
 	return nil

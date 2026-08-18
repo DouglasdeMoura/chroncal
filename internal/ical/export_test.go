@@ -44,13 +44,18 @@ func TestExport_SingleEvent(t *testing.T) {
 // falls back to the stored end time as DTEND (issue #582 round 4). The
 // startup heal clears such values, so this guard covers only a row the
 // heal has not seen yet.
-func TestExport_NegativeStoredDurationFallsBackToDTEND(t *testing.T) {
+// A legacy row holds the end time that its bad span produced, so the
+// end can precede the start. Export must emit neither the invalid
+// DURATION nor an inverted interval (issue #582 round 4).
+func TestExport_NegativeStoredDurationFallsBackToPositiveSpan(t *testing.T) {
 	t.Parallel()
+	start := time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC)
 	events := []event.Event{{
-		UID:           "export-neg-duration",
-		Title:         "Legacy negative span",
-		StartTime:     time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
-		EndTime:       time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		UID:   "export-neg-duration",
+		Title: "Legacy negative span",
+		// The real legacy shape: end = start + (-PT1H).
+		StartTime:     start,
+		EndTime:       start.Add(-time.Hour),
 		DurationValue: "-PT1H",
 		Status:        "CONFIRMED",
 		Transp:        "OPAQUE",
@@ -66,8 +71,11 @@ func TestExport_NegativeStoredDurationFallsBackToDTEND(t *testing.T) {
 	if strings.Contains(ics, "DURATION:") {
 		t.Errorf("output carries the invalid DURATION; want the DTEND fallback:\n%s", ics)
 	}
-	if !strings.Contains(ics, "DTEND:") {
-		t.Errorf("output missing the DTEND fallback:\n%s", ics)
+	if !strings.Contains(ics, "DTEND:20260401T150000Z") {
+		t.Errorf("output missing the 1h fallback DTEND; an inverted interval is invalid iCal:\n%s", ics)
+	}
+	if strings.Contains(ics, "DTEND:20260401T130000Z") {
+		t.Errorf("output carries an inverted DTEND before the DTSTART:\n%s", ics)
 	}
 }
 
