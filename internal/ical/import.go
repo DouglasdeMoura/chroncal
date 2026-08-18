@@ -339,7 +339,11 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, []string, error) {
 	}
 
 	// ATTENDEE + ORGANIZER
-	attendees := parseAttendeesFromProps(props)
+	attendees, attendeeWarnings := parseAttendeesFromProps(props, model.TaskAttendee)
+	for _, w := range attendeeWarnings {
+		// Name the owning record: the clamp leaves no other trace.
+		todoWarnings = append(todoWarnings, fmt.Sprintf("todo %q: %s", uid, w))
+	}
 
 	// ATTACH, COMMENT, CONTACT, RELATED-TO
 	attachments, err := parseAttachmentsFromProps(props)
@@ -605,7 +609,11 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 	}
 
 	// ATTENDEE + ORGANIZER
-	attendees := parseAttendees(ve)
+	attendees, attendeeWarnings := parseAttendees(ve)
+	for _, w := range attendeeWarnings {
+		// Name the owning record: the clamp leaves no other trace.
+		alarmWarnings = append(alarmWarnings, fmt.Sprintf("event %q: %s", uid, w))
+	}
 
 	// ATTACH, COMMENT, RELATED-TO
 	attachments, err := parseAttachmentsFromProps(ve.Props)
@@ -924,8 +932,11 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 	return alarm, strings.Join(warns, "; ")
 }
 
-func parseAttendees(ve ical.Event) []model.Attendee {
+// parseAttendees reads the attendees of a VEVENT. The second return
+// value lists the parameters attendeeFromProp clamped.
+func parseAttendees(ve ical.Event) ([]model.Attendee, []string) {
 	var attendees []model.Attendee
+	var warns []string
 
 	// ORGANIZER — track email so we can deduplicate against ATTENDEE below.
 	var organizerEmail string
@@ -949,11 +960,12 @@ func parseAttendees(ve ical.Event) []model.Attendee {
 		if organizerEmail != "" && strings.EqualFold(email, organizerEmail) {
 			continue
 		}
-		a := attendeeFromProp(&prop)
+		a, w := attendeeFromProp(&prop, model.EventAttendee)
+		warns = append(warns, w...)
 		attendees = append(attendees, a)
 	}
 
-	return attendees
+	return attendees, warns
 }
 
 func stripMailto(s string) string {
@@ -1103,8 +1115,12 @@ func parseDateListFromProps(props ical.Props, propName string, fallback *time.Lo
 	return strings.Join(dates, ",")
 }
 
-func parseAttendeesFromProps(props ical.Props) []model.Attendee {
+// parseAttendeesFromProps reads the attendees of a VTODO or a VJOURNAL.
+// Those two tables accept the wider PARTSTAT set, so the caller passes
+// model.TaskAttendee. The second return value lists the clamps.
+func parseAttendeesFromProps(props ical.Props, kind model.AttendeeKind) ([]model.Attendee, []string) {
 	var attendees []model.Attendee
+	var warns []string
 
 	var organizerEmail string
 	if prop := props.Get(ical.PropOrganizer); prop != nil {
@@ -1126,22 +1142,46 @@ func parseAttendeesFromProps(props ical.Props) []model.Attendee {
 		if organizerEmail != "" && strings.EqualFold(email, organizerEmail) {
 			continue
 		}
-		a := attendeeFromProp(&prop)
+		a, w := attendeeFromProp(&prop, kind)
+		warns = append(warns, w...)
 		attendees = append(attendees, a)
 	}
 
-	return attendees
+	return attendees, warns
 }
 
 // attendeeFromProp extracts a model.Attendee from an iCal ATTENDEE property.
 // All RFC 5545 parameters are included.
-func attendeeFromProp(prop *ical.Prop) model.Attendee {
+// attendeeFromProp builds one attendee and clamps the three parameters
+// the attendee tables constrain. RFC 5545 permits an x-name or an
+// iana-token for PARTSTAT (§3.2.12), ROLE (§3.2.16), and CUTYPE
+// (§3.2.3), but each column carries a CHECK constraint. A stored
+// out-of-set value would fail the insert inside the sync transaction and
+// roll back the whole resource on every pass (issue #587). The second
+// return value lists the clamps, so the caller reports them.
+func attendeeFromProp(prop *ical.Prop, kind model.AttendeeKind) (model.Attendee, []string) {
+	var warns []string
+	partstat := clampAttendeeParam(&warns, "PARTSTAT",
+		strings.ToUpper(paramOrDefault(prop, ical.ParamParticipationStatus, model.DefaultRSVPStatus)),
+		model.DefaultRSVPStatus,
+		func(v string) bool { return model.ValidRSVPStatus(kind, v) })
+	role := clampAttendeeParam(&warns, "ROLE",
+		strings.ToUpper(paramOrDefault(prop, ical.ParamRole, model.DefaultAttendeeRole)),
+		model.DefaultAttendeeRole,
+		model.ValidAttendeeRole)
+	// RFC 5545 §3.2.3 tells a reader to treat a CUTYPE it does not know
+	// the same way as UNKNOWN, so the clamp keeps that meaning.
+	cutype := clampAttendeeParam(&warns, "CUTYPE",
+		strings.ToUpper(paramOrDefault(prop, ical.ParamCalendarUserType, "INDIVIDUAL")),
+		model.UnknownCUType,
+		model.ValidAttendeeCUType)
+
 	return model.Attendee{
 		Email:         stripMailto(prop.Value),
 		Name:          prop.Params.Get(ical.ParamCommonName),
-		RSVPStatus:    strings.ToUpper(paramOrDefault(prop, ical.ParamParticipationStatus, "NEEDS-ACTION")),
-		Role:          strings.ToUpper(paramOrDefault(prop, ical.ParamRole, "REQ-PARTICIPANT")),
-		CUType:        strings.ToUpper(paramOrDefault(prop, ical.ParamCalendarUserType, "INDIVIDUAL")),
+		RSVPStatus:    partstat,
+		Role:          role,
+		CUType:        cutype,
 		RSVPRequested: strings.EqualFold(prop.Params.Get(ical.ParamRSVP), "TRUE"),
 		SentBy:        stripMailto(prop.Params.Get(ical.ParamSentBy)),
 		DelegatedTo:   joinMailtoParams(prop.Params.Values(ical.ParamDelegatedTo)),
@@ -1149,7 +1189,17 @@ func attendeeFromProp(prop *ical.Prop) model.Attendee {
 		Member:        joinMailtoParams(prop.Params.Values(ical.ParamMember)),
 		Dir:           prop.Params.Get(ical.ParamDir),
 		Language:      prop.Params.Get(ical.ParamLanguage),
+	}, warns
+}
+
+// clampAttendeeParam returns value when valid reports it. Otherwise it
+// records a warning and returns fallback.
+func clampAttendeeParam(warns *[]string, param, value, fallback string, valid func(string) bool) string {
+	if valid(value) {
+		return value
 	}
+	*warns = append(*warns, fmt.Sprintf("ATTENDEE %s=%q: unsupported value, using %s", param, value, fallback))
+	return fallback
 }
 
 // joinMailtoParams joins multiple mailto URI param values into a comma-separated
@@ -1360,7 +1410,11 @@ func journalFromVJournal(comp *ical.Component) (journal.Journal, []string, error
 	}
 
 	// ATTENDEE + ORGANIZER
-	attendees := parseAttendeesFromProps(props)
+	attendees, attendeeWarnings := parseAttendeesFromProps(props, model.TaskAttendee)
+	for _, w := range attendeeWarnings {
+		// Name the owning record: the clamp leaves no other trace.
+		journalWarnings = append(journalWarnings, fmt.Sprintf("journal %q: %s", uid, w))
+	}
 
 	// ATTACH, COMMENT, CONTACT, RELATED-TO
 	attachments, err := parseAttachmentsFromProps(props)

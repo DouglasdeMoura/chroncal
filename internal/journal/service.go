@@ -669,6 +669,13 @@ func (s *Service) ListAttendees(ctx context.Context, journalID int64) ([]model.A
 }
 
 func (s *Service) ReplaceAttendees(ctx context.Context, journalID int64, attendees []model.Attendee) error {
+	// Prepare before the transaction opens. A standalone call then
+	// rejects a bad attendee without a write lock. See
+	// model.PrepareAttendeesForWrite.
+	attendees, err := model.PrepareAttendeesForWrite(model.TaskAttendee, attendees)
+	if err != nil {
+		return err
+	}
 	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
 		return err

@@ -317,3 +317,87 @@ func TestImport_MalformedActionToken_DropsAlarm(t *testing.T) {
 		t.Errorf("no malformed-ACTION warning; warnings = %v", result.Warnings)
 	}
 }
+
+// RFC 5545 permits an x-name or an iana-token for PARTSTAT, ROLE, and
+// CUTYPE, but each attendee column carries a CHECK constraint. Before
+// the clamp, a server-sent x-name value failed the insert inside the
+// sync transaction and rolled back the whole resource on every pass
+// (issue #587). The parser now clamps the value and warns.
+func TestImport_UnsupportedAttendeeParams_ClampWithWarning(t *testing.T) {
+	t.Parallel()
+	const ics = "BEGIN:VCALENDAR\r\n" +
+		"VERSION:2.0\r\n" +
+		"PRODID:-//test//EN\r\n" +
+		"BEGIN:VEVENT\r\n" +
+		"UID:x-name-partstat@example.com\r\n" +
+		"DTSTAMP:20260401T100000Z\r\n" +
+		"DTSTART:20260401T140000Z\r\n" +
+		"DTEND:20260401T150000Z\r\n" +
+		"SUMMARY:Event with foreign attendee params\r\n" +
+		"ATTENDEE;PARTSTAT=X-FOO;ROLE=X-BAR;CUTYPE=X-CUSTOM:mailto:a@example.com\r\n" +
+		"END:VEVENT\r\n" +
+		"END:VCALENDAR\r\n"
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile: %v", err)
+	}
+	if len(result.Events) != 1 || len(result.Events[0].Attendees) != 1 {
+		t.Fatalf("events/attendees = %d/%+v, want 1 event with 1 attendee", len(result.Events), result.Events)
+	}
+	a := result.Events[0].Attendees[0]
+	if a.RSVPStatus != model.DefaultRSVPStatus {
+		t.Errorf("RSVPStatus = %q, want the %s default", a.RSVPStatus, model.DefaultRSVPStatus)
+	}
+	if a.Role != model.DefaultAttendeeRole {
+		t.Errorf("Role = %q, want the %s default", a.Role, model.DefaultAttendeeRole)
+	}
+	if a.CUType != model.UnknownCUType {
+		t.Errorf("CUType = %q, want %s", a.CUType, model.UnknownCUType)
+	}
+
+	// The clamped values must pass the write rule, so the resource
+	// persists instead of failing the pull.
+	if _, err := model.PrepareAttendeesForWrite(model.EventAttendee, result.Events[0].Attendees); err != nil {
+		t.Fatalf("the clamped attendee must pass the write rule: %v", err)
+	}
+
+	for _, want := range []string{"PARTSTAT", "ROLE", "CUTYPE"} {
+		if !warningMentions(result.Warnings, `event "x-name-partstat@example.com"`, want) {
+			t.Errorf("no %s clamp warning that names the event; warnings = %v", want, result.Warnings)
+		}
+	}
+}
+
+// A VTODO accepts COMPLETED and IN-PROCESS on PARTSTAT, because its
+// table carries the wider CHECK constraint. The clamp must not degrade
+// those two values to the default.
+func TestImport_TaskPartStat_KeepsCompleted(t *testing.T) {
+	t.Parallel()
+	const ics = "BEGIN:VCALENDAR\r\n" +
+		"VERSION:2.0\r\n" +
+		"PRODID:-//test//EN\r\n" +
+		"BEGIN:VTODO\r\n" +
+		"UID:task-partstat@example.com\r\n" +
+		"DTSTAMP:20260401T100000Z\r\n" +
+		"SUMMARY:Todo with a task PARTSTAT\r\n" +
+		"ATTENDEE;PARTSTAT=COMPLETED:mailto:a@example.com\r\n" +
+		"END:VTODO\r\n" +
+		"END:VCALENDAR\r\n"
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile: %v", err)
+	}
+	if len(result.Todos) != 1 || len(result.Todos[0].Attendees) != 1 {
+		t.Fatalf("todos/attendees = %d/%+v, want 1 todo with 1 attendee", len(result.Todos), result.Todos)
+	}
+	if got := result.Todos[0].Attendees[0].RSVPStatus; got != "COMPLETED" {
+		t.Errorf("RSVPStatus = %q, want COMPLETED", got)
+	}
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "PARTSTAT") {
+			t.Errorf("a valid task PARTSTAT must not warn; got %q", w)
+		}
+	}
+}

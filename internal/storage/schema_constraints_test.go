@@ -582,3 +582,90 @@ func TestFireableAlarmQueriesMatchModelPredicate(t *testing.T) {
 	}
 	check("ListPendingTodoAlarmStates", tdStateTrigs)
 }
+
+// The attendee CHECK constraints and the model predicates must agree. A
+// value that passes the Go side but fails a constraint rolls back the
+// whole resource transaction during sync (issue #587). This test probes
+// the three attendee tables with candidate values. The schema and the
+// model predicates must give the same verdict on each one.
+//
+// The PARTSTAT set is per component on purpose. The event table refuses
+// COMPLETED and IN-PROCESS. The todo table and the journal table accept
+// them, because RFC 5545 allows those two values on a task.
+func TestAttendeeConstraintsMatchModelValidators(t *testing.T) {
+	db, q, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("list calendars: %v", err)
+	}
+	calID := cals[0].ID
+
+	res, err := db.Exec(`INSERT INTO events (uid, calendar_id, title, start_time, end_time, all_day, status, transp, sequence, priority)
+		 VALUES ('attendee-lockstep-event', ?, 'Test', '2026-04-01T00:00:00Z', '2026-04-01T01:00:00Z', 0, 'CONFIRMED', 'OPAQUE', 0, 0)`, calID)
+	if err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+	eventID, _ := res.LastInsertId()
+	res, err = db.Exec(`INSERT INTO todos (uid, calendar_id, summary, status, priority, sequence)
+		 VALUES ('attendee-lockstep-todo', ?, 'Test', 'NEEDS-ACTION', 0, 0)`, calID)
+	if err != nil {
+		t.Fatalf("insert todo: %v", err)
+	}
+	todoID, _ := res.LastInsertId()
+	res, err = db.Exec(`INSERT INTO journals (uid, calendar_id, summary, status, sequence)
+		 VALUES ('attendee-lockstep-journal', ?, 'Test', 'FINAL', 0)`, calID)
+	if err != nil {
+		t.Fatalf("insert journal: %v", err)
+	}
+	journalID, _ := res.LastInsertId()
+
+	// The extra candidates cover the shapes RFC 5545 allows and the
+	// constraints refuse: an x-name, the two task-only values, a
+	// lowercase near-miss, and an unknown token.
+	extra := []string{"X-FOO", "COMPLETED", "IN-PROCESS", "accepted", "BOGUS"}
+
+	tables := []struct {
+		table string
+		fk    string
+		id    int64
+		kind  model.AttendeeKind
+	}{
+		{"event_attendees", "event_id", eventID, model.EventAttendee},
+		{"todo_attendees", "todo_id", todoID, model.TaskAttendee},
+		{"journal_attendees", "journal_id", journalID, model.TaskAttendee},
+	}
+
+	for _, tc := range tables {
+		checks := []struct {
+			col    string
+			values []string
+			valid  func(string) bool
+		}{
+			{"rsvp_status", append(model.RSVPStatuses(tc.kind), extra...),
+				func(v string) bool { return model.ValidRSVPStatus(tc.kind, v) }},
+			{"role", append(model.AttendeeRoles(), extra...), model.ValidAttendeeRole},
+			{"cutype", append(model.AttendeeCUTypes(), extra...), model.ValidAttendeeCUType},
+		}
+		for _, c := range checks {
+			for _, v := range c.values {
+				_, err := db.Exec(
+					`INSERT INTO `+tc.table+` (`+tc.fk+`, email, `+c.col+`) VALUES (?, 'a@example.com', ?)`,
+					tc.id, v,
+				)
+				if got, want := err == nil, c.valid(v); got != want {
+					t.Errorf("%s %s %q: insert ok = %v, model predicate = %v (err: %v)",
+						tc.table, c.col, v, got, want, err)
+				}
+				if err != nil && !strings.Contains(err.Error(), "CHECK constraint failed") {
+					t.Errorf("%s %s %q: rejected by %v, not by the CHECK constraint", tc.table, c.col, v, err)
+				}
+			}
+		}
+	}
+}
