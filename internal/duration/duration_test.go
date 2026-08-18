@@ -22,6 +22,10 @@ func TestAdd(t *testing.T) {
 		{"positive prefix", "+PT10M", time.Date(2026, 4, 1, 14, 10, 0, 0, time.UTC)},
 		{"hours minutes seconds", "-PT1H30M45S", time.Date(2026, 4, 1, 12, 29, 15, 0, time.UTC)},
 		{"empty returns zero", "", time.Time{}},
+		// A total above maxSeconds wrapped int64 nanoseconds before the
+		// range check (issue #581). Add now returns the zero time.
+		{"overflow returns zero", "PT5124096H", time.Time{}},
+		{"negative overflow returns zero", "PT3000000H", time.Time{}},
 	}
 
 	for _, tt := range tests {
@@ -78,6 +82,27 @@ func TestValidate(t *testing.T) {
 		{"signed seconds", "PT-30S", true},
 		{"plus signed minutes", "PT+15M", true},
 		{"signed trailing component", "PT1H-30M", true},
+
+		// Range check (issue #581): the total must not be more than
+		// maxSeconds (math.MaxInt64 nanoseconds, about 292 years).
+		// PT5124096H wrapped to about +25 minutes before the check.
+		{"hours wrap positive", "PT5124096H", true},
+		// PT3000000H wrapped to a negative offset before the check.
+		{"hours wrap negative", "PT3000000H", true},
+		{"negative hours wrap", "-PT5124096H", true},
+		{"seconds at the ceiling", "PT9223372036S", false},
+		{"seconds above the ceiling", "PT9223372037S", true},
+		{"hours just under the ceiling", "PT2562047H", false},
+		{"hours just above the ceiling", "PT2562048H", true},
+		{"weeks just under the ceiling", "P15250W", false},
+		{"huge weeks", "P15251W", true},
+		{"days just under the ceiling", "P106751D", false},
+		{"huge days", "P106752D", true},
+		// The components pass alone but the sum crosses the ceiling.
+		{"component sum crosses the ceiling", "P106751DT24H", true},
+		// A component too large for int64 fails in strconv, not in the
+		// range check. It must still report an error.
+		{"component beyond int64", "PT99999999999999999999H", true},
 	}
 
 	for _, tt := range tests {
