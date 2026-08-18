@@ -219,7 +219,6 @@ func buildOverrideSuppressionKeys(rows []storage.Todo) map[string]map[string]str
 	return m
 }
 
-// todoFromRow converts a storage view row to a todo.Todo
 // todoIsOpen reports whether a todo can still fire an alarm. A completed
 // or a cancelled todo cannot. The batch alarm read and the loops that
 // process the rows share this test, so a new terminal status cannot reach
@@ -228,6 +227,7 @@ func todoIsOpen(row storage.Todo) bool {
 	return row.Status != "COMPLETED" && row.Status != "CANCELLED"
 }
 
+// todoFromRow converts a storage view row to a todo.Todo
 func todoFromRow(row storage.Todo) todo.Todo {
 	return todo.Todo{
 		ID:              row.ID,

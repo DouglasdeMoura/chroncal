@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/pressly/goose/v3"
+
+	"github.com/douglasdemoura/chroncal/internal/model"
 )
 
 // migHelpers returns exec and count helpers bound to conn. The migration
@@ -406,5 +408,98 @@ func TestMigration043RunsOncePerDatabase(t *testing.T) {
 	}
 	if span != "-PT1H" {
 		t.Errorf("duration = %q, want the row untouched by a second Up", span)
+	}
+}
+
+// Verifies migration 045 repairs a malformed stored alarm action and
+// leaves every well-shaped value alone. A build older than the token rule
+// of issue #595 stored any non-empty action, so a row can hold " " or
+// "NO NE". A preserved foreign action such as X-APPLE-SOUND holds only
+// token characters and must survive untouched.
+func TestMigration045RepairsMalformedAction(t *testing.T) {
+	conn, _, err := Open(t.TempDir() + "/mig045.db")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer conn.Close()
+
+	ctx := context.Background()
+	mustExec, count := migHelpers(t, ctx, conn)
+	provider := migProvider(t, conn)
+
+	// Go back before the repair, so the seeds can hold the malformed
+	// values an older build stored.
+	if _, err := provider.DownTo(ctx, 44); err != nil {
+		t.Fatalf("down to 44: %v", err)
+	}
+
+	mustExec(`INSERT INTO events (uid, calendar_id, title, start_time, end_time)
+		VALUES ('mig045-evt', 1, 'Mig', '2026-01-01T10:00:00Z', '2026-01-01T11:00:00Z')`)
+	mustExec(`INSERT INTO todos (uid, calendar_id, summary) VALUES ('mig045-todo', 1, 'Mig')`)
+
+	seeds := []struct {
+		id     int
+		action string
+		repair bool
+	}{
+		{1, " ", true},
+		{2, "NO NE", true},
+		{3, "X-APPLE-SOUND", false},
+		{4, "NONE", false},
+		{5, "DISPLAY", false},
+		{6, "PROCEDURE", false},
+	}
+	for _, s := range seeds {
+		mustExec(`INSERT INTO event_alarms (id, event_id, action, trigger_value) VALUES (?, 1, ?, '-PT15M')`,
+			s.id, s.action)
+		mustExec(`INSERT INTO todo_alarms (id, todo_id, action, trigger_value) VALUES (?, 1, ?, '-PT15M')`,
+			s.id, s.action)
+	}
+
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+
+	for _, table := range []string{"event_alarms", "todo_alarms"} {
+		for _, s := range seeds {
+			want := s.action
+			if s.repair {
+				want = "DISPLAY"
+			}
+			if n := count(`SELECT COUNT(*) FROM `+table+` WHERE id = ? AND action = ?`, s.id, want); n != 1 {
+				t.Errorf("%s id %d: action %q did not end as %q", table, s.id, s.action, want)
+			}
+		}
+	}
+}
+
+// The migration 045 GLOB pattern and model.ValidAlarmActionToken must give
+// the same verdict. A value the Go rule refuses must be repaired, and a
+// value it accepts must survive. Two hand-written rules would otherwise
+// drift, and the migration would leave a row every later write refuses.
+func TestMigration045PatternMatchesTokenRule(t *testing.T) {
+	conn, _, err := Open(t.TempDir() + "/mig045-pattern.db")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer conn.Close()
+
+	candidates := []string{
+		"DISPLAY", "AUDIO", "EMAIL", "NONE", "PROCEDURE", "X-APPLE-SOUND",
+		"x-lower-case", "A1", "-", "9",
+		"", " ", "  ", "\t", "NO NE", "X APPLE", "DISPLAY;", "a.b", "caf\u00e9",
+	}
+	for _, v := range candidates {
+		var matched int
+		if err := conn.QueryRowContext(context.Background(),
+			`SELECT CASE WHEN ? = '' OR ? GLOB '*[^A-Za-z0-9-]*' THEN 1 ELSE 0 END`,
+			v, v).Scan(&matched); err != nil {
+			t.Fatalf("probe %q: %v", v, err)
+		}
+		wantRepair := !model.ValidAlarmActionToken(v)
+		if (matched == 1) != wantRepair {
+			t.Errorf("action %q: the migration repairs it = %v, but the token rule calls it malformed = %v",
+				v, matched == 1, wantRepair)
+		}
 	}
 }

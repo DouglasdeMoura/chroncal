@@ -1226,7 +1226,12 @@ func createNewTodoAlarm(ctx context.Context, qtx *storage.Queries, todoID int64,
 	}
 	row, err := qtx.CreateTodoAlarm(ctx, params)
 	if isUniqueUIDViolation(err) {
-		params.Uid = storage.StringToNullable(uuid.New().String())
+		// Retry through the shared rule, like the event service does.
+		// The retry must not stamp a minted UID on a preserved foreign
+		// alarm (issue #586).
+		retry := a
+		retry.UID = ""
+		params.Uid = storage.StringToNullable(model.AlarmUIDForWrite(retry))
 		row, err = qtx.CreateTodoAlarm(ctx, params)
 	}
 	if err != nil {
