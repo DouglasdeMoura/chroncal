@@ -195,7 +195,7 @@ func validateTiming(dueDate, startDate, dur string) error {
 	// drops the DURATION with a warning, so a server cannot fail a
 	// sync pull here (issue #582 round 5).
 	if err := duration.ValidateSpan(dur); err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalidTiming, err)
+		return fmt.Errorf("%w: %w", ErrInvalidTiming, err)
 	}
 	if startDate == "" {
 		return fmt.Errorf("%w: duration requires start date", ErrInvalidTiming)
