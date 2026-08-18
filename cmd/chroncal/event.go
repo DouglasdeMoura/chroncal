@@ -1899,9 +1899,11 @@ func validateAlarmTrigger(trigger string) error {
 	if _, err := time.Parse(time.RFC3339, trigger); err == nil {
 		return nil
 	}
-	// Strict RFC 5545 duration validation.
+	// Strict RFC 5545 duration validation. Surface the parse error: a
+	// well-formed duration can now fail the range check, and "must be
+	// an ISO 8601 duration" alone would misdescribe that rejection.
 	if err := duration.Validate(trigger); err != nil {
-		return errInvalidInputf("invalid alarm trigger %q: must be an ISO 8601 duration (e.g. -PT15M) or RFC 3339 datetime", trigger)
+		return errInvalidInputf("invalid alarm trigger %q: %v (use an ISO 8601 duration such as -PT15M, or an RFC 3339 datetime)", trigger, err)
 	}
 	return nil
 }

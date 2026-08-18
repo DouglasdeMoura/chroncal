@@ -237,7 +237,11 @@ func setPropFloating(vevent *ical.Event, propName string, t time.Time) {
 func setEventTimes(vevent *ical.Event, e event.Event) {
 	// RFC 5545 forbids both DTEND and DURATION on the same VEVENT.
 	// When DurationValue is set (imported from .ics), emit DURATION instead of DTEND.
-	useDuration := e.DurationValue != ""
+	// The Validate guard exists for DB rows written before import
+	// validated DURATION (the same reason as the alarm-path guard in
+	// buildValarm). A stored bad value must not reach the server; the
+	// stored end time takes over as DTEND.
+	useDuration := e.DurationValue != "" && duration.Validate(e.DurationValue) == nil
 
 	if e.AllDay {
 		vevent.Props.SetDate(ical.PropDateTimeStart, allDayExportDate(e.StartTime, e.Timezone))
@@ -397,7 +401,10 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 		// (import enforces no mutual exclusion), and a single bad component makes
 		// enc.Encode reject the whole calendar, dropping every todo. Drop the
 		// conflicting DURATION instead so the rest of the batch still exports.
-		if t.Duration != "" &&
+		// The Validate guard covers DB rows written before import
+		// validated the todo DURATION; a stored bad value must not
+		// reach the server.
+		if t.Duration != "" && duration.Validate(t.Duration) == nil &&
 			vtodo.Props.Get(ical.PropDue) == nil &&
 			vtodo.Props.Get(ical.PropDateTimeStart) != nil {
 			p := &ical.Prop{Name: ical.PropDuration}
@@ -728,18 +735,7 @@ func emitRecurrenceID(props ical.Props, recurrenceID string, allDay, floating bo
 // was reverted. It read floating values as UTC while the alarm engine reads
 // them in the record's timezone. That moved reminders by the zone offset.
 func exportableTrigger(v string) bool {
-	if v == "" {
-		return false
-	}
-	if v[0] == '-' || v[0] == '+' || v[0] == 'P' {
-		return duration.Validate(v) == nil
-	}
-	for _, layout := range []string{"20060102T150405Z", "20060102T150405", time.RFC3339} {
-		if _, err := time.Parse(layout, v); err == nil {
-			return true
-		}
-	}
-	return false
+	return model.ParseableAlarmTrigger(v)
 }
 
 // buildValarm renders an alarm as a VALARM component, or nil when the alarm

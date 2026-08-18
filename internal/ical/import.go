@@ -201,9 +201,16 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, []string, error) {
 		todoWarnings = append(todoWarnings, w)
 	}
 
-	var duration string
+	// Validate like the VEVENT path. A malformed value would persist,
+	// re-export verbatim, and poison a RELATED=END alarm anchor.
+	var durationValue string
 	if prop := props.Get(ical.PropDuration); prop != nil {
-		duration = prop.Value
+		if duration.Validate(prop.Value) == nil {
+			durationValue = prop.Value
+		} else {
+			todoWarnings = append(todoWarnings, fmt.Sprintf(
+				"todo %q: invalid DURATION %q; dropped", uid, prop.Value))
+		}
 	}
 
 	var completedAt string
@@ -320,7 +327,7 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, []string, error) {
 		Location:        location,
 		DueDate:         dueDate,
 		StartDate:       startDate,
-		Duration:        duration,
+		Duration:        durationValue,
 		CompletedAt:     completedAt,
 		PercentComplete: percentComplete,
 		Status:          strings.ToUpper(status),
@@ -429,10 +436,12 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 			endTime = addDuration(startTime, prop.Value)
 			explicitEnd = true
 		} else if prop != nil {
-			// Malformed DURATION (go-ical stores the raw value without validating).
-			// Fall back to a 1h span and drop the bad value so it is neither
-			// persisted nor re-exported.
+			// Malformed DURATION (go-ical stores the raw value with no
+			// validation). Fall back to a 1h span, warn, and drop the bad
+			// value so it does not persist and does not re-export.
 			endTime = startTime.Add(time.Hour)
+			dtendWarnings = append(dtendWarnings, fmt.Sprintf(
+				"event %q: invalid DURATION %q; dropped, the event gets a 1h span", uid, prop.Value))
 		} else if badDTEND {
 			// DTEND was present but unusable and there is no DURATION to fall
 			// back on. A timed event gets the same 1h default as a malformed

@@ -267,6 +267,26 @@ func (a Alarm) RepeatPaired() bool {
 	return (a.Repeat > 0) == (a.Duration != "")
 }
 
+// ParseableAlarmTrigger returns true if v is a trigger value the alarm
+// engine and the exporter can read: a valid RFC 5545 duration, or an
+// absolute time in one of the three accepted layouts. The exporter and
+// the startup heal in the storage package share this rule. A row that
+// fails it can never fire, and export omits its VALARM.
+func ParseableAlarmTrigger(v string) bool {
+	if v == "" {
+		return false
+	}
+	if v[0] == '-' || v[0] == '+' || v[0] == 'P' {
+		return duration.Validate(v) == nil
+	}
+	for _, layout := range []string{"20060102T150405Z", "20060102T150405", time.RFC3339} {
+		if _, err := time.Parse(layout, v); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // ValidateAcknowledged returns true if v is a valid RFC 9074 ACKNOWLEDGED
 // value: empty string (clear), iCal UTC datetime, or RFC 3339.
 func ValidateAcknowledged(v string) bool {

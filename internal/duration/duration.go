@@ -8,15 +8,19 @@ import (
 	"time"
 )
 
-// maxSeconds is the largest total, in seconds, that parse accepts. It is
-// the number of whole seconds a time.Duration can hold (math.MaxInt64
-// nanoseconds, about 292 years). Add multiplies hours, minutes, and
-// seconds into a time.Duration. A total above this bound would wrap
-// (issue #581). The bound also applies to the days and weeks components.
-// Add moves days with AddDate, so days do not wrap the same way, but one
-// consistent ceiling keeps the rule simple. For the bound, a day counts
-// as 24 hours and a week counts as 7 days.
+// maxSeconds is the largest time total, in seconds, that parse accepts
+// for the hours, minutes, and seconds components. It is the number of
+// whole seconds a time.Duration can hold (math.MaxInt64 nanoseconds,
+// about 292 years). Add multiplies these components into a
+// time.Duration. A total above this bound would wrap (issue #581).
 const maxSeconds = math.MaxInt64 / int64(time.Second)
+
+// maxDays is the largest day total (days plus weeks, as days) that
+// parse accepts. Add moves the day total with AddDate, which takes an
+// int day count. This bound keeps that conversion safe on a 32-bit
+// build. Days do not feed the time.Duration sum, so they need no
+// nanosecond ceiling.
+const maxDays = math.MaxInt32
 
 type parsed struct {
 	neg     bool
@@ -27,29 +31,30 @@ type parsed struct {
 	seconds int64
 }
 
-// checkRange rejects a duration whose total is more than maxSeconds.
-// It guards each multiply before it runs, so the arithmetic itself
-// cannot wrap. All components are non-negative here, so the running
-// total stays far below math.MaxInt64 between checks.
+// checkRange rejects a duration whose components are out of range. The
+// day total must fit maxDays. The hours, minutes, and seconds total
+// must fit maxSeconds. Each multiply has a guard before it runs, so
+// the arithmetic itself cannot wrap. All components are non-negative
+// here, so the sums stay far below math.MaxInt64 between checks.
 func (p parsed) checkRange(orig string) error {
+	if p.weeks > maxDays/7 || p.days > maxDays-p.weeks*7 {
+		return fmt.Errorf("invalid duration %q: too large, the day total is more than %d days", orig, int64(maxDays))
+	}
 	var total int64
 	for _, c := range []struct {
 		value   int64
 		seconds int64
 	}{
-		{p.weeks, 7 * 86400},
-		{p.days, 86400},
 		{p.hours, 3600},
 		{p.minutes, 60},
 		{p.seconds, 1},
 	} {
-		v := c.value
-		if v > maxSeconds/c.seconds {
-			return fmt.Errorf("invalid duration %q: too large, the total is more than %d seconds", orig, maxSeconds)
+		if c.value > maxSeconds/c.seconds {
+			return fmt.Errorf("invalid duration %q: too large, the time total is more than %d seconds", orig, maxSeconds)
 		}
-		total += v * c.seconds
+		total += c.value * c.seconds
 		if total > maxSeconds {
-			return fmt.Errorf("invalid duration %q: too large, the total is more than %d seconds", orig, maxSeconds)
+			return fmt.Errorf("invalid duration %q: too large, the time total is more than %d seconds", orig, maxSeconds)
 		}
 	}
 	return nil
@@ -71,10 +76,9 @@ func consumeComponent(s string, letter byte, orig string) (string, int64, error)
 	// strconv.ParseInt rejects every non-digit except a leading sign, so
 	// a first-byte sign check is all that's needed to forbid
 	// per-component signs (num is non-empty here because i > 0).
-	// The 64-bit width keeps the maxSeconds ceiling the same on a 32-bit
-	// build: strconv.Atoi is int-sized there, and a value at the ceiling
-	// would fail the parse instead of the range check (issue #582
-	// review).
+	// The 64-bit width keeps the range checks the same on a 32-bit
+	// build. strconv.Atoi is int-sized there. A value at a ceiling
+	// would then fail the parse instead of the range check.
 	if num[0] == '+' || num[0] == '-' {
 		return "", 0, fmt.Errorf("invalid duration %q: bad %c value %q", orig, letter, num)
 	}
@@ -226,7 +230,9 @@ func FromGo(d time.Duration) string {
 // Validate checks that s is a well-formed RFC 5545 duration string.
 // Format: [+/-]P[nW] or [+/-]P[nD][T[nH][nM][nS]]
 // Returns an error if the string is empty, malformed, or has leftover garbage.
-// Also returns an error if the total is more than maxSeconds (about 292 years).
+// Also returns an error when a component is out of range: the time
+// total is capped at maxSeconds (about 292 years) and the day total at
+// maxDays.
 func Validate(s string) error {
 	_, err := parse(s)
 	return err

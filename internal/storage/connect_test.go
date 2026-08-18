@@ -254,10 +254,10 @@ func TestOpen_ForeignKeys(t *testing.T) {
 	}
 }
 
-// normalizeAlarmRepeatPairs must heal rows written before the parsers
-// validated REPEAT and DURATION: clamp the count, clear a bad interval,
-// clear an unpaired value, and leave normal rows alone (issue #580).
-func TestNormalizeAlarmRepeatPairs(t *testing.T) {
+// healAlarmRows must heal rows written before the parsers validated
+// REPEAT and DURATION: clamp the count, clear a bad interval, clear an
+// unpaired value, and leave normal rows alone (issue #580).
+func TestHealAlarmRows_NormalizesRepeatPairs(t *testing.T) {
 	db, q, err := Open(":memory:")
 	if err != nil {
 		t.Fatalf("open db: %v", err)
@@ -302,8 +302,8 @@ func TestNormalizeAlarmRepeatPairs(t *testing.T) {
 		ids[i], _ = res.LastInsertId()
 	}
 
-	if err := normalizeAlarmRepeatPairs(db); err != nil {
-		t.Fatalf("normalizeAlarmRepeatPairs: %v", err)
+	if err := healAlarmRows(db); err != nil {
+		t.Fatalf("healAlarmRows: %v", err)
 	}
 
 	for i, r := range rows {
@@ -321,10 +321,11 @@ func TestNormalizeAlarmRepeatPairs(t *testing.T) {
 	}
 }
 
-// purgeInvalidAlarmTriggers must delete an alarm row with an out-of-range
-// duration trigger_value. It must keep a valid duration trigger. It must
-// never touch an absolute trigger (issue #581).
-func TestPurgeInvalidAlarmTriggers(t *testing.T) {
+// healAlarmRows must delete an alarm row whose trigger_value fails
+// model.ParseableAlarmTrigger: an out-of-range duration, a malformed
+// duration, a bare number, an empty value, or an invalid absolute time.
+// It must keep every readable trigger (issues #581 and #582 round 2).
+func TestHealAlarmRows_PurgesDeadTriggers(t *testing.T) {
 	db, q, err := Open(":memory:")
 	if err != nil {
 		t.Fatalf("open db: %v", err)
@@ -348,10 +349,14 @@ func TestPurgeInvalidAlarmTriggers(t *testing.T) {
 		trigger  string
 		survives bool
 	}{
-		{"PT5124096H", false},      // over the ceiling; Validate accepted it before the range check
-		{"-PT15M", true},           // valid duration
-		{"20260401T100000Z", true}, // absolute trigger, not duration-shaped
-		{"P", false},               // malformed duration shape
+		{"PT5124096H", false},       // over the ceiling; Validate accepted it before the range check
+		{"-PT15M", true},            // valid duration
+		{"20260401T100000Z", true},  // absolute compact UTC trigger
+		{"20260401T100000", true},   // absolute compact floating trigger
+		{"P", false},                // malformed duration shape
+		{"15M", false},              // legacy raw value; export omits it, the engine cannot read it
+		{"", false},                 // empty; the alarm could never fire
+		{"20261301T250000Z", false}, // absolute shape that fails every layout
 	}
 	ids := make([]int64, len(rows))
 	for i, r := range rows {
@@ -364,8 +369,8 @@ func TestPurgeInvalidAlarmTriggers(t *testing.T) {
 		ids[i], _ = res.LastInsertId()
 	}
 
-	if err := purgeInvalidAlarmTriggers(db); err != nil {
-		t.Fatalf("purgeInvalidAlarmTriggers: %v", err)
+	if err := healAlarmRows(db); err != nil {
+		t.Fatalf("healAlarmRows: %v", err)
 	}
 
 	for i, r := range rows {
