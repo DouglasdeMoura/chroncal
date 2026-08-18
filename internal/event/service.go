@@ -1660,6 +1660,19 @@ func deleteUnmatchedAlarms(ctx context.Context, qtx *storage.Queries, existing [
 	return nil
 }
 
+// ReplaceFireableAlarms replaces the fireable alarms of an event and
+// carries the stored sync-only rows forward. A caller that cannot state a
+// preserved action — the CLI --alarm flag — uses this method, so a
+// routine edit does not delete the VALARM of another client (issue #579).
+// A caller that must delete such a row calls ReplaceAlarms instead.
+func (s *Service) ReplaceFireableAlarms(ctx context.Context, eventID int64, alarms []model.Alarm) error {
+	stored, err := s.ListAlarms(ctx, eventID)
+	if err != nil {
+		return fmt.Errorf("list stored alarms: %w", err)
+	}
+	return s.ReplaceAlarms(ctx, eventID, model.KeepSyncOnlyAlarms(stored, alarms))
+}
+
 func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []model.Alarm) error {
 	// Prepare before the transaction opens. A standalone call then
 	// rejects a bad alarm without a write lock. A sync caller already

@@ -807,11 +807,7 @@ a --progress value other than 100.`,
 				}
 			}
 			if cmd.Flags().Changed("alarm") {
-				stored, err := a.Todos.ListAlarms(ctx, t.ID)
-				if err != nil {
-					return fmt.Errorf("load alarms: %w", err)
-				}
-				if err := a.Todos.ReplaceAlarms(ctx, t.ID, keepSyncOnlyAlarms(stored, alarms)); err != nil {
+				if err := a.Todos.ReplaceFireableAlarms(ctx, t.ID, alarms); err != nil {
 					return fmt.Errorf("update alarms: %w", err)
 				}
 			}
