@@ -852,20 +852,17 @@ func fromStorageTodoAlarm(r storage.TodoAlarm) model.Alarm {
 }
 
 func (s *Service) ReplaceAlarms(ctx context.Context, todoID int64, alarms []model.Alarm) error {
+	// Prepare before the transaction opens. A bad alarm then fails
+	// without a write lock; see model.PrepareAlarmsForWrite.
+	alarms, err := model.PrepareAlarmsForWrite(alarms)
+	if err != nil {
+		return err
+	}
 	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
 		return err
 	}
 	defer rollback()
-
-	// Prepare a copy of the alarms before any read. The caller's slice
-	// does not change. A bad Action or Related fails with a typed
-	// error, not with the CHECK constraint (issue #578). Mirrors
-	// event.replaceAlarmsTx.
-	alarms, err = model.PrepareAlarmsForWrite(alarms)
-	if err != nil {
-		return err
-	}
 
 	// Merge. Do not wipe and recreate. A delete of a todo alarm row cascades
 	// away its todo_alarm_state. That would restore dismissed firings on
