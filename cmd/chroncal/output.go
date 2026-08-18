@@ -99,14 +99,21 @@ func toJSONAlarmAttendees(attendees []model.AlarmAttendee) []jsonAlarmAttendee {
 }
 
 type jsonCalendar struct {
-	ID          int64  `json:"id"`
-	Name        string `json:"name"`
-	Color       string `json:"color"`
-	Description string `json:"description,omitempty"`
-	OwnerEmail  string `json:"owner_email,omitempty"`
-	IsDefault   bool   `json:"is_default,omitempty"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
+	ID            int64  `json:"id"`
+	Name          string `json:"name"`
+	Color         string `json:"color"`
+	Description   string `json:"description,omitempty"`
+	OwnerEmail    string `json:"owner_email,omitempty"`
+	IsDefault     bool   `json:"is_default,omitempty"`
+	AccountID     int64  `json:"account_id,omitempty"`
+	AccountName   string `json:"account_name,omitempty"`
+	RemoteURL     string `json:"remote_url,omitempty"`
+	RemoteAccess  string `json:"remote_access,omitempty"`
+	LastSyncAt    string `json:"last_sync_at,omitempty"`
+	LastSyncError string `json:"last_sync_error,omitempty"`
+	Hidden        bool   `json:"hidden,omitempty"`
+	CreatedAt     string `json:"created_at"`
+	UpdatedAt     string `json:"updated_at"`
 }
 
 func toJSONEvent(e event.Event) jsonEvent {
@@ -166,14 +173,19 @@ func toJSONEvent(e event.Event) jsonEvent {
 
 func toJSONCalendar(c calendar.Calendar) jsonCalendar {
 	return jsonCalendar{
-		ID:          c.ID,
-		Name:        c.Name,
-		Color:       c.Color,
-		Description: c.Description,
-		OwnerEmail:  c.OwnerEmail,
-		IsDefault:   c.IsDefault,
-		CreatedAt:   c.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt:   c.UpdatedAt.UTC().Format(time.RFC3339),
+		ID:            c.ID,
+		Name:          c.Name,
+		Color:         c.Color,
+		Description:   c.Description,
+		OwnerEmail:    c.OwnerEmail,
+		IsDefault:     c.IsDefault,
+		AccountID:     c.AccountID,
+		RemoteURL:     c.RemoteURL,
+		RemoteAccess:  c.RemoteAccess,
+		LastSyncAt:    c.LastSyncAt,
+		LastSyncError: c.LastSyncError,
+		CreatedAt:     c.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:     c.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 }
 

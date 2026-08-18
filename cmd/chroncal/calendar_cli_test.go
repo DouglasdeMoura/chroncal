@@ -244,10 +244,61 @@ func TestCalendarListJSONIncludesOwnerEmail(t *testing.T) {
 			if got.OwnerEmail != "me@example.com" {
 				t.Fatalf("owner_email = %q, want %q", got.OwnerEmail, "me@example.com")
 			}
+			if got.AccountID != 0 {
+				t.Fatalf("account_id = %d, want 0 for local calendar", got.AccountID)
+			}
+			if got.Hidden {
+				t.Fatal("hidden = true, want false for a new calendar")
+			}
 			return
 		}
 	}
 	t.Fatalf("calendar list did not include Work: %s", stdout)
+}
+
+func TestCalendarListJSONIncludesAccountForRemoteCalendar(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("CHRONCAL_BEARER_TOKEN", "test-token")
+
+	_, _, err := runChroncalCommand(t,
+		"calendar", "create", "Work",
+		"--remote-url", "https://cal.example.com/dav/calendars/work/",
+		"--username", "alice",
+		"--auth", "bearer",
+		"--allow-plaintext",
+		"--output", "json",
+	)
+	if err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+
+	stdout, _, err := runChroncalCommand(t, "calendar", "list", "--output", "json")
+	if err != nil {
+		t.Fatalf("calendar list json: %v", err)
+	}
+	var cals []jsonCalendar
+	if err := json.Unmarshal([]byte(stdout), &cals); err != nil {
+		t.Fatalf("decode: %v\n%s", err, stdout)
+	}
+	var got *jsonCalendar
+	for i := range cals {
+		if cals[i].Name == "Work" {
+			got = &cals[i]
+			break
+		}
+	}
+	if got == nil {
+		t.Fatalf("Work missing: %s", stdout)
+	}
+	if got.AccountID == 0 {
+		t.Fatalf("account_id omitted/zero, want linked account: %s", stdout)
+	}
+	if got.AccountName == "" {
+		t.Fatalf("account_name empty, want derived display name: %s", stdout)
+	}
+	if got.RemoteURL != "https://cal.example.com/dav/calendars/work/" {
+		t.Fatalf("remote_url = %q", got.RemoteURL)
+	}
 }
 
 func setupCalendarCLITestEnv(t *testing.T) string {
@@ -261,6 +312,8 @@ func setupCalendarCLITestEnv(t *testing.T) string {
 	// hermetically and don't depend on the host OS keyring, which is absent on
 	// the Linux CI runner (no org.freedesktop.secrets) — see issue #474.
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "xdg-config"))
+	// Isolate hidden_calendars from the developer's real TUI state.
+	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "xdg-state"))
 	return dbPath
 }
 
