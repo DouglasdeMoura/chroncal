@@ -32,6 +32,7 @@ account share one stored credential.`,
 		accountGetCmd(),
 		accountListCmd(),
 		accountUpdateCmd(),
+		accountCredentialsCmd(),
 		accountCalendarsCmd(),
 		accountRemoveCmd(),
 	)
@@ -222,6 +223,87 @@ authentication type, or stored credential.`,
 	}
 	cmd.Flags().StringVar(&name, "name", "", "new account display name (required)")
 	_ = cmd.MarkFlagRequired("name")
+	return cmd
+}
+
+func accountCredentialsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "credentials <name|id>",
+		Short: "Rotate a basic or bearer account secret",
+		Long: `Replace the stored password or bearer token for one account.
+
+The server URL, username, and authentication type stay the same. OAuth
+accounts must use "chroncal account reauth" instead.
+
+Secrets come from the environment, never from flags:
+  basic   CHRONCAL_PASSWORD
+  bearer  CHRONCAL_BEARER_TOKEN
+
+A missing or identity-mismatched keyring entry is repaired. Other
+backend failures leave the previous secret unchanged.`,
+		Example: `  CHRONCAL_PASSWORD=... chroncal account credentials Work --output json
+  CHRONCAL_BEARER_TOKEN=... chroncal account credentials 3 --output json`,
+		Args: exactOneArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			a, err := initApp()
+			if err != nil {
+				return err
+			}
+			defer a.Close()
+			ctx := context.Background()
+			configured, err := resolveAccount(ctx, a.Accounts, args[0])
+			if err != nil {
+				return err
+			}
+
+			authType := strings.ToLower(strings.TrimSpace(configured.AuthType))
+			var secret string
+			switch authType {
+			case "oauth2":
+				return errInvalidInputf(
+					"account %q uses OAuth 2.0; run chroncal account reauth instead",
+					configured.DisplayName,
+				)
+			case "bearer":
+				secret, err = readBearerToken()
+			case "basic", "":
+				secret, err = readBasicPassword()
+			default:
+				return errInvalidInputf("unsupported auth type %q", configured.AuthType)
+			}
+			if err != nil {
+				return err
+			}
+
+			store, err := newCalendarCredentialStore(
+				a.CredentialNamespace, a.PreviousCredentialNamespaces,
+				a.MigrateLegacyCredentials, a.AllowPlaintext,
+			)
+			if err != nil {
+				return fmt.Errorf("credential store: %w", err)
+			}
+			fingerprint := configured.CredentialFingerprint()
+			cred, err := credentialForRotation(store.Get(configured.ID, fingerprint))
+			if err != nil {
+				return err
+			}
+			if authType == "bearer" {
+				cred.AccessToken = secret
+			} else {
+				cred.Password = secret
+			}
+			if err := a.Accounts.StoreCredential(ctx, configured.ID, fingerprint, cred, store); err != nil {
+				return err
+			}
+
+			if outputFmt != "text" {
+				return printOutput(cmd.OutOrStdout(), toJSONAccount(configured))
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Updated credentials for %q.\n",
+				textsafe.Display(configured.DisplayName))
+			return nil
+		},
+	}
 	return cmd
 }
 
@@ -763,4 +845,18 @@ func printAccountDiscovery(w interface{ Write([]byte) (int, error) }, discovery 
 		_, _ = fmt.Fprintf(w, "  [%s] %s\t%s\t%s\n", status,
 			textsafe.Display(remote.Name), access, textsafe.Display(remote.Path))
 	}
+}
+
+// credentialForRotation matches the TUI repair contract: a missing or
+// identity-mismatched keyring entry is a broken state rotation exists to
+// fix. Other backend errors abort so a transient failure cannot clobber
+// a still-valid secret.
+func credentialForRotation(cred auth.Credential, err error) (auth.Credential, error) {
+	if err == nil {
+		return cred, nil
+	}
+	if auth.IsCredentialNotFound(err) || errors.Is(err, auth.ErrCredentialIdentityMismatch) {
+		return auth.Credential{}, nil
+	}
+	return auth.Credential{}, fmt.Errorf("load current credentials: %w", err)
 }
