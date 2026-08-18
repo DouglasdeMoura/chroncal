@@ -2,10 +2,21 @@ package duration
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// maxSeconds is the largest total, in seconds, that parse accepts. It is
+// the number of whole seconds a time.Duration can hold (math.MaxInt64
+// nanoseconds, about 292 years). Add multiplies hours, minutes, and
+// seconds into a time.Duration. A total above this bound would wrap
+// (issue #581). The bound also applies to the days and weeks components.
+// Add moves days with AddDate, so days do not wrap the same way, but one
+// consistent ceiling keeps the rule simple. For the bound, a day counts
+// as 24 hours and a week counts as 7 days.
+const maxSeconds = math.MaxInt64 / int64(time.Second)
 
 type parsed struct {
 	neg     bool
@@ -14,6 +25,34 @@ type parsed struct {
 	hours   int
 	minutes int
 	seconds int
+}
+
+// checkRange rejects a duration whose total is more than maxSeconds.
+// It guards each multiply before it runs, so the arithmetic itself
+// cannot wrap. All components are non-negative here, so the running
+// total stays far below math.MaxInt64 between checks.
+func (p parsed) checkRange(orig string) error {
+	var total int64
+	for _, c := range []struct {
+		value   int
+		seconds int64
+	}{
+		{p.weeks, 7 * 86400},
+		{p.days, 86400},
+		{p.hours, 3600},
+		{p.minutes, 60},
+		{p.seconds, 1},
+	} {
+		v := int64(c.value)
+		if v > maxSeconds/c.seconds {
+			return fmt.Errorf("invalid duration %q: too large, the total is more than %d seconds", orig, maxSeconds)
+		}
+		total += v * c.seconds
+		if total > maxSeconds {
+			return fmt.Errorf("invalid duration %q: too large, the total is more than %d seconds", orig, maxSeconds)
+		}
+	}
+	return nil
 }
 
 // consumeComponent extracts the unsigned integer before letter in s.
@@ -79,7 +118,7 @@ func parse(s string) (parsed, error) {
 		if r != "" {
 			return parsed{}, fmt.Errorf("invalid duration %q: trailing characters after W", s)
 		}
-		return p, nil
+		return p, p.checkRange(s)
 	}
 
 	r, p.days, err = consumeComponent(r, 'D', s)
@@ -88,7 +127,7 @@ func parse(s string) (parsed, error) {
 	}
 
 	if r == "" {
-		return p, nil
+		return p, p.checkRange(s)
 	}
 
 	if r[0] != 'T' {
@@ -116,7 +155,7 @@ func parse(s string) (parsed, error) {
 	if r != "" {
 		return parsed{}, fmt.Errorf("invalid duration %q: trailing characters %q", s, r)
 	}
-	return p, nil
+	return p, p.checkRange(s)
 }
 
 // FromGo converts a Go time.Duration to an RFC 5545 duration string.
@@ -183,6 +222,7 @@ func FromGo(d time.Duration) string {
 // Validate checks that s is a well-formed RFC 5545 duration string.
 // Format: [+/-]P[nW] or [+/-]P[nD][T[nH][nM][nS]]
 // Returns an error if the string is empty, malformed, or has leftover garbage.
+// Also returns an error if the total is more than maxSeconds (about 292 years).
 func Validate(s string) error {
 	_, err := parse(s)
 	return err
@@ -190,8 +230,8 @@ func Validate(s string) error {
 
 // Add parses an RFC 5545 duration string and adds it to a time.
 // Format: [+/-]P[nW] or [+/-]P[nD][T[nH][nM][nS]]
-// Returns zero time for empty or unparseable input. Callers should
-// validate with Validate() before they call Add().
+// Returns zero time for empty, unparseable, or out-of-range input.
+// Callers should validate with Validate() before they call Add().
 func Add(t time.Time, dur string) time.Time {
 	p, err := parse(dur)
 	if err != nil {

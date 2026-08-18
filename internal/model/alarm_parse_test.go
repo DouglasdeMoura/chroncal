@@ -82,3 +82,26 @@ func TestContentEqual_RelatedIgnoredOnAbsoluteTriggers(t *testing.T) {
 		t.Error("duration-trigger alarms anchored to different ends fire at different times and must NOT match")
 	}
 }
+
+// TestValidAlarmDuration_RejectsOverflow guards the range check in
+// internal/duration (issue #581). PT5124096H once wrapped int64
+// nanoseconds to about +25 minutes, so buildRepeatTriggers set repeats
+// about 25 minutes apart instead of centuries apart. The parse-level
+// bound must make ValidAlarmDuration reject it. Normal intervals must
+// still pass.
+func TestValidAlarmDuration_RejectsOverflow(t *testing.T) {
+	tests := []struct {
+		dur  string
+		want bool
+	}{
+		{"PT5124096H", false}, // wrapped positive before the range check
+		{"PT3000000H", false}, // wrapped negative before the range check
+		{"PT5M", true},
+		{"P1D", true},
+	}
+	for _, tt := range tests {
+		if got := ValidAlarmDuration(tt.dur); got != tt.want {
+			t.Errorf("ValidAlarmDuration(%q) = %v, want %v", tt.dur, got, tt.want)
+		}
+	}
+}
