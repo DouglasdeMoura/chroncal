@@ -5,15 +5,6 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *;
 -- name: ListTodoAlarmsByTodoID :many
 SELECT * FROM todo_alarms WHERE todo_id = ? ORDER BY id;
 
--- name: ListFireableTodoAlarmsByTodoID :many
--- The action list mirrors model.FireableAlarmAction. Keep the two in
--- lockstep. The alarm check loop is the only caller, and a preserved
--- sync-only action must not reach it.
-SELECT * FROM todo_alarms
-WHERE todo_id = ?
-  AND action IN ('AUDIO', 'DISPLAY', 'EMAIL')
-ORDER BY id;
-
 -- name: ListFireableTodoAlarmsByTodoIDs :many
 -- The action list mirrors model.FireableAlarmAction. Keep the two in
 -- lockstep. The alarm check loop is the only caller, and a preserved

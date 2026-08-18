@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/douglasdemoura/chroncal/internal/duration"
 )
 
@@ -256,6 +258,26 @@ func StorableAlarmAction(action string) bool {
 	return ValidAlarmActionToken(action)
 }
 
+// AlarmUIDForWrite returns the UID a write stores for a. It keeps a UID
+// the alarm already carries. For an alarm with no UID it mints one, unless
+// the alarm holds an action the engine cannot fire.
+//
+// A preserved foreign VALARM keeps an empty UID on purpose (issue #586).
+// A minted UID would reach the server on the next push, and the client that
+// wrote the VALARM never authored that value. An empty UID is safe: the
+// UID match refuses an empty value on both sides and falls back to the
+// content match, the export writes the property only for a non-empty
+// value, and the unique index covers a non-null uid alone.
+func AlarmUIDForWrite(a Alarm) string {
+	if a.UID != "" {
+		return a.UID
+	}
+	if !FireableAlarmAction(a.Action) {
+		return ""
+	}
+	return uuid.NewString()
+}
+
 // CheckStorableAlarmAction returns a named error for an action the alarm
 // tables reject. It converts an opaque CHECK failure into a named error.
 // The enclosing transaction still rolls back on it. The alarm write
@@ -276,9 +298,14 @@ func CheckStorableAlarmAction(action string) error {
 // A caller that must remove a preserved alarm skips this function and
 // calls ReplaceAlarms with the exact list instead. The TUI alarm editor
 // works that way, so a local calendar keeps a way to delete such a row.
+// A stored row an older build wrote can hold a malformed action, which
+// the write rule now refuses (issue #595). Carrying it forward would make
+// every --alarm update fail on it, so this function leaves it behind. The
+// row cannot fire and the export writes the default in its place, so it
+// carries nothing the user or another client can use.
 func KeepSyncOnlyAlarms(stored, replacement []Alarm) []Alarm {
 	for _, a := range stored {
-		if !FireableAlarmAction(a.Action) {
+		if !FireableAlarmAction(a.Action) && StorableAlarmAction(a.Action) {
 			replacement = append(replacement, a)
 		}
 	}
@@ -408,7 +435,7 @@ func prepareAlarmForWrite(a *Alarm) error {
 		a.Related = DefaultAlarmRelated
 	}
 	if !StorableAlarmAction(a.Action) {
-		return fmt.Errorf("%w: action %q is empty", ErrInvalidAlarm, a.Action)
+		return fmt.Errorf("%w: action %q is not an RFC 5545 iana-token or x-name", ErrInvalidAlarm, a.Action)
 	}
 	if !ValidAlarmRelated(a.Related) {
 		return fmt.Errorf("%w: related %q is not one of %s", ErrInvalidAlarm, a.Related, alarmRelatedValuesList)

@@ -791,3 +791,36 @@ func TestValidateTiming_RejectsAnUnstorableEnd(t *testing.T) {
 		t.Errorf("a storable span must pass: %v", err)
 	}
 }
+
+// The todo service shares the alarm UID rule with the event service: a
+// preserved foreign alarm keeps an empty UID, on the first write and on a
+// later write that content-matches the stored row (issue #586).
+func TestTodoService_ReplaceAlarms_KeepsForeignAlarmUIDEmpty(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	td := createTodo(t, svc)
+
+	foreign := model.Alarm{Action: "NONE", TriggerValue: "-PT5M", Related: "START"}
+	fireable := model.Alarm{Action: "DISPLAY", TriggerValue: "-PT15M", Related: "START"}
+
+	for _, pass := range []string{"first", "second"} {
+		if err := svc.ReplaceAlarms(ctx, td.ID, []model.Alarm{foreign, fireable}); err != nil {
+			t.Fatalf("%s write: %v", pass, err)
+		}
+		alarms, err := svc.ListAlarms(ctx, td.ID)
+		if err != nil {
+			t.Fatalf("ListAlarms: %v", err)
+		}
+		if len(alarms) != 2 {
+			t.Fatalf("%s pass: alarms = %d, want 2", pass, len(alarms))
+		}
+		for _, a := range alarms {
+			if a.Action == "NONE" && a.UID != "" {
+				t.Errorf("%s pass: preserved alarm UID = %q, want empty", pass, a.UID)
+			}
+			if a.Action == "DISPLAY" && a.UID == "" {
+				t.Errorf("%s pass: fireable alarm UID is empty, want a minted value", pass)
+			}
+		}
+	}
+}

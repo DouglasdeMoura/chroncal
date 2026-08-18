@@ -1180,3 +1180,55 @@ func TestValidateDurationValue_StorableEnd(t *testing.T) {
 		t.Errorf("a zero start must skip the storability check: %v", err)
 	}
 }
+
+// A preserved foreign alarm keeps an empty UID. A minted UID would reach
+// the server on the next push, and the client that wrote the VALARM never
+// authored that value (issue #586). The rule must hold on the first write
+// and on a later write that content-matches the stored row.
+func TestEventService_ReplaceAlarms_KeepsForeignAlarmUIDEmpty(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	e := createEvent(t, svc)
+
+	foreign := model.Alarm{Action: "X-APPLE-SOUND", TriggerValue: "-PT5M", Related: "START"}
+	fireable := model.Alarm{Action: "DISPLAY", TriggerValue: "-PT15M", Related: "START"}
+
+	if err := svc.ReplaceAlarms(ctx, e.ID, []model.Alarm{foreign, fireable}); err != nil {
+		t.Fatalf("first write: %v", err)
+	}
+	assertAlarmUIDs(t, svc, e.ID)
+
+	// A re-import writes the same content again. syncMatchedAlarm must not
+	// backfill a UID onto the preserved row.
+	if err := svc.ReplaceAlarms(ctx, e.ID, []model.Alarm{foreign, fireable}); err != nil {
+		t.Fatalf("second write: %v", err)
+	}
+	assertAlarmUIDs(t, svc, e.ID)
+}
+
+// assertAlarmUIDs checks that the preserved alarm carries no UID and the
+// fireable alarm carries one.
+func assertAlarmUIDs(t *testing.T, svc *Service, eventID int64) {
+	t.Helper()
+	alarms, err := svc.ListAlarms(context.Background(), eventID)
+	if err != nil {
+		t.Fatalf("ListAlarms: %v", err)
+	}
+	if len(alarms) != 2 {
+		t.Fatalf("alarms = %d, want 2", len(alarms))
+	}
+	for _, a := range alarms {
+		switch a.Action {
+		case "X-APPLE-SOUND":
+			if a.UID != "" {
+				t.Errorf("preserved alarm UID = %q, want empty", a.UID)
+			}
+		case "DISPLAY":
+			if a.UID == "" {
+				t.Error("fireable alarm UID is empty, want a minted value")
+			}
+		default:
+			t.Errorf("unexpected action %q", a.Action)
+		}
+	}
+}
