@@ -12,8 +12,14 @@ SELECT * FROM event_alarms WHERE event_id = ? ORDER BY id;
 SELECT DISTINCT trigger_value FROM event_alarms
 WHERE action IN ('AUDIO', 'DISPLAY', 'EMAIL');
 
--- name: ListAlarmsByEventIDs :many
-SELECT * FROM event_alarms WHERE event_id IN (sqlc.slice(event_ids)) ORDER BY event_id, id;
+-- name: ListFireableAlarmsByEventIDs :many
+-- The action list mirrors model.FireableAlarmAction. Keep the two in
+-- lockstep. The alarm check loop is the only caller, and a preserved
+-- sync-only action must not reach it.
+SELECT * FROM event_alarms
+WHERE event_id IN (sqlc.slice(event_ids))
+  AND action IN ('AUDIO', 'DISPLAY', 'EMAIL')
+ORDER BY event_id, id;
 
 -- name: DeleteAlarmsByEventID :exec
 DELETE FROM event_alarms WHERE event_id = ?;

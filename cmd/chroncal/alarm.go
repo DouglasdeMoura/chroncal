@@ -62,12 +62,11 @@ func fireAlarm(da alarm.DueAlarm, policy alarmExecutionPolicy) error {
 			return notify.Display(da)
 		}
 		return nil
-	case "DISPLAY":
-		return notify.Display(da)
 	}
-	// A preserved sync-only action (issue #579): dispatch nothing. The
-	// callers refuse the claim first, so this arm is defense in depth.
-	return nil
+	// DISPLAY, and the safety net: a fireable action with no dispatch arm
+	// still shows a notification. A sync-only action cannot reach this
+	// function — the mark helpers refuse it before the claim.
+	return notify.Display(da)
 }
 
 // isAlarmAlreadyClaimed reports whether err is the SQLite UNIQUE-constraint
@@ -151,9 +150,8 @@ func markAndFireEventAlarm(ctx context.Context, a *app.App, da alarm.DueAlarm, p
 
 // markAndFireTodoAlarm is the todo counterpart of markAndFireEventAlarm.
 func markAndFireTodoAlarm(ctx context.Context, a *app.App, tda alarm.TodoDueAlarm, policy alarmExecutionPolicy) fireResult {
-	// Refuse a preserved sync-only action (issue #579) before the claim.
-	// A claim would consume the state and record a false "fired" entry
-	// for a notification that never appears.
+	// Same sync-only refusal as markAndFireEventAlarm; see the comment
+	// there.
 	if !model.FireableAlarmAction(tda.Alarm.Action) {
 		return fireResult{}
 	}

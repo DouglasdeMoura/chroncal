@@ -115,6 +115,54 @@ func (q *Queries) ListDistinctTodoAlarmTriggers(ctx context.Context) ([]string, 
 	return items, nil
 }
 
+const listFireableTodoAlarmsByTodoID = `-- name: ListFireableTodoAlarmsByTodoID :many
+SELECT id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype, attach_binary FROM todo_alarms
+WHERE todo_id = ?
+  AND action IN ('AUDIO', 'DISPLAY', 'EMAIL')
+ORDER BY id
+`
+
+// The action list mirrors model.FireableAlarmAction. Keep the two in
+// lockstep. The alarm check loop is the only caller, and a preserved
+// sync-only action must not reach it.
+func (q *Queries) ListFireableTodoAlarmsByTodoID(ctx context.Context, todoID int64) ([]TodoAlarm, error) {
+	rows, err := q.db.QueryContext(ctx, listFireableTodoAlarmsByTodoID, todoID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TodoAlarm
+	for rows.Next() {
+		var i TodoAlarm
+		if err := rows.Scan(
+			&i.ID,
+			&i.TodoID,
+			&i.Action,
+			&i.TriggerValue,
+			&i.Description,
+			&i.Repeat,
+			&i.Duration,
+			&i.Related,
+			&i.Summary,
+			&i.Uid,
+			&i.Acknowledged,
+			&i.AttachUri,
+			&i.AttachFmttype,
+			&i.AttachBinary,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTodoAlarmsByTodoID = `-- name: ListTodoAlarmsByTodoID :many
 SELECT id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype, attach_binary FROM todo_alarms WHERE todo_id = ? ORDER BY id
 `

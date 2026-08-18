@@ -668,23 +668,18 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 	var warns []string
 
 	if prop := comp.Props.Get(ical.PropAction); prop != nil {
-		// Keep an action outside model.FireableAlarmAction verbatim
-		// (issue #579). RFC 5545 permits an x-name or iana-token action
-		// (for example X-APPLE-SOUND), and Google Calendar emits
-		// ACTION:NONE as a "reminder disabled" sentinel. A drop here
-		// makes every later push delete the VALARM of the other client.
-		// For ACTION:NONE, a drop lets Google re-apply the reminders the
-		// user turned off. The alarm tables accept any non-empty action
-		// (see model.StorableAlarmAction). Export re-emits it verbatim.
-		// The alarm check loop skips it, so it never fires locally. The
-		// warning tells the user that: a legacy ACTION:PROCEDURE or a
-		// typo would otherwise look like an armed reminder with no
-		// diagnostic anywhere. Sync re-imports a resource only when it
-		// changes, so the warning does not repeat on every pull.
-		if action := strings.ToUpper(strings.TrimSpace(prop.Value)); action != "" {
-			alarm.Action = action
-			if !model.FireableAlarmAction(action) {
-				warns = append(warns, fmt.Sprintf("VALARM ACTION %q: preserved for sync; it never fires locally", action))
+		// The parser preserves an action outside model.FireableAlarmAction
+		// (issue #579; that predicate's doc comment holds the shared
+		// rationale). A drop makes every later push delete the VALARM of
+		// the other client. The parser stores the trimmed original case,
+		// so the foreign VALARM round-trips verbatim. A fireable action
+		// stays canonical uppercase.
+		raw := strings.TrimSpace(prop.Value)
+		if up := strings.ToUpper(raw); up != "" {
+			if model.FireableAlarmAction(up) {
+				alarm.Action = up
+			} else {
+				alarm.Action = raw
 			}
 		}
 		// An empty value keeps the default action. The service write
@@ -883,6 +878,16 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 	alarm.XProperties = extractXPropertiesWithSet(comp.Props, nil)
 	if alarm.XProperties == nil {
 		alarm.XProperties = []model.XProperty{}
+	}
+
+	// A preserved sync-only action needs a diagnostic: a legacy
+	// ACTION:PROCEDURE or a typo would otherwise look like an armed
+	// reminder. Warn only when the alarm survives the TRIGGER gate. The
+	// report must not say "preserved" and "dropped" for one alarm. Sync
+	// re-imports a resource only when it changes, so the warning does
+	// not repeat on every pull.
+	if alarm.TriggerValue != "" && !model.FireableAlarmAction(alarm.Action) {
+		warns = append(warns, fmt.Sprintf("VALARM ACTION %q: preserved for sync; it never fires locally", alarm.Action))
 	}
 
 	return alarm, strings.Join(warns, "; ")

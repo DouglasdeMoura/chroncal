@@ -296,13 +296,16 @@ func TestCheck_SnoozedAlarmRewrittenSyncOnly_DoesNotRefire(t *testing.T) {
 	if len(due) != 0 {
 		t.Errorf("due after rewrite = %d, want 0 (a sync-only action must not re-fire)", len(due))
 	}
-	var snoozedTo sql.NullString
+	// The lister retires the state row. An unconsumed snooze would stay
+	// pending in `alarm list` forever, and every check tick would resolve
+	// it again for nothing.
+	var ackedAt sql.NullString
 	if err := db.QueryRowContext(ctx,
-		`SELECT snoozed_to FROM alarm_state WHERE id = ?`, stateID).Scan(&snoozedTo); err != nil {
+		`SELECT acked_at FROM alarm_state WHERE id = ?`, stateID).Scan(&ackedAt); err != nil {
 		t.Fatal(err)
 	}
-	if !snoozedTo.Valid || snoozedTo.String == "" {
-		t.Errorf("snoozed_to was cleared; the snooze state must stay unconsumed")
+	if !ackedAt.Valid || ackedAt.String == "" {
+		t.Errorf("state row not acknowledged; the dead snooze must be retired")
 	}
 }
 

@@ -230,9 +230,10 @@ func StorableAlarmAction(action string) bool {
 	return action != ""
 }
 
-// CheckStorableAlarmAction reports an action the alarm tables reject. It
-// names the value, so the error beats a raw CHECK failure. The write
-// still rolls back the enclosing transaction.
+// CheckStorableAlarmAction returns a named error for an action the alarm
+// tables reject. It converts an opaque CHECK failure into a named error.
+// The enclosing transaction still rolls back on it. The alarm write
+// helpers in the event and todo services share this check.
 func CheckStorableAlarmAction(action string) error {
 	if !StorableAlarmAction(action) {
 		return fmt.Errorf("action %q is not storable", action)
@@ -257,6 +258,7 @@ func PrepareAlarmUpdate(a, ex Alarm) (string, error) {
 
 // ValidAlarmRelated returns true if related is an accepted RELATED
 // value.
+
 func ValidAlarmRelated(related string) bool {
 	return slices.Contains(alarmRelatedValues, related)
 }

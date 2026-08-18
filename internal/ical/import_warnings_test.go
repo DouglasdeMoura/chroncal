@@ -147,6 +147,31 @@ func TestImport_UnsupportedAlarmAction_PreservesAlarm(t *testing.T) {
 	}
 }
 
+// A sync-only alarm with an unparseable TRIGGER is dropped by the caller's
+// TriggerValue gate. The report must then carry only the dropped warning.
+// A "preserved" warning next to a "dropped" warning for one alarm would
+// contradict itself.
+func TestImport_SyncOnlyAlarmWithBadTrigger_OneCoherentWarning(t *testing.T) {
+	t.Parallel()
+	ics := eventICS("sync-only-bad-trigger@example.com", "Event with a broken foreign alarm",
+		"ACTION:X-APPLE-SOUND\r\nTRIGGER:soon\r\n",
+	)
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile: %v", err)
+	}
+	if len(result.Events) != 1 || len(result.Events[0].Alarms) != 0 {
+		t.Fatalf("events/alarms = %d/%+v, want 1 event with 0 alarms", len(result.Events), result.Events)
+	}
+	if !warningMentions(result.Warnings, "TRIGGER", `"soon"`, "alarm dropped") {
+		t.Errorf("no dropped-trigger warning; warnings = %v", result.Warnings)
+	}
+	if warningMentions(result.Warnings, "preserved for sync") {
+		t.Errorf("contradictory preserved warning for a dropped alarm; warnings = %v", result.Warnings)
+	}
+}
+
 // An unsupported RELATED value and a malformed DURATION share the failure
 // class of issue #575. RELATED fails the CHECK constraint and rolls back
 // the resource. DURATION round-trips into a push that a strict server

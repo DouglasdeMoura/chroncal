@@ -24,12 +24,16 @@ type TodoDueAlarm struct {
 	StateID   int64
 }
 
-// TodoAlarmLister defines the interface for a list of todo alarms.
-// ListAlarmsLean omits X-properties (round-trip-only metadata) — the check
-// loop calls it per todo every tick and never reads them.
+// TodoAlarmLister defines the interface for a list of todo alarms. The
+// Lean variants omit X-properties (round-trip-only metadata) — the check
+// loop calls them per todo every tick and never reads them. The Fireable
+// variant also excludes preserved sync-only actions in SQL; the snooze
+// lister needs the unfiltered list to detect and retire a rewritten
+// alarm's state.
 type TodoAlarmLister interface {
 	ListAlarms(ctx context.Context, todoID int64) ([]model.Alarm, error)
 	ListAlarmsLean(ctx context.Context, todoID int64) ([]model.Alarm, error)
+	ListFireableAlarmsLean(ctx context.Context, todoID int64) ([]model.Alarm, error)
 }
 
 // TodoService handles alarm operations for todos
@@ -78,11 +82,10 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 			continue
 		}
 
-		alarms, err := s.todos.ListAlarmsLean(ctx, t.ID)
+		alarms, err := s.todos.ListFireableAlarmsLean(ctx, t.ID)
 		if err != nil {
 			continue
 		}
-		alarms = fireable(alarms)
 		if len(alarms) == 0 {
 			continue
 		}
@@ -367,8 +370,15 @@ func (s *TodoService) ListExpiredTodoSnoozed(ctx context.Context, now time.Time)
 		}
 		// A sync pull can rewrite a snoozed alarm to a sync-only action
 		// in place (same row ID, matched by UID). The re-fire must not
-		// happen and the snooze state must stay unconsumed.
+		// happen. Acknowledge the state row: an unconsumed snooze would
+		// stay pending in `alarm list` forever, and every check tick
+		// would resolve it again for nothing.
 		if !model.FireableAlarmAction(matched.Action) {
+			ackAt := now.UTC().Format(time.RFC3339)
+			_ = s.q.AcknowledgeTodoAlarmState(ctx, storage.AcknowledgeTodoAlarmStateParams{
+				AckedAt: &ackAt,
+				ID:      st.ID,
+			})
 			continue
 		}
 

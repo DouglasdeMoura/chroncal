@@ -1430,13 +1430,16 @@ func (s *Service) ListAlarms(ctx context.Context, eventID int64) ([]model.Alarm,
 	return buildAlarmsWithAttendees(ctx, s.q, rows)
 }
 
-// ListAlarmsByEventIDs fetches alarms for multiple event IDs in a single batch query.
-// Returns a map of event ID to its list of alarms.
-func (s *Service) ListAlarmsByEventIDs(ctx context.Context, eventIDs []int64) (map[int64][]model.Alarm, error) {
+// ListFireableAlarmsByEventIDs fetches the fireable alarms for multiple
+// event IDs in a single batch query. Returns a map of event ID to its list
+// of alarms. The query excludes preserved sync-only actions (issue #579):
+// the alarm check loop is the only caller, and a sync-only alarm must not
+// reach it.
+func (s *Service) ListFireableAlarmsByEventIDs(ctx context.Context, eventIDs []int64) (map[int64][]model.Alarm, error) {
 	if len(eventIDs) == 0 {
 		return nil, nil
 	}
-	alarmRows, err := s.q.ListAlarmsByEventIDs(ctx, eventIDs)
+	alarmRows, err := s.q.ListFireableAlarmsByEventIDs(ctx, eventIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -1513,11 +1516,8 @@ func matchAlarmByUID(existing []model.Alarm, matched []bool, a model.Alarm) (int
 // updateAlarmInPlace rewrites a UID-matched alarm's content on its stored
 // row. The row ID stays so alarm_state entries keyed to it survive.
 func updateAlarmInPlace(ctx context.Context, qtx *storage.Queries, eventID int64, a model.Alarm, ex model.Alarm) error {
-	// Reject an unstorable action in Go, with a named error. The raw
-	// CHECK constraint would roll back the whole resource transaction
-	// during sync (issue #575).
-	if !model.StorableAlarmAction(a.Action) {
-		return fmt.Errorf("update alarm: action %q is not storable", a.Action)
+	if err := model.CheckStorableAlarmAction(a.Action); err != nil {
+		return fmt.Errorf("update alarm: %w", err)
 	}
 	// Same ACKNOWLEDGED policy as syncMatchedAlarm: a malformed incoming
 	// value must not clobber valid stored state.
@@ -1607,11 +1607,8 @@ func isUniqueUIDViolation(err error) bool {
 // both copies), which would otherwise fail this event's sync forever. On
 // collision, mint a fresh local UID instead.
 func createNewAlarm(ctx context.Context, qtx *storage.Queries, eventID int64, a model.Alarm) error {
-	// Reject an unstorable action in Go, with a named error. The raw
-	// CHECK constraint would roll back the whole resource transaction
-	// during sync (issue #575).
-	if !model.StorableAlarmAction(a.Action) {
-		return fmt.Errorf("create alarm: action %q is not storable", a.Action)
+	if err := model.CheckStorableAlarmAction(a.Action); err != nil {
+		return fmt.Errorf("create alarm: %w", err)
 	}
 	params := storage.CreateAlarmParams{
 		EventID:       eventID,

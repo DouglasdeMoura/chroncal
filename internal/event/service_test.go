@@ -948,9 +948,9 @@ func TestEventService_ListAlarmsByEventIDs_Correctness(t *testing.T) {
 
 	// Fetch alarms in batch (new optimized pattern)
 	eventIDs := []int64{events[0].ID, events[1].ID, events[2].ID}
-	batchMap, err := svc.ListAlarmsByEventIDs(ctx, eventIDs)
+	batchMap, err := svc.ListFireableAlarmsByEventIDs(ctx, eventIDs)
 	if err != nil {
-		t.Fatalf("ListAlarmsByEventIDs: %v", err)
+		t.Fatalf("ListFireableAlarmsByEventIDs: %v", err)
 	}
 
 	// Verify results are identical
@@ -985,7 +985,7 @@ func TestEventService_ListAlarmsByEventIDs_Correctness(t *testing.T) {
 	}
 
 	// Test empty input
-	emptyMap, err := svc.ListAlarmsByEventIDs(ctx, []int64{})
+	emptyMap, err := svc.ListFireableAlarmsByEventIDs(ctx, []int64{})
 	if err != nil {
 		t.Errorf("empty eventIDs: got error %v", err)
 	}
@@ -995,7 +995,7 @@ func TestEventService_ListAlarmsByEventIDs_Correctness(t *testing.T) {
 
 	// Test non-existent event IDs
 	nonExistent := []int64{9999, 9998}
-	nonExistentMap, err := svc.ListAlarmsByEventIDs(ctx, nonExistent)
+	nonExistentMap, err := svc.ListFireableAlarmsByEventIDs(ctx, nonExistent)
 	if err != nil {
 		t.Errorf("non-existent eventIDs: got error %v", err)
 	}

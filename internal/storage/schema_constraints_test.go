@@ -419,3 +419,115 @@ func TestAlarmConstraintsMatchModelValidators(t *testing.T) {
 		}
 	}
 }
+
+// The fireable-filtered queries and model.FireableAlarmAction must agree.
+// The WHERE lists in the query files are copies of the Go set with only a
+// comment as the tie. This test probes both with the same candidates, in
+// the same way TestAlarmConstraintsMatchModelValidators pins the CHECK
+// constraints.
+func TestFireableAlarmQueriesMatchModelPredicate(t *testing.T) {
+	db, q, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("list calendars: %v", err)
+	}
+	calID := cals[0].ID
+	res, err := db.Exec(`INSERT INTO events (uid, calendar_id, title, start_time, end_time, all_day, status, transp, sequence, priority)
+		 VALUES ('fireable-q-event', ?, 'Test', '2026-04-01T00:00:00Z', '2026-04-01T01:00:00Z', 0, 'CONFIRMED', 'OPAQUE', 0, 0)`, calID)
+	if err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+	eventID, _ := res.LastInsertId()
+	res, err = db.Exec(`INSERT INTO todos (uid, calendar_id, summary, status, priority, sequence)
+		 VALUES ('fireable-q-todo', ?, 'Test', 'NEEDS-ACTION', 0, 0)`, calID)
+	if err != nil {
+		t.Fatalf("insert todo: %v", err)
+	}
+	todoID, _ := res.LastInsertId()
+
+	// One candidate per action, each with a unique trigger. The trigger
+	// then identifies the action in the distinct-trigger results.
+	candidates := map[string]string{
+		"AUDIO":         "-PT1M",
+		"DISPLAY":       "-PT2M",
+		"EMAIL":         "-PT3M",
+		"NONE":          "-PT4M",
+		"X-APPLE-SOUND": "-PT5M",
+		"display":       "-PT6M",
+	}
+	for action, trigger := range candidates {
+		if _, err := db.Exec(
+			`INSERT INTO event_alarms (event_id, action, trigger_value) VALUES (?, ?, ?)`,
+			eventID, action, trigger); err != nil {
+			t.Fatalf("insert event alarm %q: %v", action, err)
+		}
+		if _, err := db.Exec(
+			`INSERT INTO todo_alarms (todo_id, action, trigger_value) VALUES (?, ?, ?)`,
+			todoID, action, trigger); err != nil {
+			t.Fatalf("insert todo alarm %q: %v", action, err)
+		}
+	}
+	wantTriggers := map[string]bool{}
+	for action, trigger := range candidates {
+		if model.FireableAlarmAction(action) {
+			wantTriggers[trigger] = true
+		}
+	}
+
+	check := func(name string, got []string) {
+		t.Helper()
+		if len(got) != len(wantTriggers) {
+			t.Errorf("%s returned %d triggers %v, want %d", name, len(got), got, len(wantTriggers))
+			return
+		}
+		for _, trig := range got {
+			if !wantTriggers[trig] {
+				t.Errorf("%s returned trigger %q of a non-fireable action", name, trig)
+			}
+		}
+	}
+
+	evTrigs, err := q.ListDistinctAlarmTriggers(ctx)
+	if err != nil {
+		t.Fatalf("ListDistinctAlarmTriggers: %v", err)
+	}
+	check("ListDistinctAlarmTriggers", evTrigs)
+
+	tdTrigs, err := q.ListDistinctTodoAlarmTriggers(ctx)
+	if err != nil {
+		t.Fatalf("ListDistinctTodoAlarmTriggers: %v", err)
+	}
+	check("ListDistinctTodoAlarmTriggers", tdTrigs)
+
+	evRows, err := q.ListFireableAlarmsByEventIDs(ctx, []int64{eventID})
+	if err != nil {
+		t.Fatalf("ListFireableAlarmsByEventIDs: %v", err)
+	}
+	evGot := make([]string, len(evRows))
+	for i, r := range evRows {
+		if !model.FireableAlarmAction(r.Action) {
+			t.Errorf("ListFireableAlarmsByEventIDs returned non-fireable action %q", r.Action)
+		}
+		evGot[i] = r.TriggerValue
+	}
+	check("ListFireableAlarmsByEventIDs", evGot)
+
+	tdRows, err := q.ListFireableTodoAlarmsByTodoID(ctx, todoID)
+	if err != nil {
+		t.Fatalf("ListFireableTodoAlarmsByTodoID: %v", err)
+	}
+	tdGot := make([]string, len(tdRows))
+	for i, r := range tdRows {
+		if !model.FireableAlarmAction(r.Action) {
+			t.Errorf("ListFireableTodoAlarmsByTodoID returned non-fireable action %q", r.Action)
+		}
+		tdGot[i] = r.TriggerValue
+	}
+	check("ListFireableTodoAlarmsByTodoID", tdGot)
+}
