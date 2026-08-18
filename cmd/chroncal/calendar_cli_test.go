@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/douglasdemoura/chroncal/internal/app"
+	"github.com/douglasdemoura/chroncal/internal/config"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
@@ -299,6 +300,119 @@ func TestCalendarListJSONIncludesAccountForRemoteCalendar(t *testing.T) {
 	if got.RemoteURL != "https://cal.example.com/dav/calendars/work/" {
 		t.Fatalf("remote_url = %q", got.RemoteURL)
 	}
+}
+
+func TestCalendarHideShowJSON(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	if err := config.SaveUIState(config.UIState{
+		ShowSidebar: false,
+		ViewMode:    "week",
+	}); err != nil {
+		t.Fatalf("seed ui state: %v", err)
+	}
+
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Work"); err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+	work := calendarJSONByName(t, "Work")
+
+	stdout, _, err := runChroncalCommand(t, "calendar", "hide", fmt.Sprintf("%d", work.ID), "--output", "json")
+	if err != nil {
+		t.Fatalf("calendar hide: %v", err)
+	}
+	var hidden jsonCalendar
+	if err := json.Unmarshal([]byte(stdout), &hidden); err != nil {
+		t.Fatalf("decode hide: %v\n%s", err, stdout)
+	}
+	if !hidden.Hidden || hidden.ID != work.ID {
+		t.Fatalf("hide json = %+v, want hidden id %d", hidden, work.ID)
+	}
+
+	state := config.LoadUIState()
+	if state.ShowSidebar || state.ViewMode != "week" {
+		t.Fatalf("ui state scalars lost: %+v", state)
+	}
+	if len(state.HiddenCalendars) != 1 || state.HiddenCalendars[0] != work.ID {
+		t.Fatalf("hidden_calendars = %v, want [%d]", state.HiddenCalendars, work.ID)
+	}
+
+	// Hide is idempotent and does not duplicate the id.
+	if _, _, err := runChroncalCommand(t, "calendar", "hide", "Work", "--output", "json"); err != nil {
+		t.Fatalf("calendar hide again: %v", err)
+	}
+	state = config.LoadUIState()
+	if len(state.HiddenCalendars) != 1 || state.HiddenCalendars[0] != work.ID {
+		t.Fatalf("hidden_calendars after second hide = %v", state.HiddenCalendars)
+	}
+
+	listed := calendarJSONByName(t, "Work")
+	if !listed.Hidden {
+		t.Fatal("list json hidden = false after hide")
+	}
+
+	stdout, _, err = runChroncalCommand(t, "calendar", "show", "Work", "--output", "json")
+	if err != nil {
+		t.Fatalf("calendar show: %v", err)
+	}
+	var shown jsonCalendar
+	if err := json.Unmarshal([]byte(stdout), &shown); err != nil {
+		t.Fatalf("decode show: %v\n%s", err, stdout)
+	}
+	if shown.Hidden {
+		t.Fatal("show json hidden = true, want false")
+	}
+	state = config.LoadUIState()
+	if len(state.HiddenCalendars) != 0 {
+		t.Fatalf("hidden_calendars after show = %v, want empty", state.HiddenCalendars)
+	}
+	if state.ViewMode != "week" || state.ShowSidebar {
+		t.Fatalf("ui state scalars lost after show: %+v", state)
+	}
+
+	if _, _, err := runChroncalCommand(t, "calendar", "show", fmt.Sprintf("%d", work.ID), "--output", "json"); err != nil {
+		t.Fatalf("calendar show again: %v", err)
+	}
+}
+
+func TestCalendarHideUnknownIDIsInvalidInput(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+
+	_, stderr, err := runChroncalCommand(t, "calendar", "hide", "99999", "--output", "json")
+	if err == nil {
+		t.Fatal("calendar hide 99999 should fail")
+	}
+	var payload struct {
+		Code  string `json:"code"`
+		Error string `json:"error"`
+	}
+	if jerr := json.Unmarshal([]byte(stderr), &payload); jerr != nil {
+		t.Fatalf("decode error payload %q: %v", stderr, jerr)
+	}
+	if payload.Code != "invalid_input" {
+		t.Fatalf("code = %q, want invalid_input", payload.Code)
+	}
+	if !strings.Contains(payload.Error, "99999") {
+		t.Fatalf("error = %q, want it to mention the unknown id", payload.Error)
+	}
+}
+
+func calendarJSONByName(t *testing.T, name string) jsonCalendar {
+	t.Helper()
+	stdout, _, err := runChroncalCommand(t, "calendar", "list", "--output", "json")
+	if err != nil {
+		t.Fatalf("calendar list: %v", err)
+	}
+	var cals []jsonCalendar
+	if err := json.Unmarshal([]byte(stdout), &cals); err != nil {
+		t.Fatalf("decode list: %v\n%s", err, stdout)
+	}
+	for _, c := range cals {
+		if c.Name == name {
+			return c
+		}
+	}
+	t.Fatalf("calendar %q missing: %s", name, stdout)
+	return jsonCalendar{}
 }
 
 func setupCalendarCLITestEnv(t *testing.T) string {
