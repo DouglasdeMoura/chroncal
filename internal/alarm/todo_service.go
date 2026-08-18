@@ -103,6 +103,11 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 
 		for _, inst := range instances {
 			for _, a := range alarms {
+				// A preserved sync-only action (issue #579) never fires.
+				// Skip it in silence: the row is healthy, not a defect.
+				if !model.FireableAlarmAction(a.Action) {
+					continue
+				}
 				triggerAt, err := computeTodoTriggerTimeForInstance(inst, a)
 				if err != nil {
 					// A refused anchor drops a reminder. Log it like

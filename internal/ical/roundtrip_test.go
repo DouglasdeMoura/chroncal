@@ -2417,3 +2417,72 @@ END:VCALENDAR`
 		t.Fatalf("round-tripped categories = %v, want [\"Foo, Bar\" \"Baz\"]", got)
 	}
 }
+
+// Regression test for issue #579. A VALARM with an action outside the
+// fireable set must survive an import → export round trip verbatim. That
+// covers the Google ACTION:NONE sentinel and an RFC 5545 x-name action
+// from another client. A drop would make the next push delete the alarm
+// server-side. The ATTACH of an x-name action must survive too.
+func TestRoundtrip_UnsupportedAlarmActionsSurvive(t *testing.T) {
+	t.Parallel()
+	const ics = "BEGIN:VCALENDAR\r\n" +
+		"VERSION:2.0\r\n" +
+		"PRODID:-//test//EN\r\n" +
+		"BEGIN:VEVENT\r\n" +
+		"UID:sync-only-alarms@example.com\r\n" +
+		"DTSTAMP:20260401T100000Z\r\n" +
+		"DTSTART:20260401T140000Z\r\n" +
+		"DTEND:20260401T150000Z\r\n" +
+		"SUMMARY:Event with foreign alarms\r\n" +
+		"BEGIN:VALARM\r\n" +
+		"ACTION:NONE\r\n" +
+		"TRIGGER;VALUE=DATE-TIME:19760401T005545Z\r\n" +
+		"END:VALARM\r\n" +
+		"BEGIN:VALARM\r\n" +
+		"ACTION:X-APPLE-SOUND\r\n" +
+		"TRIGGER:-PT9M\r\n" +
+		"ATTACH:Chord\r\n" +
+		"END:VALARM\r\n" +
+		"END:VEVENT\r\n" +
+		"END:VCALENDAR\r\n"
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Events) != 1 || len(result.Events[0].Alarms) != 2 {
+		t.Fatalf("events/alarms = %d/%+v, want 1 event with 2 alarms", len(result.Events), result.Events)
+	}
+
+	data, err := ExportEvents(result.Events, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	out := string(data)
+	for _, want := range []string{
+		"ACTION:NONE",
+		"TRIGGER;VALUE=DATE-TIME:19760401T005545Z",
+		"ACTION:X-APPLE-SOUND",
+		"TRIGGER;VALUE=DURATION:-PT9M",
+		"ATTACH:Chord",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("export lacks %q; output:\n%s", want, out)
+		}
+	}
+
+	// The second pass must parse the same two alarms again: the loop must
+	// be stable, not merely one-shot.
+	reimported, err := ImportFile(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("reimport: %v", err)
+	}
+	if len(reimported.Events) != 1 || len(reimported.Events[0].Alarms) != 2 {
+		t.Fatalf("reimported events/alarms = %d/%+v, want 1 event with 2 alarms",
+			len(reimported.Events), reimported.Events)
+	}
+	gotActions := []string{reimported.Events[0].Alarms[0].Action, reimported.Events[0].Alarms[1].Action}
+	if gotActions[0] != "NONE" || gotActions[1] != "X-APPLE-SOUND" {
+		t.Errorf("reimported actions = %v, want [NONE X-APPLE-SOUND]", gotActions)
+	}
+}

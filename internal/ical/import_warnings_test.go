@@ -112,18 +112,17 @@ func eventICS(uid, summary string, valarms ...string) string {
 	return s + "END:VEVENT\r\nEND:VCALENDAR\r\n"
 }
 
-// Regression test for issue #575. Google CalDAV emits VALARM ACTION:NONE as
-// a "no reminder" sentinel. The alarm tables reject that action with a CHECK
-// constraint. The failed insert rolled back the whole resource transaction,
-// so the event never persisted and sync never converged. The parser must
-// drop each unsupported alarm with a warning and keep the parent record and
-// its supported alarms. (The todo caller shares the warning wrapper; see
-// TestImport_DroppedAlarmWarning_NamesOwningRecord.)
-func TestImport_UnsupportedAlarmAction_DropsAlarmKeepsRecord(t *testing.T) {
+// Regression test for issue #579 (follow-up to issue #575). PR #577
+// dropped a VALARM with an action outside the fireable set. Every later
+// push then deleted the VALARM of another client from the server copy —
+// or let Google re-apply the default reminders that its ACTION:NONE
+// sentinel had disabled. The parser must now keep such an alarm verbatim.
+// The preserved alarm round-trips faithfully, so no warning applies.
+func TestImport_UnsupportedAlarmAction_PreservesAlarm(t *testing.T) {
 	t.Parallel()
-	ics := eventICS("action-none-event@example.com", "Event with a no-op alarm",
+	ics := eventICS("action-none-event@example.com", "Event with a sync-only alarm",
 		"ACTION:NONE\r\nTRIGGER:-PT15M\r\n",
-		"ACTION:PROCEDURE\r\nTRIGGER:-PT5M\r\n",
+		"ACTION:X-APPLE-SOUND\r\nTRIGGER:-PT5M\r\n",
 		"ACTION:DISPLAY\r\nTRIGGER:-PT30M\r\nDESCRIPTION:Real reminder\r\n",
 	)
 
@@ -131,17 +130,17 @@ func TestImport_UnsupportedAlarmAction_DropsAlarmKeepsRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportFile: %v", err)
 	}
-	if len(result.Events) != 1 || len(result.Events[0].Alarms) != 1 {
-		t.Fatalf("events/alarms = %d/%+v, want 1 event with 1 alarm", len(result.Events), result.Events)
+	if len(result.Events) != 1 || len(result.Events[0].Alarms) != 3 {
+		t.Fatalf("events/alarms = %d/%+v, want 1 event with 3 alarms", len(result.Events), result.Events)
 	}
-	if got := result.Events[0].Alarms[0].Action; got != "DISPLAY" {
-		t.Errorf("surviving alarm action = %q, want DISPLAY", got)
+	wantActions := []string{"NONE", "X-APPLE-SOUND", "DISPLAY"}
+	for i, want := range wantActions {
+		if got := result.Events[0].Alarms[i].Action; got != want {
+			t.Errorf("alarm %d action = %q, want %q (preserved verbatim)", i, got, want)
+		}
 	}
-	if !warningMentions(result.Warnings, `event "action-none-event@example.com"`, "ACTION", `"NONE"`) {
-		t.Errorf("no ACTION NONE warning that names the event; warnings = %v", result.Warnings)
-	}
-	if !warningMentions(result.Warnings, `event "action-none-event@example.com"`, "ACTION", `"PROCEDURE"`) {
-		t.Errorf("no ACTION PROCEDURE warning that names the event; warnings = %v", result.Warnings)
+	if warningMentions(result.Warnings, "ACTION") {
+		t.Errorf("preserved actions must not warn (they round-trip faithfully); warnings = %v", result.Warnings)
 	}
 }
 

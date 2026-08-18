@@ -165,22 +165,26 @@ func sortedEmails(atts []AlarmAttendee) []string {
 	return emails
 }
 
-// alarmActions lists the ACTION values the alarm tables accept, in a
-// fixed order. The set mirrors the CHECK constraints in db/migrations/003
-// and 006. Keep this slice and the two constraints in lockstep. A value
-// outside this set fails the constraint and rolls back the whole resource
-// transaction during sync (issue #575). The match is case-sensitive, the
-// same as the constraints. The slice is unexported so no other package
-// can change the accepted set at run time.
+// alarmActions lists the ACTION values the alarm engine can fire, in a
+// fixed order. The TUI dropdown and the CLI --alarm parser offer only
+// this set for a new alarm. The SQL queries that filter on the action
+// copy this list, so the storage test
+// TestFireableAlarmQueriesMatchModelPredicate probes every value here
+// against those queries. The match is case-sensitive. The slice is
+// unexported so no other package can change the set at run time.
+//
+// The storage rule is wider: see StorableAlarmAction. Migration 043
+// widened the CHECK constraints, so the tables also hold a preserved
+// foreign action (issue #579).
 var alarmActions = []string{"AUDIO", "DISPLAY", "EMAIL"}
 
 // alarmRelatedValues lists the RELATED values the alarm tables accept
 // for the TRIGGER anchor, with the same lockstep rule as alarmActions.
 var alarmRelatedValues = []string{"START", "END"}
 
-// AlarmActions returns the accepted ACTION values as a fresh slice.
-// A caller can keep or change the returned slice. The accepted set
-// does not change.
+// AlarmActions returns the fireable ACTION values as a fresh slice.
+// A caller can keep or change the returned slice. The set does not
+// change.
 func AlarmActions() []string {
 	return slices.Clone(alarmActions)
 }
@@ -191,7 +195,7 @@ func AlarmRelatedValues() []string {
 	return slices.Clone(alarmRelatedValues)
 }
 
-// AlarmActionsList returns the accepted ACTION values as one joined
+// AlarmActionsList returns the fireable ACTION values as one joined
 // string, for error messages and help text. The list renders once at
 // package load, so every consumer stays in lockstep with the set.
 func AlarmActionsList() string {
@@ -204,9 +208,51 @@ func AlarmRelatedValuesList() string {
 	return alarmRelatedValuesList
 }
 
-// ValidAlarmAction returns true if action is an accepted ACTION value.
-func ValidAlarmAction(action string) bool {
+// FireableAlarmAction returns true if action is a value the alarm engine
+// can fire. The alarm check loop skips every other action. The TUI
+// dropdown and the CLI --alarm parser offer only this set for a new
+// alarm.
+//
+// The storage rule is wider: see StorableAlarmAction. Import preserves an
+// RFC 5545 x-name or iana-token action (for example X-APPLE-SOUND) and
+// the Google ACTION:NONE sentinel, so a push does not delete the alarm of
+// another client (issue #579).
+func FireableAlarmAction(action string) bool {
 	return slices.Contains(alarmActions, action)
+}
+
+// StorableAlarmAction returns true if action is a value the alarm tables
+// accept: any non-empty string. The rule mirrors the CHECK constraints in
+// db/migrations/043. Keep this function and the two constraints in
+// lockstep. A value that passes here but fails the constraint rolls back
+// the whole resource transaction during sync (issue #575).
+func StorableAlarmAction(action string) bool {
+	return action != ""
+}
+
+// CheckStorableAlarmAction reports an action the alarm tables reject. It
+// names the value, so the error beats a raw CHECK failure. The write
+// still rolls back the enclosing transaction.
+func CheckStorableAlarmAction(action string) error {
+	if !StorableAlarmAction(action) {
+		return fmt.Errorf("action %q is not storable", action)
+	}
+	return nil
+}
+
+// PrepareAlarmUpdate checks an alarm that a caller writes over the stored
+// row ex. It returns the ACKNOWLEDGED value for the update. A malformed
+// value that arrives must not clobber valid stored state, so the function
+// keeps the stored value instead. The event service and the todo service
+// share this rule.
+func PrepareAlarmUpdate(a, ex Alarm) (string, error) {
+	if err := CheckStorableAlarmAction(a.Action); err != nil {
+		return "", fmt.Errorf("update alarm: %w", err)
+	}
+	if ValidateAcknowledged(a.Acknowledged) {
+		return a.Acknowledged, nil
+	}
+	return ex.Acknowledged, nil
 }
 
 // ValidAlarmRelated returns true if related is an accepted RELATED
@@ -236,7 +282,7 @@ var ErrInvalidAlarm = errors.New("invalid alarm")
 // PrepareAlarmsForWrite returns a prepared copy of alarms. For each
 // element it fills an empty Action with DefaultAlarmAction and an
 // empty Related with DefaultAlarmRelated. It then validates the two
-// fields against the sets the alarm tables accept. Those are the two
+// fields against the rules the alarm tables enforce. Those are the two
 // alarm columns with a CHECK constraint. For a bad value it returns an
 // error that wraps ErrInvalidAlarm and names the index, the field, and
 // the value. The caller's slice does not change.
@@ -257,6 +303,11 @@ func PrepareAlarmsForWrite(alarms []Alarm) ([]Alarm, error) {
 }
 
 // prepareAlarmForWrite fills the defaults and validates one alarm.
+//
+// The action rule is StorableAlarmAction, not the fireable set. Migration
+// 043 widened the CHECK constraint, because import preserves the action
+// of another client (issue #579). A check against the fireable set here
+// would reject every preserved alarm at the write boundary.
 func prepareAlarmForWrite(a *Alarm) error {
 	if a.Action == "" {
 		a.Action = DefaultAlarmAction
@@ -264,8 +315,8 @@ func prepareAlarmForWrite(a *Alarm) error {
 	if a.Related == "" {
 		a.Related = DefaultAlarmRelated
 	}
-	if !ValidAlarmAction(a.Action) {
-		return fmt.Errorf("%w: action %q is not one of %s", ErrInvalidAlarm, a.Action, alarmActionsList)
+	if !StorableAlarmAction(a.Action) {
+		return fmt.Errorf("%w: action %q is empty", ErrInvalidAlarm, a.Action)
 	}
 	if !ValidAlarmRelated(a.Related) {
 		return fmt.Errorf("%w: related %q is not one of %s", ErrInvalidAlarm, a.Related, alarmRelatedValuesList)

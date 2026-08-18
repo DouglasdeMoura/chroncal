@@ -1659,7 +1659,11 @@ func parseOneAlarm(val string) (model.Alarm, error) {
 	// Check for ACTION: prefix
 	if idx := strings.Index(val, ":"); idx > 0 {
 		prefix := strings.ToUpper(val[:idx])
-		if model.ValidAlarmAction(prefix) {
+		// Only a fireable action is a valid prefix. The CLI creates local
+		// alarms, and a local alarm must be one the engine can fire. A
+		// sync-only action (issue #579) enters the database from import
+		// alone.
+		if model.FireableAlarmAction(prefix) {
 			action = prefix
 			rest = val[idx+1:]
 		}

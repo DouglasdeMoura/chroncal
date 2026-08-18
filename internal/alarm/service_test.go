@@ -158,6 +158,91 @@ func TestCheck_GarbageTrigger_NeverFires(t *testing.T) {
 	}
 }
 
+// Regression test for issue #579. Import preserves a VALARM action outside
+// model.FireableAlarmAction (for example the Google ACTION:NONE sentinel or
+// an x-name action from another client). Check must skip such an alarm in
+// silence, on both the event path and the todo path, while a fireable alarm
+// on the same record still fires.
+func TestCheck_SkipsSyncOnlyAction(t *testing.T) {
+	svc, evtSvc, todoSvc := newTestServicesWithTodos(t)
+	ctx := context.Background()
+
+	start := time.Now().Add(10 * time.Minute)
+	e, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "Foreign alarms",
+		StartTime:  start,
+		EndTime:    start.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "NONE", TriggerValue: "-PT15M"},
+		{Action: "X-APPLE-SOUND", TriggerValue: "-PT15M"},
+		{Action: "DISPLAY", TriggerValue: "-PT15M", Description: "real reminder"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	td, err := todoSvc.Create(ctx, todo.CreateParams{
+		CalendarID: 1,
+		Summary:    "Foreign todo alarm",
+		DueDate:    start.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := todoSvc.ReplaceAlarms(ctx, td.ID, []model.Alarm{
+		{Action: "NONE", TriggerValue: "-PT15M"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	dueEvents, dueTodos, err := svc.Check(ctx, time.Now())
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if len(dueEvents) != 1 {
+		t.Fatalf("event alarms = %d, want 1 (only the DISPLAY alarm fires)", len(dueEvents))
+	}
+	if got := dueEvents[0].Alarm.Action; got != "DISPLAY" {
+		t.Errorf("fired action = %q, want DISPLAY", got)
+	}
+	if len(dueTodos) != 0 {
+		t.Errorf("todo alarms = %d, want 0 (a sync-only action never fires)", len(dueTodos))
+	}
+
+	// CheckMissed must not report a sync-only action either: it never
+	// fires, so it is never missed.
+	missed, missedTodos, err := svc.CheckMissed(ctx, time.Now().Add(48*time.Hour), 72*time.Hour)
+	if err != nil {
+		t.Fatalf("check missed: %v", err)
+	}
+	for _, m := range missed {
+		alarms, err := evtSvc.ListAlarms(ctx, e.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, a := range alarms {
+			if a.ID == m.AlarmID && !model.FireableAlarmAction(a.Action) {
+				t.Errorf("missed report includes sync-only alarm %d (%s)", a.ID, a.Action)
+			}
+		}
+	}
+	for _, m := range missedTodos {
+		alarms, err := todoSvc.ListAlarms(ctx, td.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, a := range alarms {
+			if a.ID == m.AlarmID && !model.FireableAlarmAction(a.Action) {
+				t.Errorf("missed report includes sync-only todo alarm %d (%s)", a.ID, a.Action)
+			}
+		}
+	}
+}
+
 func TestCheck_SkipsAlreadyFired(t *testing.T) {
 	svc, evtSvc := newTestServices(t)
 	ctx := context.Background()

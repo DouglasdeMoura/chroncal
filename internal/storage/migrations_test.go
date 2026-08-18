@@ -80,6 +80,112 @@ func TestMigration031UpDown(t *testing.T) {
 		VALUES ('event_alarm', 1, 'X-ALARM-PROP', 'works-again')`)
 }
 
+// Verifies migration 043 (the wide alarm action CHECK) rolls back and
+// re-applies cleanly with live rows. The rebuild runs with foreign keys ON,
+// so DROP TABLE performs an implicit DELETE that cascades into alarm_state
+// and event_alarm_attendees; the migration must restore those rows
+// id-intact. The alarm-owned x_properties rows must survive in place. On
+// Down, an alarm with a sync-only action is intentionally deleted together
+// with its dependent rows.
+func TestMigration043UpDown(t *testing.T) {
+	conn, _, err := Open(t.TempDir() + "/mig043.db")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer conn.Close()
+
+	ctx := context.Background()
+	mustExec := func(query string, args ...any) {
+		t.Helper()
+		if _, err := conn.ExecContext(ctx, query, args...); err != nil {
+			t.Fatalf("exec %q: %v", query, err)
+		}
+	}
+	count := func(query string, args ...any) int {
+		t.Helper()
+		var n int
+		if err := conn.QueryRowContext(ctx, query, args...).Scan(&n); err != nil {
+			t.Fatalf("count %q: %v", query, err)
+		}
+		return n
+	}
+
+	// Seed: one event with a fireable alarm (state + attendee + x-prop) and
+	// one sync-only NONE alarm (x-prop only).
+	mustExec(`INSERT INTO events (uid, calendar_id, title, start_time, end_time)
+		VALUES ('mig043-evt', 1, 'Mig', '2026-01-01T10:00:00Z', '2026-01-01T11:00:00Z')`)
+	mustExec(`INSERT INTO event_alarms (id, event_id, action, trigger_value) VALUES (1, 1, 'EMAIL', '-PT15M')`)
+	mustExec(`INSERT INTO event_alarms (id, event_id, action, trigger_value) VALUES (2, 1, 'NONE', '-PT5M')`)
+	mustExec(`INSERT INTO alarm_state (id, alarm_id, event_id, trigger_at, fired_at)
+		VALUES (7, 1, 1, '2026-01-01T09:45:00Z', '2026-01-01T09:45:01Z')`)
+	mustExec(`INSERT INTO event_alarm_attendees (alarm_id, email) VALUES (1, 'a@example.com')`)
+	mustExec(`INSERT INTO x_properties (owner_type, owner_id, name, value)
+		VALUES ('event_alarm', 1, 'X-KEEP', 'yes')`)
+	mustExec(`INSERT INTO x_properties (owner_type, owner_id, name, value)
+		VALUES ('event_alarm', 2, 'X-GONE-ON-DOWN', 'yes')`)
+
+	migrationsFS, err := fs.Sub(dbembed.Migrations, "migrations")
+	if err != nil {
+		t.Fatalf("sub fs: %v", err)
+	}
+	provider, err := goose.NewProvider(goose.DialectSQLite3, conn, migrationsFS)
+	if err != nil {
+		t.Fatalf("provider: %v", err)
+	}
+	if _, err := provider.DownTo(ctx, 42); err != nil {
+		t.Fatalf("down to 42: %v", err)
+	}
+
+	if n := count(`SELECT COUNT(*) FROM event_alarms`); n != 1 {
+		t.Errorf("alarms after Down = %d, want 1 (the NONE alarm is dropped)", n)
+	}
+	if n := count(`SELECT COUNT(*) FROM alarm_state WHERE id = 7 AND alarm_id = 1
+		AND trigger_at = '2026-01-01T09:45:00Z'`); n != 1 {
+		t.Errorf("alarm_state row after Down = %d, want 1 (id-intact restore)", n)
+	}
+	if n := count(`SELECT COUNT(*) FROM event_alarm_attendees WHERE alarm_id = 1
+		AND email = 'a@example.com'`); n != 1 {
+		t.Errorf("attendee row after Down = %d, want 1", n)
+	}
+	if n := count(`SELECT COUNT(*) FROM x_properties WHERE owner_type = 'event_alarm'`); n != 1 {
+		t.Errorf("alarm x_properties after Down = %d, want 1 (the NONE alarm's rows go with it)", n)
+	}
+	if _, err := conn.ExecContext(ctx,
+		`INSERT INTO event_alarms (event_id, action, trigger_value) VALUES (1, 'NONE', '-PT5M')`,
+	); err == nil {
+		t.Errorf("narrow CHECK accepted action NONE after Down")
+	}
+
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatalf("re-up: %v", err)
+	}
+
+	if n := count(`SELECT COUNT(*) FROM alarm_state WHERE id = 7 AND alarm_id = 1`); n != 1 {
+		t.Errorf("alarm_state row after re-Up = %d, want 1 (id-intact restore)", n)
+	}
+	if n := count(`SELECT COUNT(*) FROM event_alarm_attendees WHERE alarm_id = 1`); n != 1 {
+		t.Errorf("attendee row after re-Up = %d, want 1", n)
+	}
+	if n := count(`SELECT COUNT(*) FROM x_properties WHERE owner_type = 'event_alarm'
+		AND owner_id = 1 AND name = 'X-KEEP'`); n != 1 {
+		t.Errorf("alarm x_properties after re-Up = %d, want 1", n)
+	}
+	// The wide CHECK accepts a sync-only action again, and the recreated
+	// AFTER DELETE trigger still cleans its x_properties.
+	mustExec(`INSERT INTO event_alarms (id, event_id, action, trigger_value) VALUES (9, 1, 'X-APPLE-SOUND', '-PT9M')`)
+	mustExec(`INSERT INTO x_properties (owner_type, owner_id, name, value)
+		VALUES ('event_alarm', 9, 'X-TMP', 'yes')`)
+	mustExec(`DELETE FROM event_alarms WHERE id = 9`)
+	if n := count(`SELECT COUNT(*) FROM x_properties WHERE owner_type = 'event_alarm' AND owner_id = 9`); n != 0 {
+		t.Errorf("x_properties for the deleted alarm = %d, want 0 (cleanup trigger recreated)", n)
+	}
+	if _, err := conn.ExecContext(ctx,
+		`INSERT INTO event_alarms (event_id, action, trigger_value) VALUES (1, '', '-PT5M')`,
+	); err == nil {
+		t.Errorf("wide CHECK accepted an empty action")
+	}
+}
+
 // Verifies migration 040 (transactional ALTER TABLE ADD COLUMN) round-trips
 // cleanly with live data. The four remote_* mirror columns and the partial
 // uniqueness index appear on Up and disappear on Down. The calendars.name
