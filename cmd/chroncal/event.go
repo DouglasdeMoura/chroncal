@@ -885,7 +885,7 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 	cmd.Flags().MarkHidden("exdate")
 	cmd.Flags().MarkHidden("rdate")
 	cmd.Flags().StringArrayVar(&attachFlags, "attach", nil, "attachment (file path or URL; prefix mime/type: for explicit MIME, e.g. application/pdf:/path/to/file; repeatable)")
-	cmd.Flags().StringArrayVar(&alarmFlags, "alarm", nil, `alarm in format [ACTION:]TRIGGER[:DESC:REPEAT:DURATION:RELATED:ATTENDEES]; ACTION is DISPLAY (default), EMAIL, or AUDIO; extended fields are optional, e.g. "DISPLAY:-PT30M::3:PT5M:END" or "EMAIL:-PT1H:::::user@example.com"; repeatable`)
+	cmd.Flags().StringArrayVar(&alarmFlags, "alarm", nil, alarmFlagHelp)
 	cmd.Flags().StringArrayVar(&attendeeFlags, "attendee", nil, "attendee as email or \"Name <email>\" (defaults: RSVP=NEEDS-ACTION, ROLE=REQ-PARTICIPANT; repeatable)")
 	cmd.Flags().StringVar(&organizer, "organizer", "", "event organizer as email or \"Name <email>\" (RFC 5545 ORGANIZER; exported as ROLE=CHAIR)")
 	cmd.Flags().StringArrayVar(&commentFlags, "comment", nil, "comment annotation (free-form text, repeatable)")
@@ -1647,6 +1647,15 @@ func smtpConfiguredForEmailAlarms() bool {
 	return strings.TrimSpace(cfg.SMTP.Host) != ""
 }
 
+// The joined lists render once at package load, so the flag help and
+// the error messages stay in lockstep with the model sets.
+var (
+	alarmActionsList = strings.Join(model.AlarmActions(), ", ")
+	alarmRelatedList = strings.Join(model.AlarmRelatedValues(), ", ")
+	alarmFlagHelp    = `alarm in format [ACTION:]TRIGGER[:DESC:REPEAT:DURATION:RELATED:ATTENDEES]; ACTION is one of ` +
+		alarmActionsList + ` (default ` + model.DefaultAlarmAction + `); extended fields are optional, e.g. "DISPLAY:-PT30M::3:PT5M:END" or "EMAIL:-PT1H:::::user@example.com"; repeatable`
+)
+
 func parseOneAlarm(val string) (model.Alarm, error) {
 	action := model.DefaultAlarmAction
 	rest := val
@@ -1717,7 +1726,7 @@ func parseOneAlarm(val string) (model.Alarm, error) {
 	if len(parts) > 4 && parts[4] != "" {
 		rel := strings.ToUpper(parts[4])
 		if !model.ValidAlarmRelated(rel) {
-			return model.Alarm{}, fmt.Errorf("alarm %q: related must be one of %s, got %q", val, strings.Join(model.AlarmRelatedValues(), ", "), parts[4])
+			return model.Alarm{}, fmt.Errorf("alarm %q: related must be one of %s, got %q", val, alarmRelatedList, parts[4])
 		}
 		a.Related = rel
 	}

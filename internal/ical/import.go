@@ -714,7 +714,7 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 			if up := strings.ToUpper(rel); model.ValidAlarmRelated(up) {
 				alarm.Related = up
 			} else {
-				warns = append(warns, fmt.Sprintf("VALARM TRIGGER RELATED=%q: unsupported value, using START", rel))
+				warns = append(warns, fmt.Sprintf("VALARM TRIGGER RELATED=%q: unsupported value, using %s", rel, model.DefaultAlarmRelated))
 			}
 		}
 	} else {

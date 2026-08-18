@@ -356,6 +356,8 @@ func TestAlarmEditor_EditModeMouseClickOnCancelReturnsToList(t *testing.T) {
 // rollback class through the TUI.
 func TestAlarmActionOptsMatchModelValidator(t *testing.T) {
 	require.NotEmpty(t, alarmActionOpts)
+	assert.Len(t, alarmActionOpts, len(model.AlarmActions()),
+		"the dropdown must offer every accepted action")
 	for _, opt := range alarmActionOpts {
 		assert.True(t, model.ValidAlarmAction(opt.Value),
 			"dropdown option %q (%s) fails model.ValidAlarmAction", opt.Value, opt.Label)

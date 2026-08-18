@@ -226,9 +226,9 @@ func (m *AlarmListEditorModel) enterEditMode(idx int) {
 		a = m.alarms[idx]
 	} else {
 		a = model.Alarm{
-			Action:       "DISPLAY",
+			Action:       model.DefaultAlarmAction,
 			TriggerValue: "-PT15M",
-			Related:      "START",
+			Related:      model.DefaultAlarmRelated,
 		}
 	}
 	m.editIdx = idx
@@ -300,7 +300,7 @@ func (m *AlarmListEditorModel) applyEditForm() {
 	alarm := model.Alarm{
 		Action:       action,
 		TriggerValue: trigger,
-		Related:      "START",
+		Related:      model.DefaultAlarmRelated,
 	}
 
 	if m.editIdx >= 0 && m.editIdx < len(m.alarms) {
@@ -413,7 +413,7 @@ func actionLabelFor(action string) string {
 func actionDisplayLabel(action string) string {
 	v := strings.ToUpper(strings.TrimSpace(action))
 	if v == "" {
-		v = "DISPLAY"
+		v = model.DefaultAlarmAction
 	}
 	for _, opt := range alarmActionOpts {
 		if strings.EqualFold(opt.Value, v) {

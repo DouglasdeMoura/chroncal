@@ -174,62 +174,63 @@ func ValidAlarmRelated(related string) bool {
 	return slices.Contains(alarmRelatedValues[:], related)
 }
 
-// Default values for the alarm fields that PrepareAlarmForWrite fills
+// Default values for the alarm fields that PrepareAlarmsForWrite fills
 // when the caller leaves them empty.
 const (
 	DefaultAlarmAction  = "DISPLAY"
 	DefaultAlarmRelated = "START"
 )
 
+// The joined lists render once at package load, so every error message
+// stays in lockstep with the arrays.
+var (
+	alarmActionsList       = strings.Join(alarmActions[:], ", ")
+	alarmRelatedValuesList = strings.Join(alarmRelatedValues[:], ", ")
+)
+
 // ErrInvalidAlarm marks an alarm field value the alarm tables reject.
-// PrepareAlarmForWrite wraps it with the field name and the value.
+// PrepareAlarmsForWrite wraps it with the field name and the value.
 var ErrInvalidAlarm = errors.New("invalid alarm")
 
-// PrepareAlarmForWrite prepares an alarm for an insert or an update. It
-// fills an empty Action with DefaultAlarmAction and an empty Related
-// with DefaultAlarmRelated. It then validates the two fields against
-// the sets the alarm tables accept. For a bad value it returns an
-// error that wraps ErrInvalidAlarm and names the field and the value.
-// On an error the alarm is unchanged. The function covers Action and
-// Related only. Those are the two alarm columns with a CHECK
-// constraint.
+// PrepareAlarmsForWrite returns a prepared copy of alarms. For each
+// element it fills an empty Action with DefaultAlarmAction and an
+// empty Related with DefaultAlarmRelated. It then validates the two
+// fields against the sets the alarm tables accept. Those are the two
+// alarm columns with a CHECK constraint. For a bad value it returns an
+// error that wraps ErrInvalidAlarm and names the index, the field, and
+// the value. The caller's slice does not change.
 //
 // The event and todo services call this function before every alarm
 // write, as defense in depth. The iCal import parser and the CLI
-// parser stay the load-bearing guards: the sync engine retries a
-// resource on any ReplaceAlarms error, so a bad value that reaches
-// sync still blocks that resource. The typed error names the cause
-// instead of a raw CHECK failure (issues #575, #578).
-func PrepareAlarmForWrite(a *Alarm) error {
-	action, related := a.Action, a.Related
-	if action == "" {
-		action = DefaultAlarmAction
-	}
-	if related == "" {
-		related = DefaultAlarmRelated
-	}
-	if !ValidAlarmAction(action) {
-		return fmt.Errorf("%w: action %q is not one of %s", ErrInvalidAlarm, action, strings.Join(alarmActions[:], ", "))
-	}
-	if !ValidAlarmRelated(related) {
-		return fmt.Errorf("%w: related %q is not one of %s", ErrInvalidAlarm, related, strings.Join(alarmRelatedValues[:], ", "))
-	}
-	a.Action, a.Related = action, related
-	return nil
-}
-
-// PrepareAlarmsForWrite copies alarms and prepares each element with
-// PrepareAlarmForWrite. It returns the prepared copy. The caller's
-// slice does not change, on success or on error. The error names the
-// index of the bad alarm.
+// parser stay the first guards. The sync engine retries a resource on
+// any ReplaceAlarms error. A bad value that reaches sync still blocks
+// that resource. The typed error names the cause instead of a raw
+// CHECK failure (issues #575, #578).
 func PrepareAlarmsForWrite(alarms []Alarm) ([]Alarm, error) {
 	prepared := slices.Clone(alarms)
 	for i := range prepared {
-		if err := PrepareAlarmForWrite(&prepared[i]); err != nil {
+		if err := prepareAlarmForWrite(&prepared[i]); err != nil {
 			return nil, fmt.Errorf("alarm %d: %w", i, err)
 		}
 	}
 	return prepared, nil
+}
+
+// prepareAlarmForWrite fills the defaults and validates one alarm.
+func prepareAlarmForWrite(a *Alarm) error {
+	if a.Action == "" {
+		a.Action = DefaultAlarmAction
+	}
+	if a.Related == "" {
+		a.Related = DefaultAlarmRelated
+	}
+	if !ValidAlarmAction(a.Action) {
+		return fmt.Errorf("%w: action %q is not one of %s", ErrInvalidAlarm, a.Action, alarmActionsList)
+	}
+	if !ValidAlarmRelated(a.Related) {
+		return fmt.Errorf("%w: related %q is not one of %s", ErrInvalidAlarm, a.Related, alarmRelatedValuesList)
+	}
+	return nil
 }
 
 // ValidAlarmDuration returns true if d is a repeat interval the alarm
