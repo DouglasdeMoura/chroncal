@@ -691,7 +691,7 @@ func TestEnginePersistImportedKeepsDirtyOnChildReplaceError(t *testing.T) {
 		}},
 	}
 
-	if _, err := engine.persistImported(ctx, calendarID, result); err == nil {
+	if _, _, err := engine.persistImported(ctx, calendarID, result); err == nil {
 		t.Fatal("persistImported returned nil, want child-replace error to propagate")
 	}
 
@@ -3055,7 +3055,7 @@ END:VCALENDAR
 	if err != nil {
 		t.Fatalf("ImportFile (with alarm): %v", err)
 	}
-	if _, err := engine.persistImported(ctx, calendarID, withAlarmResult); err != nil {
+	if _, _, err := engine.persistImported(ctx, calendarID, withAlarmResult); err != nil {
 		t.Fatalf("persistImported (with alarm): %v", err)
 	}
 
@@ -3089,7 +3089,7 @@ END:VCALENDAR
 	if err != nil {
 		t.Fatalf("ImportFile (no alarm): %v", err)
 	}
-	if _, err := engine.persistImported(ctx, calendarID, noAlarmResult); err != nil {
+	if _, _, err := engine.persistImported(ctx, calendarID, noAlarmResult); err != nil {
 		t.Fatalf("persistImported (no alarm): %v", err)
 	}
 
@@ -3257,7 +3257,7 @@ func TestPersistImportedRollsBackOnReplaceFailure(t *testing.T) {
 		t.Fatalf("drop event_comments: %v", err)
 	}
 
-	if _, err := engine.persistImported(ctx, calendarID, result); err == nil {
+	if _, _, err := engine.persistImported(ctx, calendarID, result); err == nil {
 		t.Fatal("expected persistImported to fail when a Replace step errors")
 	}
 
@@ -3655,7 +3655,7 @@ func TestPersistImportedPrunesStaleOverrides(t *testing.T) {
 	const keptRID = "2026-08-27T17:00:00Z"
 
 	// First sync: master + two overrides.
-	_, err = engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
+	_, _, err = engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
 		Events: []event.Event{
 			pruneTestEvent(uid, calendarID, "", "FREQ=WEEKLY;INTERVAL=2;BYDAY=TH"),
 			pruneTestEvent(uid, calendarID, deletedRID, ""),
@@ -3678,7 +3678,7 @@ func TestPersistImportedPrunesStaleOverrides(t *testing.T) {
 	// VEVENT removed) but kept the 8/27 override.
 	secondMaster := pruneTestEvent(uid, calendarID, "", "FREQ=WEEKLY;INTERVAL=2;BYDAY=TH")
 	secondMaster.ExDates = deletedRID
-	_, err = engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
+	_, _, err = engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
 		Events: []event.Event{
 			secondMaster,
 			pruneTestEvent(uid, calendarID, keptRID, ""),
@@ -3777,7 +3777,7 @@ func TestPersistImportedPruneSkipsDirtyResource(t *testing.T) {
 	const localRID = "2026-07-02T17:00:00Z"
 
 	// First pull: master only, then the tracking row settles clean.
-	if _, err := engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
+	if _, _, err := engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
 		Events: []event.Event{pruneTestEvent(uid, calendarID, "", "FREQ=WEEKLY;INTERVAL=2;BYDAY=TH")},
 	}); err != nil {
 		t.Fatalf("first persistImported: %v", err)
@@ -3800,7 +3800,7 @@ func TestPersistImportedPruneSkipsDirtyResource(t *testing.T) {
 
 	// Second pull before the push lands (e.g. the series title changed on the
 	// server). The server body has no override — because it has never seen it.
-	if _, err := engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
+	if _, _, err := engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
 		Events: []event.Event{pruneTestEvent(uid, calendarID, "", "FREQ=WEEKLY;INTERVAL=2;BYDAY=TH")},
 	}); err != nil {
 		t.Fatalf("second persistImported: %v", err)
@@ -3828,7 +3828,7 @@ func TestPersistImportedPrunesCleanSyncedResource(t *testing.T) {
 	const uid = "clean-prune-test"
 	const staleRID = "2026-07-02T17:00:00Z"
 
-	if _, err := engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
+	if _, _, err := engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
 		Events: []event.Event{
 			pruneTestEvent(uid, calendarID, "", "FREQ=WEEKLY;INTERVAL=2;BYDAY=TH"),
 			pruneTestEvent(uid, calendarID, staleRID, ""),
@@ -3841,7 +3841,7 @@ func TestPersistImportedPrunesCleanSyncedResource(t *testing.T) {
 	// Server deleted the instance: EXDATE on the master, override gone.
 	master := pruneTestEvent(uid, calendarID, "", "FREQ=WEEKLY;INTERVAL=2;BYDAY=TH")
 	master.ExDates = staleRID
-	if _, err := engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
+	if _, _, err := engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
 		Events: []event.Event{master},
 	}); err != nil {
 		t.Fatalf("second persistImported: %v", err)
@@ -3874,7 +3874,7 @@ func TestPersistImportedPruneSkipsIncompleteParse(t *testing.T) {
 	const uid = "partial-parse-test"
 	const rid = "2026-07-02T17:00:00Z"
 
-	if _, err := engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
+	if _, _, err := engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
 		Events: []event.Event{
 			pruneTestEvent(uid, calendarID, "", "FREQ=WEEKLY;INTERVAL=2;BYDAY=TH"),
 			pruneTestEvent(uid, calendarID, rid, ""),
@@ -3885,7 +3885,7 @@ func TestPersistImportedPruneSkipsIncompleteParse(t *testing.T) {
 
 	// Second pull: the override VEVENT was dropped by the parser, not by the
 	// server. The keep-set is an incomplete inventory — no pruning.
-	if _, err := engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
+	if _, _, err := engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
 		Events:            []event.Event{pruneTestEvent(uid, calendarID, "", "FREQ=WEEKLY;INTERVAL=2;BYDAY=TH")},
 		SkippedComponents: 1,
 	}); err != nil {
@@ -3922,7 +3922,7 @@ func TestPersistImportedPrunePerUID(t *testing.T) {
 	const ridB = "2026-07-03T17:00:00Z"
 
 	for uid, rid := range map[string]string{uidA: ridA, uidB: ridB} {
-		if _, err := engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
+		if _, _, err := engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
 			Events: []event.Event{
 				pruneTestEvent(uid, calendarID, "", "FREQ=WEEKLY;BYDAY=TH"),
 				pruneTestEvent(uid, calendarID, rid, ""),
@@ -3934,7 +3934,7 @@ func TestPersistImportedPrunePerUID(t *testing.T) {
 
 	// One malformed resource: B's override listed before A's master, and B's
 	// master absent. Only A — whose own master is present — may be pruned.
-	if _, err := engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
+	if _, _, err := engine.persistImported(ctx, calendarID, icalPkg.ImportResult{
 		Events: []event.Event{
 			pruneTestEvent(uidB, calendarID, ridB, ""),
 			pruneTestEvent(uidA, calendarID, "", "FREQ=WEEKLY;BYDAY=TH"),
@@ -4307,5 +4307,105 @@ func TestNewEngine_NilLoggerIsSilent(t *testing.T) {
 
 	if buf.Len() > 0 {
 		t.Fatalf("nil-logger engine wrote to slog.Default (stderr in production, which corrupts the TUI): %q", buf.String())
+	}
+}
+
+// TestPersistImportedDropsInvalidAlarm covers issue #585. A server
+// resource that carries one alarm the write rule rejects must still
+// persist: the event and its valid alarms land, the drop travels back as
+// a warning, and the pull does not fail. The old code propagated the
+// error, so the whole resource stayed absent and retried on every cycle
+// while the report showed nothing.
+func TestPersistImportedDropsInvalidAlarm(t *testing.T) {
+	t.Parallel()
+
+	engine, _, q := newTestEngine(t)
+	ctx := context.Background()
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	start := time.Date(2026, 6, 18, 17, 0, 0, 0, time.UTC)
+	// The iCal parser sanitizes an alarm, so the bad value is built here
+	// the way a future producer would deliver it.
+	result := icalPkg.ImportResult{
+		Events: []event.Event{{
+			UID:        "bad-alarm-uid",
+			CalendarID: calendarID,
+			Title:      "Carries one bad alarm",
+			StartTime:  start,
+			EndTime:    start.Add(time.Hour),
+			Alarms: []model.Alarm{
+				{Action: "DISPLAY", TriggerValue: "-PT15M", Related: "START"},
+				{Action: "DISPLAY", TriggerValue: "-PT30M", Related: "MIDDLE"},
+			},
+		}},
+	}
+
+	revs, warnings, err := engine.persistImported(ctx, calendarID, result)
+	if err != nil {
+		t.Fatalf("persistImported must not fail the resource for one bad alarm: %v", err)
+	}
+	if _, ok := revs["bad-alarm-uid"]; !ok {
+		t.Fatalf("revs = %v, want an entry for the persisted event", revs)
+	}
+
+	saved, err := q.GetEventByUID(ctx, "bad-alarm-uid")
+	if err != nil {
+		t.Fatalf("GetEventByUID: the event must persist: %v", err)
+	}
+	alarms, err := engine.events.ListAlarms(ctx, saved.ID)
+	if err != nil {
+		t.Fatalf("ListAlarms: %v", err)
+	}
+	if len(alarms) != 1 {
+		t.Fatalf("alarms = %d, want 1 (the valid one); got %+v", len(alarms), alarms)
+	}
+	if alarms[0].TriggerValue != "-PT15M" {
+		t.Errorf("kept alarm trigger = %q, want -PT15M", alarms[0].TriggerValue)
+	}
+
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %d, want 1; got %v", len(warnings), warnings)
+	}
+	for _, want := range []string{"bad-alarm-uid", "alarm 2", "MIDDLE"} {
+		if !strings.Contains(warnings[0], want) {
+			t.Errorf("warning %q does not name %q", warnings[0], want)
+		}
+	}
+}
+
+// A failure that is not an invalid alarm still fails the resource, so the
+// caller keeps it dirty and retries.
+func TestPersistImportedStillFailsOnOtherErrors(t *testing.T) {
+	t.Parallel()
+
+	engine, _, q := newTestEngine(t)
+	ctx := context.Background()
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	start := time.Date(2026, 6, 18, 17, 0, 0, 0, time.UTC)
+	// An attendee outside the PARTSTAT CHECK constraint fails the write.
+	// That is not an alarm error, so it must still fail the resource.
+	result := icalPkg.ImportResult{
+		Events: []event.Event{{
+			UID:        "bad-attendee-uid",
+			CalendarID: calendarID,
+			Title:      "Carries a bad attendee",
+			StartTime:  start,
+			EndTime:    start.Add(time.Hour),
+			Attendees: []model.Attendee{
+				{Email: "alice@example.com", RSVPStatus: "NOT-A-PARTSTAT", Role: "REQ-PARTICIPANT"},
+			},
+		}},
+	}
+	if _, _, err := engine.persistImported(ctx, calendarID, result); err == nil {
+		t.Fatal("persistImported must still fail for a non-alarm error")
 	}
 }

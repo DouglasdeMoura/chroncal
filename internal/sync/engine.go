@@ -23,6 +23,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/event"
 	icalPkg "github.com/douglasdemoura/chroncal/internal/ical"
 	"github.com/douglasdemoura/chroncal/internal/journal"
+	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/synclock"
 	"github.com/douglasdemoura/chroncal/internal/todo"
@@ -1010,11 +1011,12 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 
 		// Persist imported data to the database
 		ownerType := detectOwnerType(importResult)
-		revs, persistErr := e.persistImported(ctx, calendarID, importResult)
+		revs, alarmWarnings, persistErr := e.persistImported(ctx, calendarID, importResult)
 		if persistErr != nil {
 			e.logger.Error("persist imported resource", "uid", uid, "path", res.Path, "error", persistErr)
 			continue
 		}
+		result.warnings = append(result.warnings, e.notePersistWarnings(res.Path, uid, alarmWarnings)...)
 
 		// Upsert sync resource tracking. UpsertSyncResource's ON CONFLICT is
 		// keyed by (calendar_id, uid), so a stale remote_url from a prior
@@ -1317,7 +1319,7 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 				continue
 			}
 			ownerType := detectOwnerType(importResult)
-			revs, persistErr := e.persistImported(ctx, calendarID, importResult)
+			revs, alarmWarnings, persistErr := e.persistImported(ctx, calendarID, importResult)
 			if persistErr != nil {
 				// A changed body we fetched but couldn't store (transient
 				// SQLite busy/lock, or a malformed component a Replace*
@@ -1330,6 +1332,7 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 				e.logger.Error("persist imported resource", "uid", uid, "path", res.Path, "error", persistErr)
 				continue
 			}
+			result.warnings = append(result.warnings, e.notePersistWarnings(res.Path, uid, alarmWarnings)...)
 			if err := e.q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
 				CalendarID:   calendarID,
 				Uid:          uid,
@@ -1751,8 +1754,15 @@ func hydrateJournal(ctx context.Context, e *Engine, j *journal.Journal) error {
 // local edit could then slip in and have its dirty flag wiped. That is the
 // lost-update window of issue #494. A UID with no sync_resources row yet (a
 // first pull) reports rev 0.
-func (e *Engine) persistImported(ctx context.Context, calendarID int64, result icalPkg.ImportResult) (map[string]int64, error) {
+// persistImported writes an imported payload and returns the per-UID revs.
+// The second return value lists the alarms it dropped. An alarm the write
+// rule rejects must not fail its whole resource: the event and its valid
+// alarms still persist, and the caller reports the drop as a warning
+// (issue #585). Every other error still fails the resource, so the caller
+// keeps it dirty and retries.
+func (e *Engine) persistImported(ctx context.Context, calendarID int64, result icalPkg.ImportResult) (map[string]int64, []string, error) {
 	revs := make(map[string]int64)
+	var alarmWarnings []string
 
 	// Build the prune inputs up front: per-UID keep-sets of the components
 	// the server sent, plus each prunable UID's dirty flag — which must be
@@ -1772,7 +1782,7 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 		var err error
 		dirtyBefore, err = e.preImportDirty(ctx, calendarID, eventKeep, todoKeep, journalKeep)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
@@ -1813,7 +1823,12 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 			// via UpsertByUID. A full CalDAV pull sends the complete component, so
 			// the absence of a property means "cleared", not "unknown". Propagate
 			// any replace error so the caller keeps the resource dirty and retries.
-			if err := events.ReplaceAlarms(ctx, saved.ID, ev.Alarms); err != nil {
+			okAlarms, badAlarms := model.PartitionAlarmsForWrite(ev.Alarms)
+			for _, bad := range badAlarms {
+				alarmWarnings = append(alarmWarnings,
+					fmt.Sprintf("event %q: alarm %d dropped: %v", ev.UID, bad.Index, bad.Err))
+			}
+			if err := events.ReplaceAlarmsForSync(ctx, saved.ID, okAlarms); err != nil {
 				return fmt.Errorf("replace alarms for event %q: %w", ev.UID, err)
 			}
 			if err := events.ReplaceAttendeesForSync(ctx, saved.ID, ev.Attendees); err != nil {
@@ -1844,7 +1859,7 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 			revs[ev.UID] = rev
 			return nil
 		}); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
@@ -1869,7 +1884,12 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 			}
 			// Replace child collections unconditionally so server-side removals
 			// (an empty list) are propagated. See the event loop above.
-			if err := todos.ReplaceAlarms(ctx, saved.ID, t.Alarms); err != nil {
+			okAlarms, badAlarms := model.PartitionAlarmsForWrite(t.Alarms)
+			for _, bad := range badAlarms {
+				alarmWarnings = append(alarmWarnings,
+					fmt.Sprintf("todo %q: alarm %d dropped: %v", t.UID, bad.Index, bad.Err))
+			}
+			if err := todos.ReplaceAlarmsForSync(ctx, saved.ID, okAlarms); err != nil {
 				return fmt.Errorf("replace alarms for todo %q: %w", t.UID, err)
 			}
 			if err := todos.ReplaceAttendees(ctx, saved.ID, t.Attendees); err != nil {
@@ -1900,7 +1920,7 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 			revs[t.UID] = rev
 			return nil
 		}); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
@@ -1948,7 +1968,7 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 			revs[j.UID] = rev
 			return nil
 		}); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
@@ -1960,7 +1980,7 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 		func(v storage.Event) string { return v.RecurrenceID },
 		(*storage.Queries).SoftDeleteEvent,
 	); err != nil {
-		return nil, fmt.Errorf("prune stale event overrides: %w", err)
+		return nil, nil, fmt.Errorf("prune stale event overrides: %w", err)
 	}
 	if err := pruneStaleOverrides(ctx, e, calendarID, todoKeep, dirtyBefore, revs,
 		e.q.ListTodoOverridesByUID,
@@ -1968,7 +1988,7 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 		func(v storage.Todo) string { return v.RecurrenceID },
 		(*storage.Queries).SoftDeleteTodo,
 	); err != nil {
-		return nil, fmt.Errorf("prune stale todo overrides: %w", err)
+		return nil, nil, fmt.Errorf("prune stale todo overrides: %w", err)
 	}
 	if err := pruneStaleOverrides(ctx, e, calendarID, journalKeep, dirtyBefore, revs,
 		e.q.ListJournalOverridesByUID,
@@ -1976,10 +1996,10 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 		func(v storage.Journal) string { return v.RecurrenceID },
 		(*storage.Queries).SoftDeleteJournal,
 	); err != nil {
-		return nil, fmt.Errorf("prune stale journal overrides: %w", err)
+		return nil, nil, fmt.Errorf("prune stale journal overrides: %w", err)
 	}
 
-	return revs, nil
+	return revs, alarmWarnings, nil
 }
 
 // keepSets groups imported components into per-UID keep-sets of their
@@ -2184,10 +2204,11 @@ func (e *Engine) importICal(ctx context.Context, calendarID int64, data string) 
 	if err != nil {
 		return false, nil, nil, err
 	}
-	revs, err = e.persistImported(ctx, calendarID, importResult)
+	revs, alarmWarnings, err := e.persistImported(ctx, calendarID, importResult)
 	if err != nil {
 		return false, nil, nil, err
 	}
+	warnings = append(warnings, e.notePersistWarnings("", "", alarmWarnings)...)
 	if afterImportPersist != nil {
 		afterImportPersist()
 	}
@@ -2298,6 +2319,24 @@ func soleUID(result icalPkg.ImportResult) string {
 // warnings also travel as data for entry points that discard the logger.
 func (e *Engine) noteImportWarnings(path string, result icalPkg.ImportResult) []ImportWarning {
 	warnings := collectImportWarnings(path, result)
+	logImportWarnings(e.logger, warnings)
+	return warnings
+}
+
+// notePersistWarnings turns the alarms persistImported dropped into
+// ImportWarnings and logs them. A dropped alarm is a silent local change
+// otherwise: the resource persists without it, and the next push writes
+// the shorter alarm set over the server copy. The caller appends the
+// returned slice to its result, so an entry point that discards the
+// logger still reports the drop (issue #585).
+func (e *Engine) notePersistWarnings(path, uid string, messages []string) []ImportWarning {
+	if len(messages) == 0 {
+		return nil
+	}
+	warnings := make([]ImportWarning, 0, len(messages))
+	for _, msg := range messages {
+		warnings = append(warnings, ImportWarning{Path: path, UID: uid, Message: msg})
+	}
 	logImportWarnings(e.logger, warnings)
 	return warnings
 }

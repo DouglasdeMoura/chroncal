@@ -1696,6 +1696,18 @@ func (s *Service) replaceFireableAlarms(ctx context.Context, eventID int64, alar
 }
 
 func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []model.Alarm) error {
+	if err := s.ensureEventWritable(ctx, eventID, 0); err != nil {
+		return err
+	}
+	return s.ReplaceAlarmsForSync(ctx, eventID, alarms)
+}
+
+// ReplaceAlarmsForSync applies an alarm set without the remote access and
+// component policy. It is reserved for the CalDAV sync engine, which
+// mirrors a server-originated VEVENT into the local cache whatever the
+// linked collection advertises. A user-originated edit must route through
+// ReplaceAlarms, so the policy holds.
+func (s *Service) ReplaceAlarmsForSync(ctx context.Context, eventID int64, alarms []model.Alarm) error {
 	// Prepare before the transaction opens. A standalone call then
 	// rejects a bad alarm without a write lock. A sync caller already
 	// holds its own transaction. See model.PrepareAlarmsForWrite.
