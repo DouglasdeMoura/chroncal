@@ -346,14 +346,6 @@ func TestEventService_ReplaceAlarms_RejectsInvalidAlarm(t *testing.T) {
 	e := createEvent(t, svc)
 
 	err := svc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
-		{Action: "DISPLAY", TriggerValue: "-PT15M"},
-		{Action: "PROCEDURE", TriggerValue: "-PT5M"},
-	})
-	if !errors.Is(err, model.ErrInvalidAlarm) {
-		t.Fatalf("invalid action: err = %v, want model.ErrInvalidAlarm", err)
-	}
-
-	err = svc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
 		{Action: "DISPLAY", TriggerValue: "-PT15M", Related: "MIDDLE"},
 	})
 	if !errors.Is(err, model.ErrInvalidAlarm) {
@@ -366,6 +358,14 @@ func TestEventService_ReplaceAlarms_RejectsInvalidAlarm(t *testing.T) {
 	}
 	if len(alarms) != 0 {
 		t.Errorf("alarms = %d, want 0 (a rejected write must store no row)", len(alarms))
+	}
+
+	// A preserved foreign action passes. Migration 043 widened the action
+	// constraint, so the boundary accepts it (issue #579).
+	if err := svc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "NONE", TriggerValue: "-PT5M"},
+	}); err != nil {
+		t.Fatalf("preserved action: err = %v, want nil", err)
 	}
 }
 

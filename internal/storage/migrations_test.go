@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+
+	"github.com/pressly/goose/v3"
 )
 
 // migHelpers returns exec and count helpers bound to conn. The migration

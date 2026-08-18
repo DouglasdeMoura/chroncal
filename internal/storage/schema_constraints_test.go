@@ -459,7 +459,7 @@ func TestFireableAlarmQueriesMatchModelPredicate(t *testing.T) {
 	// The non-fireable probes stay fixed: they cover the preserved actions
 	// (issue #579) and a lowercase near-miss.
 	candidates := map[string]string{}
-	for i, action := range model.FireableAlarmActions() {
+	for i, action := range model.AlarmActions() {
 		candidates[action] = fmt.Sprintf("-PT%dM", i+1)
 	}
 	for i, action := range []string{"NONE", "X-APPLE-SOUND", "display"} {

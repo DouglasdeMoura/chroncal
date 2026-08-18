@@ -246,6 +246,24 @@ func CheckStorableAlarmAction(action string) error {
 	return nil
 }
 
+// KeepSyncOnlyAlarms appends every stored alarm the engine cannot fire to
+// a replacement list. A caller that can only state a fireable alarm — the
+// --alarm flag has no syntax for a preserved action — must carry those
+// rows forward. Without the carry-over the replacement deletes them, and
+// the next push deletes the VALARM of another client (issue #579).
+//
+// A caller that must remove a preserved alarm skips this function and
+// calls ReplaceAlarms with the exact list instead. The TUI alarm editor
+// works that way, so a local calendar keeps a way to delete such a row.
+func KeepSyncOnlyAlarms(stored, replacement []Alarm) []Alarm {
+	for _, a := range stored {
+		if !FireableAlarmAction(a.Action) {
+			replacement = append(replacement, a)
+		}
+	}
+	return replacement
+}
+
 // PrepareAlarmUpdate checks an alarm that a caller writes over the stored
 // row ex. It returns the ACKNOWLEDGED value for the update. A malformed
 // value that arrives must not clobber valid stored state, so the function

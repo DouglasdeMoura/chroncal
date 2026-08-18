@@ -879,6 +879,18 @@ func fromStorageTodoAlarm(r storage.TodoAlarm) model.Alarm {
 	}
 }
 
+// ReplaceFireableAlarms replaces the fireable alarms of a todo and
+// carries the stored sync-only rows forward, like the event method of the
+// same name (issue #579). A caller that must delete such a row calls
+// ReplaceAlarms instead.
+func (s *Service) ReplaceFireableAlarms(ctx context.Context, todoID int64, alarms []model.Alarm) error {
+	stored, err := s.ListAlarms(ctx, todoID)
+	if err != nil {
+		return fmt.Errorf("list stored alarms: %w", err)
+	}
+	return s.ReplaceAlarms(ctx, todoID, model.KeepSyncOnlyAlarms(stored, alarms))
+}
+
 func (s *Service) ReplaceAlarms(ctx context.Context, todoID int64, alarms []model.Alarm) error {
 	// Prepare before the transaction opens. A standalone call then
 	// rejects a bad alarm without a write lock. A sync caller already
