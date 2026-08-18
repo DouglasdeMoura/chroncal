@@ -816,6 +816,35 @@ func (s *Service) ListFireableAlarmsLean(ctx context.Context, todoID int64) ([]m
 	return s.listAlarms(ctx, todoID, false, true)
 }
 
+// ListFireableAlarmsByTodoIDs fetches the fireable alarms for many todo
+// IDs in one query. It returns a map of the todo ID to its alarms. The
+// alarm check loop reads every todo on each tick, so a call per todo
+// costs one query per todo (issue #586). The query excludes a preserved
+// sync-only action, like ListFireableAlarmsLean.
+func (s *Service) ListFireableAlarmsByTodoIDs(ctx context.Context, todoIDs []int64) (map[int64][]model.Alarm, error) {
+	if len(todoIDs) == 0 {
+		return nil, nil
+	}
+	rows, err := s.q.ListFireableTodoAlarmsByTodoIDs(ctx, todoIDs)
+	if err != nil {
+		return nil, err
+	}
+	alarms, err := s.buildAlarms(ctx, rows, false)
+	if err != nil {
+		return nil, err
+	}
+	if len(alarms) == 0 {
+		return nil, nil
+	}
+	// fromStorageTodoAlarm maps the todo ID onto the EventID field of the
+	// shared alarm model, like the event service does with its own ID.
+	alarmMap := make(map[int64][]model.Alarm, len(todoIDs))
+	for _, a := range alarms {
+		alarmMap[a.EventID] = append(alarmMap[a.EventID], a)
+	}
+	return alarmMap, nil
+}
+
 func (s *Service) listAlarms(ctx context.Context, todoID int64, withXProps, fireableOnly bool) ([]model.Alarm, error) {
 	var rows []storage.TodoAlarm
 	var err error
@@ -827,6 +856,13 @@ func (s *Service) listAlarms(ctx context.Context, todoID int64, withXProps, fire
 	if err != nil {
 		return nil, err
 	}
+	return s.buildAlarms(ctx, rows, withXProps)
+}
+
+// buildAlarms turns todo_alarms rows into the shared alarm model. It
+// attaches the attendees, and the X-properties when the caller asks for
+// them. The per-todo read and the batch read share it.
+func (s *Service) buildAlarms(ctx context.Context, rows []storage.TodoAlarm, withXProps bool) ([]model.Alarm, error) {
 	if len(rows) == 0 {
 		return nil, nil
 	}

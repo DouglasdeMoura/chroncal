@@ -2543,3 +2543,56 @@ func TestRoundtrip_FireableAlarmRepeatStillClamps(t *testing.T) {
 		t.Errorf("export lacks %q; output:\n%s", want, string(data))
 	}
 }
+
+// A VALARM property the parser does not read must survive the round trip.
+// The parser used to keep only an X- property, so an IANA property such as
+// the RFC 9074 PROXIMITY was lost, and the next push rewrote the VALARM of
+// another client without it (issue #586, item f).
+func TestRoundtrip_UnhandledAlarmPropertiesSurvive(t *testing.T) {
+	t.Parallel()
+	const ics = "BEGIN:VCALENDAR\r\n" +
+		"VERSION:2.0\r\n" +
+		"PRODID:-//test//EN\r\n" +
+		"BEGIN:VEVENT\r\n" +
+		"UID:iana-alarm-props@example.com\r\n" +
+		"DTSTAMP:20260401T100000Z\r\n" +
+		"DTSTART:20260401T140000Z\r\n" +
+		"DTEND:20260401T150000Z\r\n" +
+		"SUMMARY:Event with an IANA alarm property\r\n" +
+		"BEGIN:VALARM\r\n" +
+		"ACTION:DISPLAY\r\n" +
+		"TRIGGER:-PT15M\r\n" +
+		"DESCRIPTION:Reminder\r\n" +
+		"PROXIMITY:DEPART\r\n" +
+		"X-VENDOR-FLAG:keep-me\r\n" +
+		"END:VALARM\r\n" +
+		"END:VEVENT\r\n" +
+		"END:VCALENDAR\r\n"
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Events) != 1 || len(result.Events[0].Alarms) != 1 {
+		t.Fatalf("events/alarms = %d/%+v, want 1 event with 1 alarm", len(result.Events), result.Events)
+	}
+
+	data, err := ExportEvents(result.Events, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	out := string(data)
+	for _, want := range []string{"PROXIMITY:DEPART", "X-VENDOR-FLAG:keep-me"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("export lacks %q; output:\n%s", want, out)
+		}
+	}
+	// The parser still reads the properties it owns, so they must not
+	// also appear a second time as preserved properties.
+	if n := strings.Count(out, "DESCRIPTION:Reminder"); n != 1 {
+		t.Errorf("DESCRIPTION appears %d times, want 1", n)
+	}
+	if n := strings.Count(out, "TRIGGER"); n != 1 {
+		t.Errorf("TRIGGER appears %d times, want 1", n)
+	}
+}

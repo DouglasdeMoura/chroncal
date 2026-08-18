@@ -24,24 +24,26 @@ func (m *mockTodoAlarmLister) ListAlarmsLean(ctx context.Context, todoID int64) 
 	return m.ListAlarms(ctx, todoID)
 }
 
-func (m *mockTodoAlarmLister) ListFireableAlarmsLean(ctx context.Context, todoID int64) ([]model.Alarm, error) {
-	alarms, err := m.ListAlarmsLean(ctx, todoID)
-	if err != nil {
-		return nil, err
-	}
-	return filterFireable(alarms), nil
+func (m *mockTodoAlarmLister) ListFireableAlarmsByTodoIDs(ctx context.Context, todoIDs []int64) (map[int64][]model.Alarm, error) {
+	return batchFireable(ctx, m.ListAlarmsLean, todoIDs)
 }
 
-// filterFireable keeps the alarms the engine can fire. Both lister mocks
-// in this package share it, so the two cannot drift.
-func filterFireable(alarms []model.Alarm) []model.Alarm {
-	kept := make([]model.Alarm, 0, len(alarms))
-	for _, a := range alarms {
-		if model.FireableAlarmAction(a.Action) {
-			kept = append(kept, a)
+// batchFireable builds the fireable alarm map the check loop reads. Both
+// lister mocks in this package share it, so the two cannot drift.
+func batchFireable(ctx context.Context, lean func(context.Context, int64) ([]model.Alarm, error), todoIDs []int64) (map[int64][]model.Alarm, error) {
+	out := make(map[int64][]model.Alarm, len(todoIDs))
+	for _, id := range todoIDs {
+		alarms, err := lean(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		for _, a := range alarms {
+			if model.FireableAlarmAction(a.Action) {
+				out[id] = append(out[id], a)
+			}
 		}
 	}
-	return kept
+	return out, nil
 }
 
 // TestComputeTodoTrigger_RelatedEnd_DtStartPlusDue guards issue #367: a VTODO

@@ -174,14 +174,29 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 		// trigger as missed when the override fired at a rescheduled time.
 		overrideKeys := buildOverrideSuppressionKeys(rows)
 
+		// Read the alarms of every open todo in one query, like CheckTodos
+		// does (issue #586).
+		openIDs := make([]int64, 0, len(rows))
+		for _, row := range rows {
+			td := todoFromRow(row)
+			if td.Status == "COMPLETED" || td.Status == "CANCELLED" {
+				continue
+			}
+			openIDs = append(openIDs, td.ID)
+		}
+		todoAlarmMap, err := s.todos.ListFireableAlarmsByTodoIDs(ctx, openIDs)
+		if err != nil {
+			return missed, nil, err
+		}
+
 		for _, row := range rows {
 			td := todoFromRow(row)
 			if td.Status == "COMPLETED" || td.Status == "CANCELLED" {
 				continue
 			}
 
-			alarms, err := s.todos.ListFireableAlarmsLean(ctx, td.ID)
-			if err != nil || len(alarms) == 0 {
+			alarms := todoAlarmMap[td.ID]
+			if len(alarms) == 0 {
 				continue
 			}
 

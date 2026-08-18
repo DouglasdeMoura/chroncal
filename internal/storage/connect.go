@@ -295,16 +295,35 @@ func normalizeAlarmRepeatPairs(conn *sql.DB) error {
 
 // backfillAlarmUIDs assigns random UUIDs to alarms that have empty UIDs.
 // This runs once after upgrade from pre-UID schema.
+//
+// An alarm the engine cannot fire keeps its empty UID. Import preserves
+// such an alarm from another client (issue #579), and a local UID would
+// travel back to the server on the next push. Some servers and clients
+// read a new UID as a different alarm. The row still matches on its
+// content during a pull, and it holds no alarm state, because it never
+// fires (issue #586).
 func backfillAlarmUIDs(conn *sql.DB, q *Queries) error {
 	ctx := context.Background()
 
-	alarms, err := q.ListAlarmsWithEmptyUID(ctx)
+	storedAlarms, err := q.ListAlarmsWithEmptyUID(ctx)
 	if err != nil {
 		return fmt.Errorf("list alarms with empty uid: %w", err)
 	}
-	todoAlarms, err := q.ListTodoAlarmsWithEmptyUID(ctx)
+	storedTodoAlarms, err := q.ListTodoAlarmsWithEmptyUID(ctx)
 	if err != nil {
 		return fmt.Errorf("list todo alarms with empty uid: %w", err)
+	}
+	var alarms []EventAlarm
+	for _, a := range storedAlarms {
+		if model.FireableAlarmAction(a.Action) {
+			alarms = append(alarms, a)
+		}
+	}
+	var todoAlarms []TodoAlarm
+	for _, a := range storedTodoAlarms {
+		if model.FireableAlarmAction(a.Action) {
+			todoAlarms = append(todoAlarms, a)
+		}
 	}
 	if len(alarms) == 0 && len(todoAlarms) == 0 {
 		return nil
