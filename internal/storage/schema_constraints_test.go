@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -451,15 +452,18 @@ func TestFireableAlarmQueriesMatchModelPredicate(t *testing.T) {
 	}
 	todoID, _ := res.LastInsertId()
 
-	// One candidate per action, each with a unique trigger. The trigger
-	// then identifies the action in the distinct-trigger results.
-	candidates := map[string]string{
-		"AUDIO":         "-PT1M",
-		"DISPLAY":       "-PT2M",
-		"EMAIL":         "-PT3M",
-		"NONE":          "-PT4M",
-		"X-APPLE-SOUND": "-PT5M",
-		"display":       "-PT6M",
+	// Derive the fireable candidates from the model set itself, so a value
+	// added there gets a probe row without an edit here. A hardcoded list
+	// would pass without covering the new value, and the drift it must
+	// catch is exactly "the Go set grew, the SQL lists did not".
+	// The non-fireable probes stay fixed: they cover the preserved actions
+	// (issue #579) and a lowercase near-miss.
+	candidates := map[string]string{}
+	for i, action := range model.FireableAlarmActions() {
+		candidates[action] = fmt.Sprintf("-PT%dM", i+1)
+	}
+	for i, action := range []string{"NONE", "X-APPLE-SOUND", "display"} {
+		candidates[action] = fmt.Sprintf("-PT%dH", i+1)
 	}
 	for action, trigger := range candidates {
 		if _, err := db.Exec(
@@ -530,4 +534,40 @@ func TestFireableAlarmQueriesMatchModelPredicate(t *testing.T) {
 		tdGot[i] = r.TriggerValue
 	}
 	check("ListFireableTodoAlarmsByTodoID", tdGot)
+
+	// The state queries filter on the same action list. Give every alarm a
+	// fired state row, then check that only the fireable actions surface.
+	fired := "2026-04-01T00:00:00Z"
+	if _, err := db.Exec(
+		`INSERT INTO alarm_state (alarm_id, event_id, trigger_at, fired_at)
+		 SELECT id, ?, trigger_value, ? FROM event_alarms WHERE event_id = ?`,
+		eventID, fired, eventID); err != nil {
+		t.Fatalf("insert alarm states: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO todo_alarm_state (alarm_id, todo_id, trigger_at, fired_at)
+		 SELECT id, ?, trigger_value, ? FROM todo_alarms WHERE todo_id = ?`,
+		todoID, fired, todoID); err != nil {
+		t.Fatalf("insert todo alarm states: %v", err)
+	}
+
+	evStates, err := q.ListPendingAlarmStates(ctx)
+	if err != nil {
+		t.Fatalf("ListPendingAlarmStates: %v", err)
+	}
+	evStateTrigs := make([]string, len(evStates))
+	for i, s := range evStates {
+		evStateTrigs[i] = s.TriggerAt
+	}
+	check("ListPendingAlarmStates", evStateTrigs)
+
+	tdStates, err := q.ListPendingTodoAlarmStates(ctx)
+	if err != nil {
+		t.Fatalf("ListPendingTodoAlarmStates: %v", err)
+	}
+	tdStateTrigs := make([]string, len(tdStates))
+	for i, s := range tdStates {
+		tdStateTrigs[i] = s.TriggerAt
+	}
+	check("ListPendingTodoAlarmStates", tdStateTrigs)
 }

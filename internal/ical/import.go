@@ -805,6 +805,11 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 		switch {
 		case err != nil || v < 0:
 			warns = append(warns, fmt.Sprintf("VALARM REPEAT: invalid value %q; ignored", prop.Value))
+		case v > model.MaxAlarmRepeat && !model.FireableAlarmAction(alarm.Action):
+			// A preserved sync-only alarm never expands into trigger
+			// state, so the clamp guards nothing. A clamp here would
+			// rewrite the VALARM of another client on the next push.
+			alarm.Repeat = v
 		case v > model.MaxAlarmRepeat:
 			alarm.Repeat = model.MaxAlarmRepeat
 			clampedFrom = v

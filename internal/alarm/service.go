@@ -18,6 +18,11 @@ import (
 // StaleThreshold is the maximum age of an unfired alarm before it is skipped.
 const StaleThreshold = 24 * time.Hour
 
+// ErrNotFireable reports that the stored action of an alarm is sync-only.
+// The alarm engine preserves such an alarm for the round trip, but it never
+// dispatches a notification for it (issue #579).
+var ErrNotFireable = errors.New("alarm action is not fireable")
+
 // baseForwardWindow is the minimum distance past `now` that the expansion
 // window reaches, before configured alarm lead times are added. It covers
 // the common short reminders (-PT15M, -P1D, …) without a DB scan. It also
@@ -531,6 +536,9 @@ func (s *Service) ListExpiredSnoozed(ctx context.Context, now time.Time) ([]DueA
 }
 
 // MarkFired records that an alarm has been fired and returns the new state ID.
+// It returns ErrNotFireable when the stored action is sync-only. The insert
+// reads the action in the same statement, so a sync pull that disables the
+// alarm after the check loop reads it cannot leave a fired state behind.
 func (s *Service) MarkFired(ctx context.Context, da DueAlarm) (int64, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	st, err := s.q.CreateAlarmState(ctx, storage.CreateAlarmStateParams{
@@ -539,6 +547,9 @@ func (s *Service) MarkFired(ctx context.Context, da DueAlarm) (int64, error) {
 		TriggerAt: da.TriggerAt.UTC().Format(time.RFC3339),
 		FiredAt:   &now,
 	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFireable
+	}
 	if err != nil {
 		return 0, err
 	}

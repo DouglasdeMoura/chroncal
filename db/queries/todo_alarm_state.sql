@@ -2,19 +2,23 @@
 SELECT * FROM todo_alarm_state 
 WHERE alarm_id = ? AND trigger_at = ?;
 
+-- Claim a fire slot for one todo alarm. The EXISTS arm reads the action in
+-- the same statement as the insert, so a sync pull that rewrites the alarm
+-- to a sync-only action between the check and the claim cannot leave a
+-- fired state for an alarm the user disabled (issue #579).
+-- Keep the action list in lockstep with model.FireableAlarmAction.
 -- name: InsertTodoAlarmState :one
 INSERT INTO todo_alarm_state (alarm_id, todo_id, trigger_at, fired_at, acked_at, snoozed_to)
-VALUES (?, ?, ?, ?, ?, ?)
+SELECT sqlc.arg(alarm_id), sqlc.arg(todo_id), sqlc.arg(trigger_at),
+       sqlc.arg(fired_at), sqlc.arg(acked_at), sqlc.arg(snoozed_to)
+WHERE EXISTS (
+    SELECT 1 FROM todo_alarms
+    WHERE id = sqlc.arg(alarm_id) AND action IN ('AUDIO','DISPLAY','EMAIL')
+)
 RETURNING *;
 
 -- name: AcknowledgeTodoAlarmState :exec
 UPDATE todo_alarm_state SET acked_at = ? WHERE id = ?;
-
--- Retire the live state of one alarm. A sync pull can rewrite an alarm
--- to a sync-only action in place. The check loop never fires that alarm
--- again, so an open state row would stay pending forever.
--- name: AcknowledgeTodoAlarmStatesByAlarmID :exec
-UPDATE todo_alarm_state SET acked_at = ? WHERE alarm_id = ? AND acked_at IS NULL;
 
 -- name: SnoozeTodoAlarmState :exec
 UPDATE todo_alarm_state SET snoozed_to = ? WHERE id = ?;
@@ -29,13 +33,17 @@ SELECT * FROM todo_alarm_state
 WHERE todo_id = ? AND fired_at IS NOT NULL AND acked_at IS NULL AND snoozed_to IS NULL
 ORDER BY fired_at DESC;
 
+-- The same sync-only filter as ListPendingTodoAlarmStates, for the re-fire
+-- path. Keep the action list in lockstep with model.FireableAlarmAction.
 -- name: ListExpiredTodoSnoozed :many
-SELECT * FROM todo_alarm_state
-WHERE fired_at IS NOT NULL
-  AND acked_at IS NULL
-  AND snoozed_to IS NOT NULL
-  AND snoozed_to <= ?
-ORDER BY snoozed_to;
+SELECT s.* FROM todo_alarm_state s
+JOIN todo_alarms a ON a.id = s.alarm_id
+WHERE s.fired_at IS NOT NULL
+  AND s.acked_at IS NULL
+  AND s.snoozed_to IS NOT NULL
+  AND s.snoozed_to <= ?
+  AND a.action IN ('AUDIO','DISPLAY','EMAIL')
+ORDER BY s.snoozed_to;
 
 -- name: RefireTodoAlarmState :execrows
 UPDATE todo_alarm_state SET fired_at = ?, snoozed_to = NULL
@@ -47,10 +55,16 @@ DELETE FROM todo_alarm_state WHERE id = ?;
 -- name: CountTodoAlarmStates :one
 SELECT COUNT(*) FROM todo_alarm_state WHERE todo_id = ?;
 
+-- Hide the state of an alarm a sync pull rewrote to a sync-only action.
+-- The filter reads the current action, so the row comes back when a later
+-- pull restores a fireable action (issue #579).
+-- Keep the action list in lockstep with model.FireableAlarmAction.
 -- name: ListPendingTodoAlarmStates :many
-SELECT * FROM todo_alarm_state
-WHERE acked_at IS NULL AND (fired_at IS NOT NULL OR snoozed_to IS NOT NULL)
-ORDER BY trigger_at;
+SELECT s.* FROM todo_alarm_state s
+JOIN todo_alarms a ON a.id = s.alarm_id
+WHERE s.acked_at IS NULL AND (s.fired_at IS NOT NULL OR s.snoozed_to IS NOT NULL)
+  AND a.action IN ('AUDIO','DISPLAY','EMAIL')
+ORDER BY s.trigger_at;
 
 -- name: GetTodoAlarmStateByID :one
 SELECT * FROM todo_alarm_state WHERE id = ?;

@@ -2,6 +2,7 @@ package ical
 
 import (
 	"bytes"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -2442,6 +2443,8 @@ func TestRoundtrip_UnsupportedAlarmActionsSurvive(t *testing.T) {
 		"ACTION:X-Apple-Sound\r\n" +
 		"TRIGGER:-PT9M\r\n" +
 		"ATTACH:Chord\r\n" +
+		"REPEAT:5000\r\n" +
+		"DURATION:PT5M\r\n" +
 		"END:VALARM\r\n" +
 		"END:VEVENT\r\n" +
 		"END:VCALENDAR\r\n"
@@ -2465,6 +2468,10 @@ func TestRoundtrip_UnsupportedAlarmActionsSurvive(t *testing.T) {
 		"ACTION:X-Apple-Sound",
 		"TRIGGER;VALUE=DURATION:-PT9M",
 		"ATTACH:Chord",
+		// The clamp guards the check loop, which never expands a
+		// sync-only alarm. A clamp here would rewrite the count of
+		// another client on the next push.
+		"REPEAT:5000",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("export lacks %q; output:\n%s", want, out)
@@ -2487,5 +2494,52 @@ func TestRoundtrip_UnsupportedAlarmActionsSurvive(t *testing.T) {
 	gotActions := []string{reimported.Events[0].Alarms[0].Action, reimported.Events[0].Alarms[1].Action}
 	if gotActions[0] != "NONE" || gotActions[1] != "X-Apple-Sound" {
 		t.Errorf("reimported actions = %v, want [NONE X-Apple-Sound]", gotActions)
+	}
+	if got := reimported.Events[0].Alarms[1].Repeat; got != 5000 {
+		t.Errorf("reimported repeat = %d, want 5000 (a preserved alarm keeps its count)", got)
+	}
+}
+
+// The REPEAT clamp still applies to a fireable alarm. That alarm expands
+// into per-trigger state in the check loop, so an absurd count must not
+// reach the engine. This is the counterpart of the exemption that
+// TestRoundtrip_UnsupportedAlarmActionsSurvive pins.
+func TestRoundtrip_FireableAlarmRepeatStillClamps(t *testing.T) {
+	t.Parallel()
+	const ics = "BEGIN:VCALENDAR\r\n" +
+		"VERSION:2.0\r\n" +
+		"PRODID:-//test//EN\r\n" +
+		"BEGIN:VEVENT\r\n" +
+		"UID:clamped-alarm@example.com\r\n" +
+		"DTSTAMP:20260401T100000Z\r\n" +
+		"DTSTART:20260401T140000Z\r\n" +
+		"DTEND:20260401T150000Z\r\n" +
+		"SUMMARY:Event with an absurd repeat\r\n" +
+		"BEGIN:VALARM\r\n" +
+		"ACTION:DISPLAY\r\n" +
+		"TRIGGER:-PT9M\r\n" +
+		"REPEAT:5000\r\n" +
+		"DURATION:PT5M\r\n" +
+		"END:VALARM\r\n" +
+		"END:VEVENT\r\n" +
+		"END:VCALENDAR\r\n"
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(result.Events) != 1 || len(result.Events[0].Alarms) != 1 {
+		t.Fatalf("events/alarms = %d/%+v, want 1 event with 1 alarm", len(result.Events), result.Events)
+	}
+	if got := result.Events[0].Alarms[0].Repeat; got != model.MaxAlarmRepeat {
+		t.Errorf("imported repeat = %d, want the clamp %d", got, model.MaxAlarmRepeat)
+	}
+
+	data, err := ExportEvents(result.Events, "")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if want := "REPEAT:" + strconv.Itoa(model.MaxAlarmRepeat); !strings.Contains(string(data), want) {
+		t.Errorf("export lacks %q; output:\n%s", want, string(data))
 	}
 }
