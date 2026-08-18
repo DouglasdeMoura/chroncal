@@ -1516,29 +1516,13 @@ func matchAlarmByUID(existing []model.Alarm, matched []bool, a model.Alarm) (int
 // updateAlarmInPlace rewrites a UID-matched alarm's content on its stored
 // row. The row ID stays so alarm_state entries keyed to it survive.
 func updateAlarmInPlace(ctx context.Context, qtx *storage.Queries, eventID int64, a model.Alarm, ex model.Alarm) error {
-	if err := model.CheckStorableAlarmAction(a.Action); err != nil {
-		return fmt.Errorf("update alarm: %w", err)
-	}
-	// A rewrite to a sync-only action disables the alarm. Retire its
-	// live state in the same transaction: the check loop never fires
-	// this alarm again, so an open state row would stay pending in
-	// `alarm list` forever (issue #579). This write point is the only
-	// place a stored action can change, so the read paths need no
-	// retirement of their own.
-	if !model.FireableAlarmAction(a.Action) {
-		acked := time.Now().UTC().Format(time.RFC3339)
-		if err := qtx.AcknowledgeAlarmStatesByAlarmID(ctx, storage.AcknowledgeAlarmStatesByAlarmIDParams{
-			AckedAt: &acked,
-			AlarmID: ex.ID,
-		}); err != nil {
-			return fmt.Errorf("retire alarm state: %w", err)
-		}
-	}
-	// Same ACKNOWLEDGED policy as syncMatchedAlarm: a malformed incoming
-	// value must not clobber valid stored state.
-	ack := a.Acknowledged
-	if !model.ValidateAcknowledged(ack) {
-		ack = ex.Acknowledged
+	// A rewrite to a sync-only action disables the alarm, but this code
+	// leaves alarm_state alone. The pending and snooze queries filter on
+	// the current action, so the state of the alarm comes back when a
+	// later pull restores a fireable action (issue #579).
+	ack, err := model.PrepareAlarmUpdate(a, ex)
+	if err != nil {
+		return err
 	}
 	if err := qtx.UpdateAlarmContentByID(ctx, storage.UpdateAlarmContentByIDParams{
 		Action:        a.Action,

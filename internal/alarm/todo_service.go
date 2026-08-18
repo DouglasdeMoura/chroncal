@@ -298,7 +298,10 @@ func computeTodoTriggerTimeForInstance(inst recurrence.ExpandedTodo, alarm model
 	return model.ParseAbsoluteTime(alarm.TriggerValue, inst.Timezone)
 }
 
-// MarkTodoAlarmFired records that a todo alarm has fired
+// MarkTodoAlarmFired records that a todo alarm has fired. It returns
+// ErrNotFireable when the stored action is sync-only. The insert reads the
+// action in the same statement, so a sync pull that disables the alarm
+// after the check loop reads it cannot leave a fired state behind.
 func (s *TodoService) MarkTodoAlarmFired(ctx context.Context, alarmID, todoID int64, triggerAt time.Time) (int64, error) {
 	triggerKey := triggerAt.UTC().Format(time.RFC3339)
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -309,6 +312,9 @@ func (s *TodoService) MarkTodoAlarmFired(ctx context.Context, alarmID, todoID in
 		TriggerAt: triggerKey,
 		FiredAt:   &now,
 	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFireable
+	}
 	if err != nil {
 		return 0, fmt.Errorf("insert todo alarm state: %w", err)
 	}

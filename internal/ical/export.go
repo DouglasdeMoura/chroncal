@@ -822,8 +822,14 @@ func buildValarm(alarm model.Alarm) *ical.Component {
 		valarm.Props.Set(p)
 		p2 := &ical.Prop{Name: "REPEAT"}
 		// Clamp like import does. A pre-clamp DB row must not push a
-		// count the next pull would rewrite.
-		p2.Value = strconv.Itoa(min(alarm.Repeat, model.MaxAlarmRepeat))
+		// count the next pull would rewrite. A preserved sync-only alarm
+		// keeps its count, because it must round-trip verbatim and it
+		// never expands into trigger state (issue #579).
+		repeat := alarm.Repeat
+		if model.FireableAlarmAction(action) {
+			repeat = min(repeat, model.MaxAlarmRepeat)
+		}
+		p2.Value = strconv.Itoa(repeat)
 		valarm.Props.Set(p2)
 	}
 	// ACKNOWLEDGED (RFC 9074) — round-trip only.

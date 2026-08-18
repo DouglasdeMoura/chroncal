@@ -242,9 +242,10 @@ func TestCheck_SkipsSyncOnlyAction(t *testing.T) {
 }
 
 // A sync pull can rewrite a snoozed alarm to a sync-only action in place
-// (same row ID, matched by UID). The write point retires the snooze state
-// in the same transaction, so the expired snooze does not re-fire and
-// `alarm list` does not show it forever.
+// (same row ID, matched by UID). The snooze must not re-fire while the
+// action stays sync-only. The state row must survive, because a later pull
+// can restore a fireable action. A retirement that wrote acked_at would
+// consume the snooze of the user for good (issue #579).
 func TestCheck_SnoozedAlarmRewrittenSyncOnly_DoesNotRefire(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	evtSvc := event.NewService(db, q)
@@ -283,8 +284,7 @@ func TestCheck_SnoozedAlarmRewrittenSyncOnly_DoesNotRefire(t *testing.T) {
 	}
 
 	// Rewrite the alarm through ReplaceAlarms with the same UID. The UID
-	// match routes to updateAlarmInPlace: the row ID survives, and the
-	// write point retires the snooze state in the same transaction.
+	// match routes to updateAlarmInPlace, so the row ID survives.
 	if err := evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
 		{Action: "NONE", TriggerValue: "-PT15M", UID: "snooze-rewrite@test"},
 	}); err != nil {
@@ -303,16 +303,34 @@ func TestCheck_SnoozedAlarmRewrittenSyncOnly_DoesNotRefire(t *testing.T) {
 		`SELECT acked_at FROM alarm_state WHERE id = ?`, stateID).Scan(&ackedAt); err != nil {
 		t.Fatal(err)
 	}
-	if !ackedAt.Valid || ackedAt.String == "" {
-		t.Errorf("state row not acknowledged; the write point must retire the dead snooze")
+	if ackedAt.Valid && ackedAt.String != "" {
+		t.Errorf("state row acknowledged; a sync-only rewrite must not consume the snooze")
+	}
+
+	// A later pull restores the fireable action. The snooze must come back,
+	// because nothing consumed it.
+	if err := evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT15M", UID: "snooze-rewrite@test"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	due, _, err = svc.Check(ctx, time.Now())
+	if err != nil {
+		t.Fatalf("check after restore: %v", err)
+	}
+	if len(due) != 1 {
+		t.Fatalf("due after restore = %d, want 1 (the restored alarm must fire again)", len(due))
+	}
+	if due[0].StateID != stateID {
+		t.Errorf("state id = %d, want the original %d", due[0].StateID, stateID)
 	}
 }
 
 // A fired-but-undismissed alarm can also be rewritten in place to a
-// sync-only action before the user dismisses it. The write point retires
-// that state row, so `alarm list` does not show a pending entry that can
-// never re-fire.
-func TestListPending_RetiresRewrittenSyncOnlyState(t *testing.T) {
+// sync-only action before the user dismisses it. `alarm list` must hide
+// that entry, because the alarm cannot fire. The row must survive, so the
+// entry comes back when a later pull restores a fireable action.
+func TestListPending_HidesRewrittenSyncOnlyState(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	evtSvc := event.NewService(db, q)
 	svc := NewService(db, q, evtSvc, nil)
@@ -347,7 +365,7 @@ func TestListPending_RetiresRewrittenSyncOnlyState(t *testing.T) {
 	}
 
 	// Rewrite the alarm through ReplaceAlarms with the same UID. The UID
-	// match routes to updateAlarmInPlace, which retires the state row.
+	// match routes to updateAlarmInPlace, so the row ID survives.
 	if err := evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
 		{Action: "NONE", TriggerValue: "-PT15M", UID: "pending-rewrite@test"},
 	}); err != nil {
@@ -366,8 +384,23 @@ func TestListPending_RetiresRewrittenSyncOnlyState(t *testing.T) {
 		`SELECT acked_at FROM alarm_state WHERE id = ?`, stateID).Scan(&ackedAt); err != nil {
 		t.Fatal(err)
 	}
-	if !ackedAt.Valid || ackedAt.String == "" {
-		t.Errorf("state row not acknowledged; the dead pending entry must be retired")
+	if ackedAt.Valid && ackedAt.String != "" {
+		t.Errorf("state row acknowledged; the hide must not dismiss the alarm of the user")
+	}
+
+	// A later pull restores the fireable action. The pending entry must
+	// come back, because nothing dismissed it.
+	if err := evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT15M", UID: "pending-rewrite@test"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pending, err = svc.ListPending(ctx)
+	if err != nil {
+		t.Fatalf("list pending after restore: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("pending after restore = %d, want 1 (the entry must come back)", len(pending))
 	}
 }
 

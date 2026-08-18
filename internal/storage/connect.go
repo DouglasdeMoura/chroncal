@@ -234,8 +234,12 @@ func normalizeAlarmRepeatPairs(conn *sql.DB) error {
 		}
 		var fixes []fix
 		err := func() error {
+			// Read the action so the heal can skip a preserved sync-only
+			// alarm. The repeat and the duration of such an alarm are
+			// round-trip data, not fire-path data, so a repair here would
+			// rewrite the VALARM of another client (issue #579).
 			rows, err := conn.QueryContext(ctx,
-				`SELECT id, repeat, COALESCE(duration, '') FROM `+table+
+				`SELECT id, action, repeat, COALESCE(duration, '') FROM `+table+
 					` WHERE repeat > 0 OR COALESCE(duration, '') != ''`)
 			if err != nil {
 				return err
@@ -244,8 +248,11 @@ func normalizeAlarmRepeatPairs(conn *sql.DB) error {
 			for rows.Next() {
 				var id int64
 				var a model.Alarm
-				if err := rows.Scan(&id, &a.Repeat, &a.Duration); err != nil {
+				if err := rows.Scan(&id, &a.Action, &a.Repeat, &a.Duration); err != nil {
 					return err
+				}
+				if !model.FireableAlarmAction(a.Action) {
+					continue
 				}
 				healed := a
 				healed.Repeat = min(healed.Repeat, model.MaxAlarmRepeat)

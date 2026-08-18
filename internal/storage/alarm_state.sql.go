@@ -23,26 +23,14 @@ func (q *Queries) AcknowledgeAlarmState(ctx context.Context, arg AcknowledgeAlar
 	return err
 }
 
-const acknowledgeAlarmStatesByAlarmID = `-- name: AcknowledgeAlarmStatesByAlarmID :exec
-UPDATE alarm_state SET acked_at = ? WHERE alarm_id = ? AND acked_at IS NULL
-`
-
-type AcknowledgeAlarmStatesByAlarmIDParams struct {
-	AckedAt *string
-	AlarmID int64
-}
-
-// Retire the live state of one alarm. A sync pull can rewrite an alarm
-// to a sync-only action in place. The check loop never fires that alarm
-// again, so an open state row would stay pending forever.
-func (q *Queries) AcknowledgeAlarmStatesByAlarmID(ctx context.Context, arg AcknowledgeAlarmStatesByAlarmIDParams) error {
-	_, err := q.db.ExecContext(ctx, acknowledgeAlarmStatesByAlarmID, arg.AckedAt, arg.AlarmID)
-	return err
-}
-
 const createAlarmState = `-- name: CreateAlarmState :one
 INSERT INTO alarm_state (alarm_id, event_id, trigger_at, fired_at)
-VALUES (?, ?, ?, ?) RETURNING id, alarm_id, event_id, trigger_at, fired_at, acked_at, snoozed_to
+SELECT ?1, ?2, ?3, ?4
+WHERE EXISTS (
+    SELECT 1 FROM event_alarms
+    WHERE id = ?1 AND action IN ('AUDIO','DISPLAY','EMAIL')
+)
+RETURNING id, alarm_id, event_id, trigger_at, fired_at, acked_at, snoozed_to
 `
 
 type CreateAlarmStateParams struct {
@@ -52,6 +40,12 @@ type CreateAlarmStateParams struct {
 	FiredAt   *string
 }
 
+// Claim a fire slot for one alarm. The EXISTS arm reads the action in the
+// same statement as the insert, so a sync pull that rewrites the alarm to
+// a sync-only action between the check and the claim cannot leave a fired
+// state for an alarm the user disabled (issue #579). Zero rows means the
+// claim failed, and the caller reports sql.ErrNoRows.
+// Keep the action list in lockstep with model.FireableAlarmAction.
 func (q *Queries) CreateAlarmState(ctx context.Context, arg CreateAlarmStateParams) (AlarmState, error) {
 	row := q.db.QueryRowContext(ctx, createAlarmState,
 		arg.AlarmID,
@@ -160,14 +154,18 @@ func (q *Queries) ListAlarmStatesByEventID(ctx context.Context, eventID int64) (
 }
 
 const listExpiredSnoozedAlarmStates = `-- name: ListExpiredSnoozedAlarmStates :many
-SELECT id, alarm_id, event_id, trigger_at, fired_at, acked_at, snoozed_to FROM alarm_state
-WHERE fired_at IS NOT NULL
-  AND acked_at IS NULL
-  AND snoozed_to IS NOT NULL
-  AND snoozed_to <= ?
-ORDER BY snoozed_to
+SELECT s.id, s.alarm_id, s.event_id, s.trigger_at, s.fired_at, s.acked_at, s.snoozed_to FROM alarm_state s
+JOIN event_alarms a ON a.id = s.alarm_id
+WHERE s.fired_at IS NOT NULL
+  AND s.acked_at IS NULL
+  AND s.snoozed_to IS NOT NULL
+  AND s.snoozed_to <= ?
+  AND a.action IN ('AUDIO','DISPLAY','EMAIL')
+ORDER BY s.snoozed_to
 `
 
+// The same sync-only filter as ListPendingAlarmStates, for the re-fire path.
+// Keep the action list in lockstep with model.FireableAlarmAction.
 func (q *Queries) ListExpiredSnoozedAlarmStates(ctx context.Context, snoozedTo *string) ([]AlarmState, error) {
 	rows, err := q.db.QueryContext(ctx, listExpiredSnoozedAlarmStates, snoozedTo)
 	if err != nil {
@@ -200,9 +198,18 @@ func (q *Queries) ListExpiredSnoozedAlarmStates(ctx context.Context, snoozedTo *
 }
 
 const listPendingAlarmStates = `-- name: ListPendingAlarmStates :many
-SELECT id, alarm_id, event_id, trigger_at, fired_at, acked_at, snoozed_to FROM alarm_state WHERE acked_at IS NULL AND fired_at IS NOT NULL ORDER BY trigger_at
+SELECT s.id, s.alarm_id, s.event_id, s.trigger_at, s.fired_at, s.acked_at, s.snoozed_to FROM alarm_state s
+JOIN event_alarms a ON a.id = s.alarm_id
+WHERE s.acked_at IS NULL AND s.fired_at IS NOT NULL
+  AND a.action IN ('AUDIO','DISPLAY','EMAIL')
+ORDER BY s.trigger_at
 `
 
+// Hide the state of an alarm a sync pull rewrote to a sync-only action.
+// The filter reads the current action, so the row comes back when a later
+// pull restores a fireable action (issue #579). A retirement that wrote
+// acked_at instead would consume the snooze of the user for good.
+// Keep the action list in lockstep with model.FireableAlarmAction.
 func (q *Queries) ListPendingAlarmStates(ctx context.Context) ([]AlarmState, error) {
 	rows, err := q.db.QueryContext(ctx, listPendingAlarmStates)
 	if err != nil {

@@ -261,9 +261,10 @@ func PrepareAlarmUpdate(a, ex Alarm) (string, error) {
 	return ex.Acknowledged, nil
 }
 
-// ValidAlarmRelated returns true if related is an accepted RELATED
-// value.
-
+// ValidAlarmRelated returns true if related is a value the alarm tables
+// accept for the TRIGGER anchor. The set mirrors the related CHECK
+// constraints in db/migrations/003 and 006, with the same lockstep rule
+// as StorableAlarmAction.
 func ValidAlarmRelated(related string) bool {
 	return slices.Contains(alarmRelatedValues, related)
 }

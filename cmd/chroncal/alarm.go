@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,7 +17,6 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/alarm"
 	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/event"
-	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/notify"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 )
@@ -111,12 +111,6 @@ type fireResult struct {
 // snoozed_to first affects a row and wins the claim. The loser sees claimed
 // == false. That is likewise a non-fired, non-error result.
 func markAndFireEventAlarm(ctx context.Context, a *app.App, da alarm.DueAlarm, policy alarmExecutionPolicy) fireResult {
-	// Refuse a preserved sync-only action (issue #579) before the claim.
-	// A claim would consume the state and record a false "fired" entry
-	// for a notification that never appears.
-	if !model.FireableAlarmAction(da.Alarm.Action) {
-		return fireResult{}
-	}
 	stateID := da.StateID
 	var markErr error
 	op := "mark-fired"
@@ -136,6 +130,9 @@ func markAndFireEventAlarm(ctx context.Context, a *app.App, da alarm.DueAlarm, p
 		if isAlarmAlreadyClaimed(markErr) {
 			return fireResult{} // another checker already fired this alarm
 		}
+		if errors.Is(markErr, alarm.ErrNotFireable) {
+			return fireResult{} // a sync pull disabled this alarm (issue #579)
+		}
 		fmt.Fprintf(os.Stderr, "chroncal: %s error: event=%q: %v\n", op, safeText(da.Event.Title), markErr)
 		return fireResult{StateID: stateID, MarkErr: markErr}
 	}
@@ -150,11 +147,6 @@ func markAndFireEventAlarm(ctx context.Context, a *app.App, da alarm.DueAlarm, p
 
 // markAndFireTodoAlarm is the todo counterpart of markAndFireEventAlarm.
 func markAndFireTodoAlarm(ctx context.Context, a *app.App, tda alarm.TodoDueAlarm, policy alarmExecutionPolicy) fireResult {
-	// Same sync-only refusal as markAndFireEventAlarm; see the comment
-	// there.
-	if !model.FireableAlarmAction(tda.Alarm.Action) {
-		return fireResult{}
-	}
 	stateID := tda.StateID
 	var markErr error
 	op := "mark-fired"
@@ -173,6 +165,9 @@ func markAndFireTodoAlarm(ctx context.Context, a *app.App, tda alarm.TodoDueAlar
 	if markErr != nil {
 		if isAlarmAlreadyClaimed(markErr) {
 			return fireResult{} // another checker already fired this alarm
+		}
+		if errors.Is(markErr, alarm.ErrNotFireable) {
+			return fireResult{} // a sync pull disabled this alarm (issue #579)
 		}
 		fmt.Fprintf(os.Stderr, "chroncal: %s error: todo=%q: %v\n", op, safeText(tda.Todo.Summary), markErr)
 		return fireResult{StateID: stateID, MarkErr: markErr}

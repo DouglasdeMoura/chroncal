@@ -2918,6 +2918,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return eventEditLoadedMsg{err: err}
 			}
 			fresh.Attendees = attendees
+			// Load the alarms too. A save writes the form list over the
+			// stored rows, so an empty list deletes every alarm of the
+			// event, including a preserved sync-only one (issue #579).
+			alarms, err := m.app.Events.ListAlarms(ctx, ev.ID)
+			if err != nil {
+				return eventEditLoadedMsg{err: err}
+			}
+			fresh.Alarms = alarms
 			// For a recurring instance, overwrite the master's DTSTART with
 			// the clicked occurrence. The form's date/time fields then
 			// reflect what the user actually clicked, not the original
