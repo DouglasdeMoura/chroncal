@@ -1895,15 +1895,16 @@ func validateAlarmTrigger(trigger string) error {
 	if trigger == "" {
 		return errInvalidInputf("alarm trigger must not be empty")
 	}
-	// Try RFC 3339 absolute datetime first.
-	if _, err := time.Parse(time.RFC3339, trigger); err == nil {
+	// model.ParseableAlarmTrigger is the one accepted set: the engine,
+	// the exporter, and this flag agree, so the compact iCal layouts
+	// pass here too. The duration error carries the reason: a
+	// well-formed duration can fail the range check, and a generic
+	// message would misdescribe that rejection.
+	if model.ParseableAlarmTrigger(trigger) {
 		return nil
 	}
-	// Strict RFC 5545 duration validation. Surface the parse error: a
-	// well-formed duration can now fail the range check, and "must be
-	// an ISO 8601 duration" alone would misdescribe that rejection.
-	if err := duration.Validate(trigger); err != nil {
-		return errInvalidInputf("invalid alarm trigger %q: %v (use an ISO 8601 duration such as -PT15M, or an RFC 3339 datetime)", trigger, err)
+	if trigger[0] == '-' || trigger[0] == '+' || trigger[0] == 'P' {
+		return errInvalidInputf("invalid alarm trigger: %v (use an ISO 8601 duration such as -PT15M, or an RFC 3339 datetime)", duration.Validate(trigger))
 	}
-	return nil
+	return errInvalidInputf("invalid alarm trigger %q (use an ISO 8601 duration such as -PT15M, or an RFC 3339 datetime)", trigger)
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
+	"github.com/douglasdemoura/chroncal/internal/duration"
 	"github.com/douglasdemoura/chroncal/internal/hydrate"
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/storage"
@@ -188,6 +189,12 @@ func completedAtFor(status, completedAt string) string {
 func validateTiming(dueDate, startDate, dur string) error {
 	if dur == "" {
 		return nil
+	}
+	// The span rule closes every CLI and TUI write path at once (issue
+	// #582 round 3). The import path drops a bad value with a warning
+	// instead, so sync never reaches this error.
+	if err := duration.ValidateSpan(dur); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidTiming, err)
 	}
 	if startDate == "" {
 		return fmt.Errorf("%w: duration requires start date", ErrInvalidTiming)

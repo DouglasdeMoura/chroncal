@@ -201,15 +201,17 @@ func todoFromVTodo(comp *ical.Component) (todo.Todo, []string, error) {
 		todoWarnings = append(todoWarnings, w)
 	}
 
-	// Validate like the VEVENT path. A malformed value would persist,
-	// re-export verbatim, and poison a RELATED=END alarm anchor.
+	// Validate like the VEVENT path, with the span rule: a DURATION
+	// must be positive (RFC 5545 §3.8.2.5). A malformed or negative
+	// value would persist, re-export verbatim, and poison a
+	// RELATED=END alarm anchor.
 	var durationValue string
 	if prop := props.Get(ical.PropDuration); prop != nil {
-		if duration.Validate(prop.Value) == nil {
+		if duration.ValidateSpan(prop.Value) == nil {
 			durationValue = prop.Value
 		} else {
 			todoWarnings = append(todoWarnings, fmt.Sprintf(
-				"todo %q: invalid DURATION %q; dropped", uid, prop.Value))
+				"todo %q: unusable DURATION %q; dropped", uid, prop.Value))
 		}
 	}
 
@@ -431,17 +433,29 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 		}
 	}
 	if endTime.IsZero() {
-		if prop := ve.Props.Get(ical.PropDuration); prop != nil && duration.Validate(prop.Value) == nil {
-			durationValue = prop.Value
-			endTime = addDuration(startTime, prop.Value)
-			explicitEnd = true
+		prop := ve.Props.Get(ical.PropDuration)
+		spanOK := false
+		if prop != nil && duration.ValidateSpan(prop.Value) == nil {
+			// The end must stay a 4-digit year. The RFC 3339 storage
+			// format cannot represent year 10000, and a 5-digit-year
+			// string misorders the lexicographic range queries.
+			if end := addDuration(startTime, prop.Value); end.Year() <= 9999 {
+				durationValue = prop.Value
+				endTime = end
+				explicitEnd = true
+				spanOK = true
+			}
+		}
+		if spanOK {
+			// The DURATION above is the span.
 		} else if prop != nil {
-			// Malformed DURATION (go-ical stores the raw value with no
-			// validation). Fall back to a 1h span, warn, and drop the bad
-			// value so it does not persist and does not re-export.
+			// Malformed, negative, zero, or unstorable DURATION (go-ical
+			// stores the raw value with no validation). Fall back to a 1h
+			// span, warn, and drop the bad value so it does not persist
+			// and does not re-export.
 			endTime = startTime.Add(time.Hour)
 			dtendWarnings = append(dtendWarnings, fmt.Sprintf(
-				"event %q: invalid DURATION %q; dropped, the event gets a 1h span", uid, prop.Value))
+				"event %q: unusable DURATION %q; dropped, the event gets a 1h span", uid, prop.Value))
 		} else if badDTEND {
 			// DTEND was present but unusable and there is no DURATION to fall
 			// back on. A timed event gets the same 1h default as a malformed

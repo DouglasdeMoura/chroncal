@@ -254,10 +254,10 @@ func TestOpen_ForeignKeys(t *testing.T) {
 	}
 }
 
-// healAlarmRows must heal rows written before the parsers validated
-// REPEAT and DURATION: clamp the count, clear a bad interval, clear an
-// unpaired value, and leave normal rows alone (issue #580).
-func TestHealAlarmRows_NormalizesRepeatPairs(t *testing.T) {
+// normalizeAlarmRepeatPairs must heal rows written before the parsers
+// validated REPEAT and DURATION: clamp the count, clear a bad interval,
+// clear an unpaired value, and leave normal rows alone (issue #580).
+func TestNormalizeAlarmRepeatPairs(t *testing.T) {
 	db, q, err := Open(":memory:")
 	if err != nil {
 		t.Fatalf("open db: %v", err)
@@ -302,8 +302,8 @@ func TestHealAlarmRows_NormalizesRepeatPairs(t *testing.T) {
 		ids[i], _ = res.LastInsertId()
 	}
 
-	if err := healAlarmRows(db); err != nil {
-		t.Fatalf("healAlarmRows: %v", err)
+	if err := normalizeAlarmRepeatPairs(db); err != nil {
+		t.Fatalf("normalizeAlarmRepeatPairs: %v", err)
 	}
 
 	for i, r := range rows {
@@ -321,11 +321,12 @@ func TestHealAlarmRows_NormalizesRepeatPairs(t *testing.T) {
 	}
 }
 
-// healAlarmRows must delete an alarm row whose trigger_value fails
-// model.ParseableAlarmTrigger: an out-of-range duration, a malformed
-// duration, a bare number, an empty value, or an invalid absolute time.
-// It must keep every readable trigger (issues #581 and #582 round 2).
-func TestHealAlarmRows_PurgesDeadTriggers(t *testing.T) {
+// normalizeAlarmRepeatPairs must not delete an alarm row, whatever its
+// trigger_value holds. An unreadable trigger is inert: the fire path
+// skips it and export omits its VALARM. A delete would cascade away the
+// alarm state and destroy an RFC-valid trigger from another client.
+// This test pins the deliberate keep decision (issue #582 round 3).
+func TestNormalizeAlarmRepeatPairs_KeepsUnreadableTriggers(t *testing.T) {
 	db, q, err := Open(":memory:")
 	if err != nil {
 		t.Fatalf("open db: %v", err)
@@ -345,41 +346,37 @@ func TestHealAlarmRows_PurgesDeadTriggers(t *testing.T) {
 	}
 	eventID, _ := res.LastInsertId()
 
-	rows := []struct {
-		trigger  string
-		survives bool
-	}{
-		{"PT5124096H", false},       // over the ceiling; Validate accepted it before the range check
-		{"-PT15M", true},            // valid duration
-		{"20260401T100000Z", true},  // absolute compact UTC trigger
-		{"20260401T100000", true},   // absolute compact floating trigger
-		{"P", false},                // malformed duration shape
-		{"15M", false},              // legacy raw value; export omits it, the engine cannot read it
-		{"", false},                 // empty; the alarm could never fire
-		{"20261301T250000Z", false}, // absolute shape that fails every layout
+	triggers := []string{
+		"PT5124096H",       // over the ceiling; Validate accepted it before the range check
+		"-PT15M",           // valid duration
+		"20260401T100000Z", // absolute compact UTC trigger
+		"P",                // malformed duration shape
+		"15M",              // legacy raw value
+		"",                 // empty
+		"20261301T250000Z", // absolute shape that fails every layout
 	}
-	ids := make([]int64, len(rows))
-	for i, r := range rows {
+	ids := make([]int64, len(triggers))
+	for i, trigger := range triggers {
 		res, err := db.Exec(
 			`INSERT INTO event_alarms (event_id, action, trigger_value) VALUES (?, 'DISPLAY', ?)`,
-			eventID, r.trigger)
+			eventID, trigger)
 		if err != nil {
 			t.Fatalf("insert alarm %d: %v", i, err)
 		}
 		ids[i], _ = res.LastInsertId()
 	}
 
-	if err := healAlarmRows(db); err != nil {
-		t.Fatalf("healAlarmRows: %v", err)
+	if err := normalizeAlarmRepeatPairs(db); err != nil {
+		t.Fatalf("normalizeAlarmRepeatPairs: %v", err)
 	}
 
-	for i, r := range rows {
+	for i, trigger := range triggers {
 		var n int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM event_alarms WHERE id = ?`, ids[i]).Scan(&n); err != nil {
 			t.Fatalf("count alarm %d: %v", i, err)
 		}
-		if got, want := n == 1, r.survives; got != want {
-			t.Errorf("row %d (%q): survives = %v, want %v", i, r.trigger, got, want)
+		if n != 1 {
+			t.Errorf("row %d (%q): deleted; every row must survive", i, trigger)
 		}
 	}
 }
