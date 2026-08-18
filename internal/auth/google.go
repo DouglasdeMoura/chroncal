@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -251,7 +252,7 @@ func GoogleOAuthFlow(ctx context.Context, clientID, clientSecret string) (*Googl
 	if err != nil {
 		return nil, err
 	}
-	fmt.Print(flowBanner(flow.AuthURL, flow.BrowserOpened))
+	fmt.Fprint(os.Stderr, flowBanner(flow.AuthURL, flow.BrowserOpened))
 	return flow.Wait(ctx)
 }
 

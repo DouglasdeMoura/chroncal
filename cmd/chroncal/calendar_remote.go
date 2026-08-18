@@ -161,9 +161,9 @@ func readBasicPassword() (string, error) {
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		return "", fmt.Errorf("a password is required: set CHRONCAL_PASSWORD or run interactively")
 	}
-	fmt.Print("Password: ")
+	fmt.Fprint(os.Stderr, "Password: ")
 	passwordBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Println()
+	fmt.Fprintln(os.Stderr)
 	if err != nil {
 		return "", fmt.Errorf("read password: %w", err)
 	}
@@ -187,9 +187,9 @@ func readBearerToken() (string, error) {
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		return "", fmt.Errorf("a bearer token is required: set CHRONCAL_BEARER_TOKEN or run interactively")
 	}
-	fmt.Print("Bearer token: ")
+	fmt.Fprint(os.Stderr, "Bearer token: ")
 	tokenBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Println()
+	fmt.Fprintln(os.Stderr)
 	if err != nil {
 		return "", fmt.Errorf("read bearer token: %w", err)
 	}
@@ -214,9 +214,9 @@ func readGoogleClientSecret() (string, error) {
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		return "", fmt.Errorf("a Google OAuth client secret is required: set GOOGLE_CLIENT_SECRET or run interactively")
 	}
-	fmt.Print("Google OAuth client secret: ")
+	fmt.Fprint(os.Stderr, "Google OAuth client secret: ")
 	secretBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Println()
+	fmt.Fprintln(os.Stderr)
 	if err != nil {
 		return "", fmt.Errorf("read client secret: %w", err)
 	}

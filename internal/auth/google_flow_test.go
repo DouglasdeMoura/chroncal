@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -183,6 +184,31 @@ func TestPendingOAuthFlow_CancelUnblocksWait(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Wait did not unblock on cancel")
+	}
+}
+
+func TestGoogleOAuthFlow_DoesNotWriteBannerToStdout(t *testing.T) {
+	stubBrowser(t, errors.New("no browser"))
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	old := os.Stdout
+	os.Stdout = w
+	t.Cleanup(func() {
+		os.Stdout = old
+		_ = w.Close()
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	_, _ = GoogleOAuthFlow(ctx, "cid", "secret")
+	_ = w.Close()
+	out, _ := io.ReadAll(r)
+	got := string(out)
+	if strings.Contains(got, "Open this URL") || strings.Contains(got, "Browser opened") {
+		t.Fatalf("OAuth banner leaked onto stdout (breaks --output json): %q", got)
 	}
 }
 
