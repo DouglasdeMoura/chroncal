@@ -147,7 +147,7 @@ func alarmSummary(alarms []model.Alarm) string {
 // The bare trigger text would read as an armed reminder, so append the
 // action label to break that misreading.
 func formatAlarmWithAction(a model.Alarm) string {
-	if a.Action == "" || model.FireableAlarmAction(a.Action) {
+	if model.FireableAlarmAction(a.Action) {
 		return formatAlarm(a)
 	}
 	return formatAlarm(a) + " (" + actionDisplayLabel(a.Action) + ", never fires)"
@@ -444,8 +444,9 @@ func actionDisplayLabel(action string) string {
 // non-canonical value (for example "display") never fires, so the form
 // must not rewrite it either.
 func alarmEditable(a model.Alarm) bool {
-	// An empty action means the DISPLAY default, so it stays editable.
-	if a.Action != "" && !model.FireableAlarmAction(a.Action) {
+	// An empty action cannot occur here: the DB CHECK forbids it, the
+	// parser defaults it, and the dropdown always sets one.
+	if !model.FireableAlarmAction(a.Action) {
 		return false
 	}
 	_, _, _, ok := parseOffsetTrigger(a.TriggerValue)

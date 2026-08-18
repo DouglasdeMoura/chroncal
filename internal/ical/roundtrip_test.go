@@ -2439,7 +2439,7 @@ func TestRoundtrip_UnsupportedAlarmActionsSurvive(t *testing.T) {
 		"TRIGGER;VALUE=DATE-TIME:19760401T005545Z\r\n" +
 		"END:VALARM\r\n" +
 		"BEGIN:VALARM\r\n" +
-		"ACTION:X-APPLE-SOUND\r\n" +
+		"ACTION:X-Apple-Sound\r\n" +
 		"TRIGGER:-PT9M\r\n" +
 		"ATTACH:Chord\r\n" +
 		"END:VALARM\r\n" +
@@ -2462,7 +2462,7 @@ func TestRoundtrip_UnsupportedAlarmActionsSurvive(t *testing.T) {
 	for _, want := range []string{
 		"ACTION:NONE",
 		"TRIGGER;VALUE=DATE-TIME:19760401T005545Z",
-		"ACTION:X-APPLE-SOUND",
+		"ACTION:X-Apple-Sound",
 		"TRIGGER;VALUE=DURATION:-PT9M",
 		"ATTACH:Chord",
 	} {
@@ -2481,8 +2481,11 @@ func TestRoundtrip_UnsupportedAlarmActionsSurvive(t *testing.T) {
 		t.Fatalf("reimported events/alarms = %d/%+v, want 1 event with 2 alarms",
 			len(reimported.Events), reimported.Events)
 	}
+	// The mixed-case x-name action must keep its original case: an
+	// uppercased copy would rewrite the VALARM of the other client on
+	// the next push.
 	gotActions := []string{reimported.Events[0].Alarms[0].Action, reimported.Events[0].Alarms[1].Action}
-	if gotActions[0] != "NONE" || gotActions[1] != "X-APPLE-SOUND" {
-		t.Errorf("reimported actions = %v, want [NONE X-APPLE-SOUND]", gotActions)
+	if gotActions[0] != "NONE" || gotActions[1] != "X-Apple-Sound" {
+		t.Errorf("reimported actions = %v, want [NONE X-Apple-Sound]", gotActions)
 	}
 }

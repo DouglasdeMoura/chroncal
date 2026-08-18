@@ -798,19 +798,32 @@ func (s *Service) ListOverridesByUID(ctx context.Context, uid string) ([]Todo, e
 // Alarm CRUD
 
 func (s *Service) ListAlarms(ctx context.Context, todoID int64) ([]model.Alarm, error) {
-	return s.listAlarms(ctx, todoID, true)
+	return s.listAlarms(ctx, todoID, true, false)
 }
 
 // ListAlarmsLean returns a todo's alarms with attendees (needed to fire
 // EMAIL alarms) but without X-properties, which are round-trip-only and
-// never read at fire time. The alarm check loop calls this per todo every
-// tick, so it skips the per-todo x_properties query that export/sync need.
+// never read at fire time.
 func (s *Service) ListAlarmsLean(ctx context.Context, todoID int64) ([]model.Alarm, error) {
-	return s.listAlarms(ctx, todoID, false)
+	return s.listAlarms(ctx, todoID, false, false)
 }
 
-func (s *Service) listAlarms(ctx context.Context, todoID int64, withXProps bool) ([]model.Alarm, error) {
-	rows, err := s.q.ListTodoAlarmsByTodoID(ctx, todoID)
+// ListFireableAlarmsLean is ListAlarmsLean restricted to fireable actions.
+// The query excludes preserved sync-only actions (issue #579): the alarm
+// check loop calls this per todo every tick, and a sync-only alarm must
+// not reach it.
+func (s *Service) ListFireableAlarmsLean(ctx context.Context, todoID int64) ([]model.Alarm, error) {
+	return s.listAlarms(ctx, todoID, false, true)
+}
+
+func (s *Service) listAlarms(ctx context.Context, todoID int64, withXProps, fireableOnly bool) ([]model.Alarm, error) {
+	var rows []storage.TodoAlarm
+	var err error
+	if fireableOnly {
+		rows, err = s.q.ListFireableTodoAlarmsByTodoID(ctx, todoID)
+	} else {
+		rows, err = s.q.ListTodoAlarmsByTodoID(ctx, todoID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1035,11 +1048,8 @@ func syncMatchedTodoAlarm(ctx context.Context, qtx *storage.Queries, a model.Ala
 // updateTodoAlarmInPlace rewrites a UID-matched alarm's content on its
 // stored row. The row ID stays so todo_alarm_state entries survive.
 func updateTodoAlarmInPlace(ctx context.Context, qtx *storage.Queries, todoID int64, a model.Alarm, ex model.Alarm) error {
-	// Reject an unstorable action in Go, with a named error. The raw
-	// CHECK constraint would roll back the whole resource transaction
-	// during sync (issue #575).
-	if !model.StorableAlarmAction(a.Action) {
-		return fmt.Errorf("update alarm: action %q is not storable", a.Action)
+	if err := model.CheckStorableAlarmAction(a.Action); err != nil {
+		return fmt.Errorf("update alarm: %w", err)
 	}
 	// Same ACKNOWLEDGED policy as syncMatchedTodoAlarm. A malformed
 	// value that arrives must not clobber valid stored state.
@@ -1097,11 +1107,8 @@ func isUniqueUIDViolation(err error) bool {
 // UID collision (for example a server that duplicates a todo with its VALARM
 // UIDs), mint a fresh local UID. Do not fail the sync forever.
 func createNewTodoAlarm(ctx context.Context, qtx *storage.Queries, todoID int64, a model.Alarm) error {
-	// Reject an unstorable action in Go, with a named error. The raw
-	// CHECK constraint would roll back the whole resource transaction
-	// during sync (issue #575).
-	if !model.StorableAlarmAction(a.Action) {
-		return fmt.Errorf("create alarm: action %q is not storable", a.Action)
+	if err := model.CheckStorableAlarmAction(a.Action); err != nil {
+		return fmt.Errorf("create alarm: %w", err)
 	}
 	uid := a.UID
 	if uid == "" {

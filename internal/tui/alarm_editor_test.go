@@ -59,10 +59,12 @@ func TestParseOffsetTrigger_Unsupported(t *testing.T) {
 func TestAlarmSummary(t *testing.T) {
 	assert.Equal(t, "None", alarmSummary(nil))
 	assert.Equal(t, "15 min. before", alarmSummary([]model.Alarm{
-		{TriggerValue: "-PT15M"},
+		{Action: "DISPLAY", TriggerValue: "-PT15M"},
 	}))
 	assert.Equal(t, "3 alarms", alarmSummary([]model.Alarm{
-		{TriggerValue: "-PT15M"}, {TriggerValue: "-P1D"}, {TriggerValue: "-PT1H"},
+		{Action: "DISPLAY", TriggerValue: "-PT15M"},
+		{Action: "DISPLAY", TriggerValue: "-P1D"},
+		{Action: "DISPLAY", TriggerValue: "-PT1H"},
 	}))
 }
 

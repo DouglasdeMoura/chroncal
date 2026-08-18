@@ -24,6 +24,20 @@ func (m *mockTodoAlarmLister) ListAlarmsLean(ctx context.Context, todoID int64) 
 	return m.ListAlarms(ctx, todoID)
 }
 
+func (m *mockTodoAlarmLister) ListFireableAlarmsLean(ctx context.Context, todoID int64) ([]model.Alarm, error) {
+	alarms, err := m.ListAlarmsLean(ctx, todoID)
+	if err != nil {
+		return nil, err
+	}
+	kept := make([]model.Alarm, 0, len(alarms))
+	for _, a := range alarms {
+		if model.FireableAlarmAction(a.Action) {
+			kept = append(kept, a)
+		}
+	}
+	return kept, nil
+}
+
 // TestComputeTodoTrigger_RelatedEnd_DtStartPlusDue guards issue #367: a VTODO
 // with DTSTART + DUE (no explicit DURATION) must anchor a RELATED=END trigger
 // at DUE, not at DTSTART. The bug fires the alarm (DUE−DTSTART) too early.

@@ -97,8 +97,10 @@ ALTER TABLE todo_alarms_new RENAME TO todo_alarms;
 CREATE INDEX idx_todo_alarms_todo_id ON todo_alarms(todo_id);
 CREATE UNIQUE INDEX idx_todo_alarms_uid ON todo_alarms(uid) WHERE uid IS NOT NULL;
 
--- Restore the child rows the implicit DELETE cascaded away. The DELETE
--- before each restore makes the step idempotent when no cascade ran.
+-- Restore the child rows the implicit DELETE cascaded away. On every
+-- normal path the cascade runs: the DSN pragmas set foreign_keys ON for
+-- each connection. The DELETE before each restore is insurance for an
+-- external goose run on a connection without those pragmas.
 DELETE FROM alarm_state;
 INSERT INTO alarm_state SELECT * FROM alarm_state_backup;
 DROP TABLE alarm_state_backup;

@@ -843,9 +843,11 @@ func buildValarm(alarm model.Alarm) *ical.Component {
 	// DISPLAY alarms carry no ATTACH, so drop it for that one action. An
 	// empty action means DISPLAY everywhere else, so drop it there too:
 	// an "ACTION:" line plus ATTACH is invalid iCal that a strict server
-	// rejects. A preserved sync-only action (issue #579) keeps its
-	// ATTACH. The RFC leaves the property set of an x-name or iana-token
-	// action open. The VALARM of another client must round-trip verbatim.
+	// rejects.
+	//
+	// A preserved sync-only action (issue #579) keeps its ATTACH. The
+	// RFC leaves the property set of an x-name or iana-token action
+	// open. The VALARM of another client must round-trip verbatim.
 	if alarm.Action != "DISPLAY" && alarm.Action != "" && (len(alarm.AttachBinary) > 0 || alarm.AttachURI != "") {
 		p := &ical.Prop{Name: ical.PropAttach, Params: make(ical.Params)}
 		if len(alarm.AttachBinary) > 0 {
