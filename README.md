@@ -513,6 +513,22 @@ chroncal event add "Release" --date 2026-06-15 --time 14:00 --alarm "DISPLAY:-PT
 
 See `chroncal event add --help` for the extra fields.
 
+A synced calendar can hold an alarm this app does not fire. A server sends
+one as a "no reminder" sentinel, and another client sends one with its own
+action, such as `X-APPLE-SOUND`. The `--alarm` flag has no syntax for those
+actions, so `chroncal event update` and `chroncal todo update` keep the
+stored rows. Without that rule, a routine reminder edit deletes the alarm
+of the other client from the server.
+
+Pass `--clear-foreign-alarms` to delete them. Use the flag with `--alarm`
+to make the new list the whole list. Use the flag on its own to remove the
+stored rows and keep the alarms you can state:
+
+```bash
+chroncal event update 12 --clear-foreign-alarms              # remove them, keep your own
+chroncal event update 12 --alarm "-PT30M" --clear-foreign-alarms  # the new alarm is the only one
+```
+
 #### Receive notifications
 
 A stored alarm does not fire on its own. Something must run `chroncal alarm check` on a schedule. Two options:

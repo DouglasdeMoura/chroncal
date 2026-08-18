@@ -934,6 +934,7 @@ func eventUpdateCmd() *cobra.Command {
 		relationFlags []string
 		recurrenceID  string
 		organizer     string
+		clearForeign  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "update <id|uid>",
@@ -1211,9 +1212,22 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 				}
 			}
 
-			if cmd.Flags().Changed("alarm") {
+			switch {
+			case cmd.Flags().Changed("alarm") && clearForeign:
+				// The flag makes the replacement set the whole set, so a
+				// preserved alarm goes with the rows the flags replace.
+				if err := a.Events.ReplaceAlarms(ctx, e.ID, alarms); err != nil {
+					return fmt.Errorf("update alarms: %w", err)
+				}
+			case cmd.Flags().Changed("alarm"):
 				if err := a.Events.ReplaceFireableAlarms(ctx, e.ID, alarms); err != nil {
 					return fmt.Errorf("update alarms: %w", err)
+				}
+			case clearForeign:
+				// The flag on its own removes the preserved rows and keeps
+				// the alarms the user can state.
+				if err := a.Events.ClearSyncOnlyAlarms(ctx, e.ID); err != nil {
+					return fmt.Errorf("clear foreign alarms: %w", err)
 				}
 			}
 
@@ -1298,6 +1312,7 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 	cmd.Flags().MarkHidden("rdate")
 	cmd.Flags().StringArrayVar(&attachFlags, "attach", nil, "attachment (file path or URL, repeatable)")
 	cmd.Flags().StringArrayVar(&alarmFlags, "alarm", nil, alarmFlagHelp)
+	cmd.Flags().BoolVar(&clearForeign, "clear-foreign-alarms", false, clearForeignAlarmsHelp)
 	cmd.Flags().StringArrayVar(&attendeeFlags, "attendee", nil, "attendee (email or \"Name <email>\", repeatable, replaces all)")
 	cmd.Flags().StringVar(&organizer, "organizer", "", "event organizer (email or \"Name <email>\", replaces existing)")
 	cmd.Flags().StringArrayVar(&commentFlags, "comment", nil, "comment annotation (repeatable, replaces all)")
@@ -1659,6 +1674,11 @@ func smtpConfiguredForEmailAlarms() bool {
 // model exports, so it stays in lockstep with the model sets.
 var alarmFlagHelp = `alarm in format [ACTION:]TRIGGER[:DESC:REPEAT:DURATION:RELATED:ATTENDEES]; ACTION is one of ` +
 	model.AlarmActionsList() + ` (default ` + model.DefaultAlarmAction + `); extended fields are optional, e.g. "DISPLAY:-PT30M::3:PT5M:END" or "EMAIL:-PT1H:::::user@example.com"; repeatable`
+
+// clearForeignAlarmsHelp documents the escape from the carry-over rule.
+// The --alarm flag cannot state an action this app does not fire, so an
+// update keeps those rows by default.
+const clearForeignAlarmsHelp = `delete the stored alarms this app cannot fire, such as a server "no reminder" sentinel or the alarm of another client; the default keeps them, because an --alarm edit cannot state them`
 
 func parseOneAlarm(val string) (model.Alarm, error) {
 	action := model.DefaultAlarmAction

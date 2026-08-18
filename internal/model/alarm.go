@@ -264,6 +264,20 @@ func KeepSyncOnlyAlarms(stored, replacement []Alarm) []Alarm {
 	return replacement
 }
 
+// FireableAlarmsOnly drops every alarm the engine cannot fire. It is the
+// opposite of KeepSyncOnlyAlarms: a caller uses it to remove a preserved
+// row that no flag can state. The CLI --clear-foreign-alarms flag takes
+// this path (issue #593).
+func FireableAlarmsOnly(stored []Alarm) []Alarm {
+	kept := make([]Alarm, 0, len(stored))
+	for _, a := range stored {
+		if FireableAlarmAction(a.Action) {
+			kept = append(kept, a)
+		}
+	}
+	return kept
+}
+
 // PrepareAlarmUpdate checks an alarm that a caller writes over the stored
 // row ex. It returns the ACKNOWLEDGED value for the update. A malformed
 // value that arrives must not clobber valid stored state, so the function
