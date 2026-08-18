@@ -16,11 +16,13 @@ import (
 const maxSeconds = math.MaxInt64 / int64(time.Second)
 
 // maxDays is the largest day total (days plus weeks, as days) that
-// parse accepts. Add moves the day total with AddDate, which takes an
-// int day count. This bound keeps that conversion safe on a 32-bit
-// build. Days do not feed the time.Duration sum, so they need no
-// nanosecond ceiling.
-const maxDays = math.MaxInt32
+// parse accepts: about 1000 years. The bound serves the RFC 3339
+// storage format. Every database time is a 4-digit-year string, and a
+// day total past this cap could push a 4-digit start year into 5
+// digits, which time.Parse rejects and which misorders lexicographic
+// range queries. The cap also keeps the AddDate int conversion safe on
+// a 32-bit build.
+const maxDays = 365242
 
 type parsed struct {
 	neg     bool
@@ -33,29 +35,17 @@ type parsed struct {
 
 // checkRange rejects a duration whose components are out of range. The
 // day total must fit maxDays. The hours, minutes, and seconds total
-// must fit maxSeconds. Each multiply has a guard before it runs, so
-// the arithmetic itself cannot wrap. All components are non-negative
-// here, so the sums stay far below math.MaxInt64 between checks.
+// must fit maxSeconds. The per-component guards run before the sum, so
+// the arithmetic itself cannot wrap: each bounded component contributes
+// at most maxSeconds, and three such terms stay far below
+// math.MaxInt64.
 func (p parsed) checkRange(orig string) error {
 	if p.weeks > maxDays/7 || p.days > maxDays-p.weeks*7 {
 		return fmt.Errorf("invalid duration %q: too large, the day total is more than %d days", orig, int64(maxDays))
 	}
-	var total int64
-	for _, c := range []struct {
-		value   int64
-		seconds int64
-	}{
-		{p.hours, 3600},
-		{p.minutes, 60},
-		{p.seconds, 1},
-	} {
-		if c.value > maxSeconds/c.seconds {
-			return fmt.Errorf("invalid duration %q: too large, the time total is more than %d seconds", orig, maxSeconds)
-		}
-		total += c.value * c.seconds
-		if total > maxSeconds {
-			return fmt.Errorf("invalid duration %q: too large, the time total is more than %d seconds", orig, maxSeconds)
-		}
+	if p.hours > maxSeconds/3600 || p.minutes > maxSeconds/60 || p.seconds > maxSeconds ||
+		p.hours*3600+p.minutes*60+p.seconds > maxSeconds {
+		return fmt.Errorf("invalid duration %q: too large, the time total is more than %d seconds", orig, maxSeconds)
 	}
 	return nil
 }
@@ -230,12 +220,28 @@ func FromGo(d time.Duration) string {
 // Validate checks that s is a well-formed RFC 5545 duration string.
 // Format: [+/-]P[nW] or [+/-]P[nD][T[nH][nM][nS]]
 // Returns an error if the string is empty, malformed, or has leftover garbage.
-// Also returns an error when a component is out of range: the time
-// total is capped at maxSeconds (about 292 years) and the day total at
-// maxDays.
+// Also returns an error when a component is out of range: checkRange
+// caps the time total at maxSeconds (about 292 years) and the day
+// total at maxDays (about 1000 years).
 func Validate(s string) error {
 	_, err := parse(s)
 	return err
+}
+
+// ValidateSpan checks that s is a well-formed, positive RFC 5545
+// duration. A DURATION property that expresses a span (a VEVENT end,
+// a VTODO duration) must be positive per RFC 5545 §3.8.2.5. Triggers
+// are different: a VALARM TRIGGER may be negative, so trigger callers
+// use Validate.
+func ValidateSpan(s string) error {
+	p, err := parse(s)
+	if err != nil {
+		return err
+	}
+	if p.neg || (p.weeks|p.days|p.hours|p.minutes|p.seconds) == 0 {
+		return fmt.Errorf("invalid duration %q: a span must be positive", s)
+	}
+	return nil
 }
 
 // Add parses an RFC 5545 duration string and adds it to a time.

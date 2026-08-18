@@ -67,9 +67,9 @@ func Open(dbPath string) (*sql.DB, *Queries, error) {
 		conn.Close()
 		return nil, nil, fmt.Errorf("purge libical diagnostic x-props: %w", err)
 	}
-	if err := healAlarmRows(conn); err != nil {
+	if err := normalizeAlarmRepeatPairs(conn); err != nil {
 		conn.Close()
-		return nil, nil, fmt.Errorf("heal alarm rows: %w", err)
+		return nil, nil, fmt.Errorf("normalize alarm repeat pairs: %w", err)
 	}
 
 	return conn, q, nil
@@ -205,24 +205,25 @@ func purgeLibicalDiagnosticXProps(conn *sql.DB) error {
 	return err
 }
 
-// healAlarmRows repairs alarm rows written before the parsers validated
-// them, in one scan per table (issues #580 and #581). Two jobs:
+// normalizeAlarmRepeatPairs heals alarm rows written before the parsers
+// validated REPEAT and DURATION (issues #580 and #581). It clamps the
+// repeat count, clears an interval that fails model.ValidAlarmDuration,
+// and clears an unpaired value. Without this repair, export and the
+// next pull disagree with the stored row. The mismatch deletes and
+// recreates the alarm row, and the cascade discards the alarm state.
 //
-//   - It heals REPEAT and DURATION. It clamps the repeat count, clears
-//     an interval that fails model.ValidAlarmDuration, and clears an
-//     unpaired value. Without this repair, export and the next pull
-//     disagree with the stored row. The mismatch deletes and recreates
-//     the alarm row, and the cascade discards the alarm state.
-//   - It deletes a row whose trigger_value fails
-//     model.ParseableAlarmTrigger. Such a row is dead weight: the fire
-//     path cannot read it and export already omits its VALARM, so it
-//     only makes the push and the local store disagree in silence.
+// The pass does not delete a row whose trigger_value fails
+// model.ParseableAlarmTrigger. Such a row is inert: the fire path
+// cannot read it and export omits its VALARM. A delete would cascade
+// away the alarm state. It could not reach the server, because nothing
+// marks the resource dirty. It would also destroy an RFC-valid trigger
+// from another client that only this build cannot represent.
 //
 // The writes for each table run in one transaction, like
 // backfillAlarmUIDs, and a failure is fatal to Open, like every startup
 // pass here. The function runs on every startup. It changes nothing
 // when all rows are healthy.
-func healAlarmRows(conn *sql.DB) error {
+func normalizeAlarmRepeatPairs(conn *sql.DB) error {
 	ctx := context.Background()
 	for _, table := range []string{"event_alarms", "todo_alarms"} {
 		type fix struct {
@@ -231,10 +232,10 @@ func healAlarmRows(conn *sql.DB) error {
 			duration string
 		}
 		var fixes []fix
-		var dead []int64
 		err := func() error {
 			rows, err := conn.QueryContext(ctx,
-				`SELECT id, repeat, COALESCE(duration, ''), trigger_value FROM `+table)
+				`SELECT id, repeat, COALESCE(duration, '') FROM `+table+
+					` WHERE repeat > 0 OR COALESCE(duration, '') != ''`)
 			if err != nil {
 				return err
 			}
@@ -242,12 +243,8 @@ func healAlarmRows(conn *sql.DB) error {
 			for rows.Next() {
 				var id int64
 				var a model.Alarm
-				if err := rows.Scan(&id, &a.Repeat, &a.Duration, &a.TriggerValue); err != nil {
+				if err := rows.Scan(&id, &a.Repeat, &a.Duration); err != nil {
 					return err
-				}
-				if !model.ParseableAlarmTrigger(a.TriggerValue) {
-					dead = append(dead, id)
-					continue
 				}
 				healed := a
 				healed.Repeat = min(healed.Repeat, model.MaxAlarmRepeat)
@@ -266,7 +263,7 @@ func healAlarmRows(conn *sql.DB) error {
 		if err != nil {
 			return fmt.Errorf("scan %s: %w", table, err)
 		}
-		if len(fixes) == 0 && len(dead) == 0 {
+		if len(fixes) == 0 {
 			continue
 		}
 		tx, err := conn.BeginTx(ctx, nil)
@@ -279,13 +276,6 @@ func healAlarmRows(conn *sql.DB) error {
 				f.repeat, f.duration, f.id); err != nil {
 				tx.Rollback()
 				return fmt.Errorf("heal %s row %d: %w", table, f.id, err)
-			}
-		}
-		for _, id := range dead {
-			if _, err := tx.ExecContext(ctx,
-				`DELETE FROM `+table+` WHERE id = ?`, id); err != nil {
-				tx.Rollback()
-				return fmt.Errorf("purge %s row %d: %w", table, id, err)
 			}
 		}
 		if err := tx.Commit(); err != nil {

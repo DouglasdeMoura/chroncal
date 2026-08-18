@@ -101,17 +101,18 @@ func TestValidate(t *testing.T) {
 		// The time components pass alone but their sum crosses the
 		// ceiling.
 		{"time sum crosses the ceiling", "PT2562047H60M", true},
-		// The day total has its own bound (maxDays, an int32). Days
-		// move through AddDate, not the time.Duration sum, so a large
-		// day count is valid (issue #582 round 2 restored this).
+		// The day total has its own bound (maxDays, about 1000 years).
+		// Days move through AddDate, not the time.Duration sum, so a
+		// large day count is valid up to the storage-format cap: a
+		// 4-digit start year must stay 4-digit (issue #582 round 3).
 		{"large day count", "P200000D", false},
 		{"large week count", "P15251W", false},
-		{"days at the day bound", "P2147483647D", false},
-		{"days above the day bound", "P2147483648D", true},
-		{"weeks at the day bound", "P306783378W", false},
-		{"weeks above the day bound", "P306783379W", true},
+		{"days at the day bound", "P365242D", false},
+		{"days above the day bound", "P365243D", true},
+		{"weeks at the day bound", "P52177W", false},
+		{"weeks above the day bound", "P52178W", true},
 		// Days above the bound with a valid time part still fail.
-		{"day bound with time part", "P2147483648DT1H", true},
+		{"day bound with time part", "P365243DT1H", true},
 		// A component too large for int64 fails in strconv, not in the
 		// range check. It must still report an error.
 		{"component beyond int64", "PT99999999999999999999H", true},
@@ -122,6 +123,35 @@ func TestValidate(t *testing.T) {
 			err := Validate(tt.dur)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Validate(%q) error = %v, wantErr %v", tt.dur, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// A span (a VEVENT end, a VTODO duration) must be a well-formed,
+// positive duration. Triggers stay on Validate, which accepts a sign.
+func TestValidateSpan(t *testing.T) {
+	tests := []struct {
+		name    string
+		dur     string
+		wantErr bool
+	}{
+		{"positive time span", "PT1H30M", false},
+		{"positive day span", "P200000D", false},
+		{"negative span", "-PT1H", true},
+		{"signed positive span", "+PT1H", false},
+		{"zero span", "PT0S", true},
+		{"zero day span", "P0D", true},
+		{"malformed span", "5 minutes", true},
+		{"empty span", "", true},
+		{"span above the day bound", "P365243D", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateSpan(tt.dur)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateSpan(%q) error = %v, wantErr %v", tt.dur, err, tt.wantErr)
 			}
 		})
 	}

@@ -859,6 +859,67 @@ END:VCALENDAR`
 	}
 }
 
+// A DURATION property is a span and must be positive (RFC 5545
+// §3.8.2.5). A negative value must not persist: it would store an end
+// before the start and re-export a value strict servers reject. A
+// valid huge value whose end passes year 9999 must also drop: the RFC
+// 3339 storage format cannot represent a 5-digit year, and the string
+// misorders the lexicographic range queries (issue #582 round 3).
+func TestImport_SpanDuration_RejectsNegativeAndUnstorable(t *testing.T) {
+	t.Parallel()
+	ics := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:neg-dur-event
+DTSTAMP:20260401T100000Z
+DTSTART:20260401T140000Z
+DURATION:-PT1H
+SUMMARY:Negative Duration Event
+END:VEVENT
+BEGIN:VEVENT
+UID:huge-dur-event
+DTSTAMP:20260401T100000Z
+DTSTART:99990401T140000Z
+DURATION:P365D
+SUMMARY:Unstorable Duration Event
+END:VEVENT
+BEGIN:VTODO
+UID:neg-dur-todo
+DTSTAMP:20260401T100000Z
+DTSTART:20260401T140000Z
+DURATION:-PT1H
+SUMMARY:Negative Duration Todo
+END:VTODO
+END:VCALENDAR`
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile error: %v", err)
+	}
+	if len(result.Events) != 2 || len(result.Todos) != 1 {
+		t.Fatalf("events/todos = %d/%d, want 2/1", len(result.Events), len(result.Todos))
+	}
+	for _, e := range result.Events {
+		if e.DurationValue != "" {
+			t.Errorf("event %q: DurationValue = %q, want empty", e.UID, e.DurationValue)
+		}
+		if want := e.StartTime.Add(time.Hour); !e.EndTime.Equal(want) {
+			t.Errorf("event %q: EndTime = %s, want the 1h fallback %s",
+				e.UID, e.EndTime.Format(time.RFC3339), want.Format(time.RFC3339))
+		}
+	}
+	if got := result.Todos[0].Duration; got != "" {
+		t.Errorf("todo Duration = %q, want empty", got)
+	}
+	for _, uid := range []string{"neg-dur-event", "huge-dur-event", "neg-dur-todo"} {
+		hasWarning := slices.ContainsFunc(result.Warnings, func(w string) bool {
+			return strings.Contains(w, uid) && strings.Contains(w, "DURATION")
+		})
+		if !hasWarning {
+			t.Errorf("no DURATION warning for %q; warnings = %v", uid, result.Warnings)
+		}
+	}
+}
+
 // A malformed DTEND (go-ical stores the raw value with no validate) must not
 // collapse the event to zero duration in silence. The old code did that
 // (endTime, _ = Props.DateTime). Mirror the malformed-DURATION treatment
