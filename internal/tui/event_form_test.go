@@ -659,3 +659,23 @@ func TestEventFormForEdit_MultiDayEndUsesDisplayTimezone(t *testing.T) {
 		t.Errorf("rangeEndDate = %v, want display-tz day %v", m.rangeEndDate, want)
 	}
 }
+
+// A duplicate is a new local event. The copy must not carry a preserved
+// sync-only alarm: the copy would publish the sentinel of another client
+// under a fresh UID (issue #579). A fireable alarm stays in the copy.
+func TestEventForm_DuplicateStripsSyncOnlyAlarms(t *testing.T) {
+	m, _ := NewEventFormModelForDuplicate(event.Event{
+		ID:         7,
+		Title:      "Synced",
+		StartTime:  time.Date(2026, 4, 22, 14, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 22, 15, 0, 0, 0, time.UTC),
+		CalendarID: 1,
+		Alarms: []model.Alarm{
+			{Action: "NONE", TriggerValue: "-PT1M"},
+			{Action: "DISPLAY", TriggerValue: "-PT15M"},
+		},
+	}, testEventFormCalendars(), Theme{})
+
+	require.Len(t, m.alarms, 1)
+	assert.Equal(t, "DISPLAY", m.alarms[0].Action)
+}

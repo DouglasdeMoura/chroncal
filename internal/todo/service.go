@@ -1051,6 +1051,21 @@ func updateTodoAlarmInPlace(ctx context.Context, qtx *storage.Queries, todoID in
 	if err := model.CheckStorableAlarmAction(a.Action); err != nil {
 		return fmt.Errorf("update alarm: %w", err)
 	}
+	// A rewrite to a sync-only action disables the alarm. Retire its
+	// live state in the same transaction: the check loop never fires
+	// this alarm again, so an open state row would stay pending in
+	// `alarm list` forever (issue #579). This write point is the only
+	// place a stored action can change, so the read paths need no
+	// retirement of their own.
+	if !model.FireableAlarmAction(a.Action) {
+		acked := time.Now().UTC().Format(time.RFC3339)
+		if err := qtx.AcknowledgeTodoAlarmStatesByAlarmID(ctx, storage.AcknowledgeTodoAlarmStatesByAlarmIDParams{
+			AckedAt: &acked,
+			AlarmID: ex.ID,
+		}); err != nil {
+			return fmt.Errorf("retire alarm state: %w", err)
+		}
+	}
 	// Same ACKNOWLEDGED policy as syncMatchedTodoAlarm. A malformed
 	// value that arrives must not clobber valid stored state.
 	ack := a.Acknowledged

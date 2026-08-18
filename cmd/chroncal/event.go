@@ -1204,7 +1204,11 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 			}
 
 			if cmd.Flags().Changed("alarm") {
-				if err := a.Events.ReplaceAlarms(ctx, e.ID, alarms); err != nil {
+				stored, err := a.Events.ListAlarms(ctx, e.ID)
+				if err != nil {
+					return fmt.Errorf("load alarms: %w", err)
+				}
+				if err := a.Events.ReplaceAlarms(ctx, e.ID, keepSyncOnlyAlarms(stored, alarms)); err != nil {
 					return fmt.Errorf("update alarms: %w", err)
 				}
 			}
@@ -1623,6 +1627,20 @@ func mergeAttendeeUpdate(existing []model.Attendee, attendeeChanged bool, newAtt
 //
 // Extended format is only available for duration triggers (prefix -, +, or P).
 // Absolute RFC 3339 triggers do not support additional fields.
+// keepSyncOnlyAlarms appends the stored sync-only alarms to a replacement
+// list. The --alarm flag syntax cannot state a preserved non-fireable
+// action (issue #579). A full replacement must carry those rows forward.
+// Without the carry-over, ReplaceAlarms deletes them and the next push
+// deletes the VALARM of another client from the server.
+func keepSyncOnlyAlarms(stored, replacement []model.Alarm) []model.Alarm {
+	for _, a := range stored {
+		if !model.FireableAlarmAction(a.Action) {
+			replacement = append(replacement, a)
+		}
+	}
+	return replacement
+}
+
 func parseAlarmFlags(flags []string) ([]model.Alarm, error) {
 	var out []model.Alarm
 	warnedMissingSMTP := false

@@ -23,6 +23,23 @@ func (q *Queries) AcknowledgeTodoAlarmState(ctx context.Context, arg Acknowledge
 	return err
 }
 
+const acknowledgeTodoAlarmStatesByAlarmID = `-- name: AcknowledgeTodoAlarmStatesByAlarmID :exec
+UPDATE todo_alarm_state SET acked_at = ? WHERE alarm_id = ? AND acked_at IS NULL
+`
+
+type AcknowledgeTodoAlarmStatesByAlarmIDParams struct {
+	AckedAt *string
+	AlarmID int64
+}
+
+// Retire the live state of one alarm. A sync pull can rewrite an alarm
+// to a sync-only action in place. The check loop never fires that alarm
+// again, so an open state row would stay pending forever.
+func (q *Queries) AcknowledgeTodoAlarmStatesByAlarmID(ctx context.Context, arg AcknowledgeTodoAlarmStatesByAlarmIDParams) error {
+	_, err := q.db.ExecContext(ctx, acknowledgeTodoAlarmStatesByAlarmID, arg.AckedAt, arg.AlarmID)
+	return err
+}
+
 const countTodoAlarmStates = `-- name: CountTodoAlarmStates :one
 SELECT COUNT(*) FROM todo_alarm_state WHERE todo_id = ?
 `

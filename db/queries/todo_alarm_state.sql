@@ -10,6 +10,12 @@ RETURNING *;
 -- name: AcknowledgeTodoAlarmState :exec
 UPDATE todo_alarm_state SET acked_at = ? WHERE id = ?;
 
+-- Retire the live state of one alarm. A sync pull can rewrite an alarm
+-- to a sync-only action in place. The check loop never fires that alarm
+-- again, so an open state row would stay pending forever.
+-- name: AcknowledgeTodoAlarmStatesByAlarmID :exec
+UPDATE todo_alarm_state SET acked_at = ? WHERE alarm_id = ? AND acked_at IS NULL;
+
 -- name: SnoozeTodoAlarmState :exec
 UPDATE todo_alarm_state SET snoozed_to = ? WHERE id = ?;
 

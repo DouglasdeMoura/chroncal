@@ -291,3 +291,29 @@ func TestImport_AlarmWithTwoProblems_ReportsBoth(t *testing.T) {
 		t.Errorf("ATTACH warning lost; warnings = %v", result.Warnings)
 	}
 }
+
+// The parser preserves only an ACTION that is an RFC 5545 iana-token or
+// x-name. A malformed value cannot round-trip: export would emit an
+// invalid ACTION line, and a strict server rejects the whole resource.
+// The parser drops that alarm and warns. A well-formed x-name survives.
+func TestImport_MalformedActionToken_DropsAlarm(t *testing.T) {
+	t.Parallel()
+	ics := eventICS("bad-action-token@example.com", "Event with a malformed action",
+		"ACTION:NO NE\r\nTRIGGER:-PT15M\r\n",
+		"ACTION:X-APPLE-SOUND\r\nTRIGGER:-PT5M\r\n",
+	)
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile: %v", err)
+	}
+	if len(result.Events) != 1 || len(result.Events[0].Alarms) != 1 {
+		t.Fatalf("events/alarms = %d/%+v, want 1 event with 1 alarm", len(result.Events), result.Events)
+	}
+	if got := result.Events[0].Alarms[0].Action; got != "X-APPLE-SOUND" {
+		t.Errorf("surviving alarm action = %q, want X-APPLE-SOUND", got)
+	}
+	if !warningMentions(result.Warnings, `"NO NE"`, "dropped") {
+		t.Errorf("no malformed-ACTION warning; warnings = %v", result.Warnings)
+	}
+}
