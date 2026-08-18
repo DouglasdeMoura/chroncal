@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -33,6 +35,7 @@ account share one stored credential.`,
 		accountListCmd(),
 		accountUpdateCmd(),
 		accountCredentialsCmd(),
+		accountReauthCmd(),
 		accountCalendarsCmd(),
 		accountRemoveCmd(),
 	)
@@ -304,6 +307,118 @@ backend failures leave the previous secret unchanged.`,
 			return nil
 		},
 	}
+	return cmd
+}
+
+func accountReauthCmd() *cobra.Command {
+	var oauthClientID string
+	cmd := &cobra.Command{
+		Use:   "reauth <name|id>",
+		Short: "Re-authenticate an OAuth account",
+		Long: `Run the Google OAuth consent flow again for one account and
+store the fresh tokens.
+
+Basic and bearer accounts rotate their secret with "chroncal account
+credentials" instead.
+
+The stored username and OAuth client config are kept. --oauth-client-id
+replaces the stored client ID for this and future runs. The client
+secret comes from GOOGLE_CLIENT_SECRET or the stored value and is
+prompted for when neither is available; it never comes from a flag.
+When Google's response omits a refresh token, the previous one is
+kept.`,
+		Example: `  chroncal account reauth "Personal Google"
+  GOOGLE_CLIENT_SECRET=... chroncal account reauth 3 --output json`,
+		Args: exactOneArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			a, err := initApp()
+			if err != nil {
+				return err
+			}
+			defer a.Close()
+			ctx := context.Background()
+			configured, err := resolveAccount(ctx, a.Accounts, args[0])
+			if err != nil {
+				return err
+			}
+
+			authType := normalizeAuthType(configured.AuthType)
+			if authType != "oauth2" {
+				if authType == "" {
+					authType = "basic"
+				}
+				return errInvalidInputf(
+					"account %q uses %s auth; run chroncal account credentials instead",
+					configured.DisplayName, authType,
+				)
+			}
+
+			store, err := newCalendarCredentialStore(
+				a.CredentialNamespace, a.PreviousCredentialNamespaces,
+				a.MigrateLegacyCredentials, a.AllowPlaintext,
+			)
+			if err != nil {
+				return fmt.Errorf("credential store: %w", err)
+			}
+			// Reauth needs the stored credential: it carries the username and
+			// the OAuth client config the flow reuses. Unlike rotation, a
+			// missing entry cannot be repaired here, so any load failure
+			// aborts before the browser opens.
+			fingerprint := configured.CredentialFingerprint()
+			cred, err := store.Get(configured.ID, fingerprint)
+			if err != nil {
+				return fmt.Errorf("load current credentials: %w", err)
+			}
+
+			clientID := oauthClientID
+			if clientID == "" {
+				clientID = cred.OAuthClientID
+			}
+			if clientID == "" {
+				return errInvalidInputf(
+					"account %q has no stored OAuth client ID; pass --oauth-client-id",
+					configured.DisplayName,
+				)
+			}
+			clientSecret := strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_SECRET"))
+			if clientSecret == "" {
+				clientSecret = cred.OAuthClientSecret
+			}
+			if clientSecret == "" {
+				clientSecret, err = readGoogleClientSecret()
+				if err != nil {
+					return err
+				}
+			}
+
+			result, err := runGoogleOAuthFlow(ctx, clientID, clientSecret)
+			if err != nil {
+				return fmt.Errorf("OAuth flow: %w", err)
+			}
+			// Same contract as the TUI's reauth: replace the token triple,
+			// keep everything else. An empty refresh token from Google keeps
+			// the previous one — overwriting it would brick refresh once the
+			// ~1h access token expires.
+			cred.AccessToken = result.AccessToken
+			if result.RefreshToken != "" {
+				cred.RefreshToken = result.RefreshToken
+			}
+			cred.TokenExpiry = result.Expiry.Format(time.RFC3339)
+			cred.OAuthClientID = clientID
+			cred.OAuthClientSecret = clientSecret
+			if err := a.Accounts.StoreCredential(ctx, configured.ID, fingerprint, cred, store); err != nil {
+				return err
+			}
+
+			if outputFmt != "text" {
+				return printOutput(cmd.OutOrStdout(), toJSONAccount(configured))
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Re-authenticated %q.\n",
+				textsafe.Display(configured.DisplayName))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&oauthClientID, "oauth-client-id", "", "Google OAuth desktop client ID (overrides the stored client ID)")
 	return cmd
 }
 

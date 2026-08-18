@@ -17,6 +17,11 @@ import (
 
 var newCalendarCredentialStore = auth.NewCredentialStore
 
+// runGoogleOAuthFlow is the seam over auth.GoogleOAuthFlow. Tests stub it so
+// OAuth code paths run without binding a loopback listener or opening a
+// browser.
+var runGoogleOAuthFlow = auth.GoogleOAuthFlow
+
 type calendarRemoteFlags struct {
 	RemoteURL     string
 	Username      string
@@ -127,7 +132,7 @@ func buildCalendarCredential(ctx context.Context, flags calendarRemoteFlags) (au
 		if err != nil {
 			return auth.Credential{}, err
 		}
-		result, err := auth.GoogleOAuthFlow(ctx, flags.OAuthClientID, clientSecret)
+		result, err := runGoogleOAuthFlow(ctx, flags.OAuthClientID, clientSecret)
 		if err != nil {
 			return auth.Credential{}, fmt.Errorf("OAuth flow: %w", err)
 		}

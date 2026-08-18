@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,11 +13,15 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/douglasdemoura/chroncal/internal/account"
 	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/caldav"
+	"github.com/douglasdemoura/chroncal/internal/config"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
@@ -680,6 +686,316 @@ func TestAccountCredentialsRepairsBrokenKeyring(t *testing.T) {
 	if got.AccessToken != "repaired-token" {
 		t.Fatalf("access token = %q, want repaired-token", got.AccessToken)
 	}
+}
+
+func TestAccountReauthStoresFreshTokens(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	ctx := context.Background()
+	a := openPlaintextApp(t, dbPath)
+	store := openPlaintextStore(t, a)
+	created, err := a.Accounts.Create(ctx, account.CreateParams{
+		Name: "Personal Google", ServerURL: "https://apidata.googleusercontent.com/caldav",
+		Username: "me@gmail.com", AuthType: "oauth2",
+	}, auth.Credential{
+		Username: "me@gmail.com", AccessToken: "old-access", RefreshToken: "old-refresh",
+		OAuthClientID: "stored-client-id", OAuthClientSecret: "stored-secret",
+	}, store)
+	if err != nil {
+		t.Fatalf("create oauth account: %v", err)
+	}
+	a.Close()
+	t.Setenv("GOOGLE_CLIENT_SECRET", "")
+
+	expiry := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	calls := stubGoogleOAuthFlow(t, &auth.GoogleOAuthResult{
+		AccessToken: "new-access", RefreshToken: "new-refresh", Expiry: expiry,
+	})
+	stdout, _, err := runAccountCommandInProcess(t,
+		"account", "reauth", "Personal Google",
+		"--output", "json", "--allow-plaintext",
+	)
+	if err != nil {
+		t.Fatalf("account reauth: %v", err)
+	}
+	assertAccountJSONWithoutSecrets(t, stdout, "Personal Google", "oauth2")
+	for _, secret := range []string{
+		"new-access", "old-access", "new-refresh", "old-refresh", "stored-secret",
+	} {
+		if strings.Contains(stdout, secret) {
+			t.Fatalf("json leaked secret %q: %s", secret, stdout)
+		}
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("oauth flow ran %d time(s), want 1", len(*calls))
+	}
+	if got := (*calls)[0]; got.clientID != "stored-client-id" || got.clientSecret != "stored-secret" {
+		t.Fatalf("oauth flow client config = %+v, want the stored values", got)
+	}
+
+	a = openPlaintextApp(t, dbPath)
+	defer a.Close()
+	got, err := a.Accounts.LoadCredential(ctx, created.ID, openPlaintextStore(t, a))
+	if err != nil {
+		t.Fatalf("load credential: %v", err)
+	}
+	if got.AccessToken != "new-access" || got.RefreshToken != "new-refresh" {
+		t.Fatalf("tokens = %+v, want fresh access and refresh tokens", got)
+	}
+	if want := expiry.Format(time.RFC3339); got.TokenExpiry != want {
+		t.Fatalf("token expiry = %q, want %q", got.TokenExpiry, want)
+	}
+	if got.Username != "me@gmail.com" ||
+		got.OAuthClientID != "stored-client-id" || got.OAuthClientSecret != "stored-secret" {
+		t.Fatalf("stored identity changed: %+v", got)
+	}
+}
+
+func TestAccountReauthKeepsRefreshTokenWhenGoogleOmitsIt(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	ctx := context.Background()
+	a := openPlaintextApp(t, dbPath)
+	store := openPlaintextStore(t, a)
+	created, err := a.Accounts.Create(ctx, account.CreateParams{
+		Name: "Personal Google", ServerURL: "https://apidata.googleusercontent.com/caldav",
+		Username: "me@gmail.com", AuthType: "oauth2",
+	}, auth.Credential{
+		Username: "me@gmail.com", AccessToken: "old-access", RefreshToken: "old-refresh",
+		OAuthClientID: "stored-client-id", OAuthClientSecret: "stored-secret",
+	}, store)
+	if err != nil {
+		t.Fatalf("create oauth account: %v", err)
+	}
+	a.Close()
+	t.Setenv("GOOGLE_CLIENT_SECRET", "")
+
+	stubGoogleOAuthFlow(t, &auth.GoogleOAuthResult{
+		AccessToken: "new-access", Expiry: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC),
+	})
+	if _, _, err := runAccountCommandInProcess(t,
+		"account", "reauth", "Personal Google",
+		"--output", "json", "--allow-plaintext",
+	); err != nil {
+		t.Fatalf("account reauth: %v", err)
+	}
+
+	a = openPlaintextApp(t, dbPath)
+	defer a.Close()
+	got, err := a.Accounts.LoadCredential(ctx, created.ID, openPlaintextStore(t, a))
+	if err != nil {
+		t.Fatalf("load credential: %v", err)
+	}
+	if got.AccessToken != "new-access" {
+		t.Fatalf("access token = %q, want new-access", got.AccessToken)
+	}
+	if got.RefreshToken != "old-refresh" {
+		t.Fatalf("refresh token = %q, want old-refresh kept", got.RefreshToken)
+	}
+}
+
+func TestAccountReauthRefusesBasicAndBearer(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	ctx := context.Background()
+	a := openPlaintextApp(t, dbPath)
+	store := openPlaintextStore(t, a)
+	basic, err := a.Accounts.Create(ctx, account.CreateParams{
+		Name: "Work", ServerURL: "https://cal.example.test/dav/",
+		Username: "alice", AuthType: "basic",
+	}, auth.Credential{Username: "alice", Password: "old-password"}, store)
+	if err != nil {
+		t.Fatalf("create basic account: %v", err)
+	}
+	bearer, err := a.Accounts.Create(ctx, account.CreateParams{
+		Name: "API Token", ServerURL: "https://cal.example.test/dav/",
+		Username: "bob", AuthType: "bearer",
+	}, auth.Credential{Username: "bob", AccessToken: "old-token"}, store)
+	if err != nil {
+		t.Fatalf("create bearer account: %v", err)
+	}
+	a.Close()
+
+	for _, ref := range []string{"Work", "API Token"} {
+		_, stderr, err := runChroncalCommand(t,
+			"account", "reauth", ref,
+			"--output", "json", "--allow-plaintext",
+		)
+		if err == nil {
+			t.Fatalf("account reauth should refuse %s accounts", ref)
+		}
+		var payload struct {
+			Code  string `json:"code"`
+			Error string `json:"error"`
+		}
+		if jerr := json.Unmarshal([]byte(stderr), &payload); jerr != nil {
+			t.Fatalf("decode error %q: %v", stderr, jerr)
+		}
+		if payload.Code != "invalid_input" {
+			t.Fatalf("code = %q, want invalid_input", payload.Code)
+		}
+		if !strings.Contains(strings.ToLower(payload.Error), "account credentials") {
+			t.Fatalf("error = %q, want account credentials guidance", payload.Error)
+		}
+	}
+
+	a = openPlaintextApp(t, dbPath)
+	defer a.Close()
+	gotBasic, err := a.Accounts.LoadCredential(ctx, basic.ID, openPlaintextStore(t, a))
+	if err != nil {
+		t.Fatalf("load basic credential: %v", err)
+	}
+	if gotBasic.Password != "old-password" {
+		t.Fatalf("basic password = %q, want old-password unchanged", gotBasic.Password)
+	}
+	gotBearer, err := a.Accounts.LoadCredential(ctx, bearer.ID, openPlaintextStore(t, a))
+	if err != nil {
+		t.Fatalf("load bearer credential: %v", err)
+	}
+	if gotBearer.AccessToken != "old-token" {
+		t.Fatalf("bearer token = %q, want old-token unchanged", gotBearer.AccessToken)
+	}
+}
+
+func TestAccountReauthOverridesClientConfigFromFlagAndEnv(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	ctx := context.Background()
+	a := openPlaintextApp(t, dbPath)
+	store := openPlaintextStore(t, a)
+	created, err := a.Accounts.Create(ctx, account.CreateParams{
+		Name: "Personal Google", ServerURL: "https://apidata.googleusercontent.com/caldav",
+		Username: "me@gmail.com", AuthType: "oauth2",
+	}, auth.Credential{
+		Username: "me@gmail.com", AccessToken: "old-access", RefreshToken: "old-refresh",
+		OAuthClientID: "stored-client-id", OAuthClientSecret: "stored-secret",
+	}, store)
+	if err != nil {
+		t.Fatalf("create oauth account: %v", err)
+	}
+	a.Close()
+	t.Setenv("GOOGLE_CLIENT_SECRET", "env-secret")
+
+	calls := stubGoogleOAuthFlow(t, &auth.GoogleOAuthResult{
+		AccessToken: "new-access", RefreshToken: "new-refresh",
+		Expiry: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC),
+	})
+	if _, _, err := runAccountCommandInProcess(t,
+		"account", "reauth", "Personal Google",
+		"--oauth-client-id", "flag-client-id",
+		"--output", "json", "--allow-plaintext",
+	); err != nil {
+		t.Fatalf("account reauth: %v", err)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("oauth flow ran %d time(s), want 1", len(*calls))
+	}
+	if got := (*calls)[0]; got.clientID != "flag-client-id" || got.clientSecret != "env-secret" {
+		t.Fatalf("oauth flow client config = %+v, want flag client ID and env secret", got)
+	}
+
+	a = openPlaintextApp(t, dbPath)
+	defer a.Close()
+	got, err := a.Accounts.LoadCredential(ctx, created.ID, openPlaintextStore(t, a))
+	if err != nil {
+		t.Fatalf("load credential: %v", err)
+	}
+	if got.OAuthClientID != "flag-client-id" || got.OAuthClientSecret != "env-secret" {
+		t.Fatalf("client config = %+v, want overrides persisted", got)
+	}
+}
+
+func TestAccountReauthRequiresOAuthClientID(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	ctx := context.Background()
+	a := openPlaintextApp(t, dbPath)
+	store := openPlaintextStore(t, a)
+	created, err := a.Accounts.Create(ctx, account.CreateParams{
+		Name: "Personal Google", ServerURL: "https://apidata.googleusercontent.com/caldav",
+		Username: "me@gmail.com", AuthType: "oauth2",
+	}, auth.Credential{Username: "me@gmail.com", AccessToken: "access", RefreshToken: "refresh"}, store)
+	if err != nil {
+		t.Fatalf("create oauth account: %v", err)
+	}
+	a.Close()
+	t.Setenv("GOOGLE_CLIENT_SECRET", "env-secret")
+
+	calls := stubGoogleOAuthFlow(t, &auth.GoogleOAuthResult{
+		AccessToken: "new-access", RefreshToken: "new-refresh",
+		Expiry: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC),
+	})
+	_, _, err = runAccountCommandInProcess(t,
+		"account", "reauth", "Personal Google", "--allow-plaintext",
+	)
+	if err == nil {
+		t.Fatal("reauth without a client ID should fail")
+	}
+	var cliErr *cliError
+	if !errors.As(err, &cliErr) || cliErr.Code != "invalid_input" {
+		t.Fatalf("error = %v, want invalid_input", err)
+	}
+	if !strings.Contains(cliErr.Msg, "--oauth-client-id") {
+		t.Fatalf("error = %q, want --oauth-client-id guidance", cliErr.Msg)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("oauth flow ran %d time(s), want 0", len(*calls))
+	}
+
+	a = openPlaintextApp(t, dbPath)
+	defer a.Close()
+	got, err := a.Accounts.LoadCredential(ctx, created.ID, openPlaintextStore(t, a))
+	if err != nil {
+		t.Fatalf("load credential: %v", err)
+	}
+	if got.AccessToken != "access" || got.RefreshToken != "refresh" {
+		t.Fatalf("oauth credential mutated: %+v", got)
+	}
+}
+
+// oauthFlowCall records the client config one stubbed OAuth flow run used.
+type oauthFlowCall struct {
+	clientID     string
+	clientSecret string
+}
+
+// stubGoogleOAuthFlow swaps the OAuth flow seam for a canned result so tests
+// exercise reauth without binding a loopback listener or opening a browser.
+// The returned slice pointer records the client config every run used.
+func stubGoogleOAuthFlow(t *testing.T, result *auth.GoogleOAuthResult) *[]oauthFlowCall {
+	t.Helper()
+	var calls []oauthFlowCall
+	prev := runGoogleOAuthFlow
+	runGoogleOAuthFlow = func(_ context.Context, clientID, clientSecret string) (*auth.GoogleOAuthResult, error) {
+		calls = append(calls, oauthFlowCall{clientID: clientID, clientSecret: clientSecret})
+		return result, nil
+	}
+	t.Cleanup(func() { runGoogleOAuthFlow = prev })
+	return &calls
+}
+
+// runAccountCommandInProcess executes one account command tree in this
+// process so package-var seams (the stubbed OAuth flow) apply. It mirrors
+// TestHelperProcess: a fresh root whose PersistentPreRunE reloads cfg from
+// CHRONCAL_DB, with the real --output/--allow-plaintext flag closures.
+func runAccountCommandInProcess(t *testing.T, args ...string) (string, string, error) {
+	t.Helper()
+
+	prevFmt, prevPlaintext := outputFmt, allowPlaintext
+	t.Cleanup(func() { outputFmt, allowPlaintext = prevFmt, prevPlaintext })
+
+	root := &cobra.Command{
+		Use: "chroncal-test",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			var err error
+			cfg, err = config.Load()
+			return err
+		},
+	}
+	root.PersistentFlags().StringVarP(&outputFmt, "output", "o", "text", "output format (text, json)")
+	root.PersistentFlags().BoolVar(&allowPlaintext, "allow-plaintext", false, "permit storing credentials in plaintext when no OS keyring is available")
+	root.AddCommand(accountCmd())
+	var out, errBuf bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errBuf)
+	root.SetArgs(args)
+	err := root.Execute()
+	return out.String(), errBuf.String(), err
 }
 
 func openPlaintextApp(t *testing.T, dbPath string) *app.App {
