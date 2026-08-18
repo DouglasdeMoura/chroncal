@@ -26,6 +26,9 @@ func TestAdd(t *testing.T) {
 		// range check (issue #581). Add now returns the zero time.
 		{"overflow returns zero", "PT5124096H", time.Time{}},
 		{"negative overflow returns zero", "PT3000000H", time.Time{}},
+		// A large day count moves through AddDate and never touches the
+		// time.Duration sum, so it stays exact (issue #582 round 2).
+		{"large day count stays exact", "P200000D", base.AddDate(0, 0, 200000)},
 	}
 
 	for _, tt := range tests {
@@ -83,8 +86,9 @@ func TestValidate(t *testing.T) {
 		{"plus signed minutes", "PT+15M", true},
 		{"signed trailing component", "PT1H-30M", true},
 
-		// Range check (issue #581): the total must not be more than
-		// maxSeconds (math.MaxInt64 nanoseconds, about 292 years).
+		// Range check (issue #581): the hours, minutes, and seconds
+		// total must not be more than maxSeconds (math.MaxInt64
+		// nanoseconds, about 292 years).
 		// PT5124096H wrapped to about +25 minutes before the check.
 		{"hours wrap positive", "PT5124096H", true},
 		// PT3000000H wrapped to a negative offset before the check.
@@ -94,12 +98,20 @@ func TestValidate(t *testing.T) {
 		{"seconds above the ceiling", "PT9223372037S", true},
 		{"hours just under the ceiling", "PT2562047H", false},
 		{"hours just above the ceiling", "PT2562048H", true},
-		{"weeks just under the ceiling", "P15250W", false},
-		{"huge weeks", "P15251W", true},
-		{"days just under the ceiling", "P106751D", false},
-		{"huge days", "P106752D", true},
-		// The components pass alone but the sum crosses the ceiling.
-		{"component sum crosses the ceiling", "P106751DT24H", true},
+		// The time components pass alone but their sum crosses the
+		// ceiling.
+		{"time sum crosses the ceiling", "PT2562047H60M", true},
+		// The day total has its own bound (maxDays, an int32). Days
+		// move through AddDate, not the time.Duration sum, so a large
+		// day count is valid (issue #582 round 2 restored this).
+		{"large day count", "P200000D", false},
+		{"large week count", "P15251W", false},
+		{"days at the day bound", "P2147483647D", false},
+		{"days above the day bound", "P2147483648D", true},
+		{"weeks at the day bound", "P306783378W", false},
+		{"weeks above the day bound", "P306783379W", true},
+		// Days above the bound with a valid time part still fail.
+		{"day bound with time part", "P2147483648DT1H", true},
 		// A component too large for int64 fails in strconv, not in the
 		// range check. It must still report an error.
 		{"component beyond int64", "PT99999999999999999999H", true},

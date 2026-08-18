@@ -248,7 +248,11 @@ func computeTodoTriggerTimeForInstance(inst recurrence.ExpandedTodo, alarm model
 			base = inst.InstanceTime.Add(due.Sub(start))
 		case !due.IsZero():
 			base = inst.InstanceTime
-		case inst.Duration != "":
+		case inst.Duration != "" && duration.Validate(inst.Duration) == nil:
+			// The Validate gate keeps a legacy out-of-range value from
+			// the zero time Add returns. A year-1 trigger would look
+			// stale and would never fire (issue #582 round 2). An
+			// invalid Duration keeps the START anchor instead.
 			base = duration.Add(base, inst.Duration)
 		}
 	}
