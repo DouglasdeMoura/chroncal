@@ -268,6 +268,12 @@ func StorableAlarmAction(action string) bool {
 // UID match refuses an empty value on both sides and falls back to the
 // content match, the export writes the property only for a non-empty
 // value, and the unique index covers a non-null uid alone.
+//
+// The rule governs a write from now on. It does not repair a row an
+// earlier build already stamped: that row holds a non-empty UID, so this
+// function keeps it and syncMatchedAlarm backfills an empty value only.
+// A minted UID cannot be told from an authored one after the fact, so no
+// repair is possible.
 func AlarmUIDForWrite(a Alarm) string {
 	if a.UID != "" {
 		return a.UID
@@ -298,14 +304,16 @@ func CheckStorableAlarmAction(action string) error {
 // A caller that must remove a preserved alarm skips this function and
 // calls ReplaceAlarms with the exact list instead. The TUI alarm editor
 // works that way, so a local calendar keeps a way to delete such a row.
-// A stored row an older build wrote can hold a malformed action, which
-// the write rule now refuses (issue #595). Carrying it forward would make
-// every --alarm update fail on it, so this function leaves it behind. The
-// row cannot fire and the export writes the default in its place, so it
-// carries nothing the user or another client can use.
+//
+// The carry-over covers every stored row the engine cannot fire. It
+// applies no further test on the action. A row that fails the write rule
+// must never be left behind here, because the replacement then deletes it
+// and the next push deletes the VALARM of another client. Migration 045
+// repairs the malformed actions an older build stored, so no such row
+// reaches this function.
 func KeepSyncOnlyAlarms(stored, replacement []Alarm) []Alarm {
 	for _, a := range stored {
-		if !FireableAlarmAction(a.Action) && StorableAlarmAction(a.Action) {
+		if !FireableAlarmAction(a.Action) {
 			replacement = append(replacement, a)
 		}
 	}

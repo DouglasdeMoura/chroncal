@@ -1639,7 +1639,13 @@ func createNewAlarm(ctx context.Context, qtx *storage.Queries, eventID int64, a 
 	}
 	row, err := qtx.CreateAlarm(ctx, params)
 	if isUniqueUIDViolation(err) {
-		params.Uid = storage.StringToNullable(uuid.New().String())
+		// A server can send the same VALARM UID on two resources. Retry
+		// through the shared rule, so the retry does not stamp a minted
+		// UID on a preserved foreign alarm (issue #586). The rule mints
+		// for a fireable action and yields an empty value otherwise.
+		retry := a
+		retry.UID = ""
+		params.Uid = storage.StringToNullable(model.AlarmUIDForWrite(retry))
 		row, err = qtx.CreateAlarm(ctx, params)
 	}
 	if err != nil {

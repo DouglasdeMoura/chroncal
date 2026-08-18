@@ -313,16 +313,22 @@ func backfillAlarmUIDs(conn *sql.DB, q *Queries) error {
 	if err != nil {
 		return fmt.Errorf("list todo alarms with empty uid: %w", err)
 	}
-	var alarms []EventAlarm
+	// model.AlarmUIDForWrite owns the rule. It yields an empty value for
+	// an action the engine cannot fire, and such a row keeps its absent
+	// UID (issue #586).
+	type uidFix struct {
+		id  int64
+		uid string
+	}
+	var alarms, todoAlarms []uidFix
 	for _, a := range storedAlarms {
-		if model.FireableAlarmAction(a.Action) {
-			alarms = append(alarms, a)
+		if uid := model.AlarmUIDForWrite(model.Alarm{Action: a.Action}); uid != "" {
+			alarms = append(alarms, uidFix{id: a.ID, uid: uid})
 		}
 	}
-	var todoAlarms []TodoAlarm
 	for _, a := range storedTodoAlarms {
-		if model.FireableAlarmAction(a.Action) {
-			todoAlarms = append(todoAlarms, a)
+		if uid := model.AlarmUIDForWrite(model.Alarm{Action: a.Action}); uid != "" {
+			todoAlarms = append(todoAlarms, uidFix{id: a.ID, uid: uid})
 		}
 	}
 	if len(alarms) == 0 && len(todoAlarms) == 0 {
@@ -338,16 +344,16 @@ func backfillAlarmUIDs(conn *sql.DB, q *Queries) error {
 	qtx := q.WithTx(tx)
 	for _, a := range alarms {
 		if err := qtx.UpdateAlarmUID(ctx, UpdateAlarmUIDParams{
-			Uid: StringToNullable(uuid.New().String()),
-			ID:  a.ID,
+			Uid: StringToNullable(a.uid),
+			ID:  a.id,
 		}); err != nil {
 			return err
 		}
 	}
 	for _, a := range todoAlarms {
 		if err := qtx.UpdateTodoAlarmUID(ctx, UpdateTodoAlarmUIDParams{
-			Uid: StringToNullable(uuid.New().String()),
-			ID:  a.ID,
+			Uid: StringToNullable(a.uid),
+			ID:  a.id,
 		}); err != nil {
 			return err
 		}

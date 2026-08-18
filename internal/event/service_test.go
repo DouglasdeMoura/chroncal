@@ -1159,6 +1159,34 @@ func TestEventService_ReplaceAlarms_CrossEventUIDCollision(t *testing.T) {
 	}
 }
 
+// The UID-collision retry must not stamp a minted UID on a preserved
+// foreign alarm. A server can duplicate a resource, so the same foreign
+// VALARM UID arrives on two events. The retry mints for a fireable action
+// only, so the second row keeps an empty UID and the next push carries no
+// value the other client never authored (issue #586).
+func TestEventService_ReplaceAlarms_ForeignUIDCollisionMintsNothing(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	e1 := createEvent(t, svc)
+	e2 := createEvent(t, svc)
+
+	foreign := model.Alarm{UID: "foreign-dup", Action: "X-APPLE-SOUND", TriggerValue: "-PT15M"}
+	if err := svc.ReplaceAlarms(ctx, e1.ID, []model.Alarm{foreign}); err != nil {
+		t.Fatalf("ReplaceAlarms e1: %v", err)
+	}
+	if err := svc.ReplaceAlarms(ctx, e2.ID, []model.Alarm{foreign}); err != nil {
+		t.Fatalf("ReplaceAlarms e2 (uid collision): %v", err)
+	}
+
+	alarms, err := svc.ListAlarms(ctx, e2.ID)
+	if err != nil || len(alarms) != 1 {
+		t.Fatalf("ListAlarms e2: %v (n=%d)", err, len(alarms))
+	}
+	if alarms[0].UID != "" {
+		t.Errorf("e2 foreign alarm UID = %q, want an empty value after the collision retry", alarms[0].UID)
+	}
+}
+
 // validateDurationValue must reject a span that carries the end past
 // the storable range, and it must accept the same span on a normal
 // start (issue #582 round 5).

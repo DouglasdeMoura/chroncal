@@ -162,31 +162,46 @@ func TestPrepareAlarmsForWrite_RejectsMalformedAction(t *testing.T) {
 	}
 }
 
-// A stored row an older build wrote can hold a malformed action. The
-// carry-over must leave it behind: feeding it back through the write rule
-// would fail every --alarm update on it (issue #595).
-func TestKeepSyncOnlyAlarms_DropsAnUnwritableStoredRow(t *testing.T) {
+// The carry-over keeps every stored row the engine cannot fire, and it
+// applies no further test. A dropped row is a deleted row: the caller
+// feeds the result to a replace, which removes what the list omits, and
+// the next push then deletes the VALARM of another client (issue #579).
+// Migration 045 repairs the malformed actions an older build stored, so
+// the carry-over never meets one.
+func TestKeepSyncOnlyAlarms_KeepsEveryNonFireableRow(t *testing.T) {
 	stored := []Alarm{
 		{Action: "X-APPLE-SOUND", TriggerValue: "-PT5M"},
-		{Action: " ", TriggerValue: "-PT10M"},
+		{Action: "NONE", TriggerValue: "-PT10M"},
+		{Action: "DISPLAY", TriggerValue: "-PT20M"},
 	}
 	kept := KeepSyncOnlyAlarms(stored, []Alarm{{Action: "DISPLAY", TriggerValue: "-PT15M"}})
 
-	if _, err := PrepareAlarmsForWrite(kept); err != nil {
-		t.Fatalf("the carry-over must stay writable: %v", err)
-	}
+	var actions []string
 	for _, a := range kept {
-		if a.Action == " " {
-			t.Error("the carry-over kept a row the write rule refuses")
+		actions = append(actions, a.Action)
+	}
+	if len(kept) != 3 {
+		t.Fatalf("kept = %v, want the replacement plus both preserved rows", actions)
+	}
+	for _, want := range []string{"X-APPLE-SOUND", "NONE"} {
+		var found bool
+		for _, a := range kept {
+			if a.Action == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("the carry-over dropped %q, which a replace would then delete", want)
 		}
 	}
-	var foundForeign bool
+	// The stored fireable row is not carried: the replacement states it.
+	var fireable int
 	for _, a := range kept {
-		if a.Action == "X-APPLE-SOUND" {
-			foundForeign = true
+		if a.Action == "DISPLAY" {
+			fireable++
 		}
 	}
-	if !foundForeign {
-		t.Error("the carry-over dropped a valid preserved alarm")
+	if fireable != 1 {
+		t.Errorf("DISPLAY appears %d times, want only the replacement copy", fireable)
 	}
 }
