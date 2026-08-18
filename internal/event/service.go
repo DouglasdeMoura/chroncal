@@ -1614,13 +1614,15 @@ func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []mod
 // edits, creates, deletes) using a tx-bound Queries. It opens no transaction so
 // callers can compose it with the event row write inside one transaction.
 func replaceAlarmsTx(ctx context.Context, qtx *storage.Queries, eventID int64, alarms []model.Alarm) error {
-	// Fill the defaults and validate before any read or write. A bad
-	// Action or Related then fails with a typed error, not with the
-	// CHECK constraint (issue #578).
-	for i := range alarms {
-		if err := model.PrepareAlarmForWrite(&alarms[i]); err != nil {
-			return err
-		}
+	// Prepare a copy of the alarms before the alarm reads and writes.
+	// The caller's slice does not change. A bad Action or Related fails
+	// with a typed error, not with the CHECK constraint (issue #578).
+	// On the *WithRelations paths the event row write and the attendee
+	// replace run earlier in the same transaction; a rejection rolls
+	// them back.
+	alarms, err := model.PrepareAlarmsForWrite(alarms)
+	if err != nil {
+		return err
 	}
 
 	// Load existing alarms with attendees for content matching.

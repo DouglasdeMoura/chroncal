@@ -858,23 +858,21 @@ func (s *Service) ReplaceAlarms(ctx context.Context, todoID int64, alarms []mode
 	}
 	defer rollback()
 
+	// Prepare a copy of the alarms before any read. The caller's slice
+	// does not change. A bad Action or Related fails with a typed
+	// error, not with the CHECK constraint (issue #578). Mirrors
+	// event.replaceAlarmsTx.
+	alarms, err = model.PrepareAlarmsForWrite(alarms)
+	if err != nil {
+		return err
+	}
+
 	// Merge. Do not wipe and recreate. A delete of a todo alarm row cascades
 	// away its todo_alarm_state. That would restore dismissed firings on
 	// every sync rewrite. Mirrors event.Service.ReplaceAlarms.
 	existing, err := loadExistingTodoAlarms(ctx, qtx, todoID)
 	if err != nil {
 		return err
-	}
-
-	// Copy before defaults apply. The caller's slice must not be mutated.
-	// PrepareAlarmForWrite fills the defaults and validates. A bad Action
-	// or Related then fails with a typed error, not with the CHECK
-	// constraint (issue #578).
-	alarms = append([]model.Alarm(nil), alarms...)
-	for i := range alarms {
-		if err := model.PrepareAlarmForWrite(&alarms[i]); err != nil {
-			return err
-		}
 	}
 
 	matched := make([]bool, len(existing))

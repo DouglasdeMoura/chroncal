@@ -1648,7 +1648,7 @@ func smtpConfiguredForEmailAlarms() bool {
 }
 
 func parseOneAlarm(val string) (model.Alarm, error) {
-	action := "DISPLAY"
+	action := model.DefaultAlarmAction
 	rest := val
 
 	// Check for ACTION: prefix
@@ -1671,7 +1671,7 @@ func parseOneAlarm(val string) (model.Alarm, error) {
 	a := model.Alarm{
 		Action:      action,
 		Description: "Reminder",
-		Related:     "START",
+		Related:     model.DefaultAlarmRelated,
 	}
 
 	if !isDuration {
@@ -1717,7 +1717,7 @@ func parseOneAlarm(val string) (model.Alarm, error) {
 	if len(parts) > 4 && parts[4] != "" {
 		rel := strings.ToUpper(parts[4])
 		if !model.ValidAlarmRelated(rel) {
-			return model.Alarm{}, fmt.Errorf("alarm %q: related must be START or END, got %q", val, parts[4])
+			return model.Alarm{}, fmt.Errorf("alarm %q: related must be one of %s, got %q", val, strings.Join(model.AlarmRelatedValues(), ", "), parts[4])
 		}
 		a.Related = rel
 	}
