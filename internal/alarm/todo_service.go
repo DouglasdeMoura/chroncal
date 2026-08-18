@@ -26,14 +26,15 @@ type TodoDueAlarm struct {
 
 // TodoAlarmLister defines the interface for a list of todo alarms. The
 // Lean variants omit X-properties (round-trip-only metadata) — the check
-// loop calls them per todo every tick and never reads them. The Fireable
-// variant also excludes preserved sync-only actions in SQL. The snooze
-// lister uses the unfiltered list, because its own state query already
-// filters on the current action.
+// loop never reads them. The Fireable variants also exclude preserved
+// sync-only actions in SQL. The check loop reads every todo on each tick,
+// so it uses the batch variant and pays one query for the whole set. The
+// snooze lister uses the unfiltered per-todo list, because its own state
+// query already filters on the current action.
 type TodoAlarmLister interface {
 	ListAlarms(ctx context.Context, todoID int64) ([]model.Alarm, error)
 	ListAlarmsLean(ctx context.Context, todoID int64) ([]model.Alarm, error)
-	ListFireableAlarmsLean(ctx context.Context, todoID int64) ([]model.Alarm, error)
+	ListFireableAlarmsByTodoIDs(ctx context.Context, todoIDs []int64) (map[int64][]model.Alarm, error)
 }
 
 // TodoService handles alarm operations for todos
@@ -72,6 +73,21 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 	// (possibly rescheduled) time with its own alarm definition.
 	overrideKeys := buildOverrideSuppressionKeys(rows)
 
+	// Read the alarms of every open todo in one query. A read per todo
+	// costs one query per todo on each tick (issue #586).
+	openIDs := make([]int64, 0, len(rows))
+	for _, row := range rows {
+		t := todoFromRow(row)
+		if t.Status == "COMPLETED" || t.Status == "CANCELLED" {
+			continue
+		}
+		openIDs = append(openIDs, t.ID)
+	}
+	alarmMap, err := s.todos.ListFireableAlarmsByTodoIDs(ctx, openIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list todo alarms: %w", err)
+	}
+
 	var due []TodoDueAlarm
 
 	for _, row := range rows {
@@ -82,8 +98,8 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 			continue
 		}
 
-		alarms, err := s.todos.ListFireableAlarmsLean(ctx, t.ID)
-		if err != nil || len(alarms) == 0 {
+		alarms := alarmMap[t.ID]
+		if len(alarms) == 0 {
 			continue
 		}
 

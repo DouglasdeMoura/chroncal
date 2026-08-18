@@ -27,12 +27,8 @@ func (m *mockAlarmLister) ListAlarmsLean(ctx context.Context, todoID int64) ([]m
 	return m.ListAlarms(ctx, todoID)
 }
 
-func (m *mockAlarmLister) ListFireableAlarmsLean(ctx context.Context, todoID int64) ([]model.Alarm, error) {
-	alarms, err := m.ListAlarmsLean(ctx, todoID)
-	if err != nil {
-		return nil, err
-	}
-	return filterFireable(alarms), nil
+func (m *mockAlarmLister) ListFireableAlarmsByTodoIDs(ctx context.Context, todoIDs []int64) (map[int64][]model.Alarm, error) {
+	return batchFireable(ctx, m.ListAlarmsLean, todoIDs)
 }
 
 func TestService_Check_BothEventAndTodoAlarms(t *testing.T) {

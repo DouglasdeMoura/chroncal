@@ -914,11 +914,14 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 		})
 	}
 
-	// X-* extension properties — preserved for round-trip fidelity only.
+	// Every property parseAlarm does not read — preserved for round-trip
+	// fidelity only. The set covers an X- extension and an IANA property
+	// alike, for example the RFC 9074 PROXIMITY. A drop would rewrite the
+	// VALARM of another client without it on the next push (issue #586).
 	// Normalize to a non-nil slice: for ReplaceAlarms, non-nil means "this
 	// is the complete X-prop set" (empty = remote cleared them), while nil
 	// means "caller has no X-prop knowledge, keep stored rows".
-	alarm.XProperties = extractXPropertiesWithSet(comp.Props, nil)
+	alarm.XProperties = extractXPropertiesWithSet(comp.Props, handledAlarmProps)
 	if alarm.XProperties == nil {
 		alarm.XProperties = []model.XProperty{}
 	}
@@ -1407,6 +1410,16 @@ func journalFromVJournal(comp *ical.Component) (journal.Journal, []string, error
 		XProperties:    extractXPropertiesWithSet(props, handledJournalProps),
 		Relations:      relations,
 	}, journalWarnings, nil
+}
+
+// handledAlarmProps is the set of property names parseAlarm reads into
+// the alarm model. parseAlarm preserves every other property, so a
+// foreign VALARM round-trips whole (issue #586).
+var handledAlarmProps = map[string]bool{
+	ical.PropAction: true, ical.PropTrigger: true, ical.PropDescription: true,
+	ical.PropSummary: true, "REPEAT": true, ical.PropDuration: true,
+	ical.PropUID: true, "ACKNOWLEDGED": true, ical.PropAttach: true,
+	ical.PropAttendee: true,
 }
 
 // handledEventProps is the set of property names explicitly parsed by eventFromVEvent.

@@ -460,3 +460,78 @@ func TestHealSpanColumns(t *testing.T) {
 		}
 	}
 }
+
+// A preserved alarm from another client keeps its empty UID. The backfill
+// mints a UID only for an alarm the engine can fire. A UID on a foreign
+// VALARM travels to the server on the next push, and some clients read it
+// as a different alarm (issue #586, item c).
+func TestBackfillAlarmUIDs_SkipsSyncOnlyActions(t *testing.T) {
+	db, q, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open error: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	res, err := db.ExecContext(ctx,
+		`INSERT INTO events (uid, calendar_id, title, start_time, end_time, all_day, status, transp, sequence, priority)
+		 VALUES ('uid-backfill-586', 1, 'Test', '2026-04-01T10:00:00Z', '2026-04-01T11:00:00Z', 0, 'CONFIRMED', 'OPAQUE', 0, 0)`)
+	if err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+	eventID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("LastInsertId: %v", err)
+	}
+	res, err = db.ExecContext(ctx,
+		`INSERT INTO todos (uid, calendar_id, summary) VALUES ('todo-backfill-586', 1, 'Test')`)
+	if err != nil {
+		t.Fatalf("insert todo: %v", err)
+	}
+	todoID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("LastInsertId: %v", err)
+	}
+
+	// Seed one fireable alarm and one preserved foreign alarm per domain.
+	// Both carry the empty UID of the pre-UID schema.
+	seeds := []struct {
+		table  string
+		column string
+		id     int64
+		action string
+	}{
+		{"event_alarms", "event_id", eventID, "DISPLAY"},
+		{"event_alarms", "event_id", eventID, "X-APPLE-SOUND"},
+		{"todo_alarms", "todo_id", todoID, "DISPLAY"},
+		{"todo_alarms", "todo_id", todoID, "NONE"},
+	}
+	for _, s := range seeds {
+		if _, err := db.ExecContext(ctx,
+			`INSERT INTO `+s.table+` (`+s.column+`, action, trigger_value, uid) VALUES (?, ?, '-PT15M', NULL)`,
+			s.id, s.action); err != nil {
+			t.Fatalf("insert %s %s: %v", s.table, s.action, err)
+		}
+	}
+
+	if err := backfillAlarmUIDs(db, q); err != nil {
+		t.Fatalf("backfillAlarmUIDs error: %v", err)
+	}
+
+	for _, s := range seeds {
+		var uid string
+		if err := db.QueryRowContext(ctx,
+			`SELECT COALESCE(uid, '') FROM `+s.table+` WHERE action = ?`, s.action).Scan(&uid); err != nil {
+			t.Fatalf("read %s %s: %v", s.table, s.action, err)
+		}
+		if model.FireableAlarmAction(s.action) {
+			if uid == "" {
+				t.Errorf("%s %s: uid is empty, want a minted UID", s.table, s.action)
+			}
+			continue
+		}
+		if uid != "" {
+			t.Errorf("%s %s: uid = %q, want it to stay empty", s.table, s.action, uid)
+		}
+	}
+}
