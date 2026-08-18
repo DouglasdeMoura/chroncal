@@ -249,15 +249,19 @@ func computeTodoTriggerTimeForInstance(inst recurrence.ExpandedTodo, alarm model
 		case !due.IsZero():
 			base = inst.InstanceTime
 		case inst.Duration != "":
-			// A legacy invalid or out-of-range Duration makes Add return
-			// the zero time. Refuse like the empty-trigger branch below:
-			// a silent START anchor would fire the alarm at the wrong
-			// time, and the callers already skip an alarm on error.
-			t := duration.Add(base, inst.Duration)
-			if t.IsZero() {
-				return time.Time{}, fmt.Errorf("invalid todo duration %q for the END anchor", inst.Duration)
+			// A legacy invalid, negative, or out-of-range Duration must
+			// not anchor the alarm. Refuse like the empty-trigger branch
+			// below: a silent or backward anchor fires the alarm at the
+			// wrong time, and the callers already skip an alarm on error.
+			if err := duration.ValidateSpan(inst.Duration); err != nil {
+				return time.Time{}, fmt.Errorf("invalid todo duration for the END anchor: %w", err)
 			}
-			base = t
+			base = duration.Add(base, inst.Duration)
+		default:
+			// No due and no duration: the END anchor has no end to bind
+			// to. Refuse instead of a silent START anchor — the same
+			// defect class as an invalid Duration, with one behavior.
+			return time.Time{}, fmt.Errorf("todo has no due date and no duration for the END anchor")
 		}
 	}
 

@@ -246,19 +246,15 @@ func prepareAlarmForWrite(a *Alarm) error {
 }
 
 // ValidAlarmDuration returns true if d is a repeat interval the alarm
-// engine can fire: a well-formed RFC 5545 duration that advances time.
-// A negative interval walks the repeat triggers backwards. A zero
+// engine can fire: a well-formed, positive RFC 5545 duration. A
+// negative interval walks the repeat triggers backwards. A zero
 // interval never advances them. The import parser, the CLI parser, the
 // exporter, and the repeat fire path share this rule.
 //
-// One duration.Add call answers both "well-formed" and "advances time".
-// Add returns the zero time when d does not parse, and the base here is
-// the zero time, so an unparseable, empty, zero, or negative d all land
-// at or before the base. The predicate runs on the alarm check loop, so
-// it must not parse d twice.
+// The predicate delegates to duration.ValidateSpan, the one positivity
+// rule over the parser, with a single parse per call.
 func ValidAlarmDuration(d string) bool {
-	var t time.Time
-	return duration.Add(t, d).After(t)
+	return duration.ValidateSpan(d) == nil
 }
 
 // RepeatPaired reports whether REPEAT and DURATION are both set or both

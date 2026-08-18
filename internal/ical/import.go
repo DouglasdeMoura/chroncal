@@ -436,10 +436,11 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 		prop := ve.Props.Get(ical.PropDuration)
 		spanOK := false
 		if prop != nil && duration.ValidateSpan(prop.Value) == nil {
-			// The end must stay a 4-digit year. The RFC 3339 storage
-			// format cannot represent year 10000, and a 5-digit-year
-			// string misorders the lexicographic range queries.
-			if end := addDuration(startTime, prop.Value); end.Year() <= 9999 {
+			// The end must stay a 4-digit year in the stored UTC form.
+			// The RFC 3339 storage format cannot represent year 10000,
+			// and a 5-digit-year string misorders the lexicographic
+			// range queries.
+			if end := addDuration(startTime, prop.Value); end.UTC().Year() <= 9999 {
 				durationValue = prop.Value
 				endTime = end
 				explicitEnd = true
@@ -448,8 +449,16 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 		}
 		if spanOK {
 			// The DURATION above is the span.
+		} else if prop != nil && duration.Validate(prop.Value) == nil &&
+			addDuration(startTime, prop.Value).Equal(startTime) {
+			// An exact zero span (DURATION:PT0S). RFC 5545 §3.6.1 gives
+			// the same meaning to a VEVENT with no DTEND and no
+			// DURATION, so store the equivalent zero-length event. Drop
+			// the value; DTEND=DTSTART carries the semantics on export.
+			endTime = startTime
+			explicitEnd = true
 		} else if prop != nil {
-			// Malformed, negative, zero, or unstorable DURATION (go-ical
+			// Malformed, negative, or unstorable DURATION (go-ical
 			// stores the raw value with no validation). Fall back to a 1h
 			// span, warn, and drop the bad value so it does not persist
 			// and does not re-export.

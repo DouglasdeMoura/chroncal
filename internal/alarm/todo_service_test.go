@@ -739,3 +739,36 @@ func TestCheckTodos_FiresLongLeadTimeAlarm(t *testing.T) {
 		t.Fatalf("got %d due todo alarms, want 1 (long-lead-time alarm missed)", len(got))
 	}
 }
+
+// A RELATED=END alarm must refuse a legacy negative Duration. A silent
+// backward anchor fires the alarm before the start (issue #582 round 4).
+func TestComputeTodoTrigger_RelatedEnd_NegativeDurationRefused(t *testing.T) {
+	start := time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
+	inst := recurrence.ExpandedTodo{
+		Todo: todo.Todo{
+			StartDate: start.Format(time.RFC3339),
+			Duration:  "-PT2H",
+		},
+		InstanceTime: start,
+	}
+	alarm := model.Alarm{Action: "DISPLAY", TriggerValue: "-PT15M", Related: "END"}
+	if _, err := computeTodoTriggerTimeForInstance(inst, alarm); err == nil {
+		t.Fatal("negative Duration for the END anchor: got nil error, want a refusal")
+	}
+}
+
+// A RELATED=END alarm with no due and no duration has no end to bind
+// to. The function must refuse, not fall back to a silent START anchor.
+func TestComputeTodoTrigger_RelatedEnd_NoAnchorRefused(t *testing.T) {
+	start := time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
+	inst := recurrence.ExpandedTodo{
+		Todo: todo.Todo{
+			StartDate: start.Format(time.RFC3339),
+		},
+		InstanceTime: start,
+	}
+	alarm := model.Alarm{Action: "DISPLAY", TriggerValue: "-PT15M", Related: "END"}
+	if _, err := computeTodoTriggerTimeForInstance(inst, alarm); err == nil {
+		t.Fatal("END anchor with no due and no duration: got nil error, want a refusal")
+	}
+}
