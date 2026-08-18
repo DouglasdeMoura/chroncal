@@ -298,7 +298,7 @@ func TestCheck_SnoozedAlarmRewrittenSyncOnly_DoesNotRefire(t *testing.T) {
 	}
 	// The lister retires the state row. An unconsumed snooze would stay
 	// pending in `alarm list` forever, and every check tick would resolve
-	// it again for nothing.
+	// it again with no effect.
 	var ackedAt sql.NullString
 	if err := db.QueryRowContext(ctx,
 		`SELECT acked_at FROM alarm_state WHERE id = ?`, stateID).Scan(&ackedAt); err != nil {
@@ -306,6 +306,68 @@ func TestCheck_SnoozedAlarmRewrittenSyncOnly_DoesNotRefire(t *testing.T) {
 	}
 	if !ackedAt.Valid || ackedAt.String == "" {
 		t.Errorf("state row not acknowledged; the dead snooze must be retired")
+	}
+}
+
+// A fired-but-undismissed alarm can also be rewritten in place to a
+// sync-only action before the user dismisses it. ListPending must retire
+// that state row with the same dismiss treatment, so `alarm list` does
+// not show a pending entry that can never re-fire.
+func TestListPending_RetiresRewrittenSyncOnlyState(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	evtSvc := event.NewService(db, q)
+	svc := NewService(db, q, evtSvc, nil)
+	ctx := context.Background()
+
+	start := time.Now().Add(10 * time.Minute)
+	e, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "Fired then disabled",
+		StartTime:  start,
+		EndTime:    start.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT15M"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	due, _, err := svc.Check(ctx, time.Now())
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if len(due) != 1 {
+		t.Fatalf("due = %d, want 1", len(due))
+	}
+	stateID, err := svc.MarkFired(ctx, due[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Rewrite the alarm row in place, like updateAlarmInPlace does on a
+	// sync pull.
+	if _, err := db.ExecContext(ctx,
+		`UPDATE event_alarms SET action = 'NONE' WHERE id = ?`, due[0].Alarm.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	pending, err := svc.ListPending(ctx)
+	if err != nil {
+		t.Fatalf("list pending: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Errorf("pending = %d, want 0 (a sync-only alarm must not stay pending)", len(pending))
+	}
+	var ackedAt sql.NullString
+	if err := db.QueryRowContext(ctx,
+		`SELECT acked_at FROM alarm_state WHERE id = ?`, stateID).Scan(&ackedAt); err != nil {
+		t.Fatal(err)
+	}
+	if !ackedAt.Valid || ackedAt.String == "" {
+		t.Errorf("state row not acknowledged; the dead pending entry must be retired")
 	}
 }
 

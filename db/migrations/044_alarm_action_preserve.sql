@@ -158,6 +158,20 @@ END;
 -- local only. The next push omits the deleted VALARMs, so the server copy
 -- loses them too, and Google re-applies the default reminders that its
 -- ACTION:NONE sentinel turned off.
+--
+-- Delete the dependent rows explicitly before the alarm rows. The
+-- cascade removes them when foreign keys are ON, but an external goose
+-- run without the DSN pragmas has them OFF. Without this insurance the
+-- backup tables below would capture orphan state and attendee rows and
+-- the restore would re-insert them.
+DELETE FROM alarm_state WHERE alarm_id IN
+    (SELECT id FROM event_alarms WHERE action NOT IN ('AUDIO','DISPLAY','EMAIL'));
+DELETE FROM event_alarm_attendees WHERE alarm_id IN
+    (SELECT id FROM event_alarms WHERE action NOT IN ('AUDIO','DISPLAY','EMAIL'));
+DELETE FROM todo_alarm_state WHERE alarm_id IN
+    (SELECT id FROM todo_alarms WHERE action NOT IN ('AUDIO','DISPLAY','EMAIL'));
+DELETE FROM todo_alarm_attendees WHERE alarm_id IN
+    (SELECT id FROM todo_alarms WHERE action NOT IN ('AUDIO','DISPLAY','EMAIL'));
 DELETE FROM event_alarms WHERE action NOT IN ('AUDIO','DISPLAY','EMAIL');
 DELETE FROM todo_alarms WHERE action NOT IN ('AUDIO','DISPLAY','EMAIL');
 

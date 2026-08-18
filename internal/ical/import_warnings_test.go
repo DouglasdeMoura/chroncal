@@ -147,8 +147,8 @@ func TestImport_UnsupportedAlarmAction_PreservesAlarm(t *testing.T) {
 	}
 }
 
-// A sync-only alarm with an unparseable TRIGGER is dropped by the caller's
-// TriggerValue gate. The report must then carry only the dropped warning.
+// The caller's TriggerValue gate drops a sync-only alarm with an
+// unparseable TRIGGER. The report must then carry only the dropped warning.
 // A "preserved" warning next to a "dropped" warning for one alarm would
 // contradict itself.
 func TestImport_SyncOnlyAlarmWithBadTrigger_OneCoherentWarning(t *testing.T) {

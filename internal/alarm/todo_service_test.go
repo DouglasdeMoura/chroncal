@@ -29,13 +29,19 @@ func (m *mockTodoAlarmLister) ListFireableAlarmsLean(ctx context.Context, todoID
 	if err != nil {
 		return nil, err
 	}
+	return filterFireable(alarms), nil
+}
+
+// filterFireable keeps the alarms the engine can fire. Both lister mocks
+// in this package share it, so the two cannot drift.
+func filterFireable(alarms []model.Alarm) []model.Alarm {
 	kept := make([]model.Alarm, 0, len(alarms))
 	for _, a := range alarms {
 		if model.FireableAlarmAction(a.Action) {
 			kept = append(kept, a)
 		}
 	}
-	return kept, nil
+	return kept
 }
 
 // TestComputeTodoTrigger_RelatedEnd_DtStartPlusDue guards issue #367: a VTODO
