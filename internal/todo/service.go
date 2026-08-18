@@ -156,8 +156,6 @@ type UpsertParams struct {
 const (
 	defaultStatus = "NEEDS-ACTION"
 	defaultClass  = "PUBLIC"
-	alarmAction   = "DISPLAY"
-	alarmRelated  = "START"
 	todoComponent = "VTODO"
 )
 
@@ -869,13 +867,13 @@ func (s *Service) ReplaceAlarms(ctx context.Context, todoID int64, alarms []mode
 	}
 
 	// Copy before defaults apply. The caller's slice must not be mutated.
+	// PrepareAlarmForWrite fills the defaults and validates. A bad Action
+	// or Related then fails with a typed error, not with the CHECK
+	// constraint (issue #578).
 	alarms = append([]model.Alarm(nil), alarms...)
 	for i := range alarms {
-		if alarms[i].Action == "" {
-			alarms[i].Action = alarmAction
-		}
-		if alarms[i].Related == "" {
-			alarms[i].Related = alarmRelated
+		if err := model.PrepareAlarmForWrite(&alarms[i]); err != nil {
+			return err
 		}
 	}
 

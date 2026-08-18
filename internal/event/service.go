@@ -1404,16 +1404,6 @@ func loadExistingAlarms(ctx context.Context, qtx *storage.Queries, eventID int64
 	return buildAlarmsWithAttendees(ctx, qtx, rows)
 }
 
-// applyAlarmDefaults sets default values for alarm fields.
-func applyAlarmDefaults(a *model.Alarm) {
-	if a.Action == "" {
-		a.Action = "DISPLAY"
-	}
-	if a.Related == "" {
-		a.Related = "START"
-	}
-}
-
 // matchAlarm tries to match a new alarm with stored ones by content.
 // Returns true and the index if matched, false otherwise. Rows whose
 // non-empty RFC 9074 UIDs differ are never paired. The UID identifies the
@@ -1624,6 +1614,15 @@ func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []mod
 // edits, creates, deletes) using a tx-bound Queries. It opens no transaction so
 // callers can compose it with the event row write inside one transaction.
 func replaceAlarmsTx(ctx context.Context, qtx *storage.Queries, eventID int64, alarms []model.Alarm) error {
+	// Fill the defaults and validate before any read or write. A bad
+	// Action or Related then fails with a typed error, not with the
+	// CHECK constraint (issue #578).
+	for i := range alarms {
+		if err := model.PrepareAlarmForWrite(&alarms[i]); err != nil {
+			return err
+		}
+	}
+
 	// Load existing alarms with attendees for content matching.
 	existing, err := loadExistingAlarms(ctx, qtx, eventID)
 	if err != nil {
@@ -1633,9 +1632,6 @@ func replaceAlarmsTx(ctx context.Context, qtx *storage.Queries, eventID int64, a
 	// Match incoming alarms against existing by content.
 	// Slice-based matching: each existing alarm can only match once (supports duplicates).
 	matched := make([]bool, len(existing))
-	for i := range alarms {
-		applyAlarmDefaults(&alarms[i])
-	}
 	var unmatched []model.Alarm
 	for _, a := range alarms {
 		if j, found := matchAlarm(existing, matched, a); found {

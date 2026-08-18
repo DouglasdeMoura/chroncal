@@ -116,8 +116,9 @@ func TestImportComponentsSurfacesChildFieldFailure(t *testing.T) {
 		Title:     "Has bad alarm",
 		StartTime: start,
 		EndTime:   start.Add(time.Hour),
-		// ACTION is constrained to AUDIO/DISPLAY/EMAIL, so this alarm fails
-		// to attach even though the event itself is valid.
+		// The service boundary rejects an ACTION outside model.AlarmActions
+		// with model.ErrInvalidAlarm (issue #578), so this alarm fails to
+		// attach even though the event itself is valid.
 		Alarms: []model.Alarm{{
 			Action:       "BOGUS",
 			TriggerValue: "-PT15M",
