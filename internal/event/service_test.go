@@ -336,6 +336,65 @@ func TestEventService_Alarms(t *testing.T) {
 	}
 }
 
+// TestEventService_ReplaceAlarms_RejectsInvalidAlarm locks the service
+// boundary contract from issue #578. A bad Action or Related must fail
+// with model.ErrInvalidAlarm before the write, not with the CHECK
+// constraint. No partial alarm row may land.
+func TestEventService_ReplaceAlarms_RejectsInvalidAlarm(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	e := createEvent(t, svc)
+
+	err := svc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT15M"},
+		{Action: "PROCEDURE", TriggerValue: "-PT5M"},
+	})
+	if !errors.Is(err, model.ErrInvalidAlarm) {
+		t.Fatalf("invalid action: err = %v, want model.ErrInvalidAlarm", err)
+	}
+
+	err = svc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT15M", Related: "MIDDLE"},
+	})
+	if !errors.Is(err, model.ErrInvalidAlarm) {
+		t.Fatalf("invalid related: err = %v, want model.ErrInvalidAlarm", err)
+	}
+
+	alarms, err := svc.ListAlarms(ctx, e.ID)
+	if err != nil {
+		t.Fatalf("ListAlarms: %v", err)
+	}
+	if len(alarms) != 0 {
+		t.Errorf("alarms = %d, want 0 (a rejected write must not land)", len(alarms))
+	}
+}
+
+// TestEventService_ReplaceAlarms_DefaultsEmptyFields keeps the defaults
+// contract. An empty Action becomes DISPLAY. An empty Related becomes
+// START. Validation runs after the defaults, so current callers pass.
+func TestEventService_ReplaceAlarms_DefaultsEmptyFields(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	e := createEvent(t, svc)
+
+	err := svc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{TriggerValue: "-PT15M"},
+	})
+	if err != nil {
+		t.Fatalf("ReplaceAlarms error: %v", err)
+	}
+	alarms, _ := svc.ListAlarms(ctx, e.ID)
+	if len(alarms) != 1 {
+		t.Fatalf("alarms = %d, want 1", len(alarms))
+	}
+	if alarms[0].Action != "DISPLAY" {
+		t.Errorf("Action = %q, want DISPLAY", alarms[0].Action)
+	}
+	if alarms[0].Related != "START" {
+		t.Errorf("Related = %q, want START", alarms[0].Related)
+	}
+}
+
 func TestEventService_ReplaceAlarms_UIDMatchPreservesRow(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()

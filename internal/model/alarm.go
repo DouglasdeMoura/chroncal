@@ -2,7 +2,9 @@ package model
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -135,24 +137,61 @@ func sortedEmails(atts []AlarmAttendee) []string {
 	return emails
 }
 
-// ValidAlarmAction returns true if action is a value the alarm tables
-// accept. The set mirrors the CHECK constraints in db/migrations/003 and
-// 006. Keep this function and the two constraints in lockstep. A value
-// that passes here but fails the constraint rolls back the whole resource
-// transaction during sync (issue #575).
+// AlarmActions lists the ACTION values the alarm tables accept, in a
+// fixed order. The set mirrors the CHECK constraints in db/migrations/003
+// and 006. Keep this slice and the two constraints in lockstep. A value
+// outside this set fails the constraint and rolls back the whole resource
+// transaction during sync (issue #575). The match is case-sensitive, the
+// same as the constraints.
+var AlarmActions = []string{"AUDIO", "DISPLAY", "EMAIL"}
+
+// ValidAlarmAction returns true if action is a value in AlarmActions.
 func ValidAlarmAction(action string) bool {
-	switch action {
-	case "AUDIO", "DISPLAY", "EMAIL":
-		return true
-	}
-	return false
+	return slices.Contains(AlarmActions, action)
 }
 
 // ValidAlarmRelated returns true if related is a value the alarm tables
 // accept for the TRIGGER anchor. The set mirrors the same CHECK
-// constraints as ValidAlarmAction, with the same lockstep rule.
+// constraints as AlarmActions, with the same lockstep rule.
 func ValidAlarmRelated(related string) bool {
 	return related == "START" || related == "END"
+}
+
+// Default values for the alarm fields that PrepareAlarmForWrite fills
+// when the caller leaves them empty.
+const (
+	DefaultAlarmAction  = "DISPLAY"
+	DefaultAlarmRelated = "START"
+)
+
+// ErrInvalidAlarm marks an alarm field value the alarm tables reject.
+// PrepareAlarmForWrite wraps it with the field name and the value.
+var ErrInvalidAlarm = errors.New("invalid alarm")
+
+// PrepareAlarmForWrite prepares an alarm for an insert or an update. It
+// fills an empty Action with DefaultAlarmAction and an empty Related
+// with DefaultAlarmRelated. It then validates both fields against the
+// sets the alarm tables accept. For a bad value it returns an error
+// that wraps ErrInvalidAlarm and names the field and the value.
+//
+// The event and todo services call this function before every alarm
+// write. The service boundary then rejects a bad value with a typed
+// error. A raw value would instead fail the CHECK constraint and roll
+// back the whole resource transaction during sync (issues #575, #578).
+func PrepareAlarmForWrite(a *Alarm) error {
+	if a.Action == "" {
+		a.Action = DefaultAlarmAction
+	}
+	if a.Related == "" {
+		a.Related = DefaultAlarmRelated
+	}
+	if !ValidAlarmAction(a.Action) {
+		return fmt.Errorf("%w: action %q is not one of %s", ErrInvalidAlarm, a.Action, strings.Join(AlarmActions, ", "))
+	}
+	if !ValidAlarmRelated(a.Related) {
+		return fmt.Errorf("%w: related %q is not START or END", ErrInvalidAlarm, a.Related)
+	}
+	return nil
 }
 
 // ValidAlarmDuration returns true if d is a repeat interval the alarm
