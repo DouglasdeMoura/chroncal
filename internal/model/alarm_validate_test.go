@@ -105,3 +105,49 @@ func TestPrepareAlarmsForWrite_RejectsInvalidRelated(t *testing.T) {
 		t.Errorf("err = %q, want the field name and the value", err)
 	}
 }
+
+// The write rule and the token shape must agree on every candidate. The
+// import parser calls ValidAlarmActionToken and the services call
+// StorableAlarmAction. A value the parser stores must therefore also pass
+// a write (issue #595).
+func TestStorableAlarmActionTokenShape(t *testing.T) {
+	cases := []struct {
+		action string
+		want   bool
+		why    string
+	}{
+		{"AUDIO", true, "a fireable action"},
+		{"DISPLAY", true, "a fireable action"},
+		{"NONE", true, "the Google sentinel"},
+		{"PROCEDURE", true, "a legacy iana-token"},
+		{"X-APPLE-SOUND", true, "an x-name with a hyphen"},
+		{"X-VENDOR2", true, "an x-name with a digit"},
+		{"display", true, "a token shape, whatever the case"},
+		{"", false, "an empty action"},
+		{" ", false, "a whitespace-only action"},
+		{"\t", false, "a tab-only action"},
+		{"NO NE", false, "an embedded space"},
+		{"X-A;B", false, "a parameter separator"},
+		{"X-A:B", false, "a value separator"},
+		{"NEW\nLINE", false, "a line break"},
+	}
+	for _, c := range cases {
+		if got := StorableAlarmAction(c.action); got != c.want {
+			t.Errorf("StorableAlarmAction(%q) = %v, want %v (%s)", c.action, got, c.want, c.why)
+		}
+		if got := ValidAlarmActionToken(c.action); got != c.want {
+			t.Errorf("ValidAlarmActionToken(%q) = %v, want %v (%s)", c.action, got, c.want, c.why)
+		}
+	}
+}
+
+// A write refuses a malformed action with the typed error. A caller can
+// then tell the refusal apart from a storage failure.
+func TestPrepareAlarmsForWrite_RejectsMalformedAction(t *testing.T) {
+	for _, action := range []string{" ", "\t", "NO NE"} {
+		_, err := PrepareAlarmsForWrite([]Alarm{{Action: action, TriggerValue: "-PT15M"}})
+		if !errors.Is(err, ErrInvalidAlarm) {
+			t.Errorf("PrepareAlarmsForWrite(action %q) error = %v, want ErrInvalidAlarm", action, err)
+		}
+	}
+}

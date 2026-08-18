@@ -345,14 +345,18 @@ func TestCalendarsRejectInvalidRemoteMetadata(t *testing.T) {
 	}
 }
 
-// The alarm CHECK constraints and the model predicates must agree. A
-// value that passes the Go side but fails the constraint rolls back the
-// whole resource transaction during sync (issue #575). This test probes
-// both alarm tables with candidate values. The schema and
-// model.StorableAlarmAction / model.ValidAlarmRelated must give the same
-// verdict on each one. The action rule is wide on purpose (issue #579):
-// the tables keep a sync-only action such as NONE or X-APPLE-SOUND, and
-// only the narrower model.FireableAlarmAction gates the alarm engine.
+// Every value a model predicate accepts must also pass the alarm CHECK
+// constraints. A value that passes the Go side but fails a constraint
+// rolls back the whole resource transaction during sync (issue #575).
+// This test probes both alarm tables with candidate values.
+//
+// The related column holds the two rules to the same verdict. The action
+// column checks one direction only, because the two rules differ on
+// purpose. The constraint rejects an empty action alone (issue #579 keeps
+// a sync-only action such as NONE or X-APPLE-SOUND). The Go rule also
+// rejects a whitespace-only action, which the constraint stores but
+// export cannot represent (issue #595). Go therefore accepts a subset,
+// which is the safe direction.
 func TestAlarmConstraintsMatchModelValidators(t *testing.T) {
 	db, q, err := Open(":memory:")
 	if err != nil {
@@ -392,14 +396,17 @@ func TestAlarmConstraintsMatchModelValidators(t *testing.T) {
 		col    string
 		values []string
 		valid  func(string) bool
+		// exact holds the constraint to the same verdict as the model
+		// predicate. A column where the Go rule is stricter on purpose
+		// sets it to false, and the test then checks only that every
+		// value the Go rule accepts also reaches the table.
+		exact bool
 	}{
 		// The valid candidates come from the model sets. The test then
 		// probes a value added to the model but not to a migration
 		// against the CHECK constraint, and the value fails here.
-		// Migration 044 widened the action constraint, so the action rule
-		// is StorableAlarmAction and a preserved foreign action passes.
-		{"action", append(model.AlarmActions(), "NONE", "PROCEDURE", "X-APPLE-SOUND", "display", ""), model.StorableAlarmAction},
-		{"related", append(model.AlarmRelatedValues(), "STARTS", "end", ""), model.ValidAlarmRelated},
+		{"action", append(model.AlarmActions(), "NONE", "PROCEDURE", "X-APPLE-SOUND", "display", " ", "\t", "NO NE", ""), model.StorableAlarmAction, false},
+		{"related", append(model.AlarmRelatedValues(), "STARTS", "end", ""), model.ValidAlarmRelated, true},
 	}
 
 	for _, ins := range inserts {
@@ -409,9 +416,13 @@ func TestAlarmConstraintsMatchModelValidators(t *testing.T) {
 					`INSERT INTO `+ins.table+` (`+ins.fk+`, `+c.col+`, trigger_value) VALUES (?, ?, '-PT15M')`,
 					ins.id, v,
 				)
-				if got, want := err == nil, c.valid(v); got != want {
-					t.Errorf("%s %s %q: insert ok = %v, model predicate = %v (err: %v)",
-						ins.table, c.col, v, got, want, err)
+				if c.valid(v) && err != nil {
+					t.Errorf("%s %s %q: the model predicate accepts it, but the insert failed: %v",
+						ins.table, c.col, v, err)
+				}
+				if c.exact && !c.valid(v) && err == nil {
+					t.Errorf("%s %s %q: the model predicate rejects it, but the insert passed",
+						ins.table, c.col, v)
 				}
 				if err != nil && !strings.Contains(err.Error(), "CHECK constraint failed") {
 					t.Errorf("%s %s %q: rejected by %v, not by the CHECK constraint", ins.table, c.col, v, err)

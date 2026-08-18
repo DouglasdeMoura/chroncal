@@ -226,13 +226,34 @@ func FireableAlarmAction(action string) bool {
 	return slices.Contains(alarmActions, action)
 }
 
-// StorableAlarmAction returns true if action is a value the alarm tables
-// accept: any non-empty string. The rule mirrors the CHECK constraints in
-// db/migrations/044. Keep this function and the two constraints in
-// lockstep. A value that passes here but fails the constraint rolls back
-// the whole resource transaction during sync (issue #575).
+// ValidAlarmActionToken returns true if s has the shape RFC 5545 gives an
+// iana-token or an x-name: one or more ALPHA, DIGIT, or "-" characters.
+// The import parser and the write rule share this test. Any other byte
+// makes export emit an ACTION line a strict server rejects.
+func ValidAlarmActionToken(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '-':
+		default:
+			return false
+		}
+	}
+	return len(s) > 0
+}
+
+// StorableAlarmAction returns true if action is a value a write accepts:
+// a well-shaped token (see ValidAlarmActionToken). The rule is stricter
+// than the CHECK constraints in db/migrations/044, which reject only an
+// empty value. A whitespace-only action passes the constraint but exports
+// as a bare ACTION line with no value, so the write rule refuses it here
+// (issue #595).
+//
+// Keep the rule at least as strict as the constraints. A value that
+// passes here but fails a constraint rolls back the whole resource
+// transaction during sync (issue #575).
 func StorableAlarmAction(action string) bool {
-	return action != ""
+	return ValidAlarmActionToken(action)
 }
 
 // CheckStorableAlarmAction returns a named error for an action the alarm
