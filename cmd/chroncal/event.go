@@ -1289,7 +1289,7 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 	cmd.Flags().MarkHidden("exdate")
 	cmd.Flags().MarkHidden("rdate")
 	cmd.Flags().StringArrayVar(&attachFlags, "attach", nil, "attachment (file path or URL, repeatable)")
-	cmd.Flags().StringArrayVar(&alarmFlags, "alarm", nil, `alarm in format [ACTION:]TRIGGER[:DESC:REPEAT:DURATION:RELATED:ATTENDEES]; repeatable`)
+	cmd.Flags().StringArrayVar(&alarmFlags, "alarm", nil, alarmFlagHelp)
 	cmd.Flags().StringArrayVar(&attendeeFlags, "attendee", nil, "attendee (email or \"Name <email>\", repeatable, replaces all)")
 	cmd.Flags().StringVar(&organizer, "organizer", "", "event organizer (email or \"Name <email>\", replaces existing)")
 	cmd.Flags().StringArrayVar(&commentFlags, "comment", nil, "comment annotation (repeatable, replaces all)")
@@ -1647,14 +1647,10 @@ func smtpConfiguredForEmailAlarms() bool {
 	return strings.TrimSpace(cfg.SMTP.Host) != ""
 }
 
-// The joined lists render once at package load, so the flag help and
-// the error messages stay in lockstep with the model sets.
-var (
-	alarmActionsList = strings.Join(model.AlarmActions(), ", ")
-	alarmRelatedList = strings.Join(model.AlarmRelatedValues(), ", ")
-	alarmFlagHelp    = `alarm in format [ACTION:]TRIGGER[:DESC:REPEAT:DURATION:RELATED:ATTENDEES]; ACTION is one of ` +
-		alarmActionsList + ` (default ` + model.DefaultAlarmAction + `); extended fields are optional, e.g. "DISPLAY:-PT30M::3:PT5M:END" or "EMAIL:-PT1H:::::user@example.com"; repeatable`
-)
+// The help renders once at package load, from the joined lists the
+// model exports, so it stays in lockstep with the model sets.
+var alarmFlagHelp = `alarm in format [ACTION:]TRIGGER[:DESC:REPEAT:DURATION:RELATED:ATTENDEES]; ACTION is one of ` +
+	model.AlarmActionsList() + ` (default ` + model.DefaultAlarmAction + `); extended fields are optional, e.g. "DISPLAY:-PT30M::3:PT5M:END" or "EMAIL:-PT1H:::::user@example.com"; repeatable`
 
 func parseOneAlarm(val string) (model.Alarm, error) {
 	action := model.DefaultAlarmAction
@@ -1726,7 +1722,7 @@ func parseOneAlarm(val string) (model.Alarm, error) {
 	if len(parts) > 4 && parts[4] != "" {
 		rel := strings.ToUpper(parts[4])
 		if !model.ValidAlarmRelated(rel) {
-			return model.Alarm{}, fmt.Errorf("alarm %q: related must be one of %s, got %q", val, alarmRelatedList, parts[4])
+			return model.Alarm{}, fmt.Errorf("alarm %q: related must be one of %s, got %q", val, model.AlarmRelatedValuesList(), parts[4])
 		}
 		a.Related = rel
 	}

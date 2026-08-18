@@ -139,39 +139,52 @@ func sortedEmails(atts []AlarmAttendee) []string {
 
 // alarmActions lists the ACTION values the alarm tables accept, in a
 // fixed order. The set mirrors the CHECK constraints in db/migrations/003
-// and 006. Keep this array and the two constraints in lockstep. A value
+// and 006. Keep this slice and the two constraints in lockstep. A value
 // outside this set fails the constraint and rolls back the whole resource
 // transaction during sync (issue #575). The match is case-sensitive, the
-// same as the constraints. The array is unexported so no other package
+// same as the constraints. The slice is unexported so no other package
 // can change the accepted set at run time.
-var alarmActions = [...]string{"AUDIO", "DISPLAY", "EMAIL"}
+var alarmActions = []string{"AUDIO", "DISPLAY", "EMAIL"}
 
 // alarmRelatedValues lists the RELATED values the alarm tables accept
 // for the TRIGGER anchor, with the same lockstep rule as alarmActions.
-var alarmRelatedValues = [...]string{"START", "END"}
+var alarmRelatedValues = []string{"START", "END"}
 
 // AlarmActions returns the accepted ACTION values as a fresh slice.
 // A caller can keep or change the returned slice. The accepted set
 // does not change.
 func AlarmActions() []string {
-	return slices.Clone(alarmActions[:])
+	return slices.Clone(alarmActions)
 }
 
 // AlarmRelatedValues returns the accepted RELATED values as a fresh
 // slice, like AlarmActions.
 func AlarmRelatedValues() []string {
-	return slices.Clone(alarmRelatedValues[:])
+	return slices.Clone(alarmRelatedValues)
+}
+
+// AlarmActionsList returns the accepted ACTION values as one joined
+// string, for error messages and help text. The list renders once at
+// package load, so every consumer stays in lockstep with the set.
+func AlarmActionsList() string {
+	return alarmActionsList
+}
+
+// AlarmRelatedValuesList returns the accepted RELATED values as one
+// joined string, like AlarmActionsList.
+func AlarmRelatedValuesList() string {
+	return alarmRelatedValuesList
 }
 
 // ValidAlarmAction returns true if action is an accepted ACTION value.
 func ValidAlarmAction(action string) bool {
-	return slices.Contains(alarmActions[:], action)
+	return slices.Contains(alarmActions, action)
 }
 
 // ValidAlarmRelated returns true if related is an accepted RELATED
 // value.
 func ValidAlarmRelated(related string) bool {
-	return slices.Contains(alarmRelatedValues[:], related)
+	return slices.Contains(alarmRelatedValues, related)
 }
 
 // Default values for the alarm fields that PrepareAlarmsForWrite fills
@@ -182,10 +195,10 @@ const (
 )
 
 // The joined lists render once at package load, so every error message
-// stays in lockstep with the arrays.
+// stays in lockstep with the slices.
 var (
-	alarmActionsList       = strings.Join(alarmActions[:], ", ")
-	alarmRelatedValuesList = strings.Join(alarmRelatedValues[:], ", ")
+	alarmActionsList       = strings.Join(alarmActions, ", ")
+	alarmRelatedValuesList = strings.Join(alarmRelatedValues, ", ")
 )
 
 // ErrInvalidAlarm marks an alarm field value the alarm tables reject.
