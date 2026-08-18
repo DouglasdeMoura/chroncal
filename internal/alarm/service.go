@@ -514,15 +514,9 @@ func (s *Service) ListExpiredSnoozed(ctx context.Context, now time.Time) ([]DueA
 		if matched.ID == 0 {
 			continue // alarm definition was removed
 		}
-		// A sync pull can rewrite a snoozed alarm to a sync-only action
-		// in place (same row ID, matched by UID). The re-fire must not
-		// happen. Dismiss the state row: an unconsumed snooze would
-		// stay pending in `alarm list` forever, and every check tick
-		// would resolve it again with no effect.
-		if !model.FireableAlarmAction(matched.Action) {
-			_ = s.Dismiss(ctx, st.ID)
-			continue
-		}
+		// A rewrite to a sync-only action retires the state row at the
+		// write point (updateAlarmInPlace), so this list never returns
+		// such a row.
 
 		triggerAt, _ := time.Parse(time.RFC3339, storage.NullableToString(st.SnoozedTo))
 
@@ -712,73 +706,17 @@ func (s *Service) Snooze(ctx context.Context, stateID int64, until time.Time) er
 	})
 }
 
-// ListPending returns all fired alarms that are not acknowledged. A sync
-// pull can rewrite a fired alarm to a sync-only action in place before
-// the user dismisses it. That alarm can never re-fire. Retire its state
-// row with the same dismiss treatment as the expired-snooze path, so
-// `alarm list` does not show it forever.
+// ListPending returns all fired alarms that are not acknowledged. A
+// rewrite to a sync-only action retires the alarm's state at the write
+// point (updateAlarmInPlace), so this list never returns such a row.
 func (s *Service) ListPending(ctx context.Context) ([]storage.AlarmState, error) {
-	states, err := s.q.ListPendingAlarmStates(ctx)
-	if err != nil {
-		return nil, err
-	}
-	kept := make([]storage.AlarmState, 0, len(states))
-	for _, st := range states {
-		if s.pendingStateIsSyncOnly(ctx, st) {
-			_ = s.Dismiss(ctx, st.ID)
-			continue
-		}
-		kept = append(kept, st)
-	}
-	return kept, nil
+	return s.q.ListPendingAlarmStates(ctx)
 }
 
-// pendingStateIsSyncOnly reports whether the state row points at an alarm
-// whose action the engine cannot fire.
-func (s *Service) pendingStateIsSyncOnly(ctx context.Context, st storage.AlarmState) bool {
-	alarms, err := s.events.ListAlarms(ctx, st.EventID)
-	if err != nil {
-		return false
-	}
-	for _, a := range alarms {
-		if a.ID == st.AlarmID {
-			return !model.FireableAlarmAction(a.Action)
-		}
-	}
-	return false
-}
-
-// ListPendingTodoAlarms returns all fired-but-not-acknowledged todo
-// alarms, with the same sync-only retirement as ListPending.
+// ListPendingTodoAlarms returns all fired todo alarms that are not
+// acknowledged, with the same write-point retirement as ListPending.
 func (s *Service) ListPendingTodoAlarms(ctx context.Context) ([]storage.TodoAlarmState, error) {
-	states, err := s.q.ListPendingTodoAlarmStates(ctx)
-	if err != nil {
-		return nil, err
-	}
-	kept := make([]storage.TodoAlarmState, 0, len(states))
-	for _, st := range states {
-		if s.pendingTodoStateIsSyncOnly(ctx, st) {
-			_ = s.DismissTodoAlarm(ctx, st.ID)
-			continue
-		}
-		kept = append(kept, st)
-	}
-	return kept, nil
-}
-
-// pendingTodoStateIsSyncOnly reports whether the todo state row points at
-// an alarm whose action the engine cannot fire.
-func (s *Service) pendingTodoStateIsSyncOnly(ctx context.Context, st storage.TodoAlarmState) bool {
-	alarms, err := s.todos.ListAlarmsLean(ctx, st.TodoID)
-	if err != nil {
-		return false
-	}
-	for _, a := range alarms {
-		if a.ID == st.AlarmID {
-			return !model.FireableAlarmAction(a.Action)
-		}
-	}
-	return false
+	return s.q.ListPendingTodoAlarmStates(ctx)
 }
 
 // DismissTodoAlarm acknowledges a fired todo alarm so it will not show as pending.

@@ -242,8 +242,9 @@ func TestCheck_SkipsSyncOnlyAction(t *testing.T) {
 }
 
 // A sync pull can rewrite a snoozed alarm to a sync-only action in place
-// (same row ID, matched by UID). The expired snooze must not re-fire, and
-// the snooze state must stay unconsumed.
+// (same row ID, matched by UID). The write point retires the snooze state
+// in the same transaction, so the expired snooze does not re-fire and
+// `alarm list` does not show it forever.
 func TestCheck_SnoozedAlarmRewrittenSyncOnly_DoesNotRefire(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	evtSvc := event.NewService(db, q)
@@ -261,7 +262,7 @@ func TestCheck_SnoozedAlarmRewrittenSyncOnly_DoesNotRefire(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
-		{Action: "DISPLAY", TriggerValue: "-PT15M"},
+		{Action: "DISPLAY", TriggerValue: "-PT15M", UID: "snooze-rewrite@test"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -281,11 +282,12 @@ func TestCheck_SnoozedAlarmRewrittenSyncOnly_DoesNotRefire(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Rewrite the alarm row in place, like updateAlarmInPlace does on a
-	// sync pull. ReplaceAlarms would delete and recreate the row, and the
-	// cascade would remove the snooze state this test must observe.
-	if _, err := db.ExecContext(ctx,
-		`UPDATE event_alarms SET action = 'NONE' WHERE id = ?`, due[0].Alarm.ID); err != nil {
+	// Rewrite the alarm through ReplaceAlarms with the same UID. The UID
+	// match routes to updateAlarmInPlace: the row ID survives, and the
+	// write point retires the snooze state in the same transaction.
+	if err := evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "NONE", TriggerValue: "-PT15M", UID: "snooze-rewrite@test"},
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -296,23 +298,20 @@ func TestCheck_SnoozedAlarmRewrittenSyncOnly_DoesNotRefire(t *testing.T) {
 	if len(due) != 0 {
 		t.Errorf("due after rewrite = %d, want 0 (a sync-only action must not re-fire)", len(due))
 	}
-	// The lister retires the state row. An unconsumed snooze would stay
-	// pending in `alarm list` forever, and every check tick would resolve
-	// it again with no effect.
 	var ackedAt sql.NullString
 	if err := db.QueryRowContext(ctx,
 		`SELECT acked_at FROM alarm_state WHERE id = ?`, stateID).Scan(&ackedAt); err != nil {
 		t.Fatal(err)
 	}
 	if !ackedAt.Valid || ackedAt.String == "" {
-		t.Errorf("state row not acknowledged; the dead snooze must be retired")
+		t.Errorf("state row not acknowledged; the write point must retire the dead snooze")
 	}
 }
 
 // A fired-but-undismissed alarm can also be rewritten in place to a
-// sync-only action before the user dismisses it. ListPending must retire
-// that state row with the same dismiss treatment, so `alarm list` does
-// not show a pending entry that can never re-fire.
+// sync-only action before the user dismisses it. The write point retires
+// that state row, so `alarm list` does not show a pending entry that can
+// never re-fire.
 func TestListPending_RetiresRewrittenSyncOnlyState(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	evtSvc := event.NewService(db, q)
@@ -330,7 +329,7 @@ func TestListPending_RetiresRewrittenSyncOnlyState(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
-		{Action: "DISPLAY", TriggerValue: "-PT15M"},
+		{Action: "DISPLAY", TriggerValue: "-PT15M", UID: "pending-rewrite@test"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -347,10 +346,11 @@ func TestListPending_RetiresRewrittenSyncOnlyState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Rewrite the alarm row in place, like updateAlarmInPlace does on a
-	// sync pull.
-	if _, err := db.ExecContext(ctx,
-		`UPDATE event_alarms SET action = 'NONE' WHERE id = ?`, due[0].Alarm.ID); err != nil {
+	// Rewrite the alarm through ReplaceAlarms with the same UID. The UID
+	// match routes to updateAlarmInPlace, which retires the state row.
+	if err := evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "NONE", TriggerValue: "-PT15M", UID: "pending-rewrite@test"},
+	}); err != nil {
 		t.Fatal(err)
 	}
 

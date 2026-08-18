@@ -503,6 +503,16 @@ func NewEventFormModelForEditInstance(ev event.Event, instanceTime time.Time, ca
 func NewEventFormModelForDuplicate(ev event.Event, calendars map[int64]CalendarInfo, theme Theme) (EventFormModel, tea.Cmd) {
 	m, cmd := NewEventFormModelForEdit(ev, calendars, theme)
 	m.editID = 0
+	// A duplicate is a new local event. Keep only the fireable alarms:
+	// a preserved sync-only VALARM belongs to another client, and a copy
+	// would publish that sentinel under a fresh UID (issue #579).
+	kept := m.alarms[:0:0]
+	for _, a := range m.alarms {
+		if model.FireableAlarmAction(a.Action) {
+			kept = append(kept, a)
+		}
+	}
+	m.alarms = kept
 	m.rebuildDialog()
 	return m, cmd
 }

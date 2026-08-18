@@ -659,6 +659,21 @@ func parseCategories(ve ical.Event) string {
 	return timeutil.JoinCategoryList(cats)
 }
 
+// validActionToken reports whether s is an RFC 5545 iana-token or x-name:
+// one or more ALPHA, DIGIT, or "-" characters. Any other byte would make
+// export emit an invalid ACTION line that a strict server rejects.
+func validActionToken(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '-':
+		default:
+			return false
+		}
+	}
+	return len(s) > 0
+}
+
 // parseAlarm extracts a model.Alarm from a VALARM component.
 // The second return value is a warning string (empty if no issues). A VALARM
 // with several problems reports all of them. Each one changes what the alarm
@@ -675,16 +690,23 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 		// so the foreign VALARM round-trips verbatim. A fireable action
 		// stays canonical uppercase.
 		raw := strings.TrimSpace(prop.Value)
-		if up := strings.ToUpper(raw); up != "" {
-			if model.FireableAlarmAction(up) {
-				alarm.Action = up
-			} else {
-				alarm.Action = raw
-			}
+		switch up := strings.ToUpper(raw); {
+		case up == "":
+			// An empty value keeps the default action. The service
+			// write boundary (model.PrepareAlarmsForWrite) fills the
+			// same default, and a reminder must not vanish over an
+			// empty value.
+		case model.FireableAlarmAction(up):
+			alarm.Action = up
+		case validActionToken(raw):
+			alarm.Action = raw
+		default:
+			// A malformed action cannot round-trip: export would emit
+			// an invalid ACTION line, and a strict server rejects the
+			// whole resource with 400. Drop the alarm and warn.
+			warns = append(warns, fmt.Sprintf("VALARM ACTION %q: not an RFC 5545 token; alarm dropped", raw))
+			return model.Alarm{}, strings.Join(warns, "; ")
 		}
-		// An empty value keeps the default action. The service write
-		// boundary (model.PrepareAlarmsForWrite) fills the same default,
-		// and a reminder must not vanish over an empty value.
 	}
 	if prop := comp.Props.Get(ical.PropTrigger); prop != nil {
 		tv := prop.Value
