@@ -860,11 +860,10 @@ END:VCALENDAR`
 }
 
 // A DURATION property is a span and must be positive (RFC 5545
-// §3.8.2.5). A negative value must not persist: it would store an end
-// before the start and re-export a value strict servers reject. A
-// valid huge value whose end passes year 9999 must also drop: the RFC
-// 3339 storage format cannot represent a 5-digit year, and the string
-// misorders the lexicographic range queries (issue #582 round 3).
+// §3.8.2.5). A negative value must not persist. It would store an end
+// before the start. It would also re-export a value that strict
+// servers reject. A value whose end passes the storable range must
+// drop as well. See timeutil.Storable for that rule.
 func TestImport_SpanDuration_RejectsNegativeAndUnstorable(t *testing.T) {
 	t.Parallel()
 	ics := `BEGIN:VCALENDAR
@@ -1434,5 +1433,81 @@ func TestImport_CustomVTimezone_PreservesZoneLabel(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("VTIMEZONE Custom/Office not captured in result.Timezones")
+	}
+}
+
+// A large day span is valid when the end still lands in the storable
+// range. The day cap in internal/duration exists for overflow safety
+// alone, so it must not replace such a span with the 1h fallback and
+// push that value back over the server copy (issue #582 round 5).
+func TestImport_LargeDaySpan_KeepsTheDuration(t *testing.T) {
+	t.Parallel()
+	ics := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:large-day-span
+DTSTAMP:20260401T100000Z
+DTSTART:20260401T140000Z
+DURATION:P400000D
+SUMMARY:Long Span Event
+END:VEVENT
+END:VCALENDAR`
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile error: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %d, want 1", len(result.Events))
+	}
+	e := result.Events[0]
+	if e.DurationValue != "P400000D" {
+		t.Errorf("DurationValue = %q, want P400000D kept", e.DurationValue)
+	}
+	if want := e.StartTime.AddDate(0, 0, 400000); !e.EndTime.Equal(want) {
+		t.Errorf("EndTime = %s, want %s", e.EndTime, want)
+	}
+}
+
+// RFC 5545 §3.6.2 makes DUE and DURATION mutually exclusive and needs a
+// DTSTART beside a DURATION. The todo service rejects both shapes, so
+// import must drop the DURATION and warn. A stored shape would fail the
+// whole calendar pull on every run (issue #582 round 5).
+func TestImport_TodoStructuralDuration_DroppedWithWarning(t *testing.T) {
+	t.Parallel()
+	ics := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VTODO
+UID:due-plus-duration
+DTSTAMP:20260401T100000Z
+DTSTART:20260401T140000Z
+DUE:20260402T140000Z
+DURATION:PT1H
+SUMMARY:Due And Duration
+END:VTODO
+BEGIN:VTODO
+UID:duration-without-start
+DTSTAMP:20260401T100000Z
+DURATION:PT1H
+SUMMARY:Duration Without Start
+END:VTODO
+END:VCALENDAR`
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile error: %v", err)
+	}
+	if len(result.Todos) != 2 {
+		t.Fatalf("todos = %d, want 2", len(result.Todos))
+	}
+	for _, td := range result.Todos {
+		if td.Duration != "" {
+			t.Errorf("todo %q: Duration = %q, want it dropped", td.UID, td.Duration)
+		}
+	}
+	joined := strings.Join(result.Warnings, " | ")
+	if !strings.Contains(joined, "mutually exclusive") {
+		t.Errorf("no DUE+DURATION warning; warnings = %v", result.Warnings)
+	}
+	if !strings.Contains(joined, "needs a DTSTART") {
+		t.Errorf("no DURATION-without-DTSTART warning; warnings = %v", result.Warnings)
 	}
 }

@@ -237,18 +237,33 @@ func setPropFloating(vevent *ical.Event, propName string, t time.Time) {
 func setEventTimes(vevent *ical.Event, e event.Event) {
 	// RFC 5545 forbids both DTEND and DURATION on the same VEVENT.
 	// When DurationValue is set (imported from .ics), emit DURATION instead of DTEND.
-	// The ValidateSpan guard exists for DB rows written before import
+	// The UsableSpan guard exists for DB rows written before import
 	// validated DURATION (the same reason as the alarm-path guard in
 	// buildValarm). A stored bad or negative value must not reach the
 	// server; the stored end time takes over as DTEND.
-	useDuration := e.DurationValue != "" && duration.ValidateSpan(e.DurationValue) == nil
+	useDuration := duration.UsableSpan(e.DurationValue)
+
+	// A legacy row whose span failed the guard above also holds an end
+	// time that the same bad span produced, so the end can precede the
+	// start. An inverted interval is invalid iCal. That is the defect
+	// the guard prevents, in another shape. Fall back to the span the
+	// importer gives a broken value. An end equal to the start stays:
+	// RFC 5545 allows a zero-length event.
+	endTime := e.EndTime
+	if !useDuration && endTime.Before(e.StartTime) {
+		if e.AllDay {
+			endTime = e.StartTime.AddDate(0, 0, 1)
+		} else {
+			endTime = e.StartTime.Add(time.Hour)
+		}
+	}
 
 	if e.AllDay {
 		vevent.Props.SetDate(ical.PropDateTimeStart, allDayExportDate(e.StartTime, e.Timezone))
 		if useDuration {
 			setPropDuration(vevent, e.DurationValue)
 		} else {
-			vevent.Props.SetDate(ical.PropDateTimeEnd, allDayExportDate(e.EndTime, e.Timezone))
+			vevent.Props.SetDate(ical.PropDateTimeEnd, allDayExportDate(endTime, e.Timezone))
 		}
 	} else if e.Timezone == "FLOATING" {
 		// Floating times are host-independent wall clocks. Import interprets
@@ -258,7 +273,7 @@ func setEventTimes(vevent *ical.Event, e event.Event) {
 		if useDuration {
 			setPropDuration(vevent, e.DurationValue)
 		} else {
-			setPropFloating(vevent, ical.PropDateTimeEnd, e.EndTime.UTC())
+			setPropFloating(vevent, ical.PropDateTimeEnd, endTime.UTC())
 		}
 	} else if e.Timezone != "" {
 		loc, err := time.LoadLocation(e.Timezone)
@@ -270,7 +285,7 @@ func setEventTimes(vevent *ical.Event, e event.Event) {
 			if useDuration {
 				setPropDuration(vevent, e.DurationValue)
 			} else {
-				vevent.Props.SetDateTime(ical.PropDateTimeEnd, e.EndTime.In(loc))
+				vevent.Props.SetDateTime(ical.PropDateTimeEnd, endTime.In(loc))
 				if prop := vevent.Props.Get(ical.PropDateTimeEnd); prop != nil {
 					prop.Params.Set(ical.ParamTimezoneID, e.Timezone)
 				}
@@ -280,7 +295,7 @@ func setEventTimes(vevent *ical.Event, e event.Event) {
 			if useDuration {
 				setPropDuration(vevent, e.DurationValue)
 			} else {
-				vevent.Props.SetDateTime(ical.PropDateTimeEnd, e.EndTime.UTC())
+				vevent.Props.SetDateTime(ical.PropDateTimeEnd, endTime.UTC())
 			}
 		}
 	} else {
@@ -288,7 +303,7 @@ func setEventTimes(vevent *ical.Event, e event.Event) {
 		if useDuration {
 			setPropDuration(vevent, e.DurationValue)
 		} else {
-			vevent.Props.SetDateTime(ical.PropDateTimeEnd, e.EndTime.UTC())
+			vevent.Props.SetDateTime(ical.PropDateTimeEnd, endTime.UTC())
 		}
 	}
 }
@@ -401,10 +416,10 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 		// (import enforces no mutual exclusion), and a single bad component makes
 		// enc.Encode reject the whole calendar, dropping every todo. Drop the
 		// conflicting DURATION instead so the rest of the batch still exports.
-		// The ValidateSpan guard covers DB rows written before import
+		// The UsableSpan guard covers DB rows written before import
 		// validated the todo DURATION; a stored bad or negative value
 		// must not reach the server.
-		if t.Duration != "" && duration.ValidateSpan(t.Duration) == nil &&
+		if duration.UsableSpan(t.Duration) &&
 			vtodo.Props.Get(ical.PropDue) == nil &&
 			vtodo.Props.Get(ical.PropDateTimeStart) != nil {
 			p := &ical.Prop{Name: ical.PropDuration}

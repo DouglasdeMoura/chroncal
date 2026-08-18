@@ -1112,3 +1112,25 @@ func TestEventService_ReplaceAlarms_CrossEventUIDCollision(t *testing.T) {
 		t.Errorf("e2 alarm UID = %q, want a freshly minted non-empty UID", alarms[0].UID)
 	}
 }
+
+// validateDurationValue must reject a span that carries the end past
+// the storable range, and it must accept the same span on a normal
+// start (issue #582 round 5).
+func TestValidateDurationValue_StorableEnd(t *testing.T) {
+	unstorable := time.Date(9999, 12, 1, 0, 0, 0, 0, time.UTC)
+	if err := validateDurationValue(unstorable, "P365D"); err == nil {
+		t.Error("a span whose end passes the storable range must fail")
+	}
+	normal := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	if err := validateDurationValue(normal, "P365D"); err != nil {
+		t.Errorf("a storable span must pass: %v", err)
+	}
+	// An empty span and a zero start stay valid: there is nothing to
+	// anchor the check on.
+	if err := validateDurationValue(normal, ""); err != nil {
+		t.Errorf("an empty span must pass: %v", err)
+	}
+	if err := validateDurationValue(time.Time{}, "P365D"); err != nil {
+		t.Errorf("a zero start must skip the storability check: %v", err)
+	}
+}

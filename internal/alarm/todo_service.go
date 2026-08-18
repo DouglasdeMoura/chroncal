@@ -105,6 +105,13 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 			for _, a := range alarms {
 				triggerAt, err := computeTodoTriggerTimeForInstance(inst, a)
 				if err != nil {
+					// A refused anchor drops a reminder. Log it like
+					// the stale branch below, so the state-dir log
+					// shows why the alarm never fired.
+					slog.Debug("skipping todo alarm with an unusable trigger",
+						"alarm_id", a.ID,
+						"todo", t.Summary,
+						"error", err)
 					continue
 				}
 
@@ -250,19 +257,18 @@ func computeTodoTriggerTimeForInstance(inst recurrence.ExpandedTodo, alarm model
 			base = inst.InstanceTime
 		case inst.Duration != "":
 			// A legacy invalid, negative, or out-of-range Duration must
-			// not anchor the alarm. Refuse like the empty-trigger branch
-			// below: a silent or backward anchor fires the alarm at the
-			// wrong time, and the callers already skip an alarm on error.
+			// not anchor the alarm. Refuse instead. A backward anchor
+			// fires the alarm at the wrong time, and the callers already
+			// skip an alarm on error.
 			if err := duration.ValidateSpan(inst.Duration); err != nil {
 				return time.Time{}, fmt.Errorf("invalid todo duration for the END anchor: %w", err)
 			}
 			base = duration.Add(base, inst.Duration)
-		default:
-			// No due and no duration: the END anchor has no end to bind
-			// to. Refuse instead of a silent START anchor — the same
-			// defect class as an invalid Duration, with one behavior.
-			return time.Time{}, fmt.Errorf("todo has no due date and no duration for the END anchor")
 		}
+		// A todo with neither an end nor a span keeps the START anchor.
+		// RFC 5545 gives such a VTODO no end, so START is the only time
+		// the alarm can bind to. A refusal here would stop a reminder
+		// that fires correctly today.
 	}
 
 	if alarm.TriggerValue == "" {

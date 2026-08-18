@@ -92,23 +92,51 @@ func parseTriggerTime(s string) (time.Time, bool) {
 	return t, err == nil
 }
 
+// The iCal datetime layouts. The compact floating layout carries no
+// zone, so only the callers that can resolve one accept it.
+const (
+	icalUTCLayout      = "20060102T150405Z"
+	icalFloatingLayout = "20060102T150405"
+)
+
+// AlarmTriggerIsDuration reports whether v has the shape of a duration
+// trigger. RFC 5545 durations start with P, and a trigger may carry a
+// sign. The exporter, the CLI, and ParseableAlarmTrigger share the
+// test, so the accepted shapes cannot drift.
+func AlarmTriggerIsDuration(v string) bool {
+	return v != "" && (v[0] == '-' || v[0] == '+' || v[0] == 'P')
+}
+
+// ParseAbsoluteTimeUTC parses an absolute iCal datetime that carries its
+// own zone: iCal UTC (20060102T150405Z) or RFC 3339. It refuses the
+// compact floating form. Use it where the caller has no timezone to
+// resolve a floating value with, such as the CLI trigger flag.
+func ParseAbsoluteTimeUTC(value string) (time.Time, error) {
+	if t, err := time.Parse(icalUTCLayout, value); err == nil {
+		return t, nil
+	}
+	if t, err := time.Parse(time.RFC3339, value); err == nil {
+		return t, nil
+	}
+	return time.Time{}, fmt.Errorf("invalid trigger format: %q", value)
+}
+
 // ParseAbsoluteTime parses an absolute iCal datetime value in any of the three
 // recognized forms: iCal UTC (20060102T150405Z), iCal floating (20060102T150405),
 // or RFC 3339. A floating value is interpreted in timezone (a tz database name)
 // when non-empty and loadable; otherwise it is returned with its zero offset.
+// The three layouts are mutually exclusive, so the zone-bearing forms can
+// resolve first through ParseAbsoluteTimeUTC.
 func ParseAbsoluteTime(value, timezone string) (time.Time, error) {
-	if t, err := time.Parse("20060102T150405Z", value); err == nil {
+	if t, err := ParseAbsoluteTimeUTC(value); err == nil {
 		return t, nil
 	}
-	if t, err := time.Parse("20060102T150405", value); err == nil {
+	if t, err := time.Parse(icalFloatingLayout, value); err == nil {
 		if timezone != "" {
 			if loc, lerr := time.LoadLocation(timezone); lerr == nil {
 				return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), 0, loc), nil
 			}
 		}
-		return t, nil
-	}
-	if t, err := time.Parse(time.RFC3339, value); err == nil {
 		return t, nil
 	}
 	return time.Time{}, fmt.Errorf("invalid trigger format: %q", value)
@@ -264,17 +292,16 @@ func (a Alarm) RepeatPaired() bool {
 }
 
 // ParseableAlarmTrigger returns true if v is a trigger value the alarm
-// engine and the exporter can read: a valid RFC 5545 duration, or an
-// absolute time that ParseAbsoluteTime accepts. The exporter and the
-// CLI share this rule. A row that fails it can never fire, and export
-// omits its VALARM. The absolute branch delegates to ParseAbsoluteTime
-// so the accepted layouts have one owner and cannot drift from the
-// fire path.
+// engine and the exporter can read. It accepts a valid RFC 5545
+// duration, or an absolute time that ParseAbsoluteTime accepts. A row
+// that fails the test can never fire, and export omits its VALARM.
+// The absolute branch delegates to ParseAbsoluteTime, so the accepted
+// layouts have one owner.
 func ParseableAlarmTrigger(v string) bool {
 	if v == "" {
 		return false
 	}
-	if v[0] == '-' || v[0] == '+' || v[0] == 'P' {
+	if AlarmTriggerIsDuration(v) {
 		return duration.Validate(v) == nil
 	}
 	_, err := ParseAbsoluteTime(v, "")

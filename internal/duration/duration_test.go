@@ -101,18 +101,20 @@ func TestValidate(t *testing.T) {
 		// The time components pass alone but their sum crosses the
 		// ceiling.
 		{"time sum crosses the ceiling", "PT2562047H60M", true},
-		// The day total has its own bound (maxDays, about 1000 years).
-		// Days move through AddDate, not the time.Duration sum, so a
-		// large day count is valid up to the storage-format cap: a
-		// 4-digit start year must stay 4-digit (issue #582 round 3).
+		// The day total has its own bound (maxDays). Days move through
+		// AddDate, not the time.Duration sum, so the bound exists only
+		// to keep the int conversion safe on a 32-bit build. Whether a
+		// span carries a time past the storable range depends on the
+		// start, so the callers own that check (issue #582 round 5).
 		{"large day count", "P200000D", false},
 		{"large week count", "P15251W", false},
-		{"days at the day bound", "P365242D", false},
-		{"days above the day bound", "P365243D", true},
-		{"weeks at the day bound", "P52177W", false},
-		{"weeks above the day bound", "P52178W", true},
+		{"day count past the old storage cap", "P400000D", false},
+		{"days at the day bound", "P2147483647D", false},
+		{"days above the day bound", "P2147483648D", true},
+		{"weeks at the day bound", "P306783378W", false},
+		{"weeks above the day bound", "P306783379W", true},
 		// Days above the bound with a valid time part still fail.
-		{"day bound with time part", "P365243DT1H", true},
+		{"day bound with time part", "P2147483648DT1H", true},
 		// A component too large for int64 fails in strconv, not in the
 		// range check. It must still report an error.
 		{"component beyond int64", "PT99999999999999999999H", true},
@@ -144,7 +146,10 @@ func TestValidateSpan(t *testing.T) {
 		{"zero day span", "P0D", true},
 		{"malformed span", "5 minutes", true},
 		{"empty span", "", true},
-		{"span above the day bound", "P365243D", true},
+		{"span above the day bound", "P2147483648D", true},
+		// A span past the old 1000-year cap is valid again. Whether it
+		// is storable depends on the start (issue #582 round 5).
+		{"span past the old storage cap", "P400000D", false},
 	}
 
 	for _, tt := range tests {

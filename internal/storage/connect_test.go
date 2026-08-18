@@ -382,10 +382,12 @@ func TestNormalizeAlarmRepeatPairs_KeepsUnreadableTriggers(t *testing.T) {
 	}
 }
 
-// clearInvalidSpanColumns must clear a legacy events.duration or
+// The span-column migration must clear a legacy events.duration or
 // todos.duration that fails the span rule, and keep valid values. The
 // clear unblocks every later edit of the row (issue #582 round 4).
-func TestClearInvalidSpanColumns(t *testing.T) {
+// The test drives the migration function directly, because Open runs
+// it once per database and a fresh database holds no legacy row.
+func TestHealSpanColumns(t *testing.T) {
 	db, q, err := Open(":memory:")
 	if err != nil {
 		t.Fatalf("open db: %v", err)
@@ -430,8 +432,16 @@ func TestClearInvalidSpanColumns(t *testing.T) {
 		todoIDs[i], _ = res.LastInsertId()
 	}
 
-	if err := clearInvalidSpanColumns(db); err != nil {
-		t.Fatalf("clearInvalidSpanColumns: %v", err)
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	if err := healSpanColumnsTx(ctx, tx); err != nil {
+		tx.Rollback()
+		t.Fatalf("healSpanColumnsTx: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
 	}
 
 	for i, r := range rows {

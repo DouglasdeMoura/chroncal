@@ -191,8 +191,9 @@ func validateTiming(dueDate, startDate, dur string) error {
 		return nil
 	}
 	// The span rule closes every CLI and TUI write path at once (issue
-	// #582 round 3). The import path drops a bad value with a warning
-	// instead, so sync never reaches this error.
+	// #582 round 3). The import path screens the same three rules and
+	// drops the DURATION with a warning, so a server cannot fail a
+	// sync pull here (issue #582 round 5).
 	if err := duration.ValidateSpan(dur); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidTiming, err)
 	}
@@ -201,6 +202,13 @@ func validateTiming(dueDate, startDate, dur string) error {
 	}
 	if dueDate != "" {
 		return fmt.Errorf("%w: due date and duration are mutually exclusive", ErrInvalidTiming)
+	}
+	// The span must also land on a time the database can hold. See
+	// timeutil.Storable.
+	if start := timeutil.ParseDate(startDate); !start.IsZero() {
+		if end := duration.Add(start, dur); !timeutil.Storable(end) {
+			return fmt.Errorf("%w: the end time is past year %d", ErrInvalidTiming, timeutil.MaxStorableYear)
+		}
 	}
 	return nil
 }
