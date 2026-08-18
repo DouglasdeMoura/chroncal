@@ -634,7 +634,7 @@ func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 		switch action := strings.ToUpper(strings.TrimSpace(prop.Value)); {
 		case action == "":
 			// Keep the DISPLAY default. The service write boundary
-			// (model.PrepareAlarmForWrite) fills the same default, and
+			// (model.PrepareAlarmsForWrite) fills the same default, and
 			// a reminder must not vanish over an empty value.
 		case !model.ValidAlarmAction(action):
 			warns = append(warns, fmt.Sprintf("VALARM ACTION %q: unsupported action; alarm dropped", action))

@@ -852,8 +852,9 @@ func fromStorageTodoAlarm(r storage.TodoAlarm) model.Alarm {
 }
 
 func (s *Service) ReplaceAlarms(ctx context.Context, todoID int64, alarms []model.Alarm) error {
-	// Prepare before the transaction opens. A bad alarm then fails
-	// without a write lock; see model.PrepareAlarmsForWrite.
+	// Prepare before the transaction opens. A standalone call then
+	// rejects a bad alarm without a write lock. A sync caller already
+	// holds its own transaction; see model.PrepareAlarmsForWrite.
 	alarms, err := model.PrepareAlarmsForWrite(alarms)
 	if err != nil {
 		return err
