@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
+	"github.com/douglasdemoura/chroncal/internal/duration"
 	"github.com/douglasdemoura/chroncal/internal/hydrate"
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/storage"
@@ -389,9 +390,22 @@ func (s *Service) ensureSeriesWritable(ctx context.Context, uid string) error {
 	return nil
 }
 
+// validateDurationValue mirrors the todo-side span rule (validateTiming
+// in the todo service). The import path drops a bad value with a
+// warning instead, so sync never reaches this error.
+func validateDurationValue(v string) error {
+	if v == "" {
+		return nil
+	}
+	return duration.ValidateSpan(v)
+}
+
 func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
 	p.applyDefaults()
 
+	if err := validateDurationValue(p.DurationValue); err != nil {
+		return Event{}, err
+	}
 	if err := calendaraccess.EnsureWritable(ctx, s.q, p.CalendarID, "VEVENT"); err != nil {
 		return Event{}, err
 	}
@@ -479,6 +493,9 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, 
 // plus ReplaceAttendees/ReplaceAlarms in separate transactions. Those separate
 // writes could leave a half-updated row when a later child write failed.
 func (s *Service) UpdateWithRelations(ctx context.Context, id int64, p UpdateParams, attendees []model.Attendee, alarms []model.Alarm) (Event, error) {
+	if err := validateDurationValue(p.DurationValue); err != nil {
+		return Event{}, err
+	}
 	p.applyDefaults()
 
 	if err := s.ensureEventWritable(ctx, id, p.CalendarID); err != nil {
@@ -551,6 +568,9 @@ func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p Update
 }
 
 func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error) {
+	if err := validateDurationValue(p.DurationValue); err != nil {
+		return Event{}, err
+	}
 	p.applyDefaults()
 
 	qtx, commit, rollback, err := s.txscope(ctx)
@@ -971,6 +991,9 @@ func (s *Service) UpdateInstance(ctx context.Context, uid string, instanceTime t
 // the same transaction, so the override row and its children commit atomically
 // (issue #87).
 func (s *Service) UpdateInstanceWithRelations(ctx context.Context, uid string, instanceTime time.Time, p UpdateParams, attendees []model.Attendee, alarms []model.Alarm) (Event, error) {
+	if err := validateDurationValue(p.DurationValue); err != nil {
+		return Event{}, err
+	}
 	p.applyDefaults()
 
 	// Reject a bad alarm before the transaction opens. See
@@ -1176,6 +1199,9 @@ func (s *Service) UpdateFromInstance(ctx context.Context, uid string, instanceTi
 // write on the new split series in the same transaction. The truncation, the
 // new master, and its children then commit atomically (issue #87).
 func (s *Service) UpdateFromInstanceWithRelations(ctx context.Context, uid string, instanceTime time.Time, p UpdateParams, attendees []model.Attendee, alarms []model.Alarm) (Event, error) {
+	if err := validateDurationValue(p.DurationValue); err != nil {
+		return Event{}, err
+	}
 	p.applyDefaults()
 
 	// Reject a bad alarm before the transaction opens. See

@@ -113,3 +113,40 @@ func TestImport_MalformedDTEND_TimedFallsBackToOneHour(t *testing.T) {
 		t.Errorf("EndTime = %v, want %v (1h default)", e.EndTime, want)
 	}
 }
+
+// DURATION:PT0S is a zero-length event, the same meaning RFC 5545
+// §3.6.1 gives a VEVENT with no DTEND and no DURATION. Import must
+// store end = start with no warning and no fabricated 1h span
+// (issue #582 round 4).
+func TestImport_ZeroDuration_StoresZeroLengthEvent(t *testing.T) {
+	t.Parallel()
+	const ics = "BEGIN:VCALENDAR\r\n" +
+		"VERSION:2.0\r\n" +
+		"PRODID:-//test//EN\r\n" +
+		"BEGIN:VEVENT\r\n" +
+		"UID:zero-duration@example.com\r\n" +
+		"DTSTAMP:20260401T100000Z\r\n" +
+		"DTSTART:20260401T100000Z\r\n" +
+		"DURATION:PT0S\r\n" +
+		"SUMMARY:Zero-length marker\r\n" +
+		"END:VEVENT\r\n" +
+		"END:VCALENDAR\r\n"
+
+	result, err := ImportFile(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ImportFile: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %d, want 1", len(result.Events))
+	}
+	e := result.Events[0]
+	if !e.EndTime.Equal(e.StartTime) {
+		t.Errorf("EndTime = %v, want the start %v (zero-length event)", e.EndTime, e.StartTime)
+	}
+	if e.DurationValue != "" {
+		t.Errorf("DurationValue = %q, want empty (DTEND=DTSTART carries the meaning)", e.DurationValue)
+	}
+	if len(result.Warnings) != 0 {
+		t.Errorf("warnings = %v, want none for a zero span", result.Warnings)
+	}
+}

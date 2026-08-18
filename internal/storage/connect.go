@@ -12,6 +12,7 @@ import (
 	_ "modernc.org/sqlite" // registers the "sqlite" database/sql driver
 
 	"github.com/douglasdemoura/chroncal/db"
+	"github.com/douglasdemoura/chroncal/internal/duration"
 	"github.com/douglasdemoura/chroncal/internal/fileid"
 	"github.com/douglasdemoura/chroncal/internal/model"
 )
@@ -70,6 +71,10 @@ func Open(dbPath string) (*sql.DB, *Queries, error) {
 	if err := normalizeAlarmRepeatPairs(conn); err != nil {
 		conn.Close()
 		return nil, nil, fmt.Errorf("normalize alarm repeat pairs: %w", err)
+	}
+	if err := clearInvalidSpanColumns(conn); err != nil {
+		conn.Close()
+		return nil, nil, fmt.Errorf("clear invalid span columns: %w", err)
 	}
 
 	return conn, q, nil
@@ -215,9 +220,11 @@ func purgeLibicalDiagnosticXProps(conn *sql.DB) error {
 // The pass does not delete a row whose trigger_value fails
 // model.ParseableAlarmTrigger. Such a row is inert: the fire path
 // cannot read it and export omits its VALARM. A delete would cascade
-// away the alarm state. It could not reach the server, because nothing
-// marks the resource dirty. It would also destroy an RFC-valid trigger
-// from another client that only this build cannot represent.
+// away the alarm state. It would also destroy an RFC-valid trigger
+// from another client that only this build cannot represent. The keep
+// decision protects only the local row and its state. The next push of
+// that resource still omits the VALARM, so the server copy can lose
+// the alarm through an ordinary edit.
 //
 // The writes for each table run in one transaction, like
 // backfillAlarmUIDs, and a failure is fatal to Open, like every startup
@@ -280,6 +287,70 @@ func normalizeAlarmRepeatPairs(conn *sql.DB) error {
 		}
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("heal %s: %w", table, err)
+		}
+	}
+	return nil
+}
+
+// clearInvalidSpanColumns heals span columns written before the parsers
+// validated them with duration.ValidateSpan (issue #581). It clears an
+// events.duration or a todos.duration that fails the span rule.
+// The clear is safe: end_time and due stay authoritative, and an
+// invalid span never had a usable meaning. Without this repair, a
+// legacy negative or malformed value blocks every later edit at the
+// service boundary and can reach the server on a push. The function
+// runs on every startup. It changes nothing when all rows are healthy.
+func clearInvalidSpanColumns(conn *sql.DB) error {
+	ctx := context.Background()
+	specs := []struct {
+		table  string
+		column string
+	}{
+		{"events", "duration"},
+		{"todos", "duration"},
+	}
+	for _, spec := range specs {
+		var ids []int64
+		err := func() error {
+			rows, err := conn.QueryContext(ctx,
+				`SELECT id, `+spec.column+` FROM `+spec.table+
+					` WHERE COALESCE(`+spec.column+`, '') != ''`)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var id int64
+				var span string
+				if err := rows.Scan(&id, &span); err != nil {
+					return err
+				}
+				if duration.ValidateSpan(span) != nil {
+					ids = append(ids, id)
+				}
+			}
+			return rows.Err()
+		}()
+		if err != nil {
+			return fmt.Errorf("scan %s: %w", spec.table, err)
+		}
+		if len(ids) == 0 {
+			continue
+		}
+		tx, err := conn.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("heal %s: %w", spec.table, err)
+		}
+		for _, id := range ids {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE `+spec.table+` SET `+spec.column+` = NULL WHERE id = ?`,
+				id); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("heal %s row %d: %w", spec.table, id, err)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("heal %s: %w", spec.table, err)
 		}
 	}
 	return nil

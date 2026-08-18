@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -377,6 +378,75 @@ func TestNormalizeAlarmRepeatPairs_KeepsUnreadableTriggers(t *testing.T) {
 		}
 		if n != 1 {
 			t.Errorf("row %d (%q): deleted; every row must survive", i, trigger)
+		}
+	}
+}
+
+// clearInvalidSpanColumns must clear a legacy events.duration or
+// todos.duration that fails the span rule, and keep valid values. The
+// clear unblocks every later edit of the row (issue #582 round 4).
+func TestClearInvalidSpanColumns(t *testing.T) {
+	db, q, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("list calendars: %v", err)
+	}
+	calID := cals[0].ID
+
+	rows := []struct {
+		span string
+		want string // "" = cleared
+	}{
+		{"-PT1H", ""},      // negative span
+		{"PT0S", ""},       // zero span
+		{"5 minutes", ""},  // malformed
+		{"PT5124096H", ""}, // over the range ceiling
+		{"PT1H", "PT1H"},   // valid span stays
+	}
+
+	eventIDs := make([]int64, len(rows))
+	todoIDs := make([]int64, len(rows))
+	for i, r := range rows {
+		res, err := db.Exec(`INSERT INTO events (uid, calendar_id, title, start_time, end_time, all_day, status, transp, sequence, priority, duration)
+			 VALUES (?, ?, 'Test', '2026-04-01T00:00:00Z', '2026-04-01T01:00:00Z', 0, 'CONFIRMED', 'OPAQUE', 0, 0, ?)`,
+			fmt.Sprintf("span-event-%d", i), calID, r.span)
+		if err != nil {
+			t.Fatalf("insert event %d: %v", i, err)
+		}
+		eventIDs[i], _ = res.LastInsertId()
+
+		res, err = db.Exec(`INSERT INTO todos (uid, calendar_id, summary, status, priority, sequence, start_date, duration)
+			 VALUES (?, ?, 'Test', 'NEEDS-ACTION', 0, 0, '2026-04-01T00:00:00Z', ?)`,
+			fmt.Sprintf("span-todo-%d", i), calID, r.span)
+		if err != nil {
+			t.Fatalf("insert todo %d: %v", i, err)
+		}
+		todoIDs[i], _ = res.LastInsertId()
+	}
+
+	if err := clearInvalidSpanColumns(db); err != nil {
+		t.Fatalf("clearInvalidSpanColumns: %v", err)
+	}
+
+	for i, r := range rows {
+		var eventSpan, todoSpan string
+		if err := db.QueryRow(`SELECT COALESCE(duration, '') FROM events WHERE id = ?`, eventIDs[i]).Scan(&eventSpan); err != nil {
+			t.Fatalf("read event %d: %v", i, err)
+		}
+		if err := db.QueryRow(`SELECT COALESCE(duration, '') FROM todos WHERE id = ?`, todoIDs[i]).Scan(&todoSpan); err != nil {
+			t.Fatalf("read todo %d: %v", i, err)
+		}
+		if eventSpan != r.want {
+			t.Errorf("event %d (%q): duration = %q, want %q", i, r.span, eventSpan, r.want)
+		}
+		if todoSpan != r.want {
+			t.Errorf("todo %d (%q): duration = %q, want %q", i, r.span, todoSpan, r.want)
 		}
 	}
 }

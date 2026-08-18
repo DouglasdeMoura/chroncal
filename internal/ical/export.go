@@ -237,11 +237,11 @@ func setPropFloating(vevent *ical.Event, propName string, t time.Time) {
 func setEventTimes(vevent *ical.Event, e event.Event) {
 	// RFC 5545 forbids both DTEND and DURATION on the same VEVENT.
 	// When DurationValue is set (imported from .ics), emit DURATION instead of DTEND.
-	// The Validate guard exists for DB rows written before import
+	// The ValidateSpan guard exists for DB rows written before import
 	// validated DURATION (the same reason as the alarm-path guard in
-	// buildValarm). A stored bad value must not reach the server; the
-	// stored end time takes over as DTEND.
-	useDuration := e.DurationValue != "" && duration.Validate(e.DurationValue) == nil
+	// buildValarm). A stored bad or negative value must not reach the
+	// server; the stored end time takes over as DTEND.
+	useDuration := e.DurationValue != "" && duration.ValidateSpan(e.DurationValue) == nil
 
 	if e.AllDay {
 		vevent.Props.SetDate(ical.PropDateTimeStart, allDayExportDate(e.StartTime, e.Timezone))
@@ -401,10 +401,10 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 		// (import enforces no mutual exclusion), and a single bad component makes
 		// enc.Encode reject the whole calendar, dropping every todo. Drop the
 		// conflicting DURATION instead so the rest of the batch still exports.
-		// The Validate guard covers DB rows written before import
-		// validated the todo DURATION; a stored bad value must not
-		// reach the server.
-		if t.Duration != "" && duration.Validate(t.Duration) == nil &&
+		// The ValidateSpan guard covers DB rows written before import
+		// validated the todo DURATION; a stored bad or negative value
+		// must not reach the server.
+		if t.Duration != "" && duration.ValidateSpan(t.Duration) == nil &&
 			vtodo.Props.Get(ical.PropDue) == nil &&
 			vtodo.Props.Get(ical.PropDateTimeStart) != nil {
 			p := &ical.Prop{Name: ical.PropDuration}

@@ -40,6 +40,37 @@ func TestExport_SingleEvent(t *testing.T) {
 	}
 }
 
+// A legacy stored negative DURATION must not reach the server. Export
+// falls back to the stored end time as DTEND (issue #582 round 4). The
+// startup heal clears such values, so this guard covers only a row the
+// heal has not seen yet.
+func TestExport_NegativeStoredDurationFallsBackToDTEND(t *testing.T) {
+	t.Parallel()
+	events := []event.Event{{
+		UID:           "export-neg-duration",
+		Title:         "Legacy negative span",
+		StartTime:     time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:       time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		DurationValue: "-PT1H",
+		Status:        "CONFIRMED",
+		Transp:        "OPAQUE",
+		Class:         "PUBLIC",
+	}}
+
+	data, err := ExportEvents(events, "Test")
+	if err != nil {
+		t.Fatalf("ExportEvents error: %v", err)
+	}
+	ics := string(data)
+
+	if strings.Contains(ics, "DURATION:") {
+		t.Errorf("output carries the invalid DURATION; want the DTEND fallback:\n%s", ics)
+	}
+	if !strings.Contains(ics, "DTEND:") {
+		t.Errorf("output missing the DTEND fallback:\n%s", ics)
+	}
+}
+
 func TestExport_EventAllFields(t *testing.T) {
 	t.Parallel()
 	events := []event.Event{{

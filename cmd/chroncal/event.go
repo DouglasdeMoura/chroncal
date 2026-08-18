@@ -1895,16 +1895,27 @@ func validateAlarmTrigger(trigger string) error {
 	if trigger == "" {
 		return errInvalidInputf("alarm trigger must not be empty")
 	}
-	// model.ParseableAlarmTrigger is the one accepted set: the engine,
-	// the exporter, and this flag agree, so the compact iCal layouts
-	// pass here too. The duration error carries the reason: a
-	// well-formed duration can fail the range check, and a generic
-	// message would misdescribe that rejection.
-	if model.ParseableAlarmTrigger(trigger) {
+	// The CLI accepts a strict subset of model.ParseableAlarmTrigger:
+	// durations, compact UTC, and RFC 3339. A compact floating time
+	// (no trailing Z) is excluded. The flag has no TZID context, the
+	// value would store raw, and export would emit invalid iCal
+	// (issue #572 documents that failure). The duration error carries
+	// the reason: a well-formed duration can fail the range check, and
+	// a generic message would misdescribe that rejection.
+	if trigger[0] == '-' || trigger[0] == '+' || trigger[0] == 'P' {
+		if err := duration.Validate(trigger); err != nil {
+			return errInvalidInputf("invalid alarm trigger: %v (use an ISO 8601 duration such as -PT15M, or an RFC 3339 datetime)", err)
+		}
 		return nil
 	}
-	if trigger[0] == '-' || trigger[0] == '+' || trigger[0] == 'P' {
-		return errInvalidInputf("invalid alarm trigger: %v (use an ISO 8601 duration such as -PT15M, or an RFC 3339 datetime)", duration.Validate(trigger))
+	if _, err := time.Parse("20060102T150405Z", trigger); err == nil {
+		return nil
+	}
+	if _, err := time.Parse(time.RFC3339, trigger); err == nil {
+		return nil
+	}
+	if _, err := time.Parse("20060102T150405", trigger); err == nil {
+		return errInvalidInputf("invalid alarm trigger %q: a floating time has no timezone; add a Z suffix or use an RFC 3339 datetime with an offset", trigger)
 	}
 	return errInvalidInputf("invalid alarm trigger %q (use an ISO 8601 duration such as -PT15M, or an RFC 3339 datetime)", trigger)
 }

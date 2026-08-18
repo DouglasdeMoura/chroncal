@@ -179,6 +179,8 @@ func TestValidateAlarmTrigger(t *testing.T) {
 		{"positive duration", "PT15M", false},
 		{"absolute datetime", "2026-05-10T14:00:00Z", false},
 		{"absolute with offset", "2026-05-10T14:00:00-04:00", false},
+		{"compact UTC", "20260510T140000Z", false},
+		{"compact floating has no timezone", "20260510T140000", true},
 		{"empty", "", true},
 		{"garbage", "garbage", true},
 		{"just P", "P", true},
