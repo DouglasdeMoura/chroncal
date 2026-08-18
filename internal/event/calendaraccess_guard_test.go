@@ -32,6 +32,18 @@ func insertGuardedCalendar(t *testing.T, db *sql.DB, name, access, components st
 	return id
 }
 
+func countAlarms(t *testing.T, db *sql.DB, eventID int64) int {
+	t.Helper()
+	var n int
+	if err := db.QueryRowContext(
+		context.Background(),
+		`SELECT COUNT(*) FROM event_alarms WHERE event_id = ?`, eventID,
+	).Scan(&n); err != nil {
+		t.Fatalf("count alarms: %v", err)
+	}
+	return n
+}
+
 func countEvents(t *testing.T, db *sql.DB) int {
 	t.Helper()
 	var n int
@@ -412,5 +424,48 @@ func TestEventAccessGuard_ReplaceAttendeesRSVPRejected(t *testing.T) {
 	}
 	if got := countAttendees(t, db, seeded.ID); got != 1 {
 		t.Fatalf("attendee rows after ReplaceAttendeesForSync = %d, want 1", got)
+	}
+}
+
+// TestEventAccessGuard_ReplaceAlarmsRejected proves a user-originated alarm
+// edit on a read-only collection is refused and writes no row (issue #585).
+// The sync engine keeps its unguarded path, so a server-originated VALARM
+// still reaches the local cache.
+func TestEventAccessGuard_ReplaceAlarmsRejected(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	svc := NewService(db, q)
+	ctx := context.Background()
+
+	readOnly := insertGuardedCalendar(t, db, "Read-Only Alarms", "read", "VEVENT")
+	seeded, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:        "alarm-guard-uid",
+		CalendarID: readOnly,
+		Title:      "Alarm Target",
+		StartTime:  time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("seed event: %v", err)
+	}
+	alarm := model.Alarm{Action: "DISPLAY", TriggerValue: "-PT15M", Related: "START"}
+
+	if err := svc.ReplaceAlarms(ctx, seeded.ID, []model.Alarm{alarm}); !errors.Is(err, calendaraccess.ErrReadOnly) {
+		t.Fatalf("ReplaceAlarms on read-only calendar: error = %v, want ErrReadOnly", err)
+	}
+	if got := countAlarms(t, db, seeded.ID); got != 0 {
+		t.Fatalf("alarm rows after rejected ReplaceAlarms = %d, want 0", got)
+	}
+
+	// ReplaceFireableAlarms is the CLI path. It routes through the guard too.
+	if err := svc.ReplaceFireableAlarms(ctx, seeded.ID, []model.Alarm{alarm}); !errors.Is(err, calendaraccess.ErrReadOnly) {
+		t.Fatalf("ReplaceFireableAlarms on read-only calendar: error = %v, want ErrReadOnly", err)
+	}
+
+	// The CalDAV sync engine must still mirror a server-originated alarm.
+	if err := svc.ReplaceAlarmsForSync(ctx, seeded.ID, []model.Alarm{alarm}); err != nil {
+		t.Fatalf("ReplaceAlarmsForSync on read-only calendar: %v (sync path must stay unguarded)", err)
+	}
+	if got := countAlarms(t, db, seeded.ID); got != 1 {
+		t.Fatalf("alarm rows after ReplaceAlarmsForSync = %d, want 1", got)
 	}
 }

@@ -913,6 +913,22 @@ func (s *Service) replaceFireableAlarms(ctx context.Context, todoID int64, alarm
 }
 
 func (s *Service) ReplaceAlarms(ctx context.Context, todoID int64, alarms []model.Alarm) error {
+	td, err := s.Get(ctx, todoID)
+	if err != nil {
+		return err
+	}
+	if err := calendaraccess.EnsureWritable(ctx, s.q, td.CalendarID, todoComponent); err != nil {
+		return err
+	}
+	return s.ReplaceAlarmsForSync(ctx, todoID, alarms)
+}
+
+// ReplaceAlarmsForSync applies an alarm set without the remote access and
+// component policy. It is reserved for the CalDAV sync engine, which
+// mirrors a server-originated VTODO into the local cache whatever the
+// linked collection advertises. A user-originated edit must route through
+// ReplaceAlarms, so the policy holds.
+func (s *Service) ReplaceAlarmsForSync(ctx context.Context, todoID int64, alarms []model.Alarm) error {
 	// Prepare before the transaction opens. A standalone call then
 	// rejects a bad alarm without a write lock. A sync caller already
 	// holds its own transaction. See model.PrepareAlarmsForWrite.

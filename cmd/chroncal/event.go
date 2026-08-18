@@ -764,6 +764,14 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 				if err != nil {
 					return err
 				}
+				// Apply the service write rule here too. The create
+				// commits before the alarms are written, so a rejection
+				// after it would leave an event row the next run
+				// duplicates (issue #585).
+				alarms, err = model.PrepareAlarmsForWrite(alarms)
+				if err != nil {
+					return err
+				}
 			}
 			var relations []model.Relation
 			if len(relationFlags) > 0 {

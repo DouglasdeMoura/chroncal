@@ -420,6 +420,14 @@ and percent-complete to 100.`,
 				if err != nil {
 					return err
 				}
+				// Apply the service write rule here too. The create
+				// commits before the alarms are written, so a rejection
+				// after it would leave a todo row the next run
+				// duplicates (issue #585).
+				alarms, err = model.PrepareAlarmsForWrite(alarms)
+				if err != nil {
+					return err
+				}
 			}
 			var relations []model.Relation
 			if len(relationFlags) > 0 {

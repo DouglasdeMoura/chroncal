@@ -328,6 +328,37 @@ func PrepareAlarmsForWrite(alarms []Alarm) ([]Alarm, error) {
 	return prepared, nil
 }
 
+// InvalidAlarm reports one alarm PartitionAlarmsForWrite dropped, with
+// the reason. Index counts from one, like the PrepareAlarmsForWrite
+// error, so a report names the same alarm either way.
+type InvalidAlarm struct {
+	Index int
+	Alarm Alarm
+	Err   error
+}
+
+// PartitionAlarmsForWrite splits alarms into the ones a write accepts and
+// the ones it rejects. It applies the rule of PrepareAlarmsForWrite to
+// each element on its own, so one bad alarm does not reject the rest.
+//
+// A caller that must store what it can uses this function. The CalDAV
+// sync engine does: a server resource carries the event and its alarms
+// together, and a whole resource that fails on one alarm never converges.
+// A caller that must reject the whole set keeps PrepareAlarmsForWrite.
+func PartitionAlarmsForWrite(alarms []Alarm) ([]Alarm, []InvalidAlarm) {
+	var ok []Alarm
+	var bad []InvalidAlarm
+	for i, a := range alarms {
+		prepared := a
+		if err := prepareAlarmForWrite(&prepared); err != nil {
+			bad = append(bad, InvalidAlarm{Index: i + 1, Alarm: a, Err: err})
+			continue
+		}
+		ok = append(ok, prepared)
+	}
+	return ok, bad
+}
+
 // prepareAlarmForWrite fills the defaults and validates one alarm.
 //
 // The action rule is StorableAlarmAction, not the fireable set. Migration

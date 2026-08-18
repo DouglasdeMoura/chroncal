@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
+	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
 
@@ -357,4 +358,50 @@ func TestTodoDeleteSeries_UnsupportedComponentWithPurgedMaster(t *testing.T) {
 	if _, err := svc.GetByUIDAndRecurrenceID(ctx, uid, recID); err != nil {
 		t.Errorf("orphan override dropped or soft-deleted by rejected DeleteSeries: %v", err)
 	}
+}
+
+// A read-only collection rejects a user-originated alarm edit and writes no
+// alarm row (issue #585). The sync engine keeps its unguarded path, so a
+// server-originated VALARM still reaches the local cache.
+func TestTodoReplaceAlarms_ReadOnlyRejected(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	svc := NewService(db, q)
+	ctx := context.Background()
+
+	td := createTodo(t, svc)
+	setTodoCalendarAccess(t, db, "read", "")
+
+	alarm := model.Alarm{Action: "DISPLAY", TriggerValue: "-PT15M", Related: "START"}
+
+	if err := svc.ReplaceAlarms(ctx, td.ID, []model.Alarm{alarm}); !errors.Is(err, calendaraccess.ErrReadOnly) {
+		t.Fatalf("ReplaceAlarms: error = %v, want ErrReadOnly", err)
+	}
+	if got := countTodoAlarms(t, db, td.ID); got != 0 {
+		t.Fatalf("alarm rows after rejected ReplaceAlarms = %d, want 0", got)
+	}
+
+	// ReplaceFireableAlarms is the CLI path. It routes through the guard too.
+	if err := svc.ReplaceFireableAlarms(ctx, td.ID, []model.Alarm{alarm}); !errors.Is(err, calendaraccess.ErrReadOnly) {
+		t.Fatalf("ReplaceFireableAlarms: error = %v, want ErrReadOnly", err)
+	}
+
+	// The CalDAV sync engine must still mirror a server-originated alarm.
+	if err := svc.ReplaceAlarmsForSync(ctx, td.ID, []model.Alarm{alarm}); err != nil {
+		t.Fatalf("ReplaceAlarmsForSync on read-only calendar: %v (sync path must stay unguarded)", err)
+	}
+	if got := countTodoAlarms(t, db, td.ID); got != 1 {
+		t.Fatalf("alarm rows after ReplaceAlarmsForSync = %d, want 1", got)
+	}
+}
+
+func countTodoAlarms(t *testing.T, db *sql.DB, todoID int64) int {
+	t.Helper()
+	var n int
+	if err := db.QueryRowContext(
+		context.Background(),
+		`SELECT COUNT(*) FROM todo_alarms WHERE todo_id = ?`, todoID,
+	).Scan(&n); err != nil {
+		t.Fatalf("count todo alarms: %v", err)
+	}
+	return n
 }
