@@ -320,3 +320,61 @@ func TestNormalizeAlarmRepeatPairs(t *testing.T) {
 		}
 	}
 }
+
+// purgeInvalidAlarmTriggers must delete an alarm row with an out-of-range
+// duration trigger_value. It must keep a valid duration trigger. It must
+// never touch an absolute trigger (issue #581).
+func TestPurgeInvalidAlarmTriggers(t *testing.T) {
+	db, q, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("list calendars: %v", err)
+	}
+	calID := cals[0].ID
+	res, err := db.Exec(`INSERT INTO events (uid, calendar_id, title, start_time, end_time, all_day, status, transp, sequence, priority)
+		 VALUES ('purge-trigger-event', ?, 'Test', '2026-04-01T00:00:00Z', '2026-04-01T01:00:00Z', 0, 'CONFIRMED', 'OPAQUE', 0, 0)`, calID)
+	if err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+	eventID, _ := res.LastInsertId()
+
+	rows := []struct {
+		trigger  string
+		survives bool
+	}{
+		{"PT5124096H", false},      // over the ceiling; Validate accepted it before the range check
+		{"-PT15M", true},           // valid duration
+		{"20260401T100000Z", true}, // absolute trigger, not duration-shaped
+		{"P", false},               // malformed duration shape
+	}
+	ids := make([]int64, len(rows))
+	for i, r := range rows {
+		res, err := db.Exec(
+			`INSERT INTO event_alarms (event_id, action, trigger_value) VALUES (?, 'DISPLAY', ?)`,
+			eventID, r.trigger)
+		if err != nil {
+			t.Fatalf("insert alarm %d: %v", i, err)
+		}
+		ids[i], _ = res.LastInsertId()
+	}
+
+	if err := purgeInvalidAlarmTriggers(db); err != nil {
+		t.Fatalf("purgeInvalidAlarmTriggers: %v", err)
+	}
+
+	for i, r := range rows {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM event_alarms WHERE id = ?`, ids[i]).Scan(&n); err != nil {
+			t.Fatalf("count alarm %d: %v", i, err)
+		}
+		if got, want := n == 1, r.survives; got != want {
+			t.Errorf("row %d (%q): survives = %v, want %v", i, r.trigger, got, want)
+		}
+	}
+}
