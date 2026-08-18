@@ -141,6 +141,10 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 	var missed []MissedAlarm
 	for _, expEvt := range expanded {
 		for _, a := range alarmMap[expEvt.ID] {
+			// A sync-only action never fires, so it is never missed.
+			if !model.FireableAlarmAction(a.Action) {
+				continue
+			}
 			triggerAt, err := computeTriggerTimeForInstance(expEvt, a)
 			if err != nil {
 				continue
@@ -194,6 +198,10 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 			}
 			for _, inst := range instances {
 				for _, a := range alarms {
+					// A sync-only action never fires, so it is never missed.
+					if !model.FireableAlarmAction(a.Action) {
+						continue
+					}
 					triggerAt, err := computeTodoTriggerTimeForInstance(inst, a)
 					if err != nil {
 						continue
@@ -311,6 +319,11 @@ func (s *Service) checkEventAlarms(ctx context.Context, now time.Time) ([]DueAla
 		alarms := alarmMap[expEvt.ID] // nil if no alarms for this event
 
 		for _, a := range alarms {
+			// A preserved sync-only action (issue #579) never fires.
+			// Skip it in silence: the row is healthy, not a defect.
+			if !model.FireableAlarmAction(a.Action) {
+				continue
+			}
 			triggerAt, err := computeTriggerTimeForInstance(expEvt, a)
 			if err != nil {
 				continue

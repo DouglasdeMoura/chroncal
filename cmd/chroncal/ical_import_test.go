@@ -116,13 +116,15 @@ func TestImportComponentsSurfacesChildFieldFailure(t *testing.T) {
 		Title:     "Has bad alarm",
 		StartTime: start,
 		EndTime:   start.Add(time.Hour),
-		// The service boundary rejects an ACTION outside model.AlarmActions
-		// with model.ErrInvalidAlarm (issue #578), so this alarm fails to
-		// attach even though the event itself is valid.
+		// The service boundary rejects a RELATED outside
+		// model.AlarmRelatedValues with model.ErrInvalidAlarm (issue
+		// #578), so this alarm fails to attach even though the event
+		// itself is valid. The action no longer forces the failure:
+		// since issue #579 the tables accept any non-empty action.
 		Alarms: []model.Alarm{{
-			Action:       "BOGUS",
+			Action:       "DISPLAY",
 			TriggerValue: "-PT15M",
-			Related:      "START",
+			Related:      "BOGUS",
 		}},
 	}
 

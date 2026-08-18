@@ -350,16 +350,40 @@ func TestAlarmEditor_EditModeMouseClickOnCancelReturnsToList(t *testing.T) {
 	assert.Empty(t, m.Alarms(), "clicking cancel must not save the alarm")
 }
 
-// Every action the dropdown offers must pass model.ValidAlarmAction. The
-// predicate mirrors the storage CHECK constraints, so a drifted option
-// would let the user pick an action the insert rejects — the issue #575
-// rollback class through the TUI.
+// Every action the dropdown offers must pass model.FireableAlarmAction.
+// The TUI creates local alarms, and a local alarm must be one the engine
+// can fire. A sync-only action (issue #579) enters the database from
+// import alone; the dropdown must never offer it.
 func TestAlarmActionOptsMatchModelValidator(t *testing.T) {
 	require.NotEmpty(t, alarmActionOpts)
 	assert.Len(t, alarmActionOpts, len(model.AlarmActions()),
 		"the dropdown must offer every accepted action")
 	for _, opt := range alarmActionOpts {
-		assert.True(t, model.ValidAlarmAction(opt.Value),
-			"dropdown option %q (%s) fails model.ValidAlarmAction", opt.Value, opt.Label)
+		assert.True(t, model.FireableAlarmAction(opt.Value),
+			"dropdown option %q (%s) fails model.FireableAlarmAction", opt.Value, opt.Label)
 	}
+}
+
+// A preserved sync-only action (issue #579) must stay view-only in the
+// alarm editor. An edit-form save would rewrite the action as DISPLAY,
+// which resurrects a reminder the user disabled (ACTION:NONE) or converts
+// the alarm of another client. The row still renders and still deletes.
+func TestAlarmEditor_SyncOnlyActionIsViewOnly(t *testing.T) {
+	alarms := []model.Alarm{{Action: "NONE", TriggerValue: "-PT15M", Related: "START"}}
+	m := NewAlarmListEditorModel(alarms, 80, 24, Theme{})
+
+	m.cursor = 0
+	m, _ = m.Update(keyMsg("e"))
+	assert.Equal(t, alarmModeList, m.mode, "edit key must not open the form for a sync-only action")
+
+	m, _ = m.Update(keyMsg("enter"))
+	assert.Equal(t, alarmModeList, m.mode, "enter must not open the form for a sync-only action")
+
+	assert.NotPanics(t, func() { _ = m.View() }, "the list must render a sync-only action")
+
+	// A fireable action with the same trigger still opens the form.
+	m2 := NewAlarmListEditorModel([]model.Alarm{{Action: "DISPLAY", TriggerValue: "-PT15M", Related: "START"}}, 80, 24, Theme{})
+	m2.cursor = 0
+	m2, _ = m2.Update(keyMsg("e"))
+	assert.Equal(t, alarmModeEdit, m2.mode, "a fireable action must stay editable")
 }

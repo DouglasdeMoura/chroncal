@@ -16,6 +16,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/alarm"
 	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/notify"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 )
@@ -50,6 +51,14 @@ var fireAlarmFn = fireAlarm
 // post-trigger notifications. The alarm check loop generates separate
 // trigger times for each repeat, each tracked independently via alarm state.
 func fireAlarm(da alarm.DueAlarm, policy alarmExecutionPolicy) error {
+	// Defense in depth for a preserved sync-only action (issue #579):
+	// Check already skips it, so this arm is normally dead. Dispatch
+	// nothing and report no error. A DISPLAY fallback here would show a
+	// reminder the user disabled (ACTION:NONE) or one that belongs to
+	// another client.
+	if !model.FireableAlarmAction(da.Alarm.Action) {
+		return nil
+	}
 	switch da.Alarm.Action {
 	case "AUDIO":
 		if err := notify.Audio(da, policy.notifyPolicy()); err != nil {

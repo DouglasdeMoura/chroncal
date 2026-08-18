@@ -423,6 +423,21 @@ func actionDisplayLabel(action string) string {
 	return titleCaseAscii(v)
 }
 
+// alarmEditable reports whether the edit form can represent the alarm
+// without loss. The form only offers single-unit relative triggers and the
+// fireable actions. A preserved sync-only action (issue #579) stays
+// view-only: a save through the form would rewrite it as DISPLAY, which
+// resurrects a reminder the user disabled (ACTION:NONE) or converts the
+// alarm of another client. The list still shows and deletes the row.
+func alarmEditable(a model.Alarm) bool {
+	// An empty action means the DISPLAY default, so it stays editable.
+	if act := strings.ToUpper(strings.TrimSpace(a.Action)); act != "" && !model.FireableAlarmAction(act) {
+		return false
+	}
+	_, _, _, ok := parseOffsetTrigger(a.TriggerValue)
+	return ok
+}
+
 func (m AlarmListEditorModel) updateListMode(msg tea.Msg) (AlarmListEditorModel, tea.Cmd) {
 	kp, ok := msg.(tea.KeyPressMsg)
 	if !ok {
@@ -452,7 +467,7 @@ func (m AlarmListEditorModel) updateListMode(msg tea.Msg) (AlarmListEditorModel,
 			m.done = true
 		default:
 			if kp.String() == "enter" && m.cursor >= 0 && m.cursor <= last {
-				if _, _, _, ok := parseOffsetTrigger(m.alarms[m.cursor].TriggerValue); ok {
+				if alarmEditable(m.alarms[m.cursor]) {
 					m.enterEditMode(m.cursor)
 				}
 			}
@@ -461,7 +476,7 @@ func (m AlarmListEditorModel) updateListMode(msg tea.Msg) (AlarmListEditorModel,
 		m.enterEditMode(-1)
 	case "e":
 		if m.cursor >= 0 && m.cursor <= last {
-			if _, _, _, ok := parseOffsetTrigger(m.alarms[m.cursor].TriggerValue); ok {
+			if alarmEditable(m.alarms[m.cursor]) {
 				m.enterEditMode(m.cursor)
 			}
 		}

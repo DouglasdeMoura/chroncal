@@ -662,29 +662,28 @@ func parseCategories(ve ical.Event) string {
 // parseAlarm extracts a model.Alarm from a VALARM component.
 // The second return value is a warning string (empty if no issues). A VALARM
 // with several problems reports all of them. Each one changes what the alarm
-// does in silence. The user needs to see every reason. An unsupported ACTION
-// is the one early exit. It drops the whole alarm and stops the parse.
+// does in silence. The user needs to see every reason.
 func parseAlarm(comp *ical.Component) (model.Alarm, string) {
 	alarm := model.Alarm{Action: model.DefaultAlarmAction, Related: model.DefaultAlarmRelated}
 	var warns []string
 
 	if prop := comp.Props.Get(ical.PropAction); prop != nil {
-		// Google Calendar emits ACTION:NONE as a "no reminder" sentinel.
-		// An unsupported action must not reach the alarm tables (issue
-		// #575, see model.ValidAlarmAction). Every later push omits the
-		// VALARM, so Google can re-apply its default reminders. That loss
-		// is smaller than a sync that never converges.
-		switch action := strings.ToUpper(strings.TrimSpace(prop.Value)); {
-		case action == "":
-			// Keep the DISPLAY default. The service write boundary
-			// (model.PrepareAlarmsForWrite) fills the same default, and
-			// a reminder must not vanish over an empty value.
-		case !model.ValidAlarmAction(action):
-			warns = append(warns, fmt.Sprintf("VALARM ACTION %q: unsupported action; alarm dropped", action))
-			return model.Alarm{}, strings.Join(warns, "; ")
-		default:
+		// Keep an action outside model.FireableAlarmAction verbatim
+		// (issue #579). RFC 5545 permits an x-name or iana-token action
+		// (for example X-APPLE-SOUND), and Google Calendar emits
+		// ACTION:NONE as a "reminder disabled" sentinel. A drop here
+		// makes every later push delete the VALARM of the other client.
+		// It also lets Google re-apply the default reminders the user
+		// turned off. The alarm tables accept any non-empty action (see
+		// model.StorableAlarmAction), export re-emits it verbatim, and
+		// the alarm check loop skips it. The alarm round-trips and never
+		// fires locally, so this path needs no warning.
+		if action := strings.ToUpper(strings.TrimSpace(prop.Value)); action != "" {
 			alarm.Action = action
 		}
+		// An empty value keeps the default action. The service write
+		// boundary (model.PrepareAlarmsForWrite) fills the same default,
+		// and a reminder must not vanish over an empty value.
 	}
 	if prop := comp.Props.Get(ical.PropTrigger); prop != nil {
 		tv := prop.Value

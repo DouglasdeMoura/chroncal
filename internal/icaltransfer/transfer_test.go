@@ -229,10 +229,12 @@ func TestImport_ChildFieldFailureIsWarningNotFailed(t *testing.T) {
 	evt := event.Event{
 		UID: "evt-bad-alarm", Title: "Has bad alarm",
 		StartTime: start, EndTime: start.Add(time.Hour),
-		// The service boundary rejects an ACTION outside model.AlarmActions
-		// with model.ErrInvalidAlarm (issue #578), so this alarm fails to
-		// attach even though the event itself is valid.
-		Alarms: []model.Alarm{{Action: "BOGUS", TriggerValue: "-PT15M", Related: "START"}},
+		// The service boundary rejects a RELATED outside
+		// model.AlarmRelatedValues with model.ErrInvalidAlarm (issue
+		// #578), so this alarm fails to attach even though the event
+		// itself is valid. The action no longer forces the failure:
+		// since issue #579 the tables accept any non-empty action.
+		Alarms: []model.Alarm{{Action: "DISPLAY", TriggerValue: "-PT15M", Related: "BOGUS"}},
 	}
 	result := &ical.ImportResult{Events: []event.Event{evt}}
 	summary := icaltransfer.Import(ctx, a, cal.ID, result)

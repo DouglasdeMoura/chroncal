@@ -348,8 +348,10 @@ func TestCalendarsRejectInvalidRemoteMetadata(t *testing.T) {
 // value that passes the Go side but fails the constraint rolls back the
 // whole resource transaction during sync (issue #575). This test probes
 // both alarm tables with candidate values. The schema and
-// model.ValidAlarmAction / model.ValidAlarmRelated must give the same
-// verdict on each one.
+// model.StorableAlarmAction / model.ValidAlarmRelated must give the same
+// verdict on each one. The action rule is wide on purpose (issue #579):
+// the tables keep a sync-only action such as NONE or X-APPLE-SOUND, and
+// only the narrower model.FireableAlarmAction gates the alarm engine.
 func TestAlarmConstraintsMatchModelValidators(t *testing.T) {
 	db, q, err := Open(":memory:")
 	if err != nil {
@@ -393,7 +395,9 @@ func TestAlarmConstraintsMatchModelValidators(t *testing.T) {
 		// The valid candidates come from the model sets. The test then
 		// probes a value added to the model but not to a migration
 		// against the CHECK constraint, and the value fails here.
-		{"action", append(model.AlarmActions(), "NONE", "PROCEDURE", "display", ""), model.ValidAlarmAction},
+		// Migration 043 widened the action constraint, so the action rule
+		// is StorableAlarmAction and a preserved foreign action passes.
+		{"action", append(model.AlarmActions(), "NONE", "PROCEDURE", "X-APPLE-SOUND", "display", ""), model.StorableAlarmAction},
 		{"related", append(model.AlarmRelatedValues(), "STARTS", "end", ""), model.ValidAlarmRelated},
 	}
 
