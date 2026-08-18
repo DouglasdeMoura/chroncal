@@ -34,7 +34,7 @@
 
           src = ./.;
           subPackages = [ "cmd/chroncal" ];
-          vendorHash = "sha256-PJ62/iAXvsjpaAgQPTu7+4tXVMqUOZGcp5/oDFGRgPU=";
+          vendorHash = "sha256-Fm94iviyX9L2fL7+KSWP6KCLMnhS4zjKu5PP0XXFQac=";
 
           nativeBuildInputs = [ go ];
           env.CGO_ENABLED = "0";
