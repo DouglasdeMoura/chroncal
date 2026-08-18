@@ -214,16 +214,15 @@ var ErrInvalidAlarm = errors.New("invalid alarm")
 // the value. The caller's slice does not change.
 //
 // The event and todo services call this function before every alarm
-// write, as defense in depth. The iCal import parser and the CLI
-// parser stay the first guards. The sync engine retries a resource on
-// any ReplaceAlarms error. A bad value that reaches sync still blocks
-// that resource. The typed error names the cause instead of a raw
-// CHECK failure (issues #575, #578).
+// write. The iCal import parser and the CLI
+// parser stay the first guards. A bad value that reaches sync still
+// fails the import and retries. The typed error names the cause
+// instead of a raw CHECK failure (issues #575, #578).
 func PrepareAlarmsForWrite(alarms []Alarm) ([]Alarm, error) {
 	prepared := slices.Clone(alarms)
 	for i := range prepared {
 		if err := prepareAlarmForWrite(&prepared[i]); err != nil {
-			return nil, fmt.Errorf("alarm %d: %w", i, err)
+			return nil, fmt.Errorf("alarm %d: %w", i+1, err)
 		}
 	}
 	return prepared, nil

@@ -68,7 +68,8 @@ func TestPrepareAlarmsForWrite_RejectsInvalidAction(t *testing.T) {
 	if !errors.Is(err, ErrInvalidAlarm) {
 		t.Fatalf("err = %v, want ErrInvalidAlarm", err)
 	}
-	for _, want := range []string{"PROCEDURE", "action", "alarm 1"} {
+	// The position is 1-based: the second element is "alarm 2".
+	for _, want := range []string{"PROCEDURE", "action", "alarm 2"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("err = %q, want it to contain %q", err, want)
 		}
