@@ -68,6 +68,17 @@ func writeSyncStatusLine(w io.Writer, status syncPkg.SyncStatus) {
 }
 
 func writeSyncConflictLine(w io.Writer, conflict syncPkg.Conflict) {
+	if conflict.Resolution != "" {
+		fmt.Fprintf(w, "  #%d  type=%s  uid=%s  detected=%s  resolved=%s  resolution=%s\n",
+			conflict.ID,
+			safeText(conflict.OwnerType),
+			safeText(conflict.UID),
+			conflict.DetectedAt.Format("2006-01-02 15:04"),
+			conflict.ResolvedAt.Format("2006-01-02 15:04"),
+			safeText(conflict.Resolution),
+		)
+		return
+	}
 	fmt.Fprintf(w, "  #%d  type=%s  uid=%s  detected=%s\n",
 		conflict.ID,
 		safeText(conflict.OwnerType),
@@ -77,8 +88,8 @@ func writeSyncConflictLine(w io.Writer, conflict syncPkg.Conflict) {
 }
 
 func writeSyncResult(outW, errW io.Writer, r *syncPkg.SyncResult) {
-	fmt.Fprintf(outW, "  Calendar %d: pushed=%d pulled=%d deleted=%d conflicts=%d errors=%d\n",
-		r.CalendarID, r.Pushed, r.Pulled, r.Deleted, r.Conflicts, len(r.Errors))
+	fmt.Fprintf(outW, "  Calendar %d: pushed=%d pulled=%d deleted=%d conflicts=%d auto-resolved=%d skipped-conflicts=%d errors=%d\n",
+		r.CalendarID, r.Pushed, r.Pulled, r.Deleted, r.Conflicts, r.AutoResolved, r.SkippedConflicts, len(r.Errors))
 	for _, err := range r.Errors {
 		fmt.Fprintf(errW, "    error: %s\n", safeText(err.Error()))
 	}

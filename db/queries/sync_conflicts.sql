@@ -7,16 +7,27 @@ ON CONFLICT(calendar_id, uid) DO UPDATE SET
     local_ical = excluded.local_ical,
     server_ical = excluded.server_ical,
     server_etag = excluded.server_etag,
-    detected_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now');
+    detected_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    resolved_at = NULL,
+    resolution = NULL;
 
 -- name: CountOpenSyncConflicts :one
-SELECT COUNT(*) FROM sync_conflicts WHERE calendar_id = ? AND uid = ?;
+SELECT COUNT(*) FROM sync_conflicts WHERE calendar_id = ? AND uid = ? AND resolved_at IS NULL;
 
 -- name: ListSyncConflicts :many
-SELECT * FROM sync_conflicts ORDER BY detected_at DESC;
+SELECT * FROM sync_conflicts WHERE resolved_at IS NULL ORDER BY detected_at DESC;
 
 -- name: ListSyncConflictsByCalendar :many
-SELECT * FROM sync_conflicts WHERE calendar_id = ? ORDER BY detected_at DESC;
+SELECT * FROM sync_conflicts WHERE calendar_id = ? AND resolved_at IS NULL ORDER BY detected_at DESC;
+
+-- name: ListResolvedSyncConflicts :many
+SELECT * FROM sync_conflicts WHERE resolved_at IS NOT NULL ORDER BY resolved_at DESC;
+
+-- name: ListResolvedSyncConflictsByCalendar :many
+SELECT * FROM sync_conflicts WHERE calendar_id = ? AND resolved_at IS NOT NULL ORDER BY resolved_at DESC;
+
+-- name: MarkSyncConflictResolved :exec
+UPDATE sync_conflicts SET resolved_at = ?, resolution = ? WHERE calendar_id = ? AND uid = ?;
 
 -- name: GetSyncConflict :one
 SELECT * FROM sync_conflicts WHERE id = ?;

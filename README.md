@@ -430,7 +430,7 @@ The export aborts when one relation read fails. It writes no file, so no incompl
 ```
 chroncal sync run       [--calendar NAME] [--account NAME] [--conflict MODE]
 chroncal sync status
-chroncal sync conflicts
+chroncal sync conflicts [--resolved]
 chroncal sync resolve   <id> --pick {local,server}
 chroncal sync reset     [--calendar NAME]
 ```
@@ -438,6 +438,12 @@ chroncal sync reset     [--calendar NAME]
 Sync runs on each connected calendar on its own. Calendars that share an account reuse its credential and sync one after another. Distinct accounts can sync at the same time. Use `chroncal account calendars list` and `chroncal account calendars add` to inspect and import remote collections. Use the calendar remote flags above when you attach one known URL.
 
 Narrow a run with `--calendar NAME` (one local calendar) or `--account NAME` (every calendar linked to one CalDAV account). The two flags are mutually exclusive. An account with no linked calendars is a clean no-op.
+
+Conflict handling:
+
+- Every write fires an opportunistic push. When the server answers 412, chroncal records a conflict and keeps the local edit. The edit stays dirty. The command prints a note on stderr. The note tells you to run `chroncal sync conflicts`.
+- The conflict strategy (`server-wins` or `prompt`) governs full sync passes only. A full pass is `sync run`, the background service, or a TUI sync. A `server-wins` pass adopts the server body, clears the dirty flag, and marks the conflict resolved as `server-auto`. A `prompt` pass records the conflict and skips that row until you resolve it.
+- A resolved conflict keeps its row. Run `chroncal sync conflicts --resolved` to list resolved conflicts. Run `chroncal sync resolve <id> --pick local` on a resolved conflict to restore the recorded local version.
 
 ### Google Calendar via CalDAV
 

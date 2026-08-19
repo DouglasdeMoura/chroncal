@@ -83,6 +83,42 @@ func TestReportOpportunisticPushEmitsWarningsThroughInjectedWriter(t *testing.T)
 	}
 }
 
+// A 412 during the opportunistic post-write push records a conflict and keeps
+// the local edit (issue #610). The note that says so must reach the warning
+// stream in every output mode: a JSON caller discards stdout to keep it
+// parseable, so stdout must carry nothing for a conflicts-only result, and
+// the note must still print. The note points at the listing command because
+// that is where the conflict ID comes from.
+func TestReportOpportunisticPushConflictNoteOnWarnStream(t *testing.T) {
+	t.Parallel()
+
+	// Text caller: nothing was pushed (the write conflicted), so stdout stays
+	// clean and the note lands on warnW.
+	var out, warn bytes.Buffer
+	reportOpportunisticPush(&out, &warn, "Work", &syncPkg.SyncResult{Conflicts: 1})
+	if !strings.Contains(warn.String(), `1 local change(s) conflicted with the server; run "chroncal sync conflicts" to resolve`) {
+		t.Errorf("warning writer got %q, want the conflict note", warn.String())
+	}
+	if out.Len() != 0 {
+		t.Errorf("stdout writer got %q; a conflicts-only result must not write to stdout", out.String())
+	}
+
+	// JSON caller (io.Discard stdout): the note must still reach warnW.
+	warn.Reset()
+	reportOpportunisticPush(io.Discard, &warn, "Work", &syncPkg.SyncResult{Conflicts: 2})
+	if !strings.Contains(warn.String(), "2 local change(s) conflicted") {
+		t.Errorf("warning writer got %q, want the conflict note despite discarded stdout", warn.String())
+	}
+
+	// An auto-resolved conflict (server-wins full pass folded into the
+	// result) reports on warnW too, worded as a resolution, not an open row.
+	warn.Reset()
+	reportOpportunisticPush(io.Discard, &warn, "Work", &syncPkg.SyncResult{AutoResolved: 1})
+	if !strings.Contains(warn.String(), "1 conflict(s) resolved in favor of the server") {
+		t.Errorf("warning writer got %q, want the auto-resolved note", warn.String())
+	}
+}
+
 // `sync resolve <id> --pick server` imports the recorded server body through
 // the same importICal as the auto server-wins paths. The engine logger is nil
 // (silent). The warnings ResolveConflict returns are then the only place

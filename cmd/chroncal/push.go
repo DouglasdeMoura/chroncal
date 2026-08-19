@@ -33,9 +33,11 @@ func opportunisticPush(a *app.App, calendarID int64, cmd *cobra.Command) {
 // calendar upstream after a CLI write. It is best-effort. Failures are
 // reported to outW but do not affect the command's exit status. The dirty
 // flag survives. The periodic `chroncal service run` tick will retry.
-// Local-only calendars (no CalDAV account linked) are silent no-ops.
-// warnW receives import warnings (see reportOpportunisticPush). Call sites
-// pass cmd.ErrOrStderr(). JSON callers that discard outW still see them.
+// A 412 records a sync conflict and keeps the local edit; the conflict note
+// then goes to warnW (see reportOpportunisticPush). Local-only calendars
+// (no CalDAV account linked) are silent no-ops. warnW receives import
+// warnings and conflict notes. Call sites pass cmd.ErrOrStderr(). JSON
+// callers that discard outW still see them.
 //
 // It is a package var so tests can substitute a record stub. Tests then
 // assert that write paths opportunistically push, with no CalDAV
@@ -57,7 +59,7 @@ var pushCalendarAfterWrite = func(a *app.App, calendarID int64, outW, warnW io.W
 
 	svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, nil)
 
-	result, err := svc.PushCalendar(ctx, calendarID, syncPkg.ConflictServerWins)
+	result, err := svc.PushLocalEdits(ctx, calendarID)
 	if err != nil {
 		fmt.Fprintf(outW, "note: auto-sync failed (%v); change will upload on next sync\n", err)
 		return
@@ -66,18 +68,25 @@ var pushCalendarAfterWrite = func(a *app.App, calendarID int64, outW, warnW io.W
 }
 
 // reportOpportunisticPush renders the outcome of an opportunistic push. The
-// engine runs with a discarded logger. The result is then the only place import
-// warnings from a server-wins conflict import surface. They go to warnW, not
-// outW. JSON callers (which pass io.Discard to keep stdout clean) still
-// see them on the ERROR stream. They never mix into stdout.
+// engine runs with a discarded logger. The result is then the only place
+// import warnings and conflict notes surface. They go to warnW, not outW.
+// JSON callers (which pass io.Discard to keep stdout clean) still see them
+// on the ERROR stream. They never mix into stdout.
 func reportOpportunisticPush(outW, warnW io.Writer, calName string, result *syncPkg.SyncResult) {
 	fprintImportWarnings(warnW, result.Warnings)
-	if result.Pushed == 0 && result.Deleted == 0 && len(result.Errors) == 0 {
+	if result.Pushed == 0 && result.Deleted == 0 && len(result.Errors) == 0 &&
+		result.Conflicts == 0 && result.AutoResolved == 0 {
 		return
 	}
 	if len(result.Errors) > 0 {
 		fmt.Fprintf(outW, "note: auto-sync partial (%d error(s)); change will retry on next sync\n", len(result.Errors))
-		return
+	} else if result.Pushed > 0 || result.Deleted > 0 {
+		fmt.Fprintf(outW, "Synced to %s · pushed %d · deleted %d\n", calName, result.Pushed, result.Deleted)
 	}
-	fmt.Fprintf(outW, "Synced to %s · pushed %d · deleted %d\n", calName, result.Pushed, result.Deleted)
+	if result.Conflicts > 0 {
+		fmt.Fprintf(warnW, "note: %d local change(s) conflicted with the server; run \"chroncal sync conflicts\" to resolve\n", result.Conflicts)
+	}
+	if result.AutoResolved > 0 {
+		fmt.Fprintf(warnW, "note: %d conflict(s) resolved in favor of the server\n", result.AutoResolved)
+	}
 }
