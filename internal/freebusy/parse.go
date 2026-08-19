@@ -92,11 +92,15 @@ func ParseComponent(comp *goical.Component) (Result, error) {
 		}
 	}
 
-	if len(result.Periods) == 0 && !result.Start.IsZero() && !result.End.IsZero() {
+	// Radicale emits one VFREEBUSY per busy interval with DTSTART/DTEND and a
+	// component-level FBTYPE, and no FREEBUSY properties. RFC 5545 §3.6.4 and
+	// RFC 4791 §7.10 use DTSTART/DTEND with no FREEBUSY for a fully free window,
+	// so only synthesize a period when that non-standard FBTYPE is present.
+	if kind := propValue(props, "FBTYPE"); kind != "" && len(result.Periods) == 0 && !result.Start.IsZero() && !result.End.IsZero() {
 		result.Periods = []Period{{
 			Start: result.Start,
 			End:   result.End,
-			Type:  normalizeType(propValue(props, "FBTYPE")),
+			Type:  normalizeType(kind),
 		}}
 	}
 
