@@ -490,6 +490,7 @@ func migration045Pattern(t *testing.T) string {
 		t.Fatalf("read migration 045: %v", err)
 	}
 	const marker = "GLOB "
+	var found []string
 	for _, line := range strings.Split(string(body), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "--") {
@@ -504,10 +505,17 @@ func migration045Pattern(t *testing.T) string {
 		if !strings.HasPrefix(rest, "'") || end < 0 {
 			t.Fatalf("migration 045: cannot read the GLOB literal from %q", trimmed)
 		}
-		return rest[:end+2]
+		found = append(found, rest[:end+2])
 	}
-	t.Fatal("migration 045: found no GLOB pattern")
-	return ""
+	// The migration repairs both alarm tables. Read every pattern, so a
+	// narrowed literal in either statement fails this test.
+	if len(found) != 2 {
+		t.Fatalf("migration 045: found %d GLOB patterns, want one per alarm table", len(found))
+	}
+	if found[0] != found[1] {
+		t.Fatalf("migration 045: the two statements use different patterns: %s and %s", found[0], found[1])
+	}
+	return found[0]
 }
 
 // The migration 045 GLOB pattern and model.ValidAlarmActionToken must give
@@ -526,16 +534,19 @@ func TestMigration045PatternMatchesTokenRule(t *testing.T) {
 	// drift this test exists to catch.
 	pattern := migration045Pattern(t)
 
+	// The empty value is out of scope. The CHECK constraint of migration
+	// 044 forbids it, and every other path reads it as "unset" and uses
+	// DISPLAY, so the migration must not rewrite it to the reserved token.
 	candidates := []string{
 		"DISPLAY", "AUDIO", "EMAIL", "NONE", "PROCEDURE", "X-APPLE-SOUND",
 		"x-lower-case", "A1", "-", "9",
-		"", " ", "  ", "\t", "NO NE", "X APPLE", "DISPLAY;", "a.b", "caf\u00e9",
+		" ", "  ", "\t", "NO NE", "X APPLE", "DISPLAY;", "a.b", "caf\u00e9",
 	}
 	for _, v := range candidates {
 		var matched int
 		if err := conn.QueryRowContext(context.Background(),
-			`SELECT CASE WHEN ? = '' OR ? GLOB `+pattern+` THEN 1 ELSE 0 END`,
-			v, v).Scan(&matched); err != nil {
+			`SELECT CASE WHEN ? GLOB `+pattern+` THEN 1 ELSE 0 END`,
+			v).Scan(&matched); err != nil {
 			t.Fatalf("probe %q: %v", v, err)
 		}
 		wantRepair := !model.ValidAlarmActionToken(v)
