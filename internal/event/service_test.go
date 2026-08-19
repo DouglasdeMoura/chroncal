@@ -1260,3 +1260,72 @@ func assertAlarmUIDs(t *testing.T, svc *Service, eventID int64) {
 		}
 	}
 }
+
+// A malformed stored action must not lock the owning event. An older
+// release run against a repaired database writes such a row again,
+// because migration 045 does not run a second time. The service maps the
+// value as it reads the row, so every later write accepts it (issue #607).
+func TestListAlarms_NormalizesMalformedStoredAction(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	e := createEvent(t, svc)
+	seedMalformedEventAlarm(t, svc, e.ID)
+
+	alarms, err := svc.ListAlarms(ctx, e.ID)
+	if err != nil {
+		t.Fatalf("ListAlarms: %v", err)
+	}
+	if len(alarms) != 1 {
+		t.Fatalf("alarms = %d, want 1", len(alarms))
+	}
+	if alarms[0].Action != model.UnsupportedAlarmAction {
+		t.Errorf("action = %q, want %q", alarms[0].Action, model.UnsupportedAlarmAction)
+	}
+}
+
+// The TUI edit path loads the stored alarms and writes the whole list
+// back. A malformed stored action made that save fail, so no edit of the
+// event could land (issue #607).
+func TestUpdateWithRelations_SavesWithMalformedStoredAction(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	e := createEvent(t, svc)
+	seedMalformedEventAlarm(t, svc, e.ID)
+
+	alarms, err := svc.ListAlarms(ctx, e.ID)
+	if err != nil {
+		t.Fatalf("ListAlarms: %v", err)
+	}
+
+	// The form carries the loaded alarms back into the save.
+	if _, err := svc.UpdateWithRelations(ctx, e.ID, UpdateParams{
+		Title:      "A new title",
+		StartTime:  e.StartTime,
+		EndTime:    e.EndTime,
+		CalendarID: e.CalendarID,
+	}, nil, alarms); err != nil {
+		t.Fatalf("the save must succeed with a malformed stored alarm: %v", err)
+	}
+
+	after, err := svc.ListAlarms(ctx, e.ID)
+	if err != nil {
+		t.Fatalf("ListAlarms after the save: %v", err)
+	}
+	if len(after) != 1 {
+		t.Fatalf("alarms after the save = %d, want 1; the row must survive", len(after))
+	}
+	if after[0].Action != model.UnsupportedAlarmAction {
+		t.Errorf("action after the save = %q, want %q", after[0].Action, model.UnsupportedAlarmAction)
+	}
+}
+
+// seedMalformedEventAlarm writes an alarm row through SQL. The service
+// write rule refuses the value, so only an older build could store it.
+func seedMalformedEventAlarm(t *testing.T, svc *Service, eventID int64) {
+	t.Helper()
+	if _, err := svc.db.ExecContext(context.Background(),
+		`INSERT INTO event_alarms (event_id, action, trigger_value, related) VALUES (?, 'NO NE', '-PT15M', 'START')`,
+		eventID); err != nil {
+		t.Fatalf("seed the malformed row: %v", err)
+	}
+}

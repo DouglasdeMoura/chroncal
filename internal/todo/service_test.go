@@ -824,3 +824,35 @@ func TestTodoService_ReplaceAlarms_KeepsForeignAlarmUIDEmpty(t *testing.T) {
 		}
 	}
 }
+
+// The todo service maps a malformed stored action as it reads the row,
+// like the event service does (issue #607).
+func TestTodoListAlarms_NormalizesMalformedStoredAction(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	td := createTodo(t, svc)
+
+	// Write the row through SQL. The service write rule refuses this
+	// value, so only an older build could store it.
+	if _, err := svc.db.ExecContext(ctx,
+		`INSERT INTO todo_alarms (todo_id, action, trigger_value, related) VALUES (?, 'NO NE', '-PT15M', 'START')`,
+		td.ID); err != nil {
+		t.Fatalf("seed the malformed row: %v", err)
+	}
+
+	alarms, err := svc.ListAlarms(ctx, td.ID)
+	if err != nil {
+		t.Fatalf("ListAlarms: %v", err)
+	}
+	if len(alarms) != 1 {
+		t.Fatalf("alarms = %d, want 1", len(alarms))
+	}
+	if alarms[0].Action != model.UnsupportedAlarmAction {
+		t.Errorf("action = %q, want %q", alarms[0].Action, model.UnsupportedAlarmAction)
+	}
+
+	// The row must still write back, so an edit of the todo cannot fail.
+	if err := svc.ReplaceAlarms(ctx, td.ID, alarms); err != nil {
+		t.Fatalf("the write must accept the normalized row: %v", err)
+	}
+}

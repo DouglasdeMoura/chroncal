@@ -2254,12 +2254,16 @@ func (s *Service) populateCategories(ctx context.Context, events []Event) {
 	}
 }
 
+// fromStorageAlarm converts an alarm row to the model value. It maps a
+// malformed stored action to model.UnsupportedAlarmAction, so every
+// reader holds a value the write rule accepts. See
+// model.NormalizeAlarmAction for the rule (issue #607).
 func fromStorageAlarm(r storage.EventAlarm) model.Alarm {
 	return model.Alarm{
 		ID:            r.ID,
 		EventID:       r.EventID,
 		UID:           storage.NullableToString(r.Uid),
-		Action:        r.Action,
+		Action:        model.NormalizeAlarmAction(r.Action),
 		TriggerValue:  r.TriggerValue,
 		Description:   storage.NullableToString(r.Description),
 		Summary:       storage.NullableToString(r.Summary),
