@@ -938,8 +938,8 @@ func normalizedComponents(components []string) []string {
 }
 
 // uniqueUnlinkedByRemoteIdentity maps a remote identity to one unlinked local
-// calendar. Duplicate keys are dropped so Import creates a fresh row instead
-// of picking an arbitrary snapshot.
+// calendar. Duplicate keys are dropped so Import and ReconcileSelection create
+// a fresh row. They must not pick an arbitrary snapshot.
 func uniqueUnlinkedByRemoteIdentity(rows []storage.Calendar, serverURL string) map[string]int64 {
 	byKey := make(map[string]int64)
 	ambiguous := make(map[string]struct{})
@@ -964,6 +964,10 @@ func uniqueUnlinkedByRemoteIdentity(rows []storage.Calendar, serverURL string) m
 	return byKey
 }
 
+// relinkDiscoveredCalendar attaches one unlinked local calendar to the account.
+// It writes live discovery color, name, access, and components onto the row.
+// Account remove clears remote_color. The live collection can also carry a new
+// remote_name. A later metadata sync then has a current remote baseline.
 func relinkDiscoveredCalendar(ctx context.Context, qtx *storage.Queries, acct Account, item DiscoveredCalendar, calendarID int64) error {
 	accountID := acct.ID
 	if err := qtx.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
@@ -973,7 +977,16 @@ func relinkDiscoveredCalendar(ctx context.Context, qtx *storage.Queries, acct Ac
 	}); err != nil {
 		return err
 	}
-	if err := qtx.UpdateCalendarCapabilitiesFromLink(ctx, storage.UpdateCalendarCapabilitiesFromLinkParams{
+	remoteName := remoteCalendarName(item.RemoteCalendar)
+	if err := qtx.AdoptCalendarRemoteName(ctx, storage.AdoptCalendarRemoteNameParams{
+		Name: remoteName,
+		ID:   calendarID,
+	}); err != nil {
+		return err
+	}
+	if _, err := qtx.UpdateCalendarDiscovery(ctx, storage.UpdateCalendarDiscoveryParams{
+		RemoteName:       remoteName,
+		RemoteColor:      item.Color,
 		RemoteAccess:     string(normalizedAccess(item.Access)),
 		RemoteComponents: strings.Join(normalizedComponents(item.SupportedComponentSet), ","),
 		ID:               calendarID,
