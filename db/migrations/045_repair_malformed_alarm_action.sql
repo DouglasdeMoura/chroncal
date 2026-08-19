@@ -32,11 +32,11 @@
 
 UPDATE event_alarms
 SET action = 'X-CHRONCAL-UNSUPPORTED'
-WHERE action = '' OR action GLOB '*[^A-Za-z0-9-]*';
+WHERE action GLOB '*[^A-Za-z0-9-]*';
 
 UPDATE todo_alarms
 SET action = 'X-CHRONCAL-UNSUPPORTED'
-WHERE action = '' OR action GLOB '*[^A-Za-z0-9-]*';
+WHERE action GLOB '*[^A-Za-z0-9-]*';
 
 -- +goose Down
 
