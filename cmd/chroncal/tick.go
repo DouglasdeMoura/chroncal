@@ -113,11 +113,16 @@ func syncInterval() (time.Duration, error) {
 	return dur, nil
 }
 
+// syncStrategy reads the configured conflict strategy for the background
+// tick. An unset or invalid name falls back to server-wins; the install
+// command rejects invalid names up front, so the fallback only covers a
+// hand-edited config file.
 func syncStrategy() syncPkg.ConflictStrategy {
-	if cfg.Sync.ConflictStrategy == string(syncPkg.ConflictPrompt) {
-		return syncPkg.ConflictPrompt
+	strategy, err := syncPkg.ParseConflictStrategy(cfg.Sync.ConflictStrategy)
+	if err != nil {
+		return syncPkg.ConflictServerWins
 	}
-	return syncPkg.ConflictServerWins
+	return strategy
 }
 
 func syncDue(now time.Time, lastAttempt string, interval time.Duration) bool {

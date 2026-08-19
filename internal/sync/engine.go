@@ -36,8 +36,17 @@ type SyncResult struct {
 	Pushed     int
 	Pulled     int
 	Deleted    int
-	Conflicts  int
-	Errors     []error
+	// Conflicts counts conflicts this cycle recorded and left open for
+	// manual resolution. Every increment is backed by a sync_conflicts row.
+	Conflicts int
+	// AutoResolved counts conflicts this cycle settled without the user: a
+	// server-wins pass that adopted the server body, and a tombstone delete
+	// that yielded to a remote edit. The recorded rows stay recoverable.
+	AutoResolved int
+	// SkippedConflicts counts dirty resources a full prompt-mode pass left
+	// unpushed because an open conflict already exists for them.
+	SkippedConflicts int
+	Errors           []error
 	// Warnings lists what ImportFile could not represent faithfully while
 	// absorbing server resources during this cycle. It rides on the result —
 	// not just the engine logger — because most entry points run the engine
@@ -85,6 +94,47 @@ const (
 	ConflictServerWins ConflictStrategy = "server-wins"
 	ConflictPrompt     ConflictStrategy = "prompt"
 )
+
+// ParseConflictStrategy maps a configured strategy name to its constant. An
+// empty name means the default, server-wins. Any other name is an error.
+func ParseConflictStrategy(s string) (ConflictStrategy, error) {
+	switch ConflictStrategy(s) {
+	case "", ConflictServerWins:
+		return ConflictServerWins, nil
+	case ConflictPrompt:
+		return ConflictPrompt, nil
+	default:
+		return "", fmt.Errorf("invalid conflict strategy %q (use %q or %q)",
+			s, ConflictServerWins, ConflictPrompt)
+	}
+}
+
+// Resolution markers recorded on sync_conflicts.resolution. A resolved row
+// keeps its local body so `sync resolve --pick local` can still restore it.
+const (
+	// ResolutionServer marks a conflict the user resolved for the server
+	// version.
+	ResolutionServer = "server"
+	// ResolutionLocal marks a conflict the user resolved for the local
+	// version.
+	ResolutionLocal = "local"
+	// ResolutionServerAuto marks a conflict a server-wins pass resolved by
+	// adopting the server version.
+	ResolutionServerAuto = "server-auto"
+)
+
+// markConflictResolved stamps the recorded conflict as resolved. The row
+// stays in place so its local body remains recoverable through
+// ResolveConflict.
+func (e *Engine) markConflictResolved(ctx context.Context, calendarID int64, uid, resolution string) error {
+	resolvedAt := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	return e.q.MarkSyncConflictResolved(ctx, storage.MarkSyncConflictResolvedParams{
+		ResolvedAt: &resolvedAt,
+		Resolution: &resolution,
+		CalendarID: calendarID,
+		Uid:        uid,
+	})
+}
 
 // Engine orchestrates push and pull of CalDAV resources.
 type Engine struct {
@@ -316,13 +366,15 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 		}
 
 		// Phase 1: Push dirty resources.
-		pushResult, err := e.push(ctx, client, calendarID, remoteURL, resolvePushIdentity(cal, account), strategy)
+		pushResult, err := e.push(ctx, client, calendarID, remoteURL, resolvePushIdentity(cal, account), strategy, false)
 		if err != nil {
 			e.logger.Error("push failed", "calendar_id", calendarID, "error", err)
 			result.Errors = append(result.Errors, fmt.Errorf("push: %w", err))
 		} else {
 			result.Pushed = pushResult.pushed
 			result.Conflicts = pushResult.conflicts
+			result.AutoResolved = pushResult.autoResolved
+			result.SkippedConflicts = pushResult.skippedConflicts
 			result.Errors = append(result.Errors, pushResult.errors...)
 			result.Warnings = append(result.Warnings, pushResult.warnings...)
 		}
@@ -348,8 +400,24 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 			result.Errors = append(result.Errors, fmt.Errorf("tombstones: %w", err))
 		} else {
 			result.Deleted += tombstoneResult.deleted
-			result.Conflicts += tombstoneResult.conflicts
+			result.AutoResolved += tombstoneResult.autoResolved
 			result.Errors = append(result.Errors, tombstoneResult.errors...)
+		}
+
+		// Phase 4: A server-wins pass also closes open conflicts whose
+		// resource is no longer dirty. Such a conflict outlived its
+		// substance — most often a pre-#610 server-wins pass adopted the
+		// server body without touching the row. Marking it resolved keeps
+		// the recorded local body recoverable instead of stranding the row
+		// in `sync conflicts` forever.
+		if strategy == ConflictServerWins {
+			resolved, err := e.resolveMootConflicts(ctx, calendarID)
+			if err != nil {
+				e.logger.Warn("resolve moot conflicts failed", "calendar_id", calendarID, "error", err)
+				result.Errors = append(result.Errors, fmt.Errorf("resolve moot conflicts: %w", err))
+			} else {
+				result.AutoResolved += resolved
+			}
 		}
 	}
 
@@ -364,20 +432,24 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 		"pulled", result.Pulled,
 		"deleted", result.Deleted,
 		"conflicts", result.Conflicts,
+		"auto_resolved", result.AutoResolved,
 		"errors", len(result.Errors),
 	)
 
 	return result, nil
 }
 
-// PushCalendar runs only the push and tombstone phases for one calendar.
+// PushLocalEdits runs only the push and tombstone phases for one calendar.
 // It is the write-only fast path used for opportunistic save-time sync.
 // Local mutations are flushed upstream. There is no pull and no rewrite of
-// calendar metadata. Dirty resources that fail to push stay dirty. The
-// next full SyncCalendar will retry them. It shares a per-calendar lifecycle
-// lock with SyncCalendar. The inner push lock continues to protect direct
-// push calls used by focused engine tests.
-func (e *Engine) PushCalendar(ctx context.Context, calendarID int64, strategy ConflictStrategy) (*SyncResult, error) {
+// calendar metadata. A 412 conflict records a sync_conflicts row and keeps
+// the local row dirty: this path never adopts the server body over an edit
+// the user just made, whatever the configured strategy. Dirty resources
+// that fail to push stay dirty. The next full SyncCalendar will retry them
+// under the configured strategy. It shares a per-calendar lifecycle lock
+// with SyncCalendar. The inner push lock continues to protect direct push
+// calls used by focused engine tests.
+func (e *Engine) PushLocalEdits(ctx context.Context, calendarID int64) (*SyncResult, error) {
 	release, err := e.lockCalendarLifecycle(ctx, calendarID)
 	if err != nil {
 		return nil, err
@@ -392,12 +464,14 @@ func (e *Engine) PushCalendar(ctx context.Context, calendarID int64, strategy Co
 		return result, nil
 	}
 
-	pushResult, err := e.push(ctx, client, calendarID, remoteURL, resolvePushIdentity(cal, account), strategy)
+	pushResult, err := e.push(ctx, client, calendarID, remoteURL, resolvePushIdentity(cal, account), ConflictPrompt, true)
 	if err != nil {
 		return result, fmt.Errorf("push: %w", err)
 	}
 	result.Pushed = pushResult.pushed
 	result.Conflicts = pushResult.conflicts
+	result.AutoResolved = pushResult.autoResolved
+	result.SkippedConflicts = pushResult.skippedConflicts
 	result.Errors = append(result.Errors, pushResult.errors...)
 	result.Warnings = append(result.Warnings, pushResult.warnings...)
 
@@ -406,7 +480,7 @@ func (e *Engine) PushCalendar(ctx context.Context, calendarID int64, strategy Co
 		result.Errors = append(result.Errors, fmt.Errorf("tombstones: %w", err))
 	} else {
 		result.Deleted = tombstoneResult.deleted
-		result.Conflicts += tombstoneResult.conflicts
+		result.AutoResolved += tombstoneResult.autoResolved
 		result.Errors = append(result.Errors, tombstoneResult.errors...)
 	}
 	return result, nil
@@ -414,6 +488,35 @@ func (e *Engine) PushCalendar(ctx context.Context, calendarID int64, strategy Co
 
 func remoteCalendarIsReadOnly(cal storage.Calendar) bool {
 	return strings.EqualFold(strings.TrimSpace(cal.RemoteAccess), "read")
+}
+
+// resolveMootConflicts marks open conflicts resolved when their resource is
+// no longer dirty. A non-dirty resource carries no unpushed local edit, so
+// the recorded conflict has nothing left to decide. A missing
+// sync_resource row is moot the same way.
+func (e *Engine) resolveMootConflicts(ctx context.Context, calendarID int64) (int, error) {
+	open, err := e.q.ListSyncConflictsByCalendar(ctx, calendarID)
+	if err != nil {
+		return 0, fmt.Errorf("list conflicts: %w", err)
+	}
+	resolved := 0
+	for _, c := range open {
+		sr, err := e.q.GetSyncResource(ctx, storage.GetSyncResourceParams{
+			CalendarID: calendarID,
+			Uid:        c.Uid,
+		})
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return resolved, fmt.Errorf("get sync resource %s: %w", c.Uid, err)
+		}
+		if err == nil && sr.Dirty != 0 {
+			continue
+		}
+		if err := e.markConflictResolved(ctx, calendarID, c.Uid, ResolutionServerAuto); err != nil {
+			return resolved, fmt.Errorf("mark conflict resolved %s: %w", c.Uid, err)
+		}
+		resolved++
+	}
+	return resolved, nil
 }
 
 const accountCalendarSyncTimeout = 5 * time.Minute
@@ -505,13 +608,22 @@ func (e *Engine) SyncAll(ctx context.Context, strategy ConflictStrategy) ([]*Syn
 }
 
 type pushResult struct {
-	pushed    int
-	conflicts int
-	errors    []error
-	warnings  []ImportWarning
+	pushed           int
+	conflicts        int
+	autoResolved     int
+	skippedConflicts int
+	errors           []error
+	warnings         []ImportWarning
 }
 
-func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL, pushIdentity string, strategy ConflictStrategy) (*pushResult, error) {
+// push uploads the dirty resources of one calendar. strategy is the
+// configured policy of a full sync pass: ConflictServerWins adopts the
+// server body after a 412, ConflictPrompt records the conflict and keeps
+// the local row dirty. opportunistic marks the save-time fast path after a
+// user mutation: it forces the prompt behavior on a 412 (the user just
+// chose these values) and disables the open-conflict skip so the failed
+// PUT refreshes the recorded bodies with the latest local edit.
+func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL, pushIdentity string, strategy ConflictStrategy, opportunistic bool) (*pushResult, error) {
 	// Serialize the push phase per calendar so a concurrent run cannot read the
 	// same dirty row and create a duplicate server object. See pushLock and
 	// issue #225.
@@ -544,18 +656,17 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 			continue
 		}
 
-		// In prompt mode, skip resources that already have an open,
-		// unresolved conflict. The local row is still dirty and carries the
-		// ETag that already failed If-Match, so re-PUTing it just 412s again
-		// and records another conflict every sync. Hold off until the user
-		// resolves it via ResolveConflict, which clears the conflict and
-		// refreshes the ETag. See issue #104. ServerWins is excluded: it
-		// never records conflict rows and clears dirty on its own 412, so it
-		// has no loop to break — and skipping it would strand a stale
-		// conflict row left over from a prior prompt-mode run. The condition
-		// mirrors the conflict-recording branch below, which treats every
-		// non-ServerWins strategy as prompt mode.
-		if strategy != ConflictServerWins {
+		// In a full prompt-mode pass, skip resources that already have an
+		// open, unresolved conflict. The local row is still dirty and carries
+		// the ETag that already failed If-Match, so re-PUTing it just 412s
+		// again on every sync. Hold off until the user resolves it via
+		// ResolveConflict, which clears the conflict and refreshes the ETag.
+		// See issue #104. ServerWins is excluded: it must process the row to
+		// resolve the conflict it recorded. The opportunistic push is also
+		// excluded: its 412 refreshes the recorded local body with the latest
+		// edit, so a fresh write updates the conflict row instead of sitting
+		// unpushed behind it.
+		if strategy != ConflictServerWins && !opportunistic {
 			if open, cerr := e.q.CountOpenSyncConflicts(ctx, storage.CountOpenSyncConflictsParams{
 				CalendarID: calendarID,
 				Uid:        res.Uid,
@@ -563,6 +674,7 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 				e.logger.Error("check open conflict", "uid", res.Uid, "error", cerr)
 			} else if open > 0 {
 				e.logger.Debug("skip push: open conflict pending resolution", "uid", res.Uid)
+				result.skippedConflicts++
 				continue
 			}
 		}
@@ -651,78 +763,117 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 			// Check for 412 Precondition Failed (ETag conflict)
 			if caldav.IsConflict(putErr) {
 				e.logger.Warn("conflict detected during push", "uid", res.Uid)
-				if strategy == ConflictServerWins {
-					// Re-fetch server version, clear dirty flag, accept server state
-					e.logger.Info("resolving conflict: server wins", "uid", res.Uid)
-					serverRes, fetchErr := client.GetResource(ctx, putPath)
-					if fetchErr != nil {
-						e.logger.Error("re-fetch server resource failed", "uid", res.Uid, "error", fetchErr)
-						result.errors = append(result.errors, fmt.Errorf("conflict re-fetch %s: %w", res.Uid, fetchErr))
-					} else {
-						var buf bytes.Buffer
-						enc := ical.NewEncoder(&buf)
-						if err := enc.Encode(serverRes.Data); err != nil {
-							e.logger.Error("encode server resource failed", "uid", res.Uid, "error", err)
-							result.errors = append(result.errors, fmt.Errorf("encode server resource %s: %w", res.Uid, err))
-							result.conflicts++
-							continue
-						}
-						imported, revs, importWarnings, err := e.importICal(ctx, calendarID, buf.String())
-						if err != nil {
-							e.logger.Error("import server resource failed", "uid", res.Uid, "error", err)
-							result.errors = append(result.errors, fmt.Errorf("import server resource %s: %w", res.Uid, err))
-							result.conflicts++
-							continue
-						}
-						result.warnings = append(result.warnings, importWarnings...)
-						if !imported {
-							// The server's 412 body carried no importable
-							// VEVENT/VTODO/VJOURNAL, so nothing was applied.
-							// Clearing dirty and stamping the server ETag here
-							// would drop the local edit behind a server version we
-							// never adopted. Keep dirty so the next push retries;
-							// the conflict is still counted below. Mirrors the
-							// manual ResolveConflict guard. See issue #495.
-							e.logger.Warn("server resource has no importable data; keeping local dirty", "uid", res.Uid)
-						} else {
-							// Clear dirty and update ETag to accept server version.
-							// Guard the clear on the rev persistImported captured
-							// inside its transaction so a local edit landing after
-							// the import committed is not silently dropped (lost
-							// update). See issues #92, #417 and #494.
-							if err := e.clearDirtyAfterImport(ctx, calendarID, res.Uid, serverRes.ETag, revs[res.Uid]); err != nil {
-								e.logger.Error("clear dirty after conflict", "uid", res.Uid, "error", err)
-							}
-						}
-					}
-				} else {
-					// ConflictPrompt: record conflict for manual resolution.
-					// Reuse icalData exported above — it is the exact body we
-					// just tried to PUT and is unchanged here, so re-exporting
-					// would needlessly repeat ~10 DB queries plus an iCal encode
-					// per conflicting resource. See issue #264.
-					serverRes, fetchErr := client.GetResource(ctx, putPath)
-					if fetchErr == nil {
-						serverIcal, encodeErr := caldav.EncodeCalendar(serverRes.Data)
-						if encodeErr != nil {
-							e.logger.Warn("encode server resource for conflict record", "uid", res.Uid, "error", encodeErr)
-						}
-						ownerID, lookupErr := e.lookupOwnerID(ctx, res.OwnerType, res.Uid)
-						if lookupErr != nil {
-							e.logger.Warn("lookup owner id for conflict record", "uid", res.Uid, "owner_type", res.OwnerType, "error", lookupErr)
-						}
-						_ = e.q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
-							CalendarID: calendarID,
-							OwnerType:  res.OwnerType,
-							OwnerID:    ownerID,
-							Uid:        res.Uid,
-							LocalIcal:  string(icalData),
-							ServerIcal: string(serverIcal),
-							ServerEtag: serverRes.ETag,
-						})
-					}
+
+				// Record the conflict before any resolution so the local body
+				// survives even when this pass adopts the server version below.
+				// Reuse icalData exported above — it is the exact body we just
+				// tried to PUT and is unchanged here, so re-exporting would
+				// needlessly repeat ~10 DB queries plus an iCal encode per
+				// conflicting resource. See issue #264. An encode failure is
+				// tolerated: the row records an empty server body, the local
+				// edit is the half we must not lose, and ResolveConflict
+				// refuses a server pick it cannot import. A failed re-fetch
+				// records nothing — without the server body and ETag the row
+				// could not be resolved safely — and surfaces as an error.
+				serverRes, fetchErr := client.GetResource(ctx, putPath)
+				if fetchErr != nil {
+					e.logger.Warn("re-fetch server resource failed", "uid", res.Uid, "error", fetchErr)
+					result.errors = append(result.errors, fmt.Errorf("conflict re-fetch %s: %w", res.Uid, fetchErr))
+					continue
 				}
-				result.conflicts++
+				serverIcal, encodeErr := caldav.EncodeCalendar(serverRes.Data)
+				if encodeErr != nil {
+					e.logger.Warn("encode server resource for conflict record", "uid", res.Uid, "error", encodeErr)
+				}
+				ownerID, lookupErr := e.lookupOwnerID(ctx, res.OwnerType, res.Uid)
+				if lookupErr != nil {
+					e.logger.Warn("lookup owner id for conflict record", "uid", res.Uid, "owner_type", res.OwnerType, "error", lookupErr)
+				}
+				if err := e.q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+					CalendarID: calendarID,
+					OwnerType:  res.OwnerType,
+					OwnerID:    ownerID,
+					Uid:        res.Uid,
+					LocalIcal:  string(icalData),
+					ServerIcal: string(serverIcal),
+					ServerEtag: serverRes.ETag,
+				}); err != nil {
+					e.logger.Error("record conflict", "uid", res.Uid, "error", err)
+					result.errors = append(result.errors, fmt.Errorf("record conflict %s: %w", res.Uid, err))
+					continue
+				}
+
+				// Prompt mode and the opportunistic push stop here. The
+				// conflict row holds both bodies and the local row stays dirty
+				// until the user resolves it with ResolveConflict.
+				if strategy != ConflictServerWins || opportunistic {
+					result.conflicts++
+					continue
+				}
+
+				// ServerWins: adopt the server version and mark the recorded
+				// conflict resolved. Every failure below leaves the row open
+				// so the user can still resolve it by hand.
+				e.logger.Info("resolving conflict: server wins", "uid", res.Uid)
+				if encodeErr != nil {
+					result.errors = append(result.errors, fmt.Errorf("encode server resource %s: %w", res.Uid, encodeErr))
+					result.conflicts++
+					continue
+				}
+				imported, revs, importWarnings, err := e.importICal(ctx, calendarID, string(serverIcal))
+				if err != nil {
+					e.logger.Error("import server resource failed", "uid", res.Uid, "error", err)
+					result.errors = append(result.errors, fmt.Errorf("import server resource %s: %w", res.Uid, err))
+					result.conflicts++
+					continue
+				}
+				result.warnings = append(result.warnings, importWarnings...)
+				if !imported {
+					// The server's 412 body carried no importable
+					// VEVENT/VTODO/VJOURNAL, so nothing was applied.
+					// Clearing dirty and stamping the server ETag here
+					// would drop the local edit behind a server version we
+					// never adopted. Keep dirty so the next push retries.
+					// Mirrors the manual ResolveConflict guard. See issue
+					// #495.
+					e.logger.Warn("server resource has no importable data; keeping local dirty", "uid", res.Uid)
+					result.conflicts++
+					continue
+				}
+				// Clear dirty and update ETag to accept server version.
+				// Guard the clear on the rev persistImported captured
+				// inside its transaction so a local edit landing after
+				// the import committed is not silently dropped (lost
+				// update). See issues #92, #417 and #494.
+				if err := e.clearDirtyAfterImport(ctx, calendarID, res.Uid, serverRes.ETag, revs[res.Uid]); err != nil {
+					e.logger.Error("clear dirty after conflict", "uid", res.Uid, "error", err)
+					result.errors = append(result.errors, fmt.Errorf("clear dirty after conflict %s: %w", res.Uid, err))
+					result.conflicts++
+					continue
+				}
+				// FinalizePushedResource clears dirty only on a rev match, so
+				// read the flag back. A local edit that landed after the import
+				// keeps the resource dirty and the conflict open.
+				sr, err := e.q.GetSyncResource(ctx, storage.GetSyncResourceParams{
+					CalendarID: calendarID,
+					Uid:        res.Uid,
+				})
+				if err != nil {
+					e.logger.Error("re-read sync resource after conflict", "uid", res.Uid, "error", err)
+					result.errors = append(result.errors, fmt.Errorf("re-read sync resource %s: %w", res.Uid, err))
+					result.conflicts++
+					continue
+				}
+				if sr.Dirty != 0 {
+					e.logger.Info("conflict stays open: local edit landed during import", "uid", res.Uid)
+					result.conflicts++
+					continue
+				}
+				if err := e.markConflictResolved(ctx, calendarID, res.Uid, ResolutionServerAuto); err != nil {
+					e.logger.Error("mark conflict resolved", "uid", res.Uid, "error", err)
+					result.errors = append(result.errors, fmt.Errorf("mark conflict resolved %s: %w", res.Uid, err))
+				}
+				result.autoResolved++
 				continue
 			}
 			e.logger.Error("PUT failed", "uid", res.Uid, "error", putErr)
@@ -1657,9 +1808,9 @@ func (e *Engine) lookupOwnerID(ctx context.Context, ownerType, uid string) (int6
 }
 
 type tombstoneResult struct {
-	deleted   int
-	conflicts int
-	errors    []error
+	deleted     int
+	autoResolved int
+	errors      []error
 }
 
 func (e *Engine) processTombstones(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL string) (*tombstoneResult, error) {
@@ -1712,7 +1863,7 @@ func (e *Engine) processTombstones(ctx context.Context, client *caldav.Client, c
 				if err := e.q.DeleteTombstone(ctx, ts.ID); err != nil {
 					e.logger.Warn("delete tombstone row after conflict failed", "uid", ts.Uid, "error", err)
 				}
-				result.conflicts++
+				result.autoResolved++
 				continue
 			}
 			e.logger.Warn("delete remote resource failed", "uid", ts.Uid, "error", err)

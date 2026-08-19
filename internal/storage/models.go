@@ -295,6 +295,8 @@ type SyncConflict struct {
 	ServerIcal string
 	ServerEtag string
 	DetectedAt string
+	ResolvedAt *string
+	Resolution *string
 }
 
 type SyncPendingHref struct {

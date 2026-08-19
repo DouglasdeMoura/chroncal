@@ -10,7 +10,7 @@ import (
 )
 
 const countOpenSyncConflicts = `-- name: CountOpenSyncConflicts :one
-SELECT COUNT(*) FROM sync_conflicts WHERE calendar_id = ? AND uid = ?
+SELECT COUNT(*) FROM sync_conflicts WHERE calendar_id = ? AND uid = ? AND resolved_at IS NULL
 `
 
 type CountOpenSyncConflictsParams struct {
@@ -34,7 +34,9 @@ ON CONFLICT(calendar_id, uid) DO UPDATE SET
     local_ical = excluded.local_ical,
     server_ical = excluded.server_ical,
     server_etag = excluded.server_etag,
-    detected_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+    detected_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    resolved_at = NULL,
+    resolution = NULL
 `
 
 type CreateSyncConflictParams struct {
@@ -79,7 +81,7 @@ func (q *Queries) DeleteSyncConflictsByCalendar(ctx context.Context, calendarID 
 }
 
 const getSyncConflict = `-- name: GetSyncConflict :one
-SELECT id, calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag, detected_at FROM sync_conflicts WHERE id = ?
+SELECT id, calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag, detected_at, resolved_at, resolution FROM sync_conflicts WHERE id = ?
 `
 
 func (q *Queries) GetSyncConflict(ctx context.Context, id int64) (SyncConflict, error) {
@@ -95,12 +97,92 @@ func (q *Queries) GetSyncConflict(ctx context.Context, id int64) (SyncConflict, 
 		&i.ServerIcal,
 		&i.ServerEtag,
 		&i.DetectedAt,
+		&i.ResolvedAt,
+		&i.Resolution,
 	)
 	return i, err
 }
 
+const listResolvedSyncConflicts = `-- name: ListResolvedSyncConflicts :many
+SELECT id, calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag, detected_at, resolved_at, resolution FROM sync_conflicts WHERE resolved_at IS NOT NULL ORDER BY resolved_at DESC
+`
+
+func (q *Queries) ListResolvedSyncConflicts(ctx context.Context) ([]SyncConflict, error) {
+	rows, err := q.db.QueryContext(ctx, listResolvedSyncConflicts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SyncConflict
+	for rows.Next() {
+		var i SyncConflict
+		if err := rows.Scan(
+			&i.ID,
+			&i.CalendarID,
+			&i.OwnerType,
+			&i.OwnerID,
+			&i.Uid,
+			&i.LocalIcal,
+			&i.ServerIcal,
+			&i.ServerEtag,
+			&i.DetectedAt,
+			&i.ResolvedAt,
+			&i.Resolution,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listResolvedSyncConflictsByCalendar = `-- name: ListResolvedSyncConflictsByCalendar :many
+SELECT id, calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag, detected_at, resolved_at, resolution FROM sync_conflicts WHERE calendar_id = ? AND resolved_at IS NOT NULL ORDER BY resolved_at DESC
+`
+
+func (q *Queries) ListResolvedSyncConflictsByCalendar(ctx context.Context, calendarID int64) ([]SyncConflict, error) {
+	rows, err := q.db.QueryContext(ctx, listResolvedSyncConflictsByCalendar, calendarID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SyncConflict
+	for rows.Next() {
+		var i SyncConflict
+		if err := rows.Scan(
+			&i.ID,
+			&i.CalendarID,
+			&i.OwnerType,
+			&i.OwnerID,
+			&i.Uid,
+			&i.LocalIcal,
+			&i.ServerIcal,
+			&i.ServerEtag,
+			&i.DetectedAt,
+			&i.ResolvedAt,
+			&i.Resolution,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSyncConflicts = `-- name: ListSyncConflicts :many
-SELECT id, calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag, detected_at FROM sync_conflicts ORDER BY detected_at DESC
+SELECT id, calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag, detected_at, resolved_at, resolution FROM sync_conflicts WHERE resolved_at IS NULL ORDER BY detected_at DESC
 `
 
 func (q *Queries) ListSyncConflicts(ctx context.Context) ([]SyncConflict, error) {
@@ -122,6 +204,8 @@ func (q *Queries) ListSyncConflicts(ctx context.Context) ([]SyncConflict, error)
 			&i.ServerIcal,
 			&i.ServerEtag,
 			&i.DetectedAt,
+			&i.ResolvedAt,
+			&i.Resolution,
 		); err != nil {
 			return nil, err
 		}
@@ -137,7 +221,7 @@ func (q *Queries) ListSyncConflicts(ctx context.Context) ([]SyncConflict, error)
 }
 
 const listSyncConflictsByCalendar = `-- name: ListSyncConflictsByCalendar :many
-SELECT id, calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag, detected_at FROM sync_conflicts WHERE calendar_id = ? ORDER BY detected_at DESC
+SELECT id, calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag, detected_at, resolved_at, resolution FROM sync_conflicts WHERE calendar_id = ? AND resolved_at IS NULL ORDER BY detected_at DESC
 `
 
 func (q *Queries) ListSyncConflictsByCalendar(ctx context.Context, calendarID int64) ([]SyncConflict, error) {
@@ -159,6 +243,8 @@ func (q *Queries) ListSyncConflictsByCalendar(ctx context.Context, calendarID in
 			&i.ServerIcal,
 			&i.ServerEtag,
 			&i.DetectedAt,
+			&i.ResolvedAt,
+			&i.Resolution,
 		); err != nil {
 			return nil, err
 		}
@@ -171,4 +257,25 @@ func (q *Queries) ListSyncConflictsByCalendar(ctx context.Context, calendarID in
 		return nil, err
 	}
 	return items, nil
+}
+
+const markSyncConflictResolved = `-- name: MarkSyncConflictResolved :exec
+UPDATE sync_conflicts SET resolved_at = ?, resolution = ? WHERE calendar_id = ? AND uid = ?
+`
+
+type MarkSyncConflictResolvedParams struct {
+	ResolvedAt *string
+	Resolution *string
+	CalendarID int64
+	Uid        string
+}
+
+func (q *Queries) MarkSyncConflictResolved(ctx context.Context, arg MarkSyncConflictResolvedParams) error {
+	_, err := q.db.ExecContext(ctx, markSyncConflictResolved,
+		arg.ResolvedAt,
+		arg.Resolution,
+		arg.CalendarID,
+		arg.Uid,
+	)
+	return err
 }

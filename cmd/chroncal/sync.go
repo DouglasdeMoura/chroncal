@@ -122,13 +122,18 @@ linked to one CalDAV account. The two flags are mutually exclusive.`,
   chroncal sync run --account Work
   chroncal sync run --conflict prompt`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Validate the flag up front so a typo (e.g. "Prompt", "ask")
-			// fails loudly instead of silently falling back to server-wins
-			// and discarding local edits. Mirrors the service.go check.
-			strategy := syncPkg.ConflictStrategy(conflict)
-			if strategy != syncPkg.ConflictServerWins && strategy != syncPkg.ConflictPrompt {
-				return errInvalidInputf("--conflict: invalid value %q (use %q or %q)",
-					conflict, syncPkg.ConflictServerWins, syncPkg.ConflictPrompt)
+			// An explicit --conflict wins. Without it, the configured
+			// sync.conflict_strategy governs the run. Parse up front so a
+			// typo (e.g. "Prompt", "ask") fails loudly instead of silently
+			// falling back to server-wins and discarding local edits.
+			// Mirrors the service.go check.
+			strategyName := conflict
+			if !cmd.Flags().Changed("conflict") {
+				strategyName = cfg.Sync.ConflictStrategy
+			}
+			strategy, err := syncPkg.ParseConflictStrategy(strategyName)
+			if err != nil {
+				return errInvalidInputf("%s", err.Error())
 			}
 
 			a, err := initApp()
@@ -212,7 +217,7 @@ linked to one CalDAV account. The two flags are mutually exclusive.`,
 	}
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "Sync only this calendar")
 	cmd.Flags().StringVar(&accountName, "account", "", "Sync only calendars linked to this account")
-	cmd.Flags().StringVar(&conflict, "conflict", "server-wins", "Conflict strategy: server-wins or prompt")
+	cmd.Flags().StringVar(&conflict, "conflict", "server-wins", "Conflict strategy: server-wins or prompt (default: sync.conflict_strategy, else server-wins)")
 	mutuallyExclusive(cmd, "calendar", "account")
 	return cmd
 }
@@ -278,11 +283,17 @@ func renderSyncStatuses(cmd *cobra.Command, statuses []syncPkg.SyncStatus) error
 }
 
 func syncConflictsCmd() *cobra.Command {
-	return &cobra.Command{
+	var resolved bool
+	cmd := &cobra.Command{
 		Use:   "conflicts",
-		Short: "List unresolved sync conflicts",
-		Long:  `List conflicts that need an explicit local-or-server decision.`,
+		Short: "List sync conflicts awaiting resolution",
+		Long: `List conflicts that need an explicit local-or-server decision.
+
+Pass --resolved to list conflicts a sync pass or the user already resolved.
+A resolved row keeps the recorded local version, so "chroncal sync resolve
+<id> --pick local" can still restore that version.`,
 		Example: `  chroncal sync conflicts
+  chroncal sync conflicts --resolved
   chroncal sync conflicts --output json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
@@ -294,38 +305,57 @@ func syncConflictsCmd() *cobra.Command {
 			credStore, _ := auth.NewCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
 			svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, nil)
 
-			conflicts, err := svc.ListConflicts(context.Background())
+			var conflicts []syncPkg.Conflict
+			if resolved {
+				conflicts, err = svc.ListResolvedConflicts(context.Background())
+			} else {
+				conflicts, err = svc.ListConflicts(context.Background())
+			}
 			if err != nil {
 				return err
 			}
 
-			return renderSyncConflicts(cmd, conflicts)
+			return renderSyncConflicts(cmd, conflicts, resolved)
 		},
 	}
+	cmd.Flags().BoolVar(&resolved, "resolved", false, "List resolved conflicts instead of unresolved ones")
+	return cmd
 }
 
-// renderSyncConflicts emits unresolved conflicts using --output.
-// DetectedAt is serialized as UTC RFC 3339 so JSON consumers get a
+// renderSyncConflicts emits conflicts using --output. DetectedAt and
+// ResolvedAt are serialized as UTC RFC 3339 so JSON consumers get a
 // stable, timezone-independent value.
-func renderSyncConflicts(cmd *cobra.Command, conflicts []syncPkg.Conflict) error {
+func renderSyncConflicts(cmd *cobra.Command, conflicts []syncPkg.Conflict, resolved bool) error {
 	w := cmd.OutOrStdout()
 
 	if outputFmt != "text" {
 		items := make([]map[string]any, 0, len(conflicts))
 		for _, c := range conflicts {
-			items = append(items, map[string]any{
+			item := map[string]any{
 				"id":          c.ID,
 				"calendar_id": c.CalendarID,
 				"owner_type":  c.OwnerType,
 				"uid":         c.UID,
 				"detected_at": c.DetectedAt.UTC().Format(time.RFC3339),
-			})
+			}
+			if c.Resolution != "" {
+				item["resolution"] = c.Resolution
+				item["resolved_at"] = c.ResolvedAt.UTC().Format(time.RFC3339)
+			} else {
+				item["resolution"] = nil
+				item["resolved_at"] = nil
+			}
+			items = append(items, item)
 		}
 		return printOutput(w, items)
 	}
 
 	if len(conflicts) == 0 {
-		fmt.Fprintln(w, "No unresolved conflicts.")
+		if resolved {
+			fmt.Fprintln(w, "No resolved conflicts.")
+		} else {
+			fmt.Fprintln(w, "No unresolved conflicts.")
+		}
 		return nil
 	}
 	for _, c := range conflicts {
@@ -341,7 +371,9 @@ func syncResolveCmd() *cobra.Command {
 		Short: "Resolve a sync conflict",
 		Long: `Resolve a listed sync conflict by choosing which version wins.
 
-Use "chroncal sync conflicts" first to find the conflict ID.`,
+Use "chroncal sync conflicts" first to find the conflict ID. A resolved
+conflict stays listed under "chroncal sync conflicts --resolved"; resolving
+it again with --pick local restores the recorded local version.`,
 		Example: `  chroncal sync resolve 12 --pick local
   chroncal sync resolve 12 --pick server`,
 		Args: exactOneArg,
@@ -474,13 +506,15 @@ func renderSyncRunResults(cmd *cobra.Command, results []*syncPkg.SyncResult, cal
 			}
 			totalErrors += len(r.Errors)
 			items = append(items, map[string]any{
-				"calendar_id":   r.CalendarID,
-				"calendar_name": calNames[r.CalendarID],
-				"pushed":        r.Pushed,
-				"pulled":        r.Pulled,
-				"deleted":       r.Deleted,
-				"conflicts":     r.Conflicts,
-				"errors":        errMsgs,
+				"calendar_id":       r.CalendarID,
+				"calendar_name":     calNames[r.CalendarID],
+				"pushed":            r.Pushed,
+				"pulled":            r.Pulled,
+				"deleted":           r.Deleted,
+				"conflicts":         r.Conflicts,
+				"auto_resolved":     r.AutoResolved,
+				"skipped_conflicts": r.SkippedConflicts,
+				"errors":            errMsgs,
 			})
 		}
 		if err := printOutput(w, map[string]any{
