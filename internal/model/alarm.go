@@ -341,9 +341,13 @@ func CheckStorableAlarmAction(action string) error {
 //
 // The carry-over covers every stored row the engine cannot fire. A row
 // must never drop out here, because the replacement then deletes it and
-// the next push deletes the VALARM of another client. The stored rows
-// arrive through NormalizeAlarmAction, so every action here already
-// passes the write rule (issue #607).
+// the next push deletes the VALARM of another client.
+//
+// The stored list must come from a service read. Such a read maps a
+// malformed action through NormalizeAlarmAction, so every action here
+// already passes the write rule. A caller that builds the list another
+// way must normalize it first. A carried row the write rule refuses
+// fails every later edit of the owning record (issue #607).
 func KeepSyncOnlyAlarms(stored, replacement []Alarm) []Alarm {
 	for _, a := range stored {
 		if FireableAlarmAction(a.Action) {
