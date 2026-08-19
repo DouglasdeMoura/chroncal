@@ -1069,12 +1069,6 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 // number used by other clients and keeps response sizes manageable.
 const multigetBatchSize = 50
 
-// pendingHrefMissLimit is the number of unknown multiget 404s the engine
-// accepts for one href. After that count the engine drops the href. Google
-// can list a stale invitation href forever. A new event that 404s once
-// must still be fetched on the next pull. See issue #576.
-const pendingHrefMissLimit = 3
-
 // pendingDeletions is the single gate for the sync engine's most
 // dangerous operation: a remove of local rows because the server no longer
 // has them.
@@ -1121,8 +1115,11 @@ func (p *pendingDeletions) markExplicit(r storage.SyncResource) {
 // the inventory is partial it withholds the entire sweep. It logs the count
 // and reason. A partial view can then never drive deletions. The rows are
 // re-evaluated on the next clean sync. complete MUST be computed by the
-// caller as "every resource the server has was observed this pull." Local
-// rows with no remote_url are skipped. They were never pushed.
+// caller as pullView.inventoryObserved. That flag is true when the REPORT
+// was not truncated, every listed href that has a local row was fetched,
+// and every fetched body persisted. An unknown multiget miss has no local
+// row. It does not flip complete. Local rows with no remote_url
+// are skipped. They were never pushed.
 func (p *pendingDeletions) inferFromAbsence(calendarID int64, locals []storage.SyncResource, seen map[string]bool, complete bool, reason string) {
 	var candidates []storage.SyncResource
 	for _, local := range locals {
@@ -1173,33 +1170,13 @@ func (p *pendingDeletions) apply(ctx context.Context, e *Engine, calendarID int6
 	return deleted, failed
 }
 
-// absenceWithholdReason describes why an absence sweep was (or wasn't) safe,
-// for the withhold log line.
-func absenceWithholdReason(truncated bool, multigetMisses, persistFailures int) string {
-	var parts []string
-	if truncated {
-		parts = append(parts, "response truncated (RFC 6578 §3.6)")
-	}
-	if multigetMisses > 0 {
-		parts = append(parts, fmt.Sprintf("%d multiget miss(es)", multigetMisses))
-	}
-	if persistFailures > 0 {
-		parts = append(parts, fmt.Sprintf("%d persist failure(s)", persistFailures))
-	}
-	if len(parts) == 0 {
-		return "complete"
-	}
-	return strings.Join(parts, " and ")
-}
-
 // applySyncCollection consumes the change list from a sync-collection REPORT.
 // It fetches bodies for changed resources via calendar-multiget. It persists
 // them, applies deletions, and stores the new sync-token. This is the fast
 // path for steady-state syncs against RFC 6578-capable servers.
 func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL string, cal storage.Calendar, syncResult *caldav.SyncCollectionResult, initialSnapshot bool) (*pullResult, error) {
 	result := &pullResult{}
-	multigetMisses := 0
-	persistFailures := 0
+	view := pullView{truncated: syncResult.Truncated}
 
 	tombstones, err := e.q.ListTombstonesByCalendar(ctx, calendarID)
 	if err != nil {
@@ -1257,14 +1234,17 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 		fetchPaths = append(fetchPaths, canonical)
 	}
 
+	pending, err := loadPendingHrefs(ctx, e.q, e.logger, calendarID)
+	if err != nil {
+		return nil, err
+	}
 	deletedSet := make(map[string]bool, len(deletedPaths))
 	for _, pth := range deletedPaths {
 		deletedSet[pth] = true
-		e.dropPendingHref(ctx, calendarID, pth)
 	}
-	if err := e.appendPendingHrefs(ctx, calendarID, remoteURL, client, tombstonedPaths, deletedSet, &fetchPaths); err != nil {
-		return nil, err
-	}
+	pending.forgetSet(ctx, deletedSet)
+	pending.forgetSet(ctx, tombstonedPaths)
+	fetchPaths = pending.appendUnseen(fetchPaths)
 
 	for start := 0; start < len(fetchPaths); start += multigetBatchSize {
 		end := start + multigetBatchSize
@@ -1278,45 +1258,30 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 		if err != nil {
 			return nil, fmt.Errorf("multiget batch %d: %w", start, err)
 		}
-		// Per-resource 404s here are NOT treated as deletions. Some servers
-		// (Google) hand back hrefs in sync-collection that 404 on multiget
-		// for reasons that aren't actual deletions — race timing, path
-		// encoding quirks, or server-side glitches. Soft-deleting on a 404
-		// alone caused real data loss in production. Just log and skip;
-		// the local row and sync_resource keep their previous etag, so the
-		// next sync_collection call will list the path again and we get
-		// another chance to fetch its body. A real server-side deletion
-		// arrives as a sync-collection 404 on the response, not a multiget
-		// 404, and is handled by the deletedPaths flow above.
-		//
-		// A miss for a local row still counts as incomplete. That is the
-		// data-loss guard. An unknown miss has no local row. Google can
-		// list a stale invitation href on every initial snapshot. A count
-		// of that miss as incomplete withholds the token forever (issue
-		// #576). Record the href and retry it on later pulls. Do not
-		// block the token.
+		// Per-resource 404s here are NOT deletions. Google can list an href
+		// that 404s on multiget for a reason other than a real delete.
+		// classifyMultigetMiss splits a known miss (local row: incomplete)
+		// from an unknown miss (no local row: record and retry). See pullView.
 		for _, miss := range multi.Missing {
 			canonical, hrefErr := client.CanonicalObjectRef(remoteURL, miss)
-			if hrefErr != nil {
-				multigetMisses++
-				e.logger.Warn("multiget href missing, skipping (will retry next sync)", "calendar_id", calendarID, "href", miss)
-				continue
-			}
-			if local, exists := localByPath[canonical]; exists {
-				multigetMisses++
-				e.logger.Warn("multiget href missing, skipping (will retry next sync)", "calendar_id", calendarID, "href", miss)
+			kind, local := classifyMultigetMiss(canonical, hrefErr, localByPath)
+			e.logger.Warn("multiget href missing", "kind", string(kind), "calendar_id", calendarID, "href", miss)
+			switch kind {
+			case multigetMissKnown:
+				view.knownMisses++
 				// Treat the missing path's UID as "still seen" so the initial
-				// snapshot deletion loop below doesn't conclude the resource
+				// snapshot deletion loop below does not conclude the resource
 				// is gone from the server. Otherwise an empty token + a
 				// transient multiget 404 would soft-delete the local event
 				// even though we have no actual evidence of deletion.
 				seenUIDs[local.Uid] = true
-				continue
-			}
-			e.logger.Warn("multiget href missing and unknown locally", "calendar_id", calendarID, "href", miss)
-			if recErr := e.noteUnknownMultigetMiss(ctx, calendarID, canonical); recErr != nil {
-				e.logger.Warn("record unknown multiget miss", "calendar_id", calendarID, "href", miss, "error", recErr)
-				multigetMisses++
+			case multigetMissUncanonical:
+				view.knownMisses++
+			case multigetMissUnknown:
+				if recErr := pending.noteMiss(ctx, canonical); recErr != nil {
+					e.logger.Warn("record unknown multiget miss", "calendar_id", calendarID, "href", miss, "error", recErr)
+					view.pendingRecordFails++
+				}
 			}
 		}
 		for _, res := range multi.Resources {
@@ -1347,7 +1312,7 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 			}
 			seenUIDs[uid] = true
 			if tombstonedUIDs[uid] {
-				e.dropPendingHref(ctx, calendarID, resPath)
+				pending.forget(ctx, resPath)
 				continue
 			}
 			ownerType := detectOwnerType(importResult)
@@ -1360,7 +1325,7 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 				// token is withheld and the next REPORT re-lists this change
 				// for another attempt. Advancing the token here would skip the
 				// change permanently until the server touches it again.
-				persistFailures++
+				view.persistFailures++
 				e.logger.Error("persist imported resource", "uid", uid, "path", res.Path, "error", persistErr)
 				continue
 			}
@@ -1390,19 +1355,16 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 			if err := e.clearDirtyAfterImport(ctx, calendarID, uid, res.ETag, revs[uid]); err != nil {
 				e.logger.Warn("clear post-import dirty", "uid", uid, "error", err)
 			}
-			e.dropPendingHref(ctx, calendarID, resPath)
+			pending.forget(ctx, resPath)
 			result.pulled++
 		}
 	}
 
 	// All deletions funnel through one chokepoint (see pendingDeletions).
-	// The inventory is "complete" only when nothing limited our view of the
-	// server's resources: the response wasn't truncated, every changed body
-	// for a local row was fetched, and every fetched body persisted. An
-	// unknown multiget miss does not count: it has no local row to lose.
-	// A persist failure leaves the local copy behind the server, so the
-	// token must be withheld too.
-	inventoryComplete := !syncResult.Truncated && multigetMisses == 0 && persistFailures == 0
+	// pullView names the two questions: inventoryObserved (absence may
+	// infer) and localRowsSafe (token may advance). An unknown miss has
+	// no local row to lose. A persist failure leaves the local copy
+	// behind the server, so the token must be withheld too.
 	deletions := newPendingDeletions(e.logger)
 
 	// Explicit deletions: the server returned a top-level 404 for these
@@ -1428,13 +1390,13 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 	// fetched.
 	if initialSnapshot {
 		deletions.inferFromAbsence(calendarID, localResources, seenUIDs,
-			inventoryComplete, absenceWithholdReason(syncResult.Truncated, multigetMisses, persistFailures))
+			view.inventoryObserved(), view.absenceWithholdReason())
 	}
 
 	deleted, deleteFailures := deletions.apply(ctx, e, calendarID)
 	result.deleted += deleted
 
-	if syncResult.SyncToken != "" && inventoryComplete && deleteFailures == 0 {
+	if syncResult.SyncToken != "" && view.localRowsSafe() && deleteFailures == 0 {
 		token := syncResult.SyncToken
 		if err := e.q.UpdateCalendarSyncState(ctx, storage.UpdateCalendarSyncStateParams{
 			ID:        calendarID,
@@ -1443,19 +1405,16 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 		}); err != nil {
 			e.logger.Warn("update sync token", "calendar_id", calendarID, "error", err)
 		}
-	} else if multigetMisses > 0 || persistFailures > 0 || deleteFailures > 0 {
-		// Pull made partial progress: some hrefs the server reported in
-		// sync-collection 404'd on multiget, or a fetched body failed to
-		// persist locally, or a server-reported deletion failed to apply
-		// locally. We don't know if the multiget 404s are real deletions or
-		// transient errors, so we don't soft-delete them; the persist failures
-		// left those resources behind the server; and the failed deletions left
-		// orphaned rows the server has already dropped. We don't advance the
-		// sync-token, so the next sync re-lists the same change set and gets
-		// another shot at fetching, storing, and deleting. Slow but safe.
+	} else if view.incomplete() || deleteFailures > 0 {
+		// Pull made partial progress: a known miss, a persist failure, a
+		// failed pending-href record, or a failed deletion. We do not
+		// advance the sync-token, so the next sync re-lists the same
+		// change set. Slow but safe.
 		e.logger.Warn("not advancing sync-token: incomplete pull",
-			"calendar_id", calendarID, "multiget_misses", multigetMisses,
-			"persist_failures", persistFailures, "delete_failures", deleteFailures)
+			"calendar_id", calendarID, "known_misses", view.knownMisses,
+			"persist_failures", view.persistFailures,
+			"pending_record_fails", view.pendingRecordFails,
+			"delete_failures", deleteFailures)
 		// Surface the incompleteness so the calendar is recorded unhealthy
 		// (LastSyncError) rather than healthy. A pull that can never converge
 		// — a permanent persist failure, an href that always 404s on
@@ -1463,74 +1422,11 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 		// otherwise only logs, leaving LastSyncError clear and the ambient ⚠
 		// sidebar glyph dark while sync stays silently stuck.
 		result.errors = append(result.errors, fmt.Errorf(
-			"incomplete pull: not advancing sync-token (%d multiget miss(es), %d persist failure(s), %d delete failure(s))",
-			multigetMisses, persistFailures, deleteFailures))
+			"incomplete pull: not advancing sync-token (%d known miss(es), %d persist failure(s), %d pending-record failure(s), %d delete failure(s))",
+			view.knownMisses, view.persistFailures, view.pendingRecordFails, deleteFailures))
 	}
 
 	return result, nil
-}
-
-// appendPendingHrefs adds stored unknown misses to fetchPaths so a later
-// pull still fetches them after the token advances. The engine drops a
-// tombstoned or deleted href. The engine skips a href that is already in
-// the change list.
-func (e *Engine) appendPendingHrefs(ctx context.Context, calendarID int64, remoteURL string, client *caldav.Client, tombstonedPaths, deletedSet map[string]bool, fetchPaths *[]string) error {
-	pending, err := e.q.ListSyncPendingHrefsByCalendar(ctx, calendarID)
-	if err != nil {
-		return fmt.Errorf("list pending hrefs: %w", err)
-	}
-	if len(pending) == 0 {
-		return nil
-	}
-	seen := make(map[string]bool, len(*fetchPaths))
-	for _, pth := range *fetchPaths {
-		seen[pth] = true
-	}
-	for _, row := range pending {
-		canonical, hrefErr := client.CanonicalObjectRef(remoteURL, row.Href)
-		if hrefErr != nil {
-			e.dropPendingHref(ctx, calendarID, row.Href)
-			continue
-		}
-		if tombstonedPaths[canonical] || deletedSet[canonical] {
-			e.dropPendingHref(ctx, calendarID, row.Href)
-			continue
-		}
-		if seen[canonical] {
-			continue
-		}
-		*fetchPaths = append(*fetchPaths, canonical)
-		seen[canonical] = true
-	}
-	return nil
-}
-
-// noteUnknownMultigetMiss records an unknown missing href. After the miss
-// budget the engine drops the row and treats the absence as stable.
-func (e *Engine) noteUnknownMultigetMiss(ctx context.Context, calendarID int64, href string) error {
-	row, err := e.q.BumpSyncPendingHref(ctx, storage.BumpSyncPendingHrefParams{
-		CalendarID: calendarID,
-		Href:       href,
-	})
-	if err != nil {
-		return err
-	}
-	if row.MissCount < pendingHrefMissLimit {
-		return nil
-	}
-	return e.q.DeleteSyncPendingHref(ctx, storage.DeleteSyncPendingHrefParams{
-		CalendarID: calendarID,
-		Href:       href,
-	})
-}
-
-func (e *Engine) dropPendingHref(ctx context.Context, calendarID int64, href string) {
-	if err := e.q.DeleteSyncPendingHref(ctx, storage.DeleteSyncPendingHrefParams{
-		CalendarID: calendarID,
-		Href:       href,
-	}); err != nil {
-		e.logger.Warn("delete pending href", "calendar_id", calendarID, "href", href, "error", err)
-	}
 }
 
 // Owner-type strings stamped on every sync_resource row and CalDAV change
