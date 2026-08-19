@@ -29,7 +29,10 @@ jobs:
           go-version: ${{ matrix.go }}
 
       - name: Run tests
-        run: go test -race -count=1 ./...
+        # The race suite is slow: cmd/chroncal alone runs past Go's
+        # default 10m per-package timeout on the Linux runner, so a
+        # legitimate run fails as though a test hung (issue #569).
+        run: go test -race -count=1 -timeout 30m ./...
 
   lint:
     name: Lint
