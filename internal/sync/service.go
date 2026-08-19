@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -270,23 +271,43 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 		// faithfully re-pushes the server content and the local edit stays
 		// lost. See issue #610.
 		//
-		// The import runs before the transaction below because it flows
-		// through the event/todo/journal services, which use their own
-		// connection. UpsertByUID is idempotent, so if the transaction
-		// fails to commit the conflict survives and the whole resolution
-		// replays cleanly.
-		imported, _, importWarnings, err := s.engine.importICal(ctx, conflict.CalendarID, conflict.LocalIcal)
+		// Skip the import when the resource is still dirty. The live row is
+		// then the unpushed local edit, which can be newer than LocalIcal.
+		// A tombstoned UID is a pending delete. Refuse it. importICal reports
+		// imported=true for a payload that still has a component, then drops
+		// the tombstoned UID, so the imported flag cannot detect this.
+		tombstoned, err := s.engine.hasTombstone(ctx, conflict.CalendarID, conflict.Uid)
 		if err != nil {
-			return nil, fmt.Errorf("import local version: %w", err)
+			return nil, err
 		}
-		if !imported {
-			// ImportFile returns no error for empty or component-less iCal.
-			// A tombstoned UID also imports nothing (issue #89 gap #2).
-			// Refuse instead of resolving falsely; the server pick stays
-			// available.
-			return nil, fmt.Errorf("local version has no importable data for %q", conflict.Uid)
+		if tombstoned {
+			return nil, fmt.Errorf("local version cannot be restored for %q: the item is pending delete", conflict.Uid)
 		}
-		warnings = importWarnings
+		sr, srErr := s.q.GetSyncResource(ctx, storage.GetSyncResourceParams{
+			CalendarID: conflict.CalendarID,
+			Uid:        conflict.Uid,
+		})
+		if srErr != nil && !errors.Is(srErr, sql.ErrNoRows) {
+			return nil, fmt.Errorf("get sync resource: %w", srErr)
+		}
+		if errors.Is(srErr, sql.ErrNoRows) || sr.Dirty == 0 {
+			// The import runs before the transaction below because it flows
+			// through the event/todo/journal services, which use their own
+			// connection. UpsertByUID is idempotent, so if the transaction
+			// fails to commit the conflict survives and the whole resolution
+			// replays cleanly.
+			imported, revs, importWarnings, err := s.engine.importICal(ctx, conflict.CalendarID, conflict.LocalIcal)
+			if err != nil {
+				return nil, fmt.Errorf("import local version: %w", err)
+			}
+			if !imported {
+				return nil, fmt.Errorf("local version has no importable data for %q", conflict.Uid)
+			}
+			if _, ok := revs[conflict.Uid]; !ok {
+				return nil, fmt.Errorf("local version has no importable data for %q", conflict.Uid)
+			}
+			warnings = importWarnings
+		}
 	}
 
 	// Wrap the dirty/etag mutation and the resolution stamp in one
