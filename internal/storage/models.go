@@ -297,6 +297,15 @@ type SyncConflict struct {
 	DetectedAt string
 }
 
+type SyncPendingHref struct {
+	ID         int64
+	CalendarID int64
+	Href       string
+	MissCount  int64
+	FirstSeen  string
+	LastSeen   string
+}
+
 type SyncResource struct {
 	ID           int64
 	CalendarID   int64

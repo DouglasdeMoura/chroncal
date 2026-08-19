@@ -754,6 +754,12 @@ func TestService_ResetCalendar(t *testing.T) {
 		ServerIcal: "server",
 		ServerEtag: "etag",
 	})
+	if _, err := q.BumpSyncPendingHref(ctx, storage.BumpSyncPendingHrefParams{
+		CalendarID: calID,
+		Href:       "/calendar/phantom-invite.ics",
+	}); err != nil {
+		t.Fatalf("BumpSyncPendingHref: %v", err)
+	}
 
 	// Reset
 	err := svc.ResetCalendar(ctx, calID)
@@ -769,6 +775,10 @@ func TestService_ResetCalendar(t *testing.T) {
 	tombstones, _ := q.ListTombstonesByCalendar(ctx, calID)
 	if len(tombstones) != 0 {
 		t.Errorf("expected 0 tombstones, got %d", len(tombstones))
+	}
+	pending, _ := q.ListSyncPendingHrefsByCalendar(ctx, calID)
+	if len(pending) != 0 {
+		t.Errorf("expected 0 pending hrefs, got %d", len(pending))
 	}
 	conflicts, _ := q.ListSyncConflictsByCalendar(ctx, calID)
 	if len(conflicts) != 0 {

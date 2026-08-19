@@ -1069,6 +1069,12 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 // number used by other clients and keeps response sizes manageable.
 const multigetBatchSize = 50
 
+// pendingHrefMissLimit is the number of unknown multiget 404s the engine
+// accepts for one href. After that count the engine drops the href. Google
+// can list a stale invitation href forever. A new event that 404s once
+// must still be fetched on the next pull. See issue #576.
+const pendingHrefMissLimit = 3
+
 // pendingDeletions is the single gate for the sync engine's most
 // dangerous operation: a remove of local rows because the server no longer
 // has them.
@@ -1077,6 +1083,7 @@ const multigetBatchSize = 50
 //   - multiget 404s
 //   - href rewrites
 //   - RFC 6578 §3.6 truncation
+//
 // A local row was deleted because it was ABSENT from a remote view that
 // turned out to be incomplete.
 //
@@ -1250,6 +1257,15 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 		fetchPaths = append(fetchPaths, canonical)
 	}
 
+	deletedSet := make(map[string]bool, len(deletedPaths))
+	for _, pth := range deletedPaths {
+		deletedSet[pth] = true
+		e.dropPendingHref(ctx, calendarID, pth)
+	}
+	if err := e.appendPendingHrefs(ctx, calendarID, remoteURL, client, tombstonedPaths, deletedSet, &fetchPaths); err != nil {
+		return nil, err
+	}
+
 	for start := 0; start < len(fetchPaths); start += multigetBatchSize {
 		end := start + multigetBatchSize
 		if end > len(fetchPaths) {
@@ -1272,20 +1288,35 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 		// another chance to fetch its body. A real server-side deletion
 		// arrives as a sync-collection 404 on the response, not a multiget
 		// 404, and is handled by the deletedPaths flow above.
+		//
+		// A miss for a local row still counts as incomplete. That is the
+		// data-loss guard. An unknown miss has no local row. Google can
+		// list a stale invitation href on every initial snapshot. A count
+		// of that miss as incomplete withholds the token forever (issue
+		// #576). Record the href and retry it on later pulls. Do not
+		// block the token.
 		for _, miss := range multi.Missing {
-			multigetMisses++
-			e.logger.Warn("multiget href missing, skipping (will retry next sync)", "calendar_id", calendarID, "href", miss)
-			// Treat the missing path's UID as "still seen" so the initial
-			// snapshot deletion loop below doesn't conclude the resource
-			// is gone from the server. Otherwise an empty token + a
-			// transient multiget 404 would soft-delete the local event
-			// even though we have no actual evidence of deletion.
 			canonical, hrefErr := client.CanonicalObjectRef(remoteURL, miss)
 			if hrefErr != nil {
+				multigetMisses++
+				e.logger.Warn("multiget href missing, skipping (will retry next sync)", "calendar_id", calendarID, "href", miss)
 				continue
 			}
 			if local, exists := localByPath[canonical]; exists {
+				multigetMisses++
+				e.logger.Warn("multiget href missing, skipping (will retry next sync)", "calendar_id", calendarID, "href", miss)
+				// Treat the missing path's UID as "still seen" so the initial
+				// snapshot deletion loop below doesn't conclude the resource
+				// is gone from the server. Otherwise an empty token + a
+				// transient multiget 404 would soft-delete the local event
+				// even though we have no actual evidence of deletion.
 				seenUIDs[local.Uid] = true
+				continue
+			}
+			e.logger.Warn("multiget href missing and unknown locally", "calendar_id", calendarID, "href", miss)
+			if recErr := e.noteUnknownMultigetMiss(ctx, calendarID, canonical); recErr != nil {
+				e.logger.Warn("record unknown multiget miss", "calendar_id", calendarID, "href", miss, "error", recErr)
+				multigetMisses++
 			}
 		}
 		for _, res := range multi.Resources {
@@ -1316,6 +1347,7 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 			}
 			seenUIDs[uid] = true
 			if tombstonedUIDs[uid] {
+				e.dropPendingHref(ctx, calendarID, resPath)
 				continue
 			}
 			ownerType := detectOwnerType(importResult)
@@ -1358,6 +1390,7 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 			if err := e.clearDirtyAfterImport(ctx, calendarID, uid, res.ETag, revs[uid]); err != nil {
 				e.logger.Warn("clear post-import dirty", "uid", uid, "error", err)
 			}
+			e.dropPendingHref(ctx, calendarID, resPath)
 			result.pulled++
 		}
 	}
@@ -1365,8 +1398,10 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 	// All deletions funnel through one chokepoint (see pendingDeletions).
 	// The inventory is "complete" only when nothing limited our view of the
 	// server's resources: the response wasn't truncated, every changed body
-	// was fetched, and every fetched body persisted. A persist failure leaves
-	// the local copy behind the server, so the token must be withheld too.
+	// for a local row was fetched, and every fetched body persisted. An
+	// unknown multiget miss does not count: it has no local row to lose.
+	// A persist failure leaves the local copy behind the server, so the
+	// token must be withheld too.
 	inventoryComplete := !syncResult.Truncated && multigetMisses == 0 && persistFailures == 0
 	deletions := newPendingDeletions(e.logger)
 
@@ -1433,6 +1468,69 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 	}
 
 	return result, nil
+}
+
+// appendPendingHrefs adds stored unknown misses to fetchPaths so a later
+// pull still fetches them after the token advances. The engine drops a
+// tombstoned or deleted href. The engine skips a href that is already in
+// the change list.
+func (e *Engine) appendPendingHrefs(ctx context.Context, calendarID int64, remoteURL string, client *caldav.Client, tombstonedPaths, deletedSet map[string]bool, fetchPaths *[]string) error {
+	pending, err := e.q.ListSyncPendingHrefsByCalendar(ctx, calendarID)
+	if err != nil {
+		return fmt.Errorf("list pending hrefs: %w", err)
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(*fetchPaths))
+	for _, pth := range *fetchPaths {
+		seen[pth] = true
+	}
+	for _, row := range pending {
+		canonical, hrefErr := client.CanonicalObjectRef(remoteURL, row.Href)
+		if hrefErr != nil {
+			e.dropPendingHref(ctx, calendarID, row.Href)
+			continue
+		}
+		if tombstonedPaths[canonical] || deletedSet[canonical] {
+			e.dropPendingHref(ctx, calendarID, row.Href)
+			continue
+		}
+		if seen[canonical] {
+			continue
+		}
+		*fetchPaths = append(*fetchPaths, canonical)
+		seen[canonical] = true
+	}
+	return nil
+}
+
+// noteUnknownMultigetMiss records an unknown missing href. After the miss
+// budget the engine drops the row and treats the absence as stable.
+func (e *Engine) noteUnknownMultigetMiss(ctx context.Context, calendarID int64, href string) error {
+	row, err := e.q.BumpSyncPendingHref(ctx, storage.BumpSyncPendingHrefParams{
+		CalendarID: calendarID,
+		Href:       href,
+	})
+	if err != nil {
+		return err
+	}
+	if row.MissCount < pendingHrefMissLimit {
+		return nil
+	}
+	return e.q.DeleteSyncPendingHref(ctx, storage.DeleteSyncPendingHrefParams{
+		CalendarID: calendarID,
+		Href:       href,
+	})
+}
+
+func (e *Engine) dropPendingHref(ctx context.Context, calendarID int64, href string) {
+	if err := e.q.DeleteSyncPendingHref(ctx, storage.DeleteSyncPendingHrefParams{
+		CalendarID: calendarID,
+		Href:       href,
+	}); err != nil {
+		e.logger.Warn("delete pending href", "calendar_id", calendarID, "href", href, "error", err)
+	}
 }
 
 // Owner-type strings stamped on every sync_resource row and CalDAV change
