@@ -63,6 +63,71 @@ END:VCALENDAR`)),
 	}
 }
 
+func TestQueryFreeBusy_MergesMultipleVFreeBusyComponents(t *testing.T) {
+	t.Parallel()
+
+	from := time.Date(2026, 8, 19, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC)
+	client := testHTTPClient{
+		do: func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/calendar; charset=utf-8"}},
+				Body: io.NopCloser(strings.NewReader(`BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Radicale//NONSGML Radicale Server//EN
+BEGIN:VFREEBUSY
+DTSTART:20260819T090000Z
+DTEND:20260819T093000Z
+FBTYPE:BUSY
+END:VFREEBUSY
+BEGIN:VFREEBUSY
+DTSTART:20260819T140000Z
+DTEND:20260819T150000Z
+FBTYPE:BUSY
+END:VFREEBUSY
+BEGIN:VFREEBUSY
+DTSTART:20260819T160000Z
+DTEND:20260819T170000Z
+FBTYPE:BUSY-TENTATIVE
+END:VFREEBUSY
+END:VCALENDAR`)),
+			}, nil
+		},
+	}
+
+	result, err := QueryFreeBusy(context.Background(), client, "https://example.com/cal/work", from, to)
+	if err != nil {
+		t.Fatalf("QueryFreeBusy: %v", err)
+	}
+	if !result.Start.Equal(from) {
+		t.Fatalf("Start = %s, want requested %s", result.Start, from)
+	}
+	if !result.End.Equal(to) {
+		t.Fatalf("End = %s, want requested %s", result.End, to)
+	}
+	if len(result.Periods) != 3 {
+		t.Fatalf("periods = %d, want 3", len(result.Periods))
+	}
+	want := []struct {
+		start time.Time
+		end   time.Time
+		kind  string
+	}{
+		{time.Date(2026, 8, 19, 9, 0, 0, 0, time.UTC), time.Date(2026, 8, 19, 9, 30, 0, 0, time.UTC), "BUSY"},
+		{time.Date(2026, 8, 19, 14, 0, 0, 0, time.UTC), time.Date(2026, 8, 19, 15, 0, 0, 0, time.UTC), "BUSY"},
+		{time.Date(2026, 8, 19, 16, 0, 0, 0, time.UTC), time.Date(2026, 8, 19, 17, 0, 0, 0, time.UTC), "BUSY-TENTATIVE"},
+	}
+	for i, p := range want {
+		if !result.Periods[i].Start.Equal(p.start) || !result.Periods[i].End.Equal(p.end) {
+			t.Fatalf("period[%d] = %s/%s, want %s/%s", i, result.Periods[i].Start, result.Periods[i].End, p.start, p.end)
+		}
+		if result.Periods[i].Type != p.kind {
+			t.Fatalf("period[%d].type = %q, want %q", i, result.Periods[i].Type, p.kind)
+		}
+	}
+}
+
 func TestClientQueryFreeBusy_ResolvesRelativeHref(t *testing.T) {
 	t.Parallel()
 
