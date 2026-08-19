@@ -139,13 +139,6 @@ linked to one CalDAV account. The two flags are mutually exclusive.`,
 			ctx, cancel := context.WithTimeout(context.Background(), syncRunTimeout)
 			defer cancel()
 
-			credStore, err := auth.NewCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
-			if err != nil {
-				return fmt.Errorf("credential store: %w", err)
-			}
-
-			svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, stderrSyncLogger(os.Stderr))
-
 			// Look up names for every calendar up front so both the JSON and
 			// text views can label results without re-querying per result.
 			cals, err := a.Calendars.List(ctx)
@@ -157,26 +150,53 @@ linked to one CalDAV account. The two flags are mutually exclusive.`,
 				calNames[c.ID] = c.Name
 			}
 
-			var results []*syncPkg.SyncResult
+			// Resolve --calendar / --account before opening the credential
+			// store. An unknown name is not_found; an account with no linked
+			// calendars is a clean no-op. Neither needs a keyring, and CI has
+			// none (see issue #474).
+			var targetCalendarID, targetAccountID int64
 			if calendarName != "" {
 				target, err := findCalendarByRef(cals, calendarName)
 				if err != nil {
 					return &cliError{Code: "not_found", Msg: err.Error()}
 				}
-				r, err := svc.SyncCalendar(ctx, target.ID, strategy)
-				if err != nil {
-					return classifySyncError(err)
-				}
-				results = []*syncPkg.SyncResult{r}
+				targetCalendarID = target.ID
 			} else if accountName != "" {
 				acct, err := resolveAccount(ctx, a.Accounts, accountName)
 				if err != nil {
 					return err
 				}
+				targetAccountID = acct.ID
+				linked := false
+				for _, c := range cals {
+					if c.AccountID == acct.ID {
+						linked = true
+						break
+					}
+				}
+				if !linked {
+					return renderSyncRunResults(cmd, nil, calNames)
+				}
+			}
+
+			credStore, err := auth.NewCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
+			if err != nil {
+				return fmt.Errorf("credential store: %w", err)
+			}
+
+			svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, stderrSyncLogger(os.Stderr))
+
+			var results []*syncPkg.SyncResult
+			if targetCalendarID != 0 {
+				r, err := svc.SyncCalendar(ctx, targetCalendarID, strategy)
+				if err != nil {
+					return classifySyncError(err)
+				}
+				results = []*syncPkg.SyncResult{r}
+			} else if targetAccountID != 0 {
 				// SyncAccount runs the account's calendars in series: they
 				// share one credential, so a refresh must not race itself.
-				// An account with no linked calendars is a clean no-op.
-				results, err = svc.SyncAccount(ctx, acct.ID, strategy)
+				results, err = svc.SyncAccount(ctx, targetAccountID, strategy)
 				if err != nil {
 					return classifySyncError(err)
 				}
