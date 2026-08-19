@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"mime"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/duration"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/model"
@@ -503,7 +505,7 @@ recurring series.`,
 			defer a.Close()
 			ctx := context.Background()
 
-			e, err := resolveEvent(ctx, a, args[0], recurrenceID)
+			e, _, err := resolveEventOccurrence(ctx, a, args[0], recurrenceID)
 			if err != nil {
 				return fmt.Errorf("get event: %w", err)
 			}
@@ -956,9 +958,16 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 			defer a.Close()
 			ctx := context.Background()
 
-			existing, err := resolveEvent(ctx, a, args[0], recurrenceID)
+			existing, createOverride, err := resolveEventOccurrence(ctx, a, args[0], recurrenceID)
 			if err != nil {
 				return fmt.Errorf("get event: %w", err)
+			}
+			var instanceTime time.Time
+			if createOverride {
+				instanceTime, err = parseRFC3339Flag("recurrence-id", recurrenceID)
+				if err != nil {
+					return err
+				}
 			}
 
 			p := event.UpdateParams{
@@ -1201,7 +1210,12 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 				}
 			}
 
-			e, err := a.Events.Update(ctx, existing.ID, p)
+			var e event.Event
+			if createOverride {
+				e, err = a.Events.UpdateInstance(ctx, existing.UID, instanceTime, p)
+			} else {
+				e, err = a.Events.Update(ctx, existing.ID, p)
+			}
 			if err != nil {
 				return fmt.Errorf("update event: %w", err)
 			}
@@ -1461,6 +1475,60 @@ any override at that time). --following truncates the series at that date.`,
 	cmd.Flags().BoolVar(&series, "series", false, "delete the entire recurring series (master + all overrides)")
 	addConfirmFlag(cmd)
 	return cmd
+}
+
+// resolveEventOccurrence looks up an event by ID, UID, or UID plus
+// recurrence-id. When no override row exists, it returns the generated
+// occurrence from the series master. createOverride is true in that case
+// so event update can call UpdateInstance.
+func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID string) (event.Event, bool, error) {
+	if recurrenceID == "" {
+		e, err := resolveEvent(ctx, a, ref, "")
+		return e, false, err
+	}
+	if _, parseErr := strconv.ParseInt(ref, 10, 64); parseErr == nil {
+		e, err := resolveEvent(ctx, a, ref, recurrenceID)
+		return e, false, err
+	}
+	e, err := a.Events.GetByUIDAndRecurrenceID(ctx, ref, recurrenceID)
+	if err == nil {
+		return e, false, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return event.Event{}, false, err
+	}
+	master, err := a.Events.GetByUID(ctx, ref)
+	if err != nil {
+		return event.Event{}, false, notFoundErr(err, "event", ref)
+	}
+	at, err := parseRFC3339Flag("recurrence-id", recurrenceID)
+	if err != nil {
+		return event.Event{}, false, err
+	}
+	occ, ok := generatedEventOccurrence(master, at)
+	if !ok {
+		return event.Event{}, false, errInvalidInputf("--recurrence-id %s is not an occurrence of event %s", at.Format(time.RFC3339), ref)
+	}
+	return occ, true, nil
+}
+
+func generatedEventOccurrence(master event.Event, at time.Time) (event.Event, bool) {
+	want := at.UTC().Format(time.RFC3339)
+	from := at.UTC()
+	to := from.Add(time.Second)
+	for _, inst := range recurrence.ExpandEvent(master, from, to) {
+		if inst.InstanceTime.UTC().Format(time.RFC3339) != want {
+			continue
+		}
+		e := inst.Event
+		if !e.EndTime.IsZero() {
+			e.EndTime = inst.InstanceTime.Add(e.EndTime.Sub(e.StartTime))
+		}
+		e.StartTime = inst.InstanceTime
+		e.RecurrenceID = want
+		return e, true
+	}
+	return event.Event{}, false
 }
 
 func parseRFC3339Flag(flag, value string) (time.Time, error) {
