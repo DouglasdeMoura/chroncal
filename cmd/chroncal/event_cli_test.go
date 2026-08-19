@@ -488,3 +488,210 @@ func TestEventListJSONIncludesAttendeesOnGeneratedOccurrence(t *testing.T) {
 		t.Fatalf("generated occurrence omitted alice attendee: %s", listOut)
 	}
 }
+
+func addOverrideGapSeries(t *testing.T) jsonEvent {
+	t.Helper()
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Work"); err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+	addOut, _, err := runChroncalCommand(t,
+		"event", "add", "Override Gap",
+		"--calendar", "Work",
+		"--date", "2026-09-01",
+		"--time", "10:00",
+		"--duration", "1h",
+		"--rrule", "FREQ=DAILY;COUNT=3",
+		"--output", "json",
+	)
+	if err != nil {
+		t.Fatalf("event add: %v", err)
+	}
+	return mustJSONEvent(t, addOut)
+}
+
+// TestEventUpdate_RecurrenceIDCreatesOverride is the issue #612 repro:
+// event update <series-uid> --recurrence-id <day-2> must create an override
+// when no override row exists yet. The master title stays unchanged.
+func TestEventUpdate_RecurrenceIDCreatesOverride(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+
+	master := addOverrideGapSeries(t)
+	day2 := "2026-09-02T10:00:00Z"
+
+	updateOut, _, err := runChroncalCommand(t,
+		"event", "update", master.UID,
+		"--recurrence-id", day2,
+		"--title", "Day 2 moved",
+		"--output", "json",
+	)
+	if err != nil {
+		t.Fatalf("event update --recurrence-id: %v", err)
+	}
+	override := mustJSONEvent(t, updateOut)
+	if override.Title != "Day 2 moved" {
+		t.Fatalf("override title = %q, want Day 2 moved", override.Title)
+	}
+	if override.RecurrenceID != day2 {
+		t.Fatalf("override recurrence_id = %q, want %q", override.RecurrenceID, day2)
+	}
+	if override.UID != master.UID {
+		t.Fatalf("override uid = %q, want master uid %q", override.UID, master.UID)
+	}
+
+	getMaster, _, err := runChroncalCommand(t, "event", "get", master.UID, "--output", "json")
+	if err != nil {
+		t.Fatalf("event get master: %v", err)
+	}
+	fresh := mustJSONEvent(t, getMaster)
+	if fresh.Title != "Override Gap" {
+		t.Fatalf("master title = %q, want Override Gap", fresh.Title)
+	}
+	if fresh.RecurrenceID != "" {
+		t.Fatalf("master recurrence_id = %q, want empty", fresh.RecurrenceID)
+	}
+}
+
+// TestEventGet_RecurrenceIDShowsGeneratedOccurrence locks in that get of a
+// series UID plus a recurrence-id with no override row shows the generated
+// occurrence. It must not report that the series does not exist.
+func TestEventGet_RecurrenceIDShowsGeneratedOccurrence(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+
+	master := addOverrideGapSeries(t)
+	day2 := "2026-09-02T10:00:00Z"
+
+	getOut, _, err := runChroncalCommand(t,
+		"event", "get", master.UID,
+		"--recurrence-id", day2,
+		"--output", "json",
+	)
+	if err != nil {
+		t.Fatalf("event get --recurrence-id: %v", err)
+	}
+	got := mustJSONEvent(t, getOut)
+	if strings.Contains(getOut, "not found") {
+		t.Fatalf("event get --recurrence-id reported not found:\n%s", getOut)
+	}
+	if got.Title != "Override Gap" {
+		t.Fatalf("title = %q, want Override Gap", got.Title)
+	}
+	if got.StartTime != day2 {
+		t.Fatalf("start_time = %q, want %q", got.StartTime, day2)
+	}
+	if got.EndTime != "2026-09-02T11:00:00Z" {
+		t.Fatalf("end_time = %q, want 2026-09-02T11:00:00Z", got.EndTime)
+	}
+	if got.RecurrenceID != day2 {
+		t.Fatalf("recurrence_id = %q, want %q", got.RecurrenceID, day2)
+	}
+	if got.UID != master.UID {
+		t.Fatalf("uid = %q, want %q", got.UID, master.UID)
+	}
+}
+
+func TestEventUpdate_RecurrenceIDUpdatesExistingOverride(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+
+	master := addOverrideGapSeries(t)
+	day2 := "2026-09-02T10:00:00Z"
+
+	if _, _, err := runChroncalCommand(t,
+		"event", "update", master.UID,
+		"--recurrence-id", day2,
+		"--title", "Day 2 moved",
+	); err != nil {
+		t.Fatalf("first event update --recurrence-id: %v", err)
+	}
+
+	updateOut, _, err := runChroncalCommand(t,
+		"event", "update", master.UID,
+		"--recurrence-id", day2,
+		"--title", "Day 2 moved again",
+		"--output", "json",
+	)
+	if err != nil {
+		t.Fatalf("second event update --recurrence-id: %v", err)
+	}
+	override := mustJSONEvent(t, updateOut)
+	if override.Title != "Day 2 moved again" {
+		t.Fatalf("override title = %q, want Day 2 moved again", override.Title)
+	}
+	if override.RecurrenceID != day2 {
+		t.Fatalf("override recurrence_id = %q, want %q", override.RecurrenceID, day2)
+	}
+
+	getMaster, _, err := runChroncalCommand(t, "event", "get", master.UID, "--output", "json")
+	if err != nil {
+		t.Fatalf("event get master: %v", err)
+	}
+	fresh := mustJSONEvent(t, getMaster)
+	if fresh.Title != "Override Gap" {
+		t.Fatalf("master title = %q, want Override Gap", fresh.Title)
+	}
+
+	listed, _, err := runChroncalCommand(t,
+		"event", "list",
+		"--from", "2026-09-01",
+		"--to", "2026-09-03",
+		"--output", "json",
+	)
+	if err != nil {
+		t.Fatalf("event list: %v", err)
+	}
+	var events []jsonEvent
+	if jerr := json.Unmarshal([]byte(listed), &events); jerr != nil {
+		t.Fatalf("decode list: %v\n%s", jerr, listed)
+	}
+	var overrideCount int
+	for _, e := range events {
+		if e.RecurrenceID == day2 {
+			overrideCount++
+			if e.Title != "Day 2 moved again" {
+				t.Fatalf("listed override title = %q, want Day 2 moved again", e.Title)
+			}
+		}
+	}
+	if overrideCount != 1 {
+		t.Fatalf("listed overrides for %s = %d, want 1\n%s", day2, overrideCount, listed)
+	}
+}
+
+func TestEventUpdate_RecurrenceIDRejectsNonOccurrence(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+
+	master := addOverrideGapSeries(t)
+	missing := "2026-12-25T10:00:00Z"
+
+	_, stderr, err := runChroncalCommand(t,
+		"event", "update", master.UID,
+		"--recurrence-id", missing,
+		"--title", "Not a day",
+	)
+	if err == nil {
+		t.Fatal("event update of a non-occurrence should fail")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "not found") {
+		t.Fatalf("error = %q, must not claim the series does not exist", msg)
+	}
+	if !strings.Contains(msg, "occurrence") && !strings.Contains(stderr, "occurrence") {
+		t.Fatalf("error = %q stderr=%q, want a clear non-occurrence message", msg, stderr)
+	}
+
+	listed, _, lerr := runChroncalCommand(t,
+		"event", "list",
+		"--from", "2026-12-25",
+		"--to", "2026-12-25",
+		"--output", "json",
+	)
+	if lerr != nil {
+		t.Fatalf("event list: %v", lerr)
+	}
+	if strings.Contains(listed, "Not a day") {
+		t.Fatalf("non-occurrence update created an override:\n%s", listed)
+	}
+}
