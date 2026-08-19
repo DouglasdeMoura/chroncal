@@ -87,3 +87,28 @@ END:VCALENDAR`
 		t.Fatalf("period.type = %q, want %q", result.Periods[0].Type, Busy)
 	}
 }
+
+func TestParseComponent_DTStartDTEndWithoutFreeBusyIsFree(t *testing.T) {
+	t.Parallel()
+
+	ics := `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//test//test//EN
+BEGIN:VFREEBUSY
+UID:fb-free
+DTSTART:20260819T000000Z
+DTEND:20260820T000000Z
+END:VFREEBUSY
+END:VCALENDAR`
+
+	results, err := ParseCalendar(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ParseCalendar: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %d, want 1", len(results))
+	}
+	if len(results[0].Periods) != 0 {
+		t.Fatalf("periods = %+v, want none for an RFC free window", results[0].Periods)
+	}
+}

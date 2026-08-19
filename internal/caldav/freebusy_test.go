@@ -63,6 +63,41 @@ END:VCALENDAR`)),
 	}
 }
 
+func TestQueryFreeBusy_RFCEmptyWindowStaysFree(t *testing.T) {
+	t.Parallel()
+
+	from := time.Date(2026, 8, 19, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC)
+	client := testHTTPClient{
+		do: func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/calendar; charset=utf-8"}},
+				Body: io.NopCloser(strings.NewReader(`BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//test//test//EN
+BEGIN:VFREEBUSY
+UID:fb-free
+DTSTART:20260819T000000Z
+DTEND:20260820T000000Z
+END:VFREEBUSY
+END:VCALENDAR`)),
+			}, nil
+		},
+	}
+
+	result, err := QueryFreeBusy(context.Background(), client, "https://example.com/cal/work", from, to)
+	if err != nil {
+		t.Fatalf("QueryFreeBusy: %v", err)
+	}
+	if !result.Start.Equal(from) || !result.End.Equal(to) {
+		t.Fatalf("window = %s/%s, want %s/%s", result.Start, result.End, from, to)
+	}
+	if len(result.Periods) != 0 {
+		t.Fatalf("periods = %+v, want none for an RFC free window", result.Periods)
+	}
+}
+
 func TestQueryFreeBusy_MergesMultipleVFreeBusyComponents(t *testing.T) {
 	t.Parallel()
 
