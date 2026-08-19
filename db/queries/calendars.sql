@@ -154,9 +154,10 @@ UPDATE calendars SET
 WHERE id = ?;
 
 -- name: ClearRemoteLinksByAccount :exec
+-- Account remove sets account_id to NULL. It keeps remote_url and remote_name
+-- so a later account add can re-link the same rows.
 UPDATE calendars SET
     account_id = NULL,
-    remote_url = '',
     ctag = '',
     sync_token = '',
     last_sync_at = '',
@@ -164,7 +165,6 @@ UPDATE calendars SET
     last_sync_error = '',
     remote_color = '',
     color_dirty = 0,
-    remote_name = '',
     remote_access = 'unknown',
     remote_components = '',
     remote_missing = 0,

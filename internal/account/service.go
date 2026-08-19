@@ -481,6 +481,7 @@ func (s *Service) Import(ctx context.Context, discovery Discovery, selectedPaths
 	for _, row := range allCalendars {
 		taken[row.Name] = struct{}{}
 	}
+	unlinkedByURL := uniqueUnlinkedByRemoteIdentity(allCalendars, discovery.Account.ServerURL)
 
 	result := ImportResult{}
 	selected := make(map[string]struct{}, len(selectedPaths))
@@ -496,7 +497,17 @@ func (s *Service) Import(ctx context.Context, discovery Discovery, selectedPaths
 		if !item.Importable {
 			return ImportResult{}, fmt.Errorf("calendar %q has no supported event, todo, or journal components", item.Name)
 		}
-		if id, ok := existingByURL[remoteIdentityKey(path, discovery.Account.ServerURL)]; ok {
+		key := remoteIdentityKey(path, discovery.Account.ServerURL)
+		if id, ok := existingByURL[key]; ok {
+			result.ExistingIDs = append(result.ExistingIDs, id)
+			continue
+		}
+		if id, ok := unlinkedByURL[key]; ok {
+			if err := relinkDiscoveredCalendar(ctx, qtx, discovery.Account, item, id); err != nil {
+				return ImportResult{}, fmt.Errorf("re-link calendar %q: %w", item.Name, err)
+			}
+			existingByURL[key] = id
+			delete(unlinkedByURL, key)
 			result.ExistingIDs = append(result.ExistingIDs, id)
 			continue
 		}
@@ -654,6 +665,7 @@ func (s *Service) ReconcileSelection(
 			taken[row.Name] = struct{}{}
 		}
 	}
+	unlinkedByURL := uniqueUnlinkedByRemoteIdentity(allCalendars, discovery.Account.ServerURL)
 
 	result := SelectionResult{RemovedIDs: make([]int64, 0, len(removedRows))}
 	for _, row := range removedRows {
@@ -668,6 +680,14 @@ func (s *Service) ReconcileSelection(
 			continue
 		}
 		item := discoveredByKey[key]
+		if id, ok := unlinkedByURL[key]; ok {
+			if err := relinkDiscoveredCalendar(ctx, qtx, discovery.Account, item, id); err != nil {
+				return SelectionResult{}, fmt.Errorf("re-link calendar %q: %w", item.Name, err)
+			}
+			delete(unlinkedByURL, key)
+			finalByKey[key] = id
+			continue
+		}
 		row, err := createDiscoveredCalendarRow(ctx, qtx, discovery.Account, item, taken)
 		if err != nil {
 			return SelectionResult{}, fmt.Errorf("add calendar %q: %w", item.Name, err)
@@ -918,6 +938,52 @@ func normalizedComponents(components []string) []string {
 // It is the single DiscoveredCalendar-to-row mapping shared by Import,
 // ReconcileSelection, and calendar migration. Remote-metadata columns then stay
 // in lockstep no matter which flow creates the row.
+func uniqueUnlinkedByRemoteIdentity(rows []storage.Calendar, serverURL string) map[string]int64 {
+	byKey := make(map[string]int64)
+	ambiguous := make(map[string]struct{})
+	for _, row := range rows {
+		if row.AccountID != nil {
+			continue
+		}
+		key := remoteIdentityKey(storage.NullableToString(row.RemoteUrl), serverURL)
+		if key == "" {
+			continue
+		}
+		if _, taken := byKey[key]; taken {
+			delete(byKey, key)
+			ambiguous[key] = struct{}{}
+			continue
+		}
+		if _, skip := ambiguous[key]; skip {
+			continue
+		}
+		byKey[key] = row.ID
+	}
+	return byKey
+}
+
+func relinkDiscoveredCalendar(ctx context.Context, qtx *storage.Queries, acct Account, item DiscoveredCalendar, calendarID int64) error {
+	accountID := acct.ID
+	if err := qtx.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID:        calendarID,
+		AccountID: &accountID,
+		RemoteUrl: storage.StringToNullable(item.Path),
+	}); err != nil {
+		return err
+	}
+	if err := qtx.UpdateCalendarCapabilitiesFromLink(ctx, storage.UpdateCalendarCapabilitiesFromLinkParams{
+		RemoteAccess:     string(normalizedAccess(item.Access)),
+		RemoteComponents: strings.Join(normalizedComponents(item.SupportedComponentSet), ","),
+		ID:               calendarID,
+	}); err != nil {
+		return err
+	}
+	return qtx.UpdateCalendarOwnerEmail(ctx, storage.UpdateCalendarOwnerEmailParams{
+		OwnerEmail: acct.Username,
+		ID:         calendarID,
+	})
+}
+
 func createDiscoveredCalendarRow(
 	ctx context.Context,
 	qtx *storage.Queries,

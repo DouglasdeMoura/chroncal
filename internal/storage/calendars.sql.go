@@ -89,7 +89,6 @@ func (q *Queries) ClearRemoteLinkByCalendar(ctx context.Context, id int64) error
 const clearRemoteLinksByAccount = `-- name: ClearRemoteLinksByAccount :exec
 UPDATE calendars SET
     account_id = NULL,
-    remote_url = '',
     ctag = '',
     sync_token = '',
     last_sync_at = '',
@@ -97,7 +96,6 @@ UPDATE calendars SET
     last_sync_error = '',
     remote_color = '',
     color_dirty = 0,
-    remote_name = '',
     remote_access = 'unknown',
     remote_components = '',
     remote_missing = 0,
@@ -105,6 +103,8 @@ UPDATE calendars SET
 WHERE account_id = ?
 `
 
+// Account remove sets account_id to NULL. It keeps remote_url and remote_name
+// so a later account add can re-link the same rows.
 func (q *Queries) ClearRemoteLinksByAccount(ctx context.Context, accountID *int64) error {
 	_, err := q.db.ExecContext(ctx, clearRemoteLinksByAccount, accountID)
 	return err

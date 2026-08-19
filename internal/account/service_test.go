@@ -13,6 +13,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/caldav"
 	"github.com/douglasdemoura/chroncal/internal/calendar"
+	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/synclock"
 )
@@ -359,8 +360,11 @@ func TestServiceDeletePreservesCalendarsAsLocal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get preserved calendar: %v", err)
 	}
-	if calendar.AccountID != nil || storage.NullableToString(calendar.RemoteUrl) != "" || calendar.RemoteName != "" {
+	if calendar.AccountID != nil {
 		t.Fatalf("preserved calendar still linked: %+v", calendar)
+	}
+	if storage.NullableToString(calendar.RemoteUrl) != "/cal/work/" || calendar.RemoteName != "Work" {
+		t.Fatalf("account remove should keep remote origin for later re-link: %+v", calendar)
 	}
 	if _, err := store.Get(account.ID, ""); err == nil {
 		t.Fatal("credential should be removed with account")
@@ -385,6 +389,118 @@ func TestServiceDeletePreservesCalendarsAsLocal(t *testing.T) {
 	}
 	if len(conflicts) != 0 {
 		t.Fatalf("stale conflicts survived account removal: %+v", conflicts)
+	}
+}
+
+func TestServiceImportRelinksCalendarsAfterAccountRemove(t *testing.T) {
+	db, q, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	store := newMemoryCredentialStore()
+	svc := NewService(db, q)
+	remote := []caldav.RemoteCalendar{
+		{Path: "/cal/second/", Name: "Second Remote", SupportedComponentSet: []string{"VEVENT"}},
+		{Path: "/cal/seeded/", Name: "Seeded Calendar", SupportedComponentSet: []string{"VEVENT"}},
+	}
+	svc.discover = func(context.Context, Account, auth.Credential, func(auth.Credential) error) ([]caldav.RemoteCalendar, error) {
+		return slices.Clone(remote), nil
+	}
+
+	account, err := svc.Create(ctx, CreateParams{
+		Name: "dev", ServerURL: "https://cal.example.test/", Username: "alice", AuthType: "basic",
+	}, auth.Credential{Username: "alice", Password: "secret"}, store)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	discovery, err := svc.Discover(ctx, account.ID, store)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	first, err := svc.Import(ctx, discovery, []string{"/cal/second/", "/cal/seeded/"})
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if len(first.CreatedIDs) != 2 {
+		t.Fatalf("first import = %+v, want two created", first)
+	}
+	secondID, seededID := first.CreatedIDs[0], first.CreatedIDs[1]
+
+	evtSvc := event.NewService(db, q)
+	stay, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: seededID,
+		Title:      "Stay here",
+		StartTime:  time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("create event: %v", err)
+	}
+
+	if err := svc.Delete(ctx, account.ID, store); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	again, err := svc.Create(ctx, CreateParams{
+		Name: "dev", ServerURL: "https://cal.example.test/", Username: "alice", AuthType: "basic",
+	}, auth.Credential{Username: "alice", Password: "secret"}, store)
+	if err != nil {
+		t.Fatalf("re-Create: %v", err)
+	}
+	discovery, err = svc.Discover(ctx, again.ID, store)
+	if err != nil {
+		t.Fatalf("re-Discover: %v", err)
+	}
+	second, err := svc.Import(ctx, discovery, []string{"/cal/second/", "/cal/seeded/"})
+	if err != nil {
+		t.Fatalf("re-Import: %v", err)
+	}
+	if len(second.CreatedIDs) != 0 {
+		t.Fatalf("re-import created new rows = %+v, want re-link of %d and %d", second, secondID, seededID)
+	}
+
+	calendars, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("list calendars: %v", err)
+	}
+	if len(calendars) != 3 {
+		t.Fatalf("calendar count = %d, want 3 (seeded Personal plus two remotes); names = %v", len(calendars), calendarNames(calendars))
+	}
+	linked, err := q.ListCalendarsByAccount(ctx, &again.ID)
+	if err != nil {
+		t.Fatalf("list re-linked calendars: %v", err)
+	}
+	if len(linked) != 2 {
+		t.Fatalf("linked calendar count = %d, want 2", len(linked))
+	}
+	byID := map[int64]storage.Calendar{}
+	for _, row := range linked {
+		byID[row.ID] = row
+	}
+	gotSecond, ok := byID[secondID]
+	if !ok {
+		t.Fatalf("Second Remote id %d was not re-linked; linked = %v", secondID, calendarNames(linked))
+	}
+	gotSeeded, ok := byID[seededID]
+	if !ok {
+		t.Fatalf("Seeded Calendar id %d was not re-linked; linked = %v", seededID, calendarNames(linked))
+	}
+	if gotSecond.Name != "Second Remote" || strings.Contains(gotSecond.Name, "(2)") {
+		t.Fatalf("Second Remote name = %q, want original without suffix", gotSecond.Name)
+	}
+	if gotSeeded.Name != "Seeded Calendar" || strings.Contains(gotSeeded.Name, "(2)") {
+		t.Fatalf("Seeded Calendar name = %q, want original without suffix", gotSeeded.Name)
+	}
+
+	gotEvent, err := evtSvc.Get(ctx, stay.ID)
+	if err != nil {
+		t.Fatalf("get event: %v", err)
+	}
+	if gotEvent.CalendarID != seededID {
+		t.Fatalf("event calendar_id = %d, want original %d", gotEvent.CalendarID, seededID)
 	}
 }
 

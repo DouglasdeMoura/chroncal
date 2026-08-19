@@ -1140,7 +1140,7 @@ func TestAccountRemovePreservesDownloadedCalendarsAsLocal(t *testing.T) {
 		t.Fatalf("calendar count after removal = %d, want original local calendar plus 2 downloads", len(calendars))
 	}
 	for _, calendar := range calendars {
-		if calendar.AccountID != 0 || calendar.RemoteURL != "" {
+		if calendar.AccountID != 0 {
 			t.Fatalf("calendar still linked after account removal: %+v", calendar)
 		}
 	}
