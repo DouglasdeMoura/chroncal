@@ -206,14 +206,14 @@ func TestKeepSyncOnlyAlarms_KeepsEveryNonFireableRow(t *testing.T) {
 	}
 }
 
-// A stored row with a malformed action must stay in the carry-over. An
-// older release run against a repaired database writes one again, and a
-// drop here would delete the VALARM of another client on the next push
-// (issue #603). The carry-over normalizes the value instead.
-func TestKeepSyncOnlyAlarms_NormalizesMalformedAction(t *testing.T) {
+// A row the read boundary normalized must stay in the carry-over. The
+// services map a malformed stored action to UnsupportedAlarmAction, so
+// that value is what the carry-over sees (issue #607). A drop here would
+// delete the VALARM of another client on the next push.
+func TestKeepSyncOnlyAlarms_KeepsTheNormalizedRow(t *testing.T) {
 	stored := []Alarm{
-		{Action: " ", TriggerValue: "-PT5M"},
-		{Action: "NO NE", TriggerValue: "-PT10M"},
+		{Action: UnsupportedAlarmAction, TriggerValue: "-PT5M"},
+		{Action: "X-APPLE-SOUND", TriggerValue: "-PT10M"},
 	}
 	kept := KeepSyncOnlyAlarms(stored, []Alarm{{Action: "DISPLAY", TriggerValue: "-PT15M"}})
 
@@ -221,9 +221,6 @@ func TestKeepSyncOnlyAlarms_NormalizesMalformedAction(t *testing.T) {
 		t.Fatalf("kept = %d rows, want the replacement plus both stored rows", len(kept))
 	}
 	for _, a := range kept[1:] {
-		if a.Action != UnsupportedAlarmAction {
-			t.Errorf("carried action = %q, want %q", a.Action, UnsupportedAlarmAction)
-		}
 		if !StorableAlarmAction(a.Action) {
 			t.Errorf("carried action %q fails the write rule, so the edit fails", a.Action)
 		}
@@ -252,8 +249,8 @@ func TestUnsupportedAlarmActionKeepsForeignTreatment(t *testing.T) {
 	}
 }
 
-// NormalizeAlarmActionForWrite keeps every value a write already accepts.
-func TestNormalizeAlarmActionForWrite(t *testing.T) {
+// NormalizeAlarmAction keeps every value a write already accepts.
+func TestNormalizeAlarmAction(t *testing.T) {
 	cases := map[string]string{
 		"DISPLAY":       "DISPLAY",
 		"X-APPLE-SOUND": "X-APPLE-SOUND",
@@ -265,8 +262,20 @@ func TestNormalizeAlarmActionForWrite(t *testing.T) {
 		"a.b":           UnsupportedAlarmAction,
 	}
 	for in, want := range cases {
-		if got := NormalizeAlarmActionForWrite(in); got != want {
-			t.Errorf("NormalizeAlarmActionForWrite(%q) = %q, want %q", in, got, want)
+		if got := NormalizeAlarmAction(in); got != want {
+			t.Errorf("NormalizeAlarmAction(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// The read boundary normalizes a stored row, but the write rule stays
+// strict. A caller that supplies a malformed action still fails, so a
+// producer defect cannot pass in silence (issue #607).
+func TestPrepareAlarmsForWrite_StillRefusesACallerValue(t *testing.T) {
+	for _, action := range []string{" ", "NO NE", "a.b"} {
+		_, err := PrepareAlarmsForWrite([]Alarm{{Action: action, TriggerValue: "-PT15M"}})
+		if !errors.Is(err, ErrInvalidAlarm) {
+			t.Errorf("PrepareAlarmsForWrite(%q) error = %v, want ErrInvalidAlarm", action, err)
 		}
 	}
 }

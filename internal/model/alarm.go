@@ -239,15 +239,23 @@ func FireableAlarmAction(action string) bool {
 // write them (issue #603).
 const UnsupportedAlarmAction = "X-CHRONCAL-UNSUPPORTED"
 
-// NormalizeAlarmActionForWrite returns the action a write stores for a
-// value that reaches a write path. It replaces a malformed token with
-// UnsupportedAlarmAction and keeps every other value.
+// NormalizeAlarmAction returns the action a stored row carries into the
+// model. It replaces a malformed token with UnsupportedAlarmAction and
+// keeps every other value. An empty value passes through, because the
+// write rule maps it to DefaultAlarmAction.
+//
+// The event service and the todo service call this function where a
+// storage row becomes a model value. Every reader then holds a value the
+// write rule accepts, so an edit of the owning record cannot fail and the
+// row is never deleted (issue #607).
+//
+// The parsers and the CLI flag keep their own strict test, so a producer
+// that supplies a malformed action still fails loudly.
 //
 // Migration 045 repairs the stored rows, but that repair is version-gated:
 // an older release run against a repaired database writes a malformed
-// action again. This function keeps such a row writable, so an edit of the
-// owning record cannot fail and the row is never deleted (issue #603).
-func NormalizeAlarmActionForWrite(action string) string {
+// action again (issue #603).
+func NormalizeAlarmAction(action string) string {
 	if action == "" || ValidAlarmActionToken(action) {
 		return action
 	}
@@ -333,17 +341,14 @@ func CheckStorableAlarmAction(action string) error {
 //
 // The carry-over covers every stored row the engine cannot fire. A row
 // must never drop out here, because the replacement then deletes it and
-// the next push deletes the VALARM of another client. Migration 045
-// repairs the malformed actions an older build stored, but that repair is
-// version-gated: an older release run against a repaired database writes
-// one again. So this function normalizes a malformed action instead of
-// leaving a row the write rule refuses (issue #603).
+// the next push deletes the VALARM of another client. The stored rows
+// arrive through NormalizeAlarmAction, so every action here already
+// passes the write rule (issue #607).
 func KeepSyncOnlyAlarms(stored, replacement []Alarm) []Alarm {
 	for _, a := range stored {
 		if FireableAlarmAction(a.Action) {
 			continue
 		}
-		a.Action = NormalizeAlarmActionForWrite(a.Action)
 		replacement = append(replacement, a)
 	}
 	return replacement

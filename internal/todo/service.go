@@ -883,11 +883,14 @@ func (s *Service) buildAlarms(ctx context.Context, rows []storage.TodoAlarm, wit
 }
 
 // fromStorageTodoAlarm maps a todo_alarms row to the shared alarm model.
+// fromStorageTodoAlarm converts an alarm row to the model value. It maps
+// a malformed stored action to model.UnsupportedAlarmAction, like the
+// event service does. See model.NormalizeAlarmAction (issue #607).
 func fromStorageTodoAlarm(r storage.TodoAlarm) model.Alarm {
 	return model.Alarm{
 		ID: r.ID, EventID: r.TodoID,
 		UID:           storage.NullableToString(r.Uid),
-		Action:        r.Action,
+		Action:        model.NormalizeAlarmAction(r.Action),
 		TriggerValue:  r.TriggerValue,
 		Description:   storage.NullableToString(r.Description),
 		Summary:       storage.NullableToString(r.Summary),

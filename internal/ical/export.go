@@ -768,8 +768,9 @@ func buildValarm(alarm model.Alarm) *ical.Component {
 	// iana-token or x-name cannot be written: a bare or malformed
 	// "ACTION:" line is invalid iCal, and a strict server rejects the
 	// whole resource for it. The write rule refuses such a value now
-	// (issue #595), so this guard covers a row an older build stored and
-	// an in-memory alarm that skipped the write paths.
+	// (issue #595), and the services normalize a stored row as they read
+	// it (issue #607). This guard therefore covers an in-memory alarm
+	// that reached the exporter without either path.
 	//
 	// The two cases take different fallbacks. An empty action is an unset
 	// value, and DISPLAY is the default the parser and the write rule fill
