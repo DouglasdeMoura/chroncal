@@ -289,6 +289,9 @@ func (s *Service) ResetCalendar(ctx context.Context, calendarID int64) error {
 	if err := qtx.DeleteTombstonesByCalendar(ctx, calendarID); err != nil {
 		return fmt.Errorf("delete tombstones: %w", err)
 	}
+	if err := qtx.DeleteSyncPendingHrefsByCalendar(ctx, calendarID); err != nil {
+		return fmt.Errorf("delete pending hrefs: %w", err)
+	}
 	if err := qtx.DeleteSyncConflictsByCalendar(ctx, calendarID); err != nil {
 		return fmt.Errorf("delete conflicts: %w", err)
 	}
