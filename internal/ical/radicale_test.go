@@ -3,6 +3,7 @@ package ical
 import (
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -17,9 +18,25 @@ import (
 // Set RADICALE_URL to override (e.g. http://localhost:5232).
 const defaultRadicaleURL = "http://localhost:5232"
 
-func radicaleURL() string { return defaultRadicaleURL }
+func radicaleURL() string { return radicaleURLFrom(os.Getenv("RADICALE_URL")) }
 
-// radicaleAvailable checks whether the Radicale server is reachable.
+func radicaleURLFrom(raw string) string {
+	raw = strings.TrimRight(strings.TrimSpace(raw), "/")
+	if raw == "" {
+		return defaultRadicaleURL
+	}
+	return raw
+}
+
+func shouldSkipRadicale(err error, status int) bool {
+	if err != nil {
+		return true
+	}
+	return status == http.StatusUnauthorized || status == http.StatusForbidden
+}
+
+// radicaleAvailable checks whether the Radicale server is reachable
+// for anonymous writes.
 func radicaleAvailable(t *testing.T) {
 	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, radicaleURL()+"/", nil)
@@ -31,6 +48,9 @@ func radicaleAvailable(t *testing.T) {
 		t.Skipf("Radicale not available at %s: %v", radicaleURL(), err)
 	}
 	resp.Body.Close()
+	if shouldSkipRadicale(nil, resp.StatusCode) {
+		t.Skipf("Radicale at %s is not usable for anonymous writes: HTTP %d", radicaleURL(), resp.StatusCode)
+	}
 }
 
 // radicaleCalendar creates (or reuses) a shared calendar on Radicale and
