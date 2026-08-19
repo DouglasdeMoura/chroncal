@@ -769,11 +769,19 @@ func buildValarm(alarm model.Alarm) *ical.Component {
 	// "ACTION:" line is invalid iCal, and a strict server rejects the
 	// whole resource for it. The write rule refuses such a value now
 	// (issue #595), so this guard covers a row an older build stored and
-	// an in-memory alarm that skipped the write paths. DISPLAY is the
-	// same fallback the parser and the write rule use for an empty value.
+	// an in-memory alarm that skipped the write paths.
+	//
+	// The two cases take different fallbacks. An empty action is an unset
+	// value, and DISPLAY is the default the parser and the write rule fill
+	// in. A malformed non-empty action belongs to the VALARM of another
+	// client, so it takes the reserved x-name instead. DISPLAY would push
+	// that alarm to the server as a firing reminder (issue #603).
 	action := alarm.Action
-	if !model.ValidAlarmActionToken(action) {
+	switch {
+	case action == "":
 		action = model.DefaultAlarmAction
+	case !model.ValidAlarmActionToken(action):
+		action = model.UnsupportedAlarmAction
 	}
 	valarm.Props.SetText(ical.PropAction, action)
 
