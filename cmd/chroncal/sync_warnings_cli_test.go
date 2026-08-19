@@ -83,6 +83,55 @@ func TestReportOpportunisticPushEmitsWarningsThroughInjectedWriter(t *testing.T)
 	}
 }
 
+// A 412 under ConflictPrompt records Conflicts and leaves the local edit
+// dirty. The report must not stay silent when that is the only outcome.
+func TestReportOpportunisticPushReportsConflicts(t *testing.T) {
+	t.Parallel()
+
+	var out, warn bytes.Buffer
+	reportOpportunisticPush(&out, &warn, "Work", &syncPkg.SyncResult{
+		Conflicts: 2,
+		Warnings: []syncPkg.ImportWarning{
+			{Message: "dropped alarm with unusable trigger"},
+		},
+	})
+	got := out.String()
+	if !strings.Contains(got, "note:") {
+		t.Fatalf("stdout writer got %q, want a conflict note", got)
+	}
+	if !strings.Contains(got, "2") {
+		t.Fatalf("stdout writer got %q, want the conflict count", got)
+	}
+	if !strings.Contains(got, "sync resolve") {
+		t.Fatalf("stdout writer got %q, want a pointer to chroncal sync resolve", got)
+	}
+	if strings.Contains(got, "import warning") {
+		t.Errorf("stdout writer got %q; warnings must stay on the warning writer", got)
+	}
+	if !strings.Contains(warn.String(), "dropped alarm") {
+		t.Errorf("warning writer got %q, want the import warning", warn.String())
+	}
+
+	// A JSON caller discards stdout; the warning must still reach warnW.
+	warn.Reset()
+	reportOpportunisticPush(io.Discard, &warn, "Work", &syncPkg.SyncResult{
+		Conflicts: 1,
+		Warnings:  []syncPkg.ImportWarning{{Message: "dropped alarm with unusable trigger"}},
+	})
+	if !strings.Contains(warn.String(), "dropped alarm") {
+		t.Errorf("warning writer got %q, want the warning despite discarded stdout", warn.String())
+	}
+}
+
+// A 412 must record a conflict and keep the local edit. ConflictServerWins
+// would import the server row and clear dirty before the user can resolve.
+func TestOpportunisticCLIPushUsesConflictPrompt(t *testing.T) {
+	t.Parallel()
+	if opportunisticPushStrategy != syncPkg.ConflictPrompt {
+		t.Fatalf("opportunistic CLI push strategy = %q, want %q", opportunisticPushStrategy, syncPkg.ConflictPrompt)
+	}
+}
+
 // `sync resolve <id> --pick server` imports the recorded server body through
 // the same importICal as the auto server-wins paths. The engine logger is nil
 // (silent). The warnings ResolveConflict returns are then the only place
