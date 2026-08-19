@@ -136,6 +136,19 @@ func (e *Engine) markConflictResolved(ctx context.Context, calendarID int64, uid
 	})
 }
 
+func (e *Engine) hasTombstone(ctx context.Context, calendarID int64, uid string) (bool, error) {
+	tombstones, err := e.q.ListTombstonesByCalendar(ctx, calendarID)
+	if err != nil {
+		return false, fmt.Errorf("list tombstones: %w", err)
+	}
+	for _, ts := range tombstones {
+		if ts.Uid == uid {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // Engine orchestrates push and pull of CalDAV resources.
 type Engine struct {
 	db        *sql.DB
@@ -872,6 +885,8 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 				if err := e.markConflictResolved(ctx, calendarID, res.Uid, ResolutionServerAuto); err != nil {
 					e.logger.Error("mark conflict resolved", "uid", res.Uid, "error", err)
 					result.errors = append(result.errors, fmt.Errorf("mark conflict resolved %s: %w", res.Uid, err))
+					result.conflicts++
+					continue
 				}
 				result.autoResolved++
 				continue
@@ -1808,9 +1823,9 @@ func (e *Engine) lookupOwnerID(ctx context.Context, ownerType, uid string) (int6
 }
 
 type tombstoneResult struct {
-	deleted     int
+	deleted      int
 	autoResolved int
-	errors      []error
+	errors       []error
 }
 
 func (e *Engine) processTombstones(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL string) (*tombstoneResult, error) {
