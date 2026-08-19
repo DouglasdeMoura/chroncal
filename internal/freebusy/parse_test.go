@@ -50,3 +50,40 @@ END:VCALENDAR`
 		t.Fatalf("period[1].type = %q, want %q", result.Periods[1].Type, BusyTentative)
 	}
 }
+
+func TestParseComponent_DTStartDTEndWithoutFreeBusyIsAPeriod(t *testing.T) {
+	t.Parallel()
+
+	ics := `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//test//test//EN
+BEGIN:VFREEBUSY
+DTSTART:20260819T090000Z
+DTEND:20260819T093000Z
+FBTYPE:BUSY
+END:VFREEBUSY
+END:VCALENDAR`
+
+	results, err := ParseCalendar(strings.NewReader(ics))
+	if err != nil {
+		t.Fatalf("ParseCalendar: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %d, want 1", len(results))
+	}
+	result := results[0]
+	if len(result.Periods) != 1 {
+		t.Fatalf("periods = %d, want 1", len(result.Periods))
+	}
+	wantStart := time.Date(2026, 8, 19, 9, 0, 0, 0, time.UTC)
+	wantEnd := time.Date(2026, 8, 19, 9, 30, 0, 0, time.UTC)
+	if !result.Periods[0].Start.Equal(wantStart) {
+		t.Fatalf("period.start = %s, want %s", result.Periods[0].Start, wantStart)
+	}
+	if !result.Periods[0].End.Equal(wantEnd) {
+		t.Fatalf("period.end = %s, want %s", result.Periods[0].End, wantEnd)
+	}
+	if result.Periods[0].Type != Busy {
+		t.Fatalf("period.type = %q, want %q", result.Periods[0].Type, Busy)
+	}
+}

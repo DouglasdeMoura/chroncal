@@ -92,6 +92,14 @@ func ParseComponent(comp *goical.Component) (Result, error) {
 		}
 	}
 
+	if len(result.Periods) == 0 && !result.Start.IsZero() && !result.End.IsZero() {
+		result.Periods = []Period{{
+			Start: result.Start,
+			End:   result.End,
+			Type:  normalizeType(propValue(props, "FBTYPE")),
+		}}
+	}
+
 	sort.Slice(result.Periods, func(i, j int) bool {
 		if result.Periods[i].Start.Equal(result.Periods[j].Start) {
 			return result.Periods[i].End.Before(result.Periods[j].End)
