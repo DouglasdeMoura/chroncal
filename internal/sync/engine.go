@@ -149,6 +149,21 @@ func (e *Engine) hasTombstone(ctx context.Context, calendarID int64, uid string)
 	return false, nil
 }
 
+// hasOpenConflict reports whether uid still has an unresolved conflict row.
+// A lookup error returns true so a pull does not import the server body
+// over a local edit it cannot confirm is free of a conflict.
+func (e *Engine) hasOpenConflict(ctx context.Context, calendarID int64, uid string) bool {
+	open, err := e.q.CountOpenSyncConflicts(ctx, storage.CountOpenSyncConflictsParams{
+		CalendarID: calendarID,
+		Uid:        uid,
+	})
+	if err != nil {
+		e.logger.Error("check open conflict", "uid", uid, "error", err)
+		return true
+	}
+	return open > 0
+}
+
 // Engine orchestrates push and pull of CalDAV resources.
 type Engine struct {
 	db        *sql.DB
@@ -1215,6 +1230,10 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 			e.logger.Debug("skip tombstoned remote resource by uid", "uid", uid, "path", resPath)
 			continue
 		}
+		if e.hasOpenConflict(ctx, calendarID, uid) {
+			e.logger.Debug("skip pull: open conflict pending resolution", "uid", uid)
+			continue
+		}
 
 		// Persist imported data to the database
 		ownerType := detectOwnerType(importResult)
@@ -1528,6 +1547,10 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 			seenUIDs[uid] = true
 			if tombstonedUIDs[uid] {
 				pending.forget(ctx, resPath)
+				continue
+			}
+			if e.hasOpenConflict(ctx, calendarID, uid) {
+				e.logger.Debug("skip pull: open conflict pending resolution", "uid", uid)
 				continue
 			}
 			ownerType := detectOwnerType(importResult)
