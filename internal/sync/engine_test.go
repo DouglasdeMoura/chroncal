@@ -631,6 +631,134 @@ END:VCALENDAR
 	}
 }
 
+func TestEnginePullSkipsOpenConflict(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+	const uid = "open-conflict-uid"
+	insertTestEvent(t, db, calendarID, uid)
+
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calendarID,
+		Uid:          uid,
+		OwnerType:    "event",
+		RemoteUrl:    "/calendar/open-conflict.ics",
+		Etag:         `"etag-old"`,
+		Dirty:        1,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+		CalendarID: calendarID,
+		OwnerType:  "event",
+		Uid:        uid,
+		LocalIcal:  "local body",
+		ServerIcal: "server body",
+		ServerEtag: `"etag-server"`,
+	}); err != nil {
+		t.Fatalf("CreateSyncConflict: %v", err)
+	}
+
+	const responseBody = `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/calendar/open-conflict.ics</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>&quot;etag-server&quot;</d:getetag>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+  <d:sync-token>https://example.com/sync/abc</d:sync-token>
+</d:multistatus>`
+
+	const fetchBody = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//chroncal//tests//EN
+BEGIN:VEVENT
+UID:open-conflict-uid
+DTSTAMP:20260403T120000Z
+DTSTART:20260403T120000Z
+DTEND:20260403T130000Z
+SUMMARY:Server version
+END:VEVENT
+END:VCALENDAR
+`
+
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method != "REPORT" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			return nil, nil
+		}
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read req body: %v", err)
+		}
+		body := responseBody
+		if strings.Contains(string(raw), "calendar-multiget") {
+			body = `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/calendar/open-conflict.ics</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>&quot;etag-server&quot;</d:getetag>
+        <cal:calendar-data>` + fetchBody + `</cal:calendar-data>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`
+		}
+		return &http.Response{
+			StatusCode: http.StatusMultiStatus,
+			Status:     "207 Multi-Status",
+			Header:     http.Header{"Content-Type": []string{"application/xml"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    r,
+		}, nil
+	})
+
+	result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if result.pulled != 0 {
+		t.Fatalf("pulled = %d, want 0", result.pulled)
+	}
+
+	evt, err := q.GetEventByUID(ctx, uid)
+	if err != nil {
+		t.Fatalf("GetEventByUID: %v", err)
+	}
+	if evt.Title != "Test "+uid {
+		t.Fatalf("title after pull = %q, want the local title", evt.Title)
+	}
+	res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: uid})
+	if err != nil {
+		t.Fatalf("GetSyncResource: %v", err)
+	}
+	if res.Dirty != 1 {
+		t.Fatalf("Dirty = %d, want 1", res.Dirty)
+	}
+	open, err := q.ListSyncConflictsByCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("ListSyncConflictsByCalendar: %v", err)
+	}
+	if len(open) != 1 {
+		t.Fatalf("open conflicts = %d, want 1", len(open))
+	}
+}
+
 // TestEnginePersistImportedKeepsDirtyOnChildReplaceError pins issue #69. A
 // transient failure during a replace of an imported resource's child
 // collections (alarms/attendees/...) must propagate out of persistImported.
