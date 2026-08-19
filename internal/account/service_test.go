@@ -363,7 +363,8 @@ func TestServiceDeletePreservesCalendarsAsLocal(t *testing.T) {
 	if calendar.AccountID != nil {
 		t.Fatalf("preserved calendar still linked: %+v", calendar)
 	}
-	if storage.NullableToString(calendar.RemoteUrl) != "/cal/work/" || calendar.RemoteName != "Work" {
+	wantOrigin := remoteIdentityKey("/cal/work/", "https://cal.example.test/")
+	if storage.NullableToString(calendar.RemoteUrl) != wantOrigin || calendar.RemoteName != "Work" {
 		t.Fatalf("account remove should keep remote origin for later re-link: %+v", calendar)
 	}
 	if _, err := store.Get(account.ID, ""); err == nil {
@@ -371,24 +372,24 @@ func TestServiceDeletePreservesCalendarsAsLocal(t *testing.T) {
 	}
 	resource, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: "downloaded"})
 	if err != nil {
-		t.Fatalf("get detached sync resource: %v", err)
+		t.Fatalf("get preserved sync resource: %v", err)
 	}
-	if resource.RemoteUrl != "" || resource.Etag != "" || resource.Dirty != 1 {
-		t.Fatalf("detached sync resource = %+v, want blank identity and dirty local state", resource)
+	if resource.RemoteUrl != "/cal/work/downloaded.ics" || resource.Etag != `"server"` || resource.Dirty != 0 {
+		t.Fatalf("sync resource = %+v, want kept href/etag so a same-origin re-link does not PUT as a create", resource)
 	}
 	tombstones, err := q.ListTombstonesByCalendar(ctx, calendarID)
 	if err != nil {
 		t.Fatalf("list tombstones: %v", err)
 	}
-	if len(tombstones) != 0 {
-		t.Fatalf("stale tombstones survived account removal: %+v", tombstones)
+	if len(tombstones) != 1 {
+		t.Fatalf("tombstones = %+v, want kept for same-origin re-link", tombstones)
 	}
 	conflicts, err := q.ListSyncConflictsByCalendar(ctx, calendarID)
 	if err != nil {
 		t.Fatalf("list conflicts: %v", err)
 	}
-	if len(conflicts) != 0 {
-		t.Fatalf("stale conflicts survived account removal: %+v", conflicts)
+	if len(conflicts) != 1 {
+		t.Fatalf("conflicts = %+v, want kept for same-origin re-link", conflicts)
 	}
 }
 
@@ -458,8 +459,11 @@ func TestServiceImportRelinksCalendarsAfterAccountRemove(t *testing.T) {
 	if err != nil {
 		t.Fatalf("re-Import: %v", err)
 	}
-	if len(second.CreatedIDs) != 0 {
-		t.Fatalf("re-import created new rows = %+v, want re-link of %d and %d", second, secondID, seededID)
+	if len(second.CreatedIDs) != 2 || second.CreatedIDs[0] != secondID || second.CreatedIDs[1] != seededID {
+		t.Fatalf("re-import = %+v, want re-link of %d and %d in CreatedIDs", second, secondID, seededID)
+	}
+	if len(second.ExistingIDs) != 0 {
+		t.Fatalf("re-import ExistingIDs = %+v, want empty", second.ExistingIDs)
 	}
 
 	calendars, err := q.ListCalendars(ctx)
@@ -1972,5 +1976,23 @@ func TestServiceRemoveWithCalendarsRejectsReplacementWhenDefaultNotRemoved(t *te
 	_, err = f.svc.RemoveWithCalendars(ctx, f.discovery.Account.ID, RemoveParams{NewDefaultID: defaultID}, f.store)
 	if !errors.Is(err, calendar.ErrInvalidPromotionTarget) {
 		t.Fatalf("err = %v, want calendar.ErrInvalidPromotionTarget", err)
+	}
+}
+
+func TestUniqueUnlinkedByRemoteIdentity_RequiresSameOrigin(t *testing.T) {
+	t.Parallel()
+	stored := remoteIdentityKey("/cal/work/", "https://cal.example.test/")
+	rows := []storage.Calendar{{
+		ID:        7,
+		RemoteUrl: storage.StringToNullable(stored),
+	}}
+	lookup := remoteIdentityKey("/cal/work/", "https://other.example.test/")
+	if _, ok := uniqueUnlinkedByRemoteIdentity(rows, "https://other.example.test/")[lookup]; ok {
+		t.Fatalf("different origin matched lookup %q", lookup)
+	}
+	key := remoteIdentityKey("/cal/work/", "https://cal.example.test/")
+	got := uniqueUnlinkedByRemoteIdentity(rows, "https://cal.example.test/")
+	if got[key] != 7 {
+		t.Fatalf("same origin = %v, want id 7 at %q", got, key)
 	}
 }

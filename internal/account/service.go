@@ -508,7 +508,7 @@ func (s *Service) Import(ctx context.Context, discovery Discovery, selectedPaths
 			}
 			existingByURL[key] = id
 			delete(unlinkedByURL, key)
-			result.ExistingIDs = append(result.ExistingIDs, id)
+			result.CreatedIDs = append(result.CreatedIDs, id)
 			continue
 		}
 
@@ -686,6 +686,7 @@ func (s *Service) ReconcileSelection(
 			}
 			delete(unlinkedByURL, key)
 			finalByKey[key] = id
+			result.CreatedIDs = append(result.CreatedIDs, id)
 			continue
 		}
 		row, err := createDiscoveredCalendarRow(ctx, qtx, discovery.Account, item, taken)
@@ -825,10 +826,6 @@ func (s *Service) Delete(ctx context.Context, accountID int64, store auth.Creden
 	if err != nil {
 		return fmt.Errorf("list account calendars: %w", err)
 	}
-	calendarIDs := make([]int64, len(linked))
-	for i, cal := range linked {
-		calendarIDs[i] = cal.ID
-	}
 	account, err := s.q.GetAccount(ctx, accountID)
 	if err != nil {
 		return fmt.Errorf("get account: %w", err)
@@ -846,15 +843,23 @@ func (s *Service) Delete(ctx context.Context, accountID int64, store auth.Creden
 	}
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
-	for _, calendarID := range calendarIDs {
-		if err := qtx.DetachSyncResourcesByCalendar(ctx, calendarID); err != nil {
-			return fmt.Errorf("detach calendar sync resources: %w", err)
+	// Keep hrefs, tombstones, and conflicts. Account remove is not a move to a
+	// new server: a later add of the same origin should re-link these rows
+	// instead of PUTting them as first-time creates. calendar connect still
+	// detaches when the collection actually changes.
+	// Persist an absolute remote_url so a different server with the same path
+	// cannot steal the unlinked row.
+	for _, cal := range linked {
+		origin := remoteIdentityKey(storage.NullableToString(cal.RemoteUrl), account.ServerUrl)
+		if origin == "" {
+			continue
 		}
-		if err := qtx.DeleteTombstonesByCalendar(ctx, calendarID); err != nil {
-			return fmt.Errorf("delete calendar tombstones: %w", err)
-		}
-		if err := qtx.DeleteSyncConflictsByCalendar(ctx, calendarID); err != nil {
-			return fmt.Errorf("delete calendar conflicts: %w", err)
+		if err := qtx.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+			ID:        cal.ID,
+			AccountID: &accountID,
+			RemoteUrl: storage.StringToNullable(origin),
+		}); err != nil {
+			return fmt.Errorf("preserve calendar origin: %w", err)
 		}
 	}
 	if err := qtx.ClearRemoteLinksByAccount(ctx, &accountID); err != nil {
@@ -932,12 +937,9 @@ func normalizedComponents(components []string) []string {
 	return out
 }
 
-// createDiscoveredCalendarRow creates the local calendar row for a discovered
-// remote collection. It reserves a local name from taken that does not collide.
-// The caller adds the returned row's name to taken when it creates in a loop.
-// It is the single DiscoveredCalendar-to-row mapping shared by Import,
-// ReconcileSelection, and calendar migration. Remote-metadata columns then stay
-// in lockstep no matter which flow creates the row.
+// uniqueUnlinkedByRemoteIdentity maps a remote identity to one unlinked local
+// calendar. Duplicate keys are dropped so Import creates a fresh row instead
+// of picking an arbitrary snapshot.
 func uniqueUnlinkedByRemoteIdentity(rows []storage.Calendar, serverURL string) map[string]int64 {
 	byKey := make(map[string]int64)
 	ambiguous := make(map[string]struct{})
@@ -984,6 +986,12 @@ func relinkDiscoveredCalendar(ctx context.Context, qtx *storage.Queries, acct Ac
 	})
 }
 
+// createDiscoveredCalendarRow creates the local calendar row for a discovered
+// remote collection. It reserves a local name from taken that does not collide.
+// The caller adds the returned row's name to taken when it creates in a loop.
+// It is the single DiscoveredCalendar-to-row mapping shared by Import,
+// ReconcileSelection, and calendar migration. Remote-metadata columns then stay
+// in lockstep no matter which flow creates the row.
 func createDiscoveredCalendarRow(
 	ctx context.Context,
 	qtx *storage.Queries,
