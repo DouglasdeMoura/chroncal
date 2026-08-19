@@ -72,20 +72,3 @@ DELETE FROM tombstones WHERE calendar_id = ? AND uid = ?;
 
 -- name: DeleteStaleTombstones :exec
 DELETE FROM tombstones WHERE deleted_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-30 days');
-
--- name: BumpSyncPendingHref :one
-INSERT INTO sync_pending_hrefs (calendar_id, href)
-VALUES (?, ?)
-ON CONFLICT(calendar_id, href) DO UPDATE SET
-    miss_count = sync_pending_hrefs.miss_count + 1,
-    last_seen = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-RETURNING *;
-
--- name: ListSyncPendingHrefsByCalendar :many
-SELECT * FROM sync_pending_hrefs WHERE calendar_id = ? ORDER BY id;
-
--- name: DeleteSyncPendingHref :exec
-DELETE FROM sync_pending_hrefs WHERE calendar_id = ? AND href = ?;
-
--- name: DeleteSyncPendingHrefsByCalendar :exec
-DELETE FROM sync_pending_hrefs WHERE calendar_id = ?;

@@ -661,6 +661,11 @@ func TestDisconnect_HiddenAccountWithMultipleCalendars_PreservesCredential(t *te
 	}); err != nil {
 		t.Fatalf("seed sync conflict: %v", err)
 	}
+	if _, err := q.BumpSyncPendingHref(ctx, storage.BumpSyncPendingHrefParams{
+		CalendarID: 1, Href: "/dav/personal/phantom-invite.ics",
+	}); err != nil {
+		t.Fatalf("seed pending href: %v", err)
+	}
 
 	// Seed the credential.
 	store := &memCredStore{}
@@ -705,6 +710,9 @@ func TestDisconnect_HiddenAccountWithMultipleCalendars_PreservesCredential(t *te
 	}
 	if conflicts, err := q.ListSyncConflictsByCalendar(ctx, 1); err != nil || len(conflicts) != 0 {
 		t.Errorf("conflicts after disconnect = (%+v, %v), want none", conflicts, err)
+	}
+	if pending, err := q.ListSyncPendingHrefsByCalendar(ctx, 1); err != nil || len(pending) != 0 {
+		t.Errorf("pending hrefs after disconnect = (%+v, %v), want none", pending, err)
 	}
 }
 

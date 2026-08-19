@@ -9,34 +9,6 @@ import (
 	"context"
 )
 
-const bumpSyncPendingHref = `-- name: BumpSyncPendingHref :one
-INSERT INTO sync_pending_hrefs (calendar_id, href)
-VALUES (?, ?)
-ON CONFLICT(calendar_id, href) DO UPDATE SET
-    miss_count = sync_pending_hrefs.miss_count + 1,
-    last_seen = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-RETURNING id, calendar_id, href, miss_count, first_seen, last_seen
-`
-
-type BumpSyncPendingHrefParams struct {
-	CalendarID int64
-	Href       string
-}
-
-func (q *Queries) BumpSyncPendingHref(ctx context.Context, arg BumpSyncPendingHrefParams) (SyncPendingHref, error) {
-	row := q.db.QueryRowContext(ctx, bumpSyncPendingHref, arg.CalendarID, arg.Href)
-	var i SyncPendingHref
-	err := row.Scan(
-		&i.ID,
-		&i.CalendarID,
-		&i.Href,
-		&i.MissCount,
-		&i.FirstSeen,
-		&i.LastSeen,
-	)
-	return i, err
-}
-
 const clearSyncResourceDirty = `-- name: ClearSyncResourceDirty :exec
 UPDATE sync_resources SET dirty = 0, etag = ? WHERE calendar_id = ? AND uid = ?
 `
@@ -76,29 +48,6 @@ DELETE FROM tombstones WHERE deleted_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', 
 
 func (q *Queries) DeleteStaleTombstones(ctx context.Context) error {
 	_, err := q.db.ExecContext(ctx, deleteStaleTombstones)
-	return err
-}
-
-const deleteSyncPendingHref = `-- name: DeleteSyncPendingHref :exec
-DELETE FROM sync_pending_hrefs WHERE calendar_id = ? AND href = ?
-`
-
-type DeleteSyncPendingHrefParams struct {
-	CalendarID int64
-	Href       string
-}
-
-func (q *Queries) DeleteSyncPendingHref(ctx context.Context, arg DeleteSyncPendingHrefParams) error {
-	_, err := q.db.ExecContext(ctx, deleteSyncPendingHref, arg.CalendarID, arg.Href)
-	return err
-}
-
-const deleteSyncPendingHrefsByCalendar = `-- name: DeleteSyncPendingHrefsByCalendar :exec
-DELETE FROM sync_pending_hrefs WHERE calendar_id = ?
-`
-
-func (q *Queries) DeleteSyncPendingHrefsByCalendar(ctx context.Context, calendarID int64) error {
-	_, err := q.db.ExecContext(ctx, deleteSyncPendingHrefsByCalendar, calendarID)
 	return err
 }
 
@@ -251,40 +200,6 @@ func (q *Queries) ListDirtySyncResources(ctx context.Context, calendarID int64) 
 			&i.Dirty,
 			&i.SyncStrategy,
 			&i.Rev,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listSyncPendingHrefsByCalendar = `-- name: ListSyncPendingHrefsByCalendar :many
-SELECT id, calendar_id, href, miss_count, first_seen, last_seen FROM sync_pending_hrefs WHERE calendar_id = ? ORDER BY id
-`
-
-func (q *Queries) ListSyncPendingHrefsByCalendar(ctx context.Context, calendarID int64) ([]SyncPendingHref, error) {
-	rows, err := q.db.QueryContext(ctx, listSyncPendingHrefsByCalendar, calendarID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []SyncPendingHref
-	for rows.Next() {
-		var i SyncPendingHref
-		if err := rows.Scan(
-			&i.ID,
-			&i.CalendarID,
-			&i.Href,
-			&i.MissCount,
-			&i.FirstSeen,
-			&i.LastSeen,
 		); err != nil {
 			return nil, err
 		}

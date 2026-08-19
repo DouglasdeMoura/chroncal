@@ -302,8 +302,6 @@ type SyncPendingHref struct {
 	CalendarID int64
 	Href       string
 	MissCount  int64
-	FirstSeen  string
-	LastSeen   string
 }
 
 type SyncResource struct {
