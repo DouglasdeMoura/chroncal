@@ -3,10 +3,12 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 
 	"github.com/pressly/goose/v3"
 
+	dbembed "github.com/douglasdemoura/chroncal/db"
 	"github.com/douglasdemoura/chroncal/internal/model"
 )
 
@@ -437,6 +439,9 @@ func TestMigration045RepairsMalformedAction(t *testing.T) {
 		VALUES ('mig045-evt', 1, 'Mig', '2026-01-01T10:00:00Z', '2026-01-01T11:00:00Z')`)
 	mustExec(`INSERT INTO todos (uid, calendar_id, summary) VALUES ('mig045-todo', 1, 'Mig')`)
 
+	// The lowercase seed matters: parseAlarm keeps the original case of a
+	// preserved action, so a pattern that covered only uppercase would
+	// clobber it and both tests would still pass.
 	seeds := []struct {
 		id     int
 		action string
@@ -448,6 +453,8 @@ func TestMigration045RepairsMalformedAction(t *testing.T) {
 		{4, "NONE", false},
 		{5, "DISPLAY", false},
 		{6, "PROCEDURE", false},
+		{7, "x-apple-sound", false},
+		{8, "a.b", true},
 	}
 	for _, s := range seeds {
 		mustExec(`INSERT INTO event_alarms (id, event_id, action, trigger_value) VALUES (?, 1, ?, '-PT15M')`,
@@ -464,13 +471,43 @@ func TestMigration045RepairsMalformedAction(t *testing.T) {
 		for _, s := range seeds {
 			want := s.action
 			if s.repair {
-				want = "DISPLAY"
+				want = model.UnsupportedAlarmAction
 			}
 			if n := count(`SELECT COUNT(*) FROM `+table+` WHERE id = ? AND action = ?`, s.id, want); n != 1 {
 				t.Errorf("%s id %d: action %q did not end as %q", table, s.id, s.action, want)
 			}
 		}
 	}
+}
+
+// migration045Pattern returns the GLOB literal the migration 045 file
+// holds, including its quotes. The pattern test probes that value, so an
+// edit to the migration reaches the test.
+func migration045Pattern(t *testing.T) string {
+	t.Helper()
+	body, err := dbembed.Migrations.ReadFile("migrations/045_repair_malformed_alarm_action.sql")
+	if err != nil {
+		t.Fatalf("read migration 045: %v", err)
+	}
+	const marker = "GLOB "
+	for _, line := range strings.Split(string(body), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "--") {
+			continue
+		}
+		i := strings.Index(trimmed, marker)
+		if i < 0 {
+			continue
+		}
+		rest := trimmed[i+len(marker):]
+		end := strings.Index(rest[1:], "'")
+		if !strings.HasPrefix(rest, "'") || end < 0 {
+			t.Fatalf("migration 045: cannot read the GLOB literal from %q", trimmed)
+		}
+		return rest[:end+2]
+	}
+	t.Fatal("migration 045: found no GLOB pattern")
+	return ""
 }
 
 // The migration 045 GLOB pattern and model.ValidAlarmActionToken must give
@@ -484,6 +521,11 @@ func TestMigration045PatternMatchesTokenRule(t *testing.T) {
 	}
 	defer conn.Close()
 
+	// Read the predicate out of the migration itself. A copy typed here
+	// would keep passing after an edit to the migration, which is the
+	// drift this test exists to catch.
+	pattern := migration045Pattern(t)
+
 	candidates := []string{
 		"DISPLAY", "AUDIO", "EMAIL", "NONE", "PROCEDURE", "X-APPLE-SOUND",
 		"x-lower-case", "A1", "-", "9",
@@ -492,7 +534,7 @@ func TestMigration045PatternMatchesTokenRule(t *testing.T) {
 	for _, v := range candidates {
 		var matched int
 		if err := conn.QueryRowContext(context.Background(),
-			`SELECT CASE WHEN ? = '' OR ? GLOB '*[^A-Za-z0-9-]*' THEN 1 ELSE 0 END`,
+			`SELECT CASE WHEN ? = '' OR ? GLOB `+pattern+` THEN 1 ELSE 0 END`,
 			v, v).Scan(&matched); err != nil {
 			t.Fatalf("probe %q: %v", v, err)
 		}

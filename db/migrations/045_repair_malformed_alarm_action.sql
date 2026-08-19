@@ -12,9 +12,18 @@
 -- delete another client's VALARM on the next push. Repair the value once
 -- here instead, so no later path has to compensate.
 --
--- DISPLAY is the fallback the parser, the write rule, and the exporter all
--- use for an action they cannot represent, so the repaired row keeps the
--- behavior the exporter already gave it.
+-- The repair writes X-CHRONCAL-UNSUPPORTED, not DISPLAY. A row with a
+-- malformed action holds the VALARM of another client, which an older
+-- build stored verbatim. DISPLAY would make that row a normal reminder:
+-- the carry-over would stop protecting it, so the next --alarm edit would
+-- delete it; the UID backfill would stamp a chroncal UID on it; and the
+-- alarm engine would fire it. X-CHRONCAL-UNSUPPORTED is a valid x-name, so
+-- every write rule accepts it, and it stays outside the fireable set, so
+-- the row keeps the treatment a preserved foreign alarm gets (issue #603).
+--
+-- The repair loses the original malformed bytes. Export could never write
+-- them, and the engine could never fire them, so the row keeps every
+-- behavior it had.
 --
 -- The GLOB pattern matches a value that holds a character outside the
 -- token set (ALPHA, DIGIT, and "-"). It mirrors model.ValidAlarmActionToken.
@@ -22,16 +31,16 @@
 -- sentinel holds only token characters, so this migration leaves it alone.
 
 UPDATE event_alarms
-SET action = 'DISPLAY'
+SET action = 'X-CHRONCAL-UNSUPPORTED'
 WHERE action = '' OR action GLOB '*[^A-Za-z0-9-]*';
 
 UPDATE todo_alarms
-SET action = 'DISPLAY'
+SET action = 'X-CHRONCAL-UNSUPPORTED'
 WHERE action = '' OR action GLOB '*[^A-Za-z0-9-]*';
 
 -- +goose Down
 
 -- The repair is irreversible. The original malformed value is gone, and no
--- column records it, so a Down cannot tell a repaired row from a row that
--- always held DISPLAY. This statement is deliberately empty.
+-- column records it, so a Down cannot restore it. This statement is
+-- deliberately empty.
 SELECT 1;

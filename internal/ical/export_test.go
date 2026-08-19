@@ -1557,9 +1557,19 @@ func TestExport_AllDayJournalOverrideRecurrenceIDIsDate(t *testing.T) {
 // the constraint refuses an empty value alone. Export must not write it:
 // a bare or malformed ACTION line is invalid iCal, and a strict server
 // rejects the whole resource for it (issue #595).
-func TestExport_MalformedStoredActionFallsBackToDisplay(t *testing.T) {
+func TestExport_MalformedStoredActionTakesTheReservedToken(t *testing.T) {
 	start := time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC)
-	for _, action := range []string{" ", "\t", "NO NE", ""} {
+	// An empty action is an unset value, so it takes the DISPLAY default.
+	// A malformed non-empty action belongs to the VALARM of another
+	// client, so it takes the reserved x-name. DISPLAY there would push
+	// that alarm to the server as a firing reminder (issue #603).
+	cases := map[string]string{
+		"":      model.DefaultAlarmAction,
+		" ":     model.UnsupportedAlarmAction,
+		"\t":    model.UnsupportedAlarmAction,
+		"NO NE": model.UnsupportedAlarmAction,
+	}
+	for action, want := range cases {
 		evt := event.Event{
 			UID: "malformed-action@example.com", Title: "Test",
 			StartTime: start, EndTime: start.Add(time.Hour),
@@ -1570,11 +1580,11 @@ func TestExport_MalformedStoredActionFallsBackToDisplay(t *testing.T) {
 			t.Fatalf("ExportEvents(action %q): %v", action, err)
 		}
 		out := string(raw)
-		if strings.Contains(out, "ACTION:"+action) && action != "" {
+		if action != "" && strings.Contains(out, "ACTION:"+action) {
 			t.Errorf("action %q: export emitted it verbatim:\n%s", action, out)
 		}
-		if !strings.Contains(out, "ACTION:DISPLAY") {
-			t.Errorf("action %q: export did not fall back to DISPLAY:\n%s", action, out)
+		if !strings.Contains(out, "ACTION:"+want) {
+			t.Errorf("action %q: export did not write %q:\n%s", action, want, out)
 		}
 	}
 }

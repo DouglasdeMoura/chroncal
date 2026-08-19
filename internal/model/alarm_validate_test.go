@@ -205,3 +205,68 @@ func TestKeepSyncOnlyAlarms_KeepsEveryNonFireableRow(t *testing.T) {
 		t.Errorf("DISPLAY appears %d times, want only the replacement copy", fireable)
 	}
 }
+
+// A stored row with a malformed action must stay in the carry-over. An
+// older release run against a repaired database writes one again, and a
+// drop here would delete the VALARM of another client on the next push
+// (issue #603). The carry-over normalizes the value instead.
+func TestKeepSyncOnlyAlarms_NormalizesMalformedAction(t *testing.T) {
+	stored := []Alarm{
+		{Action: " ", TriggerValue: "-PT5M"},
+		{Action: "NO NE", TriggerValue: "-PT10M"},
+	}
+	kept := KeepSyncOnlyAlarms(stored, []Alarm{{Action: "DISPLAY", TriggerValue: "-PT15M"}})
+
+	if len(kept) != 3 {
+		t.Fatalf("kept = %d rows, want the replacement plus both stored rows", len(kept))
+	}
+	for _, a := range kept[1:] {
+		if a.Action != UnsupportedAlarmAction {
+			t.Errorf("carried action = %q, want %q", a.Action, UnsupportedAlarmAction)
+		}
+		if !StorableAlarmAction(a.Action) {
+			t.Errorf("carried action %q fails the write rule, so the edit fails", a.Action)
+		}
+		if FireableAlarmAction(a.Action) {
+			t.Errorf("carried action %q is fireable, so the engine would fire the alarm of another client", a.Action)
+		}
+		if AlarmUIDForWrite(a) != "" {
+			t.Errorf("a write mints a UID for %q, which the next push sends to the server", a.Action)
+		}
+	}
+}
+
+// The reserved token must satisfy every rule the repaired row meets later.
+func TestUnsupportedAlarmActionKeepsForeignTreatment(t *testing.T) {
+	if !ValidAlarmActionToken(UnsupportedAlarmAction) {
+		t.Errorf("%q is not a valid token, so a write refuses the repaired row", UnsupportedAlarmAction)
+	}
+	if !StorableAlarmAction(UnsupportedAlarmAction) {
+		t.Errorf("%q fails the write rule", UnsupportedAlarmAction)
+	}
+	if FireableAlarmAction(UnsupportedAlarmAction) {
+		t.Errorf("%q is fireable, so the engine fires a repaired foreign alarm", UnsupportedAlarmAction)
+	}
+	if got := AlarmUIDForWrite(Alarm{Action: UnsupportedAlarmAction}); got != "" {
+		t.Errorf("AlarmUIDForWrite = %q, want an empty UID for a preserved row", got)
+	}
+}
+
+// NormalizeAlarmActionForWrite keeps every value a write already accepts.
+func TestNormalizeAlarmActionForWrite(t *testing.T) {
+	cases := map[string]string{
+		"DISPLAY":       "DISPLAY",
+		"X-APPLE-SOUND": "X-APPLE-SOUND",
+		"x-apple-sound": "x-apple-sound",
+		"NONE":          "NONE",
+		"":              "",
+		" ":             UnsupportedAlarmAction,
+		"NO NE":         UnsupportedAlarmAction,
+		"a.b":           UnsupportedAlarmAction,
+	}
+	for in, want := range cases {
+		if got := NormalizeAlarmActionForWrite(in); got != want {
+			t.Errorf("NormalizeAlarmActionForWrite(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

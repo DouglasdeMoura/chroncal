@@ -180,6 +180,9 @@ func TestCheck_SkipsSyncOnlyAction(t *testing.T) {
 	if err := evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
 		{Action: "NONE", TriggerValue: "-PT15M"},
 		{Action: "X-APPLE-SOUND", TriggerValue: "-PT15M"},
+		// A row migration 045 repaired keeps the foreign treatment, so
+		// the engine skips it too (issue #603).
+		{Action: model.UnsupportedAlarmAction, TriggerValue: "-PT15M"},
 		{Action: "DISPLAY", TriggerValue: "-PT15M", Description: "real reminder"},
 	}); err != nil {
 		t.Fatal(err)

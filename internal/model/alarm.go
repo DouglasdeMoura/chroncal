@@ -228,6 +228,32 @@ func FireableAlarmAction(action string) bool {
 	return slices.Contains(alarmActions, action)
 }
 
+// UnsupportedAlarmAction replaces a stored action that is not a valid
+// token. It is an RFC 5545 x-name, so it passes every write rule, and it
+// is outside the fireable set, so the alarm keeps the treatment a
+// preserved foreign alarm gets: the carry-over protects the row, no write
+// mints a UID for it, and the alarm engine skips it.
+//
+// Migration 045 writes this value over the malformed bytes an older build
+// stored. The engine could never fire those rows, and export could never
+// write them (issue #603).
+const UnsupportedAlarmAction = "X-CHRONCAL-UNSUPPORTED"
+
+// NormalizeAlarmActionForWrite returns the action a write stores for a
+// value that reaches a write path. It replaces a malformed token with
+// UnsupportedAlarmAction and keeps every other value.
+//
+// Migration 045 repairs the stored rows, but that repair is version-gated:
+// an older release run against a repaired database writes a malformed
+// action again. This function keeps such a row writable, so an edit of the
+// owning record cannot fail and the row is never deleted (issue #603).
+func NormalizeAlarmActionForWrite(action string) string {
+	if action == "" || ValidAlarmActionToken(action) {
+		return action
+	}
+	return UnsupportedAlarmAction
+}
+
 // ValidAlarmActionToken returns true if s has the shape RFC 5545 gives an
 // iana-token or an x-name: one or more ALPHA, DIGIT, or "-" characters.
 // The import parser and the write rule share this test. Any other byte
@@ -305,17 +331,20 @@ func CheckStorableAlarmAction(action string) error {
 // calls ReplaceAlarms with the exact list instead. The TUI alarm editor
 // works that way, so a local calendar keeps a way to delete such a row.
 //
-// The carry-over covers every stored row the engine cannot fire. It
-// applies no further test on the action. A row that fails the write rule
-// must never be left behind here, because the replacement then deletes it
-// and the next push deletes the VALARM of another client. Migration 045
-// repairs the malformed actions an older build stored, so no such row
-// reaches this function.
+// The carry-over covers every stored row the engine cannot fire. A row
+// must never drop out here, because the replacement then deletes it and
+// the next push deletes the VALARM of another client. Migration 045
+// repairs the malformed actions an older build stored, but that repair is
+// version-gated: an older release run against a repaired database writes
+// one again. So this function normalizes a malformed action instead of
+// leaving a row the write rule refuses (issue #603).
 func KeepSyncOnlyAlarms(stored, replacement []Alarm) []Alarm {
 	for _, a := range stored {
-		if !FireableAlarmAction(a.Action) {
-			replacement = append(replacement, a)
+		if FireableAlarmAction(a.Action) {
+			continue
 		}
+		a.Action = NormalizeAlarmActionForWrite(a.Action)
+		replacement = append(replacement, a)
 	}
 	return replacement
 }
