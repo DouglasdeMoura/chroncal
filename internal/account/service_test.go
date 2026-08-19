@@ -393,6 +393,10 @@ func TestServiceDeletePreservesCalendarsAsLocal(t *testing.T) {
 	}
 }
 
+// Import must re-link the same local rows after account remove. Events stay
+// on the original calendar IDs. The re-link writes a live discovery color
+// and name onto the row. Account remove clears remote_color. Metadata sync
+// then has a current remote baseline.
 func TestServiceImportRelinksCalendarsAfterAccountRemove(t *testing.T) {
 	db, q, err := storage.Open(":memory:")
 	if err != nil {
@@ -404,8 +408,8 @@ func TestServiceImportRelinksCalendarsAfterAccountRemove(t *testing.T) {
 	store := newMemoryCredentialStore()
 	svc := NewService(db, q)
 	remote := []caldav.RemoteCalendar{
-		{Path: "/cal/second/", Name: "Second Remote", SupportedComponentSet: []string{"VEVENT"}},
-		{Path: "/cal/seeded/", Name: "Seeded Calendar", SupportedComponentSet: []string{"VEVENT"}},
+		{Path: "/cal/second/", Name: "Second Remote", Color: "#112233", SupportedComponentSet: []string{"VEVENT"}},
+		{Path: "/cal/seeded/", Name: "Seeded Calendar", Color: "#445566", SupportedComponentSet: []string{"VEVENT"}},
 	}
 	svc.discover = func(context.Context, Account, auth.Credential, func(auth.Credential) error) ([]caldav.RemoteCalendar, error) {
 		return slices.Clone(remote), nil
@@ -444,6 +448,21 @@ func TestServiceImportRelinksCalendarsAfterAccountRemove(t *testing.T) {
 	if err := svc.Delete(ctx, account.ID, store); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
+	unlinked, err := q.GetCalendar(ctx, seededID)
+	if err != nil {
+		t.Fatalf("get unlinked calendar: %v", err)
+	}
+	if storage.NullableToString(unlinked.RemoteColor) != "" {
+		t.Fatalf("account remove should clear remote_color: %+v", unlinked)
+	}
+	if unlinked.RemoteName != "Seeded Calendar" || unlinked.Color != "#445566" {
+		t.Fatalf("account remove should keep remote_name and local color: %+v", unlinked)
+	}
+
+	remote[0].Name = "Second Live"
+	remote[0].Color = "#AABBCC"
+	remote[1].Name = "Seeded Live"
+	remote[1].Color = "#DDEEFF"
 
 	again, err := svc.Create(ctx, CreateParams{
 		Name: "dev", ServerURL: "https://cal.example.test/", Username: "alice", AuthType: "basic",
@@ -486,17 +505,38 @@ func TestServiceImportRelinksCalendarsAfterAccountRemove(t *testing.T) {
 	}
 	gotSecond, ok := byID[secondID]
 	if !ok {
-		t.Fatalf("Second Remote id %d was not re-linked; linked = %v", secondID, calendarNames(linked))
+		t.Fatalf("Second Live id %d was not re-linked; linked = %v", secondID, calendarNames(linked))
 	}
 	gotSeeded, ok := byID[seededID]
 	if !ok {
-		t.Fatalf("Seeded Calendar id %d was not re-linked; linked = %v", seededID, calendarNames(linked))
+		t.Fatalf("Seeded Live id %d was not re-linked; linked = %v", seededID, calendarNames(linked))
 	}
-	if gotSecond.Name != "Second Remote" || strings.Contains(gotSecond.Name, "(2)") {
-		t.Fatalf("Second Remote name = %q, want original without suffix", gotSecond.Name)
+	if gotSecond.Name != "Second Live" || strings.Contains(gotSecond.Name, "(2)") {
+		t.Fatalf("Second Live name = %q, want live discovery name without suffix", gotSecond.Name)
 	}
-	if gotSeeded.Name != "Seeded Calendar" || strings.Contains(gotSeeded.Name, "(2)") {
-		t.Fatalf("Seeded Calendar name = %q, want original without suffix", gotSeeded.Name)
+	if gotSeeded.Name != "Seeded Live" || strings.Contains(gotSeeded.Name, "(2)") {
+		t.Fatalf("Seeded Live name = %q, want live discovery name without suffix", gotSeeded.Name)
+	}
+	if gotSecond.RemoteName != "Second Live" {
+		t.Errorf("Second remote_name = %q, want live discovery name", gotSecond.RemoteName)
+	}
+	if gotSeeded.RemoteName != "Seeded Live" {
+		t.Errorf("Seeded remote_name = %q, want live discovery name", gotSeeded.RemoteName)
+	}
+	if storage.NullableToString(gotSecond.RemoteColor) != "#AABBCC" {
+		t.Errorf("Second remote_color = %q, want live discovery color", storage.NullableToString(gotSecond.RemoteColor))
+	}
+	if storage.NullableToString(gotSeeded.RemoteColor) != "#DDEEFF" {
+		t.Errorf("Seeded remote_color = %q, want live discovery color", storage.NullableToString(gotSeeded.RemoteColor))
+	}
+	if gotSecond.Color != "#AABBCC" {
+		t.Errorf("Second color = %q, want live discovery color", gotSecond.Color)
+	}
+	if gotSeeded.Color != "#DDEEFF" {
+		t.Errorf("Seeded color = %q, want live discovery color", gotSeeded.Color)
+	}
+	if gotSecond.ColorDirty != 0 || gotSeeded.ColorDirty != 0 {
+		t.Errorf("color_dirty = %d/%d, want 0/0", gotSecond.ColorDirty, gotSeeded.ColorDirty)
 	}
 
 	gotEvent, err := evtSvc.Get(ctx, stay.ID)
@@ -505,101 +545,6 @@ func TestServiceImportRelinksCalendarsAfterAccountRemove(t *testing.T) {
 	}
 	if gotEvent.CalendarID != seededID {
 		t.Fatalf("event calendar_id = %d, want original %d", gotEvent.CalendarID, seededID)
-	}
-}
-
-// Import must write live discovery color and name onto a re-linked row. Account
-// remove clears remote_color. Metadata sync then has a current remote baseline
-// instead of an empty mirror.
-func TestServiceImportRelinksAppliesLiveRemoteMetadata(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	defer db.Close()
-
-	ctx := context.Background()
-	store := newMemoryCredentialStore()
-	svc := NewService(db, q)
-	remote := []caldav.RemoteCalendar{{
-		Path: "/cal/work/", Name: "Work", Color: "#112233",
-		Access: caldav.CalendarAccessOwner, SupportedComponentSet: []string{"VEVENT"},
-	}}
-	svc.discover = func(context.Context, Account, auth.Credential, func(auth.Credential) error) ([]caldav.RemoteCalendar, error) {
-		return slices.Clone(remote), nil
-	}
-
-	account, err := svc.Create(ctx, CreateParams{
-		Name: "dev", ServerURL: "https://cal.example.test/", Username: "alice", AuthType: "basic",
-	}, auth.Credential{Username: "alice", Password: "secret"}, store)
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	discovery, err := svc.Discover(ctx, account.ID, store)
-	if err != nil {
-		t.Fatalf("Discover: %v", err)
-	}
-	first, err := svc.Import(ctx, discovery, []string{"/cal/work/"})
-	if err != nil {
-		t.Fatalf("Import: %v", err)
-	}
-	if len(first.CreatedIDs) != 1 {
-		t.Fatalf("first import = %+v, want one created", first)
-	}
-	calID := first.CreatedIDs[0]
-
-	if err := svc.Delete(ctx, account.ID, store); err != nil {
-		t.Fatalf("Delete: %v", err)
-	}
-	unlinked, err := q.GetCalendar(ctx, calID)
-	if err != nil {
-		t.Fatalf("get unlinked calendar: %v", err)
-	}
-	if storage.NullableToString(unlinked.RemoteColor) != "" {
-		t.Fatalf("account remove should clear remote_color: %+v", unlinked)
-	}
-	if unlinked.RemoteName != "Work" || unlinked.Color != "#112233" {
-		t.Fatalf("account remove should keep remote_name and local color: %+v", unlinked)
-	}
-
-	remote[0].Name = "Work Live"
-	remote[0].Color = "#AABBCC"
-	again, err := svc.Create(ctx, CreateParams{
-		Name: "dev", ServerURL: "https://cal.example.test/", Username: "alice", AuthType: "basic",
-	}, auth.Credential{Username: "alice", Password: "secret"}, store)
-	if err != nil {
-		t.Fatalf("re-Create: %v", err)
-	}
-	discovery, err = svc.Discover(ctx, again.ID, store)
-	if err != nil {
-		t.Fatalf("re-Discover: %v", err)
-	}
-	second, err := svc.Import(ctx, discovery, []string{"/cal/work/"})
-	if err != nil {
-		t.Fatalf("re-Import: %v", err)
-	}
-	if len(second.CreatedIDs) != 1 || second.CreatedIDs[0] != calID {
-		t.Fatalf("re-import = %+v, want re-link of %d", second, calID)
-	}
-
-	got, err := q.GetCalendar(ctx, calID)
-	if err != nil {
-		t.Fatalf("get re-linked calendar: %v", err)
-	}
-	if got.RemoteName != "Work Live" {
-		t.Errorf("remote_name = %q, want live discovery name", got.RemoteName)
-	}
-	if storage.NullableToString(got.RemoteColor) != "#AABBCC" {
-		t.Errorf("remote_color = %q, want live discovery color", storage.NullableToString(got.RemoteColor))
-	}
-	if got.Color != "#AABBCC" {
-		t.Errorf("color = %q, want live discovery color", got.Color)
-	}
-	if got.Name != "Work Live" {
-		t.Errorf("name = %q, want adopted live remote name", got.Name)
-	}
-	if got.ColorDirty != 0 {
-		t.Errorf("color_dirty = %d, want 0", got.ColorDirty)
 	}
 }
 

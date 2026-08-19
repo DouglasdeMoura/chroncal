@@ -381,19 +381,7 @@ func (s *Service) discoverLocked(ctx context.Context, accountID int64, store aut
 		if local, ok := existingByURL[key]; ok {
 			item.Imported = true
 			item.CalendarID = local.ID
-			if err := qtx.AdoptCalendarRemoteName(ctx, storage.AdoptCalendarRemoteNameParams{
-				Name: remote.Name,
-				ID:   local.ID,
-			}); err != nil {
-				return Discovery{}, fmt.Errorf("adopt discovered calendar name %q: %w", remote.Name, err)
-			}
-			if _, err := qtx.UpdateCalendarDiscovery(ctx, storage.UpdateCalendarDiscoveryParams{
-				RemoteName:       remote.Name,
-				RemoteColor:      remote.Color,
-				RemoteAccess:     string(remote.Access),
-				RemoteComponents: strings.Join(remote.SupportedComponentSet, ","),
-				ID:               local.ID,
-			}); err != nil {
+			if err := applyDiscoveredCalendarMetadata(ctx, qtx, item, local.ID); err != nil {
 				return Discovery{}, fmt.Errorf("update discovered calendar %q: %w", remote.Name, err)
 			}
 		}
@@ -964,10 +952,30 @@ func uniqueUnlinkedByRemoteIdentity(rows []storage.Calendar, serverURL string) m
 	return byKey
 }
 
+// applyDiscoveredCalendarMetadata writes live discovery color, name, access,
+// and components onto a local calendar. AdoptCalendarRemoteName keeps a
+// user-chosen display name. UpdateCalendarDiscovery is the one write of the
+// remote_* mirrors and the color CASE rules.
+func applyDiscoveredCalendarMetadata(ctx context.Context, qtx *storage.Queries, item DiscoveredCalendar, calendarID int64) error {
+	remoteName := remoteCalendarName(item.RemoteCalendar)
+	if err := qtx.AdoptCalendarRemoteName(ctx, storage.AdoptCalendarRemoteNameParams{
+		Name: remoteName,
+		ID:   calendarID,
+	}); err != nil {
+		return err
+	}
+	_, err := qtx.UpdateCalendarDiscovery(ctx, storage.UpdateCalendarDiscoveryParams{
+		RemoteName:       remoteName,
+		RemoteColor:      item.Color,
+		RemoteAccess:     string(normalizedAccess(item.Access)),
+		RemoteComponents: strings.Join(normalizedComponents(item.SupportedComponentSet), ","),
+		ID:               calendarID,
+	})
+	return err
+}
+
 // relinkDiscoveredCalendar attaches one unlinked local calendar to the account.
-// It writes live discovery color, name, access, and components onto the row.
-// Account remove clears remote_color. The live collection can also carry a new
-// remote_name. A later metadata sync then has a current remote baseline.
+// It writes the live collection onto the row through applyDiscoveredCalendarMetadata.
 func relinkDiscoveredCalendar(ctx context.Context, qtx *storage.Queries, acct Account, item DiscoveredCalendar, calendarID int64) error {
 	accountID := acct.ID
 	if err := qtx.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
@@ -977,20 +985,7 @@ func relinkDiscoveredCalendar(ctx context.Context, qtx *storage.Queries, acct Ac
 	}); err != nil {
 		return err
 	}
-	remoteName := remoteCalendarName(item.RemoteCalendar)
-	if err := qtx.AdoptCalendarRemoteName(ctx, storage.AdoptCalendarRemoteNameParams{
-		Name: remoteName,
-		ID:   calendarID,
-	}); err != nil {
-		return err
-	}
-	if _, err := qtx.UpdateCalendarDiscovery(ctx, storage.UpdateCalendarDiscoveryParams{
-		RemoteName:       remoteName,
-		RemoteColor:      item.Color,
-		RemoteAccess:     string(normalizedAccess(item.Access)),
-		RemoteComponents: strings.Join(normalizedComponents(item.SupportedComponentSet), ","),
-		ID:               calendarID,
-	}); err != nil {
+	if err := applyDiscoveredCalendarMetadata(ctx, qtx, item, calendarID); err != nil {
 		return err
 	}
 	return qtx.UpdateCalendarOwnerEmail(ctx, storage.UpdateCalendarOwnerEmailParams{
