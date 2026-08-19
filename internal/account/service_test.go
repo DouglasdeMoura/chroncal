@@ -508,6 +508,177 @@ func TestServiceImportRelinksCalendarsAfterAccountRemove(t *testing.T) {
 	}
 }
 
+// Import must write live discovery color and name onto a re-linked row. Account
+// remove clears remote_color. Metadata sync then has a current remote baseline
+// instead of an empty mirror.
+func TestServiceImportRelinksAppliesLiveRemoteMetadata(t *testing.T) {
+	db, q, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	store := newMemoryCredentialStore()
+	svc := NewService(db, q)
+	remote := []caldav.RemoteCalendar{{
+		Path: "/cal/work/", Name: "Work", Color: "#112233",
+		Access: caldav.CalendarAccessOwner, SupportedComponentSet: []string{"VEVENT"},
+	}}
+	svc.discover = func(context.Context, Account, auth.Credential, func(auth.Credential) error) ([]caldav.RemoteCalendar, error) {
+		return slices.Clone(remote), nil
+	}
+
+	account, err := svc.Create(ctx, CreateParams{
+		Name: "dev", ServerURL: "https://cal.example.test/", Username: "alice", AuthType: "basic",
+	}, auth.Credential{Username: "alice", Password: "secret"}, store)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	discovery, err := svc.Discover(ctx, account.ID, store)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	first, err := svc.Import(ctx, discovery, []string{"/cal/work/"})
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if len(first.CreatedIDs) != 1 {
+		t.Fatalf("first import = %+v, want one created", first)
+	}
+	calID := first.CreatedIDs[0]
+
+	if err := svc.Delete(ctx, account.ID, store); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	unlinked, err := q.GetCalendar(ctx, calID)
+	if err != nil {
+		t.Fatalf("get unlinked calendar: %v", err)
+	}
+	if storage.NullableToString(unlinked.RemoteColor) != "" {
+		t.Fatalf("account remove should clear remote_color: %+v", unlinked)
+	}
+	if unlinked.RemoteName != "Work" || unlinked.Color != "#112233" {
+		t.Fatalf("account remove should keep remote_name and local color: %+v", unlinked)
+	}
+
+	remote[0].Name = "Work Live"
+	remote[0].Color = "#AABBCC"
+	again, err := svc.Create(ctx, CreateParams{
+		Name: "dev", ServerURL: "https://cal.example.test/", Username: "alice", AuthType: "basic",
+	}, auth.Credential{Username: "alice", Password: "secret"}, store)
+	if err != nil {
+		t.Fatalf("re-Create: %v", err)
+	}
+	discovery, err = svc.Discover(ctx, again.ID, store)
+	if err != nil {
+		t.Fatalf("re-Discover: %v", err)
+	}
+	second, err := svc.Import(ctx, discovery, []string{"/cal/work/"})
+	if err != nil {
+		t.Fatalf("re-Import: %v", err)
+	}
+	if len(second.CreatedIDs) != 1 || second.CreatedIDs[0] != calID {
+		t.Fatalf("re-import = %+v, want re-link of %d", second, calID)
+	}
+
+	got, err := q.GetCalendar(ctx, calID)
+	if err != nil {
+		t.Fatalf("get re-linked calendar: %v", err)
+	}
+	if got.RemoteName != "Work Live" {
+		t.Errorf("remote_name = %q, want live discovery name", got.RemoteName)
+	}
+	if storage.NullableToString(got.RemoteColor) != "#AABBCC" {
+		t.Errorf("remote_color = %q, want live discovery color", storage.NullableToString(got.RemoteColor))
+	}
+	if got.Color != "#AABBCC" {
+		t.Errorf("color = %q, want live discovery color", got.Color)
+	}
+	if got.Name != "Work Live" {
+		t.Errorf("name = %q, want adopted live remote name", got.Name)
+	}
+	if got.ColorDirty != 0 {
+		t.Errorf("color_dirty = %d, want 0", got.ColorDirty)
+	}
+}
+
+// Two unlinked rows with the same remote identity are ambiguous. Import must
+// create a new calendar. It must not pick one snapshot at random.
+func TestServiceImportSkipsAmbiguousUnlinkedRemoteIdentity(t *testing.T) {
+	db, q, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	store := newMemoryCredentialStore()
+	svc := NewService(db, q)
+	snapA, err := q.CreateCalendar(ctx, storage.CreateCalendarParams{Name: "Snap A", Color: "#111111"})
+	if err != nil {
+		t.Fatalf("create snapshot A: %v", err)
+	}
+	snapB, err := q.CreateCalendar(ctx, storage.CreateCalendarParams{Name: "Snap B", Color: "#222222"})
+	if err != nil {
+		t.Fatalf("create snapshot B: %v", err)
+	}
+	origin := remoteIdentityKey("/cal/work/", "https://cal.example.test/")
+	if _, err := db.ExecContext(ctx,
+		"UPDATE calendars SET remote_url = ?, remote_name = 'Work' WHERE id IN (?, ?)",
+		origin, snapA.ID, snapB.ID,
+	); err != nil {
+		t.Fatalf("seed duplicate origins: %v", err)
+	}
+
+	svc.discover = func(context.Context, Account, auth.Credential, func(auth.Credential) error) ([]caldav.RemoteCalendar, error) {
+		return []caldav.RemoteCalendar{{
+			Path: "/cal/work/", Name: "Work", Color: "#112233", SupportedComponentSet: []string{"VEVENT"},
+		}}, nil
+	}
+	account, err := svc.Create(ctx, CreateParams{
+		Name: "dev", ServerURL: "https://cal.example.test/", Username: "alice", AuthType: "basic",
+	}, auth.Credential{Username: "alice", Password: "secret"}, store)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	discovery, err := svc.Discover(ctx, account.ID, store)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	result, err := svc.Import(ctx, discovery, []string{"/cal/work/"})
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if len(result.CreatedIDs) != 1 {
+		t.Fatalf("import = %+v, want one new calendar", result)
+	}
+	newID := result.CreatedIDs[0]
+	if newID == snapA.ID || newID == snapB.ID {
+		t.Fatalf("import re-linked snapshot %d, want a new row", newID)
+	}
+
+	for _, snap := range []storage.Calendar{snapA, snapB} {
+		got, err := q.GetCalendar(ctx, snap.ID)
+		if err != nil {
+			t.Fatalf("get snapshot %d: %v", snap.ID, err)
+		}
+		if got.AccountID != nil {
+			t.Fatalf("ambiguous snapshot %d was re-linked: %+v", snap.ID, got)
+		}
+	}
+	created, err := q.GetCalendar(ctx, newID)
+	if err != nil {
+		t.Fatalf("get created calendar: %v", err)
+	}
+	if created.AccountID == nil || *created.AccountID != account.ID {
+		t.Fatalf("new calendar account_id = %v, want %d", created.AccountID, account.ID)
+	}
+	if created.Name != "Work" {
+		t.Fatalf("new calendar name = %q, want Work", created.Name)
+	}
+}
+
 func TestServiceDeleteRollsBackWhenCredentialRemovalFails(t *testing.T) {
 	db, q, err := storage.Open(":memory:")
 	if err != nil {
@@ -1683,6 +1854,94 @@ func TestServiceRemoveWithCalendarsRefusesLastCalendar(t *testing.T) {
 	}
 }
 
+// ReconcileSelection must re-link the same local rows after account remove.
+// Events stay on the original calendar IDs.
+func TestReconcileSelectionRelinksCalendarsAfterAccountRemove(t *testing.T) {
+	f := newSelectionFixture(t)
+	imported, _ := f.importAndRefresh(t, "/cal/a/", "/cal/b/")
+	if len(imported.CreatedIDs) != 2 {
+		t.Fatalf("first import = %+v, want two created", imported)
+	}
+	aID, bID := imported.CreatedIDs[0], imported.CreatedIDs[1]
+	ctx := context.Background()
+
+	evtSvc := event.NewService(f.db, f.q)
+	stay, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: aID,
+		Title:      "Stay here",
+		StartTime:  time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("create event: %v", err)
+	}
+
+	if err := f.svc.Delete(ctx, f.discovery.Account.ID, f.store); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	again, err := f.svc.Create(ctx, CreateParams{
+		Name: "Work", ServerURL: "https://cal.example.test/dav/",
+		Username: "alice", AuthType: "basic",
+	}, auth.Credential{Username: "alice", Password: "secret"}, f.store)
+	if err != nil {
+		t.Fatalf("re-Create: %v", err)
+	}
+	discovery, err := f.svc.Discover(ctx, again.ID, f.store)
+	if err != nil {
+		t.Fatalf("re-Discover: %v", err)
+	}
+	result, err := f.svc.ReconcileSelection(ctx, discovery, SelectionParams{
+		SelectedPaths: []string{"/cal/a/", "/cal/b/"},
+	}, f.store)
+	if err != nil {
+		t.Fatalf("ReconcileSelection: %v", err)
+	}
+	if !slices.Equal(result.CreatedIDs, []int64{aID, bID}) || len(result.RemovedIDs) != 0 || result.AccountRemoved {
+		t.Fatalf("selection result = %+v, want re-link of %d and %d", result, aID, bID)
+	}
+
+	linked, err := f.q.ListCalendarsByAccount(ctx, &again.ID)
+	if err != nil {
+		t.Fatalf("list re-linked calendars: %v", err)
+	}
+	if len(linked) != 2 {
+		t.Fatalf("linked calendar count = %d, want 2; names = %v", len(linked), calendarNames(linked))
+	}
+	byID := map[int64]storage.Calendar{}
+	for _, row := range linked {
+		byID[row.ID] = row
+	}
+	gotA, ok := byID[aID]
+	if !ok {
+		t.Fatalf("A id %d was not re-linked; linked = %v", aID, calendarNames(linked))
+	}
+	gotB, ok := byID[bID]
+	if !ok {
+		t.Fatalf("B id %d was not re-linked; linked = %v", bID, calendarNames(linked))
+	}
+	if gotA.Name != "A" || strings.Contains(gotA.Name, "(2)") {
+		t.Fatalf("A name = %q, want original without suffix", gotA.Name)
+	}
+	if gotB.Name != "B" || strings.Contains(gotB.Name, "(2)") {
+		t.Fatalf("B name = %q, want original without suffix", gotB.Name)
+	}
+	if storage.NullableToString(gotA.RemoteColor) != "#112233" {
+		t.Errorf("A remote_color = %q, want discovery color", storage.NullableToString(gotA.RemoteColor))
+	}
+	if storage.NullableToString(gotB.RemoteColor) != "#445566" {
+		t.Errorf("B remote_color = %q, want discovery color", storage.NullableToString(gotB.RemoteColor))
+	}
+
+	gotEvent, err := evtSvc.Get(ctx, stay.ID)
+	if err != nil {
+		t.Fatalf("get event: %v", err)
+	}
+	if gotEvent.CalendarID != aID {
+		t.Fatalf("event calendar_id = %d, want original %d", gotEvent.CalendarID, aID)
+	}
+}
+
 func TestReconcileSelectionAddsAndRemovesInOneFinalState(t *testing.T) {
 	f := newSelectionFixture(t)
 	imported, discovery := f.importAndRefresh(t, "/cal/a/")
@@ -1994,5 +2253,27 @@ func TestUniqueUnlinkedByRemoteIdentity_RequiresSameOrigin(t *testing.T) {
 	got := uniqueUnlinkedByRemoteIdentity(rows, "https://cal.example.test/")
 	if got[key] != 7 {
 		t.Fatalf("same origin = %v, want id 7 at %q", got, key)
+	}
+}
+
+func TestUniqueUnlinkedByRemoteIdentity_DropsDuplicates(t *testing.T) {
+	t.Parallel()
+	server := "https://cal.example.test/"
+	key := remoteIdentityKey("/cal/work/", server)
+	other := remoteIdentityKey("/cal/other/", server)
+	linkedID := int64(9)
+	rows := []storage.Calendar{
+		{ID: 1, RemoteUrl: storage.StringToNullable(key)},
+		{ID: 2, RemoteUrl: storage.StringToNullable(key)},
+		{ID: 3, RemoteUrl: storage.StringToNullable(other)},
+		{ID: 4, RemoteUrl: storage.StringToNullable(key)},
+		{ID: 5, AccountID: &linkedID, RemoteUrl: storage.StringToNullable(other)},
+	}
+	got := uniqueUnlinkedByRemoteIdentity(rows, server)
+	if _, ok := got[key]; ok {
+		t.Fatalf("ambiguous key present: %v", got)
+	}
+	if got[other] != 3 {
+		t.Fatalf("unique key = %v, want id 3 at %q", got, other)
 	}
 }
