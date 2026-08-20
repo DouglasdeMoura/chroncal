@@ -66,6 +66,7 @@ type MiniMonthModel struct {
 	rangeActive bool
 	rangeStart  time.Time // zero if not yet pinned
 	rangeEnd    time.Time // zero if only start is pinned
+	weekStart   time.Weekday
 }
 
 func NewMiniMonthModel(initial time.Time) MiniMonthModel {
@@ -90,6 +91,12 @@ func (m MiniMonthModel) SetTheme(accent, today, text, muted color.Color) MiniMon
 // when range mode is active. Endpoints continue to use the accent color.
 func (m MiniMonthModel) SetRangeColor(c color.Color) MiniMonthModel {
 	m.rangeColor = c
+	return m
+}
+
+// SetWeekStart sets the first column of the day grid. Sunday is the default.
+func (m MiniMonthModel) SetWeekStart(w time.Weekday) MiniMonthModel {
+	m.weekStart = w
 	return m
 }
 
@@ -232,7 +239,7 @@ func (m MiniMonthModel) Update(msg tea.Msg) (MiniMonthModel, tea.Cmd) {
 }
 
 // miniMonthHeaderWidth is the header row width in display columns. It matches
-// the weekday row ("Su Mo Tu We Th Fr Sa") and the seven day cells below it.
+// the weekday row (seven 2-letter labels) and the seven day cells below it.
 // The chevrons then align with the right edge of the grid.
 const miniMonthHeaderWidth = 20
 
@@ -285,7 +292,7 @@ func (m MiniMonthModel) HandleClick(x, y int) (MiniMonthModel, tea.Cmd) {
 	if col < 0 || col > 6 {
 		return m, nil
 	}
-	leading := int(m.displayMonth.Weekday())
+	leading := weekdayOffset(m.displayMonth, m.weekStart)
 	dayIndex := gridY*7 + col - leading
 	if dayIndex < 0 {
 		return m, nil
@@ -334,12 +341,12 @@ func (m MiniMonthModel) View() string {
 	b.WriteString(rightChev)
 	b.WriteString("\n")
 	// Weekday row dimmed so the day numbers carry the hierarchy.
-	b.WriteString(mutedStyle.Render("Su Mo Tu We Th Fr Sa"))
+	b.WriteString(mutedStyle.Render(miniWeekdayHeader(m.weekStart)))
 	b.WriteString("\n")
 
 	first := m.displayMonth
 	// Pad to align first-of-month under its weekday column.
-	leading := int(first.Weekday())
+	leading := weekdayOffset(first, m.weekStart)
 	for range leading {
 		b.WriteString("   ")
 	}
@@ -496,19 +503,19 @@ func addMonthClamped(t time.Time, months int) time.Time {
 }
 
 // renderMiniCalendar draws a compact month grid.
-func renderMiniCalendar(selected, today time.Time, indent int, theme Theme) string {
+func renderMiniCalendar(selected, today time.Time, indent int, theme Theme, weekStart time.Weekday) string {
 	y, mo, _ := selected.Date()
 	loc := selected.Location()
 
 	first := time.Date(y, mo, 1, 0, 0, 0, 0, loc)
-	startDow := int(first.Weekday())
+	startDow := weekdayOffset(first, weekStart)
 	daysInMonth := time.Date(y, mo+1, 0, 0, 0, 0, 0, loc).Day()
 
 	pad := strings.Repeat(" ", indent)
 	faint := lipgloss.NewStyle().Faint(true)
 
 	var lines []string
-	lines = append(lines, pad+faint.Render("Su Mo Tu We Th Fr Sa"))
+	lines = append(lines, pad+faint.Render(miniWeekdayHeader(weekStart)))
 
 	dayNum := 1
 	for week := range 6 {
@@ -546,4 +553,20 @@ func sameDay(a, b time.Time) bool {
 	ay, am, ad := a.Date()
 	by, bm, bd := b.Date()
 	return ay == by && am == bm && ad == bd
+}
+
+var miniWeekdayLabels = [7]string{"Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"}
+
+// miniWeekdayHeader returns the compact weekday row for weekStart.
+// Sunday yields "Su Mo Tu We Th Fr Sa". The width is always 20 columns.
+func miniWeekdayHeader(weekStart time.Weekday) string {
+	var b strings.Builder
+	b.Grow(20)
+	for i := range 7 {
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		b.WriteString(miniWeekdayLabels[(int(weekStart)+i)%7])
+	}
+	return b.String()
 }

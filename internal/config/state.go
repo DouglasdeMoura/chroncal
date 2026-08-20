@@ -15,6 +15,9 @@ type UIState struct {
 	HiddenCalendars     []int64 `json:"hidden_calendars,omitempty"`
 	AgendaShowEmptyDays bool    `json:"agenda_show_empty_days,omitempty"`
 	ShowWeekNumbers     bool    `json:"show_week_numbers,omitempty"`
+	// WeekStart is "sunday" or "monday". Empty means the TUI has not stored
+	// a choice, so the ui.week_start config value (or Sunday) applies.
+	WeekStart string `json:"week_start,omitempty"`
 }
 
 func defaultUIState() UIState {

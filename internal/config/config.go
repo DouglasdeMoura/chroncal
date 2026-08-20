@@ -60,6 +60,9 @@ type UIConfig struct {
 	// Theme is the name of a built-in theme under internal/tui/themes/
 	// (e.g. "default", "system"). Empty falls back to the default.
 	Theme string `mapstructure:"theme"`
+	// WeekStart is the first day of the week in the TUI month view, week
+	// view, and mini-calendar. Valid values: "sunday" (default), "monday".
+	WeekStart string `mapstructure:"week_start"`
 }
 
 type Config struct {
@@ -145,6 +148,7 @@ func newViper() *viper.Viper {
 	v.BindEnv("security.allow_plaintext")
 	v.BindEnv("soft_delete.purge_days")
 	v.BindEnv("ui.theme")
+	v.BindEnv("ui.week_start")
 
 	return v
 }

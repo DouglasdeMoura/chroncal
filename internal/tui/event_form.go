@@ -192,11 +192,12 @@ type EventFormModel struct {
 	// fieldKeys maps form item index → field key for OnFieldEnter
 	fieldKeys []string
 
-	keys   eventFormKeyMap
-	help   help.Model
-	width  int
-	height int
-	theme  Theme
+	keys      eventFormKeyMap
+	help      help.Model
+	width     int
+	height    int
+	theme     Theme
+	weekStart time.Weekday
 }
 
 type eventFormKeyMap struct {
@@ -811,7 +812,7 @@ func (m *EventFormModel) tryOpenOverlay() tea.Cmd {
 		return noopCmd
 	case efKeyRepeat:
 		if m.repeatField.Selected() == repeatCustomIdx {
-			m.rruleEditor = NewRecurrenceEditorModel(m.day, m.width, m.height, m.theme)
+			m.rruleEditor = NewRecurrenceEditorModel(m.day, m.width, m.height, m.theme).SetWeekStart(m.weekStart)
 			if m.customRule != "" {
 				m.rruleEditor.LoadRule(m.customRule)
 			}
@@ -837,7 +838,8 @@ func (m *EventFormModel) tryOpenOverlay() tea.Cmd {
 func (m *EventFormModel) openDatePicker() {
 	m.datePicker = NewMiniMonthModel(m.day).Focus().FocusGrid().
 		SetTheme(m.theme.Selected, m.theme.Today, m.theme.Text, m.theme.Muted).
-		SetRangeColor(m.theme.Selected)
+		SetRangeColor(m.theme.Selected).
+		SetWeekStart(m.weekStart)
 	m.rangeMode = m.rangeHasEnd
 	m.rangeStart = time.Time{}
 	m.rangeEnd = time.Time{}
@@ -855,7 +857,8 @@ func (m *EventFormModel) openDatePicker() {
 // openEndsDatePicker initialises the ends-date MiniMonthModel and opens the overlay.
 func (m *EventFormModel) openEndsDatePicker() {
 	m.endsDatePickerModel = NewMiniMonthModel(m.endsDate).Focus().FocusGrid().
-		SetTheme(m.theme.Selected, m.theme.Today, m.theme.Text, m.theme.Muted)
+		SetTheme(m.theme.Selected, m.theme.Today, m.theme.Text, m.theme.Muted).
+		SetWeekStart(m.weekStart)
 	m.endsDatePicker = true
 	m.dpBtnFocus = -1
 }
@@ -865,6 +868,12 @@ func (m *EventFormModel) openEndsDatePicker() {
 // This callback exists for non-overlay field-enter behavior.
 func (m *EventFormModel) handleFieldEnter(fieldKey string) tea.Cmd {
 	return nil // nil = proceed with default focus-next
+}
+
+// SetWeekStart sets the first day of the week for date-picker grids.
+func (m EventFormModel) SetWeekStart(w time.Weekday) EventFormModel {
+	m.weekStart = w
+	return m
 }
 
 func (m EventFormModel) SetSize(w, h int) EventFormModel {

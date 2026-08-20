@@ -1,6 +1,10 @@
 package tui
 
-import tea "charm.land/bubbletea/v2"
+import (
+	"time"
+
+	tea "charm.land/bubbletea/v2"
+)
 
 // Palette action messages. The palette emits these via a selected command's
 // Action func; the app-level Update handles them like any other tea.Msg.
@@ -17,11 +21,14 @@ type ToggleSidebarMsg struct{}
 // ToggleWeekNumbersMsg toggles the ISO week-number gutter in month/week views.
 type ToggleWeekNumbersMsg struct{}
 
+// ToggleWeekStartMsg switches the first day of the week between Sunday and Monday.
+type ToggleWeekStartMsg struct{}
+
 // buildPaletteCommands returns the default commands exposed through the
 // palette, with bindings to the current app state (cursor, etc.).
 func buildPaletteCommands(m Model) []PaletteCommand {
 	cursor, _ := m.viewCursorAndToday()
-	commands := make([]PaletteCommand, 0, 17)
+	commands := make([]PaletteCommand, 0, 18)
 	commands = append(commands,
 		PaletteCommand{
 			ID:       "nav.today",
@@ -106,6 +113,13 @@ func buildPaletteCommands(m Model) []PaletteCommand {
 			Action:   func() tea.Msg { return ToggleWeekNumbersMsg{} },
 		},
 		PaletteCommand{
+			ID:       "ui.week_start",
+			Title:    weekStartPaletteTitle(m.weekStart),
+			Category: "View",
+			Shortcut: "W",
+			Action:   func() tea.Msg { return ToggleWeekStartMsg{} },
+		},
+		PaletteCommand{
 			ID:       "trash.view",
 			Title:    "Recently Deleted",
 			Category: "View",
@@ -128,4 +142,11 @@ func buildPaletteCommands(m Model) []PaletteCommand {
 		},
 	)
 	return commands
+}
+
+func weekStartPaletteTitle(weekStart time.Weekday) string {
+	if weekStart == time.Monday {
+		return "Start Week on Sunday"
+	}
+	return "Start Week on Monday"
 }
