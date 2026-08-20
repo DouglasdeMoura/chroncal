@@ -1312,6 +1312,21 @@ func syncHealthFor(info CalendarInfo) SyncHealth {
 	}
 }
 
+// openCredentialStore opens the credential store with the namespace settings and
+// the migration settings of the app. It discards the warnings, so keyring output
+// never overwrites the rendered TUI. Every TUI flow that touches a credential
+// goes through this one constructor. A change to how the store opens thus
+// applies to all the flows at the same time.
+func (m Model) openCredentialStore() (auth.CredentialStore, error) {
+	return auth.NewCredentialStoreWithWarnings(
+		m.app.CredentialNamespace,
+		m.app.PreviousCredentialNamespaces,
+		m.app.MigrateLegacyCredentials,
+		m.app.AllowPlaintext,
+		io.Discard,
+	)
+}
+
 // newSyncService builds a sync.Service using the app's shared SQLite handle.
 // Credential-store warnings are discarded so sync work does not clobber the
 // rendered TUI. Token-refresh persist mid-run is included. The engine logs
@@ -1319,7 +1334,7 @@ func syncHealthFor(info CalendarInfo) SyncHealth {
 // Sync detail like import warnings then stays inspectable. Users run
 // `chroncal sync run` from a shell if they need verbose output live.
 func (m Model) newSyncService() (*syncpkg.Service, error) {
-	credStore, err := auth.NewCredentialStoreWithWarnings(m.app.CredentialNamespace, m.app.PreviousCredentialNamespaces, m.app.MigrateLegacyCredentials, m.app.AllowPlaintext, io.Discard)
+	credStore, err := m.openCredentialStore()
 	if err != nil {
 		return nil, fmt.Errorf("credential store: %w", err)
 	}
@@ -1485,13 +1500,7 @@ func (m Model) prepareAccountReauth(
 ) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
-		credStore, err := auth.NewCredentialStoreWithWarnings(
-			m.app.CredentialNamespace,
-			m.app.PreviousCredentialNamespaces,
-			m.app.MigrateLegacyCredentials,
-			m.app.AllowPlaintext,
-			io.Discard,
-		)
+		credStore, err := m.openCredentialStore()
 		if err != nil {
 			return accountReauthReadyMsg{accountID: configured.ID, name: configured.DisplayName, err: err}
 		}
@@ -1532,13 +1541,7 @@ func (m Model) finishOAuthReauth(result *auth.GoogleOAuthResult) tea.Cmd {
 		}
 	}
 	return func() tea.Msg {
-		credStore, err := auth.NewCredentialStoreWithWarnings(
-			m.app.CredentialNamespace,
-			m.app.PreviousCredentialNamespaces,
-			m.app.MigrateLegacyCredentials,
-			m.app.AllowPlaintext,
-			io.Discard,
-		)
+		credStore, err := m.openCredentialStore()
 		if err != nil {
 			return storedMsg(err)
 		}
@@ -1598,13 +1601,7 @@ func (m Model) updateAccountCredentials(configured account.Account, secret strin
 	}
 	return func() tea.Msg {
 		ctx := context.Background()
-		credStore, err := auth.NewCredentialStoreWithWarnings(
-			m.app.CredentialNamespace,
-			m.app.PreviousCredentialNamespaces,
-			m.app.MigrateLegacyCredentials,
-			m.app.AllowPlaintext,
-			io.Discard,
-		)
+		credStore, err := m.openCredentialStore()
 		if err != nil {
 			return storedMsg(err)
 		}
@@ -1698,7 +1695,7 @@ func (m Model) connectAndDiscoverCalendar(req CalendarDiscoveryRequestedMsg, cre
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		store, err := auth.NewCredentialStoreWithWarnings(m.app.CredentialNamespace, m.app.PreviousCredentialNamespaces, m.app.MigrateLegacyCredentials, m.app.AllowPlaintext, io.Discard)
+		store, err := m.openCredentialStore()
 		if err != nil {
 			return accountDiscoveryReadyMsg{err: err}
 		}
@@ -1788,13 +1785,7 @@ func (m Model) reconcileAndSyncAccountCalendars(selection *accountCalendarSelect
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
-		store, err := auth.NewCredentialStoreWithWarnings(
-			m.app.CredentialNamespace,
-			m.app.PreviousCredentialNamespaces,
-			m.app.MigrateLegacyCredentials,
-			m.app.AllowPlaintext,
-			io.Discard,
-		)
+		store, err := m.openCredentialStore()
 		if err != nil {
 			finished.err = err
 			return finished
@@ -1945,13 +1936,7 @@ func (m Model) discardDiscoveryAccount(accountID int64) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		store, err := auth.NewCredentialStoreWithWarnings(
-			m.app.CredentialNamespace,
-			m.app.PreviousCredentialNamespaces,
-			m.app.MigrateLegacyCredentials,
-			m.app.AllowPlaintext,
-			io.Discard,
-		)
+		store, err := m.openCredentialStore()
 		if err == nil {
 			err = m.app.Accounts.Delete(ctx, accountID, store)
 		}
@@ -1963,13 +1948,7 @@ func (m Model) removeAccount(accountID int64, name string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		store, err := auth.NewCredentialStoreWithWarnings(
-			m.app.CredentialNamespace,
-			m.app.PreviousCredentialNamespaces,
-			m.app.MigrateLegacyCredentials,
-			m.app.AllowPlaintext,
-			io.Discard,
-		)
+		store, err := m.openCredentialStore()
 		if err == nil {
 			err = m.app.Accounts.Delete(ctx, accountID, store)
 		}
@@ -1986,13 +1965,7 @@ func (m Model) discoverAccountCalendars(accountID int64, generation uint64) tea.
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		store, err := auth.NewCredentialStoreWithWarnings(
-			m.app.CredentialNamespace,
-			m.app.PreviousCredentialNamespaces,
-			m.app.MigrateLegacyCredentials,
-			m.app.AllowPlaintext,
-			io.Discard,
-		)
+		store, err := m.openCredentialStore()
 		if err != nil {
 			return result(account.Discovery{}, fmt.Errorf("open credential store: %w", err))
 		}
@@ -4590,7 +4563,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if err != nil {
 					return calendarMutationDoneMsg{err: err}
 				}
-				credStore, _ := auth.NewCredentialStoreWithWarnings(m.app.CredentialNamespace, m.app.PreviousCredentialNamespaces, m.app.MigrateLegacyCredentials, m.app.AllowPlaintext, io.Discard)
+				credStore, _ := m.openCredentialStore()
 				return calendarMutationDoneMsg{err: m.app.Calendars.Disconnect(ctx, cal, credStore)}
 			}
 		}
@@ -4604,7 +4577,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Delete confirmed: close the edit dialog too.
 			m.calendarManagerOpen = false
 			return m, func() tea.Msg {
-				credStore, _ := auth.NewCredentialStoreWithWarnings(m.app.CredentialNamespace, m.app.PreviousCredentialNamespaces, m.app.MigrateLegacyCredentials, m.app.AllowPlaintext, io.Discard)
+				credStore, _ := m.openCredentialStore()
 				err := m.app.Calendars.DeleteWithRemoteCleanup(context.Background(), id, newDefaultID, credStore)
 				return calendarMutationDoneMsg{err: err}
 			}
