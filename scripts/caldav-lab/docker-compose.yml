@@ -1,0 +1,26 @@
+# Radicale CalDAV server for the account lab.
+#
+# The server needs authentication (alice:secret) and holds several
+# collections. The lab uses it to run `chroncal account` against a real
+# CalDAV server.
+#
+# The port is 5233. The anonymous round-trip server for the
+# internal/ical tests uses 5232. Both servers can run at the same time.
+#
+# Usage:
+#   docker compose -f scripts/caldav-lab/docker-compose.yml up -d
+#   docker compose -f scripts/caldav-lab/docker-compose.yml down -v
+services:
+  radicale:
+    image: tomsquest/docker-radicale:3.2.0.0
+    container_name: chroncal-caldav-lab
+    ports:
+      - "5233:5232"
+    environment:
+      RADICALE_USERS: alice:secret
+    volumes:
+      - radicale-lab-data:/data
+    restart: unless-stopped
+
+volumes:
+  radicale-lab-data:
