@@ -211,6 +211,7 @@ func (m HelpDialogModel) sections() []helpSection {
 				{"?", "this help"},
 				{"\\", "toggle sidebar"},
 				{"#", "toggle week numbers"},
+				{"W", "toggle week start"},
 				{"tab · shift+tab", "move focus"},
 				{"esc · q", "close (read-only dialogs)"},
 				{"esc", "close (forms)"},

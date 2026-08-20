@@ -245,7 +245,11 @@ Helpful conventions:
 			}
 		}
 
-		return tui.Run(a, cfg.UI.Theme, tui.RunOptions{Event: openEvent})
+		weekStart := time.Sunday
+		if w, ok := config.ParseWeekStart(cfg.UI.WeekStart); ok {
+			weekStart = w
+		}
+		return tui.Run(a, cfg.UI.Theme, tui.RunOptions{Event: openEvent, WeekStart: weekStart})
 	},
 }
 

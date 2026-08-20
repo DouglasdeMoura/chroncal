@@ -260,3 +260,26 @@ func TestLoad_NoFileNoError(t *testing.T) {
 		t.Fatalf("Load() error = %v, want nil when config file is absent", err)
 	}
 }
+
+func TestLoad_UIWeekStartFromFile(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "chroncal")
+	os.MkdirAll(configDir, 0o755)
+	os.WriteFile(filepath.Join(configDir, "config.toml"), []byte("[ui]\nweek_start = \"monday\"\n"), 0o644)
+
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("CHRONCAL_UI_WEEK_START", "")
+
+	cfg := mustLoad(t)
+	if cfg.UI.WeekStart != "monday" {
+		t.Errorf("UI.WeekStart = %q, want monday", cfg.UI.WeekStart)
+	}
+}
+
+func TestLoad_UIWeekStartFromEnv(t *testing.T) {
+	t.Setenv("CHRONCAL_UI_WEEK_START", "monday")
+	cfg := mustLoad(t)
+	if cfg.UI.WeekStart != "monday" {
+		t.Errorf("UI.WeekStart = %q, want monday from env", cfg.UI.WeekStart)
+	}
+}

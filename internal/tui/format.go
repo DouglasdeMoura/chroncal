@@ -396,12 +396,16 @@ func isoWeekForRow(anchor time.Time, weekStart time.Weekday, week int) int {
 	return w
 }
 
+// weekdayOffset returns how many days d falls after weekStart, in 0..6.
+func weekdayOffset(d time.Time, weekStart time.Weekday) int {
+	return (int(d.Weekday()) - int(weekStart) + 7) % 7
+}
+
 // calendarGridAnchor returns the date of the top-left cell of the calendar
 // grid for the given month and week start.
 func calendarGridAnchor(month time.Time, weekStart time.Weekday) time.Time {
 	first := time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, time.Local)
-	offset := (int(first.Weekday()) - int(weekStart) + 7) % 7
-	return first.AddDate(0, 0, -offset)
+	return first.AddDate(0, 0, -weekdayOffset(first, weekStart))
 }
 
 // distributeCells splits avail into n cell sizes each >= minSize. It spreads

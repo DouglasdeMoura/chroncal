@@ -64,10 +64,17 @@ type RecurrenceEditorModel struct {
 	done      bool
 	cancelled bool
 
-	help   help.Model
-	width  int
-	height int
-	theme  Theme
+	help      help.Model
+	width     int
+	height    int
+	theme     Theme
+	weekStart time.Weekday
+}
+
+// SetWeekStart sets the first day of the week for the ends-date mini-calendar.
+func (m RecurrenceEditorModel) SetWeekStart(w time.Weekday) RecurrenceEditorModel {
+	m.weekStart = w
+	return m
 }
 
 // NewRecurrenceEditorModel creates a new editor pre-configured from the event date.
@@ -547,7 +554,7 @@ func (m RecurrenceEditorModel) HandleEndsDateMouse(msg tea.MouseClickMsg, picker
 	y, mo, _ := m.endsDate.Date()
 	loc := m.endsDate.Location()
 	first := time.Date(y, mo, 1, 0, 0, 0, 0, loc)
-	startDow := int(first.Weekday())
+	startDow := weekdayOffset(first, m.weekStart)
 	daysInMonth := time.Date(y, mo+1, 0, 0, 0, 0, 0, loc).Day()
 
 	dayNum := ry*7 + dow - startDow + 1
@@ -673,7 +680,7 @@ func (m RecurrenceEditorModel) EndsDatePickerView() string {
 	bold := lipgloss.NewStyle().Bold(true)
 
 	monthStr := m.endsDate.Format("January 2006")
-	calGrid := renderMiniCalendar(m.endsDate, time.Now(), 0, m.theme)
+	calGrid := renderMiniCalendar(m.endsDate, time.Now(), 0, m.theme, m.weekStart)
 	gridLines := strings.Split(calGrid, "\n")
 	calLines := make([]string, 0, len(gridLines)+1)
 	calLines = append(calLines, bold.Render(monthStr))

@@ -51,3 +51,35 @@ func TestUIStateLoad_OldFileWithoutHiddenCalendars(t *testing.T) {
 		t.Errorf("HiddenCalendars should be nil for old file, got %v", out.HiddenCalendars)
 	}
 }
+
+func TestUIStateRoundTrip_WeekStart(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", dir)
+
+	in := UIState{ShowSidebar: true, WeekStart: "monday"}
+	if err := SaveUIState(in); err != nil {
+		t.Fatalf("SaveUIState: %v", err)
+	}
+	out := LoadUIState()
+	if out.WeekStart != "monday" {
+		t.Errorf("WeekStart = %q, want monday", out.WeekStart)
+	}
+}
+
+func TestUIStateLoad_OldFileWithoutWeekStart(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", dir)
+
+	path := filepath.Join(dir, "chroncal", "state.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`{"show_sidebar":true,"view_mode":"month"}`), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	out := LoadUIState()
+	if out.WeekStart != "" {
+		t.Errorf("WeekStart = %q, want empty for old file", out.WeekStart)
+	}
+}

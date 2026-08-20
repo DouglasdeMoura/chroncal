@@ -55,6 +55,7 @@ type appKeyMap struct {
 	AgendaView   key.Binding
 	Sidebar      key.Binding
 	WeekNumbers  key.Binding
+	WeekStart    key.Binding
 	Create       key.Binding
 	SwitchFocus  key.Binding
 	Help         key.Binding
@@ -74,6 +75,7 @@ func defaultAppKeys() appKeyMap {
 		AgendaView:   key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "agenda")),
 		Sidebar:      key.NewBinding(key.WithKeys("\\"), key.WithHelp("\\", "sidebar")),
 		WeekNumbers:  key.NewBinding(key.WithKeys("#"), key.WithHelp("#", "week numbers")),
+		WeekStart:    key.NewBinding(key.WithKeys("W", "shift+w"), key.WithHelp("W", "week start")),
 		Create:       key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "new")),
 		SwitchFocus:  key.NewBinding(key.WithKeys("tab", "shift+tab"), key.WithHelp("tab", "switch focus")),
 		Help:         key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
@@ -447,6 +449,11 @@ type Model struct {
 	ready            bool
 	showSidebar      bool
 	showWeekNumbers  bool
+	weekStart        time.Weekday
+	// persistWeekStart is true when the first day of the week came from
+	// UI state or from a TUI toggle. Config then stays the default until
+	// the user sets the day in the TUI.
+	persistWeekStart bool
 	focus            appFocus
 	hiddenCalendars  map[int64]bool
 	clickedEventID   int64
@@ -552,6 +559,12 @@ type Model struct {
 // (see internal/tui/themes/*.toml); empty or unknown names fall back to
 // DefaultThemeName.
 func NewModel(a *app.App, themeName string) Model {
+	return newModel(a, themeName, time.Sunday)
+}
+
+// newModel builds the root TUI model. configWeekStart is the value from
+// config.toml / CHRONCAL_UI_WEEK_START. A stored UI-state choice overrides it.
+func newModel(a *app.App, themeName string, configWeekStart time.Weekday) Model {
 	ui := config.LoadUIState()
 	hidden := make(map[int64]bool, len(ui.HiddenCalendars))
 	for _, id := range ui.HiddenCalendars {
@@ -567,7 +580,13 @@ func NewModel(a *app.App, themeName string) Model {
 	case "agenda":
 		vm = viewAgenda
 	}
-	sb := NewSidebarModel(NewMiniMonthModel(now), NewCalendarListModel(nil, hidden))
+	weekStart := configWeekStart
+	persistWeekStart := false
+	if w, ok := config.ParseWeekStart(ui.WeekStart); ok {
+		weekStart = w
+		persistWeekStart = true
+	}
+	sb := NewSidebarModel(NewMiniMonthModel(now).SetWeekStart(weekStart), NewCalendarListModel(nil, hidden))
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	theme := LoadTheme(themeName, true)
 	SetActiveTheme(theme)
@@ -576,12 +595,14 @@ func NewModel(a *app.App, themeName string) Model {
 		themeName:          themeName,
 		keys:               defaultAppKeys(),
 		viewMode:           vm,
-		calendar:           NewCalendarModel(now).SetShowWeekNumbers(ui.ShowWeekNumbers),
-		week:               NewWeekModel(now).SetShowWeekNumbers(ui.ShowWeekNumbers),
+		calendar:           NewCalendarModel(now).SetShowWeekNumbers(ui.ShowWeekNumbers).SetWeekStart(weekStart),
+		week:               NewWeekModel(now).SetShowWeekNumbers(ui.ShowWeekNumbers).SetWeekStart(weekStart),
 		day:                NewDayModel(now),
 		agenda:             newAgendaForStartup(now, vm, ui.AgendaShowEmptyDays),
 		showSidebar:        ui.ShowSidebar,
 		showWeekNumbers:    ui.ShowWeekNumbers,
+		weekStart:          weekStart,
+		persistWeekStart:   persistWeekStart,
 		hiddenCalendars:    hidden,
 		focus:              focusCalendar,
 		sidebar:            sb,
@@ -2800,7 +2821,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case EventCreateMsg:
 		var cmd tea.Cmd
 		m.form, cmd = NewEventFormModel(msg.Day, eventFormCalendars(m.calendars), m.theme)
-		m.form = m.form.SetSize(m.width, m.height)
+		m.form = m.form.SetWeekStart(m.weekStart).SetSize(m.width, m.height)
 		m.formOpen = true
 		return m, cmd
 
@@ -2856,7 +2877,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		var cmd tea.Cmd
 		m.form, cmd = NewEventFormModelForEditInstance(msg.event, msg.instanceTime, eventFormCalendars(m.calendars), m.theme)
-		m.form = m.form.SetSize(m.width, m.height)
+		m.form = m.form.SetWeekStart(m.weekStart).SetSize(m.width, m.height)
 		m.formOpen = true
 		m.dialogOpen = false
 		if m.viewDialogOpen {
@@ -2905,7 +2926,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case EventDuplicateMsg:
 		var cmd tea.Cmd
 		m.form, cmd = NewEventFormModelForDuplicate(msg.Event, eventFormCalendars(m.calendars), m.theme)
-		m.form = m.form.SetSize(m.width, m.height)
+		m.form = m.form.SetWeekStart(m.weekStart).SetSize(m.width, m.height)
 		m.formOpen = true
 		if m.viewDialogOpen {
 			m.viewReturnEvent = msg.Event
@@ -3045,6 +3066,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ToggleWeekNumbersMsg:
 		return m.toggleWeekNumbers()
+
+	case ToggleWeekStartMsg:
+		return m.toggleWeekStart()
 
 	case eventCreatedMsg:
 		if msg.err != nil {
@@ -4850,6 +4874,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.toggleSidebar()
 		case key.Matches(msg, m.keys.WeekNumbers):
 			return m.toggleWeekNumbers()
+		case key.Matches(msg, m.keys.WeekStart):
+			return m.toggleWeekStart()
 		case key.Matches(msg, m.keys.CalendarList):
 			return m, func() tea.Msg { return CalendarManagerRequestedMsg{Target: CalendarManagerTargetRoot} }
 		case key.Matches(msg, m.keys.Sync):
@@ -4887,7 +4913,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			var cmd tea.Cmd
 			m.form, cmd = NewEventFormModel(cursor, eventFormCalendars(m.calendars), m.theme)
-			m.form = m.form.SetSize(m.width, m.height)
+			m.form = m.form.SetWeekStart(m.weekStart).SetSize(m.width, m.height)
 			m.formOpen = true
 			return m, cmd
 		}
@@ -5266,6 +5292,24 @@ func (m Model) toggleWeekNumbers() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// toggleWeekStart switches the first day of the week between Sunday and Monday.
+func (m Model) toggleWeekStart() (tea.Model, tea.Cmd) {
+	if m.weekStart == time.Monday {
+		m.weekStart = time.Sunday
+	} else {
+		m.weekStart = time.Monday
+	}
+	m.persistWeekStart = true
+	m.calendar = m.calendar.SetWeekStart(m.weekStart)
+	m.week = m.week.SetWeekStart(m.weekStart)
+	m.sidebar = m.sidebar.SetWeekStart(m.weekStart)
+	m.saveUIState()
+	if m.viewMode == viewWeek {
+		return m, m.loadEvents()
+	}
+	return m, nil
+}
+
 // toggleSidebar toggles the sidebar panel and resyncs view sizes.
 func (m Model) toggleSidebar() (tea.Model, tea.Cmd) {
 	m.showSidebar = !m.showSidebar
@@ -5302,6 +5346,13 @@ func (m *Model) switchView() tea.Cmd {
 	return m.loadEvents()
 }
 
+func (m Model) persistedWeekStart() string {
+	if !m.persistWeekStart {
+		return ""
+	}
+	return config.FormatWeekStart(m.weekStart)
+}
+
 func (m Model) saveUIState() {
 	var vm string
 	switch m.viewMode {
@@ -5327,13 +5378,15 @@ func (m Model) saveUIState() {
 		HiddenCalendars:     ids,
 		AgendaShowEmptyDays: m.agenda.ShowEmptyDays(),
 		ShowWeekNumbers:     m.showWeekNumbers,
+		WeekStart:           m.persistedWeekStart(),
 	})
 }
 
 // RunOptions configures a TUI session. A non-zero Event jumps to that
 // occurrence and opens its view dialog after the first load.
 type RunOptions struct {
-	Event event.Event
+	Event     event.Event
+	WeekStart time.Weekday
 }
 
 func Run(a *app.App, themeName string, opts RunOptions) error {
@@ -5354,7 +5407,7 @@ func Run(a *app.App, themeName string, opts RunOptions) error {
 	bg, palette := detectTerminalState(os.Stdin, os.Stdout)
 	SetActivePalette(palette)
 
-	model := NewModel(a, themeName)
+	model := newModel(a, themeName, opts.WeekStart)
 	if opts.Event.ID != 0 {
 		model = model.WithOpenEvent(opts.Event)
 	}

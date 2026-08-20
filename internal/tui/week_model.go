@@ -107,6 +107,14 @@ func (m WeekModel) SetShowWeekNumbers(show bool) WeekModel {
 	return m
 }
 
+// SetWeekStart sets the first day of the displayed week. Sunday is the default.
+func (m WeekModel) SetWeekStart(w time.Weekday) WeekModel {
+	m.weekStart = w
+	return m
+}
+
+func (m WeekModel) WeekStart() time.Weekday { return m.weekStart }
+
 func (m WeekModel) allDayRowCount() int {
 	anchor := m.WeekStartDate()
 	maxPerCol := 0

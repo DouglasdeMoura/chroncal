@@ -639,7 +639,7 @@ chroncal --event standup-uid --at 2026-04-17T14:00:00Z
 
 `--at` accepts an RFC 3339 timestamp or `YYYY-MM-DD`. It selects a generated occurrence of a recurring series. The details show the times of that occurrence, not the series start. Stored overrides take `--recurrence-id` with the series UID. `--at` requires `--event` and excludes `--recurrence-id`.
 
-**Views**: month, week, day, agenda. Switch with `m`, `w`, `d`, `a`.
+**Views**: month, week, day, agenda. Switch with `m`, `w`, `d`, `a`. Press `W` to switch the first day of the week between Sunday and Monday. The TUI stores the choice. You can also set `ui.week_start` in `config.toml`.
 
 The TUI can create, edit, view, and delete events. Event details include alarms, attendees, and attachments. Use `p` to copy event details. Use `u` to undo a delete.
 
@@ -672,13 +672,14 @@ Configuration loads in this order of precedence:
 | `db` | Path to SQLite database | `$XDG_DATA_HOME/chroncal/chroncal.db` |
 | `product_id` | iCal PRODID for export | `-//chroncal//chroncal//EN` |
 | `ui.theme` | Built-in TUI theme name under `internal/tui/themes/` (`system` or `default`; see [TUI themes](#tui-themes)) | `system` |
+| `ui.week_start` | First day of the week in the TUI month view, week view, and mini-calendar (`sunday` or `monday`) | `sunday` |
 | `soft_delete.purge_days` | Days to keep soft-deleted rows before the background purge. `0` disables automatic purge. | `30` |
 | `sync.interval` | Minimum interval between background CalDAV syncs that `chroncal service run` performs. `service install` defaults to `15m` when this is unset. | (unset — no sync unless the installed service sets `CHRONCAL_SYNC_INTERVAL`) |
 | `sync.conflict_strategy` | Default conflict-resolution mode when you do not pass `sync run --conflict` | (unset) |
 | `security.allow_unsafe_alarm_audio_attach` | Allow AUDIO alarms to attach arbitrary URIs. Off by default. | `false` |
 | `security.allow_unsafe_alarm_email_attendees` | Allow EMAIL alarms to send to unverified attendee addresses. Off by default. | `false` |
 
-Every key is also available as an environment variable (`CHRONCAL_` prefix, dots become underscores). Examples: `CHRONCAL_UI_THEME`, `CHRONCAL_SOFT_DELETE_PURGE_DAYS`, `CHRONCAL_SYNC_INTERVAL`.
+Every key is also available as an environment variable (`CHRONCAL_` prefix, dots become underscores). Examples: `CHRONCAL_UI_THEME`, `CHRONCAL_UI_WEEK_START`, `CHRONCAL_SOFT_DELETE_PURGE_DAYS`, `CHRONCAL_SYNC_INTERVAL`.
 
 ### TUI themes
 

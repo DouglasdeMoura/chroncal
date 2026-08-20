@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
@@ -12,6 +13,12 @@ import (
 func (m SidebarModel) SetTheme(t Theme) SidebarModel {
 	m.miniMonth = m.miniMonth.SetTheme(t.Selected, t.Today, t.Text, t.Muted)
 	m.list = m.list.SetTheme(t.Selected, t.Muted, t.Text, t.SelectedText, t.Error)
+	return m
+}
+
+// SetWeekStart propagates the first day of the week to the mini-month grid.
+func (m SidebarModel) SetWeekStart(w time.Weekday) SidebarModel {
+	m.miniMonth = m.miniMonth.SetWeekStart(w)
 	return m
 }
 
