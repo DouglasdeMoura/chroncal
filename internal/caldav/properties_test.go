@@ -55,6 +55,92 @@ func TestGetCalendarColor(t *testing.T) {
 	}
 }
 
+func TestGetCalendarColorForbiddenIncludesBody(t *testing.T) {
+	t.Parallel()
+
+	client := testHTTPClient{
+		do: func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusForbidden,
+				Status:     "403 Forbidden",
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"reason":"accessNotConfigured"}}`)),
+				Request:    req,
+			}, nil
+		},
+	}
+
+	_, err := GetCalendarColor(context.Background(), client, "https://example.com/cal/work")
+	if err == nil {
+		t.Fatal("err = nil, want 403")
+	}
+	if !strings.Contains(err.Error(), "accessNotConfigured") {
+		t.Fatalf("err = %q, want the response body", err)
+	}
+	if strings.Contains(err.Error(), googleCalDAVForbiddenHint) {
+		t.Fatalf("err = %q, must not hint at Google CalDAV on a generic host", err)
+	}
+}
+
+func TestGetCalendarColorGoogleForbiddenHintsCalDAVAPI(t *testing.T) {
+	t.Parallel()
+
+	client := testHTTPClient{
+		do: func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusForbidden,
+				Status:     "403 Forbidden",
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"reason":"accessNotConfigured"}}`)),
+				Request:    req,
+			}, nil
+		},
+	}
+
+	_, err := GetCalendarColor(context.Background(), client, "https://apidata.googleusercontent.com/caldav/v2/me@example.com/events")
+	if err == nil {
+		t.Fatal("err = nil, want 403")
+	}
+	if !strings.Contains(err.Error(), "accessNotConfigured") {
+		t.Fatalf("err = %q, want the response body", err)
+	}
+	if !strings.Contains(err.Error(), googleCalDAVForbiddenHint) {
+		t.Fatalf("err = %q, want the caldav.googleapis.com hint", err)
+	}
+}
+
+func TestGetCalendarColorPropstatForbiddenIsEmpty(t *testing.T) {
+	t.Parallel()
+
+	client := testHTTPClient{
+		do: func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusMultiStatus,
+				Header:     http.Header{"Content-Type": []string{"application/xml"}},
+				Body: io.NopCloser(strings.NewReader(`<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:ic="http://apple.com/ns/ical/">
+  <d:response>
+    <d:href>/cal/work</d:href>
+    <d:propstat>
+      <d:prop><ic:calendar-color/></d:prop>
+      <d:status>HTTP/1.1 403 Forbidden</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`)),
+				Request: req,
+			}, nil
+		},
+	}
+
+	color, err := GetCalendarColor(context.Background(), client, "https://example.com/cal/work")
+	if err != nil {
+		t.Fatalf("GetCalendarColor: %v", err)
+	}
+	if color != "" {
+		t.Fatalf("color = %q, want empty when the property is forbidden", color)
+	}
+}
+
 func TestNormalizeCalendarColor(t *testing.T) {
 	t.Parallel()
 

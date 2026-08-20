@@ -494,6 +494,8 @@ Google limitations:
 
 - Google CalDAV only supports `VEVENT`. Use Nextcloud, Radicale, or Fastmail for `VTODO` and `VJOURNAL`.
 - Google paginates large `sync-collection` REPORT responses (RFC 6578 §3.6). It returns a `507` marker plus a continuation token. chroncal follows the pages and applies the union. The first sync of a large calendar then pulls every event.
+- If account add lists calendars but the first sync returns HTTP 403, enable `caldav.googleapis.com` on the Google Cloud project. The Calendar JSON API is not enough.
+- A failed calendar-color PROPFIND does not block event sync. Google colors come from CalendarList.
 
 ### Free/busy
 

@@ -2,7 +2,9 @@ package caldav
 
 import (
 	"errors"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,5 +80,31 @@ func TestHTTPErrorNoRetryAfterStaysPlain(t *testing.T) {
 	// Still retryable via status-code classification.
 	if !retry.IsTransient(err) {
 		t.Fatalf("httpError(503) should still be transient: %v", err)
+	}
+}
+
+func TestHTTPErrorAnnotatesGoogleCalDAVForbidden(t *testing.T) {
+	t.Parallel()
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://apidata.googleusercontent.com/caldav/v2/me@example.com/events/", nil)
+	if err != nil {
+		t.Fatalf("NewRequestWithContext: %v", err)
+	}
+	resp := &http.Response{
+		StatusCode: http.StatusForbidden,
+		Status:     "403 Forbidden",
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"error":{"reason":"accessNotConfigured"}}`)),
+		Request:    req,
+	}
+	got := httpError(resp)
+	if got == nil {
+		t.Fatal("httpError = nil, want 403")
+	}
+	if !strings.Contains(got.Error(), "accessNotConfigured") {
+		t.Fatalf("err = %q, want the response body", got)
+	}
+	if !strings.Contains(got.Error(), googleCalDAVForbiddenHint) {
+		t.Fatalf("err = %q, want the caldav.googleapis.com hint", got)
 	}
 }

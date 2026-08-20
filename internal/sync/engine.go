@@ -1674,6 +1674,13 @@ func (e *Engine) syncCalendarMetadata(ctx context.Context, client *caldav.Client
 		return fmt.Errorf("get calendar for metadata sync: %w", err)
 	}
 
+	// Google CalendarList already supplies the color at discovery. Apple
+	// calendar-color is not a Google CalDAV property. Skip both the fetch
+	// and the push. A PROPFIND 403 must not fail event sync (issue #628).
+	if caldav.IsGoogleCalendarEndpoint(remoteURL) {
+		return nil
+	}
+
 	// A dirty local color wins: push it and clear the flag. Skip the remote
 	// fetch entirely — its value would be discarded, and a failed fetch must
 	// not block the pending push or strand ColorDirty (issue #419).
@@ -1693,7 +1700,15 @@ func (e *Engine) syncCalendarMetadata(ctx context.Context, client *caldav.Client
 		return client.GetCalendarColor(ctx, remoteURL)
 	})
 	if err != nil {
-		return fmt.Errorf("get remote calendar color: %w", err)
+		// Color is decorative. A server that refuses calendar-color must
+		// not fail the rest of the calendar sync (issue #628).
+		e.logger.Warn("get remote calendar color failed", "calendar_id", calendarID, "error", err)
+		return nil
+	}
+	if remoteColor == "" {
+		// The server does not advertise a color. Keep the color that
+		// discovery or the user already set.
+		return nil
 	}
 
 	if remoteColor != storage.NullableToString(cal.RemoteColor) {
