@@ -80,20 +80,12 @@ func (m SidebarModel) Blur() SidebarModel {
 }
 func (m SidebarModel) Focused() bool { return m.focused }
 
-func (m SidebarModel) MiniMonth() MiniMonthModel { return m.miniMonth }
-func (m SidebarModel) List() CalendarListModel   { return m.list }
+func (m SidebarModel) List() CalendarListModel { return m.list }
 
 // SetList replaces the calendar list child (e.g. after calendars reload).
 // Focus state is preserved.
 func (m SidebarModel) SetList(l CalendarListModel) SidebarModel {
 	m.list = l
-	return m.refocusChildren()
-}
-
-// SetMiniMonth replaces the mini-month child (for example after a refresh of
-// the per-day event-density set). Focus state is kept.
-func (m SidebarModel) SetMiniMonth(mm MiniMonthModel) SidebarModel {
-	m.miniMonth = mm
 	return m.refocusChildren()
 }
 

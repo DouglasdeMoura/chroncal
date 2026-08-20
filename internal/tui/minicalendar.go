@@ -15,14 +15,6 @@ import (
 // The parent (app.go) decides what to do — typically move the active main view.
 type MiniMonthDateSelectedMsg struct{ Date time.Time }
 
-// MiniMonthMonthChangedMsg is emitted whenever the displayed month changes
-// (via a cursor that crosses a boundary, chevron / [ / ] shifts, or snap-to-today).
-// The parent uses this to (re)load the per-day event-density map for the new
-// month. Month changes are preview-only and do NOT carry into the main view.
-// Only an explicit day selection (MiniMonthDateSelectedMsg) drives the main
-// view's cursor.
-type MiniMonthMonthChangedMsg struct{ Month time.Time }
-
 type miniMonthKeyMap struct {
 	Up, Down, Left, Right key.Binding
 	PrevMonth, NextMonth  key.Binding
@@ -68,9 +60,6 @@ type MiniMonthModel struct {
 	textColor    color.Color
 	mutedColor   color.Color
 	rangeColor   color.Color
-	// eventDays holds "YYYY-MM-DD" keys for days that have at least one
-	// visible event; rendered as a combining dot below the day number.
-	eventDays map[string]bool
 	// Range highlight (opt-in). When rangeActive is true, days between
 	// rangeStart and rangeEnd render with the range background, and the
 	// two endpoints render with the cursor/accent highlight.
@@ -122,13 +111,6 @@ func (m MiniMonthModel) RangeStart() time.Time { return m.rangeStart }
 
 // RangeEnd returns the currently pinned range end (zero if none).
 func (m MiniMonthModel) RangeEnd() time.Time { return m.rangeEnd }
-
-// SetEventDays replaces the set of days (keyed "YYYY-MM-DD") that should be
-// marked as having at least one visible event. Pass nil to clear the set.
-func (m MiniMonthModel) SetEventDays(days map[string]bool) MiniMonthModel {
-	m.eventDays = days
-	return m
-}
 
 func (m MiniMonthModel) Focus() MiniMonthModel { m.focused = true; return m }
 func (m MiniMonthModel) Blur() MiniMonthModel  { m.focused = false; return m }
@@ -184,44 +166,31 @@ func (m MiniMonthModel) RetreatFocus() MiniMonthModel {
 	return m
 }
 
-// monthChangedCmd returns a cmd that emits MiniMonthMonthChangedMsg with the
-// current displayMonth, or nil if prev is already in the same month.
-func (m MiniMonthModel) monthChangedCmd(prev time.Time) tea.Cmd {
-	if prev.Year() == m.displayMonth.Year() && prev.Month() == m.displayMonth.Month() {
-		return nil
-	}
-	month := m.displayMonth
-	return func() tea.Msg { return MiniMonthMonthChangedMsg{Month: month} }
-}
-
 func (m MiniMonthModel) moveCursor(dx, dy int) (MiniMonthModel, tea.Cmd) {
-	prev := m.displayMonth
 	next := m.cursor.AddDate(0, 0, dy*7+dx)
 	m.cursor = next
 	if next.Year() != m.displayMonth.Year() || next.Month() != m.displayMonth.Month() {
 		m.displayMonth = time.Date(next.Year(), next.Month(), 1, 0, 0, 0, 0, next.Location())
 	}
-	return m, m.monthChangedCmd(prev)
+	return m, nil
 }
 
 func (m MiniMonthModel) shiftMonth(delta int) (MiniMonthModel, tea.Cmd) {
-	prev := m.displayMonth
 	m.displayMonth = m.displayMonth.AddDate(0, delta, 0)
 	// Snap the cursor to the first of the new month so that when Tab
 	// arrives at the day grid after a chevron shift, the selection is the
 	// first day of the newly displayed month instead of a date that's no
 	// longer in view.
 	m.cursor = m.displayMonth
-	return m, m.monthChangedCmd(prev)
+	return m, nil
 }
 
 func (m MiniMonthModel) snapToday() (MiniMonthModel, tea.Cmd) {
-	prev := m.displayMonth
 	now := time.Now()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	m.cursor = today
 	m.displayMonth = time.Date(today.Year(), today.Month(), 1, 0, 0, 0, 0, today.Location())
-	return m, m.monthChangedCmd(prev)
+	return m, nil
 }
 
 func (m MiniMonthModel) Update(msg tea.Msg) (MiniMonthModel, tea.Cmd) {
@@ -331,14 +300,8 @@ func (m MiniMonthModel) HandleClick(x, y int) (MiniMonthModel, tea.Cmd) {
 	return m, func() tea.Msg { return MiniMonthDateSelectedMsg{Date: sel} }
 }
 
-// eventDotSuffix is the Unicode combining dot-below character. Appended to a
-// day number it renders as the same number with a small dot directly beneath
-// it. That gives an event-density cue with no change of cell width.
-const eventDotSuffix = "\u0323"
-
 // View renders a 7-column day grid with a header row that shows the month.
-// Cursor is highlighted. Today is bolded. Days with events get a subtle dot
-// below the digit.
+// Cursor is highlighted. Today is bolded.
 func (m MiniMonthModel) View() string {
 	var b strings.Builder
 	// Header: chevrons are real tab stops (Tab / click) for month navigation.
@@ -391,11 +354,6 @@ func (m MiniMonthModel) View() string {
 	for cur.Month() == first.Month() {
 		key := cur.Format("2006-01-02")
 		num := fmt.Sprintf("%2d", cur.Day())
-		// Combining dot below attaches to the last rune of the number without
-		// taking a display column, so the grid geometry is preserved.
-		if m.eventDays[key] {
-			num += eventDotSuffix
-		}
 		cell := num
 		isCursor := key == cursorDay
 		isToday := key == todayKey

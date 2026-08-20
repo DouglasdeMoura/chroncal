@@ -101,16 +101,6 @@ type eventsLoadedMsg struct {
 	err    error
 }
 
-// miniMonthEventsLoadedMsg carries the events for the sidebar mini-month's
-// displayed month. It's separate from eventsLoadedMsg so the mini-month's
-// event-density dots can be computed independently from the main view's
-// query range (which may be a single day/week).
-type miniMonthEventsLoadedMsg struct {
-	month  time.Time
-	events []event.Event
-	err    error
-}
-
 type calendarsLoadedMsg struct {
 	calendars map[int64]CalendarInfo
 	accounts  map[int64]account.Account
@@ -513,10 +503,6 @@ type Model struct {
 	helpDialog     HelpDialogModel
 	helpDialogOpen bool
 
-	// miniMonthEvents caches the raw events for the sidebar mini-month's
-	// displayed month so visibility toggles can re-filter without a DB hit.
-	miniMonthEvents []event.Event
-
 	// syncStatus is a transient footer line shown during/after a sync run.
 	// statusToken is bumped whenever the status changes so stale Tick
 	// expirations can tell whether they still own the current line.
@@ -746,7 +732,7 @@ func (m Model) loadEventsIncremental() tea.Cmd {
 // also says whether the result is a merge (incremental) or a replacement
 // (full refresh).
 func (m Model) queryEventsRange(from, to time.Time, merge bool) tea.Cmd {
-	mainCmd := func() tea.Msg {
+	return func() tea.Msg {
 		expanded, err := m.app.Recurrences.ListExpandedEvents(context.Background(), from, to)
 		events := make([]event.Event, len(expanded))
 		for i, e := range expanded {
@@ -759,9 +745,6 @@ func (m Model) queryEventsRange(from, to time.Time, merge bool) tea.Cmd {
 		}
 		return eventsLoadedMsg{from: from, to: to, merge: merge, events: events, err: err}
 	}
-	// The mini-month shows a full month regardless of the main view's range,
-	// so refresh its per-day event counts alongside every main reload.
-	return tea.Batch(mainCmd, m.loadMiniMonthEvents())
 }
 
 // mergeEvents dedup-appends new events into the stored list. The dedup key is
@@ -790,27 +773,6 @@ func mergeEvents(existing, incoming []event.Event) []event.Event {
 
 func eventDedupKey(e event.Event) string {
 	return e.StartTime.UTC().Format(time.RFC3339) + "|" + fmt.Sprint(e.ID)
-}
-
-// loadMiniMonthEvents queries the single-month range displayed by the sidebar
-// mini-month so we can paint event-density dots under day numbers.
-func (m Model) loadMiniMonthEvents() tea.Cmd {
-	mm := m.sidebar.MiniMonth().DisplayMonth()
-	monthStart := time.Date(mm.Year(), mm.Month(), 1, 0, 0, 0, 0, time.UTC)
-	from, to := localSpanQueryRange(monthStart, monthStart.AddDate(0, 1, 0))
-	return func() tea.Msg {
-		expanded, err := m.app.Recurrences.ListExpandedEvents(context.Background(), from, to)
-		events := make([]event.Event, len(expanded))
-		for i, e := range expanded {
-			evt := e.Event
-			if !evt.EndTime.IsZero() {
-				evt.EndTime = e.InstanceTime.Add(evt.EndTime.Sub(evt.StartTime))
-			}
-			evt.StartTime = e.InstanceTime
-			events[i] = evt
-		}
-		return miniMonthEventsLoadedMsg{month: monthStart, events: events, err: err}
-	}
 }
 
 // trashLoadedMsg carries trash entries across events, todos, and journals
@@ -848,22 +810,6 @@ func (m Model) loadTrash() tea.Cmd {
 	}
 }
 
-// refreshMiniMonthDays recomputes the per-day event-density set from the
-// cached mini-month events. It honors the current hiddenCalendars filter.
-// It then pushes the set into the sidebar.
-func (m Model) refreshMiniMonthDays() Model {
-	days := make(map[string]bool, len(m.miniMonthEvents))
-	for _, e := range m.miniMonthEvents {
-		if m.hiddenCalendars[e.CalendarID] {
-			continue
-		}
-		days[eventDay(e).Format("2006-01-02")] = true
-	}
-	mm := m.sidebar.MiniMonth().SetEventDays(days)
-	m.sidebar = m.sidebar.SetMiniMonth(mm)
-	return m
-}
-
 func eventsOn(events []event.Event, day time.Time) []event.Event {
 	dayKey := day.Local().Format("2006-01-02")
 	var out []event.Event
@@ -879,16 +825,6 @@ func eventsOn(events []event.Event, day time.Time) []event.Event {
 		}
 	}
 	return out
-}
-
-// eventDay returns the display date for an event. All-day events use their
-// UTC date (a datestamp, not a point in time). They then appear on the
-// correct day regardless of the local timezone offset.
-func eventDay(e event.Event) time.Time {
-	if e.AllDay {
-		return e.StartTime.UTC()
-	}
-	return e.StartTime.Local()
 }
 
 func eventsToCalendar(events []event.Event, calendars map[int64]CalendarInfo, hidden map[int64]bool) []CalendarEvent {
@@ -3261,29 +3197,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m = m.navigateMainTo(msg.Date)
 		return m, m.loadEvents()
 
-	case MiniMonthMonthChangedMsg:
-		// Sidebar month shifted — refresh the mini-month density dots so
-		// the new month's events render. Main-view navigation is driven
-		// only by explicit day selection (MiniMonthDateSelectedMsg); month
-		// changes here are preview-only.
-		return m, m.loadMiniMonthEvents()
-
-	case miniMonthEventsLoadedMsg:
-		if msg.err != nil {
-			// Don't surface a sidebar fetch error as m.err — the main view
-			// still works; silently drop and leave the old density map.
-			return m, nil
-		}
-		// Guard against a stale load: if the user shifted months between
-		// request and response, only accept the result if it still matches.
-		current := m.sidebar.MiniMonth().DisplayMonth()
-		if current.Year() != msg.month.Year() || current.Month() != msg.month.Month() {
-			return m, nil
-		}
-		m.miniMonthEvents = msg.events
-		m = m.refreshMiniMonthDays()
-		return m, nil
-
 	case CalendarVisibilityToggledMsg:
 		// Mirror the toggle into the open calendar manager. Its root list
 		// and reopened detail params then never go stale. The manager's own
@@ -3303,8 +3216,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sidebar = m.sidebar.SetList(list)
 		m.saveUIState()
 		m = m.refreshCalendarViews()
-		// Re-filter cached mini-month events against the new visibility set.
-		m = m.refreshMiniMonthDays()
 		if m.dialogOpen {
 			dayEvents := eventsOn(filterVisibleEvents(m.events, m.hiddenCalendars), m.dialog.day)
 			m.dialog = m.dialog.SetEvents(dayEvents)
