@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"io"
 	"slices"
 	"strings"
 	"time"
@@ -11,7 +10,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/douglasdemoura/chroncal/internal/account"
-	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/caldav"
 	"github.com/douglasdemoura/chroncal/internal/textsafe"
 )
@@ -82,13 +80,7 @@ func (m Model) discoverCalendarMove(sourceID, accountID int64) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		store, err := auth.NewCredentialStoreWithWarnings(
-			m.app.CredentialNamespace,
-			m.app.PreviousCredentialNamespaces,
-			m.app.MigrateLegacyCredentials,
-			m.app.AllowPlaintext,
-			io.Discard,
-		)
+		store, err := m.openCredentialStore()
 		if err != nil {
 			return calendarMoveDiscoveryReadyMsg{sourceID: sourceID, accountID: accountID, err: fmt.Errorf("open credential store: %w", err)}
 		}
