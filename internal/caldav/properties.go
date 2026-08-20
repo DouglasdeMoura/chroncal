@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -48,9 +47,12 @@ func GetCalendarColor(ctx context.Context, httpClient webdav.HTTPClient, calenda
 		return "", err
 	}
 	defer resp.Body.Close()
+	if resp.Request == nil {
+		resp.Request = req
+	}
 
 	if resp.StatusCode != http.StatusMultiStatus {
-		return "", statusErrorf(resp.StatusCode, "PROPFIND calendar-color: HTTP %d", resp.StatusCode)
+		return "", fmt.Errorf("PROPFIND calendar-color: %w", httpError(resp))
 	}
 
 	var ms calendarColorMultiStatus
@@ -64,7 +66,10 @@ func GetCalendarColor(ctx context.Context, httpClient webdav.HTTPClient, calenda
 			switch {
 			case code >= 200 && code < 300:
 				return NormalizeCalendarColor(propstat.Prop.CalendarColor), nil
-			case code == http.StatusNotFound:
+			case code == http.StatusNotFound, code == http.StatusForbidden:
+				// The collection exists. The server does not advertise
+				// calendar-color. Keep the call successful so sync can
+				// still pull events (issue #628).
 				return "", nil
 			case code != 0:
 				return "", statusErrorf(code, "PROPFIND calendar-color: HTTP %d", code)
@@ -155,8 +160,10 @@ func SetCalendarColor(ctx context.Context, httpClient webdav.HTTPClient, calenda
 		}
 		return nil
 	default:
-		_, _ = io.Copy(io.Discard, resp.Body)
-		return statusErrorf(resp.StatusCode, "PROPPATCH calendar-color: HTTP %d", resp.StatusCode)
+		if resp.Request == nil {
+			resp.Request = req
+		}
+		return fmt.Errorf("PROPPATCH calendar-color: %w", httpError(resp))
 	}
 }
 

@@ -139,6 +139,40 @@ func TestSyncCollectionForbiddenWithoutPreconditionIsGenericError(t *testing.T) 
 	if errors.Is(err, ErrSyncCollectionUnsupported) {
 		t.Fatalf("err = %v, must not be ErrSyncCollectionUnsupported on 403", err)
 	}
+	if !strings.Contains(err.Error(), "nope") {
+		t.Fatalf("err = %q, want the response body", err)
+	}
+}
+
+func TestSyncCollectionGoogleForbiddenHintsCalDAVAPI(t *testing.T) {
+	t.Parallel()
+
+	client, err := NewClient(putTestHTTPClient{do: func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusForbidden,
+			Status:     "403 Forbidden",
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"reason":"accessNotConfigured"}}`)),
+			Request:    req,
+		}, nil
+	}}, "https://apidata.googleusercontent.com/caldav/v2")
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	_, err = client.SyncCollection(context.Background(), "/me@example.com/events/", "")
+	if err == nil {
+		t.Fatal("err = nil, want 403")
+	}
+	if errors.Is(err, ErrSyncTokenInvalid) {
+		t.Fatalf("err = %v, must not be ErrSyncTokenInvalid", err)
+	}
+	if !strings.Contains(err.Error(), "accessNotConfigured") {
+		t.Fatalf("err = %q, want the response body", err)
+	}
+	if !strings.Contains(err.Error(), googleCalDAVForbiddenHint) {
+		t.Fatalf("err = %q, want the caldav.googleapis.com hint", err)
+	}
 }
 
 func TestSyncCollectionUnsupportedOnNotImplemented(t *testing.T) {

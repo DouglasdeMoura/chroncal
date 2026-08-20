@@ -2570,6 +2570,264 @@ func TestEngineSyncCalendarMetadataAdoptsRemoteColor(t *testing.T) {
 	}
 }
 
+func seedCalendarColorState(t *testing.T, db *sql.DB, q *storage.Queries, remoteURL, color, remoteColor string, dirty int) {
+	t.Helper()
+	ctx := context.Background()
+	account, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name:      "test",
+		ServerUrl: "https://example.com",
+		AuthType:  "basic",
+		Username:  "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID:        1,
+		AccountID: &account.ID,
+		RemoteUrl: storage.StringToNullable(remoteURL),
+	}); err != nil {
+		t.Fatalf("LinkCalendarToAccount: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		UPDATE calendars
+		SET color = ?, remote_color = ?, color_dirty = ?
+		WHERE id = 1
+	`, color, remoteColor, dirty); err != nil {
+		t.Fatalf("seed calendar color state: %v", err)
+	}
+}
+
+// TestEngineSyncCalendarMetadataIgnoresColorFetchForbidden reproduces
+// issue #628. A PROPFIND 403 for calendar-color must not fail metadata
+// sync. Event pull can then continue. The local color stays in place.
+func TestEngineSyncCalendarMetadataIgnoresColorFetchForbidden(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	seedCalendarColorState(t, db, q, "https://example.com/cal/work", "#9e69af", "#9e69af", 0)
+
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method != "PROPFIND" {
+			t.Fatalf("unexpected method %s", r.Method)
+		}
+		return &http.Response{
+			StatusCode: http.StatusForbidden,
+			Status:     "403 Forbidden",
+			Header:     http.Header{"Content-Type": []string{"text/plain"}},
+			Body:       io.NopCloser(strings.NewReader("nope")),
+			Request:    r,
+		}, nil
+	})
+
+	if err := engine.syncCalendarMetadata(context.Background(), client, 1, "https://example.com/cal/work"); err != nil {
+		t.Fatalf("syncCalendarMetadata: %v", err)
+	}
+
+	cal, err := q.GetCalendar(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("GetCalendar: %v", err)
+	}
+	if cal.Color != "#9e69af" {
+		t.Fatalf("Color = %q, want #9e69af", cal.Color)
+	}
+	if got := storage.NullableToString(cal.RemoteColor); got != "#9e69af" {
+		t.Fatalf("RemoteColor = %q, want #9e69af", got)
+	}
+}
+
+// TestEngineSyncCalendarMetadataSkipsGoogleColorRequests reproduces
+// issue #628. Google colors come from CalendarList. Apple calendar-color
+// traffic must not run against CalDAV.
+func TestEngineSyncCalendarMetadataSkipsGoogleColorRequests(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	seedCalendarColorState(t, db, q,
+		"https://apidata.googleusercontent.com/caldav/v2/me@example.com/events",
+		"#9e69af", "#9e69af", 1)
+
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		return nil, nil
+	})
+
+	if err := engine.syncCalendarMetadata(context.Background(), client, 1,
+		"https://apidata.googleusercontent.com/caldav/v2/me@example.com/events"); err != nil {
+		t.Fatalf("syncCalendarMetadata: %v", err)
+	}
+
+	cal, err := q.GetCalendar(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("GetCalendar: %v", err)
+	}
+	if cal.Color != "#9e69af" {
+		t.Fatalf("Color = %q, want #9e69af", cal.Color)
+	}
+	if cal.ColorDirty != 1 {
+		t.Fatalf("ColorDirty = %d, want 1", cal.ColorDirty)
+	}
+}
+
+// TestEngineSyncCalendarMetadataKeepsColorWhenRemoteOmitsIt reproduces
+// issue #628. A 404 propstat for calendar-color must not wipe a color
+// that discovery already stored.
+func TestEngineSyncCalendarMetadataKeepsColorWhenRemoteOmitsIt(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	seedCalendarColorState(t, db, q, "https://example.com/cal/work", "#9e69af", "#9e69af", 0)
+
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method != "PROPFIND" {
+			t.Fatalf("unexpected method %s", r.Method)
+		}
+		return &http.Response{
+			StatusCode: http.StatusMultiStatus,
+			Header:     http.Header{"Content-Type": []string{"application/xml"}},
+			Body: io.NopCloser(strings.NewReader(`<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:ic="http://apple.com/ns/ical/">
+  <d:response>
+    <d:href>/cal/work</d:href>
+    <d:propstat>
+      <d:prop><ic:calendar-color/></d:prop>
+      <d:status>HTTP/1.1 404 Not Found</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`)),
+			Request: r,
+		}, nil
+	})
+
+	if err := engine.syncCalendarMetadata(context.Background(), client, 1, "https://example.com/cal/work"); err != nil {
+		t.Fatalf("syncCalendarMetadata: %v", err)
+	}
+
+	cal, err := q.GetCalendar(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("GetCalendar: %v", err)
+	}
+	if cal.Color != "#9e69af" {
+		t.Fatalf("Color = %q, want #9e69af", cal.Color)
+	}
+}
+
+// TestEngineSyncCalendarPullsEventsWhenColorForbidden reproduces issue
+// #628. Initial sync must pull events even when calendar-color PROPFIND
+// returns HTTP 403.
+func TestEngineSyncCalendarPullsEventsWhenColorForbidden(t *testing.T) {
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+
+	const eventICS = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//chroncal//tests//EN
+BEGIN:VEVENT
+UID:color-403-event
+DTSTAMP:20260820T120000Z
+DTSTART:20260820T120000Z
+DTEND:20260820T130000Z
+SUMMARY:Still synced
+END:VEVENT
+END:VCALENDAR
+`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case "PROPFIND":
+			http.Error(w, `{"error":{"reason":"accessNotConfigured"}}`, http.StatusForbidden)
+			return
+		case "REPORT":
+			body, _ := io.ReadAll(r.Body)
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusMultiStatus)
+			if strings.Contains(string(body), "calendar-multiget") {
+				_, _ = io.WriteString(w, `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/calendar/color-403-event.ics</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>&quot;etag-1&quot;</d:getetag>
+        <cal:calendar-data>`+eventICS+`</cal:calendar-data>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`)
+				return
+			}
+			_, _ = io.WriteString(w, `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/calendar/color-403-event.ics</d:href>
+    <d:propstat>
+      <d:prop><d:getetag>&quot;etag-1&quot;</d:getetag></d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+  <d:sync-token>https://example.com/sync/1</d:sync-token>
+</d:multistatus>`)
+			return
+		default:
+			t.Errorf("unexpected method %s", r.Method)
+			http.Error(w, "unexpected", http.StatusMethodNotAllowed)
+		}
+	}))
+	defer server.Close()
+
+	remoteAccount, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name: "color-403", ServerUrl: server.URL, AuthType: "basic", Username: "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	calendars, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := calendars[0].ID
+	remoteURL := server.URL + "/calendar"
+	if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID: calendarID, AccountID: &remoteAccount.ID, RemoteUrl: &remoteURL,
+	}); err != nil {
+		t.Fatalf("LinkCalendarToAccount: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		UPDATE calendars SET color = '#9e69af', remote_color = '#9e69af', color_dirty = 0 WHERE id = ?
+	`, calendarID); err != nil {
+		t.Fatalf("seed calendar color: %v", err)
+	}
+	engine.credStore.(*mockCredStore).creds[remoteAccount.ID] = auth.Credential{
+		AccountID: remoteAccount.ID, Username: "user", Password: "secret",
+	}
+
+	result, err := engine.SyncCalendar(ctx, calendarID, ConflictServerWins)
+	if err != nil {
+		t.Fatalf("SyncCalendar: %v", err)
+	}
+	if len(result.Errors) != 0 {
+		t.Fatalf("sync errors = %v, want none after a color 403", result.Errors)
+	}
+	if result.Pulled != 1 {
+		t.Fatalf("Pulled = %d, want 1", result.Pulled)
+	}
+	evt, err := q.GetEventByUID(ctx, "color-403-event")
+	if err != nil {
+		t.Fatalf("GetEventByUID: %v", err)
+	}
+	if evt.Title != "Still synced" {
+		t.Fatalf("Title = %q, want Still synced", evt.Title)
+	}
+	cal, err := q.GetCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("GetCalendar: %v", err)
+	}
+	if cal.Color != "#9e69af" {
+		t.Fatalf("Color = %q, want #9e69af", cal.Color)
+	}
+}
+
 // TestEnginePullPaginatesTruncatedSyncCollection reproduces the Google
 // initial-snapshot data loss. The server truncates the sync-collection
 // response (RFC 6578 §3.6 — a 507 marker on the collection plus a

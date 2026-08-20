@@ -593,7 +593,33 @@ func statusErrorf(status int, format string, args ...any) error {
 	return retry.NewHTTPError(status, fmt.Errorf(format, args...))
 }
 
+const httpErrorBodyLimit = 1024
+
+// googleCalDAVForbiddenHint tells the user how to fix a Google CalDAV 403.
+// CalendarList uses the Calendar JSON API. Event sync uses CalDAV. Google
+// returns 403 from apidata.googleusercontent.com when caldav.googleapis.com
+// is off on the OAuth client project (issue #628).
+const googleCalDAVForbiddenHint = "enable caldav.googleapis.com on the Google Cloud project (the Calendar JSON API is not enough)"
+
 func httpError(resp *http.Response) error {
+	if resp == nil {
+		return fmt.Errorf("HTTP 0")
+	}
+
+	var body []byte
+	truncated := false
+	if resp.Body != nil {
+		lr := &io.LimitedReader{R: resp.Body, N: httpErrorBodyLimit}
+		body, _ = io.ReadAll(lr)
+		truncated = lr.N == 0
+	}
+	return httpErrorFromBody(resp, body, truncated)
+}
+
+// httpErrorFromBody builds the same typed HTTP error as httpError when the
+// caller already consumed the response body. Sync-collection sniffs a 403
+// for valid-sync-token and must still show the body (issue #628).
+func httpErrorFromBody(resp *http.Response, body []byte, truncated bool) error {
 	if resp == nil {
 		return fmt.Errorf("HTTP 0")
 	}
@@ -603,21 +629,20 @@ func httpError(resp *http.Response) error {
 		status = fmt.Sprintf("%d %s", resp.StatusCode, http.StatusText(resp.StatusCode))
 	}
 
-	var bodyText string
-	if resp.Body != nil {
-		lr := &io.LimitedReader{R: resp.Body, N: 1024}
-		body, _ := io.ReadAll(lr)
-		bodyText = strings.TrimSpace(string(body))
-		if lr.N == 0 {
-			bodyText += " […]"
-		}
+	bodyText := strings.TrimSpace(string(body))
+	if !truncated && len(bodyText) > httpErrorBodyLimit {
+		bodyText = bodyText[:httpErrorBodyLimit]
+		truncated = true
+	}
+	if truncated && bodyText != "" && !strings.HasSuffix(bodyText, " […]") {
+		bodyText += " […]"
 	}
 
 	msg := fmt.Sprintf("HTTP %s", status)
 	if bodyText != "" {
 		msg = fmt.Sprintf("HTTP %s: %s", status, bodyText)
 	}
-	err := retry.NewHTTPError(resp.StatusCode, errors.New(msg))
+	err := annotateGoogleCalDAVForbidden(resp, retry.NewHTTPError(resp.StatusCode, errors.New(msg)))
 
 	// Servers ask clients to back off via Retry-After (typically on 429 or
 	// 503). Thread that hint out as a typed transient error so the retry
@@ -628,6 +653,19 @@ func httpError(resp *http.Response) error {
 		}
 	}
 	return err
+}
+
+func annotateGoogleCalDAVForbidden(resp *http.Response, err error) error {
+	if err == nil || resp == nil || resp.StatusCode != http.StatusForbidden {
+		return err
+	}
+	if resp.Request == nil || resp.Request.URL == nil {
+		return err
+	}
+	if !IsGoogleCalendarEndpoint(resp.Request.URL.String()) {
+		return err
+	}
+	return fmt.Errorf("%w; %s", err, googleCalDAVForbiddenHint)
 }
 
 // parseRetryAfter parses an HTTP Retry-After header value, which is either a
