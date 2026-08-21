@@ -232,6 +232,7 @@ To enable EMAIL notifications, configure SMTP via environment variables:
   CHRONCAL_SMTP_PORT       SMTP server port (default: 587)
   CHRONCAL_SMTP_USERNAME   SMTP authentication username
   CHRONCAL_SMTP_PASSWORD   SMTP authentication password
+  CHRONCAL_SMTP_PASSWORD_CMD   command whose stdout is the password (alternative to CHRONCAL_SMTP_PASSWORD)
   CHRONCAL_SMTP_FROM       sender address for alarm emails
 
 Or in the config file ($XDG_CONFIG_HOME/chroncal/config.toml):
@@ -240,6 +241,8 @@ Or in the config file ($XDG_CONFIG_HOME/chroncal/config.toml):
   port = 587
   username = "user@example.com"
   password = "app-password"
+  # or retrieve the password with a command instead of hardcoding it:
+  # password_cmd = "pass show smtp/app-password"
   from = "noreply@example.com"
 
 Environment variables override config file values.

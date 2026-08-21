@@ -262,7 +262,11 @@ func Email(da alarm.DueAlarm, smtpCfg config.SMTPConfig, policy ExecutionPolicy)
 
 	var auth smtp.Auth
 	if smtpCfg.Username != "" {
-		auth = smtp.PlainAuth("", smtpCfg.Username, smtpCfg.Password, smtpCfg.Host)
+		password, err := smtpCfg.ResolvePassword()
+		if err != nil {
+			return err
+		}
+		auth = smtp.PlainAuth("", smtpCfg.Username, password, smtpCfg.Host)
 	}
 
 	if useImplicitTLS(smtpCfg) {

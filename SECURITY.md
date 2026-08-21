@@ -30,6 +30,6 @@ chroncal stores data in a local SQLite database. The main security areas are:
 - **iCal import** -- The import path parses untrusted `.ics` files. chroncal enforces payload and inline attachment size limits on import.
 - **Account credentials** -- The OS keyring stores credentials by default. Plaintext storage is opt-in only for environments without a usable keyring.
 - **OAuth tokens** -- Google CalDAV uses PKCE. The configured credential store keeps access tokens after a refresh.
-- **SMTP credentials** -- Config files store SMTP credentials.
+- **SMTP credentials** -- Config files store SMTP credentials. The `smtp.password_cmd` option runs a command at send time and keeps the secret out of the config file.
 - **Remote CalDAV servers** -- Sync, discovery, and free/busy requests use bounded HTTP clients and command deadlines.
 - **Desktop notifications** -- D-Bus on Linux.

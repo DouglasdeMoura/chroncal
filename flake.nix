@@ -12,7 +12,15 @@
       nixpkgs,
       flake-utils,
     }:
-    flake-utils.lib.eachDefaultSystem (
+    {
+      # Home Manager module. It sits outside eachDefaultSystem because a
+      # module must not pin one build system; the consumer's pkgs picks it.
+      homeModules.default = import ./home-manager.nix { inherit self; };
+
+      # Alias under the historical attribute name.
+      homeManagerModules.default = self.homeModules.default;
+    }
+    // flake-utils.lib.eachDefaultSystem (
       system:
       let
         pkgs = import nixpkgs { inherit system; };
