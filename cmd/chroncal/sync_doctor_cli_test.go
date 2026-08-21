@@ -1,64 +1,21 @@
 package main
 
 import (
-	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
-	"github.com/spf13/cobra"
-
 	"github.com/douglasdemoura/chroncal/internal/app"
-	"github.com/douglasdemoura/chroncal/internal/config"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
-// runSyncDoctorInProcess executes `sync doctor` against the database that
-// CHRONCAL_DB points at. The confirm helper refuses a non-interactive shell
-// without --yes, which is exactly the behavior under test.
-func runSyncDoctorInProcess(t *testing.T, args ...string) (string, string, error) {
+// seedWedgedCLIResource inserts one dirty event whose relations relation
+// cannot load, then renames that table. The doctor then lists exactly one
+// wedge. event_relations is safe to rename: only hydration reads it, so the
+// helper process still opens the database afterwards.
+func seedWedgedCLIResource(t *testing.T, dbPath string) {
 	t.Helper()
-
-	prevFmt, prevPlaintext := outputFmt, allowPlaintext
-	t.Cleanup(func() { outputFmt, allowPlaintext = prevFmt, prevPlaintext })
-
-	root := &cobra.Command{
-		Use: "chroncal-test",
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			var err error
-			cfg, err = config.Load()
-			return err
-		},
-	}
-	root.PersistentFlags().StringVarP(&outputFmt, "output", "o", "text", "output format (text, json)")
-	root.PersistentFlags().BoolVar(&allowPlaintext, "allow-plaintext", false, "permit storing credentials in plaintext when no OS keyring is available")
-	root.AddCommand(syncCmd())
-	var out, errBuf bytes.Buffer
-	root.SetOut(&out)
-	root.SetErr(&errBuf)
-	root.SetArgs(args)
-	err := root.Execute()
-	return out.String(), errBuf.String(), err
-}
-
-func TestSyncDoctorEmptyReportsNone(t *testing.T) {
-	t.Setenv("CHRONCAL_DB", t.TempDir()+"/doctor.db")
-
-	out, _, err := runSyncDoctorInProcess(t, "sync", "doctor")
-	if err != nil {
-		t.Fatalf("sync doctor: %v", err)
-	}
-	if !strings.Contains(out, "No wedged resources.") {
-		t.Errorf("output %q misses the empty report", out)
-	}
-}
-
-func TestSyncDoctorPushRefusesNonInteractiveWithoutYes(t *testing.T) {
-	dbPath := t.TempDir() + "/doctor.db"
-	t.Setenv("CHRONCAL_DB", dbPath)
-
-	// Seed one wedged resource so the push flow reaches its confirmation
-	// gate instead of stopping at the not-found check.
 	a, err := app.New(dbPath)
 	if err != nil {
 		t.Fatalf("app.New: %v", err)
@@ -87,19 +44,157 @@ func TestSyncDoctorPushRefusesNonInteractiveWithoutYes(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpsertSyncResource: %v", err)
 	}
-	// Wedge the relations relation. app.New must stay able to open the
-	// database afterwards, so the wedge cannot touch a table the startup
-	// maintenance queries (event_alarms, x-properties). event_relations is
-	// safe: only hydration reads it.
 	if _, err := a.DB.ExecContext(ctx, `ALTER TABLE event_relations RENAME TO event_relations_broken`); err != nil {
 		t.Fatalf("rename event_relations: %v", err)
 	}
+}
 
-	_, _, err = runSyncDoctorInProcess(t, "sync", "doctor", "--push", "wedge-cli@example.com")
+// bumpPushFailCount stores a failed-push count on the wedged resource, like
+// the engine bookkeeping does after failed push attempts.
+func bumpPushFailCount(t *testing.T, dbPath string, count int) {
+	t.Helper()
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	defer a.Close()
+	if _, err := a.DB.ExecContext(context.Background(),
+		`UPDATE sync_resources SET push_fail_count = ?, last_push_error = ?`,
+		count, "export wedge-cli@example.com: unreadable relation(s) relations",
+	); err != nil {
+		t.Fatalf("bump push_fail_count: %v", err)
+	}
+}
+
+func TestSyncDoctorEmptyReportsNone(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+
+	stdout, _, err := runChroncalCommand(t, "sync", "doctor")
+	if err != nil {
+		t.Fatalf("sync doctor: %v", err)
+	}
+	if !strings.Contains(stdout, "No wedged resources.") {
+		t.Errorf("output %q misses the empty report", stdout)
+	}
+}
+
+func TestSyncDoctorJSONEmptyIsArray(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+
+	stdout, _, err := runChroncalCommand(t, "sync", "doctor", "--output", "json")
+	if err != nil {
+		t.Fatalf("sync doctor --output json: %v", err)
+	}
+	var items []map[string]any
+	if err := json.Unmarshal([]byte(stdout), &items); err != nil {
+		t.Fatalf("decode %q: %v", stdout, err)
+	}
+	if len(items) != 0 {
+		t.Errorf("items = %v, want an empty array", items)
+	}
+}
+
+func TestSyncDoctorListsWedgedResource(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	seedWedgedCLIResource(t, dbPath)
+
+	stdout, stderr, err := runChroncalCommand(t, "sync", "doctor")
+	if err != nil {
+		t.Fatalf("sync doctor: %v (stderr: %s)", err, stderr)
+	}
+	if !strings.Contains(stdout, "uid wedge-cli@example.com (event): unreadable relation(s) relations; 0 failed push attempt(s)") {
+		t.Errorf("output %q misses the wedged line with its push-failure count", stdout)
+	}
+	// The whole recovery hint belongs to stdout. A consumer that captures
+	// stdout then also captures the command it needs.
+	for _, want := range []string{
+		"1 wedged resource(s). Recover one with:",
+		"chroncal sync doctor --push <uid> --yes",
+		"The push drops the unreadable relations from the server copy.",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout %q misses hint %q", stdout, want)
+		}
+	}
+	if strings.Contains(stderr, "chroncal sync doctor") {
+		t.Errorf("stderr %q carries part of the hint; the hint belongs on stdout", stderr)
+	}
+
+	bumpPushFailCount(t, dbPath, 3)
+	stdout, _, err = runChroncalCommand(t, "sync", "doctor")
+	if err != nil {
+		t.Fatalf("sync doctor after bumps: %v", err)
+	}
+	if !strings.Contains(stdout, "3 failed push attempt(s)") {
+		t.Errorf("output %q misses the recorded push-failure count", stdout)
+	}
+}
+
+func TestSyncDoctorJSONListsWedgedResource(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	seedWedgedCLIResource(t, dbPath)
+	bumpPushFailCount(t, dbPath, 2)
+
+	stdout, _, err := runChroncalCommand(t, "sync", "doctor", "--output", "json")
+	if err != nil {
+		t.Fatalf("sync doctor --output json: %v", err)
+	}
+	var items []map[string]any
+	if err := json.Unmarshal([]byte(stdout), &items); err != nil {
+		t.Fatalf("decode %q: %v", stdout, err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %v, want one entry", items)
+	}
+	item := items[0]
+	if item["uid"] != "wedge-cli@example.com" {
+		t.Errorf("uid = %v, want wedge-cli@example.com", item["uid"])
+	}
+	if item["owner_type"] != "event" {
+		t.Errorf("owner_type = %v, want event", item["owner_type"])
+	}
+	relations, _ := item["relations"].([]any)
+	if len(relations) != 1 || relations[0] != "relations" {
+		t.Errorf("relations = %v, want [relations]", item["relations"])
+	}
+	if item["push_fail_count"] != float64(2) {
+		t.Errorf("push_fail_count = %v, want 2", item["push_fail_count"])
+	}
+}
+
+func TestSyncDoctorPushRefusesNonInteractiveWithoutYes(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	seedWedgedCLIResource(t, dbPath)
+
+	// Seed one wedged resource so the push flow reaches its confirmation
+	// gate instead of stopping at the not-found check.
+	_, _, err := runChroncalCommand(t, "sync", "doctor", "--push", "wedge-cli@example.com")
 	if err == nil {
 		t.Fatal("expected refusal without --yes in a non-interactive shell")
 	}
 	if !strings.Contains(err.Error(), "--yes") {
 		t.Errorf("refusal %q does not mention --yes", err.Error())
+	}
+}
+
+func TestSyncDoctorPushUnknownUIDIsNotFound(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+
+	_, stderr, err := runChroncalCommand(t, "sync", "doctor", "--push", "missing@example.com", "--yes", "--output", "json")
+	if err == nil {
+		t.Fatal("push of an unknown uid should fail")
+	}
+	var payload struct {
+		Code  string `json:"code"`
+		Error string `json:"error"`
+	}
+	if jerr := json.Unmarshal([]byte(stderr), &payload); jerr != nil {
+		t.Fatalf("decode error payload %q: %v", stderr, jerr)
+	}
+	if payload.Code != "not_found" {
+		t.Fatalf("code = %q, want not_found", payload.Code)
+	}
+	if !strings.Contains(payload.Error, "missing@example.com") {
+		t.Fatalf("error = %q, want it to name the uid", payload.Error)
 	}
 }

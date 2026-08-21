@@ -62,11 +62,6 @@ func Rel[T any](ctx context.Context, c *Collector, dst *[]T, rel string, load fu
 	*dst = v
 }
 
-// Failures returns one entry per failed relation load.
-func (c *Collector) Failures() []RelFailure {
-	return c.failures
-}
-
 // Err returns the recorded errors joined via errors.Join, or nil when every
 // relation loaded. A non-nil result is always a *HydrationError, so callers
 // can read the failed relations in structured form via errors.As.

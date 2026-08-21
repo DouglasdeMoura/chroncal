@@ -164,3 +164,197 @@ func TestDiagnoseAndDoctorPushRecoverWedgedResource(t *testing.T) {
 		t.Errorf("the incomplete PUT carried a VALARM anyway:\n%s", body)
 	}
 }
+
+// newDoctorTestEnv builds an engine whose calendar points at srvURL. The
+// basic credential is already stored.
+func newDoctorTestEnv(t *testing.T, srvURL, name string) (*Engine, *sql.DB, *storage.Queries, storage.Calendar) {
+	t.Helper()
+	db, q, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	credStore := &mockCredStore{creds: make(map[int64]auth.Credential)}
+	engine := NewEngine(db, q, credStore,
+		calendar.NewService(db, q),
+		event.NewService(db, q),
+		todo.NewService(db, q),
+		journal.NewService(db, q),
+		nil)
+
+	account, err := q.CreateAccount(context.Background(), storage.CreateAccountParams{
+		Name:      name,
+		ServerUrl: srvURL,
+		AuthType:  "basic",
+		Username:  "user-" + name,
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	credStore.creds[account.ID] = auth.Credential{AccountID: account.ID, Username: "user-" + name, Password: "pw"}
+
+	cal, err := q.CreateCalendar(context.Background(), storage.CreateCalendarParams{Name: name})
+	if err != nil {
+		t.Fatalf("CreateCalendar: %v", err)
+	}
+	if err := q.LinkCalendarToAccount(context.Background(), storage.LinkCalendarToAccountParams{
+		ID:        cal.ID,
+		AccountID: &account.ID,
+		RemoteUrl: storage.StringToNullable(srvURL + "/cal/" + name + "/"),
+	}); err != nil {
+		t.Fatalf("LinkCalendarToAccount: %v", err)
+	}
+	return engine, db, q, cal
+}
+
+// TestPushRecordsFailureAndDoctorResetsCounter pins the push-failure
+// bookkeeping (issue #646). A push attempt that fails on the unreadable
+// relation increments push_fail_count and stores the error. The diagnosis
+// reports the count. A successful doctor push resets both columns.
+func TestPushRecordsFailureAndDoctorResetsCounter(t *testing.T) {
+	t.Parallel()
+
+	var failWrites atomic.Bool
+	failWrites.Store(true)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if failWrites.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("ETag", `"etag-doctor"`)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	t.Cleanup(srv.Close)
+
+	engine, db, q, cal := newDoctorTestEnv(t, srv.URL, "counter")
+	ctx := context.Background()
+	seedWedgedEvent(t, engine, db, q, cal.ID, "wedge-count")
+
+	// One push attempt fails on the unreadable relation. The export aborts
+	// before any PUT, so the fake client must stay untouched.
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		return nil, nil
+	})
+	result, err := engine.push(ctx, client, cal.ID, srv.URL, "", ConflictPrompt)
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if len(result.errors) != 1 {
+		t.Fatalf("errors = %v, want one export failure", result.errors)
+	}
+
+	res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: cal.ID, Uid: "wedge-count"})
+	if err != nil {
+		t.Fatalf("GetSyncResource: %v", err)
+	}
+	if res.PushFailCount != 1 {
+		t.Fatalf("PushFailCount = %d, want 1", res.PushFailCount)
+	}
+	if !strings.Contains(res.LastPushError, "unreadable relation(s)") {
+		t.Fatalf("LastPushError = %q, want it to name the relation", res.LastPushError)
+	}
+
+	wedged, err := engine.DiagnoseCalendar(ctx, cal.ID)
+	if err != nil {
+		t.Fatalf("DiagnoseCalendar: %v", err)
+	}
+	if len(wedged) != 1 || wedged[0].PushFailCount != 1 {
+		t.Fatalf("diagnosis = %+v, want one entry with PushFailCount 1", wedged)
+	}
+
+	// A successful doctor push resets the bookkeeping.
+	failWrites.Store(false)
+	if _, err := engine.DoctorPush(ctx, cal.ID, "wedge-count"); err != nil {
+		t.Fatalf("DoctorPush: %v", err)
+	}
+	res, err = q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: cal.ID, Uid: "wedge-count"})
+	if err != nil {
+		t.Fatalf("GetSyncResource: %v", err)
+	}
+	if res.PushFailCount != 0 || res.LastPushError != "" {
+		t.Fatalf("bookkeeping after doctor push: count=%d error=%q, want 0 and empty",
+			res.PushFailCount, res.LastPushError)
+	}
+	if res.Dirty != 0 {
+		t.Fatalf("Dirty = %d, want 0", res.Dirty)
+	}
+}
+
+// TestDoctorPushRecoversLostPutResponse mirrors the lost-response recovery
+// of the regular push (issue #294) on the doctor path (issue #647). The
+// first PUT lands and its response fails transiently. The retry sends the
+// stale If-Match and the server answers 412. The doctor adopts the ETag of
+// the landed write instead of failing the same way forever.
+func TestDoctorPushRecoversLostPutResponse(t *testing.T) {
+	t.Parallel()
+
+	var putBody atomic.Value
+	var putCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			body, _ := io.ReadAll(r.Body)
+			putBody.Store(string(body))
+			putCount.Add(1)
+			if putCount.Load() == 1 {
+				// The write landed. The response fails transiently, like a
+				// reset connection would.
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			// The retry carries the stale pre-PUT If-Match.
+			w.WriteHeader(http.StatusPreconditionFailed)
+		case http.MethodGet:
+			// The server holds exactly the body of the first PUT.
+			w.Header().Set("Content-Type", "text/calendar; charset=utf-8")
+			w.Header().Set("Etag", `"etag-after"`)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(putBody.Load().(string)))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	engine, db, q, cal := newDoctorTestEnv(t, srv.URL, "lostput")
+	ctx := context.Background()
+
+	// A previously synced wedged resource: it carries a remote URL and an
+	// ETag, so the doctor PUT is conditional.
+	insertTestEvent(t, db, cal.ID, "doctor-lost-put")
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   cal.ID,
+		Uid:          "doctor-lost-put",
+		OwnerType:    "event",
+		RemoteUrl:    "/cal/lostput/doctor-lost-put.ics",
+		Etag:         `"etag-before"`,
+		Dirty:        1,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+	breakEventAlarms(t, db)
+
+	dropped, err := engine.DoctorPush(ctx, cal.ID, "doctor-lost-put")
+	if err != nil {
+		t.Fatalf("DoctorPush: %v", err)
+	}
+	if len(dropped) != 1 || dropped[0] != "alarms" {
+		t.Fatalf("dropped = %v, want [alarms]", dropped)
+	}
+	if got := putCount.Load(); got != 2 {
+		t.Fatalf("PUT count = %d, want 2 (one lost response, one rejected retry)", got)
+	}
+	res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: cal.ID, Uid: "doctor-lost-put"})
+	if err != nil {
+		t.Fatalf("GetSyncResource: %v", err)
+	}
+	if res.Etag != "etag-after" {
+		t.Fatalf("Etag = %q, want the landed write's etag-after", res.Etag)
+	}
+	if res.Dirty != 0 {
+		t.Fatalf("Dirty = %d, want 0", res.Dirty)
+	}
+}

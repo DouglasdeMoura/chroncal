@@ -589,14 +589,18 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 				continue
 			}
 			e.logger.Error("export resource failed", "uid", res.Uid, "error", err)
-			result.errors = append(result.errors, fmt.Errorf("export %s: %w", res.Uid, err))
+			exportErr := fmt.Errorf("export %s: %w", res.Uid, err)
+			result.errors = append(result.errors, exportErr)
+			e.recordPushFailure(ctx, calendarID, res.Uid, exportErr)
 			continue
 		}
 
 		// Parse the iCal data for PUT
 		cal, parseErr := parseICalData(icalData)
 		if parseErr != nil {
-			result.errors = append(result.errors, fmt.Errorf("parse ical for %s: %w", res.Uid, parseErr))
+			parseErr = fmt.Errorf("parse ical for %s: %w", res.Uid, parseErr)
+			result.errors = append(result.errors, parseErr)
+			e.recordPushFailure(ctx, calendarID, res.Uid, parseErr)
 			continue
 		}
 
@@ -605,13 +609,17 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 		if res.RemoteUrl != "" {
 			putPath, err = client.CanonicalObjectRef(remoteURL, res.RemoteUrl)
 			if err != nil {
-				result.errors = append(result.errors, fmt.Errorf("validate remote href for %s: %w", res.Uid, err))
+				err = fmt.Errorf("validate remote href for %s: %w", res.Uid, err)
+				result.errors = append(result.errors, err)
+				e.recordPushFailure(ctx, calendarID, res.Uid, err)
 				continue
 			}
 		} else {
 			putPath, err = client.CanonicalObjectRef(remoteURL, buildRemoteResourcePath(remoteURL, res.Uid))
 			if err != nil {
-				result.errors = append(result.errors, fmt.Errorf("build remote href for %s: %w", res.Uid, err))
+				err = fmt.Errorf("build remote href for %s: %w", res.Uid, err)
+				result.errors = append(result.errors, err)
+				e.recordPushFailure(ctx, calendarID, res.Uid, err)
 				continue
 			}
 		}
@@ -718,7 +726,9 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 				continue
 			}
 			e.logger.Error("PUT failed", "uid", res.Uid, "error", putErr)
-			result.errors = append(result.errors, fmt.Errorf("put %s: %w", res.Uid, putErr))
+			putErr = fmt.Errorf("put %s: %w", res.Uid, putErr)
+			result.errors = append(result.errors, putErr)
+			e.recordPushFailure(ctx, calendarID, res.Uid, putErr)
 			continue
 		}
 
@@ -737,6 +747,9 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 		}); err != nil {
 			e.logger.Error("finalize pushed resource failed", "uid", res.Uid, "error", err)
 		}
+		// The body reached the server, so this attempt succeeded. Reset the
+		// failure bookkeeping even when the finalize write above failed.
+		e.clearPushFailure(ctx, calendarID, res.Uid)
 
 		// Update remote URL if it was newly assigned
 		if res.RemoteUrl == "" {
@@ -758,6 +771,33 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 	}
 
 	return result, nil
+}
+
+// recordPushFailure stores one more consecutive failed push attempt for a
+// resource. The push loop and the sync doctor call it after a push attempt
+// that fails on an export, a parse, or a PUT. The doctor reads the counter
+// to show how long a resource stayed wedged. A failed bookkeeping write
+// only logs: the push error itself stays the reported failure.
+func (e *Engine) recordPushFailure(ctx context.Context, calendarID int64, uid string, err error) {
+	if rerr := e.q.RecordSyncResourcePushFailure(ctx, storage.RecordSyncResourcePushFailureParams{
+		LastPushError: err.Error(),
+		CalendarID:    calendarID,
+		Uid:           uid,
+	}); rerr != nil {
+		e.logger.Warn("record push failure", "uid", uid, "error", rerr)
+	}
+}
+
+// clearPushFailure resets the push-failure bookkeeping after a successful
+// push. A failed bookkeeping write only logs: the pushed body already
+// reached the server.
+func (e *Engine) clearPushFailure(ctx context.Context, calendarID int64, uid string) {
+	if cerr := e.q.ClearSyncResourcePushFailure(ctx, storage.ClearSyncResourcePushFailureParams{
+		CalendarID: calendarID,
+		Uid:        uid,
+	}); cerr != nil {
+		e.logger.Warn("clear push failure", "uid", uid, "error", cerr)
+	}
 }
 
 // putAlreadyLanded reports whether the server's current body for path equals

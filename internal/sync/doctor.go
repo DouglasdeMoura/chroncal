@@ -8,11 +8,11 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/caldav"
 	"github.com/douglasdemoura/chroncal/internal/event"
-	"github.com/douglasdemoura/chroncal/internal/journal"
-	"github.com/douglasdemoura/chroncal/internal/todo"
 	"github.com/douglasdemoura/chroncal/internal/hydrate"
 	icalPkg "github.com/douglasdemoura/chroncal/internal/ical"
+	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
 // WedgedResource describes a dirty sync resource whose export fails on a
@@ -24,6 +24,10 @@ type WedgedResource struct {
 	OwnerType  string
 	// Relations names every relation whose load failed.
 	Relations []string
+	// PushFailCount counts the consecutive push attempts that failed
+	// before this diagnosis. The push loop and this doctor increment it
+	// after every failed attempt (issue #646).
+	PushFailCount int64
 }
 
 // DiagnoseCalendar exports every dirty resource of one calendar and returns
@@ -44,10 +48,11 @@ func (e *Engine) DiagnoseCalendar(ctx context.Context, calendarID int64) ([]Wedg
 				rels = append(rels, f.Relation)
 			}
 			wedged = append(wedged, WedgedResource{
-				CalendarID: calendarID,
-				UID:        res.Uid,
-				OwnerType:  res.OwnerType,
-				Relations:  rels,
+				CalendarID:    calendarID,
+				UID:           res.Uid,
+				OwnerType:     res.OwnerType,
+				Relations:     rels,
+				PushFailCount: res.PushFailCount,
 			})
 		}
 	}
@@ -60,7 +65,21 @@ func (e *Engine) DiagnoseCalendar(ctx context.Context, calendarID int64) ([]Wedg
 // this is the one path where chroncal knowingly pushes an incomplete record,
 // and it exists so a deterministic local corruption cannot block every other
 // edit forever (issue #568).
+//
+// The doctor deliberately skips the organizer gate (userOrganizesEvent) that
+// the regular push enforces. The doctor exists to move resources the regular
+// push cannot move. A foreign-organized meeting with an unreadable relation
+// stays wedged without this bypass.
 func (e *Engine) DoctorPush(ctx context.Context, calendarID int64, uid string) (dropped []string, err error) {
+	// Hold the calendar lifecycle lock across the dirty snapshot, the PUT,
+	// and the finalize, like SyncCalendar and PushCalendar do. A concurrent
+	// sync run must not interleave between them (issue #647).
+	release, err := e.lockCalendarLifecycle(ctx, calendarID)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	cal, _, client, remoteURL, err := e.loadCalendarClient(ctx, calendarID)
 	if err != nil {
 		return nil, err
@@ -106,11 +125,32 @@ func (e *Engine) DoctorPush(ctx context.Context, calendarID int64, uid string) (
 		}
 	}
 
+	// A PUT can reach the server and still lose its response, which Retry
+	// classifies as transient. The retried PUT re-sends the stale If-Match
+	// and the server answers 412 forever. Mirror the regular push loop:
+	// when an earlier attempt may have landed and the server now holds the
+	// exact body we sent, adopt the landed ETag. See issues #294 and #647.
+	priorAttemptMayHaveLanded := false
 	newEtag, putErr := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (string, error) {
-		return client.PutResource(ctx, putPath, body, res.Etag)
+		etag, err := client.PutResource(ctx, putPath, body, res.Etag)
+		if err == nil {
+			return etag, nil
+		}
+		// A 412 is never transient, so these branches are exclusive.
+		if caldav.IsTransient(err) {
+			priorAttemptMayHaveLanded = true
+		} else if priorAttemptMayHaveLanded && caldav.IsConflict(err) {
+			if landedEtag, ok := e.putAlreadyLanded(ctx, client, putPath, body); ok {
+				return landedEtag, nil
+			}
+		}
+		return etag, err
 	})
+
 	if putErr != nil {
-		return dropped, fmt.Errorf("put %s: %w", uid, putErr)
+		putErr = fmt.Errorf("put %s: %w", uid, putErr)
+		e.recordPushFailure(ctx, calendarID, uid, putErr)
+		return dropped, putErr
 	}
 
 	if err := e.q.FinalizePushedResource(ctx, storage.FinalizePushedResourceParams{
@@ -121,6 +161,9 @@ func (e *Engine) DoctorPush(ctx context.Context, calendarID int64, uid string) (
 	}); err != nil {
 		return dropped, fmt.Errorf("finalize pushed resource %s: %w", uid, err)
 	}
+	// The incomplete record reached the server. Reset the failure
+	// bookkeeping like a regular successful push does.
+	e.clearPushFailure(ctx, calendarID, uid)
 	if res.RemoteUrl == "" {
 		if err := e.q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
 			CalendarID:   calendarID,
