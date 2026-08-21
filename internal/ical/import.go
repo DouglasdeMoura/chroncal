@@ -61,6 +61,25 @@ var errImportLimitExceeded = errors.New("ical import exceeds configured limits")
 const xpropOriginalDTEND = model.XPropOriginalDTEND
 
 // ImportFile parses an iCal stream from a file or another local source.
+
+// stripCommentLines removes physical lines that start with ";" and returns the
+// rest. RFC 5545 does not define a comment production, but chroncal's own
+// ical export --skip-unreadable writes a caveat header in this shape, so the
+// importer must accept its own output again. A folded continuation line starts
+// with a space or a tab, so a ";" at column 0 can only be a comment line.
+func stripCommentLines(data []byte) []byte {
+	if !bytes.HasPrefix(data, []byte(";")) && !bytes.Contains(data, []byte("\n;")) {
+		return data
+	}
+	var out []byte
+	for _, line := range bytes.SplitAfter(data, []byte("\n")) {
+		if len(line) > 0 && line[0] == ';' {
+			continue
+		}
+		out = append(out, line...)
+	}
+	return out
+}
 func ImportFile(r io.Reader) (ImportResult, error) {
 	return importFile(r, false)
 }
@@ -91,6 +110,7 @@ func importFile(r io.Reader, remote bool) (ImportResult, error) {
 	if len(data) > maxImportBytes {
 		return result, fmt.Errorf("ical payload exceeds %d bytes", maxImportBytes)
 	}
+	data = stripCommentLines(data)
 
 	dec := ical.NewDecoder(bytes.NewReader(data))
 

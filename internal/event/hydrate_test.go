@@ -61,6 +61,47 @@ func hideTable(t *testing.T, svc *Service, table string) {
 	})
 }
 
+// HydrateSkipUnreadable serves the CLI's ical export --skip-unreadable path.
+// It must name exactly the relations that failed and keep Hydrate's abort
+// contract intact.
+func TestEventService_HydrateSkipUnreadable_NamesLostRelations(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	e := createEvent(t, svc)
+
+	// Hide and restore inside the test body. The post-restore check must run
+	// before this test ends, so hideTable's t.Cleanup ordering does not fit.
+	hide := func() {
+		t.Helper()
+		if _, err := svc.db.ExecContext(ctx,
+			"ALTER TABLE event_attendees RENAME TO event_attendees_hidden"); err != nil {
+			t.Fatalf("hide event_attendees: %v", err)
+		}
+	}
+	restore := func() {
+		t.Helper()
+		if _, err := svc.db.ExecContext(ctx,
+			"ALTER TABLE event_attendees_hidden RENAME TO event_attendees"); err != nil {
+			t.Fatalf("restore event_attendees: %v", err)
+		}
+	}
+
+	hide()
+	failed := svc.HydrateSkipUnreadable(ctx, &e)
+	if len(failed) != 1 || failed[0] != "attendees" {
+		t.Fatalf("HydrateSkipUnreadable = %v, want [attendees]", failed)
+	}
+	if err := svc.Hydrate(ctx, &e); err == nil {
+		t.Fatal("Hydrate returned nil with a relation unreadable; the default export must still abort")
+	}
+
+	restore()
+	failed = svc.HydrateSkipUnreadable(ctx, &e)
+	if len(failed) != 0 {
+		t.Fatalf("HydrateSkipUnreadable after restore = %v, want none", failed)
+	}
+}
+
 func TestEventService_Hydrate_PopulatesRelations(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()

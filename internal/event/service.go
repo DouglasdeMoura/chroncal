@@ -2445,7 +2445,21 @@ func (s *Service) HydrateBestEffort(ctx context.Context, e *Event) error {
 	return s.hydrate(ctx, e, false)
 }
 
-func (s *Service) hydrate(ctx context.Context, e *Event, failFast bool) error {
+// HydrateSkipUnreadable populates every relation it can and returns the names
+// of the relations it could not load. It never fails.
+//
+// This serves the CLI's ical export --skip-unreadable path. The user chose to
+// keep a backup that misses unreadable relations, so the export names what
+// each record lost. Any path that writes iCal for a push must use Hydrate.
+// A partial record pushed to a server overwrites the complete copy there.
+func (s *Service) HydrateSkipUnreadable(ctx context.Context, e *Event) []string {
+	return s.collect(ctx, e, false).Failed()
+}
+
+// collect loads every relation onto e through one Collector. Hydrate,
+// HydrateBestEffort, and HydrateSkipUnreadable share it, so the relation set
+// stays a single definition.
+func (s *Service) collect(ctx context.Context, e *Event, failFast bool) *hydrate.Collector {
 	c := &hydrate.Collector{Kind: "event", ID: e.ID, FailFast: failFast}
 	hydrate.Rel(ctx, c, &e.Alarms, "alarms", s.ListAlarms)
 	hydrate.Rel(ctx, c, &e.Attendees, "attendees", s.ListAttendees)
@@ -2455,5 +2469,9 @@ func (s *Service) hydrate(ctx context.Context, e *Event, failFast bool) error {
 	hydrate.Rel(ctx, c, &e.Resources, "resources", s.ListResources)
 	hydrate.Rel(ctx, c, &e.Relations, "relations", s.ListRelations)
 	hydrate.Rel(ctx, c, &e.XProperties, "x-properties", s.ListXProperties)
-	return c.Err()
+	return c
+}
+
+func (s *Service) hydrate(ctx context.Context, e *Event, failFast bool) error {
+	return s.collect(ctx, e, failFast).Err()
 }

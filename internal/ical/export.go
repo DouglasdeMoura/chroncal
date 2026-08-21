@@ -616,6 +616,45 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// PrependComments inserts comment lines after the calendar's opening
+// BEGIN:VCALENDAR line and returns the result. Each entry becomes one physical
+// line that starts with "; ". A CR or LF inside an entry is replaced with a
+// space, so one entry stays one line.
+//
+// RFC 5545 does not define a comment production, but readers skip unknown
+// lines that start with "; " in practice, and chroncal's own importer strips
+// them (see stripCommentLines). The CLI export --skip-unreadable path uses
+// this to carry its caveat inside the file, so the file self-describes months
+// later without terminal context. The data stays unchanged when it holds no
+// VCALENDAR opening line.
+func PrependComments(data []byte, comments []string) []byte {
+	if len(comments) == 0 {
+		return data
+	}
+	s := string(data)
+	idx := strings.Index(s, "BEGIN:VCALENDAR")
+	if idx < 0 {
+		return data
+	}
+	eol := strings.IndexAny(s[idx:], "\r\n")
+	var insertAt int
+	if eol < 0 {
+		// No line end after the opening line; append before whatever tail.
+		insertAt = len(s)
+	} else {
+		insertAt = idx + eol
+	}
+	var b strings.Builder
+	b.WriteString(s[:insertAt])
+	repl := strings.NewReplacer("\r", " ", "\n", " ")
+	for _, c := range comments {
+		b.WriteString("\r\n; ")
+		b.WriteString(repl.Replace(c))
+	}
+	b.WriteString(s[insertAt:])
+	return []byte(b.String())
+}
+
 // MergeCalendars combines two iCal byte streams into one VCALENDAR.
 // It takes the header from the first and appends all components from both.
 func MergeCalendars(a, b []byte) []byte {
