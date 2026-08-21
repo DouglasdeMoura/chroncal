@@ -57,7 +57,10 @@ var pushCalendarAfterWrite = func(a *app.App, calendarID int64, outW, warnW io.W
 
 	svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, nil)
 
-	result, err := svc.PushCalendar(ctx, calendarID, syncPkg.ConflictServerWins)
+	// syncStrategy() defaults to ConflictServerWins. The config key
+	// sync.conflict_strategy (env CHRONCAL_SYNC_CONFLICT_STRATEGY) set to
+	// "prompt" opts every opportunistic push into prompt mode instead.
+	result, err := svc.PushCalendar(ctx, calendarID, syncStrategy())
 	if err != nil {
 		fmt.Fprintf(outW, "note: auto-sync failed (%v); change will upload on next sync\n", err)
 		return
@@ -70,8 +73,17 @@ var pushCalendarAfterWrite = func(a *app.App, calendarID int64, outW, warnW io.W
 // warnings from a server-wins conflict import surface. They go to warnW, not
 // outW. JSON callers (which pass io.Discard to keep stdout clean) still
 // see them on the ERROR stream. They never mix into stdout.
+//
+// A server-wins conflict replaces the just-written local row with the server
+// version. That overwrite is silent by design (the push converges), so the
+// result's conflict count is the only signal it happened. reportOpportunisticPush
+// prints one note per count on warnW with the resolve command. Without that
+// note an edit appears to save and then vanishes (issue #610).
 func reportOpportunisticPush(outW, warnW io.Writer, calName string, result *syncPkg.SyncResult) {
 	fprintImportWarnings(warnW, result.Warnings)
+	if result.Conflicts > 0 {
+		fmt.Fprintf(warnW, "note: %d local change(s) conflicted with the server and were replaced by server versions; see chroncal sync conflicts\n", result.Conflicts)
+	}
 	if result.Pushed == 0 && result.Deleted == 0 && len(result.Errors) == 0 {
 		return
 	}

@@ -438,6 +438,8 @@ Sync runs on each connected calendar on its own. Calendars that share an account
 
 Narrow a run with `--calendar NAME` (one local calendar) or `--account NAME` (every calendar linked to one CalDAV account). The two flags are mutually exclusive. An account with no linked calendars is a clean no-op.
 
+Every write command (`event add`, `todo update`, `journal delete`, and so on) pushes your change to the server right after it saves. The push uses server-wins by default. On a conflict, the server version replaces your local change. chroncal records each replaced change as a conflict row and prints a note on stderr. Run `chroncal sync conflicts` to list the rows. Run `chroncal sync resolve <id> --pick local` to restore your version. Set `sync.conflict_strategy` to `prompt` to stop the automatic replace; the push then keeps your change dirty and waits for your decision.
+
 ### Google Calendar via CalDAV
 
 Google Calendar requires OAuth 2.0. It only exposes `VEVENT` over CalDAV.
@@ -677,7 +679,7 @@ Configuration loads in this order of precedence:
 | `ui.week_start` | First day of the week in the TUI month view, week view, and mini-calendar (`sunday` or `monday`) | `sunday` |
 | `soft_delete.purge_days` | Days to keep soft-deleted rows before the background purge. `0` disables automatic purge. | `30` |
 | `sync.interval` | Minimum interval between background CalDAV syncs that `chroncal service run` performs. `service install` defaults to `15m` when this is unset. | (unset — no sync unless the installed service sets `CHRONCAL_SYNC_INTERVAL`) |
-| `sync.conflict_strategy` | Default conflict-resolution mode when you do not pass `sync run --conflict` | (unset) |
+| `sync.conflict_strategy` | Default conflict-resolution mode when you do not pass `sync run --conflict`. Also applies to background syncs and to the automatic push after each write command. | (unset) |
 | `security.allow_unsafe_alarm_audio_attach` | Allow AUDIO alarms to attach arbitrary URIs. Off by default. | `false` |
 | `security.allow_unsafe_alarm_email_attendees` | Allow EMAIL alarms to send to unverified attendee addresses. Off by default. | `false` |
 

@@ -549,10 +549,11 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 		// and records another conflict every sync. Hold off until the user
 		// resolves it via ResolveConflict, which clears the conflict and
 		// refreshes the ETag. See issue #104. ServerWins is excluded: it
-		// never records conflict rows and clears dirty on its own 412, so it
-		// has no loop to break — and skipping it would strand a stale
-		// conflict row left over from a prior prompt-mode run. The condition
-		// mirrors the conflict-recording branch below, which treats every
+		// auto-resolves each 412 by adopting the server version, and
+		// skipping would block that convergence behind a stale conflict row
+		// left over from a prior prompt-mode run or from its own recording
+		// of an earlier overwritten edit (issue #610). The condition mirrors
+		// the conflict-recording branch below, which treats every
 		// non-ServerWins strategy as prompt mode.
 		if strategy != ConflictServerWins {
 			if open, cerr := e.q.CountOpenSyncConflicts(ctx, storage.CountOpenSyncConflictsParams{
@@ -657,6 +658,38 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 							result.errors = append(result.errors, fmt.Errorf("encode server resource %s: %w", res.Uid, err))
 							result.conflicts++
 							continue
+						}
+						// Record the conflict even though server-wins resolves
+						// it automatically. The import below replaces the local
+						// row with the server version and clears dirty, so
+						// without a row the overwritten local edit would vanish
+						// silently (issue #610). The row keeps both bodies:
+						// `chroncal sync conflicts` lists the overwrite and
+						// `chroncal sync resolve <id> --pick local` restores the
+						// local edit. One open row per UID: a retry loop against
+						// an unimportable server body must not insert a fresh
+						// row on every push.
+						if open, cerr := e.q.CountOpenSyncConflicts(ctx, storage.CountOpenSyncConflictsParams{
+							CalendarID: calendarID,
+							Uid:        res.Uid,
+						}); cerr != nil {
+							e.logger.Warn("check open conflict before record", "uid", res.Uid, "error", cerr)
+						} else if open == 0 {
+							ownerID, lookupErr := e.lookupOwnerID(ctx, res.OwnerType, res.Uid)
+							if lookupErr != nil {
+								e.logger.Warn("lookup owner id for conflict record", "uid", res.Uid, "owner_type", res.OwnerType, "error", lookupErr)
+							}
+							if cerr := e.q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+								CalendarID: calendarID,
+								OwnerType:  res.OwnerType,
+								OwnerID:    ownerID,
+								Uid:        res.Uid,
+								LocalIcal:  string(icalData),
+								ServerIcal: buf.String(),
+								ServerEtag: serverRes.ETag,
+							}); cerr != nil {
+								e.logger.Warn("record server-wins conflict", "uid", res.Uid, "error", cerr)
+							}
 						}
 						imported, revs, importWarnings, err := e.importICal(ctx, calendarID, buf.String())
 						if err != nil {

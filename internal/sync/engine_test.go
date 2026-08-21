@@ -1557,8 +1557,164 @@ END:VCALENDAR
 	if err != nil {
 		t.Fatalf("ListSyncConflictsByCalendar: %v", err)
 	}
-	if len(conflicts) != 0 {
-		t.Fatalf("sync conflicts = %d, want 0", len(conflicts))
+	// Server-wins still adopts the server version above. Issue #610 now also
+	// records the overwritten local edit as a conflict row so
+	// `chroncal sync conflicts` lists it and --pick local can restore it.
+	if len(conflicts) != 1 {
+		t.Fatalf("sync conflicts = %d, want 1", len(conflicts))
+	}
+	if conflicts[0].Uid != "server-wins-event" {
+		t.Fatalf("conflict uid = %q, want server-wins-event", conflicts[0].Uid)
+	}
+	if conflicts[0].ServerEtag != "etag-server" {
+		t.Fatalf("conflict ServerEtag = %q, want etag-server", conflicts[0].ServerEtag)
+	}
+	if !strings.Contains(conflicts[0].LocalIcal, "SUMMARY:Test server-wins-event") {
+		t.Fatalf("conflict LocalIcal missing the overwritten local summary, got %q", conflicts[0].LocalIcal)
+	}
+}
+
+// TestEnginePushCalendarServerWinsRecordsConflictRow drives the push phase
+// behind the opportunistic save-time entry point (PushCalendar) through a 412
+// with the default server-wins strategy. Issue #610: the push must keep its
+// convergence behavior (adopt the server version, clear dirty) and must also
+// record a sync_conflicts row so `chroncal sync conflicts` lists the
+// overwritten local edit. The recorded Conflicts count is what
+// reportOpportunisticPush turns into the stderr warning.
+func TestEnginePushCalendarServerWinsRecordsConflictRow(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	insertTestEvent(t, db, calendarID, "push-conflict-event")
+
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		switch r.Method {
+		case http.MethodPut:
+			return &http.Response{
+				StatusCode: http.StatusPreconditionFailed,
+				Status:     "412 Precondition Failed",
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("precondition failed")),
+				Request:    r,
+			}, nil
+		case http.MethodGet:
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header: http.Header{
+					"Content-Type": []string{"text/calendar; charset=utf-8"},
+					"Etag":         []string{`"etag-server"`},
+				},
+				Body: io.NopCloser(strings.NewReader(`BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//chroncal//tests//EN
+BEGIN:VEVENT
+UID:push-conflict-event
+DTSTAMP:20260403T120000Z
+DTSTART:20260403T120000Z
+DTEND:20260403T130000Z
+SUMMARY:Server version
+END:VEVENT
+END:VCALENDAR
+`)),
+				Request: r,
+			}, nil
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			return nil, nil
+		}
+	})
+
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calendarID,
+		Uid:          "push-conflict-event",
+		OwnerType:    "event",
+		RemoteUrl:    "/calendar/push-conflict-event.ics",
+		Etag:         `"etag-before"`,
+		Dirty:        1,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+
+	result, err := engine.push(ctx, client, calendarID, "", "", ConflictServerWins)
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if result.conflicts != 1 {
+		t.Fatalf("conflicts = %d, want 1 (this count drives the CLI warning)", result.conflicts)
+	}
+	if result.pushed != 0 || len(result.errors) != 0 {
+		t.Fatalf("pushed = %d, errors = %d; want 0/0", result.pushed, len(result.errors))
+	}
+
+	conflicts, err := q.ListSyncConflictsByCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("ListSyncConflictsByCalendar: %v", err)
+	}
+	if len(conflicts) != 1 {
+		t.Fatalf("sync conflicts = %d, want 1", len(conflicts))
+	}
+	if conflicts[0].Uid != "push-conflict-event" {
+		t.Fatalf("conflict uid = %q, want push-conflict-event", conflicts[0].Uid)
+	}
+	if conflicts[0].ServerEtag != "etag-server" {
+		t.Fatalf("conflict ServerEtag = %q, want etag-server", conflicts[0].ServerEtag)
+	}
+	if !strings.Contains(conflicts[0].LocalIcal, "SUMMARY:Test push-conflict-event") {
+		t.Fatalf("conflict LocalIcal missing the overwritten local summary, got %q", conflicts[0].LocalIcal)
+	}
+	if !strings.Contains(conflicts[0].ServerIcal, "SUMMARY:Server version") {
+		t.Fatalf("conflict ServerIcal missing the server summary, got %q", conflicts[0].ServerIcal)
+	}
+
+	// Convergence is unchanged: the local row holds the server version and
+	// the dirty flag is cleared.
+	evt, err := q.GetEventByUID(ctx, "push-conflict-event")
+	if err != nil {
+		t.Fatalf("GetEventByUID: %v", err)
+	}
+	if evt.Title != "Server version" {
+		t.Fatalf("Title = %q, want Server version", evt.Title)
+	}
+	dirty, err := q.ListDirtySyncResources(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("ListDirtySyncResources: %v", err)
+	}
+	if len(dirty) != 0 {
+		t.Fatalf("dirty resources = %d, want 0", len(dirty))
+	}
+
+	// A later conflicting push for the same UID reuses the open row instead
+	// of inserting a duplicate on every attempt.
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calendarID,
+		Uid:          "push-conflict-event",
+		OwnerType:    "event",
+		RemoteUrl:    "/calendar/push-conflict-event.ics",
+		Etag:         `"etag-server"`,
+		Dirty:        1,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("re-mark dirty: %v", err)
+	}
+	if _, err := engine.push(ctx, client, calendarID, "", "", ConflictServerWins); err != nil {
+		t.Fatalf("second push: %v", err)
+	}
+	conflicts, err = q.ListSyncConflictsByCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("re-list conflicts: %v", err)
+	}
+	if len(conflicts) != 1 {
+		t.Fatalf("sync conflicts after second push = %d, want 1 (no duplicate rows)", len(conflicts))
 	}
 }
 

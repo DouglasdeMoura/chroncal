@@ -83,6 +83,56 @@ func TestReportOpportunisticPushEmitsWarningsThroughInjectedWriter(t *testing.T)
 	}
 }
 
+// A server-wins conflict replaces the just-written local row with the server
+// version. The push then reports Pushed=0/Deleted=0, so without a dedicated
+// note the user sees nothing at all while their edit vanishes (issue #610).
+// reportOpportunisticPush must surface result.Conflicts on the warning
+// writer with the resolve command. stdout stays clean so `-o json` output
+// keeps parsing.
+func TestReportOpportunisticPushSurfacesConflicts(t *testing.T) {
+	t.Parallel()
+
+	// Conflicts only: the silent-data-loss case. Nothing pushed, nothing
+	// deleted, no errors — yet stderr must still explain where the local
+	// edit went.
+	var out, warn bytes.Buffer
+	reportOpportunisticPush(&out, &warn, "Work", &syncPkg.SyncResult{Conflicts: 2})
+	want := "note: 2 local change(s) conflicted with the server and were replaced by server versions; see chroncal sync conflicts\n"
+	if warn.String() != want {
+		t.Errorf("warning writer got %q, want %q", warn.String(), want)
+	}
+	if out.Len() != 0 {
+		t.Errorf("stdout writer got %q; conflicts-only pushes must keep stdout silent", out.String())
+	}
+
+	// A JSON caller discards stdout and still sees the note on stderr.
+	warn.Reset()
+	reportOpportunisticPush(io.Discard, &warn, "Work", &syncPkg.SyncResult{Conflicts: 1})
+	if !strings.Contains(warn.String(), "see chroncal sync conflicts") {
+		t.Errorf("warning writer got %q, want the conflict note despite discarded stdout", warn.String())
+	}
+
+	// Conflicts alongside a normal push keep both messages on their own
+	// streams.
+	out.Reset()
+	warn.Reset()
+	reportOpportunisticPush(&out, &warn, "Work", &syncPkg.SyncResult{Pushed: 1, Conflicts: 1})
+	if !strings.Contains(warn.String(), "1 local change(s) conflicted") {
+		t.Errorf("warning writer got %q, want the conflict note", warn.String())
+	}
+	if !strings.Contains(out.String(), "Synced to Work") {
+		t.Errorf("stdout writer got %q, want the push confirmation", out.String())
+	}
+
+	// Zero conflicts stay silent: this runs after every single write.
+	out.Reset()
+	warn.Reset()
+	reportOpportunisticPush(&out, &warn, "Work", &syncPkg.SyncResult{Conflicts: 0})
+	if out.Len() != 0 || warn.Len() != 0 {
+		t.Errorf("conflict-free push wrote out=%q warn=%q, want silence", out.String(), warn.String())
+	}
+}
+
 // `sync resolve <id> --pick server` imports the recorded server body through
 // the same importICal as the auto server-wins paths. The engine logger is nil
 // (silent). The warnings ResolveConflict returns are then the only place
