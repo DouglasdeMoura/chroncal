@@ -92,7 +92,7 @@ Skip a single run with `LEFTHOOK=0 git commit ...` when you need to.
 
 ## Tests
 
-Tests use in-memory SQLite databases via `testutil.NewTestDB(t)`. You do not need extra setup.
+Tests use a SQLite database from `testutil.NewTestDB(t)`. The first call in a test binary builds one template database with all migrations. A later call copies the template files when they exist and falls back to a fresh migration otherwise. Each test gets an isolated database at low cost. You do not need extra setup.
 
 ```bash
 # Run all tests
