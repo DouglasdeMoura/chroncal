@@ -57,7 +57,10 @@ func newDBBackedModel(t *testing.T) (Model, *app.App) {
 }
 
 // step runs one message through Model.Update and executes the returned
-// command. It returns the next message, or nil when Update gave no command.
+// command. A plain result goes back to the caller, so a test can assert
+// each hop of a message chain. A tea.BatchMsg result holds no single
+// message, so step drains the batch through drainBatch. It returns the
+// last message that is not a batch, or nil when no message results.
 func step(t *testing.T, m Model, msg tea.Msg) (Model, tea.Msg) {
 	t.Helper()
 	updated, cmd := m.Update(msg)
@@ -65,23 +68,62 @@ func step(t *testing.T, m Model, msg tea.Msg) (Model, tea.Msg) {
 	if cmd == nil {
 		return m, nil
 	}
-	return m, cmd()
+	result := cmd()
+	if batch, ok := result.(tea.BatchMsg); ok {
+		return drainBatch(t, m, batch)
+	}
+	return m, result
 }
 
-// submitOpenForm saves the mounted form the way the user does: Ctrl+S fires
+// drainBatch executes every command that a tea.BatchMsg holds. Each
+// produced message goes back through Model.Update, and the commands that
+// Update returns join the queue until no command remains. A command that
+// returns another batch unwraps into the same queue. It returns the last
+// message that is not a batch, or nil when the batch gave none.
+func drainBatch(t *testing.T, m Model, batch tea.BatchMsg) (Model, tea.Msg) {
+	t.Helper()
+	var last tea.Msg
+	queue := append([]tea.Cmd(nil), batch...)
+	for len(queue) > 0 {
+		cmd := queue[0]
+		queue = queue[1:]
+		if cmd == nil {
+			continue
+		}
+		result := cmd()
+		if child, ok := result.(tea.BatchMsg); ok {
+			queue = append(queue, child...)
+			continue
+		}
+		if result == nil {
+			continue
+		}
+		last = result
+		updated, next := m.Update(result)
+		m = updated.(Model)
+		if next != nil {
+			queue = append(queue, next)
+		}
+	}
+	return m, last
+}
+
+// submitOpenForm saves the mounted form the way the user does. Ctrl+S fires
 // the form submit, the form answers with eventFormSubmitNowMsg, and that
-// message makes the form build EventFormSaveMsg against live state.
+// message makes the form build EventFormSaveMsg against live state. Both
+// hops are strict. A save that skips the deferred submit fails here, so the
+// test rejects a stale-receiver save.
 func submitOpenForm(t *testing.T, m Model) (Model, EventFormSaveMsg) {
 	t.Helper()
 	m, next := step(t, m, keyPressMsg("ctrl+s"))
 	require.NotNil(t, next)
-	if _, ok := next.(eventFormSubmitNowMsg); ok {
-		m, next = step(t, m, next)
-		require.NotNil(t, next)
-	}
-	save, ok := next.(EventFormSaveMsg)
-	require.True(t, ok, "expected EventFormSaveMsg, got %T", next)
-	return m, save
+	require.IsType(t, eventFormSubmitNowMsg{}, next,
+		"ctrl+s must emit eventFormSubmitNowMsg, got %T", next)
+	m, next = step(t, m, next)
+	require.NotNil(t, next)
+	require.IsType(t, EventFormSaveMsg{}, next,
+		"the deferred submit must emit EventFormSaveMsg, got %T", next)
+	return m, next.(EventFormSaveMsg)
 }
 
 // findAlarm returns the alarm with the given action and trigger.
@@ -162,6 +204,12 @@ func TestHarness_CreateSave_WritesAlarmRows(t *testing.T) {
 	m, _ = step(t, m, EventCreateMsg{Day: day})
 	require.True(t, m.formOpen, "the create form did not open")
 	require.Zero(t, m.form.editID)
+
+	// Pin the form timezone to UTC. The form fills the start time from the
+	// machine wall clock, and save reads that time in the form timezone.
+	// A machine outside UTC shifts the start instant out of the fixed
+	// window below. UTC keeps the start inside the window on every machine.
+	m.form.timezoneField.SetValue("UTC")
 
 	m.form.titleField.SetValue("Planned outage")
 	m.form.alarms = []model.Alarm{{Action: "DISPLAY", TriggerValue: "-PT10M"}}
