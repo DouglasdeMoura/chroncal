@@ -30,6 +30,7 @@ With --push, chroncal pushes the resource without the unreadable relations.
 The server copy then loses exactly those fields. The command prints the loss
 before the push and asks for confirmation.`,
 		Example: `  chroncal sync doctor
+  chroncal sync doctor --output json
   chroncal sync doctor --push 6f2c8e42-...@example.com --yes`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
@@ -58,28 +59,67 @@ before the push and asks for confirmation.`,
 	return cmd
 }
 
-// runDoctorList prints one line per wedged resource across all calendars.
-func runDoctorList(cmd *cobra.Command, svc *syncPkg.Service, cals []storage.Calendar) error {
-	out := cmd.OutOrStdout()
-	total := 0
+// doctorEntry pairs one wedged resource with the calendar that holds it, so
+// both render functions print the calendar name next to the UID.
+type doctorEntry struct {
+	calendarName string
+	wedged       syncPkg.WedgedResource
+}
+
+// diagnoseAll collects the wedged resources of every calendar.
+func diagnoseAll(ctx context.Context, svc *syncPkg.Service, cals []storage.Calendar) ([]doctorEntry, error) {
+	var entries []doctorEntry
 	for _, cal := range cals {
-		wedged, err := svc.DiagnoseCalendar(context.Background(), cal.ID)
+		wedged, err := svc.DiagnoseCalendar(ctx, cal.ID)
 		if err != nil {
-			return fmt.Errorf("diagnose calendar %q: %w", cal.Name, err)
+			return nil, fmt.Errorf("diagnose calendar %q: %w", cal.Name, err)
 		}
 		for _, w := range wedged {
-			total++
-			fmt.Fprintf(out, "calendar %q uid %s (%s): unreadable relation(s) %s\n",
-				cal.Name, w.UID, w.OwnerType, strings.Join(w.Relations, ", "))
+			entries = append(entries, doctorEntry{calendarName: cal.Name, wedged: w})
 		}
 	}
-	if total == 0 {
+	return entries, nil
+}
+
+// runDoctorList prints one line per wedged resource across all calendars.
+// JSON and YAML return an array, [] when no calendar holds a wedge, like
+// every sibling read command.
+func runDoctorList(cmd *cobra.Command, svc *syncPkg.Service, cals []storage.Calendar) error {
+	entries, err := diagnoseAll(context.Background(), svc, cals)
+	if err != nil {
+		return err
+	}
+	out := cmd.OutOrStdout()
+
+	if outputFmt != "text" {
+		items := make([]map[string]any, 0, len(entries))
+		for _, en := range entries {
+			items = append(items, map[string]any{
+				"calendar_id":     en.wedged.CalendarID,
+				"calendar_name":   en.calendarName,
+				"uid":             en.wedged.UID,
+				"owner_type":      en.wedged.OwnerType,
+				"relations":       en.wedged.Relations,
+				"push_fail_count": en.wedged.PushFailCount,
+			})
+		}
+		return printOutput(out, items)
+	}
+
+	if len(entries) == 0 {
 		fmt.Fprintln(out, "No wedged resources.")
 		return nil
 	}
-	fmt.Fprintf(out, "\n%d wedged resource(s). Recover one with:\n", total)
-	fmt.Fprintf(cmd.ErrOrStderr(), "  chroncal sync doctor --push <uid> --yes\n")
-	fmt.Fprintf(cmd.ErrOrStderr(), "The push drops the unreadable relations from the server copy.\n")
+	for _, en := range entries {
+		fmt.Fprintf(out, "calendar %q uid %s (%s): unreadable relation(s) %s; %d failed push attempt(s)\n",
+			en.calendarName, en.wedged.UID, en.wedged.OwnerType,
+			strings.Join(en.wedged.Relations, ", "), en.wedged.PushFailCount)
+	}
+	// The whole hint block goes to stdout. A consumer that captures stdout
+	// then also captures the recovery command.
+	fmt.Fprintf(out, "\n%d wedged resource(s). Recover one with:\n", len(entries))
+	fmt.Fprintln(out, "  chroncal sync doctor --push <uid> --yes")
+	fmt.Fprintln(out, "The push drops the unreadable relations from the server copy.")
 	return nil
 }
 
@@ -106,14 +146,28 @@ func runDoctorPush(cmd *cobra.Command, svc *syncPkg.Service, cals []storage.Cale
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Pushed %s. Dropped relation(s): %s.\n",
-				uid, strings.Join(dropped, ", "))
-			fmt.Fprintf(cmd.OutOrStdout(), "The resource is no longer dirty. Other edits flow again.\n")
-			return nil
+			return renderDoctorPush(cmd, uid, dropped)
 		}
 	}
 	return &cliError{
-		Code: "not-wedged",
+		Code: "not_found",
 		Msg:  fmt.Sprintf("no wedged resource with uid %q; run chroncal sync doctor for the list", uid),
 	}
+}
+
+// renderDoctorPush confirms the escape push using the active --output
+// format, like the sibling sync resolve command.
+func renderDoctorPush(cmd *cobra.Command, uid string, dropped []string) error {
+	if outputFmt != "text" {
+		return printOutput(cmd.OutOrStdout(), map[string]any{
+			"uid":     uid,
+			"pushed":  true,
+			"dropped": dropped,
+		})
+	}
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "Pushed %s. Dropped relation(s): %s.\n",
+		uid, strings.Join(dropped, ", "))
+	fmt.Fprintln(out, "The resource is no longer dirty. Other edits flow again.")
+	return nil
 }

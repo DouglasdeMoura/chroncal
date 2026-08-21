@@ -40,15 +40,18 @@ WHERE calendar_id = ? AND uid = ?;
 
 -- name: RecordSyncResourcePushFailure :exec
 -- One more consecutive failed push attempt for this resource. The engine
--- calls this after a failed export or PUT. Doctor reads the counter to show
--- how long a resource stayed wedged.
+-- and the sync doctor call this after a push attempt that fails on an
+-- export, a parse, or a PUT. The doctor reads the counter to show how long
+-- a resource stayed wedged.
 UPDATE sync_resources
 SET push_fail_count = push_fail_count + 1,
     last_push_error = ?
 WHERE calendar_id = ? AND uid = ?;
 
 -- name: ClearSyncResourcePushFailure :exec
--- Reset the failure bookkeeping after a successful push.
+-- Reset the failure bookkeeping after a successful push. The engine clears
+-- it next to FinalizePushedResource. The sync doctor clears it after its
+-- escape-hatch PUT lands.
 UPDATE sync_resources SET push_fail_count = 0, last_push_error = ''
 WHERE calendar_id = ? AND uid = ?;
 
