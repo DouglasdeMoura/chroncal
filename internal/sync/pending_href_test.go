@@ -389,9 +389,9 @@ func TestEnginePullDropsUnknownMultigetMissAfterBudget(t *testing.T) {
 // a query string, another origin, or a collection path. No local row can
 // map to such an href, so the miss carries no data-loss signal. The engine
 // must skip it: no known-miss count, no pending row, and the token
-// advances. The same table pins the old rules for canonical 404s: an
-// unknown miss takes the budget path, and a miss for a local row still
-// withholds the token.
+// advances. The same table pins the old rules for canonical 404s. An
+// unknown miss takes the budget path. A miss for a local row still holds
+// back the token.
 func TestEnginePullUncanonicalMultigetMissAdvancesToken(t *testing.T) {
 	t.Parallel()
 
