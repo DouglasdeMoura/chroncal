@@ -428,10 +428,10 @@ func reportUnreadable(records []unreadableRecord) {
 // into the .ics. A reader months later then sees which records are incomplete
 // and what each one misses, with no terminal output to rely on.
 func unreadableCaveatLines(records []unreadableRecord) []string {
-	lines := []string{
+	lines := make([]string, 0, 2+len(records))
+	lines = append(lines,
 		"chroncal wrote this file with --skip-unreadable.",
-		"The records below are incomplete. Their named relations are absent:",
-	}
+		"The records below are incomplete. Their named relations are absent:")
 	for _, r := range records {
 		lines = append(lines, fmt.Sprintf("%s %d (uid %s): %s",
 			r.kind, r.id, r.uid, strings.Join(r.relations, ", ")))
