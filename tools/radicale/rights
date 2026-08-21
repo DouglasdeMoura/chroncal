@@ -1,0 +1,6 @@
+# Local-testing rights: every (anonymous) user gets full read/write to
+# every collection, so MKCOL / MKCALENDAR / PUT all succeed without auth.
+[allow-everything]
+user = .*
+collection = .*
+permissions = RrWw
