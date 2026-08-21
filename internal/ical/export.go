@@ -180,7 +180,7 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 			if alarm.Summary == "" && alarm.Action == "EMAIL" {
 				alarm.Summary = e.Title
 			}
-			if v := buildValarm(alarm); v != nil {
+			if v := buildValarm(alarm, e.Timezone); v != nil {
 				vevent.Children = append(vevent.Children, v)
 			}
 		}
@@ -549,7 +549,7 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 			if alarm.Summary == "" && alarm.Action == "EMAIL" {
 				alarm.Summary = t.Summary
 			}
-			if v := buildValarm(alarm); v != nil {
+			if v := buildValarm(alarm, t.Timezone); v != nil {
 				vtodo.Children = append(vtodo.Children, v)
 			}
 		}
@@ -744,19 +744,21 @@ func emitRecurrenceID(props ical.Props, recurrenceID string, allDay, floating bo
 // server copy. That is why import drops the value up front, where the user
 // gets a warning. Do not let it reach this point in silence.
 //
-// Do not reinstate UTC normalization without the record's timezone. A floating
-// date-time trigger passes here and is emitted verbatim, which is not valid
-// iCal (issue #572). The UTC normalization that used to sit in buildValarm
-// was reverted. It read floating values as UTC while the alarm engine reads
-// them in the record's timezone. That moved reminders by the zone offset.
+// A floating date-time trigger is resolved against the record's timezone in
+// buildValarm. The alarm engine reads the same value through
+// model.ParseAbsoluteTime with the record's timezone, so export and fire time
+// agree by construction (issue #572). Do not read a floating value as UTC
+// without the record's timezone. That normalization was reverted once, and it
+// moved reminders by the zone offset.
 func exportableTrigger(v string) bool {
 	return model.ParseableAlarmTrigger(v)
 }
 
 // buildValarm renders an alarm as a VALARM component, or nil when the alarm
-// carries a TRIGGER that cannot be expressed as valid iCal. Callers must skip
-// a nil result.
-func buildValarm(alarm model.Alarm) *ical.Component {
+// carries a TRIGGER that cannot be expressed as valid iCal. recordTZ is the
+// owning event or todo timezone, and it resolves a floating absolute trigger
+// the way the alarm engine does. Callers must skip a nil result.
+func buildValarm(alarm model.Alarm, recordTZ string) *ical.Component {
 	if !exportableTrigger(alarm.TriggerValue) {
 		return nil
 	}
@@ -806,11 +808,11 @@ func buildValarm(alarm model.Alarm) *ical.Component {
 		// the whole resource. So this guard stays even though import no longer
 		// produces the case.
 		trigger.Params.Set("VALUE", "DATE-TIME")
-		// Normalize legacy RFC 3339 values to iCal format. Import now
-		// normalizes every RFC 3339 trigger to compact UTC on the way in,
-		// so this branch exists only for pre-normalization DB rows that
-		// still hold the raw RFC 3339 string.
-		if t, err := time.Parse(time.RFC3339, alarm.TriggerValue); err == nil {
+		// Resolve every absolute value through ParseAbsoluteTime, the same
+		// function computeTriggerTimeForInstance uses. A floating value then
+		// denotes the same instant here and at fire time (issue #572). The
+		// call also normalizes legacy RFC 3339 rows to compact UTC.
+		if t, err := model.ParseAbsoluteTime(alarm.TriggerValue, recordTZ); err == nil {
 			trigger.Value = t.UTC().Format("20060102T150405Z")
 		}
 	}

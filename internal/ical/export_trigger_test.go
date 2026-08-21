@@ -136,3 +136,44 @@ func TestExportableTrigger(t *testing.T) {
 		}
 	}
 }
+
+// A floating absolute trigger is invalid iCal on the wire (RFC 5545 §3.8.6.3
+// requires UTC for VALUE=DATE-TIME). Export resolves it in the record's
+// timezone through model.ParseAbsoluteTime, so the emitted instant is what
+// the alarm engine would fire.
+func TestExport_FloatingTriggerResolvesInRecordZone(t *testing.T) {
+	t.Parallel()
+	const floating = "20260401T100000"
+	events := []event.Event{{
+		UID:       "floating-trigger@example.com",
+		Title:     "Event",
+		Timezone:  "America/New_York",
+		StartTime: time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC),
+		Alarms: []model.Alarm{
+			{Action: "DISPLAY", TriggerValue: floating, Description: "Floating", Related: "START"},
+		},
+	}}
+	data, err := ExportEvents(events, "Work")
+	if err != nil {
+		t.Fatalf("ExportEvents: %v", err)
+	}
+	want, err := model.ParseAbsoluteTime(floating, "America/New_York")
+	if err != nil {
+		t.Fatalf("ParseAbsoluteTime: %v", err)
+	}
+	wantStr := want.UTC().Format("20060102T150405Z")
+	var trigger string
+	for _, line := range strings.Split(string(data), "\r\n") {
+		if strings.HasPrefix(line, "TRIGGER") {
+			trigger = line
+			break
+		}
+	}
+	if trigger == "" {
+		t.Fatalf("no TRIGGER line in export:\n%s", data)
+	}
+	if !strings.HasSuffix(trigger, ":"+wantStr) && !strings.Contains(trigger, wantStr) {
+		t.Errorf("TRIGGER = %s, want it to denote %s (the record-zone resolution)", trigger, wantStr)
+	}
+}
