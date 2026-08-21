@@ -1261,7 +1261,8 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 		// Per-resource 404s here are NOT deletions. Google can list an href
 		// that 404s on multiget for a reason other than a real delete.
 		// classifyMultigetMiss splits a known miss (local row: incomplete)
-		// from an unknown miss (no local row: record and retry). See pullView.
+		// from an unknown miss (no local row: record and retry). An
+		// uncanonical href carries neither risk: skip it. See pullView.
 		for _, miss := range multi.Missing {
 			canonical, hrefErr := client.CanonicalObjectRef(remoteURL, miss)
 			kind, local := classifyMultigetMiss(canonical, hrefErr, localByPath)
@@ -1276,7 +1277,14 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 				// even though we have no actual evidence of deletion.
 				seenUIDs[local.Uid] = true
 			case multigetMissUncanonical:
-				view.knownMisses++
+				// CanonicalObjectRef rejected this href (query or fragment,
+				// another origin, a collection path). localByPath holds
+				// canonical paths only, so no local row maps to this miss
+				// and there is no data to lose. A retry obligation cannot
+				// converge either: the resource loop below discards any body
+				// served under an uncanonical path. Log and move on so a
+				// broken or hostile server cannot wedge the calendar with a
+				// permanent token withhold. See issue #625.
 			case multigetMissUnknown:
 				if recErr := pending.noteMiss(ctx, canonical); recErr != nil {
 					e.logger.Warn("record unknown multiget miss", "calendar_id", calendarID, "href", miss, "error", recErr)
