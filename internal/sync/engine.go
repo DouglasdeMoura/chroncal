@@ -1282,9 +1282,9 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 				// canonical paths only, so no local row maps to this miss
 				// and there is no data to lose. A retry obligation cannot
 				// converge either: the resource loop below discards any body
-				// served under an uncanonical path. Log and move on so a
-				// broken or hostile server cannot wedge the calendar with a
-				// permanent token withhold. See issue #625.
+				// served under an uncanonical path. Log and skip the miss so
+				// a broken or hostile server cannot hold back the sync
+				// token forever. See issue #625.
 			case multigetMissUnknown:
 				if recErr := pending.noteMiss(ctx, canonical); recErr != nil {
 					e.logger.Warn("record unknown multiget miss", "calendar_id", calendarID, "href", miss, "error", recErr)
