@@ -11,6 +11,8 @@ run: build
 test:
 	go test ./... -count=1
 
+# -timeout=20m: race instrumentation multiplies the test cost, and the
+# slowest packages need headroom over go test's 600s default (issue #569).
 test-race:
 	go test -race -count=1 -timeout=20m ./...
 

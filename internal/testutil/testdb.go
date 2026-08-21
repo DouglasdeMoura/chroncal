@@ -30,14 +30,18 @@ func buildTemplateDB() (string, error) {
 	path := filepath.Join(dir, "template.db")
 	db, _, err := storage.Open(path)
 	if err != nil {
+		os.RemoveAll(dir)
 		return "", err
 	}
 	// Fold the WAL into the main file so a plain file copy carries the
 	// whole schema.
 	_, _ = db.ExecContext(context.Background(), `PRAGMA wal_checkpoint(TRUNCATE)`)
 	if err := db.Close(); err != nil {
+		os.RemoveAll(dir)
 		return "", err
 	}
+	// Success keeps the template directory for the process lifetime.
+	// NewTestDB copies the template file on every call.
 	return path, nil
 }
 
@@ -61,9 +65,10 @@ func copyFile(src, dst string) error {
 
 // NewTestDB creates a fresh file-backed SQLite database with all migrations
 // applied. The first call builds a template database once, and every call
-// afterwards copies that template instead of re-running the migration set.
-// Each test still gets an isolated database at its own path. The database is
-// automatically closed when the test ends.
+// afterwards copies that template instead of a second run of the migration set.
+// Each test still gets an isolated database at its own path. The pool is
+// pinned to a single connection, as storage.Open does for ":memory:".
+// The database is automatically closed when the test ends.
 func NewTestDB(t *testing.T) (*sql.DB, *storage.Queries) {
 	t.Helper()
 	templateOnce.Do(func() {
@@ -85,6 +90,19 @@ func NewTestDB(t *testing.T) (*sql.DB, *storage.Queries) {
 	db, q, err := storage.Open(dst)
 	if err != nil {
 		t.Fatalf("open test db: %v", err)
+	}
+	// Pin the pool to one connection. Leak guards rely on a leaked
+	// transaction that blocks the next query on the only connection.
+	db.SetMaxOpenConns(1)
+	// The template database recorded its own file identity as a credential
+	// location. The copy inherits that row and also records its own
+	// identity. Delete the inherited row so the copy matches a freshly
+	// migrated database.
+	if _, err := db.ExecContext(context.Background(), `
+		DELETE FROM credential_locations
+		WHERE location <> (SELECT current_location FROM credential_namespace WHERE id = 1)
+	`); err != nil {
+		t.Fatalf("delete stale credential locations: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
 	return db, q

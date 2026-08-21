@@ -523,9 +523,9 @@ func TestConnect_RelinkPropagatesTransientGetAccountError(t *testing.T) {
 }
 
 // TestConnect_PanicDoesNotLeakTransaction verifies that a panic raised between
-// BeginTx and Commit in Connect does not leak the transaction. The in-memory
-// test pool is pinned to a single connection (storage.Open sets
-// SetMaxOpenConns(1) for ":memory:"). A leaked transaction then never returns
+// BeginTx and Commit in Connect does not leak the transaction. The test pool
+// is pinned to a single connection (testutil.NewTestDB sets
+// SetMaxOpenConns(1)). A leaked transaction then never returns
 // its connection to the pool. The next query blocks until its context expires.
 // A deferred rollback releases the connection. The follow-up read then returns
 // promptly.
