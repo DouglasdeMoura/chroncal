@@ -1,6 +1,7 @@
 package caldav
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -137,6 +138,105 @@ func fetchGoogleCalendarListPage(ctx context.Context, client googleHTTPClient, p
 
 func googleCalDAVCollectionURL(calendarID string) string {
 	return googleCalDAVBaseURL + "/" + url.PathEscape(strings.TrimSpace(calendarID)) + "/events"
+}
+
+// googleCalendarIDFromCollectionURL reverses googleCalDAVCollectionURL.
+func googleCalendarIDFromCollectionURL(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if !IsGoogleCalendarEndpoint(raw) {
+		return "", false
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", false
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(parts) < 4 || parts[0] != "caldav" || parts[1] != "v2" || parts[len(parts)-1] != "events" {
+		return "", false
+	}
+	id := strings.TrimSpace(strings.Join(parts[2:len(parts)-1], "/"))
+	if id == "" {
+		return "", false
+	}
+	return id, true
+}
+
+type googleCalendarListColorPatch struct {
+	BackgroundColor string `json:"backgroundColor"`
+	ForegroundColor string `json:"foregroundColor"`
+}
+
+func googleCalendarListForeground(background string) string {
+	hex := strings.TrimPrefix(NormalizeCalendarColor(background), "#")
+	if len(hex) != 6 {
+		return "#ffffff"
+	}
+	var r, g, b int
+	if _, err := fmt.Sscanf(hex, "%02x%02x%02x", &r, &g, &b); err != nil {
+		return "#ffffff"
+	}
+	if 0.2126*float64(r)+0.7152*float64(g)+0.0722*float64(b) > 140 {
+		return "#000000"
+	}
+	return "#ffffff"
+}
+
+// SetGoogleCalendarListColor writes a calendar's display color through the
+// Calendar JSON API. Google CalDAV does not implement Apple calendar-color.
+func SetGoogleCalendarListColor(ctx context.Context, client googleHTTPClient, calendarURL, color string) error {
+	calendarID, ok := googleCalendarIDFromCollectionURL(calendarURL)
+	if !ok {
+		return fmt.Errorf("google calendar id: not a Google CalDAV collection URL")
+	}
+	color = NormalizeCalendarColor(color)
+	if color == "" {
+		return fmt.Errorf("google calendar color is empty")
+	}
+
+	endpoint, err := url.Parse(googleCalendarListURL)
+	if err != nil {
+		return fmt.Errorf("parse Google CalendarList URL: %w", err)
+	}
+	if endpoint.Path == "" {
+		endpoint.Path = "/"
+	}
+	endpoint = endpoint.JoinPath(calendarID)
+	query := endpoint.Query()
+	query.Set("colorRgbFormat", "true")
+	endpoint.RawQuery = query.Encode()
+
+	body, err := json.Marshal(googleCalendarListColorPatch{
+		BackgroundColor: color,
+		ForegroundColor: googleCalendarListForeground(color),
+	})
+	if err != nil {
+		return fmt.Errorf("encode Google CalendarList color: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, endpoint.String(), bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create Google CalendarList color request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("google CalendarList color request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.Request == nil {
+		resp.Request = req
+	}
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("google CalendarList color: %w", httpError(resp))
+	}
+	return nil
+}
+
+// SetGoogleCalendarListColor writes the calendar's display color through the
+// Calendar JSON API using this client's credentials.
+func (c *Client) SetGoogleCalendarListColor(ctx context.Context, calendarURL, color string) error {
+	return SetGoogleCalendarListColor(ctx, c.httpClient, calendarURL, color)
 }
 
 func googleCalendarAccess(role string) CalendarAccess {

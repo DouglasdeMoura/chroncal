@@ -1675,9 +1675,25 @@ func (e *Engine) syncCalendarMetadata(ctx context.Context, client *caldav.Client
 	}
 
 	// Google CalendarList already supplies the color at discovery. Apple
-	// calendar-color is not a Google CalDAV property. Skip both the fetch
-	// and the push. A PROPFIND 403 must not fail event sync (issue #628).
+	// calendar-color is not a Google CalDAV property, so never PROPFIND
+	// it. A dirty local color still has to be written: CalendarList PATCH
+	// is the Google equivalent of Apple calendar-color PROPPATCH. Clearing
+	// ColorDirty after a successful write lets later Discover rounds adopt
+	// CalendarList again. A failed write must not fail event sync
+	// (issue #628); the dirty latch then keeps the local override.
 	if caldav.IsGoogleCalendarEndpoint(remoteURL) {
+		if cal.ColorDirty == 0 {
+			return nil
+		}
+		if _, err := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (struct{}, error) {
+			return struct{}{}, client.SetGoogleCalendarListColor(ctx, remoteURL, cal.Color)
+		}); err != nil {
+			e.logger.Warn("set google calendar color failed", "calendar_id", calendarID, "error", err)
+			return nil
+		}
+		if err := e.calendars.ClearColorDirty(ctx, calendarID, cal.Color); err != nil {
+			return fmt.Errorf("clear calendar color dirty: %w", err)
+		}
 		return nil
 	}
 

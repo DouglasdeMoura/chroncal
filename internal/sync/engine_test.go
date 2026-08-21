@@ -2636,16 +2636,16 @@ func TestEngineSyncCalendarMetadataIgnoresColorFetchForbidden(t *testing.T) {
 	}
 }
 
-// TestEngineSyncCalendarMetadataSkipsGoogleColorRequests reproduces
+// TestEngineSyncCalendarMetadataSkipsGoogleColorFetch reproduces
 // issue #628. Google colors come from CalendarList. Apple calendar-color
-// traffic must not run against CalDAV.
-func TestEngineSyncCalendarMetadataSkipsGoogleColorRequests(t *testing.T) {
+// traffic must not run against CalDAV when there is nothing to push.
+func TestEngineSyncCalendarMetadataSkipsGoogleColorFetch(t *testing.T) {
 	t.Parallel()
 
 	engine, db, q := newTestEngine(t)
 	seedCalendarColorState(t, db, q,
 		"https://apidata.googleusercontent.com/caldav/v2/me@example.com/events",
-		"#9e69af", "#9e69af", 1)
+		"#9e69af", "#9e69af", 0)
 
 	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
 		t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
@@ -2663,6 +2663,106 @@ func TestEngineSyncCalendarMetadataSkipsGoogleColorRequests(t *testing.T) {
 	}
 	if cal.Color != "#9e69af" {
 		t.Fatalf("Color = %q, want #9e69af", cal.Color)
+	}
+	if cal.ColorDirty != 0 {
+		t.Fatalf("ColorDirty = %d, want 0", cal.ColorDirty)
+	}
+}
+
+// TestEngineSyncCalendarMetadataPushesGoogleColorViaCalendarList writes a
+// dirty Google color through CalendarList, not Apple calendar-color.
+func TestEngineSyncCalendarMetadataPushesGoogleColorViaCalendarList(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	const remoteURL = "https://apidata.googleusercontent.com/caldav/v2/me@example.com/events"
+	seedCalendarColorState(t, db, q, remoteURL, "#112233", "#9e69af", 1)
+
+	var sawPatch bool
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodPatch {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		if r.URL.Host != "www.googleapis.com" {
+			t.Fatalf("PATCH host = %q, want www.googleapis.com", r.URL.Host)
+		}
+		if !strings.Contains(r.URL.Path, "/calendar/v3/users/me/calendarList/") {
+			t.Fatalf("PATCH path = %q", r.URL.Path)
+		}
+		if r.URL.Query().Get("colorRgbFormat") != "true" {
+			t.Fatalf("colorRgbFormat = %q", r.URL.Query().Get("colorRgbFormat"))
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll: %v", err)
+		}
+		if !strings.Contains(string(body), `"backgroundColor":"#112233"`) {
+			t.Fatalf("PATCH body = %s", body)
+		}
+		sawPatch = true
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"backgroundColor":"#112233"}`)),
+			Request:    r,
+		}, nil
+	})
+
+	if err := engine.syncCalendarMetadata(context.Background(), client, 1, remoteURL); err != nil {
+		t.Fatalf("syncCalendarMetadata: %v", err)
+	}
+	if !sawPatch {
+		t.Fatal("expected CalendarList color PATCH")
+	}
+
+	cal, err := q.GetCalendar(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("GetCalendar: %v", err)
+	}
+	if cal.Color != "#112233" {
+		t.Fatalf("Color = %q, want #112233", cal.Color)
+	}
+	if got := storage.NullableToString(cal.RemoteColor); got != "#112233" {
+		t.Fatalf("RemoteColor = %q, want #112233", got)
+	}
+	if cal.ColorDirty != 0 {
+		t.Fatalf("ColorDirty = %d, want 0", cal.ColorDirty)
+	}
+}
+
+// TestEngineSyncCalendarMetadataKeepsGoogleColorDirtyWhenPatchFails keeps
+// the local Google color override when CalendarList PATCH is refused.
+// Event sync must still proceed (issue #628).
+func TestEngineSyncCalendarMetadataKeepsGoogleColorDirtyWhenPatchFails(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	const remoteURL = "https://apidata.googleusercontent.com/caldav/v2/me@example.com/events"
+	seedCalendarColorState(t, db, q, remoteURL, "#112233", "#9e69af", 1)
+
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodPatch {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		return &http.Response{
+			StatusCode: http.StatusForbidden,
+			Status:     "403 Forbidden",
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"reason":"forbidden"}}`)),
+			Request:    r,
+		}, nil
+	})
+
+	if err := engine.syncCalendarMetadata(context.Background(), client, 1, remoteURL); err != nil {
+		t.Fatalf("syncCalendarMetadata: %v", err)
+	}
+
+	cal, err := q.GetCalendar(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("GetCalendar: %v", err)
+	}
+	if cal.Color != "#112233" {
+		t.Fatalf("Color = %q, want #112233", cal.Color)
 	}
 	if cal.ColorDirty != 1 {
 		t.Fatalf("ColorDirty = %d, want 1", cal.ColorDirty)
