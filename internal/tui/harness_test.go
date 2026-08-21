@@ -179,7 +179,7 @@ func TestHarness_EditSave_PreservesStoredAlarms(t *testing.T) {
 	updated, ok := next.(eventUpdatedMsg)
 	require.True(t, ok, "expected eventUpdatedMsg, got %T", next)
 	require.NoError(t, updated.err)
-	m, _ = step(t, m, next)
+	_, _ = step(t, m, next)
 
 	fresh, err := a.Events.Get(ctx, seeded.ID)
 	require.NoError(t, err)
@@ -222,7 +222,7 @@ func TestHarness_CreateSave_WritesAlarmRows(t *testing.T) {
 	created, ok := next.(eventCreatedMsg)
 	require.True(t, ok, "expected eventCreatedMsg, got %T", next)
 	require.NoError(t, created.err)
-	m, _ = step(t, m, next)
+	_, _ = step(t, m, next)
 
 	events, err := a.Events.ListByDateRange(ctx, day, day.AddDate(0, 0, 1))
 	require.NoError(t, err)
