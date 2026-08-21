@@ -80,8 +80,8 @@ func NewWeekModel(today time.Time) WeekModel {
 }
 
 func (m WeekModel) WeekStartDate() time.Time {
-	offset := (int(m.cursor.Weekday()) - int(m.weekStart) + 7) % 7
-	return time.Date(m.cursor.Year(), m.cursor.Month(), m.cursor.Day()-offset, 0, 0, 0, 0, m.cursor.Location())
+	d := m.cursor
+	return time.Date(d.Year(), d.Month(), d.Day()-weekdayOffset(d, m.weekStart), 0, 0, 0, 0, d.Location())
 }
 
 func (m WeekModel) Cursor() time.Time { return m.cursor }

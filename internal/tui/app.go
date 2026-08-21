@@ -450,10 +450,6 @@ type Model struct {
 	showSidebar      bool
 	showWeekNumbers  bool
 	weekStart        time.Weekday
-	// persistWeekStart is true when the first day of the week came from
-	// UI state or from a TUI toggle. Config then stays the default until
-	// the user sets the day in the TUI.
-	persistWeekStart bool
 	focus            appFocus
 	hiddenCalendars  map[int64]bool
 	clickedEventID   int64
@@ -581,10 +577,8 @@ func newModel(a *app.App, themeName string, configWeekStart time.Weekday) Model 
 		vm = viewAgenda
 	}
 	weekStart := configWeekStart
-	persistWeekStart := false
 	if w, ok := config.ParseWeekStart(ui.WeekStart); ok {
 		weekStart = w
-		persistWeekStart = true
 	}
 	sb := NewSidebarModel(NewMiniMonthModel(now).SetWeekStart(weekStart), NewCalendarListModel(nil, hidden))
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
@@ -602,7 +596,6 @@ func newModel(a *app.App, themeName string, configWeekStart time.Weekday) Model 
 		showSidebar:        ui.ShowSidebar,
 		showWeekNumbers:    ui.ShowWeekNumbers,
 		weekStart:          weekStart,
-		persistWeekStart:   persistWeekStart,
 		hiddenCalendars:    hidden,
 		focus:              focusCalendar,
 		sidebar:            sb,
@@ -2819,11 +2812,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case EventCreateMsg:
-		var cmd tea.Cmd
-		m.form, cmd = NewEventFormModel(msg.Day, eventFormCalendars(m.calendars), m.theme)
-		m.form = m.form.SetWeekStart(m.weekStart).SetSize(m.width, m.height)
-		m.formOpen = true
-		return m, cmd
+		form, cmd := NewEventFormModel(msg.Day, eventFormCalendars(m.calendars), m.theme)
+		return m.openEventForm(form, cmd)
 
 	case EventEditMsg:
 		if cmd, blocked := m.blockReadOnlyCalendarMutation(msg.Event.CalendarID); blocked {
@@ -2875,16 +2865,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 			return m, nil
 		}
-		var cmd tea.Cmd
-		m.form, cmd = NewEventFormModelForEditInstance(msg.event, msg.instanceTime, eventFormCalendars(m.calendars), m.theme)
-		m.form = m.form.SetWeekStart(m.weekStart).SetSize(m.width, m.height)
-		m.formOpen = true
+		form, cmd := NewEventFormModelForEditInstance(msg.event, msg.instanceTime, eventFormCalendars(m.calendars), m.theme)
 		m.dialogOpen = false
 		if m.viewDialogOpen {
 			m.viewReturnEvent = msg.event
 		}
 		m.viewDialogOpen = false
-		return m, cmd
+		return m.openEventForm(form, cmd)
 
 	case EventViewRequestedMsg:
 		ev := msg.Event
@@ -2924,15 +2911,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case EventDuplicateMsg:
-		var cmd tea.Cmd
-		m.form, cmd = NewEventFormModelForDuplicate(msg.Event, eventFormCalendars(m.calendars), m.theme)
-		m.form = m.form.SetWeekStart(m.weekStart).SetSize(m.width, m.height)
-		m.formOpen = true
+		form, cmd := NewEventFormModelForDuplicate(msg.Event, eventFormCalendars(m.calendars), m.theme)
 		if m.viewDialogOpen {
 			m.viewReturnEvent = msg.Event
 		}
 		m.viewDialogOpen = false
-		return m, cmd
+		return m.openEventForm(form, cmd)
 
 	case EventFormSaveMsg:
 		if cmd, blocked := m.blockReadOnlyCalendarMutation(msg.CalendarID); blocked {
@@ -4911,11 +4895,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			default:
 				cursor = m.calendar.Cursor()
 			}
-			var cmd tea.Cmd
-			m.form, cmd = NewEventFormModel(cursor, eventFormCalendars(m.calendars), m.theme)
-			m.form = m.form.SetWeekStart(m.weekStart).SetSize(m.width, m.height)
-			m.formOpen = true
-			return m, cmd
+			form, cmd := NewEventFormModel(cursor, eventFormCalendars(m.calendars), m.theme)
+			return m.openEventForm(form, cmd)
 		}
 		if m.focus == focusCalendar {
 			switch m.viewMode {
@@ -5300,7 +5281,6 @@ func (m Model) toggleWeekStart() (tea.Model, tea.Cmd) {
 	} else {
 		m.weekStart = time.Monday
 	}
-	m.persistWeekStart = true
 	m.calendar = m.calendar.SetWeekStart(m.weekStart)
 	m.week = m.week.SetWeekStart(m.weekStart)
 	m.sidebar = m.sidebar.SetWeekStart(m.weekStart)
@@ -5323,6 +5303,13 @@ func (m Model) toggleSidebar() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// openEventForm mounts an event form with the session week start and size.
+func (m Model) openEventForm(form EventFormModel, cmd tea.Cmd) (Model, tea.Cmd) {
+	m.form = form.SetWeekStart(m.weekStart).SetSize(m.width, m.height)
+	m.formOpen = true
+	return m, cmd
+}
+
 // openPalette initializes and shows the command palette.
 func (m Model) openPalette() (tea.Model, tea.Cmd) {
 	cmds := buildPaletteCommands(m)
@@ -5342,13 +5329,6 @@ func (m *Model) switchView() tea.Cmd {
 	m.agenda = m.agenda.SetSize(iw, ih)
 	m.saveUIState()
 	return m.loadEvents()
-}
-
-func (m Model) persistedWeekStart() string {
-	if !m.persistWeekStart {
-		return ""
-	}
-	return config.FormatWeekStart(m.weekStart)
 }
 
 func (m Model) saveUIState() {
@@ -5376,7 +5356,7 @@ func (m Model) saveUIState() {
 		HiddenCalendars:     ids,
 		AgendaShowEmptyDays: m.agenda.ShowEmptyDays(),
 		ShowWeekNumbers:     m.showWeekNumbers,
-		WeekStart:           m.persistedWeekStart(),
+		WeekStart:           config.FormatWeekStart(m.weekStart),
 	})
 }
 

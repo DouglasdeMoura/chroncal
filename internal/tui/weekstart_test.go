@@ -155,12 +155,9 @@ func TestNewModel_ConfigWeekStartAppliesWhenStateEmpty(t *testing.T) {
 	if m.weekStart != time.Monday {
 		t.Fatalf("weekStart = %v, want Monday from config", m.weekStart)
 	}
-	if m.persistWeekStart {
-		t.Fatal("config week start must not lock UI state until the user toggles")
-	}
 	m.saveUIState()
-	if got := config.LoadUIState().WeekStart; got != "" {
-		t.Fatalf("saved week_start = %q, want empty so config remains the source", got)
+	if got := config.LoadUIState().WeekStart; got != config.WeekStartMonday {
+		t.Fatalf("saved week_start = %q, want monday", got)
 	}
 }
 
