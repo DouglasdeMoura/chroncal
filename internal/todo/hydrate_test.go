@@ -80,3 +80,20 @@ func TestTodoService_HydrateBestEffort_PopulatesPastAFailure(t *testing.T) {
 		t.Errorf("Attendees = %d, want 1", len(fetched.Attendees))
 	}
 }
+
+// See event.TestEventService_HydrateSkipUnreadable_NamesLostRelations.
+func TestTodoService_HydrateSkipUnreadable_NamesLostRelations(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	td := createTodo(t, svc)
+
+	hideTable(t, svc, "todo_alarms")
+
+	failed := svc.HydrateSkipUnreadable(ctx, &td)
+	if len(failed) != 1 || failed[0] != "alarms" {
+		t.Fatalf("HydrateSkipUnreadable = %v, want [alarms]", failed)
+	}
+	if err := svc.Hydrate(ctx, &td); err == nil {
+		t.Fatal("Hydrate returned nil with a relation unreadable; the default export must still abort")
+	}
+}

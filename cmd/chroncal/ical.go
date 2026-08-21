@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -147,6 +148,7 @@ func icalExportCmd() *cobra.Command {
 		includeEvents   bool
 		includeTodos    bool
 		includeJournals bool
+		skipUnreadable  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "export",
@@ -155,7 +157,12 @@ func icalExportCmd() *cobra.Command {
 
 Without --events, --todos, or --journals, all supported entry types are
 included. Use --file to write a file, or omit it to print the .ics data
-to stdout.`,
+to stdout.
+
+A failed relation read aborts the export by default. No file is then
+written, so no incomplete backup exists. Pass --skip-unreadable to write
+past such failures. The file then carries a comment header that names
+each incomplete record, and stderr lists them.`,
 		Example: `  chroncal ical export --calendar Work --file work.ics
   chroncal ical export --events --from 2026-04-01 --to 2026-04-30
   chroncal ical export --todos --category release`,
@@ -219,6 +226,10 @@ to stdout.`,
 				toDate = toT.Format("2006-01-02")
 			}
 
+			// Records that exported without all their relations. The default
+			// path aborts instead, so this stays empty there.
+			var incomplete []unreadableRecord
+
 			// Load events
 			var events []event.Event
 			if includeEvents {
@@ -263,8 +274,16 @@ to stdout.`,
 					// .ics missing alarms and attendees. Name the offending record
 					// and say no file was written, so the message is actionable
 					// rather than a bare "event 4211 attachments: ...".
+					//
+					// With --skip-unreadable the user chose that trade-off for this
+					// run: keep every readable relation, and mark what went missing.
 					if err := a.Events.Hydrate(ctx, &events[i]); err != nil {
-						return fmt.Errorf("export aborted, no file written: %w (event uid %s)", err, events[i].UID)
+						if !skipUnreadable {
+							return fmt.Errorf("export aborted, no file written: %w (event uid %s)", err, events[i].UID)
+						}
+						if failed := a.Events.HydrateSkipUnreadable(ctx, &events[i]); len(failed) > 0 {
+							incomplete = append(incomplete, unreadableRecord{"event", events[i].ID, events[i].UID, failed})
+						}
 					}
 				}
 			}
@@ -284,7 +303,12 @@ to stdout.`,
 				}
 				for i := range todos {
 					if err := a.Todos.Hydrate(ctx, &todos[i]); err != nil {
-						return fmt.Errorf("export aborted, no file written: %w (todo uid %s)", err, todos[i].UID)
+						if !skipUnreadable {
+							return fmt.Errorf("export aborted, no file written: %w (todo uid %s)", err, todos[i].UID)
+						}
+						if failed := a.Todos.HydrateSkipUnreadable(ctx, &todos[i]); len(failed) > 0 {
+							incomplete = append(incomplete, unreadableRecord{"todo", todos[i].ID, todos[i].UID, failed})
+						}
 					}
 				}
 			}
@@ -304,7 +328,12 @@ to stdout.`,
 				}
 				for i := range journals {
 					if err := a.Journals.Hydrate(ctx, &journals[i]); err != nil {
-						return fmt.Errorf("export aborted, no file written: %w (journal uid %s)", err, journals[i].UID)
+						if !skipUnreadable {
+							return fmt.Errorf("export aborted, no file written: %w (journal uid %s)", err, journals[i].UID)
+						}
+						if failed := a.Journals.HydrateSkipUnreadable(ctx, &journals[i]); len(failed) > 0 {
+							incomplete = append(incomplete, unreadableRecord{"journal", journals[i].ID, journals[i].UID, failed})
+						}
 					}
 				}
 			}
@@ -343,6 +372,14 @@ to stdout.`,
 				data = ical.MergeCalendars(data, p)
 			}
 
+			// The file must self-describe months later without terminal
+			// context, so the caveat goes into the file as comment lines and
+			// not only onto this run's stderr.
+			if len(incomplete) > 0 {
+				reportUnreadable(incomplete)
+				data = ical.PrependComments(data, unreadableCaveatLines(incomplete))
+			}
+
 			if outFile != "" {
 				if err := os.WriteFile(outFile, data, 0o644); err != nil {
 					return fmt.Errorf("write file: %w", err)
@@ -364,5 +401,39 @@ to stdout.`,
 	cmd.Flags().BoolVar(&includeEvents, "events", false, "include only events")
 	cmd.Flags().BoolVar(&includeTodos, "todos", false, "include only todos")
 	cmd.Flags().BoolVar(&includeJournals, "journals", false, "include only journal entries")
+	cmd.Flags().BoolVar(&skipUnreadable, "skip-unreadable", false,
+		"export past unreadable relations and mark incomplete records (default: abort)")
 	return cmd
+}
+
+// unreadableRecord names one record that exported without all its relations.
+type unreadableRecord struct {
+	kind      string
+	id        int64
+	uid       string
+	relations []string
+}
+
+// reportUnreadable prints one line per incomplete record to stderr. The line
+// carries the row id, the uid, and the names of the lost relations.
+func reportUnreadable(records []unreadableRecord) {
+	fmt.Fprintf(os.Stderr, "chroncal: --skip-unreadable: %d record(s) are incomplete:\n", len(records))
+	for _, r := range records {
+		fmt.Fprintf(os.Stderr, "  %s %d (uid %s): %s\n", r.kind, r.id, r.uid, strings.Join(r.relations, ", "))
+	}
+}
+
+// unreadableCaveatLines builds the comment lines that PrependComments writes
+// into the .ics. A reader months later then sees which records are incomplete
+// and what each one misses, with no terminal output to rely on.
+func unreadableCaveatLines(records []unreadableRecord) []string {
+	lines := []string{
+		"chroncal wrote this file with --skip-unreadable.",
+		"The records below are incomplete. Their named relations are absent:",
+	}
+	for _, r := range records {
+		lines = append(lines, fmt.Sprintf("%s %d (uid %s): %s",
+			r.kind, r.id, r.uid, strings.Join(r.relations, ", ")))
+	}
+	return lines
 }

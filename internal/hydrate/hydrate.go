@@ -42,6 +42,7 @@ type Collector struct {
 	FailFast bool   // stop at the first error instead of loading the rest
 
 	failures []RelFailure
+	failed   []string
 }
 
 // Rel loads one relation via load(ctx, c.ID) and assigns the result to *dst.
@@ -57,6 +58,7 @@ func Rel[T any](ctx context.Context, c *Collector, dst *[]T, rel string, load fu
 	v, err := load(ctx, c.ID)
 	if err != nil {
 		c.failures = append(c.failures, RelFailure{Kind: c.Kind, ID: c.ID, Relation: rel, Cause: err})
+		c.failed = append(c.failed, rel)
 		return
 	}
 	*dst = v
@@ -74,4 +76,17 @@ func (c *Collector) Err() error {
 		errs[i] = fmt.Errorf("%s %d %s: %w", f.Kind, f.ID, f.Relation, f.Cause)
 	}
 	return &HydrationError{Err: errors.Join(errs...), Failures: c.failures}
+}
+
+// Failed returns the names of the relations that could not load, in load
+// order. It returns nil when every relation loaded. A caller that skips
+// unreadable relations uses it to name what a record lost instead of parsing
+// error text.
+func (c *Collector) Failed() []string {
+	if len(c.failed) == 0 {
+		return nil
+	}
+	out := make([]string, len(c.failed))
+	copy(out, c.failed)
+	return out
 }

@@ -71,3 +71,20 @@ func TestJournalService_HydrateBestEffort_PopulatesPastAFailure(t *testing.T) {
 		t.Errorf("Comments = %d, want 1", len(fetched.Comments))
 	}
 }
+
+// See event.TestEventService_HydrateSkipUnreadable_NamesLostRelations.
+func TestJournalService_HydrateSkipUnreadable_NamesLostRelations(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	j := createJournal(t, svc)
+
+	hideTable(t, svc, "journal_attendees")
+
+	failed := svc.HydrateSkipUnreadable(ctx, &j)
+	if len(failed) != 1 || failed[0] != "attendees" {
+		t.Fatalf("HydrateSkipUnreadable = %v, want [attendees]", failed)
+	}
+	if err := svc.Hydrate(ctx, &j); err == nil {
+		t.Fatal("Hydrate returned nil with a relation unreadable; the default export must still abort")
+	}
+}

@@ -1061,7 +1061,17 @@ func (s *Service) HydrateBestEffort(ctx context.Context, j *Journal) error {
 	return s.hydrate(ctx, j, false)
 }
 
-func (s *Service) hydrate(ctx context.Context, j *Journal, failFast bool) error {
+// HydrateSkipUnreadable populates every relation it can and returns the names
+// of the relations it could not load. It never fails. See
+// event.Service.HydrateSkipUnreadable for the contract.
+func (s *Service) HydrateSkipUnreadable(ctx context.Context, j *Journal) []string {
+	return s.collect(ctx, j, false).Failed()
+}
+
+// collect loads every relation onto j through one Collector. Hydrate,
+// HydrateBestEffort, and HydrateSkipUnreadable share it, so the relation set
+// stays a single definition.
+func (s *Service) collect(ctx context.Context, j *Journal, failFast bool) *hydrate.Collector {
 	c := &hydrate.Collector{Kind: "journal", ID: j.ID, FailFast: failFast}
 	hydrate.Rel(ctx, c, &j.Attendees, "attendees", s.ListAttendees)
 	hydrate.Rel(ctx, c, &j.Attachments, "attachments", s.ListAttachments)
@@ -1069,5 +1079,9 @@ func (s *Service) hydrate(ctx context.Context, j *Journal, failFast bool) error 
 	hydrate.Rel(ctx, c, &j.Contacts, "contacts", s.ListContacts)
 	hydrate.Rel(ctx, c, &j.Relations, "relations", s.ListRelations)
 	hydrate.Rel(ctx, c, &j.XProperties, "x-properties", s.ListXProperties)
-	return c.Err()
+	return c
+}
+
+func (s *Service) hydrate(ctx context.Context, j *Journal, failFast bool) error {
+	return s.collect(ctx, j, failFast).Err()
 }

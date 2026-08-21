@@ -121,4 +121,46 @@ func TestRelBestEffortContinuesAndJoins(t *testing.T) {
 	if got := err.Error(); got != want {
 		t.Fatalf("Err() = %q, want %q", got, want)
 	}
+
+	got := c.Failed()
+	if len(got) != 2 || got[0] != "attendees" || got[1] != "contacts" {
+		t.Fatalf("Failed() = %v, want [attendees contacts] in load order", got)
+	}
+}
+
+func TestFailedNilWhenClean(t *testing.T) {
+	ctx := context.Background()
+	c := &hydrate.Collector{Kind: "event", ID: 1}
+
+	var comments []string
+	var called bool
+	hydrate.Rel(ctx, c, &comments, "comments", loader(&called, nil, []string{"ok"}, nil))
+
+	if err := c.Err(); err != nil {
+		t.Fatalf("Err() = %v, want nil", err)
+	}
+	if got := c.Failed(); got != nil {
+		t.Fatalf("Failed() = %v, want nil when every relation loaded", got)
+	}
+}
+
+// The CLI's export --skip-unreadable names the lost relations per record. In
+// fail-fast mode the run aborts after the first failure, so the later Rel
+// calls never record a second name.
+func TestFailedSingleEntryInFailFastMode(t *testing.T) {
+	ctx := context.Background()
+	c := &hydrate.Collector{Kind: "todo", ID: 4, FailFast: true}
+
+	var attendees, comments []string
+	var c1, c2 bool
+	hydrate.Rel(ctx, c, &attendees, "attendees", loader[string](&c1, nil, nil, errBoom))
+	hydrate.Rel(ctx, c, &comments, "comments", loader[string](&c2, nil, nil, errBoom))
+
+	if c2 {
+		t.Fatal("second loader ran in fail-fast mode")
+	}
+	got := c.Failed()
+	if len(got) != 1 || got[0] != "attendees" {
+		t.Fatalf("Failed() = %v, want [attendees]", got)
+	}
 }
