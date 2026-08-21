@@ -307,11 +307,13 @@ func setEventTimes(vevent *ical.Event, e event.Event) {
 		}
 	}
 
-	// A server DTEND that failed to parse was replaced locally by a
-	// fabricated span. When the value arrived over CalDAV, import preserved
-	// the original string in X-CHRONCAL-ORIGINAL-DTEND. Hand it back
-	// verbatim: the server gets exactly what it gave us, and our invention
-	// never overwrites its value (issue #567).
+	// A CalDAV import of a DTEND that failed to parse stores the raw
+	// server string in X-CHRONCAL-ORIGINAL-DTEND and fabricates a local
+	// span. Emit the stored string as DTEND: the server receives the exact
+	// value it sent, and the fabricated span does not overwrite it (issue
+	// #567). A local edit that changes the span clears the slot first (see
+	// internal/event, issue #649). This override then applies only while
+	// the local span still matches the server value.
 	if !useDuration {
 		for _, xp := range e.XProperties {
 			if xp.Name != xpropOriginalDTEND {
@@ -1313,8 +1315,8 @@ func emitXProperties(comp *ical.Component, xprops []model.XProperty) {
 		if isLibicalDiagnosticProp(xp.Name) {
 			continue
 		}
-		// The original-DTEND preservation slot feeds the DTEND override in
-		// buildVevent. Emitting it again would duplicate the value on the
+		// The original-DTEND slot supplies the DTEND override in
+		// setEventTimes. An emit here would duplicate the value on the
 		// wire.
 		if xp.Name == xpropOriginalDTEND {
 			continue

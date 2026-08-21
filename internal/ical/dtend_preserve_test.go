@@ -1,12 +1,15 @@
 package ical
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
 
 // exchangeDTENDIcal is the shape Exchange emits: DTSTART parses, DTEND
@@ -115,5 +118,100 @@ func TestExportNormalEventKeepsComputedDTEND(t *testing.T) {
 	}
 	if !strings.Contains(out, "DTEND") {
 		t.Errorf("normal event lost its DTEND:\n%s", out)
+	}
+}
+
+// A local edit that changes the span must clear the preservation slot.
+// Otherwise the next export emits the stale server DTEND and drops the
+// user's new end time (issue #649). An edit that keeps the span keeps the
+// slot.
+func TestLocalSpanEditClearsPreservedDTEND(t *testing.T) {
+	t.Parallel()
+
+	db, q := testutil.NewTestDB(t)
+	ctx := context.Background()
+	calSvc := calendar.NewService(db, q)
+	eventSvc := event.NewService(db, q)
+
+	cals, err := calSvc.List(ctx)
+	if err != nil {
+		t.Fatalf("List calendars: %v", err)
+	}
+	calID := cals[0].ID
+
+	// Persist a remote import the way the sync engine does: the row first,
+	// then the x-properties.
+	imported := importOneEvent(t, exchangeDTENDIcal)
+	saved, err := eventSvc.UpsertByUID(ctx, event.UpsertParams{
+		UID: imported.UID, CalendarID: calID,
+		Title: imported.Title, StartTime: imported.StartTime, EndTime: imported.EndTime,
+		Timezone: imported.Timezone, DtStamp: imported.DtStamp,
+	})
+	if err != nil {
+		t.Fatalf("UpsertByUID: %v", err)
+	}
+	if err := eventSvc.ReplaceXProperties(ctx, saved.ID, imported.XProperties); err != nil {
+		t.Fatalf("ReplaceXProperties: %v", err)
+	}
+
+	hasSlot := func() bool {
+		xps, err := eventSvc.ListXProperties(ctx, saved.ID)
+		if err != nil {
+			t.Fatalf("ListXProperties: %v", err)
+		}
+		for _, xp := range xps {
+			if xp.Name == xpropOriginalDTEND {
+				return true
+			}
+		}
+		return false
+	}
+	if !hasSlot() {
+		t.Fatal("setup lost the preservation slot")
+	}
+
+	// An edit that keeps the span keeps the slot.
+	edit := event.UpdateParams{
+		CalendarID: calID,
+		Title:      "Exchange meeting, renamed",
+		StartTime:  imported.StartTime,
+		EndTime:    imported.EndTime,
+		Timezone:   imported.Timezone,
+	}
+	if _, err := eventSvc.Update(ctx, saved.ID, edit); err != nil {
+		t.Fatalf("span-preserving update: %v", err)
+	}
+	if !hasSlot() {
+		t.Fatal("a span-preserving edit cleared the slot")
+	}
+
+	// A local edit that moves the end time clears the slot.
+	edit.EndTime = imported.EndTime.Add(time.Hour)
+	edited, err := eventSvc.Update(ctx, saved.ID, edit)
+	if err != nil {
+		t.Fatalf("end-time edit: %v", err)
+	}
+	if hasSlot() {
+		t.Fatal("the span edit kept the preservation slot")
+	}
+
+	// Export emits the edited end time, not the stale server string.
+	if err := eventSvc.Hydrate(ctx, &edited); err != nil {
+		t.Fatalf("Hydrate: %v", err)
+	}
+	data, err := ExportEvents([]event.Event{edited}, "Work")
+	if err != nil {
+		t.Fatalf("ExportEvents: %v", err)
+	}
+	out := string(data)
+	want := "DTEND:" + edited.EndTime.UTC().Format("20060102T150405Z")
+	if !strings.Contains(out, want) {
+		t.Errorf("export lost the edited DTEND %q:\n%s", want, out)
+	}
+	if strings.Contains(out, "20260101T163000") {
+		t.Errorf("export emitted the stale server DTEND:\n%s", out)
+	}
+	if strings.Contains(out, xpropOriginalDTEND) {
+		t.Errorf("export leaked the preservation slot:\n%s", out)
 	}
 }

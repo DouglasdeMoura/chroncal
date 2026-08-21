@@ -1,5 +1,12 @@
 package model
 
+// XPropOriginalDTEND names the x-property that preserves a server DTEND
+// which local parsing could not read. The CalDAV pull path stores the raw
+// property under this name. Export emits the stored string as DTEND while
+// no DURATION is set. A local edit that changes the span clears the slot.
+// See internal/ical and docs/adr/0002 (issues #567, #649).
+const XPropOriginalDTEND = "X-CHRONCAL-ORIGINAL-DTEND"
+
 // XProperty represents an iCal extension property (X-* or unhandled IANA
 // property) stored for round-trip fidelity. The Params field is a JSON
 // object mapping parameter names to arrays of values, e.g.:

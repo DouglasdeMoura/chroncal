@@ -548,6 +548,10 @@ func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p Update
 	if err := validateDurationValue(p.StartTime, p.DurationValue); err != nil {
 		return Event{}, err
 	}
+	old, err := qtx.GetEvent(ctx, id)
+	if err != nil {
+		return Event{}, err
+	}
 	r, err := qtx.UpdateEvent(ctx, storage.UpdateEventParams{
 		ID:             id,
 		Title:          p.Title,
@@ -578,8 +582,65 @@ func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p Update
 	if err := replaceCategoriesTx(ctx, qtx, e.ID, ParseCategoryList(p.Categories)); err != nil {
 		return Event{}, fmt.Errorf("replace categories: %w", err)
 	}
+	if localSpanEdit(old, p) {
+		if err := clearPreservedDTENDTx(ctx, qtx, e.ID); err != nil {
+			return Event{}, err
+		}
+	}
 	e.Categories = p.Categories
 	return e, nil
+}
+
+// localSpanEdit reports whether an update replaces the stored end time or
+// duration. Only a local edit goes through UpdateParams. A sync upsert
+// bypasses this rule, because a fresh server body sets the slot again
+// (issue #649).
+func localSpanEdit(old storage.Event, p UpdateParams) bool {
+	return old.EndTime != p.EndTime.Format(time.RFC3339) ||
+		storage.NullableToString(old.Duration) != p.DurationValue
+}
+
+// clearPreservedDTENDTx removes the X-CHRONCAL-ORIGINAL-DTEND slot from the
+// event's x-properties. It runs inside the caller's transaction and keeps
+// every other x-property. It does nothing when the slot is absent.
+//
+// A local edit that changes the span invalidates the preserved server DTEND.
+// An export after the edit must emit the edited span, not the stale server
+// string (issue #649).
+func clearPreservedDTENDTx(ctx context.Context, qtx *storage.Queries, eventID int64) error {
+	rows, err := qtx.ListXPropertiesByOwner(ctx, storage.ListXPropertiesByOwnerParams{
+		OwnerType: "event", OwnerID: eventID,
+	})
+	if err != nil {
+		return fmt.Errorf("list x-properties: %w", err)
+	}
+	found := false
+	for _, r := range rows {
+		if r.Name == model.XPropOriginalDTEND {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil
+	}
+	if err := qtx.DeleteXPropertiesByOwner(ctx, storage.DeleteXPropertiesByOwnerParams{
+		OwnerType: "event", OwnerID: eventID,
+	}); err != nil {
+		return fmt.Errorf("delete x-properties: %w", err)
+	}
+	for _, r := range rows {
+		if r.Name == model.XPropOriginalDTEND {
+			continue
+		}
+		if err := qtx.InsertXProperty(ctx, storage.InsertXPropertyParams{
+			OwnerType: "event", OwnerID: eventID,
+			Name: r.Name, Value: r.Value, Params: r.Params,
+		}); err != nil {
+			return fmt.Errorf("insert x-property: %w", err)
+		}
+	}
+	return nil
 }
 
 func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error) {
@@ -1072,7 +1133,7 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 		Uid:          uid,
 		RecurrenceID: recID,
 	}); gErr == nil {
-		r, err = qtx.UpdateEvent(ctx, overrideUpdateParams(existing.ID, p))
+		r, err = updateOverrideTx(ctx, qtx, existing, p)
 		if err != nil {
 			return Event{}, 0, fmt.Errorf("update override: %w", err)
 		}
@@ -1089,7 +1150,7 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 				if eErr != nil {
 					return Event{}, 0, fmt.Errorf("retry get override: %w", eErr)
 				}
-				r, err = qtx.UpdateEvent(ctx, overrideUpdateParams(existing.ID, p))
+				r, err = updateOverrideTx(ctx, qtx, existing, p)
 				if err != nil {
 					return Event{}, 0, fmt.Errorf("retry update override: %w", err)
 				}
@@ -1106,6 +1167,22 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 	e := FromStorage(r)
 	e.Categories = timeutil.JoinCategoryList(carriedCats)
 	return e, master.CalendarID, nil
+}
+
+// updateOverrideTx updates a stored override row. A span change clears the
+// preserved server DTEND slot on that row (issue #649). A fresh override row
+// never carries the slot, so the create path needs no clear.
+func updateOverrideTx(ctx context.Context, qtx *storage.Queries, existing storage.Event, p UpdateParams) (storage.Event, error) {
+	r, err := qtx.UpdateEvent(ctx, overrideUpdateParams(existing.ID, p))
+	if err != nil {
+		return storage.Event{}, err
+	}
+	if localSpanEdit(existing, p) {
+		if err := clearPreservedDTENDTx(ctx, qtx, existing.ID); err != nil {
+			return storage.Event{}, err
+		}
+	}
+	return r, nil
 }
 
 // overrideUpdateParams builds the storage params for an update of a stored

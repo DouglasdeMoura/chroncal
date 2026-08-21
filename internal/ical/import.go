@@ -50,12 +50,15 @@ const (
 
 var errImportLimitExceeded = errors.New("ical import exceeds configured limits")
 
-// xpropOriginalDTEND preserves a server DTEND that failed to parse. The
-// fabricated local span must not overwrite the server's value on the next
-// push, so export hands the original string back verbatim. Only the CalDAV
-// pull path sets it: a file-imported value did not come from the target
-// server, and re-emitting it there could wedge a strict server.
-const xpropOriginalDTEND = "X-CHRONCAL-ORIGINAL-DTEND"
+// xpropOriginalDTEND preserves a server DTEND that failed to parse. Export
+// emits the stored string as DTEND, so the fabricated local span does not
+// overwrite the server value (issue #567). A local edit that changes the
+// span clears the slot first (see internal/event, issue #649).
+//
+// Only the CalDAV pull path sets the slot. A file import did not receive
+// the value from the target server. An export of such a value could send
+// the target server a DTEND it rejects, and the resource then stays dirty.
+const xpropOriginalDTEND = model.XPropOriginalDTEND
 
 // ImportFile parses an iCal stream from a file or another local source.
 func ImportFile(r io.Reader) (ImportResult, error) {
@@ -63,9 +66,9 @@ func ImportFile(r io.Reader) (ImportResult, error) {
 }
 
 // ImportFileRemote parses an iCal stream that a CalDAV server served. A
-// DTEND that fails to parse is then preserved verbatim in
-// X-CHRONCAL-ORIGINAL-DTEND, so export can hand the server back exactly what
-// it gave us (issue #567).
+// DTEND that fails to parse is stored verbatim in
+// X-CHRONCAL-ORIGINAL-DTEND. Export then returns the exact server value
+// (issue #567).
 func ImportFileRemote(r io.Reader) (ImportResult, error) {
 	return importFile(r, true)
 }
@@ -649,10 +652,10 @@ func eventFromVEvent(ve ical.Event, remote bool) (event.Event, []string, error) 
 
 	xprops := extractXPropertiesWithSet(ve.Props, handledEventProps)
 	if remote && badDTENDRaw != nil {
-		// The server's DTEND failed to parse here but parses on the server
-		// (a non-IANA TZID is the usual cause). Keep the raw property so
-		// export hands the value back verbatim instead of pushing the
-		// fabricated span over the server's original (issue #567).
+		// The server's DTEND failed to parse here but parses on the
+		// server (a non-IANA TZID is the usual cause). Store the raw
+		// property, so export returns the server value instead of the
+		// fabricated span (issue #567).
 		params := "{}"
 		if len(badDTENDRaw.Params) > 0 {
 			if b, err := json.Marshal(badDTENDRaw.Params); err == nil {
@@ -1541,8 +1544,7 @@ var handledJournalProps = map[string]bool{
 	ical.PropDateTimeStamp: true, ical.PropCreated: true, ical.PropLastModified: true,
 	ical.PropAttach: true, ical.PropComment: true, ical.PropContact: true,
 	ical.PropRelatedTo: true,
-	ical.PropAttendee: true, ical.PropOrganizer: true,
-	xpropOriginalDTEND: true,
+	ical.PropAttendee:  true, ical.PropOrganizer: true,
 }
 
 // extractXPropertiesWithSet collects properties not in the handled set.
