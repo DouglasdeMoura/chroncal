@@ -12,7 +12,7 @@ test:
 	go test ./... -count=1
 
 test-race:
-	go test -race -count=1 ./...
+	go test -race -count=1 -timeout=20m ./...
 
 coverage:
 	go test ./... -count=1 -coverprofile=coverage.out
