@@ -3,9 +3,11 @@ package caldav
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/douglasdemoura/chroncal/internal/auth"
@@ -106,5 +108,89 @@ func TestDiscoverGoogleCalendarsSkipsDeletedAndMapsFreeBusyReader(t *testing.T) 
 	}
 	if got := calendars[0].SupportedComponentSet; !slices.Equal(got, []string{"VFREEBUSY"}) {
 		t.Fatalf("freeBusyReader SupportedComponentSet = %v, want VFREEBUSY-only", got)
+	}
+}
+
+func TestGoogleCalendarIDFromCollectionURL(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		id string
+	}{
+		{"me@example.com"},
+		{"en.brazilian#holiday@group.v.calendar.google.com"},
+	}
+	for _, tc := range cases {
+		got, ok := googleCalendarIDFromCollectionURL(googleCalDAVCollectionURL(tc.id))
+		if !ok || got != tc.id {
+			t.Errorf("googleCalendarIDFromCollectionURL(%q) = %q, %v", tc.id, got, ok)
+		}
+	}
+	if _, ok := googleCalendarIDFromCollectionURL("https://cal.example.com/dav/work"); ok {
+		t.Fatal("non-Google URL parsed as a Google calendar id")
+	}
+	if _, ok := googleCalendarIDFromCollectionURL("https://apidata.googleusercontent.com/caldav"); ok {
+		t.Fatal("account root parsed as a Google calendar id")
+	}
+}
+
+func TestSetGoogleCalendarListColorPatchesRGB(t *testing.T) {
+	calendarID := "en.brazilian#holiday@group.v.calendar.google.com"
+	var gotPath, gotQuery, gotBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch {
+			t.Fatalf("method = %s", r.Method)
+		}
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll: %v", err)
+		}
+		gotBody = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"backgroundColor":"#112233"}`))
+	}))
+	defer server.Close()
+
+	oldListURL := googleCalendarListURL
+	googleCalendarListURL = server.URL
+	defer func() { googleCalendarListURL = oldListURL }()
+
+	collection := googleCalDAVCollectionURL(calendarID)
+	if err := SetGoogleCalendarListColor(context.Background(), http.DefaultClient, collection, "#112233"); err != nil {
+		t.Fatalf("SetGoogleCalendarListColor: %v", err)
+	}
+	if strings.Trim(gotPath, "/") != calendarID {
+		t.Fatalf("path = %q, want calendar id %q", gotPath, calendarID)
+	}
+	if !strings.Contains(gotQuery, "colorRgbFormat=true") {
+		t.Fatalf("query = %q", gotQuery)
+	}
+	if !strings.Contains(gotBody, `"backgroundColor":"#112233"`) {
+		t.Fatalf("body = %s", gotBody)
+	}
+	if !strings.Contains(gotBody, `"foregroundColor":"#ffffff"`) {
+		t.Fatalf("body missing foreground: %s", gotBody)
+	}
+}
+
+func TestSetGoogleCalendarListColorForbiddenIncludesBody(t *testing.T) {
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":{"reason":"forbidden"}}`, http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	oldListURL := googleCalendarListURL
+	googleCalendarListURL = server.URL
+	defer func() { googleCalendarListURL = oldListURL }()
+
+	err := SetGoogleCalendarListColor(context.Background(), http.DefaultClient, googleCalDAVCollectionURL("me@example.com"), "#112233")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "forbidden") {
+		t.Fatalf("error = %v, want body", err)
 	}
 }
