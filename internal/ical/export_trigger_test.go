@@ -173,7 +173,7 @@ func TestExport_FloatingTriggerResolvesInRecordZone(t *testing.T) {
 	if trigger == "" {
 		t.Fatalf("no TRIGGER line in export:\n%s", data)
 	}
-	if !strings.HasSuffix(trigger, ":"+wantStr) && !strings.Contains(trigger, wantStr) {
+	if !strings.Contains(trigger, wantStr) {
 		t.Errorf("TRIGGER = %s, want it to denote %s (the record-zone resolution)", trigger, wantStr)
 	}
 }

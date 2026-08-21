@@ -16,17 +16,17 @@ No single representation of an unparseable trigger is simultaneously:
 - fireable by the alarm engine,
 - valid on the wire as iCal.
 
-The importer must therefore pick one property to sacrifice. This record
+The importer must therefore pick one property to sacrifice. This ADR
 explains the choice and blocks a return to the worse options.
 
 ## Options tried
 
 | Behavior | Commit | Failure mode |
 |---|---|---|
-| Drop at import, no warning | before `3a348327` | Data is lost without notice. |
+| Drop at import, no warning | before `3a348327` | The alarm is lost without notice. |
 | Preserve the raw value verbatim | `3a348327` | Export emits `VALUE=DATE-TIME` garbage. Strict servers reject the PUT with HTTP 400. The resource stays dirty forever. |
 | Preserve locally, skip the VALARM on export | `6ba476d2` | The PUT omits the alarm. The next unrelated edit deletes it from the server. |
-| Drop at import, with a warning | `2d7b926a` (current) | Data is still lost, but the loss is announced. |
+| Drop at import, with a warning | `2d7b926a` (current) | The alarm is still lost, but a warning names it. |
 
 The current answer is the least bad option. It is not a good option.
 
@@ -44,7 +44,7 @@ exist:
 - UI that distinguishes the broken alarm from an armed reminder.
 
 Without both, preservation is strictly worse than dropping. The same data is
-lost at the next push instead of at import. In between, the user sees a
+lost at the next push instead of at import. Until the next push, the user sees a
 reminder that never fires, and the alarm editor refuses to open the record.
 
 ## Future work
