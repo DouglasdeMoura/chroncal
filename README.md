@@ -639,7 +639,7 @@ chroncal --event standup-uid --at 2026-04-17T14:00:00Z
 
 `--at` accepts an RFC 3339 timestamp or `YYYY-MM-DD`. It selects a generated occurrence of a recurring series. The details show the times of that occurrence, not the series start. Stored overrides take `--recurrence-id` with the series UID. `--at` requires `--event` and excludes `--recurrence-id`.
 
-**Views**: month, week, day, agenda. Switch with `m`, `w`, `d`, `a`. Press `W` to switch the first day of the week between Sunday and Monday. The TUI stores the choice. You can also set `ui.week_start` in `config.toml`.
+**Views**: month, week, day, agenda. Switch with `m`, `w`, `d`, `a`. Press `W` to switch the first day of the week between Sunday and Monday. The TUI stores the choice, the same way it stores the view. `ui.week_start` in `config.toml` sets the default before a stored choice exists.
 
 The TUI can create, edit, view, and delete events. Event details include alarms, attendees, and attachments. Use `p` to copy event details. Use `u` to undo a delete.
 
