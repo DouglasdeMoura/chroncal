@@ -158,6 +158,15 @@ const (
 	multigetMissUnknown     multigetMissKind = "unknown"
 )
 
+// classifyMultigetMiss sorts one multiget 404 by the risk it carries.
+//
+//	multigetMissUncanonical: CanonicalObjectRef rejected the href. No
+//	local row can map to it, so it is not a data-loss signal. The caller
+//	skips it or takes the unknown-miss budget path.
+//	multigetMissKnown: the path maps to a local row. The caller must
+//	treat the pull as incomplete.
+//	multigetMissUnknown: no local row maps to the path. The caller may
+//	record a retry obligation and advance the token.
 func classifyMultigetMiss(canonical string, hrefErr error, localByPath map[string]storage.SyncResource) (multigetMissKind, storage.SyncResource) {
 	if hrefErr != nil {
 		return multigetMissUncanonical, storage.SyncResource{}

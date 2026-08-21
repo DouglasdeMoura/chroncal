@@ -384,6 +384,138 @@ func TestEnginePullDropsUnknownMultigetMissAfterBudget(t *testing.T) {
 	}
 }
 
+// TestEnginePullUncanonicalMultigetMissAdvancesToken covers issue #625.
+// A server can report a 404 under an href that CanonicalObjectRef rejects:
+// a query string, another origin, or a collection path. No local row can
+// map to such an href, so the miss carries no data-loss signal. The engine
+// must skip it: no known-miss count, no pending row, and the token
+// advances. The same table pins the old rules for canonical 404s: an
+// unknown miss takes the budget path, and a miss for a local row still
+// withholds the token.
+func TestEnginePullUncanonicalMultigetMissAdvancesToken(t *testing.T) {
+	t.Parallel()
+
+	const (
+		token1  = "https://example.com/sync/t1"
+		alive   = "/calendar/alive.ics"
+		phantom = "/calendar/phantom-invite.ics"
+		racey   = "/calendar/racey.ics"
+	)
+
+	cases := []struct {
+		name        string
+		seedLocal   string   // non-empty seeds a local row for this UID at racey
+		missing     []string // hrefs the multiget response reports as 404
+		wantToken   string
+		wantErrors  bool
+		wantPulled  int
+		wantDeleted int
+		wantPending int
+	}{
+		{
+			name:        "query string",
+			missing:     []string{phantom + "?rev=2"},
+			wantToken:   token1,
+			wantPulled:  1,
+			wantPending: 0,
+		},
+		{
+			name:        "other origin",
+			missing:     []string{"https://evil.example.com/calendar/phantom-invite.ics"},
+			wantToken:   token1,
+			wantPulled:  1,
+			wantPending: 0,
+		},
+		{
+			name:        "root collection path",
+			missing:     []string{"/"},
+			wantToken:   token1,
+			wantPulled:  1,
+			wantPending: 0,
+		},
+		{
+			name:        "canonical unknown miss still records and advances",
+			missing:     []string{phantom},
+			wantToken:   token1,
+			wantPulled:  1,
+			wantPending: 1,
+		},
+		{
+			name:        "canonical known miss still withholds the token",
+			seedLocal:   "racey",
+			missing:     []string{racey},
+			wantToken:   "",
+			wantErrors:  true,
+			wantPulled:  1,
+			wantDeleted: 0,
+			wantPending: 0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			engine, db, q := newTestEngine(t)
+			ctx := context.Background()
+			calendarID := firstCalendarID(t, q)
+
+			listed := []string{alive, phantom}
+			if tc.seedLocal != "" {
+				insertTestEvent(t, db, calendarID, tc.seedLocal)
+				if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+					CalendarID: calendarID, Uid: tc.seedLocal, OwnerType: "event",
+					RemoteUrl: racey, Etag: "old", Dirty: 0, SyncStrategy: "sync-token",
+				}); err != nil {
+					t.Fatalf("UpsertSyncResource %s: %v", tc.seedLocal, err)
+				}
+				listed = append(listed, racey)
+			}
+
+			client := newScriptedClient(t,
+				func(string) string { return syncCollectionXML(token1, listed...) },
+				func(int, string) string {
+					return multigetXML(map[string]string{alive: testEventICS("alive-uid", "Alive")}, tc.missing)
+				},
+			)
+
+			result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+			if err != nil {
+				t.Fatalf("pull: %v", err)
+			}
+			if result.pulled != tc.wantPulled {
+				t.Fatalf("pulled = %d, want %d", result.pulled, tc.wantPulled)
+			}
+			if result.deleted != tc.wantDeleted {
+				t.Fatalf("deleted = %d, want %d", result.deleted, tc.wantDeleted)
+			}
+			if (len(result.errors) > 0) != tc.wantErrors {
+				t.Fatalf("errors = %v, wantErrors = %v", result.errors, tc.wantErrors)
+			}
+			if tok := calendarToken(t, q, calendarID); tok != tc.wantToken {
+				t.Fatalf("sync_token = %q, want %q", tok, tc.wantToken)
+			}
+			rows := listPendingHrefs(t, q, calendarID)
+			if len(rows) != tc.wantPending {
+				t.Fatalf("pending hrefs = %+v, want %d row(s)", rows, tc.wantPending)
+			}
+			if tc.wantPending == 1 {
+				if rows[0].Href != phantom || rows[0].MissCount != 1 {
+					t.Fatalf("pending hrefs = %+v, want one row for %s with miss_count 1", rows, phantom)
+				}
+			}
+			if _, err := q.GetEventByUID(ctx, "alive-uid"); err != nil {
+				t.Fatalf("alive event missing: %v", err)
+			}
+			if tc.seedLocal != "" {
+				if _, err := q.GetEventByUID(ctx, tc.seedLocal); err != nil {
+					t.Fatalf("%s row (known miss) was wrongly deleted: %v", tc.seedLocal, err)
+				}
+			}
+		})
+	}
+}
+
 // TestEnginePullMixedKnownAndUnknownMultigetMissWithholdsToken pins the
 // split completeness rule. A known miss still withholds the token and
 // absence deletion. An unknown phantom in the same REPORT does not
