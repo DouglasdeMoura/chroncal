@@ -306,6 +306,33 @@ func setEventTimes(vevent *ical.Event, e event.Event) {
 			vevent.Props.SetDateTime(ical.PropDateTimeEnd, endTime.UTC())
 		}
 	}
+
+	// A server DTEND that failed to parse was replaced locally by a
+	// fabricated span. When the value arrived over CalDAV, import preserved
+	// the original string in X-CHRONCAL-ORIGINAL-DTEND. Hand it back
+	// verbatim: the server gets exactly what it gave us, and our invention
+	// never overwrites its value (issue #567).
+	if !useDuration {
+		for _, xp := range e.XProperties {
+			if xp.Name != xpropOriginalDTEND {
+				continue
+			}
+			p := &ical.Prop{Name: ical.PropDateTimeEnd, Params: make(ical.Params)}
+			p.Value = xp.Value
+			if xp.Params != "" && xp.Params != "{}" {
+				var params map[string][]string
+				if err := json.Unmarshal([]byte(xp.Params), &params); err == nil {
+					for k, vals := range params {
+						for _, v := range vals {
+							p.Params.Add(k, v)
+						}
+					}
+				}
+			}
+			vevent.Props.Set(p)
+			break
+		}
+	}
 }
 
 func allDayExportDate(t time.Time, timezone string) time.Time {
@@ -1284,6 +1311,12 @@ func splitNonEmpty(s string) []string {
 func emitXProperties(comp *ical.Component, xprops []model.XProperty) {
 	for _, xp := range xprops {
 		if isLibicalDiagnosticProp(xp.Name) {
+			continue
+		}
+		// The original-DTEND preservation slot feeds the DTEND override in
+		// buildVevent. Emitting it again would duplicate the value on the
+		// wire.
+		if xp.Name == xpropOriginalDTEND {
 			continue
 		}
 		p := &ical.Prop{Name: xp.Name, Params: make(ical.Params)}
