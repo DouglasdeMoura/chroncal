@@ -305,15 +305,17 @@ type SyncPendingHref struct {
 }
 
 type SyncResource struct {
-	ID           int64
-	CalendarID   int64
-	Uid          string
-	OwnerType    string
-	RemoteUrl    string
-	Etag         string
-	Dirty        int64
-	SyncStrategy string
-	Rev          int64
+	ID            int64
+	CalendarID    int64
+	Uid           string
+	OwnerType     string
+	RemoteUrl     string
+	Etag          string
+	Dirty         int64
+	SyncStrategy  string
+	Rev           int64
+	PushFailCount int64
+	LastPushError string
 }
 
 type Timezone struct {

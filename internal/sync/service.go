@@ -53,6 +53,21 @@ func (s *Service) SyncAll(ctx context.Context, strategy ConflictStrategy) ([]*Sy
 	return s.engine.SyncAll(ctx, strategy)
 }
 
+// DiagnoseCalendar lists the wedged resources of one calendar. A wedged
+// resource fails export on a deterministic hydration error, so every sync
+// retries it and no edit under its UID reaches the server.
+func (s *Service) DiagnoseCalendar(ctx context.Context, calendarID int64) ([]WedgedResource, error) {
+	return s.engine.DiagnoseCalendar(ctx, calendarID)
+}
+
+// DoctorPush pushes one wedged resource with best-effort hydration. The PUT
+// omits every relation in dropped. The caller must obtain explicit user
+// confirmation first; this is the one path that knowingly pushes an
+// incomplete record (issue #568).
+func (s *Service) DoctorPush(ctx context.Context, calendarID int64, uid string) ([]string, error) {
+	return s.engine.DoctorPush(ctx, calendarID, uid)
+}
+
 // SyncStatus returns the current sync status for a calendar.
 type SyncStatus struct {
 	CalendarID          int64

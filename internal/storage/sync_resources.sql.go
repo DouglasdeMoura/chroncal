@@ -24,6 +24,22 @@ func (q *Queries) ClearSyncResourceDirty(ctx context.Context, arg ClearSyncResou
 	return err
 }
 
+const clearSyncResourcePushFailure = `-- name: ClearSyncResourcePushFailure :exec
+UPDATE sync_resources SET push_fail_count = 0, last_push_error = ''
+WHERE calendar_id = ? AND uid = ?
+`
+
+type ClearSyncResourcePushFailureParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+// Reset the failure bookkeeping after a successful push.
+func (q *Queries) ClearSyncResourcePushFailure(ctx context.Context, arg ClearSyncResourcePushFailureParams) error {
+	_, err := q.db.ExecContext(ctx, clearSyncResourcePushFailure, arg.CalendarID, arg.Uid)
+	return err
+}
+
 const createTombstone = `-- name: CreateTombstone :exec
 INSERT INTO tombstones (calendar_id, uid, remote_url) VALUES (?, ?, ?)
 ON CONFLICT(calendar_id, uid) DO UPDATE SET
@@ -152,7 +168,7 @@ func (q *Queries) FinalizePushedResource(ctx context.Context, arg FinalizePushed
 }
 
 const getSyncResource = `-- name: GetSyncResource :one
-SELECT id, calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy, rev FROM sync_resources WHERE calendar_id = ? AND uid = ?
+SELECT id, calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy, rev, push_fail_count, last_push_error FROM sync_resources WHERE calendar_id = ? AND uid = ?
 `
 
 type GetSyncResourceParams struct {
@@ -173,12 +189,14 @@ func (q *Queries) GetSyncResource(ctx context.Context, arg GetSyncResourceParams
 		&i.Dirty,
 		&i.SyncStrategy,
 		&i.Rev,
+		&i.PushFailCount,
+		&i.LastPushError,
 	)
 	return i, err
 }
 
 const listDirtySyncResources = `-- name: ListDirtySyncResources :many
-SELECT id, calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy, rev FROM sync_resources WHERE calendar_id = ? AND dirty = 1 ORDER BY id
+SELECT id, calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy, rev, push_fail_count, last_push_error FROM sync_resources WHERE calendar_id = ? AND dirty = 1 ORDER BY id
 `
 
 func (q *Queries) ListDirtySyncResources(ctx context.Context, calendarID int64) ([]SyncResource, error) {
@@ -200,6 +218,8 @@ func (q *Queries) ListDirtySyncResources(ctx context.Context, calendarID int64) 
 			&i.Dirty,
 			&i.SyncStrategy,
 			&i.Rev,
+			&i.PushFailCount,
+			&i.LastPushError,
 		); err != nil {
 			return nil, err
 		}
@@ -215,7 +235,7 @@ func (q *Queries) ListDirtySyncResources(ctx context.Context, calendarID int64) 
 }
 
 const listSyncResourcesByCalendar = `-- name: ListSyncResourcesByCalendar :many
-SELECT id, calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy, rev FROM sync_resources WHERE calendar_id = ? ORDER BY id
+SELECT id, calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy, rev, push_fail_count, last_push_error FROM sync_resources WHERE calendar_id = ? ORDER BY id
 `
 
 func (q *Queries) ListSyncResourcesByCalendar(ctx context.Context, calendarID int64) ([]SyncResource, error) {
@@ -237,6 +257,8 @@ func (q *Queries) ListSyncResourcesByCalendar(ctx context.Context, calendarID in
 			&i.Dirty,
 			&i.SyncStrategy,
 			&i.Rev,
+			&i.PushFailCount,
+			&i.LastPushError,
 		); err != nil {
 			return nil, err
 		}
@@ -310,6 +332,27 @@ type MarkSyncResourceDirtyWithEtagParams struct {
 
 func (q *Queries) MarkSyncResourceDirtyWithEtag(ctx context.Context, arg MarkSyncResourceDirtyWithEtagParams) error {
 	_, err := q.db.ExecContext(ctx, markSyncResourceDirtyWithEtag, arg.Etag, arg.CalendarID, arg.Uid)
+	return err
+}
+
+const recordSyncResourcePushFailure = `-- name: RecordSyncResourcePushFailure :exec
+UPDATE sync_resources
+SET push_fail_count = push_fail_count + 1,
+    last_push_error = ?
+WHERE calendar_id = ? AND uid = ?
+`
+
+type RecordSyncResourcePushFailureParams struct {
+	LastPushError string
+	CalendarID    int64
+	Uid           string
+}
+
+// One more consecutive failed push attempt for this resource. The engine
+// calls this after a failed export or PUT. Doctor reads the counter to show
+// how long a resource stayed wedged.
+func (q *Queries) RecordSyncResourcePushFailure(ctx context.Context, arg RecordSyncResourcePushFailureParams) error {
+	_, err := q.db.ExecContext(ctx, recordSyncResourcePushFailure, arg.LastPushError, arg.CalendarID, arg.Uid)
 	return err
 }
 
