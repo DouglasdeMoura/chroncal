@@ -160,9 +160,10 @@ included. Use --file to write a file, or omit it to print the .ics data
 to stdout.
 
 A failed relation read aborts the export by default. No file is then
-written, so no incomplete backup exists. Pass --skip-unreadable to write
-past such failures. The file then carries a comment header that names
-each incomplete record, and stderr lists them.`,
+written, so no incomplete backup exists. Pass --skip-unreadable to
+continue past records with unreadable relations. The file then carries
+a comment header that names each incomplete record, and stderr lists
+them.`,
 		Example: `  chroncal ical export --calendar Work --file work.ics
   chroncal ical export --events --from 2026-04-01 --to 2026-04-30
   chroncal ical export --todos --category release`,

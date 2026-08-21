@@ -423,7 +423,7 @@ chroncal ical export  [--calendar NAME] [--from DATE] [--to DATE] [--category TE
 
 Imports have size limits to reduce resource exhaustion from untrusted calendar data. `chroncal ical import` rejects `.ics` payloads larger than 8 MiB. It also rejects inline base64 attachments larger than 1 MiB decoded.
 
-The export aborts when one relation read fails. It writes no file, so no incomplete backup exists. Pass `--skip-unreadable` to write past such failures. The file then carries a comment header that names each incomplete record. The command also lists those records on stderr.
+The export aborts when one relation read fails. It writes no file, so no incomplete backup exists. Pass `--skip-unreadable` to continue past records with unreadable relations. The file then carries a comment header that names each incomplete record. The command also lists those records on stderr.
 
 ### Sync
 
