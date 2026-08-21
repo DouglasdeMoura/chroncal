@@ -21,6 +21,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/caldav"
 	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/event"
+	hydratepkg "github.com/douglasdemoura/chroncal/internal/hydrate"
 	icalPkg "github.com/douglasdemoura/chroncal/internal/ical"
 	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/model"
@@ -1559,6 +1560,22 @@ func exportResourceFor[T any](
 			// alarms/attendees/attachments/... and the PUT would strip them
 			// from the server copy. Abort instead: the dirty flag stays set, so
 			// the resource is retried whole on the next sync.
+			//
+			// A deterministic failure (a corrupt row a retry can never fix)
+			// wedges the resource: every sync fails identically and no edit
+			// under this UID reaches the server. Name the broken relations and
+			// point at the escape hatch so the user learns what is stuck and
+			// why (issue #568).
+			var hErr *hydratepkg.HydrationError
+			if errors.As(err, &hErr) && len(hErr.Failures) > 0 {
+				rels := make([]string, 0, len(hErr.Failures))
+				for _, f := range hErr.Failures {
+					rels = append(rels, f.Relation)
+				}
+				return nil, fmt.Errorf(
+					"hydrate %s uid %s: unreadable relation(s) %s; the resource is stuck and no edit reaches the server until it is resolved (see chroncal sync doctor): %w",
+					kind, uid, strings.Join(rels, ", "), err)
+			}
 			return nil, fmt.Errorf("hydrate %s uid %s: %w", kind, uid, err)
 		}
 	}

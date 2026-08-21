@@ -38,6 +38,20 @@ SET etag = ?,
     dirty = CASE WHEN rev = ? THEN 0 ELSE dirty END
 WHERE calendar_id = ? AND uid = ?;
 
+-- name: RecordSyncResourcePushFailure :exec
+-- One more consecutive failed push attempt for this resource. The engine
+-- calls this after a failed export or PUT. Doctor reads the counter to show
+-- how long a resource stayed wedged.
+UPDATE sync_resources
+SET push_fail_count = push_fail_count + 1,
+    last_push_error = ?
+WHERE calendar_id = ? AND uid = ?;
+
+-- name: ClearSyncResourcePushFailure :exec
+-- Reset the failure bookkeeping after a successful push.
+UPDATE sync_resources SET push_fail_count = 0, last_push_error = ''
+WHERE calendar_id = ? AND uid = ?;
+
 -- name: DeleteSyncResource :exec
 DELETE FROM sync_resources WHERE calendar_id = ? AND uid = ?;
 

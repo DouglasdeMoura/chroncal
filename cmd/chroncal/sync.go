@@ -99,7 +99,7 @@ conflicts for calendars connected to remote CalDAV calendars.`,
 		Args: rejectUnknownSubcommand,
 		RunE: groupRunE,
 	}
-	cmd.AddCommand(syncRunCmd(), syncStatusCmd(), syncConflictsCmd(), syncResolveCmd(), syncResetCmd())
+	cmd.AddCommand(syncRunCmd(), syncStatusCmd(), syncConflictsCmd(), syncResolveCmd(), syncResetCmd(), syncDoctorCmd())
 	return cmd
 }
 
