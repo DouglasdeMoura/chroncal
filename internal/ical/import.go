@@ -50,7 +50,27 @@ const (
 
 var errImportLimitExceeded = errors.New("ical import exceeds configured limits")
 
+// xpropOriginalDTEND preserves a server DTEND that failed to parse. The
+// fabricated local span must not overwrite the server's value on the next
+// push, so export hands the original string back verbatim. Only the CalDAV
+// pull path sets it: a file-imported value did not come from the target
+// server, and re-emitting it there could wedge a strict server.
+const xpropOriginalDTEND = "X-CHRONCAL-ORIGINAL-DTEND"
+
+// ImportFile parses an iCal stream from a file or another local source.
 func ImportFile(r io.Reader) (ImportResult, error) {
+	return importFile(r, false)
+}
+
+// ImportFileRemote parses an iCal stream that a CalDAV server served. A
+// DTEND that fails to parse is then preserved verbatim in
+// X-CHRONCAL-ORIGINAL-DTEND, so export can hand the server back exactly what
+// it gave us (issue #567).
+func ImportFileRemote(r io.Reader) (ImportResult, error) {
+	return importFile(r, true)
+}
+
+func importFile(r io.Reader, remote bool) (ImportResult, error) {
 	var result ImportResult
 	// skipComponent is the one place that defines what "the parser dropped a
 	// persistable component" means: the warning for the user plus the count
@@ -123,7 +143,7 @@ func ImportFile(r io.Reader) (ImportResult, error) {
 			case ical.CompEvent:
 				vevent := ical.Event{Component: child}
 				resolveComponentTZIDs(child, tzMap)
-				e, warns, err := eventFromVEvent(vevent)
+				e, warns, err := eventFromVEvent(vevent, remote)
 				if err != nil {
 					if errors.Is(err, errImportLimitExceeded) {
 						return result, err
@@ -411,7 +431,7 @@ func parseDateProp(props ical.Props, kind, name, uid string) (string, string) {
 	return t.UTC().Format(time.RFC3339), ""
 }
 
-func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
+func eventFromVEvent(ve ical.Event, remote bool) (event.Event, []string, error) {
 	uid, err := ve.Props.Text(ical.PropUID)
 	if err != nil || uid == "" {
 		return event.Event{}, nil, fmt.Errorf("missing UID")
@@ -445,6 +465,7 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 	var dtendWarnings []string
 	explicitEnd := false
 	badDTEND := false
+	var badDTENDRaw *ical.Prop
 	if prop := ve.Props.Get(ical.PropDateTimeEnd); prop != nil {
 		var err error
 		endTime, err = prop.DateTime(nil)
@@ -461,6 +482,7 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 			// the exact outcome this fallback exists to prevent.
 			endTime = time.Time{}
 			badDTEND = true
+			badDTENDRaw = prop
 			dtendWarnings = append(dtendWarnings, fmt.Sprintf(
 				"event %q: unparseable DTEND %q; ignored, falling back to DURATION or the default span", uid, prop.Value))
 		}
@@ -625,6 +647,24 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 	resources := parseResourcesFromProps(ve.Props)
 	relations := parseRelationsFromProps(ve.Props)
 
+	xprops := extractXPropertiesWithSet(ve.Props, handledEventProps)
+	if remote && badDTENDRaw != nil {
+		// The server's DTEND failed to parse here but parses on the server
+		// (a non-IANA TZID is the usual cause). Keep the raw property so
+		// export hands the value back verbatim instead of pushing the
+		// fabricated span over the server's original (issue #567).
+		params := "{}"
+		if len(badDTENDRaw.Params) > 0 {
+			if b, err := json.Marshal(badDTENDRaw.Params); err == nil {
+				params = string(b)
+			}
+		}
+		xprops = append(xprops, model.XProperty{
+			Name:   xpropOriginalDTEND,
+			Value:  badDTENDRaw.Value,
+			Params: params,
+		})
+	}
 	return event.Event{
 		UID:            uid,
 		Title:          summary,
@@ -656,7 +696,7 @@ func eventFromVEvent(ve ical.Event) (event.Event, []string, error) {
 		Contacts:       contacts,
 		Resources:      resources,
 		Relations:      relations,
-		XProperties:    extractXPropertiesWithSet(ve.Props, handledEventProps),
+		XProperties:    xprops,
 	}, append(childWarnings, dtendWarnings...), nil
 }
 
@@ -1501,7 +1541,8 @@ var handledJournalProps = map[string]bool{
 	ical.PropDateTimeStamp: true, ical.PropCreated: true, ical.PropLastModified: true,
 	ical.PropAttach: true, ical.PropComment: true, ical.PropContact: true,
 	ical.PropRelatedTo: true,
-	ical.PropAttendee:  true, ical.PropOrganizer: true,
+	ical.PropAttendee: true, ical.PropOrganizer: true,
+	xpropOriginalDTEND: true,
 }
 
 // extractXPropertiesWithSet collects properties not in the handled set.

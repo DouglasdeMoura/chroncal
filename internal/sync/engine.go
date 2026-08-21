@@ -1031,7 +1031,7 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 			continue
 		}
 
-		importResult, err := icalPkg.ImportFile(strings.NewReader(buf.String()))
+		importResult, err := icalPkg.ImportFileRemote(strings.NewReader(buf.String()))
 		if err != nil {
 			e.logger.Warn("import fetched resource failed", "path", res.Path, "error", err)
 			continue
@@ -1348,7 +1348,7 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 				e.logger.Warn("encode fetched resource failed", "path", res.Path, "error", err)
 				continue
 			}
-			importResult, err := icalPkg.ImportFile(strings.NewReader(buf.String()))
+			importResult, err := icalPkg.ImportFileRemote(strings.NewReader(buf.String()))
 			if err != nil {
 				e.logger.Warn("import fetched resource failed", "path", res.Path, "error", err)
 				continue
@@ -2272,7 +2272,7 @@ func (e *Engine) inTx(ctx context.Context, fn func(*sql.Tx) error) error {
 // They then do not stamp the server ETag onto an unchanged local row in
 // silence.
 func (e *Engine) importICal(ctx context.Context, calendarID int64, data string) (imported bool, revs map[string]int64, warnings []ImportWarning, err error) {
-	importResult, err := icalPkg.ImportFile(strings.NewReader(data))
+	importResult, err := icalPkg.ImportFileRemote(strings.NewReader(data))
 	if err != nil {
 		return false, nil, nil, fmt.Errorf("import ical: %w", err)
 	}
