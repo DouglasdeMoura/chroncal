@@ -93,8 +93,8 @@ func TestToggleWeekStart_PersistsMonday(t *testing.T) {
 
 	next, cmd := m.toggleWeekStart()
 	m = next.(Model)
-	if cmd != nil {
-		t.Fatal("month view toggle must not reload events")
+	if cmd == nil {
+		t.Fatal("month view toggle must reload events for the shifted grid")
 	}
 	if m.weekStart != time.Monday {
 		t.Fatalf("toggled weekStart = %v, want Monday", m.weekStart)
@@ -114,6 +114,36 @@ func TestToggleWeekStart_PersistsMonday(t *testing.T) {
 	reloaded := NewModel(nil, "")
 	if reloaded.weekStart != time.Monday {
 		t.Fatalf("reloaded weekStart = %v, want Monday", reloaded.weekStart)
+	}
+}
+
+func TestToggleWeekStart_MonthViewReloadsShiftedRange(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", dir)
+
+	m := NewModel(nil, "")
+	m.viewMode = viewMonth
+	// January 2023 starts on Sunday. Sunday-start grid is 1 Jan;
+	// Monday-start grid is 26 Dec.
+	m.calendar.month = time.Date(2023, 1, 1, 0, 0, 0, 0, time.Local)
+	m.calendar.cursor = time.Date(2023, 1, 15, 0, 0, 0, 0, time.Local)
+
+	beforeFrom, beforeTo := m.expectedEventRange()
+	next, cmd := m.toggleWeekStart()
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("month view toggle must reload events for the shifted grid")
+	}
+	afterFrom, afterTo := m.expectedEventRange()
+	if afterFrom.Equal(beforeFrom) && afterTo.Equal(beforeTo) {
+		t.Fatalf("expectedEventRange did not change: %v–%v", afterFrom, afterTo)
+	}
+	wantFrom, wantTo := localSpanQueryRange(
+		time.Date(2022, 12, 26, 0, 0, 0, 0, time.Local),
+		time.Date(2023, 2, 6, 0, 0, 0, 0, time.Local),
+	)
+	if !afterFrom.Equal(wantFrom) || !afterTo.Equal(wantTo) {
+		t.Fatalf("expectedEventRange = %v–%v, want %v–%v", afterFrom, afterTo, wantFrom, wantTo)
 	}
 }
 

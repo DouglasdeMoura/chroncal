@@ -5293,6 +5293,7 @@ func (m Model) toggleWeekNumbers() (tea.Model, tea.Cmd) {
 }
 
 // toggleWeekStart switches the first day of the week between Sunday and Monday.
+// Month and week query ranges follow the new grid, so events reload.
 func (m Model) toggleWeekStart() (tea.Model, tea.Cmd) {
 	if m.weekStart == time.Monday {
 		m.weekStart = time.Sunday
@@ -5304,10 +5305,7 @@ func (m Model) toggleWeekStart() (tea.Model, tea.Cmd) {
 	m.week = m.week.SetWeekStart(m.weekStart)
 	m.sidebar = m.sidebar.SetWeekStart(m.weekStart)
 	m.saveUIState()
-	if m.viewMode == viewWeek {
-		return m, m.loadEvents()
-	}
-	return m, nil
+	return m, m.loadEvents()
 }
 
 // toggleSidebar toggles the sidebar panel and resyncs view sizes.
