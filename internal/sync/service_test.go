@@ -590,19 +590,39 @@ func TestService_ResolveConflict_ServerDoesNotResurrectDeleted(t *testing.T) {
 	}
 }
 
+// TestService_ResolveConflict_Local restores the recorded local version
+// (issue #610). The current row holds the server body after a server-wins pass.
+// The conflict row keeps the captured local edit. Picking local must import
+// that recorded body over the current row, mark the resource dirty with the
+// recorded server etag, and mark the conflict resolved "local" instead of
+// deleting the row.
 func TestService_ResolveConflict_Local(t *testing.T) {
-	svc, q := newTestService(t)
+	svc, db, q := newTestServiceWithDB(t)
 	ctx := context.Background()
 
 	cals, _ := q.ListCalendars(ctx)
 	calID := cals[0].ID
 
+	const uid = "resolve-local-uid"
+	events := event.NewService(db, q)
+
+	// The current row holds the server body. A server-wins pass imported it.
+	if _, err := events.UpsertByUID(ctx, event.UpsertParams{
+		UID:        uid,
+		CalendarID: calID,
+		Title:      "Server Title",
+		StartTime:  time.Date(2026, 4, 3, 10, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 3, 11, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("seed current event: %v", err)
+	}
+
 	// The stored etag is the stale value that already failed If-Match.
 	err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
 		CalendarID:   calID,
-		Uid:          "resolve-local-uid",
+		Uid:          uid,
 		OwnerType:    "event",
-		RemoteUrl:    "https://example.com/cal/resolve-local-uid.ics",
+		RemoteUrl:    "https://example.com/cal/" + uid + ".ics",
 		Etag:         "stale-etag",
 		Dirty:        0,
 		SyncStrategy: "sync-token",
@@ -611,12 +631,20 @@ func TestService_ResolveConflict_Local(t *testing.T) {
 		t.Fatalf("UpsertSyncResource: %v", err)
 	}
 
+	// The recorded local version is the edit the user made. It differs from
+	// the current row so the import is observable.
+	localIcal := "BEGIN:VCALENDAR\r\n" +
+		"VERSION:2.0\r\nPRODID:-//chroncal//test//EN\r\n" +
+		"BEGIN:VEVENT\r\nUID:" + uid + "\r\n" +
+		"DTSTAMP:20260401T120000Z\r\n" +
+		"DTSTART:20260403T120000Z\r\nDTEND:20260403T130000Z\r\n" +
+		"SUMMARY:Local Title\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
 	err = q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 		CalendarID: calID,
 		OwnerType:  "event",
 		OwnerID:    1,
-		Uid:        "resolve-local-uid",
-		LocalIcal:  "local",
+		Uid:        uid,
+		LocalIcal:  localIcal,
 		ServerIcal: "server",
 		ServerEtag: "etag-456",
 	})
@@ -630,15 +658,31 @@ func TestService_ResolveConflict_Local(t *testing.T) {
 		t.Fatalf("ResolveConflict local: %v", err)
 	}
 
-	// Conflict should be deleted
-	remaining, _ := q.ListSyncConflicts(ctx)
-	if len(remaining) != 0 {
-		t.Errorf("expected 0 conflicts after resolve, got %d", len(remaining))
+	// The row leaves the open list and stays in the resolved list as "local".
+	open, _ := q.ListSyncConflicts(ctx)
+	if len(open) != 0 {
+		t.Errorf("open conflicts after resolve = %d, want 0", len(open))
+	}
+	resolved, err := q.ListResolvedSyncConflicts(ctx)
+	if err != nil {
+		t.Fatalf("ListResolvedSyncConflicts: %v", err)
+	}
+	if len(resolved) != 1 || resolved[0].Resolution == nil || *resolved[0].Resolution != "local" {
+		t.Fatalf("resolved conflicts = %+v, want one row with resolution %q", resolved, "local")
+	}
+
+	// The current row now holds the recorded local version.
+	got, err := events.GetByUID(ctx, uid)
+	if err != nil {
+		t.Fatalf("GetByUID: %v", err)
+	}
+	if got.Title != "Local Title" {
+		t.Errorf("title after resolve = %q, want %q (the recorded local version)", got.Title, "Local Title")
 	}
 
 	res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{
 		CalendarID: calID,
-		Uid:        "resolve-local-uid",
+		Uid:        uid,
 	})
 	if err != nil {
 		t.Fatalf("GetSyncResource: %v", err)
@@ -654,6 +698,128 @@ func TestService_ResolveConflict_Local(t *testing.T) {
 	// surfacing a fresh conflict if it changed again.
 	if res.Etag != "etag-456" {
 		t.Fatalf("Etag = %q, want %q (the conflict ServerEtag)", res.Etag, "etag-456")
+	}
+}
+
+func TestService_ResolveConflict_LocalDoesNotResurrectDeleted(t *testing.T) {
+	svc, db, q := newTestServiceWithDB(t)
+	ctx := context.Background()
+
+	cals, _ := q.ListCalendars(ctx)
+	calID := cals[0].ID
+	const uid = "resolve-local-deleted-uid"
+	events := event.NewService(db, q)
+
+	created, err := events.UpsertByUID(ctx, event.UpsertParams{
+		UID:        uid,
+		CalendarID: calID,
+		Title:      "Local Title",
+		StartTime:  time.Date(2026, 4, 3, 10, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 3, 11, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("seed local event: %v", err)
+	}
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calID,
+		Uid:          uid,
+		OwnerType:    "event",
+		RemoteUrl:    "https://example.com/cal/" + uid + ".ics",
+		Etag:         "etag-before",
+		Dirty:        1,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+	if err := events.Delete(ctx, created.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	localIcal := "BEGIN:VCALENDAR\r\n" +
+		"VERSION:2.0\r\nPRODID:-//chroncal//test//EN\r\n" +
+		"BEGIN:VEVENT\r\nUID:" + uid + "\r\n" +
+		"DTSTAMP:20260401T120000Z\r\n" +
+		"DTSTART:20260403T120000Z\r\nDTEND:20260403T130000Z\r\n" +
+		"SUMMARY:Local Title\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+		CalendarID: calID, OwnerType: "event", OwnerID: created.ID, Uid: uid,
+		LocalIcal: localIcal, ServerIcal: "server", ServerEtag: "etag-456",
+	}); err != nil {
+		t.Fatalf("CreateSyncConflict: %v", err)
+	}
+
+	conflicts, _ := q.ListSyncConflicts(ctx)
+	if _, err := svc.ResolveConflict(ctx, conflicts[0].ID, "local"); err == nil {
+		t.Fatal("ResolveConflict local on a tombstoned UID: expected error, got nil")
+	}
+
+	if _, err := events.GetByUID(ctx, uid); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("event was resurrected by resolve local; GetByUID err = %v, want sql.ErrNoRows", err)
+	}
+	tombstones, _ := q.ListTombstonesByCalendar(ctx, calID)
+	if len(tombstones) != 1 {
+		t.Fatalf("tombstones = %d, want 1", len(tombstones))
+	}
+	remaining, _ := q.ListSyncConflicts(ctx)
+	if len(remaining) != 1 {
+		t.Fatalf("open conflicts after refused resolve = %d, want 1", len(remaining))
+	}
+}
+
+func TestService_ResolveConflict_LocalKeepsANewerDirtyEdit(t *testing.T) {
+	svc, db, q := newTestServiceWithDB(t)
+	ctx := context.Background()
+
+	cals, _ := q.ListCalendars(ctx)
+	calID := cals[0].ID
+	const uid = "resolve-local-newer-uid"
+	events := event.NewService(db, q)
+
+	if _, err := events.UpsertByUID(ctx, event.UpsertParams{
+		UID:        uid,
+		CalendarID: calID,
+		Title:      "Newer Title",
+		StartTime:  time.Date(2026, 4, 3, 10, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 3, 11, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("seed current event: %v", err)
+	}
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calID,
+		Uid:          uid,
+		OwnerType:    "event",
+		RemoteUrl:    "https://example.com/cal/" + uid + ".ics",
+		Etag:         "stale-etag",
+		Dirty:        1,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+
+	localIcal := "BEGIN:VCALENDAR\r\n" +
+		"VERSION:2.0\r\nPRODID:-//chroncal//test//EN\r\n" +
+		"BEGIN:VEVENT\r\nUID:" + uid + "\r\n" +
+		"DTSTAMP:20260401T120000Z\r\n" +
+		"DTSTART:20260403T120000Z\r\nDTEND:20260403T130000Z\r\n" +
+		"SUMMARY:Local Title\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+		CalendarID: calID, OwnerType: "event", OwnerID: 1, Uid: uid,
+		LocalIcal: localIcal, ServerIcal: "server", ServerEtag: "etag-456",
+	}); err != nil {
+		t.Fatalf("CreateSyncConflict: %v", err)
+	}
+
+	conflicts, _ := q.ListSyncConflicts(ctx)
+	if _, err := svc.ResolveConflict(ctx, conflicts[0].ID, "local"); err != nil {
+		t.Fatalf("ResolveConflict local: %v", err)
+	}
+
+	got, err := events.GetByUID(ctx, uid)
+	if err != nil {
+		t.Fatalf("GetByUID: %v", err)
+	}
+	if got.Title != "Newer Title" {
+		t.Fatalf("title after resolve = %q, want %q (the live dirty edit)", got.Title, "Newer Title")
 	}
 }
 
@@ -804,10 +970,10 @@ func TestParseTime(t *testing.T) {
 	}
 }
 
-// TestService_PushCalendarRejectsLocalOnly guards the contract that
+// TestService_PushLocalEditsRejectsLocalOnly guards the contract that
 // opportunistic save-time push will fail fast for calendars without a
 // linked account. CLI/TUI callers can then safely treat it as a no-op.
-func TestService_PushCalendarRejectsLocalOnly(t *testing.T) {
+func TestService_PushLocalEditsRejectsLocalOnly(t *testing.T) {
 	svc, q := newTestService(t)
 	ctx := context.Background()
 
@@ -819,9 +985,9 @@ func TestService_PushCalendarRejectsLocalOnly(t *testing.T) {
 		t.Fatal("expected at least one seeded calendar")
 	}
 
-	_, err = svc.PushCalendar(ctx, cals[0].ID, ConflictServerWins)
+	_, err = svc.PushLocalEdits(ctx, cals[0].ID)
 	if err == nil {
-		t.Fatal("PushCalendar on local-only calendar: expected error, got nil")
+		t.Fatal("PushLocalEdits on local-only calendar: expected error, got nil")
 	}
 }
 
@@ -833,9 +999,16 @@ func TestServiceResolveConflictWaitsForCalendarLifecycle(t *testing.T) {
 		t.Fatalf("ListCalendars: %v", err)
 	}
 	calendarID := cals[0].ID
+	// The local pick imports LocalIcal, so seed an importable body.
+	localIcal := "BEGIN:VCALENDAR\r\n" +
+		"VERSION:2.0\r\nPRODID:-//chroncal//test//EN\r\n" +
+		"BEGIN:VEVENT\r\nUID:locked-conflict\r\n" +
+		"DTSTAMP:20260401T120000Z\r\n" +
+		"DTSTART:20260403T120000Z\r\nDTEND:20260403T130000Z\r\n" +
+		"SUMMARY:Locked\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
 	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 		CalendarID: calendarID, OwnerType: "event", OwnerID: 1, Uid: "locked-conflict",
-		LocalIcal: "local", ServerIcal: "server", ServerEtag: `"etag"`,
+		LocalIcal: localIcal, ServerIcal: "server", ServerEtag: `"etag"`,
 	}); err != nil {
 		t.Fatalf("CreateSyncConflict: %v", err)
 	}
@@ -999,19 +1172,26 @@ func TestService_ResolveConflict_ServerReturnsImportWarnings(t *testing.T) {
 	}
 }
 
-// A local pick never imports a body, so it must report no warnings.
+// A local pick imports the recorded local body. A body the importer can take
+// as-is must report no warnings.
 func TestService_ResolveConflict_LocalReturnsNoImportWarnings(t *testing.T) {
 	svc, db, q := newTestServiceWithDB(t)
 	ctx := context.Background()
 	testutil.LinkCalendarToAccount(t, db)
 
 	cals, _ := q.ListCalendars(ctx)
+	localIcal := "BEGIN:VCALENDAR\r\n" +
+		"VERSION:2.0\r\nPRODID:-//chroncal//test//EN\r\n" +
+		"BEGIN:VEVENT\r\nUID:resolve-local-uid\r\n" +
+		"DTSTAMP:20260401T120000Z\r\n" +
+		"DTSTART:20260403T120000Z\r\nDTEND:20260403T130000Z\r\n" +
+		"SUMMARY:Local\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
 	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 		CalendarID: cals[0].ID,
 		OwnerType:  "event",
 		OwnerID:    1,
 		Uid:        "resolve-local-uid",
-		LocalIcal:  "local",
+		LocalIcal:  localIcal,
 		ServerIcal: "server",
 		ServerEtag: "etag-1",
 	}); err != nil {

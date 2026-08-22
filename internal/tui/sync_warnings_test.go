@@ -26,6 +26,17 @@ func TestSyncSummaryCountsImportWarnings(t *testing.T) {
 	}
 }
 
+func TestSyncSummaryCountsAutoResolved(t *testing.T) {
+	t.Parallel()
+
+	if got := syncSummary("Work", syncTotals{autoResolved: 2}); !strings.Contains(got, "2 auto-resolved") {
+		t.Errorf("syncSummary with 2 auto-resolved = %q", got)
+	}
+	if got := syncSummary("Work", syncTotals{pulled: 3}); strings.Contains(got, "auto-resolved") {
+		t.Errorf("syncSummary with none auto-resolved = %q", got)
+	}
+}
+
 // The account-link pulls (first import after discovery, and the manage-
 // calendars reconcile) run the same first sync as every other TUI path.
 // Import warnings collected on their SyncResults must reach the status line

@@ -48,6 +48,11 @@ jobs:
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.11.4
+          # Do not verify the config against the remote JSON schema. The
+          # verification step downloads the schema from golangci-lint.run, and
+          # a timeout or outage of that site fails the job before the lint runs.
+          # The lint itself still runs.
+          verify: false
 
       - name: govulncheck
         run: |

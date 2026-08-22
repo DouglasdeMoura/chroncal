@@ -240,13 +240,14 @@ type syncTarget struct {
 
 // syncTotals accumulates per-calendar SyncResult counts across a SyncAll run.
 type syncTotals struct {
-	pushed    int
-	pulled    int
-	deleted   int
-	conflicts int
-	warnings  int
-	errCount  int
-	firstErr  error
+	pushed       int
+	pulled       int
+	deleted      int
+	conflicts    int
+	autoResolved int
+	warnings     int
+	errCount     int
+	firstErr     error
 }
 
 // syncAllPlannedMsg is emitted by runSyncAllPlan after a list of the connected
@@ -392,14 +393,18 @@ type Model struct {
 	theme     Theme
 	themeName string
 	keys      appKeyMap
-	width     int
-	height    int
-	viewMode  viewMode
-	calendar  CalendarModel
-	week      WeekModel
-	day       DayModel
-	agenda    AgendaModel
-	events    []event.Event
+	// fullSyncStrategy is the configured conflict strategy for manual and
+	// background full sync passes. The save-time opportunistic push never
+	// uses it: that path always records a conflict and keeps the edit.
+	fullSyncStrategy syncpkg.ConflictStrategy
+	width            int
+	height           int
+	viewMode         viewMode
+	calendar         CalendarModel
+	week             WeekModel
+	day              DayModel
+	agenda           AgendaModel
+	events           []event.Event
 	// loadedFrom/loadedTo track the [from, to) UTC range currently covered
 	// by m.events. Agenda expansion can then query only the new slice.
 	// It does not re-query the whole window each time. Zero values
@@ -1323,7 +1328,7 @@ func (m Model) runSyncOne(target syncTarget, index, total int) tea.Cmd {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
-		result, err := svc.SyncCalendar(ctx, target.ID, syncpkg.ConflictServerWins)
+		result, err := svc.SyncCalendar(ctx, target.ID, m.fullSyncStrategy)
 		return syncCalendarFinishedMsg{index: index, total: total, name: target.Name, result: result, err: err}
 	}
 }
@@ -1336,7 +1341,7 @@ func (m Model) runSyncCalendar(id int64, name string) tea.Cmd {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
-		result, err := svc.SyncCalendar(ctx, id, syncpkg.ConflictServerWins)
+		result, err := svc.SyncCalendar(ctx, id, m.fullSyncStrategy)
 		if err != nil {
 			return syncFinishedMsg{err: err}
 		}
@@ -1345,11 +1350,12 @@ func (m Model) runSyncCalendar(id int64, name string) tea.Cmd {
 			label = "calendar"
 		}
 		summary := syncSummary(label, syncTotals{
-			pushed:    result.Pushed,
-			pulled:    result.Pulled,
-			deleted:   result.Deleted,
-			conflicts: result.Conflicts,
-			warnings:  len(result.Warnings),
+			pushed:       result.Pushed,
+			pulled:       result.Pulled,
+			deleted:      result.Deleted,
+			conflicts:    result.Conflicts,
+			autoResolved: result.AutoResolved,
+			warnings:     len(result.Warnings),
 		})
 		var firstErr error
 		if len(result.Errors) > 0 {
@@ -1366,7 +1372,7 @@ func (m Model) runSyncAccount(accountID int64, name string) tea.Cmd {
 			return syncFinishedMsg{err: err}
 		}
 		results, err := svc.SyncAccount(
-			context.Background(), accountID, syncpkg.ConflictServerWins,
+			context.Background(), accountID, m.fullSyncStrategy,
 		)
 		if err != nil {
 			return syncFinishedMsg{err: err}
@@ -1380,6 +1386,7 @@ func (m Model) runSyncAccount(accountID int64, name string) tea.Cmd {
 			totals.pulled += result.Pulled
 			totals.deleted += result.Deleted
 			totals.conflicts += result.Conflicts
+			totals.autoResolved += result.AutoResolved
 			totals.warnings += len(result.Warnings)
 			if totals.firstErr == nil && len(result.Errors) > 0 {
 				totals.firstErr = result.Errors[0]
@@ -1720,7 +1727,7 @@ func (m Model) importAndSyncAccountCalendars(paths []string) tea.Cmd {
 			finished.syncErr = err
 			return finished
 		}
-		finished.synced, finished.warnings, finished.syncErr = syncNewlyLinkedCalendars(ctx, syncService, result.CreatedIDs)
+		finished.synced, finished.warnings, finished.syncErr = syncNewlyLinkedCalendars(ctx, syncService, result.CreatedIDs, m.fullSyncStrategy)
 		return finished
 	}
 }
@@ -1757,7 +1764,7 @@ func (m Model) reconcileAndSyncAccountCalendars(selection *accountCalendarSelect
 			finished.syncErr = err
 			return finished
 		}
-		finished.synced, finished.warnings, finished.syncErr = syncNewlyLinkedCalendars(ctx, syncService, result.CreatedIDs)
+		finished.synced, finished.warnings, finished.syncErr = syncNewlyLinkedCalendars(ctx, syncService, result.CreatedIDs, m.fullSyncStrategy)
 		return finished
 	}
 }
@@ -1941,9 +1948,10 @@ func syncProgressLabel(name string) string {
 
 // runOpportunisticPush pushes unpushed changes for a single calendar with no
 // pull. Best-effort: failures do not surface as errors. The dirty flag
-// survives and the background tick will retry. Returns nil for local-only
-// calendars (Synced=false). Callers can then batch it into the post-save
-// command with no UI noise for offline calendars.
+// survives and the background tick will retry. A 412 records a conflict and
+// keeps the saved edit; the footer then names the conflict count. Returns
+// nil for local-only calendars (Synced=false). Callers can then batch it
+// into the post-save command with no UI noise for offline calendars.
 func (m Model) runOpportunisticPush(calendarID int64) tea.Cmd {
 	info, ok := m.calendars[calendarID]
 	if !ok || !info.Synced {
@@ -1957,11 +1965,12 @@ func (m Model) runOpportunisticPush(calendarID int64) tea.Cmd {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		result, err := svc.PushCalendar(ctx, calendarID, syncpkg.ConflictServerWins)
+		result, err := svc.PushLocalEdits(ctx, calendarID)
 		if err != nil {
 			return opportunisticPushFinishedMsg{err: err}
 		}
-		if result.Pushed == 0 && result.Deleted == 0 && len(result.Errors) == 0 && len(result.Warnings) == 0 {
+		if result.Pushed == 0 && result.Deleted == 0 && len(result.Errors) == 0 && len(result.Warnings) == 0 &&
+			result.Conflicts == 0 && result.AutoResolved == 0 {
 			return opportunisticPushFinishedMsg{}
 		}
 		label := name
@@ -1969,9 +1978,11 @@ func (m Model) runOpportunisticPush(calendarID int64) tea.Cmd {
 			label = "calendar"
 		}
 		summary := syncSummary(label, syncTotals{
-			pushed:   result.Pushed,
-			deleted:  result.Deleted,
-			warnings: len(result.Warnings),
+			pushed:       result.Pushed,
+			deleted:      result.Deleted,
+			conflicts:    result.Conflicts,
+			autoResolved: result.AutoResolved,
+			warnings:     len(result.Warnings),
 		})
 		var firstErr error
 		if len(result.Errors) > 0 {
@@ -2002,6 +2013,9 @@ func syncSummary(label string, t syncTotals) string {
 	if t.conflicts > 0 {
 		parts = append(parts, fmt.Sprintf("%d %s", t.conflicts, pluralize(t.conflicts, "conflict", "conflicts")))
 	}
+	if t.autoResolved > 0 {
+		parts = append(parts, fmt.Sprintf("%d auto-resolved", t.autoResolved))
+	}
 	if t.warnings > 0 {
 		parts = append(parts, importWarningsSegment(t.warnings))
 	}
@@ -2016,9 +2030,9 @@ func syncSummary(label string, t syncTotals) string {
 // warning count (fabricated values the status line must mention), and the
 // first error. Later calendars still sync. One failure then does not strand
 // the rest unsynced.
-func syncNewlyLinkedCalendars(ctx context.Context, svc *syncpkg.Service, ids []int64) (synced, warnings int, syncErr error) {
+func syncNewlyLinkedCalendars(ctx context.Context, svc *syncpkg.Service, ids []int64, strategy syncpkg.ConflictStrategy) (synced, warnings int, syncErr error) {
 	for _, calendarID := range ids {
-		syncResult, err := svc.SyncCalendar(ctx, calendarID, syncpkg.ConflictServerWins)
+		syncResult, err := svc.SyncCalendar(ctx, calendarID, strategy)
 		if syncResult != nil {
 			warnings += len(syncResult.Warnings)
 		}
@@ -4184,6 +4198,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncTotals.pulled += msg.result.Pulled
 			m.syncTotals.deleted += msg.result.Deleted
 			m.syncTotals.conflicts += msg.result.Conflicts
+			m.syncTotals.autoResolved += msg.result.AutoResolved
 			m.syncTotals.warnings += len(msg.result.Warnings)
 			m.syncTotals.errCount += len(msg.result.Errors)
 			if m.syncTotals.firstErr == nil && len(msg.result.Errors) > 0 {
@@ -5362,9 +5377,27 @@ func (m Model) saveUIState() {
 
 // RunOptions configures a TUI session. A non-zero Event jumps to that
 // occurrence and opens its view dialog after the first load.
+// SyncConflictStrategy is the configured full-pass strategy name (from
+// cfg.Sync.ConflictStrategy). An empty or invalid name falls back to
+// server-wins.
 type RunOptions struct {
-	Event     event.Event
-	WeekStart time.Weekday
+	Event                event.Event
+	WeekStart            time.Weekday
+	SyncConflictStrategy string
+}
+
+// resolveFullSyncStrategy maps the configured conflict-strategy name to the
+// value the TUI's full sync passes use. An empty or invalid name falls back
+// to server-wins. The install command rejects invalid names up front, so the
+// fallback only covers a hand-edited config file. The warning goes to the
+// state-dir log file. A write to stderr would print over the display.
+func resolveFullSyncStrategy(name string) syncpkg.ConflictStrategy {
+	strategy, err := syncpkg.ParseConflictStrategy(name)
+	if err != nil {
+		config.SharedStateDirLogger().Warn("invalid sync.conflict_strategy; full syncs fall back to server-wins", "value", name, "error", err.Error())
+		return syncpkg.ConflictServerWins
+	}
+	return strategy
 }
 
 func Run(a *app.App, themeName string, opts RunOptions) error {
@@ -5386,6 +5419,7 @@ func Run(a *app.App, themeName string, opts RunOptions) error {
 	SetActivePalette(palette)
 
 	model := newModel(a, themeName, opts.WeekStart)
+	model.fullSyncStrategy = resolveFullSyncStrategy(opts.SyncConflictStrategy)
 	if opts.Event.ID != 0 {
 		model = model.WithOpenEvent(opts.Event)
 	}

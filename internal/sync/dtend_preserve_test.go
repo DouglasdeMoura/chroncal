@@ -80,12 +80,18 @@ func TestPushServerWinsRepullPreservesDTEND(t *testing.T) {
 		t.Fatalf("UpsertSyncResource: %v", err)
 	}
 
-	result, err := engine.push(ctx, client, calendarID, "", "", ConflictServerWins)
+	result, err := engine.push(ctx, client, calendarID, "", "", ConflictServerWins, false)
 	if err != nil {
 		t.Fatalf("push: %v", err)
 	}
-	if result.conflicts != 1 {
-		t.Fatalf("conflicts = %d, want 1", result.conflicts)
+	// Issue #610: a server-wins 412 records the row, adopts the server
+	// body, and settles it in the same pass. AutoResolved counts it; an
+	// open Conflicts count would mean the row stayed unresolved.
+	if result.autoResolved != 1 {
+		t.Fatalf("autoResolved = %d, want 1", result.autoResolved)
+	}
+	if result.conflicts != 0 {
+		t.Fatalf("conflicts = %d, want 0", result.conflicts)
 	}
 	if len(result.errors) != 0 {
 		t.Fatalf("errors = %d, want 0: %v", len(result.errors), result.errors)

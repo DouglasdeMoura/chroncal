@@ -27,7 +27,7 @@ Core data services:
 
 Integration packages and infrastructure packages do not use the `NewService` shape above. Each package has its own constructor:
 
-- **sync** - CalDAV sync engine. Detect and resolve conflicts (`NewService` with extra dependencies)
+- **sync** - CalDAV sync engine. Detect and resolve conflicts (`NewService` with extra dependencies). Write paths push through `PushLocalEdits`; a 412 records a conflict and keeps the edit dirty. The conflict strategy governs full passes only. A resolved conflict row stays, so `sync resolve --pick local` can restore the recorded local body.
 - **caldav** - Low-level CalDAV client (discovery, REPORT, PROPFIND, VFREEBUSY). Constructor: `NewClient`
 - **freebusy** - Local free/busy results plus a remote CalDAV query. Plain functions (`Compute`)
 - **auth** - Credential store (OS keyring, optional plaintext). OAuth2 PKCE. Plain functions

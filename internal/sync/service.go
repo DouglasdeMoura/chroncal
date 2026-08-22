@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -36,11 +37,13 @@ func (s *Service) SyncCalendar(ctx context.Context, calendarID int64, strategy C
 	return s.engine.SyncCalendar(ctx, calendarID, strategy)
 }
 
-// PushCalendar pushes unpushed local changes for one calendar with no pull.
-// Intended for opportunistic save-time sync from CLI/TUI mutations. Failures
-// leave the dirty flag intact so the periodic tick can retry.
-func (s *Service) PushCalendar(ctx context.Context, calendarID int64, strategy ConflictStrategy) (*SyncResult, error) {
-	return s.engine.PushCalendar(ctx, calendarID, strategy)
+// PushLocalEdits pushes unpushed local changes for one calendar with no
+// pull. Intended for opportunistic save-time sync from CLI/TUI mutations.
+// A 412 records a conflict and keeps the local edit dirty; this path never
+// adopts the server body over the edit the user just made. Failures leave
+// the dirty flag intact so the periodic tick can retry.
+func (s *Service) PushLocalEdits(ctx context.Context, calendarID int64) (*SyncResult, error) {
+	return s.engine.PushLocalEdits(ctx, calendarID)
 }
 
 // SyncAccount syncs all calendars linked to one account.
@@ -115,7 +118,7 @@ func (s *Service) Status(ctx context.Context) ([]SyncStatus, error) {
 	return statuses, nil
 }
 
-// Conflict represents an unresolved sync conflict.
+// Conflict represents a recorded sync conflict.
 type Conflict struct {
 	ID         int64
 	CalendarID int64
@@ -125,6 +128,11 @@ type Conflict struct {
 	ServerICal string
 	ServerETag string
 	DetectedAt time.Time
+	// Resolution and ResolvedAt are set on a resolved conflict. The row
+	// survives resolution so `sync resolve --pick local` can still restore
+	// the recorded local body.
+	Resolution string
+	ResolvedAt time.Time
 }
 
 // ListConflicts returns all unresolved sync conflicts.
@@ -135,18 +143,43 @@ func (s *Service) ListConflicts(ctx context.Context) ([]Conflict, error) {
 	}
 	out := make([]Conflict, len(rows))
 	for i, r := range rows {
-		out[i] = Conflict{
-			ID:         r.ID,
-			CalendarID: r.CalendarID,
-			OwnerType:  r.OwnerType,
-			UID:        r.Uid,
-			LocalICal:  r.LocalIcal,
-			ServerICal: r.ServerIcal,
-			ServerETag: r.ServerEtag,
-			DetectedAt: parseTime(r.DetectedAt),
-		}
+		out[i] = conflictFromRow(r)
 	}
 	return out, nil
+}
+
+// ListResolvedConflicts returns the conflicts a pass or the user already
+// resolved, newest resolution first.
+func (s *Service) ListResolvedConflicts(ctx context.Context) ([]Conflict, error) {
+	rows, err := s.q.ListResolvedSyncConflicts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Conflict, len(rows))
+	for i, r := range rows {
+		out[i] = conflictFromRow(r)
+	}
+	return out, nil
+}
+
+func conflictFromRow(r storage.SyncConflict) Conflict {
+	c := Conflict{
+		ID:         r.ID,
+		CalendarID: r.CalendarID,
+		OwnerType:  r.OwnerType,
+		UID:        r.Uid,
+		LocalICal:  r.LocalIcal,
+		ServerICal: r.ServerIcal,
+		ServerETag: r.ServerEtag,
+		DetectedAt: parseTime(r.DetectedAt),
+	}
+	if r.Resolution != nil {
+		c.Resolution = *r.Resolution
+	}
+	if r.ResolvedAt != nil {
+		c.ResolvedAt = parseTime(*r.ResolvedAt)
+	}
+	return c
 }
 
 // resolveConflictAfterRevCapture, when non-nil, runs inside ResolveConflict's
@@ -159,11 +192,15 @@ func (s *Service) ListConflicts(ctx context.Context) ([]Conflict, error) {
 // afterImportRevCapture and issues #466 and #510.
 var resolveConflictAfterRevCapture func()
 
-// ResolveConflict resolves a conflict by a pick of the local or server version.
-// The returned warnings list what an import of the server body could not
-// represent faithfully (accept-server pick only; a local pick imports
-// nothing). The CLI builds this service with a nil (silent) engine logger.
-// The return value is then the only channel those warnings have.
+// ResolveConflict resolves a conflict by a pick of the local or server
+// version. The local pick first imports the recorded local body, then marks
+// the resource dirty with the server ETag so the next push sends it. The
+// server pick imports the recorded server body. The returned warnings list
+// what an import could not represent faithfully. The CLI builds this
+// service with a nil (silent) engine logger. The return value is then the
+// only channel those warnings have. A resolved conflict can be resolved
+// again: the row survives resolution so the recorded local body stays
+// recoverable.
 func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick string) ([]ImportWarning, error) {
 	if pick != "server" && pick != "local" {
 		return nil, fmt.Errorf("invalid pick: %q (use 'local' or 'server')", pick)
@@ -226,12 +263,57 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 		if resolveConflictAfterRevCapture != nil {
 			resolveConflictAfterRevCapture()
 		}
+	} else {
+		// Restore the recorded local body before the transaction below marks
+		// the resource dirty. The current row may no longer hold that body: a
+		// server-wins pass (or any later import) can have replaced it after
+		// the conflict was recorded. Without the restore, the dirty mark
+		// faithfully re-pushes the server content and the local edit stays
+		// lost. See issue #610.
+		//
+		// Skip the import when the resource is still dirty. The live row is
+		// then the unpushed local edit, which can be newer than LocalIcal.
+		// A tombstoned UID is a pending delete. Refuse it. importICal reports
+		// imported=true for a payload that still has a component, then drops
+		// the tombstoned UID, so the imported flag cannot detect this.
+		tombstoned, err := s.engine.hasTombstone(ctx, conflict.CalendarID, conflict.Uid)
+		if err != nil {
+			return nil, err
+		}
+		if tombstoned {
+			return nil, fmt.Errorf("local version cannot be restored for %q: the item is pending delete", conflict.Uid)
+		}
+		sr, srErr := s.q.GetSyncResource(ctx, storage.GetSyncResourceParams{
+			CalendarID: conflict.CalendarID,
+			Uid:        conflict.Uid,
+		})
+		if srErr != nil && !errors.Is(srErr, sql.ErrNoRows) {
+			return nil, fmt.Errorf("get sync resource: %w", srErr)
+		}
+		if errors.Is(srErr, sql.ErrNoRows) || sr.Dirty == 0 {
+			// The import runs before the transaction below because it flows
+			// through the event/todo/journal services, which use their own
+			// connection. UpsertByUID is idempotent, so if the transaction
+			// fails to commit the conflict survives and the whole resolution
+			// replays cleanly.
+			imported, revs, importWarnings, err := s.engine.importICal(ctx, conflict.CalendarID, conflict.LocalIcal)
+			if err != nil {
+				return nil, fmt.Errorf("import local version: %w", err)
+			}
+			if !imported {
+				return nil, fmt.Errorf("local version has no importable data for %q", conflict.Uid)
+			}
+			if _, ok := revs[conflict.Uid]; !ok {
+				return nil, fmt.Errorf("local version has no importable data for %q", conflict.Uid)
+			}
+			warnings = importWarnings
+		}
 	}
 
-	// Wrap the dirty/etag mutation and the conflict deletion in one transaction
-	// so a failure can't half-resolve the conflict — e.g. dirty cleared with a
-	// stale ETag but the conflict still recorded, which would re-trigger an HTTP
-	// 412 loop on the next push. Issue #89 gap #3.
+	// Wrap the dirty/etag mutation and the resolution stamp in one
+	// transaction so a failure can't half-resolve the conflict — e.g. dirty
+	// cleared with a stale ETag but the conflict still open, which would
+	// re-trigger an HTTP 412 loop on the next push. Issue #89 gap #3.
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
@@ -275,8 +357,21 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 		}
 	}
 
-	if err := qtx.DeleteSyncConflict(ctx, conflictID); err != nil {
-		return nil, fmt.Errorf("delete conflict: %w", err)
+	// Mark the conflict resolved instead of deleting the row. The row keeps
+	// the local body, so a later `sync resolve --pick local` can still
+	// restore the edit an auto-resolution discarded. See issue #610.
+	resolution := ResolutionServer
+	if pick == "local" {
+		resolution = ResolutionLocal
+	}
+	resolvedAt := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	if err := qtx.MarkSyncConflictResolved(ctx, storage.MarkSyncConflictResolvedParams{
+		ResolvedAt: &resolvedAt,
+		Resolution: &resolution,
+		CalendarID: conflict.CalendarID,
+		Uid:        conflict.Uid,
+	}); err != nil {
+		return nil, fmt.Errorf("mark conflict resolved: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err

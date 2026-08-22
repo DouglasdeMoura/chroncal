@@ -162,10 +162,11 @@ back to every 15 minutes when it is unset.`,
 					return err
 				}
 			}
-			if s := cfg.Sync.ConflictStrategy; s != "" &&
-				s != string(syncPkg.ConflictServerWins) && s != string(syncPkg.ConflictPrompt) {
-				return errInvalidInputf("sync.conflict_strategy: invalid value %q (use %q or %q)",
-					s, syncPkg.ConflictServerWins, syncPkg.ConflictPrompt)
+			// The configured strategy is interpolated into the service
+			// environment, so reject an invalid name here. An empty name is
+			// the server-wins default and stays valid.
+			if _, err := syncPkg.ParseConflictStrategy(cfg.Sync.ConflictStrategy); err != nil {
+				return errInvalidInputf("sync.conflict_strategy: %s", err.Error())
 			}
 
 			data := map[string]string{
