@@ -249,3 +249,169 @@ func (s *Service) reconcileSyncAfterRestore(ctx context.Context, calendarID int6
 	}
 	return nil
 }
+
+// ErrHasOverrides is returned when a delete targets a recurring master
+// todo that has override instances. Use DeleteSeries instead.
+var ErrHasOverrides = fmt.Errorf("todo has overrides: use DeleteSeries to delete the entire series")
+
+// Delete soft-deletes a todo by ID. For a standalone todo it flips
+// deleted_at. For an override it adds EXDATE to the master and
+// soft-deletes the override in the same transaction so undo can reverse
+// both sides. A recurring master with live overrides is rejected.
+// Callers must use DeleteSeries.
+func (s *Service) Delete(ctx context.Context, id int64) error {
+	td, err := s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	if err := calendaraccess.EnsureWritable(ctx, s.q, td.CalendarID, todoComponent); err != nil {
+		return err
+	}
+	// RDATE-only masters (no RRULE) are recurring too, so guard on either rule
+	// or RDATEs; otherwise their overrides would be orphaned (#415).
+	if (td.RecurrenceRule != "" || td.RDates != "") && td.RecurrenceID == "" {
+		overrides, err := s.q.ListTodoOverridesByUID(ctx, td.UID)
+		if err != nil {
+			return fmt.Errorf("check overrides: %w", err)
+		}
+		if len(overrides) > 0 {
+			return ErrHasOverrides
+		}
+	}
+
+	if td.RecurrenceID == "" {
+		// Tombstone and soft-delete commit together. A failed tombstone write
+		// cannot leave a soft-deleted row whose next sync DELETEs a still-live
+		// server resource (issue #107).
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("begin tx: %w", err)
+		}
+		defer tx.Rollback()
+		qtx := s.q.WithTx(tx)
+		if _, err := storage.CreateTombstoneIfSynced(ctx, tx, td.CalendarID, td.UID); err != nil {
+			return fmt.Errorf("create tombstone: %w", err)
+		}
+		if err := qtx.SoftDeleteTodo(ctx, id); err != nil {
+			return fmt.Errorf("soft-delete todo: %w", err)
+		}
+		if err := storage.MarkResourceDirty(ctx, tx, td.CalendarID, td.UID, "todo"); err != nil {
+			return fmt.Errorf("mark resource dirty: %w", err)
+		}
+		return tx.Commit()
+	}
+
+	if td.RecurrenceID != "" {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("begin tx: %w", err)
+		}
+		defer tx.Rollback()
+		qtx := s.q.WithTx(tx)
+
+		master, err := qtx.GetTodoByUID(ctx, td.UID)
+		// A genuine lookup error (for example SQLITE_BUSY) must not collapse
+		// into the "no master" path. That path would soft-delete the override
+		// and skip its EXDATE/provenance records. Series expansion would then
+		// restore the occurrence (issue #290). Only a missing master (ErrNoRows)
+		// may skip those records.
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("get master: %w", err)
+		}
+		if err == nil {
+			existing := timeutil.ParseTimeList(storage.NullableToString(master.Exdates))
+			recIDTime, parseErr := timeutil.ParseRecurrenceID(td.RecurrenceID)
+			if parseErr != nil {
+				// A malformed recurrence_id cannot be excluded from the
+				// master. A soft-delete of the override would then restore the
+				// occurrence via series expansion. Return an error. The restore
+				// path treats the same parse failure as fatal.
+				return fmt.Errorf("parse recurrence_id %q: %w", td.RecurrenceID, parseErr)
+			}
+			existing = append(existing, recIDTime)
+			if err := qtx.UpdateTodoExdates(ctx, storage.UpdateTodoExdatesParams{
+				Exdates: storage.StringToNullable(timeutil.SerializeTimeList(existing)),
+				ID:      master.ID,
+			}); err != nil {
+				return fmt.Errorf("update exdates: %w", err)
+			}
+			// Record provenance so restore knows this EXDATE was
+			// delete-added (and may be stripped) rather than imported.
+			if err := qtx.RecordTodoExdateDelete(ctx, storage.RecordTodoExdateDeleteParams{
+				CalendarID:   master.CalendarID,
+				Uid:          td.UID,
+				RecurrenceID: td.RecurrenceID,
+			}); err != nil {
+				return fmt.Errorf("record exdate delete: %w", err)
+			}
+		}
+
+		if err := qtx.SoftDeleteTodo(ctx, id); err != nil {
+			return fmt.Errorf("soft-delete todo: %w", err)
+		}
+		// Mark the master dirty — its EXDATE was modified — inside the same
+		// transaction. A failed mark then rolls the EXDATE change back. The
+		// path does not commit a change that is never pushed (issue #107).
+		if err := storage.MarkResourceDirty(ctx, tx, td.CalendarID, td.UID, "todo"); err != nil {
+			return fmt.Errorf("mark resource dirty: %w", err)
+		}
+		return tx.Commit()
+	}
+
+	// Unreachable: RecurrenceID is either "" (handled above) or non-empty.
+	if err := s.q.SoftDeleteTodo(ctx, id); err != nil {
+		return err
+	}
+	_ = storage.MarkResourceDirty(ctx, s.db, td.CalendarID, td.UID, "todo")
+	return nil
+}
+
+// DeleteSeries soft-deletes a recurring master todo and every override
+// with its UID. A tombstone is created when the master is synced so
+// the next push sends DELETE to the server. The local rows stay in
+// place until purge so the user can restore them.
+func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
+	// Resolve every calendar the UID spans before a transaction opens. A
+	// read-only or VEVENT-only collection then rejects the whole series
+	// delete up front. Distinct calendar IDs across all rows (not just the
+	// master) cover orphaned overrides and series-tail rows even after the
+	// master has been purged on its own.
+	if err := s.ensureSeriesWritable(ctx, uid); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+
+	// Tombstone, dirty-mark, and soft-delete commit together. A failed
+	// sync-track write cannot leave a tombstone for a still-live series
+	// whose next sync would DELETE it from the server (issue #107). No
+	// master means there is nothing to track.
+	master, mErr := qtx.GetTodoByUID(ctx, uid)
+	// Only ErrNoRows means "no master to track". A genuine lookup error must
+	// abort. Otherwise the series is soft-deleted locally without a tombstone
+	// or dirty mark. It would then resurface on the next pull (issue #290).
+	if mErr != nil && !errors.Is(mErr, sql.ErrNoRows) {
+		return fmt.Errorf("get master: %w", mErr)
+	}
+	haveMaster := mErr == nil
+	if haveMaster {
+		if _, err := storage.CreateTombstoneIfSynced(ctx, tx, master.CalendarID, uid); err != nil {
+			return fmt.Errorf("create tombstone: %w", err)
+		}
+	}
+
+	if err := qtx.SoftDeleteTodosByUID(ctx, uid); err != nil {
+		return fmt.Errorf("soft-delete series: %w", err)
+	}
+	if haveMaster {
+		if err := storage.MarkResourceDirty(ctx, tx, master.CalendarID, uid, "todo"); err != nil {
+			return fmt.Errorf("mark resource dirty: %w", err)
+		}
+	}
+	return tx.Commit()
+}
