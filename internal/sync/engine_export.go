@@ -7,12 +7,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/douglasdemoura/chroncal/internal/caldav"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	hydratepkg "github.com/douglasdemoura/chroncal/internal/hydrate"
 	icalPkg "github.com/douglasdemoura/chroncal/internal/ical"
 	"github.com/douglasdemoura/chroncal/internal/journal"
-	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
@@ -192,151 +190,6 @@ func (e *Engine) lookupOwnerID(ctx context.Context, ownerType, uid string) (int6
 		return 0, err
 	}
 	return ops.lookupID(ctx, e, uid)
-}
-
-type tombstoneResult struct {
-	deleted      int
-	autoResolved int
-	errors       []error
-}
-
-func (e *Engine) processTombstones(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL string) (*tombstoneResult, error) {
-	tombstones, err := e.q.ListTombstonesByCalendar(ctx, calendarID)
-	if err != nil {
-		return nil, fmt.Errorf("list tombstones: %w", err)
-	}
-
-	// Index the last-seen ETags so each DELETE can be made conditional. A real
-	// lookup failure must abort rather than silently degrade to unconditional
-	// DELETEs that could clobber a concurrent remote edit, so we surface it.
-	syncResources, err := e.q.ListSyncResourcesByCalendar(ctx, calendarID)
-	if err != nil {
-		return nil, fmt.Errorf("list sync resources: %w", err)
-	}
-	etagByUID := make(map[string]string, len(syncResources))
-	for _, sr := range syncResources {
-		etagByUID[sr.Uid] = sr.Etag
-	}
-
-	result := &tombstoneResult{}
-	for _, ts := range tombstones {
-		deletePath, hrefErr := client.CanonicalObjectRef(remoteURL, ts.RemoteUrl)
-		if hrefErr != nil {
-			result.errors = append(result.errors, fmt.Errorf("validate tombstone %s: %w", ts.Uid, hrefErr))
-			continue
-		}
-		// Make the DELETE conditional on the ETag we last saw so the server
-		// rejects it (412) if the resource was edited remotely after our last
-		// sync. Without this, the tombstone push would silently destroy that
-		// concurrent edit. An untracked resource (never synced, or already
-		// cleaned up) has no ETag, which falls back to an unconditional DELETE.
-		etag := etagByUID[ts.Uid]
-		e.logger.Debug("deleting tombstone", "uid", ts.Uid, "remote_url", deletePath)
-		if _, err := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (struct{}, error) {
-			return struct{}{}, client.DeleteResource(ctx, deletePath, etag)
-		}); err != nil && !errors.Is(err, caldav.ErrResourceGone) {
-			// A 404/410 means the resource is already absent server-side —
-			// the desired end state — so fall through and clear the local
-			// rows instead of re-issuing the DELETE on every sync.
-			if caldav.IsConflict(err) {
-				// 412: the resource was edited remotely after we last saw it.
-				// Honoring the delete would discard that edit, so abandon it.
-				// Drop the tombstone (stop re-issuing the DELETE every sync)
-				// but keep the sync_resource so the next pull re-imports the
-				// remote version, resurrecting the item with its remote edit.
-				// A delete-vs-edit conflict always preserves the remote edit
-				// (the non-destructive choice), independent of ConflictStrategy.
-				e.logger.Warn("tombstone delete conflict: remote edited, preserving remote version", "uid", ts.Uid)
-				if err := e.q.DeleteTombstone(ctx, ts.ID); err != nil {
-					e.logger.Warn("delete tombstone row after conflict failed", "uid", ts.Uid, "error", err)
-				}
-				result.autoResolved++
-				continue
-			}
-			e.logger.Warn("delete remote resource failed", "uid", ts.Uid, "error", err)
-			result.errors = append(result.errors, fmt.Errorf("delete tombstone %s: %w", ts.Uid, err))
-			continue
-		}
-		if err := e.q.DeleteSyncResource(ctx, storage.DeleteSyncResourceParams{
-			CalendarID: calendarID,
-			Uid:        ts.Uid,
-		}); err != nil {
-			e.logger.Warn("delete sync resource after tombstone", "uid", ts.Uid, "error", err)
-		}
-		if err := e.q.DeleteTombstone(ctx, ts.ID); err != nil {
-			e.logger.Warn("delete tombstone row failed", "uid", ts.Uid, "error", err)
-		}
-		result.deleted++
-	}
-	return result, nil
-}
-
-func (e *Engine) syncCalendarMetadata(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL string) error {
-	cal, err := e.q.GetCalendar(ctx, calendarID)
-	if err != nil {
-		return fmt.Errorf("get calendar for metadata sync: %w", err)
-	}
-
-	// Google CalendarList already supplies the color at discovery. Apple
-	// calendar-color is not a Google CalDAV property, so never PROPFIND
-	// it. A dirty local color still has to be written: CalendarList PATCH
-	// is the Google equivalent of Apple calendar-color PROPPATCH. Clearing
-	// ColorDirty after a successful write lets later Discover rounds adopt
-	// CalendarList again. A failed write must not fail event sync
-	// (issue #628); the dirty latch then keeps the local override.
-	if caldav.IsGoogleCalendarEndpoint(remoteURL) {
-		if cal.ColorDirty == 0 {
-			return nil
-		}
-		if _, err := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (struct{}, error) {
-			return struct{}{}, client.SetGoogleCalendarListColor(ctx, remoteURL, cal.Color)
-		}); err != nil {
-			e.logger.Warn("set google calendar color failed", "calendar_id", calendarID, "error", err)
-			return nil
-		}
-		if err := e.calendars.ClearColorDirty(ctx, calendarID, cal.Color); err != nil {
-			return fmt.Errorf("clear calendar color dirty: %w", err)
-		}
-		return nil
-	}
-
-	// A dirty local color wins: push it and clear the flag. Skip the remote
-	// fetch entirely — its value would be discarded, and a failed fetch must
-	// not block the pending push or strand ColorDirty (issue #419).
-	if cal.ColorDirty != 0 {
-		if _, err := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (struct{}, error) {
-			return struct{}{}, client.SetCalendarColor(ctx, remoteURL, cal.Color)
-		}); err != nil {
-			return fmt.Errorf("set remote calendar color: %w", err)
-		}
-		if err := e.calendars.ClearColorDirty(ctx, calendarID, cal.Color); err != nil {
-			return fmt.Errorf("clear calendar color dirty: %w", err)
-		}
-		return nil
-	}
-
-	remoteColor, err := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (string, error) {
-		return client.GetCalendarColor(ctx, remoteURL)
-	})
-	if err != nil {
-		// Color is decorative. A server that refuses calendar-color must
-		// not fail the rest of the calendar sync (issue #628).
-		e.logger.Warn("get remote calendar color failed", "calendar_id", calendarID, "error", err)
-		return nil
-	}
-	if remoteColor == "" {
-		// The server does not advertise a color. Keep the color that
-		// discovery or the user already set.
-		return nil
-	}
-
-	if remoteColor != storage.NullableToString(cal.RemoteColor) {
-		if err := e.calendars.UpdateColorFromSync(ctx, calendarID, remoteColor, remoteColor); err != nil {
-			return fmt.Errorf("update calendar color from sync: %w", err)
-		}
-	}
-
-	return nil
 }
 
 // errResourceMissing reports that no live local row exists for a UID we were
