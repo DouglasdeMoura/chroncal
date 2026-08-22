@@ -810,119 +810,15 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 			// Check for 412 Precondition Failed (ETag conflict)
 			if caldav.IsConflict(putErr) {
 				e.logger.Warn("conflict detected during push", "uid", res.Uid)
-
-				// Record the conflict before any resolution so the local body
-				// survives even when this pass adopts the server version below.
-				// Reuse icalData exported above — it is the exact body we just
-				// tried to PUT and is unchanged here, so re-exporting would
-				// needlessly repeat ~10 DB queries plus an iCal encode per
-				// conflicting resource. See issue #264. An encode failure is
-				// tolerated: the row records an empty server body, the local
-				// edit is the half we must not lose, and ResolveConflict
-				// refuses a server pick it cannot import. A failed re-fetch
-				// records nothing — without the server body and ETag the row
-				// could not be resolved safely — and surfaces as an error.
-				serverRes, fetchErr := client.GetResource(ctx, putPath)
-				if fetchErr != nil {
-					e.logger.Warn("re-fetch server resource failed", "uid", res.Uid, "error", fetchErr)
-					result.errors = append(result.errors, fmt.Errorf("conflict re-fetch %s: %w", res.Uid, fetchErr))
-					continue
-				}
-				serverIcal, encodeErr := caldav.EncodeCalendar(serverRes.Data)
-				if encodeErr != nil {
-					e.logger.Warn("encode server resource for conflict record", "uid", res.Uid, "error", encodeErr)
-				}
-				ownerID, lookupErr := e.lookupOwnerID(ctx, res.OwnerType, res.Uid)
-				if lookupErr != nil {
-					e.logger.Warn("lookup owner id for conflict record", "uid", res.Uid, "owner_type", res.OwnerType, "error", lookupErr)
-				}
-				if err := e.q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
-					CalendarID: calendarID,
-					OwnerType:  res.OwnerType,
-					OwnerID:    ownerID,
-					Uid:        res.Uid,
-					LocalIcal:  string(icalData),
-					ServerIcal: string(serverIcal),
-					ServerEtag: serverRes.ETag,
-				}); err != nil {
-					e.logger.Error("record conflict", "uid", res.Uid, "error", err)
-					result.errors = append(result.errors, fmt.Errorf("record conflict %s: %w", res.Uid, err))
-					continue
-				}
-
-				// Prompt mode and the opportunistic push stop here. The
-				// conflict row holds both bodies and the local row stays dirty
-				// until the user resolves it with ResolveConflict.
-				if strategy != ConflictServerWins || opportunistic {
+				outcome, warnings, errs := e.handlePutConflict(ctx, client, calendarID, res, putPath, icalData, strategy, opportunistic)
+				result.warnings = append(result.warnings, warnings...)
+				result.errors = append(result.errors, errs...)
+				switch outcome {
+				case putConflictLeftOpen:
 					result.conflicts++
-					continue
+				case putConflictAutoResolved:
+					result.autoResolved++
 				}
-
-				// ServerWins: adopt the server version and mark the recorded
-				// conflict resolved. Every failure below leaves the row open
-				// so the user can still resolve it by hand.
-				e.logger.Info("resolving conflict: server wins", "uid", res.Uid)
-				if encodeErr != nil {
-					result.errors = append(result.errors, fmt.Errorf("encode server resource %s: %w", res.Uid, encodeErr))
-					result.conflicts++
-					continue
-				}
-				imported, revs, importWarnings, err := e.importICal(ctx, calendarID, string(serverIcal))
-				if err != nil {
-					e.logger.Error("import server resource failed", "uid", res.Uid, "error", err)
-					result.errors = append(result.errors, fmt.Errorf("import server resource %s: %w", res.Uid, err))
-					result.conflicts++
-					continue
-				}
-				result.warnings = append(result.warnings, importWarnings...)
-				if !imported {
-					// The server's 412 body carried no importable
-					// VEVENT/VTODO/VJOURNAL, so nothing was applied.
-					// Clearing dirty and stamping the server ETag here
-					// would drop the local edit behind a server version we
-					// never adopted. Keep dirty so the next push retries.
-					// Mirrors the manual ResolveConflict guard. See issue
-					// #495.
-					e.logger.Warn("server resource has no importable data; keeping local dirty", "uid", res.Uid)
-					result.conflicts++
-					continue
-				}
-				// Clear dirty and update ETag to accept server version.
-				// Guard the clear on the rev persistImported captured
-				// inside its transaction so a local edit landing after
-				// the import committed is not silently dropped (lost
-				// update). See issues #92, #417 and #494.
-				if err := e.clearDirtyAfterImport(ctx, calendarID, res.Uid, serverRes.ETag, revs[res.Uid]); err != nil {
-					e.logger.Error("clear dirty after conflict", "uid", res.Uid, "error", err)
-					result.errors = append(result.errors, fmt.Errorf("clear dirty after conflict %s: %w", res.Uid, err))
-					result.conflicts++
-					continue
-				}
-				// FinalizePushedResource clears dirty only on a rev match, so
-				// read the flag back. A local edit that landed after the import
-				// keeps the resource dirty and the conflict open.
-				sr, err := e.q.GetSyncResource(ctx, storage.GetSyncResourceParams{
-					CalendarID: calendarID,
-					Uid:        res.Uid,
-				})
-				if err != nil {
-					e.logger.Error("re-read sync resource after conflict", "uid", res.Uid, "error", err)
-					result.errors = append(result.errors, fmt.Errorf("re-read sync resource %s: %w", res.Uid, err))
-					result.conflicts++
-					continue
-				}
-				if sr.Dirty != 0 {
-					e.logger.Info("conflict stays open: local edit landed during import", "uid", res.Uid)
-					result.conflicts++
-					continue
-				}
-				if err := e.markConflictResolved(ctx, calendarID, res.Uid, ResolutionServerAuto); err != nil {
-					e.logger.Error("mark conflict resolved", "uid", res.Uid, "error", err)
-					result.errors = append(result.errors, fmt.Errorf("mark conflict resolved %s: %w", res.Uid, err))
-					result.conflicts++
-					continue
-				}
-				result.autoResolved++
 				continue
 			}
 			e.logger.Error("PUT failed", "uid", res.Uid, "error", putErr)
@@ -971,6 +867,127 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 	}
 
 	return result, nil
+}
+
+// putConflictOutcome classifies how a 412 on one resource was settled.
+type putConflictOutcome int
+
+const (
+	// putConflictRecordFailed means no conflict row exists. The failure
+	// surfaced as an error, so the caller counts nothing.
+	putConflictRecordFailed putConflictOutcome = iota
+	// putConflictLeftOpen means the row is recorded and the resource stays
+	// dirty. The user must resolve the conflict by hand.
+	putConflictLeftOpen
+	// putConflictAutoResolved means a server-wins pass adopted the server
+	// body and marked the row resolved.
+	putConflictAutoResolved
+)
+
+// handlePutConflict settles one 412 Precondition Failed answer. It records
+// the conflict before any resolution so the local body survives even when
+// the pass adopts the server version. icalData is the exact body that just
+// failed the PUT, so the handler does not export it again (issue #264). An
+// encode failure is tolerated: the row records an empty server body, the
+// local edit is the half we must not lose, and ResolveConflict refuses a
+// server pick it cannot import. A failed re-fetch records nothing — without
+// the server body and ETag the row could not be resolved safely — and
+// surfaces as an error. Prompt mode and the opportunistic push stop after
+// the record. A server-wins pass adopts the server version and marks the
+// row resolved; every failure on that path leaves the row open so the user
+// can still resolve it by hand. See issue #610.
+func (e *Engine) handlePutConflict(ctx context.Context, client *caldav.Client, calendarID int64, res storage.SyncResource, putPath string, icalData []byte, strategy ConflictStrategy, opportunistic bool) (putConflictOutcome, []ImportWarning, []error) {
+	var warnings []ImportWarning
+	var errs []error
+
+	serverRes, fetchErr := client.GetResource(ctx, putPath)
+	if fetchErr != nil {
+		e.logger.Warn("re-fetch server resource failed", "uid", res.Uid, "error", fetchErr)
+		return putConflictRecordFailed, warnings, append(errs, fmt.Errorf("conflict re-fetch %s: %w", res.Uid, fetchErr))
+	}
+	serverIcal, encodeErr := caldav.EncodeCalendar(serverRes.Data)
+	if encodeErr != nil {
+		e.logger.Warn("encode server resource for conflict record", "uid", res.Uid, "error", encodeErr)
+	}
+	ownerID, lookupErr := e.lookupOwnerID(ctx, res.OwnerType, res.Uid)
+	if lookupErr != nil {
+		e.logger.Warn("lookup owner id for conflict record", "uid", res.Uid, "owner_type", res.OwnerType, "error", lookupErr)
+	}
+	if err := e.q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+		CalendarID: calendarID,
+		OwnerType:  res.OwnerType,
+		OwnerID:    ownerID,
+		Uid:        res.Uid,
+		LocalIcal:  string(icalData),
+		ServerIcal: string(serverIcal),
+		ServerEtag: serverRes.ETag,
+	}); err != nil {
+		e.logger.Error("record conflict", "uid", res.Uid, "error", err)
+		return putConflictRecordFailed, warnings, append(errs, fmt.Errorf("record conflict %s: %w", res.Uid, err))
+	}
+
+	// Prompt mode and the opportunistic push stop here. The conflict row
+	// holds both bodies and the local row stays dirty until the user
+	// resolves it with ResolveConflict.
+	if strategy != ConflictServerWins || opportunistic {
+		return putConflictLeftOpen, warnings, errs
+	}
+
+	// ServerWins: adopt the server version and mark the recorded conflict
+	// resolved. Every failure below leaves the row open so the user can
+	// still resolve it by hand.
+	e.logger.Info("resolving conflict: server wins", "uid", res.Uid)
+	if encodeErr != nil {
+		errs = append(errs, fmt.Errorf("encode server resource %s: %w", res.Uid, encodeErr))
+		return putConflictLeftOpen, warnings, errs
+	}
+	imported, revs, importWarnings, err := e.importICal(ctx, calendarID, string(serverIcal))
+	if err != nil {
+		e.logger.Error("import server resource failed", "uid", res.Uid, "error", err)
+		errs = append(errs, fmt.Errorf("import server resource %s: %w", res.Uid, err))
+		return putConflictLeftOpen, warnings, errs
+	}
+	warnings = append(warnings, importWarnings...)
+	if !imported {
+		// The server's 412 body carried no importable VEVENT/VTODO/VJOURNAL,
+		// so nothing was applied. Clearing dirty and stamping the server
+		// ETag here would drop the local edit behind a server version we
+		// never adopted. Keep dirty so the next push retries. Mirrors the
+		// manual ResolveConflict guard. See issue #495.
+		e.logger.Warn("server resource has no importable data; keeping local dirty", "uid", res.Uid)
+		return putConflictLeftOpen, warnings, errs
+	}
+	// Clear dirty and update ETag to accept server version. Guard the clear
+	// on the rev persistImported captured inside its transaction so a local
+	// edit landing after the import committed is not silently dropped (lost
+	// update). See issues #92, #417 and #494.
+	if err := e.clearDirtyAfterImport(ctx, calendarID, res.Uid, serverRes.ETag, revs[res.Uid]); err != nil {
+		e.logger.Error("clear dirty after conflict", "uid", res.Uid, "error", err)
+		errs = append(errs, fmt.Errorf("clear dirty after conflict %s: %w", res.Uid, err))
+		return putConflictLeftOpen, warnings, errs
+	}
+	// FinalizePushedResource clears dirty only on a rev match, so read the
+	// flag back. A local edit that landed after the import keeps the
+	// resource dirty and the conflict open.
+	sr, err := e.q.GetSyncResource(ctx, storage.GetSyncResourceParams{
+		CalendarID: calendarID,
+		Uid:        res.Uid,
+	})
+	if err != nil {
+		e.logger.Error("re-read sync resource after conflict", "uid", res.Uid, "error", err)
+		errs = append(errs, fmt.Errorf("re-read sync resource %s: %w", res.Uid, err))
+		return putConflictLeftOpen, warnings, errs
+	}
+	if sr.Dirty != 0 {
+		e.logger.Info("conflict stays open: local edit landed during import", "uid", res.Uid)
+		return putConflictLeftOpen, warnings, errs
+	}
+	if err := e.markConflictResolved(ctx, calendarID, res.Uid, ResolutionServerAuto); err != nil {
+		e.logger.Error("mark conflict resolved", "uid", res.Uid, "error", err)
+		errs = append(errs, fmt.Errorf("mark conflict resolved %s: %w", res.Uid, err))
+		return putConflictLeftOpen, warnings, errs
+	}
+	return putConflictAutoResolved, warnings, errs
 }
 
 // recordPushFailure stores one more consecutive failed push attempt for a

@@ -1631,44 +1631,7 @@ func TestEnginePushLocalEditsRefreshesOpenConflict(t *testing.T) {
 	insertTestEvent(t, db, calendarID, "conflict-event")
 
 	var puts int
-	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
-		switch r.Method {
-		case http.MethodPut:
-			puts++
-			return &http.Response{
-				StatusCode: http.StatusPreconditionFailed,
-				Status:     "412 Precondition Failed",
-				Header:     make(http.Header),
-				Body:       io.NopCloser(strings.NewReader("precondition failed")),
-				Request:    r,
-			}, nil
-		case http.MethodGet:
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Status:     "200 OK",
-				Header: http.Header{
-					"Content-Type": []string{"text/calendar; charset=utf-8"},
-					"Etag":         []string{`"etag-server"`},
-				},
-				Body: io.NopCloser(strings.NewReader(`BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//chroncal//tests//EN
-BEGIN:VEVENT
-UID:conflict-event
-DTSTAMP:20260403T120000Z
-DTSTART:20260403T120000Z
-DTEND:20260403T130000Z
-SUMMARY:Server version
-END:VEVENT
-END:VCALENDAR
-`)),
-				Request: r,
-			}, nil
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-			return nil, nil
-		}
-	})
+	client := serverWinsConflictClient(t, "conflict-event", &puts)
 
 	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
 		CalendarID:   calendarID,
@@ -1764,43 +1727,7 @@ func TestEnginePushConflictRecordFailureSurfacesError(t *testing.T) {
 
 	insertTestEvent(t, db, calendarID, "conflict-event")
 
-	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
-		switch r.Method {
-		case http.MethodPut:
-			return &http.Response{
-				StatusCode: http.StatusPreconditionFailed,
-				Status:     "412 Precondition Failed",
-				Header:     make(http.Header),
-				Body:       io.NopCloser(strings.NewReader("precondition failed")),
-				Request:    r,
-			}, nil
-		case http.MethodGet:
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Status:     "200 OK",
-				Header: http.Header{
-					"Content-Type": []string{"text/calendar; charset=utf-8"},
-					"Etag":         []string{`"etag-server"`},
-				},
-				Body: io.NopCloser(strings.NewReader(`BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//chroncal//tests//EN
-BEGIN:VEVENT
-UID:conflict-event
-DTSTAMP:20260403T120000Z
-DTSTART:20260403T120000Z
-DTEND:20260403T130000Z
-SUMMARY:Server version
-END:VEVENT
-END:VCALENDAR
-`)),
-				Request: r,
-			}, nil
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-			return nil, nil
-		}
-	})
+	client := serverWinsConflictClient(t, "conflict-event", nil)
 
 	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
 		CalendarID:   calendarID,
@@ -1977,9 +1904,15 @@ END:VCALENDAR
 	if len(open) != 0 {
 		t.Fatalf("open sync conflicts = %d, want 0", len(open))
 	}
-	resolvedRows, err := q.ListResolvedSyncConflictsByCalendar(ctx, calendarID)
+	allResolved, err := q.ListResolvedSyncConflicts(ctx)
 	if err != nil {
-		t.Fatalf("ListResolvedSyncConflictsByCalendar: %v", err)
+		t.Fatalf("ListResolvedSyncConflicts: %v", err)
+	}
+	var resolvedRows []storage.SyncConflict
+	for _, r := range allResolved {
+		if r.CalendarID == calendarID {
+			resolvedRows = append(resolvedRows, r)
+		}
 	}
 	if len(resolvedRows) != 1 {
 		t.Fatalf("resolved sync conflicts = %d, want 1", len(resolvedRows))
@@ -4225,13 +4158,17 @@ func linkCalendarToTestAccount(t *testing.T, ctx context.Context, q *storage.Que
 
 // serverWinsConflictClient returns a CalDAV client whose PUT 412s and whose GET
 // returns the server's version of uid (SUMMARY "Server version", ETag
-// "etag-server"). That drives the ConflictServerWins accept-server path.
-func serverWinsConflictClient(t *testing.T, uid string) *caldav.Client {
+// "etag-server"). That drives the ConflictServerWins accept-server path. A
+// non-nil puts counter receives one increment per PUT.
+func serverWinsConflictClient(t *testing.T, uid string, puts *int) *caldav.Client {
 	t.Helper()
 	path := "/calendar/" + uid + ".ics"
 	return newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
 		switch r.Method {
 		case http.MethodPut:
+			if puts != nil {
+				*puts++
+			}
 			return &http.Response{
 				StatusCode: http.StatusPreconditionFailed,
 				Status:     "412 Precondition Failed",
@@ -4307,7 +4244,7 @@ func TestEnginePushServerWinsPreservesConcurrentEdit(t *testing.T) {
 	}
 	t.Cleanup(func() { afterImportRevCapture = nil })
 
-	client := serverWinsConflictClient(t, "srv-wins-race")
+	client := serverWinsConflictClient(t, "srv-wins-race", nil)
 	result, err := engine.push(ctx, client, calendarID, "", "", ConflictServerWins, false)
 	if err != nil {
 		t.Fatalf("push: %v", err)
@@ -4385,7 +4322,7 @@ func TestEnginePushServerWinsPreservesConcurrentEditAfterPersist(t *testing.T) {
 	}
 	t.Cleanup(func() { afterImportPersist = nil })
 
-	client := serverWinsConflictClient(t, "srv-wins-persist-race")
+	client := serverWinsConflictClient(t, "srv-wins-persist-race", nil)
 	result, err := engine.push(ctx, client, calendarID, "", "", ConflictServerWins, false)
 	if err != nil {
 		t.Fatalf("push: %v", err)
